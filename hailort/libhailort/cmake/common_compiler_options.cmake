@@ -1,0 +1,23 @@
+cmake_minimum_required(VERSION 3.0.0)
+
+FUNCTION(disable_exceptions target)
+    if(WIN32)
+        # TODO: Find the right flag for windows (-fno-exceptions equivalent)
+    elseif(UNIX)
+        target_compile_options(libhailort PRIVATE -fno-exceptions)
+    else()
+        message(FATAL_ERROR "Unexpeced host, stopping build")
+    endif()
+ENDFUNCTION()
+
+FUNCTION(exclude_archive_libs_symbols target)
+    if(WIN32)
+        # TODO: check it
+    elseif(UNIX)
+        get_property(TEMP_LINK_FLAGS TARGET ${target} PROPERTY LINK_FLAGS)
+        set(TEMP_LINK_FLAGS "${TEMP_LINK_FLAGS} -Wl,--exclude-libs=ALL")
+        set_property(TARGET ${target} PROPERTY LINK_FLAGS ${TEMP_LINK_FLAGS})
+    else()
+        message(FATAL_ERROR "Unexpeced host, stopping build")
+    endif()
+ENDFUNCTION()

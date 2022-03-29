@@ -1,0 +1,7 @@
+Compiling the plugin:
+  cmake -H. -Bbuild
+  cmake --build build
+
+Using the plugin:
+  The plugin is dependent on libhailort which is included in the `hailort/lib/` directory.
+  Use LD_LIBRARY_PATH to specify the location of the libhailort library.

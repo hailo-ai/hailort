@@ -1,0 +1,32 @@
+cmake_minimum_required(VERSION 3.0.0)
+
+add_executable(cpp_vstreams_example vstreams_example.cpp)
+target_link_libraries(cpp_vstreams_example PRIVATE example_base)
+
+add_executable(cpp_infer_pipeline_example infer_pipeline_example.cpp)
+target_link_libraries(cpp_infer_pipeline_example PRIVATE example_base)
+
+add_executable(cpp_raw_streams_example raw_streams_example.cpp)
+target_link_libraries(cpp_raw_streams_example PRIVATE example_base)
+
+add_executable(cpp_multi_network_vstream_example multi_network_vstream_example.cpp)
+target_link_libraries(cpp_multi_network_vstream_example PRIVATE example_base)
+
+add_executable(cpp_switch_hefs_example switch_hefs_example.cpp)
+target_link_libraries(cpp_switch_hefs_example PRIVATE example_base)
+
+add_executable(cpp_switch_hefs_example_threads_reuse switch_hefs_example_threads_reuse.cpp)
+target_link_libraries(cpp_switch_hefs_example_threads_reuse PRIVATE example_base)
+
+add_executable(multi_device_example_cpp multi_device_example.cpp)
+target_link_libraries(multi_device_example_cpp PRIVATE example_base)
+
+set(EXAMPLES_CPP_TARGETS
+    cpp_vstreams_example
+    cpp_infer_pipeline_example
+    cpp_raw_streams_example
+    cpp_multi_network_vstream_example
+    cpp_switch_hefs_example
+    cpp_switch_hefs_example_threads_reuse
+    multi_device_example_cpp
+    PARENT_SCOPE)

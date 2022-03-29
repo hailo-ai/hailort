@@ -1,0 +1,144 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "config_schema",
+    "description": "schema for user config",
+    "type": "object",
+    "properties":
+    {
+        "network":
+        {
+            "type": "object",
+            "properties":
+            {
+                "should_use_dhcp": {"type": "boolean"},
+                "mac_address": {"$ref": "#/definitions/mac_address"},
+                "static_ip_address": {"type": "string", "format": "ipv4"},
+                "static_gw_address": {"type": "string", "format": "ipv4"},
+                "static_netmask": {"type": "string", "format": "ipv4"},
+                "rx_pause_frames_enable": {"type": "boolean"}
+            }
+        },
+        "system":
+        {
+            "type": "object",
+            "properties":
+            {
+                "name": {"type": "string", "maxLength": 32},
+                "app_watchdog_enable": {"type": "boolean"},
+                "app_watchdog_cycles": {"$ref": "#/definitions/uint16_t"},
+                "core_watchdog_enable": {"type": "boolean"},
+                "core_watchdog_cycles": {"$ref": "#/definitions/uint16_t"},
+                "watchdog_mode" : {"$ref": "#/definitions/watchdog_mode"},
+                "max_neural_network_core_clock_rate": {"$ref": "#/definitions/clock_frequency"},
+                "supported_aspm_states": {"$ref": "#/definitions/supported_aspm_states"},
+                "bus_0_i2c_speed": {"$ref": "#/definitions/i2c_speed"},
+                "bus_1_i2c_speed": {"$ref": "#/definitions/i2c_speed"},
+                "bus_2_i2c_speed": {"$ref": "#/definitions/i2c_speed"},
+                "bus_3_i2c_speed": {"$ref": "#/definitions/i2c_speed"},
+                "supported_aspm_l1_substates": {"$ref": "#/definitions/supported_aspm_l1_substates"},
+                "overcurrent_parameters_source": {"$ref": "#/definitions/overcurrent_parameters_source"},
+                "overcurrent_monitoring_red_threshold": {"$ref": "#/definitions/uint32_t"},
+                "overcurrent_conversion_time_microseconds": {"$ref": "#/definitions/conversion_time"},
+                "temperature_parameters_source": {"$ref": "#/definitions/temperature_parameters_source"},
+                "temperature_red_threshold": {"$ref": "#/definitions/int8_t"},
+                "temperature_red_hysteresis_threshold": {"$ref": "#/definitions/int8_t"},
+                "temperature_orange_threshold": {"$ref": "#/definitions/int8_t"},
+                "temperature_orange_hysteresis_threshold": {"$ref": "#/definitions/int8_t"},
+                "overcurrent_monitoring_orange_threshold_enable": {"type": "boolean"}
+            }
+        },
+        "control":
+        {
+            "type": "object",
+            "properties":
+            {
+                "udp_port": {"$ref": "#/definitions/uint16_t"}
+            }
+        },
+        "d2h_event":
+        {
+            "type": "object",
+            "properties":
+            {
+                "host_udp_port": {"$ref": "#/definitions/uint16_t"},
+                "src_udp_port": {"$ref": "#/definitions/uint16_t"},
+                "host_ip_address": {"type": "string", "format": "ipv4"},
+                "connection_type": {"type": "boolean"}
+            }
+        },
+        "logger":
+        {
+            "type": "object",
+            "properties":
+            {
+                "send_via_pci": {"type": "boolean"},
+                "send_via_uart": {"type": "boolean"},
+                "logger_level": {"$ref": "#/definitions/logger_level"}
+            }
+        }
+    },
+    "definitions":
+    {
+        "mac_address":
+        {
+            "type": "string",
+            "pattern": "^(([0-9a-fA-F]{2}[:]){5}|([0-9a-fA-F]{2}){5})([0-9a-fA-F]{2})$"
+        },
+        "clock_frequency":
+        {
+            "enum":
+                ["100MHZ", "200MHZ", "400MHZ"]
+        },
+        "supported_aspm_states":
+        {
+            "enum":
+                ["ASPM_DISABLED", "ASPM_L1_ONLY", "ASPM_L0S_L1",
+                 "ASPM DISABLED", "ASPM L1 ONLY", "ASPM L0S L1"]
+        },
+        "i2c_speed":
+        {
+            "enum":
+                ["I2C_SPEED_STANDARD", "I2C_SPEED_FAST",
+                 "I2C SPEED STANDARD", "I2C SPEED FAST"]
+        },
+        "supported_aspm_l1_substates":
+        {
+            "enum":
+                ["ASPM_L1_SUBSTATES_DISABLED", "ASPM_L1_SUBSTATES_L11_ONLY", "ASPM_L1_SUBSTATES_L11_L12",
+                 "ASPM L1 SUBSTATES DISABLED", "ASPM L1 SUBSTATES L1.1 ONLY", "ASPM L1 SUBSTATES L1.1 L1.2"]
+        },
+        "watchdog_mode":
+        {
+            "enum":
+                ["WD_MODE_HW_SW", "WD_MODE_HW_ONLY",
+                 "WD MODE HW SW", "WD MODE HW ONLY"]
+        },
+        "logger_level":
+        {
+            "enum":
+                ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "FATAL"]
+        },
+        "overcurrent_parameters_source":
+        {
+            "enum":
+                ["FW_VALUES", "USER_CONFIG_VALUES", 
+                 "BOARD_CONFIG_VALUES", "OVERCURRENT_DISABLED",
+                 "FW VALUES", "USER CONFIG VALUES", 
+                 "BOARD CONFIG VALUES", "OVERCURRENT DISABLED"]
+        },
+        "temperature_parameters_source":
+        {
+            "enum":
+                ["FW_VALUES", "USER_CONFIG_VALUES", 
+                 "FW VALUES", "USER CONFIG VALUES"]
+        },
+        "conversion_time":
+        {
+            "enum":
+                [140, 204, 332, 588,
+                 1100, 2116, 4156, 8244]
+        },
+        "uint16_t": {"type": "integer", "minimum": 0, "maximum": 65535},
+        "uint32_t": {"type": "integer", "minimum": 0, "maximum": 4294967295}
+    }
+}

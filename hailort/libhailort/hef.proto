@@ -1,0 +1,512 @@
+syntax = "proto3";
+
+message ProtoHEFHef {
+    ProtoHEFHeader header = 1;
+    repeated ProtoHEFNetworkGroup network_groups = 2;
+    bytes mapping = 3;
+    ProtoHEFIncludedFeatures included_features = 4;
+    repeated ProtoHEFExtension extensions = 5;
+    repeated ProtoHEFOptionalExtension optional_extensions = 6;
+}
+
+message ProtoHEFIncludedFeatures {
+    bool abbale = 1;
+    bool posted_writes = 2;
+    bool ddr = 3;
+    uint32 number_of_contexts = 4;
+    bool compressed_params = 5;
+    bool transpose_component = 6;
+    bool padded_ddr_buffers = 7;
+    bool sequencer = 8;
+}
+
+enum ProtoHEFExtensionType {
+    ABBALE = 0;
+    POSTED_WRITES = 1;
+    DDR = 2;
+    PADDED_DDR_BUFFERS = 3;
+    IS_MULTI_CONTEXTS = 4;
+    COMPRESSED_PARAMS = 5;
+    TRANSPOSE_COMPONENT = 6;
+    TEST_ONE = 7;
+    MULTI_NETWORK_VARIABLE_BATCH_SIZE = 8;
+    IS_NMS_MULTI_CONTEXT = 9;
+    OFFLOAD_ARGMAX = 10;
+    UNUSED = 0XFFFF;
+}
+
+message ProtoHEFExtension {
+    uint32 type_index = 1;
+    string name = 2;
+}
+
+message ProtoHEFOptionalExtension  {
+    uint32 type_index = 1;
+    string name = 2;
+}
+
+message ProtoHEFHeader {
+    // The target hw_arch the HEF is compiled to
+    ProtoHEFHwArch hw_arch = 1;
+
+    // Timestamp of the time the HEF was created
+    uint64 timestamp = 2;
+
+    // The version of the SDK the HEF has been created with
+    string sdk_version = 3;
+
+    // The format version of the hef file 
+    uint64 version = 4;
+}
+
+// Enum describing the different possible hw_archs
+enum ProtoHEFHwArch {
+    PROTO__HW_ARCH__HAILO8 = 0;
+    PROTO__HW_ARCH__HAILO8P = 1;
+    PROTO__HW_ARCH__HAILO8R = 2;
+
+    // Reserving low numbers to public hw archs
+    PROTO__HW_ARCH__SAGE_A0 = 100;
+    PROTO__HW_ARCH__SAGE_B0 = 101;
+    PROTO__HW_ARCH__PAPRIKA_B0 = 102;
+    PROTO__HW_ARCH__MERCURY = 103;
+    PROTO__HW_ARCH__GINGER = 104;
+    PROTO__HW_ARCH__LAVENDER = 105;
+}
+
+message ProtoHEFNetworkGroup {
+    // Metadata describing the network_group
+    ProtoHEFNetworkGroupMetadata network_group_metadata = 1;
+
+    // The preliminary configuration of the network_group
+    ProtoHEFPreliminaryConfig preliminary_config = 2;
+
+    // The contexts of the network_group
+    repeated ProtoHEFContext contexts = 3;
+
+    // List of sorted output names according to their order
+    repeated string sorted_outputs_order = 4;
+
+    // Metadata for fused layers
+    ProtoHEFFusedLayersMetadata fused_layers_metadata = 5;
+
+    // Connected component names ordered by index
+    repeated string networks_names = 6;
+}
+
+message ProtoHEFNetworkGroupMetadata {
+    // The name of the network_group
+    string network_group_name = 1;
+
+    // The index of the network_group (execution order)
+    uint32 network_group_index = 2;
+
+    // Indicates whether the network is transposed
+    bool transposed_net = 3;
+
+    // The bottleneck post placement fps
+    double bottleneck_fps = 4;
+
+    // Number of pcie channels being used for config
+    uint32 cfg_channels_count = 5;
+}
+
+message ProtoHEFFusedLayersMetadata {
+    bool network_has_fused_layers = 1;
+    repeated string updated_sorted_output_names = 2;
+    repeated ProtoHEFEdgeLayerFused fused_layers = 3;
+}
+
+message ProtoHEFEdgeLayerFused {
+    ProtoHEFEdgeLayerInfo layer_info = 1;
+    repeated string defused_layers_names = 2;
+    ProtoHEFNmsInfo nms_info = 3;
+}
+
+message ProtoHEFContext {
+    // The index of the context
+    uint32 context_index = 1;
+
+    // Triggers and their actions
+    repeated ProtoHEFOperation operations = 2;
+
+    // Metadata descibing the context
+    ProtoHEFContextMetadata metadata = 3;
+}
+
+message ProtoHEFOperation {
+    // The trigger for the operation
+    ProtoHEFTrigger trigger = 1;
+
+    // The actions that would be performed as part of the operation
+    repeated ProtoHEFAction actions = 2;
+}
+
+// An object describing a trigger
+message ProtoHEFTrigger {
+    uint32 unique_id = 1;
+    oneof trigger {
+        ProtoHEFTriggerLcu trigger_lcu = 2;
+        ProtoHEFTriggerNone trigger_none = 3;
+        ProtoHEFTriggerAllDataWasSentToHostPCIe trigger_all_data_was_sent = 4;
+        ProtoHEFTriggerAllDataWasReceivedFromHostPCIe trigger_all_data_was_received = 5;
+        ProtoHEFTriggerNms trigger_nms = 6;
+        ProtoHEFWaitDmaIdleTrigger trigger_dma_idle = 7;
+    }
+}
+
+// Trigger raised by LCU
+message ProtoHEFTriggerLcu {
+    // The cluster index of the lcu
+    uint32 cluster_index = 1;
+
+    // The lcu index of the lcu
+    uint32 lcu_index = 2;
+}
+
+// Trigger raised by NMS
+message ProtoHEFTriggerNms {
+    // NOTE: reshape-NMS interface is hard-coded 0.
+    uint32 aggregator_index = 1;
+    uint32 pred_cluster_ob_index = 2;
+    uint32 pred_cluster_ob_cluster_index = 3;
+    uint32 pred_cluster_ob_interface = 4;
+    uint32 succ_prepost_ob_index = 5;
+    uint32 succ_prepost_ob_interface = 6;
+}
+
+// Trigger type of None, Can be performed right away
+message ProtoHEFTriggerNone {
+}
+
+// Trigger indicating all of the data was sent to the host
+message ProtoHEFTriggerAllDataWasSentToHostPCIe {
+    uint32 shmifo_index = 1;
+}
+
+// Trigger indicating all of the data was received
+message ProtoHEFTriggerAllDataWasReceivedFromHostPCIe {
+    uint32 shmifo_index = 1;
+}
+
+// Trigger indicating all data was sent to host, when variable
+// amount of output data.
+message ProtoHEFWaitDmaIdleTrigger {
+    uint32 shmifo_index = 1;
+}
+
+// An object describing possible actions
+message ProtoHEFAction {
+    uint32 unique_id = 1;
+    oneof action {
+        ProtoHEFActionWriteData write_data = 2;
+        ProtoHEFActionWriteDataCcw write_data_ccw = 3;
+        ProtoHEFActionWriteCompressedData write_compressed_data = 4;
+        ProtoHEFActionEnableSequencer enable_sequencer = 5;
+        ProtoHEFActionWaitForSequencer wait_for_seqeuncer = 6;
+        ProtoHEFActionDisableLcu disable_lcu = 7;
+        ProtoHEFActionEnableLcu enable_lcu = 8;
+        ProtoHEFActionNone none = 9;
+        ProtoHEFActionAllowInputDataflow allow_input_dataflow = 10;
+        ProtoHEFActionWaitForModuleConfigDone wait_for_module_config_done = 11;
+    }
+}
+
+message ProtoHEFActionWriteData {
+    // The address to write the data to
+    uint64 address = 1;
+
+    // The data that would be written
+    bytes data = 2;
+}
+
+message ProtoHEFActionWriteDataCcw {
+    // The data that would be written
+    bytes data = 1;
+    uint32 cfg_channel_index = 2;
+}
+
+message ProtoHEFActionWriteCompressedData {
+    // The address to write the data to
+    uint64 address = 1;
+
+    // The data that would be written
+    bytes data = 2;
+}
+
+message InitialL3 {
+    // L3 cut index sequencer should start from
+    uint32 initial_l3_index = 1;
+    // Offset in the L3 (in bytes)
+    uint32 initial_l3_offset = 2;
+    bool includes_initial_l3_info = 3;
+}
+
+message ProtoHEFActionEnableSequencer {
+    // Index of the cluster of the sequencer
+    uint32 cluster_index = 1;
+    // Initial L3 sequencer uses
+    uint32 initial_l3_legacy = 2; // backwards compatability for old hailort 4.0.0
+    InitialL3 initial_l3_info = 11;
+    // Bitmap of configured APUs
+    uint32 active_apu_bitmap = 3;
+    // Bitmap of configured subclusters
+    uint64 active_sc_bitmap = 4;
+    // Bitmap of configured l2 memories
+    uint64 active_l2_bitmap = 5;
+    // Bitmap of configured input_aligners
+    uint32 active_ia_bitmap = 6;
+
+    // L2 write starting offset of 16 subclusters; to be used in L2 interleaved writing mode
+    uint32 l2_write_0 = 7;
+    uint32 l2_write_1 = 8;
+    uint32 l2_write_2 = 9;
+    uint32 l2_write_3 = 10;
+}
+
+message ProtoHEFActionWaitForSequencer {
+    // Index of the cluster of the sequencer
+    uint32 cluster_index = 1;
+}
+
+message ProtoHEFActionWaitForModuleConfigDone {
+    // Index indicating which module to wait for
+    uint32 index = 1;
+}
+
+message ProtoHEFActionDisableLcu {
+    // Index of the lcu
+    uint32 lcu_index = 1;
+
+    // Index of the cluster of the lcu
+    uint32 cluster_index = 2;
+
+    // Address to indicate where the FW should write to
+    uint32 lcu_enable_address = 5;
+}
+
+message ProtoHEFActionEnableLcu {
+    // Index of the lcu
+    uint32 lcu_index = 1;
+
+    // Index of the cluster of the lcu
+    uint32 cluster_index = 2;
+
+    // Address at lcu to mark as complete apon reach (after lcu_kernel_done_count times)
+    uint32 lcu_kernel_done_address = 3;
+
+    // Amount of times lcu_kernel_done_addess should be reached before marking is done
+    uint32 lcu_kernel_done_count = 4;
+
+    // Address to indicate where the FW should write to
+    uint32 lcu_enable_address = 5;
+
+    // network index index- name given by networks_names 
+    // in ProtoHEFNetworkGroup
+    uint32 network_index = 6;
+}
+
+// None action - Do not do anything
+message ProtoHEFActionNone {
+}
+
+// Allow sending data to input dataflow
+message ProtoHEFActionAllowInputDataflow {
+    uint32 sys_index = 1;
+    ProtoHEFEdgeConnectionType connection_type = 2;
+}
+
+// Indicates that after this data is written, it should mark the DMA write as completed
+message ProtoHEFActionSetDmaCompelte {
+}
+
+// Wait until indication that DMA was complete 
+message ProtoHEFActionWaitForDmaCompelte {
+}
+
+// Preliminary config that will be written at the beginning of the network_group
+message ProtoHEFPreliminaryConfig {
+    repeated ProtoHEFOperation operation = 1;
+}
+
+// Metadata describing the context
+message ProtoHEFContextMetadata {
+    // Context name
+    string name = 1;
+
+    // Information related to the edge layers
+    repeated ProtoHEFEdgeLayer edge_layers = 2;
+
+    // List of triggers which guarantee the end of each cluster
+    repeated ProtoHEFClusterEndGuarantee cluster_end_guarantee = 3;
+
+    // List of triggers by their estimated execution end
+    repeated ProtoHEFOrderedTrigger trigger_order = 4;
+
+    // List of sorted output names according to their order
+    repeated string sorted_outputs_order = 5;
+
+    // information about the HW package
+    ProtoHEFHwPackageInfo hw_package_info = 6;
+
+    // Information about the shmiglue
+    ProtoHEFShmiglueInfo shmiglue_info = 7; // DEPRACATED
+}
+
+// A dummy shmifo the glue logic of "closed" channels will point to
+message ProtoHEFShmiglueInfo {
+    bool should_use_shmiglue = 1; // DEPRACATED
+    uint32 shmiglue_index = 2; // DEPRACATED
+}
+
+message ProtoHEFEdgeLayer {
+    ProtoHEFEdgeLayerDirection direction = 1;
+    ProtoHEFEdgeLayerType edge_layer_type = 2;
+    oneof edge {
+        ProtoHEFEdgeLayerInfo layer_info = 3;
+        ProtoHEFEdgeLayerMux layer_mux = 4;
+    };
+    ProtoHEFContextSwitchInformation context_switch_info = 5;
+    uint32 network_index = 6;
+}
+
+// Enum indicating the direction of the edge layer
+enum ProtoHEFEdgeLayerDirection {
+    // Edge layer is host to device (input to the chip)
+    PROTO__EDGE_LAYER_DIRECTION__HOST_TO_DEVICE = 0;
+
+    // Edge layer is device to host (output from the chip)
+    PROTO__EDGE_LAYER_DIRECTION__DEVICE_TO_HOST = 1;
+}
+
+enum ProtoHEFEdgeLayerType {
+    PROTO__EDGE_LAYER_TYPE__INFO = 0;
+    PROTO__EDGE_LAYER_TYPE__MUX = 1;
+}
+
+message ProtoHEFEdgeLayerInfo {
+    string name = 1;
+    string hn_output_layer_name = 4;
+    ProtoHEFEdgeLayerBase edge_layer_base = 2;
+    ProtoHEFEdgeLayerNumericInfo numeric_info = 3;
+    repeated string original_names = 5;
+    bool transposed = 6;
+}
+
+message ProtoHefEdge {
+    oneof edge {
+        ProtoHEFEdgeLayerInfo layer_info = 1;
+        ProtoHEFEdgeLayerMux layer_mux = 2;
+    };
+}
+
+message ProtoHEFEdgeLayerMux {
+    string name = 1;
+    string hn_output_layer_name = 4;
+    ProtoHEFEdgeLayerBase edge_layer_base = 2;
+    ProtoHEFEdgeLayerMuxData mux_data = 3;
+    repeated ProtoHefEdge predecessors = 5;
+    repeated string original_names = 6;
+}
+
+message ProtoHEFEdgeLayerMuxData {
+    uint32 number_of_predecessors = 1;
+    uint32 height_gcd = 2;
+    uint32 height_ratios_list_len = 3;
+    repeated uint32 height_ratios_list = 4;
+}
+
+enum ProtoHEFEdgeConnectionType {
+    PROTO__EDGE_CONNECTION_TYPE__BOUNDARY = 0;
+    PROTO__EDGE_CONNECTION_TYPE__INTERMEDIATE = 1;
+    PROTO__EDGE_CONNECTION_TYPE__DDR = 2;
+}
+
+message ProtoHEFContextSwitchInformation {
+    uint32 context_index = 1;
+    string context_name = 2;
+    ProtoHEFEdgeConnectionType edge_connection_type = 3;
+    uint32 connected_context_index = 4;
+    string connected_context_name = 5;
+    uint32 buffers = 6;
+    uint32 connected_sys_index = 7;
+    repeated ProtoHEFConnectedContextInfo connected_contexts = 8;
+}
+
+message ProtoHEFConnectedContextInfo {
+    uint32 index = 1;
+    string name = 2;
+    uint32 sys_index = 3;
+}
+
+message ProtoHEFResourceIndices {
+    uint32 index = 1;
+    uint32 cluster_index = 2;
+}
+
+message ProtoHEFEdgeLayerBase {
+    uint32 height = 1;
+    uint32 padded_height = 2;
+    uint32 width = 3;
+    uint32 padded_width = 4;
+    uint32 features = 5;
+    uint32 padded_features = 6;
+    // TODO: Should change to an enum?
+    uint32 format = 7;
+    uint32 sys_index = 8;
+    uint32 core_bytes_per_buffer = 9;
+    uint32 core_buffers_per_frame = 10;
+    ProtoHEFAdditionalInfo additional_info = 11;
+    uint32 data_bytes = 12;
+
+    repeated ProtoHEFResourceIndices buffer_indices = 13;
+    bool host_argmax = 14;
+}
+
+// Additional information for specific layer types
+message ProtoHEFAdditionalInfo {
+    ProtoHEFNmsInfo nms_info = 1;
+}
+
+// NMS specific parameters
+message ProtoHEFNmsInfo {
+    uint32 type_index = 1;
+    uint64 number_of_classes = 2;
+    uint64 max_output_size = 3;
+    uint64 bbox_size = 4;
+    bool is_defused = 5;
+    ProtoHEFNmsDefuseInfo defuse_info = 6;
+    uint64 input_division_factor = 7;
+}
+
+message ProtoHEFNmsDefuseInfo {
+    uint64 class_group_index = 1;
+    string original_name = 3;
+}
+
+message ProtoHEFEdgeLayerNumericInfo {
+    float qp_zp = 1;
+    float qp_scale = 2;
+    float limvals_min = 3;
+    float limvals_max = 4;
+}
+
+// An object that can be repeated in order to provide the order of the triggers.
+// Contain estimated execution time from previous trigger.
+message ProtoHEFOrderedTrigger {
+    ProtoHEFTrigger triggers = 1;
+    uint64 estimated_time_from_previous_ns = 2;
+}
+
+// Object which maps between a cluster index and a trigger which Guarantees the cluster is no longer in use
+message ProtoHEFClusterEndGuarantee {
+    uint32 cluster_index = 1;
+    ProtoHEFTrigger trigger = 2;
+}
+
+// HW package information - Copied form JLF
+message ProtoHEFHwPackageInfo {
+    uint32 dense_alignment_size = 1;
+    uint32 axi_width = 2;
+    uint32 memory_width = 3;
+}

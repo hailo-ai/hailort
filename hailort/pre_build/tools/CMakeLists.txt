@@ -1,0 +1,10 @@
+cmake_minimum_required(VERSION 3.0.0)
+
+message(STATUS "Building protobuf::protoc...")
+if(NOT protobuf_BUILD_TESTS)
+    set(protobuf_BUILD_TESTS OFF CACHE BOOL "Build protobuf tests")
+endif()
+if(MSVC AND NOT protobuf_MSVC_STATIC_RUNTIME)
+    set(protobuf_MSVC_STATIC_RUNTIME OFF CACHE BOOL "Protobuf MSVC static runtime")
+endif()
+add_subdirectory(${HAILO_EXTERNAL_DIR}/protobuf/cmake build_protoc)

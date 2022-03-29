@@ -1,0 +1,290 @@
+/*
+ * Copyright (c) 2021-2022 Hailo Technologies Ltd. All rights reserved.
+ * Distributed under the LGPL 2.1 license (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ */
+#include "gsthailosend.hpp"
+#include "gsthailonet.hpp"
+#include "metadata/hailo_buffer_flag_meta.hpp"
+
+#include <chrono>
+#include <iostream>
+#include <gst/video/video.h>
+#include <gst/video/gstvideofilter.h>
+
+GST_DEBUG_CATEGORY_STATIC(gst_hailosend_debug_category);
+#define GST_CAT_DEFAULT gst_hailosend_debug_category
+#define RGB_FEATURES_SIZE (3)
+#define YUY2_FEATURES_SIZE (2)
+
+static void gst_hailosend_set_property(GObject *object, guint property_id, const GValue *value, GParamSpec *pspec);
+static void gst_hailosend_get_property(GObject *object, guint property_id, GValue *value, GParamSpec *pspec);
+static GstCaps *gst_hailosend_transform_caps(GstBaseTransform *trans, GstPadDirection direction, GstCaps *caps, GstCaps *filter);
+static GstFlowReturn gst_hailosend_transform_frame_ip(GstVideoFilter *filter, GstVideoFrame *frame);
+static gboolean gst_hailosend_propose_allocation(GstBaseTransform *trans, GstQuery *decide_query, GstQuery *query);
+static GstStateChangeReturn gst_hailosend_change_state(GstElement *element, GstStateChange transition);
+
+enum
+{
+    PROP_0,
+    PROP_DEBUG
+};
+
+G_DEFINE_TYPE(GstHailoSend, gst_hailosend, GST_TYPE_VIDEO_FILTER);
+
+static void gst_hailosend_class_init(GstHailoSendClass *klass)
+{
+    GObjectClass *gobject_class = G_OBJECT_CLASS(klass);
+    GstElementClass *element_class = GST_ELEMENT_CLASS(klass);
+    GstBaseTransformClass *base_transform_class = GST_BASE_TRANSFORM_CLASS(klass);
+    GstVideoFilterClass *video_filter_class = GST_VIDEO_FILTER_CLASS(klass);
+
+    /* Setting up pads and setting metadata should be moved to
+       base_class_init if you intend to subclass this class. */
+    gst_element_class_add_pad_template(GST_ELEMENT_CLASS(klass),
+        gst_pad_template_new("src", GST_PAD_SRC, GST_PAD_ALWAYS, gst_caps_from_string(HAILO_VIDEO_CAPS)));
+    gst_element_class_add_pad_template(GST_ELEMENT_CLASS(klass),
+        gst_pad_template_new("sink", GST_PAD_SINK, GST_PAD_ALWAYS, gst_caps_from_string(HAILO_VIDEO_CAPS)));
+
+    gst_element_class_set_static_metadata(GST_ELEMENT_CLASS(klass),
+        "hailosend element", "Hailo/Filter/Video", "Send RGB/YUY2 video to HailoRT", PLUGIN_AUTHOR);
+    
+    element_class->change_state = GST_DEBUG_FUNCPTR(gst_hailosend_change_state);
+
+    gobject_class->set_property = gst_hailosend_set_property;
+    gobject_class->get_property = gst_hailosend_get_property;
+    g_object_class_install_property (gobject_class, PROP_DEBUG,
+        g_param_spec_boolean ("debug", "debug", "debug", false,
+            (GParamFlags)(GST_PARAM_CONTROLLABLE | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+    base_transform_class->transform_caps = GST_DEBUG_FUNCPTR(gst_hailosend_transform_caps);
+    base_transform_class->propose_allocation = GST_DEBUG_FUNCPTR(gst_hailosend_propose_allocation);
+    video_filter_class->transform_frame_ip = GST_DEBUG_FUNCPTR(gst_hailosend_transform_frame_ip);
+}
+
+Expected<std::unique_ptr<HailoSendImpl>> HailoSendImpl::create(GstHailoSend *element)
+{
+    if (nullptr == element) {
+        return make_unexpected(HAILO_INVALID_ARGUMENT);
+    }
+
+    auto ptr = make_unique_nothrow<HailoSendImpl>(element);
+    if (nullptr == ptr) {
+        return make_unexpected(HAILO_OUT_OF_HOST_MEMORY);
+    }
+
+    return ptr;
+}
+
+HailoSendImpl::HailoSendImpl(GstHailoSend *element) : m_element(element), m_hailonet(nullptr), m_props(),
+    m_batch_size(HAILO_DEFAULT_BATCH_SIZE), m_last_frame_pts(0)
+{
+    GST_DEBUG_CATEGORY_INIT(gst_hailosend_debug_category, "hailosend", 0, "debug category for hailosend element");
+}
+
+void HailoSendImpl::set_property(GObject *object, guint property_id, const GValue *value, GParamSpec *pspec)
+{
+    GST_DEBUG_OBJECT(m_element, "set_property");
+
+    if ((object == nullptr) || (value == nullptr) || (pspec == nullptr)) {
+        g_error("set_property got null parameter!");
+        return;
+    }
+
+    switch (property_id) {
+    case PROP_DEBUG:
+        m_props.m_debug = g_value_get_boolean(value);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
+        break;
+    }
+}
+
+void HailoSendImpl::get_property(GObject *object, guint property_id, GValue *value, GParamSpec *pspec)
+{
+    GST_DEBUG_OBJECT(m_element, "get_property");
+
+    if ((object == nullptr) || (value == nullptr) || (pspec == nullptr)) {
+        g_error("get_property got null parameter!");
+        return;
+    }
+
+    switch (property_id) {
+    case PROP_DEBUG:
+        g_value_set_boolean(value, m_props.m_debug.get());
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
+        break;
+    }
+}
+
+GstFlowReturn HailoSendImpl::handle_frame(GstVideoFilter */*filter*/, GstVideoFrame *frame)
+{
+    assert(nullptr != frame);
+    m_last_frame_pts = GST_BUFFER_TIMESTAMP(frame->buffer);
+
+    if (!GST_HAILONET(GST_ELEMENT_PARENT(m_element))->impl->is_active()) {
+        GstHailoBufferFlagMeta *meta = GST_HAILO_BUFFER_FLAG_META_ADD(frame->buffer);
+        meta->flag = BUFFER_FLAG_SKIP;
+        return GST_FLOW_OK;
+    }
+
+    guint8 *frame_buffer = reinterpret_cast<guint8*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
+    hailo_status status = HAILO_UNINITIALIZED;
+
+    if (m_props.m_debug.get()) {
+        std::chrono::duration<double, std::milli> latency;
+        std::chrono::time_point<std::chrono::system_clock> start_time;
+        start_time = std::chrono::system_clock::now();
+        status = write_to_vstreams(frame_buffer, GST_VIDEO_FRAME_SIZE(frame));
+        latency = std::chrono::system_clock::now() - start_time;
+        GST_DEBUG("hailosend latency: %f milliseconds", latency.count());
+    } else {
+        status = write_to_vstreams(frame_buffer, GST_VIDEO_FRAME_SIZE(frame));
+    }
+
+    if (HAILO_SUCCESS != status) {
+        return GST_FLOW_ERROR;
+    }
+    return GST_FLOW_OK;
+}
+
+hailo_status HailoSendImpl::write_to_vstreams(void *buf, size_t size)
+{
+    for (auto &in_vstream : m_input_vstreams) {
+        auto status = in_vstream.write(MemoryView(buf, size));
+        GST_CHECK_SUCCESS(status, m_element, STREAM, "Failed writing to input vstream %s, status = %d", in_vstream.name().c_str(), status);
+    }
+    return HAILO_SUCCESS;
+}
+
+GstCaps *HailoSendImpl::get_caps(GstBaseTransform */*trans*/, GstPadDirection /*direction*/, GstCaps */*caps*/, GstCaps */*filter*/)
+{
+    GST_DEBUG_OBJECT(m_element, "transform_caps");
+
+    if (0 == m_input_vstream_infos.size()) {
+        // Init here because it is guaranteed that we have a parent element
+        m_hailonet = GST_HAILONET(GST_ELEMENT_PARENT(m_element));
+
+        hailo_status status = m_hailonet->impl->set_hef();
+        if (HAILO_SUCCESS != status) {
+            return NULL;
+        }
+    }
+    
+    const gchar *format = nullptr;
+    switch (m_input_vstream_infos[0].format.order) {
+    case HAILO_FORMAT_ORDER_NHWC:
+    case HAILO_FORMAT_ORDER_NHCW:
+    case HAILO_FORMAT_ORDER_FCR:
+    case HAILO_FORMAT_ORDER_F8CR:
+        format = "RGB";
+        GST_CHECK(RGB_FEATURES_SIZE == m_input_vstream_infos[0].shape.features, NULL, m_element, STREAM,
+            "Features of input vstream %s is not %d for RGB format! (features=%d)", m_input_vstream_infos[0].name, RGB_FEATURES_SIZE,
+            m_input_vstream_infos[0].shape.features);
+        break;
+    case HAILO_FORMAT_ORDER_YUY2:
+        format = "YUY2";
+        GST_CHECK(YUY2_FEATURES_SIZE == m_input_vstream_infos[0].shape.features, NULL, m_element, STREAM,
+            "Features of input vstream %s is not %d for YUY2 format! (features=%d)", m_input_vstream_infos[0].name, YUY2_FEATURES_SIZE,
+            m_input_vstream_infos[0].shape.features);
+        break;
+    default:
+        GST_ELEMENT_ERROR(m_element, RESOURCE, FAILED,
+            ("Input VStream %s has an unsupported format order! order = %d", m_input_vstream_infos[0].name, m_input_vstream_infos[0].format.order), (NULL));
+        return NULL;
+    }
+
+    /* filter against set allowed caps on the pad */
+    return gst_caps_new_simple("video/x-raw",
+                               "format", G_TYPE_STRING, format,
+                               "width", G_TYPE_INT, m_input_vstream_infos[0].shape.width,
+                               "height", G_TYPE_INT, m_input_vstream_infos[0].shape.height,
+                               NULL);
+}
+
+void HailoSendImpl::set_input_vstream_infos(std::vector<hailo_vstream_info_t> &&input_vstream_infos)
+{
+    m_input_vstream_infos = std::move(input_vstream_infos);
+}
+
+void HailoSendImpl::set_input_vstreams(std::vector<InputVStream> &&input_vstreams)
+{
+    m_input_vstreams = std::move(input_vstreams);
+}
+
+hailo_status HailoSendImpl::clear_vstreams()
+{
+    return InputVStream::clear(m_input_vstreams);
+}
+
+static void gst_hailosend_init(GstHailoSend *self)
+{
+    auto hailosend_impl = HailoSendImpl::create(self);
+    if (!hailosend_impl) {
+        GST_ELEMENT_ERROR(self, RESOURCE, FAILED, ("Creating hailosend implementation has failed! status = %d", hailosend_impl.status()), (NULL));
+        return;
+    }
+
+    self->impl = hailosend_impl.release();
+}
+
+void gst_hailosend_set_property(GObject *object, guint property_id, const GValue *value, GParamSpec *pspec)
+{
+    GST_HAILOSEND(object)->impl->set_property(object, property_id, value, pspec);
+}
+
+void gst_hailosend_get_property(GObject *object, guint property_id, GValue *value, GParamSpec *pspec)
+{
+    GST_HAILOSEND(object)->impl->get_property(object, property_id, value, pspec);
+}
+
+static GstFlowReturn gst_hailosend_transform_frame_ip(GstVideoFilter *filter, GstVideoFrame *frame)
+{
+    GST_DEBUG_OBJECT(filter, "transform_frame_ip");
+    return GST_HAILOSEND(filter)->impl->handle_frame(filter, frame);
+}
+
+static GstCaps *gst_hailosend_transform_caps(GstBaseTransform *trans, GstPadDirection direction, GstCaps *caps, GstCaps *filter)
+{
+    return GST_HAILOSEND(trans)->impl->get_caps(trans, direction, caps, filter);
+}
+
+static gboolean gst_hailosend_propose_allocation(GstBaseTransform *trans, GstQuery *decide_query, GstQuery *query)
+{
+    if (GST_HAILOSEND(trans)->impl->batch_size() > 1) {
+        return FALSE;
+    }
+
+    return GST_BASE_TRANSFORM_CLASS(gst_hailosend_parent_class)->propose_allocation(trans, decide_query, query);
+}
+
+static GstStateChangeReturn gst_hailosend_change_state(GstElement *element, GstStateChange transition)
+{
+    GstStateChangeReturn ret = GST_ELEMENT_CLASS(gst_hailosend_parent_class)->change_state(element, transition);
+    if (GST_STATE_CHANGE_FAILURE == ret) {
+        return ret;
+    }
+
+    if (GST_STATE_CHANGE_READY_TO_NULL == transition) {
+        // Cleanup all of hailosend memory
+        GST_HAILOSEND(element)->impl.reset();
+    }
+
+    return ret;
+}

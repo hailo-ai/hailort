@@ -1,0 +1,50 @@
+cmake_minimum_required(VERSION 3.0.0)
+
+project(gsthailo)
+
+if(NOT CMAKE_HOST_UNIX)
+    message(FATAL_ERROR "Only unix hosts are supported, stopping build")
+endif()
+
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_LIST_DIR}/cmake/")
+find_package(HailoRT)
+
+# GST_PLUGIN_DEFINE needs PACKAGE to be defined
+set(GST_HAILO_PACKAGE_NAME "hailo")
+set(GST_HAILO_VERSION "1.0")
+
+find_package(PkgConfig REQUIRED)
+pkg_search_module(GLIB REQUIRED glib-2.0)
+pkg_search_module(GSTREAMER REQUIRED gstreamer-1.0)
+pkg_search_module(GSTREAMER_BASE REQUIRED gstreamer-base-1.0)
+pkg_search_module(GSTREAMER_VIDEO REQUIRED gstreamer-video-1.0)
+
+add_library(gsthailo SHARED
+    gst-hailo/gsthailoplugin.cpp
+    gst-hailo/gsthailonet.cpp
+    gst-hailo/gsthailosend.cpp
+    gst-hailo/gsthailorecv.cpp
+    gst-hailo/gsthailodevicestats.cpp
+    gst-hailo/common.cpp
+    gst-hailo/network_group_handle.cpp
+    gst-hailo/metadata/hailo_buffer_flag_meta.cpp
+    gst-hailo/metadata/tensor_meta.cpp
+    gst-hailo/hailo_events/hailo_events.cpp)
+
+set_target_properties(gsthailo PROPERTIES
+    PUBLIC_HEADER "gst-hailo/metadata/tensor_meta.hpp"
+)
+
+target_compile_options(gsthailo PRIVATE
+    -Werror -Wall -Wextra -Wconversion -O3 -DNDEBUG # TODO support debug/release builds
+    -DVERSION="${GST_HAILO_VERSION}"
+    -DPACKAGE="${GST_HAILO_PACKAGE_NAME}")
+
+target_include_directories(gsthailo PRIVATE ${GSTREAMER_VIDEO_INCLUDE_DIRS})
+target_link_libraries(gsthailo HailoRT::libhailort ${GSTREAMER_VIDEO_LDFLAGS})
+
+install(TARGETS gsthailo
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    # TODO: get gstreamer-1.0 in an automate way
+    PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gstreamer-1.0/gst/hailo/"
+    CONFIGURATIONS Release)
