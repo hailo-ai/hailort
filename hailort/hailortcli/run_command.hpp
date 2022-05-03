@@ -45,8 +45,9 @@ struct pipeline_stats_measurement_params {
 };
 
 struct runtime_data_params {
-    bool download_runtime_data;
+    bool collect_runtime_data;
     std::string runtime_data_output_path;
+    uint16_t batch_to_measure;
 };
 
 struct inference_runner_params {

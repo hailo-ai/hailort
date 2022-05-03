@@ -18,52 +18,41 @@
 
 namespace hailort
 {
-
-int convert_format_type_to_int(const hailo_format_type_t& type)
+class HailoRTBindingsCommon
 {
-    switch (type) {
-    case HAILO_FORMAT_TYPE_UINT8:
-        return 1;
-    case HAILO_FORMAT_TYPE_UINT16:
-        return 2;
-    case HAILO_FORMAT_TYPE_FLOAT32:
-        return 4;
-    default:
-        throw HailoRTStatusException("Invalid format type.");
-    }
-}
-
-std::string convert_format_type_to_string(const hailo_format_type_t& type)
-{
-    switch (type) {
-    case HAILO_FORMAT_TYPE_UINT8:
-        return "uint8";
-    case HAILO_FORMAT_TYPE_UINT16:
-        return "uint16";
-    case HAILO_FORMAT_TYPE_FLOAT32:
-        return "float32";
-    default:
-        throw HailoRTStatusException("Invalid format type.");
-    }
-}
-
-std::vector<size_t> get_pybind_shape(const hailo_vstream_info_t& vstream_info, const hailo_format_t &user_format)
-{
-    // We are using user_format instead of hw format inside the vstream_info
-    const auto shape = vstream_info.shape;
-    // TODO: support no transformations (i.e. use stream_info.hw_shape) (SDK-16811)
-    switch (user_format.order)
+public:
+    static std::string convert_format_type_to_string(const hailo_format_type_t& type)
     {
-    case HAILO_FORMAT_ORDER_HAILO_NMS:
-        return { HailoRTCommon::get_nms_host_shape_size(vstream_info.nms_shape) };
-    case HAILO_FORMAT_ORDER_NC:
-        return {shape.features};
-    case HAILO_FORMAT_ORDER_NHW:
-        return {shape.height, shape.width};
-    default:
-        return {shape.height, shape.width, shape.features};
+        switch (type) {
+        case HAILO_FORMAT_TYPE_UINT8:
+            return "uint8";
+        case HAILO_FORMAT_TYPE_UINT16:
+            return "uint16";
+        case HAILO_FORMAT_TYPE_FLOAT32:
+            return "float32";
+        default:
+            throw HailoRTStatusException("Invalid format type.");
+        }
     }
-}
+
+    static std::vector<size_t> get_pybind_shape(const hailo_vstream_info_t& vstream_info, const hailo_format_t &user_format)
+    {
+        // We are using user_format instead of hw format inside the vstream_info
+        const auto shape = vstream_info.shape;
+        // TODO: support no transformations (i.e. use stream_info.hw_shape) (SDK-16811)
+        switch (user_format.order)
+        {
+        case HAILO_FORMAT_ORDER_HAILO_NMS:
+            return { HailoRTCommon::get_nms_host_shape_size(vstream_info.nms_shape) };
+        case HAILO_FORMAT_ORDER_NC:
+            return {shape.features};
+        case HAILO_FORMAT_ORDER_NHW:
+            return {shape.height, shape.width};
+        default:
+            return {shape.height, shape.width, shape.features};
+        }
+    }
+};
 
 } /* namespace hailort */
 

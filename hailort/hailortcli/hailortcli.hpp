@@ -28,7 +28,7 @@ using namespace hailort;
     } while (0)
 
 struct hailo_pcie_params {
-    std::string pcie_bdf;  // if empty use the first scanned
+    std::string pcie_bdf;  // if empty use the first scanned. if '*', run on all devices on the machine one-by-one
 };
 
 struct hailo_eth_params {

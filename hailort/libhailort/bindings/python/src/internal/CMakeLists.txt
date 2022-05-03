@@ -6,6 +6,11 @@ pybind11_add_module(_pyhailort_internal SHARED
     ${HAILORT_SRCS_ABS}
 )
 
+set_target_properties(_pyhailort_internal PROPERTIES
+    CXX_STANDARD              14
+    CXX_STANDARD_REQUIRED     YES
+)
+
 target_include_directories(_pyhailort_internal
     PRIVATE
     $<BUILD_INTERFACE:${PYHAILORT_DIR}>
@@ -16,7 +21,7 @@ target_include_directories(_pyhailort_internal
     $<BUILD_INTERFACE:${DRIVER_INC_DIR}>
 )
 
-target_link_libraries(_pyhailort_internal PRIVATE libhailort hef_proto spdlog::spdlog readerwriterqueue)
+target_link_libraries(_pyhailort_internal PRIVATE libhailort hef_proto spdlog::spdlog readerwriterqueue microprofile)
 if(WIN32)
     target_link_libraries(_pyhailort_internal PRIVATE Ws2_32 Iphlpapi Shlwapi)
 endif()

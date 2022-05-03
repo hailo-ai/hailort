@@ -64,6 +64,12 @@ hailo_status VDeviceInputStream::activate_stream()
 
 Expected<size_t> VDeviceInputStream::sync_write_raw_buffer(const MemoryView &buffer)
 {
+    auto network_group_scheduler = m_network_group_scheduler.lock();
+    if (network_group_scheduler) {
+        auto status = network_group_scheduler->wait_for_write(m_network_group_name, name());
+        CHECK_SUCCESS_AS_EXPECTED(status);
+    }
+
     auto written_bytes = m_streams[m_next_transfer_stream_index]->sync_write_raw_buffer(buffer);
     if (HAILO_SUCCESS != written_bytes.status()) {
         LOGGER__INFO("Write to stream has failed! status = {}", written_bytes.status());
@@ -87,8 +93,8 @@ hailo_status VDeviceInputStream::sync_write_all_raw_buffer_no_transform_impl(voi
 
 Expected<std::unique_ptr<VDeviceInputStream>> VDeviceInputStream::create_input_stream_from_net_group(
     std::vector<std::shared_ptr<ResourcesManager>> &resources_managers,
-    const LayerInfo &edge_layer, const std::string &stream_name,
-    EventPtr &&network_group_activated_event, LatencyMeterPtr latency_meter)
+    const LayerInfo &edge_layer, const std::string &stream_name, const std::string &network_group_name,
+    EventPtr &&network_group_activated_event, NetworkGroupSchedulerWeakPtr network_group_scheduler, LatencyMeterPtr latency_meter)
 {
     hailo_status status = HAILO_UNINITIALIZED;
 
@@ -99,14 +105,13 @@ Expected<std::unique_ptr<VDeviceInputStream>> VDeviceInputStream::create_input_s
 
     std::vector<PcieDevice*> devices;
     std::vector<std::unique_ptr<PcieInputStream>> streams;
-    auto partial_network_name = edge_layer.partial_network_name;
 
     for (auto &resources_manager : resources_managers) {
         CHECK_AS_EXPECTED(Device::Type::PCIE == resources_manager->get_device().get_type(), HAILO_INTERNAL_FAILURE,
             "vDevice stream is supported only with PCIe devices");
         PcieDevice &pcie_device = reinterpret_cast<PcieDevice&>(resources_manager->get_device());
 
-        auto batch_size = resources_manager->get_network_batch_size_from_partial_name(partial_network_name);
+        auto batch_size = resources_manager->get_network_batch_size(edge_layer.network_name);
         auto local_stream = PcieInputStream::create(pcie_device, channel_index.value(),
             edge_layer, batch_size.value(), network_group_activated_event, latency_meter);
         CHECK_EXPECTED(local_stream);
@@ -116,7 +121,7 @@ Expected<std::unique_ptr<VDeviceInputStream>> VDeviceInputStream::create_input_s
     }
 
     std::unique_ptr<VDeviceInputStream> local_vdevice_stream(new (std::nothrow) VDeviceInputStream(devices,
-        std::move(streams), std::move(network_group_activated_event), edge_layer, status));
+        std::move(streams), network_group_name, std::move(network_group_activated_event), edge_layer, network_group_scheduler, status));
     CHECK_AS_EXPECTED((nullptr != local_vdevice_stream), HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
@@ -124,12 +129,13 @@ Expected<std::unique_ptr<VDeviceInputStream>> VDeviceInputStream::create_input_s
 }
 
 Expected<std::unique_ptr<VDeviceInputStream>> VDeviceInputStream::create(std::vector<std::shared_ptr<ResourcesManager>> &resources_managers,
-    const LayerInfo &edge_layer, const std::string &stream_name, EventPtr network_group_activated_event, LatencyMeterPtr latency_meter)
+    const LayerInfo &edge_layer, const std::string &stream_name, const std::string &network_group_name, EventPtr network_group_activated_event,
+    NetworkGroupSchedulerWeakPtr network_group_scheduler, LatencyMeterPtr latency_meter)
 {
     assert(0 < resources_managers.size());
 
     auto input_stream = create_input_stream_from_net_group(resources_managers, edge_layer,
-        stream_name, std::move(network_group_activated_event), latency_meter);
+        stream_name, network_group_name, std::move(network_group_activated_event), network_group_scheduler, latency_meter);
     CHECK_EXPECTED(input_stream);
 
     return input_stream.release();
@@ -173,6 +179,16 @@ hailo_status VDeviceInputStream::abort()
             status = abort_status;
         }
     }
+
+    auto network_group_scheduler = m_network_group_scheduler.lock();
+    if (network_group_scheduler) {
+        auto disable_status = network_group_scheduler->disable_stream(m_network_group_name, name());
+        if (HAILO_SUCCESS != disable_status) {
+            LOGGER__ERROR("Failed to disable stream in the network group scheduler. (status: {})", disable_status);
+            status = disable_status;
+        }
+    }
+
     return status;
 }
 
@@ -181,12 +197,31 @@ hailo_status VDeviceInputStream::clear_abort()
     auto status = HAILO_SUCCESS; // Best effort
     for (auto &stream : m_streams) {
         auto clear_abort_status = stream->clear_abort();
-        if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed to clear abort input stream. (status: {} device: {})", status, stream->get_dev_id());
+        if ((HAILO_SUCCESS != clear_abort_status) && (HAILO_STREAM_NOT_ACTIVATED != clear_abort_status)) {
+            LOGGER__ERROR("Failed to clear abort input stream. (status: {} device: {})", clear_abort_status, stream->get_dev_id());
             status = clear_abort_status;
         }
     }
+
+    auto network_group_scheduler = m_network_group_scheduler.lock();
+    if (network_group_scheduler) {
+        auto enable_status = network_group_scheduler->enable_stream(m_network_group_name, name());
+        if (HAILO_SUCCESS != enable_status) {
+            LOGGER__ERROR("Failed to enable stream in the network group scheduler. (status: {})", enable_status);
+            status = enable_status;
+        }
+    }
+
     return status;
+}
+
+bool VDeviceInputStream::is_scheduled()
+{
+    auto network_group_scheduler = m_network_group_scheduler.lock();
+    if (!network_group_scheduler) {
+        return false;
+    }
+    return (HAILO_SCHEDULING_ALGORITHM_NONE != network_group_scheduler->algorithm());
 }
 
 /** Output stream **/
@@ -241,6 +276,12 @@ Expected<size_t> VDeviceOutputStream::sync_read_raw_buffer(MemoryView &/*buffer*
 
 hailo_status VDeviceOutputStream::read(MemoryView buffer)
 {
+    auto network_group_scheduler = m_network_group_scheduler.lock();
+    if (network_group_scheduler) {
+        auto status = network_group_scheduler->wait_for_read(m_network_group_name, name());
+        CHECK_SUCCESS(status);
+    }
+
     auto status = m_streams[m_next_transfer_stream_index]->read(buffer);
     if (HAILO_SUCCESS != status) {
         LOGGER__INFO("Read from stream has failed! status = {}", status);
@@ -252,13 +293,19 @@ hailo_status VDeviceOutputStream::read(MemoryView buffer)
         m_next_transfer_stream_index = static_cast<uint32_t>((m_next_transfer_stream_index + 1) % m_streams.size());
         m_acc_frames = 0;
     }
+
+    if (network_group_scheduler) {
+        status = network_group_scheduler->signal_read_finish(m_network_group_name, name());
+        CHECK_SUCCESS(status);
+    }
+
     return HAILO_SUCCESS;
 }
 
 Expected<std::unique_ptr<VDeviceOutputStream>> VDeviceOutputStream::create_output_stream_from_net_group(
     std::vector<std::shared_ptr<ResourcesManager>> &resources_managers,
-    const LayerInfo &edge_layer, const std::string &stream_name,
-    EventPtr &&network_group_activated_event, LatencyMeterPtr latency_meter)
+    const LayerInfo &edge_layer, const std::string &stream_name, const std::string &network_group_name,
+    EventPtr &&network_group_activated_event, NetworkGroupSchedulerWeakPtr network_group_scheduler, LatencyMeterPtr latency_meter)
 {
     hailo_status status = HAILO_UNINITIALIZED;
 
@@ -270,14 +317,13 @@ Expected<std::unique_ptr<VDeviceOutputStream>> VDeviceOutputStream::create_outpu
 
     std::vector<PcieDevice*> devices;
     std::vector<std::unique_ptr<PcieOutputStream>> streams;
-    auto partial_network_name = edge_layer.partial_network_name;
 
     for (auto &resources_manager : resources_managers) {
         CHECK_AS_EXPECTED(Device::Type::PCIE == resources_manager->get_device().get_type(), HAILO_INTERNAL_FAILURE,
             "vDevice stream is supported only with PCIe devices");
         PcieDevice &pcie_device = reinterpret_cast<PcieDevice&>(resources_manager->get_device());
 
-        auto batch_size = resources_manager->get_network_batch_size_from_partial_name(partial_network_name);
+        auto batch_size = resources_manager->get_network_batch_size(edge_layer.network_name);
         auto local_stream = PcieOutputStream::create(pcie_device, channel_index.value(),
             edge_layer, batch_size.value(), network_group_activated_event, latency_meter);
         CHECK_EXPECTED(local_stream);
@@ -286,8 +332,8 @@ Expected<std::unique_ptr<VDeviceOutputStream>> VDeviceOutputStream::create_outpu
         streams.emplace_back(local_stream.release());
     }
 
-    std::unique_ptr<VDeviceOutputStream> local_vdevice_stream(new (std::nothrow) VDeviceOutputStream(devices, std::move(streams),
-        edge_layer, std::move(network_group_activated_event), status));
+    std::unique_ptr<VDeviceOutputStream> local_vdevice_stream(new (std::nothrow) VDeviceOutputStream(devices, std::move(streams), network_group_name,
+        edge_layer, std::move(network_group_activated_event), network_group_scheduler, status));
     CHECK_AS_EXPECTED((nullptr != local_vdevice_stream), HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
@@ -295,12 +341,13 @@ Expected<std::unique_ptr<VDeviceOutputStream>> VDeviceOutputStream::create_outpu
 }
 
 Expected<std::unique_ptr<VDeviceOutputStream>> VDeviceOutputStream::create(std::vector<std::shared_ptr<ResourcesManager>> &resources_managers,
-    const LayerInfo &edge_layer, const std::string &stream_name, EventPtr network_group_activated_event, LatencyMeterPtr latency_meter)
+    const LayerInfo &edge_layer, const std::string &stream_name, const std::string &network_group_name, EventPtr network_group_activated_event,
+    NetworkGroupSchedulerWeakPtr network_group_scheduler, LatencyMeterPtr latency_meter)
 {
     assert(0 < resources_managers.size());
 
     auto output_stream = create_output_stream_from_net_group(resources_managers, edge_layer,
-        stream_name, std::move(network_group_activated_event), latency_meter);
+        stream_name, network_group_name, std::move(network_group_activated_event), network_group_scheduler, latency_meter);
     CHECK_EXPECTED(output_stream);
 
     return output_stream.release();
@@ -331,6 +378,16 @@ hailo_status VDeviceOutputStream::abort()
             status = abort_status;
         }
     }
+
+    auto network_group_scheduler = m_network_group_scheduler.lock();
+    if (network_group_scheduler) {
+        auto disable_status = network_group_scheduler->disable_stream(m_network_group_name, name());
+        if (HAILO_SUCCESS != disable_status) {
+            LOGGER__ERROR("Failed to disable stream in the network group scheduler. (status: {})", disable_status);
+            status = disable_status;
+        }
+    }
+
     return status;
 }
 
@@ -339,12 +396,31 @@ hailo_status VDeviceOutputStream::clear_abort()
     auto status = HAILO_SUCCESS; // Best effort
     for (auto &stream : m_streams) {
         auto clear_abort_status = stream->clear_abort();
-        if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed to clear abort output stream. (status: {} device: {})", status, stream->get_dev_id());
+        if ((HAILO_SUCCESS != clear_abort_status) && (HAILO_STREAM_NOT_ACTIVATED != clear_abort_status)) {
+            LOGGER__ERROR("Failed to clear abort output stream. (status: {} device: {})", clear_abort_status, stream->get_dev_id());
             status = clear_abort_status;
         }
     }
+
+    auto network_group_scheduler = m_network_group_scheduler.lock();
+    if (network_group_scheduler) {
+        auto enable_status = network_group_scheduler->enable_stream(m_network_group_name, name());
+        if (HAILO_SUCCESS != enable_status) {
+            LOGGER__ERROR("Failed to enable stream in the network group scheduler. (status: {})", enable_status);
+            status = enable_status;
+        }
+    }
+
     return status;
+}
+
+bool VDeviceOutputStream::is_scheduled()
+{
+    auto network_group_scheduler = m_network_group_scheduler.lock();
+    if (!network_group_scheduler) {
+        return false;
+    }
+    return (HAILO_SCHEDULING_ALGORITHM_NONE != network_group_scheduler->algorithm());
 }
 
 } /* namespace hailort */

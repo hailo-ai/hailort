@@ -241,8 +241,6 @@ FwControlCommand::FwControlCommand(CLI::App &parent_app) :
     add_subcommand<FwControlTestMemoriesCommand>();
     // TODO: Support on windows (HRT-5919)
     #if defined(__GNUC__)
-    // TODO: Unhide (HRT-6035)
-    static const bool HIDDEN = true;
-    add_subcommand<DownloadActionListCommand>(HIDDEN);
+    add_subcommand<DownloadActionListCommand>();
     #endif
 }

@@ -23,7 +23,6 @@ extern "C" {
 #define CONTEXT_SWITCH_DEFS__TIMESTAMP_INIT_VALUE (0xFFFFFFFF)
 #define CONTEXT_SWITCH_DEFS__ENABLE_LCU_DEFAULT_KERNEL_ADDRESS (1)
 #define CONTEXT_SWITCH_DEFS__ENABLE_LCU_DEFAULT_KERNEL_COUNT (2)
-#define CONTEXT_SWITCH_DEFS__ENABLE_LCU_DEFAULT_BATCH_SIZE (1)
 
 #define CONTEXT_SWITCH_DEFS__PACKED_LCU_ID_LCU_INDEX_SHIFT (0)
 #define CONTEXT_SWITCH_DEFS__PACKED_LCU_ID_LCU_INDEX_WIDTH (4)
@@ -116,9 +115,18 @@ typedef struct {
  * |     |       |     .last_executed = <last_action_executed_in_repeated>;                                |
  * |     |       |     .sub_action_type = CONTEXT_SWITCH_DEFS__ACTION_TYPE_ENABLE_LCU_DEFAULT;             |
  * |     |       | }                                                                                       |
- * |     |       | CONTEXT_SWITCH_DEFS__enable_lcu_action_default_data_t { .packed_lcu_id=<some_lcu_id>; } |
- * |     |       | CONTEXT_SWITCH_DEFS__enable_lcu_action_default_data_t { .packed_lcu_id=<some_lcu_id>; } |
- * |     V       | CONTEXT_SWITCH_DEFS__enable_lcu_action_default_data_t { .packed_lcu_id=<some_lcu_id>; } |
+ * |     |       | CONTEXT_SWITCH_DEFS__enable_lcu_action_default_data_t {                                 |
+ * |     |       |     .packed_lcu_id=<some_lcu_id>;                                                       |
+ * |     |       |     .network_index=<some_network_index>                                                 |
+ * |     |       |  }                                                                                      |
+ * |     |       | CONTEXT_SWITCH_DEFS__enable_lcu_action_default_data_t {                                 |
+ * |     |       |     .packed_lcu_id=<some_lcu_id>;                                                       |
+ * |     |       |     .network_index=<some_network_index>                                                 |
+ * |     |       |  }                                                                                      |
+ * |     |       | CONTEXT_SWITCH_DEFS__enable_lcu_action_default_data_t {                                 |
+ * |     |       |     .packed_lcu_id=<some_lcu_id>;                                                       |
+ * |     |       |     .network_index=<some_network_index>                                                 |
+ * |     V       |  }                                                                                      |
  * |    ...      | (Next action starting with CONTEXT_SWITCH_DEFS__common_action_header_t)                 |
  * |-------------------------------------------------------------------------------------------------------|
  * See also: "CONTROL_PROTOCOL__REPEATED_ACTION_t" in "control_protocol.h"
@@ -146,6 +154,7 @@ typedef struct {
 
 typedef struct {
     uint8_t packed_lcu_id;
+    uint8_t network_index;
     uint16_t kernel_done_address;
     uint32_t kernel_done_count;
 } CONTEXT_SWITCH_DEFS__enable_lcu_action_non_default_data_t;
@@ -153,6 +162,7 @@ typedef struct {
 /* Default action - kernel_done_address and kernel_done_count has default values */
 typedef struct {
     uint8_t packed_lcu_id;
+    uint8_t network_index;
 } CONTEXT_SWITCH_DEFS__enable_lcu_action_default_data_t;
 
 typedef struct {
@@ -168,7 +178,8 @@ typedef struct {
 typedef struct {
     uint8_t vdma_channel_index;
     uint8_t stream_index;
-    uint32_t channel_credits;
+    uint8_t network_index;
+    uint32_t frame_periph_size;
     uint8_t credit_type;
     uint16_t periph_bytes_per_buffer;
 } CONTEXT_SWITCH_DEFS__fetch_data_action_data_t;
@@ -182,7 +193,8 @@ typedef struct {
 typedef struct {
     uint8_t h2d_vdma_channel_index;
     uint8_t d2h_vdma_channel_index;
-    uint32_t descriptors_per_batch;
+    uint8_t network_index;
+    uint32_t descriptors_per_frame;
     uint16_t programmed_descriptors_count;
 } CONTEXT_SWITCH_DEFS__add_ddr_pair_info_action_data_t;
 
@@ -233,6 +245,7 @@ typedef struct {
 typedef struct {
     uint8_t stream_index;
     uint8_t vdma_channel_index;
+    uint8_t network_index;
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
     uint64_t host_descriptors_base_address;
     uint16_t initial_host_available_descriptors;
@@ -260,6 +273,7 @@ typedef struct {
 typedef struct {
     uint8_t stream_index;
     uint8_t vdma_channel_index;
+    uint8_t network_index;
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
     // TODO: add this to CONTEXT_SWITCH_DEFS__stream_reg_info_t
     uint32_t frame_credits_in_bytes;
@@ -283,8 +297,7 @@ typedef struct {
 
 typedef struct {
     uint8_t channel_index;
-    uint64_t host_descriptors_base_address;
-    uint16_t initial_host_available_descriptors;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
 } CONTEXT_SWITCH_DEFS__activate_cfg_channel_t;
 
 typedef struct {

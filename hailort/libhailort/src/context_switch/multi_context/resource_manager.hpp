@@ -28,9 +28,8 @@
 
 #include "hailo/hailort.h"
 #include "intermediate_buffer.hpp"
-#include "vdma_buffer.hpp"
+#include "config_buffer.hpp"
 #include "vdma_channel.hpp"
-#include "vdma_descriptor_list.hpp"
 #include "control_protocol.hpp"
 #include "pcie_device.hpp"
 
@@ -124,40 +123,6 @@ private:
     std::string m_layer_name;
 };
 
-
-class ConfigResources final
-{
-public:
-    ConfigResources(HailoRTDriver &driver, VdmaBuffer &&buffer, VdmaDescriptorList &&descriptor,
-        uint16_t requested_desc_page_size, size_t total_buffer_size);
-
-    // Write data to config channel
-    hailo_status write(const void *data, size_t data_size);
-
-    // Program the descriptors for the data written so far
-    Expected<uint16_t> program_descriptors();
-
-    uint16_t get_page_size();
-
-    size_t get_current_buffer_size();
-
-    /* Get all the config size. It's not the same as the VdmaBuffer::size() 
-    since we might add NOPs to the data (Pre-fetch mode) */
-    size_t get_total_cfg_size();
-
-private:
-    VdmaBuffer m_buffer;
-    VdmaDescriptorList m_descriptor;
-    const uint16_t m_desc_page_size;
-    const size_t m_total_buffer_size; 
-    size_t m_acc_buffer_offset;
-    uint16_t m_acc_desc_count;
-    size_t m_current_buffer_size;
-
-    friend class ResourcesManager;
-};
-
-
 class ResourcesManager final
 {
 public:
@@ -183,10 +148,10 @@ public:
         m_network_index_map(std::move(other.m_network_index_map)) {}
 
     ExpectedRef<IntermediateBuffer> create_inter_context_buffer(uint32_t transfer_size, uint8_t src_stream_index,
-        uint8_t src_context_index, const std::string &partial_network_name);
+        uint8_t src_context_index, const std::string &network_name);
     ExpectedRef<IntermediateBuffer> get_intermediate_buffer(const IntermediateBufferKey &key);
     Expected<std::pair<uint16_t, uint32_t>> get_desc_buffer_sizes_for_boundary_channel(uint32_t transfer_size,
-        const std::string &partial_network_name);
+        const std::string &network_name);
     ExpectedRef<IntermediateBuffer> create_ddr_buffer(DdrChannelsInfo &ddr_info, uint8_t context_index);
 
     Expected<CONTROL_PROTOCOL__application_header_t> get_control_network_group_header();
@@ -203,12 +168,12 @@ public:
         return m_contexts;
     }
 
-    std::vector<ConfigResources> &preliminary_config() 
+    std::vector<ConfigBuffer> &preliminary_config() 
     {
         return m_preliminary_config; 
     }
 
-    std::vector<ConfigResources> &dynamic_config(uint8_t context_index)
+    std::vector<ConfigBuffer> &dynamic_config(uint8_t context_index)
     {
         assert(context_index < m_dynamic_config.size());
         return m_dynamic_config[context_index]; 
@@ -260,8 +225,6 @@ public:
     Expected<Buffer> read_intermediate_buffer(const IntermediateBufferKey &key);
 
     hailo_status set_number_of_cfg_channels(const uint8_t number_of_cfg_channels);
-    static Expected<ConfigResources> create_config_resources(uint8_t channel_index,
-        const std::vector<uint32_t> &cfg_sizes, HailoRTDriver &driver);
     void update_preliminary_config_buffer_info();
     void update_dynamic_contexts_buffer_info();
 
@@ -271,13 +234,16 @@ public:
     hailo_status open_ddr_channels();
     void abort_ddr_channels();
     void close_ddr_channels();
-    hailo_status enable_state_machine();
+    hailo_status enable_state_machine(uint16_t dynamic_batch_size);
     hailo_status reset_state_machine();
-    Expected<uint16_t> get_network_batch_size_from_partial_name(const std::string &partial_network_name) const;
-    hailo_status fill_network_batch_size(CONTROL_PROTOCOL__application_header_t &app_header);
+    Expected<uint16_t> get_network_batch_size(const std::string &network_name) const;
+
 private:
     ExpectedRef<IntermediateBuffer> create_intermediate_buffer(uint32_t transfer_size, uint16_t batch_size,
         const IntermediateBufferKey &key);
+    void update_config_buffer_info(std::vector<ConfigBuffer> &config_buffers,
+        CONTROL_PROTOCOL__context_switch_context_info_t &context);
+    hailo_status fill_network_batch_size(CONTROL_PROTOCOL__application_header_t &app_header);
 
     std::vector<DdrChannelsInfo> m_ddr_infos;
     std::vector<CONTROL_PROTOCOL__context_switch_context_info_t> m_contexts;
@@ -285,10 +251,10 @@ private:
     VdmaDevice &m_vdma_device;
     HailoRTDriver &m_driver;
     const ConfigureNetworkParams m_config_params;
-    std::vector<ConfigResources> m_preliminary_config;
+    std::vector<ConfigBuffer> m_preliminary_config;
     // m_dynamic_config[context_index][config_index]
-    std::vector<std::vector<ConfigResources>> m_dynamic_config;
-    std::map<IntermediateBufferKey, std::unique_ptr<IntermediateBuffer>> m_intermediate_buffers;
+    std::vector<std::vector<ConfigBuffer>> m_dynamic_config;
+    std::map<IntermediateBufferKey, IntermediateBuffer> m_intermediate_buffers;
     std::vector<VdmaChannel> m_inter_context_channels;
     std::vector<VdmaChannel> m_config_channels;
     std::vector<VdmaChannel> m_ddr_buffer_channels;
@@ -297,8 +263,8 @@ private:
     const std::vector<std::string> m_network_index_map;
 
     ResourcesManager(VdmaDevice &vdma_device, HailoRTDriver &driver,
-        const ConfigureNetworkParams config_params, std::vector<ConfigResources> &&preliminary_config,
-        std::vector<std::vector<ConfigResources>> &&dynamic_config, std::shared_ptr<NetworkGroupMetadata> &&network_group_metadata, uint8_t net_group_index,
+        const ConfigureNetworkParams config_params, std::vector<ConfigBuffer> &&preliminary_config,
+        std::vector<std::vector<ConfigBuffer>> &&dynamic_config, std::shared_ptr<NetworkGroupMetadata> &&network_group_metadata, uint8_t net_group_index,
         const std::vector<std::string> &&network_index_map) :
           m_vdma_device(vdma_device), m_driver(driver), m_config_params(config_params),
           m_preliminary_config(std::move(preliminary_config)), m_dynamic_config(std::move(dynamic_config)),

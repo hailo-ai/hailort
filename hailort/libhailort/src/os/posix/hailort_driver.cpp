@@ -561,7 +561,7 @@ Expected<uintptr_t> HailoRTDriver::vdma_low_memory_buffer_alloc(size_t size)
     CHECK_AS_EXPECTED(m_allocate_driver_buffer, HAILO_INVALID_OPERATION,
         "Tried to allocate buffer from driver even though operation is not supported");
 
-    hailo_allocate_buffer_params allocate_params = {
+    hailo_allocate_low_memory_buffer_params allocate_params = {
         .buffer_size    = size,
         .buffer_handle  = 0
     };
@@ -585,6 +585,28 @@ hailo_status HailoRTDriver::vdma_low_memory_buffer_free(uintptr_t buffer_handle)
     }
 
     return HAILO_SUCCESS; 
+}
+
+Expected<std::pair<uintptr_t, uint64_t>> HailoRTDriver::vdma_continuous_buffer_alloc(size_t size)
+{
+    hailo_allocate_continuous_buffer_params params { .buffer_size = size, .buffer_handle = 0, .dma_address = 0 };
+
+    if (0 > ioctl(this->m_fd, HAILO_VDMA_CONTINUOUS_BUFFER_ALLOC, &params)) {
+        LOGGER__ERROR("Failed allocate continuous buffer with errno:{}", errno);
+        return make_unexpected(HAILO_PCIE_DRIVER_FAIL);
+    }
+
+    return std::make_pair(params.buffer_handle, params.dma_address);
+}
+
+hailo_status HailoRTDriver::vdma_continuous_buffer_free(uintptr_t buffer_handle)
+{
+    if (0 > ioctl(this->m_fd, HAILO_VDMA_CONTINUOUS_BUFFER_FREE, buffer_handle)) {
+        LOGGER__ERROR("Failed to free continuous buffer with errno: {}", errno);
+        return HAILO_PCIE_DRIVER_FAIL;
+    }
+
+    return HAILO_SUCCESS;
 }
 
 hailo_status HailoRTDriver::mark_as_used()

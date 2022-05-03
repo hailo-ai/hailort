@@ -43,9 +43,7 @@ struct LayerInfo {
     hailo_nms_info_t nms_info;
     uint32_t height_gcd;
     std::vector<uint32_t> height_ratios;
-    // Note - network name as seen by the user is build in the following way - "network_group_name / partial_network name"
-    // In layer info scope - we would use the partial network name only. 
-    std::string partial_network_name;
+    std::string network_name;
 
     // Simulation Info
     BufferIndices buffer_indices;
@@ -96,24 +94,24 @@ public:
         return false;
     }
 
-    static std::vector<hailo_vstream_info_t> get_vstream_infos_from_layer_info(const LayerInfo &layer_info, const std::string &network_group_name)
+    static std::vector<hailo_vstream_info_t> get_vstream_infos_from_layer_info(const LayerInfo &layer_info)
     {
         std::vector<hailo_vstream_info_t> res = {};
         if (layer_info.is_mux) {
             for (auto &pred : layer_info.predecessor) {
-                auto vstream_infos = get_vstream_infos_from_layer_info(pred, network_group_name);
+                auto vstream_infos = get_vstream_infos_from_layer_info(pred);
                 res.insert(res.end(), vstream_infos.begin(), vstream_infos.end());
             }
         } else if (layer_info.is_defused_nms) {
             for (auto &fused_nms : layer_info.fused_nms_layer) {
                 // In case of fused nms layers, several LayerInfos will contain data about the same fused layer
                 if (!vstream_info_already_in_vector(res, fused_nms.name)) {
-                    auto vstream_info = get_vstream_info_from_layer_info_impl(fused_nms, network_group_name);
+                    auto vstream_info = get_vstream_info_from_layer_info_impl(fused_nms);
                     res.push_back(vstream_info);
                 }
             }
         } else {
-            auto vstream_info = get_vstream_info_from_layer_info_impl(layer_info, network_group_name);
+            auto vstream_info = get_vstream_info_from_layer_info_impl(layer_info);
             res.push_back(vstream_info);
         }
 
@@ -121,7 +119,7 @@ public:
     }
 
 private:
-    static hailo_vstream_info_t get_vstream_info_from_layer_info_impl(const LayerInfo &layer_info, const std::string &network_group_name)
+    static hailo_vstream_info_t get_vstream_info_from_layer_info_impl(const LayerInfo &layer_info)
     {
         hailo_vstream_info_t res = {};
         res.format.type = layer_info.format.type;
@@ -138,9 +136,8 @@ private:
         res.direction = layer_info.direction;
         assert(layer_info.name.length() < HAILO_MAX_STREAM_NAME_SIZE);
         strncpy(res.name, layer_info.name.c_str(), layer_info.name.length() + 1);
-        auto network_name = network_group_name + HAILO_DEFAULT_NETWORK_NAME_QUALIFIER + layer_info.partial_network_name;
-        assert(network_name.length() < HAILO_MAX_NETWORK_NAME_SIZE);
-        strncpy(res.network_name, network_name.c_str(), network_name.length() + 1);
+        assert(layer_info.network_name.length() < HAILO_MAX_NETWORK_NAME_SIZE);
+        strncpy(res.network_name, layer_info.network_name.c_str(), layer_info.network_name.length() + 1);
         res.quant_info = layer_info.quant_info;
 
         return res;

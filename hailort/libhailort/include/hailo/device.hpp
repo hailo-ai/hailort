@@ -312,7 +312,7 @@ public:
     /**
      * Start performing a long power measurement.
      * 
-     * @param[in]   delay_milliseconds   Amount of time between each measurement interval.
+     * @param[in]   unused               Unused parameter.
      *                                   This time period is sleep time of the core.
      * @param[in]   averaging_factor     Number of samples per time period, sensor configuration value.
      * @param[in]   sampling_period      Related conversion time, sensor configuration value.
@@ -323,8 +323,9 @@ public:
      *                                   Note that the average calculated by the firmware is “average of averages”,
      *                                   because it averages values that have already been averaged by the sensor.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This function is deprecated. One should use 'Device::start_power_measurement(hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period)'
      */
-    hailo_status start_power_measurement(uint32_t delay_milliseconds, hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period);
+    hailo_status start_power_measurement(uint32_t unused, hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period);
 
     /**
      * Set parameters for long power measurement.
@@ -338,6 +339,7 @@ public:
      * @param[in]   measurement_type   The type of the measurement. Choosing ::HAILO_POWER_MEASUREMENT_TYPES__AUTO
      *                                 will select the default value according to the supported features.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This function is deprecated. One should use 'Device::set_power_measurement(hailo_measurement_buffer_index_t buffer_index, hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type)'
      */
     hailo_status set_power_measurement(uint32_t index, hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type);
 
@@ -347,9 +349,53 @@ public:
      * @param[in]   index                 Index of the buffer on the firmware the data would be saved at.
      * @param[in]   should_clear          Flag indicating if the results saved at the firmware will be deleted after reading.
      * @return Upon success, returns @a hailo_power_measurement_data_t. Measured units are determined due to ::hailo_power_measurement_types_t
-     *         passed to ::hailo_set_power_measurement. Otherwise, returns a ::hailo_status error.
+     *         passed to 'Device::set_power_measurement'. Otherwise, returns a ::hailo_status error.
+     * @note This function is deprecated. One should use "Device::get_power_measurement(hailo_measurement_buffer_index_t buffer_index, bool should_clear)'
      */
     Expected<hailo_power_measurement_data_t> get_power_measurement(uint32_t index, bool should_clear);
+
+    /**
+     * Start performing a long power measurement.
+     * 
+     * @param[in]   averaging_factor     Number of samples per time period, sensor configuration value.
+     * @param[in]   sampling_period      Related conversion time, sensor configuration value.
+     *                                   The sensor samples the power every sampling_period {ms} and averages every
+     *                                   averaging_factor samples. The sensor provides a new value every: 2 * sampling_period * averaging_factor {ms}.
+     *                                   The firmware wakes up every interval_milliseconds {ms} and checks the sensor.
+     *                                   If there is a new value to read from the sensor, the firmware reads it.
+     *                                   Note that the average calculated by the firmware is “average of averages”,
+     *                                   because it averages values that have already been averaged by the sensor.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     */
+    hailo_status start_power_measurement(hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period);
+
+
+    /**
+     * Set parameters for long power measurement.
+     * 
+     * @param[in]   buffer_index       A ::hailo_measurement_buffer_index_t represents the buffer on the firmware the data would be saved at.
+     *                                 Should match the one passed to 'Device::get_power_measurement'.
+     * @param[in]   dvm                Which DVM will be measured. Default (::HAILO_DVM_OPTIONS_AUTO) will be different according to the board: <br>
+     *                                 - Default (::HAILO_DVM_OPTIONS_AUTO) for EVB is an approximation to the total power consumption of the chip in PCIe setups.
+     *                                 It sums ::HAILO_DVM_OPTIONS_VDD_CORE, ::HAILO_DVM_OPTIONS_MIPI_AVDD and ::HAILO_DVM_OPTIONS_AVDD_H.
+     *                                 Only ::HAILO_POWER_MEASUREMENT_TYPES__POWER can measured with this option.
+     *                                 - Default (::HAILO_DVM_OPTIONS_AUTO) for platforms supporting current monitoring (such as M.2 and mPCIe): OVERCURRENT_PROTECTION.
+     * @param[in]   measurement_type   The type of the measurement. Choosing ::HAILO_POWER_MEASUREMENT_TYPES__AUTO
+     *                                 will select the default value according to the supported features.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     */
+    hailo_status set_power_measurement(hailo_measurement_buffer_index_t buffer_index, hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type);
+
+    /**
+     * Read measured power from a long power measurement
+     * 
+     * @param[in]   buffer_index          A ::hailo_measurement_buffer_index_t represents the buffer on the firmware the data would be saved at.
+     *                                    Should match the one passed to 'Device::set_power_measurement'.
+     * @param[in]   should_clear          Flag indicating if the results saved at the firmware will be deleted after reading.
+     * @return Upon success, returns @a hailo_power_measurement_data_t. Measured units are determined due to ::hailo_power_measurement_types_t
+     *         passed to 'Device::set_power_measurement'. Otherwise, returns a ::hailo_status error.
+     */
+    Expected<hailo_power_measurement_data_t> get_power_measurement(hailo_measurement_buffer_index_t buffer_index, bool should_clear);
 
     /**
      * Stop performing a long power measurement.
@@ -387,7 +433,7 @@ public:
      * @param[in] opaque                User specific data.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
-    virtual hailo_status set_notification_callback(NotificationCallback func, hailo_notification_id_t notification_id,
+    virtual hailo_status set_notification_callback(const NotificationCallback &func, hailo_notification_id_t notification_id,
         void *opaque) = 0;
 
     /**
@@ -614,6 +660,8 @@ public:
     Expected<std::vector<uint8_t>> get_number_of_contexts_per_network_group();
     Expected<Buffer> download_context_action_list(uint8_t context_index, uint32_t *base_address,
         uint32_t *batch_counter, uint16_t max_size = 10000);
+    // The batch configured is reset between network groups
+    hailo_status set_context_action_list_timestamp_batch(uint16_t batch_index);
 
     virtual ~Device() = default;
     Device(const Device &) = delete;

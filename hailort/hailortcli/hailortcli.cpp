@@ -138,7 +138,8 @@ void add_device_options(CLI::App *app, hailo_device_params &device_params)
 
     // PCIe options
     auto *pcie_bdf_option = group->add_option("-s,--bdf", device_params.pcie_params.pcie_bdf,
-        "Device id ([<domain>]:<bus>:<device>.<func>, same as in lspci command)")
+        "Device id ([<domain>]:<bus>:<device>.<func>, same as in lspci command).\n" \
+        "In order to run on all PCIe devices connected to the machine one-by-one, use '*' (instead of device id).")
         ->default_val("");
 
     // Ethernet options
@@ -194,6 +195,28 @@ void add_vdevice_options(CLI::App *app, hailo_device_params &device_params) {
     });
 }
 
+static bool do_versions_match()
+{
+    hailo_version_t libhailort_version = {};
+    auto status = hailo_get_library_version(&libhailort_version);
+    if (HAILO_SUCCESS != status) {
+        std::cerr << "Failed to get libhailort version" << std::endl;
+        return false;
+    }
+
+    bool versions_match = ((HAILORT_MAJOR_VERSION == libhailort_version.major) &&
+        (HAILORT_MINOR_VERSION == libhailort_version.minor) &&
+        (HAILORT_REVISION_VERSION == libhailort_version.revision));
+    if (!versions_match) {
+        std::cerr << "libhailort version (" <<
+            libhailort_version.major << "." << libhailort_version.minor << "." << libhailort_version.revision <<
+            ") does not match HailoRT-CLI version (" <<
+            HAILORT_MAJOR_VERSION << "." << HAILORT_MINOR_VERSION << "." << HAILORT_REVISION_VERSION << ")" << std::endl;
+        return false;
+    }
+    return true;
+}
+
 class HailoRTCLI : public ContainerCommand {
 public:
     HailoRTCLI(CLI::App *app) : ContainerCommand(app)
@@ -201,7 +224,7 @@ public:
 
         m_app->add_flag_callback("-v,--version",
             [] () {
-                std::cout << "hailortcli version " <<
+                std::cout << "HailoRT-CLI version " <<
                     HAILORT_MAJOR_VERSION << "." << HAILORT_MINOR_VERSION << "." << HAILORT_REVISION_VERSION << std::endl;
                 // throw CLI::Success to stop parsing and not failing require_subcommand(1) we set earlier
                 throw (CLI::Success{});
@@ -235,6 +258,9 @@ public:
 };
 
 int main(int argc, char** argv) {
+    if (!do_versions_match()) {
+        return -1;
+    }
     auto console_sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
     console_sink->set_level(spdlog::level::info);
     console_sink->set_pattern("[%n] [%^%l%$] %v");

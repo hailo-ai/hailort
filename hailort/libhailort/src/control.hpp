@@ -293,8 +293,7 @@ public:
      *
      * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
      */
-    static hailo_status enable_network_group(Device &device, 
-            uint8_t network_group_index);
+    static hailo_status enable_network_group(Device &device, uint8_t network_group_index, uint16_t dynamic_batch_size);
     /**
      *  reset context switch state machine
      * 
@@ -335,10 +334,12 @@ public:
      * 
      * @param[in]     device - The Hailo device.
      * @param[in]     network_group_index - network_group index 
+     * @param[in]     dynamic_batch_size - dynamic_batch size (or CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE if it's
+     *                                     to be ignored) 
      *
      * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
      */
-    static hailo_status switch_network_group(Device &device, uint8_t network_group_index);
+    static hailo_status switch_network_group(Device &device, uint8_t network_group_index, uint16_t dynamic_batch_size);
 
     /**
      *  Enable/disable halt transmition following Rx pause frame
@@ -383,11 +384,11 @@ public:
     // TODO: needed?
     static hailo_status power_measurement(Device &device, CONTROL_PROTOCOL__dvm_options_t dvm,
         CONTROL_PROTOCOL__power_measurement_types_t measurement_type, float32_t *measurement);
-    static hailo_status set_power_measurement(Device &device, uint32_t index, CONTROL_PROTOCOL__dvm_options_t dvm,
+    static hailo_status set_power_measurement(Device &device, hailo_measurement_buffer_index_t buffer_index, CONTROL_PROTOCOL__dvm_options_t dvm,
         CONTROL_PROTOCOL__power_measurement_types_t measurement_type);
-    static hailo_status get_power_measurement(Device &device, uint32_t index, bool should_clear,
+    static hailo_status get_power_measurement(Device &device, hailo_measurement_buffer_index_t buffer_index, bool should_clear,
         hailo_power_measurement_data_t *measurement_data);
-    static hailo_status start_power_measurement(Device &device, uint32_t delay_milliseconds,
+    static hailo_status start_power_measurement(Device &device,
         CONTROL_PROTOCOL__averaging_factor_t averaging_factor, CONTROL_PROTOCOL__sampling_period_t sampling_period);
     static hailo_status stop_power_measurement(Device &device);
 
@@ -404,7 +405,7 @@ private:
             CONTROL_PROTOCOL__context_switch_context_info_single_control_t *context_info);
     static hailo_status change_context_switch_status(Device &device, 
             CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status,
-            uint8_t network_group_index);
+            uint8_t network_group_index, uint16_t dynamic_batch_size);
 };
 
 } /* namespace hailort */

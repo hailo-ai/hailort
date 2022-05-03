@@ -13,6 +13,7 @@
 #define HAILO_HCP_CONFIG_MANAGER_HPP_
 
 #include "context_switch/config_manager.hpp"
+#include "context_switch/network_group_wrapper.hpp"
 #include "context_switch/single_context/hcp_config_network_group.hpp"
 #include "hailo/hailort.h"
 #include "hailo/device.hpp"
@@ -43,6 +44,7 @@ public:
 private:
     // TODO: (SDK-16665) Dont need is_active flag for dtor?
     std::vector<std::shared_ptr<HcpConfigNetworkGroup>> m_net_groups;
+    std::vector<std::shared_ptr<ConfiguredNetworkGroupWrapper>> m_net_group_wrappers;
     Device &m_device;
     HcpConfigActiveAppHolder m_active_net_group_holder;
 };

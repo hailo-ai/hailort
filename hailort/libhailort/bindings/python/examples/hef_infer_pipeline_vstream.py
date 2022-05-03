@@ -1,6 +1,6 @@
 from hailo_platform import (HEF, PcieDevice, ConfigureParams, InferVStreams, InputVStreamParams,
     OutputVStreamParams, FormatType)
-from hailo_platform.drivers.hailort.pyhailort import HailoStreamInterface
+from hailo_platform.pyhailort.pyhailort import HailoStreamInterface
 import numpy as np
 import argparse
 

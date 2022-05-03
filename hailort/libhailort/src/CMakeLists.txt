@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.0.0)
 
 find_package(Threads REQUIRED)
 
+include(GNUInstallDirs)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/common_compiler_options.cmake)
 
 FUNCTION(relative_to_absolute_paths output)
@@ -45,15 +46,19 @@ set(HAILORT_CPP_SOURCES
     context_switch/network_group.cpp
     context_switch/resource_manager.cpp
     intermediate_buffer.cpp
+    config_buffer.cpp
     d2h_events_parser.cpp
     mipi_stream.cpp
 
     hlpcie.cpp
     vdma_channel.cpp
-    vdma_buffer.cpp
     vdma_descriptor_list.cpp
     vdma_device.cpp
     vdma_stream.cpp
+
+    vdma/mapped_buffer.cpp
+    vdma/sg_buffer.cpp
+    vdma/continuous_buffer.cpp
 
     pcie_device.cpp
     pcie_stream.cpp
@@ -68,6 +73,8 @@ set(HAILORT_CPP_SOURCES
 
     vstream.cpp
     inference_pipeline.cpp
+
+    network_group_scheduler.cpp
 )
 
 set(common_dir "${PROJECT_SOURCE_DIR}/common/src")
@@ -116,6 +123,10 @@ target_link_libraries(libhailort PRIVATE Threads::Threads)
 target_link_libraries(libhailort PRIVATE hef_proto)
 target_link_libraries(libhailort PRIVATE spdlog::spdlog)
 target_link_libraries(libhailort PRIVATE readerwriterqueue)
+target_link_libraries(libhailort PRIVATE microprofile)
+if(CMAKE_SYSTEM_NAME STREQUAL QNX)
+    target_link_libraries(libhailort PRIVATE pevents)
+endif()
 
 set(HAILORT_PUBLIC_HEADERS
     ${HAILORT_INC_DIR}/hailo/hailort.h

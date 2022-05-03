@@ -11,8 +11,7 @@
 #define _HAILO_INTERMEDIATE_BUFFER_HPP_
 
 #include "os/hailort_driver.hpp"
-#include "vdma_buffer.hpp"
-#include "vdma_descriptor_list.hpp"
+#include "vdma/sg_buffer.hpp"
 #include "hailo/expected.hpp"
 #include "hailo/buffer.hpp"
 
@@ -20,103 +19,57 @@
 namespace hailort
 {
 
-class IntermediateBuffer {
+class IntermediateBuffer final {
 public:
-
-    enum class Type {
-        EXTERNAL_DESC
-    };
-
-    static Expected<std::unique_ptr<IntermediateBuffer>> create(Type type, HailoRTDriver &driver,
-        const uint32_t transfer_size, const uint16_t batch_size);
-
-    virtual ~IntermediateBuffer() = default;
-    IntermediateBuffer(const IntermediateBuffer &) = delete;
-    IntermediateBuffer& operator=(const IntermediateBuffer &) = delete;
-    IntermediateBuffer(IntermediateBuffer &&) = default;
-    IntermediateBuffer& operator=(IntermediateBuffer &&) = delete;
-
-
-    virtual hailo_status program_inter_context() = 0;
-
-    // Returns the amount of programed descriptors
-    virtual Expected<uint16_t> program_ddr() = 0;
-    virtual Expected<uint16_t> program_host_managed_ddr(uint16_t row_size, uint32_t buffered_rows,
-        uint16_t initial_desc_offset) = 0;
-
-    virtual uint64_t dma_address() const = 0;
-    virtual uint16_t descriptors_in_frame() const = 0;
-    virtual uint16_t desc_page_size() const = 0;
-    virtual uint16_t descs_count() const = 0;
-    virtual uint8_t depth() const = 0;
-
-    // Should be only used for host managed ddr buffer, in the future this function may return nullptr (on CCB
-    // case where there is no descriptors list)
-    virtual VdmaDescriptorList* get_desc_list() = 0;
-
-    virtual Expected<Buffer> read() = 0;
-
-protected:
-    IntermediateBuffer() = default;
-};
-
-class ExternalDescIntermediateBuffer : public IntermediateBuffer
-{
-public:
-
-    static Expected<std::unique_ptr<IntermediateBuffer>> create(HailoRTDriver &driver, const uint32_t transfer_size,
+    static Expected<IntermediateBuffer> create(HailoRTDriver &driver, const uint32_t transfer_size,
         const uint16_t batch_size);
 
-    ExternalDescIntermediateBuffer(VdmaBuffer &&buffer, VdmaDescriptorList &&desc_list,
-        const uint32_t transfer_size, const uint32_t transfers_count) :
-           m_buffer(std::move(buffer)), m_desc_list(std::move(desc_list)),
-           m_transfer_size(transfer_size), m_transfers_count(transfers_count) {};
-
-    hailo_status program_inter_context() override;
+    hailo_status program_inter_context();
 
     // Returns the amount of programed descriptors
-    Expected<uint16_t> program_ddr() override;
+    Expected<uint16_t> program_ddr();
     Expected<uint16_t> program_host_managed_ddr(uint16_t row_size, uint32_t buffered_rows,
-        uint16_t initial_desc_offset) override;
+        uint16_t initial_desc_offset);
 
-    uint64_t dma_address() const override
+    uint64_t dma_address() const
     {
-        return m_desc_list.dma_address();
+        return m_buffer.dma_address();
     }
 
-    uint16_t descriptors_in_frame() const override
+    uint32_t descriptors_in_frame() const
     {
-        return static_cast<uint16_t>(m_desc_list.descriptors_in_buffer(m_transfer_size));
+        return m_buffer.descriptors_in_buffer(m_transfer_size);
     }
 
-    uint16_t desc_page_size() const override
+    uint16_t desc_page_size() const
     {
-        return m_desc_list.desc_page_size();
+        return m_buffer.desc_page_size();
     }
 
-    uint16_t descs_count() const override
+    uint32_t descs_count() const
     {
-        return static_cast<uint16_t>(m_desc_list.count());
+        return m_buffer.descs_count();
     }
 
-    uint8_t depth() const override
+    uint8_t depth()
     {
-        return m_desc_list.depth();
+        return m_buffer.depth();
     }
 
-    // Should be only used for host managed ddr buffer, in the future this function may return nullptr (on CCB
-    // case where there is no descriptors list)
-    VdmaDescriptorList* get_desc_list() override
+    // Should be only used for host managed ddr buffer, not suported on continuous buffers
+    ExpectedRef<VdmaDescriptorList> get_desc_list()
     {
-        return &m_desc_list;
+        return m_buffer.get_desc_list();
     }
 
-    Expected<Buffer> read() override;
+    Expected<Buffer> read();
 
 private:
+    IntermediateBuffer(vdma::SgBuffer &&buffer,
+        const uint32_t transfer_size, const uint32_t transfers_count) :
+           m_buffer(std::move(buffer)), m_transfer_size(transfer_size), m_transfers_count(transfers_count) {}
 
-    VdmaBuffer m_buffer;
-    VdmaDescriptorList m_desc_list;
+    vdma::SgBuffer m_buffer;
     const uint32_t m_transfer_size;
     const uint32_t m_transfers_count;
 };

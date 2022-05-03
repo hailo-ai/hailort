@@ -224,6 +224,7 @@ hailo_status HEF_METADATA__add_enable_lcu_non_default_action(
  * @param[out]    action - pointer to the action
  * @param[in]     cluster_index - cluster index
  * @param[in]     lcu_index - lcu_index
+ * @param[in]     network_index - network index
  * @param[in]     is_repeated - 'true' if the action is part of a "repeated sequence" (a group of consecutive actions
  *                              with the same type)
  *
@@ -233,6 +234,7 @@ hailo_status HEF_METADATA__add_enable_lcu_default_action(
     uint8_t **action_data_current_offset,
     uint8_t cluster_index,
     uint8_t lcu_index,
+    uint8_t network_index,
     bool is_repeated);
 
 /**

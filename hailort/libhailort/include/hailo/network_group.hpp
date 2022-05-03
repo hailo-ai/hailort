@@ -191,8 +191,7 @@ public:
      * @return Upon success, returns Expected of a pointer to ActivatedNetworkGroup object.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
-    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate(
-        const hailo_activate_network_group_params_t &network_group_params) = 0;
+    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate(const hailo_activate_network_group_params_t &network_group_params) = 0;
 
     /**
      * Block until network group is activated, or until timeout is passed.
@@ -308,6 +307,9 @@ public:
 
 protected:
     ConfiguredNetworkGroup() = default;
+
+    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_internal(
+        const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size) = 0;
 
 private:
     friend class ActivatedNetworkGroup;

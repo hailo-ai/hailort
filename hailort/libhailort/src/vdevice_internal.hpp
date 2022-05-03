@@ -20,6 +20,7 @@
 #include "hailo/vdevice.hpp"
 #include "pcie_device.hpp"
 #include "context_switch/multi_context/vdma_config_manager.hpp"
+#include "network_group_scheduler.hpp"
 
 
 namespace hailort
@@ -59,13 +60,19 @@ public:
         return devices_infos;
     }
 
+    const NetworkGroupSchedulerPtr &network_group_scheduler()
+    {
+        return m_network_group_scheduler;
+    }
+
 private:
-    VDeviceBase(std::vector<std::unique_ptr<PcieDevice>> &&devices) : m_devices(std::move(devices))
+    VDeviceBase(std::vector<std::unique_ptr<PcieDevice>> &&devices, NetworkGroupSchedulerPtr network_group_scheduler) :
+        m_devices(std::move(devices)), m_network_group_scheduler(network_group_scheduler)
         {}
 
     std::vector<std::unique_ptr<PcieDevice>> m_devices;
     std::unique_ptr<VdmaConfigManager> m_context_switch_manager;
-
+    NetworkGroupSchedulerPtr m_network_group_scheduler;
 };
 
 } /* namespace hailort */

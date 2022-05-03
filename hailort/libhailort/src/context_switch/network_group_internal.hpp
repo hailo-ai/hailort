@@ -5,15 +5,16 @@
 /**
  * @file network_group_internal.hpp
  * @brief Class declaration for ConfiguredNetworkGroupBase and ActivatedNetworkGroupBase that implement the basic ConfiguredNetworkGroup
- *        and ActivatedNetworkGroup interfaces. All internal classes that are relavant should inherit from the
+ *        and ActivatedNetworkGroup interfaces. All internal classes that are relevant should inherit from the
  *        ConfiguredNetworkGroupBase and ActivatedNetworkGroupBase classes.
- *        Hence, the hiearchy is as follows:
+ *        Hence, the hierarchy is as follows:
  *        -----------------------------------------------------------------------------
- *        |                        ConfiguredNetworkGroup                             |  (External "interface")
- *        |                                  |                                        |
- *        |                      ConfiguredNetworkGroupBase                           |  (Base classes)
- *        |                          /                \                               |
- *        |           VdmaConfigNetworkGroup       HcpConfigNetworkGroup              | (Actual implementations)
+ *        |                          ConfiguredNetworkGroup                           |  (External "interface")
+ *        |                   ________________|___________________                    |
+ *        |                  /                                    \                   |
+ *        |            ConfiguredNetworkGroupBase       ConfiguredNetworkGroupWrapper |  (Base classes)
+ *        |               /                  \                                        |
+ *        |  VdmaConfigNetworkGroup     HcpConfigNetworkGroup                         | (Actual implementations)
  *        -----------------------------------------------------------------------------
  *        |                         ActivatedNetworkGroup                             |  (External "interface")
  *        |                                   |                                       |
@@ -31,6 +32,7 @@
 #include "hailo/network_group.hpp"
 #include "hef_internal.hpp"
 #include "common/latency_meter.hpp"
+#include "control_protocol.h"
 
 namespace hailort
 {
@@ -74,6 +76,9 @@ public:
     ConfiguredNetworkGroupBase &operator=(ConfiguredNetworkGroupBase &&other) = delete;
     ConfiguredNetworkGroupBase(ConfiguredNetworkGroupBase &&other) = default;
 
+    Expected<std::unique_ptr<ActivatedNetworkGroup>> force_activate(
+        uint16_t dynamic_batch_size = CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE);
+    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate(const hailo_activate_network_group_params_t &network_group_params) override;
     virtual hailo_status wait_for_activation(const std::chrono::milliseconds &timeout) override;
 
     virtual const std::string &get_network_group_name() const override;
@@ -126,9 +131,18 @@ public:
     
     Expected<uint16_t> get_stream_batch_size(const std::string &stream_name);
 
+    const ConfigureNetworkParams get_config_params() const;
+
 protected:
     ConfiguredNetworkGroupBase(const ConfigureNetworkParams &config_params, const uint8_t m_net_group_index, 
         const NetworkGroupMetadata &network_group_metadata, hailo_status &status);
+    ConfiguredNetworkGroupBase(const ConfigureNetworkParams &config_params, const uint8_t m_net_group_index, 
+        const NetworkGroupMetadata &network_group_metadata, bool is_scheduling, hailo_status &status);
+
+    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_internal(
+        const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size) override;
+    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_impl(
+        const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size) = 0;
 
     hailo_status create_output_stream_from_config_params(Device &device,
         const hailo_stream_parameters_t &stream_params, const std::string &stream_name);
@@ -152,6 +166,11 @@ protected:
     const NetworkGroupMetadata m_network_group_metadata;
     AccumulatorPtr m_activation_time_accumulator;
     AccumulatorPtr m_deactivation_time_accumulator;
+
+private:
+    friend class ConfiguredNetworkGroupWrapper;
+
+    bool m_is_scheduling;
 };
 
 } /* namespace hailort */

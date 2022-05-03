@@ -9,7 +9,11 @@ if (NOT TARGET libhailort)
         find_path(HAILORT_INCLUDE_DIR "hailo/" PATH_SUFFIXES "HailoRT/include/")
 
     else()
-        find_library(HAILORT_LIB "libhailort.so.4.6.0" PATH_SUFFIXES "lib/")
+        set(HAILORT_MAJOR_VERSION    4)
+        set(HAILORT_MINOR_VERSION    7)
+        set(HAILORT_REVISION_VERSION 0)
+
+        find_library(HAILORT_LIB "libhailort.so.${HAILORT_MAJOR_VERSION}.${HAILORT_MINOR_VERSION}.${HAILORT_REVISION_VERSION}" PATH_SUFFIXES "lib/")
         find_path(HAILORT_INCLUDE_DIR "hailo/" PATH_SUFFIXES "include/")
     endif()
 

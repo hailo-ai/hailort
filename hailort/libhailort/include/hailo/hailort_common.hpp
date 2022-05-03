@@ -30,6 +30,7 @@ public:
     static const uint32_t MAX_DEFUSED_LAYER_COUNT = 9;
     static const size_t HW_DATA_ALIGNMENT = 8;
     static const uint64_t NMS_DELIMITER = 0xFFFFFFFFFFFFFFFF;
+    static const uint64_t NMS_DUMMY_DELIMITER = 0xFFFFFFFFFFFFFFFE;
     static const uint32_t MUX_INFO_COUNT = 32;
     static const uint32_t MAX_MUX_PREDECESSORS = 4;
     static const uint16_t ETH_INPUT_BASE_PORT = 32401;

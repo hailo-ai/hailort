@@ -18,6 +18,7 @@ Expected<VdmaConfigActivatedNetworkGroup> VdmaConfigActivatedNetworkGroup::creat
     VdmaConfigActiveAppHolder &active_net_group_holder,
     std::vector<std::shared_ptr<ResourcesManager>> resources_managers,
     const hailo_activate_network_group_params_t &network_group_params,
+    uint16_t dynamic_batch_size,
     std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
     std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,         
     EventPtr network_group_activated_event,
@@ -29,7 +30,7 @@ Expected<VdmaConfigActivatedNetworkGroup> VdmaConfigActivatedNetworkGroup::creat
     CHECK_ARG_NOT_NULL_AS_EXPECTED(deactivation_time_accumulator);
 
     auto status = HAILO_UNINITIALIZED;
-    VdmaConfigActivatedNetworkGroup object(network_group_params, input_streams, output_streams,
+    VdmaConfigActivatedNetworkGroup object(network_group_params, dynamic_batch_size, input_streams, output_streams,
         std::move(resources_managers), active_net_group_holder, std::move(network_group_activated_event),
         deactivation_time_accumulator, status);
     CHECK_SUCCESS_AS_EXPECTED(status);
@@ -39,6 +40,7 @@ Expected<VdmaConfigActivatedNetworkGroup> VdmaConfigActivatedNetworkGroup::creat
 
 VdmaConfigActivatedNetworkGroup::VdmaConfigActivatedNetworkGroup(
     const hailo_activate_network_group_params_t &network_group_params,
+    uint16_t dynamic_batch_size,
     std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
     std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,
     std::vector<std::shared_ptr<ResourcesManager>> &&resources_managers,
@@ -79,7 +81,7 @@ VdmaConfigActivatedNetworkGroup::VdmaConfigActivatedNetworkGroup(
     }
 
     for (auto &resources_manager : m_resources_managers) {
-        status = resources_manager->enable_state_machine();
+        status = resources_manager->enable_state_machine(dynamic_batch_size);
         if (HAILO_SUCCESS != status) {
             LOGGER__ERROR("Failed to activate state-machine");
             return;

@@ -17,6 +17,7 @@
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
 #include "transform_internal.hpp"
+#include "microprofile.h"
 
 #include <type_traits>
 #include <sstream>
@@ -1230,6 +1231,7 @@ hailo_status FrameOutputTransformContext::transform_inner(const void *src_ptr, v
 hailo_status transform_demux_raw_frame(const void *src, uint32_t offset,
     hailo_mux_info_t *mux_info, uint32_t mux_row_count)
 {
+    MICROPROFILE_SCOPEI("Transformations", "Demux", 0);
     // This is a recursive function with a maximum depth of HailoRTCommon::MUX_INFO_COUNT.
     hailo_status status = HAILO_UNINITIALIZED;
     struct hailo_mux_info_t *predecessor = NULL;
@@ -1470,6 +1472,7 @@ InputTransformContext::InputTransformContext(size_t src_frame_size, const hailo_
 
 hailo_status InputTransformContext::transform(const MemoryView src, MemoryView dst)
 {
+    MICROPROFILE_SCOPEI("Transformations", "H2D transform", 0);
     /* Check sizes */
     CHECK(src.size() == m_src_frame_size, HAILO_INVALID_ARGUMENT,
         "src size must be {}. passed size - {}", m_src_frame_size, src.size());
@@ -1636,6 +1639,7 @@ Expected<std::unique_ptr<OutputTransformContext>> NMSOutputTransformContext::cre
 
 hailo_status FrameOutputTransformContext::transform(const MemoryView src, MemoryView dst)
 {
+    MICROPROFILE_SCOPEI("Transformations", "D2H transform", 0);
     /* Check sizes */
     CHECK(src.size() == m_src_frame_size, HAILO_INVALID_ARGUMENT,
         "src size must be {}. passed size - {}", m_src_frame_size, src.size());
@@ -1650,6 +1654,7 @@ hailo_status FrameOutputTransformContext::transform(const MemoryView src, Memory
 
 hailo_status NMSOutputTransformContext::transform(const MemoryView src, MemoryView dst)
 {
+    MICROPROFILE_SCOPEI("Transformations", "D2H NMS transform", 0);
     /* Check sizes */
     CHECK(src.size() == m_src_frame_size, HAILO_INVALID_ARGUMENT,
         "src size must be {}. passed size - {}", m_src_frame_size, src.size());
@@ -1826,6 +1831,7 @@ hailo_status OutputDemuxerBase::get_mux_info_from_layer_info_impl(hailo_mux_info
 hailo_status fuse_buffers(const std::vector<MemoryView> &buffers,
     const std::vector<hailo_nms_info_t> &infos_of_buffers, MemoryView dst)
 {
+    MICROPROFILE_SCOPEI("Transformations", "Fuse NMS", 0);
     CHECK_ARG_NOT_NULL(dst.data());
     CHECK(buffers.size() == infos_of_buffers.size(), HAILO_INVALID_ARGUMENT,
         "Vectors of buffers and NMS infos does not match!");

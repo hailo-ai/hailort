@@ -13,6 +13,7 @@
 #include "md5.h"
 
 #include <iostream>
+#include <iomanip>
 
 constexpr int DownloadActionListCommand::INVALID_NUMERIC_VALUE;
 
@@ -21,7 +22,7 @@ DownloadActionListCommand::DownloadActionListCommand(CLI::App &parent_app) :
 {
     static const char *JSON_SUFFIX = ".json";
     m_app->add_option("--output-file", m_output_file_path, "Output file path")
-        ->default_val("context_action_list.json")
+        ->default_val("runtime_data.json")
         ->check(FileSuffixValidator(JSON_SUFFIX));
 }
 
@@ -57,6 +58,11 @@ hailo_status DownloadActionListCommand::execute(Device &device, const std::strin
     std::cout << "done." << std::endl;
 
     return HAILO_SUCCESS;
+}
+
+hailo_status DownloadActionListCommand::set_batch_to_measure(Device &device, uint16_t batch_to_measure)
+{
+    return device.set_context_action_list_timestamp_batch(batch_to_measure);
 }
 
 hailo_status DownloadActionListCommand::execute_on_device(Device &device)
@@ -101,7 +107,8 @@ Expected<std::string> DownloadActionListCommand::calc_md5_hexdigest(const std::s
     std::stringstream hexdigest;
     for (uint32_t i = 0; i < ARRAY_ENTRIES(md5_sum); i++) {
         // cast to int needed for proper formatting
-        hexdigest << std::hex << static_cast<int>(md5_sum[i]);
+        static const int NUM_HEX_DIGITS_IN_UNIT8 = 2;
+        hexdigest << std::hex << std::setfill('0') << std::setw(NUM_HEX_DIGITS_IN_UNIT8) << static_cast<int>(md5_sum[i]);
     }
 
     return hexdigest.str();

@@ -14,7 +14,7 @@
 #include "os/hailort_driver.hpp"
 #include "hailo/expected.hpp"
 #include "os/mmap_buffer.hpp"
-#include "vdma_buffer.hpp"
+#include "vdma/mapped_buffer.hpp"
 #include "common/utils.hpp"
 
 namespace hailort
@@ -81,7 +81,7 @@ inline bool device_interuptes_enabled(VdmaInterruptsDomain interrupts_domain)
 class VdmaDescriptorList
 {
 public:
-    static Expected<VdmaDescriptorList> create(size_t desc_count, uint16_t requested_desc_page_size,
+    static Expected<VdmaDescriptorList> create(uint32_t desc_count, uint16_t requested_desc_page_size,
         HailoRTDriver &driver);
 
     ~VdmaDescriptorList();
@@ -96,7 +96,7 @@ public:
         return m_depth;
     }
 
-    size_t count() const
+    uint32_t count() const
     {
         return m_count;
     }
@@ -122,9 +122,9 @@ public:
         return m_desc_handle;
     }
 
-    hailo_status configure_to_use_buffer(VdmaBuffer& buffer, uint8_t channel_index);
+    hailo_status configure_to_use_buffer(vdma::MappedBuffer& buffer, uint8_t channel_index);
     // On hailo8, we allow configuring buffer without specific channel index.
-    hailo_status configure_to_use_buffer(VdmaBuffer& buffer);
+    hailo_status configure_to_use_buffer(vdma::MappedBuffer& buffer);
 
     Expected<uint16_t> program_descriptors(size_t transfer_size, VdmaInterruptsDomain first_desc_interrupts_domain,
         VdmaInterruptsDomain last_desc_interrupts_domain, size_t desc_offset, bool is_circular);
@@ -141,7 +141,7 @@ public:
         uint16_t batch_size, const std::vector<uint32_t> &transfer_sizes);
 
 private:
-    VdmaDescriptorList(size_t desc_count, HailoRTDriver &driver, uint16_t desc_page_size, hailo_status &status);
+    VdmaDescriptorList(uint32_t desc_count, HailoRTDriver &driver, uint16_t desc_page_size, hailo_status &status);
     uint32_t get_interrupts_bitmask(VdmaInterruptsDomain interrupts_domain);
     void program_single_descriptor(VdmaDescriptor &descriptor, uint16_t page_size,
         VdmaInterruptsDomain interrupts_domain);
@@ -155,7 +155,7 @@ private:
         uint16_t initial_desc_page_size);
 
     MmapBuffer<VdmaDescriptor> m_mapped_list;
-    size_t m_count;
+    uint32_t m_count;
     uint8_t m_depth;
     uintptr_t m_desc_handle;
     uint64_t m_dma_address;

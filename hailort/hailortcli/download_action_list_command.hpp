@@ -27,6 +27,7 @@ public:
     // To be used from external commands
     static hailo_status execute(Device &device, const std::string &output_file_path,
         const ConfiguredNetworkGroupVector &network_groups={}, const std::string &hef_file_path="");
+    static hailo_status set_batch_to_measure(Device &device, uint16_t batch_to_measure);
 
 protected:
     virtual hailo_status execute_on_device(Device &device) override;

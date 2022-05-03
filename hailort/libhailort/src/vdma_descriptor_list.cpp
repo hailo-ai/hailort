@@ -17,7 +17,7 @@
 namespace hailort
 {
 
-Expected<VdmaDescriptorList> VdmaDescriptorList::create(size_t desc_count, uint16_t requested_desc_page_size,
+Expected<VdmaDescriptorList> VdmaDescriptorList::create(uint32_t desc_count, uint16_t requested_desc_page_size,
     HailoRTDriver &driver)
 {
     hailo_status status = HAILO_UNINITIALIZED;
@@ -30,7 +30,7 @@ Expected<VdmaDescriptorList> VdmaDescriptorList::create(size_t desc_count, uint1
     return object;
 }
 
-VdmaDescriptorList::VdmaDescriptorList(size_t desc_count, HailoRTDriver &driver, uint16_t desc_page_size,
+VdmaDescriptorList::VdmaDescriptorList(uint32_t desc_count, HailoRTDriver &driver, uint16_t desc_page_size,
                                        hailo_status &status) :
     m_mapped_list(),
     m_count(desc_count),
@@ -107,13 +107,13 @@ Expected<uint8_t> VdmaDescriptorList::calculate_desc_list_depth(size_t count)
     return static_cast<uint8_t>(depth);
 }
 
-hailo_status VdmaDescriptorList::configure_to_use_buffer(VdmaBuffer& buffer, uint8_t channel_index)
+hailo_status VdmaDescriptorList::configure_to_use_buffer(vdma::MappedBuffer& buffer, uint8_t channel_index)
 {
     return m_driver.descriptors_list_bind_vdma_buffer(m_desc_handle, buffer.handle(), m_desc_page_size,
         channel_index);
 }
 
-hailo_status VdmaDescriptorList::configure_to_use_buffer(VdmaBuffer& buffer)
+hailo_status VdmaDescriptorList::configure_to_use_buffer(vdma::MappedBuffer& buffer)
 {
     return configure_to_use_buffer(buffer, HailoRTDriver::INVALID_VDMA_CHANNEL_INDEX);
 }

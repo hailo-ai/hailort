@@ -70,21 +70,10 @@ public:
 
 protected:
     virtual hailo_status execute_on_device(Device &device) = 0;
+    hailo_status execute_on_all_pcie_devices();
 
 private:
     hailo_device_params m_device_params;
-};
-
-class PcieDeviceCommand : public Command {
-public:
-    explicit PcieDeviceCommand(CLI::App *app);
-    virtual hailo_status execute() override final;
-
-protected:
-    virtual hailo_status execute_on_device(Device &device) = 0;
-
-private:
-    hailo_pcie_params m_pcie_device_params;
 };
 
 #endif /* _HAILO_COMMAND_HPP_ */

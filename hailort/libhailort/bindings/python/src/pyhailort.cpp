@@ -5,22 +5,21 @@
 #include <pybind11/complex.h>
 #include <pybind11/functional.h>
 #include <vector>
+#include <exception>
 using namespace std;
 
-#include "hailo/hailort.h"
-#include "hailo/device.hpp"
-#include "hailo/transform.hpp"
-#include "hailo/hef.hpp"
-#include "hailo/hailort_common.hpp"
-#include "hailo/quantization.hpp"
+#include "hailo/hailort.hpp"
 
 #include "hef_api.hpp"
 #include "vstream_api.hpp"
 #include "vdevice_api.hpp"
+#include "device_api.hpp"
+
 #include "utils.hpp"
 #include "utils.h"
 
-#include "common/socket.hpp"
+#include "bindings_common.hpp"
+
 #include "sensor_config_exports.h"
 #include "hailort_defaults.hpp"
 #if defined(__GNUC__)
@@ -31,62 +30,6 @@ namespace hailort
 {
 
 #define MAX_HAILO_PACKET_SIZE (4*1024)
-
-
-class PowerMeasurementData { 
-    public:
-        float32_t m_average_value;
-        float32_t m_average_time_value_milliseconds;
-        float32_t m_min_value;
-        float32_t m_max_value;
-        uint32_t m_total_number_of_samples;
-        PowerMeasurementData(hailo_power_measurement_data_t &&c_power_data);
-        bool equals(const PowerMeasurementData &other);
-        static py::tuple get_state(const PowerMeasurementData &power_measurement_data);
-        static PowerMeasurementData set_state(py::tuple t);
-        const static uint32_t NUM_OF_MEMBERS = 5;
-};
-
-PowerMeasurementData::PowerMeasurementData(hailo_power_measurement_data_t &&c_power_data)
-{
-    m_average_value = c_power_data.average_value;
-    m_average_time_value_milliseconds = c_power_data.average_time_value_milliseconds;
-    m_min_value = c_power_data.min_value;
-    m_max_value = c_power_data.max_value;
-    m_total_number_of_samples = c_power_data.total_number_of_samples;
-}
-
-/* Return a tuple that fully encodes the state of the object */
-py::tuple PowerMeasurementData::get_state(const PowerMeasurementData &power_measurement_data){
-    return py::make_tuple(
-        power_measurement_data.m_average_value,
-        power_measurement_data.m_average_time_value_milliseconds,
-        power_measurement_data.m_min_value,
-        power_measurement_data.m_max_value,
-        power_measurement_data.m_total_number_of_samples);
-}
-
-PowerMeasurementData PowerMeasurementData::set_state(py::tuple t){
-    if (PowerMeasurementData::NUM_OF_MEMBERS != t.size())
-        throw std::runtime_error("Invalid power measurement data state!");
-
-    /* Create a new C++ instance */
-    hailo_power_measurement_data_t data;
-    data.average_value = t[0].cast<float32_t>();
-    data.average_time_value_milliseconds = t[1].cast<float32_t>();
-    data.min_value = t[2].cast<float32_t>();
-    data.max_value = t[3].cast<float32_t>();
-    data.total_number_of_samples = t[4].cast<uint32_t>();
-    return PowerMeasurementData(std::move(data));
-}
-
-bool PowerMeasurementData::equals(const PowerMeasurementData &other) {
-    return ((this->m_average_value == other.m_average_value) &&
-        (this->m_average_time_value_milliseconds == other.m_average_time_value_milliseconds) &&
-        (this->m_min_value == other.m_min_value) &&
-        (this->m_max_value == other.m_max_value) &&
-        (this->m_total_number_of_samples == other.m_total_number_of_samples));
-}
 
 bool temperature_info_equals(hailo_chip_temperature_info_t &first, hailo_chip_temperature_info_t &second){
     return ((first.ts0_temperature == second.ts0_temperature) &&
@@ -101,798 +44,12 @@ bool hailo_format_equals(hailo_format_t &first, hailo_format_t &second){
 }
 class UdpScan {
     public:
-        UdpScan();
+        UdpScan() = default;
         std::list<std::string> scan_devices(char *interface_name, uint32_t timeout_milliseconds);
     private:
         static const size_t m_max_number_of_devices = 100;
         hailo_eth_device_info_t m_eth_device_infos[m_max_number_of_devices] = {};
 };
-
-/* Device */
-// TODO HRT-5285: Change Python bindings of device class to use CPP API and move functionality to a new device module.
-uintptr_t create_eth_device(char *device_address, size_t device_address_length, uint16_t port,
-    uint32_t timeout_milliseconds, uint8_t max_number_of_attempts)
-{
-    hailo_status status = HAILO_UNINITIALIZED;
-    hailo_device device = NULL;
-    hailo_eth_device_info_t device_info = {};
-
-    /* Validate address length */
-    if (INET_ADDRSTRLEN < device_address_length) {
-        EXIT_WITH_ERROR("device_address_length is invalid")
-    }
-
-    device_info.host_address.sin_family = AF_INET;
-    device_info.host_address.sin_port = HAILO_ETH_PORT_ANY;
-    status = Socket::pton(AF_INET, HAILO_ETH_ADDRESS_ANY, &(device_info.host_address.sin_addr));
-    VALIDATE_STATUS(status);
-
-    device_info.device_address.sin_family = AF_INET;
-    device_info.device_address.sin_port = port;
-    status = Socket::pton(AF_INET, device_address, &(device_info.device_address.sin_addr));
-    VALIDATE_STATUS(status);
-
-    device_info.timeout_millis = timeout_milliseconds;
-    device_info.max_number_of_attempts = max_number_of_attempts;
-    device_info.max_payload_size = HAILO_DEFAULT_ETH_MAX_PAYLOAD_SIZE;
-    
-    status = hailo_create_ethernet_device(&device_info, &device);
-    VALIDATE_STATUS(status);
-
-    return (uintptr_t)device;
-}
-
-std::vector<hailo_pcie_device_info_t> scan_pcie_devices(void)
-{
-    auto scan_result = Device::scan_pcie();
-    VALIDATE_EXPECTED(scan_result);
-
-    return scan_result.release();
-}
-
-uintptr_t create_pcie_device(hailo_pcie_device_info_t *device_info)
-{
-    hailo_device device = NULL;
-    hailo_status status = hailo_create_pcie_device(device_info, &device);
-    VALIDATE_STATUS(status);
-
-    return (uintptr_t)device;
-}
-
-void release_device(uintptr_t device)
-{
-    hailo_status status = HAILO_UNINITIALIZED;
-
-    status = hailo_release_device((hailo_device)device);
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-uintptr_t get_hlpcie_device(uintptr_t hailort_device)
-{
-    return hailort_device;
-}
-
-/* Controls */
-hailo_device_identity_t identify(uintptr_t device)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    auto board_info = reinterpret_cast<Device *>(device)->identify();
-    VALIDATE_EXPECTED(board_info);
-
-    return board_info.release();
-}
-
-hailo_core_information_t core_identify(uintptr_t device)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    auto core_info = reinterpret_cast<Device *>(device)->core_identify();
-    VALIDATE_EXPECTED(core_info);
-
-    return core_info.release();
-}
-
-void set_fw_logger(uintptr_t device, hailo_fw_logger_level_t level, uint32_t interface_mask)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device*>(device));
-
-    auto status = reinterpret_cast<Device *>(device)->set_fw_logger(level, interface_mask);
-    VALIDATE_STATUS(status);
-}
-
-void set_throttling_state(uintptr_t device, bool should_activate)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device*>(device));
-
-    auto status = reinterpret_cast<Device *>(device)->set_throttling_state(should_activate);
-    VALIDATE_STATUS(status);
-}
-
-bool get_throttling_state(uintptr_t device)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device*>(device));
-
-    auto is_active_expected = reinterpret_cast<Device *>(device)->get_throttling_state();
-    VALIDATE_EXPECTED(is_active_expected);
-
-    return is_active_expected.release();
-}
-
-void set_overcurrent_state(uintptr_t device, bool should_activate)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device*>(device));
-
-    auto status = reinterpret_cast<Device*>(device)->set_overcurrent_state(should_activate);
-    VALIDATE_STATUS(status);
-}
-
-bool get_overcurrent_state(uintptr_t device)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device*>(device));
-
-    auto is_required_expected = reinterpret_cast<Device*>(device)->get_overcurrent_state();
-    VALIDATE_EXPECTED(is_required_expected);
-
-    return is_required_expected.release();
-}
-
-py::bytes read_memory(uintptr_t device, uint32_t address, uint32_t length)
-{
-    std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(length, '\x00');
-    VALIDATE_NOT_NULL(response);
-    VALIDATE_NOT_NULL(reinterpret_cast<Device*>(device));
-
-    MemoryView data_view(const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(response->data())), length);
-    auto status = (reinterpret_cast<Device*>(device))->read_memory(address, data_view);
-    VALIDATE_STATUS(status);
-
-    return *response;
-}
-
-void write_memory(uintptr_t device, uint32_t address, py::bytes data, uint32_t length)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device*>(device));
-
-    auto status = (reinterpret_cast<Device*>(device))->write_memory(address, MemoryView(const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(std::string(data).c_str())), length));
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-void test_chip_memories(uintptr_t device)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    hailo_status status = reinterpret_cast<Device *>(device)->test_chip_memories();
-    VALIDATE_STATUS(status);
-}
-
-void i2c_write(uintptr_t device, hailo_i2c_slave_config_t *slave_config, uint32_t register_address, py::bytes data,
-    uint32_t length)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    VALIDATE_NOT_NULL(slave_config);
-
-    std::string data_str(data);
-    MemoryView data_view = MemoryView::create_const(data_str.c_str(), length);
-    auto status = reinterpret_cast<Device *>(device)->i2c_write(*slave_config, register_address, data_view);
-    VALIDATE_STATUS(status);
-}
-
-py::bytes i2c_read(uintptr_t device, hailo_i2c_slave_config_t *slave_config, uint32_t register_address, uint32_t length)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    VALIDATE_NOT_NULL(slave_config);
-
-    std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(length, '\x00');
-    VALIDATE_NOT_NULL(response);
-
-    MemoryView data_view(const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(response->data())), length);
-    auto status = reinterpret_cast<Device *>(device)->i2c_read(*slave_config, register_address, data_view);
-    VALIDATE_STATUS(status);
-
-    return *response;
-}
-
-float32_t power_measurement(uintptr_t device, hailo_dvm_options_t dvm,
-    hailo_power_measurement_types_t measurement_type)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    auto measurement = reinterpret_cast<Device *>(device)->power_measurement(dvm, measurement_type);
-    VALIDATE_EXPECTED(measurement);
-    
-    return measurement.release();
-}
-
-void start_power_measurement(uintptr_t device, uint32_t delay_milliseconds,
-    hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    auto status = reinterpret_cast<Device *>(device)->start_power_measurement(delay_milliseconds, averaging_factor,
-        sampling_period);
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-void set_power_measurement(uintptr_t device, uint32_t index, hailo_dvm_options_t dvm,
-    hailo_power_measurement_types_t measurement_type)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    auto status = reinterpret_cast<Device *>(device)->set_power_measurement(index, dvm, measurement_type);
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-PowerMeasurementData get_power_measurement(uintptr_t device, uint32_t index, bool should_clear)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    auto measurement_data = reinterpret_cast<Device *>(device)->get_power_measurement(index, should_clear);
-    VALIDATE_EXPECTED(measurement_data);
-
-    return PowerMeasurementData(measurement_data.release());
-}
-
-void stop_power_measurement(uintptr_t device)
-{
-    hailo_status status = HAILO_UNINITIALIZED;
-
-    status = hailo_stop_power_measurement((hailo_device)device);
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-void reset(uintptr_t device, hailo_reset_device_mode_t mode)
-{
-    hailo_status status = HAILO_UNINITIALIZED;
-
-    status = hailo_reset_device((hailo_device)device, mode);
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-hailo_fw_user_config_information_t examine_user_config(uintptr_t device)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    auto user_config_info = reinterpret_cast<Device *>(device)->examine_user_config();
-    VALIDATE_EXPECTED(user_config_info);
-
-    return user_config_info.release();
-}
-
-py::bytes read_user_config(uintptr_t device)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    auto config_buffer = reinterpret_cast<Device *>(device)->read_user_config();
-    VALIDATE_EXPECTED(config_buffer);
-
-    std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(
-        const_cast<char*>(reinterpret_cast<const char*>(config_buffer->data())), config_buffer->size());
-    VALIDATE_NOT_NULL(response);
-
-    return *response;
-}
-
-void write_user_config(uintptr_t device, py::bytes data)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    std::string data_str(data); 
-    MemoryView data_view = MemoryView::create_const(data_str.c_str(), data_str.size());
-    auto status = reinterpret_cast<Device *>(device)->write_user_config(data_view);
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-void erase_user_config(uintptr_t device)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    auto status = reinterpret_cast<Device *>(device)->erase_user_config();
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-py::bytes read_board_config(uintptr_t device)
-{
-    auto config_buffer = reinterpret_cast<Device *>(device)->read_board_config();
-    VALIDATE_EXPECTED(config_buffer);
-
-    std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(
-        const_cast<char*>(reinterpret_cast<const char*>(config_buffer->data())), config_buffer->size());
-    VALIDATE_NOT_NULL(response);
-    
-    return *response;
-}
-
-void write_board_config(uintptr_t device, py::bytes data)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    std::string data_str(data); 
-    MemoryView data_view = MemoryView::create_const(data_str.c_str(), data_str.size());
-    auto status = reinterpret_cast<Device *>(device)->write_board_config(data_view);
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-hailo_extended_device_information_t get_extended_device_information(uintptr_t device)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    auto extended_device_info = reinterpret_cast<Device *>(device)->get_extended_device_information();
-    VALIDATE_EXPECTED(extended_device_info);
-       
-    return extended_device_info.release();
-}
-
-hailo_health_info_t get_health_information(uintptr_t device)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    auto health_info = reinterpret_cast<Device *>(device)->get_health_information();
-    VALIDATE_EXPECTED(health_info);
-       
-    return health_info.release();
-}
-
-void sensor_store_config(uintptr_t device, uint32_t section_index, uint32_t reset_data_size, uint32_t sensor_type, const std::string &config_file_path,
-    uint16_t config_height, uint16_t config_width, uint16_t config_fps, const std::string &config_name)
-{
-    hailo_status status = HAILO_UNINITIALIZED;
-    VALIDATE_NOT_NULL(reinterpret_cast<Device*>(device));
-    status = (reinterpret_cast<Device*>(device))->store_sensor_config(section_index, static_cast<hailo_sensor_types_t>(sensor_type), reset_data_size, config_height, config_width,
-        config_fps, config_file_path, config_name);
-
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-void store_isp_config(uintptr_t device, uint32_t reset_config_size, uint16_t config_height, uint16_t config_width, uint16_t config_fps,
-    const std::string &isp_static_config_file_path, const std::string &isp_runtime_config_file_path, const std::string &config_name)
-{
-    hailo_status status = HAILO_UNINITIALIZED;
-    VALIDATE_NOT_NULL(reinterpret_cast<Device*>(device));
-    status = (reinterpret_cast<Device*>(device))->store_isp_config(reset_config_size, config_height, config_width, config_fps,
-        isp_static_config_file_path, isp_runtime_config_file_path, config_name);
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-py::bytes sensor_get_sections_info(uintptr_t device)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    auto buffer = (reinterpret_cast<Device*>(device))->sensor_get_sections_info();
-    VALIDATE_EXPECTED(buffer);
-    
-    std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(
-        const_cast<char*>(reinterpret_cast<const char*>(buffer->data())), buffer->size());
-    VALIDATE_NOT_NULL(response);
-
-    return *response;
-}
-
-void sensor_set_i2c_bus_index(uintptr_t device, uint32_t sensor_type, uint32_t bus_index)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    hailo_status status = (reinterpret_cast<Device*>(device))->sensor_set_i2c_bus_index(
-        static_cast<hailo_sensor_types_t>(sensor_type), bus_index);
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-void sensor_load_and_start_config(uintptr_t device, uint32_t section_index)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    auto status = (reinterpret_cast<Device*>(device))->sensor_load_and_start_config(section_index);
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-void sensor_reset(uintptr_t device, uint32_t section_index)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    auto status = (reinterpret_cast<Device*>(device))->sensor_reset(section_index);
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-void sensor_set_generic_i2c_slave(uintptr_t device, uint16_t slave_address,
-    uint8_t register_address_size, uint8_t bus_index, uint8_t should_hold_bus, uint8_t endianness)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    auto status = (reinterpret_cast<Device*>(device))->sensor_set_generic_i2c_slave(slave_address, register_address_size,
-        bus_index, should_hold_bus, endianness);
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-void firmware_update(uintptr_t device, py::bytes fw_bin, uint32_t fw_bin_length, bool should_reset)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    hailo_status status = reinterpret_cast<Device *>(device)->firmware_update(MemoryView::create_const(std::string(fw_bin).c_str(), fw_bin_length),
-        should_reset);
-    VALIDATE_STATUS(status);
-}
-
-void second_stage_update(uintptr_t device, py::bytes second_stage_bin, uint32_t second_stage_bin_length)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    hailo_status status = reinterpret_cast<Device *>(device)->second_stage_update((uint8_t *)std::string(second_stage_bin).c_str(), 
-        second_stage_bin_length);
-    VALIDATE_STATUS(status);
-}
-
-py::list configure_device_from_hef(uintptr_t device, const HefWrapper &hef,
-    const NetworkGroupsParamsMap &configure_params={})
-{
-    if (nullptr == (void*)device) {
-        EXIT_WITH_ERROR("Got NULL in parameter 'device'!");
-    }
-
-    auto network_groups = (reinterpret_cast<Device*>(device))->configure(*hef.hef_ptr(), configure_params);
-    VALIDATE_EXPECTED(network_groups);
-
-    py::list results;
-    for (const auto &network_group : network_groups.value()) {
-        results.append(network_group.get());
-    }
-
-    return results;
-}
-
-// Quantization
-void dequantize_output_buffer_from_uint8(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &dst_dtype,
-    uint32_t shape_size, const hailo_quant_info_t &quant_info)
-{
-    switch (dst_dtype) {
-        case HAILO_FORMAT_TYPE_UINT8:
-            Quantization::dequantize_output_buffer<uint8_t, uint8_t>(static_cast<uint8_t*>(src_buffer.mutable_data()),
-                static_cast<uint8_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        case HAILO_FORMAT_TYPE_UINT16:
-            Quantization::dequantize_output_buffer<uint16_t, uint8_t>(static_cast<uint8_t*>(src_buffer.mutable_data()),
-                static_cast<uint16_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        case HAILO_FORMAT_TYPE_FLOAT32:
-            Quantization::dequantize_output_buffer<float32_t, uint8_t>(static_cast<uint8_t*>(src_buffer.mutable_data()),
-                static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        default:
-            LOGGER__ERROR("Output quantization isn't supported from src format type uint8 to dst format type = {}",
-                convert_format_type_to_string(dst_dtype));
-            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
-            break;
-    }
-}
-
-void dequantize_output_buffer_from_uint16(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &dst_dtype,
-    uint32_t shape_size, const hailo_quant_info_t &quant_info)
-{
-    switch (dst_dtype) {
-        case HAILO_FORMAT_TYPE_UINT16:
-            Quantization::dequantize_output_buffer<uint16_t, uint16_t>(static_cast<uint16_t*>(src_buffer.mutable_data()),
-                static_cast<uint16_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        case HAILO_FORMAT_TYPE_FLOAT32:
-            Quantization::dequantize_output_buffer<float32_t, uint16_t>(static_cast<uint16_t*>(src_buffer.mutable_data()),
-                static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        default:
-            LOGGER__ERROR("Output quantization isn't supported from src dormat type uint16 to dst format type = {}",
-                convert_format_type_to_string(dst_dtype));
-            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
-            break;
-    }
-}
-
-void dequantize_output_buffer_from_float32(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &dst_dtype,
-    uint32_t shape_size, const hailo_quant_info_t &quant_info)
-{
-    switch (dst_dtype) {
-        case HAILO_FORMAT_TYPE_FLOAT32:
-            Quantization::dequantize_output_buffer<float32_t, float32_t>(static_cast<float32_t*>(src_buffer.mutable_data()),
-                static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        default:
-            LOGGER__ERROR("Output quantization isn't supported from src format type float32 to dst format type = {}",
-                convert_format_type_to_string(dst_dtype));
-            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
-            break;
-    }
-}
-
-void dequantize_output_buffer_from_uint8_in_place(py::array dst_buffer, const hailo_format_type_t &dst_dtype,
-    uint32_t shape_size, const hailo_quant_info_t &quant_info)
-{
-    switch (dst_dtype) {
-        case HAILO_FORMAT_TYPE_UINT8:
-            Quantization::dequantize_output_buffer_in_place<uint8_t, uint8_t>(
-                static_cast<uint8_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        case HAILO_FORMAT_TYPE_UINT16:
-            Quantization::dequantize_output_buffer_in_place<uint16_t, uint8_t>(
-                static_cast<uint16_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        case HAILO_FORMAT_TYPE_FLOAT32:
-            Quantization::dequantize_output_buffer_in_place<float32_t, uint8_t>(
-                static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        default:
-            LOGGER__ERROR("Output quantization isn't supported from src format type uint8 to dst format type = {}",
-                convert_format_type_to_string(dst_dtype));
-            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
-            break;
-    }
-}
-
-void dequantize_output_buffer_from_uint16_in_place(py::array dst_buffer, const hailo_format_type_t &dst_dtype,
-    uint32_t shape_size, const hailo_quant_info_t &quant_info)
-{
-    switch (dst_dtype) {
-        case HAILO_FORMAT_TYPE_UINT16:
-            Quantization::dequantize_output_buffer_in_place<uint16_t, uint16_t>(
-                static_cast<uint16_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        case HAILO_FORMAT_TYPE_FLOAT32:
-            Quantization::dequantize_output_buffer_in_place<float32_t, uint16_t>(
-                static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        default:
-            LOGGER__ERROR("Output quantization isn't supported from src dormat type uint16 to dst format type = {}",
-                convert_format_type_to_string(dst_dtype));
-            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
-            break;
-    }
-}
-
-void dequantize_output_buffer_from_float32_in_place(py::array dst_buffer, const hailo_format_type_t &dst_dtype,
-    uint32_t shape_size, const hailo_quant_info_t &quant_info)
-{
-    switch (dst_dtype) {
-        case HAILO_FORMAT_TYPE_FLOAT32:
-            Quantization::dequantize_output_buffer_in_place<float32_t, float32_t>(
-                static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        default:
-            LOGGER__ERROR("Output quantization isn't supported from src format type float32 to dst format type = {}",
-                convert_format_type_to_string(dst_dtype));
-            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
-            break;
-    }
-}
-
-void dequantize_output_buffer_in_place(py::array dst_buffer, const hailo_format_type_t &src_dtype,
-    const hailo_format_type_t &dst_dtype, uint32_t shape_size, const hailo_quant_info_t &quant_info)
-{
-    switch (src_dtype) {
-        case HAILO_FORMAT_TYPE_UINT8:
-            dequantize_output_buffer_from_uint8_in_place(dst_buffer, dst_dtype, shape_size, quant_info);
-            break;
-        case HAILO_FORMAT_TYPE_UINT16:
-            dequantize_output_buffer_from_uint16_in_place(dst_buffer, dst_dtype, shape_size, quant_info);
-            break;
-        case HAILO_FORMAT_TYPE_FLOAT32:
-            dequantize_output_buffer_from_float32_in_place(dst_buffer, dst_dtype, shape_size, quant_info);
-            break;
-        default:
-            LOGGER__ERROR("Unsupported src format type = {}", convert_format_type_to_string(dst_dtype));
-            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
-            break;
-    }
-}
-
-void dequantize_output_buffer(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &src_dtype,
-    const hailo_format_type_t &dst_dtype, uint32_t shape_size, const hailo_quant_info_t &quant_info)
-{
-    switch (src_dtype) {
-        case HAILO_FORMAT_TYPE_UINT8:
-            dequantize_output_buffer_from_uint8(src_buffer, dst_buffer, dst_dtype, shape_size, quant_info);
-            break;
-        case HAILO_FORMAT_TYPE_UINT16:
-            dequantize_output_buffer_from_uint16(src_buffer, dst_buffer, dst_dtype, shape_size, quant_info);
-            break;
-        case HAILO_FORMAT_TYPE_FLOAT32:
-            dequantize_output_buffer_from_float32(src_buffer, dst_buffer, dst_dtype, shape_size, quant_info);
-            break;
-        default:
-            LOGGER__ERROR("Unsupported src format type = {}", convert_format_type_to_string(dst_dtype));
-            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
-            break;
-    }
-}
-
-void quantize_input_buffer_from_uint8(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &dst_dtype,
-    uint32_t shape_size, const hailo_quant_info_t &quant_info)
-{
-    switch (dst_dtype) {
-        case HAILO_FORMAT_TYPE_UINT8:
-            Quantization::quantize_input_buffer<uint8_t, uint8_t>(static_cast<uint8_t*>(src_buffer.mutable_data()),
-                static_cast<uint8_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        default:
-            LOGGER__ERROR("Input quantization isn't supported from src format type uint8 to dst format type = {}", convert_format_type_to_string(dst_dtype));
-            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
-            break;
-    }
-}
-
-void quantize_input_buffer_from_uint16(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &dst_dtype,
-    uint32_t shape_size, const hailo_quant_info_t &quant_info)
-{
-    switch (dst_dtype) {
-        case HAILO_FORMAT_TYPE_UINT8:
-            Quantization::quantize_input_buffer<uint16_t, uint8_t>(static_cast<uint16_t*>(src_buffer.mutable_data()),
-                static_cast<uint8_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        case HAILO_FORMAT_TYPE_UINT16:
-            Quantization::quantize_input_buffer<uint16_t, uint16_t>(static_cast<uint16_t*>(src_buffer.mutable_data()),
-                static_cast<uint16_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        default:
-            LOGGER__ERROR("Input quantization isn't supported from src format type uint16 to dst format type = {}",
-                convert_format_type_to_string(dst_dtype));
-            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
-            break;
-    }
-}
-
-void quantize_input_buffer_from_float32(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &dst_dtype,
-    uint32_t shape_size, const hailo_quant_info_t &quant_info)
-{
-    switch (dst_dtype) {
-        case HAILO_FORMAT_TYPE_UINT8:
-            Quantization::quantize_input_buffer<float32_t, uint8_t>(static_cast<float32_t*>(src_buffer.mutable_data()),
-                static_cast<uint8_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        case HAILO_FORMAT_TYPE_UINT16:
-            Quantization::quantize_input_buffer<float32_t, uint16_t>(static_cast<float32_t*>(src_buffer.mutable_data()),
-                static_cast<uint16_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
-            break;
-        default:
-            LOGGER__ERROR("Input quantization isn't supported from src format type float32 to dst format type = {}",
-                convert_format_type_to_string(dst_dtype));
-            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
-            break;
-    }
-}
-
-void quantize_input_buffer(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &src_dtype,
-    const hailo_format_type_t &dst_dtype, uint32_t shape_size, const hailo_quant_info_t &quant_info)
-{
-    switch (src_dtype) {
-        case HAILO_FORMAT_TYPE_UINT8:
-            quantize_input_buffer_from_uint8(src_buffer, dst_buffer, dst_dtype, shape_size, quant_info);
-            break;
-        case HAILO_FORMAT_TYPE_UINT16:
-            quantize_input_buffer_from_uint16(src_buffer, dst_buffer, dst_dtype, shape_size, quant_info);
-            break;
-        case HAILO_FORMAT_TYPE_FLOAT32:
-            quantize_input_buffer_from_float32(src_buffer, dst_buffer, dst_dtype, shape_size, quant_info);
-            break;
-        default:
-            LOGGER__ERROR("Input quantization isn't supported for src format type = {}", convert_format_type_to_string(dst_dtype));
-            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
-            break;
-    }
-}
-
-void set_pause_frames(uintptr_t device, bool rx_pause_frames_enable)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    auto status = reinterpret_cast<Device *>(device)->set_pause_frames(rx_pause_frames_enable);
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-void wd_enable(uintptr_t device, hailo_cpu_id_t cpu_id)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    hailo_status status = reinterpret_cast<Device *>(device)->wd_enable(cpu_id);
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-void wd_disable(uintptr_t device, hailo_cpu_id_t cpu_id)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    hailo_status status = reinterpret_cast<Device *>(device)->wd_disable(cpu_id);
-    VALIDATE_STATUS(status);
-
-    return;
-}
-
-void wd_config(uintptr_t device, hailo_cpu_id_t cpu_id, uint32_t wd_cycles, hailo_watchdog_mode_t wd_mode)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    auto status = reinterpret_cast<Device *>(device)->wd_config(cpu_id, wd_cycles, wd_mode);
-    VALIDATE_STATUS(status);
-}
-
-uint32_t previous_system_state(uintptr_t device, hailo_cpu_id_t cpu_id)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-
-    auto system_state = reinterpret_cast<Device *>(device)->previous_system_state(cpu_id);
-    VALIDATE_EXPECTED(system_state);
-
-    return system_state.release();
-}
-
-hailo_chip_temperature_info_t get_chip_temperature(uintptr_t device)
-{
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    
-    auto temp_info = reinterpret_cast<Device *>(device)->get_chip_temperature();
-    VALIDATE_EXPECTED(temp_info);
-
-    return temp_info.release();
-}
-
-void set_input_stream_timeout(uintptr_t input_stream, uint32_t timeout_milis)
-{
-    hailo_status status = hailo_set_input_stream_timeout((hailo_input_stream)input_stream, timeout_milis);
-    VALIDATE_STATUS(status);
-}
-
-void set_output_stream_timeout(uintptr_t output_stream, uint32_t timeout_milis)
-{
-    hailo_status status = hailo_set_output_stream_timeout((hailo_output_stream)output_stream, timeout_milis);
-    VALIDATE_STATUS(status);
-}
-
-void set_notification_callback(uintptr_t device, const std::function<void(uintptr_t, const hailo_notification_t&, py::object)> &callback,
-    hailo_notification_id_t notification_id, py::object opaque)
-{
-    // we capture opaque and move it because when opaque goes out of score it will be deleted,
-    // so capturing it ensures that it will not be deleted
-    hailo_status status = ((Device*)device)->set_notification_callback(
-        [callback, op = std::move(opaque)] (Device &device, const hailo_notification_t &notification, void* opaque) {
-            (void)opaque;
-            callback((uintptr_t)&device, notification, op);
-        }, notification_id, nullptr);
-    VALIDATE_STATUS(status);
-}
-
-void remove_notification_callback(uintptr_t device, hailo_notification_id_t notification_id)
-{
-    hailo_status status = hailo_remove_notification_callback(reinterpret_cast<hailo_device>(device), notification_id);
-    VALIDATE_STATUS(status);
-}
-
-UdpScan::UdpScan()
-{
-}
 
 std::list<std::string> UdpScan::scan_devices(char* interface_name, uint32_t timeout_milliseconds)
 {
@@ -916,41 +73,248 @@ std::list<std::string> UdpScan::scan_devices(char* interface_name, uint32_t time
     return device_addresses;
 }
 
-py::bytes read_log(uintptr_t device, size_t byte_count, hailo_cpu_id_t cpu_id)
+std::vector<hailo_pcie_device_info_t> scan_pcie_devices(void)
 {
-    std::string response;
+    auto scan_result = Device::scan_pcie();
+    VALIDATE_EXPECTED(scan_result);
 
-    response.reserve(byte_count);
-    response.resize(byte_count);
-
-    MemoryView response_view ((&response[0]), byte_count);
-    auto response_size_expected = ((Device*)device)->read_log(response_view, cpu_id);
-    VALIDATE_EXPECTED(response_size_expected);
-
-    response.resize(response_size_expected.release());
-    return py::bytes(response);
+    return scan_result.release();
 }
 
-void direct_write_memory(uintptr_t device, uint32_t address, py::bytes buffer)
+// Quantization
+void dequantize_output_buffer_from_uint8(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &dst_dtype,
+    uint32_t shape_size, const hailo_quant_info_t &quant_info)
 {
-    const auto buffer_str = static_cast<std::string>(buffer);
-    hailo_status status = ((Device*)device)->direct_write_memory(address, buffer_str.c_str(),
-        (uint32_t) (buffer_str.length()));
-    VALIDATE_STATUS(status);
+    switch (dst_dtype) {
+        case HAILO_FORMAT_TYPE_UINT8:
+            Quantization::dequantize_output_buffer<uint8_t, uint8_t>(static_cast<uint8_t*>(src_buffer.mutable_data()),
+                static_cast<uint8_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        case HAILO_FORMAT_TYPE_UINT16:
+            Quantization::dequantize_output_buffer<uint16_t, uint8_t>(static_cast<uint8_t*>(src_buffer.mutable_data()),
+                static_cast<uint16_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        case HAILO_FORMAT_TYPE_FLOAT32:
+            Quantization::dequantize_output_buffer<float32_t, uint8_t>(static_cast<uint8_t*>(src_buffer.mutable_data()),
+                static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        default:
+            LOGGER__ERROR("Output quantization isn't supported from src format type uint8 to dst format type = {}",
+                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
+            break;
+    }
 }
 
-py::bytes direct_read_memory(uintptr_t device, uint32_t address, uint32_t size)
+void dequantize_output_buffer_from_uint16(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &dst_dtype,
+    uint32_t shape_size, const hailo_quant_info_t &quant_info)
 {
-    std::string buffer_str;
+    switch (dst_dtype) {
+        case HAILO_FORMAT_TYPE_UINT16:
+            Quantization::dequantize_output_buffer<uint16_t, uint16_t>(static_cast<uint16_t*>(src_buffer.mutable_data()),
+                static_cast<uint16_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        case HAILO_FORMAT_TYPE_FLOAT32:
+            Quantization::dequantize_output_buffer<float32_t, uint16_t>(static_cast<uint16_t*>(src_buffer.mutable_data()),
+                static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        default:
+            LOGGER__ERROR("Output quantization isn't supported from src dormat type uint16 to dst format type = {}",
+                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
+            break;
+    }
+}
 
-    buffer_str.reserve(size);
-    buffer_str.resize(size);
+void dequantize_output_buffer_from_float32(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &dst_dtype,
+    uint32_t shape_size, const hailo_quant_info_t &quant_info)
+{
+    switch (dst_dtype) {
+        case HAILO_FORMAT_TYPE_FLOAT32:
+            Quantization::dequantize_output_buffer<float32_t, float32_t>(static_cast<float32_t*>(src_buffer.mutable_data()),
+                static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        default:
+            LOGGER__ERROR("Output quantization isn't supported from src format type float32 to dst format type = {}",
+                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
+            break;
+    }
+}
 
-    hailo_status status = ((Device*)device)->direct_read_memory(address, (char*)buffer_str.c_str(), size);
-    VALIDATE_STATUS(status);
+void dequantize_output_buffer_from_uint8_in_place(py::array dst_buffer, const hailo_format_type_t &dst_dtype,
+    uint32_t shape_size, const hailo_quant_info_t &quant_info)
+{
+    switch (dst_dtype) {
+        case HAILO_FORMAT_TYPE_UINT8:
+            Quantization::dequantize_output_buffer_in_place<uint8_t, uint8_t>(
+                static_cast<uint8_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        case HAILO_FORMAT_TYPE_UINT16:
+            Quantization::dequantize_output_buffer_in_place<uint16_t, uint8_t>(
+                static_cast<uint16_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        case HAILO_FORMAT_TYPE_FLOAT32:
+            Quantization::dequantize_output_buffer_in_place<float32_t, uint8_t>(
+                static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        default:
+            LOGGER__ERROR("Output quantization isn't supported from src format type uint8 to dst format type = {}",
+                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
+            break;
+    }
+}
 
-    buffer_str.resize(size);
-    return py::bytes(buffer_str);
+void dequantize_output_buffer_from_uint16_in_place(py::array dst_buffer, const hailo_format_type_t &dst_dtype,
+    uint32_t shape_size, const hailo_quant_info_t &quant_info)
+{
+    switch (dst_dtype) {
+        case HAILO_FORMAT_TYPE_UINT16:
+            Quantization::dequantize_output_buffer_in_place<uint16_t, uint16_t>(
+                static_cast<uint16_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        case HAILO_FORMAT_TYPE_FLOAT32:
+            Quantization::dequantize_output_buffer_in_place<float32_t, uint16_t>(
+                static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        default:
+            LOGGER__ERROR("Output quantization isn't supported from src dormat type uint16 to dst format type = {}",
+                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
+            break;
+    }
+}
+
+void dequantize_output_buffer_from_float32_in_place(py::array dst_buffer, const hailo_format_type_t &dst_dtype,
+    uint32_t shape_size, const hailo_quant_info_t &quant_info)
+{
+    switch (dst_dtype) {
+        case HAILO_FORMAT_TYPE_FLOAT32:
+            Quantization::dequantize_output_buffer_in_place<float32_t, float32_t>(
+                static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        default:
+            LOGGER__ERROR("Output quantization isn't supported from src format type float32 to dst format type = {}",
+                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
+            break;
+    }
+}
+
+void dequantize_output_buffer_in_place(py::array dst_buffer, const hailo_format_type_t &src_dtype,
+    const hailo_format_type_t &dst_dtype, uint32_t shape_size, const hailo_quant_info_t &quant_info)
+{
+    switch (src_dtype) {
+        case HAILO_FORMAT_TYPE_UINT8:
+            dequantize_output_buffer_from_uint8_in_place(dst_buffer, dst_dtype, shape_size, quant_info);
+            break;
+        case HAILO_FORMAT_TYPE_UINT16:
+            dequantize_output_buffer_from_uint16_in_place(dst_buffer, dst_dtype, shape_size, quant_info);
+            break;
+        case HAILO_FORMAT_TYPE_FLOAT32:
+            dequantize_output_buffer_from_float32_in_place(dst_buffer, dst_dtype, shape_size, quant_info);
+            break;
+        default:
+            LOGGER__ERROR("Unsupported src format type = {}", HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
+            break;
+    }
+}
+
+void dequantize_output_buffer(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &src_dtype,
+    const hailo_format_type_t &dst_dtype, uint32_t shape_size, const hailo_quant_info_t &quant_info)
+{
+    switch (src_dtype) {
+        case HAILO_FORMAT_TYPE_UINT8:
+            dequantize_output_buffer_from_uint8(src_buffer, dst_buffer, dst_dtype, shape_size, quant_info);
+            break;
+        case HAILO_FORMAT_TYPE_UINT16:
+            dequantize_output_buffer_from_uint16(src_buffer, dst_buffer, dst_dtype, shape_size, quant_info);
+            break;
+        case HAILO_FORMAT_TYPE_FLOAT32:
+            dequantize_output_buffer_from_float32(src_buffer, dst_buffer, dst_dtype, shape_size, quant_info);
+            break;
+        default:
+            LOGGER__ERROR("Unsupported src format type = {}", HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
+            break;
+    }
+}
+
+void quantize_input_buffer_from_uint8(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &dst_dtype,
+    uint32_t shape_size, const hailo_quant_info_t &quant_info)
+{
+    switch (dst_dtype) {
+        case HAILO_FORMAT_TYPE_UINT8:
+            Quantization::quantize_input_buffer<uint8_t, uint8_t>(static_cast<uint8_t*>(src_buffer.mutable_data()),
+                static_cast<uint8_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        default:
+            LOGGER__ERROR("Input quantization isn't supported from src format type uint8 to dst format type = {}", HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
+            break;
+    }
+}
+
+void quantize_input_buffer_from_uint16(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &dst_dtype,
+    uint32_t shape_size, const hailo_quant_info_t &quant_info)
+{
+    switch (dst_dtype) {
+        case HAILO_FORMAT_TYPE_UINT8:
+            Quantization::quantize_input_buffer<uint16_t, uint8_t>(static_cast<uint16_t*>(src_buffer.mutable_data()),
+                static_cast<uint8_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        case HAILO_FORMAT_TYPE_UINT16:
+            Quantization::quantize_input_buffer<uint16_t, uint16_t>(static_cast<uint16_t*>(src_buffer.mutable_data()),
+                static_cast<uint16_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        default:
+            LOGGER__ERROR("Input quantization isn't supported from src format type uint16 to dst format type = {}",
+                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
+            break;
+    }
+}
+
+void quantize_input_buffer_from_float32(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &dst_dtype,
+    uint32_t shape_size, const hailo_quant_info_t &quant_info)
+{
+    switch (dst_dtype) {
+        case HAILO_FORMAT_TYPE_UINT8:
+            Quantization::quantize_input_buffer<float32_t, uint8_t>(static_cast<float32_t*>(src_buffer.mutable_data()),
+                static_cast<uint8_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        case HAILO_FORMAT_TYPE_UINT16:
+            Quantization::quantize_input_buffer<float32_t, uint16_t>(static_cast<float32_t*>(src_buffer.mutable_data()),
+                static_cast<uint16_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
+            break;
+        default:
+            LOGGER__ERROR("Input quantization isn't supported from src format type float32 to dst format type = {}",
+                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
+            break;
+    }
+}
+
+void quantize_input_buffer(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &src_dtype,
+    const hailo_format_type_t &dst_dtype, uint32_t shape_size, const hailo_quant_info_t &quant_info)
+{
+    switch (src_dtype) {
+        case HAILO_FORMAT_TYPE_UINT8:
+            quantize_input_buffer_from_uint8(src_buffer, dst_buffer, dst_dtype, shape_size, quant_info);
+            break;
+        case HAILO_FORMAT_TYPE_UINT16:
+            quantize_input_buffer_from_uint16(src_buffer, dst_buffer, dst_dtype, shape_size, quant_info);
+            break;
+        case HAILO_FORMAT_TYPE_FLOAT32:
+            quantize_input_buffer_from_float32(src_buffer, dst_buffer, dst_dtype, shape_size, quant_info);
+            break;
+        default:
+            LOGGER__ERROR("Input quantization isn't supported for src format type = {}", HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
+            break;
+    }
 }
 
 std::string get_status_message(uint32_t status_in)
@@ -1025,66 +389,37 @@ private:
 
 // End of temp hack for hlpcie
 
+static void validate_versions_match()
+{
+    hailo_version_t libhailort_version = {};
+    auto status = hailo_get_library_version(&libhailort_version);
+    if (HAILO_SUCCESS != status) {
+        throw std::logic_error("Failed to get libhailort version");
+    }
+
+    bool versions_match = ((HAILORT_MAJOR_VERSION == libhailort_version.major) &&
+        (HAILORT_MINOR_VERSION == libhailort_version.minor) &&
+        (HAILORT_REVISION_VERSION == libhailort_version.revision));
+    if (!versions_match) {
+        std::stringstream message;
+        message << "libhailort version (" <<
+            libhailort_version.major << "." << libhailort_version.minor << "." << libhailort_version.revision <<
+            ") does not match pyhailort version (" <<
+            HAILORT_MAJOR_VERSION << "." << HAILORT_MINOR_VERSION << "." << HAILORT_REVISION_VERSION << ")";
+        throw std::logic_error(message.str());
+    }
+}
+
 PYBIND11_MODULE(_pyhailort, m) {
+    validate_versions_match();
+
     m.def("get_status_message", &get_status_message);
-    // Device
-    m.def("create_eth_device", &create_eth_device);
-    m.def("create_pcie_device", &create_pcie_device);
     m.def("scan_pcie_devices", &scan_pcie_devices);
-    m.def("release_device", &release_device);
-    m.def("get_hlpcie_device", &get_hlpcie_device);
-    // Controls
-    m.def("identify", &identify);
-    m.def("core_identify", &core_identify);
-    m.def("set_fw_logger", &set_fw_logger);
-    m.def("read_memory", &read_memory);
-    m.def("write_memory", &write_memory);
-    m.def("power_measurement", &power_measurement);
-    m.def("start_power_measurement", &start_power_measurement);
-    m.def("stop_power_measurement", &stop_power_measurement);
-    m.def("set_power_measurement", &set_power_measurement);
-    m.def("get_power_measurement", &get_power_measurement);
-    m.def("firmware_update", &firmware_update);
-    m.def("second_stage_update", &second_stage_update);
-    m.def("examine_user_config", &examine_user_config);
-    m.def("read_user_config", &read_user_config);
-    m.def("write_user_config", &write_user_config);
-    m.def("erase_user_config", &erase_user_config);
-    m.def("read_board_config", &read_board_config);
-    m.def("write_board_config", &write_board_config);
-    m.def("i2c_write", &i2c_write);
-    m.def("i2c_read", &i2c_read);
-    m.def("sensor_store_config", &sensor_store_config);
-    m.def("store_isp_config", &store_isp_config);
-    m.def("sensor_set_i2c_bus_index", &sensor_set_i2c_bus_index);
-    m.def("sensor_load_and_start_config", &sensor_load_and_start_config);
-    m.def("sensor_reset", &sensor_reset);
-    m.def("sensor_set_generic_i2c_slave", &sensor_set_generic_i2c_slave);
-    m.def("sensor_get_sections_info", &sensor_get_sections_info);
-    m.def("reset", &reset);
-    m.def("wd_enable", &wd_enable);
-    m.def("wd_disable", &wd_disable);
-    m.def("wd_config", &wd_config);
-    m.def("previous_system_state", &previous_system_state);
-    m.def("get_chip_temperature", &get_chip_temperature);
-    m.def("get_extended_device_information", &get_extended_device_information);
-    m.def("set_pause_frames", &set_pause_frames);
-    m.def("test_chip_memories", &test_chip_memories);
-    m.def("_get_health_information", &get_health_information);
-    m.def("set_throttling_state", &set_throttling_state);
-    m.def("get_throttling_state", &get_throttling_state);
-    m.def("_set_overcurrent_state", &set_overcurrent_state);
-    m.def("_get_overcurrent_state", &get_overcurrent_state);
-    //HEF
-    m.def("configure_device_from_hef", &configure_device_from_hef);
-    //Stream related
-    m.def("set_input_stream_timeout", &set_input_stream_timeout);
-    m.def("set_output_stream_timeout", &set_output_stream_timeout);
-    m.def("set_notification_callback", &set_notification_callback);
-    m.def("remove_notification_callback", &remove_notification_callback);
     m.def("dequantize_output_buffer_in_place", &dequantize_output_buffer_in_place);
     m.def("dequantize_output_buffer", &dequantize_output_buffer);
     m.def("quantize_input_buffer", &quantize_input_buffer);
+
+    m.def("get_format_data_bytes", &HailoRTCommon::get_format_data_bytes);
 
     py::class_<hailo_pcie_device_info_t>(m, "PcieDeviceInfo")
         .def(py::init<>())
@@ -1168,6 +503,13 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("AVERAGE_256", HAILO_AVERAGE_FACTOR_256, "Each sample reflects a value of 256 sub-samples.")
         .value("AVERAGE_512", HAILO_AVERAGE_FACTOR_512, "Each sample reflects a value of 512 sub-samples.")
         .value("AVERAGE_1024", HAILO_AVERAGE_FACTOR_1024, "Each sample reflects a value of 1024 sub-samples.")
+        ;
+
+    py::enum_<hailo_measurement_buffer_index_t>(m, "MeasurementBufferIndex", "Enum-like class representing all FW buffers for power measurements storing.")
+        .value("MEASUREMENT_BUFFER_INDEX_0", HAILO_MEASUREMENT_BUFFER_INDEX_0)
+        .value("MEASUREMENT_BUFFER_INDEX_1", HAILO_MEASUREMENT_BUFFER_INDEX_1)
+        .value("MEASUREMENT_BUFFER_INDEX_2", HAILO_MEASUREMENT_BUFFER_INDEX_2)
+        .value("MEASUREMENT_BUFFER_INDEX_3", HAILO_MEASUREMENT_BUFFER_INDEX_3)
         ;
 
     py::class_<hailo_notification_t>(m, "Notification")
@@ -1847,23 +1189,18 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_static("MAX_ALIGNED_UDP_PAYLOAD_SIZE_RTP", []() { return 1472;} )
         ;
 
-    m.def("read_log", &read_log, py::return_value_policy::move);
-    m.def("direct_write_memory", &direct_write_memory);
-    m.def("direct_read_memory", &direct_read_memory);
-    m.def("get_format_data_bytes", &HailoRTCommon::get_format_data_bytes);
-
-    HEF_API_initialize_python_module(m);
+    HefWrapper::initialize_python_module(m);
     VStream_api_initialize_python_module(m);
     VDevice_api_initialize_python_module(m);
+    DeviceWrapper::add_to_python_module(m);
+
     #if defined(__GNUC__)
     TrafficControlUtilWrapper::add_to_python_module(m);
     #endif
 
-#ifdef VERSION_INFO
-    m.attr("__version__") = VERSION_INFO;
-#else
-    m.attr("__version__") = "dev";
-#endif
+    std::stringstream version;
+    version << HAILORT_MAJOR_VERSION << "." << HAILORT_MINOR_VERSION << "." << HAILORT_REVISION_VERSION;
+    m.attr("__version__") = version.str();
 }
 
 } /* namespace hailort */

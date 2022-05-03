@@ -15,8 +15,8 @@ HcpConfigNetworkGroup::HcpConfigNetworkGroup(Device &device, HcpConfigActiveAppH
           m_config(std::move(config)), m_active_net_group_holder(active_net_group_holder), m_device(device)
 {}
 
-Expected<std::unique_ptr<ActivatedNetworkGroup>> HcpConfigNetworkGroup::activate(
-    const hailo_activate_network_group_params_t &network_group_params)
+Expected<std::unique_ptr<ActivatedNetworkGroup>> HcpConfigNetworkGroup::activate_impl(
+    const hailo_activate_network_group_params_t &network_group_params, uint16_t /* dynamic_batch_size */)
 {
     auto start_time = std::chrono::steady_clock::now();
 

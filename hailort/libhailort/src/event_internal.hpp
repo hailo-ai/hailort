@@ -67,8 +67,8 @@ private:
     //       * Hence, SHUTDOWN_INDEX must come before WAITABLE_INDEX!
     static const size_t SHUTDOWN_INDEX = 0;
     static const size_t WAITABLE_INDEX = 1;
-    #if defined(_MSC_VER)
-    using WaitHandleArray = std::array<underlying_handle_t, 2>;
+    #if defined(_MSC_VER) || defined(__QNX__)
+    using WaitHandleArray = std::array<underlying_waitable_handle_t, 2>;
     #else
     using WaitHandleArray = std::array<struct pollfd, 2>;
     #endif

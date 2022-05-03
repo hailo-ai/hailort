@@ -83,7 +83,7 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> Netwo
     GST_CHECK(nullptr != network_name, make_unexpected(HAILO_INVALID_ARGUMENT), m_element, RESOURCE, "Got nullptr in network name!");
 
     m_network_name = network_name;
-    hailo_status status = m_net_group_config_manager.add_network(m_network_name, m_element);
+    hailo_status status = m_net_group_config_manager.add_network_to_shared_network_group(m_shared_device_id, m_network_name, m_element);
     GST_CHECK(HAILO_SUCCESS == status, make_unexpected(status), m_element, RESOURCE,
         "Inserting network name to configured networks has failed, status = %d", status);
 
@@ -300,15 +300,24 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> NetworkGroupConfigManager::con
     return std::move(network_group_list->at(0));
 }
 
-hailo_status NetworkGroupConfigManager::add_network(const std::string &network_name, const GstElement *owner_element)
+hailo_status NetworkGroupConfigManager::add_network_to_shared_network_group(const std::string &shared_device_id, const std::string &network_name,
+    const GstElement *owner_element)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
 
-    auto found = m_configured_networks.find(network_name);
-    GST_CHECK(found == m_configured_networks.end(), HAILO_INVALID_OPERATION, owner_element, RESOURCE,
-        "Network %s was already configured by %s!", network_name.c_str(), found->second.c_str());
+    if (shared_device_id.empty()) {
+        // the device is unique so we don't need to share anything
+        return HAILO_SUCCESS;
+    }
 
-    m_configured_networks[network_name] = GST_ELEMENT_NAME(owner_element);
+    auto found_by_device = m_configured_networks.find(shared_device_id);
+    if (found_by_device != m_configured_networks.end()) {
+        auto found_network = found_by_device->second.find(network_name);
+        GST_CHECK(found_network == found_by_device->second.end(), HAILO_INVALID_OPERATION, owner_element, RESOURCE,
+            "Network %s was already configured by %s by the same device!", network_name.c_str(), found_network->second.c_str());
+    }
+
+    m_configured_networks[shared_device_id][network_name] = GST_ELEMENT_NAME(owner_element);
     return HAILO_SUCCESS;
 }
 

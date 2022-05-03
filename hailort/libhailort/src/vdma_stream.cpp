@@ -137,6 +137,22 @@ Expected<size_t> VdmaInputStream::sync_write_raw_buffer(const MemoryView &buffer
     return buffer.size();
 }
 
+hailo_status VdmaInputStream::write_buffer_only(const MemoryView &buffer)
+{
+    return m_channel->write_buffer(buffer, m_channel_timeout);
+}
+
+hailo_status VdmaInputStream::send_pending_buffer()
+{
+    hailo_status status = m_channel->wait(get_frame_size(), m_channel_timeout);
+    if ((HAILO_STREAM_INTERNAL_ABORT == status) || (HAILO_STREAM_NOT_ACTIVATED == status)) {
+        return status;
+    }
+    CHECK_SUCCESS(status);
+
+    return m_channel->send_pending_buffer(m_channel_timeout);
+}
+
 hailo_status VdmaInputStream::sync_write_all_raw_buffer_no_transform_impl(void *buffer, size_t offset, size_t size)
 {
     ASSERT(NULL != buffer);

@@ -225,7 +225,7 @@ int main()
     auto network_infos = get_network_infos(*network_group.value());
     if (!network_infos) {
         std::cerr << "Failed to get network infos, status = " << network_infos.status() << std::endl;
-        return network_group.status();
+        return network_infos.status();
     }
 
     auto vstreams = create_vstreams_per_network(*network_group.value(), network_infos.value());

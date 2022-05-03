@@ -239,21 +239,45 @@ Expected<float32_t> Device::power_measurement(hailo_dvm_options_t dvm, hailo_pow
     return res;
 }
 
-hailo_status Device::start_power_measurement(uint32_t delay_milliseconds, hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period)
+hailo_status Device::start_power_measurement(uint32_t /*unused*/, hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period)
 {
-    return Control::start_power_measurement(*this, delay_milliseconds, static_cast<CONTROL_PROTOCOL__averaging_factor_t>(averaging_factor),
-        static_cast<CONTROL_PROTOCOL__sampling_period_t>(sampling_period));
+    // TODO: Remove deprecated function
+    LOGGER__WARNING("'Device::start_power_measurement(uint32_t unused, hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period)' is deprecated. "\
+        "One should use ''Device::start_power_measurement(hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period)");
+    return start_power_measurement(averaging_factor, sampling_period);
 }
 
 hailo_status Device::set_power_measurement(uint32_t index, hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type)
 {
-    return Control::set_power_measurement(*this, index, static_cast<CONTROL_PROTOCOL__dvm_options_t>(dvm), static_cast<CONTROL_PROTOCOL__power_measurement_types_t>(measurement_type));
+    // TODO: Remove deprecated function
+    LOGGER__WARNING("'Device::set_power_measurement(uint32_t index, hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type)' is deprecated. "\
+        "One should use ''Device::set_power_measurement(hailo_measurement_buffer_index_t buffer_index, hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type)");
+    return set_power_measurement(static_cast<hailo_measurement_buffer_index_t>(index), dvm, measurement_type);
 }
 
 Expected<hailo_power_measurement_data_t> Device::get_power_measurement(uint32_t index, bool should_clear)
 {
+    // TODO: Remove deprecated function
+    LOGGER__WARNING("'Device::get_power_measurement(uint32_t index, bool should_clear)' is deprecated. "\
+        "One should use ''Device::set_power_measurement(hailo_measurement_buffer_index_t buffer_index, bool should_clear)");
+    return get_power_measurement(static_cast<hailo_measurement_buffer_index_t>(index), should_clear);
+}
+
+hailo_status Device::start_power_measurement(hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period)
+{
+    return Control::start_power_measurement(*this, static_cast<CONTROL_PROTOCOL__averaging_factor_t>(averaging_factor),
+        static_cast<CONTROL_PROTOCOL__sampling_period_t>(sampling_period));
+}
+
+hailo_status Device::set_power_measurement(hailo_measurement_buffer_index_t buffer_index, hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type)
+{
+    return Control::set_power_measurement(*this, buffer_index, static_cast<CONTROL_PROTOCOL__dvm_options_t>(dvm), static_cast<CONTROL_PROTOCOL__power_measurement_types_t>(measurement_type));
+}
+
+Expected<hailo_power_measurement_data_t> Device::get_power_measurement(hailo_measurement_buffer_index_t buffer_index, bool should_clear)
+{
     hailo_power_measurement_data_t measurement_data = {};
-    auto status = Control::get_power_measurement(*this, index, should_clear, &measurement_data);
+    auto status = Control::get_power_measurement(*this, buffer_index, should_clear, &measurement_data);
     CHECK_SUCCESS_AS_EXPECTED(status);
     return measurement_data;
 }
@@ -437,6 +461,12 @@ Expected<Buffer> Device::download_context_action_list(uint8_t context_index, uin
     *batch_counter = batch_counter_local;
 
     return final_action_list.release();
+}
+
+hailo_status Device::set_context_action_list_timestamp_batch(uint16_t batch_index)
+{
+    static const bool ENABLE_USER_CONFIG = true;
+    return Control::config_context_switch_timestamp(*this, batch_index, ENABLE_USER_CONFIG);
 }
 
 } /* namespace hailort */

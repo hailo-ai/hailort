@@ -19,4 +19,6 @@ endif()
 add_subdirectory(cpp)
 add_subdirectory(c)
 
+set_target_properties(${EXAMPLES_CPP_TARGETS} PROPERTIES CXX_STANDARD 14)
+
 add_custom_target(hailort_examples DEPENDS ${EXAMPLES_C_TARGETS} ${EXAMPLES_CPP_TARGETS})

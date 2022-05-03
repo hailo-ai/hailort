@@ -27,7 +27,6 @@ private:
     
     inference_runner_params m_params;
     bool m_not_measure_power;
-    uint32_t m_time;
     std::string m_csv_file_path;
 };
 

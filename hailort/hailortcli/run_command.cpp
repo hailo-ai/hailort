@@ -61,7 +61,7 @@ void user_signal_handler_func(int signum)
 
 hailo_status wait_for_exit_with_timeout(std::chrono::seconds time_to_run)
 {
-#if defined(__unix__)
+#if defined(__linux__)
     sighandler_t prev_handler = signal(USER_SIGNAL, user_signal_handler_func);
     CHECK(prev_handler !=  SIG_ERR, HAILO_INVALID_OPERATION, "signal failed, errno = {}", errno);
     std::mutex mutex;
@@ -202,20 +202,20 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
 
     // TODO: Support on windows (HRT-5919)
     #if defined(__GNUC__)
-    // TODO: Unhide (HRT-6035)
-    // Unnamed "option groups" hide subcommands/options from the help message
-    // (see https://github.com/CLIUtils/CLI11/blob/main/README.md)
-    auto *hidden_group = run_subcommand->add_option_group("");
-    auto *download_runtime_data_subcommand = hidden_group->add_subcommand("download-runtime-data",
-        "Download runtime data to be used by the Profiler");
+    auto *collect_runtime_data_subcommand = run_subcommand->add_subcommand("collect-runtime-data",
+        "Collect runtime data to be used by the Profiler");
     static const char *JSON_SUFFIX = ".json";
-    download_runtime_data_subcommand->add_option("--output-path",
+    collect_runtime_data_subcommand->add_option("--output-path",
         params.runtime_data.runtime_data_output_path, "Runtime data output file path")
-        ->default_val("context_action_list.json")
+        ->default_val("runtime_data.json")
         ->check(FileSuffixValidator(JSON_SUFFIX));
-    download_runtime_data_subcommand->parse_complete_callback([&params]() {
+    static const uint32_t DEFAULT_BATCH_TO_MEASURE = 2;
+    collect_runtime_data_subcommand->add_option("--batch-to-measure",
+        params.runtime_data.batch_to_measure, "Batch to be measured")
+        ->default_val(DEFAULT_BATCH_TO_MEASURE);
+    collect_runtime_data_subcommand->parse_complete_callback([&params]() {
         // If this subcommand was parsed, then we need to download runtime_data
-        params.runtime_data.download_runtime_data = true;
+        params.runtime_data.collect_runtime_data = true;
     });
     #endif
 
@@ -248,9 +248,20 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
             !(params.power_measurement.measure_power || params.power_measurement.measure_current || params.measure_temp),
             "Writing measurements in csv format is not supported for multiple devices");
 
+        PARSE_CHECK(("*" != params.device_params.pcie_params.pcie_bdf),
+            "Passing '*' as BDF is not supported for 'run' command. for multiple devices inference see '--device-count'");
+
         if ((0 == params.time_to_run) && (0 == params.frames_count)) {
             // Use default
             params.time_to_run = DEFAULT_TIME_TO_RUN_SECONDS;
+        }
+
+        if (params.runtime_data.collect_runtime_data) {
+            if ((0 != params.frames_count) && (params.frames_count < params.runtime_data.batch_to_measure)) {
+                LOGGER__WARNING("--frames-count ({}) is smaller than --batch-to-measure ({}), "
+                    "hence timestamps will not be updated in runtime data", params.frames_count,
+                    params.runtime_data.batch_to_measure);
+            }
         }
     });
 
@@ -1030,18 +1041,34 @@ Expected<NetworkGroupInferResult> run_command_hef_single_device(const inference_
     auto network_group_list = device.value()->configure(hef.value(), configure_params.value());
     CHECK_EXPECTED(network_group_list, "Failed configure device from hef");
 
+    #if defined(__GNUC__)
+    // TODO: Support on windows (HRT-5919)
+    if (params.runtime_data.collect_runtime_data) {
+        DownloadActionListCommand::set_batch_to_measure(*device.value(), params.runtime_data.batch_to_measure);
+    }
+    #endif
+
     // TODO: SDK-14842, for now this function supports only one network_group
     auto network_group = network_group_list.value()[0];
     auto inference_result = activate_network_group_and_run(*device.value().get(), network_group, params);
 
     #if defined(__GNUC__)
     // TODO: Support on windows (HRT-5919)
-    if (params.runtime_data.download_runtime_data) {
+    if (params.runtime_data.collect_runtime_data) {
+        if ((0 == params.frames_count) && inference_result) {
+            const auto frames_count = inference_result->frames_count();
+            if (frames_count && (frames_count.value() <  params.runtime_data.batch_to_measure)) {
+                LOGGER__WARNING("Number of frames sent ({}) is smaller than --batch-to-measure ({}), "
+                    "hence timestamps will not be updated in runtime data", frames_count.value(),
+                    params.runtime_data.batch_to_measure);
+            }
+        }
+
         DownloadActionListCommand::execute(*device.value(), params.runtime_data.runtime_data_output_path,
             network_group_list.value(), params.hef_path);
     }
     #endif
-
+    CHECK_EXPECTED(inference_result);
     return inference_result;
 }
 

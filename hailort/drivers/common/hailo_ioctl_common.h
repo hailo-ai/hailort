@@ -45,7 +45,7 @@ typedef uint8_t bool;
 #include <linux/kernel.h>
 #endif
 
-#if defined(__unix__)
+#if defined(__linux__)
 #include <linux/ioctl.h>
 #endif
 
@@ -261,13 +261,19 @@ struct hailo_read_log_params {
     size_t read_bytes;          // out
 };
 
-struct hailo_allocate_buffer_params {
+struct hailo_allocate_low_memory_buffer_params {
     size_t      buffer_size;    // in
     uintptr_t   buffer_handle;  // out
 };
 
 struct hailo_mark_as_in_use_params {
     bool in_use;           // out
+};
+
+struct hailo_allocate_continuous_buffer_params {
+    size_t buffer_size;         // in
+    uintptr_t buffer_handle;    // out
+    uint64_t dma_address;       // out
 };
 
 #pragma pack(pop)
@@ -311,6 +317,8 @@ enum hailo_vdma_ioctl_code {
     HAILO_VDMA_LOW_MEMORY_BUFFER_ALLOC_CODE,
     HAILO_VDMA_LOW_MEMORY_BUFFER_FREE_CODE,
     HAILO_MARK_AS_IN_USE_CODE,
+    HAILO_VDMA_CONTINUOUS_BUFFER_ALLOC_CODE,
+    HAILO_VDMA_CONTINUOUS_BUFFER_FREE_CODE,
 
     // Must be last
     HAILO_VDMA_IOCTL_MAX_NR,
@@ -331,10 +339,14 @@ enum hailo_vdma_ioctl_code {
 #define HAILO_DESC_LIST_RELEASE             _IO_(HAILO_VDMA_IOCTL_MAGIC,   HAILO_DESC_LIST_RELEASE_CODE)
 #define HAILO_DESC_LIST_BIND_VDMA_BUFFER    _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_DESC_LIST_BIND_VDMA_BUFFER_CODE, struct hailo_desc_list_bind_vdma_buffer_params)
 
-#define HAILO_VDMA_LOW_MEMORY_BUFFER_ALLOC  _IOWR_(HAILO_VDMA_IOCTL_MAGIC, HAILO_VDMA_LOW_MEMORY_BUFFER_ALLOC_CODE, struct hailo_allocate_buffer_params)
+#define HAILO_VDMA_LOW_MEMORY_BUFFER_ALLOC  _IOWR_(HAILO_VDMA_IOCTL_MAGIC, HAILO_VDMA_LOW_MEMORY_BUFFER_ALLOC_CODE, struct hailo_allocate_low_memory_buffer_params)
 #define HAILO_VDMA_LOW_MEMORY_BUFFER_FREE   _IO_(HAILO_VDMA_IOCTL_MAGIC,   HAILO_VDMA_LOW_MEMORY_BUFFER_FREE_CODE)
 
 #define HAILO_MARK_AS_IN_USE                _IOW_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_MARK_AS_IN_USE_CODE,             struct hailo_mark_as_in_use_params)
+
+#define HAILO_VDMA_CONTINUOUS_BUFFER_ALLOC  _IOWR_(HAILO_VDMA_IOCTL_MAGIC, HAILO_VDMA_CONTINUOUS_BUFFER_ALLOC_CODE, struct hailo_allocate_continuous_buffer_params)
+#define HAILO_VDMA_CONTINUOUS_BUFFER_FREE   _IO_(HAILO_VDMA_IOCTL_MAGIC,   HAILO_VDMA_CONTINUOUS_BUFFER_FREE_CODE)
+
 
 enum hailo_windows_ioctl_code {
     HAILO_WINDOWS_DESC_LIST_MMAP_CODE,

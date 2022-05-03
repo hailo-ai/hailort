@@ -300,6 +300,17 @@ typedef enum hailo_averaging_factor_e {
     HAILO_AVERAGE_FACTOR_MAX_ENUM = HAILO_MAX_ENUM
 } hailo_averaging_factor_t;
 
+/** Enum that represents buffers on the device for power measurements storing */
+typedef enum hailo_measurement_buffer_index_e {
+    HAILO_MEASUREMENT_BUFFER_INDEX_0 = 0,
+    HAILO_MEASUREMENT_BUFFER_INDEX_1,
+    HAILO_MEASUREMENT_BUFFER_INDEX_2,
+    HAILO_MEASUREMENT_BUFFER_INDEX_3,
+
+    /** Max enum value to maintain ABI Integrity */
+    HAILO_MEASUREMENT_BUFFER_INDEX_MAX_ENUM = HAILO_MAX_ENUM
+} hailo_measurement_buffer_index_t;
+
 /** Data of the power measurement samples */
 typedef struct {
     float32_t average_value;
@@ -326,12 +337,23 @@ typedef struct {
     uint32_t func;
 } hailo_pcie_device_info_t;
 
+/** Scheduler algorithm */
+typedef enum hailo_scheduling_algorithm_e {
+    HAILO_SCHEDULING_ALGORITHM_NONE = 0,
+    HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN,
+
+    /** Max enum value to maintain ABI Integrity */
+    HAILO_SCHEDULING_ALGORITHM_MAX_ENUM = HAILO_MAX_ENUM
+} hailo_scheduling_algorithm_t;
+
 /** Virtual device parameters */
 typedef struct {
     /** Requested number of physical devices. if @a device_infos is not NULL, represents the number of ::hailo_pcie_device_info_t in @a device_infos */
     uint32_t device_count;
     /** Specific physical devices information to create the vdevice from. If NULL, the vdevice will try to occupy devices from the available pool */
     hailo_pcie_device_info_t *device_infos;
+    /** The scheduling algorithm to use for network group scheduling */
+    hailo_scheduling_algorithm_t scheduling_algorithm;
 } hailo_vdevice_params_t;
 
 /** Device architecture */
@@ -940,14 +962,7 @@ typedef enum {
 
 /** Hailo stream parameters */
 typedef struct {
-    union {
-        #ifndef _MSC_VER
-        // Windows combaseapi.h uses `inteface` as a keyword
-        hailo_stream_interface_t interface DEPRECATED("interface is deprecated. One should use stream_interface instead.");
-        #endif
-        hailo_stream_interface_t stream_interface;    
-    };
-    
+    hailo_stream_interface_t stream_interface;
     hailo_stream_direction_t direction;
     union {
         hailo_pcie_input_stream_params_t pcie_input_params;
@@ -1193,7 +1208,7 @@ typedef struct {
     char name[HAILO_MAX_NETWORK_NAME_SIZE];
 } hailo_network_info_t;
 
-/** Hailo device ID string - BDF for PCIe devices, MAC address for Ethernet devices, "Core" for core devices. **/
+/** Hailo device ID string - BDF for PCIe devices, IP address for Ethernet devices, "Core" for core devices. **/
 typedef struct {
     char id[HAILO_MAX_DEVICE_ID_LENGTH];
 } hailo_device_id_t;
@@ -1729,7 +1744,7 @@ HAILORTAPI hailo_status hailo_set_pause_frames(hailo_device device, bool rx_paus
 
 /**
  * Get device id which is the identification string of the device. BDF for PCIe devices, 
- * MAC address for Ethernet devices, "Core" for core devices.
+ * IP address for Ethernet devices, "Core" for core devices.
  *
  * @param[in]  device           A ::hailo_device object.
  * @param[out] id               The returned device id.
@@ -2004,8 +2019,6 @@ HAILORTAPI hailo_status hailo_power_measurement(hailo_device device, hailo_dvm_o
  * Start performing a long power measurement.
  * 
  * @param[in]   device               A ::hailo_device object.
- * @param[in]   delay_milliseconds   Amount of time between each measurement interval.
- *                                   This time period is sleep time of the core.
  * @param[in]   averaging_factor     Number of samples per time period, sensor configuration value.
  * @param[in]   sampling_period      Related conversion time, sensor configuration value.
  *                                   The sensor samples the power every sampling_period {ms} and averages every
@@ -2016,14 +2029,15 @@ HAILORTAPI hailo_status hailo_power_measurement(hailo_device device, hailo_dvm_o
  *                                   because it averages values that have already been averaged by the sensor.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  */
-HAILORTAPI hailo_status hailo_start_power_measurement(hailo_device device, uint32_t delay_milliseconds,
+HAILORTAPI hailo_status hailo_start_power_measurement(hailo_device device,
     hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period);
 
 /**
  * Set parameters for long power measurement.
  * 
  * @param[in]   device             A ::hailo_device object.
- * @param[in]   index              Index of the buffer on the firmware the data would be saved at.
+ * @param[in]   buffer_index       A ::hailo_measurement_buffer_index_t represents the buffer on the firmware the data would be saved at.
+ *                                 Should match the one passed to ::hailo_get_power_measurement.
  * @param[in]   dvm                Which DVM will be measured. Default (::HAILO_DVM_OPTIONS_AUTO) will be different according to the board: <br>
  *                                 - Default (::HAILO_DVM_OPTIONS_AUTO) for EVB is an approximation to the total power consumption of the chip in PCIe setups.
  *                                 It sums ::HAILO_DVM_OPTIONS_VDD_CORE, ::HAILO_DVM_OPTIONS_MIPI_AVDD and ::HAILO_DVM_OPTIONS_AVDD_H.
@@ -2033,20 +2047,21 @@ HAILORTAPI hailo_status hailo_start_power_measurement(hailo_device device, uint3
  *                                 will select the default value according to the supported features.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  */
-HAILORTAPI hailo_status hailo_set_power_measurement(hailo_device device, uint32_t index,
+HAILORTAPI hailo_status hailo_set_power_measurement(hailo_device device, hailo_measurement_buffer_index_t buffer_index,
     hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type);
 
 /**
  * Read measured power from a long power measurement
  * 
  * @param[in]   device                A ::hailo_device object.
- * @param[in]   index                 Index of the buffer on the firmware the data would be saved at.
+ * @param[in]   buffer_index          A ::hailo_measurement_buffer_index_t represents the buffer on the firmware the data would be saved at.
+ *                                    Should match the one passed to ::hailo_set_power_measurement.
  * @param[in]   should_clear          Flag indicating if the results saved at the firmware will be deleted after reading.
  * @param[out]  measurement_data      The measurement data, ::hailo_power_measurement_data_t. Measured units are
  *                                    determined due to ::hailo_power_measurement_types_t passed to ::hailo_set_power_measurement
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  */
-HAILORTAPI hailo_status hailo_get_power_measurement(hailo_device device, uint32_t index, bool should_clear,
+HAILORTAPI hailo_status hailo_get_power_measurement(hailo_device device, hailo_measurement_buffer_index_t buffer_index, bool should_clear,
      hailo_power_measurement_data_t *measurement_data);
 
 /**
@@ -3050,110 +3065,6 @@ HAILORTAPI hailo_status hailo_get_network_infos(hailo_configured_network_group n
 /** @defgroup group_deprecated_functions_and_defines Deprecated functions and defines
  *  @{
  */
-
-/**
- * Returns the network latency (only available if latency measurement was enabled).
- *
- * @param[in]  configured_network_group     NetworkGroup to get the latency measurement from.
- * @param[out] result                       Output latency result.
- * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- * @note This function is deprecated. One should use 'hailo_get_latency_measurement()'
- */
-HAILORTAPI hailo_status hailo_get_latency_measurement_from_network_group(hailo_configured_network_group configured_network_group,
-    hailo_latency_measurement_result_t *result)
-    DEPRECATED("'hailo_get_latency_measurement_from_network_group' is deprecated. One should use 'hailo_get_latency_measurement()'.");
-
-
-typedef hailo_input_transform_context hailo_input_transformer DEPRECATED("hailo_input_transformer is deprecated. One should use hailo_input_transform_context");
-typedef hailo_output_transform_context hailo_output_transformer DEPRECATED("hailo_output_transformer is deprecated. One should use hailo_output_transform_context");
-
-/**
- * Creates an input transformer object. Allocates all necessary buffers used for the transformation (pre-process).
- * 
- * @param[in]     stream_info - A ::hailo_stream_info_t object
- * @param[in]     transform_params - A ::hailo_transform_params_t user transformation parameters.
- * @param[out]    transformer - A ::hailo_input_transform_context
- * 
- * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
- * 
- * @note To release the transformer, call the ::hailo_release_input_transformer function
- *      with the returned ::hailo_input_transform_context.
- * 
- */
-HAILORTAPI hailo_status hailo_create_input_transformer(const hailo_stream_info_t *stream_info,
-    const hailo_transform_params_t *transform_params, hailo_input_transform_context *transformer)
-    DEPRECATED("hailo_create_input_transformer is deprecated. One should use hailo_create_input_transform_context");
-
-/**
- * Releases a transformer object including all allocated buffers.
- * 
- * @param[in]    transformer - A ::hailo_input_transform_context object.
- * 
- * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
- */
-HAILORTAPI hailo_status hailo_release_input_transformer(hailo_input_transform_context transformer)
-    DEPRECATED("hailo_release_input_transformer is deprecated. One should use hailo_release_input_transform_context");
-
-/**
- * Transforms an input frame pointed to by @a src directly to the buffer pointed to by @a dst.
- * 
- * @param[in]  transformer          A ::hailo_input_transform_context.
- * @param[in]  src                  A pointer to a buffer to be transformed.
- * @param[in]  src_size             The number of bytes to transform. This number must be equal to the input host_frame_size,
- *                                  and less than or equal to the size of @a src buffer.
- * @param[out] dst                  A pointer to a buffer that receives the transformed data.
- * @param[in]  dst_size             The number of bytes in @a dst buffer. This number must be equal to the input hw_frame_size,
- *                                  and less than or equal to the size of @a dst buffer.
- * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- * @warning The buffers must not overlap.
- */
-HAILORTAPI hailo_status hailo_transform_frame_by_input_transformer(hailo_input_transform_context transformer,
-    const void *src, size_t src_size, void *dst, size_t dst_size)
-    DEPRECATED("hailo_transform_frame_by_input_transformer is deprecated. One should use hailo_transform_frame_by_input_transform_context");
-
-/**
- * Creates an output transformer object. Allocates all necessary buffers used for the transformation (post-process).
- * 
- * @param[in]     stream_info - A ::hailo_stream_info_t object
- * @param[in]     transform_params - A ::hailo_transform_params_t user transformation parameters.
- * @param[out]    transformer - A ::hailo_output_transform_context
- * 
- * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
- * 
- * @note To release the transform_context, call the ::hailo_release_output_transform_context function
- *      with the returned ::hailo_output_transform_context.
- * 
- */
-HAILORTAPI hailo_status hailo_create_output_transformer(const hailo_stream_info_t *stream_info,
-    const hailo_transform_params_t *transform_params, hailo_output_transform_context *transformer)
-    DEPRECATED("hailo_create_output_transformer is deprecated. One should use hailo_create_output_transform_context");
-
-/**
- * Releases a transformer object including all allocated buffers.
- * 
- * @param[in]    transformer - A ::hailo_output_transform_context object.
- * 
- * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
- */
-HAILORTAPI hailo_status hailo_release_output_transformer(hailo_output_transform_context transformer)
-    DEPRECATED("hailo_release_output_transformer is deprecated. One should use hailo_release_output_transform_context");
-
-/**
- * Transforms an output frame pointed to by @a src directly to the buffer pointed to by @a dst.
- * 
- * @param[in]  transformer          A ::hailo_output_transform_context.
- * @param[in]  src                  A pointer to a buffer to be transformed.
- * @param[in]  src_size             The number of bytes to transform. This number must be equal to the output hw_frame_size,
- *                                  and less than or equal to the size of @a src buffer.
- * @param[out] dst                  A pointer to a buffer that receives the transformed data.
- * @param[in]  dst_size             The number of bytes in @a dst buffer. This number must be equal to the output host_frame_size,
- *                                  and less than or equal to the size of @a dst buffer.
- * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- * @warning The buffers must not overlap.
- */
-HAILORTAPI hailo_status hailo_transform_frame_by_output_transformer(hailo_output_transform_context transformer,
-    const void *src, size_t src_size, void *dst, size_t dst_size)
-    DEPRECATED("hailo_transform_frame_by_output_transformer is deprecated. One should use hailo_transform_frame_by_output_transform_context");;
 
 /** @} */ // end of group_deprecated_functions_and_defines
 

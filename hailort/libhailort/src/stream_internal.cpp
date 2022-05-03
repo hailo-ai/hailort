@@ -22,9 +22,19 @@ EventPtr &InputStreamBase::get_network_group_activated_event()
     return m_network_group_activated_event;
 }
 
+bool InputStreamBase::is_scheduled()
+{
+    return false;
+}
+
 EventPtr &OutputStreamBase::get_network_group_activated_event()
 {
     return m_network_group_activated_event;
+}
+
+bool OutputStreamBase::is_scheduled()
+{
+    return false;
 }
 
 } /* namespace hailort */

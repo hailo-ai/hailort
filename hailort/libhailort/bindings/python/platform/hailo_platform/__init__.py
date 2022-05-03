@@ -4,37 +4,7 @@ import sys
 import pathlib
 import pprint
 
-from hailo_platform.common.paths_manager.version import get_version
-from hailo_platform.common.paths_manager.paths import PackingInfo, PackingStatus
-
 class MissingPyHRTLib(Exception):
-    pass
-
-
-# This hack checks which modules the user has on his computer.
-# packing status set to "packed_client" if it can't import the PLATFORM_INTERNALS module
-# it set the packing status to "standalone_platform" if it can't import the SDK_COMMON module
-
-try:
-    import hailo_platform_internals  # noqa F401
-except ImportError:
-    PackingInfo().status = PackingStatus.packed_client
-
-try:
-    import hailo_sdk_common # noqa F401
-except:
-    PackingInfo().status = PackingStatus.standalone_platform
-
-
-
-# This hack only affects internals users with hailo_validation installed.
-# It changes the packing status to PACKED if it thinks SDK was installed from
-# wheel.
-try:
-    import hailo_validation  # noqa F401
-    if 'site-packages/hailo_sdk' in __path__[0] :
-        PackingInfo().status = PackingStatus.packed_client
-except ImportError:
     pass
 
 
@@ -45,11 +15,8 @@ def join_drivers_path(path):
 
 
 from hailo_platform.tools.udp_rate_limiter import UDPRateLimiter
-from hailo_platform.drivers.hw_object import PcieDevice, EthernetDevice
-from hailo_platform.drivers.hailo_controller.power_measurement import (DvmTypes,
-                                                                       PowerMeasurementTypes,
-                                                                       SamplingPeriod, AveragingFactor)
-from hailo_platform.drivers.hailort.pyhailort import (HEF, ConfigureParams,
+from hailo_platform.pyhailort.hw_object import PcieDevice, EthernetDevice
+from hailo_platform.pyhailort.pyhailort import (HEF, ConfigureParams,
                                                       FormatType, FormatOrder,
                                                       MipiDataTypeRx, MipiPixelsPerClock,
                                                       MipiClockSelection, MipiIspImageInOrder,
@@ -57,7 +24,8 @@ from hailo_platform.drivers.hailort.pyhailort import (HEF, ConfigureParams,
                                                       Endianness, HailoStreamInterface,
                                                       InputVStreamParams, OutputVStreamParams,
                                                       InputVStreams, OutputVStreams,
-                                                      InferVStreams, HailoStreamDirection, HailoFormatFlags, HailoCpuId, VDevice)
+                                                      InferVStreams, HailoStreamDirection, HailoFormatFlags, HailoCpuId, VDevice,
+                                                      DvmTypes, PowerMeasurementTypes, SamplingPeriod, AveragingFactor, MeasurementBufferIndex)
 
 def _verify_pyhailort_lib_exists():
     python_version = "".join(str(i) for i in sys.version_info[:2])
@@ -66,16 +34,29 @@ def _verify_pyhailort_lib_exists():
         "nt": "pyd",  # Windows
     }[os.name]
 
-    path = f"{__path__[0]}/drivers/hailort/"
+    path = f"{__path__[0]}/pyhailort/"
     if next(pathlib.Path(path).glob(f"_pyhailort*.{lib_extension}"), None) is None:
         raise MissingPyHRTLib(f"{path} should include a _pyhailort library (_pyhailort*{python_version}*.{lib_extension}). Includes: {pprint.pformat(list(pathlib.Path(path).iterdir()))}")
 
 _verify_pyhailort_lib_exists()
 
+def get_version(package_name):
+    # See: https://packaging.python.org/guides/single-sourcing-package-version/ (Option 5)
+    # We assume that the installed package is actually the same one we import. This assumption may
+    # break in some edge cases e.g. if the user modifies sys.path manually.
+    
+    # hailo_platform package has been renamed to hailort, but the import is still hailo_platform
+    if package_name == "hailo_platform":
+        package_name = "hailort"
+    try:
+        import pkg_resources
+        return pkg_resources.get_distribution(package_name).version
+    except:
+        return 'unknown'
 
 __version__ = get_version('hailo_platform')
 __all__ = ['EthernetDevice', 'DvmTypes', 'PowerMeasurementTypes',
-           'SamplingPeriod', 'AveragingFactor', 'UDPRateLimiter', 'PcieDevice', 'HEF',
+           'SamplingPeriod', 'AveragingFactor', 'MeasurementBufferIndex', 'UDPRateLimiter', 'PcieDevice', 'HEF',
            'ConfigureParams', 'FormatType', 'FormatOrder', 'MipiDataTypeRx', 'MipiPixelsPerClock', 'MipiClockSelection',
            'MipiIspImageInOrder', 'MipiIspImageOutDataType', 'join_drivers_path', 'IspLightFrequency', 'HailoPowerMode',
            'Endianness', 'HailoStreamInterface', 'InputVStreamParams', 'OutputVStreamParams',

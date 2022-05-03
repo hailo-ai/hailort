@@ -32,6 +32,7 @@ public:
         VdmaConfigActiveAppHolder &active_net_group_holder,
         std::vector<std::shared_ptr<ResourcesManager>> resources_managers,
         const hailo_activate_network_group_params_t &network_group_params,
+        uint16_t dynamic_batch_size,
         std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
         std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,         
         EventPtr network_group_activated_event,
@@ -49,6 +50,7 @@ public:
 private:
     VdmaConfigActivatedNetworkGroup(
       const hailo_activate_network_group_params_t &network_group_params,
+      uint16_t dynamic_batch_size,
       std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
       std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,
       std::vector<std::shared_ptr<ResourcesManager>> &&resources_managers,

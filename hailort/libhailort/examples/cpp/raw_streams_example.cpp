@@ -157,6 +157,10 @@ hailo_status infer(InputStreamRefVector &input_streams, OutputStreamRefVector &o
 int main()
 {
     auto device = Device::create_pcie();
+    /*
+    For simplicity, not passing `device_info` - This function will fail in case more than one PCIe device is present.
+    See `hailort::Device::scan_pcie` and `hailort::Device::create_pcie` functions documentation.
+    */
     if (!device) {
         std::cerr << "Failed create_pcie " << device.status() << std::endl;
         return device.status();

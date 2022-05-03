@@ -6,7 +6,11 @@ if (NOT TARGET libhailort)
     # find_path finds a directory containing the named file
     find_path(HAILORT_INCLUDE_DIR "hailo/" PATH_SUFFIXES "include/")
 
-    find_library(HAILORT_LIB "libhailort.so.4.6.0" PATH_SUFFIXES "lib/")
+    set(HAILORT_MAJOR_VERSION    4)
+    set(HAILORT_MINOR_VERSION    7)
+    set(HAILORT_REVISION_VERSION 0)
+
+    find_library(HAILORT_LIB "libhailort.so.${HAILORT_MAJOR_VERSION}.${HAILORT_MINOR_VERSION}.${HAILORT_REVISION_VERSION}" PATH_SUFFIXES "lib/")
 
     include(FindPackageHandleStandardArgs)
     # Handle the QUIETLY and REQUIRED arguments and set HAILORT_FOUND to TRUE
@@ -23,6 +27,14 @@ if (NOT TARGET libhailort)
         IMPORTED_LOCATION "${HAILORT_LIB}"
         INTERFACE_INCLUDE_DIRECTORIES "${HAILORT_INCLUDE_DIR}"
     )
+
+    set_property(TARGET HailoRT::libhailort
+        APPEND PROPERTY INTERFACE_COMPILE_DEFINITIONS
+            HAILORT_MAJOR_VERSION=${HAILORT_MAJOR_VERSION}
+            HAILORT_MINOR_VERSION=${HAILORT_MINOR_VERSION}
+            HAILORT_REVISION_VERSION=${HAILORT_REVISION_VERSION}
+    )
+
 else()
     add_library(HailoRT::libhailort ALIAS libhailort)
 endif()

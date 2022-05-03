@@ -1,5 +1,6 @@
 #include "hailo/transform.hpp"
 #include "network_group_internal.hpp"
+#include "network_group_wrapper.hpp"
 #include "hef_internal.hpp"
 #include "common/utils.hpp"
 #include "hailort_defaults.hpp"
@@ -132,6 +133,14 @@ Expected<std::unique_ptr<ActivatedNetworkGroup>> ConfiguredNetworkGroup::activat
     return activate(network_group_params);
 }
 
+Expected<std::unique_ptr<ActivatedNetworkGroup>> ConfiguredNetworkGroupBase::activate(
+    const hailo_activate_network_group_params_t &network_group_params)
+{
+    CHECK_AS_EXPECTED(!m_is_scheduling, HAILO_INVALID_OPERATION,
+        "Manually activating a network group is not allowed when the network group scheduler is active!");
+    return activate_internal(network_group_params, CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE);
+}
+
 Expected<std::chrono::nanoseconds> get_latency(LatencyMeterPtr &latency_meter, bool clear)
 {
     auto hw_latency = latency_meter->get_latency(clear);
@@ -166,13 +175,11 @@ Expected<LatencyMeasurementResult> ConfiguredNetworkGroupBase::get_latency_measu
         }
         result.avg_hw_latency = latency_sum / measurements_count;
     } else {
-        auto partial_network_name = m_network_group_metadata.get_partial_network_name(network_name);
-        CHECK_EXPECTED(partial_network_name);
-        if(!contains(m_latency_meter, partial_network_name.value())) {
-            LOGGER__DEBUG("No latency measurements was found for network {}", partial_network_name.value());
-            return make_unexpected(HAILO_NOT_AVAILABLE);
+        if(!contains(m_latency_meter, network_name)) {
+            LOGGER__DEBUG("No latency measurements was found for network {}", network_name);
+            return make_unexpected(HAILO_NOT_FOUND);
         }
-        auto hw_latency = get_latency(m_latency_meter.at(partial_network_name.value()), clear);
+        auto hw_latency = get_latency(m_latency_meter.at(network_name), clear);
         if (HAILO_NOT_AVAILABLE == hw_latency.status()) {
             return make_unexpected(HAILO_NOT_AVAILABLE);
         }
@@ -181,8 +188,6 @@ Expected<LatencyMeasurementResult> ConfiguredNetworkGroupBase::get_latency_measu
     }
     return result;
 }
-
-
 
 Expected<OutputStreamWithParamsVector> ConfiguredNetworkGroupBase::get_output_streams_from_vstream_names(
     const std::map<std::string, hailo_vstream_params_t> &outputs_params)
@@ -282,14 +287,21 @@ Expected<LayerInfo> ConfiguredNetworkGroupBase::get_layer_info(const std::string
 ConfiguredNetworkGroupBase::ConfiguredNetworkGroupBase(
     const ConfigureNetworkParams &config_params, const uint8_t net_group_index, 
     const NetworkGroupMetadata &network_group_metadata, hailo_status &status) :
-        ConfiguredNetworkGroup::ConfiguredNetworkGroup(),
+        ConfiguredNetworkGroupBase(config_params, net_group_index, network_group_metadata, false, status)
+{}
+
+ConfiguredNetworkGroupBase::ConfiguredNetworkGroupBase(
+    const ConfigureNetworkParams &config_params, const uint8_t net_group_index, 
+    const NetworkGroupMetadata &network_group_metadata, bool is_scheduling, hailo_status &status) :
         m_config_params(config_params),
         m_net_group_index(net_group_index),
         m_latency_meter(),
         m_network_group_metadata(network_group_metadata),
         m_activation_time_accumulator(),
-        m_deactivation_time_accumulator()
+        m_deactivation_time_accumulator(),
+        m_is_scheduling(is_scheduling)
 {
+    // TODO: Add validation for config_params is running with schedular and hence dynamic_batch_size (HRT-6538)
     auto event = Event::create_shared(Event::State::not_signalled);
     if (nullptr == event) {
         LOGGER__ERROR("Failed to create activation event");
@@ -315,6 +327,20 @@ ConfiguredNetworkGroupBase::ConfiguredNetworkGroupBase(
     status = HAILO_SUCCESS;
 }
 
+Expected<std::unique_ptr<ActivatedNetworkGroup>> ConfiguredNetworkGroupBase::activate_internal(
+    const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size)
+{
+    CHECK_AS_EXPECTED(dynamic_batch_size <= m_config_params.batch_size, HAILO_INVALID_ARGUMENT,
+        "Dynamic batch size ({}) must be less than/equal to the configured batch size ({})",
+        dynamic_batch_size, m_config_params.batch_size);
+    return activate_impl(network_group_params, dynamic_batch_size);
+}
+
+Expected<std::unique_ptr<ActivatedNetworkGroup>> ConfiguredNetworkGroupBase::force_activate(uint16_t dynamic_batch_size)
+{
+    return activate_internal(HailoRTDefaults::get_network_group_params(), dynamic_batch_size);
+}
+
 const std::string &ConfiguredNetworkGroupBase::get_network_group_name() const
 {
     return m_network_group_metadata.network_group_name();
@@ -326,11 +352,8 @@ Expected<uint16_t> ConfiguredNetworkGroupBase::get_stream_batch_size(const std::
     CHECK_EXPECTED(layer_infos);
     for (const auto &layer_info : layer_infos.release()) {
         if (layer_info.name == stream_name) {
-            auto partial_network_name = layer_info.partial_network_name;
             for (auto const &network_params_pair : m_config_params.network_params_by_name) {
-                auto network_name = network_params_pair.first;
-                auto found = network_name.find(HAILO_DEFAULT_NETWORK_NAME_QUALIFIER + partial_network_name);
-                if (found != std::string::npos) {
+                if (network_params_pair.first == layer_info.network_name) {
                     auto batch_size = network_params_pair.second.batch_size;
                     return batch_size;
                 }
@@ -341,14 +364,18 @@ Expected<uint16_t> ConfiguredNetworkGroupBase::get_stream_batch_size(const std::
     return make_unexpected(HAILO_NOT_FOUND);
 }
 
+const ConfigureNetworkParams ConfiguredNetworkGroupBase::get_config_params() const
+{
+    return m_config_params;
+}
+
 hailo_status ConfiguredNetworkGroupBase::create_input_stream_from_config_params(Device &device,
     const hailo_stream_parameters_t &stream_params, const std::string &stream_name)
 {
     auto edge_layer = get_layer_info(stream_name);
     CHECK_EXPECTED_AS_STATUS(edge_layer);
 
-    auto partial_network_name = edge_layer->partial_network_name;
-    auto latency_meter = (contains(m_latency_meter, partial_network_name)) ? m_latency_meter.at(partial_network_name) : nullptr;
+    auto latency_meter = (contains(m_latency_meter, edge_layer->network_name)) ? m_latency_meter.at(edge_layer->network_name) : nullptr;
 
     CHECK(device.is_stream_interface_supported(stream_params.stream_interface), HAILO_INVALID_OPERATION,
         "Device does not supports the given stream interface streams. Please update input_stream_params for stream {}.",
@@ -415,8 +442,7 @@ hailo_status ConfiguredNetworkGroupBase::create_output_stream_from_config_params
     auto edge_layer = get_layer_info(stream_name);
     CHECK_EXPECTED_AS_STATUS(edge_layer);
 
-    auto partial_network_name = edge_layer->partial_network_name;
-    auto latency_meter = (contains(m_latency_meter, partial_network_name)) ? m_latency_meter.at(partial_network_name) : nullptr;
+    auto latency_meter = (contains(m_latency_meter, edge_layer->network_name)) ? m_latency_meter.at(edge_layer->network_name) : nullptr;
 
     CHECK(device.is_stream_interface_supported(stream_params.stream_interface), HAILO_INVALID_OPERATION,
         "Device does not supports the given stream interface streams. Please update input_stream_params for stream {}.",
@@ -475,7 +501,7 @@ hailo_status ConfiguredNetworkGroupBase::create_streams_from_config_params(Devic
 {
     if ((m_config_params.latency & HAILO_LATENCY_MEASURE) == HAILO_LATENCY_MEASURE) {
         // Best affort for starting latency meter.
-        auto networks_names = m_network_group_metadata.get_partial_network_names();
+        auto networks_names = m_network_group_metadata.get_network_names();
         for (auto &network_name : networks_names) {
             auto layer_infos = m_network_group_metadata.get_all_layer_infos(network_name);
             CHECK_EXPECTED_AS_STATUS(layer_infos);
@@ -516,10 +542,7 @@ hailo_status ConfiguredNetworkGroupBase::create_streams_from_config_params(Devic
 
 Expected<InputStreamRefVector> ConfiguredNetworkGroupBase::get_input_streams_by_network(const std::string &network_name)
 {
-    auto partial_network_name = m_network_group_metadata.get_partial_network_name(network_name);
-    CHECK_EXPECTED(partial_network_name);
-
-    auto input_stream_infos = m_network_group_metadata.get_input_stream_infos(partial_network_name.value());
+    auto input_stream_infos = m_network_group_metadata.get_input_stream_infos(network_name);
     CHECK_EXPECTED(input_stream_infos);
 
     InputStreamRefVector result;
@@ -533,10 +556,7 @@ Expected<InputStreamRefVector> ConfiguredNetworkGroupBase::get_input_streams_by_
 
 Expected<OutputStreamRefVector> ConfiguredNetworkGroupBase::get_output_streams_by_network(const std::string &network_name)
 {
-    auto partial_network_name = m_network_group_metadata.get_partial_network_name(network_name);
-    CHECK_EXPECTED(partial_network_name);
-
-    auto output_stream_infos = m_network_group_metadata.get_output_stream_infos(partial_network_name.value());
+    auto output_stream_infos = m_network_group_metadata.get_output_stream_infos(network_name);
     CHECK_EXPECTED(output_stream_infos);
 
     OutputStreamRefVector result;
@@ -658,10 +678,7 @@ Expected<std::map<std::string, hailo_vstream_params_t>> ConfiguredNetworkGroupBa
     bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
     const std::string &network_name)
 {
-    auto partial_network_name = m_network_group_metadata.get_partial_network_name(network_name);
-    CHECK_EXPECTED(partial_network_name);
-
-    auto input_vstream_infos = m_network_group_metadata.get_input_vstream_infos(partial_network_name.value());
+    auto input_vstream_infos = m_network_group_metadata.get_input_vstream_infos(network_name);
     CHECK_EXPECTED(input_vstream_infos);
 
     std::map<std::string, hailo_vstream_params_t> res;
@@ -675,10 +692,7 @@ Expected<std::map<std::string, hailo_vstream_params_t>> ConfiguredNetworkGroupBa
     bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
     const std::string &network_name)
 {
-    auto partial_network_name = m_network_group_metadata.get_partial_network_name(network_name);
-    CHECK_EXPECTED(partial_network_name);
-
-    auto output_vstream_infos = m_network_group_metadata.get_output_vstream_infos(partial_network_name.value());
+    auto output_vstream_infos = m_network_group_metadata.get_output_vstream_infos(network_name);
     CHECK_EXPECTED(output_vstream_infos);
 
     std::map<std::string, hailo_vstream_params_t> res;
@@ -696,37 +710,25 @@ Expected<std::vector<hailo_network_info_t>> ConfiguredNetworkGroupBase::get_netw
 Expected<std::vector<hailo_stream_info_t>> ConfiguredNetworkGroupBase::get_all_stream_infos(
     const std::string &network_name) const
 {
-    auto partial_network_name = m_network_group_metadata.get_partial_network_name(network_name);
-    CHECK_EXPECTED(partial_network_name);
-
-    return m_network_group_metadata.get_all_stream_infos(partial_network_name.value());
+    return m_network_group_metadata.get_all_stream_infos(network_name);
 }
 
 Expected<std::vector<hailo_vstream_info_t>> ConfiguredNetworkGroupBase::get_input_vstream_infos(
     const std::string &network_name) const
 {
-    auto partial_network_name = m_network_group_metadata.get_partial_network_name(network_name);
-    CHECK_EXPECTED(partial_network_name);
-
-    return m_network_group_metadata.get_input_vstream_infos(partial_network_name.value());
+    return m_network_group_metadata.get_input_vstream_infos(network_name);
 }
 
 Expected<std::vector<hailo_vstream_info_t>> ConfiguredNetworkGroupBase::get_output_vstream_infos(
     const std::string &network_name) const
 {
-    auto partial_network_name = m_network_group_metadata.get_partial_network_name(network_name);
-    CHECK_EXPECTED(partial_network_name);
-
-    return m_network_group_metadata.get_output_vstream_infos(partial_network_name.value());
+    return m_network_group_metadata.get_output_vstream_infos(network_name);
 }
 
 Expected<std::vector<hailo_vstream_info_t>> ConfiguredNetworkGroupBase::get_all_vstream_infos(
     const std::string &network_name) const
 {
-    auto partial_network_name = m_network_group_metadata.get_partial_network_name(network_name);
-    CHECK_EXPECTED(partial_network_name);
-
-    return m_network_group_metadata.get_all_vstream_infos(partial_network_name.value());
+    return m_network_group_metadata.get_all_vstream_infos(network_name);
 }
 
 AccumulatorPtr ConfiguredNetworkGroupBase::get_activation_time_accumulator() const
@@ -737,6 +739,170 @@ AccumulatorPtr ConfiguredNetworkGroupBase::get_activation_time_accumulator() con
 AccumulatorPtr ConfiguredNetworkGroupBase::get_deactivation_time_accumulator() const
 {
     return m_deactivation_time_accumulator;
+}
+
+const std::string &ConfiguredNetworkGroupWrapper::get_network_group_name() const
+{
+    return m_configured_network_group->get_network_group_name();
+}
+
+Expected<hailo_stream_interface_t> ConfiguredNetworkGroupWrapper::get_default_streams_interface()
+{
+    return m_configured_network_group->get_default_streams_interface();
+}
+
+std::vector<std::reference_wrapper<InputStream>> ConfiguredNetworkGroupWrapper::get_input_streams_by_interface(hailo_stream_interface_t stream_interface)
+{
+    return m_configured_network_group->get_input_streams_by_interface(stream_interface);
+}
+
+std::vector<std::reference_wrapper<OutputStream>> ConfiguredNetworkGroupWrapper::get_output_streams_by_interface(hailo_stream_interface_t stream_interface)
+{
+    return m_configured_network_group->get_output_streams_by_interface(stream_interface);
+}
+
+ExpectedRef<InputStream> ConfiguredNetworkGroupWrapper::get_input_stream_by_name(const std::string& name)
+{
+    return m_configured_network_group->get_input_stream_by_name(name);
+}
+ExpectedRef<OutputStream> ConfiguredNetworkGroupWrapper::get_output_stream_by_name(const std::string& name)
+{
+    return m_configured_network_group->get_output_stream_by_name(name);
+}
+
+Expected<InputStreamRefVector> ConfiguredNetworkGroupWrapper::get_input_streams_by_network(const std::string &network_name)
+{
+    return m_configured_network_group->get_input_streams_by_network(network_name);
+}
+
+Expected<OutputStreamRefVector> ConfiguredNetworkGroupWrapper::get_output_streams_by_network(const std::string &network_name)
+{
+    return m_configured_network_group->get_output_streams_by_network(network_name);
+}
+
+InputStreamRefVector ConfiguredNetworkGroupWrapper::get_input_streams()
+{
+    return m_configured_network_group->get_input_streams();
+}
+
+OutputStreamRefVector ConfiguredNetworkGroupWrapper::get_output_streams()
+{
+    return m_configured_network_group->get_output_streams();
+}
+
+Expected<LatencyMeasurementResult> ConfiguredNetworkGroupWrapper::get_latency_measurement(const std::string &network_name)
+{
+    return m_configured_network_group->get_latency_measurement(network_name);
+}
+
+Expected<OutputStreamWithParamsVector> ConfiguredNetworkGroupWrapper::get_output_streams_from_vstream_names(
+    const std::map<std::string, hailo_vstream_params_t> &outputs_params)
+{
+    return m_configured_network_group->get_output_streams_from_vstream_names(outputs_params);
+}
+
+Expected<std::unique_ptr<ActivatedNetworkGroup>> ConfiguredNetworkGroupWrapper::activate_internal(const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size)
+{
+    return m_configured_network_group->activate_internal(network_group_params, dynamic_batch_size);
+}
+
+hailo_status ConfiguredNetworkGroupWrapper::wait_for_activation(const std::chrono::milliseconds &timeout)
+{
+    return m_configured_network_group->wait_for_activation(timeout);
+}
+
+Expected<std::map<std::string, hailo_vstream_params_t>> ConfiguredNetworkGroupWrapper::make_input_vstream_params(
+    bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
+    const std::string &network_name)
+{
+    return m_configured_network_group->make_input_vstream_params(quantized, format_type, timeout_ms, queue_size, network_name);
+}
+Expected<std::map<std::string, hailo_vstream_params_t>> ConfiguredNetworkGroupWrapper::make_output_vstream_params(
+    bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
+    const std::string &network_name)
+{
+    return m_configured_network_group->make_output_vstream_params(quantized, format_type, timeout_ms, queue_size, network_name);
+}
+
+Expected<std::vector<std::map<std::string, hailo_vstream_params_t>>> ConfiguredNetworkGroupWrapper::make_output_vstream_params_groups(
+    bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size)
+{
+    return m_configured_network_group->make_output_vstream_params_groups(quantized, format_type, timeout_ms, queue_size);
+}
+
+Expected<std::vector<std::vector<std::string>>> ConfiguredNetworkGroupWrapper::get_output_vstream_groups()
+{
+    return m_configured_network_group->get_output_vstream_groups();
+}
+
+Expected<std::vector<hailo_network_info_t>> ConfiguredNetworkGroupWrapper::get_network_infos() const
+{
+    return m_configured_network_group->get_network_infos();
+}
+
+Expected<std::vector<hailo_stream_info_t>> ConfiguredNetworkGroupWrapper::get_all_stream_infos(const std::string &network_name) const
+{
+    return m_configured_network_group->get_all_stream_infos(network_name);
+}
+
+Expected<std::vector<hailo_vstream_info_t>> ConfiguredNetworkGroupWrapper::get_input_vstream_infos(const std::string &network_name) const
+{
+    return m_configured_network_group->get_input_vstream_infos(network_name);
+}
+
+Expected<std::vector<hailo_vstream_info_t>> ConfiguredNetworkGroupWrapper::get_output_vstream_infos(const std::string &network_name) const
+{
+    return m_configured_network_group->get_output_vstream_infos(network_name);
+}
+
+Expected<std::vector<hailo_vstream_info_t>> ConfiguredNetworkGroupWrapper::get_all_vstream_infos(const std::string &network_name) const
+{
+    return m_configured_network_group->get_all_vstream_infos(network_name);
+}
+
+AccumulatorPtr ConfiguredNetworkGroupWrapper::get_activation_time_accumulator() const
+{
+    return m_configured_network_group->get_activation_time_accumulator();
+}
+
+AccumulatorPtr ConfiguredNetworkGroupWrapper::get_deactivation_time_accumulator() const
+{
+    return m_configured_network_group->get_deactivation_time_accumulator();
+}
+
+std::shared_ptr<ConfiguredNetworkGroupBase> ConfiguredNetworkGroupWrapper::get_configured_network() const
+{
+    return m_configured_network_group;
+}
+
+ConfiguredNetworkGroupWrapper::ConfiguredNetworkGroupWrapper(std::shared_ptr<ConfiguredNetworkGroupBase> configured_network_group, hailo_status &status) :
+    m_configured_network_group(configured_network_group)
+{
+    // Can't fail for now
+    status = HAILO_SUCCESS;
+}
+
+Expected<ConfiguredNetworkGroupWrapper> ConfiguredNetworkGroupWrapper::create(std::shared_ptr<ConfiguredNetworkGroupBase> configured_network_group)
+{
+    hailo_status status = HAILO_UNINITIALIZED;
+
+    auto wrapper = ConfiguredNetworkGroupWrapper(configured_network_group, status);
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    return wrapper;
+}
+
+Expected<ConfiguredNetworkGroupWrapper> ConfiguredNetworkGroupWrapper::clone()
+{
+    auto wrapper = create(m_configured_network_group);
+    CHECK_EXPECTED(wrapper);
+
+    return wrapper;
+}
+
+Expected<std::unique_ptr<ActivatedNetworkGroup>> ConfiguredNetworkGroupWrapper::activate(const hailo_activate_network_group_params_t &network_group_params)
+{
+    return m_configured_network_group->activate(network_group_params);
 }
 
 } /* namespace hailort */

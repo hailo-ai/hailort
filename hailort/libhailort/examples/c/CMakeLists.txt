@@ -24,8 +24,11 @@ target_link_libraries(c_switch_hefs_example PRIVATE example_base)
 add_executable(c_switch_single_io_hefs_example switch_single_io_hefs_example.c)
 target_link_libraries(c_switch_single_io_hefs_example PRIVATE example_base)
 
-add_executable(multi_device_example_c multi_device_example.c)
-target_link_libraries(multi_device_example_c PRIVATE example_base)
+add_executable(c_multi_device_example multi_device_example.c)
+target_link_libraries(c_multi_device_example PRIVATE example_base)
+
+add_executable(c_power_measurement_example power_measurement_example.c)
+target_link_libraries(c_power_measurement_example PRIVATE example_base)
 
 set(EXAMPLES_C_TARGETS
     c_data_quantization_example
@@ -35,5 +38,6 @@ set(EXAMPLES_C_TARGETS
     c_multi_network_vstream_example
     c_switch_hefs_example
     c_switch_single_io_hefs_example
-    multi_device_example_c
+    c_multi_device_example
+    c_power_measurement_example
     PARENT_SCOPE)

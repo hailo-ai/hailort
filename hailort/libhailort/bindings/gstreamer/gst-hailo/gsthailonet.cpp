@@ -634,8 +634,33 @@ hailo_status HailoNetImpl::signal_was_flushed_event()
     return m_was_flushed_event->signal();
 }
 
+static bool do_versions_match(GstHailoNet *self)
+{
+    hailo_version_t libhailort_version = {};
+    auto status = hailo_get_library_version(&libhailort_version);
+    if (HAILO_SUCCESS != status) {
+        GST_ELEMENT_ERROR(self, RESOURCE, FAILED, ("Fetching libhailort version has failed! status = %d", status), (NULL));
+        return false;
+    }
+
+    bool versions_match = ((HAILORT_MAJOR_VERSION == libhailort_version.major) &&
+        (HAILORT_MINOR_VERSION == libhailort_version.minor) &&
+        (HAILORT_REVISION_VERSION == libhailort_version.revision));
+    if (!versions_match) {
+        GST_ELEMENT_ERROR(self, RESOURCE, FAILED, ("libhailort version (%d.%d.%d) does not match gsthailonet version (%d.%d.%d)",
+            libhailort_version.major, libhailort_version.minor, libhailort_version.revision,
+            HAILORT_MAJOR_VERSION, HAILORT_MINOR_VERSION, HAILORT_REVISION_VERSION), (NULL));
+        return false;
+    }
+    return true;
+}
+
 static void gst_hailonet_init(GstHailoNet *self)
 {
+    if (!do_versions_match(self)) {
+        return;
+    }
+
     auto hailonet_impl = HailoNetImpl::create(self);
     if (!hailonet_impl) {
         GST_ELEMENT_ERROR(self, RESOURCE, FAILED, ("Creating hailonet implementation has failed! status = %d", hailonet_impl.status()), (NULL));

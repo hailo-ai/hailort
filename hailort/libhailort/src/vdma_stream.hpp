@@ -30,6 +30,8 @@ public:
     virtual hailo_status abort() override;
     virtual hailo_status clear_abort() override;
     virtual hailo_status flush() override;
+    hailo_status write_buffer_only(const MemoryView &buffer);
+    hailo_status send_pending_buffer();
 
     uint16_t get_batch_size() const
     {

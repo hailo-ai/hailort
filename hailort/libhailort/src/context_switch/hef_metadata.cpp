@@ -453,6 +453,7 @@ hailo_status HEF_METADATA__add_enable_lcu_default_action(
         uint8_t **action_data_current_offset,
         uint8_t cluster_index,
         uint8_t lcu_index,
+        uint8_t network_index,
         bool is_repeated)
 {
     hailo_status status = HAILO_UNINITIALIZED;
@@ -465,6 +466,7 @@ hailo_status HEF_METADATA__add_enable_lcu_default_action(
     enable_lcu_action.header.is_repeated = is_repeated;
     enable_lcu_action.cluster_index = cluster_index;
     enable_lcu_action.lcu_index = lcu_index;
+    enable_lcu_action.network_index = network_index;
 
     status = hef_metadata__update_slicing_info(context_info,  action_data_current_offset,
         sizeof(enable_lcu_action), true);

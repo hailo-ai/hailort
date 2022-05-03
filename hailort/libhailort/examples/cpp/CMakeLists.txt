@@ -18,8 +18,11 @@ target_link_libraries(cpp_switch_hefs_example PRIVATE example_base)
 add_executable(cpp_switch_hefs_example_threads_reuse switch_hefs_example_threads_reuse.cpp)
 target_link_libraries(cpp_switch_hefs_example_threads_reuse PRIVATE example_base)
 
-add_executable(multi_device_example_cpp multi_device_example.cpp)
-target_link_libraries(multi_device_example_cpp PRIVATE example_base)
+add_executable(cpp_multi_device_example multi_device_example.cpp)
+target_link_libraries(cpp_multi_device_example PRIVATE example_base)
+
+add_executable(cpp_power_measurement_example power_measurement_example.cpp)
+target_link_libraries(cpp_power_measurement_example PRIVATE example_base)
 
 set(EXAMPLES_CPP_TARGETS
     cpp_vstreams_example
@@ -28,5 +31,6 @@ set(EXAMPLES_CPP_TARGETS
     cpp_multi_network_vstream_example
     cpp_switch_hefs_example
     cpp_switch_hefs_example_threads_reuse
-    multi_device_example_cpp
+    cpp_multi_device_example
+    cpp_power_measurement_example
     PARENT_SCOPE)

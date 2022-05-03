@@ -77,7 +77,7 @@ VdmaChannel::VdmaChannel(uint8_t channel_index, Direction direction, HailoRTDriv
       m_host_registers(driver, channel_index, direction),
       m_device_registers(driver, channel_index, other_direction(direction)), m_desc_page_size(desc_page_size),
       m_stream_index(stream_index), m_latency_meter(latency_meter), m_channel_enabled(false), 
-      m_transfers_per_axi_intr(transfers_per_axi_intr)
+      m_transfers_per_axi_intr(transfers_per_axi_intr), m_pending_buffers_sizes(0), m_pending_num_avail_offset(0)
 {
     // channel index invalid
     if (channel_index >= MAX_HOST_CHANNELS_COUNT) {
@@ -141,7 +141,9 @@ channel_index(other.channel_index),
  m_state(std::move(other.m_state)),
  m_channel_handle(std::move(other.m_channel_handle)),
  m_channel_enabled(std::exchange(other.m_channel_enabled, false)),
- m_transfers_per_axi_intr(std::move(other.m_transfers_per_axi_intr))
+ m_transfers_per_axi_intr(std::move(other.m_transfers_per_axi_intr)),
+ m_pending_buffers_sizes(std::move(other.m_pending_buffers_sizes)),
+ m_pending_num_avail_offset(std::move(other.m_pending_num_avail_offset))
 {}
 
 hailo_status VdmaChannel::stop_channel()
@@ -183,7 +185,7 @@ hailo_status VdmaChannel::prepare_d2h_pending_descriptors(uint32_t descs_count, 
     for (uint32_t i = 0; i < transfers_count; i++) {
         /* Provide FW interrupt only in the end of the last transfer in the batch */
         auto last_desc_interrutps_domain = 
-            (static_cast<uint32_t>(m_transfers_per_axi_intr -1) == (i % m_transfers_per_axi_intr)) ? 
+            (static_cast<uint32_t>(m_transfers_per_axi_intr - 1) == (i % m_transfers_per_axi_intr)) ? 
                 VdmaInterruptsDomain::BOTH : VdmaInterruptsDomain::HOST;
         auto status = prepare_descriptors(transfer_size, first_desc_interrupts_domain, last_desc_interrutps_domain);
         CHECK_SUCCESS(status, "Failed prepare desc status={}", status);
@@ -225,6 +227,7 @@ hailo_status VdmaChannel::allocate_resources(uint32_t descs_count)
 #endif
 
     m_state = state.release();
+    m_pending_buffers_sizes = CircularArray<size_t>(descs_count);
 
     // If measuring latency, max_active_transfer is limited to 16 (see hailort_driver.hpp doc for further information)
     int pending_buffers_size = (nullptr == m_latency_meter) ? static_cast<int>(m_state->m_pending_buffers.size()) :
@@ -264,7 +267,6 @@ hailo_status VdmaChannel::start_allocated_channel(uint32_t transfer_size)
     assert(m_state);
 
     std::lock_guard<State> state_guard(*m_state);
-
     reset_internal_counters();
 
     auto status = start_channel(*m_descriptors_buffer);
@@ -278,6 +280,7 @@ hailo_status VdmaChannel::start_allocated_channel(uint32_t transfer_size)
         }
         return status;
     }
+
     return HAILO_SUCCESS;
 }
 
@@ -305,14 +308,8 @@ hailo_status VdmaChannel::wait(size_t buffer_size, const std::chrono::millisecon
 
 hailo_status VdmaChannel::transfer(void *buf, size_t count)
 {
-    if ((nullptr == buf) || (0 == count)) {
-        return HAILO_INVALID_ARGUMENT;
-    }
-
-    if (!m_mapped_user_buffer) {
-        LOGGER__ERROR("Transfer called without allocating buffers");
-        return HAILO_INVALID_OPERATION;
-    }
+    CHECK((nullptr != buf) && (0 < count), HAILO_INVALID_ARGUMENT);
+    CHECK(nullptr != m_mapped_user_buffer, HAILO_INVALID_OPERATION, "Transfer called without allocating buffers");
 
     hailo_status status = HAILO_UNINITIALIZED;
     assert(m_state);
@@ -337,6 +334,93 @@ hailo_status VdmaChannel::transfer(void *buf, size_t count)
     return HAILO_SUCCESS;
 }
 
+hailo_status VdmaChannel::write_buffer_impl(const MemoryView &buffer)
+{
+    CHECK(nullptr != m_mapped_user_buffer, HAILO_INVALID_OPERATION, "Transfer called without allocating buffers");
+
+    size_t desired_desc_num = m_descriptors_buffer->descriptors_in_buffer(buffer.size());
+    uint32_t desc_avail = (get_num_available() + m_pending_num_avail_offset) & m_state->m_descs.size_mask;
+
+    assert(CB_AVAIL(m_state->m_descs, desc_avail, CB_TAIL(m_state->m_descs)) >= static_cast<uint16_t>(desired_desc_num));
+
+    /* Copy buffer into the PLDA data struct */
+    auto offset = desc_avail * m_desc_page_size;
+    auto status = m_mapped_user_buffer->write_cyclic(buffer.data(), buffer.size(), offset);
+    CHECK_SUCCESS(status);
+
+    m_pending_num_avail_offset = static_cast<uint16_t>(m_pending_num_avail_offset + desired_desc_num);
+
+    CHECK(!m_pending_buffers_sizes.full(), HAILO_INVALID_OPERATION, "Cannot add more pending buffers!");
+    m_pending_buffers_sizes.push_back(buffer.size());
+    return HAILO_SUCCESS;
+}
+
+hailo_status VdmaChannel::write_buffer(const MemoryView &buffer, std::chrono::milliseconds timeout)
+{
+    assert(m_state);
+    std::unique_lock<State> state_guard(*m_state);
+
+    size_t desired_desc_num = m_descriptors_buffer->descriptors_in_buffer(buffer.size());
+    bool was_successful = m_can_write_buffer_cv.wait_for(state_guard, timeout, [this, desired_desc_num] () {
+        uint32_t desc_avail = (get_num_available() + m_pending_num_avail_offset) & m_state->m_descs.size_mask;
+        int num_free = CB_AVAIL(m_state->m_descs, desc_avail, CB_TAIL(m_state->m_descs));
+        return (num_free >= static_cast<uint16_t>(desired_desc_num));
+    });
+    CHECK(was_successful, HAILO_TIMEOUT, "Waiting for descriptiors in write_buffer has reached a timeout!");
+
+    return write_buffer_impl(buffer);
+}
+
+hailo_status VdmaChannel::send_pending_buffer_impl()
+{
+    CHECK(!m_pending_buffers_sizes.empty(), HAILO_INVALID_OPERATION, "There are no pending buffers to send!");
+
+    // For h2d, only the host need to get transfer done interrupts
+    VdmaInterruptsDomain last_desc_interrupts_domain = VdmaInterruptsDomain::HOST;
+    // If we measure latency, we need interrupt on the first descriptor
+    VdmaInterruptsDomain first_desc_interrupts_domain = (m_latency_meter != nullptr) ?
+        VdmaInterruptsDomain::HOST : VdmaInterruptsDomain::NONE;
+
+    auto status = prepare_descriptors(m_pending_buffers_sizes.front(), first_desc_interrupts_domain, last_desc_interrupts_domain);
+    CHECK_SUCCESS(status);
+
+    m_state->m_accumulated_transfers = (m_state->m_accumulated_transfers + 1) % m_transfers_per_axi_intr;
+
+    size_t desired_desc_num = m_descriptors_buffer->descriptors_in_buffer(m_pending_buffers_sizes.front());
+    m_pending_num_avail_offset = static_cast<uint16_t>(m_pending_num_avail_offset - desired_desc_num);
+
+    m_pending_buffers_sizes.pop_front();
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status VdmaChannel::send_pending_buffer(std::chrono::milliseconds timeout)
+{
+    assert(m_state);
+    std::lock_guard<State> state_guard(*m_state);
+
+    // Save before calling send_pending_buffer_impl because we pop from m_pending_buffers_sizes there
+    size_t desired_desc_num = m_descriptors_buffer->descriptors_in_buffer(m_pending_buffers_sizes.front());
+
+    auto status = send_pending_buffer_impl();
+    CHECK_SUCCESS(status);
+
+    // When all pending buffers have been sent but no buffers were processed yet (there are no free descriptors) we want to wait
+    // for channel completion to make free room to the next buffers
+    if (0 == m_pending_num_avail_offset) {
+        int num_free = CB_AVAIL(m_state->m_descs, get_num_available(), CB_TAIL(m_state->m_descs));
+
+        // TODO: This assumes the next buffer is the same size as the current one, so consider moving this to the write_buffer function
+        if (num_free < static_cast<uint16_t>(desired_desc_num)) {
+            status = wait_for_channel_completion(timeout);
+            CHECK_SUCCESS(status);
+        }
+    }
+    m_can_write_buffer_cv.notify_one();
+
+    return HAILO_SUCCESS;
+}
+
 hailo_status VdmaChannel::flush(const std::chrono::milliseconds &timeout)
 {
     assert(m_state);
@@ -356,43 +440,11 @@ hailo_status VdmaChannel::flush(const std::chrono::milliseconds &timeout)
 
 hailo_status VdmaChannel::transfer_h2d(void *buf, size_t count)
 {
-    uint16_t descNum = 0;
-    const uint16_t pageSize = m_desc_page_size;
-    uint32_t desc_avail = 0;
-    hailo_status status = HAILO_UNINITIALIZED;
-    // For h2d, only the host need to get transfer done interrupts
-    VdmaInterruptsDomain last_desc_interrupts_domain = VdmaInterruptsDomain::HOST;
-    // If we measure latecy, we need interrupt on the first descriptor
-    VdmaInterruptsDomain first_desc_interrupts_domain = (m_latency_meter != nullptr) ?
-        VdmaInterruptsDomain::HOST : VdmaInterruptsDomain::NONE;
-
-    assert(buf != nullptr);
-    assert(m_state);
-
-    desc_avail = get_num_available();
-
-    /* calculate desired descriptors for the buffer */
-    size_t desiredDescNum = ((count + pageSize - 1) / pageSize);
-    if (desiredDescNum > UINT16_MAX) {
-        return HAILO_OUT_OF_DESCRIPTORS;
-    }
-    descNum = (uint16_t)(desiredDescNum);
-    int num_available = desc_avail;
-    int num_processed = CB_TAIL(m_state->m_descs);
-    int num_free = CB_AVAIL(m_state->m_descs, num_available, num_processed);
-    if (num_free < descNum) {
-        return HAILO_OUT_OF_DESCRIPTORS;
-    }
-
-    /* Copy buffer into the PLDA data struct */
-    auto offset = desc_avail * pageSize;
-    status = m_mapped_user_buffer->write_cyclic(buf, count, offset);
+    auto status = write_buffer_impl(MemoryView(buf, count));
     CHECK_SUCCESS(status);
 
-    status = prepare_descriptors(count, first_desc_interrupts_domain, last_desc_interrupts_domain);
+    status = send_pending_buffer_impl();
     CHECK_SUCCESS(status);
-
-    m_state->m_accumulated_transfers = (m_state->m_accumulated_transfers + 1) % m_transfers_per_axi_intr;
 
     return HAILO_SUCCESS;
 }
@@ -432,7 +484,6 @@ hailo_status VdmaChannel::transfer_d2h(void *buf, size_t count)
     m_state->m_accumulated_transfers = (m_state->m_accumulated_transfers + 1) % m_transfers_per_axi_intr;
 
     return HAILO_SUCCESS;
-
 }
 
 uint16_t VdmaChannel::get_num_available()
@@ -446,7 +497,10 @@ uint16_t VdmaChannel::get_num_available()
     auto hw_num_avail = m_host_registers.get_num_available();
     assert(hw_num_avail);
     // On case of channel aborted, the num_available is set to 0 (so we don't accept sync)
-    assert((hw_num_avail.value() == num_available) || is_aborted().value());
+
+    if ((HailoRTDriver::INVALID_VDMA_CHANNEL_HANDLE != *m_channel_handle) && !is_aborted().value()) {
+        assert(hw_num_avail.value() == num_available);
+    }
 #endif
     return num_available;
 }
@@ -516,9 +570,6 @@ hailo_status VdmaChannel::inc_num_available(uint16_t value)
     int num_available = get_num_available();
     int num_processed = CB_TAIL(m_state->m_descs);
     int num_free = CB_AVAIL(m_state->m_descs, num_available, num_processed);
-    uint16_t hw_num_avail = 0;
-    
-    (void) hw_num_avail;
     if (value > num_free) {
         return HAILO_OUT_OF_DESCRIPTORS;
     }
@@ -592,17 +643,17 @@ void VdmaChannel::clear_descriptor_list()
     }
 }
 
-hailo_status VdmaChannel::allocate_buffer(const size_t buffer_size)
+hailo_status VdmaChannel::allocate_buffer(const uint32_t buffer_size)
 {
     assert((buffer_size % m_desc_page_size) == 0);
-    size_t desc_count = buffer_size / m_desc_page_size;
+    uint32_t desc_count = buffer_size / m_desc_page_size;
 
     if (m_mapped_user_buffer) {
         LOGGER__ERROR("m_mapped_user_buffer is not NULL");
         return HAILO_INVALID_OPERATION;
     }
 
-    auto mapped_buffer = VdmaBuffer::create(buffer_size, m_direction, m_driver);
+    auto mapped_buffer = vdma::MappedBuffer::create(buffer_size, m_direction, m_driver);
     if(!mapped_buffer) {
         LOGGER__ERROR("create mapped buffer failed");
         return mapped_buffer.status();
@@ -620,7 +671,7 @@ hailo_status VdmaChannel::allocate_buffer(const size_t buffer_size)
         return status;
     }
 
-    m_mapped_user_buffer = make_unique_nothrow<VdmaBuffer>(mapped_buffer.release());
+    m_mapped_user_buffer = make_unique_nothrow<vdma::MappedBuffer>(mapped_buffer.release());
     CHECK_NOT_NULL(m_mapped_user_buffer, HAILO_OUT_OF_HOST_MEMORY);
 
     m_descriptors_buffer = make_unique_nothrow<VdmaDescriptorList>(descriptors.release());
@@ -834,7 +885,6 @@ Expected<bool> VdmaChannel::is_aborted()
 
 hailo_status VdmaChannel::wait_for_condition(std::function<bool()> condition, std::chrono::milliseconds timeout)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
     auto start_time = std::chrono::steady_clock::now();
     std::chrono::milliseconds time_elapsed(0);
     while (timeout > time_elapsed) {
@@ -842,33 +892,43 @@ hailo_status VdmaChannel::wait_for_condition(std::function<bool()> condition, st
             return HAILO_SUCCESS;
         }
 
-        auto hw_num_processed = wait_interrupts(timeout);
-        if ((hw_num_processed.status() == HAILO_TIMEOUT) ||
-            (hw_num_processed &&  hw_num_processed.value() == 0)) {
-            // We need to check for channel abort in this 2 cases:
-            //  1. TIMEOUT - maybe the timeout is a result of channel aborted.
-            //  2. hw_num_processed == 0 - In this case we receive an interrupt, but the channel may be
-            //     aborted. When the channel is aborted, num processed is set to 0.
-            auto is_aborted_exp = is_aborted();
-            CHECK_EXPECTED_AS_STATUS(is_aborted_exp);
-            if (is_aborted_exp.value()) {
-                LOGGER__CRITICAL("Channel {} was aborted by an external source!", channel_index);
-                return HAILO_STREAM_ABORTED;
-            }
+        auto status = wait_for_channel_completion(timeout);
+        if (HAILO_SUCCESS != status) {
+            return status;
         }
-        if ((HAILO_STREAM_INTERNAL_ABORT == hw_num_processed.status()) ||
-            (HAILO_STREAM_NOT_ACTIVATED == hw_num_processed.status())) {
-            return hw_num_processed.status();
-        }
-        CHECK_EXPECTED_AS_STATUS(hw_num_processed);
-
-        status = trigger_channel_completion(hw_num_processed.value());
-        CHECK_SUCCESS(status);
 
         time_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time);
     }
 
     return condition() ? HAILO_SUCCESS : HAILO_TIMEOUT;
+}
+
+hailo_status VdmaChannel::wait_for_channel_completion(std::chrono::milliseconds timeout)
+{
+    auto hw_num_processed = wait_interrupts(timeout);
+    if ((hw_num_processed.status() == HAILO_TIMEOUT) ||
+        (hw_num_processed &&  hw_num_processed.value() == 0)) {
+        // We need to check for channel abort in this 2 cases:
+        //  1. TIMEOUT - maybe the timeout is a result of channel aborted.
+        //  2. hw_num_processed == 0 - In this case we receive an interrupt, but the channel may be
+        //     aborted. When the channel is aborted, num processed is set to 0.
+        auto is_aborted_exp = is_aborted();
+        CHECK_EXPECTED_AS_STATUS(is_aborted_exp);
+        if (is_aborted_exp.value()) {
+            LOGGER__CRITICAL("Channel {} was aborted by an external source!", channel_index);
+            return HAILO_STREAM_ABORTED;
+        }
+    }
+    if ((HAILO_STREAM_INTERNAL_ABORT == hw_num_processed.status()) ||
+        (HAILO_STREAM_NOT_ACTIVATED == hw_num_processed.status())) {
+        return hw_num_processed.status();
+    }
+    CHECK_EXPECTED_AS_STATUS(hw_num_processed);
+
+    auto status = trigger_channel_completion(hw_num_processed.value());
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
 }
 
 Expected<uint16_t> VdmaChannel::wait_interrupts(std::chrono::milliseconds timeout)

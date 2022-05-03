@@ -15,7 +15,6 @@
 #include "hailo/hef.hpp"
 #include "hailo/vdevice.hpp"
 
-#include "bindings_common.hpp"
 #include "utils.hpp"
 #include "common/logger_macros.hpp"
 

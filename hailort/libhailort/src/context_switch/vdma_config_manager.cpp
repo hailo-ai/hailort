@@ -23,6 +23,7 @@
 #include "hailo/hef.hpp"
 #include "control.hpp"
 #include "hailort_defaults.hpp"
+#include "vdevice_internal.hpp"
 
 #include "pcie_device.hpp"
 #include "hlpcie.hpp"
@@ -38,7 +39,9 @@ Expected<VdmaConfigManager> VdmaConfigManager::create(VdmaDevice &device)
     const bool is_vdevice = false;
     std::vector<std::reference_wrapper<VdmaDevice>> devices;
     devices.push_back(device);
-    VdmaConfigManager manager(std::move(devices), is_vdevice);
+
+    auto empty_weak_ptr = NetworkGroupSchedulerWeakPtr();
+    VdmaConfigManager manager(std::move(devices), is_vdevice, empty_weak_ptr);
     return manager;
 }
 
@@ -56,13 +59,12 @@ Expected<VdmaConfigManager> VdmaConfigManager::create(VDevice &vdevice)
         pcie_devices.emplace_back(static_cast<PcieDevice&>(dev.get()));
     }
 
-
-    VdmaConfigManager manager(std::move(pcie_devices), is_vdevice);
+    VdmaConfigManager manager(std::move(pcie_devices), is_vdevice, static_cast<VDeviceBase&>(vdevice).network_group_scheduler());
     return manager;
 }
 
-VdmaConfigManager::VdmaConfigManager(std::vector<std::reference_wrapper<VdmaDevice>> &&devices, bool is_vdevice)
-    : m_devices(std::move(devices)), m_net_groups(), m_is_vdevice(is_vdevice) {}
+VdmaConfigManager::VdmaConfigManager(std::vector<std::reference_wrapper<VdmaDevice>> &&devices, bool is_vdevice, NetworkGroupSchedulerWeakPtr network_group_scheduler)
+    : m_devices(std::move(devices)), m_net_groups(), m_net_group_wrappers(), m_is_vdevice(is_vdevice), m_network_group_scheduler(network_group_scheduler) {}
 
 Expected<ConfiguredNetworkGroupVector> VdmaConfigManager::add_hef(Hef &hef,
     const NetworkGroupsParamsMap &configure_params)
@@ -128,7 +130,7 @@ Expected<ConfiguredNetworkGroupVector> VdmaConfigManager::add_hef(Hef &hef,
         }
 
         auto net_group = VdmaConfigNetworkGroup::create(m_active_net_group_holder, config_params,
-            resources_managers, network_group_metadata_ptr);
+            resources_managers, network_group_metadata_ptr, m_network_group_scheduler);
         current_net_group_index++;
 
         auto net_group_ptr = make_shared_nothrow<VdmaConfigNetworkGroup>(net_group.release());
@@ -143,12 +145,25 @@ Expected<ConfiguredNetworkGroupVector> VdmaConfigManager::add_hef(Hef &hef,
             status = net_group_ptr->create_streams_from_config_params(net_group_ptr->get_resources_managers()[0]->get_device());
             CHECK_SUCCESS_AS_EXPECTED(status);
         }
+
+        auto network_group_scheduler = m_network_group_scheduler.lock();
+        if (network_group_scheduler) {
+            status = network_group_scheduler->add_network_group(net_group_ptr);
+            CHECK_SUCCESS_AS_EXPECTED(status);
+        }
     
         // Check that all boundary streams were created
         status = validate_boundary_streams_were_created(hef, network_group_proto->network_group_metadata().network_group_name(), *net_group_ptr);
         CHECK_SUCCESS_AS_EXPECTED(status);
 
-        added_network_groups.emplace_back(std::static_pointer_cast<ConfiguredNetworkGroup>(net_group_ptr));
+        auto net_group_wrapper = ConfiguredNetworkGroupWrapper::create(net_group_ptr);
+        CHECK_EXPECTED(net_group_wrapper);
+
+        auto net_group_wrapper_ptr = make_shared_nothrow<ConfiguredNetworkGroupWrapper>(net_group_wrapper.release());
+        CHECK_AS_EXPECTED(nullptr != net_group_wrapper_ptr, HAILO_OUT_OF_HOST_MEMORY);
+        m_net_group_wrappers.emplace_back(net_group_wrapper_ptr);
+
+        added_network_groups.emplace_back(std::static_pointer_cast<ConfiguredNetworkGroup>(net_group_wrapper_ptr));
     }
     std::string unmatched_keys = "";
     for (const auto &pair : configure_params_copy) {
@@ -171,7 +186,9 @@ Expected<ConfiguredNetworkGroupVector> VdmaConfigManager::add_hef(Hef &hef,
         //     is_abbale_supported = proto_message->included_features().abbale();
         // }
 
+        const auto supported_features = m_net_groups[0]->get_resources_managers()[0]->get_supported_features();
         context_switch_info.context_switch_main_header.validation_features.is_abbale_supported = is_abbale_supported;
+        context_switch_info.context_switch_main_header.infer_features.preliminary_run_asap = supported_features.preliminary_run_asap;
         for (size_t i = 0, contexts = 0; i < m_net_groups.size(); ++i) {
             for (auto &resource_manager : m_net_groups[i]->get_resources_managers()) {
                 if (0 == strcmp(device.get().get_dev_id(), resource_manager->get_dev_id())) {
@@ -218,8 +235,8 @@ hailo_status VdmaConfigManager::update_network_batch_size(ConfigureNetworkParams
     CHECK((single_network_default_batch || multi_network_default_batch), HAILO_INVALID_OPERATION, 
         "User provided non batch size for network group and for network as well. User is adviced to work with network's batch size only");
 
-    /* In case user works with network group, overide the network batch size.*/
     if (!single_network_default_batch && multi_network_default_batch) {
+        /* In case user works with network group, overide the network batch size.*/
         for (auto &network_params : config_params.network_params_by_name) {
             network_params.second.batch_size = config_params.batch_size;
         }

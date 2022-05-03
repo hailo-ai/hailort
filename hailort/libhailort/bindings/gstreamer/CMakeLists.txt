@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.0.0)
 
 project(gsthailo)
 
+include(GNUInstallDirs)
+
 if(NOT CMAKE_HOST_UNIX)
     message(FATAL_ERROR "Only unix hosts are supported, stopping build")
 endif()

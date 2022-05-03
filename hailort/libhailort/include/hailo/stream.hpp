@@ -79,6 +79,11 @@ public:
     virtual EventPtr &get_network_group_activated_event() = 0;
 
     /**
+     * @returns whether the stream is managed by a network group scheduler.
+     */
+    virtual bool is_scheduled() = 0;
+
+    /**
      * Writes the entire buffer to the stream without transformations
      *
      * @param[in] buffer    The buffer to be written.
@@ -182,6 +187,11 @@ public:
      * @returns a pointer for network group activated event.
      */
     virtual EventPtr &get_network_group_activated_event() = 0;
+
+    /**
+     * @returns whether the stream is managed by a network group scheduler.
+     */
+    virtual bool is_scheduled() = 0;
     
     /**
      * @returns the stream's info.

@@ -48,6 +48,7 @@ private:
     std::mutex m_mutex;
 };
 
+using device_id_t = std::string;
 using network_name_t = std::string;
 using hailonet_name_t = std::string;
 
@@ -58,7 +59,8 @@ public:
     Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(const void *element, const std::string &device_id,
         const char *network_group_name, uint16_t batch_size, std::shared_ptr<VDevice> &vdevice, std::shared_ptr<Hef> hef,
         NetworkGroupsParamsMap &net_groups_params_map);
-    hailo_status add_network(const std::string &network_name, const GstElement *owner_element);
+    hailo_status add_network_to_shared_network_group(const std::string &shared_device_id, const std::string &network_name,
+        const GstElement *owner_element);
     
 private:
     static std::string get_configure_string(const std::string &device_id, const char *network_group_name, uint16_t batch_size);
@@ -69,7 +71,7 @@ private:
 
     // TODO: change this map to store only the shared network_groups (used by multiple hailonets with the same vdevices)
     std::unordered_map<std::string, std::shared_ptr<ConfiguredNetworkGroup>> m_configured_net_groups;
-    std::unordered_map<network_name_t, hailonet_name_t> m_configured_networks;
+    std::unordered_map<device_id_t, std::unordered_map<network_name_t, hailonet_name_t>> m_configured_networks;
     std::mutex m_mutex;
 };
 
@@ -117,7 +119,7 @@ private:
     static NetworkGroupConfigManager m_net_group_config_manager;
     static NetworkGroupActivationManager m_net_group_activation_manager;
     const GstElement *m_element;
-    std::string m_shared_device_id;
+    std::string m_shared_device_id; // empty string when using unique device
     std::string m_net_group_name;
     std::string m_network_name;
     uint16_t m_batch_size;
