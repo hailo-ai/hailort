@@ -209,7 +209,7 @@ PYBIND11_MODULE(_pyhailort_internal, m) {
         .def_readonly("buffer_indices", &LayerInfo::buffer_indices)
         .def_readonly("core_bytes_per_buffer", &LayerInfo::core_bytes_per_buffer)
         .def_readonly("core_buffers_per_frame", &LayerInfo::core_buffers_per_frame)
-        .def_readonly("network_name", &LayerInfo::partial_network_name)
+        .def_readonly("network_name", &LayerInfo::network_name)
         ;
 }
 

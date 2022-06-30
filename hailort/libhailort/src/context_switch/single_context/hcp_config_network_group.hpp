@@ -35,12 +35,17 @@ public:
         const ConfigureNetworkParams &config_params, uint8_t net_group_index,
         NetworkGroupMetadata &&network_group_metadata, hailo_status &status);
 
-    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate(
-    const hailo_activate_network_group_params_t &network_group_params = HailoRTDefaults::get_network_group_params()) override;
+    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_impl(
+        const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size) override;
     virtual Expected<hailo_stream_interface_t> get_default_streams_interface() override;
 
     virtual Expected<uint8_t> get_boundary_channel_index(uint8_t stream_index, hailo_stream_direction_t direction,
         const std::string &layer_name) override;
+    virtual Expected<std::shared_ptr<LatencyMetersMap>> get_latnecy_meters() override;
+    virtual Expected<std::shared_ptr<VdmaChannel>> get_boundary_vdma_channel_by_stream_name(
+        const std::string &stream_name) override;
+    virtual hailo_status set_scheduler_timeout(const std::chrono::milliseconds &timeout, const std::string &network_name) override;
+    virtual hailo_status set_scheduler_threshold(uint32_t threshold, const std::string &network_name) override;
 
     virtual ~HcpConfigNetworkGroup() = default;
     HcpConfigNetworkGroup(const HcpConfigNetworkGroup &other) = delete;

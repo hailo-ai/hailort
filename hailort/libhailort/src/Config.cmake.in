@@ -1,0 +1,10 @@
+@PACKAGE_INIT@
+
+if(TARGET libhailort)
+    if(${HailoRT_FIND_VERSION} VERSION_EQUAL "${HAILORT_MAJOR_VERSION}.${HAILORT_MINOR_VERSION}.${HAILORT_REVISION_VERSION}")
+        add_library(HailoRT::libhailort ALIAS libhailort)
+    endif()
+else()
+    include("${CMAKE_CURRENT_LIST_DIR}/HailoRTTargets.cmake")
+    check_required_components(HailoRT)
+endif()

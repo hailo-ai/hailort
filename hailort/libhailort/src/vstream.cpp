@@ -348,8 +348,9 @@ Expected<std::vector<PipelineBuffer>> TransformDemuxElement::action(PipelineBuff
 
 BaseVStream::BaseVStream(const hailo_vstream_info_t &vstream_info, const hailo_vstream_params_t &vstream_params,
                          std::shared_ptr<PipelineElement> pipeline_entry, std::vector<std::shared_ptr<PipelineElement>> &&pipeline,
-                         std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr shutdown_event,
-                         AccumulatorPtr pipeline_latency_accumulator, EventPtr &&network_group_activated_event, hailo_status &output_status) :
+                         std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
+                         EventPtr shutdown_event, AccumulatorPtr pipeline_latency_accumulator, EventPtr &&network_group_activated_event,
+                         hailo_status &output_status) :
     m_vstream_info(vstream_info),
     m_vstream_params(vstream_params),
     m_measure_pipeline_latency((vstream_params.vstream_stats_flags & HAILO_VSTREAM_STATS_MEASURE_LATENCY) != 0),
@@ -443,13 +444,13 @@ hailo_status BaseVStream::stop_vstream()
 
 hailo_status BaseVStream::stop_and_clear()
 {
-     auto status = m_network_group_activated_event->wait(std::chrono::milliseconds(0));
-     CHECK(HAILO_TIMEOUT == status, HAILO_INVALID_OPERATION,
+    auto status = m_network_group_activated_event->wait(std::chrono::milliseconds(0));
+    CHECK(HAILO_TIMEOUT == status, HAILO_INVALID_OPERATION,
         "Trying to clear {} vstream before its network group is deactivated", name());
- 
-     status = stop_vstream();
-     CHECK_SUCCESS(status);
-    
+
+    status = stop_vstream();
+    CHECK_SUCCESS(status);
+
     status = m_entry_element->clear();
     CHECK_SUCCESS(status, "Failed clearing vstream {}", name());
     
@@ -584,8 +585,8 @@ InputVStream::InputVStream(const hailo_vstream_info_t &vstream_info, const hailo
                            std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr shutdown_event,
                            AccumulatorPtr pipeline_latency_accumulator,
                            EventPtr network_group_activated_event, hailo_status &output_status) :
-    BaseVStream(vstream_info, vstream_params, pipeline_entry, std::move(pipeline), std::move(pipeline_status), shutdown_event,
-                pipeline_latency_accumulator, std::move(network_group_activated_event), output_status)
+    BaseVStream(vstream_info, vstream_params, pipeline_entry, std::move(pipeline), std::move(pipeline_status),
+                shutdown_event, pipeline_latency_accumulator, std::move(network_group_activated_event), output_status)
 {
     if (HAILO_SUCCESS != output_status) {
         return;
@@ -595,11 +596,14 @@ InputVStream::InputVStream(const hailo_vstream_info_t &vstream_info, const hailo
 
 hailo_status InputVStream::write(const MemoryView &buffer)
 {
-    CHECK(m_is_activated, HAILO_VSTREAM_PIPELINE_NOT_ACTIVATED, "Failed to write buffer! Virtual stream {} is not activated!", name());
-    auto status = m_network_group_activated_event->wait(std::chrono::milliseconds(0));
-    CHECK(HAILO_TIMEOUT != status, HAILO_NETWORK_GROUP_NOT_ACTIVATED,
-        "Trying to write to vstream {} before its network group is activated", name());
-    status = m_entry_element->run_push(PipelineBuffer(buffer, m_measure_pipeline_latency));
+    if (nullptr != m_network_group_activated_event) {
+        CHECK(m_is_activated, HAILO_VSTREAM_PIPELINE_NOT_ACTIVATED, "Failed to write buffer! Virtual stream {} is not activated!", name());
+        auto status = m_network_group_activated_event->wait(std::chrono::milliseconds(0));
+        CHECK(HAILO_TIMEOUT != status, HAILO_NETWORK_GROUP_NOT_ACTIVATED,
+            "Trying to write to vstream {} before its network group is activated", name());
+    }
+
+    auto status = m_entry_element->run_push(PipelineBuffer(buffer, m_measure_pipeline_latency));
     if (HAILO_SHUTDOWN_EVENT_SIGNALED == status) {
         LOGGER__INFO("Sending to VStream was shutdown!");
         status = m_pipeline_status->load();
@@ -665,7 +669,6 @@ Expected<OutputVStream> OutputVStream::create(const hailo_vstream_info_t &vstrea
     std::shared_ptr<PipelineElement> pipeline_entry, std::vector<std::shared_ptr<PipelineElement>> &&pipeline,
     std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr shutdown_event,
     EventPtr network_group_activated_event, AccumulatorPtr pipeline_latency_accumulator)
-
 {
     hailo_status status = HAILO_UNINITIALIZED;
 
@@ -693,8 +696,8 @@ OutputVStream::OutputVStream(const hailo_vstream_info_t &vstream_info, const hai
                              std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr shutdown_event,
                              AccumulatorPtr pipeline_latency_accumulator,
                              EventPtr network_group_activated_event, hailo_status &output_status) :
-    BaseVStream(vstream_info, vstream_params, pipeline_entry, std::move(pipeline), std::move(pipeline_status), shutdown_event,
-                pipeline_latency_accumulator, std::move(network_group_activated_event), output_status)
+    BaseVStream(vstream_info, vstream_params, pipeline_entry, std::move(pipeline), std::move(pipeline_status),
+                shutdown_event, pipeline_latency_accumulator, std::move(network_group_activated_event), output_status)
 {
     if (HAILO_SUCCESS != output_status) {
         return;
@@ -705,17 +708,19 @@ OutputVStream::OutputVStream(const hailo_vstream_info_t &vstream_info, const hai
 
 hailo_status OutputVStream::read(MemoryView buffer)
 {
-    CHECK(m_is_activated, HAILO_VSTREAM_PIPELINE_NOT_ACTIVATED, "read() failed! Virtual stream {} is not activated!", name());
-    auto status = m_network_group_activated_event->wait(std::chrono::milliseconds(0));
-    if (HAILO_TIMEOUT == status) {
-        LOGGER__INFO("Trying to read from vstream {} before its network_group is activated", name());
-        return HAILO_NETWORK_GROUP_NOT_ACTIVATED;
+    if (nullptr != m_network_group_activated_event) {
+        CHECK(m_is_activated, HAILO_VSTREAM_PIPELINE_NOT_ACTIVATED, "read() failed! Virtual stream {} is not activated!", name());
+        auto status = m_network_group_activated_event->wait(std::chrono::milliseconds(0));
+        if (HAILO_TIMEOUT == status) {
+            LOGGER__INFO("Trying to read from vstream {} before its network_group is activated", name());
+            return HAILO_NETWORK_GROUP_NOT_ACTIVATED;
+        }
+        CHECK_SUCCESS(status);
     }
-    CHECK_SUCCESS(status);
 
     assert(1 == m_entry_element->sources().size());
     auto recv_buffer = m_entry_element->sources()[0].run_pull(PipelineBuffer(buffer, m_measure_pipeline_latency));
-    status = recv_buffer.status();
+    auto status = recv_buffer.status();
     if (HAILO_SHUTDOWN_EVENT_SIGNALED == status) {
         LOGGER__INFO("Receiving to VStream was shutdown!");
         status = m_pipeline_status->load();
@@ -850,18 +855,25 @@ Expected<PipelineBuffer> HwReadElement::run_pull(PipelineBuffer &&optional, cons
     CHECK_EXPECTED(buffer);
 
     while (true) {
-        auto status = m_activation_wait_or_shutdown.wait(m_timeout);
-        if (HAILO_SHUTDOWN_EVENT_SIGNALED == status) {
-            return make_unexpected(HAILO_SHUTDOWN_EVENT_SIGNALED);
+        if (!m_stream.is_scheduled()) {
+            auto status = m_activation_wait_or_shutdown.wait(m_timeout);
+            if (HAILO_SHUTDOWN_EVENT_SIGNALED == status) {
+                return make_unexpected(HAILO_SHUTDOWN_EVENT_SIGNALED);
+            }
+            if (HAILO_TIMEOUT == status) {
+                return make_unexpected(HAILO_NETWORK_GROUP_NOT_ACTIVATED);
+            }
+            CHECK_SUCCESS_AS_EXPECTED(status);
+        } else {
+            auto status = m_activation_wait_or_shutdown.wait(std::chrono::milliseconds(0));
+            if (HAILO_SHUTDOWN_EVENT_SIGNALED == status) {
+                return make_unexpected(HAILO_SHUTDOWN_EVENT_SIGNALED);
+            }
         }
-        if (HAILO_TIMEOUT == status) {
-            return make_unexpected(HAILO_NETWORK_GROUP_NOT_ACTIVATED);
-        }
-        CHECK_SUCCESS_AS_EXPECTED(status);
 
         MemoryView buffer_view(buffer.value().as_view());
         m_duration_collector.start_measurement();
-        status = m_stream.read(buffer_view);
+        auto status = m_stream.read(buffer_view);
         m_duration_collector.complete_measurement();
         if (HAILO_INVALID_FRAME == status) {
             m_stream.increase_invalid_frames_count(1);
@@ -992,7 +1004,7 @@ hailo_status HwWriteElement::clear()
 
 hailo_status HwWriteElement::flush()
 {
-    hailo_status status = m_got_flush_event->wait(std::chrono::milliseconds(HAILO_DEFAULT_VSTREAM_TIMEOUT_MS));
+    hailo_status status = m_got_flush_event->wait(m_stream.get_timeout());
     CHECK_SUCCESS(status);
 
     status = m_got_flush_event->reset();
@@ -1195,7 +1207,10 @@ Expected<std::vector<InputVStream>> VStreamsBuilderUtils::create_inputs(InputStr
     std::vector<std::shared_ptr<PipelineElement>> elements;
     std::vector<InputVStream> vstreams;
 
-    auto network_group_activated_event = input_stream.get_network_group_activated_event();
+    EventPtr network_group_activated_event = nullptr;
+    if (!input_stream.is_scheduled()) {
+        network_group_activated_event = input_stream.get_network_group_activated_event();
+    }
 
     auto shutdown_event = Event::create_shared(Event::State::not_signalled);
     CHECK_AS_EXPECTED(nullptr != shutdown_event, HAILO_OUT_OF_HOST_MEMORY);
@@ -1261,7 +1276,10 @@ Expected<std::vector<OutputVStream>> VStreamsBuilderUtils::create_outputs(Output
     std::vector<std::shared_ptr<PipelineElement>> elements;
     std::vector<OutputVStream> vstreams;
 
-    auto network_group_activated_event = output_stream.get_network_group_activated_event();
+    EventPtr network_group_activated_event = nullptr;
+    if (!output_stream.is_scheduled()) {
+        network_group_activated_event = output_stream.get_network_group_activated_event();
+    }
 
     auto shutdown_event = Event::create_shared(Event::State::not_signalled);
     CHECK_AS_EXPECTED(nullptr != shutdown_event, HAILO_OUT_OF_HOST_MEMORY);
@@ -1336,8 +1354,8 @@ Expected<std::vector<OutputVStream>> VStreamsBuilderUtils::create_outputs(Output
 
             output_stream.set_timeout(std::chrono::milliseconds(HAILO_INFINITE));
             hw_read_queue_elem->get()->set_timeout(std::chrono::milliseconds(HAILO_INFINITE));
-            auto vstream = OutputVStream::create(vstream_info->second, vstream_params, post_infer_queue_elem.release(),
-                std::move(elements), std::move(pipeline_status), shutdown_event, network_group_activated_event, pipeline_latency_accumulator.release());
+            auto vstream = OutputVStream::create(vstream_info->second, vstream_params, post_infer_queue_elem.release(), std::move(elements),
+                std::move(pipeline_status), shutdown_event, network_group_activated_event, pipeline_latency_accumulator.release());
             CHECK_EXPECTED(vstream);
             vstreams.emplace_back(vstream.release());
         } else {
@@ -1421,7 +1439,10 @@ hailo_status VStreamsBuilderUtils::add_demux(OutputStream &output_stream, NameTo
     base_elements.push_back(demux_elem.value());
     CHECK_SUCCESS(PipelinePad::link_pads(hw_read_elem, demux_elem.value()));
 
-    auto network_group_activated_event = output_stream.get_network_group_activated_event();
+    EventPtr network_group_activated_event = nullptr;
+    if (!output_stream.is_scheduled()) {
+        network_group_activated_event = output_stream.get_network_group_activated_event();
+    }
 
     uint32_t i = 0;
     for (auto &edge_info : demuxer_ptr->get_edges_stream_info()) {
@@ -1471,9 +1492,8 @@ hailo_status VStreamsBuilderUtils::add_demux(OutputStream &output_stream, NameTo
             current_vstream_elements.push_back(post_infer_queue_elem.value());
             CHECK_SUCCESS(PipelinePad::link_pads(post_infer_elem.value(), post_infer_queue_elem.value()));
 
-            auto vstream = OutputVStream::create(vstream_info->second, vstream_params, post_infer_queue_elem.release(),
-                std::move(current_vstream_elements), std::move(pipeline_status_copy), shutdown_event, network_group_activated_event,
-                pipeline_latency_accumulator.release());
+            auto vstream = OutputVStream::create(vstream_info->second, vstream_params, post_infer_queue_elem.release(), std::move(current_vstream_elements),
+                std::move(pipeline_status_copy), shutdown_event, network_group_activated_event, pipeline_latency_accumulator.release());
             CHECK_EXPECTED_AS_STATUS(vstream);
             vstreams.emplace_back(vstream.release());
         } else {
@@ -1485,9 +1505,8 @@ hailo_status VStreamsBuilderUtils::add_demux(OutputStream &output_stream, NameTo
             current_vstream_elements.push_back(user_copy_elem.value());
             CHECK_SUCCESS(PipelinePad::link_pads(demux_queue_elem.value(), user_copy_elem.value()));
 
-            auto vstream = OutputVStream::create(vstream_info->second, vstream_params, user_copy_elem.release(),
-                std::move(current_vstream_elements), std::move(pipeline_status_copy), shutdown_event, network_group_activated_event,
-                pipeline_latency_accumulator.release());
+            auto vstream = OutputVStream::create(vstream_info->second, vstream_params, user_copy_elem.release(), std::move(current_vstream_elements),
+                std::move(pipeline_status_copy), shutdown_event, network_group_activated_event, pipeline_latency_accumulator.release());
             CHECK_EXPECTED_AS_STATUS(vstream);
             vstreams.emplace_back(vstream.release());
         }
@@ -1550,6 +1569,11 @@ hailo_status VStreamsBuilderUtils::add_nms_fuse(OutputStreamRefVector &output_st
 
     auto should_transform = OutputTransformContext::is_transformation_required({}, src_stream_format, {},
         vstreams_params.user_buffer_format, vstream_info->second.quant_info);
+    
+    EventPtr network_group_activated_event = nullptr;
+    if (!output_streams[0].get().is_scheduled()) {
+        network_group_activated_event = output_streams[0].get().get_network_group_activated_event();
+    }
 
     if (should_transform) {
         auto nms_queue_elem = PullQueueElement::create(
@@ -1574,15 +1598,13 @@ hailo_status VStreamsBuilderUtils::add_nms_fuse(OutputStreamRefVector &output_st
         elements.push_back(post_infer_queue_elem.value());
         CHECK_SUCCESS(PipelinePad::link_pads(post_infer_elem.value(), post_infer_queue_elem.value()));
 
-        auto vstream = OutputVStream::create(vstream_info->second, vstreams_params, post_infer_queue_elem.release(),
-                std::move(elements), std::move(pipeline_status), shutdown_event, output_streams[0].get().get_network_group_activated_event(),
-                pipeline_latency_accumulator.release());
+        auto vstream = OutputVStream::create(vstream_info->second, vstreams_params, post_infer_queue_elem.release(), std::move(elements),
+            std::move(pipeline_status), shutdown_event, network_group_activated_event, pipeline_latency_accumulator.release());
         CHECK_EXPECTED_AS_STATUS(vstream);
         vstreams.emplace_back(vstream.release());
     } else {
-        auto vstream = OutputVStream::create(vstream_info->second, vstreams_params, nms_elem.release(),
-                std::move(elements), std::move(pipeline_status), shutdown_event, output_streams[0].get().get_network_group_activated_event(),
-                pipeline_latency_accumulator.release());
+        auto vstream = OutputVStream::create(vstream_info->second, vstreams_params, nms_elem.release(), std::move(elements),
+            std::move(pipeline_status), shutdown_event, network_group_activated_event, pipeline_latency_accumulator.release());
         CHECK_EXPECTED_AS_STATUS(vstream);
         vstreams.emplace_back(vstream.release());
     }

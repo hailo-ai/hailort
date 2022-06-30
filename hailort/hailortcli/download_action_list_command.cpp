@@ -13,6 +13,7 @@
 #include "md5.h"
 
 #include <iostream>
+#include <iomanip>
 
 constexpr int DownloadActionListCommand::INVALID_NUMERIC_VALUE;
 
@@ -21,7 +22,7 @@ DownloadActionListCommand::DownloadActionListCommand(CLI::App &parent_app) :
 {
     static const char *JSON_SUFFIX = ".json";
     m_app->add_option("--output-file", m_output_file_path, "Output file path")
-        ->default_val("context_action_list.json")
+        ->default_val("runtime_data.json")
         ->check(FileSuffixValidator(JSON_SUFFIX));
 }
 
@@ -57,6 +58,11 @@ hailo_status DownloadActionListCommand::execute(Device &device, const std::strin
     std::cout << "done." << std::endl;
 
     return HAILO_SUCCESS;
+}
+
+hailo_status DownloadActionListCommand::set_batch_to_measure(Device &device, uint16_t batch_to_measure)
+{
+    return device.set_context_action_list_timestamp_batch(batch_to_measure);
 }
 
 hailo_status DownloadActionListCommand::execute_on_device(Device &device)
@@ -101,7 +107,8 @@ Expected<std::string> DownloadActionListCommand::calc_md5_hexdigest(const std::s
     std::stringstream hexdigest;
     for (uint32_t i = 0; i < ARRAY_ENTRIES(md5_sum); i++) {
         // cast to int needed for proper formatting
-        hexdigest << std::hex << static_cast<int>(md5_sum[i]);
+        static const int NUM_HEX_DIGITS_IN_UNIT8 = 2;
+        hexdigest << std::hex << std::setfill('0') << std::setw(NUM_HEX_DIGITS_IN_UNIT8) << static_cast<int>(md5_sum[i]);
     }
 
     return hexdigest.str();
@@ -180,9 +187,9 @@ Expected<ordered_json> DownloadActionListCommand::parse_action_data(uint32_t bas
             data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__application_change_interrupt_data_t *>(action);
             action_length_local = sizeof(CONTEXT_SWITCH_DEFS__application_change_interrupt_data_t);
             break;
-        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_VDMA_DESCRIPTORS:
-            data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__read_vdma_action_data_t *>(action);
-            action_length_local = sizeof(CONTEXT_SWITCH_DEFS__read_vdma_action_data_t);
+        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_CFG_CHANNEL_DESCRIPTORS:
+            data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__fetch_cfg_channel_descriptors_action_data_t *>(action);
+            action_length_local = sizeof(CONTEXT_SWITCH_DEFS__fetch_cfg_channel_descriptors_action_data_t);
             break;
         case CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_CCW_BURSTS:
             data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__fetch_ccw_bursts_action_data_t *>(action);
@@ -199,6 +206,10 @@ Expected<ordered_json> DownloadActionListCommand::parse_action_data(uint32_t bas
         case CONTEXT_SWITCH_DEFS__ACTION_TYPE_DEACTIVATE_VDMA_CHANNEL:
             data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__deactivate_vdma_channel_action_data_t *>(action);
             action_length_local = sizeof(CONTEXT_SWITCH_DEFS__deactivate_vdma_channel_action_data_t);
+            break;
+        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_VALIDATE_VDMA_CHANNEL:
+            data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__validate_vdma_channel_action_data_t *>(action);
+            action_length_local = sizeof(CONTEXT_SWITCH_DEFS__validate_vdma_channel_action_data_t);
             break;
         case CONTEXT_SWITCH_DEFS__ACTION_TYPE_ENABLE_LCU_DEFAULT:
             data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__enable_lcu_action_default_data_t *>(action);
@@ -245,6 +256,10 @@ Expected<ordered_json> DownloadActionListCommand::parse_action_data(uint32_t bas
             action_length_local = sizeof(CONTEXT_SWITCH_DEFS__add_ddr_pair_info_action_data_t);
             break;
         case CONTEXT_SWITCH_DEFS__ACTION_TYPE_DDR_BUFFERING_START:
+            data_json = json({});
+            action_length_local = 0;
+            break;
+        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_BURST_CREDITS_TASK_START:
             data_json = json({});
             action_length_local = 0;
             break;
@@ -391,7 +406,7 @@ Expected<ordered_json> DownloadActionListCommand::parse_network_groups(Device &d
     return network_group_list_json;
 }
 
-void to_json(json& j, const CONTEXT_SWITCH_DEFS__read_vdma_action_data_t& data) {
+void to_json(json& j, const CONTEXT_SWITCH_DEFS__fetch_cfg_channel_descriptors_action_data_t& data) {
     j = json{{"descriptors_count", data.descriptors_count}, {"channel_index", data.cfg_channel_number}};
 }
 

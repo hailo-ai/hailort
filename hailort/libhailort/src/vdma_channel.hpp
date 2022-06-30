@@ -18,14 +18,29 @@
 #include "vdma_channel_regs.hpp"
 #include "hailo/expected.hpp"
 #include "os/hailort_driver.hpp"
-#include "vdma_buffer.hpp"
+#include "vdma/mapped_buffer.hpp"
 #include "vdma_descriptor_list.hpp"
+#include "hailo/buffer.hpp"
 
 #include <mutex>
 #include <array>
+#include <condition_variable>
 
 namespace hailort
 {
+
+class VdmaChannel;
+class PendingBufferState final
+{
+public:
+    PendingBufferState(VdmaChannel &vdma_channel, size_t next_buffer_desc_num) : m_vdma_channel(vdma_channel),
+        m_next_buffer_desc_num(next_buffer_desc_num) {}
+    hailo_status finish(std::chrono::milliseconds timeout, std::unique_lock<std::mutex> &lock);
+
+private:
+    VdmaChannel &m_vdma_channel;
+    size_t m_next_buffer_desc_num;
+};
 
 class VdmaChannel final
 {
@@ -48,6 +63,8 @@ public:
     hailo_status wait(size_t buffer_size, const std::chrono::milliseconds &timeout);
 
     hailo_status transfer(void *buf, size_t count);
+    hailo_status write_buffer(const MemoryView &buffer, std::chrono::milliseconds timeout);
+    Expected<PendingBufferState> send_pending_buffer();
     hailo_status trigger_channel_completion(uint16_t hw_num_processed);
     hailo_status allocate_resources(uint32_t descs_count);
     /* For channels controlled by the HailoRT, the HailoRT needs to use this function to start the channel (it registers the channel to driver 
@@ -57,8 +74,8 @@ public:
     hailo_status unregister_fw_controlled_channel();
     hailo_status flush(const std::chrono::milliseconds &timeout);
     hailo_status set_num_avail_value(uint16_t new_value);
+    hailo_status set_transfers_per_axi_intr(uint16_t transfers_per_axi_intr);
     hailo_status inc_num_available_for_ddr(uint16_t value, uint32_t size_mask);
-    hailo_status wait_channel_interrupts_for_ddr(const std::chrono::milliseconds &timeout);
     Expected<uint16_t> get_hw_num_processed_ddr(uint32_t size_mask);
     /*Used for DDR channels only. TODO - remove */
     hailo_status start_channel(VdmaDescriptorList &desc_list);
@@ -71,6 +88,11 @@ public:
     hailo_status abort();
     hailo_status clear_abort();
 
+    uint8_t get_channel_index()
+    {
+        return m_channel_index;
+    }
+
     VdmaChannel(const VdmaChannel &other) = delete;
     VdmaChannel &operator=(const VdmaChannel &other) = delete;
     VdmaChannel(VdmaChannel &&other) noexcept;
@@ -80,7 +102,9 @@ public:
         uint16_t requested_desc_page_size);
 
 
-    const uint8_t channel_index;
+    const uint8_t m_channel_index;
+
+    friend class PendingBufferState;
 
 private:
     struct PendingBuffer {
@@ -115,11 +139,13 @@ private:
     VdmaChannel(uint8_t channel_index, Direction direction, HailoRTDriver &driver, uint32_t stream_index,
         LatencyMeterPtr latency_meter, uint16_t desc_page_size, uint16_t transfers_per_axi_intr, hailo_status &status);
 
-    hailo_status allocate_buffer(const size_t buffer_size);
+    hailo_status allocate_buffer(const uint32_t buffer_size);
     void clear_descriptor_list();
     hailo_status release_buffer();
     static Direction other_direction(const Direction direction);
     hailo_status transfer_h2d(void *buf, size_t count);
+    hailo_status write_buffer_impl(const MemoryView &buffer);
+    hailo_status send_pending_buffer_impl();
     uint16_t get_num_available();
     Expected<uint16_t> get_hw_num_processed();
     void add_pending_buffer(uint32_t first_desc, uint32_t last_desc);
@@ -131,6 +157,7 @@ private:
         VdmaInterruptsDomain last_desc_interrupts_domain);
     hailo_status prepare_d2h_pending_descriptors(uint32_t descs_count, uint32_t transfer_size);
     void reset_internal_counters();
+    hailo_status wait_for_channel_completion(std::chrono::milliseconds timeout);
 
     uint32_t calculate_descriptors_count(uint32_t buffer_size);
 
@@ -158,7 +185,7 @@ private:
 
     // TODO: remove the unique_ptr, instead allocate the buffer in the ctor (needs to move ddr channel to
     // other class)
-    std::unique_ptr<VdmaBuffer> m_mapped_user_buffer;
+    std::unique_ptr<vdma::MappedBuffer> m_mapped_user_buffer;
     std::unique_ptr<VdmaDescriptorList> m_descriptors_buffer;
     uint32_t m_stream_index;
     LatencyMeterPtr m_latency_meter;
@@ -171,6 +198,12 @@ private:
     bool m_channel_enabled;
     
     uint16_t m_transfers_per_axi_intr;
+    // Using CircularArray because it won't allocate or free memory wile pushing and poping. The fact that it is circural is not relevant here
+    CircularArray<size_t> m_pending_buffers_sizes;
+    uint16_t m_pending_num_avail_offset;
+    std::condition_variable_any m_can_write_buffer_cv;
+    std::atomic_bool m_is_waiting_for_channel_completion;
+    bool m_is_aborted;
 };
 
 } /* namespace hailort */

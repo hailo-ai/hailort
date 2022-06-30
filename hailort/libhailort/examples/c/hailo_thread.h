@@ -3,7 +3,7 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @ file hailo_thread.h
+ * @file hailo_thread.h
  * Common threads related functions, for linux and windows
  **/
 

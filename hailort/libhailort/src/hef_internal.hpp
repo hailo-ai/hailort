@@ -48,7 +48,7 @@ namespace hailort
 {
 
 class ResourcesManager;
-class ConfigResources;
+class ConfigBuffer;
 class VdmaConfigActivatedNetworkGroup;
 using VdmaConfigActiveAppHolder = ActiveNetworkGroupHolder<VdmaConfigActivatedNetworkGroup>;
 using ProtoHEFNetworkGroupPtr = std::shared_ptr<ProtoHEFNetworkGroup>;
@@ -86,7 +86,8 @@ static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
     COMPRESSED_PARAMS, 
     TRANSPOSE_COMPONENT,
     IS_NMS_MULTI_CONTEXT,
-    OFFLOAD_ARGMAX
+    OFFLOAD_ARGMAX,
+    PRELIMINARY_RUN_ASAP // Extention added in platform 4.8 release
 };
 
 struct HefParsingInfo
@@ -102,6 +103,7 @@ struct NetworkGroupSupportedFeatures {
     bool padded_ddr_buffers;
     bool multi_network_support;
     bool multi_context;
+    bool preliminary_run_asap;
 };
 
 static inline bool is_h2d_boundary_info_layer(const ProtoHEFEdgeLayer& layer)
@@ -150,33 +152,34 @@ class HailoRTDriver;
 class NetworkGroupMetadata {
 public:
     NetworkGroupMetadata(const std::string &network_group_name, std::vector<LayerInfo> &&layer_infos, std::vector<std::string> &&sorted_output_names,
-        NetworkGroupSupportedFeatures &supported_features, const std::vector<std::string> &sorted_partial_network_names);
+        NetworkGroupSupportedFeatures &supported_features, const std::vector<std::string> &sorted_network_names);
 
-    Expected<std::vector<LayerInfo>> get_input_layer_infos(const std::string &partial_network_name = HAILO_DEFAULT_PARTIAL_NETWORK_NAME) const;
-    Expected<std::vector<LayerInfo>> get_output_layer_infos(const std::string &partial_network_name = HAILO_DEFAULT_PARTIAL_NETWORK_NAME) const;
-    Expected<std::vector<LayerInfo>> get_all_layer_infos(const std::string &partial_network_name = HAILO_DEFAULT_PARTIAL_NETWORK_NAME) const;
+    Expected<std::vector<LayerInfo>> get_input_layer_infos(const std::string &network_name = "") const;
+    Expected<std::vector<LayerInfo>> get_output_layer_infos(const std::string &network_name = "") const;
+    Expected<std::vector<LayerInfo>> get_all_layer_infos(const std::string &network_name = "") const;
+    Expected<LayerInfo> get_layer_info_by_stream_name(const std::string &stream_name) const;
 
-    Expected<std::vector<hailo_stream_info_t>> get_input_stream_infos(const std::string &partial_network_name = HAILO_DEFAULT_PARTIAL_NETWORK_NAME) const;
-    Expected<std::vector<hailo_stream_info_t>> get_output_stream_infos(const std::string &partial_network_name = HAILO_DEFAULT_PARTIAL_NETWORK_NAME) const;
-    Expected<std::vector<hailo_stream_info_t>> get_all_stream_infos(const std::string &partial_network_name = HAILO_DEFAULT_PARTIAL_NETWORK_NAME) const;
+    Expected<std::vector<hailo_stream_info_t>> get_input_stream_infos(const std::string &network_name = "") const;
+    Expected<std::vector<hailo_stream_info_t>> get_output_stream_infos(const std::string &network_name = "") const;
+    Expected<std::vector<hailo_stream_info_t>> get_all_stream_infos(const std::string &network_name = "") const;
 
-    Expected<std::vector<hailo_vstream_info_t>> get_input_vstream_infos(const std::string &partial_network_name = HAILO_DEFAULT_PARTIAL_NETWORK_NAME) const;
-    Expected<std::vector<hailo_vstream_info_t>> get_output_vstream_infos(const std::string &partial_network_name = HAILO_DEFAULT_PARTIAL_NETWORK_NAME) const;
-    Expected<std::vector<hailo_vstream_info_t>> get_all_vstream_infos(const std::string &partial_network_name = HAILO_DEFAULT_PARTIAL_NETWORK_NAME) const;
+    Expected<std::vector<hailo_vstream_info_t>> get_input_vstream_infos(const std::string &network_name = "") const;
+    Expected<std::vector<hailo_vstream_info_t>> get_output_vstream_infos(const std::string &network_name = "") const;
+    Expected<std::vector<hailo_vstream_info_t>> get_all_vstream_infos(const std::string &network_name = "") const;
 
     Expected<std::vector<std::string>> get_vstream_names_from_stream_name(const std::string &stream_name) const;
     Expected<std::vector<std::string>> get_stream_names_from_vstream_name(const std::string &vstream_name) const;
-
-    // Note - network name is build in the following way - "network_group_name / partial_network name"
-    // get partial network name returns the part of the name after the network group name and the "/" qualifier.
-    // The protobuf hold the partial network name.
-    Expected<std::string> get_partial_network_name(const std::string &network_name) const;
 
     Expected<std::vector<hailo_network_info_t>> get_network_infos() const;
 
     const std::string &network_group_name() const
     {
         return m_network_group_name;
+    }
+
+    const std::string default_network_name() const
+    {
+        return HailoRTDefaults::get_network_name(m_network_group_name);
     }
 
     const std::vector<std::string> get_sorted_output_names() const
@@ -189,9 +192,9 @@ public:
         return m_supported_features;
     }
 
-    const std::vector<std::string> get_partial_network_names() const
+    const std::vector<std::string> get_network_names() const
     {
-        return m_sorted_partial_network_names;
+        return m_sorted_network_names;
     }
 
 private:
@@ -205,7 +208,7 @@ private:
     std::string m_network_group_name;
     std::vector<std::string> m_sorted_output_names;
     NetworkGroupSupportedFeatures m_supported_features;
-    std::vector<std::string> m_sorted_partial_network_names;
+    std::vector<std::string> m_sorted_network_names;
 };
 
 class Hef::Impl final
@@ -225,20 +228,20 @@ public:
     Expected<std::vector<hailo_network_info_t>> get_network_infos(const std::string &net_group_name="");
 
     Expected<std::vector<hailo_stream_info_t>> get_input_stream_infos(const std::string &net_group_name="",
-        const std::string &partial_network_name="");
+        const std::string &network_name="");
     Expected<std::vector<hailo_stream_info_t>> get_output_stream_infos(const std::string &net_group_name="",
-        const std::string &partial_network_name="");
+        const std::string &network_name="");
     Expected<std::vector<hailo_stream_info_t>> get_all_stream_infos(const std::string &net_group_name="",
-        const std::string &partial_network_name="");
+        const std::string &network_name="");
     Expected<hailo_stream_info_t> get_stream_info_by_name(const std::string &stream_name,
         hailo_stream_direction_t stream_direction, const std::string &net_group_name="");
 
     Expected<std::vector<hailo_vstream_info_t>> get_input_vstream_infos(const std::string &net_group_name="",
-        const std::string &partial_network_name="");
+        const std::string &network_name="");
     Expected<std::vector<hailo_vstream_info_t>> get_output_vstream_infos(const std::string &net_group_name="",
-        const std::string &partial_network_name="");
+        const std::string &network_name="");
     Expected<std::vector<hailo_vstream_info_t>> get_all_vstream_infos(const std::string &net_group_name="",
-        const std::string &partial_network_name="");
+        const std::string &network_name="");
     Expected<std::vector<std::string>> get_sorted_output_names(const std::string &net_group_name="");
     Expected<size_t> get_number_of_input_streams(const std::string &net_group_name="");
     Expected<size_t> get_number_of_output_streams(const std::string &net_group_name="");
@@ -247,7 +250,7 @@ public:
     static bool contains_ddr_layers(const ProtoHEFNetworkGroup& net_group);
     static hailo_status validate_net_group_unique_layer_names(ProtoHEFNetworkGroupPtr net_group);
     Expected<std::vector<hailo_vstream_info_t>> get_network_input_vstream_infos(const std::string &net_group_name="",
-        const std::string &partial_network_name="");
+        const std::string &network_name="");
 
     Expected<std::vector<std::string>> get_stream_names_from_vstream_name(const std::string &vstream_name,
         const std::string &net_group_name="");
@@ -287,16 +290,16 @@ public:
         const hailo_mipi_input_stream_params_t &mipi_params);
 
     Expected<std::map<std::string, hailo_vstream_params_t>> make_input_vstream_params(
-        const std::string &net_group_name, const std::string &partial_network_name, bool quantized, 
+        const std::string &net_group_name, const std::string &network_name, bool quantized, 
         hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size);
     hailo_status fill_missing_input_vstream_params_with_default(const std::string &net_group_name,
-        const std::string &partial_network_name, std::map<std::string, hailo_vstream_params_t> &input_vstreams_params,
+        const std::string &network_name, std::map<std::string, hailo_vstream_params_t> &input_vstreams_params,
         bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size);
     Expected<std::map<std::string, hailo_vstream_params_t>> make_output_vstream_params(
-        const std::string &net_group_name, const std::string &partial_network_name, bool quantized, 
+        const std::string &net_group_name, const std::string &network_name, bool quantized, 
         hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size);
     hailo_status fill_missing_output_vstream_params_with_default(const std::string &net_group_name,
-        const std::string &partial_network_name, std::map<std::string, hailo_vstream_params_t> &output_vstream_params,
+        const std::string &network_name, std::map<std::string, hailo_vstream_params_t> &output_vstream_params,
         bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size);
     static hailo_status fill_missing_vstream_params_with_default(std::map<std::string, hailo_vstream_params_t> &vstream_params,
         std::vector<hailo_vstream_info_t> &name_to_format_info, bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms,
@@ -334,9 +337,9 @@ private:
     static Expected<HefParsingInfo> get_parsing_info(ProtoHEFNetworkGroupPtr net_group);
 
     Expected<std::map<std::string, hailo_format_t>> get_inputs_vstream_names_and_format_info(
-        const std::string &net_group_name, const std::string &partial_network_name);
+        const std::string &net_group_name, const std::string &network_name);
     Expected<std::map<std::string, hailo_format_t>> get_outputs_vstream_names_and_format_info(
-        const std::string &net_group_name, const std::string &partial_network_name);
+        const std::string &net_group_name, const std::string &network_name);
 
     static Expected<std::string> get_vstream_name_from_original_name_mux(const std::string &original_name, const ProtoHefEdge &layer);
     static Expected<std::vector<std::string>> get_original_names_from_vstream_name_mux(const std::string &vstream_name, const ProtoHefEdge &layer);
@@ -394,6 +397,10 @@ public:
 
     static Expected<std::vector<hailo_network_info_t>> get_network_infos(const ProtoHEFNetworkGroup &net_group,
         const std::string &net_group_name, const NetworkGroupSupportedFeatures &supported_features);
+
+    static std::string get_network_name(const ProtoHEFNetworkGroup &net_group, const std::string &partial_network_name);
+    static std::string get_network_name(const std::string &net_group_name, const std::string &partial_network_name);
+
 private:
     static hailo_status fill_layer_info_with_base_info(const ProtoHEFEdgeLayerBase &base_info,
         const ProtoHEFEdgeConnectionType &edge_connection_type,
@@ -403,7 +410,7 @@ private:
         const ProtoHEFNetworkGroup &net_group, hailo_stream_direction_t direction,
         bool hw_padding_supported, const std::string &partial_network_name, LayerInfo &layer_info);
     static hailo_status fill_fused_nms_info(const ProtoHEFEdgeLayerFused &info,
-            LayerInfo &layer_info, hailo_quant_info_t &defuse_quant_info, const std::string &partial_network_name);
+            LayerInfo &layer_info, hailo_quant_info_t &defuse_quant_info, const std::string &network_name);
     static hailo_status fill_mux_info(const ProtoHEFEdgeLayerMux &info,
         const ProtoHEFEdgeConnectionType &edge_connection_type,
         const ProtoHEFNetworkGroup &net_group, hailo_stream_direction_t direction,
@@ -441,6 +448,7 @@ public:
         None,
         WriteData,
         WriteDataCcw,
+        AddCcwBurst,
         CreateDescForCcw,
         ReadVdma,
         TriggerSequencer,
@@ -453,11 +461,12 @@ public:
         WaitForModuleConfigDone,
         AddDdrPairInfo,
         AddDdrBufferingStart,
-        AddRrepeated
+        AddRrepeated,
+        StartBurstCreditsTask
     };
 
     static Expected<ContextSwitchConfigActionPtr> create(const ProtoHEFAction &proto_action, Device &device,
-        std::vector<ConfigResources> &config, const ResourcesManager &resources_manager, const ProtoHEFNetworkGroup &net_group,
+        std::vector<ConfigBuffer> &config, const ResourcesManager &resources_manager, const ProtoHEFNetworkGroup &net_group,
         bool support_pre_fetch);
 
     ContextSwitchConfigAction(ContextSwitchConfigAction &&) = default;
@@ -529,7 +538,7 @@ class WriteDataCcwAction : public ContextSwitchConfigAction
 {
 public:
     static Expected<ContextSwitchConfigActionPtr> create(const ProtoHEFAction& proto_action,
-        std::vector<ConfigResources> &config, bool support_pre_fetch);
+        std::vector<ConfigBuffer> &config, bool support_pre_fetch);
     WriteDataCcwAction(WriteDataCcwAction &&) = default;
     WriteDataCcwAction(const WriteDataCcwAction &) = delete;
     WriteDataCcwAction &operator=(WriteDataCcwAction &&) = delete;
@@ -541,21 +550,37 @@ public:
     virtual bool supports_repeated_block() const override;
 
 private:
-    WriteDataCcwAction(const ProtoHEFAction& proto_action, std::vector<ConfigResources> &config, 
+    WriteDataCcwAction(const ProtoHEFAction& proto_action, ConfigBuffer &config, 
         bool support_pre_fetch);
 
-    bool should_pad_with_nops();
-    hailo_status pad_with_nops(uint8_t cfg_channel_index);
+    bool is_last_ccw_write();
+    hailo_status pad_with_nops();
     
-    std::vector<ConfigResources> &m_config;
+    ConfigBuffer &m_config;
     const bool m_support_pre_fetch;
+};
+
+class AddCcwBurstAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create(uint8_t channel_index, uint16_t ccw_bursts);
+
+    virtual hailo_status execute(CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
+        uint8_t **context_meta_data_head_pointer) override;
+    virtual bool supports_repeated_block() const override;
+
+private:
+    AddCcwBurstAction(uint8_t channel_index, uint16_t ccw_bursts);
+
+    const uint8_t m_channel_index;
+    const uint16_t m_ccw_bursts;
 };
 
 class CreateConfigDescAndFetchAction : public ContextSwitchConfigAction
 {
 public:
-    static Expected<ContextSwitchConfigActionPtr> create(std::vector<ConfigResources> &config_resources,
-        const std::set<uint8_t> &pending_cfg_ch_buffer, const std::vector<uint16_t> &ccw_burst, bool support_pre_fetch);
+    static Expected<ContextSwitchConfigActionPtr> create(uint8_t channel_index, ConfigBuffer &config_buffer);
+
     CreateConfigDescAndFetchAction(CreateConfigDescAndFetchAction &&) = default;
     CreateConfigDescAndFetchAction(const CreateConfigDescAndFetchAction &) = delete;
     CreateConfigDescAndFetchAction &operator=(CreateConfigDescAndFetchAction &&) = delete;
@@ -567,13 +592,29 @@ public:
     virtual bool supports_repeated_block() const override;
 
 private:
-    CreateConfigDescAndFetchAction(std::vector<ConfigResources> &config, const std::set<uint8_t> &pending_cfg_ch_buffer,
-        const std::vector<uint16_t> &ccw_burst, bool support_pre_fetch);
-        
-    std::vector<ConfigResources> &m_config;
-    const std::set<uint8_t> m_pending_cfg_ch_buffer;
-    const std::vector<uint16_t> m_ccw_bursts;
-    const bool m_support_pre_fetch;
+    CreateConfigDescAndFetchAction(uint8_t channel_index, ConfigBuffer &config_buffer);
+
+    const uint8_t m_channel_index;
+    ConfigBuffer &m_config_buffer;
+};
+
+class StartBurstCreditsTaskAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create();
+
+    StartBurstCreditsTaskAction(StartBurstCreditsTaskAction &&) = default;
+    StartBurstCreditsTaskAction(const StartBurstCreditsTaskAction &) = delete;
+    StartBurstCreditsTaskAction &operator=(StartBurstCreditsTaskAction &&) = delete;
+    StartBurstCreditsTaskAction &operator=(const StartBurstCreditsTaskAction &) = delete;
+    virtual ~StartBurstCreditsTaskAction() = default;
+
+    virtual hailo_status execute(CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
+        uint8_t **context_meta_data_head_pointer) override;
+    virtual bool supports_repeated_block() const override;
+
+private:
+    StartBurstCreditsTaskAction();
 };
 
 class RepeatedHeaderAction : public ContextSwitchConfigAction

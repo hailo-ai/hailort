@@ -3,7 +3,7 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @ file raw_streams_example.c
+ * @file raw_streams_example.c
  * This example demonstrates basic usage of HailoRT streaming api.
  * It loads an HEF network with multiple inputs and multiple outputs into a Hailo PCIe device and performs a
  * short inference.
@@ -185,7 +185,12 @@ int main()
     size_t index = 0;
 
     status = hailo_create_pcie_device(NULL, &device);
+    /*
+    For simplicity, passing NULL as `device_info` - This function will fail in case more than one PCIe device is present.
+    See `hailo_scan_pcie_devices` and `hailo_create_pcie_device` functions documentation.
+    */
     REQUIRE_SUCCESS(status, l_exit, "Failed to create pcie_device");
+
 
     status = hailo_create_hef_file(&hef, HEF_FILE);
     REQUIRE_SUCCESS(status, l_release_device, "Failed creating hef file %s", HEF_FILE);

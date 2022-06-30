@@ -25,6 +25,9 @@ namespace hailort
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 #endif
 
+#define POWER_MEASUREMENT_DELAY_MS(__sample_period, __average_factor) \
+    (static_cast<uint32_t>((__sample_period) / 1000.0 * (__average_factor) * 2 * 1.2))
+
 #define OVERCURRENT_PROTECTION_WARNING ( \
         "Using the overcurrent protection dvm for power measurement will disable the ovecurrent protection.\n" \
         "If only taking one measurement, the protection will resume automatically.\n" \
@@ -1097,7 +1100,7 @@ exit:
     return status;
 }
 
-hailo_status Control::set_power_measurement(Device &device, uint32_t index, CONTROL_PROTOCOL__dvm_options_t dvm,
+hailo_status Control::set_power_measurement(Device &device, hailo_measurement_buffer_index_t buffer_index, CONTROL_PROTOCOL__dvm_options_t dvm,
     CONTROL_PROTOCOL__power_measurement_types_t measurement_type)
 {
     hailo_status status = HAILO_UNINITIALIZED;
@@ -1110,11 +1113,11 @@ hailo_status Control::set_power_measurement(Device &device, uint32_t index, CONT
     CONTROL_PROTOCOL__payload_t *payload = NULL;
     CONTROL_PROTOCOL__set_power_measurement_response_t *response = NULL;
 
-    CHECK(CONTROL_PROTOCOL__MAX_NUMBER_OF_POWER_MEASUREMETS > index,
-        HAILO_INVALID_ARGUMENT, "Invalid power measurement index {}", index);
+    CHECK(CONTROL_PROTOCOL__MAX_NUMBER_OF_POWER_MEASUREMETS > buffer_index,
+        HAILO_INVALID_ARGUMENT, "Invalid power measurement index {}", buffer_index);
 
     common_status = CONTROL_PROTOCOL__pack_set_power_measurement_request(&request, &request_size, device.get_control_sequence(),
-            index, dvm, measurement_type);
+            buffer_index, dvm, measurement_type);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -1144,7 +1147,7 @@ exit:
     return status;
 }
 
-hailo_status Control::get_power_measurement(Device &device, uint32_t index, bool should_clear,
+hailo_status Control::get_power_measurement(Device &device, hailo_measurement_buffer_index_t buffer_index, bool should_clear,
     hailo_power_measurement_data_t *measurement_data)
 {
     hailo_status status = HAILO_UNINITIALIZED;
@@ -1158,11 +1161,11 @@ hailo_status Control::get_power_measurement(Device &device, uint32_t index, bool
     CONTROL_PROTOCOL__get_power_measurement_response_t *get_power_response = NULL;
 
     /* Validate arguments */
-    CHECK(CONTROL_PROTOCOL__MAX_NUMBER_OF_POWER_MEASUREMETS > index,
-        HAILO_INVALID_ARGUMENT, "Invalid power measurement index {}", index);
+    CHECK(CONTROL_PROTOCOL__MAX_NUMBER_OF_POWER_MEASUREMETS > buffer_index,
+        HAILO_INVALID_ARGUMENT, "Invalid power measurement index {}", buffer_index);
     CHECK_ARG_NOT_NULL(measurement_data);
     common_status = CONTROL_PROTOCOL__pack_get_power_measurement_request(&request, &request_size, device.get_control_sequence(),
-            index, should_clear);
+            buffer_index, should_clear);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -1194,7 +1197,7 @@ exit:
     return status;
 }
 
-hailo_status Control::start_power_measurement(Device &device, uint32_t delay_milliseconds,
+hailo_status Control::start_power_measurement(Device &device,
     CONTROL_PROTOCOL__averaging_factor_t averaging_factor , CONTROL_PROTOCOL__sampling_period_t sampling_period)
 {
     hailo_status status = HAILO_UNINITIALIZED;
@@ -1205,6 +1208,13 @@ hailo_status Control::start_power_measurement(Device &device, uint32_t delay_mil
     size_t response_size = RESPONSE_MAX_BUFFER_SIZE;
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
+
+    uint32_t delay_milliseconds = POWER_MEASUREMENT_DELAY_MS(sampling_period, averaging_factor);
+    // There is no logical way that measurement delay can be 0 - because sampling_period and averaging_factor cant be 0
+    // Hence if it is 0 - it means it was 0.xx and we want to round up to 1 in that case
+    if (0 == delay_milliseconds) {
+        delay_milliseconds = 1;
+    }
 
     common_status = CONTROL_PROTOCOL__pack_start_power_measurement_request(&request, &request_size, device.get_control_sequence(),
             delay_milliseconds, averaging_factor, sampling_period);
@@ -2392,18 +2402,14 @@ hailo_status Control::context_switch_set_context_info(Device &device,
 
         context_info_single_control.is_first_control_per_context = is_first_control_per_context;
         context_info_single_control.is_last_control_per_context = is_last_control_per_context;
-        static_assert(sizeof(context_info_single_control.context_cfg_base_address) == sizeof(context_info->context_cfg_base_address),
-            "mismatch in sizes of context_cfg_base_address");
-        static_assert(sizeof(context_info_single_control.context_cfg_total_descriptors) == sizeof(context_info->context_total_descriptors),
-            "mismatch in sizes of context_cfg_total_descriptors");
+        static_assert(sizeof(context_info_single_control.config_buffer_infos) == sizeof(context_info->config_buffer_infos),
+            "mismatch in sizes of config_buffer_infos");
         static_assert(sizeof(context_info_single_control.context_stream_remap_data) == sizeof(context_info->context_stream_remap_data),
             "mismatch in sizes of context_stream_remap_data");
-        memcpy(context_info_single_control.context_cfg_base_address,
-                context_info->context_cfg_base_address,
-                sizeof(context_info_single_control.context_cfg_base_address));
-        memcpy(context_info_single_control.context_cfg_total_descriptors,
-                context_info->context_total_descriptors,
-                sizeof(context_info_single_control.context_cfg_total_descriptors));
+        context_info_single_control.cfg_channels_count = context_info->cfg_channels_count;
+        memcpy(context_info_single_control.config_buffer_infos,
+            context_info->config_buffer_infos,
+            sizeof(context_info_single_control.config_buffer_infos));
 
         memcpy(&(context_info_single_control.context_stream_remap_data),
                 &(context_info->context_stream_remap_data),
@@ -2717,7 +2723,7 @@ hailo_status Control::download_context_action_list(Device &device, uint8_t conte
 
 hailo_status Control::change_context_switch_status(Device &device,
         CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status,
-        uint8_t network_group_index)
+        uint8_t network_group_index, uint16_t dynamic_batch_size)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     HAILO_COMMON_STATUS_t common_status = HAILO_COMMON_STATUS__UNINITIALIZED;
@@ -2729,7 +2735,7 @@ hailo_status Control::change_context_switch_status(Device &device,
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
     common_status = CONTROL_PROTOCOL__pack_change_context_switch_status_request(&request, &request_size,
-            device.get_control_sequence(), state_machine_status, network_group_index);
+            device.get_control_sequence(), state_machine_status, network_group_index, dynamic_batch_size);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -2752,14 +2758,18 @@ exit:
     return status;
 }
 
-hailo_status Control::enable_network_group(Device &device, uint8_t network_group_index)
+hailo_status Control::enable_network_group(Device &device, uint8_t network_group_index, uint16_t dynamic_batch_size)
 {
-    return Control::change_context_switch_status(device, CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_ENABLED, network_group_index);
+    return Control::change_context_switch_status(device, CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_ENABLED,
+        network_group_index, dynamic_batch_size);
 }
 
 hailo_status Control::reset_context_switch_state_machine(Device &device)
 {
-    return Control::change_context_switch_status(device, CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_RESET, 0);
+    static const auto IGNORE_NETWORK_GROUP_INDEX = 0;
+    static const auto IGNORE_DYNAMIC_BATCH_SIZE = 0;
+    return Control::change_context_switch_status(device, CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_RESET,
+        IGNORE_NETWORK_GROUP_INDEX, IGNORE_DYNAMIC_BATCH_SIZE);
 }
 
 hailo_status Control::wd_enable(Device &device, uint8_t cpu_id, bool should_enable)
@@ -2993,7 +3003,7 @@ exit:
     return status;
 }
 
-hailo_status Control::switch_network_group(Device &device, uint8_t network_group_index)
+hailo_status Control::switch_network_group(Device &device, uint8_t network_group_index, uint16_t dynamic_batch_size)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     HAILO_COMMON_STATUS_t common_status = HAILO_COMMON_STATUS__UNINITIALIZED;
@@ -3004,11 +3014,10 @@ hailo_status Control::switch_network_group(Device &device, uint8_t network_group
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-
     LOGGER__DEBUG("Set network_group_index {}", network_group_index);
 
     common_status = CONTROL_PROTOCOL__pack_switch_application_request(&request, &request_size, device.get_control_sequence(),
-            network_group_index);
+            network_group_index, dynamic_batch_size);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;

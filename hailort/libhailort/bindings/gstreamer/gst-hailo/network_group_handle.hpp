@@ -31,23 +31,29 @@
 class VDeviceManager final
 {
 public:
-    VDeviceManager() : m_shared_vdevices(), m_unique_vdevices() {}
+    VDeviceManager() : m_shared_vdevices(), m_shared_vdevices_scheduling_algorithm(), m_unique_vdevices() {}
 
-    Expected<std::shared_ptr<VDevice>> create_vdevice(const void *element, const std::string &device_id, uint16_t device_count, uint32_t vdevice_key);
+    Expected<std::shared_ptr<VDevice>> create_vdevice(const void *element, const std::string &device_id, uint16_t device_count, uint32_t vdevice_key,
+        hailo_scheduling_algorithm_t scheduling_algorithm);
 
 private:
-    Expected<std::shared_ptr<VDevice>> create_shared_vdevice(const void *element, const std::string &device_id);
-    Expected<std::shared_ptr<VDevice>> create_shared_vdevice(const void *element, uint16_t device_count, uint32_t vdevice_key);
-    Expected<std::shared_ptr<VDevice>> create_unique_vdevice(const void *element, uint16_t device_count);
-    Expected<std::shared_ptr<VDevice>> get_vdevice(const std::string &device_id);
+    Expected<std::shared_ptr<VDevice>> create_shared_vdevice(const void *element, const std::string &device_id,
+        hailo_scheduling_algorithm_t scheduling_algorithm);
+    Expected<std::shared_ptr<VDevice>> create_shared_vdevice(const void *element, uint16_t device_count, uint32_t vdevice_key,
+        hailo_scheduling_algorithm_t scheduling_algorithm);
+    Expected<std::shared_ptr<VDevice>> create_unique_vdevice(const void *element, uint16_t device_count,
+        hailo_scheduling_algorithm_t scheduling_algorithm);
+    Expected<std::shared_ptr<VDevice>> get_vdevice(const std::string &device_id, hailo_scheduling_algorithm_t scheduling_algorithm);
 
     /* Contains only the shared vdevices (either created by bdf, or with device-count && vdevice-key)
        Keys are either "<BDF>" or "<device_count>-<vdevice_key>" */
     std::unordered_map<std::string, std::shared_ptr<VDevice>> m_shared_vdevices;
+    std::unordered_map<std::string, hailo_scheduling_algorithm_t> m_shared_vdevices_scheduling_algorithm; // Used to check that 2 shared vdevices gets the same scheduling-algorithm
     std::vector<std::shared_ptr<VDevice>> m_unique_vdevices;
     std::mutex m_mutex;
 };
 
+using device_id_t = std::string;
 using network_name_t = std::string;
 using hailonet_name_t = std::string;
 
@@ -58,7 +64,8 @@ public:
     Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(const void *element, const std::string &device_id,
         const char *network_group_name, uint16_t batch_size, std::shared_ptr<VDevice> &vdevice, std::shared_ptr<Hef> hef,
         NetworkGroupsParamsMap &net_groups_params_map);
-    hailo_status add_network(const std::string &network_name, const GstElement *owner_element);
+    hailo_status add_network_to_shared_network_group(const std::string &shared_device_id, const std::string &network_name,
+        const GstElement *owner_element);
     
 private:
     static std::string get_configure_string(const std::string &device_id, const char *network_group_name, uint16_t batch_size);
@@ -69,7 +76,7 @@ private:
 
     // TODO: change this map to store only the shared network_groups (used by multiple hailonets with the same vdevices)
     std::unordered_map<std::string, std::shared_ptr<ConfiguredNetworkGroup>> m_configured_net_groups;
-    std::unordered_map<network_name_t, hailonet_name_t> m_configured_networks;
+    std::unordered_map<device_id_t, std::unordered_map<network_name_t, hailonet_name_t>> m_configured_networks;
     std::mutex m_mutex;
 };
 
@@ -96,13 +103,18 @@ public:
     NetworkGroupHandle(const GstElement *element) : m_element(element), m_shared_device_id(), m_net_group_name(), m_network_name(), m_batch_size(0),
         m_vdevice(nullptr), m_hef(nullptr), m_cng(nullptr), m_ang(nullptr) {}
 
-    hailo_status set_hef(const char *device_id, uint16_t device_count, uint32_t vdevice_key, const char *hef_path);
+    hailo_status set_hef(const char *device_id, uint16_t device_count, uint32_t vdevice_key, hailo_scheduling_algorithm_t scheduling_algorithm,
+        const char *hef_path);
     hailo_status configure_network_group(const char *net_group_name, uint16_t batch_size);
     Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> create_vstreams(const char *network_name,
         const std::vector<hailo_format_with_name_t> &output_formats);
     hailo_status activate_network_group();
     hailo_status abort_streams();
     Expected<bool> remove_network_group();
+
+    hailo_status set_scheduler_timeout(const char *network_name, uint32_t timeout_ms);
+    hailo_status set_scheduler_threshold(const char *network_name, uint32_t threshold);
+
 
     std::shared_ptr<Hef> hef()
     {
@@ -111,13 +123,14 @@ public:
 
 private:
     Expected<NetworkGroupsParamsMap> get_configure_params(Hef &hef, const char *net_group_name, uint16_t batch_size);
-    Expected<std::shared_ptr<VDevice>> create_vdevice(const std::string &device_id, uint16_t device_count, uint32_t vdevice_key);
+    Expected<std::shared_ptr<VDevice>> create_vdevice(const std::string &device_id, uint16_t device_count, uint32_t vdevice_key,
+        hailo_scheduling_algorithm_t scheduling_algorithm);
 
     static VDeviceManager m_vdevice_manager;
     static NetworkGroupConfigManager m_net_group_config_manager;
     static NetworkGroupActivationManager m_net_group_activation_manager;
     const GstElement *m_element;
-    std::string m_shared_device_id;
+    std::string m_shared_device_id; // empty string when using unique device
     std::string m_net_group_name;
     std::string m_network_name;
     uint16_t m_batch_size;

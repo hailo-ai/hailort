@@ -79,7 +79,7 @@ public:
         const LayerInfo &edge_layer, const hailo_eth_input_stream_params_t &params, EventPtr network_group_activated_event);
 
     uint16_t get_remote_port();
-    virtual hailo_status activate_stream() override;
+    virtual hailo_status activate_stream(uint16_t dynamic_batch_size) override;
     virtual hailo_status deactivate_stream() override;
     virtual hailo_stream_interface_t get_interface() const override { return HAILO_STREAM_INTERFACE_ETH; }
     virtual std::chrono::milliseconds get_timeout() const override;
@@ -194,7 +194,7 @@ public:
     static Expected<std::unique_ptr<EthernetOutputStream>> create(Device &device, const LayerInfo &edge_layer,
         const hailo_eth_output_stream_params_t &params, EventPtr network_group_activated_event);
 
-    virtual hailo_status activate_stream() override;
+    virtual hailo_status activate_stream(uint16_t dynamic_batch_size) override;
     virtual hailo_status deactivate_stream() override;
     virtual hailo_stream_interface_t get_interface() const override { return HAILO_STREAM_INTERFACE_ETH; }
     virtual std::chrono::milliseconds get_timeout() const override;

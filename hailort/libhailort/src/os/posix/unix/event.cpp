@@ -20,7 +20,7 @@
 namespace hailort
 {
 
-Waitable::Waitable(underlying_handle_t handle) :
+Waitable::Waitable(underlying_waitable_handle_t handle) :
     m_handle(handle)
 {}
 
@@ -35,12 +35,12 @@ Waitable::Waitable(Waitable&& other) :
     m_handle(std::exchange(other.m_handle, -1))
 {}
 
-underlying_handle_t Waitable::get_underlying_handle()
+underlying_waitable_handle_t Waitable::get_underlying_handle()
 {
     return m_handle;
 }
 
-hailo_status Waitable::eventfd_poll(underlying_handle_t fd, std::chrono::milliseconds timeout)
+hailo_status Waitable::eventfd_poll(underlying_waitable_handle_t fd, std::chrono::milliseconds timeout)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     struct pollfd pfd{};
@@ -84,7 +84,7 @@ l_exit:
     return status;
 }
 
-hailo_status Waitable::eventfd_read(underlying_handle_t fd)
+hailo_status Waitable::eventfd_read(underlying_waitable_handle_t fd)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     ssize_t read_ret = -1;
@@ -104,7 +104,7 @@ l_exit:
     return status;
 }
 
-hailo_status Waitable::eventfd_write(underlying_handle_t fd)
+hailo_status Waitable::eventfd_write(underlying_waitable_handle_t fd)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     ssize_t write_ret = -1;
@@ -167,7 +167,7 @@ hailo_status Event::reset()
     return eventfd_read(m_handle);
 }
 
-underlying_handle_t Event::open_event_handle(const State& initial_state)
+underlying_waitable_handle_t Event::open_event_handle(const State& initial_state)
 {
     static const int NO_FLAGS = 0;
     const int state = initial_state == State::signalled ? 1 : 0;
@@ -223,7 +223,7 @@ bool Semaphore::is_auto_reset()
     return true;
 }
 
-underlying_handle_t Semaphore::open_semaphore_handle(uint32_t initial_count)
+underlying_waitable_handle_t Semaphore::open_semaphore_handle(uint32_t initial_count)
 {
     static const int SEMAPHORE = EFD_SEMAPHORE;
     const auto handle = eventfd(initial_count, SEMAPHORE);

@@ -3,7 +3,7 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @ file vstreams_example
+ * @file vstreams_example
  * This example demonstrates using virtual streams over c++
  **/
 
@@ -17,17 +17,7 @@ constexpr bool QUANTIZED = true;
 constexpr hailo_format_type_t FORMAT_TYPE = HAILO_FORMAT_TYPE_AUTO;
 constexpr size_t MAX_LAYER_EDGES = 16;
 
-
-using hailort::VDevice;
-using hailort::Hef;
-using hailort::Expected;
-using hailort::make_unexpected;
-using hailort::ConfiguredNetworkGroup;
-using hailort::VStreamsBuilder;
-using hailort::InputVStream;
-using hailort::OutputVStream;
-using hailort::MemoryView;
-
+using namespace hailort;
 
 Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(VDevice &vdevice)
 {

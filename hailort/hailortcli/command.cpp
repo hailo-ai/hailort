@@ -41,6 +41,10 @@ DeviceCommand::DeviceCommand(CLI::App *app) :
 
 hailo_status DeviceCommand::execute()
 {
+    if ((DeviceType::PCIE == m_device_params.device_type ) &&
+        ("*" == m_device_params.pcie_params.pcie_bdf)) {
+        return execute_on_all_pcie_devices();
+    }
     auto device = create_device(m_device_params);
     if (!device) {
         return device.status();
@@ -49,23 +53,24 @@ hailo_status DeviceCommand::execute()
     return execute_on_device(*device.value());
 }
 
-PcieDeviceCommand::PcieDeviceCommand(CLI::App *app) :
-    Command(app)
+hailo_status DeviceCommand::execute_on_all_pcie_devices()
 {
-    auto group = app->add_option_group("PCIE Device Options");
-
-    // PCIe options
-    group->add_option("-s,--bdf", m_pcie_device_params.pcie_bdf,
-        "Device id ([<domain>]:<bus>:<device>.<func>, same as in lspci command)")
-        ->default_val("");
-}
-
-hailo_status PcieDeviceCommand::execute()
-{
-    auto device = create_pcie_device(m_pcie_device_params);
-    if (!device) {
-        return device.status();
+    auto status = HAILO_SUCCESS; // Best effort
+    auto all_devices_infos = Device::scan_pcie();
+    if (!all_devices_infos) {
+        return all_devices_infos.status();
     }
+    for (auto &dev_info : all_devices_infos.value()) {
+        auto device = Device::create_pcie(dev_info);
+        if (!device) {
+            return device.status();
+        }
 
-    return execute_on_device(*device.value());
+        auto execute_status = execute_on_device(*device.value());
+        if (HAILO_SUCCESS != execute_status) {
+            std::cerr << "Failed to execute on device: " << device.value()->get_dev_id() << ". status= " << execute_status << std::endl;
+            status = execute_status;
+        }
+    }
+    return status;
 }

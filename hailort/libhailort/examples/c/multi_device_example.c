@@ -11,7 +11,7 @@
  * You shall not reproduce, modify or distribute this software without prior written permission.
  **/
 /**
- * @ file multi_device_example.c
+ * @file multi_device_example.c
  * This example demonstrates how to work with multiple devices using virtual device.
  * The program scans for Hailo-8 devices connected to a provided PCIe interface, generates random dataset,
  * and runs it through the virtual device with virtual streams.

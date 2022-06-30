@@ -79,14 +79,17 @@ hailo_status DeviceBase::reset(hailo_reset_device_mode_t mode)
     return reset_impl(reset_type);
 }
 
-hailo_status DeviceBase::set_notification_callback(NotificationCallback func, hailo_notification_id_t notification_id, void *opaque)
+hailo_status DeviceBase::set_notification_callback(const NotificationCallback &func, hailo_notification_id_t notification_id, void *opaque)
 {
     CHECK((0 <= notification_id) && (HAILO_NOTIFICATION_ID_COUNT > notification_id), HAILO_INVALID_ARGUMENT,
         "Notification id value is invalid");
     CHECK_ARG_NOT_NULL(func);
 
+    auto func_ptr = make_shared_nothrow<NotificationCallback>(func);
+    CHECK_NOT_NULL(func_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
     const std::lock_guard<std::mutex> lock(m_callbacks_lock);
-    m_d2h_callbacks[notification_id].func = func;
+    m_d2h_callbacks[notification_id].func = func_ptr;
     m_d2h_callbacks[notification_id].opaque = opaque;
     return HAILO_SUCCESS;
 }
@@ -558,7 +561,7 @@ void DeviceBase::d2h_notification_thread_main(const std::string &device_id)
 
         LOGGER__INFO("[{}] Got notification from fw with id: {}", device_id, hailo_notification_id);
 
-        NotificationCallback callback_func = nullptr;
+        std::shared_ptr<NotificationCallback> callback_func = nullptr;
         void *callback_opaque = nullptr;
         {
             const std::lock_guard<std::mutex> lock(m_callbacks_lock);
@@ -574,7 +577,7 @@ void DeviceBase::d2h_notification_thread_main(const std::string &device_id)
             callback_notification.sequence = notification.header.sequence;
             static_assert(sizeof(callback_notification.body) == sizeof(notification.message_parameters), "D2H notification size mismatch");
             memcpy(&callback_notification.body, &notification.message_parameters, sizeof(notification.message_parameters));
-            callback_func(*this, callback_notification, callback_opaque);
+            (*callback_func)(*this, callback_notification, callback_opaque);
         }
     }
 }

@@ -46,8 +46,8 @@ typedef struct {
 } CONTEXT_SWITCH__context_control_slicing_data_t;
 
 typedef struct {
-    uint64_t context_cfg_base_address[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
-    uint16_t context_total_descriptors[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
+    uint8_t cfg_channels_count;
+    CONTROL_PROTOCOL__host_buffer_info_t config_buffer_infos[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
     uint32_t context_network_data_length;
     CONTROL_PROTOCOL__stream_remap_data_t context_stream_remap_data;
     uint8_t context_network_data[CONTROL_PROTOCOL__CONTEXT_NETWORK_DATA_MAX_SIZE];
@@ -130,7 +130,8 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_download_context_action_list_reques
         size_t *request_size, uint32_t sequence, uint8_t context_index, uint16_t action_list_offset);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_context_switch_status_request(
         CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
-        CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status, uint8_t application_index);
+        CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status, uint8_t application_index,
+        uint16_t dynamic_batch_size);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_wd_enable(
     CONTROL_PROTOCOL__request_t *request,
     size_t *request_size,
@@ -153,7 +154,7 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_d2h_event_manager_set_host_info_req
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_d2h_event_manager_send_host_info_event_request( CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
         uint8_t event_priority);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_switch_application_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
-        uint8_t application_index);
+        uint8_t application_index, uint16_t dynamic_batch_size);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_chip_temperature_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_read_board_config(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint32_t address, uint32_t data_length);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_write_board_config_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint32_t address, const uint8_t *data, uint32_t data_length);

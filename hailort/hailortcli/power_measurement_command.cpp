@@ -10,9 +10,6 @@
 #include "power_measurement_command.hpp"
 #include <thread>
 
-#define POWER_MEASUREMENT_DELAY_MS(__sample_period, __average_factor) \
-    (static_cast<uint32_t>((__sample_period) / 1000.0 * (__average_factor) * 2 * 1.2))
-
 
 PowerMeasurementSubcommand::PowerMeasurementSubcommand(CLI::App &parent_app) :
     DeviceCommand(parent_app.add_subcommand("measure-power", "Measures power consumption")), m_params(),
@@ -120,19 +117,13 @@ Expected<LongPowerMeasurement> PowerMeasurementSubcommand::start_power_measureme
         return make_unexpected(status);
     }
 
-    status = hailo_set_power_measurement(reinterpret_cast<hailo_device>(&device), 0, dvm, measurement_type);
+    status = hailo_set_power_measurement(reinterpret_cast<hailo_device>(&device), HAILO_MEASUREMENT_BUFFER_INDEX_0, dvm, measurement_type);
     if (HAILO_SUCCESS != status) {
         std::cerr << "Failed to set power measurement parameters, status " << status << std::endl;
         return make_unexpected(status);
     }
 
-    uint32_t measurement_delay = POWER_MEASUREMENT_DELAY_MS(sampling_period, averaging_factor);
-    // There is no logical way that measurement delay can be 0 - because sampling_period and averaging_factor cant be 0
-    // Hence if it is 0 - it means it was 0.xx and we want to round up to 1 in that case
-    if (0 == measurement_delay) {
-        measurement_delay = 1;
-    }
-    status = hailo_start_power_measurement(reinterpret_cast<hailo_device>(&device), measurement_delay,
+    status = hailo_start_power_measurement(reinterpret_cast<hailo_device>(&device),
         averaging_factor_enum, sampling_period_enum);
     if (HAILO_SUCCESS != status) {
         std::cerr << "Failed to start power measurement, status " << status << std::endl;
@@ -155,7 +146,7 @@ hailo_status LongPowerMeasurement::stop()
         return status;
     }
 
-    status = hailo_get_power_measurement(reinterpret_cast<hailo_device>(&m_device), 0, true, &m_data);
+    status = hailo_get_power_measurement(reinterpret_cast<hailo_device>(&m_device), HAILO_MEASUREMENT_BUFFER_INDEX_0, true, &m_data);
     if (HAILO_SUCCESS != status) {
         std::cerr << "Failed to get power measurement results, status " << status << std::endl;
         return status;

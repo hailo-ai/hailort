@@ -52,7 +52,7 @@ dirent* Filesystem::DirWalker::next_file()
     return readdir(m_dir);
 }
 
-#if defined(__unix__)
+#if defined(__linux__)
 
 Expected<std::vector<std::string>> Filesystem::get_files_in_dir_flat(const std::string &dir_path)
 {

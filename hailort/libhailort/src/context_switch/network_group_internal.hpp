@@ -5,15 +5,16 @@
 /**
  * @file network_group_internal.hpp
  * @brief Class declaration for ConfiguredNetworkGroupBase and ActivatedNetworkGroupBase that implement the basic ConfiguredNetworkGroup
- *        and ActivatedNetworkGroup interfaces. All internal classes that are relavant should inherit from the
+ *        and ActivatedNetworkGroup interfaces. All internal classes that are relevant should inherit from the
  *        ConfiguredNetworkGroupBase and ActivatedNetworkGroupBase classes.
- *        Hence, the hiearchy is as follows:
+ *        Hence, the hierarchy is as follows:
  *        -----------------------------------------------------------------------------
- *        |                        ConfiguredNetworkGroup                             |  (External "interface")
- *        |                                  |                                        |
- *        |                      ConfiguredNetworkGroupBase                           |  (Base classes)
- *        |                          /                \                               |
- *        |           VdmaConfigNetworkGroup       HcpConfigNetworkGroup              | (Actual implementations)
+ *        |                          ConfiguredNetworkGroup                           |  (External "interface")
+ *        |                   ________________|___________________                    |
+ *        |                  /                                    \                   |
+ *        |            ConfiguredNetworkGroupBase       ConfiguredNetworkGroupWrapper |  (Base classes)
+ *        |               /                  \                                        |
+ *        |  VdmaConfigNetworkGroup     HcpConfigNetworkGroup                         | (Actual implementations)
  *        -----------------------------------------------------------------------------
  *        |                         ActivatedNetworkGroup                             |  (External "interface")
  *        |                                   |                                       |
@@ -31,6 +32,8 @@
 #include "hailo/network_group.hpp"
 #include "hef_internal.hpp"
 #include "common/latency_meter.hpp"
+#include "control_protocol.h"
+#include "vdma_channel.hpp"
 
 namespace hailort
 {
@@ -52,12 +55,13 @@ protected:
     hailo_activate_network_group_params_t m_network_group_params;
 
     ActivatedNetworkGroupBase(const hailo_activate_network_group_params_t &network_group_params,
+        uint16_t dynamic_batch_size,
         std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
         std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,         
         EventPtr &&network_group_activated_event, hailo_status &status);
 
 private:
-    hailo_status activate_low_level_streams();
+    hailo_status activate_low_level_streams(uint16_t dynamic_batch_size);
     hailo_status validate_network_group_params(const hailo_activate_network_group_params_t &network_group_params);
 
     std::map<std::string, std::unique_ptr<InputStream>> &m_input_streams;
@@ -74,6 +78,9 @@ public:
     ConfiguredNetworkGroupBase &operator=(ConfiguredNetworkGroupBase &&other) = delete;
     ConfiguredNetworkGroupBase(ConfiguredNetworkGroupBase &&other) = default;
 
+    Expected<std::unique_ptr<ActivatedNetworkGroup>> force_activate(
+        uint16_t dynamic_batch_size = CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE);
+    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate(const hailo_activate_network_group_params_t &network_group_params) override;
     virtual hailo_status wait_for_activation(const std::chrono::milliseconds &timeout) override;
 
     virtual const std::string &get_network_group_name() const override;
@@ -126,9 +133,18 @@ public:
     
     Expected<uint16_t> get_stream_batch_size(const std::string &stream_name);
 
+    const ConfigureNetworkParams get_config_params() const;
+
 protected:
     ConfiguredNetworkGroupBase(const ConfigureNetworkParams &config_params, const uint8_t m_net_group_index, 
         const NetworkGroupMetadata &network_group_metadata, hailo_status &status);
+    ConfiguredNetworkGroupBase(const ConfigureNetworkParams &config_params, const uint8_t m_net_group_index, 
+        const NetworkGroupMetadata &network_group_metadata, bool is_scheduling, hailo_status &status);
+
+    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_internal(
+        const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size) override;
+    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_impl(
+        const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size) = 0;
 
     hailo_status create_output_stream_from_config_params(Device &device,
         const hailo_stream_parameters_t &stream_params, const std::string &stream_name);
@@ -142,16 +158,25 @@ protected:
 
     virtual Expected<uint8_t> get_boundary_channel_index(uint8_t stream_index, hailo_stream_direction_t direction,
         const std::string &layer_name) = 0;
+    virtual Expected<std::shared_ptr<LatencyMetersMap>> get_latnecy_meters() = 0;
+    virtual Expected<std::shared_ptr<VdmaChannel>> get_boundary_vdma_channel_by_stream_name(const std::string &stream_name) = 0;
 
     const ConfigureNetworkParams m_config_params;
+    const uint16_t m_min_configured_batch_size; // TODO: remove after HRT-6535
     uint8_t m_net_group_index;
-    std::map<std::string, LatencyMeterPtr> m_latency_meter; // Latency meter per network
     std::map<std::string, std::unique_ptr<InputStream>> m_input_streams;
     std::map<std::string, std::unique_ptr<OutputStream>> m_output_streams;
     EventPtr m_network_group_activated_event;
     const NetworkGroupMetadata m_network_group_metadata;
     AccumulatorPtr m_activation_time_accumulator;
     AccumulatorPtr m_deactivation_time_accumulator;
+
+private:
+    friend class ConfiguredNetworkGroupWrapper;
+
+    static uint16_t get_smallest_configured_batch_size(const ConfigureNetworkParams &config_params);
+
+    bool m_is_scheduling;
 };
 
 } /* namespace hailort */

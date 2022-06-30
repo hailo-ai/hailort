@@ -2,12 +2,13 @@ cmake_minimum_required(VERSION 3.0.0)
 
 project(gsthailo)
 
+include(GNUInstallDirs)
+
 if(NOT CMAKE_HOST_UNIX)
     message(FATAL_ERROR "Only unix hosts are supported, stopping build")
 endif()
 
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_LIST_DIR}/cmake/")
-find_package(HailoRT)
+find_package(HailoRT 4.8.0 EXACT REQUIRED)
 
 # GST_PLUGIN_DEFINE needs PACKAGE to be defined
 set(GST_HAILO_PACKAGE_NAME "hailo")

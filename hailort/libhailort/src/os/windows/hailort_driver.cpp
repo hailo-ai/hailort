@@ -603,12 +603,17 @@ hailo_status HailoRTDriver::read_bar(PciBar bar, off_t offset, size_t size, void
     transfer.bar_index = static_cast<uint32_t>(bar);
     transfer.offset = offset;
     transfer.count = size;
-    transfer.buffer = buf;
+    memset(transfer.buffer, 0, sizeof(transfer.buffer));
+
+    CHECK(size <= sizeof(transfer.buffer), HAILO_INVALID_ARGUMENT,
+        "Invalid size to read, size given {} is larger than max size {}", size, sizeof(transfer.buffer));
 
     if (0 > ioctl(m_fd, HAILO_BAR_TRANSFER, &data)) {
         LOGGER__ERROR("HailoRTDriver::read_bar failed with errno:{}", errno);
         return HAILO_PCIE_DRIVER_FAIL;
     }
+
+    memcpy(buf, transfer.buffer, transfer.count);
 
     return HAILO_SUCCESS;
 }
@@ -631,7 +636,12 @@ hailo_status HailoRTDriver::write_bar(PciBar bar, off_t offset, size_t size, con
     transfer.bar_index = static_cast<uint32_t>(bar);
     transfer.offset = offset;
     transfer.count = size;
-    transfer.buffer = (void*)buf;
+    memset(transfer.buffer, 0, sizeof(transfer.buffer));
+
+    CHECK(size <= sizeof(transfer.buffer), HAILO_INVALID_ARGUMENT,
+        "Invalid size to write, size given {} is larger than max size {}", size, sizeof(transfer.buffer));
+
+    memcpy(transfer.buffer, buf, transfer.count);
 
     if (0 > ioctl(this->m_fd, HAILO_BAR_TRANSFER, &data)) {
         LOGGER__ERROR("HailoRTDriver::write_bar failed with errno: {}", errno);
@@ -961,6 +971,18 @@ Expected<uintptr_t> HailoRTDriver::vdma_low_memory_buffer_alloc(size_t size) {
 
 
 hailo_status HailoRTDriver::vdma_low_memory_buffer_free(uintptr_t buffer_handle) {
+    (void) buffer_handle;
+    return HAILO_INVALID_OPERATION;
+}
+
+Expected<std::pair<uintptr_t, uint64_t>> HailoRTDriver::vdma_continuous_buffer_alloc(size_t size)
+{
+    (void) size;
+    return make_unexpected(HAILO_INVALID_OPERATION);
+}
+
+hailo_status HailoRTDriver::vdma_continuous_buffer_free(uintptr_t buffer_handle)
+{
     (void) buffer_handle;
     return HAILO_INVALID_OPERATION;
 }

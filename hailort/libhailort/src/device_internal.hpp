@@ -55,7 +55,7 @@ public:
     virtual Expected<ConfiguredNetworkGroupVector> configure(Hef &hef,
         const NetworkGroupsParamsMap &configure_params={}) override;
     virtual hailo_status reset(hailo_reset_device_mode_t mode) override;
-    virtual hailo_status set_notification_callback(NotificationCallback func, hailo_notification_id_t notification_id, void *opaque) override;
+    virtual hailo_status set_notification_callback(const NotificationCallback &func, hailo_notification_id_t notification_id, void *opaque) override;
     virtual hailo_status remove_notification_callback(hailo_notification_id_t notification_id) override;
     virtual void activate_notifications(const std::string &device_id);
     virtual void start_notification_fetch_thread(D2hEventQueue *write_queue);
@@ -122,7 +122,7 @@ private:
     Expected<firmware_type_t> get_fw_type();
 
     typedef struct {
-        NotificationCallback func;
+        std::shared_ptr<NotificationCallback> func;
         void *opaque;
     } d2h_notification_callback_t;
 

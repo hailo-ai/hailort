@@ -28,13 +28,20 @@ BenchmarkCommand::BenchmarkCommand(CLI::App &parent_app) :
     m_app->add_option("hef", m_params.hef_path, "Path of the HEF to load")
         ->check(CLI::ExistingFile)
         ->required();
-     m_app->add_option("-t, --time-to-run", m_time, "Measurement time in seconds per hw_only/streaming/latency measurement mode")
+     m_app->add_option("-t, --time-to-run", m_params.time_to_run, "Measurement time in seconds per hw_only/streaming/latency measurement mode")
         ->check(CLI::PositiveNumber)
         ->default_val(15);
     m_app->add_option("--no-power", m_not_measure_power, "Skip power measurement, even if the platform supports it. The default value is False")
         ->default_val("false");
     m_app->add_option("--batch-size", m_params.batch_size, "Inference batch size (default is 1)")
         ->default_val(1);
+    m_app->add_option("--power-mode", m_params.power_mode,
+        "Core power mode (PCIE only; ignored otherwise)")
+        ->transform(HailoCheckedTransformer<hailo_power_mode_t>({
+            { "performance", hailo_power_mode_t::HAILO_POWER_MODE_PERFORMANCE },
+            { "ultra_performance", hailo_power_mode_t::HAILO_POWER_MODE_ULTRA_PERFORMANCE }
+        }))
+        ->default_val("performance");
     m_app->add_option("--input-files", m_params.inputs_name_and_file_path, "  The input files need to be in UINT8 before transformations.")
         ->check(InputNameToFileMap);
     m_app->add_option("--csv", m_csv_file_path, "If set print the output as csv to the specified path");
@@ -66,6 +73,7 @@ hailo_status BenchmarkCommand::execute()
     auto streaming_mode_info = fps_streaming_mode();
     CHECK_EXPECTED_AS_STATUS(streaming_mode_info, "FPS in streaming mode failed");
 
+    // TODO - HRT-6931 - measure latnecy only in the case of single device. 
     std::cout << "Measuring HW Latency" << std::endl;
     auto latency_info = latency();
     CHECK_EXPECTED_AS_STATUS(latency_info, "Latency measuring failed");
@@ -110,7 +118,6 @@ Expected<NetworkGroupInferResult> BenchmarkCommand::hw_only_mode()
     m_params.power_measurement.measure_power = false;
     m_params.measure_latency = false;
     m_params.mode = InferMode::HW_ONLY;
-    m_params.time_to_run = m_time;
     return run_command_hef(m_params);
 }
 
@@ -121,7 +128,6 @@ Expected<NetworkGroupInferResult> BenchmarkCommand::fps_streaming_mode()
     m_params.measure_latency = false;
     m_params.transform.transform = true;
     m_params.transform.quantized = false;
-    m_params.time_to_run = m_time;
     return run_command_hef(m_params);
 }
 
@@ -132,6 +138,5 @@ Expected<NetworkGroupInferResult> BenchmarkCommand::latency()
     m_params.mode = InferMode::STREAMING;
     m_params.transform.transform = true;
     m_params.transform.quantized = false;
-    m_params.time_to_run = m_time;
     return run_command_hef(m_params);
 }

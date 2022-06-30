@@ -295,30 +295,30 @@ hailo_status hailo_power_measurement(hailo_device device, hailo_dvm_options_t dv
     return HAILO_SUCCESS;
 }
 
-hailo_status hailo_start_power_measurement(hailo_device device, uint32_t delay_milliseconds,
+hailo_status hailo_start_power_measurement(hailo_device device,
     hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = Control::start_power_measurement(*reinterpret_cast<Device*>(device), delay_milliseconds, static_cast<CONTROL_PROTOCOL__averaging_factor_t>(averaging_factor), static_cast<CONTROL_PROTOCOL__sampling_period_t>(sampling_period));
+    auto status = Control::start_power_measurement(*reinterpret_cast<Device*>(device), static_cast<CONTROL_PROTOCOL__averaging_factor_t>(averaging_factor), static_cast<CONTROL_PROTOCOL__sampling_period_t>(sampling_period));
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
 
-hailo_status hailo_set_power_measurement(hailo_device device, uint32_t index,
+hailo_status hailo_set_power_measurement(hailo_device device, hailo_measurement_buffer_index_t buffer_index,
     hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = Control::set_power_measurement(*reinterpret_cast<Device*>(device), index, static_cast<CONTROL_PROTOCOL__dvm_options_t>(dvm), static_cast<CONTROL_PROTOCOL__power_measurement_types_t>(measurement_type));
+    auto status = Control::set_power_measurement(*reinterpret_cast<Device*>(device), buffer_index, static_cast<CONTROL_PROTOCOL__dvm_options_t>(dvm), static_cast<CONTROL_PROTOCOL__power_measurement_types_t>(measurement_type));
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
 
-hailo_status hailo_get_power_measurement(hailo_device device, uint32_t index, bool should_clear,
+hailo_status hailo_get_power_measurement(hailo_device device, hailo_measurement_buffer_index_t buffer_index, bool should_clear,
     hailo_power_measurement_data_t *measurement_data)
 {
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(measurement_data);
-    auto status = Control::get_power_measurement(*reinterpret_cast<Device*>(device), index, should_clear, measurement_data);
+    auto status = Control::get_power_measurement(*reinterpret_cast<Device*>(device), buffer_index, should_clear, measurement_data);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -847,23 +847,6 @@ hailo_status hailo_hef_get_all_vstream_infos(hailo_hef hef, const char *name,
     return HAILO_SUCCESS;
 }
 
-hailo_status hailo_get_latency_measurement_from_network_group(hailo_configured_network_group configured_network_group,
-    hailo_latency_measurement_result_t *result)
-{
-    LOGGER__WARNING("'hailo_get_latency_measurement_from_network_group' is deprecated. One shuold use 'hailo_get_latency_measurement()'.");
-    CHECK_ARG_NOT_NULL(configured_network_group);
-    CHECK_ARG_NOT_NULL(result);
-
-    auto latency_result = ((ConfiguredNetworkGroup*)configured_network_group)->get_latency_measurement();
-    CHECK_EXPECTED_AS_STATUS(latency_result);
-
-    hailo_latency_measurement_result_t local_result {};
-    local_result.avg_hw_latency_ms = std::chrono::duration<double, std::milli>(latency_result->avg_hw_latency).count();
-
-    *result = local_result;
-    return HAILO_SUCCESS;
-}
-
 HAILORTAPI hailo_status hailo_get_latency_measurement(hailo_configured_network_group configured_network_group,
     const char *network_name, hailo_latency_measurement_result_t *result)
 {
@@ -880,6 +863,24 @@ HAILORTAPI hailo_status hailo_get_latency_measurement(hailo_configured_network_g
 
     *result = local_result;
     return HAILO_SUCCESS;
+}
+
+hailo_status hailo_set_scheduler_timeout(hailo_configured_network_group configured_network_group,
+    uint32_t timeout_ms, const char *network_name)
+{
+    CHECK_ARG_NOT_NULL(configured_network_group);
+
+    std::string network_name_str = (nullptr == network_name) ? "" : network_name;
+    return ((ConfiguredNetworkGroup*)configured_network_group)->set_scheduler_timeout(std::chrono::milliseconds(timeout_ms), network_name_str);
+}
+
+hailo_status hailo_set_scheduler_threshold(hailo_configured_network_group configured_network_group,
+    uint32_t threshold, const char *network_name)
+{
+    CHECK_ARG_NOT_NULL(configured_network_group);
+
+    std::string network_name_str = (nullptr == network_name) ? "" : network_name;
+    return ((ConfiguredNetworkGroup*)configured_network_group)->set_scheduler_threshold(threshold, network_name_str);
 }
 
 hailo_status hailo_calculate_eth_input_rate_limits(hailo_hef hef, const char *network_group_name, uint32_t fps,
@@ -1148,96 +1149,6 @@ hailo_status hailo_transform_frame_by_output_transform_context(hailo_output_tran
 
     MemoryView dst_buffer(dst, dst_size);
     auto status = reinterpret_cast<OutputTransformContext*>(transform_context)->transform(MemoryView::create_const(src,
-        src_size), dst_buffer);
-    CHECK_SUCCESS(status);
-    return HAILO_SUCCESS;
-}
-
-// TODO (HRT-6080): Remove deprecated function
-hailo_status hailo_create_input_transformer(const hailo_stream_info_t *stream_info,
-    const hailo_transform_params_t *transform_params, hailo_input_transform_context *transformer)
-{
-    CHECK_ARG_NOT_NULL(stream_info);
-    CHECK_ARG_NOT_NULL(transform_params);
-    CHECK_ARG_NOT_NULL(transformer);
-
-    LOGGER__WARNING("'hailo_create_input_transformer' is deprecated. One shold use 'hailo_create_input_transform_context'");
-
-    auto local_transformer = InputTransformContext::create(*stream_info, *transform_params);
-    CHECK_EXPECTED_AS_STATUS(local_transformer);
-
-    *transformer = reinterpret_cast<hailo_input_transform_context>(local_transformer.release().release());
-    return HAILO_SUCCESS;
-}
-
-// TODO (HRT-6080): Remove deprecated function
-hailo_status hailo_release_input_transformer(hailo_input_transform_context transformer)
-{
-    CHECK_ARG_NOT_NULL(transformer);
-
-    LOGGER__WARNING("'hailo_release_input_transformer' is deprecated. One shold use 'hailo_release_input_transform_context'");
-
-    delete reinterpret_cast<InputTransformContext*>(transformer);
-    return HAILO_SUCCESS;
-}
-
-// TODO (HRT-6080): Remove deprecated function
-hailo_status hailo_transform_frame_by_input_transformer(hailo_input_transform_context transformer,
-    const void *src, size_t src_size, void *dst, size_t dst_size)
-{
-    CHECK_ARG_NOT_NULL(transformer);
-    CHECK_ARG_NOT_NULL(src);
-    CHECK_ARG_NOT_NULL(dst);
-
-    LOGGER__WARNING("'hailo_transform_frame_by_input_transformer' is deprecated. One shold use 'hailo_transform_frame_by_input_transform_context'");
-
-    MemoryView dst_buffer(dst, dst_size);
-    auto status = reinterpret_cast<InputTransformContext*>(transformer)->transform(
-        MemoryView::create_const(src, src_size), dst_buffer);
-    CHECK_SUCCESS(status);
-    return HAILO_SUCCESS;
-}
-
-// TODO (HRT-6080): Remove deprecated function
-hailo_status hailo_create_output_transformer(const hailo_stream_info_t *stream_info,
-    const hailo_transform_params_t *transform_params, hailo_output_transform_context *transformer)
-{
-    CHECK_ARG_NOT_NULL(stream_info);
-    CHECK_ARG_NOT_NULL(transform_params);
-    CHECK_ARG_NOT_NULL(transformer);
-
-    LOGGER__WARNING("'hailo_create_output_transformer' is deprecated. One shold use 'hailo_create_output_transform_context'");
-
-    auto local_transformer = OutputTransformContext::create(*stream_info, *transform_params);
-    CHECK_EXPECTED_AS_STATUS(local_transformer);
-
-    *transformer = reinterpret_cast<hailo_output_transform_context>(local_transformer.release().release());
-    return HAILO_SUCCESS;
-}
-
-// TODO (HRT-6080): Remove deprecated function
-hailo_status hailo_release_output_transformer(hailo_output_transform_context transformer)
-{
-    CHECK_ARG_NOT_NULL(transformer);
- 
-    LOGGER__WARNING("'hailo_release_output_transformer' is deprecated. One shold use 'hailo_release_output_transform_context'");
-
-    delete reinterpret_cast<OutputTransformContext*>(transformer);
-    return HAILO_SUCCESS;
-}
-
-// TODO (HRT-6080): Remove deprecated function
-hailo_status hailo_transform_frame_by_output_transformer(hailo_output_transform_context transformer,
-    const void *src, size_t src_size, void *dst, size_t dst_size)
-{
-    CHECK_ARG_NOT_NULL(transformer);
-    CHECK_ARG_NOT_NULL(src);
-    CHECK_ARG_NOT_NULL(dst);
-
-    LOGGER__WARNING("'hailo_transform_frame_by_output_transformer' is deprecated. One shold use 'hailo_transform_frame_by_output_transform_context'");
-
-    MemoryView dst_buffer(dst, dst_size);
-    auto status = reinterpret_cast<OutputTransformContext*>(transformer)->transform(MemoryView::create_const(src,
         src_size), dst_buffer);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;

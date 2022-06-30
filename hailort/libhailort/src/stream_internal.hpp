@@ -83,6 +83,7 @@ protected:
     }
 
     virtual EventPtr &get_network_group_activated_event() override;
+    virtual bool is_scheduled() override;
 
 private:
     EventPtr m_network_group_activated_event;
@@ -124,6 +125,7 @@ protected:
     }
 
     virtual EventPtr &get_network_group_activated_event() override;
+    virtual bool is_scheduled() override;
 
     LayerInfo m_layer_info;
 

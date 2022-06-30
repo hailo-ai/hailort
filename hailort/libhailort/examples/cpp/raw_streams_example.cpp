@@ -3,7 +3,7 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @ file raw_streams_example
+ * @file raw_streams_example
  * This example demonstrates using low level streams over c++
  **/
 
@@ -17,20 +17,7 @@ constexpr bool QUANTIZED = true;
 constexpr hailo_format_type_t FORMAT_TYPE = HAILO_FORMAT_TYPE_AUTO;
 constexpr size_t MAX_LAYER_EDGES = 16;
 
-using hailort::Device;
-using hailort::Hef;
-using hailort::Expected;
-using hailort::make_unexpected;
-using hailort::ConfiguredNetworkGroup;
-using hailort::VStreamsBuilder;
-using hailort::InputStream;
-using hailort::InputTransformContext;
-using hailort::OutputTransformContext;
-using hailort::OutputStream;
-using hailort::MemoryView;
-using hailort::InputStreamRefVector;
-using hailort::OutputStreamRefVector;
-
+using namespace hailort;
 
 Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(Device &device)
 {
@@ -157,6 +144,10 @@ hailo_status infer(InputStreamRefVector &input_streams, OutputStreamRefVector &o
 int main()
 {
     auto device = Device::create_pcie();
+    /*
+    For simplicity, not passing `device_info` - This function will fail in case more than one PCIe device is present.
+    See `hailort::Device::scan_pcie` and `hailort::Device::create_pcie` functions documentation.
+    */
     if (!device) {
         std::cerr << "Failed create_pcie " << device.status() << std::endl;
         return device.status();

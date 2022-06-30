@@ -12,6 +12,7 @@
 #include "vstream_internal.hpp"
 #include "hailort_defaults.hpp"
 #include "context_switch/network_group_internal.hpp"
+#include "context_switch/network_group_wrapper.hpp"
 
 #include <sstream>
 
@@ -99,7 +100,7 @@ Expected<InferVStreams> InferVStreams::create(ConfiguredNetworkGroup &net_group,
 {
     auto network_infos = net_group.get_network_infos();
     CHECK_EXPECTED(network_infos);
-    auto is_multi_context = (dynamic_cast<ConfiguredNetworkGroupBase&>(net_group)).get_supported_features().multi_context;
+    auto is_multi_context = (dynamic_cast<ConfiguredNetworkGroupWrapper&>(net_group)).get_configured_network()->get_supported_features().multi_context;
     std::map<std::string, std::pair<size_t, size_t>> input_param_count_per_network;
     size_t total_inputs_found = 0;
     size_t total_outputs_found = 0;

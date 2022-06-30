@@ -141,8 +141,6 @@ private:
     Buffer m_transpose_buffer;
 };
 
-typedef InputTransformContext InputTransformer DEPRECATED("InputTransformer is deprecated. One should use InputTransformContext");
-
 /*! Object used for output stream transformation*/
 class HAILORTAPI OutputTransformContext
 {
@@ -246,8 +244,6 @@ protected:
     const bool m_should_transpose;
     const bool m_should_reorder;
 };
-
-typedef OutputTransformContext OutputTransformer DEPRECATED("OutputTransformer is deprecated. One should use OutputTransformContext");
 
 /*! Object used to demux muxed stream */
 class HAILORTAPI OutputDemuxer {

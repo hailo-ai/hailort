@@ -16,180 +16,127 @@
 namespace hailort
 {
 
-
-void ControlWrapper::set_clock_freq(uintptr_t device, uint32_t clock_freq)
+void ControlWrapper::set_clock_freq(DeviceWrapper &device, uint32_t clock_freq)
 {
-    VALIDATE_NOT_NULL(reinterpret_cast<Device*>(device));
-    auto status = Control::set_clock_freq(*reinterpret_cast<Device*>(device), clock_freq);
+    auto status = Control::set_clock_freq(*device, clock_freq);
     VALIDATE_STATUS(status);
 }
 
-void ControlWrapper::close_all_streams(uintptr_t device)
+void ControlWrapper::close_all_streams(DeviceWrapper &device)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
-
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::close_all_streams(*reinterpret_cast<Device *>(device));
+    auto status = Control::close_all_streams(*device);
     VALIDATE_STATUS(status);
 }
 
-void ControlWrapper::config_ahb_to_axi(uintptr_t device, bool use_64bit_data_only)
+void ControlWrapper::config_ahb_to_axi(DeviceWrapper &device, bool use_64bit_data_only)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__config_core_top_type_t config_type = CONTROL_PROTOCOL__CONFIG_CORE_TOP_TYPE_AHB_TO_AXI;
     CONTROL_PROTOCOL__config_core_top_params_t params = {0};
     params.ahb_to_axi.enable_use_64bit_data_only = use_64bit_data_only;
 
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::config_core_top(*reinterpret_cast<Device *>(device), config_type, &params);
+    auto status = Control::config_core_top(*device, config_type, &params);
     VALIDATE_STATUS(status);
-
-    return;
 }
 
-void ControlWrapper::phy_operation(uintptr_t device, CONTROL_PROTOCOL__phy_operation_t operation_type)
+void ControlWrapper::phy_operation(DeviceWrapper &device, CONTROL_PROTOCOL__phy_operation_t operation_type)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
-
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::phy_operation(*reinterpret_cast<Device *>(device), operation_type);
+    auto status = Control::phy_operation(*device, operation_type);
     VALIDATE_STATUS(status);
-
-    return;
 }
 
-uint32_t ControlWrapper::latency_measurement_read(uintptr_t device)
+uint32_t ControlWrapper::latency_measurement_read(DeviceWrapper &device)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
     uint32_t inbound_to_outbound_latency_nsec = 0;
 
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::latency_measurement_read(*reinterpret_cast<Device *>(device), &inbound_to_outbound_latency_nsec);
+    auto status = Control::latency_measurement_read(*device, &inbound_to_outbound_latency_nsec);
     VALIDATE_STATUS(status);
 
     return inbound_to_outbound_latency_nsec;
 }
 
-void ControlWrapper::latency_measurement_config(uintptr_t device, uint8_t latency_measurement_en,
+void ControlWrapper::latency_measurement_config(DeviceWrapper &device, uint8_t latency_measurement_en,
     uint32_t inbound_start_buffer_number, uint32_t outbound_stop_buffer_number, uint32_t inbound_stream_index,
     uint32_t outbound_stream_index)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
-
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::latency_measurement_config(*reinterpret_cast<Device *>(device), latency_measurement_en, inbound_start_buffer_number,
+    auto status = Control::latency_measurement_config(*device, latency_measurement_en, inbound_start_buffer_number,
             outbound_stop_buffer_number, inbound_stream_index, outbound_stream_index);
     VALIDATE_STATUS(status);
-
-    return;
 }
 
-void ControlWrapper::start_firmware_update(uintptr_t device)
+void ControlWrapper::start_firmware_update(DeviceWrapper &device)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
-
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::start_firmware_update(*reinterpret_cast<Device *>(device));
+    auto status = Control::start_firmware_update(*device);
     VALIDATE_STATUS(status);
-
-    return;
 }
 
-void ControlWrapper::finish_firmware_update(uintptr_t device)
+void ControlWrapper::finish_firmware_update(DeviceWrapper &device)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
-
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::finish_firmware_update(*reinterpret_cast<Device *>(device));
+    auto status = Control::finish_firmware_update(*device);
     VALIDATE_STATUS(status);
-
-    return;
 }
 
-void ControlWrapper::write_firmware_update(uintptr_t device, uint32_t offset, py::bytes data, uint32_t length)
+void ControlWrapper::write_firmware_update(DeviceWrapper &device, uint32_t offset, py::bytes data, uint32_t length)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
-
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::write_firmware_update(*reinterpret_cast<Device *>(device), offset, (uint8_t*)std::string(data).c_str(), length);
+    auto status = Control::write_firmware_update(*device, offset, (uint8_t*)std::string(data).c_str(), length);
     VALIDATE_STATUS(status);
-
-    return;
 }
 
-void ControlWrapper::validate_firmware_update(uintptr_t device, py::bytes md5_raw_data, uint32_t firmware_size)
+void ControlWrapper::validate_firmware_update(DeviceWrapper &device, py::bytes md5_raw_data, uint32_t firmware_size)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
     MD5_SUM_t expected_md5 = {0};
-
     memcpy(&expected_md5, (uint8_t*)std::string(md5_raw_data).c_str(), sizeof(expected_md5));
 
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::validate_firmware_update(*reinterpret_cast<Device *>(device), &expected_md5, firmware_size);
+    auto status = Control::validate_firmware_update(*device, &expected_md5, firmware_size);
     VALIDATE_STATUS(status);
-
-    return;
 }
 
-py::bytes ControlWrapper::sensor_get_config(uintptr_t device, uint32_t section_index, uint32_t offset, uint32_t data_length)
+py::bytes ControlWrapper::sensor_get_config(DeviceWrapper &device, uint32_t section_index, uint32_t offset, uint32_t data_length)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
     std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(data_length, '\x00');
     VALIDATE_NOT_NULL(response);
     
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::sensor_get_config(*reinterpret_cast<Device *>(device), section_index, offset, data_length,
-        (uint8_t*)(response->data()));
-   
+    auto status = Control::sensor_get_config(*device, section_index, offset, data_length, (uint8_t*)(response->data()));
     VALIDATE_STATUS(status);
 
      return *response;
 }
 
-void ControlWrapper::idle_time_set_measurement(uintptr_t device, bool measurement_enable)
+void ControlWrapper::idle_time_set_measurement(DeviceWrapper &device, bool measurement_enable)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
-
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::idle_time_set_measurement(*reinterpret_cast<Device *>(device), measurement_enable);
+    auto status = Control::idle_time_set_measurement(*device, measurement_enable);
     VALIDATE_STATUS(status);
 }
 
-uint64_t ControlWrapper::idle_time_get_measurement(uintptr_t device)
+uint64_t ControlWrapper::idle_time_get_measurement(DeviceWrapper &device)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
     uint64_t measurement = 0;
 
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::idle_time_get_measurement(*reinterpret_cast<Device *>(device), &measurement);
+    auto status = Control::idle_time_get_measurement(*device, &measurement);
     VALIDATE_STATUS(status);
 
     return measurement;
 }
 
-void ControlWrapper::d2h_notification_manager_set_host_info(uintptr_t device, uint16_t host_port, uint32_t host_ip_address)
+void ControlWrapper::d2h_notification_manager_set_host_info(DeviceWrapper &device, uint16_t host_port, uint32_t host_ip_address)
 {
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    hailo_status status = Control::d2h_notification_manager_set_host_info(*reinterpret_cast<Device *>(device), host_port, host_ip_address);
+    auto status = Control::d2h_notification_manager_set_host_info(*device, host_port, host_ip_address);
     VALIDATE_STATUS(status);
 }
 
-void ControlWrapper::d2h_notification_manager_send_host_info_notification(uintptr_t device, uint8_t notification_priority)
+void ControlWrapper::d2h_notification_manager_send_host_info_notification(DeviceWrapper &device, uint8_t notification_priority)
 {
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    hailo_status status = Control::d2h_notification_manager_send_host_info_notification(*reinterpret_cast<Device *>(device), notification_priority);
+    auto status = Control::d2h_notification_manager_send_host_info_notification(*device, notification_priority);
     VALIDATE_STATUS(status);
 }
 
 /* Context switch */
-void ControlWrapper::set_context_switch_breakpoint(uintptr_t device, 
+void ControlWrapper::set_context_switch_breakpoint(DeviceWrapper &device, 
         uint8_t breakpoint_id,
         bool break_at_any_network_group_index, uint8_t network_group_index, 
         bool break_at_any_batch_index, uint16_t batch_index, 
         bool break_at_any_context_index,uint8_t context_index, 
         bool break_at_any_action_index, uint16_t action_index) 
 {
-    hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__context_switch_breakpoint_control_t breakpoint_control = 
         CONTROL_PROTOCOL__CONTEXT_SWITCH_BREAKPOINT_CONTROL_SET;
     CONTROL_PROTOCOL__context_switch_breakpoint_data_t breakpoint_data = {
@@ -202,72 +149,59 @@ void ControlWrapper::set_context_switch_breakpoint(uintptr_t device,
         break_at_any_action_index,
         action_index};
 
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::config_context_switch_breakpoint(*reinterpret_cast<Device *>(device), breakpoint_id,
-            breakpoint_control, &breakpoint_data);
+    auto status = Control::config_context_switch_breakpoint(*device, breakpoint_id, breakpoint_control, &breakpoint_data);
     VALIDATE_STATUS(status);
 }
 
-void ControlWrapper::continue_context_switch_breakpoint(uintptr_t device, uint8_t breakpoint_id) 
+void ControlWrapper::continue_context_switch_breakpoint(DeviceWrapper &device, uint8_t breakpoint_id) 
 {
-    hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__context_switch_breakpoint_control_t breakpoint_control = 
         CONTROL_PROTOCOL__CONTEXT_SWITCH_BREAKPOINT_CONTROL_CONTINUE;
     CONTROL_PROTOCOL__context_switch_breakpoint_data_t breakpoint_data = {false,0,false,0,false,0,false,0};
 
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::config_context_switch_breakpoint(*reinterpret_cast<Device *>(device), breakpoint_id, 
+    auto status = Control::config_context_switch_breakpoint(*device, breakpoint_id, 
             breakpoint_control, &breakpoint_data);
     VALIDATE_STATUS(status);
 }
 
-void ControlWrapper::clear_context_switch_breakpoint(uintptr_t device, uint8_t breakpoint_id) 
+void ControlWrapper::clear_context_switch_breakpoint(DeviceWrapper &device, uint8_t breakpoint_id) 
 {
-    hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__context_switch_breakpoint_control_t breakpoint_control = 
         CONTROL_PROTOCOL__CONTEXT_SWITCH_BREAKPOINT_CONTROL_CLEAR;
     CONTROL_PROTOCOL__context_switch_breakpoint_data_t breakpoint_data = {false,0,false,0,false,0,false,0};
 
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::config_context_switch_breakpoint(*reinterpret_cast<Device *>(device), breakpoint_id,
+    auto status = Control::config_context_switch_breakpoint(*device, breakpoint_id,
             breakpoint_control, &breakpoint_data);
     VALIDATE_STATUS(status);
 }
 
-uint8_t ControlWrapper::get_context_switch_breakpoint_status(uintptr_t device, uint8_t breakpoint_id) 
+uint8_t ControlWrapper::get_context_switch_breakpoint_status(DeviceWrapper &device, uint8_t breakpoint_id) 
 {
-    hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__context_switch_debug_sys_status_t breakpoint_status = 
         CONTROL_PROTOCOL__CONTEXT_SWITCH_DEBUG_SYS_STATUS_COUNT;
 
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::get_context_switch_breakpoint_status(*reinterpret_cast<Device *>(device), breakpoint_id,
+    auto status = Control::get_context_switch_breakpoint_status(*device, breakpoint_id,
             &breakpoint_status);
     VALIDATE_STATUS(status);
 
     return static_cast<uint8_t>(breakpoint_status);
 }
 
-void ControlWrapper::config_context_switch_timestamp(uintptr_t device, uint16_t batch_index) 
+void ControlWrapper::config_context_switch_timestamp(DeviceWrapper &device, uint16_t batch_index) 
 {
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    hailo_status status = Control::config_context_switch_timestamp(*reinterpret_cast<Device *>(device), batch_index, true);
+    auto status = Control::config_context_switch_timestamp(*device, batch_index, true);
     VALIDATE_STATUS(status);
 }
 
-void ControlWrapper::remove_context_switch_timestamp_configuration(uintptr_t device) 
+void ControlWrapper::remove_context_switch_timestamp_configuration(DeviceWrapper &device) 
 {
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    hailo_status status = Control::config_context_switch_timestamp(*reinterpret_cast<Device *>(device), 0, false);
+    auto status = Control::config_context_switch_timestamp(*device, 0, false);
     VALIDATE_STATUS(status);
 }
 
-void ControlWrapper::enable_debugging(uintptr_t device, bool is_rma)
+void ControlWrapper::enable_debugging(DeviceWrapper &device, bool is_rma)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
-
-    VALIDATE_NOT_NULL(reinterpret_cast<Device *>(device));
-    status = Control::enable_debugging(*reinterpret_cast<Device *>(device), is_rma);
+    auto status = Control::enable_debugging(*device, is_rma);
     VALIDATE_STATUS(status);
 }
 

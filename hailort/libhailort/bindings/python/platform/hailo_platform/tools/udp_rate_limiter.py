@@ -6,8 +6,7 @@ from __future__ import division
 from builtins import object
 
 
-from hailo_platform.common.tools.cmd_utils.base_utils import HailortCliUtil
-from hailo_platform.drivers.hailort.pyhailort import ConfiguredNetwork, HEF, TrafficControl, INPUT_DATAFLOW_BASE_PORT
+from hailo_platform.pyhailort.pyhailort import ConfiguredNetwork, HEF, TrafficControl, INPUT_DATAFLOW_BASE_PORT
 
 DEFAULT_MAX_KBPS = 850e3
 DEFAULT_MAX_KBPS_PAPRIKA_B0 = 160e3
@@ -41,7 +40,7 @@ class RateLimiterWrapper(object):
         """RateLimiterWrapper constructor.
 
         Args:
-            configured_network_group (:class:`~hailo_platform.drivers.hailort.pyhailort.ConfiguredNetwork`): The
+            configured_network_group (:class:`~hailo_platform.pyhailort.pyhailort.ConfiguredNetwork`): The
                 target network_group.
             fps (int): Frame rate.
             fps_factor (float): Safety factor by which to multiply the calculated UDP rate.
@@ -114,9 +113,3 @@ class UDPRateLimiter(object):
             results[port] = input_rates[stream_info.name] / BYTES_IN_Kbits
 
         return results
-
-
-class UDPRateLimiterCLI(HailortCliUtil):
-    """CLI tool for UDP rate limitation."""
-    def __init__(self, parser):
-        super().__init__(parser, 'udp-rate-limiter')

@@ -12,7 +12,7 @@
 #include <sys/mman.h>
 #include <errno.h>
 
-#if defined(__unix__)
+#if defined(__linux__)
 #include <linux/mman.h>
 #endif
 

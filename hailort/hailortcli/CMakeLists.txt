@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.0.0)
 
+include(GNUInstallDirs)
+
 set(HAILORTCLI_CPP_FILES
     hailortcli.cpp
     command.cpp
@@ -29,7 +31,6 @@ if(UNIX)
         udp_rate_limiter_command.cpp
         # TODO: We dont compile download_action_list_command on windows, as it uses packed enums (HRT-5919)
         download_action_list_command.cpp
-
     )
 endif()
 
@@ -50,11 +51,16 @@ add_executable(hailortcli
 )
 target_compile_options(hailortcli PRIVATE ${HAILORT_COMPILE_OPTIONS})
 set_property(TARGET hailortcli PROPERTY CXX_STANDARD 14)
-set_property(TARGET hailortcli PROPERTY INSTALL_RPATH "$ORIGIN") # Need to add "${CMAKE_INSTALL_LIBDIR}" when installing with cmake to /usr/local
+set_property(TARGET hailortcli PROPERTY INSTALL_RPATH "$ORIGIN" "../lib/") # Link with a relative libhailort
 target_link_libraries(hailortcli libhailort CLI11::CLI11 nlohmann_json spdlog::spdlog readerwriterqueue)
 target_link_libraries(hailortcli DotWriter)
+# TODO: Remove microprofile after removing pipeline.cpp from hailortcli sources
+target_link_libraries(hailortcli microprofile)
+
 if(WIN32)
     target_link_libraries(hailortcli Ws2_32 Iphlpapi Shlwapi)
+elseif(CMAKE_SYSTEM_NAME STREQUAL QNX)
+    target_link_libraries(hailortcli pevents)
 endif()
 target_include_directories(hailortcli
     PRIVATE

@@ -1,5 +1,5 @@
 <p align="left">
-  <img src=".logo.svg" />
+  <img src=".hailort.png" />
 </p>
 
 

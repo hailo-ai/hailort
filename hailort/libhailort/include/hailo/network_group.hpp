@@ -57,6 +57,11 @@ public:
     ActivatedNetworkGroup &operator=(ActivatedNetworkGroup &&other) = delete;
     ActivatedNetworkGroup(ActivatedNetworkGroup &&other) noexcept = default;
 
+    /**
+     * @return The network group name.
+     */
+    virtual const std::string &get_network_group_name() const = 0;
+
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &key) = 0;
     
     /**
@@ -191,8 +196,7 @@ public:
      * @return Upon success, returns Expected of a pointer to ActivatedNetworkGroup object.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
-    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate(
-        const hailo_activate_network_group_params_t &network_group_params) = 0;
+    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate(const hailo_activate_network_group_params_t &network_group_params) = 0;
 
     /**
      * Block until network group is activated, or until timeout is passed.
@@ -303,11 +307,45 @@ public:
      */
     virtual Expected<std::vector<hailo_vstream_info_t>> get_all_vstream_infos(const std::string &network_name="") const = 0;
 
+    /**
+     * Sets the maximum time period that may pass before getting run time from the scheduler,
+     *  even without reaching the minimum required send requests (e.g. threshold - see set_scheduler_threshold()),
+     *  as long as at least one send request has been sent.
+     *  This time period is measured since the last time the scheduler gave this network group run time.
+     *
+     * @param[in]  timeout              Timeout in milliseconds.
+     * @param[in]  network_name         Network name for which to set the timeout.
+     *                                  If not passed, the timeout will be set for all the networks in the network group.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE, and before the creation of any vstreams.
+     * @note The default timeout is 0ms.
+     * @note Currently, setting the timeout for a specific network is not supported.
+     */
+    virtual hailo_status set_scheduler_timeout(const std::chrono::milliseconds &timeout, const std::string &network_name="") = 0;
+
+    /**
+     * Sets the minimum number of send requests required before the network is considered ready to get run time from the scheduler.
+     * If at least one send request has been sent, but the threshold is not reached within a set time period (e.g. timeout - see hailo_set_scheduler_timeout()),
+     *  the scheduler will consider the network ready regardless.
+     *
+     * @param[in]  threshold            Threshold in number of frames.
+     * @param[in]  network_name         Network name for which to set the threshold.
+     *                                  If not passed, the threshold will be set for all the networks in the network group.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE, and before the creation of any vstreams.
+     * @note The default threshold is 1.
+     * @note Currently, setting the threshold for a specific network is not supported.
+     */
+    virtual hailo_status set_scheduler_threshold(uint32_t threshold, const std::string &network_name="") = 0;
+
     virtual AccumulatorPtr get_activation_time_accumulator() const = 0;
     virtual AccumulatorPtr get_deactivation_time_accumulator() const = 0;
 
 protected:
     ConfiguredNetworkGroup() = default;
+
+    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_internal(
+        const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size) = 0;
 
 private:
     friend class ActivatedNetworkGroup;

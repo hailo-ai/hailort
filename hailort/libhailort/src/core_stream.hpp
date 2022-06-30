@@ -22,20 +22,19 @@ public:
     CoreInputStream(CoreInputStream &&other) = default;
     virtual ~CoreInputStream() = default;
 
-    static Expected<std::unique_ptr<CoreInputStream>> create(Device &device, uint8_t channel_index,
-        const LayerInfo &edge_layer, uint16_t batch_size, EventPtr network_group_activated_event,
-        LatencyMeterPtr latency_meter = nullptr);
+    static Expected<std::unique_ptr<CoreInputStream>> create(Device &device,
+        std::shared_ptr<VdmaChannel> channel, const LayerInfo &edge_layer, uint16_t batch_size, 
+        EventPtr network_group_activated_event);
 
     virtual hailo_stream_interface_t get_interface() const override { return HAILO_STREAM_INTERFACE_CORE; }
 
 private:
     CoreInputStream(
         CoreDevice &device,
-        uint8_t channel_index,
+        std::shared_ptr<VdmaChannel> channel,
         const LayerInfo &edge_layer,
         EventPtr network_group_activated_event,
         uint16_t batch_size,
-        LatencyMeterPtr latency_meter,
         const std::chrono::milliseconds &transfer_timeout,
         hailo_status &status);
 };
@@ -45,20 +44,19 @@ public:
     CoreOutputStream(CoreOutputStream &&other) = default;
     virtual ~CoreOutputStream() = default;
 
-    static Expected<std::unique_ptr<CoreOutputStream>> create(Device &device, uint8_t channel_index,
-        const LayerInfo &edge_layer, uint16_t batch_size, EventPtr network_group_activated_event,
-        LatencyMeterPtr latency_meter);
+    static Expected<std::unique_ptr<CoreOutputStream>> create(Device &device,
+        std::shared_ptr<VdmaChannel> channel, const LayerInfo &edge_layer, uint16_t batch_size, 
+        EventPtr network_group_activated_event);
 
     virtual hailo_stream_interface_t get_interface() const override { return HAILO_STREAM_INTERFACE_CORE; }
 
 private:
     explicit CoreOutputStream(
         CoreDevice &device,
-        uint8_t channel_index,
+        std::shared_ptr<VdmaChannel> channel,
         const LayerInfo &edge_layer,
         EventPtr network_group_activated_event,
         uint16_t batch_size,
-        LatencyMeterPtr latency_meter,
         const std::chrono::milliseconds &transfer_timeout,
         hailo_status &status);
 };

@@ -1,0 +1,14 @@
+{
+    "network":
+    {
+        "static_netmask": "255.255.255.0",
+        "should_use_dhcp": false,
+        "mac_address": "80:00:DE:AD:BE:EF"
+    },
+    "system":
+    {
+        "name": "Hailo-8",
+        "supported_aspm_states": "ASPM L1 ONLY",
+        "temperature_throttling_enable": true
+    }
+}

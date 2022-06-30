@@ -59,6 +59,11 @@ extern "C" {
 #define CONTROL_PROTOCOL__REQUEST_BASE_SIZE (sizeof(CONTROL_PROTOCOL__request_header_t) + sizeof(uint32_t))
 #define CONTROL_PROTOCOL__OPCODE_INVALID  0xFFFFFFFF
 
+/* If a control accepts a dynamic_batch_size and this value is passed, the 
+ * dynamic_batch_size will be ignored. The pre-configured batch_size will be used.
+ */
+#define CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE (0)
+
 #define CONTROL_PROTOCOL__TRIGGER_SUB_INDEX_SHIFT (0)
 #define CONTROL_PROTOCOL__TRIGGER_SUB_INDEX_BIT_MASK (0x000000FF)
 #define CONTROL_PROTOCOL__TRIGGER_INDEX_SHIFT (16)
@@ -863,19 +868,22 @@ typedef enum {
 } CONTROL_PROTOCOL__CONTEXT_SWITCH_VERSION_t;
 
 typedef struct {
+    bool is_abbale_supported;
+} CONTROL_PROTOCOL__VALIDATION_FEATURE_LIST_t;
+
+typedef struct {
+    bool preliminary_run_asap;
+} CONTROL_PROTOCOL__INFER_FEATURE_LIST_t;
+
+typedef struct {
     uint8_t dynamic_contexts_count;
     uint32_t host_boundary_channels_bitmap;
-    uint32_t host_ddr_channels_bitmap;
-    uint8_t cfg_channels_count;
     uint8_t cfg_channel_numbers[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
     uint8_t power_mode; // CONTROL_PROTOCOL__power_mode_t
+    CONTROL_PROTOCOL__INFER_FEATURE_LIST_t infer_features;
     uint8_t networks_count;
     uint16_t batch_size[CONTROL_PROTOCOL__MAX_NETWORKS_PER_NETWORK_GROUP];
 } CONTROL_PROTOCOL__application_header_t;
-
-typedef struct {
-    bool is_abbale_supported;
-} CONTROL_PROTOCOL__VALIDATION_FEATURE_LIST_t;
 
 typedef struct {
     uint32_t context_switch_version_length;
@@ -960,6 +968,7 @@ typedef enum {
     CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ENABLE_LCU_DEFAULT,
     CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ADD_REPEATED,
     CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_FETCH_CCW_BURSTS,
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_BURST_CREDITS_TASK_START,
 
     /* must be last*/
     CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_COUNT,
@@ -1026,6 +1035,25 @@ typedef enum {
     CONTROL_PROTOCOL__EDGE_CONNECTION_TYPE_COUNT
 } CONTROL_PROTOCOL__EDGE_CONNECTION_TYPE_t;
 
+typedef enum {
+    CONTROL_PROTOCOL__HOST_BUFFER_TYPE_EXTERNAL_DESC = 0,
+    CONTROL_PROTOCOL__HOST_BUFFER_TYPE_CCB,
+
+    // The buffer uses external descriptors that is host managed - the firmware don't need to config this buffer
+    CONTROL_PROTOCOL__HOST_BUFFER_TYPE_HOST_MANAGED_EXTERNAL_DESC,
+
+    /* must be last*/
+    CONTROL_PROTOCOL__HOST_BUFFER_TYPE_COUNT
+} CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t;
+
+typedef struct {
+    uint8_t buffer_type;   // CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t
+    uint64_t dma_address;
+    uint16_t desc_page_size;
+    uint32_t total_desc_count;
+    uint32_t bytes_in_pattern;
+} CONTROL_PROTOCOL__host_buffer_info_t;
+
 typedef struct {
     uint8_t communication_type;
     uint8_t edge_connection_type;
@@ -1040,7 +1068,6 @@ typedef struct {
 
 typedef struct {
     uint64_t host_descriptors_base_address;
-    uint16_t initial_host_available_descriptors;
     uint8_t desc_list_depth;
 } CONTROL_PROTOCOL__host_desc_address_info_t;
 
@@ -1052,9 +1079,7 @@ typedef struct {
 
 typedef struct {
     CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
-    uint32_t frame_credits_in_bytes;
-    CONTROL_PROTOCOL__host_desc_address_info_t host_desc_address_info;
-    uint16_t desc_page_size;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
 } CONTROL_PROTOCOL__inter_context_output_t;
 
 typedef struct {
@@ -1062,7 +1087,7 @@ typedef struct {
     uint32_t frame_credits_in_bytes;
     CONTROL_PROTOCOL__host_desc_address_info_t host_desc_address_info;
     uint16_t desc_page_size;
-    bool fw_managed_channel;
+    uint32_t buffered_rows_count;
 } CONTROL_PROTOCOL__ddr_buffer_output_t;
 
 
@@ -1073,19 +1098,19 @@ typedef struct {
 typedef struct {
     CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
     uint16_t desc_page_size;
+    uint32_t initial_credit_size;
 } CONTROL_PROTOCOL__network_boundary_input_t;
 
 typedef struct {
     CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
-    CONTROL_PROTOCOL__host_desc_address_info_t host_desc_address_info;
-    uint16_t desc_page_size;
-    uint16_t context_credits_in_descriptors;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
+    uint32_t initial_credit_size;
 } CONTROL_PROTOCOL__inter_context_input_t;
 
 typedef struct {
     CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
     CONTROL_PROTOCOL__host_desc_address_info_t host_desc_address_info;
-    bool fw_managed_channel;
+    uint32_t initial_credit_size;
 } CONTROL_PROTOCOL__ddr_buffer_input_t;
 
 typedef struct {
@@ -1106,10 +1131,10 @@ typedef struct {
     uint8_t is_first_control_per_context;
     uint32_t is_last_control_per_context_length;
     uint8_t is_last_control_per_context;
-    uint32_t context_cfg_base_address_length;
-    uint64_t context_cfg_base_address[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
-    uint32_t context_cfg_total_descriptors_length;
-    uint16_t context_cfg_total_descriptors[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
+    uint32_t cfg_channels_count_length;
+    uint8_t cfg_channels_count;
+    uint32_t config_buffer_infos_length;
+    CONTROL_PROTOCOL__host_buffer_info_t config_buffer_infos[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
     uint32_t context_stream_remap_data_length;
     CONTROL_PROTOCOL__stream_remap_data_t context_stream_remap_data;
     uint32_t number_of_edge_layers_length;
@@ -1155,16 +1180,19 @@ typedef struct {
  * |     |       |   .header = { CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ENABLE_LCU_DEFAULT, true };  |
  * |     |       |   .cluster_index = <some_cluster_index>;                                           |
  * |     |       |   .lcu_index = <some_lcu_index>;                                                   |
+ * |     |       |   .network_index = <some_network_index>;                                           |
  * |     |       | }                                                                                  |
  * |     |       | CONTROL_PROTOCOL__ENABLE_LCU_DEFAULT_ACTION_t {                                    |
  * |     |       |   .header = { CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ENABLE_LCU_DEFAULT, true };  |
  * |     |       |   .cluster_index = <some_cluster_index>;                                           |
  * |     |       |   .lcu_index = <some_lcu_index>;                                                   |
+ * |     |       |   .network_index = <some_network_index>;                                           |
  * |     |       | }                                                                                  |
  * |     |       | CONTROL_PROTOCOL__ENABLE_LCU_DEFAULT_ACTION_t {                                    |
  * |     |       |   .header = { CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ENABLE_LCU_DEFAULT, true };  |
  * |     |       |   .cluster_index = <some_cluster_index>;                                           |
  * |     |       |   .lcu_index = <some_lcu_index>;                                                   |
+ * |     |       |   .network_index = <some_network_index>;                                           |
  * |     V       | }                                                                                  |
  * |    ...      | (Next action control)                                                              |
  * |--------------------------------------------------------------------------------------------------|
@@ -1236,6 +1264,7 @@ typedef struct {
     CONTROL_PROTOCOL__ACTION_HEADER_t header;
     uint8_t cluster_index;
     uint8_t lcu_index;
+    uint8_t network_index;
 } CONTROL_PROTOCOL__ENABLE_LCU_DEFAULT_ACTION_t;
 
 typedef struct {
@@ -1264,6 +1293,11 @@ typedef struct {
     /* Must be first */
     CONTROL_PROTOCOL__ACTION_HEADER_t header;
 } CONTROL_PROTOCOL__ADD_DDR_BUFFERING_START_ACTION_t;
+
+typedef struct {
+    /* Must be first */
+    CONTROL_PROTOCOL__ACTION_HEADER_t header;
+} CONTROL_PROTOCOL__BURST_CREDITS_TASK_START_ACTION_T;
 
 typedef struct {
     CONTROL_PROTOCOL__TRIGGER_t trigger;
@@ -1324,6 +1358,8 @@ typedef struct {
     uint8_t state_machine_status;
     uint32_t application_index_length;
     uint8_t application_index;
+    uint32_t dynamic_batch_size_length;
+    uint16_t dynamic_batch_size;
 } CONTROL_PROTOCOL__change_context_switch_status_request_t;
 
 typedef struct {
@@ -1338,6 +1374,8 @@ typedef struct {
 typedef struct {
     uint32_t application_index_length;
     uint8_t application_index;
+    uint32_t dynamic_batch_size_length;
+    uint16_t dynamic_batch_size;
 } CONTROL_PROTOCOL__switch_application_request_t;
 
 typedef struct {
@@ -1674,8 +1712,8 @@ typedef struct {
 typedef struct {
     bool is_first_control_per_context;
     bool is_last_control_per_context;
-    uint64_t context_cfg_base_address[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
-    uint16_t context_cfg_total_descriptors[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
+    uint8_t cfg_channels_count;
+    CONTROL_PROTOCOL__host_buffer_info_t config_buffer_infos[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
     CONTROL_PROTOCOL__stream_remap_data_t context_stream_remap_data;
     uint8_t number_of_edge_layers;
     uint8_t number_of_trigger_groups;

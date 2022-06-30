@@ -209,7 +209,7 @@ class Expected final
 {
 public:
     /**
-     * Expected<T> can access Expected<U>'s private members (needed for implicit upcasting)
+     * Expected<T> can access Expected\<U\>'s private members (needed for implicit upcasting)
      */
     template<class U>
     friend class Expected;
@@ -231,30 +231,42 @@ public:
      * Copy constructor
      */
     explicit Expected(const Expected<T> &other) :
-        m_value(other.m_value),
         m_status(other.m_status)
-    {}
+    {
+        if (other.has_value()) {
+            construct(&m_value, other.m_value);
+        }
+    }
 
     /**
      * Copy constructor for implicit upcasting
      */
     template <typename U>
     Expected(const Expected<U>& other) :
-        m_value(other.m_value),
         m_status(other.m_status)
-    {}
+    {
+        if (other.has_value()) {
+            construct(&m_value, other.m_value);
+        }
+    }
 
     /**
      * Move constructor
      * 
      * Construct a new Expected<T> where:
-     *  - other.m_value moved to this.m_value.
-     *  - other.m_status moved to this.m_status, and other.m_status is set to HAILO_UNINITIALIZED.
+     *  - other.m_status moved to this.m_status.
+     *  - other.m_value moved to this.m_value if other.m_value exists.
+     *
+     * If other had value before the move, it will still have the value that was moved (so the value object is valid but
+     * in an unspecified state).
      */
     Expected(Expected<T> &&other) :
-        m_value(std::move(other.m_value)),
-        m_status(std::exchange(other.m_status, HAILO_UNINITIALIZED))
-    {}
+        m_status(other.m_status)
+    {
+        if (other.has_value()) {
+            construct(&m_value, std::move(other.m_value));
+        }
+    }
 
     /**
      * Construct a new Expected<T> from T& where:
@@ -448,6 +460,12 @@ public:
     }
 
 private:
+    template<typename... Args>
+    static void construct(T *value, Args &&...args)
+    {
+        new ((void*)value) T(std::forward<Args>(args)...);
+    }
+
     union {
         T m_value;
     };

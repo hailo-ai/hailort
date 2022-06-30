@@ -78,7 +78,8 @@ hailo_status EthernetInputStream::deactivate_stream()
     return HAILO_SUCCESS;
 }
 
-hailo_status EthernetInputStream::activate_stream()
+// Note: Ethernet streams don't work with dynamic batch sizes
+hailo_status EthernetInputStream::activate_stream(uint16_t /* dynamic_batch_size */)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__config_stream_params_t params = {};
@@ -460,7 +461,8 @@ hailo_status EthernetOutputStream::deactivate_stream()
     return HAILO_SUCCESS;
 }
 
-hailo_status EthernetOutputStream::activate_stream()
+// Note: Ethernet streams don't work with dynamic batch sizes
+hailo_status EthernetOutputStream::activate_stream(uint16_t /* dynamic_batch_size */)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__config_stream_params_t params = {};

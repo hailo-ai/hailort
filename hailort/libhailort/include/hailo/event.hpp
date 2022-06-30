@@ -21,8 +21,28 @@
 #include <poll.h>
 #endif
 
+#if defined(__QNX__)
+#include <atomic>
+#include <mutex>
+
+// Forward declare neosmart::neosmart_event_t_
+namespace neosmart {
+    struct neosmart_event_t_;
+}
+#endif // defined (__QNX__)
+
 namespace hailort
 {
+
+// underlying_waitable_handle_t
+#if defined(_MSC_VER) || defined(__linux__)
+    typedef underlying_handle_t underlying_waitable_handle_t; 
+#elif defined(__QNX__)
+    typedef neosmart::neosmart_event_t_* underlying_waitable_handle_t;
+#else
+    #error "Unsupported Platform"
+#endif
+
 
 class Waitable;
 using WaitablePtr = std::shared_ptr<Waitable>;
@@ -31,7 +51,7 @@ using WaitablePtrList = std::vector<WaitablePtr>;
 class HAILORTAPI Waitable
 {
 public:    
-    explicit Waitable(underlying_handle_t handle);
+    explicit Waitable(underlying_waitable_handle_t handle);
     virtual ~Waitable();
     Waitable(Waitable&& other);
 
@@ -45,22 +65,25 @@ public:
     virtual hailo_status wait(std::chrono::milliseconds timeout) = 0;
     virtual hailo_status signal() = 0;
     virtual bool is_auto_reset() = 0;
-    underlying_handle_t get_underlying_handle();
+    underlying_waitable_handle_t get_underlying_handle();
+#if defined(__QNX__)
+    virtual void post_wait() = 0;
+#endif // defined (__QNX__)
 
     static constexpr auto INIFINITE_TIMEOUT() { return std::chrono::milliseconds(HAILO_INFINITE); }
 
 protected:
-    #if defined(_MSC_VER)
-    static hailo_status wait_for_single_object(underlying_handle_t handle, std::chrono::milliseconds timeout);
+    #if defined(_MSC_VER) || defined(__QNX__)
+    static hailo_status wait_for_single_object(underlying_waitable_handle_t handle, std::chrono::milliseconds timeout);
     #else
     // Waits on the fd until the waitable is signaled
-    static hailo_status eventfd_poll(underlying_handle_t fd, std::chrono::milliseconds timeout);
+    static hailo_status eventfd_poll(underlying_waitable_handle_t fd, std::chrono::milliseconds timeout);
     // Expected to be called after eventfd_poll returns HAILO_SUCCESS
-    static hailo_status eventfd_read(underlying_handle_t fd);
-    static hailo_status eventfd_write(underlying_handle_t fd);
+    static hailo_status eventfd_read(underlying_waitable_handle_t fd);
+    static hailo_status eventfd_write(underlying_waitable_handle_t fd);
     #endif
 
-    underlying_handle_t m_handle;
+    underlying_waitable_handle_t m_handle;
 };
 
 class Event;
@@ -86,9 +109,12 @@ public:
     virtual hailo_status signal() override;
     virtual bool is_auto_reset() override;
     hailo_status reset();
+#if defined(__QNX__)
+    virtual void post_wait() override;
+#endif // defined (__QNX__)
 
 private:
-    static underlying_handle_t open_event_handle(const State& initial_state);
+    static underlying_waitable_handle_t open_event_handle(const State& initial_state);
 };
 
 class Semaphore;
@@ -106,9 +132,19 @@ public:
     virtual hailo_status wait(std::chrono::milliseconds timeout) override;
     virtual hailo_status signal() override;
     virtual bool is_auto_reset() override;
+#if defined(__QNX__)
+    Semaphore(underlying_waitable_handle_t handle, uint32_t initial_count);
+    Semaphore(Semaphore&& other);
+
+    virtual void post_wait() override;
+#endif // defined (__QNX__)
 
 private:
-    static underlying_handle_t open_semaphore_handle(uint32_t initial_count);
+    static underlying_waitable_handle_t open_semaphore_handle(uint32_t initial_count);
+#if defined (__QNX__)
+    std::atomic<unsigned int> m_count;
+    std::mutex m_sem_mutex;
+#endif // defined(__QNX__)
 };
 
 } /* namespace hailort */

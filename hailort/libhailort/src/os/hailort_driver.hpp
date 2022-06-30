@@ -37,6 +37,8 @@ static_assert((0 == ((PENDING_BUFFERS_SIZE - 1) &  PENDING_BUFFERS_SIZE)), "PEND
 // When measuring latency, each channel is capable of PENDING_BUFFERS_SIZE active transfers, each transfer raises max of 2 timestamps
 #define MAX_IRQ_TIMESTAMPS_SIZE (PENDING_BUFFERS_SIZE * 2)
 
+#define DESCRIPTORS_IN_BUFFER(buffer_size, desc_page_size) (((buffer_size) + (desc_page_size) - 1) / (desc_page_size))
+
 #define PCIE_EXPECTED_MD5_LENGTH (16)
 
 enum class PciBar {
@@ -166,15 +168,28 @@ public:
      * Frees a vdma descriptors buffer allocated by 'create_descriptors_buffer'.
      */
     hailo_status descriptors_list_release(uintptr_t desc_handle);
- 
-    Expected<uintptr_t> vdma_low_memory_buffer_alloc(size_t size);
-    hailo_status vdma_low_memory_buffer_free(uintptr_t buffer_handle);
 
     /**
      * Configure vdma channel descriptors to point to the given user address.
      */
     hailo_status descriptors_list_bind_vdma_buffer(uintptr_t desc_handle, VdmaBufferHandle buffer_handle,
         uint16_t desc_page_size, uint8_t channel_index);
+
+    Expected<uintptr_t> vdma_low_memory_buffer_alloc(size_t size);
+    hailo_status vdma_low_memory_buffer_free(uintptr_t buffer_handle);
+
+    /**
+     * Allocate continuous vdma buffer.
+     *
+     * @param[in] size - Buffer size
+     * @return pair <buffer_handle, dma_address>.
+     */
+    Expected<std::pair<uintptr_t, uint64_t>> vdma_continuous_buffer_alloc(size_t size);
+
+    /**
+     * Frees a vdma continuous buffer allocated by 'vdma_continuous_buffer_alloc'.
+     */
+    hailo_status vdma_continuous_buffer_free(uintptr_t buffer_handle);
 
     /**
      * The actual desc page size might be smaller than the once requested, depends on the host capabilities.

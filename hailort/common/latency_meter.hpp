@@ -125,6 +125,7 @@ private:
 };
 
 using LatencyMeterPtr = std::shared_ptr<LatencyMeter>;
+using LatencyMetersMap = std::map<std::string, LatencyMeterPtr>;
 
 } /* namespace hailort */
 

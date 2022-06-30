@@ -29,11 +29,13 @@
 #ifdef _MSC_VER
 #if !defined(bool) && !defined(__cplusplus)
 typedef uint8_t bool;
-#endif
+#endif // !defined(bool) && !defined(__cplusplus)
+
 #if !defined(INT_MAX)
 #define INT_MAX 0x7FFFFFFF
-#endif
-#else
+#endif // !defined(INT_MAX)
+
+#elif defined(__linux__) // #ifdef _MSC_VER
 #ifndef __KERNEL__
 // include the userspace headers only if this file is included by user space program
 // It is discourged to include them when compiling the driver (https://lwn.net/Articles/113349/)
@@ -43,11 +45,9 @@ typedef uint8_t bool;
 #include <linux/types.h>
 #include <linux/limits.h>
 #include <linux/kernel.h>
-#endif
+#endif // ifndef __KERNEL__
 
-#if defined(__unix__)
 #include <linux/ioctl.h>
-#endif
 
 #define _IOW_       _IOW
 #define _IOR_       _IOR
@@ -57,6 +57,21 @@ typedef uint8_t bool;
 #define HAILO_GENERAL_IOCTL_MAGIC 'g'
 #define HAILO_VDMA_IOCTL_MAGIC 'v'
 #define HAILO_WINDOWS_IOCTL_MAGIC 'w'
+
+#elif defined(__QNX__) // #ifdef _MSC_VER
+#include <devctl.h>
+#include <stdint.h>
+#include <sys/types.h>
+// defines for devctl
+#define _IOW_   __DIOF
+#define _IOR_   __DIOT
+#define _IOWR_  __DIOTF
+#define _IO_    __DION
+#define HAILO_GENERAL_IOCTL_MAGIC   _DCMD_ALL
+#define HAILO_VDMA_IOCTL_MAGIC      _DCMD_MISC
+
+#else // #ifdef _MSC_VER
+#error "unsupported platform!"
 #endif
 
 #pragma pack(push, 1)
@@ -181,6 +196,9 @@ struct hailo_fw_control {
 };
 
 /* structure used in ioctl HAILO_BAR_TRANSFER */
+// Max bar transfer size gotten from ATR0_TABLE_SIZE
+#define MAX_BAR_TRANSFER_LENGTH  (4096)
+
 enum hailo_transfer_direction {
     TRANSFER_READ = 0,
     TRANSFER_WRITE,
@@ -194,7 +212,7 @@ struct hailo_bar_transfer_params {
     uint32_t bar_index;                                 // in
     off_t offset;                                       // in
     size_t count;                                       // in
-    void* buffer;                                       // in/out
+    uint8_t buffer[MAX_BAR_TRANSFER_LENGTH];            // in/out
 };
 
 /* structure used in ioctl HAILO_VDMA_CHANNEL_REGISTERS */
@@ -222,9 +240,11 @@ struct hailo_vdma_buffer_sync_params {
 };
 
 /* structure used in ioctl HAILO_READ_NOTIFICATION */
+#define MAX_NOTIFICATION_LENGTH  (1500)
+
 struct hailo_d2h_notification {
     size_t buffer_len;                  // out
-    uint8_t buffer[MAX_CONTROL_LENGTH]; // out
+    uint8_t buffer[MAX_NOTIFICATION_LENGTH]; // out
 };
 
 enum hailo_board_type {
@@ -254,20 +274,30 @@ struct hailo_driver_info {
     uint32_t minor_version;
     uint32_t revision_version;
 };
+
+/* structure used in ioctl HAILO_READ_LOG */
+#define MAX_FW_LOG_BUFFER_LENGTH  (512)
+
 struct hailo_read_log_params {
-    enum hailo_cpu_id cpu_id;   // in
-    uint8_t *buffer;            // out
-    size_t buffer_size;         // in
-    size_t read_bytes;          // out
+    enum hailo_cpu_id cpu_id;                   // in
+    uint8_t buffer[MAX_FW_LOG_BUFFER_LENGTH];   // out
+    size_t buffer_size;                         // in
+    size_t read_bytes;                          // out
 };
 
-struct hailo_allocate_buffer_params {
+struct hailo_allocate_low_memory_buffer_params {
     size_t      buffer_size;    // in
     uintptr_t   buffer_handle;  // out
 };
 
 struct hailo_mark_as_in_use_params {
     bool in_use;           // out
+};
+
+struct hailo_allocate_continuous_buffer_params {
+    size_t buffer_size;         // in
+    uintptr_t buffer_handle;    // out
+    uint64_t dma_address;       // out
 };
 
 #pragma pack(pop)
@@ -286,7 +316,7 @@ enum hailo_general_ioctl_code {
     HAILO_GENERAL_IOCTL_MAX_NR,
 };
 
-#define HAILO_BAR_TRANSFER              _IOW_(HAILO_GENERAL_IOCTL_MAGIC,   HAILO_BAR_TRANSFER_CODE,               struct hailo_bar_transfer_params)
+#define HAILO_BAR_TRANSFER              _IOWR_(HAILO_GENERAL_IOCTL_MAGIC,  HAILO_BAR_TRANSFER_CODE,               struct hailo_bar_transfer_params)
 #define HAILO_FW_CONTROL                _IOWR_(HAILO_GENERAL_IOCTL_MAGIC,  HAILO_FW_CONTROL_CODE,                 struct hailo_fw_control)
 #define HAILO_READ_NOTIFICATION         _IOW_(HAILO_GENERAL_IOCTL_MAGIC,   HAILO_READ_NOTIFICATION_CODE,          struct hailo_d2h_notification)
 #define HAILO_DISABLE_NOTIFICATION      _IO_(HAILO_GENERAL_IOCTL_MAGIC,    HAILO_DISABLE_NOTIFICATION_CODE)
@@ -311,6 +341,8 @@ enum hailo_vdma_ioctl_code {
     HAILO_VDMA_LOW_MEMORY_BUFFER_ALLOC_CODE,
     HAILO_VDMA_LOW_MEMORY_BUFFER_FREE_CODE,
     HAILO_MARK_AS_IN_USE_CODE,
+    HAILO_VDMA_CONTINUOUS_BUFFER_ALLOC_CODE,
+    HAILO_VDMA_CONTINUOUS_BUFFER_FREE_CODE,
 
     // Must be last
     HAILO_VDMA_IOCTL_MAX_NR,
@@ -331,10 +363,14 @@ enum hailo_vdma_ioctl_code {
 #define HAILO_DESC_LIST_RELEASE             _IO_(HAILO_VDMA_IOCTL_MAGIC,   HAILO_DESC_LIST_RELEASE_CODE)
 #define HAILO_DESC_LIST_BIND_VDMA_BUFFER    _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_DESC_LIST_BIND_VDMA_BUFFER_CODE, struct hailo_desc_list_bind_vdma_buffer_params)
 
-#define HAILO_VDMA_LOW_MEMORY_BUFFER_ALLOC  _IOWR_(HAILO_VDMA_IOCTL_MAGIC, HAILO_VDMA_LOW_MEMORY_BUFFER_ALLOC_CODE, struct hailo_allocate_buffer_params)
+#define HAILO_VDMA_LOW_MEMORY_BUFFER_ALLOC  _IOWR_(HAILO_VDMA_IOCTL_MAGIC, HAILO_VDMA_LOW_MEMORY_BUFFER_ALLOC_CODE, struct hailo_allocate_low_memory_buffer_params)
 #define HAILO_VDMA_LOW_MEMORY_BUFFER_FREE   _IO_(HAILO_VDMA_IOCTL_MAGIC,   HAILO_VDMA_LOW_MEMORY_BUFFER_FREE_CODE)
 
 #define HAILO_MARK_AS_IN_USE                _IOW_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_MARK_AS_IN_USE_CODE,             struct hailo_mark_as_in_use_params)
+
+#define HAILO_VDMA_CONTINUOUS_BUFFER_ALLOC  _IOWR_(HAILO_VDMA_IOCTL_MAGIC, HAILO_VDMA_CONTINUOUS_BUFFER_ALLOC_CODE, struct hailo_allocate_continuous_buffer_params)
+#define HAILO_VDMA_CONTINUOUS_BUFFER_FREE   _IO_(HAILO_VDMA_IOCTL_MAGIC,   HAILO_VDMA_CONTINUOUS_BUFFER_FREE_CODE)
+
 
 enum hailo_windows_ioctl_code {
     HAILO_WINDOWS_DESC_LIST_MMAP_CODE,

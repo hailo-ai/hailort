@@ -40,7 +40,7 @@ namespace hailort
 {
 
 Expected<ConfiguredNetworkGroupVector> HcpConfigManager::add_hef(Hef &hef,
-    const NetworkGroupsParamsMap &configure_params)
+    const NetworkGroupsParamsMap &configure_params, bool /*is_scheduler_used*/)
 {
     auto &hef_network_groups = hef.pimpl->network_groups();
     auto current_net_group_index = static_cast<uint8_t>(m_net_groups.size());
@@ -95,7 +95,15 @@ Expected<ConfiguredNetworkGroupVector> HcpConfigManager::add_hef(Hef &hef,
         auto net_group_ptr = make_shared_nothrow<HcpConfigNetworkGroup>(std::move(single_context_app));
         CHECK_AS_EXPECTED(nullptr != net_group_ptr, HAILO_OUT_OF_HOST_MEMORY);
         m_net_groups.emplace_back(net_group_ptr);
-        added_network_groups.emplace_back(std::static_pointer_cast<ConfiguredNetworkGroup>(net_group_ptr));
+
+        auto net_group_wrapper = ConfiguredNetworkGroupWrapper::create(net_group_ptr);
+        CHECK_EXPECTED(net_group_wrapper);
+
+        auto net_group_wrapper_ptr = make_shared_nothrow<ConfiguredNetworkGroupWrapper>(net_group_wrapper.release());
+        CHECK_AS_EXPECTED(nullptr != net_group_wrapper_ptr, HAILO_OUT_OF_HOST_MEMORY);
+        m_net_group_wrappers.emplace_back(net_group_wrapper_ptr);
+
+        added_network_groups.emplace_back(std::static_pointer_cast<ConfiguredNetworkGroup>(net_group_wrapper_ptr));
 
         current_net_group_index++;
 

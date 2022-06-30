@@ -13,11 +13,12 @@
 
 #define DESC_PAGE_SIZE_SHIFT                  (8)
 #define DESC_PAGE_SIZE_MASK                   (0xFFFFFF00)
+#define DESC_IRQ_MASK                         (0x0000003C)
 
 namespace hailort
 {
 
-Expected<VdmaDescriptorList> VdmaDescriptorList::create(size_t desc_count, uint16_t requested_desc_page_size,
+Expected<VdmaDescriptorList> VdmaDescriptorList::create(uint32_t desc_count, uint16_t requested_desc_page_size,
     HailoRTDriver &driver)
 {
     hailo_status status = HAILO_UNINITIALIZED;
@@ -30,7 +31,7 @@ Expected<VdmaDescriptorList> VdmaDescriptorList::create(size_t desc_count, uint1
     return object;
 }
 
-VdmaDescriptorList::VdmaDescriptorList(size_t desc_count, HailoRTDriver &driver, uint16_t desc_page_size,
+VdmaDescriptorList::VdmaDescriptorList(uint32_t desc_count, HailoRTDriver &driver, uint16_t desc_page_size,
                                        hailo_status &status) :
     m_mapped_list(),
     m_count(desc_count),
@@ -107,13 +108,13 @@ Expected<uint8_t> VdmaDescriptorList::calculate_desc_list_depth(size_t count)
     return static_cast<uint8_t>(depth);
 }
 
-hailo_status VdmaDescriptorList::configure_to_use_buffer(VdmaBuffer& buffer, uint8_t channel_index)
+hailo_status VdmaDescriptorList::configure_to_use_buffer(vdma::MappedBuffer& buffer, uint8_t channel_index)
 {
     return m_driver.descriptors_list_bind_vdma_buffer(m_desc_handle, buffer.handle(), m_desc_page_size,
         channel_index);
 }
 
-hailo_status VdmaDescriptorList::configure_to_use_buffer(VdmaBuffer& buffer)
+hailo_status VdmaDescriptorList::configure_to_use_buffer(vdma::MappedBuffer& buffer)
 {
     return configure_to_use_buffer(buffer, HailoRTDriver::INVALID_VDMA_CHANNEL_INDEX);
 }
@@ -125,7 +126,7 @@ Expected<uint16_t> VdmaDescriptorList::program_descriptors(size_t transfer_size,
     const auto required_descriptors = descriptors_in_buffer(transfer_size);
     // Required_descriptors + desc_offset can't reach m_count. We need to keep at least 1 free desc at all time.
     if ((!is_circular) && ((required_descriptors + desc_offset) >= m_count)){
-        LOGGER__ERROR("Requested transfer size ({}) result in more descrptors than available ({})", transfer_size, m_count);
+        LOGGER__ERROR("Requested transfer size ({}) result in more descriptors than available ({})", transfer_size, m_count);
         return make_unexpected(HAILO_OUT_OF_DESCRIPTORS);
     }
 
@@ -144,23 +145,15 @@ Expected<uint16_t> VdmaDescriptorList::program_descriptors(size_t transfer_size,
     return std::move(static_cast<uint16_t>(required_descriptors));
 }
 
-Expected<uint16_t> VdmaDescriptorList::program_descs_for_ddr_transfers(uint32_t row_size, bool should_raise_interrupt,
-    uint32_t number_of_rows_per_intrpt, uint32_t buffered_rows, uint16_t initial_descs_offset, bool is_circular)
+hailo_status VdmaDescriptorList::reprogram_descriptor_interrupts_domain(size_t desc_index,
+    VdmaInterruptsDomain interrupts_domain)
 {
-    uint16_t programmed_descs = 0;
-    size_t offset = initial_descs_offset;
-    assert(0 == (buffered_rows % number_of_rows_per_intrpt));
-
-    auto first_desc_interrupts_mask = VdmaInterruptsDomain::NONE;
-    auto last_desc_interrupts_mask = (should_raise_interrupt) ? VdmaInterruptsDomain::HOST : VdmaInterruptsDomain::NONE;
-    for (uint32_t rows_count = 0; rows_count < buffered_rows; rows_count += number_of_rows_per_intrpt) {
-        auto desc_count_local = program_descriptors((row_size * number_of_rows_per_intrpt),
-            first_desc_interrupts_mask, last_desc_interrupts_mask, offset, is_circular);
-        CHECK_EXPECTED(desc_count_local);
-        offset = (offset + desc_count_local.value()) & (m_count - 1);
-        programmed_descs = static_cast<uint16_t>(programmed_descs + desc_count_local.value());
+    if (desc_index >= m_count){
+        LOGGER__ERROR("Requested desc (index={}) exceeds the number of descriptors in the list ({})", desc_index, m_count);
+        return HAILO_OUT_OF_DESCRIPTORS;
     }
-    return programmed_descs;
+    reprogram_single_descriptor_interrupts_domain((*this)[desc_index], interrupts_domain);
+    return HAILO_SUCCESS;
 }
 
 uint32_t VdmaDescriptorList::descriptors_in_buffer(size_t buffer_size) const
@@ -171,7 +164,7 @@ uint32_t VdmaDescriptorList::descriptors_in_buffer(size_t buffer_size) const
 uint32_t VdmaDescriptorList::descriptors_in_buffer(size_t buffer_size, uint16_t desc_page_size)
 {
     assert(buffer_size < std::numeric_limits<uint32_t>::max());
-    return static_cast<uint32_t>(((buffer_size) + desc_page_size - 1) / desc_page_size);
+    return static_cast<uint32_t>(DESCRIPTORS_IN_BUFFER(buffer_size, desc_page_size));
 }
 
 uint32_t VdmaDescriptorList::calculate_descriptors_count(uint32_t buffer_size, uint16_t batch_size, uint16_t desc_page_size)
@@ -257,8 +250,9 @@ Expected<std::pair<uint16_t, uint32_t>> VdmaDescriptorList::get_desc_buffer_size
 
         CHECK_AS_EXPECTED(local_desc_page_size <= max_desc_page_size, HAILO_OUT_OF_DESCRIPTORS,
             "Network shapes and batch size exceeds driver descriptors capabilities. "
-            "Required descriptors count: {}, max allowed on the driver: {}.",
-            (batch_size * acc_desc_count), MAX_DESCS_COUNT);
+            "Required descriptors count: {}, max allowed on the driver: {}. (A common cause for this error could be the"
+            "Batch size - which is {}).",
+            (batch_size * acc_desc_count), MAX_DESCS_COUNT, batch_size);
 
         CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(local_desc_page_size), HAILO_INTERNAL_FAILURE,
             "Descriptor page size needs to fit in 16B");
@@ -322,16 +316,31 @@ void VdmaDescriptorList::program_single_descriptor(VdmaDescriptor &descriptor, u
         (uint32_t)(page_size << DESC_PAGE_SIZE_SHIFT) & (uint32_t)DESC_PAGE_SIZE_MASK;
 
     if (VdmaInterruptsDomain::NONE != interrupts_domain) {
-        // update the desc_control
-        descriptor.PageSize_DescControl |= (DESC_REQUREST_IRQ_PROCESSED | DESC_REQUREST_IRQ_ERR);
+        // Update the desc_control
+        descriptor.PageSize_DescControl |= (DESC_REQUREST_IRQ_PROCESSED | DESC_REQUREST_IRQ_ERR |
+            get_interrupts_bitmask(interrupts_domain));
 #ifndef NDEBUG
         descriptor.PageSize_DescControl |= (DESC_STATUS_REQ | DESC_STATUS_REQ_ERR);
 #endif
-        descriptor.PageSize_DescControl |= get_interrupts_bitmask(interrupts_domain);
     }
 
     // Clear status
     descriptor.RemainingPageSize_Status = 0;
+}
+
+void VdmaDescriptorList::reprogram_single_descriptor_interrupts_domain(VdmaDescriptor &descriptor,
+    VdmaInterruptsDomain interrupts_domain)
+{
+    // Set the IRQ control bits to zero
+    descriptor.PageSize_DescControl &= ~DESC_IRQ_MASK;
+    
+    if (VdmaInterruptsDomain::NONE == interrupts_domain) {
+        // Nothing else to do
+        return;
+    }
+
+    descriptor.PageSize_DescControl |= (DESC_REQUREST_IRQ_PROCESSED | DESC_REQUREST_IRQ_ERR |
+        get_interrupts_bitmask(interrupts_domain));
 }
 
 } /* namespace hailort */

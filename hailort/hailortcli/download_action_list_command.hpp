@@ -27,6 +27,7 @@ public:
     // To be used from external commands
     static hailo_status execute(Device &device, const std::string &output_file_path,
         const ConfiguredNetworkGroupVector &network_groups={}, const std::string &hef_file_path="");
+    static hailo_status set_batch_to_measure(Device &device, uint16_t batch_to_measure);
 
 protected:
     virtual hailo_status execute_on_device(Device &device) override;
@@ -62,7 +63,7 @@ private:
 // JSON serialization
 
 NLOHMANN_JSON_SERIALIZE_ENUM(CONTEXT_SWITCH_DEFS__ACTION_TYPE_t, {
-    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_VDMA_DESCRIPTORS, "fetch_vdma_descriptors"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_CFG_CHANNEL_DESCRIPTORS, "fetch_cfg_channel_descriptors"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_TRIGGER_SEQUENCER, "trigger_sequencer"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_DATA_FROM_VDMA_CHANNEL, "fetch_data_from_vdma_channel"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_ENABLE_LCU_DEFAULT, "enable_lcu_default"},
@@ -75,9 +76,11 @@ NLOHMANN_JSON_SERIALIZE_ENUM(CONTEXT_SWITCH_DEFS__ACTION_TYPE_t, {
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_ACTIVATE_DDR_BUFFER_INPUT, "activate_ddr_buffer_input"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_ACTIVATE_DDR_BUFFER_OUTPUT, "activate_ddr_buffer_output"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_DEACTIVATE_VDMA_CHANNEL, "deactivate_vdma_channel"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_VALIDATE_VDMA_CHANNEL, "validate_vdma_channel"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_CHANGE_VDMA_TO_STREAM_MAPPING, "change_vdma_to_stream_mapping"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_ADD_DDR_PAIR_INFO, "add_ddr_pair_info"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_DDR_BUFFERING_START, "ddr_buffering_start"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_BURST_CREDITS_TASK_START, "burst_credits_task_start"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_LCU_INTERRUPT, "lcu_interrupt"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_SEQUENCER_DONE_INTERRUPT, "sequencer_done_interrupt"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_INPUT_CHANNEL_TRANSFER_DONE_INTERRUPT, "input_channel_transfer_done_interrupt"},
@@ -97,6 +100,7 @@ NLOHMANN_JSON_SERIALIZE_ENUM(CONTEXT_SWITCH_DEFS__ACTION_TYPE_t, {
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__repeated_action_header_t, count, last_executed, sub_action_type);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__trigger_sequencer_action_data_t, cluster_index);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__deactivate_vdma_channel_action_data_t, vdma_channel_index);
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__validate_vdma_channel_action_data_t, vdma_channel_index);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__fetch_data_action_data_t, vdma_channel_index, stream_index);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__add_ddr_pair_info_action_data_t, h2d_vdma_channel_index, d2h_vdma_channel_index);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__vdma_dataflow_interrupt_data_t, vdma_channel_index);
@@ -118,7 +122,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__deactivate_cfg_channel_t
 void to_json(json& j, const CONTEXT_SWITCH_DEFS__enable_lcu_action_default_data_t& data);
 void to_json(json& j, const CONTEXT_SWITCH_DEFS__enable_lcu_action_non_default_data_t& data);
 void to_json(json& j, const CONTEXT_SWITCH_DEFS__disable_lcu_action_data_t& data);
-void to_json(json& j, const CONTEXT_SWITCH_DEFS__read_vdma_action_data_t& data);
+void to_json(json& j, const CONTEXT_SWITCH_DEFS__fetch_cfg_channel_descriptors_action_data_t& data);
 void to_json(json& j, const CONTEXT_SWITCH_DEFS__fetch_ccw_bursts_action_data_t& data);
 void to_json(json& j, const CONTEXT_SWITCH_DEFS__change_vdma_to_stream_mapping_data_t& data);
 void to_json(json& j, const CONTEXT_SWITCH_DEFS__lcu_interrupt_data_t& data);

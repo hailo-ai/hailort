@@ -32,6 +32,8 @@ enum ProtoHEFExtensionType {
     MULTI_NETWORK_VARIABLE_BATCH_SIZE = 8;
     IS_NMS_MULTI_CONTEXT = 9;
     OFFLOAD_ARGMAX = 10;
+    HW_PADDING = 11;
+    PRELIMINARY_RUN_ASAP = 12;
     UNUSED = 0XFFFF;
 }
 
@@ -461,6 +463,7 @@ message ProtoHEFEdgeLayerBase {
 
     repeated ProtoHEFResourceIndices buffer_indices = 13;
     bool host_argmax = 14;
+    uint32 max_shmifo_size = 15;
 }
 
 // Additional information for specific layer types

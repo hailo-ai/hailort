@@ -1,5 +1,5 @@
 import os
-import sys
+import json
 from setuptools import setup, find_packages
 from wheel.bdist_wheel import bdist_wheel as orig_bdist_wheel
 
@@ -12,14 +12,27 @@ class NonPurePythonBDistWheel(orig_bdist_wheel):
         self.root_is_pure = False
 
 
-def _get_pyhailort_lib():
+def _get_pyhailort_lib_path():
+    conf_file_path = os.path.join(os.path.abspath(os.path.dirname( __file__ )), "wheel_conf.json")
     extension = {
         "posix": "so",
         "nt": "pyd",  # Windows
     }[os.name]
-    py = "".join(map(str, sys.version_info[:2]))
+    if not os.path.isfile(conf_file_path):
+        return None
 
-    return f"drivers/hailort/_pyhailort*{py}*.{extension}"
+    with open(conf_file_path, "r") as conf_file:
+        content = json.load(conf_file)
+        return f"../hailo_platform/pyhailort/_pyhailort*{content['py_version']}*{content['arch']}*.{extension}"
+
+def _get_package_paths():
+    packages = []
+    pyhailort_lib = _get_pyhailort_lib_path()
+    if pyhailort_lib: 
+        packages.append(pyhailort_lib)
+    packages.append("../hailo_tutorials/notebooks/*")
+    packages.append("../hailo_tutorials/hefs/*")
+    return packages
 
 
 if __name__ == "__main__":
@@ -32,7 +45,7 @@ if __name__ == "__main__":
         description="HailoRT",
         entry_points={
             "console_scripts": [
-                "hailo=hailo_platform.tools.cmd_utils.main:main",
+                "hailo=hailo_platform.tools.hailocli.main:main",
             ]
         },
         install_requires=[
@@ -41,16 +54,13 @@ if __name__ == "__main__":
             "future",
             "netaddr",
             "netifaces",
-            "six",
             "verboselogs",
             # Pinned versions
             "numpy==1.19.4",
         ],
         name="hailort",
         package_data={
-            "hailo_platform": [
-                _get_pyhailort_lib(),  # packs _pyhailort library for _pyhailort imports
-            ],
+            "hailo_platform": _get_package_paths(),
         },
         packages=find_packages(),
         platforms=[
@@ -58,6 +68,6 @@ if __name__ == "__main__":
             "linux_aarch64",
         ],
         url="https://hailo.ai/",
-        version="4.6.0",
+        version="4.8.0",
         zip_safe=False,
     )

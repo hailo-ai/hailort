@@ -31,7 +31,6 @@ GST_DEBUG_CATEGORY_STATIC(gst_hailodevicestats_debug_category);
     2 * sampling_period (1.1) * averaging_factor (256) [ms].
     Therefore we want it to be the period of time that the core will sleep between samples,
     plus a factor of 20 percent */
-#define POWER_MEASUREMENT_DELAY_MS (static_cast<uint32_t>(1100 / 1000.0 * 256 * 2 * 1.2))
 
 static void gst_hailodevicestats_set_property(GObject *object, guint property_id, const GValue *value, GParamSpec *pspec);
 static void gst_hailodevicestats_get_property(GObject *object, guint property_id, GValue *value, GParamSpec *pspec);
@@ -226,10 +225,10 @@ hailo_status HailoDeviceStatsImpl::run_measure_loop()
     hailo_status status = m_device->stop_power_measurement();
     GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Stopping power measurement failed, status = %d", status);
 
-    status = m_device->set_power_measurement(0, HAILO_DVM_OPTIONS_AUTO, HAILO_POWER_MEASUREMENT_TYPES__AUTO);
+    status = m_device->set_power_measurement(HAILO_MEASUREMENT_BUFFER_INDEX_0, HAILO_DVM_OPTIONS_AUTO, HAILO_POWER_MEASUREMENT_TYPES__AUTO);
     GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Setting power measurement parameters failed, status = %d", status);
 
-    status = m_device->start_power_measurement(POWER_MEASUREMENT_DELAY_MS, HAILO_DEFAULT_INIT_AVERAGING_FACTOR, HAILO_DEFAULT_INIT_SAMPLING_PERIOD_US);
+    status = m_device->start_power_measurement(HAILO_DEFAULT_INIT_AVERAGING_FACTOR, HAILO_DEFAULT_INIT_SAMPLING_PERIOD_US);
     GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Starting power measurement failed, status = %d", status);
 
     auto device_string = Device::pcie_device_info_to_string(m_device_info);
@@ -237,7 +236,7 @@ hailo_status HailoDeviceStatsImpl::run_measure_loop()
     const char *device_raw_string = device_string->c_str();
 
     while (m_is_thread_running.load()) {
-        auto measurement = m_device->get_power_measurement(0, true);
+        auto measurement = m_device->get_power_measurement(HAILO_MEASUREMENT_BUFFER_INDEX_0, true);
         GST_CHECK_EXPECTED_AS_STATUS(measurement, m_element, RESOURCE, "Getting power measurement failed, status = %d", measurement.status());
 
         if (!m_is_silent) {

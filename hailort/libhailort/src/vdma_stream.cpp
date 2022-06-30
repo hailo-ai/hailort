@@ -11,24 +11,19 @@
 namespace hailort
 {
 
-VdmaInputStream::VdmaInputStream(VdmaDevice &device, uint8_t channel_index, const LayerInfo &edge_layer,
-                                 EventPtr network_group_activated_event, uint16_t batch_size,
-                                 LatencyMeterPtr latency_meter, std::chrono::milliseconds transfer_timeout,
+VdmaInputStream::VdmaInputStream(VdmaDevice &device, std::shared_ptr<VdmaChannel> channel,
+                                 const LayerInfo &edge_layer, EventPtr network_group_activated_event, uint16_t batch_size,
+                                 std::chrono::milliseconds transfer_timeout,
                                  hailo_stream_interface_t stream_interface, hailo_status &status) :
     InputStreamBase(edge_layer, stream_interface, std::move(network_group_activated_event), status),
     m_device(&device),
-    m_channel_index(channel_index),
+    m_channel(std::move(channel)),
     is_stream_activated(false),
     m_channel_timeout(transfer_timeout),
-    m_latency_meter(latency_meter),
-    m_batch_size(batch_size)
+    m_max_batch_size(batch_size),
+    m_dynamic_batch_size(batch_size)
 {
     // Checking status for base class c'tor
-    if (HAILO_SUCCESS != status) {
-        return;
-    }
-
-    status = config_stream();
     if (HAILO_SUCCESS != status) {
         return;
     }
@@ -52,12 +47,11 @@ VdmaInputStream::~VdmaInputStream()
 VdmaInputStream::VdmaInputStream(VdmaInputStream &&other) :
     InputStreamBase(std::move(other)),
     m_device(std::move(other.m_device)),
-    m_channel_index(std::move(other.m_channel_index)),
     m_channel(std::move(other.m_channel)),
     is_stream_activated(std::exchange(other.is_stream_activated, false)),
     m_channel_timeout(std::move(other.m_channel_timeout)),
-    m_latency_meter(std::move(other.m_latency_meter)),
-    m_batch_size(other.m_batch_size)
+    m_max_batch_size(other.m_max_batch_size),
+    m_dynamic_batch_size(other.m_dynamic_batch_size)
 {}
 
 std::chrono::milliseconds VdmaInputStream::get_timeout() const
@@ -83,12 +77,15 @@ hailo_status VdmaInputStream::clear_abort()
 
 hailo_status VdmaInputStream::flush()
 {
-    return m_channel->flush((m_channel_timeout * m_batch_size));
+    return m_channel->flush((m_channel_timeout * m_dynamic_batch_size));
 }
 
-hailo_status VdmaInputStream::activate_stream()
+hailo_status VdmaInputStream::activate_stream(uint16_t dynamic_batch_size)
 {
-    auto status = m_channel->start_allocated_channel(0);
+    auto status = set_dynamic_batch_size(dynamic_batch_size);
+    CHECK_SUCCESS(status);
+
+    status = m_channel->start_allocated_channel(0);
     CHECK_SUCCESS(status);
 
     this->is_stream_activated = true;
@@ -104,10 +101,10 @@ hailo_status VdmaInputStream::deactivate_stream()
     /* Flush is best effort */
     auto status = m_channel->flush(VDMA_FLUSH_TIMEOUT);
     if (HAILO_STREAM_INTERNAL_ABORT == status) {
-        LOGGER__INFO("Flush input_channel is not needed because channel was aborted. (channel {})", m_channel_index);
+        LOGGER__INFO("Flush input_channel is not needed because channel was aborted. (channel {})", m_channel->get_channel_index());
         status = HAILO_SUCCESS;
     } else if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("Failed to flush input_channel. (status {} channel {})", status, m_channel_index);
+        LOGGER__ERROR("Failed to flush input_channel. (status {} channel {})", status, m_channel->get_channel_index());
     }
 
     /* Close channel is best effort. */
@@ -137,6 +134,32 @@ Expected<size_t> VdmaInputStream::sync_write_raw_buffer(const MemoryView &buffer
     return buffer.size();
 }
 
+hailo_status VdmaInputStream::write_buffer_only(const MemoryView &buffer)
+{
+    return m_channel->write_buffer(buffer, m_channel_timeout);
+}
+
+Expected<PendingBufferState> VdmaInputStream::send_pending_buffer()
+{
+    hailo_status status = m_channel->wait(get_frame_size(), m_channel_timeout);
+    if ((HAILO_STREAM_INTERNAL_ABORT == status) || (HAILO_STREAM_NOT_ACTIVATED == status)) {
+        return make_unexpected(status);
+    }
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    return m_channel->send_pending_buffer();
+}
+
+uint16_t VdmaInputStream::get_dynamic_batch_size() const
+{
+    return m_dynamic_batch_size;
+}
+
+const char* VdmaInputStream::get_dev_id() const
+{
+    return m_device->get_dev_id();
+}
+
 hailo_status VdmaInputStream::sync_write_all_raw_buffer_no_transform_impl(void *buffer, size_t offset, size_t size)
 {
     ASSERT(NULL != buffer);
@@ -144,60 +167,40 @@ hailo_status VdmaInputStream::sync_write_all_raw_buffer_no_transform_impl(void *
     return sync_write_raw_buffer(MemoryView(static_cast<uint8_t*>(buffer) + offset, size)).status();
 }
 
-hailo_status VdmaInputStream::config_stream()
+hailo_status VdmaInputStream::set_dynamic_batch_size(uint16_t dynamic_batch_size)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
-    uint32_t descs_count = 0;
-    uint16_t page_size = 0;
-    uint32_t min_active_trans = MIN_ACTIVE_TRANSFERS_SCALE * m_batch_size;
-    uint32_t max_active_trans = MAX_ACTIVE_TRANSFERS_SCALE * m_batch_size;
-    assert(min_active_trans <= max_active_trans);
+    CHECK(dynamic_batch_size <= m_max_batch_size, HAILO_INVALID_ARGUMENT,
+        "Dynamic batch size ({}) must be <= than the configured batch size ({})",
+        dynamic_batch_size, m_max_batch_size);
+    
+    if (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == dynamic_batch_size) {
+        LOGGER__TRACE("Received CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == dynamic_batch_size; "
+                      "Leaving previously set value of {}", m_dynamic_batch_size);
+    } else {
+        LOGGER__TRACE("Setting stream's dynamic_batch_size to {}", dynamic_batch_size);
+        m_dynamic_batch_size = dynamic_batch_size;
 
-    CHECK(IS_FIT_IN_UINT16(min_active_trans), HAILO_INVALID_ARGUMENT, 
-        "calculated min_active_trans for vdma descriptor list is out of UINT16 range");
-
-    CHECK(IS_FIT_IN_UINT16(max_active_trans), HAILO_INVALID_ARGUMENT, 
-        "calculated min_active_trans for vdma descriptor list is out of UINT16 range");
-
-    auto desc_sizes_pair = VdmaDescriptorList::get_desc_buffer_sizes_for_single_transfer(m_device->get_driver(),
-        static_cast<uint16_t>(min_active_trans), static_cast<uint16_t>(max_active_trans), m_stream_info.hw_frame_size);
-    CHECK_EXPECTED_AS_STATUS(desc_sizes_pair);
-
-    page_size = desc_sizes_pair->first;
-    descs_count = desc_sizes_pair->second;
-
-    auto channel = VdmaChannel::create(m_channel_index, VdmaChannel::Direction::H2D, m_device->get_driver(), page_size,
-        m_stream_info.index, m_latency_meter, m_batch_size);
-
-    m_channel = make_unique_nothrow<VdmaChannel>(channel.release());
-    CHECK(nullptr != m_channel, HAILO_OUT_OF_HOST_MEMORY);
-
-    status = m_channel->allocate_resources(descs_count);
-    CHECK_SUCCESS(status);
+        const auto status = m_channel->set_transfers_per_axi_intr(m_dynamic_batch_size);
+        CHECK_SUCCESS(status);
+    }
 
     return HAILO_SUCCESS;
 }
 
 /** Output stream **/
-VdmaOutputStream::VdmaOutputStream(VdmaDevice &device, uint8_t channel_index, const LayerInfo &edge_layer,
-                                   EventPtr network_group_activated_event, uint16_t batch_size,
-                                   LatencyMeterPtr latency_meter, std::chrono::milliseconds transfer_timeout,
-                                   hailo_status &status) :
+VdmaOutputStream::VdmaOutputStream(VdmaDevice &device, std::shared_ptr<VdmaChannel> channel,
+                                   const LayerInfo &edge_layer, EventPtr network_group_activated_event, uint16_t batch_size,
+                                   std::chrono::milliseconds transfer_timeout, hailo_status &status) :
     OutputStreamBase(edge_layer, std::move(network_group_activated_event), status),
     m_device(&device),
-    m_channel_index(channel_index),
+    m_channel(std::move(channel)),
     is_stream_activated(false),
     m_transfer_timeout(transfer_timeout),
-    m_latency_meter(latency_meter),
-    m_batch_size(batch_size),
+    m_max_batch_size(batch_size),
+    m_dynamic_batch_size(batch_size),
     m_transfer_size(get_transfer_size(m_stream_info))
 {
     // Check status for base class c'tor
-    if (HAILO_SUCCESS != status) {
-        return;
-    }
-
-    status = config_stream();
     if (HAILO_SUCCESS != status) {
         return;
     }
@@ -208,12 +211,11 @@ VdmaOutputStream::VdmaOutputStream(VdmaDevice &device, uint8_t channel_index, co
 VdmaOutputStream::VdmaOutputStream(VdmaOutputStream &&other) :
     OutputStreamBase(std::move(other)),
     m_device(std::move(other.m_device)),
-    m_channel_index(std::move(other.m_channel_index)),
     m_channel(std::move(other.m_channel)),
     is_stream_activated(std::exchange(other.is_stream_activated, false)),
     m_transfer_timeout(std::move(other.m_transfer_timeout)),
-    m_latency_meter(std::move(other.m_latency_meter)),
-    m_batch_size(other.m_batch_size),
+    m_max_batch_size(other.m_max_batch_size),
+    m_dynamic_batch_size(other.m_dynamic_batch_size),
     m_transfer_size(other.m_transfer_size)
 {}
 
@@ -252,9 +254,22 @@ hailo_status VdmaOutputStream::clear_abort()
     return m_channel->clear_abort();
 }
 
-hailo_status VdmaOutputStream::activate_stream()
+uint16_t VdmaOutputStream::get_dynamic_batch_size() const
 {
-    auto status = m_channel->start_allocated_channel(m_transfer_size);
+    return m_dynamic_batch_size;
+}
+
+const char* VdmaOutputStream::get_dev_id() const
+{
+    return m_device->get_dev_id();
+}
+
+hailo_status VdmaOutputStream::activate_stream(uint16_t dynamic_batch_size)
+{
+    auto status = set_dynamic_batch_size(dynamic_batch_size);
+    CHECK_SUCCESS(status);
+    
+    status = m_channel->start_allocated_channel(m_transfer_size);
     CHECK_SUCCESS(status);
 
     this->is_stream_activated = true;
@@ -291,36 +306,6 @@ Expected<size_t> VdmaOutputStream::sync_read_raw_buffer(MemoryView &buffer)
     return buffer.size();
 }
 
-hailo_status VdmaOutputStream::config_stream()
-{
-    const uint32_t min_active_trans = MIN_ACTIVE_TRANSFERS_SCALE * m_batch_size;
-    const uint32_t max_active_trans = MAX_ACTIVE_TRANSFERS_SCALE * m_batch_size;
-    assert(min_active_trans <= max_active_trans);
-
-    CHECK(IS_FIT_IN_UINT16(min_active_trans), HAILO_INVALID_ARGUMENT, 
-        "calculated min_active_trans for vdma descriptor list is out of UINT16 range");
-
-    CHECK(IS_FIT_IN_UINT16(max_active_trans), HAILO_INVALID_ARGUMENT, 
-        "calculated min_active_trans for vdma descriptor list is out of UINT16 range");
-
-    auto desc_sizes_pair = VdmaDescriptorList::get_desc_buffer_sizes_for_single_transfer(m_device->get_driver(),
-        static_cast<uint16_t>(min_active_trans), static_cast<uint16_t>(max_active_trans), m_transfer_size);
-    CHECK_EXPECTED_AS_STATUS(desc_sizes_pair);
-    
-    const auto page_size = desc_sizes_pair->first;
-    auto channel = VdmaChannel::create(m_channel_index, VdmaChannel::Direction::D2H, m_device->get_driver(), page_size,
-        m_stream_info.index, m_latency_meter, m_batch_size);
-
-    m_channel = make_unique_nothrow<VdmaChannel>(channel.release());
-    CHECK(nullptr != m_channel, HAILO_OUT_OF_HOST_MEMORY);
-
-    const auto descs_count = desc_sizes_pair->second;
-    const auto status = m_channel->allocate_resources(descs_count);
-    CHECK_SUCCESS(status);
-
-    return HAILO_SUCCESS;
-}
-
 hailo_status VdmaOutputStream::read_all(MemoryView &buffer)
 {
     CHECK((buffer.size() % HailoRTCommon::HW_DATA_ALIGNMENT) == 0, HAILO_INVALID_ARGUMENT, 
@@ -334,6 +319,26 @@ uint32_t VdmaOutputStream::get_transfer_size(const hailo_stream_info_t &stream_i
     // The ppu outputs one bbox per vdma buffer in the case of nms
     return (HAILO_FORMAT_ORDER_HAILO_NMS == stream_info.format.order) ?
         stream_info.nms_info.bbox_size : stream_info.hw_frame_size;
+}
+
+hailo_status VdmaOutputStream::set_dynamic_batch_size(uint16_t dynamic_batch_size)
+{
+    CHECK(dynamic_batch_size <= m_max_batch_size, HAILO_INVALID_ARGUMENT,
+        "Dynamic batch size ({}) must be <= than the configured batch size ({})",
+        dynamic_batch_size, m_max_batch_size);
+    
+    if (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == dynamic_batch_size) {
+        LOGGER__TRACE("Received CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == dynamic_batch_size; "
+                      "Leaving previously set value of {}", m_dynamic_batch_size);
+    } else {
+        LOGGER__TRACE("Setting stream's dynamic_batch_size to {}", dynamic_batch_size);
+        m_dynamic_batch_size = dynamic_batch_size;
+
+        const auto status = m_channel->set_transfers_per_axi_intr(m_dynamic_batch_size);
+        CHECK_SUCCESS(status);
+    }
+
+    return HAILO_SUCCESS;
 }
 
 } /* namespace hailort */

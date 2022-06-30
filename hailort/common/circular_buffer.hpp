@@ -97,6 +97,11 @@ public:
         return CB_HEAD(m_circ) == CB_TAIL(m_circ);
     }
 
+    bool full()
+    {
+        return 0 == CB_AVAIL(m_circ, CB_HEAD(m_circ), CB_TAIL(m_circ));
+    }
+
 private:
     circbuf_t m_circ;
     std::vector<T> m_array;

@@ -10,6 +10,7 @@
 #include "pipeline.hpp"
 #include "common/utils.hpp"
 #include "common/runtime_statistics_internal.hpp"
+#include "microprofile.h"
 
 namespace hailort
 {
@@ -629,6 +630,11 @@ BaseQueueElement::BaseQueueElement(SpscQueue<PipelineBuffer> &&queue, EventPtr s
 void BaseQueueElement::start_thread()
 {
     m_thread = std::thread([this] () {
+        // Microprofile the thread
+        MicroProfileOnThreadCreate(name().c_str());
+        MicroProfileSetEnableAllGroups(true);
+        MicroProfileSetForceMetaCounters(true);
+
         while (m_is_thread_running.load()) {
             auto status = m_activation_event.wait(INIFINITE_TIMEOUT());
 
@@ -669,6 +675,8 @@ void BaseQueueElement::start_thread()
                 }
             }
         }
+        // TODO: Should we use MicroProfileShutdown?
+        MicroProfileOnThreadExit();
     });
 }
 
@@ -846,14 +854,13 @@ hailo_status PushQueueElement::deactivate()
     if (HAILO_SUCCESS != status) {
         // We want to deactivate source even if enqueue failed
         auto deactivation_status = next_pad().deactivate();
-        if (HAILO_SUCCESS != deactivation_status) {
-            LOGGER__ERROR("Deactivate of source in {} has failed with status {}", name(), status);
-            // TODO (HRT-4156): return error status?
-        }
+        CHECK_SUCCESS(deactivation_status);
         if ((HAILO_STREAM_INTERNAL_ABORT == status) || (HAILO_SHUTDOWN_EVENT_SIGNALED == status)) {
             LOGGER__INFO("enqueue() in element {} was aborted, got status = {}", name(), status);
-        } else {
-            LOGGER__ERROR("enqueue() in element {} failed, got status = {}", name(), status);
+        }
+        else {
+             LOGGER__ERROR("enqueue() in element {} failed, got status = {}", name(), status);
+             return status;
         }
     }
 
@@ -980,14 +987,9 @@ Expected<PipelineBuffer> PullQueueElement::run_pull(PipelineBuffer &&optional, c
 hailo_status PullQueueElement::deactivate()
 {
     hailo_status status = next_pad().deactivate();
-    if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("deactivate of source in {} has failed with status {}", name(), status);
-    }
-
-    status = m_shutdown_event->signal();
-    if (HAILO_SUCCESS != status) {
-        LOGGER__CRITICAL("Signaling shutdown event has failed with status = {}", status);
-    }
+    auto shutdown_event_status = m_shutdown_event->signal();
+    CHECK_SUCCESS(status);
+    CHECK_SUCCESS(shutdown_event_status);
 
     return HAILO_SUCCESS;
 }
@@ -1349,9 +1351,6 @@ hailo_status BaseDemuxElement::deactivate()
     // deactivate should be called before mutex acquire and notify_all because it is possible that all queues are waiting on
     // the run_pull of the source (HwRead) and the mutex is already acquired so this would prevent a timeout error
     hailo_status status = next_pad().deactivate();
-    if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("deactivate of source in {} has failed with status {}", name(), status);
-    }
 
     {
         // There is a case where the other thread is halted (via context switch) before the wait_for() function,
@@ -1360,6 +1359,8 @@ hailo_status BaseDemuxElement::deactivate()
         std::unique_lock<std::mutex> lock(m_mutex);
     }
     m_cv.notify_all();
+
+    CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
 }

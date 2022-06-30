@@ -50,9 +50,11 @@
 // underlying_handle_t
 #ifndef underlying_handle_t
 #if defined(_MSC_VER)
-typedef HANDLE underlying_handle_t; 
+typedef HANDLE underlying_handle_t;
+#elif defined(__linux__) || defined(__QNX__)
+typedef int underlying_handle_t;
 #else
-typedef int underlying_handle_t; 
+#error "Unsupported Platform"
 #endif
 #endif
 

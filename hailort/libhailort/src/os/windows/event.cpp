@@ -17,7 +17,7 @@
 namespace hailort
 {
 
-Waitable::Waitable(underlying_handle_t handle) :
+Waitable::Waitable(underlying_waitable_handle_t handle) :
     m_handle(handle)
 {}
 
@@ -32,7 +32,7 @@ Waitable::Waitable(Waitable&& other) :
     m_handle(std::exchange(other.m_handle, nullptr))
 {}
 
-underlying_handle_t Waitable::get_underlying_handle()
+underlying_waitable_handle_t Waitable::get_underlying_handle()
 {
     return m_handle;
 }
@@ -46,7 +46,7 @@ static DWORD timeout_millies(long long value)
     return millies;
 }
 
-hailo_status Waitable::wait_for_single_object(underlying_handle_t handle, std::chrono::milliseconds timeout)
+hailo_status Waitable::wait_for_single_object(underlying_waitable_handle_t handle, std::chrono::milliseconds timeout)
 {
     DWORD wait_millies = timeout_millies(timeout.count());
     assert(nullptr != handle);
@@ -117,7 +117,7 @@ hailo_status Event::reset()
     return HAILO_SUCCESS;
 }
 
-underlying_handle_t Event::open_event_handle(const State& initial_state)
+underlying_waitable_handle_t Event::open_event_handle(const State& initial_state)
 {
     static const LPSECURITY_ATTRIBUTES NO_INHERITANCE = nullptr;
     static const BOOL                  MANUAL_RESET = true;
@@ -172,7 +172,7 @@ bool Semaphore::is_auto_reset()
     return true;
 }
 
-underlying_handle_t Semaphore::open_semaphore_handle(uint32_t initial_count)
+underlying_waitable_handle_t Semaphore::open_semaphore_handle(uint32_t initial_count)
 {
     static const LPSECURITY_ATTRIBUTES NO_INHERITANCE = nullptr;
     static const LONG                  MAX_SIZE = std::numeric_limits<long>::max();

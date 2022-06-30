@@ -17,5 +17,6 @@ const uint32_t HailoRTCommon::BBOX_PARAMS;
 const uint32_t HailoRTCommon::MAX_DEFUSED_LAYER_COUNT;
 const size_t HailoRTCommon::HW_DATA_ALIGNMENT;
 const uint64_t HailoRTCommon::NMS_DELIMITER;
+const uint64_t HailoRTCommon::NMS_DUMMY_DELIMITER;
 
 } /* namespace hailort */
