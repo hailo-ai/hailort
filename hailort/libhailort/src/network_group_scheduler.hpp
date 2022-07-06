@@ -42,6 +42,7 @@ public:
         : m_algorithm(algorithm), m_before_read_write_mutex(), m_write_read_cv(), m_current_network_group(0),
             m_switching_network_group(true), m_has_current_ng_finished(true), m_next_network_group(0), m_forced_idle_state(false)
         {
+            m_should_stop = false;
             // Temp solution until we'll implement timeout as timers
             m_thread = std::thread([this] () {
                 while (!m_should_stop.load()) {

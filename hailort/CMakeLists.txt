@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.0.0)
 # Set firmware version
 add_definitions( -DFIRMWARE_VERSION_MAJOR=4 )
 add_definitions( -DFIRMWARE_VERSION_MINOR=8 )
-add_definitions( -DFIRMWARE_VERSION_REVISION=0 )
+add_definitions( -DFIRMWARE_VERSION_REVISION=1 )
 
 message(STATUS "Building pre_build")
 include(${CMAKE_CURRENT_LIST_DIR}/libhailort/cmake/execute_cmake.cmake)

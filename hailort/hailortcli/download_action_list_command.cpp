@@ -15,6 +15,8 @@
 #include <iostream>
 #include <iomanip>
 
+#define MHz (1000 * 1000)
+
 constexpr int DownloadActionListCommand::INVALID_NUMERIC_VALUE;
 
 DownloadActionListCommand::DownloadActionListCommand(CLI::App &parent_app) :
@@ -34,12 +36,14 @@ hailo_status DownloadActionListCommand::execute(Device &device, const std::strin
     auto curr_time = CliCommon::current_time_to_string();
     CHECK_EXPECTED_AS_STATUS(curr_time);
 
-    // TODO: Get real clock rate (HRT-5998)
-    static const uint32_t CLOCK_CYCLE = 200;
+    auto extended_info = device.get_extended_device_information();
+    CHECK_EXPECTED_AS_STATUS(extended_info);
+    const auto clock_cycle = extended_info->neural_network_core_clock_rate / MHz;
+
     ordered_json action_list_json = {
         {"version", ACTION_LIST_FORMAT_VERSION()},
         {"creation_time", curr_time.release()},
-        {"clock_cycle_MHz", CLOCK_CYCLE},
+        {"clock_cycle_MHz", clock_cycle},
         {"hef", json({})}
     };
 
