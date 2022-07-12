@@ -209,7 +209,7 @@ class Expected final
 {
 public:
     /**
-     * Expected<T> can access Expected<U>'s private members (needed for implicit upcasting)
+     * Expected<T> can access Expected\<U\>'s private members (needed for implicit upcasting)
      */
     template<class U>
     friend class Expected;

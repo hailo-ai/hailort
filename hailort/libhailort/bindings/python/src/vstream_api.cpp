@@ -39,7 +39,7 @@ void InputVStreamWrapper::add_to_python_module(py::module &m)
     .def_property_readonly("dtype", [](InputVStream &self)
     {
         const auto format_type = self.get_user_buffer_format().type;
-        return py::dtype(HailoRTBindingsCommon::convert_format_type_to_string(format_type));
+        return HailoRTBindingsCommon::get_dtype(format_type);
     })
     .def_property_readonly("shape", [](InputVStream &self)
     {
@@ -118,7 +118,7 @@ InputVStreamsWrapper::InputVStreamsWrapper(std::unordered_map<std::string, std::
 py::dtype OutputVStreamWrapper::get_dtype(OutputVStream &self)
 {
     const auto format_type = self.get_user_buffer_format().type;
-    return py::dtype(HailoRTBindingsCommon::convert_format_type_to_string(format_type));
+    return HailoRTBindingsCommon::get_dtype(format_type);
 }
 
 hailo_format_t OutputVStreamWrapper::get_user_buffer_format(OutputVStream &self)
@@ -262,14 +262,14 @@ py::dtype InferVStreamsWrapper::get_host_dtype(const std::string &stream_name)
 {
     auto input = m_infer_pipeline->get_input_by_name(stream_name);
     if (HAILO_SUCCESS == input.status()) {
-        return py::dtype(HailoRTBindingsCommon::convert_format_type_to_string(input->get().get_user_buffer_format().type));
+        return HailoRTBindingsCommon::get_dtype(input->get().get_user_buffer_format().type);
     } else if (HAILO_NOT_FOUND != input.status()) {
         THROW_STATUS_ERROR(input.status());
     }
     auto output = m_infer_pipeline->get_output_by_name(stream_name);
     VALIDATE_EXPECTED(output);
 
-    return py::dtype(HailoRTBindingsCommon::convert_format_type_to_string(output->get().get_user_buffer_format().type));
+    return HailoRTBindingsCommon::get_dtype(output->get().get_user_buffer_format().type);
 }
 
 hailo_format_t InferVStreamsWrapper::get_user_buffer_format(const std::string &stream_name)

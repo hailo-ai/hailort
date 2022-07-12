@@ -3,7 +3,7 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @ file power_measurement_example.cpp
+ * @file power_measurement_example.cpp
  * This example demonstrates power and current measurements.
  **/
 
@@ -30,10 +30,7 @@ const std::string CURRENT_ARG = "current";
 
 const std::chrono::seconds MEASUREMENTS_DURATION_SECS(5);
 
-using hailort::VDevice;
-using hailort::Device;
-using hailort::Expected;
-using hailort::make_unexpected;
+using namespace hailort;
 
 Expected<hailo_power_measurement_types_t> parse_arguments(int argc, char **argv)
 {

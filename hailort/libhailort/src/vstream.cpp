@@ -1004,7 +1004,7 @@ hailo_status HwWriteElement::clear()
 
 hailo_status HwWriteElement::flush()
 {
-    hailo_status status = m_got_flush_event->wait(std::chrono::milliseconds(HAILO_DEFAULT_VSTREAM_TIMEOUT_MS));
+    hailo_status status = m_got_flush_event->wait(m_stream.get_timeout());
     CHECK_SUCCESS(status);
 
     status = m_got_flush_event->reset();

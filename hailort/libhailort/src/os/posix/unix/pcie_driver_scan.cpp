@@ -3,11 +3,11 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @file pcie_driver_sysfs.cpp
+ * @file pcie_driver_scan.cpp
  * @brief Parse pcie driver sysfs
  **/
 
-#include "os/posix/pcie_driver_sysfs.hpp"
+#include "os/posix/pcie_driver_scan.hpp"
 #include <stdarg.h>
 #include <dirent.h>
 
@@ -19,7 +19,7 @@ namespace hailort
 #define HAILO_DEVICE_ID_FILENAME ("device_id")
 
 
-Expected<std::vector<std::string>> list_sysfs_pcie_devices()
+Expected<std::vector<std::string>> list_pcie_devices()
 {
     DIR *dir_iter = opendir(HAILO_PCIE_CLASS_PATH);
     if (!dir_iter) {

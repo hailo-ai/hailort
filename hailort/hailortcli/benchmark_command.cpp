@@ -73,6 +73,7 @@ hailo_status BenchmarkCommand::execute()
     auto streaming_mode_info = fps_streaming_mode();
     CHECK_EXPECTED_AS_STATUS(streaming_mode_info, "FPS in streaming mode failed");
 
+    // TODO - HRT-6931 - measure latnecy only in the case of single device. 
     std::cout << "Measuring HW Latency" << std::endl;
     auto latency_info = latency();
     CHECK_EXPECTED_AS_STATUS(latency_info, "Latency measuring failed");

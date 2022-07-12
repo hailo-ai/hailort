@@ -1635,7 +1635,7 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_main_header_requ
 
     /* Header */
     local_request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE + sizeof(CONTROL_PROTOCOL__context_switch_set_main_header_request_t);
-    control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_SET_MAIN_HEADER, 5);
+    control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_SET_MAIN_HEADER, 4);
 
     /* context_switch_version */
     request->parameters.context_switch_set_main_header_request.context_switch_version_length = 
@@ -1647,11 +1647,6 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_main_header_requ
     request->parameters.context_switch_set_main_header_request.validation_features_length = 
         BYTE_ORDER__htonl(sizeof(request->parameters.context_switch_set_main_header_request.validation_features));
     request->parameters.context_switch_set_main_header_request.validation_features = context_switch_header->validation_features;
-
-    /* infer_features */
-    request->parameters.context_switch_set_main_header_request.infer_features_length = 
-        BYTE_ORDER__htonl(sizeof(request->parameters.context_switch_set_main_header_request.infer_features));
-    request->parameters.context_switch_set_main_header_request.infer_features = context_switch_header->infer_features;
 
     /* application_count */
     request->parameters.context_switch_set_main_header_request.application_count_length = 

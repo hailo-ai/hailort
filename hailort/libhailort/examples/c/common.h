@@ -3,7 +3,7 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @ file example_common.h
+ * @file example_common.h
  * Common macros and defines used by Hailort Examples
  **/
 

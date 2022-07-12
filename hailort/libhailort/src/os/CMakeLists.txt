@@ -27,10 +27,15 @@ set(files
     ${HAILO_FULL_OS_DIR}/event.cpp
 )
 
-if(UNIX)
+if(CMAKE_SYSTEM_NAME STREQUAL QNX)
+    # QNX only modules
+    set(files ${files}
+        ${HAILO_OS_DIR}/qnx/pcie_driver_scan.cpp
+    )
+elseif(UNIX)
     # Unix only modules
     set(files ${files}
-        ${HAILO_OS_DIR}/pcie_driver_sysfs.cpp
+        ${HAILO_OS_DIR}/unix/pcie_driver_scan.cpp
     )
 endif()
 

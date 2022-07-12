@@ -21,7 +21,8 @@
 
 GType gst_hailo_buffer_flag_meta_api_get_type(void)
 {
-    static volatile GType type;
+    // https://github.com/vmware/open-vm-tools/commit/b2c8baeaa8ac365e1445f941cf1b80999ed89a9d
+    static GType type;
     static const gchar *tags[] = {HAILO_BUFFER_FLAG_META_TAG, NULL};
 
     if (g_once_init_enter(&type)) {

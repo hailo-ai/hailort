@@ -108,7 +108,8 @@ Expected<ConfiguredNetworkGroupVector> VDeviceBase::configure(Hef &hef,
         CHECK_AS_EXPECTED(nullptr != m_context_switch_manager, HAILO_OUT_OF_HOST_MEMORY);
     }
 
-    auto network_groups = m_context_switch_manager->add_hef(hef, configure_params);
+    bool is_scheduler_used = (m_network_group_scheduler != nullptr);
+    auto network_groups = m_context_switch_manager->add_hef(hef, configure_params, is_scheduler_used);
     CHECK_EXPECTED(network_groups);
 
     auto elapsed_time_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time).count();

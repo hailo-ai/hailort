@@ -339,7 +339,9 @@ typedef struct {
 
 /** Scheduler algorithm */
 typedef enum hailo_scheduling_algorithm_e {
+    /** Scheduling disabled */
     HAILO_SCHEDULING_ALGORITHM_NONE = 0,
+    /** Round Robin */
     HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN,
 
     /** Max enum value to maintain ABI Integrity */
@@ -2439,6 +2441,41 @@ HAILORTAPI hailo_status hailo_get_output_stream(
  */
 HAILORTAPI hailo_status hailo_get_latency_measurement(hailo_configured_network_group configured_network_group,
     const char *network_name, hailo_latency_measurement_result_t *result);
+
+/**
+ * Sets the maximum time period that may pass before getting run time from the scheduler,
+ *  even without reaching the minimum required send requests (e.g. threshold - see hailo_set_scheduler_threshold()),
+ *  as long as at least one send request has been sent.
+ *  This time period is measured since the last time the scheduler gave this network group run time.
+ *
+ * @param[in]  configured_network_group     NetworkGroup for which to set the scheduler timeout.
+ * @param[in]  timeout_ms                   Timeout in milliseconds.
+ * @param[in]  network_name                 Network name for which to set the timeout.
+ *                                          If NULL is passed, the timeout will be set for all the networks in the network group.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE, and before the creation of any vstreams.
+ * @note The default timeout is 0ms.
+ * @note Currently, setting the timeout for a specific network is not supported.
+ */
+HAILORTAPI hailo_status hailo_set_scheduler_timeout(hailo_configured_network_group configured_network_group,
+    uint32_t timeout_ms, const char *network_name);
+
+/**
+ * Sets the minimum number of send requests required before the network is considered ready to get run time from the scheduler.
+ * If at least one send request has been sent, but the threshold is not reached within a set time period (e.g. timeout - see hailo_set_scheduler_timeout()),
+ *  the scheduler will consider the network ready regardless.
+ *
+ * @param[in]  configured_network_group     NetworkGroup for which to set the scheduler threshold.
+ * @param[in]  threshold                    Threshold in number of frames.
+ * @param[in]  network_name                 Network name for which to set the threshold.
+ *                                          If NULL is passed, the threshold will be set for all the networks in the network group.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE, and before the creation of any vstreams.
+ * @note The default threshold is 1.
+ * @note Currently, setting the threshold for a specific network is not supported.
+ */
+HAILORTAPI hailo_status hailo_set_scheduler_threshold(hailo_configured_network_group configured_network_group,
+    uint32_t threshold, const char *network_name);
 
 /** @} */ // end of group_network_group_functions
 

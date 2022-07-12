@@ -28,6 +28,20 @@
 
 namespace hailort
 {
+
+class VdmaChannel;
+class PendingBufferState final
+{
+public:
+    PendingBufferState(VdmaChannel &vdma_channel, size_t next_buffer_desc_num) : m_vdma_channel(vdma_channel),
+        m_next_buffer_desc_num(next_buffer_desc_num) {}
+    hailo_status finish(std::chrono::milliseconds timeout, std::unique_lock<std::mutex> &lock);
+
+private:
+    VdmaChannel &m_vdma_channel;
+    size_t m_next_buffer_desc_num;
+};
+
 class VdmaChannel final
 {
 public:
@@ -50,7 +64,7 @@ public:
 
     hailo_status transfer(void *buf, size_t count);
     hailo_status write_buffer(const MemoryView &buffer, std::chrono::milliseconds timeout);
-    hailo_status send_pending_buffer(std::chrono::milliseconds timeout);
+    Expected<PendingBufferState> send_pending_buffer();
     hailo_status trigger_channel_completion(uint16_t hw_num_processed);
     hailo_status allocate_resources(uint32_t descs_count);
     /* For channels controlled by the HailoRT, the HailoRT needs to use this function to start the channel (it registers the channel to driver 
@@ -60,8 +74,8 @@ public:
     hailo_status unregister_fw_controlled_channel();
     hailo_status flush(const std::chrono::milliseconds &timeout);
     hailo_status set_num_avail_value(uint16_t new_value);
+    hailo_status set_transfers_per_axi_intr(uint16_t transfers_per_axi_intr);
     hailo_status inc_num_available_for_ddr(uint16_t value, uint32_t size_mask);
-    hailo_status wait_channel_interrupts_for_ddr(const std::chrono::milliseconds &timeout);
     Expected<uint16_t> get_hw_num_processed_ddr(uint32_t size_mask);
     /*Used for DDR channels only. TODO - remove */
     hailo_status start_channel(VdmaDescriptorList &desc_list);
@@ -74,6 +88,11 @@ public:
     hailo_status abort();
     hailo_status clear_abort();
 
+    uint8_t get_channel_index()
+    {
+        return m_channel_index;
+    }
+
     VdmaChannel(const VdmaChannel &other) = delete;
     VdmaChannel &operator=(const VdmaChannel &other) = delete;
     VdmaChannel(VdmaChannel &&other) noexcept;
@@ -83,7 +102,9 @@ public:
         uint16_t requested_desc_page_size);
 
 
-    const uint8_t channel_index;
+    const uint8_t m_channel_index;
+
+    friend class PendingBufferState;
 
 private:
     struct PendingBuffer {
@@ -181,6 +202,8 @@ private:
     CircularArray<size_t> m_pending_buffers_sizes;
     uint16_t m_pending_num_avail_offset;
     std::condition_variable_any m_can_write_buffer_cv;
+    std::atomic_bool m_is_waiting_for_channel_completion;
+    bool m_is_aborted;
 };
 
 } /* namespace hailort */

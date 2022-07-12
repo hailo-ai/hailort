@@ -15,6 +15,8 @@
 #include <iostream>
 #include <iomanip>
 
+#define MHz (1000 * 1000)
+
 constexpr int DownloadActionListCommand::INVALID_NUMERIC_VALUE;
 
 DownloadActionListCommand::DownloadActionListCommand(CLI::App &parent_app) :
@@ -34,12 +36,14 @@ hailo_status DownloadActionListCommand::execute(Device &device, const std::strin
     auto curr_time = CliCommon::current_time_to_string();
     CHECK_EXPECTED_AS_STATUS(curr_time);
 
-    // TODO: Get real clock rate (HRT-5998)
-    static const uint32_t CLOCK_CYCLE = 200;
+    auto extended_info = device.get_extended_device_information();
+    CHECK_EXPECTED_AS_STATUS(extended_info);
+    const auto clock_cycle = extended_info->neural_network_core_clock_rate / MHz;
+
     ordered_json action_list_json = {
         {"version", ACTION_LIST_FORMAT_VERSION()},
         {"creation_time", curr_time.release()},
-        {"clock_cycle_MHz", CLOCK_CYCLE},
+        {"clock_cycle_MHz", clock_cycle},
         {"hef", json({})}
     };
 
@@ -187,9 +191,9 @@ Expected<ordered_json> DownloadActionListCommand::parse_action_data(uint32_t bas
             data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__application_change_interrupt_data_t *>(action);
             action_length_local = sizeof(CONTEXT_SWITCH_DEFS__application_change_interrupt_data_t);
             break;
-        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_VDMA_DESCRIPTORS:
-            data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__read_vdma_action_data_t *>(action);
-            action_length_local = sizeof(CONTEXT_SWITCH_DEFS__read_vdma_action_data_t);
+        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_CFG_CHANNEL_DESCRIPTORS:
+            data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__fetch_cfg_channel_descriptors_action_data_t *>(action);
+            action_length_local = sizeof(CONTEXT_SWITCH_DEFS__fetch_cfg_channel_descriptors_action_data_t);
             break;
         case CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_CCW_BURSTS:
             data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__fetch_ccw_bursts_action_data_t *>(action);
@@ -206,6 +210,10 @@ Expected<ordered_json> DownloadActionListCommand::parse_action_data(uint32_t bas
         case CONTEXT_SWITCH_DEFS__ACTION_TYPE_DEACTIVATE_VDMA_CHANNEL:
             data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__deactivate_vdma_channel_action_data_t *>(action);
             action_length_local = sizeof(CONTEXT_SWITCH_DEFS__deactivate_vdma_channel_action_data_t);
+            break;
+        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_VALIDATE_VDMA_CHANNEL:
+            data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__validate_vdma_channel_action_data_t *>(action);
+            action_length_local = sizeof(CONTEXT_SWITCH_DEFS__validate_vdma_channel_action_data_t);
             break;
         case CONTEXT_SWITCH_DEFS__ACTION_TYPE_ENABLE_LCU_DEFAULT:
             data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__enable_lcu_action_default_data_t *>(action);
@@ -252,6 +260,10 @@ Expected<ordered_json> DownloadActionListCommand::parse_action_data(uint32_t bas
             action_length_local = sizeof(CONTEXT_SWITCH_DEFS__add_ddr_pair_info_action_data_t);
             break;
         case CONTEXT_SWITCH_DEFS__ACTION_TYPE_DDR_BUFFERING_START:
+            data_json = json({});
+            action_length_local = 0;
+            break;
+        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_BURST_CREDITS_TASK_START:
             data_json = json({});
             action_length_local = 0;
             break;
@@ -398,7 +410,7 @@ Expected<ordered_json> DownloadActionListCommand::parse_network_groups(Device &d
     return network_group_list_json;
 }
 
-void to_json(json& j, const CONTEXT_SWITCH_DEFS__read_vdma_action_data_t& data) {
+void to_json(json& j, const CONTEXT_SWITCH_DEFS__fetch_cfg_channel_descriptors_action_data_t& data) {
     j = json{{"descriptors_count", data.descriptors_count}, {"channel_index", data.cfg_channel_number}};
 }
 

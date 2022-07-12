@@ -3,7 +3,7 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @ file power_measurement_example.c
+ * @file power_measurement_example.c
  * This example demonstrates power and current measurements.
  **/
 

@@ -830,7 +830,7 @@ hailo_status reorder_input_stream(const void *src_ptr, hailo_3d_image_shape_t sr
         return HAILO_SUCCESS;
     }
 
-    if ((HAILO_FORMAT_ORDER_FCR == src_format.order) &&
+    if (((HAILO_FORMAT_ORDER_FCR == src_format.order) || (HAILO_FORMAT_ORDER_NHWC == src_format.order)) &&
         (HAILO_FORMAT_ORDER_FCR == dst_format.order)) {
         assert(0 == (dst_image_shape.features % 8));
         switch (dst_format.type) {
@@ -847,7 +847,7 @@ hailo_status reorder_input_stream(const void *src_ptr, hailo_3d_image_shape_t sr
         return HAILO_SUCCESS;
     }
 
-    if ((HAILO_FORMAT_ORDER_F8CR == src_format.order) &&
+    if (((HAILO_FORMAT_ORDER_F8CR == src_format.order) || (HAILO_FORMAT_ORDER_NHWC == src_format.order)) &&
         (HAILO_FORMAT_ORDER_F8CR == dst_format.order)) {
         switch (dst_format.type) {
             case HAILO_FORMAT_TYPE_UINT8:
@@ -994,7 +994,7 @@ hailo_status reorder_output_stream(const void *src_ptr, hailo_3d_image_shape_t s
             }
     }
     else if ((HAILO_FORMAT_ORDER_FCR == src_format.order) &&
-        (HAILO_FORMAT_ORDER_FCR == dst_format.order)) {
+        ((HAILO_FORMAT_ORDER_FCR == dst_format.order) || (HAILO_FORMAT_ORDER_NHWC == dst_format.order))) {
             switch (src_format.type) {
                 case HAILO_FORMAT_TYPE_UINT8:
                     transform__d2h_NHWC_to_NHWC<uint8_t>((uint8_t*)src_ptr, &src_image_shape, (uint8_t*)dst_ptr, &dst_image_shape);
@@ -1008,7 +1008,7 @@ hailo_status reorder_output_stream(const void *src_ptr, hailo_3d_image_shape_t s
             }
     }
     else if ((HAILO_FORMAT_ORDER_F8CR == src_format.order) &&
-        (HAILO_FORMAT_ORDER_F8CR == dst_format.order)) {
+        ((HAILO_FORMAT_ORDER_F8CR == dst_format.order) || (HAILO_FORMAT_ORDER_NHWC == dst_format.order))) {
             switch (src_format.type) {
                 case HAILO_FORMAT_TYPE_UINT8:
                     transform__d2h_F8CR<uint8_t>((uint8_t*)src_ptr, &src_image_shape, (uint8_t*)dst_ptr, &dst_image_shape);

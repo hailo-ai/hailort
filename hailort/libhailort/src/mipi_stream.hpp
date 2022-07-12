@@ -51,7 +51,7 @@ public:
 
     virtual ~MipiInputStream();
 
-    virtual hailo_status activate_stream() override;
+    virtual hailo_status activate_stream(uint16_t dynamic_batch_size) override;
     virtual hailo_status deactivate_stream() override;
     virtual hailo_stream_interface_t get_interface() const override { return HAILO_STREAM_INTERFACE_MIPI; }
     virtual std::chrono::milliseconds get_timeout() const override;

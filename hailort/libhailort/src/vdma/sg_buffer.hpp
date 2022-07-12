@@ -45,7 +45,6 @@ public:
     virtual uint16_t desc_page_size() const override;
     virtual uint32_t descs_count() const override;
     uint8_t depth() const;
-    virtual uint32_t descriptors_in_buffer(size_t buffer_size) const override;
 
     // Should be only used for host managed ddr buffer, in the future this function may return nullptr (on CCB
     // case where there is no descriptors list)
@@ -56,10 +55,8 @@ public:
 
     virtual Expected<uint32_t> program_descriptors(size_t transfer_size, VdmaInterruptsDomain first_desc_interrupts_domain,
         VdmaInterruptsDomain last_desc_interrupts_domain, size_t desc_offset, bool is_circular) override;
-
-    // Program descriptors count for ddr will always fit uint16_t (on SgBuffer).
-    Expected<uint16_t> program_descs_for_ddr_transfers(uint32_t row_size, bool should_raise_interrupt, 
-        uint32_t number_of_rows_per_intrpt, uint32_t buffered_rows, uint16_t initial_descs_offset, bool is_circular);
+    virtual hailo_status reprogram_device_interrupts_for_end_of_batch(size_t transfer_size, uint16_t batch_size,
+        VdmaInterruptsDomain new_interrupts_domain) override;
 
 private:
     SgBuffer(VdmaDescriptorList &&desc_list, MappedBuffer &&mapped_buffer) :

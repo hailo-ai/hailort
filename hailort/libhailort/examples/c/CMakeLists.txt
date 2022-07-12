@@ -18,11 +18,11 @@ target_link_libraries(c_infer_pipeline_example PRIVATE example_base)
 add_executable(c_multi_network_vstream_example multi_network_vstream_example.c)
 target_link_libraries(c_multi_network_vstream_example PRIVATE example_base)
 
-add_executable(c_switch_hefs_example switch_hefs_example.c)
-target_link_libraries(c_switch_hefs_example PRIVATE example_base)
+add_executable(c_switch_network_groups_example switch_network_groups_example.c)
+target_link_libraries(c_switch_network_groups_example PRIVATE example_base)
 
-add_executable(c_switch_single_io_hefs_example switch_single_io_hefs_example.c)
-target_link_libraries(c_switch_single_io_hefs_example PRIVATE example_base)
+add_executable(c_switch_single_io_network_groups_manually_example switch_single_io_network_groups_manually_example.c)
+target_link_libraries(c_switch_single_io_network_groups_manually_example PRIVATE example_base)
 
 add_executable(c_multi_device_example multi_device_example.c)
 target_link_libraries(c_multi_device_example PRIVATE example_base)
@@ -36,8 +36,8 @@ set(EXAMPLES_C_TARGETS
     c_vstreams_example
     c_infer_pipeline_example
     c_multi_network_vstream_example
-    c_switch_hefs_example
-    c_switch_single_io_hefs_example
+    c_switch_network_groups_example
+    c_switch_single_io_network_groups_manually_example
     c_multi_device_example
     c_power_measurement_example
     PARENT_SCOPE)

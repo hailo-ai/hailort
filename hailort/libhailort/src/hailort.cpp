@@ -865,6 +865,24 @@ HAILORTAPI hailo_status hailo_get_latency_measurement(hailo_configured_network_g
     return HAILO_SUCCESS;
 }
 
+hailo_status hailo_set_scheduler_timeout(hailo_configured_network_group configured_network_group,
+    uint32_t timeout_ms, const char *network_name)
+{
+    CHECK_ARG_NOT_NULL(configured_network_group);
+
+    std::string network_name_str = (nullptr == network_name) ? "" : network_name;
+    return ((ConfiguredNetworkGroup*)configured_network_group)->set_scheduler_timeout(std::chrono::milliseconds(timeout_ms), network_name_str);
+}
+
+hailo_status hailo_set_scheduler_threshold(hailo_configured_network_group configured_network_group,
+    uint32_t threshold, const char *network_name)
+{
+    CHECK_ARG_NOT_NULL(configured_network_group);
+
+    std::string network_name_str = (nullptr == network_name) ? "" : network_name;
+    return ((ConfiguredNetworkGroup*)configured_network_group)->set_scheduler_threshold(threshold, network_name_str);
+}
+
 hailo_status hailo_calculate_eth_input_rate_limits(hailo_hef hef, const char *network_group_name, uint32_t fps,
     hailo_rate_limit_t *rates, size_t *rates_length)
 {

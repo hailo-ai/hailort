@@ -34,7 +34,7 @@
         package_dest: /usr/include/aarch64-linux-gnu
     -   version: '3.9'
         installation: manual
-        package_name: https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa/+build/23497785/+files/libpython3.9-dev_3.9.12-1+bionic1_arm64.deb
+        package_name: https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa/+build/23779329/+files/libpython3.9-dev_3.9.13-1+bionic1_arm64.deb
         package_dest: /usr/include/aarch64-linux-gnu
 -   name: linux.armv7l
     required_packages:

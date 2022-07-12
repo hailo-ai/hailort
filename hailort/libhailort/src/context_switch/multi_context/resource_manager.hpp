@@ -145,16 +145,20 @@ public:
         m_inter_context_channels(std::move(other.m_inter_context_channels)),
         m_config_channels(std::move(other.m_config_channels)), m_ddr_buffer_channels(std::move(other.m_ddr_buffer_channels)),
         m_network_group_metadata(std::move(other.m_network_group_metadata)), m_net_group_index(other.m_net_group_index),
-        m_network_index_map(std::move(other.m_network_index_map)) {}
+        m_network_index_map(std::move(other.m_network_index_map)),
+        m_latency_meters(std::move(other.m_latency_meters)),
+        m_boundary_channels(std::move(other.m_boundary_channels)) {}
 
     ExpectedRef<IntermediateBuffer> create_inter_context_buffer(uint32_t transfer_size, uint8_t src_stream_index,
         uint8_t src_context_index, const std::string &network_name);
     ExpectedRef<IntermediateBuffer> get_intermediate_buffer(const IntermediateBufferKey &key);
-    Expected<std::pair<uint16_t, uint32_t>> get_desc_buffer_sizes_for_boundary_channel(uint32_t transfer_size,
-        const std::string &network_name);
+    Expected<std::shared_ptr<VdmaChannel>> create_boundary_vdma_channel(uint8_t channel_index, uint32_t transfer_size, 
+        const std::string &network_name, const std::string &stream_name,
+        VdmaChannel::Direction channel_direction);
+
     ExpectedRef<IntermediateBuffer> create_ddr_buffer(DdrChannelsInfo &ddr_info, uint8_t context_index);
 
-    Expected<CONTROL_PROTOCOL__application_header_t> get_control_network_group_header();
+    Expected<CONTROL_PROTOCOL__application_header_t> get_control_network_group_header(bool is_scheduler_used);
 
     using context_info_t = CONTROL_PROTOCOL__context_switch_context_info_t;
 
@@ -218,6 +222,11 @@ public:
         return m_vdma_device.get_dev_id();
     }
 
+    LatencyMetersMap &get_latnecy_meters()
+    {
+        return m_latency_meters;
+    }
+
     Expected<uint8_t> get_boundary_channel_index(uint8_t stream_index,
         hailo_stream_direction_t direction, const std::string &layer_name);
     Expected<hailo_stream_interface_t> get_default_streams_interface();
@@ -228,22 +237,25 @@ public:
     void update_preliminary_config_buffer_info();
     void update_dynamic_contexts_buffer_info();
 
-    hailo_status create_vdma_channels();
+    hailo_status create_internal_vdma_channels();
     hailo_status register_fw_managed_vdma_channels();
     hailo_status unregister_fw_managed_vdma_channels();
+    hailo_status set_inter_context_channels_dynamic_batch_size(uint16_t dynamic_batch_size);
     hailo_status open_ddr_channels();
     void abort_ddr_channels();
     void close_ddr_channels();
     hailo_status enable_state_machine(uint16_t dynamic_batch_size);
     hailo_status reset_state_machine();
     Expected<uint16_t> get_network_batch_size(const std::string &network_name) const;
+    Expected<std::shared_ptr<VdmaChannel>> get_boundary_vdma_channel_by_stream_name(const std::string &stream_name);
 
 private:
-    ExpectedRef<IntermediateBuffer> create_intermediate_buffer(uint32_t transfer_size, uint16_t batch_size,
-        const IntermediateBufferKey &key);
+    ExpectedRef<IntermediateBuffer> create_intermediate_buffer(IntermediateBuffer::ChannelType channel_type,
+        uint32_t transfer_size, uint16_t batch_size, const IntermediateBufferKey &key);
     void update_config_buffer_info(std::vector<ConfigBuffer> &config_buffers,
         CONTROL_PROTOCOL__context_switch_context_info_t &context);
-    hailo_status fill_network_batch_size(CONTROL_PROTOCOL__application_header_t &app_header);
+    hailo_status fill_infer_features(CONTROL_PROTOCOL__application_header_t &app_header);
+    hailo_status fill_network_batch_size(CONTROL_PROTOCOL__application_header_t &app_header, bool is_scheduler_used);
 
     std::vector<DdrChannelsInfo> m_ddr_infos;
     std::vector<CONTROL_PROTOCOL__context_switch_context_info_t> m_contexts;
@@ -261,14 +273,17 @@ private:
     std::shared_ptr<NetworkGroupMetadata> m_network_group_metadata;
     uint8_t m_net_group_index;
     const std::vector<std::string> m_network_index_map;
+    LatencyMetersMap m_latency_meters; // Latency meter per network
+    std::map<std::string, std::shared_ptr<VdmaChannel>> m_boundary_channels; //map of string name and connected vDMA channel
 
     ResourcesManager(VdmaDevice &vdma_device, HailoRTDriver &driver,
         const ConfigureNetworkParams config_params, std::vector<ConfigBuffer> &&preliminary_config,
         std::vector<std::vector<ConfigBuffer>> &&dynamic_config, std::shared_ptr<NetworkGroupMetadata> &&network_group_metadata, uint8_t net_group_index,
-        const std::vector<std::string> &&network_index_map) :
+        const std::vector<std::string> &&network_index_map, LatencyMetersMap &&latency_meters) :
           m_vdma_device(vdma_device), m_driver(driver), m_config_params(config_params),
           m_preliminary_config(std::move(preliminary_config)), m_dynamic_config(std::move(dynamic_config)),
-          m_network_group_metadata(std::move(network_group_metadata)), m_net_group_index(net_group_index), m_network_index_map(std::move(network_index_map)) {};
+          m_network_group_metadata(std::move(network_group_metadata)), m_net_group_index(net_group_index), m_network_index_map(std::move(network_index_map)),
+          m_latency_meters(std::move(latency_meters)) {};
 
 };
 

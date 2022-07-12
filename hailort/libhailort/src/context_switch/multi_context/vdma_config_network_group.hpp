@@ -47,11 +47,11 @@ public:
         return m_resources_managers;
     }
 
-    hailo_status create_vdevice_streams_from_config_params();
+    hailo_status create_vdevice_streams_from_config_params(network_group_handle_t network_group_handle);
     hailo_status create_output_vdevice_stream_from_config_params(
-        const hailo_stream_parameters_t &stream_params, const std::string &stream_name);
+        const hailo_stream_parameters_t &stream_params, const std::string &stream_name, network_group_handle_t network_group_handle);
     hailo_status create_input_vdevice_stream_from_config_params(
-        const hailo_stream_parameters_t &stream_params, const std::string &stream_name);
+        const hailo_stream_parameters_t &stream_params, const std::string &stream_name, network_group_handle_t network_group_handle);
 
     virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_impl(
         const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size) override;
@@ -60,6 +60,13 @@ public:
 
     virtual Expected<uint8_t> get_boundary_channel_index(uint8_t stream_index, hailo_stream_direction_t direction,
         const std::string &layer_name) override;
+    virtual Expected<std::shared_ptr<LatencyMetersMap>> get_latnecy_meters() override;
+    virtual Expected<std::shared_ptr<VdmaChannel>> get_boundary_vdma_channel_by_stream_name(
+        const std::string &stream_name) override;
+
+    void set_network_group_handle(network_group_handle_t handle);
+    virtual hailo_status set_scheduler_timeout(const std::chrono::milliseconds &timeout, const std::string &network_name) override;
+    virtual hailo_status set_scheduler_threshold(uint32_t threshold, const std::string &network_name) override;
 
     virtual ~VdmaConfigNetworkGroup() = default;
     VdmaConfigNetworkGroup(const VdmaConfigNetworkGroup &other) = delete;
@@ -78,6 +85,8 @@ private:
     VdmaConfigActiveAppHolder &m_active_net_group_holder;
     std::vector<std::shared_ptr<ResourcesManager>> m_resources_managers;
     NetworkGroupSchedulerWeakPtr m_network_group_scheduler;
+    network_group_handle_t m_network_group_handle;
+
 };
 
 } /* namespace hailort */

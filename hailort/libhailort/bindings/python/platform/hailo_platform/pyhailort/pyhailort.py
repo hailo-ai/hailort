@@ -4,11 +4,8 @@ __version__ = pkg_resources.get_distribution("hailort").version
 
 import sys
 
-from hailo_platform.pyhailort.hailo_control_protocol import BoardInformation, CoreInformation, HailoResetTypes, ExtendedDeviceInformation, HealthInformation
-
 from argparse import ArgumentTypeError
 import numpy
-import signal
 import time
 from hailo_platform.common.logger.logger import default_logger
 import gc
@@ -149,320 +146,6 @@ def get_status_message(status_code):
     if status_str == "":
         raise HailoStatusInvalidValueException("Value {} is not a valid status".format(status_code))
     return status_str
-
-class Control(object):
-    class Type(object):
-        PCIE = 0
-        ETH = 1
-    
-    def __init__(self, control_type, address, port, pcie_device_info=None, response_timeout_seconds=10,
-     max_number_of_attempts=3):
-        self.device = None
-        self.control_type = control_type
-        self._eth_address = address
-        self._eth_port = port
-        self._eth_response_timeout_milliseconds = int(response_timeout_seconds * 1000)
-        self._eth_max_number_of_attempts = max_number_of_attempts
-        self._pcie_device_info = pcie_device_info
-
-        if sys.platform != "win32":
-            signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGWINCH])
-
-    def ensure_device(method):
-        def _ensure_device(self, *args, **kw):
-            if self.device is not None:
-                return method(self, *args, **kw)
-            
-            with ExceptionWrapper():
-                if self.control_type == Control.Type.PCIE:
-                    self.device = _pyhailort.Device.create_pcie(self._pcie_device_info)
-                elif self.control_type == Control.Type.ETH:
-                    self.device = _pyhailort.Device.create_eth(self._eth_address, self._eth_port,
-                        self._eth_response_timeout_milliseconds, self._eth_max_number_of_attempts)
-                else:
-                    raise HailoRTException("Unsupported control type")
-            try:
-                result = method(self, *args, **kw)
-            finally:
-                if self.device is not None:
-                    with ExceptionWrapper():
-                        self.device.release()
-                self.device = None
-
-            return result
-        return _ensure_device
-    
-    def set_device(self, device_object):
-        if device_object is None:
-            self.device = None
-        else:
-            self.device = device_object.device
-        
-    @ensure_device
-    def identify(self):
-        with ExceptionWrapper():
-            response = self.device.identify()
-        board_information = BoardInformation(response.protocol_version, response.fw_version.major,
-            response.fw_version.minor, response.fw_version.revision, response.logger_version,
-            response.board_name, response.is_release,  int(response.device_architecture), response.serial_number,
-            response.part_number, response.product_name)
-        return board_information
-
-    @ensure_device
-    def core_identify(self):
-        with ExceptionWrapper():
-            response = self.device.core_identify()
-        core_information = CoreInformation(response.fw_version.major, response.fw_version.minor, 
-            response.fw_version.revision, response.is_release)
-        return core_information
-
-    @ensure_device
-    def set_fw_logger(self, level, interface_mask):
-        with ExceptionWrapper():
-            return self.device.set_fw_logger(level, interface_mask)
-
-    @ensure_device
-    def set_throttling_state(self, should_activate):
-        with ExceptionWrapper():
-            return self.device.set_throttling_state(should_activate)
-
-    @ensure_device
-    def get_throttling_state(self):
-        with ExceptionWrapper():
-            return self.device.get_throttling_state()
-
-    @ensure_device
-    def _set_overcurrent_state(self, should_activate):
-        with ExceptionWrapper():
-            return self.device._set_overcurrent_state(should_activate)
-
-    @ensure_device
-    def _get_overcurrent_state(self):
-        with ExceptionWrapper():
-            return self.device._get_overcurrent_state()
-
-    @ensure_device
-    def read_memory(self, address, length):
-        with ExceptionWrapper():
-            return self.device.read_memory(int(address), int(length))
-
-    @ensure_device
-    def write_memory(self, address, data):
-        with ExceptionWrapper():
-            return self.device.write_memory(int(address), data, len(data))
-    
-    @ensure_device
-    def configure(self, hef, configure_params_by_name={}):
-        with ExceptionWrapper():
-            return self.device.configure(hef._hef, configure_params_by_name)
-
-    @ensure_device
-    def _create_c_i2c_slave(self, pythonic_slave):
-        c_slave = _pyhailort.I2CSlaveConfig()
-        c_slave.endianness = pythonic_slave.endianness
-        c_slave.slave_address = pythonic_slave.slave_address
-        c_slave.register_address_size = pythonic_slave.register_address_size
-        c_slave.bus_index = pythonic_slave.bus_index
-        return c_slave
-
-    @ensure_device
-    def i2c_write(self, pythonic_slave, register_address, data):
-        c_slave = self._create_c_i2c_slave(pythonic_slave)
-        with ExceptionWrapper():
-            return self.device.i2c_write(c_slave, register_address, data, len(data))
-
-    @ensure_device
-    def i2c_read(self, pythonic_slave, register_address, data_length):
-        c_slave = self._create_c_i2c_slave(pythonic_slave)
-        with ExceptionWrapper():
-            return self.device.i2c_read(c_slave, register_address, data_length)
-
-    @ensure_device
-    def power_measurement(self, dvm, measurement_type):
-        with ExceptionWrapper():
-            return self.device.power_measurement(dvm, measurement_type)
-    
-    @ensure_device
-    def start_power_measurement(self, averaging_factor, sampling_period):
-        with ExceptionWrapper():
-            return self.device.start_power_measurement(averaging_factor, sampling_period)
-    
-    @ensure_device
-    def set_power_measurement(self, buffer_index, dvm, measurement_type):
-        with ExceptionWrapper():
-            return self.device.set_power_measurement(buffer_index, dvm, measurement_type)
-
-    @ensure_device
-    def get_power_measurement(self, buffer_index, should_clear):
-        with ExceptionWrapper():
-            return self.device.get_power_measurement(buffer_index, should_clear)
-
-    @ensure_device
-    def stop_power_measurement(self):
-        with ExceptionWrapper():
-            return self.device.stop_power_measurement()
-    
-    @ensure_device
-    def examine_user_config(self):
-        with ExceptionWrapper():
-            return self.device.examine_user_config()
-
-    @ensure_device
-    def read_user_config(self):
-        with ExceptionWrapper():
-            return self.device.read_user_config()
-    
-    @ensure_device
-    def write_user_config(self, data):
-        with ExceptionWrapper():
-            return self.device.write_user_config(data)
-    
-    @ensure_device
-    def erase_user_config(self):
-        with ExceptionWrapper():
-            return self.device.erase_user_config()
-
-    @ensure_device
-    def read_board_config(self):
-        with ExceptionWrapper():
-            return self.device.read_board_config()
-
-    @ensure_device
-    def write_board_config(self, data):
-        with ExceptionWrapper():
-            return self.device.write_board_config(data)
-
-    @ensure_device
-    def reset(self, reset_type):
-        map_mode = {
-            HailoResetTypes.CHIP    : _pyhailort.ResetDeviceMode.CHIP,
-            HailoResetTypes.NN_CORE : _pyhailort.ResetDeviceMode.NN_CORE,
-            HailoResetTypes.SOFT : _pyhailort.ResetDeviceMode.SOFT,
-            HailoResetTypes.FORCED_SOFT : _pyhailort.ResetDeviceMode.FORCED_SOFT
-            }
-        
-        mode = map_mode[reset_type]
-        with ExceptionWrapper():
-            return self.device.reset(mode)
-
-    @ensure_device
-    def sensor_store_config(self, section_index, reset_data_size, sensor_type, config_file_path, config_height, config_width, 
-                            config_fps, config_name):
-        with ExceptionWrapper():
-            return self.device.sensor_store_config(section_index, reset_data_size, sensor_type, config_file_path, 
-                config_height, config_width, config_fps, config_name)
-
-    @ensure_device
-    def store_isp_config(self, reset_config_size, config_height, config_width, config_fps, isp_static_config_file_path, 
-                                isp_runtime_config_file_path, config_name):
-        with ExceptionWrapper():
-            return self.device.store_isp_config(reset_config_size, config_height, config_width, config_fps, 
-                isp_static_config_file_path, isp_runtime_config_file_path, config_name)
-
-    @ensure_device
-    def sensor_get_sections_info(self):
-        with ExceptionWrapper():
-            return self.device.sensor_get_sections_info()
-
-    @ensure_device
-    def sensor_set_i2c_bus_index(self, sensor_type, bus_index):
-        with ExceptionWrapper():
-            return self.device.sensor_set_i2c_bus_index(sensor_type, bus_index)
-        
-    @ensure_device
-    def sensor_load_and_start_config(self, section_index):
-        with ExceptionWrapper():
-            return self.device.sensor_load_and_start_config(section_index)
-
-    @ensure_device
-    def sensor_reset(self, section_index):
-        with ExceptionWrapper():
-            return self.device.sensor_reset(section_index)
-
-    @ensure_device
-    def sensor_set_generic_i2c_slave(self, slave_address, register_address_size, bus_index, should_hold_bus, endianness):
-        with ExceptionWrapper():
-            return self.device.sensor_set_generic_i2c_slave(slave_address, register_address_size, bus_index, should_hold_bus, endianness)
-
-    @ensure_device
-    def firmware_update(self, firmware_binary, should_reset):
-        with ExceptionWrapper():
-            return self.device.firmware_update(firmware_binary, len(firmware_binary), should_reset)
-
-    @ensure_device
-    def second_stage_update(self, second_stage_binary):
-        with ExceptionWrapper():
-            return self.device.second_stage_update(second_stage_binary, len(second_stage_binary))
-
-    @ensure_device
-    def set_pause_frames(self, rx_pause_frames_enable):
-        with ExceptionWrapper():
-            return self.device.set_pause_frames(rx_pause_frames_enable)
-
-    @ensure_device
-    def wd_enable(self, cpu_id):
-        with ExceptionWrapper():
-            return self.device.wd_enable(cpu_id)
-
-    @ensure_device
-    def wd_disable(self, cpu_id):
-        with ExceptionWrapper():
-            return self.device.wd_disable(cpu_id)
-
-    @ensure_device
-    def wd_config(self, cpu_id, wd_cycles, wd_mode):
-        with ExceptionWrapper():
-            return self.device.wd_config(cpu_id, wd_cycles, WatchdogMode(wd_mode))
-
-    @ensure_device
-    def previous_system_state(self, cpu_id):
-        with ExceptionWrapper():
-            return self.device.previous_system_state(cpu_id)
-
-    @ensure_device
-    def get_chip_temperature(self):
-        with ExceptionWrapper():
-            return self.device.get_chip_temperature()
-
-    @ensure_device
-    def get_extended_device_information(self):
-        with ExceptionWrapper():
-            response = self.device.get_extended_device_information()
-        device_information = ExtendedDeviceInformation(response.neural_network_core_clock_rate,
-            response.supported_features, response.boot_source, response.lcs, response.soc_id,  response.eth_mac_address , response.unit_level_tracking_id, response.soc_pm_values)
-        return device_information
-
-    @ensure_device
-    def _get_health_information(self):
-        with ExceptionWrapper():
-            response = self.device._get_health_information()
-        health_information = HealthInformation(response.overcurrent_protection_active, response.current_overcurrent_zone, response.red_overcurrent_threshold,
-                    response.orange_overcurrent_threshold, response.temperature_throttling_active, response.current_temperature_zone, response.current_temperature_throttling_level, 
-                    response.temperature_throttling_levels, response.orange_temperature_threshold, response.orange_hysteresis_temperature_threshold,
-                    response.red_temperature_threshold, response.red_hysteresis_temperature_threshold)
-        return health_information
-    
-    @ensure_device
-    def set_notification_callback(self, callback_func, notification_id, opaque):
-        with ExceptionWrapper():
-            self.device.set_notification_callback(callback_func, notification_id, opaque)
-
-    @ensure_device
-    def remove_notification_callback(self, notification_id):
-        with ExceptionWrapper():
-            self.device.remove_notification_callback(notification_id)
-
-    @ensure_device
-    def test_chip_memories(self):
-        """
-        Test chip memories using smart BIST mechanism.
-        """
-        with ExceptionWrapper():
-            return self.device.test_chip_memories()
-
-    @ensure_device
-    def _get_device_handle(self):
-        return self.device
 
 
 class HailoUdpScan(object):
@@ -1195,7 +878,7 @@ class InferVStreams(object):
                 continue
             nms_shape = output_buffers_info[name].vstream_info.nms_shape
             if self._tf_nms_format:
-                shape = [batch_size] + output_buffers_info[name].old_nms_fomrat_shape
+                shape = [batch_size] + output_buffers_info[name].tf_nms_fomrat_shape
                 output_dtype = output_buffers_info[name].output_dtype
                 quantized_empty_bbox = output_buffers_info[name].quantized_empty_bbox
                 flat_result_array = result_array.reshape(-1)
@@ -1937,29 +1620,26 @@ class InputVStreams(object):
 class OutputLayerUtils(object):
     def __init__(self, hef, vstream_name, pipeline, net_group_name=""):
         self._hef = hef
-        self._net_group_name = net_group_name
-        self._vstream_info = self._get_vstream_info(vstream_name)
+        self._vstream_info = self._get_vstream_info(net_group_name, vstream_name)
 
         if isinstance(pipeline, (_pyhailort.InferVStreams)):
-            # TODO: HRT-5754 - Save user buffer instead of dtype and flags.
-            self._output_dtype = pipeline.get_host_dtype(vstream_name)
+            self._user_buffer_format = pipeline.get_user_buffer_format(vstream_name)
             self._output_shape = pipeline.get_shape(vstream_name)
-            self._output_flags = pipeline.get_user_buffer_format(vstream_name).flags
         else:
-            self._output_dtype = pipeline.dtype
+            self._user_buffer_format = pipeline.get_user_buffer_format()
             self._output_shape = pipeline.shape
-            self._output_flags = pipeline.get_user_buffer_format().flags
 
-        self._is_nms = (self._vstream_info.format.order == FormatOrder.HAILO_NMS)
+        self._is_nms = (self._user_buffer_format.order == FormatOrder.HAILO_NMS)
+
         if self._is_nms:
-            self._quantized_empty_bbox = numpy.asarray([0] * BBOX_PARAMS, dtype=self._output_dtype)
-            if not (self._output_flags & _pyhailort.FormatFlags.QUANTIZED):
-                HailoRTTransformUtils.dequantize_output_buffer_in_place(self._quantized_empty_bbox, self._output_dtype,
+            self._quantized_empty_bbox = numpy.asarray([0] * BBOX_PARAMS, dtype=self.output_dtype)
+            if not (self._user_buffer_format.flags & _pyhailort.FormatFlags.QUANTIZED):
+                HailoRTTransformUtils.dequantize_output_buffer_in_place(self._quantized_empty_bbox, self.output_dtype,
                     BBOX_PARAMS, self._vstream_info.quant_info)
-    
+
     @property
     def output_dtype(self):
-        return self._output_dtype
+        return _pyhailort.get_dtype(self._user_buffer_format.type)
     
     @property
     def output_shape(self):
@@ -1972,24 +1652,28 @@ class OutputLayerUtils(object):
     @property
     def output_tensor_info(self):
         return self.output_shape, self.output_dtype
-    
+
     @property
     def is_nms(self):
         return self._is_nms
     
     @property
     def quantized_empty_bbox(self):
+        if not self.is_nms:
+            raise HailoRTException("Requested NMS info for non-NMS layer")
         return self._quantized_empty_bbox
 
-    def _get_vstream_info(self, name):
-        output_vstream_infos = self._hef.get_output_vstream_infos(self._net_group_name)
+    def _get_vstream_info(self, net_group_name, vstream_name):
+        output_vstream_infos = self._hef.get_output_vstream_infos(net_group_name)
         for info in output_vstream_infos:
-            if info.name == name:
+            if info.name == vstream_name:
                 return info
-        raise HailoRTException("No vstream matches the given name {}".format(name))
+        raise HailoRTException("No vstream matches the given name {}".format(vstream_name))
 
     @property
-    def old_nms_fomrat_shape(self):
+    def tf_nms_fomrat_shape(self):
+        if not self.is_nms:
+            raise HailoRTException("Requested NMS info for non-NMS layer")
         nms_shape = self._vstream_info.nms_shape
         return [nms_shape.number_of_classes, BBOX_PARAMS,
                 nms_shape.max_bboxes_per_class]
@@ -2041,7 +1725,7 @@ class OutputVStream(object):
             if self._tf_nms_format:
                 nms_results_tesnor = result_array
                 # We create the tf_format buffer with reversed width/features for preformance optimization
-                shape = self._output_layer_utils.old_nms_fomrat_shape
+                shape = self._output_layer_utils.tf_nms_fomrat_shape
                 result_array = numpy.empty([shape[0], shape[2], shape[1]], dtype=self._output_dtype)
                 HailoRTTransformUtils.output_raw_buffer_to_nms_tf_format_single_frame(nms_results_tesnor, result_array,
                     nms_shape.number_of_classes,

@@ -20,7 +20,7 @@ Expected<std::unique_ptr<ActivatedNetworkGroup>> HcpConfigNetworkGroup::activate
 {
     auto start_time = std::chrono::steady_clock::now();
 
-    auto activated_net_group = HcpConfigActivatedNetworkGroup::create(m_device, m_config, network_group_params,
+    auto activated_net_group = HcpConfigActivatedNetworkGroup::create(m_device, m_config, get_network_group_name(), network_group_params,
         m_input_streams, m_output_streams, m_active_net_group_holder, m_config_params.power_mode,
         m_network_group_activated_event);
     CHECK_EXPECTED(activated_net_group);
@@ -44,6 +44,35 @@ Expected<uint8_t> HcpConfigNetworkGroup::get_boundary_channel_index(uint8_t stre
 {
     return (direction == HAILO_H2D_STREAM) ? stream_index :
         static_cast<uint8_t>(stream_index + OUTPUT_CHANNEL_INDEX_OFFSET);
+}
+
+hailo_status HcpConfigNetworkGroup::set_scheduler_timeout(const std::chrono::milliseconds &timeout, const std::string &network_name)
+{
+    (void) timeout;
+    (void) network_name;
+    return HAILO_INVALID_OPERATION;
+}
+
+hailo_status HcpConfigNetworkGroup::set_scheduler_threshold(uint32_t threshold, const std::string &network_name)
+{
+    (void) threshold;
+    (void) network_name;
+    return HAILO_INVALID_OPERATION;
+}
+
+Expected<std::shared_ptr<LatencyMetersMap>> HcpConfigNetworkGroup::get_latnecy_meters()
+{
+    /* hcp does not support latnecy. return empty map */
+    LatencyMetersMap empty_map; 
+    return make_shared_nothrow<LatencyMetersMap>(empty_map);
+}
+
+Expected<std::shared_ptr<VdmaChannel>> HcpConfigNetworkGroup::get_boundary_vdma_channel_by_stream_name(
+    const std::string &stream_name)
+{
+    LOGGER__ERROR("get_boundary_vdma_channel_by_stream_name function for stream name {} is not supported in hcp config manager", 
+        stream_name);
+    return make_unexpected(HAILO_INVALID_OPERATION);
 }
 
 } /* namespace hailort */

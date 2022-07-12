@@ -611,17 +611,13 @@ hailo_status HEF_METADATA__add_network_boundary_output_edge_layer(
 }
 
 hailo_status HEF_METADATA__add_inter_context_output_edge_layer(
-        CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
-        uint8_t **edge_layer_current_offset,
-        uint8_t stream_index, 
-        uint8_t vdma_channel_index,
-        uint8_t network_index,
-        const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
-        uint32_t frame_credits_in_bytes,
-        uint64_t host_descriptors_base_address,
-        uint16_t initial_host_available_descriptors,
-        uint16_t desc_page_size,
-        uint8_t desc_list_depth)
+    CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
+    uint8_t **edge_layer_current_offset,
+    uint8_t stream_index, 
+    uint8_t vdma_channel_index,
+    uint8_t network_index,
+    const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
+    const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__inter_context_output_t *edge_layer_info = nullptr;
@@ -649,11 +645,7 @@ hailo_status HEF_METADATA__add_inter_context_output_edge_layer(
             network_index,
             nn_stream_config);
 
-    edge_layer_info->frame_credits_in_bytes = frame_credits_in_bytes;
-    edge_layer_info->host_desc_address_info.host_descriptors_base_address = host_descriptors_base_address; 
-    edge_layer_info->host_desc_address_info.initial_host_available_descriptors = initial_host_available_descriptors; 
-    edge_layer_info->desc_page_size = desc_page_size;
-    edge_layer_info->host_desc_address_info.desc_list_depth = desc_list_depth;
+    edge_layer_info->host_buffer_info = host_buffer_info;
 
     *(edge_layer_current_offset) += sizeof(*edge_layer_info);
 
@@ -669,10 +661,9 @@ hailo_status HEF_METADATA__add_ddr_buffer_output_edge_layer(
         const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
         uint32_t frame_credits_in_bytes,
         uint64_t host_descriptors_base_address,
-        uint16_t initial_host_available_descriptors,
         uint16_t desc_page_size,
         uint8_t desc_list_depth,
-        bool fw_managed_channel)
+        uint32_t buffered_rows_count)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__ddr_buffer_output_t *edge_layer_info = nullptr;
@@ -704,22 +695,22 @@ hailo_status HEF_METADATA__add_ddr_buffer_output_edge_layer(
 
     edge_layer_info->frame_credits_in_bytes = frame_credits_in_bytes;
     edge_layer_info->host_desc_address_info.host_descriptors_base_address = host_descriptors_base_address; 
-    edge_layer_info->host_desc_address_info.initial_host_available_descriptors = initial_host_available_descriptors; 
     edge_layer_info->desc_page_size = desc_page_size;
     edge_layer_info->host_desc_address_info.desc_list_depth = desc_list_depth;
-    edge_layer_info->fw_managed_channel = fw_managed_channel;
+    edge_layer_info->buffered_rows_count = buffered_rows_count;
 
     return HAILO_SUCCESS;
 }
 
 hailo_status HEF_METADATA__add_network_boundary_input_edge_layer(
-        CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
-        uint8_t **edge_layer_current_offset,
-        uint8_t stream_index, 
-        uint8_t vdma_channel_index,
-        uint8_t network_index,
-        const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
-        uint16_t desc_page_size)
+    CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
+    uint8_t **edge_layer_current_offset,
+    uint8_t stream_index, 
+    uint8_t vdma_channel_index,
+    uint8_t network_index,
+    const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
+    uint16_t desc_page_size,
+    uint32_t initial_credit_size)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__network_boundary_input_t *edge_layer_info = nullptr;
@@ -748,6 +739,7 @@ hailo_status HEF_METADATA__add_network_boundary_input_edge_layer(
             nn_stream_config);
 
     edge_layer_info->desc_page_size = desc_page_size;
+    edge_layer_info->initial_credit_size = initial_credit_size;
 
     *(edge_layer_current_offset) += sizeof(*edge_layer_info);
 
@@ -755,16 +747,14 @@ hailo_status HEF_METADATA__add_network_boundary_input_edge_layer(
 }
 
 hailo_status HEF_METADATA__add_inter_context_input_edge_layer(
-        CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
-        uint8_t **edge_layer_current_offset,
-        uint8_t stream_index, 
-        uint8_t vdma_channel_index,
-        uint8_t network_index,
-        const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
-        uint16_t context_credits_in_descriptors,
-        uint64_t host_descriptors_base_address,
-        uint8_t desc_list_depth,
-        uint16_t desc_page_size)
+    CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
+    uint8_t **edge_layer_current_offset,
+    uint8_t stream_index, 
+    uint8_t vdma_channel_index,
+    uint8_t network_index,
+    const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
+    const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info,
+    uint32_t initial_credit_size)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__inter_context_input_t *edge_layer_info = nullptr;
@@ -792,11 +782,8 @@ hailo_status HEF_METADATA__add_inter_context_input_edge_layer(
             network_index,
             nn_stream_config);
 
-    edge_layer_info->context_credits_in_descriptors = context_credits_in_descriptors;
-    edge_layer_info->host_desc_address_info.host_descriptors_base_address = host_descriptors_base_address; 
-    edge_layer_info->host_desc_address_info.initial_host_available_descriptors = 0;
-    edge_layer_info->host_desc_address_info.desc_list_depth = desc_list_depth;
-    edge_layer_info->desc_page_size = desc_page_size;
+    edge_layer_info->host_buffer_info = host_buffer_info;
+    edge_layer_info->initial_credit_size = initial_credit_size;
 
     *(edge_layer_current_offset) += sizeof(*edge_layer_info);
 
@@ -804,15 +791,15 @@ hailo_status HEF_METADATA__add_inter_context_input_edge_layer(
 }
 
 hailo_status HEF_METADATA__add_ddr_buffer_input_edge_layer(
-        CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
-        uint8_t **edge_layer_current_offset,
-        uint8_t stream_index, 
-        uint8_t vdma_channel_index,
-        uint8_t network_index,
-        const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
-        uint64_t host_descriptors_base_address,
-        uint8_t desc_list_depth,
-        bool fw_managed_channel)
+    CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
+    uint8_t **edge_layer_current_offset,
+    uint8_t stream_index, 
+    uint8_t vdma_channel_index,
+    uint8_t network_index,
+    const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
+    uint64_t host_descriptors_base_address,
+    uint8_t desc_list_depth,
+    uint32_t initial_credit_size)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__ddr_buffer_input_t *edge_layer_info = nullptr;
@@ -841,9 +828,8 @@ hailo_status HEF_METADATA__add_ddr_buffer_input_edge_layer(
             nn_stream_config);
 
     edge_layer_info->host_desc_address_info.host_descriptors_base_address = host_descriptors_base_address; 
-    edge_layer_info->host_desc_address_info.initial_host_available_descriptors = 0;
     edge_layer_info->host_desc_address_info.desc_list_depth = desc_list_depth;
-    edge_layer_info->fw_managed_channel = fw_managed_channel;
+    edge_layer_info->initial_credit_size = initial_credit_size;
 
     *(edge_layer_current_offset) += sizeof(*edge_layer_info);
 
@@ -906,6 +892,32 @@ hailo_status HEF_METADATA__add_ddr_buffering_start(
 
     memcpy((*action_data_current_offset), &ddr_buffering_start, sizeof(ddr_buffering_start));
     *(action_data_current_offset) += sizeof(ddr_buffering_start);
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status HEF_METADATA__burst_credits_task_start(
+        CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
+        uint8_t **action_data_current_offset,
+        bool is_repeated)
+{
+    hailo_status status = HAILO_UNINITIALIZED;
+    CONTROL_PROTOCOL__BURST_CREDITS_TASK_START_ACTION_T burst_credits_task_start{};
+
+    CHECK_ARG_NOT_NULL(action_data_current_offset);
+    CHECK_ARG_NOT_NULL(*action_data_current_offset);
+
+    burst_credits_task_start.header.action_type = CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_BURST_CREDITS_TASK_START;
+    burst_credits_task_start.header.is_repeated = is_repeated;
+
+    status = hef_metadata__update_slicing_info(context_info, 
+            action_data_current_offset, 
+            sizeof(burst_credits_task_start),
+            true);
+    CHECK_SUCCESS(status);
+
+    memcpy((*action_data_current_offset), &burst_credits_task_start, sizeof(burst_credits_task_start));
+    *(action_data_current_offset) += sizeof(burst_credits_task_start);
 
     return HAILO_SUCCESS;
 }

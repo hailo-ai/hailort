@@ -129,7 +129,7 @@ protected:
     // Note: Implement sync_write_all_raw_buffer_no_transform_impl for the actual stream interaction in sub classes
     virtual hailo_status sync_write_all_raw_buffer_no_transform_impl(void *buffer, size_t offset, size_t size) = 0;
 
-    virtual hailo_status activate_stream() = 0;
+    virtual hailo_status activate_stream(uint16_t dynamic_batch_size) = 0;
     virtual hailo_status deactivate_stream() = 0;
 
     virtual Expected<size_t> sync_write_raw_buffer(const MemoryView &buffer) = 0;
@@ -241,7 +241,7 @@ protected:
     OutputStream() = default;
     OutputStream(OutputStream&&);
 
-    virtual hailo_status activate_stream() = 0;
+    virtual hailo_status activate_stream(uint16_t dynamic_batch_size) = 0;
     virtual hailo_status deactivate_stream() = 0;
     virtual hailo_status read_all(MemoryView &buffer) = 0;
 

@@ -41,6 +41,11 @@ public:
 
     virtual Expected<uint8_t> get_boundary_channel_index(uint8_t stream_index, hailo_stream_direction_t direction,
         const std::string &layer_name) override;
+    virtual Expected<std::shared_ptr<LatencyMetersMap>> get_latnecy_meters() override;
+    virtual Expected<std::shared_ptr<VdmaChannel>> get_boundary_vdma_channel_by_stream_name(
+        const std::string &stream_name) override;
+    virtual hailo_status set_scheduler_timeout(const std::chrono::milliseconds &timeout, const std::string &network_name) override;
+    virtual hailo_status set_scheduler_threshold(uint32_t threshold, const std::string &network_name) override;
 
     virtual ~HcpConfigNetworkGroup() = default;
     HcpConfigNetworkGroup(const HcpConfigNetworkGroup &other) = delete;

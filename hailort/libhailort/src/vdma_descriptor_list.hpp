@@ -128,9 +128,7 @@ public:
 
     Expected<uint16_t> program_descriptors(size_t transfer_size, VdmaInterruptsDomain first_desc_interrupts_domain,
         VdmaInterruptsDomain last_desc_interrupts_domain, size_t desc_offset, bool is_circular);
-
-    Expected<uint16_t> program_descs_for_ddr_transfers(uint32_t row_size, bool should_raise_interrupt, 
-        uint32_t number_of_rows_per_intrpt, uint32_t buffered_rows, uint16_t initial_descs_offset, bool is_circular);
+    hailo_status reprogram_descriptor_interrupts_domain(size_t desc_index, VdmaInterruptsDomain interrupts_domain);
 
     uint32_t descriptors_in_buffer(size_t buffer_size) const;
     static uint32_t descriptors_in_buffer(size_t buffer_size, uint16_t desc_page_size);
@@ -145,6 +143,7 @@ private:
     uint32_t get_interrupts_bitmask(VdmaInterruptsDomain interrupts_domain);
     void program_single_descriptor(VdmaDescriptor &descriptor, uint16_t page_size,
         VdmaInterruptsDomain interrupts_domain);
+    void reprogram_single_descriptor_interrupts_domain(VdmaDescriptor &descriptor, VdmaInterruptsDomain interrupts_domain);
     static Expected<uint8_t> calculate_desc_list_depth(size_t count);
     // Note: initial_desc_page_size should be the optimal descriptor page size.
     static Expected<std::pair<uint16_t, uint32_t>> get_desc_buffer_sizes_for_single_transfer_impl(

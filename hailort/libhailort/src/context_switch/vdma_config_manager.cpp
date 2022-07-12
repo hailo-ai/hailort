@@ -67,7 +67,7 @@ VdmaConfigManager::VdmaConfigManager(std::vector<std::reference_wrapper<VdmaDevi
     : m_devices(std::move(devices)), m_net_groups(), m_net_group_wrappers(), m_is_vdevice(is_vdevice), m_network_group_scheduler(network_group_scheduler) {}
 
 Expected<ConfiguredNetworkGroupVector> VdmaConfigManager::add_hef(Hef &hef,
-    const NetworkGroupsParamsMap &configure_params)
+    const NetworkGroupsParamsMap &configure_params, bool scheduler_is_used)
 {
     auto &hef_network_groups = hef.pimpl->network_groups();
     auto current_net_group_index = static_cast<uint8_t>(m_net_groups.size());
@@ -139,16 +139,19 @@ Expected<ConfiguredNetworkGroupVector> VdmaConfigManager::add_hef(Hef &hef,
 
         // TODO: move this func into VdmaConfigNetworkGroup c'tor
         if (m_is_vdevice) {
-            status = net_group_ptr->create_vdevice_streams_from_config_params();
+            auto network_group_handle = INVALID_NETWORK_GROUP_HANDLE;
+            auto network_group_scheduler = m_network_group_scheduler.lock();
+            if (network_group_scheduler) {
+                auto network_group_handle_exp = network_group_scheduler->add_network_group(net_group_ptr);
+                CHECK_EXPECTED(network_group_handle_exp);
+                network_group_handle = network_group_handle_exp.value();
+                net_group_ptr->set_network_group_handle(network_group_handle);
+            }
+
+            status = net_group_ptr->create_vdevice_streams_from_config_params(network_group_handle);
             CHECK_SUCCESS_AS_EXPECTED(status);
         } else {
             status = net_group_ptr->create_streams_from_config_params(net_group_ptr->get_resources_managers()[0]->get_device());
-            CHECK_SUCCESS_AS_EXPECTED(status);
-        }
-
-        auto network_group_scheduler = m_network_group_scheduler.lock();
-        if (network_group_scheduler) {
-            status = network_group_scheduler->add_network_group(net_group_ptr);
             CHECK_SUCCESS_AS_EXPECTED(status);
         }
     
@@ -186,13 +189,11 @@ Expected<ConfiguredNetworkGroupVector> VdmaConfigManager::add_hef(Hef &hef,
         //     is_abbale_supported = proto_message->included_features().abbale();
         // }
 
-        const auto supported_features = m_net_groups[0]->get_resources_managers()[0]->get_supported_features();
         context_switch_info.context_switch_main_header.validation_features.is_abbale_supported = is_abbale_supported;
-        context_switch_info.context_switch_main_header.infer_features.preliminary_run_asap = supported_features.preliminary_run_asap;
         for (size_t i = 0, contexts = 0; i < m_net_groups.size(); ++i) {
             for (auto &resource_manager : m_net_groups[i]->get_resources_managers()) {
                 if (0 == strcmp(device.get().get_dev_id(), resource_manager->get_dev_id())) {
-                    auto net_group_header_exp = resource_manager->get_control_network_group_header();
+                    auto net_group_header_exp = resource_manager->get_control_network_group_header(scheduler_is_used);
                     CHECK_EXPECTED(net_group_header_exp);
                     context_switch_info.context_switch_main_header.application_header[i] = net_group_header_exp.value();
                     auto net_group_contexts = resource_manager->get_contexts();
@@ -207,13 +208,25 @@ Expected<ConfiguredNetworkGroupVector> VdmaConfigManager::add_hef(Hef &hef,
             }
         }
 
-        // Reset context_switch status
-        auto status = Control::reset_context_switch_state_machine(device.get());
-        CHECK_SUCCESS_AS_EXPECTED(status);
+        {
+            // Add instance that guards scheduler to deactivate network_group temporary
+            auto scheduler_idle_guard = NetworkGroupScheduler::create_scheduler_idle_guard();
+            if (m_is_vdevice) {
+                auto network_group_scheduler = m_network_group_scheduler.lock();
+                if (network_group_scheduler) {
+                    auto status = scheduler_idle_guard->set_scheduler(network_group_scheduler);
+                    CHECK_SUCCESS_AS_EXPECTED(status);
+                }
+            }
 
-        // Write context_switch info
-        status = Control::write_context_switch_info(device.get(), &context_switch_info);
-        CHECK_SUCCESS_AS_EXPECTED(status);
+            // Reset context_switch status
+            auto status = Control::reset_context_switch_state_machine(device.get());
+            CHECK_SUCCESS_AS_EXPECTED(status);
+
+            // Write context_switch info
+            status = Control::write_context_switch_info(device.get(), &context_switch_info);
+            CHECK_SUCCESS_AS_EXPECTED(status);
+        }
     }
 
     return added_network_groups;

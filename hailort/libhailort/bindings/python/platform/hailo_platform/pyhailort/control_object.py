@@ -2,14 +2,21 @@
 
 """Control operations for the Hailo hardware device."""
 import struct
+import sys
+import signal
+
 from builtins import object
 from abc import ABCMeta, abstractmethod
 from future.utils import with_metaclass
 
-from hailo_platform.pyhailort.hailo_control_protocol import HailoResetTypes, DeviceArchitectureTypes
-from hailo_platform.pyhailort.power_measurement import SamplingPeriod, AveragingFactor, DvmTypes, PowerMeasurementTypes, MeasurementBufferIndex, _get_buffer_index_enum_member
-from hailo_platform.pyhailort.pyhailort import Control, InternalPcieDevice
 from hailo_platform.common.logger.logger import default_logger
+
+from hailo_platform.pyhailort.hailo_control_protocol import BoardInformation, CoreInformation, DeviceArchitectureTypes, ExtendedDeviceInformation, HealthInformation
+from hailo_platform.pyhailort.power_measurement import SamplingPeriod, AveragingFactor, DvmTypes, PowerMeasurementTypes, MeasurementBufferIndex, _get_buffer_index_enum_member
+from hailo_platform.pyhailort.pyhailort import InternalPcieDevice, ExceptionWrapper
+
+import hailo_platform.pyhailort._pyhailort as _pyhailort
+
 
 class ControlObjectException(Exception):
     """Raised on illegal ContolObject operation."""
@@ -26,7 +33,10 @@ class HailoControl(with_metaclass(ABCMeta, object)):
     def __init__(self):
         """Initializes a new HailoControl object."""
         self._logger = default_logger()
-        self._controller = None
+        self._device = None
+
+        if sys.platform != "win32":
+            signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGWINCH])
 
     @abstractmethod
     def open(self):
@@ -49,7 +59,8 @@ class HailoControl(with_metaclass(ABCMeta, object)):
                 configure_params. In case of a mismatch with net_groups_names, default params will
                 be used.
         """     
-        return self._controller.configure(hef, configure_params_by_name)
+        with ExceptionWrapper():
+            return self._device.configure(hef._hef, configure_params_by_name)
 
     @abstractmethod
     def chip_reset(self):
@@ -110,19 +121,23 @@ class HcpControl(HailoControl):
 
     def chip_reset(self):
         """Resets the device (chip reset)."""
-        return self._controller.reset(reset_type=HailoResetTypes.CHIP)
+        with ExceptionWrapper():
+            return self._device.reset(_pyhailort.ResetDeviceMode.CHIP)
 
     def nn_core_reset(self):
         """Resets the nn_core."""
-        return self._controller.reset(reset_type=HailoResetTypes.NN_CORE)
+        with ExceptionWrapper():
+            return self._device.reset(_pyhailort.ResetDeviceMode.NN_CORE)
 
     def soft_reset(self):
         """reloads the device firmware (soft reset)"""
-        return self._controller.reset(reset_type=HailoResetTypes.SOFT)
+        with ExceptionWrapper():
+            return self._device.reset(_pyhailort.ResetDeviceMode.SOFT)
         
     def forced_soft_reset(self):
         """reloads the device firmware (forced soft reset)"""
-        return self._controller.reset(reset_type=HailoResetTypes.FORCED_SOFT) 
+        with ExceptionWrapper():
+            return self._device.reset(_pyhailort.ResetDeviceMode.FORCED_SOFT)
 
     def read_memory(self, address, data_length):
         """Reads memory from the Hailo chip. Byte order isn't changed. The core uses little-endian
@@ -135,7 +150,8 @@ class HcpControl(HailoControl):
         Returns:
             list of str: Memory read from the chip, each index in the list is a byte
         """
-        return self._controller.read_memory(address, data_length)
+        with ExceptionWrapper():
+            return self._device.read_memory(address, data_length)
 
     def write_memory(self, address, data_buffer):
         """Write memory to Hailo chip. Byte order isn't changed. The core uses little-endian byte
@@ -145,7 +161,8 @@ class HcpControl(HailoControl):
             address (int): Physical address to write to.
             data_buffer (list of str): Data to write.
         """
-        return self._controller.write_memory(address, data_buffer)
+        with ExceptionWrapper():
+            return self._device.write_memory(address, data_buffer, len(data_buffer))
 
     def power_measurement(self, dvm=DvmTypes.AUTO, measurement_type=PowerMeasurementTypes.AUTO):
         """Perform a single power measurement on an Hailo chip. It works with the default settings
@@ -179,7 +196,8 @@ class HcpControl(HailoControl):
         """
         if self.device_id.device_architecture != DeviceArchitectureTypes.HAILO8_B0:
             raise ControlObjectException("Invalid device architecture: {}".format(self.device_id.device_architecture))
-        return self._controller.power_measurement(dvm, measurement_type)
+        with ExceptionWrapper():
+            return self._device.power_measurement(dvm, measurement_type)
 
     def start_power_measurement(self, delay=None, averaging_factor=AveragingFactor.AVERAGE_256, sampling_period=SamplingPeriod.PERIOD_1100us):
         """Start performing a long power measurement.
@@ -200,7 +218,8 @@ class HcpControl(HailoControl):
         # TODO: Remove deprecated arg
         if delay is not None:
             self._logger.warning("Passing 'delay' to 'start_power_measurement()' is deprecated and will be removed in future versions")
-        return self._controller.start_power_measurement(averaging_factor, sampling_period)
+        with ExceptionWrapper():
+            return self._device.start_power_measurement(averaging_factor, sampling_period)
 
     def stop_power_measurement(self):
         """Stop performing a long power measurement. Deletes all saved results from the firmware.
@@ -208,7 +227,8 @@ class HcpControl(HailoControl):
         and returns to the default values, so the sensor will return a new value every 2.2 ms
         without averaging values.
         """
-        return self._controller.stop_power_measurement()
+        with ExceptionWrapper():
+            return self._device.stop_power_measurement()
 
     def set_power_measurement(self, buffer_index=MeasurementBufferIndex.MEASUREMENT_BUFFER_INDEX_0, dvm=DvmTypes.AUTO, measurement_type=PowerMeasurementTypes.AUTO):
         """Set parameters for long power measurement on an Hailo chip.
@@ -236,7 +256,8 @@ class HcpControl(HailoControl):
             self._logger.warning("Passing integer as 'buffer_index' to 'set_power_measurement()' is deprecated. One should pass "
                 ":class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex` as 'buffer_index' instead.")
             buffer_index = _get_buffer_index_enum_member(buffer_index)
-        return self._controller.set_power_measurement(buffer_index, dvm, measurement_type)
+        with ExceptionWrapper():
+            return self._device.set_power_measurement(buffer_index, dvm, measurement_type)
 
     def get_power_measurement(self, buffer_index=MeasurementBufferIndex.MEASUREMENT_BUFFER_INDEX_0, should_clear=True):
         """Read measured power from a long power measurement
@@ -267,12 +288,12 @@ class HcpControl(HailoControl):
             self._logger.warning("Passing integer as 'buffer_index' to 'get_power_measurement()' is deprecated. One should pass "
                 ":class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex` as 'buffer_index' instead.")
             buffer_index = _get_buffer_index_enum_member(buffer_index)
-        return self._controller.get_power_measurement(
-            buffer_index,
-            should_clear=should_clear)
+        with ExceptionWrapper():
+            return self._device.get_power_measurement(buffer_index, should_clear)
 
     def _examine_user_config(self):
-        return self._controller.examine_user_config()
+        with ExceptionWrapper():
+            return self._device.examine_user_config()
     
     def read_user_config(self):
         """Read the user configuration section as binary data.
@@ -280,7 +301,8 @@ class HcpControl(HailoControl):
         Returns:
             str: User config as a binary buffer.
         """
-        return self._controller.read_user_config()
+        with ExceptionWrapper():
+            return self._device.read_user_config()
 
     def write_user_config(self, configuration):
         """Write the user configuration.
@@ -288,10 +310,12 @@ class HcpControl(HailoControl):
         Args:
             configuration (str): A binary representation of a Hailo device configuration.
         """
-        return self._controller.write_user_config(configuration)
+        with ExceptionWrapper():
+            return self._device.write_user_config(configuration)
     
     def _erase_user_config(self):
-        return self._controller.erase_user_config()
+        with ExceptionWrapper():
+            return self._device.erase_user_config()
     
     def read_board_config(self):
         """Read the board configuration section as binary data.
@@ -299,7 +323,8 @@ class HcpControl(HailoControl):
         Returns:
             str: Board config as a binary buffer.
         """
-        return self._controller.read_board_config()
+        with ExceptionWrapper():
+            return self._device.read_board_config()
 
     def write_board_config(self, configuration):
         """Write the static confuration.
@@ -307,7 +332,8 @@ class HcpControl(HailoControl):
         Args:
             configuration (str): A binary representation of a Hailo device configuration.
         """
-        return self._controller.write_board_config(configuration)
+        with ExceptionWrapper():
+            return self._device.write_board_config(configuration)
 
     def identify(self):
         """Gets the Hailo chip identification.
@@ -315,7 +341,13 @@ class HcpControl(HailoControl):
         Returns:
             class HailoIdentifyResponse with Protocol version.
         """
-        return self._controller.identify()
+        with ExceptionWrapper():
+            response =  self._device.identify()
+        board_information = BoardInformation(response.protocol_version, response.fw_version.major,
+            response.fw_version.minor, response.fw_version.revision, response.logger_version,
+            response.board_name, response.is_release,  int(response.device_architecture), response.serial_number,
+            response.part_number, response.product_name)
+        return board_information
 
     def core_identify(self):
         """Gets the Core Hailo chip identification.
@@ -323,7 +355,11 @@ class HcpControl(HailoControl):
         Returns:
             class HailoIdentifyResponse with Protocol version.
         """
-        return self._controller.core_identify()
+        with ExceptionWrapper():
+            response =  self._device.core_identify()
+        core_information = CoreInformation(response.fw_version.major, response.fw_version.minor, 
+            response.fw_version.revision, response.is_release)
+        return core_information
 
     def set_fw_logger(self, level, interface_mask):
         """Configure logger level and interface of sending.
@@ -332,7 +368,8 @@ class HcpControl(HailoControl):
             level (FwLoggerLevel):    The minimum logger level.
             interface_mask (int):     Output interfaces (mix of FwLoggerInterface).
         """
-        return self._controller.set_fw_logger(level, interface_mask)
+        with ExceptionWrapper():
+            return self._device.set_fw_logger(level, interface_mask)
 
     def set_throttling_state(self, should_activate):
         """Change throttling state of temperature protection component.
@@ -340,7 +377,8 @@ class HcpControl(HailoControl):
         Args:
             should_activate (bool):   Should be true to enable or false to disable. 
         """
-        return self._controller.set_throttling_state(should_activate)
+        with ExceptionWrapper():
+            return self._device.set_throttling_state(should_activate)
 
     def get_throttling_state(self):
         """Get the current throttling state of temperature protection component.
@@ -348,7 +386,8 @@ class HcpControl(HailoControl):
         Returns:
             bool: true if temperature throttling is enabled, false otherwise.
         """
-        return self._controller.get_throttling_state()
+        with ExceptionWrapper():
+            return self._device.get_throttling_state()
 
     def _set_overcurrent_state(self, should_activate):
         """Control whether the overcurrent protection is enabled or disabled.
@@ -356,7 +395,8 @@ class HcpControl(HailoControl):
         Args:
             should_activate (bool):   Should be true to enable or false to disable. 
         """
-        return self._controller._set_overcurrent_state(should_activate)
+        with ExceptionWrapper():
+            return self._device._set_overcurrent_state(should_activate)
 
     def _get_overcurrent_state(self):
         """Get the overcurrent protection state.
@@ -364,7 +404,17 @@ class HcpControl(HailoControl):
         Returns:
             bool: true if overcurrent protection is enabled, false otherwise.
         """
-        return self._controller._get_overcurrent_state()
+        with ExceptionWrapper():
+            return self._device._get_overcurrent_state()
+
+    @staticmethod
+    def _create_c_i2c_slave(pythonic_slave):
+        c_slave = _pyhailort.I2CSlaveConfig()
+        c_slave.endianness = pythonic_slave.endianness
+        c_slave.slave_address = pythonic_slave.slave_address
+        c_slave.register_address_size = pythonic_slave.register_address_size
+        c_slave.bus_index = pythonic_slave.bus_index
+        return c_slave
 
     def i2c_write(self, slave, register_address, data):
         """Write data to an I2C slave.
@@ -375,7 +425,9 @@ class HcpControl(HailoControl):
             register_address (int): The address of the register to which the data will be written.
             data (str): The data that will be written.
         """
-        return self._controller.i2c_write(slave, register_address, data)
+        c_slave = HcpControl._create_c_i2c_slave(slave)
+        with ExceptionWrapper():
+            return self._device.i2c_write(c_slave, register_address, data, len(data))
         
     def i2c_read(self, slave, register_address, data_length):
         """Read data from an I2C slave.
@@ -389,7 +441,9 @@ class HcpControl(HailoControl):
         Returns:
             str: Data read from the I2C slave.
         """
-        return self._controller.i2c_read(slave, register_address, data_length)
+        c_slave = HcpControl._create_c_i2c_slave(slave)
+        with ExceptionWrapper():
+            return self._device.i2c_read(c_slave, register_address, data_length)
         
     def read_register(self, address):
         """Read the value of a register from a given address.
@@ -432,7 +486,8 @@ class HcpControl(HailoControl):
             firmware_binary (bytes): firmware binary stream.
             should_reset (bool): Should a reset be performed after the update (to load the new firmware)
         """
-        return self._controller.firmware_update(firmware_binary, should_reset)
+        with ExceptionWrapper():
+            return self._device.firmware_update(firmware_binary, len(firmware_binary), should_reset)
 
     def second_stage_update(self, second_stage_binary):
         """Update second stage binary on the flash
@@ -440,7 +495,8 @@ class HcpControl(HailoControl):
         Args:
             second_stage_binary (bytes): second stage binary stream.
         """
-        return self._controller.second_stage_update(second_stage_binary)
+        with ExceptionWrapper():
+            return self._device.second_stage_update(second_stage_binary, len(second_stage_binary))
 
     def store_sensor_config(self, section_index, reset_data_size, sensor_type, config_file_path,
                             config_height=0, config_width=0, config_fps=0, config_name=None):
@@ -460,7 +516,8 @@ class HcpControl(HailoControl):
         if config_name is None:
             config_name = "UNINITIALIZED"
 
-        return self._controller.sensor_store_config(section_index, reset_data_size, sensor_type, config_file_path,
+        with ExceptionWrapper():
+            return self._device.sensor_store_config(section_index, reset_data_size, sensor_type, config_file_path,
             config_height, config_width, config_fps, config_name)
     
     def store_isp_config(self, reset_config_size, isp_static_config_file_path, isp_runtime_config_file_path,
@@ -479,7 +536,8 @@ class HcpControl(HailoControl):
         if config_name is None:
             config_name = "UNINITIALIZED"
 
-        return self._controller.store_isp_config(reset_config_size, config_height, config_width, 
+        with ExceptionWrapper():
+            return self._device.store_isp_config(reset_config_size, config_height, config_width, 
             config_fps, isp_static_config_file_path, isp_runtime_config_file_path, config_name)
 
     def get_sensor_sections_info(self):
@@ -488,7 +546,8 @@ class HcpControl(HailoControl):
         Returns:
             Sensor sections info read from the chip flash memory.
         """
-        return self._controller.sensor_get_sections_info()
+        with ExceptionWrapper():
+            return self._device.sensor_get_sections_info()
     
     def sensor_set_generic_i2c_slave(self, slave_address, register_address_size, bus_index, should_hold_bus, endianness):
         """Set a generic I2C slave for sensor usage.
@@ -502,7 +561,8 @@ class HcpControl(HailoControl):
             endianness (:class:`~hailo_platform.pyhailort.pyhailort.Endianness`):
                 Big or little endian.
         """
-        return self._controller.sensor_set_generic_i2c_slave(slave_address, register_address_size, bus_index, should_hold_bus, endianness)
+        with ExceptionWrapper():
+            return self._device.sensor_set_generic_i2c_slave(slave_address, register_address_size, bus_index, should_hold_bus, endianness)
 
     def set_sensor_i2c_bus_index(self, sensor_type, i2c_bus_index):
         """Set the I2C bus to which the sensor of the specified type is connected.
@@ -511,7 +571,8 @@ class HcpControl(HailoControl):
             sensor_type (:class:`~hailo_platform.pyhailort.pyhailort.SensorConfigTypes`): The sensor type.
             i2c_bus_index (int): The I2C bus index of the sensor.
         """
-        return self._controller.sensor_set_i2c_bus_index(sensor_type, i2c_bus_index)
+        with ExceptionWrapper():
+            return self._device.sensor_set_i2c_bus_index(sensor_type, i2c_bus_index)
 
     def load_and_start_sensor(self, section_index):
         """Load the configuration with I2C in the section index.
@@ -519,7 +580,8 @@ class HcpControl(HailoControl):
         Args:
             section_index (int): Flash section index to load config from. [0-6]
         """
-        return self._controller.sensor_load_and_start_config(section_index)
+        with ExceptionWrapper():
+            return self._device.sensor_load_and_start_config(section_index)
 
     def reset_sensor(self, section_index):
         """Reset the sensor that is related to the section index config.
@@ -527,7 +589,8 @@ class HcpControl(HailoControl):
         Args:
             section_index (int): Flash section index to reset. [0-6]
         """
-        return self._controller.sensor_reset(section_index)
+        with ExceptionWrapper():
+            return self._device.sensor_reset(section_index)
 
     def wd_enable(self, cpu_id):
         """Enable firmware watchdog.
@@ -535,7 +598,8 @@ class HcpControl(HailoControl):
         Args:
             cpu_id (:class:`~hailo_platform.pyhailort.pyhailort.HailoCpuId`): 0 for App CPU, 1 for Core CPU.
         """
-        self._controller.wd_enable(cpu_id)
+        with ExceptionWrapper():
+            return self._device.wd_enable(cpu_id)
 
     def wd_disable(self, cpu_id):
         """Disable firmware watchdog.
@@ -543,7 +607,8 @@ class HcpControl(HailoControl):
         Args:
             cpu_id (:class:`~hailo_platform.pyhailort.pyhailort.HailoCpuId`): 0 for App CPU, 1 for Core CPU.
         """
-        self._controller.wd_disable(cpu_id)
+        with ExceptionWrapper():
+            return self._device.wd_disable(cpu_id)
 
     def wd_config(self, cpu_id, wd_cycles, wd_mode):
         """Configure a firmware watchdog.
@@ -553,7 +618,8 @@ class HcpControl(HailoControl):
             wd_cycles (int): number of cycles until watchdog is triggered.
             wd_mode (int): 0 - HW/SW mode, 1 -  HW only mode
         """
-        return self._controller.wd_config(cpu_id, wd_cycles, wd_mode)
+        with ExceptionWrapper():
+            return self._device.wd_config(cpu_id, wd_cycles, wd_mode)
 
     def previous_system_state(self, cpu_id):
         """Read the FW previous system state.
@@ -561,7 +627,8 @@ class HcpControl(HailoControl):
         Args:
             cpu_id (:class:`~hailo_platform.pyhailort.pyhailort.HailoCpuId`): 0 for App CPU, 1 for Core CPU.
         """
-        return self._controller.previous_system_state(cpu_id)
+        with ExceptionWrapper():
+            return self._device.previous_system_state(cpu_id)
 
     def get_chip_temperature(self):
         """Returns the latest temperature measurements from the 2 internal temperature sensors of the Hailo chip.
@@ -571,13 +638,24 @@ class HcpControl(HailoControl):
              Temperature in celsius of the 2 internal temperature sensors (TS), and a sample
              count (a running 16-bit counter)
         """
-        return self._controller.get_chip_temperature()
+        with ExceptionWrapper():
+            return self._device.get_chip_temperature()
 
     def get_extended_device_information(self):
-        return self._controller.get_extended_device_information()
+        with ExceptionWrapper():
+            response = self._device.get_extended_device_information()
+        device_information = ExtendedDeviceInformation(response.neural_network_core_clock_rate,
+            response.supported_features, response.boot_source, response.lcs, response.soc_id,  response.eth_mac_address , response.unit_level_tracking_id, response.soc_pm_values)
+        return device_information
 
     def _get_health_information(self):
-        return self._controller._get_health_information()
+        with ExceptionWrapper():
+            response = self._device._get_health_information()
+        health_information = HealthInformation(response.overcurrent_protection_active, response.current_overcurrent_zone, response.red_overcurrent_threshold,
+                    response.orange_overcurrent_threshold, response.temperature_throttling_active, response.current_temperature_zone, response.current_temperature_throttling_level, 
+                    response.temperature_throttling_levels, response.orange_temperature_threshold, response.orange_hysteresis_temperature_threshold,
+                    response.red_temperature_threshold, response.red_hysteresis_temperature_threshold)
+        return health_information
 
     def set_pause_frames(self, rx_pause_frames_enable):
         """Enable/Disable Pause frames.
@@ -585,16 +663,18 @@ class HcpControl(HailoControl):
         Args:
             rx_pause_frames_enable (bool): False for disable, True for enable.
         """
-        self._controller.set_pause_frames(rx_pause_frames_enable)
+        with ExceptionWrapper():
+            return self._device.set_pause_frames(rx_pause_frames_enable)
 
     def test_chip_memories(self):
         """test all chip memories using smart BIST
 
         """
-        self._controller.test_chip_memories()
+        with ExceptionWrapper():
+            return self._device.test_chip_memories()
 
     def _get_device_handle(self):
-        return self._controller._get_device_handle()
+        return self._device
 
 class UdpHcpControl(HcpControl):
     """Control object that uses a HCP over UDP controller interface."""
@@ -612,12 +692,14 @@ class UdpHcpControl(HcpControl):
 
         # In the C API we define the total amount of attempts, instead of the amount of retries.
         max_number_of_attempts = retries + 1
-        self._controller = Control(Control.Type.ETH, remote_ip, remote_control_port, response_timeout_seconds=response_timeout_seconds, max_number_of_attempts=max_number_of_attempts)
-        self.set_udp_device(device)
+        response_timeout_milliseconds = int(response_timeout_seconds * 1000)
+        if device is None:
+            with ExceptionWrapper():
+                self.device = _pyhailort.Device.create_eth(remote_ip, remote_control_port,
+                    response_timeout_milliseconds, max_number_of_attempts)
+        else:
+            self._device = device.device
         self._device_id = self.identify()
-
-    def set_udp_device(self, device):
-        self._controller.set_device(device)
 
 
 class PcieHcpControl(HcpControl):
@@ -629,20 +711,13 @@ class PcieHcpControl(HcpControl):
 
         if device_info is None:
             device_info = InternalPcieDevice.scan_devices()[0]
-        
-        self._controller = Control(Control.Type.PCIE, None, None, pcie_device_info=device_info)
-        self.set_pcie_device(device)
+
+        if device is None:
+            with ExceptionWrapper():
+                self._device = _pyhailort.Device.create_pcie(device_info)
+        else:
+            self._device = device.device
         self._device_id = self.identify()
-
-    def release(self):
-        if self._controller is None:
-            return
-        self._controller.release()
-        self._controller = None
-
-    def set_pcie_device(self, pcie_device):
-        """Prepare the pcie device to be used after creating it."""
-        self._controller.set_device(pcie_device)
     
     def set_notification_callback(self, callback_func, notification_id, opaque):
         """Set a callback function to be called when a notification is received.
@@ -657,7 +732,8 @@ class PcieHcpControl(HcpControl):
             The notifications thread is started and closed in the use_device() context, so
             notifications can only be received there.
         """
-        return self._controller.set_notification_callback(callback_func, notification_id, opaque)
+        with ExceptionWrapper():
+            return self._device.set_notification_callback(callback_func, notification_id, opaque)
 
     def remove_notification_callback(self, notification_id):
         """Remove a notification callback which was already set.
@@ -665,4 +741,5 @@ class PcieHcpControl(HcpControl):
         Args:
             notification_id (NotificationId): Notification ID to remove the callback from.
         """
-        return self._controller.remove_notification_callback(notification_id)
+        with ExceptionWrapper():
+            return self._device.remove_notification_callback(notification_id)

@@ -372,8 +372,7 @@ public:
         .def("reset_rate_limit", &TrafficControlUtilWrapper::reset_rate_limit)
         .def_static("get_interface_name", [](const std::string &ip) {
             return TrafficControlUtilWrapper::get_interface_name(ip);
-        });
-        ;
+        })
         ;
     }
 
@@ -420,6 +419,7 @@ PYBIND11_MODULE(_pyhailort, m) {
     m.def("quantize_input_buffer", &quantize_input_buffer);
 
     m.def("get_format_data_bytes", &HailoRTCommon::get_format_data_bytes);
+    m.def("get_dtype", &HailoRTBindingsCommon::get_dtype);
 
     py::class_<hailo_pcie_device_info_t>(m, "PcieDeviceInfo")
         .def(py::init<>())
@@ -695,12 +695,40 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_readwrite("height", &hailo_3d_image_shape_t::height)
         .def_readwrite("width", &hailo_3d_image_shape_t::width)
         .def_readwrite("features", &hailo_3d_image_shape_t::features)
+        .def(py::pickle(
+            [](const hailo_3d_image_shape_t &shape) { // __getstate__
+                return py::make_tuple(
+                    shape.height,
+                    shape.width,
+                    shape.features);
+            },
+            [](py::tuple t) { // __setstate__
+                hailo_3d_image_shape_t shape;
+                shape.height = t[0].cast<uint32_t>();
+                shape.width = t[1].cast<uint32_t>();
+                shape.features = t[2].cast<uint32_t>();
+                return shape;
+            }
+        ))
         ;
 
     py::class_<hailo_nms_shape_t>(m, "NmsShape")
         .def(py::init<>())
         .def_readonly("number_of_classes", &hailo_nms_shape_t::number_of_classes)
         .def_readonly("max_bboxes_per_class", &hailo_nms_shape_t::max_bboxes_per_class)
+        .def(py::pickle(
+            [](const hailo_nms_shape_t &nms_shape) { // __getstate__
+                return py::make_tuple(
+                    nms_shape.number_of_classes,
+                    nms_shape.max_bboxes_per_class);
+            },
+            [](py::tuple t) { // __setstate__
+                hailo_nms_shape_t nms_shape;
+                nms_shape.number_of_classes = t[0].cast<uint32_t>();
+                nms_shape.max_bboxes_per_class = t[1].cast<uint32_t>();
+                return nms_shape;
+            }
+        ))
         ;
 
     py::class_<hailo_nms_info_t>(m, "NmsInfo")
@@ -776,6 +804,23 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_readwrite("qp_scale", &hailo_quant_info_t::qp_scale)
         .def_readwrite("limvals_min", &hailo_quant_info_t::limvals_min)
         .def_readwrite("limvals_max", &hailo_quant_info_t::limvals_max)
+        .def(py::pickle(
+            [](const hailo_quant_info_t &quant_info) { // __getstate__
+                return py::make_tuple(
+                    quant_info.qp_zp,
+                    quant_info.qp_scale,
+                    quant_info.limvals_min,
+                    quant_info.limvals_max);
+            },
+            [](py::tuple t) { // __setstate__
+                hailo_quant_info_t quant_info;
+                quant_info.qp_zp = t[0].cast<float32_t>();
+                quant_info.qp_scale = t[1].cast<float32_t>();
+                quant_info.limvals_min = t[2].cast<float32_t>();
+                quant_info.limvals_max = t[3].cast<float32_t>();
+                return quant_info;
+            }
+        ))
         ;
 
     py::enum_<hailo_mipi_pixels_per_clock_t>(m, "MipiPixelsPerClock")
@@ -1149,6 +1194,43 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def("__repr__", [](const hailo_vstream_info_t &self) {
             return std::string("VStreamInfo(\"") + std::string(self.name) + std::string("\")");
         })
+        .def(py::pickle(
+            [](const hailo_vstream_info_t &vstream_info) { // __getstate__
+                if (HAILO_FORMAT_ORDER_HAILO_NMS == vstream_info.format.order) {
+                    return py::make_tuple(
+                        vstream_info.name,
+                        vstream_info.network_name,
+                        vstream_info.direction,
+                        vstream_info.format,
+                        vstream_info.nms_shape,
+                        vstream_info.quant_info);
+                }
+                else {
+                    return py::make_tuple(
+                        vstream_info.name,
+                        vstream_info.network_name,
+                        vstream_info.direction,
+                        vstream_info.format,
+                        vstream_info.shape,
+                        vstream_info.quant_info);
+                }
+            },
+            [](py::tuple t) { // __setstate__
+                hailo_vstream_info_t vstream_info;
+                strcpy(vstream_info.name, t[0].cast<std::string>().c_str());
+                strcpy(vstream_info.network_name, t[1].cast<std::string>().c_str());
+                vstream_info.direction = t[2].cast<hailo_stream_direction_t>();
+                vstream_info.format = t[3].cast<hailo_format_t>();
+                if (HAILO_FORMAT_ORDER_HAILO_NMS == vstream_info.format.order) {
+                    vstream_info.nms_shape = t[4].cast<hailo_nms_shape_t>();
+                }
+                else {
+                    vstream_info.shape = t[4].cast<hailo_3d_image_shape_t>();
+                }
+                vstream_info.quant_info = t[5].cast<hailo_quant_info_t>();
+                return vstream_info;
+            }
+        ))
         ;
 
     py::class_<hailo_stream_info_t>(m, "StreamInfo", py::module_local())

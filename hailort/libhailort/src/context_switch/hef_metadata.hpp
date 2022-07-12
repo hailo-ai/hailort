@@ -303,13 +303,7 @@ hailo_status HEF_METADATA__add_network_boundary_output_edge_layer(
  * @param[in]     vdma_channel_index - channel index
  * @param[in]     network_index - network index 
  * @param[in]     nn_stream_config
- * @param[in]     frame_credits_in_bytes - context credits in bytes
- * @param[in]     host_descriptors_base_address - host descritpors base address
- * @param[in]     initial_host_available_descriptors - initial host available descriptors, initialized by the FW once new context
- *                start
- * @param[in]     desc_page_size - descriptor page_size in bytes
- * @param[in]     desc_list_depth - descriptor list depth
- * 
+ * @param[in]     host_buffer_info - info about host buffer
  */
 hailo_status HEF_METADATA__add_inter_context_output_edge_layer(
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
@@ -318,11 +312,7 @@ hailo_status HEF_METADATA__add_inter_context_output_edge_layer(
     uint8_t vdma_channel_index, 
     uint8_t network_index,
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
-    uint32_t frame_credits_in_bytes,
-    uint64_t host_descriptors_base_address,
-    uint16_t initial_host_available_descriptors,
-    uint16_t desc_page_size,
-    uint8_t desc_list_depth);
+    const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info);
 
 /**
  * build edge layer - vdma DDR buffer output
@@ -335,11 +325,9 @@ hailo_status HEF_METADATA__add_inter_context_output_edge_layer(
  * @param[in]     nn_stream_config
  * @param[in]     frame_credits_in_bytes - context credits in bytes
  * @param[in]     host_descriptors_base_address - host descritpors base address
- * @param[in]     initial_host_available_descriptors - initial host available descriptors, initialized by the FW once new context
- *                start
  * @param[in]     desc_page_size - descriptor page_size in bytes
  * @param[in]     desc_list_depth - descriptor list depth
- * @param[in]     fw_managed_channel - descriptor list depth
+ * @param[in]     buffered_rows_count - amount of rows to buffer.
  *
  */
 hailo_status HEF_METADATA__add_ddr_buffer_output_edge_layer(
@@ -351,10 +339,9 @@ hailo_status HEF_METADATA__add_ddr_buffer_output_edge_layer(
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
     uint32_t frame_credits_in_bytes,
     uint64_t host_descriptors_base_address,
-    uint16_t initial_host_available_descriptors,
     uint16_t desc_page_size,
     uint8_t desc_list_depth,
-    bool fw_managed_channel);
+    uint32_t buffered_rows_count);
 
 /**
  * build edge layer - vdma network boundary input
@@ -366,6 +353,7 @@ hailo_status HEF_METADATA__add_ddr_buffer_output_edge_layer(
  * @param[in]     network_index - network index 
  * @param[in]     nn_stream_config
  * @param[in]     desc_page_size - desc page size in bytes
+ * @param[in]     initial_credit_size - initial credit size, if 0 is set the firmware takes its default value.
  *
  */
 hailo_status HEF_METADATA__add_network_boundary_input_edge_layer(
@@ -375,7 +363,8 @@ hailo_status HEF_METADATA__add_network_boundary_input_edge_layer(
     uint8_t vdma_channel_index, 
     uint8_t network_index,
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
-    uint16_t desc_page_size);
+    uint16_t desc_page_size,
+    uint32_t initial_credit_size);
 
 /**
  * build edge layer - vdma intermediate buffer input
@@ -386,9 +375,8 @@ hailo_status HEF_METADATA__add_network_boundary_input_edge_layer(
  * @param[in]     vdma_channel_index - channel index
  * @param[in]     network_index - network index 
  * @param[in]     nn_stream_config
- * @param[in]     context_credits_in_descriptors - context credits in descriptors
- * @param[in]     host_descriptors_base_address - host descritpors base address
- * @param[in]     desc_page_size - desc page size in bytes
+ * @param[in]     host_buffer_info - info about host buffer
+ * @param[in]     initial_credit_size - initial credit size, if 0 is set the firmware takes its default value.
  *
  */
 hailo_status HEF_METADATA__add_inter_context_input_edge_layer(
@@ -398,10 +386,8 @@ hailo_status HEF_METADATA__add_inter_context_input_edge_layer(
     uint8_t vdma_channel_index, 
     uint8_t network_index,
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
-    uint16_t context_credits_in_descriptors,
-    uint64_t host_descriptors_base_address,
-    uint8_t desc_list_depth,
-    uint16_t desc_page_size);
+    const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info,
+    uint32_t initial_credit_size);
 
 /**
  * build edge layer - vdma ddr buffer input
@@ -412,11 +398,9 @@ hailo_status HEF_METADATA__add_inter_context_input_edge_layer(
  * @param[in]     vdma_channel_index - channel index
  * @param[in]     network_index - network index 
  * @param[in]     nn_stream_config
- * @param[in]     context_credits_in_descriptors - context credits in descriptors
  * @param[in]     host_descriptors_base_address - host descritpors base address
  * @param[in]     desc_list_depth - descriptor list depth
- * @param[in]     fw_managed_channel - descriptor list depth
- *
+ * @param[in]     initial_credit_size - initial credit size, if 0 is set the firmware takes its default value.
  */
 hailo_status HEF_METADATA__add_ddr_buffer_input_edge_layer(
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
@@ -427,7 +411,7 @@ hailo_status HEF_METADATA__add_ddr_buffer_input_edge_layer(
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
     uint64_t host_descriptors_base_address,
     uint8_t desc_list_depth,
-    bool fw_managed_channel);
+    uint32_t initial_credit_size);
 
 /**
  * Build add ddr pair info action
@@ -450,6 +434,7 @@ hailo_status HEF_METADATA__add_ddr_pair_info(
     const uint32_t descriptors_per_frame,
     const uint16_t programmed_descriptors_count,
     bool is_repeated);
+
 /**
  * Build add ddr buffering start
  *
@@ -463,6 +448,20 @@ hailo_status HEF_METADATA__add_ddr_buffering_start(
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
     uint8_t **action_data_current_offset,
     bool is_repeated);
+
+/**
+ * Build add burst credits task start
+ *
+ * @param[in]     context_info - struct holding all the context info
+ * @param[out]    action_data_current_offset - pointer to the action
+ * @param[in]     is_repeated - 'true' if the action is part of a "repeated sequence" (a group of consecutive actions
+ *                              with the same type)
+ *
+ */
+hailo_status HEF_METADATA__burst_credits_task_start(
+        CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
+        uint8_t **action_data_current_offset,
+        bool is_repeated);
 
 } /* namespace hailort */
 

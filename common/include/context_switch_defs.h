@@ -56,7 +56,7 @@ typedef enum : uint8_t {
 #else
 typedef enum __attribute__((packed)) {
 #endif
-    CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_VDMA_DESCRIPTORS = 0,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_CFG_CHANNEL_DESCRIPTORS = 0,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_TRIGGER_SEQUENCER,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_DATA_FROM_VDMA_CHANNEL,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_ENABLE_LCU_DEFAULT,
@@ -84,6 +84,8 @@ typedef enum __attribute__((packed)) {
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_DMA_IDLE_ACTION,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_NMS_IDLE,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_CCW_BURSTS,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_VALIDATE_VDMA_CHANNEL,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_BURST_CREDITS_TASK_START,
     
     /* Must be last */
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT
@@ -140,7 +142,7 @@ typedef struct {
 typedef struct {
     uint16_t descriptors_count;
     uint8_t cfg_channel_number;
-} CONTEXT_SWITCH_DEFS__read_vdma_action_data_t;
+} CONTEXT_SWITCH_DEFS__fetch_cfg_channel_descriptors_action_data_t;
 
 typedef struct {
     uint16_t ccw_bursts;
@@ -173,7 +175,18 @@ typedef struct {
     uint8_t vdma_channel_index;
     uint8_t edge_layer_direction;
     bool is_inter_context;
+    uint8_t host_buffer_type;  // CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t
+    uint32_t initial_credit_size;
 } CONTEXT_SWITCH_DEFS__deactivate_vdma_channel_action_data_t;
+
+typedef struct {
+    uint8_t vdma_channel_index;
+    uint8_t edge_layer_direction;
+    bool is_inter_context;
+    bool is_single_context_network_group;
+    uint8_t host_buffer_type;  // CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t
+    uint32_t initial_credit_size;
+} CONTEXT_SWITCH_DEFS__validate_vdma_channel_action_data_t;
 
 typedef struct {
     uint8_t vdma_channel_index;
@@ -182,6 +195,7 @@ typedef struct {
     uint32_t frame_periph_size;
     uint8_t credit_type;
     uint16_t periph_bytes_per_buffer;
+    uint8_t host_buffer_type;  // CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t, relevant only for descriptors credit.
 } CONTEXT_SWITCH_DEFS__fetch_data_action_data_t;
 
 typedef struct {
@@ -239,6 +253,7 @@ typedef struct {
     uint8_t stream_index;
     uint8_t vdma_channel_index;
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
+    uint32_t initial_credit_size;
     bool is_single_context_app;
 } CONTEXT_SWITCH_DEFS__activate_boundary_input_data_t;
 
@@ -247,9 +262,8 @@ typedef struct {
     uint8_t vdma_channel_index;
     uint8_t network_index;
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
-    uint64_t host_descriptors_base_address;
-    uint16_t initial_host_available_descriptors;
-    uint8_t desc_list_depth;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
+    uint32_t initial_credit_size;
 } CONTEXT_SWITCH_DEFS__activate_inter_context_input_data_t;
 
 typedef struct {
@@ -257,9 +271,8 @@ typedef struct {
     uint8_t vdma_channel_index;
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
     uint64_t host_descriptors_base_address;
-    uint16_t initial_host_available_descriptors;
     uint8_t desc_list_depth;
-    bool fw_managed_channel;
+    uint32_t initial_credit_size;
 } CONTEXT_SWITCH_DEFS__activate_ddr_buffer_input_data_t;
 
 typedef struct {
@@ -275,12 +288,7 @@ typedef struct {
     uint8_t vdma_channel_index;
     uint8_t network_index;
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
-    // TODO: add this to CONTEXT_SWITCH_DEFS__stream_reg_info_t
-    uint32_t frame_credits_in_bytes;
-    uint64_t host_descriptors_base_address;
-    uint16_t initial_host_available_descriptors;
-    uint16_t desc_page_size;
-    uint8_t desc_list_depth;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
 } CONTEXT_SWITCH_DEFS__activate_inter_context_output_data_t;
 
 typedef struct {
@@ -289,10 +297,9 @@ typedef struct {
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
     uint32_t frame_credits_in_bytes;
     uint64_t host_descriptors_base_address;
-    uint16_t initial_host_available_descriptors;
     uint16_t desc_page_size;
     uint8_t desc_list_depth;
-    bool fw_managed_channel;
+    uint32_t buffered_rows_count;
 } CONTEXT_SWITCH_DEFS__activate_ddr_buffer_output_data_t;
 
 typedef struct {

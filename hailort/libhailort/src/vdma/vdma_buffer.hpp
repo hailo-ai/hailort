@@ -38,10 +38,16 @@ public:
     virtual uint64_t dma_address() const = 0;
     virtual uint16_t desc_page_size() const = 0;
     virtual uint32_t descs_count() const = 0;
-    virtual uint32_t descriptors_in_buffer(size_t buffer_size) const = 0;
 
-    // Should be only used for host managed ddr buffer, in the future this function may return nullptr (on CCB
-    // case where there is no descriptors list)
+    uint32_t descriptors_in_buffer(size_t buffer_size) const
+    {
+        assert(buffer_size < std::numeric_limits<uint32_t>::max());
+        const auto page_size = desc_page_size();
+        return static_cast<uint32_t>(DESCRIPTORS_IN_BUFFER(buffer_size, page_size));
+    }
+
+    // If there's no descriptor list then Unexpected(HAILO_INVALID_OPERATION) will be returned
+    // (E.g. for CCB, where there is no descriptors list)
     virtual ExpectedRef<VdmaDescriptorList> get_desc_list() = 0;
 
     virtual hailo_status read(void *buf_dst, size_t count, size_t offset) = 0;
@@ -49,7 +55,8 @@ public:
 
     virtual Expected<uint32_t> program_descriptors(size_t transfer_size, VdmaInterruptsDomain first_desc_interrupts_domain,
         VdmaInterruptsDomain last_desc_interrupts_domain, size_t desc_offset, bool is_circular) = 0;
-
+    virtual hailo_status reprogram_device_interrupts_for_end_of_batch(size_t transfer_size, uint16_t batch_size,
+        VdmaInterruptsDomain new_interrupts_domain) = 0;
 };
 
 } /* vdma */

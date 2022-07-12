@@ -3,7 +3,7 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @ file data_quantization_example.c
+ * @file data_quantization_example.c
  * This example demonstrates using quantization on an HEF network with multiple inputs and multiple outputs
  **/
 

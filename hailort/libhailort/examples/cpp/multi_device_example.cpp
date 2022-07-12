@@ -11,7 +11,7 @@
  * You shall not reproduce, modify or distribute this software without prior written permission.
  **/
 /**
- * @ file multi_device_example.cpp
+ * @file multi_device_example.cpp
  * This example demonstrates how to work with multiple devices using virtual device.
  **/
 
@@ -25,17 +25,7 @@ constexpr bool QUANTIZED = true;
 constexpr hailo_format_type_t FORMAT_TYPE = HAILO_FORMAT_TYPE_AUTO;
 constexpr size_t MAX_LAYER_EDGES = 16;
 
-
-using hailort::VDevice;
-using hailort::Hef;
-using hailort::Expected;
-using hailort::make_unexpected;
-using hailort::ConfiguredNetworkGroup;
-using hailort::VStreamsBuilder;
-using hailort::InputVStream;
-using hailort::OutputVStream;
-using hailort::MemoryView;
-
+using namespace hailort;
 
 Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(VDevice &vdevice)
 {

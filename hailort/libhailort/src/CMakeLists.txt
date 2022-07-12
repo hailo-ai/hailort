@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.0.0)
 find_package(Threads REQUIRED)
 
 include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/common_compiler_options.cmake)
 
 FUNCTION(relative_to_absolute_paths output)
@@ -44,7 +45,9 @@ set(HAILORT_CPP_SOURCES
     context_switch/vdma_config_network_group.cpp
     context_switch/vdma_config_activated_network_group.cpp
     context_switch/network_group.cpp
+    context_switch/network_group_wrapper.cpp
     context_switch/resource_manager.cpp
+    context_switch/pipeline_multiplexer.cpp
     intermediate_buffer.cpp
     config_buffer.cpp
     d2h_events_parser.cpp
@@ -125,7 +128,7 @@ target_link_libraries(libhailort PRIVATE spdlog::spdlog)
 target_link_libraries(libhailort PRIVATE readerwriterqueue)
 target_link_libraries(libhailort PRIVATE microprofile)
 if(CMAKE_SYSTEM_NAME STREQUAL QNX)
-    target_link_libraries(libhailort PRIVATE pevents)
+    target_link_libraries(libhailort PRIVATE pevents pci)
 endif()
 
 set(HAILORT_PUBLIC_HEADERS
@@ -185,7 +188,44 @@ target_compile_definitions(libhailort PUBLIC
 )
 
 install(TARGETS libhailort
-   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-   CONFIGURATIONS Release
-   PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/hailo"
-   CONFIGURATIONS Release)
+    EXPORT HailoRTTargets
+    CONFIGURATIONS Release
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/hailo"
+    INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+)
+
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    install(CODE "execute_process(COMMAND ldconfig)")
+endif()
+
+# Export libhailort
+set(CMAKE_SCRIPTS_DIR ${CMAKE_CURRENT_BINARY_DIR})
+configure_package_config_file(${CMAKE_CURRENT_SOURCE_DIR}/Config.cmake.in
+  "${CMAKE_SCRIPTS_DIR}/HailoRTConfig.cmake"
+  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/HailoRT
+)
+write_basic_package_version_file(
+  "${CMAKE_SCRIPTS_DIR}/HailoRTConfigVersion.cmake"
+  VERSION "${HAILORT_MAJOR_VERSION}.${HAILORT_MINOR_VERSION}.${HAILORT_REVISION_VERSION}"
+  COMPATIBILITY ExactVersion
+)
+
+# Support builds without installation
+set(HailoRT_DIR "${CMAKE_SCRIPTS_DIR}" PARENT_SCOPE)
+
+# Package installation
+install(FILES
+        "${CMAKE_SCRIPTS_DIR}/HailoRTConfig.cmake"
+        "${CMAKE_SCRIPTS_DIR}/HailoRTConfigVersion.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/HailoRT
+    COMPONENT libhailort
+)
+install(EXPORT HailoRTTargets
+    FILE HailoRTTargets.cmake
+    NAMESPACE HailoRT::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/HailoRT
+    COMPONENT libhailort
+)

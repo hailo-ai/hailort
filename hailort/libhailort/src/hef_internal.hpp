@@ -87,7 +87,7 @@ static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
     TRANSPOSE_COMPONENT,
     IS_NMS_MULTI_CONTEXT,
     OFFLOAD_ARGMAX,
-    PRELIMINARY_RUN_ASAP
+    PRELIMINARY_RUN_ASAP // Extention added in platform 4.8 release
 };
 
 struct HefParsingInfo
@@ -157,6 +157,7 @@ public:
     Expected<std::vector<LayerInfo>> get_input_layer_infos(const std::string &network_name = "") const;
     Expected<std::vector<LayerInfo>> get_output_layer_infos(const std::string &network_name = "") const;
     Expected<std::vector<LayerInfo>> get_all_layer_infos(const std::string &network_name = "") const;
+    Expected<LayerInfo> get_layer_info_by_stream_name(const std::string &stream_name) const;
 
     Expected<std::vector<hailo_stream_info_t>> get_input_stream_infos(const std::string &network_name = "") const;
     Expected<std::vector<hailo_stream_info_t>> get_output_stream_infos(const std::string &network_name = "") const;
@@ -460,7 +461,8 @@ public:
         WaitForModuleConfigDone,
         AddDdrPairInfo,
         AddDdrBufferingStart,
-        AddRrepeated
+        AddRrepeated,
+        StartBurstCreditsTask
     };
 
     static Expected<ContextSwitchConfigActionPtr> create(const ProtoHEFAction &proto_action, Device &device,
@@ -591,9 +593,28 @@ public:
 
 private:
     CreateConfigDescAndFetchAction(uint8_t channel_index, ConfigBuffer &config_buffer);
-        
+
     const uint8_t m_channel_index;
     ConfigBuffer &m_config_buffer;
+};
+
+class StartBurstCreditsTaskAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create();
+
+    StartBurstCreditsTaskAction(StartBurstCreditsTaskAction &&) = default;
+    StartBurstCreditsTaskAction(const StartBurstCreditsTaskAction &) = delete;
+    StartBurstCreditsTaskAction &operator=(StartBurstCreditsTaskAction &&) = delete;
+    StartBurstCreditsTaskAction &operator=(const StartBurstCreditsTaskAction &) = delete;
+    virtual ~StartBurstCreditsTaskAction() = default;
+
+    virtual hailo_status execute(CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
+        uint8_t **context_meta_data_head_pointer) override;
+    virtual bool supports_repeated_block() const override;
+
+private:
+    StartBurstCreditsTaskAction();
 };
 
 class RepeatedHeaderAction : public ContextSwitchConfigAction

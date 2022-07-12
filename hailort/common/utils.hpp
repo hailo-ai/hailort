@@ -52,6 +52,24 @@ static inline bool contains(const std::set<T> &container, T value)
     return (container.find(value) != container.end());
 }
 
+template <class T>
+class unlock_guard {
+public:
+    unlock_guard(T &lock) : m_lock(lock) {
+        m_lock.unlock();
+    }
+
+    ~unlock_guard() {
+        m_lock.lock();
+    }
+
+    unlock_guard(const unlock_guard&) = delete;
+    unlock_guard& operator=(const unlock_guard&) = delete;
+
+private:
+    T &m_lock;
+};
+
 // From https://stackoverflow.com/questions/57092289/do-stdmake-shared-and-stdmake-unique-have-a-nothrow-version
 template <class T, class... Args>
 static inline std::unique_ptr<T> make_unique_nothrow(Args&&... args)
@@ -239,6 +257,18 @@ constexpr uint32_t get_nearest_powerof_2(uint32_t value, uint32_t min_power_of_2
         power_of_2 <<=  1;
     }
     return power_of_2;
+}
+
+template<class K, class V>
+static uint32_t get_max_value_of_unordered_map(const std::unordered_map<K, V> &map)
+{
+    uint32_t max_count = 0;
+    for (auto &name_counter_pair : map) {
+        if (name_counter_pair.second > max_count) {
+            max_count = name_counter_pair.second;
+        }
+    }
+    return max_count;
 }
 
 } /* namespace hailort */

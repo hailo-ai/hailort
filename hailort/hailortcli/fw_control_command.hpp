@@ -12,8 +12,6 @@
 
 #include "hailortcli.hpp"
 #include "command.hpp"
-// TODO: Remove scan as a subcommand of fw_control_subcommand (HRT-2676)
-#include "scan_command.hpp"
 #if defined(__GNUC__)
 // TODO: Support on windows (HRT-5919)
 #include "download_action_list_command.hpp"

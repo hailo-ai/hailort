@@ -53,11 +53,6 @@ uint8_t SgBuffer::depth() const
     return m_desc_list.depth();
 }
 
-uint32_t SgBuffer::descriptors_in_buffer(size_t buffer_size) const
-{
-    return m_desc_list.descriptors_in_buffer(buffer_size);
-}
-
 ExpectedRef<VdmaDescriptorList> SgBuffer::get_desc_list()
 {
     return std::ref(m_desc_list);
@@ -80,11 +75,13 @@ Expected<uint32_t> SgBuffer::program_descriptors(size_t transfer_size, VdmaInter
         desc_offset, is_circular);
 }
 
-Expected<uint16_t> SgBuffer::program_descs_for_ddr_transfers(uint32_t row_size, bool should_raise_interrupt, 
-    uint32_t number_of_rows_per_intrpt, uint32_t buffered_rows, uint16_t initial_descs_offset, bool is_circular)
+hailo_status SgBuffer::reprogram_device_interrupts_for_end_of_batch(size_t transfer_size, uint16_t batch_size,
+        VdmaInterruptsDomain new_interrupts_domain)
 {
-    return m_desc_list.program_descs_for_ddr_transfers(row_size, should_raise_interrupt, number_of_rows_per_intrpt,
-        buffered_rows, initial_descs_offset, is_circular);
+    const auto desc_per_transfer = m_desc_list.descriptors_in_buffer(transfer_size);
+    const auto num_desc_in_batch = desc_per_transfer * batch_size;
+    const auto last_desc_index_in_batch = num_desc_in_batch - 1;
+    return m_desc_list.reprogram_descriptor_interrupts_domain(last_desc_index_in_batch, new_interrupts_domain);
 }
 
 }

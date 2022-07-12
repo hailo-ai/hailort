@@ -3,7 +3,7 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @ file vstreams_example.c
+ * @file vstreams_example.c
  * This example demonstrates the basic data-path on HailoRT using the high level API - Virtual Stream Pipeline.
  * The program scans for Hailo-8 devices connected to a provided PCIe interface, generates random dataset,
  * and runs it through the VDevice with virtual streams.

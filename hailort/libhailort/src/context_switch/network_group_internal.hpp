@@ -33,6 +33,7 @@
 #include "hef_internal.hpp"
 #include "common/latency_meter.hpp"
 #include "control_protocol.h"
+#include "vdma_channel.hpp"
 
 namespace hailort
 {
@@ -54,12 +55,13 @@ protected:
     hailo_activate_network_group_params_t m_network_group_params;
 
     ActivatedNetworkGroupBase(const hailo_activate_network_group_params_t &network_group_params,
+        uint16_t dynamic_batch_size,
         std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
         std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,         
         EventPtr &&network_group_activated_event, hailo_status &status);
 
 private:
-    hailo_status activate_low_level_streams();
+    hailo_status activate_low_level_streams(uint16_t dynamic_batch_size);
     hailo_status validate_network_group_params(const hailo_activate_network_group_params_t &network_group_params);
 
     std::map<std::string, std::unique_ptr<InputStream>> &m_input_streams;
@@ -156,10 +158,12 @@ protected:
 
     virtual Expected<uint8_t> get_boundary_channel_index(uint8_t stream_index, hailo_stream_direction_t direction,
         const std::string &layer_name) = 0;
+    virtual Expected<std::shared_ptr<LatencyMetersMap>> get_latnecy_meters() = 0;
+    virtual Expected<std::shared_ptr<VdmaChannel>> get_boundary_vdma_channel_by_stream_name(const std::string &stream_name) = 0;
 
     const ConfigureNetworkParams m_config_params;
+    const uint16_t m_min_configured_batch_size; // TODO: remove after HRT-6535
     uint8_t m_net_group_index;
-    std::map<std::string, LatencyMeterPtr> m_latency_meter; // Latency meter per network
     std::map<std::string, std::unique_ptr<InputStream>> m_input_streams;
     std::map<std::string, std::unique_ptr<OutputStream>> m_output_streams;
     EventPtr m_network_group_activated_event;
@@ -169,6 +173,8 @@ protected:
 
 private:
     friend class ConfiguredNetworkGroupWrapper;
+
+    static uint16_t get_smallest_configured_batch_size(const ConfigureNetworkParams &config_params);
 
     bool m_is_scheduling;
 };

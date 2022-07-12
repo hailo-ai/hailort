@@ -463,6 +463,7 @@ message ProtoHEFEdgeLayerBase {
 
     repeated ProtoHEFResourceIndices buffer_indices = 13;
     bool host_argmax = 14;
+    uint32 max_shmifo_size = 15;
 }
 
 // Additional information for specific layer types

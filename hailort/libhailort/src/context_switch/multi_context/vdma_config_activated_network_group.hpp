@@ -30,11 +30,12 @@ public:
 
     static Expected<VdmaConfigActivatedNetworkGroup> create(
         VdmaConfigActiveAppHolder &active_net_group_holder,
+        const std::string &network_group_name,
         std::vector<std::shared_ptr<ResourcesManager>> resources_managers,
         const hailo_activate_network_group_params_t &network_group_params,
         uint16_t dynamic_batch_size,
         std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
-        std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,         
+        std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,
         EventPtr network_group_activated_event,
         AccumulatorPtr deactivation_time_accumulator);
 
@@ -45,10 +46,12 @@ public:
     VdmaConfigActivatedNetworkGroup &operator=(VdmaConfigActivatedNetworkGroup &&other) = delete;
     VdmaConfigActivatedNetworkGroup(VdmaConfigActivatedNetworkGroup &&other) noexcept;
 
+    virtual const std::string &get_network_group_name() const override;
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &key) override;
 
 private:
     VdmaConfigActivatedNetworkGroup(
+      const std::string &network_group_name,
       const hailo_activate_network_group_params_t &network_group_params,
       uint16_t dynamic_batch_size,
       std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
@@ -66,6 +69,7 @@ private:
     static void ddr_send_thread_main(DdrChannelsInfo ddr_info,
       std::shared_ptr<std::atomic<uint16_t>> desc_list_num_ready);
 
+  std::string m_network_group_name;
   bool m_should_reset_state_machine;
   VdmaConfigActiveAppHolder &m_active_net_group_holder;
   // One ResourcesManager per connected physical device. Currently only one device is supported.

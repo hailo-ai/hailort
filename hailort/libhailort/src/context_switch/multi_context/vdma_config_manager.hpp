@@ -38,7 +38,7 @@ public:
     static Expected<VdmaConfigManager> create(VDevice &vdevice);
     virtual ConfigManagerType get_manager_type();
     virtual Expected<ConfiguredNetworkGroupVector> add_hef(Hef &hef,
-        const NetworkGroupsParamsMap &configure_params={});
+        const NetworkGroupsParamsMap &configure_params, bool is_scheduler_used=false);
 
     static hailo_status update_network_batch_size(ConfigureNetworkParams &configure_params);
 

@@ -36,6 +36,7 @@ class HcpConfigActivatedNetworkGroup : public ActivatedNetworkGroupBase
 {
   public:
     static Expected<HcpConfigActivatedNetworkGroup> create(Device &device, std::vector<WriteMemoryInfo> &config,
+        const std::string &network_group_name,
         const hailo_activate_network_group_params_t &network_group_params,
         std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
         std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,        
@@ -49,7 +50,9 @@ class HcpConfigActivatedNetworkGroup : public ActivatedNetworkGroupBase
     HcpConfigActivatedNetworkGroup(HcpConfigActivatedNetworkGroup &&other) noexcept :
       ActivatedNetworkGroupBase(std::move(other)), m_active_net_group_holder(other.m_active_net_group_holder),
       m_is_active(std::exchange(other.m_is_active, false)), m_power_mode(other.m_power_mode),
-      m_device(other.m_device) {};
+      m_device(other.m_device), m_network_group_name(std::move(other.m_network_group_name)) {};
+
+    virtual const std::string &get_network_group_name() const override;
 
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &/*key*/) override
     {
@@ -60,6 +63,7 @@ class HcpConfigActivatedNetworkGroup : public ActivatedNetworkGroupBase
 
   private:
       HcpConfigActivatedNetworkGroup(Device &device, HcpConfigActiveAppHolder &active_net_group_holder,
+        const std::string &network_group_name,
         const hailo_activate_network_group_params_t &network_group_params,
         std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
         std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,        
@@ -69,6 +73,7 @@ class HcpConfigActivatedNetworkGroup : public ActivatedNetworkGroupBase
     bool m_is_active;
     hailo_power_mode_t m_power_mode;
     Device &m_device;
+    std::string m_network_group_name;
 };
 
 } /* namespace hailort */

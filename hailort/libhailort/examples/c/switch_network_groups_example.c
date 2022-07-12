@@ -3,11 +3,10 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @ file switch_hefs_example.c
- * This example demonstrates basic usage of HailoRT streaming api over multiple network groups, using vstreams.
- * It loads several HEF networks with single/multiple inputs and single/multiple outputs into a Hailo PCIe VDevice and performs a
- * short inference on each one. 
- * After inference is finished, the example switches to the next HEF and start inference again.
+ * @file switch_network_groups_example.c
+ * This example demonstrates basic usage of HailoRT streaming api over multiple network groups, using VStreams.
+ * It loads several network_groups (via several HEFs) into a Hailo PCIe VDevice and performs a inferences on all of them in parallel.
+ * The network_groups switching is performed automatically by the HailoRT scheduler.
  **/
 
 #include "common.h"
@@ -20,7 +19,6 @@
 
 #define INFER_FRAME_COUNT (100)
 #define HEF_COUNT (2)
-#define RUN_COUNT (10)
 #define DEVICE_COUNT (1)
 
 typedef struct write_thread_args_t {
@@ -172,7 +170,6 @@ int main()
     hailo_configure_params_t configure_params = {0};
     hailo_configured_network_group network_groups[HEF_COUNT] = {NULL};
     size_t network_groups_size = 1;
-    hailo_activated_network_group activated_network_group = NULL;
     hailo_input_vstream input_vstreams[HEF_COUNT][MAX_EDGE_LAYERS];
     hailo_output_vstream output_vstreams[HEF_COUNT][MAX_EDGE_LAYERS];
     size_t input_frame_size[HEF_COUNT][MAX_EDGE_LAYERS];
@@ -183,21 +180,19 @@ int main()
     size_t num_input_vstreams[HEF_COUNT];
     size_t num_output_vstreams[HEF_COUNT];
     uint8_t hef_index = 0;
-    uint8_t run_index = 0;
 
-    hailo_thread input_vstream_threads[MAX_EDGE_LAYERS];
-    hailo_thread output_vstream_threads[MAX_EDGE_LAYERS];
-    write_thread_args_t write_args[MAX_EDGE_LAYERS];
-    read_thread_args_t read_args[MAX_EDGE_LAYERS];
+    hailo_thread input_vstream_threads[HEF_COUNT][MAX_EDGE_LAYERS];
+    hailo_thread output_vstream_threads[HEF_COUNT][MAX_EDGE_LAYERS];
+    write_thread_args_t write_args[HEF_COUNT][MAX_EDGE_LAYERS];
+    read_thread_args_t read_args[HEF_COUNT][MAX_EDGE_LAYERS];
 
-    bool break_main_loop = false;
-
-    char HEF_FILES[HEF_COUNT][MAX_HEF_PATH_LEN] = {"hefs/shortcut_net.hef", "hefs/shortcut_net.hef"};
+    char HEF_FILES[HEF_COUNT][MAX_HEF_PATH_LEN] = {"hefs/multi_network_shortcut_net.hef", "hefs/shortcut_net.hef"};
 
     status = hailo_init_vdevice_params(&params);
     REQUIRE_SUCCESS(status, l_exit, "Failed init vdevice_params");
 
     params.device_count = DEVICE_COUNT;
+    params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN;
     status = hailo_create_vdevice(&params, &vdevice);
     REQUIRE_SUCCESS(status, l_exit, "Failed to create vdevice");
 
@@ -221,43 +216,32 @@ int main()
         REQUIRE_SUCCESS(status, l_release_vstreams, "Failed building streams");
     }
 
-    // Inference part
-    for (run_index = 0; run_index < RUN_COUNT; run_index++) {
-        for (hef_index = 0; hef_index < HEF_COUNT; hef_index++) {
-            status = hailo_activate_network_group(network_groups[hef_index], NULL, &activated_network_group);
-            REQUIRE_SUCCESS(status, l_release_vstreams, "Failed activate network group");
+    for (hef_index = 0; hef_index < HEF_COUNT; hef_index++) {
+        for (size_t i = 0; i < num_input_vstreams[hef_index]; i++) {
+            status = create_input_vstream_thread(input_vstreams[hef_index][i], src_data[hef_index][i],
+                input_frame_size[hef_index][i], &input_vstream_threads[hef_index][i], &write_args[hef_index][i]);
+        }
+        REQUIRE_SUCCESS(status, l_release_vstreams, "Failed creating write threads");
 
-            for (size_t i = 0; i < num_input_vstreams[hef_index]; i++) {
-                status = create_input_vstream_thread(input_vstreams[hef_index][i], src_data[hef_index][i],
-                    input_frame_size[hef_index][i], &input_vstream_threads[i], &write_args[i]);
+        for (size_t i = 0; i < num_output_vstreams[hef_index]; i++) {
+            status = create_output_vstream_thread(output_vstreams[hef_index][i], dst_data[hef_index][i],
+                output_frame_size[hef_index][i], &output_vstream_threads[hef_index][i], &read_args[hef_index][i]);
+        }
+        REQUIRE_SUCCESS(status, l_release_vstreams, "Failed creating read threads");
+    }
+
+    for (hef_index = 0; hef_index < HEF_COUNT; hef_index++) {
+        for (size_t i = 0; i < num_input_vstreams[hef_index]; i++) {
+            status = hailo_join_thread(&input_vstream_threads[hef_index][i]);
+            if (HAILO_SUCCESS != status) {
+                printf("write_thread failed \n");
             }
+        }
 
-            for (size_t i = 0; i < num_output_vstreams[hef_index]; i++) {
-                status = create_output_vstream_thread(output_vstreams[hef_index][i], dst_data[hef_index][i],
-                    output_frame_size[hef_index][i], &output_vstream_threads[i], &read_args[i]);
-            }
-
-            for (size_t i = 0; i < num_input_vstreams[hef_index]; i++) {
-                status = hailo_join_thread(&input_vstream_threads[i]);
-                if (HAILO_SUCCESS != status) {
-                    printf("write_thread failed \n");
-                    break_main_loop = true;
-                }
-            }
-
-            for (size_t i = 0; i < num_output_vstreams[hef_index]; i++) {
-                status = hailo_join_thread(&output_vstream_threads[i]);
-                if (HAILO_SUCCESS != status) {
-                    printf("write_thread failed \n");
-                    break_main_loop = true;
-                }
-            }
-
-            status = hailo_deactivate_network_group(activated_network_group);
-            REQUIRE_SUCCESS(status, l_deactivate_network_group, "Failed to de-activate network group");
-
-            if(break_main_loop) {
-                goto l_release_vstreams;
+        for (size_t i = 0; i < num_output_vstreams[hef_index]; i++) {
+            status = hailo_join_thread(&output_vstream_threads[hef_index][i]);
+            if (HAILO_SUCCESS != status) {
+                printf("read_thread failed \n");
             }
         }
     }
@@ -266,8 +250,6 @@ int main()
     status = HAILO_SUCCESS;
     goto l_release_vstreams;
 
-l_deactivate_network_group:
-    (void)hailo_deactivate_network_group(activated_network_group);
 l_release_vstreams:
     for (hef_index = 0; hef_index < HEF_COUNT; hef_index++) {
         (void)hailo_release_output_vstreams(output_vstreams[hef_index], num_output_vstreams[hef_index]);

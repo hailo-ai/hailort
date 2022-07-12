@@ -22,17 +22,8 @@ constexpr size_t FIRST_NET_BATCH_SIZE = 1;
 constexpr size_t SECOND_NET_BATCH_SIZE = 2;
 constexpr uint32_t DEVICE_COUNT = 1;
 
-using hailort::VDevice;
-using hailort::Hef;
-using hailort::Expected;
-using hailort::make_unexpected;
-using hailort::ConfiguredNetworkGroup;
-using hailort::VStreamsBuilder;
-using hailort::InputVStream;
-using hailort::OutputVStream;
-using hailort::MemoryView;
+using namespace hailort;
 using InOutVStreams = std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>;
-
 
 Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(VDevice &vdevice, Hef &hef, uint16_t batch_size[NET_COUNT])
 {

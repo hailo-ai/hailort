@@ -3,7 +3,7 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @ file raw_streams_example.c
+ * @file raw_streams_example.c
  * This example demonstrates basic usage of HailoRT streaming api.
  * It loads an HEF network with multiple inputs and multiple outputs into a Hailo PCIe device and performs a
  * short inference.

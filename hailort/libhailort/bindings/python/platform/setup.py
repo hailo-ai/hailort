@@ -30,8 +30,8 @@ def _get_package_paths():
     pyhailort_lib = _get_pyhailort_lib_path()
     if pyhailort_lib: 
         packages.append(pyhailort_lib)
-    packages.append("../tutorials/notebooks/*")
-    packages.append("../tutorials/hefs/*")
+    packages.append("../hailo_tutorials/notebooks/*")
+    packages.append("../hailo_tutorials/hefs/*")
     return packages
 
 
@@ -68,6 +68,6 @@ if __name__ == "__main__":
             "linux_aarch64",
         ],
         url="https://hailo.ai/",
-        version="4.7.0",
+        version="4.8.1",
         zip_safe=False,
     )

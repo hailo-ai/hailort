@@ -1,5 +1,5 @@
 #include "os/hailort_driver.hpp"
-#include "os/posix/pcie_driver_sysfs.hpp"
+#include "os/posix/pcie_driver_scan.hpp"
 #include "hailo_ioctl_common.h"
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
@@ -182,9 +182,10 @@ hailo_status HailoRTDriver::disable_notifications()
     return HAILO_SUCCESS;
 }
 
+#if defined(__linux__)
 Expected<std::vector<HailoRTDriver::DeviceInfo>> HailoRTDriver::scan_pci()
 {
-    auto device_names = list_sysfs_pcie_devices();
+    auto device_names = list_pcie_devices();
     CHECK_EXPECTED(device_names, "Failed listing pcie devices");
 
     std::vector<HailoRTDriver::DeviceInfo> devices_info;
@@ -195,6 +196,26 @@ Expected<std::vector<HailoRTDriver::DeviceInfo>> HailoRTDriver::scan_pci()
     }
     return devices_info;
 }
+#elif defined(__QNX__)
+Expected<std::vector<HailoRTDriver::DeviceInfo>> HailoRTDriver::scan_pci()
+{
+    auto device_names = list_pcie_devices();
+    CHECK_EXPECTED(device_names, "Failed listing pcie devices");
+
+    // TODO: HRT-6785 - support multiple devices - currently device_names is vector of one device - in future will be multiple
+    std::vector<HailoRTDriver::DeviceInfo> devices_info;
+    uint32_t index = 0;
+    for (const auto &device_name : device_names.value()) {
+        auto device_info = query_device_info(device_name, index);
+        CHECK_EXPECTED(device_info, "failed parsing device info for {}", device_name);
+        devices_info.push_back(device_info.release());
+        index++;
+    }
+    return devices_info;
+}
+#else
+static_assert(true, "Error, Unsupported Platform");
+#endif //defined (__linux__)
 
 Expected<uint32_t> HailoRTDriver::read_vdma_channel_registers(off_t offset, size_t size)
 {
@@ -247,13 +268,20 @@ hailo_status HailoRTDriver::read_bar(PciBar bar, off_t offset, size_t size, void
         .bar_index = static_cast<uint32_t>(bar),
         .offset = offset,
         .count = size,
-        .buffer = buf
+        .buffer = {0}
     };
+
+    if (size > sizeof(transfer.buffer)) {
+        LOGGER__ERROR("Invalid size to read, size given {} is larger than max size {}", size, sizeof(transfer.buffer));
+        return HAILO_INVALID_ARGUMENT;
+    }
 
     if (0 > ioctl(this->m_fd, HAILO_BAR_TRANSFER, &transfer)) {
         LOGGER__ERROR("HailoRTDriver::read_bar failed with errno:{}", errno);
         return HAILO_PCIE_DRIVER_FAIL;
     }
+
+    memcpy(buf, transfer.buffer, transfer.count);
 
     return HAILO_SUCCESS;
 }
@@ -275,8 +303,15 @@ hailo_status HailoRTDriver::write_bar(PciBar bar, off_t offset, size_t size, con
         .bar_index = static_cast<uint32_t>(bar),
         .offset = offset,
         .count = size,
-        .buffer = (void*)buf
+        .buffer = {0}
     };
+
+    if (size > sizeof(transfer.buffer)) {
+        LOGGER__ERROR("Invalid size to read, size given {} is larger than max size {}", size, sizeof(transfer.buffer));
+        return HAILO_INVALID_ARGUMENT;
+    }
+
+    memcpy(transfer.buffer, buf, transfer.count);
 
     if (0 > ioctl(this->m_fd, HAILO_BAR_TRANSFER, &transfer)) {
         LOGGER__ERROR("HailoRTDriver::write_bar failed with errno:{}", errno);
@@ -419,16 +454,23 @@ hailo_status HailoRTDriver::read_log(uint8_t *buffer, size_t buffer_size, size_t
 
     hailo_read_log_params params {
         .cpu_id = translate_cpu_id(cpu_id),
-        .buffer = buffer,
+        .buffer = {0},
         .buffer_size = buffer_size,
         .read_bytes = 0
     };
+
+    CHECK(buffer_size <= sizeof(params.buffer), HAILO_PCIE_DRIVER_FAIL,
+        "Given buffer size {} is bigger than buffer size used to read logs {}", buffer_size, sizeof(params.buffer));
 
     if (0 > ioctl(this->m_fd, HAILO_READ_LOG, &params)) {
         LOGGER__ERROR("Failed to read log with errno:{}", errno);
         return HAILO_PCIE_DRIVER_FAIL;
     }
 
+    CHECK(params.read_bytes <= sizeof(params.buffer), HAILO_PCIE_DRIVER_FAIL,
+        "Amount of bytes read from log {} is bigger than size of buffer {}", params.read_bytes, sizeof(params.buffer));
+
+    memcpy(buffer, params.buffer, params.read_bytes);
     *read_bytes = params.read_bytes;
 
     return HAILO_SUCCESS;

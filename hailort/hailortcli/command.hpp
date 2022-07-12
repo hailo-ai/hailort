@@ -26,11 +26,6 @@ public:
         return m_app->parsed();
     }
 
-    void set_description(const std::string &new_desc)
-    {
-        m_app->description(new_desc);
-    }
-
     void set_footer(const std::string &new_footer)
     {
         m_app->footer(new_footer);

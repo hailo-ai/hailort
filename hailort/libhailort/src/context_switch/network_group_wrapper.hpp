@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2022 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -64,6 +64,9 @@ public:
     virtual Expected<std::vector<hailo_vstream_info_t>> get_output_vstream_infos(const std::string &network_name="") const override;
     virtual Expected<std::vector<hailo_vstream_info_t>> get_all_vstream_infos(const std::string &network_name="") const override;
 
+    virtual hailo_status set_scheduler_timeout(const std::chrono::milliseconds &timeout, const std::string &network_name) override;
+    virtual hailo_status set_scheduler_threshold(uint32_t threshold, const std::string &network_name) override;
+
     virtual AccumulatorPtr get_activation_time_accumulator() const override;
     virtual AccumulatorPtr get_deactivation_time_accumulator() const override;
 
@@ -74,9 +77,7 @@ protected:
         const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size) override;
 
 private:
-    friend class VStreamsBuilder;
-
-    ConfiguredNetworkGroupWrapper(std::shared_ptr<ConfiguredNetworkGroupBase> configured_network_group, hailo_status &status);
+    ConfiguredNetworkGroupWrapper(std::shared_ptr<ConfiguredNetworkGroupBase> configured_network_group);
 
     std::shared_ptr<ConfiguredNetworkGroupBase> m_configured_network_group;
 };

@@ -21,7 +21,7 @@ namespace hailort
 class HailoRTBindingsCommon
 {
 public:
-    static std::string convert_format_type_to_string(const hailo_format_type_t& type)
+    static std::string convert_format_type_to_string(const hailo_format_type_t &type)
     {
         switch (type) {
         case HAILO_FORMAT_TYPE_UINT8:
@@ -51,6 +51,11 @@ public:
         default:
             return {shape.height, shape.width, shape.features};
         }
+    }
+
+    static py::dtype get_dtype(const hailo_format_type_t &type)
+    {
+        return py::dtype(HailoRTBindingsCommon::convert_format_type_to_string(type));
     }
 };
 

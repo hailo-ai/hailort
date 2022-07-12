@@ -3,7 +3,7 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @ file switch_single_io_hefs_example.c
+ * @file switch_single_io_network_groups_manually_example.c
  * This example demonstrates basic usage of HailoRT streaming api over multiple network groups, using vstreams.
  * It loads several HEF networks with a single input and a single output into a Hailo PCIe VDevice and performs a inference on each one. 
  * After inference is finished, the example switches to the next HEF and start inference again.

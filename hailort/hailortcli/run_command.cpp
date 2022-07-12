@@ -100,8 +100,6 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
 
     auto hef_new = run_subcommand->add_option("hef", params.hef_path, "An existing HEF file/directory path")
         ->check(CLI::ExistingFile | CLI::ExistingDirectory);
-    auto hef_old = run_subcommand->add_option("--hef", params.hef_path, "An existing HEF file/directory path")
-        ->check(CLI::ExistingFile | CLI::ExistingDirectory);
 
     // Allow multiple subcommands (see https://cliutils.github.io/CLI11/book/chapters/subcommands.html)
     run_subcommand->require_subcommand(0, 0);
@@ -229,9 +227,9 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
 
     run_subcommand->add_flag("--measure-temp", params.measure_temp, "Measure chip temperature");
 
-    run_subcommand->parse_complete_callback([&params, hef_new, hef_old, power_sampling_period,
+    run_subcommand->parse_complete_callback([&params, hef_new, power_sampling_period,
             power_averaging_factor, measure_power_opt, measure_current_opt]() {
-        PARSE_CHECK(hef_new->empty() ^ hef_old->empty(), "Single HEF file/directory is required");
+        PARSE_CHECK(!hef_new->empty(), "Single HEF file/directory is required");
         bool is_hw_only = InferMode::HW_ONLY == params.mode;
         params.transform.transform = (!is_hw_only || (params.inputs_name_and_file_path.size() > 0));
         PARSE_CHECK((!params.transform.quantized || (HAILO_FORMAT_TYPE_AUTO == params.transform.format_type)),
@@ -264,11 +262,6 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
             }
         }
     });
-
-    std::vector<DeprecationActionPtr> actions{
-        std::make_shared<OptionDeprecation>(hef_old, "hef (positional)"),
-    };
-    hailo_deprecate_options(run_subcommand, actions, false);
 }
 
 std::map<std::string, std::string> format_strings_to_key_value_pairs(const std::vector<std::string> &key_value_pairs_str) {

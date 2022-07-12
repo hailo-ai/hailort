@@ -30,6 +30,55 @@ static Expected<std::vector<std::string>> build_network_index_map(ProtoHEFNetwor
     return network_names_vector;
 }
 
+static Expected<LatencyMeterPtr> create_hw_latency_meter(const std::vector<LayerInfo> &layers)
+{
+    std::set<uint32_t> d2h_channel_indexes;
+
+    size_t h2d_streams_count = 0;
+    for (const auto &layer : layers) {
+        if (layer.direction == HAILO_D2H_STREAM) {
+            if (HAILO_FORMAT_ORDER_HAILO_NMS == layer.format.order) {
+                LOGGER__WARNING("HW Latency measurement is not supported on NMS networks");
+                return make_unexpected(HAILO_INVALID_OPERATION);
+            }
+
+            d2h_channel_indexes.insert(layer.index);
+        }
+        else {
+            h2d_streams_count++;
+        }
+    }
+
+    if (h2d_streams_count > 1) {
+        LOGGER__WARNING("HW Latency measurement is supported on networks with a single input");
+        return make_unexpected(HAILO_INVALID_OPERATION);
+    }
+
+    return make_shared_nothrow<LatencyMeter>(d2h_channel_indexes, MAX_IRQ_TIMESTAMPS_SIZE);
+}
+
+static Expected<LatencyMetersMap> create_latency_meters_from_config_params( 
+    const ConfigureNetworkParams &config_params, std::shared_ptr<NetworkGroupMetadata> network_group_metadata)
+{
+    LatencyMetersMap latency_meters_map; 
+
+    if ((config_params.latency & HAILO_LATENCY_MEASURE) == HAILO_LATENCY_MEASURE) {
+        // Best affort for starting latency meter.
+        auto networks_names = network_group_metadata->get_network_names();
+        for (auto &network_name : networks_names) {
+            auto layer_infos = network_group_metadata->get_all_layer_infos(network_name);
+            CHECK_EXPECTED(layer_infos);
+            auto latency_meter = create_hw_latency_meter(layer_infos.value());
+            if (latency_meter) {
+                latency_meters_map.emplace(network_name, latency_meter.release());
+                LOGGER__DEBUG("Starting hw latency measurement for network {}", network_name);
+            }
+        }
+    }
+
+    return latency_meters_map;
+}
+
 Expected<ResourcesManager> ResourcesManager::create(VdmaDevice &vdma_device, HailoRTDriver &driver,
     const ConfigureNetworkParams &config_params, ProtoHEFNetworkGroupPtr network_group_proto,
     std::shared_ptr<NetworkGroupMetadata> network_group_metadata, const HefParsingInfo &parsing_info,
@@ -85,9 +134,12 @@ Expected<ResourcesManager> ResourcesManager::create(VdmaDevice &vdma_device, Hai
 
     auto network_index_map = build_network_index_map(network_group_proto, network_group_metadata->supported_features());
     CHECK_EXPECTED(network_index_map);
+
+    auto latency_meters = create_latency_meters_from_config_params(config_params, network_group_metadata);
+    CHECK_EXPECTED(latency_meters);
     ResourcesManager resources_manager(vdma_device, driver, config_params,
         std::move(preliminary_configs_vector), std::move(dynamic_cfg_vectors), std::move(network_group_metadata), net_group_index,
-        std::move(network_index_map.release()));
+        std::move(network_index_map.release()), latency_meters.release());
 
     auto status = resources_manager.set_number_of_cfg_channels(cfg_channels_count);
     CHECK_SUCCESS_AS_EXPECTED(status);
@@ -95,7 +147,13 @@ Expected<ResourcesManager> ResourcesManager::create(VdmaDevice &vdma_device, Hai
     return resources_manager;
 }
 
-hailo_status ResourcesManager::fill_network_batch_size(CONTROL_PROTOCOL__application_header_t &app_header)
+hailo_status ResourcesManager::fill_infer_features(CONTROL_PROTOCOL__application_header_t &app_header)
+{
+    app_header.infer_features.preliminary_run_asap = m_network_group_metadata->supported_features().preliminary_run_asap;
+    return HAILO_SUCCESS;
+}
+
+hailo_status ResourcesManager::fill_network_batch_size(CONTROL_PROTOCOL__application_header_t &app_header, bool is_scheduler_used)
 {
     app_header.networks_count = static_cast<uint8_t>(m_config_params.network_params_by_name.size());
     for (const auto &network_pair : m_config_params.network_params_by_name) {
@@ -104,7 +162,7 @@ hailo_status ResourcesManager::fill_network_batch_size(CONTROL_PROTOCOL__applica
         for (network_index = 0; network_index < m_network_index_map.size(); network_index++) {
             auto const network_name_from_map = m_network_index_map[network_index];
             if (network_name_from_map == network_name_from_params) {
-                app_header.batch_size[network_index] = network_pair.second.batch_size;
+                app_header.batch_size[network_index] = (is_scheduler_used) ? HAILO_DEFAULT_BATCH_SIZE : network_pair.second.batch_size;
                 break;
             }
         }
@@ -117,7 +175,7 @@ hailo_status ResourcesManager::fill_network_batch_size(CONTROL_PROTOCOL__applica
     return HAILO_SUCCESS;
 }
 
-hailo_status ResourcesManager::create_vdma_channels()
+hailo_status ResourcesManager::create_internal_vdma_channels()
 {
     std::vector<uint8_t> intermediate_channels_idx;
     std::vector<uint8_t> cfg_channels_idx;
@@ -161,6 +219,57 @@ hailo_status ResourcesManager::create_vdma_channels()
     return HAILO_SUCCESS;
 }
 
+Expected<std::shared_ptr<VdmaChannel>> ResourcesManager::create_boundary_vdma_channel(
+    uint8_t channel_index, uint32_t transfer_size, const std::string &network_name, const std::string &stream_name,
+    VdmaChannel::Direction channel_direction)
+{
+    auto network_batch_size = get_network_batch_size(network_name);
+    CHECK_EXPECTED(network_batch_size);
+    uint32_t min_active_trans = MIN_ACTIVE_TRANSFERS_SCALE * network_batch_size.value();
+    uint32_t max_active_trans = MAX_ACTIVE_TRANSFERS_SCALE * network_batch_size.value();
+
+    CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(min_active_trans), HAILO_INVALID_ARGUMENT, 
+        "calculated min_active_trans for vdma descriptor list is out of UINT16 range");
+ 
+    CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(max_active_trans), HAILO_INVALID_ARGUMENT, 
+        "calculated min_active_trans for vdma descriptor list is out of UINT16 range");
+ 
+    auto edge_layer = m_network_group_metadata->get_layer_info_by_stream_name(stream_name);
+    CHECK_EXPECTED(edge_layer);
+    auto latency_meter = (contains(m_latency_meters, edge_layer->network_name)) ? m_latency_meters.at(edge_layer->network_name) : nullptr;
+    auto stream_index = edge_layer.value().index;
+
+    /* TODO - HRT-6829- page_size should be calculated inside the vDMA channel class create function */
+    auto desc_sizes_pair = VdmaDescriptorList::get_desc_buffer_sizes_for_single_transfer(m_driver,
+        static_cast<uint16_t>(min_active_trans), static_cast<uint16_t>(max_active_trans), transfer_size);
+    CHECK_EXPECTED(desc_sizes_pair);
+
+    const auto page_size = desc_sizes_pair->first;
+    const auto descs_count = desc_sizes_pair->second;
+    auto channel = VdmaChannel::create(channel_index, channel_direction, m_driver, page_size,
+        stream_index, latency_meter, network_batch_size.value());
+    CHECK_EXPECTED(channel);
+    const auto status = channel->allocate_resources(descs_count);
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    auto channel_ptr = make_shared_nothrow<VdmaChannel>(channel.release());
+    CHECK_NOT_NULL_AS_EXPECTED(channel_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+    m_boundary_channels.emplace(stream_name, channel_ptr);
+
+    return channel_ptr;
+}
+
+Expected<std::shared_ptr<VdmaChannel>> ResourcesManager::get_boundary_vdma_channel_by_stream_name(const std::string &stream_name)
+{
+    auto boundary_channel_it = m_boundary_channels.find(stream_name);
+    if (std::end(m_boundary_channels) == boundary_channel_it) {
+        return make_unexpected(HAILO_NOT_FOUND);
+    }
+
+    return std::shared_ptr<VdmaChannel>(m_boundary_channels[stream_name]);
+}
+
 ExpectedRef<IntermediateBuffer> ResourcesManager::create_inter_context_buffer(uint32_t transfer_size,
     uint8_t src_stream_index, uint8_t src_context_index, const std::string &network_name)
 {
@@ -169,7 +278,8 @@ ExpectedRef<IntermediateBuffer> ResourcesManager::create_inter_context_buffer(ui
     auto network_batch_size = network_batch_size_exp.value();
 
     const auto intermediate_buffer_key = std::make_pair(src_context_index, src_stream_index);
-    auto intermediate_buffer = create_intermediate_buffer(transfer_size, network_batch_size, intermediate_buffer_key);
+    auto intermediate_buffer = create_intermediate_buffer(IntermediateBuffer::ChannelType::INTER_CONTEXT, transfer_size,
+        network_batch_size, intermediate_buffer_key);
     CHECK_EXPECTED(intermediate_buffer);
     auto intermediate_buffer_ref = intermediate_buffer.release();
 
@@ -189,48 +299,22 @@ ExpectedRef<IntermediateBuffer> ResourcesManager::get_intermediate_buffer(const 
     return std::ref(intermediate_buffer_it->second);
 }
 
-Expected<std::pair<uint16_t, uint32_t>> ResourcesManager::get_desc_buffer_sizes_for_boundary_channel(
-    uint32_t transfer_size, const std::string &network_name)
-{
-    auto network_batch_size = get_network_batch_size(network_name);
-    CHECK_EXPECTED(network_batch_size);
-    uint32_t min_active_trans = MIN_ACTIVE_TRANSFERS_SCALE * network_batch_size.value();
-    uint32_t max_active_trans = MAX_ACTIVE_TRANSFERS_SCALE * network_batch_size.value();
-
-    CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(min_active_trans), HAILO_INVALID_ARGUMENT, 
-        "calculated min_active_trans for vdma descriptor list is out of UINT16 range");
-
-    CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(max_active_trans), HAILO_INVALID_ARGUMENT, 
-        "calculated min_active_trans for vdma descriptor list is out of UINT16 range");
-
-    return VdmaDescriptorList::get_desc_buffer_sizes_for_single_transfer(m_driver,
-        static_cast<uint16_t>(min_active_trans), static_cast<uint16_t>(max_active_trans), transfer_size);
-}
-
-Expected<CONTROL_PROTOCOL__application_header_t> ResourcesManager::get_control_network_group_header()
+Expected<CONTROL_PROTOCOL__application_header_t> ResourcesManager::get_control_network_group_header(bool is_scheduler_used)
 {
     CONTROL_PROTOCOL__application_header_t  app_header = {};
     app_header.dynamic_contexts_count = static_cast<uint8_t>(m_contexts.size() - 1);
     app_header.host_boundary_channels_bitmap = 0;
-    app_header.host_ddr_channels_bitmap = 0;
 
     /* Bitmask of all boundary and DDR channels*/
     int host_boundary_channels_bitmap_local = 0;
-    int host_ddr_channels_bitmap_local = 0;
     for (size_t i = MIN_H2D_CHANNEL_INDEX; i <= MAX_D2H_CHANNEL_INDEX; i++) {
         /* Set boundary channels */
         if (m_channels_info[i].is_type(ChannelInfo::Type::BOUNDARY) && m_channels_info[i].is_used()) {
             host_boundary_channels_bitmap_local |= 1 << i;
         }
-        /* DDR buffer channels are host controlled only if the HEF does not support padded ddr buffers */
-        else if ((m_channels_info[i].is_type(ChannelInfo::Type::DDR) && (!get_supported_features().padded_ddr_buffers)) &&
-            (m_channels_info[i].is_used())) {
-            host_ddr_channels_bitmap_local |= 1 << i;
-        }
     }
 
     app_header.host_boundary_channels_bitmap = static_cast<uint32_t>(host_boundary_channels_bitmap_local);
-    app_header.host_ddr_channels_bitmap = static_cast<uint32_t>(host_ddr_channels_bitmap_local);
 
     uint8_t cfg_handle_idx = 0;
     for (uint8_t ch_idx = MIN_H2D_CHANNEL_INDEX; ch_idx <= MAX_H2D_CHANNEL_INDEX; ch_idx++) {
@@ -242,7 +326,8 @@ Expected<CONTROL_PROTOCOL__application_header_t> ResourcesManager::get_control_n
         }
     }
     app_header.power_mode = static_cast<uint8_t>(m_config_params.power_mode);
-    fill_network_batch_size(app_header);
+    CHECK_SUCCESS_AS_EXPECTED(fill_infer_features(app_header), "Invalid infer features");
+    CHECK_SUCCESS_AS_EXPECTED(fill_network_batch_size(app_header, is_scheduler_used), "Invalid network batch sizes");
     return app_header;
 }
 
@@ -279,21 +364,11 @@ Expected<uint8_t> ResourcesManager::get_available_channel_index(std::set<uint8_t
             return index;
         }
 
-        // If DDR is managed by the FW - allow reuse of channels for DDR / inter_context
-        if (get_supported_features().padded_ddr_buffers) {
-            if (((ChannelInfo::Type::BOUNDARY != required_type) && (ChannelInfo::Type::CFG != required_type)) &&
-                ((m_channels_info[index].is_type(ChannelInfo::Type::DDR)) || (m_channels_info[index].is_type(ChannelInfo::Type::INTER_CONTEXT)))) {
-                m_channels_info[index].set_type(required_type);
-                m_channels_info[index].set_layer_name(layer_name);
-                return index;
-            }
-        } else {
-            // If not - allow reuse of channels for within the same type
-            if (m_channels_info[index].is_type(required_type)) {
-                m_channels_info[index].set_type(required_type);
-                m_channels_info[index].set_layer_name(layer_name);
-                return index;
-            }
+        if (((ChannelInfo::Type::BOUNDARY != required_type) && (ChannelInfo::Type::CFG != required_type)) &&
+            ((m_channels_info[index].is_type(ChannelInfo::Type::DDR)) || (m_channels_info[index].is_type(ChannelInfo::Type::INTER_CONTEXT)))) {
+            m_channels_info[index].set_type(required_type);
+            m_channels_info[index].set_layer_name(layer_name);
+            return index;
         }
     }
 
@@ -346,7 +421,7 @@ ExpectedRef<IntermediateBuffer> ResourcesManager::create_ddr_buffer(DdrChannelsI
     const uint32_t transfer_size = ddr_info.row_size * DDR_NUMBER_OF_ROWS_PER_INTERRUPT;
 
     auto intermediate_buffer_key = std::make_pair(context_index, ddr_info.d2h_stream_index);
-    return create_intermediate_buffer(transfer_size, static_cast<uint16_t>(number_of_transfers),
+    return create_intermediate_buffer(IntermediateBuffer::ChannelType::DDR, transfer_size, static_cast<uint16_t>(number_of_transfers),
         intermediate_buffer_key);
 }
 
@@ -388,12 +463,9 @@ hailo_status ResourcesManager::register_fw_managed_vdma_channels()
         CHECK_SUCCESS(status);
     }
 
-    /* If ddr supported padded buffers - DDR buffers are managed by the FW */
-    if (get_supported_features().padded_ddr_buffers) {
-        for (auto &ch : m_ddr_buffer_channels) {
-            status = ch.register_fw_controlled_channel();
-            CHECK_SUCCESS(status);
-        }
+    for (auto &ch : m_ddr_buffer_channels) {
+        status = ch.register_fw_controlled_channel();
+        CHECK_SUCCESS(status);
     }
 
     return HAILO_SUCCESS;
@@ -414,12 +486,19 @@ hailo_status ResourcesManager::unregister_fw_managed_vdma_channels()
         CHECK_SUCCESS(status);
     }
 
-    /* If ddr supported padded buffers - DDR buffers are managed by the FW */
-    if (get_supported_features().padded_ddr_buffers) {
-        for (auto &ch : m_ddr_buffer_channels) {
-            status = ch.unregister_fw_controlled_channel();
-            CHECK_SUCCESS(status);
-        }
+    for (auto &ch : m_ddr_buffer_channels) {
+        status = ch.unregister_fw_controlled_channel();
+        CHECK_SUCCESS(status);
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status ResourcesManager::set_inter_context_channels_dynamic_batch_size(uint16_t dynamic_batch_size)
+{
+    for (auto &key_buff_pair : m_intermediate_buffers) {
+        const auto status = key_buff_pair.second.reprogram_inter_context(dynamic_batch_size);
+        CHECK_SUCCESS(status);
     }
 
     return HAILO_SUCCESS;
@@ -469,46 +548,11 @@ hailo_status ResourcesManager::reset_state_machine()
     return Control::reset_context_switch_state_machine(m_vdma_device);
 }
 
-hailo_status ResourcesManager::open_ddr_channels()
-{
-    for (auto& ddr_info : m_ddr_infos) {
-        for (auto &ch : m_ddr_buffer_channels) {
-            auto desc_list = ddr_info.intermediate_buffer->get_desc_list();
-            CHECK_EXPECTED_AS_STATUS(desc_list, "user managed DDR is not supported");
-            if (ddr_info.d2h_channel_index == ch.channel_index) {
-                auto status = ch.start_channel(*desc_list);
-                CHECK_SUCCESS(status);
-                ddr_info.d2h_ch = &ch;
-            }
-            if (ddr_info.h2d_channel_index == ch.channel_index) {
-                auto status = ch.start_channel(*desc_list);
-                CHECK_SUCCESS(status);
-                ddr_info.h2d_ch = &ch;
-            }
-        }
-    }
-    return HAILO_SUCCESS;
-}
-
-void ResourcesManager::abort_ddr_channels() // Best effort func
-{
-    for (auto &ch : m_ddr_buffer_channels) {
-        auto status = ch.abort();
-        if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed to abort DDR channel {}", ch.channel_index);
-        }
-    }
-}
-
-void ResourcesManager::close_ddr_channels() // Best effort func
-{
-    m_ddr_buffer_channels.clear();
-}
-
-ExpectedRef<IntermediateBuffer> ResourcesManager::create_intermediate_buffer(uint32_t transfer_size, uint16_t batch_size,
+ExpectedRef<IntermediateBuffer> ResourcesManager::create_intermediate_buffer(
+    IntermediateBuffer::ChannelType channel_type, uint32_t transfer_size, uint16_t batch_size,
     const IntermediateBufferKey &key)
 {
-    auto intermediate_buffer = IntermediateBuffer::create(m_driver, transfer_size, batch_size);
+    auto intermediate_buffer = IntermediateBuffer::create(m_driver, channel_type, transfer_size, batch_size);
     CHECK_EXPECTED(intermediate_buffer);
 
     auto emplace_res = m_intermediate_buffers.emplace(key, intermediate_buffer.release());
@@ -529,8 +573,7 @@ void ResourcesManager::update_config_buffer_info(std::vector<ConfigBuffer> &conf
         context.config_buffer_infos[i].dma_address = config.dma_address();
         context.config_buffer_infos[i].desc_page_size = config.desc_page_size();
         context.config_buffer_infos[i].total_desc_count = config.total_desc_count();
-        // Initial desc count is used only when the cfg channel is confifo prefetch mode.
-        context.config_buffer_infos[i].initial_desc_count = config.acc_desc_count();
+        context.config_buffer_infos[i].bytes_in_pattern = config.acc_desc_count() * config.desc_page_size();
 
         i++;
     }

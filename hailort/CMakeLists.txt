@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.0.0)
 
 # Set firmware version
 add_definitions( -DFIRMWARE_VERSION_MAJOR=4 )
-add_definitions( -DFIRMWARE_VERSION_MINOR=7 )
-add_definitions( -DFIRMWARE_VERSION_REVISION=0 )
+add_definitions( -DFIRMWARE_VERSION_MINOR=8 )
+add_definitions( -DFIRMWARE_VERSION_REVISION=1 )
 
 message(STATUS "Building pre_build")
 include(${CMAKE_CURRENT_LIST_DIR}/libhailort/cmake/execute_cmake.cmake)
@@ -65,8 +65,13 @@ if(HAILO_BUILD_PYBIND)
     if(NOT PYTHON_EXECUTABLE AND PYBIND11_PYTHON_VERSION)
         # PYBIND11_PYTHON_VERSION is prioritized (not virtual environment) if PYTHON_EXECUTABLE is not set.
         # See https://pybind11.readthedocs.io/en/stable/changelog.html#v2-6-0-oct-21-2020
-        find_package(PythonInterp ${PYBIND11_PYTHON_VERSION} REQUIRED)
-        set(PYTHON_EXECUTABLE ${Python_EXECUTABLE})
+        if(${CMAKE_VERSION} VERSION_LESS "3.12.0")
+            find_package(PythonInterp ${PYBIND11_PYTHON_VERSION} REQUIRED)
+            set(PYTHON_EXECUTABLE ${Python_EXECUTABLE})
+        else()
+            find_package(Python3 ${PYBIND11_PYTHON_VERSION} REQUIRED EXACT COMPONENTS Interpreter Development)
+            set(PYTHON_EXECUTABLE ${Python3_EXECUTABLE})
+        endif()
     endif()
     add_subdirectory(external/pybind11 EXCLUDE_FROM_ALL)
 endif()

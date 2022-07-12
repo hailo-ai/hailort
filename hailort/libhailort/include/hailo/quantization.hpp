@@ -11,6 +11,7 @@
 #define _HAILO_QUANTIZATION_HPP_
 
 #include "hailo/hailort.h"
+#include "hailo/hailort_common.hpp"
 #include <math.h>
 #include <fenv.h>
 

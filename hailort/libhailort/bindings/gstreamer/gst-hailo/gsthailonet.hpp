@@ -52,7 +52,8 @@ struct HailoNetProperties final
 {
 public:
     HailoNetProperties() : m_device_id(nullptr), m_hef_path(nullptr), m_network_name(nullptr), m_batch_size(HAILO_DEFAULT_BATCH_SIZE),
-        m_is_active(false), m_device_count(0), m_vdevice_key(DEFAULT_VDEVICE_KEY)
+        m_is_active(false), m_device_count(0), m_vdevice_key(DEFAULT_VDEVICE_KEY), m_scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_NONE),
+        m_scheduler_timeout_ms(HAILO_DEFAULT_SCHEDULER_TIMEOUT_MS), m_scheduler_threshold(HAILO_DEFAULT_SCHEDULER_THRESHOLD)
     {}
 
     HailoElemProperty<gchar*> m_device_id;
@@ -62,6 +63,9 @@ public:
     HailoElemProperty<gboolean> m_is_active;
     HailoElemProperty<guint16> m_device_count;
     HailoElemProperty<guint32> m_vdevice_key;
+    HailoElemProperty<hailo_scheduling_algorithm_t> m_scheduling_algorithm;
+    HailoElemProperty<guint32> m_scheduler_timeout_ms;
+    HailoElemProperty<guint32> m_scheduler_threshold;
 };
 
 class HailoNetImpl final
@@ -76,19 +80,26 @@ public:
     hailo_status set_hef();
     hailo_status link_elements();
     hailo_status configure_network_group();
-    hailo_status activate_network_group();
+    hailo_status activate_hailonet();
     hailo_status abort_streams();
-    hailo_status deactivate_network_group();
+
     gboolean src_pad_event(GstEvent *event);
     GstPadProbeReturn sink_probe();
     gboolean is_active();
     hailo_status flush();
     hailo_status signal_was_flushed_event();
 
+    hailo_status deactivate_network_group();
+    HailoNetProperties &get_props() {
+        return m_props;
+    }
+
 private:
     void init_ghost_sink();
     void init_ghost_src();
     Expected<std::string> get_network_group_name(const std::string &network_name);
+
+    hailo_status clear_vstreams();
 
     static std::atomic_uint32_t m_hailonet_count;
     static std::mutex m_mutex;

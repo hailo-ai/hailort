@@ -133,8 +133,7 @@ bool ConfigBuffer::should_use_ccb(HailoRTDriver &driver)
     case HailoRTDriver::DmaType::PCIE:
         return false;
     case HailoRTDriver::DmaType::DRAM:
-        // TODO: return true when ready
-        return false;
+        return true;
     default:
         assert(true);
         return false;

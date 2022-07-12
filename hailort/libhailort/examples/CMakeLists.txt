@@ -2,10 +2,10 @@ cmake_minimum_required(VERSION 3.0.0)
 
 project(hailort-examples)
 
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_LIST_DIR}/cmake/")
-find_package(HailoRT)
 find_package(Threads REQUIRED)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
+
+find_package(HailoRT 4.8.1 EXACT REQUIRED)
 
 add_library(example_base INTERFACE)
 target_link_libraries(example_base INTERFACE HailoRT::libhailort Threads::Threads)

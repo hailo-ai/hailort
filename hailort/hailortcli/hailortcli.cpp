@@ -120,21 +120,14 @@ void add_device_options(CLI::App *app, hailo_device_params &device_params)
 
     auto group = app->add_option_group("Device Options");
     
-    // TODO: `--target` and `udp` DeviceType::ETH are for backwards compatibility with the python implemention (`hailo`)
-    // TODO: Remove them (HRT-2676)
     const HailoCheckedTransformer<DeviceType> device_type_transformer({
             { "pcie", DeviceType::PCIE },
             { "eth", DeviceType::ETH },
-            { "udp", DeviceType::ETH },
         });
     auto *device_type_option = group->add_option("-d,--device-type,--target", device_params.device_type,
         "Device type to use\n"
-        "Default is pcie.\n"
-        "Note: 'udp' is an alias for 'eth'.")
+        "Default is pcie.")
         ->transform(device_type_transformer);
-
-    std::vector<DeprecationActionPtr> actions{ std::make_shared<ValueDeprecation>(device_type_option, "udp", "eth") };
-    hailo_deprecate_options(app, actions, false);
 
     // PCIe options
     auto *pcie_bdf_option = group->add_option("-s,--bdf", device_params.pcie_params.pcie_bdf,

@@ -17,39 +17,28 @@ ScanSubcommand::ScanSubcommand(CLI::App &parent_app) :
     Command(parent_app.add_subcommand("scan", "Shows all available devices")),
     m_device_type(Device::Type::PCIE)
 {
-    // TODO: `--target` and `udp` Device::TYPE::ETH are for backwards compatibility with the python implemention (`hailo`)
-    // TODO: Remove them (HRT-2676)
     const HailoCheckedTransformer<Device::Type> device_type_transformer({
             { "pcie", Device::Type::PCIE },
             { "eth", Device::Type::ETH },
-            { "udp", Device::Type::ETH },
         });
     auto *device_type_option = m_app->add_option("-d,--device-type,--target", m_device_type,
-        "Device type to use\n"
-        "Note: 'udp' is an alias for 'eth'.")
+        "Device type to use.")
         ->transform(device_type_transformer)
         ->default_val("pcie");
 
     // Ethernet options
     auto *eth_options_group = m_app->add_option_group("Ethernet Device Options");
-    // TODO: `--ip` is for backwards compatibility with the python implemention (`hailo`)
-    // TODO: Remove it (HRT-2676)
     auto *interface_ip_option = eth_options_group->add_option("--interface-ip", m_interface_ip_addr,
         "Interface IP address to scan")
         ->default_val("")
         ->check(CLI::ValidIPV4);
-    auto *ip_option = eth_options_group->add_option("--ip", m_interface_ip_addr)
-        ->default_val("")
-        ->excludes(interface_ip_option)
-        ->check(CLI::ValidIPV4);
 
     auto *interface_name_option = eth_options_group->add_option("--interface", m_interface_name, "Interface name to scan")
         ->default_val("")
-        ->excludes(interface_ip_option)
-        ->excludes(ip_option);
+        ->excludes(interface_ip_option);
 
-    m_app->parse_complete_callback([this, device_type_option, interface_ip_option, ip_option, interface_name_option]() {
-        bool eth_options_given = !interface_ip_option->empty() || !ip_option->empty() || !interface_name_option->empty();
+    m_app->parse_complete_callback([this, device_type_option, interface_ip_option, interface_name_option]() {
+        bool eth_options_given = !interface_ip_option->empty() || !interface_name_option->empty();
 
         // The user didn't put target, we can figure it ourself
         if (device_type_option->empty()) {
@@ -71,12 +60,6 @@ ScanSubcommand::ScanSubcommand(CLI::App &parent_app) :
             throw CLI::ParseError("Ethernet options set on non eth device", CLI::ExitCodes::InvalidError);
         }
     });
-
-    std::vector<DeprecationActionPtr> actions{
-        std::make_shared<ValueDeprecation>(device_type_option, "udp", "eth"),
-        std::make_shared<OptionDeprecation>(ip_option, "--interface-ip")
-    };
-    hailo_deprecate_options(m_app, actions, false);
 }
 
 hailo_status ScanSubcommand::execute()

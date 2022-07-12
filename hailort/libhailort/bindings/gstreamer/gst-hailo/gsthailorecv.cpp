@@ -359,11 +359,9 @@ static GstFlowReturn gst_hailorecv_buffer_pool_acquire_callback(GstBufferPool *p
         ++hailo_pool->buffers_acquired;
 
         GstStructure *pool_config = gst_buffer_pool_get_config(pool);
-        GstCaps *caps = nullptr;
-        guint size = 0;
-        guint min_buffers = 0;
         guint max_buffers = 0;
-        gboolean result = gst_buffer_pool_config_get_params(pool_config, &caps, &size, &min_buffers, &max_buffers);
+        gboolean result = gst_buffer_pool_config_get_params(pool_config, NULL, NULL, NULL, &max_buffers);
+        gst_structure_free(pool_config);
         if (!result) {
             g_error("Failed getting config params from buffer pool!");
             return GST_FLOW_ERROR;

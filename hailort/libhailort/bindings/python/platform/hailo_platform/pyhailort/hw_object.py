@@ -30,6 +30,7 @@ class HailoHWObject(object):
     """Abstract Hailo hardware device representation."""
 
     NAME = InferenceTargets.UNINITIALIZED
+    IS_HARDWARE = True
 
     def __init__(self):
         """Create the Hailo hardware object."""
@@ -50,6 +51,11 @@ class HailoHWObject(object):
     def name(self):
         """str: The name of this target. Valid values are defined by :class:`~hailo_platform.pyhailort.hw_object.InferenceTargets`"""
         return type(self).NAME
+
+    @property
+    def is_hardware(self):
+        """bool: Indicates this target runs on a physical hardware device."""
+        return type(self).IS_HARDWARE
 
     @property
     def device_id(self):

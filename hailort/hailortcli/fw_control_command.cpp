@@ -230,14 +230,6 @@ FwControlCommand::FwControlCommand(CLI::App &parent_app) :
 {
     add_subcommand<FwControlIdentifyCommand>();
     add_subcommand<FwControlResetCommand>();
-
-    // TODO: Remove scan as a subcommand of fw_control_subcommand (HRT-2676)
-    //       Can also remove Command::set_description function after this, and the return value of `add_subcommand`
-    auto &scan = add_subcommand<ScanSubcommand>();
-    scan.set_description("Alias for root-level 'scan' command (i.e. 'hailortcli scan...')\n"
-        "Note: 'scan' as a sub-command of 'fw-control' is deprecated; use 'hailortcli scan' instead\n"
-        "       (or 'hailo scan' when using the 'hailo' command).");
-
     add_subcommand<FwControlTestMemoriesCommand>();
     // TODO: Support on windows (HRT-5919)
     #if defined(__GNUC__)

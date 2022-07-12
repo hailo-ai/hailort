@@ -6,7 +6,6 @@ import sys
 
 import hailo_platform
 from hailo_platform.tools.hailocli.base_utils import HailortCliUtil, Helper, HailortCliUtilError
-from hailo_platform.tools.hailocli.infer_cli import InferCLI
 from hailo_platform.tools.hailocli.hailocli_commands import (FWUpdaterCLI, SSBUpdaterCLI, ControlCommandCLI, ScanCommandCLI,
                                                             LoggerCommandCLI, MeasurePowerCommandCLI, RunCommandCLI, SensorConfigCommandCLI,
                                                             FWConfigCommandCLI, BenchmarkCommandCLI, UDPRateLimiterCLI)
@@ -24,9 +23,7 @@ class PlatformCommands:
         'fw-control': ('Useful firmware control operations', ControlCommandCLI),
         'fw-logger': ('Download fw logs to a file', LoggerCommandCLI),
         'scan': ('Scans for devices (Ethernet or PCIE)', ScanCommandCLI),
-        'broadcast': ('Scans for devices on a given interface (alias to \'hailo scan\')', ScanCommandCLI),
         'sensor-config': ('Sensor configuration tool', SensorConfigCommandCLI),
-        'infer': ('Run a compiled network - infer command is deprecated and will be removed in a future release. Please use \'hailo run\' instead.', InferCLI),
         'run': ('Run a compiled network', RunCommandCLI),
         'benchmark': ('Measure basic performance on compiled network', BenchmarkCommandCLI),
         'measure-power': ('Measures power consumption', MeasurePowerCommandCLI),
@@ -40,7 +37,7 @@ class PlatformCommands:
 
         try:
             # If sdk_client is importable - add its commands to this tool
-            from hailo_sdk_client.tools.hailocli.main import ClientCommands
+            from hailo_sdk_client.tools.cmd_utils.main import ClientCommands
             self.COMMANDS.update(ClientCommands.SDK_COMMANDS)
         except ImportError:
             pass

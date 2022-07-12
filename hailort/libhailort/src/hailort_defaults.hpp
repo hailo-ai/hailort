@@ -52,8 +52,8 @@ constexpr hailo_format_order_t DEFAULT_FORMAT_ARGMAX_ORDER_MAP[] = {
 };
 
 
-#define HAILO_DEFAULT_PARTIAL_NETWORK_NAME (std::string("default_network_name"))
 #define HAILO_DEFAULT_NETWORK_NAME_QUALIFIER (std::string("/"))
+
 
 class HailoRTDefaults
 {
@@ -323,15 +323,10 @@ public:
     {
         std::string default_network_name = net_group_name + 
             HAILO_DEFAULT_NETWORK_NAME_QUALIFIER + 
-            HAILO_DEFAULT_PARTIAL_NETWORK_NAME;
+            net_group_name;
 
         return default_network_name;
     }
-
-    static std::string get_partial_network_name()
-    {
-        return HAILO_DEFAULT_PARTIAL_NETWORK_NAME;
-    }    
 
     static hailo_format_t expand_auto_format(const hailo_format_t &host_format, const hailo_format_t &hw_format)
     {

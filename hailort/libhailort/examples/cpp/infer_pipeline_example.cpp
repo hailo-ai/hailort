@@ -3,7 +3,7 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @ file vstreams_example
+ * @file vstreams_example
  * This example demonstrates the basic data-path on HailoRT using the high level API - Virtual Stream Pipeline.
  * The program creates a device according to the provdied IP address, generates a random dataset,
  * and runs it through the device with virtual streams pipeline.
@@ -19,15 +19,7 @@ constexpr hailo_format_type_t FORMAT_TYPE = HAILO_FORMAT_TYPE_AUTO;
 
 #define USAGE_ERROR_MSG ("Args parsing error.\nUsage: infer_pipeline_example <ip_address>\n")
 
-
-using hailort::Device;
-using hailort::Hef;
-using hailort::Expected;
-using hailort::make_unexpected;
-using hailort::ConfiguredNetworkGroup;
-using hailort::MemoryView;
-using hailort::InferVStreams;
-
+using namespace hailort;
 
 Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(Device &device)
 {

@@ -3,7 +3,7 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @ file infer_pipeline_example.c
+ * @file infer_pipeline_example.c
  * This example demonstrates the basic data-path on HailoRT using the high level API - Virtual Stream Pipeline.
  * The program scans for Hailo-8 devices connected to a provided Ethernet interface, generates a random dataset,
  * and runs it through the device with virtual streams pipeline.

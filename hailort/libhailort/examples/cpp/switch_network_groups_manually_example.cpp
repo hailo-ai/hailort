@@ -2,11 +2,11 @@
  * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
-/**git checkout HRT-4862-change-switch_hefs_example-to-r
- * @ file switch_hefs_example_threads_reuse.cpp
+/**
+ * @file switch_network_groups_manually_example.cpp
  * This example demonstrates basic usage of HailoRT streaming api over multiple networks, using vstreams.
  * It loads several HEF networks with single/multiple inputs and single/multiple outputs into a Hailo PCIe VDevice and performs a
- * short inference on each one. 
+ * short inference on each one.
  * After inference is finished, the example switches to the next HEF and start inference again.
  **/
 
@@ -23,15 +23,7 @@ constexpr size_t RUN_COUNT = 10;
 constexpr std::chrono::milliseconds WAIT_FOR_ACTIVATION_TIMEOUT_MS(10);
 constexpr uint32_t DEVICE_COUNT = 1;
 
-using hailort::VDevice;
-using hailort::Hef;
-using hailort::ConfiguredNetworkGroup;
-using hailort::ActivatedNetworkGroup;
-using hailort::VStreamsBuilder;
-using hailort::InputVStream;
-using hailort::OutputVStream;
-using hailort::MemoryView;
-
+using namespace hailort;
 
 #include <mutex>
 #include <condition_variable>

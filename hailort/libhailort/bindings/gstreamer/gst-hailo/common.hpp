@@ -51,6 +51,9 @@ using namespace hailort;
 #define HAILO_SUPPORTED_FORMATS "{ RGB, YUY2 }"
 #define HAILO_VIDEO_CAPS GST_VIDEO_CAPS_MAKE(HAILO_SUPPORTED_FORMATS)
 
+#define HAILO_DEFAULT_SCHEDULER_TIMEOUT_MS (0)
+#define HAILO_DEFAULT_SCHEDULER_THRESHOLD (1)
+
 #define GST_CHECK(cond, ret_val, element, domain, ...)      \
     do {                                \
         if (!(cond)) {                  \

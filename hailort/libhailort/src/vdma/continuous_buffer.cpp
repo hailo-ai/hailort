@@ -50,6 +50,14 @@ uint32_t ContinuousBuffer::get_buffer_size(uint32_t buffer_size)
     return std::max(aligned_buffer_size, min_buffer_size);
 }
 
+uint32_t ContinuousBuffer::get_buffer_size_desc_power2(uint32_t buffer_size)
+{
+    const uint16_t page_size = DEFAULT_DESC_PAGE_SIZE;
+    const auto descriptors_in_buffer = DESCRIPTORS_IN_BUFFER(buffer_size, page_size);
+    const auto actual_descriptors_count = get_nearest_powerof_2(descriptors_in_buffer, MIN_CCB_DESCRIPTORS_COUNT);
+    return actual_descriptors_count * page_size;
+}
+
 ContinuousBuffer::~ContinuousBuffer()
 {
     if (0 != m_handle) {
@@ -88,12 +96,6 @@ uint32_t ContinuousBuffer::descs_count() const
     return descriptors_in_buffer(m_size);
 }
 
-uint32_t ContinuousBuffer::descriptors_in_buffer(size_t buffer_size) const
-{
-    assert(buffer_size < std::numeric_limits<uint32_t>::max());
-    return static_cast<uint32_t>(((buffer_size) + desc_page_size() - 1) / desc_page_size());
-}
-
 hailo_status ContinuousBuffer::read(void *buf_dst, size_t count, size_t offset)
 {
     CHECK((count + offset) <= m_size, HAILO_INSUFFICIENT_BUFFER,
@@ -114,7 +116,6 @@ hailo_status ContinuousBuffer::write(const void *buf_src, size_t count, size_t o
     return HAILO_SUCCESS;
 }
 
-
 Expected<uint32_t> ContinuousBuffer::program_descriptors(size_t transfer_size, VdmaInterruptsDomain first_desc_interrupts_domain,
     VdmaInterruptsDomain last_desc_interrupts_domain, size_t desc_offset, bool is_circular)
 {
@@ -123,10 +124,20 @@ Expected<uint32_t> ContinuousBuffer::program_descriptors(size_t transfer_size, V
     (void)desc_offset;
     (void)is_circular;
 
-    // They descriptors in continuous mode are programmed by the hw, nothing to do here.
+    // The descriptors in continuous mode are programmed by the hw, nothing to do here.
     return descriptors_in_buffer(transfer_size);
 }
 
+hailo_status ContinuousBuffer::reprogram_device_interrupts_for_end_of_batch(size_t transfer_size, uint16_t batch_size,
+        VdmaInterruptsDomain new_interrupts_domain)
+{
+    (void)transfer_size;
+    (void)batch_size;
+    (void)new_interrupts_domain;
+
+    // The descriptors in continuous mode are programmed by the hw, nothing to do here.
+    return HAILO_SUCCESS;
+}
 
 ContinuousBuffer::ContinuousBuffer(size_t size, HailoRTDriver &driver, uintptr_t handle, uint64_t dma_address,
     MmapBuffer<void> &&mmap) :

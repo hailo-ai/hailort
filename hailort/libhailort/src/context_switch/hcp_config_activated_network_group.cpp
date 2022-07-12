@@ -14,6 +14,7 @@ namespace hailort
 {
 
 Expected<HcpConfigActivatedNetworkGroup> HcpConfigActivatedNetworkGroup::create(Device &device, std::vector<WriteMemoryInfo> &config,
+        const std::string &network_group_name,
         const hailo_activate_network_group_params_t &network_group_params,
         std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
         std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,
@@ -36,20 +37,29 @@ Expected<HcpConfigActivatedNetworkGroup> HcpConfigActivatedNetworkGroup::create(
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
 
-    HcpConfigActivatedNetworkGroup object(device, active_net_group_holder, network_group_params, input_streams, output_streams,
+    HcpConfigActivatedNetworkGroup object(device, active_net_group_holder, network_group_name, network_group_params, input_streams, output_streams,
         power_mode, std::move(network_group_activated_event), status);
     CHECK_SUCCESS_AS_EXPECTED(status);
     return object;
 }
 
-HcpConfigActivatedNetworkGroup::HcpConfigActivatedNetworkGroup(Device &device,
-    HcpConfigActiveAppHolder &active_net_group_holder, const hailo_activate_network_group_params_t &network_group_params,
-    std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
-    std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,    
-    hailo_power_mode_t power_mode, EventPtr &&network_group_activated_event, hailo_status &status) :
-      ActivatedNetworkGroupBase(network_group_params, input_streams, output_streams,
-        std::move(network_group_activated_event), status),
-      m_active_net_group_holder(active_net_group_holder), m_is_active(true), m_power_mode(power_mode), m_device(device)
+HcpConfigActivatedNetworkGroup::HcpConfigActivatedNetworkGroup(
+        Device &device,
+        HcpConfigActiveAppHolder &active_net_group_holder,
+        const std::string &network_group_name,
+        const hailo_activate_network_group_params_t &network_group_params,
+        std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
+        std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,    
+        hailo_power_mode_t power_mode,
+        EventPtr &&network_group_activated_event,
+        hailo_status &status) :
+    ActivatedNetworkGroupBase(network_group_params, CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE,
+                              input_streams, output_streams, std::move(network_group_activated_event), status),
+    m_active_net_group_holder(active_net_group_holder),
+    m_is_active(true),
+    m_power_mode(power_mode),
+    m_device(device),
+    m_network_group_name(network_group_name)
 {
     // Validate ActivatedNetworkGroup status
     if (HAILO_SUCCESS != status) {
@@ -64,6 +74,11 @@ HcpConfigActivatedNetworkGroup::~HcpConfigActivatedNetworkGroup()
         m_active_net_group_holder.clear();
         deactivate_resources();
     }
+}
+
+const std::string &HcpConfigActivatedNetworkGroup::get_network_group_name() const
+{
+    return m_network_group_name;
 }
 
 } /* namespace hailort */

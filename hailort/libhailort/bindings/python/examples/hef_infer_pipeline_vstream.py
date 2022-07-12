@@ -25,6 +25,8 @@ def main():
             input_data = {name : 1 + np.ndarray([args.num_frames] + list(shape), dtype=np.float32) for name, shape in input_names_to_shape.items()}
             with network_group.activate(network_group_params):
                 _ = infer_pipeline.infer(input_data)
+        
+    print('Inference ran successfully')
 
 if __name__ == '__main__':
     main()

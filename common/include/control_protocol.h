@@ -868,16 +868,6 @@ typedef enum {
 } CONTROL_PROTOCOL__CONTEXT_SWITCH_VERSION_t;
 
 typedef struct {
-    uint8_t dynamic_contexts_count;
-    uint32_t host_boundary_channels_bitmap;
-    uint32_t host_ddr_channels_bitmap;
-    uint8_t cfg_channel_numbers[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
-    uint8_t power_mode; // CONTROL_PROTOCOL__power_mode_t
-    uint8_t networks_count;
-    uint16_t batch_size[CONTROL_PROTOCOL__MAX_NETWORKS_PER_NETWORK_GROUP];
-} CONTROL_PROTOCOL__application_header_t;
-
-typedef struct {
     bool is_abbale_supported;
 } CONTROL_PROTOCOL__VALIDATION_FEATURE_LIST_t;
 
@@ -886,12 +876,20 @@ typedef struct {
 } CONTROL_PROTOCOL__INFER_FEATURE_LIST_t;
 
 typedef struct {
+    uint8_t dynamic_contexts_count;
+    uint32_t host_boundary_channels_bitmap;
+    uint8_t cfg_channel_numbers[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
+    uint8_t power_mode; // CONTROL_PROTOCOL__power_mode_t
+    CONTROL_PROTOCOL__INFER_FEATURE_LIST_t infer_features;
+    uint8_t networks_count;
+    uint16_t batch_size[CONTROL_PROTOCOL__MAX_NETWORKS_PER_NETWORK_GROUP];
+} CONTROL_PROTOCOL__application_header_t;
+
+typedef struct {
     uint32_t context_switch_version_length;
     uint32_t context_switch_version;
     uint32_t validation_features_length;
     CONTROL_PROTOCOL__VALIDATION_FEATURE_LIST_t validation_features;
-    uint32_t infer_features_length;
-    CONTROL_PROTOCOL__INFER_FEATURE_LIST_t infer_features;
     uint32_t application_count_length;
     uint8_t application_count;
     uint32_t application_header_length;
@@ -909,7 +907,6 @@ typedef enum {
 typedef struct {
     CONTROL_PROTOCOL__CONTEXT_SWITCH_VERSION_t context_switch_version;
     CONTROL_PROTOCOL__VALIDATION_FEATURE_LIST_t validation_features;
-    CONTROL_PROTOCOL__INFER_FEATURE_LIST_t infer_features;
     uint8_t application_count;
     CONTROL_PROTOCOL__application_header_t application_header[CONTROL_PROTOCOL__MAX_CONTEXT_SWITCH_APPLICATIONS];
 } CONTROL_PROTOCOL__context_switch_main_header_t;
@@ -971,6 +968,7 @@ typedef enum {
     CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ENABLE_LCU_DEFAULT,
     CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ADD_REPEATED,
     CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_FETCH_CCW_BURSTS,
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_BURST_CREDITS_TASK_START,
 
     /* must be last*/
     CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_COUNT,
@@ -1037,6 +1035,25 @@ typedef enum {
     CONTROL_PROTOCOL__EDGE_CONNECTION_TYPE_COUNT
 } CONTROL_PROTOCOL__EDGE_CONNECTION_TYPE_t;
 
+typedef enum {
+    CONTROL_PROTOCOL__HOST_BUFFER_TYPE_EXTERNAL_DESC = 0,
+    CONTROL_PROTOCOL__HOST_BUFFER_TYPE_CCB,
+
+    // The buffer uses external descriptors that is host managed - the firmware don't need to config this buffer
+    CONTROL_PROTOCOL__HOST_BUFFER_TYPE_HOST_MANAGED_EXTERNAL_DESC,
+
+    /* must be last*/
+    CONTROL_PROTOCOL__HOST_BUFFER_TYPE_COUNT
+} CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t;
+
+typedef struct {
+    uint8_t buffer_type;   // CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t
+    uint64_t dma_address;
+    uint16_t desc_page_size;
+    uint32_t total_desc_count;
+    uint32_t bytes_in_pattern;
+} CONTROL_PROTOCOL__host_buffer_info_t;
+
 typedef struct {
     uint8_t communication_type;
     uint8_t edge_connection_type;
@@ -1051,7 +1068,6 @@ typedef struct {
 
 typedef struct {
     uint64_t host_descriptors_base_address;
-    uint32_t initial_host_available_descriptors;
     uint8_t desc_list_depth;
 } CONTROL_PROTOCOL__host_desc_address_info_t;
 
@@ -1063,9 +1079,7 @@ typedef struct {
 
 typedef struct {
     CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
-    uint32_t frame_credits_in_bytes;
-    CONTROL_PROTOCOL__host_desc_address_info_t host_desc_address_info;
-    uint16_t desc_page_size;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
 } CONTROL_PROTOCOL__inter_context_output_t;
 
 typedef struct {
@@ -1073,7 +1087,7 @@ typedef struct {
     uint32_t frame_credits_in_bytes;
     CONTROL_PROTOCOL__host_desc_address_info_t host_desc_address_info;
     uint16_t desc_page_size;
-    bool fw_managed_channel;
+    uint32_t buffered_rows_count;
 } CONTROL_PROTOCOL__ddr_buffer_output_t;
 
 
@@ -1084,19 +1098,19 @@ typedef struct {
 typedef struct {
     CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
     uint16_t desc_page_size;
+    uint32_t initial_credit_size;
 } CONTROL_PROTOCOL__network_boundary_input_t;
 
 typedef struct {
     CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
-    CONTROL_PROTOCOL__host_desc_address_info_t host_desc_address_info;
-    uint16_t desc_page_size;
-    uint16_t context_credits_in_descriptors;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
+    uint32_t initial_credit_size;
 } CONTROL_PROTOCOL__inter_context_input_t;
 
 typedef struct {
     CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
     CONTROL_PROTOCOL__host_desc_address_info_t host_desc_address_info;
-    bool fw_managed_channel;
+    uint32_t initial_credit_size;
 } CONTROL_PROTOCOL__ddr_buffer_input_t;
 
 typedef struct {
@@ -1106,26 +1120,6 @@ typedef struct {
 typedef struct {
     uint8_t should_use_stream_remap;
 } CONTROL_PROTOCOL__stream_remap_data_t;
-
-typedef enum {
-    CONTROL_PROTOCOL__HOST_BUFFER_TYPE_EXTERNAL_DESC = 0,
-    CONTROL_PROTOCOL__HOST_BUFFER_TYPE_CCB,
-
-    // The buffer uses external descriptors that is host managed - the firmware don't need to config this buffer
-    CONTROL_PROTOCOL__HOST_BUFFER_TYPE_HOST_MANAGED_EXTERNAL_DESC,
-
-
-    /* must be last*/
-    CONTROL_PROTOCOL__HOST_BUFFER_TYPE_COUNT
-} CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t;
-
-typedef struct {
-    uint8_t buffer_type;   // CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t
-    uint64_t dma_address;
-    uint16_t desc_page_size;
-    uint32_t total_desc_count;
-    uint32_t initial_desc_count;  // Initial credit given to the channel in descriptors
-} CONTROL_PROTOCOL__host_buffer_info_t;
 
 #if defined(_MSC_VER)
 // TODO: warning C4200
@@ -1299,6 +1293,11 @@ typedef struct {
     /* Must be first */
     CONTROL_PROTOCOL__ACTION_HEADER_t header;
 } CONTROL_PROTOCOL__ADD_DDR_BUFFERING_START_ACTION_t;
+
+typedef struct {
+    /* Must be first */
+    CONTROL_PROTOCOL__ACTION_HEADER_t header;
+} CONTROL_PROTOCOL__BURST_CREDITS_TASK_START_ACTION_T;
 
 typedef struct {
     CONTROL_PROTOCOL__TRIGGER_t trigger;

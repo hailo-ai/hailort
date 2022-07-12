@@ -22,6 +22,8 @@ public:
     static Expected<ContinuousBuffer> create(size_t size, HailoRTDriver &driver);
 
     static uint32_t get_buffer_size(uint32_t buffer_size);
+    // Get buffer size with the requirment that the amount of descriptors is a power of 2.
+    static uint32_t get_buffer_size_desc_power2(uint32_t buffer_size);
 
     ContinuousBuffer(const ContinuousBuffer &) = delete;
     ContinuousBuffer& operator=(const ContinuousBuffer &) = delete;
@@ -47,7 +49,6 @@ public:
     virtual uint64_t dma_address() const override;
     virtual uint16_t desc_page_size() const override;
     virtual uint32_t descs_count() const override;
-    virtual uint32_t descriptors_in_buffer(size_t buffer_size) const override;
 
     // Not used in this flow
     virtual ExpectedRef<VdmaDescriptorList> get_desc_list() override
@@ -59,8 +60,10 @@ public:
     virtual hailo_status read(void *buf_dst, size_t count, size_t offset) override;
     virtual hailo_status write(const void *buf_src, size_t count, size_t offset) override;
 
-    Expected<uint32_t> program_descriptors(size_t transfer_size, VdmaInterruptsDomain first_desc_interrupts_domain,
-        VdmaInterruptsDomain last_desc_interrupts_domain, size_t desc_offset, bool is_circular);
+    virtual Expected<uint32_t> program_descriptors(size_t transfer_size, VdmaInterruptsDomain first_desc_interrupts_domain,
+        VdmaInterruptsDomain last_desc_interrupts_domain, size_t desc_offset, bool is_circular) override;
+    virtual hailo_status reprogram_device_interrupts_for_end_of_batch(size_t transfer_size, uint16_t batch_size,
+        VdmaInterruptsDomain new_interrupts_domain) override;
 
 private:
     ContinuousBuffer(size_t size, HailoRTDriver &driver, uintptr_t handle, uint64_t dma_address,

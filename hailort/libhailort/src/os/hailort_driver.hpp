@@ -37,6 +37,8 @@ static_assert((0 == ((PENDING_BUFFERS_SIZE - 1) &  PENDING_BUFFERS_SIZE)), "PEND
 // When measuring latency, each channel is capable of PENDING_BUFFERS_SIZE active transfers, each transfer raises max of 2 timestamps
 #define MAX_IRQ_TIMESTAMPS_SIZE (PENDING_BUFFERS_SIZE * 2)
 
+#define DESCRIPTORS_IN_BUFFER(buffer_size, desc_page_size) (((buffer_size) + (desc_page_size) - 1) / (desc_page_size))
+
 #define PCIE_EXPECTED_MD5_LENGTH (16)
 
 enum class PciBar {

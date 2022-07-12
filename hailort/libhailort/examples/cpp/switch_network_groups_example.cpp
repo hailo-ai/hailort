@@ -1,0 +1,170 @@
+/**
+ * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Distributed under the MIT license (https://opensource.org/licenses/MIT)
+ **/
+/**
+ * @file switch_network_groups_example.cpp
+ * This example demonstrates basic usage of HailoRT streaming api over multiple network groups, using VStreams.
+ * It loads several network_groups (via several HEFs) into a Hailo PCIe VDevice and performs a inferences on all of them in parallel.
+ * The network_groups switching is performed automatically by the HailoRT scheduler.
+ **/
+
+#include "hailo/hailort.hpp"
+
+#include <iostream>
+#include <chrono>
+
+constexpr bool QUANTIZED = true;
+constexpr hailo_format_type_t FORMAT_TYPE = HAILO_FORMAT_TYPE_AUTO;
+constexpr size_t INFER_FRAME_COUNT = 100;
+constexpr uint32_t DEVICE_COUNT = 1;
+
+using namespace hailort;
+using ThreadsVector = std::vector<std::unique_ptr<std::thread>>;
+using StatusVector = std::vector<std::shared_ptr<hailo_status>>;
+
+void write_all(InputVStream &input_vstream, std::shared_ptr<hailo_status> status_out)
+{
+    std::vector<uint8_t> buff(input_vstream.get_frame_size());
+
+    for (size_t i = 0; i < INFER_FRAME_COUNT; i++) {
+        auto status = input_vstream.write(MemoryView(buff.data(), buff.size()));
+        if (HAILO_SUCCESS != status) {
+            *status_out = status;
+            return;
+        }
+    }
+    *status_out = HAILO_SUCCESS;
+    return;
+}
+
+void read_all(OutputVStream &output_vstream, std::shared_ptr<hailo_status> status_out)
+{
+    std::vector<uint8_t> buff(output_vstream.get_frame_size());
+
+    for (size_t i = 0; i < INFER_FRAME_COUNT; i++) {
+        auto status = output_vstream.read(MemoryView(buff.data(), buff.size()));
+        if (HAILO_SUCCESS != status) {
+            *status_out = status;
+            return;
+        }
+    }
+    *status_out = HAILO_SUCCESS;
+    return;
+}
+
+Expected<std::vector<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>>> build_vstreams(
+    const std::vector<std::shared_ptr<ConfiguredNetworkGroup>> &configured_network_groups)
+{
+    std::vector<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> vstreams_per_network_group;
+
+    for (auto &network_group : configured_network_groups) {
+        auto vstreams_exp = VStreamsBuilder::create_vstreams(*network_group, QUANTIZED, FORMAT_TYPE);
+        if (!vstreams_exp) {
+            return make_unexpected(vstreams_exp.status());
+        }
+        vstreams_per_network_group.emplace_back(vstreams_exp.release());
+    }
+    return vstreams_per_network_group;
+}
+
+void create_read_threads(std::vector<OutputVStream> &vstreams, StatusVector &read_results, ThreadsVector &threads_vector)
+{
+    for (auto &vstream : vstreams) {
+        read_results.push_back(std::make_shared<hailo_status>(HAILO_UNINITIALIZED));
+        threads_vector.emplace_back(std::make_unique<std::thread>(read_all, std::ref(vstream), read_results.back()));
+    }
+}
+
+void create_write_threads(std::vector<InputVStream> &vstreams, StatusVector &write_results, ThreadsVector &threads_vector)
+{
+    for (auto &vstream : vstreams) {
+        write_results.push_back(std::make_shared<hailo_status>(HAILO_UNINITIALIZED));
+        threads_vector.emplace_back(std::make_unique<std::thread>(write_all, std::ref(vstream), write_results.back()));
+    }
+}
+
+Expected<std::unique_ptr<VDevice>> create_vdevice()
+{
+    hailo_vdevice_params_t params;
+    auto status = hailo_init_vdevice_params(&params);
+    if (HAILO_SUCCESS != status) {
+        std::cerr << "Failed init vdevice_params, status = " << status << std::endl;
+        return make_unexpected(status);
+    }
+    params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN;
+    params.device_count = DEVICE_COUNT;
+
+    return VDevice::create(params);
+}
+
+Expected<std::vector<std::shared_ptr<ConfiguredNetworkGroup>>> configure_hefs(VDevice &vdevice, std::vector<std::string> &hef_paths)
+{
+    std::vector<std::shared_ptr<ConfiguredNetworkGroup>> results;
+
+    for (const auto &path : hef_paths) {
+        auto hef_exp = Hef::create(path);
+        if (!hef_exp) {
+            return make_unexpected(hef_exp.status());
+        }
+        auto hef = hef_exp.release();
+
+        auto added_network_groups = vdevice.configure(hef);
+        if (!added_network_groups) {
+            return make_unexpected(added_network_groups.status());
+        }
+        results.insert(results.end(), added_network_groups->begin(),
+            added_network_groups->end());
+    }
+    return results;
+}
+
+int main()
+{
+    auto vdevice_exp = create_vdevice();
+    if (!vdevice_exp) {
+        std::cerr << "Failed create vdevice, status = " << vdevice_exp.status() << std::endl;
+        return vdevice_exp.status();
+    }
+    auto vdevice = vdevice_exp.release();
+
+    std::vector<std::string> hef_paths = {"hefs/multi_network_shortcut_net.hef", "hefs/shortcut_net.hef"};
+    auto configured_network_groups_exp = configure_hefs(*vdevice, hef_paths);
+    if (!configured_network_groups_exp) {
+        std::cerr << "Failed to configure HEFs, status = " << configured_network_groups_exp.status() << std::endl;
+        return configured_network_groups_exp.status();
+    }
+    auto configured_network_groups = configured_network_groups_exp.release();
+
+    auto vstreams_per_network_group_exp = build_vstreams(configured_network_groups);
+    if (!vstreams_per_network_group_exp) {
+        std::cerr << "Failed to create vstreams, status = " << vstreams_per_network_group_exp.status() << std::endl;
+        return vstreams_per_network_group_exp.status();
+    }
+    auto vstreams_per_network_group = vstreams_per_network_group_exp.release();
+
+    ThreadsVector threads;
+    StatusVector results;
+
+    for (auto &vstreams_pair : vstreams_per_network_group) {
+        // Create send/recv threads
+        create_read_threads(vstreams_pair.second, results, threads);
+        create_write_threads(vstreams_pair.first, results, threads);
+    }
+
+    // Join threads and validate results
+    for (auto &thread : threads) {
+        if (thread->joinable()) {
+            thread->join();
+        }
+    }
+    for (auto &status : results) {
+        if (HAILO_SUCCESS != *status) {
+            std::cerr << "Inference failed, status = "  << *status << std::endl;
+            return *status;
+        }
+    }
+
+    std::cout << "Inference finished successfully" << std::endl;
+    return HAILO_SUCCESS;
+}

@@ -12,8 +12,8 @@ import struct
 # Supported protocol and Firmware version of current SDK.
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 4
-SUPPORTED_FW_MINOR = 7
-SUPPORTED_FW_REVISION = 0
+SUPPORTED_FW_MINOR = 8
+SUPPORTED_FW_REVISION = 1
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
 
@@ -231,14 +231,6 @@ class HailoFirmwareType(Enum):
     """Indication the firmware type """
     CORE = 'core'
     APP = 'app'
-
-
-class HailoResetTypes(Enum):
-    """Defines the available reset types."""
-    CHIP = 'chip'
-    NN_CORE = 'nn_core'
-    SOFT = 'soft'
-    FORCED_SOFT = 'forced_soft'
 
 
 class HailoFirmwareVersion(object):
