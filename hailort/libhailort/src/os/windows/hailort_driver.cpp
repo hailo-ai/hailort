@@ -20,7 +20,10 @@
 namespace hailort
 {
 
-//TODO: unify
+static_assert(VDMA_CHANNELS_PER_ENGINE == MAX_VDMA_CHANNELS_PER_ENGINE, "Driver and libhailort parameters mismatch");
+static_assert(MIN_D2H_CHANNEL_INDEX == VDMA_DEST_CHANNELS_START, "Driver and libhailort parameters mismatch");
+
+//TODO HRT-7309: merge with posix
 constexpr hailo_dma_data_direction direction_to_dma_data_direction(HailoRTDriver::DmaDirection direction) {
     switch (direction){
     case HailoRTDriver::DmaDirection::H2D:
@@ -500,6 +503,7 @@ HailoRTDriver::HailoRTDriver(const std::string &dev_path, FileDescriptor &&fd, h
     }
 
     m_desc_max_page_size = device_properties.desc_max_page_size;
+    m_dma_engines_count = device_properties.dma_engines_count;
     switch (device_properties.board_type) {
     case HAILO8:
         m_board_type = BoardType::HAILO8;
@@ -702,34 +706,38 @@ hailo_status HailoRTDriver::vdma_buffer_sync(VdmaBufferHandle handle, DmaDirecti
     return HAILO_SUCCESS;
 }
 
-Expected<HailoRTDriver::VdmaChannelHandle> HailoRTDriver::vdma_channel_enable(uint32_t channel_index,
+Expected<HailoRTDriver::VdmaChannelHandle> HailoRTDriver::vdma_channel_enable(vdma::ChannelId channel_id,
     DmaDirection data_direction, uintptr_t desc_list_handle, bool enable_timestamps_measure)
 {
+    CHECK_AS_EXPECTED(is_valid_channel_id(channel_id), HAILO_INVALID_ARGUMENT, "Invalid channel id {} given", channel_id);
     CHECK_AS_EXPECTED(data_direction != DmaDirection::BOTH, HAILO_INVALID_ARGUMENT);
     tCompatibleHailoIoctlData data = {};
     hailo_vdma_channel_enable_params& params = data.Buffer.ChannelEnable;
-    params.channel_index = channel_index;
+    params.engine_index = channel_id.engine_index;
+    params.channel_index = channel_id.channel_index;
     params.direction = direction_to_dma_data_direction(data_direction);
     params.desc_list_handle = desc_list_handle,
     params.enable_timestamps_measure = enable_timestamps_measure;
 
     if (0 > ioctl(this->m_fd, HAILO_VDMA_CHANNEL_ENABLE, &data)) {
-        LOGGER__ERROR("Failed to enable interrupt for channel {} with errno: {}", channel_index, errno);
+        LOGGER__ERROR("Failed to enable interrupt for channel {} with errno: {}", channel_id.channel_index, errno);
         return make_unexpected(HAILO_PCIE_DRIVER_FAIL);
     }
 
     return std::move(params.channel_handle);
 }
 
-hailo_status HailoRTDriver::vdma_channel_disable(uint32_t channel_index, VdmaChannelHandle channel_handle)
+hailo_status HailoRTDriver::vdma_channel_disable(vdma::ChannelId channel_id, VdmaChannelHandle channel_handle)
 {
+    CHECK(is_valid_channel_id(channel_id), HAILO_INVALID_ARGUMENT, "Invalid channel id {} given", channel_id);
     tCompatibleHailoIoctlData data = {};
     hailo_vdma_channel_disable_params& params = data.Buffer.ChannelDisable;
-    params.channel_index = channel_index;
+    params.engine_index = channel_id.engine_index;
+    params.channel_index = channel_id.channel_index;
     params.channel_handle = channel_handle;
 
     if (0 > ioctl(this->m_fd, HAILO_VDMA_CHANNEL_DISABLE, &data)) {
-        LOGGER__ERROR("Failed to disable interrupt for channel {} with errno: {}", channel_index, errno);
+        LOGGER__ERROR("Failed to disable interrupt for channel {} with errno: {}", channel_id, errno);
         return HAILO_PCIE_DRIVER_FAIL;
     }
 
@@ -750,40 +758,42 @@ static Expected<ChannelInterruptTimestampList> create_interrupt_timestamp_list(h
     return std::move(timestamp_list);
 }
 
-Expected<ChannelInterruptTimestampList> HailoRTDriver::wait_channel_interrupts(uint32_t channel_index, VdmaChannelHandle channel_handle,
-    const std::chrono::milliseconds &timeout)
+Expected<ChannelInterruptTimestampList> HailoRTDriver::wait_channel_interrupts(vdma::ChannelId channel_id,
+    VdmaChannelHandle channel_handle, const std::chrono::milliseconds &timeout)
 {
+    CHECK_AS_EXPECTED(is_valid_channel_id(channel_id), HAILO_INVALID_ARGUMENT, "Invalid channel id {} given", channel_id);
     CHECK_AS_EXPECTED(timeout.count() >= 0, HAILO_INVALID_ARGUMENT);
 
     const uint32_t timestamps_count = MAX_IRQ_TIMESTAMPS_SIZE;
     struct hailo_channel_interrupt_timestamp timestamps[timestamps_count];
     tCompatibleHailoIoctlData data = {};
-    hailo_vdma_channel_wait_params& wait = data.Buffer.ChannelWait;
-    wait.channel_index = channel_index;
-    wait.channel_handle = channel_handle;
-    wait.timeout_ms = static_cast<uint64_t>(timeout.count());
-    wait.timestamps = timestamps;
-    wait.timestamps_count = timestamps_count;
+    hailo_vdma_channel_wait_params& params = data.Buffer.ChannelWait;
+    params.engine_index = channel_id.engine_index;
+    params.channel_index = channel_id.channel_index;
+    params.channel_handle = channel_handle;
+    params.timeout_ms = static_cast<uint64_t>(timeout.count());
+    params.timestamps = timestamps;
+    params.timestamps_count = timestamps_count;
 
     if (0 > ioctl(this->m_fd, HAILO_VDMA_CHANNEL_WAIT_INT, &data)) {
         const auto ioctl_errno = errno;
         if (ERROR_SEM_TIMEOUT == ioctl_errno) {
-            LOGGER__ERROR("Waiting for interrupt for channel {} timed-out", channel_index);
+            LOGGER__ERROR("Waiting for interrupt for channel {} timed-out", channel_id);
             return make_unexpected(HAILO_TIMEOUT);
         }
         if (ERROR_OPERATION_ABORTED == ioctl_errno) {
-            LOGGER__INFO("Stream (index={}) was aborted!", channel_index);
+            LOGGER__INFO("Stream (index={}) was aborted!", channel_id);
             return make_unexpected(HAILO_STREAM_INTERNAL_ABORT);
         }
         if (ERROR_NOT_READY == ioctl_errno) {
-            LOGGER__INFO("Channel (index={}) was deactivated!", channel_index);
+            LOGGER__INFO("Channel (index={}) was deactivated!", channel_id);
             return make_unexpected(HAILO_STREAM_NOT_ACTIVATED);
         }
-        LOGGER__ERROR("Failed to wait interrupt for channel {} with errno: {}", channel_index, ioctl_errno);
+        LOGGER__ERROR("Failed to wait interrupt for channel {} with errno: {}", channel_id, ioctl_errno);
         return make_unexpected(HAILO_PCIE_DRIVER_FAIL);
     }
 
-    return create_interrupt_timestamp_list(wait);
+    return create_interrupt_timestamp_list(params);
 }
 
 hailo_status HailoRTDriver::fw_control(const void *request, size_t request_len, const uint8_t request_md5[PCIE_EXPECTED_MD5_LENGTH],
@@ -832,7 +842,8 @@ hailo_status read_log(uint8_t *buffer, size_t buffer_size, size_t *read_bytes, h
     return HAILO_PCIE_NOT_SUPPORTED_ON_PLATFORM;
 }
 
-Expected<size_t> HailoRTDriver::vdma_buffer_map(void *user_address, size_t required_size, DmaDirection data_direction, uintptr_t driver_buff_handle)
+Expected<size_t> HailoRTDriver::vdma_buffer_map(void *user_address, size_t required_size, DmaDirection data_direction,
+    vdma_mapped_buffer_driver_identifier &driver_buff_handle)
 {
     tCompatibleHailoIoctlData data = {};
     hailo_vdma_buffer_map_params& map_user_buffer_info = data.Buffer.VdmaBufferMap;
@@ -850,10 +861,11 @@ Expected<size_t> HailoRTDriver::vdma_buffer_map(void *user_address, size_t requi
     return std::move(map_user_buffer_info.mapped_handle);
 }
 
-hailo_status HailoRTDriver::vdma_buffer_unmap(size_t handle)
+hailo_status HailoRTDriver::vdma_buffer_unmap(VdmaBufferHandle handle)
 {
     tCompatibleHailoIoctlData data = {};
-    data.Value = handle;
+    hailo_vdma_buffer_unmap_params& unmap_user_buffer_info = data.Buffer.VdmaBufferUnmap;
+    unmap_user_buffer_info.mapped_handle = handle;
     if (0 > ioctl(this->m_fd, HAILO_VDMA_BUFFER_UNMAP, &data)) {
         LOGGER__ERROR("Failed to unmap user buffer with errno: {}", errno);
         return HAILO_PCIE_DRIVER_FAIL;
@@ -881,7 +893,8 @@ Expected<std::pair<uintptr_t, uint64_t>> HailoRTDriver::descriptors_list_create(
 hailo_status HailoRTDriver::descriptors_list_release(uintptr_t desc_handle)
 {
     tCompatibleHailoIoctlData data = {};
-    data.Value = desc_handle;
+    uintptr_t& release_desc_info = data.Buffer.DescListReleaseParam; 
+    release_desc_info = desc_handle;
     if (0 > ioctl(this->m_fd, HAILO_DESC_LIST_RELEASE, &data)) {
         LOGGER__ERROR("Failed to release descriptors list with errno: {}", errno);
         return HAILO_PCIE_DRIVER_FAIL;
@@ -908,28 +921,32 @@ hailo_status HailoRTDriver::descriptors_list_bind_vdma_buffer(uintptr_t desc_han
     return HAILO_SUCCESS;
 }
 
-hailo_status HailoRTDriver::vdma_channel_abort(uint32_t channel_index, VdmaChannelHandle channel_handle)
+hailo_status HailoRTDriver::vdma_channel_abort(vdma::ChannelId channel_id, VdmaChannelHandle channel_handle)
 {
+    CHECK(is_valid_channel_id(channel_id), HAILO_INVALID_ARGUMENT, "Invalid channel id {} given", channel_id);
     tCompatibleHailoIoctlData data = {};
-    hailo_vdma_channel_abort_params& abort_params = data.Buffer.ChannelAbort;
-    abort_params.channel_index = channel_index;
-    abort_params.channel_handle = channel_handle;
+    hailo_vdma_channel_abort_params& params = data.Buffer.ChannelAbort;
+    params.engine_index = channel_id.engine_index;
+    params.channel_index = channel_id.channel_index;
+    params.channel_handle = channel_handle;
     if (0 > ioctl(this->m_fd, HAILO_VDMA_CHANNEL_ABORT, &data)) {
-        LOGGER__ERROR("Failed to abort vdma channel (index={}) with errno: {}", channel_index, errno);
+        LOGGER__ERROR("Failed to abort vdma channel (index={}) with errno: {}", channel_id, errno);
         return HAILO_PCIE_DRIVER_FAIL;
     }
 
     return HAILO_SUCCESS;
 }
 
-hailo_status HailoRTDriver::vdma_channel_clear_abort(uint32_t channel_index, VdmaChannelHandle channel_handle)
+hailo_status HailoRTDriver::vdma_channel_clear_abort(vdma::ChannelId channel_id, VdmaChannelHandle channel_handle)
 {
+    CHECK(is_valid_channel_id(channel_id), HAILO_INVALID_ARGUMENT, "Invalid channel id {} given", channel_id);
     tCompatibleHailoIoctlData data = {};
-    hailo_vdma_channel_clear_abort_params& clear_params = data.Buffer.ChannelClearAbort;
-    clear_params.channel_index = channel_index;
-    clear_params.channel_handle = channel_handle;
+    hailo_vdma_channel_clear_abort_params& params = data.Buffer.ChannelClearAbort;
+    params.engine_index = channel_id.engine_index;
+    params.channel_index = channel_id.channel_index;
+    params.channel_handle = channel_handle;
     if (0 > ioctl(this->m_fd, HAILO_VDMA_CHANNEL_CLEAR_ABORT, &data)) {
-        LOGGER__ERROR("Failed to clear abort vdma channel (index={}) with errno: {}", channel_index, errno);
+        LOGGER__ERROR("Failed to clear abort vdma channel (index={}) with errno: {}", channel_id, errno);
         return HAILO_PCIE_DRIVER_FAIL;
     }
 
@@ -956,7 +973,7 @@ Expected<MmapBufferImpl> MmapBufferImpl::create_file_map(size_t length, FileDesc
     tCompatibleHailoIoctlData data = {};
     data.Buffer.DescListMmap.desc_handle = offset;
     data.Buffer.DescListMmap.size = length;
-    if (0 > ioctl(file, HAILO_WINDOWS_DESC_LIST_MMAP, &data)) {
+    if (0 > ioctl(file, HAILO_NON_LINUX_DESC_LIST_MMAP, &data)) {
         LOGGER__ERROR("Failed to map physical memory with errno: {}", errno);
         return make_unexpected(HAILO_PCIE_DRIVER_FAIL);
     }
@@ -998,6 +1015,12 @@ hailo_status HailoRTDriver::mark_as_used()
         return HAILO_DEVICE_IN_USE;
     }
     return HAILO_SUCCESS;
+}
+
+// TODO: HRT-7309 merge with posix
+bool HailoRTDriver::is_valid_channel_id(const vdma::ChannelId &channel_id)
+{
+    return (channel_id.engine_index < m_dma_engines_count) && (channel_id.channel_index < MAX_VDMA_CHANNELS_PER_ENGINE);
 }
 
 } /* namespace hailort */

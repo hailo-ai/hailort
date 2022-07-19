@@ -40,7 +40,7 @@ namespace hailort
 {
 
 Expected<ConfiguredNetworkGroupVector> HcpConfigManager::add_hef(Hef &hef,
-    const NetworkGroupsParamsMap &configure_params, bool /*is_scheduler_used*/)
+    const NetworkGroupsParamsMap &configure_params)
 {
     auto &hef_network_groups = hef.pimpl->network_groups();
     auto current_net_group_index = static_cast<uint8_t>(m_net_groups.size());
@@ -59,7 +59,8 @@ Expected<ConfiguredNetworkGroupVector> HcpConfigManager::add_hef(Hef &hef,
     }
 
     // Reset FW state_machine status
-    auto status = Control::reset_context_switch_state_machine(m_device);
+    static const auto REMOVE_NN_CONFIG_DURING_RESET = false;
+    auto status = Control::reset_context_switch_state_machine(m_device, REMOVE_NN_CONFIG_DURING_RESET);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     ConfiguredNetworkGroupVector added_network_groups;

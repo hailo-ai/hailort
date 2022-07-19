@@ -12,8 +12,9 @@
 
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
-#include "common/utils.hpp"
 #include "hailo/network_group.hpp"
+#include "common/utils.hpp"
+#include "common/async_thread.hpp"
 
 #include <condition_variable>
 
@@ -26,8 +27,6 @@ namespace hailort
 #define INVALID_NETWORK_GROUP_HANDLE (UINT32_MAX)
 using network_group_handle_t = uint32_t;
 
-const auto SCHEDULER_REFRESH_INTERVAL = std::chrono::milliseconds(500);
-
 class NetworkGroupScheduler;
 using NetworkGroupSchedulerPtr = std::shared_ptr<NetworkGroupScheduler>;
 
@@ -35,28 +34,22 @@ using NetworkGroupSchedulerPtr = std::shared_ptr<NetworkGroupScheduler>;
 using NetworkGroupSchedulerWeakPtr = std::weak_ptr<NetworkGroupScheduler>;
 
 using stream_name_t = std::string;
-class NetworkGroupScheduler final {
-public:
-    static Expected<NetworkGroupSchedulerPtr> create_shared(hailo_scheduling_algorithm_t algorithm);
-    NetworkGroupScheduler(hailo_scheduling_algorithm_t algorithm)
-        : m_algorithm(algorithm), m_before_read_write_mutex(), m_write_read_cv(), m_current_network_group(0),
-            m_switching_network_group(true), m_has_current_ng_finished(true), m_next_network_group(0), m_forced_idle_state(false)
-        {
-            m_should_stop = false;
-            // Temp solution until we'll implement timeout as timers
-            m_thread = std::thread([this] () {
-                while (!m_should_stop.load()) {
-                    m_write_read_cv.notify_all();
-                    std::this_thread::sleep_for(SCHEDULER_REFRESH_INTERVAL);
-                }
-          });
-        }
 
-    ~NetworkGroupScheduler()
-    {
-        m_should_stop = true;
-        m_thread.join();
-    }
+
+class NetworkGroupScheduler
+{
+public:
+    static Expected<NetworkGroupSchedulerPtr> create_round_robin();
+    NetworkGroupScheduler(hailo_scheduling_algorithm_t algorithm)
+        : m_is_switching_network_group(true), m_current_network_group(INVALID_NETWORK_GROUP_HANDLE), m_next_network_group(INVALID_NETWORK_GROUP_HANDLE),
+          m_algorithm(algorithm), m_has_current_ng_finished(true), m_is_currently_transferring_batch(false), m_before_read_write_mutex(), m_write_read_cv(),
+          m_forced_idle_state(false) {}
+
+    virtual ~NetworkGroupScheduler();
+    NetworkGroupScheduler(const NetworkGroupScheduler &other) = delete;
+    NetworkGroupScheduler &operator=(const NetworkGroupScheduler &other) = delete;
+    NetworkGroupScheduler &operator=(NetworkGroupScheduler &&other) = delete;
+    NetworkGroupScheduler(NetworkGroupScheduler &&other) noexcept = delete;
 
     hailo_scheduling_algorithm_t algorithm()
     {
@@ -93,50 +86,77 @@ public:
         return guard;
     }
 
+protected:
+    virtual hailo_status choose_next_network_group() = 0;
+    bool is_network_group_ready(const network_group_handle_t &network_group_handle);
+
+    std::atomic_bool m_is_switching_network_group;
+    network_group_handle_t m_current_network_group;
+    network_group_handle_t m_next_network_group;
+
+    std::vector<std::weak_ptr<ConfiguredNetworkGroup>> m_cngs;
+    std::unique_ptr<ActivatedNetworkGroup> m_ang;
+
 private:
+    hailo_status switch_network_group_if_should_be_next(const network_group_handle_t &network_group_handle, std::unique_lock<std::mutex> &read_write_lock);
     hailo_status switch_network_group_if_idle(const network_group_handle_t &network_group_handle, std::unique_lock<std::mutex> &read_write_lock);
     hailo_status activate_network_group(const network_group_handle_t &network_group_handle, std::unique_lock<std::mutex> &read_write_lock);
-    hailo_status send_all_pending_buffers(const network_group_handle_t &network_group_handle, std::unique_lock<std::mutex> &read_write_lock);
-    hailo_status send_pending_buffer(const network_group_handle_t &network_group_handle, const std::string &stream_name, std::unique_lock<std::mutex> &read_write_lock);
-    hailo_status switch_network_group_if_should_be_next(const network_group_handle_t &network_group_handle, std::unique_lock<std::mutex> &read_write_lock);
     void deactivate_network_group();
-    bool is_network_group_ready(const network_group_handle_t &network_group_handle);
-    hailo_status mark_switching_ng_if_ready();
-    bool can_stream_read(const network_group_handle_t &network_group_handle, const std::string &stream_name);
-    bool has_current_ng_finished();
-    void reset_current_ng_counters();
-    void decrease_current_ng_counters();
+
+    bool has_input_written_most_frames(const network_group_handle_t &network_group_handle, const std::string &stream_name);
+    hailo_status block_write_if_needed(const network_group_handle_t &network_group_handle, const std::string &stream_name);
+    Expected<bool> should_wait_for_write_again(const network_group_handle_t &network_group_handle, const std::string &stream_name);
     hailo_status allow_all_writes();
     hailo_status allow_writes_for_other_inputs_if_needed(const network_group_handle_t &network_group_handle);
+    hailo_status send_all_pending_buffers(const network_group_handle_t &network_group_handle, std::unique_lock<std::mutex> &read_write_lock);
+    hailo_status send_pending_buffer(const network_group_handle_t &network_group_handle, const std::string &stream_name, std::unique_lock<std::mutex> &read_write_lock);
+
+    bool can_stream_read(const network_group_handle_t &network_group_handle, const std::string &stream_name);
+    bool has_current_ng_finished();
+
+    void decrease_current_ng_counters();
+    void reset_current_ng_counters();
 
     void force_idle_state();
     void resume_from_idle_state();
 
     hailo_scheduling_algorithm_t m_algorithm;
+    std::atomic_bool m_has_current_ng_finished;
+    std::atomic_bool m_is_currently_transferring_batch;
     std::mutex m_before_read_write_mutex;
     std::condition_variable m_write_read_cv;
-    std::unordered_map<network_group_handle_t, std::unordered_map<stream_name_t, std::atomic_bool>> m_should_ng_stop;
+
     std::unordered_map<network_group_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_requested_write;
     std::unordered_map<network_group_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_written_buffer;
-    std::unordered_map<network_group_handle_t, std::unordered_map<stream_name_t, EventPtr>> m_write_buffer_events;
-    std::unordered_map<network_group_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_sent_pending_buffer;
     std::unordered_map<network_group_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_finished_sent_pending_buffer;
-    std::unordered_map<network_group_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_allowed_read;
     std::unordered_map<network_group_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_finished_read;
-    network_group_handle_t m_current_network_group;
-    std::vector<std::weak_ptr<ConfiguredNetworkGroup>> m_cngs;
-    std::unique_ptr<ActivatedNetworkGroup> m_ang;
-    std::atomic_bool m_switching_network_group;
-    std::atomic_bool m_has_current_ng_finished;
-    network_group_handle_t m_next_network_group;
-    std::atomic_bool m_forced_idle_state;
-
-    std::thread m_thread;
-    std::atomic_bool m_should_stop;
 
     std::unordered_map<network_group_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_min_threshold_per_stream;
-    std::unordered_map<network_group_handle_t, std::chrono::milliseconds> m_timeout_per_network_group;
-    std::unordered_map<network_group_handle_t, std::chrono::time_point<std::chrono::steady_clock>> m_last_run_time_stamp;
+
+    std::unordered_map<network_group_handle_t, std::chrono::time_point<std::chrono::steady_clock>> m_first_run_time_stamp;
+    std::unordered_map<network_group_handle_t, std::unique_ptr<ReusableThread>> m_timer_threads_per_network_group;
+    std::unordered_map<network_group_handle_t, std::shared_ptr<std::chrono::milliseconds>> m_timeout_per_network_group;
+    std::unordered_map<network_group_handle_t, std::shared_ptr<std::atomic_bool>> m_timeout_passed_per_network_group;
+    std::unordered_map<network_group_handle_t, uint16_t> m_max_batch_size;
+
+    std::unordered_map<network_group_handle_t, std::unordered_map<stream_name_t, std::atomic_bool>> m_should_ng_stop;
+    std::unordered_map<network_group_handle_t, std::unordered_map<stream_name_t, EventPtr>> m_write_buffer_events;
+    std::unordered_map<network_group_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_sent_pending_buffer;
+    std::unordered_map<network_group_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_requested_read;
+
+    std::atomic_bool m_forced_idle_state;
+};
+
+
+class NetworkGroupSchedulerRoundRobin : public NetworkGroupScheduler
+{
+public:
+    NetworkGroupSchedulerRoundRobin() :
+        NetworkGroupScheduler(HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN)
+        {};
+
+protected:
+    virtual hailo_status choose_next_network_group() override;
 };
 
 } /* namespace hailort */

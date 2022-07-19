@@ -282,6 +282,11 @@ public:
             return get_frame_size(vstream_info.shape, format);
         }
     }
+
+    static constexpr bool is_vdma_stream_interface(hailo_stream_interface_t stream_interface)
+    {
+        return (HAILO_STREAM_INTERFACE_PCIE == stream_interface) || (HAILO_STREAM_INTERFACE_CORE == stream_interface);
+    }
 };
 
 #ifndef HAILO_EMULATOR

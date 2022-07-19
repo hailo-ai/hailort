@@ -695,7 +695,7 @@ class UdpHcpControl(HcpControl):
         response_timeout_milliseconds = int(response_timeout_seconds * 1000)
         if device is None:
             with ExceptionWrapper():
-                self.device = _pyhailort.Device.create_eth(remote_ip, remote_control_port,
+                self._device = _pyhailort.Device.create_eth(remote_ip, remote_control_port,
                     response_timeout_milliseconds, max_number_of_attempts)
         else:
             self._device = device.device

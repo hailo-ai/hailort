@@ -99,6 +99,18 @@
             PP_HASCOMMA(PP_COMMA __VA_ARGS__ ()),\
             PP_NARG_(__VA_ARGS__, PP_RSEQ_N()))
 
+#define PP_ISEMPTY(...)                                 \
+_PP_ISEMPTY(                                            \
+          PP_HASCOMMA(__VA_ARGS__),                     \
+          PP_HASCOMMA(PP_COMMA __VA_ARGS__),            \
+          PP_HASCOMMA(__VA_ARGS__ (/*empty*/)),         \
+          PP_HASCOMMA(PP_COMMA __VA_ARGS__ (/*empty*/)) \
+          )
+ 
+#define PP_PASTE5(_0, _1, _2, _3, _4) _0 ## _1 ## _2 ## _3 ## _4
+#define _PP_ISEMPTY(_0, _1, _2, _3) PP_HASCOMMA(PP_PASTE5(_PP_IS_EMPTY_CASE_, _0, _1, _2, _3))
+#define _PP_IS_EMPTY_CASE_0001 ,
+
 #define UNUSED0(...)
 #define UNUSED1(x) (void)(x)
 #define UNUSED2(x,y) (void)(x),(void)(y)

@@ -34,7 +34,7 @@ public:
     virtual ConfigManagerType get_manager_type();
 
     virtual Expected<ConfiguredNetworkGroupVector> add_hef(Hef &hef,
-        const NetworkGroupsParamsMap &configure_params, bool is_scheduler_used = false);
+        const NetworkGroupsParamsMap &configure_params);
 
     HcpConfigManager(const HcpConfigManager &other) = delete;
     HcpConfigManager &operator=(const HcpConfigManager &other) = delete;

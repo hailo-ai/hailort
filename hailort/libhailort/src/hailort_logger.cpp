@@ -34,8 +34,12 @@ namespace hailort
 #define HAILORT_FILE_LOGGER_PATTERN "[%Y-%m-%d %X.%e] [%n] [%l] [%s:%#] [%!] %v" //File logger will print: [timestamp] [hailort] [log level] [source file:line number] [function name] msg
 #define HAILORT_ANDROID_LOGGER_PATTERN "%v"               // Android logger will print only message (additional info are built-in)
 
+#define HAILORT_LOGGER_PATH "HAILORT_LOGGER_PATH"
+
 #ifdef _WIN32
-bool is_curr_dir_accesible()
+#define PATH_SEPERATOR "\\"
+
+bool is_dir_accesible(const std::string &dir)
 {
     // The code is based on examples from: https://cpp.hotexamples.com/examples/-/-/AccessCheck/cpp-accesscheck-function-examples.html
     bool return_val = false;
@@ -55,7 +59,7 @@ bool is_curr_dir_accesible()
     BOOL access_status = FALSE;
 
     // Retrieves a copy of the security descriptor for current dir.
-    DWORD result = GetNamedSecurityInfo(".", SE_FILE_OBJECT, security_Info, NULL, NULL, NULL, NULL, &security_desc);
+    DWORD result = GetNamedSecurityInfo(dir.c_str(), SE_FILE_OBJECT, security_Info, NULL, NULL, NULL, NULL, &security_desc);
     if (result != ERROR_SUCCESS) {
         std::cerr << "Failed to get security information for local directory with error = " << result << std::endl;
         return_val = false;
@@ -102,9 +106,11 @@ l_exit:
     return return_val;
 }
 #else
-bool is_curr_dir_accesible()
+#define PATH_SEPERATOR "/"
+
+bool is_dir_accesible(const std::string &dir)
 {
-    auto ret = access(".", W_OK);
+    auto ret = access(dir.c_str(), W_OK);
     if (ret == 0) {
         return true;
     }
@@ -120,12 +126,14 @@ bool is_curr_dir_accesible()
 
 std::shared_ptr<spdlog::sinks::sink> HailoRTLogger::create_file_sink()
 {
-    // TODO: HRT-4937 - Consider creating the hailort.log file in predetermined directory or as a part of SYSLOG
-    if (is_curr_dir_accesible()) {
-        return make_shared_nothrow<spdlog::sinks::rotating_file_sink_mt>(HAILORT_LOGGER_FILENAME, MAX_LOG_FILE_SIZE,
+    auto dir_env_var = std::getenv(HAILORT_LOGGER_PATH);
+    std::string dir = ((nullptr == dir_env_var) || (0 == std::strlen(dir_env_var))) ? "." : dir_env_var; // defaulted to current directory
+    if (dir == "NONE") {
+        return make_shared_nothrow<spdlog::sinks::null_sink_st>();
+    } else if (is_dir_accesible(dir)) {
+        return make_shared_nothrow<spdlog::sinks::rotating_file_sink_mt>((dir + PATH_SEPERATOR + HAILORT_LOGGER_FILENAME), MAX_LOG_FILE_SIZE,
             HAILORT_MAX_NUMBER_OF_LOG_FILES);
-    }
-    else {
+    } else {
         std::cerr << "HailoRT warning: Cannot create HailoRT log file! Please check the current directory's write permissions." << std::endl;
         // Create null sink instead (Will throw away its log)
         return make_shared_nothrow<spdlog::sinks::null_sink_st>();

@@ -1155,8 +1155,9 @@ class InternalPcieDevice(object):
     @staticmethod
     def scan_devices():
         with ExceptionWrapper():
+            pcie_scanner = _pyhailort.PcieScan()
             return [PcieDeviceInfo(dev_info.bus, dev_info.device, dev_info.func, dev_info.domain)
-                for dev_info in _pyhailort.scan_pcie_devices()]
+                for dev_info in pcie_scanner.scan_devices()]
 
     def create_debug_log(self):
         return PcieDebugLog(self)

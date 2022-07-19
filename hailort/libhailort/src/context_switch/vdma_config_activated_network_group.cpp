@@ -53,12 +53,13 @@ VdmaConfigActivatedNetworkGroup::VdmaConfigActivatedNetworkGroup(
     ActivatedNetworkGroupBase(network_group_params, dynamic_batch_size, input_streams,
                               output_streams, std::move(network_group_activated_event), status),
     m_network_group_name(network_group_name),
-    m_should_reset_state_machine(true),
+    m_should_reset_network_group(true),
     m_active_net_group_holder(active_net_group_holder),
     m_resources_managers(std::move(resources_managers)),
     m_ddr_send_threads(),
     m_ddr_recv_threads(),
-    m_deactivation_time_accumulator(deactivation_time_accumulator)
+    m_deactivation_time_accumulator(deactivation_time_accumulator),
+    m_keep_nn_config_during_reset(false)
 {
     // Validate ActivatedNetworkGroup status
     if (HAILO_SUCCESS != status) {
@@ -92,17 +93,18 @@ VdmaConfigActivatedNetworkGroup::VdmaConfigActivatedNetworkGroup(
 VdmaConfigActivatedNetworkGroup::VdmaConfigActivatedNetworkGroup(VdmaConfigActivatedNetworkGroup &&other) noexcept :
     ActivatedNetworkGroupBase(std::move(other)),
     m_network_group_name(std::move(other.m_network_group_name)),
-    m_should_reset_state_machine(std::exchange(other.m_should_reset_state_machine, false)),
+    m_should_reset_network_group(std::exchange(other.m_should_reset_network_group, false)),
     m_active_net_group_holder(other.m_active_net_group_holder),
     m_resources_managers(std::move(other.m_resources_managers)),
     m_ddr_send_threads(std::move(other.m_ddr_send_threads)),
     m_ddr_recv_threads(std::move(other.m_ddr_recv_threads)),
-    m_deactivation_time_accumulator(std::move(other.m_deactivation_time_accumulator))
+    m_deactivation_time_accumulator(std::move(other.m_deactivation_time_accumulator)),
+    m_keep_nn_config_during_reset(std::move(other.m_keep_nn_config_during_reset))
 {}
 
 VdmaConfigActivatedNetworkGroup::~VdmaConfigActivatedNetworkGroup()
 {
-    if (!m_should_reset_state_machine) {
+    if (!m_should_reset_network_group) {
         return;
     }
 
@@ -113,7 +115,7 @@ VdmaConfigActivatedNetworkGroup::~VdmaConfigActivatedNetworkGroup()
     deactivate_resources();
 
     for (auto &resources_manager : m_resources_managers) {
-        status = resources_manager->reset_state_machine();
+        status = resources_manager->reset_state_machine(m_keep_nn_config_during_reset);
         if (HAILO_SUCCESS != status) {
             LOGGER__ERROR("Failed to reset context switch status");
         }
@@ -143,6 +145,12 @@ Expected<Buffer> VdmaConfigActivatedNetworkGroup::get_intermediate_buffer(const 
         "'get_intermediate_buffer' function works only when working with 1 physical device. number of physical devices: {}",
         m_resources_managers.size());
     return m_resources_managers[0]->read_intermediate_buffer(key);
+}
+
+hailo_status VdmaConfigActivatedNetworkGroup::set_keep_nn_config_during_reset(const bool keep_nn_config_during_reset)
+{
+    m_keep_nn_config_during_reset = keep_nn_config_during_reset;
+    return HAILO_SUCCESS;
 }
 
 } /* namespace hailort */

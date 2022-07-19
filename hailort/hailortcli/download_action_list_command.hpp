@@ -93,38 +93,41 @@ NLOHMANN_JSON_SERIALIZE_ENUM(CONTEXT_SWITCH_DEFS__ACTION_TYPE_t, {
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_DMA_IDLE_ACTION, "wait_for_dma_idle_action"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_NMS_IDLE, "wait_for_nms_idle"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_CCW_BURSTS, "fetch_ccw_bursts"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_DDR_BUFFERING_RESET, "ddr_buffering_reset"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT, nullptr},
 });
 
 // Default implementions
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__repeated_action_header_t, count, last_executed, sub_action_type);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__trigger_sequencer_action_data_t, cluster_index);
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__deactivate_vdma_channel_action_data_t, vdma_channel_index);
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__validate_vdma_channel_action_data_t, vdma_channel_index);
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__fetch_data_action_data_t, vdma_channel_index, stream_index);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__add_ddr_pair_info_action_data_t, h2d_vdma_channel_index, d2h_vdma_channel_index);
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__vdma_dataflow_interrupt_data_t, vdma_channel_index);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__sequencer_interrupt_data_t, sequencer_index);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__wait_nms_idle_data_t, aggregator_index);
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__wait_dma_idle_data_t, vdma_channel_index, stream_index);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__module_config_done_interrupt_data_t, module_index);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__application_change_interrupt_data_t, application_index);
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__activate_boundary_input_data_t, vdma_channel_index, stream_index);
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__activate_inter_context_input_data_t, vdma_channel_index, stream_index);
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__activate_ddr_buffer_input_data_t, vdma_channel_index, stream_index);
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__activate_boundary_output_data_t, vdma_channel_index, stream_index);
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__activate_inter_context_output_data_t, vdma_channel_index, stream_index);
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__activate_ddr_buffer_output_data_t, vdma_channel_index, stream_index);
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__activate_cfg_channel_t, channel_index);
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__deactivate_cfg_channel_t, channel_index);
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__fetch_ccw_bursts_action_data_t, config_stream_index);
 
 // Non-default implementations
-void to_json(json& j, const CONTEXT_SWITCH_DEFS__enable_lcu_action_default_data_t& data);
-void to_json(json& j, const CONTEXT_SWITCH_DEFS__enable_lcu_action_non_default_data_t& data);
-void to_json(json& j, const CONTEXT_SWITCH_DEFS__disable_lcu_action_data_t& data);
-void to_json(json& j, const CONTEXT_SWITCH_DEFS__fetch_cfg_channel_descriptors_action_data_t& data);
-void to_json(json& j, const CONTEXT_SWITCH_DEFS__fetch_ccw_bursts_action_data_t& data);
-void to_json(json& j, const CONTEXT_SWITCH_DEFS__change_vdma_to_stream_mapping_data_t& data);
-void to_json(json& j, const CONTEXT_SWITCH_DEFS__lcu_interrupt_data_t& data);
+
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__deactivate_vdma_channel_action_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__validate_vdma_channel_action_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_boundary_input_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_inter_context_input_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_ddr_buffer_input_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_boundary_output_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_inter_context_output_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_ddr_buffer_output_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__enable_lcu_action_default_data_t& data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__enable_lcu_action_non_default_data_t& data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__disable_lcu_action_data_t& data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__fetch_cfg_channel_descriptors_action_data_t& data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__change_vdma_to_stream_mapping_data_t& data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__fetch_data_action_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__wait_dma_idle_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__vdma_dataflow_interrupt_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__lcu_interrupt_data_t& data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_cfg_channel_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__deactivate_cfg_channel_t &data);
+
 
 #endif /* _HAILO_DOWNLOAD_ACTION_LIST_COMMAND_HPP_ */

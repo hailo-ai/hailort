@@ -4,6 +4,7 @@
 #include "pcie_stream.hpp"
 #include "mipi_stream.hpp"
 #include "vdevice_stream.hpp"
+#include "vdevice_stream_wrapper.hpp"
 
 namespace hailort
 {
@@ -72,14 +73,7 @@ Expected<hailo_stream_interface_t> VdmaConfigNetworkGroup::get_default_streams_i
     return first_streams_interface;
 }
 
-Expected<uint8_t> VdmaConfigNetworkGroup::get_boundary_channel_index(uint8_t stream_index,
-    hailo_stream_direction_t direction, const std::string &layer_name)
-{
-    // All ResourceManagers shares the same metadata and channels info
-    return m_resources_managers[0]->get_boundary_channel_index(stream_index, direction, layer_name);
-}
-
-hailo_status VdmaConfigNetworkGroup::create_vdevice_streams_from_config_params(network_group_handle_t network_group_handle)
+hailo_status VdmaConfigNetworkGroup::create_vdevice_streams_from_config_params(std::shared_ptr<PipelineMultiplexer> multiplexer, network_group_handle_t network_group_handle)
 {
     // TODO - HRT-6931 - raise error on this case 
     if (((m_config_params.latency & HAILO_LATENCY_MEASURE) == HAILO_LATENCY_MEASURE) && (1 < m_resources_managers.size())) {
@@ -91,14 +85,14 @@ hailo_status VdmaConfigNetworkGroup::create_vdevice_streams_from_config_params(n
             case HAILO_H2D_STREAM:
                 {
                     auto status = create_input_vdevice_stream_from_config_params(stream_parameters_pair.second,
-                        stream_parameters_pair.first, network_group_handle);
+                        stream_parameters_pair.first, multiplexer, network_group_handle);
                     CHECK_SUCCESS(status);
                 }
                 break;
             case HAILO_D2H_STREAM:
                 {
                     auto status = create_output_vdevice_stream_from_config_params(stream_parameters_pair.second,
-                        stream_parameters_pair.first, network_group_handle);
+                        stream_parameters_pair.first, multiplexer, network_group_handle);
                     CHECK_SUCCESS(status);
                 }
                 break;
@@ -112,35 +106,39 @@ hailo_status VdmaConfigNetworkGroup::create_vdevice_streams_from_config_params(n
 }
 
 hailo_status VdmaConfigNetworkGroup::create_input_vdevice_stream_from_config_params(const hailo_stream_parameters_t &stream_params,
-    const std::string &stream_name, network_group_handle_t network_group_handle)
+    const std::string &stream_name, std::shared_ptr<PipelineMultiplexer> multiplexer, network_group_handle_t network_group_handle)
 {
     auto edge_layer = get_layer_info(stream_name);
     CHECK_EXPECTED_AS_STATUS(edge_layer);
 
-    CHECK(HAILO_STREAM_INTERFACE_PCIE == stream_params.stream_interface, HAILO_INVALID_OPERATION,
-        "Only PCIe streams are supported on VDevice usage. {} has {} interface.", stream_name, stream_params.stream_interface);
+    CHECK(HailoRTCommon::is_vdma_stream_interface(stream_params.stream_interface), HAILO_INVALID_OPERATION,
+        "Stream {} not supported on VDevice usage. {} has {} interface.", stream_name, stream_params.stream_interface);
     auto input_stream = VDeviceInputStream::create(m_resources_managers, edge_layer.value(),
         stream_name, network_group_handle, m_network_group_activated_event,
         m_network_group_scheduler);
     CHECK_EXPECTED_AS_STATUS(input_stream);
-    m_input_streams.insert(make_pair(stream_name, input_stream.release()));
+    auto input_stream_wrapper = VDeviceInputStreamWrapper::create(input_stream.release(), edge_layer->network_name, multiplexer, network_group_handle);
+    CHECK_EXPECTED_AS_STATUS(input_stream_wrapper);
+    m_input_streams.insert(make_pair(stream_name, input_stream_wrapper.release()));
 
     return HAILO_SUCCESS;
 }
 
 hailo_status VdmaConfigNetworkGroup::create_output_vdevice_stream_from_config_params(const hailo_stream_parameters_t &stream_params,
-    const std::string &stream_name, network_group_handle_t network_group_handle)
+    const std::string &stream_name, std::shared_ptr<PipelineMultiplexer> multiplexer, network_group_handle_t network_group_handle)
 {
     auto edge_layer = get_layer_info(stream_name);
     CHECK_EXPECTED_AS_STATUS(edge_layer);
 
-    CHECK(HAILO_STREAM_INTERFACE_PCIE == stream_params.stream_interface, HAILO_INVALID_OPERATION,
-        "Only PCIe streams are supported on VDevice usage. {} has {} interface.", stream_name, stream_params.stream_interface);
+    CHECK(HailoRTCommon::is_vdma_stream_interface(stream_params.stream_interface), HAILO_INVALID_OPERATION,
+        "Stream {} not supported on VDevice usage. {} has {} interface.", stream_name, stream_params.stream_interface);
     auto output_stream = VDeviceOutputStream::create(m_resources_managers, edge_layer.value(),
         stream_name, network_group_handle, m_network_group_activated_event,
         m_network_group_scheduler);
     CHECK_EXPECTED_AS_STATUS(output_stream);
-    m_output_streams.insert(make_pair(stream_name, output_stream.release()));
+    auto output_stream_wrapper = VDeviceOutputStreamWrapper::create(output_stream.release(), edge_layer->network_name, multiplexer, network_group_handle);
+    CHECK_EXPECTED_AS_STATUS(output_stream_wrapper);
+    m_output_streams.insert(make_pair(stream_name, output_stream_wrapper.release()));
 
     return HAILO_SUCCESS;
 }

@@ -13,6 +13,7 @@
 #include "hailo/vdevice.hpp"
 #include "vdevice_internal.hpp"
 #include "pcie_device.hpp"
+#include "core_device.hpp"
 #include "hailort_defaults.hpp"
 
 namespace hailort
@@ -43,15 +44,78 @@ Expected<std::unique_ptr<VDeviceBase>> VDeviceBase::create(const hailo_vdevice_p
 {
     NetworkGroupSchedulerPtr scheduler_ptr;
     if (HAILO_SCHEDULING_ALGORITHM_NONE != params.scheduling_algorithm) {
-        auto network_group_scheduler = NetworkGroupScheduler::create_shared(params.scheduling_algorithm);
-        CHECK_EXPECTED(network_group_scheduler);
-        scheduler_ptr = network_group_scheduler.release();
+        if (HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN == params.scheduling_algorithm) {
+            auto network_group_scheduler = NetworkGroupScheduler::create_round_robin();
+            CHECK_EXPECTED(network_group_scheduler);
+            scheduler_ptr = network_group_scheduler.release();
+        } else {
+            LOGGER__ERROR("Unsupported scheduling algorithm");
+            return make_unexpected(HAILO_INVALID_ARGUMENT);
+        }
     }
 
+    auto devices_expected = create_devices(params);
+    CHECK_EXPECTED(devices_expected);
+    auto devices = devices_expected.release();
+
+    std::string vdevice_ids = "VDevice Infos:";
+    for (const auto &device : devices) {
+        auto info_str = device->get_dev_id();
+        vdevice_ids += " " + std::string(info_str);
+    }
+    LOGGER__INFO("{}", vdevice_ids);
+
+    auto vdevice = std::unique_ptr<VDeviceBase>(new (std::nothrow) VDeviceBase(std::move(devices), scheduler_ptr));
+    CHECK_AS_EXPECTED(nullptr != vdevice, HAILO_OUT_OF_HOST_MEMORY);
+
+    return vdevice;
+}
+
+// TODO - make this function thread-safe.
+Expected<ConfiguredNetworkGroupVector> VDeviceBase::configure(Hef &hef,
+    const NetworkGroupsParamsMap &configure_params)
+{
+    auto start_time = std::chrono::steady_clock::now();
+    if (!m_context_switch_manager) {
+        auto local_context_switch_manager = VdmaConfigManager::create(*this);
+        CHECK_EXPECTED(local_context_switch_manager);
+        m_context_switch_manager = make_unique_nothrow<VdmaConfigManager>(local_context_switch_manager.release());
+        CHECK_AS_EXPECTED(nullptr != m_context_switch_manager, HAILO_OUT_OF_HOST_MEMORY);
+    }
+
+    auto network_groups = m_context_switch_manager->add_hef(hef, configure_params);
+    CHECK_EXPECTED(network_groups);
+
+    auto elapsed_time_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time).count();
+    LOGGER__INFO("Configuring HEF on VDevice took {} milliseconds", elapsed_time_ms);
+
+    return network_groups;
+}
+
+Expected<Device::Type> VDeviceBase::get_device_type()
+{
+    auto device_type = m_devices[0]->get_type();
+    for (auto &dev : m_devices) {
+        CHECK_AS_EXPECTED(device_type == dev->get_type(), HAILO_INTERNAL_FAILURE,
+            "vDevice is supported only with homogeneous device type");
+    }
+    return device_type;
+}
+
+Expected<std::vector<std::unique_ptr<VdmaDevice>>> VDeviceBase::create_devices(const hailo_vdevice_params_t &params)
+{
+    // Currently we use either pcie device or core device. If the field device_infos is set, the user expects to use
+    // PCIe device.
+    const bool should_use_core = (params.device_infos == nullptr) && CoreDevice::is_core_driver_loaded();
+    return should_use_core ?  create_core_devices(params) : create_pcie_devices(params);
+}
+
+Expected<std::vector<std::unique_ptr<VdmaDevice>>> VDeviceBase::create_pcie_devices(const hailo_vdevice_params_t &params)
+{
     auto scan_res = PcieDevice::scan();
     CHECK_EXPECTED(scan_res);
 
-    std::vector<std::unique_ptr<PcieDevice>> devices;
+    std::vector<std::unique_ptr<VdmaDevice>> devices;
     devices.reserve(params.device_count);
 
     hailo_pcie_device_info_t *device_infos_ptr = params.device_infos;
@@ -79,43 +143,29 @@ Expected<std::unique_ptr<VDeviceBase>> VDeviceBase::create(const hailo_vdevice_p
     }
     CHECK_AS_EXPECTED(params.device_count == devices.size(), HAILO_OUT_OF_PHYSICAL_DEVICES,
         "Failed to create vdevice. there are not enough free devices. requested: {}, found: {}",
-            params.device_count, devices.size());
+        params.device_count, devices.size());
 
-    std::string vdevice_infos = "VDevice Infos:";
-    for (const auto &device : devices) {
-        auto info_str = PcieDevice::pcie_device_info_to_string(device->get_device_info());
-        CHECK_EXPECTED(info_str);
-
-        vdevice_infos += " " + info_str.value();
-    }
-    LOGGER__INFO("{}", vdevice_infos);
-
-    auto vdevice = std::unique_ptr<VDeviceBase>(new (std::nothrow) VDeviceBase(std::move(devices), scheduler_ptr));
-    CHECK_AS_EXPECTED(nullptr != vdevice, HAILO_OUT_OF_HOST_MEMORY);
-
-    return vdevice;
+    return devices;
 }
 
-// TODO - make this function thread-safe.
-Expected<ConfiguredNetworkGroupVector> VDeviceBase::configure(Hef &hef,
-    const NetworkGroupsParamsMap &configure_params)
+Expected<std::vector<std::unique_ptr<VdmaDevice>>> VDeviceBase::create_core_devices(const hailo_vdevice_params_t &params)
 {
-    auto start_time = std::chrono::steady_clock::now();
-    if (!m_context_switch_manager) {
-        auto local_context_switch_manager = VdmaConfigManager::create(*this);
-        CHECK_EXPECTED(local_context_switch_manager);
-        m_context_switch_manager = make_unique_nothrow<VdmaConfigManager>(local_context_switch_manager.release());
-        CHECK_AS_EXPECTED(nullptr != m_context_switch_manager, HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_AS_EXPECTED(1 == params.device_count, HAILO_OUT_OF_PHYSICAL_DEVICES,
+        "Only one core device can exist on the system, given {}", params.device_count);
+
+    auto core_device = CoreDevice::create();
+    CHECK_EXPECTED(core_device);
+
+    auto status = core_device.value()->mark_as_used();
+    if (status == HAILO_DEVICE_IN_USE) {
+        return make_unexpected(HAILO_OUT_OF_PHYSICAL_DEVICES);
     }
+    CHECK_SUCCESS_AS_EXPECTED(status);
 
-    bool is_scheduler_used = (m_network_group_scheduler != nullptr);
-    auto network_groups = m_context_switch_manager->add_hef(hef, configure_params, is_scheduler_used);
-    CHECK_EXPECTED(network_groups);
-
-    auto elapsed_time_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time).count();
-    LOGGER__INFO("Configuring HEF on VDevice took {} milliseconds", elapsed_time_ms);
-
-    return network_groups;
+    std::vector<std::unique_ptr<VdmaDevice>> vdma_devices;
+    vdma_devices.push_back(core_device.release());
+    return vdma_devices;
 }
+
 
 } /* namespace hailort */

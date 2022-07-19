@@ -65,6 +65,7 @@ hailo_status DeviceCommand::execute_on_all_pcie_devices()
         if (!device) {
             return device.status();
         }
+        std::cout << "Executing on device: " << device.value()->get_dev_id() << std::endl;
 
         auto execute_status = execute_on_device(*device.value());
         if (HAILO_SUCCESS != execute_status) {

@@ -370,7 +370,7 @@ Expected<std::unique_ptr<EthernetInputStream>> EthernetInputStream::create(Devic
     auto eth_device = reinterpret_cast<EthernetDevice*>(&device);
     std::unique_ptr<EthernetInputStream> local_stream;
 
-    auto stream_index = edge_layer.index;
+    auto stream_index = edge_layer.stream_index;
     auto udp = eth_stream__create_udp(eth_device, params.host_address, stream_index, params.device_port, true);
     CHECK_EXPECTED(udp);
 
@@ -700,7 +700,7 @@ Expected<std::unique_ptr<EthernetOutputStream>> EthernetOutputStream::create(Dev
     // TODO: try to avoid cast
     auto eth_device = reinterpret_cast<EthernetDevice*>(&device);
 
-    const auto stream_index = edge_layer.index;
+    const auto stream_index = edge_layer.stream_index;
     auto udp = eth_stream__create_udp(eth_device, params.host_address, stream_index, params.device_port, false);
     CHECK_EXPECTED(udp);
     local_stream = std::unique_ptr<EthernetOutputStream>(new (std::nothrow) EthernetOutputStream(device,

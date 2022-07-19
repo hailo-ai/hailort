@@ -36,6 +36,7 @@
 #include "hef_internal.hpp"
 #include "control_protocol.hpp"
 #include "layer_info.hpp"
+#include "vdma_channel.hpp"
 
 namespace hailort
 {
@@ -52,6 +53,9 @@ typedef struct hailo_mux_info_t{
     void* buffer;
 } hailo_mux_info_t;
 
+class InputStreamWrapper;
+class OutputStreamWrapper;
+
 class InputStreamBase : public InputStream
 {
 public:
@@ -60,6 +64,16 @@ public:
     InputStreamBase(const InputStreamBase&) = delete;
     InputStreamBase& operator=(const InputStreamBase&) = delete;
     InputStreamBase(InputStreamBase&&) = default;
+
+    virtual const CONTROL_PROTOCOL__nn_stream_config_t &get_nn_stream_config()
+    {
+        return m_nn_stream_config;
+    };
+
+    virtual Expected<PendingBufferState> send_pending_buffer()
+    {
+        return make_unexpected(HAILO_INVALID_OPERATION);
+    }
 
     CONTROL_PROTOCOL__nn_stream_config_t m_nn_stream_config;
 
@@ -82,10 +96,15 @@ protected:
         status = HAILO_SUCCESS;
     }
 
+    InputStreamBase(const hailo_stream_info_t &stream_info,
+        const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config, const EventPtr &network_group_activated_event);
+
     virtual EventPtr &get_network_group_activated_event() override;
     virtual bool is_scheduled() override;
 
 private:
+    friend class InputStreamWrapper;
+
     EventPtr m_network_group_activated_event;
 };
 
@@ -98,6 +117,11 @@ public:
     OutputStreamBase(const OutputStreamBase&) = delete;
     OutputStreamBase& operator=(const OutputStreamBase&) = delete;
     OutputStreamBase(OutputStreamBase&&) = default;
+
+    virtual const CONTROL_PROTOCOL__nn_stream_config_t &get_nn_stream_config()
+    {
+        return m_nn_stream_config;
+    };
 
     virtual const LayerInfo& get_layer_info() override
     {
@@ -124,12 +148,17 @@ protected:
         status = HAILO_SUCCESS;
     }
 
+    OutputStreamBase(const LayerInfo &layer_info, const hailo_stream_info_t &stream_info,
+        const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config, const EventPtr &network_group_activated_event);
+
     virtual EventPtr &get_network_group_activated_event() override;
     virtual bool is_scheduled() override;
 
     LayerInfo m_layer_info;
 
 private:
+    friend class OutputStreamWrapper;
+
     EventPtr m_network_group_activated_event;
 };
 

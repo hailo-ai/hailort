@@ -40,6 +40,20 @@ extern "C" {
     (((cluster_index) << CONTEXT_SWITCH_DEFS__PACKED_LCU_ID_CLUSTER_INDEX_SHIFT) & CONTEXT_SWITCH_DEFS__PACKED_LCU_ID_CLUSTER_INDEX_MASK)
 
 
+#define CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__VDMA_CHANNEL_INDEX_MASK (0x1f)
+#define CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__ENGINE_INDEX_MASK (0x60)
+#define CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__ENGINE_INDEX_SHIFT (5)
+
+#define CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__SET(dst, engine_index, vdma_channel_index) do { \
+        (dst) = (vdma_channel_index) | ((engine_index) << CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__ENGINE_INDEX_SHIFT);\
+    } while (0)
+
+#define CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__READ(src, engine_index, vdma_channel_index) do {\
+        (engine_index) = ((src) & CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__ENGINE_INDEX_MASK) >> \
+            CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__ENGINE_INDEX_SHIFT; \
+        (vdma_channel_index) = ((src) & CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__VDMA_CHANNEL_INDEX_MASK); \
+    } while (0)
+
 #pragma pack(push, 1)
 typedef struct {
     uint16_t core_bytes_per_buffer;
@@ -86,6 +100,7 @@ typedef enum __attribute__((packed)) {
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_CCW_BURSTS,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_VALIDATE_VDMA_CHANNEL,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_BURST_CREDITS_TASK_START,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_DDR_BUFFERING_RESET,
     
     /* Must be last */
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT
@@ -141,12 +156,12 @@ typedef struct {
 
 typedef struct {
     uint16_t descriptors_count;
-    uint8_t cfg_channel_number;
+    uint8_t packed_vdma_channel_id;
 } CONTEXT_SWITCH_DEFS__fetch_cfg_channel_descriptors_action_data_t;
 
 typedef struct {
     uint16_t ccw_bursts;
-    uint8_t cfg_channel_number;
+    uint8_t config_stream_index;
 } CONTEXT_SWITCH_DEFS__fetch_ccw_bursts_action_data_t;
 
 typedef struct {
@@ -172,7 +187,7 @@ typedef struct {
 } CONTEXT_SWITCH_DEFS__disable_lcu_action_data_t;
 
 typedef struct {
-    uint8_t vdma_channel_index;
+    uint8_t packed_vdma_channel_id;
     uint8_t edge_layer_direction;
     bool is_inter_context;
     uint8_t host_buffer_type;  // CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t
@@ -180,7 +195,7 @@ typedef struct {
 } CONTEXT_SWITCH_DEFS__deactivate_vdma_channel_action_data_t;
 
 typedef struct {
-    uint8_t vdma_channel_index;
+    uint8_t packed_vdma_channel_id;
     uint8_t edge_layer_direction;
     bool is_inter_context;
     bool is_single_context_network_group;
@@ -189,7 +204,7 @@ typedef struct {
 } CONTEXT_SWITCH_DEFS__validate_vdma_channel_action_data_t;
 
 typedef struct {
-    uint8_t vdma_channel_index;
+    uint8_t packed_vdma_channel_id;
     uint8_t stream_index;
     uint8_t network_index;
     uint32_t frame_periph_size;
@@ -199,7 +214,7 @@ typedef struct {
 } CONTEXT_SWITCH_DEFS__fetch_data_action_data_t;
 
 typedef struct {
-    uint8_t vdma_channel_index;
+    uint8_t packed_vdma_channel_id;
     uint8_t stream_index;
     bool is_dummy_stream;
 } CONTEXT_SWITCH_DEFS__change_vdma_to_stream_mapping_data_t;
@@ -218,7 +233,7 @@ typedef struct {
 } CONTEXT_SWITCH_DEFS__lcu_interrupt_data_t;
 
 typedef struct {
-    uint8_t vdma_channel_index;
+    uint8_t packed_vdma_channel_id;
 } CONTEXT_SWITCH_DEFS__vdma_dataflow_interrupt_data_t;
 
 typedef struct {
@@ -235,7 +250,7 @@ typedef struct {
 } CONTEXT_SWITCH_DEFS__wait_nms_idle_data_t;
 
 typedef struct {
-    uint8_t vdma_channel_index;
+    uint8_t packed_vdma_channel_id;
     uint8_t stream_index;
     bool is_inter_context;
 } CONTEXT_SWITCH_DEFS__wait_dma_idle_data_t;
@@ -250,16 +265,17 @@ typedef struct {
 
 /* edge layers structs */
 typedef struct {
+    uint8_t packed_vdma_channel_id;
     uint8_t stream_index;
-    uint8_t vdma_channel_index;
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
     uint32_t initial_credit_size;
     bool is_single_context_app;
 } CONTEXT_SWITCH_DEFS__activate_boundary_input_data_t;
 
 typedef struct {
+    uint8_t packed_vdma_channel_id;
     uint8_t stream_index;
-    uint8_t vdma_channel_index;
     uint8_t network_index;
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
     CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
@@ -267,48 +283,55 @@ typedef struct {
 } CONTEXT_SWITCH_DEFS__activate_inter_context_input_data_t;
 
 typedef struct {
+    uint8_t packed_vdma_channel_id;
     uint8_t stream_index;
-    uint8_t vdma_channel_index;
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
-    uint64_t host_descriptors_base_address;
-    uint8_t desc_list_depth;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
     uint32_t initial_credit_size;
+    uint8_t connected_d2h_channel_index;
 } CONTEXT_SWITCH_DEFS__activate_ddr_buffer_input_data_t;
 
 typedef struct {
+    uint8_t packed_vdma_channel_id;
     uint8_t stream_index;
-    uint8_t vdma_channel_index;
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
-    uint32_t frame_credits_in_bytes;
-    uint16_t desc_page_size;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
 } CONTEXT_SWITCH_DEFS__activate_boundary_output_data_t;
 
 typedef struct {
+    uint8_t packed_vdma_channel_id;
     uint8_t stream_index;
-    uint8_t vdma_channel_index;
     uint8_t network_index;
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
     CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
 } CONTEXT_SWITCH_DEFS__activate_inter_context_output_data_t;
 
 typedef struct {
+    uint8_t packed_vdma_channel_id;
     uint8_t stream_index;
-    uint8_t vdma_channel_index;
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
-    uint32_t frame_credits_in_bytes;
-    uint64_t host_descriptors_base_address;
-    uint16_t desc_page_size;
-    uint8_t desc_list_depth;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
     uint32_t buffered_rows_count;
 } CONTEXT_SWITCH_DEFS__activate_ddr_buffer_output_data_t;
 
+typedef union {
+    CONTEXT_SWITCH_DEFS__activate_boundary_input_data_t activate_boundary_input_data;
+    CONTEXT_SWITCH_DEFS__activate_inter_context_input_data_t activate_inter_context_input_data;
+    CONTEXT_SWITCH_DEFS__activate_ddr_buffer_input_data_t activate_ddr_buffer_input_data;
+    CONTEXT_SWITCH_DEFS__activate_boundary_output_data_t activate_boundary_output_data;
+    CONTEXT_SWITCH_DEFS__activate_inter_context_output_data_t activate_inter_context_output_data;
+    CONTEXT_SWITCH_DEFS__activate_ddr_buffer_output_data_t activate_ddr_buffer_output_data;
+} CONTEXT_SWITCH_COMMON__activate_edge_layer_action_t;
+
 typedef struct {
-    uint8_t channel_index;
+    uint8_t packed_vdma_channel_id;
+    uint8_t config_stream_index;
     CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
 } CONTEXT_SWITCH_DEFS__activate_cfg_channel_t;
 
 typedef struct {
-    uint8_t channel_index;
+    uint8_t packed_vdma_channel_id;
+    uint8_t config_stream_index;
 } CONTEXT_SWITCH_DEFS__deactivate_cfg_channel_t;
 
 #pragma pack(pop)

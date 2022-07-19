@@ -39,13 +39,6 @@ Expected<hailo_stream_interface_t> HcpConfigNetworkGroup::get_default_streams_in
     return m_device.get_default_streams_interface();
 }
 
-Expected<uint8_t> HcpConfigNetworkGroup::get_boundary_channel_index(uint8_t stream_index,
-    hailo_stream_direction_t direction, const std::string &/* layer_name */)
-{
-    return (direction == HAILO_H2D_STREAM) ? stream_index :
-        static_cast<uint8_t>(stream_index + OUTPUT_CHANNEL_INDEX_OFFSET);
-}
-
 hailo_status HcpConfigNetworkGroup::set_scheduler_timeout(const std::chrono::milliseconds &timeout, const std::string &network_name)
 {
     (void) timeout;

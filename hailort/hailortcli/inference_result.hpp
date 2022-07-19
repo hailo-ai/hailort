@@ -84,24 +84,27 @@ public:
     size_t m_total_recv_frame_size;
 
     // TODO: change to optional
-    std::unique_ptr<double> m_infer_duration;
-    std::unique_ptr<std::chrono::nanoseconds> m_hw_latency;
-    std::unique_ptr<std::chrono::nanoseconds> m_overall_latency;
+    std::shared_ptr<double> m_infer_duration;
+    std::shared_ptr<std::chrono::nanoseconds> m_hw_latency;
+    std::shared_ptr<std::chrono::nanoseconds> m_overall_latency;
 };
 
 struct NetworkGroupInferResult
 {
 public:
-    NetworkGroupInferResult(std::map<std::string, NetworkInferResult> &&result_per_network = {}) :
+    NetworkGroupInferResult(const std::string &network_group_name, std::map<std::string, NetworkInferResult> &&result_per_network = {}) :
+        m_network_group_name(network_group_name),
         m_result_per_network(std::move(result_per_network)),
-        m_power_measurements(),
-        m_current_measurements(),
-        m_temp_measurements(),
         m_fps_accumulators(),
         m_latency_accumulators(),
         m_queue_size_accumulators(),
         m_pipeline_latency_accumulators()
     {}
+
+    std::string network_group_name()
+    {
+        return m_network_group_name;
+    }
 
     Expected<double> infer_duration(const std::string &network_name = "") const
     {
@@ -228,14 +231,14 @@ public:
         return frames_count_cpy;
     }
 
+    const std::map<std::string, NetworkInferResult> &results_per_network() const
+    {
+        return m_result_per_network;
+    }
+
+    std::string m_network_group_name;
     // <network_name, network_inference_results>
     std::map<std::string, NetworkInferResult> m_result_per_network;
-
-    // <device_id, measurement>
-    // TODO: create a struct contianing all device measurements, and keep only one map
-    std::map<std::string, std::unique_ptr<LongPowerMeasurement>> m_power_measurements;
-    std::map<std::string, std::unique_ptr<LongPowerMeasurement>> m_current_measurements;
-    std::map<std::string, std::unique_ptr<TempMeasurementData>> m_temp_measurements;
 
     // <vstream_name, accumulator>
     std::map<std::string, std::map<std::string, AccumulatorPtr>> m_fps_accumulators;
@@ -274,40 +277,7 @@ public:
     void update_pipeline_stats(const std::map<std::string, std::vector<std::reference_wrapper<InputStream>>> &/*inputs_per_network*/,
         const std::map<std::string, std::vector<std::reference_wrapper<OutputStream>>> &/*outputs_per_network*/)
     {
-        // Overloading fow hw_object inference - not using any pipelines so nothing to update
-    }
-
-    void initialize_measurements(const std::vector<std::reference_wrapper<Device>> &devices)
-    {
-        for (const auto &device : devices) {
-            m_power_measurements.emplace(device.get().get_dev_id(), std::unique_ptr<LongPowerMeasurement>{});
-            m_current_measurements.emplace(device.get().get_dev_id(), std::unique_ptr<LongPowerMeasurement>{});
-            m_temp_measurements.emplace(device.get().get_dev_id(), std::unique_ptr<TempMeasurementData>{});
-        }
-    }
-
-    hailo_status set_power_measurement(const std::string &device_id, std::unique_ptr<LongPowerMeasurement> &&power_measure)
-    {
-        auto iter = m_power_measurements.find(device_id);
-        CHECK(m_power_measurements.end() != iter, HAILO_INVALID_ARGUMENT);
-        iter->second = std::move(power_measure);
-        return HAILO_SUCCESS;
-    }
-
-    hailo_status set_current_measurement(const std::string &device_id, std::unique_ptr<LongPowerMeasurement> &&current_measure)
-    {
-        auto iter = m_current_measurements.find(device_id);
-        CHECK(m_current_measurements.end() != iter, HAILO_INVALID_ARGUMENT);
-        iter->second = std::move(current_measure);
-        return HAILO_SUCCESS;
-    }
-
-    hailo_status set_temp_measurement(const std::string &device_id, std::unique_ptr<TempMeasurementData> &&temp_measure)
-    {
-        auto iter = m_temp_measurements.find(device_id);
-        CHECK(m_temp_measurements.end() != iter, HAILO_INVALID_ARGUMENT);
-        iter->second = std::move(temp_measure);
-        return HAILO_SUCCESS;
+        // Overloading fow hw_only inference - not using any pipelines so nothing to update
     }
 
 private:
@@ -321,6 +291,60 @@ private:
 
         map.emplace(key, value);
     }
+};
+
+struct InferResult
+{
+public:
+    InferResult(std::vector<NetworkGroupInferResult> &&network_groups_results) : m_network_group_results(std::move(network_groups_results))
+        {}
+
+    std::vector<NetworkGroupInferResult> &network_group_results()
+    {
+        return m_network_group_results;
+    }
+
+    void initialize_measurements(const std::vector<std::reference_wrapper<Device>> &devices)
+    {
+        for (const auto &device : devices) {
+            m_power_measurements.emplace(device.get().get_dev_id(), std::shared_ptr<LongPowerMeasurement>{});
+            m_current_measurements.emplace(device.get().get_dev_id(), std::shared_ptr<LongPowerMeasurement>{});
+            m_temp_measurements.emplace(device.get().get_dev_id(), std::shared_ptr<TempMeasurementData>{});
+        }
+    }
+
+    hailo_status set_power_measurement(const std::string &device_id, std::shared_ptr<LongPowerMeasurement> &&power_measure)
+    {
+        auto iter = m_power_measurements.find(device_id);
+        CHECK(m_power_measurements.end() != iter, HAILO_INVALID_ARGUMENT);
+        iter->second = std::move(power_measure);
+        return HAILO_SUCCESS;
+    }
+
+    hailo_status set_current_measurement(const std::string &device_id, std::shared_ptr<LongPowerMeasurement> &&current_measure)
+    {
+        auto iter = m_current_measurements.find(device_id);
+        CHECK(m_current_measurements.end() != iter, HAILO_INVALID_ARGUMENT);
+        iter->second = std::move(current_measure);
+        return HAILO_SUCCESS;
+    }
+
+    hailo_status set_temp_measurement(const std::string &device_id, std::shared_ptr<TempMeasurementData> &&temp_measure)
+    {
+        auto iter = m_temp_measurements.find(device_id);
+        CHECK(m_temp_measurements.end() != iter, HAILO_INVALID_ARGUMENT);
+        iter->second = std::move(temp_measure);
+        return HAILO_SUCCESS;
+    }
+
+    // <device_id, measurement>
+    // TODO: create a struct containing all device measurements, and keep only one map
+    std::map<std::string, std::shared_ptr<LongPowerMeasurement>> m_power_measurements;
+    std::map<std::string, std::shared_ptr<LongPowerMeasurement>> m_current_measurements;
+    std::map<std::string, std::shared_ptr<TempMeasurementData>> m_temp_measurements;
+
+private:
+    std::vector<NetworkGroupInferResult> m_network_group_results;
 };
 
 #endif /* _HAILO_INFER_RESULT_ */

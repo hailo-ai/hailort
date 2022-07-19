@@ -33,9 +33,9 @@ inline bool vdma_channel_control_is_paused(uint8_t control_reg)
 
 class VdmaChannelRegs final {
 public:
-    VdmaChannelRegs(HailoRTDriver &driver, uint32_t channel_index, HailoRTDriver::DmaDirection direction) :
+    VdmaChannelRegs(HailoRTDriver &driver, vdma::ChannelId channel_id, HailoRTDriver::DmaDirection direction) :
         m_driver(driver),
-        m_channel_offset(VDMA_CHANNEL_OFFSET(channel_index, (HailoRTDriver::DmaDirection::H2D == direction)))
+        m_channel_offset(VDMA_CHANNEL_OFFSET(channel_id.channel_index, (HailoRTDriver::DmaDirection::H2D == direction)))
     {}
 
     Expected<uint8_t> get_control()

@@ -12,6 +12,8 @@
 #define _HAILO_PIPELINE_MULTIPLEXER_HPP_
 
 #include "hailo/event.hpp"
+#include "hailo/network_group.hpp"
+#include "network_group_scheduler.hpp"
 
 #include <queue>
 #include <mutex>
@@ -30,21 +32,31 @@ public:
 
     PipelineMultiplexer();
 
-    hailo_status add_reader(EventPtr &reader_event);
-    hailo_status signal_done_reading();
+    hailo_status reader_wait(network_group_handle_t network_group_handle, const std::string &network_name, const std::string &output_name);
 
-    void enable();
-    bool is_enabled() const;
+    hailo_status signal_sent_frame(network_group_handle_t network_group_handle, const std::string &network_name);
 
-    void acquire_write_lock();
-    void release_write_lock();
+    /* This function is called by outputs stream when a frame has been received.
+        Only when all outputs of a network have received a frame, the relevant events will be signalled. */
+    hailo_status signal_received_frame(network_group_handle_t network_group_handle, const std::string &network_name, const std::string &output_name);
+
+    Expected<std::unique_lock<std::mutex>> acquire_write_lock(network_group_handle_t network_group_handle);
 
 private:
-    bool m_is_enabled;
-    std::mutex m_mutex;
-    std::queue<EventPtr> m_readers;
+    Expected<EventPtr> get_reader_event(network_group_handle_t network_group_handle, const std::string &network_name,
+        const std::string &output_name, bool should_create=false);
+    hailo_status signal_next(const std::string &network_name);
+
+    std::mutex m_readers_queue_mutex;
+    
+    using EventMap = std::unordered_map<std::string, EventPtr>;
+    std::unordered_map<std::string, std::queue<std::reference_wrapper<EventMap>>> m_readers_queue_by_network;
+    std::unordered_map<std::string, EventMap> m_signalled_events_by_network;
 
     std::mutex m_write_mutex;
+
+    //map by network_group_handle, network_name, output_name
+    std::unordered_map<network_group_handle_t, std::unordered_map<std::string, EventMap>> m_reader_events_mapping;
 };
 
 } /* namespace hailort */

@@ -73,22 +73,37 @@ hailo_status BenchmarkCommand::execute()
     auto streaming_mode_info = fps_streaming_mode();
     CHECK_EXPECTED_AS_STATUS(streaming_mode_info, "FPS in streaming mode failed");
 
-    // TODO - HRT-6931 - measure latnecy only in the case of single device. 
+    // TODO - HRT-6931 - measure latency only in the case of single device. 
     std::cout << "Measuring HW Latency" << std::endl;
     auto latency_info = latency();
     CHECK_EXPECTED_AS_STATUS(latency_info, "Latency measuring failed");
+
+    assert(hw_only_mode_info->network_group_results().size() == streaming_mode_info->network_group_results().size());
+    assert(latency_info->network_group_results().size() == streaming_mode_info->network_group_results().size());
 
     std::cout << std::endl;
     std::cout << "=======" << std::endl;
     std::cout << "Summary" << std::endl;
     std::cout << "=======" << std::endl;
-    std::cout << "FPS     (hw_only)                 = " << hw_only_mode_info->fps().value() <<std::endl;
-    std::cout << "        (streaming)               = " << streaming_mode_info->fps().value() <<std::endl;
-    if (auto hw_latency = latency_info->hw_latency()) {
-        std::cout << "Latency (hw)                      = " << InferResultsFormatUtils::latency_result_to_ms(hw_latency.value()) << " ms" << std::endl;
-    }
-    if (auto overall_latency = latency_info->overall_latency()) {
-        std::cout << "        (overall)                 = " << InferResultsFormatUtils::latency_result_to_ms(overall_latency.value()) << " ms" << std::endl;
+
+    for (auto &hw_only_res : hw_only_mode_info->network_group_results()) {
+        auto network_group_name = hw_only_res.network_group_name();
+        auto streaming_res = std::find_if(streaming_mode_info->network_group_results().begin(), streaming_mode_info->network_group_results().end(),
+            [network_group_name] (NetworkGroupInferResult &infer_results) { return (infer_results.network_group_name() == network_group_name); });
+        CHECK(streaming_mode_info->network_group_results().end() != streaming_res, HAILO_INTERNAL_FAILURE, "Failed to fun streaming results for network group {}", network_group_name);
+
+        auto latency_res = std::find_if(latency_info->network_group_results().begin(), latency_info->network_group_results().end(),
+            [network_group_name] (NetworkGroupInferResult &infer_results) { return (infer_results.network_group_name() == network_group_name); });
+        CHECK(latency_info->network_group_results().end() != latency_res, HAILO_INTERNAL_FAILURE, "Failed to fun latency results for network group {}", network_group_name);
+
+        std::cout << "FPS     (hw_only)                 = " << hw_only_res.fps().value() <<std::endl;
+        std::cout << "        (streaming)               = " << streaming_res->fps().value() <<std::endl;
+        if (auto hw_latency = latency_res->hw_latency()) {
+            std::cout << "Latency (hw)                      = " << InferResultsFormatUtils::latency_result_to_ms(hw_latency.value()) << " ms" << std::endl;
+        }
+        if (auto overall_latency = latency_res->overall_latency()) {
+            std::cout << "        (overall)                 = " << InferResultsFormatUtils::latency_result_to_ms(overall_latency.value()) << " ms" << std::endl;
+        }
     }
     if (!m_not_measure_power) {
         for (const auto &pair : streaming_mode_info->m_power_measurements) {
@@ -98,7 +113,6 @@ hailo_status BenchmarkCommand::execute()
             std::cout << "  Power in streaming mode (average) = " << data.average_value << " " << power_units << std::endl;
             std::cout << "                          (max)     = " << data.max_value << " " << power_units << std::endl;
         }
-
     }
 
     if (!m_csv_file_path.empty()){
@@ -106,13 +120,13 @@ hailo_status BenchmarkCommand::execute()
         auto printer = InferStatsPrinter::create(m_params, false);
         CHECK_EXPECTED_AS_STATUS(printer, "Failed to initialize infer stats printer");
         printer->print_benchmark_csv_header();
-        printer->print_benchmark_csv(m_params.hef_path, hw_only_mode_info.release(), 
-            streaming_mode_info.release(), latency_info.release());
+        printer->print_benchmark_csv(hw_only_mode_info.value(), 
+            streaming_mode_info.value(), latency_info.value());
     }
     return HAILO_SUCCESS;
 }
 
-Expected<NetworkGroupInferResult> BenchmarkCommand::hw_only_mode()
+Expected<InferResult> BenchmarkCommand::hw_only_mode()
 {
     m_params.transform.transform = (m_params.inputs_name_and_file_path.size() > 0);
     m_params.power_measurement.measure_power = false;
@@ -121,7 +135,7 @@ Expected<NetworkGroupInferResult> BenchmarkCommand::hw_only_mode()
     return run_command_hef(m_params);
 }
 
-Expected<NetworkGroupInferResult> BenchmarkCommand::fps_streaming_mode()
+Expected<InferResult> BenchmarkCommand::fps_streaming_mode()
 {
     m_params.power_measurement.measure_power = !m_not_measure_power;
     m_params.mode = InferMode::STREAMING;
@@ -131,7 +145,7 @@ Expected<NetworkGroupInferResult> BenchmarkCommand::fps_streaming_mode()
     return run_command_hef(m_params);
 }
 
-Expected<NetworkGroupInferResult> BenchmarkCommand::latency()
+Expected<InferResult> BenchmarkCommand::latency()
 {
     m_params.power_measurement.measure_power = false;
     m_params.measure_latency = true;

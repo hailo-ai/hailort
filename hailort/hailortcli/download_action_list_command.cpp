@@ -16,6 +16,10 @@
 #include <iomanip>
 
 #define MHz (1000 * 1000)
+// div factor is valid only for Hailo8-B0 platform. 
+// TODO - HRT-7364 - add CPU subsystem frequency into the device extended info control
+// and use it for get the timer's frequency
+#define NN_CORE_TO_TIMER_FREQ_FACTOR (2)
 
 constexpr int DownloadActionListCommand::INVALID_NUMERIC_VALUE;
 
@@ -38,7 +42,7 @@ hailo_status DownloadActionListCommand::execute(Device &device, const std::strin
 
     auto extended_info = device.get_extended_device_information();
     CHECK_EXPECTED_AS_STATUS(extended_info);
-    const auto clock_cycle = extended_info->neural_network_core_clock_rate / MHz;
+    const auto clock_cycle = (extended_info->neural_network_core_clock_rate / NN_CORE_TO_TIMER_FREQ_FACTOR) / MHz;
 
     ordered_json action_list_json = {
         {"version", ACTION_LIST_FORMAT_VERSION()},
@@ -410,12 +414,68 @@ Expected<ordered_json> DownloadActionListCommand::parse_network_groups(Device &d
     return network_group_list_json;
 }
 
-void to_json(json& j, const CONTEXT_SWITCH_DEFS__fetch_cfg_channel_descriptors_action_data_t& data) {
-    j = json{{"descriptors_count", data.descriptors_count}, {"channel_index", data.cfg_channel_number}};
+template<typename ActionData>
+static json unpack_vdma_channel_id(const ActionData &data)
+{
+    uint8_t engine_index = 0;
+    uint8_t vdma_channel_index = 0;
+    CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__READ(data.packed_vdma_channel_id, engine_index, vdma_channel_index);
+    return json{{"vdma_channel_index", vdma_channel_index}, {"engine_index", engine_index}};
 }
 
-void to_json(json& j, const CONTEXT_SWITCH_DEFS__fetch_ccw_bursts_action_data_t& data) {
-    j = json{{"channel_index", data.cfg_channel_number}};
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__deactivate_vdma_channel_action_data_t &data)
+{
+    j = unpack_vdma_channel_id(data);
+}
+
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__validate_vdma_channel_action_data_t &data)
+{
+    j = unpack_vdma_channel_id(data);
+}
+
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_boundary_input_data_t &data)
+{
+    j = unpack_vdma_channel_id(data);
+    j["stream_index"] = data.stream_index;
+}
+
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_inter_context_input_data_t &data)
+{
+    j = unpack_vdma_channel_id(data);
+    j["stream_index"] = data.stream_index;
+}
+
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_ddr_buffer_input_data_t &data)
+{
+    j = unpack_vdma_channel_id(data);
+    j["stream_index"] = data.stream_index;
+}
+
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_boundary_output_data_t &data)
+{
+    j = unpack_vdma_channel_id(data);
+    j["stream_index"] = data.stream_index;
+}
+
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_inter_context_output_data_t &data)
+{
+    j = unpack_vdma_channel_id(data);
+    j["stream_index"] = data.stream_index;
+}
+
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_ddr_buffer_output_data_t &data)
+{
+    j = unpack_vdma_channel_id(data);
+    j["stream_index"] = data.stream_index;
+}
+
+// Needs to be backwards compatible, so we use "channel_index" instead of "vdma_channel_index".
+void to_json(json& j, const CONTEXT_SWITCH_DEFS__fetch_cfg_channel_descriptors_action_data_t& data) {
+    uint8_t engine_index = 0;
+    uint8_t vdma_channel_index = 0;
+    CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__READ(data.packed_vdma_channel_id, engine_index, vdma_channel_index);
+    j = json{{"descriptors_count", data.descriptors_count}, {"channel_index", vdma_channel_index},
+        {"engine_index", engine_index}};
 }
 
 void to_json(json& j, const CONTEXT_SWITCH_DEFS__enable_lcu_action_non_default_data_t& data) {
@@ -437,12 +497,47 @@ void to_json(json& j, const CONTEXT_SWITCH_DEFS__disable_lcu_action_data_t& data
 }
 
 void to_json(json& j, const CONTEXT_SWITCH_DEFS__change_vdma_to_stream_mapping_data_t& data) {
-    j = json{{"vdma_channel_index", data.vdma_channel_index}, {"stream_index", data.stream_index},
-        {"type", data.is_dummy_stream ? "dummy" : "active"}};
+    j = unpack_vdma_channel_id(data);
+    j["stream_index"] = data.stream_index;
+    j["type"] = data.is_dummy_stream ? "dummy" : "active";
+}
+
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__fetch_data_action_data_t &data)
+{
+    j = unpack_vdma_channel_id(data);
+    j["stream_index"] = data.stream_index;
+}
+
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__wait_dma_idle_data_t &data)
+{
+    j = unpack_vdma_channel_id(data);
+    j["stream_index"] = data.stream_index;
+}
+
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__vdma_dataflow_interrupt_data_t &data)
+{
+    j = unpack_vdma_channel_id(data);
 }
 
 void to_json(json& j, const CONTEXT_SWITCH_DEFS__lcu_interrupt_data_t& data) {
     const auto cluster_index = CONTEXT_SWITCH_DEFS__PACKED_LCU_ID_CLUSTER_INDEX_READ(data.packed_lcu_id);
     const auto lcu_index = CONTEXT_SWITCH_DEFS__PACKED_LCU_ID_LCU_INDEX_READ(data.packed_lcu_id);
     j = json{{"cluster_index", cluster_index}, {"lcu_index", lcu_index}};
+}
+
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_cfg_channel_t &data)
+{
+    uint8_t engine_index = 0;
+    uint8_t vdma_channel_index = 0;
+    CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__READ(data.packed_vdma_channel_id, engine_index, vdma_channel_index);
+    j = json{{"config_stream_index", data.config_stream_index}, {"channel_index", vdma_channel_index},
+        {"engine_index", engine_index}};
+}
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__deactivate_cfg_channel_t &data)
+{
+    uint8_t engine_index = 0;
+    uint8_t vdma_channel_index = 0;
+    CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__READ(data.packed_vdma_channel_id, engine_index, vdma_channel_index);
+    j = json{{"config_stream_index", data.config_stream_index}, {"channel_index", vdma_channel_index},
+        {"engine_index", engine_index}};
 }

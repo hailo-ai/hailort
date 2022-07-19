@@ -103,20 +103,22 @@ InferStatsPrinter::InferStatsPrinter(const inference_runner_params &params, hail
     output_status = HAILO_SUCCESS;
 }
 
-void InferStatsPrinter::print(const std::string &network_group_name, Expected<NetworkGroupInferResult>& inference_result)
+void InferStatsPrinter::print(const std::vector<std::string> &network_groups_names, Expected<InferResult> &inference_result)
 {
     if (m_results_csv_file.is_open()) {
         std::cout << "> Writing inference results to '" << m_results_csv_path << "'... ";
-        print_csv(network_group_name, inference_result);
+        print_csv(network_groups_names, inference_result);
         std::cout << "done." << std::endl;
     }
-    if (m_pipeline_stats_csv_file.is_open()) {
+    if (m_pipeline_stats_csv_file.is_open() && (inference_result)) {
         std::cout << "> Writing pipeline statistics to '" << m_pipeline_stats_csv_path << "'... ";
         m_pipeline_stats_csv_file << "net_name,vstream_name,param_type,element,mean,min,max,var,sd,mean_sd,index" << std::endl;
-        print_pipeline_elem_stats_csv(network_group_name, inference_result->m_fps_accumulators);
-        print_pipeline_elem_stats_csv(network_group_name, inference_result->m_latency_accumulators);
-        print_pipeline_elem_stats_csv(network_group_name, inference_result->m_queue_size_accumulators);
-        print_entire_pipeline_stats_csv(network_group_name, inference_result->m_pipeline_latency_accumulators);
+        for (auto &network_group_results : inference_result->network_group_results()) {
+            print_pipeline_elem_stats_csv(network_group_results.network_group_name(), network_group_results.m_fps_accumulators);
+            print_pipeline_elem_stats_csv(network_group_results.network_group_name(), network_group_results.m_latency_accumulators);
+            print_pipeline_elem_stats_csv(network_group_results.network_group_name(), network_group_results.m_queue_size_accumulators);
+            print_entire_pipeline_stats_csv(network_group_results.network_group_name(), network_group_results.m_pipeline_latency_accumulators);
+        }
         std::cout << "done." << std::endl;
     }
     print_stdout(inference_result);
@@ -132,100 +134,106 @@ void InferStatsPrinter::print_benchmark_csv_header()
     m_results_csv_file << "net_name,fps,hw_only_fps,num_of_frames,num_of_frames_hw_only,hw_latency,overall_latency,min_power,average_power,max_power" << std::endl;
 }
 
-void InferStatsPrinter::print_csv(const std::string &network_group_name,  Expected<NetworkGroupInferResult>& inference_result)
+void InferStatsPrinter::print_csv(const std::vector<std::string> &network_groups_names, Expected<InferResult> &inference_result)
 {
     auto status_description = hailo_get_status_message(inference_result.status());
-    m_results_csv_file << network_group_name << "," << static_cast<uint32_t>(inference_result.status()) << "," << status_description;
-    if (!inference_result) {
-        m_results_csv_file << ",,,,,,,,,,,";
+    if (HAILO_SUCCESS != inference_result.status()) {
+        for (auto &network_group_name : network_groups_names) {
+            m_results_csv_file << network_group_name << "," << static_cast<uint32_t>(inference_result.status()) << "," << status_description;
+            if (!inference_result) {
+                m_results_csv_file << ",,,,,,,,,,,";
+            }
+        }
+    } else {
+        for (auto &results : inference_result->network_group_results()) {
+            m_results_csv_file << results.network_group_name() << "," << static_cast<uint32_t>(inference_result.status()) << "," << status_description;
+            m_results_csv_file << ",";
+
+            if (auto fps = results.fps()) {
+                m_results_csv_file << fps.value();
+            }
+            m_results_csv_file << ",";
+
+            if (auto frames_count = results.frames_count()) {
+                m_results_csv_file << frames_count.value();
+            }
+            m_results_csv_file << ",";
+
+            if (auto send_data_rate = results.send_data_rate_mbit_sec()) {
+                m_results_csv_file << send_data_rate.value();
+            }
+            m_results_csv_file << ",";
+
+            if (auto recv_data_rate = results.recv_data_rate_mbit_sec()) {
+                m_results_csv_file << recv_data_rate.value();
+            }
+            m_results_csv_file << ",";
+
+            if (auto hw_latency = results.hw_latency()) {
+                m_results_csv_file << InferResultsFormatUtils::latency_result_to_ms(hw_latency.value());
+            }
+            m_results_csv_file << ",";
+
+            if (auto overall_latency = results.overall_latency()) {
+                m_results_csv_file << InferResultsFormatUtils::latency_result_to_ms(overall_latency.value());
+            }
+
+            // TODO HRT-5363 support multiple devices (Currently assumes 1 device in the map)
+            if (1 == inference_result->m_power_measurements.size()) {
+                for (const auto &pair : inference_result->m_power_measurements) {
+                    if (nullptr != pair.second) {
+                        m_results_csv_file << ",";
+                        m_results_csv_file << pair.second->data().min_value;
+                        m_results_csv_file << ",";
+                        m_results_csv_file << pair.second->data().average_value;
+                        m_results_csv_file << ",";
+                        m_results_csv_file << pair.second->data().max_value;
+                    } else {
+                        m_results_csv_file << ",,,";
+                    }
+                }
+            } else {
+                m_results_csv_file << ",,,";
+            }
+
+            // TODO HRT-5363 support multiple devices (Currently assumes 1 device in the map)
+            if (1 == inference_result->m_current_measurements.size()) {
+                for (const auto &pair : inference_result->m_current_measurements) {
+                    if (nullptr != pair.second) {
+                        m_results_csv_file << ",";
+                        m_results_csv_file << pair.second->data().min_value;
+                        m_results_csv_file << ",";
+                        m_results_csv_file << pair.second->data().average_value;
+                        m_results_csv_file << ",";
+                        m_results_csv_file << pair.second->data().max_value;
+                    } else {
+                        m_results_csv_file << ",,,";
+                    }
+                }
+            } else {
+                m_results_csv_file << ",,,";
+            }
+
+            // TODO HRT-5363 support multiple devices (Currently assumes 1 device in the map)
+            if (1 == inference_result->m_temp_measurements.size()) {
+                for (const auto &pair : inference_result->m_temp_measurements) {
+                    if (nullptr != pair.second) {
+                        m_results_csv_file << ",";
+                        m_results_csv_file << pair.second->min_value;
+                        m_results_csv_file << ",";
+                        m_results_csv_file << pair.second->average_value;
+                        m_results_csv_file << ",";
+                        m_results_csv_file << pair.second->max_value;
+                    } else {
+                        m_results_csv_file << ",,,";
+                    }
+                }
+            } else {
+                m_results_csv_file << ",,,";
+            }
+            m_results_csv_file << std::endl;
+        }
     }
-    else {
-        m_results_csv_file << ",";
-
-        if (auto fps = inference_result->fps()) {
-            m_results_csv_file << fps.value();
-        }
-        m_results_csv_file << ",";
-
-        if (auto frames_count = inference_result->frames_count()) {
-            m_results_csv_file << frames_count.value();
-        }
-        m_results_csv_file << ",";
-
-        if (auto send_data_rate = inference_result->send_data_rate_mbit_sec()) {
-            m_results_csv_file << send_data_rate.value();
-        }
-        m_results_csv_file << ",";
-
-        if (auto recv_data_rate = inference_result->recv_data_rate_mbit_sec()) {
-            m_results_csv_file << recv_data_rate.value();
-        }
-        m_results_csv_file << ",";
-
-        if (auto hw_latency = inference_result->hw_latency()) {
-            m_results_csv_file << InferResultsFormatUtils::latency_result_to_ms(hw_latency.value());
-        }
-        m_results_csv_file << ",";
-
-        if (auto overall_latency = inference_result->overall_latency()) {
-            m_results_csv_file << InferResultsFormatUtils::latency_result_to_ms(overall_latency.value());
-        }
-
-        // TODO HRT-5363 support multiple devices (Currently assumes 1 device in the map)
-        if (1 == inference_result->m_power_measurements.size()) {
-            for (const auto &pair : inference_result->m_power_measurements) {
-                if (nullptr != pair.second) {
-                    m_results_csv_file << ",";
-                    m_results_csv_file << pair.second->data().min_value;
-                    m_results_csv_file << ",";
-                    m_results_csv_file << pair.second->data().average_value;
-                    m_results_csv_file << ",";
-                    m_results_csv_file << pair.second->data().max_value;
-                } else {
-                    m_results_csv_file << ",,,";
-                }
-            }
-        } else {
-            m_results_csv_file << ",,,";
-        }
-
-        // TODO HRT-5363 support multiple devices (Currently assumes 1 device in the map)
-        if (1 == inference_result->m_current_measurements.size()) {
-            for (const auto &pair : inference_result->m_current_measurements) {
-                if (nullptr != pair.second) {
-                    m_results_csv_file << ",";
-                    m_results_csv_file << pair.second->data().min_value;
-                    m_results_csv_file << ",";
-                    m_results_csv_file << pair.second->data().average_value;
-                    m_results_csv_file << ",";
-                    m_results_csv_file << pair.second->data().max_value;
-                } else {
-                    m_results_csv_file << ",,,";
-                }
-            }
-        } else {
-            m_results_csv_file << ",,,";
-        }
-
-        // TODO HRT-5363 support multiple devices (Currently assumes 1 device in the map)
-        if (1 == inference_result->m_temp_measurements.size()) {
-            for (const auto &pair : inference_result->m_temp_measurements) {
-                if (nullptr != pair.second) {
-                    m_results_csv_file << ",";
-                    m_results_csv_file << pair.second->min_value;
-                    m_results_csv_file << ",";
-                    m_results_csv_file << pair.second->average_value;
-                    m_results_csv_file << ",";
-                    m_results_csv_file << pair.second->max_value;
-                } else {
-                    m_results_csv_file << ",,,";
-                }
-            }
-        } else {
-            m_results_csv_file << ",,,";
-        }
-    }
-    m_results_csv_file << std::endl;
 }
 
 void InferStatsPrinter::print_pipeline_elem_stats_csv(const std::string &network_group_name,
@@ -273,59 +281,72 @@ void InferStatsPrinter::print_entire_pipeline_stats_csv(const std::string &netwo
     }
 }
 
-void InferStatsPrinter::print_benchmark_csv(const std::string &network_group_name, const NetworkGroupInferResult &hw_inference_result,
-    const NetworkGroupInferResult &streaming_inference_result, const NetworkGroupInferResult &hw_latency_result)
+void InferStatsPrinter::print_benchmark_csv(InferResult &hw_inference_result,
+        InferResult &streaming_inference_result, InferResult &hw_latency_result)
 {
-    m_results_csv_file << network_group_name << ",";
+    assert(hw_inference_result.network_group_results().size() == streaming_inference_result.network_group_results().size());
+    assert(hw_latency_result.network_group_results().size() == streaming_inference_result.network_group_results().size());
+    
+    for (auto &hw_res : hw_inference_result.network_group_results()) {
+        auto network_group_name = hw_res.network_group_name();
 
-    if (auto fps = streaming_inference_result.fps()) {
-        m_results_csv_file << fps.value();
-    }
-    m_results_csv_file << ",";
+        auto streaming_res = std::find_if(streaming_inference_result.network_group_results().begin(), streaming_inference_result.network_group_results().end(),
+            [network_group_name] (NetworkGroupInferResult &infer_results) { return (infer_results.network_group_name() == network_group_name); });
 
-    if (auto hw_only_fps = hw_inference_result.fps()) {
-        m_results_csv_file << hw_only_fps.value();
-    }
-    m_results_csv_file << ",";
+        auto latency_res = std::find_if(hw_latency_result.network_group_results().begin(), hw_latency_result.network_group_results().end(),
+            [network_group_name] (NetworkGroupInferResult &infer_results) { return (infer_results.network_group_name() == network_group_name); });
 
-    if (auto frames_count = streaming_inference_result.frames_count()) {
-        m_results_csv_file << frames_count.value();
-    }
-    m_results_csv_file << ",";
+        m_results_csv_file << network_group_name << ",";
 
-    if (auto frames_count = hw_inference_result.frames_count()) {
-        m_results_csv_file << frames_count.value();
-    }
-    m_results_csv_file << ",";
-
-    if (auto hw_latency = hw_latency_result.hw_latency()) {
-        m_results_csv_file << InferResultsFormatUtils::latency_result_to_ms(hw_latency.value());
-    }
-    m_results_csv_file << ",";
-
-    if (auto overall_latency = hw_latency_result.overall_latency()) {
-        m_results_csv_file << InferResultsFormatUtils::latency_result_to_ms(overall_latency.value());
-    }
-
-    // TODO HRT-5363 support multiple devices (Currently assumes 1 device in the map)
-    if (1 == streaming_inference_result.m_power_measurements.size()) {
-        for (const auto &pair : streaming_inference_result.m_power_measurements) {
-            if (nullptr != pair.second) {
-                m_results_csv_file << ",";
-                m_results_csv_file << pair.second->data().min_value;
-                m_results_csv_file << ",";
-                m_results_csv_file << pair.second->data().average_value;
-                m_results_csv_file << ",";
-                m_results_csv_file << pair.second->data().max_value;
-            } else {
-                m_results_csv_file << ",,,";
-            }
+        if (auto fps = streaming_res->fps()) {
+            m_results_csv_file << fps.value();
         }
-    } else {
-        m_results_csv_file << ",,,";
-    }
+        m_results_csv_file << ",";
 
-    m_results_csv_file << std::endl;
+        if (auto hw_only_fps = hw_res.fps()) {
+            m_results_csv_file << hw_only_fps.value();
+        }
+        m_results_csv_file << ",";
+
+        if (auto frames_count = streaming_res->frames_count()) {
+            m_results_csv_file << frames_count.value();
+        }
+        m_results_csv_file << ",";
+
+        if (auto frames_count = hw_res.frames_count()) {
+            m_results_csv_file << frames_count.value();
+        }
+        m_results_csv_file << ",";
+
+        if (auto hw_latency = latency_res->hw_latency()) {
+            m_results_csv_file << InferResultsFormatUtils::latency_result_to_ms(hw_latency.value());
+        }
+        m_results_csv_file << ",";
+
+        if (auto overall_latency = latency_res->overall_latency()) {
+            m_results_csv_file << InferResultsFormatUtils::latency_result_to_ms(overall_latency.value());
+        }
+
+        // TODO HRT-5363 support multiple devices (Currently assumes 1 device in the map)
+        if (1 == streaming_inference_result.m_power_measurements.size()) {
+            for (const auto &pair : streaming_inference_result.m_power_measurements) {
+                if (nullptr != pair.second) {
+                    m_results_csv_file << ",";
+                    m_results_csv_file << pair.second->data().min_value;
+                    m_results_csv_file << ",";
+                    m_results_csv_file << pair.second->data().average_value;
+                    m_results_csv_file << ",";
+                    m_results_csv_file << pair.second->data().max_value;
+                } else {
+                    m_results_csv_file << ",,,";
+                }
+            }
+        } else {
+            m_results_csv_file << ",,,";
+        }
+
+        m_results_csv_file << std::endl;
+    }
 }
 template< typename T>
 void InferStatsPrinter::print_stdout_single_element(const T &results, size_t frames_count)
@@ -357,7 +378,7 @@ void InferStatsPrinter::print_stdout_single_element(const T &results, size_t fra
 
 }
 
-void InferStatsPrinter::print_stdout(Expected<NetworkGroupInferResult>& inference_result)
+void InferStatsPrinter::print_stdout(Expected<InferResult> &inference_result)
 {
     if (!inference_result) {
         return;
@@ -369,31 +390,36 @@ void InferStatsPrinter::print_stdout(Expected<NetworkGroupInferResult>& inferenc
     std::cout << std::setprecision(2) << std::fixed;
     std::cout  << FORMAT_CLEAR_LINE << "> Inference result:" << std::endl;
 
-    if (1 < inference_result->m_result_per_network.size()) {
-        // If there is more than 1 network, we print results per network, and than sum of bandwith
-        for (auto &network_result_pair : inference_result->m_result_per_network) {
-            std::cout << "  Network: " << network_result_pair.first <<  std::endl;
-            auto frames_count = (m_print_frame_count) ? network_result_pair.second.m_frames_count : 0;
-            print_stdout_single_element<NetworkInferResult>(network_result_pair.second, frames_count);
-        }
-        std::stringstream bandwidth_stream;
-        bandwidth_stream << std::setprecision(2) << std::fixed;
-        if (auto send_data_rate = inference_result->send_data_rate_mbit_sec()) {
-            bandwidth_stream << "    Send Rate: " << send_data_rate.value() << " Mbit/s" << std::endl;
-        }
+    for (auto &network_group_results : inference_result.value().network_group_results()) {
+        std::cout << " Network group: " << network_group_results.network_group_name() <<  std::endl;
+        if (1 < network_group_results.m_result_per_network.size()) {
+            // If there is more than 1 network, we print results per network, and than sum of bandwith
+            for (auto &network_result_pair : network_group_results.m_result_per_network) {
+                std::cout << "  Network: " << network_result_pair.first <<  std::endl;
+                auto frames_count = (m_print_frame_count) ? network_result_pair.second.m_frames_count : 0;
+                print_stdout_single_element<NetworkInferResult>(network_result_pair.second, frames_count);
+            }
+            std::stringstream bandwidth_stream;
+            bandwidth_stream << std::setprecision(2) << std::fixed;
+            if (auto send_data_rate = network_group_results.send_data_rate_mbit_sec()) {
+                bandwidth_stream << "    Send Rate: " << send_data_rate.value() << " Mbit/s" << std::endl;
+            }
 
-        if (auto recv_data_rate = inference_result->recv_data_rate_mbit_sec()) {
-            bandwidth_stream << "    Recv Rate: " << recv_data_rate.value() << " Mbit/s" << std::endl;
-        }
+            if (auto recv_data_rate = network_group_results.recv_data_rate_mbit_sec()) {
+                bandwidth_stream << "    Recv Rate: " << recv_data_rate.value() << " Mbit/s" << std::endl;
+            }
 
-        if (0 != bandwidth_stream.rdbuf()->in_avail()) {
-            std::cout << "  Total bandwidth: " <<  std::endl;
-            std::cout << bandwidth_stream.rdbuf();
+            if (0 != bandwidth_stream.rdbuf()->in_avail()) {
+                std::cout << "  Total bandwidth: " <<  std::endl;
+                std::cout << bandwidth_stream.rdbuf();
+            }
+            std::cout << std::endl;
+        } else {
+            auto frames_count_exp = network_group_results.frames_count();
+            auto frames_count = ((frames_count_exp) && (m_print_frame_count)) ? frames_count_exp.value() : 0;
+            print_stdout_single_element<NetworkGroupInferResult>(network_group_results, frames_count);
+            std::cout << std::endl;
         }
-    } else {
-        auto frames_count_exp = inference_result->frames_count();
-        auto frames_count = ((frames_count_exp) && (m_print_frame_count)) ? frames_count_exp.value() : 0;
-        print_stdout_single_element<NetworkGroupInferResult>(inference_result.value(), frames_count);
     }
 
     if ((inference_result->m_power_measurements.size() != inference_result->m_current_measurements.size()) ||

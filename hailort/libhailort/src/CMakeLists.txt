@@ -48,7 +48,9 @@ set(HAILORT_CPP_SOURCES
     context_switch/network_group_wrapper.cpp
     context_switch/resource_manager.cpp
     context_switch/pipeline_multiplexer.cpp
-    intermediate_buffer.cpp
+    channel_allocator.cpp
+    inter_context_buffer.cpp
+    ddr_channels_pair.cpp
     config_buffer.cpp
     d2h_events_parser.cpp
     mipi_stream.cpp
@@ -59,9 +61,11 @@ set(HAILORT_CPP_SOURCES
     vdma_device.cpp
     vdma_stream.cpp
 
+    vdma/vdma_mapped_buffer_impl.cpp
     vdma/mapped_buffer.cpp
     vdma/sg_buffer.cpp
     vdma/continuous_buffer.cpp
+    vdma/vdma_buffer.cpp
 
     pcie_device.cpp
     pcie_stream.cpp
@@ -71,6 +75,7 @@ set(HAILORT_CPP_SOURCES
 
     vdevice.cpp
     vdevice_stream.cpp
+    vdevice_stream_wrapper.cpp
 
     control_protocol.cpp
 

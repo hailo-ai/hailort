@@ -156,8 +156,6 @@ protected:
 
     Expected<LayerInfo> get_layer_info(const std::string &stream_name);
 
-    virtual Expected<uint8_t> get_boundary_channel_index(uint8_t stream_index, hailo_stream_direction_t direction,
-        const std::string &layer_name) = 0;
     virtual Expected<std::shared_ptr<LatencyMetersMap>> get_latnecy_meters() = 0;
     virtual Expected<std::shared_ptr<VdmaChannel>> get_boundary_vdma_channel_by_stream_name(const std::string &stream_name) = 0;
 

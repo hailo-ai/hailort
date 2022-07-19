@@ -22,6 +22,10 @@ constexpr std::chrono::seconds VDMA_FLUSH_TIMEOUT(10);
 
 class VdmaInputStream : public InputStreamBase {
 public:
+    static Expected<std::unique_ptr<VdmaInputStream>> create(VdmaDevice &device,
+        std::shared_ptr<VdmaChannel> channel, const LayerInfo &edge_layer, uint16_t batch_size, 
+        EventPtr network_group_activated_event);
+
     VdmaInputStream(VdmaInputStream &&other);
     virtual ~VdmaInputStream();
 
@@ -56,10 +60,16 @@ private:
     std::chrono::milliseconds m_channel_timeout;
     const uint16_t m_max_batch_size;
     uint16_t m_dynamic_batch_size;
+
+    friend class VDeviceInputStream;
 };
 
 class VdmaOutputStream : public OutputStreamBase {
 public:
+    static Expected<std::unique_ptr<VdmaOutputStream>> create(VdmaDevice &device,
+        std::shared_ptr<VdmaChannel> channel, const LayerInfo &edge_layer, uint16_t batch_size, 
+        EventPtr network_group_activated_event);
+
     VdmaOutputStream(VdmaOutputStream &&other);
     virtual ~VdmaOutputStream();
 
@@ -92,6 +102,8 @@ private:
     const uint16_t m_max_batch_size;
     uint16_t m_dynamic_batch_size;
     const uint32_t m_transfer_size;
+
+    friend class VDeviceOutputStream;
 };
 
 

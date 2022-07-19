@@ -5,7 +5,7 @@ project(hailort-examples)
 find_package(Threads REQUIRED)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 
-find_package(HailoRT 4.8.1 EXACT REQUIRED)
+find_package(HailoRT 4.9.0 EXACT REQUIRED)
 
 add_library(example_base INTERFACE)
 target_link_libraries(example_base INTERFACE HailoRT::libhailort Threads::Threads)

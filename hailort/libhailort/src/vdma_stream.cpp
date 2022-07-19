@@ -7,9 +7,37 @@
  **/
 
 #include "vdma_stream.hpp"
+#include "pcie_stream.hpp"
+#include "core_stream.hpp"
 
 namespace hailort
 {
+
+Expected<std::unique_ptr<VdmaInputStream>> VdmaInputStream::create(VdmaDevice &device,
+    std::shared_ptr<VdmaChannel> channel, const LayerInfo &edge_layer, uint16_t batch_size, 
+    EventPtr network_group_activated_event)
+{
+    switch (device.get_type()) {
+    case Device::Type::PCIE:
+    {
+        auto local_stream = PcieInputStream::create(device, channel, edge_layer, batch_size,
+            network_group_activated_event);
+        CHECK_EXPECTED(local_stream);
+        return std::unique_ptr<VdmaInputStream>(local_stream.release());
+    }
+    case Device::Type::CORE:
+    {
+        auto local_stream = CoreInputStream::create(device, channel, edge_layer, batch_size,
+            network_group_activated_event);
+        CHECK_EXPECTED(local_stream);
+        return std::unique_ptr<VdmaInputStream>(local_stream.release());
+    }
+    default:
+        assert(false);
+        LOGGER__ERROR("Invalid device type {}", static_cast<uint8_t>(device.get_type()));
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
+    }
+}
 
 VdmaInputStream::VdmaInputStream(VdmaDevice &device, std::shared_ptr<VdmaChannel> channel,
                                  const LayerInfo &edge_layer, EventPtr network_group_activated_event, uint16_t batch_size,
@@ -101,10 +129,10 @@ hailo_status VdmaInputStream::deactivate_stream()
     /* Flush is best effort */
     auto status = m_channel->flush(VDMA_FLUSH_TIMEOUT);
     if (HAILO_STREAM_INTERNAL_ABORT == status) {
-        LOGGER__INFO("Flush input_channel is not needed because channel was aborted. (channel {})", m_channel->get_channel_index());
+        LOGGER__INFO("Flush input_channel is not needed because channel was aborted. (channel {})", m_channel->get_channel_id());
         status = HAILO_SUCCESS;
     } else if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("Failed to flush input_channel. (status {} channel {})", status, m_channel->get_channel_index());
+        LOGGER__ERROR("Failed to flush input_channel. (status {} channel {})", status, m_channel->get_channel_id());
     }
 
     /* Close channel is best effort. */
@@ -188,6 +216,32 @@ hailo_status VdmaInputStream::set_dynamic_batch_size(uint16_t dynamic_batch_size
 }
 
 /** Output stream **/
+Expected<std::unique_ptr<VdmaOutputStream>> VdmaOutputStream::create(VdmaDevice &device,
+    std::shared_ptr<VdmaChannel> channel, const LayerInfo &edge_layer, uint16_t batch_size, 
+    EventPtr network_group_activated_event)
+{
+    switch (device.get_type()) {
+    case Device::Type::PCIE:
+    {
+        auto local_stream = PcieOutputStream::create(device, channel, edge_layer, batch_size,
+            network_group_activated_event);
+        CHECK_EXPECTED(local_stream);
+        return std::unique_ptr<VdmaOutputStream>(local_stream.release());
+    }
+    case Device::Type::CORE:
+    {
+        auto local_stream = CoreOutputStream::create(device, channel, edge_layer, batch_size,
+            network_group_activated_event);
+        CHECK_EXPECTED(local_stream);
+        return std::unique_ptr<VdmaOutputStream>(local_stream.release());
+    }
+    default:
+        assert(false);
+        LOGGER__ERROR("Invalid device type {}", static_cast<uint8_t>(device.get_type()));
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
+    }
+}
+
 VdmaOutputStream::VdmaOutputStream(VdmaDevice &device, std::shared_ptr<VdmaChannel> channel,
                                    const LayerInfo &edge_layer, EventPtr network_group_activated_event, uint16_t batch_size,
                                    std::chrono::milliseconds transfer_timeout, hailo_status &status) :

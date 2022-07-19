@@ -375,7 +375,7 @@ hailo_status ConfiguredNetworkGroupBase::create_input_stream_from_config_params(
             {
                 auto batch_size_exp = get_stream_batch_size(stream_name);
                 CHECK_EXPECTED_AS_STATUS(batch_size_exp);
-                const auto stream_index = edge_layer->index;
+                const auto stream_index = edge_layer->stream_index;
                 auto vdma_channel_ptr = get_boundary_vdma_channel_by_stream_name(stream_name);
                 CHECK_EXPECTED_AS_STATUS(vdma_channel_ptr, "Failed to get vdma channel for output stream {}", stream_index);
 
@@ -389,7 +389,7 @@ hailo_status ConfiguredNetworkGroupBase::create_input_stream_from_config_params(
             {
                 auto batch_size_exp = get_stream_batch_size(stream_name);
                 CHECK_EXPECTED_AS_STATUS(batch_size_exp);
-                const auto stream_index = edge_layer->index;
+                const auto stream_index = edge_layer->stream_index;
                 auto vdma_channel_ptr = get_boundary_vdma_channel_by_stream_name(stream_name);
                 CHECK_EXPECTED_AS_STATUS(vdma_channel_ptr, "Failed to get vdma channel for output stream {}", stream_index);
 
@@ -440,7 +440,7 @@ hailo_status ConfiguredNetworkGroupBase::create_output_stream_from_config_params
             {
                 auto batch_size_exp = get_stream_batch_size(stream_name);
                 CHECK_EXPECTED_AS_STATUS(batch_size_exp);
-                const auto stream_index = edge_layer->index;
+                const auto stream_index = edge_layer->stream_index;
                 auto vdma_channel_ptr = get_boundary_vdma_channel_by_stream_name(stream_name);
                 CHECK_EXPECTED_AS_STATUS(vdma_channel_ptr, "Failed to get vdma channel for output stream {}", stream_index);
 
@@ -454,7 +454,7 @@ hailo_status ConfiguredNetworkGroupBase::create_output_stream_from_config_params
             {
                 auto batch_size_exp = get_stream_batch_size(stream_name);
                 CHECK_EXPECTED_AS_STATUS(batch_size_exp);
-                const auto stream_index = edge_layer->index;
+                const auto stream_index = edge_layer->stream_index;
                 auto vdma_channel_ptr = get_boundary_vdma_channel_by_stream_name(stream_name);
                 CHECK_EXPECTED_AS_STATUS(vdma_channel_ptr, "Failed to get vdma channel for output stream {}", stream_index);
 

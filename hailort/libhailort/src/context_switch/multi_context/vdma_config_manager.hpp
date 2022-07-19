@@ -31,14 +31,16 @@
 namespace hailort
 {
 
+class VDeviceBase;
+
 class VdmaConfigManager : public ConfigManager
 {
 public:
     static Expected<VdmaConfigManager> create(VdmaDevice &device);
-    static Expected<VdmaConfigManager> create(VDevice &vdevice);
+    static Expected<VdmaConfigManager> create(VDeviceBase &vdevice);
     virtual ConfigManagerType get_manager_type();
     virtual Expected<ConfiguredNetworkGroupVector> add_hef(Hef &hef,
-        const NetworkGroupsParamsMap &configure_params, bool is_scheduler_used=false);
+        const NetworkGroupsParamsMap &configure_params);
 
     static hailo_status update_network_batch_size(ConfigureNetworkParams &configure_params);
 

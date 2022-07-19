@@ -1702,11 +1702,11 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_context_info_req
     request->parameters.context_switch_set_context_info_request.cfg_channels_count = context_info->cfg_channels_count;
 
     /* context cfg buffer info */
-    request->parameters.context_switch_set_context_info_request.config_buffer_infos_length = 
-        BYTE_ORDER__htonl(sizeof(request->parameters.context_switch_set_context_info_request.config_buffer_infos));
-    memcpy(&(request->parameters.context_switch_set_context_info_request.config_buffer_infos), 
-            &(context_info->config_buffer_infos), 
-            sizeof(request->parameters.context_switch_set_context_info_request.config_buffer_infos));
+    request->parameters.context_switch_set_context_info_request.config_channel_infos_length = 
+        BYTE_ORDER__htonl(sizeof(request->parameters.context_switch_set_context_info_request.config_channel_infos));
+    memcpy(&(request->parameters.context_switch_set_context_info_request.config_channel_infos), 
+            &(context_info->config_channel_infos), 
+            sizeof(request->parameters.context_switch_set_context_info_request.config_channel_infos));
 
     /* context unused stream index */
     request->parameters.context_switch_set_context_info_request.context_stream_remap_data_length = 
@@ -1833,7 +1833,7 @@ exit:
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_context_switch_status_request(
         CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
         CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status, uint8_t application_index,
-        uint16_t dynamic_batch_size)
+        uint16_t dynamic_batch_size, bool keep_nn_config_during_reset)
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
     size_t local_request_size = 0;
@@ -1846,7 +1846,7 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_context_switch_status_reques
     /* Header */
     local_request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE + 
         sizeof(CONTROL_PROTOCOL__change_context_switch_status_request_t);
-    control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_CHANGE_CONTEXT_SWITCH_STATUS, 3);
+    control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_CHANGE_CONTEXT_SWITCH_STATUS, 4);
 
     /* state_machine_status */
     request->parameters.change_context_switch_status_request.state_machine_status_length = 
@@ -1865,6 +1865,11 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_context_switch_status_reques
         BYTE_ORDER__htonl(sizeof(request->parameters.change_context_switch_status_request.dynamic_batch_size));
     request->parameters.change_context_switch_status_request.dynamic_batch_size = dynamic_batch_size;
     
+    /* dynamic_batch_size */
+    request->parameters.change_context_switch_status_request.keep_nn_config_during_reset_length = 
+        BYTE_ORDER__htonl(sizeof(request->parameters.change_context_switch_status_request.keep_nn_config_during_reset));
+    request->parameters.change_context_switch_status_request.keep_nn_config_during_reset = keep_nn_config_during_reset;
+
     *request_size = local_request_size;
     status = HAILO_COMMON_STATUS__SUCCESS;
 exit:

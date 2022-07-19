@@ -18,8 +18,9 @@
 #include "vdma_channel_regs.hpp"
 #include "hailo/expected.hpp"
 #include "os/hailort_driver.hpp"
-#include "vdma/mapped_buffer.hpp"
+#include "vdma/sg_buffer.hpp"
 #include "vdma_descriptor_list.hpp"
+#include "vdma/channel_id.hpp"
 #include "hailo/buffer.hpp"
 
 #include <mutex>
@@ -47,7 +48,7 @@ class VdmaChannel final
 public:
     using Direction = HailoRTDriver::DmaDirection;
 
-    static Expected<VdmaChannel> create(uint8_t channel_index, Direction direction, HailoRTDriver &driver,
+    static Expected<VdmaChannel> create(vdma::ChannelId channel_id, Direction direction, HailoRTDriver &driver,
         uint16_t requested_desc_page_size, uint32_t stream_index = 0, LatencyMeterPtr latency_meter = nullptr, 
         uint16_t transfers_per_axi_intr = 1);
     ~VdmaChannel();
@@ -77,20 +78,19 @@ public:
     hailo_status set_transfers_per_axi_intr(uint16_t transfers_per_axi_intr);
     hailo_status inc_num_available_for_ddr(uint16_t value, uint32_t size_mask);
     Expected<uint16_t> get_hw_num_processed_ddr(uint32_t size_mask);
-    /*Used for DDR channels only. TODO - remove */
-    hailo_status start_channel(VdmaDescriptorList &desc_list);
     /* For channels controlled by the FW (inter context and cfg channels), the hailort needs only to register the channel to the driver.
        The FW would be responsible to open and close the channel */
     hailo_status register_channel_to_driver(uintptr_t desc_list_handle);
     hailo_status stop_channel();
     uint16_t get_page_size();
+    Expected<CONTROL_PROTOCOL__host_buffer_info_t> get_boundary_buffer_info(uint32_t transfer_size);
 
     hailo_status abort();
     hailo_status clear_abort();
 
-    uint8_t get_channel_index()
+    vdma::ChannelId get_channel_id() const
     {
-        return m_channel_index;
+        return m_channel_id;
     }
 
     VdmaChannel(const VdmaChannel &other) = delete;
@@ -101,8 +101,6 @@ public:
     static uint32_t calculate_buffer_size(const HailoRTDriver &driver, uint32_t transfer_size, uint32_t transfers_count,
         uint16_t requested_desc_page_size);
 
-
-    const uint8_t m_channel_index;
 
     friend class PendingBufferState;
 
@@ -136,7 +134,7 @@ private:
         size_t m_accumulated_transfers;
     };
 
-    VdmaChannel(uint8_t channel_index, Direction direction, HailoRTDriver &driver, uint32_t stream_index,
+    VdmaChannel(vdma::ChannelId channel_id, Direction direction, HailoRTDriver &driver, uint32_t stream_index,
         LatencyMeterPtr latency_meter, uint16_t desc_page_size, uint16_t transfers_per_axi_intr, hailo_status &status);
 
     hailo_status allocate_buffer(const uint32_t buffer_size);
@@ -174,7 +172,9 @@ private:
     Expected<uint16_t> update_latency_meter(const ChannelInterruptTimestampList &timestamp_list);
     static bool is_desc_between(uint16_t begin, uint16_t end, uint16_t desc);
     Expected<bool> is_aborted();
+    hailo_status start_channel();
 
+    const vdma::ChannelId m_channel_id;
     Direction m_direction;
     HailoRTDriver &m_driver;
     VdmaChannelRegs m_host_registers;
@@ -185,8 +185,7 @@ private:
 
     // TODO: remove the unique_ptr, instead allocate the buffer in the ctor (needs to move ddr channel to
     // other class)
-    std::unique_ptr<vdma::MappedBuffer> m_mapped_user_buffer;
-    std::unique_ptr<VdmaDescriptorList> m_descriptors_buffer;
+    std::unique_ptr<vdma::SgBuffer> m_buffer;
     uint32_t m_stream_index;
     LatencyMeterPtr m_latency_meter;
 
@@ -203,7 +202,7 @@ private:
     uint16_t m_pending_num_avail_offset;
     std::condition_variable_any m_can_write_buffer_cv;
     std::atomic_bool m_is_waiting_for_channel_completion;
-    bool m_is_aborted;
+    std::atomic_bool m_is_aborted_by_internal_source;
 };
 
 } /* namespace hailort */

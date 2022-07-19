@@ -41,8 +41,8 @@ The following examples are provided, demonstrating the HailoRT API:
 ## Compiling with CMake
 Examples are configured and compiled using the following commands:
 ```sh
-cmake -H. -Bbuild
-cmake --build build
+cmake -H. -Bbuild -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config release
 ```
 > **_NOTE:_** Write permissions are required to compile the examples from their current directory.
 If this is not the case, copy the examples directory to another location with the required permissions.

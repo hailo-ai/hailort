@@ -24,6 +24,7 @@
 #include "control.hpp"
 #include "hailort_defaults.hpp"
 #include "vdevice_internal.hpp"
+#include "pipeline_multiplexer.hpp"
 
 #include "pcie_device.hpp"
 #include "hlpcie.hpp"
@@ -45,29 +46,39 @@ Expected<VdmaConfigManager> VdmaConfigManager::create(VdmaDevice &device)
     return manager;
 }
 
-Expected<VdmaConfigManager> VdmaConfigManager::create(VDevice &vdevice)
+Expected<VdmaConfigManager> VdmaConfigManager::create(VDeviceBase &vdevice)
 {
     const bool is_vdevice = true;
     auto devices = vdevice.get_physical_devices();
     CHECK_EXPECTED(devices);
 
-    // Down casting Device to PcieDevice
-    std::vector<std::reference_wrapper<VdmaDevice>> pcie_devices;
+    const auto device_type = vdevice.get_device_type();
+    CHECK_EXPECTED(device_type);
+
+    // Down casting Device to VdmaDevice
+    std::vector<std::reference_wrapper<VdmaDevice>> vdma_devices;
     for (auto &dev : devices.release()) {
-        CHECK_AS_EXPECTED(Device::Type::PCIE == dev.get().get_type(), HAILO_INTERNAL_FAILURE,
-            "vDevice is supported only with PCIe devices");
-        pcie_devices.emplace_back(static_cast<PcieDevice&>(dev.get()));
+        assert(device_type.value() == dev.get().get_type());
+        vdma_devices.emplace_back(static_cast<VdmaDevice&>(dev.get()));
     }
 
-    VdmaConfigManager manager(std::move(pcie_devices), is_vdevice, static_cast<VDeviceBase&>(vdevice).network_group_scheduler());
+    VdmaConfigManager manager(std::move(vdma_devices), is_vdevice, vdevice.network_group_scheduler());
     return manager;
 }
 
 VdmaConfigManager::VdmaConfigManager(std::vector<std::reference_wrapper<VdmaDevice>> &&devices, bool is_vdevice, NetworkGroupSchedulerWeakPtr network_group_scheduler)
     : m_devices(std::move(devices)), m_net_groups(), m_net_group_wrappers(), m_is_vdevice(is_vdevice), m_network_group_scheduler(network_group_scheduler) {}
 
+static bool should_use_multiplexer(const std::shared_ptr<NetworkGroupMetadata> &metadata, const std::vector<std::shared_ptr<VdmaConfigNetworkGroup>> &network_groups)
+{
+    (void) metadata;
+    (void) network_groups;
+    // TODO HRT-6579 decide if the multiplexer should be used for this network group.
+    return false;
+}
+
 Expected<ConfiguredNetworkGroupVector> VdmaConfigManager::add_hef(Hef &hef,
-    const NetworkGroupsParamsMap &configure_params, bool scheduler_is_used)
+    const NetworkGroupsParamsMap &configure_params)
 {
     auto &hef_network_groups = hef.pimpl->network_groups();
     auto current_net_group_index = static_cast<uint8_t>(m_net_groups.size());
@@ -147,14 +158,26 @@ Expected<ConfiguredNetworkGroupVector> VdmaConfigManager::add_hef(Hef &hef,
                 network_group_handle = network_group_handle_exp.value();
                 net_group_ptr->set_network_group_handle(network_group_handle);
             }
-
-            status = net_group_ptr->create_vdevice_streams_from_config_params(network_group_handle);
-            CHECK_SUCCESS_AS_EXPECTED(status);
+            if (network_group_scheduler && should_use_multiplexer(network_group_metadata_ptr, m_net_groups)) {
+                /*
+                auto identical_network_groups = find_identical(m_net_groups);
+                // Iterate through the other VdmaCOnfigNetworkGroup and clone each of its streams with
+                //  `VDeviceOutputStreamWrapper::clone()` and `VDeviceInputStreamWrapper::clone()`.
+                status = net_group_ptr->create_vdevice_streams_from_another(identical_wrappers[0], network_group_handle);
+                CHECK_SUCCESS_AS_EXPECTED(status);
+                */
+            } else {
+                auto multiplexer = make_shared_nothrow<PipelineMultiplexer>();
+                CHECK_AS_EXPECTED(nullptr != multiplexer, HAILO_OUT_OF_HOST_MEMORY, "Failed to create PipelineMultiplexer");
+                // Using id 0 because these are the streams of the first configured network group of this multiplexer
+                status = net_group_ptr->create_vdevice_streams_from_config_params(multiplexer, network_group_handle);
+                CHECK_SUCCESS_AS_EXPECTED(status);
+            }
         } else {
             status = net_group_ptr->create_streams_from_config_params(net_group_ptr->get_resources_managers()[0]->get_device());
             CHECK_SUCCESS_AS_EXPECTED(status);
         }
-    
+
         // Check that all boundary streams were created
         status = validate_boundary_streams_were_created(hef, network_group_proto->network_group_metadata().network_group_name(), *net_group_ptr);
         CHECK_SUCCESS_AS_EXPECTED(status);
@@ -193,7 +216,7 @@ Expected<ConfiguredNetworkGroupVector> VdmaConfigManager::add_hef(Hef &hef,
         for (size_t i = 0, contexts = 0; i < m_net_groups.size(); ++i) {
             for (auto &resource_manager : m_net_groups[i]->get_resources_managers()) {
                 if (0 == strcmp(device.get().get_dev_id(), resource_manager->get_dev_id())) {
-                    auto net_group_header_exp = resource_manager->get_control_network_group_header(scheduler_is_used);
+                    auto net_group_header_exp = resource_manager->get_control_network_group_header();
                     CHECK_EXPECTED(net_group_header_exp);
                     context_switch_info.context_switch_main_header.application_header[i] = net_group_header_exp.value();
                     auto net_group_contexts = resource_manager->get_contexts();
@@ -220,7 +243,8 @@ Expected<ConfiguredNetworkGroupVector> VdmaConfigManager::add_hef(Hef &hef,
             }
 
             // Reset context_switch status
-            auto status = Control::reset_context_switch_state_machine(device.get());
+            static const auto REMOVE_NN_CONFIG_DURING_RESET = false;
+            auto status = Control::reset_context_switch_state_machine(device.get(), REMOVE_NN_CONFIG_DURING_RESET);
             CHECK_SUCCESS_AS_EXPECTED(status);
 
             // Write context_switch info

@@ -64,6 +64,8 @@ public:
 
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &key) = 0;
     
+    virtual hailo_status set_keep_nn_config_during_reset(const bool keep_nn_config_during_reset) = 0;
+
     /**
      * @return The number of invalid frames.
      */

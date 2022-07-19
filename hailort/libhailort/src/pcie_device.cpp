@@ -246,22 +246,25 @@ hailo_status PcieDevice::close_all_vdma_channels()
     auto status = HAILO_UNINITIALIZED;
 
     // TODO: Add one icotl to stop all channels at once (HRT-6097)
-    for (int channel_index = 0; channel_index <= MAX_H2D_CHANNEL_INDEX; channel_index++) {
-        auto host_registers = VdmaChannelRegs(m_driver, channel_index, HailoRTDriver::DmaDirection::H2D);
+    constexpr uint8_t PCIE_DEFAULT_ENGINE_INDEX = 0;
+    for (uint8_t channel_index = 0; channel_index <= MAX_H2D_CHANNEL_INDEX; channel_index++) {
+        const vdma::ChannelId channel_id = { PCIE_DEFAULT_ENGINE_INDEX, channel_index };
+        auto host_registers = VdmaChannelRegs(m_driver, channel_id, HailoRTDriver::DmaDirection::H2D);
         status = host_registers.stop_channel();
         CHECK_SUCCESS(status);
 
-        auto device_registers = VdmaChannelRegs(m_driver, channel_index, HailoRTDriver::DmaDirection::D2H);
+        auto device_registers = VdmaChannelRegs(m_driver, channel_id, HailoRTDriver::DmaDirection::D2H);
         status = device_registers.stop_channel();
         CHECK_SUCCESS(status);
     }
 
-    for (int channel_index = MIN_D2H_CHANNEL_INDEX; channel_index <= MAX_D2H_CHANNEL_INDEX; channel_index++) {
-        auto host_registers = VdmaChannelRegs(m_driver, channel_index, HailoRTDriver::DmaDirection::D2H);
+    for (uint8_t channel_index = MIN_D2H_CHANNEL_INDEX; channel_index <= MAX_D2H_CHANNEL_INDEX; channel_index++) {
+        const vdma::ChannelId channel_id = { PCIE_DEFAULT_ENGINE_INDEX, channel_index };
+        auto host_registers = VdmaChannelRegs(m_driver, channel_id, HailoRTDriver::DmaDirection::D2H);
         status = host_registers.stop_channel();
         CHECK_SUCCESS(status);
 
-        auto device_registers = VdmaChannelRegs(m_driver, channel_index, HailoRTDriver::DmaDirection::H2D);
+        auto device_registers = VdmaChannelRegs(m_driver, channel_id, HailoRTDriver::DmaDirection::H2D);
         status = device_registers.stop_channel();
         CHECK_SUCCESS(status);
     }

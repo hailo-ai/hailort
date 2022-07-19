@@ -298,11 +298,13 @@ public:
      *  reset context switch state machine
      * 
      * @param[in]     device - The Hailo device.
-     * @param[in]     network_group_index - network_group index 
+     * @param[in]     keep_nn_config_during_reset - 
+     *                Use if in the reset flow, user wise to remain in the same network group. 
+     *                this reset flow keep most of the configuration on the network group for faster batch switching. 
      *
      * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
      */
-    static hailo_status reset_context_switch_state_machine(Device &device);
+    static hailo_status reset_context_switch_state_machine(Device &device, bool keep_nn_config_during_reset);
     /**
      *  set dataflow interrupt by control
      * 
@@ -405,7 +407,7 @@ private:
             CONTROL_PROTOCOL__context_switch_context_info_single_control_t *context_info);
     static hailo_status change_context_switch_status(Device &device, 
             CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status,
-            uint8_t network_group_index, uint16_t dynamic_batch_size);
+            uint8_t network_group_index, uint16_t dynamic_batch_size, bool keep_nn_config_during_reset);
 };
 
 } /* namespace hailort */

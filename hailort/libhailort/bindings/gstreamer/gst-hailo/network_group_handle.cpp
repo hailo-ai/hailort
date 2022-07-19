@@ -329,9 +329,23 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> NetworkGroupConfigManager::con
     GST_CHECK_EXPECTED(network_group_list, element, RESOURCE, "Failed configure device from hef, status = %d",
         network_group_list.status());
 
-    m_configured_net_groups[get_configure_string(device_id, network_group_name, batch_size)] = network_group_list->at(0);
+    std::shared_ptr<ConfiguredNetworkGroup> result = nullptr;
+    for (auto &network_group : network_group_list.value()) {
+        m_configured_net_groups[get_configure_string(device_id, network_group->get_network_group_name().c_str(), batch_size)] = network_group;
+        if (std::string(network_group_name) == network_group->get_network_group_name()) {
+            result = network_group;
+            break;
+        }
+    }
 
-    return std::move(network_group_list->at(0));
+    if (result) {
+        return result;
+    } else if (1 != network_group_list->size()) {
+        g_error("Configuring HEF with multiple network_groups without providing valid network_group name. passed name = %s, status = %d", network_group_name, HAILO_NOT_FOUND);
+        return make_unexpected(HAILO_NOT_FOUND);
+    } else {
+        return std::move(network_group_list->at(0));
+    }
 }
 
 hailo_status NetworkGroupConfigManager::add_network_to_shared_network_group(const std::string &shared_device_id, const std::string &network_name,

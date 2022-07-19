@@ -2402,14 +2402,14 @@ hailo_status Control::context_switch_set_context_info(Device &device,
 
         context_info_single_control.is_first_control_per_context = is_first_control_per_context;
         context_info_single_control.is_last_control_per_context = is_last_control_per_context;
-        static_assert(sizeof(context_info_single_control.config_buffer_infos) == sizeof(context_info->config_buffer_infos),
-            "mismatch in sizes of config_buffer_infos");
+        static_assert(sizeof(context_info_single_control.config_channel_infos) == sizeof(context_info->config_channel_infos),
+            "mismatch in sizes of config_channel_infos");
         static_assert(sizeof(context_info_single_control.context_stream_remap_data) == sizeof(context_info->context_stream_remap_data),
             "mismatch in sizes of context_stream_remap_data");
         context_info_single_control.cfg_channels_count = context_info->cfg_channels_count;
-        memcpy(context_info_single_control.config_buffer_infos,
-            context_info->config_buffer_infos,
-            sizeof(context_info_single_control.config_buffer_infos));
+        memcpy(context_info_single_control.config_channel_infos,
+            context_info->config_channel_infos,
+            sizeof(context_info_single_control.config_channel_infos));
 
         memcpy(&(context_info_single_control.context_stream_remap_data),
                 &(context_info->context_stream_remap_data),
@@ -2723,7 +2723,7 @@ hailo_status Control::download_context_action_list(Device &device, uint8_t conte
 
 hailo_status Control::change_context_switch_status(Device &device,
         CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status,
-        uint8_t network_group_index, uint16_t dynamic_batch_size)
+        uint8_t network_group_index, uint16_t dynamic_batch_size, bool keep_nn_config_during_reset)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     HAILO_COMMON_STATUS_t common_status = HAILO_COMMON_STATUS__UNINITIALIZED;
@@ -2735,7 +2735,8 @@ hailo_status Control::change_context_switch_status(Device &device,
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
     common_status = CONTROL_PROTOCOL__pack_change_context_switch_status_request(&request, &request_size,
-            device.get_control_sequence(), state_machine_status, network_group_index, dynamic_batch_size);
+            device.get_control_sequence(), state_machine_status, network_group_index, dynamic_batch_size, 
+            keep_nn_config_during_reset);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -2760,16 +2761,17 @@ exit:
 
 hailo_status Control::enable_network_group(Device &device, uint8_t network_group_index, uint16_t dynamic_batch_size)
 {
+    static const auto REMOVE_NN_CONFIG_DURING_RESET = false;
     return Control::change_context_switch_status(device, CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_ENABLED,
-        network_group_index, dynamic_batch_size);
+        network_group_index, dynamic_batch_size, REMOVE_NN_CONFIG_DURING_RESET);
 }
 
-hailo_status Control::reset_context_switch_state_machine(Device &device)
+hailo_status Control::reset_context_switch_state_machine(Device &device, bool keep_nn_config_during_reset)
 {
     static const auto IGNORE_NETWORK_GROUP_INDEX = 0;
     static const auto IGNORE_DYNAMIC_BATCH_SIZE = 0;
     return Control::change_context_switch_status(device, CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_RESET,
-        IGNORE_NETWORK_GROUP_INDEX, IGNORE_DYNAMIC_BATCH_SIZE);
+        IGNORE_NETWORK_GROUP_INDEX, IGNORE_DYNAMIC_BATCH_SIZE, keep_nn_config_during_reset);
 }
 
 hailo_status Control::wd_enable(Device &device, uint8_t cpu_id, bool should_enable)

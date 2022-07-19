@@ -51,6 +51,24 @@ Expected<Buffer> Buffer::create(size_t size, uint8_t default_value)
     return buffer;
 }
 
+Expected<BufferPtr> Buffer::create_shared(size_t size)
+{
+    auto buffer = Buffer::create(size);
+    CHECK_EXPECTED(buffer);
+    auto buffer_ptr = make_shared_nothrow<Buffer>(buffer.release());
+    CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
+    return buffer_ptr;
+}
+
+Expected<BufferPtr> Buffer::create_shared(size_t size, uint8_t default_value)
+{
+    auto buffer = Buffer::create(size, default_value);
+    CHECK_EXPECTED(buffer);
+    auto buffer_ptr = make_shared_nothrow<Buffer>(buffer.release());
+    CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
+    return buffer_ptr;
+}
+
 Expected<Buffer> Buffer::create(const uint8_t *src, size_t size)
 {
     auto buffer = create(size);

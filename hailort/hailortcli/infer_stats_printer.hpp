@@ -29,9 +29,9 @@ public:
 class InferStatsPrinter final {
 public:
     static Expected<InferStatsPrinter> create(const inference_runner_params &params, bool print_running_info = true);
-    void print(const std::string &network_name, Expected<NetworkGroupInferResult>& inference_result);
-    void print_benchmark_csv(const std::string &network_name, const NetworkGroupInferResult &hw_inference_result,
-        const NetworkGroupInferResult &streaming_inference_result, const NetworkGroupInferResult &hw_latency_result);
+    void print(const std::vector<std::string> &network_groups_names, Expected<InferResult> &inference_result);
+    void print_benchmark_csv(InferResult &hw_inference_result,
+        InferResult &streaming_inference_result, InferResult &hw_latency_result);
     void print_csv_header();
     void print_benchmark_csv_header();
 
@@ -39,14 +39,14 @@ private:
     static constexpr uint32_t NO_INDEX = std::numeric_limits<uint32_t>::max();
 
     InferStatsPrinter(const inference_runner_params &params, hailo_status &output_status, bool print_running_info = true);
-    void print_csv(const std::string &network_name, Expected<NetworkGroupInferResult>& inference_result);
+    void print_csv(const std::vector<std::string> &network_groups_names, Expected<InferResult> &inference_result);
     void print_pipeline_elem_stats_csv(const std::string &network_name,
         const std::map<std::string, std::map<std::string, AccumulatorPtr>> &inference_result);
     void print_pipeline_elem_stats_csv(const std::string &network_name,
         const std::map<std::string, std::map<std::string, std::vector<AccumulatorPtr>>> &inference_result);
     void print_entire_pipeline_stats_csv(const std::string &network_name,
         const std::map<std::string, AccumulatorPtr> &inference_result);
-    void print_stdout(Expected<NetworkGroupInferResult>& inference_result);
+    void print_stdout(Expected<InferResult> &inference_result);
     template <typename T>
     void print_stdout_single_element(const T &results, size_t frames_count);
 

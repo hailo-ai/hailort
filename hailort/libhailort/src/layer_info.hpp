@@ -13,6 +13,7 @@
 #include "hailo/hailort.h"
 #include "hailo/hailort_common.hpp"
 #include "hailort_defaults.hpp"
+#include "control_protocol.h"
 
 #include <vector>
 #include <memory>
@@ -37,20 +38,55 @@ struct LayerInfo {
     uint32_t hw_data_bytes;
     hailo_format_t format;
     hailo_stream_direction_t direction;
-    uint8_t index;
+    uint8_t stream_index;
     std::string name;
     hailo_quant_info_t quant_info;
     hailo_nms_info_t nms_info;
     uint32_t height_gcd;
     std::vector<uint32_t> height_ratios;
     std::string network_name;
+    uint8_t network_index;
+    CONTROL_PROTOCOL__nn_stream_config_t nn_stream_config;
+    uint32_t max_shmifo_size;
+    uint8_t context_index;
 
     // Simulation Info
     BufferIndices buffer_indices;
+};
 
-    // HW Info
-    uint16_t core_bytes_per_buffer;
-    uint16_t core_buffers_per_frame;
+struct InterContextLayerInfo {
+    std::string name;
+    uint8_t stream_index;
+    uint8_t context_index;
+    hailo_stream_direction_t direction;
+    CONTROL_PROTOCOL__nn_stream_config_t nn_stream_config;
+    std::string network_name;
+    uint8_t network_index;
+    uint32_t max_shmifo_size;
+    uint8_t src_context_index;
+    uint8_t src_stream_index;
+    // HRT-7201 - The system supports one src and multiple dstinations. Right now we're saving only one dstination 
+    uint8_t dst_context_index;
+    uint8_t dst_stream_index;
+};
+
+struct DdrLayerInfo {
+    std::string name;
+    uint8_t stream_index;
+    uint8_t context_index;
+    hailo_stream_direction_t direction;
+    CONTROL_PROTOCOL__nn_stream_config_t nn_stream_config;
+    std::string network_name;
+    uint8_t network_index;
+    uint32_t max_shmifo_size;
+    uint16_t min_buffered_rows;
+    // total_buffers_per_frame not same as core_buffer_per frame. 
+    //(In DDR core buffer per frame is 1). Used to calc total host descriptors_per_frame. 
+    uint16_t total_buffers_per_frame;
+    uint8_t src_context_index;
+    uint8_t src_stream_index;
+    uint8_t dst_context_index;
+    uint8_t dst_stream_index;
 };
 
 class LayerInfoUtils {
@@ -75,7 +111,7 @@ public:
                 res.hw_shape.height * res.hw_shape.width * res.hw_shape.features * res.hw_data_bytes;
         }
         res.direction = layer_info.direction;
-        res.index = layer_info.index;
+        res.index = layer_info.stream_index;
         assert(layer_info.name.length() < HAILO_MAX_NAME_SIZE);
         strncpy(res.name, layer_info.name.c_str(), layer_info.name.length() + 1);
         res.quant_info = layer_info.quant_info;

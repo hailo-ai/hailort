@@ -183,7 +183,7 @@ PYBIND11_MODULE(_pyhailort_internal, m) {
             return self.format.order;
         })
         .def_readonly("direction", &LayerInfo::direction)
-        .def_readonly("sys_index", &LayerInfo::index)
+        .def_readonly("sys_index", &LayerInfo::stream_index)
         .def_readonly("name", &LayerInfo::name)
         .def_readonly("quant_info", &LayerInfo::quant_info)
         // For backwards compatibility (accessing qp through layer_info directly)
@@ -207,8 +207,14 @@ PYBIND11_MODULE(_pyhailort_internal, m) {
         .def_readonly("height_gcd", &LayerInfo::height_gcd)
         .def_readonly("height_ratios", &LayerInfo::height_ratios)
         .def_readonly("buffer_indices", &LayerInfo::buffer_indices)
-        .def_readonly("core_bytes_per_buffer", &LayerInfo::core_bytes_per_buffer)
-        .def_readonly("core_buffers_per_frame", &LayerInfo::core_buffers_per_frame)
+        .def_property_readonly("core_bytes_per_buffer", [](LayerInfo& self)
+        {
+            return self.nn_stream_config.core_bytes_per_buffer;
+        })
+        .def_property_readonly("core_buffers_per_frame", [](LayerInfo& self)
+        {
+            return self.nn_stream_config.core_buffers_per_frame;
+        })
         .def_readonly("network_name", &LayerInfo::network_name)
         ;
 }

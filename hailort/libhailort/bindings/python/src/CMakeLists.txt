@@ -19,6 +19,7 @@ pybind11_add_module(_pyhailort
     device_api.cpp
     hef_api.cpp
     vstream_api.cpp
+    quantization_api.cpp
     ${HAILORT_COMMON_CPP_SOURCES}
 )
 
