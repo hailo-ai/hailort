@@ -1,0 +1,13 @@
+[Unit]
+Description=HailoRT service
+Documentation=https://github.com/hailo-ai/hailort
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/hailort_service
+Restart=on-failure
+RemainAfterExit=yes
+Environment="HAILORT_LOGGER_PATH=/var/log/hailo"
+
+[Install]
+WantedBy=multi-user.target

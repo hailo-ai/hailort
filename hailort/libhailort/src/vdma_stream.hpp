@@ -22,6 +22,10 @@ constexpr std::chrono::seconds VDMA_FLUSH_TIMEOUT(10);
 
 class VdmaInputStream : public InputStreamBase {
 public:
+    static Expected<std::unique_ptr<VdmaInputStream>> create(VdmaDevice &device,
+        std::shared_ptr<VdmaChannel> channel, const LayerInfo &edge_layer, uint16_t batch_size, 
+        EventPtr network_group_activated_event);
+
     VdmaInputStream(VdmaInputStream &&other);
     virtual ~VdmaInputStream();
 
@@ -34,6 +38,8 @@ public:
     Expected<PendingBufferState> send_pending_buffer();
     uint16_t get_dynamic_batch_size() const;
     const char* get_dev_id() const;
+    virtual Expected<size_t> get_buffer_frames_size() const override;
+    virtual Expected<size_t> get_pending_frames_count() const override;
 
 protected:
     VdmaInputStream(VdmaDevice &device, std::shared_ptr<VdmaChannel> channel, const LayerInfo &edge_layer,
@@ -56,10 +62,18 @@ private:
     std::chrono::milliseconds m_channel_timeout;
     const uint16_t m_max_batch_size;
     uint16_t m_dynamic_batch_size;
+    std::mutex m_write_only_mutex;
+    std::mutex m_send_pending_mutex;
+
+    friend class VDeviceInputStream;
 };
 
 class VdmaOutputStream : public OutputStreamBase {
 public:
+    static Expected<std::unique_ptr<VdmaOutputStream>> create(VdmaDevice &device,
+        std::shared_ptr<VdmaChannel> channel, const LayerInfo &edge_layer, uint16_t batch_size, 
+        EventPtr network_group_activated_event);
+
     VdmaOutputStream(VdmaOutputStream &&other);
     virtual ~VdmaOutputStream();
 
@@ -69,6 +83,10 @@ public:
     virtual hailo_status clear_abort() override;
     uint16_t get_dynamic_batch_size() const;
     const char* get_dev_id() const;
+    virtual Expected<size_t> get_buffer_frames_size() const override;
+    virtual Expected<size_t> get_pending_frames_count() const override;
+
+    virtual hailo_status register_for_d2h_interrupts(const std::function<void(uint32_t)> &callback);
 
 protected:
     VdmaOutputStream(VdmaDevice &device, std::shared_ptr<VdmaChannel> channel, const LayerInfo &edge_layer,
@@ -92,6 +110,9 @@ private:
     const uint16_t m_max_batch_size;
     uint16_t m_dynamic_batch_size;
     const uint32_t m_transfer_size;
+    std::mutex m_read_mutex;
+
+    friend class VDeviceOutputStream;
 };
 
 

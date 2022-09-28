@@ -50,6 +50,7 @@ public:
         std::chrono::milliseconds timeout);
     static Expected<std::vector<hailo_eth_device_info_t>> scan_by_host_address(const std::string &host_address,
         std::chrono::milliseconds timeout);
+    static Expected<hailo_eth_device_info_t> parse_eth_device_info(const std::string &ip_addr, bool log_on_failure);
 
     static Expected<std::unique_ptr<EthernetDevice>> create(const hailo_eth_device_info_t &device_info);
     static Expected<std::unique_ptr<EthernetDevice>> create(const std::string &ip_addr);

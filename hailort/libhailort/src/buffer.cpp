@@ -12,6 +12,7 @@
 #include "hailo/buffer.hpp"
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
+#include "common/string_utils.hpp"
 
 #include <algorithm>
 #include <string>
@@ -49,6 +50,24 @@ Expected<Buffer> Buffer::create(size_t size, uint8_t default_value)
     CHECK_EXPECTED(buffer);
     std::memset(static_cast<void*>(buffer->m_data.get()), default_value, size);
     return buffer;
+}
+
+Expected<BufferPtr> Buffer::create_shared(size_t size)
+{
+    auto buffer = Buffer::create(size);
+    CHECK_EXPECTED(buffer);
+    auto buffer_ptr = make_shared_nothrow<Buffer>(buffer.release());
+    CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
+    return buffer_ptr;
+}
+
+Expected<BufferPtr> Buffer::create_shared(size_t size, uint8_t default_value)
+{
+    auto buffer = Buffer::create(size, default_value);
+    CHECK_EXPECTED(buffer);
+    auto buffer_ptr = make_shared_nothrow<Buffer>(buffer.release());
+    CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
+    return buffer_ptr;
 }
 
 Expected<Buffer> Buffer::create(const uint8_t *src, size_t size)
@@ -158,12 +177,9 @@ std::string Buffer::to_string() const
 // Note: This is a friend function
 std::ostream& operator<<(std::ostream& stream, const Buffer& buffer)
 {
-    for (size_t i = 0; i < buffer.size(); i++) {
-        // Without the cast, the numbers are printed as though they were chars
-        stream << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(buffer[i]) << "\t";
-    }
+    const bool UPPERCASE = true;
+    stream << StringUtils::to_hex_string(buffer.data(), buffer.size(), UPPERCASE, "\t");
     stream << "\n[size = " << std::dec << buffer.size() << "]";
-
     return stream;
 }
 
@@ -245,12 +261,9 @@ bool MemoryView::empty() const noexcept
 // Note: This is a friend function
 std::ostream& operator<<(std::ostream& stream, const MemoryView& buffer)
 {
-    for (size_t i = 0; i < buffer.size(); i++) {
-        // Without the cast, the numbers are printed as though they were chars
-        stream << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(buffer.data()[i]) << "\t";
-    }
+    const bool UPPERCASE = true;
+    stream << StringUtils::to_hex_string(buffer.data(), buffer.size(), UPPERCASE, "\t");
     stream << "\n[size = " << std::dec << buffer.size() << "]";
-
     return stream;
 }
 

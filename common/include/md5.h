@@ -30,7 +30,8 @@
 
 /** Start of modifications for the open source file. **/
 #include "stdint.h"
-typedef uint8_t MD5_SUM_t[16];
+#define MD5_DIGEST_LENGTH 16
+typedef uint8_t MD5_SUM_t[MD5_DIGEST_LENGTH];
 /* Any 32-bit or wider unsigned integer data type will do */
 typedef size_t MD5_u32plus;
 /** End of modifications. **/

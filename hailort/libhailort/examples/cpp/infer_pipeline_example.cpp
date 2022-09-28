@@ -3,9 +3,9 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @file vstreams_example
+ * @file infer_pipeline_example.cpp
  * This example demonstrates the basic data-path on HailoRT using the high level API - Virtual Stream Pipeline.
- * The program creates a device according to the provdied IP address, generates a random dataset,
+ * The program creates a device according to the provided IP address, generates a random dataset,
  * and runs it through the device with virtual streams pipeline.
  **/
 

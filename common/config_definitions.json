@@ -45,7 +45,8 @@
                 "temperature_orange_threshold": {"size": 1, "deserialize_as": "int"},
                 "temperature_orange_hysteresis_threshold": {"size": 1, "deserialize_as": "int"},
                 "temperature_throttling_enable": {"size": 1, "deserialize_as": "bool"},
-                "overcurrent_monitoring_orange_threshold_enable": {"size": 1, "deserialize_as": "bool"}
+                "deprecated__overcurrent_monitoring_orange_threshold_enable": {"size": 1, "deserialize_as": "bool"},
+                "overcurrent_throttling_enable": {"size": 1, "deserialize_as": "bool"}
             }
         },
         "control":

@@ -9,9 +9,10 @@
 
 #include "fw_control_command.hpp"
 #include "firmware_header_utils.h"
+#include "common/string_utils.hpp"
 
 
-static const char *NOT_CONFIGURED_ATTR = "<Not Configured>";
+static const char *NOT_CONFIGURED_ATTR = "<N/A>";
 #define MHz (1000 * 1000)
 
 
@@ -55,14 +56,8 @@ static std::string extended_device_information_supported_features(hailo_device_s
 
 static void extended_device_information_print_array(uint8_t *array_for_print, size_t array_length, std::string splitter)
 {
-    uint32_t i = 0;
-    for(i = 0; i < array_length; i++) {
-        std::cout << std::setfill('0') << std::setw(2) << std::uppercase << std::hex << static_cast<int>(array_for_print[i]);
-        if(array_length != (i+1)) {
-           std::cout << splitter;
-        }
-    }
-    std::cout << std::endl;
+    const bool UPPERCASE = true;
+    std::cout << StringUtils::to_hex_string(array_for_print, array_length, UPPERCASE, splitter) << std::endl;
 }
 
 static bool extended_device_information_is_array_not_empty(uint8_t *array_for_print, size_t array_length)
@@ -135,8 +130,10 @@ static std::string fw_version_string(const hailo_device_identity_t &identity)
 static std::string identity_arch_string(const hailo_device_identity_t &identity)
 {
     switch (identity.device_architecture) {
-    case HAILO_ARCH_HAILO8_B0:
-        return "HAILO8_B0";
+    case HAILO_ARCH_HAILO8:
+        return "HAILO8";
+    case HAILO_ARCH_HAILO8L:
+        return "HAILO8L";
     case HAILO_ARCH_MERCURY_CA:
         return "MERCURY_CA";
     case HAILO_ARCH_MERCURY_VPU:

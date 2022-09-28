@@ -26,7 +26,7 @@ namespace vdma {
 class SgBuffer final : public VdmaBuffer {
 public:
     static Expected<SgBuffer> create(HailoRTDriver &driver, uint32_t desc_count, uint16_t desc_page_size,
-        HailoRTDriver::DmaDirection data_direction, uint8_t channel_index = 0);
+        HailoRTDriver::DmaDirection data_direction, uint8_t channel_index = HailoRTDriver::INVALID_VDMA_CHANNEL_INDEX);
 
     virtual ~SgBuffer() = default;
 
@@ -46,12 +46,13 @@ public:
     virtual uint32_t descs_count() const override;
     uint8_t depth() const;
 
-    // Should be only used for host managed ddr buffer, in the future this function may return nullptr (on CCB
-    // case where there is no descriptors list)
-    virtual ExpectedRef<VdmaDescriptorList> get_desc_list() override;
+    ExpectedRef<VdmaDescriptorList> get_desc_list();
 
     virtual hailo_status read(void *buf_dst, size_t count, size_t offset) override;
     virtual hailo_status write(const void *buf_src, size_t count, size_t offset) override;
+
+    hailo_status read_cyclic(void *buf_dst, size_t count, size_t offset);
+    hailo_status write_cyclic(const void *buf_src, size_t count, size_t offset);
 
     virtual Expected<uint32_t> program_descriptors(size_t transfer_size, VdmaInterruptsDomain first_desc_interrupts_domain,
         VdmaInterruptsDomain last_desc_interrupts_domain, size_t desc_offset, bool is_circular) override;

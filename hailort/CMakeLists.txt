@@ -2,22 +2,29 @@ cmake_minimum_required(VERSION 3.0.0)
 
 # Set firmware version
 add_definitions( -DFIRMWARE_VERSION_MAJOR=4 )
-add_definitions( -DFIRMWARE_VERSION_MINOR=8 )
-add_definitions( -DFIRMWARE_VERSION_REVISION=1 )
+add_definitions( -DFIRMWARE_VERSION_MINOR=10 )
+add_definitions( -DFIRMWARE_VERSION_REVISION=0 )
+if(HAILO_BUILD_SERVICE)
+    add_definitions( -DHAILO_SUPPORT_MULTI_PROCESS )
+endif()
 
 message(STATUS "Building pre_build")
-include(${CMAKE_CURRENT_LIST_DIR}/libhailort/cmake/execute_cmake.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/execute_cmake.cmake)
 set(HAILO_EXTERNAL_DIR ${CMAKE_CURRENT_LIST_DIR}/external)
+set(HAILO_PRE_BUILD_BUILD_TOOLS ${CMAKE_CURRENT_LIST_DIR}/pre_build/build/tools)
+
+set(PRE_BUILD_BUILD_TYPE "Release")
 execute_cmake(
     SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/pre_build
     BUILD_DIR ${CMAKE_CURRENT_LIST_DIR}/pre_build/build
     CONFIGURE_ARGS
-        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_BUILD_TYPE=${PRE_BUILD_BUILD_TYPE}
         -DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_LIST_DIR}/pre_build/install
         -DHAILO_EXTERNAL_DIR=${HAILO_EXTERNAL_DIR}
         -DHAILO_OFFLINE_COMPILATION=${HAILO_OFFLINE_COMPILATION}
+        -DHAILO_BUILD_SERVICE=${HAILO_BUILD_SERVICE}
     BUILD_ARGS
-        --config ${CMAKE_BUILD_TYPE} --target install ${CMAKE_EXTRA_BUILD_ARGS}
+        --config ${PRE_BUILD_BUILD_TYPE} --target install ${CMAKE_EXTRA_BUILD_ARGS}
     PARALLEL_BUILD
 )
 
@@ -53,13 +60,24 @@ endif()
 add_subdirectory(external/protobuf/cmake EXCLUDE_FROM_ALL)
 if(NOT MSVC)
     set_target_properties(libprotobuf PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    set_target_properties(libprotobuf-lite PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif()
+
+if(HAILO_BUILD_SERVICE)
+    if(CMAKE_HOST_UNIX)
+        set(HAILO_GRPC_CPP_PLUGIN_EXECUTABLE "${HAILO_PRE_BUILD_BUILD_TOOLS}/build_grpc/grpc_cpp_plugin")
+    else()
+        set(HAILO_GRPC_CPP_PLUGIN_EXECUTABLE "${HAILO_PRE_BUILD_BUILD_TOOLS}/build_grpc/${PRE_BUILD_BUILD_TYPE}/grpc_cpp_plugin.exe")
+    endif()
+endif()
+set(HAILO_PROTOBUF_PROTOC $<TARGET_FILE:protobuf::protoc>)
 
 set(HAILORT_INC_DIR ${PROJECT_SOURCE_DIR}/hailort/libhailort/include)
 set(HAILORT_SRC_DIR ${PROJECT_SOURCE_DIR}/hailort/libhailort/src)
 set(HAILORT_COMMON_DIR ${PROJECT_SOURCE_DIR}/hailort/)
 set(COMMON_INC_DIR ${PROJECT_SOURCE_DIR}/common/include)
 set(DRIVER_INC_DIR ${PROJECT_SOURCE_DIR}/hailort/drivers/common)
+set(RPC_DIR ${PROJECT_SOURCE_DIR}/hailort/rpc)
 
 if(HAILO_BUILD_PYBIND)
     if(NOT PYTHON_EXECUTABLE AND PYBIND11_PYTHON_VERSION)
@@ -85,6 +103,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL QNX)
     add_library(pevents STATIC EXCLUDE_FROM_ALL external/pevents/src/pevents.cpp)
     target_include_directories(pevents PUBLIC external/pevents/src)
     target_compile_definitions(pevents PRIVATE -DWFMO)
+endif()
+
+if(HAILO_BUILD_SERVICE)
+    set(BUILD_TESTING OFF) # disabe abseil tests
+    set(gRPC_ZLIB_PROVIDER "module" CACHE STRING "Provider of zlib library")
+    # The following is an awful hack needed in order to force grpc to use our libprotobuf+liborotoc targets
+    # ('formal' options are to let grpc recompile it which causes a name conflict,
+    # or let it use find_package and take the risk it will use a different installed lib)
+    set(gRPC_PROTOBUF_PROVIDER "hack" CACHE STRING "Provider of protobuf library")
+    add_subdirectory(external/grpc EXCLUDE_FROM_ALL)
+    add_subdirectory(rpc)
 endif()
 
 # microprofile
@@ -113,6 +142,10 @@ endif()
 add_subdirectory(common)
 add_subdirectory(libhailort)
 add_subdirectory(hailortcli)
+
+if(HAILO_BUILD_SERVICE)
+    add_subdirectory(hailort_service)
+endif()
 
 if(HAILO_WIN_DRIVER)
     add_subdirectory(drivers/win)

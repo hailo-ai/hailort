@@ -29,7 +29,10 @@
 GST_DEBUG_CATEGORY_STATIC(gst_hailosend_debug_category);
 #define GST_CAT_DEFAULT gst_hailosend_debug_category
 #define RGB_FEATURES_SIZE (3)
+#define RGBA_FEATURES_SIZE (4)
 #define YUY2_FEATURES_SIZE (2)
+#define NV12_FEATURES_SIZE (3)
+#define NV21_FEATURES_SIZE (3)
 
 static void gst_hailosend_set_property(GObject *object, guint property_id, const GValue *value, GParamSpec *pspec);
 static void gst_hailosend_get_property(GObject *object, guint property_id, GValue *value, GParamSpec *pspec);
@@ -61,7 +64,7 @@ static void gst_hailosend_class_init(GstHailoSendClass *klass)
         gst_pad_template_new("sink", GST_PAD_SINK, GST_PAD_ALWAYS, gst_caps_from_string(HAILO_VIDEO_CAPS)));
 
     gst_element_class_set_static_metadata(GST_ELEMENT_CLASS(klass),
-        "hailosend element", "Hailo/Filter/Video", "Send RGB/YUY2 video to HailoRT", PLUGIN_AUTHOR);
+        "hailosend element", "Hailo/Filter/Video", "Send RGB/RGBA/YUY2 video to HailoRT", PLUGIN_AUTHOR);
     
     element_class->change_state = GST_DEBUG_FUNCPTR(gst_hailosend_change_state);
 
@@ -173,7 +176,7 @@ hailo_status HailoSendImpl::write_to_vstreams(void *buf, size_t size)
     return HAILO_SUCCESS;
 }
 
-GstCaps *HailoSendImpl::get_caps(GstBaseTransform */*trans*/, GstPadDirection /*direction*/, GstCaps */*caps*/, GstCaps */*filter*/)
+GstCaps *HailoSendImpl::get_caps(GstBaseTransform */*trans*/, GstPadDirection /*direction*/, GstCaps *caps, GstCaps */*filter*/)
 {
     GST_DEBUG_OBJECT(m_element, "transform_caps");
 
@@ -190,6 +193,11 @@ GstCaps *HailoSendImpl::get_caps(GstBaseTransform */*trans*/, GstPadDirection /*
     const gchar *format = nullptr;
     switch (m_input_vstream_infos[0].format.order) {
     case HAILO_FORMAT_ORDER_NHWC:
+        if (m_input_vstream_infos[0].shape.features == RGBA_FEATURES_SIZE) {
+            format = "RGBA";
+            break;
+        }
+        /* Fallthrough */
     case HAILO_FORMAT_ORDER_NHCW:
     case HAILO_FORMAT_ORDER_FCR:
     case HAILO_FORMAT_ORDER_F8CR:
@@ -204,6 +212,18 @@ GstCaps *HailoSendImpl::get_caps(GstBaseTransform */*trans*/, GstPadDirection /*
             "Features of input vstream %s is not %d for YUY2 format! (features=%d)", m_input_vstream_infos[0].name, YUY2_FEATURES_SIZE,
             m_input_vstream_infos[0].shape.features);
         break;
+    case HAILO_FORMAT_ORDER_NV12:
+        format = "NV12";
+        GST_CHECK(NV12_FEATURES_SIZE == m_input_vstream_infos[0].shape.features, NULL, m_element, STREAM,
+            "Features of input vstream %s is not %d for NV12 format! (features=%d)", m_input_vstream_infos[0].name, NV12_FEATURES_SIZE,
+            m_input_vstream_infos[0].shape.features);
+        break;
+    case HAILO_FORMAT_ORDER_NV21:
+        format = "NV21";
+        GST_CHECK(NV21_FEATURES_SIZE == m_input_vstream_infos[0].shape.features, NULL, m_element, STREAM,
+            "Features of input vstream %s is not %d for NV21 format! (features=%d)", m_input_vstream_infos[0].name, NV21_FEATURES_SIZE,
+            m_input_vstream_infos[0].shape.features);
+        break;
     default:
         GST_ELEMENT_ERROR(m_element, RESOURCE, FAILED,
             ("Input VStream %s has an unsupported format order! order = %d", m_input_vstream_infos[0].name, m_input_vstream_infos[0].format.order), (NULL));
@@ -211,11 +231,12 @@ GstCaps *HailoSendImpl::get_caps(GstBaseTransform */*trans*/, GstPadDirection /*
     }
 
     /* filter against set allowed caps on the pad */
-    return gst_caps_new_simple("video/x-raw",
+    GstCaps *new_caps = gst_caps_new_simple("video/x-raw",
                                "format", G_TYPE_STRING, format,
                                "width", G_TYPE_INT, m_input_vstream_infos[0].shape.width,
                                "height", G_TYPE_INT, m_input_vstream_infos[0].shape.height,
                                NULL);
+    return gst_caps_intersect(caps, new_caps);
 }
 
 void HailoSendImpl::set_input_vstream_infos(std::vector<hailo_vstream_info_t> &&input_vstream_infos)

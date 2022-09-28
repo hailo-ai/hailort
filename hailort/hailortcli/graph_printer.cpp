@@ -206,55 +206,60 @@ void PipelineGraphNode::set_visited()
     m_visited = true;
 }
 
-hailo_status GraphPrinter::write_dot_file(const std::map<std::string, std::vector<InputVStream>> &input_vstreams_per_network,
-    const std::map<std::string, std::vector<OutputVStream>> &output_vstreams_per_network, const std::string &graph_title,
+hailo_status GraphPrinter::write_dot_file(const std::vector<std::map<std::string, std::vector<std::reference_wrapper<InputVStream>>>> &input_vstreams_per_network_group,
+    const std::vector<std::map<std::string, std::vector<std::reference_wrapper<OutputVStream>>>> &output_vstreams_per_network_group, const std::string &graph_title,
     const std::string &output_path, bool write_pipeline_stats)
 {
-    PipelineGraph graph(input_vstreams_per_network, output_vstreams_per_network, graph_title, write_pipeline_stats);
+    PipelineGraph graph(input_vstreams_per_network_group, output_vstreams_per_network_group, graph_title, write_pipeline_stats);
     return graph.write_dot_file(output_path);
 }
 
 
-GraphPrinter::PipelineGraph::PipelineGraph(const std::map<std::string, std::vector<InputVStream>> &input_vstreams_per_network,
-                                           const std::map<std::string, std::vector<OutputVStream>> &output_vstreams_per_network,
+GraphPrinter::PipelineGraph::PipelineGraph(const std::vector<std::map<std::string, std::vector<std::reference_wrapper<InputVStream>>>> &input_vstreams_per_network_group,
+                                           const std::vector<std::map<std::string, std::vector<std::reference_wrapper<OutputVStream>>>> &output_vstreams_per_network_group,
                                            const std::string &graph_title, bool write_pipeline_stats) :
     m_graph(true, create_graph_title_label(graph_title, DefaultNodeAttrs::MAIN_LABEL_FONT_SIZE)),
     m_elems_in_graph()
 {
-    size_t total_inputs_count = 0;
-    for (auto &input_vstreams_pair : input_vstreams_per_network) {
-        total_inputs_count += input_vstreams_pair.second.size();
-    }
-    size_t total_outputs_count = 0;
-    for (auto &output_vstreams_pair : output_vstreams_per_network) {
-        total_outputs_count += output_vstreams_pair.second.size();
-    }
-
     // Set the graph "graph title" label to be on top
     m_graph.GetAttributes().SetLabelLoc(DotWriter::LabelLoc::T);
     // Set the graph direction from left to right
     m_graph.GetAttributes().SetRankDir(DotWriter::RankDir::LR);
-    m_graph.GetAttributes().SetPackMode(format_pack_mode(total_outputs_count + total_inputs_count));
 
-    // Note: This order is important (input pipelines will be printed above output pipelines)
-    for (const auto &output_vstreams_pair : output_vstreams_per_network) {
-        for (const auto &vstream : output_vstreams_pair.second) {
-            update_graph_nodes(vstream.get_pipeline(), write_pipeline_stats);
+    assert(input_vstreams_per_network_group.size() == output_vstreams_per_network_group.size());
+
+    for (size_t network_group_index = 0; network_group_index < input_vstreams_per_network_group.size(); network_group_index++) {
+        size_t total_inputs_count = 0;
+        for (auto &input_vstreams_pair : input_vstreams_per_network_group[network_group_index]) {
+            total_inputs_count += input_vstreams_pair.second.size();
         }
-    }
-    for (const auto &input_vstreams_pair : input_vstreams_per_network) {
-        for (const auto &vstream : input_vstreams_pair.second) {
-            update_graph_nodes(vstream.get_pipeline(), write_pipeline_stats);
+        size_t total_outputs_count = 0;
+        for (auto &output_vstreams_pair : output_vstreams_per_network_group[network_group_index]) {
+            total_outputs_count += output_vstreams_pair.second.size();
         }
-    }
-    for (const auto &output_vstreams_pair : output_vstreams_per_network) {
-        for (const auto &vstream : output_vstreams_pair.second) {
-            update_edges_in_graph(vstream.get_pipeline(), "HW", "user_output");
+
+        m_graph.GetAttributes().SetPackMode(format_pack_mode(total_outputs_count + total_inputs_count));
+
+        // Note: This order is important (input pipelines will be printed above output pipelines)
+        for (const auto &output_vstreams_pair : output_vstreams_per_network_group[network_group_index]) {
+            for (const auto &vstream : output_vstreams_pair.second) {
+                update_graph_nodes(vstream.get().get_pipeline(), write_pipeline_stats);
+            }
         }
-    }
-    for (const auto &input_vstreams_pair : input_vstreams_per_network) {
-        for (const auto &vstream : input_vstreams_pair.second) {
-            update_edges_in_graph(vstream.get_pipeline(), "user_input", "HW");
+        for (const auto &input_vstreams_pair : input_vstreams_per_network_group[network_group_index]) {
+            for (const auto &vstream : input_vstreams_pair.second) {
+                update_graph_nodes(vstream.get().get_pipeline(), write_pipeline_stats);
+            }
+        }
+        for (const auto &output_vstreams_pair : output_vstreams_per_network_group[network_group_index]) {
+            for (const auto &vstream : output_vstreams_pair.second) {
+                update_edges_in_graph(vstream.get().get_pipeline(), "HW", "user_output");
+            }
+        }
+        for (const auto &input_vstreams_pair : input_vstreams_per_network_group[network_group_index]) {
+            for (const auto &vstream : input_vstreams_pair.second) {
+                update_edges_in_graph(vstream.get().get_pipeline(), "user_input", "HW");
+            }
         }
     }
 }

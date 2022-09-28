@@ -24,6 +24,9 @@ target_link_libraries(cpp_multi_device_example PRIVATE example_base)
 add_executable(cpp_power_measurement_example power_measurement_example.cpp)
 target_link_libraries(cpp_power_measurement_example PRIVATE example_base)
 
+add_executable(cpp_multi_process_example multi_process_example.cpp)
+target_link_libraries(cpp_multi_process_example PRIVATE example_base)
+
 set(EXAMPLES_CPP_TARGETS
     cpp_vstreams_example
     cpp_infer_pipeline_example
@@ -33,4 +36,5 @@ set(EXAMPLES_CPP_TARGETS
     cpp_switch_network_groups_manually_example
     cpp_multi_device_example
     cpp_power_measurement_example
+    cpp_multi_process_example
     PARENT_SCOPE)

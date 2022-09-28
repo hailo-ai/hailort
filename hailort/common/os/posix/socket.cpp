@@ -129,7 +129,9 @@ hailo_status Socket::pton(int af, const char *src, void *dst)
     CHECK_ARG_NOT_NULL(dst);
 
     inet_rc = inet_pton(af, reinterpret_cast<const char*>(src), dst);
-    CHECK(1 == inet_rc, HAILO_ETH_FAILURE, "Could not convert string ip address to sockaddr struct");
+    if (1 != inet_rc) {
+        return HAILO_ETH_FAILURE;
+    }
 
     return HAILO_SUCCESS;
 }

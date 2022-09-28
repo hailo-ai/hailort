@@ -298,11 +298,13 @@ public:
      *  reset context switch state machine
      * 
      * @param[in]     device - The Hailo device.
-     * @param[in]     network_group_index - network_group index 
+     * @param[in]     keep_nn_config_during_reset - 
+     *                Use if in the reset flow, user wise to remain in the same network group. 
+     *                this reset flow keep most of the configuration on the network group for faster batch switching. 
      *
      * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
      */
-    static hailo_status reset_context_switch_state_machine(Device &device);
+    static hailo_status reset_context_switch_state_machine(Device &device, bool keep_nn_config_during_reset);
     /**
      *  set dataflow interrupt by control
      * 
@@ -320,26 +322,14 @@ public:
      *  set d2h manager a new host configuration by control
      * 
      * @param[in]     device - The Hailo device.
-     * @param[in]     host_port  - host port in case connection_type is Ethernet  , otherwise neglected.
-     * @param[in]     host_ip_address  - host ip in case connection_type is Ethernet , otherwise neglected,
+     * @param[in]     host_port  - host port in case connection_type is Ethernet, otherwise neglected.
+     * @param[in]     host_ip_address  - host ip in case connection_type is Ethernet, otherwise neglected,
      *                0 means auto detect IP address from control.
      *
      * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
      */
     static hailo_status d2h_notification_manager_set_host_info(Device &device, uint16_t host_port, uint32_t host_ip_address);
     static hailo_status d2h_notification_manager_send_host_info_notification(Device &device, uint8_t notification_priority);
-
-    /**
-     *  set the user desired network_group (must be sent after sending the meta data header)
-     * 
-     * @param[in]     device - The Hailo device.
-     * @param[in]     network_group_index - network_group index 
-     * @param[in]     dynamic_batch_size - dynamic_batch size (or CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE if it's
-     *                                     to be ignored) 
-     *
-     * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
-     */
-    static hailo_status switch_network_group(Device &device, uint8_t network_group_index, uint16_t dynamic_batch_size);
 
     /**
      *  Enable/disable halt transmition following Rx pause frame
@@ -360,6 +350,7 @@ public:
     static hailo_status wd_enable(Device &device, uint8_t cpu_id, bool should_enable);
     static hailo_status wd_config(Device &device, uint8_t cpu_id, uint32_t wd_cycles, CONTROL_PROTOCOL__WATCHDOG_MODE_t wd_mode);
     static hailo_status previous_system_state(Device &device, uint8_t cpu_id, CONTROL_PROTOCOL__system_state_t *system_state);
+    static hailo_status clear_configured_apps(Device &device);
     static hailo_status get_chip_temperature(Device &device, hailo_chip_temperature_info_t *temp_info);
     static hailo_status enable_debugging(Device &device, bool is_rma);
     
@@ -392,6 +383,8 @@ public:
         CONTROL_PROTOCOL__averaging_factor_t averaging_factor, CONTROL_PROTOCOL__sampling_period_t sampling_period);
     static hailo_status stop_power_measurement(Device &device);
 
+    static Expected<uint32_t> get_partial_clusters_layout_bitmap(Device &device);
+
 private:
     static hailo_status write_memory_chunk(Device &device, uint32_t address, const uint8_t *data, uint32_t chunk_size);
     static hailo_status read_memory_chunk(Device &device, uint32_t address, uint8_t *data, uint32_t chunk_size);
@@ -405,7 +398,8 @@ private:
             CONTROL_PROTOCOL__context_switch_context_info_single_control_t *context_info);
     static hailo_status change_context_switch_status(Device &device, 
             CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status,
-            uint8_t network_group_index, uint16_t dynamic_batch_size);
+            uint8_t network_group_index, uint16_t dynamic_batch_size, bool keep_nn_config_during_reset);
+    static Expected<CONTROL_PROTOCOL__get_extended_device_information_response_t> get_extended_device_info_response(Device &device);
 };
 
 } /* namespace hailort */

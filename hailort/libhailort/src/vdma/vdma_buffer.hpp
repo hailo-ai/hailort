@@ -13,6 +13,7 @@
 
 #include "os/hailort_driver.hpp"
 #include "vdma_descriptor_list.hpp"
+#include "control_protocol.h"
 
 namespace hailort {
 namespace vdma {
@@ -46,10 +47,6 @@ public:
         return static_cast<uint32_t>(DESCRIPTORS_IN_BUFFER(buffer_size, page_size));
     }
 
-    // If there's no descriptor list then Unexpected(HAILO_INVALID_OPERATION) will be returned
-    // (E.g. for CCB, where there is no descriptors list)
-    virtual ExpectedRef<VdmaDescriptorList> get_desc_list() = 0;
-
     virtual hailo_status read(void *buf_dst, size_t count, size_t offset) = 0;
     virtual hailo_status write(const void *buf_src, size_t count, size_t offset) = 0;
 
@@ -57,6 +54,8 @@ public:
         VdmaInterruptsDomain last_desc_interrupts_domain, size_t desc_offset, bool is_circular) = 0;
     virtual hailo_status reprogram_device_interrupts_for_end_of_batch(size_t transfer_size, uint16_t batch_size,
         VdmaInterruptsDomain new_interrupts_domain) = 0;
+        
+    CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info(uint32_t transfer_size);
 };
 
 } /* vdma */

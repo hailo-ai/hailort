@@ -102,10 +102,10 @@ typedef struct {
 typedef struct {
     uint32_t overcurrent_zone;
     float32_t exceeded_alert_threshold;
-    float32_t sampled_current_during_alert;
+    bool is_last_overcurrent_violation_reached;
 } D2H_EVENT_health_monitor_overcurrent_alert_event_message_t;
 
-#define D2H_EVENT_HEALTH_MONITOR_OVERCURRENT_ALERT_EVENT_PARAMETER_COUNT  (2)
+#define D2H_EVENT_HEALTH_MONITOR_OVERCURRENT_ALERT_EVENT_PARAMETER_COUNT  (4)
 
 /* D2H_EVENT_health_monitor_lcu_ecc_error_event_message_t should be the same as hailo_health_monitor_lcu_ecc_error_notification_message_t */
 typedef struct {

@@ -47,7 +47,7 @@ typedef struct {
 
 typedef struct {
     uint8_t cfg_channels_count;
-    CONTROL_PROTOCOL__host_buffer_info_t config_buffer_infos[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
+    CONTROL_PROTOCOL__config_channel_info_t config_channel_infos[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
     uint32_t context_network_data_length;
     CONTROL_PROTOCOL__stream_remap_data_t context_stream_remap_data;
     uint8_t context_network_data[CONTROL_PROTOCOL__CONTEXT_NETWORK_DATA_MAX_SIZE];
@@ -131,7 +131,7 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_download_context_action_list_reques
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_context_switch_status_request(
         CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
         CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status, uint8_t application_index,
-        uint16_t dynamic_batch_size);
+        uint16_t dynamic_batch_size, bool keep_nn_config_during_reset);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_wd_enable(
     CONTROL_PROTOCOL__request_t *request,
     size_t *request_size,
@@ -145,6 +145,8 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_wd_config(
     uint8_t cpu_id,
     uint32_t wd_cycles,
     CONTROL_PROTOCOL__WATCHDOG_MODE_t wd_mode);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_clear_configured_apps_request(
+    CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_previous_system_state(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint8_t cpu_id);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_dataflow_interrupt_request(
         CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
@@ -153,8 +155,6 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_d2h_event_manager_set_host_info_req
         uint8_t connection_type, uint16_t host_port, uint32_t host_ip_address);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_d2h_event_manager_send_host_info_event_request( CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
         uint8_t event_priority);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_switch_application_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
-        uint8_t application_index, uint16_t dynamic_batch_size);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_chip_temperature_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_read_board_config(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint32_t address, uint32_t data_length);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_write_board_config_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint32_t address, const uint8_t *data, uint32_t data_length);

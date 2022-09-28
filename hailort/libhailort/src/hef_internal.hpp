@@ -87,7 +87,7 @@ static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
     TRANSPOSE_COMPONENT,
     IS_NMS_MULTI_CONTEXT,
     OFFLOAD_ARGMAX,
-    PRELIMINARY_RUN_ASAP // Extention added in platform 4.8 release
+    KO_RUN_ASAP // Extention added in platform 4.8 release
 };
 
 struct HefParsingInfo
@@ -105,6 +105,8 @@ struct NetworkGroupSupportedFeatures {
     bool multi_context;
     bool preliminary_run_asap;
 };
+
+static uint32_t PARTIAL_CLUSTERS_LAYOUT_IGNORE = static_cast<uint32_t>(-1);
 
 static inline bool is_h2d_boundary_info_layer(const ProtoHEFEdgeLayer& layer)
 {
@@ -151,13 +153,29 @@ class HailoRTDriver;
 
 class NetworkGroupMetadata {
 public:
-    NetworkGroupMetadata(const std::string &network_group_name, std::vector<LayerInfo> &&layer_infos, std::vector<std::string> &&sorted_output_names,
-        NetworkGroupSupportedFeatures &supported_features, const std::vector<std::string> &sorted_network_names);
+    NetworkGroupMetadata() = default;
+    NetworkGroupMetadata(const std::string &network_group_name,
+        std::vector<std::vector<LayerInfo>> &&boundary_input_layers,
+        std::vector<std::vector<LayerInfo>> &&boundary_output_layers,
+        std::vector<std::vector<InterContextLayerInfo>> &&inter_context_input_layers,
+        std::vector<std::vector<InterContextLayerInfo>> &&inter_context_output_layers,
+        std::vector<std::vector<DdrLayerInfo>> &&ddr_input_layers,
+        std::vector<std::vector<DdrLayerInfo>> &&ddr_output_layers,
+        std::vector<std::string> &&sorted_output_names,
+        NetworkGroupSupportedFeatures &supported_features, 
+        const std::vector<std::string> &sorted_network_names);
 
     Expected<std::vector<LayerInfo>> get_input_layer_infos(const std::string &network_name = "") const;
     Expected<std::vector<LayerInfo>> get_output_layer_infos(const std::string &network_name = "") const;
     Expected<std::vector<LayerInfo>> get_all_layer_infos(const std::string &network_name = "") const;
     Expected<LayerInfo> get_layer_info_by_stream_name(const std::string &stream_name) const;
+    
+    std::vector<LayerInfo> get_boundary_input_layer_infos(const uint8_t context_index) const;
+    std::vector<LayerInfo> get_boundary_output_layer_infos(const uint8_t context_index) const;
+    std::vector<InterContextLayerInfo> get_inter_context_input_layer_infos(const uint8_t context_index) const;
+    std::vector<InterContextLayerInfo> get_inter_context_output_layer_infos(const uint8_t context_index) const;
+    std::vector<DdrLayerInfo> get_ddr_input_layer_infos(const uint8_t context_index) const;
+    std::vector<DdrLayerInfo> get_ddr_output_layer_infos(const uint8_t context_index) const;
 
     Expected<std::vector<hailo_stream_info_t>> get_input_stream_infos(const std::string &network_name = "") const;
     Expected<std::vector<hailo_stream_info_t>> get_output_stream_infos(const std::string &network_name = "") const;
@@ -201,14 +219,45 @@ private:
     std::vector<hailo_stream_info_t> convert_layer_infos_to_stream_infos(const std::vector<LayerInfo> &layer_infos) const;
     std::vector<hailo_vstream_info_t> convert_layer_infos_to_vstream_infos(const std::vector<LayerInfo> &layer_infos) const;
 
-    // Per network
-    std::map<std::string, std::vector<LayerInfo>> m_input_layer_infos;
-    std::map<std::string, std::vector<LayerInfo>> m_output_layer_infos;
+    // vector of edge layers Per context
+    std::vector<std::vector<LayerInfo>> m_boundary_input_layers;
+    std::vector<std::vector<LayerInfo>> m_boundary_output_layers;
+    std::vector<std::vector<InterContextLayerInfo>> m_inter_context_input_layers;
+    std::vector<std::vector<InterContextLayerInfo>> m_inter_context_output_layers;
+    std::vector<std::vector<DdrLayerInfo>> m_ddr_input_layers;
+    std::vector<std::vector<DdrLayerInfo>> m_ddr_output_layers;
 
     std::string m_network_group_name;
     std::vector<std::string> m_sorted_output_names;
     NetworkGroupSupportedFeatures m_supported_features;
     std::vector<std::string> m_sorted_network_names;
+};
+
+class NetworkGroupMetadataPerArch
+{
+public:
+    NetworkGroupMetadataPerArch() = default;
+    Expected<NetworkGroupMetadata> get_metadata(uint32_t partial_clusters_layout_bitmap)
+    {
+        if (PARTIAL_CLUSTERS_LAYOUT_IGNORE == partial_clusters_layout_bitmap) {
+            // Passing PARTIAL_CLUSTERS_LAYOUT_IGNORE is magic for getting one of the metadata
+            assert(0 != m_metadata_per_arch.size());
+            auto result = m_metadata_per_arch.begin()->second;
+            return result;
+        }
+        if (contains(m_metadata_per_arch, partial_clusters_layout_bitmap)) {
+            auto result = m_metadata_per_arch[partial_clusters_layout_bitmap];
+            return result;
+        }
+        LOGGER__ERROR("NetworkGroupMetadataPerArch does not contain metadata for partial_clusters_layout_bitmap {}", partial_clusters_layout_bitmap);
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
+    }
+    void add_metadata(const NetworkGroupMetadata &metadata, uint32_t partial_clusters_layout_bitmap)
+    {
+        m_metadata_per_arch[partial_clusters_layout_bitmap] = metadata;
+    }
+private:
+    std::map<uint32_t, NetworkGroupMetadata> m_metadata_per_arch;
 };
 
 class Hef::Impl final
@@ -248,7 +297,7 @@ public:
     ProtoHEFHwArch get_device_arch();
     Expected<float64_t> get_bottleneck_fps(const std::string &net_group_name="");
     static bool contains_ddr_layers(const ProtoHEFNetworkGroup& net_group);
-    static hailo_status validate_net_group_unique_layer_names(ProtoHEFNetworkGroupPtr net_group);
+    static hailo_status validate_net_group_unique_layer_names(const ProtoHEFNetworkGroup &net_group);
     Expected<std::vector<hailo_vstream_info_t>> get_network_input_vstream_infos(const std::string &net_group_name="",
         const std::string &network_name="");
 
@@ -274,7 +323,7 @@ public:
 
     /* TODO HRT-5067 - work with hailo_device_architecture_t instead of ProtoHEFHwArch */
     static Expected<std::shared_ptr<ResourcesManager>> create_resources_manager(
-        ProtoHEFNetworkGroupPtr network_group_proto, uint8_t net_group_index,
+        const ProtoHEFNetworkGroup &network_group_proto, uint8_t net_group_index,
         VdmaDevice &device, HailoRTDriver &driver, const ConfigureNetworkParams &network_group_params,
         std::shared_ptr<NetworkGroupMetadata> network_group_metadata,
         const ProtoHEFHwArch &hw_arch);
@@ -305,13 +354,23 @@ public:
         std::vector<hailo_vstream_info_t> &name_to_format_info, bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms,
         uint32_t queue_size);
 
-    Expected<NetworkGroupMetadata> get_network_group_metadata(const std::string &network_group_name)
+    Expected<NetworkGroupMetadata> get_network_group_metadata(const std::string &network_group_name, uint32_t partial_clusters_layout_bitmap = PARTIAL_CLUSTERS_LAYOUT_IGNORE)
     {
-        CHECK_AS_EXPECTED(contains(m_network_group_metadata, network_group_name), HAILO_NOT_FOUND,
+        CHECK_AS_EXPECTED(contains(m_network_group_metadata_per_arch, network_group_name), HAILO_NOT_FOUND,
             "Network group with name {} wasn't found", network_group_name);
-        auto metadata = m_network_group_metadata.at(network_group_name);
+        auto metadata_per_arch = m_network_group_metadata_per_arch.at(network_group_name);
+        auto metadata = metadata_per_arch.get_metadata(partial_clusters_layout_bitmap);
         return metadata;
     }
+
+    const MD5_SUM_t &md5() const
+    {
+        return m_md5;
+    }
+
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+    const MemoryView get_hef_memview();
+#endif // HAILO_SUPPORT_MULTI_PROCESS
 
 private:
     Impl(const std::string &hef_path, hailo_status &status);
@@ -322,6 +381,7 @@ private:
     hailo_status transfer_protobuf_field_ownership(ProtoHEFHef &hef_message);
     hailo_status fill_networks_metadata();
     void fill_extensions_bitset();
+    void init_md5(MD5_SUM_t &calculated_md5);
 
     static bool check_hef_extension(const ProtoHEFExtensionType &extension, const ProtoHEFHeader &header,
         const std::vector<ProtoHEFExtension> &hef_extensions, const ProtoHEFIncludedFeatures &included_features);
@@ -334,7 +394,7 @@ private:
 
     hailo_status validate_hef_extensions();
     static hailo_status validate_hef_header(const hef__header_t &header, MD5_SUM_t &calculated_md5, size_t proto_size);
-    static Expected<HefParsingInfo> get_parsing_info(ProtoHEFNetworkGroupPtr net_group);
+    static Expected<HefParsingInfo> get_parsing_info(const ProtoHEFNetworkGroup &net_group);
 
     Expected<std::map<std::string, hailo_format_t>> get_inputs_vstream_names_and_format_info(
         const std::string &net_group_name, const std::string &network_name);
@@ -344,6 +404,8 @@ private:
     static Expected<std::string> get_vstream_name_from_original_name_mux(const std::string &original_name, const ProtoHefEdge &layer);
     static Expected<std::vector<std::string>> get_original_names_from_vstream_name_mux(const std::string &vstream_name, const ProtoHefEdge &layer);
 
+    Expected<NetworkGroupMetadata> create_metadata_per_arch(const ProtoHEFNetworkGroup &network_group, NetworkGroupSupportedFeatures &supported_features);
+
     // Hef information
     ProtoHEFHeader m_header;
     ProtoHEFIncludedFeatures m_included_features;
@@ -351,9 +413,14 @@ private:
     std::vector<ProtoHEFExtension> m_hef_extensions;
     std::vector<ProtoHEFOptionalExtension> m_hef_optional_extensions;
     std::bitset<SUPPORTED_EXTENSIONS_BITSET_SIZE> m_supported_extensions_bitset;
+    MD5_SUM_t m_md5;
+
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+    Buffer m_hef_buffer;
+#endif // HAILO_SUPPORT_MULTI_PROCESS
 
     // NetworkGroups information
-    std::map<std::string, NetworkGroupMetadata> m_network_group_metadata;
+    std::map<std::string, NetworkGroupMetadataPerArch> m_network_group_metadata_per_arch;
 };
 
 // TODO: Make this part of a namespace? (HRT-2881)
@@ -385,11 +452,49 @@ class HefUtils final
 public:
     HefUtils() = delete;
 
-    static Expected<std::vector<LayerInfo>> get_all_layers_info(const ProtoHEFNetworkGroup &network_group_proto,
-        const NetworkGroupSupportedFeatures &supported_features);
+    static hailo_status fill_boundary_layers_info(
+        const ProtoHEFNetworkGroup &network_group_proto,
+        const uint8_t context_index,
+        const ProtoHEFEdgeLayer &layer,
+        const NetworkGroupSupportedFeatures &supported_features,
+        std::vector<std::string> &layer_name,
+        std::vector<LayerInfo> &context_boundary_input_layers,
+        std::vector<LayerInfo> &context_boundary_output_layers);
+    static Expected<InterContextLayerInfo> get_inter_context_layer_info(
+        const ProtoHEFNetworkGroup &net_group, const uint8_t context_index,
+        const ProtoHEFEdgeLayer &layer, const NetworkGroupSupportedFeatures &supported_features);
+    static hailo_status fill_inter_context_layers_info(
+        const ProtoHEFNetworkGroup &network_group_proto,
+        const uint8_t context_index,
+        const ProtoHEFEdgeLayer &layer,
+        const NetworkGroupSupportedFeatures &supported_features,
+        std::vector<InterContextLayerInfo> &context_inter_context_input_layers,
+        std::vector<InterContextLayerInfo> &context_inter_context_output_layers);
+    static Expected<DdrLayerInfo> get_ddr_layer_info(
+        const ProtoHEFNetworkGroup &net_group, const uint8_t context_index,
+        const ProtoHEFEdgeLayer &layer, const NetworkGroupSupportedFeatures &supported_features);
+    static hailo_status fill_ddr_layers_info(
+        const ProtoHEFNetworkGroup &network_group_proto,
+        const uint8_t context_index,
+        const ProtoHEFEdgeLayer &layer,
+        const NetworkGroupSupportedFeatures &supported_features,
+        std::vector<DdrLayerInfo> &context_ddr_input_layers,
+        std::vector<DdrLayerInfo> &context_ddr_output_layers);
+    static hailo_status check_ddr_pairs_match(
+        const std::vector<DdrLayerInfo> &context_ddr_input_layers,
+        const std::vector<DdrLayerInfo> &context_ddr_output_layers,
+        const uint8_t context_index);
+    static hailo_status get_all_layers_info(const ProtoHEFNetworkGroup &network_group_proto,
+        const NetworkGroupSupportedFeatures &supported_features,
+        std::vector<std::vector<LayerInfo>> &boundary_input_layers,
+        std::vector<std::vector<LayerInfo>> &boundary_output_layers,
+        std::vector<std::vector<InterContextLayerInfo>> &inter_context_input_layers,
+        std::vector<std::vector<InterContextLayerInfo>> &inter_context_output_layers,
+        std::vector<std::vector<DdrLayerInfo>> &ddr_input_layers,
+        std::vector<std::vector<DdrLayerInfo>> &ddr_output_layers);
     static Expected<hailo_nms_info_t> parse_proto_nms_info(const ProtoHEFNmsInfo &proto_nms_info);
-    static Expected<LayerInfo> get_layer_info(const ProtoHEFNetworkGroup &net_group, const ProtoHEFEdgeLayer &layer,
-        const NetworkGroupSupportedFeatures &supported_features);
+    static Expected<LayerInfo> get_boundary_layer_info(const ProtoHEFNetworkGroup &net_group, const uint8_t context_index,
+        const ProtoHEFEdgeLayer &layer, const NetworkGroupSupportedFeatures &supported_features);
     static Expected<std::vector<std::string>> get_sorted_output_names(const ProtoHEFNetworkGroup &net_group);
     
     static Expected<std::string> get_partial_network_name_by_index(const ProtoHEFNetworkGroup &network_group_proto, uint8_t network_index, 
@@ -404,17 +509,20 @@ public:
 private:
     static hailo_status fill_layer_info_with_base_info(const ProtoHEFEdgeLayerBase &base_info,
         const ProtoHEFEdgeConnectionType &edge_connection_type,
-        const ProtoHEFNetworkGroupMetadata &network_group_proto, bool hw_padding_supported, bool transposed, LayerInfo &layer_info);
+        const ProtoHEFNetworkGroupMetadata &network_group_proto, bool hw_padding_supported, bool transposed, 
+        const uint8_t context_index, const uint8_t network_index, LayerInfo &layer_info);
     static hailo_status fill_layer_info(const ProtoHEFEdgeLayerInfo &info,
         const ProtoHEFEdgeConnectionType &edge_connection_type,
         const ProtoHEFNetworkGroup &net_group, hailo_stream_direction_t direction,
-        bool hw_padding_supported, const std::string &partial_network_name, LayerInfo &layer_info);
+        bool hw_padding_supported, const uint8_t context_index, const std::string &partial_network_name, 
+        uint8_t network_index, LayerInfo &layer_info);
     static hailo_status fill_fused_nms_info(const ProtoHEFEdgeLayerFused &info,
             LayerInfo &layer_info, hailo_quant_info_t &defuse_quant_info, const std::string &network_name);
     static hailo_status fill_mux_info(const ProtoHEFEdgeLayerMux &info,
         const ProtoHEFEdgeConnectionType &edge_connection_type,
         const ProtoHEFNetworkGroup &net_group, hailo_stream_direction_t direction,
-        bool hw_padding_supported, const std::string &partial_network_name, LayerInfo &layer_info);
+        bool hw_padding_supported, const uint8_t context_index, const std::string &partial_network_name, 
+        uint8_t network_index, LayerInfo &layer_info);
 };
 
 class ContextSwitchTrigger final
@@ -459,10 +567,11 @@ public:
         EnableLcuDefault,
         DisableLcu,
         WaitForModuleConfigDone,
-        AddDdrPairInfo,
-        AddDdrBufferingStart,
+        DdrPairInfo,
+        StartDdrBufferingTask,
         AddRrepeated,
-        StartBurstCreditsTask
+        StartBurstCreditsTask,
+        EdgeLayerActivationActionsPositionMarker
     };
 
     static Expected<ContextSwitchConfigActionPtr> create(const ProtoHEFAction &proto_action, Device &device,
@@ -563,23 +672,23 @@ private:
 class AddCcwBurstAction : public ContextSwitchConfigAction
 {
 public:
-    static Expected<ContextSwitchConfigActionPtr> create(uint8_t channel_index, uint16_t ccw_bursts);
+    static Expected<ContextSwitchConfigActionPtr> create(uint8_t config_stream_index, uint16_t ccw_bursts);
 
     virtual hailo_status execute(CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
         uint8_t **context_meta_data_head_pointer) override;
     virtual bool supports_repeated_block() const override;
 
 private:
-    AddCcwBurstAction(uint8_t channel_index, uint16_t ccw_bursts);
+    AddCcwBurstAction(uint8_t config_stream_index, uint16_t ccw_bursts);
 
-    const uint8_t m_channel_index;
+    const uint8_t m_config_stream_index;
     const uint16_t m_ccw_bursts;
 };
 
 class CreateConfigDescAndFetchAction : public ContextSwitchConfigAction
 {
 public:
-    static Expected<ContextSwitchConfigActionPtr> create(uint8_t channel_index, ConfigBuffer &config_buffer);
+    static Expected<ContextSwitchConfigActionPtr> create(uint8_t config_stream_index, ConfigBuffer &config_buffer);
 
     CreateConfigDescAndFetchAction(CreateConfigDescAndFetchAction &&) = default;
     CreateConfigDescAndFetchAction(const CreateConfigDescAndFetchAction &) = delete;
@@ -592,9 +701,9 @@ public:
     virtual bool supports_repeated_block() const override;
 
 private:
-    CreateConfigDescAndFetchAction(uint8_t channel_index, ConfigBuffer &config_buffer);
+    CreateConfigDescAndFetchAction(uint8_t config_stream_index, ConfigBuffer &config_buffer);
 
-    const uint8_t m_channel_index;
+    const uint8_t m_config_stream_index;
     ConfigBuffer &m_config_buffer;
 };
 
@@ -758,6 +867,67 @@ public:
 
 private:
     WaitForModuleConfigDoneAction(const ProtoHEFAction& proto_action);
+};
+
+class DdrPairInfoAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create(const vdma::ChannelId &h2d_channel_id,
+        const vdma::ChannelId &d2h_channel_id, uint32_t descriptors_per_frame, uint16_t descs_count);
+    DdrPairInfoAction(DdrPairInfoAction &&) = default;
+    DdrPairInfoAction(const DdrPairInfoAction &) = delete;
+    DdrPairInfoAction &operator=(DdrPairInfoAction &&) = delete;
+    DdrPairInfoAction &operator=(const DdrPairInfoAction &) = delete;
+    virtual ~DdrPairInfoAction() = default;
+
+    virtual hailo_status execute(CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
+        uint8_t **context_meta_data_head_pointer) override;
+    virtual bool supports_repeated_block() const override;
+
+private:
+    DdrPairInfoAction(const vdma::ChannelId &h2d_channel_id, const vdma::ChannelId &d2h_channel_id,
+        uint32_t descriptors_per_frame, uint16_t descs_count);
+
+    const vdma::ChannelId m_h2d_channel_id;
+    const vdma::ChannelId m_d2h_channel_id;
+    const uint32_t m_descriptors_per_frame;
+    const uint16_t m_descs_count;
+};
+
+class StartDdrBufferingTaskAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create();
+    StartDdrBufferingTaskAction(StartDdrBufferingTaskAction &&) = default;
+    StartDdrBufferingTaskAction(const StartDdrBufferingTaskAction &) = delete;
+    StartDdrBufferingTaskAction &operator=(StartDdrBufferingTaskAction &&) = delete;
+    StartDdrBufferingTaskAction &operator=(const StartDdrBufferingTaskAction &) = delete;
+    virtual ~StartDdrBufferingTaskAction() = default;
+
+    virtual hailo_status execute(CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
+        uint8_t **context_meta_data_head_pointer) override;
+    virtual bool supports_repeated_block() const override;
+
+private:
+    StartDdrBufferingTaskAction();
+};
+
+class EdgeLayerActivationActionsPositionMarker : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create();
+    EdgeLayerActivationActionsPositionMarker(EdgeLayerActivationActionsPositionMarker &&) = default;
+    EdgeLayerActivationActionsPositionMarker(const EdgeLayerActivationActionsPositionMarker &) = delete;
+    EdgeLayerActivationActionsPositionMarker &operator=(EdgeLayerActivationActionsPositionMarker &&) = delete;
+    EdgeLayerActivationActionsPositionMarker &operator=(const EdgeLayerActivationActionsPositionMarker &) = delete;
+    virtual ~EdgeLayerActivationActionsPositionMarker() = default;
+
+    virtual hailo_status execute(CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
+        uint8_t **context_meta_data_head_pointer) override;
+    virtual bool supports_repeated_block() const override;
+
+private:
+    EdgeLayerActivationActionsPositionMarker();
 };
 
 } /* namespace hailort */

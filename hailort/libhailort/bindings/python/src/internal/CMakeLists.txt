@@ -21,7 +21,17 @@ target_include_directories(_pyhailort_internal
     $<BUILD_INTERFACE:${DRIVER_INC_DIR}>
 )
 
-target_link_libraries(_pyhailort_internal PRIVATE libhailort hef_proto spdlog::spdlog readerwriterqueue microprofile)
+target_link_libraries(_pyhailort_internal PRIVATE
+    libhailort
+    hef_proto
+    spdlog::spdlog
+    readerwriterqueue
+    microprofile
+    scheduler_mon_proto)
+if(HAILO_BUILD_SERVICE)
+    target_link_libraries(_pyhailort_internal PRIVATE grpc++_unsecure hailort_rpc_grpc_proto)
+endif()
+
 if(WIN32)
     target_link_libraries(_pyhailort_internal PRIVATE Ws2_32 Iphlpapi Shlwapi)
 endif()

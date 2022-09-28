@@ -9,4 +9,4 @@ set(CMAKE_LINKER arm-linux-gnueabihf-ld)
 add_compile_options(-march=armv7-a)
 
 # pybind is not supported in this platform
-set(HAILO_BUILD_PYBIND 0)
+set(HAILO_BUILD_PYBIND "OFF" CACHE STRING "hailo_build_pybind" FORCE)

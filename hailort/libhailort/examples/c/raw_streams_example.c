@@ -5,7 +5,7 @@
 /**
  * @file raw_streams_example.c
  * This example demonstrates basic usage of HailoRT streaming api.
- * It loads an HEF network with multiple inputs and multiple outputs into a Hailo PCIe device and performs a
+ * It loads an HEF network with multiple inputs and multiple outputs into a Hailo device and performs a
  * short inference.
  **/
 
@@ -170,6 +170,8 @@ l_cleanup:
 int main()
 {
     hailo_status status = HAILO_UNINITIALIZED;
+    hailo_device_id_t device_id = {0};
+    size_t actual_devices_count = 1;
     hailo_device device = NULL;
     hailo_hef hef = NULL;
     hailo_configure_params_t configure_params = {0};
@@ -184,13 +186,13 @@ int main()
     size_t number_output_streams = 0;
     size_t index = 0;
 
-    status = hailo_create_pcie_device(NULL, &device);
-    /*
-    For simplicity, passing NULL as `device_info` - This function will fail in case more than one PCIe device is present.
-    See `hailo_scan_pcie_devices` and `hailo_create_pcie_device` functions documentation.
-    */
-    REQUIRE_SUCCESS(status, l_exit, "Failed to create pcie_device");
+    status = hailo_scan_devices(NULL, &device_id, &actual_devices_count);
+    REQUIRE_SUCCESS(status, l_exit, "Failed to scan devices");
+    REQUIRE_ACTION(1 == actual_devices_count, status = HAILO_INVALID_OPERATION, l_exit,
+        "Only 1 device on the system is supported on the example");
 
+    status = hailo_create_device_by_id(&device_id, &device);
+    REQUIRE_SUCCESS(status, l_exit, "Failed to create device");
 
     status = hailo_create_hef_file(&hef, HEF_FILE);
     REQUIRE_SUCCESS(status, l_release_device, "Failed creating hef file %s", HEF_FILE);

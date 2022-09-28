@@ -14,6 +14,7 @@
 #include "hailo/expected.hpp"
 #include <chrono>
 #include <string>
+#include <vector>
 
 namespace hailort
 {
@@ -172,6 +173,14 @@ public:
             return "NCHW";
         case HAILO_FORMAT_ORDER_YUY2:
             return "YUY2";
+        case HAILO_FORMAT_ORDER_NV12:
+            return "NV12";
+        case HAILO_FORMAT_ORDER_HAILO_YYUV:
+            return "YYUV";
+        case HAILO_FORMAT_ORDER_NV21:
+            return "NV21";
+        case HAILO_FORMAT_ORDER_HAILO_YYVU:
+            return "YYVU";
         default:
             return "Nan";
         }
@@ -282,6 +291,14 @@ public:
             return get_frame_size(vstream_info.shape, format);
         }
     }
+
+    static constexpr bool is_vdma_stream_interface(hailo_stream_interface_t stream_interface)
+    {
+        return (HAILO_STREAM_INTERFACE_PCIE == stream_interface) || (HAILO_STREAM_INTERFACE_CORE == stream_interface);
+    }
+
+    static Expected<hailo_device_id_t> to_device_id(const std::string &device_id);
+    static Expected<std::vector<hailo_device_id_t>> to_device_ids_vector(const std::vector<std::string> &device_ids_str);
 };
 
 #ifndef HAILO_EMULATOR
@@ -290,7 +307,7 @@ constexpr std::chrono::milliseconds DEFAULT_TRANSFER_TIMEOUT(std::chrono::second
 constexpr std::chrono::milliseconds DEFAULT_TRANSFER_TIMEOUT(std::chrono::seconds(5000));
 #endif /* ifndef HAILO_EMULATOR */
 
-constexpr std::chrono::milliseconds HAILO_INFINITE_TIMEOUT(std::chrono::milliseconds::max());
+constexpr std::chrono::milliseconds HAILO_INFINITE_TIMEOUT(UINT32_MAX);
 
 inline hailo_latency_measurement_flags_t operator|(hailo_latency_measurement_flags_t a,
     hailo_latency_measurement_flags_t b)

@@ -19,6 +19,7 @@
 #include "common/compiler_extensions_compat.hpp"
 #include "os/hailort_driver.hpp"
 #include "context_switch/multi_context/resource_manager.hpp"
+#include "context_switch/multi_context/vdma_config_manager.hpp"
 
 #include <new>
 #include <algorithm>
@@ -120,7 +121,8 @@ static constexpr int DEVICE_ID_STRING_LENGTH_LONG = 12; // Length without null t
 
 static constexpr int DEVICE_ID_MAX_STRING_LENGTH = std::max(DEVICE_ID_STRING_LENGTH_SHORT, DEVICE_ID_STRING_LENGTH_LONG);
 
-Expected<hailo_pcie_device_info_t> PcieDevice::parse_pcie_device_info(const std::string &device_info_str)
+Expected<hailo_pcie_device_info_t> PcieDevice::parse_pcie_device_info(const std::string &device_info_str,
+    bool log_on_failure)
 {
     hailo_pcie_device_info_t device_info{};
     int scanf_res = sscanf(device_info_str.c_str(), DEVICE_ID_STRING_FMT_LONG,
@@ -130,9 +132,12 @@ Expected<hailo_pcie_device_info_t> PcieDevice::parse_pcie_device_info(const std:
         device_info.domain = HAILO_PCIE_ANY_DOMAIN;
         scanf_res = sscanf(device_info_str.c_str(), DEVICE_ID_STRING_FMT_SHORT,
             &device_info.bus, &device_info.device, &device_info.func);
-        CHECK_AS_EXPECTED(DEVICE_ID_ELEMENTS_COUNT_SHORT == scanf_res,
-            HAILO_INVALID_ARGUMENT,
-            "Invalid device info string (format is [<domain>].<bus>.<device>.<func>) {}");
+        if (DEVICE_ID_ELEMENTS_COUNT_SHORT != scanf_res) {
+            if (log_on_failure) {
+                LOGGER__ERROR("Invalid device info string (format is [<domain>].<bus>.<device>.<func>) {}", device_info_str);
+            }
+            return make_unexpected(HAILO_INVALID_ARGUMENT);
+        }
     }
 
     return device_info;
@@ -161,7 +166,8 @@ Expected<std::string> PcieDevice::pcie_device_info_to_string(const hailo_pcie_de
 PcieDevice::PcieDevice(HailoRTDriver &&driver, const hailo_pcie_device_info_t &device_info, hailo_status &status) :
     VdmaDevice::VdmaDevice(std::move(driver), Device::Type::PCIE),
     m_fw_up(false),
-    m_device_info(device_info)
+    m_device_info(device_info),
+    m_context_switch_manager(nullptr)
 {
     // Send identify if FW is loaded
     status = HAILO_PCIE__read_atr_to_validate_fw_is_up(m_driver, &m_fw_up);
@@ -207,6 +213,7 @@ PcieDevice::~PcieDevice()
 hailo_status PcieDevice::fw_interact_impl(uint8_t *request_buffer, size_t request_size, uint8_t *response_buffer, 
                                           size_t *response_size, hailo_cpu_id_t cpu_id)
 {
+    // TODO: HRT-7535
     return HAILO_PCIE__fw_interact(m_driver, request_buffer, (uint32_t)request_size,  response_buffer, 
                                     response_size, PCIE_DEFAULT_TIMEOUT_MS, cpu_id);
 }
@@ -236,6 +243,22 @@ hailo_status PcieDevice::direct_read_memory(uint32_t address, void *buffer, uint
     return HAILO_PCIE__read_memory(m_driver, address, buffer, size);
 }
 
+ExpectedRef<ConfigManager> PcieDevice::get_config_manager()
+{
+    auto status = mark_as_used();
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    if (!m_context_switch_manager) {
+        auto local_context_switch_manager = VdmaConfigManager::create(*this);
+        CHECK_EXPECTED(local_context_switch_manager);
+
+        m_context_switch_manager = make_unique_nothrow<VdmaConfigManager>(local_context_switch_manager.release());
+        CHECK_AS_EXPECTED(nullptr != m_context_switch_manager, HAILO_OUT_OF_HOST_MEMORY);
+    }
+
+    return std::ref(*m_context_switch_manager);
+}
+
 const char *PcieDevice::get_dev_id() const
 {
     return m_device_id.c_str();
@@ -246,22 +269,25 @@ hailo_status PcieDevice::close_all_vdma_channels()
     auto status = HAILO_UNINITIALIZED;
 
     // TODO: Add one icotl to stop all channels at once (HRT-6097)
-    for (int channel_index = 0; channel_index <= MAX_H2D_CHANNEL_INDEX; channel_index++) {
-        auto host_registers = VdmaChannelRegs(m_driver, channel_index, HailoRTDriver::DmaDirection::H2D);
+    constexpr uint8_t PCIE_DEFAULT_ENGINE_INDEX = 0;
+    for (uint8_t channel_index = 0; channel_index <= MAX_H2D_CHANNEL_INDEX; channel_index++) {
+        const vdma::ChannelId channel_id = { PCIE_DEFAULT_ENGINE_INDEX, channel_index };
+        auto host_registers = VdmaChannelRegs(m_driver, channel_id, HailoRTDriver::DmaDirection::H2D);
         status = host_registers.stop_channel();
         CHECK_SUCCESS(status);
 
-        auto device_registers = VdmaChannelRegs(m_driver, channel_index, HailoRTDriver::DmaDirection::D2H);
+        auto device_registers = VdmaChannelRegs(m_driver, channel_id, HailoRTDriver::DmaDirection::D2H);
         status = device_registers.stop_channel();
         CHECK_SUCCESS(status);
     }
 
-    for (int channel_index = MIN_D2H_CHANNEL_INDEX; channel_index <= MAX_D2H_CHANNEL_INDEX; channel_index++) {
-        auto host_registers = VdmaChannelRegs(m_driver, channel_index, HailoRTDriver::DmaDirection::D2H);
+    for (uint8_t channel_index = MIN_D2H_CHANNEL_INDEX; channel_index <= MAX_D2H_CHANNEL_INDEX; channel_index++) {
+        const vdma::ChannelId channel_id = { PCIE_DEFAULT_ENGINE_INDEX, channel_index };
+        auto host_registers = VdmaChannelRegs(m_driver, channel_id, HailoRTDriver::DmaDirection::D2H);
         status = host_registers.stop_channel();
         CHECK_SUCCESS(status);
 
-        auto device_registers = VdmaChannelRegs(m_driver, channel_index, HailoRTDriver::DmaDirection::H2D);
+        auto device_registers = VdmaChannelRegs(m_driver, channel_id, HailoRTDriver::DmaDirection::H2D);
         status = device_registers.stop_channel();
         CHECK_SUCCESS(status);
     }

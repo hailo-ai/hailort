@@ -62,11 +62,11 @@ Expected<std::vector<hailo_network_info_t>> get_network_infos(ConfiguredNetworkG
 {
     auto networks_infos = net_group.get_network_infos();
     if (!networks_infos) {
-        std::cerr << "Failed to get networks infos of network group " << net_group.get_network_group_name() << std::endl;
+        std::cerr << "Failed to get networks infos of network group " << net_group.name() << std::endl;
         return make_unexpected(networks_infos.status());
     }
     if (NET_COUNT != networks_infos->size()) {
-        std::cerr << "Invalid amount of networks in group " << net_group.get_network_group_name() << std::endl;
+        std::cerr << "Invalid amount of networks in group " << net_group.name() << std::endl;
         return make_unexpected(networks_infos.status());
     }
 

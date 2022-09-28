@@ -68,6 +68,16 @@ hailo_status SgBuffer::write(const void *buf_src, size_t count, size_t offset)
     return m_mapped_buffer.write(buf_src, count, offset);
 }
 
+hailo_status SgBuffer::read_cyclic(void *buf_dst, size_t count, size_t offset)
+{
+    return m_mapped_buffer.read_cyclic(buf_dst, count, offset);
+}
+
+hailo_status SgBuffer::write_cyclic(const void *buf_src, size_t count, size_t offset)
+{
+    return m_mapped_buffer.write_cyclic(buf_src, count, offset);
+}
+
 Expected<uint32_t> SgBuffer::program_descriptors(size_t transfer_size, VdmaInterruptsDomain first_desc_interrupts_domain,
     VdmaInterruptsDomain last_desc_interrupts_domain, size_t desc_offset, bool is_circular)
 {

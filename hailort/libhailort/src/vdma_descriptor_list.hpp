@@ -20,8 +20,6 @@
 namespace hailort
 {
 
-// HW doens't support more than 32 channels
-#define MAX_HOST_CHANNELS_COUNT (32)
 
 #define MAX_DESCS_COUNT (64 * 1024u)
 #define MIN_DESCS_COUNT (2u)

@@ -7,9 +7,37 @@
  **/
 
 #include "vdma_stream.hpp"
+#include "pcie_stream.hpp"
+#include "core_stream.hpp"
 
 namespace hailort
 {
+
+Expected<std::unique_ptr<VdmaInputStream>> VdmaInputStream::create(VdmaDevice &device,
+    std::shared_ptr<VdmaChannel> channel, const LayerInfo &edge_layer, uint16_t batch_size, 
+    EventPtr network_group_activated_event)
+{
+    switch (device.get_type()) {
+    case Device::Type::PCIE:
+    {
+        auto local_stream = PcieInputStream::create(device, channel, edge_layer, batch_size,
+            network_group_activated_event);
+        CHECK_EXPECTED(local_stream);
+        return std::unique_ptr<VdmaInputStream>(local_stream.release());
+    }
+    case Device::Type::CORE:
+    {
+        auto local_stream = CoreInputStream::create(device, channel, edge_layer, batch_size,
+            network_group_activated_event);
+        CHECK_EXPECTED(local_stream);
+        return std::unique_ptr<VdmaInputStream>(local_stream.release());
+    }
+    default:
+        assert(false);
+        LOGGER__ERROR("Invalid device type {}", static_cast<uint8_t>(device.get_type()));
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
+    }
+}
 
 VdmaInputStream::VdmaInputStream(VdmaDevice &device, std::shared_ptr<VdmaChannel> channel,
                                  const LayerInfo &edge_layer, EventPtr network_group_activated_event, uint16_t batch_size,
@@ -101,10 +129,10 @@ hailo_status VdmaInputStream::deactivate_stream()
     /* Flush is best effort */
     auto status = m_channel->flush(VDMA_FLUSH_TIMEOUT);
     if (HAILO_STREAM_INTERNAL_ABORT == status) {
-        LOGGER__INFO("Flush input_channel is not needed because channel was aborted. (channel {})", m_channel->get_channel_index());
+        LOGGER__INFO("Flush input_channel is not needed because channel was aborted. (channel {})", m_channel->get_channel_id());
         status = HAILO_SUCCESS;
     } else if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("Failed to flush input_channel. (status {} channel {})", status, m_channel->get_channel_index());
+        LOGGER__ERROR("Failed to flush input_channel. (status {} channel {})", status, m_channel->get_channel_id());
     }
 
     /* Close channel is best effort. */
@@ -123,12 +151,15 @@ Expected<size_t> VdmaInputStream::sync_write_raw_buffer(const MemoryView &buffer
     hailo_status status = HAILO_UNINITIALIZED;
 
     status = m_channel->wait(buffer.size(), m_channel_timeout);
-    if ((HAILO_STREAM_INTERNAL_ABORT == status) || (HAILO_STREAM_NOT_ACTIVATED == status)) {
+    if ((status == HAILO_STREAM_INTERNAL_ABORT) || (status == HAILO_STREAM_NOT_ACTIVATED)) {
         return make_unexpected(status);
     }
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     status = m_channel->transfer((void*)buffer.data(), buffer.size());
+    if ((status == HAILO_STREAM_INTERNAL_ABORT) || (status == HAILO_STREAM_NOT_ACTIVATED)) {
+        return make_unexpected(status);
+    }
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     return buffer.size();
@@ -136,11 +167,13 @@ Expected<size_t> VdmaInputStream::sync_write_raw_buffer(const MemoryView &buffer
 
 hailo_status VdmaInputStream::write_buffer_only(const MemoryView &buffer)
 {
+    std::unique_lock<std::mutex> lock(m_write_only_mutex);
     return m_channel->write_buffer(buffer, m_channel_timeout);
 }
 
 Expected<PendingBufferState> VdmaInputStream::send_pending_buffer()
 {
+    std::unique_lock<std::mutex> lock(m_send_pending_mutex);
     hailo_status status = m_channel->wait(get_frame_size(), m_channel_timeout);
     if ((HAILO_STREAM_INTERNAL_ABORT == status) || (HAILO_STREAM_NOT_ACTIVATED == status)) {
         return make_unexpected(status);
@@ -158,6 +191,16 @@ uint16_t VdmaInputStream::get_dynamic_batch_size() const
 const char* VdmaInputStream::get_dev_id() const
 {
     return m_device->get_dev_id();
+}
+
+Expected<size_t> VdmaInputStream::get_buffer_frames_size() const
+{
+    return m_channel->get_transfers_count_in_buffer(m_stream_info.hw_frame_size);
+}
+
+Expected<size_t> VdmaInputStream::get_pending_frames_count() const
+{
+    return m_channel->get_h2d_pending_frames_count();
 }
 
 hailo_status VdmaInputStream::sync_write_all_raw_buffer_no_transform_impl(void *buffer, size_t offset, size_t size)
@@ -188,6 +231,32 @@ hailo_status VdmaInputStream::set_dynamic_batch_size(uint16_t dynamic_batch_size
 }
 
 /** Output stream **/
+Expected<std::unique_ptr<VdmaOutputStream>> VdmaOutputStream::create(VdmaDevice &device,
+    std::shared_ptr<VdmaChannel> channel, const LayerInfo &edge_layer, uint16_t batch_size, 
+    EventPtr network_group_activated_event)
+{
+    switch (device.get_type()) {
+    case Device::Type::PCIE:
+    {
+        auto local_stream = PcieOutputStream::create(device, channel, edge_layer, batch_size,
+            network_group_activated_event);
+        CHECK_EXPECTED(local_stream);
+        return std::unique_ptr<VdmaOutputStream>(local_stream.release());
+    }
+    case Device::Type::CORE:
+    {
+        auto local_stream = CoreOutputStream::create(device, channel, edge_layer, batch_size,
+            network_group_activated_event);
+        CHECK_EXPECTED(local_stream);
+        return std::unique_ptr<VdmaOutputStream>(local_stream.release());
+    }
+    default:
+        assert(false);
+        LOGGER__ERROR("Invalid device type {}", static_cast<uint8_t>(device.get_type()));
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
+    }
+}
+
 VdmaOutputStream::VdmaOutputStream(VdmaDevice &device, std::shared_ptr<VdmaChannel> channel,
                                    const LayerInfo &edge_layer, EventPtr network_group_activated_event, uint16_t batch_size,
                                    std::chrono::milliseconds transfer_timeout, hailo_status &status) :
@@ -277,6 +346,11 @@ hailo_status VdmaOutputStream::activate_stream(uint16_t dynamic_batch_size)
     return HAILO_SUCCESS;
 }
 
+hailo_status VdmaOutputStream::register_for_d2h_interrupts(const std::function<void(uint32_t)> &callback)
+{
+    return m_channel->register_for_d2h_interrupts(callback);
+}
+
 hailo_status VdmaOutputStream::deactivate_stream()
 {
     if (!is_stream_activated) {
@@ -295,12 +369,15 @@ Expected<size_t> VdmaOutputStream::sync_read_raw_buffer(MemoryView &buffer)
     hailo_status status = HAILO_UNINITIALIZED;
 
     status = m_channel->wait(buffer.size(), m_transfer_timeout);
-    if ((HAILO_STREAM_INTERNAL_ABORT == status) || (HAILO_STREAM_NOT_ACTIVATED == status)) {
+    if ((status == HAILO_STREAM_INTERNAL_ABORT) || (status == HAILO_STREAM_NOT_ACTIVATED)) {
         return make_unexpected(status);
     }
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     status = m_channel->transfer(buffer.data(), buffer.size());
+    if ((status == HAILO_STREAM_NOT_ACTIVATED) || (status == HAILO_STREAM_INTERNAL_ABORT)) {
+        return make_unexpected(status);
+    }
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     return buffer.size();
@@ -308,6 +385,7 @@ Expected<size_t> VdmaOutputStream::sync_read_raw_buffer(MemoryView &buffer)
 
 hailo_status VdmaOutputStream::read_all(MemoryView &buffer)
 {
+    std::unique_lock<std::mutex> lock(m_read_mutex);
     CHECK((buffer.size() % HailoRTCommon::HW_DATA_ALIGNMENT) == 0, HAILO_INVALID_ARGUMENT, 
         "Size must be aligned to {} (got {})", HailoRTCommon::HW_DATA_ALIGNMENT, buffer.size());
 
@@ -339,6 +417,39 @@ hailo_status VdmaOutputStream::set_dynamic_batch_size(uint16_t dynamic_batch_siz
     }
 
     return HAILO_SUCCESS;
+}
+
+Expected<size_t> VdmaOutputStream::get_buffer_frames_size() const
+{
+    if (HAILO_FORMAT_ORDER_HAILO_NMS == m_stream_info.format.order) {
+        // In NMS, each output frame has different size depending on the number of bboxes found for each class
+        // and m_stream_info.hw_frame_size is the max frame size. To know the actual frame size and
+        // calculate the number of frames we need to read the content of the buffer (and finding the delimiter for each class in each frame).
+        LOGGER__INFO("NMS is not supported in function get_buffer_frames_size()");
+        return make_unexpected(HAILO_NOT_AVAILABLE);
+    }
+
+    return m_channel->get_transfers_count_in_buffer(m_stream_info.hw_frame_size);
+}
+
+Expected<size_t> VdmaOutputStream::get_pending_frames_count() const
+{
+    if (HAILO_FORMAT_ORDER_HAILO_NMS == m_stream_info.format.order) {
+        // In NMS, each output frame has different size depending on the number of bboxes found for each class
+        // and m_stream_info.hw_frame_size is the max frame size. To know the actual frame size and
+        // calculate the number of frames we need to read the content of the buffer (and finding the delimiter for each class in each frame).
+        LOGGER__INFO("NMS is not supported in function get_pending_frames_count()");
+        return make_unexpected(HAILO_NOT_AVAILABLE);
+    }
+
+    auto pending_descs_count = m_channel->get_d2h_pending_descs_count();
+    CHECK_EXPECTED(pending_descs_count);
+
+    auto channel_page_size = m_channel->get_page_size();
+    uint32_t descs_per_frame = (0 == (m_stream_info.hw_frame_size % channel_page_size)) ? (m_stream_info.hw_frame_size / channel_page_size) :
+        ((m_stream_info.hw_frame_size / channel_page_size) + 1);
+
+    return static_cast<size_t>(std::floor(pending_descs_count.value() / descs_per_frame));
 }
 
 } /* namespace hailort */

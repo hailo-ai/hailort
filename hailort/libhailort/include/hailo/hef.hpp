@@ -38,6 +38,9 @@ struct ConfigureNetworkParams
         }
     }
 
+    bool operator==(const ConfigureNetworkParams &other);
+    bool operator!=(const ConfigureNetworkParams &other);
+
     uint16_t batch_size;
     hailo_power_mode_t power_mode;
     hailo_latency_measurement_flags_t latency;
@@ -424,6 +427,13 @@ public:
      */
     Expected<std::vector<hailo_network_info_t>> get_network_infos(const std::string &net_group_name="");
 
+    /**
+     * Returns a unique hash for the specific Hef.
+     * 
+     * @return A unique string hash for the Hef. Hefs created based on identical files will return identical hashes.
+     */
+    std::string hash() const;
+
     ~Hef();
     Hef(Hef &&);
     Hef &operator=(Hef &&);
@@ -439,6 +449,10 @@ private:
     friend class OutputStream;
     friend class PyhailortInternal;
     friend class ConfiguredNetworkGroupBase;
+
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+    friend class HailoRtRpcClient;
+#endif // HAILO_SUPPORT_MULTI_PROCESS
 
     class Impl;
     Hef(std::unique_ptr<Impl> pimpl);

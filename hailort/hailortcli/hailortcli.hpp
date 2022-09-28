@@ -27,35 +27,21 @@ using namespace hailort;
         }                                                                       \
     } while (0)
 
-struct hailo_pcie_params {
-    std::string pcie_bdf;  // if empty use the first scanned. if '*', run on all devices on the machine one-by-one
-};
-
-struct hailo_eth_params {
-    std::string ip_addr;
+struct hailo_device_params {
+    std::vector<std::string> device_ids;
 };
 
 struct hailo_vdevice_params {
-    uint32_t device_count;
+    hailo_device_params device_params;
+    uint32_t device_count = HAILO_DEFAULT_DEVICE_COUNT;
+    std::string group_id;
+    bool multi_process_service = false;
 };
 
-enum class DeviceType {
-    PCIE = 0,
-    ETH,
-    DEFAULT
-};
-
-struct hailo_device_params {
-    DeviceType device_type;
-    hailo_pcie_params pcie_params;
-    hailo_eth_params eth_params;
-    hailo_vdevice_params vdevice_params;
-};
-
-void add_device_options(CLI::App *app, hailo_device_params &device_params);
-void add_vdevice_options(CLI::App *app, hailo_device_params &device_params);
-Expected<std::unique_ptr<Device>> create_device(const hailo_device_params &device_params);
-Expected<std::unique_ptr<Device>> create_pcie_device(const hailo_pcie_params &pcie_params);
+void add_vdevice_options(CLI::App *app, hailo_vdevice_params &vdevice_params);
+void add_device_options(CLI::App *app, hailo_device_params &device_params, bool support_asterisk=true);
+Expected<std::vector<std::unique_ptr<Device>>> create_devices(const hailo_device_params &device_params);
+Expected<std::vector<std::string>> get_device_ids(const hailo_device_params &device_params);
 
 /**
  * CLI11 transformer object, converting enum argument from string.
@@ -101,7 +87,7 @@ using DeprecationActionPtr = std::shared_ptr<DeprecationAction>;
 class OptionDeprecation : public DeprecationAction
 {
 public:
-    OptionDeprecation(CLI::Option *opt, const std::string &replacement) :
+    OptionDeprecation(CLI::Option *opt, const std::string &replacement = std::string()) :
         DeprecationAction(),
         m_opt(opt),
         m_replacement(replacement)
@@ -115,7 +101,12 @@ public:
     virtual std::string deprecate(bool message_inline) override
     {
         std::stringstream message;
-        message << "'" << m_opt->get_name() << "' is deprecated, please use '" << m_replacement << "' instead." << std::endl;
+        message << "'" << m_opt->get_name() << "' is deprecated";
+        if (!m_replacement.empty()) {
+            std::cout << ", please use " << m_replacement << "' instead.";
+        }
+        message << std::endl;
+
         CLI::Validator deprecate_warning(
             [message = message.str()](std::string &) {
                 std::cout << message;

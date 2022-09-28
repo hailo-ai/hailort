@@ -170,7 +170,7 @@ hailo_status EthernetUtils::get_interface_from_board_ip(const char *board_ip, ch
 
     struct in_addr board_ip_struct{};
     auto status = Socket::pton(AF_INET, board_ip, &board_ip_struct);
-    CHECK_SUCCESS(status);
+    CHECK_SUCCESS(status, "Invalid board ip address {}", board_ip);
 
     for (const auto& network_interface : network_interfaces.value()) {
         auto arp_table = ArpTable::create(network_interface.index());
