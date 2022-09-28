@@ -1,5 +1,11 @@
+import os
+import subprocess
+import pathlib
+import sys
 
+import hailo_platform
 from hailo_platform.tools.hailocli.base_utils import HailortCliUtil
+import pkg_resources
 
 """
     HailoRTCLI matching commands in Hailo-CLI tool.
@@ -68,3 +74,62 @@ class UDPRateLimiterCLI(HailortCliUtil):
     """CLI tool for UDP rate limitation."""
     def __init__(self, parser):
         super().__init__(parser, 'udp-rate-limiter')
+
+
+class TutorialRequired(Exception):
+    pass
+
+
+class TutorialRunnerCLI():
+
+    TUTORIALS_DIR = os.path.join(pathlib.Path(hailo_platform.__file__).parent.parent, 'hailo_tutorials/notebooks/')
+    TUTORIALS_REQUIREMENTS = ["jupyter"]
+    ERROR_MSG = """
+    Jupyter or one of its dependencies are not installed in this Python environment. These packages
+    are not mandatory for pyHailoRT itself, but they are required in order to run the Python API tutorial
+    notebooks. Please run the following command to install the missing Python packages: 
+    """
+
+    def __init__(self, parser):
+        parser.add_argument('--ip', type=str, default=None, help='the ip parameter passed to jupyter-notebook.')
+        parser.add_argument('--port', type=str, default=None, help='the port parameter passed to jupyter-notebook.')
+        parser.set_defaults(func=self.run)
+
+    def _check_requirements(self):
+        missing_pkgs = []
+        working_set = pkg_resources.WorkingSet()
+        for req in self.TUTORIALS_REQUIREMENTS:
+            try:
+                working_set.require(req)
+            except pkg_resources.DistributionNotFound:
+                missing_pkgs.append(req)
+        
+        if missing_pkgs:
+            sys.tracebacklimit = 0
+            raise TutorialRequired(f"\n{self.ERROR_MSG}\n    {'; '.join([f'pip install {pkg}' for pkg in missing_pkgs])}")
+
+    def run(self, args):
+        self._check_requirements()
+        exec_string = f'jupyter-notebook {self.TUTORIALS_DIR}'
+        if args.ip is not None:
+            exec_string += f" --ip={args.ip}"
+
+        if args.port is not None:
+            exec_string += f" --port={args.port}"
+
+        return subprocess.run(
+            exec_string,
+            shell=True,
+            check=True,
+            env=os.environ.copy(),
+        )
+
+
+class ParseHEFCommandCLI(HailortCliUtil):
+    def __init__(self, parser):
+        super().__init__(parser, 'parse-hef')
+
+
+class MonitorCommandCLI(HailortCliUtil):
+    def __init__(self, parser):
+        super().__init__(parser, 'monitor')

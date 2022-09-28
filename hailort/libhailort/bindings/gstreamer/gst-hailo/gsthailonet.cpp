@@ -570,7 +570,7 @@ hailo_status HailoNetImpl::configure_network_group()
     GST_CHECK_EXPECTED_AS_STATUS(network_group_name, m_element, RESOURCE, "Could not get network group name from name %s, status = %d",
         m_props.m_network_name.get(), network_group_name.status());
 
-    hailo_status status = m_net_group_handle->configure_network_group(network_group_name->c_str(), m_props.m_batch_size.get());
+    hailo_status status = m_net_group_handle->configure_network_group(network_group_name->c_str(), m_props.m_scheduling_algorithm.get(), m_props.m_batch_size.get());
     if (HAILO_SUCCESS != status) {
         return status;
     }
@@ -585,7 +585,7 @@ hailo_status HailoNetImpl::configure_network_group()
         GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Setting scheduler threshold failed, status = %d", status);
     }
 
-    auto vstreams = m_net_group_handle->create_vstreams(m_props.m_network_name.get(), m_output_formats);
+    auto vstreams = m_net_group_handle->create_vstreams(m_props.m_network_name.get(), m_props.m_scheduling_algorithm.get(), m_output_formats);
     GST_CHECK_EXPECTED_AS_STATUS(vstreams, m_element, RESOURCE, "Creating vstreams failed, status = %d", status);
 
     GST_HAILOSEND(m_hailosend)->impl->set_input_vstreams(std::move(vstreams->first));

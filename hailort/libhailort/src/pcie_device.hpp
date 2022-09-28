@@ -23,11 +23,11 @@ namespace hailort
 
 class PcieDevice : public VdmaDevice {
 public:
-
     static Expected<std::vector<hailo_pcie_device_info_t>> scan();
     static Expected<std::unique_ptr<PcieDevice>> create();
     static Expected<std::unique_ptr<PcieDevice>> create(const hailo_pcie_device_info_t &device_info);
-    static Expected<hailo_pcie_device_info_t> parse_pcie_device_info(const std::string &device_info_str);
+    static Expected<hailo_pcie_device_info_t> parse_pcie_device_info(const std::string &device_info_str,
+        bool log_on_failure);
     static Expected<std::string> pcie_device_info_to_string(const hailo_pcie_device_info_t &device_info);
 
     virtual ~PcieDevice();
@@ -52,6 +52,7 @@ public:
             return false;
         }
     }
+    virtual ExpectedRef<ConfigManager> get_config_manager() override;
 
     // TODO: used for tests
     void set_is_control_version_supported(bool value);
@@ -71,6 +72,12 @@ private:
     bool m_fw_up;
     const hailo_pcie_device_info_t m_device_info;
     std::string m_device_id;
+    // TODO: (HRT-7535) This member needs to be held in the object that impls fw_interact_impl func,
+    //       because VdmaConfigManager calls a control (which in turn calls fw_interact_impl).
+    //       (otherwise we'll get a "pure virtual method called" runtime error in the Device's dtor)
+    //       Once we merge CoreDevice::fw_interact_impl and PcieDevice::fw_interact_impl we can
+    //       move the m_context_switch_manager member and get_config_manager() func to VdmaDevice.
+    std::unique_ptr<ConfigManager> m_context_switch_manager;
 };
 
 } /* namespace hailort */

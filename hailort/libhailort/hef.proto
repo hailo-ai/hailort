@@ -1,5 +1,7 @@
 syntax = "proto3";
 
+option optimize_for = LITE_RUNTIME;
+
 message ProtoHEFHef {
     ProtoHEFHeader header = 1;
     repeated ProtoHEFNetworkGroup network_groups = 2;
@@ -13,7 +15,7 @@ message ProtoHEFIncludedFeatures {
     bool abbale = 1;
     bool posted_writes = 2;
     bool ddr = 3;
-    uint32 number_of_contexts = 4;
+    bool is_multi_context = 4;
     bool compressed_params = 5;
     bool transpose_component = 6;
     bool padded_ddr_buffers = 7;
@@ -33,7 +35,7 @@ enum ProtoHEFExtensionType {
     IS_NMS_MULTI_CONTEXT = 9;
     OFFLOAD_ARGMAX = 10;
     HW_PADDING = 11;
-    PRELIMINARY_RUN_ASAP = 12;
+    KO_RUN_ASAP = 12;
     UNUSED = 0XFFFF;
 }
 
@@ -42,7 +44,7 @@ message ProtoHEFExtension {
     string name = 2;
 }
 
-message ProtoHEFOptionalExtension  {
+message ProtoHEFOptionalExtension {
     uint32 type_index = 1;
     string name = 2;
 }
@@ -66,6 +68,7 @@ enum ProtoHEFHwArch {
     PROTO__HW_ARCH__HAILO8 = 0;
     PROTO__HW_ARCH__HAILO8P = 1;
     PROTO__HW_ARCH__HAILO8R = 2;
+    PROTO__HW_ARCH__HAILO8L = 3;
 
     // Reserving low numbers to public hw archs
     PROTO__HW_ARCH__SAGE_A0 = 100;
@@ -75,6 +78,16 @@ enum ProtoHEFHwArch {
     PROTO__HW_ARCH__GINGER = 104;
     PROTO__HW_ARCH__LAVENDER = 105;
 }
+
+
+message ProtoHEFPhysicalLayout {
+    uint32 partial_clusters_layout_bitmap = 1;
+};
+
+message ProtoHEFPartialNetworkGroup {
+    ProtoHEFNetworkGroup network_group = 1;
+    ProtoHEFPhysicalLayout layout = 2;
+};
 
 message ProtoHEFNetworkGroup {
     // Metadata describing the network_group
@@ -94,6 +107,15 @@ message ProtoHEFNetworkGroup {
 
     // Connected component names ordered by index
     repeated string networks_names = 6;
+
+    // Partial network groups configuration
+    repeated ProtoHEFPartialNetworkGroup partial_network_groups = 7;
+}
+
+message ProtoHEFCfgChannelConfig {
+    uint32 cfg_channel_index = 1;
+    // which dma feeds this cfg channel
+    uint32 engine_id = 2;
 }
 
 message ProtoHEFNetworkGroupMetadata {
@@ -109,8 +131,14 @@ message ProtoHEFNetworkGroupMetadata {
     // The bottleneck post placement fps
     double bottleneck_fps = 4;
 
+    // The latency from simulation
+    double latency = 6;
+
     // Number of pcie channels being used for config
     uint32 cfg_channels_count = 5;
+
+    // config information regarding the cfg channels
+    repeated ProtoHEFCfgChannelConfig cfg_channels_config = 7;
 }
 
 message ProtoHEFFusedLayersMetadata {
@@ -211,6 +239,7 @@ message ProtoHEFAction {
         ProtoHEFActionNone none = 9;
         ProtoHEFActionAllowInputDataflow allow_input_dataflow = 10;
         ProtoHEFActionWaitForModuleConfigDone wait_for_module_config_done = 11;
+        ProtoHEFActionDebugSleep debug_sleep = 12;
     }
 }
 
@@ -234,6 +263,11 @@ message ProtoHEFActionWriteCompressedData {
 
     // The data that would be written
     bytes data = 2;
+}
+
+message ProtoHEFActionDebugSleep {
+    // Debug action that asks FW to sleep for some duration
+    uint64 duration_in_usec = 1;
 }
 
 message InitialL3 {
@@ -439,6 +473,7 @@ message ProtoHEFConnectedContextInfo {
     uint32 index = 1;
     string name = 2;
     uint32 sys_index = 3;
+    uint32 engine_id = 4;
 }
 
 message ProtoHEFResourceIndices {
@@ -464,6 +499,7 @@ message ProtoHEFEdgeLayerBase {
     repeated ProtoHEFResourceIndices buffer_indices = 13;
     bool host_argmax = 14;
     uint32 max_shmifo_size = 15;
+    uint32 engine_id = 16;
 }
 
 // Additional information for specific layer types

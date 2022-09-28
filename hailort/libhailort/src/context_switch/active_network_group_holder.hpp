@@ -11,7 +11,7 @@
 #ifndef _HAILO_CONTEXT_SWITCH_ACTIVE_NETWORK_GROUP_HOLDER_HPP_
 #define _HAILO_CONTEXT_SWITCH_ACTIVE_NETWORK_GROUP_HOLDER_HPP_
 
-// TODO: can’t we just have ActiveNetworkGroup ref under device?
+// TODO: cant we just have ActiveNetworkGroup ref under device?
 
 #include "hailo/hailort.h"
 #include "common/utils.hpp"

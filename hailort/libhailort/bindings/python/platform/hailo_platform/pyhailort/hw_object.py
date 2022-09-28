@@ -10,9 +10,9 @@ from contextlib import contextmanager
 
 from hailo_platform.pyhailort.control_object import UdpHcpControl, PcieHcpControl
 from hailo_platform.common.logger.logger import default_logger
-from hailo_platform.pyhailort.hailo_control_protocol import BoardInformation
 
-from hailo_platform.pyhailort.pyhailort import ConfiguredNetwork, InternalEthernetDevice, InternalPcieDevice, HailoRTTransformUtils, HailoUdpScan, HailoRTException
+from hailo_platform.pyhailort.pyhailort import (ConfiguredNetwork, InternalEthernetDevice, InternalPcieDevice,
+                                                HailoRTTransformUtils, HailoUdpScan, HailoRTException, BoardInformation)
 
 
 class InferenceTargets(object):
@@ -385,7 +385,7 @@ class EthernetDevice(HailoChipObject):
         self._open_device()
 
         self._id = "{}".format(self._remote_ip)
-        identity = self._control_object._device_id
+        identity = self._control_object._identify_info
         self._hw_arch = BoardInformation.get_hw_arch_str(identity.device_architecture)
 
     @staticmethod
@@ -450,7 +450,7 @@ class PcieDevice(HailoChipObject):
 
         # At this point self._device_info is already initialized
         self._id = "{}".format(self._device_info)
-        identity = self._control_object._device_id
+        identity = self._control_object._identify_info
         self._hw_arch = BoardInformation.get_hw_arch_str(identity.device_architecture)
 
     @staticmethod

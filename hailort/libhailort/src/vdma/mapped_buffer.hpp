@@ -24,6 +24,7 @@
 #include "os/mmap_buffer.hpp"
 #include "os/hailort_driver.hpp"
 #include "hailo/expected.hpp"
+#include "vdma_mapped_buffer_impl.hpp"
 
 namespace hailort {
 namespace vdma {
@@ -43,8 +44,8 @@ public:
     MappedBuffer(MappedBuffer &&other) noexcept = default;
     MappedBuffer &operator=(MappedBuffer &&other) = delete;
 
-    void *user_address() { return m_user_address.get(); }
-    size_t handle() { return m_handle; }
+    void *user_address() { return m_vdma_mapped_buffer->get(); }
+    HailoRTDriver::VdmaBufferHandle handle() { return m_handle; }
     size_t size() const { return m_size; }
 
     /**
@@ -99,14 +100,10 @@ public:
 
 private:
 
-    static Expected<MmapBuffer<void>> allocate_vdma_buffer(HailoRTDriver &driver, size_t required_size,
-        uintptr_t &driver_buff_handle);
-
-    MmapBuffer<void> m_user_address;
+    std::unique_ptr<VdmaMappedBufferImpl> m_vdma_mapped_buffer;
     HailoRTDriver::VdmaBufferHandle m_handle;
     size_t m_size;
     HailoRTDriver &m_driver;
-    uintptr_t m_driver_buff_handle;
 };
 
 } /* namespace vdma */

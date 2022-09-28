@@ -75,7 +75,7 @@ struct tCompatibleHailoIoctlParam
 
 #define HAILO_GENERAL_IOCTL_MAGIC 0
 #define HAILO_VDMA_IOCTL_MAGIC    1
-#define HAILO_WINDOWS_IOCTL_MAGIC 2
+#define HAILO_NON_LINUX_IOCTL_MAGIC 2
 
 
 
@@ -111,13 +111,16 @@ struct tCompatibleHailoIoctlData
         hailo_vdma_buffer_sync_params VdmaBufferSync;
         hailo_fw_control FirmwareControl;
         hailo_vdma_buffer_map_params VdmaBufferMap;
+        hailo_vdma_buffer_unmap_params VdmaBufferUnmap;
         hailo_desc_list_create_params DescListCreate;
+        uintptr_t DescListReleaseParam;
         hailo_desc_list_bind_vdma_buffer_params DescListBind;
         hailo_d2h_notification D2HNotification;
         hailo_device_properties DeviceProperties;
         hailo_driver_info DriverInfo;
-        hailo_channel_registers_params ChannelRegisters;
-        hailo_windows_desc_list_mmap_params DescListMmap;
+        hailo_vdma_channel_read_register_params ChannelRegisterRead;
+        hailo_vdma_channel_write_register_params ChannelRegisterWrite;
+        hailo_non_linux_desc_list_mmap_params DescListMmap;
         hailo_read_log_params ReadLog;
         hailo_mark_as_in_use_params MarkAsInUse;
     } Buffer;

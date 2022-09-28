@@ -48,6 +48,7 @@ public:
 
     virtual const std::string &get_network_group_name() const override;
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &key) override;
+    virtual hailo_status set_keep_nn_config_during_reset(const bool keep_nn_config_during_reset) override;
 
 private:
     VdmaConfigActivatedNetworkGroup(
@@ -70,13 +71,14 @@ private:
       std::shared_ptr<std::atomic<uint16_t>> desc_list_num_ready);
 
   std::string m_network_group_name;
-  bool m_should_reset_state_machine;
+  bool m_should_reset_network_group;
   VdmaConfigActiveAppHolder &m_active_net_group_holder;
   // One ResourcesManager per connected physical device. Currently only one device is supported.
   std::vector<std::shared_ptr<ResourcesManager>> m_resources_managers;
   std::vector<std::thread> m_ddr_send_threads;
   std::vector<std::thread> m_ddr_recv_threads;
   AccumulatorPtr m_deactivation_time_accumulator;
+  bool m_keep_nn_config_during_reset;
 };
 
 } /* namespace hailort */

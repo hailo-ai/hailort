@@ -26,7 +26,12 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(Device
         return make_unexpected(hef.status());
     }
 
-    auto configure_params = hef->create_configure_params(HAILO_STREAM_INTERFACE_PCIE);
+    auto stream_interface = device.get_default_streams_interface();
+    if (!stream_interface) {
+        return make_unexpected(stream_interface.status());
+    }
+
+    auto configure_params = hef->create_configure_params(stream_interface.value());
     if (!configure_params) {
         return make_unexpected(configure_params.status());
     }
@@ -143,13 +148,13 @@ hailo_status infer(InputStreamRefVector &input_streams, OutputStreamRefVector &o
 
 int main()
 {
-    auto device = Device::create_pcie();
     /*
-    For simplicity, not passing `device_info` - This function will fail in case more than one PCIe device is present.
-    See `hailort::Device::scan_pcie` and `hailort::Device::create_pcie` functions documentation.
+     For simplicity, not passing `device_id` - This function will fail in case more than one device is present.
+     See `hailort::Device::scan_devices` and `hailort::Device::create` functions documentation.
     */
+    auto device = Device::create();
     if (!device) {
-        std::cerr << "Failed create_pcie " << device.status() << std::endl;
+        std::cerr << "Failed create device " << device.status() << std::endl;
         return device.status();
     }
 

@@ -26,9 +26,8 @@ public:
         const std::string &interface_name);
 
 private:
-    hailo_status scan_pcie();
-
-    Device::Type m_device_type;
+    // Scans any system device
+    hailo_status scan();
 
     // Ethernet scan options
     std::string m_interface_ip_addr;

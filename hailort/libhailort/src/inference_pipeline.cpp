@@ -19,10 +19,12 @@
 namespace hailort
 {
 
-InferVStreams::InferVStreams(std::vector<InputVStream> &&inputs, std::vector<OutputVStream> &&outputs, bool is_multi_context) :
+InferVStreams::InferVStreams(std::vector<InputVStream> &&inputs, std::vector<OutputVStream> &&outputs, bool is_multi_context,
+    uint16_t batch_size) :
     m_inputs(std::move(inputs)),
     m_outputs(std::move(outputs)),
-    m_is_multi_context(is_multi_context)
+    m_is_multi_context(is_multi_context),
+    m_batch_size(batch_size)
 {
     for (auto &input : m_inputs) {
         if (contains(m_network_name_to_input_count, input.network_name())) {
@@ -100,13 +102,32 @@ Expected<InferVStreams> InferVStreams::create(ConfiguredNetworkGroup &net_group,
 {
     auto network_infos = net_group.get_network_infos();
     CHECK_EXPECTED(network_infos);
-    auto is_multi_context = (dynamic_cast<ConfiguredNetworkGroupWrapper&>(net_group)).get_configured_network()->get_supported_features().multi_context;
+
+    auto is_multi_context = net_group.is_multi_context();
     std::map<std::string, std::pair<size_t, size_t>> input_param_count_per_network;
     size_t total_inputs_found = 0;
     size_t total_outputs_found = 0;
+
+    uint16_t batch_size = 0;
+    if (is_multi_context) {
+        const auto &config_params = net_group.get_config_params();
+        batch_size = config_params.batch_size;
+
+        if (HAILO_DEFAULT_BATCH_SIZE == batch_size) {
+            uint16_t network_batch_size = config_params.network_params_by_name.begin()->second.batch_size;
+            for (const auto &name_params_pair : config_params.network_params_by_name) {
+                CHECK_AS_EXPECTED(network_batch_size == name_params_pair.second.batch_size, HAILO_INVALID_ARGUMENT,
+                    "Batch size of each network must be the same!");
+            }
+
+            batch_size = network_batch_size;
+        }
+    }
+
     for (const auto &network_info : network_infos.value()) {
         auto input_vstream_infos_per_network = net_group.get_input_vstream_infos(network_info.name);
         CHECK_EXPECTED(input_vstream_infos_per_network);
+
         size_t input_counter = 0;
         for (const auto &vstream_info : input_vstream_infos_per_network.value()) {
             if (contains(input_params, std::string(vstream_info.name))) {
@@ -117,6 +138,7 @@ Expected<InferVStreams> InferVStreams::create(ConfiguredNetworkGroup &net_group,
 
         auto output_vstream_infos_per_network = net_group.get_output_vstream_infos(network_info.name);
         CHECK_EXPECTED(output_vstream_infos_per_network);
+
         size_t output_counter = 0;
         for (const auto &vstream_info : output_vstream_infos_per_network.value()) {
             if (contains(output_params, std::string(vstream_info.name))) {
@@ -125,7 +147,7 @@ Expected<InferVStreams> InferVStreams::create(ConfiguredNetworkGroup &net_group,
             }
         }
 
-        if (0 != input_counter || 0 != output_counter) {
+        if ((0 != input_counter) || (0 != output_counter)) {
             CHECK_AS_EXPECTED(input_counter == input_vstream_infos_per_network->size(), HAILO_INVALID_ARGUMENT,
                 "Found only partial inputs for network {}", network_info.name);
             CHECK_AS_EXPECTED(output_counter == output_vstream_infos_per_network->size(), HAILO_INVALID_ARGUMENT,
@@ -139,30 +161,37 @@ Expected<InferVStreams> InferVStreams::create(ConfiguredNetworkGroup &net_group,
     if (total_inputs_found != input_params.size()) {
         auto all_input_vstream_infos = net_group.get_input_vstream_infos();
         CHECK_EXPECTED(all_input_vstream_infos);
+
         auto status = verify_vstream_params_in_vstream_infos(input_params, all_input_vstream_infos.release());
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
     if (total_outputs_found != output_params.size()) {
         auto all_output_vstream_infos = net_group.get_input_vstream_infos();
         CHECK_EXPECTED(all_output_vstream_infos);
+
         auto status = verify_vstream_params_in_vstream_infos(output_params, all_output_vstream_infos.release());
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
 
     auto input_vstreams = VStreamsBuilder::create_input_vstreams(net_group, input_params);
     CHECK_EXPECTED(input_vstreams);
+
     auto output_vstreams = VStreamsBuilder::create_output_vstreams(net_group, output_params);
     CHECK_EXPECTED(output_vstreams);
 
-    return InferVStreams(input_vstreams.release(), output_vstreams.release(), is_multi_context);
+    return InferVStreams(input_vstreams.release(), output_vstreams.release(), is_multi_context, batch_size);
 }
 
 hailo_status InferVStreams::infer(const std::map<std::string, MemoryView>& input_data,
-    std::map<std::string, MemoryView>& output_data, size_t batch_size)
+    std::map<std::string, MemoryView>& output_data, size_t frames_count)
 {
     auto status = verify_network_inputs_and_outputs(input_data, output_data);
     CHECK_SUCCESS(status);
-    status = verify_memory_view_size(input_data, output_data, batch_size);
+
+    status = verify_memory_view_size(input_data, output_data, frames_count);
+    CHECK_SUCCESS(status);
+
+    status = verify_frames_count(frames_count);
     CHECK_SUCCESS(status);
 
     std::vector<AsyncThreadPtr<hailo_status>> results;
@@ -173,9 +202,9 @@ hailo_status InferVStreams::infer(const std::map<std::string, MemoryView>& input
         CHECK_EXPECTED_AS_STATUS(input_vstream_exp);
         auto &input_vstream = input_vstream_exp.release().get();
         results.emplace_back(std::make_unique<AsyncThread<hailo_status>>(
-            [&input_vstream, &input_name_to_data_pair, batch_size]() -> hailo_status {
+            [&input_vstream, &input_name_to_data_pair, frames_count]() -> hailo_status {
                 const auto &input_buffer = input_name_to_data_pair.second;
-                for (uint32_t i = 0; i < batch_size; i++) {
+                for (uint32_t i = 0; i < frames_count; i++) {
                     const size_t offset = i * input_vstream.get_frame_size();
                     auto status = input_vstream.write(MemoryView::create_const(
                         input_buffer.data() + offset,
@@ -195,8 +224,8 @@ hailo_status InferVStreams::infer(const std::map<std::string, MemoryView>& input
         CHECK_EXPECTED_AS_STATUS(output_vstream_exp);
         auto &output_vstream = output_vstream_exp.release().get();
         results.emplace_back(std::make_unique<AsyncThread<hailo_status>>(
-            [&output_vstream, &output_name_to_data_pair, batch_size]() {
-                for (size_t i = 0; i < batch_size; i++) {
+            [&output_vstream, &output_name_to_data_pair, frames_count]() {
+                for (size_t i = 0; i < frames_count; i++) {
                     auto status = output_vstream.read(MemoryView(output_name_to_data_pair.second.data() + i * output_vstream.get_frame_size(), output_vstream.get_frame_size()));
                     if (HAILO_SUCCESS != status) {
                         return status;
@@ -227,25 +256,32 @@ hailo_status InferVStreams::infer(const std::map<std::string, MemoryView>& input
 }
 
 hailo_status InferVStreams::verify_memory_view_size(const std::map<std::string, MemoryView>& inputs_name_mem_view_map,
-    const std::map<std::string, MemoryView>& outputs_name_mem_view_map, size_t batch_count)
+    const std::map<std::string, MemoryView>& outputs_name_mem_view_map, size_t frames_count)
 {
     for (const auto &input_name_to_memview : inputs_name_mem_view_map) {
         auto input_vstream_exp = get_input_by_name(input_name_to_memview.first);
         CHECK_EXPECTED_AS_STATUS(input_vstream_exp);
         auto &input_vstream = input_vstream_exp.release().get();
-        CHECK(batch_count * input_vstream.get_frame_size() == input_name_to_memview.second.size(), HAILO_INVALID_ARGUMENT,
+        CHECK(frames_count * input_vstream.get_frame_size() == input_name_to_memview.second.size(), HAILO_INVALID_ARGUMENT,
             "Memory size of vstream {} does not match the frame count! (Expected {}, got {})",
-            input_vstream.name(), batch_count * input_vstream.get_frame_size(), input_name_to_memview.second.size());
+            input_vstream.name(), frames_count * input_vstream.get_frame_size(), input_name_to_memview.second.size());
     }
     for (const auto &output_name_to_memview : outputs_name_mem_view_map) {
         auto output_vstream_exp = get_output_by_name(output_name_to_memview.first);
         CHECK_EXPECTED_AS_STATUS(output_vstream_exp);
         auto &output_vstream = output_vstream_exp.release().get();
-        CHECK(batch_count * output_vstream.get_frame_size() == output_name_to_memview.second.size(), HAILO_INVALID_ARGUMENT,
+        CHECK(frames_count * output_vstream.get_frame_size() == output_name_to_memview.second.size(), HAILO_INVALID_ARGUMENT,
             "Memory size of vstream {} does not match the frame count! (Expected {}, got {})",
-            output_vstream.name(), batch_count * output_vstream.get_frame_size(), output_name_to_memview.second.size());
+            output_vstream.name(), frames_count * output_vstream.get_frame_size(), output_name_to_memview.second.size());
     }
 
+    return HAILO_SUCCESS;
+}
+
+hailo_status InferVStreams::verify_frames_count(size_t frames_count)
+{
+    CHECK((!m_is_multi_context) || (frames_count % m_batch_size == 0), HAILO_INVALID_ARGUMENT,
+        "Frames count is not a multiplier of the batch size! ({} % {} != 0)", frames_count, m_batch_size);
     return HAILO_SUCCESS;
 }
 

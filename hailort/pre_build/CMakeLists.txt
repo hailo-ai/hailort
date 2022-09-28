@@ -3,12 +3,14 @@ project(hailort_prebuild)
 
 if(NOT HAILO_OFFLINE_COMPILATION)
     set(HAILO_PRE_BUILD_EXTERNAL_DIR ${CMAKE_CURRENT_LIST_DIR}/external)
-    include(../libhailort/cmake/execute_cmake.cmake)
+    include(../cmake/execute_cmake.cmake)
     message("Downloading dependencies to ${HAILO_EXTERNAL_DIR} ...")
     execute_cmake(
-        SOURCE_DIR "${HAILO_PRE_BUILD_EXTERNAL_DIR}"
-        BUILD_DIR "${HAILO_PRE_BUILD_EXTERNAL_DIR}/build"
-        CONFIGURE_ARGS "-DHAILO_EXTERNAL_DIR=${HAILO_EXTERNAL_DIR}"
+        SOURCE_DIR ${HAILO_PRE_BUILD_EXTERNAL_DIR}
+        BUILD_DIR ${HAILO_PRE_BUILD_EXTERNAL_DIR}/build
+        CONFIGURE_ARGS
+            -DHAILO_EXTERNAL_DIR=${HAILO_EXTERNAL_DIR}
+            -DHAILO_BUILD_SERVICE=${HAILO_BUILD_SERVICE}
     )
     message("Finished downloading dependencies")
 else()

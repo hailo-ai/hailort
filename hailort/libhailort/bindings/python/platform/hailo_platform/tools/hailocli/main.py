@@ -8,7 +8,8 @@ import hailo_platform
 from hailo_platform.tools.hailocli.base_utils import HailortCliUtil, Helper, HailortCliUtilError
 from hailo_platform.tools.hailocli.hailocli_commands import (FWUpdaterCLI, SSBUpdaterCLI, ControlCommandCLI, ScanCommandCLI,
                                                             LoggerCommandCLI, MeasurePowerCommandCLI, RunCommandCLI, SensorConfigCommandCLI,
-                                                            FWConfigCommandCLI, BenchmarkCommandCLI, UDPRateLimiterCLI)
+                                                            FWConfigCommandCLI, BenchmarkCommandCLI, UDPRateLimiterCLI, MonitorCommandCLI, ParseHEFCommandCLI, TutorialRunnerCLI)
+from hailo_platform.common.logger.logger import default_logger
 
 # Note: PlatformCommands are external dependencies in phase2-sdk/demos repo; don't change!
 class PlatformCommands:
@@ -18,19 +19,23 @@ class PlatformCommands:
         'fw-update': ('Firmware update tool', FWUpdaterCLI),
         'ssb-update': ('Second stage boot update tool', SSBUpdaterCLI),
         'fw-config': ('Firmware configuration tool', FWConfigCommandCLI),
-        'udp-limiter': ('UDP rate limitation tool', UDPRateLimiterCLI),
-        'udp': ('Alias to udp-limiter', UDPRateLimiterCLI),
+        'udp-limiter': ('Alias to udp-rate-limiter. Deprecated.', UDPRateLimiterCLI),
+        'udp': ('Alias to udp-rate-limiter. Deprecated.', UDPRateLimiterCLI),
+        'udp-rate-limiter': ('Limit UDP rate', UDPRateLimiterCLI),
         'fw-control': ('Useful firmware control operations', ControlCommandCLI),
         'fw-logger': ('Download fw logs to a file', LoggerCommandCLI),
         'scan': ('Scans for devices (Ethernet or PCIE)', ScanCommandCLI),
         'sensor-config': ('Sensor configuration tool', SensorConfigCommandCLI),
         'run': ('Run a compiled network', RunCommandCLI),
         'benchmark': ('Measure basic performance on compiled network', BenchmarkCommandCLI),
+        'monitor': ("Monitor of networks - Presents information about the running networks. To enable monitor, set in the application process the environment variable 'SCHEDULER_MONITOR' to 1.", MonitorCommandCLI),
+        'parse-hef': (' Parse HEF to get information about its components', ParseHEFCommandCLI),
         'measure-power': ('Measures power consumption', MeasurePowerCommandCLI),
+        'tutorial': ('Runs the tutorials in jupyter notebook', TutorialRunnerCLI),
     }
 
     def __init__(self):
-        self.parser = argparse.ArgumentParser(description=self._get_description())
+        self.parser = argparse.ArgumentParser(description=self._get_generic_description())
         self.subparsers = self.parser.add_subparsers(help='Hailo utilities aimed to help with everything you need')
         self.COMMANDS = {}
         self.COMMANDS.update(type(self).PLATFORM_COMMANDS)
@@ -45,6 +50,10 @@ class PlatformCommands:
     @staticmethod
     def _get_description():
         return 'Hailo Platform SW v{} command line utilities'.format(hailo_platform.__version__)
+
+    @staticmethod
+    def _get_generic_description():
+        return 'Hailo Command Line Utility'
 
     def run(self):
         argv = sys.argv[1:]
@@ -70,6 +79,10 @@ class PlatformCommands:
             return self.INVALID_COMMAND_EXIT_CODE
 
         command_name = argv[0]
+        # TODO: Remove deprecation warning
+        if command_name in ['udp', 'udp-limiter']:
+            logger = default_logger()
+            logger.warning("Warning - running '{}' command is deprecated, support will be removed in future versions. Use 'udp-rate-limiter' instead.".format(command_name))
         if (command_name in commands) and isinstance(commands[command_name], HailortCliUtil):
             # HailortCliUtil just passes the rest of the argv to hailortcli
             try :

@@ -8,6 +8,11 @@ option(HAILO_BUILD_GSTREAMER "Compile gstreamer plugins" OFF)
 option(HAILO_BUILD_EXAMPLES "Build examples" OFF)
 option(HAILO_OFFLINE_COMPILATION "Don't download external dependencies" OFF)
 option(HAILO_MICROPROFILE "Microprofile code" OFF)
+option(HAILO_BUILD_SERVICE "Build hailort service" OFF)
+
+if(WIN32 AND ${HAILO_BUILD_SERVICE})
+    message(FATAL_ERROR "HailoRT service is not supported on Windows")
+endif()
 
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM)
@@ -51,7 +56,8 @@ elseif(UNIX)
         set(HAILORT_COMPILE_OPTIONS ${HAILORT_COMPILE_OPTIONS} -Werror -Wall -Wextra
             # TODO: remove me warnings
             -Wno-conversion
-            -Wno-deprecated-declarations
+            -Wno-deprecated-declarations  # On c structures with deprecated attribute, clang generates implicit move ctor
+                                          # that causes a warning
             -Wno-inconsistent-missing-override
             )
     else()

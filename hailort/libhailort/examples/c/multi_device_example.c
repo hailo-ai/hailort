@@ -1,14 +1,6 @@
 /**
- * Copyright 2020 (C) Hailo Technologies Ltd.
- * All rights reserved.
- *
- * Hailo Technologies Ltd. ("Hailo") disclaims any warranties, including, but not limited to,
- * the implied warranties of merchantability and fitness for a particular purpose.
- * This software is provided on an "AS IS" basis, and Hailo has no obligation to provide maintenance,
- * support, updates, enhancements, or modifications.
- *
- * You may use this software in the development of any project.
- * You shall not reproduce, modify or distribute this software without prior written permission.
+ * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
  * @file multi_device_example.c
@@ -23,7 +15,7 @@
 
 #define INFER_FRAME_COUNT (100)
 #define MAX_EDGE_LAYERS (16)
-#define MAX_PCIE_DEVICES (16)
+#define MAX_DEVICES (16)
 #define HEF_FILE ("hefs/shortcut_net.hef")
 
 
@@ -136,8 +128,8 @@ int main()
 {
     hailo_status status = HAILO_UNINITIALIZED;
     hailo_vdevice vdevice = NULL;
-    hailo_pcie_device_info_t device_infos[MAX_PCIE_DEVICES];
-    size_t actual_count = 0;
+    hailo_device_id_t device_ids[MAX_DEVICES];
+    size_t actual_count = MAX_DEVICES;
     hailo_vdevice_params_t params = {0};
     hailo_hef hef = NULL;
     hailo_configure_params_t config_params = {0};
@@ -151,8 +143,8 @@ int main()
     hailo_input_vstream input_vstreams[MAX_EDGE_LAYERS] = {NULL};
     hailo_output_vstream output_vstreams[MAX_EDGE_LAYERS] = {NULL};
 
-    status = hailo_scan_pcie_devices(device_infos, MAX_PCIE_DEVICES, &actual_count);
-    REQUIRE_SUCCESS(status, l_exit, "Failed to scan pcie_device");
+    status = hailo_scan_devices(NULL, device_ids, &actual_count);
+    REQUIRE_SUCCESS(status, l_exit, "Failed to scan devices");
 
     status = hailo_init_vdevice_params(&params);
     REQUIRE_SUCCESS(status, l_exit, "Failed init vdevice_params");

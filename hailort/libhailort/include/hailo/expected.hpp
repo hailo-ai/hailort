@@ -300,7 +300,7 @@ public:
      * 
      * NOTE: std::enable_if_t used because the variadic constructor can sometimes have a better cv-qualifier match than
      *       the other constructors. For example, candidate is: Expected<T>::operator bool() const [with T = int]
-     *       while conversion from ‘Expected<int>’ to ‘int’.
+     *       while conversion from 'Expected<int>' to 'int'.
      *       See https://stackoverflow.com/questions/51937519/class-constructor-precedence-with-a-variadic-template-constructor-for-a-value-wr
      */
     template <typename... Args, std::enable_if_t<std::is_constructible<T, Args...>::value, int> = 0>
@@ -314,7 +314,7 @@ public:
      * 
      * NOTE: std::enable_if_t used because the variadic constructor can sometimes have a better cv-qualifier match than
      *       the other constructors. For example, candidate is: Expected<T>::operator bool() const [with T = int]
-     *       while conversion from ‘Expected<int>’ to ‘int’.
+     *       while conversion from 'Expected<int>' to 'int'.
      *       See https://stackoverflow.com/questions/51937519/class-constructor-precedence-with-a-variadic-template-constructor-for-a-value-wr
      * 
      * NOTE: ExpectedKey can only be constructed from Expected<T>. This way Expected<T> will be the only class that

@@ -65,7 +65,7 @@ public:
 
 protected:
     virtual hailo_status execute_on_device(Device &device) = 0;
-    hailo_status execute_on_all_pcie_devices();
+    hailo_status execute_on_devices(std::vector<std::unique_ptr<Device>> &devices);
 
 private:
     hailo_device_params m_device_params;

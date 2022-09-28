@@ -96,7 +96,7 @@ public:
     /**
      * @returns A ::hailo_stream_info_t object containing the stream's info.
      */
-    const hailo_stream_info_t &get_info() const
+    virtual const hailo_stream_info_t &get_info() const
     {
         return m_stream_info;
     }
@@ -106,7 +106,7 @@ public:
      */
     virtual inline size_t get_frame_size() const
     {
-        return m_stream_info.hw_frame_size;
+        return get_info().hw_frame_size;
     }
 
     /**
@@ -114,7 +114,7 @@ public:
      */
     std::string name() const
     {
-        return m_stream_info.name;
+        return get_info().name;
     }
 
     /**
@@ -196,7 +196,7 @@ public:
     /**
      * @returns the stream's info.
      */
-    const hailo_stream_info_t &get_info() const
+    virtual const hailo_stream_info_t &get_info() const
     {
         return m_stream_info;
     }
@@ -206,7 +206,7 @@ public:
      */
     virtual inline size_t get_frame_size() const
     {
-        return m_stream_info.hw_frame_size;
+        return get_info().hw_frame_size;
     }
 
     /**
@@ -214,7 +214,7 @@ public:
      */
     std::string name() const
     {
-        return m_stream_info.name;
+        return get_info().name;
     }
 
     /**

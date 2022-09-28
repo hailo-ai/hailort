@@ -257,7 +257,7 @@ void HefWrapper::initialize_python_module(py::module &m)
     py::class_<ConfiguredNetworkGroup>(m, "ConfiguredNetworkGroup")
         .def("get_name", [](ConfiguredNetworkGroup& self)
             {
-                return self.get_network_group_name();
+                return self.name();
             })
         .def("get_default_streams_interface", [](ConfiguredNetworkGroup& self)
             {

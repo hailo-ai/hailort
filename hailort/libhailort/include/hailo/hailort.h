@@ -65,6 +65,10 @@ extern "C" {
 #define HAILO_SOC_PM_VALUES_BYTES_LENGTH (24)
 #define HAILO_MAX_TEMPERATURE_THROTTLING_LEVELS_NUMBER (4)
 
+#define HAILO_UNIQUE_VDEVICE_GROUP_ID ("UNIQUE")
+#define HAILO_DEFAULT_VDEVICE_GROUP_ID HAILO_UNIQUE_VDEVICE_GROUP_ID
+
+
 typedef float float32_t;
 typedef double float64_t;
 typedef uint16_t nms_bbox_counter_t;
@@ -136,7 +140,7 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(62, HAILO_STREAM_ABORTED                          /*!< Stream aborted due to an external event */)\
     HAILO_STATUS__X(63, HAILO_STREAM_INTERNAL_ABORT                   /*!< Stream recv/send was aborted */)\
     HAILO_STATUS__X(64, HAILO_PCIE_DRIVER_NOT_INSTALLED               /*!< Pcie driver is not installed */)\
-    HAILO_STATUS__X(65, HAILO_NOT_AVAILABLE                           /*!< Componenet is not available */)\
+    HAILO_STATUS__X(65, HAILO_NOT_AVAILABLE                           /*!< Component is not available */)\
     HAILO_STATUS__X(66, HAILO_TRAFFIC_CONTROL_FAILURE                 /*!< Traffic control failure */)\
     HAILO_STATUS__X(67, HAILO_INVALID_SECOND_STAGE                    /*!< Second stage bin is invalid */)\
     HAILO_STATUS__X(68, HAILO_INVALID_PIPELINE                        /*!< Pipeline is invalid */)\
@@ -147,7 +151,9 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(73, HAILO_DEVICE_IN_USE                           /*!< The device is already in use */)\
     HAILO_STATUS__X(74, HAILO_OUT_OF_PHYSICAL_DEVICES                 /*!< There are not enough physical devices */)\
     HAILO_STATUS__X(75, HAILO_INVALID_DEVICE_ARCHITECTURE             /*!< Invalid device architecture */)\
-    HAILO_STATUS__X(76, HAILO_INVALID_DRIVER_VERSION                  /*!< Invalid driver version*/)\
+    HAILO_STATUS__X(76, HAILO_INVALID_DRIVER_VERSION                  /*!< Invalid driver version */)\
+    HAILO_STATUS__X(77, HAILO_RPC_FAILED                              /*!< RPC failed */)\
+    HAILO_STATUS__X(78, HAILO_INVALID_SERVICE_VERSION                 /*!< Invalid service version */)\
 
 typedef enum {
 #define HAILO_STATUS__X(value, name) name = value,
@@ -320,6 +326,9 @@ typedef struct {
     uint32_t total_number_of_samples;
 } hailo_power_measurement_data_t;
 
+/** Additional scan params, for future compatibility */
+typedef struct _hailo_scan_devices_params_t hailo_scan_devices_params_t;
+
 /** Ethernet device information */
 typedef struct {
     struct sockaddr_in host_address;
@@ -337,6 +346,21 @@ typedef struct {
     uint32_t func;
 } hailo_pcie_device_info_t;
 
+/** Hailo device ID string - BDF for PCIe devices, IP address for Ethernet devices. **/
+typedef struct {
+    char id[HAILO_MAX_DEVICE_ID_LENGTH];
+} hailo_device_id_t;
+
+/** Hailo device type */
+typedef enum {
+    HAILO_DEVICE_TYPE_PCIE,
+    HAILO_DEVICE_TYPE_ETH,
+    HAILO_DEVICE_TYPE_CORE,
+
+    /** Max enum value to maintain ABI Integrity */
+    HAILO_DEVICE_TYPE_MAX_ENUM = HAILO_MAX_ENUM
+} hailo_device_type_t;
+
 /** Scheduler algorithm */
 typedef enum hailo_scheduling_algorithm_e {
     /** Scheduling disabled */
@@ -350,18 +374,41 @@ typedef enum hailo_scheduling_algorithm_e {
 
 /** Virtual device parameters */
 typedef struct {
-    /** Requested number of physical devices. if @a device_infos is not NULL, represents the number of ::hailo_pcie_device_info_t in @a device_infos */
+    /**
+     * Requested number of physical devices. if @a device_ids is not NULL, or @a device_infos is not NULL represents
+     * the number of ::hailo_device_id_t in @a device_ids or the number of ::hailo_pcie_device_info_t in
+     * @a device_infos.
+     */
     uint32_t device_count;
-    /** Specific physical devices information to create the vdevice from. If NULL, the vdevice will try to occupy devices from the available pool */
-    hailo_pcie_device_info_t *device_infos;
+
+    /**
+     * This param is deprecated. One should use 'device_ids'.
+     * Specific physical devices information to create the vdevice from. If NULL, the vdevice will try to occupy
+     * devices from the available pool.
+     * This parameter cannot be used together with @a device_ids.
+     */
+    hailo_pcie_device_info_t *device_infos DEPRECATED("'device_infos' param is deprecated. One should use 'device_ids'");
+
+    /**
+     * Specific device ids to create the vdevice from. If NULL, the vdevice the vdevice will try to occupy
+     * devices from the available pool.
+     * This parameter cannot be used together with @a device_infos.
+     */
+    hailo_device_id_t *device_ids;
+
     /** The scheduling algorithm to use for network group scheduling */
     hailo_scheduling_algorithm_t scheduling_algorithm;
+    /** Key for using a shared VDevice. To create a unique VDevice, use HAILO_UNIQUE_VDEVICE_GROUP_ID */
+    const char *group_id;
+    /** Flag specifies whether to create the VDevice in HailoRT service or not. Defaults to false */
+    bool multi_process_service;
 } hailo_vdevice_params_t;
 
 /** Device architecture */
 typedef enum hailo_device_architecture_e {
     HAILO_ARCH_HAILO8_A0 = 0,
-    HAILO_ARCH_HAILO8_B0,
+    HAILO_ARCH_HAILO8,
+    HAILO_ARCH_HAILO8L,
     HAILO_ARCH_MERCURY_CA,
     HAILO_ARCH_MERCURY_VPU,
     
@@ -609,6 +656,32 @@ typedef enum {
      * - Device side: [Y0, U0, Y1, V0]
      */
     HAILO_FORMAT_ORDER_YUY2                 = 12,
+
+    /**
+     * YUV format, encoding 8 pixels in 96 bits
+     *      [Y0, Y1, Y2, Y3, Y4, Y5, Y6, Y7, U0, V0, U1, V1] represents
+     *          [Y0, U0, V0], [Y1, U0, V0], [Y2, U0, V0], [Y3, U0, V0], [Y4, U1, V1], [Y5, U1, V1], [Y6, U1, V1], [Y7, U1, V1]
+     */
+    HAILO_FORMAT_ORDER_NV12                 = 13,
+
+    /**
+     * YUV format, encoding 8 pixels in 96 bits
+     *      [Y0, Y1, Y2, Y3, Y4, Y5, Y6, Y7, V0, U0, V1, U1] represents
+     *          [Y0, V0, U0], [Y1, V0, U0], [Y2, V0, U0], [Y3, V0, U0], [Y4, V1, U1], [Y5, V1, U1], [Y6, V1, U1], [Y7, V1, U1]
+     */
+    HAILO_FORMAT_ORDER_NV21                 = 14,
+
+    /**
+     * Internal implementation for HAILO_FORMAT_ORDER_NV12 format
+     *      [Y0, Y1, Y2, Y3, Y4, Y5, Y6, Y7, U0, V0, U1, V1] is represented by [Y0, Y1, Y2, Y3, U0, V0, Y4, Y5, Y6, Y7, U1, V1]
+     */
+    HAILO_FORMAT_ORDER_HAILO_YYUV           = 15,
+
+    /**
+     * Internal implementation for HAILO_FORMAT_ORDER_NV21 format
+     *      [Y0, Y1, Y2, Y3, Y4, Y5, Y6, Y7, V0, U0, V1, U1] is represented by [Y0, Y1, Y2, Y3, V0, U0, Y4, Y5, Y6, Y7, V1, U1]
+     */
+    HAILO_FORMAT_ORDER_HAILO_YYVU           = 16,
 
     /** Max enum value to maintain ABI Integrity */
     HAILO_FORMAT_ORDER_MAX_ENUM             = HAILO_MAX_ENUM
@@ -1210,11 +1283,6 @@ typedef struct {
     char name[HAILO_MAX_NETWORK_NAME_SIZE];
 } hailo_network_info_t;
 
-/** Hailo device ID string - BDF for PCIe devices, IP address for Ethernet devices, "Core" for core devices. **/
-typedef struct {
-    char id[HAILO_MAX_DEVICE_ID_LENGTH];
-} hailo_device_id_t;
-
 /** Notification IDs, for each notification, one of the ::hailo_notification_message_parameters_t union will be set. */
 typedef enum {
     /** Matches hailo_notification_message_parameters_t::rx_error_notification. */
@@ -1288,16 +1356,15 @@ typedef struct {
 } hailo_health_monitor_temperature_alarm_notification_message_t;
 
 typedef enum {
-    HAILO_OVERCURRENT_PROTECTION_OVERCURRENT_ZONE__NONE = 0,
-    HAILO_OVERCURRENT_PROTECTION_OVERCURRENT_ZONE__ORANGE = 1,
-    HAILO_OVERCURRENT_PROTECTION_OVERCURRENT_ZONE__RED = 2
+    HAILO_OVERCURRENT_PROTECTION_OVERCURRENT_ZONE__GREEN = 0,
+    HAILO_OVERCURRENT_PROTECTION_OVERCURRENT_ZONE__RED = 1
 } hailo_overcurrent_protection_overcurrent_zone_t;
 
 /** Health monitor - Overcurrent alert notification message */
 typedef struct {
     hailo_overcurrent_protection_overcurrent_zone_t overcurrent_zone;
     float32_t exceeded_alert_threshold;
-    float32_t sampled_current_during_alert;
+    bool is_last_overcurrent_violation_reached;
 } hailo_health_monitor_overcurrent_alert_notification_message_t;
 
 /** Health monitor - LCU ECC error notification message */
@@ -1397,7 +1464,7 @@ typedef struct {
     bool overcurrent_protection_active;
     uint8_t current_overcurrent_zone;
     float32_t red_overcurrent_threshold;
-    float32_t orange_overcurrent_threshold;
+    bool overcurrent_throttling_active;
     bool temperature_throttling_active;
     uint8_t current_temperature_zone;
     int8_t current_temperature_throttling_level;
@@ -1406,6 +1473,8 @@ typedef struct {
     int32_t orange_hysteresis_temperature_threshold;
     int32_t red_temperature_threshold;
     int32_t red_hysteresis_temperature_threshold;
+    uint32_t requested_overcurrent_clock_freq;
+    uint32_t requested_temperature_clock_freq;
 } hailo_health_info_t;
 
 typedef struct {
@@ -1562,6 +1631,36 @@ HAILORTAPI const char* hailo_get_status_message(hailo_status status);
  */
 
 /**
+ * Returns information on all available devices in the system.
+ *
+ * @param[in] params                    Scan params, used for future compatibility, only NULL is allowed.
+ * @param[out] device_ids               Array of ::hailo_device_id_t to be fetched from vdevice.
+ * @param[inout] device_ids_length      As input - the size of @a device_ids array. As output - the number of
+ *                                      device scanned.
+ * @note ethernet devices are not considered "devices in the system", so they are not scanned in this function.
+ *       use :hailo_scan_ethernet_devices for ethernet devices.
+ * 
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_scan_devices(hailo_scan_devices_params_t *params, hailo_device_id_t *device_ids,
+    size_t *device_ids_length);
+
+/**
+ * Creates a device by the given device id.
+ * 
+ * @param[in] device_id      Device id, can represent several device types:
+ *                              [-] for pcie devices - pcie bdf (XXXX:XX:XX.X or XX:XX.X)
+ *                              [-] for ethernet devices - ip address (xxx.xxx.xxx.xxx)
+ *                           If NULL is given and there is only one available system device, use this device.
+ * @param[out] device        A pointer to a ::hailo_device that receives the allocated PCIe device.
+ * @return Upon success, returns Expected of a unique_ptr to Device object.
+ *         Otherwise, returns Unexpected of ::hailo_status error.
+ * 
+ * @note To release a device, call the ::hailo_release_device function with the returned ::hailo_device.
+ */
+HAILORTAPI hailo_status hailo_create_device_by_id(const hailo_device_id_t *device_id, hailo_device *device);
+
+/**
  * Returns information on all available pcie devices in the system.
  *
  * @param[out] pcie_device_infos         A pointer to a buffer of ::hailo_pcie_device_info_t that receives the
@@ -1635,6 +1734,16 @@ HAILORTAPI hailo_status hailo_create_ethernet_device(hailo_eth_device_info_t *de
 HAILORTAPI hailo_status hailo_release_device(hailo_device device);
 
 /**
+ * Returns the device type of the given device id string.
+ * 
+ * @param[in] device_id       A :hailo_device_id_t device id to check.
+ * @param[out] device_type    A :hailo_device_type_t returned device type.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_device_get_type_by_device_id(const hailo_device_id_t *device_id,
+    hailo_device_type_t *device_type);
+
+/**
  * Sends identify control to a Hailo device.
  *
  * @param[in] device              A ::hailo_device to be identified.
@@ -1673,7 +1782,9 @@ HAILORTAPI hailo_status hailo_set_fw_logger(hailo_device device, hailo_fw_logger
     uint32_t interface_mask);
 
 /**
- * Change throttling state of temperature protection component.
+ * Change throttling state of temperature protection and overcurrent protection components.
+ * In case that change throttling state of temperature protection didn't succeed,
+ * the change throttling state of overcurrent protection is executed.
  *
  * @param[in] device            A ::hailo_device object.
  * @param[in] should_activate   Should be true to enable or false to disable.
@@ -1682,10 +1793,11 @@ HAILORTAPI hailo_status hailo_set_fw_logger(hailo_device device, hailo_fw_logger
 HAILORTAPI hailo_status hailo_set_throttling_state(hailo_device device, bool should_activate);
 
 /**
- * Get current throttling state of temperature protection component.
+ * Get current throttling state of temperature protection and overcurrent protection components.
+ * If any throttling is enabled, the function return true.
  *
  * @param[in] device            A ::hailo_device object.
- * @param[out] is_active        A pointer to the temperature protection throttling state: true if active, false otherwise.
+ * @param[out] is_active        A pointer to the temperature protection or overcurrent protection components throttling state: true if active, false otherwise.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
  */
 HAILORTAPI hailo_status hailo_get_throttling_state(hailo_device device, bool *is_active);
@@ -1981,8 +2093,22 @@ HAILORTAPI hailo_status hailo_get_physical_devices(hailo_vdevice vdevice, hailo_
  * @param[inout] number_of_devices         As input - the size of @a devices_infos array. As output - the number of physical devices under vdevice.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  * @note The returned physical devices are held in the scope of @a vdevice.
+ * @note This function is deprecated. One should use 'hailo_vdevice_get_physical_devices_ids()'
  */
 HAILORTAPI hailo_status hailo_get_physical_devices_infos(hailo_vdevice vdevice, hailo_pcie_device_info_t *devices_infos,
+    size_t *number_of_devices) DEPRECATED("'hailo_get_physical_devices_infos' is deprecated. One should use 'hailo_vdevice_get_physical_devices_ids()'.");
+
+/**
+ * Gets the physical devices' ids from a vdevice.
+ *
+ * @param[in]  vdevice                     A @a hailo_vdevice object to fetch physical devices from.
+ * @param[out] devices_ids                 Array of ::hailo_device_id_t to be fetched from vdevice.
+ * @param[inout] number_of_devices         As input - the size of @a devices_ids array. As output - the number of
+ *                                         physical devices under vdevice.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ * @note The returned physical devices are held in the scope of @a vdevice.
+ */
+HAILORTAPI hailo_status hailo_vdevice_get_physical_devices_ids(hailo_vdevice vdevice, hailo_device_id_t *devices_ids,
     size_t *number_of_devices);
 
 /**
@@ -2027,7 +2153,7 @@ HAILORTAPI hailo_status hailo_power_measurement(hailo_device device, hailo_dvm_o
  *                                   averaging_factor samples. The sensor provides a new value every: 2 * sampling_period * averaging_factor {ms}.
  *                                   The firmware wakes up every interval_milliseconds {ms} and checks the sensor.
  *                                   If there is a new value to read from the sensor, the firmware reads it.
- *                                   Note that the average calculated by the firmware is “average of averages”,
+ *                                   Note that the average calculated by the firmware is 'average of averages',
  *                                   because it averages values that have already been averaged by the sensor.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  */
@@ -2456,6 +2582,7 @@ HAILORTAPI hailo_status hailo_get_latency_measurement(hailo_configured_network_g
  * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE, and before the creation of any vstreams.
  * @note The default timeout is 0ms.
  * @note Currently, setting the timeout for a specific network is not supported.
+ * @note The timeout may be ignored to prevent idle time from the device.
  */
 HAILORTAPI hailo_status hailo_set_scheduler_timeout(hailo_configured_network_group configured_network_group,
     uint32_t timeout_ms, const char *network_name);
@@ -2473,6 +2600,7 @@ HAILORTAPI hailo_status hailo_set_scheduler_timeout(hailo_configured_network_gro
  * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE, and before the creation of any vstreams.
  * @note The default threshold is 1.
  * @note Currently, setting the threshold for a specific network is not supported.
+ * @note The threshold may be ignored to prevent idle time from the device.
  */
 HAILORTAPI hailo_status hailo_set_scheduler_threshold(hailo_configured_network_group configured_network_group,
     uint32_t threshold, const char *network_name);
