@@ -230,7 +230,8 @@ PYBIND11_MODULE(_pyhailort, m) {
 
     py::enum_<hailo_device_architecture_t>(m, "DeviceArchitecture")
         .value("HAILO8_A0", HAILO_ARCH_HAILO8_A0)
-        .value("HAILO8_B0", HAILO_ARCH_HAILO8_B0)
+        .value("HAILO8", HAILO_ARCH_HAILO8)
+        .value("HAILO8L", HAILO_ARCH_HAILO8L)
         .value("MERCURY_CA", HAILO_ARCH_MERCURY_CA)
     ;
 
@@ -304,8 +305,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         ;
 
     py::enum_<hailo_overcurrent_protection_overcurrent_zone_t>(m, "OvercurrentAlertState")
-        .value("OVERCURRENT_ZONE_NONE", HAILO_OVERCURRENT_PROTECTION_OVERCURRENT_ZONE__NONE)
-        .value("OVERCURRENT_ZONE_ORANGE", HAILO_OVERCURRENT_PROTECTION_OVERCURRENT_ZONE__ORANGE)
+        .value("OVERCURRENT_ZONE_GREEN", HAILO_OVERCURRENT_PROTECTION_OVERCURRENT_ZONE__GREEN)
         .value("OVERCURRENT_ZONE_RED", HAILO_OVERCURRENT_PROTECTION_OVERCURRENT_ZONE__RED)
         ;
     
@@ -346,7 +346,7 @@ PYBIND11_MODULE(_pyhailort, m) {
     py::class_<hailo_health_monitor_overcurrent_alert_notification_message_t>(m, "HealthMonitorOvercurrentAlertNotificationMessage")
         .def_readonly("overcurrent_zone", &hailo_health_monitor_overcurrent_alert_notification_message_t::overcurrent_zone)
         .def_readonly("exceeded_alert_threshold", &hailo_health_monitor_overcurrent_alert_notification_message_t::exceeded_alert_threshold)
-        .def_readonly("sampled_current_during_alert", &hailo_health_monitor_overcurrent_alert_notification_message_t::sampled_current_during_alert)
+        .def_readonly("is_last_overcurrent_violation_reached", &hailo_health_monitor_overcurrent_alert_notification_message_t::is_last_overcurrent_violation_reached)
         ;
 
     py::class_<hailo_health_monitor_lcu_ecc_error_notification_message_t>(m, "HealthMonitorLcuEccErrorNotificationMessage")
@@ -771,11 +771,29 @@ PYBIND11_MODULE(_pyhailort, m) {
         });
         ;
 
-    py::class_<hailo_vdevice_params_t>(m, "VDeviceParams")
+    py::class_<VDeviceParamsWrapper>(m, "VDeviceParams")
         .def(py::init<>())
-        .def_readwrite("device_count", &hailo_vdevice_params_t::device_count)
+        .def_property("device_count",
+            [](const VDeviceParamsWrapper& params) -> uint32_t {
+                return params.orig_params.device_count;
+            },
+            [](VDeviceParamsWrapper& params, const uint32_t& device_count) {
+                params.orig_params.device_count = device_count;
+            }        
+        )
+        .def_property("group_id",
+            [](const VDeviceParamsWrapper& params) -> py::str {
+                return std::string(params.orig_params.group_id);
+            },
+            [](VDeviceParamsWrapper& params, const std::string& group_id) {
+                params.group_id_str = group_id;
+                params.orig_params.group_id = params.group_id_str.c_str();
+            }
+        )
         .def_static("default", []() {
-            return HailoRTDefaults::get_vdevice_params();
+            auto orig_params = HailoRTDefaults::get_vdevice_params();
+            VDeviceParamsWrapper params_wrapper{orig_params, ""};
+            return params_wrapper;
         });
         ;
 
@@ -844,7 +862,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_readonly("overcurrent_protection_active", &hailo_health_info_t::overcurrent_protection_active)
         .def_readonly("current_overcurrent_zone", &hailo_health_info_t::current_overcurrent_zone)
         .def_readonly("red_overcurrent_threshold", &hailo_health_info_t::red_overcurrent_threshold)
-        .def_readonly("orange_overcurrent_threshold", &hailo_health_info_t::orange_overcurrent_threshold)
+        .def_readonly("overcurrent_throttling_active", &hailo_health_info_t::overcurrent_throttling_active)
         .def_readonly("temperature_throttling_active", &hailo_health_info_t::temperature_throttling_active)
         .def_readonly("current_temperature_zone", &hailo_health_info_t::current_temperature_zone)
         .def_readonly("current_temperature_throttling_level", &hailo_health_info_t::current_temperature_throttling_level)
@@ -860,6 +878,8 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_readonly("orange_hysteresis_temperature_threshold", &hailo_health_info_t::orange_hysteresis_temperature_threshold)
         .def_readonly("red_temperature_threshold", &hailo_health_info_t::red_temperature_threshold)
         .def_readonly("red_hysteresis_temperature_threshold", &hailo_health_info_t::red_hysteresis_temperature_threshold)
+        .def_readonly("requested_overcurrent_clock_freq", &hailo_health_info_t::requested_overcurrent_clock_freq)
+        .def_readonly("requested_temperature_clock_freq", &hailo_health_info_t::requested_temperature_clock_freq)
         ;
 
     py::class_<hailo_extended_device_information_t>(m, "ExtendedDeviceInformation")
@@ -922,10 +942,6 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("CPU1", HAILO_CPU_ID_1)
         ;
 
-    py::enum_<hailo_bootloader_version_t>(m, "BootloaderVersion")
-        .value("UNSIGNED", BOOTLOADER_VERSION_HAILO8_B0_UNSIGNED)
-        .value("SIGNED", BOOTLOADER_VERSION_HAILO8_B0_SIGNED)
-        ;
 
     py::class_<uint32_t>(m, "HailoRTDefaults")
         .def_static("HAILO_INFINITE", []() { return HAILO_INFINITE;} )
@@ -934,6 +950,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_static("DEVICE_BASE_INPUT_STREAM_PORT", []() { return HailoRTCommon::ETH_INPUT_BASE_PORT;} )
         .def_static("DEVICE_BASE_OUTPUT_STREAM_PORT", []() { return HailoRTCommon::ETH_OUTPUT_BASE_PORT;} )
         .def_static("PCIE_ANY_DOMAIN", []() { return HAILO_PCIE_ANY_DOMAIN;} )
+        .def_static("HAILO_UNIQUE_VDEVICE_GROUP_ID", []() { return std::string(HAILO_UNIQUE_VDEVICE_GROUP_ID); } )
         ;
 
     py::class_<hailo_network_group_info_t>(m, "NetworkGroupInfo", py::module_local())

@@ -18,8 +18,7 @@ BenchmarkCommand::BenchmarkCommand(CLI::App &parent_app) :
     Command(parent_app.add_subcommand("benchmark", "Measure basic performance on compiled network")),
     m_params({})
 {
-    add_device_options(m_app, m_params.device_params);
-    add_vdevice_options(m_app, m_params.device_params);
+    add_vdevice_options(m_app, m_params.vdevice_params);
     m_params.measure_overall_latency = false;
     m_params.power_measurement.measure_current = false;
     m_params.show_progress = true;
@@ -56,7 +55,7 @@ BenchmarkCommand::BenchmarkCommand(CLI::App &parent_app) :
 
     // TODO HRT-5363 support multiple devices
     m_app->parse_complete_callback([this]() {
-        PARSE_CHECK((this->m_params.device_params.vdevice_params.device_count == 1) || this->m_csv_file_path.empty() || this->m_not_measure_power,
+        PARSE_CHECK((m_params.vdevice_params.device_count == 1) || m_csv_file_path.empty() || m_not_measure_power,
             "Writing power measurements in csv format is not supported for multiple devices");
     });
 }

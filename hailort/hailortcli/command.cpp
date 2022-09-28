@@ -41,35 +41,21 @@ DeviceCommand::DeviceCommand(CLI::App *app) :
 
 hailo_status DeviceCommand::execute()
 {
-    if ((DeviceType::PCIE == m_device_params.device_type ) &&
-        ("*" == m_device_params.pcie_params.pcie_bdf)) {
-        return execute_on_all_pcie_devices();
+    auto devices = create_devices(m_device_params);
+    if (!devices) {
+        return devices.status();
     }
-    auto device = create_device(m_device_params);
-    if (!device) {
-        return device.status();
-    }
-
-    return execute_on_device(*device.value());
+    return execute_on_devices(devices.value());
 }
 
-hailo_status DeviceCommand::execute_on_all_pcie_devices()
+hailo_status DeviceCommand::execute_on_devices(std::vector<std::unique_ptr<Device>> &devices)
 {
     auto status = HAILO_SUCCESS; // Best effort
-    auto all_devices_infos = Device::scan_pcie();
-    if (!all_devices_infos) {
-        return all_devices_infos.status();
-    }
-    for (auto &dev_info : all_devices_infos.value()) {
-        auto device = Device::create_pcie(dev_info);
-        if (!device) {
-            return device.status();
-        }
-        std::cout << "Executing on device: " << device.value()->get_dev_id() << std::endl;
-
-        auto execute_status = execute_on_device(*device.value());
+    for (auto &device : devices) {
+        std::cout << "Executing on device: " << device->get_dev_id() << std::endl;
+        auto execute_status = execute_on_device(*device);
         if (HAILO_SUCCESS != execute_status) {
-            std::cerr << "Failed to execute on device: " << device.value()->get_dev_id() << ". status= " << execute_status << std::endl;
+            std::cerr << "Failed to execute on device: " << device->get_dev_id() << ". status= " << execute_status << std::endl;
             status = execute_status;
         }
     }

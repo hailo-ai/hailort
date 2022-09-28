@@ -160,7 +160,7 @@ Expected<firmware_type_t> DeviceBase::get_fw_type()
     const auto architecture = get_architecture();
     CHECK_EXPECTED(architecture);
 
-    if (architecture.value() == HAILO_ARCH_HAILO8_B0) {
+    if ((architecture.value() == HAILO_ARCH_HAILO8) || (architecture.value() == HAILO_ARCH_HAILO8L)) {
         firmware_type = FIRMWARE_TYPE_HAILO8;
     }
     else if (architecture.value() == HAILO_ARCH_MERCURY_CA || architecture.value() == HAILO_ARCH_MERCURY_VPU) {
@@ -595,13 +595,20 @@ hailo_status DeviceBase::check_hef_is_compatible(Hef &hef)
     }
 
     // TODO: MSW-227 check clock rate for mercury as well.
-    if (HAILO_ARCH_HAILO8_B0 == device_arch.value()) {
+    if ((HAILO_ARCH_HAILO8 == device_arch.value()) || (HAILO_ARCH_HAILO8L == device_arch.value())) {
         auto extended_device_info_expected = Control::get_extended_device_information(*this);
         CHECK_EXPECTED_AS_STATUS(extended_device_info_expected,  "Can't get device extended info");
         hailo_extended_device_information_t extended_device_information = extended_device_info_expected.release();
         check_clock_rate_for_hailo8(extended_device_information.neural_network_core_clock_rate,
             hef.pimpl->get_device_arch());
     }
+
+    if ((ProtoHEFHwArch::PROTO__HW_ARCH__HAILO8L == hef.pimpl->get_device_arch()) && (HAILO_ARCH_HAILO8 == device_arch.value())) {
+        LOGGER__WARNING(
+            "HEF was compiled for Hailo8L device, while the device itself is Hailo8. " \
+            "This will result in lower performance.");
+    }
+
 
     return HAILO_SUCCESS;
 }
@@ -689,8 +696,10 @@ hailo_status DeviceBase::validate_fw_version_for_platform(const hailo_device_ide
 bool DeviceBase::is_hef_compatible(hailo_device_architecture_t device_arch, ProtoHEFHwArch hef_arch)
 {
     switch (device_arch) {
-    case HAILO_ARCH_HAILO8_B0:
-        return (hef_arch == PROTO__HW_ARCH__HAILO8P) || (hef_arch == PROTO__HW_ARCH__HAILO8R);
+    case HAILO_ARCH_HAILO8:
+        return (hef_arch == PROTO__HW_ARCH__HAILO8P) || (hef_arch == PROTO__HW_ARCH__HAILO8R) || (hef_arch == PROTO__HW_ARCH__HAILO8L);
+    case HAILO_ARCH_HAILO8L:
+        return (hef_arch == PROTO__HW_ARCH__HAILO8L);
     case HAILO_ARCH_MERCURY_CA:
     case HAILO_ARCH_MERCURY_VPU:
         return (hef_arch == PROTO__HW_ARCH__MERCURY) || (hef_arch == PROTO__HW_ARCH__GINGER) ||
@@ -702,7 +711,7 @@ bool DeviceBase::is_hef_compatible(hailo_device_architecture_t device_arch, Prot
 
 void DeviceBase::check_clock_rate_for_hailo8(uint32_t clock_rate, ProtoHEFHwArch hef_hw_arch)
 {
-    uint32_t expected_clock_rate = (hef_hw_arch == ProtoHEFHwArch::PROTO__HW_ARCH__HAILO8P) ? HAILO8_CLOCK_RATE : HAILO8R_CLOCK_RATE;
+    uint32_t expected_clock_rate = (hef_hw_arch == ProtoHEFHwArch::PROTO__HW_ARCH__HAILO8R) ? HAILO8R_CLOCK_RATE : HAILO8_CLOCK_RATE;
     if (expected_clock_rate != clock_rate) {
         LOGGER__WARNING(
             "HEF was compiled assuming clock rate of {} MHz, while the device clock rate is {} MHz. " \

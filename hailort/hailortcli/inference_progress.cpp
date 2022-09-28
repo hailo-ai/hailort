@@ -65,6 +65,7 @@ void InferProgress::finish(bool should_print_progress)
 
 void InferProgress::print_progress(bool should_reset_cursor)
 {
+    std::unique_lock<std::mutex> lock(m_mutex);
     for (auto &network_progress_bar : m_networks_progress) {
         std::cout << network_progress_bar->get_progress_text() << std::endl;
     }

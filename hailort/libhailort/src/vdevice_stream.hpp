@@ -38,7 +38,7 @@ public:
     virtual ~VDeviceInputStream();
 
     static Expected<std::shared_ptr<VDeviceInputStream>> create(std::vector<std::shared_ptr<ResourcesManager>> &resources_managers,
-        const LayerInfo &edge_layer, const std::string &stream_name, const network_group_handle_t &network_group_handle, EventPtr network_group_activated_event,
+        const LayerInfo &edge_layer, const std::string &stream_name, const scheduler_ng_handle_t &network_group_handle, EventPtr network_group_activated_event,
         NetworkGroupSchedulerWeakPtr network_group_scheduler);
 
     virtual hailo_status activate_stream(uint16_t dynamic_batch_size) override;
@@ -51,6 +51,8 @@ public:
     virtual bool is_scheduled() override;
 
     virtual Expected<PendingBufferState> send_pending_buffer() override;
+    virtual Expected<size_t> get_buffer_frames_size() const override;
+    virtual Expected<size_t> get_pending_frames_count() const override;
 
 protected:
     virtual Expected<size_t> sync_write_raw_buffer(const MemoryView &buffer) override;
@@ -62,7 +64,7 @@ private:
     explicit VDeviceInputStream(
         std::vector<VdmaDevice*> devices,
         std::vector<std::unique_ptr<VdmaInputStream>> &&streams,
-        const network_group_handle_t &network_group_handle,
+        const scheduler_ng_handle_t &network_group_handle,
         EventPtr &&network_group_activated_event,
         const LayerInfo &layer_info,
         NetworkGroupSchedulerWeakPtr network_group_scheduler,
@@ -79,17 +81,17 @@ private:
             m_stream_interface(stream_interface)
     {}
 
-    Expected<size_t> sync_write_raw_buffer_impl(const MemoryView &buffer, network_group_handle_t network_group_handle);
-    hailo_status abort_impl(network_group_handle_t network_group_handle);
-    hailo_status clear_abort_impl(network_group_handle_t network_group_handle);
+    Expected<size_t> sync_write_raw_buffer_impl(const MemoryView &buffer, scheduler_ng_handle_t network_group_handle);
+    hailo_status abort_impl(scheduler_ng_handle_t network_group_handle);
+    hailo_status clear_abort_impl(scheduler_ng_handle_t network_group_handle);
     virtual hailo_status flush() override;
 
     static Expected<std::shared_ptr<VDeviceInputStream>> create_input_stream_from_net_group(
         std::vector<std::shared_ptr<ResourcesManager>> &resources_managers,
-        const LayerInfo &edge_layer, const std::string &stream_name, const network_group_handle_t &network_group_handle,
+        const LayerInfo &edge_layer, const std::string &stream_name, const scheduler_ng_handle_t &network_group_handle,
         EventPtr &&network_group_activated_event, NetworkGroupSchedulerWeakPtr network_group_scheduler);
 
-    network_group_handle_t m_network_group_handle;
+    scheduler_ng_handle_t m_network_group_handle;
     NetworkGroupSchedulerWeakPtr m_network_group_scheduler;
     std::vector<VdmaDevice*> m_devices;
     std::vector<std::unique_ptr<VdmaInputStream>> m_streams;
@@ -116,7 +118,7 @@ public:
     virtual ~VDeviceOutputStream();
 
     static Expected<std::unique_ptr<VDeviceOutputStream>> create(std::vector<std::shared_ptr<ResourcesManager>> &resources_managers,
-        const LayerInfo &edge_layer, const std::string &stream_name, const network_group_handle_t &network_group_handle,
+        const LayerInfo &edge_layer, const std::string &stream_name, const scheduler_ng_handle_t &network_group_handle,
         EventPtr network_group_activated_event, NetworkGroupSchedulerWeakPtr network_group_scheduler);
 
     virtual hailo_status activate_stream(uint16_t dynamic_batch_size) override;
@@ -127,6 +129,17 @@ public:
     virtual hailo_status abort() override;
     virtual hailo_status clear_abort() override;
     virtual bool is_scheduled() override;
+    virtual Expected<size_t> get_buffer_frames_size() const override;
+    virtual Expected<size_t> get_pending_frames_count() const override;
+
+    virtual hailo_status register_for_d2h_interrupts(const std::function<void(uint32_t)> &callback) override
+    {
+        for (auto &stream : m_streams) {
+            auto status = stream->register_for_d2h_interrupts(callback);
+            CHECK_SUCCESS(status);
+        }
+        return HAILO_SUCCESS;
+    }
 
 protected:
     virtual Expected<size_t> sync_read_raw_buffer(MemoryView &buffer) override;
@@ -137,7 +150,7 @@ private:
     explicit VDeviceOutputStream(
         std::vector<VdmaDevice*> devices,
         std::vector<std::unique_ptr<VdmaOutputStream>> &&streams,
-        const network_group_handle_t &network_group_handle,
+        const scheduler_ng_handle_t &network_group_handle,
         const LayerInfo &layer_info,
         EventPtr &&network_group_activated_event,
         NetworkGroupSchedulerWeakPtr network_group_scheduler,
@@ -154,18 +167,18 @@ private:
             m_stream_interface(stream_interface)
     {}
 
-    hailo_status abort_impl(network_group_handle_t network_group_handle);
-    hailo_status clear_abort_impl(network_group_handle_t network_group_handle);
+    hailo_status abort_impl(scheduler_ng_handle_t network_group_handle);
+    hailo_status clear_abort_impl(scheduler_ng_handle_t network_group_handle);
     virtual hailo_status read_all(MemoryView &buffer) override;
     virtual hailo_status read(MemoryView buffer) override;
-    hailo_status read_impl(MemoryView buffer, network_group_handle_t network_group_handle);
+    hailo_status read_impl(MemoryView buffer, scheduler_ng_handle_t network_group_handle);
     
     static Expected<std::unique_ptr<VDeviceOutputStream>> create_output_stream_from_net_group(
         std::vector<std::shared_ptr<ResourcesManager>> &resources_managers, const LayerInfo &edge_layer,
-        const std::string &stream_name, const network_group_handle_t &network_group_handle, EventPtr &&network_group_activated_event,
+        const std::string &stream_name, const scheduler_ng_handle_t &network_group_handle, EventPtr &&network_group_activated_event,
         NetworkGroupSchedulerWeakPtr network_group_scheduler);
 
-    network_group_handle_t m_network_group_handle;
+    scheduler_ng_handle_t m_network_group_handle;
     NetworkGroupSchedulerWeakPtr m_network_group_scheduler;
     std::vector<VdmaDevice*> m_devices;
     std::vector<std::unique_ptr<VdmaOutputStream>> m_streams;

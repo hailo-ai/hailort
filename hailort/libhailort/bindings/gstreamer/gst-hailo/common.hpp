@@ -48,7 +48,7 @@ using namespace hailort;
 #define DEFAULT_VDEVICE_KEY (0)
 #define MIN_VALID_VDEVICE_KEY (1)
 
-#define HAILO_SUPPORTED_FORMATS "{ RGB, YUY2 }"
+#define HAILO_SUPPORTED_FORMATS "{ RGB, RGBA, YUY2 }"
 #define HAILO_VIDEO_CAPS GST_VIDEO_CAPS_MAKE(HAILO_SUPPORTED_FORMATS)
 
 #define HAILO_DEFAULT_SCHEDULER_TIMEOUT_MS (0)
@@ -67,6 +67,14 @@ using namespace hailort;
         if (HAILO_SUCCESS != (status)) {                  \
             GST_ELEMENT_ERROR((element), domain, FAILED, (__VA_ARGS__), (NULL)); \
             return (status);           \
+        }                               \
+    } while(0)
+
+#define GST_CHECK_SUCCESS_AS_EXPECTED(status, element, domain, ...)      \
+    do {                                \
+        if (HAILO_SUCCESS != (status)) {                  \
+            GST_ELEMENT_ERROR((element), domain, FAILED, (__VA_ARGS__), (NULL)); \
+            return make_unexpected(status);           \
         }                               \
     } while(0)
 

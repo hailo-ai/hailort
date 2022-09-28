@@ -87,7 +87,7 @@ static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
     TRANSPOSE_COMPONENT,
     IS_NMS_MULTI_CONTEXT,
     OFFLOAD_ARGMAX,
-    PRELIMINARY_RUN_ASAP // Extention added in platform 4.8 release
+    KO_RUN_ASAP // Extention added in platform 4.8 release
 };
 
 struct HefParsingInfo
@@ -105,6 +105,8 @@ struct NetworkGroupSupportedFeatures {
     bool multi_context;
     bool preliminary_run_asap;
 };
+
+static uint32_t PARTIAL_CLUSTERS_LAYOUT_IGNORE = static_cast<uint32_t>(-1);
 
 static inline bool is_h2d_boundary_info_layer(const ProtoHEFEdgeLayer& layer)
 {
@@ -151,6 +153,7 @@ class HailoRTDriver;
 
 class NetworkGroupMetadata {
 public:
+    NetworkGroupMetadata() = default;
     NetworkGroupMetadata(const std::string &network_group_name,
         std::vector<std::vector<LayerInfo>> &&boundary_input_layers,
         std::vector<std::vector<LayerInfo>> &&boundary_output_layers,
@@ -230,6 +233,33 @@ private:
     std::vector<std::string> m_sorted_network_names;
 };
 
+class NetworkGroupMetadataPerArch
+{
+public:
+    NetworkGroupMetadataPerArch() = default;
+    Expected<NetworkGroupMetadata> get_metadata(uint32_t partial_clusters_layout_bitmap)
+    {
+        if (PARTIAL_CLUSTERS_LAYOUT_IGNORE == partial_clusters_layout_bitmap) {
+            // Passing PARTIAL_CLUSTERS_LAYOUT_IGNORE is magic for getting one of the metadata
+            assert(0 != m_metadata_per_arch.size());
+            auto result = m_metadata_per_arch.begin()->second;
+            return result;
+        }
+        if (contains(m_metadata_per_arch, partial_clusters_layout_bitmap)) {
+            auto result = m_metadata_per_arch[partial_clusters_layout_bitmap];
+            return result;
+        }
+        LOGGER__ERROR("NetworkGroupMetadataPerArch does not contain metadata for partial_clusters_layout_bitmap {}", partial_clusters_layout_bitmap);
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
+    }
+    void add_metadata(const NetworkGroupMetadata &metadata, uint32_t partial_clusters_layout_bitmap)
+    {
+        m_metadata_per_arch[partial_clusters_layout_bitmap] = metadata;
+    }
+private:
+    std::map<uint32_t, NetworkGroupMetadata> m_metadata_per_arch;
+};
+
 class Hef::Impl final
 {
 public:
@@ -267,7 +297,7 @@ public:
     ProtoHEFHwArch get_device_arch();
     Expected<float64_t> get_bottleneck_fps(const std::string &net_group_name="");
     static bool contains_ddr_layers(const ProtoHEFNetworkGroup& net_group);
-    static hailo_status validate_net_group_unique_layer_names(ProtoHEFNetworkGroupPtr net_group);
+    static hailo_status validate_net_group_unique_layer_names(const ProtoHEFNetworkGroup &net_group);
     Expected<std::vector<hailo_vstream_info_t>> get_network_input_vstream_infos(const std::string &net_group_name="",
         const std::string &network_name="");
 
@@ -293,7 +323,7 @@ public:
 
     /* TODO HRT-5067 - work with hailo_device_architecture_t instead of ProtoHEFHwArch */
     static Expected<std::shared_ptr<ResourcesManager>> create_resources_manager(
-        ProtoHEFNetworkGroupPtr network_group_proto, uint8_t net_group_index,
+        const ProtoHEFNetworkGroup &network_group_proto, uint8_t net_group_index,
         VdmaDevice &device, HailoRTDriver &driver, const ConfigureNetworkParams &network_group_params,
         std::shared_ptr<NetworkGroupMetadata> network_group_metadata,
         const ProtoHEFHwArch &hw_arch);
@@ -324,13 +354,23 @@ public:
         std::vector<hailo_vstream_info_t> &name_to_format_info, bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms,
         uint32_t queue_size);
 
-    Expected<NetworkGroupMetadata> get_network_group_metadata(const std::string &network_group_name)
+    Expected<NetworkGroupMetadata> get_network_group_metadata(const std::string &network_group_name, uint32_t partial_clusters_layout_bitmap = PARTIAL_CLUSTERS_LAYOUT_IGNORE)
     {
-        CHECK_AS_EXPECTED(contains(m_network_group_metadata, network_group_name), HAILO_NOT_FOUND,
+        CHECK_AS_EXPECTED(contains(m_network_group_metadata_per_arch, network_group_name), HAILO_NOT_FOUND,
             "Network group with name {} wasn't found", network_group_name);
-        auto metadata = m_network_group_metadata.at(network_group_name);
+        auto metadata_per_arch = m_network_group_metadata_per_arch.at(network_group_name);
+        auto metadata = metadata_per_arch.get_metadata(partial_clusters_layout_bitmap);
         return metadata;
     }
+
+    const MD5_SUM_t &md5() const
+    {
+        return m_md5;
+    }
+
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+    const MemoryView get_hef_memview();
+#endif // HAILO_SUPPORT_MULTI_PROCESS
 
 private:
     Impl(const std::string &hef_path, hailo_status &status);
@@ -341,6 +381,7 @@ private:
     hailo_status transfer_protobuf_field_ownership(ProtoHEFHef &hef_message);
     hailo_status fill_networks_metadata();
     void fill_extensions_bitset();
+    void init_md5(MD5_SUM_t &calculated_md5);
 
     static bool check_hef_extension(const ProtoHEFExtensionType &extension, const ProtoHEFHeader &header,
         const std::vector<ProtoHEFExtension> &hef_extensions, const ProtoHEFIncludedFeatures &included_features);
@@ -353,7 +394,7 @@ private:
 
     hailo_status validate_hef_extensions();
     static hailo_status validate_hef_header(const hef__header_t &header, MD5_SUM_t &calculated_md5, size_t proto_size);
-    static Expected<HefParsingInfo> get_parsing_info(ProtoHEFNetworkGroupPtr net_group);
+    static Expected<HefParsingInfo> get_parsing_info(const ProtoHEFNetworkGroup &net_group);
 
     Expected<std::map<std::string, hailo_format_t>> get_inputs_vstream_names_and_format_info(
         const std::string &net_group_name, const std::string &network_name);
@@ -363,6 +404,8 @@ private:
     static Expected<std::string> get_vstream_name_from_original_name_mux(const std::string &original_name, const ProtoHefEdge &layer);
     static Expected<std::vector<std::string>> get_original_names_from_vstream_name_mux(const std::string &vstream_name, const ProtoHefEdge &layer);
 
+    Expected<NetworkGroupMetadata> create_metadata_per_arch(const ProtoHEFNetworkGroup &network_group, NetworkGroupSupportedFeatures &supported_features);
+
     // Hef information
     ProtoHEFHeader m_header;
     ProtoHEFIncludedFeatures m_included_features;
@@ -370,9 +413,14 @@ private:
     std::vector<ProtoHEFExtension> m_hef_extensions;
     std::vector<ProtoHEFOptionalExtension> m_hef_optional_extensions;
     std::bitset<SUPPORTED_EXTENSIONS_BITSET_SIZE> m_supported_extensions_bitset;
+    MD5_SUM_t m_md5;
+
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+    Buffer m_hef_buffer;
+#endif // HAILO_SUPPORT_MULTI_PROCESS
 
     // NetworkGroups information
-    std::map<std::string, NetworkGroupMetadata> m_network_group_metadata;
+    std::map<std::string, NetworkGroupMetadataPerArch> m_network_group_metadata_per_arch;
 };
 
 // TODO: Make this part of a namespace? (HRT-2881)
@@ -824,8 +872,8 @@ private:
 class DdrPairInfoAction : public ContextSwitchConfigAction
 {
 public:
-    static Expected<ContextSwitchConfigActionPtr> create(uint8_t h2d_channel_index, uint8_t d2h_channel_index,
-                                                         uint32_t descriptors_per_frame, uint16_t descs_count);
+    static Expected<ContextSwitchConfigActionPtr> create(const vdma::ChannelId &h2d_channel_id,
+        const vdma::ChannelId &d2h_channel_id, uint32_t descriptors_per_frame, uint16_t descs_count);
     DdrPairInfoAction(DdrPairInfoAction &&) = default;
     DdrPairInfoAction(const DdrPairInfoAction &) = delete;
     DdrPairInfoAction &operator=(DdrPairInfoAction &&) = delete;
@@ -837,11 +885,11 @@ public:
     virtual bool supports_repeated_block() const override;
 
 private:
-    DdrPairInfoAction(uint8_t h2d_channel_index, uint8_t d2h_channel_index, uint32_t descriptors_per_frame,
-        uint16_t descs_count);
+    DdrPairInfoAction(const vdma::ChannelId &h2d_channel_id, const vdma::ChannelId &d2h_channel_id,
+        uint32_t descriptors_per_frame, uint16_t descs_count);
 
-    const uint8_t m_h2d_channel_index;
-    const uint8_t m_d2h_channel_index;
+    const vdma::ChannelId m_h2d_channel_id;
+    const vdma::ChannelId m_d2h_channel_id;
     const uint32_t m_descriptors_per_frame;
     const uint16_t m_descs_count;
 };

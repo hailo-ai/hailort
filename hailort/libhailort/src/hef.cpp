@@ -17,6 +17,7 @@
 #include "common/utils.hpp"
 #include "hailo/hailort_common.hpp"
 #include "hailort_defaults.hpp"
+#include "common/string_utils.hpp"
 
 #include "hlpcie.hpp"
 #include "pcie_device.hpp"
@@ -65,17 +66,29 @@ typedef struct {
 } CcwHeader;
 #pragma pack(pop)
 
-typedef struct {
-    std::set<uint8_t> D2H_channels_in_use;
-    std::set<uint8_t> H2D_channels_in_use;
-} ContextSwitchChannelsParsingInfo;
+bool ConfigureNetworkParams::operator==(const ConfigureNetworkParams &other)
+{
+    for (auto &name_param_pair : network_params_by_name) {
+        if ((other.network_params_by_name.find(name_param_pair.first) == other.network_params_by_name.end()) ||
+                (name_param_pair.second.batch_size != other.network_params_by_name.at(name_param_pair.first).batch_size) ) {
+            return false;
+        }
+    }
+    return (batch_size == other.batch_size) && (power_mode == other.power_mode) && (latency == other.latency);
+}
+
+bool ConfigureNetworkParams::operator!=(const ConfigureNetworkParams &other)
+{
+    return !(*this == other);
+}
+
 
 // Note: Can't add the definition in the header. This will lead to the following error:
-//       /usr/include/c++/7/bits/unique_ptr.h: In instantiation of ‘void std::default_delete<_Tp>::operator()(_Tp*) const [with _Tp = Hef::Impl]’:
-//       /usr/include/c++/7/bits/unique_ptr.h:263:17:   required from ‘std::unique_ptr<_Tp, _Dp>::~unique_ptr() [with _Tp = Hef::Impl; _Dp = std::default_delete<Hef::Impl>]’
-//       /local/users/projects/platform-sw/hailort/libhailort/src/../include/hailo/hef.hpp:61:7:   required from ‘Expected<T>::~Expected() [with T = Hef]’
+//       /usr/include/c++/7/bits/unique_ptr.h: In instantiation of 'void std::default_delete<_Tp>::operator()(_Tp*) const [with _Tp = Hef::Impl]':
+//       /usr/include/c++/7/bits/unique_ptr.h:263:17:   required from 'std::unique_ptr<_Tp, _Dp>::~unique_ptr() [with _Tp = Hef::Impl; _Dp = std::default_delete<Hef::Impl>]'
+//       /local/users/projects/platform-sw/hailort/libhailort/src/../include/hailo/hef.hpp:61:7:   required from 'Expected<T>::~Expected() [with T = Hef]'
 //       /local/users/projects/platform-sw/hailort/hailortcli/run_command.cpp:705:51:   required from here
-//       /usr/include/c++/7/bits/unique_ptr.h:76:22: error: invalid application of ‘sizeof’ to incomplete type ‘Hef::Impl’
+//       /usr/include/c++/7/bits/unique_ptr.h:76:22: error: invalid application of 'sizeof' to incomplete type 'Hef::Impl'
 //         static_assert(sizeof(_Tp)>0,
 Hef::~Hef() = default;
 Hef::Hef(Hef &&) = default;
@@ -317,8 +330,19 @@ hailo_status Hef::Impl::validate_hef_extensions()
     return HAILO_SUCCESS;
 }
 
+void Hef::Impl::init_md5(MD5_SUM_t &calculated_md5)
+{
+    memcpy(m_md5, calculated_md5, sizeof(m_md5));
+}
+
 hailo_status Hef::Impl::parse_hef_file(const std::string &hef_path)
 {
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+    auto hef_buffer = read_binary_file(hef_path);
+    CHECK_EXPECTED_AS_STATUS(hef_buffer);
+    m_hef_buffer = hef_buffer.release();
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+
     auto hef_file = std::ifstream(hef_path, std::ios::in | std::ios::binary);
     CHECK(hef_file.is_open(), HAILO_OPEN_FILE_FAILURE, "Failed to open HEF file \"{}\". errno: {}", hef_path, errno);
 
@@ -335,6 +359,8 @@ hailo_status Hef::Impl::parse_hef_file(const std::string &hef_path)
 
     status = validate_hef_header(header, calculated_md5, proto_size.value());
     CHECK_SUCCESS(status);
+
+    init_md5(calculated_md5);
 
     ProtoHEFHef hef_message;
     auto rb = hef_message.ParseFromIstream(&hef_file);
@@ -354,6 +380,12 @@ hailo_status Hef::Impl::parse_hef_file(const std::string &hef_path)
 
 hailo_status Hef::Impl::parse_hef_memview(const MemoryView &hef_memview)
 {
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+    auto hef_buffer = Buffer::create(hef_memview.data(), hef_memview.size());
+    CHECK_EXPECTED_AS_STATUS(hef_buffer);
+    m_hef_buffer = hef_buffer.release();
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+
     CHECK(hef_memview.size() >= sizeof(hef__header_t), HAILO_INVALID_HEF, "Invalid HEF header");
     const hef__header_t &header = reinterpret_cast<const hef__header_t&>(*hef_memview.data());
 
@@ -368,6 +400,8 @@ hailo_status Hef::Impl::parse_hef_memview(const MemoryView &hef_memview)
 
     auto status = validate_hef_header(header, calculated_md5, proto_size);
     CHECK_SUCCESS(status);
+
+    init_md5(calculated_md5);
 
     ProtoHEFHef hef_message;
     auto rb = hef_message.ParseFromArray(proto_buffer, static_cast<int>(proto_size));
@@ -391,51 +425,67 @@ hailo_status Hef::Impl::fill_networks_metadata()
     auto supported_features = get_supported_features(m_header, m_hef_extensions, m_included_features,
         m_hef_optional_extensions);
 
+    NetworkGroupMetadataPerArch metadata;
+    uint32_t partial_clusters_layout_bitmap = 0;
+    std::string network_group_name;
+
     for (auto &network_group : m_groups) {
-
-        CHECK(!contains(m_network_group_metadata,
-            network_group->network_group_metadata().network_group_name()),
-            HAILO_INVALID_OPERATION, "Network group with the name {} is already configured on the device",
-            network_group->network_group_metadata().network_group_name());
-
-
-        std::vector<std::vector<LayerInfo>> boundary_input_layers;
-        std::vector<std::vector<LayerInfo>> boundary_output_layers;
-        std::vector<std::vector<InterContextLayerInfo>> inter_context_input_layers;
-        std::vector<std::vector<InterContextLayerInfo>> inter_context_output_layers;
-        std::vector<std::vector<DdrLayerInfo>> ddr_input_layers;
-        std::vector<std::vector<DdrLayerInfo>> ddr_output_layers;
-        auto status = HefUtils::get_all_layers_info(*network_group, supported_features, 
-            boundary_input_layers, boundary_output_layers,
-            inter_context_input_layers, inter_context_output_layers,
-            ddr_input_layers, ddr_output_layers);
-        CHECK_SUCCESS(status);
-
-        auto sorted_output_names = HefUtils::get_sorted_output_names(*network_group);
-        CHECK_EXPECTED_AS_STATUS(sorted_output_names);
-
-        std::vector<std::string> sorted_network_names;
-        if (supported_features.multi_network_support) {
-            sorted_network_names.reserve(network_group->networks_names().size());
-            for (auto &partial_network_name : network_group->networks_names()) {
-                auto network_name = HefUtils::get_network_name(*network_group, partial_network_name);
-                sorted_network_names.push_back(network_name);
+        if (ProtoHEFHwArch::PROTO__HW_ARCH__HAILO8L == get_device_arch()) {
+            for (auto &partial_network_group : network_group->partial_network_groups()) {
+                partial_clusters_layout_bitmap = partial_network_group.layout().partial_clusters_layout_bitmap();
+                network_group_name = partial_network_group.network_group().network_group_metadata().network_group_name();                
+                auto metadata_per_arch = create_metadata_per_arch(partial_network_group.network_group(), supported_features);
+                CHECK_EXPECTED_AS_STATUS(metadata_per_arch);
+                metadata.add_metadata(metadata_per_arch.release(), partial_clusters_layout_bitmap);
             }
         } else {
-            sorted_network_names.push_back(HailoRTDefaults::get_network_name(network_group->network_group_metadata().network_group_name()));
+            partial_clusters_layout_bitmap = PARTIAL_CLUSTERS_LAYOUT_IGNORE;
+            network_group_name = network_group->network_group_metadata().network_group_name();
+            auto metadata_per_arch = create_metadata_per_arch(*network_group, supported_features);
+            CHECK_EXPECTED_AS_STATUS(metadata_per_arch);
+            metadata.add_metadata(metadata_per_arch.release(), partial_clusters_layout_bitmap);
         }
+        CHECK(!contains(m_network_group_metadata_per_arch, network_group_name),
+            HAILO_INVALID_OPERATION, "Network group with the name {} is already configured on the device", network_group_name);
+        m_network_group_metadata_per_arch.emplace(network_group_name, metadata);        
+    }
+    return HAILO_SUCCESS;
+}
 
-        NetworkGroupMetadata metadata(network_group->network_group_metadata().network_group_name(),
-            std::move(boundary_input_layers), std::move(boundary_output_layers), 
-            std::move(inter_context_input_layers), std::move(inter_context_output_layers), 
-            std::move(ddr_input_layers), std::move(ddr_output_layers), 
-            sorted_output_names.release(), supported_features, sorted_network_names);
+Expected<NetworkGroupMetadata> Hef::Impl::create_metadata_per_arch(const ProtoHEFNetworkGroup &network_group, NetworkGroupSupportedFeatures &supported_features)
+{
+    std::vector<std::vector<LayerInfo>> boundary_input_layers;
+    std::vector<std::vector<LayerInfo>> boundary_output_layers;
+    std::vector<std::vector<InterContextLayerInfo>> inter_context_input_layers;
+    std::vector<std::vector<InterContextLayerInfo>> inter_context_output_layers;
+    std::vector<std::vector<DdrLayerInfo>> ddr_input_layers;
+    std::vector<std::vector<DdrLayerInfo>> ddr_output_layers;
+    auto status = HefUtils::get_all_layers_info(network_group, supported_features, 
+        boundary_input_layers, boundary_output_layers,
+        inter_context_input_layers, inter_context_output_layers,
+        ddr_input_layers, ddr_output_layers);
+    CHECK_SUCCESS_AS_EXPECTED(status);
 
-        m_network_group_metadata.emplace(
-            network_group->network_group_metadata().network_group_name(), metadata);
+    auto sorted_output_names = HefUtils::get_sorted_output_names(network_group);
+    CHECK_EXPECTED(sorted_output_names);
+
+    std::vector<std::string> sorted_network_names;
+    if (supported_features.multi_network_support) {
+        sorted_network_names.reserve(network_group.networks_names().size());
+        for (auto &partial_network_name : network_group.networks_names()) {
+            auto network_name = HefUtils::get_network_name(network_group, partial_network_name);
+            sorted_network_names.push_back(network_name);
+        }
+    } else {
+        sorted_network_names.push_back(HailoRTDefaults::get_network_name(network_group.network_group_metadata().network_group_name()));
     }
 
-    return HAILO_SUCCESS;
+    NetworkGroupMetadata metadata_per_arch(network_group.network_group_metadata().network_group_name(),
+        std::move(boundary_input_layers), std::move(boundary_output_layers), 
+        std::move(inter_context_input_layers), std::move(inter_context_output_layers), 
+        std::move(ddr_input_layers), std::move(ddr_output_layers), 
+        sorted_output_names.release(), supported_features, sorted_network_names);
+    return metadata_per_arch;
 }
 
 hailo_status Hef::Impl::transfer_protobuf_field_ownership(ProtoHEFHef &hef_message)
@@ -464,6 +514,13 @@ hailo_status Hef::Impl::transfer_protobuf_field_ownership(ProtoHEFHef &hef_messa
 
     return HAILO_SUCCESS;
 }
+
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+const MemoryView Hef::Impl::get_hef_memview()
+{
+    return MemoryView(m_hef_buffer);
+}
+#endif // HAILO_SUPPORT_MULTI_PROCESS
 
 Hef::Impl::Impl(const std::string &hef_path, hailo_status &status)
 {
@@ -511,7 +568,7 @@ NetworkGroupSupportedFeatures Hef::Impl::get_supported_features(const ProtoHEFHe
         header, hef_optional_extensions);
     supported_features.multi_context = check_hef_extension(ProtoHEFExtensionType::IS_MULTI_CONTEXTS, header,
         hef_extensions, included_features);
-    supported_features.preliminary_run_asap = check_hef_extension(ProtoHEFExtensionType::PRELIMINARY_RUN_ASAP,
+    supported_features.preliminary_run_asap = check_hef_extension(ProtoHEFExtensionType::KO_RUN_ASAP,
         header, hef_extensions, included_features);
 
     return supported_features;
@@ -794,7 +851,7 @@ bool Hef::Impl::check_hef_extension(const ProtoHEFExtensionType &extension, cons
         case ProtoHEFExtensionType::DDR:
             return included_features.ddr();
         case ProtoHEFExtensionType::IS_MULTI_CONTEXTS:
-            return (included_features.number_of_contexts() > 0);
+            return included_features.is_multi_context();
         case ProtoHEFExtensionType::COMPRESSED_PARAMS:
             return included_features.compressed_params();
         case ProtoHEFExtensionType::TRANSPOSE_COMPONENT:
@@ -824,21 +881,28 @@ Expected<std::pair<std::string, std::string>> Hef::Impl::get_network_group_and_n
     std::string network_group_name;
     if (name.empty()) {
         // Name is not given - addressing all networks in the first network_group
-        network_group_name = m_groups[0]->network_group_metadata().network_group_name();
+        network_group_name = (ProtoHEFHwArch::PROTO__HW_ARCH__HAILO8L == get_device_arch()) ?
+            m_groups[0]->partial_network_groups(0).network_group().network_group_metadata().network_group_name()
+            : m_groups[0]->network_group_metadata().network_group_name();
         LOGGER__INFO("No name was given. Addressing all networks of default network_group: {}",
             network_group_name);
         auto network_name = HailoRTDefaults::get_network_name(network_group_name);
         return std::make_pair(network_group_name, network_name);
     } else {
+        const ProtoHEFNetworkGroup *network_group_ptr = nullptr;
         for (const auto &network_group : m_groups) {
-            network_group_name = network_group->network_group_metadata().network_group_name();
+            network_group_ptr = (ProtoHEFHwArch::PROTO__HW_ARCH__HAILO8L == get_device_arch()) ?
+                &network_group->partial_network_groups(0).network_group()
+                : network_group.get();
+            network_group_name = network_group_ptr->network_group_metadata().network_group_name();
+
             // Look for network_group with the given name
             if (name == network_group_name) {
                 auto network_name = HailoRTDefaults::get_network_name(network_group_name);
                 return std::make_pair(network_group_name, network_name);
             }
             // Look for network with the given name
-            for (const auto &partial_network_name : network_group->networks_names()) {
+            for (const auto &partial_network_name : network_group_ptr->networks_names()) {
                 auto full_network_name = HefUtils::get_network_name(network_group_name, partial_network_name);
                 if (name == full_network_name) {
                     return std::make_pair(network_group_name, full_network_name);
@@ -858,14 +922,29 @@ Expected<std::pair<std::string, std::string>> Hef::Impl::get_network_group_and_n
 
 Expected<ProtoHEFNetworkGroupPtr> Hef::Impl::get_net_group_by_name(const std::string &net_group_name)
 {
+    const ProtoHEFNetworkGroup *network_group_ptr = nullptr;
     if ("" == net_group_name) {
+        network_group_ptr = (ProtoHEFHwArch::PROTO__HW_ARCH__HAILO8L == get_device_arch()) ?
+            &m_groups[0]->partial_network_groups(0).network_group() : m_groups[0].get();
+
         LOGGER__INFO("No network_group name was given. Addressing default network_group: {}",
-            m_groups[0]->network_group_metadata().network_group_name());
-        return Expected<ProtoHEFNetworkGroupPtr>(m_groups[0]);
+            network_group_ptr->network_group_metadata().network_group_name());
+
+        ProtoHEFNetworkGroupPtr network_group_shared_ptr = make_shared_nothrow<ProtoHEFNetworkGroup>(*network_group_ptr);
+        CHECK_NOT_NULL_AS_EXPECTED(network_group_shared_ptr, HAILO_OUT_OF_HOST_MEMORY);
+        return Expected<ProtoHEFNetworkGroupPtr>(network_group_shared_ptr);
     }
     for (auto const &net_group : m_groups) {
         CHECK_AS_EXPECTED(nullptr != net_group, HAILO_INTERNAL_FAILURE, "null netwrok group");
-        if (net_group_name == net_group->network_group_metadata().network_group_name()) {
+        if (ProtoHEFHwArch::PROTO__HW_ARCH__HAILO8L == get_device_arch()) {
+            if (net_group_name ==
+                net_group->partial_network_groups(0).network_group().network_group_metadata().network_group_name()) {
+                ProtoHEFNetworkGroupPtr network_group_shared_ptr =
+                    make_shared_nothrow<ProtoHEFNetworkGroup>(m_groups[0]->partial_network_groups(0).network_group());
+                CHECK_NOT_NULL_AS_EXPECTED(network_group_shared_ptr, HAILO_OUT_OF_HOST_MEMORY);
+                return Expected<ProtoHEFNetworkGroupPtr>(network_group_shared_ptr);
+            }
+        } else if (net_group_name == net_group->network_group_metadata().network_group_name()) {
             return Expected<ProtoHEFNetworkGroupPtr>(net_group);
         }
     }
@@ -952,11 +1031,12 @@ hailo_status HefUtils::fill_layer_info_with_base_info(const ProtoHEFEdgeLayerBas
     layer_info.network_index = network_index;
     layer_info.context_index = context_index;
 
-    if (!IS_FIT_IN_UINT8(base_info.sys_index())) {
-        LOGGER__ERROR("Failed to parse HEF. Invalid sys_index {}.", base_info.sys_index());
-        return HAILO_INVALID_HEF;
-    }
+    CHECK(IS_FIT_IN_UINT8(base_info.sys_index()), HAILO_INVALID_HEF,
+        "Failed to parse HEF. Invalid sys_index: {}.", base_info.sys_index());
     layer_info.stream_index = static_cast<uint8_t>(base_info.sys_index());
+    CHECK(IS_FIT_IN_UINT8(base_info.engine_id()), HAILO_INVALID_HEF,
+        "Failed to parse HEF. Invalid engine_id: {}.", base_info.engine_id());
+    layer_info.dma_engine_index = static_cast<uint8_t>(base_info.engine_id());
 
     if (HAILO_FORMAT_ORDER_HAILO_NMS == layer_info.format.order) {
         auto expected_nms_info = parse_proto_nms_info(base_info.additional_info().nms_info());
@@ -1369,6 +1449,10 @@ Expected<InterContextLayerInfo> HefUtils::get_inter_context_layer_info(const Pro
     CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(layer.layer_info().edge_layer_base().sys_index()), HAILO_INVALID_HEF,
         "Failed to parse HEF. Invalid sys_index: {}.", layer.layer_info().edge_layer_base().sys_index());
     result.stream_index = static_cast<uint8_t>(layer.layer_info().edge_layer_base().sys_index());
+    CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(layer.layer_info().edge_layer_base().engine_id()), HAILO_INVALID_HEF,
+        "Failed to parse HEF. Invalid engine_id: {}.", layer.layer_info().edge_layer_base().engine_id());
+    result.dma_engine_index = static_cast<uint8_t>(layer.layer_info().edge_layer_base().engine_id());
+
     result.max_shmifo_size = layer.layer_info().edge_layer_base().max_shmifo_size();
 
     CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(layer.context_switch_info().connected_sys_index()), HAILO_INVALID_HEF,
@@ -1414,13 +1498,20 @@ Expected<DdrLayerInfo> HefUtils::get_ddr_layer_info(const ProtoHEFNetworkGroup &
     CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(layer.layer_info().edge_layer_base().sys_index()), HAILO_INVALID_HEF,
         "Failed to parse HEF. Invalid sys_index: {}.", layer.layer_info().edge_layer_base().sys_index());
     result.stream_index = static_cast<uint8_t>(layer.layer_info().edge_layer_base().sys_index());
+    CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(layer.layer_info().edge_layer_base().engine_id()), HAILO_INVALID_HEF,
+        "Failed to parse HEF. Invalid engine_id: {}.", layer.layer_info().edge_layer_base().engine_id());
     result.max_shmifo_size = layer.layer_info().edge_layer_base().max_shmifo_size();
     CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(layer.layer_info().edge_layer_base().core_buffers_per_frame()), HAILO_INVALID_HEF,
         "Failed to parse HEF. Invalid core_buffers_per_frame: {}.", layer.layer_info().edge_layer_base().core_buffers_per_frame());
     result.total_buffers_per_frame = static_cast<uint16_t>(layer.layer_info().edge_layer_base().core_buffers_per_frame());
 
+    CHECK_AS_EXPECTED(layer.context_switch_info().connected_contexts_size() == 1, HAILO_INVALID_HEF,
+        "Only single connected context is supported on DDR channels");
+    const auto& connected_context = layer.context_switch_info().connected_contexts(0);
     CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(layer.context_switch_info().connected_sys_index()), HAILO_INVALID_HEF,
         "Failed to parse HEF. Invalid connected_sys_index: {}.", layer.context_switch_info().connected_sys_index());
+    CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(connected_context.engine_id()), HAILO_INVALID_HEF,
+        "Failed to parse HEF. Invalid engine_id: {}. in connected_contexts", connected_context.engine_id());
     CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(layer.context_switch_info().connected_context_index()), HAILO_INVALID_HEF,
         "Failed to parse HEF. Invalid connected_context_index: {}.", layer.context_switch_info().connected_context_index());
     result.direction = (ProtoHEFEdgeLayerDirection::PROTO__EDGE_LAYER_DIRECTION__DEVICE_TO_HOST ==
@@ -1429,13 +1520,17 @@ Expected<DdrLayerInfo> HefUtils::get_ddr_layer_info(const ProtoHEFNetworkGroup &
         HAILO_INVALID_HEF, "for ddr layer, connected_context_index must be same to the edge layer's context");
     if ((ProtoHEFEdgeLayerDirection::PROTO__EDGE_LAYER_DIRECTION__HOST_TO_DEVICE == layer.direction())) {
         result.src_stream_index = static_cast<uint8_t>(layer.context_switch_info().connected_sys_index());
+        result.src_dma_engine_index = static_cast<uint8_t>(connected_context.engine_id());
         result.src_context_index = static_cast<uint8_t>(layer.context_switch_info().connected_context_index());
         result.dst_stream_index = result.stream_index;
+        result.dst_dma_engine_index = static_cast<uint8_t>(layer.layer_info().edge_layer_base().engine_id());
         result.dst_context_index = result.context_index;
     } else {
         result.src_stream_index = result.stream_index;
+        result.src_dma_engine_index = static_cast<uint8_t>(layer.layer_info().edge_layer_base().engine_id());
         result.src_context_index = result.context_index;
         result.dst_stream_index = static_cast<uint8_t>(layer.context_switch_info().connected_sys_index());
+        result.dst_dma_engine_index = static_cast<uint8_t>(connected_context.engine_id());
         result.dst_context_index = static_cast<uint8_t>(layer.context_switch_info().connected_context_index());
     }
 
@@ -1482,52 +1577,38 @@ inline std::pair<uint8_t, uint16_t> old_hef_parse_initial_l3(uint32_t initial_l3
 }
 
 static hailo_status fill_boundary_input_layer(CONTROL_PROTOCOL__context_switch_context_info_t *context_info, 
-    uint8_t **context_meta_data_head_pointer, ResourcesManager &resources_manager, const LayerInfo layer_info,
-    ContextSwitchChannelsParsingInfo &channels_parsing_info)
+    uint8_t **context_meta_data_head_pointer, ResourcesManager &resources_manager, const LayerInfo layer_info)
 {
-    auto channel_index = resources_manager.get_available_channel_index(
-        channels_parsing_info.H2D_channels_in_use, ChannelInfo::Type::BOUNDARY, VdmaChannel::Direction::H2D, layer_info.name);
-    CHECK_EXPECTED_AS_STATUS(channel_index);
-
-    // Mark the channel info with the stream_index
-    auto channel_info = resources_manager.get_channel_info(channel_index.value());
-    CHECK_EXPECTED_AS_STATUS(channel_info);
-    channel_info->get().set_stream_index(layer_info.stream_index);
+    const auto channel_id = resources_manager.get_available_channel_id(to_layer_identifier(layer_info),
+        VdmaChannel::Direction::H2D, layer_info.dma_engine_index);
+    CHECK_EXPECTED_AS_STATUS(channel_id);
 
     const auto frame_credits_in_bytes = (layer_info.nn_stream_config.periph_bytes_per_buffer * 
         layer_info.nn_stream_config.core_buffers_per_frame);
 
-    auto vdma_channel = resources_manager.create_boundary_vdma_channel(channel_index.value(), frame_credits_in_bytes,
+    auto vdma_channel = resources_manager.create_boundary_vdma_channel(channel_id.value(), frame_credits_in_bytes,
         layer_info.network_name, layer_info.name, VdmaChannel::Direction::H2D);
     CHECK_EXPECTED_AS_STATUS(vdma_channel);
     auto buffer_info = vdma_channel.value()->get_boundary_buffer_info(frame_credits_in_bytes);
     CHECK_EXPECTED_AS_STATUS(buffer_info);
 
-    // Lock the channel for further use in this net_group
-    channels_parsing_info.H2D_channels_in_use.insert(channel_index.value());
-
-    LOGGER__DEBUG("Boundary input stream: {} h2d_pcie_channel: {}.", layer_info.stream_index, channel_index.value());
+    LOGGER__DEBUG("Boundary input stream: {} h2d_channel: {}.", layer_info.stream_index, channel_id.value());
 
     /* Update metadata */
     auto status = HEF_METADATA__add_network_boundary_input_edge_layer(context_info, 
-        context_meta_data_head_pointer, layer_info.stream_index, channel_index.value(), layer_info.network_index, layer_info.nn_stream_config,
-        buffer_info.value(), layer_info.max_shmifo_size);
+        context_meta_data_head_pointer, channel_id.value(), layer_info.stream_index, layer_info.network_index,
+        layer_info.nn_stream_config, buffer_info.value(), layer_info.max_shmifo_size);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
 }
 
 static hailo_status fill_inter_context_input_layer(CONTROL_PROTOCOL__context_switch_context_info_t *context_info, 
-        uint8_t **context_meta_data_head_pointer, ResourcesManager &resources_manager, const InterContextLayerInfo &layer_info,
-        ContextSwitchChannelsParsingInfo &channels_parsing_info, std::set<uint8_t> &channels_to_unlock)
+    uint8_t **context_meta_data_head_pointer, ResourcesManager &resources_manager, const InterContextLayerInfo &layer_info)
 {
-    /* Find next available h2d_channel, and mark it to unlock at the end of the context */
-    auto h2d_channel_index = resources_manager.get_available_channel_index(channels_parsing_info.H2D_channels_in_use,
-        ChannelInfo::Type::INTER_CONTEXT, VdmaChannel::Direction::H2D);
-    CHECK_EXPECTED_AS_STATUS(h2d_channel_index);
-
-    channels_parsing_info.H2D_channels_in_use.insert(h2d_channel_index.value());
-    channels_to_unlock.insert(h2d_channel_index.value());
+    const auto channel_id = resources_manager.get_available_channel_id(to_layer_identifier(layer_info),
+        VdmaChannel::Direction::H2D, layer_info.dma_engine_index);
+    CHECK_EXPECTED_AS_STATUS(channel_id);
 
     /* Get inter context buffer previously created */
     auto intermediate_buffer_key = std::make_pair(layer_info.src_context_index, layer_info.src_stream_index);
@@ -1536,45 +1617,36 @@ static hailo_status fill_inter_context_input_layer(CONTROL_PROTOCOL__context_swi
         layer_info.src_context_index, layer_info.src_stream_index);
     auto &inter_context_buffer = inter_context_buffer_exp->get();
 
-    LOGGER__DEBUG("Intermediate input stream {}, src_context:{}, dst_context: {}, h2d_pcie_channel {}.",
-        layer_info.stream_index, layer_info.src_context_index, layer_info.dst_context_index, h2d_channel_index.value());
+    LOGGER__DEBUG("Intermediate input stream {}, src_context:{}, dst_context: {}, h2d_channel {}.",
+        layer_info.stream_index, layer_info.src_context_index, layer_info.dst_context_index, channel_id.value());
 
     /* Update metadata */
     return HEF_METADATA__add_inter_context_input_edge_layer(context_info, context_meta_data_head_pointer,
-        layer_info.stream_index, h2d_channel_index.value(), layer_info.network_index, layer_info.nn_stream_config,
+        channel_id.value(), layer_info.stream_index, layer_info.network_index, layer_info.nn_stream_config,
         inter_context_buffer.get_host_buffer_info(), layer_info.max_shmifo_size);
 }
 
 static hailo_status fill_boundary_output_layer(CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
-        uint8_t **context_meta_data_head_pointer, ResourcesManager &resources_manager, const LayerInfo &layer_info,
-        ContextSwitchChannelsParsingInfo &channels_parsing_info)
+    uint8_t **context_meta_data_head_pointer, ResourcesManager &resources_manager, const LayerInfo &layer_info)
 {
-    auto channel_index = resources_manager.get_available_channel_index(channels_parsing_info.D2H_channels_in_use,
-       ChannelInfo::Type::BOUNDARY, VdmaChannel::Direction::D2H, layer_info.name);
-    CHECK_EXPECTED_AS_STATUS(channel_index);
+    const auto channel_id = resources_manager.get_available_channel_id(to_layer_identifier(layer_info),
+        VdmaChannel::Direction::D2H, layer_info.dma_engine_index);
+    CHECK_EXPECTED_AS_STATUS(channel_id);
 
     const auto frame_credits_in_bytes = (layer_info.nn_stream_config.periph_bytes_per_buffer * 
         layer_info.nn_stream_config.core_buffers_per_frame);
 
-    // Mark the channel info with the stream_index
-    auto channel_info = resources_manager.get_channel_info(channel_index.value());
-    CHECK_EXPECTED_AS_STATUS(channel_info);
-    channel_info->get().set_stream_index(layer_info.stream_index);
-
-    auto vdma_channel = resources_manager.create_boundary_vdma_channel(channel_index.value(), frame_credits_in_bytes,
+    auto vdma_channel = resources_manager.create_boundary_vdma_channel(channel_id.value(), frame_credits_in_bytes,
         layer_info.network_name, layer_info.name, VdmaChannel::Direction::D2H);
     CHECK_EXPECTED_AS_STATUS(vdma_channel);
     auto buffer_info = vdma_channel.value()->get_boundary_buffer_info(frame_credits_in_bytes);
     CHECK_EXPECTED_AS_STATUS(buffer_info);
 
-    // Lock the channel for further use in this net_group
-    channels_parsing_info.D2H_channels_in_use.insert(channel_index.value());
-
-    LOGGER__DEBUG("Boundary output stream: {} d2h_pcie_channel: {}.", layer_info.stream_index, channel_index.value());
+    LOGGER__DEBUG("Boundary output stream: {} d2h_channel: {}.", layer_info.stream_index, channel_id.value());
 
     /* Update metadata */
     auto status = HEF_METADATA__add_network_boundary_output_edge_layer(context_info, 
-            context_meta_data_head_pointer, layer_info.stream_index, channel_index.value(), layer_info.network_index,
+            context_meta_data_head_pointer, channel_id.value(), layer_info.stream_index, layer_info.network_index,
             layer_info.nn_stream_config, buffer_info.value());
     CHECK_SUCCESS(status);
 
@@ -1582,16 +1654,11 @@ static hailo_status fill_boundary_output_layer(CONTROL_PROTOCOL__context_switch_
 }
 
 static hailo_status fill_inter_context_output_layer(CONTROL_PROTOCOL__context_switch_context_info_t *context_info, 
-        uint8_t **context_meta_data_head_pointer, ResourcesManager &resources_manager, const InterContextLayerInfo &layer_info,
-        ContextSwitchChannelsParsingInfo &channels_parsing_info, std::set<uint8_t> &channels_to_unlock)
+    uint8_t **context_meta_data_head_pointer, ResourcesManager &resources_manager, const InterContextLayerInfo &layer_info)
 {
-    /* Find next available d2h_channel, and mark it to unlock at the end of the context */
-    auto d2h_channel_index = resources_manager.get_available_channel_index(
-        channels_parsing_info.D2H_channels_in_use, ChannelInfo::Type::INTER_CONTEXT, VdmaChannel::Direction::D2H);
-    CHECK_EXPECTED_AS_STATUS(d2h_channel_index);
-
-    channels_parsing_info.D2H_channels_in_use.insert(d2h_channel_index.value());
-    channels_to_unlock.insert(d2h_channel_index.value());
+    const auto channel_id = resources_manager.get_available_channel_id(to_layer_identifier(layer_info),
+        VdmaChannel::Direction::D2H, layer_info.dma_engine_index);
+    CHECK_EXPECTED_AS_STATUS(channel_id);
 
     const auto frame_credits_in_bytes = (layer_info.nn_stream_config.periph_bytes_per_buffer * 
         layer_info.nn_stream_config.core_buffers_per_frame);
@@ -1601,12 +1668,12 @@ static hailo_status fill_inter_context_output_layer(CONTROL_PROTOCOL__context_sw
     CHECK_EXPECTED_AS_STATUS(inter_context_buffer_exp);
     auto &inter_context_buffer = inter_context_buffer_exp->get();
 
-    LOGGER__DEBUG("Inter-context output stream {}, src_context:{}, d2h_pcie_channel {}.",
-        layer_info.stream_index, layer_info.src_context_index, d2h_channel_index.value());
+    LOGGER__DEBUG("Inter-context output stream {}, src_context:{}, d2h_channel {}.",
+        layer_info.stream_index, layer_info.src_context_index, channel_id.value());
 
     /* Update metadata */
     auto status = HEF_METADATA__add_inter_context_output_edge_layer(context_info, context_meta_data_head_pointer,
-        layer_info.stream_index, d2h_channel_index.value(), layer_info.network_index, layer_info.nn_stream_config, 
+        channel_id.value(), layer_info.stream_index, layer_info.network_index, layer_info.nn_stream_config, 
         inter_context_buffer.get_host_buffer_info());
     CHECK_SUCCESS(status);
 
@@ -1614,8 +1681,7 @@ static hailo_status fill_inter_context_output_layer(CONTROL_PROTOCOL__context_sw
 }
 
 static hailo_status fill_ddr_output_layer(CONTROL_PROTOCOL__context_switch_context_info_t *context_info, 
-        uint8_t **context_meta_data_head_pointer, ResourcesManager &resources_manager, const DdrLayerInfo &layer_info,
-        ContextSwitchChannelsParsingInfo &channels_parsing_info, std::set<uint8_t> &channels_to_unlock)
+    uint8_t **context_meta_data_head_pointer, ResourcesManager &resources_manager, const DdrLayerInfo &layer_info)
 {
     CHECK(resources_manager.get_supported_features().padded_ddr_buffers, HAILO_INVALID_HEF,
         "Failed opening non-compatible HEF that uses the following deprecated features: host-managed DDR buffers." 
@@ -1628,19 +1694,17 @@ static hailo_status fill_ddr_output_layer(CONTROL_PROTOCOL__context_switch_conte
 
     // It is assumed that output channels are parsed before input channels. 
     // Allocate vdma channel index for both edges
-    auto h2d_channel_index_expected = resources_manager.get_available_channel_index(channels_parsing_info.H2D_channels_in_use,
-        ChannelInfo::Type::DDR, VdmaChannel::Direction::H2D);
-    CHECK_EXPECTED_AS_STATUS(h2d_channel_index_expected);
-    ddr_pair_info.h2d_channel_index = h2d_channel_index_expected.value();
-    channels_parsing_info.H2D_channels_in_use.insert(ddr_pair_info.h2d_channel_index);
-    channels_to_unlock.insert(ddr_pair_info.h2d_channel_index);
+    const LayerIdentifier h2d_layer_identifier = to_layer_identifier(layer_info, VdmaChannel::Direction::H2D);
+    const auto h2d_channel_id = resources_manager.get_available_channel_id(h2d_layer_identifier,
+        VdmaChannel::Direction::H2D, layer_info.src_dma_engine_index);
+    CHECK_EXPECTED_AS_STATUS(h2d_channel_id);
+    ddr_pair_info.h2d_channel_id = h2d_channel_id.value();
 
-    auto d2h_channel_index_expected = resources_manager.get_available_channel_index(channels_parsing_info.D2H_channels_in_use,
-        ChannelInfo::Type::DDR, VdmaChannel::Direction::D2H);
-    CHECK_EXPECTED_AS_STATUS(d2h_channel_index_expected);
-    ddr_pair_info.d2h_channel_index = d2h_channel_index_expected.value();
-    channels_parsing_info.D2H_channels_in_use.insert(ddr_pair_info.d2h_channel_index);
-    channels_to_unlock.insert(ddr_pair_info.d2h_channel_index);
+    const LayerIdentifier d2h_layer_identifier = to_layer_identifier(layer_info, VdmaChannel::Direction::D2H);
+    const auto d2h_channel_id = resources_manager.get_available_channel_id(d2h_layer_identifier,
+        VdmaChannel::Direction::D2H, layer_info.dst_context_index);
+    CHECK_EXPECTED_AS_STATUS(d2h_channel_id);
+    ddr_pair_info.d2h_channel_id = d2h_channel_id.value();
 
     ddr_pair_info.row_size = layer_info.nn_stream_config.core_bytes_per_buffer;
     ddr_pair_info.min_buffered_rows = layer_info.min_buffered_rows;
@@ -1651,38 +1715,29 @@ static hailo_status fill_ddr_output_layer(CONTROL_PROTOCOL__context_switch_conte
     CHECK_EXPECTED_AS_STATUS(ddr_channels_pair);
 
     return HEF_METADATA__add_ddr_buffer_output_edge_layer(context_info,
-        context_meta_data_head_pointer, layer_info.stream_index, ddr_pair_info.d2h_channel_index,
+        context_meta_data_head_pointer, d2h_channel_id.value(), layer_info.stream_index,
         layer_info.network_index, layer_info.nn_stream_config, ddr_channels_pair->get().get_host_buffer_info(), 
         layer_info.min_buffered_rows);
 }
 
 static hailo_status fill_ddr_input_layer(CONTROL_PROTOCOL__context_switch_context_info_t *context_info, 
-        uint8_t **context_meta_data_head_pointer, ResourcesManager &resources_manager, const DdrLayerInfo &layer_info,
-        ContextSwitchChannelsParsingInfo &channels_parsing_info, std::set<uint8_t> &channels_to_unlock)
+    uint8_t **context_meta_data_head_pointer, ResourcesManager &resources_manager, const DdrLayerInfo &layer_info)
 {
     auto ddr_channels_pair = resources_manager.get_ddr_channels_pair(layer_info.context_index, layer_info.src_stream_index);
     CHECK(ddr_channels_pair, HAILO_INVALID_HEF, "Mathing DDR layer as not found for context {} src stream {}", 
         layer_info.context_index, layer_info.src_stream_index);
 
     const auto ddr_info = ddr_channels_pair->get().info();
-    LOGGER__DEBUG("DDR layer: input stream_index: {}, output stream_index: {}, h2d_pcie_channel {}, d2h_pcie_channel: {}.",
-        ddr_info.h2d_stream_index, ddr_info.d2h_stream_index, ddr_info.h2d_channel_index, ddr_info.d2h_channel_index);
+    LOGGER__DEBUG("DDR layer: input stream_index: {}, output stream_index: {}, h2d_channel {}, d2h_channel: {}.",
+        ddr_info.h2d_stream_index, ddr_info.d2h_stream_index, ddr_info.h2d_channel_id, ddr_info.d2h_channel_id);
 
     CHECK(layer_info.dst_stream_index == ddr_info.h2d_stream_index, HAILO_INVALID_HEF, "DDR channel pair mismatch in h2d channel");
     CHECK(layer_info.src_stream_index == ddr_info.d2h_stream_index, HAILO_INVALID_HEF, "DDR channel pair mismatch in d2h channel");
 
-    // On preliminary asap, this function is called on both the preliminary context and on the first context,
-    // Therefore we must ensure that the vdma channels are locked for the first context.
-    // TODO HRT-6683 - if using the same context, this code can be removed.
-    channels_parsing_info.H2D_channels_in_use.insert(ddr_info.h2d_channel_index);
-    channels_to_unlock.insert(ddr_info.h2d_channel_index);
-    channels_parsing_info.D2H_channels_in_use.insert(ddr_info.d2h_channel_index);
-    channels_to_unlock.insert(ddr_info.d2h_channel_index);
-
     return HEF_METADATA__add_ddr_buffer_input_edge_layer(context_info,
-        context_meta_data_head_pointer, ddr_info.h2d_stream_index, ddr_info.h2d_channel_index, layer_info.network_index,
+        context_meta_data_head_pointer, ddr_info.h2d_channel_id, ddr_info.h2d_stream_index, layer_info.network_index,
         layer_info.nn_stream_config, ddr_channels_pair->get().get_host_buffer_info(), layer_info.max_shmifo_size,
-        ddr_info.d2h_channel_index);
+        ddr_info.d2h_channel_id);
 }
 
 Expected<std::string> HefUtils::get_partial_network_name_by_index(const ProtoHEFNetworkGroup &network_group_proto, uint8_t network_index, 
@@ -1716,7 +1771,7 @@ static hailo_status add_ddr_buffers_info(std::vector<ContextSwitchConfigActionPt
     for (auto& ddr_channels_pair : resources_manager.get_ddr_channel_pairs_per_context(context_index)) {
         if (ddr_channels_pair.get().need_manual_credit_management()) {
             const auto ddr_info = ddr_channels_pair.get().info();
-            auto ddr_pair_action = DdrPairInfoAction::create(ddr_info.h2d_channel_index, ddr_info.d2h_channel_index,
+            auto ddr_pair_action = DdrPairInfoAction::create(ddr_info.h2d_channel_id, ddr_info.d2h_channel_id,
                 ddr_channels_pair.get().descriptors_per_frame(), ddr_channels_pair.get().descs_count());
             CHECK_EXPECTED_AS_STATUS(ddr_pair_action);
             configuration_actions.emplace_back(ddr_pair_action.release());
@@ -1735,14 +1790,12 @@ static hailo_status add_ddr_buffers_info(std::vector<ContextSwitchConfigActionPt
 }
 
 static hailo_status parse_and_fill_edge_layers_mapping(
-        CONTROL_PROTOCOL__context_switch_context_info_t *context_info, 
-        uint8_t **context_meta_data_head_pointer, const ProtoHEFContextMetadata *context_metadata, 
-        ContextSwitchChannelsParsingInfo &channels_parsing_info, ResourcesManager &resources_manager, 
-        std::shared_ptr<NetworkGroupMetadata> network_group_metadata, uint8_t context_index)
+    CONTROL_PROTOCOL__context_switch_context_info_t *context_info, 
+    uint8_t **context_meta_data_head_pointer, const ProtoHEFContextMetadata *context_metadata, 
+    ResourcesManager &resources_manager, std::shared_ptr<NetworkGroupMetadata> network_group_metadata,
+    uint8_t context_index)
 {
     hailo_status status = HAILO_UNINITIALIZED;
-    // We use those sets to unlock resources at the end of each context parsing to prevent reuse within the same context
-    std::set<uint8_t> channels_to_unlock = {};
 
     const auto number_of_edge_layers = context_metadata->edge_layers_size();
     CHECK(0 < number_of_edge_layers, HAILO_INVALID_HEF, "No edge layers in this context");
@@ -1762,52 +1815,58 @@ static hailo_status parse_and_fill_edge_layers_mapping(
 
     for (const auto &output_layer_info : ddr_output_layers) {
         status = fill_ddr_output_layer(context_info, context_meta_data_head_pointer,
-            resources_manager, output_layer_info, channels_parsing_info, channels_to_unlock);
+            resources_manager, output_layer_info);
         CHECK_SUCCESS(status);
     }
 
     for (const auto &output_layer_info : boundary_output_layers) {
         status = fill_boundary_output_layer(context_info, context_meta_data_head_pointer,
-            resources_manager, output_layer_info, channels_parsing_info);
+            resources_manager, output_layer_info);
         CHECK_SUCCESS(status);
     }
 
     for (const auto &output_layer_info : inter_context_output_layers) {
         status = fill_inter_context_output_layer(context_info, context_meta_data_head_pointer,
-            resources_manager, output_layer_info, channels_parsing_info, channels_to_unlock);
+            resources_manager, output_layer_info);
         CHECK_SUCCESS(status);
     }
 
     for (const auto &input_layer_info : ddr_input_layers) {
         status = fill_ddr_input_layer(context_info, context_meta_data_head_pointer,
-            resources_manager, input_layer_info, channels_parsing_info, channels_to_unlock);
+            resources_manager, input_layer_info);
         CHECK_SUCCESS(status);
     }
 
     for (const auto &input_layer_info : boundary_input_layers) {
         status = fill_boundary_input_layer(context_info, context_meta_data_head_pointer,
-            resources_manager, input_layer_info, channels_parsing_info);
+            resources_manager, input_layer_info);
         CHECK_SUCCESS(status);
     }
 
     for (const auto &input_layer_info : inter_context_input_layers) {
         status = fill_inter_context_input_layer(context_info, context_meta_data_head_pointer,
-            resources_manager, input_layer_info, channels_parsing_info, channels_to_unlock);
+            resources_manager, input_layer_info);
         CHECK_SUCCESS(status);
     }
 
     /* UN-Lock resources at the end of the context - 
-        d2h inter-context and DDR buffer channels, h2d inter-context and DDR buffer channels */
-    for (auto& channel_index : channels_to_unlock) {
-        if (contains(channels_parsing_info.D2H_channels_in_use, channel_index)) {
-            channels_parsing_info.D2H_channels_in_use.erase(channel_index);
-        } else if (contains(channels_parsing_info.H2D_channels_in_use, channel_index)) {
-            channels_parsing_info.H2D_channels_in_use.erase(channel_index);
-        } else {
-            LOGGER__ERROR("channel_index {} was marked for unlocking, but is not marked as in use in context {}",
-                channel_index, context_index);
-            return HAILO_INTERNAL_FAILURE;
-        }
+        h2d inter-context, d2h inter-context and DDR buffer channels */
+    for (const auto &input_layer_info : inter_context_input_layers) {
+        status = resources_manager.free_channel_index(to_layer_identifier(input_layer_info));
+        CHECK_SUCCESS(status);
+    }
+
+    for (const auto &output_layer_info : inter_context_output_layers) {
+        status = resources_manager.free_channel_index(to_layer_identifier(output_layer_info));
+        CHECK_SUCCESS(status);
+    }
+
+    for (const auto &output_layer_info : ddr_output_layers) {
+        status = resources_manager.free_channel_index(to_layer_identifier(output_layer_info, VdmaChannel::Direction::H2D));
+        CHECK_SUCCESS(status);
+
+        status = resources_manager.free_channel_index(to_layer_identifier(output_layer_info, VdmaChannel::Direction::D2H));
+        CHECK_SUCCESS(status);
     }
 
     return HAILO_SUCCESS;
@@ -2147,7 +2206,7 @@ static hailo_status parse_actions_in_operation(const ProtoHEFOperation &operatio
     Device &device, const ProtoHEFHwArch &hw_arch, uint8_t context_index, bool is_preliminary_context,
     bool is_first_operation, std::vector<ConfigBuffer> &config_resources,
     const ResourcesManager &resources_manager,
-    ProtoHEFNetworkGroupPtr network_group_proto,
+    const ProtoHEFNetworkGroup &network_group_proto,
     CONTROL_PROTOCOL__context_switch_context_info_t &context_info, uint8_t **context_meta_data_head_pointer)
 {
     const auto support_pre_fetch = is_mercury_device_type(hw_arch);
@@ -2157,7 +2216,7 @@ static hailo_status parse_actions_in_operation(const ProtoHEFOperation &operatio
     configuration_actions.reserve(operation.actions_size());
     for (const auto &proto_action : operation.actions()) {
         auto configuration_action = ContextSwitchConfigAction::create(proto_action, device, config_resources,
-            resources_manager, *network_group_proto, support_pre_fetch);
+            resources_manager, network_group_proto, support_pre_fetch);
         CHECK_EXPECTED_AS_STATUS(configuration_action);
         configuration_actions.emplace_back(configuration_action.release());
     }
@@ -2181,18 +2240,18 @@ static hailo_status parse_actions_in_operation(const ProtoHEFOperation &operatio
     return HAILO_SUCCESS;
 }
 
-static hailo_status fill_context_recepies_for_multi_context(ProtoHEFNetworkGroupPtr network_group_proto, 
+static hailo_status fill_context_recepies_for_multi_context(const ProtoHEFNetworkGroup &network_group_proto, 
     const ProtoHEFHwArch &hw_arch, CONTROL_PROTOCOL__context_switch_context_info_t &context_info, 
     ResourcesManager &resources_manager, uint8_t context_index, const ProtoHEFContext &proto_context, 
     std::shared_ptr<NetworkGroupMetadata> network_group_metadata, 
-    Device &device, ContextSwitchChannelsParsingInfo &channels_parsing_info)
+    Device &device)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     uint8_t *context_meta_data_head_pointer = context_info.context_network_data;
 
     // Add edge layers mapping
     status = parse_and_fill_edge_layers_mapping(&context_info, &context_meta_data_head_pointer, 
-        &proto_context.metadata(), channels_parsing_info, resources_manager, network_group_metadata, context_index);
+        &proto_context.metadata(), resources_manager, network_group_metadata, context_index);
     CHECK_SUCCESS(status);
 
     CHECK(IS_FIT_IN_UINT8(proto_context.operations_size()), HAILO_INVALID_HEF,
@@ -2226,7 +2285,7 @@ static hailo_status fill_context_recepies_for_multi_context(ProtoHEFNetworkGroup
 
 static hailo_status fill_preliminary_config_recepies_for_multi_context(const ProtoHEFHwArch &hw_arch,
     CONTROL_PROTOCOL__context_switch_context_info_t &context_info, ResourcesManager &resources_manager,
-    ContextSwitchChannelsParsingInfo &channels_parsing_info, ProtoHEFNetworkGroupPtr network_group_proto,
+    const ProtoHEFNetworkGroup &network_group_proto,
     const ProtoHEFPreliminaryConfig &proto_preliminary_config, 
     std::shared_ptr<NetworkGroupMetadata> network_group_metadata, Device &device)
 {
@@ -2239,7 +2298,7 @@ static hailo_status fill_preliminary_config_recepies_for_multi_context(const Pro
         // Add edge layers mapping (only preliminary_run_asap networks have edge layers in the preliminary context)
         static const auto PRELIMINARY_CONTEXT_INDEX = 0;
         auto status = parse_and_fill_edge_layers_mapping(&context_info, &context_meta_data_head_pointer, 
-            &(network_group_proto->contexts(PRELIMINARY_CONTEXT_INDEX).metadata()), channels_parsing_info, resources_manager,
+            &(network_group_proto.contexts(PRELIMINARY_CONTEXT_INDEX).metadata()), resources_manager,
             network_group_metadata, PRELIMINARY_CONTEXT_INDEX);
         CHECK_SUCCESS(status);
     }
@@ -2269,21 +2328,19 @@ static hailo_status fill_preliminary_config_recepies_for_multi_context(const Pro
 }
 
 Expected<std::shared_ptr<ResourcesManager>> Hef::Impl::create_resources_manager(
-    ProtoHEFNetworkGroupPtr network_group_proto, uint8_t net_group_index,
+    const ProtoHEFNetworkGroup &network_group_proto, uint8_t net_group_index,
     VdmaDevice &device, HailoRTDriver &driver, const ConfigureNetworkParams &config_params, 
     std::shared_ptr<NetworkGroupMetadata> network_group_metadata,
     const ProtoHEFHwArch &hw_arch)
 {
-    CHECK_ARG_NOT_NULL_AS_EXPECTED(network_group_proto);
-
-    CHECK(network_group_proto->contexts_size() <= MAX_CONTEXTS_COUNT, make_unexpected(HAILO_INVALID_HEF),
-        "App '{}' contains more contexts than allowed ({} > {})", network_group_proto->network_group_metadata().network_group_name(),
-        network_group_proto->contexts_size(), MAX_CONTEXTS_COUNT);
+    CHECK(network_group_proto.contexts_size() <= MAX_CONTEXTS_COUNT, make_unexpected(HAILO_INVALID_HEF),
+        "App '{}' contains more contexts than allowed ({} > {})", network_group_proto.network_group_metadata().network_group_name(),
+        network_group_proto.contexts_size(), MAX_CONTEXTS_COUNT);
     
     for (auto &network_params : config_params.network_params_by_name) {
         CHECK(HAILO_MAX_BATCH_SIZE >= network_params.second.batch_size, make_unexpected(HAILO_INVALID_ARGUMENT),
             "Given batch size ({}) for network group {}, network {} is bigger than max allowed ({})", network_params.second.batch_size,
-            network_group_proto->network_group_metadata().network_group_name(), network_params.first, HAILO_MAX_BATCH_SIZE);
+            network_group_proto.network_group_metadata().network_group_name(), network_params.first, HAILO_MAX_BATCH_SIZE);
     }
 
     auto parsing_info = Hef::Impl::get_parsing_info(network_group_proto);
@@ -2296,27 +2353,18 @@ Expected<std::shared_ptr<ResourcesManager>> Hef::Impl::create_resources_manager(
     auto preliminary_context = resources_manager->add_new_context();
     CHECK_EXPECTED(preliminary_context);
 
-    // TODO: Support sharing of ContextSwitchChannelsParsingInfo between fill_preliminary_config_recepies_for_multi_context
-    //       and fill_context_recepies_for_multi_context (HRT-6683).
-    //       When running in preliminary_run_asap mode the channels used by the first dynamic context and by the preliminary
-    //       context are the same channels. We need to add the sane edge_layers for both contexts (look for calls to 
-    //       hef_metadata__add_edge_layer_header) so that the needed actions will be added to the action list. However,
-    //       due to the logic in ResourceManager::get_available_channel_index's blacklist channels that should be the same
-    //       will get different indexes. Need to refactor the logic of that function and the entire channel index allocation logic.
-    ContextSwitchChannelsParsingInfo channels_parsing_info_preliminary{};
     auto status = fill_preliminary_config_recepies_for_multi_context(hw_arch, preliminary_context.value().get(),
-        resources_manager.value(), channels_parsing_info_preliminary, network_group_proto, network_group_proto->preliminary_config(),
+        resources_manager.value(), network_group_proto, network_group_proto.preliminary_config(),
         network_group_metadata, device);
     CHECK_SUCCESS_AS_EXPECTED(status);
     resources_manager->update_preliminary_config_buffer_info();
 
-    ContextSwitchChannelsParsingInfo channels_parsing_info_dynamic{};
-    for (uint8_t context_index = 0; context_index < network_group_proto->contexts_size(); ++context_index) {
+    for (uint8_t context_index = 0; context_index < network_group_proto.contexts_size(); ++context_index) {
         auto new_context = resources_manager->add_new_context();
         CHECK_EXPECTED(new_context);
 
         status = fill_context_recepies_for_multi_context(network_group_proto, hw_arch, new_context.value().get(), resources_manager.value(),
-            context_index, network_group_proto->contexts(context_index), network_group_metadata, device, channels_parsing_info_dynamic);
+            context_index, network_group_proto.contexts(context_index), network_group_metadata, device);
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
     resources_manager->update_dynamic_contexts_buffer_info();
@@ -2795,7 +2843,7 @@ hailo_status WriteDataCcwAction::pad_with_nops()
     auto nop_count = (buffer_residue == 0) ? 0 : ((page_size - buffer_residue) / CCW_HEADER_SIZE);
     for (uint8_t nop_index = 0; nop_index < nop_count; nop_index++) {
         /* Generate nop transaction.
-           CCW of all zeros (64’h0) should be treated as NOP – ignore CCW and expect CCW in next 64b word. 
+           CCW of all zeros (64'h0) should be treated as NOP - ignore CCW and expect CCW in next 64b word. 
            When CSM recognize it is a NOP it pops it from the channel FIFO without forward any address/data/command, 
            does not contribute to CRC calculations but return credits to the peripheral as usual. */
         m_config.write(reinterpret_cast<const void *>(&CCW_NOP), sizeof(CCW_NOP));
@@ -3216,20 +3264,20 @@ bool WaitForModuleConfigDoneAction::supports_repeated_block() const
     return false;
 }
 
-Expected<ContextSwitchConfigActionPtr> DdrPairInfoAction::create(uint8_t h2d_channel_index, uint8_t d2h_channel_index,
-                                                                 uint32_t descriptors_per_frame, uint16_t descs_count)
+Expected<ContextSwitchConfigActionPtr> DdrPairInfoAction::create(const vdma::ChannelId &h2d_channel_id,
+    const vdma::ChannelId &d2h_channel_id, uint32_t descriptors_per_frame, uint16_t descs_count)
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) DdrPairInfoAction(
-        h2d_channel_index, d2h_channel_index, descriptors_per_frame, descs_count));
+        h2d_channel_id, d2h_channel_id, descriptors_per_frame, descs_count));
     CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
-DdrPairInfoAction::DdrPairInfoAction(uint8_t h2d_channel_index, uint8_t d2h_channel_index,
-                                     uint32_t descriptors_per_frame, uint16_t descs_count) :
+DdrPairInfoAction::DdrPairInfoAction(const vdma::ChannelId &h2d_channel_id, const vdma::ChannelId &d2h_channel_id,
+    uint32_t descriptors_per_frame, uint16_t descs_count) :
     ContextSwitchConfigAction(Type::DdrPairInfo, CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ADD_DDR_PAIR_INFO),
-    m_h2d_channel_index(h2d_channel_index),
-    m_d2h_channel_index(d2h_channel_index),
+    m_h2d_channel_id(h2d_channel_id),
+    m_d2h_channel_id(d2h_channel_id),
     m_descriptors_per_frame(descriptors_per_frame),
     m_descs_count(descs_count)
 {}
@@ -3237,8 +3285,8 @@ DdrPairInfoAction::DdrPairInfoAction(uint8_t h2d_channel_index, uint8_t d2h_chan
 hailo_status DdrPairInfoAction::execute(CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
     uint8_t **context_meta_data_head_pointer)
 {
-    return HEF_METADATA__add_ddr_pair_info(context_info, context_meta_data_head_pointer, 
-        m_h2d_channel_index, m_d2h_channel_index, m_descriptors_per_frame, m_descs_count, m_is_in_repeated_block);
+    return HEF_METADATA__add_ddr_pair_info(context_info, context_meta_data_head_pointer, m_h2d_channel_id,
+        m_d2h_channel_id, m_descriptors_per_frame, m_descs_count, m_is_in_repeated_block);
 }
 
 bool DdrPairInfoAction::supports_repeated_block() const
@@ -3410,13 +3458,11 @@ Expected<std::vector<std::string>> Hef::Impl::get_original_names_from_vstream_na
     return make_unexpected(HAILO_NOT_FOUND);
 }
 
-hailo_status Hef::Impl::validate_net_group_unique_layer_names(ProtoHEFNetworkGroupPtr net_group)
+hailo_status Hef::Impl::validate_net_group_unique_layer_names(const ProtoHEFNetworkGroup &net_group)
 {
-    CHECK_ARG_NOT_NULL(net_group);
-
     std::set<std::string> edge_layer_names;
     std::string layer_name;
-    for (auto &context : net_group->contexts()) {
+    for (auto &context : net_group.contexts()) {
         for (auto &layer : context.metadata().edge_layers()) {
             // TODO: remove check for boundary layer after fix will be pushed in SDK
             if (ProtoHEFEdgeConnectionType::PROTO__EDGE_CONNECTION_TYPE__BOUNDARY ==
@@ -3473,19 +3519,17 @@ Expected<ConfigBufferInfoMap> get_config_buffer_info(
     return results;
 }
 
-Expected<HefParsingInfo> Hef::Impl::get_parsing_info(ProtoHEFNetworkGroupPtr net_group)
+Expected<HefParsingInfo> Hef::Impl::get_parsing_info(const ProtoHEFNetworkGroup &net_group)
 {
-    assert(nullptr != net_group);
-
     // Parse preliminary config
-    auto preliminary_config_buffer_infos = get_config_buffer_info(net_group->preliminary_config().operation());
+    auto preliminary_config_buffer_infos = get_config_buffer_info(net_group.preliminary_config().operation());
     CHECK_EXPECTED(preliminary_config_buffer_infos);
 
     HefParsingInfo parsing_info;
     parsing_info.cfg_infos_preliminary_config = preliminary_config_buffer_infos.release();
 
     // Parse dynamic contexts
-    for (const auto &context : net_group->contexts()) {
+    for (const auto &context : net_group.contexts()) {
         auto dynamic_ctxt_config_buffer_infos = get_config_buffer_info(context.operations());
         CHECK_EXPECTED(dynamic_ctxt_config_buffer_infos);
 
@@ -3535,13 +3579,23 @@ Expected<ConfigureNetworkParams> Hef::create_configure_params_mipi_input(hailo_s
     return pimpl->create_configure_params_mipi_input(output_interface, mipi_params, network_group_name);
 }
 
+std::string Hef::hash() const
+{
+    const auto &md5 = pimpl->md5();
+    const bool LOWERCASE = false;
+    return StringUtils::to_hex_string(md5, MD5_DIGEST_LENGTH, LOWERCASE);
+}
+
 std::vector<std::string> Hef::Impl::get_network_groups_names()
 {
     std::vector<std::string> results;
     results.reserve(m_groups.size());
 
     for (const auto &net_group : m_groups) {
-        results.push_back(net_group->network_group_metadata().network_group_name());
+        auto &network_group_name = (ProtoHEFHwArch::PROTO__HW_ARCH__HAILO8L == get_device_arch()) ?
+            net_group->partial_network_groups(0).network_group().network_group_metadata().network_group_name()
+            : net_group->network_group_metadata().network_group_name();
+        results.push_back(network_group_name);
     }
     return results;
 }
@@ -3558,7 +3612,9 @@ Expected<std::vector<hailo_network_group_info_t>> Hef::Impl::get_network_groups_
 
     for (const auto &net_group : m_groups) {
         hailo_network_group_info_t info = {};
-        auto &network_group_name = net_group->network_group_metadata().network_group_name();
+        auto &network_group_name = (ProtoHEFHwArch::PROTO__HW_ARCH__HAILO8L == get_device_arch()) ?
+            net_group->partial_network_groups(0).network_group().network_group_metadata().network_group_name()
+            : net_group->network_group_metadata().network_group_name();
         CHECK_AS_EXPECTED(HAILO_MAX_NETWORK_GROUP_NAME_SIZE >= (network_group_name.length() + 1), HAILO_INTERNAL_FAILURE,
             "The network group '{}' has a too long name (max is HAILO_MAX_NETWORK_GROUP_NAME_SIZE)", network_group_name);
         strncpy(info.name, network_group_name.c_str(), network_group_name.length() + 1);

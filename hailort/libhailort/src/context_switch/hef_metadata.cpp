@@ -548,15 +548,16 @@ void hef_metadata__add_edge_layer_header(
     *(edge_layer_current_offset) += sizeof(*edge_layer_header);
 }
 
-void hef_metadata__fill_edge_layer_common_info(
-        CONTROL_PROTOCOL__edge_layer_common_info_t *edge_layer_common_info,
-        uint8_t stream_index, 
-        uint8_t vdma_channel_index,
-        uint8_t network_index,
-        const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config)
+static void hef_metadata__fill_edge_layer_common_info(
+    CONTROL_PROTOCOL__edge_layer_common_info_t *edge_layer_common_info,
+    vdma::ChannelId channel_id,
+    uint8_t stream_index,
+    uint8_t network_index,
+    const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config)
 {
+    edge_layer_common_info->engine_index = channel_id.engine_index;
+    edge_layer_common_info->vdma_channel_index = channel_id.channel_index;
     edge_layer_common_info->stream_index = stream_index;
-    edge_layer_common_info->vdma_channel_index = vdma_channel_index;
     edge_layer_common_info->network_index = network_index;
     edge_layer_common_info->nn_stream_config.core_bytes_per_buffer = BYTE_ORDER__htons(nn_stream_config.core_bytes_per_buffer);
     edge_layer_common_info->nn_stream_config.core_buffers_per_frame = BYTE_ORDER__htons(nn_stream_config.core_buffers_per_frame);
@@ -569,8 +570,8 @@ void hef_metadata__fill_edge_layer_common_info(
 hailo_status HEF_METADATA__add_network_boundary_output_edge_layer(
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
     uint8_t **edge_layer_current_offset,
-    uint8_t stream_index, 
-    uint8_t vdma_channel_index,
+    vdma::ChannelId channel_id,
+    uint8_t stream_index,
     uint8_t network_index,
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
     const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info)
@@ -596,10 +597,10 @@ hailo_status HEF_METADATA__add_network_boundary_output_edge_layer(
     edge_layer_info = (CONTROL_PROTOCOL__network_boundary_output_t *)(*edge_layer_current_offset);
 
     hef_metadata__fill_edge_layer_common_info(&(edge_layer_info->common_info),
-            stream_index, 
-            vdma_channel_index,
-            network_index,
-            nn_stream_config);
+        channel_id,
+        stream_index,
+        network_index,
+        nn_stream_config);
 
     edge_layer_info->host_buffer_info = host_buffer_info;
 
@@ -611,8 +612,8 @@ hailo_status HEF_METADATA__add_network_boundary_output_edge_layer(
 hailo_status HEF_METADATA__add_inter_context_output_edge_layer(
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
     uint8_t **edge_layer_current_offset,
-    uint8_t stream_index, 
-    uint8_t vdma_channel_index,
+    vdma::ChannelId channel_id,
+    uint8_t stream_index,
     uint8_t network_index,
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
     const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info)
@@ -638,10 +639,10 @@ hailo_status HEF_METADATA__add_inter_context_output_edge_layer(
     edge_layer_info = (CONTROL_PROTOCOL__inter_context_output_t *)(*edge_layer_current_offset);
 
     hef_metadata__fill_edge_layer_common_info(&(edge_layer_info->common_info),
-            stream_index, 
-            vdma_channel_index,
-            network_index,
-            nn_stream_config);
+        channel_id,
+        stream_index,
+        network_index,
+        nn_stream_config);
 
     edge_layer_info->host_buffer_info = host_buffer_info;
 
@@ -653,8 +654,8 @@ hailo_status HEF_METADATA__add_inter_context_output_edge_layer(
 hailo_status HEF_METADATA__add_ddr_buffer_output_edge_layer(
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
     uint8_t **edge_layer_current_offset,
+    vdma::ChannelId channel_id,
     uint8_t stream_index,
-    uint8_t vdma_channel_index,
     uint8_t network_index,
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
     const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info,
@@ -681,10 +682,10 @@ hailo_status HEF_METADATA__add_ddr_buffer_output_edge_layer(
     edge_layer_info = (CONTROL_PROTOCOL__ddr_buffer_output_t *)(*edge_layer_current_offset);
 
     hef_metadata__fill_edge_layer_common_info(&(edge_layer_info->common_info),
-            stream_index, 
-            vdma_channel_index,
-            network_index,
-            nn_stream_config);
+        channel_id,
+        stream_index,
+        network_index,
+        nn_stream_config);
 
     *(edge_layer_current_offset) += sizeof(*edge_layer_info);
 
@@ -697,8 +698,8 @@ hailo_status HEF_METADATA__add_ddr_buffer_output_edge_layer(
 hailo_status HEF_METADATA__add_network_boundary_input_edge_layer(
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
     uint8_t **edge_layer_current_offset,
-    uint8_t stream_index, 
-    uint8_t vdma_channel_index,
+    vdma::ChannelId channel_id,
+    uint8_t stream_index,
     uint8_t network_index,
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
     const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info,
@@ -725,10 +726,10 @@ hailo_status HEF_METADATA__add_network_boundary_input_edge_layer(
     edge_layer_info = (CONTROL_PROTOCOL__network_boundary_input_t *)(*edge_layer_current_offset);
 
     hef_metadata__fill_edge_layer_common_info(&(edge_layer_info->common_info),
-            stream_index, 
-            vdma_channel_index,
-            network_index,
-            nn_stream_config);
+        channel_id,
+        stream_index,
+        network_index,
+        nn_stream_config);
 
     edge_layer_info->host_buffer_info = host_buffer_info;
     edge_layer_info->initial_credit_size = initial_credit_size;
@@ -741,8 +742,8 @@ hailo_status HEF_METADATA__add_network_boundary_input_edge_layer(
 hailo_status HEF_METADATA__add_inter_context_input_edge_layer(
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
     uint8_t **edge_layer_current_offset,
-    uint8_t stream_index, 
-    uint8_t vdma_channel_index,
+    vdma::ChannelId channel_id,
+    uint8_t stream_index,
     uint8_t network_index,
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
     const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info,
@@ -769,10 +770,10 @@ hailo_status HEF_METADATA__add_inter_context_input_edge_layer(
     edge_layer_info = (CONTROL_PROTOCOL__inter_context_input_t *)(*edge_layer_current_offset);
 
     hef_metadata__fill_edge_layer_common_info(&(edge_layer_info->common_info),
-            stream_index, 
-            vdma_channel_index,
-            network_index,
-            nn_stream_config);
+        channel_id,
+        stream_index,
+        network_index,
+        nn_stream_config);
 
     edge_layer_info->host_buffer_info = host_buffer_info;
     edge_layer_info->initial_credit_size = initial_credit_size;
@@ -785,13 +786,13 @@ hailo_status HEF_METADATA__add_inter_context_input_edge_layer(
 hailo_status HEF_METADATA__add_ddr_buffer_input_edge_layer(
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
     uint8_t **edge_layer_current_offset,
-    uint8_t stream_index, 
-    uint8_t vdma_channel_index,
+    vdma::ChannelId channel_id,
+    uint8_t stream_index,
     uint8_t network_index,
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
     const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info,
     uint32_t initial_credit_size,
-    uint8_t connected_d2h_channel_index)
+    vdma::ChannelId connected_d2h_channel_id)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__ddr_buffer_input_t *edge_layer_info = nullptr;
@@ -814,14 +815,15 @@ hailo_status HEF_METADATA__add_ddr_buffer_input_edge_layer(
     edge_layer_info = (CONTROL_PROTOCOL__ddr_buffer_input_t *)(*edge_layer_current_offset);
 
     hef_metadata__fill_edge_layer_common_info(&(edge_layer_info->common_info),
-            stream_index, 
-            vdma_channel_index,
-            network_index,
-            nn_stream_config);
+        channel_id,
+        stream_index,
+        network_index,
+        nn_stream_config);
 
     edge_layer_info->host_buffer_info = host_buffer_info;
     edge_layer_info->initial_credit_size = initial_credit_size;
-    edge_layer_info->connected_d2h_channel_index = connected_d2h_channel_index;
+    edge_layer_info->connected_d2h_engine_index = connected_d2h_channel_id.engine_index;
+    edge_layer_info->connected_d2h_channel_index = connected_d2h_channel_id.channel_index;
 
     *(edge_layer_current_offset) += sizeof(*edge_layer_info);
 
@@ -829,13 +831,13 @@ hailo_status HEF_METADATA__add_ddr_buffer_input_edge_layer(
 }
 
 hailo_status HEF_METADATA__add_ddr_pair_info(
-        CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
-        uint8_t **action_data_current_offset,
-        const uint8_t h2d_vdma_channel_index, 
-        const uint8_t d2h_vdma_channel_index,
-        const uint32_t descriptors_per_frame,
-        const uint16_t programmed_descriptors_count,
-        bool is_repeated)
+    CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
+    uint8_t **action_data_current_offset,
+    const vdma::ChannelId h2d_vdma_channel_id,
+    const vdma::ChannelId d2h_vdma_channel_id,
+    const uint32_t descriptors_per_frame,
+    const uint16_t programmed_descriptors_count,
+    bool is_repeated)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__ADD_DDR_PAIR_ACTION_t ddr_pair_action{};
@@ -845,8 +847,10 @@ hailo_status HEF_METADATA__add_ddr_pair_info(
 
     ddr_pair_action.header.action_type = CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ADD_DDR_PAIR_INFO;
     ddr_pair_action.header.is_repeated = is_repeated;
-    ddr_pair_action.h2d_vdma_channel_index = h2d_vdma_channel_index;
-    ddr_pair_action.d2h_vdma_channel_index = d2h_vdma_channel_index;
+    ddr_pair_action.h2d_engine_index = h2d_vdma_channel_id.engine_index;
+    ddr_pair_action.h2d_vdma_channel_index = h2d_vdma_channel_id.channel_index;
+    ddr_pair_action.d2h_engine_index = d2h_vdma_channel_id.engine_index;
+    ddr_pair_action.d2h_vdma_channel_index = d2h_vdma_channel_id.channel_index;
     ddr_pair_action.descriptors_per_frame = descriptors_per_frame;
     ddr_pair_action.programmed_descriptors_count = programmed_descriptors_count;
 

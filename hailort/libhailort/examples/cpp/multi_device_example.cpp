@@ -1,14 +1,6 @@
 /**
- * Copyright 2020 (C) Hailo Technologies Ltd.
- * All rights reserved.
- *
- * Hailo Technologies Ltd. ("Hailo") disclaims any warranties, including, but not limited to,
- * the implied warranties of merchantability and fitness for a particular purpose.
- * This software is provided on an "AS IS" basis, and Hailo has no obligation to provide maintenance,
- * support, updates, enhancements, or modifications.
- *
- * You may use this software in the development of any project.
- * You shall not reproduce, modify or distribute this software without prior written permission.
+ * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
  * @file multi_device_example.cpp
@@ -134,9 +126,9 @@ hailo_status infer(std::vector<InputVStream> &input_streams, std::vector<OutputV
 
 int main()
 {
-    auto scan_res = hailort::Device::scan_pcie();
+    auto scan_res = hailort::Device::scan();
     if (!scan_res) {
-        std::cerr << "Failed to scan pcie, status = " << scan_res.status() << std::endl;
+        std::cerr << "Failed to scan, status = " << scan_res.status() << std::endl;
         return scan_res.status();
     }
 

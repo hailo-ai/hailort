@@ -12,8 +12,6 @@
 #include <functional>
 #include <thread>
 #include <memory>
-#include <atomic>
-#include <condition_variable>
 
 namespace hailort
 {
@@ -28,7 +26,7 @@ public:
     explicit AsyncThread(std::function<T(void)> func) :
         m_result(),
         m_thread([this, func]() {
-            m_result.store(func());
+            m_result = func();
         })
     {}
 
@@ -47,66 +45,12 @@ public:
         if (m_thread.joinable()) {
             m_thread.join();
         }
-        return m_result.load();
+        return std::move(m_result);
     }
 
 private:
-    std::atomic<T> m_result;
+    T m_result;
     std::thread m_thread;
-};
-
-
-class ReusableThread final
-{
-public:
-    ReusableThread(std::function<void()> lambda) : m_is_active(true), m_is_running(true)
-    {
-        m_thread = std::thread([this, lambda] () {
-            while (m_is_active) {
-                std::unique_lock<std::mutex> lock(m_mutex);
-                m_cv.wait(lock, [&] { return ((m_is_running.load()) || !(m_is_active.load())); });
-                if (m_is_active.load()) {
-                    lambda();
-                    m_is_running = false;
-                }
-            }
-        });
-    };
-
-    ~ReusableThread()
-    {
-        {
-            std::unique_lock<std::mutex> lock(m_mutex);
-            m_is_running = false;
-            m_is_active = false;
-        }
-        m_cv.notify_one();
-        if (m_thread.joinable()) {
-            m_thread.join();
-        }
-    }
-
-    ReusableThread(const ReusableThread &other) = delete;
-    ReusableThread &operator=(const ReusableThread &other) = delete;
-    ReusableThread &operator=(ReusableThread &&other) = delete;
-    ReusableThread(ReusableThread &&other) noexcept = delete;
-
-    void restart()
-    {
-        {
-            std::unique_lock<std::mutex> lock(m_mutex);
-            m_is_running = true;
-        }
-        m_cv.notify_one();
-
-    }
-
-private:
-    std::thread m_thread;
-    std::atomic_bool m_is_active;
-    std::atomic_bool m_is_running;
-    std::mutex m_mutex;
-    std::condition_variable m_cv;
 };
 
 

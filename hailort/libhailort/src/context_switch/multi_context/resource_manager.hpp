@@ -10,17 +10,17 @@
  *
  * !-Working with physical device-!
  * VdmaDevice (either PcieDevice or CoreDevice)
- * └── VdmaConfigManager
- *     └──vector of VdmaConfigNetworkGroup
- *                  └──ResourceManager <only one>
- *                     └──reference to physical device
+ * |-- VdmaConfigManager
+ *     |--vector of VdmaConfigNetworkGroup
+ *                  |--ResourceManager <only one>
+ *                     |--reference to physical device
  *
  * !-Working with virtual device-!
  * VDevice
- * └──vector of VdmaDevice (either PcieDevice or CoreDevice)
- * └──vector of VdmaConfigNetworkGroup
- *              └── vector of ResourceManager <one per phys device>
- *                            └──reference to physical device
+ * |--vector of VdmaDevice (either PcieDevice or CoreDevice)
+ * |--vector of VdmaConfigNetworkGroup
+ *              |-- vector of ResourceManager <one per phys device>
+ *                            |--reference to physical device
   **/
 
 #ifndef _HAILO_CONTEXT_SWITCH_RESOURCE_MANAGER_HPP_
@@ -43,7 +43,7 @@ class ResourcesManager final
 {
 public:
     static Expected<ResourcesManager> create(VdmaDevice &vdma_device, HailoRTDriver &driver,
-        const ConfigureNetworkParams &config_params, ProtoHEFNetworkGroupPtr network_group_proto,
+        const ConfigureNetworkParams &config_params, const ProtoHEFNetworkGroup &network_group_proto,
         std::shared_ptr<NetworkGroupMetadata> network_group_metadata, const HefParsingInfo &parsing_info,
         uint8_t net_group_index);
 
@@ -69,8 +69,8 @@ public:
     ExpectedRef<InterContextBuffer> create_inter_context_buffer(uint32_t transfer_size, uint8_t src_stream_index,
         uint8_t src_context_index, const std::string &network_name);
     ExpectedRef<InterContextBuffer> get_inter_context_buffer(const IntermediateBufferKey &key);
-    Expected<std::shared_ptr<VdmaChannel>> create_boundary_vdma_channel(uint8_t channel_index, uint32_t transfer_size, 
-        const std::string &network_name, const std::string &stream_name,
+    Expected<std::shared_ptr<VdmaChannel>> create_boundary_vdma_channel(const vdma::ChannelId &channel_id,
+        uint32_t transfer_size, const std::string &network_name, const std::string &stream_name,
         VdmaChannel::Direction channel_direction);
 
     ExpectedRef<DdrChannelsPair> create_ddr_channels_pair(const DdrChannelsInfo &ddr_info, uint8_t context_index);
@@ -123,20 +123,16 @@ public:
         return m_vdma_device;
     }
 
-    Expected<uint8_t> get_available_channel_index(std::set<uint8_t>& blacklist, ChannelInfo::Type required_type,
-        VdmaChannel::Direction direction, const std::string &layer_name="");
-
-    Expected<std::reference_wrapper<ChannelInfo>> get_channel_info(uint8_t index)
-    {
-        return m_channel_allocator.get_channel_info(index);
-    }
+    Expected<vdma::ChannelId> get_available_channel_id(const LayerIdentifier &layer_identifier,
+        VdmaChannel::Direction direction, uint8_t engine_index);
+    hailo_status free_channel_index(const LayerIdentifier &layer_identifier);
 
     const char* get_dev_id() const
     {
         return m_vdma_device.get_dev_id();
     }
 
-    LatencyMetersMap &get_latnecy_meters()
+    LatencyMetersMap &get_latency_meters()
     {
         return m_latency_meters;
     }
@@ -145,7 +141,6 @@ public:
 
     Expected<Buffer> read_intermediate_buffer(const IntermediateBufferKey &key);
 
-    hailo_status set_number_of_cfg_channels(const uint8_t number_of_cfg_channels);
     void update_preliminary_config_buffer_info();
     void update_dynamic_contexts_buffer_info();
 
@@ -165,7 +160,11 @@ private:
     void update_config_buffer_info(std::vector<ConfigBuffer> &config_buffers,
         CONTROL_PROTOCOL__context_switch_context_info_t &context);
     hailo_status fill_infer_features(CONTROL_PROTOCOL__application_header_t &app_header);
+    hailo_status fill_validation_features(CONTROL_PROTOCOL__application_header_t &app_header);
     hailo_status fill_network_batch_size(CONTROL_PROTOCOL__application_header_t &app_header);
+
+    static Expected<uint8_t> get_cfg_channel_engine(HailoRTDriver &driver, uint8_t config_stream_index,
+        const ProtoHEFNetworkGroupMetadata &proto_metadata);
 
     std::vector<CONTROL_PROTOCOL__context_switch_context_info_t> m_contexts;
     ChannelAllocator m_channel_allocator;
@@ -185,10 +184,11 @@ private:
     std::map<std::string, std::shared_ptr<VdmaChannel>> m_boundary_channels; //map of string name and connected vDMA channel
 
     ResourcesManager(VdmaDevice &vdma_device, HailoRTDriver &driver,
-        const ConfigureNetworkParams config_params, std::vector<ConfigBuffer> &&preliminary_config,
-        std::vector<std::vector<ConfigBuffer>> &&dynamic_config, std::shared_ptr<NetworkGroupMetadata> &&network_group_metadata, uint8_t net_group_index,
+        ChannelAllocator &&channel_allocator, const ConfigureNetworkParams config_params,
+        std::vector<ConfigBuffer> &&preliminary_config, std::vector<std::vector<ConfigBuffer>> &&dynamic_config,
+        std::shared_ptr<NetworkGroupMetadata> &&network_group_metadata, uint8_t net_group_index,
         const std::vector<std::string> &&network_index_map, LatencyMetersMap &&latency_meters) :
-          m_channel_allocator(network_group_metadata->supported_features()),
+          m_channel_allocator(std::move(channel_allocator)),
           m_vdma_device(vdma_device), m_driver(driver), m_config_params(config_params),
           m_preliminary_config(std::move(preliminary_config)), m_dynamic_config(std::move(dynamic_config)),
           m_network_group_metadata(std::move(network_group_metadata)), m_net_group_index(net_group_index), m_network_index_map(std::move(network_index_map)),

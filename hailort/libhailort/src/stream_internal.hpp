@@ -10,20 +10,20 @@
  *        Hence, the hierarchy is as follows:
  * 
  * InputStream                      (External "interface")
- * └── InputStreamBase              (Base class)
- *     ├── VdmaInputStream          (Base class for vdma streams)
- *     │   ├── PcieInputStream
- *     │   └── CoreInputStream
- *     ├── EthernetInputStream
- *     └── MipiInputStream
+ * |-- InputStreamBase              (Base class)
+ *     |-- VdmaInputStream          (Base class for vdma streams)
+ *     |   |-- PcieInputStream
+ *     |   |-- CoreInputStream
+ *     |-- EthernetInputStream
+ *     |-- MipiInputStream
  * 
  *
  * OutputStream                      (External "interface")
- * └── OutputStreamBase              (Base class)
- *     ├── VdmaOutputStream          (Base class for vdma streams)
- *     │   ├── PcieOutputStream
- *     │   └── CoreOutputStream
- *     └── EthernetOutputStream
+ * |-- OutputStreamBase              (Base class)
+ *     |-- VdmaOutputStream          (Base class for vdma streams)
+ *     |   |-- PcieOutputStream
+ *     |   |-- CoreOutputStream
+ *     |-- EthernetOutputStream
  * 
  **/
 
@@ -71,6 +71,16 @@ public:
     };
 
     virtual Expected<PendingBufferState> send_pending_buffer()
+    {
+        return make_unexpected(HAILO_INVALID_OPERATION);
+    }
+
+    virtual Expected<size_t> get_buffer_frames_size() const
+    {
+        return make_unexpected(HAILO_INVALID_OPERATION);
+    }
+    
+    virtual Expected<size_t> get_pending_frames_count() const
     {
         return make_unexpected(HAILO_INVALID_OPERATION);
     }
@@ -127,6 +137,21 @@ public:
     {
         return m_layer_info;
     };
+
+    virtual Expected<size_t> get_buffer_frames_size() const
+    {
+        return make_unexpected(HAILO_INVALID_OPERATION);
+    }
+    
+    virtual Expected<size_t> get_pending_frames_count() const
+    {
+        return make_unexpected(HAILO_INVALID_OPERATION);
+    }
+
+    virtual hailo_status register_for_d2h_interrupts(const std::function<void(uint32_t)> &/*callback*/)
+    {
+        return HAILO_INVALID_OPERATION;
+    }
 
     CONTROL_PROTOCOL__nn_stream_config_t m_nn_stream_config;
 

@@ -168,12 +168,19 @@ struct hailo_vdma_channel_disable_params {
 
 /* structure used in ioctl HAILO_VDMA_CHANNEL_WAIT_INT */
 struct hailo_vdma_channel_wait_params {
-    uint8_t engine_index;                                   // in
-    uint8_t channel_index;                                  // in
-    uint64_t channel_handle;                                // in
-    uint64_t timeout_ms;                                    // in
-    struct hailo_channel_interrupt_timestamp *timestamps;   // out
-    uint32_t timestamps_count;                              // inout
+    uint8_t engine_index;                                                               // in
+    uint8_t channel_index;                                                              // in
+    uint64_t channel_handle;                                                            // in
+    uint64_t timeout_ms;                                                                // in
+    uint32_t timestamps_count;                                                          // inout
+// In linux send address to local buffer because there isnt room on stack for array
+#if defined(__linux__)
+    struct hailo_channel_interrupt_timestamp *timestamps;                               // out
+#elif defined(__QNX__) || defined(_MSC_VER)
+    struct hailo_channel_interrupt_timestamp timestamps[CHANNEL_IRQ_TIMESTAMPS_SIZE];   // out
+#else
+#error "unsupported platform!"
+#endif // __linux__  
 };
 
 /* structure used in ioctl HAILO_VDMA_CHANNEL_ABORT */
@@ -234,12 +241,24 @@ struct hailo_bar_transfer_params {
     uint8_t buffer[MAX_BAR_TRANSFER_LENGTH];            // in/out
 };
 
-/* structure used in ioctl HAILO_VDMA_CHANNEL_REGISTERS */
-struct hailo_channel_registers_params {
-    enum hailo_transfer_direction transfer_direction;  // in
-    off_t offset;                                      // in
-    size_t size;                                       // in
-    uint32_t data;                                     // in/out
+/* structure used in ioctl HAILO_VDMA_CHANNEL_READ_REGISTER */
+struct hailo_vdma_channel_read_register_params {
+    uint8_t engine_index;                       // in
+    uint8_t channel_index;                      // in
+    enum hailo_dma_data_direction direction;    // in
+    size_t offset;                              // in
+    size_t reg_size;                            // in, can be either 1, 2 or 4
+    uint32_t data;                              // out
+};
+
+/* structure used in ioctl HAILO_VDMA_CHANNEL_WRITE_REGISTER */
+struct hailo_vdma_channel_write_register_params {
+    uint8_t engine_index;                       // in
+    uint8_t channel_index;                      // in
+    enum hailo_dma_data_direction direction;    // in
+    size_t offset;                              // in
+    size_t reg_size;                            // in, can be either 1, 2 or 4
+    uint32_t data;                              // in
 };
 
 /* structure used in ioctl HAILO_VDMA_BUFFER_SYNC */
@@ -354,7 +373,8 @@ enum hailo_vdma_ioctl_code {
     HAILO_VDMA_CHANNEL_WAIT_INT_CODE,
     HAILO_VDMA_CHANNEL_ABORT_CODE,
     HAILO_VDMA_CHANNEL_CLEAR_ABORT_CODE,
-    HAILO_VDMA_CHANNEL_REGISTERS_CODE,
+    HAILO_VDMA_CHANNEL_READ_REGISTER_CODE,
+    HAILO_VDMA_CHANNEL_WRITE_REGISTER_CODE,
     HAILO_VDMA_BUFFER_MAP_CODE,
     HAILO_VDMA_BUFFER_UNMAP_CODE,
     HAILO_VDMA_BUFFER_SYNC_CODE,
@@ -376,7 +396,8 @@ enum hailo_vdma_ioctl_code {
 #define HAILO_VDMA_CHANNEL_WAIT_INT         _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_CHANNEL_WAIT_INT_CODE,      struct hailo_vdma_channel_wait_params)
 #define HAILO_VDMA_CHANNEL_ABORT            _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_CHANNEL_ABORT_CODE,         struct hailo_vdma_channel_abort_params)
 #define HAILO_VDMA_CHANNEL_CLEAR_ABORT      _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_CHANNEL_CLEAR_ABORT_CODE,   struct hailo_vdma_channel_clear_abort_params)
-#define HAILO_VDMA_CHANNEL_REGISTERS        _IOWR_(HAILO_VDMA_IOCTL_MAGIC, HAILO_VDMA_CHANNEL_REGISTERS_CODE,     struct hailo_channel_registers_params)
+#define HAILO_VDMA_CHANNEL_READ_REGISTER    _IOWR_(HAILO_VDMA_IOCTL_MAGIC, HAILO_VDMA_CHANNEL_READ_REGISTER_CODE, struct hailo_vdma_channel_read_register_params)
+#define HAILO_VDMA_CHANNEL_WRITE_REGISTER   _IOR_(HAILO_VDMA_IOCTL_MAGIC, HAILO_VDMA_CHANNEL_WRITE_REGISTER_CODE, struct hailo_vdma_channel_write_register_params)
 
 #define HAILO_VDMA_BUFFER_MAP               _IOWR_(HAILO_VDMA_IOCTL_MAGIC, HAILO_VDMA_BUFFER_MAP_CODE,            struct hailo_vdma_buffer_map_params)
 #define HAILO_VDMA_BUFFER_UNMAP             _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_BUFFER_UNMAP_CODE,          struct hailo_vdma_buffer_unmap_params)

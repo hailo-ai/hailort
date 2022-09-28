@@ -220,27 +220,24 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_overcurrent_alert_
         goto l_exit;
     }
 
-    switch (d2h_notification_message->message_parameters.health_monitor_overcurrent_alert_event.overcurrent_zone) {
-        case HAILO_OVERCURRENT_PROTECTION_OVERCURRENT_ZONE__NONE:
-            LOGGER__INFO("Got health monitor notification - overcurrent alert state cleared.");
-            break;
-
-        case HAILO_OVERCURRENT_PROTECTION_OVERCURRENT_ZONE__ORANGE:
-            LOGGER__WARNING("Got health monitor notification - overcurrent alert state exceeded orange threshold ({} mA), and sampled current during alert ({} mA)", 
-                d2h_notification_message->message_parameters.health_monitor_overcurrent_alert_event.exceeded_alert_threshold,
-                d2h_notification_message->message_parameters.health_monitor_overcurrent_alert_event.sampled_current_during_alert);
-            break;
-
-        case HAILO_OVERCURRENT_PROTECTION_OVERCURRENT_ZONE__RED:
-            LOGGER__CRITICAL("Got health monitor notification - overcurrent alert state exceeded red threshold ({} mA), and sampled current during alert ({} mA)", 
-                d2h_notification_message->message_parameters.health_monitor_overcurrent_alert_event.exceeded_alert_threshold,
-                d2h_notification_message->message_parameters.health_monitor_overcurrent_alert_event.sampled_current_during_alert);
-            break;
-
-        default:
-            LOGGER__ERROR("Got invalid health monitor notification - overcurrent alert state could not be parsed.");
-            status = HAILO_STATUS__D2H_EVENTS__INVALID_ARGUMENT;
-            goto l_exit;
+    if (d2h_notification_message->message_parameters.health_monitor_overcurrent_alert_event.is_last_overcurrent_violation_reached) {
+        LOGGER__WARNING("Got health monitor notification - last overcurrent violation allow alert state. The exceeded alert threshold is {} mA", 
+                d2h_notification_message->message_parameters.health_monitor_overcurrent_alert_event.exceeded_alert_threshold);
+    } else {
+        switch (d2h_notification_message->message_parameters.health_monitor_overcurrent_alert_event.overcurrent_zone) {
+            case HAILO_OVERCURRENT_PROTECTION_OVERCURRENT_ZONE__GREEN:
+                LOGGER__INFO("Got health monitor notification - overcurrent reached green zone. clk frequency decrease process was stopped. The exceeded alert threshold is {} mA", 
+                        d2h_notification_message->message_parameters.health_monitor_overcurrent_alert_event.exceeded_alert_threshold);
+                break;
+            case HAILO_OVERCURRENT_PROTECTION_OVERCURRENT_ZONE__RED:
+                LOGGER__CRITICAL("Got health monitor notification - overcurrent reached red zone. clk frequency decrease process was started. The exceeded alert threshold is {} mA", 
+                        d2h_notification_message->message_parameters.health_monitor_overcurrent_alert_event.exceeded_alert_threshold);
+                break;
+            default:
+                LOGGER__ERROR("Got invalid health monitor notification - overcurrent alert state could not be parsed.");
+                status = HAILO_STATUS__D2H_EVENTS__INVALID_ARGUMENT;
+                goto l_exit;
+        }
     }
 
     status = HAILO_COMMON_STATUS__SUCCESS;

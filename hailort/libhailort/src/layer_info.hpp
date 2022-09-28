@@ -14,6 +14,7 @@
 #include "hailo/hailort_common.hpp"
 #include "hailort_defaults.hpp"
 #include "control_protocol.h"
+#include "os/hailort_driver.hpp"
 
 #include <vector>
 #include <memory>
@@ -21,6 +22,15 @@
 
 namespace hailort
 {
+
+enum class LayerType
+{
+    NOT_SET = 0,
+    BOUNDARY = 1,
+    INTER_CONTEXT = 2,
+    DDR = 3,
+    CFG = 4
+};
 
 struct BufferIndices {
     uint32_t index;
@@ -39,6 +49,7 @@ struct LayerInfo {
     hailo_format_t format;
     hailo_stream_direction_t direction;
     uint8_t stream_index;
+    uint8_t dma_engine_index;
     std::string name;
     hailo_quant_info_t quant_info;
     hailo_nms_info_t nms_info;
@@ -57,6 +68,7 @@ struct LayerInfo {
 struct InterContextLayerInfo {
     std::string name;
     uint8_t stream_index;
+    uint8_t dma_engine_index;
     uint8_t context_index;
     hailo_stream_direction_t direction;
     CONTROL_PROTOCOL__nn_stream_config_t nn_stream_config;
@@ -84,10 +96,32 @@ struct DdrLayerInfo {
     //(In DDR core buffer per frame is 1). Used to calc total host descriptors_per_frame. 
     uint16_t total_buffers_per_frame;
     uint8_t src_context_index;
+    uint8_t src_dma_engine_index;
     uint8_t src_stream_index;
     uint8_t dst_context_index;
+    uint8_t dst_dma_engine_index;
     uint8_t dst_stream_index;
 };
+
+// LayerIdentifier = <LayerType, layer_name, stream_index>
+using LayerIdentifier = std::tuple<LayerType, std::string, uint8_t>;
+
+inline LayerIdentifier to_layer_identifier(const LayerInfo &info)
+{
+    return std::make_tuple(LayerType::BOUNDARY, info.name, info.stream_index);
+}
+
+inline LayerIdentifier to_layer_identifier(const InterContextLayerInfo &info)
+{
+    return std::make_tuple(LayerType::INTER_CONTEXT, info.name, info.stream_index);
+}
+
+inline LayerIdentifier to_layer_identifier(const DdrLayerInfo &info, HailoRTDriver::DmaDirection direction)
+{
+    const auto stream_index = (direction == HailoRTDriver::DmaDirection::H2D) ? info.src_stream_index :
+                                                                                info.dst_stream_index;
+    return std::make_tuple(LayerType::DDR, info.name, stream_index);
+}
 
 class LayerInfoUtils {
 public:

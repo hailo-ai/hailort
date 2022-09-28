@@ -398,7 +398,12 @@ Expected<std::unique_ptr<EthernetInputStream>> EthernetInputStream::create(Devic
 
     auto device_architecture = eth_device->get_architecture();
     CHECK_EXPECTED(device_architecture);
-    local_stream->configuration.use_dataflow_padding = (HAILO_ARCH_HAILO8_B0 == device_architecture.value());
+    if ((HAILO_ARCH_HAILO8 == device_architecture.value()) || (HAILO_ARCH_HAILO8L == device_architecture.value())) {
+        local_stream->configuration.use_dataflow_padding = true;
+    }
+    else {
+        local_stream->configuration.use_dataflow_padding = false;
+    }
 
     local_stream->set_max_payload_size(params.max_payload_size);
 

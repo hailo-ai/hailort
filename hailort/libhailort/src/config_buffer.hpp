@@ -19,7 +19,7 @@ namespace hailort {
 class ConfigBuffer final
 {
 public:
-    static Expected<ConfigBuffer> create(HailoRTDriver &driver, uint8_t vdma_channel_index,
+    static Expected<ConfigBuffer> create(HailoRTDriver &driver, vdma::ChannelId channel_id,
         const std::vector<uint32_t> &cfg_sizes);
 
     // Write data to config channel
@@ -38,7 +38,7 @@ public:
     CONTROL_PROTOCOL__config_channel_info_t get_config_channel_info() const;
 
 private:
-    ConfigBuffer(std::unique_ptr<vdma::VdmaBuffer> &&buffer, uint8_t vdma_channel_index, size_t total_buffer_size);
+    ConfigBuffer(std::unique_ptr<vdma::VdmaBuffer> &&buffer, vdma::ChannelId channel_id, size_t total_buffer_size);
 
     static Expected<std::unique_ptr<vdma::VdmaBuffer>> create_sg_buffer(HailoRTDriver &driver,
         uint8_t vdma_channel_index, const std::vector<uint32_t> &cfg_sizes);
@@ -48,7 +48,7 @@ private:
     static bool should_use_ccb(HailoRTDriver &driver);
 
     std::unique_ptr<vdma::VdmaBuffer> m_buffer;
-    uint8_t m_vdma_channel_index;
+    vdma::ChannelId m_channel_id;
     const size_t m_total_buffer_size; 
     size_t m_acc_buffer_offset;
     uint32_t m_acc_desc_count;

@@ -44,7 +44,7 @@
                 "temperature_red_hysteresis_threshold": {"$ref": "#/definitions/int8_t"},
                 "temperature_orange_threshold": {"$ref": "#/definitions/int8_t"},
                 "temperature_orange_hysteresis_threshold": {"$ref": "#/definitions/int8_t"},
-                "overcurrent_monitoring_orange_threshold_enable": {"type": "boolean"}
+                "deprecated__overcurrent_monitoring_orange_threshold_enable": {"type": "boolean"}
             }
         },
         "control":

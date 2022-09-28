@@ -8,7 +8,7 @@ if(NOT CMAKE_HOST_UNIX)
     message(FATAL_ERROR "Only unix hosts are supported, stopping build")
 endif()
 
-find_package(HailoRT 4.9.0 EXACT REQUIRED)
+find_package(HailoRT 4.10.0 EXACT REQUIRED)
 
 # GST_PLUGIN_DEFINE needs PACKAGE to be defined
 set(GST_HAILO_PACKAGE_NAME "hailo")

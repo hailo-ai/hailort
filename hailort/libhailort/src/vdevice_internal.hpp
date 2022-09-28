@@ -8,9 +8,14 @@
  *        Hence, the hiearchy is as follows:
  *
  * VDevice                  (External "interface")
- * └── VDeviceBase          (Actual implementations)
+ * |
+ * |-- VDeviceHandle            (VDevice handle for a possibly shared VDeviceBase
+ * |                         when hailort is running as single process)
+ * |-- VDeviceClient            (VDevice client for a possibly shared VDeviceBase
+ * |                         when hailort is running as a service)
+ * |-- VDeviceBase          (Actual implementations)
  *     |
- *     ├── std::vector<VdmaDevice>
+ *     |-- std::vector<VdmaDevice>
  **/
 
 #ifndef _HAILO_VDEVICE_INTERNAL_HPP_
@@ -22,9 +27,13 @@
 #include "context_switch/multi_context/vdma_config_manager.hpp"
 #include "network_group_scheduler.hpp"
 
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+#include "hailort_rpc_client.hpp"
+#endif // HAILO_SUPPORT_MULTI_PROCESS
 
 namespace hailort
 {
+
 
 class VDeviceBase : public VDevice
 {
@@ -39,7 +48,7 @@ public:
     virtual Expected<ConfiguredNetworkGroupVector> configure(Hef &hef,
         const NetworkGroupsParamsMap &configure_params={}) override;
 
-    virtual Expected<std::vector<std::reference_wrapper<Device>>> get_physical_devices() override
+    virtual Expected<std::vector<std::reference_wrapper<Device>>> get_physical_devices() const override
     {
         // Return Expected for future functionality
         std::vector<std::reference_wrapper<Device>> devices_refs;
@@ -49,16 +58,14 @@ public:
         return devices_refs;
     }
 
-    virtual Expected<std::vector<hailo_pcie_device_info_t>> get_physical_devices_infos() override
+    virtual Expected<std::vector<std::string>> get_physical_devices_ids() const override
     {
-        std::vector<hailo_pcie_device_info_t> devices_infos;
+        std::vector<std::string> device_ids;
+        device_ids.reserve(m_devices.size());
         for (auto &device : m_devices) {
-            CHECK_AS_EXPECTED(device->get_type() == Device::Type::PCIE, HAILO_INTERNAL_FAILURE,
-                "Get physical device info is allowed only on PCIe device");
-            devices_infos.push_back((reinterpret_cast<PcieDevice*>(device.get()))->get_device_info());
+            device_ids.push_back(device.get()->get_dev_id());
         }
-
-        return devices_infos;
+        return device_ids;
     }
 
     const NetworkGroupSchedulerPtr &network_group_scheduler()
@@ -75,12 +82,63 @@ private:
         {}
 
     static Expected<std::vector<std::unique_ptr<VdmaDevice>>> create_devices(const hailo_vdevice_params_t &params);
-    static Expected<std::vector<std::unique_ptr<VdmaDevice>>> create_pcie_devices(const hailo_vdevice_params_t &params);
-    static Expected<std::vector<std::unique_ptr<VdmaDevice>>> create_core_devices(const hailo_vdevice_params_t &params);
+    static Expected<std::vector<std::string>> get_device_ids(const hailo_vdevice_params_t &params);
 
     std::vector<std::unique_ptr<VdmaDevice>> m_devices;
     std::unique_ptr<VdmaConfigManager> m_context_switch_manager;
     NetworkGroupSchedulerPtr m_network_group_scheduler;
+
+    std::mutex m_mutex;
+};
+
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+class VDeviceClient : public VDevice
+{
+public:
+    static Expected<std::unique_ptr<VDevice>> create(const hailo_vdevice_params_t &params);
+
+    VDeviceClient(VDeviceClient &&) = delete;
+    VDeviceClient(const VDeviceClient &) = delete;
+    VDeviceClient &operator=(VDeviceClient &&) = delete;
+    VDeviceClient &operator=(const VDeviceClient &) = delete;
+    virtual ~VDeviceClient();
+
+    Expected<ConfiguredNetworkGroupVector> configure(Hef &hef,
+        const NetworkGroupsParamsMap &configure_params={}) override;
+
+    Expected<std::vector<std::reference_wrapper<Device>>> get_physical_devices() const override;
+
+    Expected<std::vector<std::string>> get_physical_devices_ids() const override;
+
+private:
+    VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t handle);
+
+    std::unique_ptr<HailoRtRpcClient> m_client;
+    uint32_t m_handle;
+};
+
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+
+class VDeviceHandle : public VDevice
+{
+public:
+    static Expected<std::unique_ptr<VDevice>> create(const hailo_vdevice_params_t &params);
+
+    VDeviceHandle(VDeviceHandle &&) = delete;
+    VDeviceHandle(const VDeviceHandle &) = delete;
+    VDeviceHandle &operator=(VDeviceHandle &&) = delete;
+    VDeviceHandle &operator=(const VDeviceHandle &) = delete;
+    virtual ~VDeviceHandle();
+
+    Expected<ConfiguredNetworkGroupVector> configure(Hef &hef,
+        const NetworkGroupsParamsMap &configure_params={}) override;
+
+    Expected<std::vector<std::reference_wrapper<Device>>> get_physical_devices() const override;
+    Expected<std::vector<std::string>> get_physical_devices_ids() const override;
+
+private:
+    VDeviceHandle(uint32_t handle);
+    uint32_t m_handle;
 };
 
 } /* namespace hailort */

@@ -8,6 +8,7 @@
  **/
 
 #include "os/mmap_buffer.hpp"
+#include "os/hailort_driver.hpp"
 #include "hailo_ioctl_common.h"
 #include <sys/ioctl.h>
 
@@ -55,12 +56,14 @@ Expected<MmapBufferImpl> MmapBufferImpl::create_file_map(size_t length, FileDesc
         .user_address = nullptr,
     };
 
-    if (0 > ioctl(file, HAILO_NON_LINUX_DESC_LIST_MMAP, &map_vdma_list_params)) {
-        LOGGER__ERROR("HAILO_NON_LINUX_DESC_LIST_MMAP failed with errno:{}", errno);
+    int err = 0;
+    auto status = HailoRTDriver::hailo_ioctl(file, HAILO_NON_LINUX_DESC_LIST_MMAP, &map_vdma_list_params, err);
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("HAILO_NON_LINUX_DESC_LIST_MMAP failed with errno:{}", err);
         return make_unexpected(HAILO_PCIE_DRIVER_FAIL);
     }
 
-    void *address = mmap(nullptr, length, PROT_WRITE | PROT_READ, MAP_SHARED | MAP_PHYS, NOFD, (off_t)map_vdma_list_params.user_address);
+    void *address = mmap(nullptr, length, PROT_WRITE | PROT_READ | PROT_NOCACHE, MAP_SHARED | MAP_PHYS, NOFD, (off_t)map_vdma_list_params.user_address);
     CHECK_AS_EXPECTED(INVALID_ADDR != address, HAILO_INTERNAL_FAILURE, "Failed to mmap buffer fd with errno:{}", errno);
 #else
 #error "unsupported platform!"

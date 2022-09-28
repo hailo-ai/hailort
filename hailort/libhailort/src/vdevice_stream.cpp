@@ -65,7 +65,7 @@ Expected<size_t> VDeviceInputStream::sync_write_raw_buffer(const MemoryView &buf
     return sync_write_raw_buffer_impl(buffer, m_network_group_handle);
 }
 
-Expected<size_t> VDeviceInputStream::sync_write_raw_buffer_impl(const MemoryView &buffer, network_group_handle_t network_group_handle)
+Expected<size_t> VDeviceInputStream::sync_write_raw_buffer_impl(const MemoryView &buffer, scheduler_ng_handle_t network_group_handle)
 {
     size_t written_bytes = 0;
     auto network_group_scheduler = m_network_group_scheduler.lock();
@@ -117,14 +117,38 @@ hailo_status VDeviceInputStream::sync_write_all_raw_buffer_no_transform_impl(voi
 Expected<PendingBufferState> VDeviceInputStream::send_pending_buffer()
 {
     assert(1 == m_streams.size());
-    VdmaInputStream &vdma_input = dynamic_cast<VdmaInputStream&>(*m_streams[m_next_transfer_stream_index].get());
+    VdmaInputStream &vdma_input = static_cast<VdmaInputStream&>(*m_streams[m_next_transfer_stream_index].get());
     return vdma_input.send_pending_buffer();
+}
+
+Expected<size_t> VDeviceInputStream::get_buffer_frames_size() const
+{
+    size_t total_buffers_size = 0;
+    for (auto &stream : m_streams) {
+        auto stream_buffer_size = stream->get_buffer_frames_size();
+        CHECK_EXPECTED(stream_buffer_size);
+        total_buffers_size += stream_buffer_size.value();
+    }
+    
+    return total_buffers_size;
+}
+
+Expected<size_t> VDeviceInputStream::get_pending_frames_count() const
+{
+    size_t total_pending_frames_count = 0;
+    for (auto &stream : m_streams) {
+        auto stream_pending_frames_count = stream->get_pending_frames_count();
+        CHECK_EXPECTED(stream_pending_frames_count);
+        total_pending_frames_count += stream_pending_frames_count.value();
+    }
+    
+    return total_pending_frames_count;
 }
 
 // TODO - HRT-6830 - make create_input/output_stream_from_net_group as virutal function
 Expected<std::shared_ptr<VDeviceInputStream>> VDeviceInputStream::create_input_stream_from_net_group(
     std::vector<std::shared_ptr<ResourcesManager>> &resources_managers,
-    const LayerInfo &edge_layer, const std::string &stream_name, const network_group_handle_t &network_group_handle,
+    const LayerInfo &edge_layer, const std::string &stream_name, const scheduler_ng_handle_t &network_group_handle,
     EventPtr &&network_group_activated_event, NetworkGroupSchedulerWeakPtr network_group_scheduler)
 {
     hailo_status status = HAILO_UNINITIALIZED;
@@ -168,7 +192,7 @@ Expected<std::shared_ptr<VDeviceInputStream>> VDeviceInputStream::create_input_s
 }
 
 Expected<std::shared_ptr<VDeviceInputStream>> VDeviceInputStream::create(std::vector<std::shared_ptr<ResourcesManager>> &resources_managers,
-    const LayerInfo &edge_layer, const std::string &stream_name, const network_group_handle_t &network_group_handle,
+    const LayerInfo &edge_layer, const std::string &stream_name, const scheduler_ng_handle_t &network_group_handle,
     EventPtr network_group_activated_event, NetworkGroupSchedulerWeakPtr network_group_scheduler)
 {
     assert(0 < resources_managers.size());
@@ -213,7 +237,7 @@ hailo_status VDeviceInputStream::abort()
     return abort_impl(m_network_group_handle);
 }
 
-hailo_status VDeviceInputStream::abort_impl(network_group_handle_t network_group_handle)
+hailo_status VDeviceInputStream::abort_impl(scheduler_ng_handle_t network_group_handle)
 {
     auto status = HAILO_SUCCESS; // Best effort
     for (auto &stream : m_streams) {
@@ -241,7 +265,7 @@ hailo_status VDeviceInputStream::clear_abort()
     return clear_abort_impl(m_network_group_handle);
 }
 
-hailo_status VDeviceInputStream::clear_abort_impl(network_group_handle_t network_group_handle)
+hailo_status VDeviceInputStream::clear_abort_impl(scheduler_ng_handle_t network_group_handle)
 {
     auto status = HAILO_SUCCESS; // Best effort
     for (auto &stream : m_streams) {
@@ -328,7 +352,7 @@ hailo_status VDeviceOutputStream::read(MemoryView buffer)
     return read_impl(buffer, m_network_group_handle);
 }
 
-hailo_status VDeviceOutputStream::read_impl(MemoryView buffer, network_group_handle_t network_group_handle)
+hailo_status VDeviceOutputStream::read_impl(MemoryView buffer, scheduler_ng_handle_t network_group_handle)
 {
     auto network_group_scheduler = m_network_group_scheduler.lock();
     if (network_group_scheduler) {
@@ -366,7 +390,7 @@ hailo_status VDeviceOutputStream::read_impl(MemoryView buffer, network_group_han
 // TODO - HRT-6830 - make create_input/output_stream_from_net_group as virutal function
 Expected<std::unique_ptr<VDeviceOutputStream>> VDeviceOutputStream::create_output_stream_from_net_group(
     std::vector<std::shared_ptr<ResourcesManager>> &resources_managers,
-    const LayerInfo &edge_layer, const std::string &stream_name, const network_group_handle_t &network_group_handle,
+    const LayerInfo &edge_layer, const std::string &stream_name, const scheduler_ng_handle_t &network_group_handle,
     EventPtr &&network_group_activated_event, NetworkGroupSchedulerWeakPtr network_group_scheduler)
 {
     hailo_status status = HAILO_UNINITIALIZED;
@@ -409,7 +433,7 @@ Expected<std::unique_ptr<VDeviceOutputStream>> VDeviceOutputStream::create_outpu
 }
 
 Expected<std::unique_ptr<VDeviceOutputStream>> VDeviceOutputStream::create(std::vector<std::shared_ptr<ResourcesManager>> &resources_managers,
-    const LayerInfo &edge_layer, const std::string &stream_name, const network_group_handle_t &network_group_handle, EventPtr network_group_activated_event,
+    const LayerInfo &edge_layer, const std::string &stream_name, const scheduler_ng_handle_t &network_group_handle, EventPtr network_group_activated_event,
     NetworkGroupSchedulerWeakPtr network_group_scheduler)
 {
     assert(0 < resources_managers.size());
@@ -441,7 +465,7 @@ hailo_status VDeviceOutputStream::abort()
     return abort_impl(m_network_group_handle);
 }
 
-hailo_status VDeviceOutputStream::abort_impl(network_group_handle_t network_group_handle)
+hailo_status VDeviceOutputStream::abort_impl(scheduler_ng_handle_t network_group_handle)
 {
     auto status = HAILO_SUCCESS; // Best effort
     for (auto &stream : m_streams) {
@@ -469,7 +493,7 @@ hailo_status VDeviceOutputStream::clear_abort()
     return clear_abort_impl(m_network_group_handle);
 }
 
-hailo_status VDeviceOutputStream::clear_abort_impl(network_group_handle_t network_group_handle)
+hailo_status VDeviceOutputStream::clear_abort_impl(scheduler_ng_handle_t network_group_handle)
 {
     auto status = HAILO_SUCCESS; // Best effort
     for (auto &stream : m_streams) {
@@ -499,6 +523,36 @@ bool VDeviceOutputStream::is_scheduled()
         return false;
     }
     return (HAILO_SCHEDULING_ALGORITHM_NONE != network_group_scheduler->algorithm());
+}
+
+Expected<size_t> VDeviceOutputStream::get_buffer_frames_size() const
+{
+    size_t total_buffers_size = 0;
+    for (auto &stream : m_streams) {
+        auto stream_buffer_size = stream->get_buffer_frames_size();
+        if (HAILO_NOT_AVAILABLE == stream_buffer_size.status()) {
+            return make_unexpected(HAILO_NOT_AVAILABLE);
+        }
+        CHECK_EXPECTED(stream_buffer_size);
+        total_buffers_size += stream_buffer_size.value();
+    }
+    
+    return total_buffers_size;
+}
+
+Expected<size_t> VDeviceOutputStream::get_pending_frames_count() const
+{
+    size_t total_pending_frames_count = 0;
+    for (auto &stream : m_streams) {
+        auto stream_pending_frames_count = stream->get_pending_frames_count();
+        if (HAILO_NOT_AVAILABLE == stream_pending_frames_count.status()) {
+            return make_unexpected(HAILO_NOT_AVAILABLE);
+        }
+        CHECK_EXPECTED(stream_pending_frames_count);
+        total_pending_frames_count += stream_pending_frames_count.value();
+    }
+    
+    return total_pending_frames_count;
 }
 
 } /* namespace hailort */

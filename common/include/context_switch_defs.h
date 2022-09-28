@@ -220,8 +220,8 @@ typedef struct {
 } CONTEXT_SWITCH_DEFS__change_vdma_to_stream_mapping_data_t;
 
 typedef struct {
-    uint8_t h2d_vdma_channel_index;
-    uint8_t d2h_vdma_channel_index;
+    uint8_t h2d_packed_vdma_channel_id;
+    uint8_t d2h_packed_vdma_channel_id;
     uint8_t network_index;
     uint32_t descriptors_per_frame;
     uint16_t programmed_descriptors_count;
@@ -288,7 +288,7 @@ typedef struct {
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
     CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
     uint32_t initial_credit_size;
-    uint8_t connected_d2h_channel_index;
+    uint8_t connected_d2h_packed_vdma_channel_id;
 } CONTEXT_SWITCH_DEFS__activate_ddr_buffer_input_data_t;
 
 typedef struct {

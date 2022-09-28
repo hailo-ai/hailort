@@ -217,6 +217,7 @@ Expected<PipelineBuffer> BufferPool::get_available_buffer(PipelineBuffer &&optio
 
 hailo_status BufferPool::release_buffer(Buffer &&buffer)
 {
+    std::unique_lock<std::mutex> lock(m_release_buffer_mutex);
     // This can be called after the shutdown event was signaled so we ignore it here
     return m_free_buffers.enqueue(std::move(buffer), true);
 }
@@ -391,6 +392,21 @@ hailo_status PipelinePad::flush()
     return m_element.flush();
 }
 
+hailo_status PipelinePad::abort()
+{
+    return m_element.abort();
+}
+
+void PipelinePad::wait_for_finish()
+{
+    m_element.wait_for_finish();
+}
+
+hailo_status PipelinePad::resume()
+{
+    return m_element.resume();
+}
+
 hailo_status PipelinePad::run_push(PipelineBuffer &&buffer)
 {
     if (m_push_complete_callback) {
@@ -500,6 +516,11 @@ hailo_status IntermediateElement::flush()
     return next_pad().flush();
 }
 
+void IntermediateElement::wait_for_finish()
+{
+    next_pad().wait_for_finish();
+}
+
 PipelineElement::PipelineElement(const std::string &name, DurationCollector &&duration_collector,
                                  std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status) :
     PipelineObject(name),
@@ -576,6 +597,16 @@ hailo_status FilterElement::clear()
     return next_pad().clear();
 }
 
+hailo_status FilterElement::abort()
+{
+    return next_pad().abort();
+}
+
+hailo_status FilterElement::resume()
+{
+    return next_pad().resume();
+}
+
 hailo_status FilterElement::run_push(PipelineBuffer &&buffer)
 {
     auto output = action(std::move(buffer), PipelineBuffer());
@@ -624,7 +655,8 @@ BaseQueueElement::BaseQueueElement(SpscQueue<PipelineBuffer> &&queue, EventPtr s
     m_is_thread_running(true),
     m_activation_event(std::move(activation_event)),
     m_deactivation_event(std::move(deactivation_event)),
-    m_queue_size_accumulator(std::move(queue_size_accumulator))
+    m_queue_size_accumulator(std::move(queue_size_accumulator)),
+    m_is_run_in_thread_running(false)
 {}
 
 void BaseQueueElement::start_thread()
@@ -643,7 +675,19 @@ void BaseQueueElement::start_thread()
                 break;
             }
             if (HAILO_SUCCESS == status) {
+                {
+                    std::unique_lock<std::mutex> lock(m_mutex);
+                    m_is_run_in_thread_running = true;
+                }
+                m_cv.notify_all();
+                
                 status = run_in_thread();
+
+                {
+                    std::unique_lock<std::mutex> lock(m_mutex);
+                    m_is_run_in_thread_running = false;
+                }
+                m_cv.notify_all();
             }
 
             if (HAILO_SUCCESS != status) {
@@ -740,6 +784,27 @@ hailo_status BaseQueueElement::clear()
     return status;
 }
 
+hailo_status BaseQueueElement::abort()
+{
+    return next_pad().abort();
+}
+
+void BaseQueueElement::wait_for_finish()
+{
+    std::unique_lock<std::mutex> lock(m_mutex);
+    m_cv.wait(lock, [this] () {
+        return !m_is_run_in_thread_running;
+    });
+}
+
+hailo_status BaseQueueElement::resume()
+{
+    auto status = m_shutdown_event->reset();
+    CHECK_SUCCESS(status);
+    m_pipeline_status->store(HAILO_SUCCESS);
+    return next_pad().resume();
+}
+
 hailo_status BaseQueueElement::set_timeout(std::chrono::milliseconds timeout)
 {
     m_timeout = timeout;
@@ -783,7 +848,8 @@ Expected<std::shared_ptr<PushQueueElement>> PushQueueElement::create(const std::
     auto deactivation_event = Event::create(Event::State::not_signalled);
     CHECK_EXPECTED(deactivation_event);
 
-    auto duration_collector = DurationCollector::create(flags);
+    // TODO: Support fps/latency collection for queue elems (HRT-7711)
+    auto duration_collector = DurationCollector::create(HAILO_PIPELINE_ELEM_STATS_NONE);
     CHECK_EXPECTED(duration_collector);
 
     AccumulatorPtr queue_size_accumulator = nullptr;
@@ -826,6 +892,7 @@ PushQueueElement::~PushQueueElement()
 
 hailo_status PushQueueElement::run_push(PipelineBuffer &&buffer)
 {
+    // TODO: Support fps/latency collection for queue elems (HRT-7711)
     if (nullptr != m_queue_size_accumulator) {
         m_queue_size_accumulator->add_data_point(static_cast<double>(m_queue.size_approx()));
     }
@@ -918,7 +985,8 @@ Expected<std::shared_ptr<PullQueueElement>> PullQueueElement::create(const std::
     auto deactivation_event = Event::create(Event::State::not_signalled);
     CHECK_EXPECTED(deactivation_event);
 
-    auto duration_collector = DurationCollector::create(flags);
+    // TODO: Support fps/latency collection for queue elems (HRT-7711)
+    auto duration_collector = DurationCollector::create(HAILO_PIPELINE_ELEM_STATS_NONE);
     CHECK_EXPECTED(duration_collector);
 
     AccumulatorPtr queue_size_accumulator = nullptr;
@@ -963,8 +1031,14 @@ hailo_status PullQueueElement::run_push(PipelineBuffer &&/*buffer*/)
     return HAILO_INVALID_OPERATION;
 }
 
+hailo_status PullQueueElement::resume()
+{
+    return next_pad().resume();
+}
+
 Expected<PipelineBuffer> PullQueueElement::run_pull(PipelineBuffer &&optional, const PipelinePad &/*sink*/)
 {
+    // TODO: Support fps/latency collection for queue elems (HRT-7711)
     CHECK_AS_EXPECTED(!optional, HAILO_INVALID_ARGUMENT, "Optional buffer is not allowed in queue element!");
 
     if (nullptr != m_queue_size_accumulator) {
@@ -1042,7 +1116,8 @@ Expected<std::shared_ptr<UserBufferQueueElement>> UserBufferQueueElement::create
     auto deactivation_event = Event::create(Event::State::not_signalled);
     CHECK_EXPECTED(deactivation_event);
 
-    auto duration_collector = DurationCollector::create(flags);
+    // TODO: Support fps/latency collection for queue elems (HRT-7711)
+    auto duration_collector = DurationCollector::create(HAILO_PIPELINE_ELEM_STATS_NONE);
     CHECK_EXPECTED(duration_collector);
 
     AccumulatorPtr queue_size_accumulator = nullptr;
@@ -1082,6 +1157,7 @@ UserBufferQueueElement::UserBufferQueueElement(SpscQueue<PipelineBuffer> &&queue
 
 Expected<PipelineBuffer> UserBufferQueueElement::run_pull(PipelineBuffer &&optional, const PipelinePad &/*source*/)
 {
+    // TODO: Support fps/latency collection for queue elems (HRT-7711)
     CHECK_AS_EXPECTED(optional, HAILO_INVALID_ARGUMENT, "Optional buffer must be valid in {}!", name());
 
     hailo_status status = m_queue.enqueue(std::move(optional), m_timeout);
@@ -1233,6 +1309,31 @@ hailo_status BaseMuxElement::clear()
     return status;
 }
 
+hailo_status BaseMuxElement::abort()
+{
+    for (auto &sink : m_sinks) {
+        hailo_status status = sink.prev()->abort();
+        CHECK_SUCCESS(status);
+    }
+    return HAILO_SUCCESS;
+}
+
+void BaseMuxElement::wait_for_finish()
+{
+    for (auto &sink : m_sinks) {
+        sink.prev()->wait_for_finish();
+    }
+}
+
+hailo_status BaseMuxElement::resume()
+{
+    for (auto &sink : m_sinks) {
+        hailo_status status = sink.prev()->resume();
+        CHECK_SUCCESS(status);
+    }
+    return HAILO_SUCCESS;
+}
+
 hailo_status BaseMuxElement::flush()
 {
     hailo_status status = HAILO_SUCCESS;
@@ -1381,6 +1482,22 @@ hailo_status BaseDemuxElement::clear()
 hailo_status BaseDemuxElement::flush()
 {
     return next_pad().flush();
+}
+
+hailo_status BaseDemuxElement::abort()
+{
+    m_was_stream_aborted = true;
+    return next_pad().abort();
+}
+
+void BaseDemuxElement::wait_for_finish()
+{
+    next_pad().wait_for_finish();
+}
+
+hailo_status BaseDemuxElement::resume()
+{
+    return next_pad().resume();
 }
 
 PipelinePad &BaseDemuxElement::next_pad()

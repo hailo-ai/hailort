@@ -138,7 +138,9 @@ hailo_status Socket::pton(int af, const char *src, void *dst)
     CHECK_EXPECTED_AS_STATUS(module_wrapper);
 
     inet_result = inet_pton(af, src, dst);
-    CHECK(1 == inet_result, HAILO_ETH_FAILURE, "Failed inet_pton. WSALE={}", WSAGetLastError());
+    if (1 != inet_result) {
+        return HAILO_ETH_FAILURE;
+    }
 
     return HAILO_SUCCESS;
 }

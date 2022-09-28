@@ -37,6 +37,8 @@ The following examples are provided, demonstrating the HailoRT API:
   - `infer_pipeline_example` - Basic inference of a shortcut network using inference pipeline (blocking) api.
     - same as `infer_pipeline_example` C example, uses HailoRT C++ api.
   - `raw_streams_example` - Basic inference of a shortcut network, same as `raw_streams_example` C example, uses HailoRT C++ api.
+  - `multi_process_example` - Demonstrates how to work with HailoRT as a service and using the HailoRT scheduler for network groups switching.
+  Using the script `multi_process_example.sh` one can specify the number of processes to run each hef, see `multi_process_example.sh -h` for more information.
 
 ## Compiling with CMake
 Examples are configured and compiled using the following commands:

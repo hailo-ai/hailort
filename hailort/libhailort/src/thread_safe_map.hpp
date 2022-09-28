@@ -43,6 +43,11 @@ public:
         return m_map.at(k);
     }
 
+    std::size_t size() {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_map.size();
+    }
+
     typename std::map<K, V>::iterator find(K& k) {
         std::unique_lock<std::mutex> lock(m_mutex);
         return m_map.find(k);
@@ -51,6 +56,11 @@ public:
     typename std::map<K, V>::iterator find(const K& k) {
         std::unique_lock<std::mutex> lock(m_mutex);
         return m_map.find(k);
+    }
+
+    bool contains(const K &k) {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_map.find(k) != m_map.end();
     }
 
     void clear() {
