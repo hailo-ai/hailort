@@ -31,25 +31,30 @@
 namespace hailort
 {
 
+#define DISABLE_MULTIPLEXER_ENV_VAR "HAILO_DISABLE_MULTIPLEXER"
+
+class VDeviceBase;
+
 class VdmaConfigManager : public ConfigManager
 {
 public:
+    // Note: Each manager created on a device clears the network groups configured to that device
     static Expected<VdmaConfigManager> create(VdmaDevice &device);
-    static Expected<VdmaConfigManager> create(VDevice &vdevice);
+    static Expected<VdmaConfigManager> create(VDeviceBase &vdevice);
     virtual ConfigManagerType get_manager_type();
-    virtual Expected<ConfiguredNetworkGroupVector> add_hef(Hef &hef,
-        const NetworkGroupsParamsMap &configure_params, bool is_scheduler_used=false);
+    virtual Expected<ConfiguredNetworkGroupVector> add_hef(Hef &hef, const NetworkGroupsParamsMap &configure_params);
 
-    static hailo_status update_network_batch_size(ConfigureNetworkParams &configure_params);
+    static hailo_status update_network_batch_size(ConfigureNetworkParams &network_group_config_params);
 
-    virtual ~VdmaConfigManager() = default;
+    virtual ~VdmaConfigManager();
     VdmaConfigManager(const VdmaConfigManager &other) noexcept = delete;
     VdmaConfigManager &operator=(const VdmaConfigManager &other) = delete;
     VdmaConfigManager &operator=(VdmaConfigManager &&other) = delete;
     VdmaConfigManager(VdmaConfigManager &&other) noexcept = default;
 
-  private:
-    VdmaConfigManager(std::vector<std::reference_wrapper<VdmaDevice>> &&devices, bool is_vdevice, NetworkGroupSchedulerWeakPtr network_group_scheduler);
+private:
+    VdmaConfigManager(std::vector<std::reference_wrapper<VdmaDevice>> &&devices, bool is_vdevice,
+                      NetworkGroupSchedulerWeakPtr network_group_scheduler, hailo_status &status);
 
     // TODO: (SDK-16665) Dont need is_active flag for dtor?
     std::vector<std::reference_wrapper<VdmaDevice>> m_devices;

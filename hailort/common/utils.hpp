@@ -19,6 +19,7 @@
 #include <map>
 #include <set>
 
+
 namespace hailort
 {
 
@@ -221,6 +222,46 @@ _ISEMPTY(                                                               \
     } while(0)
 #define CHECK_SUCCESS_AS_EXPECTED(status, ...) _CHECK_SUCCESS_AS_EXPECTED(status, ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
 
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+#define _CHECK_SUCCESS_AS_RPC_STATUS(status, reply, is_default, fmt, ...)                                                                    \
+    do {                                                                                                                                     \
+        const auto &__check_success_status = (status);                                                                                       \
+        if (__check_success_status != HAILO_SUCCESS) {                                                                                       \
+            reply->set_status(static_cast<uint32_t>(__check_success_status));                                                                \
+            LOGGER__ERROR(                                                                                                                   \
+                _CONSTRUCT_MSG(is_default, "CHECK_SUCCESS_AS_RPC_STATUS failed with status={}", fmt, __check_success_status, ##__VA_ARGS__)  \
+            );                                                                                                                               \
+            return grpc::Status::OK;                                                                                                         \
+        }                                                                                                                                    \
+    } while(0)
+#define CHECK_SUCCESS_AS_RPC_STATUS(status, reply, ...) _CHECK_SUCCESS_AS_RPC_STATUS(status, reply, ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
+
+#define CHECK_EXPECTED_AS_RPC_STATUS(expected, reply, ...) CHECK_SUCCESS_AS_RPC_STATUS(expected.status(), reply, __VA_ARGS__)
+
+#define _CHECK_AS_RPC_STATUS(cond, reply, ret_val, ...)                                                                                    \
+    do {                                                                                                                                   \
+        if (!(cond)) {                                                                                                                     \
+            reply->set_status(ret_val);                                                                                                    \
+            LOGGER__ERROR(                                                                                                                 \
+                _CONSTRUCT_MSG(is_default, "CHECK_AS_RPC_STATUS failed with status={}", fmt, ret_val, ##__VA_ARGS__)                       \
+            );                                                                                                                             \
+            return grpc::Status::OK;                                                                                                       \
+        }                                                                                                                                  \
+    } while(0)
+#define CHECK_AS_RPC_STATUS(cond, reply, ret_val, ...) _CHECK_AS_RPC_STATUS((cond), (reply), (ret_val), ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
+
+#define _CHECK_GRPC_STATUS(status, ret_val)                                                               \
+    do {                                                                                                  \
+        if (!status.ok()) {                                                                               \
+            LOGGER__ERROR("CHECK_GRPC_STATUS failed with error massage: {}.", status.error_message());    \
+            return ret_val;                                                                               \
+        }                                                                                                 \
+    } while(0)
+
+#define CHECK_GRPC_STATUS(status) _CHECK_GRPC_STATUS(status, HAILO_RPC_FAILED)
+#define CHECK_GRPC_STATUS_AS_EXPECTED(status) _CHECK_GRPC_STATUS(status, make_unexpected(HAILO_RPC_FAILED))
+#endif
+
 #define _CHECK_EXPECTED(obj, is_default, fmt, ...)                                                                                      \
     do {                                                                                                                                \
         const auto &__check_expected_obj = (obj);                                                                                       \
@@ -243,6 +284,15 @@ _ISEMPTY(                                                               \
         );                                                                                                                                        \
     } while(0)
 #define CHECK_EXPECTED_AS_STATUS(obj, ...) _CHECK_EXPECTED_AS_STATUS(obj, ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
+
+#ifndef _MSC_VER
+#define IGNORE_DEPRECATION_WARNINGS_BEGIN _Pragma("GCC diagnostic push") \
+                                          _Pragma("GCC diagnostic ignored \"-Wdeprecated-declarations\"")
+#define IGNORE_DEPRECATION_WARNINGS_END  _Pragma("GCC diagnostic pop")
+#else
+#define IGNORE_DEPRECATION_WARNINGS_BEGIN
+#define IGNORE_DEPRECATION_WARNINGS_END
+#endif
 
 constexpr bool is_powerof2(size_t v) {
     // bit trick
@@ -269,6 +319,18 @@ static uint32_t get_max_value_of_unordered_map(const std::unordered_map<K, V> &m
         }
     }
     return max_count;
+}
+
+template<class K, class V>
+static uint32_t get_min_value_of_unordered_map(const std::unordered_map<K, V> &map)
+{
+    uint32_t min_count = UINT32_MAX;
+    for (auto &name_counter_pair : map) {
+        if (name_counter_pair.second < min_count) {
+            min_count = name_counter_pair.second;
+        }
+    }
+    return min_count;
 }
 
 } /* namespace hailort */

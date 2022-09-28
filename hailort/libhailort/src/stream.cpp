@@ -28,8 +28,8 @@ hailo_status InputStream::flush()
 hailo_status InputStream::write(const MemoryView &buffer)
 {
     MICROPROFILE_SCOPEI("Stream", "Write", 0);
-    CHECK((buffer.size() % m_stream_info.hw_frame_size) == 0, HAILO_INVALID_ARGUMENT,
-        "write size {} must be a multiple of hw size {}", buffer.size(), m_stream_info.hw_frame_size);
+    CHECK((buffer.size() % get_info().hw_frame_size) == 0, HAILO_INVALID_ARGUMENT,
+        "write size {} must be a multiple of hw size {}", buffer.size(), get_info().hw_frame_size);
 
     CHECK(((buffer.size() % HailoRTCommon::HW_DATA_ALIGNMENT) == 0), HAILO_INVALID_ARGUMENT,
         "Input must be aligned to {} (got {})", HailoRTCommon::HW_DATA_ALIGNMENT, buffer.size());
@@ -42,26 +42,26 @@ hailo_status InputStream::write(const MemoryView &buffer)
 std::string InputStream::to_string() const
 {
     std::stringstream string_stream;
-    string_stream << "InputStream(index=" << static_cast<uint32_t>(m_stream_info.index)
-                    << ", name=" << m_stream_info.name << ")";
+    string_stream << "InputStream(index=" << static_cast<uint32_t>(get_info().index)
+                    << ", name=" << get_info().name << ")";
     return string_stream.str();
 }
 
-OutputStream::OutputStream(OutputStream &&other) : m_stream_info(std::move(other.m_stream_info)),
+OutputStream::OutputStream(OutputStream &&other) : m_stream_info(std::move(other.get_info())),
     m_dataflow_manager_id(std::move(other.m_dataflow_manager_id)),
     m_invalid_frames_count(static_cast<uint32_t>(other.m_invalid_frames_count))
 {}
 
 hailo_status OutputStream::read_nms(void *buffer, size_t offset, size_t size)
 {
-    uint32_t num_of_classes = m_stream_info.nms_info.number_of_classes;
-    uint32_t max_bboxes_per_class = m_stream_info.nms_info.max_bboxes_per_class;
-    uint32_t chunks_per_frame = m_stream_info.nms_info.chunks_per_frame;
-    size_t bbox_size = m_stream_info.nms_info.bbox_size;
+    uint32_t num_of_classes = get_info().nms_info.number_of_classes;
+    uint32_t max_bboxes_per_class = get_info().nms_info.max_bboxes_per_class;
+    uint32_t chunks_per_frame = get_info().nms_info.chunks_per_frame;
+    size_t bbox_size = get_info().nms_info.bbox_size;
     size_t transfer_size = bbox_size;
 
-    CHECK(size == m_stream_info.hw_frame_size, HAILO_INSUFFICIENT_BUFFER,
-        "On nms stream buffer size should be {} (given size {})", m_stream_info.hw_frame_size, size);
+    CHECK(size == get_info().hw_frame_size, HAILO_INSUFFICIENT_BUFFER,
+        "On nms stream buffer size should be {} (given size {})", get_info().hw_frame_size, size);
 
     for (uint32_t chunk_index = 0; chunk_index < chunks_per_frame; chunk_index++) {
         for (uint32_t class_index = 0; class_index < num_of_classes; class_index++) {
@@ -105,10 +105,10 @@ hailo_status OutputStream::read_nms(void *buffer, size_t offset, size_t size)
 hailo_status OutputStream::read(MemoryView buffer)
 {
     MICROPROFILE_SCOPEI("Stream", "Read", 0);
-    CHECK((buffer.size() % m_stream_info.hw_frame_size) == 0, HAILO_INVALID_ARGUMENT,
-        "When read size {} must be a multiple of hw size {}", buffer.size(), m_stream_info.hw_frame_size);
+    CHECK((buffer.size() % get_info().hw_frame_size) == 0, HAILO_INVALID_ARGUMENT,
+        "When read size {} must be a multiple of hw size {}", buffer.size(), get_info().hw_frame_size);
 
-    if (m_stream_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS){
+    if (get_info().format.order == HAILO_FORMAT_ORDER_HAILO_NMS){
         return read_nms(buffer.data(), 0, buffer.size());
     } else {
         return this->read_all(buffer);
@@ -118,8 +118,8 @@ hailo_status OutputStream::read(MemoryView buffer)
 std::string OutputStream::to_string() const
 {
     std::stringstream string_stream;
-    string_stream << "OutputStream(index=" << static_cast<uint32_t>(m_stream_info.index)
-                    << ", name=" << m_stream_info.name << ")";
+    string_stream << "OutputStream(index=" << static_cast<uint32_t>(get_info().index)
+                    << ", name=" << get_info().name << ")";
     return string_stream.str();
 }
 

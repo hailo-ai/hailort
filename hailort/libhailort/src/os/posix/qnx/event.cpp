@@ -92,7 +92,7 @@ hailo_status Event::wait(std::chrono::milliseconds timeout)
 hailo_status Event::signal()
 {
     const auto result = neosmart::SetEvent(m_handle);
-    CHECK(0 != result, HAILO_INTERNAL_FAILURE, "SetEvent failed with error {}" , result);
+    CHECK(0 == result, HAILO_INTERNAL_FAILURE, "SetEvent failed with error {}" , result);
 
     return HAILO_SUCCESS;
 }
@@ -105,14 +105,14 @@ bool Event::is_auto_reset()
 hailo_status Event::reset()
 {
     const auto result = neosmart::ResetEvent(m_handle);
-    CHECK(0 != result, HAILO_INTERNAL_FAILURE, "ResetEvent failed with error {}", result);
+    CHECK(0 == result, HAILO_INTERNAL_FAILURE, "ResetEvent failed with error {}", result);
     
     return HAILO_SUCCESS;
 }
 
 underlying_waitable_handle_t Event::open_event_handle(const State& initial_state)
 {
-    static const auto manual_reset = true;
+    const bool manual_reset = true;
     const bool state = (initial_state == State::signalled ? true : false);
     auto event = neosmart::CreateEvent(manual_reset, state);
     if (INVALID_EVENT_HANDLE == event) {
@@ -183,8 +183,8 @@ bool Semaphore::is_auto_reset()
 
 underlying_waitable_handle_t Semaphore::open_semaphore_handle(uint32_t initial_count)
 {
-    static const auto manual_reset = false;
-    static const auto state = (initial_count > 0 ? true : false);
+    const bool manual_reset = false;
+    const bool state = (initial_count > 0 ? true : false);
     auto event = neosmart::CreateEvent(manual_reset, state);
     if (INVALID_EVENT_HANDLE == event) {
         LOGGER__ERROR("Call to CreateEvent failed");

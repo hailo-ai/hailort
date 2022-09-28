@@ -120,6 +120,22 @@ Expected<std::vector<std::string>> Filesystem::get_files_in_dir_flat(const std::
     return files;
 }
 
+
+Expected<std::vector<std::string>> Filesystem::get_latest_files_in_dir_flat(const std::string &dir_path, std::chrono::milliseconds time_interval)
+{
+    // TODO: HRT-7304
+    (void)dir_path;
+    (void)time_interval;
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
+Expected<time_t> Filesystem::get_file_modified_time(const std::string &file_path)
+{
+    // TODO: HRT-7304
+    (void)file_path;
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
 Expected<bool> Filesystem::is_directory(const std::string &path)
 {
     if (path.length() > MAX_PATH) {

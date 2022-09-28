@@ -35,13 +35,14 @@ extern "C" {
 #define CONTROL_PROTOCOL__MAX_SERIAL_NUMBER_LENGTH (16)
 #define CONTROL_PROTOCOL__MAX_PART_NUMBER_LENGTH (16)
 #define CONTROL_PROTOCOL__MAX_PRODUCT_NAME_LENGTH (42)
-#define CONTROL_PROTOCOL__MAX_CONTEXT_SWITCH_APPLICATIONS (8)
+#define CONTROL_PROTOCOL__MAX_CONTEXT_SWITCH_APPLICATIONS (32)
 #define CONTROL_PROTOCOL__MAX_NUMBER_OF_CLUSTERS (8)
 #define CONTROL_PROTOCOL__MAX_CONTROL_LENGTH (1500)
-#define CONTROL_PROTOCOL__MAX_TOTAL_CONTEXTS (32)
+#define CONTROL_PROTOCOL__MAX_TOTAL_CONTEXTS (128)
 #define CONTROL_PROTOCOL__SOC_ID_LENGTH (32)
 #define CONTROL_PROTOCOL__MAX_CFG_CHANNELS (4)
 #define CONTROL_PROTOCOL__MAX_NETWORKS_PER_NETWORK_GROUP (8)
+#define CONTROL_PROTOCOL__MAX_VDMA_ENGINES_COUNT (3)
 /* Tightly coupled with the sizeof PROCESS_MONITOR__detection_results_t 
     and HAILO_SOC_PM_VALUES_BYTES_LENGTH */
 #define PM_RESULTS_LENGTH (24)
@@ -51,6 +52,8 @@ extern "C" {
 
 /* Tightly coupled to HAILO_MAX_TEMPERATURE_THROTTLING_LEVELS_NUMBER */
 #define MAX_TEMPERATURE_THROTTLING_LEVELS_NUMBER (4)
+
+#define MAX_OVERCURRENT_THROTTLING_LEVELS_NUMBER (8)
 
 #define CONTROL_PROTOCOL__MAX_NUMBER_OF_POWER_MEASUREMETS (4)
 #define CONTROL_PROTOCOL__DEFAULT_INIT_SAMPLING_PERIOD_US (CONTROL_PROTOCOL__PERIOD_1100US)
@@ -143,7 +146,7 @@ extern "C" {
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CORE_IDENTIFY,                             true, CPU_ID_CORE_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_D2H_EVENT_MANAGER_SET_HOST_INFO,           false, CPU_ID_APP_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_D2H_EVENT_MANAGER_SEND_EVENT_HOST_INFO,    false, CPU_ID_APP_CPU)\
-    CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_SWITCH_APPLICATION,                        false, CPU_ID_CORE_CPU)\
+    CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_SWITCH_APPLICATION /* obsolete */,         false, CPU_ID_CORE_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_GET_CHIP_TEMPERATURE,                      false, CPU_ID_APP_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_READ_BOARD_CONFIG,                         true, CPU_ID_APP_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_WRITE_BOARD_CONFIG,                        true, CPU_ID_APP_CPU)\
@@ -169,6 +172,7 @@ extern "C" {
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CORE_PREVIOUS_SYSTEM_STATE,                false, CPU_ID_CORE_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CORE_WD_ENABLE,                            false, CPU_ID_CORE_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CORE_WD_CONFIG,                            false, CPU_ID_CORE_CPU)\
+    CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_CLEAR_CONFIGURED_APPS,      false, CPU_ID_CORE_CPU)\
 
 typedef enum {
 #define CONTROL_PROTOCOL__OPCODE_X(name, is_critical, cpu_id) name,
@@ -353,7 +357,8 @@ typedef struct {
 
 typedef enum {
     CONTROL_PROTOCOL__HAILO8_A0 = 0,
-    CONTROL_PROTOCOL__HAILO8_B0,
+    CONTROL_PROTOCOL__HAILO8,
+    CONTROL_PROTOCOL__HAILO8L,
     CONTROL_PROTOCOL__MERCURY_CA,
     CONTROL_PROTOCOL__MERCURY_VPU,
     /* Must be last!! */
@@ -877,10 +882,10 @@ typedef struct {
 
 typedef struct {
     uint8_t dynamic_contexts_count;
-    uint32_t host_boundary_channels_bitmap;
-    uint8_t cfg_channel_numbers[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
+    uint32_t host_boundary_channels_bitmap[CONTROL_PROTOCOL__MAX_VDMA_ENGINES_COUNT];
     uint8_t power_mode; // CONTROL_PROTOCOL__power_mode_t
     CONTROL_PROTOCOL__INFER_FEATURE_LIST_t infer_features;
+    CONTROL_PROTOCOL__VALIDATION_FEATURE_LIST_t validation_features;
     uint8_t networks_count;
     uint16_t batch_size[CONTROL_PROTOCOL__MAX_NETWORKS_PER_NETWORK_GROUP];
 } CONTROL_PROTOCOL__application_header_t;
@@ -888,8 +893,6 @@ typedef struct {
 typedef struct {
     uint32_t context_switch_version_length;
     uint32_t context_switch_version;
-    uint32_t validation_features_length;
-    CONTROL_PROTOCOL__VALIDATION_FEATURE_LIST_t validation_features;
     uint32_t application_count_length;
     uint8_t application_count;
     uint32_t application_header_length;
@@ -906,7 +909,6 @@ typedef enum {
 
 typedef struct {
     CONTROL_PROTOCOL__CONTEXT_SWITCH_VERSION_t context_switch_version;
-    CONTROL_PROTOCOL__VALIDATION_FEATURE_LIST_t validation_features;
     uint8_t application_count;
     CONTROL_PROTOCOL__application_header_t application_header[CONTROL_PROTOCOL__MAX_CONTEXT_SWITCH_APPLICATIONS];
 } CONTROL_PROTOCOL__context_switch_main_header_t;
@@ -969,6 +971,7 @@ typedef enum {
     CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ADD_REPEATED,
     CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_FETCH_CCW_BURSTS,
     CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_BURST_CREDITS_TASK_START,
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_EDGE_LAYER_ACTIVATION_ACTIONS_POSITION,
 
     /* must be last*/
     CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_COUNT,
@@ -1054,27 +1057,23 @@ typedef struct {
     uint32_t bytes_in_pattern;
 } CONTROL_PROTOCOL__host_buffer_info_t;
 
+/* TODO: merge CONTROL_PROTOCOL__edge_layer_common_info_t into the header (HRT-7113) */
 typedef struct {
     uint8_t communication_type;
     uint8_t edge_connection_type;
 } CONTROL_PROTOCOL__edge_layer_header_t;
 
 typedef struct {
-    uint8_t stream_index;
+    uint8_t engine_index;
     uint8_t vdma_channel_index;
+    uint8_t stream_index;
     uint8_t network_index;
     CONTROL_PROTOCOL__nn_stream_config_t nn_stream_config;
 } CONTROL_PROTOCOL__edge_layer_common_info_t;
 
 typedef struct {
-    uint64_t host_descriptors_base_address;
-    uint8_t desc_list_depth;
-} CONTROL_PROTOCOL__host_desc_address_info_t;
-
-typedef struct {
     CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
-    uint32_t frame_credits_in_bytes;
-    uint16_t desc_page_size;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
 } CONTROL_PROTOCOL__network_boundary_output_t;
 
 typedef struct {
@@ -1084,9 +1083,7 @@ typedef struct {
 
 typedef struct {
     CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
-    uint32_t frame_credits_in_bytes;
-    CONTROL_PROTOCOL__host_desc_address_info_t host_desc_address_info;
-    uint16_t desc_page_size;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
     uint32_t buffered_rows_count;
 } CONTROL_PROTOCOL__ddr_buffer_output_t;
 
@@ -1097,7 +1094,7 @@ typedef struct {
 
 typedef struct {
     CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
-    uint16_t desc_page_size;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
     uint32_t initial_credit_size;
 } CONTROL_PROTOCOL__network_boundary_input_t;
 
@@ -1109,8 +1106,10 @@ typedef struct {
 
 typedef struct {
     CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
-    CONTROL_PROTOCOL__host_desc_address_info_t host_desc_address_info;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
     uint32_t initial_credit_size;
+    uint8_t connected_d2h_engine_index;
+    uint8_t connected_d2h_channel_index;
 } CONTROL_PROTOCOL__ddr_buffer_input_t;
 
 typedef struct {
@@ -1120,6 +1119,12 @@ typedef struct {
 typedef struct {
     uint8_t should_use_stream_remap;
 } CONTROL_PROTOCOL__stream_remap_data_t;
+
+typedef struct {
+    CONTROL_PROTOCOL__host_buffer_info_t config_buffer_info;
+    uint8_t engine_index;
+    uint8_t vdma_channel_index;
+} CONTROL_PROTOCOL__config_channel_info_t;
 
 #if defined(_MSC_VER)
 // TODO: warning C4200
@@ -1133,8 +1138,8 @@ typedef struct {
     uint8_t is_last_control_per_context;
     uint32_t cfg_channels_count_length;
     uint8_t cfg_channels_count;
-    uint32_t config_buffer_infos_length;
-    CONTROL_PROTOCOL__host_buffer_info_t config_buffer_infos[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
+    uint32_t config_channel_infos_length;
+    CONTROL_PROTOCOL__config_channel_info_t config_channel_infos[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
     uint32_t context_stream_remap_data_length;
     CONTROL_PROTOCOL__stream_remap_data_t context_stream_remap_data;
     uint32_t number_of_edge_layers_length;
@@ -1209,14 +1214,14 @@ typedef struct {
     /* Must be first */
     CONTROL_PROTOCOL__ACTION_HEADER_t header;
     uint16_t descriptors_count;
-    uint8_t cfg_channel_handle;
+    uint8_t config_stream_index;
 } CONTROL_PROTOCOL__READ_VDMA_ACTION_t;
 
 typedef struct {
     /* Must be first */
     CONTROL_PROTOCOL__ACTION_HEADER_t header;
     uint16_t ccw_bursts;
-    uint8_t cfg_channel_handle;
+    uint8_t config_stream_index;
 } CONTROL_PROTOCOL__FETCH_CCW_BURSTS_ACTION_t;
 
 typedef struct {
@@ -1283,7 +1288,9 @@ typedef struct {
 typedef struct {
     /* Must be first */
     CONTROL_PROTOCOL__ACTION_HEADER_t header;
+    uint8_t h2d_engine_index;
     uint8_t h2d_vdma_channel_index;
+    uint8_t d2h_engine_index;
     uint8_t d2h_vdma_channel_index;
     uint32_t descriptors_per_frame;
     uint16_t programmed_descriptors_count;
@@ -1298,6 +1305,11 @@ typedef struct {
     /* Must be first */
     CONTROL_PROTOCOL__ACTION_HEADER_t header;
 } CONTROL_PROTOCOL__BURST_CREDITS_TASK_START_ACTION_T;
+
+typedef struct {
+    /* Must be first */
+    CONTROL_PROTOCOL__ACTION_HEADER_t header;
+} CONTROL_PROTOCOL__EDGE_LAYER_ACTIVATION_ACTIONS_POSITION_MARKER_T;
 
 typedef struct {
     CONTROL_PROTOCOL__TRIGGER_t trigger;
@@ -1360,6 +1372,8 @@ typedef struct {
     uint8_t application_index;
     uint32_t dynamic_batch_size_length;
     uint16_t dynamic_batch_size;
+    uint32_t keep_nn_config_during_reset_length;
+    uint8_t keep_nn_config_during_reset;
 } CONTROL_PROTOCOL__change_context_switch_status_request_t;
 
 typedef struct {
@@ -1370,13 +1384,6 @@ typedef struct {
     uint32_t interrupt_sub_index_length;
     uint8_t interrupt_sub_index;
 } CONTROL_PROTOCOL__set_dataflow_interrupt_request_t;
-
-typedef struct {
-    uint32_t application_index_length;
-    uint8_t application_index;
-    uint32_t dynamic_batch_size_length;
-    uint16_t dynamic_batch_size;
-} CONTROL_PROTOCOL__switch_application_request_t;
 
 typedef struct {
     uint32_t connection_type_length;
@@ -1429,6 +1436,8 @@ typedef struct {
     CONTROL_PROTOCOL_fuse_info_t fuse_info;
     uint32_t pd_info_length;
     uint8_t pd_info[PM_RESULTS_LENGTH];
+    uint32_t partial_clusters_layout_bitmap_length;
+    uint32_t partial_clusters_layout_bitmap;
 } CONTROL_PROTOCOL__get_extended_device_information_response_t;
 
 /* Tightly coupled to hailo_throttling_level_t */
@@ -1446,8 +1455,8 @@ typedef struct {
     uint8_t current_overcurrent_zone;
     uint32_t red_overcurrent_threshold_length;
     float32_t red_overcurrent_threshold;
-    uint32_t orange_overcurrent_threshold_length;
-    float32_t orange_overcurrent_threshold;
+    uint32_t overcurrent_throttling_active_length;
+    bool overcurrent_throttling_active;
     uint32_t temperature_throttling_active_length;
     bool temperature_throttling_active;
     uint32_t current_temperature_zone_length;
@@ -1464,6 +1473,10 @@ typedef struct {
     int32_t red_temperature_threshold;
     uint32_t red_hysteresis_temperature_threshold_length;
     int32_t red_hysteresis_temperature_threshold;
+    uint32_t requested_overcurrent_clock_freq_length;
+    uint32_t requested_overcurrent_clock_freq;
+    uint32_t requested_temperature_clock_freq_length;
+    uint32_t requested_temperature_clock_freq;
 } CONTROL_PROTOCOL__get_health_information_response_t;
 
 typedef enum {
@@ -1659,7 +1672,6 @@ typedef union {
    CONTROL_PROTOCOL__d2h_event_manager_send_host_info_event_request_t d2h_event_manager_send_host_info_event_request;
    CONTROL_PROTOCOL__read_board_config_request_t read_board_config_request;
    CONTROL_PROTOCOL__write_board_config_request_t write_board_config_request;
-   CONTROL_PROTOCOL__switch_application_request_t switch_application_request;
    CONTROL_PROTOCOL__config_context_switch_breakpoint_request_t config_context_switch_breakpoint_request;
    CONTROL_PROTOCOL__get_context_switch_breakpoint_status_request_t get_context_switch_breakpoint_status_request;
    CONTROL_PROTOCOL__enable_debugging_request_t enable_debugging_request;
@@ -1713,7 +1725,7 @@ typedef struct {
     bool is_first_control_per_context;
     bool is_last_control_per_context;
     uint8_t cfg_channels_count;
-    CONTROL_PROTOCOL__host_buffer_info_t config_buffer_infos[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
+    CONTROL_PROTOCOL__config_channel_info_t config_channel_infos[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
     CONTROL_PROTOCOL__stream_remap_data_t context_stream_remap_data;
     uint8_t number_of_edge_layers;
     uint8_t number_of_trigger_groups;

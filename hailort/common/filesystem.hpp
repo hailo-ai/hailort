@@ -16,6 +16,7 @@
 #include "hailo/expected.hpp"
 #include <vector>
 #include <string>
+#include <chrono>
 
 #if defined(__GNUC__)
 #include <dirent.h>
@@ -29,7 +30,10 @@ public:
     Filesystem() = delete;
 
     static Expected<std::vector<std::string>> get_files_in_dir_flat(const std::string &dir_path);
+    static Expected<std::vector<std::string>> get_latest_files_in_dir_flat(const std::string &dir_path, std::chrono::milliseconds time_interval);
+    static Expected<time_t> get_file_modified_time(const std::string &file_path);
     static Expected<bool> is_directory(const std::string &path);
+    static hailo_status create_directory(const std::string &dir_path);
     static bool has_suffix(const std::string &file_name, const std::string &suffix)
     {
         return (file_name.size() >= suffix.size()) && equal(suffix.rbegin(), suffix.rend(), file_name.rbegin());    
@@ -91,6 +95,37 @@ private:
     
     #endif
 };
+
+// TODO: HRT-7304 - Add support for windows
+#if defined(__GNUC__)
+class TempFile {
+public:
+    static Expected<TempFile> create(const std::string &file_name, const std::string &file_directory = "");
+    ~TempFile();
+
+    std::string name() const;
+
+private:
+    TempFile(const char *path);
+
+    std::string m_path;
+};
+
+class LockedFile {
+public:
+    // The mode param is the string containing the file access mode, compatible with `fopen` function.
+    static Expected<LockedFile> create(const std::string &file_path, const std::string &mode);
+    ~LockedFile();
+
+    int get_fd() const;
+
+private:
+    LockedFile(FILE *fp, int fd);
+
+    FILE *m_fp;
+    int m_fd;
+};
+#endif
 
 } /* namespace hailort */
 

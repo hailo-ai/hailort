@@ -14,6 +14,20 @@
 namespace hailort
 {
 
+std::vector<std::string> DeviceWrapper::scan()
+{
+    auto device_ids = Device::scan();
+    VALIDATE_EXPECTED(device_ids);
+    return device_ids.release();
+}
+
+DeviceWrapper DeviceWrapper::create(const std::string &device_id)
+{
+    auto device = Device::create(device_id);
+    VALIDATE_EXPECTED(device);
+    return DeviceWrapper(device.release());
+}
+
 DeviceWrapper DeviceWrapper::create_pcie(hailo_pcie_device_info_t &device_info)
 {
     auto device = Device::create_pcie(device_info);
@@ -22,7 +36,7 @@ DeviceWrapper DeviceWrapper::create_pcie(hailo_pcie_device_info_t &device_info)
     return DeviceWrapper(device.release());
 }
 
-DeviceWrapper DeviceWrapper::create_eth(std::string &device_address, uint16_t port,
+DeviceWrapper DeviceWrapper::create_eth(const std::string &device_address, uint16_t port,
     uint32_t timeout_milliseconds, uint8_t max_number_of_attempts)
 {
     hailo_eth_device_info_t device_info = {};
@@ -47,14 +61,6 @@ DeviceWrapper DeviceWrapper::create_eth(std::string &device_address, uint16_t po
     device_info.max_payload_size = HAILO_DEFAULT_ETH_MAX_PAYLOAD_SIZE;
 
     auto device = Device::create_eth(device_info);
-    VALIDATE_EXPECTED(device);
-
-    return DeviceWrapper(device.release());
-}
-
-DeviceWrapper DeviceWrapper::create_core()
-{
-    auto device = Device::create_core_device();
     VALIDATE_EXPECTED(device);
 
     return DeviceWrapper(device.release());
@@ -458,13 +464,21 @@ py::bytes DeviceWrapper::direct_read_memory(uint32_t address, uint32_t size)
     return py::bytes(buffer_str);
 }
 
+const char *DeviceWrapper::get_dev_id() const
+{
+    return device().get_dev_id();
+}
+
 void DeviceWrapper::add_to_python_module(py::module &m)
 {
     py::class_<DeviceWrapper>(m, "Device")
+    // Scan
+    .def("scan", &DeviceWrapper::scan)
+
     // C'tors
+    .def("create", &DeviceWrapper::create)
     .def("create_pcie", &DeviceWrapper::create_pcie)
     .def("create_eth", &DeviceWrapper::create_eth)
-    .def("create_core", &DeviceWrapper::create_core)
     .def("release", &DeviceWrapper::release)
 
     //HEF
@@ -514,6 +528,7 @@ void DeviceWrapper::add_to_python_module(py::module &m)
     .def("_get_overcurrent_state", &DeviceWrapper::get_overcurrent_state)
     .def("direct_write_memory", &DeviceWrapper::direct_write_memory)
     .def("direct_read_memory", &DeviceWrapper::direct_read_memory)
+    .def_property_readonly("device_id", &DeviceWrapper::get_dev_id)
     .def("read_log", &DeviceWrapper::read_log, py::return_value_policy::move)
 
     .def("set_notification_callback", &DeviceWrapper::set_notification_callback)

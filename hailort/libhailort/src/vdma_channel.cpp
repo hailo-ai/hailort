@@ -4,10 +4,16 @@
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
 #include "microprofile.h"
+#include "vdma/sg_buffer.hpp"
+#include "vdma_descriptor_list.hpp"
+
+#include "hailo/hailort_common.hpp"
 
 #include <list>
 #include <chrono>
 #include <thread>
+
+#include <iostream>
 
 namespace hailort
 {
@@ -52,7 +58,7 @@ void VdmaChannel::State::unlock()
 #endif
 }
 
-Expected<VdmaChannel> VdmaChannel::create(uint8_t channel_index, Direction direction, HailoRTDriver &driver,
+Expected<VdmaChannel> VdmaChannel::create(vdma::ChannelId channel_id, Direction direction, HailoRTDriver &driver,
     uint16_t requested_desc_page_size, uint32_t stream_index, LatencyMeterPtr latency_meter, uint16_t transfers_per_axi_intr)
 {
     CHECK_AS_EXPECTED(Direction::BOTH != direction, HAILO_INVALID_ARGUMENT);
@@ -61,8 +67,12 @@ Expected<VdmaChannel> VdmaChannel::create(uint8_t channel_index, Direction direc
     auto desc_page_size_value = driver.calc_desc_page_size(requested_desc_page_size);
     CHECK_AS_EXPECTED(is_powerof2(desc_page_size_value), HAILO_INVALID_ARGUMENT,
         "Descriptor page_size must be a power of two.");
+    CHECK_AS_EXPECTED(channel_id.channel_index < VDMA_CHANNELS_PER_ENGINE, HAILO_INVALID_ARGUMENT,
+        "Invalid DMA channel index {}", channel_id.channel_index);
+    CHECK_AS_EXPECTED(channel_id.engine_index < driver.dma_engines_count(), HAILO_INVALID_ARGUMENT,
+        "Invalid DMA engine index {}, max {}", channel_id.engine_index, driver.dma_engines_count());
 
-    VdmaChannel object(channel_index, direction, driver, stream_index, latency_meter, desc_page_size_value, 
+    VdmaChannel object(channel_id, direction, driver, stream_index, latency_meter, desc_page_size_value, 
         transfers_per_axi_intr, status);
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("Failed creating VdmaChannel");
@@ -71,23 +81,17 @@ Expected<VdmaChannel> VdmaChannel::create(uint8_t channel_index, Direction direc
     return object;
 }
 
-VdmaChannel::VdmaChannel(uint8_t channel_index, Direction direction, HailoRTDriver &driver, 
+VdmaChannel::VdmaChannel(vdma::ChannelId channel_id, Direction direction, HailoRTDriver &driver, 
     uint32_t stream_index, LatencyMeterPtr latency_meter, uint16_t desc_page_size, uint16_t transfers_per_axi_intr, 
     hailo_status &status)
-    : m_channel_index(channel_index), m_direction(direction), m_driver(driver),
-      m_host_registers(driver, channel_index, direction),
-      m_device_registers(driver, channel_index, other_direction(direction)), m_desc_page_size(desc_page_size),
-      m_stream_index(stream_index), m_latency_meter(latency_meter), m_channel_enabled(false), 
+    : m_d2h_callback_thread(nullptr), m_channel_id(channel_id),
+      m_direction(direction), m_driver(driver),
+      m_host_registers(driver, channel_id, direction),
+      m_device_registers(driver, channel_id, other_direction(direction)), m_desc_page_size(desc_page_size),
+      m_stream_index(stream_index), m_latency_meter(latency_meter), m_channel_enabled(false), m_channel_is_active(false),
       m_transfers_per_axi_intr(transfers_per_axi_intr), m_pending_buffers_sizes(0), m_pending_num_avail_offset(0), m_is_waiting_for_channel_completion(false),
-      m_is_aborted(false)
+      m_is_aborted_by_internal_source(false)
 {
-    // channel index invalid
-    if (channel_index >= MAX_HOST_CHANNELS_COUNT) {
-        LOGGER__ERROR("Invalid DMA index");
-        status = HAILO_INVALID_ARGUMENT;
-        return;
-    }
-
     if (m_transfers_per_axi_intr == 0) {
         LOGGER__ERROR("Invalid transfers per axi interrupt");
         status = HAILO_INVALID_ARGUMENT;
@@ -115,6 +119,11 @@ VdmaChannel::~VdmaChannel()
     if (m_channel_enabled) {
         stop_channel();
         m_channel_enabled = false;
+        if (Direction::H2D == m_direction) {
+            m_can_write_buffer_cv.notify_all();
+        } else {
+            m_can_read_buffer_cv.notify_all();
+        }
     }
 
     if (m_state) {
@@ -130,40 +139,49 @@ VdmaChannel::~VdmaChannel()
 }
 
 VdmaChannel::VdmaChannel(VdmaChannel &&other) noexcept:
-m_channel_index(other.m_channel_index),
+ m_d2h_callback_thread(std::move(other.m_d2h_callback_thread)),
+ m_channel_id(std::move(other.m_channel_id)),
  m_direction(other.m_direction),
  m_driver(other.m_driver),
  m_host_registers(std::move(other.m_host_registers)),
  m_device_registers(std::move(other.m_device_registers)),
  m_desc_page_size(other.m_desc_page_size),
- m_mapped_user_buffer(std::move(other.m_mapped_user_buffer)),
- m_descriptors_buffer(std::move(other.m_descriptors_buffer)),
+ m_buffer(std::move(other.m_buffer)),
  m_stream_index(std::move(other.m_stream_index)),
  m_latency_meter(std::move(other.m_latency_meter)),
  m_state(std::move(other.m_state)),
  m_channel_handle(std::move(other.m_channel_handle)),
  m_channel_enabled(std::exchange(other.m_channel_enabled, false)),
+ m_channel_is_active(std::exchange(other.m_channel_is_active, false)),
  m_transfers_per_axi_intr(std::move(other.m_transfers_per_axi_intr)),
  m_pending_buffers_sizes(std::move(other.m_pending_buffers_sizes)),
  m_pending_num_avail_offset(std::move(other.m_pending_num_avail_offset)),
- m_is_waiting_for_channel_completion(other.m_is_waiting_for_channel_completion.load()),
- m_is_aborted(std::move(other.m_is_aborted))
+ m_is_waiting_for_channel_completion(other.m_is_waiting_for_channel_completion.exchange(false)),
+ m_is_aborted_by_internal_source(other.m_is_aborted_by_internal_source.exchange(false))
 {}
 
 hailo_status VdmaChannel::stop_channel()
 {
-    assert(m_channel_handle);
-    if (HailoRTDriver::INVALID_VDMA_CHANNEL_HANDLE != *m_channel_handle) {
-        // The driver also stops the channels
-        const auto status = unregister_fw_controlled_channel();
-        CHECK_SUCCESS(status, "Failed to disable channel {}", m_channel_index);
+    {
+        std::unique_lock<std::mutex> lock(m_is_active_flag_mutex);
+        m_channel_is_active = false;
     }
 
-    if (m_state) {
-        std::lock_guard<State> state_guard(*m_state);
-        reset_internal_counters();
+    if (!m_state) {
+        const auto status = unregister_fw_controlled_channel();
+        CHECK_SUCCESS(status, "Failed to disable channel {}", m_channel_id);
+    } else {
+        std::unique_lock<State> state_guard(*m_state);
+        const auto status = unregister_fw_controlled_channel();
+        CHECK_SUCCESS(status, "Failed to disable channel {}", m_channel_id);
+
+        if (Direction::D2H == m_direction) {
+            unregister_for_d2h_interrupts(state_guard);
+        } else {
+            // For H2D channels we reset counters as we want to allow writes to the start of the buffer while the channel is stopped
+            reset_internal_counters();
+        }
     }
-    
     return HAILO_SUCCESS;
 }
 
@@ -172,25 +190,67 @@ uint16_t VdmaChannel::get_page_size()
     return m_desc_page_size;
 }
 
+Expected<CONTROL_PROTOCOL__host_buffer_info_t> VdmaChannel::get_boundary_buffer_info(uint32_t transfer_size)
+{
+    CHECK_AS_EXPECTED(m_buffer, HAILO_INVALID_OPERATION, "Cannot get host buffer before buffer is allocated");
+    return m_buffer->get_host_buffer_info(transfer_size);
+}
 
 hailo_status VdmaChannel::abort()
 {
-    m_is_aborted = true;
-    m_can_write_buffer_cv.notify_one();
-    return m_driver.vdma_channel_abort(m_channel_index, *m_channel_handle);
+    m_is_aborted_by_internal_source = true;
+    if (Direction::H2D == m_direction) {
+        m_can_write_buffer_cv.notify_all();
+    } else {
+        m_can_read_buffer_cv.notify_all();
+    }
+    return m_driver.vdma_channel_abort(m_channel_id, *m_channel_handle);
 }
 
 hailo_status VdmaChannel::clear_abort()
 {
-    m_is_aborted = false;
-    return m_driver.vdma_channel_clear_abort(m_channel_index, *m_channel_handle);
+    auto status = m_driver.vdma_channel_clear_abort(m_channel_id, *m_channel_handle);
+    m_is_aborted_by_internal_source = false;
+    return status;
 }
 
-hailo_status VdmaChannel::prepare_d2h_pending_descriptors(uint32_t descs_count, uint32_t transfer_size)
+size_t VdmaChannel::get_transfers_count_in_buffer(size_t transfer_size)
 {
-    uint32_t descs_in_transfer = m_descriptors_buffer->descriptors_in_buffer(transfer_size);
-    uint32_t transfers_count = std::min(((descs_count - 1) / descs_in_transfer),
-        static_cast<uint32_t>(CB_SIZE(m_state->m_buffers) - 1));
+    const auto descs_in_transfer = m_buffer->descriptors_in_buffer(transfer_size);
+    const auto descs_count = CB_SIZE(m_state->m_descs);
+    return (descs_count - 1) / descs_in_transfer;
+}
+
+size_t VdmaChannel::get_buffer_size() const
+{
+    assert(m_buffer);
+    return m_buffer->size();
+}
+
+Expected<size_t> VdmaChannel::get_h2d_pending_frames_count()
+{
+    return m_pending_buffers_sizes.size();
+}
+
+Expected<size_t> VdmaChannel::get_d2h_pending_descs_count()
+{
+    assert(m_state);
+
+    std::lock_guard<State> state_guard(*m_state);
+
+    int num_proc = CB_TAIL(m_state->m_descs);
+    int desc_num_ready = CB_PROG(m_state->m_descs, num_proc, m_state->m_d2h_read_desc_index);
+
+    return desc_num_ready;
+}
+
+hailo_status VdmaChannel::prepare_d2h_pending_descriptors(uint32_t transfer_size)
+{
+    assert(m_buffer);
+
+    auto transfers_count_in_buffer = get_transfers_count_in_buffer(transfer_size);
+    auto transfers_count = std::min(transfers_count_in_buffer,
+        static_cast<size_t>(CB_SIZE(m_state->m_buffers) - 1));
 
     // on D2H no need for interrupt of first descriptor
     const auto first_desc_interrupts_domain = VdmaInterruptsDomain::NONE;
@@ -200,6 +260,10 @@ hailo_status VdmaChannel::prepare_d2h_pending_descriptors(uint32_t descs_count, 
             (static_cast<uint32_t>(m_transfers_per_axi_intr - 1) == (i % m_transfers_per_axi_intr)) ? 
                 VdmaInterruptsDomain::BOTH : VdmaInterruptsDomain::HOST;
         auto status = prepare_descriptors(transfer_size, first_desc_interrupts_domain, last_desc_interrutps_domain);
+        if (HAILO_STREAM_NOT_ACTIVATED == status) {
+            LOGGER__INFO("preparing descriptors failed because channel is not activated");
+            return status;
+        }
         CHECK_SUCCESS(status, "Failed prepare desc status={}", status);
     }
 
@@ -275,22 +339,22 @@ void VdmaChannel::reset_internal_counters()
 hailo_status VdmaChannel::start_allocated_channel(uint32_t transfer_size)
 {
     /* descriptor buffer must be allocated */
-    assert(m_descriptors_buffer);
+    assert(m_buffer);
     assert(m_state);
     std::lock_guard<State> state_guard(*m_state);
     reset_internal_counters();
 
-    auto status = start_channel(*m_descriptors_buffer);
-    CHECK_SUCCESS(status, "failed to start channel {}", m_channel_index);
+    auto status = start_channel();
+    CHECK_SUCCESS(status, "failed to start channel {}", m_channel_id);
 
     if ((Direction::D2H == m_direction) && (transfer_size != 0)) {
-        auto descs_count = CB_SIZE(m_state->m_descs);
-        status = prepare_d2h_pending_descriptors(descs_count, transfer_size);
+        status = prepare_d2h_pending_descriptors(transfer_size);
         if (HAILO_SUCCESS != status) {
             stop_channel();
         }
         return status;
     }
+    m_channel_is_active = true;
 
     return HAILO_SUCCESS;
 }
@@ -300,27 +364,89 @@ hailo_status VdmaChannel::register_fw_controlled_channel()
     return register_channel_to_driver(HailoRTDriver::INVALID_DRIVER_BUFFER_HANDLE_VALUE);
 }
 
-hailo_status VdmaChannel::wait(size_t buffer_size, const std::chrono::milliseconds &timeout)
+hailo_status VdmaChannel::register_for_d2h_interrupts(const std::function<void(uint32_t)> &callback)
 {
-    if (!m_mapped_user_buffer) {
+    // This function has to be called after channel is started
+    assert(!((m_d2h_callback_thread) && m_d2h_callback_thread->joinable()));
+    m_d2h_callback_thread = make_unique_nothrow<std::thread>([this, callback]() {
+        wait_d2h_callback(callback);
+    });
+    CHECK_NOT_NULL(m_d2h_callback_thread, HAILO_OUT_OF_HOST_MEMORY);
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status VdmaChannel::unregister_for_d2h_interrupts(std::unique_lock<State> &lock)
+{
+    // This function has to be called after channel is stopped (after unregister_fw_controlled_channel is called)
+    if ((m_d2h_callback_thread) && (m_d2h_callback_thread->joinable())) {
+        // Let the channel finish processing interrupts
+        lock.unlock();
+        m_d2h_callback_thread->join();
+        lock.lock();
+    }
+    return HAILO_SUCCESS;
+}
+
+void VdmaChannel::wait_d2h_callback(const std::function<void(uint32_t)> &callback)
+{
+    assert(Direction::D2H == m_direction);
+    if(!m_buffer) {
+        LOGGER__ERROR("Wait called without allocating buffers");
+        return;
+    }
+    while (true) {
+        auto status = wait_for_channel_completion(HAILO_INFINITE_TIMEOUT, callback);
+         if (HAILO_SUCCESS == status || (HAILO_STREAM_INTERNAL_ABORT == status)) {
+            // Ignore HAILO_STREAM_INTERNAL_ABORT as we want to keep waiting for interrupts until channel is stopped
+            continue;
+        } else if (HAILO_STREAM_NOT_ACTIVATED == status) {
+            // Finish gracefully
+            return;
+        } else {
+            LOGGER__ERROR("wait_d2h_callback failed with status={}", status);
+            return;
+        }
+    }
+}
+
+hailo_status VdmaChannel::wait(size_t buffer_size, std::chrono::milliseconds timeout)
+{
+    if (!m_buffer) {
         LOGGER__ERROR("Wait called without allocating buffers");
         return HAILO_INVALID_OPERATION;
     }
 
-    CHECK(buffer_size < m_mapped_user_buffer->size(), HAILO_INVALID_ARGUMENT,
-        "Requested transfer size ({}) must be smaller than ({})", buffer_size, m_mapped_user_buffer->size());
+    CHECK(buffer_size < m_buffer->size(), HAILO_INVALID_ARGUMENT,
+        "Requested transfer size ({}) must be smaller than ({})", buffer_size, m_buffer->size());
 
-    auto is_ready_for_transfer = (Direction::H2D == m_direction)
-                                     ? std::bind(&VdmaChannel::is_ready_for_transfer_h2d, this, buffer_size)
-                                     : std::bind(&VdmaChannel::is_ready_for_transfer_d2h, this, buffer_size);
-
+    if ((Direction::D2H == m_direction) && ((m_d2h_callback_thread) && (m_d2h_callback_thread->joinable()))) {
+        std::unique_lock<State> state_guard(*m_state);
+        hailo_status status = HAILO_SUCCESS; // Best effort
+        bool was_successful = m_can_read_buffer_cv.wait_for(state_guard, timeout, [this, buffer_size, &status] () {
+            if ((!m_channel_enabled) || (m_is_aborted_by_internal_source)) {
+                status = HAILO_STREAM_INTERNAL_ABORT;
+                return true; // return true so that the wait will finish
+            }
+            return is_ready_for_transfer_d2h(buffer_size);
+        });
+        if (HAILO_STREAM_INTERNAL_ABORT == status) {
+            LOGGER__INFO("wait_for in d2h wait was aborted!");
+            return HAILO_STREAM_INTERNAL_ABORT;
+        }
+        CHECK(was_successful, HAILO_TIMEOUT);
+        return HAILO_SUCCESS;
+    }
+    auto is_ready_for_transfer = (Direction::H2D == m_direction) ?
+        std::bind(&VdmaChannel::is_ready_for_transfer_h2d, this, buffer_size) :
+        std::bind(&VdmaChannel::is_ready_for_transfer_d2h, this, buffer_size);
     return wait_for_condition(is_ready_for_transfer, timeout);
 }
 
 hailo_status VdmaChannel::transfer(void *buf, size_t count)
 {
     CHECK((nullptr != buf) && (0 < count), HAILO_INVALID_ARGUMENT);
-    CHECK(nullptr != m_mapped_user_buffer, HAILO_INVALID_OPERATION, "Transfer called without allocating buffers");
+    CHECK(nullptr != m_buffer, HAILO_INVALID_OPERATION, "Transfer called without allocating buffers");
 
     hailo_status status = HAILO_UNINITIALIZED;
     assert(m_state);
@@ -328,15 +454,23 @@ hailo_status VdmaChannel::transfer(void *buf, size_t count)
 
     if (Direction::H2D == m_direction) {
         status = transfer_h2d(buf, count);
+        if (HAILO_STREAM_NOT_ACTIVATED == status) {
+            LOGGER__INFO("Transfer failed because Channel {} is not activated", m_channel_id);
+            return HAILO_STREAM_NOT_ACTIVATED;
+        } 
         if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Transfer failed for channel {}", m_channel_index);
+            LOGGER__ERROR("Transfer failed for channel {}", m_channel_id);
             return status;
         }
         return HAILO_SUCCESS;
     } else {
         status = transfer_d2h(buf, count);
+        if (HAILO_STREAM_NOT_ACTIVATED == status) {
+            LOGGER__INFO("Transfer failed because Channel {} is not activated", m_channel_id);
+            return HAILO_STREAM_NOT_ACTIVATED;
+        } 
         if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Transfer failed for channel {} status {}", m_channel_index, status);
+            LOGGER__ERROR("Transfer failed for channel {} status {}", m_channel_id, status);
             return status;
         }
         return HAILO_SUCCESS;
@@ -347,19 +481,19 @@ hailo_status VdmaChannel::transfer(void *buf, size_t count)
 
 hailo_status VdmaChannel::write_buffer_impl(const MemoryView &buffer)
 {
-    CHECK(nullptr != m_mapped_user_buffer, HAILO_INVALID_OPERATION, "Transfer called without allocating buffers");
+    CHECK(nullptr != m_buffer, HAILO_INVALID_OPERATION, "Transfer called without allocating buffers");
 
-    size_t desired_desc_num = m_descriptors_buffer->descriptors_in_buffer(buffer.size());
+    size_t desired_desc_num = m_buffer->descriptors_in_buffer(buffer.size());
     uint32_t desc_avail = (get_num_available() + m_pending_num_avail_offset) & m_state->m_descs.size_mask;
 
     assert(CB_AVAIL(m_state->m_descs, desc_avail, CB_TAIL(m_state->m_descs)) >= static_cast<uint16_t>(desired_desc_num));
 
     /* Copy buffer into the PLDA data struct */
     auto offset = desc_avail * m_desc_page_size;
-    auto status = m_mapped_user_buffer->write_cyclic(buffer.data(), buffer.size(), offset);
+    auto status = m_buffer->write_cyclic(buffer.data(), buffer.size(), offset);
     CHECK_SUCCESS(status);
 
-    m_pending_num_avail_offset = static_cast<uint16_t>(m_pending_num_avail_offset + desired_desc_num);
+    m_pending_num_avail_offset = static_cast<uint16_t>(m_pending_num_avail_offset + desired_desc_num);    
 
     CHECK(!m_pending_buffers_sizes.full(), HAILO_INVALID_OPERATION, "Cannot add more pending buffers!");
     m_pending_buffers_sizes.push_back(buffer.size());
@@ -371,23 +505,45 @@ hailo_status VdmaChannel::write_buffer(const MemoryView &buffer, std::chrono::mi
     assert(m_state);
     std::unique_lock<State> state_guard(*m_state);
 
-    hailo_status status = HAILO_UNINITIALIZED;
-    size_t desired_desc_num = m_descriptors_buffer->descriptors_in_buffer(buffer.size());
-    bool was_successful = m_can_write_buffer_cv.wait_for(state_guard, timeout, [this, &status, desired_desc_num] () {
-        if ((!m_channel_enabled) || (m_is_aborted)) {
-            status = HAILO_STREAM_INTERNAL_ABORT;
+    size_t desired_desc_num = m_buffer->descriptors_in_buffer(buffer.size());
+    hailo_status channel_completion_status = HAILO_SUCCESS;
+    bool was_successful = m_can_write_buffer_cv.wait_for(state_guard, timeout, [this, desired_desc_num, timeout, &state_guard,
+            &channel_completion_status] () {
+        if ((!m_channel_enabled) || (m_is_aborted_by_internal_source)) {
             return true;
+        }
+
+        // TODO (HRT-7252): Clean this code
+        while (true) {
+            int buffers_head = CB_HEAD(m_state->m_buffers);
+            int buffers_tail = CB_TAIL(m_state->m_buffers);
+            if (CB_AVAIL(m_state->m_buffers, buffers_head, buffers_tail)) {
+                break;
+            }
+
+            if (HailoRTDriver::INVALID_VDMA_CHANNEL_HANDLE == *m_channel_handle) {
+                return false;
+            }
+
+            state_guard.unlock();
+            channel_completion_status = wait_for_channel_completion(timeout);
+            if (HAILO_SUCCESS != channel_completion_status) {
+                LOGGER__INFO("wait_for_channel_completion failed with status={}", channel_completion_status);
+                return true;
+            }
+            state_guard.lock();
         }
 
         uint32_t desc_avail = (get_num_available() + m_pending_num_avail_offset) & m_state->m_descs.size_mask;
         int num_free = CB_AVAIL(m_state->m_descs, desc_avail, CB_TAIL(m_state->m_descs));
         return (num_free >= static_cast<uint16_t>(desired_desc_num));
     });
-    if (HAILO_STREAM_INTERNAL_ABORT == status) {
+    if ((!m_channel_enabled) || (m_is_aborted_by_internal_source) || (HAILO_STREAM_INTERNAL_ABORT == channel_completion_status)) {
         LOGGER__INFO("wait_for in write_buffer was aborted!");
-        return status;
+        return HAILO_STREAM_INTERNAL_ABORT;
     }
     CHECK(was_successful, HAILO_TIMEOUT, "Waiting for descriptors in write_buffer has reached a timeout!");
+    CHECK_SUCCESS(channel_completion_status);
 
     return write_buffer_impl(buffer);
 }
@@ -395,6 +551,7 @@ hailo_status VdmaChannel::write_buffer(const MemoryView &buffer, std::chrono::mi
 hailo_status VdmaChannel::send_pending_buffer_impl()
 {
     CHECK(!m_pending_buffers_sizes.empty(), HAILO_INVALID_OPERATION, "There are no pending buffers to send!");
+    assert(m_buffer);
 
     // For h2d, only the host need to get transfer done interrupts
     VdmaInterruptsDomain last_desc_interrupts_domain = VdmaInterruptsDomain::HOST;
@@ -403,11 +560,20 @@ hailo_status VdmaChannel::send_pending_buffer_impl()
         VdmaInterruptsDomain::HOST : VdmaInterruptsDomain::NONE;
 
     auto status = prepare_descriptors(m_pending_buffers_sizes.front(), first_desc_interrupts_domain, last_desc_interrupts_domain);
+    if (HAILO_STREAM_NOT_ACTIVATED == status) {
+        LOGGER__INFO("sending pending buffer failed because stream is not activated");
+        // Stream was aborted during transfer - reset pending buffers
+        m_pending_num_avail_offset = 0;
+        while (m_pending_buffers_sizes.size() > 0) {
+            m_pending_buffers_sizes.pop_front();
+        }
+        return status;
+    }
     CHECK_SUCCESS(status);
 
     m_state->m_accumulated_transfers = (m_state->m_accumulated_transfers + 1) % m_transfers_per_axi_intr;
 
-    size_t desired_desc_num = m_descriptors_buffer->descriptors_in_buffer(m_pending_buffers_sizes.front());
+    size_t desired_desc_num = m_buffer->descriptors_in_buffer(m_pending_buffers_sizes.front());
     m_pending_num_avail_offset = static_cast<uint16_t>(m_pending_num_avail_offset - desired_desc_num);
 
     m_pending_buffers_sizes.pop_front();
@@ -420,13 +586,19 @@ Expected<PendingBufferState> VdmaChannel::send_pending_buffer()
     size_t next_buffer_desc_num = 0;
     {
         assert(m_state);
+        assert(m_buffer);
         std::lock_guard<State> state_guard(*m_state);
 
         // Save before calling send_pending_buffer_impl because we pop from m_pending_buffers_sizes there
-        next_buffer_desc_num = m_descriptors_buffer->descriptors_in_buffer(m_pending_buffers_sizes.front());
+        next_buffer_desc_num = m_buffer->descriptors_in_buffer(m_pending_buffers_sizes.front());
 
         auto status = send_pending_buffer_impl();
-        CHECK_SUCCESS_AS_EXPECTED(status);
+        if (HAILO_STREAM_NOT_ACTIVATED == status) {
+            LOGGER__INFO("stream is not activated");
+            return make_unexpected(HAILO_STREAM_NOT_ACTIVATED);
+        } else {
+            CHECK_SUCCESS_AS_EXPECTED(status);
+        }
     }
     m_can_write_buffer_cv.notify_one();
 
@@ -479,7 +651,7 @@ hailo_status VdmaChannel::flush(const std::chrono::milliseconds &timeout)
         return HAILO_SUCCESS;
     }
 
-    if (!m_mapped_user_buffer) {
+    if (!m_buffer) {
         LOGGER__ERROR("VdmaChannel::flush is called on a channel without allocated resources");
         return HAILO_INVALID_OPERATION;
     }
@@ -493,7 +665,11 @@ hailo_status VdmaChannel::transfer_h2d(void *buf, size_t count)
     CHECK_SUCCESS(status);
 
     status = send_pending_buffer_impl();
-    CHECK_SUCCESS(status);
+    if (HAILO_STREAM_NOT_ACTIVATED == status) {
+        return status;
+    } else {
+        CHECK_SUCCESS(status);
+    }
 
     return HAILO_SUCCESS;
 }
@@ -507,8 +683,9 @@ hailo_status VdmaChannel::transfer_d2h(void *buf, size_t count)
         VdmaInterruptsDomain::BOTH : VdmaInterruptsDomain::HOST;
  
     assert(m_state);
+    assert(m_buffer);
 
-    auto desired_desc_num = m_descriptors_buffer->descriptors_in_buffer(count);
+    auto desired_desc_num = m_buffer->descriptors_in_buffer(count);
     assert(desired_desc_num <= MAX_DESCS_COUNT);
     int desc_num = static_cast<int>(desired_desc_num);
 
@@ -519,7 +696,7 @@ hailo_status VdmaChannel::transfer_d2h(void *buf, size_t count)
     }
 
     size_t offset = m_state->m_d2h_read_desc_index * m_desc_page_size;
-    status = m_mapped_user_buffer->read_cyclic(buf, count, offset);
+    status = m_buffer->read_cyclic(buf, count, offset);
     if (status != HAILO_SUCCESS) {
         return status;
     }
@@ -527,8 +704,14 @@ hailo_status VdmaChannel::transfer_d2h(void *buf, size_t count)
     m_state->m_d2h_read_desc_index = (m_state->m_d2h_read_desc_index + desc_num) & m_state->m_descs.size_mask;
 
     // prepare descriptors for next recv
-    status = prepare_descriptors(count, first_desc_interrupts_domain, last_desc_interrupts_domain);
-    CHECK_SUCCESS(status);
+    if (*m_channel_handle != HailoRTDriver::INVALID_VDMA_CHANNEL_HANDLE) {
+        status = prepare_descriptors(count, first_desc_interrupts_domain, last_desc_interrupts_domain);
+        if (HAILO_STREAM_NOT_ACTIVATED == status) {
+            LOGGER__INFO("transfer d2h failed because stream is not activated");
+            return status;
+        }
+        CHECK_SUCCESS(status);
+    }
 
     m_state->m_accumulated_transfers = (m_state->m_accumulated_transfers + 1) % m_transfers_per_axi_intr;
 
@@ -551,7 +734,7 @@ uint16_t VdmaChannel::get_num_available()
     assert(is_aborted_exp);
 
     if ((HailoRTDriver::INVALID_VDMA_CHANNEL_HANDLE != *m_channel_handle) && !is_aborted_exp.value()) {
-         assert(hw_num_avail.value() == num_available);
+        assert(hw_num_avail.value() == num_available);
     }
 #endif
     return num_available;
@@ -573,6 +756,10 @@ Expected<uint16_t> VdmaChannel::get_hw_num_processed()
 
 hailo_status VdmaChannel::set_num_avail_value(uint16_t new_value)
 {
+    // TODO - HRT-7885 : add check in driver
+    CHECK(*m_channel_handle != HailoRTDriver::INVALID_VDMA_CHANNEL_HANDLE, HAILO_STREAM_NOT_ACTIVATED,
+        "Error, can't set num available when stream is not activated");
+
     auto status = m_host_registers.set_num_available(new_value);
     CHECK_SUCCESS(status, "Fail to write vdma num available register");
 
@@ -630,10 +817,12 @@ VdmaChannel::Direction VdmaChannel::other_direction(Direction direction)
 
 hailo_status VdmaChannel::unregister_fw_controlled_channel()
 {
-    auto status = m_driver.vdma_channel_disable(m_channel_index, *m_channel_handle);
-    *m_channel_handle = HailoRTDriver::INVALID_VDMA_CHANNEL_HANDLE;
-    CHECK_SUCCESS(status, "Failed to disable channel {}", m_channel_index);
-
+    assert(m_channel_handle);
+    if (HailoRTDriver::INVALID_VDMA_CHANNEL_HANDLE != *m_channel_handle) {
+        auto status = m_driver.vdma_channel_disable(m_channel_id, *m_channel_handle);
+        *m_channel_handle = HailoRTDriver::INVALID_VDMA_CHANNEL_HANDLE;
+        CHECK_SUCCESS(status, "Failed to disable channel {}", m_channel_id);
+    }
     return HAILO_SUCCESS;
 }
 
@@ -641,33 +830,39 @@ hailo_status VdmaChannel::register_channel_to_driver(uintptr_t desc_list_handle)
 {
     const bool measure_latency = (nullptr != m_latency_meter);
     const uintptr_t desc_handle = desc_list_handle;
-    auto channel_handle = m_driver.vdma_channel_enable(m_channel_index, m_direction, desc_handle, measure_latency);
-    CHECK_EXPECTED_AS_STATUS(channel_handle, "Failed to enable channel {}", m_channel_index);
+    auto channel_handle = m_driver.vdma_channel_enable(m_channel_id, m_direction, desc_handle, measure_latency);
+    CHECK_EXPECTED_AS_STATUS(channel_handle, "Failed to enable channel {}", m_channel_id);
 
     *m_channel_handle = channel_handle.release();
     return HAILO_SUCCESS;
 }
 
-hailo_status VdmaChannel::start_channel(VdmaDescriptorList &desc_list)
+hailo_status VdmaChannel::start_channel()
 {
-    assert(is_aborted());
+    auto is_aborted_exp = is_aborted();
+    assert(is_aborted_exp);
+    assert(is_aborted_exp.value());
 
-    auto status = register_channel_to_driver(desc_list.handle());
-    CHECK_SUCCESS(status, "Failed to enable channel {}", m_channel_index);
+    auto status = register_channel_to_driver(m_buffer->get_desc_list()->get().handle());
+    CHECK_SUCCESS(status, "Failed to enable channel {}", m_channel_id);
+
+    m_channel_is_active = true;
 
     return HAILO_SUCCESS;
 }
 
+// TODO - HRT-6984 - move function inside desc list class as part of the ctor
 void VdmaChannel::clear_descriptor_list()
 {
-    assert(m_descriptors_buffer);
+    assert(m_buffer);
 
-    size_t desc_number = m_descriptors_buffer->count();
-    size_t page_size = m_mapped_user_buffer->size() / desc_number;
+    size_t desc_number = m_buffer->descs_count();
+    size_t page_size = m_buffer->desc_page_size();
+    auto desc_list = m_buffer->get_desc_list();
 
     // Config Descriptors value in SG-List Host side
     for (uint32_t j = 0; j < desc_number; j++) {
-        VdmaDescriptor &descInfo = (*m_descriptors_buffer)[j];
+        VdmaDescriptor &descInfo = (desc_list->get())[j];
         descInfo.PageSize_DescControl = static_cast<uint32_t>((page_size << 8) + 0x2);
         descInfo.RemainingPageSize_Status = 0x0;
     }
@@ -678,34 +873,17 @@ hailo_status VdmaChannel::allocate_buffer(const uint32_t buffer_size)
     assert((buffer_size % m_desc_page_size) == 0);
     uint32_t desc_count = buffer_size / m_desc_page_size;
 
-    if (m_mapped_user_buffer) {
-        LOGGER__ERROR("m_mapped_user_buffer is not NULL");
+    if (m_buffer) {
+        LOGGER__ERROR("m_buffer is not NULL");
         return HAILO_INVALID_OPERATION;
     }
 
-    auto mapped_buffer = vdma::MappedBuffer::create(buffer_size, m_direction, m_driver);
-    if(!mapped_buffer) {
-        LOGGER__ERROR("create mapped buffer failed");
-        return mapped_buffer.status();
-    }
+    auto buffer = vdma::SgBuffer::create(m_driver, desc_count, m_desc_page_size, m_direction,
+        m_channel_id.channel_index);
+    CHECK_EXPECTED_AS_STATUS(buffer);
 
-    auto descriptors = VdmaDescriptorList::create(desc_count, m_desc_page_size, m_driver);
-    if (!descriptors) {
-        LOGGER__ERROR("create descriptor list failed");
-        return descriptors.status();
-    }
-
-    auto status = descriptors->configure_to_use_buffer(mapped_buffer.value(), m_channel_index);
-    if (status != HAILO_SUCCESS) {
-        LOGGER__ERROR("connect descriptor list to buffer failed");
-        return status;
-    }
-
-    m_mapped_user_buffer = make_unique_nothrow<vdma::MappedBuffer>(mapped_buffer.release());
-    CHECK_NOT_NULL(m_mapped_user_buffer, HAILO_OUT_OF_HOST_MEMORY);
-
-    m_descriptors_buffer = make_unique_nothrow<VdmaDescriptorList>(descriptors.release());
-    CHECK_NOT_NULL(m_descriptors_buffer, HAILO_OUT_OF_HOST_MEMORY);
+    m_buffer = make_unique_nothrow<vdma::SgBuffer>(buffer.release());
+    CHECK_NOT_NULL(m_buffer, HAILO_OUT_OF_HOST_MEMORY);
 
     return HAILO_SUCCESS;
 }
@@ -726,7 +904,7 @@ uint32_t VdmaChannel::calculate_buffer_size(const HailoRTDriver &driver, uint32_
     return descs_count * desc_page_size;
 }
 
-hailo_status VdmaChannel::trigger_channel_completion(uint16_t hw_num_processed)
+hailo_status VdmaChannel::trigger_channel_completion(uint16_t hw_num_processed, const std::function<void(uint32_t)> &callback)
 {
     // NOTE: right now, we can retake the 'completion' descriptor for a new transfer before handling the interrupt.
     //      we should have our own pointers indicating whats free instead of reading from HW.
@@ -736,6 +914,7 @@ hailo_status VdmaChannel::trigger_channel_completion(uint16_t hw_num_processed)
     // situation correctly.
 
     assert(m_state);
+    assert(m_buffer);
     std::lock_guard<State> state_guard(*m_state);
 
     int processed_no = 0;
@@ -746,7 +925,8 @@ hailo_status VdmaChannel::trigger_channel_completion(uint16_t hw_num_processed)
 
     auto channel_error = m_host_registers.get_channel_error();
     CHECK_EXPECTED_AS_STATUS(channel_error, "Fail to read vdma channel error register");
-    CHECK(0 == channel_error.value(), HAILO_INTERNAL_FAILURE, "Vdma channel {} in error state {}", m_channel_index, channel_error.value());
+    CHECK(0 == channel_error.value(), HAILO_INTERNAL_FAILURE, "Vdma channel {} in error state {}", m_channel_id,
+        channel_error.value());
 
     uint16_t last_num_processed = static_cast<uint16_t>(CB_TAIL(m_state->m_descs));
 
@@ -757,10 +937,10 @@ hailo_status VdmaChannel::trigger_channel_completion(uint16_t hw_num_processed)
         bool is_complete = is_desc_between(last_num_processed, hw_num_processed, last_desc_index) || (hw_num_processed == get_num_available());
 
 #ifndef NDEBUG
-        auto status = (*m_descriptors_buffer)[last_desc_index].RemainingPageSize_Status & 0xFF;
+        auto status = (m_buffer->get_desc_list()->get())[last_desc_index].RemainingPageSize_Status & 0xFF;
         // Verify if a DMA Descriptor error occurred.
         if (status & 0x2) {
-            LOGGER__ERROR("Error while processing descriptor {} of DMA {} on board {}.", last_desc_index, m_channel_index,
+            LOGGER__ERROR("Error while processing descriptor {} of DMA {} on board {}.", last_desc_index, m_channel_id,
                 m_driver.dev_path());
             return HAILO_INTERNAL_FAILURE;
         }
@@ -785,7 +965,10 @@ hailo_status VdmaChannel::trigger_channel_completion(uint16_t hw_num_processed)
 
         if (Direction::H2D == m_direction) {
             m_can_write_buffer_cv.notify_one();
+        } else {
+            m_can_read_buffer_cv.notify_one();
         }
+        callback(processed_no);
     }
 
     m_is_waiting_for_channel_completion = false;
@@ -795,8 +978,9 @@ hailo_status VdmaChannel::trigger_channel_completion(uint16_t hw_num_processed)
 bool VdmaChannel::is_ready_for_transfer_h2d(size_t buffer_size)
 {   
     assert(m_state);
+    assert(m_buffer);
 
-    size_t desired_desc_num = m_descriptors_buffer->descriptors_in_buffer(buffer_size);
+    size_t desired_desc_num = m_buffer->descriptors_in_buffer(buffer_size);
     assert(desired_desc_num <= MAX_DESCS_COUNT);
     int desc_num = static_cast<int>(desired_desc_num);
 
@@ -825,8 +1009,9 @@ bool VdmaChannel::is_ready_for_transfer_h2d(size_t buffer_size)
 bool VdmaChannel::is_ready_for_transfer_d2h(size_t buffer_size)
 {
     assert(m_state);
+    assert(m_buffer);
 
-    size_t desired_desc_num = m_descriptors_buffer->descriptors_in_buffer(buffer_size);
+    size_t desired_desc_num = m_buffer->descriptors_in_buffer(buffer_size);
     assert(desired_desc_num <= MAX_DESCS_COUNT);
     int desc_num = static_cast<int>(desired_desc_num);
 
@@ -841,7 +1026,6 @@ bool VdmaChannel::is_ready_for_transfer_d2h(size_t buffer_size)
     if (num_ready < desc_num) {
         return false;
     }
-
     return true;
 }
 
@@ -850,12 +1034,12 @@ hailo_status VdmaChannel::prepare_descriptors(size_t transfer_size, VdmaInterrup
 {
     MICROPROFILE_SCOPEI("vDMA Channel", "Trigger vDMA", 0);
 
-    assert(m_descriptors_buffer);
+    assert(m_buffer);
     assert(m_state);
-    auto &desc_info = *m_descriptors_buffer;
+    auto desc_info = m_buffer->get_desc_list();
 
     /* calculate desired descriptors for the buffer */
-    size_t desired_desc_num = m_descriptors_buffer->descriptors_in_buffer(transfer_size);
+    size_t desired_desc_num = m_buffer->descriptors_in_buffer(transfer_size);
     assert(desired_desc_num <= MAX_DESCS_COUNT);
     uint16_t desc_num = static_cast<uint16_t>(desired_desc_num);
 
@@ -866,10 +1050,10 @@ hailo_status VdmaChannel::prepare_descriptors(size_t transfer_size, VdmaInterrup
         return HAILO_OUT_OF_DESCRIPTORS;
     }
 
-    auto actual_desc_count = desc_info.program_descriptors(transfer_size, first_desc_interrupts_domain,
+    auto actual_desc_count = desc_info->get().program_descriptors(transfer_size, first_desc_interrupts_domain,
         last_desc_interrupts_domain, num_available, true);
     if (!actual_desc_count) {
-        LOGGER__ERROR("Failed to program desc_list for channel {}", m_channel_index);
+        LOGGER__ERROR("Failed to program desc_list for channel {}", m_channel_id);
         return actual_desc_count.status();
     }
     assert (actual_desc_count.value() == desc_num);
@@ -940,7 +1124,7 @@ hailo_status VdmaChannel::wait_for_condition(std::function<bool()> condition, st
     return condition() ? HAILO_SUCCESS : HAILO_TIMEOUT;
 }
 
-hailo_status VdmaChannel::wait_for_channel_completion(std::chrono::milliseconds timeout)
+hailo_status VdmaChannel::wait_for_channel_completion(std::chrono::milliseconds timeout, const std::function<void(uint32_t)> &callback)
 {
     auto hw_num_processed = wait_interrupts(timeout);
     if ((hw_num_processed.status() == HAILO_TIMEOUT) ||
@@ -952,7 +1136,12 @@ hailo_status VdmaChannel::wait_for_channel_completion(std::chrono::milliseconds 
         auto is_aborted_exp = is_aborted();
         CHECK_EXPECTED_AS_STATUS(is_aborted_exp);
         if (is_aborted_exp.value()) {
-            LOGGER__CRITICAL("Channel {} was aborted by an external source!", m_channel_index);
+            std::unique_lock<std::mutex> lock(m_is_active_flag_mutex);
+            if (!m_channel_is_active) {
+                return HAILO_STREAM_NOT_ACTIVATED;
+            }
+
+            LOGGER__CRITICAL("Channel {} was aborted by an external source!", m_channel_id);
             return HAILO_STREAM_ABORTED;
         }
     }
@@ -962,7 +1151,7 @@ hailo_status VdmaChannel::wait_for_channel_completion(std::chrono::milliseconds 
     }
     CHECK_EXPECTED_AS_STATUS(hw_num_processed);
 
-    auto status = trigger_channel_completion(hw_num_processed.value());
+    auto status = trigger_channel_completion(hw_num_processed.value(), callback);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -972,7 +1161,7 @@ Expected<uint16_t> VdmaChannel::wait_interrupts(std::chrono::milliseconds timeou
 {
     assert(m_state);
 
-    auto irq_data = m_driver.wait_channel_interrupts(m_channel_index, *m_channel_handle, timeout);
+    auto irq_data = m_driver.wait_channel_interrupts(m_channel_id, *m_channel_handle, timeout);
     if ((HAILO_STREAM_INTERNAL_ABORT == irq_data.status()) ||
         (HAILO_STREAM_NOT_ACTIVATED == irq_data.status())) {
         LOGGER__INFO("Wait channel interrupts was aborted!");

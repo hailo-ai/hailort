@@ -60,6 +60,11 @@ class HcpConfigActivatedNetworkGroup : public ActivatedNetworkGroupBase
         return make_unexpected(HAILO_INVALID_OPERATION);
     }
 
+    virtual hailo_status set_keep_nn_config_during_reset(const bool /* keep_nn_config_during_reset */) override
+    {
+        LOGGER__ERROR("set_keep_nn_config_during_reset() is not supported on single_context network_groups");
+        return HAILO_INVALID_OPERATION;
+    }
 
   private:
       HcpConfigActivatedNetworkGroup(Device &device, HcpConfigActiveAppHolder &active_net_group_holder,

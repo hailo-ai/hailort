@@ -21,6 +21,8 @@ public:
     static Expected<int32_t> to_int32(const std::string &str, int base);
     static Expected<uint8_t> to_uint8(const std::string &str, int base);
     static Expected<uint32_t> to_uint32(const std::string &str, int base);
+
+    static std::string to_hex_string(const uint8_t *array, size_t size, bool uppercase, const std::string &delimiter="");
 };
 
 } /* namespace hailort */

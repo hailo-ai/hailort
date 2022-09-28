@@ -30,6 +30,11 @@
 namespace hailort
 {
 
+struct VDeviceParamsWrapper {
+    hailo_vdevice_params_t orig_params;
+    std::string group_id_str;
+};
+
 class VDeviceWrapper {
 public:
     static VDeviceWrapper create(const hailo_vdevice_params_t &params)
@@ -37,13 +42,15 @@ public:
         return VDeviceWrapper(params);
     };
 
-    static VDeviceWrapper create_from_infos(const std::vector<hailo_pcie_device_info_t> &device_infos)
+    static VDeviceWrapper create(const VDeviceParamsWrapper &params)
     {
-        hailo_vdevice_params_t params = {};
-        params.device_count = static_cast<uint32_t>(device_infos.size());
-        params.device_infos = const_cast<hailo_pcie_device_info_t*>(device_infos.data());
-        return VDeviceWrapper(params);
-    };
+        return VDeviceWrapper(params.orig_params);
+    }
+
+    static VDeviceWrapper create_from_ids(const std::vector<std::string> &device_ids)
+    {
+        return VDeviceWrapper(device_ids);
+    }
 
     VDeviceWrapper(const hailo_vdevice_params_t &params)
     {
@@ -53,13 +60,21 @@ public:
         m_vdevice = vdevice_expected.release();
     };
 
-    py::list get_physical_devices_infos()
+    VDeviceWrapper(const std::vector<std::string> &device_ids)
     {
-        auto phys_devs_infos = m_vdevice->get_physical_devices_infos();
-        VALIDATE_EXPECTED(phys_devs_infos);
+        auto vdevice_expected = VDevice::create(device_ids);
+        VALIDATE_EXPECTED(vdevice_expected);
 
-        return py::cast(phys_devs_infos.value());
-    };
+        m_vdevice = vdevice_expected.release();
+    }
+
+    py::list get_physical_devices_ids() const
+    {
+        const auto phys_devs_ids = m_vdevice->get_physical_devices_ids();
+        VALIDATE_EXPECTED(phys_devs_ids);
+
+        return py::cast(phys_devs_ids.value());
+    }
 
     py::list configure(const HefWrapper &hef,
         const NetworkGroupsParamsMap &configure_params={})
@@ -88,9 +103,10 @@ private:
 void VDevice_api_initialize_python_module(py::module &m)
 {
     py::class_<VDeviceWrapper>(m, "VDevice")
-        .def("create", &VDeviceWrapper::create)
-        .def("create_from_infos", &VDeviceWrapper::create_from_infos)
-        .def("get_physical_devices_infos", &VDeviceWrapper::get_physical_devices_infos)
+        .def("create", py::overload_cast<const hailo_vdevice_params_t&>(&VDeviceWrapper::create))
+        .def("create", py::overload_cast<const VDeviceParamsWrapper&>(&VDeviceWrapper::create))
+        .def("create_from_ids", &VDeviceWrapper::create_from_ids)
+        .def("get_physical_devices_ids", &VDeviceWrapper::get_physical_devices_ids)
         .def("configure", &VDeviceWrapper::configure)
         .def("release", &VDeviceWrapper::release)
         ;

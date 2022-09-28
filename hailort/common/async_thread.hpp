@@ -12,7 +12,6 @@
 #include <functional>
 #include <thread>
 #include <memory>
-#include <atomic>
 
 namespace hailort
 {
@@ -27,7 +26,7 @@ public:
     explicit AsyncThread(std::function<T(void)> func) :
         m_result(),
         m_thread([this, func]() {
-            m_result.store(func());
+            m_result = func();
         })
     {}
 
@@ -46,13 +45,14 @@ public:
         if (m_thread.joinable()) {
             m_thread.join();
         }
-        return m_result.load();
+        return std::move(m_result);
     }
 
 private:
-    std::atomic<T> m_result;
+    T m_result;
     std::thread m_thread;
 };
+
 
 template<typename T>
 using AsyncThreadPtr = std::unique_ptr<AsyncThread<T>>;

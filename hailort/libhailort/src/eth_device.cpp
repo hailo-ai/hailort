@@ -100,25 +100,10 @@ Expected<std::unique_ptr<EthernetDevice>> EthernetDevice::create(const hailo_eth
 
 Expected<std::unique_ptr<EthernetDevice>> EthernetDevice::create(const std::string &ip_addr)
 {
-    auto status = HAILO_UNINITIALIZED;
-    hailo_eth_device_info_t device_info{};
-
-    device_info.host_address.sin_family = AF_INET;
-    device_info.host_address.sin_port = HAILO_ETH_PORT_ANY;
-
-    status = Socket::pton(AF_INET, HAILO_ETH_ADDRESS_ANY, &(device_info.host_address.sin_addr));
-    CHECK_SUCCESS_AS_EXPECTED(status);
-
-    device_info.device_address.sin_family = AF_INET;
-    device_info.device_address.sin_port = HAILO_DEFAULT_ETH_CONTROL_PORT;
-    status = Socket::pton(AF_INET, ip_addr.c_str(), &(device_info.device_address.sin_addr));
-    CHECK_SUCCESS_AS_EXPECTED(status);
-
-    device_info.timeout_millis = HAILO_DEFAULT_ETH_SCAN_TIMEOUT_MS;
-    device_info.max_number_of_attempts = HAILO_DEFAULT_ETH_MAX_NUMBER_OF_RETRIES;
-    device_info.max_payload_size = HAILO_DEFAULT_ETH_MAX_PAYLOAD_SIZE;
-
-    return create(device_info);
+    const bool LOG_ON_FAILURE = true;
+    auto device_info = parse_eth_device_info(ip_addr, LOG_ON_FAILURE);
+    CHECK_EXPECTED(device_info, "Failed to parse ip address {}", ip_addr);
+    return create(device_info.release());
 }
 
 EthernetDevice::EthernetDevice(const hailo_eth_device_info_t &device_info, Udp &&control_udp, hailo_status &status) :
@@ -238,7 +223,7 @@ hailo_status get_udp_broadcast_params(const char *host_address, struct in_addr &
     assert(nullptr != host_address);
 
     auto status = Socket::pton(AF_INET, host_address, &interface_ip_address);
-    CHECK_SUCCESS(status);
+    CHECK_SUCCESS(status, "Invalid host ip address {}", host_address);
     status = Socket::pton(AF_INET, ETH_BROADCAST_IP, &broadcast_ip_address);
     CHECK_SUCCESS(status);
 
@@ -276,6 +261,34 @@ Expected<std::vector<hailo_eth_device_info_t>> EthernetDevice::scan_by_host_addr
 
     /* Receive all responses */
     return eth_device__receive_responses(*udp_broadcast);
+}
+
+Expected<hailo_eth_device_info_t> EthernetDevice::parse_eth_device_info(const std::string &ip_addr,
+    bool log_on_failure)
+{
+    hailo_eth_device_info_t device_info{};
+
+    device_info.host_address.sin_family = AF_INET;
+    device_info.host_address.sin_port = HAILO_ETH_PORT_ANY;
+
+    auto status = Socket::pton(AF_INET, HAILO_ETH_ADDRESS_ANY, &(device_info.host_address.sin_addr));
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    device_info.device_address.sin_family = AF_INET;
+    device_info.device_address.sin_port = HAILO_DEFAULT_ETH_CONTROL_PORT;
+    status = Socket::pton(AF_INET, ip_addr.c_str(), &(device_info.device_address.sin_addr));
+    if (status != HAILO_SUCCESS) {
+        if (log_on_failure) {
+            LOGGER__ERROR("Invalid ip address {}", ip_addr);
+        }
+        return make_unexpected(status);
+    }
+
+    device_info.timeout_millis = HAILO_DEFAULT_ETH_SCAN_TIMEOUT_MS;
+    device_info.max_number_of_attempts = HAILO_DEFAULT_ETH_MAX_NUMBER_OF_RETRIES;
+    device_info.max_payload_size = HAILO_DEFAULT_ETH_MAX_PAYLOAD_SIZE;
+
+    return device_info;
 }
 
 void EthernetDevice::increment_control_sequence()

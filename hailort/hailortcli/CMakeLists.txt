@@ -23,6 +23,7 @@ set(HAILORTCLI_CPP_FILES
     temp_measurement.cpp
     parse_hef_command.cpp
     graph_printer.cpp
+    mon_command.cpp
     )
     
 if(UNIX)
@@ -52,8 +53,14 @@ add_executable(hailortcli
 target_compile_options(hailortcli PRIVATE ${HAILORT_COMPILE_OPTIONS})
 set_property(TARGET hailortcli PROPERTY CXX_STANDARD 14)
 set_property(TARGET hailortcli PROPERTY INSTALL_RPATH "$ORIGIN" "../lib/") # Link with a relative libhailort
-target_link_libraries(hailortcli libhailort CLI11::CLI11 nlohmann_json spdlog::spdlog readerwriterqueue)
-target_link_libraries(hailortcli DotWriter)
+target_link_libraries(hailortcli
+    libhailort
+    CLI11::CLI11
+    nlohmann_json
+    spdlog::spdlog
+    readerwriterqueue
+    DotWriter
+    scheduler_mon_proto)
 # TODO: Remove microprofile after removing pipeline.cpp from hailortcli sources
 target_link_libraries(hailortcli microprofile)
 
@@ -72,4 +79,6 @@ target_include_directories(hailortcli
 
 install(TARGETS hailortcli
    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-   CONFIGURATIONS Release)
+   CONFIGURATIONS Release
+)
+cli11_install_completion_file(hailortcli)

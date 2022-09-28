@@ -18,7 +18,7 @@
 #define MEASUREMENT_BUFFER_INDEX (HAILO_MEASUREMENT_BUFFER_INDEX_0)
 
 #define MEASUREMENTS_DURATION_SECS (5)
-#define MAX_PCIE_DEVICES (16)
+#define MAX_DEVICES (16)
 
 #define MEASUREMENT_UNITS(__type) \
     ((HAILO_POWER_MEASUREMENT_TYPES__POWER == __type) ? ("W") : ("mA"))
@@ -80,17 +80,17 @@ int main(int argc, char **argv)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     hailo_vdevice vdevice = NULL;
-    hailo_pcie_device_info_t device_infos[MAX_PCIE_DEVICES];
-    size_t actual_device_count = 0;
+    hailo_device_id_t device_ids[MAX_DEVICES];
+    size_t actual_device_count = MAX_DEVICES;
     hailo_vdevice_params_t params = {0};
-    hailo_device physical_devices[MAX_PCIE_DEVICES];
-    hailo_power_measurement_data_t measurement_result[MAX_PCIE_DEVICES] = {0};
+    hailo_device physical_devices[MAX_DEVICES];
+    hailo_power_measurement_data_t measurement_result[MAX_DEVICES] = {0};
     hailo_power_measurement_types_t measurement_type = {0};
 
     parse_arguments(argc, argv, &measurement_type);
 
-    status = hailo_scan_pcie_devices(device_infos, MAX_PCIE_DEVICES, &actual_device_count);
-    REQUIRE_SUCCESS(status, l_exit, "Failed to scan pcie_device");
+    status = hailo_scan_devices(NULL, device_ids, &actual_device_count);
+    REQUIRE_SUCCESS(status, l_exit, "Failed to scan devices");
 
     status = hailo_init_vdevice_params(&params);
     REQUIRE_SUCCESS(status, l_exit, "Failed to init vdevice_params");

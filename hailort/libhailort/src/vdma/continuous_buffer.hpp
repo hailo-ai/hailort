@@ -50,13 +50,6 @@ public:
     virtual uint16_t desc_page_size() const override;
     virtual uint32_t descs_count() const override;
 
-    // Not used in this flow
-    virtual ExpectedRef<VdmaDescriptorList> get_desc_list() override
-    {
-        LOGGER__ERROR("Can't get descriptor list on continuous buffer");
-        return make_unexpected(HAILO_INVALID_OPERATION);
-    }
-
     virtual hailo_status read(void *buf_dst, size_t count, size_t offset) override;
     virtual hailo_status write(const void *buf_src, size_t count, size_t offset) override;
 

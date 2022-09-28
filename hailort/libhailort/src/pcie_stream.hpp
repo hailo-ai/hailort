@@ -36,8 +36,6 @@ private:
         uint16_t batch_size,
         const std::chrono::milliseconds &transfer_timeout,
         hailo_status &status);
-
-    friend class VDeviceInputStream;
 };
 
 class PcieOutputStream : public VdmaOutputStream {
@@ -50,8 +48,6 @@ public:
         EventPtr network_group_activated_event);
 
     virtual hailo_stream_interface_t get_interface() const override { return HAILO_STREAM_INTERFACE_PCIE; }
-
-    friend class VDeviceOutputStream;
 
 private:
     explicit PcieOutputStream(

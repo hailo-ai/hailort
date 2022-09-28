@@ -22,6 +22,8 @@ namespace hailort
 class VdmaDevice : public DeviceBase {
 public:
 
+    static Expected<std::unique_ptr<VdmaDevice>> create(const std::string &device_id);
+
     virtual ~VdmaDevice() = default;
 
     virtual hailo_status wait_for_wakeup() override;
@@ -41,10 +43,8 @@ protected:
 
     virtual Expected<D2H_EVENT_MESSAGE_t> read_notification() override;
     virtual hailo_status disable_notifications() override;
-    virtual ExpectedRef<ConfigManager> get_config_manager() override;
 
     HailoRTDriver m_driver;
-    std::unique_ptr<ConfigManager> m_context_switch_manager;
 };
 
 } /* namespace hailort */

@@ -1,0 +1,410 @@
+syntax = "proto3";
+
+option optimize_for = LITE_RUNTIME;
+
+service HailoRtRpc {
+    rpc client_keep_alive (keepalive_Request) returns (empty) {}
+    rpc get_service_version (get_service_version_Request) returns (get_service_version_Reply) {}
+    rpc VDevice_create (VDevice_create_Request) returns (VDevice_create_Reply) {}
+    rpc VDevice_release (Release_Request) returns (Release_Reply) {}
+    rpc VDevice_configure (VDevice_configure_Request) returns (VDevice_configure_Reply) {}
+    rpc VDevice_get_physical_devices_ids (VDevice_get_physical_devices_ids_Request) returns (VDevice_get_physical_devices_ids_Reply) {}
+
+    rpc ConfiguredNetworkGroup_release (Release_Request) returns (Release_Reply) {}
+    rpc ConfiguredNetworkGroup_make_input_vstream_params (ConfiguredNetworkGroup_make_input_vstream_params_Request) returns (ConfiguredNetworkGroup_make_input_vstream_params_Reply) {}
+    rpc ConfiguredNetworkGroup_make_output_vstream_params (ConfiguredNetworkGroup_make_output_vstream_params_Request) returns (ConfiguredNetworkGroup_make_output_vstream_params_Reply) {}
+    rpc ConfiguredNetworkGroup_get_name (ConfiguredNetworkGroup_get_name_Request) returns (ConfiguredNetworkGroup_get_name_Reply) {}
+    rpc ConfiguredNetworkGroup_get_network_infos (ConfiguredNetworkGroup_get_network_infos_Request) returns (ConfiguredNetworkGroup_get_network_infos_Reply) {}
+    rpc ConfiguredNetworkGroup_get_all_stream_infos (ConfiguredNetworkGroup_get_all_stream_infos_Request) returns (ConfiguredNetworkGroup_get_all_stream_infos_Reply) {}
+    rpc ConfiguredNetworkGroup_get_default_stream_interface (ConfiguredNetworkGroup_get_default_stream_interface_Request) returns (ConfiguredNetworkGroup_get_default_stream_interface_Reply) {}
+    rpc ConfiguredNetworkGroup_get_output_vstream_groups (ConfiguredNetworkGroup_get_output_vstream_groups_Request) returns (ConfiguredNetworkGroup_get_output_vstream_groups_Reply) {}
+    rpc ConfiguredNetworkGroup_get_input_vstream_infos (ConfiguredNetworkGroup_get_vstream_infos_Request) returns (ConfiguredNetworkGroup_get_vstream_infos_Reply) {}
+    rpc ConfiguredNetworkGroup_get_output_vstream_infos (ConfiguredNetworkGroup_get_vstream_infos_Request) returns (ConfiguredNetworkGroup_get_vstream_infos_Reply) {}
+    rpc ConfiguredNetworkGroup_get_all_vstream_infos (ConfiguredNetworkGroup_get_vstream_infos_Request) returns (ConfiguredNetworkGroup_get_vstream_infos_Reply) {}
+    rpc ConfiguredNetworkGroup_set_scheduler_timeout (ConfiguredNetworkGroup_set_scheduler_timeout_Request) returns (ConfiguredNetworkGroup_set_scheduler_timeout_Reply) {}
+    rpc ConfiguredNetworkGroup_set_scheduler_threshold (ConfiguredNetworkGroup_set_scheduler_threshold_Request) returns (ConfiguredNetworkGroup_set_scheduler_threshold_Reply) {}
+    rpc ConfiguredNetworkGroup_get_latency_measurement (ConfiguredNetworkGroup_get_latency_measurement_Request) returns (ConfiguredNetworkGroup_get_latency_measurement_Reply) {}
+
+    rpc InputVStreams_create (VStream_create_Request) returns (VStreams_create_Reply) {}
+    rpc InputVStream_release (Release_Request) returns (Release_Reply) {}
+    rpc OutputVStreams_create (VStream_create_Request) returns (VStreams_create_Reply) {}
+    rpc OutputVStream_release (Release_Request) returns (Release_Reply) {}
+    rpc InputVStream_write (InputVStream_write_Request) returns (InputVStream_write_Reply) {}
+    rpc OutputVStream_read (OutputVStream_read_Request) returns (OutputVStream_read_Reply) {}
+    rpc InputVStream_get_frame_size (VStream_get_frame_size_Request) returns (VStream_get_frame_size_Reply) {}
+    rpc OutputVStream_get_frame_size (VStream_get_frame_size_Request) returns (VStream_get_frame_size_Reply) {}
+    rpc InputVStream_flush (InputVStream_flush_Request) returns (InputVStream_flush_Reply) {}
+    rpc InputVStream_name (VStream_name_Request) returns (VStream_name_Reply) {}
+    rpc OutputVStream_name (VStream_name_Request) returns (VStream_name_Reply) {}
+    rpc InputVStream_abort (VStream_abort_Request) returns (VStream_abort_Reply) {}
+    rpc OutputVStream_abort (VStream_abort_Request) returns (VStream_abort_Reply) {}
+    rpc InputVStream_resume (VStream_resume_Request) returns (VStream_resume_Reply) {}
+    rpc OutputVStream_resume (VStream_resume_Request) returns (VStream_resume_Reply) {}
+}
+
+message empty {}
+
+message keepalive_Request {
+    uint32 process_id = 1;
+}
+
+message HailoVDeviceParams {
+    uint32 device_count = 1;
+    repeated string device_ids = 2;
+    uint32 scheduling_algorithm = 3;
+    string group_id = 4;
+}
+
+message HailoVersion {
+    uint32 major_version = 1;
+    uint32 minor_version = 2;
+    uint32 revision_version = 3;
+}
+
+message get_service_version_Request {
+}
+
+message get_service_version_Reply {
+    uint32 status = 1;
+    HailoVersion hailo_version = 2;
+}
+
+message VDevice_create_Request {
+    HailoVDeviceParams hailo_vdevice_params = 1;
+    uint32 pid = 2;
+}
+
+message VDevice_create_Reply {
+    uint32 status = 1;
+    uint32 handle = 2;
+}
+
+message Release_Request {
+    uint32 handle = 1;
+}
+
+message Release_Reply {
+    uint32 status = 1;
+}
+
+message VStreams_create_Reply {
+    uint32 status = 1;
+    repeated uint32 handles = 2;
+}
+
+message VStream_create_Request {
+    uint32 net_group = 1;
+    repeated NamedVStreamParams vstreams_params = 2;
+    uint32 pid = 3;
+}
+
+message HailoFormat {
+    uint32 type = 1;
+    uint32 order = 2;
+    uint32 flags = 3;
+}
+
+message VStreamParams {
+    HailoFormat user_buffer_format = 1;
+    uint32 timeout_ms = 2;
+    uint32 queue_size = 3;
+    uint32 vstream_stats_flags = 4;
+    uint32 pipeline_elements_stats_flags = 5;
+}
+
+message NamedVStreamParams {
+    string name = 1;
+    VStreamParams params = 2;
+}
+
+message ThreeDImageShape {
+    uint32 height = 1;
+    uint32 width = 2;
+    uint32 features = 3;
+}
+
+message StreamShape {
+    ThreeDImageShape shape = 1;
+    ThreeDImageShape hw_shape = 2;
+}
+
+message NmsDefuseInfo {
+    uint32 class_group_index = 1;
+    string original_name = 2;
+}
+
+message NmsInfo {
+    uint32 number_of_classes = 1;
+    uint32 max_bboxes_per_class = 2;
+    uint32 bbox_size = 3;
+    uint32 chunks_per_frame = 4;
+    bool is_defused = 5;
+    NmsDefuseInfo defuse_info = 6;
+}
+
+message QuantInfo {
+    float qp_zp = 1;
+    float qp_scale = 2;
+    float limvals_min = 3;
+    float limvals_max = 4;
+}
+
+message StreamInfo {
+    StreamShape stream_shape = 1;
+    NmsInfo nms_info = 2;
+    uint32 hw_data_bytes = 3;
+    uint32 hw_frame_size = 4;
+    HailoFormat format = 5;
+    uint32 direction = 6;
+    uint32 index = 7;
+    string name = 8;
+    QuantInfo quant_info = 9;
+    bool is_mux = 10; 
+}
+
+message StreamsParams {
+    uint32 stream_interface = 1;
+    uint32 direction = 2;
+}
+
+message NamedStreamParams {
+    string name = 1;
+    StreamsParams params = 2;
+}
+
+message NetworkParams {
+    uint32 batch_size = 1;
+}
+
+message NamedNetworkParams {
+    string name = 1;
+    NetworkParams params = 2;
+}
+
+message NmsShape {
+    uint32 number_of_classes = 1;
+    uint32 max_bbox_per_class = 2;
+}
+
+message VStreamInfo {
+    string name = 1;
+    string network_name = 2;
+    uint32 direction = 3;
+    HailoFormat format = 4;
+    ThreeDImageShape shape = 5;
+    NmsShape nms_shape = 6;
+    QuantInfo quant_info = 7;
+}
+
+message HailoConfigureNetworkParams {
+    uint32 batch_size = 1;
+    uint32 power_mode = 2;
+    uint32 latency = 3;
+    repeated NamedStreamParams stream_params_map = 4;
+    repeated NamedNetworkParams network_params_map = 5;
+}
+
+message NamedConfigureNetworkParams {
+    string name = 1;
+    HailoConfigureNetworkParams params = 2;
+}
+
+message VStreamGroup {
+    repeated string vstream_group = 1;
+}
+
+message VDevice_configure_Request {
+    uint32 handle = 1;
+    bytes hef = 2;
+    repeated NamedConfigureNetworkParams configure_params_map = 3;
+    uint32 pid = 4;
+}
+
+message VDevice_configure_Reply {
+    uint32 status = 1;
+    repeated uint32 networks_handles = 2;
+}
+
+message VDevice_get_physical_devices_ids_Request {
+    uint32 handle = 1;
+}
+
+message VDevice_get_physical_devices_ids_Reply {
+    uint32 status = 1;
+    repeated string devices_ids = 2;
+}
+
+message ConfiguredNetworkGroup_make_input_vstream_params_Request {
+    uint32 handle = 1;
+    bool quantized = 2;
+    uint32 format_type = 3;
+    uint32 timeout_ms = 4;
+    uint32 queue_size = 5;
+    string network_name = 6;
+}
+
+message ConfiguredNetworkGroup_make_input_vstream_params_Reply {
+    uint32 status = 1;
+    repeated NamedVStreamParams vstream_params_map = 2;
+}
+
+message ConfiguredNetworkGroup_make_output_vstream_params_Request {
+    uint32 handle = 1;
+    bool quantized = 2;
+    uint32 format_type = 3;
+    uint32 timeout_ms = 4;
+    uint32 queue_size = 5;
+    string network_name = 6;
+}
+
+message ConfiguredNetworkGroup_make_output_vstream_params_Reply {
+    uint32 status = 1;
+    repeated NamedVStreamParams vstream_params_map = 2;
+}
+
+message ConfiguredNetworkGroup_get_name_Request {
+    uint32 handle = 1;
+}
+
+message ConfiguredNetworkGroup_get_name_Reply {
+    uint32 status = 1;
+    string network_group_name = 2;
+}
+
+message ConfiguredNetworkGroup_get_network_infos_Request {
+    uint32 handle = 1;
+}
+
+message ConfiguredNetworkGroup_get_network_infos_Reply {
+    uint32 status = 1;
+    repeated string network_infos = 2;
+}
+
+message ConfiguredNetworkGroup_get_all_stream_infos_Request {
+    uint32 handle = 1;
+    string network_name = 2;
+}
+
+message ConfiguredNetworkGroup_get_all_stream_infos_Reply {
+    uint32 status = 1;
+    repeated StreamInfo stream_infos = 2;
+}
+
+message ConfiguredNetworkGroup_get_default_stream_interface_Request {
+    uint32 handle = 1;
+}
+
+message ConfiguredNetworkGroup_get_default_stream_interface_Reply {
+    uint32 status = 1;
+    uint32 stream_interface = 2;
+}
+
+message ConfiguredNetworkGroup_get_output_vstream_groups_Request {
+    uint32 handle = 1;
+}
+
+message ConfiguredNetworkGroup_get_output_vstream_groups_Reply {
+    uint32 status = 1;
+    repeated VStreamGroup output_vstream_groups = 2;
+}
+
+message ConfiguredNetworkGroup_get_vstream_infos_Request {
+    uint32 handle = 1;
+    string network_name = 2;
+}
+
+message ConfiguredNetworkGroup_get_latency_measurement_Request {
+    uint32 handle = 1;
+    string network_name = 2;
+}
+
+message ConfiguredNetworkGroup_get_vstream_infos_Reply {
+    uint32 status = 1;
+    repeated VStreamInfo vstream_infos = 2;
+}
+
+message ConfiguredNetworkGroup_set_scheduler_timeout_Request {
+    uint32 handle = 1;
+    uint32 timeout_ms = 2;
+    string network_name = 3;
+}
+
+message ConfiguredNetworkGroup_set_scheduler_timeout_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredNetworkGroup_set_scheduler_threshold_Request {
+    uint32 handle = 1;
+    uint32 threshold = 2;
+    string network_name = 3;
+}
+
+message ConfiguredNetworkGroup_set_scheduler_threshold_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredNetworkGroup_get_latency_measurement_Reply {
+    uint32 status = 1;
+    uint32 avg_hw_latency = 2;
+}
+
+message InputVStream_write_Request {
+    uint32 handle = 1;
+    bytes data = 2;
+}
+
+message InputVStream_write_Reply {
+    uint32 status = 1;
+}
+
+message OutputVStream_read_Request {
+    uint32 handle = 1;
+    uint32 size = 2;
+}
+
+message OutputVStream_read_Reply {
+    uint32 status = 1;
+    bytes data = 2;
+}
+
+message VStream_get_frame_size_Request {
+    uint32 handle = 1;
+}
+
+message VStream_get_frame_size_Reply {
+    uint32 status = 1;
+    uint32 frame_size = 2;
+}
+
+message InputVStream_flush_Request {
+    uint32 handle = 1;
+}
+
+message InputVStream_flush_Reply {
+    uint32 status = 1;
+}
+
+message VStream_name_Request {
+    uint32 handle = 1;
+}
+
+message VStream_name_Reply {
+    uint32 status = 1;
+    string name = 2;
+}
+
+message VStream_abort_Request {
+    uint32 handle = 1;
+}
+
+message VStream_abort_Reply {
+    uint32 status = 1;
+}
+
+message VStream_resume_Request {
+    uint32 handle = 1;
+}
+
+message VStream_resume_Reply {
+    uint32 status = 1;
+}

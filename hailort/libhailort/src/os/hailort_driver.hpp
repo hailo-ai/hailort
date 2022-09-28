@@ -15,11 +15,17 @@
 #include "hailo/expected.hpp"
 #include "d2h_event_queue.hpp"
 #include "os/file_descriptor.hpp"
+#include "os/mmap_buffer.hpp"
+#include "vdma/channel_id.hpp"
 
 #include <mutex>
 #include <thread>
 #include <chrono>
 #include <utility>
+
+#ifdef __QNX__
+#include <sys/mman.h>
+#endif // __QNX__
 
 namespace hailort
 {
@@ -41,6 +47,13 @@ static_assert((0 == ((PENDING_BUFFERS_SIZE - 1) &  PENDING_BUFFERS_SIZE)), "PEND
 
 #define PCIE_EXPECTED_MD5_LENGTH (16)
 
+constexpr size_t VDMA_CHANNELS_PER_ENGINE = 32;
+constexpr uint8_t MIN_H2D_CHANNEL_INDEX = 0;
+constexpr uint8_t MAX_H2D_CHANNEL_INDEX = 15;
+constexpr uint8_t MIN_D2H_CHANNEL_INDEX = MAX_H2D_CHANNEL_INDEX + 1;
+constexpr uint8_t MAX_D2H_CHANNEL_INDEX = 31;
+
+
 enum class PciBar {
     bar0 = 0,
     bar1,
@@ -60,6 +73,17 @@ struct ChannelInterruptTimestampList {
     ChannelInterruptTimestamp timestamp_list[MAX_IRQ_TIMESTAMPS_SIZE];
     size_t count;
 };
+
+#if defined(__linux__) || defined(_MSC_VER)
+using vdma_mapped_buffer_driver_identifier = uintptr_t;
+#elif defined(__QNX__)
+struct vdma_mapped_buffer_driver_identifier {
+    shm_handle_t shm_handle;
+    int shm_fd;
+};
+#else
+#error "unsupported platform!"
+#endif // defined(__linux__) || defined(_MSC_VER)
 
 class HailoRTDriver final
 {
@@ -101,23 +125,30 @@ public:
 
     static Expected<HailoRTDriver> create(const std::string &dev_path);
 
+// TODO: HRT-7309 add implementation for Windows
+#if defined(__linux__) || defined(__QNX__)
+    static hailo_status hailo_ioctl(int fd, int request, void* request_struct, int &error_status);
+#endif // defined(__linux__) || defined(__QNX__)
+
     static Expected<std::vector<DeviceInfo>> scan_pci();
 
     hailo_status read_bar(PciBar bar, off_t offset, size_t size, void *buf);
     hailo_status write_bar(PciBar bar, off_t offset, size_t size, const void *buf);
 
-    Expected<uint32_t> read_vdma_channel_registers(off_t offset, size_t size);
-    hailo_status write_vdma_channel_registers(off_t offset, size_t size, uint32_t data);
+    Expected<uint32_t> read_vdma_channel_register(vdma::ChannelId channel_id, DmaDirection data_direction, size_t offset,
+        size_t reg_size);
+    hailo_status write_vdma_channel_register(vdma::ChannelId channel_id, DmaDirection data_direction, size_t offset,
+        size_t reg_size, uint32_t data);
 
     hailo_status vdma_buffer_sync(VdmaBufferHandle buffer, DmaDirection sync_direction, void *address, size_t buffer_size);
 
-    Expected<VdmaChannelHandle> vdma_channel_enable(uint32_t channel_index, DmaDirection data_direction,
+    Expected<VdmaChannelHandle> vdma_channel_enable(vdma::ChannelId channel_id, DmaDirection data_direction,
         uintptr_t desc_list_handle, bool enable_timestamps_measure);
-    hailo_status vdma_channel_disable(uint32_t channel_index, VdmaChannelHandle channel_handle);
-    Expected<ChannelInterruptTimestampList> wait_channel_interrupts(uint32_t channel_index, VdmaChannelHandle channel_handle,
-        const std::chrono::milliseconds &timeout);
-    hailo_status vdma_channel_abort(uint32_t channel_index, VdmaChannelHandle channel_handle);
-    hailo_status vdma_channel_clear_abort(uint32_t channel_index, VdmaChannelHandle channel_handle);
+    hailo_status vdma_channel_disable(vdma::ChannelId channel_index, VdmaChannelHandle channel_handle);
+    Expected<ChannelInterruptTimestampList> wait_channel_interrupts(vdma::ChannelId channel_id,
+        VdmaChannelHandle channel_handle, const std::chrono::milliseconds &timeout);
+    hailo_status vdma_channel_abort(vdma::ChannelId channel_id, VdmaChannelHandle channel_handle);
+    hailo_status vdma_channel_clear_abort(vdma::ChannelId channel_id, VdmaChannelHandle channel_handle);
 
     Expected<D2H_EVENT_MESSAGE_t> read_notification();
     hailo_status disable_notifications();
@@ -148,7 +179,7 @@ public:
      *  of user allocated buffer
      */ 
     Expected<VdmaBufferHandle> vdma_buffer_map(void *user_address, size_t required_size, DmaDirection data_direction,
-        uintptr_t driver_buff_handle);
+        vdma_mapped_buffer_driver_identifier &driver_buff_handle);
 
     /**
     * Unmaps user buffer mapped using HailoRTDriver::map_buffer.
@@ -222,8 +253,25 @@ public:
 
     hailo_status mark_as_used();
 
+#ifdef __QNX__
+    inline pid_t resource_manager_pid() const
+    {
+        return m_resource_manager_pid;
+    }
+#endif // __QNX__
+
     inline bool allocate_driver_buffer() const {
         return m_allocate_driver_buffer;
+    }
+
+    inline uint16_t desc_max_page_size() const
+    {
+        return m_desc_max_page_size;
+    }
+
+    inline size_t dma_engines_count() const
+    {
+        return m_dma_engines_count;
     }
 
     HailoRTDriver(const HailoRTDriver &other) = delete;
@@ -239,12 +287,18 @@ private:
 
     HailoRTDriver(const std::string &dev_path, FileDescriptor &&fd, hailo_status &status);
 
+    bool is_valid_channel_id(const vdma::ChannelId &channel_id);
+
     FileDescriptor m_fd;
     std::string m_dev_path;
     uint16_t m_desc_max_page_size;
     BoardType m_board_type;
     DmaType m_dma_type;
     bool m_allocate_driver_buffer;
+    size_t m_dma_engines_count;
+#ifdef __QNX__
+    pid_t m_resource_manager_pid;
+#endif // __QNX__
 };
 
 } /* namespace hailort */

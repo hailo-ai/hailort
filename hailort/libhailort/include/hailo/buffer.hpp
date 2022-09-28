@@ -21,6 +21,9 @@
 namespace hailort
 {
 
+class Buffer;
+using BufferPtr = std::shared_ptr<Buffer>;
+
 class HAILORTAPI Buffer final
 {
 public:
@@ -55,15 +58,20 @@ public:
     /**
      * Create functions, may fail be due to out of memory
      */
-    // Crates a buffer size bytes long, without setting the memory
+    // Creates a buffer size bytes long, without setting the memory
     static Expected<Buffer> create(size_t size);
-    // Crates a buffer size bytes long, setting the memory to default_value
+    // Creates a buffer size bytes long, setting the memory to default_value
     static Expected<Buffer> create(size_t size, uint8_t default_value);
     // Creates a copy of the data pointed to by src, size bytes long
     static Expected<Buffer> create(const uint8_t *src, size_t size);
     // Creates a new buffer with the contents of the initializer_list
     static Expected<Buffer> create(std::initializer_list<uint8_t> init);
  
+    // Creates a buffer size bytes long, without setting the memory
+    static Expected<BufferPtr> create_shared(size_t size);
+    // Creates a buffer size bytes long, setting the memory to default_value
+    static Expected<BufferPtr> create_shared(size_t size, uint8_t default_value);
+
     // Moves the data pointed to by other into the lvalue:
     // * other is invalidated.
     // * The previous data pointed to by the lvalue is freed

@@ -121,16 +121,16 @@ class GraphPrinter
 {
 public:
     GraphPrinter() = delete;
-    static hailo_status write_dot_file(const std::map<std::string, std::vector<InputVStream>> &input_vstreams_per_network,
-        const std::map<std::string, std::vector<OutputVStream>> &output_vstreams_per_network,
+    static hailo_status write_dot_file(const std::vector<std::map<std::string, std::vector<std::reference_wrapper<InputVStream>>>> &input_vstreams_per_network_group,
+        const std::vector<std::map<std::string, std::vector<std::reference_wrapper<OutputVStream>>>> &output_vstreams_per_network_group,
         const std::string &graph_title, const std::string &output_path, bool write_pipeline_stats);
 
 private:
     class PipelineGraph final
     {
     public:
-        PipelineGraph(const std::map<std::string, std::vector<InputVStream>> &input_vstreams_per_network,
-            const std::map<std::string, std::vector<OutputVStream>> &output_vstreams_per_network,
+        PipelineGraph(const std::vector<std::map<std::string, std::vector<std::reference_wrapper<InputVStream>>>> &input_vstreams_per_network_group,
+            const std::vector<std::map<std::string, std::vector<std::reference_wrapper<OutputVStream>>>> &output_vstreams_per_network_group,
             const std::string &graph_title, bool write_pipeline_stats);
         hailo_status write_dot_file(const std::string &output_path);
 

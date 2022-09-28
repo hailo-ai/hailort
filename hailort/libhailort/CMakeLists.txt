@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.0.0)
 # set(CMAKE_C_CLANG_TIDY "clang-tidy;-checks=*")
 
 set(HAILORT_MAJOR_VERSION    4)
-set(HAILORT_MINOR_VERSION    8)
-set(HAILORT_REVISION_VERSION 1)
+set(HAILORT_MINOR_VERSION    10)
+set(HAILORT_REVISION_VERSION 0)
 
 # Add the cmake folder so the modules there are found
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
@@ -12,7 +12,7 @@ set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 protobuf_generate_cpp(PROTO_HEF_SRC PROTO_HEF_HEADR hef.proto)
 
 add_library(hef_proto ${PROTO_HEF_SRC} ${PROTO_HEF_HEADR})
-target_link_libraries(hef_proto libprotobuf)
+target_link_libraries(hef_proto libprotobuf-lite)
 set_target_properties(hef_proto PROPERTIES CXX_STANDARD 14 GENERATED TRUE POSITION_INDEPENDENT_CODE ON)
 if(CMAKE_HOST_WIN32)
     # https://github.com/protocolbuffers/protobuf/tree/master/cmake#notes-on-compiler-warnings
@@ -25,11 +25,26 @@ target_include_directories(hef_proto
     $<BUILD_INTERFACE: ${Protobuf_INCLUDE_DIRS}>
 )
 
+protobuf_generate_cpp(PROTO_SCHEDULER_MON_SRC PROTO_SCHEDULER_MON_HEADR scheduler_mon.proto)
+add_library(scheduler_mon_proto ${PROTO_SCHEDULER_MON_SRC} ${PROTO_SCHEDULER_MON_HEADR})
+target_link_libraries(scheduler_mon_proto libprotobuf-lite)
+set_target_properties(scheduler_mon_proto PROPERTIES CXX_STANDARD 14 GENERATED TRUE POSITION_INDEPENDENT_CODE ON)
+if(CMAKE_HOST_WIN32)
+    target_compile_options(scheduler_mon_proto PRIVATE /wd4244)
+endif()
+get_filename_component(PROTO_SCHEDULER_MON_HEADER_DIRECTORY ${PROTO_SCHEDULER_MON_HEADR} DIRECTORY)
+target_include_directories(scheduler_mon_proto
+    PUBLIC
+    $<BUILD_INTERFACE: ${PROTO_SCHEDULER_MON_HEADER_DIRECTORY}>
+    $<BUILD_INTERFACE: ${Protobuf_INCLUDE_DIRS}>
+)
+
 # Add readerwriterqueue as a header-only library
 add_library(readerwriterqueue INTERFACE)
 target_include_directories(readerwriterqueue INTERFACE ${HAILO_EXTERNAL_DIR}/readerwriterqueue)
 
 add_subdirectory(src)
+
 if(HAILO_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()

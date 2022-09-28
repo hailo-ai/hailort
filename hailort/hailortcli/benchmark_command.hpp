@@ -21,9 +21,9 @@ public:
     hailo_status execute() override;
 
 private:
-    Expected<NetworkGroupInferResult> hw_only_mode();
-    Expected<NetworkGroupInferResult> fps_streaming_mode();
-    Expected<NetworkGroupInferResult> latency();
+    Expected<InferResult> hw_only_mode();
+    Expected<InferResult> fps_streaming_mode();
+    Expected<InferResult> latency();
     
     inference_runner_params m_params;
     bool m_not_measure_power;

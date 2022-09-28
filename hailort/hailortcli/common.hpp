@@ -50,4 +50,30 @@ struct FileSuffixValidator : public CLI::Validator {
     }
 };
 
+// Based on NLOHMANN_JSON_SERIALIZE_ENUM (json/include/nlohmann/json.hpp)
+// Accepts a static array instead of building one in the function
+#define NLOHMANN_JSON_SERIALIZE_ENUM2(ENUM_TYPE, _pair_arr)\
+    template<typename BasicJsonType>                                                            \
+    inline void to_json(BasicJsonType& j, const ENUM_TYPE& e)                                   \
+    {                                                                                           \
+        static_assert(std::is_enum<ENUM_TYPE>::value, #ENUM_TYPE " must be an enum!");          \
+        auto it = std::find_if(std::begin(_pair_arr), std::end(_pair_arr),                      \
+                               [e](const std::pair<ENUM_TYPE, BasicJsonType>& ej_pair) -> bool  \
+        {                                                                                       \
+            return ej_pair.first == e;                                                          \
+        });                                                                                     \
+        j = ((it != std::end(_pair_arr)) ? it : std::begin(_pair_arr))->second;                 \
+    }                                                                                           \
+    template<typename BasicJsonType>                                                            \
+    inline void from_json(const BasicJsonType& j, ENUM_TYPE& e)                                 \
+    {                                                                                           \
+        static_assert(std::is_enum<ENUM_TYPE>::value, #ENUM_TYPE " must be an enum!");          \
+        auto it = std::find_if(std::begin(_pair_arr), std::end(_pair_arr),                      \
+                               [&j](const std::pair<ENUM_TYPE, BasicJsonType>& ej_pair) -> bool \
+        {                                                                                       \
+            return ej_pair.second == j;                                                         \
+        });                                                                                     \
+        e = ((it != std::end(_pair_arr)) ? it : std::begin(_pair_arr))->first;                  \
+    }
+
 #endif /* _HAILO_HAILORTCLI_COMMON_HPP_ */

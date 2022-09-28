@@ -5,7 +5,7 @@
 /**
  * @file switch_network_groups_example.c
  * This example demonstrates basic usage of HailoRT streaming api over multiple network groups, using VStreams.
- * It loads several network_groups (via several HEFs) into a Hailo PCIe VDevice and performs a inferences on all of them in parallel.
+ * It loads several network_groups (via several HEFs) into a Hailo VDevice and performs a inferences on all of them in parallel.
  * The network_groups switching is performed automatically by the HailoRT scheduler.
  **/
 

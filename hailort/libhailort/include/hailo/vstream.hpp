@@ -18,16 +18,62 @@
 namespace hailort
 {
 
+class OutputVStreamInternal;
+class InputVStreamInternal;
 class SinkElement;
 class PipelineElement;
 
-/*! Virtual stream base class */
-class HAILORTAPI BaseVStream
+class HAILORTAPI InputVStream
 {
 public:
-    BaseVStream(BaseVStream &&other) noexcept;
-    BaseVStream& operator=(BaseVStream &&other) noexcept;
-    virtual ~BaseVStream();
+    static Expected<InputVStream> create(const hailo_vstream_info_t &vstream_info,
+        const hailo_vstream_params_t &vstream_params, std::shared_ptr<PipelineElement> pipeline_entry,
+        std::shared_ptr<SinkElement> pipeline_exit, std::vector<std::shared_ptr<PipelineElement>> &&pipeline,
+        std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr shutdown_event, EventPtr network_group_activated_event,
+        AccumulatorPtr pipeline_latency_accumulator);
+    InputVStream(InputVStream &&other) noexcept = default;
+    InputVStream &operator=(InputVStream &&other) noexcept = default;
+    virtual ~InputVStream() = default;
+
+    /**
+     * Writes @a buffer to hailo device.
+     *
+     * @param[in] buffer            The buffer containing the data to be sent to device.
+     *                              The buffer's format can be obtained by get_user_buffer_format(),
+     *                              and the buffer's shape can be obtained by calling get_info().shape.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     */
+    hailo_status write(const MemoryView &buffer);
+
+    /**
+     * Flushes the vstream pipeline buffers. This will block until the vstream pipeline is clear.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     */
+    hailo_status flush();
+
+    /**
+     * Clears the vstreams' pipeline buffers.
+     *
+     * @param[in] vstreams            The vstreams to be cleared.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     */
+    static hailo_status clear(std::vector<InputVStream> &vstreams);
+
+    /**
+     * Clears the vstreams' pipeline buffers.
+     *
+     * @param[in] vstreams            The vstreams to be cleared.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     */
+    static hailo_status clear(std::vector<std::reference_wrapper<InputVStream>> &vstreams);
+
+    /**
+     * Aborts vstream in unrecoverable manner.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     */
+    hailo_status abort();
 
     /**
      * @return the size of a virtual stream's frame on the host side in bytes.
@@ -106,89 +152,19 @@ public:
     const std::vector<std::shared_ptr<PipelineElement>> &get_pipeline() const;
 
 protected:
-    BaseVStream(const hailo_vstream_info_t &vstream_info, const hailo_vstream_params_t &vstream_params,
-        std::shared_ptr<PipelineElement> pipeline_entry, std::vector<std::shared_ptr<PipelineElement>> &&pipeline,
-        std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr shutdown_event, AccumulatorPtr pipeline_latency_accumulator,
-        EventPtr &&network_group_activated_event, hailo_status &output_status);
+    explicit InputVStream(std::shared_ptr<InputVStreamInternal> vstream);
+    std::string get_pipeline_description() const;
 
-    virtual std::string get_pipeline_description() const = 0;
     hailo_status start_vstream();
     hailo_status stop_vstream();
     hailo_status stop_and_clear();
 
-    hailo_vstream_info_t m_vstream_info;
-    hailo_vstream_params_t m_vstream_params;
-    bool m_measure_pipeline_latency;
-    std::shared_ptr<PipelineElement> m_entry_element;
-    std::vector<std::shared_ptr<PipelineElement>> m_pipeline;
-    volatile bool m_is_activated;
-    std::shared_ptr<std::atomic<hailo_status>> m_pipeline_status;
-    EventPtr m_shutdown_event;
-    EventPtr m_network_group_activated_event;
-    std::map<std::string, AccumulatorPtr> m_fps_accumulators;
-    std::map<std::string, AccumulatorPtr> m_latency_accumulators;
-    std::map<std::string, std::vector<AccumulatorPtr>> m_queue_size_accumulators;
-    AccumulatorPtr m_pipeline_latency_accumulator;
-};
+    std::shared_ptr<InputVStreamInternal> m_vstream;
 
-/*! Input virtual stream, used to stream data to device */
-class HAILORTAPI InputVStream : public BaseVStream
-{
-public:
-    static Expected<InputVStream> create(const hailo_vstream_info_t &vstream_info,
-        const hailo_vstream_params_t &vstream_params, std::shared_ptr<PipelineElement> pipeline_entry,
-        std::shared_ptr<SinkElement> pipeline_exit, std::vector<std::shared_ptr<PipelineElement>> &&pipeline,
-        std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr shutdown_event, EventPtr network_group_activated_event,
-        AccumulatorPtr pipeline_latency_accumulator);
-    InputVStream(InputVStream &&other) noexcept = default;
-    InputVStream &operator=(InputVStream &&other) noexcept = default;
-    virtual ~InputVStream() = default;
-
-    /**
-     * Writes @a buffer to hailo device.
-     *
-     * @param[in] buffer            The buffer containing the data to be sent to device.
-     *                              The buffer's format can be obtained by get_user_buffer_format(), 
-     *                              and the buffer's shape can be obtained by calling get_info().shape.
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     */
-    hailo_status write(const MemoryView &buffer);
-
-    /**
-     * Flushes the vstream pipeline buffers. This will block until the vstream pipeline is clear.
-     * 
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     */
-    hailo_status flush();
-
-    /**
-     * Clears the vstreams' pipeline buffers.
-     * 
-     * @param[in] vstreams            The vstreams to be cleared.
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     */
-    static hailo_status clear(std::vector<InputVStream> &vstreams);
-    
-    /**
-     * Clears the vstreams' pipeline buffers.
-     * 
-     * @param[in] vstreams            The vstreams to be cleared.
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     */
-    static hailo_status clear(std::vector<std::reference_wrapper<InputVStream>> &vstreams);
-
-private:
-    InputVStream(const hailo_vstream_info_t &vstream_info, const hailo_vstream_params_t &vstream_params,
-        std::shared_ptr<PipelineElement> pipeline_entry, std::vector<std::shared_ptr<PipelineElement>> &&pipeline,
-        std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr shutdown_event, AccumulatorPtr pipeline_latency_accumulator,
-        EventPtr network_group_activated_event, hailo_status &output_status);
-
-    virtual std::string get_pipeline_description() const override;
     friend class VStreamsBuilderUtils;
 };
 
-/*! Output virtual stream, used to read data from device */
-class HAILORTAPI OutputVStream : public BaseVStream
+class HAILORTAPI OutputVStream
 {
 public:
     static Expected<OutputVStream> create(
@@ -212,32 +188,115 @@ public:
 
     /**
      * Clears the vstreams' pipeline buffers.
-     * 
+     *
      * @param[in] vstreams            The vstreams to be cleared.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note If not all output vstreams from the same group are passed together, it will cause an <b> undefined behavior </b>.
-     *       See ConfiguredNetworkGroup::get_output_vstream_groups, to get the output vstreams groups.
      */
     static hailo_status clear(std::vector<OutputVStream> &vstreams);
 
     /**
      * Clears the vstreams' pipeline buffers.
-     * 
+     *
      * @param[in] vstreams            The vstreams to be cleared.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note If not all output vstreams from the same group are passed together, it will cause an <b> undefined behavior </b>.
-     *       See ConfiguredNetworkGroup::get_output_vstream_groups, to get the output vstreams groups.
      */
     static hailo_status clear(std::vector<std::reference_wrapper<OutputVStream>> &vstreams);
 
-private:
-    OutputVStream(const hailo_vstream_info_t &vstream_info, const hailo_vstream_params_t &vstream_params,
-        std::shared_ptr<PipelineElement> pipeline_entry, std::vector<std::shared_ptr<PipelineElement>> &&pipeline,
-        std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr shutdown_event, AccumulatorPtr pipeline_latency_accumulator,
-        EventPtr network_group_activated_event, hailo_status &output_status);
+    /**
+     * Aborts vstream in unrecoverable manner.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     */
+    hailo_status abort();
 
-    virtual std::string get_pipeline_description() const override;
+    /**
+     * @return the size of a virtual stream's frame on the host side in bytes.
+     * @note The size could be affected by the format type - using UINT16, or by the data not being quantized yet.
+     */
+    size_t get_frame_size() const;
+
+    /**
+     * @return ::hailo_vstream_info_t object containing the vstream info.
+     */
+    const hailo_vstream_info_t &get_info() const;
+
+    /**
+     * @return ::hailo_format_t object containing the user buffer format.
+     */
+    const hailo_format_t &get_user_buffer_format() const;
+
+    /**
+     * @return the virtual stream's name.
+     */
+    std::string name() const;
+
+    /**
+     * @return the virtual stream's network name.
+     */
+    std::string network_name() const;
+
+    /**
+     * Gets a reference to a map between pipeline element names to their respective fps accumulators.
+     * These accumulators measure the net throughput of each pipeline element. This means that the effects
+     * of queuing in the vstream pipeline (between elements) are not accounted for by these accumulators.
+     * 
+     * @return A const reference to a map between pipeline element names to their respective fps accumulators.
+     * @note FPS accumulators are created for pipeline elements, if the vstream is created with the flag
+     *       ::HAILO_PIPELINE_ELEM_STATS_MEASURE_FPS set under the @a pipeline_elements_stats_flags field of ::hailo_vstream_params_t.
+     */
+    const std::map<std::string, AccumulatorPtr> &get_fps_accumulators() const;
+    
+    /**
+     * Gets a reference to a map between pipeline element names to their respective latency accumulators.
+     * These accumulators measure the net latency of each pipeline element. This means that the effects
+     * of queuing in the vstream pipeline (between elements) are not accounted for by these accumulators.
+     * 
+     * @return A const reference to a map between pipeline element names to their respective latency accumulators.
+     * @note Latency accumulators are created for pipeline elements, if the vstream is created with the flag
+     *       ::HAILO_PIPELINE_ELEM_STATS_MEASURE_LATENCY set under the @a pipeline_elements_stats_flags field of ::hailo_vstream_params_t.
+     */
+    const std::map<std::string, AccumulatorPtr> &get_latency_accumulators() const;
+
+    /**
+     * Gets a reference to a map between pipeline element names to their respective queue size accumulators.
+     * These accumulators measure the number of free buffers in the queue, right before a buffer is removed
+     * from the queue to be used.
+     * 
+     * @return A const reference to a map between pipeline element names to their respective queue size accumulators.
+     * @note Queue size accumulators are created for pipeline elements, if the vstream is created with the flag
+     *       ::HAILO_PIPELINE_ELEM_STATS_MEASURE_QUEUE_SIZE set under the @a pipeline_elements_stats_flags field of ::hailo_vstream_params_t.
+     */
+    const std::map<std::string, std::vector<AccumulatorPtr>> &get_queue_size_accumulators() const;
+    
+    /**
+     * Gets a shared_ptr to the vstream's latency accumulator. This accumulator measures the time it takes for a frame to pass
+     * through an entire vstream pipeline. Specifically:
+     * * For InputVStream%s: The time it takes a frame from the call to InputVStream::write, until the frame is written to the HW.
+     * * For OutputVStream%s: The time it takes a frame from being read from the HW, until it's returned to the user via OutputVStream::read.
+     * 
+     * @return A shared pointer to the vstream's latency accumulator.
+     * @note A pipeline-wide latency accumulator is created for the vstream, if the vstream is created with the flag
+     *       ::HAILO_VSTREAM_STATS_MEASURE_LATENCY set under the @a vstream_stats_flags field of ::hailo_vstream_params_t.
+     */
+    AccumulatorPtr get_pipeline_latency_accumulator() const;
+    
+    /**
+     * @return A const reference to the @a PipelineElement%s that this vstream is comprised of.
+     */
+    const std::vector<std::shared_ptr<PipelineElement>> &get_pipeline() const;
+
+protected:
+    explicit OutputVStream(std::shared_ptr<OutputVStreamInternal> vstream);
+    std::string get_pipeline_description() const;
+
+    hailo_status start_vstream();
+    hailo_status stop_vstream();
+    hailo_status stop_and_clear();
+
+    std::shared_ptr<OutputVStreamInternal> m_vstream;
+
     friend class VStreamsBuilderUtils;
+    friend class VdmaConfigNetworkGroup;
 };
 
 /*! Contains the virtual streams creation functions */

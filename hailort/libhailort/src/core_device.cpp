@@ -39,7 +39,8 @@ Expected<std::unique_ptr<CoreDevice>> CoreDevice::create()
 
 
 CoreDevice::CoreDevice(HailoRTDriver &&driver, hailo_status &status) : 
-    VdmaDevice::VdmaDevice(std::move(driver), Device::Type::CORE)
+    VdmaDevice::VdmaDevice(std::move(driver), Device::Type::CORE),
+    m_context_switch_manager(nullptr)
 {
     status = update_fw_state();
     if (HAILO_SUCCESS != status) {
@@ -59,6 +60,7 @@ Expected<hailo_device_architecture_t> CoreDevice::get_architecture() const {
 hailo_status CoreDevice::fw_interact_impl(uint8_t *request_buffer, size_t request_size,
         uint8_t *response_buffer, size_t *response_size, hailo_cpu_id_t cpu_id)
 {
+    // TODO: HRT-7535
     uint8_t request_md5[PCIE_EXPECTED_MD5_LENGTH];
     MD5_CTX ctx;
 
@@ -96,6 +98,22 @@ hailo_status CoreDevice::reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type)
 
     LOGGER__ERROR("Can't reset CoreDevice, please use linux reboot");
     return HAILO_NOT_IMPLEMENTED;
+}
+
+ExpectedRef<ConfigManager> CoreDevice::get_config_manager()
+{
+    auto status = mark_as_used();
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    if (!m_context_switch_manager) {
+        auto local_context_switch_manager = VdmaConfigManager::create(*this);
+        CHECK_EXPECTED(local_context_switch_manager);
+
+        m_context_switch_manager = make_unique_nothrow<VdmaConfigManager>(local_context_switch_manager.release());
+        CHECK_AS_EXPECTED(nullptr != m_context_switch_manager, HAILO_OUT_OF_HOST_MEMORY);
+    }
+
+    return std::ref(*m_context_switch_manager);
 }
 
 Expected<size_t> CoreDevice::read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id)
