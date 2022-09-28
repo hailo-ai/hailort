@@ -4,7 +4,7 @@ find_package(Threads REQUIRED)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
-include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/common_compiler_options.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/common_compiler_options.cmake)
 
 FUNCTION(relative_to_absolute_paths output)
     SET(listVar "")
@@ -85,6 +85,10 @@ set(HAILORT_CPP_SOURCES
     network_group_scheduler.cpp
 )
 
+if(HAILO_BUILD_SERVICE)
+    set(HAILORT_CPP_SOURCES "${HAILORT_CPP_SOURCES}" hailort_rpc_client.cpp network_group_client.cpp)
+endif()
+
 set(common_dir "${PROJECT_SOURCE_DIR}/common/src")
 set(COMMON_C_SOURCES
     ${common_dir}/firmware_status.c
@@ -129,9 +133,14 @@ endif()
 
 target_link_libraries(libhailort PRIVATE Threads::Threads)
 target_link_libraries(libhailort PRIVATE hef_proto)
+target_link_libraries(libhailort PRIVATE scheduler_mon_proto)
 target_link_libraries(libhailort PRIVATE spdlog::spdlog)
 target_link_libraries(libhailort PRIVATE readerwriterqueue)
 target_link_libraries(libhailort PRIVATE microprofile)
+if(HAILO_BUILD_SERVICE)
+    target_link_libraries(libhailort PRIVATE grpc++_unsecure)
+    target_link_libraries(libhailort PRIVATE hailort_rpc_grpc_proto)
+endif()
 if(CMAKE_SYSTEM_NAME STREQUAL QNX)
     target_link_libraries(libhailort PRIVATE pevents pci)
 endif()
@@ -184,6 +193,7 @@ target_include_directories(libhailort
     $<BUILD_INTERFACE:${HAILORT_SRC_DIR}>
     $<BUILD_INTERFACE:${COMMON_INC_DIR}>
     $<BUILD_INTERFACE:${DRIVER_INC_DIR}>
+    $<BUILD_INTERFACE:${RPC_DIR}>
 )
 
 target_compile_definitions(libhailort PUBLIC

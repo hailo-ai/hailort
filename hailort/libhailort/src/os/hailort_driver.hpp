@@ -125,13 +125,20 @@ public:
 
     static Expected<HailoRTDriver> create(const std::string &dev_path);
 
+// TODO: HRT-7309 add implementation for Windows
+#if defined(__linux__) || defined(__QNX__)
+    static hailo_status hailo_ioctl(int fd, int request, void* request_struct, int &error_status);
+#endif // defined(__linux__) || defined(__QNX__)
+
     static Expected<std::vector<DeviceInfo>> scan_pci();
 
     hailo_status read_bar(PciBar bar, off_t offset, size_t size, void *buf);
     hailo_status write_bar(PciBar bar, off_t offset, size_t size, const void *buf);
 
-    Expected<uint32_t> read_vdma_channel_registers(off_t offset, size_t size);
-    hailo_status write_vdma_channel_registers(off_t offset, size_t size, uint32_t data);
+    Expected<uint32_t> read_vdma_channel_register(vdma::ChannelId channel_id, DmaDirection data_direction, size_t offset,
+        size_t reg_size);
+    hailo_status write_vdma_channel_register(vdma::ChannelId channel_id, DmaDirection data_direction, size_t offset,
+        size_t reg_size, uint32_t data);
 
     hailo_status vdma_buffer_sync(VdmaBufferHandle buffer, DmaDirection sync_direction, void *address, size_t buffer_size);
 

@@ -437,7 +437,7 @@ private:
     HANDLE m_Handle = NULL;
 };
 
-
+// TODO: HRT-7309 : implement hailo_ioctl for windows
 static int ioctl(HANDLE h, ULONG val, tCompatibleHailoIoctlData *ioctl_data)
 {
     ioctl_data->Parameters.u.value = val;
@@ -655,34 +655,46 @@ hailo_status HailoRTDriver::write_bar(PciBar bar, off_t offset, size_t size, con
     return HAILO_SUCCESS;
 }
 
-Expected<uint32_t> HailoRTDriver::read_vdma_channel_registers(off_t offset, size_t size)
+Expected<uint32_t> HailoRTDriver::read_vdma_channel_register(vdma::ChannelId channel_id, DmaDirection data_direction,
+    size_t offset, size_t reg_size)
 {
+    CHECK_AS_EXPECTED(is_valid_channel_id(channel_id), HAILO_INVALID_ARGUMENT, "Invalid channel id {} given", channel_id);
+    CHECK_AS_EXPECTED(data_direction != DmaDirection::BOTH, HAILO_INVALID_ARGUMENT, "Invalid direction given");
+
     tCompatibleHailoIoctlData data = {};
-    hailo_channel_registers_params& params = data.Buffer.ChannelRegisters;
-    params.transfer_direction = TRANSFER_READ;
+    auto& params = data.Buffer.ChannelRegisterRead;
+    params.engine_index = channel_id.engine_index;
+    params.channel_index = channel_id.channel_index;
+    params.direction = direction_to_dma_data_direction(data_direction);
     params.offset = offset;
-    params.size = size;
+    params.reg_size = reg_size;
     params.data = 0;
 
-    if (0 > ioctl(this->m_fd, HAILO_VDMA_CHANNEL_REGISTERS, &data)) {
-        LOGGER__ERROR("HailoRTDriver::read_vdma_channel_registers failed with errno: {}", errno);
+    if (0 > ioctl(this->m_fd, HAILO_VDMA_CHANNEL_READ_REGISTER, &data)) {
+        LOGGER__ERROR("HailoRTDriver::read_vdma_channel_register failed with errno: {}", errno);
         return make_unexpected(HAILO_PCIE_DRIVER_FAIL);
     }
 
     return std::move(params.data);
 }
 
-hailo_status HailoRTDriver::write_vdma_channel_registers(off_t offset, size_t size, uint32_t value)
+hailo_status HailoRTDriver::write_vdma_channel_register(vdma::ChannelId channel_id, DmaDirection data_direction,
+    size_t offset, size_t reg_size, uint32_t value)
 {
+    CHECK(is_valid_channel_id(channel_id), HAILO_INVALID_ARGUMENT, "Invalid channel id {} given", channel_id);
+    CHECK(data_direction != DmaDirection::BOTH, HAILO_INVALID_ARGUMENT, "Invalid direction given");
+
     tCompatibleHailoIoctlData data = {};
-    hailo_channel_registers_params& params = data.Buffer.ChannelRegisters;
-    params.transfer_direction = TRANSFER_WRITE;
+    auto& params = data.Buffer.ChannelRegisterWrite;
+    params.engine_index = channel_id.engine_index;
+    params.channel_index = channel_id.channel_index;
+    params.direction = direction_to_dma_data_direction(data_direction);
     params.offset = offset;
-    params.size = size;
+    params.reg_size = reg_size;
     params.data = value;
 
-    if (0 > ioctl(this->m_fd, HAILO_VDMA_CHANNEL_REGISTERS, &data)) {
-        LOGGER__ERROR("HailoRTDriver::write_vdma_channel_registers failed with errno: {}", errno);
+    if (0 > ioctl(this->m_fd, HAILO_VDMA_CHANNEL_WRITE_REGISTER, &data)) {
+        LOGGER__ERROR("HailoRTDriver::write_vdma_channel_register failed with errno: {}", errno);
         return HAILO_PCIE_DRIVER_FAIL;
     }
 
@@ -710,7 +722,7 @@ Expected<HailoRTDriver::VdmaChannelHandle> HailoRTDriver::vdma_channel_enable(vd
     DmaDirection data_direction, uintptr_t desc_list_handle, bool enable_timestamps_measure)
 {
     CHECK_AS_EXPECTED(is_valid_channel_id(channel_id), HAILO_INVALID_ARGUMENT, "Invalid channel id {} given", channel_id);
-    CHECK_AS_EXPECTED(data_direction != DmaDirection::BOTH, HAILO_INVALID_ARGUMENT);
+    CHECK_AS_EXPECTED(data_direction != DmaDirection::BOTH, HAILO_INVALID_ARGUMENT, "Invalid direction given");
     tCompatibleHailoIoctlData data = {};
     hailo_vdma_channel_enable_params& params = data.Buffer.ChannelEnable;
     params.engine_index = channel_id.engine_index;
@@ -764,16 +776,13 @@ Expected<ChannelInterruptTimestampList> HailoRTDriver::wait_channel_interrupts(v
     CHECK_AS_EXPECTED(is_valid_channel_id(channel_id), HAILO_INVALID_ARGUMENT, "Invalid channel id {} given", channel_id);
     CHECK_AS_EXPECTED(timeout.count() >= 0, HAILO_INVALID_ARGUMENT);
 
-    const uint32_t timestamps_count = MAX_IRQ_TIMESTAMPS_SIZE;
-    struct hailo_channel_interrupt_timestamp timestamps[timestamps_count];
     tCompatibleHailoIoctlData data = {};
     hailo_vdma_channel_wait_params& params = data.Buffer.ChannelWait;
     params.engine_index = channel_id.engine_index;
     params.channel_index = channel_id.channel_index;
     params.channel_handle = channel_handle;
     params.timeout_ms = static_cast<uint64_t>(timeout.count());
-    params.timestamps = timestamps;
-    params.timestamps_count = timestamps_count;
+    params.timestamps_count = MAX_IRQ_TIMESTAMPS_SIZE;
 
     if (0 > ioctl(this->m_fd, HAILO_VDMA_CHANNEL_WAIT_INT, &data)) {
         const auto ioctl_errno = errno;

@@ -12,7 +12,9 @@
 #include <hailo/hailort.h>
 #include "hailo/expected.hpp"
 #include "hailo/network_group.hpp"
+#include "hailo/hef.hpp"
 #include "common/logger_macros.hpp"
+#include "common/utils.hpp"
 
 namespace hailort
 {
@@ -31,7 +33,11 @@ constexpr hailo_format_order_t DEFAULT_FORMAT_ORDER_MAP[] = {
     HAILO_FORMAT_ORDER_HAILO_NMS,           // HAILO_FORMAT_ORDER_HAILO_NMS,
     HAILO_FORMAT_ORDER_NHWC,                // HAILO_FORMAT_ORDER_RGB888,
     HAILO_FORMAT_ORDER_NCHW,                // HAILO_FORMAT_ORDER_NCHW,
-    HAILO_FORMAT_ORDER_YUY2                 // HAILO_FORMAT_ORDER_YUY2
+    HAILO_FORMAT_ORDER_YUY2,                // HAILO_FORMAT_ORDER_YUY2,
+    HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_NV12,
+    HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_NV21,
+    HAILO_FORMAT_ORDER_NV12,                // HAILO_FORMAT_ORDER_HAILO_YYUV,
+    HAILO_FORMAT_ORDER_NV21                 // HAILO_FORMAT_ORDER_HAILO_YYVU
     };
 
 constexpr hailo_format_order_t DEFAULT_FORMAT_ARGMAX_ORDER_MAP[] = {
@@ -48,7 +54,11 @@ constexpr hailo_format_order_t DEFAULT_FORMAT_ARGMAX_ORDER_MAP[] = {
     HAILO_FORMAT_ORDER_HAILO_NMS,           // HAILO_FORMAT_ORDER_HAILO_NMS,
     HAILO_FORMAT_ORDER_NHW,                 // HAILO_FORMAT_ORDER_RGB888,
     HAILO_FORMAT_ORDER_NHW,                 // HAILO_FORMAT_ORDER_NCHW,
-    HAILO_FORMAT_ORDER_YUY2                 // HAILO_FORMAT_ORDER_YUY2
+    HAILO_FORMAT_ORDER_YUY2,                // HAILO_FORMAT_ORDER_YUY2,
+    HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_NV12,
+    HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_NV21,
+    HAILO_FORMAT_ORDER_NV12,                // HAILO_FORMAT_ORDER_HAILO_YYUV,
+    HAILO_FORMAT_ORDER_NV21                 // HAILO_FORMAT_ORDER_HAILO_YYVU
 };
 
 
@@ -93,6 +103,12 @@ public:
             break;
         case 11:
             return std::move(HAILO_FORMAT_ORDER_YUY2);
+            break;
+        case 14:
+            return std::move(HAILO_FORMAT_ORDER_HAILO_YYUV);
+            break;
+        case 15:
+            return std::move(HAILO_FORMAT_ORDER_HAILO_YYVU);
             break;
         default:
             LOGGER__ERROR("Invalid allocator_format_order ({})", allocator_format_order);
@@ -344,7 +360,14 @@ public:
     {
         hailo_vdevice_params_t params = {};
         params.device_count = HAILO_DEFAULT_DEVICE_COUNT;
+
+IGNORE_DEPRECATION_WARNINGS_BEGIN
         params.device_infos = nullptr;
+IGNORE_DEPRECATION_WARNINGS_END
+
+        params.device_ids = nullptr;
+        params.group_id = HAILO_DEFAULT_VDEVICE_GROUP_ID;
+        params.multi_process_service = false;
         return params;
     }
 };

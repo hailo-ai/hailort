@@ -44,6 +44,9 @@ struct pipeline_stats_measurement_params {
     std::string pipeline_stats_output_path;
 };
 
+static constexpr uint16_t RUNTIME_DATA_IGNORE_BATCH_TO_MEASURE_OPT = std::numeric_limits<uint16_t>::max();
+static constexpr uint16_t RUNTIME_DATA_DEFAULT_BATCH_TO_MEASURE_OPT = 2;
+
 struct runtime_data_params {
     bool collect_runtime_data;
     std::string runtime_data_output_path;
@@ -51,7 +54,7 @@ struct runtime_data_params {
 };
 
 struct inference_runner_params {
-    hailo_device_params device_params;
+    hailo_vdevice_params vdevice_params;
     std::string hef_path;
     uint32_t frames_count;
     uint32_t time_to_run;

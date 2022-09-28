@@ -8,6 +8,7 @@
  **/
 
 #include "hailo/transform.hpp"
+#include "hailo/vstream.hpp"
 #include "network_group_internal.hpp"
 #include "hef_internal.hpp"
 #include "common/utils.hpp"
@@ -18,6 +19,7 @@
 #include "mipi_stream.hpp"
 #include "control.hpp"
 #include "common/runtime_statistics_internal.hpp"
+#include "vstream_internal.hpp"
 
 namespace hailort
 {
@@ -132,7 +134,7 @@ Expected<LatencyMeasurementResult> ConfiguredNetworkGroupBase::get_latency_measu
     bool clear = ((m_config_params.latency & HAILO_LATENCY_CLEAR_AFTER_GET) == HAILO_LATENCY_CLEAR_AFTER_GET);
     LatencyMeasurementResult result = {};
 
-    auto latency_meters_exp = get_latnecy_meters();
+    auto latency_meters_exp = get_latency_meters();
     CHECK_EXPECTED(latency_meters_exp);
     auto latency_meters = latency_meters_exp.release();
 
@@ -337,6 +339,11 @@ const std::string &ConfiguredNetworkGroupBase::get_network_group_name() const
     return m_network_group_metadata.network_group_name();
 }
 
+const std::string &ConfiguredNetworkGroupBase::name() const
+{
+    return m_network_group_metadata.network_group_name();
+}
+
 Expected<uint16_t> ConfiguredNetworkGroupBase::get_stream_batch_size(const std::string &stream_name)
 {
     auto layer_infos = m_network_group_metadata.get_all_layer_infos();
@@ -353,6 +360,11 @@ Expected<uint16_t> ConfiguredNetworkGroupBase::get_stream_batch_size(const std::
     }
     LOGGER__ERROR("Failed to find network name output stream {}", stream_name);
     return make_unexpected(HAILO_NOT_FOUND);
+}
+
+bool ConfiguredNetworkGroupBase::is_multi_context() const
+{
+    return m_network_group_metadata.supported_features().multi_context;
 }
 
 const ConfigureNetworkParams ConfiguredNetworkGroupBase::get_config_params() const
@@ -606,6 +618,8 @@ std::vector<std::reference_wrapper<OutputStream>> ConfiguredNetworkGroupBase::ge
 
 hailo_status ConfiguredNetworkGroupBase::wait_for_activation(const std::chrono::milliseconds &timeout)
 {
+    CHECK(!m_is_scheduling, HAILO_INVALID_OPERATION,
+        "Waiting for network group activation is not allowed when the network group scheduler is active!");
     return m_network_group_activated_event->wait(timeout);
 }
 
@@ -711,6 +725,87 @@ AccumulatorPtr ConfiguredNetworkGroupBase::get_activation_time_accumulator() con
 AccumulatorPtr ConfiguredNetworkGroupBase::get_deactivation_time_accumulator() const
 {
     return m_deactivation_time_accumulator;
+}
+
+static hailo_vstream_params_t expand_vstream_params_autos(const hailo_stream_info_t &stream_info,
+    const hailo_vstream_params_t &vstream_params)
+{
+    auto local_vstream_params = vstream_params;
+    local_vstream_params.user_buffer_format = HailoRTDefaults::expand_auto_format(vstream_params.user_buffer_format,
+        stream_info.format);
+    return local_vstream_params;
+}
+
+static std::map<std::string, hailo_vstream_info_t> vstream_infos_vector_to_map(std::vector<hailo_vstream_info_t> &&vstream_info_vector)
+{
+    std::map<std::string, hailo_vstream_info_t> vstream_infos_map;
+    for (const auto &vstream_info : vstream_info_vector) {
+        vstream_infos_map.emplace(std::string(vstream_info.name), vstream_info);
+    }
+
+    return vstream_infos_map;
+}
+
+Expected<std::vector<InputVStream>> ConfiguredNetworkGroupBase::create_input_vstreams(const std::map<std::string, hailo_vstream_params_t> &inputs_params)
+{
+    auto input_vstream_infos = get_input_vstream_infos();
+    CHECK_EXPECTED(input_vstream_infos);
+    auto input_vstream_infos_map = vstream_infos_vector_to_map(input_vstream_infos.release());
+
+    std::vector<InputVStream> vstreams;
+    vstreams.reserve(inputs_params.size());
+    for (const auto &name_params_pair : inputs_params) {
+        auto input_stream_ref = get_input_stream_by_name(name_params_pair.first);
+        CHECK_EXPECTED(input_stream_ref);
+
+        const auto vstream_info = input_vstream_infos_map.find(name_params_pair.first);
+        CHECK_AS_EXPECTED(vstream_info != input_vstream_infos_map.end(), HAILO_NOT_FOUND,
+            "Failed to find vstream info of {}", name_params_pair.first);
+
+        const auto vstream_params = expand_vstream_params_autos(input_stream_ref->get().get_info(), name_params_pair.second);
+        auto inputs = VStreamsBuilderUtils::create_inputs(input_stream_ref->get(), vstream_info->second, vstream_params);
+        CHECK_EXPECTED(inputs);
+
+        vstreams.insert(vstreams.end(), std::make_move_iterator(inputs->begin()), std::make_move_iterator(inputs->end()));
+    }
+    return vstreams;
+}
+
+Expected<std::vector<OutputVStream>> ConfiguredNetworkGroupBase::create_output_vstreams(const std::map<std::string, hailo_vstream_params_t> &outputs_params)
+{
+    std::vector<OutputVStream> vstreams;
+    vstreams.reserve(outputs_params.size());
+    auto output_streams = get_output_streams_from_vstream_names(outputs_params);
+    CHECK_EXPECTED(output_streams);
+
+    auto output_vstream_infos = get_output_vstream_infos();
+    CHECK_EXPECTED(output_vstream_infos);
+    auto output_vstream_infos_map = vstream_infos_vector_to_map(output_vstream_infos.release());
+
+    // We iterate through all output streams, and if they are nms, we collect them together by their original stream name.
+    // We need this step because all nms output streams of the same original stream need to be fused together
+    std::map<std::string, std::pair<OutputStreamRefVector, hailo_vstream_params_t>> nms_output_streams;
+    for (auto &stream_params_pair: output_streams.value()) {
+        auto &out_stream = stream_params_pair.first.get();
+        if ((HAILO_FORMAT_ORDER_HAILO_NMS == out_stream.get_info().format.order && out_stream.get_info().nms_info.is_defused) &&
+            (outputs_params.end() != outputs_params.find(out_stream.get_info().nms_info.defuse_info.original_name))) {
+                auto original_name = stream_params_pair.first.get().get_info().nms_info.defuse_info.original_name;
+                nms_output_streams.emplace(original_name, std::pair<OutputStreamRefVector, hailo_vstream_params_t>(
+                    OutputStreamRefVector(), outputs_params.at(original_name)));
+                nms_output_streams[original_name].first.push_back(stream_params_pair.first.get());
+        } else {
+            auto outputs = VStreamsBuilderUtils::create_outputs(stream_params_pair.first.get(), stream_params_pair.second, output_vstream_infos_map);
+            CHECK_EXPECTED(outputs);
+            vstreams.insert(vstreams.end(), std::make_move_iterator(outputs->begin()), std::make_move_iterator(outputs->end()));
+        }
+    }
+    for (auto &nms_output_stream_pair : nms_output_streams) {
+        auto outputs = VStreamsBuilderUtils::create_output_nms(nms_output_stream_pair.second.first, nms_output_stream_pair.second.second,
+            output_vstream_infos_map);
+        CHECK_EXPECTED(outputs);
+        vstreams.insert(vstreams.end(), std::make_move_iterator(outputs->begin()), std::make_move_iterator(outputs->end()));
+    }
+    return vstreams;
 }
 
 } /* namespace hailort */

@@ -43,6 +43,15 @@ public:
     static Expected<std::unique_ptr<VDevice>> create();
 
     /**
+     * Creates a vdevice from the given phyiscal device ids.
+     * 
+     * @return Upon success, returns Expected of a unique_ptr to VDevice object.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note calling this create method will apply default vdevice params.
+     */
+    static Expected<std::unique_ptr<VDevice>> create(const std::vector<std::string> &device_ids);
+
+    /**
      * Configure the vdevice from an hef.
      *
      * @param[in] hef                         A reference to an Hef object to configure the vdevice by.
@@ -60,15 +69,25 @@ public:
      *         Otherwise, returns Unexpected of ::hailo_status error.
      * @note The returned physical devices are held in the scope of @a vdevice.
      */
-    virtual Expected<std::vector<std::reference_wrapper<Device>>> get_physical_devices() = 0;
+    virtual Expected<std::vector<std::reference_wrapper<Device>>> get_physical_devices() const = 0;
 
     /**
      * Gets the devices informations.
      * 
      * @return Upon success, returns Expected of a vector of ::hailo_pcie_device_info_t objects.
      *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note This function is deprecated. One should use 'get_physical_devices_ids()'
      */
-    virtual Expected<std::vector<hailo_pcie_device_info_t>> get_physical_devices_infos() = 0;
+    Expected<std::vector<hailo_pcie_device_info_t>> get_physical_devices_infos() const
+        DEPRECATED("'VDevice::get_physical_devices_infos' is deprecated. One should use 'VDevice::get_physical_devices_ids()'.");
+
+    /**
+     * Gets the physical device IDs.
+     * 
+     * @return Upon success, returns Expected of a vector of std::string device ids objects.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    virtual Expected<std::vector<std::string>> get_physical_devices_ids() const = 0;
 
     virtual ~VDevice() = default;
     VDevice(const VDevice &) = delete;

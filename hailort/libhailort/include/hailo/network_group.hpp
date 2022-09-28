@@ -12,6 +12,7 @@
 
 #include "hailo/stream.hpp"
 #include "hailo/runtime_statistics.hpp"
+#include "hailo/hef.hpp"
 
 #include <string>
 #include <map>
@@ -21,6 +22,9 @@
 
 namespace hailort
 {
+
+class InputVStream;
+class OutputVStream;
 
 /** @addtogroup group_type_definitions */
 /*@{*/
@@ -88,7 +92,13 @@ public:
     /**
      * @return The network group name.
      */
-    virtual const std::string &get_network_group_name() const = 0;
+    virtual const std::string &get_network_group_name() const
+        DEPRECATED("'get_network_group_name' is deprecated. One should use 'name()'.") = 0;
+
+    /**
+     * @return The network group name.
+     */
+    virtual const std::string &name() const = 0;
 
     /**
      * Gets the stream's default interface.
@@ -340,8 +350,21 @@ public:
      */
     virtual hailo_status set_scheduler_threshold(uint32_t threshold, const std::string &network_name="") = 0;
 
+    /**
+     * @return Is the network group multi-context or not.
+     */
+    virtual bool is_multi_context() const = 0;
+
+    /**
+     * @return The configuration parameters this network group was initialized with.
+     */
+    virtual const ConfigureNetworkParams get_config_params() const = 0;
+
     virtual AccumulatorPtr get_activation_time_accumulator() const = 0;
     virtual AccumulatorPtr get_deactivation_time_accumulator() const = 0;
+
+    virtual Expected<std::vector<InputVStream>> create_input_vstreams(const std::map<std::string, hailo_vstream_params_t> &inputs_params) = 0;
+    virtual Expected<std::vector<OutputVStream>> create_output_vstreams(const std::map<std::string, hailo_vstream_params_t> &outputs_params) = 0;
 
 protected:
     ConfiguredNetworkGroup() = default;

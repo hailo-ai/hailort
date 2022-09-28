@@ -10,6 +10,7 @@
 #include "common/string_utils.hpp"
 #include "common/utils.hpp"
 
+#include <sstream>
 #include <stdlib.h>
 #include <errno.h>
 
@@ -69,6 +70,19 @@ Expected<uint8_t> StringUtils::to_uint8(const std::string &str, int base)
         HAILO_INVALID_ARGUMENT, "Failed to convert string {} to uint8_t.", str);
 
     return static_cast<uint8_t>(number.value());
+}
+
+std::string StringUtils::to_hex_string(const uint8_t *array, size_t size, bool uppercase, const std::string &delimiter)
+{
+    std::stringstream stream;
+    for (size_t i = 0; i < size; i++) {
+        const auto hex_byte = uppercase ? fmt::format("{:02X}", array[i]) : fmt::format("{:02x}", array[i]);
+        stream << hex_byte;
+        if (i != (size - 1)) {
+            stream << delimiter;
+        }
+    }
+    return stream.str();
 }
 
 } /* namespace hailort */

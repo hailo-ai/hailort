@@ -61,12 +61,12 @@ public:
      * @param[in] buffer_size
      * @param[in] timeout
      */
-    hailo_status wait(size_t buffer_size, const std::chrono::milliseconds &timeout);
+    hailo_status wait(size_t buffer_size, std::chrono::milliseconds timeout);
 
     hailo_status transfer(void *buf, size_t count);
     hailo_status write_buffer(const MemoryView &buffer, std::chrono::milliseconds timeout);
     Expected<PendingBufferState> send_pending_buffer();
-    hailo_status trigger_channel_completion(uint16_t hw_num_processed);
+    hailo_status trigger_channel_completion(uint16_t hw_num_processed, const std::function<void(uint32_t)> &callback);
     hailo_status allocate_resources(uint32_t descs_count);
     /* For channels controlled by the HailoRT, the HailoRT needs to use this function to start the channel (it registers the channel to driver 
        and starts the vDMA channel. Used for boundary channels */
@@ -93,6 +93,11 @@ public:
         return m_channel_id;
     }
 
+    size_t get_transfers_count_in_buffer(size_t transfer_size);
+    size_t get_buffer_size() const;
+    Expected<size_t> get_h2d_pending_frames_count();
+    Expected<size_t> get_d2h_pending_descs_count();
+
     VdmaChannel(const VdmaChannel &other) = delete;
     VdmaChannel &operator=(const VdmaChannel &other) = delete;
     VdmaChannel(VdmaChannel &&other) noexcept;
@@ -101,6 +106,7 @@ public:
     static uint32_t calculate_buffer_size(const HailoRTDriver &driver, uint32_t transfer_size, uint32_t transfers_count,
         uint16_t requested_desc_page_size);
 
+    hailo_status register_for_d2h_interrupts(const std::function<void(uint32_t)> &callback);
 
     friend class PendingBufferState;
 
@@ -132,7 +138,10 @@ private:
         // Contains the last num_processed of the last interrupt (only used on latency measurement)
         uint16_t m_last_timestamp_num_processed;
         size_t m_accumulated_transfers;
+        bool pending_reads;
     };
+
+    hailo_status unregister_for_d2h_interrupts(std::unique_lock<State> &lock);
 
     VdmaChannel(vdma::ChannelId channel_id, Direction direction, HailoRTDriver &driver, uint32_t stream_index,
         LatencyMeterPtr latency_meter, uint16_t desc_page_size, uint16_t transfers_per_axi_intr, hailo_status &status);
@@ -153,13 +162,16 @@ private:
     bool is_ready_for_transfer_d2h(size_t buffer_size);
     hailo_status prepare_descriptors(size_t transfer_size, VdmaInterruptsDomain first_desc_interrupts_domain,
         VdmaInterruptsDomain last_desc_interrupts_domain);
-    hailo_status prepare_d2h_pending_descriptors(uint32_t descs_count, uint32_t transfer_size);
+    hailo_status prepare_d2h_pending_descriptors(uint32_t transfer_size);
     void reset_internal_counters();
-    hailo_status wait_for_channel_completion(std::chrono::milliseconds timeout);
+    hailo_status wait_for_channel_completion(std::chrono::milliseconds timeout, const std::function<void(uint32_t)> &callback = [](uint32_t) { return; });
 
     uint32_t calculate_descriptors_count(uint32_t buffer_size);
 
     hailo_status wait_for_condition(std::function<bool()> condition, std::chrono::milliseconds timeout);
+
+    void wait_d2h_callback(const std::function<void(uint32_t)> &callback);
+    std::unique_ptr<std::thread> m_d2h_callback_thread;
 
     /**
      * Returns the new hw num_processed of the irq
@@ -195,12 +207,15 @@ private:
     MmapBuffer<HailoRTDriver::VdmaChannelHandle> m_channel_handle;
 
     bool m_channel_enabled;
+    bool m_channel_is_active;
+    std::mutex m_is_active_flag_mutex;
     
     uint16_t m_transfers_per_axi_intr;
     // Using CircularArray because it won't allocate or free memory wile pushing and poping. The fact that it is circural is not relevant here
     CircularArray<size_t> m_pending_buffers_sizes;
     uint16_t m_pending_num_avail_offset;
     std::condition_variable_any m_can_write_buffer_cv;
+    std::condition_variable_any m_can_read_buffer_cv;
     std::atomic_bool m_is_waiting_for_channel_completion;
     std::atomic_bool m_is_aborted_by_internal_source;
 };

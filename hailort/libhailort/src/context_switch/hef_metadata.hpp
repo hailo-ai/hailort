@@ -5,6 +5,7 @@
 #include "common/utils.hpp"
 #include "control_protocol.h"
 #include "control_protocol.hpp"
+#include "vdma/channel_id.hpp"
 
 namespace hailort
 {
@@ -276,8 +277,8 @@ hailo_status HEF_METADATA__add_wait_for_module_config_done_action(
  *
  * @param[in]     context_info - struct holding all the context info
  * @param[out]    edge_layer_current_offset - pointer to the location of the edge layer struct
+ * @param[in]     channel_id - vdma channel id
  * @param[in]     stream_index - stream index 
- * @param[in]     vdma_channel_index - channel index 
  * @param[in]     network_index - network index 
  * @param[in]     nn_stream_config
  * @param[in]     host_buffer_info - info about host buffer
@@ -286,8 +287,8 @@ hailo_status HEF_METADATA__add_wait_for_module_config_done_action(
 hailo_status HEF_METADATA__add_network_boundary_output_edge_layer(
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
     uint8_t **edge_layer_current_offset,
+    vdma::ChannelId channel_id,
     uint8_t stream_index, 
-    uint8_t vdma_channel_index, 
     uint8_t network_index,
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
     const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info);
@@ -296,8 +297,8 @@ hailo_status HEF_METADATA__add_network_boundary_output_edge_layer(
  *
  * @param[in]     context_info - struct holding all the context info
  * @param[out]    edge_layer_current_offset - pointer to the location of the edge layer struct 
+ * @param[in]     channel_id - vdma channel id
  * @param[in]     stream_index - stream index 
- * @param[in]     vdma_channel_index - channel index
  * @param[in]     network_index - network index 
  * @param[in]     nn_stream_config
  * @param[in]     host_buffer_info - info about host buffer
@@ -305,8 +306,8 @@ hailo_status HEF_METADATA__add_network_boundary_output_edge_layer(
 hailo_status HEF_METADATA__add_inter_context_output_edge_layer(
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
     uint8_t **edge_layer_current_offset,
-    uint8_t stream_index, 
-    uint8_t vdma_channel_index, 
+    vdma::ChannelId channel_id,
+    uint8_t stream_index,
     uint8_t network_index,
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
     const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info);
@@ -315,9 +316,9 @@ hailo_status HEF_METADATA__add_inter_context_output_edge_layer(
  * build edge layer - vdma DDR buffer output
  *
  * @param[in]     context_info - struct holding all the context info
- * @param[out]    edge_layer_current_offset - pointer to the location of the edge layer struct 
+ * @param[out]    edge_layer_current_offset - pointer to the location of the edge layer struct
+ * @param[in]     channel_id - vdma channel id
  * @param[in]     stream_index - stream index 
- * @param[in]     vdma_channel_index - channel index
  * @param[in]     network_index - network index 
  * @param[in]     nn_stream_config
  * @param[in]     host_buffer_info - info about host buffer
@@ -327,8 +328,8 @@ hailo_status HEF_METADATA__add_inter_context_output_edge_layer(
 hailo_status HEF_METADATA__add_ddr_buffer_output_edge_layer(
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
     uint8_t **edge_layer_current_offset,
+    vdma::ChannelId channel_id,
     uint8_t stream_index, 
-    uint8_t vdma_channel_index, 
     uint8_t network_index,
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
     const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info,
@@ -338,9 +339,9 @@ hailo_status HEF_METADATA__add_ddr_buffer_output_edge_layer(
  * build edge layer - vdma network boundary input
  *
  * @param[in]     context_info - struct holding all the context info
- * @param[out]    edge_layer_current_offset - pointer to the location of the edge layer struct 
+ * @param[out]    edge_layer_current_offset - pointer to the location of the edge layer struct
+ * @param[in]     channel_id - vdma channel id
  * @param[in]     stream_index - stream index 
- * @param[in]     vdma_channel_index - channel index
  * @param[in]     network_index - network index 
  * @param[in]     nn_stream_config
  * @param[in]     host_buffer_info - info about host buffer
@@ -350,8 +351,8 @@ hailo_status HEF_METADATA__add_ddr_buffer_output_edge_layer(
 hailo_status HEF_METADATA__add_network_boundary_input_edge_layer(
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
     uint8_t **edge_layer_current_offset,
+    vdma::ChannelId channel_id,
     uint8_t stream_index, 
-    uint8_t vdma_channel_index, 
     uint8_t network_index,
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
     const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info,
@@ -361,9 +362,9 @@ hailo_status HEF_METADATA__add_network_boundary_input_edge_layer(
  * build edge layer - vdma intermediate buffer input
  *
  * @param[in]     context_info - struct holding all the context info
- * @param[out]    edge_layer_current_offset - pointer to the location of the edge layer struct 
+ * @param[out]    edge_layer_current_offset - pointer to the location of the edge layer struct
+ * @param[in]     channel_id - vdma channel id
  * @param[in]     stream_index - stream index 
- * @param[in]     vdma_channel_index - channel index
  * @param[in]     network_index - network index 
  * @param[in]     nn_stream_config
  * @param[in]     host_buffer_info - info about host buffer
@@ -373,8 +374,8 @@ hailo_status HEF_METADATA__add_network_boundary_input_edge_layer(
 hailo_status HEF_METADATA__add_inter_context_input_edge_layer(
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
     uint8_t **edge_layer_current_offset,
+    vdma::ChannelId channel_id,
     uint8_t stream_index, 
-    uint8_t vdma_channel_index, 
     uint8_t network_index,
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
     const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info,
@@ -384,33 +385,33 @@ hailo_status HEF_METADATA__add_inter_context_input_edge_layer(
  * build edge layer - vdma ddr buffer input
  *
  * @param[in]     context_info - struct holding all the context info
- * @param[out]    edge_layer_current_offset - pointer to the location of the edge layer struct 
+ * @param[out]    edge_layer_current_offset - pointer to the location of the edge layer struct
+ * @param[in]     channel_id - vdma channel id
  * @param[in]     stream_index - stream index 
- * @param[in]     vdma_channel_index - channel index
  * @param[in]     network_index - network index 
  * @param[in]     nn_stream_config
  * @param[in]     host_buffer_info - info about host buffer.
  * @param[in]     initial_credit_size - initial credit size, if 0 is set the firmware takes its default value.
- * @param[in]     connected_d2h_channel_index - vdma channel index of the connected d2h channel.
+ * @param[in]     connected_d2h_channel_id - vdma channel id of the connected d2h channel.
  */
 hailo_status HEF_METADATA__add_ddr_buffer_input_edge_layer(
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
     uint8_t **edge_layer_current_offset,
+    vdma::ChannelId channel_id,
     uint8_t stream_index, 
-    uint8_t vdma_channel_index, 
     uint8_t network_index,
     const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
     const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info,
     uint32_t initial_credit_size,
-    uint8_t connected_d2h_channel_index);
+    vdma::ChannelId connected_d2h_channel_id);
 
 /**
  * Build add ddr pair info action
  *
  * @param[in]     context_info - struct holding all the context info
  * @param[out]    action_data_current_offset - pointer to the action
- * @param[in]     h2d_vdma_channel_index - DDR pair host to device channel index
- * @param[in]     d2h_vdma_channel_index - DDR pair device to host channel index
+ * @param[in]     h2d_vdma_channel_id - DDR pair host to device channel ind
+ * @param[in]     d2h_vdma_channel_id - DDR pair device to host channel id
  * @param[in]     descriptors_per_frame - expected total descritors transfered (per one frame)
  * @param[in]     programmed_descriptors_count - total size of the programed descriptors list
  * @param[in]     is_repeated - 'true' if the action is part of a "repeated sequence" (a group of consecutive actions
@@ -420,8 +421,8 @@ hailo_status HEF_METADATA__add_ddr_buffer_input_edge_layer(
 hailo_status HEF_METADATA__add_ddr_pair_info(
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info,
     uint8_t **action_data_current_offset,
-    const uint8_t h2d_vdma_channel_index, 
-    const uint8_t d2h_vdma_channel_index,
+    const vdma::ChannelId h2d_vdma_channel_id,
+    const vdma::ChannelId d2h_vdma_channel_id,
     const uint32_t descriptors_per_frame,
     const uint16_t programmed_descriptors_count,
     bool is_repeated);

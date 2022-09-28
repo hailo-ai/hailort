@@ -39,16 +39,26 @@ VdmaMappedBufferImpl::~VdmaMappedBufferImpl()
 
 const int VdmaMappedBufferImpl::INVALID_FD = -1;
 const shm_handle_t VdmaMappedBufferImpl::INVALID_HANDLE = (shm_handle_t)-1;
+const char* VdmaMappedBufferImpl::VDMA_BUFFER_TYPE_MEMORY_NAME = "/memory/below4G/ram/below1G";
 
 Expected<VdmaMappedBufferImpl> VdmaMappedBufferImpl::allocate_vdma_buffer(HailoRTDriver &driver, size_t required_size)
 {
+    // Desctructor of type_mem_fd will close fd
+    FileDescriptor type_mem_fd(posix_typed_mem_open(VDMA_BUFFER_TYPE_MEMORY_NAME, O_RDWR, POSIX_TYPED_MEM_ALLOCATE));
+    if (INVALID_FD == type_mem_fd) {
+        LOGGER__ERROR("Error getting fd from typed memory of type {}, errno {}\n", VDMA_BUFFER_TYPE_MEMORY_NAME,
+            errno);
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
+    }
+
     vdma_mapped_buffer_driver_identifier driver_buff_handle;
     driver_buff_handle.shm_fd = shm_open(SHM_ANON, O_RDWR | O_CREAT, 0777);
     CHECK_AS_EXPECTED(INVALID_FD != driver_buff_handle.shm_fd, HAILO_INTERNAL_FAILURE,
         "Error creating shm object, errno is: {}", errno);
 
     // backs the shared memory object with physical memory
-    int err = shm_ctl(driver_buff_handle.shm_fd, SHMCTL_ANON, 0, required_size);
+    int err = shm_ctl(driver_buff_handle.shm_fd, SHMCTL_ANON | SHMCTL_TYMEM, (uint64_t)type_mem_fd,
+        required_size);
     if (-1 == err) {
         LOGGER__ERROR("Error backing shm object in physical memory, errno is: {}", errno);
         close(driver_buff_handle.shm_fd);
@@ -64,7 +74,7 @@ Expected<VdmaMappedBufferImpl> VdmaMappedBufferImpl::allocate_vdma_buffer(HailoR
         return make_unexpected(HAILO_INTERNAL_FAILURE);
     }
 
-    void *address = mmap(0, required_size, PROT_WRITE | PROT_READ, MAP_SHARED, driver_buff_handle.shm_fd, 0);
+    void *address = mmap(0, required_size, PROT_WRITE | PROT_READ | PROT_NOCACHE, MAP_SHARED, driver_buff_handle.shm_fd, 0);
     if (MAP_FAILED == address) {
         LOGGER__ERROR("Failed to mmap buffer with errno:{}", errno);
         shm_delete_handle(driver_buff_handle.shm_handle);

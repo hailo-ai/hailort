@@ -77,6 +77,8 @@ bool TransformContextUtils::should_reorder(const hailo_3d_image_shape_t &src_ima
         case HAILO_FORMAT_ORDER_HAILO_NMS:
         case HAILO_FORMAT_ORDER_RGB888:
         case HAILO_FORMAT_ORDER_NCHW:
+        case HAILO_FORMAT_ORDER_NV12:
+        case HAILO_FORMAT_ORDER_NV21:
             return true;
         default:
             LOGGER__WARN("Hailo Internal warning - Unrecognised order. Transformation optimization would not be activated");
@@ -135,10 +137,12 @@ std::string TransformContextUtils::make_transpose_description(hailo_3d_image_sha
     return transpose_description.str();
 }
 
-void copy_output_buffer_float32(float32_t *dst_ptr, uint32_t frame_size)
+template<typename T, typename Q>
+void cast_elements_inplace(T *dst_ptr, uint32_t frame_size)
 {
+    static_assert(sizeof(T) >= sizeof(Q), "cast_elements_inplace() cannot cast to smaller size");
     for (int32_t i = (int32_t)frame_size - 1; i >= 0; i--) {
-        dst_ptr[i] = (float32_t)(*((uint8_t*)dst_ptr + i));
+        dst_ptr[i] = (T)(*((Q*)dst_ptr + i));
     }
 }
 
@@ -244,6 +248,42 @@ void transform__d2h_NHWC_to_NHWC(const T *src_ptr, hailo_3d_image_shape_t *src_i
             dst_offset = r * dst_image_shape->width * dst_image_shape->features + c * dst_image_shape->features;
             memcpy(dst_ptr + dst_offset, src_ptr + src_offset, dst_image_shape->features * sizeof(T));
         }
+    }
+}
+
+template <typename T>
+void transform__h2d_NV12_to_NV12(const T *src_ptr, hailo_3d_image_shape_t *src_image_shape, T *dst_ptr, hailo_3d_image_shape_t *dst_image_shape)
+{
+    /* Validate arguments */
+    ASSERT(NULL != src_ptr);
+    ASSERT(NULL != dst_ptr);
+    uint32_t rows_count = src_image_shape->height * src_image_shape->features;
+    ASSERT(0 == fmod(rows_count, 1.5));
+    ASSERT(0 == (src_image_shape->width % 2));
+
+    auto row_leftover = dst_image_shape->width - src_image_shape->width;
+
+    size_t src_offset_y = 0;
+    size_t src_offset_uv = ((static_cast<uint32_t>(rows_count / 1.5)) * src_image_shape->width);
+    size_t dst_offset = 0;
+
+    for(uint32_t h = 0; h < (static_cast<uint32_t>(rows_count / 1.5)); h += 2) {
+        /* Copy 2 rows of Y for each row of U,V */
+        // Copy Y
+        for (auto i = 0; i < 2; i++) {
+            memcpy(dst_ptr + dst_offset, src_ptr + src_offset_y, (src_image_shape->width * sizeof(T)));
+            src_offset_y += (src_image_shape->width);
+            dst_offset += (src_image_shape->width);
+            memset((dst_ptr + dst_offset), 0, (row_leftover * sizeof(T)));
+            dst_offset += row_leftover;
+        }
+
+        // Copy U, V
+        memcpy(dst_ptr + dst_offset, (src_ptr + src_offset_uv), (src_image_shape->width * sizeof(T)));
+        src_offset_uv += src_image_shape->width;
+        dst_offset += src_image_shape->width;
+        memset((dst_ptr + dst_offset), 0, (row_leftover * sizeof(T)));
+        dst_offset += row_leftover;
     }
 }
 
@@ -768,7 +808,15 @@ hailo_status FrameOutputTransformContext::quantize_stream(const void *dst_ptr)
                     return HAILO_INVALID_OPERATION;
                 }
             } else {
-                copy_output_buffer_float32((float32_t*)dst_ptr, shape_size);
+                if (m_src_format.type == HAILO_FORMAT_TYPE_UINT8) {
+                    cast_elements_inplace<float32_t, uint8_t>((float32_t*)dst_ptr, shape_size);
+                }
+                else if (m_src_format.type == HAILO_FORMAT_TYPE_UINT16) {
+                    cast_elements_inplace<float32_t, uint16_t>((float32_t*)dst_ptr, shape_size);
+                }
+                else {
+                    return HAILO_INVALID_OPERATION;
+                }
             }
             break;
         default:
@@ -943,6 +991,24 @@ hailo_status reorder_input_stream(const void *src_ptr, hailo_3d_image_shape_t sr
         }
     }
 
+    if (((HAILO_FORMAT_ORDER_NV12 == src_format.order) &&
+               (HAILO_FORMAT_ORDER_HAILO_YYUV) == dst_format.order) ||
+               ((HAILO_FORMAT_ORDER_NV21 == src_format.order) &&
+               (HAILO_FORMAT_ORDER_HAILO_YYVU) == dst_format.order)) {
+            switch (src_format.type) {
+                case HAILO_FORMAT_TYPE_UINT8:
+                    transform__h2d_NV12_to_NV12<uint8_t>((uint8_t*)src_ptr, &src_image_shape, (uint8_t*)dst_ptr, &dst_image_shape);
+                    break;
+                case HAILO_FORMAT_TYPE_UINT16:
+                    transform__h2d_NV12_to_NV12<uint16_t>((uint16_t*)src_ptr, &src_image_shape, (uint16_t*)dst_ptr, &dst_image_shape);
+                    break;
+                default:
+                    LOGGER__ERROR("Invalid src-buffer's type format {}", src_format.type);
+                    return HAILO_INVALID_ARGUMENT;
+            }
+            return HAILO_SUCCESS;
+    }
+
     LOGGER__ERROR("Unsupported input stream transformation from hailo_format_order_t "
                 "{} to hailo_format_order_t {}", src_format.order, dst_format.order);
     return HAILO_INVALID_OPERATION;
@@ -1092,8 +1158,9 @@ hailo_status reorder_output_stream(const void *src_ptr, hailo_3d_image_shape_t s
                     return HAILO_INVALID_ARGUMENT;
             }
     } else {
-        LOGGER__INFO("Unsupported output stream transformation from hailo_format_order_t "
-                    "{} to hailo_format_order_t {}", src_format.order, dst_format.order);
+        LOGGER__ERROR("Unsupported output stream transformation from hailo_format_order_t "
+            "{} to hailo_format_order_t {}", HailoRTCommon::get_format_order_str(src_format.order),
+                HailoRTCommon::get_format_order_str(dst_format.order));
         return HAILO_INVALID_OPERATION;
     }
 

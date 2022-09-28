@@ -12,6 +12,8 @@
 #include "vdma_device.hpp"
 #include "vdma_descriptor_list.hpp"
 #include "context_switch/multi_context/vdma_config_manager.hpp"
+#include "pcie_device.hpp"
+#include "core_device.hpp"
 
 
 #include <new>
@@ -22,9 +24,27 @@ namespace hailort
 
 VdmaDevice::VdmaDevice(HailoRTDriver &&driver, Device::Type type) :
     DeviceBase::DeviceBase(type),
-    m_driver(std::move(driver)),
-    m_context_switch_manager(nullptr)
+    m_driver(std::move(driver))
 {
+}
+
+Expected<std::unique_ptr<VdmaDevice>> VdmaDevice::create(const std::string &device_id)
+{
+    const bool DONT_LOG_ON_FAILURE = false;
+    if (CoreDevice::DEVICE_ID == device_id) {
+        auto device = CoreDevice::create();
+        CHECK_EXPECTED(device);;
+        return std::unique_ptr<VdmaDevice>(device.release());
+    }
+    else if (auto pcie_info = PcieDevice::parse_pcie_device_info(device_id, DONT_LOG_ON_FAILURE)) {
+        auto device = PcieDevice::create(pcie_info.release());
+        CHECK_EXPECTED(device);;
+        return std::unique_ptr<VdmaDevice>(device.release());
+    }
+    else {
+        LOGGER__ERROR("Invalid device id {}", device_id);
+        return make_unexpected(HAILO_INVALID_ARGUMENT);
+    }
 }
 
 hailo_status VdmaDevice::wait_for_wakeup()
@@ -40,22 +60,6 @@ Expected<D2H_EVENT_MESSAGE_t> VdmaDevice::read_notification()
 hailo_status VdmaDevice::disable_notifications()
 {
     return m_driver.disable_notifications();
-}
-
-ExpectedRef<ConfigManager> VdmaDevice::get_config_manager()
-{
-    auto status = mark_as_used();
-    CHECK_SUCCESS_AS_EXPECTED(status);
-
-    if (!m_context_switch_manager) {
-        auto local_context_switch_manager = VdmaConfigManager::create(*this);
-        CHECK_EXPECTED(local_context_switch_manager);
-
-        m_context_switch_manager = make_unique_nothrow<VdmaConfigManager>(local_context_switch_manager.release());
-        CHECK_AS_EXPECTED(nullptr != m_context_switch_manager, HAILO_OUT_OF_HOST_MEMORY);
-    }
-
-    return std::ref(*m_context_switch_manager);
 }
 
 Expected<size_t> VdmaDevice::read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id)

@@ -44,7 +44,7 @@ hailo_status infer(hailo_configured_network_group configured_network_group,
             src_data = malloc(input_buffer.raw_buffer.size);
             REQUIRE_ACTION(src_data != NULL, status = HAILO_OUT_OF_HOST_MEMORY, l_free_buffers, "Failed to allocate input buffer");
             // Prepare src data here
-            for (size_t j = 0; j < frame_size; j++) {
+            for (size_t j = 0; j < input_buffer.raw_buffer.size; j++) {
                 src_data[j] = (uint8_t)(rand() % 256);
             }
 

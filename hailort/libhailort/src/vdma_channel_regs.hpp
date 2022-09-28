@@ -35,7 +35,8 @@ class VdmaChannelRegs final {
 public:
     VdmaChannelRegs(HailoRTDriver &driver, vdma::ChannelId channel_id, HailoRTDriver::DmaDirection direction) :
         m_driver(driver),
-        m_channel_offset(VDMA_CHANNEL_OFFSET(channel_id.channel_index, (HailoRTDriver::DmaDirection::H2D == direction)))
+        m_channel_id(channel_id),
+        m_direction(direction)
     {}
 
     Expected<uint8_t> get_control()
@@ -86,7 +87,7 @@ private:
     template<typename IntegerType>
     Expected<IntegerType> read_integer(uint32_t offset)
     {
-        auto value = m_driver.read_vdma_channel_registers(m_channel_offset + offset, sizeof(IntegerType));
+        auto value = m_driver.read_vdma_channel_register(m_channel_id, m_direction, offset, sizeof(IntegerType));
         CHECK_EXPECTED(value);
         return static_cast<IntegerType>(value.release());
     }
@@ -99,11 +100,12 @@ private:
     template<typename IntegerType>
     hailo_status write_integer(uint32_t offset, IntegerType value)
     {
-        return m_driver.write_vdma_channel_registers(m_channel_offset + offset,  sizeof(value), value);
+        return m_driver.write_vdma_channel_register(m_channel_id, m_direction, offset,  sizeof(value), value);
     }
 
     HailoRTDriver &m_driver;
-    uint32_t m_channel_offset;
+    const vdma::ChannelId m_channel_id;
+    const HailoRTDriver::DmaDirection m_direction;
 };
 
 } /* namespace hailort */

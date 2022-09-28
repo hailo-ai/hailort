@@ -17,6 +17,11 @@ const std::string &ConfiguredNetworkGroupWrapper::get_network_group_name() const
     return m_configured_network_group->get_network_group_name();
 }
 
+const std::string &ConfiguredNetworkGroupWrapper::name() const
+{
+    return m_configured_network_group->name();
+}
+
 Expected<hailo_stream_interface_t> ConfiguredNetworkGroupWrapper::get_default_streams_interface()
 {
     return m_configured_network_group->get_default_streams_interface();
@@ -150,6 +155,15 @@ AccumulatorPtr ConfiguredNetworkGroupWrapper::get_deactivation_time_accumulator(
     return m_configured_network_group->get_deactivation_time_accumulator();
 }
 
+bool ConfiguredNetworkGroupWrapper::is_multi_context() const
+{
+    return m_configured_network_group->is_multi_context();
+}
+const ConfigureNetworkParams ConfiguredNetworkGroupWrapper::get_config_params() const
+{
+    return m_configured_network_group->get_config_params();
+}
+
 std::shared_ptr<ConfiguredNetworkGroupBase> ConfiguredNetworkGroupWrapper::get_configured_network() const
 {
     return m_configured_network_group;
@@ -175,6 +189,16 @@ Expected<ConfiguredNetworkGroupWrapper> ConfiguredNetworkGroupWrapper::clone()
 Expected<std::unique_ptr<ActivatedNetworkGroup>> ConfiguredNetworkGroupWrapper::activate(const hailo_activate_network_group_params_t &network_group_params)
 {
     return m_configured_network_group->activate(network_group_params);
+}
+
+Expected<std::vector<InputVStream>> ConfiguredNetworkGroupWrapper::create_input_vstreams(const std::map<std::string, hailo_vstream_params_t> &inputs_params)
+{
+    return m_configured_network_group->create_input_vstreams(inputs_params);
+}
+
+Expected<std::vector<OutputVStream>> ConfiguredNetworkGroupWrapper::create_output_vstreams(const std::map<std::string, hailo_vstream_params_t> &outputs_params)
+{
+    return m_configured_network_group->create_output_vstreams(outputs_params);
 }
 
 } /* namespace hailort */

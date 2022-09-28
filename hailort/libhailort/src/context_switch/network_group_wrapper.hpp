@@ -13,6 +13,7 @@
 
 #include "hailo/hailort.h"
 #include "hailo/network_group.hpp"
+#include "hailo/vstream.hpp"
 #include "network_group_internal.hpp"
 
 namespace hailort
@@ -31,6 +32,7 @@ public:
     Expected<ConfiguredNetworkGroupWrapper> clone();
 
     virtual const std::string &get_network_group_name() const override;
+    virtual const std::string &name() const override;
     virtual Expected<hailo_stream_interface_t> get_default_streams_interface() override;
 
     virtual std::vector<std::reference_wrapper<InputStream>> get_input_streams_by_interface(hailo_stream_interface_t stream_interface) override;
@@ -69,8 +71,13 @@ public:
 
     virtual AccumulatorPtr get_activation_time_accumulator() const override;
     virtual AccumulatorPtr get_deactivation_time_accumulator() const override;
+    virtual bool is_multi_context() const override;
+    virtual const ConfigureNetworkParams get_config_params() const override;
 
     std::shared_ptr<ConfiguredNetworkGroupBase> get_configured_network() const;
+
+    virtual Expected<std::vector<InputVStream>> create_input_vstreams(const std::map<std::string, hailo_vstream_params_t> &inputs_params);
+    virtual Expected<std::vector<OutputVStream>> create_output_vstreams(const std::map<std::string, hailo_vstream_params_t> &outputs_params);
 
 protected:
     virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_internal(

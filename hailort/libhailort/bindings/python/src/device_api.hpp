@@ -44,13 +44,20 @@ class DeviceWrapper final
 {
 public:
 
+    static std::vector<std::string> scan();
+    static DeviceWrapper create(const std::string &device_id);
     static DeviceWrapper create_pcie(hailo_pcie_device_info_t &device_info);
-    static DeviceWrapper create_eth(std::string &device_address, uint16_t port,
+    static DeviceWrapper create_eth(const std::string &device_address, uint16_t port,
         uint32_t timeout_milliseconds, uint8_t max_number_of_attempts);
-    static DeviceWrapper create_core();
     void release();
 
     Device& device()
+    {
+        VALIDATE_NOT_NULL(m_device);
+        return *(m_device.get());
+    }
+
+    const Device& device() const
     {
         VALIDATE_NOT_NULL(m_device);
         return *(m_device.get());
@@ -117,6 +124,7 @@ public:
     py::bytes read_log(size_t byte_count, hailo_cpu_id_t cpu_id);
     void direct_write_memory(uint32_t address, py::bytes buffer);
     py::bytes direct_read_memory(uint32_t address, uint32_t size);
+    const char *get_dev_id() const;
 
     static void add_to_python_module(py::module &m);
 

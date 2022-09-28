@@ -29,6 +29,8 @@
 #include "sensor_config_utils.hpp"
 #include "common/compiler_extensions_compat.hpp"
 #include "hailort_logger.hpp"
+#include "shared_resource_manager.hpp"
+#include "vdevice_internal.hpp"
 
 #include <chrono>
 
@@ -38,6 +40,7 @@ COMPAT__INITIALIZER(hailort__initialize_logger)
 {
     // Init logger singleton if compiling only HailoRT
     (void) HailoRTLogger::get_instance();
+    (void) SharedResourceManager<std::string, VDeviceBase>::get_instance();
 }
 
 hailo_status hailo_get_library_version(hailo_version_t *version)
@@ -118,6 +121,44 @@ hailo_status hailo_get_extended_device_information(hailo_device device, hailo_ex
     return HAILO_SUCCESS;
 }
 
+hailo_status hailo_scan_devices(hailo_scan_devices_params_t *params, hailo_device_id_t *device_ids,
+    size_t *device_ids_length)
+{
+    CHECK_ARG_NOT_NULL(device_ids);
+    CHECK_ARG_NOT_NULL(device_ids_length);
+    CHECK(params == nullptr, HAILO_INVALID_ARGUMENT, "Passing scan params is not allowed");
+
+    auto device_ids_vector = Device::scan();
+    CHECK_EXPECTED_AS_STATUS(device_ids_vector);
+
+    if (device_ids_vector->size() > *device_ids_length) {
+        LOGGER__ERROR("Too many devices detected. devices count: {}, scan_results_length: {}",
+            device_ids_vector->size(), *device_ids_length);
+        *device_ids_length = device_ids_vector->size();
+        return HAILO_INSUFFICIENT_BUFFER;
+    }
+    *device_ids_length = device_ids_vector->size();
+
+    for (size_t i = 0; i < device_ids_vector->size(); i++) {
+        auto device_id = HailoRTCommon::to_device_id(device_ids_vector.value()[i]);
+        CHECK_EXPECTED_AS_STATUS(device_id);
+        device_ids[i] = device_id.release();
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_create_device_by_id(const hailo_device_id_t *device_id, hailo_device *device_out)
+{
+    CHECK_ARG_NOT_NULL(device_out);
+
+    auto device = (device_id == nullptr) ? Device::create() : Device::create(device_id->id);
+    CHECK_EXPECTED_AS_STATUS(device, "Failed creating pcie device");
+    *device_out = reinterpret_cast<hailo_device>(device.release().release());
+
+    return HAILO_SUCCESS;
+}
+
 // TODO: Fill pcie_device_infos_length items into pcie_device_infos, 
 //       even if 'scan_results->size() > pcie_device_infos_length' (HRT-3163)
 hailo_status hailo_scan_pcie_devices(
@@ -143,7 +184,7 @@ hailo_status hailo_parse_pcie_device_info(const char *device_info_str,
     CHECK_ARG_NOT_NULL(device_info_str);
     CHECK_ARG_NOT_NULL(device_info);
 
-    auto local_device_info = PcieDevice::parse_pcie_device_info(std::string(device_info_str));
+    auto local_device_info = Device::parse_pcie_device_info(std::string(device_info_str));
     CHECK_EXPECTED_AS_STATUS(local_device_info);
 
     *device_info = local_device_info.value();
@@ -165,6 +206,31 @@ hailo_status hailo_release_device(hailo_device device_ptr)
 {
     CHECK_ARG_NOT_NULL(device_ptr);
     delete reinterpret_cast<Device*>(device_ptr);
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_device_get_type_by_device_id(const hailo_device_id_t *device_id,
+    hailo_device_type_t *device_type)
+{
+    CHECK_ARG_NOT_NULL(device_id);
+    const auto local_device_type = Device::get_device_type(device_id->id);
+    CHECK_EXPECTED_AS_STATUS(local_device_type);
+
+    switch (local_device_type.value()) {
+    case Device::Type::PCIE:
+        *device_type = HAILO_DEVICE_TYPE_PCIE;
+        break;
+    case Device::Type::ETH:
+        *device_type = HAILO_DEVICE_TYPE_ETH;
+        break;
+    case Device::Type::CORE:
+        *device_type = HAILO_DEVICE_TYPE_CORE;
+        break;
+    default:
+        LOGGER__ERROR("Internal failure, invalid device type returned");
+        return HAILO_INTERNAL_FAILURE;
+    }
+
     return HAILO_SUCCESS;
 }
 
@@ -241,11 +307,11 @@ hailo_status hailo_get_device_id(hailo_device device, hailo_device_id_t *id)
 {
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(id);
-    auto device_id = (reinterpret_cast<Device*>(device))->get_dev_id();
-    CHECK(strnlen(device_id, HAILO_MAX_DEVICE_ID_LENGTH) < HAILO_MAX_DEVICE_ID_LENGTH, HAILO_INTERNAL_FAILURE,
-        "Device '{}' has a too long name (max is HAILO_MAX_DEVICE_ID_LENGTH)", device_id);
-    strncpy(id->id, device_id, HAILO_MAX_DEVICE_ID_LENGTH - 1);
-    id->id[HAILO_MAX_DEVICE_ID_LENGTH - 1] = 0;
+
+    auto id_expected = HailoRTCommon::to_device_id(reinterpret_cast<Device*>(device)->get_dev_id());
+    CHECK_EXPECTED_AS_STATUS(id_expected);
+    *id = id_expected.release();
+
     return HAILO_SUCCESS;
 }
 
@@ -1806,11 +1872,14 @@ hailo_status hailo_get_physical_devices(hailo_vdevice vdevice, hailo_device *dev
 hailo_status hailo_get_physical_devices_infos(hailo_vdevice vdevice, hailo_pcie_device_info_t *devices_infos,
     size_t *number_of_devices)
 {
+    CHECK_ARG_NOT_NULL(vdevice);
     CHECK_ARG_NOT_NULL(devices_infos);
     CHECK_ARG_NOT_NULL(number_of_devices);
 
+IGNORE_DEPRECATION_WARNINGS_BEGIN
     auto phys_devices_infos = (reinterpret_cast<VDevice *>(vdevice))->get_physical_devices_infos();
     CHECK_EXPECTED_AS_STATUS(phys_devices_infos);
+IGNORE_DEPRECATION_WARNINGS_END
 
     if (*number_of_devices < phys_devices_infos->size()) {
         LOGGER__ERROR("Can't return all physical devices infos. There are {} physical devices infos under the vdevice, but output array is of size {}",
@@ -1822,6 +1891,33 @@ hailo_status hailo_get_physical_devices_infos(hailo_vdevice vdevice, hailo_pcie_
 
     for (size_t i = 0; i < phys_devices_infos->size(); i++) {
         devices_infos[i] = phys_devices_infos.value()[i];
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_vdevice_get_physical_devices_ids(hailo_vdevice vdevice, hailo_device_id_t *devices_ids,
+    size_t *number_of_devices)
+{
+    CHECK_ARG_NOT_NULL(vdevice);
+    CHECK_ARG_NOT_NULL(devices_ids);
+    CHECK_ARG_NOT_NULL(number_of_devices);
+
+    const auto phys_devices_ids = (reinterpret_cast<VDevice *>(vdevice))->get_physical_devices_ids();
+    CHECK_EXPECTED_AS_STATUS(phys_devices_ids);
+
+    if (*number_of_devices < phys_devices_ids->size()) {
+        LOGGER__ERROR("Can't return all physical devices ids. There are {} physical devices ids under the vdevice, but output array is of size {}",
+            phys_devices_ids->size(), *number_of_devices);
+        *number_of_devices = phys_devices_ids->size();
+        return HAILO_INSUFFICIENT_BUFFER;
+    }
+    *number_of_devices = phys_devices_ids->size();
+
+    for (size_t i = 0; i < phys_devices_ids->size(); i++) {
+        auto id_expected = HailoRTCommon::to_device_id(phys_devices_ids.value()[i]);
+        CHECK_EXPECTED_AS_STATUS(id_expected);
+        devices_ids[i] = id_expected.release();
     }
 
     return HAILO_SUCCESS;

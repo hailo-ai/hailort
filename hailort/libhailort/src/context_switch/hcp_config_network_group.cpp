@@ -20,7 +20,7 @@ Expected<std::unique_ptr<ActivatedNetworkGroup>> HcpConfigNetworkGroup::activate
 {
     auto start_time = std::chrono::steady_clock::now();
 
-    auto activated_net_group = HcpConfigActivatedNetworkGroup::create(m_device, m_config, get_network_group_name(), network_group_params,
+    auto activated_net_group = HcpConfigActivatedNetworkGroup::create(m_device, m_config, name(), network_group_params,
         m_input_streams, m_output_streams, m_active_net_group_holder, m_config_params.power_mode,
         m_network_group_activated_event);
     CHECK_EXPECTED(activated_net_group);
@@ -29,7 +29,7 @@ Expected<std::unique_ptr<ActivatedNetworkGroup>> HcpConfigNetworkGroup::activate
     CHECK_AS_EXPECTED(nullptr != activated_net_group_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     auto elapsed_time_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time).count();
-    LOGGER__INFO("Activating {} took {} milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.", get_network_group_name(), elapsed_time_ms);
+    LOGGER__INFO("Activating {} took {} milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.", name(), elapsed_time_ms);
 
     return activated_net_group_ptr;
 }
@@ -53,7 +53,7 @@ hailo_status HcpConfigNetworkGroup::set_scheduler_threshold(uint32_t threshold, 
     return HAILO_INVALID_OPERATION;
 }
 
-Expected<std::shared_ptr<LatencyMetersMap>> HcpConfigNetworkGroup::get_latnecy_meters()
+Expected<std::shared_ptr<LatencyMetersMap>> HcpConfigNetworkGroup::get_latency_meters()
 {
     /* hcp does not support latnecy. return empty map */
     LatencyMetersMap empty_map; 

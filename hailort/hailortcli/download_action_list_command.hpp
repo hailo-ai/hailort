@@ -11,9 +11,11 @@
 #define _HAILO_DOWNLOAD_ACTION_LIST_COMMAND_HPP_
 
 #include "hailortcli.hpp"
+#include "common.hpp"
 #include "command.hpp"
 
 #include "context_switch_defs.h"
+#include "common/utils.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -62,7 +64,7 @@ private:
 
 // JSON serialization
 
-NLOHMANN_JSON_SERIALIZE_ENUM(CONTEXT_SWITCH_DEFS__ACTION_TYPE_t, {
+static std::pair<CONTEXT_SWITCH_DEFS__ACTION_TYPE_t, std::string> mapping[] = {
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_CFG_CHANNEL_DESCRIPTORS, "fetch_cfg_channel_descriptors"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_TRIGGER_SEQUENCER, "trigger_sequencer"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_DATA_FROM_VDMA_CHANNEL, "fetch_data_from_vdma_channel"},
@@ -93,14 +95,16 @@ NLOHMANN_JSON_SERIALIZE_ENUM(CONTEXT_SWITCH_DEFS__ACTION_TYPE_t, {
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_DMA_IDLE_ACTION, "wait_for_dma_idle_action"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_NMS_IDLE, "wait_for_nms_idle"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_CCW_BURSTS, "fetch_ccw_bursts"},
-    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_DDR_BUFFERING_RESET, "ddr_buffering_reset"},
-    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT, nullptr},
-});
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_DDR_BUFFERING_RESET, "ddr_buffering_reset"}
+};
+static_assert(ARRAY_ENTRIES(mapping) == CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT,
+    "Missing a mapping from a CONTEXT_SWITCH_DEFS__ACTION_TYPE_t to it's string value");
+
+NLOHMANN_JSON_SERIALIZE_ENUM2(CONTEXT_SWITCH_DEFS__ACTION_TYPE_t, mapping);
 
 // Default implementions
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__repeated_action_header_t, count, last_executed, sub_action_type);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__trigger_sequencer_action_data_t, cluster_index);
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__add_ddr_pair_info_action_data_t, h2d_vdma_channel_index, d2h_vdma_channel_index);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__sequencer_interrupt_data_t, sequencer_index);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__wait_nms_idle_data_t, aggregator_index);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__module_config_done_interrupt_data_t, module_index);
@@ -108,7 +112,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__application_change_inter
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__fetch_ccw_bursts_action_data_t, config_stream_index);
 
 // Non-default implementations
-
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__deactivate_vdma_channel_action_data_t &data);
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__validate_vdma_channel_action_data_t &data);
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_boundary_input_data_t &data);
@@ -128,6 +131,6 @@ void to_json(json &j, const CONTEXT_SWITCH_DEFS__vdma_dataflow_interrupt_data_t 
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__lcu_interrupt_data_t& data);
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_cfg_channel_t &data);
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__deactivate_cfg_channel_t &data);
-
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__add_ddr_pair_info_action_data_t &data);
 
 #endif /* _HAILO_DOWNLOAD_ACTION_LIST_COMMAND_HPP_ */

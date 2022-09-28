@@ -1635,18 +1635,13 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_main_header_requ
 
     /* Header */
     local_request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE + sizeof(CONTROL_PROTOCOL__context_switch_set_main_header_request_t);
-    control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_SET_MAIN_HEADER, 4);
+    control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_SET_MAIN_HEADER, 3);
 
     /* context_switch_version */
     request->parameters.context_switch_set_main_header_request.context_switch_version_length = 
         BYTE_ORDER__htonl(sizeof(request->parameters.context_switch_set_main_header_request.context_switch_version));
     request->parameters.context_switch_set_main_header_request.context_switch_version = 
         context_switch_header->context_switch_version;
-
-    /* validation_features */
-    request->parameters.context_switch_set_main_header_request.validation_features_length = 
-        BYTE_ORDER__htonl(sizeof(request->parameters.context_switch_set_main_header_request.validation_features));
-    request->parameters.context_switch_set_main_header_request.validation_features = context_switch_header->validation_features;
 
     /* application_count */
     request->parameters.context_switch_set_main_header_request.application_count_length = 
@@ -1955,6 +1950,28 @@ exit:
     return status;
 }
 
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_clear_configured_apps_request(
+    CONTROL_PROTOCOL__request_t *request,
+    size_t *request_size,
+    uint32_t sequence)
+{
+    HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
+
+    if ((NULL == request) || (NULL == request_size)) {
+        status = HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED;
+        goto exit;
+    }
+
+    *request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE;
+    control_protocol__pack_empty_request(request, request_size, sequence,
+        HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_CLEAR_CONFIGURED_APPS);
+    
+    status = HAILO_COMMON_STATUS__SUCCESS;
+
+exit:
+    return status;
+}
+
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_previous_system_state(
     CONTROL_PROTOCOL__request_t *request,
     size_t *request_size,
@@ -2094,37 +2111,6 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_d2h_event_manager_send_host_info_ev
     request->parameters.d2h_event_manager_send_host_info_event_request.priority = event_priority;
     
 
-    *request_size = local_request_size;
-    status = HAILO_COMMON_STATUS__SUCCESS;
-exit:
-    return status;
-}
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_switch_application_request(
-        CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
-        uint8_t application_index, uint16_t dynamic_batch_size)
-{
-    HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
-    size_t local_request_size = 0;
-
-    if ((NULL == request) || (NULL == request_size)) {
-        status = HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED;
-        goto exit;
-    }
-
-    /* Header */
-    local_request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE + sizeof(CONTROL_PROTOCOL__switch_application_request_t);
-    control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_SWITCH_APPLICATION, 1);
-
-    /* application_index */
-    request->parameters.switch_application_request.application_index_length =
-        BYTE_ORDER__htonl(sizeof(request->parameters.switch_application_request.application_index));
-    request->parameters.switch_application_request.application_index = application_index;
-
-    /* dynamic_batch_size */
-    request->parameters.switch_application_request.dynamic_batch_size_length =
-        BYTE_ORDER__htonl(sizeof(request->parameters.switch_application_request.dynamic_batch_size));
-    request->parameters.switch_application_request.dynamic_batch_size = dynamic_batch_size;
-        
     *request_size = local_request_size;
     status = HAILO_COMMON_STATUS__SUCCESS;
 exit:

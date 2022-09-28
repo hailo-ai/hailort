@@ -1,3 +1,7 @@
+from enum import Enum, IntEnum
+import re
+import signal
+import struct
 import pkg_resources
 # hailo_platform package has been renamed to hailort, but the import is still hailo_platform
 __version__ = pkg_resources.get_distribution("hailort").version
@@ -15,25 +19,26 @@ import hailo_platform.pyhailort._pyhailort as _pyhailort
 if _pyhailort.__version__ != __version__:
     raise ImportError("_pyhailort version ({}) does not match pyhailort version ({})".format(_pyhailort.__version__, __version__))
 
-from hailo_platform.pyhailort._pyhailort import (BootloaderVersion, TemperatureInfo, # noqa F401
-                                                        DvmTypes, PowerMeasurementTypes,  # noqa F401
-                                                        PowerMeasurementData, NotificationId,  # noqa F401
-                                                        OvercurrentAlertState,
-                                                        FormatOrder,
-                                                        AveragingFactor, SamplingPeriod, MeasurementBufferIndex,
-                                                        FormatType, WatchdogMode,
-                                                        MipiDataTypeRx, MipiPixelsPerClock,
-                                                        MipiClockSelection, MipiIspImageInOrder,
-                                                        MipiIspImageOutDataType, IspLightFrequency,
-                                                        BootSource, HailoSocketDefs, Endianness,
-                                                        MipiInputStreamParams, SensorConfigTypes,
-                                                        SensorConfigOpCode)
+from hailo_platform.pyhailort._pyhailort import (TemperatureInfo, # noqa F401
+                                                 DvmTypes, PowerMeasurementTypes,  # noqa F401
+                                                 PowerMeasurementData, NotificationId,  # noqa F401
+                                                 OvercurrentAlertState,
+                                                 FormatOrder,
+                                                 AveragingFactor, SamplingPeriod, MeasurementBufferIndex,
+                                                 FormatType, WatchdogMode,
+                                                 MipiDataTypeRx, MipiPixelsPerClock,
+                                                 MipiClockSelection, MipiIspImageInOrder,
+                                                 MipiIspImageOutDataType, IspLightFrequency,
+                                                 BootSource, HailoSocketDefs, Endianness,
+                                                 MipiInputStreamParams, SensorConfigTypes,
+                                                 SensorConfigOpCode)
 
 BBOX_PARAMS = _pyhailort.HailoRTDefaults.BBOX_PARAMS()
 HAILO_DEFAULT_ETH_CONTROL_PORT = _pyhailort.HailoRTDefaults.HAILO_DEFAULT_ETH_CONTROL_PORT()
 INPUT_DATAFLOW_BASE_PORT = _pyhailort.HailoRTDefaults.DEVICE_BASE_INPUT_STREAM_PORT()
 OUTPUT_DATAFLOW_BASE_PORT = _pyhailort.HailoRTDefaults.DEVICE_BASE_OUTPUT_STREAM_PORT()
 PCIE_ANY_DOMAIN = _pyhailort.HailoRTDefaults.PCIE_ANY_DOMAIN()
+HAILO_UNIQUE_VDEVICE_GROUP_ID = _pyhailort.HailoRTDefaults.HAILO_UNIQUE_VDEVICE_GROUP_ID()
 DEFAULT_VSTREAM_TIMEOUT_MS = 10000
 DEFAULT_VSTREAM_QUEUE_SIZE = 2
 
@@ -1226,29 +1231,1096 @@ class HailoCpuId(_pyhailort.CpuId):
 class HailoFormatFlags(_pyhailort.FormatFlags):
     pass
 
+SUPPORTED_PROTOCOL_VERSION = 2
+SUPPORTED_FW_MAJOR = 4
+SUPPORTED_FW_MINOR = 10
+SUPPORTED_FW_REVISION = 0
+
+MEGA_MULTIPLIER = 1000.0 * 1000.0
+
+
+class DeviceArchitectureTypes(IntEnum):
+    HAILO8_A0 = 0
+    HAILO8 = 1
+    HAILO8L = 2
+    MERCURY_CA = 3
+
+    def __str__(self):
+        return self.name
+
+class BoardInformation(object):
+    def __init__(self, protocol_version, fw_version_major, fw_version_minor, fw_version_revision,
+                 logger_version, board_name, is_release, device_architecture, serial_number, part_number, product_name):
+        self.protocol_version = protocol_version
+        self.firmware_version = HailoFirmwareVersion.construct_from_params(fw_version_major, fw_version_minor, fw_version_revision, is_release, HailoFirmwareType.APP)
+        self.logger_version = logger_version
+        self.board_name = board_name
+        self.is_release = is_release
+        self.device_architecture = DeviceArchitectureTypes(device_architecture)
+        self.serial_number = serial_number
+        self.part_number = part_number
+        self.product_name = product_name
+    
+    def _string_field_str(self, string_field):
+        # Return <N/A> if the string field is empty
+        return string_field.rstrip('\x00') or "<N/A>"
+
+    def __str__(self):
+        """Returns:
+            str: Human readable string.
+        """
+        return 'Control Protocol Version: {}\n' \
+               'Firmware Version: {}\n' \
+               'Logger Version: {}\n' \
+               'Board Name: {}\n' \
+               'Device Architecture: {}\n' \
+               'Serial Number: {}\n' \
+               'Part Number: {}\n' \
+               'Product Name: {}\n'.format(
+            self.protocol_version,
+            self.firmware_version,
+            self.logger_version,
+            self.board_name.rstrip('\x00'),
+            str(self.device_architecture),
+            self._string_field_str(self.serial_number),
+            self._string_field_str(self.part_number),
+            self._string_field_str(self.product_name))
+       
+    def __repr__(self):
+        """Returns:
+            str: Human readable string.
+        """ 
+        return self.__str__()
+
+    @staticmethod
+    def get_hw_arch_str(device_arch):
+        if ((device_arch == DeviceArchitectureTypes.HAILO8) or
+            (device_arch == DeviceArchitectureTypes.HAILO8L)):
+            return 'hailo8'
+        elif device_arch == DeviceArchitectureTypes.MERCURY_CA:
+            return 'mercury'
+        else:
+            raise HailoRTException("Unsupported device architecture.")
+
+class CoreInformation(object):
+    def __init__(self, fw_version_major, fw_version_minor, fw_version_revision, is_release):
+        self.firmware_version = HailoFirmwareVersion.construct_from_params(fw_version_major, fw_version_minor, fw_version_revision, is_release, HailoFirmwareType.CORE)
+        self.is_release = is_release
+    
+    def __str__(self):
+        """Returns:
+            str: Human readable string.
+        """
+        return 'Core Firmware Version: {}'.format(
+            self.firmware_version)
+
+    def __repr__(self):
+        """Returns:
+            str: Human readable string.
+        """
+        return self.__str__()
+
+class TemperatureThrottlingLevel(object):
+    def __init__(self, level_number, temperature_threshold, hysteresis_temperature_threshold, throttling_nn_clock_freq):
+        self.level_number = level_number
+        self.temperature_threshold = temperature_threshold
+        self.hysteresis_temperature_threshold = hysteresis_temperature_threshold
+        self.throttling_nn_clock_freq = throttling_nn_clock_freq
+
+    def __str__(self):
+        """Returns:
+            str: Human readable string.
+        """
+        return 'Temperature Throttling Level {}: \n' \
+               'Temperature Threshold: {}\n' \
+               'Hysteresis Temperature Threshold: {}\n' \
+               'Throttling NN Clock Frequency: {}\n' \
+               .format(self.level_number, self.temperature_threshold, self.hysteresis_temperature_threshold, self.throttling_nn_clock_freq)
+        
+    def __repr__(self):
+        return self.__str__()
+
+class HealthInformation(object):
+    def __init__(self, overcurrent_protection_active, current_overcurrent_zone, red_overcurrent_threshold, overcurrent_throttling_active,
+                       temperature_throttling_active, current_temperature_zone, current_temperature_throttling_level,
+                       temperature_throttling_levels, orange_temperature_threshold, orange_hysteresis_temperature_threshold, 
+                       red_temperature_threshold, red_hysteresis_temperature_threshold, requested_overcurrent_clock_freq, requested_temperature_clock_freq):
+        self.overcurrent_protection_active = overcurrent_protection_active
+        self.current_overcurrent_zone = current_overcurrent_zone
+        self.red_overcurrent_threshold = red_overcurrent_threshold
+        self.overcurrent_throttling_active = overcurrent_throttling_active
+        self.temperature_throttling_active = temperature_throttling_active
+        self.current_temperature_zone = current_temperature_zone
+        self.current_temperature_throttling_level = current_temperature_throttling_level
+        self.orange_temperature_threshold = orange_temperature_threshold
+        self.orange_hysteresis_temperature_threshold = orange_hysteresis_temperature_threshold
+        self.red_temperature_threshold = red_temperature_threshold
+        self.red_hysteresis_temperature_threshold = red_hysteresis_temperature_threshold
+        self.requested_overcurrent_clock_freq = requested_overcurrent_clock_freq
+        self.requested_temperature_clock_freq = requested_temperature_clock_freq
+        
+        # Add TemperatureThrottlingLevel in case it has new throttling_nn_clock_freq. level_number can be used as only last
+        # levels can be with the same freq
+        self.temperature_throttling_levels = []
+        if self.temperature_throttling_active:
+            throttling_nn_clock_frequencies = []
+            for level_number, temperature_throttling_level in enumerate(temperature_throttling_levels):
+                if temperature_throttling_level.throttling_nn_clock_freq not in throttling_nn_clock_frequencies:
+                    throttling_nn_clock_frequencies.append(temperature_throttling_level.throttling_nn_clock_freq)
+                    self.temperature_throttling_levels.append(TemperatureThrottlingLevel(level_number,
+                                                                                        temperature_throttling_level.temperature_threshold, 
+                                                                                        temperature_throttling_level.hysteresis_temperature_threshold, 
+                                                                                        temperature_throttling_level.throttling_nn_clock_freq))
+    def __repr__(self):
+        return self.__str__()
+
+    def __str__(self):
+        """Returns:
+            str: Human readable string.
+        """
+        temperature_throttling_levels_str = "\n".join(["\n\n{}\n".format(str(temperature_throttling_level)) for temperature_throttling_level in self.temperature_throttling_levels]) \
+                                            if self.temperature_throttling_active else "<Temperature throttling is disabled>"
+        return 'Overcurrent Protection Active: {}\n' \
+               'Overcurrent Protection Current Overcurrent Zone: {}\n' \
+               'Overcurrent Protection Red Threshold: {}\n' \
+               'Overcurrent Protection Throttling State: {}\n' \
+               'Temperature Protection Red Threshold: {}\n' \
+               'Temperature Protection Red Hysteresis Threshold: {}\n' \
+               'Temperature Protection Orange Threshold: {}\n' \
+               'Temperature Protection Orange Hysteresis Threshold: {}\n' \
+               'Temperature Protection Throttling State: {}\n' \
+               'Temperature Protection Current Zone: {}\n' \
+               'Temperature Protection Current Throttling Level: {}\n' \
+               'Temperature Protection Throttling Levels: {}' \
+               .format(self.overcurrent_protection_active, self.current_overcurrent_zone, self.red_overcurrent_threshold, 
+                       self.overcurrent_throttling_active, self.red_temperature_threshold, 
+                       self.red_hysteresis_temperature_threshold, self.orange_temperature_threshold, 
+                       self.orange_hysteresis_temperature_threshold, self.temperature_throttling_active,
+                       self.current_temperature_zone, self.current_temperature_throttling_level, temperature_throttling_levels_str)
+
+class ExtendedDeviceInformation(object):
+    def __init__(self, neural_network_core_clock_rate, supported_features, boot_source, lcs, soc_id, eth_mac_address, unit_level_tracking_id, soc_pm_values):
+        self.neural_network_core_clock_rate = neural_network_core_clock_rate
+        self.supported_features = SupportedFeatures(supported_features)
+        self.boot_source = boot_source
+        self.lcs = lcs
+        self.soc_id = soc_id
+        self.eth_mac_address = eth_mac_address
+        self.unit_level_tracking_id = unit_level_tracking_id
+        self.soc_pm_values = soc_pm_values
+
+    def __str__(self):
+        """Returns:
+            str: Human readable string.
+        """
+        string = 'Neural Network Core Clock Rate: {}MHz\n' \
+                 '{}' \
+                 'Boot source: {}\n' \
+                 'LCS: {}\n'.format(
+            self.neural_network_core_clock_rate / MEGA_MULTIPLIER,
+            str(self.supported_features),
+            str(self.boot_source.name),
+            str(self.lcs))
+        if any(self.soc_id):
+            string += 'SoC ID: ' + (self.soc_id.hex())
+
+        if any(self.eth_mac_address):
+            string += '\nMAC Address: ' + (":".join("{:02X}".format(i) for i in self.eth_mac_address))
+        
+        if any(self.unit_level_tracking_id):
+            string += '\nULT ID: ' + (self.unit_level_tracking_id.hex())
+        
+        if any(self.soc_pm_values):
+            string += '\nPM Values: ' + (self.soc_pm_values.hex())
+
+
+        return string
+
+    def __repr__(self):
+        """Returns:
+            str: Human readable string.
+        """
+        return self.__str__()
+
+class HailoFirmwareMode(Enum):
+    """Indication that firmware version is stable and official  """
+    DEVELOP = 'develop'
+    RELEASE = 'release'
+
+
+class HailoFirmwareType(Enum):
+    """Indication the firmware type """
+    CORE = 'core'
+    APP = 'app'
+
+
+class HailoFirmwareVersion(object):
+    """Represents a Hailo chip firmware version."""
+    DEV_BIT  = 0x80000000
+    CORE_BIT = 0x08000000
+    FW_VERSION_FORMAT = '<III'
+
+    def __init__(self, firmware_version_buffer, is_release, fw_type):
+        """Initialize a new Hailo Firmware Version object.
+
+        Args:
+            firmware_version_buffer (str): A buffer containing the firmware version struct.
+            is_release (bool, optional): Flag indicating if firmware is at develop/release mode.
+                                        None indicates unknown
+        """
+        self.major, self.minor, self.revision = struct.unpack(
+            self.FW_VERSION_FORMAT,
+            firmware_version_buffer)
+        
+        self.fw_type = fw_type
+        self.mode = HailoFirmwareMode.RELEASE if is_release else HailoFirmwareMode.DEVELOP
+        
+        self.revision &= ~(self.CORE_BIT | self.DEV_BIT)
+
+    def __str__(self):
+        """Returns:
+            str: Firmware version in a human readable format.
+        """
+        return '{}.{}.{} ({},{})'.format(self.major, self.minor, self.revision, self.mode.value, self.fw_type.value)
+
+    @classmethod
+    def construct_from_params(cls, major, minor, revision, is_release, fw_type):
+        """Returns:
+            class HailoFirmwareVersion : with the given Firmware version.
+        """
+        return cls(struct.pack(HailoFirmwareVersion.FW_VERSION_FORMAT, major, minor, revision), is_release, fw_type)
+
+    @property
+    def comparable_value(self):
+        """A value that could be compared to other firmware versions."""
+        return (self.major << 64) + (self.minor << 32) + (self.revision)
+
+    def __hash__(self):
+        return self.comparable_value
+
+    def __eq__(self, other):
+        return self.comparable_value == other.comparable_value
+
+    def __lt__(self, other):
+        return self.comparable_value < other.comparable_value
+
+    def check_protocol_compatibility(self, other):
+        return ((self.major == other.major) and (self.minor == other.minor))
+
+class SupportedFeatures(object):
+    def __init__(self, supported_features):
+        self.ethernet = supported_features.ethernet
+        self.mipi = supported_features.mipi
+        self.pcie = supported_features.pcie
+        self.current_monitoring = supported_features.current_monitoring
+        self.mdio = supported_features.mdio
+    
+    def _feature_str(self, feature_name, is_feature_enabled):
+        return '{}: {}\n'.format(feature_name, 'Enabled' if is_feature_enabled else 'Disabled')
+
+    def __str__(self):
+        """Returns:
+            str: Human readable string.
+        """
+        return 'Device supported features: \n' + \
+            self._feature_str('Ethernet', self.ethernet) + \
+            self._feature_str('MIPI', self.mipi) + \
+            self._feature_str('PCIE', self.pcie) + \
+            self._feature_str('Current Monitoring', self.current_monitoring) + \
+            self._feature_str('MDIO', self.mdio)
+
+    def __repr__(self):
+        """Returns:
+            str: Human readable string.
+        """
+        return self.__str__()
+
+    def _is_feature_enabled(self, feature):
+        return (self.supported_features & feature) != 0
+
+def _enum_to_dict(enum):
+    return {k: v for k, v in enum.__dict__.items() if not re.match("__(.*)", str(k)) and isinstance(v, enum)}
+
+def _get_buffer_index_enum_member(index):
+    for name, member in _enum_to_dict(MeasurementBufferIndex).items():
+        if int(member) == index:
+            return member
+    raise HailoRTException("Invalid index")
+
+class Control:
+    """The control object of this device, which implements the control API of the Hailo device.
+    Should be used only from Device.control"""
+
+    WORD_SIZE = 4
+
+    def __init__(self, device: '_pyhailort.Device'):
+        self._device = device
+        self._logger = default_logger()
+
+        # TODO: should remove?
+        if sys.platform != "win32":
+            signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGWINCH])
+
+        self._identify_info = self.identify()
+
+    @property
+    def device_id(self):
+        """Getter for the device_id.
+
+        Returns:
+            str: A string ID of the device. BDF for PCIe devices, IP address for Ethernet devices, "Core" for core devices.
+        """
+        return self._device.device_id
+
+    def open(self):
+        """Initializes the resources needed for using a control device."""
+        pass
+
+    def close(self):
+        """Releases the resources that were allocated for the control device."""
+        pass
+
+    def chip_reset(self):
+        """Resets the device (chip reset)."""
+        with ExceptionWrapper():
+            return self._device.reset(_pyhailort.ResetDeviceMode.CHIP)
+
+    def nn_core_reset(self):
+        """Resets the nn_core."""
+        with ExceptionWrapper():
+            return self._device.reset(_pyhailort.ResetDeviceMode.NN_CORE)
+
+    def soft_reset(self):
+        """reloads the device firmware (soft reset)"""
+        with ExceptionWrapper():
+            return self._device.reset(_pyhailort.ResetDeviceMode.SOFT)
+        
+    def forced_soft_reset(self):
+        """reloads the device firmware (forced soft reset)"""
+        with ExceptionWrapper():
+            return self._device.reset(_pyhailort.ResetDeviceMode.FORCED_SOFT)
+
+    def read_memory(self, address, data_length):
+        """Reads memory from the Hailo chip. Byte order isn't changed. The core uses little-endian
+        byte order.
+
+        Args:
+            address (int): Physical address to read from.
+            data_length (int): Size to read in bytes.
+
+        Returns:
+            list of str: Memory read from the chip, each index in the list is a byte
+        """
+        with ExceptionWrapper():
+            return self._device.read_memory(address, data_length)
+
+    def write_memory(self, address, data_buffer):
+        """Write memory to Hailo chip. Byte order isn't changed. The core uses little-endian byte
+        order.
+
+        Args:
+            address (int): Physical address to write to.
+            data_buffer (list of str): Data to write.
+        """
+        with ExceptionWrapper():
+            return self._device.write_memory(address, data_buffer, len(data_buffer))
+
+    def configure(self, hef, configure_params_by_name={}):
+        """
+        Configures device from HEF object.
+
+        Args:
+            hef (:class:`~hailo_platform.pyhailort.pyhailort.HEF`): HEF to configure the
+                device from.
+            configure_params_by_name (dict, optional): Maps between each net_group_name to
+                configure_params. In case of a mismatch with net_groups_names, default params will
+                be used.
+        """     
+        with ExceptionWrapper():
+            return self._device.configure(hef._hef, configure_params_by_name)
+
+    def power_measurement(self, dvm=DvmTypes.AUTO, measurement_type=PowerMeasurementTypes.AUTO):
+        """Perform a single power measurement on an Hailo chip. It works with the default settings
+        where the sensor returns a new value every 2.2 ms without averaging the values.
+
+        Args:
+            dvm (:class:`~hailo_platform.pyhailort.pyhailort.DvmTypes`):
+                Which DVM will be measured. Default (:class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.AUTO`) will be different according to the board: \n
+                 Default (:class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.AUTO`) for EVB is an approximation to the total power consumption of the chip in PCIe setups.
+                 It sums :class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.VDD_CORE`,
+                 :class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.MIPI_AVDD` and :class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.AVDD_H`.
+                 Only :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes.POWER` can measured with this option. \n
+                 Default (:class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.AUTO`) for platforms supporting current monitoring (such as M.2 and mPCIe): :class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.OVERCURRENT_PROTECTION`
+            measurement_type
+             (:class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes`):
+             The type of the measurement.
+
+        Returns:
+            float: The measured power. \n
+            For :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes`: \n
+            - :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes.SHUNT_VOLTAGE`: Unit is mV. \n
+            - :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes.BUS_VOLTAGE`: Unit is mV. \n
+            - :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes.POWER`: Unit is W. \n
+            - :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes.CURRENT`: Unit is mA. \n
+
+
+        Note:
+            This function can perform measurements for more than just power. For all supported
+            measurement types, please look at
+            :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes`.
+        """
+        if ((self._identify_info.device_architecture != DeviceArchitectureTypes.HAILO8) and
+            (self._identify_info.device_architecture != DeviceArchitectureTypes.HAILO8L)):
+            raise HailoRTException("Invalid device architecture: {}".format(self._identify_info.device_architecture))
+        with ExceptionWrapper():
+            return self._device.power_measurement(dvm, measurement_type)
+
+    def start_power_measurement(self, delay=None, averaging_factor=AveragingFactor.AVERAGE_256, sampling_period=SamplingPeriod.PERIOD_1100us):
+        """Start performing a long power measurement.
+
+        Args:
+            delay: Unused parameter. Will be removed in future versions.
+            averaging_factor (:class:`~hailo_platform.pyhailort.pyhailort.AveragingFactor`):
+                Number of samples per time period, sensor configuration value.
+            sampling_period (:class:`~hailo_platform.pyhailort.pyhailort.SamplingPeriod`):
+                Related conversion time, sensor configuration value. The sensor samples the power
+                every ``sampling_period`` [ms] and averages every ``averaging_factor`` samples. The
+                sensor provides a new value every: 2 * sampling_period * averaging_factor [ms]. The
+                firmware wakes up every ``delay`` [ms] and checks the sensor. If there is a new`
+                value to read from the sensor, the firmware reads it.  Note that the average
+                calculated by the firmware is "average of averages", because it averages values
+                that have already been averaged by the sensor.
+        """
+        # TODO: Remove deprecated arg
+        if delay is not None:
+            self._logger.warning("Passing 'delay' to 'start_power_measurement()' is deprecated and will be removed in future versions")
+        with ExceptionWrapper():
+            return self._device.start_power_measurement(averaging_factor, sampling_period)
+
+    def stop_power_measurement(self):
+        """Stop performing a long power measurement. Deletes all saved results from the firmware.
+        Calling the function eliminates the start function settings for the averaging the samples,
+        and returns to the default values, so the sensor will return a new value every 2.2 ms
+        without averaging values.
+        """
+        with ExceptionWrapper():
+            return self._device.stop_power_measurement()
+
+    def set_power_measurement(self, buffer_index=MeasurementBufferIndex.MEASUREMENT_BUFFER_INDEX_0, dvm=DvmTypes.AUTO, measurement_type=PowerMeasurementTypes.AUTO):
+        """Set parameters for long power measurement on an Hailo chip.
+
+        Args:
+            buffer_index (:class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex`): Index of the buffer on the firmware the data would be saved at.
+                Default is :class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex.MEASUREMENT_BUFFER_INDEX_0`
+            dvm (:class:`~hailo_platform.pyhailort.pyhailort.DvmTypes`):
+                Which DVM will be measured. Default (:class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.AUTO`) will be different according to the board: \n
+                 Default (:class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.AUTO`) for EVB is an approximation to the total power consumption of the chip in PCIe setups.
+                 It sums :class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.VDD_CORE`,
+                 :class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.MIPI_AVDD` and :class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.AVDD_H`.
+                 Only :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes.POWER` can measured with this option. \n
+                 Default (:class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.AUTO`) for platforms supporting current monitoring (such as M.2 and mPCIe): :class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.OVERCURRENT_PROTECTION`
+            measurement_type
+             (:class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes`):
+             The type of the measurement.
+
+        Note:
+            This function can perform measurements for more than just power. For all supported measurement types
+            view :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes`
+        """
+        # TODO: Remove deprecated arg
+        if isinstance(buffer_index, int):
+            self._logger.warning("Passing integer as 'buffer_index' to 'set_power_measurement()' is deprecated. One should pass "
+                ":class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex` as 'buffer_index' instead.")
+            buffer_index = _get_buffer_index_enum_member(buffer_index)
+        with ExceptionWrapper():
+            return self._device.set_power_measurement(buffer_index, dvm, measurement_type)
+
+    def get_power_measurement(self, buffer_index=MeasurementBufferIndex.MEASUREMENT_BUFFER_INDEX_0, should_clear=True):
+        """Read measured power from a long power measurement
+
+        Args:
+            buffer_index (:class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex`): Index of the buffer on the firmware the data would be saved at.
+                Default is :class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex.MEASUREMENT_BUFFER_INDEX_0`
+            should_clear (bool): Flag indicating if the results saved at the firmware will be deleted after reading.
+
+        Returns:
+            :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementData`:
+             Object containing measurement data \n
+            For :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes`: \n
+            - :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes.SHUNT_VOLTAGE`: Unit is mV. \n
+            - :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes.BUS_VOLTAGE`: Unit is mV. \n
+            - :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes.POWER`: Unit is W. \n
+            - :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes.CURRENT`: Unit is mA. \n
+
+        Note:
+            This function can perform measurements for more than just power.
+            For all supported measurement types view
+            :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes`.
+        """
+        if ((self._identify_info.device_architecture != DeviceArchitectureTypes.HAILO8) and
+            (self._identify_info.device_architecture != DeviceArchitectureTypes.HAILO8L)):
+            raise HailoRTException("Invalid device architecture: {}".format(self._identify_info.device_architecture))
+        # TODO: Remove deprecated arg
+        if isinstance(buffer_index, int):
+            self._logger.warning("Passing integer as 'buffer_index' to 'get_power_measurement()' is deprecated. One should pass "
+                ":class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex` as 'buffer_index' instead.")
+            buffer_index = _get_buffer_index_enum_member(buffer_index)
+        with ExceptionWrapper():
+            return self._device.get_power_measurement(buffer_index, should_clear)
+
+    def _examine_user_config(self):
+        with ExceptionWrapper():
+            return self._device.examine_user_config()
+    
+    def read_user_config(self):
+        """Read the user configuration section as binary data.
+
+        Returns:
+            str: User config as a binary buffer.
+        """
+        with ExceptionWrapper():
+            return self._device.read_user_config()
+
+    def write_user_config(self, configuration):
+        """Write the user configuration.
+
+        Args:
+            configuration (str): A binary representation of a Hailo device configuration.
+        """
+        with ExceptionWrapper():
+            return self._device.write_user_config(configuration)
+    
+    def _erase_user_config(self):
+        with ExceptionWrapper():
+            return self._device.erase_user_config()
+    
+    def read_board_config(self):
+        """Read the board configuration section as binary data.
+
+        Returns:
+            str: Board config as a binary buffer.
+        """
+        with ExceptionWrapper():
+            return self._device.read_board_config()
+
+    def write_board_config(self, configuration):
+        """Write the static configuration.
+
+        Args:
+            configuration (str): A binary representation of a Hailo device configuration.
+        """
+        with ExceptionWrapper():
+            return self._device.write_board_config(configuration)
+
+    def identify(self):
+        """Gets the Hailo chip identification.
+
+        Returns:
+            :class:`~hailo_platform.pyhailort.pyhailort.BoardInformation`
+        """
+        with ExceptionWrapper():
+            response =  self._device.identify()
+        board_information = BoardInformation(response.protocol_version, response.fw_version.major,
+            response.fw_version.minor, response.fw_version.revision, response.logger_version,
+            response.board_name, response.is_release,  int(response.device_architecture), response.serial_number,
+            response.part_number, response.product_name)
+        return board_information
+
+    def core_identify(self):
+        """Gets the Core Hailo chip identification.
+
+        Returns:
+            :class:`~hailo_platform.pyhailort.pyhailort.CoreInformation`
+        """
+        with ExceptionWrapper():
+            response =  self._device.core_identify()
+        core_information = CoreInformation(response.fw_version.major, response.fw_version.minor, 
+            response.fw_version.revision, response.is_release)
+        return core_information
+
+    def set_fw_logger(self, level, interface_mask):
+        """Configure logger level and interface of sending.
+
+        Args:
+            level (FwLoggerLevel):    The minimum logger level.
+            interface_mask (int):     Output interfaces (mix of FwLoggerInterface).
+        """
+        with ExceptionWrapper():
+            return self._device.set_fw_logger(level, interface_mask)
+
+    def set_throttling_state(self, should_activate):
+        """Change throttling state of temperature protection and overcurrent protection components.
+           In case that change throttling state of temperature protection didn't succeed,
+           the change throttling state of overcurrent protection is executed.
+
+        Args:
+            should_activate (bool):   Should be true to enable or false to disable. 
+        """
+        with ExceptionWrapper():
+            return self._device.set_throttling_state(should_activate)
+
+    def get_throttling_state(self):
+        """Get the current throttling state of temperature protection and overcurrent protection components.
+           If any throttling is enabled, the function return true.
+
+        Returns:
+            bool: true if temperature or overcurrent protection throttling is enabled, false otherwise.
+        """
+        with ExceptionWrapper():
+            return self._device.get_throttling_state()
+
+    def _set_overcurrent_state(self, should_activate):
+        """Control whether the overcurrent protection is enabled or disabled.
+
+        Args:
+            should_activate (bool):   Should be true to enable or false to disable. 
+        """
+        with ExceptionWrapper():
+            return self._device._set_overcurrent_state(should_activate)
+
+    def _get_overcurrent_state(self):
+        """Get the overcurrent protection state.
+        
+        Returns:
+            bool: true if overcurrent protection is enabled, false otherwise.
+        """
+        with ExceptionWrapper():
+            return self._device._get_overcurrent_state()
+
+    @staticmethod
+    def _create_c_i2c_slave(pythonic_slave):
+        c_slave = _pyhailort.I2CSlaveConfig()
+        c_slave.endianness = pythonic_slave.endianness
+        c_slave.slave_address = pythonic_slave.slave_address
+        c_slave.register_address_size = pythonic_slave.register_address_size
+        c_slave.bus_index = pythonic_slave.bus_index
+        return c_slave
+
+    def i2c_write(self, slave, register_address, data):
+        """Write data to an I2C slave.
+
+        Args:
+            slave (:class:`hailo_platform.pyhailort.i2c_slaves.I2CSlave`): I2C slave
+                configuration.
+            register_address (int): The address of the register to which the data will be written.
+            data (str): The data that will be written.
+        """
+        c_slave = self._create_c_i2c_slave(slave)
+        with ExceptionWrapper():
+            return self._device.i2c_write(c_slave, register_address, data, len(data))
+        
+    def i2c_read(self, slave, register_address, data_length):
+        """Read data from an I2C slave.
+
+        Args:
+            slave (:class:`hailo_platform.pyhailort.i2c_slaves.I2CSlave`): I2C slave
+                configuration.
+            register_address (int): The address of the register from which the data will be read.
+            data_length (int): The number of bytes to read.
+
+        Returns:
+            str: Data read from the I2C slave.
+        """
+        c_slave = self._create_c_i2c_slave(slave)
+        with ExceptionWrapper():
+            return self._device.i2c_read(c_slave, register_address, data_length)
+        
+    def read_register(self, address):
+        """Read the value of a register from a given address.
+
+        Args:
+            address (int): Address to read register from.
+
+        Returns:
+            int: Value of the register
+        """
+        register_value, = struct.unpack('!I', self.read_memory(address, type(self).WORD_SIZE))
+        return register_value
+
+    def set_bit(self, address, bit_index):
+        """Set (turn on) a specific bit at a register from a given address.
+
+        Args:
+            address (int) : Address of the register to modify.
+            bit_index (int) : Index of the bit that would be set.
+        """
+        register_value = self.read_register(address)
+        register_value |= 1 << bit_index
+        self.write_memory(address, struct.pack('!I', register_value))
+
+    def reset_bit(self, address, bit_index):
+        """Reset (turn off) a specific bit at a register from a given address.
+
+        Args:
+            address (int) :  Address of the register to modify.
+            bit_index (int) : Index of the bit that would be reset.
+        """
+        register_value = self.read_register(address)
+        register_value &= ~(1 << bit_index)
+        self.write_memory(address, struct.pack('!I', register_value))
+    
+    def firmware_update(self, firmware_binary, should_reset=True):
+        """Update firmware binary on the flash. 
+        
+        Args:
+            firmware_binary (bytes): firmware binary stream.
+            should_reset (bool): Should a reset be performed after the update (to load the new firmware)
+        """
+        with ExceptionWrapper():
+            return self._device.firmware_update(firmware_binary, len(firmware_binary), should_reset)
+
+    def second_stage_update(self, second_stage_binary):
+        """Update second stage binary on the flash
+        
+        Args:
+            second_stage_binary (bytes): second stage binary stream.
+        """
+        with ExceptionWrapper():
+            return self._device.second_stage_update(second_stage_binary, len(second_stage_binary))
+
+    def store_sensor_config(self, section_index, reset_data_size, sensor_type, config_file_path,
+                            config_height=0, config_width=0, config_fps=0, config_name=None):
+            
+        """Store sensor configuration to Hailo chip flash memory.
+        
+        Args:
+            section_index (int): Flash section index to write to. [0-6]
+            reset_data_size (int): Size of reset configuration.
+            sensor_type (:class:`~hailo_platform.pyhailort.pyhailort.SensorConfigTypes`): Sensor type.
+            config_file_path (str): Sensor configuration file path.
+            config_height (int): Configuration resolution height.
+            config_width (int): Configuration resolution width.
+            config_fps (int): Configuration FPS.
+            config_name (str): Sensor configuration name.
+        """
+        if config_name is None:
+            config_name = "UNINITIALIZED"
+
+        with ExceptionWrapper():
+            return self._device.sensor_store_config(section_index, reset_data_size, sensor_type, config_file_path,
+            config_height, config_width, config_fps, config_name)
+    
+    def store_isp_config(self, reset_config_size, isp_static_config_file_path, isp_runtime_config_file_path,
+                         config_height=0, config_width=0, config_fps=0, config_name=None):
+        """Store sensor isp configuration to Hailo chip flash memory.
+
+        Args:
+            reset_config_size (int): Size of reset configuration.
+            isp_static_config_file_path (str): Sensor isp static configuration file path.
+            isp_runtime_config_file_path (str): Sensor isp runtime configuration file path.
+            config_height (int): Configuration resolution height.
+            config_width (int): Configuration resolution width.
+            config_fps (int): Configuration FPS.
+            config_name (str): Sensor configuration name.
+        """
+        if config_name is None:
+            config_name = "UNINITIALIZED"
+
+        with ExceptionWrapper():
+            return self._device.store_isp_config(reset_config_size, config_height, config_width, 
+            config_fps, isp_static_config_file_path, isp_runtime_config_file_path, config_name)
+
+    def get_sensor_sections_info(self):
+        """Get sensor sections info from Hailo chip flash memory.
+
+        Returns:
+            Sensor sections info read from the chip flash memory.
+        """
+        with ExceptionWrapper():
+            return self._device.sensor_get_sections_info()
+    
+    def sensor_set_generic_i2c_slave(self, slave_address, register_address_size, bus_index, should_hold_bus, endianness):
+        """Set a generic I2C slave for sensor usage.
+
+        Args:
+            sequence (int): Request/response sequence.
+            slave_address (int): The address of the I2C slave.
+            register_address_size (int): The size of the offset (in bytes).
+            bus_index (int): The number of the bus the I2C slave is behind.
+            should_hold_bus (bool): Hold the bus during the read.
+            endianness (:class:`~hailo_platform.pyhailort.pyhailort.Endianness`):
+                Big or little endian.
+        """
+        with ExceptionWrapper():
+            return self._device.sensor_set_generic_i2c_slave(slave_address, register_address_size, bus_index, should_hold_bus, endianness)
+
+    def set_sensor_i2c_bus_index(self, sensor_type, i2c_bus_index):
+        """Set the I2C bus to which the sensor of the specified type is connected.
+  
+        Args:
+            sensor_type (:class:`~hailo_platform.pyhailort.pyhailort.SensorConfigTypes`): The sensor type.
+            i2c_bus_index (int): The I2C bus index of the sensor.
+        """
+        with ExceptionWrapper():
+            return self._device.sensor_set_i2c_bus_index(sensor_type, i2c_bus_index)
+
+    def load_and_start_sensor(self, section_index):
+        """Load the configuration with I2C in the section index.
+  
+        Args:
+            section_index (int): Flash section index to load config from. [0-6]
+        """
+        with ExceptionWrapper():
+            return self._device.sensor_load_and_start_config(section_index)
+
+    def reset_sensor(self, section_index):
+        """Reset the sensor that is related to the section index config.
+
+        Args:
+            section_index (int): Flash section index to reset. [0-6]
+        """
+        with ExceptionWrapper():
+            return self._device.sensor_reset(section_index)
+
+    def wd_enable(self, cpu_id):
+        """Enable firmware watchdog.
+
+        Args:
+            cpu_id (:class:`~hailo_platform.pyhailort.pyhailort.HailoCpuId`): 0 for App CPU, 1 for Core CPU.
+        """
+        with ExceptionWrapper():
+            return self._device.wd_enable(cpu_id)
+
+    def wd_disable(self, cpu_id):
+        """Disable firmware watchdog.
+
+        Args:
+            cpu_id (:class:`~hailo_platform.pyhailort.pyhailort.HailoCpuId`): 0 for App CPU, 1 for Core CPU.
+        """
+        with ExceptionWrapper():
+            return self._device.wd_disable(cpu_id)
+
+    def wd_config(self, cpu_id, wd_cycles, wd_mode):
+        """Configure a firmware watchdog.
+
+        Args:
+            cpu_id (:class:`~hailo_platform.pyhailort.pyhailort.HailoCpuId`): 0 for App CPU, 1 for Core CPU.
+            wd_cycles (int): number of cycles until watchdog is triggered.
+            wd_mode (int): 0 - HW/SW mode, 1 -  HW only mode
+        """
+        with ExceptionWrapper():
+            return self._device.wd_config(cpu_id, wd_cycles, wd_mode)
+
+    def previous_system_state(self, cpu_id):
+        """Read the FW previous system state.
+
+        Args:
+            cpu_id (:class:`~hailo_platform.pyhailort.pyhailort.HailoCpuId`): 0 for App CPU, 1 for Core CPU.
+        """
+        with ExceptionWrapper():
+            return self._device.previous_system_state(cpu_id)
+
+    def get_chip_temperature(self):
+        """Returns the latest temperature measurements from the 2 internal temperature sensors of the Hailo chip.
+
+        Returns:
+            :class:`~hailo_platform.pyhailort.pyhailort.TemperatureInfo`:
+             Temperature in celsius of the 2 internal temperature sensors (TS), and a sample
+             count (a running 16-bit counter)
+        """
+        with ExceptionWrapper():
+            return self._device.get_chip_temperature()
+
+    def get_extended_device_information(self):
+        """Returns extended information about the device
+
+        Returns:
+            :class:`~hailo_platform.pyhailort.pyhailort.ExtendedDeviceInformation`:
+
+        """
+        with ExceptionWrapper():
+            response = self._device.get_extended_device_information()
+        device_information = ExtendedDeviceInformation(response.neural_network_core_clock_rate,
+            response.supported_features, response.boot_source, response.lcs, response.soc_id,  response.eth_mac_address , response.unit_level_tracking_id, response.soc_pm_values)
+        return device_information
+
+    def _get_health_information(self):
+        with ExceptionWrapper():
+            response = self._device._get_health_information()
+
+        health_information = HealthInformation(response.overcurrent_protection_active, response.current_overcurrent_zone, response.red_overcurrent_threshold,
+                    response.overcurrent_throttling_active, response.temperature_throttling_active, response.current_temperature_zone, response.current_temperature_throttling_level, 
+                    response.temperature_throttling_levels, response.orange_temperature_threshold, response.orange_hysteresis_temperature_threshold,
+                    response.red_temperature_threshold, response.red_hysteresis_temperature_threshold, response.requested_overcurrent_clock_freq,
+                    response.requested_temperature_clock_freq)
+        return health_information
+
+    def set_pause_frames(self, rx_pause_frames_enable):
+        """Enable/Disable Pause frames.
+
+        Args:
+            rx_pause_frames_enable (bool): False for disable, True for enable.
+        """
+        with ExceptionWrapper():
+            return self._device.set_pause_frames(rx_pause_frames_enable)
+
+    def test_chip_memories(self):
+        """test all chip memories using smart BIST
+
+        """
+        with ExceptionWrapper():
+            return self._device.test_chip_memories()
+
+    def set_notification_callback(self, callback_func, notification_id, opaque):
+        """Set a callback function to be called when a notification is received.
+
+        Args:
+            callback_func (function): Callback function with the parameters (device, notification, opaque).
+                Note that throwing exceptions is not supported and will cause the program to terminate with an error!
+            notification_id (NotificationId): Notification ID to register the callback to.
+            opauqe (object): User defined data.
+
+        Note:
+            The notifications thread is started and closed in the use_device() context, so
+            notifications can only be received there.
+        """
+        with ExceptionWrapper():
+            return self._device.set_notification_callback(callback_func, notification_id, opaque)
+
+    def remove_notification_callback(self, notification_id):
+        """Remove a notification callback which was already set.
+
+        Args:
+            notification_id (NotificationId): Notification ID to remove the callback from.
+        """
+        with ExceptionWrapper():
+            return self._device.remove_notification_callback(notification_id)
+
+    def _get_device_handle(self):
+        return self._device
+
+
+# TODO: HRT-7718 - implement more functionalities from hw_object.py
+class Device:
+    """ Hailo device object representation. """
+
+    @classmethod
+    def scan(cls):
+        """Scans for all devices on the system.
+
+        Returns:
+            list of str, device ids.
+        """
+        return _pyhailort.Device.scan()
+
+    def __init__(self, device_id=None):
+        """Create the Hailo device object.
+
+        Args:
+            device_id (str): Device id string, can represent several device types:
+                                [-] for pcie devices - pcie bdf (XXXX:XX:XX.X)
+                                [-] for ethernet devices - ip address (xxx.xxx.xxx.xxx)
+        """
+        gc.collect()
+
+        # Device __del__ function tries to release self._device.
+        # to avoid AttributeError if the __init__ func fails, we set it to None first.
+        # https://stackoverflow.com/questions/6409644/is-del-called-on-an-object-that-doesnt-complete-init
+        self._device = None
+
+        if device_id is None:
+            system_device_ids = Device.scan()
+            if len(system_device_ids) == 0:
+                raise HailoRTException('HailoRT device not found in the system')
+            device_id = system_device_ids[0]
+
+        self._device_id = device_id
+        self._device = _pyhailort.Device.create(device_id)
+        self._loaded_network_groups = []
+        self._creation_pid = os.getpid()
+        self._control_object = Control(self._device)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.release()
+        return False
+
+    def __del__(self):
+        self.release()
+
+    def __repr__(self) -> str:
+        return f'Device({self._device_id!r})'
+
+    def release(self):
+        """Release the allocated resources of the device. This function should be called when working with the device not as context-manager."""
+
+        if self._device is not None:
+            with ExceptionWrapper():
+                self._device.release()
+            self._device = None
+
+    @property
+    def device_id(self):
+        """Getter for the device_id.
+
+        Returns:
+            str: A string ID of the device. BDF for PCIe devices, IP address for Ethernet devices, "Core" for core devices.
+        """
+        return self._device_id
+
+    def configure(self, hef, configure_params_by_name={}):
+        """Configures target device from HEF object.
+
+        Args:
+            hef (:class:`~hailo_platform.pyhailort.pyhailort.HEF`): HEF to configure the vdevice from
+            configure_params_by_name (dict, optional): Maps between each net_group_name to configure_params. If not provided, default params will be applied
+        """
+        if self._creation_pid != os.getpid():
+            raise HailoRTException("VDevice can only be configured from the process it was created in.")
+        with ExceptionWrapper():
+            configured_apps = self._device.configure(hef._hef, configure_params_by_name)
+        configured_networks = [ConfiguredNetwork(configured_app, self, hef) for configured_app in configured_apps]
+        self._loaded_network_groups.extend(configured_networks)
+        return configured_networks
+
+    @property
+    def control(self):
+        """
+        Returns:
+            :class:`~hailo_platform.pyhailort.pyhailort.Control`: the control object of this device, which
+            implements the control API of the Hailo device.
+
+        .. attention:: Use the low level control API with care.
+        """
+        return self._control_object
 
 class VDevice(object):
     """Hailo virtual device representation."""
 
-    def __init__(
-            self,
-            params=None, device_infos=None):
+    def __init__(self, params=None, device_infos=None, *, device_ids=None):
 
         """Create the Hailo virtual device object.
 
         Args:
             params (:obj:`hailo_platform.pyhailort.pyhailort.VDeviceParams`, optional): VDevice params, call
-                :func:`VDevice.create_params` to get default params. Excludes 'device_infos'.
-            device_infos (list of :obj:`hailo_platform.pyhailort.pyhailort.PcieDeviceInfo`, optional): pcie devices infos to create VDevice from,
-                call :func:`PcieDevice.scan_devices` to get list of all available devices. Excludes 'params'.
+                :func:`VDevice.create_params` to get default params. Excludes 'device_ids' and 'device_infos'.
+            device_infos (list of :obj:`hailo_platform.pyhailort.pyhailort.PcieDeviceInfo`, optional):
+                Deprecated - one should use device_ids instead. If given - pcie devices infos to create VDevice from,
+                call :func:`PcieDevice.scan_devices` to get list of all available devices. Excludes 'params' and 'device_ids.
+            device_ids (list of str, optional): devices ids to create VDevice from, call :func:`_Device.scan` to get
+                list of all available devices. Excludes 'params' and 'device_infos'.
         """
         gc.collect()
         self._id = "VDevice"
         self._params = params
-        self._device_infos = device_infos
-        if self._device_infos is not None:
+
+        # Convert device_infos to device_ids
+        if device_infos is not None:
+            if device_ids is not None:
+                raise HailoRTException("VDevice can by ids from either device_ids or device_infos. Both parameters were passed to the c'tor")
+
+            logger = default_logger()
+            logger.warning("Warning - passing device_infos is deprecated. One should pass device_ids.")
+            device_ids = [str(device_info) for device_info in device_infos]
+            device_infos = None
+
+        self._device_ids = device_ids
+        if self._device_ids is not None:
             if self._params is not None:
-                raise HailoRTException("VDevice can be created from params or device_infos. Both parameters was passed to the c'tor")
+                raise HailoRTException("VDevice can be created from params or device ids/infos. Both parameters were passed to the c'tor")
+
         self._vdevice = None
         self._loaded_network_groups = []
         self._open_vdevice()
@@ -1256,9 +2328,9 @@ class VDevice(object):
         self._creation_pid = os.getpid()
 
     def _open_vdevice(self):
-        if self._device_infos is not None:
+        if self._device_ids is not None:
             with ExceptionWrapper():
-                self._vdevice = _pyhailort.VDevice.create_from_infos(self._device_infos)
+                self._vdevice = _pyhailort.VDevice.create_from_ids(self._device_ids)
         else:
             if self._params is None:
                 self._params = VDevice.create_params()
@@ -1305,25 +2377,32 @@ class VDevice(object):
         """Gets the underlying physical devices.
 
         Return:
-            list of :obj:`~hailo_platform.pyhailort.hw_object.PcieDevice`: The underlying physical devices.
+            list of :obj:`~hailo_platform.pyhailort.pyhailort.Device`: The underlying physical devices.
         """
-        with ExceptionWrapper():
-            phys_dev_infos = self._vdevice.get_physical_devices_infos()
-        pythonic_dev_infos = [PcieDeviceInfo(dev_info.bus, dev_info.device, dev_info.func, dev_info.domain)
-            for dev_info in phys_dev_infos]
-
-        from hailo_platform.pyhailort.hw_object import PcieDevice
-        return [PcieDevice(info) for info in pythonic_dev_infos]
+        phys_dev_infos = self.get_physical_devices_ids()
+        return [Device(dev_id) for dev_id in phys_dev_infos]
 
     def get_physical_devices_infos(self):
-        """Gets the physical devices infos.
+        """Deprecated: :func:`VDevice.get_physical_devices_infos` is deprecated. One should use
+        (:func:`VDevice.get_physical_devices_ids`) instead.
+
+        Gets the physical devices infos.
 
         Return:
             list of :obj:`~hailo_platform.pyhailort.pyhailort.PcieDeviceInfo`: The underlying physical devices infos.
         """
-        with ExceptionWrapper():
-            return self._vdevice.get_physical_devices_infos()
+        logger = default_logger()
+        logger.warning("Warning - VDevice.get_physical_devices_infos() is deprecated. One should use VDevice.get_physical_devices_ids.")
+        return [PcieDeviceInfo.from_string(dev_id) for dev_id in self.get_physical_devices_ids()]
 
+    def get_physical_devices_ids(self):
+        """Gets the physical devices ids.
+
+        Return:
+            list of :obj:`str`: The underlying physical devices infos.
+        """
+        with ExceptionWrapper():
+            return self._vdevice.get_physical_devices_ids()
 
 class InputVStreamParams(object):
     """Parameters of an input virtual stream (host to device)."""
@@ -1410,14 +2489,14 @@ class OutputVStreamParams(object):
         Args:
             configured_network (:class:`ConfiguredNetwork`): The configured network group for which
                 the params are created.
-            quantized (bool): Whether the data fed into the chip is already quantized. True means
-                the data is already quantized. False means it's HailoRT's responsibility to quantize
-                (scale) the data. Defaults to True.
+            quantized (bool): Whether the data returned from the chip should be quantized. True means
+                the data is still quantized. False means it's HailoRT's responsibility to de-quantize
+                (rescale) the data. Defaults to True.
             format_type (:class:`~hailo_platform.pyhailort.pyhailort.FormatType`): The
                 default format type of the data for all output virtual streams. If quantized is False,
                 the default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.FLOAT32`. Otherwise,
                 the default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.AUTO`,
-                which means the data is fed in the same format expected by the device (usually
+                which means the returned data is in the same format returned from the device (usually
                 uint8).
             timeout_ms (int): The default timeout in milliseconds for all output virtual streams.
                 Defaults to DEFAULT_VSTREAM_TIMEOUT_MS. In case of timeout, :class:`HailoRTTimeout` will be raised.

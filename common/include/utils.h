@@ -123,4 +123,6 @@ _PP_ISEMPTY(                                            \
 #define ALL_UNUSED_IMPL(nargs) ALL_UNUSED_IMPL_(nargs)
 #define ALL_UNUSED(...) ALL_UNUSED_IMPL( PP_NARG(__VA_ARGS__))(__VA_ARGS__ )
 
+#define MICROSECONDS_IN_MILLISECOND (1000)
+
 #endif /* __UTILS_H__ */

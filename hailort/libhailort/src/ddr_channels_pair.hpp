@@ -19,9 +19,9 @@ namespace hailort
 
 struct DdrChannelsInfo
 {
-    uint8_t d2h_channel_index;
+    vdma::ChannelId d2h_channel_id;
     uint8_t d2h_stream_index;
-    uint8_t h2d_channel_index;
+    vdma::ChannelId h2d_channel_id;
     uint8_t h2d_stream_index;
     uint16_t row_size;
     uint16_t min_buffered_rows;

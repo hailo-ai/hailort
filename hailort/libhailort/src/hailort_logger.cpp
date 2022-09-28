@@ -37,7 +37,7 @@ namespace hailort
 #define HAILORT_LOGGER_PATH "HAILORT_LOGGER_PATH"
 
 #ifdef _WIN32
-#define PATH_SEPERATOR "\\"
+#define PATH_SEPARATOR "\\"
 
 bool is_dir_accesible(const std::string &dir)
 {
@@ -106,7 +106,7 @@ l_exit:
     return return_val;
 }
 #else
-#define PATH_SEPERATOR "/"
+#define PATH_SEPARATOR "/"
 
 bool is_dir_accesible(const std::string &dir)
 {
@@ -131,7 +131,7 @@ std::shared_ptr<spdlog::sinks::sink> HailoRTLogger::create_file_sink()
     if (dir == "NONE") {
         return make_shared_nothrow<spdlog::sinks::null_sink_st>();
     } else if (is_dir_accesible(dir)) {
-        return make_shared_nothrow<spdlog::sinks::rotating_file_sink_mt>((dir + PATH_SEPERATOR + HAILORT_LOGGER_FILENAME), MAX_LOG_FILE_SIZE,
+        return make_shared_nothrow<spdlog::sinks::rotating_file_sink_mt>((dir + PATH_SEPARATOR + HAILORT_LOGGER_FILENAME), MAX_LOG_FILE_SIZE,
             HAILORT_MAX_NUMBER_OF_LOG_FILES);
     } else {
         std::cerr << "HailoRT warning: Cannot create HailoRT log file! Please check the current directory's write permissions." << std::endl;

@@ -1,7 +1,7 @@
 :: cmd
 @ECHO OFF
 set BASE_URI=https://hailo-hailort.s3.eu-west-2.amazonaws.com
-set HRT_VERSION=4.9.0
+set HRT_VERSION=4.10.0
 set REMOTE_HEF_DIR=Hailo8/%HRT_VERSION%/HEFS
 set LOCAL_EXAMPLES_HEF_DIR=..\libhailort\examples\hefs
 set LOCAL_TUTORIALS_HEF_DIR=..\libhailort\bindings\python\platform\tutorials\hefs

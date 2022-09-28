@@ -47,7 +47,7 @@ public:
 
     Expected<double> send_data_rate_mbit_sec() const
     {
-        if (!m_infer_duration) {
+        if (!m_infer_duration || !m_total_send_frame_size) {
             return make_unexpected(HAILO_NOT_AVAILABLE);
         }
        return (static_cast<double>(m_frames_count * m_total_send_frame_size) / *m_infer_duration) * MBIT_PER_BYTE;
@@ -55,7 +55,7 @@ public:
 
     Expected<double> recv_data_rate_mbit_sec() const
     {
-        if (!m_infer_duration) {
+        if (!m_infer_duration || !m_total_recv_frame_size) {
             return make_unexpected(HAILO_NOT_AVAILABLE);
         }
         return (static_cast<double>(m_frames_count * m_total_recv_frame_size) / *m_infer_duration) * MBIT_PER_BYTE;

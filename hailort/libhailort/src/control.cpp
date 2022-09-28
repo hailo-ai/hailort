@@ -17,6 +17,7 @@
 #include "d2h_events.h"
 #include "hw_consts.hpp"
 #include <array>
+#include "hef_internal.hpp"
 
 namespace hailort
 {
@@ -76,9 +77,7 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
     /* Clear debug/release bit */
     board_info.fw_version.revision = GET_REVISION_NUMBER_VALUE(board_info.fw_version.revision);
 
-    // TODO: Fix static cast, we are assuming they are the same (HRT-3177)
-    board_info.device_architecture = static_cast<hailo_device_architecture_t>(
-        BYTE_ORDER__ntohl(identify_response->device_architecture));
+    board_info.device_architecture = static_cast<hailo_device_architecture_t>(BYTE_ORDER__ntohl(identify_response->device_architecture));
 
     /* Write identify results to log */
     LOGGER__INFO("firmware_version is: {}.{}.{}",
@@ -94,14 +93,12 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
 }
 
 Expected<hailo_extended_device_information_t> control__parse_get_extended_device_information_results
-        (CONTROL_PROTOCOL__get_extended_device_information_response_t *get_extended_device_information_response)
+        (CONTROL_PROTOCOL__get_extended_device_information_response_t &get_extended_device_information_response)
 {
     uint8_t local_supported_features;
     hailo_extended_device_information_t device_info;
 
-    CHECK_AS_EXPECTED(nullptr != get_extended_device_information_response, HAILO_INVALID_ARGUMENT);
-
-    local_supported_features = (uint8_t)BYTE_ORDER__ntohl(get_extended_device_information_response->supported_features);
+    local_supported_features = (uint8_t)BYTE_ORDER__ntohl(get_extended_device_information_response.supported_features);
 
     device_info.supported_features.ethernet = (local_supported_features &
                                                (1 << CONTROL_PROTOCOL__SUPPORTED_FEATURES_ETHERNET_BIT_OFFSET)) != 0;
@@ -113,22 +110,22 @@ Expected<hailo_extended_device_information_t> control__parse_get_extended_device
                                                          (1 << CONTROL_PROTOCOL__SUPPORTED_FEATURES_CURRENT_MONITORING_BIT_OFFSET)) != 0;
     device_info.supported_features.mdio = (local_supported_features &
                                            (1 << CONTROL_PROTOCOL__SUPPORTED_FEATURES_MDIO_BIT_OFFSET)) != 0;
-    device_info.neural_network_core_clock_rate = BYTE_ORDER__ntohl(get_extended_device_information_response->neural_network_core_clock_rate);
+    device_info.neural_network_core_clock_rate = BYTE_ORDER__ntohl(get_extended_device_information_response.neural_network_core_clock_rate);
 
     LOGGER__DEBUG("Max Neural Network Core Clock Rate: {}", device_info.neural_network_core_clock_rate);
 
     device_info.boot_source = static_cast<hailo_device_boot_source_t>(
-        BYTE_ORDER__ntohl(get_extended_device_information_response->boot_source));
+        BYTE_ORDER__ntohl(get_extended_device_information_response.boot_source));
 
     (void)memcpy(device_info.soc_id,
-                 get_extended_device_information_response->soc_id,
-                 BYTE_ORDER__ntohl(get_extended_device_information_response->soc_id_length));
+                 get_extended_device_information_response.soc_id,
+                 BYTE_ORDER__ntohl(get_extended_device_information_response.soc_id_length));
 
-    device_info.lcs = get_extended_device_information_response->lcs;
+    device_info.lcs = get_extended_device_information_response.lcs;
 
-    memcpy(&device_info.unit_level_tracking_id[0], &get_extended_device_information_response->fuse_info, sizeof(device_info.unit_level_tracking_id));
-    memcpy(&device_info.eth_mac_address[0], &get_extended_device_information_response->eth_mac_address[0], BYTE_ORDER__ntohl(get_extended_device_information_response->eth_mac_length));
-    memcpy(&device_info.soc_pm_values, &get_extended_device_information_response->pd_info, sizeof(device_info.soc_pm_values));
+    memcpy(&device_info.unit_level_tracking_id[0], &get_extended_device_information_response.fuse_info, sizeof(device_info.unit_level_tracking_id));
+    memcpy(&device_info.eth_mac_address[0], &get_extended_device_information_response.eth_mac_address[0], BYTE_ORDER__ntohl(get_extended_device_information_response.eth_mac_length));
+    memcpy(&device_info.soc_pm_values, &get_extended_device_information_response.pd_info, sizeof(device_info.soc_pm_values));
 
     return device_info;
 }
@@ -144,7 +141,7 @@ Expected<hailo_health_info_t> control__parse_get_health_information_results
     health_info.current_overcurrent_zone = get_health_information_response->current_overcurrent_zone;
     // Re-convertion to floats after
     health_info.red_overcurrent_threshold = float32_t(BYTE_ORDER__ntohl(get_health_information_response->red_overcurrent_threshold));
-    health_info.orange_overcurrent_threshold = float32_t(BYTE_ORDER__ntohl(get_health_information_response->orange_overcurrent_threshold));
+    health_info.overcurrent_throttling_active = get_health_information_response->overcurrent_throttling_active;
     health_info.temperature_throttling_active = get_health_information_response->temperature_throttling_active;
     health_info.current_temperature_zone = get_health_information_response->current_temperature_zone;
     health_info.current_temperature_throttling_level = get_health_information_response->current_temperature_throttling_level;
@@ -154,6 +151,8 @@ Expected<hailo_health_info_t> control__parse_get_health_information_results
     health_info.orange_hysteresis_temperature_threshold = BYTE_ORDER__ntohl(get_health_information_response->orange_hysteresis_temperature_threshold);
     health_info.red_temperature_threshold = BYTE_ORDER__ntohl(get_health_information_response->red_temperature_threshold);
     health_info.red_hysteresis_temperature_threshold = BYTE_ORDER__ntohl(get_health_information_response->red_hysteresis_temperature_threshold);
+    health_info.requested_overcurrent_clock_freq = BYTE_ORDER__ntohl(get_health_information_response->requested_overcurrent_clock_freq);
+    health_info.requested_temperature_clock_freq = BYTE_ORDER__ntohl(get_health_information_response->requested_temperature_clock_freq);
     return health_info;
 }
 
@@ -3005,23 +3004,26 @@ exit:
     return status;
 }
 
-hailo_status Control::switch_network_group(Device &device, uint8_t network_group_index, uint16_t dynamic_batch_size)
+
+hailo_status Control::clear_configured_apps(Device &device)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     HAILO_COMMON_STATUS_t common_status = HAILO_COMMON_STATUS__UNINITIALIZED;
     CONTROL_PROTOCOL__request_t request = {};
     size_t request_size = 0;
     uint8_t response_buffer[RESPONSE_MAX_BUFFER_SIZE] = {};
-    size_t response_size = sizeof(response_buffer);
+    size_t response_size = RESPONSE_MAX_BUFFER_SIZE;
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    LOGGER__DEBUG("Set network_group_index {}", network_group_index);
+    LOGGER__DEBUG("Sending clear_configured_apps");
 
-    common_status = CONTROL_PROTOCOL__pack_switch_application_request(&request, &request_size, device.get_control_sequence(),
-            network_group_index, dynamic_batch_size);
+    common_status = CONTROL_PROTOCOL__pack_context_switch_clear_configured_apps_request(&request, &request_size,
+        device.get_control_sequence());
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_context_switch_clear_configured_apps_request with status {:#X}",
+            common_status);
         goto exit;
     }
 
@@ -3031,9 +3033,9 @@ hailo_status Control::switch_network_group(Device &device, uint8_t network_group
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("failed clear_configured_apps control with status {}", status);
         goto exit;
     }
 
@@ -3116,7 +3118,7 @@ exit:
     return status;
 }
 
-Expected<hailo_extended_device_information_t> Control::get_extended_device_information(Device &device)
+Expected<CONTROL_PROTOCOL__get_extended_device_information_response_t> Control::get_extended_device_info_response(Device &device)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     HAILO_COMMON_STATUS_t common_status = HAILO_COMMON_STATUS__UNINITIALIZED;
@@ -3126,7 +3128,6 @@ Expected<hailo_extended_device_information_t> Control::get_extended_device_infor
     size_t response_size = RESPONSE_MAX_BUFFER_SIZE;
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
-    CONTROL_PROTOCOL__get_extended_device_information_response_t *get_extended_device_information_response = NULL;
 
     /* Validate arguments */
 
@@ -3141,9 +3142,27 @@ Expected<hailo_extended_device_information_t> Control::get_extended_device_infor
     status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
-    get_extended_device_information_response = (CONTROL_PROTOCOL__get_extended_device_information_response_t *)(payload->parameters);
+    return std::move(*(CONTROL_PROTOCOL__get_extended_device_information_response_t *)(payload->parameters));
+}
 
-    return control__parse_get_extended_device_information_results(get_extended_device_information_response);
+Expected<uint32_t> Control::get_partial_clusters_layout_bitmap(Device &device)
+{
+    auto device_arch_exp = device.get_architecture();
+    CHECK_EXPECTED(device_arch_exp);
+    if (HAILO_ARCH_HAILO8L != device_arch_exp.value()) {
+        // Partial clusters layout is only relevant in HAILO_ARCH_HAILO8L arch
+        return Expected<uint32_t>(PARTIAL_CLUSTERS_LAYOUT_IGNORE);
+    }
+    auto extended_device_info_response = get_extended_device_info_response(device);
+    CHECK_EXPECTED(extended_device_info_response);
+    return BYTE_ORDER__ntohl(extended_device_info_response->partial_clusters_layout_bitmap);
+}
+
+Expected<hailo_extended_device_information_t> Control::get_extended_device_information(Device &device)
+{
+    auto extended_device_info_response = get_extended_device_info_response(device);
+    CHECK_EXPECTED(extended_device_info_response);
+    return control__parse_get_extended_device_information_results(extended_device_info_response.value());
 }
 
 Expected<hailo_health_info_t> Control::get_health_information(Device &device)

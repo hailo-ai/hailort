@@ -87,7 +87,7 @@ public:
         CB_DEQUEUE(m_circ, 1);
     }
 
-    T& front()
+    T &front()
     {
         return m_array[CB_TAIL(m_circ)];
     }
@@ -100,6 +100,11 @@ public:
     bool full()
     {
         return 0 == CB_AVAIL(m_circ, CB_HEAD(m_circ), CB_TAIL(m_circ));
+    }
+
+    size_t size()
+    {
+        return CB_PROG(m_circ, CB_HEAD(m_circ), CB_TAIL(m_circ));
     }
 
 private:

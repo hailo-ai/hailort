@@ -12,6 +12,7 @@
 #include "hailo/hailort.h"
 #include "user_config_common.h"
 #include "common/file_utils.hpp"
+#include "common/string_utils.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -266,16 +267,8 @@ Expected<json> FwConfigJsonSerializer::deserialize_mac_address(uint8_t *entry_va
     CHECK_AS_EXPECTED((MAC_ADDRESS_LENGTH == size), HAILO_INTERNAL_FAILURE,
         "Mac address length is invalid. Length recieved is: {}, length expected: {}", size, MAC_ADDRESS_LENGTH);
     
-    std::stringstream ss;
-    for (size_t i = 0; i < MAC_ADDRESS_LENGTH; i++) {
-        if (i != 0) {
-            ss << ':';
-        }
-        ss.width(2); 
-        ss.fill('0');
-        ss << std::uppercase << std::hex << (int)(entry_value[i]);
-    }
-    return json(ss.str());
+    const bool UPPERCASE = true;
+    return json(StringUtils::to_hex_string(entry_value, size, UPPERCASE, ":"));
 }
 
 Expected<json> FwConfigJsonSerializer::deserialize_supported_aspm_states(uint8_t *entry_value, uint32_t size)

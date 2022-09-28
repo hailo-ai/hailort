@@ -35,8 +35,7 @@ class ConfigManager
   public:
     virtual ~ConfigManager() {}
     virtual ConfigManagerType get_manager_type() = 0;
-    virtual Expected<ConfiguredNetworkGroupVector> add_hef(Hef &hef, const std::map<std::string,
-        ConfigureNetworkParams> &configure_params) = 0;
+    virtual Expected<ConfiguredNetworkGroupVector> add_hef(Hef &hef, const std::map<std::string, ConfigureNetworkParams> &configure_params) = 0;
 
   protected:
     hailo_status validate_boundary_streams_were_created(Hef &hef, const std::string &network_group_name, ConfiguredNetworkGroup &network_group)

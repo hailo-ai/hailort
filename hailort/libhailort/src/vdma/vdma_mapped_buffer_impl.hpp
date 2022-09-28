@@ -98,6 +98,7 @@ private:
 
     static const int INVALID_FD;
     static const shm_handle_t INVALID_HANDLE;
+    static const char* VDMA_BUFFER_TYPE_MEMORY_NAME;
 
     void *m_address;
     size_t m_length;

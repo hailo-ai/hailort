@@ -10,7 +10,7 @@
 #include "download_action_list_command.hpp"
 #include "common.hpp"
 #include "common/file_utils.hpp"
-#include "md5.h"
+#include "common/string_utils.hpp"
 
 #include <iostream>
 #include <iomanip>
@@ -94,6 +94,7 @@ Expected<ordered_json> DownloadActionListCommand::parse_hef_metadata(const std::
     return hef_info_json;
 }
 
+
 bool DownloadActionListCommand::is_valid_hef(const std::string &hef_file_path)
 {
     // Open hef, to check that it's valid
@@ -112,14 +113,8 @@ Expected<std::string> DownloadActionListCommand::calc_md5_hexdigest(const std::s
     MD5_Update(&md5_ctx, hef_bin->data(), hef_bin->size());
     MD5_Final(md5_sum, &md5_ctx);
 
-    std::stringstream hexdigest;
-    for (uint32_t i = 0; i < ARRAY_ENTRIES(md5_sum); i++) {
-        // cast to int needed for proper formatting
-        static const int NUM_HEX_DIGITS_IN_UNIT8 = 2;
-        hexdigest << std::hex << std::setfill('0') << std::setw(NUM_HEX_DIGITS_IN_UNIT8) << static_cast<int>(md5_sum[i]);
-    }
-
-    return hexdigest.str();
+    const bool LOWERCASE = false;
+    return StringUtils::to_hex_string(md5_sum, ARRAY_ENTRIES(md5_sum), LOWERCASE);
 }
 
 hailo_status DownloadActionListCommand::write_json(const ordered_json &json_obj, const std::string &output_file_path,
@@ -135,6 +130,11 @@ hailo_status DownloadActionListCommand::write_json(const ordered_json &json_obj,
     return HAILO_SUCCESS;
 }
 
+// We want to make sure that the switch-case bellow handles all of the action types in order to prevent parsing errors
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic error "-Wswitch-enum"
+#endif
 Expected<ordered_json> DownloadActionListCommand::parse_action_data(uint32_t base_address, uint8_t *action,
     uint32_t current_buffer_offset, uint32_t *action_length, CONTEXT_SWITCH_DEFS__ACTION_TYPE_t action_type,
     uint32_t timestamp, uint8_t sub_action_index, bool sub_action_index_set, bool *is_repeated, uint8_t *num_repeated,
@@ -279,14 +279,24 @@ Expected<ordered_json> DownloadActionListCommand::parse_action_data(uint32_t bas
             data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__deactivate_cfg_channel_t *>(action);
             action_length_local = sizeof(CONTEXT_SWITCH_DEFS__deactivate_cfg_channel_t);
             break;
+        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_DDR_BUFFERING_RESET:
+            data_json = json({});
+            action_length_local = 0;
+            break;
+        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT:
+            // Fallthrough
+            // Handling CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT is needed because we compile this file with -Wswitch-enum
         default:
-            std::cerr << "PARSING ERROR ! unknown action main type" << std::endl;
+            std::cerr << "PARSING ERROR ! unknown action main type " << action_type << std::endl;
             return make_unexpected(HAILO_INTERNAL_FAILURE);
     }
     action_json["data"] = data_json;
     *action_length = static_cast<uint32_t>(action_length_local);
     return action_json;
 }
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 Expected<ordered_json> DownloadActionListCommand::parse_single_repeated_action(uint32_t base_address,
     uint8_t *action, uint32_t current_buffer_offset, uint32_t *action_length,
@@ -540,4 +550,20 @@ void to_json(json &j, const CONTEXT_SWITCH_DEFS__deactivate_cfg_channel_t &data)
     CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__READ(data.packed_vdma_channel_id, engine_index, vdma_channel_index);
     j = json{{"config_stream_index", data.config_stream_index}, {"channel_index", vdma_channel_index},
         {"engine_index", engine_index}};
+}
+
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__add_ddr_pair_info_action_data_t &data)
+{
+    uint8_t h2d_engine_index = 0;
+    uint8_t h2d_vdma_channel_index = 0;
+    uint8_t d2h_engine_index = 0;
+    uint8_t d2h_vdma_channel_index = 0;
+
+    CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__READ(data.h2d_packed_vdma_channel_id, h2d_engine_index,
+        h2d_vdma_channel_index);
+    CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__READ(data.d2h_packed_vdma_channel_id, d2h_engine_index,
+        d2h_vdma_channel_index);
+
+    j = json{{"h2d_engine_index", h2d_engine_index}, {"h2d_vdma_channel_index", h2d_vdma_channel_index},
+        {"d2h_engine_index", d2h_engine_index}, {"d2h_vdma_channel_index", d2h_vdma_channel_index}};
 }

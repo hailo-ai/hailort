@@ -5,7 +5,7 @@
 /**
  * @file switch_network_groups_manually_example.cpp
  * This example demonstrates basic usage of HailoRT streaming api over multiple networks, using vstreams.
- * It loads several HEF networks with single/multiple inputs and single/multiple outputs into a Hailo PCIe VDevice and performs a
+ * It loads several HEF networks with single/multiple inputs and single/multiple outputs into a Hailo VDevice and performs a
  * short inference on each one.
  * After inference is finished, the example switches to the next HEF and start inference again.
  **/

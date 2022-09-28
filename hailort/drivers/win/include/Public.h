@@ -118,7 +118,8 @@ struct tCompatibleHailoIoctlData
         hailo_d2h_notification D2HNotification;
         hailo_device_properties DeviceProperties;
         hailo_driver_info DriverInfo;
-        hailo_channel_registers_params ChannelRegisters;
+        hailo_vdma_channel_read_register_params ChannelRegisterRead;
+        hailo_vdma_channel_write_register_params ChannelRegisterWrite;
         hailo_non_linux_desc_list_mmap_params DescListMmap;
         hailo_read_log_params ReadLog;
         hailo_mark_as_in_use_params MarkAsInUse;

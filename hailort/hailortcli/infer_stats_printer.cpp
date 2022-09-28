@@ -10,6 +10,7 @@
 #include "infer_stats_printer.hpp"
 #include "run_command.hpp"
 #include "common.hpp"
+#include "pipeline.hpp"
 
 #include <fstream>
 #include <iostream>
@@ -372,6 +373,7 @@ void InferStatsPrinter::print_stdout_single_element(const T &results, size_t fra
     if (auto hw_latency = results.hw_latency()) {
         std::cout << "    HW Latency: " << InferResultsFormatUtils::latency_result_to_ms(hw_latency.value()) << " ms" << std::endl;
     }
+
     if (auto overall_latency = results.overall_latency()) {
         std::cout << "    Overall Latency: " << InferResultsFormatUtils::latency_result_to_ms(overall_latency.value()) << " ms" << std::endl;
     }
@@ -445,9 +447,9 @@ void InferStatsPrinter::print_stdout(Expected<InferResult> &inference_result)
         }
         auto temp_measure_iter = inference_result->m_temp_measurements.find(pair.first);
         if ((temp_measure_iter != inference_result->m_temp_measurements.end()) && (nullptr != temp_measure_iter->second)) {
-            measurement_stream << "    Minimum chip temperature: " << temp_measure_iter->second->min_value << "°C" << std::endl;
-            measurement_stream << "    Average chip temperature: " << temp_measure_iter->second->average_value << "°C" << std::endl;
-            measurement_stream << "    Maximum chip temperature: " << temp_measure_iter->second->max_value << "°C" << std::endl;
+            measurement_stream << "    Minimum chip temperature: " << temp_measure_iter->second->min_value << "C" << std::endl;
+            measurement_stream << "    Average chip temperature: " << temp_measure_iter->second->average_value << "C" << std::endl;
+            measurement_stream << "    Maximum chip temperature: " << temp_measure_iter->second->max_value << "C" << std::endl;
         }
         if (0 != measurement_stream.rdbuf()->in_avail()) {
             std::cout << "  Device: " << pair.first << std::endl;
@@ -465,6 +467,8 @@ void InferStatsPrinter::write_accumulator_results(std::ofstream &output_stream, 
 {
     const auto &accumulator_result = accumulator->get();
     if ((!accumulator_result.count()) || (accumulator_result.count().value() == 0)) {
+        LOGGER__WARNING("No {} data has been collected for element '{}' (vstream '{}'). Collection begins after the element has processed {} frames...",
+            accumulator->get_data_type(), elem_name, vstream_name, DEFAULT_NUM_FRAMES_BEFORE_COLLECTION_START);
         return;
     }
     

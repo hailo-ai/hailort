@@ -24,10 +24,6 @@
 namespace hailort
 {
 
-typedef enum {
-    BOOTLOADER_VERSION_HAILO8_B0_UNSIGNED = 0,
-    BOOTLOADER_VERSION_HAILO8_B0_SIGNED
-} hailo_bootloader_version_t;
 
 /** @defgroup group_type_definitions HailoRT CPP API definitions
  *  @{
@@ -49,6 +45,17 @@ public:
         ETH,
         CORE
     };
+
+    /**
+     * Returns the device_id string on all available devices in the system.
+     * The device id is a unique identitier for the device on the system.
+     * 
+     * @return Upon success, returns Expected of a vector of std::string containing the information.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note ethernet devices are not considered "devices in the system", so they are not scanned in this function.
+     *       use :scan_eth for ethernet devices.
+     */
+    static Expected<std::vector<std::string>> scan();
 
     /**
      * Returns information on all available pcie devices in the system.
@@ -79,6 +86,26 @@ public:
      */
     static Expected<std::vector<hailo_eth_device_info_t>> scan_eth_by_host_address(const std::string &host_address,
         std::chrono::milliseconds timeout);
+
+    /**
+     * Creates a device if there is only one system device detected in the system.
+     * 
+     * @return Upon success, returns Expected of a unique_ptr to Device object.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    static Expected<std::unique_ptr<Device>> create();
+
+    /**
+     * Creates a device by the given device id.
+     * 
+     * @param[in] device_id  Device id string, can represent several device types:
+     *                           [-] for pcie devices - pcie bdf (XXXX:XX:XX.X)
+     *                           [-] for ethernet devices - ip address (xxx.xxx.xxx.xxx)
+     * 
+     * @return Upon success, returns Expected of a unique_ptr to Device object.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    static Expected<std::unique_ptr<Device>> create(const std::string &device_id);
 
     /**
      * Creates pcie device if there is only one pcie device connected
@@ -133,9 +160,14 @@ public:
      */
     static Expected<std::string> pcie_device_info_to_string(const hailo_pcie_device_info_t &device_info);
 
-    // For internal use only
-    static bool is_core_driver_loaded();
-    static Expected<std::unique_ptr<Device>> create_core_device();
+    /**
+     * Returns the device type of the given device id string.
+     * 
+     * @param[in] device_id       A std::string device id to check.
+     * @return Upon success, returns Expected of the device type.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    static Expected<Type> get_device_type(const std::string &device_id);
 
     /**
      * Configure the device from an hef.
@@ -192,7 +224,9 @@ public:
     hailo_status set_fw_logger(hailo_fw_logger_level_t level, uint32_t interface_mask);
 
     /**
-     * Change throttling state of temperature protection component.
+     * Change throttling state of temperature protection and overcurrent protection components.
+     * In case that change throttling state of temperature protection didn't succeed,
+     * the change throttling state of overcurrent protection is executed.
      *
      * @param[in] should_activate   Should be true to enable or false to disable.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
@@ -218,7 +252,8 @@ public:
     hailo_status read_memory(uint32_t address, MemoryView &data);
 
     /**
-     * Get current throttling state of temperature protection component.
+     * Get current throttling state of temperature protection and overcurrent protection components.
+     * If any throttling is enabled, the function return true.
      *
      * @return Upon success, returns Expected of @a bool, indicates weather the throttling state is active or not.
      *         Otherwise, returns Unexpected of ::hailo_status error.
@@ -320,7 +355,7 @@ public:
      *                                   averaging_factor samples. The sensor provides a new value every: 2 * sampling_period * averaging_factor {ms}.
      *                                   The firmware wakes up every interval_milliseconds {ms} and checks the sensor.
      *                                   If there is a new value to read from the sensor, the firmware reads it.
-     *                                   Note that the average calculated by the firmware is “average of averages”,
+     *                                   Note that the average calculated by the firmware is 'average of averages',
      *                                   because it averages values that have already been averaged by the sensor.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      * @note This function is deprecated. One should use 'Device::start_power_measurement(hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period)'
@@ -363,7 +398,7 @@ public:
      *                                   averaging_factor samples. The sensor provides a new value every: 2 * sampling_period * averaging_factor {ms}.
      *                                   The firmware wakes up every interval_milliseconds {ms} and checks the sensor.
      *                                   If there is a new value to read from the sensor, the firmware reads it.
-     *                                   Note that the average calculated by the firmware is “average of averages”,
+     *                                   Note that the average calculated by the firmware is 'average of averages',
      *                                   because it averages values that have already been averaged by the sensor.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
@@ -671,6 +706,8 @@ public:
 
 protected:
     Device(Type type);
+
+    static Expected<std::unique_ptr<Device>> create_core();
 
     virtual hailo_status wait_for_wakeup() = 0;
     virtual void increment_control_sequence() = 0;

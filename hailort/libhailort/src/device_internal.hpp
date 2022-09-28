@@ -9,11 +9,11 @@
  *        Hence, the hierarchy is as follows:
  *
  * Device                       (External "interface")
- * └── BaseDevice               (Base classes)
- *     ├── VdmaDevice
- *     │   ├── PcieDevice
- *     │   └── CoreDevice
- *     └── EthernetDevice
+ * |-- BaseDevice               (Base classes)
+ *     |-- VdmaDevice
+ *     |   |-- PcieDevice
+ *     |   |-- CoreDevice
+ *     |-- EthernetDevice
  **/
 
 #ifndef _HAILO_DEVICE_INTERNAL_HPP_
@@ -27,6 +27,7 @@
 #include "firmware_header_utils.h"
 #include "control_protocol.h"
 #include "context_switch/config_manager.hpp"
+#include "hef_internal.hpp"
 
 #include <thread>
 
@@ -108,6 +109,8 @@ protected:
     std::shared_ptr<NotificationThreadSharedParams> m_notif_fetch_thread_params;
 
 private:
+    friend class VDeviceBase;
+
     static hailo_status fw_notification_id_to_hailo(D2H_EVENT_ID_t fw_notification_id,
         hailo_notification_id_t* hailo_notification_id);
     static hailo_status validate_binary_version_for_platform(firmware_version_t *new_binary_version, 

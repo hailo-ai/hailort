@@ -56,7 +56,8 @@ InputVStreamsWrapper InputVStreamsWrapper::create(ConfiguredNetworkGroup &net_gr
 
     std::unordered_map<std::string, std::shared_ptr<InputVStream>> input_vstreams;
     for (auto &input : input_vstreams_expected.value()) {
-        input_vstreams.emplace(input.name(), make_shared_nothrow<InputVStream>(std::move(input)));
+        auto input_name = input.name();
+        input_vstreams.emplace(input_name, make_shared_nothrow<InputVStream>(std::move(input)));
     }
     return InputVStreamsWrapper(input_vstreams);
 }
@@ -168,7 +169,8 @@ OutputVStreamsWrapper OutputVStreamsWrapper::create(ConfiguredNetworkGroup &net_
 
     std::unordered_map<std::string, std::shared_ptr<OutputVStream>> output_vstreams;
     for (auto &output : output_vstreams_expected.value()) {
-        output_vstreams.emplace(output.name(), make_shared_nothrow<OutputVStream>(std::move(output)));
+        auto output_name = output.name();
+        output_vstreams.emplace(output_name, make_shared_nothrow<OutputVStream>(std::move(output)));
     }
     return OutputVStreamsWrapper(output_vstreams);
 }

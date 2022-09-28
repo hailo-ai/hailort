@@ -22,14 +22,96 @@
 #include <sstream>
 #include <chrono>
 
-VDeviceManager NetworkGroupHandle::m_vdevice_manager;
+std::unordered_set<std::shared_ptr<VDevice>> NetworkGroupHandle::m_vdevices;
 NetworkGroupConfigManager NetworkGroupHandle::m_net_group_config_manager;
 NetworkGroupActivationManager NetworkGroupHandle::m_net_group_activation_manager;
+
+
+Expected<std::shared_ptr<VDevice>> create_shared_vdevice(const void *element, const std::string &device_id,
+    uint32_t vdevice_key, hailo_scheduling_algorithm_t scheduling_algorithm)
+{
+    // If passing device_id, than device_count must be 1
+    const auto device_count = 1;
+
+    auto device_id_expected = HailoRTCommon::to_device_id(device_id);
+    GST_CHECK_EXPECTED(device_id_expected, element, RESOURCE, "Failed parsing device id, status = %d", device_id_expected.status());
+
+    hailo_vdevice_params_t params = {};
+    auto status = hailo_init_vdevice_params(&params);
+    GST_CHECK_SUCCESS_AS_EXPECTED(status, element, RESOURCE, "Failed hailo_init_vdevice_params, status = %d", status);
+
+    params.device_count = device_count;
+    params.device_ids = &(device_id_expected.value());
+    params.scheduling_algorithm = scheduling_algorithm;
+    if (vdevice_key == DEFAULT_VDEVICE_KEY) {
+        params.group_id = HAILO_UNIQUE_VDEVICE_GROUP_ID;
+    } else {
+        auto key = std::to_string(vdevice_key);
+        params.group_id = key.c_str();
+    }
+    auto vdevice = VDevice::create(params);
+    GST_CHECK_EXPECTED(vdevice, element, RESOURCE, "Failed creating vdevice, status = %d", vdevice.status());
+    std::shared_ptr<VDevice> vdevice_ptr = std::move(vdevice.release());
+    return vdevice_ptr;
+}
+
+Expected<std::shared_ptr<VDevice>> create_shared_vdevice(const void *element, uint16_t device_count, uint32_t vdevice_key,
+    hailo_scheduling_algorithm_t scheduling_algorithm)
+{
+    auto device_id = std::to_string(vdevice_key);
+    hailo_vdevice_params_t params = {};
+    auto status = hailo_init_vdevice_params(&params);
+    GST_CHECK_SUCCESS_AS_EXPECTED(status, element, RESOURCE, "Failed hailo_init_vdevice_params, status = %d", status);
+    params.device_count = device_count;
+    params.scheduling_algorithm = scheduling_algorithm;
+    params.group_id = device_id.c_str();
+    auto vdevice = VDevice::create(params);
+    GST_CHECK_EXPECTED(vdevice, element, RESOURCE, "Failed creating vdevice, status = %d", vdevice.status());
+    std::shared_ptr<VDevice> vdevice_ptr = std::move(vdevice.release());
+    return vdevice_ptr;
+}
+
+Expected<std::shared_ptr<VDevice>> create_unique_vdevice(const void *element, uint16_t device_count,
+    hailo_scheduling_algorithm_t scheduling_algorithm)
+{
+    hailo_vdevice_params_t params = {};
+    auto status = hailo_init_vdevice_params(&params);
+    GST_CHECK_SUCCESS_AS_EXPECTED(status, element, RESOURCE, "Failed hailo_init_vdevice_params, status = %d", status);
+
+    params.device_count = device_count;
+    params.scheduling_algorithm = scheduling_algorithm;
+    params.group_id = HAILO_UNIQUE_VDEVICE_GROUP_ID;
+    auto vdevice = VDevice::create(params);
+    GST_CHECK_EXPECTED(vdevice, element, RESOURCE, "Failed creating vdevice, status = %d", vdevice.status());
+    std::shared_ptr<VDevice> vdevice_ptr = std::move(vdevice.release());
+    return vdevice_ptr;
+}
+
+Expected<std::shared_ptr<VDevice>> NetworkGroupHandle::create_vdevice(const void *element, const std::string &device_id, uint16_t device_count,
+    uint32_t vdevice_key, hailo_scheduling_algorithm_t scheduling_algorithm)
+{
+    if (!device_id.empty()) {
+        auto result = create_shared_vdevice(element, device_id, vdevice_key, scheduling_algorithm);
+        GST_CHECK_EXPECTED(result, element, RESOURCE, "Failed creating vdevice, status = %d", result.status());
+        m_vdevices.insert(result.value());
+        return result;
+    }
+    if (DEFAULT_VDEVICE_KEY != vdevice_key) {
+        auto result = create_shared_vdevice(element, device_count, vdevice_key, scheduling_algorithm);
+        GST_CHECK_EXPECTED(result, element, RESOURCE, "Failed creating vdevice, status = %d", result.status());
+        m_vdevices.insert(result.value());
+        return result;
+    }
+    auto result = create_unique_vdevice(element, device_count, scheduling_algorithm);
+    GST_CHECK_EXPECTED(result, element, RESOURCE, "Failed creating vdevice, status = %d", result.status());
+    m_vdevices.insert(result.value());
+    return result;
+}
 
 Expected<std::shared_ptr<VDevice>> NetworkGroupHandle::create_vdevice(const std::string &device_id, uint16_t device_count, uint32_t vdevice_key,
     hailo_scheduling_algorithm_t scheduling_algorithm)
 {
-    auto expected_device = m_vdevice_manager.create_vdevice(m_element, device_id, device_count, vdevice_key, scheduling_algorithm);
+    auto expected_device = create_vdevice(m_element, device_id, device_count, vdevice_key, scheduling_algorithm);
     GST_CHECK_EXPECTED(expected_device, m_element, RESOURCE, "Failed creating vdevice, status = %d", expected_device.status());
     return expected_device;
 }
@@ -65,12 +147,13 @@ hailo_status NetworkGroupHandle::set_hef(const char *device_id, uint16_t device_
     return HAILO_SUCCESS;
 }
 
-hailo_status NetworkGroupHandle::configure_network_group(const char *net_group_name, uint16_t batch_size)
+hailo_status NetworkGroupHandle::configure_network_group(const char *net_group_name, hailo_scheduling_algorithm_t scheduling_algorithm, uint16_t batch_size)
 {
     auto net_groups_params_map = get_configure_params(*m_hef, net_group_name, batch_size);
     GST_CHECK_EXPECTED_AS_STATUS(net_groups_params_map, m_element, RESOURCE, "Failed getting configure params, status = %d", net_groups_params_map.status());
 
-    auto expected_cng = m_net_group_config_manager.configure_network_group(m_element, m_shared_device_id, net_group_name, batch_size, m_vdevice, m_hef, net_groups_params_map.value());
+    auto expected_cng = m_net_group_config_manager.configure_network_group(m_element, m_shared_device_id, scheduling_algorithm,
+        net_group_name, batch_size, m_vdevice, m_hef, net_groups_params_map.value());
     GST_CHECK_EXPECTED_AS_STATUS(expected_cng, m_element, RESOURCE, "Failed configuring network, status = %d", expected_cng.status());
 
     m_cng = expected_cng.release();
@@ -91,14 +174,16 @@ hailo_status NetworkGroupHandle::set_scheduler_threshold(const char *network_nam
 }
 
 Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> NetworkGroupHandle::create_vstreams(const char *network_name,
-    const std::vector<hailo_format_with_name_t> &output_formats)
+    hailo_scheduling_algorithm_t scheduling_algorithm, const std::vector<hailo_format_with_name_t> &output_formats)
 {
     GST_CHECK(nullptr != network_name, make_unexpected(HAILO_INVALID_ARGUMENT), m_element, RESOURCE, "Got nullptr in network name!");
 
     m_network_name = network_name;
-    hailo_status status = m_net_group_config_manager.add_network_to_shared_network_group(m_shared_device_id, m_network_name, m_element);
-    GST_CHECK(HAILO_SUCCESS == status, make_unexpected(status), m_element, RESOURCE,
-        "Inserting network name to configured networks has failed, status = %d", status);
+    if (scheduling_algorithm == HAILO_SCHEDULING_ALGORITHM_NONE) {
+        hailo_status status = m_net_group_config_manager.add_network_to_shared_network_group(m_shared_device_id, m_network_name, m_element);
+        GST_CHECK(HAILO_SUCCESS == status, make_unexpected(status), m_element, RESOURCE,
+            "Inserting network name to configured networks has failed, status = %d", status);
+    }
 
     auto input_params_map = m_cng->make_input_vstream_params(true, HAILO_FORMAT_TYPE_AUTO, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
         HAILO_DEFAULT_VSTREAM_QUEUE_SIZE, m_network_name);
@@ -151,7 +236,8 @@ Expected<NetworkGroupsParamsMap> NetworkGroupHandle::get_configure_params(Hef &h
 
 hailo_status NetworkGroupHandle::activate_network_group()
 {
-    auto expected_ang = m_net_group_activation_manager.activate_network_group(m_element, m_shared_device_id, m_net_group_name.c_str(), m_batch_size, m_cng);
+    auto expected_ang = m_net_group_activation_manager.activate_network_group(m_element, m_shared_device_id, m_hef->hash(),
+        m_net_group_name.c_str(), m_batch_size, m_cng);
     GST_CHECK_EXPECTED_AS_STATUS(expected_ang, m_element, RESOURCE, "Failed activating network, status = %d", expected_ang.status());
     m_ang = expected_ang.release();
     return HAILO_SUCCESS;
@@ -197,7 +283,8 @@ Expected<bool> NetworkGroupHandle::remove_network_group()
     // If use count is 2, it means the only references to the activated network group is in the manager and the one here, meaning that we can clear it
     // from the manager
     if (m_ang.use_count() == 2) {
-        hailo_status status = m_net_group_activation_manager.remove_activated_network(m_shared_device_id, m_net_group_name.c_str(), m_batch_size);
+        hailo_status status = m_net_group_activation_manager.remove_activated_network(m_shared_device_id, m_hef->hash(),
+            m_net_group_name.c_str(), m_batch_size);
         GST_CHECK(HAILO_SUCCESS == status, make_unexpected(status), m_element, RESOURCE, "Cound not find activated network group! status = %d", status);
 
         was_network_deactivated = true;
@@ -209,120 +296,22 @@ Expected<bool> NetworkGroupHandle::remove_network_group()
     return was_network_deactivated;
 }
 
-
-Expected<std::shared_ptr<VDevice>> VDeviceManager::create_vdevice(const void *element, const std::string &device_id, uint16_t device_count,
-    uint32_t vdevice_key, hailo_scheduling_algorithm_t scheduling_algorithm)
-{
-    std::unique_lock<std::mutex> lock(m_mutex);
-    if (!device_id.empty()) {
-        return create_shared_vdevice(element, device_id, scheduling_algorithm);
-    }
-    if (DEFAULT_VDEVICE_KEY != vdevice_key) {
-        return create_shared_vdevice(element, device_count, vdevice_key, scheduling_algorithm);
-    }
-    return create_unique_vdevice(element, device_count, scheduling_algorithm);
-}
-
-Expected<std::shared_ptr<VDevice>> VDeviceManager::create_shared_vdevice(const void *element, const std::string &device_id,
-    hailo_scheduling_algorithm_t scheduling_algorithm)
-{
-    // If passing device_id, than device_count must be 1
-    const auto device_count = 1;
-
-    // If vdevice already exist, use it
-    auto found_vdevice = get_vdevice(device_id, scheduling_algorithm);
-    if (found_vdevice.status() != HAILO_NOT_FOUND) {
-        GST_CHECK_EXPECTED(found_vdevice, element, RESOURCE, "Failed using shared vdevice, status = %d", found_vdevice.status());
-        return found_vdevice.release();
-    }
-
-    auto device_info_expected = Device::parse_pcie_device_info(device_id);
-    GST_CHECK_EXPECTED(device_info_expected, element, RESOURCE, "Failed parsing pcie device info, status = %d", device_info_expected.status());
-
-    hailo_vdevice_params_t params = {};
-    params.device_count = device_count;
-    params.device_infos = &(device_info_expected.value());
-    params.scheduling_algorithm = scheduling_algorithm;
-    auto vdevice = VDevice::create(params);
-    GST_CHECK_EXPECTED(vdevice, element, RESOURCE, "Failed creating vdevice, status = %d", vdevice.status());
-    std::shared_ptr<VDevice> vdevice_ptr = std::move(vdevice.release());
-
-    m_shared_vdevices[device_id] = vdevice_ptr;
-    m_shared_vdevices_scheduling_algorithm[device_id] = scheduling_algorithm;
-    return vdevice_ptr;
-}
-
-Expected<std::shared_ptr<VDevice>> VDeviceManager::create_shared_vdevice(const void *element, uint16_t device_count, uint32_t vdevice_key,
-    hailo_scheduling_algorithm_t scheduling_algorithm)
-{
-    auto device_id = std::to_string(device_count) + "-" + std::to_string(vdevice_key);
-
-    // If vdevice already exist, use it
-    auto found_vdevice = get_vdevice(device_id, scheduling_algorithm);
-    if (found_vdevice.status() != HAILO_NOT_FOUND) {
-        GST_CHECK_EXPECTED(found_vdevice, element, RESOURCE, "Failed using shared vdevice, status = %d", found_vdevice.status());
-        return found_vdevice.release();
-    }
-
-    hailo_vdevice_params_t params = {};
-    params.device_count = device_count;
-    params.device_infos = nullptr;
-    params.scheduling_algorithm = scheduling_algorithm;
-    auto vdevice = VDevice::create(params);
-    GST_CHECK_EXPECTED(vdevice, element, RESOURCE, "Failed creating vdevice, status = %d", vdevice.status());
-    std::shared_ptr<VDevice> vdevice_ptr = std::move(vdevice.release());
-
-    m_shared_vdevices[device_id] = vdevice_ptr;
-    m_shared_vdevices_scheduling_algorithm[device_id] = scheduling_algorithm;
-    return vdevice_ptr;
-}
-
-Expected<std::shared_ptr<VDevice>> VDeviceManager::create_unique_vdevice(const void *element, uint16_t device_count,
-    hailo_scheduling_algorithm_t scheduling_algorithm)
-{
-    hailo_vdevice_params_t params = {};
-    params.device_count = device_count;
-    params.device_infos = nullptr;
-    params.scheduling_algorithm = scheduling_algorithm;
-    auto vdevice = VDevice::create(params);
-    GST_CHECK_EXPECTED(vdevice, element, RESOURCE, "Failed creating vdevice, status = %d", vdevice.status());
-
-    // Unique vdevices are not saved in VDeviceManager, only in their hailonet
-    std::shared_ptr<VDevice> vdevice_ptr = std::move(vdevice.release());
-    m_unique_vdevices.push_back(vdevice_ptr);
-    return vdevice_ptr;
-}
-
-Expected<std::shared_ptr<VDevice>> VDeviceManager::get_vdevice(const std::string &device_id,
-    hailo_scheduling_algorithm_t scheduling_algorithm)
-{
-    auto found = m_shared_vdevices.find(device_id);
-    if (found == m_shared_vdevices.end()) {
-        return make_unexpected(HAILO_NOT_FOUND);
-    }
-
-    // shared_vdevice is found, verify the requested scheduling_algorithm
-    assert(m_shared_vdevices_scheduling_algorithm.end() != m_shared_vdevices_scheduling_algorithm.find(device_id));
-    if (scheduling_algorithm != m_shared_vdevices_scheduling_algorithm[device_id]) {
-        auto status = HAILO_INVALID_OPERATION;
-        g_warning("Shared vdevice with the same credentials is already exists (%s) but with a different scheduling-algorithm (requested: %d, exists: %d), status = %d",
-            device_id.c_str(), scheduling_algorithm, m_shared_vdevices_scheduling_algorithm[device_id], status);
-        return make_unexpected(HAILO_INVALID_OPERATION);
-    }
-
-    auto vdevice_cpy = found->second;
-    return vdevice_cpy;
-}
-
 Expected<std::shared_ptr<ConfiguredNetworkGroup>> NetworkGroupConfigManager::configure_network_group(const void *element, const std::string &device_id,
-    const char *network_group_name, uint16_t batch_size, std::shared_ptr<VDevice> &vdevice, std::shared_ptr<Hef> hef,
+    hailo_scheduling_algorithm_t scheduling_algorithm, const char *network_group_name, uint16_t batch_size, std::shared_ptr<VDevice> &vdevice, std::shared_ptr<Hef> hef,
     NetworkGroupsParamsMap &net_groups_params_map)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
 
-    std::shared_ptr<ConfiguredNetworkGroup> found_cng = get_configured_network_group(device_id, network_group_name, batch_size);
+    std::shared_ptr<ConfiguredNetworkGroup> found_cng = get_configured_network_group(device_id, hef->hash(), network_group_name, batch_size);
     if (nullptr != found_cng) {
-        return found_cng;
+        // If cng was already configured
+        auto infos = found_cng->get_network_infos();
+        GST_CHECK_EXPECTED(infos, element, RESOURCE, "Failed getting network infos");
+        if ((infos.release().size() > 1) || (scheduling_algorithm == HAILO_SCHEDULING_ALGORITHM_NONE)) {
+            // But hailonet is not running all networks in the cng (or if not using scheduler) -
+            // Do not use multiplexer!
+            return found_cng;
+        }
     }
 
     auto network_group_list = vdevice->configure(*hef, net_groups_params_map);
@@ -331,8 +320,8 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> NetworkGroupConfigManager::con
 
     std::shared_ptr<ConfiguredNetworkGroup> result = nullptr;
     for (auto &network_group : network_group_list.value()) {
-        m_configured_net_groups[get_configure_string(device_id, network_group->get_network_group_name().c_str(), batch_size)] = network_group;
-        if (std::string(network_group_name) == network_group->get_network_group_name()) {
+        m_configured_net_groups[get_configure_string(device_id, hef->hash(), network_group->name().c_str(), batch_size)] = network_group;
+        if (std::string(network_group_name) == network_group->name()) {
             result = network_group;
             break;
         }
@@ -370,9 +359,9 @@ hailo_status NetworkGroupConfigManager::add_network_to_shared_network_group(cons
 }
 
 std::shared_ptr<ConfiguredNetworkGroup> NetworkGroupConfigManager::get_configured_network_group(const std::string &device_id,
-    const char *network_group_name, uint16_t batch_size)
+    const std::string &hef_hash, const char *network_group_name, uint16_t batch_size)
 {
-    auto found = m_configured_net_groups.find(get_configure_string(device_id, network_group_name, batch_size));
+    auto found = m_configured_net_groups.find(get_configure_string(device_id, hef_hash, network_group_name, batch_size));
     if (found == m_configured_net_groups.end()) {
         return nullptr;
     }
@@ -380,7 +369,8 @@ std::shared_ptr<ConfiguredNetworkGroup> NetworkGroupConfigManager::get_configure
     return found->second;
 }
 
-std::string NetworkGroupConfigManager::get_configure_string(const std::string &device_id, const char *network_group_name, uint16_t batch_size)
+std::string NetworkGroupConfigManager::get_configure_string(const std::string &device_id, const std::string &hef_hash,
+    const char *network_group_name, uint16_t batch_size)
 {
     const char *EMPTY_FIELD = "NULL,";
     std::ostringstream oss;
@@ -390,6 +380,8 @@ std::string NetworkGroupConfigManager::get_configure_string(const std::string &d
     } else {
         oss << device_id << ",";
     }
+
+    oss << hef_hash << ",";
 
     if (nullptr == network_group_name) {
         oss << EMPTY_FIELD;
@@ -402,11 +394,11 @@ std::string NetworkGroupConfigManager::get_configure_string(const std::string &d
 }
 
 Expected<std::shared_ptr<ActivatedNetworkGroup>> NetworkGroupActivationManager::activate_network_group(const void *element, const std::string &device_id,
-    const char *net_group_name, uint16_t batch_size, std::shared_ptr<ConfiguredNetworkGroup> cng)
+    const std::string &hef_hash, const char *net_group_name, uint16_t batch_size, std::shared_ptr<ConfiguredNetworkGroup> cng)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
 
-    std::shared_ptr<ActivatedNetworkGroup> found_ang = get_activated_network_group(device_id, net_group_name, batch_size);
+    std::shared_ptr<ActivatedNetworkGroup> found_ang = get_activated_network_group(device_id, hef_hash, net_group_name, batch_size);
     if (nullptr != found_ang) {
         return found_ang;
     }
@@ -416,15 +408,15 @@ Expected<std::shared_ptr<ActivatedNetworkGroup>> NetworkGroupActivationManager::
         activated_network_group.status());
 
     std::shared_ptr<ActivatedNetworkGroup> ang = std::move(activated_network_group.release());
-    m_activated_net_groups[NetworkGroupConfigManager::get_configure_string(device_id, net_group_name, batch_size)] = ang;
+    m_activated_net_groups[NetworkGroupConfigManager::get_configure_string(device_id, hef_hash, net_group_name, batch_size)] = ang;
 
     return ang;
 }
 
 std::shared_ptr<ActivatedNetworkGroup> NetworkGroupActivationManager::get_activated_network_group(const std::string &device_id,
-    const char *net_group_name, uint16_t batch_size)
+    const std::string &hef_hef, const char *net_group_name, uint16_t batch_size)
 {
-    auto found = m_activated_net_groups.find(NetworkGroupConfigManager::get_configure_string(device_id, net_group_name, batch_size));
+    auto found = m_activated_net_groups.find(NetworkGroupConfigManager::get_configure_string(device_id, hef_hef, net_group_name, batch_size));
     if (found == m_activated_net_groups.end()) {
         return nullptr;
     }
@@ -432,12 +424,12 @@ std::shared_ptr<ActivatedNetworkGroup> NetworkGroupActivationManager::get_activa
     return found->second;
 }
 
-hailo_status NetworkGroupActivationManager::remove_activated_network(const std::string &device_id, const char *net_group_name,
-    uint16_t batch_size)
+hailo_status NetworkGroupActivationManager::remove_activated_network(const std::string &device_id, const std::string &hef_hash,
+    const char *net_group_name, uint16_t batch_size)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
 
-    auto found = m_activated_net_groups.find(NetworkGroupConfigManager::get_configure_string(device_id, net_group_name, batch_size));
+    auto found = m_activated_net_groups.find(NetworkGroupConfigManager::get_configure_string(device_id, hef_hash, net_group_name, batch_size));
     if (found == m_activated_net_groups.end()) {
         return HAILO_NOT_FOUND;
     }

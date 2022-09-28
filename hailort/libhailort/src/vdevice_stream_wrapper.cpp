@@ -35,12 +35,39 @@ std::chrono::milliseconds VDeviceInputStreamWrapper::get_timeout() const
 
 hailo_status VDeviceInputStreamWrapper::abort()
 {
-    return m_vdevice_input_stream->abort_impl(m_network_group_handle);
+    if (is_scheduled()) {
+        auto status = m_multiplexer->disable_network_group(m_network_group_multiplexer_handle);
+        CHECK_SUCCESS(status);
+
+        // TODO: HRT-7638
+        status = m_multiplexer->run_once_for_stream(name(), INPUT_RUN_ONCE_HANDLE__ABORT, m_network_group_multiplexer_handle);
+        CHECK_SUCCESS(status);
+
+        return HAILO_SUCCESS;
+    }
+
+    auto status = m_vdevice_input_stream->abort_impl(m_network_group_scheduler_handle);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
 }
 
 hailo_status VDeviceInputStreamWrapper::clear_abort()
 {
-    return m_vdevice_input_stream->clear_abort_impl(m_network_group_handle);
+    if (is_scheduled()) {
+        auto status = m_multiplexer->enable_network_group(m_network_group_multiplexer_handle);
+        CHECK_SUCCESS(status);
+
+        status = m_multiplexer->run_once_for_stream(name(), INPUT_RUN_ONCE_HANDLE__CLEAR_ABORT, m_network_group_multiplexer_handle);
+        CHECK_SUCCESS(status);
+
+        return HAILO_SUCCESS;
+    }
+
+    auto status = m_vdevice_input_stream->clear_abort_impl(m_network_group_scheduler_handle);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
 }
 
 bool VDeviceInputStreamWrapper::is_scheduled()
@@ -53,17 +80,37 @@ Expected<PendingBufferState> VDeviceInputStreamWrapper::send_pending_buffer()
     return m_vdevice_input_stream->send_pending_buffer();
 }
 
+Expected<size_t> VDeviceInputStreamWrapper::get_buffer_frames_size() const
+{
+    return m_vdevice_input_stream->get_buffer_frames_size();
+}
+
+Expected<size_t> VDeviceInputStreamWrapper::get_pending_frames_count() const
+{
+    return m_vdevice_input_stream->get_pending_frames_count();
+}
+
 Expected<size_t> VDeviceInputStreamWrapper::sync_write_raw_buffer(const MemoryView &buffer)
 {
-    auto lock_exp = m_multiplexer->acquire_write_lock(m_network_group_handle);
-    CHECK_AS_EXPECTED(HAILO_SUCCESS == lock_exp.status() || HAILO_NOT_FOUND == lock_exp.status(), lock_exp.status());
-    auto exp = m_vdevice_input_stream->sync_write_raw_buffer_impl(buffer, m_network_group_handle);
+    if (is_scheduled()) {
+        auto status = m_multiplexer->wait_for_write(m_network_group_multiplexer_handle);
+        if (HAILO_STREAM_INTERNAL_ABORT == status) {
+            return make_unexpected(status);
+        }
+        CHECK_SUCCESS_AS_EXPECTED(status);
+    }
+
+    auto exp = m_vdevice_input_stream->sync_write_raw_buffer_impl(buffer, m_network_group_scheduler_handle);
     if (HAILO_STREAM_INTERNAL_ABORT == exp.status()) {
         return make_unexpected(exp.status());
     }
     CHECK_EXPECTED(exp);
-    auto status = m_multiplexer->signal_sent_frame(m_network_group_handle, m_network_name);
-    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    if (is_scheduled()) {
+        auto status = m_multiplexer->signal_write_finish();
+        CHECK_SUCCESS_AS_EXPECTED(status);
+    }
+
     return exp;
 }
 
@@ -81,35 +128,75 @@ hailo_status VDeviceInputStreamWrapper::set_timeout(std::chrono::milliseconds ti
 
 hailo_status VDeviceInputStreamWrapper::flush()
 {
+    if (is_scheduled()) {
+        auto status = m_multiplexer->run_once_for_stream(name(), INPUT_RUN_ONCE_HANDLE__FLUSH, m_network_group_multiplexer_handle);
+        CHECK_SUCCESS(status);
+
+        return HAILO_SUCCESS;
+    }
+
     return m_vdevice_input_stream->flush();
 }
 
 Expected<std::unique_ptr<VDeviceInputStreamWrapper>> VDeviceInputStreamWrapper::create(std::shared_ptr<VDeviceInputStream> vdevice_input_stream,
-    std::string network_name, std::shared_ptr<PipelineMultiplexer> multiplexer, network_group_handle_t network_group_handle)
+    std::string network_name, std::shared_ptr<PipelineMultiplexer> multiplexer, scheduler_ng_handle_t network_group_scheduler_handle,
+    multiplexer_ng_handle_t network_group_multiplexer_handle)
 {
-    std::unique_ptr<VDeviceInputStreamWrapper> wrapper(new (std::nothrow) VDeviceInputStreamWrapper(vdevice_input_stream, network_name, multiplexer, network_group_handle));
+    hailo_status status = HAILO_UNINITIALIZED;
+    std::unique_ptr<VDeviceInputStreamWrapper> wrapper(new (std::nothrow) VDeviceInputStreamWrapper(vdevice_input_stream, network_name, multiplexer,
+        network_group_scheduler_handle, network_group_multiplexer_handle, status));
     CHECK_NOT_NULL_AS_EXPECTED(wrapper, HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_SUCCESS_AS_EXPECTED(status);
 
     return wrapper;
 }
 
-Expected<std::unique_ptr<VDeviceInputStreamWrapper>> VDeviceInputStreamWrapper::clone(network_group_handle_t network_group_handle)
+Expected<std::unique_ptr<VDeviceInputStreamWrapper>> VDeviceInputStreamWrapper::clone(multiplexer_ng_handle_t network_group_multiplexer_handle)
 {
-    auto wrapper = create(m_vdevice_input_stream, m_network_name, m_multiplexer, network_group_handle);
+    auto wrapper = create(m_vdevice_input_stream, m_network_name, m_multiplexer, m_network_group_scheduler_handle, network_group_multiplexer_handle);
     CHECK_EXPECTED(wrapper);
 
     return wrapper;
 }
 
 VDeviceInputStreamWrapper::VDeviceInputStreamWrapper(std::shared_ptr<VDeviceInputStream> &vdevice_input_stream,
-    std::string network_name, std::shared_ptr<PipelineMultiplexer> multiplexer, network_group_handle_t network_group_handle) :
+    std::string network_name, std::shared_ptr<PipelineMultiplexer> multiplexer, scheduler_ng_handle_t network_group_scheduler_handle,
+    multiplexer_ng_handle_t network_group_multiplexer_handle, hailo_status &status) :
     InputStreamBase(vdevice_input_stream->get_info(),
         vdevice_input_stream->m_nn_stream_config, vdevice_input_stream->get_network_group_activated_event()),
     m_vdevice_input_stream(vdevice_input_stream),
     m_multiplexer(multiplexer),
-    m_network_group_handle(network_group_handle),
+    m_network_group_scheduler_handle(network_group_scheduler_handle),
+    m_network_group_multiplexer_handle(network_group_multiplexer_handle),
     m_network_name(network_name)
-{}
+{
+    status = multiplexer->register_run_once_for_stream(vdevice_input_stream->name(), INPUT_RUN_ONCE_HANDLE__FLUSH, [this]
+    {
+        return m_vdevice_input_stream->flush();
+    });
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("register_run_once_for_stream failed! status = {}", status);
+        return;
+    }
+
+    status = multiplexer->register_run_once_for_stream(vdevice_input_stream->name(), INPUT_RUN_ONCE_HANDLE__ABORT, [this]
+    {
+        return m_vdevice_input_stream->abort_impl(m_network_group_scheduler_handle);
+    });
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("register_run_once_for_stream failed! status = {}", status);
+        return;
+    }
+
+    status = multiplexer->register_run_once_for_stream(vdevice_input_stream->name(), INPUT_RUN_ONCE_HANDLE__CLEAR_ABORT, [this]
+    {
+        return m_vdevice_input_stream->clear_abort_impl(m_network_group_scheduler_handle);
+    });
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("register_run_once_for_stream failed! status = {}", status);
+        return;
+    }
+}
 
 const hailo_stream_info_t &VDeviceOutputStreamWrapper::get_info() const
 {
@@ -143,17 +230,53 @@ std::chrono::milliseconds VDeviceOutputStreamWrapper::get_timeout() const
 
 hailo_status VDeviceOutputStreamWrapper::abort()
 {
-    return m_vdevice_output_stream->abort_impl(m_network_group_handle);
+    if (is_scheduled()) {
+        auto status = m_multiplexer->disable_network_group(m_network_group_multiplexer_handle);
+        CHECK_SUCCESS(status);
+
+        // TODO: HRT-7638
+        status = m_multiplexer->run_once_for_stream(name(), OUTPUT_RUN_ONCE_HANDLE__ABORT, m_network_group_multiplexer_handle);
+        CHECK_SUCCESS(status);
+
+        return HAILO_SUCCESS;
+    }
+
+    auto status = m_vdevice_output_stream->abort_impl(m_network_group_scheduler_handle);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
 }
 
 hailo_status VDeviceOutputStreamWrapper::clear_abort()
 {
-    return m_vdevice_output_stream->clear_abort_impl(m_network_group_handle);
+    if (is_scheduled()) {
+        auto status = m_multiplexer->enable_network_group(m_network_group_multiplexer_handle);
+        CHECK_SUCCESS(status);
+
+        status = m_multiplexer->run_once_for_stream(name(), OUTPUT_RUN_ONCE_HANDLE__CLEAR_ABORT, m_network_group_multiplexer_handle);
+        CHECK_SUCCESS(status);
+
+        return HAILO_SUCCESS;
+    }
+
+    auto status = m_vdevice_output_stream->clear_abort_impl(m_network_group_scheduler_handle);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
 }
 
 bool VDeviceOutputStreamWrapper::is_scheduled()
 {
     return m_vdevice_output_stream->is_scheduled();
+}
+
+Expected<size_t> VDeviceOutputStreamWrapper::get_buffer_frames_size() const
+{
+    return m_vdevice_output_stream->get_buffer_frames_size();
+}
+Expected<size_t> VDeviceOutputStreamWrapper::get_pending_frames_count() const
+{
+    return m_vdevice_output_stream->get_pending_frames_count();
 }
 
 Expected<size_t> VDeviceOutputStreamWrapper::sync_read_raw_buffer(MemoryView &buffer)
@@ -168,14 +291,26 @@ hailo_status VDeviceOutputStreamWrapper::read_all(MemoryView &buffer)
 
 hailo_status VDeviceOutputStreamWrapper::read(MemoryView buffer)
 {
-    auto status = m_multiplexer->reader_wait(m_network_group_handle, m_network_name, get_info().name);
-    CHECK_SUCCESS(status);
-    status = m_vdevice_output_stream->read_impl(buffer, m_network_group_handle);
-    if (HAILO_STREAM_INTERNAL_ABORT == status) {
+    if (is_scheduled()) {
+        auto status = m_multiplexer->wait_for_read(m_network_group_multiplexer_handle, name());
+        if (HAILO_STREAM_INTERNAL_ABORT == status) {
+            return status;
+        }
+        CHECK_SUCCESS(status);
+    }
+
+    auto status = m_vdevice_output_stream->read_impl(buffer, m_network_group_scheduler_handle);
+    if ((HAILO_STREAM_INTERNAL_ABORT == status) || (HAILO_STREAM_NOT_ACTIVATED == status)) {
         return status;
     }
     CHECK_SUCCESS(status);
-    return m_multiplexer->signal_received_frame(m_network_group_handle, m_network_name, get_info().name);
+
+    if (is_scheduled()) {
+        status = m_multiplexer->signal_read_finish(m_network_group_multiplexer_handle);
+        CHECK_SUCCESS(status);
+    }
+
+    return HAILO_SUCCESS;
 }
 
 hailo_status VDeviceOutputStreamWrapper::set_timeout(std::chrono::milliseconds timeout)
@@ -184,30 +319,53 @@ hailo_status VDeviceOutputStreamWrapper::set_timeout(std::chrono::milliseconds t
 }
 
 Expected<std::unique_ptr<VDeviceOutputStreamWrapper>> VDeviceOutputStreamWrapper::create(std::shared_ptr<VDeviceOutputStream> vdevice_output_stream,
-    std::string network_name, std::shared_ptr<PipelineMultiplexer> multiplexer, network_group_handle_t network_group_handle)
+    std::string network_name, std::shared_ptr<PipelineMultiplexer> multiplexer, scheduler_ng_handle_t network_group_scheduler_handle,
+    multiplexer_ng_handle_t network_group_multiplexer_handle)
 {
-    std::unique_ptr<VDeviceOutputStreamWrapper> wrapper(new (std::nothrow) VDeviceOutputStreamWrapper(vdevice_output_stream, network_name, multiplexer, network_group_handle));
+    hailo_status status = HAILO_UNINITIALIZED;
+    std::unique_ptr<VDeviceOutputStreamWrapper> wrapper(new (std::nothrow) VDeviceOutputStreamWrapper(vdevice_output_stream, network_name, multiplexer,
+        network_group_scheduler_handle, network_group_multiplexer_handle, status));
     CHECK_NOT_NULL_AS_EXPECTED(wrapper, HAILO_OUT_OF_HOST_MEMORY);
 
     return wrapper;
 }
 
-Expected<std::unique_ptr<VDeviceOutputStreamWrapper>> VDeviceOutputStreamWrapper::clone(network_group_handle_t network_group_handle)
+Expected<std::unique_ptr<VDeviceOutputStreamWrapper>> VDeviceOutputStreamWrapper::clone(scheduler_ng_handle_t network_group_multiplexer_handle)
 {
-    auto wrapper = create(m_vdevice_output_stream, m_network_name, m_multiplexer, network_group_handle);
+    auto wrapper = create(m_vdevice_output_stream, m_network_name, m_multiplexer, m_network_group_scheduler_handle, network_group_multiplexer_handle);
     CHECK_EXPECTED(wrapper);
 
     return wrapper;
 }
 
 VDeviceOutputStreamWrapper::VDeviceOutputStreamWrapper(std::shared_ptr<VDeviceOutputStream> &vdevice_output_stream,
-        std::string network_name, std::shared_ptr<PipelineMultiplexer> multiplexer, network_group_handle_t network_group_handle) :
+        std::string network_name, std::shared_ptr<PipelineMultiplexer> multiplexer, scheduler_ng_handle_t network_group_scheduler_handle,
+        multiplexer_ng_handle_t network_group_multiplexer_handle, hailo_status &status) :
     OutputStreamBase(vdevice_output_stream->get_layer_info(), vdevice_output_stream->get_info(),
         vdevice_output_stream->m_nn_stream_config, vdevice_output_stream->get_network_group_activated_event()),
     m_vdevice_output_stream(vdevice_output_stream),
     m_multiplexer(multiplexer),
-    m_network_group_handle(network_group_handle),
+    m_network_group_scheduler_handle(network_group_scheduler_handle),
+    m_network_group_multiplexer_handle(network_group_multiplexer_handle),
     m_network_name(network_name)
-{}
+{
+    status = multiplexer->register_run_once_for_stream(vdevice_output_stream->name(), OUTPUT_RUN_ONCE_HANDLE__ABORT, [this]
+    {
+        return m_vdevice_output_stream->abort_impl(m_network_group_scheduler_handle);
+    });
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("register_run_once_for_stream failed! status = {}", status);
+        return;
+    }
+
+    status = multiplexer->register_run_once_for_stream(vdevice_output_stream->name(), OUTPUT_RUN_ONCE_HANDLE__CLEAR_ABORT, [this]
+    {
+        return m_vdevice_output_stream->clear_abort_impl(m_network_group_scheduler_handle);
+    });
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("register_run_once_for_stream failed! status = {}", status);
+        return;
+    }
+}
 
 } /* namespace hailort */

@@ -48,6 +48,29 @@ Device::Device(Type type) :
 #endif
 }
 
+Expected<std::vector<std::string>> Device::scan()
+{
+    // TODO: HRT-7530 support both CORE and PCIE
+    if (CoreDevice::is_loaded()) {
+        return std::vector<std::string>{CoreDevice::DEVICE_ID};
+    }
+    else {
+        auto pcie_device_infos = PcieDevice::scan();
+        CHECK_EXPECTED(pcie_device_infos);
+
+        std::vector<std::string> results;
+        results.reserve(pcie_device_infos->size());
+
+        for (const auto pcie_device_info : pcie_device_infos.release()) {
+            auto device_id = pcie_device_info_to_string(pcie_device_info);
+            CHECK_EXPECTED(device_id);
+            results.emplace_back(device_id.release());
+        }
+
+        return results;
+    }
+}
+
 Expected<std::vector<hailo_pcie_device_info_t>> Device::scan_pcie()
 {
     return PcieDevice::scan();
@@ -63,6 +86,34 @@ Expected<std::vector<hailo_eth_device_info_t>> Device::scan_eth_by_host_address(
     std::chrono::milliseconds timeout)
 {
     return EthernetDevice::scan_by_host_address(host_address, timeout);
+}
+
+Expected<std::unique_ptr<Device>> Device::create()
+{
+    auto device_ids = scan();
+    CHECK_EXPECTED(device_ids, "Failed scan devices");
+    CHECK_AS_EXPECTED(device_ids->size() == 1, HAILO_INVALID_OPERATION,
+        "Expected only 1 device on the system (found {}). Pass device_id to create a specific device", device_ids->size());
+
+    return Device::create(device_ids->at(0));
+}
+
+Expected<std::unique_ptr<Device>> Device::create(const std::string &device_id)
+{
+    const bool DONT_LOG_ON_FAILURE = false;
+    if (CoreDevice::DEVICE_ID == device_id) {
+        return create_core();
+    }
+    else if (auto pcie_info = PcieDevice::parse_pcie_device_info(device_id, DONT_LOG_ON_FAILURE)) {
+        return create_pcie(pcie_info.release());
+    }
+    else if (auto eth_info = EthernetDevice::parse_eth_device_info(device_id, DONT_LOG_ON_FAILURE)) {
+        return create_eth(eth_info.release());
+    }
+    else {
+        LOGGER__ERROR("Invalid device id {}", device_id);
+        return make_unexpected(HAILO_INVALID_ARGUMENT);
+    }
 }
 
 Expected<std::unique_ptr<Device>> Device::create_pcie()
@@ -103,7 +154,8 @@ Expected<std::unique_ptr<Device>> Device::create_eth(const std::string &ip_addr)
 
 Expected<hailo_pcie_device_info_t> Device::parse_pcie_device_info(const std::string &device_info_str)
 {
-    return PcieDevice::parse_pcie_device_info(device_info_str);
+    const bool LOG_ON_FAILURE = true;
+    return PcieDevice::parse_pcie_device_info(device_info_str, LOG_ON_FAILURE);
 }
 
 Expected<std::string> Device::pcie_device_info_to_string(const hailo_pcie_device_info_t &device_info)
@@ -111,18 +163,22 @@ Expected<std::string> Device::pcie_device_info_to_string(const hailo_pcie_device
     return PcieDevice::pcie_device_info_to_string(device_info);
 }
 
-bool Device::is_core_driver_loaded()
+Expected<Device::Type> Device::get_device_type(const std::string &device_id)
 {
-    return CoreDevice::is_loaded();
-}
-
-Expected<std::unique_ptr<Device>> Device::create_core_device()
-{
-    auto core_device = CoreDevice::create();
-    CHECK_EXPECTED(core_device);
-    // Upcasting to Device unique_ptr (from CoreDevice unique_ptr)
-    auto device = std::unique_ptr<Device>(core_device.release());
-    return device;
+    const bool DONT_LOG_ON_FAILURE = false;
+    if (CoreDevice::DEVICE_ID == device_id) {
+        return Type::CORE;
+    }
+    else if (auto pcie_info = PcieDevice::parse_pcie_device_info(device_id, DONT_LOG_ON_FAILURE)) {
+        return Type::PCIE;
+    }
+    else if (auto eth_info = EthernetDevice::parse_eth_device_info(device_id, DONT_LOG_ON_FAILURE)) {
+        return Type::ETH;
+    }
+    else {
+        LOGGER__ERROR("Invalid device id {}", device_id);
+        return make_unexpected(HAILO_INVALID_ARGUMENT);
+    }
 }
 
 uint32_t Device::get_control_sequence()
@@ -467,6 +523,15 @@ hailo_status Device::set_context_action_list_timestamp_batch(uint16_t batch_inde
 {
     static const bool ENABLE_USER_CONFIG = true;
     return Control::config_context_switch_timestamp(*this, batch_index, ENABLE_USER_CONFIG);
+}
+
+Expected<std::unique_ptr<Device>> Device::create_core()
+{
+    auto core_device = CoreDevice::create();
+    CHECK_EXPECTED(core_device);
+    // Upcasting to Device unique_ptr (from CoreDevice unique_ptr)
+    auto device = std::unique_ptr<Device>(core_device.release());
+    return device;
 }
 
 } /* namespace hailort */

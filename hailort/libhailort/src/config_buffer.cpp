@@ -16,24 +16,23 @@
 
 namespace hailort {
 
-Expected<ConfigBuffer> ConfigBuffer::create(HailoRTDriver &driver, uint8_t vdma_channel_index,
+Expected<ConfigBuffer> ConfigBuffer::create(HailoRTDriver &driver, vdma::ChannelId channel_id,
     const std::vector<uint32_t> &cfg_sizes)
 {
     const auto buffer_size = std::accumulate(cfg_sizes.begin(), cfg_sizes.end(), 0);
 
     auto buffer_ptr = should_use_ccb(driver) ?
         create_ccb_buffer(driver, buffer_size) :
-        create_sg_buffer(driver, vdma_channel_index, cfg_sizes);
+        create_sg_buffer(driver, channel_id.channel_index, cfg_sizes);
     CHECK_EXPECTED(buffer_ptr);
 
-    return ConfigBuffer(buffer_ptr.release(), vdma_channel_index, buffer_size);
+    return ConfigBuffer(buffer_ptr.release(), channel_id, buffer_size);
 }
 
 ConfigBuffer::ConfigBuffer(std::unique_ptr<vdma::VdmaBuffer> &&buffer,
-    uint8_t vdma_channel_index,
-    size_t total_buffer_size)
+    vdma::ChannelId channel_id, size_t total_buffer_size)
     : m_buffer(std::move(buffer)),
-      m_vdma_channel_index(vdma_channel_index),
+      m_channel_id(channel_id),
       m_total_buffer_size(total_buffer_size), m_acc_buffer_offset(0), m_acc_desc_count(0),
       m_current_buffer_size(0)
 {}
@@ -81,7 +80,8 @@ CONTROL_PROTOCOL__config_channel_info_t ConfigBuffer::get_config_channel_info() 
 {
     CONTROL_PROTOCOL__config_channel_info_t config_channel_info;
     config_channel_info.config_buffer_info = m_buffer->get_host_buffer_info(m_acc_desc_count * m_buffer->desc_page_size());
-    config_channel_info.vdma_channel_index = m_vdma_channel_index;
+    config_channel_info.engine_index = m_channel_id.engine_index;
+    config_channel_info.vdma_channel_index = m_channel_id.channel_index;
     return config_channel_info;
 }
 
