@@ -328,6 +328,9 @@ public:
         std::shared_ptr<NetworkGroupMetadata> network_group_metadata,
         const ProtoHEFHwArch &hw_arch);
 
+    static ExpectedRef<const ProtoHEFNetworkGroup> get_net_group_per_arch(const ProtoHEFNetworkGroup &base_net_group,
+        ProtoHEFHwArch hef_arch, hailo_device_architecture_t device_arch, uint32_t partial_clusters_layout_bitmap);
+
     Expected<std::map<std::string, hailo_stream_parameters_t>> create_stream_parameters_by_name(
         const std::string &net_group_name, hailo_stream_interface_t stream_interface);
 
@@ -528,6 +531,7 @@ private:
 class ContextSwitchTrigger final
 {
 public:
+    static Expected<ContextSwitchTrigger> create_none_trigger();
     static Expected<ContextSwitchTrigger> create(const ProtoHEFTrigger &proto_trigger);
     ContextSwitchTrigger(ContextSwitchTrigger &&) = default;
     ContextSwitchTrigger(const ContextSwitchTrigger &) = delete;

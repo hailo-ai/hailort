@@ -61,8 +61,6 @@ target_link_libraries(hailortcli
     readerwriterqueue
     DotWriter
     scheduler_mon_proto)
-# TODO: Remove microprofile after removing pipeline.cpp from hailortcli sources
-target_link_libraries(hailortcli microprofile)
 
 if(WIN32)
     target_link_libraries(hailortcli Ws2_32 Iphlpapi Shlwapi)

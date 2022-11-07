@@ -19,7 +19,6 @@
 #include "hailort_defaults.hpp"
 #include "common/string_utils.hpp"
 
-#include "hlpcie.hpp"
 #include "pcie_device.hpp"
 #include "context_switch/multi_context/vdma_config_manager.hpp"
 #include "context_switch/single_context/hcp_config_manager.hpp"
@@ -66,7 +65,7 @@ typedef struct {
 } CcwHeader;
 #pragma pack(pop)
 
-bool ConfigureNetworkParams::operator==(const ConfigureNetworkParams &other)
+bool ConfigureNetworkParams::operator==(const ConfigureNetworkParams &other) const
 {
     for (auto &name_param_pair : network_params_by_name) {
         if ((other.network_params_by_name.find(name_param_pair.first) == other.network_params_by_name.end()) ||
@@ -77,7 +76,7 @@ bool ConfigureNetworkParams::operator==(const ConfigureNetworkParams &other)
     return (batch_size == other.batch_size) && (power_mode == other.power_mode) && (latency == other.latency);
 }
 
-bool ConfigureNetworkParams::operator!=(const ConfigureNetworkParams &other)
+bool ConfigureNetworkParams::operator!=(const ConfigureNetworkParams &other) const
 {
     return !(*this == other);
 }
@@ -2283,6 +2282,55 @@ static hailo_status fill_context_recepies_for_multi_context(const ProtoHEFNetwor
     return HAILO_SUCCESS;
 }
 
+static hailo_status fill_activation_config_recepies_for_multi_context(
+    CONTROL_PROTOCOL__context_switch_context_info_t &context_info, ResourcesManager &resources_manager,
+    const ProtoHEFNetworkGroup &network_group_proto, std::shared_ptr<NetworkGroupMetadata> network_group_metadata)
+{
+    uint8_t *context_meta_data_head_pointer = context_info.context_network_data;
+
+    // We'll go over all the edge layers in all of the contexts and select boundary (input/output) edge layers
+    for (uint8_t context_index = 0; context_index < network_group_proto.contexts_size(); ++context_index) {
+        const auto &context_metadata = network_group_proto.contexts(context_index).metadata();
+        const auto number_of_edge_layers = context_metadata.edge_layers_size();
+        CHECK(0 < number_of_edge_layers, HAILO_INVALID_HEF, "No edge layers in this context");
+        CHECK(IS_FIT_IN_UINT8(number_of_edge_layers), HAILO_INVALID_HEF, 
+            "Failed to parse HEF. Invalid edge_layers_size: {}.", number_of_edge_layers);
+
+        const auto boundary_output_layers = network_group_metadata->get_boundary_output_layer_infos(context_index);
+        for (const auto &output_layer_info : boundary_output_layers) {
+            const auto status = fill_boundary_output_layer(&context_info, &context_meta_data_head_pointer,
+                resources_manager, output_layer_info);
+            CHECK_SUCCESS(status);
+        }
+
+        const auto boundary_input_layers = network_group_metadata->get_boundary_input_layer_infos(context_index);
+        for (const auto &input_layer_info : boundary_input_layers) {
+            const auto status = fill_boundary_input_layer(&context_info, &context_meta_data_head_pointer,
+                resources_manager, input_layer_info);
+            CHECK_SUCCESS(status);
+        }
+    }
+
+    // The activation context has only one action - EdgeLayerActivationActionsPositionMarker
+    // It's placed in a none trigger (all actions must be placed in a trigger group), and signals the fw
+    // to add open boundary channel actions at the start of the context.
+    const auto trigger = ContextSwitchTrigger::create_none_trigger();
+    CHECK_EXPECTED_AS_STATUS(trigger);
+    auto status = trigger->add_to_trigger_group(&context_info, &context_meta_data_head_pointer);
+    CHECK_SUCCESS(status);
+    
+    auto action = EdgeLayerActivationActionsPositionMarker::create();
+    CHECK_EXPECTED_AS_STATUS(action);
+    status = action.value()->execute(&context_info, &context_meta_data_head_pointer);
+    CHECK_SUCCESS(status);
+
+    // Update context_network_data_length per context, and preliminary_context_descriptors count in main header
+    context_info.context_network_data_length =
+        static_cast<uint32_t>(context_meta_data_head_pointer - context_info.context_network_data);
+
+    return HAILO_SUCCESS;
+}
+
 static hailo_status fill_preliminary_config_recepies_for_multi_context(const ProtoHEFHwArch &hw_arch,
     CONTROL_PROTOCOL__context_switch_context_info_t &context_info, ResourcesManager &resources_manager,
     const ProtoHEFNetworkGroup &network_group_proto,
@@ -2350,17 +2398,22 @@ Expected<std::shared_ptr<ResourcesManager>> Hef::Impl::create_resources_manager(
         parsing_info.release(), net_group_index);
     CHECK_EXPECTED(resources_manager);
 
-    auto preliminary_context = resources_manager->add_new_context();
-    CHECK_EXPECTED(preliminary_context);
+    auto activation_context = resources_manager->add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_ACTIVATION);
+    CHECK_EXPECTED(activation_context);
+    auto status = fill_activation_config_recepies_for_multi_context(activation_context.value().get(),
+        resources_manager.value(), network_group_proto, network_group_metadata);
+    CHECK_SUCCESS_AS_EXPECTED(status);
 
-    auto status = fill_preliminary_config_recepies_for_multi_context(hw_arch, preliminary_context.value().get(),
+    auto preliminary_context = resources_manager->add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_PRELIMINARY);
+    CHECK_EXPECTED(preliminary_context);
+    status = fill_preliminary_config_recepies_for_multi_context(hw_arch, preliminary_context.value().get(),
         resources_manager.value(), network_group_proto, network_group_proto.preliminary_config(),
         network_group_metadata, device);
     CHECK_SUCCESS_AS_EXPECTED(status);
     resources_manager->update_preliminary_config_buffer_info();
 
     for (uint8_t context_index = 0; context_index < network_group_proto.contexts_size(); ++context_index) {
-        auto new_context = resources_manager->add_new_context();
+        auto new_context = resources_manager->add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_DYNAMIC);
         CHECK_EXPECTED(new_context);
 
         status = fill_context_recepies_for_multi_context(network_group_proto, hw_arch, new_context.value().get(), resources_manager.value(),
@@ -2369,13 +2422,31 @@ Expected<std::shared_ptr<ResourcesManager>> Hef::Impl::create_resources_manager(
     }
     resources_manager->update_dynamic_contexts_buffer_info();
 
-    status = resources_manager->create_fw_managed_vdma_channels();
+    status = resources_manager->create_internal_vdma_channels();
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     auto resources_manager_ptr = make_shared_nothrow<ResourcesManager>(resources_manager.release());
     CHECK_NOT_NULL_AS_EXPECTED(resources_manager_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return resources_manager_ptr;
+}
+
+ExpectedRef<const ProtoHEFNetworkGroup> Hef::Impl::get_net_group_per_arch(const ProtoHEFNetworkGroup &base_net_group,
+    ProtoHEFHwArch hef_arch, hailo_device_architecture_t device_arch, uint32_t partial_clusters_layout_bitmap)
+{
+    if (ProtoHEFHwArch::PROTO__HW_ARCH__HAILO8L == hef_arch) {
+        // Hailo8 can work with Hailo8L configurations. in that case we choose one of the configurations
+        for (auto &partial_network_group : base_net_group.partial_network_groups()) {
+            if ((partial_clusters_layout_bitmap == partial_network_group.layout().partial_clusters_layout_bitmap()) ||
+                ((HAILO_ARCH_HAILO8 == device_arch))) {
+                return std::ref(partial_network_group.network_group());
+            }
+        }
+        LOGGER__ERROR("There is no matching partial_clusters_layout_bitmap configuration in the given HEF");
+        return make_unexpected(HAILO_INVALID_HEF);
+    } else {
+        return std::ref(base_net_group);
+    }
 }
 
 Expected<std::vector<std::string>> Hef::Impl::get_sorted_output_names(const std::string &net_group_name)
@@ -2638,6 +2709,11 @@ Expected<CONTROL_PROTOCOL__TRIGGER_t> ContextSwitchTrigger::serialize(const Prot
 
     // Deafult case
     return make_unexpected(HAILO_INTERNAL_FAILURE);
+}
+
+Expected<ContextSwitchTrigger> ContextSwitchTrigger::create_none_trigger()
+{
+    return ContextSwitchTrigger(HEF_METADATA__build_none_trigger());
 }
 
 Expected<ContextSwitchTrigger> ContextSwitchTrigger::create(const ProtoHEFTrigger &proto_trigger)

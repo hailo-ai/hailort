@@ -1,8 +1,28 @@
 cmake_minimum_required(VERSION 3.0.0)
 
+option(HAILO_BUILD_PYBIND "Build Python binding" OFF)
+option(HAILO_BUILD_PYHAILORT_VENV "Build pyhailort in venv. Only used if HAILO_BUILD_PYBIND is on" ON)
+option(HAILO_BUILD_EMULATOR "Build hailort for emulator" OFF)
+option(HAILO_BUILD_UT "Build Unit Tests" OFF)
+option(HAILO_BUILD_HW_DEBUG_TOOL "Build hw debug tool" OFF)
+option(HAILO_BUILD_GSTREAMER "Compile gstreamer plugins" OFF)
+option(HAILO_BUILD_EXAMPLES "Build examples" OFF)
+option(HAILO_OFFLINE_COMPILATION "Don't download external dependencies" OFF)
+option(HAILO_BUILD_SERVICE "Build hailort service" OFF)
+
+if(WIN32 AND ${HAILO_BUILD_SERVICE})
+    message(FATAL_ERROR "HailoRT service is not supported on Windows")
+endif()
+
+# Flag for emulator (FPGA/Veloce)
+if(HAILO_BUILD_EMULATOR)
+    message(WARNING "HailoRT is building with Emulator flag on")
+    set(HAILORT_COMPILE_OPTIONS ${HAILORT_COMPILE_OPTIONS} -DHAILO_EMULATOR)
+endif()
+
 # Set firmware version
 add_definitions( -DFIRMWARE_VERSION_MAJOR=4 )
-add_definitions( -DFIRMWARE_VERSION_MINOR=10 )
+add_definitions( -DFIRMWARE_VERSION_MINOR=11 )
 add_definitions( -DFIRMWARE_VERSION_REVISION=0 )
 if(HAILO_BUILD_SERVICE)
     add_definitions( -DHAILO_SUPPORT_MULTI_PROCESS )
@@ -116,32 +136,12 @@ if(HAILO_BUILD_SERVICE)
     add_subdirectory(rpc)
 endif()
 
-# microprofile
-if(HAILO_MICROPROFILE)
-    add_library(microprofile STATIC EXCLUDE_FROM_ALL external/microprofile/microprofile.cpp)
-    set_target_properties(microprofile PROPERTIES
-        CXX_STANDARD              11
-        CXX_STANDARD_REQUIRED     YES
-        POSITION_INDEPENDENT_CODE ON
-    )
-    target_compile_definitions(microprofile
-        PRIVATE
-        -DMICROPROFILE_WEBSERVER=1
-        -DMICROPROFILE_GPU_TIMERS=0
-        -DMICROPROFILE_NAME_MAX_LEN=256
-        PUBLIC
-        -DMICROPROFILE_ENABLED=1
-    )
-    target_include_directories(microprofile PUBLIC external/microprofile)
-else()
-    add_library(microprofile INTERFACE)
-    target_compile_definitions(microprofile INTERFACE -DMICROPROFILE_ENABLED=0)
-    target_include_directories(microprofile INTERFACE external/microprofile)
-endif()
-
 add_subdirectory(common)
 add_subdirectory(libhailort)
 add_subdirectory(hailortcli)
+if(HAILO_BUILD_HW_DEBUG_TOOL)
+    add_subdirectory(tools/hw_debug)
+endif()
 
 if(HAILO_BUILD_SERVICE)
     add_subdirectory(hailort_service)

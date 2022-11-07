@@ -66,7 +66,7 @@ Expected<hailo_stream_interface_t> VdmaConfigNetworkGroup::get_default_streams_i
     auto first_streams_interface = m_resources_managers[0]->get_default_streams_interface();
     CHECK_EXPECTED(first_streams_interface);
 #ifndef NDEBUG
-    // Check that all physicall devices has the same interface
+    // Check that all physical devices has the same interface
     for (auto &resoucres_manager : m_resources_managers) {
         auto iface = resoucres_manager->get_default_streams_interface();
         CHECK_EXPECTED(iface);

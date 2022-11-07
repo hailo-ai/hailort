@@ -43,8 +43,12 @@ protected:
 
     virtual Expected<D2H_EVENT_MESSAGE_t> read_notification() override;
     virtual hailo_status disable_notifications() override;
+    virtual hailo_status fw_interact_impl(uint8_t *request_buffer, size_t request_size,
+        uint8_t *response_buffer, size_t *response_size, hailo_cpu_id_t cpu_id) override;
+    virtual ExpectedRef<ConfigManager> get_config_manager() override;
 
     HailoRTDriver m_driver;
+    std::unique_ptr<ConfigManager> m_context_switch_manager;
 };
 
 } /* namespace hailort */

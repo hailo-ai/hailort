@@ -360,6 +360,7 @@ public:
     {
         hailo_vdevice_params_t params = {};
         params.device_count = HAILO_DEFAULT_DEVICE_COUNT;
+        params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN;
 
 IGNORE_DEPRECATION_WARNINGS_BEGIN
         params.device_infos = nullptr;

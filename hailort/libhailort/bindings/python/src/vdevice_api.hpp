@@ -49,7 +49,18 @@ public:
 
     static VDeviceWrapper create_from_ids(const std::vector<std::string> &device_ids)
     {
-        return VDeviceWrapper(device_ids);
+        auto device_ids_vector = HailoRTCommon::to_device_ids_vector(device_ids);
+        VALIDATE_EXPECTED(device_ids_vector);
+
+        hailo_vdevice_params_t params = {};
+        auto status = hailo_init_vdevice_params(&params);
+        VALIDATE_STATUS(status);
+
+        params.device_ids = device_ids_vector->data();
+        params.device_count = static_cast<uint32_t>(device_ids_vector->size());
+        params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_NONE;
+
+        return VDeviceWrapper(params);
     }
 
     VDeviceWrapper(const hailo_vdevice_params_t &params)
@@ -59,14 +70,6 @@ public:
 
         m_vdevice = vdevice_expected.release();
     };
-
-    VDeviceWrapper(const std::vector<std::string> &device_ids)
-    {
-        auto vdevice_expected = VDevice::create(device_ids);
-        VALIDATE_EXPECTED(vdevice_expected);
-
-        m_vdevice = vdevice_expected.release();
-    }
 
     py::list get_physical_devices_ids() const
     {

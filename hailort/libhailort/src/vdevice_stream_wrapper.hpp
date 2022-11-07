@@ -55,6 +55,7 @@ public:
     virtual Expected<PendingBufferState> send_pending_buffer() override;
     virtual Expected<size_t> get_buffer_frames_size() const override;
     virtual Expected<size_t> get_pending_frames_count() const override;
+    virtual hailo_status reset_offset_of_pending_frames() override;
 
 protected:
     virtual Expected<size_t> sync_write_raw_buffer(const MemoryView &buffer) override;

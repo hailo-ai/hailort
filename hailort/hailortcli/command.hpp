@@ -64,11 +64,12 @@ public:
     virtual hailo_status execute() override final;
 
 protected:
+    hailo_device_params m_device_params;
+
     virtual hailo_status execute_on_device(Device &device) = 0;
     hailo_status execute_on_devices(std::vector<std::unique_ptr<Device>> &devices);
+    hailo_status validate_specific_device_is_given();
 
-private:
-    hailo_device_params m_device_params;
 };
 
 #endif /* _HAILO_COMMAND_HPP_ */

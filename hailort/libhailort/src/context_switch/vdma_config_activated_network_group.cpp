@@ -50,14 +50,12 @@ VdmaConfigActivatedNetworkGroup::VdmaConfigActivatedNetworkGroup(
         EventPtr &&network_group_activated_event,
         AccumulatorPtr deactivation_time_accumulator,
         hailo_status &status) :
-    ActivatedNetworkGroupBase(network_group_params, dynamic_batch_size, input_streams,
-                              output_streams, std::move(network_group_activated_event), status),
+    ActivatedNetworkGroupBase(network_group_params, input_streams, output_streams,
+                              std::move(network_group_activated_event), status),
     m_network_group_name(network_group_name),
     m_should_reset_network_group(true),
     m_active_net_group_holder(active_net_group_holder),
     m_resources_managers(std::move(resources_managers)),
-    m_ddr_send_threads(),
-    m_ddr_recv_threads(),
     m_deactivation_time_accumulator(deactivation_time_accumulator),
     m_keep_nn_config_during_reset(false)
 {
@@ -88,6 +86,23 @@ VdmaConfigActivatedNetworkGroup::VdmaConfigActivatedNetworkGroup(
             return;
         }
     }
+
+    // TODO: remove this after fixing (HRT-8477)
+    for (auto &resources_manager : m_resources_managers) {
+        resources_manager->unmark_d2h_callbacks_for_shutdown();
+    }
+
+    status = activate_low_level_streams(dynamic_batch_size);
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to activate low level streams");
+        return;
+    }
+
+    status = m_network_group_activated_event->signal();
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to signal network activation event");
+        return;
+    }
 }
 
 VdmaConfigActivatedNetworkGroup::VdmaConfigActivatedNetworkGroup(VdmaConfigActivatedNetworkGroup &&other) noexcept :
@@ -96,8 +111,6 @@ VdmaConfigActivatedNetworkGroup::VdmaConfigActivatedNetworkGroup(VdmaConfigActiv
     m_should_reset_network_group(std::exchange(other.m_should_reset_network_group, false)),
     m_active_net_group_holder(other.m_active_net_group_holder),
     m_resources_managers(std::move(other.m_resources_managers)),
-    m_ddr_send_threads(std::move(other.m_ddr_send_threads)),
-    m_ddr_recv_threads(std::move(other.m_ddr_recv_threads)),
     m_deactivation_time_accumulator(std::move(other.m_deactivation_time_accumulator)),
     m_keep_nn_config_during_reset(std::move(other.m_keep_nn_config_during_reset))
 {}
@@ -112,19 +125,42 @@ VdmaConfigActivatedNetworkGroup::~VdmaConfigActivatedNetworkGroup()
     const auto start_time = std::chrono::steady_clock::now();
 
     m_active_net_group_holder.clear();
-    deactivate_resources();
+    
+    m_network_group_activated_event->reset();
+
+    // TODO: We call flush_boundary_input_channels instead of the input stream's flush function
+    //       in order to control the timeout (which can be inifinite in some cases) (HRT-8227)
+    for (auto &resources_manager : m_resources_managers) {
+        status = resources_manager->flush_boundary_input_channels();
+        if (HAILO_STREAM_INTERNAL_ABORT == status) {
+            LOGGER__DEBUG("Failed to flush boundary input channels with status {}", status);
+        }
+        else if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to flush boundary input channels with status {}", status);
+        }
+    }
+
+    // TODO: remove this after fixing (HRT-8477)
+    for (auto &resources_manager : m_resources_managers) {
+        resources_manager->mark_d2h_callbacks_for_shutdown();
+    }
 
     for (auto &resources_manager : m_resources_managers) {
         status = resources_manager->reset_state_machine(m_keep_nn_config_during_reset);
         if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed to reset context switch status");
+            LOGGER__ERROR("Failed to reset context switch with status {}", status);
         }
+    }
+
+    status = deactivate_low_level_streams();
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to deactivate low level streams with status {}", status);
     }
 
     for (auto &resources_manager : m_resources_managers) {
         status = resources_manager->unregister_fw_managed_vdma_channels();
         if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed to stop fw managed vdma channels");
+            LOGGER__ERROR("Failed to stop fw managed vdma channels with status {}", status);
         }
     }
 

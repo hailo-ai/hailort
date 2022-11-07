@@ -105,7 +105,9 @@ hailo_status VdmaInputStream::clear_abort()
 
 hailo_status VdmaInputStream::flush()
 {
-    return m_channel->flush((m_channel_timeout * m_dynamic_batch_size));
+    const auto dynamic_batch_size = (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == m_dynamic_batch_size) ? 
+        1 : m_dynamic_batch_size;
+    return m_channel->flush(m_channel_timeout * dynamic_batch_size);
 }
 
 hailo_status VdmaInputStream::activate_stream(uint16_t dynamic_batch_size)
@@ -113,7 +115,7 @@ hailo_status VdmaInputStream::activate_stream(uint16_t dynamic_batch_size)
     auto status = set_dynamic_batch_size(dynamic_batch_size);
     CHECK_SUCCESS(status);
 
-    status = m_channel->start_allocated_channel(0);
+    status = m_channel->complete_channel_activation(0);
     CHECK_SUCCESS(status);
 
     this->is_stream_activated = true;
@@ -126,20 +128,10 @@ hailo_status VdmaInputStream::deactivate_stream()
         return HAILO_SUCCESS;
     }
 
-    /* Flush is best effort */
-    auto status = m_channel->flush(VDMA_FLUSH_TIMEOUT);
-    if (HAILO_STREAM_INTERNAL_ABORT == status) {
-        LOGGER__INFO("Flush input_channel is not needed because channel was aborted. (channel {})", m_channel->get_channel_id());
-        status = HAILO_SUCCESS;
-    } else if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("Failed to flush input_channel. (status {} channel {})", status, m_channel->get_channel_id());
-    }
-
     /* Close channel is best effort. */
-    auto stop_channel_status = m_channel->stop_channel();
-    if (HAILO_SUCCESS != stop_channel_status) {
-        LOGGER__ERROR("Failed to stop channel with error status {}", stop_channel_status);
-        status = (status == HAILO_SUCCESS) ? stop_channel_status : status;
+    const auto status = m_channel->stop_channel();
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to stop channel with status {}", status);
     }
 
     this->is_stream_activated = false;
@@ -201,6 +193,11 @@ Expected<size_t> VdmaInputStream::get_buffer_frames_size() const
 Expected<size_t> VdmaInputStream::get_pending_frames_count() const
 {
     return m_channel->get_h2d_pending_frames_count();
+}
+
+hailo_status VdmaInputStream::reset_offset_of_pending_frames()
+{
+    return m_channel->reset_offset_of_pending_frames();
 }
 
 hailo_status VdmaInputStream::sync_write_all_raw_buffer_no_transform_impl(void *buffer, size_t offset, size_t size)
@@ -337,8 +334,8 @@ hailo_status VdmaOutputStream::activate_stream(uint16_t dynamic_batch_size)
 {
     auto status = set_dynamic_batch_size(dynamic_batch_size);
     CHECK_SUCCESS(status);
-    
-    status = m_channel->start_allocated_channel(m_transfer_size);
+
+    status = m_channel->complete_channel_activation(m_transfer_size);
     CHECK_SUCCESS(status);
 
     this->is_stream_activated = true;

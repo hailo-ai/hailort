@@ -36,7 +36,7 @@ class PendingBufferState final
 public:
     PendingBufferState(VdmaChannel &vdma_channel, size_t next_buffer_desc_num) : m_vdma_channel(vdma_channel),
         m_next_buffer_desc_num(next_buffer_desc_num) {}
-    hailo_status finish(std::chrono::milliseconds timeout, std::unique_lock<std::mutex> &lock);
+    hailo_status finish(std::chrono::milliseconds timeout, std::unique_lock<std::mutex> &lock, uint16_t max_batch_size);
 
 private:
     VdmaChannel &m_vdma_channel;
@@ -68,19 +68,21 @@ public:
     Expected<PendingBufferState> send_pending_buffer();
     hailo_status trigger_channel_completion(uint16_t hw_num_processed, const std::function<void(uint32_t)> &callback);
     hailo_status allocate_resources(uint32_t descs_count);
-    /* For channels controlled by the HailoRT, the HailoRT needs to use this function to start the channel (it registers the channel to driver 
-       and starts the vDMA channel. Used for boundary channels */
-    hailo_status start_allocated_channel(uint32_t transfer_size);
+    // Call for boundary channels, after the fw has activted them (via ResourcesManager::enable_state_machine)
+    hailo_status complete_channel_activation(uint32_t transfer_size);
+    // Libhailort registers the channels to the driver and the FW is responsible for opening and closing them
     hailo_status register_fw_controlled_channel();
     hailo_status unregister_fw_controlled_channel();
+    void mark_d2h_callbacks_for_shutdown();
+    void unmark_d2h_callbacks_for_shutdown();
+    // For D2H channels, we don't buffer data
+    // Hence there's nothing to be "flushed" and the function will return with HAILO_SUCCESS
     hailo_status flush(const std::chrono::milliseconds &timeout);
     hailo_status set_num_avail_value(uint16_t new_value);
     hailo_status set_transfers_per_axi_intr(uint16_t transfers_per_axi_intr);
     hailo_status inc_num_available_for_ddr(uint16_t value, uint32_t size_mask);
     Expected<uint16_t> get_hw_num_processed_ddr(uint32_t size_mask);
-    /* For channels controlled by the FW (inter context and cfg channels), the hailort needs only to register the channel to the driver.
-       The FW would be responsible to open and close the channel */
-    hailo_status register_channel_to_driver(uintptr_t desc_list_handle);
+    
     hailo_status stop_channel();
     uint16_t get_page_size();
     Expected<CONTROL_PROTOCOL__host_buffer_info_t> get_boundary_buffer_info(uint32_t transfer_size);
@@ -97,6 +99,8 @@ public:
     size_t get_buffer_size() const;
     Expected<size_t> get_h2d_pending_frames_count();
     Expected<size_t> get_d2h_pending_descs_count();
+
+    hailo_status reset_offset_of_pending_frames();
 
     VdmaChannel(const VdmaChannel &other) = delete;
     VdmaChannel &operator=(const VdmaChannel &other) = delete;
@@ -138,9 +142,10 @@ private:
         // Contains the last num_processed of the last interrupt (only used on latency measurement)
         uint16_t m_last_timestamp_num_processed;
         size_t m_accumulated_transfers;
-        bool pending_reads;
+        bool m_channel_is_active;
     };
 
+    hailo_status register_channel_to_driver();
     hailo_status unregister_for_d2h_interrupts(std::unique_lock<State> &lock);
 
     VdmaChannel(vdma::ChannelId channel_id, Direction direction, HailoRTDriver &driver, uint32_t stream_index,
@@ -184,7 +189,6 @@ private:
     Expected<uint16_t> update_latency_meter(const ChannelInterruptTimestampList &timestamp_list);
     static bool is_desc_between(uint16_t begin, uint16_t end, uint16_t desc);
     Expected<bool> is_aborted();
-    hailo_status start_channel();
 
     const vdma::ChannelId m_channel_id;
     Direction m_direction;
@@ -206,18 +210,20 @@ private:
     // because multiple processes can enable/disable vdma channel (which changes the channel)
     MmapBuffer<HailoRTDriver::VdmaChannelHandle> m_channel_handle;
 
+    // TODO: Remove after HRT-7838
+    Buffer m_buffer_for_frames_shift;
+
     bool m_channel_enabled;
-    bool m_channel_is_active;
-    std::mutex m_is_active_flag_mutex;
     
     uint16_t m_transfers_per_axi_intr;
     // Using CircularArray because it won't allocate or free memory wile pushing and poping. The fact that it is circural is not relevant here
     CircularArray<size_t> m_pending_buffers_sizes;
-    uint16_t m_pending_num_avail_offset;
+    std::atomic_uint16_t m_pending_num_avail_offset;
     std::condition_variable_any m_can_write_buffer_cv;
     std::condition_variable_any m_can_read_buffer_cv;
     std::atomic_bool m_is_waiting_for_channel_completion;
     std::atomic_bool m_is_aborted_by_internal_source;
+    std::atomic_bool m_d2h_callbacks_marked_for_shutdown;
 };
 
 } /* namespace hailort */

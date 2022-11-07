@@ -274,7 +274,10 @@ public:
      *  Download generated context switch action list per single context
      * 
      * @param[in]     device - The Hailo device.
-     * @param[in]     context_index - context index of the context the user wishes to download the action list
+     * @param[in]     network_group_id - Unique identifier for the network
+     * @param[in]     context_type - type of context
+     * @param[in]     context_index - context index of the context the user wishes to download the action list. Should
+     *                be 0 for non-dynamic contexts.
      * @param[out]    base address - base address of the context action list in the FW memory
      * @param[out]    action list - buffer of the action list
      * @param[out]    action_list_length - size of the action list buffer
@@ -282,8 +285,10 @@ public:
      * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
      */
     // TODO: fix
-    static hailo_status download_context_action_list(Device &device, uint8_t context_index, size_t action_list_max_size, 
-            uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length, uint32_t *batch_counter);
+    static hailo_status download_context_action_list(Device &device, uint32_t network_group_id,
+        CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index,
+        size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length,
+        uint32_t *batch_counter);
             
     /**
      *  Enable network group
@@ -391,9 +396,10 @@ private:
     static hailo_status read_user_config_chunk(Device &device, uint32_t read_offset, uint32_t read_length,
         uint8_t *buffer, uint32_t *actual_read_data_length);
     static hailo_status write_user_config_chunk(Device &device, uint32_t offset, const uint8_t *data, uint32_t chunk_size);
-    static hailo_status download_context_action_list_chunk(Device &device, uint8_t context_index, uint16_t action_list_offset,
-            size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length,
-            bool *is_action_list_end, uint32_t *batch_counter);
+    static hailo_status download_context_action_list_chunk(Device &device, uint32_t network_group_id,
+        CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index, uint16_t action_list_offset,
+        size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length,
+        bool *is_action_list_end, uint32_t *batch_counter);
     static hailo_status context_switch_set_context_info_chunk(Device &device,
             CONTROL_PROTOCOL__context_switch_context_info_single_control_t *context_info);
     static hailo_status change_context_switch_status(Device &device, 

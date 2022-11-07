@@ -157,8 +157,6 @@ private:
 
 #endif
 
-// End of temp hack for hlpcie
-
 static void validate_versions_match()
 {
     hailo_version_t libhailort_version = {};
@@ -393,6 +391,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_readonly("logger_version", &hailo_device_identity_t::logger_version)
         .def_readonly("board_name_length", &hailo_device_identity_t::board_name_length)
         .def_readonly("is_release", &hailo_device_identity_t::is_release)
+        .def_readonly("extended_context_switch_buffer", &hailo_device_identity_t::extended_context_switch_buffer)
         .def_readonly("device_architecture", &hailo_device_identity_t::device_architecture)
         .def_property_readonly("board_name", [](const hailo_device_identity_t& board_info) -> py::str {
             return py::str(board_info.board_name, board_info.board_name_length);
@@ -413,6 +412,7 @@ PYBIND11_MODULE(_pyhailort, m) {
 
     py::class_<hailo_core_information_t>(m, "CoreInformation")
         .def_readonly("is_release", &hailo_core_information_t::is_release)
+        .def_readonly("extended_context_switch_buffer", &hailo_core_information_t::extended_context_switch_buffer)
         .def_readonly("fw_version", &hailo_core_information_t::fw_version)
         ;
 
@@ -792,6 +792,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         )
         .def_static("default", []() {
             auto orig_params = HailoRTDefaults::get_vdevice_params();
+            orig_params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_NONE;
             VDeviceParamsWrapper params_wrapper{orig_params, ""};
             return params_wrapper;
         });

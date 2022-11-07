@@ -181,7 +181,6 @@ Expected<std::shared_ptr<VDeviceInputStream>> VDeviceInputStream::create_input_s
             "vDevice internal streams should have the same stream interface");
     }
 
-
     std::shared_ptr<VDeviceInputStream> local_vdevice_stream(new (std::nothrow) VDeviceInputStream(devices,
         std::move(streams), network_group_handle, std::move(network_group_activated_event), edge_layer, 
         network_group_scheduler, stream_interface, status));
@@ -288,6 +287,16 @@ hailo_status VDeviceInputStream::clear_abort_impl(scheduler_ng_handle_t network_
     return status;
 }
 
+hailo_status VDeviceInputStream::reset_offset_of_pending_frames()
+{
+    for (auto &stream : m_streams) {
+        auto status = stream->reset_offset_of_pending_frames();
+        CHECK_SUCCESS(status);
+    }
+
+    return HAILO_SUCCESS;
+}
+
 bool VDeviceInputStream::is_scheduled()
 {
     auto network_group_scheduler = m_network_group_scheduler.lock();
@@ -356,7 +365,8 @@ hailo_status VDeviceOutputStream::read_impl(MemoryView buffer, scheduler_ng_hand
 {
     auto network_group_scheduler = m_network_group_scheduler.lock();
     if (network_group_scheduler) {
-        auto status = network_group_scheduler->wait_for_read(network_group_handle, name());
+        // All timeout values of m_streams should be the same
+        auto status = network_group_scheduler->wait_for_read(network_group_handle, name(), m_streams[0]->get_timeout());
         if (HAILO_STREAM_INTERNAL_ABORT == status) {
             LOGGER__INFO("Read from stream was aborted.");
             return status;

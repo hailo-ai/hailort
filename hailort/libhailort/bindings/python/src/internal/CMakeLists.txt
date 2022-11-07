@@ -26,7 +26,6 @@ target_link_libraries(_pyhailort_internal PRIVATE
     hef_proto
     spdlog::spdlog
     readerwriterqueue
-    microprofile
     scheduler_mon_proto)
 if(HAILO_BUILD_SERVICE)
     target_link_libraries(_pyhailort_internal PRIVATE grpc++_unsecure hailort_rpc_grpc_proto)

@@ -360,17 +360,17 @@ Expected<std::map<std::string, hailo_vstream_params_t>> HailoRtRpcClient::Config
 
 Expected<std::string> HailoRtRpcClient::ConfiguredNetworkGroup_get_network_group_name(uint32_t handle)
 {
-    return ConfiguredNetworkGroup_get_name(handle);
+    return ConfiguredNetworkGroup_name(handle);
 }
 
-Expected<std::string> HailoRtRpcClient::ConfiguredNetworkGroup_get_name(uint32_t handle)
+Expected<std::string> HailoRtRpcClient::ConfiguredNetworkGroup_name(uint32_t handle)
 {
-    ConfiguredNetworkGroup_get_name_Request request;
+    ConfiguredNetworkGroup_name_Request request;
     request.set_handle(handle);
 
-    ConfiguredNetworkGroup_get_name_Reply reply;
+    ConfiguredNetworkGroup_name_Reply reply;
     grpc::ClientContext context;
-    grpc::Status status = m_stub->ConfiguredNetworkGroup_get_name(&context, request, &reply);
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_name(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
@@ -510,42 +510,48 @@ Expected<std::vector<std::vector<std::string>>> HailoRtRpcClient::ConfiguredNetw
     return result;
 }
 
+hailo_vstream_info_t deserialize_vstream_info(const VStreamInfo &info_proto)
+{
+    hailo_vstream_info_t info;
+    strcpy(info.name, info_proto.name().c_str());
+    strcpy(info.network_name, info_proto.network_name().c_str());
+    info.direction = static_cast<hailo_stream_direction_t>(info_proto.direction());
+    hailo_format_t format = {
+        .type = static_cast<hailo_format_type_t>(info_proto.format().type()),
+        .order = static_cast<hailo_format_order_t>(info_proto.format().order()),
+        .flags = static_cast<hailo_format_flags_t>(info_proto.format().flags())
+    };
+    info.format = format;
+    if (format.order == HAILO_FORMAT_ORDER_HAILO_NMS) {
+        hailo_nms_shape_t nms_shape = {
+            .number_of_classes = info_proto.nms_shape().number_of_classes(),
+            .max_bboxes_per_class = info_proto.nms_shape().max_bbox_per_class()
+        };
+        info.nms_shape = nms_shape;
+    } else {
+        hailo_3d_image_shape_t shape = {
+            .height = info_proto.shape().height(),
+            .width = info_proto.shape().width(),
+            .features = info_proto.shape().features()
+        };
+        info.shape = shape;
+    }
+    hailo_quant_info_t quant_info = {
+        .qp_zp = info_proto.quant_info().qp_zp(),
+        .qp_scale = info_proto.quant_info().qp_scale(),
+        .limvals_min = info_proto.quant_info().limvals_min(),
+        .limvals_max = info_proto.quant_info().limvals_max()
+    };
+    info.quant_info = quant_info;
+    return info;
+}
+
 Expected<std::vector<hailo_vstream_info_t>> deserialize_vstream_infos(const ConfiguredNetworkGroup_get_vstream_infos_Reply &reply)
 {
     std::vector<hailo_vstream_info_t> result;
     result.reserve(reply.vstream_infos().size());
     for (auto& info_proto : reply.vstream_infos()) {
-        hailo_vstream_info_t info;
-        strcpy(info.name, info_proto.name().c_str());
-        strcpy(info.network_name, info_proto.network_name().c_str());
-        info.direction = static_cast<hailo_stream_direction_t>(info_proto.direction());
-        hailo_format_t format = {
-            .type = static_cast<hailo_format_type_t>(info_proto.format().type()),
-            .order = static_cast<hailo_format_order_t>(info_proto.format().order()),
-            .flags = static_cast<hailo_format_flags_t>(info_proto.format().flags())
-        };
-        info.format = format;
-        if (format.order == HAILO_FORMAT_ORDER_HAILO_NMS) {
-            hailo_nms_shape_t nms_shape = {
-                .number_of_classes = info_proto.nms_shape().number_of_classes(),
-                .max_bboxes_per_class = info_proto.nms_shape().max_bbox_per_class()
-            };
-            info.nms_shape = nms_shape;
-        } else {
-            hailo_3d_image_shape_t shape = {
-                .height = info_proto.shape().height(),
-                .width = info_proto.shape().width(),
-                .features = info_proto.shape().features()
-            };
-            info.shape = shape;
-        }
-        hailo_quant_info_t quant_info = {
-            .qp_zp = info_proto.quant_info().qp_zp(),
-            .qp_scale = info_proto.quant_info().qp_scale(),
-            .limvals_min = info_proto.quant_info().limvals_min(),
-            .limvals_max = info_proto.quant_info().limvals_max()
-        };
-        info.quant_info = quant_info;
+        auto info = deserialize_vstream_info(info_proto);
         result.push_back(info);
     }
     return result;
@@ -757,7 +763,7 @@ hailo_status HailoRtRpcClient::InputVStream_abort(uint32_t handle)
     grpc::ClientContext context;
     VStream_abort_Reply reply;
     grpc::Status status = m_stub->InputVStream_abort(&context, request, &reply);
-    CHECK(status.ok(), HAILO_RPC_FAILED, "InputVStream_abort: RPC failed");
+    CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     return static_cast<hailo_status>(reply.status());
 }
@@ -769,7 +775,7 @@ hailo_status HailoRtRpcClient::OutputVStream_abort(uint32_t handle)
     grpc::ClientContext context;
     VStream_abort_Reply reply;
     grpc::Status status = m_stub->OutputVStream_abort(&context, request, &reply);
-    CHECK(status.ok(), HAILO_RPC_FAILED, "OutputVStream_abort: RPC failed");
+    CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     return static_cast<hailo_status>(reply.status());
 }
@@ -781,7 +787,7 @@ hailo_status HailoRtRpcClient::InputVStream_resume(uint32_t handle)
     grpc::ClientContext context;
     VStream_resume_Reply reply;
     grpc::Status status = m_stub->InputVStream_resume(&context, request, &reply);
-    CHECK(status.ok(), HAILO_RPC_FAILED, "InputVStream_resume: RPC failed");
+    CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     return static_cast<hailo_status>(reply.status());
 }
@@ -793,9 +799,78 @@ hailo_status HailoRtRpcClient::OutputVStream_resume(uint32_t handle)
     grpc::ClientContext context;
     VStream_resume_Reply reply;
     grpc::Status status = m_stub->OutputVStream_resume(&context, request, &reply);
-    CHECK(status.ok(), HAILO_RPC_FAILED, "OutputVStream_resume: RPC failed");
+    CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     return static_cast<hailo_status>(reply.status());
+}
+
+Expected<hailo_format_t> HailoRtRpcClient::InputVStream_get_user_buffer_format(uint32_t handle)
+{
+    VStream_get_user_buffer_format_Request request;
+    request.set_handle(handle);
+    grpc::ClientContext context;
+    VStream_get_user_buffer_format_Reply reply;
+    grpc::Status status = m_stub->InputVStream_get_user_buffer_format(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+
+    auto user_buffer_format_proto = reply.user_buffer_format();
+    hailo_format_t format{
+        .type = static_cast<hailo_format_type_t>(user_buffer_format_proto.type()),
+        .order = static_cast<hailo_format_order_t>(user_buffer_format_proto.order()),
+        .flags = static_cast<hailo_format_flags_t>(user_buffer_format_proto.flags())
+    };
+
+    return format;
+}
+
+Expected<hailo_format_t> HailoRtRpcClient::OutputVStream_get_user_buffer_format(uint32_t handle)
+{
+    VStream_get_user_buffer_format_Request request;
+    request.set_handle(handle);
+    grpc::ClientContext context;
+    VStream_get_user_buffer_format_Reply reply;
+    grpc::Status status = m_stub->OutputVStream_get_user_buffer_format(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+
+    auto user_buffer_format_proto = reply.user_buffer_format();
+    hailo_format_t format{
+        .type = static_cast<hailo_format_type_t>(user_buffer_format_proto.type()),
+        .order = static_cast<hailo_format_order_t>(user_buffer_format_proto.order()),
+        .flags = static_cast<hailo_format_flags_t>(user_buffer_format_proto.flags())
+    };
+
+    return format;
+}
+
+Expected<hailo_vstream_info_t> HailoRtRpcClient::InputVStream_get_info(uint32_t handle)
+{
+    VStream_get_info_Request request;
+    request.set_handle(handle);
+    grpc::ClientContext context;
+    VStream_get_info_Reply reply;
+    grpc::Status status = m_stub->InputVStream_get_info(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    auto info_proto = reply.vstream_info();
+    return deserialize_vstream_info(info_proto);
+}
+Expected<hailo_vstream_info_t> HailoRtRpcClient::OutputVStream_get_info(uint32_t handle)
+{
+    VStream_get_info_Request request;
+    request.set_handle(handle);
+    grpc::ClientContext context;
+    VStream_get_info_Reply reply;
+    grpc::Status status = m_stub->OutputVStream_get_info(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    auto info_proto = reply.vstream_info();
+    return deserialize_vstream_info(info_proto);
 }
 
 }

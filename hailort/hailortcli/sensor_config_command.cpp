@@ -157,6 +157,10 @@ SensorDumpConfigSubcommand::SensorDumpConfigSubcommand(CLI::App &parent_app) :
 
 hailo_status SensorDumpConfigSubcommand::execute_on_device(Device &device)
 {
+    auto status = validate_specific_device_is_given();
+    CHECK_SUCCESS(status,
+        "'sensor-config get-config' command should get a specific device-id.");
+
     return device.sensor_dump_config(m_section_index, m_output_file_path);
 }
 

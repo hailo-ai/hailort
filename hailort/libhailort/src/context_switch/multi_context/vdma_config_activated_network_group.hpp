@@ -62,21 +62,11 @@ private:
       EventPtr &&network_group_activated_event,
       AccumulatorPtr deactivation_time_accumulator, hailo_status &status);
 
-    hailo_status init_ddr_resources();
-    hailo_status cleanup_ddr_resources();
-
-    static void ddr_recv_thread_main(DdrChannelsInfo ddr_info,
-      std::shared_ptr<std::atomic<uint16_t>> desc_list_num_ready);
-    static void ddr_send_thread_main(DdrChannelsInfo ddr_info,
-      std::shared_ptr<std::atomic<uint16_t>> desc_list_num_ready);
-
   std::string m_network_group_name;
   bool m_should_reset_network_group;
   VdmaConfigActiveAppHolder &m_active_net_group_holder;
   // One ResourcesManager per connected physical device. Currently only one device is supported.
   std::vector<std::shared_ptr<ResourcesManager>> m_resources_managers;
-  std::vector<std::thread> m_ddr_send_threads;
-  std::vector<std::thread> m_ddr_recv_threads;
   AccumulatorPtr m_deactivation_time_accumulator;
   bool m_keep_nn_config_during_reset;
 };

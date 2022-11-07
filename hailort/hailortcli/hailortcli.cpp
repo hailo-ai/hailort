@@ -96,9 +96,9 @@ void add_vdevice_options(CLI::App *app, hailo_vdevice_params &vdevice_params)
     auto group = app->add_option_group("VDevice Options");
     auto device_count_option = group->add_option("--device-count", vdevice_params.device_count, "VDevice device count")
         ->check(CLI::PositiveNumber);
-    auto multi_process_option = group->add_flag("--multi-process-service", vdevice_params.multi_process_service,
+    group->add_flag("--multi-process-service", vdevice_params.multi_process_service,
         "VDevice multi process service");
-    group->add_option("--group-id", vdevice_params.group_id, "VDevice group id")->needs(multi_process_option);
+    group->add_option("--group-id", vdevice_params.group_id, "VDevice group id");
     group->parse_complete_callback([&vdevice_params, device_count_option](){
         if (vdevice_params.device_params.device_ids.size() > 0) {
             // Check either device_count or device_id

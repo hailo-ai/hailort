@@ -49,8 +49,11 @@ hailo_status write_logs_to_file(Device &device, std::ofstream &ofs, hailo_cpu_id
 
 hailo_status FwLoggerCommand::execute_on_device(Device &device)
 {
+    auto status = validate_specific_device_is_given();
+    CHECK_SUCCESS(status,
+        "'fw-logger' command should get a specific device-id");
+        
     auto ofs_flags = std::ios::out | std::ios::binary;
-    hailo_status status = HAILO_UNINITIALIZED;
 
     if (!m_should_overwrite){
         ofs_flags |= std::ios::app;

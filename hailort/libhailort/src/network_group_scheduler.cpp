@@ -17,10 +17,31 @@
 namespace hailort
 {
 
+#define SINGLE_CONTEXT_BATCH_SIZE (1)
+
+void increase_counter(std::unordered_map<hailort::scheduler_ng_handle_t, std::unordered_map<hailort::stream_name_t, std::atomic_uint32_t>> &counter,
+    const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name)
+{
+    assert(contains(counter, network_group_handle));
+    assert(contains(counter[network_group_handle], stream_name));
+    counter[network_group_handle][stream_name]++;
+}
+
+void decrease_counter(std::unordered_map<hailort::scheduler_ng_handle_t, std::unordered_map<hailort::stream_name_t, std::atomic_uint32_t>> &counter,
+    const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name)
+{
+    assert(contains(counter, network_group_handle));
+    assert(contains(counter[network_group_handle], stream_name));
+    assert(0 < counter[network_group_handle][stream_name]);
+    counter[network_group_handle][stream_name]--;
+}
+
+
 NetworkGroupScheduler::NetworkGroupScheduler(hailo_scheduling_algorithm_t algorithm) :
     m_is_switching_network_group(true),
     m_current_network_group(INVALID_NETWORK_GROUP_HANDLE),
     m_next_network_group(INVALID_NETWORK_GROUP_HANDLE),
+    m_changing_current_batch_size(),
     m_algorithm(algorithm),
     m_before_read_write_mutex(),
     m_current_batch_size(0),
@@ -158,23 +179,23 @@ void NetworkGroupScheduler::log_monitor_networks_infos(ProtoMon &mon)
 
     for (uint32_t network_group_handle = 0; network_group_handle < m_last_measured_activation_timestamp.size(); network_group_handle++) {
         assert(contains(m_active_duration, network_group_handle));
-        auto curr_ng_core = m_active_duration[network_group_handle];
+        auto curr_ng_active_time = m_active_duration[network_group_handle];
         
         if (network_group_handle == m_current_network_group) {
             // Network is currently active
             auto time_diff = std::chrono::duration_cast<std::chrono::duration<double>>(
                 curr_time - m_last_measured_activation_timestamp[m_current_network_group]).count();
-            curr_ng_core += time_diff;
+            curr_ng_active_time += time_diff;
             m_last_measured_activation_timestamp[m_current_network_group] = curr_time;
         }
 
-        auto core_utilization = ((curr_ng_core * 100) /  measurement_duration);
-        auto outputs_count = static_cast<uint32_t>(m_allowed_read[network_group_handle].size());
+        auto active_time = ((curr_ng_active_time * 100) /  measurement_duration);
+        auto outputs_count = static_cast<uint32_t>(m_requested_read_frames[network_group_handle].size());
         auto fps = static_cast<double>((m_fps_accumulator[network_group_handle] / outputs_count) / measurement_duration);
 
         auto net_info = mon.add_networks_infos();
         net_info->set_network_name(get_network_group_name(network_group_handle));
-        net_info->set_core_utilization(core_utilization);
+        net_info->set_active_time(active_time);
         net_info->set_fps(fps);
     }
     
@@ -187,8 +208,8 @@ void NetworkGroupScheduler::log_monitor_frames_infos(ProtoMon &mon)
         auto net_frames_info = mon.add_net_frames_infos();
         net_frames_info->set_network_name(get_network_group_name(network_group_handle));
 
-        assert(contains(m_requested_write, network_group_handle));
-        for (auto &streams_requested_write_pair : m_requested_write[network_group_handle]) {
+        assert(contains(m_requested_write_frames, network_group_handle));
+        for (auto &streams_requested_write_pair : m_requested_write_frames[network_group_handle]) {
             auto &stream_name = streams_requested_write_pair.first;
 
             auto stream_frames_info = net_frames_info->add_streams_frames_infos();
@@ -201,8 +222,8 @@ void NetworkGroupScheduler::log_monitor_frames_infos(ProtoMon &mon)
             }
         }
         
-        assert(contains(m_allowed_read, network_group_handle));
-        for (auto &streams_requested_read_pair : m_allowed_read[network_group_handle]) {
+        assert(contains(m_requested_read_frames, network_group_handle));
+        for (auto &streams_requested_read_pair : m_requested_read_frames[network_group_handle]) {
             auto &stream_name = streams_requested_read_pair.first;
 
             auto stream_frames_info = net_frames_info->add_streams_frames_infos();
@@ -288,6 +309,7 @@ Expected<scheduler_ng_handle_t> NetworkGroupScheduler::add_network_group(std::we
         m_frame_was_sent_per_network_group[network_group_handle] = false;
         m_timeout_per_network_group[network_group_handle] = make_shared_nothrow<std::chrono::milliseconds>(DEFAULT_SCHEDULER_TIMEOUT);
         CHECK_AS_EXPECTED(nullptr != m_timeout_per_network_group[network_group_handle], HAILO_OUT_OF_HOST_MEMORY);
+        m_changing_current_batch_size[network_group_handle] = false;
 
         auto added_cng_ptr = added_cng.lock();
         CHECK_AS_EXPECTED(added_cng_ptr, HAILO_INTERNAL_FAILURE);
@@ -301,7 +323,7 @@ Expected<scheduler_ng_handle_t> NetworkGroupScheduler::add_network_group(std::we
             auto batch_size = cng_base->get_stream_batch_size(stream_infos.value()[0].name);
             CHECK_EXPECTED(batch_size);
 
-            if (batch_size.value() > HAILO_DEFAULT_BATCH_SIZE) {
+            if (batch_size.value() > SINGLE_CONTEXT_BATCH_SIZE) {
                 m_max_batch_size[network_group_handle] = batch_size.release();
             }
         }
@@ -311,22 +333,22 @@ Expected<scheduler_ng_handle_t> NetworkGroupScheduler::add_network_group(std::we
             m_should_ng_stop[network_group_handle][stream_info.name] = false;
             m_min_threshold_per_stream[network_group_handle][stream_info.name] = DEFAULT_SCHEDULER_MIN_THRESHOLD;
             if (HAILO_H2D_STREAM == stream_info.direction) {
-                m_requested_write[network_group_handle][stream_info.name] = 0;
-                m_written_buffer[network_group_handle][stream_info.name] = 0;
-                m_sent_pending_buffer[network_group_handle][stream_info.name] = 0;
-                m_current_sent_pending_buffer[network_group_handle][stream_info.name] = 0;
-                m_finished_sent_pending_buffer[network_group_handle][stream_info.name] = 0;
+                m_requested_write_frames[network_group_handle][stream_info.name] = 0;
+                m_finished_write_frames[network_group_handle][stream_info.name] = 0;
+                m_h2d_requested_transferred_frames[network_group_handle][stream_info.name] = 0;
+                m_current_cycle_requested_transferred_frames_h2d[network_group_handle][stream_info.name] = 0;
+                m_h2d_finished_transferred_frames[network_group_handle][stream_info.name] = 0;
 
                 auto event = Event::create_shared(Event::State::signalled);
                 CHECK_AS_EXPECTED(nullptr != event, HAILO_OUT_OF_HOST_MEMORY);
 
                 m_write_buffer_events[network_group_handle][stream_info.name] = event;
             } else {
-                m_requested_read[network_group_handle][stream_info.name] = 0;
-                m_allowed_read[network_group_handle][stream_info.name] = 0;
-                m_finished_read[network_group_handle][stream_info.name] = 0;
-                m_current_finished_read[network_group_handle][stream_info.name] = 0;
-                m_pending_read[network_group_handle][stream_info.name] = 0;
+                m_requested_read_frames[network_group_handle][stream_info.name] = 0;
+                m_ongoing_read_frames[network_group_handle][stream_info.name] = 0;
+                m_finished_read_frames[network_group_handle][stream_info.name] = 0;
+                m_current_cycle_finished_read_frames_d2h[network_group_handle][stream_info.name] = 0;
+                m_d2h_finished_transferred_frames[network_group_handle][stream_info.name] = 0;
             }
         }
     }
@@ -360,8 +382,8 @@ hailo_status NetworkGroupScheduler::wait_for_write(const scheduler_ng_handle_t &
                 if (!m_frame_was_sent_per_network_group[network_group_handle]) {
                     m_frame_was_sent_per_network_group[network_group_handle] = true;
                 }
-                m_requested_write[network_group_handle][stream_name]++;
-                status = allow_writes_for_other_inputs_if_needed(network_group_handle);
+                increase_counter(m_requested_write_frames, network_group_handle, stream_name);
+                status = refresh_write_events_for_other_inputs_if_needed(network_group_handle);
                 CHECK_SUCCESS(status);
                 break;
             }
@@ -409,7 +431,21 @@ bool NetworkGroupScheduler::has_enough_space_in_read_buffers(const scheduler_ng_
 
 bool NetworkGroupScheduler::has_input_written_most_frames(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name)
 {
-    return m_requested_write[network_group_handle][stream_name] == get_max_value_of_unordered_map(m_requested_write[network_group_handle]);
+    auto total_writes = total_written_frames_count(network_group_handle);
+    return total_writes[stream_name] == get_max_value_of_unordered_map(total_writes);
+}
+
+// TODO: Use get_pre_transfer_h2d_frames_count + get_h2d_transferred_frames_count
+// TODO: Avoid returning map (malloc)
+std::unordered_map<stream_name_t, uint32_t> NetworkGroupScheduler::total_written_frames_count(const scheduler_ng_handle_t &network_group_handle)
+{
+    std::unordered_map<stream_name_t, uint32_t> write_sum;
+    for (const auto &name_counter_pair : m_requested_write_frames[network_group_handle]) {
+        write_sum[name_counter_pair.first] = name_counter_pair.second + m_finished_write_frames[network_group_handle][name_counter_pair.first]
+            + m_h2d_requested_transferred_frames[network_group_handle][name_counter_pair.first]
+            + m_h2d_finished_transferred_frames[network_group_handle][name_counter_pair.first];
+    }
+    return write_sum;
 }
 
 bool NetworkGroupScheduler::should_ng_stop(const scheduler_ng_handle_t &network_group_handle)
@@ -430,19 +466,18 @@ Expected<bool> NetworkGroupScheduler::should_wait_for_write(const scheduler_ng_h
         return make_unexpected(HAILO_STREAM_INTERNAL_ABORT);
     }
 
-    assert(contains(m_requested_write, network_group_handle));
-    assert(contains(m_sent_pending_buffer, network_group_handle));
+    assert(contains(m_requested_write_frames, network_group_handle));
     assert(contains(m_max_batch_size, network_group_handle));
 
-    auto pending_buffers = m_requested_write[network_group_handle][stream_name] - m_sent_pending_buffer[network_group_handle][stream_name];
-    bool has_written_max_batch_size = (is_ng_multicontext(network_group_handle) && (m_max_batch_size[network_group_handle] == pending_buffers));
+    auto pre_transfer_h2d_frames = m_requested_write_frames[network_group_handle][stream_name] + m_finished_write_frames[network_group_handle][stream_name];
+    bool has_written_max_batch_size = (is_ng_multicontext(network_group_handle) && (m_max_batch_size[network_group_handle] == pre_transfer_h2d_frames));
 
-    bool should_stop_writing_because_switching = ((nullptr != m_ang) && m_is_switching_network_group &&
+    bool should_stop_writing_because_switching = ((nullptr != m_ang) && (m_is_switching_network_group || m_changing_current_batch_size[network_group_handle]) &&
         (network_group_handle == m_current_network_group) && has_input_written_most_frames(network_group_handle, stream_name));
 
-    auto min_finished_read = get_min_value_of_unordered_map(m_finished_read[network_group_handle]);
-    auto ongoing_frames = (min_finished_read < m_requested_write[network_group_handle][stream_name]) ?
-        (m_requested_write[network_group_handle][stream_name] - min_finished_read) : 0;
+    auto total_written_frames = total_written_frames_count(network_group_handle)[stream_name];
+    auto min_finished_read = get_min_value_of_unordered_map(m_finished_read_frames[network_group_handle]);
+    auto ongoing_frames = (min_finished_read < total_written_frames) ? (total_written_frames - min_finished_read) : 0;
     bool has_enough_space_for_writes = has_enough_space_in_read_buffers(network_group_handle, ongoing_frames);
 
     if (has_written_max_batch_size || should_stop_writing_because_switching || (!has_enough_space_for_writes)) {
@@ -452,12 +487,13 @@ Expected<bool> NetworkGroupScheduler::should_wait_for_write(const scheduler_ng_h
     return false;
 }
 
-hailo_status NetworkGroupScheduler::allow_writes_for_other_inputs_if_needed(const scheduler_ng_handle_t &network_group_handle)
+hailo_status NetworkGroupScheduler::refresh_write_events_for_other_inputs_if_needed(const scheduler_ng_handle_t &network_group_handle)
 {
     if (!has_ng_finished(network_group_handle) && m_is_switching_network_group) {
-        auto max_write = get_max_value_of_unordered_map(m_requested_write[network_group_handle]);
+        auto written_frames = total_written_frames_count(network_group_handle);
+        auto max_write = get_max_value_of_unordered_map(written_frames);
         for (auto &name_event_pair : m_write_buffer_events[network_group_handle]) {
-            if (m_requested_write[network_group_handle][name_event_pair.first] < max_write) {
+            if (written_frames[name_event_pair.first] < max_write) {
                 auto status = name_event_pair.second->signal();
                 CHECK_SUCCESS(status);
             }
@@ -475,9 +511,8 @@ hailo_status NetworkGroupScheduler::signal_write_finish(const scheduler_ng_handl
             return HAILO_STREAM_INTERNAL_ABORT;
         }
 
-        assert(contains(m_written_buffer, network_group_handle));
-        assert(contains(m_written_buffer[network_group_handle], stream_name));
-        m_written_buffer[network_group_handle][stream_name]++;
+        increase_counter(m_finished_write_frames, network_group_handle, stream_name);
+        decrease_counter(m_requested_write_frames, network_group_handle, stream_name);
 
         auto status = switch_network_group_if_idle(network_group_handle, lock);
         CHECK_SUCCESS(status);
@@ -512,17 +547,15 @@ hailo_status NetworkGroupScheduler::switch_network_group_if_idle(const scheduler
         return HAILO_SUCCESS;
     }
 
-    auto status = try_change_multicontext_ng_batch_size(network_group_handle, read_write_lock);
-    CHECK_SUCCESS(status);
-
     return HAILO_SUCCESS;
 }
 
+// TODO: Use max(m_d2h_finished_transferred_frames) == 0 instead
 bool NetworkGroupScheduler::has_pending_frames(const scheduler_ng_handle_t &network_group_handle)
 {
-    uint32_t transferred_frames = get_max_value_of_unordered_map(m_sent_pending_buffer[network_group_handle]);
-    for (auto &name_counter_pair : m_finished_read[network_group_handle]) {
-        if (name_counter_pair.second < transferred_frames) {
+    uint32_t h2d_transferred_frames_count = get_h2d_transferred_frames_count(network_group_handle);
+    for (auto &name_counter_pair : m_finished_read_frames[network_group_handle]) {
+        if (name_counter_pair.second < h2d_transferred_frames_count) {
             return true;
         }
     }
@@ -533,33 +566,49 @@ hailo_status NetworkGroupScheduler::try_change_multicontext_ng_batch_size(const 
     std::unique_lock<std::mutex> &read_write_lock)
 {
     if ((nullptr != m_ang) && (network_group_handle == m_current_network_group) && is_ng_multicontext(network_group_handle) && has_ng_finished(network_group_handle)) {
-        if (get_buffered_frames_count() > 0) {
-            hailo_status status = activate_network_group(network_group_handle, read_write_lock, true);
-            CHECK_SUCCESS(status);
+        if ((get_pre_transfer_h2d_frames_count(m_current_network_group) > 0) &&
+            (get_pre_transfer_h2d_frames_count(m_current_network_group) != m_current_batch_size)) {
+            /* Wait for all requested_writes to finish */
+            m_changing_current_batch_size[network_group_handle] = true;
+            m_write_read_cv.wait(read_write_lock, [this]() {
+                return 0 == get_max_value_of_unordered_map(m_requested_write_frames[m_current_network_group]);
+            });
+            /* memcpy the frames in all inputs to offset 0 */
+            auto cng = m_cngs[network_group_handle].lock();
+            CHECK(cng, HAILO_INTERNAL_FAILURE);
+            for (auto &input_stream : cng->get_input_streams()) {
+                InputStreamBase &vdevice_input = static_cast<InputStreamBase&>(input_stream.get());
+                // Needed because after re-activation num_avail will be 0
+                // TODO: Remove after HRT-7838
+                auto status = vdevice_input.reset_offset_of_pending_frames();
+                CHECK_SUCCESS(status);
+            }
         }
+        hailo_status status = activate_network_group(network_group_handle, read_write_lock, true);
+        CHECK_SUCCESS(status);
     }
 
     return HAILO_SUCCESS;
 }
 
 hailo_status NetworkGroupScheduler::activate_network_group(const scheduler_ng_handle_t &network_group_handle,
-    std::unique_lock<std::mutex> &read_write_lock, bool keep_nn_config)
+    std::unique_lock<std::mutex> &read_write_lock, bool /*keep_nn_config*/)
 {
-    for (auto &name_counter_pair : m_current_sent_pending_buffer[network_group_handle]) {
+    for (auto &name_counter_pair : m_current_cycle_requested_transferred_frames_h2d[network_group_handle]) {
         name_counter_pair.second = 0;
     }
 
-    for (auto &name_counter_pair : m_current_finished_read[network_group_handle]) {
+    for (auto &name_counter_pair : m_current_cycle_finished_read_frames_d2h[network_group_handle]) {
         name_counter_pair.second = 0;
     }
 
     uint16_t batch_size = CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE;
     if (is_ng_multicontext(network_group_handle)) {
-        batch_size = static_cast<uint16_t>(get_buffered_frames_count());
+        batch_size = static_cast<uint16_t>(get_pre_transfer_h2d_frames_count(network_group_handle));
     }
 
     if (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == batch_size) {
-        batch_size = 1;
+        batch_size = SINGLE_CONTEXT_BATCH_SIZE;
     }
 
     bool has_same_batch_size_as_previous = (m_current_batch_size == batch_size);
@@ -567,11 +616,11 @@ hailo_status NetworkGroupScheduler::activate_network_group(const scheduler_ng_ha
 
     if (m_current_network_group != INVALID_NETWORK_GROUP_HANDLE) {
         if ((network_group_handle != m_current_network_group) || (!has_same_batch_size_as_previous)) {
-            if (nullptr != m_ang) {
-                auto status = m_ang->set_keep_nn_config_during_reset(keep_nn_config);
-                CHECK_SUCCESS(status);
-            }
-                
+            // TODO (HRT-8480): Enable this flow
+            // if (nullptr != m_ang) {
+            //     auto status = m_ang->set_keep_nn_config_during_reset(keep_nn_config);
+            //     CHECK_SUCCESS(status);
+            // }
             deactivate_network_group();
         } else {
             reset_current_ng_timestamps();
@@ -583,9 +632,6 @@ hailo_status NetworkGroupScheduler::activate_network_group(const scheduler_ng_ha
     if (m_current_network_group != network_group_handle) {
         m_is_switching_network_group = false;
     }
-
-    auto status = allow_all_writes();
-    CHECK_SUCCESS(status);
 
     if ((network_group_handle != m_current_network_group) || (!has_same_batch_size_as_previous)) {
         assert(m_cngs.size() > network_group_handle);
@@ -601,11 +647,11 @@ hailo_status NetworkGroupScheduler::activate_network_group(const scheduler_ng_ha
         // Register to get interrupts - has to be after network group is activated
         for (auto &output_stream : cng->get_output_streams()) {
             OutputStreamBase &vdevice_output = static_cast<OutputStreamBase&>(output_stream.get());
-            status = vdevice_output.register_for_d2h_interrupts(
+            auto status = vdevice_output.register_for_d2h_interrupts(
                 [this, network_group_handle, name = output_stream.get().name(), format = vdevice_output.get_layer_info().format.order](uint32_t frames) {
                     if(hailo_format_order_t::HAILO_FORMAT_ORDER_HAILO_NMS != format) {
                         std::unique_lock<std::mutex> lock(m_before_read_write_mutex);
-                        m_pending_read[network_group_handle][name] += frames;
+                        m_d2h_finished_transferred_frames[network_group_handle][name] += frames;
                     }
                     m_write_read_cv.notify_all();
                 });
@@ -615,6 +661,12 @@ hailo_status NetworkGroupScheduler::activate_network_group(const scheduler_ng_ha
 
     m_last_run_time_stamp[network_group_handle] = std::chrono::steady_clock::now(); // Mark timestamp on activation
     m_current_network_group = network_group_handle;
+
+    // Finished switching batch size
+    m_changing_current_batch_size[network_group_handle] = false;
+
+    auto status = refresh_all_write_events();
+    CHECK_SUCCESS(status);
 
     status = send_all_pending_buffers(network_group_handle, read_write_lock);
     if (HAILO_STREAM_INTERNAL_ABORT == status) {
@@ -626,7 +678,7 @@ hailo_status NetworkGroupScheduler::activate_network_group(const scheduler_ng_ha
     return HAILO_SUCCESS;
 }
 
-hailo_status NetworkGroupScheduler::allow_all_writes()
+hailo_status NetworkGroupScheduler::refresh_all_write_events()
 {
     for (auto &handle_dict_pair : m_write_buffer_events) {
         for (auto &name_event_pair : handle_dict_pair.second) {
@@ -646,9 +698,10 @@ hailo_status NetworkGroupScheduler::send_all_pending_buffers(const scheduler_ng_
 
     while (true) {
         uint32_t finished_sending_count = 0;
-        for (auto &name_counter_pair : m_written_buffer[network_group_handle]) {
-            if ((m_sent_pending_buffer[network_group_handle][name_counter_pair.first] < name_counter_pair.second)
-                    && ((!is_ng_multicontext(network_group_handle)) || (m_current_sent_pending_buffer[network_group_handle][name_counter_pair.first] < m_current_batch_size))) {
+        for (auto &name_counter_pair : m_finished_write_frames[network_group_handle]) {
+            if ((name_counter_pair.second > 0)
+                    && ((!is_ng_multicontext(network_group_handle)) ||
+                        (m_current_cycle_requested_transferred_frames_h2d[network_group_handle][name_counter_pair.first] < m_current_batch_size))) {
                 auto status = send_pending_buffer(network_group_handle, name_counter_pair.first, read_write_lock);
                 if (HAILO_STREAM_INTERNAL_ABORT == status) {
                     LOGGER__INFO("send_pending_buffer has failed with status=HAILO_STREAM_INTERNAL_ABORT");
@@ -659,7 +712,7 @@ hailo_status NetworkGroupScheduler::send_all_pending_buffers(const scheduler_ng_
                 finished_sending_count++;
             }
         }
-        if (finished_sending_count == m_written_buffer[network_group_handle].size()) {
+        if (finished_sending_count == m_finished_write_frames[network_group_handle].size()) {
             break;
         }
     }
@@ -681,21 +734,19 @@ hailo_status NetworkGroupScheduler::send_pending_buffer(const scheduler_ng_handl
     auto pending_buffer_state = vdevice_input.send_pending_buffer();
     CHECK_EXPECTED_AS_STATUS(pending_buffer_state);
 
-    assert(contains(m_sent_pending_buffer, network_group_handle));
-    m_sent_pending_buffer[network_group_handle][stream_name]++;
+    increase_counter(m_h2d_requested_transferred_frames, network_group_handle, stream_name);
+    increase_counter(m_current_cycle_requested_transferred_frames_h2d, network_group_handle, stream_name);
+    decrease_counter(m_finished_write_frames, network_group_handle, stream_name);
 
-    assert(contains(m_current_sent_pending_buffer, network_group_handle));
-    m_current_sent_pending_buffer[network_group_handle][stream_name]++;
-
-    auto status = pending_buffer_state->finish(vdevice_input.get_timeout(), read_write_lock);
+    auto status = pending_buffer_state->finish(vdevice_input.get_timeout(), read_write_lock, MAX(SINGLE_CONTEXT_BATCH_SIZE, m_max_batch_size[network_group_handle]));
     if (HAILO_STREAM_INTERNAL_ABORT == status) {
         LOGGER__INFO("finish has failed with status=HAILO_STREAM_INTERNAL_ABORT");
         return status;
     }
     CHECK_SUCCESS(status);
 
-    assert(contains(m_finished_sent_pending_buffer, network_group_handle));
-    m_finished_sent_pending_buffer[network_group_handle][stream_name]++;
+    increase_counter(m_h2d_finished_transferred_frames, network_group_handle, stream_name);
+    decrease_counter(m_h2d_requested_transferred_frames, network_group_handle, stream_name);
 
     if (should_ng_stop(network_group_handle)) {
         return HAILO_STREAM_INTERNAL_ABORT;
@@ -741,15 +792,15 @@ hailo_status NetworkGroupScheduler::switch_network_group_if_should_be_next(const
 
 bool NetworkGroupScheduler::is_network_group_ready(const scheduler_ng_handle_t &network_group_handle, bool check_threshold)
 {
-    assert(contains(m_written_buffer, network_group_handle));
+    assert(contains(m_finished_write_frames, network_group_handle));
     assert(contains(m_min_threshold_per_stream, network_group_handle));
     assert(contains(m_last_run_time_stamp, network_group_handle));
 
     // Check if there arent any write requests
     bool has_pending_writes = false;
-    uint32_t written_frames = get_max_value_of_unordered_map(m_requested_write[network_group_handle]);
-    for (const auto &name_counter_pair : m_pending_read[network_group_handle]) {
-        uint32_t finished_read_frames = m_finished_read[network_group_handle][name_counter_pair.first];
+    uint32_t written_frames = get_max_value_of_unordered_map(total_written_frames_count(network_group_handle));
+    for (const auto &name_counter_pair : m_d2h_finished_transferred_frames[network_group_handle]) {
+        uint32_t finished_read_frames = m_finished_read_frames[network_group_handle][name_counter_pair.first];
         if ((finished_read_frames + name_counter_pair.second) < written_frames) {
             has_pending_writes = true;
             break;
@@ -758,18 +809,23 @@ bool NetworkGroupScheduler::is_network_group_ready(const scheduler_ng_handle_t &
 
     // Check if there arent any read requests
     bool has_pending_reads = false;
-    uint32_t read_requests = get_max_value_of_unordered_map(m_requested_read[network_group_handle]);
-    for (const auto &name_counter_pair : m_allowed_read[network_group_handle]) {
-        if (name_counter_pair.second < read_requests) {
+    for (const auto &name_counter_pair : m_requested_read_frames[network_group_handle]) {
+        if (name_counter_pair.second > 0) {
             has_pending_reads = true;
             break;
         }
     }
 
     if (check_threshold) {
-        for (auto &name_counter_pair : m_written_buffer[network_group_handle]) {
+        for (auto &name_counter_pair : m_requested_write_frames[network_group_handle]) {
+            auto threshold = m_min_threshold_per_stream[network_group_handle][name_counter_pair.first].load();
+            if (DEFAULT_SCHEDULER_MIN_THRESHOLD == threshold) {
+                threshold = 1;
+            }
+
             // Check if there arent enough write requests to reach threshold and timeout didnt passed
-            if ((name_counter_pair.second < m_min_threshold_per_stream[network_group_handle][name_counter_pair.first]) &&
+            auto write_requests = name_counter_pair.second + m_finished_write_frames[network_group_handle][name_counter_pair.first];
+            if ((write_requests < threshold) &&
                 ((*(m_timeout_per_network_group[network_group_handle]) > (std::chrono::steady_clock::now() - m_last_run_time_stamp[network_group_handle])))) {
                 return false;
             }
@@ -779,19 +835,17 @@ bool NetworkGroupScheduler::is_network_group_ready(const scheduler_ng_handle_t &
     return has_pending_writes && has_pending_reads && (!has_pending_frames(network_group_handle));
 }
 
-hailo_status NetworkGroupScheduler::wait_for_read(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name)
+hailo_status NetworkGroupScheduler::wait_for_read(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name,
+    const std::chrono::milliseconds &timeout)
 {
     {
         std::unique_lock<std::mutex> lock(m_before_read_write_mutex);
-        assert(contains(m_allowed_read, network_group_handle));
-        assert(contains(m_allowed_read[network_group_handle], stream_name));
-        assert(contains(m_requested_read, network_group_handle));
-        assert(contains(m_requested_read[network_group_handle], stream_name));
 
-        m_requested_read[network_group_handle][stream_name]++;
+        increase_counter(m_requested_read_frames, network_group_handle, stream_name);
 
         hailo_status status = HAILO_UNINITIALIZED;
-        m_write_read_cv.wait(lock, [this, network_group_handle, stream_name, &status, &lock] {
+        auto wait_res = m_write_read_cv.wait_for(lock, timeout, [this, network_group_handle, stream_name, &status, &lock] {
+
             if (should_ng_stop(network_group_handle)) {
                 status = HAILO_STREAM_INTERNAL_ABORT;
                 return true; // return true so that the wait will finish
@@ -809,12 +863,16 @@ hailo_status NetworkGroupScheduler::wait_for_read(const scheduler_ng_handle_t &n
 
             return can_stream_read(network_group_handle, stream_name);
         });
+        if (!wait_res) {
+            return HAILO_TIMEOUT;
+        }
         if (HAILO_STREAM_INTERNAL_ABORT == status) {
             return status;
         }
         CHECK_SUCCESS(status);
 
-        m_allowed_read[network_group_handle][stream_name]++;
+        increase_counter(m_ongoing_read_frames, network_group_handle, stream_name);
+        decrease_counter(m_requested_read_frames, network_group_handle, stream_name);
     }
     m_write_read_cv.notify_all();
 
@@ -823,39 +881,45 @@ hailo_status NetworkGroupScheduler::wait_for_read(const scheduler_ng_handle_t &n
 
 bool NetworkGroupScheduler::can_stream_read(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name)
 {
-    assert(contains(m_allowed_read, network_group_handle));
-    assert(contains(m_sent_pending_buffer, network_group_handle));
-    return m_allowed_read[network_group_handle][stream_name].load() < get_max_value_of_unordered_map(m_sent_pending_buffer[network_group_handle]);
+    assert(contains(m_ongoing_read_frames, network_group_handle));
+    assert(contains(m_finished_read_frames, network_group_handle));
+    uint32_t d2h_transferred_frames = m_ongoing_read_frames[network_group_handle][stream_name] + m_finished_read_frames[network_group_handle][stream_name];
+    return d2h_transferred_frames < get_h2d_transferred_frames_count(network_group_handle);
+}
+
+uint32_t NetworkGroupScheduler::get_h2d_transferred_frames_count(const scheduler_ng_handle_t &network_group_handle)
+{
+    std::unordered_map<stream_name_t, uint32_t> transferred_frames;
+    for (const auto &name_counter_pair : m_h2d_requested_transferred_frames[network_group_handle]) {
+        transferred_frames[name_counter_pair.first] = name_counter_pair.second + m_h2d_finished_transferred_frames[network_group_handle][name_counter_pair.first];
+    }
+    return get_max_value_of_unordered_map(transferred_frames);
 }
 
 hailo_status NetworkGroupScheduler::signal_read_finish(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name)
 {
     {
         std::unique_lock<std::mutex> lock(m_before_read_write_mutex);
-        assert(contains(m_finished_read, network_group_handle));
-        assert(contains(m_finished_read[network_group_handle], stream_name));
 
         // Prevent integer underflow in nms
-        if (m_pending_read[network_group_handle][stream_name] > 0) {
-            m_pending_read[network_group_handle][stream_name]--;
+        if (m_d2h_finished_transferred_frames[network_group_handle][stream_name] > 0) {
+            m_d2h_finished_transferred_frames[network_group_handle][stream_name]--;
         }
-        m_finished_read[network_group_handle][stream_name]++;
-        m_current_finished_read[network_group_handle][stream_name]++;
+        increase_counter(m_finished_read_frames, network_group_handle, stream_name);
+        increase_counter(m_current_cycle_finished_read_frames_d2h, network_group_handle, stream_name);
+        decrease_counter(m_ongoing_read_frames, network_group_handle, stream_name);
         m_fps_accumulator[network_group_handle]++;
 
         hailo_status status = choose_next_network_group();
         CHECK_SUCCESS(status);
 
-        if (!is_ng_multicontext(network_group_handle)) {
-            // Prevents integer overflow of the counters
-            decrease_current_ng_counters();
-        } else {
-            status = try_change_multicontext_ng_batch_size(network_group_handle, lock);
-            CHECK_SUCCESS(status);
-        }
+        status = try_change_multicontext_ng_batch_size(network_group_handle, lock);
+        CHECK_SUCCESS(status);
+
+        decrease_current_ng_counters();
     }
 
-    auto status = allow_all_writes();
+    auto status = refresh_all_write_events();
     CHECK_SUCCESS(status);
     m_write_read_cv.notify_all();
 
@@ -869,7 +933,7 @@ bool NetworkGroupScheduler::has_ng_finished(scheduler_ng_handle_t network_group_
     }
 
     if (is_ng_multicontext(network_group_handle)) {
-        for (auto &name_counter_pair : m_current_finished_read[network_group_handle]) {
+        for (auto &name_counter_pair : m_current_cycle_finished_read_frames_d2h[network_group_handle]) {
             if (name_counter_pair.second < m_current_batch_size) {
                 return false;
             }
@@ -878,8 +942,8 @@ bool NetworkGroupScheduler::has_ng_finished(scheduler_ng_handle_t network_group_
         return true;
     }
 
-    uint32_t written_frames = get_max_value_of_unordered_map(m_requested_write[network_group_handle]);
-    for (auto &name_counter_pair : m_finished_read[network_group_handle]) {
+    uint32_t written_frames = get_max_value_of_unordered_map(total_written_frames_count(network_group_handle));
+    for (auto &name_counter_pair : m_finished_read_frames[network_group_handle]) {
         if (name_counter_pair.second < written_frames) {
             return false;
         }
@@ -894,17 +958,28 @@ bool NetworkGroupScheduler::has_ng_drained_everything(scheduler_ng_handle_t netw
         return true;
     }
 
-    uint32_t written_frames = get_max_value_of_unordered_map(m_requested_write[network_group_handle]);
-    for (auto &name_counter_pair : m_finished_sent_pending_buffer[network_group_handle]) {
-        if (name_counter_pair.second < written_frames) {
+    for (auto &name_counter_pair : m_requested_write_frames[network_group_handle]) {
+        if (name_counter_pair.second > 0) {
+            return false;
+        }
+    }
+    for (auto &name_counter_pair : m_finished_write_frames[network_group_handle]) {
+        if (name_counter_pair.second > 0) {
+            return false;
+        }
+    }
+    for (auto &name_counter_pair : m_h2d_requested_transferred_frames[network_group_handle]) {
+        if (name_counter_pair.second > 0) {
             return false;
         }
     }
 
-    assert(contains(m_finished_read, network_group_handle));
-    for (const auto &name_counter_pair : m_pending_read[network_group_handle]) {
-        uint32_t finished_read_frames = m_finished_read[network_group_handle][name_counter_pair.first];
-        if ((finished_read_frames + name_counter_pair.second) < written_frames) {
+    assert(contains(m_h2d_finished_transferred_frames, network_group_handle));
+    assert(contains(m_d2h_finished_transferred_frames, network_group_handle));
+    assert(contains(m_finished_read_frames, network_group_handle));
+    uint32_t written_frames = get_max_value_of_unordered_map(m_h2d_finished_transferred_frames[network_group_handle]);
+    for (const auto &name_counter_pair : m_d2h_finished_transferred_frames[network_group_handle]) {
+        if ((m_finished_read_frames[network_group_handle][name_counter_pair.first] + name_counter_pair.second) < written_frames) {
             return false;
         }
     }
@@ -918,61 +993,21 @@ void NetworkGroupScheduler::decrease_current_ng_counters()
     }
 
     // Decrease only if counter is 2 or bigger because reaching 0 can cause states to change
-    for (auto &name_counter_pair : m_requested_write[m_current_network_group]) {
+    for (auto &name_counter_pair : m_h2d_finished_transferred_frames[m_current_network_group]) {
         if (name_counter_pair.second <= 1) {
             return;
         }
     }
-    for (auto &name_counter_pair : m_written_buffer[m_current_network_group]) {
-        if (name_counter_pair.second <= 1) {
-            return;
-        }
-    }
-    for (auto &name_counter_pair : m_sent_pending_buffer[m_current_network_group]) {
-        if (name_counter_pair.second <= 1) {
-            return;
-        }
-    }
-    for (auto &name_counter_pair : m_finished_sent_pending_buffer[m_current_network_group]) {
-        if (name_counter_pair.second <= 1) {
-            return;
-        }
-    }
-    for (auto &name_counter_pair : m_requested_read[m_current_network_group]) {
-        if (name_counter_pair.second <= 1) {
-            return;
-        }
-    }
-    for (auto &name_counter_pair : m_allowed_read[m_current_network_group]) {
-        if (name_counter_pair.second <= 1) {
-            return;
-        }
-    }
-    for (auto &name_counter_pair : m_finished_read[m_current_network_group]) {
+    for (auto &name_counter_pair : m_finished_read_frames[m_current_network_group]) {
         if (name_counter_pair.second <= 1) {
             return;
         }
     }
 
-    for (auto &name_counter_pair : m_requested_write[m_current_network_group]) {
+    for (auto &name_counter_pair : m_h2d_finished_transferred_frames[m_current_network_group]) {
         name_counter_pair.second--;
     }
-    for (auto &name_counter_pair : m_written_buffer[m_current_network_group]) {
-        name_counter_pair.second--;
-    }
-    for (auto &name_counter_pair : m_sent_pending_buffer[m_current_network_group]) {
-        name_counter_pair.second--;
-    }
-    for (auto &name_counter_pair : m_finished_sent_pending_buffer[m_current_network_group]) {
-        name_counter_pair.second--;
-    }
-    for (auto &name_counter_pair : m_requested_read[m_current_network_group]) {
-        name_counter_pair.second--;
-    }
-    for (auto &name_counter_pair : m_allowed_read[m_current_network_group]) {
-        name_counter_pair.second--;
-    }
-    for (auto &name_counter_pair : m_finished_read[m_current_network_group]) {
+    for (auto &name_counter_pair : m_finished_read_frames[m_current_network_group]) {
         name_counter_pair.second--;
     }
 }
@@ -982,14 +1017,13 @@ bool NetworkGroupScheduler::is_ng_multicontext(const scheduler_ng_handle_t &netw
     return (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE != m_max_batch_size[network_group_handle]);
 }
 
-uint32_t NetworkGroupScheduler::get_buffered_frames_count()
+uint32_t NetworkGroupScheduler::get_pre_transfer_h2d_frames_count(const scheduler_ng_handle_t &network_group_handle)
 {
-    std::unordered_map<stream_name_t, std::atomic_uint32_t> buffered_frames;
-    for (const auto &name_counter_pair : m_requested_write[m_current_network_group]) {
-        buffered_frames[name_counter_pair.first] = name_counter_pair.second - m_sent_pending_buffer[m_current_network_group][name_counter_pair.first];
+    std::unordered_map<stream_name_t, uint32_t> write_sum;
+    for (const auto &name_counter_pair : m_requested_write_frames[network_group_handle]) {
+        write_sum[name_counter_pair.first] = name_counter_pair.second + m_finished_write_frames[network_group_handle][name_counter_pair.first];
     }
-
-    return get_max_value_of_unordered_map(buffered_frames);
+    return get_max_value_of_unordered_map(write_sum);
 }
 
 hailo_status NetworkGroupScheduler::enable_stream(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name)
@@ -1019,12 +1053,9 @@ hailo_status NetworkGroupScheduler::disable_stream(const scheduler_ng_handle_t &
 
         m_should_ng_stop[network_group_handle][stream_name] = true;
 
-        // Signal event to exit infinite timeout on wait_for_write if actually an input stream
-        assert(contains(m_write_buffer_events, network_group_handle));
-        if (contains(m_write_buffer_events[network_group_handle], stream_name)) {
-            auto status = m_write_buffer_events[network_group_handle][stream_name]->signal();
-            CHECK_SUCCESS(status);
-        }
+        // Signal write events to exit infinite timeout on wait_for_write for this network group
+        auto status = refresh_all_write_events();
+        CHECK_SUCCESS(status);
     }
     m_write_read_cv.notify_all();
     return HAILO_SUCCESS;
@@ -1056,10 +1087,15 @@ hailo_status NetworkGroupScheduler::set_threshold(const scheduler_ng_handle_t &n
     (void)network_name;
 
     assert(contains(m_min_threshold_per_stream, network_group_handle));
-    assert(contains(m_last_run_time_stamp, network_group_handle));
     assert(contains(m_frame_was_sent_per_network_group, network_group_handle));
+    assert(contains(m_max_batch_size, network_group_handle));
+
+    CHECK((CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == m_max_batch_size[network_group_handle]) ||
+        (threshold <= m_max_batch_size[network_group_handle]), HAILO_INVALID_ARGUMENT, "Threshold must be equal or lower than the maximum batch size!");
+
     CHECK(!m_frame_was_sent_per_network_group[network_group_handle], HAILO_INVALID_OPERATION,
         "Setting scheduler threshold is allowed only before sending / receiving frames on the network group.");
+
     for (auto &threshold_per_stream_pair : m_min_threshold_per_stream[network_group_handle]) {
         threshold_per_stream_pair.second = threshold;
     }

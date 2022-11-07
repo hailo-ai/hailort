@@ -49,10 +49,10 @@ Expected<vdma::ChannelId> ChannelAllocator::get_available_channel_id(const Layer
             continue;
         }
 
-        // In the case of boundary channels, if the channel id was used in previous context as fw-managed (and it
-        // was freed, so it doesn't appear in `currently_used_channel_index`), we can't reuse it.
+        // In the case of boundary channels, if the channel id was used in previous context as an internal channel (and
+        // it was freed, so it doesn't appear in `currently_used_channel_index`), we can't reuse it.
         if (std::get<0>(layer_identifier) == LayerType::BOUNDARY) {
-            if (contains(m_fw_managed_channel_ids, channel_id)) {
+            if (contains(m_internal_channel_ids, channel_id)) {
                 continue;
             }
         }
@@ -82,18 +82,17 @@ const std::set<vdma::ChannelId> &ChannelAllocator::get_boundary_channel_ids() co
     return m_boundary_channel_ids;
 }
 
-const std::set<vdma::ChannelId> &ChannelAllocator::get_fw_managed_channel_ids() const
+const std::set<vdma::ChannelId> &ChannelAllocator::get_internal_channel_ids() const
 {
-    return m_fw_managed_channel_ids;
+    return m_internal_channel_ids;
 }
 
 void ChannelAllocator::insert_new_channel_id(const LayerIdentifier &layer_identifier, const vdma::ChannelId &channel_id)
 {
     if (LayerType::BOUNDARY == std::get<0>(layer_identifier)) {
         m_boundary_channel_ids.insert(channel_id);
-    }
-    else {
-        m_fw_managed_channel_ids.insert(channel_id);
+    } else {
+        m_internal_channel_ids.insert(channel_id);
     }
 
     m_allocated_channels.emplace(layer_identifier, channel_id);

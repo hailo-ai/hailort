@@ -13,10 +13,9 @@
 
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
-#include "d2h_event_queue.hpp"
 #include "os/file_descriptor.hpp"
-#include "os/mmap_buffer.hpp"
 #include "vdma/channel_id.hpp"
+#include "common/utils.hpp"
 
 #include <mutex>
 #include <thread>
@@ -54,15 +53,6 @@ constexpr uint8_t MIN_D2H_CHANNEL_INDEX = MAX_H2D_CHANNEL_INDEX + 1;
 constexpr uint8_t MAX_D2H_CHANNEL_INDEX = 31;
 
 
-enum class PciBar {
-    bar0 = 0,
-    bar1,
-    bar2,
-    bar3,
-    bar4,
-    bar5,
-};
-
 // NOTE: don't change members from this struct without updating all code using it (platform specific)
 struct ChannelInterruptTimestamp {
     std::chrono::nanoseconds timestamp;
@@ -91,16 +81,7 @@ public:
 
     struct DeviceInfo {
         std::string dev_path;
-
-        // Board information
-        uint32_t vendor_id;
-        uint32_t device_id;
-
-        // PCIe board location
-        uint32_t domain;
-        uint32_t bus;
-        uint32_t device;
-        uint32_t func;
+        std::string device_id;
     };
 
     enum class DmaDirection {
@@ -109,15 +90,28 @@ public:
         BOTH
     };
 
-    // TODO: move to general place
-    enum class BoardType {
-        HAILO8 = 0,
-        MERCURY = 1
-    };
-
     enum class DmaType {
         PCIE,
         DRAM
+    };
+
+    enum class MemoryType {
+        DIRECT_MEMORY,
+
+        // vDMA memories
+        VDMA0,  // On PCIe board, VDMA0 and BAR2 are the same
+        VDMA1,
+        VDMA2,
+
+        // PCIe driver memories
+        PCIE_BAR0,
+        PCIE_BAR2,
+        PCIE_BAR4,
+
+        // DRAM DMA driver memories
+        DMA_ENGINE0,
+        DMA_ENGINE1,
+        DMA_ENGINE2,
     };
 
     using VdmaBufferHandle = size_t;
@@ -130,10 +124,10 @@ public:
     static hailo_status hailo_ioctl(int fd, int request, void* request_struct, int &error_status);
 #endif // defined(__linux__) || defined(__QNX__)
 
-    static Expected<std::vector<DeviceInfo>> scan_pci();
+    static Expected<std::vector<DeviceInfo>> scan_devices();
 
-    hailo_status read_bar(PciBar bar, off_t offset, size_t size, void *buf);
-    hailo_status write_bar(PciBar bar, off_t offset, size_t size, const void *buf);
+    hailo_status read_memory(MemoryType memory_type, uint64_t address, void *buf, size_t size);
+    hailo_status write_memory(MemoryType memory_type, uint64_t address, const void *buf, size_t size);
 
     Expected<uint32_t> read_vdma_channel_register(vdma::ChannelId channel_id, DmaDirection data_direction, size_t offset,
         size_t reg_size);
@@ -143,14 +137,14 @@ public:
     hailo_status vdma_buffer_sync(VdmaBufferHandle buffer, DmaDirection sync_direction, void *address, size_t buffer_size);
 
     Expected<VdmaChannelHandle> vdma_channel_enable(vdma::ChannelId channel_id, DmaDirection data_direction,
-        uintptr_t desc_list_handle, bool enable_timestamps_measure);
+        bool enable_timestamps_measure);
     hailo_status vdma_channel_disable(vdma::ChannelId channel_index, VdmaChannelHandle channel_handle);
     Expected<ChannelInterruptTimestampList> wait_channel_interrupts(vdma::ChannelId channel_id,
         VdmaChannelHandle channel_handle, const std::chrono::milliseconds &timeout);
     hailo_status vdma_channel_abort(vdma::ChannelId channel_id, VdmaChannelHandle channel_handle);
     hailo_status vdma_channel_clear_abort(vdma::ChannelId channel_id, VdmaChannelHandle channel_handle);
 
-    Expected<D2H_EVENT_MESSAGE_t> read_notification();
+    Expected<std::vector<uint8_t>> read_notification();
     hailo_status disable_notifications();
 
     hailo_status fw_control(const void *request, size_t request_len, const uint8_t request_md5[PCIE_EXPECTED_MD5_LENGTH],
@@ -234,11 +228,6 @@ public:
         return static_cast<uint16_t>(std::min(static_cast<uint32_t>(requested_size), static_cast<uint32_t>(m_desc_max_page_size)));
     }
 
-    inline BoardType board_type() const
-    {
-        return m_board_type;
-    }
-
     inline DmaType dma_type() const
     {
         return m_dma_type;
@@ -274,6 +263,11 @@ public:
         return m_dma_engines_count;
     }
 
+    inline bool is_fw_loaded() const
+    {
+        return m_is_fw_loaded;
+    }
+
     HailoRTDriver(const HailoRTDriver &other) = delete;
     HailoRTDriver &operator=(const HailoRTDriver &other) = delete;
     HailoRTDriver(HailoRTDriver &&other) noexcept = default;
@@ -284,6 +278,8 @@ public:
     static const uint8_t            INVALID_VDMA_CHANNEL_INDEX;
 
 private:
+    hailo_status read_memory_ioctl(MemoryType memory_type, uint64_t address, void *buf, size_t size);
+    hailo_status write_memory_ioctl(MemoryType memory_type, uint64_t address, const void *buf, size_t size);
 
     HailoRTDriver(const std::string &dev_path, FileDescriptor &&fd, hailo_status &status);
 
@@ -292,10 +288,10 @@ private:
     FileDescriptor m_fd;
     std::string m_dev_path;
     uint16_t m_desc_max_page_size;
-    BoardType m_board_type;
     DmaType m_dma_type;
     bool m_allocate_driver_buffer;
     size_t m_dma_engines_count;
+    bool m_is_fw_loaded;
 #ifdef __QNX__
     pid_t m_resource_manager_pid;
 #endif // __QNX__

@@ -438,6 +438,9 @@ hailo_status BaseVStream::abort()
 
 hailo_status BaseVStream::resume()
 {
+    if (!m_is_aborted) {
+        return HAILO_SUCCESS;
+    }
     m_is_aborted = false;
     return m_entry_element->resume();
 }
@@ -586,6 +589,11 @@ hailo_status InputVStream::abort()
     return m_vstream->abort();
 }
 
+hailo_status InputVStream::resume()
+{
+    return m_vstream->resume();
+}
+
 size_t InputVStream::get_frame_size() const
 {
     return m_vstream->get_frame_size();
@@ -694,6 +702,11 @@ hailo_status OutputVStream::clear(std::vector<OutputVStream> &vstreams)
 hailo_status OutputVStream::abort()
 {
     return m_vstream->abort();
+}
+
+hailo_status OutputVStream::resume()
+{
+    return m_vstream->resume();
 }
 
 hailo_status OutputVStream::clear(std::vector<std::reference_wrapper<OutputVStream>> &vstreams)
@@ -926,7 +939,6 @@ hailo_status InputVStreamImpl::flush()
 }
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
-// TODO: HRT-6606
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wreturn-type"
 Expected<std::shared_ptr<InputVStreamClient>> InputVStreamClient::create(uint32_t input_vstream_handle)
@@ -935,14 +947,24 @@ Expected<std::shared_ptr<InputVStreamClient>> InputVStreamClient::create(uint32_
     ch_args.SetMaxReceiveMessageSize(-1);
     auto channel = grpc::CreateCustomChannel(HAILO_DEFAULT_UDS_ADDR, grpc::InsecureChannelCredentials(), ch_args);
     CHECK_AS_EXPECTED(channel != nullptr, HAILO_INTERNAL_FAILURE);
+
     auto client = std::unique_ptr<HailoRtRpcClient>(new HailoRtRpcClient(channel));
     CHECK_AS_EXPECTED(client != nullptr, HAILO_OUT_OF_HOST_MEMORY);
-    return std::shared_ptr<InputVStreamClient>(new InputVStreamClient(std::move(client), std::move(input_vstream_handle)));
+
+    auto user_buffer_format =  client->InputVStream_get_user_buffer_format(input_vstream_handle);
+    CHECK_EXPECTED(user_buffer_format);
+
+    auto vstream_info =  client->InputVStream_get_info(input_vstream_handle);
+    CHECK_EXPECTED(vstream_info);
+
+    return std::shared_ptr<InputVStreamClient>(new InputVStreamClient(std::move(client), std::move(input_vstream_handle),
+        user_buffer_format.release(), vstream_info.release()));
 }
 
 // TODO: HRT-6606
-InputVStreamClient::InputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t input_vstream_handle)
-    : m_client(std::move(client)), m_handle(std::move(input_vstream_handle)) {}
+InputVStreamClient::InputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t input_vstream_handle, hailo_format_t &&user_buffer_format, 
+    hailo_vstream_info_t &&info)
+    : m_client(std::move(client)), m_handle(std::move(input_vstream_handle)), m_user_buffer_format(user_buffer_format), m_info(info) {}
 
 InputVStreamClient::~InputVStreamClient()
 {
@@ -978,7 +1000,7 @@ hailo_status InputVStreamClient::resume()
 
 size_t InputVStreamClient::get_frame_size() const
 {
-    auto frame_size =  m_client->InputVStream_get_frame_size(m_handle);
+    auto frame_size = m_client->InputVStream_get_frame_size(m_handle);
     if (!frame_size) {
         LOGGER__CRITICAL("InputVStream_get_frame_size failed with status={}", frame_size.status());
         return 0;
@@ -988,14 +1010,12 @@ size_t InputVStreamClient::get_frame_size() const
 
 const hailo_vstream_info_t &InputVStreamClient::get_info() const
 {
-    // TODO: HRT-6606
-    assert(false);
+    return m_info;
 }
 
 const hailo_format_t &InputVStreamClient::get_user_buffer_format() const
 {
-    // TODO: HRT-6606
-    assert(false);
+    return m_user_buffer_format;
 }
 
 std::string InputVStreamClient::name() const
@@ -1201,13 +1221,23 @@ Expected<std::shared_ptr<OutputVStreamClient>> OutputVStreamClient::create(uint3
     ch_args.SetMaxReceiveMessageSize(-1);
     auto channel = grpc::CreateCustomChannel(HAILO_DEFAULT_UDS_ADDR, grpc::InsecureChannelCredentials(), ch_args);
     CHECK_AS_EXPECTED(channel != nullptr, HAILO_INTERNAL_FAILURE);
+
     auto client = std::unique_ptr<HailoRtRpcClient>(new HailoRtRpcClient(channel));
     CHECK_AS_EXPECTED(client != nullptr, HAILO_OUT_OF_HOST_MEMORY);
-    return std::shared_ptr<OutputVStreamClient>(new OutputVStreamClient(std::move(client), std::move(outputs_vstream_handle)));
+
+    auto user_buffer_format =  client->OutputVStream_get_user_buffer_format(outputs_vstream_handle);
+    CHECK_EXPECTED(user_buffer_format);
+
+    auto info =  client->OutputVStream_get_info(outputs_vstream_handle);
+    CHECK_EXPECTED(info);
+
+    return std::shared_ptr<OutputVStreamClient>(new OutputVStreamClient(std::move(client), std::move(outputs_vstream_handle),
+        user_buffer_format.release(), info.release()));
 }
 
-OutputVStreamClient::OutputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t outputs_vstream_handle)
-    : m_client(std::move(client)), m_handle(std::move(outputs_vstream_handle)) {}
+OutputVStreamClient::OutputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t outputs_vstream_handle, hailo_format_t &&user_buffer_format,
+    hailo_vstream_info_t &&info)
+    : m_client(std::move(client)), m_handle(std::move(outputs_vstream_handle)), m_user_buffer_format(user_buffer_format), m_info(info) {}
 
 OutputVStreamClient::~OutputVStreamClient()
 {
@@ -1248,14 +1278,12 @@ size_t OutputVStreamClient::get_frame_size() const
 
 const hailo_vstream_info_t &OutputVStreamClient::get_info() const
 {
-    // TODO: HRT-6606
-    assert(false);
+    return m_info;
 }
 
 const hailo_format_t &OutputVStreamClient::get_user_buffer_format() const
 {
-    // TODO: HRT-6606
-    assert(false);
+    return m_user_buffer_format;
 }
 
 std::string OutputVStreamClient::name() const
@@ -1359,7 +1387,7 @@ std::string HwReadElement::description() const
     return element_description.str();
 }
 
-hailo_status HwReadElement::post_deactivate()
+hailo_status HwReadElement::execute_post_deactivate()
 {
     auto status = m_stream.clear_abort();
     CHECK(((HAILO_SUCCESS == status) || (HAILO_STREAM_NOT_ACTIVATED == status)), status,
@@ -1367,28 +1395,29 @@ hailo_status HwReadElement::post_deactivate()
     return HAILO_SUCCESS;
 }
 
-hailo_status HwReadElement::clear()
+hailo_status HwReadElement::execute_clear()
 {
     return HAILO_SUCCESS;
 }
 
-hailo_status HwReadElement::flush()
+hailo_status HwReadElement::execute_flush()
 {
     return HAILO_INVALID_OPERATION;
 }
 
-hailo_status HwReadElement::abort()
+hailo_status HwReadElement::execute_abort()
 {
     return m_stream.abort();
 }
 
-void HwReadElement::wait_for_finish()
-{
-}
-
-hailo_status HwReadElement::resume()
+hailo_status HwReadElement::execute_resume()
 {
     return m_stream.clear_abort();
+}
+
+hailo_status HwReadElement::execute_wait_for_finish()
+{
+    return HAILO_SUCCESS;
 }
 
 std::vector<AccumulatorPtr> HwReadElement::get_queue_size_accumulators()
@@ -1451,12 +1480,12 @@ Expected<PipelineBuffer> HwReadElement::run_pull(PipelineBuffer &&optional, cons
     }
 }
 
-hailo_status HwReadElement::activate()
+hailo_status HwReadElement::execute_activate()
 {
     return HAILO_SUCCESS;
 }
 
-hailo_status HwReadElement::deactivate()
+hailo_status HwReadElement::execute_deactivate()
 {
     auto signal_shutdown_status = m_shutdown_event->signal();
     if (HAILO_SUCCESS != signal_shutdown_status) {
@@ -1523,12 +1552,12 @@ hailo_status HwWriteElement::run_push(PipelineBuffer &&buffer)
     return status;
 }
 
-hailo_status HwWriteElement::activate()
+hailo_status HwWriteElement::execute_activate()
 {
     return HAILO_SUCCESS;
 }
 
-hailo_status HwWriteElement::deactivate()
+hailo_status HwWriteElement::execute_deactivate()
 {
     // The flush operation will block until all buffers currently in the pipeline will be processed.
     // We assume that no buffers are sent after the call for deactivate.
@@ -1547,7 +1576,7 @@ hailo_status HwWriteElement::deactivate()
     return HAILO_SUCCESS;
 }
 
-hailo_status HwWriteElement::post_deactivate()
+hailo_status HwWriteElement::execute_post_deactivate()
 {
     auto status = m_stream.clear_abort();
     CHECK(((status == HAILO_SUCCESS) || (status == HAILO_STREAM_NOT_ACTIVATED)), status,
@@ -1555,12 +1584,12 @@ hailo_status HwWriteElement::post_deactivate()
     return HAILO_SUCCESS;
 }
 
-hailo_status HwWriteElement::clear()
+hailo_status HwWriteElement::execute_clear()
 {
     return HAILO_SUCCESS;
 }
 
-hailo_status HwWriteElement::flush()
+hailo_status HwWriteElement::execute_flush()
 {
     hailo_status status = m_got_flush_event->wait(m_stream.get_timeout());
     CHECK_SUCCESS(status);
@@ -1571,18 +1600,19 @@ hailo_status HwWriteElement::flush()
     return HAILO_SUCCESS;
 }
 
-hailo_status HwWriteElement::abort()
+hailo_status HwWriteElement::execute_abort()
 {
     return m_stream.abort();
 }
 
-void HwWriteElement::wait_for_finish()
-{
-}
-
-hailo_status HwWriteElement::resume()
+hailo_status HwWriteElement::execute_resume()
 {
     return m_stream.clear_abort();
+}
+
+hailo_status HwWriteElement::execute_wait_for_finish()
+{
+    return HAILO_SUCCESS;
 }
 
 std::string HwWriteElement::description() const

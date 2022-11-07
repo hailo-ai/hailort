@@ -10,7 +10,6 @@
 #include "pipeline.hpp"
 #include "common/utils.hpp"
 #include "common/runtime_statistics_internal.hpp"
-#include "microprofile.h"
 
 namespace hailort
 {
@@ -397,9 +396,9 @@ hailo_status PipelinePad::abort()
     return m_element.abort();
 }
 
-void PipelinePad::wait_for_finish()
+hailo_status PipelinePad::wait_for_finish()
 {
-    m_element.wait_for_finish();
+    return m_element.wait_for_finish();
 }
 
 hailo_status PipelinePad::resume()
@@ -511,14 +510,10 @@ IntermediateElement::IntermediateElement(const std::string &name, DurationCollec
     m_sources.emplace_back(*this, name, PipelinePad::Type::SOURCE);
 }
 
-hailo_status IntermediateElement::flush()
+std::vector<PipelinePad*> IntermediateElement::execution_pads()
 {
-    return next_pad().flush();
-}
-
-void IntermediateElement::wait_for_finish()
-{
-    next_pad().wait_for_finish();
+    std::vector<PipelinePad*> result{&next_pad()};
+    return result;
 }
 
 PipelineElement::PipelineElement(const std::string &name, DurationCollector &&duration_collector,
@@ -572,40 +567,111 @@ std::string PipelineElement::description() const
     return element_description.str();
 }
 
+hailo_status PipelineElement::activate()
+{
+    return execute_activate();
+}
+
+hailo_status PipelineElement::deactivate()
+{
+    return execute_deactivate();
+}
+
+hailo_status PipelineElement::post_deactivate()
+{
+    return execute_post_deactivate();
+}
+
+hailo_status PipelineElement::clear()
+{
+    return execute_clear();
+}
+
+hailo_status PipelineElement::flush()
+{
+    return execute_flush();
+}
+
+hailo_status PipelineElement::abort()
+{
+    return execute_abort();
+}
+
+hailo_status PipelineElement::resume()
+{
+    return execute_resume();
+}
+
+hailo_status PipelineElement::wait_for_finish()
+{
+    return execute_wait_for_finish();
+}
+
+hailo_status PipelineElement::execute_activate()
+{
+    return execute([&](auto *pad){ return pad->activate(); });
+}
+
+hailo_status PipelineElement::execute_deactivate()
+{
+    return execute([&](auto *pad){ return pad->deactivate(); });
+}
+
+hailo_status PipelineElement::execute_post_deactivate()
+{
+    return execute([&](auto *pad){ return pad->post_deactivate(); });
+}
+
+hailo_status PipelineElement::execute_clear()
+{
+    return execute([&](auto *pad){ return pad->clear(); });
+}
+
+hailo_status PipelineElement::execute_flush()
+{
+    return execute([&](auto *pad){ return pad->flush(); });
+}
+
+hailo_status PipelineElement::execute_abort()
+{
+    return execute([&](auto *pad){ return pad->abort(); });
+}
+
+hailo_status PipelineElement::execute_resume()
+{
+    return execute([&](auto *pad){ return pad->resume(); });
+}
+
+hailo_status PipelineElement::execute_wait_for_finish()
+{
+    return execute([&](auto *pad){ return pad->wait_for_finish(); });
+}
+
+hailo_status PipelineElement::execute(std::function<hailo_status(PipelinePad*)> func)
+{
+    for (auto pad : execution_pads()) {
+        auto status = func(pad);
+        CHECK_SUCCESS(status);
+    }
+    return HAILO_SUCCESS;
+}
+
+std::vector<PipelinePad*> SourceElement::execution_pads()
+{
+    std::vector<PipelinePad*> result{&source()};
+    return result;
+}
+
+std::vector<PipelinePad*> SinkElement::execution_pads()
+{
+    std::vector<PipelinePad*> result{&sink()};
+    return result;
+}
+
 FilterElement::FilterElement(const std::string &name, DurationCollector &&duration_collector,
                              std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status) :
     IntermediateElement(name, std::move(duration_collector), std::move(pipeline_status))
 {}
-
-hailo_status FilterElement::activate()
-{
-    return next_pad().activate();
-}
-
-hailo_status FilterElement::deactivate()
-{
-    return next_pad().deactivate();
-}
-
-hailo_status FilterElement::post_deactivate()
-{
-    return next_pad().post_deactivate();
-}
-
-hailo_status FilterElement::clear()
-{
-    return next_pad().clear();
-}
-
-hailo_status FilterElement::abort()
-{
-    return next_pad().abort();
-}
-
-hailo_status FilterElement::resume()
-{
-    return next_pad().resume();
-}
 
 hailo_status FilterElement::run_push(PipelineBuffer &&buffer)
 {
@@ -616,8 +682,12 @@ hailo_status FilterElement::run_push(PipelineBuffer &&buffer)
     CHECK_EXPECTED_AS_STATUS(output);
 
     hailo_status status = next_pad().run_push(output.release());
-    if (HAILO_SHUTDOWN_EVENT_SIGNALED == status) {
-        LOGGER__INFO("run_push of FilterElement was shutdown!");
+    if (status == HAILO_SHUTDOWN_EVENT_SIGNALED) {
+        LOGGER__INFO("run_push of {} was shutdown!", name());
+        return status;
+    }
+    if (status == HAILO_STREAM_INTERNAL_ABORT) {
+        LOGGER__INFO("run_push of {} was aborted!", name());
         return status;
     }
     CHECK_SUCCESS(status);
@@ -662,11 +732,6 @@ BaseQueueElement::BaseQueueElement(SpscQueue<PipelineBuffer> &&queue, EventPtr s
 void BaseQueueElement::start_thread()
 {
     m_thread = std::thread([this] () {
-        // Microprofile the thread
-        MicroProfileOnThreadCreate(name().c_str());
-        MicroProfileSetEnableAllGroups(true);
-        MicroProfileSetForceMetaCounters(true);
-
         while (m_is_thread_running.load()) {
             auto status = m_activation_event.wait(INIFINITE_TIMEOUT());
 
@@ -719,8 +784,6 @@ void BaseQueueElement::start_thread()
                 }
             }
         }
-        // TODO: Should we use MicroProfileShutdown?
-        MicroProfileOnThreadExit();
     });
 }
 
@@ -745,9 +808,9 @@ std::vector<AccumulatorPtr> BaseQueueElement::get_queue_size_accumulators()
     return {m_queue_size_accumulator};
 }
 
-hailo_status BaseQueueElement::activate()
+hailo_status BaseQueueElement::execute_activate()
 {
-    hailo_status status = next_pad().activate();
+    hailo_status status = PipelineElement::execute_activate();
     CHECK_SUCCESS(status);
 
     status = m_activation_event.signal();
@@ -756,7 +819,7 @@ hailo_status BaseQueueElement::activate()
     return HAILO_SUCCESS;
 }
 
-hailo_status BaseQueueElement::post_deactivate()
+hailo_status BaseQueueElement::execute_post_deactivate()
 {
     hailo_status status = m_deactivation_event.wait(INIFINITE_TIMEOUT());
     if (HAILO_SUCCESS != status) {
@@ -768,12 +831,12 @@ hailo_status BaseQueueElement::post_deactivate()
         LOGGER__ERROR("Failed to reset of deactivation event in {} with status {}", name(), status);
     }
 
-    return next_pad().post_deactivate();
+    return PipelineElement::execute_post_deactivate();
 }
 
-hailo_status BaseQueueElement::clear()
+hailo_status BaseQueueElement::execute_clear()
 {
-    auto status = next_pad().clear();
+    auto status = PipelineElement::execute_clear();
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("Failed to clear() in {} with status {}", name(), status);
     }
@@ -784,25 +847,33 @@ hailo_status BaseQueueElement::clear()
     return status;
 }
 
-hailo_status BaseQueueElement::abort()
-{
-    return next_pad().abort();
-}
-
-void BaseQueueElement::wait_for_finish()
+hailo_status BaseQueueElement::execute_wait_for_finish()
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     m_cv.wait(lock, [this] () {
         return !m_is_run_in_thread_running;
     });
+    return HAILO_SUCCESS;
 }
 
-hailo_status BaseQueueElement::resume()
+hailo_status PushQueueElement::execute_abort()
+{
+    auto status = m_shutdown_event->reset();
+    CHECK_SUCCESS(status);
+    m_pipeline_status->store(HAILO_STREAM_INTERNAL_ABORT);
+    status = PipelineElement::execute_abort();
+    CHECK_SUCCESS(status);
+    return m_activation_event.signal();
+}
+
+hailo_status BaseQueueElement::execute_resume()
 {
     auto status = m_shutdown_event->reset();
     CHECK_SUCCESS(status);
     m_pipeline_status->store(HAILO_SUCCESS);
-    return next_pad().resume();
+    status = PipelineElement::execute_resume();
+    CHECK_SUCCESS(status);
+    return m_activation_event.signal();
 }
 
 hailo_status BaseQueueElement::set_timeout(std::chrono::milliseconds timeout)
@@ -896,7 +967,13 @@ hailo_status PushQueueElement::run_push(PipelineBuffer &&buffer)
     if (nullptr != m_queue_size_accumulator) {
         m_queue_size_accumulator->add_data_point(static_cast<double>(m_queue.size_approx()));
     }
-    hailo_status status = m_queue.enqueue(std::move(buffer), m_timeout);
+    auto status = m_pipeline_status->load();
+    if (status == HAILO_STREAM_INTERNAL_ABORT) {
+        LOGGER__INFO("run_push of {} was aborted!", name());
+        return status;
+    }
+    CHECK_SUCCESS(m_pipeline_status->load());
+    status = m_queue.enqueue(std::move(buffer), m_timeout);
     if (HAILO_SHUTDOWN_EVENT_SIGNALED == status) {
         auto queue_thread_status = pipeline_status();
         CHECK_SUCCESS(queue_thread_status,
@@ -914,13 +991,13 @@ Expected<PipelineBuffer> PushQueueElement::run_pull(PipelineBuffer &&/*optional*
     return make_unexpected(HAILO_INVALID_OPERATION);
 }
 
-hailo_status PushQueueElement::deactivate()
+hailo_status PushQueueElement::execute_deactivate()
 {
     // Mark to the threads that deactivate() was called.
     hailo_status status = m_queue.enqueue(PipelineBuffer(PipelineBuffer::Type::DEACTIVATE));
     if (HAILO_SUCCESS != status) {
         // We want to deactivate source even if enqueue failed
-        auto deactivation_status = next_pad().deactivate();
+        auto deactivation_status = PipelineElement::execute_deactivate();
         CHECK_SUCCESS(deactivation_status);
         if ((HAILO_STREAM_INTERNAL_ABORT == status) || (HAILO_SHUTDOWN_EVENT_SIGNALED == status)) {
             LOGGER__INFO("enqueue() in element {} was aborted, got status = {}", name(), status);
@@ -1031,11 +1108,6 @@ hailo_status PullQueueElement::run_push(PipelineBuffer &&/*buffer*/)
     return HAILO_INVALID_OPERATION;
 }
 
-hailo_status PullQueueElement::resume()
-{
-    return next_pad().resume();
-}
-
 Expected<PipelineBuffer> PullQueueElement::run_pull(PipelineBuffer &&optional, const PipelinePad &/*sink*/)
 {
     // TODO: Support fps/latency collection for queue elems (HRT-7711)
@@ -1058,9 +1130,9 @@ Expected<PipelineBuffer> PullQueueElement::run_pull(PipelineBuffer &&optional, c
     return output;
 }
 
-hailo_status PullQueueElement::deactivate()
+hailo_status PullQueueElement::execute_deactivate()
 {
-    hailo_status status = next_pad().deactivate();
+    hailo_status status = PipelineElement::execute_deactivate();
     auto shutdown_event_status = m_shutdown_event->signal();
     CHECK_SUCCESS(status);
     CHECK_SUCCESS(shutdown_event_status);
@@ -1181,9 +1253,9 @@ Expected<PipelineBuffer> UserBufferQueueElement::run_pull(PipelineBuffer &&optio
     return output;
 }
 
-hailo_status UserBufferQueueElement::clear()
+hailo_status UserBufferQueueElement::execute_clear()
 {
-    auto status = next_pad().clear();
+    auto status = PipelineElement::execute_clear();
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("Failed to clear() in {} with status {}", name(), status);
     }
@@ -1245,6 +1317,16 @@ BaseMuxElement::BaseMuxElement(size_t sink_count, const std::string &name, std::
     }
 }
 
+std::vector<PipelinePad*> BaseMuxElement::execution_pads()
+{
+    std::vector<PipelinePad*> result;
+    result.reserve(m_sinks.size());
+    for (auto& pad : m_sinks) {
+        result.push_back(pad.prev());
+    }
+    return result;
+}
+
 hailo_status BaseMuxElement::run_push(PipelineBuffer &&/*buffer*/)
 {
     return HAILO_NOT_IMPLEMENTED;
@@ -1268,82 +1350,6 @@ Expected<PipelineBuffer> BaseMuxElement::run_pull(PipelineBuffer &&optional, con
     CHECK_EXPECTED(output);
 
     return output;
-}
-
-hailo_status BaseMuxElement::activate()
-{
-    for (auto &sink : m_sinks) {
-        hailo_status status = sink.prev()->activate();
-        CHECK_SUCCESS(status);
-    }
-    return HAILO_SUCCESS;
-}
-
-hailo_status BaseMuxElement::deactivate()
-{
-    for (auto &sink : m_sinks) {
-        hailo_status status = sink.prev()->deactivate();
-        CHECK_SUCCESS(status);
-    }
-    return HAILO_SUCCESS;
-}
-
-hailo_status BaseMuxElement::post_deactivate()
-{
-    for (auto &sink : m_sinks) {
-        hailo_status status = sink.prev()->post_deactivate();
-        CHECK_SUCCESS(status);
-    }
-    return HAILO_SUCCESS;
-}
-
-hailo_status BaseMuxElement::clear()
-{
-    hailo_status status = HAILO_SUCCESS;
-    for (auto &sink : m_sinks) {
-        hailo_status clear_status = sink.prev()->clear();
-        if (HAILO_SUCCESS != clear_status) {
-            status = clear_status;
-        }
-    }
-    return status;
-}
-
-hailo_status BaseMuxElement::abort()
-{
-    for (auto &sink : m_sinks) {
-        hailo_status status = sink.prev()->abort();
-        CHECK_SUCCESS(status);
-    }
-    return HAILO_SUCCESS;
-}
-
-void BaseMuxElement::wait_for_finish()
-{
-    for (auto &sink : m_sinks) {
-        sink.prev()->wait_for_finish();
-    }
-}
-
-hailo_status BaseMuxElement::resume()
-{
-    for (auto &sink : m_sinks) {
-        hailo_status status = sink.prev()->resume();
-        CHECK_SUCCESS(status);
-    }
-    return HAILO_SUCCESS;
-}
-
-hailo_status BaseMuxElement::flush()
-{
-    hailo_status status = HAILO_SUCCESS;
-    for (auto &sink : m_sinks) {
-        hailo_status clear_status = sink.prev()->flush();
-        if (HAILO_SUCCESS != clear_status) {
-            status = clear_status;
-        }
-    }
-    return status;
 }
 
 BaseDemuxElement::BaseDemuxElement(size_t source_count, const std::string &name, std::chrono::milliseconds timeout,
@@ -1432,17 +1438,17 @@ bool BaseDemuxElement::were_all_sinks_called()
     return std::all_of(m_was_source_called.begin(), m_was_source_called.end(), [](bool v) { return v; });
 }
 
-hailo_status BaseDemuxElement::activate()
+hailo_status BaseDemuxElement::execute_activate()
 {
     if (m_is_activated) {
         return HAILO_SUCCESS;
     }
     m_is_activated = true;// TODO Should this always be true, no matter the status of source().activate()?
     m_was_stream_aborted = false;
-    return next_pad().activate();
+    return PipelineElement::execute_activate();
 }
 
-hailo_status BaseDemuxElement::deactivate()
+hailo_status BaseDemuxElement::execute_deactivate()
 {
     if (!m_is_activated) {
         return HAILO_SUCCESS;
@@ -1451,7 +1457,7 @@ hailo_status BaseDemuxElement::deactivate()
 
     // deactivate should be called before mutex acquire and notify_all because it is possible that all queues are waiting on
     // the run_pull of the source (HwRead) and the mutex is already acquired so this would prevent a timeout error
-    hailo_status status = next_pad().deactivate();
+    hailo_status status = PipelineElement::execute_deactivate();
 
     {
         // There is a case where the other thread is halted (via context switch) before the wait_for() function,
@@ -1466,38 +1472,18 @@ hailo_status BaseDemuxElement::deactivate()
     return HAILO_SUCCESS;
 }
 
-hailo_status BaseDemuxElement::post_deactivate()
+hailo_status BaseDemuxElement::execute_post_deactivate()
 {
     for (uint32_t i = 0; i < m_was_source_called.size(); i++) {
         m_was_source_called[i] = false;
     }
-    return next_pad().post_deactivate();
+    return PipelineElement::execute_post_deactivate();
 }
 
-hailo_status BaseDemuxElement::clear()
-{
-    return next_pad().clear();
-}
-
-hailo_status BaseDemuxElement::flush()
-{
-    return next_pad().flush();
-}
-
-hailo_status BaseDemuxElement::abort()
+hailo_status BaseDemuxElement::execute_abort()
 {
     m_was_stream_aborted = true;
-    return next_pad().abort();
-}
-
-void BaseDemuxElement::wait_for_finish()
-{
-    next_pad().wait_for_finish();
-}
-
-hailo_status BaseDemuxElement::resume()
-{
-    return next_pad().resume();
+    return PipelineElement::execute_abort();
 }
 
 PipelinePad &BaseDemuxElement::next_pad()
@@ -1511,5 +1497,12 @@ hailo_status BaseDemuxElement::set_timeout(std::chrono::milliseconds timeout)
     m_timeout = timeout;
     return HAILO_SUCCESS;
 }
+
+std::vector<PipelinePad*> BaseDemuxElement::execution_pads()
+{
+    std::vector<PipelinePad*> result{&next_pad()};
+    return result;
+}
+
 
 } /* namespace hailort */

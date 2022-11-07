@@ -145,7 +145,12 @@ static_assert(false, "Unsupported Platform!");
 Expected<bool> Filesystem::is_directory(const std::string &path)
 {
     struct stat path_stat{};
-    CHECK(0 == stat(path.c_str(), &path_stat), make_unexpected(HAILO_FILE_OPERATION_FAILURE),
+    auto ret_Val = stat(path.c_str(), &path_stat);
+    if (ret_Val != 0 && (errno == ENOENT)) {
+        // Directory path does not exist
+        return false;
+    }
+    CHECK(0 == ret_Val, make_unexpected(HAILO_FILE_OPERATION_FAILURE),
         "stat() on path \"{}\" failed. errno {}", path.c_str(), errno);
 
    return S_ISDIR(path_stat.st_mode);
@@ -211,11 +216,17 @@ LockedFile::LockedFile(FILE *fp, int fd) : m_fp(fp), m_fd(fd)
 
 LockedFile::~LockedFile()
 {
-    if (-1 == flock(m_fd, LOCK_UN)) {
-        LOGGER__ERROR("Failed to unlock file with errno {}", errno);
+    if (m_fp != nullptr) {
+        // The lock is released when all descriptors are closed.
+        // Since we use LOCK_EX, this is the only fd open and the lock will be release after d'tor.
         fclose(m_fp);
     }
 }
+
+LockedFile::LockedFile(LockedFile &&other) :
+    m_fp(std::exchange(other.m_fp, nullptr)),
+    m_fd(other.m_fd)
+{}
 
 int LockedFile::get_fd() const
 {

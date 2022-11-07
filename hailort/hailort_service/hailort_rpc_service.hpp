@@ -76,7 +76,14 @@ public:
         VStream_resume_Reply *reply) override;
     virtual grpc::Status OutputVStream_resume(grpc::ServerContext*, const VStream_resume_Request *request,
         VStream_resume_Reply *reply) override;
-
+    virtual grpc::Status InputVStream_get_user_buffer_format(grpc::ServerContext*, const VStream_get_user_buffer_format_Request *request,
+        VStream_get_user_buffer_format_Reply *reply) override;
+    virtual grpc::Status OutputVStream_get_user_buffer_format(grpc::ServerContext*, const VStream_get_user_buffer_format_Request *request,
+        VStream_get_user_buffer_format_Reply *reply) override;
+    virtual grpc::Status InputVStream_get_info(grpc::ServerContext*, const VStream_get_info_Request *request,
+        VStream_get_info_Reply *reply) override;
+    virtual grpc::Status OutputVStream_get_info(grpc::ServerContext*, const VStream_get_info_Request *request,
+        VStream_get_info_Reply *reply) override;
     virtual grpc::Status ConfiguredNetworkGroup_release(grpc::ServerContext*, const Release_Request* request,
         Release_Reply* reply) override;
     virtual grpc::Status ConfiguredNetworkGroup_make_input_vstream_params(grpc::ServerContext*,
@@ -85,9 +92,9 @@ public:
     virtual grpc::Status ConfiguredNetworkGroup_make_output_vstream_params(grpc::ServerContext*,
         const ConfiguredNetworkGroup_make_output_vstream_params_Request *request,
         ConfiguredNetworkGroup_make_output_vstream_params_Reply *reply) override;
-    virtual grpc::Status ConfiguredNetworkGroup_get_name(grpc::ServerContext*,
-        const ConfiguredNetworkGroup_get_name_Request *request,
-        ConfiguredNetworkGroup_get_name_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_name(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_name_Request *request,
+        ConfiguredNetworkGroup_name_Reply *reply) override;
     virtual grpc::Status ConfiguredNetworkGroup_get_network_infos(grpc::ServerContext*,
         const ConfiguredNetworkGroup_get_network_infos_Request *request,
         ConfiguredNetworkGroup_get_network_infos_Reply *reply) override;

@@ -46,6 +46,7 @@ typedef struct {
 } CONTEXT_SWITCH__context_control_slicing_data_t;
 
 typedef struct {
+    uint8_t context_type; // CONTROL_PROTOCOL__context_switch_context_type_t
     uint8_t cfg_channels_count;
     CONTROL_PROTOCOL__config_channel_info_t config_channel_infos[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
     uint32_t context_network_data_length;
@@ -54,6 +55,9 @@ typedef struct {
     /* control_slicing_data is used in internal hef_metadata.cpp functions only */
     CONTEXT_SWITCH__context_control_slicing_data_t control_slicing_data;
 } CONTROL_PROTOCOL__context_switch_context_info_t;
+
+static_assert(sizeof(CONTROL_PROTOCOL__context_switch_context_index_t) <= UINT8_MAX,
+        "CONTROL_PROTOCOL__context_switch_context_index_t must fit in uint8_t");
 
 typedef struct {
     CONTROL_PROTOCOL__context_switch_main_header_t context_switch_main_header;
@@ -126,8 +130,9 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_context_info_req
         CONTROL_PROTOCOL__context_switch_context_info_single_control_t *context_info);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_idle_time_set_measuremment_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint8_t measurement_enable);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_idle_time_get_measuremment_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_download_context_action_list_request(CONTROL_PROTOCOL__request_t *request, 
-        size_t *request_size, uint32_t sequence, uint8_t context_index, uint16_t action_list_offset);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_download_context_action_list_request(CONTROL_PROTOCOL__request_t *request,
+    size_t *request_size, uint32_t sequence, uint32_t network_group_id,
+    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index, uint16_t action_list_offset);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_context_switch_status_request(
         CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
         CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status, uint8_t application_index,

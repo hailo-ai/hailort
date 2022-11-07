@@ -85,6 +85,11 @@ public:
         return make_unexpected(HAILO_INVALID_OPERATION);
     }
 
+    virtual hailo_status reset_offset_of_pending_frames()
+    {
+        return HAILO_INVALID_OPERATION;
+    }
+
     CONTROL_PROTOCOL__nn_stream_config_t m_nn_stream_config;
 
 protected:

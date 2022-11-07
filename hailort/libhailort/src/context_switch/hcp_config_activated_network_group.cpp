@@ -53,8 +53,8 @@ HcpConfigActivatedNetworkGroup::HcpConfigActivatedNetworkGroup(
         hailo_power_mode_t power_mode,
         EventPtr &&network_group_activated_event,
         hailo_status &status) :
-    ActivatedNetworkGroupBase(network_group_params, CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE,
-                              input_streams, output_streams, std::move(network_group_activated_event), status),
+    ActivatedNetworkGroupBase(network_group_params, input_streams, output_streams,
+                              std::move(network_group_activated_event), status),
     m_active_net_group_holder(active_net_group_holder),
     m_is_active(true),
     m_power_mode(power_mode),
@@ -66,13 +66,43 @@ HcpConfigActivatedNetworkGroup::HcpConfigActivatedNetworkGroup(
         return;
     }
     m_active_net_group_holder.set(*this);
+
+    status = activate_low_level_streams(CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE);
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to activate low level streams");
+        return;
+    }
+
+    status = m_network_group_activated_event->signal();
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to signal network activation event");
+        return;
+    }
 }
 
 HcpConfigActivatedNetworkGroup::~HcpConfigActivatedNetworkGroup()
 {
-    if (m_is_active) {
-        m_active_net_group_holder.clear();
-        deactivate_resources();
+    if (!m_is_active) {
+        return;
+    }
+    m_active_net_group_holder.clear();
+
+    if (nullptr == m_network_group_activated_event) {
+        return;
+    }
+
+    m_network_group_activated_event->reset();
+
+    for (auto &name_pair : m_input_streams) {
+        const auto status = name_pair.second->flush();
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to flush input stream {} with status {}", name_pair.first, status);
+        }
+    }
+
+    const auto status = deactivate_low_level_streams();
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to deactivate low level streams");
     }
 }
 

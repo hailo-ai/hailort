@@ -48,7 +48,7 @@ extern "C" {
 #define HAILO_DEFAULT_BUFFERS_THRESHOLD (0)
 #define HAILO_DEFAULT_MAX_ETHERNET_BANDWIDTH_BYTES_PER_SEC (106300000)
 #define HAILO_MAX_STREAMS_COUNT (32)
-#define HAILO_DEFAULT_BATCH_SIZE (1)
+#define HAILO_DEFAULT_BATCH_SIZE (0)
 #define HAILO_MAX_NETWORK_GROUPS (8)
 #define HAILO_MAX_NETWORK_GROUP_NAME_SIZE (HAILO_MAX_NAME_SIZE)
 /* Network name is always attached to network group name with '/' separator */
@@ -439,6 +439,7 @@ typedef struct {
     uint8_t board_name_length;
     char board_name[HAILO_MAX_BOARD_NAME_LENGTH];
     bool is_release;
+    bool extended_context_switch_buffer;
     hailo_device_architecture_t device_architecture;
     uint8_t serial_number_length;
     char serial_number[HAILO_MAX_SERIAL_NUMBER_LENGTH];
@@ -450,6 +451,7 @@ typedef struct {
 
 typedef struct {
     bool is_release;
+    bool extended_context_switch_buffer;
     hailo_firmware_version_t fw_version;
 } hailo_core_information_t;
 
@@ -2429,6 +2431,35 @@ HAILORTAPI hailo_status hailo_init_configure_params_mipi_input(hailo_hef hef, ha
     hailo_mipi_input_stream_params_t *mipi_params, hailo_configure_params_t *params);
 
 /**
+ * Init configure params with default values for a given hef.
+ *
+ * @param[in]  hef                      A  ::hailo_hef object to configure the @a device by.
+ * @param[in]  stream_interface         A @a hailo_stream_interface_t indicating which @a hailo_stream_parameters_t to create.
+ * @param[in]  network_group_name       The name of the network_group to make configure params for. If NULL is passed,
+ *                                      the first network_group in the HEF will be addressed.
+ * @param[out] params                   A @a hailo_configure_params_t to be filled.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_init_configure_network_group_params(hailo_hef hef, hailo_stream_interface_t stream_interface,
+    const char *network_group_name, hailo_configure_network_group_params_t *params);
+
+/**
+ * Init configure params with default values for a given hef, where all input_streams_params are init to be MIPI type.
+ *
+ * @param[in]  hef                      A  ::hailo_hef object to configure the @a device by.
+ * @param[in]  output_interface         A @a hailo_stream_interface_t indicating which @a hailo_stream_parameters_t to
+ *                                      create for the output streams.
+ * @param[in]  mipi_params              A ::hailo_mipi_input_stream_params_t object which contains the MIPI params for
+ *                                      the input streams.
+ * @param[in]  network_group_name       The name of the network_group to make configure params for. If NULL is passed,
+ *                                      the first network_group in the HEF will be addressed.
+ * @param[out] params                   A @a hailo_configure_params_t to be filled.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_init_configure_network_group_params_mipi_input(hailo_hef hef, hailo_stream_interface_t output_interface,
+    hailo_mipi_input_stream_params_t *mipi_params, const char *network_group_name, hailo_configure_network_group_params_t *params);
+
+/**
  * Configure the device from an hef.
  *
  * @param[in]  device                      A ::hailo_device object to be configured.
@@ -2598,7 +2629,7 @@ HAILORTAPI hailo_status hailo_set_scheduler_timeout(hailo_configured_network_gro
  *                                          If NULL is passed, the threshold will be set for all the networks in the network group.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE, and before the creation of any vstreams.
- * @note The default threshold is 1.
+ * @note The default threshold is 0, which means HailoRT will apply an automatic heuristic to choose the threshold.
  * @note Currently, setting the threshold for a specific network is not supported.
  * @note The threshold may be ignored to prevent idle time from the device.
  */

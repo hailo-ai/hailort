@@ -101,6 +101,8 @@ typedef enum __attribute__((packed)) {
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_VALIDATE_VDMA_CHANNEL,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_BURST_CREDITS_TASK_START,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_DDR_BUFFERING_RESET,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_OPEN_BOUNDARY_INPUT_CHANNEL,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_OPEN_BOUNDARY_OUTPUT_CHANNEL,
     
     /* Must be last */
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT
@@ -270,7 +272,6 @@ typedef struct {
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
     CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
     uint32_t initial_credit_size;
-    bool is_single_context_app;
 } CONTEXT_SWITCH_DEFS__activate_boundary_input_data_t;
 
 typedef struct {
@@ -314,6 +315,16 @@ typedef struct {
     uint32_t buffered_rows_count;
 } CONTEXT_SWITCH_DEFS__activate_ddr_buffer_output_data_t;
 
+typedef struct {
+    uint8_t packed_vdma_channel_id;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
+} CONTEXT_SWITCH_DEFS__open_boundary_input_channel_data_t;
+
+typedef struct {
+    uint8_t packed_vdma_channel_id;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
+} CONTEXT_SWITCH_DEFS__open_boundary_output_channel_data_t;
+
 typedef union {
     CONTEXT_SWITCH_DEFS__activate_boundary_input_data_t activate_boundary_input_data;
     CONTEXT_SWITCH_DEFS__activate_inter_context_input_data_t activate_inter_context_input_data;
@@ -321,6 +332,8 @@ typedef union {
     CONTEXT_SWITCH_DEFS__activate_boundary_output_data_t activate_boundary_output_data;
     CONTEXT_SWITCH_DEFS__activate_inter_context_output_data_t activate_inter_context_output_data;
     CONTEXT_SWITCH_DEFS__activate_ddr_buffer_output_data_t activate_ddr_buffer_output_data;
+    CONTEXT_SWITCH_DEFS__open_boundary_input_channel_data_t open_boundary_input_channel_data;
+    CONTEXT_SWITCH_DEFS__open_boundary_output_channel_data_t open_boundary_output_channel_data;
 } CONTEXT_SWITCH_COMMON__activate_edge_layer_action_t;
 
 typedef struct {

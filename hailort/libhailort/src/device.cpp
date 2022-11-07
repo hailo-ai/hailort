@@ -295,30 +295,6 @@ Expected<float32_t> Device::power_measurement(hailo_dvm_options_t dvm, hailo_pow
     return res;
 }
 
-hailo_status Device::start_power_measurement(uint32_t /*unused*/, hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period)
-{
-    // TODO: Remove deprecated function
-    LOGGER__WARNING("'Device::start_power_measurement(uint32_t unused, hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period)' is deprecated. "\
-        "One should use ''Device::start_power_measurement(hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period)");
-    return start_power_measurement(averaging_factor, sampling_period);
-}
-
-hailo_status Device::set_power_measurement(uint32_t index, hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type)
-{
-    // TODO: Remove deprecated function
-    LOGGER__WARNING("'Device::set_power_measurement(uint32_t index, hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type)' is deprecated. "\
-        "One should use ''Device::set_power_measurement(hailo_measurement_buffer_index_t buffer_index, hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type)");
-    return set_power_measurement(static_cast<hailo_measurement_buffer_index_t>(index), dvm, measurement_type);
-}
-
-Expected<hailo_power_measurement_data_t> Device::get_power_measurement(uint32_t index, bool should_clear)
-{
-    // TODO: Remove deprecated function
-    LOGGER__WARNING("'Device::get_power_measurement(uint32_t index, bool should_clear)' is deprecated. "\
-        "One should use ''Device::set_power_measurement(hailo_measurement_buffer_index_t buffer_index, bool should_clear)");
-    return get_power_measurement(static_cast<hailo_measurement_buffer_index_t>(index), should_clear);
-}
-
 hailo_status Device::start_power_measurement(hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period)
 {
     return Control::start_power_measurement(*this, static_cast<CONTROL_PROTOCOL__averaging_factor_t>(averaging_factor),
@@ -467,31 +443,24 @@ Expected<hailo_health_info_t> Device::get_health_information()
     return Control::get_health_information(*this);
 }
 
-Expected<std::vector<uint8_t>> Device::get_number_of_contexts_per_network_group()
+Expected<std::vector<uint8_t>> Device::get_number_of_dynamic_contexts_per_network_group()
 {
     CONTROL_PROTOCOL__context_switch_main_header_t context_switch_main_header{};
     const auto status = Control::get_context_switch_main_header(*this, &context_switch_main_header);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
-    uint32_t total_number_of_contexts = 0;
     std::vector<uint8_t> number_of_contexts_per_network_group;
     for (auto network_group_index = 0; network_group_index < context_switch_main_header.application_count; network_group_index++) {
-        // # of contexts in a network group = # of non preliminary contexts + 1 for the preliminary context
-        const uint32_t num_contexts = context_switch_main_header.application_header[network_group_index].dynamic_contexts_count + 1;
+        const uint32_t num_contexts = context_switch_main_header.application_header[network_group_index].dynamic_contexts_count;
         CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(num_contexts), HAILO_INTERNAL_FAILURE, "num_contexts must fit in one byte");
         number_of_contexts_per_network_group.emplace_back(static_cast<uint8_t>(num_contexts));
-        total_number_of_contexts += number_of_contexts_per_network_group.back();
     }
-
-    // Total number of contexts need to fit in 1B - checking for overflow
-    CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(total_number_of_contexts), HAILO_INTERNAL_FAILURE,
-        "Context indexes are expected to fit in 1B. actual size is {}", total_number_of_contexts);
 
     return number_of_contexts_per_network_group;
 }
 
-Expected<Buffer> Device::download_context_action_list(uint8_t context_index, uint32_t *base_address,
-    uint32_t *batch_counter, uint16_t max_size)
+Expected<Buffer> Device::download_context_action_list(uint32_t network_group_id, uint8_t context_type,
+    uint8_t context_index, uint32_t *base_address, uint32_t *batch_counter, uint16_t max_size)
 {
     CHECK_ARG_NOT_NULL_AS_EXPECTED(base_address);
     CHECK_ARG_NOT_NULL_AS_EXPECTED(batch_counter);
@@ -503,7 +472,8 @@ Expected<Buffer> Device::download_context_action_list(uint8_t context_index, uin
     uint32_t base_address_local = 0;
     uint32_t batch_counter_local = 0;
     uint16_t actual_size = 0;
-    const auto status = Control::download_context_action_list(*this, context_index, action_list->size(), 
+    const auto status = Control::download_context_action_list(*this, network_group_id,
+        (CONTROL_PROTOCOL__context_switch_context_type_t)context_type, context_index, action_list->size(),
         &base_address_local, action_list->data(), &actual_size, &batch_counter_local);
     CHECK_SUCCESS_AS_EXPECTED(status);
     CHECK_AS_EXPECTED(actual_size <= max_size, HAILO_INTERNAL_FAILURE);

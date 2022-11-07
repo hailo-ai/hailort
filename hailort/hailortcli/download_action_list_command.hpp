@@ -56,8 +56,9 @@ private:
     static Expected<ordered_json> parse_single_action(uint32_t base_address, uint8_t *context_action_list,
         uint32_t current_buffer_offset, uint32_t *action_length, bool *is_repeated, uint8_t *num_repeated,
         CONTEXT_SWITCH_DEFS__ACTION_TYPE_t *sub_action_type, uint32_t *time_stamp);
-    static Expected<ordered_json> parse_context(uint32_t action_list_base_address, uint8_t *context_action_list,
-        uint16_t action_list_size, uint32_t batch_counter);
+    static Expected<ordered_json> parse_context(Device &device, uint32_t network_group_id,
+        CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index,
+        const std::string &context_name);
     static double get_accumulator_mean_value(const AccumulatorPtr &accumulator, double default_value = INVALID_NUMERIC_VALUE);
     static Expected<ordered_json> parse_network_groups(Device &device, const ConfiguredNetworkGroupVector &network_groups);
 };
@@ -95,7 +96,9 @@ static std::pair<CONTEXT_SWITCH_DEFS__ACTION_TYPE_t, std::string> mapping[] = {
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_DMA_IDLE_ACTION, "wait_for_dma_idle_action"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_NMS_IDLE, "wait_for_nms_idle"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_CCW_BURSTS, "fetch_ccw_bursts"},
-    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_DDR_BUFFERING_RESET, "ddr_buffering_reset"}
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_DDR_BUFFERING_RESET, "ddr_buffering_reset"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_OPEN_BOUNDARY_INPUT_CHANNEL, "open_boundary_input_channel"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_OPEN_BOUNDARY_OUTPUT_CHANNEL, "open_boundary_output_channel"},
 };
 static_assert(ARRAY_ENTRIES(mapping) == CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT,
     "Missing a mapping from a CONTEXT_SWITCH_DEFS__ACTION_TYPE_t to it's string value");
@@ -132,5 +135,7 @@ void to_json(json &j, const CONTEXT_SWITCH_DEFS__lcu_interrupt_data_t& data);
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_cfg_channel_t &data);
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__deactivate_cfg_channel_t &data);
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__add_ddr_pair_info_action_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__open_boundary_input_channel_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__open_boundary_output_channel_data_t &data);
 
 #endif /* _HAILO_DOWNLOAD_ACTION_LIST_COMMAND_HPP_ */

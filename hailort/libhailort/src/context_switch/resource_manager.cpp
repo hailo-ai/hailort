@@ -159,6 +159,52 @@ Expected<ResourcesManager> ResourcesManager::create(VdmaDevice &vdma_device, Hai
     return resources_manager;
 }
 
+ResourcesManager::ResourcesManager(VdmaDevice &vdma_device, HailoRTDriver &driver,
+                                   ChannelAllocator &&channel_allocator, const ConfigureNetworkParams config_params,
+                                   std::vector<ConfigBuffer> &&preliminary_config,
+                                   std::vector<std::vector<ConfigBuffer>> &&dynamic_config,
+                                   std::shared_ptr<NetworkGroupMetadata> &&network_group_metadata,
+                                   uint8_t net_group_index, const std::vector<std::string> &&network_index_map,
+                                   LatencyMetersMap &&latency_meters) :
+    m_contexts(),
+    m_channel_allocator(std::move(channel_allocator)),
+    m_vdma_device(vdma_device),
+    m_driver(driver),
+    m_config_params(config_params),
+    m_preliminary_config(std::move(preliminary_config)),
+    m_dynamic_config(std::move(dynamic_config)),
+    m_inter_context_buffers(),
+    m_ddr_channels_pairs(),
+    m_internal_channels(),
+    m_network_group_metadata(std::move(network_group_metadata)),
+    m_net_group_index(net_group_index),
+    m_dynamic_context_count(0),
+    m_total_context_count(0),
+    m_network_index_map(std::move(network_index_map)),
+    m_latency_meters(std::move(latency_meters)),
+    m_boundary_channels()
+{}
+
+ResourcesManager::ResourcesManager(ResourcesManager &&other) noexcept :
+    m_contexts(std::move(other.m_contexts)),
+    m_channel_allocator(std::move(other.m_channel_allocator)),
+    m_vdma_device(other.m_vdma_device),
+    m_driver(other.m_driver),
+    m_config_params(other.m_config_params),
+    m_preliminary_config(std::move(other.m_preliminary_config)),
+    m_dynamic_config(std::move(other.m_dynamic_config)),
+    m_inter_context_buffers(std::move(other.m_inter_context_buffers)),
+    m_ddr_channels_pairs(std::move(other.m_ddr_channels_pairs)),
+    m_internal_channels(std::move(other.m_internal_channels)),
+    m_network_group_metadata(std::move(other.m_network_group_metadata)),
+    m_net_group_index(other.m_net_group_index),
+    m_dynamic_context_count(std::exchange(other.m_dynamic_context_count, static_cast<uint8_t>(0))),
+    m_total_context_count(std::exchange(other.m_total_context_count, static_cast<uint8_t>(0))),
+    m_network_index_map(std::move(other.m_network_index_map)),
+    m_latency_meters(std::move(other.m_latency_meters)),
+    m_boundary_channels(std::move(other.m_boundary_channels))
+{}
+
 hailo_status ResourcesManager::fill_infer_features(CONTROL_PROTOCOL__application_header_t &app_header)
 {
     app_header.infer_features.preliminary_run_asap = m_network_group_metadata->supported_features().preliminary_run_asap;
@@ -203,16 +249,16 @@ hailo_status ResourcesManager::fill_network_batch_size(CONTROL_PROTOCOL__applica
     return HAILO_SUCCESS;
 }
 
-hailo_status ResourcesManager::create_fw_managed_vdma_channels()
+hailo_status ResourcesManager::create_internal_vdma_channels()
 {
-    auto fw_managed_channel_ids = m_channel_allocator.get_fw_managed_channel_ids();
+    auto internal_channel_ids = m_channel_allocator.get_internal_channel_ids();
 
-    m_fw_managed_channels.reserve(fw_managed_channel_ids.size());
-    for (const auto &ch : fw_managed_channel_ids) {
+    m_internal_channels.reserve(internal_channel_ids.size());
+    for (const auto &ch : internal_channel_ids) {
         auto direction = (ch.channel_index < MIN_D2H_CHANNEL_INDEX) ? VdmaChannel::Direction::H2D : VdmaChannel::Direction::D2H;
         auto vdma_channel = VdmaChannel::create(ch, direction, m_driver, m_vdma_device.get_default_desc_page_size());
         CHECK_EXPECTED_AS_STATUS(vdma_channel);
-        m_fw_managed_channels.emplace_back(vdma_channel.release());
+        m_internal_channels.emplace_back(vdma_channel.release());
     }
 
     return HAILO_SUCCESS;
@@ -224,6 +270,7 @@ Expected<std::shared_ptr<VdmaChannel>> ResourcesManager::create_boundary_vdma_ch
 {
     auto network_batch_size = get_network_batch_size(network_name);
     CHECK_EXPECTED(network_batch_size);
+
     uint32_t min_active_trans = MIN_ACTIVE_TRANSFERS_SCALE * network_batch_size.value();
     uint32_t max_active_trans = MAX_ACTIVE_TRANSFERS_SCALE * network_batch_size.value();
 
@@ -296,8 +343,8 @@ ExpectedRef<InterContextBuffer> ResourcesManager::get_inter_context_buffer(const
 
 Expected<CONTROL_PROTOCOL__application_header_t> ResourcesManager::get_control_network_group_header()
 {
-    CONTROL_PROTOCOL__application_header_t  app_header{};
-    app_header.dynamic_contexts_count = static_cast<uint8_t>(m_contexts.size() - 1);
+    CONTROL_PROTOCOL__application_header_t app_header{};
+    app_header.dynamic_contexts_count = m_dynamic_context_count;
 
     /* Bitmask of all boundary channels (per engine) */
     std::array<int, CONTROL_PROTOCOL__MAX_VDMA_ENGINES_COUNT> host_boundary_channels_bitmap{};
@@ -354,15 +401,13 @@ hailo_status ResourcesManager::free_channel_index(const LayerIdentifier &layer_i
 
 void ResourcesManager::update_preliminary_config_buffer_info()
 {
-    // Preliminary_config is the first 'context' m_contexts vector
-    update_config_buffer_info(m_preliminary_config, m_contexts[0]);
+    update_config_buffer_info(m_preliminary_config, m_contexts[CONTROL_PROTOCOL__CONTEXT_SWITCH_INDEX_PRELIMINARY_CONTEXT]);
 }
 
 void ResourcesManager::update_dynamic_contexts_buffer_info()
 {
-    // Preliminary_config is the first 'context' m_contexts vector
-    assert((m_dynamic_config.size() + 1) == m_contexts.size());
-    int ctxt_index = 1;
+    assert(m_dynamic_config.size() == m_dynamic_context_count);
+    int ctxt_index = CONTROL_PROTOCOL__CONTEXT_SWITCH_INDEX_FIRST_DYNAMIC_CONTEXT;
     for (auto &cfg_context : m_dynamic_config) {
         update_config_buffer_info(cfg_context, m_contexts[ctxt_index]);
         ctxt_index++;
@@ -400,8 +445,13 @@ hailo_status ResourcesManager::register_fw_managed_vdma_channels()
 {
     hailo_status status = HAILO_UNINITIALIZED;
 
-    for (auto &ch : m_fw_managed_channels) {
+    for (auto &ch : m_internal_channels) {
         status = ch.register_fw_controlled_channel();
+        CHECK_SUCCESS(status);
+    }
+
+    for (auto &ch : m_boundary_channels) {
+        status = ch.second->register_fw_controlled_channel();
         CHECK_SUCCESS(status);
     }
 
@@ -412,8 +462,10 @@ hailo_status ResourcesManager::unregister_fw_managed_vdma_channels()
 {
     hailo_status status = HAILO_UNINITIALIZED;
 
+    // Note: We don't "unregister" the m_boundary_channels here, beacuse the Vdma*Stream objects will unregister their
+    //       own channels.
     // TODO: Add one icotl to stop all channels at once (HRT-6097)
-    for (auto &ch : m_fw_managed_channels) {
+    for (auto &ch : m_internal_channels) {
         status = ch.unregister_fw_controlled_channel();
         CHECK_SUCCESS(status);
     }
@@ -436,7 +488,11 @@ Expected<uint16_t> ResourcesManager::get_network_batch_size(const std::string &n
     for (auto const &network_map: m_config_params.network_params_by_name) {
         auto const network_name_from_params = network_map.first;
         if (network_name_from_params == network_name) {
-            return Expected<uint16_t>(network_map.second.batch_size);
+            auto actual_batch_size = network_map.second.batch_size;
+            if (HAILO_DEFAULT_BATCH_SIZE == actual_batch_size) {
+                actual_batch_size = DEFAULT_ACTUAL_BATCH_SIZE;
+            }
+            return actual_batch_size;
         }
     }
 
@@ -461,6 +517,39 @@ Expected<Buffer> ResourcesManager::read_intermediate_buffer(const IntermediateBu
         key.second);
     return make_unexpected(HAILO_NOT_FOUND);
 
+}
+
+hailo_status ResourcesManager::flush_boundary_input_channels()
+{
+    // Best effort
+    auto status = HAILO_SUCCESS;
+    for (auto &ch : m_boundary_channels) {
+        // Nothing to flush for D2H channels, the function will return with success
+        const auto flush_status = ch.second->flush(VDMA_FLUSH_TIMEOUT);
+        if (HAILO_STREAM_INTERNAL_ABORT == flush_status) {
+            status = HAILO_STREAM_INTERNAL_ABORT;
+        }
+        else if (HAILO_SUCCESS != flush_status) {
+            status = flush_status;
+            LOGGER__ERROR("Failed to flush input stream {} vdma channel", ch.first);
+        }
+    }
+
+    return status;
+}
+
+void ResourcesManager::mark_d2h_callbacks_for_shutdown()
+{
+    for (auto &ch : m_boundary_channels) {
+        ch.second->mark_d2h_callbacks_for_shutdown();
+    }
+}
+
+void ResourcesManager::unmark_d2h_callbacks_for_shutdown()
+{
+    for (auto &ch : m_boundary_channels) {
+        ch.second->unmark_d2h_callbacks_for_shutdown();
+    }
 }
 
 hailo_status ResourcesManager::enable_state_machine(uint16_t dynamic_batch_size)

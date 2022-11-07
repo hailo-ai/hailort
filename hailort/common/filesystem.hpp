@@ -117,6 +117,11 @@ public:
     static Expected<LockedFile> create(const std::string &file_path, const std::string &mode);
     ~LockedFile();
 
+    LockedFile(const LockedFile &other) = delete;
+    LockedFile &operator=(const LockedFile &other) = delete;
+    LockedFile &operator=(LockedFile &&other) = delete;
+    LockedFile(LockedFile &&other);
+
     int get_fd() const;
 
 private:

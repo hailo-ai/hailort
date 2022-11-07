@@ -231,10 +231,13 @@ protected:
     virtual hailo_status stop_and_clear() override;
 
 private:
-    InputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t input_vstream_handle);
+    InputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t input_vstream_handle, hailo_format_t &&user_buffer_format, 
+        hailo_vstream_info_t &&info);
 
     std::unique_ptr<HailoRtRpcClient> m_client;
     uint32_t m_handle;
+    hailo_format_t m_user_buffer_format;
+    hailo_vstream_info_t m_info;
 };
 
 class OutputVStreamClient : public OutputVStreamInternal
@@ -268,10 +271,13 @@ protected:
     virtual hailo_status stop_and_clear() override;
 
 private:
-    OutputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t outputs_vstream_handle);
+    OutputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t outputs_vstream_handle, hailo_format_t &&user_buffer_format,
+        hailo_vstream_info_t &&info);
 
     std::unique_ptr<HailoRtRpcClient> m_client;
     uint32_t m_handle;
+    hailo_format_t m_user_buffer_format;
+    hailo_vstream_info_t m_info;
 };
 #endif // HAILO_SUPPORT_MULTI_PROCESS
 
@@ -384,14 +390,14 @@ public:
 
     virtual hailo_status run_push(PipelineBuffer &&buffer) override;
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
-    virtual hailo_status activate() override;
-    virtual hailo_status deactivate() override;
-    virtual hailo_status post_deactivate() override;
-    virtual hailo_status clear() override;
-    virtual hailo_status flush() override;
-    virtual hailo_status abort() override;
-    virtual void wait_for_finish() override;
-    virtual hailo_status resume() override;
+    virtual hailo_status execute_activate() override;
+    virtual hailo_status execute_deactivate() override;
+    virtual hailo_status execute_post_deactivate() override;
+    virtual hailo_status execute_clear() override;
+    virtual hailo_status execute_flush() override;
+    virtual hailo_status execute_abort() override;
+    virtual hailo_status execute_resume() override;
+    virtual hailo_status execute_wait_for_finish() override;
     uint32_t get_invalid_frames_count();
     virtual std::string description() const override;
 
@@ -414,14 +420,14 @@ public:
 
     virtual hailo_status run_push(PipelineBuffer &&buffer) override;
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
-    virtual hailo_status activate() override;
-    virtual hailo_status deactivate() override;
-    virtual hailo_status post_deactivate() override;
-    virtual hailo_status clear() override;
-    virtual hailo_status flush() override;
-    virtual hailo_status abort() override;
-    virtual void wait_for_finish() override;
-    virtual hailo_status resume() override;
+    virtual hailo_status execute_activate() override;
+    virtual hailo_status execute_deactivate() override;
+    virtual hailo_status execute_post_deactivate() override;
+    virtual hailo_status execute_clear() override;
+    virtual hailo_status execute_flush() override;
+    virtual hailo_status execute_abort() override;
+    virtual hailo_status execute_resume() override;
+    virtual hailo_status execute_wait_for_finish() override;
     virtual std::string description() const override;
 
 private:

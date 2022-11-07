@@ -13,7 +13,7 @@ service HailoRtRpc {
     rpc ConfiguredNetworkGroup_release (Release_Request) returns (Release_Reply) {}
     rpc ConfiguredNetworkGroup_make_input_vstream_params (ConfiguredNetworkGroup_make_input_vstream_params_Request) returns (ConfiguredNetworkGroup_make_input_vstream_params_Reply) {}
     rpc ConfiguredNetworkGroup_make_output_vstream_params (ConfiguredNetworkGroup_make_output_vstream_params_Request) returns (ConfiguredNetworkGroup_make_output_vstream_params_Reply) {}
-    rpc ConfiguredNetworkGroup_get_name (ConfiguredNetworkGroup_get_name_Request) returns (ConfiguredNetworkGroup_get_name_Reply) {}
+    rpc ConfiguredNetworkGroup_name (ConfiguredNetworkGroup_name_Request) returns (ConfiguredNetworkGroup_name_Reply) {}
     rpc ConfiguredNetworkGroup_get_network_infos (ConfiguredNetworkGroup_get_network_infos_Request) returns (ConfiguredNetworkGroup_get_network_infos_Reply) {}
     rpc ConfiguredNetworkGroup_get_all_stream_infos (ConfiguredNetworkGroup_get_all_stream_infos_Request) returns (ConfiguredNetworkGroup_get_all_stream_infos_Reply) {}
     rpc ConfiguredNetworkGroup_get_default_stream_interface (ConfiguredNetworkGroup_get_default_stream_interface_Request) returns (ConfiguredNetworkGroup_get_default_stream_interface_Reply) {}
@@ -40,6 +40,10 @@ service HailoRtRpc {
     rpc OutputVStream_abort (VStream_abort_Request) returns (VStream_abort_Reply) {}
     rpc InputVStream_resume (VStream_resume_Request) returns (VStream_resume_Reply) {}
     rpc OutputVStream_resume (VStream_resume_Request) returns (VStream_resume_Reply) {}
+    rpc InputVStream_get_user_buffer_format (VStream_get_user_buffer_format_Request) returns (VStream_get_user_buffer_format_Reply) {}
+    rpc OutputVStream_get_user_buffer_format (VStream_get_user_buffer_format_Request) returns (VStream_get_user_buffer_format_Reply) {}
+    rpc InputVStream_get_info (VStream_get_info_Request) returns (VStream_get_info_Reply) {}
+    rpc OutputVStream_get_info (VStream_get_info_Request) returns (VStream_get_info_Reply) {}
 }
 
 message empty {}
@@ -262,11 +266,11 @@ message ConfiguredNetworkGroup_make_output_vstream_params_Reply {
     repeated NamedVStreamParams vstream_params_map = 2;
 }
 
-message ConfiguredNetworkGroup_get_name_Request {
+message ConfiguredNetworkGroup_name_Request {
     uint32 handle = 1;
 }
 
-message ConfiguredNetworkGroup_get_name_Reply {
+message ConfiguredNetworkGroup_name_Reply {
     uint32 status = 1;
     string network_group_name = 2;
 }
@@ -407,4 +411,22 @@ message VStream_resume_Request {
 
 message VStream_resume_Reply {
     uint32 status = 1;
+}
+
+message VStream_get_user_buffer_format_Request {
+    uint32 handle = 1;
+}
+
+message VStream_get_user_buffer_format_Reply {
+    uint32 status = 1;
+    HailoFormat user_buffer_format = 2;
+}
+
+message VStream_get_info_Request {
+    uint32 handle = 1;
+}
+
+message VStream_get_info_Reply {
+    uint32 status = 1;
+    VStreamInfo vstream_info = 2;
 }
