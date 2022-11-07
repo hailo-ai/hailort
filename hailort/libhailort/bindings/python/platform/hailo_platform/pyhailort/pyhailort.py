@@ -1,5 +1,4 @@
 from enum import Enum, IntEnum
-import re
 import signal
 import struct
 import pkg_resources
@@ -1233,7 +1232,7 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 4
-SUPPORTED_FW_MINOR = 10
+SUPPORTED_FW_MINOR = 11
 SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
@@ -1250,9 +1249,11 @@ class DeviceArchitectureTypes(IntEnum):
 
 class BoardInformation(object):
     def __init__(self, protocol_version, fw_version_major, fw_version_minor, fw_version_revision,
-                 logger_version, board_name, is_release, device_architecture, serial_number, part_number, product_name):
+                 logger_version, board_name, is_release, extended_context_switch_buffer, device_architecture,
+                 serial_number, part_number, product_name):
         self.protocol_version = protocol_version
-        self.firmware_version = HailoFirmwareVersion.construct_from_params(fw_version_major, fw_version_minor, fw_version_revision, is_release, HailoFirmwareType.APP)
+        self.firmware_version = HailoFirmwareVersion.construct_from_params(fw_version_major, fw_version_minor, fw_version_revision, is_release,
+            extended_context_switch_buffer, HailoFirmwareType.APP)
         self.logger_version = logger_version
         self.board_name = board_name
         self.is_release = is_release
@@ -1303,8 +1304,9 @@ class BoardInformation(object):
             raise HailoRTException("Unsupported device architecture.")
 
 class CoreInformation(object):
-    def __init__(self, fw_version_major, fw_version_minor, fw_version_revision, is_release):
-        self.firmware_version = HailoFirmwareVersion.construct_from_params(fw_version_major, fw_version_minor, fw_version_revision, is_release, HailoFirmwareType.CORE)
+    def __init__(self, fw_version_major, fw_version_minor, fw_version_revision, is_release, extended_context_switch_buffer):
+        self.firmware_version = HailoFirmwareVersion.construct_from_params(fw_version_major, fw_version_minor, fw_version_revision, is_release,
+            extended_context_switch_buffer, HailoFirmwareType.CORE)
         self.is_release = is_release
     
     def __str__(self):
@@ -1456,17 +1458,20 @@ class HailoFirmwareType(Enum):
 
 class HailoFirmwareVersion(object):
     """Represents a Hailo chip firmware version."""
-    DEV_BIT  = 0x80000000
-    CORE_BIT = 0x08000000
+    CORE_BIT                           = 0x08000000
+    EXTENDED_CONTEXT_SWITCH_BUFFER_BIT = 0x40000000
+    DEV_BIT                            = 0x80000000
     FW_VERSION_FORMAT = '<III'
 
-    def __init__(self, firmware_version_buffer, is_release, fw_type):
+    def __init__(self, firmware_version_buffer, is_release, extended_context_switch_buffer, fw_type):
         """Initialize a new Hailo Firmware Version object.
 
         Args:
             firmware_version_buffer (str): A buffer containing the firmware version struct.
             is_release (bool, optional): Flag indicating if firmware is at develop/release mode.
-                                        None indicates unknown
+                                         None indicates unknown
+            extended_context_switch_buffer (bool): Flag indicating if firmware has an extended context switch buffer.
+            fw_type (HailoFirmwareType): Firmware type
         """
         self.major, self.minor, self.revision = struct.unpack(
             self.FW_VERSION_FORMAT,
@@ -1474,21 +1479,24 @@ class HailoFirmwareVersion(object):
         
         self.fw_type = fw_type
         self.mode = HailoFirmwareMode.RELEASE if is_release else HailoFirmwareMode.DEVELOP
+        self.extended_context_switch_buffer = extended_context_switch_buffer
         
-        self.revision &= ~(self.CORE_BIT | self.DEV_BIT)
+        self.revision &= ~(self.CORE_BIT | self.EXTENDED_CONTEXT_SWITCH_BUFFER_BIT | self.DEV_BIT)
 
     def __str__(self):
         """Returns:
             str: Firmware version in a human readable format.
         """
-        return '{}.{}.{} ({},{})'.format(self.major, self.minor, self.revision, self.mode.value, self.fw_type.value)
+        return '{}.{}.{} ({},{}{})'.format(self.major, self.minor, self.revision, self.mode.value, self.fw_type.value,
+            ',extended context switch buffer' if self.extended_context_switch_buffer else '')
 
     @classmethod
-    def construct_from_params(cls, major, minor, revision, is_release, fw_type):
+    def construct_from_params(cls, major, minor, revision, is_release, extended_context_switch_buffer, fw_type):
         """Returns:
             class HailoFirmwareVersion : with the given Firmware version.
         """
-        return cls(struct.pack(HailoFirmwareVersion.FW_VERSION_FORMAT, major, minor, revision), is_release, fw_type)
+        return cls(struct.pack(HailoFirmwareVersion.FW_VERSION_FORMAT, major, minor, revision), is_release,
+            extended_context_switch_buffer, fw_type)
 
     @property
     def comparable_value(self):
@@ -1538,14 +1546,6 @@ class SupportedFeatures(object):
     def _is_feature_enabled(self, feature):
         return (self.supported_features & feature) != 0
 
-def _enum_to_dict(enum):
-    return {k: v for k, v in enum.__dict__.items() if not re.match("__(.*)", str(k)) and isinstance(v, enum)}
-
-def _get_buffer_index_enum_member(index):
-    for name, member in _enum_to_dict(MeasurementBufferIndex).items():
-        if int(member) == index:
-            return member
-    raise HailoRTException("Invalid index")
 
 class Control:
     """The control object of this device, which implements the control API of the Hailo device.
@@ -1675,11 +1675,10 @@ class Control:
         with ExceptionWrapper():
             return self._device.power_measurement(dvm, measurement_type)
 
-    def start_power_measurement(self, delay=None, averaging_factor=AveragingFactor.AVERAGE_256, sampling_period=SamplingPeriod.PERIOD_1100us):
+    def start_power_measurement(self, averaging_factor=AveragingFactor.AVERAGE_256, sampling_period=SamplingPeriod.PERIOD_1100us):
         """Start performing a long power measurement.
 
         Args:
-            delay: Unused parameter. Will be removed in future versions.
             averaging_factor (:class:`~hailo_platform.pyhailort.pyhailort.AveragingFactor`):
                 Number of samples per time period, sensor configuration value.
             sampling_period (:class:`~hailo_platform.pyhailort.pyhailort.SamplingPeriod`):
@@ -1691,9 +1690,6 @@ class Control:
                 calculated by the firmware is "average of averages", because it averages values
                 that have already been averaged by the sensor.
         """
-        # TODO: Remove deprecated arg
-        if delay is not None:
-            self._logger.warning("Passing 'delay' to 'start_power_measurement()' is deprecated and will be removed in future versions")
         with ExceptionWrapper():
             return self._device.start_power_measurement(averaging_factor, sampling_period)
 
@@ -1727,11 +1723,6 @@ class Control:
             This function can perform measurements for more than just power. For all supported measurement types
             view :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes`
         """
-        # TODO: Remove deprecated arg
-        if isinstance(buffer_index, int):
-            self._logger.warning("Passing integer as 'buffer_index' to 'set_power_measurement()' is deprecated. One should pass "
-                ":class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex` as 'buffer_index' instead.")
-            buffer_index = _get_buffer_index_enum_member(buffer_index)
         with ExceptionWrapper():
             return self._device.set_power_measurement(buffer_index, dvm, measurement_type)
 
@@ -1760,11 +1751,6 @@ class Control:
         if ((self._identify_info.device_architecture != DeviceArchitectureTypes.HAILO8) and
             (self._identify_info.device_architecture != DeviceArchitectureTypes.HAILO8L)):
             raise HailoRTException("Invalid device architecture: {}".format(self._identify_info.device_architecture))
-        # TODO: Remove deprecated arg
-        if isinstance(buffer_index, int):
-            self._logger.warning("Passing integer as 'buffer_index' to 'get_power_measurement()' is deprecated. One should pass "
-                ":class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex` as 'buffer_index' instead.")
-            buffer_index = _get_buffer_index_enum_member(buffer_index)
         with ExceptionWrapper():
             return self._device.get_power_measurement(buffer_index, should_clear)
 
@@ -1822,8 +1808,9 @@ class Control:
             response =  self._device.identify()
         board_information = BoardInformation(response.protocol_version, response.fw_version.major,
             response.fw_version.minor, response.fw_version.revision, response.logger_version,
-            response.board_name, response.is_release,  int(response.device_architecture), response.serial_number,
-            response.part_number, response.product_name)
+            response.board_name, response.is_release, response.extended_context_switch_buffer,
+            int(response.device_architecture), response.serial_number, response.part_number,
+            response.product_name)
         return board_information
 
     def core_identify(self):
@@ -1835,7 +1822,7 @@ class Control:
         with ExceptionWrapper():
             response =  self._device.core_identify()
         core_information = CoreInformation(response.fw_version.major, response.fw_version.minor, 
-            response.fw_version.revision, response.is_release)
+            response.fw_version.revision, response.is_release, response.extended_context_switch_buffer)
         return core_information
 
     def set_fw_logger(self, level, interface_mask):

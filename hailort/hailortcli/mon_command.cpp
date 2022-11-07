@@ -13,6 +13,9 @@
 #include "common/filesystem.hpp"
 
 #include <iostream>
+#if defined(__GNUC__)
+#include <sys/ioctl.h>
+#endif
 
 namespace hailort
 {
@@ -20,8 +23,10 @@ namespace hailort
 // TODO: Deal with longer networks names - should use HAILO_MAX_NETWORK_NAME_SIZE but its too long for one line
 constexpr size_t NETWORK_NAME_WIDTH = 40;
 constexpr size_t STREAM_NAME_WIDTH = 60;
+constexpr size_t ACTIVE_TIME_WIDTH = 25;
 constexpr size_t NUMBER_WIDTH = 15;
 constexpr size_t LINE_LENGTH = 125;
+constexpr std::chrono::milliseconds EPSILON_TIME(500);
 
 MonCommand::MonCommand(CLI::App &parent_app) :
     Command(parent_app.add_subcommand("monitor", "Monitor of networks - Presents information about the running networks. " \
@@ -43,7 +48,7 @@ size_t MonCommand::print_networks_info_header()
     std::cout << 
         std::setw(NETWORK_NAME_WIDTH) << std::left << "Network" <<
         std::setw(NUMBER_WIDTH) << std::left << "FPS" <<
-        std::setw(NUMBER_WIDTH) << std::left << "Core%" << 
+        std::setw(ACTIVE_TIME_WIDTH) << std::left << "Active Time (%) " <<
         std::setw(NUMBER_WIDTH) << std::left << "PID" << 
         "\n" << std::left << std::string(LINE_LENGTH, '-') << "\n";
     static const uint32_t header_lines_count = 2;
@@ -53,17 +58,21 @@ size_t MonCommand::print_networks_info_header()
 
 size_t MonCommand::print_networks_info_table(const ProtoMon &mon_message)
 {
+    const uint32_t NUMBER_OBJECTS_COUNT = 3;
+    auto data_line_len = (NUMBER_WIDTH * NUMBER_OBJECTS_COUNT) + NETWORK_NAME_WIDTH;
+    auto rest_line_len = LINE_LENGTH - data_line_len;
+
     const std::string &pid = mon_message.pid();
     for (auto net_info : mon_message.networks_infos()) {
         auto &net_name = net_info.network_name();
         auto fps = net_info.fps();
-        auto core = net_info.core_utilization();
+        auto active_time = net_info.active_time();
 
         std::cout << std::setprecision(1) << std::fixed <<
             std::setw(NETWORK_NAME_WIDTH) << std::left << net_name <<
             std::setw(NUMBER_WIDTH) << std::left << fps <<
-            std::setw(NUMBER_WIDTH) << std::left << core << 
-            std::setw(NUMBER_WIDTH) << std::left << pid << "\n";
+            std::setw(ACTIVE_TIME_WIDTH) << std::left << active_time <<
+            std::setw(NUMBER_WIDTH) << std::left << pid << std::string(rest_line_len, ' ') << "\n";
     }
 
     return mon_message.networks_infos().size();
@@ -110,50 +119,90 @@ size_t MonCommand::print_frames_table(const ProtoMon &mon_message)
 }
 
 #if defined(__GNUC__)
+Expected<uint16_t> get_terminal_line_width()
+{
+    struct winsize w;
+    int ret = ioctl(0, TIOCGWINSZ, &w);
+    CHECK_AS_EXPECTED(ret == 0, HAILO_INTERNAL_FAILURE,"Failed to get_terminal_line_width, with errno: {}", errno);
+
+    uint16_t terminal_line_width = w.ws_col;
+    return terminal_line_width;
+}
+
 hailo_status MonCommand::print_table()
 {
+    std::chrono::milliseconds time_interval = DEFAULT_SCHEDULER_MON_INTERVAL + EPSILON_TIME;
+    auto terminal_line_width_expected = get_terminal_line_width();
+    CHECK_EXPECTED_AS_STATUS(terminal_line_width_expected);
+    auto terminal_line_width = terminal_line_width_expected.release();
+
+    size_t last_run_total_lines_count = 0;
+    bool data_was_printed = false;
     while (true) {
-        auto epsilon = std::chrono::milliseconds(500);
-        std::chrono::milliseconds time_interval = DEFAULT_SCHEDULER_MON_INTERVAL + epsilon;
-        auto scheduler_mon_files = Filesystem::get_latest_files_in_dir_flat(SCHEDULER_MON_TMP_DIR, time_interval);
-        if (HAILO_SUCCESS != scheduler_mon_files.status() || scheduler_mon_files->empty()) {
-            LOGGER__WARNING("Getting scheduler monitor files failed. Please check the application is running and environment variable '{}' is set to 1.",
-                SCHEDULER_MON_ENV_VAR);
-            return HAILO_NOT_FOUND;
-        }
+        size_t total_lines_count = 0;
+        bool print_warning_msg = true; // Will change to false only if mon directory is valid and there are updated files in it.
+
+        auto mon_dir_valid = Filesystem::is_directory(SCHEDULER_MON_TMP_DIR);
+        CHECK_EXPECTED_AS_STATUS(mon_dir_valid);
 
         std::vector<ProtoMon> mon_messages;
-        mon_messages.reserve(scheduler_mon_files->size());
-        for (const auto &mon_file : scheduler_mon_files.value()) {
-            auto file = LockedFile::create(mon_file, "r");
-            if (HAILO_SUCCESS != file.status()) {
-                LOGGER__ERROR("Failed to open and lock file {}, with status: {}", mon_file, file.status());
-                continue;
-            }
+        if (mon_dir_valid.value()) {
+            auto scheduler_mon_files = Filesystem::get_latest_files_in_dir_flat(SCHEDULER_MON_TMP_DIR, time_interval);
+            CHECK_EXPECTED_AS_STATUS(scheduler_mon_files);
+            print_warning_msg = scheduler_mon_files->empty();
 
-            ProtoMon mon_message;
-            if (!mon_message.ParseFromFileDescriptor(file->get_fd())) {
-                LOGGER__WARNING("Failed to ParseFromFileDescriptor monitor file {} with errno {}", mon_file, errno);
-                continue;
-            }
+            mon_messages.reserve(scheduler_mon_files->size());
+            for (const auto &mon_file : scheduler_mon_files.value()) {
+                auto file = LockedFile::create(mon_file, "r");
+                if (HAILO_SUCCESS != file.status()) {
+                    LOGGER__ERROR("Failed to open and lock file {}, with status: {}", mon_file, file.status());
+                    total_lines_count++;
+                    continue;
+                }
 
-            mon_messages.emplace_back(std::move(mon_message));
+                ProtoMon mon_message;
+                if (!mon_message.ParseFromFileDescriptor(file->get_fd())) {
+                    LOGGER__WARNING("Failed to ParseFromFileDescriptor monitor file {} with errno {}", mon_file, errno);
+                    total_lines_count++;
+                    continue;
+                }
+
+                mon_messages.emplace_back(std::move(mon_message));
+            }
         }
 
-        size_t total_lines_count = print_networks_info_header();
+        total_lines_count += print_networks_info_header();
         for (auto &mon_message : mon_messages) {
             total_lines_count += print_networks_info_table(mon_message);
         }
 
-        std::cout << "\n\n";
+        std::cout << std::string(terminal_line_width, ' ') << "\n";
+        std::cout << std::string(terminal_line_width, ' ') << "\n";
         total_lines_count += 2;
 
         total_lines_count += print_frames_header();
         for (auto &mon_message : mon_messages) {
             total_lines_count += print_frames_table(mon_message);
         }
-        CliCommon::reset_cursor(total_lines_count);
 
+        if (print_warning_msg) {
+            std::cout << "Monitor did not retrieve any files. This occurs when there is no application currently running. If this is not the case, verify that environment variable '" <<
+                SCHEDULER_MON_ENV_VAR << "' is set to 1.\n";
+            total_lines_count++;
+
+            if (data_was_printed) {
+                auto lines_to_clear = last_run_total_lines_count - total_lines_count;
+                CliCommon::clear_lines_down(lines_to_clear);
+                total_lines_count += lines_to_clear;
+                data_was_printed = false;
+            }
+        }
+        else {
+            data_was_printed = true;
+            last_run_total_lines_count = total_lines_count;
+        }
+
+        CliCommon::reset_cursor(total_lines_count);
         std::this_thread::sleep_for(DEFAULT_SCHEDULER_MON_INTERVAL);
     }
     

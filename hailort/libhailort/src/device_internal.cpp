@@ -226,6 +226,12 @@ hailo_status DeviceBase::firmware_update(const MemoryView &firmware_binary, bool
     CHECK_SUCCESS(status, "Invalid APP firmware binary was supplied");
     status = validate_fw_version_for_platform(board_info_before_update, new_core_fw_version, FW_BINARY_TYPE_CORE_FIRMWARE);
     CHECK_SUCCESS(status, "Invalid CORE firmware binary was supplied");
+
+    if (IS_REVISION_EXTENDED_CONTEXT_SWITCH_BUFFER(new_app_firmware_header->firmware_revision) || 
+            IS_REVISION_EXTENDED_CONTEXT_SWITCH_BUFFER(new_core_firmware_header->firmware_revision)) {
+        LOGGER__ERROR("Can't update to \"extended context switch buffer\" firmware (no ethernet support).");
+        return HAILO_INVALID_FIRMWARE;
+    }
     
     // TODO: Fix cast, we are assuming they are the same (HRT-3177)
     current_fw_version = reinterpret_cast<firmware_version_t*>(&(board_info_before_update.fw_version));

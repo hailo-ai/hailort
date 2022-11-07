@@ -1,43 +1,23 @@
 cmake_minimum_required(VERSION 3.0.0)
 
-file(GLOB_RECURSE C_EXAMPLE_SOURCES "*.c")
-SET_SOURCE_FILES_PROPERTIES(${C_EXAMPLE_SOURCES} PROPERTIES LANGUAGE C)
+add_subdirectory(data_quantization_example)
+add_subdirectory(raw_streams_example)
+add_subdirectory(vstreams_example)
+add_subdirectory(infer_pipeline_example)
+add_subdirectory(multi_network_vstream_example)
+add_subdirectory(switch_network_groups_example)
+add_subdirectory(switch_network_groups_manually_example)
+add_subdirectory(multi_device_example)
+add_subdirectory(power_measurement_example)
 
-add_executable(c_data_quantization_example data_quantization_example.c)
-target_link_libraries(c_data_quantization_example PRIVATE example_base)
-
-add_executable(c_raw_streams_example raw_streams_example.c)
-target_link_libraries(c_raw_streams_example PRIVATE example_base)
-
-add_executable(c_vstreams_example vstreams_example.c)
-target_link_libraries(c_vstreams_example PRIVATE example_base)
-
-add_executable(c_infer_pipeline_example infer_pipeline_example.c)
-target_link_libraries(c_infer_pipeline_example PRIVATE example_base)
-
-add_executable(c_multi_network_vstream_example multi_network_vstream_example.c)
-target_link_libraries(c_multi_network_vstream_example PRIVATE example_base)
-
-add_executable(c_switch_network_groups_example switch_network_groups_example.c)
-target_link_libraries(c_switch_network_groups_example PRIVATE example_base)
-
-add_executable(c_switch_single_io_network_groups_manually_example switch_single_io_network_groups_manually_example.c)
-target_link_libraries(c_switch_single_io_network_groups_manually_example PRIVATE example_base)
-
-add_executable(c_multi_device_example multi_device_example.c)
-target_link_libraries(c_multi_device_example PRIVATE example_base)
-
-add_executable(c_power_measurement_example power_measurement_example.c)
-target_link_libraries(c_power_measurement_example PRIVATE example_base)
-
-set(EXAMPLES_C_TARGETS
+add_custom_target(c_hailort_examples)
+add_dependencies(c_hailort_examples
     c_data_quantization_example
     c_raw_streams_example
     c_vstreams_example
     c_infer_pipeline_example
     c_multi_network_vstream_example
     c_switch_network_groups_example
-    c_switch_single_io_network_groups_manually_example
+    c_switch_network_groups_manually_example
     c_multi_device_example
-    c_power_measurement_example
-    PARENT_SCOPE)
+    c_power_measurement_example)

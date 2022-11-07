@@ -80,12 +80,11 @@ public:
         m_vdevice(nullptr), m_hef(nullptr), m_cng(nullptr), m_ang(nullptr) {}
 
     hailo_status set_hef(const char *device_id, uint16_t device_count, uint32_t vdevice_key, hailo_scheduling_algorithm_t scheduling_algorithm,
-        const char *hef_path);
+        bool multi_process_service, const char *hef_path);
     hailo_status configure_network_group(const char *net_group_name, hailo_scheduling_algorithm_t scheduling_algorithm, uint16_t batch_size);
     Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> create_vstreams(const char *network_name,
         hailo_scheduling_algorithm_t scheduling_algorithm, const std::vector<hailo_format_with_name_t> &output_formats);
     hailo_status activate_network_group();
-    hailo_status abort_streams();
     Expected<bool> remove_network_group();
 
     hailo_status set_scheduler_timeout(const char *network_name, uint32_t timeout_ms);
@@ -100,9 +99,9 @@ public:
 private:
     Expected<NetworkGroupsParamsMap> get_configure_params(Hef &hef, const char *net_group_name, uint16_t batch_size);
     static Expected<std::shared_ptr<VDevice>> create_vdevice(const void *element, const std::string &device_id, uint16_t device_count,
-        uint32_t vdevice_key, hailo_scheduling_algorithm_t scheduling_algorithm);
+        uint32_t vdevice_key, hailo_scheduling_algorithm_t scheduling_algorithm, bool multi_process_service);
     Expected<std::shared_ptr<VDevice>> create_vdevice(const std::string &device_id, uint16_t device_count, uint32_t vdevice_key,
-        hailo_scheduling_algorithm_t scheduling_algorithm);
+        hailo_scheduling_algorithm_t scheduling_algorithm, bool multi_process_service);
 
     static std::unordered_set<std::shared_ptr<VDevice>> m_vdevices;
     static NetworkGroupConfigManager m_net_group_config_manager;

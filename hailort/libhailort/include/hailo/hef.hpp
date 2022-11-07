@@ -38,8 +38,8 @@ struct ConfigureNetworkParams
         }
     }
 
-    bool operator==(const ConfigureNetworkParams &other);
-    bool operator!=(const ConfigureNetworkParams &other);
+    bool operator==(const ConfigureNetworkParams &other) const;
+    bool operator!=(const ConfigureNetworkParams &other) const;
 
     uint16_t batch_size;
     hailo_power_mode_t power_mode;

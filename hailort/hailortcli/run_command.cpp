@@ -48,6 +48,8 @@ constexpr std::chrono::milliseconds TIME_TO_WAIT_FOR_CONFIG(300);
 constexpr std::chrono::milliseconds TIME_TO_WAIT_FOR_CONFIG(30000);
 #define HAILORTCLI_DEFAULT_VSTREAM_TIMEOUT_MS (HAILO_DEFAULT_VSTREAM_TIMEOUT_MS * 100)
 #endif /* ifndef HAILO_EMULATOR */
+static const char *RUNTIME_DATA_BATCH_TO_MEASURE_OPT_LAST = "last";
+static const char *RUNTIME_DATA_BATCH_TO_MEASURE_OPT_DEFAULT = "2";
 
 #ifndef _MSC_VER
 void user_signal_handler_func(int signum)
@@ -86,7 +88,7 @@ bool should_measure_pipeline_stats(const inference_runner_params& params)
 bool use_batch_to_measure_opt(const inference_runner_params& params)
 {
     return params.runtime_data.collect_runtime_data &&
-        (params.runtime_data.batch_to_measure != RUNTIME_DATA_IGNORE_BATCH_TO_MEASURE_OPT);
+        (params.runtime_data.batch_to_measure_str != RUNTIME_DATA_BATCH_TO_MEASURE_OPT_LAST);
 }
 
 static void add_run_command_params(CLI::App *run_subcommand, inference_runner_params& params)
@@ -118,7 +120,7 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
     auto total_batch_size = run_subcommand->add_option("--batch-size", params.batch_size,
         "Inference batch (should be a divisor of --frames-count if provided).\n"
         "This batch applies to the whole network_group. for differential batch per network, see --net-batch-size")
-        ->check(CLI::PositiveNumber)
+        ->check(CLI::NonNegativeNumber)
         ->default_val(HAILO_DEFAULT_BATCH_SIZE);
 
     run_subcommand->add_option("--net-batch-size", params.batch_per_network,
@@ -213,11 +215,12 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
         ->default_val("runtime_data.json")
         ->check(FileSuffixValidator(JSON_SUFFIX));
     std::stringstream batch_to_measure_help;
-    batch_to_measure_help << "Batch to be measured " << std::endl
-        << "The last batch will be measured if " << RUNTIME_DATA_IGNORE_BATCH_TO_MEASURE_OPT << " is provided";
+    batch_to_measure_help << "Batch to be measured (non-negative integer)" << std::endl
+        << "The last batch will be measured if '" << RUNTIME_DATA_BATCH_TO_MEASURE_OPT_LAST << "' is provided";
     collect_runtime_data_subcommand->add_option("--batch-to-measure",
-        params.runtime_data.batch_to_measure, batch_to_measure_help.str())
-        ->default_val(RUNTIME_DATA_DEFAULT_BATCH_TO_MEASURE_OPT);
+        params.runtime_data.batch_to_measure_str, batch_to_measure_help.str())
+        ->default_val(RUNTIME_DATA_BATCH_TO_MEASURE_OPT_DEFAULT)
+        ->check(UintOrKeywordValidator(RUNTIME_DATA_BATCH_TO_MEASURE_OPT_LAST));
     collect_runtime_data_subcommand->parse_complete_callback([&params]() {
         // If this subcommand was parsed, then we need to download runtime_data
         params.runtime_data.collect_runtime_data = true;
@@ -257,7 +260,7 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
             "--sampling-period requires --measure-power or --measure-current");
         PARSE_CHECK(power_averaging_factor->empty() || has_oneof_measure_flags,
             "--averaging-period factor --measure-power or --measure-current");
-        PARSE_CHECK(((0 != params.time_to_run) || (0 == (params.frames_count % params.batch_size))),
+        PARSE_CHECK(((0 != params.time_to_run) || (HAILO_DEFAULT_BATCH_SIZE == params.batch_size) || (0 == (params.frames_count % params.batch_size))),
             "--batch-size should be a divisor of --frames-count if provided");
         // TODO HRT-5363 support multiple devices
         PARSE_CHECK((params.vdevice_params.device_count == 1) || params.csv_output.empty() ||
@@ -278,11 +281,14 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
         PARSE_CHECK(!(params.vdevice_params.multi_process_service && is_hw_only),
             "--hw-only mode is not supported for multi process service");
 
-        if (use_batch_to_measure_opt(params) &&
-                (0 != params.frames_count) && (params.frames_count < params.runtime_data.batch_to_measure)) {
-            LOGGER__WARNING("--frames-count ({}) is smaller than --batch-to-measure ({}), "
-                "hence timestamps will not be updated in runtime data", params.frames_count,
-                params.runtime_data.batch_to_measure);
+        if (use_batch_to_measure_opt(params)) {
+            // This cast is ok because we validate params.runtime_data.batch_to_measure_str with UintOrKeywordValidator
+            params.runtime_data.batch_to_measure = static_cast<uint16_t>(std::stoi(params.runtime_data.batch_to_measure_str));
+            if ((0 != params.frames_count) && (params.frames_count < params.runtime_data.batch_to_measure)) {
+                LOGGER__WARNING("--frames-count ({}) is smaller than --batch-to-measure ({}), "
+                    "hence timestamps will not be updated in runtime data", params.frames_count,
+                    params.runtime_data.batch_to_measure);
+            }
         }
     });
 }
@@ -433,17 +439,17 @@ hailo_status abort_streams(std::vector<std::reference_wrapper<SendObject>> &send
     std::vector<std::reference_wrapper<RecvObject>> &recv_objects)
 {
     auto status = HAILO_SUCCESS; // Best effort
-    for (auto &input_stream : send_objects) {
-        auto abort_status = input_stream.get().abort();
-        if (HAILO_SUCCESS != abort_status) {
-            LOGGER__ERROR("Failed to abort input stream {}", input_stream.get().name());
-            status = abort_status;
-        }
-    }
     for (auto &output_stream : recv_objects) {
         auto abort_status = output_stream.get().abort();
         if (HAILO_SUCCESS != abort_status) {
             LOGGER__ERROR("Failed to abort output stream {}", output_stream.get().name());
+            status = abort_status;
+        }
+    }
+    for (auto &input_stream : send_objects) {
+        auto abort_status = input_stream.get().abort();
+        if (HAILO_SUCCESS != abort_status) {
+            LOGGER__ERROR("Failed to abort input stream {}", input_stream.get().name());
             status = abort_status;
         }
     }
@@ -549,15 +555,18 @@ std::pair<std::string, uint16_t> get_network_to_batch(const std::string &name_to
 
 uint16_t get_batch_size(const inference_runner_params &params, const std::string &network_name)
 {
+    uint16_t batch_size = params.batch_size;
+
     /* params.batch_per_network is a partial list of networks.
        If a network is not in it, it gets the network_group_batch (params.batch_size) */
     for (auto &name_to_batch_str : params.batch_per_network) {
         auto name_to_batch = get_network_to_batch(name_to_batch_str);
         if (network_name == name_to_batch.first) {
-            return name_to_batch.second;
+            batch_size = name_to_batch.second;
+            break;
         }
     }
-    return params.batch_size;
+    return (HAILO_DEFAULT_BATCH_SIZE == batch_size ? 1 : batch_size);
 }
 
 Expected<std::map<std::string, ConfigureNetworkParams>> get_configure_params(const inference_runner_params &params, hailort::Hef &hef, hailo_stream_interface_t interface)
@@ -1051,7 +1060,7 @@ static Expected<std::vector<std::map<std::string, BufferPtr>>> create_dataset(
     return results;
 }
 
-Expected<InferResult> activate_network_group_and_run(
+Expected<InferResult> activate_and_run_single_device(
     Device &device,
     const std::vector<std::shared_ptr<ConfiguredNetworkGroup>> &network_groups,
     const inference_runner_params &params)
@@ -1164,7 +1173,7 @@ Expected<InferResult> run_command_hef_single_device(const inference_runner_param
     }
 #endif
 
-    auto inference_result = activate_network_group_and_run(*device, network_group_list.value(), params);
+    auto inference_result = activate_and_run_single_device(*device, network_group_list.value(), params);
 
 #if defined(__GNUC__)
     // TODO: Support on windows (HRT-5919)
@@ -1185,6 +1194,100 @@ Expected<InferResult> run_command_hef_single_device(const inference_runner_param
 
 #endif
     CHECK_EXPECTED(inference_result);
+    return inference_result;
+}
+
+
+Expected<InferResult> activate_and_run_vdevice(
+    std::vector<std::reference_wrapper<Device>> &physical_devices,
+    bool scheduler_is_used,
+    const std::vector<std::shared_ptr<ConfiguredNetworkGroup>> &network_groups,
+    const inference_runner_params &params)
+{
+    std::unique_ptr<ActivatedNetworkGroup> activated_network_group;
+    if (!scheduler_is_used) {
+        auto activated_net_group_exp = activate_network_group(*network_groups[0]);
+        CHECK_EXPECTED(activated_net_group_exp, "Failed activate network_group");
+        activated_network_group = activated_net_group_exp.release();
+    }
+
+    auto input_dataset = create_dataset(network_groups, params);
+    CHECK_EXPECTED(input_dataset, "Failed creating input dataset");
+
+    hailo_power_measurement_types_t measurement_type = HAILO_POWER_MEASUREMENT_TYPES__MAX_ENUM;
+    bool should_measure_power = false;
+    if (params.power_measurement.measure_power) {
+        measurement_type = HAILO_POWER_MEASUREMENT_TYPES__POWER;
+        should_measure_power = true;
+    } else if (params.power_measurement.measure_current) {
+        measurement_type = HAILO_POWER_MEASUREMENT_TYPES__CURRENT;
+        should_measure_power = true;
+    }
+
+    std::map<std::string, std::shared_ptr<LongPowerMeasurement>> power_measurements;
+    if (should_measure_power) {
+        for (auto &device : physical_devices) {
+            auto long_power_measurement_exp = PowerMeasurementSubcommand::start_power_measurement(device,
+                HAILO_DVM_OPTIONS_AUTO,
+                measurement_type, params.power_measurement.sampling_period, params.power_measurement.averaging_factor);
+            CHECK_EXPECTED(long_power_measurement_exp, "Failed starting power measurement on device {}", device.get().get_dev_id());
+            auto long_power_measurement_p = make_shared_nothrow<LongPowerMeasurement>(long_power_measurement_exp.release());
+            CHECK_NOT_NULL_AS_EXPECTED(long_power_measurement_p, HAILO_OUT_OF_HOST_MEMORY);
+            power_measurements.emplace(device.get().get_dev_id(), std::move(long_power_measurement_p));
+        }
+    }
+
+    std::map<std::string, std::shared_ptr<TemperatureMeasurement>> temp_measurements;
+    if (params.measure_temp) {
+        for (auto &device : physical_devices) {
+            auto temp_measure = make_shared_nothrow<TemperatureMeasurement>(device);
+            CHECK_NOT_NULL_AS_EXPECTED(temp_measure, HAILO_OUT_OF_HOST_MEMORY);
+            auto status = temp_measure->start_measurement();
+            CHECK_SUCCESS_AS_EXPECTED(status, "Failed starting temperature measurement on device {}", device.get().get_dev_id());
+            temp_measurements.emplace(device.get().get_dev_id(), std::move(temp_measure));
+        }
+    }
+
+    auto infer_result = run_inference(network_groups, input_dataset.value(), params);
+    CHECK_EXPECTED(infer_result, "Error failed running inference");
+
+    InferResult inference_result(infer_result.release());
+    inference_result.initialize_measurements(physical_devices);
+
+    if (should_measure_power) {
+        auto status = HAILO_SUCCESS;
+        for (auto &power_measure_pair : power_measurements) {
+            auto measurement_status = power_measure_pair.second->stop();
+            if (HAILO_SUCCESS != measurement_status) {
+                // The returned status will be the last non-success status.
+                status = measurement_status;
+                LOGGER__ERROR("Failed stopping power measurement on device {} with status {}", power_measure_pair.first, measurement_status);
+            } else {
+                auto set_measurement_status = HAILO_UNINITIALIZED;
+                if (params.power_measurement.measure_current) {
+                    set_measurement_status = inference_result.set_current_measurement(power_measure_pair.first, std::move(power_measure_pair.second));
+                } else {
+                    set_measurement_status = inference_result.set_power_measurement(power_measure_pair.first, std::move(power_measure_pair.second));
+                }
+                if (HAILO_SUCCESS != set_measurement_status) {
+                    status = set_measurement_status;
+                    LOGGER__ERROR("Failed setting power measurement to inference result with status {}", set_measurement_status);
+                }
+            }
+        }
+        CHECK_SUCCESS_AS_EXPECTED(status);
+    }
+
+    if (params.measure_temp) {
+        for(const auto &temp_measure_pair : temp_measurements) {
+            temp_measure_pair.second->stop_measurement();
+            auto temp_measure_p = make_shared_nothrow<TempMeasurementData>(temp_measure_pair.second->get_data());
+            CHECK_NOT_NULL_AS_EXPECTED(temp_measure_p, HAILO_OUT_OF_HOST_MEMORY);
+            auto status = inference_result.set_temp_measurement(temp_measure_pair.first, std::move(temp_measure_p));
+            CHECK_SUCCESS_AS_EXPECTED(status);
+        }
+    }
+
     return inference_result;
 }
 
@@ -1221,33 +1324,6 @@ Expected<InferResult> run_command_hef_vdevice(const inference_runner_params &par
     auto vdevice = VDevice::create(vdevice_params);
     CHECK_EXPECTED(vdevice, "Failed creating vdevice");
 
-    // VDevice always has Pcie devices
-    auto configure_params = get_configure_params(params, hef.value(), hailo_stream_interface_t::HAILO_STREAM_INTERFACE_PCIE);
-    CHECK_EXPECTED(configure_params);
-
-    auto network_group_list = vdevice.value()->configure(hef.value(), configure_params.value());
-    CHECK_EXPECTED(network_group_list, "Failed configure vdevice from hef");
-
-    std::unique_ptr<ActivatedNetworkGroup> activated_network_group;
-    if (!scheduler_is_used) {
-        auto activated_net_group_exp = activate_network_group(*network_group_list.value()[0]);
-        CHECK_EXPECTED(activated_net_group_exp, "Failed activate network_group");
-        activated_network_group = activated_net_group_exp.release();
-    }
-
-    auto input_dataset = create_dataset(network_group_list.value(), params);
-    CHECK_EXPECTED(input_dataset, "Failed creating input dataset");
-
-    hailo_power_measurement_types_t measurement_type = HAILO_POWER_MEASUREMENT_TYPES__MAX_ENUM;
-    bool should_measure_power = false;
-    if (params.power_measurement.measure_power) {
-        measurement_type = HAILO_POWER_MEASUREMENT_TYPES__POWER;
-        should_measure_power = true;
-    } else if (params.power_measurement.measure_current) {
-        measurement_type = HAILO_POWER_MEASUREMENT_TYPES__CURRENT;
-        should_measure_power = true;
-    }
-
     std::vector<std::reference_wrapper<Device>> physical_devices;
     if (!params.vdevice_params.multi_process_service) {
         auto expected_physical_devices = vdevice.value()->get_physical_devices();
@@ -1255,29 +1331,12 @@ Expected<InferResult> run_command_hef_vdevice(const inference_runner_params &par
         physical_devices = expected_physical_devices.value();
     }
 
-    std::map<std::string, std::shared_ptr<LongPowerMeasurement>> power_measurements;
-    if (should_measure_power) {
-        for (auto &device : physical_devices) {
-            auto long_power_measurement_exp = PowerMeasurementSubcommand::start_power_measurement(device,
-                HAILO_DVM_OPTIONS_AUTO,
-                measurement_type, params.power_measurement.sampling_period, params.power_measurement.averaging_factor);
-            CHECK_EXPECTED(long_power_measurement_exp, "Failed starting power measurement on device {}", device.get().get_dev_id());
-            auto long_power_measurement_p = make_shared_nothrow<LongPowerMeasurement>(long_power_measurement_exp.release());
-            CHECK_NOT_NULL_AS_EXPECTED(long_power_measurement_p, HAILO_OUT_OF_HOST_MEMORY);
-            power_measurements.emplace(device.get().get_dev_id(), std::move(long_power_measurement_p));
-        }
-    }
+    // VDevice always has Pcie devices
+    auto configure_params = get_configure_params(params, hef.value(), hailo_stream_interface_t::HAILO_STREAM_INTERFACE_PCIE);
+    CHECK_EXPECTED(configure_params);
 
-    std::map<std::string, std::shared_ptr<TemperatureMeasurement>> temp_measurements;
-    if (params.measure_temp) {
-        for (auto &device : physical_devices) {
-            auto temp_measure = make_shared_nothrow<TemperatureMeasurement>(device);
-            CHECK_NOT_NULL_AS_EXPECTED(temp_measure, HAILO_OUT_OF_HOST_MEMORY);
-            status = temp_measure->start_measurement();
-            CHECK_SUCCESS_AS_EXPECTED(status, "Failed starting temperature measurement on device {}", device.get().get_dev_id());
-            temp_measurements.emplace(device.get().get_dev_id(), std::move(temp_measure));
-        }
-    }
+    auto network_group_list = vdevice.value()->configure(hef.value(), configure_params.value());
+    CHECK_EXPECTED(network_group_list, "Failed configure vdevice from hef");
 
 #if defined(__GNUC__)
     for (auto &device : physical_devices) {
@@ -1289,7 +1348,8 @@ Expected<InferResult> run_command_hef_vdevice(const inference_runner_params &par
     }
 #endif
 
-    auto infer_result = run_inference(network_group_list.value(), input_dataset.value(), params);
+    auto infer_result = activate_and_run_vdevice(physical_devices, scheduler_is_used, network_group_list.value(), params);
+    CHECK_EXPECTED(infer_result, "Error failed running inference");
 
 #if defined(__GNUC__)
     for (auto &device : physical_devices) {
@@ -1311,45 +1371,7 @@ Expected<InferResult> run_command_hef_vdevice(const inference_runner_params &par
     }
 #endif
 
-    CHECK_EXPECTED(infer_result, "Error failed running inference");
-
-    InferResult inference_result(infer_result.release());
-    inference_result.initialize_measurements(physical_devices);
-
-    if (should_measure_power) {
-        for (auto &power_measure_pair : power_measurements) {
-            auto measurement_status = power_measure_pair.second->stop();
-            if (HAILO_SUCCESS != measurement_status) {
-                // The returned status will be the last non-success status.
-                status = measurement_status;
-                LOGGER__ERROR("Failed stopping power measurement on device {} with status {}", power_measure_pair.first, measurement_status);
-            } else {
-                auto set_measurement_status = HAILO_UNINITIALIZED;
-                if (params.power_measurement.measure_current) {
-                    set_measurement_status = inference_result.set_current_measurement(power_measure_pair.first, std::move(power_measure_pair.second));
-                } else {
-                    set_measurement_status = inference_result.set_power_measurement(power_measure_pair.first, std::move(power_measure_pair.second));
-                }
-                if (HAILO_SUCCESS != set_measurement_status) {
-                    status = set_measurement_status;
-                    LOGGER__ERROR("Failed setting power measurement to inference result with status {}", set_measurement_status);
-                }
-            }
-        }
-        CHECK_SUCCESS_AS_EXPECTED(status);
-    }
-
-    if (params.measure_temp) {
-        for(const auto &temp_measure_pair : temp_measurements) {
-            temp_measure_pair.second->stop_measurement();
-            auto temp_measure_p = make_shared_nothrow<TempMeasurementData>(temp_measure_pair.second->get_data());
-            CHECK_NOT_NULL_AS_EXPECTED(temp_measure_p, HAILO_OUT_OF_HOST_MEMORY);
-            status = inference_result.set_temp_measurement(temp_measure_pair.first, std::move(temp_measure_p));
-            CHECK_SUCCESS_AS_EXPECTED(status);
-        }
-    }
-
-    return inference_result;
+    return infer_result;
 }
 
 Expected<bool> use_vdevice(const hailo_vdevice_params &params)

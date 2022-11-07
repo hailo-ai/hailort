@@ -22,6 +22,8 @@
 namespace hailort
 {
 
+#define DISABLE_MULTIPLEXER_ENV_VAR "HAILO_DISABLE_MULTIPLEXER"
+
 using multiplexer_ng_handle_t = uint32_t;
 using run_once_for_stream_handle_t = uint32_t;
 
@@ -42,7 +44,8 @@ public:
     size_t instances_count() const;
     hailo_status wait_for_write(multiplexer_ng_handle_t network_group_handle);
     hailo_status signal_write_finish();
-    hailo_status wait_for_read(multiplexer_ng_handle_t network_group_handle, const std::string &stream_name);
+    hailo_status wait_for_read(multiplexer_ng_handle_t network_group_handle, const std::string &stream_name,
+        const std::chrono::milliseconds &timeout);
     hailo_status signal_read_finish(multiplexer_ng_handle_t network_group_handle);
     hailo_status enable_network_group(multiplexer_ng_handle_t network_group_handle);
     hailo_status disable_network_group(multiplexer_ng_handle_t network_group_handle);
@@ -52,6 +55,8 @@ public:
         multiplexer_ng_handle_t network_group_handle);
 
     void set_can_output_vstream_read(multiplexer_ng_handle_t network_group_handle, const std::string &vstream_name, bool can_read);
+
+    static bool should_use_multiplexer();
 
 private:
     std::unordered_map<multiplexer_ng_handle_t, std::atomic_bool> m_should_ng_stop;

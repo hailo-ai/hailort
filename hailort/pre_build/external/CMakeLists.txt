@@ -26,7 +26,6 @@ git_clone(json              https://github.com/ArthurSonzogni/nlohmann_json_cmak
 git_clone(DotWriter         https://github.com/hailo-ai/DotWriter.git                               e5fa8f281adca10dd342b1d32e981499b8681daf)
 git_clone(benchmark         https://github.com/google/benchmark.git                                 f91b6b42b1b9854772a90ae9501464a161707d1e)
 git_clone(pevents           https://github.com/neosmart/pevents.git                                 1209b1fd1bd2e75daab4380cf43d280b90b45366)
-git_clone(microprofile      https://github.com/jonasmr/microprofile                                 03c34f96840defe0f4c196309628815d02b98059)
 
 if(HAILO_BUILD_SERVICE)
     git_clone(grpc              https://github.com/grpc/grpc                                            53d69cc581c5b7305708587f4f1939278477c28a)

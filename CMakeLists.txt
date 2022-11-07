@@ -1,19 +1,5 @@
 cmake_minimum_required(VERSION 3.0.0)
 
-option(HAILO_BUILD_PYBIND "Build Python binding" OFF)
-option(HAILO_BUILD_PYHAILORT_VENV "Build pyhailort in venv. Only used if HAILO_BUILD_PYBIND is on" ON)
-option(HAILO_BUILD_EMULATOR "Build hailort for emulator" OFF)
-option(HAILO_BUILD_UT "Build Unit Tests" OFF)
-option(HAILO_BUILD_GSTREAMER "Compile gstreamer plugins" OFF)
-option(HAILO_BUILD_EXAMPLES "Build examples" OFF)
-option(HAILO_OFFLINE_COMPILATION "Don't download external dependencies" OFF)
-option(HAILO_MICROPROFILE "Microprofile code" OFF)
-option(HAILO_BUILD_SERVICE "Build hailort service" OFF)
-
-if(WIN32 AND ${HAILO_BUILD_SERVICE})
-    message(FATAL_ERROR "HailoRT service is not supported on Windows")
-endif()
-
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM)
     set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
@@ -65,14 +51,6 @@ elseif(UNIX)
     endif()
 else()
     message(FATAL_ERROR "Unexpeced host, stopping build")
-endif()
-
-enable_testing()
-
-# Flag for emulator (FPGA/Veloce)
-if(HAILO_BUILD_EMULATOR)
-    message(WARNING "HailoRT is building with Emulator flag on")
-    set(HAILORT_COMPILE_OPTIONS ${HAILORT_COMPILE_OPTIONS} -DHAILO_EMULATOR)
 endif()
 
 # Enable output of compile commands during generation

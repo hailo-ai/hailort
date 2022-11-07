@@ -90,6 +90,11 @@ Expected<size_t> VDeviceInputStreamWrapper::get_pending_frames_count() const
     return m_vdevice_input_stream->get_pending_frames_count();
 }
 
+hailo_status VDeviceInputStreamWrapper::reset_offset_of_pending_frames()
+{
+    return m_vdevice_input_stream->reset_offset_of_pending_frames();
+}
+
 Expected<size_t> VDeviceInputStreamWrapper::sync_write_raw_buffer(const MemoryView &buffer)
 {
     if (is_scheduled()) {
@@ -292,7 +297,8 @@ hailo_status VDeviceOutputStreamWrapper::read_all(MemoryView &buffer)
 hailo_status VDeviceOutputStreamWrapper::read(MemoryView buffer)
 {
     if (is_scheduled()) {
-        auto status = m_multiplexer->wait_for_read(m_network_group_multiplexer_handle, name());
+        auto status = m_multiplexer->wait_for_read(m_network_group_multiplexer_handle, name(),
+            m_vdevice_output_stream->get_timeout());
         if (HAILO_STREAM_INTERNAL_ABORT == status) {
             return status;
         }

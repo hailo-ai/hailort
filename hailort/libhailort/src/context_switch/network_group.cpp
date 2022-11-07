@@ -20,35 +20,23 @@
 #include "control.hpp"
 #include "common/runtime_statistics_internal.hpp"
 #include "vstream_internal.hpp"
+#include "context_switch/multi_context/resource_manager.hpp"
 
 namespace hailort
 {
 
 ActivatedNetworkGroupBase::ActivatedNetworkGroupBase(const hailo_activate_network_group_params_t &network_group_params,
-        uint16_t dynamic_batch_size,
         std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
         std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,         
         EventPtr &&network_group_activated_event, hailo_status &status) :
     m_network_group_params(network_group_params),
+    m_network_group_activated_event(std::move(network_group_activated_event)),
     m_input_streams(input_streams),
-    m_output_streams(output_streams),
-    m_network_group_activated_event(std::move(network_group_activated_event))
+    m_output_streams(output_streams)
 {
     status = validate_network_group_params(network_group_params);
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("Failed to validate network_group params");
-        return;
-    }
-
-    status = activate_low_level_streams(dynamic_batch_size);
-    if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("Failed to activate low level streams");
-        return;
-    }
-
-    status = m_network_group_activated_event->signal();
-    if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("Failed to signal network activation event");
         return;
     }
 }
@@ -67,6 +55,29 @@ hailo_status ActivatedNetworkGroupBase::activate_low_level_streams(uint16_t dyna
     return HAILO_SUCCESS;
 }
 
+hailo_status ActivatedNetworkGroupBase::deactivate_low_level_streams()
+{
+    // Best effort
+    auto status = HAILO_SUCCESS;
+    auto deactivate_status = HAILO_UNINITIALIZED;
+    for (auto &name_pair : m_input_streams) {
+        deactivate_status = name_pair.second->deactivate_stream();
+        if (HAILO_SUCCESS != deactivate_status) {
+            LOGGER__ERROR("Failed to deactivate input stream {}", name_pair.first);
+            status = deactivate_status;
+        }
+    }
+    for (auto &name_pair : m_output_streams) {
+        deactivate_status = name_pair.second->deactivate_stream();
+        if (HAILO_SUCCESS != deactivate_status) {
+            LOGGER__ERROR("Failed to deactivate output stream {}", name_pair.first);
+            status = deactivate_status;
+        }
+    }
+
+    return status;
+}
+
 uint32_t ActivatedNetworkGroupBase::get_invalid_frames_count()
 {
     uint32_t total_invalid_frames_count = 0;
@@ -74,27 +85,6 @@ uint32_t ActivatedNetworkGroupBase::get_invalid_frames_count()
         total_invalid_frames_count += name_stream_pair.second->get_invalid_frames_count();
     }
     return total_invalid_frames_count;
-}
-
-void ActivatedNetworkGroupBase::deactivate_resources()
-{
-    if (nullptr != m_network_group_activated_event) {
-        for (auto &name_pair : m_input_streams) {
-            auto status = name_pair.second->deactivate_stream();
-            if (HAILO_SUCCESS != status) {
-                LOGGER__ERROR("Failed to deactivate input stream name {}", name_pair.first);
-            }
-        }
-    
-        for (auto &name_pair : m_output_streams) {
-            auto status = name_pair.second->deactivate_stream();
-            if (HAILO_SUCCESS != status) {
-                LOGGER__ERROR("Failed to deactivate output stream name {}", name_pair.first);
-            }
-        }
-        m_network_group_activated_event->reset();
-    }
-
 }
 
 // TODO: Implement function (HRT-3174)
@@ -316,14 +306,25 @@ uint16_t ConfiguredNetworkGroupBase::get_smallest_configured_batch_size(const Co
     //    using dynamic_batch_sizes, all networks will use the same dynamic_batch_size (until HRT-6535 is done).
     //    Hence, we must not set a dynamic_batch_size to a value greater than the smallest configured network
     //    batch_size (e.g. all the resources allocated are for at most the configured network batch_size).
-    return std::min_element(config_params.network_params_by_name.begin(), config_params.network_params_by_name.end(),
-        [](const auto& lhs, const auto& rhs) { return lhs.second.batch_size < rhs.second.batch_size; })->second.batch_size;
+
+    /* We iterate over all network's batch_sizes to get the non-default min.
+       Ignoring HAILO_DEFAULT_BATCH_SIZE as it is not a real batch-value,
+       but indicating the scheduler should optimize batches by himself */
+    uint16_t min_batch_size = UINT16_MAX;
+    for (const auto &network_params_pair : config_params.network_params_by_name) {
+        if ((HAILO_DEFAULT_BATCH_SIZE != network_params_pair.second.batch_size) &&
+            (network_params_pair.second.batch_size < min_batch_size)) {
+            min_batch_size = network_params_pair.second.batch_size;
+        }
+    }
+    return (UINT16_MAX == min_batch_size) ? DEFAULT_ACTUAL_BATCH_SIZE : min_batch_size;
 }
 
 Expected<std::unique_ptr<ActivatedNetworkGroup>> ConfiguredNetworkGroupBase::activate_internal(
     const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size)
 {
-    CHECK_AS_EXPECTED(dynamic_batch_size <= m_min_configured_batch_size, HAILO_INVALID_ARGUMENT,
+    CHECK_AS_EXPECTED((CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == dynamic_batch_size) ||
+        (dynamic_batch_size <= m_min_configured_batch_size), HAILO_INVALID_ARGUMENT,
         "Dynamic batch size ({}) must be less than/equal to the smallest configured batch size ({})",
         dynamic_batch_size, m_min_configured_batch_size);
     return activate_impl(network_group_params, dynamic_batch_size);

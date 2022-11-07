@@ -71,6 +71,7 @@ public:
     void set_input_vstream_infos(std::vector<hailo_vstream_info_t> &&input_vstream_infos);
     void set_input_vstreams(std::vector<InputVStream> &&input_vstreams);
     hailo_status clear_vstreams();
+    hailo_status abort_vstreams();
 
     void set_batch_size(uint32_t batch_size)
     {

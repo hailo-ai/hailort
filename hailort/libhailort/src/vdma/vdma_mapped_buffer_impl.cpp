@@ -37,6 +37,8 @@ VdmaMappedBufferImpl::~VdmaMappedBufferImpl()
 
 #elif defined(__QNX__)
 
+#include <fcntl.h> 
+
 const int VdmaMappedBufferImpl::INVALID_FD = -1;
 const shm_handle_t VdmaMappedBufferImpl::INVALID_HANDLE = (shm_handle_t)-1;
 const char* VdmaMappedBufferImpl::VDMA_BUFFER_TYPE_MEMORY_NAME = "/memory/below4G/ram/below1G";

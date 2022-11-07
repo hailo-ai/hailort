@@ -69,11 +69,18 @@ public:
     static hailo_status clear(std::vector<std::reference_wrapper<InputVStream>> &vstreams);
 
     /**
-     * Aborts vstream in unrecoverable manner.
+     * Aborts vstream until its resumed.
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
     hailo_status abort();
+
+    /**
+     * Resumes vstream after it was aborted.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     */
+    hailo_status resume();
 
     /**
      * @return the size of a virtual stream's frame on the host side in bytes.
@@ -203,11 +210,18 @@ public:
     static hailo_status clear(std::vector<std::reference_wrapper<OutputVStream>> &vstreams);
 
     /**
-     * Aborts vstream in unrecoverable manner.
+     * Aborts vstream until its resumed.
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
     hailo_status abort();
+
+    /**
+     * Resumes vstream after it was aborted.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     */
+    hailo_status resume();
 
     /**
      * @return the size of a virtual stream's frame on the host side in bytes.

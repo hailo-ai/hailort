@@ -44,7 +44,7 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
 
     CHECK_AS_EXPECTED(nullptr != identify_response, HAILO_INVALID_ARGUMENT);
 
-    /* Store identify response inside control */
+    // Store identify response inside control
     board_info.protocol_version = BYTE_ORDER__ntohl(identify_response->protocol_version);
     board_info.logger_version = BYTE_ORDER__ntohl(identify_response->logger_version);
     (void)memcpy(&(board_info.fw_version),
@@ -67,14 +67,17 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
         &(identify_response->product_name),
         BYTE_ORDER__ntohl(identify_response->product_name_length));
 
-    /* Check if firmware is at debug/release */
+    // Check if the firmware is debug or release
     board_info.is_release = (!IS_REVISION_DEV(board_info.fw_version.revision));
+
+    // Check if the firmware was compiled with EXTENDED_CONTEXT_SWITCH_BUFFER
+    board_info.extended_context_switch_buffer = IS_REVISION_EXTENDED_CONTEXT_SWITCH_BUFFER(board_info.fw_version.revision);
 
     // Make sure response was from app CPU
     CHECK_AS_EXPECTED((0 == (board_info.fw_version.revision & REVISION_APP_CORE_FLAG_BIT_MASK)), HAILO_INVALID_FIRMWARE,
      "Got invalid app FW type, which means the FW was not marked correctly. unmaked FW revision {}", board_info.fw_version.revision);
 
-    /* Clear debug/release bit */
+    // Keep the revision number only
     board_info.fw_version.revision = GET_REVISION_NUMBER_VALUE(board_info.fw_version.revision);
 
     board_info.device_architecture = static_cast<hailo_device_architecture_t>(BYTE_ORDER__ntohl(identify_response->device_architecture));
@@ -163,22 +166,25 @@ hailo_status control__parse_core_identify_results(CONTROL_PROTOCOL__core_identif
     CHECK_ARG_NOT_NULL(core_info);
     CHECK_ARG_NOT_NULL(identify_response);
 
-    /* Store identify response inside control */
+    // Store identify response inside control
     (void)memcpy(&(core_info->fw_version),
             &(identify_response->fw_version),
             sizeof(core_info->fw_version));
 
-    /* Check if firmware is at debug/release */
+    // Check if firmware is at debug/release
     core_info->is_release = !(IS_REVISION_DEV(core_info->fw_version.revision));
 
-    /* Make sure response was from core CPU */
+    // Check if the firmware was compiled with EXTENDED_CONTEXT_SWITCH_BUFFER
+    core_info->extended_context_switch_buffer = IS_REVISION_EXTENDED_CONTEXT_SWITCH_BUFFER(core_info->fw_version.revision);
+
+    // Make sure response was from core CPU
     CHECK((REVISION_APP_CORE_FLAG_BIT_MASK == (core_info->fw_version.revision & REVISION_APP_CORE_FLAG_BIT_MASK)), HAILO_INVALID_FIRMWARE,
         "Got invalid core FW type, which means the FW was not marked correctly. unmaked FW revision {}", core_info->fw_version.revision);
 
-    /* Clear debug/release bit */
+    // Keep the revision number only
     core_info->fw_version.revision = GET_REVISION_NUMBER_VALUE(core_info->fw_version.revision);
 
-    /* Write identify results to log */
+    // Write identify results to log
     LOGGER__INFO("core firmware_version is: {}.{}.{}",
             core_info->fw_version.major,
             core_info->fw_version.minor,
@@ -2375,7 +2381,7 @@ hailo_status Control::context_switch_set_context_info(Device &device,
     CONTROL_PROTOCOL__context_switch_context_info_t *context_info)
 {
     hailo_status status = HAILO_UNINITIALIZED;
-    CONTROL_PROTOCOL__context_switch_context_info_single_control_t context_info_single_control = {};
+    CONTROL_PROTOCOL__context_switch_context_info_single_control_t context_info_single_control{};
     uint8_t slice_index = 0;
     bool is_first_control_per_context = false;
     bool is_last_control_per_context = false;
@@ -2398,9 +2404,13 @@ hailo_status Control::context_switch_set_context_info(Device &device,
         }
 
         /* Build single control struct from context info */
-
         context_info_single_control.is_first_control_per_context = is_first_control_per_context;
         context_info_single_control.is_last_control_per_context = is_last_control_per_context;
+
+        static_assert(sizeof(context_info_single_control.context_type) == sizeof(context_info->context_type),
+            "mismatch in sizes of context_type");
+        context_info_single_control.context_type = context_info->context_type;
+
         static_assert(sizeof(context_info_single_control.config_channel_infos) == sizeof(context_info->config_channel_infos),
             "mismatch in sizes of config_channel_infos");
         static_assert(sizeof(context_info_single_control.context_stream_remap_data) == sizeof(context_info->context_stream_remap_data),
@@ -2472,9 +2482,9 @@ hailo_status Control::write_context_switch_info(Device &device,
     /* For each network_group */
     for (network_group_index = 0; network_group_index < context_switch_info->context_switch_main_header.application_count;
             network_group_index++) {
-        /* number of contexts in network_group - all dynamic contexts +1 for the additional preliminary context */
-        uint8_t total_contexts_in_app = (uint8_t)(
-                context_switch_info->context_switch_main_header.application_header[network_group_index].dynamic_contexts_count + 1);
+        const auto dynamic_contexts_count = context_switch_info->context_switch_main_header.application_header[network_group_index].dynamic_contexts_count;
+        const auto total_contexts_in_app = static_cast<uint8_t>(dynamic_contexts_count +
+            CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS);
         /* For each context in network_group */
         for (dynamic_contexts_index = 0; dynamic_contexts_index < total_contexts_in_app; dynamic_contexts_index++) {
             if (CONTROL_PROTOCOL__MAX_TOTAL_CONTEXTS <= total_context_counter) {
@@ -2609,9 +2619,10 @@ hailo_status Control::set_pause_frames(Device &device, uint8_t rx_pause_frames_e
     return HAILO_SUCCESS;
 }
 
-hailo_status Control::download_context_action_list_chunk(Device &device, uint8_t context_index, uint16_t action_list_offset,
-        size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length,
-        bool *is_action_list_end, uint32_t *batch_counter)
+hailo_status Control::download_context_action_list_chunk(Device &device, uint32_t network_group_id,
+    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index,
+    uint16_t action_list_offset, size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list,
+    uint16_t *action_list_length, bool *is_action_list_end, uint32_t *batch_counter)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     HAILO_COMMON_STATUS_t common_status = HAILO_COMMON_STATUS__UNINITIALIZED;
@@ -2623,14 +2634,13 @@ hailo_status Control::download_context_action_list_chunk(Device &device, uint8_t
     CONTROL_PROTOCOL__payload_t *payload = NULL;
     CONTROL_PROTOCOL__download_context_action_list_response_t *context_action_list_response = NULL;
 
-
     /* Validate arguments */
     CHECK_ARG_NOT_NULL(base_address);
     CHECK_ARG_NOT_NULL(action_list);
     CHECK_ARG_NOT_NULL(action_list_length);
 
     common_status = CONTROL_PROTOCOL__pack_download_context_action_list_request(&request, &request_size, device.get_control_sequence(),
-            context_index, action_list_offset);
+        network_group_id, context_type, context_index, action_list_offset);
 
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
@@ -2680,8 +2690,9 @@ exit:
     return status;
 }
 
-hailo_status Control::download_context_action_list(Device &device, uint8_t context_index, size_t action_list_max_size,
-        uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length, uint32_t *batch_counter)
+hailo_status Control::download_context_action_list(Device &device, uint32_t network_group_id,
+    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index, size_t action_list_max_size,
+    uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length, uint32_t *batch_counter)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     bool is_action_list_end = false;
@@ -2701,9 +2712,9 @@ hailo_status Control::download_context_action_list(Device &device, uint8_t conte
     remaining_action_list_max_size = action_list_max_size;
 
     do {
-        status = download_context_action_list_chunk(device, context_index, accumulated_action_list_length,
-                remaining_action_list_max_size, &chunk_base_address, action_list_current_offset,
-                &chunk_action_list_length, &is_action_list_end, &batch_counter_local);
+        status = download_context_action_list_chunk(device, network_group_id, context_type, context_index,
+            accumulated_action_list_length, remaining_action_list_max_size, &chunk_base_address,
+            action_list_current_offset, &chunk_action_list_length, &is_action_list_end, &batch_counter_local);
         CHECK_SUCCESS(status);
 
         accumulated_action_list_length = (uint16_t)(accumulated_action_list_length + chunk_action_list_length);

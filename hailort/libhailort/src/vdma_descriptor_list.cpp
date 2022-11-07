@@ -293,7 +293,7 @@ uint32_t VdmaDescriptorList::get_interrupts_bitmask(VdmaInterruptsDomain interru
         device_bitmask = DRAM_DMA_DEVICE_INTERRUPTS_BITMASK;
         break;
     default:
-        assert(true);
+        assert(false);
     }
 
     uint32_t bitmask = 0;

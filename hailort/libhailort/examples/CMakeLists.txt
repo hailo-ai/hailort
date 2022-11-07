@@ -2,23 +2,9 @@ cmake_minimum_required(VERSION 3.0.0)
 
 project(hailort-examples)
 
-find_package(Threads REQUIRED)
-set(THREADS_PREFER_PTHREAD_FLAG ON)
-
-find_package(HailoRT 4.10.0 EXACT REQUIRED)
-
-add_library(example_base INTERFACE)
-target_link_libraries(example_base INTERFACE HailoRT::libhailort Threads::Threads)
-
-if(WIN32)
-    target_compile_options(example_base INTERFACE /W4 /WX /DWIN32_LEAN_AND_MEAN /DNOMINMAX /wd4201 /wd4251)
-else()
-    target_compile_options(example_base INTERFACE -Werror -Wall -Wextra -Wconversion -O3 -DNDEBUG) # TODO support debug/release builds
-endif()
-
 add_subdirectory(cpp)
 add_subdirectory(c)
 
-set_target_properties(${EXAMPLES_CPP_TARGETS} PROPERTIES CXX_STANDARD 14)
-
-add_custom_target(hailort_examples DEPENDS ${EXAMPLES_C_TARGETS} ${EXAMPLES_CPP_TARGETS})
+# We add a costum target in order to compile all of the hailort examples
+add_custom_target(hailort_examples)
+add_dependencies(hailort_examples c_hailort_examples cpp_hailort_examples)

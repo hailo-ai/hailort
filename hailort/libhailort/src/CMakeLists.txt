@@ -55,7 +55,6 @@ set(HAILORT_CPP_SOURCES
     d2h_events_parser.cpp
     mipi_stream.cpp
 
-    hlpcie.cpp
     vdma_channel.cpp
     vdma_descriptor_list.cpp
     vdma_device.cpp
@@ -136,7 +135,6 @@ target_link_libraries(libhailort PRIVATE hef_proto)
 target_link_libraries(libhailort PRIVATE scheduler_mon_proto)
 target_link_libraries(libhailort PRIVATE spdlog::spdlog)
 target_link_libraries(libhailort PRIVATE readerwriterqueue)
-target_link_libraries(libhailort PRIVATE microprofile)
 if(HAILO_BUILD_SERVICE)
     target_link_libraries(libhailort PRIVATE grpc++_unsecure)
     target_link_libraries(libhailort PRIVATE hailort_rpc_grpc_proto)

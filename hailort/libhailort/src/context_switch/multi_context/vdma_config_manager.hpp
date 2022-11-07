@@ -19,7 +19,6 @@
 #include "hailo/vdevice.hpp"
 #include "hailo/expected.hpp"
 #include "common/utils.hpp"
-#include "hlpcie.hpp"
 #include "vdma_channel.hpp"
 #include "network_group_scheduler.hpp"
 
@@ -30,8 +29,6 @@
 
 namespace hailort
 {
-
-#define DISABLE_MULTIPLEXER_ENV_VAR "HAILO_DISABLE_MULTIPLEXER"
 
 class VDeviceBase;
 
@@ -55,6 +52,13 @@ public:
 private:
     VdmaConfigManager(std::vector<std::reference_wrapper<VdmaDevice>> &&devices, bool is_vdevice,
                       NetworkGroupSchedulerWeakPtr network_group_scheduler, hailo_status &status);
+
+    Expected<ConfigureNetworkParams> get_default_configured_params(Hef &hef,
+        const std::string &network_group_name);
+    Expected<std::shared_ptr<ConfiguredNetworkGroup>> create_configured_network_group(
+        std::shared_ptr<NetworkGroupMetadata> network_group_metadata, const ProtoHEFNetworkGroup &network_group_proto,
+        Hef &hef, const ConfigureNetworkParams &config_params, uint8_t network_group_index,
+        bool &was_hef_already_configured);
 
     // TODO: (SDK-16665) Dont need is_active flag for dtor?
     std::vector<std::reference_wrapper<VdmaDevice>> m_devices;

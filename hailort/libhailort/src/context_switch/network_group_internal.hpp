@@ -52,25 +52,23 @@ public:
     ActivatedNetworkGroupBase(ActivatedNetworkGroupBase &&other) = default;
 
     virtual uint32_t get_invalid_frames_count() override;
-    // Must be called on d'tor of derived class
-    void deactivate_resources();
 
 protected:
     hailo_activate_network_group_params_t m_network_group_params;
 
     ActivatedNetworkGroupBase(const hailo_activate_network_group_params_t &network_group_params,
-        uint16_t dynamic_batch_size,
         std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
         std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,         
         EventPtr &&network_group_activated_event, hailo_status &status);
-
-private:
     hailo_status activate_low_level_streams(uint16_t dynamic_batch_size);
-    hailo_status validate_network_group_params(const hailo_activate_network_group_params_t &network_group_params);
+    hailo_status deactivate_low_level_streams();
 
+    EventPtr m_network_group_activated_event;
     std::map<std::string, std::unique_ptr<InputStream>> &m_input_streams;
     std::map<std::string, std::unique_ptr<OutputStream>> &m_output_streams;
-    EventPtr m_network_group_activated_event;
+
+private:
+    hailo_status validate_network_group_params(const hailo_activate_network_group_params_t &network_group_params);
 };
 
 class ConfiguredNetworkGroupBase : public ConfiguredNetworkGroup

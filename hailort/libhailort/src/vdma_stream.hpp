@@ -18,7 +18,6 @@
 
 namespace hailort
 {
-constexpr std::chrono::seconds VDMA_FLUSH_TIMEOUT(10);
 
 class VdmaInputStream : public InputStreamBase {
 public:
@@ -40,6 +39,7 @@ public:
     const char* get_dev_id() const;
     virtual Expected<size_t> get_buffer_frames_size() const override;
     virtual Expected<size_t> get_pending_frames_count() const override;
+    virtual hailo_status reset_offset_of_pending_frames() override;
 
 protected:
     VdmaInputStream(VdmaDevice &device, std::shared_ptr<VdmaChannel> channel, const LayerInfo &edge_layer,

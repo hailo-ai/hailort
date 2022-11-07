@@ -20,7 +20,7 @@
 #include <condition_variable>
 
 #define DEFAULT_SCHEDULER_TIMEOUT (std::chrono::milliseconds(0))
-#define DEFAULT_SCHEDULER_MIN_THRESHOLD (1)
+#define DEFAULT_SCHEDULER_MIN_THRESHOLD (0)
 
 namespace hailort
 {
@@ -58,7 +58,8 @@ public:
 
     hailo_status wait_for_write(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name);
     hailo_status signal_write_finish(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name);
-    hailo_status wait_for_read(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name);
+    hailo_status wait_for_read(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name,
+        const std::chrono::milliseconds &timeout);
     hailo_status signal_read_finish(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name);
 
     hailo_status enable_stream(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name);
@@ -75,6 +76,7 @@ protected:
     std::atomic_bool m_is_switching_network_group;
     scheduler_ng_handle_t m_current_network_group;
     scheduler_ng_handle_t m_next_network_group;
+    std::map<scheduler_ng_handle_t, std::atomic_bool> m_changing_current_batch_size;
 
     std::vector<std::weak_ptr<ConfiguredNetworkGroup>> m_cngs;
     std::unique_ptr<ActivatedNetworkGroup> m_ang;
@@ -89,11 +91,12 @@ private:
     hailo_status try_change_multicontext_ng_batch_size(const scheduler_ng_handle_t &network_group_handle, std::unique_lock<std::mutex> &read_write_lock);
 
     bool has_input_written_most_frames(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name);
+    std::unordered_map<stream_name_t, uint32_t> total_written_frames_count(const scheduler_ng_handle_t &network_group_handle);
     bool can_stream_write(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name);
     hailo_status block_write_if_needed(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name);
     Expected<bool> should_wait_for_write(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name);
-    hailo_status allow_all_writes();
-    hailo_status allow_writes_for_other_inputs_if_needed(const scheduler_ng_handle_t &network_group_handle);
+    hailo_status refresh_all_write_events();
+    hailo_status refresh_write_events_for_other_inputs_if_needed(const scheduler_ng_handle_t &network_group_handle);
     hailo_status send_all_pending_buffers(const scheduler_ng_handle_t &network_group_handle, std::unique_lock<std::mutex> &read_write_lock);
     hailo_status send_pending_buffer(const scheduler_ng_handle_t &network_group_handle, const std::string &stream_name, std::unique_lock<std::mutex> &read_write_lock);
 
@@ -103,9 +106,10 @@ private:
     bool has_ng_drained_everything(scheduler_ng_handle_t network_group_handle);
     bool has_pending_frames(const scheduler_ng_handle_t &network_group_handle);
     bool has_enough_space_in_read_buffers(const scheduler_ng_handle_t &network_group_handle, uint32_t ongoing_frames);
-    void decrease_current_ng_counters();
     bool is_ng_multicontext(const scheduler_ng_handle_t &network_group_handle);
-    uint32_t get_buffered_frames_count();
+    void decrease_current_ng_counters();
+    uint32_t get_pre_transfer_h2d_frames_count(const scheduler_ng_handle_t &network_group_handle);
+    uint32_t get_h2d_transferred_frames_count(const scheduler_ng_handle_t &network_group_handle);
 
     std::string get_network_group_name(scheduler_ng_handle_t network_group_handle);
     hailo_status start_mon();
@@ -125,17 +129,20 @@ private:
     std::atomic_uint32_t m_current_batch_size;
     std::condition_variable m_write_read_cv;
 
-    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_requested_write;
-    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_written_buffer;
-    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_sent_pending_buffer;
-    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_current_sent_pending_buffer;
-    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_finished_sent_pending_buffer;
+    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_requested_write_frames; // 'wait_for_write()' has been called
+    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_finished_write_frames; // 'signal_finished_write()' has been called - frame is written in buffer (writes are a-sync)
 
-    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_requested_read;
-    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_allowed_read;
-    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_finished_read;
-    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_current_finished_read;
-    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_pending_read;
+    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_h2d_requested_transferred_frames; // 'send_pending_buffer()' has been called
+    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_h2d_finished_transferred_frames; // Frame has been transferred to device (intrpt was raised)
+
+    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_requested_read_frames; // 'wait_for_read()' has been called
+    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_ongoing_read_frames; // 'wait_for_read()' has finished, the user is blocking on read (reads are sync)
+
+    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_d2h_finished_transferred_frames; // Frame has been transferred from device (intrpt was raised)
+    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_finished_read_frames; // 'signal_finish_read()' has been called - user finished getting the frame
+
+    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_current_cycle_requested_transferred_frames_h2d; // Relevant for multi-context - last batch
+    std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_current_cycle_finished_read_frames_d2h; // Relevant for multi-context - last batch
 
     std::unordered_map<scheduler_ng_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> m_min_threshold_per_stream;
 

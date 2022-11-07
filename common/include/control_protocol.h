@@ -38,7 +38,6 @@ extern "C" {
 #define CONTROL_PROTOCOL__MAX_CONTEXT_SWITCH_APPLICATIONS (32)
 #define CONTROL_PROTOCOL__MAX_NUMBER_OF_CLUSTERS (8)
 #define CONTROL_PROTOCOL__MAX_CONTROL_LENGTH (1500)
-#define CONTROL_PROTOCOL__MAX_TOTAL_CONTEXTS (128)
 #define CONTROL_PROTOCOL__SOC_ID_LENGTH (32)
 #define CONTROL_PROTOCOL__MAX_CFG_CHANNELS (4)
 #define CONTROL_PROTOCOL__MAX_NETWORKS_PER_NETWORK_GROUP (8)
@@ -1041,11 +1040,9 @@ typedef enum {
 typedef enum {
     CONTROL_PROTOCOL__HOST_BUFFER_TYPE_EXTERNAL_DESC = 0,
     CONTROL_PROTOCOL__HOST_BUFFER_TYPE_CCB,
+    CONTROL_PROTOCOL__HOST_BUFFER_TYPE_HOST_MANAGED_EXTERNAL_DESC, /* DEPRECATED */
 
-    // The buffer uses external descriptors that is host managed - the firmware don't need to config this buffer
-    CONTROL_PROTOCOL__HOST_BUFFER_TYPE_HOST_MANAGED_EXTERNAL_DESC,
-
-    /* must be last*/
+    /* must be last */
     CONTROL_PROTOCOL__HOST_BUFFER_TYPE_COUNT
 } CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t;
 
@@ -1136,6 +1133,8 @@ typedef struct {
     uint8_t is_first_control_per_context;
     uint32_t is_last_control_per_context_length;
     uint8_t is_last_control_per_context;
+    uint32_t context_type_length;
+    uint8_t context_type; // CONTROL_PROTOCOL__context_switch_context_type_t
     uint32_t cfg_channels_count_length;
     uint8_t cfg_channels_count;
     uint32_t config_channel_infos_length;
@@ -1331,6 +1330,10 @@ typedef struct {
 } CONTROL_PROTOCOL__idle_time_get_measurement_response_t;
 
 typedef struct {
+    uint32_t network_group_id_length;
+    uint32_t network_group_id;
+    uint32_t context_type_length;
+    uint8_t context_type; // CONTROL_PROTOCOL__context_switch_context_type_t
     uint32_t context_index_length;
     uint8_t context_index;
     uint32_t action_list_offset_length;
@@ -1721,9 +1724,39 @@ typedef struct {
 #define CONTROL_PROTOCOL__CONTEXT_NETWORK_DATA_SINGLE_CONTROL_MAX_SIZE \
     (CONTROL_PROTOCOL__MAX_REQUEST_PARAMETERS_LENGTH - sizeof(CONTROL_PROTOCOL__context_switch_set_context_info_request_t))
 
+typedef enum {
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_PRELIMINARY,
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_DYNAMIC,
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_BATCH_SWITCHING,
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_ACTIVATION,
+
+    /* must be last*/
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_COUNT,
+} CONTROL_PROTOCOL__context_switch_context_type_t;
+
+// TODO: After HRT-8111, CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS should include the
+//       batch switching context. I.e. it's index should come before the first dynamic context; probably:
+//       - ACTIVATION
+//       - BATCH_SWITCHING
+//       - PRELIMINARY
+//       - first dynamic... (i.e. CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS == 3)
+typedef enum {
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_INDEX_ACTIVATION_CONTEXT = 0,
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_INDEX_PRELIMINARY_CONTEXT,
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS,
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_INDEX_FIRST_DYNAMIC_CONTEXT = CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS,
+
+    /* must be last*/
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_INDEX_COUNT,
+} CONTROL_PROTOCOL__context_switch_context_index_t;
+
+#define CONTROL_PROTOCOL__MAX_DYNAMIC_CONTEXTS (128)
+#define CONTROL_PROTOCOL__MAX_TOTAL_CONTEXTS (CONTROL_PROTOCOL__MAX_DYNAMIC_CONTEXTS + CONTROL_PROTOCOL__MAX_CONTEXT_SWITCH_APPLICATIONS * CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS)
+
 typedef struct {
     bool is_first_control_per_context;
     bool is_last_control_per_context;
+    uint8_t context_type; // CONTROL_PROTOCOL__context_switch_context_type_t
     uint8_t cfg_channels_count;
     CONTROL_PROTOCOL__config_channel_info_t config_channel_infos[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
     CONTROL_PROTOCOL__stream_remap_data_t context_stream_remap_data;
@@ -1732,6 +1765,10 @@ typedef struct {
     uint32_t context_network_data_length;
     uint8_t context_network_data[CONTROL_PROTOCOL__CONTEXT_NETWORK_DATA_SINGLE_CONTROL_MAX_SIZE];
 } CONTROL_PROTOCOL__context_switch_context_info_single_control_t;
+
+CASSERT(sizeof(CONTROL_PROTOCOL__context_switch_context_index_t)<=UINT8_MAX, control_protocol_h);
+CASSERT(sizeof(CONTROL_PROTOCOL__context_switch_context_type_t)<=UINT8_MAX, control_protocol_h);
+
 
 /* Context switch user structs */
 

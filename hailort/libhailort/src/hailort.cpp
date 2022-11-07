@@ -557,39 +557,9 @@ hailo_status hailo_init_configure_params(hailo_hef hef, hailo_stream_interface_t
     params->network_group_params_count = network_groups_names.size();
     uint8_t net_group = 0;
     for (const auto &net_group_name : network_groups_names) {
-        CHECK(HAILO_MAX_NETWORK_GROUP_NAME_SIZE > net_group_name.length(), HAILO_INTERNAL_FAILURE,
-            "Network group '{}' name is too long (max is HAILO_MAX_NETWORK_GROUP_NAME_SIZE, including NULL terminator)",
-            net_group_name);
-        strncpy(params->network_group_params[net_group].name, net_group_name.c_str(), net_group_name.length() + 1);
-
-        auto config_params =  HailoRTDefaults::get_configure_params();
-        params->network_group_params[net_group].batch_size = config_params.batch_size;
-        params->network_group_params[net_group].power_mode = config_params.power_mode;
-
-        auto stream_params_by_name = reinterpret_cast<Hef*>(hef)->create_stream_parameters_by_name(net_group_name, stream_interface);
-        CHECK_EXPECTED_AS_STATUS(stream_params_by_name);
-        CHECK(HAILO_MAX_STREAMS_COUNT >= stream_params_by_name->size(), HAILO_INTERNAL_FAILURE,
-            "Too many streams in HEF");
-        params->network_group_params[net_group].stream_params_by_name_count = stream_params_by_name->size();
-
-        uint8_t stream = 0;
-        for (const auto &stream_params_pair : stream_params_by_name.release()) {
-            CHECK(stream_params_pair.first.length() < HAILO_MAX_STREAM_NAME_SIZE, HAILO_INTERNAL_FAILURE,
-                "Stream '{}' has a too long name (max is HAILO_MAX_STREAM_NAME_SIZE)", stream_params_pair.first);
-
-            hailo_stream_parameters_by_name_t params_by_name = {};
-            strncpy(params_by_name.name, stream_params_pair.first.c_str(), stream_params_pair.first.length() + 1);
-            params_by_name.stream_params = stream_params_pair.second;
-            params->network_group_params[net_group].stream_params_by_name[stream] = params_by_name;
-            stream++;
-        }
-
-        /* Fill network params */
-        auto status = hailo_init_network_params(hef, net_group_name, 
-            params->network_group_params[net_group].network_params_by_name, 
-            params->network_group_params[net_group].network_params_by_name_count);
+        auto status = hailo_init_configure_network_group_params(hef, stream_interface, net_group_name.c_str(),
+            &(params->network_group_params[net_group]));
         CHECK_SUCCESS(status);
-
         net_group++;
     }
 
@@ -610,38 +580,111 @@ hailo_status hailo_init_configure_params_mipi_input(hailo_hef hef, hailo_stream_
     params->network_group_params_count = network_groups_names.size();
     uint8_t net_group = 0;
     for (const auto &net_group_name : network_groups_names) {
-        auto config_params =  HailoRTDefaults::get_configure_params();
-        strncpy(params->network_group_params[net_group].name, net_group_name.c_str(), net_group_name.length() + 1);
-        params->network_group_params[net_group].power_mode = config_params.power_mode;
-
-        auto stream_params_by_name = reinterpret_cast<Hef*>(hef)->create_stream_parameters_by_name_mipi_input(net_group_name,
-            output_interface, *mipi_params);
-        CHECK_EXPECTED_AS_STATUS(stream_params_by_name);
-        CHECK(HAILO_MAX_STREAMS_COUNT >= stream_params_by_name->size(), HAILO_INTERNAL_FAILURE,
-            "Too many streams in HEF. There are {} streams for network_group {}", stream_params_by_name->size(),
-            net_group_name);
-        params->network_group_params[net_group].stream_params_by_name_count = stream_params_by_name->size();
-
-        uint8_t stream = 0;
-        for (const auto &stream_params_pair : stream_params_by_name.release()) {
-            CHECK(stream_params_pair.first.length() < HAILO_MAX_STREAM_NAME_SIZE, HAILO_INTERNAL_FAILURE,
-                "Stream '{}' has a too long name (max is HAILO_MAX_STREAM_NAME_SIZE)", stream_params_pair.first);
-
-            hailo_stream_parameters_by_name_t params_by_name = {};
-            strncpy(params_by_name.name, stream_params_pair.first.c_str(), stream_params_pair.first.length() + 1);
-            params_by_name.stream_params = stream_params_pair.second;
-            params->network_group_params[net_group].stream_params_by_name[stream] = params_by_name;
-            stream++;
-        }
-
-        /* Fill network params */
-        auto status = hailo_init_network_params(hef, net_group_name, 
-            params->network_group_params[net_group].network_params_by_name, 
-            params->network_group_params[net_group].network_params_by_name_count);
-
+        auto status = hailo_init_configure_network_group_params_mipi_input(hef, output_interface, mipi_params,
+            net_group_name.c_str(), &(params->network_group_params[net_group]));
         CHECK_SUCCESS(status);
         net_group++;
     }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status fill_configured_network_params_with_default(hailo_hef hef, const char *network_group_name, hailo_configure_network_group_params_t &params)
+{
+    std::string network_group_name_str; 
+    if (nullptr == network_group_name) {
+        auto network_groups_names = reinterpret_cast<Hef*>(hef)->get_network_groups_names();
+        CHECK(HAILO_MAX_NETWORK_GROUPS >= network_groups_names.size(), HAILO_INVALID_HEF,
+            "Too many network_groups on a given HEF");
+        network_group_name_str = network_groups_names[0];
+
+        LOGGER__INFO("No network_group name was given. Addressing default network_group: {}",
+            network_group_name_str);
+    } else {
+        network_group_name_str = std::string(network_group_name);
+    }
+
+    CHECK(HAILO_MAX_NETWORK_GROUP_NAME_SIZE > network_group_name_str.length(), HAILO_INTERNAL_FAILURE,
+        "Network group '{}' name is too long (max is HAILO_MAX_NETWORK_GROUP_NAME_SIZE, including NULL terminator)",
+        network_group_name_str);
+    strncpy(params.name, network_group_name_str.c_str(), network_group_name_str.length() + 1);
+
+    auto config_params =  HailoRTDefaults::get_configure_params();
+    params.batch_size = config_params.batch_size;
+    params.power_mode = config_params.power_mode;
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status fill_configured_network_params_with_stream_params(const std::map<std::string, hailo_stream_parameters_t> &stream_params_by_name,
+    hailo_configure_network_group_params_t &params)
+{
+    CHECK(HAILO_MAX_STREAMS_COUNT >= stream_params_by_name.size(), HAILO_INTERNAL_FAILURE,
+        "Too many streams in HEF. found {} streams.", stream_params_by_name.size());
+    params.stream_params_by_name_count = stream_params_by_name.size();
+
+    uint8_t stream = 0;
+    for (const auto &stream_params_pair : stream_params_by_name) {
+        CHECK(stream_params_pair.first.length() < HAILO_MAX_STREAM_NAME_SIZE, HAILO_INTERNAL_FAILURE,
+            "Stream '{}' has a too long name (max is HAILO_MAX_STREAM_NAME_SIZE)", stream_params_pair.first);
+
+        hailo_stream_parameters_by_name_t params_by_name = {};
+        strncpy(params_by_name.name, stream_params_pair.first.c_str(), stream_params_pair.first.length() + 1);
+        params_by_name.stream_params = stream_params_pair.second;
+        params.stream_params_by_name[stream] = params_by_name;
+        stream++;
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_init_configure_network_group_params(hailo_hef hef, hailo_stream_interface_t stream_interface,
+    const char *network_group_name, hailo_configure_network_group_params_t *params)
+{
+    CHECK_ARG_NOT_NULL(hef);
+    CHECK_ARG_NOT_NULL(params);
+
+    auto status = fill_configured_network_params_with_default(hef, network_group_name, *params);
+    CHECK_SUCCESS(status);
+
+    auto stream_params_by_name = reinterpret_cast<Hef*>(hef)->create_stream_parameters_by_name(network_group_name, stream_interface);
+    CHECK_EXPECTED_AS_STATUS(stream_params_by_name);
+
+    status = fill_configured_network_params_with_stream_params(stream_params_by_name.value(), *params);
+    CHECK_SUCCESS(status);
+
+    /* Fill network params */
+    status = hailo_init_network_params(hef, network_group_name, 
+        params->network_params_by_name, 
+        params->network_params_by_name_count);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_init_configure_network_group_params_mipi_input(hailo_hef hef, hailo_stream_interface_t output_interface,
+    hailo_mipi_input_stream_params_t *mipi_params, const char *network_group_name, hailo_configure_network_group_params_t *params)
+{
+    CHECK_ARG_NOT_NULL(hef);
+    CHECK_ARG_NOT_NULL(mipi_params);
+    CHECK_ARG_NOT_NULL(params);
+
+    auto status = fill_configured_network_params_with_default(hef, network_group_name, *params);
+    CHECK_SUCCESS(status);
+
+    auto stream_params_by_name = reinterpret_cast<Hef*>(hef)->create_stream_parameters_by_name_mipi_input(network_group_name,
+        output_interface, *mipi_params);
+    CHECK_EXPECTED_AS_STATUS(stream_params_by_name);
+
+    status = fill_configured_network_params_with_stream_params(stream_params_by_name.value(), *params);
+    CHECK_SUCCESS(status);
+
+    /* Fill network params */
+    status = hailo_init_network_params(hef, network_group_name, 
+        params->network_params_by_name, 
+        params->network_params_by_name_count);
+
+    CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
 }

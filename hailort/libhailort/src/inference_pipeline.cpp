@@ -13,6 +13,7 @@
 #include "hailort_defaults.hpp"
 #include "context_switch/network_group_internal.hpp"
 #include "context_switch/network_group_wrapper.hpp"
+#include "context_switch/multi_context/resource_manager.hpp"
 
 #include <sstream>
 
@@ -122,6 +123,10 @@ Expected<InferVStreams> InferVStreams::create(ConfiguredNetworkGroup &net_group,
 
             batch_size = network_batch_size;
         }
+    }
+
+    if (HAILO_DEFAULT_BATCH_SIZE == batch_size) {
+        batch_size = DEFAULT_ACTUAL_BATCH_SIZE;
     }
 
     for (const auto &network_info : network_infos.value()) {

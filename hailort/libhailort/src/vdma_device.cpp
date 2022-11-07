@@ -22,6 +22,12 @@
 namespace hailort
 {
 
+#ifndef HAILO_EMULATOR
+static constexpr std::chrono::milliseconds DEFAULT_TIMEOUT(1000);
+#else /* ifndef HAILO_EMULATOR */
+static constexpr std::chrono::milliseconds DEFAULT_TIMEOUT(50000);
+#endif /* ifndef HAILO_EMULATOR */
+
 VdmaDevice::VdmaDevice(HailoRTDriver &&driver, Device::Type type) :
     DeviceBase::DeviceBase(type),
     m_driver(std::move(driver))
@@ -38,7 +44,7 @@ Expected<std::unique_ptr<VdmaDevice>> VdmaDevice::create(const std::string &devi
     }
     else if (auto pcie_info = PcieDevice::parse_pcie_device_info(device_id, DONT_LOG_ON_FAILURE)) {
         auto device = PcieDevice::create(pcie_info.release());
-        CHECK_EXPECTED(device);;
+        CHECK_EXPECTED(device);
         return std::unique_ptr<VdmaDevice>(device.release());
     }
     else {
@@ -54,12 +60,65 @@ hailo_status VdmaDevice::wait_for_wakeup()
 
 Expected<D2H_EVENT_MESSAGE_t> VdmaDevice::read_notification()
 {
-    return m_driver.read_notification();
+    auto notification_buffer = m_driver.read_notification();
+    if (!notification_buffer.has_value()) {
+        return make_unexpected(notification_buffer.status());
+    }
+
+    D2H_EVENT_MESSAGE_t notification;
+    CHECK_AS_EXPECTED(sizeof(notification) >= notification_buffer->size(), HAILO_GET_D2H_EVENT_MESSAGE_FAIL,
+        "buffer len is not valid = {}", notification_buffer->size());
+    memcpy(&notification, notification_buffer->data(), notification_buffer->size());
+    return notification;
 }
 
 hailo_status VdmaDevice::disable_notifications()
 {
     return m_driver.disable_notifications();
+}
+
+hailo_status VdmaDevice::fw_interact_impl(uint8_t *request_buffer, size_t request_size,
+        uint8_t *response_buffer, size_t *response_size, hailo_cpu_id_t cpu_id)
+{
+    uint8_t request_md5[PCIE_EXPECTED_MD5_LENGTH];
+    MD5_CTX ctx;
+
+    MD5_Init(&ctx);
+    MD5_Update(&ctx, request_buffer, request_size);
+    MD5_Final(request_md5, &ctx);
+
+    uint8_t response_md5[PCIE_EXPECTED_MD5_LENGTH];
+    uint8_t expected_response_md5[PCIE_EXPECTED_MD5_LENGTH];
+
+    auto status = m_driver.fw_control(request_buffer, request_size, request_md5,
+        response_buffer, response_size, response_md5,
+        DEFAULT_TIMEOUT, cpu_id);
+    CHECK_SUCCESS(status, "Failed to send fw control");
+
+    MD5_Init(&ctx);
+    MD5_Update(&ctx, response_buffer, (*response_size));
+    MD5_Final(expected_response_md5, &ctx);
+
+    auto memcmp_result = memcmp(expected_response_md5, response_md5, sizeof(response_md5));
+    CHECK(0 == memcmp_result, HAILO_INTERNAL_FAILURE, "MD5 validation of control response failed.");
+
+    return HAILO_SUCCESS;
+}
+
+ExpectedRef<ConfigManager> VdmaDevice::get_config_manager()
+{
+    auto status = mark_as_used();
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    if (!m_context_switch_manager) {
+        auto local_context_switch_manager = VdmaConfigManager::create(*this);
+        CHECK_EXPECTED(local_context_switch_manager);
+
+        m_context_switch_manager = make_unique_nothrow<VdmaConfigManager>(local_context_switch_manager.release());
+        CHECK_AS_EXPECTED(nullptr != m_context_switch_manager, HAILO_OUT_OF_HOST_MEMORY);
+    }
+
+    return std::ref(*m_context_switch_manager);
 }
 
 Expected<size_t> VdmaDevice::read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id)

@@ -254,6 +254,15 @@ hailo_status HailoSendImpl::clear_vstreams()
     return InputVStream::clear(m_input_vstreams);
 }
 
+hailo_status HailoSendImpl::abort_vstreams()
+{
+    for (auto& input_vstream : m_input_vstreams) {
+        auto status = input_vstream.abort();
+        GST_CHECK_SUCCESS(status, m_element, STREAM, "Failed aborting input vstream %s, status = %d", input_vstream.name().c_str(), status);
+    }
+    return HAILO_SUCCESS;
+}
+
 static void gst_hailosend_init(GstHailoSend *self)
 {
     auto hailosend_impl = HailoSendImpl::create(self);
@@ -303,6 +312,8 @@ static GstStateChangeReturn gst_hailosend_change_state(GstElement *element, GstS
     }
 
     if (GST_STATE_CHANGE_READY_TO_NULL == transition) {
+        auto status = GST_HAILOSEND(element)->impl->abort_vstreams();
+        GST_CHECK(HAILO_SUCCESS == status, GST_STATE_CHANGE_FAILURE, element, STREAM, "Aborting input vstreams failed, status = %d\n", status);
         // Cleanup all of hailosend memory
         GST_HAILOSEND(element)->impl.reset();
     }

@@ -79,6 +79,7 @@ enum
     PROP_SCHEDULING_ALGORITHM,
     PROP_SCHEDULER_TIMEOUT_MS,
     PROP_SCHEDULER_THRESHOLD,
+    PROP_MULTI_PROCESS_SERVICE,
 };
 
 G_DEFINE_TYPE(GstHailoNet, gst_hailonet, GST_TYPE_BIN);
@@ -160,7 +161,10 @@ static void gst_hailonet_class_init(GstHailoNetClass *klass)
     g_object_class_install_property(gobject_class, PROP_SCHEDULER_THRESHOLD,
         g_param_spec_uint("scheduler-threshold", "Frames threshold for scheduler", "The minimum number of send requests required before the hailonet is considered ready to get run time from the scheduler.",
             HAILO_DEFAULT_SCHEDULER_THRESHOLD, std::numeric_limits<uint32_t>::max(), HAILO_DEFAULT_SCHEDULER_THRESHOLD, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
-
+    g_object_class_install_property(gobject_class, PROP_MULTI_PROCESS_SERVICE,
+        g_param_spec_boolean("multi-process-service", "Should run over HailoRT service", "Controls wether to run HailoRT over its service. "
+            "To use this property, the service should be active and scheduling-algorithm should be set. Defaults to false.",
+            HAILO_DEFAULT_MULTI_PROCESS_SERVICE, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
     // See information about the "flush" signal in the element description
     g_signal_new(
         "flush",
@@ -192,8 +196,8 @@ Expected<std::unique_ptr<HailoNetImpl>> HailoNetImpl::create(GstHailoNet *elemen
     }
 
     // Passing 0 disables the features here
-    g_object_set(queue, "max-size-time", 0, NULL);
-    g_object_set(queue, "max-size-bytes", 0, NULL);
+    g_object_set(queue, "max-size-time", (guint64)0, NULL);
+    g_object_set(queue, "max-size-bytes", (guint)0, NULL);
     g_signal_connect(queue, "overrun", G_CALLBACK(gst_hailonet_inner_queue_overrun_callback), nullptr);
     g_signal_connect(queue, "underrun", G_CALLBACK(gst_hailonet_inner_queue_underrun_callback), nullptr);
 
@@ -438,6 +442,13 @@ void HailoNetImpl::set_property(GObject *object, guint property_id, const GValue
         }
         m_props.m_scheduler_threshold = g_value_get_uint(value);
         break;
+    case PROP_MULTI_PROCESS_SERVICE:
+        if (m_was_configured) {
+            g_warning("The network was already configured so changing the multi-process-service property will not take place!");
+            break;
+        }
+        m_props.m_multi_process_service = g_value_get_boolean(value);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
         break;
@@ -505,6 +516,9 @@ void HailoNetImpl::get_property(GObject *object, guint property_id, GValue *valu
     case PROP_SCHEDULER_THRESHOLD:
         g_value_set_uint(value, m_props.m_scheduler_threshold.get());
         break;
+    case PROP_MULTI_PROCESS_SERVICE:
+        g_value_set_boolean(value, m_props.m_multi_process_service.get());
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
         break;
@@ -516,10 +530,16 @@ hailo_status HailoNetImpl::set_hef()
     m_net_group_handle = make_unique_nothrow<NetworkGroupHandle>(GST_ELEMENT(m_element));
     GST_CHECK(nullptr != m_net_group_handle, HAILO_OUT_OF_HOST_MEMORY, m_element, RESOURCE, "Failed allocating memory for network handle!");
 
-    hailo_status status = m_net_group_handle->set_hef(m_props.m_device_id.get(), m_props.m_device_count.get(), m_props.m_vdevice_key.get(),
-        m_props.m_scheduling_algorithm.get(), m_props.m_hef_path.get());
+    hailo_status status = m_net_group_handle->set_hef(m_props.m_device_id.get(), m_props.m_device_count.get(),
+        m_props.m_vdevice_key.get(), m_props.m_scheduling_algorithm.get(), static_cast<bool>(m_props.m_multi_process_service.get()),
+        m_props.m_hef_path.get());
     if (HAILO_SUCCESS != status) {
         return status;
+    }
+
+    if (m_props.m_multi_process_service.get()) {
+        GST_CHECK(m_props.m_scheduling_algorithm.get() != HAILO_SCHEDULING_ALGORITHM_NONE,
+            HAILO_INVALID_OPERATION, m_element, RESOURCE, "To use multi-process-service please set scheduling-algorithm.");
     }
 
     if (nullptr == m_props.m_network_name.get()) {
@@ -661,7 +681,11 @@ hailo_status HailoNetImpl::abort_streams()
         return HAILO_SUCCESS;
     }
 
-    return m_net_group_handle->abort_streams();
+    auto status = GST_HAILOSEND(m_hailosend)->impl->abort_vstreams();
+    GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Failed aborting input VStreams of hailosend, status = %d", status);
+    status = GST_HAILORECV(m_hailorecv)->impl->abort_vstreams();
+    GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Failed aborting output VStreams of hailorecv, status = %d", status);
+    return HAILO_SUCCESS;
 }
 
 hailo_status HailoNetImpl::deactivate_network_group()
@@ -834,13 +858,8 @@ static GstStateChangeReturn gst_hailonet_change_state(GstElement *element, GstSt
     }
     case GST_STATE_CHANGE_READY_TO_NULL:
     {
-        // VStreams are destructed in hailosend's/hailorecv's GST_STATE_CHANGE_READY_TO_NULL (which calls 'clear_abort' on low-level streams)
-        // We abort streams again because deactivation of the activated network group calls flush, and it can fail on timeout unless we call abort
-        hailo_status status = hailonet->abort_streams();
-        GST_CHECK(HAILO_SUCCESS == status, GST_STATE_CHANGE_FAILURE, element, RESOURCE, "Aborting streams has failed, status = %d\n", status);
-
         if (HAILO_SCHEDULING_ALGORITHM_NONE == hailonet->get_props().m_scheduling_algorithm.get()) {
-            status = hailonet->deactivate_network_group();
+            auto status = hailonet->deactivate_network_group();
             GST_CHECK(HAILO_SUCCESS == status, GST_STATE_CHANGE_FAILURE, element, RESOURCE, "Deactivating network group failed, status = %d\n", status);
         }
 

@@ -22,6 +22,15 @@ PipelineMultiplexer::PipelineMultiplexer() :
     m_read_streams_count(0)
 {}
 
+bool PipelineMultiplexer::should_use_multiplexer()
+{
+    auto disable_multiplexer_env = std::getenv(DISABLE_MULTIPLEXER_ENV_VAR);
+    if ((nullptr != disable_multiplexer_env) && (strnlen(disable_multiplexer_env, 2) == 1) && (strncmp(disable_multiplexer_env, "1", 1) == 0)) {
+        return false;
+    }
+    return true;
+}
+
 hailo_status PipelineMultiplexer::add_network_group_instance(multiplexer_ng_handle_t network_group_handle, ConfiguredNetworkGroup &network_group)
 {
     std::unique_lock<std::mutex> lock(m_writing_mutex);
@@ -79,6 +88,10 @@ hailo_status PipelineMultiplexer::wait_for_write(multiplexer_ng_handle_t network
 
         m_is_waiting_to_write[network_group_handle] = true;
         m_writing_cv.wait(lock, [this, network_group_handle] {
+            if (!has_more_than_one_ng_instance() || !should_use_multiplexer()) {
+                return true;
+            }
+
             if (m_should_ng_stop[network_group_handle]) {
                 return true;
             }
@@ -149,7 +162,8 @@ hailo_status PipelineMultiplexer::signal_write_finish()
     return HAILO_SUCCESS;
 }
 
-hailo_status PipelineMultiplexer::wait_for_read(multiplexer_ng_handle_t network_group_handle, const std::string &stream_name)
+hailo_status PipelineMultiplexer::wait_for_read(multiplexer_ng_handle_t network_group_handle, const std::string &stream_name,
+    const std::chrono::milliseconds &timeout)
 {
     std::unique_lock<std::mutex> lock(m_reading_mutex);
 
@@ -157,7 +171,9 @@ hailo_status PipelineMultiplexer::wait_for_read(multiplexer_ng_handle_t network_
     assert(contains(m_is_stream_reading, network_group_handle));
     assert(contains(m_is_stream_reading[network_group_handle], stream_name));
 
-    m_reading_cv.wait(lock, [this, network_group_handle, stream_name] {
+
+    auto wait_res = m_reading_cv.wait_for(lock, timeout, [this, network_group_handle, stream_name] {
+
         if (m_should_ng_stop[network_group_handle]) {
             return true;
         }
@@ -176,6 +192,9 @@ hailo_status PipelineMultiplexer::wait_for_read(multiplexer_ng_handle_t network_
 
         return true;
     });
+    if (!wait_res) {
+        return HAILO_TIMEOUT;
+    }
     if (m_should_ng_stop[network_group_handle]) {
         return HAILO_STREAM_INTERNAL_ABORT;
     }

@@ -250,16 +250,18 @@ _ISEMPTY(                                                               \
     } while(0)
 #define CHECK_AS_RPC_STATUS(cond, reply, ret_val, ...) _CHECK_AS_RPC_STATUS((cond), (reply), (ret_val), ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
 
-#define _CHECK_GRPC_STATUS(status, ret_val)                                                               \
-    do {                                                                                                  \
-        if (!status.ok()) {                                                                               \
-            LOGGER__ERROR("CHECK_GRPC_STATUS failed with error massage: {}.", status.error_message());    \
-            return ret_val;                                                                               \
-        }                                                                                                 \
+#define _CHECK_GRPC_STATUS(status, ret_val, warning_msg)                                                    \
+    do {                                                                                                    \
+        if (!status.ok()) {                                                                                 \
+            LOGGER__ERROR("CHECK_GRPC_STATUS failed with error massage: {}.", status.error_message());      \
+            LOGGER__WARNING(warning_msg);                                                                   \
+            return ret_val;                                                                                 \
+        }                                                                                                   \
     } while(0)
 
-#define CHECK_GRPC_STATUS(status) _CHECK_GRPC_STATUS(status, HAILO_RPC_FAILED)
-#define CHECK_GRPC_STATUS_AS_EXPECTED(status) _CHECK_GRPC_STATUS(status, make_unexpected(HAILO_RPC_FAILED))
+#define SERVICE_WARNING_MSG ("Make sure HailoRT service is enabled and active!")
+#define CHECK_GRPC_STATUS(status) _CHECK_GRPC_STATUS(status, HAILO_RPC_FAILED, SERVICE_WARNING_MSG)
+#define CHECK_GRPC_STATUS_AS_EXPECTED(status) _CHECK_GRPC_STATUS(status, make_unexpected(HAILO_RPC_FAILED), SERVICE_WARNING_MSG)
 #endif
 
 #define _CHECK_EXPECTED(obj, is_default, fmt, ...)                                                                                      \

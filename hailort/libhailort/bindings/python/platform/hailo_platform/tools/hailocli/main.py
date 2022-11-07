@@ -9,7 +9,6 @@ from hailo_platform.tools.hailocli.base_utils import HailortCliUtil, Helper, Hai
 from hailo_platform.tools.hailocli.hailocli_commands import (FWUpdaterCLI, SSBUpdaterCLI, ControlCommandCLI, ScanCommandCLI,
                                                             LoggerCommandCLI, MeasurePowerCommandCLI, RunCommandCLI, SensorConfigCommandCLI,
                                                             FWConfigCommandCLI, BenchmarkCommandCLI, UDPRateLimiterCLI, MonitorCommandCLI, ParseHEFCommandCLI, TutorialRunnerCLI)
-from hailo_platform.common.logger.logger import default_logger
 
 # Note: PlatformCommands are external dependencies in phase2-sdk/demos repo; don't change!
 class PlatformCommands:
@@ -19,8 +18,6 @@ class PlatformCommands:
         'fw-update': ('Firmware update tool', FWUpdaterCLI),
         'ssb-update': ('Second stage boot update tool', SSBUpdaterCLI),
         'fw-config': ('Firmware configuration tool', FWConfigCommandCLI),
-        'udp-limiter': ('Alias to udp-rate-limiter. Deprecated.', UDPRateLimiterCLI),
-        'udp': ('Alias to udp-rate-limiter. Deprecated.', UDPRateLimiterCLI),
         'udp-rate-limiter': ('Limit UDP rate', UDPRateLimiterCLI),
         'fw-control': ('Useful firmware control operations', ControlCommandCLI),
         'fw-logger': ('Download fw logs to a file', LoggerCommandCLI),
@@ -79,10 +76,6 @@ class PlatformCommands:
             return self.INVALID_COMMAND_EXIT_CODE
 
         command_name = argv[0]
-        # TODO: Remove deprecation warning
-        if command_name in ['udp', 'udp-limiter']:
-            logger = default_logger()
-            logger.warning("Warning - running '{}' command is deprecated, support will be removed in future versions. Use 'udp-rate-limiter' instead.".format(command_name))
         if (command_name in commands) and isinstance(commands[command_name], HailortCliUtil):
             # HailortCliUtil just passes the rest of the argv to hailortcli
             try :

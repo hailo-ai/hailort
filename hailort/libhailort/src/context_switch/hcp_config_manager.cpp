@@ -31,7 +31,6 @@
 #include "hailo/hef.hpp"
 #include "control.hpp"
 #include "pcie_device.hpp"
-#include "hlpcie.hpp"
 
 #include <new>
 #include <algorithm>
@@ -53,6 +52,7 @@ Expected<ConfiguredNetworkGroupVector> HcpConfigManager::add_hef(Hef &hef,
     auto &hef_network_groups = hef.pimpl->network_groups();
     auto current_net_group_index = static_cast<uint8_t>(m_net_groups.size());
     ConfiguredNetworkGroupVector added_network_groups;
+    // TODO: can be optimized (add another loop the allocate the network group we're adding)
     added_network_groups.reserve(hef_network_groups.size());
     auto configure_params_copy = configure_params;
     auto hef_arch = hef.pimpl->get_device_arch();
@@ -62,53 +62,47 @@ Expected<ConfiguredNetworkGroupVector> HcpConfigManager::add_hef(Hef &hef,
     auto status = Control::reset_context_switch_state_machine(m_device, REMOVE_NN_CONFIG_DURING_RESET);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
-    const ProtoHEFNetworkGroup *network_group_ptr = nullptr;
-    for (const auto &net_group : hef_network_groups) {
-        CHECK_NOT_NULL_AS_EXPECTED(net_group, HAILO_INTERNAL_FAILURE);
+    for (const auto &base_network_group_proto : hef_network_groups) {
+        CHECK_NOT_NULL_AS_EXPECTED(base_network_group_proto, HAILO_INTERNAL_FAILURE);
 
-        if (ProtoHEFHwArch::PROTO__HW_ARCH__HAILO8L == hef_arch) {
-            // Hailo8 can work with Hailo8L configurations. in that case we choose one of the configurations
-            for (auto &partial_network_group : net_group->partial_network_groups()) {
-                if ((partial_clusters_layout_bitmap == partial_network_group.layout().partial_clusters_layout_bitmap()) ||
-                    ((HAILO_ARCH_HAILO8 == device_arch))) {
-                    network_group_ptr = &partial_network_group.network_group();
-                    break;
-                }
-            }
-            CHECK_AS_EXPECTED(nullptr != network_group_ptr, HAILO_INTERNAL_FAILURE, "There is no matching partial_clusters_layout_bitmap configuration in the given HEF");
+        auto network_group_proto = Hef::Impl::get_net_group_per_arch(*base_network_group_proto, hef_arch, device_arch,
+            partial_clusters_layout_bitmap);
+        CHECK_EXPECTED(network_group_proto);
+
+        const std::string network_group_name = network_group_proto->get().network_group_metadata().network_group_name();
+
+        /* If NG params are present, use them
+           If no configure params are given, use default*/
+        ConfigureNetworkParams config_params{};
+        if (contains(configure_params, network_group_name)) {
+            config_params = configure_params_copy.at(network_group_name);
+            configure_params_copy.erase(network_group_name);
+        } else if (configure_params.empty()) {
+            auto interface = m_device.get_default_streams_interface();
+            CHECK_EXPECTED(interface);
+            auto config_params_exp = hef.create_configure_params(interface.value(), network_group_name);
+            CHECK_EXPECTED(config_params_exp);
+            config_params = config_params_exp.release();
         } else {
-            network_group_ptr = net_group.get();
+            continue;
         }
-        CHECK_NOT_NULL_AS_EXPECTED(network_group_ptr, HAILO_INTERNAL_FAILURE);
 
         /* Validate that all network_groups are single context */
-        CHECK(1 == network_group_ptr->contexts_size(), make_unexpected(HAILO_INTERNAL_FAILURE),
+        CHECK(1 == network_group_proto->get().contexts_size(), make_unexpected(HAILO_INTERNAL_FAILURE),
             "Only single_context network_groups is supported!. Network group {} has {} contexts.",
-            network_group_ptr->network_group_metadata().network_group_name(), network_group_ptr->contexts_size());
-        CHECK_AS_EXPECTED(!(Hef::Impl::contains_ddr_layers(*network_group_ptr)), HAILO_INVALID_OPERATION,
+            network_group_name, network_group_proto->get().contexts_size());
+        CHECK_AS_EXPECTED(!(Hef::Impl::contains_ddr_layers(network_group_proto->get())), HAILO_INVALID_OPERATION,
             "DDR layers are only supported for PCIe device. Network group {} contains DDR layers.",
-            network_group_ptr->network_group_metadata().network_group_name());
-        status = Hef::Impl::validate_net_group_unique_layer_names(*network_group_ptr);
+            network_group_name);
+        status = Hef::Impl::validate_net_group_unique_layer_names(network_group_proto->get());
         CHECK_SUCCESS_AS_EXPECTED(status);
 
         /* Update preliminary_config and dynamic_contexts recepies */
-        auto &proto_preliminary_config = network_group_ptr->preliminary_config();
+        auto &proto_preliminary_config = network_group_proto->get().preliminary_config();
         auto net_group_config = Hef::Impl::create_single_context_network_group_config(proto_preliminary_config);
         CHECK_EXPECTED(net_group_config);
 
-        ConfigureNetworkParams config_params = {};
-        if (contains(configure_params_copy, network_group_ptr->network_group_metadata().network_group_name())) {
-            config_params = configure_params_copy.at(network_group_ptr->network_group_metadata().network_group_name());
-            configure_params_copy.erase(network_group_ptr->network_group_metadata().network_group_name());
-        } else {
-            auto interface = m_device.get_default_streams_interface();
-            CHECK_EXPECTED(interface);
-            auto config_params_exp = hef.create_configure_params(interface.value(), network_group_ptr->network_group_metadata().network_group_name());
-            CHECK_EXPECTED(config_params_exp);
-            config_params = config_params_exp.release();
-        }
-
-        auto network_group_metadata = hef.pimpl->get_network_group_metadata(network_group_ptr->network_group_metadata().network_group_name());
+        auto network_group_metadata = hef.pimpl->get_network_group_metadata(network_group_name);
         CHECK_EXPECTED(network_group_metadata);
 
         auto single_context_app = HcpConfigNetworkGroup(m_device, m_active_net_group_holder, net_group_config.release(),
@@ -135,7 +129,7 @@ Expected<ConfiguredNetworkGroupVector> HcpConfigManager::add_hef(Hef &hef,
         CHECK_SUCCESS_AS_EXPECTED(status);
 
         // Check that all boundary streams were created
-        status = validate_boundary_streams_were_created(hef, network_group_ptr->network_group_metadata().network_group_name(), *net_group_shared_ptr);
+        status = validate_boundary_streams_were_created(hef, network_group_name, *net_group_shared_ptr);
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
     std::string unmatched_keys = "";

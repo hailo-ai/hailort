@@ -1,5 +1,4 @@
 #include "mapped_buffer.hpp"
-#include "microprofile.h"
 
 namespace hailort {
 namespace vdma {
@@ -95,7 +94,6 @@ hailo_status MappedBuffer::read(void *buf_dst, size_t count, size_t offset)
 
 hailo_status MappedBuffer::write_cyclic(const void *buf_src, size_t count, size_t offset)
 {
-    MICROPROFILE_SCOPEI("vDMA", "Write buffer", 0);
     if (count > m_size) {
         LOGGER__ERROR("Requested size({}) is more than the MappedBuffer size {}", count, m_size);
         return HAILO_INSUFFICIENT_BUFFER;
@@ -121,7 +119,6 @@ hailo_status MappedBuffer::write_cyclic(const void *buf_src, size_t count, size_
 
 hailo_status MappedBuffer::read_cyclic(void *buf_dst, size_t count, size_t offset)
 {
-    MICROPROFILE_SCOPEI("vDMA", "Read buffer", 0);
     if (count > m_size) {
         LOGGER__ERROR("Requested size({}) is more than the MappedBuffer size {}", count, m_size);
         return HAILO_INSUFFICIENT_BUFFER;

@@ -1677,7 +1677,7 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_context_info_req
     /* Header */
     local_request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE + 
         sizeof(CONTROL_PROTOCOL__context_switch_set_context_info_request_t) + context_info->context_network_data_length;
-    control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_SET_CONTEXT_INFO, 8);
+    control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_SET_CONTEXT_INFO, 9);
 
     /* is_first_control_per_context */
     request->parameters.context_switch_set_context_info_request.is_first_control_per_context_length = 
@@ -1690,6 +1690,12 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_context_info_req
         BYTE_ORDER__htonl(sizeof(request->parameters.context_switch_set_context_info_request.is_last_control_per_context));
     request->parameters.context_switch_set_context_info_request.is_last_control_per_context = 
         context_info->is_last_control_per_context;
+
+    /* context_type */
+    request->parameters.context_switch_set_context_info_request.context_type_length = 
+        BYTE_ORDER__htonl(sizeof(request->parameters.context_switch_set_context_info_request.context_type));
+    request->parameters.context_switch_set_context_info_request.context_type = 
+        context_info->context_type;
 
     /* cfg_channels_count */
     request->parameters.context_switch_set_context_info_request.cfg_channels_count_length = 
@@ -1793,7 +1799,8 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_pause_frames_request(CONTROL_PR
 }
 
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_download_context_action_list_request(CONTROL_PROTOCOL__request_t *request, 
-        size_t *request_size, uint32_t sequence, uint8_t context_index, uint16_t action_list_offset)
+    size_t *request_size, uint32_t sequence, uint32_t network_group_id,
+    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index, uint16_t action_list_offset)
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
     size_t local_request_size = 0;
@@ -1805,19 +1812,27 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_download_context_action_list_reques
 
     /* Header */
     local_request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE + sizeof(CONTROL_PROTOCOL__download_context_action_list_request_t);
-    control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_DOWNLOAD_CONTEXT_ACTION_LIST, 2);
+    control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_DOWNLOAD_CONTEXT_ACTION_LIST, 4);
+
+    /* network_group_id */
+    request->parameters.download_context_action_list_request.network_group_id_length = 
+        BYTE_ORDER__htonl(sizeof(request->parameters.download_context_action_list_request.network_group_id));
+    request->parameters.download_context_action_list_request.network_group_id = BYTE_ORDER__htonl(network_group_id);
+
+    /* context_type */
+    request->parameters.download_context_action_list_request.context_type_length = 
+        BYTE_ORDER__htonl(sizeof(request->parameters.download_context_action_list_request.context_type));
+    request->parameters.download_context_action_list_request.context_type =  static_cast<uint8_t>(context_type);
 
     /* context_index */
     request->parameters.download_context_action_list_request.context_index_length = 
         BYTE_ORDER__htonl(sizeof(request->parameters.download_context_action_list_request.context_index));
-    memcpy(&(request->parameters.download_context_action_list_request.context_index), 
-            &(context_index), sizeof(request->parameters.download_context_action_list_request.context_index));
+    request->parameters.download_context_action_list_request.context_index = context_index;
 
     /* action_list_offset */
     request->parameters.download_context_action_list_request.action_list_offset_length = 
         BYTE_ORDER__htonl(sizeof(request->parameters.download_context_action_list_request.action_list_offset));
-    memcpy(&(request->parameters.download_context_action_list_request.action_list_offset), 
-            &(action_list_offset), sizeof(request->parameters.download_context_action_list_request.action_list_offset));
+    request->parameters.download_context_action_list_request.action_list_offset = BYTE_ORDER__htons(action_list_offset);
 
     *request_size = local_request_size;
     status = HAILO_COMMON_STATUS__SUCCESS;

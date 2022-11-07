@@ -27,7 +27,6 @@
 #include "pipeline_multiplexer.hpp"
 
 #include "pcie_device.hpp"
-#include "hlpcie.hpp"
 
 #include <new>
 #include <algorithm>
@@ -118,6 +117,134 @@ VdmaConfigManager::~VdmaConfigManager()
     }
 }
 
+Expected<std::shared_ptr<ConfiguredNetworkGroup>> VdmaConfigManager::create_configured_network_group(
+    std::shared_ptr<NetworkGroupMetadata> network_group_metadata,
+    const ProtoHEFNetworkGroup &network_group_proto, Hef &hef, const ConfigureNetworkParams &config_params,
+    uint8_t network_group_index, bool &was_hef_already_configured)
+{
+    auto status = Hef::Impl::validate_net_group_unique_layer_names(network_group_proto);
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    std::shared_ptr<VdmaConfigNetworkGroup> identical_network_group = nullptr;
+    std::vector<std::shared_ptr<ResourcesManager>> resources_managers;
+    bool should_create_resources_managers = true;
+
+    auto network_group_scheduler = m_network_group_scheduler.lock();
+
+    /* Validate batch size is identical for all networks in case scheduler is enabled */
+    uint16_t ref_batch_size = UINT16_MAX;
+    if (network_group_scheduler) {
+        for (const auto &network_params_pair : config_params.network_params_by_name) {
+            if (UINT16_MAX == ref_batch_size) {
+                ref_batch_size = network_params_pair.second.batch_size;
+            }
+            CHECK_AS_EXPECTED(ref_batch_size == network_params_pair.second.batch_size, HAILO_INVALID_OPERATION,
+                "When scheduler is enabled, all networks should have the same batch_size. configure_params contains {} and {}. " \
+                "To disable scheduler, set HAILO_SCHEDULING_ALGORITHM_NONE in VDevice creation.", ref_batch_size, network_params_pair.second.batch_size);
+        }
+    }
+
+    if (m_is_vdevice && network_group_scheduler && PipelineMultiplexer::should_use_multiplexer()) {
+        for (auto &network_group : m_net_groups) {
+            if (network_group->equals(hef, network_group_metadata->network_group_name())) {
+                identical_network_group = network_group;
+                LOGGER__INFO("Network group {} was already configured. Using its resources instead of creating new ones...",
+                    network_group_metadata->network_group_name());
+                break;
+            }
+        }
+
+        if (nullptr != identical_network_group) {
+            should_create_resources_managers = false;
+            resources_managers = identical_network_group->get_resources_managers();
+            was_hef_already_configured = true;
+            if (config_params != identical_network_group->get_config_params()) {
+                LOGGER__WARNING("Configured network group was already configured but has different parameters which will not take effect!");
+            }
+        }
+    }
+
+    if (should_create_resources_managers) {
+        /* build HEF supported features */
+        for (auto device : m_devices) {
+            auto resource_manager = Hef::Impl::create_resources_manager(network_group_proto, network_group_index,
+                device.get(), device.get().get_driver(), config_params, network_group_metadata, hef.pimpl->get_device_arch());
+            CHECK_EXPECTED(resource_manager);
+            resources_managers.push_back(resource_manager.release());
+        }
+    }
+
+    auto net_group = VdmaConfigNetworkGroup::create(m_active_net_group_holder, config_params,
+        resources_managers, hef.hash(), network_group_metadata, m_network_group_scheduler);
+
+    auto net_group_ptr = make_shared_nothrow<VdmaConfigNetworkGroup>(net_group.release());
+    CHECK_AS_EXPECTED(nullptr != net_group_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+    // TODO: move this func into VdmaConfigNetworkGroup c'tor
+    if (m_is_vdevice) {
+        if (network_group_scheduler && (nullptr != identical_network_group)) {
+            status = net_group_ptr->create_vdevice_streams_from_duplicate(identical_network_group);
+            CHECK_SUCCESS_AS_EXPECTED(status);
+
+            net_group_ptr->set_network_group_handle(identical_network_group->network_group_handle());
+        } else {
+            auto network_group_handle = INVALID_NETWORK_GROUP_HANDLE;
+            if (network_group_scheduler) {
+                auto network_group_handle_exp = network_group_scheduler->add_network_group(net_group_ptr);
+                CHECK_EXPECTED(network_group_handle_exp);
+
+                network_group_handle = network_group_handle_exp.value();
+                net_group_ptr->set_network_group_handle(network_group_handle);
+            }
+
+            auto multiplexer = make_shared_nothrow<PipelineMultiplexer>();
+            CHECK_AS_EXPECTED(nullptr != multiplexer, HAILO_OUT_OF_HOST_MEMORY, "Failed to create PipelineMultiplexer");
+
+            status = net_group_ptr->create_vdevice_streams_from_config_params(multiplexer, network_group_handle);
+            CHECK_SUCCESS_AS_EXPECTED(status);
+
+            m_net_groups.emplace_back(net_group_ptr);
+        }
+    } else {
+        status = net_group_ptr->create_streams_from_config_params(net_group_ptr->get_resources_managers()[0]->get_device());
+        CHECK_SUCCESS_AS_EXPECTED(status);
+
+        m_net_groups.emplace_back(net_group_ptr);
+    }
+
+    // Check that all boundary streams were created
+    status = validate_boundary_streams_were_created(hef, network_group_metadata->network_group_name(), *net_group_ptr);
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    auto net_group_wrapper = ConfiguredNetworkGroupWrapper::create(net_group_ptr);
+    CHECK_EXPECTED(net_group_wrapper);
+
+    auto net_group_wrapper_ptr = make_shared_nothrow<ConfiguredNetworkGroupWrapper>(net_group_wrapper.release());
+    CHECK_AS_EXPECTED(nullptr != net_group_wrapper_ptr, HAILO_OUT_OF_HOST_MEMORY);
+    m_net_group_wrappers.emplace_back(net_group_wrapper_ptr);
+
+    return Expected<std::shared_ptr<ConfiguredNetworkGroup>>(net_group_wrapper_ptr);
+}
+
+Expected<ConfigureNetworkParams> VdmaConfigManager::get_default_configured_params(Hef &hef,
+    const std::string &network_group_name)
+{
+    auto first_streams_interface = m_devices[0].get().get_default_streams_interface();
+    CHECK_EXPECTED(first_streams_interface);
+#ifndef NDEBUG
+    // Check that all physical devices has the same interface
+    for (auto &device : m_devices) {
+        auto interface = device.get().get_default_streams_interface();
+        CHECK_EXPECTED(interface);
+        CHECK_AS_EXPECTED(interface.value() == first_streams_interface.value(), HAILO_INTERNAL_FAILURE,
+            "Not all default stream interfaces are the same");
+    }
+#endif
+    auto config_params = hef.create_configure_params(first_streams_interface.value(), network_group_name);
+    CHECK_EXPECTED(config_params);
+    return config_params.release();
+}
+
 Expected<ConfiguredNetworkGroupVector> VdmaConfigManager::add_hef(Hef &hef,
     const NetworkGroupsParamsMap &configure_params)
 {
@@ -142,61 +269,37 @@ Expected<ConfiguredNetworkGroupVector> VdmaConfigManager::add_hef(Hef &hef,
     bool was_hef_already_configured = false;
 
     ConfiguredNetworkGroupVector added_network_groups;
+    // TODO: can be optimized (add another loop the allocate the network group we're adding)
     added_network_groups.reserve(hef_network_groups.size());
 
     auto hef_arch = hef.pimpl->get_device_arch();
 
     auto current_net_group_index = static_cast<uint8_t>(prev_network_group_count);
     auto configure_params_copy = configure_params;
-    const ProtoHEFNetworkGroup *network_group_ptr = nullptr;
-    for (const auto &network_group_proto : hef_network_groups) {
-        CHECK_NOT_NULL_AS_EXPECTED(network_group_proto, HAILO_INTERNAL_FAILURE);
+    for (const auto &base_network_group_proto : hef_network_groups) {
+        CHECK_NOT_NULL_AS_EXPECTED(base_network_group_proto, HAILO_INTERNAL_FAILURE);
+        auto network_group_proto = Hef::Impl::get_net_group_per_arch(*base_network_group_proto, hef_arch, device_arch,
+            partial_clusters_layout_bitmap);
+        CHECK_EXPECTED(network_group_proto);
 
-        if (ProtoHEFHwArch::PROTO__HW_ARCH__HAILO8L == hef_arch) {
-            // Hailo8 can work with Hailo8L configurations. in that case we choose one of the configurations
-            for (auto &partial_network_group : network_group_proto->partial_network_groups()) {
-                if ((partial_clusters_layout_bitmap == partial_network_group.layout().partial_clusters_layout_bitmap()) ||
-                    ((HAILO_ARCH_HAILO8 == device_arch))) {
-                    network_group_ptr = &partial_network_group.network_group();
-                    break;
-                }
-            }
-            CHECK_AS_EXPECTED(nullptr != network_group_ptr, HAILO_INTERNAL_FAILURE, "There is no matching partial_clusters_layout_bitmap configuration in the given HEF");
-        } else {
-            network_group_ptr = network_group_proto.get();
-        }
-        CHECK_NOT_NULL_AS_EXPECTED(network_group_ptr, HAILO_INTERNAL_FAILURE);
-        std::string network_group_name = network_group_ptr->network_group_metadata().network_group_name();
+        const std::string network_group_name = network_group_proto->get().network_group_metadata().network_group_name();
 
-        auto status = Hef::Impl::validate_net_group_unique_layer_names(*network_group_ptr);
-        CHECK_SUCCESS_AS_EXPECTED(status);
-
-        static_assert(HAILO_DEFAULT_BATCH_SIZE <= std::numeric_limits<uint16_t>::max(),
-            "Invalid HAILO_DEFAULT_BATCH_SIZE");
-
+        /* If NG params are present, use them
+           If no configure params are given, use default*/
         ConfigureNetworkParams config_params{};
         if (contains(configure_params, network_group_name)) {
             config_params = configure_params_copy.at(network_group_name);
             configure_params_copy.erase(network_group_name);
-        } else {
-            auto first_streams_interface = m_devices[0].get().get_default_streams_interface();
-            CHECK_EXPECTED(first_streams_interface);
-#ifndef NDEBUG
-            // Check that all physicall devices has the same interface
-            for (auto &device : m_devices) {
-                auto interface = device.get().get_default_streams_interface();
-                CHECK_EXPECTED(interface);
-                CHECK_AS_EXPECTED(interface.value() == first_streams_interface.value(), HAILO_INTERNAL_FAILURE,
-                    "Not all default stream interfaces are the same");
-            }
-#endif
-            auto config_params_exp = hef.create_configure_params(first_streams_interface.value(), network_group_name);
+        } else if (configure_params.empty()) {
+            auto config_params_exp = get_default_configured_params(hef, network_group_name);
             CHECK_EXPECTED(config_params_exp);
             config_params = config_params_exp.release();
+        } else {
+            continue;
         }
 
         /* Validate batch size (network group batch size vs network batch size) */
-        status = update_network_batch_size(config_params);
+        auto status = update_network_batch_size(config_params);
         CHECK_SUCCESS_AS_EXPECTED(status);
 
         auto network_group_metadata = hef.pimpl->get_network_group_metadata(network_group_name, partial_clusters_layout_bitmap);
@@ -205,99 +308,11 @@ Expected<ConfiguredNetworkGroupVector> VdmaConfigManager::add_hef(Hef &hef,
         auto network_group_metadata_ptr = make_shared_nothrow<NetworkGroupMetadata>(network_group_metadata.release());
         CHECK_AS_EXPECTED(nullptr != network_group_metadata_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
-        std::shared_ptr<VdmaConfigNetworkGroup> identical_network_group = nullptr;
-        std::vector<std::shared_ptr<ResourcesManager>> resources_managers;
-        bool should_create_resources_managers = true;
-    
-        auto network_group_scheduler = m_network_group_scheduler.lock();
-
-        bool should_use_multiplexer = true;
-        auto disable_multiplexer_env = std::getenv(DISABLE_MULTIPLEXER_ENV_VAR);
-        if ((nullptr != disable_multiplexer_env) && (strnlen(disable_multiplexer_env, 2) == 1) && (strncmp(disable_multiplexer_env, "1", 1) == 0)) {
-            should_use_multiplexer = false;
-        }
-
-        if (m_is_vdevice && network_group_scheduler && should_use_multiplexer) {
-            for (auto &network_group : m_net_groups) {
-                if (network_group->equals(hef, network_group_name)) {
-                    identical_network_group = network_group;
-                    LOGGER__INFO("Network group {} was already configured. Using its resources instead of creating new ones...", network_group_name);
-                    break;
-                }
-            }
-
-            if (nullptr != identical_network_group) {
-                should_create_resources_managers = false;
-                resources_managers = identical_network_group->get_resources_managers();
-                was_hef_already_configured = true;
-
-                if (config_params != identical_network_group->get_config_params()) {
-                    LOGGER__WARNING("Configured network group was already configured but has different parameters which will not take effect!");
-                }
-            }
-        }
-
-        if (should_create_resources_managers) {
-            /* build HEF supported features */
-            for (auto device : m_devices) {
-                auto resource_manager = Hef::Impl::create_resources_manager(*network_group_ptr, current_net_group_index,
-                    device.get(), device.get().get_driver(), config_params, network_group_metadata_ptr, hef.pimpl->get_device_arch());
-                CHECK_EXPECTED(resource_manager);
-                resources_managers.push_back(resource_manager.release());
-            }
-        }
-
-        auto net_group = VdmaConfigNetworkGroup::create(m_active_net_group_holder, config_params,
-            resources_managers, hef.hash(), network_group_metadata_ptr, m_network_group_scheduler);
+        auto network_group = create_configured_network_group(network_group_metadata_ptr, network_group_proto->get(), hef,
+            config_params, current_net_group_index, was_hef_already_configured);
+        CHECK_EXPECTED(network_group);
         current_net_group_index++;
-
-        auto net_group_ptr = make_shared_nothrow<VdmaConfigNetworkGroup>(net_group.release());
-        CHECK_AS_EXPECTED(nullptr != net_group_ptr, HAILO_OUT_OF_HOST_MEMORY);
-
-        // TODO: move this func into VdmaConfigNetworkGroup c'tor
-        if (m_is_vdevice) {
-            if (network_group_scheduler && (nullptr != identical_network_group)) {
-                status = net_group_ptr->create_vdevice_streams_from_duplicate(identical_network_group);
-                CHECK_SUCCESS_AS_EXPECTED(status);
-
-                net_group_ptr->set_network_group_handle(identical_network_group->network_group_handle());
-            } else {
-                auto network_group_handle = INVALID_NETWORK_GROUP_HANDLE;
-                if (network_group_scheduler) {
-                    auto network_group_handle_exp = network_group_scheduler->add_network_group(net_group_ptr);
-                    CHECK_EXPECTED(network_group_handle_exp);
-
-                    network_group_handle = network_group_handle_exp.value();
-                    net_group_ptr->set_network_group_handle(network_group_handle);
-                }
-
-                auto multiplexer = make_shared_nothrow<PipelineMultiplexer>();
-                CHECK_AS_EXPECTED(nullptr != multiplexer, HAILO_OUT_OF_HOST_MEMORY, "Failed to create PipelineMultiplexer");
-
-                status = net_group_ptr->create_vdevice_streams_from_config_params(multiplexer, network_group_handle);
-                CHECK_SUCCESS_AS_EXPECTED(status);
-
-                m_net_groups.emplace_back(net_group_ptr);
-            }
-        } else {
-            status = net_group_ptr->create_streams_from_config_params(net_group_ptr->get_resources_managers()[0]->get_device());
-            CHECK_SUCCESS_AS_EXPECTED(status);
-
-            m_net_groups.emplace_back(net_group_ptr);
-        }
-
-        // Check that all boundary streams were created
-        status = validate_boundary_streams_were_created(hef, network_group_name, *net_group_ptr);
-        CHECK_SUCCESS_AS_EXPECTED(status);
-
-        auto net_group_wrapper = ConfiguredNetworkGroupWrapper::create(net_group_ptr);
-        CHECK_EXPECTED(net_group_wrapper);
-
-        auto net_group_wrapper_ptr = make_shared_nothrow<ConfiguredNetworkGroupWrapper>(net_group_wrapper.release());
-        CHECK_AS_EXPECTED(nullptr != net_group_wrapper_ptr, HAILO_OUT_OF_HOST_MEMORY);
-
-        m_net_group_wrappers.emplace_back(net_group_wrapper_ptr);
-        added_network_groups.emplace_back(std::static_pointer_cast<ConfiguredNetworkGroup>(net_group_wrapper_ptr));
+        added_network_groups.emplace_back(network_group.release());
     }
     std::string unmatched_keys = "";
     for (const auto &pair : configure_params_copy) {
@@ -348,6 +363,8 @@ Expected<ConfiguredNetworkGroupVector> VdmaConfigManager::add_hef(Hef &hef,
 
 hailo_status VdmaConfigManager::update_network_batch_size(ConfigureNetworkParams &network_group_config_params)
 {
+    static_assert(HAILO_DEFAULT_BATCH_SIZE == 0, "Invalid HAILO_DEFAULT_BATCH_SIZE");
+
     auto single_network_default_batch = (HAILO_DEFAULT_BATCH_SIZE == network_group_config_params.batch_size);
     auto multi_network_default_batch = true;
     /* Batch size overide logic - if user modifies network group batch size

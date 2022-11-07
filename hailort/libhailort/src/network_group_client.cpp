@@ -20,8 +20,8 @@ ConfiguredNetworkGroupClient::ConfiguredNetworkGroupClient(std::unique_ptr<Hailo
     m_client(std::move(client)),
     m_handle(handle)
 {
-    auto reply = m_client->ConfiguredNetworkGroup_get_name(m_handle);
-    if (reply.status() != HAILO_SUCCESS) {
+    auto reply = m_client->ConfiguredNetworkGroup_name(m_handle);
+    if (!reply) {
         LOGGER__ERROR("get_network_group_name failed with status {}", reply.status());
         return;
     }
@@ -32,7 +32,7 @@ ConfiguredNetworkGroupClient::~ConfiguredNetworkGroupClient()
 {
     auto reply = m_client->ConfiguredNetworkGroup_release(m_handle);
     if (reply != HAILO_SUCCESS) {
-        LOGGER__CRITICAL("ConfiguredNetworkGroup_release failed!");
+        LOGGER__CRITICAL("ConfiguredNetworkGroup_release failed with status: {}", reply);
     }
 }
 

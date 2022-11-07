@@ -68,6 +68,6 @@ if __name__ == "__main__":
             "linux_aarch64",
         ],
         url="https://hailo.ai/",
-        version="4.10.0",
+        version="4.11.0",
         zip_safe=False,
     )

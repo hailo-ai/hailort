@@ -51,7 +51,7 @@ public:
         bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
         const std::string &network_name);
     Expected<std::string> ConfiguredNetworkGroup_get_network_group_name(uint32_t handle);
-    Expected<std::string> ConfiguredNetworkGroup_get_name(uint32_t handle);
+    Expected<std::string> ConfiguredNetworkGroup_name(uint32_t handle);
     Expected<std::vector<hailo_network_info_t>> ConfiguredNetworkGroup_get_network_infos(uint32_t handle);
     Expected<std::vector<hailo_stream_info_t>> ConfiguredNetworkGroup_get_all_stream_infos(uint32_t handle, const std::string &network_name);
     Expected<hailo_stream_interface_t> ConfiguredNetworkGroup_get_default_stream_interface(uint32_t handle);
@@ -82,9 +82,14 @@ public:
 
     hailo_status InputVStream_abort(uint32_t handle);
     hailo_status OutputVStream_abort(uint32_t handle);
-
     hailo_status InputVStream_resume(uint32_t handle);
     hailo_status OutputVStream_resume(uint32_t handle);
+
+    Expected<hailo_format_t> InputVStream_get_user_buffer_format(uint32_t handle);
+    Expected<hailo_format_t> OutputVStream_get_user_buffer_format(uint32_t handle);
+
+    Expected<hailo_vstream_info_t> InputVStream_get_info(uint32_t handle);
+    Expected<hailo_vstream_info_t> OutputVStream_get_info(uint32_t handle);
 
 private:
     std::unique_ptr<HailoRtRpc::Stub> m_stub;
