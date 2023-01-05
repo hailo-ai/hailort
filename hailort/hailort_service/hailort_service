@@ -1,0 +1,12 @@
+# This file contains HailoRT's configurable environment variables for HailoRT Service.
+# The environment variables are set to their default values.
+# To change an environment variable's value, follow the steps:
+# 1. Change the value of the selected environemt variable in this file
+# 2. Reload systemd unit files by running: `sudo systemctl daemon-reload`
+# 3. Enable and start service by running: `sudo systemctl enable --now hailort.service`
+
+[Service]
+HAILORT_LOGGER_PATH="/var/log/hailo"
+HAILO_DISABLE_MULTIPLEXER=0
+HAILO_ENABLE_MULTI_DEVICE_SCHEDULER=0
+SCHEDULER_MONITOR=0

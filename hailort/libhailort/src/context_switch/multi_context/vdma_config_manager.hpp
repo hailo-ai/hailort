@@ -11,58 +11,46 @@
 #ifndef HAILO_VDMA_CONFIG_MANAGER_HPP_
 #define HAILO_VDMA_CONFIG_MANAGER_HPP_
 
-#include "context_switch/config_manager.hpp"
-#include "context_switch/network_group_wrapper.hpp"
 #include "context_switch/multi_context/vdma_config_network_group.hpp"
 #include "hailo/hailort.h"
-#include "hailo/device.hpp"
-#include "hailo/vdevice.hpp"
-#include "hailo/expected.hpp"
 #include "common/utils.hpp"
-#include "hlpcie.hpp"
-#include "vdma_channel.hpp"
-#include "network_group_scheduler.hpp"
 
-#include <vector>
-#include <map>
-#include <algorithm>
-#include <bitset>
 
 namespace hailort
 {
 
-#define DISABLE_MULTIPLEXER_ENV_VAR "HAILO_DISABLE_MULTIPLEXER"
-
-class VDeviceBase;
-
-class VdmaConfigManager : public ConfigManager
+class VdmaConfigManager final
 {
 public:
-    // Note: Each manager created on a device clears the network groups configured to that device
-    static Expected<VdmaConfigManager> create(VdmaDevice &device);
-    static Expected<VdmaConfigManager> create(VDeviceBase &vdevice);
-    virtual ConfigManagerType get_manager_type();
-    virtual Expected<ConfiguredNetworkGroupVector> add_hef(Hef &hef, const NetworkGroupsParamsMap &configure_params);
+    VdmaConfigManager() = delete;
 
-    static hailo_status update_network_batch_size(ConfigureNetworkParams &network_group_config_params);
+    static hailo_status switch_network_group(std::shared_ptr<VdmaConfigNetworkGroup> current_active_ng,
+        std::shared_ptr<VdmaConfigNetworkGroup> next_ng, const uint16_t batch_size)
+    {
+        auto status = HAILO_UNINITIALIZED;
+        // If current_active_ng is nullptr - we are activating first network group
+        if (nullptr != current_active_ng) {
+            status = current_active_ng->deactivate_impl();
+            CHECK_SUCCESS(status, "Failed deactivating current network group");
 
-    virtual ~VdmaConfigManager();
-    VdmaConfigManager(const VdmaConfigManager &other) noexcept = delete;
-    VdmaConfigManager &operator=(const VdmaConfigManager &other) = delete;
-    VdmaConfigManager &operator=(VdmaConfigManager &&other) = delete;
-    VdmaConfigManager(VdmaConfigManager &&other) noexcept = default;
+            // TODO: MSW-762 - In mercury we need to reset after deactivate in case of mercury - this will be fixed and the
+            // If will be removed when we make the nn_manager responsible to reset the nn-core
+            // And if switching to nullptr (which is final deactivate - we must also reset state machine)
+            if (Device::Type::CORE == current_active_ng->get_resources_manager()->get_device().get_type() ||
+                (nullptr == next_ng)) {
+                status = current_active_ng->get_resources_manager()->reset_state_machine(false);
+                CHECK_SUCCESS(status, "Failed to reset state machine in switch network group");
+            }
+        }
 
-private:
-    VdmaConfigManager(std::vector<std::reference_wrapper<VdmaDevice>> &&devices, bool is_vdevice,
-                      NetworkGroupSchedulerWeakPtr network_group_scheduler, hailo_status &status);
+        // If next_ng is nullptr we are deactivating last network group
+        if (nullptr != next_ng) {
+            status = next_ng->activate_impl(batch_size);
+            CHECK_SUCCESS(status, "Failed activating network group");
+        }
 
-    // TODO: (SDK-16665) Dont need is_active flag for dtor?
-    std::vector<std::reference_wrapper<VdmaDevice>> m_devices;
-    std::vector<std::shared_ptr<VdmaConfigNetworkGroup>> m_net_groups;
-    std::vector<std::shared_ptr<ConfiguredNetworkGroupWrapper>> m_net_group_wrappers;
-    VdmaConfigActiveAppHolder m_active_net_group_holder;
-    bool m_is_vdevice;
-    NetworkGroupSchedulerWeakPtr m_network_group_scheduler;
+        return HAILO_SUCCESS;
+    }
 };
 
 } /* namespace hailort */

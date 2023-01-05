@@ -48,7 +48,7 @@ extern "C" {
 #define HAILO_DEFAULT_BUFFERS_THRESHOLD (0)
 #define HAILO_DEFAULT_MAX_ETHERNET_BANDWIDTH_BYTES_PER_SEC (106300000)
 #define HAILO_MAX_STREAMS_COUNT (32)
-#define HAILO_DEFAULT_BATCH_SIZE (1)
+#define HAILO_DEFAULT_BATCH_SIZE (0)
 #define HAILO_MAX_NETWORK_GROUPS (8)
 #define HAILO_MAX_NETWORK_GROUP_NAME_SIZE (HAILO_MAX_NAME_SIZE)
 /* Network name is always attached to network group name with '/' separator */
@@ -67,7 +67,6 @@ extern "C" {
 
 #define HAILO_UNIQUE_VDEVICE_GROUP_ID ("UNIQUE")
 #define HAILO_DEFAULT_VDEVICE_GROUP_ID HAILO_UNIQUE_VDEVICE_GROUP_ID
-
 
 typedef float float32_t;
 typedef double float64_t;
@@ -137,8 +136,8 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(59, HAILO_THREAD_NOT_ACTIVATED                    /*!< The given thread has not been activated */)\
     HAILO_STATUS__X(60, HAILO_THREAD_NOT_JOINABLE                     /*!< The given thread is not joinable */)\
     HAILO_STATUS__X(61, HAILO_NOT_FOUND                               /*!< Could not find element */)\
-    HAILO_STATUS__X(62, HAILO_STREAM_ABORTED                          /*!< Stream aborted due to an external event */)\
-    HAILO_STATUS__X(63, HAILO_STREAM_INTERNAL_ABORT                   /*!< Stream recv/send was aborted */)\
+    HAILO_STATUS__X(62, HAILO_STREAM_ABORTED_BY_HW                    /*!< Stream aborted due to an external event */)\
+    HAILO_STATUS__X(63, HAILO_STREAM_ABORTED_BY_USER                  /*!< Stream recv/send was aborted */)\
     HAILO_STATUS__X(64, HAILO_PCIE_DRIVER_NOT_INSTALLED               /*!< Pcie driver is not installed */)\
     HAILO_STATUS__X(65, HAILO_NOT_AVAILABLE                           /*!< Component is not available */)\
     HAILO_STATUS__X(66, HAILO_TRAFFIC_CONTROL_FAILURE                 /*!< Traffic control failure */)\
@@ -154,6 +153,7 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(76, HAILO_INVALID_DRIVER_VERSION                  /*!< Invalid driver version */)\
     HAILO_STATUS__X(77, HAILO_RPC_FAILED                              /*!< RPC failed */)\
     HAILO_STATUS__X(78, HAILO_INVALID_SERVICE_VERSION                 /*!< Invalid service version */)\
+    HAILO_STATUS__X(79, HAILO_NOT_SUPPORTED                           /*!< Not supported operation */)\
 
 typedef enum {
 #define HAILO_STATUS__X(value, name) name = value,
@@ -166,6 +166,9 @@ typedef enum {
     /** Max enum value to maintain ABI Integrity */
     HAILO_STATUS_MAX_ENUM                       = HAILO_MAX_ENUM
 } hailo_status;
+
+#define HAILO_STREAM_ABORTED HAILO_STREAM_ABORTED_BY_HW /* 'HAILO_STREAM_ABORTED' is deprecated. One should use 'HAILO_STREAM_ABORTED_BY_HW' */
+#define HAILO_STREAM_INTERNAL_ABORT HAILO_STREAM_ABORTED_BY_USER /* 'HAILO_STREAM_INTERNAL_ABORT' is deprecated. One should use 'HAILO_STREAM_ABORTED_BY_USER' */
 
 /** HailoRT library version */
 typedef struct {
@@ -375,24 +378,14 @@ typedef enum hailo_scheduling_algorithm_e {
 /** Virtual device parameters */
 typedef struct {
     /**
-     * Requested number of physical devices. if @a device_ids is not NULL, or @a device_infos is not NULL represents
-     * the number of ::hailo_device_id_t in @a device_ids or the number of ::hailo_pcie_device_info_t in
-     * @a device_infos.
+     * Requested number of physical devices. if @a device_ids is not NULL represents
+     * the number of ::hailo_device_id_t in @a device_ids.
      */
     uint32_t device_count;
 
     /**
-     * This param is deprecated. One should use 'device_ids'.
-     * Specific physical devices information to create the vdevice from. If NULL, the vdevice will try to occupy
+     * Specific device ids to create the vdevice from. If NULL, the vdevice will try to occupy
      * devices from the available pool.
-     * This parameter cannot be used together with @a device_ids.
-     */
-    hailo_pcie_device_info_t *device_infos DEPRECATED("'device_infos' param is deprecated. One should use 'device_ids'");
-
-    /**
-     * Specific device ids to create the vdevice from. If NULL, the vdevice the vdevice will try to occupy
-     * devices from the available pool.
-     * This parameter cannot be used together with @a device_infos.
      */
     hailo_device_id_t *device_ids;
 
@@ -439,6 +432,7 @@ typedef struct {
     uint8_t board_name_length;
     char board_name[HAILO_MAX_BOARD_NAME_LENGTH];
     bool is_release;
+    bool extended_context_switch_buffer;
     hailo_device_architecture_t device_architecture;
     uint8_t serial_number_length;
     char serial_number[HAILO_MAX_SERIAL_NUMBER_LENGTH];
@@ -450,6 +444,7 @@ typedef struct {
 
 typedef struct {
     bool is_release;
+    bool extended_context_switch_buffer;
     hailo_firmware_version_t fw_version;
 } hailo_core_information_t;
 
@@ -682,6 +677,13 @@ typedef enum {
      *      [Y0, Y1, Y2, Y3, Y4, Y5, Y6, Y7, V0, U0, V1, U1] is represented by [Y0, Y1, Y2, Y3, V0, U0, Y4, Y5, Y6, Y7, V1, U1]
      */
     HAILO_FORMAT_ORDER_HAILO_YYVU           = 16,
+
+    /**
+     * RGB, where every row is padded to 4.
+     * - Host side: [N, H, W, C], where width*channels are padded to 4.
+     * - Not used for device side
+     */
+    HAILO_FORMAT_ORDER_RGB4                 = 17,
 
     /** Max enum value to maintain ABI Integrity */
     HAILO_FORMAT_ORDER_MAX_ENUM             = HAILO_MAX_ENUM
@@ -1205,7 +1207,7 @@ typedef struct {
     {
         /* Frame shape */
         hailo_3d_image_shape_t shape;
-        /* NMS shape, only valid if format.order is ::HAILO_FORMAT_ORDER_NMS */
+        /* NMS shape, only valid if format.order is ::HAILO_FORMAT_ORDER_HAILO_NMS */
         hailo_nms_shape_t nms_shape;
     };
 
@@ -1326,7 +1328,7 @@ typedef struct {
 typedef struct {
     uint32_t connection_status;
     uint32_t connection_type;
-    uint32_t pcie_is_active;
+    uint32_t vdma_is_active;
     uint32_t host_port;
     uint32_t host_ip_addr;
 } hailo_debug_notification_message_t;
@@ -1429,8 +1431,7 @@ typedef struct {
  * @param[in] opaque                User specific data.
  * @warning Throwing exceptions in the callback is not supported!
  */
-typedef void (*hailo_notification_callback)(hailo_device, const hailo_notification_t*, void*);
-
+typedef void (*hailo_notification_callback)(hailo_device device, const hailo_notification_t *notification, void *opaque);
 /** Hailo device reset modes */
 typedef enum {
     HAILO_RESET_DEVICE_MODE_CHIP        = 0,
@@ -2086,19 +2087,6 @@ HAILORTAPI hailo_status hailo_get_physical_devices(hailo_vdevice vdevice, hailo_
     size_t *number_of_devices);
 
 /**
- * Gets the physical devices' infos from a vdevice.
- *
- * @param[in]  vdevice                     A @a hailo_vdevice object to fetch physical devices from.
- * @param[out] devices_infos               Array of ::hailo_pcie_device_info_t to be fetched from vdevice.
- * @param[inout] number_of_devices         As input - the size of @a devices_infos array. As output - the number of physical devices under vdevice.
- * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- * @note The returned physical devices are held in the scope of @a vdevice.
- * @note This function is deprecated. One should use 'hailo_vdevice_get_physical_devices_ids()'
- */
-HAILORTAPI hailo_status hailo_get_physical_devices_infos(hailo_vdevice vdevice, hailo_pcie_device_info_t *devices_infos,
-    size_t *number_of_devices) DEPRECATED("'hailo_get_physical_devices_infos' is deprecated. One should use 'hailo_vdevice_get_physical_devices_ids()'.");
-
-/**
  * Gets the physical devices' ids from a vdevice.
  *
  * @param[in]  vdevice                     A @a hailo_vdevice object to fetch physical devices from.
@@ -2429,6 +2417,35 @@ HAILORTAPI hailo_status hailo_init_configure_params_mipi_input(hailo_hef hef, ha
     hailo_mipi_input_stream_params_t *mipi_params, hailo_configure_params_t *params);
 
 /**
+ * Init configure params with default values for a given hef.
+ *
+ * @param[in]  hef                      A  ::hailo_hef object to configure the @a device by.
+ * @param[in]  stream_interface         A @a hailo_stream_interface_t indicating which @a hailo_stream_parameters_t to create.
+ * @param[in]  network_group_name       The name of the network_group to make configure params for. If NULL is passed,
+ *                                      the first network_group in the HEF will be addressed.
+ * @param[out] params                   A @a hailo_configure_params_t to be filled.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_init_configure_network_group_params(hailo_hef hef, hailo_stream_interface_t stream_interface,
+    const char *network_group_name, hailo_configure_network_group_params_t *params);
+
+/**
+ * Init configure params with default values for a given hef, where all input_streams_params are init to be MIPI type.
+ *
+ * @param[in]  hef                      A  ::hailo_hef object to configure the @a device by.
+ * @param[in]  output_interface         A @a hailo_stream_interface_t indicating which @a hailo_stream_parameters_t to
+ *                                      create for the output streams.
+ * @param[in]  mipi_params              A ::hailo_mipi_input_stream_params_t object which contains the MIPI params for
+ *                                      the input streams.
+ * @param[in]  network_group_name       The name of the network_group to make configure params for. If NULL is passed,
+ *                                      the first network_group in the HEF will be addressed.
+ * @param[out] params                   A @a hailo_configure_params_t to be filled.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_init_configure_network_group_params_mipi_input(hailo_hef hef, hailo_stream_interface_t output_interface,
+    hailo_mipi_input_stream_params_t *mipi_params, const char *network_group_name, hailo_configure_network_group_params_t *params);
+
+/**
  * Configure the device from an hef.
  *
  * @param[in]  device                      A ::hailo_device object to be configured.
@@ -2598,7 +2615,7 @@ HAILORTAPI hailo_status hailo_set_scheduler_timeout(hailo_configured_network_gro
  *                                          If NULL is passed, the threshold will be set for all the networks in the network group.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE, and before the creation of any vstreams.
- * @note The default threshold is 1.
+ * @note The default threshold is 0, which means HailoRT will apply an automatic heuristic to choose the threshold.
  * @note Currently, setting the threshold for a specific network is not supported.
  * @note The threshold may be ignored to prevent idle time from the device.
  */
@@ -3226,6 +3243,32 @@ HAILORTAPI hailo_status hailo_get_network_infos(hailo_configured_network_group n
     hailo_network_info_t *networks_infos, size_t *number_of_networks);
 
 /** @} */ // end of multi_network_functions
+
+/** @defgroup group_advanced_API_functions hailo advence API functions
+ *  @{
+ */
+
+typedef enum hailo_sleep_state_e {
+    HAILO_SLEEP_STATE_SLEEPING   = 0,
+    HAILO_SLEEP_STATE_AWAKE = 1,
+
+    /** Max enum value to maintain ABI Integrity */
+    HAILO_SLEEP_STATE_MAX_ENUM = HAILO_MAX_ENUM
+} hailo_sleep_state_t;
+
+/**
+ *  Set chip sleep state.
+ * @note This is an advanced API. Please be advised not to use this API, unless supported by Hailo.
+ * 
+ * @param[in]     device         A ::hailo_device object.
+ * @param[in]     sleep_state    The requested sleep state of the chip
+ * 
+ * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
+ */
+
+HAILORTAPI hailo_status hailo_set_sleep_state(hailo_device device, hailo_sleep_state_t sleep_state);
+
+/** @} */ // end of group_advanced_API_functions
 
 /** @defgroup group_deprecated_functions_and_defines Deprecated functions and defines
  *  @{

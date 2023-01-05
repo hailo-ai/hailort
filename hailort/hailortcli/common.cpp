@@ -72,3 +72,22 @@ void CliCommon::reset_cursor(size_t lines_count)
         std::cout << FORMAT_CURSOR_UP_LINE;
     }
 }
+
+void CliCommon::clear_lines_down(size_t lines_count)
+{
+    for (size_t i = 0; i < lines_count; i++) {
+        std::cout << FORMAT_CURSOR_DOWN_CLEAR_LINE;
+    }
+}
+
+bool CliCommon::is_positive_number(const std::string &s)
+{
+    bool is_number = (!s.empty()) && (std::all_of(s.begin(), s.end(), ::isdigit));
+    return is_number && (0 < std::stoi(s));
+}
+
+bool CliCommon::is_non_negative_number(const std::string &s)
+{
+    bool is_number = (!s.empty()) && (std::all_of(s.begin(), s.end(), ::isdigit));
+    return is_number && (0 <= std::stoi(s));
+}

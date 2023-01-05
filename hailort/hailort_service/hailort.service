@@ -4,10 +4,13 @@ Documentation=https://github.com/hailo-ai/hailort
 
 [Service]
 Type=forking
+EnvironmentFile=/etc/default/hailort_service
 ExecStart=/usr/local/bin/hailort_service
 Restart=on-failure
 RemainAfterExit=yes
-Environment="HAILORT_LOGGER_PATH=/var/log/hailo"
+PIDFile=/run/hailo/hailort_service.pid
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStartPost=/bin/sleep 0.1
 
 [Install]
 WantedBy=multi-user.target

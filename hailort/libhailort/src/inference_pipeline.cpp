@@ -12,7 +12,7 @@
 #include "vstream_internal.hpp"
 #include "hailort_defaults.hpp"
 #include "context_switch/network_group_internal.hpp"
-#include "context_switch/network_group_wrapper.hpp"
+#include "context_switch/multi_context/resource_manager.hpp"
 
 #include <sstream>
 
@@ -124,6 +124,10 @@ Expected<InferVStreams> InferVStreams::create(ConfiguredNetworkGroup &net_group,
         }
     }
 
+    if (HAILO_DEFAULT_BATCH_SIZE == batch_size) {
+        batch_size = DEFAULT_ACTUAL_BATCH_SIZE;
+    }
+
     for (const auto &network_info : network_infos.value()) {
         auto input_vstream_infos_per_network = net_group.get_input_vstream_infos(network_info.name);
         CHECK_EXPECTED(input_vstream_infos_per_network);
@@ -166,7 +170,7 @@ Expected<InferVStreams> InferVStreams::create(ConfiguredNetworkGroup &net_group,
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
     if (total_outputs_found != output_params.size()) {
-        auto all_output_vstream_infos = net_group.get_input_vstream_infos();
+        auto all_output_vstream_infos = net_group.get_output_vstream_infos();
         CHECK_EXPECTED(all_output_vstream_infos);
 
         auto status = verify_vstream_params_in_vstream_infos(output_params, all_output_vstream_infos.release());
@@ -209,7 +213,7 @@ hailo_status InferVStreams::infer(const std::map<std::string, MemoryView>& input
                     auto status = input_vstream.write(MemoryView::create_const(
                         input_buffer.data() + offset,
                         input_vstream.get_frame_size()));
-                    if (HAILO_STREAM_INTERNAL_ABORT == status) {
+                    if (HAILO_STREAM_ABORTED_BY_USER == status) {
                         LOGGER__DEBUG("Input stream was aborted!");
                         return status;
                     }
@@ -240,7 +244,7 @@ hailo_status InferVStreams::infer(const std::map<std::string, MemoryView>& input
     auto error_status = HAILO_SUCCESS;
     for (auto& result : results) {
         status = result->get();
-        if (HAILO_STREAM_INTERNAL_ABORT == status) {
+        if (HAILO_STREAM_ABORTED_BY_USER == status) {
             continue;
         }
         if (HAILO_SUCCESS != status) {

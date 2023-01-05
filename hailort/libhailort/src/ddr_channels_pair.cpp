@@ -45,7 +45,7 @@ uint32_t DdrChannelsPair::descriptors_per_frame() const
     return (m_info.row_size / m_buffer->desc_page_size()) * m_info.total_buffers_per_frame;
 }
 
-Expected<Buffer> DdrChannelsPair::read()
+Expected<Buffer> DdrChannelsPair::read() const
 {
     const auto size = m_buffer->size();
     auto res = Buffer::create(size);

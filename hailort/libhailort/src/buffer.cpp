@@ -23,6 +23,21 @@
 namespace hailort
 {
 
+static void format_buffer(std::ostream& stream, const uint8_t *buffer, size_t size)
+{
+    assert(nullptr != buffer);
+
+    static const bool UPPERCASE = true;
+    static const size_t BYTES_PER_LINE = 32;
+    static const char *BYTE_DELIM = "  ";
+    for (size_t offset = 0; offset < size; offset += BYTES_PER_LINE) {
+        const size_t line_size = std::min(BYTES_PER_LINE, size - offset);
+        stream << fmt::format("0x{:08X}", offset) << BYTE_DELIM; // 32 bit offset into a buffer should be enough
+        stream << StringUtils::to_hex_string(buffer + offset, line_size, UPPERCASE, BYTE_DELIM) << std::endl;
+    }
+    stream << "[size = " << std::dec << size << "]";
+}
+
 Buffer::Buffer() :
     m_data(nullptr),
     m_size(0)
@@ -177,9 +192,7 @@ std::string Buffer::to_string() const
 // Note: This is a friend function
 std::ostream& operator<<(std::ostream& stream, const Buffer& buffer)
 {
-    const bool UPPERCASE = true;
-    stream << StringUtils::to_hex_string(buffer.data(), buffer.size(), UPPERCASE, "\t");
-    stream << "\n[size = " << std::dec << buffer.size() << "]";
+    format_buffer(stream, buffer.data(), buffer.size());
     return stream;
 }
 
@@ -261,9 +274,7 @@ bool MemoryView::empty() const noexcept
 // Note: This is a friend function
 std::ostream& operator<<(std::ostream& stream, const MemoryView& buffer)
 {
-    const bool UPPERCASE = true;
-    stream << StringUtils::to_hex_string(buffer.data(), buffer.size(), UPPERCASE, "\t");
-    stream << "\n[size = " << std::dec << buffer.size() << "]";
+    format_buffer(stream, buffer.data(), buffer.size());
     return stream;
 }
 

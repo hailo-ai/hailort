@@ -105,7 +105,9 @@ hailo_status VdmaInputStream::clear_abort()
 
 hailo_status VdmaInputStream::flush()
 {
-    return m_channel->flush((m_channel_timeout * m_dynamic_batch_size));
+    const auto dynamic_batch_size = (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == m_dynamic_batch_size) ? 
+        1 : m_dynamic_batch_size;
+    return m_channel->flush(m_channel_timeout * dynamic_batch_size);
 }
 
 hailo_status VdmaInputStream::activate_stream(uint16_t dynamic_batch_size)
@@ -113,7 +115,7 @@ hailo_status VdmaInputStream::activate_stream(uint16_t dynamic_batch_size)
     auto status = set_dynamic_batch_size(dynamic_batch_size);
     CHECK_SUCCESS(status);
 
-    status = m_channel->start_allocated_channel(0);
+    status = m_channel->complete_channel_activation(0);
     CHECK_SUCCESS(status);
 
     this->is_stream_activated = true;
@@ -126,20 +128,18 @@ hailo_status VdmaInputStream::deactivate_stream()
         return HAILO_SUCCESS;
     }
 
-    /* Flush is best effort */
+    // Flush is best effort
     auto status = m_channel->flush(VDMA_FLUSH_TIMEOUT);
-    if (HAILO_STREAM_INTERNAL_ABORT == status) {
+    if (HAILO_STREAM_ABORTED_BY_USER == status) {
         LOGGER__INFO("Flush input_channel is not needed because channel was aborted. (channel {})", m_channel->get_channel_id());
         status = HAILO_SUCCESS;
     } else if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("Failed to flush input_channel. (status {} channel {})", status, m_channel->get_channel_id());
     }
 
-    /* Close channel is best effort. */
-    auto stop_channel_status = m_channel->stop_channel();
-    if (HAILO_SUCCESS != stop_channel_status) {
-        LOGGER__ERROR("Failed to stop channel with error status {}", stop_channel_status);
-        status = (status == HAILO_SUCCESS) ? stop_channel_status : status;
+    status = m_channel->stop_channel();
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to stop channel with status {}", status);
     }
 
     this->is_stream_activated = false;
@@ -151,46 +151,64 @@ Expected<size_t> VdmaInputStream::sync_write_raw_buffer(const MemoryView &buffer
     hailo_status status = HAILO_UNINITIALIZED;
 
     status = m_channel->wait(buffer.size(), m_channel_timeout);
-    if ((status == HAILO_STREAM_INTERNAL_ABORT) || (status == HAILO_STREAM_NOT_ACTIVATED)) {
+    if ((status == HAILO_STREAM_ABORTED_BY_USER) || (status == HAILO_STREAM_NOT_ACTIVATED)) {
         return make_unexpected(status);
     }
+    CHECK_AS_EXPECTED(HAILO_TIMEOUT != status, HAILO_TIMEOUT,
+        "{} (H2D) failed with status={} (timeout={}ms)", name(), HAILO_TIMEOUT, m_channel_timeout.count());
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     status = m_channel->transfer((void*)buffer.data(), buffer.size());
-    if ((status == HAILO_STREAM_INTERNAL_ABORT) || (status == HAILO_STREAM_NOT_ACTIVATED)) {
+    if ((status == HAILO_STREAM_ABORTED_BY_USER) || (status == HAILO_STREAM_NOT_ACTIVATED)) {
         return make_unexpected(status);
     }
+    CHECK_AS_EXPECTED(HAILO_TIMEOUT != status, HAILO_TIMEOUT,
+        "{} (H2D) failed with status={} (timeout={}ms)", name(), HAILO_TIMEOUT, m_channel_timeout.count());
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     return buffer.size();
 }
 
-hailo_status VdmaInputStream::write_buffer_only(const MemoryView &buffer)
+hailo_status VdmaInputStream::write_buffer_only(const MemoryView &buffer,
+    const std::function<bool()> &should_cancel)
 {
     std::unique_lock<std::mutex> lock(m_write_only_mutex);
-    return m_channel->write_buffer(buffer, m_channel_timeout);
+    return m_channel->write_buffer(buffer, m_channel_timeout, should_cancel);
 }
 
-Expected<PendingBufferState> VdmaInputStream::send_pending_buffer()
+hailo_status VdmaInputStream::send_pending_buffer(size_t device_index)
 {
     std::unique_lock<std::mutex> lock(m_send_pending_mutex);
+    CHECK(0 == device_index, HAILO_INVALID_OPERATION);
     hailo_status status = m_channel->wait(get_frame_size(), m_channel_timeout);
-    if ((HAILO_STREAM_INTERNAL_ABORT == status) || (HAILO_STREAM_NOT_ACTIVATED == status)) {
-        return make_unexpected(status);
+    if ((HAILO_STREAM_ABORTED_BY_USER == status) || (HAILO_STREAM_NOT_ACTIVATED == status)) {
+        return status;
     }
-    CHECK_SUCCESS_AS_EXPECTED(status);
+    CHECK(HAILO_TIMEOUT != status, HAILO_TIMEOUT,
+        "{} (H2D) failed with status={} (timeout={}ms)", name(), HAILO_TIMEOUT, m_channel_timeout.count());
+    CHECK_SUCCESS(status);
 
     return m_channel->send_pending_buffer();
 }
 
 uint16_t VdmaInputStream::get_dynamic_batch_size() const
 {
-    return m_dynamic_batch_size;
+    return std::max(m_dynamic_batch_size, static_cast<uint16_t>(1));
 }
 
 const char* VdmaInputStream::get_dev_id() const
 {
     return m_device->get_dev_id();
+}
+
+Expected<VdmaChannel::BufferState> VdmaInputStream::get_buffer_state()
+{
+    return m_channel->get_buffer_state();
+}
+
+hailo_status VdmaInputStream::sync_channel_state()
+{
+    return m_channel->sync_state(get_timeout());
 }
 
 Expected<size_t> VdmaInputStream::get_buffer_frames_size() const
@@ -212,6 +230,13 @@ hailo_status VdmaInputStream::sync_write_all_raw_buffer_no_transform_impl(void *
 
 hailo_status VdmaInputStream::set_dynamic_batch_size(uint16_t dynamic_batch_size)
 {
+    // TODO: use std::max in the configure stage
+    if (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == m_max_batch_size) {
+        LOGGER__TRACE("max_batch_size is CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE; "
+                      "Ignoring value of dynamic_batch_size {}", m_dynamic_batch_size);
+        return HAILO_SUCCESS;
+    }
+
     CHECK(dynamic_batch_size <= m_max_batch_size, HAILO_INVALID_ARGUMENT,
         "Dynamic batch size ({}) must be <= than the configured batch size ({})",
         dynamic_batch_size, m_max_batch_size);
@@ -325,7 +350,7 @@ hailo_status VdmaOutputStream::clear_abort()
 
 uint16_t VdmaOutputStream::get_dynamic_batch_size() const
 {
-    return m_dynamic_batch_size;
+    return std::max(m_dynamic_batch_size, static_cast<uint16_t>(1));
 }
 
 const char* VdmaOutputStream::get_dev_id() const
@@ -333,12 +358,17 @@ const char* VdmaOutputStream::get_dev_id() const
     return m_device->get_dev_id();
 }
 
+Expected<VdmaChannel::BufferState> VdmaOutputStream::get_buffer_state()
+{
+    return m_channel->get_buffer_state();
+}
+
 hailo_status VdmaOutputStream::activate_stream(uint16_t dynamic_batch_size)
 {
     auto status = set_dynamic_batch_size(dynamic_batch_size);
     CHECK_SUCCESS(status);
-    
-    status = m_channel->start_allocated_channel(m_transfer_size);
+
+    status = m_channel->complete_channel_activation(m_transfer_size);
     CHECK_SUCCESS(status);
 
     this->is_stream_activated = true;
@@ -358,7 +388,9 @@ hailo_status VdmaOutputStream::deactivate_stream()
     }
 
     auto status = m_channel->stop_channel();
-    CHECK_SUCCESS(status);
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to stop channel with status {}", status);
+    }
 
     this->is_stream_activated = false;
     return HAILO_SUCCESS;
@@ -369,15 +401,19 @@ Expected<size_t> VdmaOutputStream::sync_read_raw_buffer(MemoryView &buffer)
     hailo_status status = HAILO_UNINITIALIZED;
 
     status = m_channel->wait(buffer.size(), m_transfer_timeout);
-    if ((status == HAILO_STREAM_INTERNAL_ABORT) || (status == HAILO_STREAM_NOT_ACTIVATED)) {
+    if ((status == HAILO_STREAM_ABORTED_BY_USER) || (status == HAILO_STREAM_NOT_ACTIVATED)) {
         return make_unexpected(status);
     }
+    CHECK_AS_EXPECTED(HAILO_TIMEOUT != status, HAILO_TIMEOUT,
+        "{} (D2H) failed with status={} (timeout={}ms)", name(), HAILO_TIMEOUT, m_transfer_timeout.count());
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     status = m_channel->transfer(buffer.data(), buffer.size());
-    if ((status == HAILO_STREAM_NOT_ACTIVATED) || (status == HAILO_STREAM_INTERNAL_ABORT)) {
+    if ((status == HAILO_STREAM_NOT_ACTIVATED) || (status == HAILO_STREAM_ABORTED_BY_USER)) {
         return make_unexpected(status);
     }
+    CHECK_AS_EXPECTED(HAILO_TIMEOUT != status, HAILO_TIMEOUT,
+        "{} (D2H) failed with status={} (timeout={}ms)", name(), HAILO_TIMEOUT, m_transfer_timeout.count());
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     return buffer.size();
@@ -401,6 +437,13 @@ uint32_t VdmaOutputStream::get_transfer_size(const hailo_stream_info_t &stream_i
 
 hailo_status VdmaOutputStream::set_dynamic_batch_size(uint16_t dynamic_batch_size)
 {
+    // TODO: use std::max in the configure stage
+    if (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == m_max_batch_size) {
+        LOGGER__TRACE("max_batch_size is CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE; "
+                      "Ignoring value of dynamic_batch_size {}", m_dynamic_batch_size);
+        return HAILO_SUCCESS;
+    }
+
     CHECK(dynamic_batch_size <= m_max_batch_size, HAILO_INVALID_ARGUMENT,
         "Dynamic batch size ({}) must be <= than the configured batch size ({})",
         dynamic_batch_size, m_max_batch_size);

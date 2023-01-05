@@ -13,9 +13,162 @@
 
 #include "hailo/hailort.h"
 #include "transform_internal.hpp"
+#include "bindings_common.hpp"
+
 
 namespace hailort
 {
+
+static const uint32_t TEST_NUM_OF_CLASSES2 = 80;
+
+py::array PyhailortInternal::get_yolov5_post_process_expected_buffer()
+{
+    static const uint32_t DETECTION_CLASS_ID_1 = 0;
+    static const float32_t CLASS_ID_1_DETECTION_COUNT = 5;
+    static const uint32_t DETECTION_CLASS_ID_3 = 2;
+    static const float32_t CLASS_ID_3_DETECTION_COUNT = 2;
+    static const uint32_t DETECTION_CLASS_ID_8 = 7;
+    static const float32_t CLASS_ID_8_DETECTION_COUNT = 1;
+    static const uint32_t DETECTION_CLASS_ID_26 = 25;
+    static const float32_t CLASS_ID_26_DETECTION_COUNT = 1;
+
+    static const hailo_bbox_float32_t bbox1_0 = {
+        /*.y_min =*/ 0.5427529811859131f,
+        /*.x_min =*/ 0.2485126256942749f,
+        /*.y_max =*/ 0.6096446067f,
+        /*.x_max =*/ 0.27035075984f,
+        /*.score =*/ 0.7761699557304382f,
+    };
+    
+    static const hailo_bbox_float32_t bbox1_1 = {
+        /*.y_min =*/ 0.5454554557800293f,
+        /*.x_min =*/ 0.33257606625556948f,
+        /*.y_max =*/ 0.7027952075f,
+        /*.x_max =*/ 0.40901548415f,
+        /*.score =*/ 0.7637669444084168f,
+    };
+    
+    static const hailo_bbox_float32_t bbox1_2 = {
+        /*.y_min =*/ 0.5521867275238037f,
+        /*.x_min =*/ 0.19988654553890229f,
+        /*.y_max =*/ 0.60256312787f,
+        /*.x_max =*/ 0.21917282976f,
+        /*.score =*/ 0.7451231479644775f,
+    };
+
+    static const hailo_bbox_float32_t bbox1_3 = {
+        /*.y_min =*/ 0.5514537692070007f,
+        /*.x_min =*/ 0.2693796157836914f,
+        /*.y_max =*/ 0.60397491604f,
+        /*.x_max =*/ 0.28537025302f,
+        /*.score =*/ 0.3756354749202728f,
+    };
+    
+    static const hailo_bbox_float32_t bbox1_4 = {
+        /*.y_min =*/ 0.553998589515686f,
+        /*.x_min =*/ 0.18612079322338105f,
+        /*.y_max =*/ 0.58339602686f,
+        /*.x_max =*/ 0.2008818537f,
+        /*.score =*/ 0.3166312277317047f,
+    };
+
+    static const hailo_bbox_float32_t bbox3_0 = {
+        /*.y_min =*/ 0.5026738047599793f,
+        /*.x_min =*/ -0.005611047148704529f,
+        /*.y_max =*/ 0.65071095526f,
+        /*.x_max =*/ 0.13888412714f,
+        /*.score =*/ 0.5734351277351379f,
+    };
+
+    static const hailo_bbox_float32_t bbox3_1 = {
+        /*.y_min =*/ 0.5620155334472656f,
+        /*.x_min =*/ 0.16757474839687348f,
+        /*.y_max =*/ 0.58410947769f,
+        /*.x_max =*/ 0.19325175508f,
+        /*.score =*/ 0.4062519371509552f,
+    };
+
+    static const hailo_bbox_float32_t bbox8_0 = {
+        /*.y_min =*/ 0.5028372406959534f,
+        /*.x_min =*/ -0.0017736181616783143f,
+        /*.y_max =*/ 0.65114967525f,
+        /*.x_max =*/ 0.13592261821f,
+        /*.score =*/ 0.4223918318748474f,
+    };
+
+    static const hailo_bbox_float32_t bbox26_0 = {
+        /*.y_min =*/ 0.5854946374893189f,
+        /*.x_min =*/ 0.2693060040473938f,
+        /*.y_max =*/ 0.68259389698f,
+        /*.x_max =*/ 0.38090330362f,
+        /*.score =*/ 0.6338639259338379f,
+    };
+
+    static const uint32_t DETECTION_COUNT = 9;
+    auto buffer_size = (DETECTION_COUNT * sizeof(hailo_bbox_float32_t)) + (TEST_NUM_OF_CLASSES2 * sizeof(float32_t));
+    auto buffer_expected = hailort::Buffer::create(buffer_size, 0);
+    // CATCH_REQUIRE_EXPECTED(buffer_expected);
+    auto buffer = buffer_expected.release();
+
+    size_t offset = 0;
+    for (uint32_t class_index = 0; class_index < TEST_NUM_OF_CLASSES2; class_index++) {
+        if (DETECTION_CLASS_ID_1 == class_index) {
+            memcpy(buffer.data() + offset, &CLASS_ID_1_DETECTION_COUNT, sizeof(CLASS_ID_1_DETECTION_COUNT));
+            offset += sizeof(CLASS_ID_1_DETECTION_COUNT);
+
+            memcpy(buffer.data() + offset, &bbox1_0, sizeof(bbox1_0));
+            offset += sizeof(bbox1_0);
+
+            memcpy(buffer.data() + offset, &bbox1_1, sizeof(bbox1_1));
+            offset += sizeof(bbox1_1);
+
+            memcpy(buffer.data() + offset, &bbox1_2, sizeof(bbox1_2));
+            offset += sizeof(bbox1_2);
+
+            memcpy(buffer.data() + offset, &bbox1_3, sizeof(bbox1_3));
+            offset += sizeof(bbox1_3);
+
+            memcpy(buffer.data() + offset, &bbox1_4, sizeof(bbox1_4));
+            offset += sizeof(bbox1_4);
+        }
+        else if (DETECTION_CLASS_ID_3 == class_index) {
+            memcpy(buffer.data() + offset, &CLASS_ID_3_DETECTION_COUNT, sizeof(CLASS_ID_3_DETECTION_COUNT));
+            offset += sizeof(CLASS_ID_3_DETECTION_COUNT);
+
+            memcpy(buffer.data() + offset, &bbox3_0, sizeof(bbox3_0));
+            offset += sizeof(bbox3_0);
+
+            memcpy(buffer.data() + offset, &bbox3_1, sizeof(bbox3_1));
+            offset += sizeof(bbox3_1);
+        }
+        else if (DETECTION_CLASS_ID_8 == class_index) {
+            memcpy(buffer.data() + offset, &CLASS_ID_8_DETECTION_COUNT, sizeof(CLASS_ID_8_DETECTION_COUNT));
+            offset += sizeof(CLASS_ID_8_DETECTION_COUNT);
+
+            memcpy(buffer.data() + offset, &bbox8_0, sizeof(bbox8_0));
+            offset += sizeof(bbox8_0);
+        }
+        else if (DETECTION_CLASS_ID_26 == class_index) {
+            memcpy(buffer.data() + offset, &CLASS_ID_26_DETECTION_COUNT, sizeof(CLASS_ID_26_DETECTION_COUNT));
+            offset += sizeof(CLASS_ID_26_DETECTION_COUNT);
+
+            memcpy(buffer.data() + offset, &bbox26_0, sizeof(bbox26_0));
+            offset += sizeof(bbox26_0);
+        }
+        else {
+            offset += sizeof(float32_t);
+        }
+    }
+
+    // Note: The ownership of the buffer is transferred to Python wrapped as a py::array.
+    //       When the py::array isn't referenced anymore in Python and is destructed, the py::capsule's dtor
+    //       is called too (and it deletes the raw buffer)
+    auto type = py::dtype(HailoRTBindingsCommon::convert_format_type_to_string(HAILO_FORMAT_TYPE_FLOAT32));
+    auto shape = *py::array::ShapeContainer({buffer.size()});
+    const auto unmanaged_addr = buffer.release();
+    return py::array(type, shape, unmanaged_addr,
+        py::capsule(unmanaged_addr, [](void *p) { delete reinterpret_cast<uint8_t*>(p); }));
+}
 
 void PyhailortInternal::demux_output_buffer(
     py::bytes src, const hailo_format_t &src_format, const hailo_3d_image_shape_t &src_shape,
@@ -108,17 +261,15 @@ bool PyhailortInternal::is_output_transformation_required(
 
 py::list PyhailortInternal::get_all_layers_info(const HefWrapper &hef, const std::string &net_group_name)
 {
-    auto network_gorup_metadata = hef.hef_ptr()->pimpl->get_network_group_metadata(net_group_name);
-    VALIDATE_EXPECTED(network_gorup_metadata);
+    auto network_group_metadata = hef.hef_ptr()->pimpl->get_network_group_metadata(net_group_name);
+    VALIDATE_EXPECTED(network_group_metadata);
 
-    auto layers_info = network_gorup_metadata->get_all_layer_infos();
-    VALIDATE_EXPECTED(layers_info);
-
-    return py::cast(layers_info.release());
+    return py::cast(network_group_metadata->get_all_layer_infos());
 }
 
 PYBIND11_MODULE(_pyhailort_internal, m) {
     ControlWrapper::add_to_python_module(m);
+    m.def("get_yolov5_post_process_expected_buffer", &PyhailortInternal::get_yolov5_post_process_expected_buffer);
     m.def("demux_output_buffer", &PyhailortInternal::demux_output_buffer);
     m.def("transform_input_buffer", &PyhailortInternal::transform_input_buffer);
     m.def("transform_output_buffer", &PyhailortInternal::transform_output_buffer);

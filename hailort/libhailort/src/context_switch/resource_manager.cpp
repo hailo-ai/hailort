@@ -6,33 +6,145 @@
 namespace hailort
 {
 
-static Expected<std::vector<std::string>> build_network_index_map(const ProtoHEFNetworkGroup &network_group_proto,
-    const NetworkGroupSupportedFeatures &supported_features)
+
+Expected<ContextResources> ContextResources::create(HailoRTDriver &driver,
+    CONTROL_PROTOCOL__context_switch_context_type_t context_type, const std::vector<vdma::ChannelId> &config_channels_ids,
+    const ConfigBufferInfoMap &config_buffer_infos)
 {
-    std::vector<std::string> network_names_vector;
-    if (supported_features.multi_network_support) {
-        auto network_count = network_group_proto.networks_names_size();
-        CHECK_AS_EXPECTED((network_count > 0), HAILO_INTERNAL_FAILURE, 
-            "Hef support multiple networks, but no networks found in the proto");
-        network_names_vector.reserve(network_count);
-        for (uint8_t network_index = 0; network_index < network_count; network_index++) {
-            auto partial_network_name = network_group_proto.networks_names(network_index);
-            auto network_name = HefUtils::get_network_name(network_group_proto, partial_network_name);
-            network_names_vector.push_back(network_name);
-        }
-    } else {
-        /* In case there is no defines networks, add single network with the same name as the network group */
-        network_names_vector.reserve(1);
-        auto net_group_name = network_group_proto.network_group_metadata().network_group_name();
-        network_names_vector.push_back(HailoRTDefaults::get_network_name(net_group_name));
+    CHECK_AS_EXPECTED(context_type < CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_COUNT, HAILO_INVALID_ARGUMENT);
+
+    CHECK_AS_EXPECTED(config_buffer_infos.size() <= config_channels_ids.size(), HAILO_INTERNAL_FAILURE,
+        "config_buffer_infos size ({}) is bigger than config_channels_id count  ({})",
+        config_buffer_infos.size(), config_channels_ids.size());
+
+    std::vector<ConfigBuffer> config_buffers;
+    config_buffers.reserve(config_buffer_infos.size());
+    for (uint8_t config_stream_index = 0; config_stream_index < config_buffer_infos.size(); config_stream_index++) {
+        auto buffer_resource = ConfigBuffer::create(driver, config_channels_ids[config_stream_index],
+            config_buffer_infos.at(config_stream_index));
+        CHECK_EXPECTED(buffer_resource);
+        config_buffers.emplace_back(buffer_resource.release());
     }
 
-    return network_names_vector;
+    return ContextResources(driver, context_type, std::move(config_buffers));
+}
+
+const std::vector<CONTROL_PROTOCOL__context_switch_context_info_single_control_t> &ContextResources::get_controls() const
+{
+    return m_builder.get_controls();
+}
+
+ContextSwitchBufferBuilder &ContextResources::builder()
+{
+    return m_builder;
+}
+
+const std::vector<BoundaryEdgeLayer> &ContextResources::get_boundary_layers() const
+{
+    return m_boundary_layers;
+}
+
+const std::vector<InterContextEdgeLayer> &ContextResources::get_inter_context_layers() const
+{
+    return m_inter_context_layers;
+}
+
+const std::vector<DdrChannelEdgeLayer> &ContextResources::get_ddr_channel_layers() const
+{
+    return m_ddr_channel_layers;
+}
+
+ExpectedRef<DdrChannelsPair> ContextResources::create_ddr_channels_pair(const DdrChannelsInfo &ddr_info)
+{
+    auto buffer = DdrChannelsPair::create(m_driver, ddr_info);
+    CHECK_EXPECTED(buffer);
+
+    m_ddr_channels_pairs.emplace_back(buffer.release());
+    return std::ref(m_ddr_channels_pairs.back());
+}
+
+ExpectedRef<const DdrChannelsPair> ContextResources::get_ddr_channels_pair(uint8_t d2h_stream_index) const
+{
+    for (auto &ddr_channels_pair : m_ddr_channels_pairs) {
+        if (ddr_channels_pair.info().d2h_stream_index == d2h_stream_index) {
+            return std::ref(ddr_channels_pair);
+        }
+    }
+
+    LOGGER__ERROR("Couldn't find ddr channels pair for {}", d2h_stream_index);
+    return make_unexpected(HAILO_INTERNAL_FAILURE);
+}
+
+const std::vector<DdrChannelsPair> &ContextResources::get_ddr_channels_pairs() const
+{
+    return m_ddr_channels_pairs;
+}
+
+std::vector<BoundaryEdgeLayer> ContextResources::get_boundary_layers(hailo_stream_direction_t direction) const
+{
+    std::vector<BoundaryEdgeLayer> edge_layers;
+    for (const auto &edge_layer : m_boundary_layers) {
+        if (edge_layer.layer_info.direction == direction) {
+            edge_layers.push_back(edge_layer);
+        }
+    }
+    return edge_layers;
+}
+
+std::vector<InterContextEdgeLayer> ContextResources::get_inter_context_layers(hailo_stream_direction_t direction) const
+{
+    std::vector<InterContextEdgeLayer> edge_layers;
+    for (const auto &edge_layer : m_inter_context_layers) {
+        if (edge_layer.layer_info.direction == direction) {
+            edge_layers.push_back(edge_layer);
+        }
+    }
+    return edge_layers;
+}
+
+std::vector<DdrChannelEdgeLayer> ContextResources::get_ddr_channel_layers(hailo_stream_direction_t direction) const
+{
+    std::vector<DdrChannelEdgeLayer> edge_layers;
+    for (const auto &edge_layer : m_ddr_channel_layers) {
+        if (edge_layer.layer_info.direction == direction) {
+            edge_layers.push_back(edge_layer);
+        }
+    }
+    return edge_layers;
+}
+
+hailo_status ContextResources::validate_edge_layers()
+{
+    std::set<vdma::ChannelId> used_channel_ids;
+    for (const auto &edge_layer : get_boundary_layers()) {
+        CHECK(used_channel_ids.find(edge_layer.channel_id) == used_channel_ids.end(), HAILO_INTERNAL_FAILURE,
+            "Same stream use the same channel id {}", edge_layer.channel_id);
+        used_channel_ids.insert(edge_layer.channel_id);
+    }
+
+    for (const auto &edge_layer : get_inter_context_layers()) {
+        CHECK(used_channel_ids.find(edge_layer.channel_id) == used_channel_ids.end(), HAILO_INTERNAL_FAILURE,
+            "Same stream use the same channel id {}", edge_layer.channel_id);
+        used_channel_ids.insert(edge_layer.channel_id);
+    }
+
+    for (const auto &edge_layer : get_ddr_channel_layers()) {
+        CHECK(used_channel_ids.find(edge_layer.channel_id) == used_channel_ids.end(), HAILO_INTERNAL_FAILURE,
+            "Same stream use the same channel id {}", edge_layer.channel_id);
+        used_channel_ids.insert(edge_layer.channel_id);
+    }
+
+    return HAILO_SUCCESS;
+}
+
+std::vector<ConfigBuffer> &ContextResources::get_config_buffers()
+{
+    return m_config_buffers;
 }
 
 static Expected<LatencyMeterPtr> create_hw_latency_meter(const std::vector<LayerInfo> &layers)
 {
-    std::set<uint32_t> d2h_channel_indexes;
+    std::set<std::string> d2h_channel_names;
 
     size_t h2d_streams_count = 0;
     for (const auto &layer : layers) {
@@ -42,7 +154,7 @@ static Expected<LatencyMeterPtr> create_hw_latency_meter(const std::vector<Layer
                 return make_unexpected(HAILO_INVALID_OPERATION);
             }
 
-            d2h_channel_indexes.insert(layer.stream_index);
+            d2h_channel_names.insert(layer.name);
         }
         else {
             h2d_streams_count++;
@@ -54,7 +166,7 @@ static Expected<LatencyMeterPtr> create_hw_latency_meter(const std::vector<Layer
         return make_unexpected(HAILO_INVALID_OPERATION);
     }
 
-    return make_shared_nothrow<LatencyMeter>(d2h_channel_indexes, MAX_IRQ_TIMESTAMPS_SIZE);
+    return make_shared_nothrow<LatencyMeter>(d2h_channel_names, MAX_IRQ_TIMESTAMPS_SIZE);
 }
 
 static Expected<LatencyMetersMap> create_latency_meters_from_config_params( 
@@ -80,84 +192,76 @@ static Expected<LatencyMetersMap> create_latency_meters_from_config_params(
 }
 
 Expected<ResourcesManager> ResourcesManager::create(VdmaDevice &vdma_device, HailoRTDriver &driver,
-    const ConfigureNetworkParams &config_params, const ProtoHEFNetworkGroup &network_group_proto,
-    std::shared_ptr<NetworkGroupMetadata> network_group_metadata, const HefParsingInfo &parsing_info,
+    const ConfigureNetworkParams &config_params, std::shared_ptr<NetworkGroupMetadata> network_group_metadata,
     uint8_t net_group_index)
 {
-    const auto &proto_metadata = network_group_proto.network_group_metadata();
-
-    // Backwards compatibility for HEFs without this field
-    CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(proto_metadata.cfg_channels_count()),
-        HAILO_INVALID_HEF, "Invalid cfg channels count");
-    uint8_t cfg_channels_count = (0 == proto_metadata.cfg_channels_count()) ?
-        1u : static_cast<uint8_t>(proto_metadata.cfg_channels_count());
-
     // Allocate config channels. In order to use the same channel ids for config channels in all contexts,
     // we allocate all of them here, and use in preliminary/dynamic context.
     ChannelAllocator allocator(driver.dma_engines_count());
-    std::vector<vdma::ChannelId> cfg_channel_ids;
-    cfg_channel_ids.reserve(cfg_channels_count);
-    for (uint8_t cfg_index = 0; cfg_index < cfg_channels_count; cfg_index++) {
-        const auto cfg_layer_identifier = std::make_tuple(LayerType::CFG, "", cfg_index);
-        const auto engine_index = get_cfg_channel_engine(driver, cfg_index, proto_metadata);
-        CHECK_EXPECTED(engine_index);
-        auto channel_id = allocator.get_available_channel_id(cfg_layer_identifier, VdmaChannel::Direction::H2D,
-            engine_index.value());
+    std::vector<vdma::ChannelId> config_channels_ids;
+    const auto &config_channels_info = network_group_metadata->config_channels_info();
+    config_channels_ids.reserve(config_channels_info.size());
+    for (uint8_t cfg_index = 0; cfg_index < config_channels_info.size(); cfg_index++) {
+        const auto layer_identifier = std::make_tuple(LayerType::CFG, "", cfg_index);
+        const auto engine_index = config_channels_info[cfg_index].engine_index;
+        auto channel_id = allocator.get_available_channel_id(layer_identifier, VdmaChannel::Direction::H2D, engine_index);
         CHECK_EXPECTED(channel_id);
-        cfg_channel_ids.push_back(channel_id.release());
+        config_channels_ids.push_back(channel_id.release());
     }
 
-    std::vector<ConfigBuffer> preliminary_configs_vector;
-    auto cfg_count_preliminary = parsing_info.cfg_infos_preliminary_config.size();
-    CHECK_AS_EXPECTED(cfg_channels_count >= cfg_count_preliminary, HAILO_INTERNAL_FAILURE,
-        "preliminary cfg count ({}) is bigger than the size passed to the network_group ({})",
-        cfg_count_preliminary, cfg_channels_count);
-    preliminary_configs_vector.reserve(cfg_count_preliminary);
-    for (uint8_t cfg_index = MIN_H2D_CHANNEL_INDEX; cfg_index < cfg_count_preliminary; cfg_index++) {
-        CHECK_AS_EXPECTED(contains(parsing_info.cfg_infos_preliminary_config, cfg_index), HAILO_INTERNAL_FAILURE,
-            "Mismatch for cfg index {}", cfg_index);
-        auto buffer_resource = ConfigBuffer::create(driver, cfg_channel_ids[cfg_index],
-            parsing_info.cfg_infos_preliminary_config.at(cfg_index));
-        CHECK_EXPECTED(buffer_resource);
-
-        preliminary_configs_vector.emplace_back(buffer_resource.release());
-    }
-
-    std::vector<std::vector<ConfigBuffer>> dynamic_cfg_vectors;
-    dynamic_cfg_vectors.reserve(network_group_proto.contexts_size());
-
-    for (int ctxt_index = 0; ctxt_index < network_group_proto.contexts_size(); ctxt_index++) {
-        std::vector<ConfigBuffer> dynamic_cfg_vector_per_context;
-        auto cfg_count_ctxt = parsing_info.cfg_infos_per_context[ctxt_index].size();
-
-        CHECK_AS_EXPECTED(cfg_channels_count >= cfg_count_ctxt, HAILO_INTERNAL_FAILURE,
-            "dynamic context cfg count ({}) (context {}) is bigger than the size passed to the network_group ({})",
-            cfg_count_ctxt, ctxt_index, cfg_channels_count);
-
-        dynamic_cfg_vector_per_context.reserve(cfg_count_ctxt);
-        for (uint8_t cfg_index = MIN_H2D_CHANNEL_INDEX; cfg_index < cfg_count_ctxt; cfg_index++) {
-            CHECK_AS_EXPECTED(contains(parsing_info.cfg_infos_per_context[ctxt_index], cfg_index),
-                HAILO_INTERNAL_FAILURE, "Mismatch for cfg index {}", cfg_index);
-            auto buffer_resource = ConfigBuffer::create(driver, cfg_channel_ids[cfg_index],
-                parsing_info.cfg_infos_per_context[ctxt_index].at(cfg_index));
-            CHECK_EXPECTED(buffer_resource);
-
-            dynamic_cfg_vector_per_context.emplace_back(buffer_resource.release());
-        }
-        dynamic_cfg_vectors.emplace_back(std::move(dynamic_cfg_vector_per_context));
-    }
-
-    auto network_index_map = build_network_index_map(network_group_proto, network_group_metadata->supported_features());
-    CHECK_EXPECTED(network_index_map);
+    auto network_index_map = network_group_metadata->get_network_names();
 
     auto latency_meters = create_latency_meters_from_config_params(config_params, network_group_metadata);
     CHECK_EXPECTED(latency_meters);
     ResourcesManager resources_manager(vdma_device, driver, std::move(allocator), config_params,
-        std::move(preliminary_configs_vector), std::move(dynamic_cfg_vectors), std::move(network_group_metadata), net_group_index,
-        std::move(network_index_map.release()), latency_meters.release());
+        std::move(network_group_metadata), net_group_index,
+        std::move(network_index_map), latency_meters.release(), std::move(config_channels_ids));
 
     return resources_manager;
 }
+
+ResourcesManager::ResourcesManager(VdmaDevice &vdma_device, HailoRTDriver &driver,
+                                   ChannelAllocator &&channel_allocator, const ConfigureNetworkParams config_params,
+                                   std::shared_ptr<NetworkGroupMetadata> &&network_group_metadata,
+                                   uint8_t net_group_index, const std::vector<std::string> &&network_index_map,
+                                   LatencyMetersMap &&latency_meters,
+                                   std::vector<vdma::ChannelId> &&config_channels_ids) :
+    m_contexts_resources(),
+    m_channel_allocator(std::move(channel_allocator)),
+    m_vdma_device(vdma_device),
+    m_driver(driver),
+    m_config_params(config_params),
+    m_inter_context_buffers(),
+    m_internal_channels(),
+    m_network_group_metadata(std::move(network_group_metadata)),
+    m_net_group_index(net_group_index),
+    m_dynamic_context_count(0),
+    m_total_context_count(0),
+    m_network_index_map(std::move(network_index_map)),
+    m_latency_meters(std::move(latency_meters)),
+    m_boundary_channels(),
+    m_is_configured(false),
+    m_config_channels_ids(std::move(config_channels_ids))
+{}
+
+ResourcesManager::ResourcesManager(ResourcesManager &&other) noexcept :
+    m_contexts_resources(std::move(other.m_contexts_resources)),
+    m_channel_allocator(std::move(other.m_channel_allocator)),
+    m_vdma_device(other.m_vdma_device),
+    m_driver(other.m_driver),
+    m_config_params(other.m_config_params),
+    m_inter_context_buffers(std::move(other.m_inter_context_buffers)),
+    m_internal_channels(std::move(other.m_internal_channels)),
+    m_network_group_metadata(std::move(other.m_network_group_metadata)),
+    m_net_group_index(other.m_net_group_index),
+    m_dynamic_context_count(std::exchange(other.m_dynamic_context_count, static_cast<uint8_t>(0))),
+    m_total_context_count(std::exchange(other.m_total_context_count, static_cast<uint8_t>(0))),
+    m_network_index_map(std::move(other.m_network_index_map)),
+    m_latency_meters(std::move(other.m_latency_meters)),
+    m_boundary_channels(std::move(other.m_boundary_channels)),
+    m_is_configured(std::exchange(other.m_is_configured, false)),
+    m_config_channels_ids(std::move(other.m_config_channels_ids))
+{}
 
 hailo_status ResourcesManager::fill_infer_features(CONTROL_PROTOCOL__application_header_t &app_header)
 {
@@ -203,60 +307,63 @@ hailo_status ResourcesManager::fill_network_batch_size(CONTROL_PROTOCOL__applica
     return HAILO_SUCCESS;
 }
 
-hailo_status ResourcesManager::create_fw_managed_vdma_channels()
+hailo_status ResourcesManager::create_internal_vdma_channels()
 {
-    auto fw_managed_channel_ids = m_channel_allocator.get_fw_managed_channel_ids();
+    auto internal_channel_ids = m_channel_allocator.get_internal_channel_ids();
 
-    m_fw_managed_channels.reserve(fw_managed_channel_ids.size());
-    for (const auto &ch : fw_managed_channel_ids) {
+    m_internal_channels.reserve(internal_channel_ids.size());
+    for (const auto &ch : internal_channel_ids) {
         auto direction = (ch.channel_index < MIN_D2H_CHANNEL_INDEX) ? VdmaChannel::Direction::H2D : VdmaChannel::Direction::D2H;
         auto vdma_channel = VdmaChannel::create(ch, direction, m_driver, m_vdma_device.get_default_desc_page_size());
         CHECK_EXPECTED_AS_STATUS(vdma_channel);
-        m_fw_managed_channels.emplace_back(vdma_channel.release());
+        m_internal_channels.emplace_back(vdma_channel.release());
     }
 
     return HAILO_SUCCESS;
 }
 
-Expected<std::shared_ptr<VdmaChannel>> ResourcesManager::create_boundary_vdma_channel(
-    const vdma::ChannelId &channel_id, uint32_t transfer_size, const std::string &network_name,
-    const std::string &stream_name, VdmaChannel::Direction channel_direction)
+hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &layer_info)
 {
-    auto network_batch_size = get_network_batch_size(network_name);
-    CHECK_EXPECTED(network_batch_size);
+    // TODO: put in layer info
+    const auto channel_direction = layer_info.direction == HAILO_H2D_STREAM ? VdmaChannel::Direction::H2D :
+                                                                              VdmaChannel::Direction::D2H;
+    const auto channel_id = get_available_channel_id(to_layer_identifier(layer_info),
+        channel_direction, layer_info.dma_engine_index);
+    CHECK_EXPECTED_AS_STATUS(channel_id);
+
+    auto network_batch_size = get_network_batch_size(layer_info.network_name);
+    CHECK_EXPECTED_AS_STATUS(network_batch_size);
+
     uint32_t min_active_trans = MIN_ACTIVE_TRANSFERS_SCALE * network_batch_size.value();
     uint32_t max_active_trans = MAX_ACTIVE_TRANSFERS_SCALE * network_batch_size.value();
 
-    CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(min_active_trans), HAILO_INVALID_ARGUMENT, 
+    CHECK(IS_FIT_IN_UINT16(min_active_trans), HAILO_INVALID_ARGUMENT, 
         "calculated min_active_trans for vdma descriptor list is out of UINT16 range");
- 
-    CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(max_active_trans), HAILO_INVALID_ARGUMENT, 
+    CHECK(IS_FIT_IN_UINT16(max_active_trans), HAILO_INVALID_ARGUMENT, 
         "calculated min_active_trans for vdma descriptor list is out of UINT16 range");
- 
-    auto edge_layer = m_network_group_metadata->get_layer_info_by_stream_name(stream_name);
-    CHECK_EXPECTED(edge_layer);
-    auto latency_meter = (contains(m_latency_meters, edge_layer->network_name)) ? m_latency_meters.at(edge_layer->network_name) : nullptr;
-    auto stream_index = edge_layer.value().stream_index;
+
+    auto latency_meter = (contains(m_latency_meters, layer_info.network_name)) ? m_latency_meters.at(layer_info.network_name) : nullptr;
 
     /* TODO - HRT-6829- page_size should be calculated inside the vDMA channel class create function */
+    const auto transfer_size = (layer_info.nn_stream_config.periph_bytes_per_buffer * 
+        layer_info.nn_stream_config.core_buffers_per_frame);
     auto desc_sizes_pair = VdmaDescriptorList::get_desc_buffer_sizes_for_single_transfer(m_driver,
         static_cast<uint16_t>(min_active_trans), static_cast<uint16_t>(max_active_trans), transfer_size);
-    CHECK_EXPECTED(desc_sizes_pair);
+    CHECK_EXPECTED_AS_STATUS(desc_sizes_pair);
 
     const auto page_size = desc_sizes_pair->first;
     const auto descs_count = desc_sizes_pair->second;
-    auto channel = VdmaChannel::create(channel_id, channel_direction, m_driver, page_size,
-        stream_index, latency_meter, network_batch_size.value());
-    CHECK_EXPECTED(channel);
+    auto channel = VdmaChannel::create(channel_id.value(), channel_direction, m_driver, page_size,
+        layer_info.name, latency_meter, network_batch_size.value());
+    CHECK_EXPECTED_AS_STATUS(channel);
     const auto status = channel->allocate_resources(descs_count);
-    CHECK_SUCCESS_AS_EXPECTED(status);
+    CHECK_SUCCESS(status);
 
     auto channel_ptr = make_shared_nothrow<VdmaChannel>(channel.release());
-    CHECK_NOT_NULL_AS_EXPECTED(channel_ptr, HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL(channel_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
-    m_boundary_channels.emplace(stream_name, channel_ptr);
-
-    return channel_ptr;
+    m_boundary_channels.emplace(layer_info.name, channel_ptr);
+    return HAILO_SUCCESS;
 }
 
 Expected<std::shared_ptr<VdmaChannel>> ResourcesManager::get_boundary_vdma_channel_by_stream_name(const std::string &stream_name)
@@ -266,7 +373,22 @@ Expected<std::shared_ptr<VdmaChannel>> ResourcesManager::get_boundary_vdma_chann
         return make_unexpected(HAILO_NOT_FOUND);
     }
 
-    return std::shared_ptr<VdmaChannel>(m_boundary_channels[stream_name]);
+    return std::shared_ptr<VdmaChannel>(boundary_channel_it->second);
+}
+
+Expected<std::shared_ptr<const VdmaChannel>> ResourcesManager::get_boundary_vdma_channel_by_stream_name(const std::string &stream_name) const
+{
+    auto boundary_channel_it = m_boundary_channels.find(stream_name);
+    if (std::end(m_boundary_channels) == boundary_channel_it) {
+        return make_unexpected(HAILO_NOT_FOUND);
+    }
+
+    return std::shared_ptr<const VdmaChannel>(boundary_channel_it->second);
+}
+
+hailo_power_mode_t ResourcesManager::get_power_mode() const
+{
+    return m_config_params.power_mode;
 }
 
 ExpectedRef<InterContextBuffer> ResourcesManager::create_inter_context_buffer(uint32_t transfer_size,
@@ -296,23 +418,9 @@ ExpectedRef<InterContextBuffer> ResourcesManager::get_inter_context_buffer(const
 
 Expected<CONTROL_PROTOCOL__application_header_t> ResourcesManager::get_control_network_group_header()
 {
-    CONTROL_PROTOCOL__application_header_t  app_header{};
-    app_header.dynamic_contexts_count = static_cast<uint8_t>(m_contexts.size() - 1);
+    CONTROL_PROTOCOL__application_header_t app_header{};
+    app_header.dynamic_contexts_count = m_dynamic_context_count;
 
-    /* Bitmask of all boundary channels (per engine) */
-    std::array<int, CONTROL_PROTOCOL__MAX_VDMA_ENGINES_COUNT> host_boundary_channels_bitmap{};
-
-    for (const auto &ch : m_channel_allocator.get_boundary_channel_ids()) {
-        CHECK_AS_EXPECTED(ch.engine_index < host_boundary_channels_bitmap.size(), HAILO_INTERNAL_FAILURE,
-            "Invalid engine index {}", static_cast<uint32_t>(ch.engine_index));
-
-        host_boundary_channels_bitmap[ch.engine_index] |= (1 << ch.channel_index);
-    }
-
-    std::copy(host_boundary_channels_bitmap.begin(), host_boundary_channels_bitmap.end(),
-        app_header.host_boundary_channels_bitmap);
-
-    app_header.power_mode = static_cast<uint8_t>(m_config_params.power_mode);
     auto status = fill_infer_features(app_header);
     CHECK_SUCCESS_AS_EXPECTED(status, "Invalid infer features");
     status = fill_validation_features(app_header);
@@ -323,17 +431,21 @@ Expected<CONTROL_PROTOCOL__application_header_t> ResourcesManager::get_control_n
     return app_header;
 }
 
-std::vector<std::reference_wrapper<const DdrChannelsPair>>
-ResourcesManager::get_ddr_channel_pairs_per_context(uint8_t context_index) const
+Expected<std::reference_wrapper<ContextResources>> ResourcesManager::add_new_context(CONTROL_PROTOCOL__context_switch_context_type_t type,
+    const ConfigBufferInfoMap &config_info)
 {
-    std::vector<std::reference_wrapper<const DdrChannelsPair>> ddr_channels_pairs;
-    for (auto &ddr_channels_pair : m_ddr_channels_pairs) {
-        if (ddr_channels_pair.first.first == context_index) {
-            ddr_channels_pairs.push_back(std::ref(ddr_channels_pair.second));
-        }
+    CHECK_AS_EXPECTED(m_total_context_count < std::numeric_limits<uint8_t>::max(), HAILO_INVALID_CONTEXT_COUNT);
+
+    auto context_resources = ContextResources::create(m_driver, type, m_config_channels_ids, config_info);
+    CHECK_EXPECTED(context_resources);
+
+    m_contexts_resources.emplace_back(context_resources.release());
+    m_total_context_count++;
+    if (CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_DYNAMIC == type) {
+        m_dynamic_context_count++;
     }
 
-    return ddr_channels_pairs;
+    return std::ref(m_contexts_resources.back());
 }
 
 Expected<vdma::ChannelId> ResourcesManager::get_available_channel_id(const LayerIdentifier &layer_identifier,
@@ -352,45 +464,6 @@ hailo_status ResourcesManager::free_channel_index(const LayerIdentifier &layer_i
     return m_channel_allocator.free_channel_index(layer_identifier);
 }
 
-void ResourcesManager::update_preliminary_config_buffer_info()
-{
-    // Preliminary_config is the first 'context' m_contexts vector
-    update_config_buffer_info(m_preliminary_config, m_contexts[0]);
-}
-
-void ResourcesManager::update_dynamic_contexts_buffer_info()
-{
-    // Preliminary_config is the first 'context' m_contexts vector
-    assert((m_dynamic_config.size() + 1) == m_contexts.size());
-    int ctxt_index = 1;
-    for (auto &cfg_context : m_dynamic_config) {
-        update_config_buffer_info(cfg_context, m_contexts[ctxt_index]);
-        ctxt_index++;
-    }
-}
-
-ExpectedRef<DdrChannelsPair> ResourcesManager::create_ddr_channels_pair(const DdrChannelsInfo &ddr_info, uint8_t context_index)
-{
-    auto buffer = DdrChannelsPair::create(m_driver, ddr_info);
-    CHECK_EXPECTED(buffer);
-
-    const auto key = std::make_pair(context_index, ddr_info.d2h_stream_index);
-    auto emplace_res = m_ddr_channels_pairs.emplace(key, buffer.release());
-    return std::ref(emplace_res.first->second);
-}
-
-ExpectedRef<DdrChannelsPair> ResourcesManager::get_ddr_channels_pair(uint8_t context_index, uint8_t d2h_stream_index)
-{
-    const auto key = std::make_pair(context_index, d2h_stream_index);
-    auto ddr_channels_pair = m_ddr_channels_pairs.find(key);
-    
-    if (m_ddr_channels_pairs.end() == ddr_channels_pair) {
-        return make_unexpected(HAILO_NOT_FOUND);
-    }
-
-    return std::ref(ddr_channels_pair->second);
-}
-
 Expected<hailo_stream_interface_t> ResourcesManager::get_default_streams_interface()
 {
     return m_vdma_device.get_default_streams_interface();
@@ -400,8 +473,13 @@ hailo_status ResourcesManager::register_fw_managed_vdma_channels()
 {
     hailo_status status = HAILO_UNINITIALIZED;
 
-    for (auto &ch : m_fw_managed_channels) {
+    for (auto &ch : m_internal_channels) {
         status = ch.register_fw_controlled_channel();
+        CHECK_SUCCESS(status);
+    }
+
+    for (auto &ch : m_boundary_channels) {
+        status = ch.second->register_fw_controlled_channel();
         CHECK_SUCCESS(status);
     }
 
@@ -412,8 +490,10 @@ hailo_status ResourcesManager::unregister_fw_managed_vdma_channels()
 {
     hailo_status status = HAILO_UNINITIALIZED;
 
+    // Note: We don't "unregister" the m_boundary_channels here, beacuse the Vdma*Stream objects will unregister their
+    //       own channels.
     // TODO: Add one icotl to stop all channels at once (HRT-6097)
-    for (auto &ch : m_fw_managed_channels) {
+    for (auto &ch : m_internal_channels) {
         status = ch.unregister_fw_controlled_channel();
         CHECK_SUCCESS(status);
     }
@@ -433,10 +513,14 @@ hailo_status ResourcesManager::set_inter_context_channels_dynamic_batch_size(uin
 
 Expected<uint16_t> ResourcesManager::get_network_batch_size(const std::string &network_name) const
 {
-    for (auto const &network_map: m_config_params.network_params_by_name) {
+    for (auto const &network_map : m_config_params.network_params_by_name) {
         auto const network_name_from_params = network_map.first;
         if (network_name_from_params == network_name) {
-            return Expected<uint16_t>(network_map.second.batch_size);
+            auto actual_batch_size = network_map.second.batch_size;
+            if (HAILO_DEFAULT_BATCH_SIZE == actual_batch_size) {
+                actual_batch_size = DEFAULT_ACTUAL_BATCH_SIZE;
+            }
+            return actual_batch_size;
         }
     }
 
@@ -452,15 +536,38 @@ Expected<Buffer> ResourcesManager::read_intermediate_buffer(const IntermediateBu
         return inter_context_buffer_it->second.read();
     }
 
-    auto ddr_channels_pair_it = m_ddr_channels_pairs.find(key);
-    if (std::end(m_ddr_channels_pairs) != ddr_channels_pair_it) {
-        return ddr_channels_pair_it->second.read();
+    const auto dynamic_context_index = key.first;
+    const size_t context_index = dynamic_context_index + CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS;
+    CHECK_AS_EXPECTED(context_index < m_contexts_resources.size(), HAILO_NOT_FOUND, "Context index {} out of range",
+        dynamic_context_index);
+    const auto d2h_stream_index = key.second;
+    if (auto ddr_channels_pair = m_contexts_resources[context_index].get_ddr_channels_pair(d2h_stream_index)) {
+        return ddr_channels_pair->get().read();
     }
 
     LOGGER__ERROR("Failed to find intermediate buffer for src_context {}, src_stream_index {}", key.first,
         key.second);
     return make_unexpected(HAILO_NOT_FOUND);
 
+}
+
+hailo_status ResourcesManager::configure()
+{
+    CHECK(!m_is_configured, HAILO_INTERNAL_FAILURE, "Can't configure the same network group twice");
+    m_is_configured = true;
+
+    auto net_group_header = get_control_network_group_header();
+    CHECK_EXPECTED_AS_STATUS(net_group_header);
+
+    auto status = Control::context_switch_set_network_group_header(m_vdma_device, net_group_header.release());
+    CHECK_SUCCESS(status);
+
+    for (const auto &context : m_contexts_resources) {
+        status = Control::context_switch_set_context_info(m_vdma_device, context.get_controls());
+        CHECK_SUCCESS(status);
+    }
+
+    return HAILO_SUCCESS;
 }
 
 hailo_status ResourcesManager::enable_state_machine(uint16_t dynamic_batch_size)
@@ -481,43 +588,6 @@ hailo_status ResourcesManager::reset_state_machine(bool keep_nn_config_during_re
     }
 
     return HAILO_SUCCESS;
-}
-
-void ResourcesManager::update_config_buffer_info(std::vector<ConfigBuffer> &config_buffers,
-    CONTROL_PROTOCOL__context_switch_context_info_t &context)
-{
-    assert(CONTROL_PROTOCOL__MAX_CFG_CHANNELS >= config_buffers.size());
-    context.cfg_channels_count = static_cast<uint8_t>(config_buffers.size());
-
-    auto i = 0;
-    for (const auto &config : config_buffers) {
-        context.config_channel_infos[i] = config.get_config_channel_info();
-        i++;
-    }
-}
-
-Expected<uint8_t> ResourcesManager::get_cfg_channel_engine(HailoRTDriver &driver, uint8_t config_stream_index,
-    const ProtoHEFNetworkGroupMetadata &proto_metadata)
-{
-    if (driver.dma_type() == HailoRTDriver::DmaType::PCIE) {
-        // On PCIe we have only 1 engine. To support the same HEF with both PCIe and DRAM, we use default engine here.
-        return uint8_t(vdma::DEFAULT_ENGINE_INDEX);
-    }
-
-    const auto &cfg_channels_config = proto_metadata.cfg_channels_config();
-    if (cfg_channels_config.empty()) {
-        // Old hef, return default value
-        return uint8_t(vdma::DEFAULT_ENGINE_INDEX);
-    }
-
-    auto cfg_info = std::find_if(cfg_channels_config.begin(), cfg_channels_config.end(),
-        [config_stream_index](const auto &cfg_info)
-        {
-            return cfg_info.cfg_channel_index() == config_stream_index;
-        });
-    CHECK_AS_EXPECTED(cfg_info != cfg_channels_config.end(), HAILO_INVALID_HEF, "Cfg channel {} not found", config_stream_index);
-    CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(cfg_info->engine_id()), HAILO_INVALID_HEF, "Invalid dma engine index");
-    return static_cast<uint8_t>(cfg_info->engine_id());
 }
 
 } /* namespace hailort */

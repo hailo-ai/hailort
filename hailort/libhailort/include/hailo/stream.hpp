@@ -139,7 +139,7 @@ protected:
 
 private:
     friend class HefConfigurator;
-    friend class ActivatedNetworkGroupBase;
+    friend class ConfiguredNetworkGroupBase;
 };
 
 /*! Output (device to host) stream representation */
@@ -257,7 +257,7 @@ private:
     void increase_invalid_frames_count(uint32_t value);
 
     friend class HefConfigurator;
-    friend class ActivatedNetworkGroupBase;
+    friend class ConfiguredNetworkGroupBase;
     friend class HwReadElement;
     friend class OutputDemuxer;
 };

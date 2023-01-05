@@ -47,17 +47,23 @@ public:
     uint8_t depth() const;
 
     ExpectedRef<VdmaDescriptorList> get_desc_list();
+    // TODO: Remove after HRT-7838    
+    void *get_user_address();
 
-    virtual hailo_status read(void *buf_dst, size_t count, size_t offset) override;
+    virtual hailo_status read(void *buf_dst, size_t count, size_t offset, bool should_sync) override;
     virtual hailo_status write(const void *buf_src, size_t count, size_t offset) override;
 
-    hailo_status read_cyclic(void *buf_dst, size_t count, size_t offset);
+    hailo_status read_cyclic(void *buf_dst, size_t count, size_t offset, bool should_sync = true);
     hailo_status write_cyclic(const void *buf_src, size_t count, size_t offset);
 
     virtual Expected<uint32_t> program_descriptors(size_t transfer_size, VdmaInterruptsDomain first_desc_interrupts_domain,
         VdmaInterruptsDomain last_desc_interrupts_domain, size_t desc_offset, bool is_circular) override;
     virtual hailo_status reprogram_device_interrupts_for_end_of_batch(size_t transfer_size, uint16_t batch_size,
         VdmaInterruptsDomain new_interrupts_domain) override;
+    
+    // TODO: after HRT-8519 the VdmaDescriptorList will be owned by the vdma channel and this function can be removed
+    //       (VdmaChannel::reprogram_buffer_offset will call VdmaDescriptorList::configure_to_use_buffer directly)
+    hailo_status reprogram_buffer_offset(size_t new_start_offset, uint8_t channel_index);
 
 private:
     SgBuffer(VdmaDescriptorList &&desc_list, MappedBuffer &&mapped_buffer) :

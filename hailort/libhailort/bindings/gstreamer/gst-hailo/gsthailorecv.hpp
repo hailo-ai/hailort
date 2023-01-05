@@ -92,6 +92,7 @@ public:
     GstFlowReturn handle_frame(GstVideoFilter *filter, GstVideoFrame *frame);
     hailo_status set_output_vstreams(std::vector<OutputVStream> &&output_vstreams, uint32_t batch_size);
     hailo_status clear_vstreams();
+    hailo_status abort_vstreams();
 
 private:
     hailo_status read_from_vstreams(bool should_print_latency);

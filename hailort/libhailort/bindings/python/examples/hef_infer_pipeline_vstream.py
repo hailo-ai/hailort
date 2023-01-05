@@ -1,4 +1,4 @@
-from hailo_platform import (HEF, PcieDevice, ConfigureParams, InferVStreams, InputVStreamParams,
+from hailo_platform import (HEF, VDevice, ConfigureParams, InferVStreams, InputVStreamParams,
     OutputVStreamParams, FormatType)
 from hailo_platform.pyhailort.pyhailort import HailoStreamInterface
 import numpy as np
@@ -12,7 +12,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    with PcieDevice() as target:
+    with VDevice() as target:
         hef = HEF(args.hef_path)
         configure_params = ConfigureParams.create_from_hef(hef, interface=HailoStreamInterface.PCIe)
         network_groups = target.configure(hef, configure_params)
@@ -26,7 +26,7 @@ def main():
             with network_group.activate(network_group_params):
                 _ = infer_pipeline.infer(input_data)
                 fps = args.num_frames / infer_pipeline.get_hw_time()
-        
+
     print('Inference ran successfully')
     print(f'FPS: {fps}')
 

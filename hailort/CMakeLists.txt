@@ -1,32 +1,35 @@
 cmake_minimum_required(VERSION 3.0.0)
 
+option(HAILO_BUILD_PYBIND "Build Python binding" OFF)
+option(HAILO_BUILD_EMULATOR "Build hailort for emulator" OFF)
+option(HAILO_BUILD_UT "Build Unit Tests" OFF)
+option(HAILO_BUILD_HW_DEBUG_TOOL "Build hw debug tool" OFF)
+option(HAILO_BUILD_GSTREAMER "Compile gstreamer plugins" OFF)
+option(HAILO_BUILD_EXAMPLES "Build examples" OFF)
+option(HAILO_OFFLINE_COMPILATION "Don't download external dependencies" OFF)
+option(HAILO_BUILD_SERVICE "Build hailort service" OFF)
+option(HAILO_BUILD_PROFILER "Build hailort profiler" ON)
+
+if(WIN32 AND ${HAILO_BUILD_SERVICE})
+    message(FATAL_ERROR "HailoRT service is not supported on Windows")
+endif()
+
+# Flag for emulator (FPGA/Veloce)
+if(HAILO_BUILD_EMULATOR)
+    message(WARNING "HailoRT is building with Emulator flag on")
+    set(HAILORT_COMPILE_OPTIONS ${HAILORT_COMPILE_OPTIONS} -DHAILO_EMULATOR)
+endif()
+
 # Set firmware version
 add_definitions( -DFIRMWARE_VERSION_MAJOR=4 )
-add_definitions( -DFIRMWARE_VERSION_MINOR=10 )
+add_definitions( -DFIRMWARE_VERSION_MINOR=12 )
 add_definitions( -DFIRMWARE_VERSION_REVISION=0 )
 if(HAILO_BUILD_SERVICE)
     add_definitions( -DHAILO_SUPPORT_MULTI_PROCESS )
 endif()
 
-message(STATUS "Building pre_build")
-include(${CMAKE_CURRENT_LIST_DIR}/cmake/execute_cmake.cmake)
-set(HAILO_EXTERNAL_DIR ${CMAKE_CURRENT_LIST_DIR}/external)
-set(HAILO_PRE_BUILD_BUILD_TOOLS ${CMAKE_CURRENT_LIST_DIR}/pre_build/build/tools)
-
-set(PRE_BUILD_BUILD_TYPE "Release")
-execute_cmake(
-    SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/pre_build
-    BUILD_DIR ${CMAKE_CURRENT_LIST_DIR}/pre_build/build
-    CONFIGURE_ARGS
-        -DCMAKE_BUILD_TYPE=${PRE_BUILD_BUILD_TYPE}
-        -DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_LIST_DIR}/pre_build/install
-        -DHAILO_EXTERNAL_DIR=${HAILO_EXTERNAL_DIR}
-        -DHAILO_OFFLINE_COMPILATION=${HAILO_OFFLINE_COMPILATION}
-        -DHAILO_BUILD_SERVICE=${HAILO_BUILD_SERVICE}
-    BUILD_ARGS
-        --config ${PRE_BUILD_BUILD_TYPE} --target install ${CMAKE_EXTRA_BUILD_ARGS}
-    PARALLEL_BUILD
-)
+# The logic of prepare_externals is executed in a sperate module so that it can be run externally (via cmake -P prepare_externals.cmake)
+include(prepare_externals.cmake)
 
 # BENCHMARK_ENABLE_TESTING can be used by other 3rd party projects, therefore we define it
 # before adding projects
@@ -83,7 +86,7 @@ if(HAILO_BUILD_PYBIND)
     if(NOT PYTHON_EXECUTABLE AND PYBIND11_PYTHON_VERSION)
         # PYBIND11_PYTHON_VERSION is prioritized (not virtual environment) if PYTHON_EXECUTABLE is not set.
         # See https://pybind11.readthedocs.io/en/stable/changelog.html#v2-6-0-oct-21-2020
-        if(${CMAKE_VERSION} VERSION_LESS "3.12.0")
+        if(${CMAKE_VERSION} VERSION_LESS "3.22.0")
             find_package(PythonInterp ${PYBIND11_PYTHON_VERSION} REQUIRED)
             set(PYTHON_EXECUTABLE ${Python_EXECUTABLE})
         else()
@@ -116,32 +119,12 @@ if(HAILO_BUILD_SERVICE)
     add_subdirectory(rpc)
 endif()
 
-# microprofile
-if(HAILO_MICROPROFILE)
-    add_library(microprofile STATIC EXCLUDE_FROM_ALL external/microprofile/microprofile.cpp)
-    set_target_properties(microprofile PROPERTIES
-        CXX_STANDARD              11
-        CXX_STANDARD_REQUIRED     YES
-        POSITION_INDEPENDENT_CODE ON
-    )
-    target_compile_definitions(microprofile
-        PRIVATE
-        -DMICROPROFILE_WEBSERVER=1
-        -DMICROPROFILE_GPU_TIMERS=0
-        -DMICROPROFILE_NAME_MAX_LEN=256
-        PUBLIC
-        -DMICROPROFILE_ENABLED=1
-    )
-    target_include_directories(microprofile PUBLIC external/microprofile)
-else()
-    add_library(microprofile INTERFACE)
-    target_compile_definitions(microprofile INTERFACE -DMICROPROFILE_ENABLED=0)
-    target_include_directories(microprofile INTERFACE external/microprofile)
-endif()
-
 add_subdirectory(common)
 add_subdirectory(libhailort)
 add_subdirectory(hailortcli)
+if(HAILO_BUILD_HW_DEBUG_TOOL)
+    add_subdirectory(tools/hw_debug)
+endif()
 
 if(HAILO_BUILD_SERVICE)
     add_subdirectory(hailort_service)

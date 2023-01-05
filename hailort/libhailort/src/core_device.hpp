@@ -22,7 +22,7 @@ namespace hailort
 
 class CoreDevice : public VdmaDevice {
 public:
-    virtual ~CoreDevice();
+    virtual ~CoreDevice() = default;
     static bool is_loaded();
     static Expected<std::unique_ptr<CoreDevice>> create();
 
@@ -48,20 +48,10 @@ public:
     static constexpr const char *DEVICE_ID = "[core]";
 
 protected:
-    virtual hailo_status fw_interact_impl(uint8_t *request_buffer, size_t request_size,
-        uint8_t *response_buffer, size_t *response_size, hailo_cpu_id_t cpu_id) override;
     virtual hailo_status reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type) override;
-    virtual ExpectedRef<ConfigManager> get_config_manager() override;
 
 private:
-    CoreDevice(HailoRTDriver &&driver, hailo_status &status);
-
-    // TODO: (HRT-7535) This member needs to be held in the object that impls fw_interact_impl func,
-    //       because VdmaConfigManager calls a control (which in turn calls fw_interact_impl).
-    //       (otherwise we'll get a "pure virtual method called" runtime error in the Device's dtor)
-    //       Once we merge CoreDevice::fw_interact_impl and PcieDevice::fw_interact_impl we can
-    //       move the m_context_switch_manager member and get_config_manager() func to VdmaDevice.
-    std::unique_ptr<ConfigManager> m_context_switch_manager;
+    CoreDevice(HailoRTDriver &&driver, hailo_status &status, const std::string &device_id);
 };
 
 

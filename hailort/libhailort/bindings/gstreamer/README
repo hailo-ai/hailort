@@ -1,6 +1,6 @@
 Compiling the plugin:
-  cmake -H. -Bbuild
-  cmake --build build
+  cmake -H. -Bbuild -DCMAKE_BUILD_TYPE=Release
+  cmake --build build --config release
 
 Using the plugin:
   The plugin is dependent on libhailort which is included in the `hailort/lib/` directory.

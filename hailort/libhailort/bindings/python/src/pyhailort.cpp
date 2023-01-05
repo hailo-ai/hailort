@@ -15,6 +15,7 @@ using namespace std;
 #include "vdevice_api.hpp"
 #include "device_api.hpp"
 #include "quantization_api.hpp"
+#include "net_flow_api.hpp"
 
 #include "utils.hpp"
 #include "utils.h"
@@ -156,8 +157,6 @@ private:
 };
 
 #endif
-
-// End of temp hack for hlpcie
 
 static void validate_versions_match()
 {
@@ -324,7 +323,7 @@ PYBIND11_MODULE(_pyhailort, m) {
     py::class_<hailo_debug_notification_message_t>(m, "DebugNotificationMessage")
         .def_readonly("connection_status", &hailo_debug_notification_message_t::connection_status)
         .def_readonly("connection_type", &hailo_debug_notification_message_t::connection_type)
-        .def_readonly("pcie_is_active", &hailo_debug_notification_message_t::pcie_is_active)
+        .def_readonly("vdma_is_active", &hailo_debug_notification_message_t::vdma_is_active)
         .def_readonly("host_port", &hailo_debug_notification_message_t::host_port)
         .def_readonly("host_ip_addr", &hailo_debug_notification_message_t::host_ip_addr)
         ;
@@ -393,6 +392,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_readonly("logger_version", &hailo_device_identity_t::logger_version)
         .def_readonly("board_name_length", &hailo_device_identity_t::board_name_length)
         .def_readonly("is_release", &hailo_device_identity_t::is_release)
+        .def_readonly("extended_context_switch_buffer", &hailo_device_identity_t::extended_context_switch_buffer)
         .def_readonly("device_architecture", &hailo_device_identity_t::device_architecture)
         .def_property_readonly("board_name", [](const hailo_device_identity_t& board_info) -> py::str {
             return py::str(board_info.board_name, board_info.board_name_length);
@@ -413,6 +413,7 @@ PYBIND11_MODULE(_pyhailort, m) {
 
     py::class_<hailo_core_information_t>(m, "CoreInformation")
         .def_readonly("is_release", &hailo_core_information_t::is_release)
+        .def_readonly("extended_context_switch_buffer", &hailo_core_information_t::extended_context_switch_buffer)
         .def_readonly("fw_version", &hailo_core_information_t::fw_version)
         ;
 
@@ -534,6 +535,10 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("RGB888", HAILO_FORMAT_ORDER_RGB888)
         .value("NCHW", HAILO_FORMAT_ORDER_NCHW)
         .value("YUY2", HAILO_FORMAT_ORDER_YUY2)
+        .value("NV12", HAILO_FORMAT_ORDER_NV12)
+        .value("YYUV", HAILO_FORMAT_ORDER_HAILO_YYUV)
+        .value("NV21", HAILO_FORMAT_ORDER_NV21)
+        .value("YYVU", HAILO_FORMAT_ORDER_HAILO_YYVU)
         ;
 
     py::enum_<hailo_format_flags_t>(m, "FormatFlags", py::arithmetic())
@@ -792,6 +797,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         )
         .def_static("default", []() {
             auto orig_params = HailoRTDefaults::get_vdevice_params();
+            orig_params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_NONE;
             VDeviceParamsWrapper params_wrapper{orig_params, ""};
             return params_wrapper;
         });
@@ -942,6 +948,10 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("CPU1", HAILO_CPU_ID_1)
         ;
 
+    py::enum_<hailo_sleep_state_t>(m, "SleepState")
+        .value("SLEEP_STATE_SLEEPING", HAILO_SLEEP_STATE_SLEEPING)
+        .value("SLEEP_STATE_AWAKE", HAILO_SLEEP_STATE_AWAKE)
+        ;
 
     py::class_<uint32_t>(m, "HailoRTDefaults")
         .def_static("HAILO_INFINITE", []() { return HAILO_INFINITE;} )
@@ -1066,6 +1076,7 @@ PYBIND11_MODULE(_pyhailort, m) {
     VStream_api_initialize_python_module(m);
     VDevice_api_initialize_python_module(m);
     DeviceWrapper::add_to_python_module(m);
+    hailort::net_flow::NetFlow_api_initialize_python_module(m);
 
     #if defined(__GNUC__)
     TrafficControlUtilWrapper::add_to_python_module(m);

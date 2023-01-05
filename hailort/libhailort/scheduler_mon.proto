@@ -5,7 +5,7 @@ option optimize_for = LITE_RUNTIME;
 message ProtoMonInfo {
     string network_name = 1;
     double fps = 2;
-    double core_utilization = 3;
+    double active_time = 3;
 }
 
 enum ProtoMonStreamDirection {

@@ -27,9 +27,11 @@
 #define _HAILO_VSTREAM_INTERNAL_HPP_
 
 #include "pipeline.hpp"
+#include "hef_internal.hpp"
+#include "net_flow/ops/yolo_post_processing.hpp"
 #include "hailo/transform.hpp"
 #include "hailo/stream.hpp"
-#include "hailo/network_group.hpp"
+#include "context_switch/network_group_internal.hpp"
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
 #include "hailort_rpc_client.hpp"
@@ -225,16 +227,14 @@ public:
     virtual AccumulatorPtr get_pipeline_latency_accumulator() const override;
     virtual const std::vector<std::shared_ptr<PipelineElement>> &get_pipeline() const override;
 
-protected:
-    virtual hailo_status start_vstream() override;
-    virtual hailo_status stop_vstream() override;
-    virtual hailo_status stop_and_clear() override;
-
 private:
-    InputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t input_vstream_handle);
+    InputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t input_vstream_handle, hailo_format_t &&user_buffer_format, 
+        hailo_vstream_info_t &&info);
 
     std::unique_ptr<HailoRtRpcClient> m_client;
     uint32_t m_handle;
+    hailo_format_t m_user_buffer_format;
+    hailo_vstream_info_t m_info;
 };
 
 class OutputVStreamClient : public OutputVStreamInternal
@@ -262,16 +262,14 @@ public:
     virtual AccumulatorPtr get_pipeline_latency_accumulator() const override;
     virtual const std::vector<std::shared_ptr<PipelineElement>> &get_pipeline() const override;
 
-protected:
-    virtual hailo_status start_vstream() override;
-    virtual hailo_status stop_vstream() override;
-    virtual hailo_status stop_and_clear() override;
-
 private:
-    OutputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t outputs_vstream_handle);
+    OutputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t outputs_vstream_handle, hailo_format_t &&user_buffer_format,
+        hailo_vstream_info_t &&info);
 
     std::unique_ptr<HailoRtRpcClient> m_client;
     uint32_t m_handle;
+    hailo_format_t m_user_buffer_format;
+    hailo_vstream_info_t m_info;
 };
 #endif // HAILO_SUPPORT_MULTI_PROCESS
 
@@ -328,6 +326,33 @@ private:
     std::unique_ptr<OutputTransformContext> m_transform_context;
 };
 
+class NmsPostProcessMuxElement : public BaseMuxElement
+{
+public:
+    static Expected<std::shared_ptr<NmsPostProcessMuxElement>> create(const NetFlowYoloNmsElement &nms_op,
+        const std::vector<hailo_3d_image_shape_t> &shapes, const std::vector<hailo_format_t> &formats,
+        const std::vector<hailo_quant_info_t> &quant_infos, hailo_format_t format, hailo_nms_info_t nms_info,
+        const std::string &name, std::chrono::milliseconds timeout, size_t buffer_pool_size,
+        hailo_pipeline_elem_stats_flags_t elem_flags, hailo_vstream_stats_flags_t vstream_flags, EventPtr shutdown_event,
+        std::shared_ptr<std::atomic<hailo_status>> pipeline_status);
+    static Expected<std::shared_ptr<NmsPostProcessMuxElement>> create(const NetFlowYoloNmsElement &nms_op,
+        const std::vector<hailo_3d_image_shape_t> &shapes, const std::vector<hailo_format_t> &formats,
+        const std::vector<hailo_quant_info_t> &quant_infos, hailo_nms_info_t nms_info, const std::string &name,
+        const hailo_vstream_params_t &vstream_params, EventPtr shutdown_event, std::shared_ptr<std::atomic<hailo_status>> pipeline_status);
+    NmsPostProcessMuxElement(const net_flow::YOLOv5PostProcessingOp &nms_op, BufferPoolPtr &&pool, const std::string &name,
+        std::chrono::milliseconds timeout, DurationCollector &&duration_collector,
+        std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status);
+
+    virtual std::vector<AccumulatorPtr> get_queue_size_accumulators() override;
+
+protected:
+    virtual Expected<PipelineBuffer> action(std::vector<PipelineBuffer> &&inputs, PipelineBuffer &&optional) override;
+
+private:
+    net_flow::YOLOv5PostProcessingOp m_nms_op;
+    BufferPoolPtr m_pool;
+};
+
 class NmsMuxElement : public BaseMuxElement
 {
 public:
@@ -343,7 +368,7 @@ public:
     virtual std::vector<AccumulatorPtr> get_queue_size_accumulators() override;
 
 protected:
-    virtual Expected<PipelineBuffer> action(std::vector<PipelineBuffer>  &&inputs, PipelineBuffer &&optional) override;
+    virtual Expected<PipelineBuffer> action(std::vector<PipelineBuffer> &&inputs, PipelineBuffer &&optional) override;
 
 private:
     std::vector<hailo_nms_info_t> m_nms_infos;
@@ -373,59 +398,62 @@ private:
 class HwReadElement : public SourceElement
 {
 public:
-    static Expected<std::shared_ptr<HwReadElement>> create(OutputStream &stream, const std::string &name, std::chrono::milliseconds timeout,
+    static Expected<std::shared_ptr<HwReadElement>> create(std::shared_ptr<OutputStream> stream, const std::string &name, std::chrono::milliseconds timeout,
         size_t buffer_pool_size, hailo_pipeline_elem_stats_flags_t elem_flags, hailo_vstream_stats_flags_t vstream_flags, EventPtr shutdown_event,
-        std::shared_ptr<std::atomic<hailo_status>> pipeline_status);
-    HwReadElement(OutputStream &stream, BufferPoolPtr buffer_pool, const std::string &name, std::chrono::milliseconds timeout,
-        DurationCollector &&duration_collector, EventPtr shutdown_event, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status);
+        std::shared_ptr<std::atomic<hailo_status>> pipeline_status, std::unique_ptr<OutputTransformContext> m_transform_context = nullptr);
+    HwReadElement(std::shared_ptr<OutputStream> stream, BufferPoolPtr buffer_pool, const std::string &name, std::chrono::milliseconds timeout,
+        DurationCollector &&duration_collector, EventPtr shutdown_event, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
+        BufferPoolPtr transform_pool = nullptr, std::unique_ptr<OutputTransformContext> transform_context = nullptr);
     virtual ~HwReadElement() = default;
 
     virtual std::vector<AccumulatorPtr> get_queue_size_accumulators() override;
 
     virtual hailo_status run_push(PipelineBuffer &&buffer) override;
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
-    virtual hailo_status activate() override;
-    virtual hailo_status deactivate() override;
-    virtual hailo_status post_deactivate() override;
-    virtual hailo_status clear() override;
-    virtual hailo_status flush() override;
-    virtual hailo_status abort() override;
-    virtual void wait_for_finish() override;
-    virtual hailo_status resume() override;
+    virtual hailo_status execute_activate() override;
+    virtual hailo_status execute_deactivate() override;
+    virtual hailo_status execute_post_deactivate() override;
+    virtual hailo_status execute_clear() override;
+    virtual hailo_status execute_flush() override;
+    virtual hailo_status execute_abort() override;
+    virtual hailo_status execute_resume() override;
+    virtual hailo_status execute_wait_for_finish() override;
     uint32_t get_invalid_frames_count();
     virtual std::string description() const override;
 
 private:
-    OutputStream &m_stream;
+    std::shared_ptr<OutputStream> m_stream;
     BufferPoolPtr m_pool;
+    BufferPoolPtr m_transform_pool;
     std::chrono::milliseconds m_timeout;
     EventPtr m_shutdown_event;
     WaitOrShutdown m_activation_wait_or_shutdown;
+    std::unique_ptr<OutputTransformContext> m_transform_context;
 };
 
 class HwWriteElement : public SinkElement
 {
 public:
-    static Expected<std::shared_ptr<HwWriteElement>> create(InputStream &stream, const std::string &name,
+    static Expected<std::shared_ptr<HwWriteElement>> create(std::shared_ptr<InputStream> stream, const std::string &name,
         hailo_pipeline_elem_stats_flags_t elem_flags, std::shared_ptr<std::atomic<hailo_status>> pipeline_status);
-    HwWriteElement(InputStream &stream, const std::string &name, DurationCollector &&duration_collector,
+    HwWriteElement(std::shared_ptr<InputStream> stream, const std::string &name, DurationCollector &&duration_collector,
         std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr got_flush_event);
     virtual ~HwWriteElement() = default;
 
     virtual hailo_status run_push(PipelineBuffer &&buffer) override;
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
-    virtual hailo_status activate() override;
-    virtual hailo_status deactivate() override;
-    virtual hailo_status post_deactivate() override;
-    virtual hailo_status clear() override;
-    virtual hailo_status flush() override;
-    virtual hailo_status abort() override;
-    virtual void wait_for_finish() override;
-    virtual hailo_status resume() override;
+    virtual hailo_status execute_activate() override;
+    virtual hailo_status execute_deactivate() override;
+    virtual hailo_status execute_post_deactivate() override;
+    virtual hailo_status execute_clear() override;
+    virtual hailo_status execute_flush() override;
+    virtual hailo_status execute_abort() override;
+    virtual hailo_status execute_resume() override;
+    virtual hailo_status execute_wait_for_finish() override;
     virtual std::string description() const override;
 
 private:
-    InputStream &m_stream;
+    std::shared_ptr<InputStream> m_stream;
     EventPtr m_got_flush_event;
 };
 
@@ -444,23 +472,32 @@ protected:
 class VStreamsBuilderUtils
 {
 public:
-    static Expected<std::vector<InputVStream>> create_inputs(InputStream &input_stream, const hailo_vstream_info_t &input_vstream_infos,
+    static Expected<std::vector<InputVStream>> create_inputs(std::shared_ptr<InputStream> input_stream, const hailo_vstream_info_t &input_vstream_infos,
         const hailo_vstream_params_t &vstreams_params);
-    static Expected<std::vector<OutputVStream>> create_outputs(OutputStream &output_stream,
+    static Expected<std::vector<OutputVStream>> create_outputs(std::shared_ptr<OutputStream> output_stream,
         NameToVStreamParamsMap &vstreams_params_map, const std::map<std::string, hailo_vstream_info_t> &output_vstream_infos);
     static InputVStream create_input(std::shared_ptr<InputVStreamInternal> input_vstream);
     static OutputVStream create_output(std::shared_ptr<OutputVStreamInternal> output_vstream);
-    static Expected<std::vector<OutputVStream>> create_output_nms(OutputStreamRefVector &output_streams,
+    static Expected<std::vector<OutputVStream>> create_output_nms(OutputStreamPtrVector &output_streams,
         hailo_vstream_params_t vstreams_params,
         const std::map<std::string, hailo_vstream_info_t> &output_vstream_infos);
-    static hailo_status add_demux(OutputStream &output_stream, NameToVStreamParamsMap &vstreams_params_map,
+    static Expected<std::vector<OutputVStream>> create_output_post_process_nms(OutputStreamPtrVector &output_streams,
+        hailo_vstream_params_t vstreams_params,
+        const std::map<std::string, hailo_vstream_info_t> &output_vstream_infos,
+        const NetFlowYoloNmsElement &nms_op);
+    static hailo_status add_demux(std::shared_ptr<OutputStream> output_stream, NameToVStreamParamsMap &vstreams_params_map,
         std::vector<std::shared_ptr<PipelineElement>> &&elements, std::vector<OutputVStream> &vstreams,
         std::shared_ptr<HwReadElement> hw_read_elem, EventPtr shutdown_event, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
         const std::map<std::string, hailo_vstream_info_t> &output_vstream_infos);
-    static hailo_status add_nms_fuse(OutputStreamRefVector &output_streams, hailo_vstream_params_t &vstreams_params,
+    static hailo_status add_nms_fuse(OutputStreamPtrVector &output_streams, hailo_vstream_params_t &vstreams_params,
         std::vector<std::shared_ptr<PipelineElement>> &elements, std::vector<OutputVStream> &vstreams,
         EventPtr shutdown_event, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
         const std::map<std::string, hailo_vstream_info_t> &output_vstream_infos);
+    static hailo_status add_nms_post_process(OutputStreamPtrVector &output_streams, hailo_vstream_params_t &vstreams_params,
+        std::vector<std::shared_ptr<PipelineElement>> &elements, std::vector<OutputVStream> &vstreams,
+        EventPtr shutdown_event, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
+        const std::map<std::string, hailo_vstream_info_t> &output_vstream_infos,
+        const NetFlowYoloNmsElement &nms_op);
     static Expected<AccumulatorPtr> create_pipeline_latency_accumulator(const hailo_vstream_params_t &vstreams_params);
 };
 

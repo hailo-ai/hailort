@@ -50,7 +50,7 @@ public:
     virtual uint16_t desc_page_size() const override;
     virtual uint32_t descs_count() const override;
 
-    virtual hailo_status read(void *buf_dst, size_t count, size_t offset) override;
+    virtual hailo_status read(void *buf_dst, size_t count, size_t offset, bool should_sync) override;
     virtual hailo_status write(const void *buf_src, size_t count, size_t offset) override;
 
     virtual Expected<uint32_t> program_descriptors(size_t transfer_size, VdmaInterruptsDomain first_desc_interrupts_domain,

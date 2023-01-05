@@ -1,5 +1,4 @@
 from enum import Enum, IntEnum
-import re
 import signal
 import struct
 import pkg_resources
@@ -123,7 +122,7 @@ class ExceptionWrapper(object):
             raise HailoRTInvalidFrameException("An invalid frame was received")
         if string_error_code == "HAILO_TIMEOUT":
             raise HailoRTTimeout("Received a timeout - hailort has failed because a timeout had occurred")
-        if string_error_code == "HAILO_STREAM_ABORTED":
+        if string_error_code == "HAILO_STREAM_ABORTED_BY_HW":
             raise HailoRTStreamAborted("Stream aborted due to an external event")
 
         if string_error_code == "HAILO_INVALID_OPERATION":
@@ -1076,6 +1075,7 @@ class HailoRTTransformUtils(object):
 
 class InternalEthernetDevice(object):
     def __init__(self, address, port, response_timeout_seconds=10, max_number_of_attempts=3):
+        # default_logger().warning("InternalEthernetDevice is deprecated! Please use Device object.")
         self.device = None
         self._address = address
         self._port = port
@@ -1104,6 +1104,7 @@ class PcieDeviceInfo(_pyhailort.PcieDeviceInfo):
 
     def __init__(self, bus, device, func, domain=None):
         super(PcieDeviceInfo, self).__init__()
+        # default_logger().warning("PcieDeviceInfo is deprecated! Please use Device object with device_id.")
         self.bus = bus
         self.device = device
         self.func = func
@@ -1140,6 +1141,7 @@ class PcieDeviceInfo(_pyhailort.PcieDeviceInfo):
 
 class InternalPcieDevice(object):
     def __init__(self, device_info=None):
+        # self._logger.warning("InternalPcieDevice deprecated! Please use Device object.")
         self.device = None
         if device_info is None:
             device_info = InternalPcieDevice.scan_devices()[0]
@@ -1233,7 +1235,7 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 4
-SUPPORTED_FW_MINOR = 10
+SUPPORTED_FW_MINOR = 12
 SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
@@ -1250,9 +1252,11 @@ class DeviceArchitectureTypes(IntEnum):
 
 class BoardInformation(object):
     def __init__(self, protocol_version, fw_version_major, fw_version_minor, fw_version_revision,
-                 logger_version, board_name, is_release, device_architecture, serial_number, part_number, product_name):
+                 logger_version, board_name, is_release, extended_context_switch_buffer, device_architecture,
+                 serial_number, part_number, product_name):
         self.protocol_version = protocol_version
-        self.firmware_version = HailoFirmwareVersion.construct_from_params(fw_version_major, fw_version_minor, fw_version_revision, is_release, HailoFirmwareType.APP)
+        self.firmware_version = HailoFirmwareVersion.construct_from_params(fw_version_major, fw_version_minor, fw_version_revision, is_release,
+            extended_context_switch_buffer, HailoFirmwareType.APP)
         self.logger_version = logger_version
         self.board_name = board_name
         self.is_release = is_release
@@ -1303,8 +1307,9 @@ class BoardInformation(object):
             raise HailoRTException("Unsupported device architecture.")
 
 class CoreInformation(object):
-    def __init__(self, fw_version_major, fw_version_minor, fw_version_revision, is_release):
-        self.firmware_version = HailoFirmwareVersion.construct_from_params(fw_version_major, fw_version_minor, fw_version_revision, is_release, HailoFirmwareType.CORE)
+    def __init__(self, fw_version_major, fw_version_minor, fw_version_revision, is_release, extended_context_switch_buffer):
+        self.firmware_version = HailoFirmwareVersion.construct_from_params(fw_version_major, fw_version_minor, fw_version_revision, is_release,
+            extended_context_switch_buffer, HailoFirmwareType.CORE)
         self.is_release = is_release
     
     def __str__(self):
@@ -1456,17 +1461,20 @@ class HailoFirmwareType(Enum):
 
 class HailoFirmwareVersion(object):
     """Represents a Hailo chip firmware version."""
-    DEV_BIT  = 0x80000000
-    CORE_BIT = 0x08000000
+    CORE_BIT                           = 0x08000000
+    EXTENDED_CONTEXT_SWITCH_BUFFER_BIT = 0x40000000
+    DEV_BIT                            = 0x80000000
     FW_VERSION_FORMAT = '<III'
 
-    def __init__(self, firmware_version_buffer, is_release, fw_type):
+    def __init__(self, firmware_version_buffer, is_release, extended_context_switch_buffer, fw_type):
         """Initialize a new Hailo Firmware Version object.
 
         Args:
             firmware_version_buffer (str): A buffer containing the firmware version struct.
             is_release (bool, optional): Flag indicating if firmware is at develop/release mode.
-                                        None indicates unknown
+                                         None indicates unknown
+            extended_context_switch_buffer (bool): Flag indicating if firmware has an extended context switch buffer.
+            fw_type (HailoFirmwareType): Firmware type
         """
         self.major, self.minor, self.revision = struct.unpack(
             self.FW_VERSION_FORMAT,
@@ -1474,21 +1482,24 @@ class HailoFirmwareVersion(object):
         
         self.fw_type = fw_type
         self.mode = HailoFirmwareMode.RELEASE if is_release else HailoFirmwareMode.DEVELOP
+        self.extended_context_switch_buffer = extended_context_switch_buffer
         
-        self.revision &= ~(self.CORE_BIT | self.DEV_BIT)
+        self.revision &= ~(self.CORE_BIT | self.EXTENDED_CONTEXT_SWITCH_BUFFER_BIT | self.DEV_BIT)
 
     def __str__(self):
         """Returns:
             str: Firmware version in a human readable format.
         """
-        return '{}.{}.{} ({},{})'.format(self.major, self.minor, self.revision, self.mode.value, self.fw_type.value)
+        return '{}.{}.{} ({},{}{})'.format(self.major, self.minor, self.revision, self.mode.value, self.fw_type.value,
+            ',extended context switch buffer' if self.extended_context_switch_buffer else '')
 
     @classmethod
-    def construct_from_params(cls, major, minor, revision, is_release, fw_type):
+    def construct_from_params(cls, major, minor, revision, is_release, extended_context_switch_buffer, fw_type):
         """Returns:
             class HailoFirmwareVersion : with the given Firmware version.
         """
-        return cls(struct.pack(HailoFirmwareVersion.FW_VERSION_FORMAT, major, minor, revision), is_release, fw_type)
+        return cls(struct.pack(HailoFirmwareVersion.FW_VERSION_FORMAT, major, minor, revision), is_release,
+            extended_context_switch_buffer, fw_type)
 
     @property
     def comparable_value(self):
@@ -1538,14 +1549,6 @@ class SupportedFeatures(object):
     def _is_feature_enabled(self, feature):
         return (self.supported_features & feature) != 0
 
-def _enum_to_dict(enum):
-    return {k: v for k, v in enum.__dict__.items() if not re.match("__(.*)", str(k)) and isinstance(v, enum)}
-
-def _get_buffer_index_enum_member(index):
-    for name, member in _enum_to_dict(MeasurementBufferIndex).items():
-        if int(member) == index:
-            return member
-    raise HailoRTException("Invalid index")
 
 class Control:
     """The control object of this device, which implements the control API of the Hailo device.
@@ -1675,11 +1678,10 @@ class Control:
         with ExceptionWrapper():
             return self._device.power_measurement(dvm, measurement_type)
 
-    def start_power_measurement(self, delay=None, averaging_factor=AveragingFactor.AVERAGE_256, sampling_period=SamplingPeriod.PERIOD_1100us):
+    def start_power_measurement(self, averaging_factor=AveragingFactor.AVERAGE_256, sampling_period=SamplingPeriod.PERIOD_1100us):
         """Start performing a long power measurement.
 
         Args:
-            delay: Unused parameter. Will be removed in future versions.
             averaging_factor (:class:`~hailo_platform.pyhailort.pyhailort.AveragingFactor`):
                 Number of samples per time period, sensor configuration value.
             sampling_period (:class:`~hailo_platform.pyhailort.pyhailort.SamplingPeriod`):
@@ -1691,9 +1693,6 @@ class Control:
                 calculated by the firmware is "average of averages", because it averages values
                 that have already been averaged by the sensor.
         """
-        # TODO: Remove deprecated arg
-        if delay is not None:
-            self._logger.warning("Passing 'delay' to 'start_power_measurement()' is deprecated and will be removed in future versions")
         with ExceptionWrapper():
             return self._device.start_power_measurement(averaging_factor, sampling_period)
 
@@ -1727,11 +1726,6 @@ class Control:
             This function can perform measurements for more than just power. For all supported measurement types
             view :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes`
         """
-        # TODO: Remove deprecated arg
-        if isinstance(buffer_index, int):
-            self._logger.warning("Passing integer as 'buffer_index' to 'set_power_measurement()' is deprecated. One should pass "
-                ":class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex` as 'buffer_index' instead.")
-            buffer_index = _get_buffer_index_enum_member(buffer_index)
         with ExceptionWrapper():
             return self._device.set_power_measurement(buffer_index, dvm, measurement_type)
 
@@ -1760,11 +1754,6 @@ class Control:
         if ((self._identify_info.device_architecture != DeviceArchitectureTypes.HAILO8) and
             (self._identify_info.device_architecture != DeviceArchitectureTypes.HAILO8L)):
             raise HailoRTException("Invalid device architecture: {}".format(self._identify_info.device_architecture))
-        # TODO: Remove deprecated arg
-        if isinstance(buffer_index, int):
-            self._logger.warning("Passing integer as 'buffer_index' to 'get_power_measurement()' is deprecated. One should pass "
-                ":class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex` as 'buffer_index' instead.")
-            buffer_index = _get_buffer_index_enum_member(buffer_index)
         with ExceptionWrapper():
             return self._device.get_power_measurement(buffer_index, should_clear)
 
@@ -1822,8 +1811,9 @@ class Control:
             response =  self._device.identify()
         board_information = BoardInformation(response.protocol_version, response.fw_version.major,
             response.fw_version.minor, response.fw_version.revision, response.logger_version,
-            response.board_name, response.is_release,  int(response.device_architecture), response.serial_number,
-            response.part_number, response.product_name)
+            response.board_name, response.is_release, response.extended_context_switch_buffer,
+            int(response.device_architecture), response.serial_number, response.part_number,
+            response.product_name)
         return board_information
 
     def core_identify(self):
@@ -1835,7 +1825,7 @@ class Control:
         with ExceptionWrapper():
             response =  self._device.core_identify()
         core_information = CoreInformation(response.fw_version.major, response.fw_version.minor, 
-            response.fw_version.revision, response.is_release)
+            response.fw_version.revision, response.is_release, response.extended_context_switch_buffer)
         return core_information
 
     def set_fw_logger(self, level, interface_mask):
@@ -2190,7 +2180,6 @@ class Control:
         return self._device
 
 
-# TODO: HRT-7718 - implement more functionalities from hw_object.py
 class Device:
     """ Hailo device object representation. """
 
@@ -2213,6 +2202,7 @@ class Device:
         """
         gc.collect()
 
+        self._logger = default_logger()
         # Device __del__ function tries to release self._device.
         # to avoid AttributeError if the __init__ func fails, we set it to None first.
         # https://stackoverflow.com/questions/6409644/is-del-called-on-an-object-that-doesnt-complete-init
@@ -2286,46 +2276,65 @@ class Device:
         """
         return self._control_object
 
+    def read_log(self, count, cpu_id):
+        """
+        Returns:
+            Returns buffer with debug log data.
+
+        Args:
+            count (int): bytes count to read
+            cpu_id (HailoCpuId): cpu id
+        """
+        with ExceptionWrapper():
+            return self._device.read_log(count, cpu_id)
+
+    @property
+    def loaded_network_groups(self):
+        """Getter for the property _loaded_network_groups.
+
+        Returns:
+            list of :obj:`ConfiguredNetwork`: List of the the configured network groups loaded on the device.
+        """
+        return self._loaded_network_groups
+
+    @property
+    def _loaded_network_group(self):
+        if len(self._loaded_network_groups) != 1:
+            raise HailoRTException("Access to network group is only allowed when there is a single loaded network group")
+        return self._loaded_network_groups[0]
+
+
 class VDevice(object):
     """Hailo virtual device representation."""
 
-    def __init__(self, params=None, device_infos=None, *, device_ids=None):
+    def __init__(self, params=None, *, device_ids=None):
 
         """Create the Hailo virtual device object.
 
         Args:
             params (:obj:`hailo_platform.pyhailort.pyhailort.VDeviceParams`, optional): VDevice params, call
-                :func:`VDevice.create_params` to get default params. Excludes 'device_ids' and 'device_infos'.
-            device_infos (list of :obj:`hailo_platform.pyhailort.pyhailort.PcieDeviceInfo`, optional):
-                Deprecated - one should use device_ids instead. If given - pcie devices infos to create VDevice from,
-                call :func:`PcieDevice.scan_devices` to get list of all available devices. Excludes 'params' and 'device_ids.
-            device_ids (list of str, optional): devices ids to create VDevice from, call :func:`_Device.scan` to get
-                list of all available devices. Excludes 'params' and 'device_infos'.
+                :func:`VDevice.create_params` to get default params. Excludes 'device_ids'.
+            device_ids (list of str, optional): devices ids to create VDevice from, call :func:`Device.scan` to get
+                list of all available devices. Excludes 'params'.
         """
         gc.collect()
+
+        # VDevice __del__ function tries to release self._vdevice.
+        # to avoid AttributeError if the __init__ func fails, we set it to None first.
+        # https://stackoverflow.com/questions/6409644/is-del-called-on-an-object-that-doesnt-complete-init
+        self._vdevice = None
+
         self._id = "VDevice"
         self._params = params
-
-        # Convert device_infos to device_ids
-        if device_infos is not None:
-            if device_ids is not None:
-                raise HailoRTException("VDevice can by ids from either device_ids or device_infos. Both parameters were passed to the c'tor")
-
-            logger = default_logger()
-            logger.warning("Warning - passing device_infos is deprecated. One should pass device_ids.")
-            device_ids = [str(device_info) for device_info in device_infos]
-            device_infos = None
+        self._loaded_network_groups = []
+        self._creation_pid = os.getpid()
 
         self._device_ids = device_ids
         if self._device_ids is not None:
             if self._params is not None:
-                raise HailoRTException("VDevice can be created from params or device ids/infos. Both parameters were passed to the c'tor")
+                raise HailoRTException("VDevice can be created from params or device ids. Both parameters were passed to the c'tor")
 
-        self._vdevice = None
-        self._loaded_network_groups = []
         self._open_vdevice()
-
-        self._creation_pid = os.getpid()
 
     def _open_vdevice(self):
         if self._device_ids is not None:
@@ -2382,19 +2391,6 @@ class VDevice(object):
         phys_dev_infos = self.get_physical_devices_ids()
         return [Device(dev_id) for dev_id in phys_dev_infos]
 
-    def get_physical_devices_infos(self):
-        """Deprecated: :func:`VDevice.get_physical_devices_infos` is deprecated. One should use
-        (:func:`VDevice.get_physical_devices_ids`) instead.
-
-        Gets the physical devices infos.
-
-        Return:
-            list of :obj:`~hailo_platform.pyhailort.pyhailort.PcieDeviceInfo`: The underlying physical devices infos.
-        """
-        logger = default_logger()
-        logger.warning("Warning - VDevice.get_physical_devices_infos() is deprecated. One should use VDevice.get_physical_devices_ids.")
-        return [PcieDeviceInfo.from_string(dev_id) for dev_id in self.get_physical_devices_ids()]
-
     def get_physical_devices_ids(self):
         """Gets the physical devices ids.
 
@@ -2403,6 +2399,22 @@ class VDevice(object):
         """
         with ExceptionWrapper():
             return self._vdevice.get_physical_devices_ids()
+
+    @property
+    def loaded_network_groups(self):
+        """Getter for the property _loaded_network_groups.
+
+        Returns:
+            list of :obj:`ConfiguredNetwork`: List of the the configured network groups loaded on the device.
+        """
+        return self._loaded_network_groups
+
+    @property
+    def _loaded_network_group(self):
+        if len(self._loaded_network_groups) != 1:
+            raise HailoRTException("Access to network group is only allowed when there is a single loaded network group")
+        return self._loaded_network_groups[0]
+
 
 class InputVStreamParams(object):
     """Parameters of an input virtual stream (host to device)."""
@@ -2883,3 +2895,14 @@ class OutputVStreams(object):
 
     def __iter__(self):
         return iter(self._vstreams.values())
+
+class YOLOv5PostProcessingOp(object):
+
+    def __init__(self, anchors, shapes, formats, quant_infos, image_height, image_width, confidence_threshold, iou_threshold, num_of_classes,
+            should_dequantize, max_boxes, should_sigmoid, one_class_per_bbox=True):
+
+        self._op = _pyhailort.YOLOv5PostProcessingOp.create(anchors, shapes, formats, quant_infos, image_height, image_width, confidence_threshold,
+            iou_threshold, num_of_classes, should_dequantize, max_boxes, should_sigmoid, one_class_per_bbox)
+
+    def execute(self, net_flow_tensors):
+        return self._op.execute(net_flow_tensors)

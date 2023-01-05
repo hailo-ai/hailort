@@ -76,6 +76,12 @@ class UDPRateLimiterCLI(HailortCliUtil):
         super().__init__(parser, 'udp-rate-limiter')
 
 
+class VersionCLI(HailortCliUtil):
+    """CLI tool for hailort version."""
+    def __init__(self, parser):
+        super().__init__(parser, '--version')
+
+
 class TutorialRequired(Exception):
     pass
 

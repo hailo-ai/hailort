@@ -30,7 +30,7 @@ namespace hailort
     (static_cast<uint32_t>((__sample_period) / 1000.0 * (__average_factor) * 2 * 1.2))
 
 #define OVERCURRENT_PROTECTION_WARNING ( \
-        "Using the overcurrent protection dvm for power measurement will disable the ovecurrent protection.\n" \
+        "Using the overcurrent protection dvm for power measurement will disable the overcurrent protection.\n" \
         "If only taking one measurement, the protection will resume automatically.\n" \
         "If doing continuous measurement, to enable overcurrent protection again you have to stop the power measurement on this dvm." \
     )
@@ -44,7 +44,7 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
 
     CHECK_AS_EXPECTED(nullptr != identify_response, HAILO_INVALID_ARGUMENT);
 
-    /* Store identify response inside control */
+    // Store identify response inside control
     board_info.protocol_version = BYTE_ORDER__ntohl(identify_response->protocol_version);
     board_info.logger_version = BYTE_ORDER__ntohl(identify_response->logger_version);
     (void)memcpy(&(board_info.fw_version),
@@ -67,14 +67,17 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
         &(identify_response->product_name),
         BYTE_ORDER__ntohl(identify_response->product_name_length));
 
-    /* Check if firmware is at debug/release */
+    // Check if the firmware is debug or release
     board_info.is_release = (!IS_REVISION_DEV(board_info.fw_version.revision));
+
+    // Check if the firmware was compiled with EXTENDED_CONTEXT_SWITCH_BUFFER
+    board_info.extended_context_switch_buffer = IS_REVISION_EXTENDED_CONTEXT_SWITCH_BUFFER(board_info.fw_version.revision);
 
     // Make sure response was from app CPU
     CHECK_AS_EXPECTED((0 == (board_info.fw_version.revision & REVISION_APP_CORE_FLAG_BIT_MASK)), HAILO_INVALID_FIRMWARE,
      "Got invalid app FW type, which means the FW was not marked correctly. unmaked FW revision {}", board_info.fw_version.revision);
 
-    /* Clear debug/release bit */
+    // Keep the revision number only
     board_info.fw_version.revision = GET_REVISION_NUMBER_VALUE(board_info.fw_version.revision);
 
     board_info.device_architecture = static_cast<hailo_device_architecture_t>(BYTE_ORDER__ntohl(identify_response->device_architecture));
@@ -163,22 +166,25 @@ hailo_status control__parse_core_identify_results(CONTROL_PROTOCOL__core_identif
     CHECK_ARG_NOT_NULL(core_info);
     CHECK_ARG_NOT_NULL(identify_response);
 
-    /* Store identify response inside control */
+    // Store identify response inside control
     (void)memcpy(&(core_info->fw_version),
             &(identify_response->fw_version),
             sizeof(core_info->fw_version));
 
-    /* Check if firmware is at debug/release */
+    // Check if firmware is at debug/release
     core_info->is_release = !(IS_REVISION_DEV(core_info->fw_version.revision));
 
-    /* Make sure response was from core CPU */
+    // Check if the firmware was compiled with EXTENDED_CONTEXT_SWITCH_BUFFER
+    core_info->extended_context_switch_buffer = IS_REVISION_EXTENDED_CONTEXT_SWITCH_BUFFER(core_info->fw_version.revision);
+
+    // Make sure response was from core CPU
     CHECK((REVISION_APP_CORE_FLAG_BIT_MASK == (core_info->fw_version.revision & REVISION_APP_CORE_FLAG_BIT_MASK)), HAILO_INVALID_FIRMWARE,
         "Got invalid core FW type, which means the FW was not marked correctly. unmaked FW revision {}", core_info->fw_version.revision);
 
-    /* Clear debug/release bit */
+    // Keep the revision number only
     core_info->fw_version.revision = GET_REVISION_NUMBER_VALUE(core_info->fw_version.revision);
 
-    /* Write identify results to log */
+    // Write identify results to log
     LOGGER__INFO("core firmware_version is: {}.{}.{}",
             core_info->fw_version.major,
             core_info->fw_version.minor,
@@ -487,6 +493,28 @@ Expected<bool> Control::get_overcurrent_state(Device &device)
 
     get_overcurrent_state_response = (CONTROL_PROTOCOL__get_overcurrent_state_response_t *)(payload->parameters);
     return std::move(get_overcurrent_state_response->is_required);
+}
+
+Expected<CONTROL_PROTOCOL__hw_consts_t> Control::get_hw_consts(Device &device)
+{
+    size_t request_size = 0;
+    CONTROL_PROTOCOL__request_t request = {};
+    auto common_status = CONTROL_PROTOCOL__pack_get_hw_consts_request(&request, &request_size, device.get_control_sequence());
+    auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    uint8_t response_buffer[RESPONSE_MAX_BUFFER_SIZE] = {};
+    size_t response_size = RESPONSE_MAX_BUFFER_SIZE;
+    status = device.fw_interact((uint8_t*)(&request), request_size, (uint8_t*)&response_buffer, &response_size);
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    CONTROL_PROTOCOL__response_header_t *header = NULL;
+    CONTROL_PROTOCOL__payload_t *payload = NULL;
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    const auto &response = *reinterpret_cast<CONTROL_PROTOCOL__get_hw_consts_response_t*>(payload->parameters);
+    return Expected<CONTROL_PROTOCOL__hw_consts_t>(response.hw_consts);
 }
 
 hailo_status Control::write_memory_chunk(Device &device, uint32_t address, const uint8_t *data, uint32_t chunk_size)
@@ -2289,8 +2317,8 @@ exit:
     return status;
 }
 
-hailo_status Control::context_switch_set_main_header(Device &device,
-    CONTROL_PROTOCOL__context_switch_main_header_t *context_switch_header)
+hailo_status Control::context_switch_set_network_group_header(Device &device,
+    const CONTROL_PROTOCOL__application_header_t &network_group_header)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     HAILO_COMMON_STATUS_t common_status = HAILO_COMMON_STATUS__UNINITIALIZED;
@@ -2301,11 +2329,8 @@ hailo_status Control::context_switch_set_main_header(Device &device,
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    /* Validate arguments */
-    CHECK_ARG_NOT_NULL(context_switch_header);
-
-    common_status = CONTROL_PROTOCOL__pack_context_switch_set_main_header_request(&request, &request_size, device.get_control_sequence(),
-            context_switch_header);
+    common_status = CONTROL_PROTOCOL__pack_context_switch_set_network_group_header_request(&request, &request_size,
+        device.get_control_sequence(), &network_group_header);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -2329,7 +2354,7 @@ exit:
 }
 
 hailo_status Control::context_switch_set_context_info_chunk(Device &device,
-    CONTROL_PROTOCOL__context_switch_context_info_single_control_t *context_info)
+    const CONTROL_PROTOCOL__context_switch_context_info_single_control_t &context_info)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     HAILO_COMMON_STATUS_t common_status = HAILO_COMMON_STATUS__UNINITIALIZED;
@@ -2340,11 +2365,8 @@ hailo_status Control::context_switch_set_context_info_chunk(Device &device,
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    /* Validate arguments */
-    CHECK_ARG_NOT_NULL(context_info);
-
     common_status = CONTROL_PROTOCOL__pack_context_switch_set_context_info_request(&request, &request_size, device.get_control_sequence(),
-            context_info);
+        &context_info);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -2372,126 +2394,13 @@ exit:
 }
 
 hailo_status Control::context_switch_set_context_info(Device &device,
-    CONTROL_PROTOCOL__context_switch_context_info_t *context_info)
+    const std::vector<CONTROL_PROTOCOL__context_switch_context_info_single_control_t> &context_infos)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
-    CONTROL_PROTOCOL__context_switch_context_info_single_control_t context_info_single_control = {};
-    uint8_t slice_index = 0;
-    bool is_first_control_per_context = false;
-    bool is_last_control_per_context = false;
-    uint16_t slice_start_offset = 0;
-    uint16_t slice_end_offset = 0;
-
-    /* Validate arguments */
-    CHECK_ARG_NOT_NULL(context_info);
-
-    do {
-        if (0 == slice_index) {
-            is_first_control_per_context = true;
-        } else {
-            is_first_control_per_context = false;
-        }
-        if (0 == context_info->control_slicing_data.control_slicing_offsets[slice_index]) {
-            is_last_control_per_context = true;
-        } else {
-            is_last_control_per_context = false;
-        }
-
-        /* Build single control struct from context info */
-
-        context_info_single_control.is_first_control_per_context = is_first_control_per_context;
-        context_info_single_control.is_last_control_per_context = is_last_control_per_context;
-        static_assert(sizeof(context_info_single_control.config_channel_infos) == sizeof(context_info->config_channel_infos),
-            "mismatch in sizes of config_channel_infos");
-        static_assert(sizeof(context_info_single_control.context_stream_remap_data) == sizeof(context_info->context_stream_remap_data),
-            "mismatch in sizes of context_stream_remap_data");
-        context_info_single_control.cfg_channels_count = context_info->cfg_channels_count;
-        memcpy(context_info_single_control.config_channel_infos,
-            context_info->config_channel_infos,
-            sizeof(context_info_single_control.config_channel_infos));
-
-        memcpy(&(context_info_single_control.context_stream_remap_data),
-                &(context_info->context_stream_remap_data),
-                sizeof(context_info_single_control.context_stream_remap_data));
-
-        context_info_single_control.number_of_edge_layers =
-            context_info->control_slicing_data.slice_edge_layers[slice_index];
-        context_info_single_control.number_of_trigger_groups =
-            context_info->control_slicing_data.slice_triggers[slice_index];
-
-        if (is_first_control_per_context) {
-            slice_start_offset = 0;
-        } else {
-            slice_start_offset = context_info->control_slicing_data.control_slicing_offsets[slice_index-1];
-        }
-        if (is_last_control_per_context) {
-            slice_end_offset = (uint16_t)context_info->context_network_data_length;
-        } else {
-            slice_end_offset = context_info->control_slicing_data.control_slicing_offsets[slice_index];
-        }
-
-        /* Validation on the memory before memcpy. Should not fail */
-        if ((CONTROL_PROTOCOL__CONTEXT_NETWORK_DATA_MAX_SIZE < slice_end_offset) ||
-                (CONTROL_PROTOCOL__CONTEXT_NETWORK_DATA_SINGLE_CONTROL_MAX_SIZE <
-                 (uint16_t)(slice_end_offset - slice_start_offset))) {
-            status = HAILO_OUT_OF_HOST_MEMORY;
-            goto exit;
-        }
-
-        context_info_single_control.context_network_data_length = (slice_end_offset - slice_start_offset);
-        memcpy(context_info_single_control.context_network_data,
-                (uint8_t *)((uintptr_t)context_info->context_network_data + slice_start_offset),
-                context_info_single_control.context_network_data_length);
-
-        status = Control::context_switch_set_context_info_chunk(device, &context_info_single_control);
+    for (const auto &context_info : context_infos) {
+        auto status = context_switch_set_context_info_chunk(device, context_info);
         CHECK_SUCCESS(status);
-
-        /* Advance control slice index */
-        slice_index++;
-    } while (!is_last_control_per_context);
-
-    status = HAILO_SUCCESS;
-exit:
-    return status;
-}
-
-hailo_status Control::write_context_switch_info(Device &device,
-    CONTROL_PROTOCOL__context_switch_info_t *context_switch_info)
-{
-    hailo_status status = HAILO_UNINITIALIZED;
-    uint8_t network_group_index = 0;
-    uint8_t total_context_counter = 0;
-    uint8_t dynamic_contexts_index = 0;
-
-    /* Validate arguments */
-    CHECK_ARG_NOT_NULL(context_switch_info);
-
-    status = Control::context_switch_set_main_header(device, &(context_switch_info->context_switch_main_header));
-    CHECK_SUCCESS(status);
-
-    /* For each network_group */
-    for (network_group_index = 0; network_group_index < context_switch_info->context_switch_main_header.application_count;
-            network_group_index++) {
-        /* number of contexts in network_group - all dynamic contexts +1 for the additional preliminary context */
-        uint8_t total_contexts_in_app = (uint8_t)(
-                context_switch_info->context_switch_main_header.application_header[network_group_index].dynamic_contexts_count + 1);
-        /* For each context in network_group */
-        for (dynamic_contexts_index = 0; dynamic_contexts_index < total_contexts_in_app; dynamic_contexts_index++) {
-            if (CONTROL_PROTOCOL__MAX_TOTAL_CONTEXTS <= total_context_counter) {
-                status = HAILO_INVALID_CONTEXT_COUNT;
-                goto exit;
-            }
-
-            /* Send context info */
-            status = context_switch_set_context_info(device, &(context_switch_info->context[total_context_counter]));
-            CHECK_SUCCESS(status);
-            total_context_counter++;
-        }
     }
-
-    status = HAILO_SUCCESS;
-exit:
-    return status;
+    return HAILO_SUCCESS;
 }
 
 hailo_status Control::idle_time_get_measurement(Device &device, uint64_t *measurement)
@@ -2609,9 +2518,10 @@ hailo_status Control::set_pause_frames(Device &device, uint8_t rx_pause_frames_e
     return HAILO_SUCCESS;
 }
 
-hailo_status Control::download_context_action_list_chunk(Device &device, uint8_t context_index, uint16_t action_list_offset,
-        size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length,
-        bool *is_action_list_end, uint32_t *batch_counter)
+hailo_status Control::download_context_action_list_chunk(Device &device, uint32_t network_group_id,
+    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index,
+    uint16_t action_list_offset, size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list,
+    uint16_t *action_list_length, bool *is_action_list_end, uint32_t *batch_counter)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     HAILO_COMMON_STATUS_t common_status = HAILO_COMMON_STATUS__UNINITIALIZED;
@@ -2623,14 +2533,13 @@ hailo_status Control::download_context_action_list_chunk(Device &device, uint8_t
     CONTROL_PROTOCOL__payload_t *payload = NULL;
     CONTROL_PROTOCOL__download_context_action_list_response_t *context_action_list_response = NULL;
 
-
     /* Validate arguments */
     CHECK_ARG_NOT_NULL(base_address);
     CHECK_ARG_NOT_NULL(action_list);
     CHECK_ARG_NOT_NULL(action_list_length);
 
     common_status = CONTROL_PROTOCOL__pack_download_context_action_list_request(&request, &request_size, device.get_control_sequence(),
-            context_index, action_list_offset);
+        network_group_id, context_type, context_index, action_list_offset);
 
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
@@ -2680,8 +2589,9 @@ exit:
     return status;
 }
 
-hailo_status Control::download_context_action_list(Device &device, uint8_t context_index, size_t action_list_max_size,
-        uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length, uint32_t *batch_counter)
+hailo_status Control::download_context_action_list(Device &device, uint32_t network_group_id,
+    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index, size_t action_list_max_size,
+    uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length, uint32_t *batch_counter)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     bool is_action_list_end = false;
@@ -2701,9 +2611,9 @@ hailo_status Control::download_context_action_list(Device &device, uint8_t conte
     remaining_action_list_max_size = action_list_max_size;
 
     do {
-        status = download_context_action_list_chunk(device, context_index, accumulated_action_list_length,
-                remaining_action_list_max_size, &chunk_base_address, action_list_current_offset,
-                &chunk_action_list_length, &is_action_list_end, &batch_counter_local);
+        status = download_context_action_list_chunk(device, network_group_id, context_type, context_index,
+            accumulated_action_list_length, remaining_action_list_max_size, &chunk_base_address,
+            action_list_current_offset, &chunk_action_list_length, &is_action_list_end, &batch_counter_local);
         CHECK_SUCCESS(status);
 
         accumulated_action_list_length = (uint16_t)(accumulated_action_list_length + chunk_action_list_length);
@@ -2940,7 +2850,8 @@ hailo_status Control::d2h_notification_manager_set_host_info(Device &device, uin
     size_t response_size = sizeof(response_buffer);
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
-    auto connection_type = (Device::Type::PCIE == device.get_type() ? D2H_EVENT_COMMUNICATION_TYPE_PCIE : D2H_EVENT_COMMUNICATION_TYPE_UDP);
+    auto connection_type = ((Device::Type::PCIE == device.get_type() || Device::Type::CORE == device.get_type()) ?
+        D2H_EVENT_COMMUNICATION_TYPE_VDMA : D2H_EVENT_COMMUNICATION_TYPE_UDP);
 
     LOGGER__DEBUG("Set d2h notification manager new host info : connection_type {}, remote_port {}, remote_ip_address {}", connection_type, host_port, host_ip_address);
 
@@ -3391,6 +3302,31 @@ hailo_status Control::run_bist_test(Device &device, bool is_top_test, uint32_t t
     auto common_status = CONTROL_PROTOCOL__pack_run_bist_test_request(
         &request, &request_size, device.get_control_sequence(),
         is_top_test, top_bypass_bitmap, cluster_index, cluster_bypass_bitmap_0, cluster_bypass_bitmap_1);
+    auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
+    CHECK_SUCCESS(status);
+
+    status = device.fw_interact((uint8_t*)(&request), request_size, (uint8_t*)&response_buffer, &response_size);
+    CHECK_SUCCESS(status);
+
+    /* Parse response */
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
+        &request);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status Control::set_sleep_state(Device &device, hailo_sleep_state_t sleep_state)
+{
+    CONTROL_PROTOCOL__request_t request = {};
+    size_t request_size = 0;
+    uint8_t response_buffer[RESPONSE_MAX_BUFFER_SIZE] = {};
+    size_t response_size = sizeof(response_buffer);
+    CONTROL_PROTOCOL__response_header_t *header = NULL;
+    CONTROL_PROTOCOL__payload_t *payload = NULL;
+
+    auto common_status = CONTROL_PROTOCOL__pack_set_sleep_state_request(
+        &request, &request_size, device.get_control_sequence(), static_cast<uint8_t>(sleep_state));
     auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
 

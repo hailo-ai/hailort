@@ -25,6 +25,7 @@
 #include "hailo/vdevice.hpp"
 #include "vdma_device.hpp"
 #include "context_switch/multi_context/vdma_config_manager.hpp"
+#include "context_switch/vdevice_network_group.hpp"
 #include "network_group_scheduler.hpp"
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
@@ -74,19 +75,27 @@ public:
     }
 
     // Currently only homogeneous vDevice is allow (= all devices are from the same type)
-    Expected<Device::Type> get_device_type();
+    virtual Expected<hailo_stream_interface_t> get_default_streams_interface() const override;
+
+    // TODO: Remove when feature becomes 'released'
+    static bool enable_multi_device_schedeulr()
+    {
+        auto enable_multi_device_schedeulr_env = std::getenv(HAILO_ENABLE_MULTI_DEVICE_SCHEDULER);
+        return ((nullptr != enable_multi_device_schedeulr_env) &&
+            (strnlen(enable_multi_device_schedeulr_env, 2) == 1) && (strncmp(enable_multi_device_schedeulr_env, "1", 1) == 0));
+    }
 
 private:
     VDeviceBase(std::vector<std::unique_ptr<VdmaDevice>> &&devices, NetworkGroupSchedulerPtr network_group_scheduler) :
-        m_devices(std::move(devices)), m_network_group_scheduler(network_group_scheduler)
+        m_devices(std::move(devices)), m_network_group_scheduler(network_group_scheduler), m_network_groups({})
         {}
 
     static Expected<std::vector<std::unique_ptr<VdmaDevice>>> create_devices(const hailo_vdevice_params_t &params);
     static Expected<std::vector<std::string>> get_device_ids(const hailo_vdevice_params_t &params);
 
     std::vector<std::unique_ptr<VdmaDevice>> m_devices;
-    std::unique_ptr<VdmaConfigManager> m_context_switch_manager;
     NetworkGroupSchedulerPtr m_network_group_scheduler;
+    std::vector<std::shared_ptr<VDeviceNetworkGroup>> m_network_groups;
 
     std::mutex m_mutex;
 };
@@ -109,6 +118,7 @@ public:
     Expected<std::vector<std::reference_wrapper<Device>>> get_physical_devices() const override;
 
     Expected<std::vector<std::string>> get_physical_devices_ids() const override;
+    Expected<hailo_stream_interface_t> get_default_streams_interface() const override;
 
 private:
     VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t handle);
@@ -135,6 +145,7 @@ public:
 
     Expected<std::vector<std::reference_wrapper<Device>>> get_physical_devices() const override;
     Expected<std::vector<std::string>> get_physical_devices_ids() const override;
+    Expected<hailo_stream_interface_t> get_default_streams_interface() const override;
 
 private:
     VDeviceHandle(uint32_t handle);

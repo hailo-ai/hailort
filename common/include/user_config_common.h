@@ -66,7 +66,8 @@ typedef enum {
     SOC__NN_CLOCK_250MHz = 250 * 1000 * 1000,
     SOC__NN_CLOCK_225MHz = 225 * 1000 * 1000,
     SOC__NN_CLOCK_200MHz = 200 * 1000 * 1000,
-    SOC__NN_CLOCK_100MHz = 100 * 1000 * 1000
+    SOC__NN_CLOCK_100MHz = 100 * 1000 * 1000,
+    SOC__NN_CLOCK_25MHz  = 25 * 1000 * 1000
 } SOC__NN_CLOCK_HZ_t;
 
 typedef enum {
@@ -79,7 +80,8 @@ typedef enum {
     SOC__CPU_CLOCK_125MHz = SOC__NN_CLOCK_250MHz >> 1,
     SOC__CPU_CLOCK_112MHz = SOC__NN_CLOCK_225MHz >> 1,
     SOC__CPU_CLOCK_100MHz = SOC__NN_CLOCK_200MHz >> 1,
-    SOC__CPU_CLOCK_50MHz = SOC__NN_CLOCK_100MHz >> 1
+    SOC__CPU_CLOCK_50MHz = SOC__NN_CLOCK_100MHz >> 1,
+    SOC__CPU_CLOCK_12MHz = SOC__NN_CLOCK_25MHz >> 1
 } SOC__CPU_CLOCK_HZ_t;
 
 typedef enum {

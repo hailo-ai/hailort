@@ -26,7 +26,6 @@
 #include "firmware_header.h"
 #include "firmware_header_utils.h"
 #include "control_protocol.h"
-#include "context_switch/config_manager.hpp"
 #include "hef_internal.hpp"
 
 #include <thread>
@@ -101,7 +100,7 @@ protected:
     void d2h_notification_thread_main(const std::string &device_id);
     hailo_status check_hef_is_compatible(Hef &hef);
 
-    virtual ExpectedRef<ConfigManager> get_config_manager() = 0;
+    virtual Expected<ConfiguredNetworkGroupVector> add_hef(Hef &hef, const NetworkGroupsParamsMap &configure_params) = 0;
     
     D2hEventQueue m_d2h_notification_queue;
     std::thread m_d2h_notification_thread;

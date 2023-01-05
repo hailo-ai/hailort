@@ -58,9 +58,9 @@ ExpectedRef<VdmaDescriptorList> SgBuffer::get_desc_list()
     return std::ref(m_desc_list);
 }
 
-hailo_status SgBuffer::read(void *buf_dst, size_t count, size_t offset)
+hailo_status SgBuffer::read(void *buf_dst, size_t count, size_t offset, bool should_sync)
 {
-    return m_mapped_buffer.read(buf_dst, count, offset);
+    return m_mapped_buffer.read(buf_dst, count, offset, should_sync);
 }
 
 hailo_status SgBuffer::write(const void *buf_src, size_t count, size_t offset)
@@ -68,14 +68,20 @@ hailo_status SgBuffer::write(const void *buf_src, size_t count, size_t offset)
     return m_mapped_buffer.write(buf_src, count, offset);
 }
 
-hailo_status SgBuffer::read_cyclic(void *buf_dst, size_t count, size_t offset)
+hailo_status SgBuffer::read_cyclic(void *buf_dst, size_t count, size_t offset, bool should_sync)
 {
-    return m_mapped_buffer.read_cyclic(buf_dst, count, offset);
+    return m_mapped_buffer.read_cyclic(buf_dst, count, offset, should_sync);
 }
 
 hailo_status SgBuffer::write_cyclic(const void *buf_src, size_t count, size_t offset)
 {
     return m_mapped_buffer.write_cyclic(buf_src, count, offset);
+}
+
+// TODO: Remove after HRT-7838
+void* SgBuffer::get_user_address()
+{
+    return m_mapped_buffer.user_address();
 }
 
 Expected<uint32_t> SgBuffer::program_descriptors(size_t transfer_size, VdmaInterruptsDomain first_desc_interrupts_domain,
@@ -92,6 +98,11 @@ hailo_status SgBuffer::reprogram_device_interrupts_for_end_of_batch(size_t trans
     const auto num_desc_in_batch = desc_per_transfer * batch_size;
     const auto last_desc_index_in_batch = num_desc_in_batch - 1;
     return m_desc_list.reprogram_descriptor_interrupts_domain(last_desc_index_in_batch, new_interrupts_domain);
+}
+
+hailo_status SgBuffer::reprogram_buffer_offset(size_t new_start_offset, uint8_t channel_index)
+{
+    return m_desc_list.configure_to_use_buffer(m_mapped_buffer, channel_index, new_start_offset);
 }
 
 }

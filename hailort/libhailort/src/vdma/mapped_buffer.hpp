@@ -67,8 +67,10 @@ public:
      * @param[out] buf_dst The buffer to copy the data to
      * @param[in] count Number of bytes to copy to buf_dst
      * @param[in] offset The offset relative to this MappedBuffer to copy the data from
+     * @param[in] should_sync If the backing memory is vdma and it's written to by a device, sync should be true 
+     *                 so that the read will be consistent with the backing memory
      */
-    hailo_status read(void *buf_dst, size_t count, size_t offset);
+    hailo_status read(void *buf_dst, size_t count, size_t offset, bool should_sync = true);
 
     /**
      * Copy data from buf_src parameter to this MappedBuffer.
@@ -95,8 +97,10 @@ public:
      * @param[out] buf_dst The buffer to copy the data to
      * @param[in] count Number of bytes to copy to buf_dst
      * @param[in] offset The offset relative to this MappedBuffer to copy the data from
+     * @param[in] should_sync If the backing memory is vdma and it's written to by a device, sync should be true 
+     *                 so that the read will be consistent with the backing memory 
      */
-    hailo_status read_cyclic(void *buf_dst, size_t count, size_t offset);
+    hailo_status read_cyclic(void *buf_dst, size_t count, size_t offset, bool should_sync = true);
 
 private:
 

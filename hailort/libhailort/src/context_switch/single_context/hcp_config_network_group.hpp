@@ -25,17 +25,15 @@
 namespace hailort
 {
 
-using HcpConfigActiveAppHolder = ActiveNetworkGroupHolder<HcpConfigActivatedNetworkGroup>;
-
 class HcpConfigNetworkGroup : public ConfiguredNetworkGroupBase
 {
 public:
     HcpConfigNetworkGroup(
-        Device &device, HcpConfigActiveAppHolder &active_net_group_holder, std::vector<WriteMemoryInfo> &&config,
-        const ConfigureNetworkParams &config_params, uint8_t net_group_index,
-        NetworkGroupMetadata &&network_group_metadata, hailo_status &status);
+        Device &device, ActiveNetGroupHolder &active_net_group_holder, std::vector<WriteMemoryInfo> &&config,
+        const ConfigureNetworkParams &config_params, NetworkGroupMetadata &&network_group_metadata, hailo_status &status,
+        std::vector<std::shared_ptr<NetFlowElement>> &&net_flow_ops);
 
-    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_impl(
+    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> create_activated_network_group(
         const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size) override;
     virtual Expected<hailo_stream_interface_t> get_default_streams_interface() override;
 
@@ -44,6 +42,9 @@ public:
         const std::string &stream_name) override;
     virtual hailo_status set_scheduler_timeout(const std::chrono::milliseconds &timeout, const std::string &network_name) override;
     virtual hailo_status set_scheduler_threshold(uint32_t threshold, const std::string &network_name) override;
+
+    virtual hailo_status activate_impl(uint16_t dynamic_batch_size) override;
+    virtual hailo_status deactivate_impl() override;
 
     virtual ~HcpConfigNetworkGroup() = default;
     HcpConfigNetworkGroup(const HcpConfigNetworkGroup &other) = delete;
@@ -55,7 +56,7 @@ public:
 
 private:
         std::vector<WriteMemoryInfo> m_config;
-        HcpConfigActiveAppHolder &m_active_net_group_holder;
+        ActiveNetGroupHolder &m_active_net_group_holder;
         Device &m_device;
 };
 
