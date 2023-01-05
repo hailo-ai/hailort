@@ -65,7 +65,6 @@ grpc::Status HailoRtRpcService::VDevice_create(grpc::ServerContext *, const VDev
 
     hailo_vdevice_params_t params = {
         .device_count = params_proto.device_count(),
-        .device_infos = nullptr,
         .device_ids = device_ids.data(),
         .scheduling_algorithm = static_cast<hailo_scheduling_algorithm_e>(params_proto.scheduling_algorithm()),
         .group_id = params_proto.group_id().c_str(),
@@ -180,6 +179,19 @@ grpc::Status HailoRtRpcService::VDevice_get_physical_devices_ids(grpc::ServerCon
     return grpc::Status::OK;
 }
 
+grpc::Status HailoRtRpcService::VDevice_get_default_streams_interface(grpc::ServerContext*,
+    const VDevice_get_default_streams_interface_Request* request, VDevice_get_default_streams_interface_Reply* reply)
+{
+    auto lambda = [](std::shared_ptr<VDevice> vdevice) {
+        return vdevice->get_default_streams_interface();
+    };
+    auto &vdevice_manager = ServiceResourceManager<VDevice>::get_instance();
+    auto stream_interface = vdevice_manager.execute<Expected<hailo_stream_interface_t>>(request->handle(), lambda);
+    CHECK_EXPECTED_AS_RPC_STATUS(stream_interface, reply);
+    reply->set_stream_interface(*stream_interface);
+    return grpc::Status::OK;
+}
+
 grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_release(grpc::ServerContext*, const Release_Request *request,
     Release_Reply *reply)
 {
@@ -187,6 +199,22 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_release(grpc::ServerConte
     auto status = manager.release_resource(request->handle());
     reply->set_status(static_cast<uint32_t>(status));
     return grpc::Status::OK;
+}
+
+ProtoNamedVStreamParams get_named_params(const std::string &name, const hailo_vstream_params_t &params)
+{
+    ProtoNamedVStreamParams named_params;
+    named_params.set_name(name);
+    auto proto_params = named_params.mutable_params();
+    auto proto_user_buffer_format = proto_params->mutable_user_buffer_format();
+    proto_user_buffer_format->set_type(params.user_buffer_format.type);
+    proto_user_buffer_format->set_order(params.user_buffer_format.order);
+    proto_user_buffer_format->set_flags(params.user_buffer_format.flags);
+    proto_params->set_timeout_ms(params.timeout_ms);
+    proto_params->set_queue_size(params.queue_size);
+    proto_params->set_vstream_stats_flags(params.vstream_stats_flags);
+    proto_params->set_pipeline_elements_stats_flags(params.pipeline_elements_stats_flags);
+    return named_params;
 }
 
 grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_make_input_vstream_params(grpc::ServerContext*,
@@ -202,20 +230,10 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_make_input_vstream_params
         request->timeout_ms(), request->queue_size(), request->network_name());
     CHECK_EXPECTED_AS_RPC_STATUS(expected_params, reply);
     auto params_map = reply->mutable_vstream_params_map();
+    auto params_map_impl = params_map->mutable_vstream_params_map();
     for (auto& name_to_params : expected_params.value()) {
-        NamedVStreamParams named_params;
-        named_params.set_name(name_to_params.first);
-        auto params = name_to_params.second;
-        auto proto_params = named_params.mutable_params();
-        auto proto_user_buffer_format = proto_params->mutable_user_buffer_format();
-        proto_user_buffer_format->set_type(params.user_buffer_format.type);
-        proto_user_buffer_format->set_order(params.user_buffer_format.order);
-        proto_user_buffer_format->set_flags(params.user_buffer_format.flags);
-        proto_params->set_timeout_ms(params.timeout_ms);
-        proto_params->set_queue_size(params.queue_size);
-        proto_params->set_vstream_stats_flags(params.vstream_stats_flags);
-        proto_params->set_pipeline_elements_stats_flags(params.pipeline_elements_stats_flags);
-        params_map->Add(std::move(named_params));
+        auto named_params = get_named_params(name_to_params.first, name_to_params.second);
+        params_map_impl->Add(std::move(named_params));
     }
     reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;    
@@ -235,20 +253,37 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_make_output_vstream_param
         request->timeout_ms(), request->queue_size(), request->network_name());
     CHECK_EXPECTED_AS_RPC_STATUS(expected_params, reply);
     auto params_map = reply->mutable_vstream_params_map();
+    auto params_map_impl = params_map->mutable_vstream_params_map();
     for (auto& name_to_params : expected_params.value()) {
-        NamedVStreamParams named_params;
-        named_params.set_name(name_to_params.first);
-        auto params = name_to_params.second;
-        auto proto_params = named_params.mutable_params();
-        auto proto_user_buffer_format = proto_params->mutable_user_buffer_format();
-        proto_user_buffer_format->set_type(params.user_buffer_format.type);
-        proto_user_buffer_format->set_order(params.user_buffer_format.order);
-        proto_user_buffer_format->set_flags(params.user_buffer_format.flags);
-        proto_params->set_timeout_ms(params.timeout_ms);
-        proto_params->set_queue_size(params.queue_size);
-        proto_params->set_vstream_stats_flags(params.vstream_stats_flags);
-        proto_params->set_pipeline_elements_stats_flags(params.pipeline_elements_stats_flags);
-        params_map->Add(std::move(named_params));
+        auto named_params = get_named_params(name_to_params.first, name_to_params.second);
+        params_map_impl->Add(std::move(named_params));
+    }
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_make_output_vstream_params_groups(grpc::ServerContext*,
+    const ConfiguredNetworkGroup_make_output_vstream_params_groups_Request *request,
+    ConfiguredNetworkGroup_make_output_vstream_params_groups_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<ConfiguredNetworkGroup> cng, bool quantized,
+        hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size) {
+            return cng->make_output_vstream_params_groups(quantized, format_type, timeout_ms, queue_size);
+    };
+    auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
+    auto expected_params = manager.execute<Expected<std::vector<std::map<std::string, hailo_vstream_params_t>>>>(request->handle(), 
+        lambda, request->quantized(), static_cast<hailo_format_type_t>(request->format_type()),
+        request->timeout_ms(), request->queue_size());
+    CHECK_EXPECTED_AS_RPC_STATUS(expected_params, reply);
+    auto params_map_vector = reply->mutable_vstream_params_groups();
+    for (auto &params_map : expected_params.value()) {
+        ProtoNamedVStreamParamsMap params_map_proto;
+        auto params_map_impl_proto = params_map_proto.mutable_vstream_params_map();
+        for (auto& name_to_params : params_map) {
+            auto named_params = get_named_params(name_to_params.first, name_to_params.second);
+            params_map_impl_proto->Add(std::move(named_params));
+        }
+        params_map_vector->Add(std::move(params_map_proto));
     }
     reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;    
@@ -282,7 +317,7 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_output_vstream_groups
     auto output_vstream_groups = expected_output_vstream_groups.value();
     auto groups_proto = reply->mutable_output_vstream_groups();
     for (auto& group : output_vstream_groups) {
-        VStreamGroup group_proto;
+        ProtoVStreamGroup group_proto;
         for (auto& name : group) {
             auto vstream_group_proto = group_proto.mutable_vstream_group();
             vstream_group_proto->Add(std::move(name));
@@ -293,34 +328,39 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_output_vstream_groups
     return grpc::Status::OK;
 }
 
+void serialize_vstream_info(const hailo_vstream_info_t &info, ProtoVStreamInfo *info_proto)
+{
+    info_proto->set_name(std::string(info.name));
+    info_proto->set_network_name(std::string(info.network_name));
+    info_proto->set_direction(static_cast<uint32_t>(info.direction));
+    auto format_proto = info_proto->mutable_format();
+    format_proto->set_flags(info.format.flags);
+    format_proto->set_order(info.format.order);
+    format_proto->set_type(info.format.type);
+    if (info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS) {
+        auto nms_shape_proto = info_proto->mutable_nms_shape();
+        nms_shape_proto->set_number_of_classes(info.nms_shape.number_of_classes);
+        nms_shape_proto->set_max_bbox_per_class(info.nms_shape.max_bboxes_per_class);
+    } else {
+        auto shape_proto = info_proto->mutable_shape();
+        shape_proto->set_height(info.shape.height);
+        shape_proto->set_width(info.shape.width);
+        shape_proto->set_features(info.shape.features);
+    }
+    auto quant_info_proto = info_proto->mutable_quant_info();
+    quant_info_proto->set_qp_zp(info.quant_info.qp_zp);
+    quant_info_proto->set_qp_scale(info.quant_info.qp_scale);
+    quant_info_proto->set_limvals_min(info.quant_info.limvals_min);
+    quant_info_proto->set_limvals_max(info.quant_info.limvals_max);
+}
+
 void serialize_vstream_infos(ConfiguredNetworkGroup_get_vstream_infos_Reply *reply,
     const std::vector<hailo_vstream_info_t> &infos)
 {
     auto vstream_infos_proto = reply->mutable_vstream_infos();
     for (auto& info : infos) {
-        VStreamInfo info_proto;
-        info_proto.set_name(std::string(info.name));
-        info_proto.set_network_name(std::string(info.network_name));
-        info_proto.set_direction(static_cast<uint32_t>(info.direction));
-        auto format_proto = info_proto.mutable_format();
-        format_proto->set_flags(info.format.flags);
-        format_proto->set_order(info.format.order);
-        format_proto->set_type(info.format.type);
-        if (info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS) {
-            auto nms_shape_proto = info_proto.mutable_nms_shape();
-            nms_shape_proto->set_number_of_classes(info.nms_shape.number_of_classes);
-            nms_shape_proto->set_max_bbox_per_class(info.nms_shape.max_bboxes_per_class);
-        } else {
-            auto shape_proto = info_proto.mutable_shape();
-            shape_proto->set_height(info.shape.height);
-            shape_proto->set_width(info.shape.width);
-            shape_proto->set_features(info.shape.features);
-        }
-        auto quant_info_proto = info_proto.mutable_quant_info();
-        quant_info_proto->set_qp_zp(info.quant_info.qp_zp);
-        quant_info_proto->set_qp_scale(info.quant_info.qp_scale);
-        quant_info_proto->set_limvals_min(info.quant_info.limvals_min);
-        quant_info_proto->set_limvals_max(info.quant_info.limvals_max);
+        ProtoVStreamInfo info_proto;
+        serialize_vstream_info(info, &info_proto);
         vstream_infos_proto->Add(std::move(info_proto));
     }
 }
@@ -394,6 +434,42 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_set_scheduler_threshold(g
     auto status = net_group_manager.execute<hailo_status>(request->handle(), lambda, request->threshold(),
         request->network_name());
     reply->set_status(status);
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_config_params(grpc::ServerContext*,
+    const ConfiguredNetworkGroup_get_config_params_Request *request,
+    ConfiguredNetworkGroup_get_config_params_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<ConfiguredNetworkGroup> cng) {
+            return cng->get_config_params();
+    };
+    auto &net_group_manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
+    auto expected_params = net_group_manager.execute<Expected<ConfigureNetworkParams>>(request->handle(), lambda);
+    CHECK_EXPECTED_AS_RPC_STATUS(expected_params, reply);
+    auto net_configure_params = expected_params.value();
+    auto proto_network_configure_params = reply->mutable_params();
+    proto_network_configure_params->set_batch_size(net_configure_params.batch_size);
+    proto_network_configure_params->set_power_mode(net_configure_params.power_mode);
+    proto_network_configure_params->set_latency(net_configure_params.latency);
+    for (const auto &name_stream_params_pair : net_configure_params.stream_params_by_name) {
+        auto proto_name_streams_params = proto_network_configure_params->add_stream_params_map();
+        proto_name_streams_params->set_name(name_stream_params_pair.first);
+
+        auto proto_stream_params = proto_name_streams_params->mutable_params();
+        auto stream_params = name_stream_params_pair.second;
+        proto_stream_params->set_stream_interface(stream_params.stream_interface);
+        proto_stream_params->set_direction(stream_params.direction);
+    }
+    for (const auto &name_network_params_pair : net_configure_params.network_params_by_name) {
+        auto proto_name_network_params = proto_network_configure_params->add_network_params_map();
+        proto_name_network_params->set_name(name_network_params_pair.first);
+
+        auto proto_network_params = proto_name_network_params->mutable_params();
+        auto network_params = name_network_params_pair.second;
+        proto_network_params->set_batch_size(network_params.batch_size);
+    }
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;
 }
 
@@ -493,9 +569,9 @@ grpc::Status HailoRtRpcService::OutputVStream_release(grpc::ServerContext *, con
     return grpc::Status::OK;
 }
 
-grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_name(grpc::ServerContext*,
-    const ConfiguredNetworkGroup_get_name_Request *request,
-    ConfiguredNetworkGroup_get_name_Reply *reply)
+grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_name(grpc::ServerContext*,
+    const ConfiguredNetworkGroup_name_Request *request,
+    ConfiguredNetworkGroup_name_Reply *reply)
 {
     auto lambda = [](std::shared_ptr<ConfiguredNetworkGroup> cng) {
             return cng->name();
@@ -568,7 +644,7 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_all_stream_infos(grpc
     CHECK_EXPECTED_AS_RPC_STATUS(expected_stream_infos, reply);
     auto proto_stream_infos = reply->mutable_stream_infos();
     for (auto& stream_info : expected_stream_infos.value()) {
-        StreamInfo proto_stream_info;
+        ProtoStreamInfo proto_stream_info;
         if (stream_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS) {
             auto proto_nms_info = proto_stream_info.mutable_nms_info();
             proto_nms_info->set_number_of_classes(stream_info.nms_info.number_of_classes);
@@ -626,6 +702,20 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_latency_measurement(g
     return grpc::Status::OK;
 }
 
+grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_is_multi_context(grpc::ServerContext*,
+    const ConfiguredNetworkGroup_is_multi_context_Request *request,
+    ConfiguredNetworkGroup_is_multi_context_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<ConfiguredNetworkGroup> cng) {
+            return cng->is_multi_context();
+    };
+    auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
+    auto is_multi_context = manager.execute<bool>(request->handle(), lambda);
+    reply->set_is_multi_context(static_cast<bool>(is_multi_context));
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
+    return grpc::Status::OK;
+}
+
 grpc::Status HailoRtRpcService::InputVStream_get_frame_size(grpc::ServerContext*, const VStream_get_frame_size_Request *request,
     VStream_get_frame_size_Reply *reply)
 {
@@ -673,7 +763,7 @@ grpc::Status HailoRtRpcService::InputVStream_name(grpc::ServerContext*, const VS
     auto &manager = ServiceResourceManager<InputVStream>::get_instance();
     auto name = manager.execute<std::string>(request->handle(), lambda);
     reply->set_name(name);
-    reply->set_status(HAILO_SUCCESS);
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;
 }
 
@@ -686,7 +776,33 @@ grpc::Status HailoRtRpcService::OutputVStream_name(grpc::ServerContext*, const V
     auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
     auto name = manager.execute<std::string>(request->handle(), lambda);
     reply->set_name(name);
-    reply->set_status(HAILO_SUCCESS);
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::InputVStream_network_name(grpc::ServerContext*, const VStream_network_name_Request *request,
+    VStream_network_name_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<InputVStream> input_vstream) {
+            return input_vstream->network_name();
+    };
+    auto &manager = ServiceResourceManager<InputVStream>::get_instance();
+    auto name = manager.execute<std::string>(request->handle(), lambda);
+    reply->set_network_name(name);
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::OutputVStream_network_name(grpc::ServerContext*, const VStream_network_name_Request *request,
+    VStream_network_name_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<OutputVStream> output_vstream) {
+            return output_vstream->network_name();
+    };
+    auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
+    auto name = manager.execute<std::string>(request->handle(), lambda);
+    reply->set_network_name(name);
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;
 }
 
@@ -714,29 +830,91 @@ grpc::Status HailoRtRpcService::OutputVStream_abort(grpc::ServerContext*, const 
     return grpc::Status::OK;
 }
 
-grpc::Status HailoRtRpcService::InputVStream_resume(grpc::ServerContext*, const VStream_resume_Request *,
-    VStream_resume_Reply *)
+grpc::Status HailoRtRpcService::InputVStream_resume(grpc::ServerContext*, const VStream_resume_Request *request,
+    VStream_resume_Reply *reply)
 {
-    // TODO - HRT-7892
-    // auto lambda = [](std::shared_ptr<InputVStream> input_vstream) {
-    //         return input_vstream->resume();
-    // };
-    // auto &manager = ServiceResourceManager<InputVStream>::get_instance();
-    // auto status = manager.execute<hailo_status>(request->handle(), lambda);
-    // reply->set_status(status);
+    auto lambda = [](std::shared_ptr<InputVStream> input_vstream) {
+            return input_vstream->resume();
+    };
+    auto &manager = ServiceResourceManager<InputVStream>::get_instance();
+    auto status = manager.execute<hailo_status>(request->handle(), lambda);
+    reply->set_status(status);
     return grpc::Status::OK;
 }
 
-grpc::Status HailoRtRpcService::OutputVStream_resume(grpc::ServerContext*, const VStream_resume_Request *,
-    VStream_resume_Reply *)
+grpc::Status HailoRtRpcService::OutputVStream_resume(grpc::ServerContext*, const VStream_resume_Request *request,
+    VStream_resume_Reply *reply)
 {
-    // TODO - HRT-7892
-    // auto lambda = [](std::shared_ptr<OutputVStream> output_vstream) {
-    //         return output_vstream->resume();
-    // };
-    // auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
-    // auto status = manager.execute<hailo_status>(request->handle(), lambda);
-    // reply->set_status(status);
+    auto lambda = [](std::shared_ptr<OutputVStream> output_vstream) {
+            return output_vstream->resume();
+    };
+    auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
+    auto status = manager.execute<hailo_status>(request->handle(), lambda);
+    reply->set_status(status);
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::InputVStream_get_user_buffer_format(grpc::ServerContext*, const VStream_get_user_buffer_format_Request *request,
+    VStream_get_user_buffer_format_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<InputVStream> input_vstream) {
+            return input_vstream->get_user_buffer_format();
+    };
+    auto &manager = ServiceResourceManager<InputVStream>::get_instance();
+    auto format = manager.execute<hailo_format_t>(request->handle(), lambda);
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
+
+    auto proto_user_buffer_format = reply->mutable_user_buffer_format();
+    proto_user_buffer_format->set_type(format.type);
+    proto_user_buffer_format->set_order(format.order);
+    proto_user_buffer_format->set_flags(format.flags);
+
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::OutputVStream_get_user_buffer_format(grpc::ServerContext*, const VStream_get_user_buffer_format_Request *request,
+    VStream_get_user_buffer_format_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<OutputVStream> output_vstream) {
+            return output_vstream->get_user_buffer_format();
+    };
+    auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
+    auto format = manager.execute<hailo_format_t>(request->handle(), lambda);
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
+
+    auto proto_user_buffer_format = reply->mutable_user_buffer_format();
+    proto_user_buffer_format->set_type(format.type);
+    proto_user_buffer_format->set_order(format.order);
+    proto_user_buffer_format->set_flags(format.flags);
+
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::InputVStream_get_info(grpc::ServerContext*, const VStream_get_info_Request *request,
+    VStream_get_info_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<InputVStream> input_vstream) {
+            return input_vstream->get_info();
+    };
+    auto &manager = ServiceResourceManager<InputVStream>::get_instance();
+    auto info = manager.execute<hailo_vstream_info_t>(request->handle(), lambda);
+    auto info_proto = reply->mutable_vstream_info();
+    serialize_vstream_info(info, info_proto);
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::OutputVStream_get_info(grpc::ServerContext*, const VStream_get_info_Request *request,
+    VStream_get_info_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<OutputVStream> output_vstream) {
+            return output_vstream->get_info();
+    };
+    auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
+    auto info = manager.execute<hailo_vstream_info_t>(request->handle(), lambda);
+    auto info_proto = reply->mutable_vstream_info();
+    serialize_vstream_info(info, info_proto);
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;
 }
 

@@ -31,6 +31,10 @@ BoardConfigReadSubcommand::BoardConfigReadSubcommand(CLI::App &parent_app) :
 
 hailo_status BoardConfigReadSubcommand::execute_on_device(Device &device)
 {
+    auto status = validate_specific_device_is_given();
+    CHECK_SUCCESS(status,
+        "'board-config read' command should get a specific device-id.");
+
     auto buffer = device.read_board_config();
     CHECK_EXPECTED_AS_STATUS(buffer, "Failed reading board config from device");
 

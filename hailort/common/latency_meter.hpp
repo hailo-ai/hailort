@@ -29,12 +29,12 @@ public:
     using duration = std::chrono::nanoseconds;
     using TimestampsArray = CircularArray<duration>;
 
-    explicit LatencyMeter(const std::set<uint32_t> &output_channels, size_t timestamps_list_length) :
+    explicit LatencyMeter(const std::set<std::string> &output_names, size_t timestamps_list_length) :
         m_start_timestamps(timestamps_list_length),
         m_latency_count(0),
         m_latency_sum(0)
     {
-        for (uint32_t ch : output_channels) {
+        for (auto &ch : output_names) {
             m_end_timestamps_per_channel.emplace(ch, TimestampsArray(timestamps_list_length));
         }
     }
@@ -54,12 +54,12 @@ public:
      * after this function is called on all channels.
      * @note Assumes that only one thread per channel is calling this function.
      */  
-    void add_end_sample(uint32_t channel_index, duration timestamp)
+    void add_end_sample(const std::string &stream_name, duration timestamp)
     {
         // Safe to access from several threads (when each pass different channel) because the map cannot
         // be changed in runtime.
-        assert(m_end_timestamps_per_channel.find(channel_index) != m_end_timestamps_per_channel.end());
-        m_end_timestamps_per_channel.at(channel_index).push_back(timestamp);
+        assert(m_end_timestamps_per_channel.find(stream_name) != m_end_timestamps_per_channel.end());
+        m_end_timestamps_per_channel.at(stream_name).push_back(timestamp);
         update_latency();
     }
 
@@ -118,7 +118,7 @@ private:
     std::mutex m_lock;
 
     TimestampsArray m_start_timestamps;
-    std::unordered_map<uint32_t, TimestampsArray> m_end_timestamps_per_channel;
+    std::unordered_map<std::string, TimestampsArray> m_end_timestamps_per_channel;
 
     size_t m_latency_count;
     duration m_latency_sum;

@@ -29,19 +29,17 @@ struct WriteMemoryInfo
     Buffer data;
 };
 
-class HcpConfigActivatedNetworkGroup;
-using HcpConfigActiveAppHolder = ActiveNetworkGroupHolder<HcpConfigActivatedNetworkGroup>;
-
 class HcpConfigActivatedNetworkGroup : public ActivatedNetworkGroupBase
 {
   public:
     static Expected<HcpConfigActivatedNetworkGroup> create(Device &device, std::vector<WriteMemoryInfo> &config,
         const std::string &network_group_name,
         const hailo_activate_network_group_params_t &network_group_params,
-        std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
-        std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,        
-        HcpConfigActiveAppHolder &active_net_group_holder,
-        hailo_power_mode_t power_mode, EventPtr network_group_activated_event);
+        std::map<std::string, std::shared_ptr<InputStream>> &input_streams,
+        std::map<std::string, std::shared_ptr<OutputStream>> &output_streams,        
+        ActiveNetGroupHolder &active_net_group_holder,
+        hailo_power_mode_t power_mode, EventPtr network_group_activated_event,
+        ConfiguredNetworkGroupBase &network_group);
 
     virtual ~HcpConfigActivatedNetworkGroup();
     HcpConfigActivatedNetworkGroup(const HcpConfigActivatedNetworkGroup &) = delete;
@@ -67,14 +65,15 @@ class HcpConfigActivatedNetworkGroup : public ActivatedNetworkGroupBase
     }
 
   private:
-      HcpConfigActivatedNetworkGroup(Device &device, HcpConfigActiveAppHolder &active_net_group_holder,
+      HcpConfigActivatedNetworkGroup(Device &device, ActiveNetGroupHolder &active_net_group_holder,
         const std::string &network_group_name,
         const hailo_activate_network_group_params_t &network_group_params,
-        std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
-        std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,        
-        hailo_power_mode_t power_mode, EventPtr &&network_group_activated_event, hailo_status &status);
+        std::map<std::string, std::shared_ptr<InputStream>> &input_streams,
+        std::map<std::string, std::shared_ptr<OutputStream>> &output_streams,        
+        hailo_power_mode_t power_mode, EventPtr &&network_group_activated_event,
+        ConfiguredNetworkGroupBase &network_group, hailo_status &status);
 
-    HcpConfigActiveAppHolder &m_active_net_group_holder;
+    ActiveNetGroupHolder &m_active_net_group_holder;
     bool m_is_active;
     hailo_power_mode_t m_power_mode;
     Device &m_device;

@@ -25,18 +25,7 @@ set(files
     ${HAILO_OS_DIR}/mmap_buffer.cpp
     ${HAILO_OS_DIR}/hailort_driver.cpp
     ${HAILO_FULL_OS_DIR}/event.cpp
+    ${HAILO_FULL_OS_DIR}/driver_scan.cpp
 )
-
-if(CMAKE_SYSTEM_NAME STREQUAL QNX)
-    # QNX only modules
-    set(files ${files}
-        ${HAILO_OS_DIR}/qnx/pcie_driver_scan.cpp
-    )
-elseif(UNIX)
-    # Unix only modules
-    set(files ${files}
-        ${HAILO_OS_DIR}/unix/pcie_driver_scan.cpp
-    )
-endif()
 
 set(HAILORT_CPP_OS_SOURCES ${files} PARENT_SCOPE)

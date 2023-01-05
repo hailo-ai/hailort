@@ -14,7 +14,6 @@
 
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
-#include "hlpcie.hpp"
 #include "vdma_channel.hpp"
 #include "vdma_device.hpp"
 
@@ -30,10 +29,7 @@ public:
         bool log_on_failure);
     static Expected<std::string> pcie_device_info_to_string(const hailo_pcie_device_info_t &device_info);
 
-    virtual ~PcieDevice();
-
-    virtual hailo_status fw_interact_impl(uint8_t *request_buffer, size_t request_size,
-        uint8_t *response_buffer, size_t *response_size, hailo_cpu_id_t cpu_id) override;
+    virtual ~PcieDevice() = default;
 
     virtual hailo_status reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type) override;
     virtual hailo_status direct_write_memory(uint32_t address, const void *buffer, uint32_t size) override;
@@ -52,7 +48,6 @@ public:
             return false;
         }
     }
-    virtual ExpectedRef<ConfigManager> get_config_manager() override;
 
     // TODO: used for tests
     void set_is_control_version_supported(bool value);
@@ -65,19 +60,15 @@ public:
     virtual const char* get_dev_id() const override;
 
 private:
-    PcieDevice(HailoRTDriver &&driver, const hailo_pcie_device_info_t &device_info, hailo_status &status);
+    PcieDevice(HailoRTDriver &&driver, const hailo_pcie_device_info_t &device_info, hailo_status &status,
+        const std::string &device_id);
 
     hailo_status close_all_vdma_channels();
 
-    bool m_fw_up;
+    static Expected<HailoRTDriver::DeviceInfo> find_device_info(const hailo_pcie_device_info_t &pcie_device_info);
+
     const hailo_pcie_device_info_t m_device_info;
     std::string m_device_id;
-    // TODO: (HRT-7535) This member needs to be held in the object that impls fw_interact_impl func,
-    //       because VdmaConfigManager calls a control (which in turn calls fw_interact_impl).
-    //       (otherwise we'll get a "pure virtual method called" runtime error in the Device's dtor)
-    //       Once we merge CoreDevice::fw_interact_impl and PcieDevice::fw_interact_impl we can
-    //       move the m_context_switch_manager member and get_config_manager() func to VdmaDevice.
-    std::unique_ptr<ConfigManager> m_context_switch_manager;
 };
 
 } /* namespace hailort */

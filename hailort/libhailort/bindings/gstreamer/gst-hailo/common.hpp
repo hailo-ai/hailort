@@ -48,11 +48,13 @@ using namespace hailort;
 #define DEFAULT_VDEVICE_KEY (0)
 #define MIN_VALID_VDEVICE_KEY (1)
 
-#define HAILO_SUPPORTED_FORMATS "{ RGB, RGBA, YUY2 }"
+#define HAILO_SUPPORTED_FORMATS "{ RGB, RGBA, YUY2, NV12, NV21 }"
 #define HAILO_VIDEO_CAPS GST_VIDEO_CAPS_MAKE(HAILO_SUPPORTED_FORMATS)
 
 #define HAILO_DEFAULT_SCHEDULER_TIMEOUT_MS (0)
-#define HAILO_DEFAULT_SCHEDULER_THRESHOLD (1)
+#define HAILO_DEFAULT_SCHEDULER_THRESHOLD (0)
+
+#define HAILO_DEFAULT_MULTI_PROCESS_SERVICE (false)
 
 #define GST_CHECK(cond, ret_val, element, domain, ...)      \
     do {                                \

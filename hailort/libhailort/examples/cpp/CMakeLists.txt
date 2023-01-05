@@ -1,33 +1,17 @@
 cmake_minimum_required(VERSION 3.0.0)
 
-add_executable(cpp_vstreams_example vstreams_example.cpp)
-target_link_libraries(cpp_vstreams_example PRIVATE example_base)
+add_subdirectory(vstreams_example)
+add_subdirectory(infer_pipeline_example)
+add_subdirectory(raw_streams_example)
+add_subdirectory(multi_network_vstream_example)
+add_subdirectory(switch_network_groups_example)
+add_subdirectory(switch_network_groups_manually_example)
+add_subdirectory(multi_device_example)
+add_subdirectory(power_measurement_example)
+add_subdirectory(multi_process_example)
 
-add_executable(cpp_infer_pipeline_example infer_pipeline_example.cpp)
-target_link_libraries(cpp_infer_pipeline_example PRIVATE example_base)
-
-add_executable(cpp_raw_streams_example raw_streams_example.cpp)
-target_link_libraries(cpp_raw_streams_example PRIVATE example_base)
-
-add_executable(cpp_multi_network_vstream_example multi_network_vstream_example.cpp)
-target_link_libraries(cpp_multi_network_vstream_example PRIVATE example_base)
-
-add_executable(cpp_switch_network_groups_example switch_network_groups_example.cpp)
-target_link_libraries(cpp_switch_network_groups_example PRIVATE example_base)
-
-add_executable(cpp_switch_network_groups_manually_example switch_network_groups_manually_example.cpp)
-target_link_libraries(cpp_switch_network_groups_manually_example PRIVATE example_base)
-
-add_executable(cpp_multi_device_example multi_device_example.cpp)
-target_link_libraries(cpp_multi_device_example PRIVATE example_base)
-
-add_executable(cpp_power_measurement_example power_measurement_example.cpp)
-target_link_libraries(cpp_power_measurement_example PRIVATE example_base)
-
-add_executable(cpp_multi_process_example multi_process_example.cpp)
-target_link_libraries(cpp_multi_process_example PRIVATE example_base)
-
-set(EXAMPLES_CPP_TARGETS
+add_custom_target(cpp_hailort_examples)
+add_dependencies(cpp_hailort_examples
     cpp_vstreams_example
     cpp_infer_pipeline_example
     cpp_raw_streams_example
@@ -36,5 +20,4 @@ set(EXAMPLES_CPP_TARGETS
     cpp_switch_network_groups_manually_example
     cpp_multi_device_example
     cpp_power_measurement_example
-    cpp_multi_process_example
-    PARENT_SCOPE)
+    cpp_multi_process_example)

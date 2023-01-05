@@ -125,6 +125,7 @@ public:
     void direct_write_memory(uint32_t address, py::bytes buffer);
     py::bytes direct_read_memory(uint32_t address, uint32_t size);
     const char *get_dev_id() const;
+    void set_sleep_state(hailo_sleep_state_t sleep_state);
 
     static void add_to_python_module(py::module &m);
 

@@ -1,0 +1,22 @@
+cmake_minimum_required(VERSION 3.0.0)
+
+message(STATUS "Building pre_build")
+
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/execute_cmake.cmake)
+set(HAILO_EXTERNAL_DIR ${CMAKE_CURRENT_LIST_DIR}/external)
+set(HAILO_PRE_BUILD_BUILD_TOOLS ${CMAKE_CURRENT_LIST_DIR}/pre_build/build/tools)
+set(PRE_BUILD_BUILD_TYPE "Release")
+
+execute_cmake(
+    SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/pre_build
+    BUILD_DIR ${CMAKE_CURRENT_LIST_DIR}/pre_build/build
+    CONFIGURE_ARGS
+        -DCMAKE_BUILD_TYPE=${PRE_BUILD_BUILD_TYPE}
+        -DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_LIST_DIR}/pre_build/install
+        -DHAILO_EXTERNAL_DIR=${HAILO_EXTERNAL_DIR}
+        -DHAILO_OFFLINE_COMPILATION=${HAILO_OFFLINE_COMPILATION}
+        -DHAILO_BUILD_SERVICE=${HAILO_BUILD_SERVICE}
+    BUILD_ARGS
+        --config ${PRE_BUILD_BUILD_TYPE} --target install ${CMAKE_EXTRA_BUILD_ARGS}
+    PARALLEL_BUILD
+)

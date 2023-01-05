@@ -96,7 +96,7 @@ uint32_t ContinuousBuffer::descs_count() const
     return descriptors_in_buffer(m_size);
 }
 
-hailo_status ContinuousBuffer::read(void *buf_dst, size_t count, size_t offset)
+hailo_status ContinuousBuffer::read(void *buf_dst, size_t count, size_t offset, bool /* should_sync */)
 {
     CHECK((count + offset) <= m_size, HAILO_INSUFFICIENT_BUFFER,
         "Requested size {} from offset {} is more than the buffer size {}", count, offset, m_size);

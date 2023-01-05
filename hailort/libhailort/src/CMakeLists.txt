@@ -16,6 +16,7 @@ FUNCTION(relative_to_absolute_paths output)
 ENDFUNCTION(relative_to_absolute_paths)
 
 add_subdirectory(os)
+add_subdirectory(net_flow)
 
 set(HAILORT_CPP_SOURCES
     device.cpp
@@ -31,23 +32,26 @@ set(HAILORT_CPP_SOURCES
     hailort_common.cpp
     sensor_config_utils.cpp
     pipeline.cpp
+    pipeline_multiplexer.cpp
 
     eth_device.cpp
     eth_stream.cpp
     udp.cpp
 
     hef.cpp
-    context_switch/hef_metadata.cpp
-    context_switch/hcp_config_manager.cpp
+    network_group_metadata.cpp
+
+    context_switch/context_switch_actions.cpp
     context_switch/hcp_config_network_group.cpp
     context_switch/hcp_config_activated_network_group.cpp
-    context_switch/vdma_config_manager.cpp
     context_switch/vdma_config_network_group.cpp
+    context_switch/vdevice_network_group.cpp
     context_switch/vdma_config_activated_network_group.cpp
     context_switch/network_group.cpp
-    context_switch/network_group_wrapper.cpp
     context_switch/resource_manager.cpp
-    context_switch/pipeline_multiplexer.cpp
+    context_switch/resource_manager_builder.cpp
+    context_switch/context_switch_buffer_builder.cpp
+
     channel_allocator.cpp
     inter_context_buffer.cpp
     ddr_channels_pair.cpp
@@ -55,7 +59,6 @@ set(HAILORT_CPP_SOURCES
     d2h_events_parser.cpp
     mipi_stream.cpp
 
-    hlpcie.cpp
     vdma_channel.cpp
     vdma_descriptor_list.cpp
     vdma_device.cpp
@@ -75,7 +78,8 @@ set(HAILORT_CPP_SOURCES
 
     vdevice.cpp
     vdevice_stream.cpp
-    vdevice_stream_wrapper.cpp
+    vdevice_stream_multiplexer_wrapper.cpp
+    multi_device_scheduled_stream.cpp
 
     control_protocol.cpp
 
@@ -83,11 +87,18 @@ set(HAILORT_CPP_SOURCES
     inference_pipeline.cpp
 
     network_group_scheduler.cpp
+
+    scheduled_network_group.cpp
+    scheduler_oracle.cpp
 )
 
 if(HAILO_BUILD_SERVICE)
     set(HAILORT_CPP_SOURCES "${HAILORT_CPP_SOURCES}" hailort_rpc_client.cpp network_group_client.cpp)
 endif()
+if(HAILO_BUILD_PROFILER)
+    set(HAILORT_CPP_SOURCES "${HAILORT_CPP_SOURCES}" tracer.cpp)
+endif()
+
 
 set(common_dir "${PROJECT_SOURCE_DIR}/common/src")
 set(COMMON_C_SOURCES
@@ -136,7 +147,6 @@ target_link_libraries(libhailort PRIVATE hef_proto)
 target_link_libraries(libhailort PRIVATE scheduler_mon_proto)
 target_link_libraries(libhailort PRIVATE spdlog::spdlog)
 target_link_libraries(libhailort PRIVATE readerwriterqueue)
-target_link_libraries(libhailort PRIVATE microprofile)
 if(HAILO_BUILD_SERVICE)
     target_link_libraries(libhailort PRIVATE grpc++_unsecure)
     target_link_libraries(libhailort PRIVATE hailort_rpc_grpc_proto)

@@ -114,7 +114,7 @@ static std::string fw_version_string(const hailo_device_identity_t &identity)
 {
     std::stringstream os;
     const auto fw_mode = ((identity.is_release) ? "release" : "develop");
-    // Currently will always return FW_BINARY_TYPE_APP_FIRMWARE as version bit is cleared in HailoRT
+    // TODO: Currently will always return FW_BINARY_TYPE_APP_FIRMWARE as version bit is cleared in HailoRT
     FW_BINARY_TYPE_t fw_binary_type = FIRMWARE_HEADER_UTILS__get_fw_binary_type(identity.fw_version.revision);
     auto fw_type = "invalid";
     if (FW_BINARY_TYPE_CORE_FIRMWARE == fw_binary_type) {
@@ -123,7 +123,11 @@ static std::string fw_version_string(const hailo_device_identity_t &identity)
         fw_type = "app";
     }
     os << identity.fw_version.major << "." << identity.fw_version.minor << "."
-       << identity.fw_version.revision << " (" << fw_mode << "," << fw_type << ")";
+       << identity.fw_version.revision << " (" << fw_mode << "," << fw_type;
+    if (identity.extended_context_switch_buffer) {
+        os << ",extended context switch buffer";
+    }
+    os << ")";
     return os.str();
 }
 

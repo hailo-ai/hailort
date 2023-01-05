@@ -108,21 +108,22 @@ Expected<uint8_t> VdmaDescriptorList::calculate_desc_list_depth(size_t count)
     return static_cast<uint8_t>(depth);
 }
 
-hailo_status VdmaDescriptorList::configure_to_use_buffer(vdma::MappedBuffer& buffer, uint8_t channel_index)
+hailo_status VdmaDescriptorList::configure_to_use_buffer(vdma::MappedBuffer& buffer, uint8_t channel_index, size_t offset)
 {
     return m_driver.descriptors_list_bind_vdma_buffer(m_desc_handle, buffer.handle(), m_desc_page_size,
-        channel_index);
+        channel_index, offset);
 }
 
-hailo_status VdmaDescriptorList::configure_to_use_buffer(vdma::MappedBuffer& buffer)
+hailo_status VdmaDescriptorList::configure_to_use_buffer(vdma::MappedBuffer& buffer, size_t offset)
 {
-    return configure_to_use_buffer(buffer, HailoRTDriver::INVALID_VDMA_CHANNEL_INDEX);
+    return configure_to_use_buffer(buffer, HailoRTDriver::INVALID_VDMA_CHANNEL_INDEX, offset);
 }
 
 Expected<uint16_t> VdmaDescriptorList::program_descriptors(size_t transfer_size,
     VdmaInterruptsDomain first_desc_interrupts_domain, VdmaInterruptsDomain last_desc_interrupts_domain,
     size_t desc_offset, bool is_circular)
 {
+    assert(transfer_size > 0);
     const auto required_descriptors = descriptors_in_buffer(transfer_size);
     // Required_descriptors + desc_offset can't reach m_count. We need to keep at least 1 free desc at all time.
     if ((!is_circular) && ((required_descriptors + desc_offset) >= m_count)){
@@ -293,7 +294,7 @@ uint32_t VdmaDescriptorList::get_interrupts_bitmask(VdmaInterruptsDomain interru
         device_bitmask = DRAM_DMA_DEVICE_INTERRUPTS_BITMASK;
         break;
     default:
-        assert(true);
+        assert(false);
     }
 
     uint32_t bitmask = 0;

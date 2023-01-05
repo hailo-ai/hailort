@@ -12,8 +12,13 @@
 #define _HAILO_CONFIG_BUFFER_HPP_
 
 #include "vdma/vdma_buffer.hpp"
+#include "hailo/buffer.hpp"
 
 namespace hailort {
+
+#define CCW_BYTES_IN_WORD (4)
+#define CCW_DATA_OFFSET (CCW_BYTES_IN_WORD * 2)
+#define CCW_HEADER_SIZE (CCW_DATA_OFFSET)
 
 
 class ConfigBuffer final
@@ -23,22 +28,28 @@ public:
         const std::vector<uint32_t> &cfg_sizes);
 
     // Write data to config channel
-    hailo_status write(const void *data, size_t data_size);
+    hailo_status write(const MemoryView &data);
 
     // Program the descriptors for the data written so far
     Expected<uint32_t> program_descriptors();
 
-    size_t get_current_buffer_size();
+    // On prefetch mode, we need to pad the config buffer with nops BEFORE the last write.
+    hailo_status pad_with_nops();
 
-    /* Get all the config size. It's not the same as the VdmaBuffer::size() 
-    since we might add NOPs to the data (Pre-fetch mode) */
-    size_t get_total_cfg_size();
+    // Amount of bytes left to write into the buffer.
+    size_t size_left() const;
+
+    // Amount of bytes already written.
+    size_t get_current_buffer_size() const;
 
     uint16_t desc_page_size() const;
-    CONTROL_PROTOCOL__config_channel_info_t get_config_channel_info() const;
+    vdma::ChannelId channel_id() const;
+    CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info() const;
 
 private:
     ConfigBuffer(std::unique_ptr<vdma::VdmaBuffer> &&buffer, vdma::ChannelId channel_id, size_t total_buffer_size);
+
+    hailo_status write_inner(const MemoryView &data);
 
     static Expected<std::unique_ptr<vdma::VdmaBuffer>> create_sg_buffer(HailoRTDriver &driver,
         uint8_t vdma_channel_index, const std::vector<uint32_t> &cfg_sizes);

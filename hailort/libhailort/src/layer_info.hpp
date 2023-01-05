@@ -23,6 +23,8 @@
 namespace hailort
 {
 
+#define INVALID_PAD_INDEX (UINT32_MAX)
+
 enum class LayerType
 {
     NOT_SET = 0,
@@ -37,70 +39,58 @@ struct BufferIndices {
     uint32_t cluster_index;
 };
 
+struct ConnectedContextInfo {
+    uint8_t context_index;
+    uint8_t dma_engine_index;
+    uint8_t stream_index;
+};
+
+struct DdrInfo {
+    // total_buffers_per_frame not same as core_buffer_per frame.
+    //(In DDR core buffer per frame is 1). Used to calc total host descriptors_per_frame.
+    uint16_t total_buffers_per_frame;
+    uint16_t min_buffered_rows;
+};
+
+
 struct LayerInfo {
-    bool is_mux;
-    std::vector<LayerInfo> predecessor;
-    bool is_defused_nms;
-    // TODO HRT-4441 change fused_layer from vector.
-    std::vector<LayerInfo> fused_nms_layer;
+    LayerType type = LayerType::NOT_SET;
+    hailo_stream_direction_t direction;
+    uint8_t stream_index;
+    uint8_t dma_engine_index;
+    std::string name;
+    std::string network_name;
+    uint8_t network_index;
+    CONTROL_PROTOCOL__nn_stream_config_t nn_stream_config;
+    uint32_t max_shmifo_size;
+    uint8_t context_index;
+    uint32_t pad_index = INVALID_PAD_INDEX;
+
+    // Transformation and shape info
     hailo_3d_image_shape_t shape;
     hailo_3d_image_shape_t hw_shape;
     uint32_t hw_data_bytes;
     hailo_format_t format;
-    hailo_stream_direction_t direction;
-    uint8_t stream_index;
-    uint8_t dma_engine_index;
-    std::string name;
     hailo_quant_info_t quant_info;
     hailo_nms_info_t nms_info;
+
+    // Mux info
+    bool is_mux;
+    std::vector<LayerInfo> predecessor;
     uint32_t height_gcd;
     std::vector<uint32_t> height_ratios;
-    std::string network_name;
-    uint8_t network_index;
-    CONTROL_PROTOCOL__nn_stream_config_t nn_stream_config;
-    uint32_t max_shmifo_size;
-    uint8_t context_index;
+
+    // Defused nms info
+    bool is_defused_nms;
+    // TODO HRT-4441 change fused_layer from vector.
+    std::vector<LayerInfo> fused_nms_layer;
 
     // Simulation Info
     BufferIndices buffer_indices;
-};
 
-struct InterContextLayerInfo {
-    std::string name;
-    uint8_t stream_index;
-    uint8_t dma_engine_index;
-    uint8_t context_index;
-    hailo_stream_direction_t direction;
-    CONTROL_PROTOCOL__nn_stream_config_t nn_stream_config;
-    std::string network_name;
-    uint8_t network_index;
-    uint32_t max_shmifo_size;
-    uint8_t src_context_index;
-    uint8_t src_stream_index;
-    // HRT-7201 - The system supports one src and multiple dstinations. Right now we're saving only one dstination 
-    uint8_t dst_context_index;
-    uint8_t dst_stream_index;
-};
-
-struct DdrLayerInfo {
-    std::string name;
-    uint8_t stream_index;
-    uint8_t context_index;
-    hailo_stream_direction_t direction;
-    CONTROL_PROTOCOL__nn_stream_config_t nn_stream_config;
-    std::string network_name;
-    uint8_t network_index;
-    uint32_t max_shmifo_size;
-    uint16_t min_buffered_rows;
-    // total_buffers_per_frame not same as core_buffer_per frame. 
-    //(In DDR core buffer per frame is 1). Used to calc total host descriptors_per_frame. 
-    uint16_t total_buffers_per_frame;
-    uint8_t src_context_index;
-    uint8_t src_dma_engine_index;
-    uint8_t src_stream_index;
-    uint8_t dst_context_index;
-    uint8_t dst_dma_engine_index;
-    uint8_t dst_stream_index;
+    // Context switch info TODO: we should use std::optional for this structures (or implement our self).
+    ConnectedContextInfo connected_context_info;
+    DdrInfo ddr_info;
 };
 
 // LayerIdentifier = <LayerType, layer_name, stream_index>
@@ -108,19 +98,7 @@ using LayerIdentifier = std::tuple<LayerType, std::string, uint8_t>;
 
 inline LayerIdentifier to_layer_identifier(const LayerInfo &info)
 {
-    return std::make_tuple(LayerType::BOUNDARY, info.name, info.stream_index);
-}
-
-inline LayerIdentifier to_layer_identifier(const InterContextLayerInfo &info)
-{
-    return std::make_tuple(LayerType::INTER_CONTEXT, info.name, info.stream_index);
-}
-
-inline LayerIdentifier to_layer_identifier(const DdrLayerInfo &info, HailoRTDriver::DmaDirection direction)
-{
-    const auto stream_index = (direction == HailoRTDriver::DmaDirection::H2D) ? info.src_stream_index :
-                                                                                info.dst_stream_index;
-    return std::make_tuple(LayerType::DDR, info.name, stream_index);
+    return std::make_tuple(info.type, info.name, info.stream_index);
 }
 
 class LayerInfoUtils {

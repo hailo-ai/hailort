@@ -50,23 +50,45 @@ Expected<uint32_t> ConfigBuffer::program_descriptors()
     return descriptors_count;
 }
 
-hailo_status ConfigBuffer::write(const void *data, size_t data_size)
+hailo_status ConfigBuffer::pad_with_nops()
 {
-    size_t total_offset = (m_acc_desc_count * m_buffer->desc_page_size()) + m_acc_buffer_offset;
-    auto status = m_buffer->write(data, data_size, total_offset);
-    CHECK_SUCCESS(status);
+    static constexpr uint64_t CCW_NOP = 0x0;
 
-    m_acc_buffer_offset += data_size;
-    m_current_buffer_size += data_size;
+    auto page_size = desc_page_size();
+    auto buffer_size = m_total_buffer_size;
+    auto buffer_residue = buffer_size % page_size;
+    if (0 != buffer_residue % CCW_HEADER_SIZE) {
+        LOGGER__ERROR("CFG channel buffer size must be a multiple of CCW header size ({})", CCW_HEADER_SIZE);
+        return HAILO_INTERNAL_FAILURE;
+    }
+    /* If buffer does not fit info descriptor, the host must pad the buffer with CCW NOPs. */
+    auto nop_count = (buffer_residue == 0) ? 0 : ((page_size - buffer_residue) / CCW_HEADER_SIZE);
+    for (uint8_t nop_index = 0; nop_index < nop_count; nop_index++) {
+        /* Generate nop transaction.
+           CCW of all zeros (64'h0) should be treated as NOP - ignore CCW and expect CCW in next 64b word. 
+           When CSM recognize it is a NOP it pops it from the channel FIFO without forward any address/data/command, 
+           does not contribute to CRC calculations but return credits to the peripheral as usual. */
+        write_inner(MemoryView::create_const(reinterpret_cast<const void *>(&CCW_NOP), sizeof(CCW_NOP)));
+    }
     return HAILO_SUCCESS;
 }
 
-size_t ConfigBuffer::get_total_cfg_size()
+
+hailo_status ConfigBuffer::write(const MemoryView &data)
 {
-    return m_total_buffer_size;
+    CHECK(data.size() <= size_left(), HAILO_INTERNAL_FAILURE, "Write too many config words");
+    write_inner(data);
+    m_current_buffer_size += data.size();
+    return HAILO_SUCCESS;
 }
 
-size_t ConfigBuffer::get_current_buffer_size()
+size_t ConfigBuffer::size_left() const
+{
+    assert(m_total_buffer_size >= m_current_buffer_size);
+    return m_total_buffer_size - m_current_buffer_size;
+}
+
+size_t ConfigBuffer::get_current_buffer_size() const
 {
     return m_current_buffer_size;
 }
@@ -76,13 +98,24 @@ uint16_t ConfigBuffer::desc_page_size() const
     return m_buffer->desc_page_size();
 }
 
-CONTROL_PROTOCOL__config_channel_info_t ConfigBuffer::get_config_channel_info() const
+vdma::ChannelId ConfigBuffer::channel_id() const
 {
-    CONTROL_PROTOCOL__config_channel_info_t config_channel_info;
-    config_channel_info.config_buffer_info = m_buffer->get_host_buffer_info(m_acc_desc_count * m_buffer->desc_page_size());
-    config_channel_info.engine_index = m_channel_id.engine_index;
-    config_channel_info.vdma_channel_index = m_channel_id.channel_index;
-    return config_channel_info;
+    return m_channel_id;
+}
+
+CONTROL_PROTOCOL__host_buffer_info_t ConfigBuffer::get_host_buffer_info() const
+{
+    return m_buffer->get_host_buffer_info(m_acc_desc_count * m_buffer->desc_page_size());
+}
+
+hailo_status ConfigBuffer::write_inner(const MemoryView &data)
+{
+    size_t total_offset = (m_acc_desc_count * m_buffer->desc_page_size()) + m_acc_buffer_offset;
+    auto status = m_buffer->write(data.data(), data.size(), total_offset);
+    CHECK_SUCCESS(status);
+
+    m_acc_buffer_offset += data.size();
+    return HAILO_SUCCESS;
 }
 
 Expected<std::unique_ptr<vdma::VdmaBuffer>> ConfigBuffer::create_sg_buffer(HailoRTDriver &driver,

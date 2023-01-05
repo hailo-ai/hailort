@@ -24,6 +24,12 @@ set(HAILORTCLI_CPP_FILES
     parse_hef_command.cpp
     graph_printer.cpp
     mon_command.cpp
+
+    run2/run2_command.cpp
+    run2/network_runner.cpp
+    run2/live_printer.cpp
+    run2/timer_live_track.cpp
+    run2/network_live_track.cpp
     )
     
 if(UNIX)
@@ -61,8 +67,6 @@ target_link_libraries(hailortcli
     readerwriterqueue
     DotWriter
     scheduler_mon_proto)
-# TODO: Remove microprofile after removing pipeline.cpp from hailortcli sources
-target_link_libraries(hailortcli microprofile)
 
 if(WIN32)
     target_link_libraries(hailortcli Ws2_32 Iphlpapi Shlwapi)

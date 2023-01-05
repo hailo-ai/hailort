@@ -11,6 +11,9 @@
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
 
+#include <iostream>
+#include <io.h>
+#include <AclAPI.h>
 #include <shlwapi.h>
 
 namespace hailort
@@ -143,6 +146,95 @@ Expected<bool> Filesystem::is_directory(const std::string &path)
         return make_unexpected(HAILO_INVALID_ARGUMENT);
     }
     return PathIsDirectoryA(path.c_str());
+}
+
+Expected<std::string> Filesystem::get_current_dir()
+{
+    char cwd[MAX_PATH];
+    auto ret_val = GetCurrentDirectoryA(MAX_PATH, cwd);
+    CHECK_AS_EXPECTED(0 != ret_val, HAILO_FILE_OPERATION_FAILURE, "Failed to get current directory path with error: {}", WSAGetLastError());
+
+    return std::string(cwd);
+}
+
+hailo_status Filesystem::create_directory(const std::string &dir_path)
+{
+    auto ret_val = CreateDirectory(dir_path.c_str(), nullptr);
+    CHECK((0 != ret_val) || (GetLastError() == ERROR_ALREADY_EXISTS), HAILO_FILE_OPERATION_FAILURE, "Failed to create directory {}", dir_path);
+    return HAILO_SUCCESS;
+}
+
+bool Filesystem::is_path_accesible(const std::string &path)
+{
+    // The code is based on examples from: https://cpp.hotexamples.com/examples/-/-/AccessCheck/cpp-accesscheck-function-examples.html
+    bool return_val = false;
+    SECURITY_INFORMATION security_Info = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION;
+    PSECURITY_DESCRIPTOR security_desc = NULL;
+    DWORD access_mask = GENERIC_WRITE;
+    GENERIC_MAPPING mapping = {0xFFFFFFFF};
+    mapping.GenericRead = FILE_GENERIC_READ;
+    mapping.GenericWrite = FILE_GENERIC_WRITE;
+    mapping.GenericExecute = FILE_GENERIC_EXECUTE;
+    mapping.GenericAll = FILE_ALL_ACCESS;
+    HANDLE h_token = NULL;
+    HANDLE h_impersonated_token = NULL;
+    PRIVILEGE_SET privilege_set = {0};
+    DWORD privilege_set_size = sizeof(privilege_set);
+    DWORD granted_access = 0;
+    BOOL access_status = FALSE;
+
+    // Retrieves a copy of the security descriptor for the path
+    DWORD result = GetNamedSecurityInfo(path.c_str(), SE_FILE_OBJECT, security_Info, NULL, NULL, NULL, NULL, &security_desc);
+    if (result != ERROR_SUCCESS) {
+        std::cerr << "Failed to get security information for path " << path << " with error = " << result << std::endl;
+        return_val = false;
+        goto l_exit;
+    }
+
+    MapGenericMask(&access_mask, &mapping);
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &h_token) == 0) {
+        return_val = false;
+        std::cerr << "OpenProcessToken() Failed. Cannot check path " << path << " access permissions, last_error = " << GetLastError() << std::endl;
+        goto l_release_security_desc;
+    }
+
+    // Getting a handle to an impersonation token. It will represent the client that is attempting to gain access.
+    if (DuplicateToken(h_token, SecurityImpersonation, &h_impersonated_token) == 0) {
+        std::cerr << "DuplicateToken() Failed. Cannot check path " << path << " access permissions, last_error = " << GetLastError() << std::endl;
+        return_val = false;
+        goto l_close_token;
+    }
+
+    if (AccessCheck(security_desc, h_impersonated_token, access_mask, &mapping, &privilege_set, &privilege_set_size, &granted_access, &access_status) == 0) {
+        std::cerr << "AccessCheck Failed. Cannot check path " << path << " access permissions, last_error = " << GetLastError() << std::endl;
+        return_val = false;
+        goto l_close_impersonated_token;
+    }
+
+    return_val = (access_status == TRUE);
+
+l_close_impersonated_token:
+    if (NULL != h_impersonated_token) {
+        (void)CloseHandle(h_impersonated_token);
+    }
+
+l_close_token:
+    if (NULL != h_token) {
+        (void)CloseHandle(h_token);
+    }
+
+l_release_security_desc:
+    if (NULL != security_desc) {
+	    (void)LocalFree(security_desc);
+    }
+l_exit:
+    return return_val;
+}
+
+bool Filesystem::does_file_exists(const std::string &path)
+{
+    // From https://stackoverflow.com/a/2112304
+    return ((GetFileAttributes(path.c_str()) != INVALID_FILE_ATTRIBUTES) && (GetLastError() == ERROR_FILE_NOT_FOUND));
 }
 
 } /* namespace hailort */

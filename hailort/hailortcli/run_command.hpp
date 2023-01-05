@@ -11,6 +11,7 @@
 #define _HAILO_RUN_COMMAND_HPP_
 
 #include "hailortcli.hpp"
+#include "common.hpp"
 #include "power_measurement_command.hpp"
 #include "temp_measurement.hpp"
 #include "CLI/CLI.hpp"
@@ -44,12 +45,10 @@ struct pipeline_stats_measurement_params {
     std::string pipeline_stats_output_path;
 };
 
-static constexpr uint16_t RUNTIME_DATA_IGNORE_BATCH_TO_MEASURE_OPT = std::numeric_limits<uint16_t>::max();
-static constexpr uint16_t RUNTIME_DATA_DEFAULT_BATCH_TO_MEASURE_OPT = 2;
-
 struct runtime_data_params {
     bool collect_runtime_data;
     std::string runtime_data_output_path;
+    std::string batch_to_measure_str;
     uint16_t batch_to_measure;
 };
 
@@ -89,6 +88,26 @@ public:
 
 private:
     inference_runner_params m_params;
+};
+
+class UintOrKeywordValidator : public CLI::Validator {
+public:
+    UintOrKeywordValidator(const std::string &keyword) {
+        name_ = "UINT_OR_KEYWORD";
+        func_ = [keyword](const std::string &s) {
+            if (s == keyword) {
+                // s is the allowed keyword
+                return std::string(); // Success
+            }
+
+            if (CliCommon::is_non_negative_number(s)) {
+                // s is an int
+                return std::string(); // Success
+            }
+
+            return std::string("should be a positive integer or '" + keyword + "'.");
+        };
+    }
 };
 
 class InputNameToFilePairValidator : public CLI::Validator {
@@ -143,7 +162,7 @@ public:
             auto batch_size = key_value_pair_str.substr(first_delimiter + 1);
             auto network_name = key_value_pair_str.substr(0, first_delimiter);
             // Batch size must be a positive number
-            if (!is_positive_number(batch_size)) {
+            if (!CliCommon::is_positive_number(batch_size)) {
                 m_must_fail = true;
                 return std::string("Failed parsing batch size (" + batch_size + ") for network (" + network_name + "). batch should be a positive number.");
             }
@@ -151,13 +170,8 @@ public:
         };
 
     }
-private:
-    bool is_positive_number(const std::string &s)
-    {
-        bool is_number = (!s.empty()) && (std::all_of(s.begin(), s.end(), ::isdigit));
-        return is_number && (0 < std::stoi(s));
-    }
 
+private:
     bool m_must_fail;
 };
 

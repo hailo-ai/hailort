@@ -37,7 +37,8 @@ constexpr hailo_format_order_t DEFAULT_FORMAT_ORDER_MAP[] = {
     HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_NV12,
     HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_NV21,
     HAILO_FORMAT_ORDER_NV12,                // HAILO_FORMAT_ORDER_HAILO_YYUV,
-    HAILO_FORMAT_ORDER_NV21                 // HAILO_FORMAT_ORDER_HAILO_YYVU
+    HAILO_FORMAT_ORDER_NV21,                // HAILO_FORMAT_ORDER_HAILO_YYVU,
+    HAILO_FORMAT_ORDER_MAX_ENUM             // Not used in device side - HAILO_FORMAT_ORDER_RGB4
     };
 
 constexpr hailo_format_order_t DEFAULT_FORMAT_ARGMAX_ORDER_MAP[] = {
@@ -58,7 +59,8 @@ constexpr hailo_format_order_t DEFAULT_FORMAT_ARGMAX_ORDER_MAP[] = {
     HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_NV12,
     HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_NV21,
     HAILO_FORMAT_ORDER_NV12,                // HAILO_FORMAT_ORDER_HAILO_YYUV,
-    HAILO_FORMAT_ORDER_NV21                 // HAILO_FORMAT_ORDER_HAILO_YYVU
+    HAILO_FORMAT_ORDER_NV21,                // HAILO_FORMAT_ORDER_HAILO_YYVU,
+    HAILO_FORMAT_ORDER_MAX_ENUM             // Not used in device side - HAILO_FORMAT_ORDER_RGB4
 };
 
 
@@ -71,9 +73,9 @@ public:
     HailoRTDefaults() = delete;
 
     // This func must be aligned to SDK!
-    static Expected<hailo_format_order_t> get_device_format_order(uint32_t allocator_format_order)
+    static Expected<hailo_format_order_t> get_device_format_order(uint32_t compiler_format_order)
     {
-        switch (allocator_format_order) {
+        switch (compiler_format_order) {
         case 0:
             return std::move(HAILO_FORMAT_ORDER_NHWC);
             break;
@@ -111,7 +113,7 @@ public:
             return std::move(HAILO_FORMAT_ORDER_HAILO_YYVU);
             break;
         default:
-            LOGGER__ERROR("Invalid allocator_format_order ({})", allocator_format_order);
+            LOGGER__ERROR("Invalid compiler_format_order ({})", compiler_format_order);
             return make_unexpected(HAILO_INTERNAL_FAILURE);
         }
     }
@@ -348,7 +350,7 @@ public:
     {
         auto host_format_copy = host_format;
         if (HAILO_FORMAT_TYPE_AUTO == host_format_copy.type) {
-            host_format_copy.type =  hw_format.type;
+            host_format_copy.type = hw_format.type;
         }
         if (HAILO_FORMAT_ORDER_AUTO == host_format_copy.order) {
             host_format_copy.order = get_default_host_format_order(hw_format);
@@ -360,11 +362,7 @@ public:
     {
         hailo_vdevice_params_t params = {};
         params.device_count = HAILO_DEFAULT_DEVICE_COUNT;
-
-IGNORE_DEPRECATION_WARNINGS_BEGIN
-        params.device_infos = nullptr;
-IGNORE_DEPRECATION_WARNINGS_END
-
+        params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN;
         params.device_ids = nullptr;
         params.group_id = HAILO_DEFAULT_VDEVICE_GROUP_ID;
         params.multi_process_service = false;

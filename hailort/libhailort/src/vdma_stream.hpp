@@ -34,12 +34,21 @@ public:
     virtual hailo_status abort() override;
     virtual hailo_status clear_abort() override;
     virtual hailo_status flush() override;
-    hailo_status write_buffer_only(const MemoryView &buffer);
-    Expected<PendingBufferState> send_pending_buffer();
+    hailo_status write_buffer_only(const MemoryView &buffer, const std::function<bool()> &should_cancel = []() { return false; });
+    hailo_status send_pending_buffer(size_t device_index = 0);
     uint16_t get_dynamic_batch_size() const;
     const char* get_dev_id() const;
+    Expected<VdmaChannel::BufferState> get_buffer_state();
     virtual Expected<size_t> get_buffer_frames_size() const override;
     virtual Expected<size_t> get_pending_frames_count() const override;
+
+    // To be used for debugging purposes
+    hailo_status sync_channel_state();
+
+    void notify_all()
+    {
+        return m_channel->notify_all();
+    }
 
 protected:
     VdmaInputStream(VdmaDevice &device, std::shared_ptr<VdmaChannel> channel, const LayerInfo &edge_layer,
@@ -65,7 +74,8 @@ private:
     std::mutex m_write_only_mutex;
     std::mutex m_send_pending_mutex;
 
-    friend class VDeviceInputStream;
+    friend class InputVDeviceBaseStream;
+    friend class InputVDeviceNativeStream;
 };
 
 class VdmaOutputStream : public OutputStreamBase {
@@ -83,6 +93,7 @@ public:
     virtual hailo_status clear_abort() override;
     uint16_t get_dynamic_batch_size() const;
     const char* get_dev_id() const;
+    Expected<VdmaChannel::BufferState> get_buffer_state();
     virtual Expected<size_t> get_buffer_frames_size() const override;
     virtual Expected<size_t> get_pending_frames_count() const override;
 
@@ -112,7 +123,7 @@ private:
     const uint32_t m_transfer_size;
     std::mutex m_read_mutex;
 
-    friend class VDeviceOutputStream;
+    friend class OutputVDeviceBaseStream;
 };
 
 

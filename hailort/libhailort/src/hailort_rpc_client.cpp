@@ -87,7 +87,7 @@ Expected<std::vector<uint32_t>> HailoRtRpcClient::InputVStreams_create(uint32_t 
     request.set_pid(pid);
     auto proto_vstreams_params = request.mutable_vstreams_params();
     for (const auto &name_params_pair : inputs_params) {
-        NamedVStreamParams proto_name_param_pair;
+        ProtoNamedVStreamParams proto_name_param_pair;
         auto vstream_params = name_params_pair.second;
 
         proto_name_param_pair.set_name(name_params_pair.first);
@@ -144,7 +144,7 @@ Expected<std::vector<uint32_t>> HailoRtRpcClient::OutputVStreams_create(uint32_t
     request.set_pid(pid);
     auto proto_vstreams_params = request.mutable_vstreams_params();
     for (const auto &name_params_pair : output_params) {
-        NamedVStreamParams proto_name_param_pair;
+        ProtoNamedVStreamParams proto_name_param_pair;
         auto vstream_params = name_params_pair.second;
 
         proto_name_param_pair.set_name(name_params_pair.first);
@@ -264,6 +264,22 @@ Expected<std::vector<std::string>> HailoRtRpcClient::VDevice_get_physical_device
     return result;
 }
 
+Expected<hailo_stream_interface_t> HailoRtRpcClient::VDevice_get_default_streams_interface(uint32_t handle)
+{
+    VDevice_get_default_streams_interface_Request request;
+    request.set_handle(handle);
+
+    VDevice_get_default_streams_interface_Reply reply;
+    grpc::ClientContext context;
+    grpc::Status status = m_stub->VDevice_get_default_streams_interface(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    CHECK_AS_EXPECTED(reply.stream_interface() < HAILO_STREAM_INTERFACE_MAX_ENUM, HAILO_INTERNAL_FAILURE,
+        "stream_interface {} out of range", reply.stream_interface());
+    return static_cast<hailo_stream_interface_t>(reply.stream_interface());
+}
+
 hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_release(uint32_t handle)
 {
     Release_Request request;
@@ -276,6 +292,30 @@ hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_release(uint32_t handle)
     assert(reply.status() < HAILO_STATUS_COUNT);
     CHECK_SUCCESS(static_cast<hailo_status>(reply.status()));
     return HAILO_SUCCESS;
+}
+
+std::map<std::string, hailo_vstream_params_t> get_group(const ProtoNamedVStreamParamsMap &named_params_map)
+{
+    std::map<std::string, hailo_vstream_params_t> result;
+    for (auto &named_params : named_params_map.vstream_params_map()) {
+        auto name = named_params.name();
+        auto proto_params = named_params.params();
+        auto proto_user_buffer_format = proto_params.user_buffer_format();
+        hailo_format_t user_buffer_format = {
+            .type = static_cast<hailo_format_type_t>(proto_user_buffer_format.type()),
+            .order = static_cast<hailo_format_order_t>(proto_user_buffer_format.order()),
+            .flags = static_cast<hailo_format_flags_t>(proto_user_buffer_format.flags())
+        };
+        hailo_vstream_params_t params = {
+            .user_buffer_format = user_buffer_format,
+            .timeout_ms = proto_params.timeout_ms(),
+            .queue_size = proto_params.queue_size(),
+            .vstream_stats_flags = static_cast<hailo_vstream_stats_flags_t>(proto_params.vstream_stats_flags()),
+            .pipeline_elements_stats_flags = static_cast<hailo_pipeline_elem_stats_flags_t>(proto_params.pipeline_elements_stats_flags())
+        };
+        result.insert({name, params});
+    }
+    return result;
 }
 
 Expected<std::map<std::string, hailo_vstream_params_t>> HailoRtRpcClient::ConfiguredNetworkGroup_make_input_vstream_params(
@@ -296,24 +336,29 @@ Expected<std::map<std::string, hailo_vstream_params_t>> HailoRtRpcClient::Config
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
-    std::map<std::string, hailo_vstream_params_t> result;
-    for (int i = 0; i < reply.vstream_params_map_size(); ++i) {
-        auto name = reply.vstream_params_map(i).name();
-        auto proto_params = reply.vstream_params_map(i).params();
-        auto proto_user_buffer_format = proto_params.user_buffer_format();
-        hailo_format_t user_buffer_format = {
-            .type = static_cast<hailo_format_type_t>(proto_user_buffer_format.type()),
-            .order = static_cast<hailo_format_order_t>(proto_user_buffer_format.order()),
-            .flags = static_cast<hailo_format_flags_t>(proto_user_buffer_format.flags())
-        };
-        hailo_vstream_params_t params = {
-            .user_buffer_format = user_buffer_format,
-            .timeout_ms = proto_params.timeout_ms(),
-            .queue_size = proto_params.queue_size(),
-            .vstream_stats_flags = static_cast<hailo_vstream_stats_flags_t>(proto_params.vstream_stats_flags()),
-            .pipeline_elements_stats_flags = static_cast<hailo_pipeline_elem_stats_flags_t>(proto_params.pipeline_elements_stats_flags())
-        };
-        result.insert({name, params});
+    return get_group(reply.vstream_params_map());
+}
+
+Expected<std::vector<std::map<std::string, hailo_vstream_params_t>>> HailoRtRpcClient::ConfiguredNetworkGroup_make_output_vstream_params_groups(
+    uint32_t handle, bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size)
+{
+    ConfiguredNetworkGroup_make_output_vstream_params_groups_Request request;
+    request.set_handle(handle);
+    request.set_quantized(quantized);
+    request.set_format_type(format_type);
+    request.set_timeout_ms(timeout_ms);
+    request.set_queue_size(queue_size);
+
+    ConfiguredNetworkGroup_make_output_vstream_params_groups_Reply reply;
+    grpc::ClientContext context;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_make_output_vstream_params_groups(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    std::vector<std::map<std::string, hailo_vstream_params_t>> result;
+    for (auto &map_proto : reply.vstream_params_groups()) {
+        auto group = get_group(map_proto);
+        result.push_back(group);
     }
     return result;
 }
@@ -337,9 +382,9 @@ Expected<std::map<std::string, hailo_vstream_params_t>> HailoRtRpcClient::Config
     assert(reply.status() < HAILO_STATUS_COUNT);
     CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
     std::map<std::string, hailo_vstream_params_t> result;
-    for (int i = 0; i < reply.vstream_params_map_size(); ++i) {
-        auto name = reply.vstream_params_map(i).name();
-        auto proto_params = reply.vstream_params_map(i).params();
+    for (int i = 0; i < reply.vstream_params_map().vstream_params_map_size(); ++i) {
+        auto name = reply.vstream_params_map().vstream_params_map(i).name();
+        auto proto_params = reply.vstream_params_map().vstream_params_map(i).params();
         auto proto_user_buffer_format = proto_params.user_buffer_format();
         hailo_format_t user_buffer_format = {
             .type = static_cast<hailo_format_type_t>(proto_user_buffer_format.type()),
@@ -360,17 +405,17 @@ Expected<std::map<std::string, hailo_vstream_params_t>> HailoRtRpcClient::Config
 
 Expected<std::string> HailoRtRpcClient::ConfiguredNetworkGroup_get_network_group_name(uint32_t handle)
 {
-    return ConfiguredNetworkGroup_get_name(handle);
+    return ConfiguredNetworkGroup_name(handle);
 }
 
-Expected<std::string> HailoRtRpcClient::ConfiguredNetworkGroup_get_name(uint32_t handle)
+Expected<std::string> HailoRtRpcClient::ConfiguredNetworkGroup_name(uint32_t handle)
 {
-    ConfiguredNetworkGroup_get_name_Request request;
+    ConfiguredNetworkGroup_name_Request request;
     request.set_handle(handle);
 
-    ConfiguredNetworkGroup_get_name_Reply reply;
+    ConfiguredNetworkGroup_name_Reply reply;
     grpc::ClientContext context;
-    grpc::Status status = m_stub->ConfiguredNetworkGroup_get_name(&context, request, &reply);
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_name(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
@@ -510,42 +555,48 @@ Expected<std::vector<std::vector<std::string>>> HailoRtRpcClient::ConfiguredNetw
     return result;
 }
 
+hailo_vstream_info_t deserialize_vstream_info(const ProtoVStreamInfo &info_proto)
+{
+    hailo_vstream_info_t info;
+    strcpy(info.name, info_proto.name().c_str());
+    strcpy(info.network_name, info_proto.network_name().c_str());
+    info.direction = static_cast<hailo_stream_direction_t>(info_proto.direction());
+    hailo_format_t format = {
+        .type = static_cast<hailo_format_type_t>(info_proto.format().type()),
+        .order = static_cast<hailo_format_order_t>(info_proto.format().order()),
+        .flags = static_cast<hailo_format_flags_t>(info_proto.format().flags())
+    };
+    info.format = format;
+    if (format.order == HAILO_FORMAT_ORDER_HAILO_NMS) {
+        hailo_nms_shape_t nms_shape = {
+            .number_of_classes = info_proto.nms_shape().number_of_classes(),
+            .max_bboxes_per_class = info_proto.nms_shape().max_bbox_per_class()
+        };
+        info.nms_shape = nms_shape;
+    } else {
+        hailo_3d_image_shape_t shape = {
+            .height = info_proto.shape().height(),
+            .width = info_proto.shape().width(),
+            .features = info_proto.shape().features()
+        };
+        info.shape = shape;
+    }
+    hailo_quant_info_t quant_info = {
+        .qp_zp = info_proto.quant_info().qp_zp(),
+        .qp_scale = info_proto.quant_info().qp_scale(),
+        .limvals_min = info_proto.quant_info().limvals_min(),
+        .limvals_max = info_proto.quant_info().limvals_max()
+    };
+    info.quant_info = quant_info;
+    return info;
+}
+
 Expected<std::vector<hailo_vstream_info_t>> deserialize_vstream_infos(const ConfiguredNetworkGroup_get_vstream_infos_Reply &reply)
 {
     std::vector<hailo_vstream_info_t> result;
     result.reserve(reply.vstream_infos().size());
     for (auto& info_proto : reply.vstream_infos()) {
-        hailo_vstream_info_t info;
-        strcpy(info.name, info_proto.name().c_str());
-        strcpy(info.network_name, info_proto.network_name().c_str());
-        info.direction = static_cast<hailo_stream_direction_t>(info_proto.direction());
-        hailo_format_t format = {
-            .type = static_cast<hailo_format_type_t>(info_proto.format().type()),
-            .order = static_cast<hailo_format_order_t>(info_proto.format().order()),
-            .flags = static_cast<hailo_format_flags_t>(info_proto.format().flags())
-        };
-        info.format = format;
-        if (format.order == HAILO_FORMAT_ORDER_HAILO_NMS) {
-            hailo_nms_shape_t nms_shape = {
-                .number_of_classes = info_proto.nms_shape().number_of_classes(),
-                .max_bboxes_per_class = info_proto.nms_shape().max_bbox_per_class()
-            };
-            info.nms_shape = nms_shape;
-        } else {
-            hailo_3d_image_shape_t shape = {
-                .height = info_proto.shape().height(),
-                .width = info_proto.shape().width(),
-                .features = info_proto.shape().features()
-            };
-            info.shape = shape;
-        }
-        hailo_quant_info_t quant_info = {
-            .qp_zp = info_proto.quant_info().qp_zp(),
-            .qp_scale = info_proto.quant_info().qp_scale(),
-            .limvals_min = info_proto.quant_info().limvals_min(),
-            .limvals_max = info_proto.quant_info().limvals_max()
-        };
-        info.quant_info = quant_info;
+        auto info = deserialize_vstream_info(info_proto);
         result.push_back(info);
     }
     return result;
@@ -649,6 +700,68 @@ Expected<LatencyMeasurementResult> HailoRtRpcClient::ConfiguredNetworkGroup_get_
     return result;
 }
 
+Expected<bool> HailoRtRpcClient::ConfiguredNetworkGroup_is_multi_context(uint32_t handle)
+{
+    ConfiguredNetworkGroup_is_multi_context_Request request;
+    ConfiguredNetworkGroup_is_multi_context_Reply reply;
+    request.set_handle(handle);
+    grpc::ClientContext context;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_is_multi_context(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    return reply.is_multi_context();
+}
+
+Expected<ConfigureNetworkParams> HailoRtRpcClient::ConfiguredNetworkGroup_get_config_params(uint32_t handle)
+{
+    ConfiguredNetworkGroup_get_config_params_Request request;
+    ConfiguredNetworkGroup_get_config_params_Reply reply;
+    request.set_handle(handle);
+    grpc::ClientContext context;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_get_config_params(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    auto proto_configure_params = reply.params();
+    ConfigureNetworkParams network_configure_params;
+    network_configure_params.batch_size = static_cast<uint16_t>(proto_configure_params.batch_size());
+    network_configure_params.power_mode = static_cast<hailo_power_mode_t>(proto_configure_params.power_mode());
+    network_configure_params.latency = static_cast<hailo_latency_measurement_flags_t>(proto_configure_params.latency());
+    for (auto &proto_name_streams_params_pair : proto_configure_params.stream_params_map()) {
+        auto proto_streams_params = proto_name_streams_params_pair.params();
+        auto stream_direction = static_cast<hailo_stream_direction_t>(proto_streams_params.direction());
+        hailo_stream_parameters_t stream_params;
+        if (stream_direction == HAILO_H2D_STREAM) {
+            stream_params = {
+                .stream_interface = static_cast<hailo_stream_interface_t>(proto_streams_params.stream_interface()),
+                .direction = stream_direction,
+                {.pcie_input_params = {
+                    .reserved = 0
+                }}
+            };
+        } else {
+            stream_params = {
+                .stream_interface = static_cast<hailo_stream_interface_t>(proto_streams_params.stream_interface()),
+                .direction = stream_direction,
+                {.pcie_output_params = {
+                    .reserved = 0
+                }}
+            };
+        }
+        network_configure_params.stream_params_by_name.insert({proto_name_streams_params_pair.name(), stream_params});
+    }
+    for (auto &proto_name_network_params_pair : proto_configure_params.network_params_map()) {
+        auto proto_network_params = proto_name_network_params_pair.params();
+        hailo_network_parameters_t net_params {
+            .batch_size = static_cast<uint16_t>(proto_network_params.batch_size())
+        };
+
+        network_configure_params.network_params_by_name.insert({proto_name_network_params_pair.name(), net_params});
+    }
+    return network_configure_params;
+}
+
 hailo_status HailoRtRpcClient::InputVStream_write(uint32_t handle, const MemoryView &buffer)
 {
     InputVStream_write_Request request;
@@ -659,7 +772,7 @@ hailo_status HailoRtRpcClient::InputVStream_write(uint32_t handle, const MemoryV
     grpc::Status status = m_stub->InputVStream_write(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
-    if (reply.status() == HAILO_STREAM_INTERNAL_ABORT) {
+    if (reply.status() == HAILO_STREAM_ABORTED_BY_USER) {
         return static_cast<hailo_status>(reply.status());
     }
     CHECK_SUCCESS(static_cast<hailo_status>(reply.status()));
@@ -676,7 +789,7 @@ hailo_status HailoRtRpcClient::OutputVStream_read(uint32_t handle, MemoryView bu
     grpc::Status status = m_stub->OutputVStream_read(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
-    if (reply.status() == HAILO_STREAM_INTERNAL_ABORT) {
+    if (reply.status() == HAILO_STREAM_ABORTED_BY_USER) {
         return static_cast<hailo_status>(reply.status());
     }
     CHECK_SUCCESS(static_cast<hailo_status>(reply.status()));
@@ -750,6 +863,34 @@ Expected<std::string> HailoRtRpcClient::OutputVStream_name(uint32_t handle)
     return name;
 }
 
+Expected<std::string> HailoRtRpcClient::InputVStream_network_name(uint32_t handle)
+{
+    VStream_network_name_Request request;
+    request.set_handle(handle);
+    grpc::ClientContext context;
+    VStream_network_name_Reply reply;
+    grpc::Status status = m_stub->InputVStream_network_name(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    auto name = reply.network_name();
+    return name;
+}
+
+Expected<std::string> HailoRtRpcClient::OutputVStream_network_name(uint32_t handle)
+{
+    VStream_network_name_Request request;
+    request.set_handle(handle);
+    grpc::ClientContext context;
+    VStream_network_name_Reply reply;
+    grpc::Status status = m_stub->OutputVStream_network_name(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    auto name = reply.network_name();
+    return name;
+}
+
 hailo_status HailoRtRpcClient::InputVStream_abort(uint32_t handle)
 {
     VStream_abort_Request request;
@@ -757,7 +898,7 @@ hailo_status HailoRtRpcClient::InputVStream_abort(uint32_t handle)
     grpc::ClientContext context;
     VStream_abort_Reply reply;
     grpc::Status status = m_stub->InputVStream_abort(&context, request, &reply);
-    CHECK(status.ok(), HAILO_RPC_FAILED, "InputVStream_abort: RPC failed");
+    CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     return static_cast<hailo_status>(reply.status());
 }
@@ -769,7 +910,7 @@ hailo_status HailoRtRpcClient::OutputVStream_abort(uint32_t handle)
     grpc::ClientContext context;
     VStream_abort_Reply reply;
     grpc::Status status = m_stub->OutputVStream_abort(&context, request, &reply);
-    CHECK(status.ok(), HAILO_RPC_FAILED, "OutputVStream_abort: RPC failed");
+    CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     return static_cast<hailo_status>(reply.status());
 }
@@ -781,7 +922,7 @@ hailo_status HailoRtRpcClient::InputVStream_resume(uint32_t handle)
     grpc::ClientContext context;
     VStream_resume_Reply reply;
     grpc::Status status = m_stub->InputVStream_resume(&context, request, &reply);
-    CHECK(status.ok(), HAILO_RPC_FAILED, "InputVStream_resume: RPC failed");
+    CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     return static_cast<hailo_status>(reply.status());
 }
@@ -793,9 +934,78 @@ hailo_status HailoRtRpcClient::OutputVStream_resume(uint32_t handle)
     grpc::ClientContext context;
     VStream_resume_Reply reply;
     grpc::Status status = m_stub->OutputVStream_resume(&context, request, &reply);
-    CHECK(status.ok(), HAILO_RPC_FAILED, "OutputVStream_resume: RPC failed");
+    CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     return static_cast<hailo_status>(reply.status());
+}
+
+Expected<hailo_format_t> HailoRtRpcClient::InputVStream_get_user_buffer_format(uint32_t handle)
+{
+    VStream_get_user_buffer_format_Request request;
+    request.set_handle(handle);
+    grpc::ClientContext context;
+    VStream_get_user_buffer_format_Reply reply;
+    grpc::Status status = m_stub->InputVStream_get_user_buffer_format(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+
+    auto user_buffer_format_proto = reply.user_buffer_format();
+    hailo_format_t format{
+        .type = static_cast<hailo_format_type_t>(user_buffer_format_proto.type()),
+        .order = static_cast<hailo_format_order_t>(user_buffer_format_proto.order()),
+        .flags = static_cast<hailo_format_flags_t>(user_buffer_format_proto.flags())
+    };
+
+    return format;
+}
+
+Expected<hailo_format_t> HailoRtRpcClient::OutputVStream_get_user_buffer_format(uint32_t handle)
+{
+    VStream_get_user_buffer_format_Request request;
+    request.set_handle(handle);
+    grpc::ClientContext context;
+    VStream_get_user_buffer_format_Reply reply;
+    grpc::Status status = m_stub->OutputVStream_get_user_buffer_format(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+
+    auto user_buffer_format_proto = reply.user_buffer_format();
+    hailo_format_t format{
+        .type = static_cast<hailo_format_type_t>(user_buffer_format_proto.type()),
+        .order = static_cast<hailo_format_order_t>(user_buffer_format_proto.order()),
+        .flags = static_cast<hailo_format_flags_t>(user_buffer_format_proto.flags())
+    };
+
+    return format;
+}
+
+Expected<hailo_vstream_info_t> HailoRtRpcClient::InputVStream_get_info(uint32_t handle)
+{
+    VStream_get_info_Request request;
+    request.set_handle(handle);
+    grpc::ClientContext context;
+    VStream_get_info_Reply reply;
+    grpc::Status status = m_stub->InputVStream_get_info(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    auto info_proto = reply.vstream_info();
+    return deserialize_vstream_info(info_proto);
+}
+Expected<hailo_vstream_info_t> HailoRtRpcClient::OutputVStream_get_info(uint32_t handle)
+{
+    VStream_get_info_Request request;
+    request.set_handle(handle);
+    grpc::ClientContext context;
+    VStream_get_info_Reply reply;
+    grpc::Status status = m_stub->OutputVStream_get_info(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    auto info_proto = reply.vstream_info();
+    return deserialize_vstream_info(info_proto);
 }
 
 }

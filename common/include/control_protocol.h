@@ -38,7 +38,6 @@ extern "C" {
 #define CONTROL_PROTOCOL__MAX_CONTEXT_SWITCH_APPLICATIONS (32)
 #define CONTROL_PROTOCOL__MAX_NUMBER_OF_CLUSTERS (8)
 #define CONTROL_PROTOCOL__MAX_CONTROL_LENGTH (1500)
-#define CONTROL_PROTOCOL__MAX_TOTAL_CONTEXTS (128)
 #define CONTROL_PROTOCOL__SOC_ID_LENGTH (32)
 #define CONTROL_PROTOCOL__MAX_CFG_CHANNELS (4)
 #define CONTROL_PROTOCOL__MAX_NETWORKS_PER_NETWORK_GROUP (8)
@@ -67,13 +66,6 @@ extern "C" {
  */
 #define CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE (0)
 
-#define CONTROL_PROTOCOL__TRIGGER_SUB_INDEX_SHIFT (0)
-#define CONTROL_PROTOCOL__TRIGGER_SUB_INDEX_BIT_MASK (0x000000FF)
-#define CONTROL_PROTOCOL__TRIGGER_INDEX_SHIFT (16)
-#define CONTROL_PROTOCOL__TRIGGER_INDEX_BIT_MASK (0x00FF0000)
-#define CONTROL_PROTOCOL__TRIGGER_TYPE_SHIFT (28)
-#define CONTROL_PROTOCOL__TRIGGER_TYPE_BIT_MASK (0xF0000000)
-
 // Tightly coupled with BOARD_CONFIG_supported_features_t struct
 #define CONTROL_PROTOCOL__SUPPORTED_FEATURES_ETHERNET_BIT_OFFSET (0)
 #define CONTROL_PROTOCOL__SUPPORTED_FEATURES_MIPI_BIT_OFFSET (1)
@@ -85,19 +77,6 @@ extern "C" {
 
 /* Value to represent an operation should be performed on all streams. */
 #define CONTROL_PROTOCOL__ALL_DATAFLOW_MANAGERS (0xFF)
-
-#define CONTROL_PROTOCOL__WRITE_TRIGGER_SUB_INDEX(val)\
-    (((uint32_t)val) << CONTROL_PROTOCOL__TRIGGER_SUB_INDEX_SHIFT)
-#define CONTROL_PROTOCOL__READ_TRIGGER_SUB_INDEX(val)\
-    (((uint32_t)(val) & CONTROL_PROTOCOL__TRIGGER_SUB_INDEX_BIT_MASK) >> (CONTROL_PROTOCOL__TRIGGER_SUB_INDEX_SHIFT))
-#define CONTROL_PROTOCOL__WRITE_TRIGGER_INDEX(val)\
-    (((uint32_t)val) << CONTROL_PROTOCOL__TRIGGER_INDEX_SHIFT)
-#define CONTROL_PROTOCOL__READ_TRIGGER_INDEX(val)\
-    (((uint32_t)(val) & CONTROL_PROTOCOL__TRIGGER_INDEX_BIT_MASK) >> (CONTROL_PROTOCOL__TRIGGER_INDEX_SHIFT))
-#define CONTROL_PROTOCOL__WRITE_TRIGGER_TYPE(val)\
-    (((uint32_t)val) << CONTROL_PROTOCOL__TRIGGER_TYPE_SHIFT)
-#define CONTROL_PROTOCOL__READ_TRIGGER_TYPE(val)\
-    (((uint32_t)(val) & CONTROL_PROTOCOL__TRIGGER_TYPE_BIT_MASK) >> (CONTROL_PROTOCOL__TRIGGER_TYPE_SHIFT))
 
 
 #define CONTROL_PROTOCOL__OPCODES_VARIABLES \
@@ -133,7 +112,7 @@ extern "C" {
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_SENSOR_LOAD_AND_START,                     false, CPU_ID_APP_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_SENSOR_RESET,                              false, CPU_ID_APP_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_SENSOR_GET_SECTIONS_INFO,                  false, CPU_ID_APP_CPU)\
-    CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_SET_MAIN_HEADER,            false, CPU_ID_CORE_CPU)\
+    CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_SET_NETWORK_GROUP_HEADER,   false, CPU_ID_CORE_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_SET_CONTEXT_INFO,           false, CPU_ID_CORE_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_IDLE_TIME_SET_MEASUREMENT,                 false, CPU_ID_APP_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_IDLE_TIME_GET_MEASUREMENT,                 false, CPU_ID_APP_CPU)\
@@ -173,6 +152,8 @@ extern "C" {
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CORE_WD_ENABLE,                            false, CPU_ID_CORE_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CORE_WD_CONFIG,                            false, CPU_ID_CORE_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_CLEAR_CONFIGURED_APPS,      false, CPU_ID_CORE_CPU)\
+    CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_GET_HW_CONSTS,                             false, CPU_ID_CORE_CPU)\
+    CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_SET_SLEEP_STATE,                           false, CPU_ID_APP_CPU)\
 
 typedef enum {
 #define CONTROL_PROTOCOL__OPCODE_X(name, is_critical, cpu_id) name,
@@ -433,6 +414,11 @@ typedef struct {
 } CONTROL_PROTOCOL__set_overcurrent_state_request_t;
 
 typedef struct {
+    uint32_t sleep_state_length;
+    uint8_t sleep_state; /* of type CONTROL_PROTOCOL__sleep_state_t */
+} CONTROL_PROTOCOL__set_sleep_state_request_t;
+
+typedef struct {
     uint32_t is_required_length;
     bool is_required;
 } CONTROL_PROTOCOL__get_overcurrent_state_response_t;
@@ -446,6 +432,7 @@ typedef struct {
     uint16_t core_bytes_per_buffer;
     uint16_t core_buffers_per_frame;
     uint16_t periph_bytes_per_buffer;
+    uint16_t periph_buffers_per_frame;
     uint16_t feature_padding_payload;
     uint16_t buffer_padding_payload;
     uint16_t buffer_padding;
@@ -868,10 +855,6 @@ typedef struct {
     uint32_t inbound_to_outbound_latency_nsec;
 } CONTROL_PROTOCOL__latency_read_response_t;
 
-typedef enum {
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_VER_V1_0_0 = 0x010000,
-} CONTROL_PROTOCOL__CONTEXT_SWITCH_VERSION_t;
-
 typedef struct {
     bool is_abbale_supported;
 } CONTROL_PROTOCOL__VALIDATION_FEATURE_LIST_t;
@@ -882,8 +865,6 @@ typedef struct {
 
 typedef struct {
     uint8_t dynamic_contexts_count;
-    uint32_t host_boundary_channels_bitmap[CONTROL_PROTOCOL__MAX_VDMA_ENGINES_COUNT];
-    uint8_t power_mode; // CONTROL_PROTOCOL__power_mode_t
     CONTROL_PROTOCOL__INFER_FEATURE_LIST_t infer_features;
     CONTROL_PROTOCOL__VALIDATION_FEATURE_LIST_t validation_features;
     uint8_t networks_count;
@@ -891,13 +872,9 @@ typedef struct {
 } CONTROL_PROTOCOL__application_header_t;
 
 typedef struct {
-    uint32_t context_switch_version_length;
-    uint32_t context_switch_version;
-    uint32_t application_count_length;
-    uint8_t application_count;
     uint32_t application_header_length;
-    CONTROL_PROTOCOL__application_header_t application_header[CONTROL_PROTOCOL__MAX_CONTEXT_SWITCH_APPLICATIONS];
-} CONTROL_PROTOCOL__context_switch_set_main_header_request_t;
+    CONTROL_PROTOCOL__application_header_t application_header;
+} CONTROL_PROTOCOL__context_switch_set_network_group_header_request_t;
 
 typedef enum {
     CONTROL_PROTOCOL__WATCHDOG_MODE_HW_SW = 0,
@@ -908,7 +885,6 @@ typedef enum {
 } CONTROL_PROTOCOL__WATCHDOG_MODE_t;
 
 typedef struct {
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_VERSION_t context_switch_version;
     uint8_t application_count;
     CONTROL_PROTOCOL__application_header_t application_header[CONTROL_PROTOCOL__MAX_CONTEXT_SWITCH_APPLICATIONS];
 } CONTROL_PROTOCOL__context_switch_main_header_t;
@@ -943,109 +919,13 @@ typedef struct {
     CONTROL_PROTOCOL__temperature_info_t info;
 } CONTROL_PROTOCOL__get_chip_temperature_response_t;
 
-typedef enum {
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_TRIGGER_TYPE_NONE = 0,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_TRIGGER_TYPE_LCU,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_TRIGGER_TYPE_INPUT_STREAM,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_TRIGGER_TYPE_OUTPUT_STREAM,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_TRIGGER_TYPE_NMS_IDLE,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_TRIGGER_TYPE_DMA_IDLE,
-
-    /* must be last*/
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_TRIGGER_TYPE_COUNT,
-} CONTROL_PROTOCOL__CONTEXT_SWITCH_TRIGGER_TYPE_t;
-
-typedef enum {
-    /* this enum starts from 128 for each debug while reading memory buffer */
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_START_INDEX = 128,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_READ_VDMA = CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_START_INDEX,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_TRIGGER_SEQUENCER,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_WAIT_FOR_SEQUENCER_DONE,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_TRIGGER_NEW_DATA_FROM_DATA_INPUT,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ENABLE_LCU_NON_DEFAULT,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_DISABLE_LCU,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_WAIT_FOR_MODULE_CONFIG_DONE,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ADD_DDR_PAIR_INFO,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ADD_DDR_BUFFERING_START,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ENABLE_LCU_DEFAULT,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ADD_REPEATED,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_FETCH_CCW_BURSTS,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_BURST_CREDITS_TASK_START,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_EDGE_LAYER_ACTIVATION_ACTIONS_POSITION,
-
-    /* must be last*/
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_COUNT,
-} CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_TYPE_t;
-
-typedef uint8_t CONTROL_PROTOCOL__TRIGGER_TYPE_t;
-
-typedef struct {
-    /* Empty struct - place holder */
-    uint8_t reserved;
-} CONTROL_PROTOCOL__TRIGGER_NONE_t;
-
-typedef struct {
-    uint8_t cluster_index;
-    uint8_t lcu_index;
-} CONTROL_PROTOCOL__TRIGGER_LCU_t;
-
-typedef struct {
-    uint8_t stream_index;
-} CONTROL_PROTOCOL__TRIGGER_INPUT_STREAM_t;
-
-typedef struct {
-    uint8_t stream_index;
-} CONTROL_PROTOCOL__TRIGGER_OUTPUT_STREAM_t;
-
-typedef struct {
-    uint8_t aggregator_index;
-    uint8_t pred_cluster_ob_index;
-    uint8_t pred_cluster_ob_cluster_index;
-    uint8_t pred_cluster_ob_interface;
-    uint8_t succ_prepost_ob_index;
-    uint8_t succ_prepost_ob_interface;
-} CONTROL_PROTOCOL__TRIGGER_NMS_IDLE_t;
-
-typedef struct {
-    uint8_t stream_index;
-} CONTROL_PROTOCOL__TRIGGER_DMA_IDLE_t;
-
-typedef union {
-    CONTROL_PROTOCOL__TRIGGER_NONE_t none_trigger;
-    CONTROL_PROTOCOL__TRIGGER_LCU_t lcu_trigger;
-    CONTROL_PROTOCOL__TRIGGER_INPUT_STREAM_t input_stream_trigger;
-    CONTROL_PROTOCOL__TRIGGER_OUTPUT_STREAM_t output_stream_trigger;
-    CONTROL_PROTOCOL__TRIGGER_NMS_IDLE_t nms_idle_trigger;
-    CONTROL_PROTOCOL__TRIGGER_DMA_IDLE_t dma_idle_trigger;
-} CONTROL_PROTOCOL__trigger_parameters_t;
-
-typedef struct {
-    CONTROL_PROTOCOL__TRIGGER_TYPE_t type;
-    CONTROL_PROTOCOL__trigger_parameters_t params;
-} CONTROL_PROTOCOL__TRIGGER_t;
-
-typedef uint8_t CONTROL_PROTOCOL__shmifo_to_pcie_channel_mapping_t;
-
-typedef enum {
-    CONTROL_PROTOCOL__EDGE_CONNECTION_TYPE_NETWORK_BOUNDARY_INPUT,
-    CONTROL_PROTOCOL__EDGE_CONNECTION_TYPE_NETWORK_BOUNDARY_OUTPUT,
-    CONTROL_PROTOCOL__EDGE_CONNECTION_TYPE_INTERMEDIATE_BUFFER_INPUT,
-    CONTROL_PROTOCOL__EDGE_CONNECTION_TYPE_INTERMEDIATE_BUFFER_OUTPUT,
-    CONTROL_PROTOCOL__EDGE_CONNECTION_TYPE_DDR_BUFFER_INPUT,
-    CONTROL_PROTOCOL__EDGE_CONNECTION_TYPE_DDR_BUFFER_OUTPUT,
-
-    /* must be last */
-    CONTROL_PROTOCOL__EDGE_CONNECTION_TYPE_COUNT
-} CONTROL_PROTOCOL__EDGE_CONNECTION_TYPE_t;
 
 typedef enum {
     CONTROL_PROTOCOL__HOST_BUFFER_TYPE_EXTERNAL_DESC = 0,
     CONTROL_PROTOCOL__HOST_BUFFER_TYPE_CCB,
+    CONTROL_PROTOCOL__HOST_BUFFER_TYPE_HOST_MANAGED_EXTERNAL_DESC, /* DEPRECATED */
 
-    // The buffer uses external descriptors that is host managed - the firmware don't need to config this buffer
-    CONTROL_PROTOCOL__HOST_BUFFER_TYPE_HOST_MANAGED_EXTERNAL_DESC,
-
-    /* must be last*/
+    /* must be last */
     CONTROL_PROTOCOL__HOST_BUFFER_TYPE_COUNT
 } CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t;
 
@@ -1057,74 +937,6 @@ typedef struct {
     uint32_t bytes_in_pattern;
 } CONTROL_PROTOCOL__host_buffer_info_t;
 
-/* TODO: merge CONTROL_PROTOCOL__edge_layer_common_info_t into the header (HRT-7113) */
-typedef struct {
-    uint8_t communication_type;
-    uint8_t edge_connection_type;
-} CONTROL_PROTOCOL__edge_layer_header_t;
-
-typedef struct {
-    uint8_t engine_index;
-    uint8_t vdma_channel_index;
-    uint8_t stream_index;
-    uint8_t network_index;
-    CONTROL_PROTOCOL__nn_stream_config_t nn_stream_config;
-} CONTROL_PROTOCOL__edge_layer_common_info_t;
-
-typedef struct {
-    CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
-    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
-} CONTROL_PROTOCOL__network_boundary_output_t;
-
-typedef struct {
-    CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
-    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
-} CONTROL_PROTOCOL__inter_context_output_t;
-
-typedef struct {
-    CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
-    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
-    uint32_t buffered_rows_count;
-} CONTROL_PROTOCOL__ddr_buffer_output_t;
-
-
-typedef struct {
-    CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
-} CONTROL_PROTOCOL__eth_network_boundary_output_t;
-
-typedef struct {
-    CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
-    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
-    uint32_t initial_credit_size;
-} CONTROL_PROTOCOL__network_boundary_input_t;
-
-typedef struct {
-    CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
-    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
-    uint32_t initial_credit_size;
-} CONTROL_PROTOCOL__inter_context_input_t;
-
-typedef struct {
-    CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
-    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
-    uint32_t initial_credit_size;
-    uint8_t connected_d2h_engine_index;
-    uint8_t connected_d2h_channel_index;
-} CONTROL_PROTOCOL__ddr_buffer_input_t;
-
-typedef struct {
-    CONTROL_PROTOCOL__edge_layer_common_info_t common_info;
-} CONTROL_PROTOCOL__eth_network_boundary_input_t;
-
-typedef struct {
-    uint8_t should_use_stream_remap;
-} CONTROL_PROTOCOL__stream_remap_data_t;
-
-typedef struct {
-    CONTROL_PROTOCOL__host_buffer_info_t config_buffer_info;
-    uint8_t engine_index;
-    uint8_t vdma_channel_index;
-} CONTROL_PROTOCOL__config_channel_info_t;
 
 #if defined(_MSC_VER)
 // TODO: warning C4200
@@ -1136,16 +948,10 @@ typedef struct {
     uint8_t is_first_control_per_context;
     uint32_t is_last_control_per_context_length;
     uint8_t is_last_control_per_context;
-    uint32_t cfg_channels_count_length;
-    uint8_t cfg_channels_count;
-    uint32_t config_channel_infos_length;
-    CONTROL_PROTOCOL__config_channel_info_t config_channel_infos[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
-    uint32_t context_stream_remap_data_length;
-    CONTROL_PROTOCOL__stream_remap_data_t context_stream_remap_data;
-    uint32_t number_of_edge_layers_length;
-    uint8_t number_of_edge_layers;
-    uint32_t number_of_trigger_groups_length;
-    uint8_t number_of_trigger_groups;
+    uint32_t context_type_length;
+    uint8_t context_type; // CONTROL_PROTOCOL__context_switch_context_type_t
+    uint32_t actions_count_length;
+    uint32_t actions_count;
     uint32_t context_network_data_length;
     uint8_t context_network_data[0];
 } CONTROL_PROTOCOL__context_switch_set_context_info_request_t;
@@ -1153,168 +959,11 @@ typedef struct {
 #pragma warning(pop)
 #endif
 
-typedef uint8_t CONTROL_PROTOCOL__ACTION_TYPE_t;
-
-/* Each CONTROL_PROTOCOL__*_ACTION_t must start with a CONTROL_PROTOCOL__ACTION_HEADER_t */
 typedef struct {
     /* Must be first */
-    CONTROL_PROTOCOL__ACTION_TYPE_t action_type;
+    uint8_t action_type; // CONTEXT_SWITCH_DEFS__ACTION_TYPE_t
     bool is_repeated;
 } CONTROL_PROTOCOL__ACTION_HEADER_t;
-
-/**
- * Repeated actions are sent in the following manner via the control protocol:
- * 1) CONTROL_PROTOCOL__REPEATED_ACTION_t with:
- *    a) 'action_type' = CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ADD_REPEATED
- *    b) 'is_repeated' = false
- * 2) 'count' sub-actions whose type matches the 'sub_action_type' defined by (1).
- *    The sub-actions will be consecutive, and will all be marked as 'is_repeated' = true in thier headers.
- *    The sub-actions may be in different slices, if there is a 'CONTROL_PROTOCOL__CONTEXT_SWITCH_TRIGGER_TYPE_NONE' between them.
- * 
- * E.g. - 3 repeated 'CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ENABLE_LCU_DEFAULT's:
- * |--------------------------------------------------------------------------------------------------|
- * |   time      |                                        data                                        |
- * |--------------------------------------------------------------------------------------------------|
- * |    ...      |                                                                                    |
- * |     |       | CONTROL_PROTOCOL__REPEATED_ACTION_t {                                              |
- * |     |       |   .header = { CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ADD_REPEATED, false};        |
- * |     |       |   .sub_action_type = CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ENABLE_LCU_DEFAULT;   |
- * |     |       |   .num_actions = 3;                                                                |
- * |     |       | }                                                                                  |
- * |     |       | CONTROL_PROTOCOL__ENABLE_LCU_DEFAULT_ACTION_t {                                    |
- * |     |       |   .header = { CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ENABLE_LCU_DEFAULT, true };  |
- * |     |       |   .cluster_index = <some_cluster_index>;                                           |
- * |     |       |   .lcu_index = <some_lcu_index>;                                                   |
- * |     |       |   .network_index = <some_network_index>;                                           |
- * |     |       | }                                                                                  |
- * |     |       | CONTROL_PROTOCOL__ENABLE_LCU_DEFAULT_ACTION_t {                                    |
- * |     |       |   .header = { CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ENABLE_LCU_DEFAULT, true };  |
- * |     |       |   .cluster_index = <some_cluster_index>;                                           |
- * |     |       |   .lcu_index = <some_lcu_index>;                                                   |
- * |     |       |   .network_index = <some_network_index>;                                           |
- * |     |       | }                                                                                  |
- * |     |       | CONTROL_PROTOCOL__ENABLE_LCU_DEFAULT_ACTION_t {                                    |
- * |     |       |   .header = { CONTROL_PROTOCOL__CONTEXT_SWITCH_ACTION_ENABLE_LCU_DEFAULT, true };  |
- * |     |       |   .cluster_index = <some_cluster_index>;                                           |
- * |     |       |   .lcu_index = <some_lcu_index>;                                                   |
- * |     |       |   .network_index = <some_network_index>;                                           |
- * |     V       | }                                                                                  |
- * |    ...      | (Next action control)                                                              |
- * |--------------------------------------------------------------------------------------------------|
- * See also: "CONTEXT_SWITCH_DEFS__repeated_action_header_t" in "context_switch_defs.h"
- */
-typedef struct {
-    /* Must be first */
-    CONTROL_PROTOCOL__ACTION_HEADER_t header;
-    CONTROL_PROTOCOL__ACTION_TYPE_t sub_action_type;
-    uint8_t num_actions;
-} CONTROL_PROTOCOL__REPEATED_ACTION_t;
-
-typedef struct {
-    /* Must be first */
-    CONTROL_PROTOCOL__ACTION_HEADER_t header;
-    uint16_t descriptors_count;
-    uint8_t config_stream_index;
-} CONTROL_PROTOCOL__READ_VDMA_ACTION_t;
-
-typedef struct {
-    /* Must be first */
-    CONTROL_PROTOCOL__ACTION_HEADER_t header;
-    uint16_t ccw_bursts;
-    uint8_t config_stream_index;
-} CONTROL_PROTOCOL__FETCH_CCW_BURSTS_ACTION_t;
-
-typedef struct {
-    uint8_t initial_l3_cut;
-    uint16_t initial_l3_offset;
-    uint32_t active_apu;
-    uint32_t active_ia;
-    uint64_t active_sc;
-    uint64_t active_l2;
-    uint64_t l2_offset_0;
-    uint64_t l2_offset_1;
-} CONTORL_PROTOCOL__sequencer_config_t;
-
-typedef struct {
-    /* Must be first */
-    CONTROL_PROTOCOL__ACTION_HEADER_t header;
-    uint8_t cluster_index;
-    CONTORL_PROTOCOL__sequencer_config_t sequencer_config;
-} CONTROL_PROTOCOL__TRIGGER_SEQUENCER_ACTION_t;
-
-typedef struct {
-    /* Must be first */
-    CONTROL_PROTOCOL__ACTION_HEADER_t header;
-    uint8_t sequencer_index;
-} CONTROL_PROTOCOL__WAIT_FOR_SEQUENCER_ACTION_t;
-
-typedef struct {
-    /* Must be first */
-    CONTROL_PROTOCOL__ACTION_HEADER_t header;
-    uint8_t stream_index;
-} CONTROL_PROTOCOL__FETCH_NEW_DATA_ACTION_t;
-
-typedef struct {
-    /* Must be first */
-    CONTROL_PROTOCOL__ACTION_HEADER_t header;
-    uint8_t cluster_index;
-    uint8_t lcu_index;
-    uint16_t kernel_done_address;
-    uint32_t kernel_done_count;
-    uint8_t network_index;
-} CONTROL_PROTOCOL__ENABLE_LCU_NON_DEAFULT_ACTION_t;
-
-typedef struct {
-    /* Must be first */
-    CONTROL_PROTOCOL__ACTION_HEADER_t header;
-    uint8_t cluster_index;
-    uint8_t lcu_index;
-    uint8_t network_index;
-} CONTROL_PROTOCOL__ENABLE_LCU_DEFAULT_ACTION_t;
-
-typedef struct {
-    /* Must be first */
-    CONTROL_PROTOCOL__ACTION_HEADER_t header;
-    uint8_t cluster_index;
-    uint8_t lcu_index;
-} CONTROL_PROTOCOL__DISABLE_LCU_ACTION_t;
-
-typedef struct {
-    /* Must be first */
-    CONTROL_PROTOCOL__ACTION_HEADER_t header;
-    uint8_t module_index;
-} CONTORL_PROTOCOL__WAIT_FOR_MODULE_CONFIG_DONE_ACTION_t;
-
-typedef struct {
-    /* Must be first */
-    CONTROL_PROTOCOL__ACTION_HEADER_t header;
-    uint8_t h2d_engine_index;
-    uint8_t h2d_vdma_channel_index;
-    uint8_t d2h_engine_index;
-    uint8_t d2h_vdma_channel_index;
-    uint32_t descriptors_per_frame;
-    uint16_t programmed_descriptors_count;
-} CONTROL_PROTOCOL__ADD_DDR_PAIR_ACTION_t;
-
-typedef struct {
-    /* Must be first */
-    CONTROL_PROTOCOL__ACTION_HEADER_t header;
-} CONTROL_PROTOCOL__ADD_DDR_BUFFERING_START_ACTION_t;
-
-typedef struct {
-    /* Must be first */
-    CONTROL_PROTOCOL__ACTION_HEADER_t header;
-} CONTROL_PROTOCOL__BURST_CREDITS_TASK_START_ACTION_T;
-
-typedef struct {
-    /* Must be first */
-    CONTROL_PROTOCOL__ACTION_HEADER_t header;
-} CONTROL_PROTOCOL__EDGE_LAYER_ACTIVATION_ACTIONS_POSITION_MARKER_T;
-
-typedef struct {
-    CONTROL_PROTOCOL__TRIGGER_t trigger;
-    uint16_t triggers_action_count;
-} CONTROL_PROTOCOL__trigger_group_t;
 
 typedef CONTROL_PROTOCOL__read_memory_request_t CONTROL_PROTOCOL__read_user_config_request_t;
 typedef CONTROL_PROTOCOL__read_memory_response_t CONTROL_PROTOCOL__read_user_config_response_t;
@@ -1331,6 +980,10 @@ typedef struct {
 } CONTROL_PROTOCOL__idle_time_get_measurement_response_t;
 
 typedef struct {
+    uint32_t network_group_id_length;
+    uint32_t network_group_id;
+    uint32_t context_type_length;
+    uint8_t context_type; // CONTROL_PROTOCOL__context_switch_context_type_t
     uint32_t context_index_length;
     uint8_t context_index;
     uint32_t action_list_offset_length;
@@ -1579,7 +1232,15 @@ typedef enum {
     CONTROL_PROTOCOL__TOP_MEM_BLOCK_SUB_SERVER6_26,
     CONTROL_PROTOCOL__TOP_MEM_BLOCK_SUB_SERVER7_27,
     CONTROL_PROTOCOL__TOP_NUM_MEM_BLOCKS
-} CONTROL_PROTOCOL__biTOP_st_top_mem_block_t;
+} CONTROL_PROTOCOL__bist_top_mem_block_t;
+
+/* Must be identical to hailo_sleep_state_t, tightly coupled */
+typedef enum {
+    CONTROL_PROTOCOL_SLEEP_STATE_SLEEPING = 0,
+    CONTROL_PROTOCOL_SLEEP_STATE_AWAKE    = 1,
+    /* must be last */
+    CONTROL_PROTOCOL_SLEEP_STATE_COUNT
+} CONTROL_PROTOCOL__sleep_state_t;
 
 /*only allowing bist on the following memories*/
  #define CONTROL_PROTOCOL__BIST_TOP_WHITELIST ((1 << CONTROL_PROTOCOL__TOP_MEM_BLOCK_L4_0_2) | \
@@ -1602,6 +1263,21 @@ typedef struct {
     uint32_t cluster_bypass_bitmap_1_length;
     uint32_t cluster_bypass_bitmap_1;
 } CONTROL_PROTOCOL__run_bist_test_request_t;
+
+typedef struct {
+    uint32_t fifo_word_granularity_bytes;
+    uint16_t max_periph_buffers_per_frame;
+    uint16_t max_periph_bytes_per_buffer;
+    uint16_t max_acceptable_bytes_per_buffer;
+    uint32_t outbound_data_stream_size;
+    uint8_t should_optimize_credits;
+    uint32_t default_initial_credit_size;
+} CONTROL_PROTOCOL__hw_consts_t;
+
+typedef struct {
+    uint32_t hw_consts_length;
+    CONTROL_PROTOCOL__hw_consts_t hw_consts;
+} CONTROL_PROTOCOL__get_hw_consts_response_t;
 
 typedef union {
     CONTROL_PROTOCOL_identify_response_t identity_response;
@@ -1628,6 +1304,8 @@ typedef union {
     CONTROL_PROTOCOL__get_health_information_response_t get_health_information_response;
     CONTROL_PROTOCOL__get_throttling_state_response_t get_throttling_state_response;
     CONTROL_PROTOCOL__get_overcurrent_state_response_t get_overcurrent_state_response;
+    CONTROL_PROTOCOL__get_hw_consts_response_t get_hw_consts_response;
+
    // Note: This array is larger than any legal request:
    // * Functions in this module won't write more than CONTROL_PROTOCOL__MAX_CONTROL_LENGTH bytes
    //   when recieving a pointer to CONTROL_PROTOCOL__request_parameters_t.
@@ -1660,7 +1338,7 @@ typedef union {
    CONTROL_PROTOCOL__sensor_reset_request_t sensor_reset_request;
    CONTROL_PROTOCOL__sensor_get_config_request_t sensor_get_config_request;
    CONTROL_PROTOCOL__sensor_set_generic_i2c_slave_request_t sensor_set_generic_i2c_slave_request;
-   CONTROL_PROTOCOL__context_switch_set_main_header_request_t context_switch_set_main_header_request;
+   CONTROL_PROTOCOL__context_switch_set_network_group_header_request_t context_switch_set_network_group_header_request;
    CONTROL_PROTOCOL__context_switch_set_context_info_request_t context_switch_set_context_info_request;
    CONTROL_PROTOCOL__idle_time_set_measurement_request_t idle_time_set_measurement_request;
    CONTROL_PROTOCOL__download_context_action_list_request_t download_context_action_list_request;
@@ -1685,6 +1363,7 @@ typedef union {
    CONTROL_PROTOCOL__set_throttling_state_request_t set_throttling_state_request;
    CONTROL_PROTOCOL__sensor_set_i2c_bus_index_t sensor_set_i2c_bus_index;
    CONTROL_PROTOCOL__set_overcurrent_state_request_t set_overcurrent_state_request;
+   CONTROL_PROTOCOL__set_sleep_state_request_t set_sleep_state_request;
    // Note: This array is larger than any legal request:
    // * Functions in this module won't write more than CONTROL_PROTOCOL__MAX_CONTROL_LENGTH bytes
    //   when recieving a pointer to CONTROL_PROTOCOL__request_parameters_t.
@@ -1721,28 +1400,40 @@ typedef struct {
 #define CONTROL_PROTOCOL__CONTEXT_NETWORK_DATA_SINGLE_CONTROL_MAX_SIZE \
     (CONTROL_PROTOCOL__MAX_REQUEST_PARAMETERS_LENGTH - sizeof(CONTROL_PROTOCOL__context_switch_set_context_info_request_t))
 
+typedef enum {
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_PRELIMINARY,
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_DYNAMIC,
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_BATCH_SWITCHING,
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_ACTIVATION,
+
+    /* must be last*/
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_COUNT,
+} CONTROL_PROTOCOL__context_switch_context_type_t;
+
+typedef enum {
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_INDEX_ACTIVATION_CONTEXT = 0,
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_INDEX_BATCH_SWITCHING_CONTEXT,
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_INDEX_PRELIMINARY_CONTEXT,
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS,
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_INDEX_FIRST_DYNAMIC_CONTEXT = CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS,
+
+    /* must be last*/
+    CONTROL_PROTOCOL__CONTEXT_SWITCH_INDEX_COUNT,
+} CONTROL_PROTOCOL__context_switch_context_index_t;
+
+#define CONTROL_PROTOCOL__MAX_CONTEXTS_PER_NETWORK_GROUP (64)
+
 typedef struct {
     bool is_first_control_per_context;
     bool is_last_control_per_context;
-    uint8_t cfg_channels_count;
-    CONTROL_PROTOCOL__config_channel_info_t config_channel_infos[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
-    CONTROL_PROTOCOL__stream_remap_data_t context_stream_remap_data;
-    uint8_t number_of_edge_layers;
-    uint8_t number_of_trigger_groups;
+    uint8_t context_type; // CONTROL_PROTOCOL__context_switch_context_type_t
+    uint32_t actions_count;
     uint32_t context_network_data_length;
     uint8_t context_network_data[CONTROL_PROTOCOL__CONTEXT_NETWORK_DATA_SINGLE_CONTROL_MAX_SIZE];
 } CONTROL_PROTOCOL__context_switch_context_info_single_control_t;
 
-/* Context switch user structs */
-
-#define CONTROL_PROTOCOL__CONTEXT_NETWORK_DATA_MAX_SIZE (8 * 1024)
-
-typedef struct {
-    uint8_t interrupt_type;
-    uint8_t interrupt_index;
-    uint8_t interrupt_sub_index;
-} CONTROL_PROTOCOL__dataflow_interrupt_t;
-/* End of context switch structs */
+CASSERT(sizeof(CONTROL_PROTOCOL__context_switch_context_index_t)<=UINT8_MAX, control_protocol_h);
+CASSERT(sizeof(CONTROL_PROTOCOL__context_switch_context_type_t)<=UINT8_MAX, control_protocol_h);
 
 typedef enum {
     CONTROL_PROTOCOL__MESSAGE_TYPE__REQUEST = 0,
@@ -1768,7 +1459,6 @@ typedef enum {
     /* Must be last! */
     CONTROL_PROTOCOL__RESET_TYPE__COUNT
 } CONTROL_PROTOCOL__reset_type_t;
-
 
 typedef union {
     /* Needed in order to parse unknown header */

@@ -4,7 +4,8 @@
  **/
 /**
  * @file circular_buffer.hpp
- * @brief
+ * @brief Manages a Single-Producer Single-Consumer queue. The size of the queue must be a power of 2.
+ *  This file exports both low level C struct, and a C++ wrapper.
  *
  **/
 
@@ -45,7 +46,7 @@ typedef struct {
     (circbuf).size_mask = static_cast<int>((s) - 1)
 #define CB_RESET(circbuf)           \
     (circbuf).head = 0;             \
-    (circbuf).tail = 0            
+    (circbuf).tail = 0
 #define CB_HEAD(x) _CB_FETCH((x).head)
 #define CB_TAIL(x) _CB_FETCH((x).tail)
 #define CB_SIZE(x) _CB_FETCH((x).size)
@@ -77,7 +78,7 @@ public:
 
     void push_back(const T& element)
     {
-        // assert(CB_AVAIL(m_circ, CB_HEAD(m_circ), CB_TAIL(m_circ)));
+        assert(CB_AVAIL(m_circ, CB_HEAD(m_circ), CB_TAIL(m_circ)));
         m_array[CB_HEAD(m_circ)] = element;
         CB_ENQUEUE(m_circ, 1);
     }

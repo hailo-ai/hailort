@@ -9,6 +9,7 @@
 
 #include "os/windows/osdep.hpp"
 #include "os/hailort_driver.hpp"
+#include "os/driver_scan.hpp"
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
 #include "common/os/windows/string_conversion.hpp"
@@ -24,7 +25,7 @@ static_assert(VDMA_CHANNELS_PER_ENGINE == MAX_VDMA_CHANNELS_PER_ENGINE, "Driver 
 static_assert(MIN_D2H_CHANNEL_INDEX == VDMA_DEST_CHANNELS_START, "Driver and libhailort parameters mismatch");
 
 //TODO HRT-7309: merge with posix
-constexpr hailo_dma_data_direction direction_to_dma_data_direction(HailoRTDriver::DmaDirection direction) {
+static hailo_dma_data_direction direction_to_dma_data_direction(HailoRTDriver::DmaDirection direction) {
     switch (direction){
     case HailoRTDriver::DmaDirection::H2D:
         return HAILO_DMA_TO_DEVICE;
@@ -32,14 +33,14 @@ constexpr hailo_dma_data_direction direction_to_dma_data_direction(HailoRTDriver
         return HAILO_DMA_FROM_DEVICE;
     case HailoRTDriver::DmaDirection::BOTH:
         return HAILO_DMA_BIDIRECTIONAL;
-    default:
-        assert(true);
-        // On release build Return value that will make ioctls to fail.
-        return HAILO_DMA_NONE;
     }
+
+    assert(false);
+    // On release build Return value that will make ioctls to fail.
+    return HAILO_DMA_NONE;
 }
 
-constexpr enum hailo_cpu_id translate_cpu_id(hailo_cpu_id_t cpu_id)
+static enum hailo_cpu_id translate_cpu_id(hailo_cpu_id_t cpu_id)
 {   
     switch (cpu_id)
     {
@@ -47,170 +48,44 @@ constexpr enum hailo_cpu_id translate_cpu_id(hailo_cpu_id_t cpu_id)
         return HAILO_CPU_ID_CPU0;
     case HAILO_CPU_ID_1:
         return HAILO_CPU_ID_CPU1;
-    default:
-        assert(true);
-        // On release build Return value that will make ioctls to fail.
-        return HAILO_CPU_ID_NONE;
+    case HAILO_CPU_ID_MAX_ENUM:
+        // Add label for HAILO_CPU_ID_MAX_ENUM to cover all enum cases (avoid warnings). Continue to the assert.
+        break;
     }
+
+    assert(false);
+    // On release build Return value that will make ioctls to fail.
+    return HAILO_CPU_ID_NONE;
 }
 
-class CDeviceProperty
+static hailo_transfer_memory_type translate_memory_type(HailoRTDriver::MemoryType memory_type)
 {
-public:
-    CDeviceProperty(LPCSTR FriendlyName) : m_FriendlyName(FriendlyName) {}
-    ~CDeviceProperty()
-    {
-        Drop();
+    using MemoryType = HailoRTDriver::MemoryType;
+    switch (memory_type) {
+    case MemoryType::DIRECT_MEMORY:
+        return HAILO_TRANSFER_DEVICE_DIRECT_MEMORY;
+    case MemoryType::VDMA0:
+        return HAILO_TRANSFER_MEMORY_VDMA0;
+    case MemoryType::VDMA1:
+        return HAILO_TRANSFER_MEMORY_VDMA1;
+    case MemoryType::VDMA2:
+        return HAILO_TRANSFER_MEMORY_VDMA2;
+    case MemoryType::PCIE_BAR0:
+        return HAILO_TRANSFER_MEMORY_PCIE_BAR0;
+    case MemoryType::PCIE_BAR2:
+        return HAILO_TRANSFER_MEMORY_PCIE_BAR2;
+    case MemoryType::PCIE_BAR4:
+        return HAILO_TRANSFER_MEMORY_PCIE_BAR4;
+    case MemoryType::DMA_ENGINE0:
+        return HAILO_TRANSFER_MEMORY_DMA_ENGINE0;
+    case MemoryType::DMA_ENGINE1:
+        return HAILO_TRANSFER_MEMORY_DMA_ENGINE1;
+    case MemoryType::DMA_ENGINE2:
+        return HAILO_TRANSFER_MEMORY_DMA_ENGINE2;
     }
-    bool IsValid() const
-    {
-        return m_Buffer != NULL;
-    }
-    void MoveTo(CDeviceProperty& other)
-    {
-        other.Drop();
-        other.m_Size = m_Size;
-        other.m_Buffer = m_Buffer;
-        other.m_String = m_String;
-        other.m_Type = m_Type;
-        other.m_Value = m_Value;
-        m_Buffer = NULL;
-    }
-    bool Number(uint32_t& Value) const {
-        Value = m_Value;
-        return m_Type == DEVPROP_TYPE_UINT32 && IsValid();
-    }
-protected:
-    PBYTE m_Buffer = NULL;
-    ULONG m_Size = 0;
-    DEVPROPTYPE m_Type = DEVPROP_TYPE_EMPTY;
-    std::wstring m_String;
-    LPCSTR m_FriendlyName;
-    uint32_t m_Value = 0;
-protected:
-    void Drop()
-    {
-        if (m_Buffer) free(m_Buffer);
-        m_Buffer = NULL;
-        m_Size = 0;
-        m_Type = DEVPROP_TYPE_EMPTY;
-    }
-    void PostProcess(CONFIGRET cr)
-    {
-        if (cr != CR_SUCCESS) {
-            Drop();
-        }
-        if (m_Type == DEVPROP_TYPE_STRING) {
-            m_String = (wchar_t *)m_Buffer;
-        }
-        if (m_Type == DEVPROP_TYPE_UINT32) {
-            if (m_Size == sizeof(uint32_t)) {
-                m_Value = *(uint32_t *)m_Buffer;
-            } else {
-                Drop();
-            }
-        }
-    }
-};
 
-class CDeviceInterfaceProperty : public CDeviceProperty
-{
-public:
-    CDeviceInterfaceProperty(LPCWSTR DevInterface, const DEVPROPKEY* Key, LPCSTR FriendlyName, bool AllowRecursion = true);
-};
-
-class CDevInstProperty : public CDeviceProperty
-{
-public:
-    CDevInstProperty(LPCWSTR DevInst, const DEVPROPKEY* Key, LPCSTR FriendlyName) :
-        CDeviceProperty(FriendlyName)
-    {
-        DEVINST dn;
-        CONFIGRET cr = CM_Locate_DevNodeW(&dn, (WCHAR *)DevInst, CM_LOCATE_DEVNODE_NORMAL);
-        if (cr != CR_SUCCESS)
-            return;
-        // try to get the size of the property
-        CM_Get_DevNode_PropertyW(dn, Key, &m_Type, NULL, &m_Size, 0);
-        if (!m_Size)
-            return;
-        m_Buffer = (PBYTE)malloc(m_Size);
-        if (!m_Buffer) {
-            return;
-        }
-        cr = CM_Get_DevNode_PropertyW(dn, Key, &m_Type, m_Buffer, &m_Size, 0);
-        PostProcess(cr);
-    }
-};
-
-class CDeviceInstancePropertyOfInterface : public CDeviceInterfaceProperty
-{
-public:
-    CDeviceInstancePropertyOfInterface(LPCWSTR DevInterface) :
-        CDeviceInterfaceProperty(DevInterface, &DEVPKEY_Device_InstanceId, "DevInstance", false)
-    { }
-    const std::wstring& DevInst() const { return m_String; }
-};
-
-bool IsSame(const HailoRTDriver::DeviceInfo& a, const HailoRTDriver::DeviceInfo& b)
-{
-    return a.bus == b.bus && a.device == b.device && a.func == b.func;
-}
-
-bool IsAny(const HailoRTDriver::DeviceInfo& a)
-{
-    return a.bus == MAXUINT;
-}
-
-class CDevicePCILocation
-{
-public:
-    CDevicePCILocation(LPCWSTR DevInterface)
-    {
-        CDeviceInterfaceProperty BusNumber(DevInterface, &DEVPKEY_Device_BusNumber, "BusNumber");
-        CDeviceInterfaceProperty Address(DevInterface, &DEVPKEY_Device_Address, "Address");
-        m_Valid = BusNumber.Number(m_Location.bus) && Address.Number(m_Location.device);
-        if (m_Valid) {
-            m_Location.func = m_Location.device & 0xff;
-            m_Location.device = m_Location.device >> 16;
-        }
-        std::wstring devInterface = DevInterface;
-        m_Location.dev_path = StringConverter::utf16_to_ansi(devInterface).value();
-    }
-    const HailoRTDriver::DeviceInfo& Location() const { return m_Location; }
-    bool IsValid() const { return m_Valid; }
-private:
-    HailoRTDriver::DeviceInfo m_Location = {};
-    bool m_Valid = false;
-};
-
-CDeviceInterfaceProperty::CDeviceInterfaceProperty(
-    LPCWSTR DevInterface,
-    const DEVPROPKEY* Key,
-    LPCSTR FriendlyName,
-    bool AllowRecursion) : CDeviceProperty(FriendlyName)
-{
-    // try to get the property via device interface
-    CM_Get_Device_Interface_PropertyW(DevInterface, Key, &m_Type, NULL, &m_Size, 0);
-    if (!m_Size) {
-        if (AllowRecursion) {
-            // try to get the property via device instance
-            CDeviceInstancePropertyOfInterface diProp(DevInterface);
-            if (diProp.IsValid()) {
-                const std::wstring& di = diProp.DevInst();
-                CDevInstProperty dip(di.c_str(), Key, FriendlyName);
-                if (dip.IsValid()) {
-                    dip.MoveTo(*this);
-                }
-            }
-        }
-        return;
-    }
-    m_Buffer = (PBYTE)malloc(m_Size);
-    if (!m_Buffer)
-        return;
-    CONFIGRET cr = CM_Get_Device_Interface_PropertyW(
-        DevInterface, Key, &m_Type, m_Buffer, &m_Size, 0);
-    PostProcess(cr);
+    assert(false);
+    return HAILO_TRANSFER_MEMORY_MAX_ENUM;
 }
 
 class CWaitable
@@ -274,20 +149,10 @@ using CMutexSync = CSync<CMutex>;
 class CDeviceFile
 {
 public:
-    CDeviceFile(std::vector<HailoRTDriver::DeviceInfo>& Instances)
-    {
-        EnumerateInstances(Instances);
-    }
+
     CDeviceFile(const std::string& path)
     {
-        std::vector<HailoRTDriver::DeviceInfo> found;
-        EnumerateInstances(found);
-        for (size_t i = 0; i < found.size(); ++i) {
-            if (path == found[i].dev_path) {
-                Create(path.c_str(), true);
-                break;
-            }
-        }
+        Create(path.c_str(), true);
     }
     void Close()
     {
@@ -313,55 +178,6 @@ public:
         return h;
     }
 protected:
-    void EnumerateInstances(std::vector<HailoRTDriver::DeviceInfo>& Instances)
-    {
-        CONFIGRET cr;
-        WCHAR* names = NULL, * currentName;
-        ULONG len = 0;
-        do {
-            cr = CM_Get_Device_Interface_List_SizeW(
-                &len,
-                &m_InterfaceGuid,
-                NULL,
-                CM_GET_DEVICE_INTERFACE_LIST_PRESENT);
-
-            if (cr != CR_SUCCESS || len < 2) {
-                LOGGER__ERROR("Driver interface not found, error {}", cr);
-                break;
-            }
-            if (len <= 1) {
-                LOGGER__ERROR("Driver interface not found");
-                break;
-            }
-            names = (WCHAR*)malloc(len * sizeof(WCHAR));
-            if (!names) {
-                LOGGER__ERROR("Can't allocate buffer of {} chars", len);
-                cr = CR_OUT_OF_MEMORY;
-                break;
-            }
-            cr = CM_Get_Device_Interface_ListW(
-                &m_InterfaceGuid,
-                NULL,
-                names,
-                len,
-                CM_GET_DEVICE_INTERFACE_LIST_PRESENT);
-            if (cr != CR_SUCCESS) {
-                LOGGER__ERROR("Can't retrieve driver interface, error {}", cr);
-                break;
-            }
-            for (currentName = names; names && *currentName; currentName += wcslen(currentName) + 1) {
-                CDevicePCILocation locationData(currentName);
-                if (!locationData.IsValid())
-                    continue;
-                Instances.push_back(locationData.Location());
-            }
-        } while (false);
-
-        if (names)
-        {
-            free(names);
-        }
-    }
     bool Notify()
     {
         if (m_Handle) {
@@ -429,7 +245,6 @@ protected:
         }
     }
 private:
-    GUID m_InterfaceGuid = GUID_DEVINTERFACE_HailoKM;
     std::string m_InterfaceName;
     HCMNOTIFICATION m_Notification = NULL;
     CMutex m_Mutex;
@@ -504,18 +319,6 @@ HailoRTDriver::HailoRTDriver(const std::string &dev_path, FileDescriptor &&fd, h
 
     m_desc_max_page_size = device_properties.desc_max_page_size;
     m_dma_engines_count = device_properties.dma_engines_count;
-    switch (device_properties.board_type) {
-    case HAILO8:
-        m_board_type = BoardType::HAILO8;
-        break;
-    case HAILO_MERCURY:
-        m_board_type = BoardType::MERCURY;
-        break;
-    default:
-        LOGGER__ERROR("Invalid board type {} returned from ioctl", device_properties.board_type);
-        status = HAILO_PCIE_DRIVER_FAIL;
-        return;
-    }
 
     switch (device_properties.dma_type) {
     case HAILO_DMA_TYPE_PCIE:
@@ -530,18 +333,22 @@ HailoRTDriver::HailoRTDriver(const std::string &dev_path, FileDescriptor &&fd, h
         return;
     }
 
+    m_is_fw_loaded = device_properties.is_fw_loaded;
     status = HAILO_SUCCESS;
 }
 
-Expected<std::vector<HailoRTDriver::DeviceInfo>> HailoRTDriver::scan_pci()
+Expected<std::vector<HailoRTDriver::DeviceInfo>> HailoRTDriver::scan_devices()
 {
-    std::vector<HailoRTDriver::DeviceInfo> all;
-    CDeviceFile f(all);
-    for (size_t i = 0; i < all.size(); ++i) {
-        const HailoRTDriver::DeviceInfo& di = all[i];
-        LOGGER__INFO("Found {}:{}:{} {}", di.bus, di.device, di.func, di.dev_path);
+    auto device_names = list_devices();
+    CHECK_EXPECTED(device_names, "Failed listing pcie devices");
+
+    std::vector<HailoRTDriver::DeviceInfo> devices_info;
+    for (const auto &device_name : device_names.value()) {
+        auto device_info = query_device_info(device_name);
+        CHECK_EXPECTED(device_info, "failed parsing device info for {}", device_name);
+        devices_info.push_back(device_info.release());
     }
-    return std::move(all);
+    return devices_info;
 }
 
 Expected<HailoRTDriver> HailoRTDriver::create(const std::string &dev_path)
@@ -561,10 +368,9 @@ Expected<HailoRTDriver> HailoRTDriver::create(const std::string &dev_path)
     return platform;
 }
 
-Expected<D2H_EVENT_MESSAGE_t> HailoRTDriver::read_notification()
+Expected<std::vector<uint8_t>> HailoRTDriver::read_notification()
 {
     tCompatibleHailoIoctlData data;
-    D2H_EVENT_MESSAGE_t notification;
     hailo_d2h_notification& notification_buffer = data.Buffer.D2HNotification;
 
     auto rc = ioctl(this->m_fd, HAILO_READ_NOTIFICATION, &data);
@@ -572,11 +378,9 @@ Expected<D2H_EVENT_MESSAGE_t> HailoRTDriver::read_notification()
         return make_unexpected(HAILO_PCIE_DRIVER_FAIL);
     }
 
-    CHECK_AS_EXPECTED(sizeof(notification) >= notification_buffer.buffer_len, HAILO_GET_D2H_EVENT_MESSAGE_FAIL,
-        "buffer len is not valid = {}", notification_buffer.buffer_len);
-
-    memcpy(&notification, notification_buffer.buffer, notification_buffer.buffer_len);
-    return std::move(notification);
+    std::vector<uint8_t> notification(notification_buffer.buffer_len);
+    memcpy(notification.data(), notification_buffer.buffer, notification_buffer.buffer_len);
+    return notification;
 }
 
 hailo_status HailoRTDriver::disable_notifications()
@@ -588,8 +392,7 @@ hailo_status HailoRTDriver::disable_notifications()
 
     return HAILO_SUCCESS;
 }
-
-hailo_status HailoRTDriver::read_bar(PciBar bar, off_t offset, size_t size, void *buf)
+hailo_status HailoRTDriver::read_memory(MemoryType memory_type, uint64_t address, void *buf, size_t size)
 {
     if (size == 0) {
         LOGGER__ERROR("Invalid size to read");
@@ -601,19 +404,73 @@ hailo_status HailoRTDriver::read_bar(PciBar bar, off_t offset, size_t size, void
         return HAILO_INVALID_ARGUMENT;
     }
 
+    constexpr uint32_t CHUNK_SIZE = ARRAY_ENTRIES(hailo_memory_transfer_params::buffer);
+    uint32_t offset = 0;
+
+    while (offset < size) {
+        const uint32_t actual_size = std::min(CHUNK_SIZE, static_cast<uint32_t>(size) - offset);
+        auto status = read_memory_ioctl(memory_type, address + offset,
+            reinterpret_cast<uint8_t*>(buf) + offset, actual_size);
+        CHECK_SUCCESS(status);
+        offset += actual_size;
+    }
+    return HAILO_SUCCESS;
+}
+
+hailo_status HailoRTDriver::write_memory(MemoryType memory_type, uint64_t address, const void *buf, size_t size)
+{
+    if (size == 0) {
+        LOGGER__ERROR("Invalid size to read");
+        return HAILO_INVALID_ARGUMENT;
+    }
+
+    if (buf == nullptr) {
+        LOGGER__ERROR("Read buffer pointer is NULL");
+        return HAILO_INVALID_ARGUMENT;
+    }
+
+    constexpr uint32_t CHUNK_SIZE = ARRAY_ENTRIES(hailo_memory_transfer_params::buffer);
+    uint32_t offset = 0;
+
+    while (offset < size) {
+        const uint32_t actual_size = std::min(CHUNK_SIZE, static_cast<uint32_t>(size) - offset);
+        auto status = write_memory_ioctl(memory_type, address + offset,
+            reinterpret_cast<const uint8_t*>(buf) + offset, actual_size);
+        CHECK_SUCCESS(status);
+        offset += actual_size;
+    }
+    return HAILO_SUCCESS;
+}
+
+hailo_status HailoRTDriver::read_memory_ioctl(MemoryType memory_type, uint64_t address, void *buf, size_t size)
+{
+    if (size == 0) {
+        LOGGER__ERROR("Invalid size to read");
+        return HAILO_INVALID_ARGUMENT;
+    }
+
+    if (buf == nullptr) {
+        LOGGER__ERROR("Read buffer pointer is NULL");
+        return HAILO_INVALID_ARGUMENT;
+    }
+
+    if (m_dma_type == DmaType::PCIE) {
+        CHECK(address < std::numeric_limits<uint32_t>::max(), HAILO_INVALID_ARGUMENT, "Address out of range {}", address);
+    }
+
     tCompatibleHailoIoctlData data = {};
-    hailo_bar_transfer_params& transfer = data.Buffer.BarTransfer;
+    hailo_memory_transfer_params& transfer = data.Buffer.MemoryTransfer;
     transfer.transfer_direction = TRANSFER_READ;
-    transfer.bar_index = static_cast<uint32_t>(bar);
-    transfer.offset = offset;
+    transfer.memory_type = translate_memory_type(memory_type);
+    transfer.address = address;
     transfer.count = size;
     memset(transfer.buffer, 0, sizeof(transfer.buffer));
 
     CHECK(size <= sizeof(transfer.buffer), HAILO_INVALID_ARGUMENT,
         "Invalid size to read, size given {} is larger than max size {}", size, sizeof(transfer.buffer));
 
-    if (0 > ioctl(m_fd, HAILO_BAR_TRANSFER, &data)) {
-        LOGGER__ERROR("HailoRTDriver::read_bar failed with errno:{}", errno);
+    if (0 > ioctl(m_fd, HAILO_MEMORY_TRANSFER, &data)) {
+        LOGGER__ERROR("HailoRTDriver::read_memory failed with errno:{}", errno);
         return HAILO_PCIE_DRIVER_FAIL;
     }
 
@@ -622,7 +479,7 @@ hailo_status HailoRTDriver::read_bar(PciBar bar, off_t offset, size_t size, void
     return HAILO_SUCCESS;
 }
 
-hailo_status HailoRTDriver::write_bar(PciBar bar, off_t offset, size_t size, const void *buf)
+hailo_status HailoRTDriver::write_memory_ioctl(MemoryType memory_type, uint64_t address, const void *buf, size_t size)
 {
     if (size == 0) {
         LOGGER__ERROR("Invalid size to write");
@@ -634,11 +491,15 @@ hailo_status HailoRTDriver::write_bar(PciBar bar, off_t offset, size_t size, con
         return HAILO_INVALID_ARGUMENT;
     }
 
+    if (m_dma_type == DmaType::PCIE) {
+        CHECK(address < std::numeric_limits<uint32_t>::max(), HAILO_INVALID_ARGUMENT, "Address out of range {}", address);
+    }
+
     tCompatibleHailoIoctlData data = {};
-    hailo_bar_transfer_params& transfer = data.Buffer.BarTransfer;
+    hailo_memory_transfer_params& transfer = data.Buffer.MemoryTransfer;
     transfer.transfer_direction = TRANSFER_WRITE;
-    transfer.bar_index = static_cast<uint32_t>(bar);
-    transfer.offset = offset;
+    transfer.memory_type = translate_memory_type(memory_type);
+    transfer.address = address;
     transfer.count = size;
     memset(transfer.buffer, 0, sizeof(transfer.buffer));
 
@@ -647,8 +508,8 @@ hailo_status HailoRTDriver::write_bar(PciBar bar, off_t offset, size_t size, con
 
     memcpy(transfer.buffer, buf, transfer.count);
 
-    if (0 > ioctl(this->m_fd, HAILO_BAR_TRANSFER, &data)) {
-        LOGGER__ERROR("HailoRTDriver::write_bar failed with errno: {}", errno);
+    if (0 > ioctl(this->m_fd, HAILO_MEMORY_TRANSFER, &data)) {
+        LOGGER__ERROR("HailoRTDriver::write_memory failed with errno: {}", errno);
         return HAILO_PCIE_DRIVER_FAIL;
     }
 
@@ -719,7 +580,7 @@ hailo_status HailoRTDriver::vdma_buffer_sync(VdmaBufferHandle handle, DmaDirecti
 }
 
 Expected<HailoRTDriver::VdmaChannelHandle> HailoRTDriver::vdma_channel_enable(vdma::ChannelId channel_id,
-    DmaDirection data_direction, uintptr_t desc_list_handle, bool enable_timestamps_measure)
+    DmaDirection data_direction, bool enable_timestamps_measure)
 {
     CHECK_AS_EXPECTED(is_valid_channel_id(channel_id), HAILO_INVALID_ARGUMENT, "Invalid channel id {} given", channel_id);
     CHECK_AS_EXPECTED(data_direction != DmaDirection::BOTH, HAILO_INVALID_ARGUMENT, "Invalid direction given");
@@ -728,7 +589,6 @@ Expected<HailoRTDriver::VdmaChannelHandle> HailoRTDriver::vdma_channel_enable(vd
     params.engine_index = channel_id.engine_index;
     params.channel_index = channel_id.channel_index;
     params.direction = direction_to_dma_data_direction(data_direction);
-    params.desc_list_handle = desc_list_handle,
     params.enable_timestamps_measure = enable_timestamps_measure;
 
     if (0 > ioctl(this->m_fd, HAILO_VDMA_CHANNEL_ENABLE, &data)) {
@@ -792,7 +652,7 @@ Expected<ChannelInterruptTimestampList> HailoRTDriver::wait_channel_interrupts(v
         }
         if (ERROR_OPERATION_ABORTED == ioctl_errno) {
             LOGGER__INFO("Stream (index={}) was aborted!", channel_id);
-            return make_unexpected(HAILO_STREAM_INTERNAL_ABORT);
+            return make_unexpected(HAILO_STREAM_ABORTED_BY_USER);
         }
         if (ERROR_NOT_READY == ioctl_errno) {
             LOGGER__INFO("Channel (index={}) was deactivated!", channel_id);
@@ -913,7 +773,7 @@ hailo_status HailoRTDriver::descriptors_list_release(uintptr_t desc_handle)
 }
 
 hailo_status HailoRTDriver::descriptors_list_bind_vdma_buffer(uintptr_t desc_handle, VdmaBufferHandle buffer_handle,
-    uint16_t desc_page_size,  uint8_t channel_index)
+    uint16_t desc_page_size,  uint8_t channel_index, size_t offset)
 {
     tCompatibleHailoIoctlData data = {};
     hailo_desc_list_bind_vdma_buffer_params& config_info = data.Buffer.DescListBind;
@@ -921,6 +781,7 @@ hailo_status HailoRTDriver::descriptors_list_bind_vdma_buffer(uintptr_t desc_han
     config_info.desc_handle = desc_handle;
     config_info.desc_page_size = desc_page_size;
     config_info.channel_index = channel_index;
+    config_info.offset = offset;
 
     if (0 > ioctl(this->m_fd, HAILO_DESC_LIST_BIND_VDMA_BUFFER, &data)) {
         LOGGER__ERROR("Failed to bind vdma buffer to descriptors list with errno: {}", errno);
@@ -964,11 +825,27 @@ hailo_status HailoRTDriver::vdma_channel_clear_abort(vdma::ChannelId channel_id,
 
 hailo_status HailoRTDriver::read_log(uint8_t *buffer, size_t buffer_size, size_t *read_bytes, hailo_cpu_id_t cpu_id)
 {
-    (void)buffer;
-    (void)buffer_size;
-    (void)read_bytes;
-    (void)cpu_id;
-    return HAILO_PCIE_NOT_SUPPORTED_ON_PLATFORM;
+    tCompatibleHailoIoctlData data = {};
+    hailo_read_log_params& params = data.Buffer.ReadLog;
+    params.buffer_size = __min(buffer_size, sizeof(params.buffer));
+    params.cpu_id = translate_cpu_id(cpu_id);
+
+    CHECK_ARG_NOT_NULL(buffer);
+    CHECK_ARG_NOT_NULL(read_bytes);
+
+    if (0 > ioctl(this->m_fd, HAILO_READ_LOG, &data)) {
+      LOGGER__ERROR("Failed to read log with errno:{}", errno);
+      return HAILO_PCIE_DRIVER_FAIL;
+    }
+
+    CHECK(params.read_bytes <= sizeof(params.buffer), HAILO_PCIE_DRIVER_FAIL,
+        "Amount of bytes read from log {} is bigger than size of buffer {}",
+        params.read_bytes, sizeof(params.buffer));
+
+    memcpy(buffer, params.buffer, params.read_bytes);
+    *read_bytes = params.read_bytes;
+
+    return HAILO_SUCCESS;
 }
 
 hailo_status HailoRTDriver::reset_nn_core()

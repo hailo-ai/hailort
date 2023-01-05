@@ -18,10 +18,14 @@ FwConfigReadSubcommand::FwConfigReadSubcommand(CLI::App &parent_app) :
 
 hailo_status FwConfigReadSubcommand::execute_on_device(Device &device)
 {
+    auto status = validate_specific_device_is_given();
+    CHECK_SUCCESS(status,
+        "'fw-config read' command should get a specific device-id.");
+
     auto user_config_buffer = device.read_user_config();
     CHECK_EXPECTED_AS_STATUS(user_config_buffer, "Failed reading user config from device");
 
-    auto status = FwConfigJsonSerializer::deserialize_config(
+    status = FwConfigJsonSerializer::deserialize_config(
         *reinterpret_cast<USER_CONFIG_header_t*>(user_config_buffer->data()),
         user_config_buffer->size(), m_output_file);
     CHECK_SUCCESS(status);

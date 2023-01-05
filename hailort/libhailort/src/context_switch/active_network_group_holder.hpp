@@ -27,7 +27,7 @@ class ActiveNetworkGroupHolder final
 
     ExpectedRef<T> get()
     {
-        CHECK(nullptr != m_net_group, HAILO_INVALID_OPERATION);
+        CHECK_NOT_NULL_AS_EXPECTED(m_net_group, HAILO_INVALID_OPERATION);
         return std::ref(*m_net_group);
     }
     void set(T &net_group)

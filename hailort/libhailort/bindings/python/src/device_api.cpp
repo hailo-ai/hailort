@@ -469,6 +469,12 @@ const char *DeviceWrapper::get_dev_id() const
     return device().get_dev_id();
 }
 
+void DeviceWrapper::set_sleep_state(hailo_sleep_state_t sleep_state)
+{
+    auto status = device().set_sleep_state(sleep_state);
+    VALIDATE_STATUS(status);
+}
+
 void DeviceWrapper::add_to_python_module(py::module &m)
 {
     py::class_<DeviceWrapper>(m, "Device")
@@ -533,6 +539,7 @@ void DeviceWrapper::add_to_python_module(py::module &m)
 
     .def("set_notification_callback", &DeviceWrapper::set_notification_callback)
     .def("remove_notification_callback", &DeviceWrapper::remove_notification_callback)
+    .def("set_sleep_state", &DeviceWrapper::set_sleep_state)
     ;
 }
 
