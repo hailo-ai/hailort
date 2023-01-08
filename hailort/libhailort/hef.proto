@@ -36,6 +36,8 @@ enum ProtoHEFExtensionType {
     OFFLOAD_ARGMAX = 10;
     HW_PADDING = 11;
     KO_RUN_ASAP = 12;
+    HAILO_NET_FLOW = 13;
+    HAILO_NET_FLOW_YOLO_NMS = 14;
     UNUSED = 0XFFFF;
 }
 
@@ -84,12 +86,190 @@ message ProtoHEFPhysicalLayout {
     uint32 partial_clusters_layout_bitmap = 1;
 };
 
+// For backwards compatability
 message ProtoHEFPartialNetworkGroup {
     ProtoHEFNetworkGroup network_group = 1;
     ProtoHEFPhysicalLayout layout = 2;
 };
 
+message ProtoHEFPartialCoreOp {
+    ProtoHEFCoreOp core_op = 1;
+    ProtoHEFPhysicalLayout layout = 2;
+};
+
+message ProtoHEFCoreOp {
+    // Metadata describing the network_group
+    ProtoHEFNetworkGroupMetadata network_group_metadata = 1;
+
+    // The preliminary configuration of the network_group
+    ProtoHEFPreliminaryConfig preliminary_config = 2;
+
+    // The contexts of the network_group
+    repeated ProtoHEFContext contexts = 3;
+
+    // List of sorted output names according to their order
+    repeated string sorted_outputs_order = 4;
+
+    // Metadata for fused layers
+    ProtoHEFFusedLayersMetadata fused_layers_metadata = 5;
+
+    // Connected component names ordered by index
+    repeated string networks_names = 6;
+
+    // Partial core ops
+    repeated ProtoHEFPartialCoreOp partial_core_ops = 7;
+};
+
+message ProtoHEFYoloBboxDecoder {
+    // List of Height coordinates (given as fraction of input size), defining each box dimensions around the anchor coordinates
+    repeated uint32 h = 2;
+
+    // List of Width coordinates (given as fraction of input size), defining each box dimensions around the anchor coordinates
+    repeated uint32 w = 3;
+
+    // Pixels stride for given bbox
+    uint32 stride = 4;
+
+    // Index of the pad connected to the layer in the decoder
+    uint32 pad_index = 5;
+};
+
+message ProtoHEFYoloNmsOp {
+    // Input image dimensions
+    double image_height = 1;
+    double image_width = 2;
+
+    // Division factor of proposals sent to the NMS per class, instead of running NMS on all proposal together
+    uint32 input_division_factor = 3;
+
+    // List of bbox decoders (anchors) for the NMS layer. Each model has its own number of boxes per anchor
+    repeated ProtoHEFYoloBboxDecoder bbox_decoders = 4;
+};
+
+message ProtoHEFNmsOp {
+    // NMS score threshold
+    double nms_score_th = 1;
+
+    // NMS IOU threshold
+    double nms_iou_th = 2;
+
+    // Fixed number of outputs allowed in this model
+    uint32 max_proposals_per_class = 3;
+
+    // Number of detected classes
+    uint32 classes = 4;
+
+    // Toggle background class removal from results
+    bool background_removal = 5;
+
+    // Index of background class for background removal
+    uint32 background_removal_index = 6;
+
+    // Additional information needed for specific NMS types
+    oneof nms_op {
+        ProtoHEFYoloNmsOp yolo_nms_op = 7;
+    }
+};
+
+enum ProtoHEFFormatOrder {
+    PROTO__FORMAT__ORDER__AUTO = 0;
+    PROTO__FORMAT__ORDER__NHWC = 1;
+    PROTO__FORMAT__ORDER__NHCW = 2;
+    PROTO__FORMAT__ORDER__FCR = 3;
+    PROTO__FORMAT__ORDER__F8CR = 4;
+    PROTO__FORMAT__ORDER__NHW = 5;
+    PROTO__FORMAT__ORDER__NC = 6;
+    PROTO__FORMAT__ORDER__BAYER_RGB = 7;
+    PROTO__FORMAT__ORDER__12_BIT_BAYER_RGB = 8;
+    PROTO__FORMAT__ORDER__HAILO_NMS = 9;
+    PROTO__FORMAT__ORDER__RGB888 = 10;
+    PROTO__FORMAT__ORDER__NCHW = 11;
+    PROTO__FORMAT__ORDER__YUY2 = 12;
+    PROTO__FORMAT__ORDER__NV12 = 13;
+    PROTO__FORMAT__ORDER__NV21 = 14;
+    PROTO__FORMAT__ORDER__HAILO_YYUV = 15;
+    PROTO__FORMAT__ORDER__HAILO_YYVU = 16;
+    PROTO__FORMAT__ORDER__MAX_ENUM = 0XFFFF;
+};
+
+enum ProtoHEFDataType {
+    PROTO__UINT8 = 0;
+    PROTO__UINT16 = 1;
+};
+
+message ProtoHEFTensorShape {
+    uint32 height = 1;
+    uint32 padded_height = 2;
+    uint32 width = 3;
+    uint32 padded_width = 4;
+    uint32 features = 5;
+    uint32 padded_features = 6;
+}
+
+message ProtoHEFNmsShape {
+    // Amount of NMS classes
+    uint32 number_of_classes = 1;
+    // Maximum amount of bboxes per nms class
+    uint32 max_bboxes_per_class = 2;
+    // Internal usage
+    uint32 bbox_size = 3;
+    // Internal usage
+    uint32 division_factor = 4;
+}
+
+message ProtoHEFPad {
+    // Pad's unique index
+    uint32 index = 1;
+
+    // Pad's name, can be empty of meaningful
+    string name = 2;
+
+    // Additional information describing the data going through this pad's interface
+    ProtoHEFFormatOrder format = 3;
+    ProtoHEFDataType data_bytes = 4;
+    ProtoHEFEdgeLayerNumericInfo numeric_info = 5;
+    oneof shape_info {
+        ProtoHEFTensorShape tensor_shape = 6;
+        ProtoHEFNmsShape nms_shape = 7;
+    }
+};
+
+message ProtoHEFOp {
+    string name = 1;
+
+    // The interfaces between different Ops
+    repeated ProtoHEFPad input_pads = 2;
+    repeated ProtoHEFPad output_pads = 3;
+
+    // Op's type
+    oneof op {
+        // Op type for a subgraph that is running on Hailo's core
+        ProtoHEFCoreOp core_op = 4;
+
+        // Op type for NMS post-processing
+        ProtoHEFNmsOp nms_op = 5;
+    }
+};
+
+message ProtoHEFPadEdge {
+    uint32 src = 1;
+    uint32 dst = 2;
+};
+
 message ProtoHEFNetworkGroup {
+    // Ops of Hailo's computational graph
+    repeated ProtoHEFOp ops = 8;
+
+    // Edges of Hailo's computational graph
+    repeated ProtoHEFPadEdge pad_edges = 9;
+
+    // The name of the network_group
+    string network_group_name = 10;
+
+    // The index of the network_group (execution order)
+    uint32 network_group_index = 11;
+
+    // For backwards compatability:
     // Metadata describing the network_group
     ProtoHEFNetworkGroupMetadata network_group_metadata = 1;
 
@@ -240,6 +420,7 @@ message ProtoHEFAction {
         ProtoHEFActionAllowInputDataflow allow_input_dataflow = 10;
         ProtoHEFActionWaitForModuleConfigDone wait_for_module_config_done = 11;
         ProtoHEFActionDebugSleep debug_sleep = 12;
+        ProtoHEFActionEnableNMS enable_nms = 13;
     }
 }
 
@@ -342,6 +523,14 @@ message ProtoHEFActionEnableLcu {
     uint32 network_index = 6;
 }
 
+message ProtoHEFActionEnableNMS {
+    // Index of the nms unit
+    uint32 nms_unit_index = 1;
+
+    // Index of the network
+    uint32 network_index = 2;
+}
+
 // None action - Do not do anything
 message ProtoHEFActionNone {
 }
@@ -404,6 +593,7 @@ message ProtoHEFEdgeLayer {
     };
     ProtoHEFContextSwitchInformation context_switch_info = 5;
     uint32 network_index = 6;
+    optional uint32 pad_index = 7; // In case of boundery
 }
 
 // Enum indicating the direction of the edge layer

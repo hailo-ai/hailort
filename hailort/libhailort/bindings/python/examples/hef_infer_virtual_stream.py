@@ -1,8 +1,9 @@
 import argparse
-from multiprocessing import Process
-
+import time
 import numpy as np
-from hailo_platform import (HEF, PcieDevice, HailoStreamInterface, ConfigureParams, InputVStreamParams, InputVStreams,
+
+from multiprocessing import Process
+from hailo_platform import (HEF, VDevice, HailoStreamInterface, ConfigureParams, InputVStreamParams, InputVStreams,
                             OutputVStreamParams, OutputVStreams)
 
 def send(configured_network, num_frames):
@@ -45,17 +46,24 @@ def main():
     args = parse_args()
     hef = HEF(args.hef_path)
 
-    with PcieDevice() as device:
+    with VDevice() as device:
         configure_params = ConfigureParams.create_from_hef(hef, interface=HailoStreamInterface.PCIe)
         network_group = device.configure(hef, configure_params)[0]
         network_group_params = network_group.create_params()
         send_process = Process(target=send, args=(network_group, args.num_frames))
         recv_process = Process(target=recv_all, args=(network_group, args.num_frames))
+
+        time_before = time.time()
         recv_process.start()
         send_process.start()
         with network_group.activate(network_group_params):
             send_process.join()
             recv_process.join()
+
+        fps = args.num_frames / (time.time() - time_before)
+
+    print('Inference ran successfully')
+    print(f'FPS: {fps}')
 
 if __name__ == '__main__':
     main()

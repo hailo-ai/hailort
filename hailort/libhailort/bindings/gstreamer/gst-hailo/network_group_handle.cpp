@@ -28,7 +28,7 @@ NetworkGroupActivationManager NetworkGroupHandle::m_net_group_activation_manager
 
 
 Expected<std::shared_ptr<VDevice>> create_shared_vdevice(const void *element, const std::string &device_id,
-    uint32_t vdevice_key, hailo_scheduling_algorithm_t scheduling_algorithm)
+    uint32_t vdevice_key, hailo_scheduling_algorithm_t scheduling_algorithm, bool multi_process_service)
 {
     // If passing device_id, than device_count must be 1
     const auto device_count = 1;
@@ -43,6 +43,7 @@ Expected<std::shared_ptr<VDevice>> create_shared_vdevice(const void *element, co
     params.device_count = device_count;
     params.device_ids = &(device_id_expected.value());
     params.scheduling_algorithm = scheduling_algorithm;
+    params.multi_process_service = multi_process_service;
     if (vdevice_key == DEFAULT_VDEVICE_KEY) {
         params.group_id = HAILO_UNIQUE_VDEVICE_GROUP_ID;
     } else {
@@ -51,12 +52,12 @@ Expected<std::shared_ptr<VDevice>> create_shared_vdevice(const void *element, co
     }
     auto vdevice = VDevice::create(params);
     GST_CHECK_EXPECTED(vdevice, element, RESOURCE, "Failed creating vdevice, status = %d", vdevice.status());
-    std::shared_ptr<VDevice> vdevice_ptr = std::move(vdevice.release());
+    std::shared_ptr<VDevice> vdevice_ptr = vdevice.release();
     return vdevice_ptr;
 }
 
 Expected<std::shared_ptr<VDevice>> create_shared_vdevice(const void *element, uint16_t device_count, uint32_t vdevice_key,
-    hailo_scheduling_algorithm_t scheduling_algorithm)
+    hailo_scheduling_algorithm_t scheduling_algorithm, bool multi_process_service)
 {
     auto device_id = std::to_string(vdevice_key);
     hailo_vdevice_params_t params = {};
@@ -65,14 +66,15 @@ Expected<std::shared_ptr<VDevice>> create_shared_vdevice(const void *element, ui
     params.device_count = device_count;
     params.scheduling_algorithm = scheduling_algorithm;
     params.group_id = device_id.c_str();
+    params.multi_process_service = multi_process_service;
     auto vdevice = VDevice::create(params);
     GST_CHECK_EXPECTED(vdevice, element, RESOURCE, "Failed creating vdevice, status = %d", vdevice.status());
-    std::shared_ptr<VDevice> vdevice_ptr = std::move(vdevice.release());
+    std::shared_ptr<VDevice> vdevice_ptr = vdevice.release();
     return vdevice_ptr;
 }
 
 Expected<std::shared_ptr<VDevice>> create_unique_vdevice(const void *element, uint16_t device_count,
-    hailo_scheduling_algorithm_t scheduling_algorithm)
+    hailo_scheduling_algorithm_t scheduling_algorithm, bool multi_process_service)
 {
     hailo_vdevice_params_t params = {};
     auto status = hailo_init_vdevice_params(&params);
@@ -81,43 +83,44 @@ Expected<std::shared_ptr<VDevice>> create_unique_vdevice(const void *element, ui
     params.device_count = device_count;
     params.scheduling_algorithm = scheduling_algorithm;
     params.group_id = HAILO_UNIQUE_VDEVICE_GROUP_ID;
+    params.multi_process_service = multi_process_service;
     auto vdevice = VDevice::create(params);
     GST_CHECK_EXPECTED(vdevice, element, RESOURCE, "Failed creating vdevice, status = %d", vdevice.status());
-    std::shared_ptr<VDevice> vdevice_ptr = std::move(vdevice.release());
+    std::shared_ptr<VDevice> vdevice_ptr = vdevice.release();
     return vdevice_ptr;
 }
 
 Expected<std::shared_ptr<VDevice>> NetworkGroupHandle::create_vdevice(const void *element, const std::string &device_id, uint16_t device_count,
-    uint32_t vdevice_key, hailo_scheduling_algorithm_t scheduling_algorithm)
+    uint32_t vdevice_key, hailo_scheduling_algorithm_t scheduling_algorithm, bool multi_process_service)
 {
     if (!device_id.empty()) {
-        auto result = create_shared_vdevice(element, device_id, vdevice_key, scheduling_algorithm);
+        auto result = create_shared_vdevice(element, device_id, vdevice_key, scheduling_algorithm, multi_process_service);
         GST_CHECK_EXPECTED(result, element, RESOURCE, "Failed creating vdevice, status = %d", result.status());
         m_vdevices.insert(result.value());
         return result;
     }
     if (DEFAULT_VDEVICE_KEY != vdevice_key) {
-        auto result = create_shared_vdevice(element, device_count, vdevice_key, scheduling_algorithm);
+        auto result = create_shared_vdevice(element, device_count, vdevice_key, scheduling_algorithm, multi_process_service);
         GST_CHECK_EXPECTED(result, element, RESOURCE, "Failed creating vdevice, status = %d", result.status());
         m_vdevices.insert(result.value());
         return result;
     }
-    auto result = create_unique_vdevice(element, device_count, scheduling_algorithm);
+    auto result = create_unique_vdevice(element, device_count, scheduling_algorithm, multi_process_service);
     GST_CHECK_EXPECTED(result, element, RESOURCE, "Failed creating vdevice, status = %d", result.status());
     m_vdevices.insert(result.value());
     return result;
 }
 
 Expected<std::shared_ptr<VDevice>> NetworkGroupHandle::create_vdevice(const std::string &device_id, uint16_t device_count, uint32_t vdevice_key,
-    hailo_scheduling_algorithm_t scheduling_algorithm)
+    hailo_scheduling_algorithm_t scheduling_algorithm, bool multi_process_service)
 {
-    auto expected_device = create_vdevice(m_element, device_id, device_count, vdevice_key, scheduling_algorithm);
+    auto expected_device = create_vdevice(m_element, device_id, device_count, vdevice_key, scheduling_algorithm, multi_process_service);
     GST_CHECK_EXPECTED(expected_device, m_element, RESOURCE, "Failed creating vdevice, status = %d", expected_device.status());
     return expected_device;
 }
 
 hailo_status NetworkGroupHandle::set_hef(const char *device_id, uint16_t device_count, uint32_t vdevice_key,
-    hailo_scheduling_algorithm_t scheduling_algorithm, const char *hef_path)
+    hailo_scheduling_algorithm_t scheduling_algorithm, bool multi_process_service, const char *hef_path)
 {
     if (0 == device_count) {
         device_count = HAILO_DEFAULT_DEVICE_COUNT;
@@ -125,7 +128,7 @@ hailo_status NetworkGroupHandle::set_hef(const char *device_id, uint16_t device_
 
     std::string device_id_str = (nullptr == device_id) ? "" : device_id;
 
-    auto vdevice = create_vdevice(device_id_str, device_count, vdevice_key, scheduling_algorithm);
+    auto vdevice = create_vdevice(device_id_str, device_count, vdevice_key, scheduling_algorithm, multi_process_service);
     GST_CHECK_EXPECTED_AS_STATUS(vdevice, m_element, RESOURCE, "Failed creating vdevice, status = %d", vdevice.status());
     m_vdevice = vdevice.release();
 
@@ -141,7 +144,7 @@ hailo_status NetworkGroupHandle::set_hef(const char *device_id, uint16_t device_
     auto hef = Hef::create(hef_path);
     GST_CHECK_EXPECTED_AS_STATUS(hef, m_element, RESOURCE, "Failed reading hef file %s, status = %d", hef_path, hef.status());
 
-    m_hef = make_shared_nothrow<Hef>(std::move(hef.release()));
+    m_hef = make_shared_nothrow<Hef>(hef.release());
     GST_CHECK(nullptr != m_hef, HAILO_OUT_OF_HOST_MEMORY, m_element, RESOURCE, "Allocating memory for HEF has failed!");
 
     return HAILO_SUCCESS;
@@ -149,7 +152,7 @@ hailo_status NetworkGroupHandle::set_hef(const char *device_id, uint16_t device_
 
 hailo_status NetworkGroupHandle::configure_network_group(const char *net_group_name, hailo_scheduling_algorithm_t scheduling_algorithm, uint16_t batch_size)
 {
-    auto net_groups_params_map = get_configure_params(*m_hef, net_group_name, batch_size);
+    auto net_groups_params_map = get_configure_params(*m_hef, *m_vdevice, net_group_name, batch_size);
     GST_CHECK_EXPECTED_AS_STATUS(net_groups_params_map, m_element, RESOURCE, "Failed getting configure params, status = %d", net_groups_params_map.status());
 
     auto expected_cng = m_net_group_config_manager.configure_network_group(m_element, m_shared_device_id, scheduling_algorithm,
@@ -185,12 +188,27 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> Netwo
             "Inserting network name to configured networks has failed, status = %d", status);
     }
 
-    auto input_params_map = m_cng->make_input_vstream_params(true, HAILO_FORMAT_TYPE_AUTO, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
+    auto expected_input_vstream_infos = hef()->get_input_vstream_infos(network_name);
+    GST_CHECK_EXPECTED(expected_input_vstream_infos, m_element, RESOURCE, "Failed getting input vstream infos, status = %d",
+        expected_input_vstream_infos.status());
+    auto expected_input_params_map = m_cng->make_input_vstream_params(true, HAILO_FORMAT_TYPE_AUTO, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
         HAILO_DEFAULT_VSTREAM_QUEUE_SIZE, m_network_name);
-    GST_CHECK_EXPECTED(input_params_map, m_element, RESOURCE, "Failed making input vstream params, status = %d",
-        input_params_map.status());
+    GST_CHECK_EXPECTED(expected_input_params_map, m_element, RESOURCE, "Failed making input vstream params, status = %d",
+        expected_input_params_map.status());
 
-    auto input_vstreams = VStreamsBuilder::create_input_vstreams(*m_cng, input_params_map.release());
+    // In RGB formats, Gstreamer is padding each row to 4.
+    auto &&input_params_map = expected_input_params_map.release();
+    auto &&input_infos = expected_input_vstream_infos.release();
+    for (auto &input_info : input_infos) {
+        if (input_params_map.count(input_info.name)) {
+            auto &input_params = input_params_map[input_info.name];
+            if (input_info.format.order == HAILO_FORMAT_ORDER_NHWC) {
+                input_params.user_buffer_format.order = HAILO_FORMAT_ORDER_RGB4;
+            }
+        }
+    }
+
+    auto input_vstreams = VStreamsBuilder::create_input_vstreams(*m_cng, input_params_map);
     GST_CHECK_EXPECTED(input_vstreams, m_element, RESOURCE, "Failed creating input vstreams, status = %d", input_vstreams.status());
 
     // TODO: HRT-4095
@@ -220,17 +238,22 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> Netwo
     GST_CHECK_EXPECTED(output_vstreams, m_element, RESOURCE, "Failed creating output vstreams, status = %d", output_vstreams.status());
 
     return std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>(
-        std::move(input_vstreams.release()), std::move(output_vstreams.release()));
+        input_vstreams.release(), output_vstreams.release());
 }
 
-Expected<NetworkGroupsParamsMap> NetworkGroupHandle::get_configure_params(Hef &hef, const char *net_group_name, uint16_t batch_size)
+Expected<NetworkGroupsParamsMap> NetworkGroupHandle::get_configure_params(Hef &hef, const VDevice &vdevice,
+    const char *net_group_name, uint16_t batch_size)
 {
-    auto params = hef.create_configure_params(HAILO_STREAM_INTERFACE_PCIE, net_group_name);
+    auto stream_interface = vdevice.get_default_streams_interface();
+    GST_CHECK_EXPECTED(stream_interface, m_element, RESOURCE,
+        "Failed default stream interface configure params, status = %d", stream_interface.status());
+
+    auto params = hef.create_configure_params(*stream_interface, net_group_name);
     GST_CHECK_EXPECTED(params, m_element, RESOURCE, "Failed creating configure params, status = %d", params.status());
     params->batch_size = batch_size;
 
     NetworkGroupsParamsMap net_groups_params_map;
-    net_groups_params_map[net_group_name] = std::move(params.release());
+    net_groups_params_map[net_group_name] = params.release();
     return net_groups_params_map;
 }
 
@@ -241,39 +264,6 @@ hailo_status NetworkGroupHandle::activate_network_group()
     GST_CHECK_EXPECTED_AS_STATUS(expected_ang, m_element, RESOURCE, "Failed activating network, status = %d", expected_ang.status());
     m_ang = expected_ang.release();
     return HAILO_SUCCESS;
-}
-
-hailo_status NetworkGroupHandle::abort_streams()
-{
-    if (nullptr == m_cng) {
-        return HAILO_SUCCESS;
-    }
-
-    hailo_status final_status = HAILO_SUCCESS;
-    auto input_streams = m_cng->get_input_streams_by_network(m_network_name);
-    GST_CHECK_EXPECTED_AS_STATUS(input_streams, m_element, RESOURCE, "Getting input streams by network name %s failed, status = %d",
-        m_network_name.c_str(), input_streams.status());
-
-    for (auto &input_stream : input_streams.value()) {
-        hailo_status status = input_stream.get().abort();
-        if (HAILO_SUCCESS != status) {
-            g_warning("Abort of input stream %s has failed, status = %d", input_stream.get().name().c_str(), status);
-            final_status = status;
-        }
-    }
-
-    auto output_streams = m_cng->get_output_streams_by_network(m_network_name);
-    GST_CHECK_EXPECTED_AS_STATUS(output_streams, m_element, RESOURCE, "Getting output streams by network name %s failed, status = %d",
-        m_network_name.c_str(), output_streams.status());
-
-    for (auto &output_stream : output_streams.value()) {
-        hailo_status status = output_stream.get().abort();
-        if (HAILO_SUCCESS != status) {
-            g_warning("Abort of output stream %s has failed, status = %d", output_stream.get().name().c_str(), status);
-            final_status = status;
-        }
-    }
-    return final_status;
 }
 
 Expected<bool> NetworkGroupHandle::remove_network_group()
@@ -407,7 +397,7 @@ Expected<std::shared_ptr<ActivatedNetworkGroup>> NetworkGroupActivationManager::
     GST_CHECK_EXPECTED(activated_network_group, element, RESOURCE, "Failed activating network group, status = %d",
         activated_network_group.status());
 
-    std::shared_ptr<ActivatedNetworkGroup> ang = std::move(activated_network_group.release());
+    std::shared_ptr<ActivatedNetworkGroup> ang = activated_network_group.release();
     m_activated_net_groups[NetworkGroupConfigManager::get_configure_string(device_id, hef_hash, net_group_name, batch_size)] = ang;
 
     return ang;

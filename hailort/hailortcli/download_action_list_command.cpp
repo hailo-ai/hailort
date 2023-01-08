@@ -20,6 +20,7 @@
 // TODO - HRT-7364 - add CPU subsystem frequency into the device extended info control
 // and use it for get the timer's frequency
 #define NN_CORE_TO_TIMER_FREQ_FACTOR (2)
+#define MERCURY_VPU_CORE_CPU_DEFAULT_FREQ_MHZ (200)
 
 constexpr int DownloadActionListCommand::INVALID_NUMERIC_VALUE;
 
@@ -40,9 +41,17 @@ hailo_status DownloadActionListCommand::execute(Device &device, const std::strin
     auto curr_time = CliCommon::current_time_to_string();
     CHECK_EXPECTED_AS_STATUS(curr_time);
 
-    auto extended_info = device.get_extended_device_information();
-    CHECK_EXPECTED_AS_STATUS(extended_info);
-    const auto clock_cycle = (extended_info->neural_network_core_clock_rate / NN_CORE_TO_TIMER_FREQ_FACTOR) / MHz;
+    auto chip_arch = device.get_architecture();
+    CHECK_EXPECTED_AS_STATUS(chip_arch);
+    unsigned int clock_cycle = 0;
+    // TODO - HRT-8046 Implement extended device info for mercury
+    if (HAILO_ARCH_MERCURY_VPU == chip_arch.value()) {
+        clock_cycle = MERCURY_VPU_CORE_CPU_DEFAULT_FREQ_MHZ;
+    } else {
+        auto extended_info = device.get_extended_device_information();
+        CHECK_EXPECTED_AS_STATUS(extended_info);
+        clock_cycle = (extended_info->neural_network_core_clock_rate / NN_CORE_TO_TIMER_FREQ_FACTOR) / MHz;
+    }
 
     ordered_json action_list_json = {
         {"version", ACTION_LIST_FORMAT_VERSION()},
@@ -75,6 +84,10 @@ hailo_status DownloadActionListCommand::set_batch_to_measure(Device &device, uin
 
 hailo_status DownloadActionListCommand::execute_on_device(Device &device)
 {
+    auto status = validate_specific_device_is_given();
+    CHECK_SUCCESS(status,
+        "'fw-control action-list' command should get a specific device-id.");
+
     return execute(device, m_output_file_path);
 }
 
@@ -179,9 +192,9 @@ Expected<ordered_json> DownloadActionListCommand::parse_action_data(uint32_t bas
             data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__wait_dma_idle_data_t *>(action);
             action_length_local = sizeof(CONTEXT_SWITCH_DEFS__wait_dma_idle_data_t);
             break;
-        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_NMS_IDLE:
-            data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__wait_nms_idle_data_t *>(action);
-            action_length_local = sizeof(CONTEXT_SWITCH_DEFS__wait_nms_idle_data_t);
+        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_NMS:
+            data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__wait_nms_data_t *>(action);
+            action_length_local = sizeof(CONTEXT_SWITCH_DEFS__wait_nms_data_t);
             break;
         case CONTEXT_SWITCH_DEFS__ACTION_TYPE_OUTPUT_CHANNEL_TRANSFER_DONE_INTERRUPT:
             data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__vdma_dataflow_interrupt_data_t *>(action);
@@ -192,8 +205,8 @@ Expected<ordered_json> DownloadActionListCommand::parse_action_data(uint32_t bas
             action_length_local = sizeof(CONTEXT_SWITCH_DEFS__module_config_done_interrupt_data_t);
             break;
         case CONTEXT_SWITCH_DEFS__ACTION_TYPE_APPLICATION_CHANGE_INTERRUPT:
-            data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__application_change_interrupt_data_t *>(action);
-            action_length_local = sizeof(CONTEXT_SWITCH_DEFS__application_change_interrupt_data_t);
+            data_json = json({});
+            action_length_local = 0;
             break;
         case CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_CFG_CHANNEL_DESCRIPTORS:
             data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__fetch_cfg_channel_descriptors_action_data_t *>(action);
@@ -283,6 +296,18 @@ Expected<ordered_json> DownloadActionListCommand::parse_action_data(uint32_t bas
             data_json = json({});
             action_length_local = 0;
             break;
+        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_OPEN_BOUNDARY_INPUT_CHANNEL:
+            data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__open_boundary_input_channel_data_t *>(action);
+            action_length_local = sizeof(CONTEXT_SWITCH_DEFS__open_boundary_input_channel_data_t);
+            break;
+        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_OPEN_BOUNDARY_OUTPUT_CHANNEL:
+            data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__open_boundary_output_channel_data_t *>(action);
+            action_length_local = sizeof(CONTEXT_SWITCH_DEFS__open_boundary_output_channel_data_t);
+            break;
+        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_ENABLE_NMS:
+            data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__enable_nms_action_t *>(action);
+            action_length_local = sizeof(CONTEXT_SWITCH_DEFS__enable_nms_action_t);
+            break;
         case CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT:
             // Fallthrough
             // Handling CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT is needed because we compile this file with -Wswitch-enum
@@ -326,24 +351,35 @@ Expected<ordered_json> DownloadActionListCommand::parse_single_action(uint32_t b
     return json.release();
 }
 
-Expected<ordered_json> DownloadActionListCommand::parse_context(uint32_t action_list_base_address,
-    uint8_t *context_action_list, uint16_t action_list_size, uint32_t batch_counter) 
+Expected<ordered_json> DownloadActionListCommand::parse_context(Device &device, uint32_t network_group_id,
+    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index, const std::string &context_name)
 {
+    uint32_t action_list_base_address = 0;
+    uint32_t batch_counter = 0;
+
+    auto action_list = device.download_context_action_list(network_group_id, context_type, context_index,
+        &action_list_base_address, &batch_counter);
+    CHECK_EXPECTED(action_list);
+    // Needs to fit in 2 bytes due to firmware limitation of action list size
+    CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(action_list->size()), HAILO_INTERNAL_FAILURE,
+        "Action list size is expected to fit in 2B. actual size is {}", action_list->size());
+
     ordered_json context_json {
         {"action_list_base_address", action_list_base_address},
-        {"action_list_size", action_list_size },
-        {"batch_counter", batch_counter}
+        {"action_list_size", action_list->size() },
+        {"batch_counter", batch_counter},
+        {"context_name", context_name},
     };
 
     ordered_json action_list_json;
     uint16_t current_buffer_offset = 0;
-    while (current_buffer_offset < action_list_size) {
+    while (current_buffer_offset < action_list->size()) {
         bool is_repeated = false;
         uint8_t num_repeated = 0;
         CONTEXT_SWITCH_DEFS__ACTION_TYPE_t sub_action_type = CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT;
         uint32_t single_action_length = 0;
         uint32_t timestamp = 0;
-        auto action_json = parse_single_action(action_list_base_address, context_action_list,
+        auto action_json = parse_single_action(action_list_base_address, action_list->data(),
             current_buffer_offset, &single_action_length, &is_repeated, &num_repeated, &sub_action_type, &timestamp);
         CHECK_EXPECTED(action_json);
         current_buffer_offset = (uint16_t)(current_buffer_offset + single_action_length);
@@ -353,7 +389,7 @@ Expected<ordered_json> DownloadActionListCommand::parse_context(uint32_t action_
             for (uint8_t index_in_repeated_block = 0; index_in_repeated_block < num_repeated; index_in_repeated_block++) {
                 uint32_t sub_action_length = 0;
                 auto repeated_action_json = parse_single_repeated_action(action_list_base_address,
-                    context_action_list + current_buffer_offset, current_buffer_offset, &sub_action_length,
+                    action_list->data() + current_buffer_offset, current_buffer_offset, &sub_action_length,
                     sub_action_type, timestamp, index_in_repeated_block);
                 CHECK_EXPECTED(repeated_action_json);
                 current_buffer_offset = (uint16_t)(current_buffer_offset + sub_action_length);
@@ -361,7 +397,7 @@ Expected<ordered_json> DownloadActionListCommand::parse_context(uint32_t action_
             }
         }
     }
-    CHECK_AS_EXPECTED(current_buffer_offset == action_list_size, HAILO_INTERNAL_FAILURE,
+    CHECK_AS_EXPECTED(current_buffer_offset == action_list->size(), HAILO_INTERNAL_FAILURE,
         "PARSING ERROR ! Reached forbidden memory space");
 
     context_json["actions"] = action_list_json;
@@ -377,16 +413,19 @@ double DownloadActionListCommand::get_accumulator_mean_value(const AccumulatorPt
 
 Expected<ordered_json> DownloadActionListCommand::parse_network_groups(Device &device, const ConfiguredNetworkGroupVector &network_groups)
 {
-    const auto number_of_contexts_per_network_group = device.get_number_of_contexts_per_network_group();
-    CHECK_EXPECTED(number_of_contexts_per_network_group);
+    const auto number_of_dynamic_contexts_per_network_group = device.get_number_of_dynamic_contexts_per_network_group();
+    CHECK_EXPECTED(number_of_dynamic_contexts_per_network_group);
 
     ordered_json network_group_list_json;
-    uint8_t global_context_index = 0;
-    for (uint32_t network_group_index = 0; network_group_index < number_of_contexts_per_network_group->size(); network_group_index++) {
+    for (uint32_t network_group_index = 0; network_group_index < number_of_dynamic_contexts_per_network_group->size(); network_group_index++) {
+        // TODO: HRT-8147 use the real network_group_id instead of network_group_index
+        const uint32_t network_group_id = network_group_index;
+
         // TODO: network_group_name via Hef::get_network_groups_names (HRT-5997)
         ordered_json network_group_json = {
             {"mean_activation_time_ms", INVALID_NUMERIC_VALUE},
             {"mean_deactivation_time_ms", INVALID_NUMERIC_VALUE},
+            {"network_group_id", network_group_id},
             {"contexts", json::array()}
         };
         // We assume the the order of the network_groups in the ConfiguredNetworkGroupVector and in the action_list
@@ -399,25 +438,31 @@ Expected<ordered_json> DownloadActionListCommand::parse_network_groups(Device &d
                 network_groups[network_group_index]->get_deactivation_time_accumulator());
         }
 
-        const auto num_contexts_in_network_group = number_of_contexts_per_network_group.value()[network_group_index];
-        for (uint8_t i = 0; i < num_contexts_in_network_group; i++) {
-            uint32_t batch_counter = 0;
-            uint32_t base_address = 0;
-            auto action_list = device.download_context_action_list(global_context_index, &base_address, &batch_counter);
-            CHECK_EXPECTED(action_list);
-            // Needs to fit in 2 bytes due to firmware limitation of action list size
-            CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(action_list->size()), HAILO_INTERNAL_FAILURE,
-                "Action list size is expected to fit in 2B. actual size is {}", action_list->size());
+        auto activation_context_json = parse_context(device, network_group_id,
+            CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_ACTIVATION, 0, "activation");
+        CHECK_EXPECTED(activation_context_json);
+        network_group_json["contexts"].emplace_back(activation_context_json.release());
 
-            auto context_json = parse_context(base_address, action_list->data(),
-                static_cast<uint16_t>(action_list->size()), batch_counter);
+        auto preliminary_context_json = parse_context(device, network_group_id,
+            CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_PRELIMINARY, 0, "preliminary");
+        CHECK_EXPECTED(preliminary_context_json);
+        network_group_json["contexts"].emplace_back(preliminary_context_json.release());
+
+        const auto dynamic_contexts_count = number_of_dynamic_contexts_per_network_group.value()[network_group_index];
+        for (uint8_t context_index = 0; context_index < dynamic_contexts_count; context_index++) {
+            auto context_json = parse_context(device, network_group_id,
+                CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_DYNAMIC, context_index,
+                fmt::format("dynamic_{}", context_index));
             CHECK_EXPECTED(context_json);
 
             network_group_json["contexts"].emplace_back(context_json.release());
-            
-            // Device::get_number_of_contexts_per_network_group guarantees no overflow
-            global_context_index++;
         }
+
+        auto batch_switching_context_json = parse_context(device, network_group_id,
+            CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_BATCH_SWITCHING, 0, "batch_switching");
+        CHECK_EXPECTED(batch_switching_context_json);
+        network_group_json["contexts"].emplace_back(batch_switching_context_json.release());
+
         network_group_list_json.emplace_back(network_group_json);
     }
 
@@ -566,4 +611,14 @@ void to_json(json &j, const CONTEXT_SWITCH_DEFS__add_ddr_pair_info_action_data_t
 
     j = json{{"h2d_engine_index", h2d_engine_index}, {"h2d_vdma_channel_index", h2d_vdma_channel_index},
         {"d2h_engine_index", d2h_engine_index}, {"d2h_vdma_channel_index", d2h_vdma_channel_index}};
+}
+
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__open_boundary_input_channel_data_t &data)
+{
+    j = unpack_vdma_channel_id(data);
+}
+
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__open_boundary_output_channel_data_t &data)
+{
+    j = unpack_vdma_channel_id(data);
 }

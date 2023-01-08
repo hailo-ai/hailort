@@ -1,5 +1,4 @@
 #include "mapped_buffer.hpp"
-#include "microprofile.h"
 
 namespace hailort {
 namespace vdma {
@@ -72,7 +71,7 @@ hailo_status MappedBuffer::write(const void *buf_src, size_t count, size_t offse
     return HAILO_SUCCESS;
 }
 
-hailo_status MappedBuffer::read(void *buf_dst, size_t count, size_t offset)
+hailo_status MappedBuffer::read(void *buf_dst, size_t count, size_t offset, bool should_sync)
 {
     if ((count + offset) > m_size) {
         LOGGER__ERROR("Requested size {} from offset {} is more than the MappedBuffer size {}", count, offset, m_size);
@@ -80,11 +79,10 @@ hailo_status MappedBuffer::read(void *buf_dst, size_t count, size_t offset)
     }
 
     if (count > 0) {
-        auto dst_vdma_address = (uint8_t*)m_vdma_mapped_buffer->get() + offset;
-        auto status = m_driver.vdma_buffer_sync(m_handle, HailoRTDriver::DmaDirection::D2H, dst_vdma_address, count);
-        if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed synching vdma buffer on read");
-            return status;
+        const auto dst_vdma_address = (uint8_t*)m_vdma_mapped_buffer->get() + offset;
+        if (should_sync) {
+            const auto status = m_driver.vdma_buffer_sync(m_handle, HailoRTDriver::DmaDirection::D2H, dst_vdma_address, count);
+            CHECK_SUCCESS(status, "Failed synching vdma buffer on read");
         }
 
         memcpy(buf_dst, dst_vdma_address, count);
@@ -95,7 +93,6 @@ hailo_status MappedBuffer::read(void *buf_dst, size_t count, size_t offset)
 
 hailo_status MappedBuffer::write_cyclic(const void *buf_src, size_t count, size_t offset)
 {
-    MICROPROFILE_SCOPEI("vDMA", "Write buffer", 0);
     if (count > m_size) {
         LOGGER__ERROR("Requested size({}) is more than the MappedBuffer size {}", count, m_size);
         return HAILO_INSUFFICIENT_BUFFER;
@@ -119,9 +116,8 @@ hailo_status MappedBuffer::write_cyclic(const void *buf_src, size_t count, size_
     return HAILO_SUCCESS;
 }
 
-hailo_status MappedBuffer::read_cyclic(void *buf_dst, size_t count, size_t offset)
+hailo_status MappedBuffer::read_cyclic(void *buf_dst, size_t count, size_t offset, bool should_sync)
 {
-    MICROPROFILE_SCOPEI("vDMA", "Read buffer", 0);
     if (count > m_size) {
         LOGGER__ERROR("Requested size({}) is more than the MappedBuffer size {}", count, m_size);
         return HAILO_INSUFFICIENT_BUFFER;
@@ -129,14 +125,14 @@ hailo_status MappedBuffer::read_cyclic(void *buf_dst, size_t count, size_t offse
 
     auto size_to_end = m_size - offset;
     auto copy_size = std::min(size_to_end, count);
-    auto status = read(buf_dst, copy_size, offset);
+    auto status = read(buf_dst, copy_size, offset, should_sync);
     if (HAILO_SUCCESS != status) {
         return status;
     }
 
     auto remaining_size = count - copy_size;
     if (remaining_size > 0) {
-        status = read((uint8_t*)buf_dst + copy_size, remaining_size, 0);
+        status = read((uint8_t*)buf_dst + copy_size, remaining_size, 0, should_sync);
         if (HAILO_SUCCESS != status) {
             return status;
         }

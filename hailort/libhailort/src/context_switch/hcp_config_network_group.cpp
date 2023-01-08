@@ -8,21 +8,21 @@
 namespace hailort
 {
 
-HcpConfigNetworkGroup::HcpConfigNetworkGroup(Device &device, HcpConfigActiveAppHolder &active_net_group_holder,
-    std::vector<WriteMemoryInfo> &&config, const ConfigureNetworkParams &config_params, uint8_t net_group_index, 
-    NetworkGroupMetadata &&network_group_metadata, hailo_status &status)
-        : ConfiguredNetworkGroupBase(config_params, net_group_index, network_group_metadata, status),
-          m_config(std::move(config)), m_active_net_group_holder(active_net_group_holder), m_device(device)
+HcpConfigNetworkGroup::HcpConfigNetworkGroup(Device &device, ActiveNetGroupHolder &active_net_group_holder,
+    std::vector<WriteMemoryInfo> &&config, const ConfigureNetworkParams &config_params, NetworkGroupMetadata &&network_group_metadata,
+    hailo_status &status, std::vector<std::shared_ptr<NetFlowElement>> &&net_flow_ops)
+        : ConfiguredNetworkGroupBase(config_params, network_group_metadata, std::move(net_flow_ops), status),
+    m_config(std::move(config)), m_active_net_group_holder(active_net_group_holder), m_device(device)
 {}
 
-Expected<std::unique_ptr<ActivatedNetworkGroup>> HcpConfigNetworkGroup::activate_impl(
+Expected<std::unique_ptr<ActivatedNetworkGroup>> HcpConfigNetworkGroup::create_activated_network_group(
     const hailo_activate_network_group_params_t &network_group_params, uint16_t /* dynamic_batch_size */)
 {
     auto start_time = std::chrono::steady_clock::now();
 
     auto activated_net_group = HcpConfigActivatedNetworkGroup::create(m_device, m_config, name(), network_group_params,
         m_input_streams, m_output_streams, m_active_net_group_holder, m_config_params.power_mode,
-        m_network_group_activated_event);
+        m_network_group_activated_event, (*this));
     CHECK_EXPECTED(activated_net_group);
 
     std::unique_ptr<ActivatedNetworkGroup> activated_net_group_ptr = make_unique_nothrow<HcpConfigActivatedNetworkGroup>(activated_net_group.release());
@@ -66,6 +66,47 @@ Expected<std::shared_ptr<VdmaChannel>> HcpConfigNetworkGroup::get_boundary_vdma_
     LOGGER__ERROR("get_boundary_vdma_channel_by_stream_name function for stream name {} is not supported in hcp config manager", 
         stream_name);
     return make_unexpected(HAILO_INVALID_OPERATION);
+}
+
+hailo_status HcpConfigNetworkGroup::activate_impl(uint16_t dynamic_batch_size)
+{
+    m_active_net_group_holder.set(*this);
+
+    auto status = activate_low_level_streams(dynamic_batch_size);
+    CHECK_SUCCESS(status, "Failed activating low level streams");
+
+    status = m_network_group_activated_event->signal();
+    CHECK_SUCCESS(status, "Failed to signal network activation event");
+
+    return HAILO_SUCCESS;
+}
+hailo_status HcpConfigNetworkGroup::deactivate_impl()
+{
+    auto expected_config_network_ref = m_active_net_group_holder.get();
+    CHECK(expected_config_network_ref.has_value(), HAILO_INTERNAL_FAILURE, "Error getting configured network group");
+
+    const auto &config_network_group = expected_config_network_ref.value();
+    // Make sure the network group we are deactivating is this object
+    CHECK(this == std::addressof(config_network_group.get()), HAILO_INTERNAL_FAILURE,
+        "Trying to deactivate different network goup");
+
+    m_active_net_group_holder.clear();
+
+    if (!m_network_group_activated_event) {
+        return HAILO_SUCCESS;
+    }
+
+    m_network_group_activated_event->reset();
+
+    for (auto &name_pair : m_input_streams) {
+        const auto status = name_pair.second->flush();
+        CHECK_SUCCESS(status, "Failed to flush input stream {}", name_pair.first);
+    }
+
+    auto status = deactivate_low_level_streams();
+    CHECK_SUCCESS(status, "Failed deactivating low level streams");
+
+    return HAILO_SUCCESS;
 }
 
 } /* namespace hailort */

@@ -261,20 +261,15 @@ public:
     static hailo_status sensor_reset(Device &device, uint32_t section_index);
     static hailo_status sensor_set_generic_i2c_slave(Device &device, uint16_t slave_address, uint8_t register_address_size, uint8_t bus_index, uint8_t should_hold_bus, uint8_t endianness);
     static hailo_status sensor_get_sections_info(Device &device, uint8_t *data);
-    /**
-     *  Send to FW the context switch header details
-     * 
-     * @param[in]     device - The Hailo device.
-     * @param[in]     context_switch_info - struct including all the data relevant for the fw
-     *
-     * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
-     */
-    static hailo_status write_context_switch_info(Device &device, CONTROL_PROTOCOL__context_switch_info_t *context_switch_info);
+
     /**
      *  Download generated context switch action list per single context
      * 
      * @param[in]     device - The Hailo device.
-     * @param[in]     context_index - context index of the context the user wishes to download the action list
+     * @param[in]     network_group_id - Unique identifier for the network group.
+     * @param[in]     context_type - type of context
+     * @param[in]     context_index - context index of the context the user wishes to download the action list. Should
+     *                be 0 for non-dynamic contexts.
      * @param[out]    base address - base address of the context action list in the FW memory
      * @param[out]    action list - buffer of the action list
      * @param[out]    action_list_length - size of the action list buffer
@@ -282,8 +277,10 @@ public:
      * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
      */
     // TODO: fix
-    static hailo_status download_context_action_list(Device &device, uint8_t context_index, size_t action_list_max_size, 
-            uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length, uint32_t *batch_counter);
+    static hailo_status download_context_action_list(Device &device, uint32_t network_group_id,
+        CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index,
+        size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length,
+        uint32_t *batch_counter);
             
     /**
      *  Enable network group
@@ -344,9 +341,9 @@ public:
     static hailo_status write_memory(Device &device, uint32_t address, const uint8_t *data, uint32_t data_length);
     static hailo_status read_memory(Device &device, uint32_t address, uint8_t *data, uint32_t data_length);
     static hailo_status context_switch_set_context_info(Device &device,
-            CONTROL_PROTOCOL__context_switch_context_info_t *context_info);
-    static hailo_status context_switch_set_main_header(Device &device,
-            CONTROL_PROTOCOL__context_switch_main_header_t *context_switch_header);
+        const std::vector<CONTROL_PROTOCOL__context_switch_context_info_single_control_t> &context_infos);
+    static hailo_status context_switch_set_network_group_header(Device &device,
+        const CONTROL_PROTOCOL__application_header_t &network_group_header);
     static hailo_status wd_enable(Device &device, uint8_t cpu_id, bool should_enable);
     static hailo_status wd_config(Device &device, uint8_t cpu_id, uint32_t wd_cycles, CONTROL_PROTOCOL__WATCHDOG_MODE_t wd_mode);
     static hailo_status previous_system_state(Device &device, uint8_t cpu_id, CONTROL_PROTOCOL__system_state_t *system_state);
@@ -371,6 +368,8 @@ public:
     static Expected<bool> get_throttling_state(Device &device);
     static hailo_status set_overcurrent_state(Device &device, bool should_activate);
     static Expected<bool> get_overcurrent_state(Device &device);
+    static Expected<CONTROL_PROTOCOL__hw_consts_t> get_hw_consts(Device &device);
+    static hailo_status set_sleep_state(Device &device, hailo_sleep_state_t sleep_state);
 
     // TODO: needed?
     static hailo_status power_measurement(Device &device, CONTROL_PROTOCOL__dvm_options_t dvm,
@@ -391,11 +390,12 @@ private:
     static hailo_status read_user_config_chunk(Device &device, uint32_t read_offset, uint32_t read_length,
         uint8_t *buffer, uint32_t *actual_read_data_length);
     static hailo_status write_user_config_chunk(Device &device, uint32_t offset, const uint8_t *data, uint32_t chunk_size);
-    static hailo_status download_context_action_list_chunk(Device &device, uint8_t context_index, uint16_t action_list_offset,
-            size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length,
-            bool *is_action_list_end, uint32_t *batch_counter);
+    static hailo_status download_context_action_list_chunk(Device &device, uint32_t network_group_id,
+        CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index, uint16_t action_list_offset,
+        size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length,
+        bool *is_action_list_end, uint32_t *batch_counter);
     static hailo_status context_switch_set_context_info_chunk(Device &device,
-            CONTROL_PROTOCOL__context_switch_context_info_single_control_t *context_info);
+        const CONTROL_PROTOCOL__context_switch_context_info_single_control_t &context_info);
     static hailo_status change_context_switch_status(Device &device, 
             CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status,
             uint8_t network_group_index, uint16_t dynamic_batch_size, bool keep_nn_config_during_reset);

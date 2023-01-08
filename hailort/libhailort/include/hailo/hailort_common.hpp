@@ -12,12 +12,15 @@
 
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
+#include <cmath>
 #include <chrono>
 #include <string>
 #include <vector>
 
 namespace hailort
 {
+
+#define RGB4_ALIGNMENT (4)
 
 /*! Common utility functions and macros that help manage hailort.h structures */
 class HAILORTAPI HailoRTCommon final
@@ -70,14 +73,29 @@ public:
     }
 
     /**
+     * Rounds an integer value up to the next multiple of a specified size.
+     *
+     * @param[in] num             Original number.
+     * @param[in] alignment       Returned number should be aligned to this parameter.
+     * @return aligned number
+     */
+    static constexpr uint32_t align_to(uint32_t num, uint32_t alignment) {
+        auto remainder = num % alignment;
+        return remainder == 0 ? num : num + (alignment - remainder);
+    }
+
+    /**
      * Gets the shape size.
      *
      * @param[in] shape             The shape to get size from.
+     * @param[in] row_alignment     The size the shape row is aligned to.
      * @return The shape size.
      */
-    static constexpr uint32_t get_shape_size(const hailo_3d_image_shape_t &shape)
+    static constexpr uint32_t get_shape_size(const hailo_3d_image_shape_t &shape, uint32_t row_alignment = 1)
     {
-        return shape.height * shape.width * shape.features; 
+        auto row_size = shape.width * shape.features;
+        row_size = align_to(row_size, row_alignment);
+        return shape.height * row_size;
     }
 
     /**
@@ -181,6 +199,8 @@ public:
             return "NV21";
         case HAILO_FORMAT_ORDER_HAILO_YYVU:
             return "YYVU";
+        case HAILO_FORMAT_ORDER_RGB4:
+            return "RGB4";
         default:
             return "Nan";
         }
@@ -245,7 +265,11 @@ public:
      */
     static constexpr uint32_t get_frame_size(const hailo_3d_image_shape_t &shape, const hailo_format_t &format)
     {
-        return get_shape_size(shape) * get_format_data_bytes(format);
+        uint32_t row_alignment = 1;
+        if (format.order == HAILO_FORMAT_ORDER_RGB4) {
+            row_alignment = RGB4_ALIGNMENT;
+        }
+        return get_shape_size(shape, row_alignment) * get_format_data_bytes(format);
     }
 
     /**

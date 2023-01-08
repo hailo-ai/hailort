@@ -308,6 +308,15 @@ hailo_status HailoRecvImpl::clear_vstreams()
     return OutputVStream::clear(m_output_vstreams);
 }
 
+hailo_status HailoRecvImpl::abort_vstreams()
+{
+    for (auto& output_vstream : m_output_vstreams) {
+        auto status = output_vstream.abort();
+        GST_CHECK_SUCCESS(status, m_element, STREAM, "Failed aborting output vstream %s, status = %d", output_vstream.name().c_str(), status);
+    }
+    return HAILO_SUCCESS;
+}
+
 static void gst_hailorecv_init(GstHailoRecv *self)
 {
     auto hailorecv_impl = HailoRecvImpl::create(self);
@@ -343,6 +352,8 @@ static GstStateChangeReturn gst_hailorecv_change_state(GstElement *element, GstS
     }
 
     if (GST_STATE_CHANGE_READY_TO_NULL == transition) {
+        auto status = GST_HAILORECV(element)->impl->abort_vstreams();
+        GST_CHECK(HAILO_SUCCESS == status, GST_STATE_CHANGE_FAILURE, element, STREAM, "Aborting output vstreams failed, status = %d\n", status);
         // Cleanup all of hailorecv memory
         GST_HAILORECV(element)->impl.reset();
     }

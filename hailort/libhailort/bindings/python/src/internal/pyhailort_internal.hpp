@@ -28,6 +28,7 @@ namespace hailort
 
 class PyhailortInternal {
 public:
+    static py::array get_yolov5_post_process_expected_buffer();
     static void demux_output_buffer(py::bytes src, const hailo_format_t &src_format, const hailo_3d_image_shape_t &src_shape,
         std::map<std::string, py::array> dst_buffers, const LayerInfo &mux_layer_info);
     static void transform_input_buffer(py::array src, const hailo_format_t &src_format, const hailo_3d_image_shape_t &src_shape,

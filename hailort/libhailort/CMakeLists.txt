@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.0.0)
 # set(CMAKE_C_CLANG_TIDY "clang-tidy;-checks=*")
 
 set(HAILORT_MAJOR_VERSION    4)
-set(HAILORT_MINOR_VERSION    10)
+set(HAILORT_MINOR_VERSION    12)
 set(HAILORT_REVISION_VERSION 0)
 
 # Add the cmake folder so the modules there are found
@@ -24,6 +24,10 @@ target_include_directories(hef_proto
     $<BUILD_INTERFACE: ${PROTO_HEADER_DIRECTORY}>
     $<BUILD_INTERFACE: ${Protobuf_INCLUDE_DIRS}>
 )
+
+if(HAILO_BUILD_PROFILER)
+    add_definitions( -DHAILO_ENABLE_PROFILER_BUILD )
+endif()
 
 protobuf_generate_cpp(PROTO_SCHEDULER_MON_SRC PROTO_SCHEDULER_MON_HEADR scheduler_mon.proto)
 add_library(scheduler_mon_proto ${PROTO_SCHEDULER_MON_SRC} ${PROTO_SCHEDULER_MON_HEADR})

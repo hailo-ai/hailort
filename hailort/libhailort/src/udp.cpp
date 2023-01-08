@@ -127,7 +127,7 @@ hailo_status Udp::send(uint8_t *buffer, size_t *size, bool use_padding, size_t m
 
     status = m_socket.send_to((const uint8_t*)send_ptr, *size, MSG_CONFIRM, (const struct sockaddr *) &m_device_address,
          m_device_address_length, &number_of_sent_bytes);
-    if (HAILO_STREAM_INTERNAL_ABORT == status) {
+    if (HAILO_STREAM_ABORTED_BY_USER == status) {
         LOGGER__INFO("Socket send_to was aborted!");
         return status;
     } 
@@ -159,7 +159,7 @@ hailo_status Udp::recv(uint8_t *buffer, size_t *size)
 
     status = m_socket.recv_from(buffer, *size,  0, (struct sockaddr *) &m_device_address, m_device_address_length,
         &number_of_received_bytes); 
-    if (HAILO_STREAM_INTERNAL_ABORT == status) {
+    if (HAILO_STREAM_ABORTED_BY_USER == status) {
         LOGGER__INFO("Socket recv_from was aborted!");
         return status;
     }

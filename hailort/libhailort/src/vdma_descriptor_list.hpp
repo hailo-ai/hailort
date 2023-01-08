@@ -120,9 +120,11 @@ public:
         return m_desc_handle;
     }
 
-    hailo_status configure_to_use_buffer(vdma::MappedBuffer& buffer, uint8_t channel_index);
+    // offset in buffer to which the first desc in this VdmaDescriptorList will point
+    // offset must be a multiple of desc_page_size()
+    hailo_status configure_to_use_buffer(vdma::MappedBuffer& buffer, uint8_t channel_index, size_t offset = 0);
     // On hailo8, we allow configuring buffer without specific channel index.
-    hailo_status configure_to_use_buffer(vdma::MappedBuffer& buffer);
+    hailo_status configure_to_use_buffer(vdma::MappedBuffer& buffer, size_t offset = 0);
 
     Expected<uint16_t> program_descriptors(size_t transfer_size, VdmaInterruptsDomain first_desc_interrupts_domain,
         VdmaInterruptsDomain last_desc_interrupts_domain, size_t desc_offset, bool is_circular);

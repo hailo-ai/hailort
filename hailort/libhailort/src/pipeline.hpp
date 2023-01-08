@@ -176,6 +176,55 @@ class PipelineElement;
 using PushCompleteCallback = std::function<void(const PipelineBuffer::Metadata&)>;
 using PullCompleteCallback = std::function<void(const PipelineBuffer::Metadata&)>;
 
+struct NetFlowPad {
+    std::string name;
+    hailo_format_t format;
+    hailo_quant_info_t quant_info;
+    uint32_t number_of_classes = 0; // temporarly here, should be only if the previous op is NMS
+};
+
+struct NetFlowElement {
+    std::vector<NetFlowPad> input_pads;
+    std::vector<NetFlowPad> output_pads;
+
+    enum class Type
+    {
+        None = 0,
+        CoreOp = 1,
+        YoloNmsOp = 2
+    };
+
+    Type type;
+    std::string name;
+    std::set<std::string> input_streams;
+
+    virtual ~NetFlowElement() = default;
+};
+
+struct YoloBboxDecoder {
+    std::vector<uint32_t> h;
+    std::vector<uint32_t> w;
+    uint32_t stride = 0;
+    // uint32_t pad_index;
+    std::string stream_name;
+};
+
+struct NetFlowNmsElement : NetFlowElement {
+    float32_t nms_score_th = 0;
+    float32_t nms_iou_th = 0;
+    uint32_t max_proposals_per_class = 0;
+    uint32_t classes = 0;
+    bool background_removal = false;
+    uint32_t background_removal_index = 0;
+};
+
+struct NetFlowYoloNmsElement final : NetFlowNmsElement {
+    std::vector<YoloBboxDecoder> bbox_decoders;
+    float32_t image_height = 0;
+    float32_t image_width = 0;
+    uint32_t input_division_factor = 0;
+};
+
 class PipelinePad final : public PipelineObject
 {
 public:
@@ -200,14 +249,14 @@ public:
     PipelinePad &operator=(PipelinePad &&other) = delete;
     ~PipelinePad() = default;
 
-    virtual hailo_status activate();
-    virtual hailo_status deactivate();
-    virtual hailo_status post_deactivate();
-    virtual hailo_status clear();
-    virtual hailo_status flush();
-    virtual hailo_status abort();
-    virtual void wait_for_finish();
-    virtual hailo_status resume();
+    hailo_status activate();
+    hailo_status deactivate();
+    hailo_status post_deactivate();
+    hailo_status clear();
+    hailo_status flush();
+    hailo_status abort();
+    hailo_status wait_for_finish();
+    hailo_status resume();
     virtual hailo_status run_push(PipelineBuffer &&buffer);
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional = PipelineBuffer());
     void set_push_complete_callback(PushCompleteCallback push_complete_callback);
@@ -248,14 +297,14 @@ public:
     PipelineElement &operator=(const PipelineElement &) = delete;
     PipelineElement &operator=(PipelineElement &&other) = delete;
 
-    virtual hailo_status activate() = 0;
-    virtual hailo_status deactivate() = 0;
-    virtual hailo_status post_deactivate() = 0;
-    virtual hailo_status clear() = 0;
-    virtual hailo_status flush() = 0;
-    virtual hailo_status abort() = 0;
-    virtual void wait_for_finish() = 0;
-    virtual hailo_status resume() = 0;
+    hailo_status activate();
+    hailo_status deactivate();
+    hailo_status post_deactivate();
+    hailo_status clear();
+    hailo_status flush();
+    hailo_status abort();
+    hailo_status resume();
+    hailo_status wait_for_finish();
     virtual hailo_status run_push(PipelineBuffer &&buffer) = 0;
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) = 0;
     AccumulatorPtr get_fps_accumulator();
@@ -285,6 +334,18 @@ protected:
 
     std::function<void()> m_cant_pull_callback;
     std::function<void()> m_can_pull_callback;
+
+    virtual std::vector<PipelinePad*> execution_pads() = 0;
+    virtual hailo_status execute_activate();
+    virtual hailo_status execute_deactivate();
+    virtual hailo_status execute_post_deactivate();
+    virtual hailo_status execute_clear();
+    virtual hailo_status execute_flush();
+    virtual hailo_status execute_abort();
+    virtual hailo_status execute_resume();
+    virtual hailo_status execute_wait_for_finish();
+
+    virtual hailo_status execute(std::function<hailo_status(PipelinePad*)>);
 };
 
 // An element with one source pad only (generates data)
@@ -294,6 +355,9 @@ public:
     SourceElement(const std::string &name, DurationCollector &&duration_collector,
                   std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status);
     PipelinePad &source();
+
+protected:
+    virtual std::vector<PipelinePad*> execution_pads() override;
 };
 
 // An element with one sink pad only (consumes data)
@@ -303,6 +367,9 @@ public:
     SinkElement(const std::string &name, DurationCollector &&duration_collector,
                 std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status);
     PipelinePad &sink();
+
+protected:
+    virtual std::vector<PipelinePad*> execution_pads() override;
 };
 
 // Transfers data from one pad to another pad. Has one sink pad and one source pad.
@@ -312,8 +379,9 @@ public:
     IntermediateElement(const std::string &name, DurationCollector &&duration_collector,
                         std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status);
     virtual PipelinePad &next_pad() = 0;
-    virtual void wait_for_finish() override;
-    virtual hailo_status flush() override;
+
+protected:
+    virtual std::vector<PipelinePad*> execution_pads() override;
 };
 
 class FilterElement : public IntermediateElement
@@ -323,12 +391,6 @@ public:
                   std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status);
     virtual ~FilterElement() = default;
 
-    virtual hailo_status activate() override;
-    virtual hailo_status deactivate() override;
-    virtual hailo_status post_deactivate() override;
-    virtual hailo_status clear() override;
-    virtual hailo_status abort() override;
-    virtual hailo_status resume() override;
     virtual hailo_status run_push(PipelineBuffer &&buffer) override;
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
 
@@ -340,15 +402,8 @@ protected:
 class BaseQueueElement : public IntermediateElement
 {
 public:
-    virtual ~BaseQueueElement() = default;
+    virtual ~BaseQueueElement();
 
-    virtual hailo_status activate() override;
-    virtual hailo_status deactivate() = 0;
-    virtual hailo_status post_deactivate() override;
-    virtual hailo_status clear() override;
-    virtual hailo_status abort() override;
-    virtual void wait_for_finish() override;
-    virtual hailo_status resume() override;
     hailo_status set_timeout(std::chrono::milliseconds timeout);
     virtual std::string description() const override;
 
@@ -362,6 +417,12 @@ protected:
         Event &&activation_event, Event &&deactivation_event);
 
     hailo_status pipeline_status();
+
+    virtual hailo_status execute_activate() override;
+    virtual hailo_status execute_post_deactivate() override;
+    virtual hailo_status execute_clear() override;
+    virtual hailo_status execute_resume() override;
+    virtual hailo_status execute_wait_for_finish() override;
 
     /// Starts/stops the queue thread. This functions needs to be called on subclasses ctor and dtor
     /// accordingly because otherwise, if we will start/stop thread in this class we will face pure-call
@@ -402,11 +463,12 @@ public:
 
     virtual hailo_status run_push(PipelineBuffer &&buffer) override;
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
-    virtual hailo_status deactivate() override;
     virtual PipelinePad &next_pad() override;
 
 protected:
+    virtual hailo_status execute_deactivate() override;
     virtual hailo_status run_in_thread() override;
+    virtual hailo_status execute_abort() override;
 };
 
 class PullQueueElement : public BaseQueueElement
@@ -424,8 +486,6 @@ public:
 
     virtual hailo_status run_push(PipelineBuffer &&buffer) override;
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
-    virtual hailo_status deactivate() override;
-    virtual hailo_status resume() override; 
     virtual PipelinePad &next_pad() override;
 
     virtual void set_on_cant_pull_callback(std::function<void()> callback) override
@@ -445,6 +505,7 @@ public:
     }
 
 protected:
+    virtual hailo_status execute_deactivate() override;
     virtual hailo_status run_in_thread() override;
 };
 
@@ -460,7 +521,6 @@ public:
         std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, Event &&activation_event, Event &&deactivation_event);
 
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
-    virtual hailo_status clear() override;
 
     virtual void set_on_cant_pull_callback(std::function<void()> callback) override
     {
@@ -473,6 +533,7 @@ public:
     }
 
 protected:
+    virtual hailo_status execute_clear() override;
     virtual hailo_status run_in_thread() override;
 
 private:
@@ -488,17 +549,10 @@ public:
 
     virtual hailo_status run_push(PipelineBuffer &&buffer) override;
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
-    virtual hailo_status activate() override;
-    virtual hailo_status deactivate() override;
-    virtual hailo_status post_deactivate() override;
-    virtual hailo_status clear() override;
-    virtual hailo_status flush() override;
-    virtual hailo_status abort() override;
-    virtual void wait_for_finish() override;
-    virtual hailo_status resume() override;
 
 protected:
     virtual Expected<PipelineBuffer> action(std::vector<PipelineBuffer> &&inputs, PipelineBuffer &&optional) = 0;
+    virtual std::vector<PipelinePad*> execution_pads() override;
 
     std::chrono::milliseconds m_timeout;
 };
@@ -512,18 +566,15 @@ public:
 
     virtual hailo_status run_push(PipelineBuffer &&buffer) override;
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
-    virtual hailo_status activate() override;
-    virtual hailo_status deactivate() override;
-    virtual hailo_status post_deactivate() override;
-    virtual hailo_status clear() override;
-    virtual hailo_status flush() override;
-    virtual hailo_status abort() override;
-    virtual void wait_for_finish() override;
-    virtual hailo_status resume() override;
     hailo_status set_timeout(std::chrono::milliseconds timeout);
 
 protected:
+    virtual hailo_status execute_activate() override;
+    virtual hailo_status execute_deactivate() override;
+    virtual hailo_status execute_post_deactivate() override;
+    virtual hailo_status execute_abort() override;
     virtual Expected<std::vector<PipelineBuffer>> action(PipelineBuffer &&input) = 0;
+    virtual std::vector<PipelinePad*> execution_pads() override;
 
     std::chrono::milliseconds m_timeout;
 

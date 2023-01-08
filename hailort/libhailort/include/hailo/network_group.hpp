@@ -39,7 +39,7 @@ using OutputStreamRefVector = std::vector<std::reference_wrapper<OutputStream>>;
 using NameToVStreamParamsMap = std::unordered_map<std::string, hailo_vstream_params_t>;
 
 /** Represents a vector of pairs of OutputStream and NameToVStreamParamsMap */
-using OutputStreamWithParamsVector = std::vector<std::pair<std::reference_wrapper<OutputStream>, NameToVStreamParamsMap>>;
+using OutputStreamWithParamsVector = std::vector<std::pair<std::shared_ptr<OutputStream>, NameToVStreamParamsMap>>;
 
 /** Latency measurement result info */
 struct LatencyMeasurementResult {
@@ -368,9 +368,6 @@ public:
 
 protected:
     ConfiguredNetworkGroup() = default;
-
-    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_internal(
-        const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size) = 0;
 
 private:
     friend class ActivatedNetworkGroup;

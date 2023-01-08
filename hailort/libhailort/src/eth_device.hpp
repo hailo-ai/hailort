@@ -16,7 +16,7 @@
 #include "hailo/hailort.h"
 #include "device_internal.hpp"
 #include "udp.hpp"
-#include "context_switch/single_context/hcp_config_manager.hpp"
+#include "context_switch/single_context/hcp_config_network_group.hpp"
 
 namespace hailort
 {
@@ -61,7 +61,7 @@ public:
 protected:
     virtual Expected<D2H_EVENT_MESSAGE_t> read_notification() override;
     virtual hailo_status disable_notifications() override;
-    virtual ExpectedRef<ConfigManager> get_config_manager() override;
+    virtual Expected<ConfiguredNetworkGroupVector> add_hef(Hef &hef, const NetworkGroupsParamsMap &configure_params) override;
 
 private:
     EthernetDevice(const hailo_eth_device_info_t &device_info, Udp &&control_udp, hailo_status &status);
@@ -69,7 +69,8 @@ private:
     const hailo_eth_device_info_t m_device_info;
     std::string m_device_id;
     Udp m_control_udp;
-    std::unique_ptr<ConfigManager> m_context_switch_manager;
+    std::vector<std::shared_ptr<HcpConfigNetworkGroup>> m_network_groups;
+    ActiveNetGroupHolder m_active_net_group_holder;
 };
 
 } /* namespace hailort */

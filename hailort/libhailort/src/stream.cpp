@@ -12,8 +12,6 @@
 #include "hailo/hailort_common.hpp"
 #include "hailo/transform.hpp"
 #include "common/utils.hpp"
-#include "hef_internal.hpp"
-#include "microprofile.h"
 
 #include <sstream>
 
@@ -27,16 +25,13 @@ hailo_status InputStream::flush()
 
 hailo_status InputStream::write(const MemoryView &buffer)
 {
-    MICROPROFILE_SCOPEI("Stream", "Write", 0);
     CHECK((buffer.size() % get_info().hw_frame_size) == 0, HAILO_INVALID_ARGUMENT,
         "write size {} must be a multiple of hw size {}", buffer.size(), get_info().hw_frame_size);
 
     CHECK(((buffer.size() % HailoRTCommon::HW_DATA_ALIGNMENT) == 0), HAILO_INVALID_ARGUMENT,
         "Input must be aligned to {} (got {})", HailoRTCommon::HW_DATA_ALIGNMENT, buffer.size());
     
-    auto status = sync_write_all_raw_buffer_no_transform_impl(const_cast<uint8_t*>(buffer.data()), 0, buffer.size());
-    MicroProfileFlip(nullptr);
-    return status;
+    return sync_write_all_raw_buffer_no_transform_impl(const_cast<uint8_t*>(buffer.data()), 0, buffer.size());
 }
 
 std::string InputStream::to_string() const
@@ -73,7 +68,7 @@ hailo_status OutputStream::read_nms(void *buffer, size_t offset, size_t size)
             for (;;) {
                 MemoryView buffer_view(static_cast<uint8_t*>(buffer) + offset, transfer_size);
                 auto expected_bytes_read = sync_read_raw_buffer(buffer_view);
-                if ((HAILO_STREAM_INTERNAL_ABORT == expected_bytes_read.status()) ||
+                if ((HAILO_STREAM_ABORTED_BY_USER == expected_bytes_read.status()) ||
                     ((HAILO_STREAM_NOT_ACTIVATED == expected_bytes_read.status()))) {
                     return expected_bytes_read.status();
                 }
@@ -104,7 +99,6 @@ hailo_status OutputStream::read_nms(void *buffer, size_t offset, size_t size)
 
 hailo_status OutputStream::read(MemoryView buffer)
 {
-    MICROPROFILE_SCOPEI("Stream", "Read", 0);
     CHECK((buffer.size() % get_info().hw_frame_size) == 0, HAILO_INVALID_ARGUMENT,
         "When read size {} must be a multiple of hw size {}", buffer.size(), get_info().hw_frame_size);
 

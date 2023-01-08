@@ -47,7 +47,7 @@ public:
         return static_cast<uint32_t>(DESCRIPTORS_IN_BUFFER(buffer_size, page_size));
     }
 
-    virtual hailo_status read(void *buf_dst, size_t count, size_t offset) = 0;
+    virtual hailo_status read(void *buf_dst, size_t count, size_t offset, bool should_sync = true) = 0;
     virtual hailo_status write(const void *buf_src, size_t count, size_t offset) = 0;
 
     virtual Expected<uint32_t> program_descriptors(size_t transfer_size, VdmaInterruptsDomain first_desc_interrupts_domain,

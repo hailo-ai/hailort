@@ -19,6 +19,8 @@
 namespace hailort
 {
 
+#define HAILO_ENABLE_MULTI_DEVICE_SCHEDULER "HAILO_ENABLE_MULTI_DEVICE_SCHEDULER"
+
 /*! Represents a bundle of physical devices. */
 class HAILORTAPI VDevice
 {
@@ -72,22 +74,20 @@ public:
     virtual Expected<std::vector<std::reference_wrapper<Device>>> get_physical_devices() const = 0;
 
     /**
-     * Gets the devices informations.
-     * 
-     * @return Upon success, returns Expected of a vector of ::hailo_pcie_device_info_t objects.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note This function is deprecated. One should use 'get_physical_devices_ids()'
-     */
-    Expected<std::vector<hailo_pcie_device_info_t>> get_physical_devices_infos() const
-        DEPRECATED("'VDevice::get_physical_devices_infos' is deprecated. One should use 'VDevice::get_physical_devices_ids()'.");
-
-    /**
      * Gets the physical device IDs.
      * 
      * @return Upon success, returns Expected of a vector of std::string device ids objects.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     virtual Expected<std::vector<std::string>> get_physical_devices_ids() const = 0;
+
+    /**
+     * Gets the stream's default interface.
+     *
+     * @return Upon success, returns Expected of ::hailo_stream_interface_t.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    virtual Expected<hailo_stream_interface_t> get_default_streams_interface() const = 0;
 
     virtual ~VDevice() = default;
     VDevice(const VDevice &) = delete;

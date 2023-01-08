@@ -17,6 +17,7 @@
 #include "hailort_defaults.hpp"
 #include "shared_resource_manager.hpp"
 #include "context_switch/network_group_internal.hpp"
+#include "context_switch/vdevice_network_group.hpp"
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
 #include "rpc_client_utils.hpp"
@@ -81,6 +82,10 @@ VDeviceHandle::~VDeviceHandle()
 
 Expected<std::unique_ptr<VDevice>> VDeviceHandle::create(const hailo_vdevice_params_t &params)
 {
+    CHECK_AS_EXPECTED((HAILO_SCHEDULING_ALGORITHM_NONE == params.scheduling_algorithm)
+            || (1 == params.device_count) || (VDeviceBase::enable_multi_device_schedeulr()), HAILO_NOT_SUPPORTED,
+        "Multiple devices scheduler feature is preview. To enable it, set env variable 'HAILO_ENABLE_MULTI_DEVICE_SCHEDULER' to 1");
+
     auto &manager = SharedResourceManager<std::string, VDeviceBase>::get_instance();
     auto create = [&params]() {
         return VDeviceBase::create(params);
@@ -127,6 +132,15 @@ Expected<std::vector<std::string>> VDeviceHandle::get_physical_devices_ids() con
     CHECK_EXPECTED(vdevice);
 
     return vdevice.value()->get_physical_devices_ids();
+}
+
+Expected<hailo_stream_interface_t> VDeviceHandle::get_default_streams_interface() const
+{
+    auto &manager = SharedResourceManager<std::string, VDeviceBase>::get_instance();
+    auto vdevice = manager.resource_lookup(m_handle);
+    CHECK_EXPECTED(vdevice);
+
+    return vdevice.value()->get_default_streams_interface();
 }
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
@@ -184,8 +198,7 @@ Expected<ConfiguredNetworkGroupVector> VDeviceClient::configure(Hef &hef,
 
 Expected<std::vector<std::reference_wrapper<Device>>> VDeviceClient::get_physical_devices() const
 {
-    // TODO: HRT-6606
-    LOGGER__ERROR("get_physical_devices is not supported when using multi process service");
+    LOGGER__ERROR("ConfiguredNetworkGroup::get_physical_devices function is not supported when using multi-process service");
     return make_unexpected(HAILO_INVALID_OPERATION);
 }
 
@@ -194,60 +207,23 @@ Expected<std::vector<std::string>> VDeviceClient::get_physical_devices_ids() con
     return m_client->VDevice_get_physical_devices_ids(m_handle);
 }
 
+Expected<hailo_stream_interface_t> VDeviceClient::get_default_streams_interface() const
+{
+    return m_client->VDevice_get_default_streams_interface(m_handle);
+}
+
 #endif // HAILO_SUPPORT_MULTI_PROCESS
 
-static Expected<std::vector<hailo_device_id_t>> convert_device_infos_to_ids(const hailo_vdevice_params_t &params)
-{
-IGNORE_DEPRECATION_WARNINGS_BEGIN
-    assert(params.device_infos != nullptr);
-
-    std::vector<hailo_device_id_t> device_ids;
-    for (uint32_t i = 0; i < params.device_count; i++) {
-        auto device_id_str = Device::pcie_device_info_to_string(params.device_infos[i]);
-        CHECK_EXPECTED(device_id_str);
-
-        auto device_id_struct = HailoRTCommon::to_device_id(device_id_str.value());
-        CHECK_EXPECTED(device_id_struct);
-
-        device_ids.push_back(device_id_struct.release());
-    }
-
-    return device_ids;
-IGNORE_DEPRECATION_WARNINGS_END
-}
 
 Expected<std::unique_ptr<VDevice>> VDevice::create(const hailo_vdevice_params_t &params)
 {
     CHECK_AS_EXPECTED(0 != params.device_count, HAILO_INVALID_ARGUMENT,
         "VDevice creation failed. invalid device_count ({}).", params.device_count);
 
-    CHECK_AS_EXPECTED((HAILO_SCHEDULING_ALGORITHM_NONE == params.scheduling_algorithm)
-            || (1 == params.device_count), HAILO_INVALID_ARGUMENT,
-        "Network group scheduler can be active only when using one device in the vDevice!");
-
-    // Convert device_infos to device_ids
-IGNORE_DEPRECATION_WARNINGS_BEGIN
-    // Save device_ids on this scope to guard the memory.
-    auto local_params = params;
-    std::vector<hailo_device_id_t> device_ids;
-    if (local_params.device_infos != nullptr) {
-        CHECK_AS_EXPECTED(local_params.device_ids == nullptr, HAILO_INVALID_ARGUMENT,
-            "Invalid vdevice params. You can set either device_ids or device_infos");
-        LOGGER__WARN("Passing 'device_infos' in 'hailo_vdevice_params_t' is deprecated. One should use 'device_ids'");
-
-        auto device_ids_expected = convert_device_infos_to_ids(local_params);
-        CHECK_EXPECTED(device_ids_expected);
-
-        device_ids = device_ids_expected.release();
-        local_params.device_ids = device_ids.data();
-        local_params.device_infos = nullptr;
-    }
-IGNORE_DEPRECATION_WARNINGS_END
-
     std::unique_ptr<VDevice> vdevice;
-    if (local_params.multi_process_service) {
+    if (params.multi_process_service) {
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
-        auto expected_vdevice = VDeviceClient::create(local_params);
+        auto expected_vdevice = VDeviceClient::create(params);
         CHECK_EXPECTED(expected_vdevice);
         vdevice = expected_vdevice.release();
 #else
@@ -255,7 +231,7 @@ IGNORE_DEPRECATION_WARNINGS_END
         return make_unexpected(HAILO_INVALID_OPERATION);
 #endif // HAILO_SUPPORT_MULTI_PROCESS
     } else {
-        auto expected_vdevice = VDeviceHandle::create(local_params);
+        auto expected_vdevice = VDeviceHandle::create(params);
         CHECK_EXPECTED(expected_vdevice);
         vdevice = expected_vdevice.release();
     }
@@ -268,23 +244,6 @@ Expected<std::unique_ptr<VDevice>> VDevice::create()
 {
     auto params = HailoRTDefaults::get_vdevice_params();
     return create(params);
-}
-
-Expected<std::vector<hailo_pcie_device_info_t>> VDevice::get_physical_devices_infos() const
-{
-    LOGGER__WARN("VDevice get_physical_devices_infos() is deprecated. one should use get_physical_devices_ids().");
-    auto device_ids = get_physical_devices_ids();
-    CHECK_EXPECTED(device_ids);
-
-    std::vector<hailo_pcie_device_info_t> device_infos;
-    device_infos.reserve(device_ids->size());
-    for (const auto &device_id : device_ids.value()) {
-        auto device_info = Device::parse_pcie_device_info(device_id);
-        CHECK_EXPECTED(device_info);
-        device_infos.emplace_back(device_info.release());
-    }
-
-    return device_infos;
 }
 
 Expected<std::unique_ptr<VDevice>> VDevice::create(const std::vector<std::string> &device_ids)
@@ -305,7 +264,7 @@ Expected<std::unique_ptr<VDeviceBase>> VDeviceBase::create(const hailo_vdevice_p
     NetworkGroupSchedulerPtr scheduler_ptr;
     if (HAILO_SCHEDULING_ALGORITHM_NONE != params.scheduling_algorithm) {
         if (HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN == params.scheduling_algorithm) {
-            auto network_group_scheduler = NetworkGroupScheduler::create_round_robin();
+            auto network_group_scheduler = NetworkGroupScheduler::create_round_robin(params.device_count);
             CHECK_EXPECTED(network_group_scheduler);
             scheduler_ptr = network_group_scheduler.release();
         } else {
@@ -331,41 +290,116 @@ Expected<std::unique_ptr<VDeviceBase>> VDeviceBase::create(const hailo_vdevice_p
     return vdevice;
 }
 
-// TODO - make this function thread-safe.
 Expected<ConfiguredNetworkGroupVector> VDeviceBase::configure(Hef &hef,
     const NetworkGroupsParamsMap &configure_params)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     auto start_time = std::chrono::steady_clock::now();
-    if (!m_context_switch_manager) {
-        auto local_context_switch_manager = VdmaConfigManager::create(*this);
-        CHECK_EXPECTED(local_context_switch_manager);
-        m_context_switch_manager = make_unique_nothrow<VdmaConfigManager>(local_context_switch_manager.release());
-        CHECK_AS_EXPECTED(nullptr != m_context_switch_manager, HAILO_OUT_OF_HOST_MEMORY);
-    }
 
     for (auto &device : m_devices) {
         auto status = device->check_hef_is_compatible(hef);
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
 
-    auto network_groups = m_context_switch_manager->add_hef(hef, configure_params);
-    CHECK_EXPECTED(network_groups);
+    auto local_config_params = configure_params;
+    if (local_config_params.empty()) {
+        // All stream iface should be the same
+        auto stream_interface = m_devices[0]->get_default_streams_interface();
+        CHECK_EXPECTED(stream_interface);
+        auto config_params_exp = hef.create_configure_params(stream_interface.value());
+        CHECK_EXPECTED(config_params_exp);
+        local_config_params = config_params_exp.release();
+    }
+
+    /* Validate batch size is identical for all networks in case scheduler is enabled */
+    if (m_network_group_scheduler) {
+        uint16_t ref_batch_size = UINT16_MAX;
+        for (const auto &ng_params_pair : local_config_params) {
+            for (const auto &network_params_pair : ng_params_pair.second.network_params_by_name) {
+                if (UINT16_MAX == ref_batch_size) {
+                    ref_batch_size = network_params_pair.second.batch_size;
+                }
+                CHECK_AS_EXPECTED(ref_batch_size == network_params_pair.second.batch_size, HAILO_INVALID_OPERATION,
+                    "When scheduler is enabled, all networks should have the same batch_size. configure_params contains {} and {}. "
+                    "To disable scheduler, set HAILO_SCHEDULING_ALGORITHM_NONE in VDevice creation.", ref_batch_size, network_params_pair.second.batch_size);
+            }
+        }
+    }
+
+    ConfiguredNetworkGroupVector added_network_groups;
+    added_network_groups.reserve(configure_params.size());
+
+    for (const auto &network_params_pair : local_config_params) {
+        std::shared_ptr<VDeviceNetworkGroup> identical_ng = nullptr;
+        if (m_network_group_scheduler && PipelineMultiplexer::should_use_multiplexer()) {
+            for (auto &network_group : m_network_groups) {
+                if ((network_group->equals(hef, network_params_pair.first)) && (1 == network_group->get_input_streams().size())) {
+                    // TODO (HRT-8634): Support multi-inputs NGs (multi networks)
+                    identical_ng = network_group;
+                    break;
+                }
+            }
+        }
+        std::shared_ptr<VDeviceNetworkGroup> vdevice_netwrok_group = nullptr;
+        if (identical_ng) {
+            auto vdevice_netwrok_group_exp = VDeviceNetworkGroup::duplicate(identical_ng);
+            CHECK_EXPECTED(vdevice_netwrok_group_exp);
+
+            vdevice_netwrok_group = vdevice_netwrok_group_exp.release();
+
+            vdevice_netwrok_group->set_network_group_handle(identical_ng->network_group_handle());
+            vdevice_netwrok_group->create_vdevice_streams_from_duplicate(identical_ng);
+
+        } else {
+            ConfiguredNetworkGroupVector network_group_bundle; // bundle of the same NGs for all devices
+            network_group_bundle.reserve(m_devices.size());
+
+            for (auto &device : m_devices) {
+                auto ng_vector = device->configure(hef, { std::make_pair(network_params_pair.first, network_params_pair.second) });
+                CHECK_EXPECTED(ng_vector);
+
+                assert(1 == ng_vector->size());
+                network_group_bundle.push_back(ng_vector.release()[0]);
+            }
+
+            auto vdevice_netwrok_group_exp = VDeviceNetworkGroup::create(network_group_bundle, m_network_group_scheduler);
+            CHECK_EXPECTED(vdevice_netwrok_group_exp);
+
+            vdevice_netwrok_group = vdevice_netwrok_group_exp.release();
+
+            auto ng_handle = INVALID_NETWORK_GROUP_HANDLE;
+            if (m_network_group_scheduler) {
+                auto network_group_handle_exp = m_network_group_scheduler->add_network_group(vdevice_netwrok_group);
+                CHECK_EXPECTED(network_group_handle_exp);
+                ng_handle = network_group_handle_exp.release();
+            }
+            vdevice_netwrok_group->set_network_group_handle(ng_handle);
+            auto status = vdevice_netwrok_group->create_vdevice_streams_from_config_params(make_shared_nothrow<PipelineMultiplexer>(), ng_handle);
+            CHECK_SUCCESS_AS_EXPECTED(status);
+
+            m_network_groups.push_back(vdevice_netwrok_group);
+        }
+
+        added_network_groups.push_back(vdevice_netwrok_group);
+    }
 
     auto elapsed_time_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time).count();
     LOGGER__INFO("Configuring HEF on VDevice took {} milliseconds", elapsed_time_ms);
 
-    return network_groups;
+    return added_network_groups;
 }
 
-Expected<Device::Type> VDeviceBase::get_device_type()
+Expected<hailo_stream_interface_t> VDeviceBase::get_default_streams_interface() const
 {
-    auto device_type = m_devices[0]->get_type();
+    auto stream_interface = m_devices[0]->get_default_streams_interface();
+    CHECK_EXPECTED(stream_interface);
     for (auto &dev : m_devices) {
-        CHECK_AS_EXPECTED(device_type == dev->get_type(), HAILO_INTERNAL_FAILURE,
+        auto current_stream_interface = dev->get_default_streams_interface();
+        CHECK_EXPECTED(current_stream_interface);
+        CHECK_AS_EXPECTED(*current_stream_interface == *stream_interface, HAILO_INTERNAL_FAILURE,
             "vDevice is supported only with homogeneous device type");
     }
-    return device_type;
+    return stream_interface.release();
 }
 
 Expected<std::vector<std::unique_ptr<VdmaDevice>>> VDeviceBase::create_devices(const hailo_vdevice_params_t &params)

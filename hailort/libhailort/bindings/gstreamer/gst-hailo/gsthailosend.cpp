@@ -176,6 +176,19 @@ hailo_status HailoSendImpl::write_to_vstreams(void *buf, size_t size)
     return HAILO_SUCCESS;
 }
 
+uint32_t get_height_by_order(const hailo_vstream_info_t &input_vstream_info)
+{
+    auto original_height = input_vstream_info.shape.height;
+    switch (input_vstream_info.format.order) {
+    case HAILO_FORMAT_ORDER_NV12:
+    case HAILO_FORMAT_ORDER_NV21:
+        return original_height * 2;
+    default:
+        break;
+    }
+    return original_height;
+}
+
 GstCaps *HailoSendImpl::get_caps(GstBaseTransform */*trans*/, GstPadDirection /*direction*/, GstCaps *caps, GstCaps */*filter*/)
 {
     GST_DEBUG_OBJECT(m_element, "transform_caps");
@@ -192,6 +205,7 @@ GstCaps *HailoSendImpl::get_caps(GstBaseTransform */*trans*/, GstPadDirection /*
     
     const gchar *format = nullptr;
     switch (m_input_vstream_infos[0].format.order) {
+    case HAILO_FORMAT_ORDER_RGB4:
     case HAILO_FORMAT_ORDER_NHWC:
         if (m_input_vstream_infos[0].shape.features == RGBA_FEATURES_SIZE) {
             format = "RGBA";
@@ -232,10 +246,10 @@ GstCaps *HailoSendImpl::get_caps(GstBaseTransform */*trans*/, GstPadDirection /*
 
     /* filter against set allowed caps on the pad */
     GstCaps *new_caps = gst_caps_new_simple("video/x-raw",
-                               "format", G_TYPE_STRING, format,
-                               "width", G_TYPE_INT, m_input_vstream_infos[0].shape.width,
-                               "height", G_TYPE_INT, m_input_vstream_infos[0].shape.height,
-                               NULL);
+                                            "format", G_TYPE_STRING, format,
+                                            "width", G_TYPE_INT, m_input_vstream_infos[0].shape.width,
+                                            "height", G_TYPE_INT, get_height_by_order(m_input_vstream_infos[0]),
+                                            NULL);
     return gst_caps_intersect(caps, new_caps);
 }
 
@@ -252,6 +266,15 @@ void HailoSendImpl::set_input_vstreams(std::vector<InputVStream> &&input_vstream
 hailo_status HailoSendImpl::clear_vstreams()
 {
     return InputVStream::clear(m_input_vstreams);
+}
+
+hailo_status HailoSendImpl::abort_vstreams()
+{
+    for (auto& input_vstream : m_input_vstreams) {
+        auto status = input_vstream.abort();
+        GST_CHECK_SUCCESS(status, m_element, STREAM, "Failed aborting input vstream %s, status = %d", input_vstream.name().c_str(), status);
+    }
+    return HAILO_SUCCESS;
 }
 
 static void gst_hailosend_init(GstHailoSend *self)
@@ -303,6 +326,8 @@ static GstStateChangeReturn gst_hailosend_change_state(GstElement *element, GstS
     }
 
     if (GST_STATE_CHANGE_READY_TO_NULL == transition) {
+        auto status = GST_HAILOSEND(element)->impl->abort_vstreams();
+        GST_CHECK(HAILO_SUCCESS == status, GST_STATE_CHANGE_FAILURE, element, STREAM, "Aborting input vstreams failed, status = %d\n", status);
         // Cleanup all of hailosend memory
         GST_HAILOSEND(element)->impl.reset();
     }

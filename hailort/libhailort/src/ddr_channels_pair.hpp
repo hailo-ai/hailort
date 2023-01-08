@@ -23,6 +23,7 @@ struct DdrChannelsInfo
     uint8_t d2h_stream_index;
     vdma::ChannelId h2d_channel_id;
     uint8_t h2d_stream_index;
+    uint8_t network_index;
     uint16_t row_size;
     uint16_t min_buffered_rows;
     // total_buffers_per_frame not same as core_buffer_per frame. 
@@ -37,7 +38,7 @@ public:
 
     uint16_t descs_count() const;
     uint32_t descriptors_per_frame() const;
-    Expected<Buffer> read();
+    Expected<Buffer> read() const;
     const DdrChannelsInfo & info() const;
 
     // Checks if the credits are automaticaly going from d2h channel to its h2d channel, or it needs to be done manually

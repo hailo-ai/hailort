@@ -147,9 +147,28 @@ public:
         }
     }
 
+    /**
+     * Indicates whether the @a quant_info contains the identity scale.
+     * If true there is no need to fix the data's scale.
+     */
     static inline bool is_identity_qp(const hailo_quant_info_t &quant_info)
     {
         return ((1 == quant_info.qp_scale) && (0 == quant_info.qp_zp));
+    }
+
+    /**
+     * De-quantize @a number from data type @a Q to data type @a T and fix it's scale according to @a quant_info.
+     *
+     * @param[in] number                   The value to be de-quantized.
+     * @param[in] quant_info               Quantization info.
+     *
+     * @return Returns the dequantized value of @a number.
+     *
+     */
+    template <typename T, typename Q>
+    static inline T dequantize_output(Q number, hailo_quant_info_t quant_info)
+    {
+        return (T)((number - quant_info.qp_zp) * quant_info.qp_scale);
     }
 
 private:
@@ -171,12 +190,6 @@ private:
         else {
             return n;
         }
-    }
-
-    template <typename T, typename Q>
-    static inline T dequantize_output(Q number, hailo_quant_info_t quant_info)
-    {
-        return (T)((number - quant_info.qp_zp) * quant_info.qp_scale);
     }
 };
 

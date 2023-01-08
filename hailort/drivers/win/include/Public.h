@@ -102,7 +102,7 @@ struct tCompatibleHailoIoctlData
     tCompatibleHailoIoctlParam Parameters;
     ULONG_PTR Value;
     union {
-        hailo_bar_transfer_params BarTransfer;
+        hailo_memory_transfer_params MemoryTransfer;
         hailo_vdma_channel_enable_params ChannelEnable;
         hailo_vdma_channel_disable_params ChannelDisable;
         hailo_vdma_channel_wait_params ChannelWait;

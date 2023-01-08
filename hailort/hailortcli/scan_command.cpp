@@ -16,12 +16,6 @@
 ScanSubcommand::ScanSubcommand(CLI::App &parent_app) :
     Command(parent_app.add_subcommand("scan", "Shows all available devices"))
 {
-    auto *device_type_option = m_app->add_option("-d,--device-type,--target", "ignored.");
-    std::vector<DeprecationActionPtr> actions{
-        std::make_shared<OptionDeprecation>(device_type_option),
-    };
-    hailo_deprecate_options(m_app, actions, false);
-
     // Ethernet options
     auto *eth_options_group = m_app->add_option_group("Ethernet Device Options");
     auto *interface_ip_option = eth_options_group->add_option("--interface-ip", m_interface_ip_addr,

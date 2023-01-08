@@ -29,7 +29,7 @@ typedef enum {
 
 typedef enum {
     D2H_EVENT_COMMUNICATION_TYPE_UDP = 0,
-    D2H_EVENT_COMMUNICATION_TYPE_PCIE,
+    D2H_EVENT_COMMUNICATION_TYPE_VDMA,
     D2H_EVENT_COMMUNICATION_TYPE__COUNT
 } D2H_EVENT_COMMUNICATION_TYPE_t;
 
@@ -72,7 +72,7 @@ typedef struct {
 typedef struct {
     uint32_t connection_status;
     uint32_t connection_type;
-    uint32_t pcie_is_active;
+    uint32_t vdma_is_active;
     uint32_t host_port;
     uint32_t host_ip_addr;
 } D2H_EVENT_host_info_event_message_t;
@@ -156,7 +156,16 @@ typedef struct {
     D2H_EVENT__message_parameters_t message_parameters;
 } D2H_EVENT_MESSAGE_t;
 
-#define PCIE_D2H_EVENT_MAX_SIZE (0x370)
+#define D2H_EVENT_BUFFER_NOT_IN_USE (0)
+#define D2H_EVENT_BUFFER_IN_USE (1)
+#define D2H_EVENT_MAX_SIZE (0x370)
+
+typedef struct {
+    uint16_t is_buffer_in_use;
+    uint16_t buffer_len;
+    uint8_t buffer[D2H_EVENT_MAX_SIZE];
+} D2H_event_buffer_t;
+
 /**********************************************************************
  * Public Functions
  **********************************************************************/

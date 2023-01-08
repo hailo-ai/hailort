@@ -42,7 +42,7 @@ Expected<Buffer> read_binary_file(const std::string &file_path)
     auto file_size = get_istream_size(file);
     CHECK_EXPECTED(file_size, "Failed to get file size");
 
-    auto buffer =  Buffer::create(file_size.value());
+    auto buffer = Buffer::create(file_size.value());
     CHECK_EXPECTED(buffer, "Failed to allocate file buffer ({} bytes}", file_size.value());
 
     // Read the data

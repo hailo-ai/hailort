@@ -49,12 +49,6 @@ class HailoDeviceCmdUtil(CmdUtilsBaseUtil):
 
 
     def validate_args(self, args):
-        if args.target == HailoCLITargets.udp.value:
-            if not args.ip:
-                self._parser.error('When using --target udp, you must supply --ip')
-            if args.board_location:
-                self._parser.error("When using --target udp, you must not supply --board-location")
-
         if args.board_location:
             all_devices = InternalPcieDevice.scan_devices()
             if args.board_location not in all_devices:
@@ -62,8 +56,6 @@ class HailoDeviceCmdUtil(CmdUtilsBaseUtil):
                     .format(args.board_location))
 
     def add_target_args(self, args_parser):
-        args_parser.add_argument('--target', type=str, choices=[t.value for t in HailoCLITargets],
-                                 default=None, help='Device type to use')
         args_parser.add_argument('--ip', type=str, default=None, help='IP address of the target (udp)')
         args_parser.add_argument('-s', '--board-location', help=PcieDeviceInfo.BOARD_LOCATION_HELP_STRING,
                                  type=PcieDeviceInfo.argument_type)

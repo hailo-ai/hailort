@@ -11,9 +11,11 @@
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
 
+#include <iostream>
 #include <errno.h>
 #include <sys/stat.h>
 #include <sys/file.h>
+#include <pwd.h>
 
 namespace hailort
 {
@@ -145,7 +147,12 @@ static_assert(false, "Unsupported Platform!");
 Expected<bool> Filesystem::is_directory(const std::string &path)
 {
     struct stat path_stat{};
-    CHECK(0 == stat(path.c_str(), &path_stat), make_unexpected(HAILO_FILE_OPERATION_FAILURE),
+    auto ret_Val = stat(path.c_str(), &path_stat);
+    if (ret_Val != 0 && (errno == ENOENT)) {
+        // Directory path does not exist
+        return false;
+    }
+    CHECK(0 == ret_Val, make_unexpected(HAILO_FILE_OPERATION_FAILURE),
         "stat() on path \"{}\" failed. errno {}", path.c_str(), errno);
 
    return S_ISDIR(path_stat.st_mode);
@@ -156,6 +163,54 @@ hailo_status Filesystem::create_directory(const std::string &dir_path)
     auto ret_val = mkdir(dir_path.c_str(), S_IRWXU | S_IRWXG | S_IRWXO );
     CHECK((ret_val == 0) || (errno == EEXIST), HAILO_FILE_OPERATION_FAILURE, "Failed to create directory {}", dir_path);
     return HAILO_SUCCESS;
+}
+
+Expected<std::string> Filesystem::get_current_dir()
+{
+    char cwd[PATH_MAX];
+    auto ret_val = getcwd(cwd, sizeof(cwd));
+    CHECK_AS_EXPECTED(nullptr != ret_val, HAILO_FILE_OPERATION_FAILURE, "Failed to get current directory path with errno {}", errno);
+
+    return std::string(cwd);
+}
+
+std::string Filesystem::get_home_directory()
+{
+    const char *homedir = getenv("HOME");
+    if (NULL == homedir) {
+        homedir = getpwuid(getuid())->pw_dir;
+    }
+
+#ifdef __QNX__
+    const std::string root_dir = "/";
+    std::string homedir_str = std::string(homedir);
+    if (homedir_str == root_dir) {
+        return homedir_str + "home";
+    }
+#endif
+
+    return homedir;
+}
+
+bool Filesystem::is_path_accesible(const std::string &path)
+{
+    auto ret = access(path.c_str(), W_OK);
+    if (ret == 0) {
+        return true;
+    }
+    else if (EACCES == errno) {
+        return false;
+    } else {
+        std::cerr << "Failed checking path " << path << " access permissions, errno = " << errno << std::endl;
+        return false;
+    }
+}
+
+bool Filesystem::does_file_exists(const std::string &path)
+{
+    // From https://stackoverflow.com/a/12774387
+    struct stat buffer;
+    return (0 == stat(path.c_str(), &buffer));
 }
 
 Expected<TempFile> TempFile::create(const std::string &file_name, const std::string &file_directory)
@@ -211,11 +266,17 @@ LockedFile::LockedFile(FILE *fp, int fd) : m_fp(fp), m_fd(fd)
 
 LockedFile::~LockedFile()
 {
-    if (-1 == flock(m_fd, LOCK_UN)) {
-        LOGGER__ERROR("Failed to unlock file with errno {}", errno);
+    if (m_fp != nullptr) {
+        // The lock is released when all descriptors are closed.
+        // Since we use LOCK_EX, this is the only fd open and the lock will be release after d'tor.
         fclose(m_fp);
     }
 }
+
+LockedFile::LockedFile(LockedFile &&other) :
+    m_fp(std::exchange(other.m_fp, nullptr)),
+    m_fd(other.m_fd)
+{}
 
 int LockedFile::get_fd() const
 {

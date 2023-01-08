@@ -96,15 +96,24 @@ typedef enum __attribute__((packed)) {
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_DEACTIVATE_CFG_CHANNEL,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_REPEATED_ACTION,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_DMA_IDLE_ACTION,
-    CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_NMS_IDLE,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_NMS,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_CCW_BURSTS,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_VALIDATE_VDMA_CHANNEL,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_BURST_CREDITS_TASK_START,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_DDR_BUFFERING_RESET,
-    
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_OPEN_BOUNDARY_INPUT_CHANNEL,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_OPEN_BOUNDARY_OUTPUT_CHANNEL,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_ENABLE_NMS,
+
     /* Must be last */
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT
 } CONTEXT_SWITCH_DEFS__ACTION_TYPE_t;
+
+typedef enum {
+    CONTEXT_SWITCH_DEFS__EDGE_LAYER_DIRECTION_UNINITIALIZED = 0,
+    CONTEXT_SWITCH_DEFS__EDGE_LAYER_DIRECTION_HOST_TO_DEVICE,
+    CONTEXT_SWITCH_DEFS__EDGE_LAYER_DIRECTION_DEVICE_TO_HOST,
+} CONTEXT_SWITCH_DEFS__EDGE_LAYER_DIRECTION_t;
 
 typedef struct {
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_t action_type;
@@ -117,7 +126,7 @@ typedef struct {
  * 2) CONTEXT_SWITCH_DEFS__repeated_action_header_t
  * 3) 'count' sub-actions whose type matches the 'sub_action_type' defined by (1).
  *    The sub-actions will be consecutive, and won't have 'CONTEXT_SWITCH_DEFS__common_action_header_t's
- * 
+ *
  * E.g - 3 repeated 'CONTEXT_SWITCH_DEFS__enable_lcu_action_default_data_t's:
  * |-------------------------------------------------------------------------------------------------------|
  * | action_list |                                        data                                             |
@@ -165,8 +174,19 @@ typedef struct {
 } CONTEXT_SWITCH_DEFS__fetch_ccw_bursts_action_data_t;
 
 typedef struct {
+    uint8_t initial_l3_cut;
+    uint16_t initial_l3_offset;
+    uint32_t active_apu;
+    uint32_t active_ia;
+    uint64_t active_sc;
+    uint64_t active_l2;
+    uint64_t l2_offset_0;
+    uint64_t l2_offset_1;
+} CONTEXT_SWITCH_DEFS__sequencer_config_t;
+
+typedef struct {
     uint8_t cluster_index;
-    CONTORL_PROTOCOL__sequencer_config_t sequencer_config;
+    CONTEXT_SWITCH_DEFS__sequencer_config_t sequencer_config;
 } CONTEXT_SWITCH_DEFS__trigger_sequencer_action_data_t;
 
 typedef struct {
@@ -198,17 +218,22 @@ typedef struct {
     uint8_t packed_vdma_channel_id;
     uint8_t edge_layer_direction;
     bool is_inter_context;
-    bool is_single_context_network_group;
     uint8_t host_buffer_type;  // CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t
     uint32_t initial_credit_size;
 } CONTEXT_SWITCH_DEFS__validate_vdma_channel_action_data_t;
+
+typedef enum {
+    CONTEXT_SWITCH_DEFS__CREDIT_TYPE_UNINITIALIZED = 0,
+    CONTEXT_SWITCH_DEFS__CREDIT_IN_BYTES,
+    CONTEXT_SWITCH_DEFS__CREDIT_IN_DESCRIPTORS,
+} CONTEXT_SWITCH_DEFS__CREDIT_TYPE_t;
 
 typedef struct {
     uint8_t packed_vdma_channel_id;
     uint8_t stream_index;
     uint8_t network_index;
     uint32_t frame_periph_size;
-    uint8_t credit_type;
+    uint8_t credit_type;  // CONTEXT_SWITCH_DEFS__CREDIT_TYPE_t
     uint16_t periph_bytes_per_buffer;
     uint8_t host_buffer_type;  // CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t, relevant only for descriptors credit.
 } CONTEXT_SWITCH_DEFS__fetch_data_action_data_t;
@@ -247,7 +272,7 @@ typedef struct {
     uint8_t pred_cluster_ob_interface;
     uint8_t succ_prepost_ob_index;
     uint8_t succ_prepost_ob_interface;
-} CONTEXT_SWITCH_DEFS__wait_nms_idle_data_t;
+} CONTEXT_SWITCH_DEFS__wait_nms_data_t;
 
 typedef struct {
     uint8_t packed_vdma_channel_id;
@@ -259,10 +284,6 @@ typedef struct {
     uint8_t module_index;
 } CONTEXT_SWITCH_DEFS__module_config_done_interrupt_data_t;
 
-typedef struct {
-    uint8_t application_index;
-} CONTEXT_SWITCH_DEFS__application_change_interrupt_data_t;
-
 /* edge layers structs */
 typedef struct {
     uint8_t packed_vdma_channel_id;
@@ -270,7 +291,6 @@ typedef struct {
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
     CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
     uint32_t initial_credit_size;
-    bool is_single_context_app;
 } CONTEXT_SWITCH_DEFS__activate_boundary_input_data_t;
 
 typedef struct {
@@ -314,14 +334,15 @@ typedef struct {
     uint32_t buffered_rows_count;
 } CONTEXT_SWITCH_DEFS__activate_ddr_buffer_output_data_t;
 
-typedef union {
-    CONTEXT_SWITCH_DEFS__activate_boundary_input_data_t activate_boundary_input_data;
-    CONTEXT_SWITCH_DEFS__activate_inter_context_input_data_t activate_inter_context_input_data;
-    CONTEXT_SWITCH_DEFS__activate_ddr_buffer_input_data_t activate_ddr_buffer_input_data;
-    CONTEXT_SWITCH_DEFS__activate_boundary_output_data_t activate_boundary_output_data;
-    CONTEXT_SWITCH_DEFS__activate_inter_context_output_data_t activate_inter_context_output_data;
-    CONTEXT_SWITCH_DEFS__activate_ddr_buffer_output_data_t activate_ddr_buffer_output_data;
-} CONTEXT_SWITCH_COMMON__activate_edge_layer_action_t;
+typedef struct {
+    uint8_t packed_vdma_channel_id;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
+} CONTEXT_SWITCH_DEFS__open_boundary_input_channel_data_t;
+
+typedef struct {
+    uint8_t packed_vdma_channel_id;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
+} CONTEXT_SWITCH_DEFS__open_boundary_output_channel_data_t;
 
 typedef struct {
     uint8_t packed_vdma_channel_id;
@@ -333,6 +354,11 @@ typedef struct {
     uint8_t packed_vdma_channel_id;
     uint8_t config_stream_index;
 } CONTEXT_SWITCH_DEFS__deactivate_cfg_channel_t;
+
+typedef struct {
+    uint8_t nms_unit_index;
+    uint8_t network_index;
+} CONTEXT_SWITCH_DEFS__enable_nms_action_t;
 
 #pragma pack(pop)
 

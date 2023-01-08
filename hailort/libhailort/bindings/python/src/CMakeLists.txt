@@ -3,6 +3,10 @@ cmake_minimum_required(VERSION 3.0.0)
 option(HAILO_BUILD_PYHAILORT_INTERNAL OFF)
 
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    if(NOT DEFINED PYBIND11_PYTHON_VERSION)
+        message(FATAL_ERROR "PYBIND11_PYTHON_VERSION is not defined. To build _pyhailort, pass python version")
+    endif()
+
     string(REPLACE "." "" dpython ${PYBIND11_PYTHON_VERSION}) # E.g "3.5" -> "35"
     if(${dpython} LESS "38")
         set(m_flag "m")
@@ -45,11 +49,24 @@ exclude_archive_libs_symbols(_pyhailort)
 
 if (HAILO_BUILD_PYHAILORT_INTERNAL)
     add_subdirectory(internal)
-    # copy files to venv
-    if(HAILO_BUILD_PYHAILORT_VENV)
-        add_custom_target(pyhailort_internal_venv ALL
-            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:_pyhailort_internal> ${PROJECT_SOURCE_DIR}/platform_internals/hailo_platform_internals/pyhailort/
-        )
-        add_dependencies(pyhailort_internal_venv _pyhailort_internal)
-    endif()
+    # copy files to a path the venv will look for
+    add_custom_target(pyhailort_internal_venv ALL
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:_pyhailort_internal> ${PROJECT_SOURCE_DIR}/platform_internals/hailo_platform_internals/pyhailort/
+    )
+    add_dependencies(pyhailort_internal_venv _pyhailort_internal)
 endif()
+
+# TODO (HRT-8637): change this hard-coded path
+set(HAILO_PYHAILORT_TARGET_DIR ${CMAKE_CURRENT_LIST_DIR}/../platform/hailo_platform/pyhailort/)
+
+# copy files to a path the venv and whl will look for
+message(STATUS "Copying _pyhailort artifacts into " ${HAILO_PYHAILORT_TARGET_DIR})
+add_custom_target(pyhailort_venv ALL
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:_pyhailort> ${HAILO_PYHAILORT_TARGET_DIR}
+)
+add_dependencies(pyhailort_venv _pyhailort)
+
+install(TARGETS _pyhailort
+    LIBRARY DESTINATION ${HAILO_PYHAILORT_TARGET_DIR}
+    CONFIGURATIONS Release
+)

@@ -17,16 +17,16 @@ def join_drivers_path(path):
 from hailo_platform.tools.udp_rate_limiter import UDPRateLimiter
 from hailo_platform.pyhailort.hw_object import PcieDevice, EthernetDevice
 from hailo_platform.pyhailort.pyhailort import (HEF, ConfigureParams,
-                                                      FormatType, FormatOrder,
-                                                      MipiDataTypeRx, MipiPixelsPerClock,
-                                                      MipiClockSelection, MipiIspImageInOrder,
-                                                      MipiIspImageOutDataType, IspLightFrequency, HailoPowerMode,
-                                                      Endianness, HailoStreamInterface,
-                                                      InputVStreamParams, OutputVStreamParams,
-                                                      InputVStreams, OutputVStreams,
-                                                      InferVStreams, HailoStreamDirection, HailoFormatFlags, HailoCpuId, Device, VDevice,
-                                                      DvmTypes, PowerMeasurementTypes, SamplingPeriod, AveragingFactor, MeasurementBufferIndex,
-                                                      HailoRTException)
+                                                FormatType, FormatOrder,
+                                                MipiDataTypeRx, MipiPixelsPerClock,
+                                                MipiClockSelection, MipiIspImageInOrder,
+                                                MipiIspImageOutDataType, IspLightFrequency, HailoPowerMode,
+                                                Endianness, HailoStreamInterface,
+                                                InputVStreamParams, OutputVStreamParams,
+                                                InputVStreams, OutputVStreams,
+                                                InferVStreams, HailoStreamDirection, HailoFormatFlags, HailoCpuId, Device, VDevice,
+                                                DvmTypes, PowerMeasurementTypes, SamplingPeriod, AveragingFactor, MeasurementBufferIndex,
+                                                HailoRTException, YOLOv5PostProcessingOp)
 
 def _verify_pyhailort_lib_exists():
     python_version = "".join(str(i) for i in sys.version_info[:2])
@@ -62,4 +62,4 @@ __all__ = ['EthernetDevice', 'DvmTypes', 'PowerMeasurementTypes',
            'MipiIspImageInOrder', 'MipiIspImageOutDataType', 'join_drivers_path', 'IspLightFrequency', 'HailoPowerMode',
            'Endianness', 'HailoStreamInterface', 'InputVStreamParams', 'OutputVStreamParams',
            'InputVStreams', 'OutputVStreams', 'InferVStreams', 'HailoStreamDirection', 'HailoFormatFlags', 'HailoCpuId',
-           'Device', 'VDevice', 'HailoRTException']
+           'Device', 'VDevice', 'HailoRTException', 'YOLOv5PostProcessingOp']

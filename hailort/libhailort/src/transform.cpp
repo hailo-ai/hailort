@@ -17,7 +17,6 @@
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
 #include "transform_internal.hpp"
-#include "microprofile.h"
 
 #include <type_traits>
 #include <sstream>
@@ -52,11 +51,11 @@ bool TransformContextUtils::should_reorder(const hailo_3d_image_shape_t &src_ima
 {
 
     /* If shapes and format are different - need to use transform_context */
-    if  (!((src_image_shape.features    == dst_image_shape.features)     && 
-            (src_image_shape.height         == dst_image_shape.height)   && 
-            (src_image_shape.width          == dst_image_shape.width)    &&
-            (src_format.order               == dst_format.order)         &&
-            (src_format.type                == dst_format.type))) {
+    if  (!((src_image_shape.features        == dst_image_shape.features) &&
+           (src_image_shape.height          == dst_image_shape.height)   && 
+           (src_image_shape.width           == dst_image_shape.width)    &&
+           (src_format.order                == dst_format.order)         &&
+           (src_format.type                 == dst_format.type))) {
         return true;
     }
 
@@ -208,7 +207,7 @@ hailo_status transpose_buffer(const MemoryView src, const hailo_3d_image_shape_t
 
 
 /* Re-Ordering funcs */
-template <typename T>
+template<typename T>
 void transform__h2d_NHWC_to_NHWC(const T *src_ptr, hailo_3d_image_shape_t *src_image_shape,
     T *dst_ptr, hailo_3d_image_shape_t *dst_image_shape)
 {
@@ -230,7 +229,7 @@ void transform__h2d_NHWC_to_NHWC(const T *src_ptr, hailo_3d_image_shape_t *src_i
     }
 }
 
-template <typename T>
+template<typename T>
 void transform__d2h_NHWC_to_NHWC(const T *src_ptr, hailo_3d_image_shape_t *src_image_shape,
     T *dst_ptr, hailo_3d_image_shape_t *dst_image_shape)
 {
@@ -251,7 +250,7 @@ void transform__d2h_NHWC_to_NHWC(const T *src_ptr, hailo_3d_image_shape_t *src_i
     }
 }
 
-template <typename T>
+template<typename T>
 void transform__h2d_NV12_to_NV12(const T *src_ptr, hailo_3d_image_shape_t *src_image_shape, T *dst_ptr, hailo_3d_image_shape_t *dst_image_shape)
 {
     /* Validate arguments */
@@ -287,7 +286,7 @@ void transform__h2d_NV12_to_NV12(const T *src_ptr, hailo_3d_image_shape_t *src_i
     }
 }
 
-template <typename T>
+template<typename T>
 void transform__h2d_NHWC_to_NHCW(const T *src_ptr, hailo_3d_image_shape_t *src_image_shape,
     T *dst_ptr, hailo_3d_image_shape_t *dst_image_shape)
 {
@@ -319,7 +318,7 @@ void transform__h2d_NHWC_to_NHCW(const T *src_ptr, hailo_3d_image_shape_t *src_i
     }
 }
 
-template <typename T>
+template<typename T>
 void transform__d2h_NHCW_to_NHWC(const T *src_ptr, hailo_3d_image_shape_t *src_image_shape,
     T *dst_ptr, hailo_3d_image_shape_t *dst_image_shape)
 {
@@ -343,7 +342,7 @@ void transform__d2h_NHCW_to_NHWC(const T *src_ptr, hailo_3d_image_shape_t *src_i
     }
 }
 
-template <typename T>
+template<typename T>
 void transform__d2h_NHW_to_NHW(const T *src_ptr, hailo_3d_image_shape_t *src_image_shape, T *dst_ptr,
     hailo_3d_image_shape_t *dst_image_shape)
 {
@@ -358,7 +357,7 @@ void transform__d2h_NHW_to_NHW(const T *src_ptr, hailo_3d_image_shape_t *src_ima
     }
 }
 
-template <typename T>
+template<typename T>
 void transform__h2d_NC_to_NC(const T *src_ptr, hailo_3d_image_shape_t *src_image_shape,
     T *dst_ptr, hailo_3d_image_shape_t *dst_image_shape)
 {
@@ -371,7 +370,7 @@ void transform__h2d_NC_to_NC(const T *src_ptr, hailo_3d_image_shape_t *src_image
     memset(dst_ptr + src_image_shape->features, 0, (dst_image_shape->features - src_image_shape->features) * sizeof(T));
 }
 
-template <typename T>
+template<typename T>
 void transform__d2h_NC_to_NC(const T *src_ptr, T *dst_ptr, hailo_3d_image_shape_t *dst_image_shape)
 {
     /* Validate arguments */
@@ -448,7 +447,7 @@ void transform__d2h_NMS(const uint8_t *src_ptr, uint8_t *dst_ptr, const hailo_nm
     }
 }
 
-template <typename T>
+template<typename T>
 void transform__h2d_FCR(const T *src_ptr, hailo_3d_image_shape_t *src_image_shape,
     T *dst_ptr, hailo_3d_image_shape_t *dst_image_shape)
 {
@@ -474,7 +473,7 @@ void transform__h2d_FCR(const T *src_ptr, hailo_3d_image_shape_t *src_image_shap
     }
 }
 
-template <typename T>
+template<typename T>
 void transform__h2d_F8CR(const T *src_ptr, hailo_3d_image_shape_t *src_image_shape,
     T *dst_ptr, hailo_3d_image_shape_t *dst_image_shape)
 {
@@ -511,7 +510,7 @@ void transform__h2d_F8CR(const T *src_ptr, hailo_3d_image_shape_t *src_image_sha
     }
 }
 
-template <typename T>
+template<typename T>
 void transform__d2h_F8CR(const T *src_ptr, hailo_3d_image_shape_t *src_image_shape,
     T *dst_ptr, hailo_3d_image_shape_t *dst_image_shape)
 {
@@ -543,7 +542,7 @@ void transform__d2h_F8CR(const T *src_ptr, hailo_3d_image_shape_t *src_image_sha
     }
 }
 
-template <typename T>
+template<typename T>
 void transform__d2h_BAYER_RGB(const T *src_ptr, hailo_3d_image_shape_t *src_image_shape,
     T *dst_ptr, hailo_3d_image_shape_t *dst_image_shape)
 {
@@ -561,7 +560,7 @@ void transform__d2h_BAYER_RGB(const T *src_ptr, hailo_3d_image_shape_t *src_imag
     }
 }
 
-template <typename T>
+template<typename T>
 hailo_status transform__h2d_NHWC_to_RGB888(const T *src_ptr, hailo_3d_image_shape_t *src_image_shape,
     T *dst_ptr, hailo_3d_image_shape_t *dst_image_shape)
 {
@@ -720,7 +719,7 @@ hailo_status transform__d2h_argmax_NHCW_to_NHW(const T *src_ptr, const hailo_3d_
 }
 
 
-template <typename T>
+template<typename T>
 hailo_status transform__h2d_YUY2_to_YUY2(const T *src_ptr, T *dst_ptr, uint32_t shape_size)
 {
     /* Validate arguments */
@@ -731,6 +730,71 @@ hailo_status transform__h2d_YUY2_to_YUY2(const T *src_ptr, T *dst_ptr, uint32_t 
           "YUY2_to_YUY2 Transform shape_size must be aligned to {}", HW_DATA_ALIGNMENT);
 
     std::copy_n(src_ptr, shape_size, dst_ptr);
+
+    return HAILO_SUCCESS;
+}
+
+template<typename T>
+hailo_status transform__h2d_RGB4_to_NHWC(const T *src_ptr, const hailo_3d_image_shape_t &src_image_shape, T *dst_ptr,
+    const hailo_3d_image_shape_t &dst_image_shape)
+{
+    /* Validate arguments */
+    ASSERT(NULL != src_ptr);
+    ASSERT(NULL != dst_ptr);
+
+    const auto row_size = src_image_shape.width * src_image_shape.features;
+    const auto src_row_size = HailoRTCommon::align_to(row_size, RGB4_ALIGNMENT);
+    const auto dst_row_size = dst_image_shape.width * dst_image_shape.features;
+
+    const auto pad_size = (dst_image_shape.width - src_image_shape.width) * dst_image_shape.features;
+
+    uint32_t src_offset = 0;
+    uint32_t dst_offset = 0;
+
+    for (uint32_t r = 0; r < dst_image_shape.height; r++) {
+        src_offset = r * src_row_size;
+        dst_offset = r * dst_row_size;
+        memcpy(dst_ptr + dst_offset, src_ptr + src_offset, src_row_size * sizeof(T));
+        if (pad_size != 0) {
+            std::fill_n(dst_ptr + dst_offset + src_row_size, pad_size, static_cast<T>(0));
+        }
+    }
+
+    return HAILO_SUCCESS;
+}
+
+template<typename T>
+hailo_status transform__h2d_RGB4_to_NHCW(const T *src_ptr, const hailo_3d_image_shape_t &src_image_shape, T *dst_ptr,
+    const hailo_3d_image_shape_t &dst_image_shape)
+{
+    /* Validate arguments */
+    ASSERT(NULL != src_ptr);
+    ASSERT(NULL != dst_ptr);
+
+    const auto row_size = src_image_shape.width * src_image_shape.features;
+    const auto src_row_size = HailoRTCommon::align_to(row_size, RGB4_ALIGNMENT);
+    const auto dst_row_size = dst_image_shape.width * dst_image_shape.features;
+
+    const auto pad_size = (dst_image_shape.width - src_image_shape.width) * dst_image_shape.features;
+
+    uint32_t src_offset = 0;
+    uint32_t dst_offset = 0;
+
+    for (uint32_t r = 0; r < src_image_shape.height ; r++) {
+        /* transpose - switch width and channels */
+        for (uint32_t f = 0; f < src_image_shape.features; f++) {
+            for (uint32_t c = 0; c < src_image_shape.width; c++) {
+                src_offset = r * src_row_size + c * src_image_shape.features + f;
+                dst_offset = r * dst_row_size + f * dst_image_shape.width + c;
+                dst_ptr[dst_offset] = src_ptr[src_offset];
+            }
+            /* pad feature to 8 elemnts */
+            if (pad_size != 0) {
+                dst_offset = r * dst_row_size + f * dst_image_shape.width + src_image_shape.width;
+                std::fill_n(dst_ptr + dst_offset, pad_size, static_cast<T>(0));
+            }
+        }
+    }
 
     return HAILO_SUCCESS;
 }
@@ -1007,6 +1071,38 @@ hailo_status reorder_input_stream(const void *src_ptr, hailo_3d_image_shape_t sr
                     return HAILO_INVALID_ARGUMENT;
             }
             return HAILO_SUCCESS;
+    }
+
+    if ((HAILO_FORMAT_ORDER_RGB4 == src_format.order) &&
+        (HAILO_FORMAT_ORDER_NHWC == dst_format.order)) {
+        switch (dst_format.type) {
+            case HAILO_FORMAT_TYPE_UINT8:
+                transform__h2d_RGB4_to_NHWC<uint8_t>((uint8_t*)src_ptr, src_image_shape, (uint8_t*)dst_ptr, dst_image_shape);
+                break;
+            case HAILO_FORMAT_TYPE_UINT16:
+                transform__h2d_RGB4_to_NHWC<uint16_t>((uint16_t*)src_ptr, src_image_shape, (uint16_t*)dst_ptr, dst_image_shape);
+                break;
+            default:
+                LOGGER__ERROR("Invalid src-buffer's type format");
+                return HAILO_INVALID_ARGUMENT;
+        }
+        return HAILO_SUCCESS;
+    }
+
+    if ((HAILO_FORMAT_ORDER_RGB4 == src_format.order) &&
+        (HAILO_FORMAT_ORDER_NHCW == dst_format.order)) {
+        switch (dst_format.type) {
+            case HAILO_FORMAT_TYPE_UINT8:
+                transform__h2d_RGB4_to_NHCW<uint8_t>((uint8_t*)src_ptr, src_image_shape, (uint8_t*)dst_ptr, dst_image_shape);
+                break;
+            case HAILO_FORMAT_TYPE_UINT16:
+                transform__h2d_RGB4_to_NHCW<uint16_t>((uint16_t*)src_ptr, src_image_shape, (uint16_t*)dst_ptr, dst_image_shape);
+                break;
+            default:
+                LOGGER__ERROR("Invalid src-buffer's type format");
+                return HAILO_INVALID_ARGUMENT;
+        }
+        return HAILO_SUCCESS;
     }
 
     LOGGER__ERROR("Unsupported input stream transformation from hailo_format_order_t "
@@ -1298,7 +1394,6 @@ hailo_status FrameOutputTransformContext::transform_inner(const void *src_ptr, v
 hailo_status transform_demux_raw_frame(const void *src, uint32_t offset,
     hailo_mux_info_t *mux_info, uint32_t mux_row_count)
 {
-    MICROPROFILE_SCOPEI("Transformations", "Demux", 0);
     // This is a recursive function with a maximum depth of HailoRTCommon::MUX_INFO_COUNT.
     hailo_status status = HAILO_UNINITIALIZED;
     struct hailo_mux_info_t *predecessor = NULL;
@@ -1539,7 +1634,6 @@ InputTransformContext::InputTransformContext(size_t src_frame_size, const hailo_
 
 hailo_status InputTransformContext::transform(const MemoryView src, MemoryView dst)
 {
-    MICROPROFILE_SCOPEI("Transformations", "H2D transform", 0);
     /* Check sizes */
     CHECK(src.size() == m_src_frame_size, HAILO_INVALID_ARGUMENT,
         "src size must be {}. passed size - {}", m_src_frame_size, src.size());
@@ -1706,7 +1800,6 @@ Expected<std::unique_ptr<OutputTransformContext>> NMSOutputTransformContext::cre
 
 hailo_status FrameOutputTransformContext::transform(const MemoryView src, MemoryView dst)
 {
-    MICROPROFILE_SCOPEI("Transformations", "D2H transform", 0);
     /* Check sizes */
     CHECK(src.size() == m_src_frame_size, HAILO_INVALID_ARGUMENT,
         "src size must be {}. passed size - {}", m_src_frame_size, src.size());
@@ -1721,7 +1814,6 @@ hailo_status FrameOutputTransformContext::transform(const MemoryView src, Memory
 
 hailo_status NMSOutputTransformContext::transform(const MemoryView src, MemoryView dst)
 {
-    MICROPROFILE_SCOPEI("Transformations", "D2H NMS transform", 0);
     /* Check sizes */
     CHECK(src.size() == m_src_frame_size, HAILO_INVALID_ARGUMENT,
         "src size must be {}. passed size - {}", m_src_frame_size, src.size());
@@ -1869,7 +1961,7 @@ hailo_status OutputDemuxerBase::get_mux_info_from_layer_info_impl(hailo_mux_info
     // This is a recursive function with a maximum depth of HailoRTCommon::MUX_INFO_COUNT. 
     mux_info.info = LayerInfoUtils::get_stream_info_from_layer_info(layer_info);
 
-    mux_info.row_size = height_ratio * layer_info.hw_shape.width * layer_info.hw_shape.features;
+    mux_info.row_size = height_ratio * layer_info.hw_shape.width * layer_info.hw_shape.features * layer_info.hw_data_bytes;
     mux_info.row_counter = 0;
 
     if (mux_info.info.is_mux) {
@@ -1898,7 +1990,6 @@ hailo_status OutputDemuxerBase::get_mux_info_from_layer_info_impl(hailo_mux_info
 hailo_status fuse_buffers(const std::vector<MemoryView> &buffers,
     const std::vector<hailo_nms_info_t> &infos_of_buffers, MemoryView dst)
 {
-    MICROPROFILE_SCOPEI("Transformations", "Fuse NMS", 0);
     CHECK_ARG_NOT_NULL(dst.data());
     CHECK(buffers.size() == infos_of_buffers.size(), HAILO_INVALID_ARGUMENT,
         "Vectors of buffers and NMS infos does not match!");

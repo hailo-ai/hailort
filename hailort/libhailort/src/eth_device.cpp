@@ -109,8 +109,7 @@ Expected<std::unique_ptr<EthernetDevice>> EthernetDevice::create(const std::stri
 EthernetDevice::EthernetDevice(const hailo_eth_device_info_t &device_info, Udp &&control_udp, hailo_status &status) :
     DeviceBase::DeviceBase(Device::Type::ETH),
     m_device_info(device_info),
-    m_control_udp(std::move(control_udp)),
-    m_context_switch_manager()
+    m_control_udp(std::move(control_udp))
 {
     char ip_buffer[INET_ADDRSTRLEN];
     status = Socket::ntop(AF_INET, &(device_info.device_address.sin_addr), ip_buffer, INET_ADDRSTRLEN);
@@ -385,15 +384,103 @@ hailo_status EthernetDevice::disable_notifications()
     return HAILO_NOT_IMPLEMENTED;
 }
 
-ExpectedRef<ConfigManager> EthernetDevice::get_config_manager()
+Expected<ConfiguredNetworkGroupVector> EthernetDevice::add_hef(Hef &hef, const NetworkGroupsParamsMap &configure_params)
 {
-    if (!m_context_switch_manager) {
-        m_context_switch_manager = make_unique_nothrow<HcpConfigManager>(*this);
-        CHECK_AS_EXPECTED(nullptr != m_context_switch_manager, HAILO_OUT_OF_HOST_MEMORY);
+    auto device_arch_exp = get_architecture();
+    CHECK_EXPECTED(device_arch_exp);
+    auto device_arch = device_arch_exp.release();
+
+    auto partial_clusters_layout_bitmap_exp = Control::get_partial_clusters_layout_bitmap(*this);
+    CHECK_EXPECTED(partial_clusters_layout_bitmap_exp);
+    auto partial_clusters_layout_bitmap = partial_clusters_layout_bitmap_exp.release();
+
+    auto &hef_network_groups = hef.pimpl->network_groups();
+    ConfiguredNetworkGroupVector added_network_groups;
+    // TODO: can be optimized (add another loop the allocate the network group we're adding)
+    added_network_groups.reserve(hef_network_groups.size());
+    auto configure_params_copy = configure_params;
+    auto hef_arch = hef.pimpl->get_device_arch();
+
+    // Reset FW state_machine status - can be removed?
+    static const auto REMOVE_NN_CONFIG_DURING_RESET = false;
+    auto status = Control::reset_context_switch_state_machine(*this, REMOVE_NN_CONFIG_DURING_RESET);
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    for (const auto &base_network_group_proto : hef_network_groups) {
+        const std::string &network_group_name = base_network_group_proto->network_group_metadata().network_group_name();
+        auto &hef_core_ops = hef.pimpl->core_ops(network_group_name);
+        assert(hef_core_ops.size() == 1);
+        const auto &core_op = hef_core_ops[0];
+
+        auto expected_partial_core_op = Hef::Impl::get_core_op_per_arch(core_op, hef_arch, device_arch,
+            partial_clusters_layout_bitmap);
+        CHECK_EXPECTED(expected_partial_core_op);
+        auto partial_core_op = expected_partial_core_op.release();
+
+        // TODO: decide about core_op names - align with the Compiler
+
+        /* If NG params are present, use them
+           If no configure params are given, use default*/
+        ConfigureNetworkParams config_params{};
+        if (contains(configure_params, network_group_name)) {
+            config_params = configure_params_copy.at(network_group_name);
+            configure_params_copy.erase(network_group_name);
+        } else if (configure_params.empty()) {
+            auto interface = get_default_streams_interface();
+            CHECK_EXPECTED(interface);
+            auto config_params_exp = hef.create_configure_params(interface.value(), network_group_name);
+            CHECK_EXPECTED(config_params_exp);
+            config_params = config_params_exp.release();
+        } else {
+            continue;
+        }
+
+        /* Validate that all network_groups are single context */
+        CHECK(1 == partial_core_op->contexts.size(), make_unexpected(HAILO_INTERNAL_FAILURE),
+            "Only single_context network_groups is supported!. Network group {} has {} contexts.",
+            network_group_name, partial_core_op->contexts.size());
+        CHECK_AS_EXPECTED(!(Hef::Impl::contains_ddr_layers(*partial_core_op)), HAILO_INVALID_OPERATION,
+            "DDR layers are only supported for PCIe device. Network group {} contains DDR layers.",
+            network_group_name);
+        status = Hef::Impl::validate_core_op_unique_layer_names(*partial_core_op);
+        CHECK_SUCCESS_AS_EXPECTED(status);
+
+        /* Update preliminary_config and dynamic_contexts recepies */
+        auto &proto_preliminary_config = partial_core_op->preliminary_config;
+        auto net_group_config = Hef::Impl::create_single_context_network_group_config(proto_preliminary_config);
+        CHECK_EXPECTED(net_group_config);
+
+        auto network_group_metadata = hef.pimpl->get_network_group_metadata(network_group_name);
+        CHECK_EXPECTED(network_group_metadata);
+
+        auto net_flow_ops = hef.pimpl->post_process_ops(network_group_metadata->network_group_name());
+
+        auto single_context_app = HcpConfigNetworkGroup(*this, m_active_net_group_holder, net_group_config.release(),
+            config_params, network_group_metadata.release(), status, std::move(net_flow_ops));
+        CHECK_SUCCESS_AS_EXPECTED(status);
+
+        auto net_group_shared_ptr = make_shared_nothrow<HcpConfigNetworkGroup>(std::move(single_context_app));
+        CHECK_AS_EXPECTED(nullptr != net_group_shared_ptr, HAILO_OUT_OF_HOST_MEMORY);
+        m_network_groups.emplace_back(net_group_shared_ptr);
+        added_network_groups.emplace_back(std::static_pointer_cast<ConfiguredNetworkGroup>(net_group_shared_ptr));
+
+        // TODO: move this func into HcpConfigNetworkGroup c'tor
+        status = net_group_shared_ptr->create_streams_from_config_params(*this);
+        CHECK_SUCCESS_AS_EXPECTED(status);
+
+        // Check that all boundary streams were created
+        status = hef.pimpl->validate_boundary_streams_were_created(network_group_name, *net_group_shared_ptr);
+        CHECK_SUCCESS_AS_EXPECTED(status);
     }
+    std::string unmatched_keys = "";
+    for (const auto &pair : configure_params_copy) {
+        unmatched_keys.append(" ");
+        unmatched_keys.append(pair.first);
+    }
+    CHECK_AS_EXPECTED(unmatched_keys.size() == 0, HAILO_INVALID_ARGUMENT,
+        "Some network group names in the configuration are not found in the hef file:{}", unmatched_keys);
 
-    return std::ref(*m_context_switch_manager);
+    return added_network_groups;
 }
-
 
 } /* namespace hailort */

@@ -11,17 +11,22 @@
  *        --------------------------------------------------------------------------------------------------------------
  *        |                                         ConfiguredNetworkGroup                                             |  (External "interface")
  *        |                   ________________________________|________________________________                        |
- *        |                  /                                    |                            \                       |
- *        |            ConfiguredNetworkGroupBase       ConfiguredNetworkGroupWrapper   ConfiguredNetworkGroupClient   |  (Base classes)
- *        |               /                  \                                                                         |
- *        |  VdmaConfigNetworkGroup     HcpConfigNetworkGroup                                                          |  (Actual implementations)
+ *        |                  /                                                                 \                       |
+ *        |                 ConfiguredNetworkGroupBase                                  ConfiguredNetworkGroupClient   |  (Base classes)
+ *        |               /                 |            \                                                             |
+ *        | VdmaConfigNetworkGroup          |            HcpConfigNetworkGroup                                         |  (Actual implementations)
+ *        |                         VDeviceNetworkGroup                                                                |
+ *        |                                 |                                                                          |
+ *        |                   vector of VdmaConfigNetworkGroup                                                         |
  *        -------------------------------------------------------------------------------------------------------------|
  *        |                         ActivatedNetworkGroup                                                              |  (External "interface")
  *        |                                   |                                                                        |
  *        |                       ActivatedNetworkGroupBase                                                            |  (Base classes)
- *        |                 __________________|__________________                                                      |
- *        |                /                                     \                                                     |
- *        |    VdmaConfigActivatedNetworkGroup         HcpConfigActivatedNetworkGroup                                  |  (Actual implementations)
+ *        |                 __________________|_____________________________________________________                   |
+ *        |                /                                         |                               \                 |
+ *        |    VdmaConfigActivatedNetworkGroup        VDeviceActivatedNetworkGroup      HcpConfigActivatedNetworkGroup |  (Actual implementations)
+ *        |                                                          |                                                 |
+ *        |                                        vector of VdmaConfigActivatedNetworkGroup                           |
  *        --------------------------------------------------------------------------------------------------------------
  **/
 
@@ -34,6 +39,7 @@
 #include "common/latency_meter.hpp"
 #include "control_protocol.h"
 #include "vdma_channel.hpp"
+#include "context_switch/active_network_group_holder.hpp"
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
 #include "hailort_rpc_client.hpp"
@@ -41,6 +47,12 @@
 
 namespace hailort
 {
+
+/** Represents a vector of InputStream ptrs */
+using InputStreamPtrVector = std::vector<std::shared_ptr<InputStream>>;
+
+/** Represents a vector of OutputStream ptrs */
+using OutputStreamPtrVector = std::vector<std::shared_ptr<OutputStream>>;
 
 class ActivatedNetworkGroupBase : public ActivatedNetworkGroup
 {
@@ -52,25 +64,21 @@ public:
     ActivatedNetworkGroupBase(ActivatedNetworkGroupBase &&other) = default;
 
     virtual uint32_t get_invalid_frames_count() override;
-    // Must be called on d'tor of derived class
-    void deactivate_resources();
 
 protected:
     hailo_activate_network_group_params_t m_network_group_params;
 
     ActivatedNetworkGroupBase(const hailo_activate_network_group_params_t &network_group_params,
-        uint16_t dynamic_batch_size,
-        std::map<std::string, std::unique_ptr<InputStream>> &input_streams,
-        std::map<std::string, std::unique_ptr<OutputStream>> &output_streams,         
+        std::map<std::string, std::shared_ptr<InputStream>> &input_streams,
+        std::map<std::string, std::shared_ptr<OutputStream>> &output_streams,         
         EventPtr &&network_group_activated_event, hailo_status &status);
 
-private:
-    hailo_status activate_low_level_streams(uint16_t dynamic_batch_size);
-    hailo_status validate_network_group_params(const hailo_activate_network_group_params_t &network_group_params);
-
-    std::map<std::string, std::unique_ptr<InputStream>> &m_input_streams;
-    std::map<std::string, std::unique_ptr<OutputStream>> &m_output_streams;
     EventPtr m_network_group_activated_event;
+    std::map<std::string, std::shared_ptr<InputStream>> &m_input_streams;
+    std::map<std::string, std::shared_ptr<OutputStream>> &m_output_streams;
+
+private:
+    hailo_status validate_network_group_params(const hailo_activate_network_group_params_t &network_group_params);
 };
 
 class ConfiguredNetworkGroupBase : public ConfiguredNetworkGroup
@@ -82,7 +90,7 @@ public:
     ConfiguredNetworkGroupBase &operator=(ConfiguredNetworkGroupBase &&other) = delete;
     ConfiguredNetworkGroupBase(ConfiguredNetworkGroupBase &&other) = default;
 
-    Expected<std::unique_ptr<ActivatedNetworkGroup>> force_activate(
+    Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_with_batch(
         uint16_t dynamic_batch_size = CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE);
     virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate(const hailo_activate_network_group_params_t &network_group_params) override;
     virtual hailo_status wait_for_activation(const std::chrono::milliseconds &timeout) override;
@@ -114,6 +122,9 @@ public:
 
     virtual Expected<std::vector<std::vector<std::string>>> get_output_vstream_groups() override;
 
+    virtual hailo_status activate_impl(uint16_t dynamic_batch_size) = 0;
+    virtual hailo_status deactivate_impl() = 0;
+
     virtual Expected<std::vector<hailo_network_info_t>> get_network_infos() const override;
     virtual Expected<std::vector<hailo_stream_info_t>> get_all_stream_infos(const std::string &network_name="") const override;
     virtual Expected<std::vector<hailo_vstream_info_t>> get_input_vstream_infos(const std::string &network_name="") const override;
@@ -134,7 +145,7 @@ public:
         return m_network_group_metadata.get_vstream_names_from_stream_name(stream_name);
     }
 
-    const NetworkGroupSupportedFeatures &get_supported_features()
+    const SupportedFeatures &get_supported_features()
     {
         return m_network_group_metadata.supported_features();
     }
@@ -144,15 +155,14 @@ public:
     virtual Expected<std::vector<InputVStream>> create_input_vstreams(const std::map<std::string, hailo_vstream_params_t> &inputs_params);
     virtual Expected<std::vector<OutputVStream>> create_output_vstreams(const std::map<std::string, hailo_vstream_params_t> &outputs_params);
 
-protected:
-    ConfiguredNetworkGroupBase(const ConfigureNetworkParams &config_params, const uint8_t m_net_group_index, 
-        const NetworkGroupMetadata &network_group_metadata, hailo_status &status);
-    ConfiguredNetworkGroupBase(const ConfigureNetworkParams &config_params, const uint8_t m_net_group_index, 
-        const NetworkGroupMetadata &network_group_metadata, bool is_scheduling, hailo_status &status);
+    std::map<std::string, std::shared_ptr<InputStream>> m_input_streams;
+    std::map<std::string, std::shared_ptr<OutputStream>> m_output_streams;
 
-    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_internal(
-        const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size) override;
-    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_impl(
+protected:
+    ConfiguredNetworkGroupBase(const ConfigureNetworkParams &config_params,
+        const NetworkGroupMetadata &network_group_metadata, std::vector<std::shared_ptr<NetFlowElement>> &&net_flow_ops, hailo_status &status);
+
+    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> create_activated_network_group(
         const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size) = 0;
 
     hailo_status create_output_stream_from_config_params(Device &device,
@@ -161,7 +171,10 @@ protected:
         const hailo_stream_parameters_t &stream_params, const std::string &stream_name);
     hailo_status add_mux_streams_by_edges_names(OutputStreamWithParamsVector &result,
         const std::unordered_map<std::string, hailo_vstream_params_t> &outputs_edges_params);
-    Expected<OutputStreamRefVector> get_output_streams_by_vstream_name(const std::string &name);
+    Expected<OutputStreamPtrVector> get_output_streams_by_vstream_name(const std::string &name);
+
+    hailo_status activate_low_level_streams(uint16_t dynamic_batch_size);
+    hailo_status deactivate_low_level_streams();
 
     Expected<LayerInfo> get_layer_info(const std::string &stream_name);
 
@@ -170,21 +183,20 @@ protected:
 
     const ConfigureNetworkParams m_config_params;
     const uint16_t m_min_configured_batch_size; // TODO: remove after HRT-6535
-    uint8_t m_net_group_index;
-    std::map<std::string, std::unique_ptr<InputStream>> m_input_streams;
-    std::map<std::string, std::unique_ptr<OutputStream>> m_output_streams;
     EventPtr m_network_group_activated_event;
     const NetworkGroupMetadata m_network_group_metadata;
     AccumulatorPtr m_activation_time_accumulator;
     AccumulatorPtr m_deactivation_time_accumulator;
 
 private:
-    friend class ConfiguredNetworkGroupWrapper;
+    friend class VDeviceNetworkGroup;
 
     static uint16_t get_smallest_configured_batch_size(const ConfigureNetworkParams &config_params);
 
-    bool m_is_scheduling;
+    std::vector<std::shared_ptr<NetFlowElement>> m_net_flow_ops;
 };
+
+using ActiveNetGroupHolder = ActiveNetworkGroupHolder<ConfiguredNetworkGroupBase>;
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
 class ConfiguredNetworkGroupClient : public ConfiguredNetworkGroup
@@ -243,10 +255,6 @@ public:
 
     virtual Expected<std::vector<InputVStream>> create_input_vstreams(const std::map<std::string, hailo_vstream_params_t> &inputs_params);
     virtual Expected<std::vector<OutputVStream>> create_output_vstreams(const std::map<std::string, hailo_vstream_params_t> &outputs_params);
-
-protected:
-    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_internal(
-        const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size) override;
 
 private:
     std::unique_ptr<HailoRtRpcClient> m_client;

@@ -70,9 +70,10 @@ public:
         return m_nn_stream_config;
     };
 
-    virtual Expected<PendingBufferState> send_pending_buffer()
+    virtual hailo_status send_pending_buffer(size_t device_index = 0)
     {
-        return make_unexpected(HAILO_INVALID_OPERATION);
+        (void)device_index;
+        return HAILO_INVALID_OPERATION;
     }
 
     virtual Expected<size_t> get_buffer_frames_size() const

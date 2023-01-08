@@ -14,8 +14,7 @@
 #include "vdma_descriptor_list.hpp"
 #include "vdma/channel_id.hpp"
 #include "vdma_channel.hpp"
-#include "hef_internal.hpp"
-
+#include "layer_info.hpp"
 #include <array>
 
 namespace hailort
@@ -31,8 +30,7 @@ public:
         VdmaChannel::Direction direction, uint8_t engine_index);
     hailo_status free_channel_index(const LayerIdentifier &layer_identifier);
 
-    const std::set<vdma::ChannelId> &get_boundary_channel_ids() const;
-    const std::set<vdma::ChannelId> &get_fw_managed_channel_ids() const;
+    const std::set<vdma::ChannelId> &get_internal_channel_ids() const;
 
 private:
     void insert_new_channel_id(const LayerIdentifier &layer_identifier, const vdma::ChannelId &channel_id);
@@ -44,7 +42,7 @@ private:
 
     // Contains all channels id allocated for the network group. This channels are never released.
     std::set<vdma::ChannelId> m_boundary_channel_ids;
-    std::set<vdma::ChannelId> m_fw_managed_channel_ids;
+    std::set<vdma::ChannelId> m_internal_channel_ids;
 };
 
 } /* namespace hailort */

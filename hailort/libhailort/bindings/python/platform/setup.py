@@ -23,6 +23,7 @@ def _get_pyhailort_lib_path():
 
     with open(conf_file_path, "r") as conf_file:
         content = json.load(conf_file)
+        # TODO (HRT-8637): change this hard-coded path
         return f"../hailo_platform/pyhailort/_pyhailort*{content['py_version']}*{content['arch']}*.{extension}"
 
 def _get_package_paths():
@@ -56,7 +57,7 @@ if __name__ == "__main__":
             "netifaces",
             "verboselogs",
             # Pinned versions
-            "numpy==1.19.4",
+            "numpy==1.23.3",
         ],
         name="hailort",
         package_data={
@@ -68,6 +69,6 @@ if __name__ == "__main__":
             "linux_aarch64",
         ],
         url="https://hailo.ai/",
-        version="4.10.0",
+        version="4.12.0",
         zip_safe=False,
     )

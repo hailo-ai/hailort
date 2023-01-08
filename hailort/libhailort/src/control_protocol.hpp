@@ -30,35 +30,9 @@ typedef struct {
     CONTROL_PROTOCOL__communication_config_prams_t communication_params;
 } CONTROL_PROTOCOL__config_stream_params_t;
 
-/* Context switch user structs */
-#define CONTROL_PROTCOL__CONTEXT_SLICING_OFFSETS \
-    ((CONTROL_PROTOCOL__CONTEXT_NETWORK_DATA_MAX_SIZE / CONTROL_PROTOCOL__CONTEXT_NETWORK_DATA_SINGLE_CONTROL_MAX_SIZE) + 1)
+static_assert(sizeof(CONTROL_PROTOCOL__context_switch_context_index_t) <= UINT8_MAX,
+        "CONTROL_PROTOCOL__context_switch_context_index_t must fit in uint8_t");
 
-typedef struct {
-    /* Tempurary building info, used when creating meta data*/
-    CONTROL_PROTOCOL__trigger_group_t *current_building_trigger;
-    uint8_t current_building_slice_index;
-    uint16_t current_buillding_offset_inside_slice;
-    /* Control slicing information */
-    uint16_t control_slicing_offsets[CONTROL_PROTCOL__CONTEXT_SLICING_OFFSETS];
-    uint8_t slice_edge_layers[CONTROL_PROTCOL__CONTEXT_SLICING_OFFSETS];
-    uint8_t slice_triggers[CONTROL_PROTCOL__CONTEXT_SLICING_OFFSETS];
-} CONTEXT_SWITCH__context_control_slicing_data_t;
-
-typedef struct {
-    uint8_t cfg_channels_count;
-    CONTROL_PROTOCOL__config_channel_info_t config_channel_infos[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
-    uint32_t context_network_data_length;
-    CONTROL_PROTOCOL__stream_remap_data_t context_stream_remap_data;
-    uint8_t context_network_data[CONTROL_PROTOCOL__CONTEXT_NETWORK_DATA_MAX_SIZE];
-    /* control_slicing_data is used in internal hef_metadata.cpp functions only */
-    CONTEXT_SWITCH__context_control_slicing_data_t control_slicing_data;
-} CONTROL_PROTOCOL__context_switch_context_info_t;
-
-typedef struct {
-    CONTROL_PROTOCOL__context_switch_main_header_t context_switch_main_header;
-    CONTROL_PROTOCOL__context_switch_context_info_t context[CONTROL_PROTOCOL__MAX_TOTAL_CONTEXTS];
-} CONTROL_PROTOCOL__context_switch_info_t;
 /* End of context switch structs */
 
 const char *CONTROL_PROTOCOL__get_textual_opcode(CONTROL_PROTOCOL__OPCODE_t opcode);
@@ -118,16 +92,17 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_sensor_reset_request(CONTROL_PROTOC
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_sensor_set_generic_i2c_slave_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint16_t slave_address,
                                                                                   uint8_t register_address_size, uint8_t bus_index, uint8_t should_hold_bus, uint8_t endianness);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_sensor_get_sections_info_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_main_header_request(
-        CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
-        CONTROL_PROTOCOL__context_switch_main_header_t *context_switch_header);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_network_group_header_request(
+    CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
+    const CONTROL_PROTOCOL__application_header_t *network_group_header);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_context_info_request(
         CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
-        CONTROL_PROTOCOL__context_switch_context_info_single_control_t *context_info);
+        const CONTROL_PROTOCOL__context_switch_context_info_single_control_t *context_info);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_idle_time_set_measuremment_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint8_t measurement_enable);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_idle_time_get_measuremment_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_download_context_action_list_request(CONTROL_PROTOCOL__request_t *request, 
-        size_t *request_size, uint32_t sequence, uint8_t context_index, uint16_t action_list_offset);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_download_context_action_list_request(CONTROL_PROTOCOL__request_t *request,
+    size_t *request_size, uint32_t sequence, uint32_t network_group_id,
+    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index, uint16_t action_list_offset);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_context_switch_status_request(
         CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
         CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status, uint8_t application_index,
@@ -193,5 +168,7 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_throttling_state_request(CONTRO
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_throttling_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_overcurrent_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, bool should_activate);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_overcurrent_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_hw_consts_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_sleep_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint8_t sleep_state);
 
 #endif /* _CONTROL_PROTOCOL_HPP_ */

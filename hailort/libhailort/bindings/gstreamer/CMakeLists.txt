@@ -8,7 +8,7 @@ if(NOT CMAKE_HOST_UNIX)
     message(FATAL_ERROR "Only unix hosts are supported, stopping build")
 endif()
 
-find_package(HailoRT 4.10.0 EXACT REQUIRED)
+find_package(HailoRT 4.12.0 EXACT REQUIRED)
 
 # GST_PLUGIN_DEFINE needs PACKAGE to be defined
 set(GST_HAILO_PACKAGE_NAME "hailo")
@@ -37,7 +37,7 @@ set_target_properties(gsthailo PROPERTIES
 )
 
 target_compile_options(gsthailo PRIVATE
-    -Werror -Wall -Wextra -Wconversion -O3 -DNDEBUG # TODO support debug/release builds
+    -Werror -Wall -Wextra -Wconversion
     -DVERSION="${GST_HAILO_VERSION}"
     -DPACKAGE="${GST_HAILO_PACKAGE_NAME}")
 
