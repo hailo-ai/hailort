@@ -752,7 +752,7 @@ void BaseQueueElement::start_thread()
                     m_is_run_in_thread_running = true;
                 }
                 m_cv.notify_all();
-                
+
                 status = run_in_thread();
 
                 {

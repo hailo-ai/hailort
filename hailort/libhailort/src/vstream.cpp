@@ -2239,6 +2239,7 @@ hailo_status VStreamsBuilderUtils::add_nms_fuse(OutputStreamPtrVector &output_st
 
     for (uint32_t i = 0; i < output_streams.size(); ++i) {
         const auto &curr_stream_info = output_streams[i]->get_info();
+        output_streams[i]->set_timeout(HAILO_INFINITE_TIMEOUT);
 
         auto hw_read_elem = HwReadElement::create(output_streams[i],
             PipelineObject::create_element_name("HwReadElement", curr_stream_info.name, curr_stream_info.index),
@@ -2252,6 +2253,7 @@ hailo_status VStreamsBuilderUtils::add_nms_fuse(OutputStreamPtrVector &output_st
             vstreams_params, shutdown_event, pipeline_status);
         CHECK_EXPECTED_AS_STATUS(nms_source_queue_elem);
         elements.push_back(nms_source_queue_elem.value());
+        nms_source_queue_elem.value()->set_timeout(HAILO_INFINITE_TIMEOUT);
         CHECK_SUCCESS(PipelinePad::link_pads(hw_read_elem.value(), nms_source_queue_elem.value()));
         CHECK_SUCCESS(PipelinePad::link_pads(nms_source_queue_elem.value(), nms_elem.value(), 0, i));
     }
@@ -2273,6 +2275,7 @@ hailo_status VStreamsBuilderUtils::add_nms_fuse(OutputStreamPtrVector &output_st
             PipelineObject::create_element_name("PullQueueElement_nms", fused_layer_name, 0),
             vstreams_params, shutdown_event, pipeline_status);
         CHECK_EXPECTED_AS_STATUS(nms_queue_elem);
+        nms_queue_elem.value()->set_timeout(HAILO_INFINITE_TIMEOUT);
         elements.push_back(nms_queue_elem.value());
         CHECK_SUCCESS(PipelinePad::link_pads(nms_elem.value(), nms_queue_elem.value()));
 
@@ -2364,6 +2367,7 @@ hailo_status VStreamsBuilderUtils::add_nms_post_process(OutputStreamPtrVector &o
 
     for (uint32_t i = 0; i < output_streams.size(); ++i) {
         const auto &curr_stream_info = output_streams[i]->get_info();
+        output_streams[i]->set_timeout(HAILO_INFINITE_TIMEOUT);
 
         auto should_transform = OutputTransformContext::is_transformation_required(curr_stream_info.hw_shape, curr_stream_info.format,
             curr_stream_info.shape, nms_src_format, vstream_info->second.quant_info);
@@ -2388,6 +2392,7 @@ hailo_status VStreamsBuilderUtils::add_nms_post_process(OutputStreamPtrVector &o
             PipelineObject::create_element_name("PullQueueElement_nms_source", curr_stream_info.name, curr_stream_info.index),
             vstreams_params, shutdown_event, pipeline_status);
         CHECK_EXPECTED_AS_STATUS(nms_source_queue_elem);
+        nms_source_queue_elem.value()->set_timeout(HAILO_INFINITE_TIMEOUT);
         elements.push_back(nms_source_queue_elem.value());
         CHECK_SUCCESS(PipelinePad::link_pads(hw_read_elem.value(), nms_source_queue_elem.value()));
         CHECK_SUCCESS(PipelinePad::link_pads(nms_source_queue_elem.value(), nms_elem.value(), 0, i));
