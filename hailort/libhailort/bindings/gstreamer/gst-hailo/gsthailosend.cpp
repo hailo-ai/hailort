@@ -243,14 +243,15 @@ GstCaps *HailoSendImpl::get_caps(GstBaseTransform */*trans*/, GstPadDirection /*
             ("Input VStream %s has an unsupported format order! order = %d", m_input_vstream_infos[0].name, m_input_vstream_infos[0].format.order), (NULL));
         return NULL;
     }
-
     /* filter against set allowed caps on the pad */
     GstCaps *new_caps = gst_caps_new_simple("video/x-raw",
                                             "format", G_TYPE_STRING, format,
                                             "width", G_TYPE_INT, m_input_vstream_infos[0].shape.width,
                                             "height", G_TYPE_INT, get_height_by_order(m_input_vstream_infos[0]),
                                             NULL);
-    return gst_caps_intersect(caps, new_caps);
+    auto result = gst_caps_intersect(caps, new_caps);
+    gst_caps_unref(new_caps);
+    return result;
 }
 
 void HailoSendImpl::set_input_vstream_infos(std::vector<hailo_vstream_info_t> &&input_vstream_infos)
