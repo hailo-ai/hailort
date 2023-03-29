@@ -15,90 +15,31 @@ FUNCTION(relative_to_absolute_paths output)
     SET(${output} "${listVar}" PARENT_SCOPE)
 ENDFUNCTION(relative_to_absolute_paths)
 
-add_subdirectory(os)
-add_subdirectory(net_flow)
-
 set(HAILORT_CPP_SOURCES
-    device.cpp
-    device_internal.cpp
-    control.cpp
-    stream.cpp
-    stream_internal.cpp
-    transform.cpp
-    buffer.cpp
-    network_rate_calculator.cpp
-    hailort_logger.cpp
     hailort.cpp
-    hailort_common.cpp
-    sensor_config_utils.cpp
-    pipeline.cpp
-    pipeline_multiplexer.cpp
-
-    eth_device.cpp
-    eth_stream.cpp
-    udp.cpp
-
-    hef.cpp
-    network_group_metadata.cpp
-
-    context_switch/context_switch_actions.cpp
-    context_switch/hcp_config_network_group.cpp
-    context_switch/hcp_config_activated_network_group.cpp
-    context_switch/vdma_config_network_group.cpp
-    context_switch/vdevice_network_group.cpp
-    context_switch/vdma_config_activated_network_group.cpp
-    context_switch/network_group.cpp
-    context_switch/resource_manager.cpp
-    context_switch/resource_manager_builder.cpp
-    context_switch/context_switch_buffer_builder.cpp
-
-    channel_allocator.cpp
-    inter_context_buffer.cpp
-    ddr_channels_pair.cpp
-    config_buffer.cpp
-    d2h_events_parser.cpp
-    mipi_stream.cpp
-
-    vdma_channel.cpp
-    vdma_descriptor_list.cpp
-    vdma_device.cpp
-    vdma_stream.cpp
-
-    vdma/vdma_mapped_buffer_impl.cpp
-    vdma/mapped_buffer.cpp
-    vdma/sg_buffer.cpp
-    vdma/continuous_buffer.cpp
-    vdma/vdma_buffer.cpp
-
-    pcie_device.cpp
-    pcie_stream.cpp
-
-    core_device.cpp
-    core_stream.cpp
-
-    vdevice.cpp
-    vdevice_stream.cpp
-    vdevice_stream_multiplexer_wrapper.cpp
-    multi_device_scheduled_stream.cpp
-
-    control_protocol.cpp
-
-    vstream.cpp
-    inference_pipeline.cpp
-
-    network_group_scheduler.cpp
-
-    scheduled_network_group.cpp
-    scheduler_oracle.cpp
+    hailort_defaults.cpp
 )
 
-if(HAILO_BUILD_SERVICE)
-    set(HAILORT_CPP_SOURCES "${HAILORT_CPP_SOURCES}" hailort_rpc_client.cpp network_group_client.cpp)
-endif()
-if(HAILO_BUILD_PROFILER)
-    set(HAILORT_CPP_SOURCES "${HAILORT_CPP_SOURCES}" tracer.cpp)
-endif()
+add_subdirectory(utils)
+add_subdirectory(os)
+add_subdirectory(device_common)
+add_subdirectory(vdevice)
+add_subdirectory(transform)
+add_subdirectory(stream_common)
+add_subdirectory(eth)
+add_subdirectory(vdma)
+add_subdirectory(mipi)
+add_subdirectory(hef)
+add_subdirectory(network_group)
+add_subdirectory(core_op)
+add_subdirectory(net_flow)
 
+
+set(HAILORT_CPP_SOURCES "${HAILORT_CPP_SOURCES}" "${HAILORT_OPS_CPP_SOURCES}")
+
+if(HAILO_BUILD_SERVICE)
+    add_subdirectory(service)
+endif()
 
 set(common_dir "${PROJECT_SOURCE_DIR}/common/src")
 set(COMMON_C_SOURCES
@@ -119,6 +60,7 @@ set(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES} CACHE INTERNAL "Absolute paths of
 set(HAILORT_CPP_OS_SOURCES ${HAILORT_CPP_OS_SOURCES} CACHE INTERNAL "Absolute paths of os-related source files")
 set(COMMON_C_SOURCES ${COMMON_C_SOURCES} CACHE INTERNAL "Absolute paths of common source files")
 set(HAILORT_SRCS_ABS ${HAILORT_CPP_SOURCES} ${HAILORT_CPP_OS_SOURCES} ${HAILORT_COMMON_CPP_SOURCES} ${COMMON_C_SOURCES} CACHE INTERNAL "All absolute paths of hailort's source files")
+set(HAILORT_OPS_CPP_SOURCES ${HAILORT_OPS_CPP_SOURCES} PARENT_SCOPE)
 
 SET_SOURCE_FILES_PROPERTIES(${C_SOURCES} PROPERTIES LANGUAGE CXX)
 add_library(libhailort SHARED ${HAILORT_SRCS_ABS})
@@ -159,12 +101,12 @@ set(HAILORT_PUBLIC_HEADERS
     ${HAILORT_INC_DIR}/hailo/hailort.h
     ${HAILORT_INC_DIR}/hailo/platform.h
 
+    ${HAILORT_INC_DIR}/hailo/hailort.hpp
     ${HAILORT_INC_DIR}/hailo/buffer.hpp
     ${HAILORT_INC_DIR}/hailo/device.hpp
     ${HAILORT_INC_DIR}/hailo/event.hpp
     ${HAILORT_INC_DIR}/hailo/expected.hpp
     ${HAILORT_INC_DIR}/hailo/hailort_common.hpp
-    ${HAILORT_INC_DIR}/hailo/hailort.hpp
     ${HAILORT_INC_DIR}/hailo/hef.hpp
     ${HAILORT_INC_DIR}/hailo/network_group.hpp
     ${HAILORT_INC_DIR}/hailo/stream.hpp
@@ -175,6 +117,8 @@ set(HAILORT_PUBLIC_HEADERS
     ${HAILORT_INC_DIR}/hailo/network_rate_calculator.hpp
     ${HAILORT_INC_DIR}/hailo/vdevice.hpp
     ${HAILORT_INC_DIR}/hailo/quantization.hpp
+    ${HAILORT_INC_DIR}/hailo/dma_mapped_buffer.hpp
+    ${HAILORT_INC_DIR}/hailo/hailort_defaults.hpp
 )
 
 set_target_properties(libhailort PROPERTIES

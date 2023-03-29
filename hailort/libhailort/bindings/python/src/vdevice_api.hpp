@@ -14,9 +14,15 @@
 
 #include "hailo/hef.hpp"
 #include "hailo/vdevice.hpp"
+#include "hailo/hailort_common.hpp"
+
+#include "common/logger_macros.hpp"
+
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+#include "service/rpc_client_utils.hpp"
+#endif // HAILO_SUPPORT_MULTI_PROCESS
 
 #include "utils.hpp"
-#include "common/logger_macros.hpp"
 
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
@@ -26,6 +32,7 @@
 #include <pybind11/functional.h>
 
 #include <string>
+
 
 namespace hailort
 {
@@ -45,6 +52,19 @@ public:
     static VDeviceWrapper create(const VDeviceParamsWrapper &params)
     {
         return VDeviceWrapper(params.orig_params);
+    }
+
+    static VDeviceWrapper create(const VDeviceParamsWrapper &params, const std::vector<std::string> &device_ids)
+    {
+        if (params.orig_params.device_ids != nullptr && (!device_ids.empty())) {
+            LOGGER__ERROR("VDevice device_ids can be set in params or device_ids argument. Both parameters were passed to the c'tor");
+            throw HailoRTStatusException(std::to_string(HAILO_INVALID_OPERATION));
+        }
+        auto modified_params = params;
+        auto device_ids_vector = HailoRTCommon::to_device_ids_vector(device_ids);
+        VALIDATE_EXPECTED(device_ids_vector);
+        modified_params.orig_params.device_ids = device_ids_vector->data();
+        return VDeviceWrapper(modified_params.orig_params);
     }
 
     static VDeviceWrapper create_from_ids(const std::vector<std::string> &device_ids)
@@ -87,8 +107,10 @@ public:
         VALIDATE_EXPECTED(network_groups);
 
         py::list results;
+        m_net_groups.reserve(m_net_groups.size() + network_groups->size());
         for (const auto &network_group : network_groups.value()) {
             results.append(network_group.get());
+            m_net_groups.emplace_back(network_group);
         }
 
         return results;
@@ -96,11 +118,43 @@ public:
 
     void release()
     {
+        m_net_groups.clear();
         m_vdevice.reset();
+    }
+
+    void before_fork()
+    {
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+        if (m_vdevice != nullptr) {
+            auto status = m_vdevice->before_fork();
+            VALIDATE_STATUS(status);
+        }
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+    }
+
+    void after_fork_in_parent()
+    {
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+        if (m_vdevice != nullptr) {
+            auto status = m_vdevice->after_fork_in_parent();
+            VALIDATE_STATUS(status);
+        }
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+    }
+
+    void after_fork_in_child()
+    {
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+        if (m_vdevice != nullptr) {
+            auto status = m_vdevice->after_fork_in_child();
+            VALIDATE_STATUS(status);
+        }
+#endif // HAILO_SUPPORT_MULTI_PROCESS
     }
 
 private:
     std::unique_ptr<VDevice> m_vdevice;
+    ConfiguredNetworkGroupVector m_net_groups;
 };
 
 void VDevice_api_initialize_python_module(py::module &m)
@@ -108,10 +162,14 @@ void VDevice_api_initialize_python_module(py::module &m)
     py::class_<VDeviceWrapper>(m, "VDevice")
         .def("create", py::overload_cast<const hailo_vdevice_params_t&>(&VDeviceWrapper::create))
         .def("create", py::overload_cast<const VDeviceParamsWrapper&>(&VDeviceWrapper::create))
+        .def("create", py::overload_cast<const VDeviceParamsWrapper&, const std::vector<std::string>&>(&VDeviceWrapper::create))
         .def("create_from_ids", &VDeviceWrapper::create_from_ids)
         .def("get_physical_devices_ids", &VDeviceWrapper::get_physical_devices_ids)
         .def("configure", &VDeviceWrapper::configure)
         .def("release", &VDeviceWrapper::release)
+        .def("before_fork", &VDeviceWrapper::before_fork)
+        .def("after_fork_in_parent", &VDeviceWrapper::after_fork_in_parent)
+        .def("after_fork_in_child", &VDeviceWrapper::after_fork_in_child)
         ;
 }
 

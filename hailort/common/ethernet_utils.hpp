@@ -12,7 +12,7 @@
 #ifndef __OS_ETHERNET_UTILS_H__
 #define __OS_ETHERNET_UTILS_H__
 
-
+#include <string>
 #include <hailo/hailort.h>
 #include "hailo/expected.hpp"
 

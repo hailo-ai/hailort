@@ -34,7 +34,7 @@ void * const MmapBufferImpl::INVALID_ADDR = MAP_FAILED;
 
 Expected<MmapBufferImpl> MmapBufferImpl::create_shared_memory(size_t length)
 {
-    void *address = mmap(nullptr, length, PROT_WRITE | PROT_READ, 
+    void *address = mmap(nullptr, length, PROT_WRITE | PROT_READ,
         MAP_ANONYMOUS | MAP_SHARED | MAP_UNINITIALIZED,
         INVALID_FD, /*offset=*/ 0);
 
@@ -60,7 +60,7 @@ Expected<MmapBufferImpl> MmapBufferImpl::create_file_map(size_t length, FileDesc
     auto status = HailoRTDriver::hailo_ioctl(file, HAILO_NON_LINUX_DESC_LIST_MMAP, &map_vdma_list_params, err);
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("HAILO_NON_LINUX_DESC_LIST_MMAP failed with errno:{}", err);
-        return make_unexpected(HAILO_PCIE_DRIVER_FAIL);
+        return make_unexpected(HAILO_DRIVER_FAIL);
     }
 
     void *address = mmap(nullptr, length, PROT_WRITE | PROT_READ | PROT_NOCACHE, MAP_SHARED | MAP_PHYS, NOFD, (off_t)map_vdma_list_params.user_address);
@@ -74,14 +74,17 @@ Expected<MmapBufferImpl> MmapBufferImpl::create_file_map(size_t length, FileDesc
 
 hailo_status MmapBufferImpl::unmap()
 {
-    if (INVALID_ADDR != m_address) {
-        if (0 != munmap(m_address, m_length)) {
-            LOGGER__ERROR("munmap of address {}, length: {} failed with errno {}", (void*)m_address, m_length, errno);
-            return HAILO_INTERNAL_FAILURE;
-        }
-        m_address = INVALID_ADDR;
-        m_length = 0;
+    if (!is_mapped()) {
+        return HAILO_SUCCESS;
     }
+
+    if (0 != munmap(m_address, m_length)) {
+        LOGGER__ERROR("munmap of address {}, length: {} failed with errno {}", (void*)m_address, m_length, errno);
+        return HAILO_INTERNAL_FAILURE;
+    }
+
+    m_address = INVALID_ADDR;
+    m_length = 0;
     return HAILO_SUCCESS;
 }
 

@@ -6,13 +6,17 @@
  * @file event.cpp
  * @brief Event & Semaphore wrapper for Windows
  **/
-#include "hailo/event.hpp"
+
 #include "hailo/hailort.h"
+#include "hailo/event.hpp"
+
 #include "common/utils.hpp"
-#include "event_internal.hpp"
+
+#include "utils/event_internal.hpp"
 
 #include <utility>
 #include <limits>
+
 
 namespace hailort
 {

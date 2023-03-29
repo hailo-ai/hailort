@@ -17,10 +17,14 @@
  * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
  * Boston, MA 02110-1301, USA.
  */
+
+#include "hailo/hailort_common.hpp"
+
 #include "network_group_handle.hpp"
 
 #include <sstream>
 #include <chrono>
+
 
 std::unordered_set<std::shared_ptr<VDevice>> NetworkGroupHandle::m_vdevices;
 NetworkGroupConfigManager NetworkGroupHandle::m_net_group_config_manager;
@@ -177,7 +181,8 @@ hailo_status NetworkGroupHandle::set_scheduler_threshold(const char *network_nam
 }
 
 Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> NetworkGroupHandle::create_vstreams(const char *network_name,
-    hailo_scheduling_algorithm_t scheduling_algorithm, const std::vector<hailo_format_with_name_t> &output_formats)
+    hailo_scheduling_algorithm_t scheduling_algorithm, const std::vector<hailo_format_with_name_t> &output_formats, bool input_quantized, 
+    bool output_quantized, hailo_format_type_t input_format_type, hailo_format_type_t output_format_type)
 {
     GST_CHECK(nullptr != network_name, make_unexpected(HAILO_INVALID_ARGUMENT), m_element, RESOURCE, "Got nullptr in network name!");
 
@@ -191,11 +196,10 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> Netwo
     auto expected_input_vstream_infos = hef()->get_input_vstream_infos(network_name);
     GST_CHECK_EXPECTED(expected_input_vstream_infos, m_element, RESOURCE, "Failed getting input vstream infos, status = %d",
         expected_input_vstream_infos.status());
-    auto expected_input_params_map = m_cng->make_input_vstream_params(true, HAILO_FORMAT_TYPE_AUTO, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
+    auto expected_input_params_map = m_cng->make_input_vstream_params(input_quantized, input_format_type, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
         HAILO_DEFAULT_VSTREAM_QUEUE_SIZE, m_network_name);
     GST_CHECK_EXPECTED(expected_input_params_map, m_element, RESOURCE, "Failed making input vstream params, status = %d",
         expected_input_params_map.status());
-
     // In RGB formats, Gstreamer is padding each row to 4.
     auto &&input_params_map = expected_input_params_map.release();
     auto &&input_infos = expected_input_vstream_infos.release();
@@ -215,7 +219,7 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> Netwo
     GST_CHECK(1 == input_vstreams->size(), make_unexpected(HAILO_INVALID_OPERATION), m_element, RESOURCE,
         "hailosend element supports only HEFs with one input for now!");
 
-    auto output_params_map = m_cng->make_output_vstream_params(true, HAILO_FORMAT_TYPE_AUTO, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
+    auto output_params_map = m_cng->make_output_vstream_params(output_quantized, output_format_type, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
         HAILO_DEFAULT_VSTREAM_QUEUE_SIZE, m_network_name);
     GST_CHECK_EXPECTED(output_params_map, m_element, RESOURCE, "Failed making output vstream params, status = %d",
         output_params_map.status());
@@ -244,11 +248,7 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> Netwo
 Expected<NetworkGroupsParamsMap> NetworkGroupHandle::get_configure_params(Hef &hef, const VDevice &vdevice,
     const char *net_group_name, uint16_t batch_size)
 {
-    auto stream_interface = vdevice.get_default_streams_interface();
-    GST_CHECK_EXPECTED(stream_interface, m_element, RESOURCE,
-        "Failed default stream interface configure params, status = %d", stream_interface.status());
-
-    auto params = hef.create_configure_params(*stream_interface, net_group_name);
+    auto params = vdevice.create_configure_params(hef, net_group_name);
     GST_CHECK_EXPECTED(params, m_element, RESOURCE, "Failed creating configure params, status = %d", params.status());
     params->batch_size = batch_size;
 

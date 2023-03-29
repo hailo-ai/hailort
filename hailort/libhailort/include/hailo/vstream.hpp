@@ -10,8 +10,6 @@
 #ifndef _HAILO_VSTREAM_HPP_
 #define _HAILO_VSTREAM_HPP_
 
-#include "hailo/transform.hpp"
-#include "hailo/stream.hpp"
 #include "hailo/network_group.hpp"
 #include "hailo/runtime_statistics.hpp"
 
@@ -29,7 +27,7 @@ public:
     static Expected<InputVStream> create(const hailo_vstream_info_t &vstream_info,
         const hailo_vstream_params_t &vstream_params, std::shared_ptr<PipelineElement> pipeline_entry,
         std::shared_ptr<SinkElement> pipeline_exit, std::vector<std::shared_ptr<PipelineElement>> &&pipeline,
-        std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr shutdown_event, EventPtr network_group_activated_event,
+        std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr shutdown_event, EventPtr core_op_activated_event,
         AccumulatorPtr pipeline_latency_accumulator);
     InputVStream(InputVStream &&other) noexcept = default;
     InputVStream &operator=(InputVStream &&other) noexcept = default;
@@ -158,6 +156,10 @@ public:
      */
     const std::vector<std::shared_ptr<PipelineElement>> &get_pipeline() const;
 
+    hailo_status before_fork();
+    hailo_status after_fork_in_parent();
+    hailo_status after_fork_in_child();
+
 protected:
     explicit InputVStream(std::shared_ptr<InputVStreamInternal> vstream);
     std::string get_pipeline_description() const;
@@ -178,7 +180,7 @@ public:
         const hailo_vstream_info_t &vstream_info, const hailo_vstream_params_t &vstream_params,
         std::shared_ptr<PipelineElement> pipeline_entry, std::vector<std::shared_ptr<PipelineElement>> &&pipeline,
         std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr shutdown_event,
-        EventPtr network_group_activated_event, AccumulatorPtr pipeline_latency_accumulator);
+        EventPtr core_op_activated_event, AccumulatorPtr pipeline_latency_accumulator);
     OutputVStream(OutputVStream &&other) noexcept = default;
     OutputVStream &operator=(OutputVStream &&other) noexcept = default;
     virtual ~OutputVStream() = default;
@@ -299,6 +301,10 @@ public:
      */
     const std::vector<std::shared_ptr<PipelineElement>> &get_pipeline() const;
 
+    hailo_status before_fork();
+    hailo_status after_fork_in_parent();
+    hailo_status after_fork_in_child();
+
 protected:
     explicit OutputVStream(std::shared_ptr<OutputVStreamInternal> vstream);
     std::string get_pipeline_description() const;
@@ -310,7 +316,7 @@ protected:
     std::shared_ptr<OutputVStreamInternal> m_vstream;
 
     friend class VStreamsBuilderUtils;
-    friend class VDeviceNetworkGroup;
+    friend class VDeviceCoreOp;
 };
 
 /*! Contains the virtual streams creation functions */

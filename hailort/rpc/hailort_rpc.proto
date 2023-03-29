@@ -5,12 +5,15 @@ option optimize_for = LITE_RUNTIME;
 service ProtoHailoRtRpc {
     rpc client_keep_alive (keepalive_Request) returns (empty) {}
     rpc get_service_version (get_service_version_Request) returns (get_service_version_Reply) {}
+
     rpc VDevice_create (VDevice_create_Request) returns (VDevice_create_Reply) {}
+    rpc VDevice_dup_handle (dup_handle_Request) returns (dup_handle_Reply) {}
     rpc VDevice_release (Release_Request) returns (Release_Reply) {}
     rpc VDevice_configure (VDevice_configure_Request) returns (VDevice_configure_Reply) {}
     rpc VDevice_get_physical_devices_ids (VDevice_get_physical_devices_ids_Request) returns (VDevice_get_physical_devices_ids_Reply) {}
     rpc VDevice_get_default_streams_interface (VDevice_get_default_streams_interface_Request) returns (VDevice_get_default_streams_interface_Reply) {}
 
+    rpc ConfiguredNetworkGroup_dup_handle (dup_handle_Request) returns (dup_handle_Reply) {}
     rpc ConfiguredNetworkGroup_release (Release_Request) returns (Release_Reply) {}
     rpc ConfiguredNetworkGroup_make_input_vstream_params (ConfiguredNetworkGroup_make_input_vstream_params_Request) returns (ConfiguredNetworkGroup_make_input_vstream_params_Reply) {}
     rpc ConfiguredNetworkGroup_make_output_vstream_params (ConfiguredNetworkGroup_make_output_vstream_params_Request) returns (ConfiguredNetworkGroup_make_output_vstream_params_Reply) {}
@@ -23,13 +26,17 @@ service ProtoHailoRtRpc {
     rpc ConfiguredNetworkGroup_get_input_vstream_infos (ConfiguredNetworkGroup_get_vstream_infos_Request) returns (ConfiguredNetworkGroup_get_vstream_infos_Reply) {}
     rpc ConfiguredNetworkGroup_get_output_vstream_infos (ConfiguredNetworkGroup_get_vstream_infos_Request) returns (ConfiguredNetworkGroup_get_vstream_infos_Reply) {}
     rpc ConfiguredNetworkGroup_get_all_vstream_infos (ConfiguredNetworkGroup_get_vstream_infos_Request) returns (ConfiguredNetworkGroup_get_vstream_infos_Reply) {}
+    rpc ConfiguredNetworkGroup_is_scheduled (ConfiguredNetworkGroup_is_scheduled_Request) returns (ConfiguredNetworkGroup_is_scheduled_Reply) {}
     rpc ConfiguredNetworkGroup_set_scheduler_timeout (ConfiguredNetworkGroup_set_scheduler_timeout_Request) returns (ConfiguredNetworkGroup_set_scheduler_timeout_Reply) {}
     rpc ConfiguredNetworkGroup_set_scheduler_threshold (ConfiguredNetworkGroup_set_scheduler_threshold_Request) returns (ConfiguredNetworkGroup_set_scheduler_threshold_Reply) {}
+    rpc ConfiguredNetworkGroup_set_scheduler_priority (ConfiguredNetworkGroup_set_scheduler_priority_Request) returns (ConfiguredNetworkGroup_set_scheduler_priority_Reply) {}
     rpc ConfiguredNetworkGroup_get_latency_measurement (ConfiguredNetworkGroup_get_latency_measurement_Request) returns (ConfiguredNetworkGroup_get_latency_measurement_Reply) {}
     rpc ConfiguredNetworkGroup_is_multi_context (ConfiguredNetworkGroup_is_multi_context_Request) returns (ConfiguredNetworkGroup_is_multi_context_Reply) {}
     rpc ConfiguredNetworkGroup_get_config_params(ConfiguredNetworkGroup_get_config_params_Request) returns (ConfiguredNetworkGroup_get_config_params_Reply) {}
 
     rpc InputVStreams_create (VStream_create_Request) returns (VStreams_create_Reply) {}
+    rpc InputVStream_dup_handle (dup_handle_Request) returns (dup_handle_Reply) {}
+    rpc OutputVStream_dup_handle (dup_handle_Request) returns (dup_handle_Reply) {}
     rpc InputVStream_release (Release_Request) returns (Release_Reply) {}
     rpc OutputVStreams_create (VStream_create_Request) returns (VStreams_create_Reply) {}
     rpc OutputVStream_release (Release_Request) returns (Release_Reply) {}
@@ -55,7 +62,7 @@ service ProtoHailoRtRpc {
 message empty {}
 
 message keepalive_Request {
-    uint32 process_id = 1;
+    uint32 pid = 1;
 }
 
 message ProtoVDeviceParams {
@@ -77,6 +84,15 @@ message get_service_version_Request {
 message get_service_version_Reply {
     uint32 status = 1;
     ProtoHailoVersion hailo_version = 2;
+}
+
+message dup_handle_Request {
+    uint32 pid = 1;
+    uint32 handle = 2;
+}
+
+message dup_handle_Reply {
+    uint32 handle = 1;
 }
 
 message VDevice_create_Request {
@@ -175,6 +191,7 @@ message ProtoStreamInfo {
 message ProtoStreamsParams {
     uint32 stream_interface = 1;
     uint32 direction = 2;
+    uint32 flags = 3;
 }
 
 message ProtoNamedStreamParams {
@@ -359,6 +376,15 @@ message ConfiguredNetworkGroup_get_vstream_infos_Reply {
     repeated ProtoVStreamInfo vstream_infos = 2;
 }
 
+message ConfiguredNetworkGroup_is_scheduled_Request {
+    uint32 handle = 1;
+}
+
+message ConfiguredNetworkGroup_is_scheduled_Reply {
+    uint32 status = 1;
+    bool is_scheduled = 2;
+}
+
 message ConfiguredNetworkGroup_set_scheduler_timeout_Request {
     uint32 handle = 1;
     uint32 timeout_ms = 2;
@@ -376,6 +402,16 @@ message ConfiguredNetworkGroup_set_scheduler_threshold_Request {
 }
 
 message ConfiguredNetworkGroup_set_scheduler_threshold_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredNetworkGroup_set_scheduler_priority_Request {
+    uint32 handle = 1;
+    uint32 priority = 2;
+    string network_name = 3;
+}
+
+message ConfiguredNetworkGroup_set_scheduler_priority_Reply {
     uint32 status = 1;
 }
 

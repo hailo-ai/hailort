@@ -27,6 +27,36 @@ void InputVStreamWrapper::add_to_python_module(py::module &m)
             MemoryView(const_cast<void*>(reinterpret_cast<const void*>(data.data())), data.nbytes()));
         VALIDATE_STATUS(status);
     })
+    .def("before_fork", [](InputVStream &self)
+    {
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+        auto status = self.before_fork();
+        VALIDATE_STATUS(status);
+#else
+        (void)self;
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+    }
+    )
+    .def("after_fork_in_parent", [](InputVStream &self)
+    {
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+        auto status = self.after_fork_in_parent();
+        VALIDATE_STATUS(status);
+#else
+        (void)self;
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+    }
+    )
+    .def("after_fork_in_child", [](InputVStream &self)
+    {
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+        auto status = self.after_fork_in_child();
+        VALIDATE_STATUS(status);
+#else
+        (void)self;
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+    }
+    )
     .def("flush", [](InputVStream &self)
     {
         hailo_status status = self.flush();
@@ -100,6 +130,36 @@ void InputVStreamsWrapper::clear()
     VALIDATE_STATUS(status);
 }
 
+void InputVStreamsWrapper::before_fork()
+{
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+    for (auto &input_vstream : m_input_vstreams) {
+        auto status = input_vstream.second->before_fork();
+        VALIDATE_STATUS(status);
+    }
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+}
+
+void InputVStreamsWrapper::after_fork_in_parent()
+{
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+    for (auto &input_vstream : m_input_vstreams) {
+        auto status = input_vstream.second->after_fork_in_parent();
+        VALIDATE_STATUS(status);
+    }
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+}
+
+void InputVStreamsWrapper::after_fork_in_child()
+{
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+    for (auto &input_vstream : m_input_vstreams) {
+        auto status = input_vstream.second->after_fork_in_child();
+        VALIDATE_STATUS(status);
+    }
+#endif // HAILO_SUPPORT_MULTI_PROCESS    
+}
+
 void InputVStreamsWrapper::add_to_python_module(py::module &m)
 {
     py::class_<InputVStreamsWrapper>(m, "InputVStreams")
@@ -109,6 +169,9 @@ void InputVStreamsWrapper::add_to_python_module(py::module &m)
     .def("clear", &InputVStreamsWrapper::clear)
     .def("__enter__", &InputVStreamsWrapper::enter, py::return_value_policy::reference)
     .def("__exit__",  [&](InputVStreamsWrapper &self, py::args) { self.exit(); })
+    .def("before_fork", &InputVStreamsWrapper::before_fork)
+    .def("after_fork_in_parent",  &InputVStreamsWrapper::after_fork_in_parent)
+    .def("after_fork_in_child", &InputVStreamsWrapper::after_fork_in_child)
     ;
 }
 
@@ -151,6 +214,36 @@ void OutputVStreamWrapper::add_to_python_module(py::module &m)
         return py::array(get_dtype(self), get_shape(self), unmanaged_addr,
             py::capsule(unmanaged_addr, [](void *p) { delete reinterpret_cast<uint8_t*>(p); }));
     })
+    .def("before_fork", [](OutputVStream &self)
+    {
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+        auto status = self.before_fork();
+        VALIDATE_STATUS(status);
+#else
+        (void)self;
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+    }
+    )
+    .def("after_fork_in_parent", [](OutputVStream &self)
+    {
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+        auto status = self.after_fork_in_parent();
+        VALIDATE_STATUS(status);
+#else
+        (void)self;
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+    }
+    )
+    .def("after_fork_in_child", [](OutputVStream &self)
+    {
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+        auto status = self.after_fork_in_child();
+        VALIDATE_STATUS(status);
+#else
+        (void)self;
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+    }
+    )
     .def_property_readonly("info", [](OutputVStream &self)
     {
         return self.get_info();
@@ -213,6 +306,36 @@ void OutputVStreamsWrapper::clear()
     VALIDATE_STATUS(status);
 }
 
+void OutputVStreamsWrapper::before_fork()
+{
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+    for (auto &output_vstream : m_output_vstreams) {
+        auto status = output_vstream.second->before_fork();
+        VALIDATE_STATUS(status);
+    }
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+}
+
+void OutputVStreamsWrapper::after_fork_in_parent()
+{
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+    for (auto &output_vstream : m_output_vstreams) {
+        auto status = output_vstream.second->after_fork_in_parent();
+        VALIDATE_STATUS(status);
+    }
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+}
+
+void OutputVStreamsWrapper::after_fork_in_child()
+{
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+    for (auto &output_vstream : m_output_vstreams) {
+        auto status = output_vstream.second->after_fork_in_child();
+        VALIDATE_STATUS(status);
+    }
+#endif // HAILO_SUPPORT_MULTI_PROCESS    
+}
+
 void OutputVStreamsWrapper::add_to_python_module(py::module &m)
 {
     py::class_<OutputVStreamsWrapper>(m, "OutputVStreams")
@@ -222,6 +345,9 @@ void OutputVStreamsWrapper::add_to_python_module(py::module &m)
     .def("clear", &OutputVStreamsWrapper::clear)
     .def("__enter__", &OutputVStreamsWrapper::enter, py::return_value_policy::reference)
     .def("__exit__",  [&](OutputVStreamsWrapper &self, py::args) { self.exit(); })
+    .def("before_fork", &OutputVStreamsWrapper::before_fork)
+    .def("after_fork_in_parent",  &OutputVStreamsWrapper::after_fork_in_parent)
+    .def("after_fork_in_child", &OutputVStreamsWrapper::after_fork_in_child)
     ;
 }
 

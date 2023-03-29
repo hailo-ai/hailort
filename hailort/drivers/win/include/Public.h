@@ -56,7 +56,6 @@ struct tCommonHailoIoctlParam
 #define HAILO_CMD_MAP_BUFFER            0x0051
 #define HAILO_CMD_FREE_MEMORY           0x0060
 #define HAILO_CMD_ALLOC_MEMORY          0x0061
-#define HAILO_CMD_ABORT_ALL             0x0070
 
 #define HAILO_IOCTL_COMPATIBLE                  CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_ANY_ACCESS)
 struct tCompatibleHailoIoctlParam
@@ -103,11 +102,10 @@ struct tCompatibleHailoIoctlData
     ULONG_PTR Value;
     union {
         hailo_memory_transfer_params MemoryTransfer;
-        hailo_vdma_channel_enable_params ChannelEnable;
-        hailo_vdma_channel_disable_params ChannelDisable;
-        hailo_vdma_channel_wait_params ChannelWait;
-        hailo_vdma_channel_abort_params ChannelAbort;
-        hailo_vdma_channel_clear_abort_params ChannelClearAbort;
+        hailo_vdma_interrupts_enable_params VdmaInterruptsEnable;
+        hailo_vdma_interrupts_disable_params VdmaInterruptsDisable;
+        hailo_vdma_interrupts_read_timestamp_params VdmaInterruptsReadTimestamps;
+        hailo_vdma_interrupts_wait_params VdmaInterruptsWait;
         hailo_vdma_buffer_sync_params VdmaBufferSync;
         hailo_fw_control FirmwareControl;
         hailo_vdma_buffer_map_params VdmaBufferMap;

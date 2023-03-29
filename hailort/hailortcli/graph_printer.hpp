@@ -12,13 +12,15 @@
 
 #include "hailo/hailort.h"
 #include "hailo/vstream.hpp"
-#include "pipeline.hpp"
+
+#include "net_flow/pipeline/pipeline.hpp"
 
 #include "DotWriter.h"
 
 #include <vector>
 #include <memory>
 #include <type_traits>
+
 
 namespace hailort
 {

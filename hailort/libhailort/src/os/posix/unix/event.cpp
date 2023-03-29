@@ -8,14 +8,18 @@
  *
  * TODO: doc
  **/
-#include "hailo/event.hpp"
+
 #include "hailo/hailort.h"
+#include "hailo/event.hpp"
+
 #include "common/utils.hpp"
-#include "event_internal.hpp"
+
+#include "utils/event_internal.hpp"
 
 #include <sys/eventfd.h>
 #include <poll.h>
 #include <utility>
+
 
 namespace hailort
 {

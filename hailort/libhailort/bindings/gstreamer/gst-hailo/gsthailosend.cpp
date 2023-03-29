@@ -33,6 +33,7 @@ GST_DEBUG_CATEGORY_STATIC(gst_hailosend_debug_category);
 #define YUY2_FEATURES_SIZE (2)
 #define NV12_FEATURES_SIZE (3)
 #define NV21_FEATURES_SIZE (3)
+#define I420_FEATURES_SIZE (3)
 
 static void gst_hailosend_set_property(GObject *object, guint property_id, const GValue *value, GParamSpec *pspec);
 static void gst_hailosend_get_property(GObject *object, guint property_id, GValue *value, GParamSpec *pspec);
@@ -64,7 +65,7 @@ static void gst_hailosend_class_init(GstHailoSendClass *klass)
         gst_pad_template_new("sink", GST_PAD_SINK, GST_PAD_ALWAYS, gst_caps_from_string(HAILO_VIDEO_CAPS)));
 
     gst_element_class_set_static_metadata(GST_ELEMENT_CLASS(klass),
-        "hailosend element", "Hailo/Filter/Video", "Send RGB/RGBA/YUY2 video to HailoRT", PLUGIN_AUTHOR);
+        "hailosend element", "Hailo/Filter/Video", "Send RGB/RGBA/YUY2/NV12/NV21/I420 video to HailoRT", PLUGIN_AUTHOR);
     
     element_class->change_state = GST_DEBUG_FUNCPTR(gst_hailosend_change_state);
 
@@ -236,6 +237,12 @@ GstCaps *HailoSendImpl::get_caps(GstBaseTransform */*trans*/, GstPadDirection /*
         format = "NV21";
         GST_CHECK(NV21_FEATURES_SIZE == m_input_vstream_infos[0].shape.features, NULL, m_element, STREAM,
             "Features of input vstream %s is not %d for NV21 format! (features=%d)", m_input_vstream_infos[0].name, NV21_FEATURES_SIZE,
+            m_input_vstream_infos[0].shape.features);
+        break;
+    case HAILO_FORMAT_ORDER_I420:
+        format = "I420";
+        GST_CHECK(I420_FEATURES_SIZE == m_input_vstream_infos[0].shape.features, NULL, m_element, STREAM,
+            "Features of input vstream %s is not %d for I420 format! (features=%d)", m_input_vstream_infos[0].name, I420_FEATURES_SIZE,
             m_input_vstream_infos[0].shape.features);
         break;
     default:

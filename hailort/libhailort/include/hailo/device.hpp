@@ -21,6 +21,7 @@
 #include <memory>
 #include <chrono>
 
+
 namespace hailort
 {
 
@@ -43,7 +44,7 @@ public:
     enum class Type {
         PCIE = 0,
         ETH,
-        CORE
+        INTEGRATED
     };
 
     /**
@@ -168,6 +169,25 @@ public:
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     static Expected<Type> get_device_type(const std::string &device_id);
+
+    /**
+     * Create the default configure params from an hef.
+     *
+     * @param[in] hef                         A reference to an Hef object to create configure params by
+     * @return Upon success, returns Expected of a NetworkGroupsParamsMap (map of string and ConfiguredNetworkParams).
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    Expected<NetworkGroupsParamsMap> create_configure_params(Hef &hef) const;
+
+    /**
+     * Create the default configure params from an hef.
+     *
+     * @param[in] hef                         A reference to an Hef object to create configure params by
+     * @param[in] network_group_name  Name of network_group to make configure params for.
+     * @return Upon success, returns Expected of a NetworkGroupsParamsMap (map of string and ConfiguredNetworkParams).
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    Expected<ConfigureNetworkParams> create_configure_params(Hef &hef, const std::string &network_group_name) const;
 
     /**
      * Configure the device from an hef.

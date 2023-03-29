@@ -12,8 +12,6 @@
 
 #include "hailo/vstream.hpp"
 
-#include <unordered_map>
-#include <chrono>
 
 namespace hailort
 {
@@ -90,12 +88,14 @@ public:
         m_inputs(std::move(other.m_inputs)),
         m_outputs(std::move(other.m_outputs)),
         m_is_multi_context(std::move(other.m_is_multi_context)),
+        m_is_scheduled(std::move(other.m_is_scheduled)),
         m_network_name_to_input_count(std::move(other.m_network_name_to_input_count)),
         m_network_name_to_output_count(std::move(other.m_network_name_to_output_count)),
         m_batch_size(std::move(other.m_batch_size))
         {};
 private:
-    InferVStreams(std::vector<InputVStream> &&inputs, std::vector<OutputVStream> &&outputs, bool is_multi_context, uint16_t batch_size);
+    InferVStreams(std::vector<InputVStream> &&inputs, std::vector<OutputVStream> &&outputs, bool is_multi_context,
+        bool is_scheduled, uint16_t batch_size);
     hailo_status verify_network_inputs_and_outputs(const std::map<std::string, MemoryView>& inputs_name_mem_view_map,
                                                    const std::map<std::string, MemoryView>& outputs_name_mem_view_map);
     hailo_status verify_memory_view_size(const std::map<std::string, MemoryView>& inputs_name_mem_view_map,
@@ -105,7 +105,8 @@ private:
 
     std::vector<InputVStream> m_inputs;
     std::vector<OutputVStream> m_outputs;
-    bool m_is_multi_context;
+    const bool m_is_multi_context;
+    const bool m_is_scheduled;
     std::map<std::string, size_t> m_network_name_to_input_count;
     std::map<std::string, size_t> m_network_name_to_output_count;
     uint16_t m_batch_size;

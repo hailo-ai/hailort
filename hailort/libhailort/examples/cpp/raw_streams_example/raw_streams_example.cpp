@@ -10,6 +10,8 @@
 #include "hailo/hailort.hpp"
 
 #include <iostream>
+#include <thread>
+
 
 #define HEF_FILE ("hefs/shortcut_net.hef")
 constexpr size_t FRAMES_COUNT = 100;
@@ -26,12 +28,7 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(Device
         return make_unexpected(hef.status());
     }
 
-    auto stream_interface = device.get_default_streams_interface();
-    if (!stream_interface) {
-        return make_unexpected(stream_interface.status());
-    }
-
-    auto configure_params = hef->create_configure_params(stream_interface.value());
+    auto configure_params = device.create_configure_params(hef.value());
     if (!configure_params) {
         return make_unexpected(configure_params.status());
     }
@@ -148,13 +145,18 @@ hailo_status infer(InputStreamRefVector &input_streams, OutputStreamRefVector &o
 
 int main()
 {
-    /*
-     For simplicity, not passing `device_id` - This function will fail in case more than one device is present.
-     See `hailort::Device::scan_devices` and `hailort::Device::create` functions documentation.
-    */
-    auto device = Device::create();
+    auto device_ids = Device::scan();
+    if (!device_ids) {
+        std::cerr << "Failed to scan, status = " << device_ids.status() << std::endl;
+        return device_ids.status();
+    }
+    if (device_ids->size() < 1){
+        std::cerr << "Failed to find a connected hailo device." << std::endl;
+        return HAILO_INVALID_OPERATION;
+    }
+    auto device = Device::create(device_ids->at(0));
     if (!device) {
-        std::cerr << "Failed create device " << device.status() << std::endl;
+        std::cerr << "Failed to create device " << device.status() << std::endl;
         return device.status();
     }
 

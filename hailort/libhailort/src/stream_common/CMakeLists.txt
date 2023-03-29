@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.0.0)
+
+set(SRC_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/stream.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/stream_internal.cpp
+)
+
+set(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES} ${SRC_FILES} PARENT_SCOPE)

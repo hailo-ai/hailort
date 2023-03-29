@@ -13,6 +13,7 @@
 #define _HAILORT_HPP_
 
 #include "hailo/hailort.h"
+#include "hailo/hailort_common.hpp"
 #include "hailo/hef.hpp"
 #include "hailo/device.hpp"
 #include "hailo/vdevice.hpp"
@@ -24,9 +25,10 @@
 #include "hailo/expected.hpp"
 #include "hailo/buffer.hpp"
 #include "hailo/event.hpp"
-#include "hailo/hailort_common.hpp"
 #include "hailo/runtime_statistics.hpp"
 #include "hailo/network_rate_calculator.hpp"
 #include "hailo/quantization.hpp"
+#include "hailo/dma_mapped_buffer.hpp"
+#include "hailo/hailort_defaults.hpp"
 
 #endif /* _HAILORT_HPP_ */

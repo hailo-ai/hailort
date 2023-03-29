@@ -1,3 +1,15 @@
+
+
+#include "hailo/hailort.h"
+
+#include "transform/transform_internal.hpp"
+#include "bindings_common.hpp"
+
+#include "pyhailort_internal.hpp"
+#include "control_api.hpp"
+#include "utils.hpp"
+#include "utils.h"
+
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <pybind11/detail/common.h>
@@ -6,22 +18,15 @@
 #include <pybind11/functional.h>
 #include <vector>
 
-#include "pyhailort_internal.hpp"
-#include "control_api.hpp"
-#include "utils.hpp"
-#include "utils.h"
-
-#include "hailo/hailort.h"
-#include "transform_internal.hpp"
-#include "bindings_common.hpp"
-
 
 namespace hailort
 {
+// TODO: Remove (HRT-9944)
+// Duplicated for hailo post process test with python API.
+static const uint32_t TEST_NUM_OF_CLASSES = 80;
 
-static const uint32_t TEST_NUM_OF_CLASSES2 = 80;
 
-py::array PyhailortInternal::get_yolov5_post_process_expected_buffer()
+Expected<Buffer> get_expected_buffer_float32()
 {
     static const uint32_t DETECTION_CLASS_ID_1 = 0;
     static const float32_t CLASS_ID_1_DETECTION_COUNT = 5;
@@ -105,13 +110,13 @@ py::array PyhailortInternal::get_yolov5_post_process_expected_buffer()
     };
 
     static const uint32_t DETECTION_COUNT = 9;
-    auto buffer_size = (DETECTION_COUNT * sizeof(hailo_bbox_float32_t)) + (TEST_NUM_OF_CLASSES2 * sizeof(float32_t));
-    auto buffer_expected = hailort::Buffer::create(buffer_size, 0);
-    // CATCH_REQUIRE_EXPECTED(buffer_expected);
+    auto buffer_size = (DETECTION_COUNT * sizeof(hailo_bbox_float32_t)) + (TEST_NUM_OF_CLASSES * sizeof(float32_t));
+    auto buffer_expected = Buffer::create(buffer_size, 0);
+    CHECK_EXPECTED(buffer_expected);
     auto buffer = buffer_expected.release();
 
     size_t offset = 0;
-    for (uint32_t class_index = 0; class_index < TEST_NUM_OF_CLASSES2; class_index++) {
+    for (uint32_t class_index = 0; class_index < TEST_NUM_OF_CLASSES; class_index++) {
         if (DETECTION_CLASS_ID_1 == class_index) {
             memcpy(buffer.data() + offset, &CLASS_ID_1_DETECTION_COUNT, sizeof(CLASS_ID_1_DETECTION_COUNT));
             offset += sizeof(CLASS_ID_1_DETECTION_COUNT);
@@ -160,12 +165,20 @@ py::array PyhailortInternal::get_yolov5_post_process_expected_buffer()
         }
     }
 
+    return buffer;
+}
+
+py::array PyhailortInternal::get_yolov5_post_process_expected_buffer()
+{
+    auto buffer = get_expected_buffer_float32();
+    VALIDATE_EXPECTED(buffer);
+
     // Note: The ownership of the buffer is transferred to Python wrapped as a py::array.
     //       When the py::array isn't referenced anymore in Python and is destructed, the py::capsule's dtor
     //       is called too (and it deletes the raw buffer)
     auto type = py::dtype(HailoRTBindingsCommon::convert_format_type_to_string(HAILO_FORMAT_TYPE_FLOAT32));
-    auto shape = *py::array::ShapeContainer({buffer.size()});
-    const auto unmanaged_addr = buffer.release();
+    auto shape = *py::array::ShapeContainer({buffer->size()});
+    const auto unmanaged_addr = buffer.release().release();
     return py::array(type, shape, unmanaged_addr,
         py::capsule(unmanaged_addr, [](void *p) { delete reinterpret_cast<uint8_t*>(p); }));
 }
@@ -261,10 +274,10 @@ bool PyhailortInternal::is_output_transformation_required(
 
 py::list PyhailortInternal::get_all_layers_info(const HefWrapper &hef, const std::string &net_group_name)
 {
-    auto network_group_metadata = hef.hef_ptr()->pimpl->get_network_group_metadata(net_group_name);
-    VALIDATE_EXPECTED(network_group_metadata);
+    auto core_op_metadata = hef.hef_ptr()->pimpl->get_core_op_metadata(net_group_name);
+    VALIDATE_EXPECTED(core_op_metadata);
 
-    return py::cast(network_group_metadata->get_all_layer_infos());
+    return py::cast(core_op_metadata->get_all_layer_infos());
 }
 
 PYBIND11_MODULE(_pyhailort_internal, m) {

@@ -9,6 +9,7 @@
 #include "inference_progress.hpp"
 #include "infer_stats_printer.hpp"
 #include "common.hpp"
+#include "common/os_utils.hpp"
 
 #include <iostream>
 #include <iomanip>
@@ -40,6 +41,7 @@ InferProgress::InferProgress(const inference_runner_params &params,
 void InferProgress::start()
 {
     m_print_thread = std::thread([this] () {
+        OsUtils::set_current_thread_name("PROGRESS_BAR");
         while (true) {
             print_progress(true);
             auto status = m_stop_event->wait(m_print_interval);

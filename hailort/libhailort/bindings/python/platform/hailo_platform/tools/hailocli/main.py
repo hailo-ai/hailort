@@ -1,14 +1,19 @@
 #!/usr/bin/env python
 
 import argparse
-import argcomplete
 import sys
 
+import argcomplete
+
 import hailo_platform
-from hailo_platform.tools.hailocli.base_utils import HailortCliUtil, Helper, HailortCliUtilError
-from hailo_platform.tools.hailocli.hailocli_commands import (FWUpdaterCLI, SSBUpdaterCLI, ControlCommandCLI, ScanCommandCLI,
-                                                            LoggerCommandCLI, MeasurePowerCommandCLI, RunCommandCLI, SensorConfigCommandCLI,
-                                                            FWConfigCommandCLI, BenchmarkCommandCLI, UDPRateLimiterCLI, MonitorCommandCLI, ParseHEFCommandCLI, TutorialRunnerCLI)
+from hailo_platform.tools.hailocli.base_utils import HailortCliUtil, HailortCliUtilError, Helper
+from hailo_platform.tools.hailocli.hailocli_commands import (BenchmarkCommandCLI, ControlCommandCLI, FWConfigCommandCLI,
+                                                             FWUpdaterCLI, LoggerCommandCLI, MeasurePowerCommandCLI,
+                                                             MonitorCommandCLI, ParseHEFCommandCLI, RunCommandCLI,
+                                                             SSBUpdaterCLI, ScanCommandCLI, SensorConfigCommandCLI,
+                                                             TutorialRunnerCLI, UDPRateLimiterCLI)
+from hailo_platform.tools.hailocli.version_action import CustomVersionAction
+
 
 # Note: PlatformCommands are external dependencies in phase2-sdk/demos repo; don't change!
 class PlatformCommands:
@@ -25,15 +30,16 @@ class PlatformCommands:
         'sensor-config': ('Sensor configuration tool', SensorConfigCommandCLI),
         'run': ('Run a compiled network', RunCommandCLI),
         'benchmark': ('Measure basic performance on compiled network', BenchmarkCommandCLI),
-        'monitor': ("Monitor of networks - Presents information about the running networks. To enable monitor, set in the application process the environment variable 'SCHEDULER_MONITOR' to 1.", MonitorCommandCLI),
+        'monitor': ("Monitor of networks - Presents information about the running networks. To enable monitor, set in the application process the environment variable 'HAILO_MONITOR' to 1.", MonitorCommandCLI),
         'parse-hef': (' Parse HEF to get information about its components', ParseHEFCommandCLI),
         'measure-power': ('Measures power consumption', MeasurePowerCommandCLI),
         'tutorial': ('Runs the tutorials in jupyter notebook', TutorialRunnerCLI),
-        #'--version': ('Print program version and exit', VersionCLI)
     }
 
     def __init__(self):
         self.parser = argparse.ArgumentParser(description=self._get_generic_description())
+        self.parser.register('action', 'custom_version', CustomVersionAction)
+        self.parser.add_argument('--version', action='custom_version')
         self.subparsers = self.parser.add_subparsers(help='Hailo utilities aimed to help with everything you need')
         self.COMMANDS = {}
         self.COMMANDS.update(type(self).PLATFORM_COMMANDS)
@@ -60,6 +66,7 @@ class PlatformCommands:
     # Dependency injection for testing
     def _run(self, argv):
         self.COMMANDS['help'] = ('show the list of commands', Helper(self.COMMANDS))
+
         # Create the commands and let them set the arguments
         commands = {}
         for command_name, (help_, command_class) in self.COMMANDS.items():
@@ -79,10 +86,10 @@ class PlatformCommands:
         command_name = argv[0]
         if (command_name in commands) and isinstance(commands[command_name], HailortCliUtil):
             # HailortCliUtil just passes the rest of the argv to hailortcli
-            try :
+            try:
                 return commands[command_name].run(argv[1:])
             except HailortCliUtilError as e:
-                print('\n'+ str(e))
+                print('\n' + str(e))
                 return
 
         # This isn't a HailortCliUtil commnad, parse with argparse

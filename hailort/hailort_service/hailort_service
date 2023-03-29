@@ -1,4 +1,4 @@
-# This file contains HailoRT's configurable environment variables for HailoRT Service.
+# This file contains HailoRT's configurable environment variables for HailoRT Linux Service.
 # The environment variables are set to their default values.
 # To change an environment variable's value, follow the steps:
 # 1. Change the value of the selected environemt variable in this file
@@ -8,5 +8,4 @@
 [Service]
 HAILORT_LOGGER_PATH="/var/log/hailo"
 HAILO_DISABLE_MULTIPLEXER=0
-HAILO_ENABLE_MULTI_DEVICE_SCHEDULER=0
-SCHEDULER_MONITOR=0
+HAILO_MONITOR=0

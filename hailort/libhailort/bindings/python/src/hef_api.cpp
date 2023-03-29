@@ -207,9 +207,10 @@ ActivatedAppContextManagerWrapper::ActivatedAppContextManagerWrapper(ConfiguredN
 const ActivatedNetworkGroup& ActivatedAppContextManagerWrapper::enter()
 {
     auto activated = m_net_group.activate(m_network_group_params);
-    VALIDATE_EXPECTED(activated);
-
-    m_activated_net_group = activated.release();
+    if (activated.status() != HAILO_NOT_IMPLEMENTED) {
+        VALIDATE_EXPECTED(activated);
+        m_activated_net_group = activated.release();
+    }
 
     return std::ref(*m_activated_net_group);
 }
@@ -273,7 +274,9 @@ void HefWrapper::initialize_python_module(py::module &m)
         .def("wait_for_activation", [](ConfiguredNetworkGroup& self, uint32_t timeout_ms)
             {
                 auto status = self.wait_for_activation(std::chrono::milliseconds(timeout_ms));
-                VALIDATE_STATUS(status);
+                if (status != HAILO_NOT_IMPLEMENTED) {
+                    VALIDATE_STATUS(status);
+                }
             })
         .def("InputVStreams", [](ConfiguredNetworkGroup &self, std::map<std::string, hailo_vstream_params_t> &input_vstreams_params)
             {
@@ -294,6 +297,49 @@ void HefWrapper::initialize_python_module(py::module &m)
             VALIDATE_EXPECTED(results);
 
             return py::cast(results.value());
+        })
+        .def("before_fork", [](ConfiguredNetworkGroup& self)
+        {
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+            auto status = self.before_fork();
+            VALIDATE_STATUS(status);
+#else
+            (void)self;
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+        })
+        .def("after_fork_in_parent", [](ConfiguredNetworkGroup& self)
+        {
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+            auto status = self.after_fork_in_parent();
+            VALIDATE_STATUS(status);            
+#else
+            (void)self;
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+        })
+        .def("after_fork_in_child", [](ConfiguredNetworkGroup& self)
+        {
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+            auto status = self.after_fork_in_child();
+            VALIDATE_STATUS(status);
+#else
+            (void)self;
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+        })
+        .def("set_scheduler_timeout", [](ConfiguredNetworkGroup& self, int timeout, const std::string &network_name="")
+        {
+            auto timeout_mili = std::chrono::milliseconds(timeout);
+            auto status = self.set_scheduler_timeout(timeout_mili, network_name);
+            VALIDATE_STATUS(status);
+        })
+        .def("set_scheduler_threshold", [](ConfiguredNetworkGroup& self, uint32_t threshold)
+        {
+            auto status = self.set_scheduler_threshold(threshold);
+            VALIDATE_STATUS(status);
+        })
+        .def("set_scheduler_priority", [](ConfiguredNetworkGroup& self, uint8_t priority)
+        {
+            auto status = self.set_scheduler_priority(priority);
+            VALIDATE_STATUS(status);
         })
         ;
 

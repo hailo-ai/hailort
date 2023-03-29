@@ -13,6 +13,8 @@
 #include <thread>
 #include <memory>
 
+#include "common/os_utils.hpp"
+
 namespace hailort
 {
 
@@ -23,16 +25,29 @@ namespace hailort
 template<typename T>
 class AsyncThread final {
 public:
-    explicit AsyncThread(std::function<T(void)> func) :
+    AsyncThread(const std::string &name, std::function<T(void)> func) :
         m_result(),
-        m_thread([this, func]() {
+        m_thread([this, name, func]() {
+            if (!name.empty()) {
+                OsUtils::set_current_thread_name(name);
+            }
             m_result = func();
         })
     {}
 
+    explicit AsyncThread(std::function<T(void)> func) : AsyncThread("", func)
+    {}
+
+    ~AsyncThread()
+    {
+        // Join on the thread. this can be a blocking operation, so to avoid it the user must call .get()
+        // before the object gets destracted (same behavoiur as in std::future returned from std::async).
+        get();
+    }
+
     /**
      * NOTE! this object is not moveable by purpose, on creation we create a lambda that take `this`, if we
-     * move the object `this` will change and the callback will be wrong. Use exeternal storage like std::unique_ptr
+     * move the object `this` will change and the callback will be wrong. Use external storage like std::unique_ptr
      * to move the object (or to put it inside a container)
      */
     AsyncThread(const AsyncThread<T> &) = delete;

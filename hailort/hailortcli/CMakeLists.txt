@@ -20,7 +20,6 @@ set(HAILORTCLI_CPP_FILES
     fw_config_serializer.cpp
     common.cpp
     benchmark_command.cpp
-    temp_measurement.cpp
     parse_hef_command.cpp
     graph_printer.cpp
     mon_command.cpp
@@ -30,6 +29,7 @@ set(HAILORTCLI_CPP_FILES
     run2/live_printer.cpp
     run2/timer_live_track.cpp
     run2/network_live_track.cpp
+    run2/measurement_live_track.cpp
     )
     
 if(UNIX)
@@ -53,9 +53,10 @@ add_executable(hailortcli
     ${HAILORT_COMMON_CPP_SOURCES}
     ${PROJECT_SOURCE_DIR}/common/src/firmware_header_utils.c
     ${PROJECT_SOURCE_DIR}/common/src/md5.c
-    ${HAILORT_SRC_DIR}/pipeline.cpp
-    ${HAILO_FULL_OS_DIR}/event.cpp
+    ${HAILORT_SRC_DIR}/net_flow/pipeline/pipeline.cpp # TODO: link dynamically with libhailort
+    ${HAILO_FULL_OS_DIR}/event.cpp # TODO: link dynamically with libhailort
 )
+
 target_compile_options(hailortcli PRIVATE ${HAILORT_COMPILE_OPTIONS})
 set_property(TARGET hailortcli PROPERTY CXX_STANDARD 14)
 set_property(TARGET hailortcli PROPERTY INSTALL_RPATH "$ORIGIN" "../lib/") # Link with a relative libhailort

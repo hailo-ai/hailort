@@ -13,14 +13,25 @@
 #include <sstream>
 
 TimerLiveTrack::TimerLiveTrack(std::chrono::milliseconds duration) :
-        m_duration(duration), m_start(std::chrono::steady_clock::now())
+        LivePrinter::Track(), m_duration(duration), m_start_time()
 {
+}
+
+hailo_status TimerLiveTrack::start()
+{
+    m_start_time = std::chrono::steady_clock::now();
+    m_started = true;
+
+    return HAILO_SUCCESS;
 }
 
 uint32_t TimerLiveTrack::get_text(std::stringstream &ss)
 {
+    if (!m_started) {
+        return 0;
+    }
     static const uint32_t MAX_PROGRESS_BAR_WIDTH = 20;
-    auto elapsed_time = std::chrono::steady_clock::now() - m_start;
+    auto elapsed_time = std::chrono::steady_clock::now() - m_start_time;
     auto eta = std::chrono::seconds(std::max<int32_t>(0, static_cast<int32_t>(std::round(std::chrono::duration<double>(m_duration - elapsed_time).count())))); // std::chrono::round is from C++17
     auto elapsed_percentage = std::min<uint32_t>(100, static_cast<uint32_t>(std::round(std::chrono::duration<double>(100 * elapsed_time / m_duration).count())));
     auto progress_bar_width = std::max<uint32_t>(1, std::min<uint32_t>(MAX_PROGRESS_BAR_WIDTH,

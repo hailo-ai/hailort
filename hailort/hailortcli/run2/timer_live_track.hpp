@@ -17,11 +17,12 @@ class TimerLiveTrack : public LivePrinter::Track
 public:
     TimerLiveTrack(std::chrono::milliseconds duration);
     virtual ~TimerLiveTrack() = default;
+    virtual hailo_status start() override;
     virtual uint32_t get_text(std::stringstream &ss) override;
 
 private:
     std::chrono::milliseconds m_duration;
-    std::chrono::time_point<std::chrono::steady_clock> m_start;
+    std::chrono::time_point<std::chrono::steady_clock> m_start_time;
 };
 
 #endif /* _HAILO_HAILORTCLI_RUN2_TIMER_LIVE_TRACK_HPP_ */

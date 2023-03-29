@@ -6,7 +6,7 @@
  * @file mmap_buffer.hpp
  * @brief RAII wrapper around memory mapping (mmap)
  *
- * 
+ *
  **/
 
 #ifndef _OS_MMAP_BUFFER_H_
@@ -23,7 +23,6 @@ namespace hailort
 
 class MmapBufferImpl final {
 public:
-
     static Expected<MmapBufferImpl> create_shared_memory(size_t length);
     static Expected<MmapBufferImpl> create_file_map(size_t length, FileDescriptor &file, uintptr_t offset);
 
@@ -37,10 +36,10 @@ public:
 
     MmapBufferImpl(const MmapBufferImpl &other) = delete;
     MmapBufferImpl &operator=(const MmapBufferImpl &other) = delete;
-    MmapBufferImpl(MmapBufferImpl &&other) noexcept : 
-        m_address(std::exchange(other.m_address, INVALID_ADDR)), 
+    MmapBufferImpl(MmapBufferImpl &&other) noexcept :
+        m_address(std::exchange(other.m_address, INVALID_ADDR)),
         m_length(std::move(other.m_length)) {};
-    MmapBufferImpl &operator=(MmapBufferImpl &&other) noexcept 
+    MmapBufferImpl &operator=(MmapBufferImpl &&other) noexcept
     {
         std::swap(m_address, other.m_address);
         std::swap(m_length, other.m_length);
@@ -48,11 +47,11 @@ public:
         return *this;
     };
 
-    void *get() {
+    void *address() {
         return m_address;
     }
 
-    explicit operator bool() const
+    bool is_mapped() const
     {
         return (INVALID_ADDR != m_address);
     }
@@ -68,7 +67,7 @@ private:
 
     void *m_address;
     size_t m_length;
-    bool   m_unmappable;
+    bool m_unmappable;
 };
 
 template<typename T>
@@ -90,7 +89,6 @@ public:
         return MmapBuffer<T>(std::move(mmap.release()));
     }
 
-
     MmapBuffer() = default;
     ~MmapBuffer() = default;
 
@@ -101,29 +99,28 @@ public:
 
     T* operator->()
     {
-        return get();
+        return address();
     }
 
-    T* get() {
-        return reinterpret_cast<T*>(m_mmap.get());
+    T* address() {
+        return reinterpret_cast<T*>(m_mmap.address());
     }
-
 
     template<typename U=T>
     std::enable_if_t<!std::is_void<U>::value, U&> operator*()
     {
-        return get()[0];
+        return address()[0];
     }
 
     template<typename U=T>
     std::enable_if_t<!std::is_void<U>::value, U&> operator[](size_t i)
     {
-        return get()[i];
+        return address()[i];
     }
 
-    explicit operator bool() const
+    bool is_mapped() const
     {
-        return bool(m_mmap);
+        return m_mmap.is_mapped();
     }
 
     // 'munmap' the current mapped buffer (if currently mapped).

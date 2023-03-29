@@ -69,15 +69,14 @@ Expected<std::string> CliCommon::current_time_to_string()
 void CliCommon::reset_cursor(size_t lines_count)
 {
     for (size_t i = 0; i < lines_count; i++) {
-        std::cout << FORMAT_CURSOR_UP_LINE;
+        std::cout << FORMAT_CURSOR_UP_LINE; // Override prev line
+        std::cout << FORMAT_CLEAR_LINE; // Delete line
     }
 }
 
-void CliCommon::clear_lines_down(size_t lines_count)
+void CliCommon::clear_terminal()
 {
-    for (size_t i = 0; i < lines_count; i++) {
-        std::cout << FORMAT_CURSOR_DOWN_CLEAR_LINE;
-    }
+    std::cout << FORMAT_CLEAR_TERMINAL_CURSOR_FIRST_LINE;
 }
 
 bool CliCommon::is_positive_number(const std::string &s)
@@ -90,4 +89,15 @@ bool CliCommon::is_non_negative_number(const std::string &s)
 {
     bool is_number = (!s.empty()) && (std::all_of(s.begin(), s.end(), ::isdigit));
     return is_number && (0 <= std::stoi(s));
+}
+
+AlternativeTerminal::AlternativeTerminal()
+{
+    std::cout << FORMAT_ENTER_ALTERNATIVE_SCREEN;
+    CliCommon::clear_terminal();
+}
+
+AlternativeTerminal::~AlternativeTerminal()
+{
+    std::cout << FORMAT_EXIT_ALTERNATIVE_SCREEN;
 }

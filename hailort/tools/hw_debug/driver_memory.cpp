@@ -4,7 +4,7 @@
  */
 
 #include "driver_memory.hpp"
-#include "mercury_fields.hpp"
+#include "hailo15_fields.hpp"
 
 DriverMemorySource::DriverMemorySource(std::shared_ptr<HailoRTDriver> driver, HailoRTDriver::MemoryType memory_type) :
     m_driver(driver),
@@ -29,6 +29,7 @@ size_t DriverMemorySource::total_size() const
 
 
 static constexpr size_t VDMA_CHANNELS_COUNT = 32;
+static constexpr size_t VDMA_H2D_CHANNELS_COUNT = 16;
 
 #pragma pack(push, 1)
 struct VdmaDataPerDirection {
@@ -57,8 +58,8 @@ struct VdmaDataPerDirection {
 static_assert(0x10 == sizeof(VdmaDataPerDirection), "Invalid VdmaDataPerDirection size");
 
 struct VdmaChannelData {
-    VdmaDataPerDirection h2d;
-    VdmaDataPerDirection d2h;
+    VdmaDataPerDirection src;
+    VdmaDataPerDirection dest;
 };
 #pragma pack(pop)
 
@@ -82,12 +83,39 @@ public:
             throw std::runtime_error(fmt::format("Failed reading memory, status {}", status));
         }
 
-        return fmt::format("channel[{}] (offset=0x{:X} size=0x{:X}):\n", index, index * sizeof(data), sizeof(data)) +
-               fmt::format("    host:   {}\n", print_direction(data.h2d)) +
-               fmt::format("    device: {}\n", print_direction(data.d2h));
+        return fmt::format("channel[{}] (offset=0x{:X} size=0x{:X} type= {}):\n", index, index * sizeof(data), sizeof(data),
+                index < VDMA_H2D_CHANNELS_COUNT ? "H2D" : "D2H") +
+               fmt::format("    Src status:  {}\n", print_src_status(data.src)) + 
+               fmt::format("    Dest status: {}\n", print_dest_status(data.dest)) + 
+               fmt::format("    Src:   {}\n", print_direction(data.src)) +
+               fmt::format("    Dest:  {}\n", print_direction(data.dest));
     }
 
 private:
+    static std::string print_src_status(const VdmaDataPerDirection &data) {
+        auto max_desc_mask =  static_cast<uint16_t>((1 << data.depth)  - 1);
+        std::string status =
+            data.error ? "CHANNEL ERROR" :
+            !data.start_abort ? "ABORTED" :
+            data.pause_resume ? "PAUSED" : 
+            (data.num_ongoing & max_desc_mask) != (data.num_processed & max_desc_mask) ? "DURING TRANSFER" : 
+            (data.num_available & max_desc_mask) != (data.num_processed & max_desc_mask) ? "WAITING TO SEND" : 
+                "IDLE";
+        return status;
+    }
+
+    static std::string print_dest_status(const VdmaDataPerDirection &data) {    
+        auto max_desc_mask =  static_cast<uint16_t>((1 << data.depth)  - 1);
+        std::string status = 
+            data.error ? "CHANNEL ERROR" :
+            !data.start_abort ? "ABORTED" :
+            data.pause_resume ? "PAUSED" : 
+            (data.num_ongoing & max_desc_mask) != (data.num_processed & max_desc_mask) ? "DURING TRANSFER" : 
+            (data.num_available & max_desc_mask) != (data.num_processed & max_desc_mask) ? "WAITING TO RECEIVE" :
+                "IDLE";
+        return status;
+    }
+
     static std::string print_direction(const VdmaDataPerDirection &data)
     {
         return fmt::format(

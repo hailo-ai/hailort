@@ -52,6 +52,29 @@ gst_scheduling_algorithm_get_type (void)
     return scheduling_algorithm_type;
 }
 
+#define GST_TYPE_HAILO_FORMAT_TYPE (gst_hailo_format_type_get_type ())
+static GType
+gst_hailo_format_type_get_type (void)
+{
+    static GType format_type_enum = 0;
+
+    /* Tightly coupled to hailo_format_type_t */
+    
+    if (!format_type_enum) {
+        static GEnumValue format_types[] = {
+            { HAILO_FORMAT_TYPE_AUTO,     "auto",     "HAILO_FORMAT_TYPE_AUTO"},
+            { HAILO_FORMAT_TYPE_UINT8,    "uint8",    "HAILO_FORMAT_TYPE_UINT8"},
+            { HAILO_FORMAT_TYPE_UINT16,   "uint16",   "HAILO_FORMAT_TYPE_UINT16"},
+            { HAILO_FORMAT_TYPE_FLOAT32,  "float32",  "HAILO_FORMAT_TYPE_FLOAT32"},
+            { HAILO_FORMAT_TYPE_MAX_ENUM,  NULL,      NULL },
+        };
+
+        format_type_enum = g_enum_register_static ("GstHailoFormatTypes", format_types);
+    }
+
+    return format_type_enum;
+}
+
 constexpr std::chrono::milliseconds WAIT_FOR_FLUSH_TIMEOUT_MS(1000);
 
 static void gst_hailonet_set_property(GObject *object, guint property_id, const GValue *value, GParamSpec *pspec);
@@ -80,6 +103,10 @@ enum
     PROP_SCHEDULER_TIMEOUT_MS,
     PROP_SCHEDULER_THRESHOLD,
     PROP_MULTI_PROCESS_SERVICE,
+    PROP_INPUT_QUANTIZED,
+    PROP_OUTPUT_QUANTIZED,
+    PROP_INPUT_FORMAT_TYPE,
+    PROP_OUTPUT_FORMAT_TYPE,
 };
 
 G_DEFINE_TYPE(GstHailoNet, gst_hailonet, GST_TYPE_BIN);
@@ -150,8 +177,7 @@ static void gst_hailonet_class_init(GstHailoNetClass *klass)
         g_param_spec_enum("scheduling-algorithm", "Scheduling policy for automatic network group switching", "Controls the Model Scheduler algorithm of HailoRT. "
             "Gets values from the enum GstHailoSchedulingAlgorithms. "
             "Using Model Scheduler algorithm different than HAILO_SCHEDULING_ALGORITHM_NONE, excludes the property 'is-active'. "
-            "When using the same VDevice across multiple hailonets, all should have the same 'scheduling-algorithm'. "
-            "To run with more than one device, set env variable 'HAILO_ENABLE_MULTI_DEVICE_SCHEDULER' to 1.",
+            "When using the same VDevice across multiple hailonets, all should have the same 'scheduling-algorithm'. ",
             GST_TYPE_SCHEDULING_ALGORITHM, HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN,
         (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
     g_object_class_install_property(gobject_class, PROP_SCHEDULER_TIMEOUT_MS,
@@ -165,6 +191,24 @@ static void gst_hailonet_class_init(GstHailoNetClass *klass)
         g_param_spec_boolean("multi-process-service", "Should run over HailoRT service", "Controls wether to run HailoRT over its service. "
             "To use this property, the service should be active and scheduling-algorithm should be set. Defaults to false.",
             HAILO_DEFAULT_MULTI_PROCESS_SERVICE, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+    g_object_class_install_property(gobject_class, PROP_INPUT_QUANTIZED,
+        g_param_spec_boolean("input-quantized", "Is the input quantized or not", "Passing `true` under the argument means that the input data sent to the stream is quantized to begin with."
+            "This will result in an input stream that doesn't quantize the input data. Passing `false` under the argument, will lead to input data being quantized.",
+            true, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+    g_object_class_install_property(gobject_class, PROP_OUTPUT_QUANTIZED,
+        g_param_spec_boolean("output-quantized", "Should the output be quantized or de-quantized","Passing `true` under the argument means that the output data received from the stream is to remain quantized" 
+            "(such as it is upon exiting the device). This will result in an output stream that doesn't de-quantize the output data. Passing `false` under the argument will lead to output data being de-quantized.",
+            true, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+    g_object_class_install_property(gobject_class, PROP_INPUT_FORMAT_TYPE,
+        g_param_spec_enum("input-format-type", "Input format type", "Input format type(auto, float32, uint16, uint8). Default value is auto."
+            "Gets values from the enum GstHailoFormatType. ",
+            GST_TYPE_HAILO_FORMAT_TYPE, HAILO_FORMAT_TYPE_AUTO,
+        (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+    g_object_class_install_property(gobject_class, PROP_OUTPUT_FORMAT_TYPE,
+        g_param_spec_enum("output-format-type", "Output format type", "Output format type(auto, float32, uint16, uint8). Default value is auto."
+            "Gets values from the enum GstHailoFormatType. ",
+            GST_TYPE_HAILO_FORMAT_TYPE, HAILO_FORMAT_TYPE_AUTO,
+        (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
     // See information about the "flush" signal in the element description
     g_signal_new(
         "flush",
@@ -457,6 +501,34 @@ void HailoNetImpl::set_property(GObject *object, guint property_id, const GValue
         }
         m_props.m_multi_process_service = g_value_get_boolean(value);
         break;
+    case PROP_INPUT_QUANTIZED:
+        if (m_was_configured) {
+            g_warning("The network was already configured so changing the quantized flag will not take place!");
+            break;
+        }
+        m_props.m_input_quantized = g_value_get_boolean(value);
+        break;
+    case PROP_OUTPUT_QUANTIZED:
+        if (m_was_configured) {
+            g_warning("The network was already configured so changing the quantized flag will not take place!");
+            break;
+        }
+        m_props.m_output_quantized = g_value_get_boolean(value);
+        break;
+    case PROP_INPUT_FORMAT_TYPE:
+        if (m_was_configured) {
+            g_warning("The network was already configured so changing the format type will not take place!");
+            break;
+        }
+        m_props.m_input_format_type = static_cast<hailo_format_type_t>(g_value_get_enum(value));
+        break;
+    case PROP_OUTPUT_FORMAT_TYPE:
+        if (m_was_configured) {
+            g_warning("The network was already configured so changing the format type will not take place!");
+            break;
+        }
+        m_props.m_output_format_type = static_cast<hailo_format_type_t>(g_value_get_enum(value));
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
         break;
@@ -526,6 +598,18 @@ void HailoNetImpl::get_property(GObject *object, guint property_id, GValue *valu
         break;
     case PROP_MULTI_PROCESS_SERVICE:
         g_value_set_boolean(value, m_props.m_multi_process_service.get());
+        break;
+    case PROP_INPUT_QUANTIZED:
+        g_value_set_boolean(value, m_props.m_input_quantized.get());
+        break;
+    case PROP_OUTPUT_QUANTIZED:
+        g_value_set_boolean(value, m_props.m_output_quantized.get());
+        break;
+    case PROP_INPUT_FORMAT_TYPE:
+        g_value_set_enum(value, m_props.m_input_format_type.get());
+        break;
+    case PROP_OUTPUT_FORMAT_TYPE:
+        g_value_set_enum(value, m_props.m_output_format_type.get());
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
@@ -613,7 +697,8 @@ hailo_status HailoNetImpl::configure_network_group()
         GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Setting scheduler threshold failed, status = %d", status);
     }
 
-    auto vstreams = m_net_group_handle->create_vstreams(m_props.m_network_name.get(), m_props.m_scheduling_algorithm.get(), m_output_formats);
+    auto vstreams = m_net_group_handle->create_vstreams(m_props.m_network_name.get(), m_props.m_scheduling_algorithm.get(), m_output_formats, static_cast<bool>(m_props.m_input_quantized.get()), 
+        static_cast<bool>(m_props.m_output_quantized.get()), m_props.m_input_format_type.get(), m_props.m_output_format_type.get());
     GST_CHECK_EXPECTED_AS_STATUS(vstreams, m_element, RESOURCE, "Creating vstreams failed, status = %d", status);
 
     GST_HAILOSEND(m_hailosend)->impl->set_input_vstreams(std::move(vstreams->first));
@@ -728,7 +813,7 @@ gboolean HailoNetImpl::src_pad_event(GstEvent *event)
 
     auto parsed_event = HailoSetOutputFormatEvent::parse(event);
     if (HAILO_SUCCESS != parsed_event.status()) {
-         return FALSE;
+        return FALSE;
     }
 
     m_output_formats = std::move(parsed_event->formats);

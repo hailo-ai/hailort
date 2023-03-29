@@ -5,12 +5,18 @@ option optimize_for = LITE_RUNTIME;
 message ProtoMonInfo {
     string network_name = 1;
     double fps = 2;
-    double active_time = 3;
+    double utilization = 3;
 }
 
 enum ProtoMonStreamDirection {
     PROTO__STREAM_DIRECTION__HOST_TO_DEVICE = 0;
     PROTO__STREAM_DIRECTION__DEVICE_TO_HOST = 1;
+}
+
+message ProtoMonDeviceInfo {
+    string device_id = 1;
+    double utilization = 2;
+    string device_arch = 3;
 }
 
 message ProtoMonStreamFramesInfo {
@@ -29,4 +35,5 @@ message ProtoMon {
     string pid = 1;
     repeated ProtoMonInfo networks_infos = 2;
     repeated ProtoMonNetworkFrames net_frames_infos = 3;
+    repeated ProtoMonDeviceInfo device_infos = 4;
 }

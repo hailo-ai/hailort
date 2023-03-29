@@ -9,10 +9,13 @@
  * This class implements our Events API over the neosmart pevents events. It also implement the Semaphore behavior and API
  * Using the pevents events. For more information check out the implementation of pevents https://github.com/neosmart/pevents
  **/
-#include "hailo/event.hpp"
+
 #include "hailo/hailort.h"
+#include "hailo/event.hpp"
+
 #include "common/utils.hpp"
-#include "event_internal.hpp"
+
+#include "utils/event_internal.hpp"
 
 #include <poll.h>
 #include <utility>
@@ -20,6 +23,7 @@
 #define WFMO
 #include "pevents.h"
 #undef WFMO
+
 
 #define INVALID_EVENT_HANDLE    (nullptr)
 #define WAIT_OBJECT_0           (0)

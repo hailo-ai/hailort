@@ -39,17 +39,17 @@ public:
     FullAccumulator &operator=(const FullAccumulator &) = delete;
     virtual ~FullAccumulator() = default;
 
-    virtual void add_data_point(T data) override
+    virtual void add_data_point(T data, uint32_t samples_count = 1) override
     {
         std::lock_guard<std::recursive_mutex> lock_guard(m_lock);
         m_min = std::min(m_min, static_cast<double>(data));
         m_max = std::max(m_max, static_cast<double>(data));
-        m_count++;
+        m_count += samples_count;
         
         // mean, variance, sd and mean_sd are calculated using Welford's_online_algorithm.
         // See: https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
         const auto delta = static_cast<double>(data) - m_mean;
-        m_mean += delta / static_cast<double>(m_count);
+        m_mean += ((delta * samples_count )/ static_cast<double>(m_count));
         m_M2 += delta * (static_cast<double>(data) - m_mean);
     }
 
@@ -182,7 +182,7 @@ public:
 
     // data is a duration of time.
     // However, the statistics collected will be in frames per seconds (i.e. time^-1).
-    virtual void add_data_point(T data) override
+    virtual void add_data_point(T data, uint32_t samples_count = 1) override
     {
         assert(0 != data);
 
@@ -192,13 +192,13 @@ public:
         // Note: 'this' is needed to access protected members of a template base class
         this->m_min = std::min(this->m_min, data_inverse);
         this->m_max = std::max(this->m_max, data_inverse);
-        this->m_count++;
+        this->m_count += samples_count;
         
         // mean, variance, sd and mean_sd are calculated using Welford's_online_algorithm.
         // See: https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
         const auto delta = data_inverse - this->m_mean;
         // We calculate the arithmatic mean
-        this->m_mean = static_cast<double>(this->m_count) / static_cast<double>(m_sum);
+        this->m_mean = static_cast<double>(this->m_count * samples_count) / static_cast<double>(m_sum);
         this->m_M2 += delta * (data_inverse - this->m_mean);
     }
 

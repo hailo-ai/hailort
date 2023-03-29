@@ -36,7 +36,7 @@ def get_max_supported_kbps(hw_arch="hailo8"):
 
 class RateLimiterWrapper(object):
     """UDPRateLimiter wrapper enabling ``with`` statements."""
-    def __init__(self, network_group, fps=1, fps_factor=1.0):
+    def __init__(self, network_group, fps=1, fps_factor=1.0, remote_ip=None, hw_arch=None):
         """RateLimiterWrapper constructor.
 
         Args:
@@ -48,10 +48,18 @@ class RateLimiterWrapper(object):
         if not isinstance(network_group, ConfiguredNetwork):
             return RateLimiterException("The API was changed. RateLimiterWrapper accept ConfiguredNetwork instead of ActivatedNetwork")
         self._network_group = network_group
-        self._remote_ip = network_group._target.remote_ip
+        if remote_ip is not None:
+            self._remote_ip = remote_ip
+        else:
+            # this line should be removed. this parameter will be removed from the object
+            self._remote_ip = network_group._target.device_id
         self._fps = fps
         self._fps_factor = fps_factor
-        self._hw_arch = network_group._target._hw_arch
+        if hw_arch is not None:
+            self._hw_arch = hw_arch
+        else:
+            # this line should be removed. this parameter will be removed from the object
+            self._hw_arch = network_group._target._hw_arch if hasattr(network_group._target, '_hw_arch') else None
         self._rates_dict = {}
         self._tc_dict = {}
 

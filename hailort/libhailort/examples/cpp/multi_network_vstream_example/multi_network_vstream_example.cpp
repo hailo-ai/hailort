@@ -10,6 +10,8 @@
 #include "hailo/hailort.hpp"
 
 #include <iostream>
+#include <thread>
+
 
 #define HEF_FILE ("hefs/multi_network_shortcut_net.hef")
 constexpr size_t INFER_FRAME_COUNT = 100;
@@ -27,7 +29,7 @@ using InOutVStreams = std::pair<std::vector<InputVStream>, std::vector<OutputVSt
 
 Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(VDevice &vdevice, Hef &hef, uint16_t batch_size[NET_COUNT])
 {
-    auto configure_params = hef.create_configure_params(HAILO_STREAM_INTERFACE_PCIE);
+    auto configure_params = vdevice.create_configure_params(hef);
     if (!configure_params) {
         std::cerr << "Failed to create configure params" << std::endl;
         return make_unexpected(configure_params.status());

@@ -12,10 +12,12 @@
 
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
+
 #include <cmath>
 #include <chrono>
 #include <string>
 #include <vector>
+
 
 namespace hailort
 {
@@ -158,6 +160,29 @@ public:
     }
 
     /**
+     * Gets a string reprenestation of the given device architecture.
+     *
+     * @param[in] arch    A ::hailo_device_architecture_t object.
+     * @return The string representation of the device architecture.
+     */
+    static std::string get_device_arch_str(const hailo_device_architecture_t &arch)
+    {
+        switch (arch)
+        {
+        case HAILO_ARCH_HAILO8_A0:
+            return "HAILO8_A0";
+        case HAILO_ARCH_HAILO8:
+            return "HAILO8";
+        case HAILO_ARCH_HAILO8L:
+            return "HAILO8L";
+        case HAILO_ARCH_HAILO15:
+            return "HAILO15";
+        default:
+            return "UNKNOWN ARCHITECTURE";
+        }
+    }
+
+    /**
      * Gets a string reprenestation of the given format order.
      *
      * @param[in] order             A ::hailo_format_order_t object.
@@ -201,6 +226,10 @@ public:
             return "YYVU";
         case HAILO_FORMAT_ORDER_RGB4:
             return "RGB4";
+        case HAILO_FORMAT_ORDER_I420:
+            return "I420";
+        case HAILO_FORMAT_ORDER_HAILO_YYYYUV:
+            return "YYYYUV";
         default:
             return "Nan";
         }
@@ -318,7 +347,7 @@ public:
 
     static constexpr bool is_vdma_stream_interface(hailo_stream_interface_t stream_interface)
     {
-        return (HAILO_STREAM_INTERFACE_PCIE == stream_interface) || (HAILO_STREAM_INTERFACE_CORE == stream_interface);
+        return (HAILO_STREAM_INTERFACE_PCIE == stream_interface) || (HAILO_STREAM_INTERFACE_INTEGRATED == stream_interface);
     }
 
     static Expected<hailo_device_id_t> to_device_id(const std::string &device_id);
@@ -377,6 +406,11 @@ inline constexpr hailo_pipeline_elem_stats_flags_t& operator|=(hailo_pipeline_el
 {
     a = a | b;
     return a;
+}
+
+inline bool is_bit_set(uint32_t num, uint8_t i)
+{
+    return (1 == ((num >> i) & 1));
 }
 
 } /* namespace hailort */

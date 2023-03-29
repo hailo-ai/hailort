@@ -7,6 +7,8 @@
  * @brief Quantization python bindings functions
  **/
 
+#include "hailo/quantization.hpp"
+
 #include "quantization_api.hpp"
 #include "bindings_common.hpp"
 

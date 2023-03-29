@@ -73,7 +73,7 @@ public:
         if (m_latency_count == 0) {
             return make_unexpected(HAILO_NOT_AVAILABLE);
         }
-
+        
         duration latency = (m_latency_sum / m_latency_count);
         if (clear) {
             m_latency_sum = duration();
@@ -93,7 +93,6 @@ private:
             return;
         }
 
-        duration start = m_start_timestamps.front();
         duration end(0);
         for (auto &end_timesatmps : m_end_timestamps_per_channel) {
             if (end_timesatmps.second.empty()) {
@@ -103,6 +102,9 @@ private:
 
             end = std::max(end, end_timesatmps.second.front());
         }
+
+        duration start = m_start_timestamps.front();
+        assert(start <= end);
 
         // calculate the latency
         m_latency_sum += (end - start);

@@ -16,6 +16,7 @@
 #define HEF_FILE ("hefs/shortcut_net.hef")
 #define INFER_FRAME_COUNT (200)
 #define MAX_EDGE_LAYERS (16)
+#define DEVICE_IDS_COUNT (16)
 
 typedef struct write_thread_args_t {
     hailo_input_stream *input_stream;
@@ -170,8 +171,8 @@ l_cleanup:
 int main()
 {
     hailo_status status = HAILO_UNINITIALIZED;
-    hailo_device_id_t device_id = {0};
-    size_t actual_devices_count = 1;
+    hailo_device_id_t device_ids[DEVICE_IDS_COUNT];
+    size_t actual_devices_count = DEVICE_IDS_COUNT;
     hailo_device device = NULL;
     hailo_hef hef = NULL;
     hailo_configure_params_t configure_params = {0};
@@ -186,12 +187,12 @@ int main()
     size_t number_output_streams = 0;
     size_t index = 0;
 
-    status = hailo_scan_devices(NULL, &device_id, &actual_devices_count);
+    status = hailo_scan_devices(NULL, device_ids, &actual_devices_count);
     REQUIRE_SUCCESS(status, l_exit, "Failed to scan devices");
-    REQUIRE_ACTION(1 == actual_devices_count, status = HAILO_INVALID_OPERATION, l_exit,
-        "Only 1 device on the system is supported on the example");
+    REQUIRE_ACTION(1 <= actual_devices_count, status = HAILO_INVALID_OPERATION, l_exit,
+        "Failed to find a connected hailo device.");
 
-    status = hailo_create_device_by_id(&device_id, &device);
+    status = hailo_create_device_by_id(&(device_ids[0]), &device);
     REQUIRE_SUCCESS(status, l_exit, "Failed to create device");
 
     status = hailo_create_hef_file(&hef, HEF_FILE);

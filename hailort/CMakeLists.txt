@@ -10,10 +10,6 @@ option(HAILO_OFFLINE_COMPILATION "Don't download external dependencies" OFF)
 option(HAILO_BUILD_SERVICE "Build hailort service" OFF)
 option(HAILO_BUILD_PROFILER "Build hailort profiler" ON)
 
-if(WIN32 AND ${HAILO_BUILD_SERVICE})
-    message(FATAL_ERROR "HailoRT service is not supported on Windows")
-endif()
-
 # Flag for emulator (FPGA/Veloce)
 if(HAILO_BUILD_EMULATOR)
     message(WARNING "HailoRT is building with Emulator flag on")
@@ -22,8 +18,8 @@ endif()
 
 # Set firmware version
 add_definitions( -DFIRMWARE_VERSION_MAJOR=4 )
-add_definitions( -DFIRMWARE_VERSION_MINOR=12 )
-add_definitions( -DFIRMWARE_VERSION_REVISION=1 )
+add_definitions( -DFIRMWARE_VERSION_MINOR=13 )
+add_definitions( -DFIRMWARE_VERSION_REVISION=0 )
 if(HAILO_BUILD_SERVICE)
     add_definitions( -DHAILO_SUPPORT_MULTI_PROCESS )
 endif()
@@ -86,7 +82,7 @@ if(HAILO_BUILD_PYBIND)
     if(NOT PYTHON_EXECUTABLE AND PYBIND11_PYTHON_VERSION)
         # PYBIND11_PYTHON_VERSION is prioritized (not virtual environment) if PYTHON_EXECUTABLE is not set.
         # See https://pybind11.readthedocs.io/en/stable/changelog.html#v2-6-0-oct-21-2020
-        if(${CMAKE_VERSION} VERSION_LESS "3.22.0")
+        if((${CMAKE_VERSION} VERSION_LESS "3.22.0") AND (NOT WIN32))
             find_package(PythonInterp ${PYBIND11_PYTHON_VERSION} REQUIRED)
             set(PYTHON_EXECUTABLE ${Python_EXECUTABLE})
         else()

@@ -83,7 +83,8 @@ public:
         bool multi_process_service, const char *hef_path);
     hailo_status configure_network_group(const char *net_group_name, hailo_scheduling_algorithm_t scheduling_algorithm, uint16_t batch_size);
     Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> create_vstreams(const char *network_name,
-        hailo_scheduling_algorithm_t scheduling_algorithm, const std::vector<hailo_format_with_name_t> &output_formats);
+        hailo_scheduling_algorithm_t scheduling_algorithm, const std::vector<hailo_format_with_name_t> &output_formats, bool input_quantized, 
+        bool output_quantized, hailo_format_type_t input_format_type, hailo_format_type_t output_format_type);
     hailo_status activate_network_group();
     Expected<bool> remove_network_group();
 

@@ -13,6 +13,7 @@
 #include <chrono>
 #include <thread>
 
+
 #define SAMPLING_PERIOD (HAILO_SAMPLING_PERIOD_1100US)
 #define AVERAGE_FACTOR (HAILO_AVERAGE_FACTOR_256)
 #define DVM_OPTION (HAILO_DVM_OPTIONS_AUTO) // For current measurement over EVB - pass DVM explicitly (see hailo_dvm_options_t)

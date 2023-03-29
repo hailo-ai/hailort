@@ -10,11 +10,13 @@
 #ifndef _HAILO_QUANTIZATION_API_HPP_
 #define _HAILO_QUANTIZATION_API_HPP_
 
-#include "hailo/hailort.hpp"
+#include "hailo/hailort.h"
+
 #include "utils.hpp"
 
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
+
 
 namespace hailort
 {

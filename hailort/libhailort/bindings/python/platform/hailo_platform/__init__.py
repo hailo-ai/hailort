@@ -26,7 +26,7 @@ from hailo_platform.pyhailort.pyhailort import (HEF, ConfigureParams,
                                                 InputVStreams, OutputVStreams,
                                                 InferVStreams, HailoStreamDirection, HailoFormatFlags, HailoCpuId, Device, VDevice,
                                                 DvmTypes, PowerMeasurementTypes, SamplingPeriod, AveragingFactor, MeasurementBufferIndex,
-                                                HailoRTException, YOLOv5PostProcessingOp)
+                                                HailoRTException, YOLOv5PostProcessOp, HailoSchedulingAlgorithm)
 
 def _verify_pyhailort_lib_exists():
     python_version = "".join(str(i) for i in sys.version_info[:2])
@@ -62,4 +62,4 @@ __all__ = ['EthernetDevice', 'DvmTypes', 'PowerMeasurementTypes',
            'MipiIspImageInOrder', 'MipiIspImageOutDataType', 'join_drivers_path', 'IspLightFrequency', 'HailoPowerMode',
            'Endianness', 'HailoStreamInterface', 'InputVStreamParams', 'OutputVStreamParams',
            'InputVStreams', 'OutputVStreams', 'InferVStreams', 'HailoStreamDirection', 'HailoFormatFlags', 'HailoCpuId',
-           'Device', 'VDevice', 'HailoRTException', 'YOLOv5PostProcessingOp']
+           'Device', 'VDevice', 'HailoRTException', 'YOLOv5PostProcessOp', 'HailoSchedulingAlgorithm']

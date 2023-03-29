@@ -11,12 +11,14 @@
 #ifndef _DEVICE_API_HPP_
 #define _DEVICE_API_HPP_
 
-#include "utils.hpp"
-#include "hailo/hailort.hpp"
+#include "hailo/hailort.h"
+#include "hailo/device.hpp"
+
 #include "common/socket.hpp"
+
+#include "utils.hpp"
 #include "hef_api.hpp"
 
-#include <pybind11/pybind11.h>
 #include <pybind11/pybind11.h>
 
 
@@ -53,14 +55,19 @@ public:
 
     Device& device()
     {
-        VALIDATE_NOT_NULL(m_device);
+        VALIDATE_NOT_NULL(m_device, HAILO_INTERNAL_FAILURE);
         return *(m_device.get());
     }
 
     const Device& device() const
     {
-        VALIDATE_NOT_NULL(m_device);
+        VALIDATE_NOT_NULL(m_device, HAILO_INTERNAL_FAILURE);
         return *(m_device.get());
+    }
+
+    bool is_valid()
+    {
+        return (nullptr != m_device);
     }
 
     Device& operator*() // Used for control_internals

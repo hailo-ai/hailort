@@ -25,6 +25,7 @@
 
 #include <memory>
 #include <mutex>
+#include <thread>
 
 G_BEGIN_DECLS
 

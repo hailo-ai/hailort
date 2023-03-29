@@ -10,6 +10,8 @@
 #include "hailo/hailort.hpp"
 
 #include <iostream>
+#include <thread>
+
 
 #define HEF_FILE ("hefs/shortcut_net.hef")
 constexpr size_t FRAMES_COUNT = 100;
@@ -26,7 +28,7 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(VDevic
         return make_unexpected(hef.status());
     }
 
-    auto configure_params = hef->create_configure_params(HAILO_STREAM_INTERFACE_PCIE);
+    auto configure_params = vdevice.create_configure_params(hef.value());
     if (!configure_params) {
         return make_unexpected(configure_params.status());
     }

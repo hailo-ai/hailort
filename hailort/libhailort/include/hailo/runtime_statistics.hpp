@@ -16,6 +16,7 @@
 #include <type_traits>
 #include <memory>
 
+
 namespace hailort
 {
 
@@ -126,9 +127,10 @@ public:
      * Add a new measurement to the Accumulator, updating the statistics measured.
      * 
      * @param data                  The measurement to be added.
+     * @param samples_count         The weight of the measurement to be considered in average calculations.
      * @note Implementations of this interface are to update the statistics in constant time
      */
-    virtual void add_data_point(T data) = 0;
+    virtual void add_data_point(T data, uint32_t samples_count = 1) = 0;
 
     /**
      * Gets the current statistics of the data added to the Accumulator, clearing the statistics afterwards.

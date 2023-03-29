@@ -14,6 +14,8 @@
 
 #include <iostream>
 #include <chrono>
+#include <thread>
+
 
 constexpr bool QUANTIZED = true;
 constexpr hailo_format_type_t FORMAT_TYPE = HAILO_FORMAT_TYPE_AUTO;

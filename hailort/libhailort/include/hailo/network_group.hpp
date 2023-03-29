@@ -17,8 +17,7 @@
 #include <string>
 #include <map>
 #include <unordered_map>
-#include <thread>
-#include <utility>
+
 
 namespace hailort
 {
@@ -67,7 +66,7 @@ public:
     virtual const std::string &get_network_group_name() const = 0;
 
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &key) = 0;
-    
+
     virtual hailo_status set_keep_nn_config_during_reset(const bool keep_nn_config_during_reset) = 0;
 
     /**
@@ -241,7 +240,7 @@ public:
     /**
      * Creates output virtual stream params.
      *
-     * @param[in]  quantized                Whether the data fed into the chip is already quantized. True means
+     * @param[in]  quantized                Whether the data returned from the chip is already quantized. True means
      *                                      the data is already quantized. False means it's HailoRT's responsibility
      *                                      to quantize (scale) the data.
      * @param[in]  format_type              The default format type for all output virtual streams.
@@ -259,7 +258,7 @@ public:
     /**
      * Creates output virtual stream params. The groups are splitted with respect to their low-level streams.
      *
-     * @param[in]  quantized                Whether the data fed into the chip is already quantized. True means
+     * @param[in]  quantized                Whether the data returned from the chip is already quantized. True means
      *                                      the data is already quantized. False means it's HailoRT's responsibility
      *                                      to quantize (scale) the data.
      * @param[in]  format_type              The default format type for all output virtual streams.
@@ -320,6 +319,11 @@ public:
     virtual Expected<std::vector<hailo_vstream_info_t>> get_all_vstream_infos(const std::string &network_name="") const = 0;
 
     /**
+     * @returns whether the network group is managed by the model scheduler.
+     */
+    virtual bool is_scheduled() const = 0;
+
+    /**
      * Sets the maximum time period that may pass before getting run time from the scheduler,
      *  even without reaching the minimum required send requests (e.g. threshold - see set_scheduler_threshold()),
      *  as long as at least one send request has been sent.
@@ -351,6 +355,21 @@ public:
     virtual hailo_status set_scheduler_threshold(uint32_t threshold, const std::string &network_name="") = 0;
 
     /**
+     * Sets the priority of the network.
+     * When the network group scheduler will choose the next network, networks with higher priority will be prioritized in the selection.
+     * bigger number represent higher priority.
+     *
+     * @param[in]  priority             Priority as a number between HAILO_SCHEDULER_PRIORITY_MIN - HAILO_SCHEDULER_PRIORITY_MAX.
+     * @param[in]  network_name         Network name for which to set the Priority.
+     *                                  If not passed, the priority will be set for all the networks in the network group.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE.
+     * @note The default priority is HAILO_SCHEDULER_PRIORITY_NORMAL.
+     * @note Currently, setting the priority for a specific network is not supported.
+     */
+    virtual hailo_status set_scheduler_priority(uint8_t priority, const std::string &network_name="") = 0;
+
+    /**
      * @return Is the network group multi-context or not.
      */
     virtual bool is_multi_context() const = 0;
@@ -365,6 +384,10 @@ public:
 
     virtual Expected<std::vector<InputVStream>> create_input_vstreams(const std::map<std::string, hailo_vstream_params_t> &inputs_params) = 0;
     virtual Expected<std::vector<OutputVStream>> create_output_vstreams(const std::map<std::string, hailo_vstream_params_t> &outputs_params) = 0;
+
+    virtual hailo_status before_fork() { return HAILO_SUCCESS; }
+    virtual hailo_status after_fork_in_parent() { return HAILO_SUCCESS; }
+    virtual hailo_status after_fork_in_child() { return HAILO_SUCCESS; }
 
 protected:
     ConfiguredNetworkGroup() = default;

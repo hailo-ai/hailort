@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.0.0)
 find_package(Threads REQUIRED)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 
-find_package(HailoRT 4.12.1 EXACT REQUIRED)
+find_package(HailoRT 4.13.0 EXACT REQUIRED)
 
 SET_SOURCE_FILES_PROPERTIES(infer_pipeline_example.c PROPERTIES LANGUAGE C)
 

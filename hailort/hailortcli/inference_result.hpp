@@ -11,7 +11,7 @@
 #define _HAILO_INFER_RESULT_
 
 #include "power_measurement_command.hpp"
-#include "temp_measurement.hpp"
+#include "common/device_measurements.hpp"
 #include "hailo/runtime_statistics.hpp"
 #include "hailo/vstream.hpp"
 
@@ -309,7 +309,7 @@ public:
         for (const auto &device : devices) {
             m_power_measurements.emplace(device.get().get_dev_id(), std::shared_ptr<LongPowerMeasurement>{});
             m_current_measurements.emplace(device.get().get_dev_id(), std::shared_ptr<LongPowerMeasurement>{});
-            m_temp_measurements.emplace(device.get().get_dev_id(), std::shared_ptr<TempMeasurementData>{});
+            m_temp_measurements.emplace(device.get().get_dev_id(), std::shared_ptr<AccumulatorResults>{});
         }
     }
 
@@ -329,7 +329,7 @@ public:
         return HAILO_SUCCESS;
     }
 
-    hailo_status set_temp_measurement(const std::string &device_id, std::shared_ptr<TempMeasurementData> &&temp_measure)
+    hailo_status set_temp_measurement(const std::string &device_id, std::shared_ptr<AccumulatorResults> &&temp_measure)
     {
         auto iter = m_temp_measurements.find(device_id);
         CHECK(m_temp_measurements.end() != iter, HAILO_INVALID_ARGUMENT);
@@ -341,7 +341,7 @@ public:
     // TODO: create a struct containing all device measurements, and keep only one map
     std::map<std::string, std::shared_ptr<LongPowerMeasurement>> m_power_measurements;
     std::map<std::string, std::shared_ptr<LongPowerMeasurement>> m_current_measurements;
-    std::map<std::string, std::shared_ptr<TempMeasurementData>> m_temp_measurements;
+    std::map<std::string, std::shared_ptr<AccumulatorResults>> m_temp_measurements;
 
 private:
     std::vector<NetworkGroupInferResult> m_network_group_results;
