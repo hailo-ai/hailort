@@ -48,6 +48,8 @@ class HailoSocket(object):
     MIN_UDP_PADDED_PAYLOAD_SIZE = HailoSocketDefs.MIN_UDP_PADDED_PAYLOAD_SIZE()
     MAX_ALIGNED_UDP_PAYLOAD_SIZE_RTP = HailoSocketDefs.MAX_ALIGNED_UDP_PAYLOAD_SIZE_RTP()
 
+class HailoSchedulingAlgorithm(_pyhailort.SchedulingAlgorithm):
+    pass
 
 class HailoRTException(Exception):
     pass
@@ -104,46 +106,47 @@ class ExceptionWrapper(object):
     def __exit__(self, exception_type, value, traceback):
         if value is not None:
             if exception_type is _pyhailort.HailoRTStatusException:
-                self._raise_indicative_status_exception(int(value.args[0]))
+                self._raise_indicative_status_exception(value)
             else:
                 raise
 
-    def _raise_indicative_status_exception(self, error_code):
+    def _raise_indicative_status_exception(self, libhailort_exception):
+        error_code = int(libhailort_exception.args[0])
         string_error_code = get_status_message(error_code)
         if string_error_code == "HAILO_ETH_RECV_FAILURE":
-            raise UdpRecvError("Failed to receive data")
+            raise UdpRecvError("Failed to receive data") from libhailort_exception
         if string_error_code == "HAILO_UNSUPPORTED_CONTROL_PROTOCOL_VERSION":
-            raise InvalidProtocolVersionException("HailoRT has failed because an invalid protocol version was received from device")
+            raise InvalidProtocolVersionException("HailoRT has failed because an invalid protocol version was received from device") from libhailort_exception
         if string_error_code == "HAILO_FW_CONTROL_FAILURE":
-            raise HailoRTFirmwareControlFailedException("libhailort control operation failed")
+            raise HailoRTFirmwareControlFailedException("libhailort control operation failed") from libhailort_exception
         if string_error_code == "HAILO_UNSUPPORTED_OPCODE":
-            raise HailoRTUnsupportedOpcodeException("HailoRT has failed because an unsupported opcode was sent to device")
+            raise HailoRTUnsupportedOpcodeException("HailoRT has failed because an unsupported opcode was sent to device") from libhailort_exception
         if string_error_code == "HAILO_INVALID_FRAME":
-            raise HailoRTInvalidFrameException("An invalid frame was received")
+            raise HailoRTInvalidFrameException("An invalid frame was received") from libhailort_exception
         if string_error_code == "HAILO_TIMEOUT":
-            raise HailoRTTimeout("Received a timeout - hailort has failed because a timeout had occurred")
+            raise HailoRTTimeout("Received a timeout - hailort has failed because a timeout had occurred") from libhailort_exception
         if string_error_code == "HAILO_STREAM_ABORTED_BY_HW":
-            raise HailoRTStreamAborted("Stream aborted due to an external event")
+            raise HailoRTStreamAborted("Stream aborted due to an external event") from libhailort_exception
 
         if string_error_code == "HAILO_INVALID_OPERATION":
-            raise HailoRTInvalidOperationException("Invalid operation. See hailort.log for more information")
+            raise HailoRTInvalidOperationException("Invalid operation. See hailort.log for more information") from libhailort_exception
         if string_error_code == "HAILO_INVALID_ARGUMENT":
-            raise HailoRTInvalidArgumentException("Invalid argument. See hailort.log for more information")
+            raise HailoRTInvalidArgumentException("Invalid argument. See hailort.log for more information") from libhailort_exception
         if string_error_code == "HAILO_NOT_FOUND":
-            raise HailoRTNotFoundException("Item not found. See hailort.log for more information")
+            raise HailoRTNotFoundException("Item not found. See hailort.log for more information") from libhailort_exception
 
         if string_error_code == "HAILO_INVALID_HEF":
-            raise HailoRTInvalidHEFException("Invalid HEF. See hailort.log for more information")
+            raise HailoRTInvalidHEFException("Invalid HEF. See hailort.log for more information") from libhailort_exception
 
         if string_error_code == "HAILO_ETH_FAILURE":
-            raise HailoRTEthException("Ethernet failure. See hailort.log for more information")
-        if string_error_code == "HAILO_PCIE_DRIVER_FAIL":
-            raise HailoRTPCIeDriverException("PCIe driver failure. run 'dmesg | grep hailo' for more information")
+            raise HailoRTEthException("Ethernet failure. See hailort.log for more information") from libhailort_exception
+        if string_error_code == "HAILO_DRIVER_FAIL":
+            raise HailoRTPCIeDriverException("PCIe driver failure. run 'dmesg | grep hailo' for more information") from libhailort_exception
 
         if string_error_code == "HAILO_NETWORK_GROUP_NOT_ACTIVATED":
-            raise HailoRTNetworkGroupNotActivatedException("Network group is not activated")
+            raise HailoRTNetworkGroupNotActivatedException("Network group is not activated") from libhailort_exception
         else:
-            raise HailoRTException("libhailort failed with error: {} ({})".format(error_code, string_error_code))
+            raise HailoRTException("libhailort failed with error: {} ({})".format(error_code, string_error_code)) from libhailort_exception
 
 def get_status_message(status_code):
     status_str = _pyhailort.get_status_message(status_code)
@@ -523,6 +526,8 @@ class ConfiguredNetwork(object):
 
     def __init__(self, configured_network, target, hef):
         self._configured_network = configured_network
+        self._input_vstreams_holders = []
+        self._output_vstreams_holders = []
         self._target = target
         self._hef = hef
 
@@ -540,6 +545,7 @@ class ConfiguredNetwork(object):
             :class:`ActivatedNetworkContextManager`: Context manager that returns the activated
             network group.
         """
+        # TODO: HRT-9988 - Add deprecation warning when changing to service by default
         network_group_params = network_group_params or self.create_params()
 
         with ExceptionWrapper():
@@ -670,11 +676,39 @@ class ConfiguredNetwork(object):
         with ExceptionWrapper():
             return self._configured_network.get_udp_rates_dict(int(fps), int(max_supported_rate_bytes))
 
+    def _before_fork(self):
+        if self._configured_network is not None:
+            self._configured_network.before_fork()
+            for input_vstreams in self._input_vstreams_holders:
+                input_vstreams.before_fork()
+            for output_vstreams in self._output_vstreams_holders:
+                output_vstreams.before_fork()
+
+    def _after_fork_in_parent(self):
+        if self._configured_network is not None:
+            self._configured_network.after_fork_in_parent()
+            for input_vstreams in self._input_vstreams_holders:
+                input_vstreams.after_fork_in_parent()
+            for output_vstreams in self._output_vstreams_holders:
+                output_vstreams.after_fork_in_parent()
+
+    def _after_fork_in_child(self):
+        if self._configured_network is not None:
+            self._configured_network.after_fork_in_child()
+            for input_vstreams in self._input_vstreams_holders:
+                input_vstreams.after_fork_in_child()
+            for output_vstreams in self._output_vstreams_holders:
+                output_vstreams.after_fork_in_child()
+
     def _create_input_vstreams(self, input_vstreams_params):
-        return self._configured_network.InputVStreams(input_vstreams_params)
+        input_vstreams_holder = self._configured_network.InputVStreams(input_vstreams_params)
+        self._input_vstreams_holders.append(input_vstreams_holder)
+        return input_vstreams_holder
 
     def _create_output_vstreams(self, output_vstreams_params):
-        return self._configured_network.OutputVStreams(output_vstreams_params)
+        output_vstreams_holder = self._configured_network.OutputVStreams(output_vstreams_params)
+        self._output_vstreams_holders.append(output_vstreams_holder)
+        return output_vstreams_holder
 
     def get_stream_names_from_vstream_name(self, vstream_name):
         """Get stream name from vstream name for a specific network group.
@@ -699,6 +733,38 @@ class ConfiguredNetwork(object):
         """
         with ExceptionWrapper():
             return self._hef.get_vstream_names_from_stream_name(stream_name, self.name)
+
+    def set_scheduler_timeout(self, timeout_ms, network_name=None):
+        """Sets the maximum time period that may pass before getting run time from the scheduler,
+            even without reaching the minimum required send requests (e.g. threshold - see set_scheduler_threshold()),
+            as long as at least one send request has been sent.
+            This time period is measured since the last time the scheduler gave this network group run time.
+        
+        Args:
+            timeout_ms (int): Timeout in milliseconds.
+        """
+        name = network_name if network_name is not None else self.name
+        return self._configured_network.set_scheduler_timeout(timeout_ms, name)
+
+    def set_scheduler_threshold(self, threshold):
+        """Sets the minimum number of send requests required before the network is considered ready to get run time from the scheduler.
+            If at least one send request has been sent, but the threshold is not reached within a set time period (e.g. timeout - see hailo_set_scheduler_timeout()),
+            the scheduler will consider the network ready regardless.
+
+        Args:
+            threshold (int): Threshold in number of frames.
+        """
+        return self._configured_network.set_scheduler_threshold(threshold)
+
+    def set_scheduler_priority(self, priority):
+        """Sets the priority of the network.
+            When the model scheduler will choose the next network, networks with higher priority will be prioritized in the selection.
+            bigger number represent higher priority.
+
+        Args:
+            priority (int): Priority as a number between HAILO_SCHEDULER_PRIORITY_MIN - HAILO_SCHEDULER_PRIORITY_MAX.
+        """
+        return self._configured_network.set_scheduler_priority(priority)
 
 
 class ActivatedNetworkContextManager(object):
@@ -1075,7 +1141,8 @@ class HailoRTTransformUtils(object):
 
 class InternalEthernetDevice(object):
     def __init__(self, address, port, response_timeout_seconds=10, max_number_of_attempts=3):
-        # default_logger().warning("InternalEthernetDevice is deprecated! Please use Device object.")
+        # TODO: HRT-9987 - Add this deprecation warning
+        # default_logger().warning("InternalEthernetDevice is deprecated! Please use VDevice object.")
         self.device = None
         self._address = address
         self._port = port
@@ -1104,7 +1171,6 @@ class PcieDeviceInfo(_pyhailort.PcieDeviceInfo):
 
     def __init__(self, bus, device, func, domain=None):
         super(PcieDeviceInfo, self).__init__()
-        # default_logger().warning("PcieDeviceInfo is deprecated! Please use Device object with device_id.")
         self.bus = bus
         self.device = device
         self.func = func
@@ -1141,7 +1207,6 @@ class PcieDeviceInfo(_pyhailort.PcieDeviceInfo):
 
 class InternalPcieDevice(object):
     def __init__(self, device_info=None):
-        # self._logger.warning("InternalPcieDevice deprecated! Please use Device object.")
         self.device = None
         if device_info is None:
             device_info = InternalPcieDevice.scan_devices()[0]
@@ -1235,8 +1300,8 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 4
-SUPPORTED_FW_MINOR = 12
-SUPPORTED_FW_REVISION = 1
+SUPPORTED_FW_MINOR = 13
+SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
 
@@ -1245,7 +1310,7 @@ class DeviceArchitectureTypes(IntEnum):
     HAILO8_A0 = 0
     HAILO8 = 1
     HAILO8L = 2
-    MERCURY_CA = 3
+    HAILO15 = 3
 
     def __str__(self):
         return self.name
@@ -1301,8 +1366,8 @@ class BoardInformation(object):
         if ((device_arch == DeviceArchitectureTypes.HAILO8) or
             (device_arch == DeviceArchitectureTypes.HAILO8L)):
             return 'hailo8'
-        elif device_arch == DeviceArchitectureTypes.MERCURY_CA:
-            return 'mercury'
+        elif device_arch == DeviceArchitectureTypes.HAILO15:
+            return 'hailo15'
         else:
             raise HailoRTException("Unsupported device architecture.")
 
@@ -1549,7 +1614,6 @@ class SupportedFeatures(object):
     def _is_feature_enabled(self, feature):
         return (self.supported_features & feature) != 0
 
-
 class Control:
     """The control object of this device, which implements the control API of the Hailo device.
     Should be used only from Device.control"""
@@ -1557,7 +1621,7 @@ class Control:
     WORD_SIZE = 4
 
     def __init__(self, device: '_pyhailort.Device'):
-        self._device = device
+        self.__device = device
         self._logger = default_logger()
 
         # TODO: should remove?
@@ -1567,11 +1631,18 @@ class Control:
         self._identify_info = self.identify()
 
     @property
+    def _device(self):
+        if not self.__device.is_valid():
+            raise HailoRTInvalidOperationException("The device in use has been released. "
+                "This can happen if 'device.release()' has been called, or one-liner usage of control 'Device().control.XX()'")
+        return self.__device
+
+    @property
     def device_id(self):
         """Getter for the device_id.
 
         Returns:
-            str: A string ID of the device. BDF for PCIe devices, IP address for Ethernet devices, "Core" for core devices.
+            str: A string ID of the device. BDF for PCIe devices, IP address for Ethernet devices, "Integrated" for integrated nnc devices.
         """
         return self._device.device_id
 
@@ -1597,7 +1668,7 @@ class Control:
         """reloads the device firmware (soft reset)"""
         with ExceptionWrapper():
             return self._device.reset(_pyhailort.ResetDeviceMode.SOFT)
-        
+
     def forced_soft_reset(self):
         """reloads the device firmware (forced soft reset)"""
         with ExceptionWrapper():
@@ -1638,7 +1709,7 @@ class Control:
             configure_params_by_name (dict, optional): Maps between each net_group_name to
                 configure_params. In case of a mismatch with net_groups_names, default params will
                 be used.
-        """     
+        """
         with ExceptionWrapper():
             return self._device.configure(hef._hef, configure_params_by_name)
 
@@ -1672,9 +1743,7 @@ class Control:
             measurement types, please look at
             :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes`.
         """
-        if ((self._identify_info.device_architecture != DeviceArchitectureTypes.HAILO8) and
-            (self._identify_info.device_architecture != DeviceArchitectureTypes.HAILO8L)):
-            raise HailoRTException("Invalid device architecture: {}".format(self._identify_info.device_architecture))
+
         with ExceptionWrapper():
             return self._device.power_measurement(dvm, measurement_type)
 
@@ -1751,16 +1820,14 @@ class Control:
             For all supported measurement types view
             :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes`.
         """
-        if ((self._identify_info.device_architecture != DeviceArchitectureTypes.HAILO8) and
-            (self._identify_info.device_architecture != DeviceArchitectureTypes.HAILO8L)):
-            raise HailoRTException("Invalid device architecture: {}".format(self._identify_info.device_architecture))
+
         with ExceptionWrapper():
             return self._device.get_power_measurement(buffer_index, should_clear)
 
     def _examine_user_config(self):
         with ExceptionWrapper():
             return self._device.examine_user_config()
-    
+
     def read_user_config(self):
         """Read the user configuration section as binary data.
 
@@ -1778,11 +1845,11 @@ class Control:
         """
         with ExceptionWrapper():
             return self._device.write_user_config(configuration)
-    
+
     def _erase_user_config(self):
         with ExceptionWrapper():
             return self._device.erase_user_config()
-    
+
     def read_board_config(self):
         """Read the board configuration section as binary data.
 
@@ -1808,7 +1875,7 @@ class Control:
             :class:`~hailo_platform.pyhailort.pyhailort.BoardInformation`
         """
         with ExceptionWrapper():
-            response =  self._device.identify()
+            response = self._device.identify()
         board_information = BoardInformation(response.protocol_version, response.fw_version.major,
             response.fw_version.minor, response.fw_version.revision, response.logger_version,
             response.board_name, response.is_release, response.extended_context_switch_buffer,
@@ -1898,7 +1965,7 @@ class Control:
         c_slave = self._create_c_i2c_slave(slave)
         with ExceptionWrapper():
             return self._device.i2c_write(c_slave, register_address, data, len(data))
-        
+
     def i2c_read(self, slave, register_address, data_length):
         """Read data from an I2C slave.
 
@@ -1914,7 +1981,7 @@ class Control:
         c_slave = self._create_c_i2c_slave(slave)
         with ExceptionWrapper():
             return self._device.i2c_read(c_slave, register_address, data_length)
-        
+
     def read_register(self, address):
         """Read the value of a register from a given address.
 
@@ -1948,7 +2015,7 @@ class Control:
         register_value = self.read_register(address)
         register_value &= ~(1 << bit_index)
         self.write_memory(address, struct.pack('!I', register_value))
-    
+
     def firmware_update(self, firmware_binary, should_reset=True):
         """Update firmware binary on the flash. 
         
@@ -1989,7 +2056,7 @@ class Control:
         with ExceptionWrapper():
             return self._device.sensor_store_config(section_index, reset_data_size, sensor_type, config_file_path,
             config_height, config_width, config_fps, config_name)
-    
+
     def store_isp_config(self, reset_config_size, isp_static_config_file_path, isp_runtime_config_file_path,
                          config_height=0, config_width=0, config_fps=0, config_name=None):
         """Store sensor isp configuration to Hailo chip flash memory.
@@ -2018,7 +2085,7 @@ class Control:
         """
         with ExceptionWrapper():
             return self._device.sensor_get_sections_info()
-    
+
     def sensor_set_generic_i2c_slave(self, slave_address, register_address_size, bus_index, should_hold_bus, endianness):
         """Set a generic I2C slave for sensor usage.
 
@@ -2181,7 +2248,7 @@ class Control:
 
 
 class Device:
-    """ Hailo device object representation. """
+    """ Hailo device object representation (for inference use VDevice)"""
 
     @classmethod
     def scan(cls):
@@ -2246,7 +2313,7 @@ class Device:
         """Getter for the device_id.
 
         Returns:
-            str: A string ID of the device. BDF for PCIe devices, IP address for Ethernet devices, "Core" for core devices.
+            str: A string ID of the device. BDF for PCIe devices, IP address for Ethernet devices, "Integrated" for integrated nnc devices.
         """
         return self._device_id
 
@@ -2258,7 +2325,7 @@ class Device:
             configure_params_by_name (dict, optional): Maps between each net_group_name to configure_params. If not provided, default params will be applied
         """
         if self._creation_pid != os.getpid():
-            raise HailoRTException("VDevice can only be configured from the process it was created in.")
+            raise HailoRTException("Device can only be configured from the process it was created in.")
         with ExceptionWrapper():
             configured_apps = self._device.configure(hef._hef, configure_params_by_name)
         configured_networks = [ConfiguredNetwork(configured_app, self, hef) for configured_app in configured_apps]
@@ -2315,9 +2382,10 @@ class VDevice(object):
             params (:obj:`hailo_platform.pyhailort.pyhailort.VDeviceParams`, optional): VDevice params, call
                 :func:`VDevice.create_params` to get default params. Excludes 'device_ids'.
             device_ids (list of str, optional): devices ids to create VDevice from, call :func:`Device.scan` to get
-                list of all available devices. Excludes 'params'.
+                list of all available devices. Excludes 'params'. Cannot be used together with device_id.
         """
         gc.collect()
+        self._logger = default_logger()
 
         # VDevice __del__ function tries to release self._vdevice.
         # to avoid AttributeError if the __init__ func fails, we set it to None first.
@@ -2330,21 +2398,37 @@ class VDevice(object):
         self._creation_pid = os.getpid()
 
         self._device_ids = device_ids
-        if self._device_ids is not None:
-            if self._params is not None:
-                raise HailoRTException("VDevice can be created from params or device ids. Both parameters were passed to the c'tor")
 
         self._open_vdevice()
 
+    def _before_fork(self):
+        if self._vdevice is not None:
+            self._vdevice.before_fork()
+            for configured_network in self._loaded_network_groups:
+                configured_network._before_fork()
+
+    def _after_fork_in_parent(self):
+        if self._vdevice is not None:
+            self._vdevice.after_fork_in_parent()
+            for configured_network in self._loaded_network_groups:
+                configured_network._after_fork_in_parent()
+
+    def _after_fork_in_child(self):
+        if self._vdevice is not None:
+            self._vdevice.after_fork_in_child()
+            for configured_network in self._loaded_network_groups:
+                configured_network._after_fork_in_child()
+
     def _open_vdevice(self):
-        if self._device_ids is not None:
-            with ExceptionWrapper():
-                self._vdevice = _pyhailort.VDevice.create_from_ids(self._device_ids)
-        else:
-            if self._params is None:
-                self._params = VDevice.create_params()
-            with ExceptionWrapper():
-                self._vdevice = _pyhailort.VDevice.create(self._params)
+        if self._params is None:
+            self._params = VDevice.create_params()
+        if  sys.platform != "win32" and self._params.multi_process_service:
+            os.register_at_fork(before=lambda: self._before_fork())
+            os.register_at_fork(after_in_parent=lambda: self._after_fork_in_parent())
+            os.register_at_fork(after_in_child=lambda: self._after_fork_in_child())
+        with ExceptionWrapper():
+            device_ids = [] if self._device_ids is None else self._device_ids
+            self._vdevice = _pyhailort.VDevice.create(self._params, device_ids)
 
     def __enter__(self):
         return self
@@ -2496,7 +2580,7 @@ class OutputVStreamParams(object):
     @staticmethod
     def make(configured_network, quantized=True, format_type=None, timeout_ms=None, queue_size=None, network_name=None):
         """Create output virtual stream params from a configured network group. These params determine the format of the
-        data that will be fed into the network group.
+        data that will be returned from the network group.
 
         Args:
             configured_network (:class:`ConfiguredNetwork`): The configured network group for which
@@ -2537,12 +2621,12 @@ class OutputVStreamParams(object):
     @staticmethod
     def make_from_network_group(configured_network, quantized=True, format_type=None, timeout_ms=None, queue_size=None, network_name=None):
         """Create output virtual stream params from a configured network group. These params determine the format of the
-        data that will be fed into the network group.
+        data that will be returned from the network group.
 
         Args:
             configured_network (:class:`ConfiguredNetwork`): The configured network group for which
                 the params are created.
-            quantized (bool): Whether the data fed into the chip is already quantized. True means
+            quantized (bool): Whether the data returned from the chip is already quantized. True means
                 the data is already quantized. False means it's HailoRT's responsibility to quantize
                 (scale) the data. Defaults to True.
             format_type (:class:`~hailo_platform.pyhailort.pyhailort.FormatType`): The
@@ -2566,12 +2650,12 @@ class OutputVStreamParams(object):
     @staticmethod
     def make_groups(configured_network, quantized=True, format_type=None, timeout_ms=None, queue_size=None):
         """Create output virtual stream params from a configured network group. These params determine the format of the
-        data that will be fed into the network group. The params groups are splitted with respect to their underlying streams for multi process usges.
+        data that will be returned from the network group. The params groups are splitted with respect to their underlying streams for multi process usges.
 
         Args:
             configured_network (:class:`ConfiguredNetwork`): The configured network group for which
                 the params are created.
-            quantized (bool): Whether the data fed into the chip is already quantized. True means
+            quantized (bool): Whether the data returned from the chip is already quantized. True means
                 the data is already quantized. False means it's HailoRT's responsibility to quantize
                 (scale) the data. Defaults to True.
             format_type (:class:`~hailo_platform.pyhailort.pyhailort.FormatType`): The
@@ -2660,6 +2744,19 @@ class InputVStream(object):
         with ExceptionWrapper():
             return self._send_object.info
 
+    def _before_fork(self):
+        if self._send_object is not None:
+            self._send_object.before_fork()
+
+    def _after_fork_in_parent(self):
+        if self._send_object is not None:
+            self._send_object.after_fork_in_parent()
+
+    def _after_fork_in_child(self):
+        if self._send_object is not None:
+            self._send_object.after_fork_in_child()
+
+
 class InputVStreams(object):
     """Input vstreams pipelines that allows to send data, to be used as a context manager."""
 
@@ -2708,6 +2805,19 @@ class InputVStreams(object):
     
     def __iter__(self):
         return iter(self._vstreams.values())
+
+    def _before_fork(self):
+        for vstream in self._vstreams.values():
+            vstream._before_fork()
+
+    def _after_fork_in_parent(self):
+        for vstream in self._vstreams.values():
+            vstream._after_fork_in_parent()
+
+    def _after_fork_in_child(self):
+        for vstream in self._vstreams.values():
+            vstream._after_fork_in_child()
+
 
 class OutputLayerUtils(object):
     def __init__(self, hef, vstream_name, pipeline, net_group_name=""):
@@ -2833,6 +2943,19 @@ class OutputVStream(object):
         with ExceptionWrapper():
             return self._recv_object.info
 
+    def _before_fork(self):
+        if self._recv_object is not None:
+            self._recv_object.before_fork()
+
+    def _after_fork_in_parent(self):
+        if self._recv_object is not None:
+            self._recv_object.after_fork_in_parent()
+
+    def _after_fork_in_child(self):
+        if self._recv_object is not None:
+            self._recv_object.after_fork_in_child()
+
+
 class OutputVStreams(object):
     """Output virtual streams pipelines that allows to receive data, to be used as a context manager."""
 
@@ -2896,13 +3019,26 @@ class OutputVStreams(object):
     def __iter__(self):
         return iter(self._vstreams.values())
 
-class YOLOv5PostProcessingOp(object):
+    def _before_fork(self):
+        for vstream in self._vstreams.values():
+            vstream._before_fork()
+
+    def _after_fork_in_parent(self):
+        for vstream in self._vstreams.values():
+            vstream._after_fork_in_parent()
+
+    def _after_fork_in_child(self):
+        for vstream in self._vstreams.values():
+            vstream._after_fork_in_child()
+
+
+class YOLOv5PostProcessOp(object):
 
     def __init__(self, anchors, shapes, formats, quant_infos, image_height, image_width, confidence_threshold, iou_threshold, num_of_classes,
-            should_dequantize, max_boxes, should_sigmoid, one_class_per_bbox=True):
+            max_boxes, cross_classes=True):
 
-        self._op = _pyhailort.YOLOv5PostProcessingOp.create(anchors, shapes, formats, quant_infos, image_height, image_width, confidence_threshold,
-            iou_threshold, num_of_classes, should_dequantize, max_boxes, should_sigmoid, one_class_per_bbox)
+        self._op = _pyhailort.YOLOv5PostProcessOp.create(anchors, shapes, formats, quant_infos, image_height, image_width, confidence_threshold,
+            iou_threshold, num_of_classes, max_boxes, cross_classes)
 
     def execute(self, net_flow_tensors):
         return self._op.execute(net_flow_tensors)

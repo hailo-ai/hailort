@@ -1,10 +1,12 @@
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.15.0)
 
 pybind11_add_module(_pyhailort_internal SHARED
     pyhailort_internal.cpp
     control_api.cpp
-    ${HAILORT_SRCS_ABS}
+    $<TARGET_OBJECTS:libhailort>
 )
+
+add_dependencies(_pyhailort_internal libhailort)
 
 set_target_properties(_pyhailort_internal PROPERTIES
     CXX_STANDARD              14
@@ -22,7 +24,6 @@ target_include_directories(_pyhailort_internal
 )
 
 target_link_libraries(_pyhailort_internal PRIVATE
-    libhailort
     hef_proto
     spdlog::spdlog
     readerwriterqueue

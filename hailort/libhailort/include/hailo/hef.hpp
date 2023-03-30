@@ -18,6 +18,7 @@
 #include <memory>
 #include <map>
 
+
 namespace hailort
 {
 
@@ -224,6 +225,23 @@ public:
     Expected<float64_t> get_bottleneck_fps(const std::string &net_group_name="");
 
     /**
+     * Get device Architecture HEF was compiled for.
+     *
+     * @return Upon success, returns Expected containing the device architecture the HEF was compiled for.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    Expected<hailo_device_architecture_t> get_hef_device_arch();
+
+    /**
+     * Get string of device architecture HEF was compiled for.
+     *
+     * @param[in] arch     hailo_device_architecture_t representing the device architecture of the HEF
+     * @return Upon success, returns string representing the device architecture the HEF was compiled for.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    static Expected<std::string> device_arch_to_string(const hailo_device_architecture_t arch);
+
+    /**
      * Gets all stream names under the given vstream name
      *
      * @param[in] vstream_name        The name of the vstream.
@@ -403,7 +421,7 @@ public:
      *                              the function returns the output virtual stream params of the given network.
      *                              If NULL is passed, the function returns the output virtual stream params of
      *                              all the networks of the first network group.
-     * @param[in] quantized         Whether the data fed into the chip is already quantized. True means
+     * @param[in] quantized         Whether the data returned from the chip is already quantized. True means
      *                              the data is already quantized. False means it's HailoRT's responsibility
      *                              to quantize (scale) the data.
      * @param[in] format_type       The default format type for all output virtual streams.
@@ -434,6 +452,8 @@ public:
      */
     std::string hash() const;
 
+    Expected<std::string> get_hef_description(bool stream_infos, bool vstream_infos);
+
     ~Hef();
     Hef(Hef &&);
     Hef &operator=(Hef &&);
@@ -448,6 +468,7 @@ private:
     friend class OutputStream;
     friend class PyhailortInternal;
     friend class ConfiguredNetworkGroupBase;
+    friend class CoreOp;
     friend class VDeviceBase;
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS

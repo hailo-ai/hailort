@@ -41,7 +41,10 @@ extern "C" {
 #define CONTROL_PROTOCOL__SOC_ID_LENGTH (32)
 #define CONTROL_PROTOCOL__MAX_CFG_CHANNELS (4)
 #define CONTROL_PROTOCOL__MAX_NETWORKS_PER_NETWORK_GROUP (8)
+#define CONTROL_PROTOCOL__MAX_VDMA_CHANNELS_PER_ENGINE (32)
 #define CONTROL_PROTOCOL__MAX_VDMA_ENGINES_COUNT (3)
+#define CONTROL_PROTOCOL__MAX_TOTAL_CHANNEL_COUNT \
+    (CONTROL_PROTOCOL__MAX_VDMA_CHANNELS_PER_ENGINE * CONTROL_PROTOCOL__MAX_VDMA_ENGINES_COUNT)
 /* Tightly coupled with the sizeof PROCESS_MONITOR__detection_results_t 
     and HAILO_SOC_PM_VALUES_BYTES_LENGTH */
 #define PM_RESULTS_LENGTH (24)
@@ -154,6 +157,7 @@ extern "C" {
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_CLEAR_CONFIGURED_APPS,      false, CPU_ID_CORE_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_GET_HW_CONSTS,                             false, CPU_ID_CORE_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_SET_SLEEP_STATE,                           false, CPU_ID_APP_CPU)\
+    CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CHANGE_HW_INFER_STATUS,                    false, CPU_ID_CORE_CPU)\
 
 typedef enum {
 #define CONTROL_PROTOCOL__OPCODE_X(name, is_critical, cpu_id) name,
@@ -340,8 +344,7 @@ typedef enum {
     CONTROL_PROTOCOL__HAILO8_A0 = 0,
     CONTROL_PROTOCOL__HAILO8,
     CONTROL_PROTOCOL__HAILO8L,
-    CONTROL_PROTOCOL__MERCURY_CA,
-    CONTROL_PROTOCOL__MERCURY_VPU,
+    CONTROL_PROTOCOL__HAILO15,
     /* Must be last!! */
     CONTROL_PROTOCOL__DEVICE_ARCHITECTURE_COUNT
 } CONTROL_PROTOCOL__device_architecture_t;
@@ -868,7 +871,9 @@ typedef struct {
     CONTROL_PROTOCOL__INFER_FEATURE_LIST_t infer_features;
     CONTROL_PROTOCOL__VALIDATION_FEATURE_LIST_t validation_features;
     uint8_t networks_count;
+    uint16_t csm_buffer_size;
     uint16_t batch_size[CONTROL_PROTOCOL__MAX_NETWORKS_PER_NETWORK_GROUP];
+    uint32_t boundary_channels_bitmap[CONTROL_PROTOCOL__MAX_VDMA_ENGINES_COUNT];
 } CONTROL_PROTOCOL__application_header_t;
 
 typedef struct {
@@ -933,7 +938,8 @@ typedef struct {
     uint8_t buffer_type;   // CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t
     uint64_t dma_address;
     uint16_t desc_page_size;
-    uint32_t total_desc_count;
+    uint32_t total_desc_count; //HRT-9913 - Some descriptors may not be initialized (to save space), needs to
+                               // change this param or add another one for validation.
     uint32_t bytes_in_pattern;
 } CONTROL_PROTOCOL__host_buffer_info_t;
 
@@ -950,8 +956,6 @@ typedef struct {
     uint8_t is_last_control_per_context;
     uint32_t context_type_length;
     uint8_t context_type; // CONTROL_PROTOCOL__context_switch_context_type_t
-    uint32_t actions_count_length;
-    uint32_t actions_count;
     uint32_t context_network_data_length;
     uint8_t context_network_data[0];
 } CONTROL_PROTOCOL__context_switch_set_context_info_request_t;
@@ -959,11 +963,6 @@ typedef struct {
 #pragma warning(pop)
 #endif
 
-typedef struct {
-    /* Must be first */
-    uint8_t action_type; // CONTEXT_SWITCH_DEFS__ACTION_TYPE_t
-    bool is_repeated;
-} CONTROL_PROTOCOL__ACTION_HEADER_t;
 
 typedef CONTROL_PROTOCOL__read_memory_request_t CONTROL_PROTOCOL__read_user_config_request_t;
 typedef CONTROL_PROTOCOL__read_memory_response_t CONTROL_PROTOCOL__read_user_config_response_t;
@@ -1279,6 +1278,47 @@ typedef struct {
     CONTROL_PROTOCOL__hw_consts_t hw_consts;
 } CONTROL_PROTOCOL__get_hw_consts_response_t;
 
+/* TODO HRT-9545 - Return and hw only parse results */
+typedef struct {
+    bool infer_done;
+    uint32_t infer_cycles;
+} CONTROL_PROTOCOL__hw_only_infer_results_t;
+
+typedef struct {
+    uint32_t results_length;
+    CONTROL_PROTOCOL__hw_only_infer_results_t results;
+} CONTROL_PROTOCOL__change_hw_infer_status_response_t;
+
+typedef struct {
+    uint8_t channel_index;
+    uint8_t engine_index;
+    uint16_t desc_programed;
+} CONTROL_PROTOCOL__hw_infer_channel_info_t;
+
+typedef struct {
+    CONTROL_PROTOCOL__hw_infer_channel_info_t channel_info[CONTROL_PROTOCOL__MAX_TOTAL_CHANNEL_COUNT];
+    uint8_t channel_count;
+} CONTROL_PROTOCOL__hw_infer_channels_info_t;
+
+typedef enum {
+    CONTROL_PROTOCOL__HW_INFER_STATE_START, 
+    CONTROL_PROTOCOL__HW_INFER_STATE_STOP,
+
+    /* must be last*/
+    CONTROL_PROTOCOL__HW_INFER_STATE_COUNT
+} CONTROL_PROTOCOL__hw_infer_state_t;
+
+typedef struct {
+    uint32_t hw_infer_state_length;
+    uint8_t hw_infer_state;
+    uint32_t application_index_length;
+    uint8_t application_index;
+    uint32_t dynamic_batch_size_length;
+    uint16_t dynamic_batch_size;
+    uint32_t channels_info_length;
+    CONTROL_PROTOCOL__hw_infer_channels_info_t channels_info;
+} CONTROL_PROTOCOL__change_hw_infer_status_request_t;
+
 typedef union {
     CONTROL_PROTOCOL_identify_response_t identity_response;
     CONTROL_PROTOCOL__core_identify_response_t core_identity_response;
@@ -1305,6 +1345,7 @@ typedef union {
     CONTROL_PROTOCOL__get_throttling_state_response_t get_throttling_state_response;
     CONTROL_PROTOCOL__get_overcurrent_state_response_t get_overcurrent_state_response;
     CONTROL_PROTOCOL__get_hw_consts_response_t get_hw_consts_response;
+    CONTROL_PROTOCOL__change_hw_infer_status_response_t change_hw_infer_status_response;
 
    // Note: This array is larger than any legal request:
    // * Functions in this module won't write more than CONTROL_PROTOCOL__MAX_CONTROL_LENGTH bytes
@@ -1364,6 +1405,7 @@ typedef union {
    CONTROL_PROTOCOL__sensor_set_i2c_bus_index_t sensor_set_i2c_bus_index;
    CONTROL_PROTOCOL__set_overcurrent_state_request_t set_overcurrent_state_request;
    CONTROL_PROTOCOL__set_sleep_state_request_t set_sleep_state_request;
+   CONTROL_PROTOCOL__change_hw_infer_status_request_t change_hw_infer_status_request;
    // Note: This array is larger than any legal request:
    // * Functions in this module won't write more than CONTROL_PROTOCOL__MAX_CONTROL_LENGTH bytes
    //   when recieving a pointer to CONTROL_PROTOCOL__request_parameters_t.
@@ -1427,7 +1469,6 @@ typedef struct {
     bool is_first_control_per_context;
     bool is_last_control_per_context;
     uint8_t context_type; // CONTROL_PROTOCOL__context_switch_context_type_t
-    uint32_t actions_count;
     uint32_t context_network_data_length;
     uint8_t context_network_data[CONTROL_PROTOCOL__CONTEXT_NETWORK_DATA_SINGLE_CONTROL_MAX_SIZE];
 } CONTROL_PROTOCOL__context_switch_context_info_single_control_t;

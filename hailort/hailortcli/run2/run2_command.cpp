@@ -10,8 +10,10 @@
 #include "run2_command.hpp"
 #include "live_printer.hpp"
 #include "timer_live_track.hpp"
+#include "measurement_live_track.hpp"
 #include "network_runner.hpp"
 
+#include "common/barrier.hpp"
 #include "common/async_thread.hpp"
 #include "hailo/vdevice.hpp"
 #include "hailo/hef.hpp"
@@ -91,6 +93,10 @@ VStreamApp::VStreamApp(const std::string &description, const std::string &name, 
     add_option("name", m_params.name, "vStream name")
         ->check(VStreamNameValidator(hef_path_option, net_group_name_option));
 
+    add_option("--input-file", m_params.input_file_path,
+        "Input file path. If not given, random data will be used. File format should be raw binary data with size that is a factor of the input shape size")
+        ->default_val("");
+
     auto format_opt_group = add_option_group("Format");
     format_opt_group->add_option("--type", m_params.params.user_buffer_format.type, "Format type")
         ->transform(HailoCheckedTransformer<hailo_format_type_t>({
@@ -116,14 +122,16 @@ VStreamApp::VStreamApp(const std::string &description, const std::string &name, 
             { "nchw", HAILO_FORMAT_ORDER_NCHW },
             { "yuy2", HAILO_FORMAT_ORDER_YUY2 },
             { "nv12", HAILO_FORMAT_ORDER_NV12 },
-            { "nv21", HAILO_FORMAT_ORDER_NV21 }
+            { "nv21", HAILO_FORMAT_ORDER_NV21 },
+            { "rgb4", HAILO_FORMAT_ORDER_RGB4 },
+            { "i420", HAILO_FORMAT_ORDER_I420 }
         }))
         ->default_val("auto");
 
     add_flag_callback(format_opt_group, "-q,--quantized,!--no-quantized", "Whether or not data is quantized",
         [this](bool result){
             m_params.params.user_buffer_format.flags = result ?
-                m_params.params.user_buffer_format.flags | HAILO_FORMAT_FLAGS_QUANTIZED :
+                static_cast<hailo_format_flags_t>(m_params.params.user_buffer_format.flags | HAILO_FORMAT_FLAGS_QUANTIZED) :
                 static_cast<hailo_format_flags_t>(m_params.params.user_buffer_format.flags & (~HAILO_FORMAT_FLAGS_QUANTIZED));})
         ->run_callback_for_default()
         ->default_val(true); // default_val() must be after run_callback_for_default()
@@ -188,9 +196,13 @@ NetworkApp::NetworkApp(const std::string &description, const std::string &name) 
     net_params->add_option("--batch-size", m_params.batch_size, "Batch size")->default_val(HAILO_DEFAULT_BATCH_SIZE);
     net_params->add_option("--scheduler-threshold", m_params.scheduler_threshold, "Scheduler threshold")->default_val(0);
     net_params->add_option("--scheduler-timeout", m_params.scheduler_timeout_ms, "Scheduler timeout in milliseconds")->default_val(0);
+    net_params->add_option("--scheduler-priority", m_params.scheduler_priority, "Scheduler priority")->default_val(HAILO_SCHEDULER_PRIORITY_NORMAL);
 
     auto run_params = add_option_group("Run Parameters");
     run_params->add_option("--framerate", m_params.framerate, "Input vStreams framerate")->default_val(UNLIMITED_FRAMERATE);
+
+    // TODO: support multiple scheduling algorithms
+    m_params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN;
 
     add_vstream_app_subcom(hef_path_option, net_group_name_option);
 }
@@ -235,12 +247,34 @@ public:
 
     const std::vector<NetworkParams>& get_network_params();
     std::chrono::seconds get_time_to_run();
+    std::vector<hailo_device_id_t> get_dev_ids();
+    uint32_t get_device_count();
+    bool get_measure_power();
+    bool get_measure_current();
+    bool get_measure_temp();
+    bool get_multi_process_service();
+    const std::string &get_group_id();
+
+    void set_scheduling_algorithm(hailo_scheduling_algorithm_t scheduling_algorithm);
+    void set_measure_latency();
 
 private:
     void add_net_app_subcom();
     std::vector<NetworkParams> m_network_params;
     uint32_t m_time_to_run;
+    std::vector<std::string> m_device_id;
+    uint32_t m_device_count;
+    bool m_multi_process_service;
+    std::string m_group_id;
+
+    bool m_measure_hw_latency;
+    bool m_measure_overall_latency;
+
+    bool m_measure_power;
+    bool m_measure_current;
+    bool m_measure_temp;
 };
+
 
 Run2::Run2() : CLI::App("Run networks (preview)", "run2")
 {
@@ -248,6 +282,39 @@ Run2::Run2() : CLI::App("Run networks (preview)", "run2")
     add_option("-t,--time-to-run", m_time_to_run, "Time to run (seconds)")
         ->default_val(DEFAULT_TIME_TO_RUN_SECONDS)
         ->check(CLI::PositiveNumber);
+
+    auto vdevice_options_group = add_option_group("VDevice Options");
+
+    auto dev_id_opt = vdevice_options_group->add_option("-s,--device-id", m_device_id,
+        "Device id, same as returned from `hailortcli scan` command. For multiple devices, use space as separator.");
+
+    vdevice_options_group->add_option("--device-count", m_device_count, "VDevice device count")
+        ->default_val(HAILO_DEFAULT_DEVICE_COUNT)
+        ->check(CLI::PositiveNumber)
+        ->excludes(dev_id_opt);
+
+    vdevice_options_group->add_flag("--multi-process-service", m_multi_process_service, "VDevice multi process service")
+        ->default_val(false);
+
+    vdevice_options_group->add_option("--group-id", m_group_id, "VDevice group id")
+        ->default_val(HAILO_DEFAULT_VDEVICE_GROUP_ID);
+
+    auto measurement_options_group = add_option_group("Measurement Options");
+
+    auto measure_power_opt = measurement_options_group->add_flag("--measure-power", m_measure_power, "Measure power consumption")
+        ->default_val(false);
+    
+    measurement_options_group->add_flag("--measure-current", m_measure_current, "Measure current")->excludes(measure_power_opt)
+        ->default_val(false);
+
+    measurement_options_group->add_flag("--measure-latency", m_measure_hw_latency, "Measure network latency")
+        ->default_val(false);
+    
+    measurement_options_group->add_flag("--measure-overall-latency", m_measure_overall_latency, "Measure overall latency measurement")
+        ->default_val(false);
+
+    measurement_options_group->add_flag("--measure-temp", m_measure_temp, "Measure chip temperature")
+        ->default_val(false);
 }
 
 void Run2::add_net_app_subcom()
@@ -286,6 +353,65 @@ std::chrono::seconds Run2::get_time_to_run()
     return std::chrono::seconds(m_time_to_run);
 }
 
+bool Run2::get_measure_power()
+{
+    return m_measure_power;
+}
+
+bool Run2::get_measure_current()
+{
+    return m_measure_current;
+}
+
+bool Run2::get_measure_temp()
+{
+    return m_measure_temp;
+}
+
+std::vector<hailo_device_id_t> Run2::get_dev_ids()
+{
+    std::vector<hailo_device_id_t> res;
+    res.reserve(m_device_id.size());
+    for (auto &id_str : m_device_id) {
+        hailo_device_id_t id = {};
+        std::memset(id.id, 0, sizeof(id.id));
+        std::strncpy(id.id, id_str.c_str(), sizeof(id.id) - 1);
+        res.push_back(id);
+    }
+    return res;
+}
+
+uint32_t Run2::get_device_count()
+{
+    return m_device_count;
+}
+
+void Run2::set_scheduling_algorithm(hailo_scheduling_algorithm_t scheduling_algorithm)
+{
+    for (auto &params: m_network_params) {
+        params.scheduling_algorithm = scheduling_algorithm;
+    }
+}
+
+void Run2::set_measure_latency()
+{
+    for (auto &params: m_network_params) {
+        params.measure_hw_latency = m_measure_hw_latency;
+        params.measure_overall_latency = m_measure_overall_latency;
+    }
+}
+
+bool Run2::get_multi_process_service()
+{
+    return m_multi_process_service;
+}
+
+const std::string &Run2::get_group_id()
+{
+    return m_group_id;
+}
+
+
 /** Run2Command */
 Run2Command::Run2Command(CLI::App &parent_app) : Command(parent_app.add_subcommand(std::make_shared<Run2>()))
 {
@@ -304,9 +430,18 @@ static hailo_status wait_for_threads(std::vector<AsyncThreadPtr<hailo_status>> &
     return last_error_status;
 }
 
+bool is_valid_ip(const std::string &ip)
+{
+    int a,b,c,d;
+    return (4 == sscanf(ip.c_str(),"%d.%d.%d.%d", &a, &b, &c, &d)) &&
+        IS_FIT_IN_UINT8(a) && IS_FIT_IN_UINT8(b) && IS_FIT_IN_UINT8(c) && IS_FIT_IN_UINT8(d);
+}
+
 hailo_status Run2Command::execute()
 {
     Run2 *app = reinterpret_cast<Run2*>(m_app);
+
+    app->set_measure_latency();
 
     if (0 == app->get_network_params().size()) {
         LOGGER__ERROR("Nothing to run");
@@ -316,9 +451,26 @@ hailo_status Run2Command::execute()
         LOGGER__WARN("\"hailortcli run2\" is in preview. It is recommended to use \"hailortcli run\" command for a single network group");
     }
 
-    // TODO: support multi-device. maybe get all by default?
     hailo_vdevice_params_t vdevice_params = {};
     CHECK_SUCCESS(hailo_init_vdevice_params(&vdevice_params));
+    auto dev_ids = app->get_dev_ids();
+    if (!dev_ids.empty()) {
+        vdevice_params.device_count = static_cast<uint32_t>(dev_ids.size());
+        vdevice_params.device_ids = dev_ids.data();
+
+        // Disable scheduler for eth VDevice
+        if ((1 == dev_ids.size()) && (is_valid_ip(dev_ids[0].id))) {
+            vdevice_params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_NONE;
+            CHECK(1 == app->get_network_params().size(), HAILO_INVALID_OPERATION, "On Ethernet inference only one model is allowed");
+            app->set_scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_NONE);
+        }
+    } else {
+        vdevice_params.device_count = app->get_device_count();
+    }
+
+    vdevice_params.group_id = app->get_group_id().c_str();
+    vdevice_params.multi_process_service = app->get_multi_process_service();
+
     auto vdevice = VDevice::create(vdevice_params);
     CHECK_EXPECTED_AS_STATUS(vdevice);
 
@@ -327,22 +479,43 @@ hailo_status Run2Command::execute()
     for (auto &net_params : app->get_network_params()) {
         auto net_runner = NetworkRunner::create_shared(*vdevice->get(), net_params);
         CHECK_EXPECTED_AS_STATUS(net_runner);
+
         net_runners.emplace_back(net_runner.release());
     }
-    LivePrinter live_printer(std::chrono::seconds(1));
-    live_printer.add(std::make_shared<TimerLiveTrack>(app->get_time_to_run()));
+    auto live_printer = std::make_unique<LivePrinter>(std::chrono::seconds(1));
+
+    live_printer->add(std::make_shared<TimerLiveTrack>(app->get_time_to_run()), 0);
 
     auto shutdown_event = Event::create(Event::State::not_signalled);
     CHECK_EXPECTED_AS_STATUS(shutdown_event);
     std::vector<AsyncThreadPtr<hailo_status>> threads;
+    Barrier barrier(net_runners.size() + 1); // We wait for all nets to finish activation + this thread to start sampling
     for (auto &net_runner : net_runners) {
-        threads.emplace_back(std::make_unique<AsyncThread<hailo_status>>([&net_runner, &shutdown_event, &live_printer](){
-            return net_runner->run(shutdown_event.value(), live_printer);
+        threads.emplace_back(std::make_unique<AsyncThread<hailo_status>>("NG_INFER", [&net_runner, &shutdown_event,
+            &live_printer, &barrier](){
+            return net_runner->run(shutdown_event.value(), *live_printer, barrier);
         }));
     }
+
+    auto physical_devices = vdevice.value()->get_physical_devices();
+    CHECK_EXPECTED_AS_STATUS(physical_devices);
+
+    for (auto &device : physical_devices.value()) {
+        auto measurement_live_track = MeasurementLiveTrack::create_shared(device.get(), app->get_measure_power(),
+            app->get_measure_current(), app->get_measure_temp());
+        CHECK_EXPECTED_AS_STATUS(measurement_live_track);
+        live_printer->add(measurement_live_track.release(), 2);
+    }
+
     // TODO: wait for all nets before starting timer. start() should update TimerLiveTrack to start. or maybe append here but first in vector...
-    live_printer.start();
-    std::this_thread::sleep_for(app->get_time_to_run());
+    barrier.arrive_and_wait();
+    CHECK_SUCCESS(live_printer->start());
+    auto status = shutdown_event->wait(app->get_time_to_run());
+    if (HAILO_TIMEOUT != status) {
+        // if shutdown_event is signaled its because one of the send/recv threads failed
+        LOGGER__ERROR("Encountered error during inference. See log for more information.");
+    }
+    live_printer.reset(); // Ensures that the final print will include real values and not with values of when streams are already aborted.
     shutdown_event->signal();
     return wait_for_threads(threads);
 }

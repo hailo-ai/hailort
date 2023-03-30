@@ -9,6 +9,7 @@ add_subdirectory(switch_network_groups_example)
 add_subdirectory(switch_network_groups_manually_example)
 add_subdirectory(multi_device_example)
 add_subdirectory(power_measurement_example)
+add_subdirectory(notification_callback_example)
 
 add_custom_target(c_hailort_examples)
 add_dependencies(c_hailort_examples
@@ -20,4 +21,5 @@ add_dependencies(c_hailort_examples
     c_switch_network_groups_example
     c_switch_network_groups_manually_example
     c_multi_device_example
-    c_power_measurement_example)
+    c_power_measurement_example
+    c_notification_callback_example)

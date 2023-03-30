@@ -7,12 +7,16 @@
  * @brief Monitor of networks - Presents information about the running networks
  **/
 
-#include "mon_command.hpp"
-#include "common.hpp"
 #include "hailo/hailort.h"
+
 #include "common/filesystem.hpp"
 
+#include "mon_command.hpp"
+#include "common.hpp"
+
 #include <iostream>
+#include <signal.h>
+#include <thread>
 #if defined(__GNUC__)
 #include <sys/ioctl.h>
 #endif
@@ -20,14 +24,21 @@
 namespace hailort
 {
 
-// TODO: Deal with longer networks names - should use HAILO_MAX_NETWORK_NAME_SIZE but its too long for one line
-constexpr size_t NETWORK_NAME_WIDTH = 40;
-constexpr size_t STREAM_NAME_WIDTH = 60;
-constexpr size_t ACTIVE_TIME_WIDTH = 25;
+constexpr size_t STRING_WIDTH = 60;
+constexpr size_t NETWORK_GROUP_NAME_WIDTH = STRING_WIDTH;
+constexpr size_t DEVICE_ID_WIDTH = STRING_WIDTH;
+constexpr size_t STREAM_NAME_WIDTH = STRING_WIDTH;
+constexpr size_t UTILIZATION_WIDTH = 25;
 constexpr size_t NUMBER_WIDTH = 15;
 constexpr size_t TERMINAL_DEFAULT_WIDTH = 80;
-constexpr size_t LINE_LENGTH = 125;
+constexpr size_t LINE_LENGTH = NETWORK_GROUP_NAME_WIDTH + STREAM_NAME_WIDTH + UTILIZATION_WIDTH + NUMBER_WIDTH;
 constexpr std::chrono::milliseconds EPSILON_TIME(500);
+
+inline std::string truncate_str(const std::string &original_str, uint32_t max_length)
+{
+    static const std::string ELLIPSIS = "...  ";
+    return (original_str.length() > max_length) ? original_str.substr(0, (max_length - ELLIPSIS.length())) + ELLIPSIS : original_str;
+}
 
 MonCommand::MonCommand(CLI::App &parent_app) :
     Command(parent_app.add_subcommand("monitor", "Monitor of networks - Presents information about the running networks. " \
@@ -40,65 +51,86 @@ hailo_status MonCommand::execute()
     LOGGER__ERROR("hailortcli `monitor` command is not supported on Windows");
     return HAILO_NOT_IMPLEMENTED;
 #else
-    return print_table();
+    return run_monitor();
 #endif
 }
 
-size_t MonCommand::print_networks_info_header()
+void MonCommand::print_devices_info_header()
 {
     std::cout << 
-        std::setw(NETWORK_NAME_WIDTH) << std::left << "Network" <<
-        std::setw(NUMBER_WIDTH) << std::left << "FPS" <<
-        std::setw(ACTIVE_TIME_WIDTH) << std::left << "Active Time (%) " <<
-        std::setw(NUMBER_WIDTH) << std::left << "PID" << 
+        std::setw(DEVICE_ID_WIDTH) << std::left << "Device ID" <<
+        std::setw(UTILIZATION_WIDTH) << std::left << "Utilization (%)" <<
+        std::setw(STRING_WIDTH) << std::left << "Architecture" <<
         "\n" << std::left << std::string(LINE_LENGTH, '-') << "\n";
-    static const uint32_t header_lines_count = 2;
-
-    return header_lines_count;
 }
 
-size_t MonCommand::print_networks_info_table(const ProtoMon &mon_message)
+void MonCommand::print_devices_info_table(const ProtoMon &mon_message)
+{
+    auto data_line_len = NUMBER_WIDTH + NETWORK_GROUP_NAME_WIDTH + DEVICE_ID_WIDTH;
+    auto rest_line_len = LINE_LENGTH - data_line_len;
+
+    for (const auto &device_info : mon_message.device_infos()) {
+        auto device_id = device_info.device_id();
+        auto utilization = device_info.utilization();
+        auto device_arch = device_info.device_arch();
+
+        std::cout << std::setprecision(1) << std::fixed <<
+            std::setw(DEVICE_ID_WIDTH) << std::left << device_id <<
+            std::setw(UTILIZATION_WIDTH) << std::left << utilization <<
+            std::setw(STRING_WIDTH) << std::left << device_arch <<
+            std::string(rest_line_len, ' ') << "\n";
+    }
+}
+
+void MonCommand::print_networks_info_header()
+{
+    std::cout << 
+        std::setw(NETWORK_GROUP_NAME_WIDTH) << std::left << "Model" <<
+        std::setw(UTILIZATION_WIDTH) << std::left << "Utilization (%) " <<
+        std::setw(NUMBER_WIDTH) << std::left << "FPS" <<
+        std::setw(NUMBER_WIDTH) << std::left << "PID" << 
+        "\n" << std::left << std::string(LINE_LENGTH, '-') << "\n";
+}
+
+void MonCommand::print_networks_info_table(const ProtoMon &mon_message)
 {
     const uint32_t NUMBER_OBJECTS_COUNT = 3;
-    auto data_line_len = (NUMBER_WIDTH * NUMBER_OBJECTS_COUNT) + NETWORK_NAME_WIDTH;
+    auto data_line_len = (NUMBER_WIDTH * NUMBER_OBJECTS_COUNT) + NETWORK_GROUP_NAME_WIDTH;
     auto rest_line_len = LINE_LENGTH - data_line_len;
 
     const std::string &pid = mon_message.pid();
-    for (auto net_info : mon_message.networks_infos()) {
-        auto &net_name = net_info.network_name();
+    for (const auto &net_info : mon_message.networks_infos()) {
+        auto &original_net_name = net_info.network_name();
+        auto net_name = truncate_str(original_net_name, NETWORK_GROUP_NAME_WIDTH);
         auto fps = net_info.fps();
-        auto active_time = net_info.active_time();
+        auto utilization = net_info.utilization();
 
         std::cout << std::setprecision(1) << std::fixed <<
-            std::setw(NETWORK_NAME_WIDTH) << std::left << net_name <<
+            std::setw(STRING_WIDTH) << std::left << net_name <<
+            std::setw(UTILIZATION_WIDTH) << std::left << utilization <<
             std::setw(NUMBER_WIDTH) << std::left << fps <<
-            std::setw(ACTIVE_TIME_WIDTH) << std::left << active_time <<
             std::setw(NUMBER_WIDTH) << std::left << pid << std::string(rest_line_len, ' ') << "\n";
     }
-
-    return mon_message.networks_infos().size();
 }
 
-size_t MonCommand::print_frames_header()
+void MonCommand::print_frames_header()
 {
     std::cout << 
-        std::setw(NETWORK_NAME_WIDTH) << std::left << "Network" <<
-        std::setw(STREAM_NAME_WIDTH) << std::left << "Stream" <<
+        std::setw(STRING_WIDTH) << std::left << "Model" <<
+        std::setw(STRING_WIDTH) << std::left << "Stream" <<
         std::setw(NUMBER_WIDTH) << std::left << "Direction" << 
         std::setw(NUMBER_WIDTH) << std::left << "Frames" << 
         "\n" << std::left << std::string(LINE_LENGTH, '-') << "\n";
-    static const size_t header_lines_count = 2;
-    return header_lines_count;
 }
 
-size_t MonCommand::print_frames_table(const ProtoMon &mon_message)
+void MonCommand::print_frames_table(const ProtoMon &mon_message)
 {
-    size_t table_lines_count = 0;
-    for (auto &net_info : mon_message.net_frames_infos()) {
-        auto &net_name = net_info.network_name();
-        table_lines_count += net_info.streams_frames_infos().size();
-        for (auto &streams_frames : net_info.streams_frames_infos()) {
-            auto &stream_name = streams_frames.stream_name();
+    for (const auto &net_info : mon_message.net_frames_infos()) {
+        auto &original_net_name = net_info.network_name();
+        auto net_name = truncate_str(original_net_name, NETWORK_GROUP_NAME_WIDTH);
+        for (const auto &streams_frames : net_info.streams_frames_infos()) {
+            auto &stream_name_original = streams_frames.stream_name();
+            auto stream_name = truncate_str(stream_name_original, STREAM_NAME_WIDTH);
             auto stream_direction = (streams_frames.stream_direction() == PROTO__STREAM_DIRECTION__HOST_TO_DEVICE) ? "H2D" : "D2H";
 
             std::string frames;
@@ -109,14 +141,12 @@ size_t MonCommand::print_frames_table(const ProtoMon &mon_message)
             }
             
             std::cout << 
-                std::setw(NETWORK_NAME_WIDTH) << std::left << net_name <<
-                std::setw(STREAM_NAME_WIDTH) << std::left << stream_name <<
+                std::setw(STRING_WIDTH) << std::left << net_name <<
+                std::setw(STRING_WIDTH) << std::left << stream_name <<
                 std::setw(NUMBER_WIDTH) << std::left << stream_direction << 
                 std::setw(NUMBER_WIDTH) << std::left << frames << "\n";
         }
     }
-    
-    return table_lines_count;
 }
 
 #if defined(__GNUC__)
@@ -133,17 +163,49 @@ Expected<uint16_t> get_terminal_line_width()
     return terminal_line_width;
 }
 
-hailo_status MonCommand::print_table()
+void MonCommand::print_tables(const std::vector<ProtoMon> &mon_messages, uint32_t terminal_line_width)
 {
+    print_devices_info_header();
+    for (const auto &mon_message : mon_messages) {
+        print_devices_info_table(mon_message);
+    }
+
+    std::cout << std::string(terminal_line_width, ' ') << "\n";
+    std::cout << std::string(terminal_line_width, ' ') << "\n";   
+    
+    print_networks_info_header();
+
+    for (const auto &mon_message : mon_messages) {
+        print_networks_info_table(mon_message);
+    }
+
+    std::cout << std::string(terminal_line_width, ' ') << "\n";
+    std::cout << std::string(terminal_line_width, ' ') << "\n";
+
+    print_frames_header();
+    for (const auto &mon_message : mon_messages) {
+        print_frames_table(mon_message);
+    }
+}
+
+static volatile bool keep_running = true;
+void signit_handler(int /*dummy*/)
+{
+    keep_running = false;
+}
+
+hailo_status MonCommand::run_monitor()
+{
+    // Note: There is no need to unregister to previous SIGINT handler since we finish running after it is called.
+    signal(SIGINT, signit_handler);
+
     std::chrono::milliseconds time_interval = DEFAULT_SCHEDULER_MON_INTERVAL + EPSILON_TIME;
     auto terminal_line_width_expected = get_terminal_line_width();
     CHECK_EXPECTED_AS_STATUS(terminal_line_width_expected);
     auto terminal_line_width = terminal_line_width_expected.release();
 
-    size_t last_run_total_lines_count = 0;
-    bool data_was_printed = false;
-    while (true) {
-        size_t total_lines_count = 0;
+    AlternativeTerminal alt_terminal;
+    while (keep_running) {
         bool print_warning_msg = true; // Will change to false only if mon directory is valid and there are updated files in it.
 
         auto mon_dir_valid = Filesystem::is_directory(SCHEDULER_MON_TMP_DIR);
@@ -160,14 +222,12 @@ hailo_status MonCommand::print_table()
                 auto file = LockedFile::create(mon_file, "r");
                 if (HAILO_SUCCESS != file.status()) {
                     LOGGER__ERROR("Failed to open and lock file {}, with status: {}", mon_file, file.status());
-                    total_lines_count++;
                     continue;
                 }
 
                 ProtoMon mon_message;
                 if (!mon_message.ParseFromFileDescriptor(file->get_fd())) {
                     LOGGER__WARNING("Failed to ParseFromFileDescriptor monitor file {} with errno {}", mon_file, errno);
-                    total_lines_count++;
                     continue;
                 }
 
@@ -175,41 +235,16 @@ hailo_status MonCommand::print_table()
             }
         }
 
-        total_lines_count += print_networks_info_header();
-        for (auto &mon_message : mon_messages) {
-            total_lines_count += print_networks_info_table(mon_message);
-        }
-
-        std::cout << std::string(terminal_line_width, ' ') << "\n";
-        std::cout << std::string(terminal_line_width, ' ') << "\n";
-        total_lines_count += 2;
-
-        total_lines_count += print_frames_header();
-        for (auto &mon_message : mon_messages) {
-            total_lines_count += print_frames_table(mon_message);
-        }
-
+        print_tables(mon_messages, terminal_line_width);
         if (print_warning_msg) {
-            std::cout << "Monitor did not retrieve any files. This occurs when there is no application currently running. If this is not the case, verify that environment variable '" <<
-                SCHEDULER_MON_ENV_VAR << "' is set to 1.\n";
-            total_lines_count++;
-
-            if (data_was_printed) {
-                auto lines_to_clear = last_run_total_lines_count - total_lines_count;
-                CliCommon::clear_lines_down(lines_to_clear);
-                total_lines_count += lines_to_clear;
-                data_was_printed = false;
-            }
-        }
-        else {
-            data_was_printed = true;
-            last_run_total_lines_count = total_lines_count;
+            std::cout << FORMAT_GREEN_PRINT << "Monitor did not retrieve any files. This occurs when there is no application currently running.\n"
+            << "If this is not the case, verify that environment variable '" << SCHEDULER_MON_ENV_VAR << "' is set to 1.\n" << FORMAT_NORMAL_PRINT;
         }
 
-        CliCommon::reset_cursor(total_lines_count);
+        CliCommon::clear_terminal();
         std::this_thread::sleep_for(DEFAULT_SCHEDULER_MON_INTERVAL);
     }
-    
+
     return HAILO_SUCCESS;
 }
 #endif

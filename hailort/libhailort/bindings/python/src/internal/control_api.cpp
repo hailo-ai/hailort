@@ -93,7 +93,7 @@ void ControlWrapper::validate_firmware_update(DeviceWrapper &device, py::bytes m
 py::bytes ControlWrapper::sensor_get_config(DeviceWrapper &device, uint32_t section_index, uint32_t offset, uint32_t data_length)
 {
     std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(data_length, '\x00');
-    VALIDATE_NOT_NULL(response);
+    VALIDATE_NOT_NULL(response, HAILO_OUT_OF_HOST_MEMORY);
     
     auto status = Control::sensor_get_config(*device, section_index, offset, data_length, (uint8_t*)(response->data()));
     VALIDATE_STATUS(status);

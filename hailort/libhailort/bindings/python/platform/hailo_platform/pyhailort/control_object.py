@@ -9,7 +9,6 @@ from hailo_platform.pyhailort.pyhailort import (Control, InternalPcieDevice, Exc
 
 import hailo_platform.pyhailort._pyhailort as _pyhailort
 
-
 class ControlObjectException(Exception):
     """Raised on illegal ContolObject operation."""
     pass
@@ -38,6 +37,9 @@ class UdpHcpControl(HcpControl):
             ignore_socket_errors (bool, optional): Ignore socket error (might be usefull for debugging).
         """
         # In the C API we define the total amount of attempts, instead of the amount of retries.
+
+        # TODO: HRT-9987 - Add this deprecation warning
+        # default_logger().warning("UdpHcpControl is deprecated! Please Use Control object")
         max_number_of_attempts = retries + 1
         response_timeout_milliseconds = int(response_timeout_seconds * 1000)
         if device is None:
@@ -55,6 +57,8 @@ class PcieHcpControl(HcpControl):
 
     def __init__(self, device=None, device_info=None):
         """Initializes a new HailoPcieController object."""
+        # TODO: HRT-9987 - Add this deprecation warning
+        # default_logger().warning("PcieHcpControl is deprecated! Please Use Control object")
         if device_info is None:
             device_info = InternalPcieDevice.scan_devices()[0]
 

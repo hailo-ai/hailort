@@ -41,6 +41,9 @@ public:
     std::shared_ptr<InputVStream> get_input_by_name(const std::string &name);
     py::dict get_all_inputs();
     void clear();
+    void before_fork();
+    void after_fork_in_parent();
+    void after_fork_in_child();
     static void add_to_python_module(py::module &m);
 
 private:
@@ -67,6 +70,9 @@ public:
     void exit();
     py::dict get_all_outputs();
     void clear();
+    void before_fork();
+    void after_fork_in_parent();
+    void after_fork_in_child();
     static void add_to_python_module(py::module &m);
 
 private:

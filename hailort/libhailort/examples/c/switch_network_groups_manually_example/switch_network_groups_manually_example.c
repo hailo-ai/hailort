@@ -57,7 +57,8 @@ thread_return_type input_vstream_thread_func(void *args)
     for (size_t run_index = 0; run_index < RUN_COUNT; run_index++) {
         for (size_t hef_index = 0 ; hef_index < HEF_COUNT; hef_index++) {
             // Wait for hef to be activated to send data
-            hailo_wait_for_network_group_activation(input_vstream_args->configured_networks[hef_index], HAILO_INFINITE);
+            status = hailo_wait_for_network_group_activation(input_vstream_args->configured_networks[hef_index], HAILO_INFINITE);
+            REQUIRE_SUCCESS(status, l_clear_src, "Failed waiting for network group activation");
 
             // Send data on relevant Hef
             for (uint32_t frame = 0; frame < INFER_FRAME_COUNT; frame++) {
@@ -106,9 +107,10 @@ thread_return_type output_vstream_thread_func(void *args)
 
     for (size_t run_index = 0; run_index < RUN_COUNT; run_index++) {
         for (size_t hef_index = 0 ; hef_index < HEF_COUNT; hef_index++) {
-            // Wait for hef to be activated to send data
-            hailo_wait_for_network_group_activation(output_vstream_args->configured_networks[hef_index], HAILO_INFINITE);
-    
+            // Wait for hef to be activated to recv data
+            status = hailo_wait_for_network_group_activation(output_vstream_args->configured_networks[hef_index], HAILO_INFINITE);
+            REQUIRE_SUCCESS(status, l_clear_dst, "Failed waiting for network group activation");
+
             for (uint32_t i = 0; i < INFER_FRAME_COUNT; i++) {
                 // Read data
                 status = hailo_vstream_read_raw_buffer(output_vstreams[hef_index],

@@ -1,29 +1,33 @@
 import os
-import subprocess
 import pathlib
+import subprocess
 import sys
+
+import pkg_resources
 
 import hailo_platform
 from hailo_platform.tools.hailocli.base_utils import HailortCliUtil
-import pkg_resources
 
 """
     HailoRTCLI matching commands in Hailo-CLI tool.
 """
 
+
 class BenchmarkCommandCLI(HailortCliUtil):
     def __init__(self, parser):
         super().__init__(parser, 'benchmark')
-        
+
 
 class FWConfigCommandCLI(HailortCliUtil):
     """CLI tool for changing the FW configuration (User Config)"""
+
     def __init__(self, parser):
         super().__init__(parser, 'fw-config')
 
 
 class BoardConfigCommandCLI(HailortCliUtil):
     """CLI tool for changing the FW configuration (Board Config)"""
+
     def __init__(self, parser):
         super().__init__(parser, 'board-config')
 
@@ -47,7 +51,7 @@ class MeasurePowerCommandCLI(HailortCliUtil):
     def __init__(self, parser):
         super().__init__(parser, 'measure-power')
 
-        
+
 class RunCommandCLI(HailortCliUtil):
     def __init__(self, parser):
         super().__init__(parser, 'run')
@@ -56,30 +60,27 @@ class RunCommandCLI(HailortCliUtil):
 class SensorConfigCommandCLI(HailortCliUtil):
     def __init__(self, parser):
         super().__init__(parser, 'sensor-config')
- 
-       
+
+
 class FWUpdaterCLI(HailortCliUtil):
     """Cli tool for firmware updates"""
+
     def __init__(self, parser):
         super().__init__(parser, 'fw-update')
 
-        
+
 class SSBUpdaterCLI(HailortCliUtil):
     """Cli tool for second stage boot updates"""
+
     def __init__(self, parser):
         super().__init__(parser, 'ssb-update')
 
-       
+
 class UDPRateLimiterCLI(HailortCliUtil):
     """CLI tool for UDP rate limitation."""
+
     def __init__(self, parser):
         super().__init__(parser, 'udp-rate-limiter')
-
-
-class VersionCLI(HailortCliUtil):
-    """CLI tool for hailort version."""
-    def __init__(self, parser):
-        super().__init__(parser, '--version')
 
 
 class TutorialRequired(Exception):
@@ -87,7 +88,6 @@ class TutorialRequired(Exception):
 
 
 class TutorialRunnerCLI():
-
     TUTORIALS_DIR = os.path.join(pathlib.Path(hailo_platform.__file__).parent.parent, 'hailo_tutorials/notebooks/')
     TUTORIALS_REQUIREMENTS = ["jupyter"]
     ERROR_MSG = """
@@ -109,7 +109,7 @@ class TutorialRunnerCLI():
                 working_set.require(req)
             except pkg_resources.DistributionNotFound:
                 missing_pkgs.append(req)
-        
+
         if missing_pkgs:
             sys.tracebacklimit = 0
             raise TutorialRequired(f"\n{self.ERROR_MSG}\n    {'; '.join([f'pip install {pkg}' for pkg in missing_pkgs])}")

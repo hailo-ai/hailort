@@ -11,60 +11,6 @@
 #include "common/filesystem.hpp"
 #include "hailo/hailort_common.hpp"
 
-#define TAB ("    ")
-
-static std::string add_tabs(uint8_t count)
-{
-    // Each TAB counts as 4 spaces
-    std::string res = "";
-    for (uint8_t i = 0; i < count; i++) {
-        res = res + TAB;
-    }
-    return res;
-}
-
-static std::string get_shape_str(const hailo_stream_info_t &stream_info)
-{
-    switch (stream_info.format.order)
-    {
-    case HAILO_FORMAT_ORDER_HAILO_NMS:
-        return HailoRTCommon::get_format_type_str(stream_info.format.type) + ", " + HailoRTCommon::get_format_order_str(stream_info.format.order) +
-            "(number of classes: " + std::to_string(stream_info.nms_info.number_of_classes) +
-            ", max_bboxes_per_class: "+ std::to_string(stream_info.nms_info.max_bboxes_per_class) + ")";
-    case HAILO_FORMAT_ORDER_NC:
-        return HailoRTCommon::get_format_type_str(stream_info.format.type) + ", " + HailoRTCommon::get_format_order_str(stream_info.format.order) +
-            "(" + std::to_string(stream_info.hw_shape.features) + ")";
-    case HAILO_FORMAT_ORDER_NHW:
-        return HailoRTCommon::get_format_type_str(stream_info.format.type) + ", " + HailoRTCommon::get_format_order_str(stream_info.format.order) +
-            "(" + std::to_string(stream_info.hw_shape.height) + "x" + std::to_string(stream_info.hw_shape.width) + ")";
-    default:
-        return HailoRTCommon::get_format_type_str(stream_info.format.type) + ", " + HailoRTCommon::get_format_order_str(stream_info.format.order) +
-            "(" + std::to_string(stream_info.hw_shape.height) + "x" + std::to_string(stream_info.hw_shape.width) +
-            "x" + std::to_string(stream_info.hw_shape.features) + ")";
-    }
-}
-
-static std::string get_shape_str(const hailo_vstream_info_t &vstream_info)
-{
-    switch (vstream_info.format.order)
-    {
-    case HAILO_FORMAT_ORDER_HAILO_NMS:
-        return HailoRTCommon::get_format_type_str(vstream_info.format.type) + ", " + HailoRTCommon::get_format_order_str(vstream_info.format.order) +
-            "(number of classes: " + std::to_string(vstream_info.nms_shape.number_of_classes) +
-            ", max_bboxes_per_class: " + std::to_string(vstream_info.nms_shape.max_bboxes_per_class) + ")";
-    case HAILO_FORMAT_ORDER_NC:
-        return HailoRTCommon::get_format_type_str(vstream_info.format.type) + ", " + HailoRTCommon::get_format_order_str(vstream_info.format.order) +
-            "(" + std::to_string(vstream_info.shape.features) + ")";
-    case HAILO_FORMAT_ORDER_NHW:
-        return HailoRTCommon::get_format_type_str(vstream_info.format.type) + ", " + HailoRTCommon::get_format_order_str(vstream_info.format.order) +
-            "(" +std::to_string(vstream_info.shape.height) + "x" + std::to_string(vstream_info.shape.width) + ")";
-    default:
-        return HailoRTCommon::get_format_type_str(vstream_info.format.type) + ", " + HailoRTCommon::get_format_order_str(vstream_info.format.order) +
-            "(" + std::to_string(vstream_info.shape.height) + "x" + std::to_string(vstream_info.shape.width) + "x" +
-            std::to_string(vstream_info.shape.features) + ")";
-    }
-}
-
 ParseHefCommand::ParseHefCommand(CLI::App &parent_app) :
     Command(parent_app.add_subcommand("parse-hef", "Parse HEF to get information about its components"))
 {
@@ -94,48 +40,9 @@ hailo_status ParseHefCommand::parse_hefs_info(const std::string &hef_path, bool 
     CHECK_EXPECTED_AS_STATUS(hef_exp, "Failed to parse HEF");
     auto hef = hef_exp.release();
 
-    auto network_group_infos = hef.get_network_groups_infos();
-    CHECK_EXPECTED_AS_STATUS(network_group_infos);
-    for (auto &network_group_info : network_group_infos.release()) {
-        auto contexts_str = (network_group_info.is_multi_context ? "Multi Context" : "Single Context");
-        std::cout << "Network group name: " << network_group_info.name << " (" << contexts_str << ")" << std::endl;
-        auto network_infos = hef.get_network_infos(network_group_info.name);
-        CHECK_EXPECTED_AS_STATUS(network_infos, "Failed to parse networks infos");
-        for (auto &network_info : network_infos.value()) {
-            std::cout << add_tabs(1) << "Network name: " << network_info.name << std::endl;
-            if (stream_infos) {
-                std::cout << add_tabs(2) << "Stream infos:" << std::endl;
-                auto input_stream_infos = hef.get_input_stream_infos(network_info.name);
-                CHECK_EXPECTED_AS_STATUS(input_stream_infos, "Failed to parse input stream infos");
-                for (auto &stream_info : input_stream_infos.value()) {
-                    auto shape_str = get_shape_str(stream_info);
-                    std::cout << add_tabs(3) << "Input  " << stream_info.name << " " << shape_str << std::endl;
-                }
-                auto output_stream_infos = hef.get_output_stream_infos(network_info.name);
-                CHECK_EXPECTED_AS_STATUS(output_stream_infos, "Failed to parse output stream infos");
-                for (auto &stream_info : output_stream_infos.value()) {
-                    auto shape_str = get_shape_str(stream_info);
-                    std::cout << add_tabs(3) << "Output " << stream_info.name << " " << shape_str << std::endl;
-                }
-            }
-            if (vstream_infos) {
-                std::cout << add_tabs(2) << "VStream infos:" << std::endl;
-                auto input_vstream_infos = hef.get_input_vstream_infos(network_info.name);
-                CHECK_EXPECTED_AS_STATUS(input_vstream_infos, "Failed to parse input vstream infos");
-                for (auto &vstream_info : input_vstream_infos.value()) {
-                    auto shape_str = get_shape_str(vstream_info);
-                    std::cout << add_tabs(3) << "Input  " << vstream_info.name << " " << shape_str << std::endl;
-                }
-                auto output_vstream_infos = hef.get_output_vstream_infos(network_info.name);
-                CHECK_EXPECTED_AS_STATUS(output_vstream_infos, "Failed to parse output vstream infos");
-                for (auto &vstream_info : output_vstream_infos.value()) {
-                    auto shape_str = get_shape_str(vstream_info);
-                    std::cout << add_tabs(3) << "Output " << vstream_info.name << " " << shape_str << std::endl;
-                }
-            }
-        }
-    }
-    std::cout << std::endl;
+    auto hef_info = hef.get_hef_description(stream_infos, vstream_infos);
+    CHECK_EXPECTED_AS_STATUS(hef_info, "Failed to parse HEF");
+    std::cout << hef_info.release();
     return HAILO_SUCCESS;
 }
 

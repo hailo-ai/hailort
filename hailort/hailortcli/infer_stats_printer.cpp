@@ -10,7 +10,8 @@
 #include "infer_stats_printer.hpp"
 #include "run_command.hpp"
 #include "common.hpp"
-#include "pipeline.hpp"
+
+#include "net_flow/pipeline/pipeline.hpp"
 
 #include <fstream>
 #include <iostream>
@@ -220,11 +221,17 @@ void InferStatsPrinter::print_csv(const std::vector<std::string> &network_groups
                 for (const auto &pair : inference_result->m_temp_measurements) {
                     if (nullptr != pair.second) {
                         m_results_csv_file << ",";
-                        m_results_csv_file << pair.second->min_value;
+                        if (auto min = pair.second->min()) {
+                            m_results_csv_file << *min;
+                        }
                         m_results_csv_file << ",";
-                        m_results_csv_file << pair.second->average_value;
+                        if (auto mean = pair.second->mean()) {
+                            m_results_csv_file << *mean;
+                        }
                         m_results_csv_file << ",";
-                        m_results_csv_file << pair.second->max_value;
+                        if (auto max = pair.second->max()) {
+                            m_results_csv_file << *max;
+                        }
                     } else {
                         m_results_csv_file << ",,,";
                     }
@@ -447,9 +454,15 @@ void InferStatsPrinter::print_stdout(Expected<InferResult> &inference_result)
         }
         auto temp_measure_iter = inference_result->m_temp_measurements.find(pair.first);
         if ((temp_measure_iter != inference_result->m_temp_measurements.end()) && (nullptr != temp_measure_iter->second)) {
-            measurement_stream << "    Minimum chip temperature: " << temp_measure_iter->second->min_value << "C" << std::endl;
-            measurement_stream << "    Average chip temperature: " << temp_measure_iter->second->average_value << "C" << std::endl;
-            measurement_stream << "    Maximum chip temperature: " << temp_measure_iter->second->max_value << "C" << std::endl;
+            if (auto min = temp_measure_iter->second->min()) {
+                measurement_stream << "    Minimum chip temperature: " << *min << "C" << std::endl;
+            }
+            if (auto mean = temp_measure_iter->second->mean()) {
+                measurement_stream << "    Average chip temperature: " << *mean << "C" << std::endl;
+            }
+            if (auto max = temp_measure_iter->second->max()) {
+                measurement_stream << "    Maximum chip temperature: " << *max << "C" << std::endl;
+            }
         }
         if (0 != measurement_stream.rdbuf()->in_avail()) {
             std::cout << "  Device: " << pair.first << std::endl;

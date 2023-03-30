@@ -13,7 +13,7 @@
 #include "hailortcli.hpp"
 #include "common.hpp"
 #include "power_measurement_command.hpp"
-#include "temp_measurement.hpp"
+#include "common/device_measurements.hpp"
 #include "CLI/CLI.hpp"
 #include "inference_result.hpp"
 

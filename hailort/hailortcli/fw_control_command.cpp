@@ -138,10 +138,8 @@ static std::string identity_arch_string(const hailo_device_identity_t &identity)
         return "HAILO8";
     case HAILO_ARCH_HAILO8L:
         return "HAILO8L";
-    case HAILO_ARCH_MERCURY_CA:
-        return "MERCURY_CA";
-    case HAILO_ARCH_MERCURY_VPU:
-        return "MERCURY_VPU";
+    case HAILO_ARCH_HAILO15:
+        return "HAILO15";
     default:
         return "Unknown";
     }

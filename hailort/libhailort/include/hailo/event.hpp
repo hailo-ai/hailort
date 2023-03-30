@@ -15,7 +15,6 @@
 
 #include <memory>
 #include <vector>
-#include <array>
 #include <chrono>
 #if defined(__GNUC__)
 #include <poll.h>
@@ -24,6 +23,7 @@
 #if defined(__QNX__)
 #include <atomic>
 #include <mutex>
+
 
 // Forward declare neosmart::neosmart_event_t_
 namespace neosmart {

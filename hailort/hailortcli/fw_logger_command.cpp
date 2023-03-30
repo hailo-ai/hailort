@@ -67,7 +67,7 @@ hailo_status FwLoggerCommand::execute_on_device(Device &device)
         return HAILO_INVALID_OPERATION;
     }
     
-    if (Device::Type::CORE != device.get_type()) {
+    if (Device::Type::INTEGRATED != device.get_type()) {
         status = write_logs_to_file(device, ofs, HAILO_CPU_ID_0);
         if (status != HAILO_SUCCESS){
             return status;

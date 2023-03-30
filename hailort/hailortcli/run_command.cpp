@@ -11,7 +11,6 @@
 #include "hailortcli.hpp"
 #include "inference_progress.hpp"
 #include "infer_stats_printer.hpp"
-#include "temp_measurement.hpp"
 #include "graph_printer.hpp"
 #if defined(__GNUC__)
 // TODO: Support on windows (HRT-5919)
@@ -25,10 +24,13 @@
 #include "common/barrier.hpp"
 #include "common/latency_meter.hpp"
 #include "common/filesystem.hpp"
+#include "common/device_measurements.hpp"
+#include "hailo/hailort.h"
 #include "hailo/network_group.hpp"
 #include "hailo/hef.hpp"
 #include "hailo/vstream.hpp"
 #include "hailo/vdevice.hpp"
+#include "hailo/transform.hpp"
 
 #include "spdlog/fmt/fmt.h"
 
@@ -43,7 +45,6 @@ std::condition_variable wait_for_exit_cv;
     They're useful for simple interprocess communication. */
 #define USER_SIGNAL (SIGUSR1)
 
-constexpr size_t OVERALL_LATENCY_TIMESTAMPS_LIST_LENGTH (512);
 constexpr uint32_t DEFAULT_TIME_TO_RUN_SECONDS = 5;
 #ifndef HAILO_EMULATOR
 constexpr std::chrono::milliseconds TIME_TO_WAIT_FOR_CONFIG(300);
@@ -226,8 +227,8 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
         "Collect runtime data to be used by the Profiler");
     static const char *JSON_SUFFIX = ".json";
     collect_runtime_data_subcommand->add_option("--output-path", params.runtime_data.runtime_data_output_path,
-        fmt::format("Runtime data output file path\n'{}' will be replaced with the current running hef",
-            RUNTIME_DATA_OUTPUT_PATH_HEF_PLACE_HOLDER))
+        fmt::format("Runtime data output file path\n'{}' will be replaced with the current running hef", RUNTIME_DATA_OUTPUT_PATH_HEF_PLACE_HOLDER)
+         + "\nIn case of multiple-devices, <device-id>_ will be added as prefix to each file")
         ->default_val(fmt::format("runtime_data_{}.json", RUNTIME_DATA_OUTPUT_PATH_HEF_PLACE_HOLDER))
         ->check(FileSuffixValidator(JSON_SUFFIX));
     collect_runtime_data_subcommand->add_option("--batch-to-measure", params.runtime_data.batch_to_measure_str,
@@ -285,9 +286,6 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
             // Use default
             params.time_to_run = DEFAULT_TIME_TO_RUN_SECONDS;
         }
-
-        PARSE_CHECK(((!params.runtime_data.collect_runtime_data) || (params.vdevice_params.device_count == 1)),
-            "Passing runtime data is not supported for multiple devices");
 
         PARSE_CHECK((!(params.runtime_data.collect_runtime_data && params.vdevice_params.multi_process_service)),
             "Passing runtime data is not supported for multi process service");
@@ -670,7 +668,7 @@ static hailo_status run_streaming_impl(std::shared_ptr<ConfiguredNetworkGroup> c
     auto first = true;
     for (auto& recv_object : recv_objects) {
         auto &frames_recieved = frames_recieved_per_output[output_index];
-        results.emplace_back(std::make_unique<AsyncThread<hailo_status>>(
+        results.emplace_back(std::make_unique<AsyncThread<hailo_status>>("RECV",
             [network_progress_bar, params, &recv_object, &output_buffers, first, &barrier, &overall_latency_meter,
             &frames_recieved, batch_size]() {
                 auto res = recv_loop(params, recv_object.get(), network_progress_bar, barrier, overall_latency_meter,
@@ -685,7 +683,7 @@ static hailo_status run_streaming_impl(std::shared_ptr<ConfiguredNetworkGroup> c
         ++output_index;
     }
     for (auto &send_object : send_objects) {
-        results.emplace_back(std::make_unique<AsyncThread<hailo_status>>(
+        results.emplace_back(std::make_unique<AsyncThread<hailo_status>>("SEND",
             [params, &send_object, &input_dataset, &barrier, &overall_latency_meter, batch_size]() -> hailo_status {
                 auto res = send_loop(params, send_object.get(), input_dataset, barrier, overall_latency_meter, batch_size);
                 if (HAILO_SUCCESS != res) {
@@ -804,7 +802,7 @@ static Expected<InferResult> run_streaming(const std::vector<std::shared_ptr<Con
             CHECK_AS_EXPECTED(contains(recv_objects_per_network_group[network_group_index], network_name_pair.first), HAILO_INTERNAL_FAILURE,
                 "Not all networks was parsed correctly.");
             auto network_name = network_name_pair.first;
-            networks_threads_status[network_group_index].emplace_back(std::make_unique<AsyncThread<hailo_status>>(
+            networks_threads_status[network_group_index].emplace_back(std::make_unique<AsyncThread<hailo_status>>(fmt::format("NG_INFER {}", network_group_index),
                 [network_group_index, &configured_net_groups, &input_datasets, &output_buffers, &params, &send_objects_per_network_group,
                     &recv_objects_per_network_group, network_name, &progress_bar, &networks_results]() {
                     return run_streaming_impl(configured_net_groups[network_group_index], input_datasets[network_group_index],
@@ -1108,9 +1106,10 @@ Expected<InferResult> activate_and_run_single_device(
     }
 
     bool should_measure_temp = params.measure_temp;
-    TemperatureMeasurement temp_measure(device);
+    auto temp_measure = TemperatureMeasurement::create_shared(device);
+    CHECK_EXPECTED(temp_measure);
     if (should_measure_temp) {
-        auto status = temp_measure.start_measurement();
+        auto status = temp_measure.value()->start_measurement();
         CHECK_SUCCESS_AS_EXPECTED(status, "Failed to get chip's temperature");
     }
 
@@ -1136,8 +1135,8 @@ Expected<InferResult> activate_and_run_single_device(
     }
 
     if (should_measure_temp) {
-        temp_measure.stop_measurement();
-        auto temp_measure_p = make_shared_nothrow<TempMeasurementData>(temp_measure.get_data());
+        temp_measure.value()->stop_measurement();
+        auto temp_measure_p = make_shared_nothrow<AccumulatorResults>(temp_measure.value()->get_data());
         CHECK_NOT_NULL_AS_EXPECTED(temp_measure_p, HAILO_OUT_OF_HOST_MEMORY);
         auto status = inference_result.set_temp_measurement(device.get_dev_id(), std::move(temp_measure_p));
         CHECK_SUCCESS_AS_EXPECTED(status);
@@ -1257,11 +1256,11 @@ Expected<InferResult> activate_and_run_vdevice(
     std::map<std::string, std::shared_ptr<TemperatureMeasurement>> temp_measurements;
     if (params.measure_temp) {
         for (auto &device : physical_devices) {
-            auto temp_measure = make_shared_nothrow<TemperatureMeasurement>(device);
-            CHECK_NOT_NULL_AS_EXPECTED(temp_measure, HAILO_OUT_OF_HOST_MEMORY);
-            auto status = temp_measure->start_measurement();
+            auto temp_measure = TemperatureMeasurement::create_shared(device);
+            CHECK_EXPECTED(temp_measure);
+            auto status = temp_measure.value()->start_measurement();
             CHECK_SUCCESS_AS_EXPECTED(status, "Failed starting temperature measurement on device {}", device.get().get_dev_id());
-            temp_measurements.emplace(device.get().get_dev_id(), std::move(temp_measure));
+            temp_measurements.emplace(device.get().get_dev_id(), temp_measure.release());
         }
     }
 
@@ -1298,7 +1297,7 @@ Expected<InferResult> activate_and_run_vdevice(
     if (params.measure_temp) {
         for(const auto &temp_measure_pair : temp_measurements) {
             temp_measure_pair.second->stop_measurement();
-            auto temp_measure_p = make_shared_nothrow<TempMeasurementData>(temp_measure_pair.second->get_data());
+            auto temp_measure_p = make_shared_nothrow<AccumulatorResults>(temp_measure_pair.second->get_data());
             CHECK_NOT_NULL_AS_EXPECTED(temp_measure_p, HAILO_OUT_OF_HOST_MEMORY);
             auto status = inference_result.set_temp_measurement(temp_measure_pair.first, std::move(temp_measure_p));
             CHECK_SUCCESS_AS_EXPECTED(status);
@@ -1384,8 +1383,9 @@ Expected<InferResult> run_command_hef_vdevice(const inference_runner_params &par
         }
 
         if (params.runtime_data.collect_runtime_data) {
-            const auto runtime_data_output_path = format_runtime_data_output_path(
-                params.runtime_data.runtime_data_output_path, params.hef_path);
+            auto output_path = (1 == physical_devices.size()) ? params.runtime_data.runtime_data_output_path :
+                (std::string(device.get().get_dev_id()) + "_" + params.runtime_data.runtime_data_output_path);
+            const auto runtime_data_output_path = format_runtime_data_output_path(output_path, params.hef_path);
             DownloadActionListCommand::execute(device.get(), runtime_data_output_path, network_group_list.value(),
                 params.hef_path);
         }

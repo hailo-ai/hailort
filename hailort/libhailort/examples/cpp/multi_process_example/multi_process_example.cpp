@@ -13,6 +13,8 @@
 #include "hailo/hailort.hpp"
 
 #include <iostream>
+#include <thread>
+
 
 constexpr size_t FRAMES_COUNT = 100;
 constexpr bool QUANTIZED = true;
@@ -29,7 +31,7 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(const 
         return make_unexpected(hef.status());
     }
 
-    auto configure_params = hef->create_configure_params(HAILO_STREAM_INTERFACE_PCIE);
+    auto configure_params = vdevice.create_configure_params(hef.value());
     if (!configure_params) {
         return make_unexpected(configure_params.status());
     }

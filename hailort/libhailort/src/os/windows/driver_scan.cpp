@@ -179,7 +179,7 @@ static Expected<uint32_t> parse_uint32_property(const std::wstring &dev_interfac
     uint32_t number = 0;
     if (!prop.Number(number)) {
         LOGGER__ERROR("Failed parsing prop");
-        return make_unexpected(HAILO_PCIE_DRIVER_FAIL);
+        return make_unexpected(HAILO_DRIVER_FAIL);
     }
     return number;
 }

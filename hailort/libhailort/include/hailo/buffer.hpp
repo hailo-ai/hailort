@@ -18,6 +18,7 @@
 #include <string>
 #include <cassert>
 
+
 namespace hailort
 {
 
@@ -113,7 +114,7 @@ public:
     // Note: If this->size() is less than sizeof(T), then part of the data pointed to by the returned pointer
     //       will be outside of the buffer's bounds.
     template<typename T, std::enable_if_t<std::is_pod<T>::value, int> = 0>
-    T* as_pointer()
+    T* as_pointer() const
     {
         assert(m_size >= sizeof(T));
         return reinterpret_cast<T*>(m_data.get());

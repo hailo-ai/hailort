@@ -27,7 +27,8 @@ class HailoHWObjectException(Exception):
 
 
 class HailoHWObject(object):
-    """Abstract Hailo hardware device representation."""
+    # TODO: HRT-9987 - Add (deprecated) to this doc
+    """Abstract Hailo hardware device representation"""
 
     NAME = InferenceTargets.UNINITIALIZED
     IS_HARDWARE = True
@@ -43,6 +44,9 @@ class HailoHWObject(object):
         self._is_device_used = False
         self._hef_loaded = False
 
+        # TODO: HRT-9987 - Add this deprecation warning
+        # self._logger.warning("HailoHWObject is deprecated! Please use VDevice/Device object.")
+
     # TODO: HRT-6310 Remove this.
     def __eq__(self, other):
         return type(self).NAME == other
@@ -50,14 +54,16 @@ class HailoHWObject(object):
     @property
     def name(self):
         """str: The name of this target. Valid values are defined by :class:`~hailo_platform.pyhailort.hw_object.InferenceTargets`"""
-        # self._logger.warning("HailoHWObject name property is deprecated! Please use VDevice object with device_id.")
+        # TODO: HRT-9987 - Add this deprecation warning
+        # self._logger.warning("HailoHWObject name property is deprecated! Please use VDevice/Device object with device_id.")
         return type(self).NAME
 
     @property
     def is_hardware(self):
         """bool: Indicates this target runs on a physical hardware device."""
         # TODO: SDK should implement in Target
-        # self._logger.warning("HailoHWObject is_hardware property is deprecated! Please use VDevice object, or derive from it.")
+        # TODO: HRT-9987 - Add this deprecation warning
+        # self._logger.warning("HailoHWObject is_hardware property is deprecated! Please use VDevice/Device object, or derive from it.")
         return type(self).IS_HARDWARE
 
     @property
@@ -74,6 +80,7 @@ class HailoHWObject(object):
         Returns:
             list of str: Sorted list of the output layer names.
         """
+        # TODO: HRT-9987 - Add this deprecation warning
         # self._logger.warning("HailoHWObject sorted_output_layer_names property is deprecated! Please use ConfiguredNetwork get_sorted_output_names.")
         if len(self._loaded_network_groups) != 1:
             raise HailoHWObjectException("Access to sorted_output_layer_names is only allowed when there is a single loaded network group")
@@ -81,8 +88,9 @@ class HailoHWObject(object):
 
     @contextmanager
     def use_device(self, *args, **kwargs):
-        # self._logger.warning("HailoHWObject use_device context manager is deprecated! Please use VDevice object.")
-        """A context manager that wraps the usage of the device (deprecated)."""
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
+        # self._logger.warning("HailoHWObject use_device context manager is deprecated! Please use VDevice/Device object.")
+        """A context manager that wraps the usage of the device."""
         self._is_device_used = True
         yield
         self._is_device_used = False
@@ -93,6 +101,7 @@ class HailoHWObject(object):
         Returns:
             dict: Keys are device output names and values are lists of layers' names.
         """
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoHWObject get_output_device_layer_to_original_layer_map function is deprecated!")
         if len(self._loaded_network_groups) != 1:
             raise HailoHWObjectException("Access to layer names is only allowed when there is a single loaded network group")
@@ -105,6 +114,7 @@ class HailoHWObject(object):
         Returns:
             dict: Keys are the names of the layers and values are device outputs names.
         """
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoHWObject get_original_layer_to_device_layer_map function is deprecated!")
         if len(self._loaded_network_groups) != 1:
             raise HailoHWObjectException("Access to layer names is only allowed when there is a single loaded network group")
@@ -114,30 +124,35 @@ class HailoHWObject(object):
     @property
     def device_input_layers(self):
         """Get a list of the names of the device's inputs."""
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoHWObject device_input_layers function is deprecated! Please use ConfiguredNetwork object.")
         return [layer.name for layer in self.get_input_stream_infos()]
 
     @property
     def device_output_layers(self):
         """Get a list of the names of the device's outputs."""
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoHWObject device_output_layers function is deprecated! Please use ConfiguredNetwork object.")
         return [layer.name for layer in self.get_output_stream_infos()]
 
     def hef_loaded(self):
         """Return True if this object has loaded the model HEF to the hardware device."""
         # TODO: SDK should implement in Target
-        # self._logger.warning("HailoHWObject hef_loaded function is deprecated! Please use VDevice object, or derive from it.")
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
+        # self._logger.warning("HailoHWObject hef_loaded function is deprecated! Please use VDevice/Device object, or derive from it.")
         return self._hef_loaded
 
     def outputs_count(self):
         """Return the amount of output tensors that are returned from the hardware device for every
         input image.
         """
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoHWObject outputs_count function is deprecated! Please use ConfiguredNetwork object.")
         return len(self.get_output_vstream_infos())
 
     def _clear_shapes(self):
         # TODO: SDK should implement in Target
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoHWObject _clear_shapes function is deprecated! Please use ConfiguredNetwork object.")
         self._hw_consts = None
 
@@ -148,6 +163,7 @@ class HailoHWObject(object):
         Returns:
             str: Model name.
         """
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoHWObject model_name property is deprecated! Please use ConfiguredNetwork object.")
         if len(self._loaded_network_groups) == 1:
             return self._loaded_network_groups[0].name
@@ -160,6 +176,7 @@ class HailoHWObject(object):
         Returns:
             Tuple of output shapes, sorted by the output names.
         """
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoHWObject get_output_shapes function is deprecated! Please use ConfiguredNetwork object.")
         if len(self._loaded_network_groups) != 1:
             raise HailoHWObjectException("Calling get_output_shapes is only allowed when there is a single loaded network group")
@@ -167,6 +184,7 @@ class HailoHWObject(object):
 
 
 class HailoChipObject(HailoHWObject):
+    # TODO: HRT-9987 - Add (deprecated) to this docs
     """Hailo hardware device representation"""
 
     def __init__(self):
@@ -195,6 +213,7 @@ class HailoChipObject(HailoHWObject):
         Returns:
             dict of :obj:'numpy.dtype': where the key is model input_layer name, and the value is dtype as the device expect to get for this input. 
         """
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoChipObject get_all_input_layers_dtype function is deprecated! Please use ConfiguredNetwork object.")
         return {stream.name: HailoRTTransformUtils.get_dtype(stream.data_bytes) for stream in self.get_input_stream_infos()}
 
@@ -208,6 +227,7 @@ class HailoChipObject(HailoHWObject):
             If there is exactly one configured network group, returns a list of
             :obj:`hailo_platform.pyhailort._pyhailort.VStreamInfo`: with all the information objects of all input vstreams
         """
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoChipObject get_input_vstream_infos function is deprecated! Please use ConfiguredNetwork object.")
         if len(self._loaded_network_groups) != 1:
             raise HailoHWObjectException("Access to network vstream info is only allowed when there is a single loaded network group")
@@ -223,6 +243,7 @@ class HailoChipObject(HailoHWObject):
             If there is exactly one configured network group, returns a list of
             :obj:`hailo_platform.pyhailort._pyhailort.VStreamInfo`: with all the information objects of all output vstreams
         """
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoChipObject get_output_vstream_infos function is deprecated! Please use ConfiguredNetwork object.")
         if len(self._loaded_network_groups) != 1:
             raise HailoHWObjectException("Access to network vstream info is only allowed when there is a single loaded network group")
@@ -238,6 +259,7 @@ class HailoChipObject(HailoHWObject):
             If there is exactly one configured network group, returns a list of
             :obj:`hailo_platform.pyhailort._pyhailort.VStreamInfo`: with all the information objects of all input and output vstreams
         """
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoChipObject get_all_vstream_infos function is deprecated! Please use ConfiguredNetwork object.")
         if len(self._loaded_network_groups) != 1:
             raise HailoHWObjectException("Access to network vstream info is only allowed when there is a single loaded network group")
@@ -254,6 +276,7 @@ class HailoChipObject(HailoHWObject):
             :obj:`hailo_platform.pyhailort._pyhailort.VStreamInfo`: with information objects
             of all input low-level streams.
         """
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoChipObject get_input_stream_infos function is deprecated! Please use ConfiguredNetwork object.")
         if len(self._loaded_network_groups) != 1:
             raise HailoHWObjectException("Access to network stream info is only allowed when there is a single loaded network group")
@@ -270,6 +293,7 @@ class HailoChipObject(HailoHWObject):
             :obj:`hailo_platform.pyhailort._pyhailort.VStreamInfo`: with information objects
             of all output low-level streams.
         """
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoChipObject get_output_stream_infos function is deprecated! Please use ConfiguredNetwork object.")
         if len(self._loaded_network_groups) != 1:
             raise HailoHWObjectException("Access to network stream info is only allowed when there is a single loaded network group")
@@ -285,6 +309,7 @@ class HailoChipObject(HailoHWObject):
             If there is exactly one configured network group, returns a list of
             :obj:`hailo_platform.pyhailort._pyhailort.StreamInfo`: with all the information objects of all input and output streams
         """
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoChipObject get_all_stream_infos function is deprecated! Please use ConfiguredNetwork object.")
         if len(self._loaded_network_groups) != 1:
             raise HailoHWObjectException("Access to network stream info is only allowed when there is a single loaded network group")
@@ -328,6 +353,7 @@ class HailoChipObject(HailoHWObject):
         Returns:
             Tuple of integers representing the input_shape.
         """
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoChipObject get_input_shape function is deprecated! Please use ConfiguredNetwork object.")
         if name is None:
             name = self.get_input_vstream_infos()[0].name
@@ -348,6 +374,7 @@ class HailoChipObject(HailoHWObject):
         Returns:
             int: The index of the layer name in the output list.
         """
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # self._logger.warning("HailoChipObject get_index_from_name function is deprecated! Please use ConfiguredNetwork object.")
         try:
             return self.sorted_output_layer_names.index(name)
@@ -371,7 +398,8 @@ class HailoChipObject(HailoHWObject):
 
 
 class EthernetDevice(HailoChipObject):
-    """Represents any Hailo hardware device that supports UDP control and dataflow."""
+    # TODO: HRT-9987 - Add (deprecated) to this docs
+    """Represents any Hailo hardware device that supports UDP control and dataflow"""
 
     NAME = InferenceTargets.UDP_CONTROLLER
 
@@ -414,6 +442,7 @@ class EthernetDevice(HailoChipObject):
         Returns:
             list of str: IPs of scanned devices.
         """
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
         # default_logger().warning("EthernetDevice scan_devices method is deprecated! Please use scan() of Device object.")
         udp_scanner = HailoUdpScan()
         return udp_scanner.scan_devices(interface_name, timeout_seconds=timeout_seconds)
@@ -435,12 +464,14 @@ class EthernetDevice(HailoChipObject):
     @property
     def remote_ip(self):
         """Return the IP of the remote device."""
-        # self._logger.warning("EthernetDevice remote_ip method is deprecated! Please use Device object.")
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
+        # self._logger.warning("EthernetDevice remote_ip method is deprecated! Please use VDevice/Device object.")
         return self._remote_ip
 
 
 class PcieDevice(HailoChipObject):
-    """Hailo PCIe production device representation."""
+    # TODO: HRT-9987 - Add (deprecated) to this docs
+    """Hailo PCIe production device representation"""
 
     NAME = InferenceTargets.PCIE_CONTROLLER
 
@@ -455,7 +486,8 @@ class PcieDevice(HailoChipObject):
                 :func:`PcieDevice.scan_devices` to get list of all available devices.
         """
         super(PcieDevice, self).__init__()
-        # self._logger.warning("PcieDevice deprecated! Please use VDevice object.")
+        # TODO: HRT-9987 - Add this deprecation warning
+        # self._logger.warning("PcieDevice is deprecated! Please use VDevice/Device object.")
 
         gc.collect()
         # PcieDevice __del__ function tries to release self._device.
@@ -479,7 +511,8 @@ class PcieDevice(HailoChipObject):
         Returns:
             list of :obj:`hailo_platform.pyhailort.pyhailort.PcieDeviceInfo`
         """
-        # default_logger().warning("PcieDevice scan_devices method is deprecated! Please use scan() of Device object.")
+        # TODO: HRT-9987 - Add this deprecation warning and (deprecated) to this docs
+        # default_logger().warning("PcieDevice scan_devices method is deprecated! Please use Device object.")
         return InternalPcieDevice.scan_devices()
 
     def _open_device(self, device_info):

@@ -10,6 +10,11 @@
 #ifndef _PYHAILORT_INTERNAL_
 #define _PYHAILORT_INTERNAL_
 
+#include "hef/hef_internal.hpp"
+
+#include "hef_api.hpp"
+#include "utils.hpp"
+#include "utils.h"
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <pybind11/detail/common.h>
@@ -18,10 +23,6 @@
 #include <pybind11/functional.h>
 #include <vector>
 
-#include "hef_internal.hpp"
-#include "hef_api.hpp"
-#include "utils.hpp"
-#include "utils.h"
 
 namespace hailort
 {

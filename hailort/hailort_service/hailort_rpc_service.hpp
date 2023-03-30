@@ -25,17 +25,21 @@
 #pragma GCC diagnostic pop
 #endif
 
+#include <thread>
+
 namespace hailort
 {
 
 class HailoRtRpcService final : public ProtoHailoRtRpc::Service {
-
 public:
+    HailoRtRpcService();
+
     virtual grpc::Status client_keep_alive(grpc::ServerContext *ctx, const keepalive_Request *request,
         empty*) override;
-
     virtual grpc::Status get_service_version(grpc::ServerContext *, const get_service_version_Request *request,
         get_service_version_Reply *reply) override;
+    virtual grpc::Status VDevice_dup_handle(grpc::ServerContext *ctx, const dup_handle_Request *request,
+        dup_handle_Reply*) override;
 
     virtual grpc::Status VDevice_create(grpc::ServerContext *, const VDevice_create_Request *request,
         VDevice_create_Reply *reply) override;
@@ -90,6 +94,13 @@ public:
         VStream_get_info_Reply *reply) override;
     virtual grpc::Status OutputVStream_get_info(grpc::ServerContext*, const VStream_get_info_Request *request,
         VStream_get_info_Reply *reply) override;
+    virtual grpc::Status InputVStream_dup_handle(grpc::ServerContext *ctx, const dup_handle_Request *request,
+        dup_handle_Reply*) override;
+    virtual grpc::Status OutputVStream_dup_handle(grpc::ServerContext *ctx, const dup_handle_Request *request,
+        dup_handle_Reply*) override;
+
+    virtual grpc::Status ConfiguredNetworkGroup_dup_handle(grpc::ServerContext *ctx, const dup_handle_Request *request,
+        dup_handle_Reply*) override;
     virtual grpc::Status ConfiguredNetworkGroup_release(grpc::ServerContext*, const Release_Request* request,
         Release_Reply* reply) override;
     virtual grpc::Status ConfiguredNetworkGroup_make_input_vstream_params(grpc::ServerContext*,
@@ -122,12 +133,18 @@ public:
     virtual grpc::Status ConfiguredNetworkGroup_get_all_vstream_infos(grpc::ServerContext*,
         const ConfiguredNetworkGroup_get_vstream_infos_Request *request,
         ConfiguredNetworkGroup_get_vstream_infos_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_is_scheduled(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_is_scheduled_Request *request,
+        ConfiguredNetworkGroup_is_scheduled_Reply *reply) override;
     virtual grpc::Status ConfiguredNetworkGroup_set_scheduler_timeout(grpc::ServerContext*,
         const ConfiguredNetworkGroup_set_scheduler_timeout_Request *request,
         ConfiguredNetworkGroup_set_scheduler_timeout_Reply *reply) override;
     virtual grpc::Status ConfiguredNetworkGroup_set_scheduler_threshold(grpc::ServerContext*,
         const ConfiguredNetworkGroup_set_scheduler_threshold_Request *request,
         ConfiguredNetworkGroup_set_scheduler_threshold_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_set_scheduler_priority(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_set_scheduler_priority_Request *request,
+        ConfiguredNetworkGroup_set_scheduler_priority_Reply *reply) override;
     virtual grpc::Status ConfiguredNetworkGroup_get_output_vstream_infos(grpc::ServerContext*,
         const ConfiguredNetworkGroup_get_vstream_infos_Request *request,
         ConfiguredNetworkGroup_get_vstream_infos_Reply *reply) override;
@@ -140,6 +157,13 @@ public:
     virtual grpc::Status ConfiguredNetworkGroup_get_config_params(grpc::ServerContext*,
         const ConfiguredNetworkGroup_get_config_params_Request *request,
         ConfiguredNetworkGroup_get_config_params_Reply *reply) override;
+
+private:
+    void keep_alive();
+
+    std::mutex m_mutex;
+    std::map<uint32_t, std::chrono::time_point<std::chrono::high_resolution_clock>> m_clients_pids;
+    std::unique_ptr<std::thread> m_keep_alive;
 };
 
 }

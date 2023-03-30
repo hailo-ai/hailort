@@ -5,19 +5,18 @@
 
 # HailoRT #
 
-HailoRT is a light-weight and production-grade run-time library, which runs on the host processor, and
-implements a robust user-space run-time library (HailoRT Library) responsible for operating a Hailo device, with intuitive APIs in C/C++ for optimized performance.
+HailoRT is a lightweight, production-grade runtime library that runs on the host processor and provides a robust
+user-space runtime library (the HailoRT Library) with intuitive APIs in C/C++ for optimized performance
 
-HailoRT is comprised of the following main components:
+HailoRT consists of the following main components:
 - HailoRT Library.
-- HailoRT CLI - command line application used to control the Hailo device, run inference using the device,
- collect inference statistics and device events, etc.
-- [**HailoRT PCIe Driver**](https://github.com/hailo-ai/hailort-drivers) - the device driver used to manage the Hailo device, communicate with the device and transfer
-    data to/from the device. The PCIe driver includes the Hailo-8 firmware that runs on the Hailo device, manages the boot and control of the Hailo device.
-- pyHailoRT - HailoRT Python API (wraps the run-time library)
+- HailoRT CLI - a command line application used to control the Hailo device, run inferences, collect statistics and device events, etc.
+- [**HailoRT PCIe Driver**](https://github.com/hailo-ai/hailort-drivers) - the device driver used to manage the Hailo device, communicate with the device,
+and transfer data to/from the device; it includes the Hailo-8 firmware that runs on the Hailo device and manages its boot and control.
+- pyHailoRT - HailoRT Python API, which wraps the runtime library.
 - HailoRT GStreamer element (HailoNet).
 
-HailoRT supports Linux and Windows, and can be compiled from sources to be integrated with various x86 and ARM processors.
+HailoRT supports Linux and Windows, and it can be compiled from sources to be integrated with various x86 and ARM processors.
 
 ## Usage
 

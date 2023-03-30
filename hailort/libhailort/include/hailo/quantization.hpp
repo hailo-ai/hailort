@@ -12,8 +12,10 @@
 
 #include "hailo/hailort.h"
 #include "hailo/hailort_common.hpp"
+
 #include <math.h>
 #include <fenv.h>
+
 
 namespace hailort
 {
@@ -171,14 +173,6 @@ public:
         return (T)((number - quant_info.qp_zp) * quant_info.qp_scale);
     }
 
-private:
-    template <typename T, typename Q>
-    static inline Q quantize_input(T number, hailo_quant_info_t quant_info)
-    {
-        float32_t clipped_number = clip((float32_t)number, quant_info.limvals_min, quant_info.limvals_max);
-        return (Q)rintf((clipped_number / quant_info.qp_scale) + quant_info.qp_zp);
-    }
-
     static inline float32_t clip(float32_t n, float32_t limval_min, float32_t limval_max)
     {
         if (n >= limval_max) {
@@ -190,6 +184,14 @@ private:
         else {
             return n;
         }
+    }
+
+private:
+    template <typename T, typename Q>
+    static inline Q quantize_input(T number, hailo_quant_info_t quant_info)
+    {
+        float32_t clipped_number = clip((float32_t)number, quant_info.limvals_min, quant_info.limvals_max);
+        return (Q)rintf((clipped_number / quant_info.qp_scale) + quant_info.qp_zp);
     }
 };
 

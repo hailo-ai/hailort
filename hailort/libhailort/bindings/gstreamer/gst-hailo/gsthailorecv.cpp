@@ -281,7 +281,7 @@ hailo_status HailoRecvImpl::set_output_vstreams(std::vector<OutputVStream> &&out
     for (auto &out_vstream : m_output_vstreams) {
         GstHailoBufferPool *hailo_pool = GST_HAILO_BUFFER_POOL(g_object_new(GST_TYPE_HAILO_BUFFER_POOL, NULL));
         gst_object_ref_sink(hailo_pool);
-        memcpy(hailo_pool->vstream_name, out_vstream.name().c_str(), sizeof(hailo_pool->vstream_name));
+        strncpy(hailo_pool->vstream_name, out_vstream.name().c_str(), out_vstream.name().length() + 1);
         hailo_pool->element_name = GST_ELEMENT_NAME(GST_ELEMENT_PARENT(m_element));
 
         GstBufferPool *pool = GST_BUFFER_POOL(hailo_pool);

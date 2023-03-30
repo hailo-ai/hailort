@@ -13,8 +13,13 @@
 #include "hailo/hailort.h"
 #include "hailo/hailort_common.hpp"
 #include "hailo/network_group.hpp"
-#include "utils.hpp"
+
 #include "common/logger_macros.hpp"
+
+#include "utils.hpp"
+
+#include <pybind11/numpy.h>
+
 
 namespace hailort
 {

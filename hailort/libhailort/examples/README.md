@@ -26,6 +26,7 @@ The following examples are provided, demonstrating the HailoRT API:
     - this example uses udp device.
   - `raw_streams_example` - Basic inference of a shortcut network using raw stream api.
     - The data is transformed before sent and after received in the same thread sending/receiving using the transformation api.
+  - `notification_callback_example` - Demonstrates how to work with notification callbacks.
 
 - C++ examples:
   - `vstreams_example` - Basic inference of a shortcut network, same as `vstreams_example` C example, uses HailoRT C++ api.
@@ -39,7 +40,7 @@ The following examples are provided, demonstrating the HailoRT API:
   - `raw_streams_example` - Basic inference of a shortcut network, same as `raw_streams_example` C example, uses HailoRT C++ api.
   - `multi_process_example` - Demonstrates how to work with HailoRT as a service and using the HailoRT Model Scheduler for network groups switching.
   Using the script `multi_process_example.sh` one can specify the number of processes to run each hef, see `multi_process_example.sh -h` for more information.
-
+  - `notification_callback_example` - Demonstrates how to work with notification callbacks, same as `notification_callback_example` C example.
 ## Compiling with CMake
 Examples are configured and compiled using the following commands:
 ```sh

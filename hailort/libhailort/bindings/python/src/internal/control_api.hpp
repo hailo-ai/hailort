@@ -11,7 +11,7 @@
 #ifndef _CONTROL_API_HPP_
 #define _CONTROL_API_HPP_
 
-#include "control.hpp"
+#include "device_common/control.hpp"
 #include "utils.hpp"
 
 #include "device_api.hpp"

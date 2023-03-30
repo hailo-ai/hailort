@@ -14,10 +14,13 @@ set(SRC_FILES
     ${HAILORT_COMMON_OS_DIR}/filesystem.cpp
     ${HAILORT_COMMON_OS_DIR}/socket.cpp
     ${HAILORT_COMMON_OS_DIR}/process.cpp
+    ${HAILORT_COMMON_OS_DIR}/os_utils.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/barrier.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/file_utils.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/string_utils.cpp
+
+    ${CMAKE_CURRENT_SOURCE_DIR}/device_measurements.cpp
 )
 
 if(WIN32)

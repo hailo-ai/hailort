@@ -6,7 +6,7 @@ set(FILES
     readline_wrapper.cpp
     driver_memory.cpp
     memory_commands.cpp
-    mercury_fields.cpp
+    hailo15_fields.cpp
 
     # Depends on hailort_driver and its dependencies
     ${HAILO_OS_DIR}/hailort_driver.cpp

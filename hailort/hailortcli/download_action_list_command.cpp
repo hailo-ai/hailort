@@ -20,7 +20,7 @@
 // TODO - HRT-7364 - add CPU subsystem frequency into the device extended info control
 // and use it for get the timer's frequency
 #define NN_CORE_TO_TIMER_FREQ_FACTOR (2)
-#define MERCURY_VPU_CORE_CPU_DEFAULT_FREQ_MHZ (200)
+#define HAILO15_VPU_CORE_CPU_DEFAULT_FREQ_MHZ (200)
 
 constexpr int DownloadActionListCommand::INVALID_NUMERIC_VALUE;
 
@@ -44,9 +44,9 @@ hailo_status DownloadActionListCommand::execute(Device &device, const std::strin
     auto chip_arch = device.get_architecture();
     CHECK_EXPECTED_AS_STATUS(chip_arch);
     unsigned int clock_cycle = 0;
-    // TODO - HRT-8046 Implement extended device info for mercury
-    if (HAILO_ARCH_MERCURY_VPU == chip_arch.value()) {
-        clock_cycle = MERCURY_VPU_CORE_CPU_DEFAULT_FREQ_MHZ;
+    // TODO - HRT-8046 Implement extended device info for hailo15
+    if (HAILO_ARCH_HAILO15 == chip_arch.value()) {
+        clock_cycle = HAILO15_VPU_CORE_CPU_DEFAULT_FREQ_MHZ;
     } else {
         auto extended_info = device.get_extended_device_information();
         CHECK_EXPECTED_AS_STATUS(extended_info);

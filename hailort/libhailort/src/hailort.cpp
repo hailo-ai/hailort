@@ -21,19 +21,22 @@
 #include "hailo/event.hpp"
 #include "hailo/network_rate_calculator.hpp"
 #include "hailo/inference_pipeline.hpp"
-#include "eth_device.hpp"
-#include "pcie_device.hpp"
-#include "pcie_stream.hpp"
-#include "eth_stream.hpp"
-#include "control.hpp"
-#include "sensor_config_utils.hpp"
+
 #include "common/compiler_extensions_compat.hpp"
-#include "hailort_logger.hpp"
-#include "shared_resource_manager.hpp"
-#include "vdevice_internal.hpp"
-#include "tracer_macros.hpp"
+#include "common/os_utils.hpp"
+
+#include "device_common/control.hpp"
+#include "eth/eth_device.hpp"
+#include "eth/eth_stream.hpp"
+#include "vdma/pcie/pcie_device.hpp"
+#include "utils/sensor_config_utils.hpp"
+#include "utils/hailort_logger.hpp"
+#include "utils/shared_resource_manager.hpp"
+#include "vdevice/vdevice_internal.hpp"
+#include "utils/profiler/tracer_macros.hpp"
 
 #include <chrono>
+
 
 using namespace hailort;
 
@@ -41,6 +44,9 @@ COMPAT__INITIALIZER(hailort__initialize_logger)
 {
     // Init logger singleton if compiling only HailoRT
     (void) HailoRTLogger::get_instance();
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+    (void) HailoRTOSLogger::get_instance();
+#endif
     (void) SharedResourceManager<std::string, VDeviceBase>::get_instance();
     TRACE(InitTrace);
 }
@@ -225,8 +231,8 @@ hailo_status hailo_device_get_type_by_device_id(const hailo_device_id_t *device_
     case Device::Type::ETH:
         *device_type = HAILO_DEVICE_TYPE_ETH;
         break;
-    case Device::Type::CORE:
-        *device_type = HAILO_DEVICE_TYPE_CORE;
+    case Device::Type::INTEGRATED:
+        *device_type = HAILO_DEVICE_TYPE_INTEGRATED;
         break;
     default:
         LOGGER__ERROR("Internal failure, invalid device type returned");
@@ -840,7 +846,7 @@ hailo_status hailo_activate_network_group(hailo_configured_network_group network
 
     hailo_activate_network_group_params_t actual_activation_params = (activation_params != nullptr) ?
         *activation_params :
-        HailoRTDefaults::get_network_group_params();
+        HailoRTDefaults::get_active_network_group_params();
 
     auto net_group_ptr = reinterpret_cast<ConfiguredNetworkGroup*>(network_group);
     auto activated_net_group = net_group_ptr->activate(actual_activation_params);
@@ -982,7 +988,7 @@ hailo_status hailo_set_scheduler_timeout(hailo_configured_network_group configur
     CHECK_ARG_NOT_NULL(configured_network_group);
 
     std::string network_name_str = (nullptr == network_name) ? "" : network_name;
-    return ((ConfiguredNetworkGroup*)configured_network_group)->set_scheduler_timeout(std::chrono::milliseconds(timeout_ms), network_name_str);
+    return (reinterpret_cast<ConfiguredNetworkGroup*>(configured_network_group))->set_scheduler_timeout(std::chrono::milliseconds(timeout_ms), network_name_str);
 }
 
 hailo_status hailo_set_scheduler_threshold(hailo_configured_network_group configured_network_group,
@@ -991,7 +997,15 @@ hailo_status hailo_set_scheduler_threshold(hailo_configured_network_group config
     CHECK_ARG_NOT_NULL(configured_network_group);
 
     std::string network_name_str = (nullptr == network_name) ? "" : network_name;
-    return ((ConfiguredNetworkGroup*)configured_network_group)->set_scheduler_threshold(threshold, network_name_str);
+    return (reinterpret_cast<ConfiguredNetworkGroup*>(configured_network_group))->set_scheduler_threshold(threshold, network_name_str);
+}
+
+hailo_status hailo_set_scheduler_priority(hailo_configured_network_group configured_network_group, uint8_t priority, const char *network_name)
+{
+    CHECK_ARG_NOT_NULL(configured_network_group);
+
+    std::string network_name_str = (nullptr == network_name) ? "" : network_name;
+    return (reinterpret_cast<ConfiguredNetworkGroup*>(configured_network_group))->set_scheduler_priority(priority, network_name_str);
 }
 
 hailo_status hailo_calculate_eth_input_rate_limits(hailo_hef hef, const char *network_group_name, uint32_t fps,

@@ -8,7 +8,8 @@
 #include <exception>
 using namespace std;
 
-#include "hailo/hailort.hpp"
+#include "hailo/hailort.h"
+#include "hailo/hailort_defaults.hpp"
 
 #include "hef_api.hpp"
 #include "vstream_api.hpp"
@@ -23,7 +24,6 @@ using namespace std;
 #include "bindings_common.hpp"
 
 #include "sensor_config_exports.h"
-#include "hailort_defaults.hpp"
 #if defined(__GNUC__)
 #include "common/os/posix/traffic_control.hpp"
 #endif
@@ -44,6 +44,7 @@ bool hailo_format_equals(hailo_format_t &first, hailo_format_t &second){
         (first.order == second.order) &&
         (first.flags == second.flags));
 }
+
 class UdpScan {
     public:
         UdpScan() = default;
@@ -231,7 +232,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("HAILO8_A0", HAILO_ARCH_HAILO8_A0)
         .value("HAILO8", HAILO_ARCH_HAILO8)
         .value("HAILO8L", HAILO_ARCH_HAILO8L)
-        .value("MERCURY_CA", HAILO_ARCH_MERCURY_CA)
+        .value("HAILO15", HAILO_ARCH_HAILO15)
     ;
 
     /* TODO: SDK-15648 */
@@ -539,6 +540,9 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("YYUV", HAILO_FORMAT_ORDER_HAILO_YYUV)
         .value("NV21", HAILO_FORMAT_ORDER_NV21)
         .value("YYVU", HAILO_FORMAT_ORDER_HAILO_YYVU)
+        .value("RGB4", HAILO_FORMAT_ORDER_RGB4)
+        .value("I420", HAILO_FORMAT_ORDER_I420)
+        .value("YYYYUV", HAILO_FORMAT_ORDER_HAILO_YYYYUV)
         ;
 
     py::enum_<hailo_format_flags_t>(m, "FormatFlags", py::arithmetic())
@@ -727,11 +731,11 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def(py::init<>())
         ;
 
-    py::class_<hailo_core_input_stream_params_t>(m, "CoreInputStreamParams")
+    py::class_<hailo_integrated_input_stream_params_t>(m, "IntegratedInputStreamParams")
         .def(py::init<>())
         ;
 
-    py::class_<hailo_core_output_stream_params_t>(m, "CoreOutputStreamParams")
+    py::class_<hailo_integrated_output_stream_params_t>(m, "IntegratedOutputStreamParams")
         .def(py::init<>())
         ;
 
@@ -746,7 +750,7 @@ PYBIND11_MODULE(_pyhailort, m) {
 
     py::enum_<hailo_stream_interface_t>(m, "StreamInterface")
         .value("PCIe", HAILO_STREAM_INTERFACE_PCIE)
-        .value("CORE", HAILO_STREAM_INTERFACE_CORE)
+        .value("INTEGRATED", HAILO_STREAM_INTERFACE_INTEGRATED)
         .value("ETH", HAILO_STREAM_INTERFACE_ETH)
         .value("MIPI", HAILO_STREAM_INTERFACE_MIPI)
         ;
@@ -772,18 +776,32 @@ PYBIND11_MODULE(_pyhailort, m) {
     py::class_<hailo_activate_network_group_params_t>(m, "ActivateNetworkGroupParams")
         .def(py::init<>())
         .def_static("default", []() {
-            return HailoRTDefaults::get_network_group_params();
+            return HailoRTDefaults::get_active_network_group_params();
         });
         ;
 
+    py::enum_<hailo_scheduling_algorithm_t>(m, "SchedulingAlgorithm")
+        .value("NONE", HAILO_SCHEDULING_ALGORITHM_NONE)
+        .value("ROUND_ROBIN", HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN)
+    ;
+
     py::class_<VDeviceParamsWrapper>(m, "VDeviceParams")
         .def(py::init<>())
+        // Add device_ids
         .def_property("device_count",
             [](const VDeviceParamsWrapper& params) -> uint32_t {
                 return params.orig_params.device_count;
             },
             [](VDeviceParamsWrapper& params, const uint32_t& device_count) {
                 params.orig_params.device_count = device_count;
+            }        
+        )
+        .def_property("scheduling_algorithm",
+            [](const VDeviceParamsWrapper& params) -> uint32_t {
+                return params.orig_params.scheduling_algorithm;
+            },
+            [](VDeviceParamsWrapper& params, hailo_scheduling_algorithm_t scheduling_algorithm) {
+                params.orig_params.scheduling_algorithm = scheduling_algorithm;
             }        
         )
         .def_property("group_id",
@@ -793,6 +811,14 @@ PYBIND11_MODULE(_pyhailort, m) {
             [](VDeviceParamsWrapper& params, const std::string& group_id) {
                 params.group_id_str = group_id;
                 params.orig_params.group_id = params.group_id_str.c_str();
+            }
+        )
+        .def_property("multi_process_service",
+            [](const VDeviceParamsWrapper& params) -> uint32_t {
+                return params.orig_params.multi_process_service;
+            },
+            [](VDeviceParamsWrapper& params, bool multi_process_service) {
+                params.orig_params.multi_process_service = multi_process_service;
             }
         )
         .def_static("default", []() {
@@ -808,8 +834,8 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_readonly("direction", &hailo_stream_parameters_t::direction)
         STREAM_PARAMETERS_UNION_PROPERTY(pcie_input_params, hailo_pcie_input_stream_params_t,
             HAILO_STREAM_INTERFACE_PCIE, HAILO_H2D_STREAM)
-        STREAM_PARAMETERS_UNION_PROPERTY(core_input_params, hailo_core_input_stream_params_t,
-            HAILO_STREAM_INTERFACE_CORE, HAILO_H2D_STREAM)
+        STREAM_PARAMETERS_UNION_PROPERTY(integrated_input_params, hailo_integrated_input_stream_params_t,
+            HAILO_STREAM_INTERFACE_INTEGRATED, HAILO_H2D_STREAM)
         STREAM_PARAMETERS_UNION_PROPERTY(eth_input_params, hailo_eth_input_stream_params_t,
             HAILO_STREAM_INTERFACE_ETH, HAILO_H2D_STREAM)
         STREAM_PARAMETERS_UNION_PROPERTY(mipi_input_params, hailo_mipi_input_stream_params_t,
@@ -818,8 +844,8 @@ PYBIND11_MODULE(_pyhailort, m) {
             HAILO_STREAM_INTERFACE_PCIE, HAILO_D2H_STREAM)
         STREAM_PARAMETERS_UNION_PROPERTY(eth_output_params, hailo_eth_output_stream_params_t,
             HAILO_STREAM_INTERFACE_ETH, HAILO_D2H_STREAM)
-        STREAM_PARAMETERS_UNION_PROPERTY(core_output_params, hailo_core_output_stream_params_t,
-            HAILO_STREAM_INTERFACE_CORE, HAILO_D2H_STREAM)
+        STREAM_PARAMETERS_UNION_PROPERTY(integrated_output_params, hailo_integrated_output_stream_params_t,
+            HAILO_STREAM_INTERFACE_INTEGRATED, HAILO_D2H_STREAM)
         ;
 
     py::class_<hailo_network_parameters_t>(m, "NetworkParameters")
@@ -1058,6 +1084,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_readonly("name", &hailo_stream_info_t::name)
         .def_readonly("sys_index", &hailo_stream_info_t::index)
         .def_readonly("data_bytes", &hailo_stream_info_t::hw_data_bytes)
+        .def_readonly("quant_info", &hailo_stream_info_t::quant_info)
         .def("__repr__", [](const hailo_stream_info_t &self) {
             return std::string("StreamInfo(\"") + std::string(self.name) + std::string("\")");
         })

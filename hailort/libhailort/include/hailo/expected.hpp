@@ -162,9 +162,11 @@
 #define _HAILO_EXPECTED_HPP_
 
 #include "hailo/hailort.h"
+
 #include <assert.h>
 #include <utility>
 #include <type_traits>
+
 
 namespace hailort
 {
@@ -446,6 +448,12 @@ public:
      * Reference of the contained value
      */
     T& operator*() &
+    {
+        assert(has_value());
+        return value();
+    }
+
+    const T& operator*() const&
     {
         assert(has_value());
         return value();

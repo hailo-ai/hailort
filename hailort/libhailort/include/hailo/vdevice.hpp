@@ -16,10 +16,9 @@
 #include "hailo/network_group.hpp"
 #include "hailo/device.hpp"
 
+
 namespace hailort
 {
-
-#define HAILO_ENABLE_MULTI_DEVICE_SCHEDULER "HAILO_ENABLE_MULTI_DEVICE_SCHEDULER"
 
 /*! Represents a bundle of physical devices. */
 class HAILORTAPI VDevice
@@ -88,6 +87,29 @@ public:
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     virtual Expected<hailo_stream_interface_t> get_default_streams_interface() const = 0;
+
+    /**
+     * Create the default configure params from an hef.
+     *
+     * @param[in] hef                A reference to an Hef object to create configure params by
+     * @return Upon success, returns Expected of a NetworkGroupsParamsMap (map of string and ConfiguredNetworkParams).
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    Expected<NetworkGroupsParamsMap> create_configure_params(Hef &hef) const;
+
+    /**
+     * Create the default configure params from an hef.
+     *
+     * @param[in] hef                         A reference to an Hef object to create configure params by
+     * @param[in] network_group_name          Name of network_group to make configure params for.
+     * @return Upon success, returns Expected of a NetworkGroupsParamsMap (map of string and ConfiguredNetworkParams).
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    Expected<ConfigureNetworkParams> create_configure_params(Hef &hef, const std::string &network_group_name) const;
+
+    virtual hailo_status before_fork() { return HAILO_SUCCESS; }
+    virtual hailo_status after_fork_in_parent() { return HAILO_SUCCESS; }
+    virtual hailo_status after_fork_in_child() { return HAILO_SUCCESS; }
 
     virtual ~VDevice() = default;
     VDevice(const VDevice &) = delete;

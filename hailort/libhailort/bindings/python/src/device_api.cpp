@@ -126,7 +126,7 @@ bool DeviceWrapper::get_overcurrent_state()
 py::bytes DeviceWrapper::read_memory(uint32_t address, uint32_t length)
 {
     std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(length, '\x00');
-    VALIDATE_NOT_NULL(response);
+    VALIDATE_NOT_NULL(response, HAILO_OUT_OF_HOST_MEMORY);
 
     MemoryView data_view(const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(response->data())), length);
     auto status = device().read_memory(address, data_view);
@@ -150,7 +150,7 @@ void DeviceWrapper::test_chip_memories()
 void DeviceWrapper::i2c_write(hailo_i2c_slave_config_t *slave_config, uint32_t register_address, py::bytes data,
     uint32_t length)
 {
-    VALIDATE_NOT_NULL(slave_config);
+    VALIDATE_NOT_NULL(slave_config, HAILO_INVALID_ARGUMENT);
 
     std::string data_str(data);
     MemoryView data_view = MemoryView::create_const(data_str.c_str(), length);
@@ -160,10 +160,10 @@ void DeviceWrapper::i2c_write(hailo_i2c_slave_config_t *slave_config, uint32_t r
 
 py::bytes DeviceWrapper::i2c_read(hailo_i2c_slave_config_t *slave_config, uint32_t register_address, uint32_t length)
 {
-    VALIDATE_NOT_NULL(slave_config);
+    VALIDATE_NOT_NULL(slave_config, HAILO_INVALID_ARGUMENT);
 
     std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(length, '\x00');
-    VALIDATE_NOT_NULL(response);
+    VALIDATE_NOT_NULL(response, HAILO_OUT_OF_HOST_MEMORY);
 
     MemoryView data_view(const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(response->data())), length);
     auto status = device().i2c_read(*slave_config, register_address, data_view);
@@ -231,7 +231,7 @@ py::bytes DeviceWrapper::read_user_config()
 
     std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(
         const_cast<char*>(reinterpret_cast<const char*>(config_buffer->data())), config_buffer->size());
-    VALIDATE_NOT_NULL(response);
+    VALIDATE_NOT_NULL(response, HAILO_OUT_OF_HOST_MEMORY);
 
     return *response;
 }
@@ -257,7 +257,7 @@ py::bytes DeviceWrapper::read_board_config()
 
     std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(
         const_cast<char*>(reinterpret_cast<const char*>(config_buffer->data())), config_buffer->size());
-    VALIDATE_NOT_NULL(response);
+    VALIDATE_NOT_NULL(response, HAILO_OUT_OF_HOST_MEMORY);
     
     return *response;
 }
@@ -309,7 +309,7 @@ py::bytes DeviceWrapper::sensor_get_sections_info()
     
     std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(
         const_cast<char*>(reinterpret_cast<const char*>(buffer->data())), buffer->size());
-    VALIDATE_NOT_NULL(response);
+    VALIDATE_NOT_NULL(response, HAILO_OUT_OF_HOST_MEMORY);
 
     return *response;
 }
@@ -446,7 +446,7 @@ void DeviceWrapper::direct_write_memory(uint32_t address, py::bytes buffer)
 {
     const auto buffer_str = static_cast<std::string>(buffer);
     hailo_status status = device().direct_write_memory(address, buffer_str.c_str(),
-        (uint32_t) (buffer_str.length()));
+        (uint32_t)(buffer_str.length()));
     VALIDATE_STATUS(status);
 }
 
@@ -478,6 +478,8 @@ void DeviceWrapper::set_sleep_state(hailo_sleep_state_t sleep_state)
 void DeviceWrapper::add_to_python_module(py::module &m)
 {
     py::class_<DeviceWrapper>(m, "Device")
+    .def("is_valid", &DeviceWrapper::is_valid)
+
     // Scan
     .def("scan", &DeviceWrapper::scan)
 

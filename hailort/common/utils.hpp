@@ -203,16 +203,15 @@ _ISEMPTY(                                                               \
 #define CHECK_SUCCESS_AS_EXPECTED(status, ...) _CHECK_SUCCESS_AS_EXPECTED(status, ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
-#define _CHECK_SUCCESS_AS_RPC_STATUS(status, reply, is_default, fmt, ...)                                                                    \
-    do {                                                                                                                                     \
-        const auto &__check_success_status = (status);                                                                                       \
-        if (__check_success_status != HAILO_SUCCESS) {                                                                                       \
-            reply->set_status(static_cast<uint32_t>(__check_success_status));                                                                \
-            LOGGER__ERROR(                                                                                                                   \
-                _CONSTRUCT_MSG(is_default, "CHECK_SUCCESS_AS_RPC_STATUS failed with status={}", fmt, __check_success_status, ##__VA_ARGS__)  \
-            );                                                                                                                               \
-            return grpc::Status::OK;                                                                                                         \
-        }                                                                                                                                    \
+#define _CHECK_SUCCESS_AS_RPC_STATUS(status, reply, is_default, fmt, ...)                                                                       \
+    do {                                                                                                                                        \
+        const auto &__check_success_status = (status);                                                                                          \
+        reply->set_status(static_cast<uint32_t>(__check_success_status));                                                                       \
+        _CHECK(                                                                                                                                 \
+            HAILO_SUCCESS == __check_success_status,                                                                                            \
+            grpc::Status::OK,                                                                                                                   \
+            _CONSTRUCT_MSG(is_default, "CHECK_SUCCESS_AS_RPC_STATUS failed with status={}", fmt, __check_success_status, ##__VA_ARGS__)         \
+        );                                                                                                                                      \
     } while(0)
 #define CHECK_SUCCESS_AS_RPC_STATUS(status, reply, ...) _CHECK_SUCCESS_AS_RPC_STATUS(status, reply, ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
 

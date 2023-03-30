@@ -40,10 +40,10 @@ class HailoRTStatusException : public HailoRTException {
         }                                                                           \
     } while (0)
 
-#define VALIDATE_NOT_NULL(__ptr)                                                    \
+#define VALIDATE_NOT_NULL(__ptr, __status)                                          \
     do {                                                                            \
         if (nullptr == (__ptr)) {                                                   \
-            throw HailoRTStatusException(std::to_string(HAILO_INVALID_ARGUMENT));   \
+            throw HailoRTStatusException(std::to_string(__status));                 \
         }                                                                           \
     } while (0)
 

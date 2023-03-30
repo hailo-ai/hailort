@@ -22,7 +22,11 @@ using namespace hailort;
 // http://www.climagic.org/mirrors/VT100_Escape_Codes.html
 #define FORMAT_CLEAR_LINE "\033[2K\r"
 #define FORMAT_CURSOR_UP_LINE "\033[F"
-#define FORMAT_CURSOR_DOWN_CLEAR_LINE "\033[B\33[2K\r"
+#define FORMAT_CLEAR_TERMINAL_CURSOR_FIRST_LINE "\033[2J\033[1;1H"
+#define FORMAT_ENTER_ALTERNATIVE_SCREEN "\033[?1049h"
+#define FORMAT_EXIT_ALTERNATIVE_SCREEN "\033[?1049l"
+#define FORMAT_GREEN_PRINT "\x1B[1;32m"
+#define FORMAT_NORMAL_PRINT "\x1B[0m"
 
 class CliCommon final
 {
@@ -32,9 +36,9 @@ public:
     static std::string duration_to_string(std::chrono::seconds secs);
     static Expected<std::string> current_time_to_string();
     static void reset_cursor(size_t number_of_lines);
-    static void clear_lines_down(size_t number_of_lines);
     static bool is_positive_number(const std::string &s);
     static bool is_non_negative_number(const std::string &s);
+    static void clear_terminal();
 };
 
 // Validators
@@ -52,6 +56,14 @@ struct FileSuffixValidator : public CLI::Validator {
             return std::string();
         };
     }
+};
+
+// This class is an RAII for running in alternative terminal
+class AlternativeTerminal final
+{
+public:
+    AlternativeTerminal();
+    ~AlternativeTerminal();
 };
 
 // Based on NLOHMANN_JSON_SERIALIZE_ENUM (json/include/nlohmann/json.hpp)

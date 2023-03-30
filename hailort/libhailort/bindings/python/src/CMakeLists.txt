@@ -24,6 +24,7 @@ pybind11_add_module(_pyhailort
     hef_api.cpp
     vstream_api.cpp
     quantization_api.cpp
+    ${HAILORT_OPS_CPP_SOURCES}
     ${HAILORT_COMMON_CPP_SOURCES}
 )
 
@@ -44,6 +45,10 @@ target_link_libraries(_pyhailort PRIVATE libhailort spdlog::spdlog)
 if(WIN32)
     target_link_libraries(_pyhailort PRIVATE Ws2_32 Iphlpapi Shlwapi)
 endif()
+if(HAILO_BUILD_SERVICE)
+    target_link_libraries(_pyhailort PRIVATE grpc++_unsecure hailort_rpc_grpc_proto hef_proto)
+endif()
+
 target_compile_options(_pyhailort PRIVATE ${HAILORT_COMPILE_OPTIONS})
 exclude_archive_libs_symbols(_pyhailort)
 

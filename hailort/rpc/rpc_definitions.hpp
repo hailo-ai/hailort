@@ -13,10 +13,14 @@
 namespace hailort
 {
 
+#ifdef _WIN32
+static const std::string HAILORT_SERVICE_DEFAULT_ADDR = "127.0.0.1:50051";
+#else
 static const std::string HAILO_UDS_PREFIX = "unix://";
 static const std::string HAILO_DEFAULT_SERVICE_ADDR = "/tmp/hailort_uds.sock";
-static const std::string HAILO_DEFAULT_UDS_ADDR = HAILO_UDS_PREFIX + HAILO_DEFAULT_SERVICE_ADDR;
-static const uint32_t HAILO_KEEPALIVE_INTERVAL_SEC = 2;
+static const std::string HAILORT_SERVICE_DEFAULT_ADDR = HAILO_UDS_PREFIX + HAILO_DEFAULT_SERVICE_ADDR;
+#endif
+static const std::chrono::seconds HAILO_KEEPALIVE_INTERVAL(2);
 
 }
 

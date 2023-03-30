@@ -27,6 +27,9 @@ using namespace hailort;
         }                                                                       \
     } while (0)
 
+// Used for run and run2 commands
+constexpr size_t OVERALL_LATENCY_TIMESTAMPS_LIST_LENGTH (512);
+
 struct hailo_device_params {
     std::vector<std::string> device_ids;
 };

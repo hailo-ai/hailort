@@ -13,6 +13,7 @@
 
 #include <iostream>
 
+
 #define HEF_FILE ("hefs/shortcut_net.hef")
 constexpr size_t FRAMES_COUNT = 100;
 constexpr hailo_format_type_t FORMAT_TYPE = HAILO_FORMAT_TYPE_AUTO;
@@ -28,7 +29,7 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(Device
         return make_unexpected(hef.status());
     }
 
-    auto configure_params = hef->create_configure_params(HAILO_STREAM_INTERFACE_ETH);
+    auto configure_params = device.create_configure_params(hef.value());
     if (!configure_params) {
         return make_unexpected(configure_params.status());
     }

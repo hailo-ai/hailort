@@ -30,7 +30,7 @@ Expected<std::vector<std::string>> list_devices()
         }
         else {
             LOGGER__ERROR("Failed to open hailo pcie class ({}), errno {}", HAILO_CLASS_PATH, errno);
-            return make_unexpected(HAILO_PCIE_DRIVER_FAIL);
+            return make_unexpected(HAILO_DRIVER_FAIL);
         }
     }
 
@@ -53,11 +53,11 @@ Expected<HailoRTDriver::DeviceInfo> query_device_info(const std::string &device_
     const std::string device_id_path = std::string(HAILO_CLASS_PATH) + "/" +
         device_name + "/" + HAILO_BOARD_LOCATION_FILENAME;
     std::ifstream device_id_file(device_id_path);
-    CHECK_AS_EXPECTED(device_id_file.good(), HAILO_PCIE_DRIVER_FAIL, "Failed open {}", device_id_path);
+    CHECK_AS_EXPECTED(device_id_file.good(), HAILO_DRIVER_FAIL, "Failed open {}", device_id_path);
 
     std::string device_id;
     std::getline(device_id_file, device_id);
-    CHECK_AS_EXPECTED(device_id_file.eof(), HAILO_PCIE_DRIVER_FAIL, "Failed read {}", device_id_path);
+    CHECK_AS_EXPECTED(device_id_file.eof(), HAILO_DRIVER_FAIL, "Failed read {}", device_id_path);
 
     HailoRTDriver::DeviceInfo device_info = {};
     device_info.dev_path = std::string("/dev/") + device_name;

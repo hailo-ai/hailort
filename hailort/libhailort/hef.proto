@@ -38,6 +38,9 @@ enum ProtoHEFExtensionType {
     KO_RUN_ASAP = 12;
     HAILO_NET_FLOW = 13;
     HAILO_NET_FLOW_YOLO_NMS = 14;
+    HAILO_NET_FLOW_YOLOX_NMS = 15;
+    HAILO_NET_FLOW_SSD_NMS = 16;
+    HAILO_NET_FLOW_IOU_NMS = 17;
     UNUSED = 0XFFFF;
 }
 
@@ -76,7 +79,7 @@ enum ProtoHEFHwArch {
     PROTO__HW_ARCH__SAGE_A0 = 100;
     PROTO__HW_ARCH__SAGE_B0 = 101;
     PROTO__HW_ARCH__PAPRIKA_B0 = 102;
-    PROTO__HW_ARCH__MERCURY = 103;
+    PROTO__HW_ARCH__HAILO15H = 103;
     PROTO__HW_ARCH__GINGER = 104;
     PROTO__HW_ARCH__LAVENDER = 105;
 }
@@ -146,6 +149,43 @@ message ProtoHEFYoloNmsOp {
     repeated ProtoHEFYoloBboxDecoder bbox_decoders = 4;
 };
 
+message ProtoHEFSSDBboxDecoder {
+    // List of Height coordinates (given as fraction of input size), defining each box dimensions around the anchor coordinates
+    repeated float h = 1;
+
+    // List of Width coordinates (given as fraction of input size), defining each box dimensions around the anchor coordinates
+    repeated float w = 2;
+
+    // Index of the pad connected to the encoded layer in the decoder (reg layer)
+    uint32 reg_pad_index = 3;
+
+    // Index of the pad connected to the classes scores layer in the decoder (cls layer)
+    uint32 cls_pad_index = 4;
+};
+
+message ProtoHEFSSDNmsOp {
+    // Input image dimensions
+    double image_height = 1;
+    double image_width = 2;
+
+    // Values used for compensation of rescales done in the training phase (derived from faster_rcnn architecture). This param rescales anchors centers.
+    uint32 centers_scale_factor = 3;
+
+    // Values used for compensation of rescales done in the training phase (derived from faster_rcnn architecture). This param rescales anchors dimensions.
+    uint32 bbox_dimensions_scale_factor = 4;
+
+    // Regression layer input order into bbox decoder
+    uint32 ty = 5;
+    uint32 tx = 6;
+    uint32 th = 7;
+    uint32 tw = 8;
+
+    // List of bbox decoders (anchors) for the NMS layer. Each model has its own number of boxes per anchor
+    repeated ProtoHEFSSDBboxDecoder bbox_decoders = 9;
+};
+
+message ProtoHEFIOUNmsOp {};
+
 message ProtoHEFNmsOp {
     // NMS score threshold
     double nms_score_th = 1;
@@ -167,7 +207,10 @@ message ProtoHEFNmsOp {
 
     // Additional information needed for specific NMS types
     oneof nms_op {
-        ProtoHEFYoloNmsOp yolo_nms_op = 7;
+        ProtoHEFYoloNmsOp yolo_nms_op = 7; // YOLOv5 post process
+        ProtoHEFYoloNmsOp yolox_nms_op = 8; // YOLO-X post process (ignores bbox decoder coordinations)
+        ProtoHEFSSDNmsOp ssd_nms_op = 9; // SSD post process
+        ProtoHEFIOUNmsOp iou_op = 10; // IoU only
     }
 };
 
@@ -221,7 +264,7 @@ message ProtoHEFPad {
     // Pad's unique index
     uint32 index = 1;
 
-    // Pad's name, can be empty of meaningful
+    // Pad's name, can be empty or meaningful
     string name = 2;
 
     // Additional information describing the data going through this pad's interface
@@ -246,7 +289,7 @@ message ProtoHEFOp {
         // Op type for a subgraph that is running on Hailo's core
         ProtoHEFCoreOp core_op = 4;
 
-        // Op type for NMS post-processing
+        // Op type for NMS post-process
         ProtoHEFNmsOp nms_op = 5;
     }
 };

@@ -15,15 +15,22 @@
 #include "hailo/event.hpp"
 
 #include <memory>
-#include <map>
 #include <chrono>
 #include <atomic>
+#include <functional>
+
 
 namespace hailort
 {
 
 // Forward declaration
 struct LayerInfo;
+class DmaMappedBuffer;
+
+using TransferDoneCallback = std::function<void(std::shared_ptr<DmaMappedBuffer> buffer,
+                                                const hailo_async_transfer_completion_info_t &status,
+                                                void *opaque)>;
+
 
 /*! Input (host to device) stream representation */
 class HAILORTAPI InputStream
@@ -76,10 +83,11 @@ public:
     /**
      * @returns a pointer for network group activated event.
      */
-    virtual EventPtr &get_network_group_activated_event() = 0;
+    EventPtr &get_network_group_activated_event()
+        DEPRECATED("'InputStream::get_network_group_activated_event' is deprecated.");
 
     /**
-     * @returns whether the stream is managed by a network group scheduler.
+     * @returns whether the stream is managed by the model scheduler.
      */
     virtual bool is_scheduled() = 0;
 
@@ -92,6 +100,13 @@ public:
      * @note @a size is expected to be a product of this.stream_info.hw_frame_size (i.e. more than one frame may be written)
      */
     virtual hailo_status write(const MemoryView &buffer);
+
+    // ******************************************** NOTE ******************************************** //
+    // Async Stream API and DmaMappedBuffer are currently not supported and are for internal use only //
+    // ********************************************************************************************** //
+    virtual hailo_status wait_for_ready(size_t transfer_size, std::chrono::milliseconds timeout); // Internal use only
+    virtual hailo_status write_async(std::shared_ptr<DmaMappedBuffer> buffer, const TransferDoneCallback &user_callback,
+        void *opaque = nullptr); // Internal use only
 
     /**
      * @returns A ::hailo_stream_info_t object containing the stream's info.
@@ -122,14 +137,16 @@ public:
      */
     virtual std::string to_string() const;
 
+    // get_network_group_activated_event is same as this function
+    virtual EventPtr &get_core_op_activated_event() = 0;
 protected:
     InputStream() = default;
-    InputStream(InputStream &&) = default;
+    InputStream(InputStream &&) = delete;
 
     // Note: Implement sync_write_all_raw_buffer_no_transform_impl for the actual stream interaction in sub classes
     virtual hailo_status sync_write_all_raw_buffer_no_transform_impl(void *buffer, size_t offset, size_t size) = 0;
 
-    virtual hailo_status activate_stream(uint16_t dynamic_batch_size) = 0;
+    virtual hailo_status activate_stream(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers) = 0;
     virtual hailo_status deactivate_stream() = 0;
 
     virtual Expected<size_t> sync_write_raw_buffer(const MemoryView &buffer) = 0;
@@ -140,6 +157,7 @@ protected:
 private:
     friend class HefConfigurator;
     friend class ConfiguredNetworkGroupBase;
+    friend class CoreOp;
 };
 
 /*! Output (device to host) stream representation */
@@ -186,13 +204,14 @@ public:
     /**
      * @returns a pointer for network group activated event.
      */
-    virtual EventPtr &get_network_group_activated_event() = 0;
+    EventPtr &get_network_group_activated_event()
+        DEPRECATED("'OutputStream::get_network_group_activated_event' is deprecated.");
 
     /**
-     * @returns whether the stream is managed by a network group scheduler.
+     * @returns whether the stream is managed by the model scheduler.
      */
     virtual bool is_scheduled() = 0;
-    
+
     /**
      * @returns the stream's info.
      */
@@ -237,11 +256,20 @@ public:
      */
     virtual hailo_status read(MemoryView buffer);
 
+    // ******************************************** NOTE ******************************************** //
+    // Async Stream API and DmaMappedBuffer are currently not supported and are for internal use only //
+    // ********************************************************************************************** //
+    virtual hailo_status wait_for_ready(size_t transfer_size, std::chrono::milliseconds timeout); // Internal use only
+    virtual hailo_status read_async(std::shared_ptr<DmaMappedBuffer> buffer, const TransferDoneCallback &user_callback,
+        void *opaque = nullptr); // Internal use only
+
+    // get_network_group_activated_event is same as this function
+    virtual EventPtr &get_core_op_activated_event() = 0;
 protected:
     OutputStream() = default;
-    OutputStream(OutputStream&&);
+    OutputStream(OutputStream&&) = delete;
 
-    virtual hailo_status activate_stream(uint16_t dynamic_batch_size) = 0;
+    virtual hailo_status activate_stream(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers) = 0;
     virtual hailo_status deactivate_stream() = 0;
     virtual hailo_status read_all(MemoryView &buffer) = 0;
 
@@ -260,6 +288,7 @@ private:
     friend class ConfiguredNetworkGroupBase;
     friend class HwReadElement;
     friend class OutputDemuxer;
+    friend class CoreOp;
 };
 
 } /* namespace hailort */

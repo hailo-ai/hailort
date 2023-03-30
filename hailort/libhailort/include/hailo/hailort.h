@@ -16,12 +16,13 @@
 extern "C" {
 #endif
 
+#include "platform.h"
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <limits.h>
 
-#include "platform.h"
 
 /** @defgroup group_defines HailoRT API definitions
  *  @{
@@ -68,6 +69,10 @@ extern "C" {
 #define HAILO_UNIQUE_VDEVICE_GROUP_ID ("UNIQUE")
 #define HAILO_DEFAULT_VDEVICE_GROUP_ID HAILO_UNIQUE_VDEVICE_GROUP_ID
 
+#define HAILO_SCHEDULER_PRIORITY_NORMAL (16)
+#define HAILO_SCHEDULER_PRIORITY_MAX (31)
+#define HAILO_SCHEDULER_PRIORITY_MIN (0)
+
 typedef float float32_t;
 typedef double float64_t;
 typedef uint16_t nms_bbox_counter_t;
@@ -110,7 +115,7 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(33, HAILO_ATR_TABLES_CONF_VALIDATION_FAIL         /*!< Validating address translation tables failure, for FW control use */)\
     HAILO_STATUS__X(34, HAILO_CONTROL_EVENT_CREATE_FAIL               /*!< Creating control event failure */)\
     HAILO_STATUS__X(35, HAILO_READ_EVENT_FAIL                         /*!< Reading event failure */)\
-    HAILO_STATUS__X(36, HAILO_PCIE_DRIVER_FAIL                        /*!< PCIE driver failure */)\
+    HAILO_STATUS__X(36, HAILO_DRIVER_FAIL                             /*!< Driver failure */)\
     HAILO_STATUS__X(37, HAILO_INVALID_FIRMWARE_MAGIC                  /*!< Invalid FW magic */)\
     HAILO_STATUS__X(38, HAILO_INVALID_FIRMWARE_CODE_SIZE              /*!< Invalid FW code size */)\
     HAILO_STATUS__X(39, HAILO_INVALID_KEY_CERTIFICATE_SIZE            /*!< Invalid key certificate size */)\
@@ -358,7 +363,7 @@ typedef struct {
 typedef enum {
     HAILO_DEVICE_TYPE_PCIE,
     HAILO_DEVICE_TYPE_ETH,
-    HAILO_DEVICE_TYPE_CORE,
+    HAILO_DEVICE_TYPE_INTEGRATED,
 
     /** Max enum value to maintain ABI Integrity */
     HAILO_DEVICE_TYPE_MAX_ENUM = HAILO_MAX_ENUM
@@ -402,8 +407,7 @@ typedef enum hailo_device_architecture_e {
     HAILO_ARCH_HAILO8_A0 = 0,
     HAILO_ARCH_HAILO8,
     HAILO_ARCH_HAILO8L,
-    HAILO_ARCH_MERCURY_CA,
-    HAILO_ARCH_MERCURY_VPU,
+    HAILO_ARCH_HAILO15,
     
     /** Max enum value to maintain ABI Integrity */
     HAILO_ARCH_MAX_ENUM = HAILO_MAX_ENUM
@@ -685,6 +689,19 @@ typedef enum {
      */
     HAILO_FORMAT_ORDER_RGB4                 = 17,
 
+    /**
+     * YUV format, encoding 8 pixels in 96 bits
+     *      [Y0, Y1, Y2, Y3, Y4, Y5, Y6, Y7, U0, U1, V0, V1] represents
+     *          [Y0, U0, V0,], [Y1, U0, V0], [Y2, U0, V0], [Y3, U0, V0], [Y4, U1, V1], [Y5, U1, V1], [Y6, U1, V1], [Y7, U1, V1]
+     */
+    HAILO_FORMAT_ORDER_I420                 = 18,
+
+    /**
+     * Internal implementation for HAILO_FORMAT_ORDER_I420 format
+     *      [Y0, Y1, Y2, Y3, Y4, Y5, Y6, Y7, U0, U1, V0, V1] is represented by [Y0, Y1, Y2, Y3, U0, V0, Y4, Y5, Y6, Y7, U1, V1]
+     */
+    HAILO_FORMAT_ORDER_HAILO_YYYYUV         = 19,
+
     /** Max enum value to maintain ABI Integrity */
     HAILO_FORMAT_ORDER_MAX_ENUM             = HAILO_MAX_ENUM
 } hailo_format_order_t;
@@ -750,8 +767,31 @@ typedef enum {
     HAILO_H2D_STREAM                    = 0,
     HAILO_D2H_STREAM                    = 1,
 
+    /** Max enum value to maintain ABI Integrity */
     HAILO_STREAM_DIRECTION_MAX_ENUM     = HAILO_MAX_ENUM
 } hailo_stream_direction_t;
+
+// ******************************************** NOTE ******************************************** //
+// Async Stream API and DmaMappedBuffer are currently not supported and are for internal use only //
+// ********************************************************************************************** //
+/** Stream flags */
+typedef enum {
+    HAILO_STREAM_FLAGS_NONE     = 0,        /*!< No flags */
+    HAILO_STREAM_FLAGS_ASYNC    = 1 << 0,   /*!< Async stream */
+
+    /** Max enum value to maintain ABI Integrity */
+    HAILO_STREAM_FLAGS_MAX_ENUM     = HAILO_MAX_ENUM
+} hailo_stream_flags_t;
+
+/** Hailo vdma buffer direction */
+typedef enum {
+    HAILO_VDMA_BUFFER_DIRECTION_FLAGS_NONE      = 0,
+    HAILO_VDMA_BUFFER_DIRECTION_FLAGS_H2D       = 1 << 0,
+    HAILO_VDMA_BUFFER_DIRECTION_FLAGS_D2H       = 1 << 1,
+
+    /** Max enum value to maintain ABI Integrity */
+    HAILO_VDMA_BUFFER_DIRECTION_FLAGS_MAX_ENUM  = HAILO_MAX_ENUM
+} hailo_vdma_buffer_direction_flags_t;
 
 /** Input or output data transform parameters */
 typedef struct {
@@ -1020,18 +1060,18 @@ typedef struct {
 /** Core input stream (host to device) parameters */
 typedef struct {
     EMPTY_STRUCT_PLACEHOLDER
-} hailo_core_input_stream_params_t;
+} hailo_integrated_input_stream_params_t;
 
 /** Core output stream (device to host) parameters */
 typedef struct {
     EMPTY_STRUCT_PLACEHOLDER
-} hailo_core_output_stream_params_t;
+} hailo_integrated_output_stream_params_t;
 
 typedef enum {
     HAILO_STREAM_INTERFACE_PCIE = 0,
     HAILO_STREAM_INTERFACE_ETH,
     HAILO_STREAM_INTERFACE_MIPI,
-    HAILO_STREAM_INTERFACE_CORE,
+    HAILO_STREAM_INTERFACE_INTEGRATED,
 
     /** Max enum value to maintain ABI Integrity */
    HAILO_STREAM_INTERFACE_MAX_ENUM = HAILO_MAX_ENUM
@@ -1041,13 +1081,14 @@ typedef enum {
 typedef struct {
     hailo_stream_interface_t stream_interface;
     hailo_stream_direction_t direction;
+    hailo_stream_flags_t flags;
     union {
         hailo_pcie_input_stream_params_t pcie_input_params;
-        hailo_core_input_stream_params_t core_input_params;
+        hailo_integrated_input_stream_params_t integrated_input_params;
         hailo_eth_input_stream_params_t eth_input_params;
         hailo_mipi_input_stream_params_t mipi_input_params;
         hailo_pcie_output_stream_params_t pcie_output_params;
-        hailo_core_output_stream_params_t core_output_params;
+        hailo_integrated_output_stream_params_t integrated_output_params;
         hailo_eth_output_stream_params_t eth_output_params;
     };
 } hailo_stream_parameters_t;
@@ -1164,6 +1205,14 @@ typedef struct {
     float32_t score;
 } hailo_bbox_float32_t;
 #pragma pack(pop)
+
+typedef struct {
+    /**
+     * - HAILO_SUCCESS when transfer is complete
+     * - HAILO_STREAM_NOT_ACTIVATED due to stream deactivation
+     */
+    hailo_status status;
+} hailo_async_transfer_completion_info_t;
 
 /**
  * Input or output stream information. In case of multiple inputs or outputs, each one has
@@ -2621,6 +2670,23 @@ HAILORTAPI hailo_status hailo_set_scheduler_timeout(hailo_configured_network_gro
  */
 HAILORTAPI hailo_status hailo_set_scheduler_threshold(hailo_configured_network_group configured_network_group,
     uint32_t threshold, const char *network_name);
+
+/**
+ * Sets the priority of the network.
+ * When the network group scheduler will choose the next network, networks with higher priority will be prioritized in the selection.
+ * bigger number represent higher priority.
+ *
+ * @param[in]  configured_network_group     NetworkGroup for which to set the scheduler priority.
+ * @param[in]  priority                     Priority as a number between HAILO_SCHEDULER_PRIORITY_MIN - HAILO_SCHEDULER_PRIORITY_MAX.
+ * @param[in]  network_name                 Network name for which to set the priority.
+ *                                          If NULL is passed, the priority will be set for all the networks in the network group.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE.
+ * @note The default priority is HAILO_SCHEDULER_PRIORITY_NORMAL.
+ * @note Currently, setting the priority for a specific network is not supported.
+ */
+HAILORTAPI hailo_status hailo_set_scheduler_priority(hailo_configured_network_group configured_network_group,
+    uint8_t priority, const char *network_name);
 
 /** @} */ // end of group_network_group_functions
 

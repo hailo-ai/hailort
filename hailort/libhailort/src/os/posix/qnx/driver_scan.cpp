@@ -32,7 +32,7 @@ Expected<std::vector<std::string>> list_devices()
         }
         else {
             LOGGER__ERROR("Failed to open hailo pcie class ({}), errno {}", HAILO_PCIE_CLASS_PATH, errno);
-            return make_unexpected(HAILO_PCIE_DRIVER_FAIL);
+            return make_unexpected(HAILO_DRIVER_FAIL);
         }
     }
 
