@@ -13,6 +13,7 @@ add_executable(hailort_service
     service_resource_manager.hpp
     ${HAILORT_SERVICE_OS_DIR}/hailort_service.cpp
     ${HAILORT_COMMON_CPP_SOURCES}
+    ${HAILO_FULL_OS_DIR}/event.cpp # TODO HRT-10681: move event.cpp to common
 )
 target_compile_options(hailort_service PRIVATE ${HAILORT_COMPILE_OPTIONS})
 set_property(TARGET hailort_service PROPERTY CXX_STANDARD 14)

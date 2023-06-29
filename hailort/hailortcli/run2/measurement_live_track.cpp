@@ -17,7 +17,6 @@
 #include <spdlog/fmt/fmt.h>
 #include <sstream>
 
-
 using namespace hailort;
 
 Expected<std::shared_ptr<MeasurementLiveTrack>> MeasurementLiveTrack::create_shared(Device &device, bool measure_power, bool measure_current,
@@ -53,35 +52,27 @@ Expected<std::shared_ptr<MeasurementLiveTrack>> MeasurementLiveTrack::create_sha
 MeasurementLiveTrack::MeasurementLiveTrack(std::shared_ptr<PowerMeasurement> power_measurement,
     std::shared_ptr<PowerMeasurement> current_measurement, std::shared_ptr<TemperatureMeasurement> temp_measurement,
     const std::string &device_id) :
-        LivePrinter::Track(), m_power_measurement(std::move(power_measurement)), m_current_measurement(std::move(current_measurement)),
+        LiveStats::Track(), m_power_measurement(std::move(power_measurement)), m_current_measurement(std::move(current_measurement)),
         m_temp_measurement(std::move(temp_measurement)), m_device_id(device_id)
 {}
 
-hailo_status MeasurementLiveTrack::start()
+hailo_status MeasurementLiveTrack::start_impl()
 {
     if (m_power_measurement) {
         CHECK_SUCCESS(m_power_measurement->start_measurement());
     }
-
     if (m_current_measurement) {
         CHECK_SUCCESS(m_current_measurement->start_measurement());
     }
-
     if (m_temp_measurement) {
         CHECK_SUCCESS(m_temp_measurement->start_measurement());
     }
 
-    m_started = true;
-
     return HAILO_SUCCESS;
 }
 
-uint32_t MeasurementLiveTrack::get_text(std::stringstream &ss)
+uint32_t MeasurementLiveTrack::push_text_impl(std::stringstream &ss)
 {
-    if (!m_started) {
-        return 0;
-    }
-
     auto rows_count = 0;
 
     if (m_power_measurement || m_current_measurement || m_temp_measurement) {
@@ -138,4 +129,37 @@ uint32_t MeasurementLiveTrack::get_text(std::stringstream &ss)
     }
 
     return rows_count;
+}
+
+void MeasurementLiveTrack::push_json_measurment_val(nlohmann::ordered_json &device_json, std::shared_ptr<BaseMeasurement> measurment, const std::string &measurment_name)
+{
+    auto measurment_info = measurment->get_data();
+    auto measurement_unit = measurment->measurement_unit();
+    auto min = measurment_info.min();
+    auto max = measurment_info.max();
+    auto mean = measurment_info.mean();
+    if (min && max && mean){
+        device_json[measurment_name] = { 
+            {"min", std::to_string(min.value()) + " " + measurement_unit}, 
+            {"max", std::to_string(max.value()) + " " + measurement_unit}, 
+            {"average", std::to_string(mean.value()) + " " + measurement_unit} 
+        };
+    }
+}
+
+void MeasurementLiveTrack::push_json_impl(nlohmann::ordered_json &json)
+{
+    nlohmann::ordered_json device_json;
+    device_json["device_id"] = m_device_id;
+
+    if (m_power_measurement){
+        push_json_measurment_val(device_json, m_power_measurement, "power");
+    }
+    if (m_current_measurement){
+        push_json_measurment_val(device_json, m_current_measurement, "current");
+    }
+    if (m_temp_measurement){
+        push_json_measurment_val(device_json, m_temp_measurement, "temperature");
+    }
+    json["devices"].emplace_back(device_json);
 }

@@ -44,33 +44,19 @@ Expected<MmapBufferImpl> MmapBufferImpl::create_shared_memory(size_t length)
 
 Expected<MmapBufferImpl> MmapBufferImpl::create_file_map(size_t length, FileDescriptor &file, uintptr_t offset)
 {
-#ifdef __linux__
     void *address = mmap(nullptr, length, PROT_WRITE | PROT_READ, MAP_SHARED, file, (off_t)offset);
     CHECK_AS_EXPECTED(INVALID_ADDR != address, HAILO_INTERNAL_FAILURE, "Failed to mmap buffer fd with errno:{}", errno);
-#elif defined(__QNX__)
-
-    // TODO change name of struct - using this sturct because itis exact fields we need ro qnx mmap too (where user address is physical addr)
-    struct hailo_non_linux_desc_list_mmap_params map_vdma_list_params {
-        .desc_handle = offset,
-        .size = length,
-        .user_address = nullptr,
-    };
-
-    int err = 0;
-    auto status = HailoRTDriver::hailo_ioctl(file, HAILO_NON_LINUX_DESC_LIST_MMAP, &map_vdma_list_params, err);
-    if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("HAILO_NON_LINUX_DESC_LIST_MMAP failed with errno:{}", err);
-        return make_unexpected(HAILO_DRIVER_FAIL);
-    }
-
-    void *address = mmap(nullptr, length, PROT_WRITE | PROT_READ | PROT_NOCACHE, MAP_SHARED | MAP_PHYS, NOFD, (off_t)map_vdma_list_params.user_address);
-    CHECK_AS_EXPECTED(INVALID_ADDR != address, HAILO_INTERNAL_FAILURE, "Failed to mmap buffer fd with errno:{}", errno);
-#else
-#error "unsupported platform!"
-#endif // __linux__
-
     return MmapBufferImpl(address, length);
 }
+
+#if defined(__QNX__)
+Expected<MmapBufferImpl> MmapBufferImpl::create_file_map_nocache(size_t length, FileDescriptor &file, uintptr_t offset)
+{
+    void *address = mmap(nullptr, length, PROT_WRITE | PROT_READ | PROT_NOCACHE, MAP_SHARED, file, (off_t)offset);
+    CHECK_AS_EXPECTED(INVALID_ADDR != address, HAILO_INTERNAL_FAILURE, "Failed to mmap buffer fd with errno:{}", errno);
+    return MmapBufferImpl(address, length);
+}
+#endif /* defined(__QNX__) */
 
 hailo_status MmapBufferImpl::unmap()
 {

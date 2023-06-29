@@ -14,6 +14,9 @@
 
 /** Package constants *********************************************************/
 #define HAILO8_INBOUND_DATA_STREAM_SIZE                                     (0x00010000L)
+// Max periph bytes per buffer for hailo15 because (we use its value shifted right by 3 - according to the spec) to
+// configure shmifo credit size - which in hailo15 only has a width of 10 bits
+#define HAILO15_PERIPH_BYTES_PER_BUFFER_MAX_SIZE                            (0x00002000L)
 
 /** PCIe constants and macors ************************************************/
 #define PCIE_CONFIG_BASE_ADDRESS                                                        (0x00200000L)                                                                   // <hw_base_addresses_macros.h>::HW_BASE_ADDRESSES__PCIE_CONFIG(0, 0, 0)

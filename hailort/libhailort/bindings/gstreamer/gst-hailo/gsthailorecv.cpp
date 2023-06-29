@@ -234,9 +234,11 @@ hailo_status HailoRecvImpl::read_from_vstreams(bool should_print_latency)
             std::chrono::duration<double, std::milli> latency = std::chrono::system_clock::now() - start_time;
             GST_DEBUG("%s latency: %f milliseconds", output_info.vstream().name().c_str(), latency.count());
         }
-        GST_CHECK_SUCCESS(status, m_element, STREAM, "Reading from vstream failed, status = %d", status);
-
         gst_buffer_unmap(*buffer, &buffer_info);
+        if (HAILO_STREAM_ABORTED_BY_USER == status) {
+            return status;
+        }
+        GST_CHECK_SUCCESS(status, m_element, STREAM, "Reading from vstream failed, status = %d", status);
     }
 
     if (should_print_latency) {

@@ -26,6 +26,10 @@ public:
     static Expected<MmapBufferImpl> create_shared_memory(size_t length);
     static Expected<MmapBufferImpl> create_file_map(size_t length, FileDescriptor &file, uintptr_t offset);
 
+#if defined(__QNX__)
+    static Expected<MmapBufferImpl> create_file_map_nocache(size_t length, FileDescriptor &file, uintptr_t offset);
+#endif /* defined(__QNX__) */
+
     MmapBufferImpl() : m_address(INVALID_ADDR), m_length(0), m_unmappable(false) {}
 
     ~MmapBufferImpl()
@@ -50,6 +54,8 @@ public:
     void *address() {
         return m_address;
     }
+
+    size_t size() const { return m_length; }
 
     bool is_mapped() const
     {
@@ -89,6 +95,15 @@ public:
         return MmapBuffer<T>(std::move(mmap.release()));
     }
 
+#if defined(__QNX__)
+    static Expected<MmapBuffer<T>> create_file_map_nocache(size_t length, FileDescriptor &file, uintptr_t offset)
+    {
+        auto mmap = MmapBufferImpl::create_file_map_nocache(length, file, offset);
+        CHECK_EXPECTED(mmap);
+        return MmapBuffer<T>(mmap.release());
+    }
+#endif /* defined(__QNX__) */
+
     MmapBuffer() = default;
     ~MmapBuffer() = default;
 
@@ -105,6 +120,8 @@ public:
     T* address() {
         return reinterpret_cast<T*>(m_mmap.address());
     }
+
+    size_t size() const { return m_mmap.size(); }
 
     template<typename U=T>
     std::enable_if_t<!std::is_void<U>::value, U&> operator*()

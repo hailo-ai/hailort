@@ -56,16 +56,22 @@ Expected<std::shared_ptr<TemperatureMeasurement>> TemperatureMeasurement::create
     return ptr;
 }
 
-
 TemperatureMeasurement::TemperatureMeasurement(Device &device, hailo_status &status) : BaseMeasurement(device, status)
-{}
+{
+    /* Executing the check only if BaseMeasurement constructor has succeeded */
+    if (HAILO_SUCCESS == status) {
+        status = sanity_check();
+    }
+}
+
+hailo_status TemperatureMeasurement::sanity_check()
+{
+    auto temp_measurement = m_device.get_chip_temperature();
+    return temp_measurement.status();
+}
 
 hailo_status TemperatureMeasurement::start_measurement()
 {
-    // Checking sensor before starting thread
-    auto temp_info = m_device.get_chip_temperature();
-    CHECK_EXPECTED_AS_STATUS(temp_info);
-
     m_is_thread_running = true;
     m_thread = std::thread([this] () {
         while (m_is_thread_running.load()) {
@@ -102,14 +108,21 @@ Expected<std::shared_ptr<PowerMeasurement>> PowerMeasurement::create_shared(Devi
 
 PowerMeasurement::PowerMeasurement(Device &device, hailo_power_measurement_types_t measurement_type, hailo_status &status)
     : BaseMeasurement(device, status), m_measurement_type(measurement_type)
-{}
+{
+    /* Executing the check only if BaseMeasurement constructor has succeeded */
+    if (HAILO_SUCCESS == status) {
+        status = sanity_check();
+    }
+}
+
+hailo_status PowerMeasurement::sanity_check()
+{
+    auto power_measurement = m_device.power_measurement(HAILO_DVM_OPTIONS_AUTO, m_measurement_type);
+    return power_measurement.status();
+}
 
 hailo_status PowerMeasurement::start_measurement()
 {
-    // Checking sensor before starting thread
-    auto power_info = m_device.power_measurement(HAILO_DVM_OPTIONS_AUTO, m_measurement_type);
-    CHECK_EXPECTED_AS_STATUS(power_info);
-
     m_is_thread_running = true;
     m_thread = std::thread([this] () {
         while (m_is_thread_running.load()) {

@@ -51,16 +51,17 @@
 
 namespace hailort
 {
+using stream_name_t = std::string;
+using op_name_t = std::string;
 
 class ConfiguredNetworkGroupBase : public ConfiguredNetworkGroup
 {
 public:
     static Expected<std::shared_ptr<ConfiguredNetworkGroupBase>> create(const ConfigureNetworkParams &config_params,
-        std::vector<std::shared_ptr<CoreOp>> &&core_ops, std::vector<std::shared_ptr<NetFlowElement>> &&net_flow_ops)
+        std::vector<std::shared_ptr<CoreOp>> &&core_ops, NetworkGroupMetadata &&metadata)
     {
         auto net_group_ptr = std::shared_ptr<ConfiguredNetworkGroupBase>(new (std::nothrow) 
-            ConfiguredNetworkGroupBase(config_params, std::move(core_ops), std::move(net_flow_ops)));
-        // auto net_group_ptr = make_shared_nothrow<ConfiguredNetworkGroupBase>(config_params, std::move(core_ops), std::move(net_flow_ops));
+            ConfiguredNetworkGroupBase(config_params, std::move(core_ops), std::move(metadata)));
         CHECK_NOT_NULL_AS_EXPECTED(net_group_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
         return net_group_ptr;
@@ -118,15 +119,20 @@ public:
     virtual bool is_multi_context() const override;
     virtual const ConfigureNetworkParams get_config_params() const override;
 
+    virtual Expected<HwInferResults> run_hw_infer_estimator() override;
+
     // TODO: HRT-9551 - Change to get_core_op_by_name() when multiple core_ops supported
     std::shared_ptr<CoreOp> get_core_op() const; 
     // TODO: HRT-9546 Remove
     const std::shared_ptr<CoreOpMetadata> get_core_op_metadata() const;
 
-    Expected<std::vector<std::string>> get_vstream_names_from_stream_name(const std::string &stream_name);
     const SupportedFeatures &get_supported_features();
     
     Expected<uint16_t> get_stream_batch_size(const std::string &stream_name);
+
+    virtual Expected<std::vector<std::string>> get_sorted_output_names() override;
+    virtual Expected<std::vector<std::string>> get_stream_names_from_vstream_name(const std::string &vstream_name) override;
+    virtual Expected<std::vector<std::string>> get_vstream_names_from_stream_name(const std::string &stream_name) override;
 
     virtual Expected<std::vector<InputVStream>> create_input_vstreams(const std::map<std::string, hailo_vstream_params_t> &inputs_params) override;
     virtual Expected<std::vector<OutputVStream>> create_output_vstreams(const std::map<std::string, hailo_vstream_params_t> &outputs_params) override;
@@ -204,7 +210,7 @@ public:
 
 private:
     ConfiguredNetworkGroupBase(const ConfigureNetworkParams &config_params,
-        std::vector<std::shared_ptr<CoreOp>> &&core_ops, std::vector<std::shared_ptr<NetFlowElement>> &&net_flow_ops);
+        std::vector<std::shared_ptr<CoreOp>> &&core_ops, NetworkGroupMetadata &&metadata);
 
     static uint16_t get_smallest_configured_batch_size(const ConfigureNetworkParams &config_params);
     hailo_status create_vdma_input_stream(Device &device, const std::string &stream_name,
@@ -225,7 +231,7 @@ private:
 
     const ConfigureNetworkParams m_config_params;
     std::vector<std::shared_ptr<CoreOp>> m_core_ops;
-    std::vector<std::shared_ptr<NetFlowElement>> m_net_flow_ops;
+    NetworkGroupMetadata m_network_group_metadata;
 
     friend class VDeviceCoreOp;
     friend class VDeviceActivatedCoreOp;
@@ -289,6 +295,12 @@ public:
     virtual bool is_multi_context() const override;
     virtual const ConfigureNetworkParams get_config_params() const override;
 
+    virtual Expected<std::vector<std::string>> get_sorted_output_names() override;
+    virtual Expected<std::vector<std::string>> get_stream_names_from_vstream_name(const std::string &vstream_name) override;
+    virtual Expected<std::vector<std::string>> get_vstream_names_from_stream_name(const std::string &stream_name) override;
+
+    virtual Expected<HwInferResults> run_hw_infer_estimator() override;
+
     virtual Expected<std::vector<InputVStream>> create_input_vstreams(const std::map<std::string, hailo_vstream_params_t> &inputs_params);
     virtual Expected<std::vector<OutputVStream>> create_output_vstreams(const std::map<std::string, hailo_vstream_params_t> &outputs_params);
 
@@ -296,7 +308,16 @@ public:
     virtual hailo_status after_fork_in_parent() override;
     virtual hailo_status after_fork_in_child() override;
 
+    virtual Expected<uint32_t> get_client_handle() const override
+    {
+        auto val = m_handle;
+        return val;
+    };
+
+    static Expected<std::shared_ptr<ConfiguredNetworkGroupClient>> duplicate_network_group_client(uint32_t handle, const std::string &network_group_name);
+
 private:
+    ConfiguredNetworkGroupClient(uint32_t handle, const std::string &network_group_name);
     hailo_status create_client();
 
     std::unique_ptr<HailoRtRpcClient> m_client;

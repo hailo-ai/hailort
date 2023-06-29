@@ -18,7 +18,7 @@
 #include <map>
 #include <unordered_map>
 
-
+/** hailort namespace */
 namespace hailort
 {
 
@@ -44,6 +44,15 @@ using OutputStreamWithParamsVector = std::vector<std::pair<std::shared_ptr<Outpu
 struct LatencyMeasurementResult {
     std::chrono::nanoseconds avg_hw_latency;
 };
+
+struct HwInferResults {
+    uint16_t batch_count;
+    size_t total_transfer_size;
+    size_t total_frames_passed;
+    float32_t time_sec;
+    float32_t fps;
+    float32_t BW_Gbps;
+};
 /*@}*/
 
 using src_context_t = uint8_t;
@@ -66,7 +75,7 @@ public:
     virtual const std::string &get_network_group_name() const = 0;
 
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &key) = 0;
-
+    // TODO HRT-10799: remove when enable batch switch flow for hailo15
     virtual hailo_status set_keep_nn_config_during_reset(const bool keep_nn_config_during_reset) = 0;
 
     /**
@@ -385,10 +394,18 @@ public:
     virtual Expected<std::vector<InputVStream>> create_input_vstreams(const std::map<std::string, hailo_vstream_params_t> &inputs_params) = 0;
     virtual Expected<std::vector<OutputVStream>> create_output_vstreams(const std::map<std::string, hailo_vstream_params_t> &outputs_params) = 0;
 
+    virtual Expected<HwInferResults> run_hw_infer_estimator() = 0;
+
     virtual hailo_status before_fork() { return HAILO_SUCCESS; }
     virtual hailo_status after_fork_in_parent() { return HAILO_SUCCESS; }
     virtual hailo_status after_fork_in_child() { return HAILO_SUCCESS; }
 
+    virtual Expected<std::vector<std::string>> get_sorted_output_names() = 0;
+    virtual Expected<std::vector<std::string>> get_stream_names_from_vstream_name(const std::string &vstream_name) = 0;
+    virtual Expected<std::vector<std::string>> get_vstream_names_from_stream_name(const std::string &stream_name) = 0;
+
+    static Expected<std::shared_ptr<ConfiguredNetworkGroup>> duplicate_network_group_client(uint32_t handle, const std::string &network_group_name);
+    virtual Expected<uint32_t> get_client_handle() const;
 protected:
     ConfiguredNetworkGroup() = default;
 

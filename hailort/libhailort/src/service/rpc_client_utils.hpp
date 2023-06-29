@@ -3,7 +3,7 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @file hailort_common.hpp
+ * @file rpc_client_utils.hpp
  * @brief Utility functions for rpc client communication
  **/
 
@@ -34,10 +34,14 @@ public:
         return instance;
     }
 
-    HailoRtRpcClientUtils()
-        : m_mutex(std::make_shared<std::mutex>())
-        , m_forking(false)
-    {}    
+    HailoRtRpcClientUtils() :
+        m_mutex(std::make_shared<std::mutex>())
+    {
+        auto status = init_keep_alive_shutdown_event();
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to initialize RPC Client's keep-alive shutdown event with status {}", status);
+        }
+    }
 
     static Expected<std::unique_ptr<HailoRtRpcClient>> create_client()
     {
@@ -55,7 +59,7 @@ public:
             // Create client
             auto channel = grpc::CreateChannel(hailort::HAILORT_SERVICE_DEFAULT_ADDR, grpc::InsecureChannelCredentials());
             auto client = make_unique_nothrow<HailoRtRpcClient>(channel);
-            CHECK(client != nullptr, HAILO_OUT_OF_HOST_MEMORY);
+            CHECK_NOT_NULL(client, HAILO_OUT_OF_HOST_MEMORY);
 
             // Check service version
             auto reply = client->get_service_version();
@@ -78,45 +82,39 @@ public:
             m_pid = OsUtils::get_curr_pid();
 
             // Trigger client keep-alive
-            m_keep_alive_thread = make_unique_nothrow<AsyncThread<hailo_status>>([this] () {
-                return this->keep_alive();
-            });
-            CHECK(nullptr != m_keep_alive_thread, HAILO_OUT_OF_HOST_MEMORY);
+            status = start_keep_alive_thread();
+            CHECK_SUCCESS(status);
+
             m_initialized = true;
         }
         return HAILO_SUCCESS;
     }
 
-    hailo_status before_fork()
+    void before_fork()
     {
-        m_forking = true;
-        return m_keep_alive_thread->get();
+        stop_keep_alive_thread();
     }
 
     hailo_status after_fork_in_parent()
     {
-        m_forking = false;
+        m_keep_alive_shutdown_event->reset();
         std::unique_lock<std::mutex> lock(*m_mutex);
         if (m_initialized) {
-            // Trigger client keep-alive
-            m_keep_alive_thread = make_unique_nothrow<AsyncThread<hailo_status>>([this] () {
-                return this->keep_alive();
-            });
+            return start_keep_alive_thread();
         }
         return HAILO_SUCCESS;
     }
 
     hailo_status after_fork_in_child()
     {
-        m_forking = false;
         m_mutex = std::make_shared<std::mutex>();
+        auto status = init_keep_alive_shutdown_event();
+        CHECK_SUCCESS(status);
+
         std::unique_lock<std::mutex> lock(*m_mutex);
         if (m_initialized) {
             m_pid = OsUtils::get_curr_pid();
-            // Trigger client keep-alive
-            m_keep_alive_thread = make_unique_nothrow<AsyncThread<hailo_status>>([this] () {
-                return this->keep_alive();
-            });
+            return start_keep_alive_thread();
         }
         return HAILO_SUCCESS;
     }
@@ -124,27 +122,59 @@ public:
 private:
     ~HailoRtRpcClientUtils()
     {
-        m_keep_alive_thread.release();
+        stop_keep_alive_thread();
+    }
+
+    void stop_keep_alive_thread()
+    {
+        if (m_keep_alive_shutdown_event) {
+            (void)m_keep_alive_shutdown_event->signal();
+        }
+
+        m_keep_alive_thread.reset();
+    }
+
+    hailo_status start_keep_alive_thread()
+    {
+        m_keep_alive_thread = make_unique_nothrow<AsyncThread<hailo_status>>("SVC_KEEPALIVE", [this] () {
+            return this->keep_alive();
+        });
+        CHECK_NOT_NULL(m_keep_alive_thread, HAILO_OUT_OF_HOST_MEMORY);
+        return HAILO_SUCCESS;
     }
 
     hailo_status keep_alive()
     {
         auto channel = grpc::CreateChannel(hailort::HAILORT_SERVICE_DEFAULT_ADDR, grpc::InsecureChannelCredentials());
         auto client = make_unique_nothrow<HailoRtRpcClient>(channel);
-        CHECK(client != nullptr, HAILO_OUT_OF_HOST_MEMORY);
-        while (!m_forking) {
+        CHECK_NOT_NULL(client, HAILO_OUT_OF_HOST_MEMORY);
+
+        while (true) {
+            auto shutdown_status = m_keep_alive_shutdown_event->wait(hailort::HAILO_KEEPALIVE_INTERVAL / 2);
+            if (HAILO_TIMEOUT != shutdown_status) {
+                // shutdown event is signal (or we have another error)
+                return shutdown_status;
+            }
+
+            // keep alive interval
             auto status = client->client_keep_alive(m_pid);
             CHECK_SUCCESS(status);
-            std::this_thread::sleep_for(hailort::HAILO_KEEPALIVE_INTERVAL / 2);
         }
+    }
+
+    hailo_status init_keep_alive_shutdown_event()
+    {
+        m_keep_alive_shutdown_event = Event::create_shared(Event::State::not_signalled);
+        CHECK(nullptr != m_keep_alive_shutdown_event, HAILO_OUT_OF_HOST_MEMORY);
+
         return HAILO_SUCCESS;
     }
 
     std::shared_ptr<std::mutex> m_mutex;
     AsyncThreadPtr<hailo_status> m_keep_alive_thread;
     bool m_initialized = false;
-    std::atomic<bool> m_forking;
     uint32_t m_pid;
+    EventPtr m_keep_alive_shutdown_event;
 };
 
 } /* namespace hailort */

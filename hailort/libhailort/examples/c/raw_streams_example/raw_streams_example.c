@@ -198,7 +198,7 @@ int main()
     status = hailo_create_hef_file(&hef, HEF_FILE);
     REQUIRE_SUCCESS(status, l_release_device, "Failed creating hef file %s", HEF_FILE);
 
-    status = hailo_init_configure_params(hef, HAILO_STREAM_INTERFACE_PCIE, &configure_params);
+    status = hailo_init_configure_params_by_device(hef, device, &configure_params);
     REQUIRE_SUCCESS(status, l_release_hef, "Failed init configure params");
 
     status = hailo_configure_device(device, hef, &configure_params, &network_group, &network_group_size);
@@ -239,5 +239,5 @@ l_release_hef:
 l_release_device:
     (void) hailo_release_device(device);
 l_exit:
-    return status;
+    return (int)status;
 }

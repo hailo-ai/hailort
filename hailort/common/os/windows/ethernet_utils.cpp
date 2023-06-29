@@ -160,48 +160,40 @@ Expected<ArpTable> ArpTable::create(uint32_t interface_index)
     return result;
 }
 
-hailo_status EthernetUtils::get_interface_from_board_ip(const char *board_ip, char *interface_name, size_t interface_name_length)
+Expected<std::string> EthernetUtils::get_interface_from_board_ip(const std::string &board_ip)
 {
-    CHECK_ARG_NOT_NULL(interface_name);
-    CHECK_ARG_NOT_NULL(board_ip);
-    
     auto network_interfaces = NetworkInterface::get_all_interfaces();
-    CHECK_EXPECTED_AS_STATUS(network_interfaces);
+    CHECK_EXPECTED(network_interfaces);
 
     struct in_addr board_ip_struct{};
-    auto status = Socket::pton(AF_INET, board_ip, &board_ip_struct);
-    CHECK_SUCCESS(status, "Invalid board ip address {}", board_ip);
+    auto status = Socket::pton(AF_INET, board_ip.c_str(), &board_ip_struct);
+    CHECK_SUCCESS_AS_EXPECTED(status, "Invalid board ip address {}", board_ip);
 
     for (const auto& network_interface : network_interfaces.value()) {
         auto arp_table = ArpTable::create(network_interface.index());
-        CHECK_EXPECTED_AS_STATUS(arp_table);
+        CHECK_EXPECTED(arp_table);
 
         const auto mac_address = arp_table->get_mac_address(static_cast<uint32_t>(board_ip_struct.S_un.S_addr));
         if (mac_address) {
-            (void)strncpy(interface_name, network_interface.friendly_name().c_str(), interface_name_length); 
-            return HAILO_SUCCESS;
+            return network_interface.friendly_name();
         }
     }
 
-    return HAILO_ETH_INTERFACE_NOT_FOUND;
+    return make_unexpected(HAILO_ETH_INTERFACE_NOT_FOUND);
 }
 
-hailo_status EthernetUtils::get_ip_from_interface(const char *interface_name, char *ip, size_t ip_length)
+Expected<std::string> EthernetUtils::get_ip_from_interface(const std::string &interface_name)
 {
-    CHECK_ARG_NOT_NULL(interface_name);
-    CHECK_ARG_NOT_NULL(ip);
-
     auto network_interfaces = NetworkInterface::get_all_interfaces();
-    CHECK_EXPECTED_AS_STATUS(network_interfaces);
+    CHECK_EXPECTED(network_interfaces);
 
     for (const auto& network_interface : network_interfaces.value()) {
         if (network_interface.friendly_name() == interface_name) {
-            (void)strncpy(ip, network_interface.ip().c_str(), ip_length); 
-            return HAILO_SUCCESS;
+            return network_interface.ip();
         }
     }
 
-    return HAILO_ETH_INTERFACE_NOT_FOUND;
+    return make_unexpected(HAILO_ETH_INTERFACE_NOT_FOUND);
 }
 
 } /* namespace hailort */

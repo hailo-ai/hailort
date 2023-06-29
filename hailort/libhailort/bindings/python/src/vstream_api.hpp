@@ -10,8 +10,6 @@
 #ifndef _VSTREAM_API_HPP_
 #define _VSTREAM_API_HPP_
 
-#include "common/logger_macros.hpp"
-#include "common/utils.hpp"
 #include "hailo/vstream.hpp"
 #include "hailo/inference_pipeline.hpp"
 #include "utils.hpp"

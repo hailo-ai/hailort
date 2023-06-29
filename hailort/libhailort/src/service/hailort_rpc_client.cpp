@@ -23,7 +23,7 @@ hailo_status HailoRtRpcClient::client_keep_alive(uint32_t pid)
     keepalive_Request request;
     request.set_pid(pid);
     empty reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->client_keep_alive(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     return HAILO_SUCCESS;
@@ -33,7 +33,7 @@ Expected<hailo_version_t> HailoRtRpcClient::get_service_version()
 {
     get_service_version_Request request;
     get_service_version_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->get_service_version(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -58,7 +58,7 @@ Expected<uint32_t> HailoRtRpcClient::VDevice_create(const hailo_vdevice_params_t
     proto_vdevice_params->set_group_id(params.group_id == nullptr ? "" : std::string(params.group_id));
 
     VDevice_create_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->VDevice_create(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -72,19 +72,20 @@ Expected<uint32_t> HailoRtRpcClient::VDevice_dup_handle(uint32_t pid, uint32_t h
     request.set_pid(pid);
     request.set_handle(handle);
     dup_handle_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->VDevice_dup_handle(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     return reply.handle();
 }
 
-hailo_status HailoRtRpcClient::VDevice_release(uint32_t handle)
+hailo_status HailoRtRpcClient::VDevice_release(uint32_t handle, uint32_t pid)
 {
     Release_Request request;
     request.set_handle(handle);
+    request.set_pid(pid);
 
     Release_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->VDevice_release(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -122,7 +123,7 @@ Expected<std::vector<uint32_t>> HailoRtRpcClient::InputVStreams_create(uint32_t 
     }
 
     VStreams_create_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->InputVStreams_create(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -135,13 +136,14 @@ Expected<std::vector<uint32_t>> HailoRtRpcClient::InputVStreams_create(uint32_t 
     return input_vstreams_handles;
 }
 
-hailo_status HailoRtRpcClient::InputVStream_release(uint32_t handle)
+hailo_status HailoRtRpcClient::InputVStream_release(uint32_t handle, uint32_t pid)
 {
     Release_Request request;
     request.set_handle(handle);
+    request.set_pid(pid);
 
     Release_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->InputVStream_release(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -179,7 +181,7 @@ Expected<std::vector<uint32_t>> HailoRtRpcClient::OutputVStreams_create(uint32_t
     }
 
     VStreams_create_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->OutputVStreams_create(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -192,13 +194,14 @@ Expected<std::vector<uint32_t>> HailoRtRpcClient::OutputVStreams_create(uint32_t
     return output_vstreams_handles;
 }
 
-hailo_status HailoRtRpcClient::OutputVStream_release(uint32_t handle)
+hailo_status HailoRtRpcClient::OutputVStream_release(uint32_t handle, uint32_t pid)
 {
     Release_Request request;
     request.set_handle(handle);
+    request.set_pid(pid);
 
     Release_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->OutputVStream_release(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -212,7 +215,7 @@ Expected<uint32_t> HailoRtRpcClient::InputVStream_dup_handle(uint32_t pid, uint3
     request.set_pid(pid);
     request.set_handle(handle);
     dup_handle_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->InputVStream_dup_handle(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     return reply.handle();
@@ -224,7 +227,7 @@ Expected<uint32_t> HailoRtRpcClient::OutputVStream_dup_handle(uint32_t pid, uint
     request.set_pid(pid);
     request.set_handle(handle);
     dup_handle_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->OutputVStream_dup_handle(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     return reply.handle();
@@ -274,7 +277,7 @@ Expected<std::vector<uint32_t>> HailoRtRpcClient::VDevice_configure(uint32_t vde
     }
 
     VDevice_configure_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->VDevice_configure(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -290,7 +293,7 @@ Expected<std::vector<std::string>> HailoRtRpcClient::VDevice_get_physical_device
     request.set_handle(handle);
 
     VDevice_get_physical_devices_ids_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->VDevice_get_physical_devices_ids(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -302,13 +305,30 @@ Expected<std::vector<std::string>> HailoRtRpcClient::VDevice_get_physical_device
     return result;
 }
 
+Expected<std::vector<std::unique_ptr<Device>>> HailoRtRpcClient::VDevice_get_physical_devices(uint32_t handle)
+{
+    std::vector<std::unique_ptr<Device>> devices;
+
+    auto device_ids = VDevice_get_physical_devices_ids(handle);
+    CHECK_EXPECTED(device_ids);
+    devices.reserve(device_ids->size());
+
+    for (const auto &device_id : device_ids.value()) {
+        auto device = Device::create(device_id);
+        CHECK_EXPECTED(device);
+        devices.push_back(std::move(device.release())) ;
+    }
+
+    return devices;
+}
+
 Expected<hailo_stream_interface_t> HailoRtRpcClient::VDevice_get_default_streams_interface(uint32_t handle)
 {
     VDevice_get_default_streams_interface_Request request;
     request.set_handle(handle);
 
     VDevice_get_default_streams_interface_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->VDevice_get_default_streams_interface(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -324,19 +344,20 @@ Expected<uint32_t> HailoRtRpcClient::ConfiguredNetworkGroup_dup_handle(uint32_t 
     request.set_pid(pid);
     request.set_handle(handle);
     dup_handle_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_dup_handle(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     return reply.handle();
 }
 
-hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_release(uint32_t handle)
+hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_release(uint32_t handle, uint32_t pid)
 {
     Release_Request request;
     request.set_handle(handle);
+    request.set_pid(pid);
 
     Release_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_release(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -381,7 +402,7 @@ Expected<std::map<std::string, hailo_vstream_params_t>> HailoRtRpcClient::Config
     request.set_network_name(network_name);
 
     ConfiguredNetworkGroup_make_input_vstream_params_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_make_input_vstream_params(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -400,7 +421,7 @@ Expected<std::vector<std::map<std::string, hailo_vstream_params_t>>> HailoRtRpcC
     request.set_queue_size(queue_size);
 
     ConfiguredNetworkGroup_make_output_vstream_params_groups_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_make_output_vstream_params_groups(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -426,7 +447,7 @@ Expected<std::map<std::string, hailo_vstream_params_t>> HailoRtRpcClient::Config
     request.set_network_name(network_name);
 
     ConfiguredNetworkGroup_make_output_vstream_params_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_make_output_vstream_params(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -464,7 +485,7 @@ Expected<std::string> HailoRtRpcClient::ConfiguredNetworkGroup_name(uint32_t han
     request.set_handle(handle);
 
     ConfiguredNetworkGroup_name_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_name(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -479,7 +500,7 @@ Expected<std::vector<hailo_network_info_t>> HailoRtRpcClient::ConfiguredNetworkG
     request.set_handle(handle);
 
     ConfiguredNetworkGroup_get_network_infos_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_get_network_infos(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -503,7 +524,7 @@ Expected<std::vector<hailo_stream_info_t>> HailoRtRpcClient::ConfiguredNetworkGr
     request.set_network_name(network_name);
 
     ConfiguredNetworkGroup_get_all_stream_infos_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_get_all_stream_infos(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -533,6 +554,8 @@ Expected<std::vector<hailo_stream_info_t>> HailoRtRpcClient::ConfiguredNetworkGr
             proto_stream_info.nms_info().chunks_per_frame(),
             proto_stream_info.nms_info().is_defused(),
             nms_defuse_info,
+            proto_stream_info.nms_info().burst_size(),
+            static_cast<hailo_nms_burst_type_t>(proto_stream_info.nms_info().burst_type()),
         };
         hailo_format_t format{
             static_cast<hailo_format_type_t>(proto_stream_info.format().type()),
@@ -571,7 +594,7 @@ Expected<hailo_stream_interface_t> HailoRtRpcClient::ConfiguredNetworkGroup_get_
     request.set_handle(handle);
 
     ConfiguredNetworkGroup_get_default_stream_interface_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_get_default_stream_interface(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -586,7 +609,7 @@ Expected<std::vector<std::vector<std::string>>> HailoRtRpcClient::ConfiguredNetw
     request.set_handle(handle);
 
     ConfiguredNetworkGroup_get_output_vstream_groups_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_get_output_vstream_groups(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -660,7 +683,7 @@ Expected<std::vector<hailo_vstream_info_t>> HailoRtRpcClient::ConfiguredNetworkG
     request.set_network_name(network_name);
 
     ConfiguredNetworkGroup_get_vstream_infos_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_get_input_vstream_infos(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -676,7 +699,7 @@ Expected<std::vector<hailo_vstream_info_t>> HailoRtRpcClient::ConfiguredNetworkG
     request.set_network_name(network_name);
 
     ConfiguredNetworkGroup_get_vstream_infos_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_get_output_vstream_infos(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -692,7 +715,7 @@ Expected<std::vector<hailo_vstream_info_t>> HailoRtRpcClient::ConfiguredNetworkG
     request.set_network_name(network_name);
 
     ConfiguredNetworkGroup_get_vstream_infos_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_get_all_vstream_infos(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -705,7 +728,7 @@ Expected<bool> HailoRtRpcClient::ConfiguredNetworkGroup_is_scheduled(uint32_t ha
     ConfiguredNetworkGroup_is_scheduled_Request request;
     ConfiguredNetworkGroup_is_scheduled_Reply reply;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_is_scheduled(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -722,7 +745,7 @@ hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_scheduler_timeout(uint
     request.set_network_name(network_name);
 
     ConfiguredNetworkGroup_set_scheduler_timeout_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_set_scheduler_timeout(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -738,7 +761,7 @@ hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_scheduler_threshold(ui
     request.set_network_name(network_name);
 
     ConfiguredNetworkGroup_set_scheduler_threshold_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_set_scheduler_threshold(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -754,7 +777,7 @@ hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_scheduler_priority(uin
     request.set_network_name(network_name);
 
     ConfiguredNetworkGroup_set_scheduler_priority_Reply reply;
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_set_scheduler_priority(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -768,10 +791,13 @@ Expected<LatencyMeasurementResult> HailoRtRpcClient::ConfiguredNetworkGroup_get_
     ConfiguredNetworkGroup_get_latency_measurement_Reply reply;
     request.set_handle(handle);
     request.set_network_name(network_name);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_get_latency_measurement(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
+    if (HAILO_NOT_AVAILABLE == reply.status()) {
+        return make_unexpected(HAILO_NOT_AVAILABLE);
+    }
     CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
     LatencyMeasurementResult result{
         std::chrono::nanoseconds(reply.avg_hw_latency())
@@ -784,7 +810,7 @@ Expected<bool> HailoRtRpcClient::ConfiguredNetworkGroup_is_multi_context(uint32_
     ConfiguredNetworkGroup_is_multi_context_Request request;
     ConfiguredNetworkGroup_is_multi_context_Reply reply;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_is_multi_context(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -797,7 +823,7 @@ Expected<ConfigureNetworkParams> HailoRtRpcClient::ConfiguredNetworkGroup_get_co
     ConfiguredNetworkGroup_get_config_params_Request request;
     ConfiguredNetworkGroup_get_config_params_Reply reply;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_get_config_params(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -832,12 +858,65 @@ Expected<ConfigureNetworkParams> HailoRtRpcClient::ConfiguredNetworkGroup_get_co
     return network_configure_params;
 }
 
+Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_sorted_output_names(uint32_t handle)
+{
+    ConfiguredNetworkGroup_get_sorted_output_names_Request request;
+    ConfiguredNetworkGroup_get_sorted_output_names_Reply reply;
+    request.set_handle(handle);
+    ClientContextWithTimeout context;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_get_sorted_output_names(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    std::vector<std::string> result;
+    for (auto &name : reply.sorted_output_names()) {
+        result.push_back(name);
+    }
+    return result;
+}
+
+Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_stream_names_from_vstream_name(uint32_t handle, const std::string &vstream_name)
+{
+    ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Request request;
+    ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Reply reply;
+    request.set_handle(handle);
+    request.set_vstream_name(vstream_name);
+    ClientContextWithTimeout context;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_get_stream_names_from_vstream_name(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    std::vector<std::string> result;
+    for (auto &name : reply.streams_names()) {
+        result.push_back(name);
+    }
+    return result;
+}
+
+Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_vstream_names_from_stream_name(uint32_t handle, const std::string &stream_name)
+{
+    ConfiguredNetworkGroup_get_vstream_names_from_stream_name_Request request;
+    ConfiguredNetworkGroup_get_vstream_names_from_stream_name_Reply reply;
+    request.set_handle(handle);
+    request.set_stream_name(stream_name);
+    ClientContextWithTimeout context;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_get_vstream_names_from_stream_name(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    std::vector<std::string> result;
+    for (auto &name : reply.vstreams_names()) {
+        result.push_back(name);
+    }
+    return result;
+}
+
 hailo_status HailoRtRpcClient::InputVStream_write(uint32_t handle, const MemoryView &buffer)
 {
     InputVStream_write_Request request;
     request.set_handle(handle);
     request.set_data(buffer.data(), buffer.size());
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     InputVStream_write_Reply reply;
     grpc::Status status = m_stub->InputVStream_write(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
@@ -854,7 +933,7 @@ hailo_status HailoRtRpcClient::OutputVStream_read(uint32_t handle, MemoryView bu
     OutputVStream_read_Request request;
     request.set_handle(handle);
     request.set_size(static_cast<uint32_t>(buffer.size()));
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     OutputVStream_read_Reply reply;
     grpc::Status status = m_stub->OutputVStream_read(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
@@ -871,7 +950,7 @@ Expected<size_t> HailoRtRpcClient::InputVStream_get_frame_size(uint32_t handle)
 {
     VStream_get_frame_size_Request request;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     VStream_get_frame_size_Reply reply;
     grpc::Status status = m_stub->InputVStream_get_frame_size(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
@@ -884,7 +963,7 @@ Expected<size_t> HailoRtRpcClient::OutputVStream_get_frame_size(uint32_t handle)
 {
     VStream_get_frame_size_Request request;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     VStream_get_frame_size_Reply reply;
     grpc::Status status = m_stub->OutputVStream_get_frame_size(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
@@ -897,7 +976,7 @@ hailo_status HailoRtRpcClient::InputVStream_flush(uint32_t handle)
 {
     InputVStream_flush_Request request;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     InputVStream_flush_Reply reply;
     grpc::Status status = m_stub->InputVStream_flush(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
@@ -909,7 +988,7 @@ Expected<std::string> HailoRtRpcClient::InputVStream_name(uint32_t handle)
 {
     VStream_name_Request request;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     VStream_name_Reply reply;
     grpc::Status status = m_stub->InputVStream_name(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
@@ -923,7 +1002,7 @@ Expected<std::string> HailoRtRpcClient::OutputVStream_name(uint32_t handle)
 {
     VStream_name_Request request;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     VStream_name_Reply reply;
     grpc::Status status = m_stub->OutputVStream_name(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
@@ -937,7 +1016,7 @@ Expected<std::string> HailoRtRpcClient::InputVStream_network_name(uint32_t handl
 {
     VStream_network_name_Request request;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     VStream_network_name_Reply reply;
     grpc::Status status = m_stub->InputVStream_network_name(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
@@ -951,7 +1030,7 @@ Expected<std::string> HailoRtRpcClient::OutputVStream_network_name(uint32_t hand
 {
     VStream_network_name_Request request;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     VStream_network_name_Reply reply;
     grpc::Status status = m_stub->OutputVStream_network_name(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
@@ -965,7 +1044,7 @@ hailo_status HailoRtRpcClient::InputVStream_abort(uint32_t handle)
 {
     VStream_abort_Request request;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     VStream_abort_Reply reply;
     grpc::Status status = m_stub->InputVStream_abort(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
@@ -977,7 +1056,7 @@ hailo_status HailoRtRpcClient::OutputVStream_abort(uint32_t handle)
 {
     VStream_abort_Request request;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     VStream_abort_Reply reply;
     grpc::Status status = m_stub->OutputVStream_abort(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
@@ -989,7 +1068,7 @@ hailo_status HailoRtRpcClient::InputVStream_resume(uint32_t handle)
 {
     VStream_resume_Request request;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     VStream_resume_Reply reply;
     grpc::Status status = m_stub->InputVStream_resume(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
@@ -1001,9 +1080,57 @@ hailo_status HailoRtRpcClient::OutputVStream_resume(uint32_t handle)
 {
     VStream_resume_Request request;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     VStream_resume_Reply reply;
     grpc::Status status = m_stub->OutputVStream_resume(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    return static_cast<hailo_status>(reply.status());
+}
+
+hailo_status HailoRtRpcClient::InputVStream_stop_and_clear(uint32_t handle)
+{
+    VStream_stop_and_clear_Request request;
+    request.set_handle(handle);
+    ClientContextWithTimeout context;
+    VStream_stop_and_clear_Reply reply;
+    grpc::Status status = m_stub->InputVStream_stop_and_clear(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    return static_cast<hailo_status>(reply.status());
+}
+
+hailo_status HailoRtRpcClient::OutputVStream_stop_and_clear(uint32_t handle)
+{
+    VStream_stop_and_clear_Request request;
+    request.set_handle(handle);
+    ClientContextWithTimeout context;
+    VStream_stop_and_clear_Reply reply;
+    grpc::Status status = m_stub->OutputVStream_stop_and_clear(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    return static_cast<hailo_status>(reply.status());
+}
+
+hailo_status HailoRtRpcClient::InputVStream_start_vstream(uint32_t handle)
+{
+    VStream_start_vstream_Request request;
+    request.set_handle(handle);
+    ClientContextWithTimeout context;
+    VStream_start_vstream_Reply reply;
+    grpc::Status status = m_stub->InputVStream_start_vstream(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    return static_cast<hailo_status>(reply.status());
+}
+
+hailo_status HailoRtRpcClient::OutputVStream_start_vstream(uint32_t handle)
+{
+    VStream_start_vstream_Request request;
+    request.set_handle(handle);
+    ClientContextWithTimeout context;
+    VStream_start_vstream_Reply reply;
+    grpc::Status status = m_stub->OutputVStream_start_vstream(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     return static_cast<hailo_status>(reply.status());
@@ -1013,7 +1140,7 @@ Expected<hailo_format_t> HailoRtRpcClient::InputVStream_get_user_buffer_format(u
 {
     VStream_get_user_buffer_format_Request request;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     VStream_get_user_buffer_format_Reply reply;
     grpc::Status status = m_stub->InputVStream_get_user_buffer_format(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
@@ -1034,7 +1161,7 @@ Expected<hailo_format_t> HailoRtRpcClient::OutputVStream_get_user_buffer_format(
 {
     VStream_get_user_buffer_format_Request request;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     VStream_get_user_buffer_format_Reply reply;
     grpc::Status status = m_stub->OutputVStream_get_user_buffer_format(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
@@ -1055,7 +1182,7 @@ Expected<hailo_vstream_info_t> HailoRtRpcClient::InputVStream_get_info(uint32_t 
 {
     VStream_get_info_Request request;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     VStream_get_info_Reply reply;
     grpc::Status status = m_stub->InputVStream_get_info(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
@@ -1068,7 +1195,7 @@ Expected<hailo_vstream_info_t> HailoRtRpcClient::OutputVStream_get_info(uint32_t
 {
     VStream_get_info_Request request;
     request.set_handle(handle);
-    grpc::ClientContext context;
+    ClientContextWithTimeout context;
     VStream_get_info_Reply reply;
     grpc::Status status = m_stub->OutputVStream_get_info(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
@@ -1076,6 +1203,34 @@ Expected<hailo_vstream_info_t> HailoRtRpcClient::OutputVStream_get_info(uint32_t
     CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
     auto info_proto = reply.vstream_info();
     return deserialize_vstream_info(info_proto);
+}
+
+Expected<bool> HailoRtRpcClient::InputVStream_is_aborted(uint32_t handle)
+{
+    VStream_is_aborted_Request request;
+    request.set_handle(handle);
+    ClientContextWithTimeout context;
+    VStream_is_aborted_Reply reply;
+    grpc::Status status = m_stub->InputVStream_is_aborted(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    auto is_aborted = reply.is_aborted();
+    return is_aborted;
+}
+
+Expected<bool> HailoRtRpcClient::OutputVStream_is_aborted(uint32_t handle)
+{
+    VStream_is_aborted_Request request;
+    request.set_handle(handle);
+    ClientContextWithTimeout context;
+    VStream_is_aborted_Reply reply;
+    grpc::Status status = m_stub->OutputVStream_is_aborted(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    auto is_aborted = reply.is_aborted();
+    return is_aborted;
 }
 
 }

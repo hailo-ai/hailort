@@ -9,6 +9,7 @@
  **/
 
 #include "device_api.hpp"
+#include <memory>
 
 
 namespace hailort
@@ -39,28 +40,7 @@ DeviceWrapper DeviceWrapper::create_pcie(hailo_pcie_device_info_t &device_info)
 DeviceWrapper DeviceWrapper::create_eth(const std::string &device_address, uint16_t port,
     uint32_t timeout_milliseconds, uint8_t max_number_of_attempts)
 {
-    hailo_eth_device_info_t device_info = {};
-
-    /* Validate address length */
-    if (INET_ADDRSTRLEN < device_address.size()) {
-        EXIT_WITH_ERROR("device_address is too long")
-    }
-
-    device_info.host_address.sin_family = AF_INET;
-    device_info.host_address.sin_port = HAILO_ETH_PORT_ANY;
-    auto status = Socket::pton(AF_INET, HAILO_ETH_ADDRESS_ANY, &(device_info.host_address.sin_addr));
-    VALIDATE_STATUS(status);
-
-    device_info.device_address.sin_family = AF_INET;
-    device_info.device_address.sin_port = port;
-    status = Socket::pton(AF_INET, device_address.c_str(), &(device_info.device_address.sin_addr));
-    VALIDATE_STATUS(status);
-
-    device_info.timeout_millis = timeout_milliseconds;
-    device_info.max_number_of_attempts = max_number_of_attempts;
-    device_info.max_payload_size = HAILO_DEFAULT_ETH_MAX_PAYLOAD_SIZE;
-
-    auto device = Device::create_eth(device_info);
+    auto device = Device::create_eth(device_address, port, timeout_milliseconds, max_number_of_attempts);
     VALIDATE_EXPECTED(device);
 
     return DeviceWrapper(device.release());
@@ -125,7 +105,7 @@ bool DeviceWrapper::get_overcurrent_state()
 
 py::bytes DeviceWrapper::read_memory(uint32_t address, uint32_t length)
 {
-    std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(length, '\x00');
+    std::unique_ptr<std::string> response = std::make_unique<std::string>(length, '\x00');
     VALIDATE_NOT_NULL(response, HAILO_OUT_OF_HOST_MEMORY);
 
     MemoryView data_view(const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(response->data())), length);
@@ -162,7 +142,7 @@ py::bytes DeviceWrapper::i2c_read(hailo_i2c_slave_config_t *slave_config, uint32
 {
     VALIDATE_NOT_NULL(slave_config, HAILO_INVALID_ARGUMENT);
 
-    std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(length, '\x00');
+    std::unique_ptr<std::string> response = std::make_unique<std::string>(length, '\x00');
     VALIDATE_NOT_NULL(response, HAILO_OUT_OF_HOST_MEMORY);
 
     MemoryView data_view(const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(response->data())), length);
@@ -229,7 +209,7 @@ py::bytes DeviceWrapper::read_user_config()
     auto config_buffer = device().read_user_config();
     VALIDATE_EXPECTED(config_buffer);
 
-    std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(
+    std::unique_ptr<std::string> response = std::make_unique<std::string>(
         const_cast<char*>(reinterpret_cast<const char*>(config_buffer->data())), config_buffer->size());
     VALIDATE_NOT_NULL(response, HAILO_OUT_OF_HOST_MEMORY);
 
@@ -255,7 +235,7 @@ py::bytes DeviceWrapper::read_board_config()
     auto config_buffer = device().read_board_config();
     VALIDATE_EXPECTED(config_buffer);
 
-    std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(
+    std::unique_ptr<std::string> response = std::make_unique<std::string>(
         const_cast<char*>(reinterpret_cast<const char*>(config_buffer->data())), config_buffer->size());
     VALIDATE_NOT_NULL(response, HAILO_OUT_OF_HOST_MEMORY);
     
@@ -307,7 +287,7 @@ py::bytes DeviceWrapper::sensor_get_sections_info()
     auto buffer = device().sensor_get_sections_info();
     VALIDATE_EXPECTED(buffer);
     
-    std::unique_ptr<std::string> response = make_unique_nothrow<std::string>(
+    std::unique_ptr<std::string> response = std::make_unique<std::string>(
         const_cast<char*>(reinterpret_cast<const char*>(buffer->data())), buffer->size());
     VALIDATE_NOT_NULL(response, HAILO_OUT_OF_HOST_MEMORY);
 

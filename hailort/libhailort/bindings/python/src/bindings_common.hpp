@@ -14,8 +14,6 @@
 #include "hailo/hailort_common.hpp"
 #include "hailo/network_group.hpp"
 
-#include "common/logger_macros.hpp"
-
 #include "utils.hpp"
 
 #include <pybind11/numpy.h>

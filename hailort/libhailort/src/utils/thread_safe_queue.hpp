@@ -15,8 +15,7 @@
 
 #include "common/utils.hpp"
 #include "common/logger_macros.hpp"
-
-#include "utils/event_internal.hpp"
+#include "common/event_internal.hpp"
 
 // Define __unix__ for inclusion of readerwriterqueue.h because readerwriterqueue is implemented over POSIX standards 
 // but checks __unix__ - otherwise QNX returns unsupported platform (need HAILO_UNDEF_UNIX_FLAG in order to undefine

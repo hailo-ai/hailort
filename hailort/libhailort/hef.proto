@@ -41,6 +41,14 @@ enum ProtoHEFExtensionType {
     HAILO_NET_FLOW_YOLOX_NMS = 15;
     HAILO_NET_FLOW_SSD_NMS = 16;
     HAILO_NET_FLOW_IOU_NMS = 17;
+    WRITE_DATA_BY_TYPE = 18;
+    NMS_OUTPUT_BURST = 19;
+    DUAL_DIRECTION_STREAM_INDEX = 20;
+    HAILO_NET_FLOW_ARGMAX = 21;
+    HAILO_NET_FLOW_SOFTMAX = 22;
+    ALIGNED_FORMAT_TYPE = 23;
+    OUTPUT_SCALE_PER_FEATURE = 25;
+    PERIPH_CALCULATION_IN_HAILORT = 26;
     UNUSED = 0XFFFF;
 }
 
@@ -163,6 +171,29 @@ message ProtoHEFSSDBboxDecoder {
     uint32 cls_pad_index = 4;
 };
 
+message ProtoHEFYoloxBboxDecoder {
+    // Pixels stride for given bbox
+    uint32 stride = 1;
+
+    // Index of the pad connected to the encoded layer in the decoder (reg layer)
+    uint32 reg_pad_index = 2;
+
+    // Index of the pad connected to the classes scores layer in the decoder (cls layer)
+    uint32 cls_pad_index = 3;
+
+    // Index of the pad connected to the objectness scores layer in the decoder (objectness layer)
+    uint32 obj_pad_index = 4;
+};
+
+message ProtoHEFYoloxNmsOp {
+    // Input image dimensions
+    double image_height = 1;
+    double image_width = 2;
+
+    // List of bbox decoders (anchors) for the NMS layer. Each model has its own number of boxes per anchor
+    repeated ProtoHEFYoloxBboxDecoder bbox_decoders = 3;
+};
+
 message ProtoHEFSSDNmsOp {
     // Input image dimensions
     double image_height = 1;
@@ -208,10 +239,20 @@ message ProtoHEFNmsOp {
     // Additional information needed for specific NMS types
     oneof nms_op {
         ProtoHEFYoloNmsOp yolo_nms_op = 7; // YOLOv5 post process
-        ProtoHEFYoloNmsOp yolox_nms_op = 8; // YOLO-X post process (ignores bbox decoder coordinations)
+        ProtoHEFYoloxNmsOp yolox_nms_op = 8; // YOLO-X post process
         ProtoHEFSSDNmsOp ssd_nms_op = 9; // SSD post process
         ProtoHEFIOUNmsOp iou_op = 10; // IoU only
     }
+};
+
+enum ProtoHEFLogitsType {
+    PROTO_HEF_ARGMAX_TYPE = 0;
+    PROTO_HEF_SOFTMAX_TYPE = 1;
+}
+
+message ProtoHEFLogitsOp {
+    // Logits type (softmax/argmax)
+    ProtoHEFLogitsType logits_type = 1;
 };
 
 enum ProtoHEFFormatOrder {
@@ -238,6 +279,13 @@ enum ProtoHEFFormatOrder {
 enum ProtoHEFDataType {
     PROTO__UINT8 = 0;
     PROTO__UINT16 = 1;
+};
+
+enum ProtoHEFFormatType {
+    PROTO__FORMAT__TYPE__AUTO = 0;
+    PROTO__FORMAT__TYPE__UINT8 = 1;
+    PROTO__FORMAT__TYPE__UINT16 = 2;
+    PROTO__FORMAT__TYPE__MAX_ENUM = 0XFFFF;
 };
 
 message ProtoHEFTensorShape {
@@ -268,8 +316,9 @@ message ProtoHEFPad {
     string name = 2;
 
     // Additional information describing the data going through this pad's interface
-    ProtoHEFFormatOrder format = 3;
-    ProtoHEFDataType data_bytes = 4;
+    ProtoHEFFormatOrder format_order = 3;
+    ProtoHEFDataType data_bytes = 4; // Unused (kept for compatibility). Should use format_type field
+    ProtoHEFFormatType format_type = 8;
     ProtoHEFEdgeLayerNumericInfo numeric_info = 5;
     oneof shape_info {
         ProtoHEFTensorShape tensor_shape = 6;
@@ -291,6 +340,9 @@ message ProtoHEFOp {
 
         // Op type for NMS post-process
         ProtoHEFNmsOp nms_op = 5;
+
+        // Op type for Logits post-processing
+        ProtoHEFLogitsOp logits_op = 6;
     }
 };
 
@@ -464,6 +516,7 @@ message ProtoHEFAction {
         ProtoHEFActionWaitForModuleConfigDone wait_for_module_config_done = 11;
         ProtoHEFActionDebugSleep debug_sleep = 12;
         ProtoHEFActionEnableNMS enable_nms = 13;
+        ProtoHEFActionWriteDataByType write_data_by_type = 14;
     }
 }
 
@@ -492,6 +545,31 @@ message ProtoHEFActionWriteCompressedData {
 message ProtoHEFActionDebugSleep {
     // Debug action that asks FW to sleep for some duration
     uint64 duration_in_usec = 1;
+}
+
+enum ProtoHEFWriteDataType {
+    DATA_FROM_ACTION = 0;
+    BATCH_SIZE = 1;
+};
+
+message ProtoHEFActionWriteDataByType {
+    // The address to write the data
+    uint64 address = 1;
+
+    // Data type - the data to write
+    ProtoHEFWriteDataType data_type = 2;
+
+    // The data that would be written if data_type=DATA_FROM_ACTION
+    bytes data = 3;
+
+    // The mask to use - ignore if data_type=DATA_FROM_ACTION and data size > 4
+    uint32 mask = 4;
+
+    // Network index
+    uint32 network_index = 5;
+
+    // data shift
+    uint32 shift = 6;
 }
 
 message InitialL3 {
@@ -572,6 +650,12 @@ message ProtoHEFActionEnableNMS {
 
     // Index of the network
     uint32 network_index = 2;
+
+    // Number of classes
+    uint32 number_of_classes = 3;
+
+    // Burst-size
+    uint32 burst_size = 4;
 }
 
 // None action - Do not do anything
@@ -740,6 +824,17 @@ message ProtoHEFAdditionalInfo {
     ProtoHEFNmsInfo nms_info = 1;
 }
 
+enum ProtoHEFNmsBurstType {
+    // No burst
+    PROTO__NMS_BURST_TYPE__NO_BURST = 0;
+    // No image delimiter, burst per class
+    PROTO__NMS_BURST_TYPE__H8_PER_CLASS = 1;
+    // Image delimiter and burst per class 
+    PROTO__NMS_BURST_TYPE__H15_PER_CLASS = 2;
+    // Image delimiter and burst per image 
+    PROTO__NMS_BURST_TYPE__H15_PER_FRAME = 3;
+}
+
 // NMS specific parameters
 message ProtoHEFNmsInfo {
     uint32 type_index = 1;
@@ -749,6 +844,8 @@ message ProtoHEFNmsInfo {
     bool is_defused = 5;
     ProtoHEFNmsDefuseInfo defuse_info = 6;
     uint64 input_division_factor = 7;
+    uint32 burst_size = 8;
+    ProtoHEFNmsBurstType burst_type = 9;
 }
 
 message ProtoHEFNmsDefuseInfo {
@@ -757,10 +854,12 @@ message ProtoHEFNmsDefuseInfo {
 }
 
 message ProtoHEFEdgeLayerNumericInfo {
-    float qp_zp = 1;
-    float qp_scale = 2;
+    float qp_zp = 1; // TODO: Remove, use vector
+    float qp_scale = 2; // TODO: Remove, use vector
     float limvals_min = 3;
     float limvals_max = 4;
+    repeated double qp_zps = 5; // zp per feature
+    repeated double qp_scales = 6; // scale per feature
 }
 
 // An object that can be repeated in order to provide the order of the triggers.

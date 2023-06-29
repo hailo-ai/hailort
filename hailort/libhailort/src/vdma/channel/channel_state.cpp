@@ -220,19 +220,19 @@ void VdmaChannelState::reset_previous_state_counters()
     m_d2h_read_desc_index_abs = 0;
 }
 
-void VdmaChannelState::add_pending_buffer(uint32_t first_desc, uint32_t last_desc, HailoRTDriver::DmaDirection direction,
-    const TransferDoneCallback &on_transfer_done, std::shared_ptr<DmaMappedBuffer> buffer, void *opaque)
+void VdmaChannelState::add_pending_buffer(uint16_t first_desc, uint16_t last_desc, HailoRTDriver::DmaDirection direction,
+    const InternalTransferDoneCallback &on_transfer_done, MappedBufferPtr mapped_buffer)
 {
     if (m_pending_buffers.full()) {
         // TODO- HRT-8900 : Fix log and check if should return error
         LOGGER__ERROR("no avail space");
     }
+
     PendingBuffer pending_buffer{};
     pending_buffer.last_desc = last_desc;
     pending_buffer.latency_measure_desc = (direction == HailoRTDriver::DmaDirection::H2D) ? first_desc : last_desc;
     pending_buffer.on_transfer_done = on_transfer_done;
-    pending_buffer.buffer = buffer;
-    pending_buffer.opaque = opaque;
+    pending_buffer.mapped_buffer = mapped_buffer;
     m_pending_buffers.push_back(std::move(pending_buffer));
 }
 

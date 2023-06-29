@@ -18,7 +18,7 @@
 #include <memory>
 #include <map>
 
-
+/** hailort namespace */
 namespace hailort
 {
 
@@ -452,7 +452,7 @@ public:
      */
     std::string hash() const;
 
-    Expected<std::string> get_hef_description(bool stream_infos, bool vstream_infos);
+    Expected<std::string> get_description(bool stream_infos, bool vstream_infos);
 
     ~Hef();
     Hef(Hef &&);

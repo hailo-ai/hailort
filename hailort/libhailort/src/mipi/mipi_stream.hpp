@@ -35,8 +35,7 @@ private:
     CONTROL_PROTOCOL__mipi_input_config_params_t m_mipi_input_params;
 
 protected:
-    virtual Expected<size_t> sync_write_raw_buffer(const MemoryView &buffer) override;
-    virtual hailo_status sync_write_all_raw_buffer_no_transform_impl(void *buffer, size_t offset, size_t size) override;
+    virtual hailo_status write_impl(const MemoryView &buffer) override;
     virtual hailo_status set_timeout(std::chrono::milliseconds timeout) { (void)timeout; return HAILO_INVALID_OPERATION; };
 
 public:
@@ -51,7 +50,6 @@ public:
     virtual std::chrono::milliseconds get_timeout() const override;
     virtual hailo_status abort() override;
     virtual hailo_status clear_abort() override;
-
 };
 
 } /* namespace hailort */

@@ -133,7 +133,7 @@ public:
         };
 
         desc_function_ = []() {
-            return "\t\tInput file path/paths. On single input network, give the full path of the data file.\n\
+            return "\t\tInput file (.bin) path/paths. On single input network, give the full path of the data file.\n\
                     \t\tOn multiple inputs network, the format is input_name1=path1 input_name2=path2, where\n\
                     \t\tinput_name1 is the name of the input stream. If not given, random data will be used";
         };

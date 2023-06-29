@@ -18,6 +18,7 @@
 #include <spdlog/fmt/bundled/core.h>
 #include <map>
 #include <set>
+#include <unordered_set>
 
 
 namespace hailort
@@ -25,7 +26,7 @@ namespace hailort
 
 #define IS_FIT_IN_UINT8(number) ((std::numeric_limits<uint8_t>::max() >= ((int32_t)(number))) && (std::numeric_limits<uint8_t>::min() <= ((int32_t)(number))))
 #define IS_FIT_IN_UINT16(number) ((std::numeric_limits<uint16_t>::max() >= ((int32_t)(number))) && (std::numeric_limits<uint16_t>::min() <= ((int32_t)(number))))
-
+#define IS_FIT_IN_UINT32(number) ((std::numeric_limits<uint32_t>::max() >= ((int64_t)(number))) && (std::numeric_limits<uint32_t>::min() <= ((int64_t)(number))))
 
 template <typename T>
 static inline bool contains(const std::vector<T> &container, const T &value)
@@ -47,6 +48,12 @@ static inline bool contains(const std::unordered_map<Q, T> &container, Q value)
 
 template <typename T>
 static inline bool contains(const std::set<T> &container, T value)
+{
+    return (container.find(value) != container.end());
+}
+
+template <typename T>
+static inline bool contains(const std::unordered_set<T> &container, T value)
 {
     return (container.find(value) != container.end());
 }
@@ -202,6 +209,14 @@ _ISEMPTY(                                                               \
     } while(0)
 #define CHECK_SUCCESS_AS_EXPECTED(status, ...) _CHECK_SUCCESS_AS_EXPECTED(status, ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
 
+// Define macro CHECK_IN_DEBUG - that checks cond in debug with CHECK macro but in release does nothing and will get optimized out
+#ifdef NDEBUG
+// In release have this macro do nothing - empty macro
+#define CHECK_IN_DEBUG(cond, ret_val, ...)
+#else // NDEBUG
+#define CHECK_IN_DEBUG(cond, ret_val, ...) CHECK(cond, ret_val, __VA_ARGS__)
+#endif // NDEBUG
+
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
 #define _CHECK_SUCCESS_AS_RPC_STATUS(status, reply, is_default, fmt, ...)                                                                       \
     do {                                                                                                                                        \
@@ -312,6 +327,12 @@ static uint32_t get_min_value_of_unordered_map(const std::unordered_map<K, V> &m
         }
     }
     return min_count;
+}
+
+static inline bool is_env_variable_on(const char* env_var_name)
+{
+    auto env_var  = std::getenv(env_var_name);
+    return ((nullptr != env_var) && (strnlen(env_var, 2) == 1) && (strncmp(env_var, "1", 1) == 0));
 }
 
 } /* namespace hailort */

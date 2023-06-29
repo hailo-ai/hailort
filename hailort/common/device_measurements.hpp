@@ -38,6 +38,9 @@ protected:
     std::atomic_bool m_is_thread_running;
     std::mutex m_mutex;
     hailort::AccumulatorPtr m_acc;
+
+private:
+    virtual hailo_status sanity_check() = 0;
 };
 
 
@@ -56,6 +59,9 @@ public:
     }
 
     TemperatureMeasurement(hailort::Device &device, hailo_status &status);
+
+private:
+    virtual hailo_status sanity_check() override;
 };
 
 
@@ -89,6 +95,7 @@ public:
 
 private:
     hailo_power_measurement_types_t m_measurement_type;
+    virtual hailo_status sanity_check() override;
 };
 
 #endif /* _HAILO_DEVICE_MEASUREMENTS_HPP_ */

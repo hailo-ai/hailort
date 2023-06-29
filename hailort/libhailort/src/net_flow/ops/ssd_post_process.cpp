@@ -16,16 +16,21 @@ namespace hailort
 namespace net_flow
 {
 
+hailo_status SSDPostProcessOp::validate_metadata()
+{
+    auto status = NmsPostProcessOp::validate_metadata();
+    if (HAILO_SUCCESS != status) {
+        return status;
+    }
+
+    return HAILO_SUCCESS;
+}
+
 Expected<std::shared_ptr<Op>> SSDPostProcessOp::create(const std::map<std::string, BufferMetaData> &inputs_metadata,
                                                        const std::map<std::string, BufferMetaData> &outputs_metadata,
                                                        const NmsPostProcessConfig &nms_post_process_config,
                                                        const SSDPostProcessConfig &ssd_post_process_config)
 {
-    for (auto &name_to_inputs_metadata : inputs_metadata) {
-        CHECK_AS_EXPECTED(name_to_inputs_metadata.second.format.order == HAILO_FORMAT_ORDER_NHCW, HAILO_INVALID_ARGUMENT,
-            "SSDPostProcessOp: Unexpected input format {}", name_to_inputs_metadata.second.format.order);
-    }
-
     // Validate each anchor is mapped by reg and cls inputs
     for (const auto &reg_to_cls_name : ssd_post_process_config.reg_to_cls_inputs) {
         CHECK_AS_EXPECTED(ssd_post_process_config.anchors.count(reg_to_cls_name.first), HAILO_INVALID_ARGUMENT,
@@ -63,6 +68,7 @@ Expected<std::shared_ptr<Op>> SSDPostProcessOp::create(const std::map<std::strin
     }
     auto op = std::shared_ptr<SSDPostProcessOp>(new (std::nothrow) SSDPostProcessOp(inputs_metadata, outputs_metadata, nms_post_process_config, ssd_post_process_config));
     CHECK_AS_EXPECTED(op != nullptr, HAILO_OUT_OF_HOST_MEMORY);
+
     return std::shared_ptr<Op>(std::move(op));
 }
 
@@ -73,8 +79,8 @@ hailo_status SSDPostProcessOp::execute(const std::map<std::string, MemoryView> &
             m_ssd_config.anchors.size(), inputs.size());
 
     std::vector<DetectionBbox> detections;
-    std::vector<uint32_t> classes_detections_count(m_nms_config.classes, 0);
-    detections.reserve(m_nms_config.max_proposals_per_class * m_nms_config.classes);
+    std::vector<uint32_t> classes_detections_count(m_nms_config.number_of_classes, 0);
+    detections.reserve(m_nms_config.max_proposals_per_class * m_nms_config.number_of_classes);
     for (const auto &reg_to_cls : m_ssd_config.reg_to_cls_inputs) {
         assert(inputs.count(reg_to_cls.first));
         assert(inputs.count(reg_to_cls.second));
@@ -113,18 +119,20 @@ hailo_status SSDPostProcessOp::extract_detections(const std::string &reg_input_n
     const auto &layer_anchors = m_ssd_config.anchors[reg_input_name];
     assert(layer_anchors.size() % 2 == 0);
     const size_t num_of_anchors = (layer_anchors.size() / 2);
+    // TODO: HRT-11044 support mixed data types
+    auto data_size_in_bytes = HailoRTCommon::get_data_bytes(m_inputs_metadata.begin()->second.format.type);
 
     // Validate reg buffer size
     static const uint32_t reg_entry_size = 4;
     auto number_of_entries = reg_padded_shape.height * reg_padded_shape.width * num_of_anchors;
-    auto buffer_size = number_of_entries * reg_entry_size;
+    auto buffer_size = number_of_entries * reg_entry_size * data_size_in_bytes;
     CHECK(buffer_size == reg_buffer.size(), HAILO_INVALID_ARGUMENT,
         "Failed to extract_detections, reg {} buffer_size should be {}, but is {}", reg_input_name, buffer_size, reg_buffer.size());
 
     // Validate cls buffer size
-    const uint32_t cls_entry_size = m_nms_config.classes;
+    const uint32_t cls_entry_size = m_nms_config.number_of_classes;
     number_of_entries = cls_padded_shape.height * cls_padded_shape.width * num_of_anchors;
-    buffer_size = number_of_entries * cls_entry_size;
+    buffer_size = number_of_entries * cls_entry_size * data_size_in_bytes;
     CHECK(buffer_size == cls_buffer.size(), HAILO_INVALID_ARGUMENT,
         "Failed to extract_detections, cls {} buffer_size should be {}, but is {}", cls_input_name, buffer_size, cls_buffer.size());
 
@@ -167,7 +175,7 @@ hailo_status SSDPostProcessOp::extract_detections(const std::string &reg_input_n
                         detections, classes_detections_count);
                     CHECK_SUCCESS(status);
                 } else if (m_inputs_metadata[reg_input_name].format.type == HAILO_FORMAT_TYPE_FLOAT32) {
-                    // For testing - TODO: Remove after generator tests are in, and return error.
+                    // For testing - TODO: HRT-9341 - Remove after generator tests are in, and return error.
                     auto status = extract_bbox_detections<float32_t, float32_t>(
                         reg_input_name, cls_input_name,
                         reg_buffer, cls_buffer,

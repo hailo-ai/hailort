@@ -32,29 +32,143 @@ HailoRtRpcService::HailoRtRpcService()
     });
 }
 
-void HailoRtRpcService::keep_alive()
+hailo_status HailoRtRpcService::abort_input_vstream(uint32_t handle)
 {
-    while (true) {
-        std::this_thread::sleep_for(hailort::HAILO_KEEPALIVE_INTERVAL / 2);
-        auto now = std::chrono::high_resolution_clock::now();
+    if (is_input_vstream_aborted(handle)) {
+        return HAILO_SUCCESS;
+    }
+
+    auto lambda = [](std::shared_ptr<InputVStream> input_vstream) {
+        return input_vstream->abort();
+    };
+    auto &manager = ServiceResourceManager<InputVStream>::get_instance();
+    auto status = manager.execute<hailo_status>(handle, lambda);
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to abort input vstream with status {}", status);
+    }
+    return status;
+}
+
+hailo_status HailoRtRpcService::abort_output_vstream(uint32_t handle)
+{
+    if (is_output_vstream_aborted(handle)) {
+        return HAILO_SUCCESS;
+    }
+
+    auto lambda = [](std::shared_ptr<OutputVStream> output_vstream) {
+        return output_vstream->abort();
+    };
+    auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
+    auto status = manager.execute<hailo_status>(handle, lambda);
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to abort output vstream with status {}", status);
+    }
+    return status;
+}
+
+bool HailoRtRpcService::is_input_vstream_aborted(uint32_t handle)
+{
+    auto lambda = [](std::shared_ptr<InputVStream> input_vstream) {
+        return input_vstream->is_aborted();
+    };
+    auto &manager = ServiceResourceManager<InputVStream>::get_instance();
+    return manager.execute<bool>(handle, lambda);
+}
+
+bool HailoRtRpcService::is_output_vstream_aborted(uint32_t handle)
+{
+    auto lambda = [](std::shared_ptr<OutputVStream> output_vstream) {
+        return output_vstream->is_aborted();
+    };
+    auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
+    return manager.execute<bool>(handle, lambda);
+}
+
+hailo_status HailoRtRpcService::resume_input_vstream(uint32_t handle)
+{
+    if (!is_input_vstream_aborted(handle)) {
+        return HAILO_SUCCESS;
+    }
+
+    auto lambda = [](std::shared_ptr<InputVStream> input_vstream) {
+        return input_vstream->resume();
+    };
+    auto &manager = ServiceResourceManager<InputVStream>::get_instance();
+    auto status = manager.execute<hailo_status>(handle, lambda);
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to resume input vstream with status {}", status);
+    }
+    return status;
+}
+
+hailo_status HailoRtRpcService::resume_output_vstream(uint32_t handle)
+{
+    if (!is_output_vstream_aborted(handle)) {
+        return HAILO_SUCCESS;
+    }
+
+    auto lambda = [](std::shared_ptr<OutputVStream> output_vstream) {
+        return output_vstream->resume();
+    };
+    auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
+    auto status = manager.execute<hailo_status>(handle, lambda);
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to resume output vstream with status {}", status);
+    }
+    return status;
+}
+
+// TODO: Add a named templated release functions for InputVStream and OutputVStream to call abort before release.
+void HailoRtRpcService::abort_vstreams_by_pids(std::set<uint32_t> &pids)
+{
+    auto inputs_handles = ServiceResourceManager<InputVStream>::get_instance().resources_handles_by_pids(pids);
+    auto outputs_handles = ServiceResourceManager<OutputVStream>::get_instance().resources_handles_by_pids(pids);
+    for (auto &input_handle : inputs_handles) {
+        abort_input_vstream(input_handle);
+    }
+    for (auto &output_handle : outputs_handles) {
+        abort_output_vstream(output_handle);
+    }
+}
+
+
+void HailoRtRpcService::remove_disconnected_clients()
+{
+    std::this_thread::sleep_for(hailort::HAILO_KEEPALIVE_INTERVAL / 2);
+    auto now = std::chrono::high_resolution_clock::now();
+    std::set<uint32_t> pids_to_remove;
+    {
         std::unique_lock<std::mutex> lock(m_mutex);
-        std::set<uint32_t> pids_to_remove;
         for (auto pid_to_last_alive : m_clients_pids) {
             auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - pid_to_last_alive.second);
             if (duration > hailort::HAILO_KEEPALIVE_INTERVAL) {
-                auto client_id = pid_to_last_alive.first;
-                pids_to_remove.insert(client_id);
-                LOGGER__INFO("Client disconnected, pid: {}", client_id);
-                HAILORT_OS_LOG_INFO("Client disconnected, pid: {}", client_id);
-                ServiceResourceManager<OutputVStream>::get_instance().release_by_pid(client_id);
-                ServiceResourceManager<InputVStream>::get_instance().release_by_pid(client_id);
-                ServiceResourceManager<ConfiguredNetworkGroup>::get_instance().release_by_pid(client_id);
-                ServiceResourceManager<VDevice>::get_instance().release_by_pid(client_id);
+                auto client_pid = pid_to_last_alive.first;
+                pids_to_remove.insert(client_pid);
             }
         }
-        for (auto &pid : pids_to_remove) {
-            m_clients_pids.erase(pid);
+
+        // We abort vstreams before releasing them to avoid cases where the vstream is stuck in execute of a
+        // blocking operation (which will be finished with timeout).
+        // To release the vstream the ServiceResourceManager is waiting for the resource_mutex which is also locked in execute.
+        abort_vstreams_by_pids(pids_to_remove);
+        for (auto &client_pid : pids_to_remove) {
+            ServiceResourceManager<OutputVStream>::get_instance().release_by_pid(client_pid);
+            ServiceResourceManager<InputVStream>::get_instance().release_by_pid(client_pid);
+            ServiceResourceManager<ConfiguredNetworkGroup>::get_instance().release_by_pid(client_pid);
+            ServiceResourceManager<VDevice>::get_instance().release_by_pid(client_pid);
+
+            LOGGER__INFO("Client disconnected, pid: {}", client_pid);
+            HAILORT_OS_LOG_INFO("Client disconnected, pid: {}", client_pid);
+            m_clients_pids.erase(client_pid);
         }
+    }
+}
+
+
+void HailoRtRpcService::keep_alive()
+{
+    while (true) {
+        remove_disconnected_clients();
     }
 }
 
@@ -93,6 +207,8 @@ grpc::Status HailoRtRpcService::VDevice_dup_handle(grpc::ServerContext*, const d
 grpc::Status HailoRtRpcService::VDevice_create(grpc::ServerContext *, const VDevice_create_Request *request,
     VDevice_create_Reply *reply)
 {
+    remove_disconnected_clients();
+
     // Deserialization
     const auto params_proto = request->hailo_vdevice_params();
     std::vector<hailo_device_id_t> device_ids;
@@ -125,8 +241,8 @@ grpc::Status HailoRtRpcService::VDevice_release(grpc::ServerContext*, const Rele
     Release_Reply *reply)
 {
     auto &manager = ServiceResourceManager<VDevice>::get_instance();
-    auto status = manager.release_resource(request->handle());
-    reply->set_status(static_cast<uint32_t>(status));
+    manager.release_resource(request->handle(), request->pid());
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;
 }
 
@@ -236,8 +352,8 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_release(grpc::ServerConte
     Release_Reply *reply)
 {
     auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
-    auto status = manager.release_resource(request->handle());
-    reply->set_status(static_cast<uint32_t>(status));
+    manager.release_resource(request->handle(), request->pid());
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;
 }
 
@@ -468,11 +584,12 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_set_scheduler_timeout(grp
     const ConfiguredNetworkGroup_set_scheduler_timeout_Request *request,
     ConfiguredNetworkGroup_set_scheduler_timeout_Reply *reply)
 {
-    auto lambda = [](std::shared_ptr<ConfiguredNetworkGroup> cng, std::chrono::milliseconds timeout_ms) {
-            return cng->set_scheduler_timeout(timeout_ms);
+    auto lambda = [](std::shared_ptr<ConfiguredNetworkGroup> cng, std::chrono::milliseconds timeout_ms, std::string network_name) {
+            return cng->set_scheduler_timeout(timeout_ms, network_name);
     };
     auto &net_group_manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
-    auto status = net_group_manager.execute<hailo_status>(request->handle(), lambda, static_cast<std::chrono::milliseconds>(request->timeout_ms()));
+    auto status = net_group_manager.execute<hailo_status>(request->handle(), lambda, static_cast<std::chrono::milliseconds>(request->timeout_ms()),
+        request->network_name());
     reply->set_status(status);
     return grpc::Status::OK;
 }
@@ -561,21 +678,24 @@ grpc::Status HailoRtRpcService::InputVStreams_create(grpc::ServerContext *, cons
         };
         inputs_params.emplace(param_proto.name(), std::move(params));
     }
+    auto network_group_handle = request->net_group();
+    auto client_pid = request->pid();
 
     auto lambda = [](std::shared_ptr<ConfiguredNetworkGroup> cng, const std::map<std::string, hailo_vstream_params_t> &inputs_params) {
             return cng->create_input_vstreams(inputs_params);
     };
     auto &net_group_manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
-    auto vstreams_expected = net_group_manager.execute<Expected<std::vector<InputVStream>>>(request->net_group(), lambda, inputs_params);
+    auto vstreams_expected = net_group_manager.execute<Expected<std::vector<InputVStream>>>(network_group_handle, lambda, inputs_params);
     CHECK_EXPECTED_AS_RPC_STATUS(vstreams_expected, reply);
     auto vstreams = vstreams_expected.release();
-    auto &manager = ServiceResourceManager<InputVStream>::get_instance();
-    auto client_pid = request->pid();
 
+    auto &manager = ServiceResourceManager<InputVStream>::get_instance();
     for (size_t i = 0; i < vstreams.size(); i++) {
         auto handle = manager.register_resource(client_pid, make_shared_nothrow<InputVStream>(std::move(vstreams[i])));
         reply->add_handles(handle);
     }
+    net_group_manager.dup_handle(client_pid, network_group_handle);
+
     reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;
 }
@@ -584,8 +704,8 @@ grpc::Status HailoRtRpcService::InputVStream_release(grpc::ServerContext *, cons
     Release_Reply *reply)
 {
     auto &manager = ServiceResourceManager<InputVStream>::get_instance();
-    auto status = manager.release_resource(request->handle());
-    reply->set_status(static_cast<uint32_t>(status));
+    manager.release_resource(request->handle(), request->pid());
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;
 }
 
@@ -610,20 +730,24 @@ grpc::Status HailoRtRpcService::OutputVStreams_create(grpc::ServerContext *, con
         output_params.emplace(param_proto.name(), std::move(params));
     }
 
+    auto network_group_handle = request->net_group();
+    auto client_pid = request->pid();
+
     auto lambda = [](std::shared_ptr<ConfiguredNetworkGroup> cng, const std::map<std::string, hailo_vstream_params_t> &output_params) {
             return cng->create_output_vstreams(output_params);
     };
     auto &net_group_manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
-    auto vstreams_expected = net_group_manager.execute<Expected<std::vector<OutputVStream>>>(request->net_group(), lambda, output_params);
+    auto vstreams_expected = net_group_manager.execute<Expected<std::vector<OutputVStream>>>(network_group_handle, lambda, output_params);
     CHECK_EXPECTED_AS_RPC_STATUS(vstreams_expected, reply);
     auto vstreams = vstreams_expected.release();
-    auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
-    auto client_pid = request->pid();
 
+    auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
     for (size_t i = 0; i < vstreams.size(); i++) {
         auto handle = manager.register_resource(client_pid, make_shared_nothrow<OutputVStream>(std::move(vstreams[i])));
         reply->add_handles(handle);
     }
+    net_group_manager.dup_handle(client_pid, network_group_handle);
+
     reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;
 }
@@ -631,8 +755,17 @@ grpc::Status HailoRtRpcService::OutputVStreams_create(grpc::ServerContext *, con
 grpc::Status HailoRtRpcService::OutputVStream_release(grpc::ServerContext *, const Release_Request *request,
     Release_Reply *reply)
 {
+    auto was_aborted = is_output_vstream_aborted(request->handle());
+    abort_output_vstream(request->handle());
     auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
-    auto status = manager.release_resource(request->handle());
+    auto resource = manager.release_resource(request->handle(), request->pid());
+    auto status = HAILO_SUCCESS;
+    if (resource && (!was_aborted)) {
+        status = resource->resume();
+        if (HAILO_SUCCESS != status) {
+            LOGGER__INFO("Failed to resume output vstream {} after destruction", resource->name());
+        }
+    }
     reply->set_status(static_cast<uint32_t>(status));
     return grpc::Status::OK;
 }
@@ -752,6 +885,8 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_all_stream_infos(grpc
             auto proto_nms_info_defuse_info = proto_nms_info->mutable_defuse_info();
             proto_nms_info_defuse_info->set_class_group_index(stream_info.nms_info.defuse_info.class_group_index);
             proto_nms_info_defuse_info->set_original_name(std::string(stream_info.nms_info.defuse_info.original_name));
+            proto_nms_info->set_burst_size(stream_info.nms_info.burst_size);
+            proto_nms_info->set_burst_type(static_cast<ProtoNmsBurstType>(proto_stream_info.nms_info().burst_type()));
         } else {
             auto proto_stream_shape = proto_stream_info.mutable_stream_shape();
             auto proto_stream_shape_shape = proto_stream_shape->mutable_shape();
@@ -793,9 +928,13 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_latency_measurement(g
     };
     auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
     auto expected_latency_result = manager.execute<Expected<LatencyMeasurementResult>>(request->handle(), lambda, request->network_name());
-    CHECK_EXPECTED_AS_RPC_STATUS(expected_latency_result, reply);
-    reply->set_avg_hw_latency(static_cast<uint32_t>(expected_latency_result.value().avg_hw_latency.count()));
-    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
+    if (HAILO_NOT_AVAILABLE == expected_latency_result.status()) {
+        reply->set_status(static_cast<uint32_t>(HAILO_NOT_AVAILABLE));
+    } else {
+        CHECK_EXPECTED_AS_RPC_STATUS(expected_latency_result, reply);
+        reply->set_avg_hw_latency(static_cast<uint32_t>(expected_latency_result.value().avg_hw_latency.count()));
+        reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
+    }
     return grpc::Status::OK;
 }
 
@@ -809,6 +948,60 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_is_multi_context(grpc::Se
     auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
     auto is_multi_context = manager.execute<bool>(request->handle(), lambda);
     reply->set_is_multi_context(static_cast<bool>(is_multi_context));
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_sorted_output_names(grpc::ServerContext*,
+    const ConfiguredNetworkGroup_get_sorted_output_names_Request *request,
+    ConfiguredNetworkGroup_get_sorted_output_names_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<ConfiguredNetworkGroup> cng) {
+            return cng->get_sorted_output_names();
+    };
+    auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
+    auto sorted_output_names_expected = manager.execute<Expected<std::vector<std::string>>>(request->handle(), lambda);
+    CHECK_EXPECTED_AS_RPC_STATUS(sorted_output_names_expected, reply);
+    auto sorted_output_names_proto = reply->mutable_sorted_output_names();
+    for (auto &name : sorted_output_names_expected.value()) {
+        sorted_output_names_proto->Add(std::move(name));
+    }
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_stream_names_from_vstream_name(grpc::ServerContext*,
+    const ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Request *request,
+    ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<ConfiguredNetworkGroup> cng, const std::string &vstream_name) {
+            return cng->get_stream_names_from_vstream_name(vstream_name);
+    };
+    auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
+    auto streams_names_expected = manager.execute<Expected<std::vector<std::string>>>(request->handle(), lambda, request->vstream_name());
+    CHECK_EXPECTED_AS_RPC_STATUS(streams_names_expected, reply);
+    auto streams_names_proto = reply->mutable_streams_names();
+    for (auto &name : streams_names_expected.value()) {
+        streams_names_proto->Add(std::move(name));
+    }
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_vstream_names_from_stream_name(grpc::ServerContext*,
+    const ConfiguredNetworkGroup_get_vstream_names_from_stream_name_Request *request,
+    ConfiguredNetworkGroup_get_vstream_names_from_stream_name_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<ConfiguredNetworkGroup> cng, const std::string &stream_name) {
+            return cng->get_vstream_names_from_stream_name(stream_name);
+    };
+    auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
+    auto vstreams_names_expected = manager.execute<Expected<std::vector<std::string>>>(request->handle(), lambda, request->stream_name());
+    CHECK_EXPECTED_AS_RPC_STATUS(vstreams_names_expected, reply);
+    auto vstreams_names_proto = reply->mutable_vstreams_names();
+    for (auto &name : vstreams_names_expected.value()) {
+        vstreams_names_proto->Add(std::move(name));
+    }
     reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;
 }
@@ -906,11 +1099,7 @@ grpc::Status HailoRtRpcService::OutputVStream_network_name(grpc::ServerContext*,
 grpc::Status HailoRtRpcService::InputVStream_abort(grpc::ServerContext*, const VStream_abort_Request *request,
     VStream_abort_Reply *reply)
 {
-    auto lambda = [](std::shared_ptr<InputVStream> input_vstream) {
-            return input_vstream->abort();
-    };
-    auto &manager = ServiceResourceManager<InputVStream>::get_instance();
-    auto status = manager.execute<hailo_status>(request->handle(), lambda);
+    auto status = abort_input_vstream(request->handle());
     reply->set_status(status);
     return grpc::Status::OK;
 }
@@ -918,11 +1107,7 @@ grpc::Status HailoRtRpcService::InputVStream_abort(grpc::ServerContext*, const V
 grpc::Status HailoRtRpcService::OutputVStream_abort(grpc::ServerContext*, const VStream_abort_Request *request,
     VStream_abort_Reply *reply)
 {
-    auto lambda = [](std::shared_ptr<OutputVStream> output_vstream) {
-            return output_vstream->abort();
-    };
-    auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
-    auto status = manager.execute<hailo_status>(request->handle(), lambda);
+    auto status = abort_output_vstream(request->handle());
     reply->set_status(status);
     return grpc::Status::OK;
 }
@@ -944,6 +1129,54 @@ grpc::Status HailoRtRpcService::OutputVStream_resume(grpc::ServerContext*, const
 {
     auto lambda = [](std::shared_ptr<OutputVStream> output_vstream) {
             return output_vstream->resume();
+    };
+    auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
+    auto status = manager.execute<hailo_status>(request->handle(), lambda);
+    reply->set_status(status);
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::InputVStream_stop_and_clear(grpc::ServerContext*, const VStream_stop_and_clear_Request *request,
+    VStream_stop_and_clear_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<InputVStream> input_vstream) {
+            return input_vstream->stop_and_clear();
+    };
+    auto &manager = ServiceResourceManager<InputVStream>::get_instance();
+    auto status = manager.execute<hailo_status>(request->handle(), lambda);
+    reply->set_status(status);
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::OutputVStream_stop_and_clear(grpc::ServerContext*, const VStream_stop_and_clear_Request *request,
+    VStream_stop_and_clear_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<OutputVStream> output_vstream) {
+            return output_vstream->stop_and_clear();
+    };
+    auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
+    auto status = manager.execute<hailo_status>(request->handle(), lambda);
+    reply->set_status(status);
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::InputVStream_start_vstream(grpc::ServerContext*, const VStream_start_vstream_Request *request,
+    VStream_start_vstream_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<InputVStream> input_vstream) {
+            return input_vstream->start_vstream();
+    };
+    auto &manager = ServiceResourceManager<InputVStream>::get_instance();
+    auto status = manager.execute<hailo_status>(request->handle(), lambda);
+    reply->set_status(status);
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::OutputVStream_start_vstream(grpc::ServerContext*, const VStream_start_vstream_Request *request,
+    VStream_start_vstream_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<OutputVStream> output_vstream) {
+            return output_vstream->start_vstream();
     };
     auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
     auto status = manager.execute<hailo_status>(request->handle(), lambda);
@@ -1011,6 +1244,32 @@ grpc::Status HailoRtRpcService::OutputVStream_get_info(grpc::ServerContext*, con
     auto info = manager.execute<hailo_vstream_info_t>(request->handle(), lambda);
     auto info_proto = reply->mutable_vstream_info();
     serialize_vstream_info(info, info_proto);
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::InputVStream_is_aborted(grpc::ServerContext*, const VStream_is_aborted_Request *request,
+    VStream_is_aborted_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<OutputVStream> input_vstream) {
+            return input_vstream->is_aborted();
+    };
+    auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
+    auto is_aborted = manager.execute<bool>(request->handle(), lambda);
+    reply->set_is_aborted(is_aborted);
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::OutputVStream_is_aborted(grpc::ServerContext*, const VStream_is_aborted_Request *request,
+    VStream_is_aborted_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<InputVStream> input_vstream) {
+            return input_vstream->is_aborted();
+    };
+    auto &manager = ServiceResourceManager<InputVStream>::get_instance();
+    auto is_aborted = manager.execute<bool>(request->handle(), lambda);
+    reply->set_is_aborted(is_aborted);
     reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;
 }

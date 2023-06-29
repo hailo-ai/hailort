@@ -32,7 +32,7 @@ namespace vdma {
 class BoundaryChannel;
 using BoundaryChannelPtr = std::shared_ptr<BoundaryChannel>;
 
-using ProcessingCompleteCallback = std::function<void(uint32_t frames_processed)>;
+using ProcessingCompleteCallback = std::function<void()>;
 
 class BoundaryChannel : public ChannelBase
 {
@@ -63,10 +63,15 @@ public:
     hailo_status deactivate();
 
     Type type() const;
+    hailo_status set_transfers_per_axi_intr(uint16_t transfers_per_axi_intr);
 
     void clear_pending_buffers_descriptors();
     hailo_status trigger_channel_completion(uint16_t hw_num_processed);
-    virtual hailo_status register_interrupt_callback(const ProcessingCompleteCallback &callback);
+
+    // Register some new interrupt callback (and reset previous).
+    // Note - when reseting an old callback, it may still be called (until interrupts are stopped).
+    void register_interrupt_callback(const ProcessingCompleteCallback &callback);
+
     CONTROL_PROTOCOL__host_buffer_info_t get_boundary_buffer_info(uint32_t transfer_size);
     virtual hailo_status abort();
     virtual hailo_status clear_abort();
@@ -74,28 +79,31 @@ public:
     // For D2H channels, we don't buffer data
     // Hence there's nothing to be "flushed" and the function will return with HAILO_SUCCESS
     virtual hailo_status flush(const std::chrono::milliseconds &timeout);
-    virtual hailo_status wait(size_t buffer_size, std::chrono::milliseconds timeout);
-    hailo_status set_transfers_per_axi_intr(uint16_t transfers_per_axi_intr);
 
-    virtual hailo_status transfer(void *buf, size_t count) = 0;
+    // Blocks until buffer_size bytes can transferred to/from the channel or until timeout has elapsed.
+    // If stop_if_deactivated is true, this function will return HAILO_STREAM_NOT_ACTIVATED after deactivate()
+    // is called. Otherwise, this function can be used to access the buffer while the channel is not active.
+    hailo_status wait(size_t buffer_size, std::chrono::milliseconds timeout, bool stop_if_deactivated=false);
+
+    // Transfers count bytes to/from buf via the channel.
+    // Blocks until the transfer can be registered or timeout has elapsed. Hence, calling 'wait(buffer_size, timeout)'
+    // prior to 'transfer(buf, buffer_size)' is redundant.
+    virtual hailo_status transfer_sync(void *buf, size_t count, std::chrono::milliseconds timeout) = 0;
+
     // TODO: can write_buffer + send_pending_buffer move to BufferedChannel? (HRT-9105)
     // Either write_buffer + send_pending_buffer or transfer (h2d) should be used on a given channel, not both
     virtual hailo_status write_buffer(const MemoryView &buffer, std::chrono::milliseconds timeout,
         const std::function<bool()> &should_cancel) = 0;
     virtual hailo_status send_pending_buffer() = 0;
-    
-    // TODO: move buffer?
-    // TODO: If the same callback is used for different buffers we need a way to tell the transfers appart
-    //       - Passing buffer to callback could do the trick. However, what will happen if the same buffer has been transferred twice?
-    //       - Maybe add a unique transfer_id? At least unique in the context of the maximum number of ongoing transfers
-    // TODO: What if there's no more room in desc list so the transfer can't be programmed? Should the function block
-    //       - Maybe define that if more than max_concurrent_transfers() (based on a param passed to create) the function will return a failure?
-    // When the transfer is complete (i.e. data is written to/from buffer with a D2H/H2D channel) callback is called
-    // buffer can't be freed until callback is called
-    virtual hailo_status transfer(std::shared_ptr<DmaMappedBuffer> buffer, const TransferDoneCallback &user_callback, void *opaque) = 0;
 
-    // Calls all pending transfer callbacks (if they exist), marking them as canceled by passing hailo_async_transfer_completion_info_t{HAILO_STREAM_NOT_ACTIVATED}.
-    // Note: This function is to be called on a deactivated channel object. Calling on an active channel will lead to unexpected results
+    // When the transfer is complete (i.e. data is written to/from buffer with a D2H/H2D channel) callback is called
+    // transfer_request.buffer can't be freed/changed until callback is called.
+    virtual hailo_status transfer_async(TransferRequest &&transfer_request) = 0;
+
+    // Calls all pending transfer callbacks (if they exist), marking them as canceled by passing
+    // HAILO_STREAM_ABORTED_BY_USER as a status to the callbacks.
+    // Note: This function is to be called on a deactivated channel object. Calling on an active channel will lead to
+    // unexpected results
     virtual hailo_status cancel_pending_transfers() = 0;
 
     virtual void notify_all() = 0;
@@ -117,7 +125,7 @@ public:
     virtual Expected<size_t> get_d2h_pending_descs_count() = 0;
 
 protected:
-    static void ignore_processing_complete(uint32_t) {}
+    static void ignore_processing_complete() {}
     void stop_interrupts_thread(std::unique_lock<RecursiveSharedMutex> &lock);
     virtual bool is_ready_for_transfer_h2d(size_t buffer_size);
     virtual bool is_ready_for_transfer_d2h(size_t buffer_size);
@@ -127,12 +135,14 @@ protected:
     virtual hailo_status complete_channel_deactivation() = 0;
 
     const Type m_type;
-    TransferDoneCallback m_transfer_done_callback;
     ProcessingCompleteCallback m_user_interrupt_callback;
     uint16_t m_transfers_per_axi_intr;
 
 private:
     bool has_room_in_desc_list(size_t buffer_size);
+    bool is_complete(const PendingBuffer &pending_buffer, uint16_t previous_num_processed,
+        uint16_t current_num_processed);
+    void on_pending_buffer_irq(PendingBuffer &buffer);
 };
 
 } /* namespace vdma */

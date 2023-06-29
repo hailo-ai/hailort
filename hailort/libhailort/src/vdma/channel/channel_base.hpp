@@ -89,6 +89,7 @@ protected:
     Expected<bool> is_aborted();
     hailo_status set_num_avail_value(uint16_t new_value);
     uint16_t get_num_available();
+    void set_num_proc_value(uint16_t new_value);
     Expected<uint16_t> get_hw_num_processed();
     hailo_status inc_num_available(uint16_t value);
     static Direction other_direction(const Direction direction);

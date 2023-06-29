@@ -57,7 +57,7 @@ const char *CONTROL_PROTOCOL__get_textual_opcode(CONTROL_PROTOCOL__OPCODE_t opco
     return CONTROL_PROTOCOL__textual_format[opcode];
 }
 
-#define CHANGE_HW_INFER_REQUEST_PARAMETER_COUNT (4)
+#define CHANGE_HW_INFER_REQUEST_PARAMETER_COUNT (5)
 
 /* Functions declarations */
 HAILO_COMMON_STATUS_t control_protocol__parse_message(uint8_t *message,
@@ -1810,10 +1810,11 @@ exit:
     return status;
 }
 
+#define CONTEXT_SWITCH_SWITCH_STATUS_REQUEST_PARAMS (5)
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_context_switch_status_request(
         CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
         CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status, uint8_t application_index,
-        uint16_t dynamic_batch_size, bool keep_nn_config_during_reset)
+        uint16_t dynamic_batch_size, uint16_t batch_count, bool keep_nn_config_during_reset)
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
     size_t local_request_size = 0;
@@ -1826,7 +1827,8 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_context_switch_status_reques
     /* Header */
     local_request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE + 
         sizeof(CONTROL_PROTOCOL__change_context_switch_status_request_t);
-    control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_CHANGE_CONTEXT_SWITCH_STATUS, 4);
+    control_protocol__pack_request_header(request, sequence, 
+        HAILO_CONTROL_OPCODE_CHANGE_CONTEXT_SWITCH_STATUS, CONTEXT_SWITCH_SWITCH_STATUS_REQUEST_PARAMS);
 
     /* state_machine_status */
     request->parameters.change_context_switch_status_request.state_machine_status_length = 
@@ -1844,8 +1846,13 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_context_switch_status_reques
     request->parameters.change_context_switch_status_request.dynamic_batch_size_length = 
         BYTE_ORDER__htonl(sizeof(request->parameters.change_context_switch_status_request.dynamic_batch_size));
     request->parameters.change_context_switch_status_request.dynamic_batch_size = dynamic_batch_size;
-    
-    /* dynamic_batch_size */
+
+    /* batch_count */
+    request->parameters.change_context_switch_status_request.batch_count_length =
+        BYTE_ORDER__htonl(sizeof(request->parameters.change_context_switch_status_request.batch_count));
+    request->parameters.change_context_switch_status_request.batch_count = batch_count;
+
+    /* keep_nn_config_during_reset */
     request->parameters.change_context_switch_status_request.keep_nn_config_during_reset_length = 
         BYTE_ORDER__htonl(sizeof(request->parameters.change_context_switch_status_request.keep_nn_config_during_reset));
     request->parameters.change_context_switch_status_request.keep_nn_config_during_reset = keep_nn_config_during_reset;
@@ -2392,7 +2399,7 @@ exit:
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_hw_infer_status_request(
     CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
     uint8_t hw_infer_state, uint8_t network_group_index, uint16_t dynamic_batch_size,
-    CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info)
+    uint16_t batch_count, CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info)
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
     size_t local_request_size = 0;
@@ -2422,6 +2429,11 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_hw_infer_status_request(
     request->parameters.change_hw_infer_status_request.dynamic_batch_size_length = 
         BYTE_ORDER__htonl(sizeof(request->parameters.change_hw_infer_status_request.dynamic_batch_size));
     request->parameters.change_hw_infer_status_request.dynamic_batch_size = dynamic_batch_size;
+
+    /* batch_count */
+    request->parameters.change_hw_infer_status_request.batch_count_length = 
+        BYTE_ORDER__htonl(sizeof(request->parameters.change_hw_infer_status_request.batch_count));
+    request->parameters.change_hw_infer_status_request.batch_count = batch_count;
 
     /* channels_info */
     request->parameters.change_hw_infer_status_request.channels_info_length = 

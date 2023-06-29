@@ -10,6 +10,7 @@
  **/
 
 #include "hef_api.hpp"
+#include <memory>
 
 
 namespace hailort
@@ -20,7 +21,7 @@ HefWrapper::HefWrapper(const std::string &hef_path)
     auto hef_expected = Hef::create(hef_path);
     VALIDATE_EXPECTED(hef_expected);
 
-    hef = make_unique_nothrow<Hef>(hef_expected.release());
+    hef = std::make_unique<Hef>(hef_expected.release());
     if (nullptr == hef) {
         THROW_STATUS_ERROR(HAILO_OUT_OF_HOST_MEMORY);
     }
@@ -31,7 +32,7 @@ HefWrapper::HefWrapper(const MemoryView &hef_buffer)
     auto hef_expected = Hef::create(hef_buffer);
     VALIDATE_EXPECTED(hef_expected);
 
-    hef = make_unique_nothrow<Hef>(hef_expected.release());
+    hef = std::make_unique<Hef>(hef_expected.release());
     if (nullptr == hef) {
         THROW_STATUS_ERROR(HAILO_OUT_OF_HOST_MEMORY);
     }
@@ -255,7 +256,11 @@ void HefWrapper::initialize_python_module(py::module &m)
         .def("get_networks_names", &HefWrapper::get_networks_names)
         ;
 
-    py::class_<ConfiguredNetworkGroup>(m, "ConfiguredNetworkGroup")
+    py::class_<ConfiguredNetworkGroup, std::shared_ptr<ConfiguredNetworkGroup>>(m, "ConfiguredNetworkGroup")
+        .def("is_scheduled", [](ConfiguredNetworkGroup& self)
+            {
+                return self.is_scheduled();
+            })
         .def("get_name", [](ConfiguredNetworkGroup& self)
             {
                 return self.name();
@@ -300,30 +305,18 @@ void HefWrapper::initialize_python_module(py::module &m)
         })
         .def("before_fork", [](ConfiguredNetworkGroup& self)
         {
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
             auto status = self.before_fork();
             VALIDATE_STATUS(status);
-#else
-            (void)self;
-#endif // HAILO_SUPPORT_MULTI_PROCESS
         })
         .def("after_fork_in_parent", [](ConfiguredNetworkGroup& self)
         {
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
             auto status = self.after_fork_in_parent();
             VALIDATE_STATUS(status);            
-#else
-            (void)self;
-#endif // HAILO_SUPPORT_MULTI_PROCESS
         })
         .def("after_fork_in_child", [](ConfiguredNetworkGroup& self)
         {
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
             auto status = self.after_fork_in_child();
             VALIDATE_STATUS(status);
-#else
-            (void)self;
-#endif // HAILO_SUPPORT_MULTI_PROCESS
         })
         .def("set_scheduler_timeout", [](ConfiguredNetworkGroup& self, int timeout, const std::string &network_name="")
         {
@@ -341,6 +334,112 @@ void HefWrapper::initialize_python_module(py::module &m)
             auto status = self.set_scheduler_priority(priority);
             VALIDATE_STATUS(status);
         })
+        .def("get_networks_names", [](ConfiguredNetworkGroup& self)
+        {
+            auto network_infos = self.get_network_infos();
+            VALIDATE_EXPECTED(network_infos);
+            std::vector<std::string> result;
+            result.reserve(network_infos->size());
+            for (const auto &info : network_infos.value()) {
+                result.push_back(info.name);
+            }
+            return py::cast(result);
+        })
+        .def("get_sorted_output_names", [](ConfiguredNetworkGroup& self)
+        {
+            auto names_list = self.get_sorted_output_names();
+            VALIDATE_EXPECTED(names_list);
+            return py::cast(names_list.release());
+        })
+        .def("get_input_vstream_infos", [](ConfiguredNetworkGroup& self, const std::string &name)
+        {
+            auto result = self.get_input_vstream_infos(name);
+            VALIDATE_EXPECTED(result);
+            return py::cast(result.value());
+        })
+        .def("get_output_vstream_infos", [](ConfiguredNetworkGroup& self, const std::string &name)
+        {
+            auto result = self.get_output_vstream_infos(name);
+            VALIDATE_EXPECTED(result);
+            return py::cast(result.value());
+        })
+        .def("get_all_vstream_infos", [](ConfiguredNetworkGroup& self, const std::string &name)
+        {
+            auto result = self.get_all_vstream_infos(name);
+            VALIDATE_EXPECTED(result);
+            return py::cast(result.value());
+        })
+        .def("get_all_stream_infos", [](ConfiguredNetworkGroup& self, const std::string &name)
+        {
+            auto result = self.get_all_stream_infos(name);
+            VALIDATE_EXPECTED(result);
+            return py::cast(result.value());
+        })
+        .def("get_input_stream_infos", [](ConfiguredNetworkGroup& self, const std::string &name)
+        {
+            std::vector<hailo_stream_info_t> input_streams_infos;
+            auto all_streams = self.get_all_stream_infos(name);
+            VALIDATE_EXPECTED(all_streams);
+            for (auto &info : all_streams.value()) {
+                if (HAILO_H2D_STREAM == info.direction) {
+                    input_streams_infos.push_back(std::move(info));
+                }
+            }
+            return py::cast(input_streams_infos);
+        })
+        .def("get_output_stream_infos", [](ConfiguredNetworkGroup& self, const std::string &name)
+        {
+            std::vector<hailo_stream_info_t> output_streams_infos;
+            auto all_streams = self.get_all_stream_infos(name);
+            VALIDATE_EXPECTED(all_streams);
+            for (auto &info : all_streams.value()) {
+                if (HAILO_D2H_STREAM == info.direction) {
+                    output_streams_infos.push_back(std::move(info));
+                }
+            }
+            return py::cast(output_streams_infos);
+        })
+        .def("get_vstream_names_from_stream_name", [](ConfiguredNetworkGroup& self, const std::string &stream_name)
+        {
+            auto result = self.get_vstream_names_from_stream_name(stream_name);
+            VALIDATE_EXPECTED(result);
+            return py::cast(result.release());
+        })
+        .def("get_stream_names_from_vstream_name", [](ConfiguredNetworkGroup& self, const std::string &vstream_name)
+        {
+            auto result = self.get_stream_names_from_vstream_name(vstream_name);
+            VALIDATE_EXPECTED(result);
+            return py::cast(result.release());
+        })
+        .def("make_input_vstream_params", [](ConfiguredNetworkGroup& self, const std::string &name, bool quantized, hailo_format_type_t format_type,
+            uint32_t timeout_ms, uint32_t queue_size)
+        {
+            auto result = self.make_input_vstream_params(quantized, format_type, timeout_ms, queue_size, name);
+            VALIDATE_EXPECTED(result);
+            return py::cast(result.release());
+        })
+        .def("make_output_vstream_params", [](ConfiguredNetworkGroup& self, const std::string &name, bool quantized, hailo_format_type_t format_type,
+            uint32_t timeout_ms, uint32_t queue_size)
+        {
+            auto result = self.make_output_vstream_params(quantized, format_type, timeout_ms, queue_size, name);
+            VALIDATE_EXPECTED(result);
+            return py::cast(result.release());
+        })
+        .def(py::pickle(
+            [](const ConfiguredNetworkGroup &cng) { // __getstate__
+                auto handle = cng.get_client_handle();
+                VALIDATE_EXPECTED(handle);
+                return py::make_tuple(handle.value(), cng.name());
+            },
+            [](py::tuple t) { // __setstate__
+                auto handle = t[0].cast<uint32_t>();
+                auto net_group_name = t[1].cast<std::string>();
+                auto net_group = ConfiguredNetworkGroup::duplicate_network_group_client(handle, net_group_name);
+                VALIDATE_EXPECTED(net_group);
+                
+                return net_group.value();
+            }
+        ))
         ;
 
     ActivatedAppContextManagerWrapper::add_to_python_module(m);

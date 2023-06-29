@@ -22,7 +22,6 @@ namespace hailort {
 #define CCW_DATA_OFFSET (CCW_BYTES_IN_WORD * 2)
 #define CCW_HEADER_SIZE (CCW_DATA_OFFSET)
 
-
 class ConfigBuffer final
 {
 public:
@@ -57,6 +56,8 @@ private:
         vdma::ChannelId channel_id, const std::vector<uint32_t> &cfg_sizes);
     static Expected<std::unique_ptr<vdma::VdmaBuffer>> create_ccb_buffer(HailoRTDriver &driver,
         uint32_t buffer_size);
+    static Expected<std::unique_ptr<vdma::VdmaBuffer>> create_buffer(HailoRTDriver &driver, vdma::ChannelId channel_id,
+        const std::vector<uint32_t> &cfg_sizes, const uint32_t buffer_size);
 
     static bool should_use_ccb(HailoRTDriver &driver);
 

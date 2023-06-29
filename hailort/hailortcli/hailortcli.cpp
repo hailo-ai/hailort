@@ -26,6 +26,7 @@
 #endif
 #include "parse_hef_command.hpp"
 #include "fw_control_command.hpp"
+#include "measure_nnc_performance_command.hpp"
 
 #include "firmware_header_utils.h"
 #include "hailo/hailort.h"
@@ -200,6 +201,7 @@ public:
         add_subcommand<MonCommand>();
 #if defined(__GNUC__)
         add_subcommand<UdpRateLimiterCommand>();
+        add_subcommand<HwInferEstimatorCommand>();
 #endif
         add_subcommand<ParseHefCommand>();
         add_subcommand<FwControlCommand>();

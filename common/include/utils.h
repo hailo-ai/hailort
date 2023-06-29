@@ -10,6 +10,8 @@
 #ifndef __UTILS_H__
 #define __UTILS_H__
 
+#include <stdint.h>
+
 /** A compile time assertion check.
  *
  *  Validate at compile time that the predicate is true without
@@ -124,5 +126,21 @@ _PP_ISEMPTY(                                            \
 #define ALL_UNUSED(...) ALL_UNUSED_IMPL( PP_NARG(__VA_ARGS__))(__VA_ARGS__ )
 
 #define MICROSECONDS_IN_MILLISECOND (1000)
+
+static inline uint8_t ceil_log2(uint32_t n)
+{
+    uint8_t result = 0;
+
+    if (n <= 1) {
+        return 0;
+    }
+
+    while (n > 1) {
+        result++;
+        n = (n + 1) >> 1;
+    }
+
+    return result;
+}
 
 #endif /* __UTILS_H__ */

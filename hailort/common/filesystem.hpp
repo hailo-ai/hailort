@@ -35,6 +35,7 @@ public:
     static Expected<time_t> get_file_modified_time(const std::string &file_path);
     static Expected<bool> is_directory(const std::string &path);
     static hailo_status create_directory(const std::string &dir_path);
+    static hailo_status remove_directory(const std::string &dir_path);
     static Expected<std::string> get_current_dir();
     static std::string get_home_directory();
     static bool is_path_accesible(const std::string &path);

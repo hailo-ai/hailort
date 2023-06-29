@@ -12,8 +12,6 @@ set(FILES
     ${HAILO_OS_DIR}/hailort_driver.cpp
     ${HAILO_OS_DIR}/file_descriptor.cpp
     ${HAILO_FULL_OS_DIR}/driver_scan.cpp
-    # TODO: HRT-3816 remove mmap header
-    ${HAILO_OS_DIR}/mmap_buffer.cpp
 )
 
 if(WIN32)
@@ -51,3 +49,8 @@ if(READLINE_INCLUDE_DIR AND READLINE_LIBRARY)
 else()
     message(WARNING "Could not find readline library. To better UI, please install it by calling `sudo apt install libreadline6-dev`")
 endif()
+
+install(TARGETS debalex
+   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+cli11_install_completion_file(debalex)

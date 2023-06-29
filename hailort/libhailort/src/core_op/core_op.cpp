@@ -150,85 +150,6 @@ Expected<LatencyMeasurementResult> CoreOp::get_latency_measurement(const std::st
     return result;
 }
 
-Expected<OutputStreamWithParamsVector> CoreOp::get_output_streams_from_vstream_names(
-    const std::map<std::string, hailo_vstream_params_t> &outputs_params)
-{
-    OutputStreamWithParamsVector results;
-    std::unordered_map<std::string, hailo_vstream_params_t> outputs_edges_params;
-    for (auto &name_params_pair : outputs_params) {
-        auto stream_names = m_metadata->get_stream_names_from_vstream_name(name_params_pair.first);
-        CHECK_EXPECTED(stream_names);
-
-        for (auto &stream_name : stream_names.value()) {
-            CHECK_AS_EXPECTED(contains(m_output_streams, stream_name), HAILO_NOT_FOUND);
-            auto output_stream = m_output_streams.at(stream_name);
-            if (output_stream->get_info().is_mux) {
-                outputs_edges_params.emplace(name_params_pair);
-            }
-            else {
-                NameToVStreamParamsMap name_to_params = {name_params_pair};
-                results.emplace_back(output_stream, name_to_params);
-            }
-        }
-    }
-    // Add non mux streams to result
-    hailo_status status = add_mux_streams_by_edges_names(results, outputs_edges_params); 
-    CHECK_SUCCESS_AS_EXPECTED(status);
-
-    return results;
-}
-
-// This function adds to results the OutputStreams that correspond to the edges in outputs_edges_params.
-// If an edge name appears in outputs_edges_params then all of its predecessors must appear in outputs_edges_params as well, Otherwise, an error is returned.
-// We use the set seen_edges in order to mark the edges already evaluated by one of its' predecessor.
-hailo_status CoreOp::add_mux_streams_by_edges_names(OutputStreamWithParamsVector &results,
-    const std::unordered_map<std::string, hailo_vstream_params_t> &outputs_edges_params)
-{
-    std::unordered_set<std::string> seen_edges;
-    for (auto &name_params_pair : outputs_edges_params) {
-        if (seen_edges.end() != seen_edges.find(name_params_pair.first)) {
-            // Edge has already been seen by one of its predecessors
-            continue;
-        }
-        auto output_streams = get_output_streams_by_vstream_name(name_params_pair.first);
-        CHECK_EXPECTED_AS_STATUS(output_streams);
-        CHECK(output_streams->size() == 1, HAILO_INVALID_ARGUMENT,
-            "mux streams cannot be separated into multiple streams");
-        auto output_stream = output_streams.release()[0];
-
-        // TODO: Find a better way to get the mux edges without creating OutputDemuxer
-        auto expected_demuxer = OutputDemuxer::create(*output_stream);
-        CHECK_EXPECTED_AS_STATUS(expected_demuxer);
-
-        NameToVStreamParamsMap name_to_params;
-        for (auto &edge : expected_demuxer.value()->get_edges_stream_info()) {
-            auto edge_name_params_pair = outputs_edges_params.find(edge.name);
-            CHECK(edge_name_params_pair != outputs_edges_params.end(), HAILO_INVALID_ARGUMENT,
-                "All edges of stream {} must be in output vstream params. edge {} is missing.",
-                name_params_pair.first, edge.name);
-            seen_edges.insert(edge.name);
-            name_to_params.insert(*edge_name_params_pair);
-        }
-        results.emplace_back(output_stream, name_to_params);
-    }
-    return HAILO_SUCCESS;
-}
-
-Expected<OutputStreamPtrVector> CoreOp::get_output_streams_by_vstream_name(const std::string &name)
-{
-    auto stream_names = m_metadata->get_stream_names_from_vstream_name(name);
-    CHECK_EXPECTED(stream_names);
-
-    OutputStreamPtrVector output_streams;
-    output_streams.reserve(stream_names->size());
-    for (const auto &stream_name : stream_names.value()) {
-        CHECK_AS_EXPECTED(contains(m_output_streams, stream_name), HAILO_NOT_FOUND);
-        output_streams.emplace_back(m_output_streams.at(stream_name));
-    }
-
-    return output_streams;
-}
-
 Expected<LayerInfo> CoreOp::get_layer_info(const std::string &stream_name)
 {
     for (auto layer_info : m_metadata->get_all_layer_infos()) {
@@ -309,11 +230,6 @@ hailo_status CoreOp::deactivate_low_level_streams()
     }
 
     return status;
-}
-
-Expected<std::vector<std::string>> CoreOp::get_vstream_names_from_stream_name(const std::string &stream_name)
-{
-    return m_metadata->get_vstream_names_from_stream_name(stream_name);
 }
 
 const SupportedFeatures &CoreOp::get_supported_features()
@@ -587,97 +503,10 @@ hailo_status CoreOp::wait_for_activation(const std::chrono::milliseconds &timeou
     return m_core_op_activated_event->wait(timeout);
 }
 
-Expected<std::vector<std::vector<std::string>>> CoreOp::get_output_vstream_groups()
-{
-    std::vector<std::vector<std::string>> results;
-
-    for (auto output_stream : get_output_streams()) {
-        auto vstreams_group = get_vstream_names_from_stream_name(output_stream.get().name());
-        CHECK_EXPECTED(vstreams_group);
-        results.push_back(vstreams_group.release());
-    }
-
-    return results;
-}
-
-Expected<std::vector<std::map<std::string, hailo_vstream_params_t>>> CoreOp::make_output_vstream_params_groups(
-    bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size)
-{
-    auto params = make_output_vstream_params(quantized, format_type, timeout_ms, queue_size);
-    CHECK_EXPECTED(params);
-
-    auto groups = get_output_vstream_groups();
-    CHECK_EXPECTED(groups);
-
-    std::vector<std::map<std::string, hailo_vstream_params_t>> results(groups->size(), std::map<std::string, hailo_vstream_params_t>());
-
-    size_t pipeline_group_index = 0;
-    for (const auto &group : groups.release()) {
-        for (const auto &name_pair : params.value()) {
-            if (contains(group, name_pair.first)) {
-                results[pipeline_group_index].insert(name_pair);
-            }
-        }
-        pipeline_group_index++;
-    }
-
-    return results;
-}
-
-Expected<std::map<std::string, hailo_vstream_params_t>> CoreOp::make_input_vstream_params(
-    bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
-    const std::string &network_name)
-{
-    auto input_vstream_infos = m_metadata->get_input_vstream_infos(network_name);
-    CHECK_EXPECTED(input_vstream_infos);
-
-    std::map<std::string, hailo_vstream_params_t> res;
-    auto status = Hef::Impl::fill_missing_vstream_params_with_default(res, input_vstream_infos.value(), quantized, 
-        format_type, timeout_ms, queue_size);
-    CHECK_SUCCESS_AS_EXPECTED(status);
-    return res;
-}
-
-Expected<std::map<std::string, hailo_vstream_params_t>> CoreOp::make_output_vstream_params(
-    bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
-    const std::string &network_name)
-{
-    auto output_vstream_infos = m_metadata->get_output_vstream_infos(network_name);
-    CHECK_EXPECTED(output_vstream_infos);
-    std::map<std::string, hailo_vstream_params_t> res;
-    auto status = Hef::Impl::fill_missing_vstream_params_with_default(res, output_vstream_infos.value(), quantized, 
-        format_type, timeout_ms, queue_size);
-    CHECK_SUCCESS_AS_EXPECTED(status);
-    return res;
-}
-
-Expected<std::vector<hailo_network_info_t>> CoreOp::get_network_infos() const
-{
-    return m_metadata->get_network_infos();
-}
-
 Expected<std::vector<hailo_stream_info_t>> CoreOp::get_all_stream_infos(
     const std::string &network_name) const
 {
     return m_metadata->get_all_stream_infos(network_name);
-}
-
-Expected<std::vector<hailo_vstream_info_t>> CoreOp::get_input_vstream_infos(
-    const std::string &network_name) const
-{
-    return m_metadata->get_input_vstream_infos(network_name);
-}
-
-Expected<std::vector<hailo_vstream_info_t>> CoreOp::get_output_vstream_infos(
-    const std::string &network_name) const
-{
-    return m_metadata->get_output_vstream_infos(network_name);
-}
-
-Expected<std::vector<hailo_vstream_info_t>> CoreOp::get_all_vstream_infos(
-    const std::string &network_name) const
-{
-    return m_metadata->get_all_vstream_infos(network_name);
 }
 
 AccumulatorPtr CoreOp::get_activation_time_accumulator() const

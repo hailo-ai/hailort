@@ -12,20 +12,16 @@
 namespace hailort {
 namespace vdma {
 
-// Minimum size of ccb buffers in descriptors, taken from the CCB spec.
-#define MIN_CCB_DESCRIPTORS_COUNT (16)
-
-static uint32_t align(uint32_t size, uint32_t align)
-{
-    assert(is_powerof2(align));
-    const uint32_t mask = align - 1;
-    return (size + mask) & ~mask;
-}
-
 Expected<ContinuousBuffer> ContinuousBuffer::create(size_t size, HailoRTDriver &driver)
 {
     auto result = driver.vdma_continuous_buffer_alloc(size);
-    CHECK_EXPECTED(result, "Failed allocating continuous buffer, size {}", size);
+    /* Don't print error here since this might be expected error that the libhailoRT can recover from
+        (out of host memory). If it's not the case, there is a print in hailort_driver.cpp file */
+    if (HAILO_OUT_OF_HOST_CMA_MEMORY == result.status()) {
+        return make_unexpected(result.status());
+    } else {
+        CHECK_EXPECTED(result);
+    }
 
     uintptr_t handle = 0;
     uint64_t dma_address = 0;
@@ -39,23 +35,6 @@ Expected<ContinuousBuffer> ContinuousBuffer::create(size_t size, HailoRTDriver &
     }
 
     return ContinuousBuffer(size, driver, handle, dma_address, mmap.release());
-}
-
-uint32_t ContinuousBuffer::get_buffer_size(uint32_t buffer_size)
-{
-    const uint16_t page_size = DEFAULT_DESC_PAGE_SIZE;
-    const auto aligned_buffer_size = align(buffer_size, page_size);
-
-    const uint32_t min_buffer_size = page_size * MIN_CCB_DESCRIPTORS_COUNT;
-    return std::max(aligned_buffer_size, min_buffer_size);
-}
-
-uint32_t ContinuousBuffer::get_buffer_size_desc_power2(uint32_t buffer_size)
-{
-    const uint16_t page_size = DEFAULT_DESC_PAGE_SIZE;
-    const auto descriptors_in_buffer = DIV_ROUND_UP(buffer_size, page_size);
-    const auto actual_descriptors_count = get_nearest_powerof_2(descriptors_in_buffer, MIN_CCB_DESCRIPTORS_COUNT);
-    return actual_descriptors_count * page_size;
 }
 
 ContinuousBuffer::~ContinuousBuffer()
@@ -96,7 +75,7 @@ uint32_t ContinuousBuffer::descs_count() const
     return descriptors_in_buffer(m_size);
 }
 
-hailo_status ContinuousBuffer::read(void *buf_dst, size_t count, size_t offset, bool /* should_sync */)
+hailo_status ContinuousBuffer::read(void *buf_dst, size_t count, size_t offset)
 {
     CHECK((count + offset) <= m_size, HAILO_INSUFFICIENT_BUFFER,
         "Requested size {} from offset {} is more than the buffer size {}", count, offset, m_size);
@@ -117,11 +96,10 @@ hailo_status ContinuousBuffer::write(const void *buf_src, size_t count, size_t o
 }
 
 Expected<uint32_t> ContinuousBuffer::program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
-    size_t desc_offset, bool is_circular)
+    size_t desc_offset)
 {
     (void)last_desc_interrupts_domain;
     (void)desc_offset;
-    (void)is_circular;
 
     // The descriptors in continuous mode are programmed by the hw, nothing to do here.
     return descriptors_in_buffer(transfer_size);

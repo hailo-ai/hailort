@@ -106,7 +106,7 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_download_context_action_list_reques
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_context_switch_status_request(
         CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
         CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status, uint8_t application_index,
-        uint16_t dynamic_batch_size, bool keep_nn_config_during_reset);
+        uint16_t dynamic_batch_size, uint16_t batch_count, bool keep_nn_config_during_reset);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_wd_enable(
     CONTROL_PROTOCOL__request_t *request,
     size_t *request_size,
@@ -172,6 +172,6 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_hw_consts_request(CONTROL_PROTO
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_sleep_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint8_t sleep_state);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_hw_infer_status_request(CONTROL_PROTOCOL__request_t *request, 
     size_t *request_size, uint32_t sequence, uint8_t hw_infer_state, uint8_t network_group_index, 
-    uint16_t dynamic_batch_size, CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info);
+    uint16_t dynamic_batch_size, uint16_t batch_count, CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info);
 
 #endif /* _CONTROL_PROTOCOL_HPP_ */

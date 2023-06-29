@@ -18,7 +18,7 @@ namespace hailort
 {
 
 Expected<std::unique_ptr<ActivatedNetworkGroup>> VDeviceActivatedCoreOp::create(
-    std::vector<std::shared_ptr<CoreOp>> &core_ops,
+    std::map<device_id_t, std::vector<std::shared_ptr<CoreOp>>> &core_ops,
     std::map<std::string, std::shared_ptr<InputStream>> &input_streams,
     std::map<std::string, std::shared_ptr<OutputStream>> &output_streams,
     const hailo_activate_network_group_params_t &network_group_params,
@@ -29,11 +29,14 @@ Expected<std::unique_ptr<ActivatedNetworkGroup>> VDeviceActivatedCoreOp::create(
     auto status = HAILO_UNINITIALIZED;
     std::vector<std::unique_ptr<ActivatedNetworkGroup>> activated_network_groups;
     activated_network_groups.reserve(core_ops.size());
-    for (auto core_op : core_ops) {
-        auto ang = core_op->create_activated_network_group(network_group_params, dynamic_batch_size,
-            resume_pending_stream_transfers);
-        CHECK_EXPECTED(ang);
-        activated_network_groups.emplace_back(ang.release());
+    for (const auto &pair : core_ops) {
+        auto &core_op_vector = pair.second;
+        for (auto &core_op : core_op_vector) {
+            auto ang = core_op->create_activated_network_group(network_group_params, dynamic_batch_size,
+                resume_pending_stream_transfers);
+            CHECK_EXPECTED(ang);
+            activated_network_groups.emplace_back(ang.release());
+        }
     }
     auto ang = VDeviceActivatedCoreOp(std::move(activated_network_groups), input_streams, output_streams,
         network_group_params, core_op_activated_event, deactivation_time_accumulator, status);
@@ -87,7 +90,7 @@ VDeviceActivatedCoreOp::VDeviceActivatedCoreOp(VDeviceActivatedCoreOp &&other) n
 }
 
 
-Expected<std::shared_ptr<VDeviceCoreOp>> VDeviceCoreOp::create(std::vector<std::shared_ptr<CoreOp>> core_ops,
+Expected<std::shared_ptr<VDeviceCoreOp>> VDeviceCoreOp::create(const std::map<device_id_t, std::vector<std::shared_ptr<CoreOp>>> &core_ops,
         CoreOpsSchedulerWeakPtr core_ops_scheduler, const std::string &hef_hash)
 {
     auto status = HAILO_UNINITIALIZED;
@@ -116,9 +119,9 @@ Expected<std::shared_ptr<VDeviceCoreOp>> VDeviceCoreOp::duplicate(std::shared_pt
 }
 
 
-VDeviceCoreOp::VDeviceCoreOp(std::vector<std::shared_ptr<CoreOp>> core_ops,
+VDeviceCoreOp::VDeviceCoreOp(const std::map<device_id_t, std::vector<std::shared_ptr<CoreOp>>> &core_ops,
     CoreOpsSchedulerWeakPtr core_ops_scheduler, const std::string &hef_hash, hailo_status &status) :
-        CoreOp(core_ops[0]->m_config_params, core_ops[0]->m_metadata, status),
+        CoreOp((core_ops.begin()->second)[0]->m_config_params, (core_ops.begin()->second)[0]->m_metadata, status),
         m_core_ops(std::move(core_ops)),
         m_core_ops_scheduler(core_ops_scheduler),
         m_scheduler_handle(INVALID_CORE_OP_HANDLE),
@@ -129,21 +132,25 @@ VDeviceCoreOp::VDeviceCoreOp(std::vector<std::shared_ptr<CoreOp>> core_ops,
 
 Expected<hailo_stream_interface_t> VDeviceCoreOp::get_default_streams_interface()
 {
-    auto first_streams_interface = m_core_ops[0]->get_default_streams_interface();
+    auto first_streams_interface = (m_core_ops.begin()->second)[0]->get_default_streams_interface();
     CHECK_EXPECTED(first_streams_interface);
 #ifndef NDEBUG
     // Check that all physical devices has the same interface
-    for (auto &core_op : m_core_ops) {
-        auto iface = core_op->get_default_streams_interface();
-        CHECK_EXPECTED(iface);
-        CHECK_AS_EXPECTED(iface.value() == first_streams_interface.value(), HAILO_INTERNAL_FAILURE,
-            "Not all default stream interfaces are the same");
+    for (const auto &pair : m_core_ops) {
+        auto &core_op_vector = pair.second;
+        for (auto &core_op : core_op_vector) {
+            auto iface = core_op->get_default_streams_interface();
+            CHECK_EXPECTED(iface);
+            CHECK_AS_EXPECTED(iface.value() == first_streams_interface.value(), HAILO_INTERNAL_FAILURE,
+                "Not all default stream interfaces are the same");
+        }
     }
 #endif
     return first_streams_interface;
 }
 
-hailo_status VDeviceCoreOp::create_vdevice_streams_from_config_params(std::shared_ptr<PipelineMultiplexer> multiplexer, scheduler_core_op_handle_t scheduler_handle)
+hailo_status VDeviceCoreOp::create_vdevice_streams_from_config_params(std::shared_ptr<PipelineMultiplexer> multiplexer,
+    scheduler_core_op_handle_t scheduler_handle)
 {
     // TODO - HRT-6931 - raise error on this case
     if (((m_config_params.latency & HAILO_LATENCY_MEASURE) == HAILO_LATENCY_MEASURE) && (1 < m_core_ops.size())) {
@@ -183,8 +190,11 @@ hailo_status VDeviceCoreOp::create_vdevice_streams_from_config_params(std::share
         TRACE(CreateCoreOpInputStreamsTrace, "", name(), input_stream.first, (uint32_t)expected_queue_size.value());
     }
     for (const auto &output_stream : m_output_streams) {
-        if ((hailo_format_order_t::HAILO_FORMAT_ORDER_HAILO_NMS == (static_cast<OutputStreamBase&>(*output_stream.second).get_layer_info().format.order)) ||
-            (HAILO_STREAM_INTERFACE_ETH == static_cast<OutputStreamBase&>(*output_stream.second).get_interface())) {
+        if (hailo_format_order_t::HAILO_FORMAT_ORDER_HAILO_NMS == (static_cast<OutputStreamBase&>(*output_stream.second).get_layer_info().format.order)) {
+            TRACE(CreateCoreOpOutputStreamsTrace, "", name(), output_stream.first, SCHEDULER_MON_NAN_VAL);
+            continue;
+        }
+        if (HAILO_STREAM_INTERFACE_ETH == static_cast<OutputStreamBase&>(*output_stream.second).get_interface()) {
             continue;
         }
         auto expected_queue_size = static_cast<OutputStreamBase&>(*output_stream.second).get_buffer_frames_size();
@@ -192,8 +202,10 @@ hailo_status VDeviceCoreOp::create_vdevice_streams_from_config_params(std::share
         TRACE(CreateCoreOpOutputStreamsTrace, "", name(), output_stream.first, (uint32_t)expected_queue_size.value());
     }
 
-    auto status = m_multiplexer->add_core_op_instance(m_multiplexer_handle, *this);
-    CHECK_SUCCESS(status);
+    if (m_multiplexer) {
+        auto status = m_multiplexer->add_core_op_instance(m_multiplexer_handle, *this);
+        CHECK_SUCCESS(status);
+    }
 
     return HAILO_SUCCESS;
 }
@@ -204,27 +216,36 @@ hailo_status VDeviceCoreOp::create_input_vdevice_stream_from_config_params(const
     auto edge_layer = get_layer_info(stream_name);
     CHECK_EXPECTED_AS_STATUS(edge_layer);
 
-    if (HailoRTCommon::is_vdma_stream_interface(stream_params.stream_interface)){
-        std::vector<std::reference_wrapper<VdmaInputStream>> low_level_streams;
-        low_level_streams.reserve(m_core_ops.size());
-        for (auto &core_op : m_core_ops) {
-            auto stream = core_op->get_input_stream_by_name(stream_name);
-            CHECK(stream, HAILO_INTERNAL_FAILURE);
-            low_level_streams.emplace_back(dynamic_cast<VdmaInputStream&>(stream.release().get()));
+    if (HailoRTCommon::is_vdma_stream_interface(stream_params.stream_interface)) {
+        std::map<device_id_t, std::reference_wrapper<VdmaInputStreamBase>> low_level_streams;
+        for (const auto &pair : m_core_ops) {
+            auto &device_id = pair.first;
+            auto &core_op_vector = pair.second;
+            for (auto &core_op : core_op_vector) {
+                auto stream = core_op->get_input_stream_by_name(stream_name);
+                CHECK(stream, HAILO_INTERNAL_FAILURE);
+                low_level_streams.emplace(device_id, dynamic_cast<VdmaInputStreamBase&>(stream.release().get()));
+            }
         }
-        auto input_stream = InputVDeviceBaseStream::create(std::move(low_level_streams), edge_layer.value(),
-            scheduler_handle, m_core_op_activated_event, m_core_ops_scheduler);
+        auto input_stream = VDeviceInputStreamBase::create(std::move(low_level_streams), stream_params, 
+            edge_layer.value(), scheduler_handle, m_core_op_activated_event, m_core_ops_scheduler);
         CHECK_EXPECTED_AS_STATUS(input_stream);
-        auto input_stream_wrapper = VDeviceInputStreamMultiplexerWrapper::create(input_stream.release(), edge_layer->network_name, multiplexer, scheduler_handle);
-        CHECK_EXPECTED_AS_STATUS(input_stream_wrapper);
-        m_input_streams.insert(make_pair(stream_name, input_stream_wrapper.release()));
+
+        if (multiplexer) {
+            auto input_stream_wrapper = VDeviceInputStreamMultiplexerWrapper::create(input_stream.release(), edge_layer->network_name, multiplexer, scheduler_handle);
+            CHECK_EXPECTED_AS_STATUS(input_stream_wrapper);
+            m_input_streams.insert(make_pair(stream_name, input_stream_wrapper.release()));
+        } else {
+            m_input_streams.insert(make_pair(stream_name, input_stream.release()));
+        }
+
     } else {
         assert(1 == m_core_ops.size());
-        auto stream = m_core_ops[0]->get_input_stream_by_name(stream_name);
+        auto stream = (m_core_ops.begin()->second)[0]->get_input_stream_by_name(stream_name);
         CHECK(stream, HAILO_INTERNAL_FAILURE);
         assert(1 == m_core_ops.size());
-        assert(contains(m_core_ops[0]->m_input_streams, stream_name));
-        m_input_streams.insert(make_pair(stream_name, m_core_ops[0]->m_input_streams.at(stream_name)));
+        assert(contains((m_core_ops.begin()->second)[0]->m_input_streams, stream_name));
+        m_input_streams.insert(make_pair(stream_name, m_core_ops.begin()->second[0]->m_input_streams.at(stream_name)));
     }
 
     return HAILO_SUCCESS;
@@ -237,23 +258,32 @@ hailo_status VDeviceCoreOp::create_output_vdevice_stream_from_config_params(cons
     CHECK_EXPECTED_AS_STATUS(edge_layer);
 
     if (HailoRTCommon::is_vdma_stream_interface(stream_params.stream_interface)) {
-        std::vector<std::reference_wrapper<VdmaOutputStream>> low_level_streams;
-        low_level_streams.reserve(m_core_ops.size());
-        for (auto &core_op : m_core_ops) {
-            auto stream = core_op->get_output_stream_by_name(stream_name);
-            CHECK(stream, HAILO_INTERNAL_FAILURE);
-            low_level_streams.emplace_back(dynamic_cast<VdmaOutputStream&>(stream.release().get()));
+        std::map<device_id_t, std::reference_wrapper<VdmaOutputStreamBase>> low_level_streams;
+        for (const auto &pair : m_core_ops) {
+            auto &device_id = pair.first;
+            auto &core_op_vector = pair.second;
+            for (auto &core_op : core_op_vector) {
+                auto stream = core_op->get_output_stream_by_name(stream_name);
+                CHECK(stream, HAILO_INTERNAL_FAILURE);
+                low_level_streams.emplace(device_id, dynamic_cast<VdmaOutputStreamBase&>(stream.release().get()));
+            }
         }
-        auto output_stream = OutputVDeviceBaseStream::create(std::move(low_level_streams), edge_layer.value(),
-            scheduler_handle, m_core_op_activated_event, m_core_ops_scheduler);
+        auto output_stream = VDeviceOutputStreamBase::create(std::move(low_level_streams), stream_params,
+            edge_layer.value(), scheduler_handle, m_core_op_activated_event, m_core_ops_scheduler);
         CHECK_EXPECTED_AS_STATUS(output_stream);
-        auto output_stream_wrapper = VDeviceOutputStreamMultiplexerWrapper::create(output_stream.release(), edge_layer->network_name, multiplexer, scheduler_handle);
-        CHECK_EXPECTED_AS_STATUS(output_stream_wrapper);
-        m_output_streams.insert(make_pair(stream_name, output_stream_wrapper.release()));
+
+        if (multiplexer) {
+            // We allow multiplexer only on scheduled streams.
+            auto output_stream_wrapper = VDeviceOutputStreamMultiplexerWrapper::create(output_stream.release(), edge_layer->network_name, multiplexer, scheduler_handle);
+            CHECK_EXPECTED_AS_STATUS(output_stream_wrapper);
+            m_output_streams.insert(make_pair(stream_name, output_stream_wrapper.release()));
+        } else {
+            m_output_streams.insert(make_pair(stream_name, output_stream.release()));
+        }
     } else {
         assert(1 == m_core_ops.size());
-        assert(contains(m_core_ops[0]->m_output_streams, stream_name));
-        m_output_streams.insert(make_pair(stream_name, m_core_ops[0]->m_output_streams.at(stream_name)));
+        assert(contains((m_core_ops.begin()->second)[0]->m_output_streams, stream_name));
+        m_output_streams.insert(make_pair(stream_name, (m_core_ops.begin()->second)[0]->m_output_streams.at(stream_name)));
     }
 
     return HAILO_SUCCESS;
@@ -266,6 +296,7 @@ hailo_status VDeviceCoreOp::create_vdevice_streams_from_duplicate(std::shared_pt
         LOGGER__WARNING("Latency measurement is not supported on more than 1 physical device.");
     }
 
+    assert(other->m_multiplexer != nullptr);
     m_multiplexer = other->m_multiplexer;
     m_multiplexer_handle = other->multiplexer_duplicates_count() + 1;
 
@@ -347,7 +378,7 @@ hailo_status VDeviceCoreOp::set_scheduler_priority(uint8_t priority, const std::
 
 Expected<std::shared_ptr<LatencyMetersMap>> VDeviceCoreOp::get_latency_meters()
 {
-    return m_core_ops[0]->get_latency_meters();
+    return m_core_ops.begin()->second[0]->get_latency_meters();
 }
 
 Expected<vdma::BoundaryChannelPtr> VDeviceCoreOp::get_boundary_vdma_channel_by_stream_name(const std::string &stream_name)
@@ -355,7 +386,7 @@ Expected<vdma::BoundaryChannelPtr> VDeviceCoreOp::get_boundary_vdma_channel_by_s
     CHECK_AS_EXPECTED(1 == m_core_ops.size(), HAILO_INVALID_OPERATION,
         "get_boundary_vdma_channel_by_stream_name function is not supported on more than 1 physical device.");
 
-    return m_core_ops[0]->get_boundary_vdma_channel_by_stream_name(stream_name);
+    return m_core_ops.begin()->second[0]->get_boundary_vdma_channel_by_stream_name(stream_name);
 }
 
 void VDeviceCoreOp::set_vstreams_multiplexer_callbacks(std::vector<OutputVStream> &output_vstreams)
@@ -376,10 +407,10 @@ void VDeviceCoreOp::set_vstreams_multiplexer_callbacks(std::vector<OutputVStream
     }
 }
 
-Expected<std::shared_ptr<VdmaConfigCoreOp>> VDeviceCoreOp::get_core_op_by_device_index(uint32_t device_index)
+Expected<std::shared_ptr<VdmaConfigCoreOp>> VDeviceCoreOp::get_core_op_by_device_id(const device_id_t &device_id)
 {
-    CHECK_AS_EXPECTED(device_index < m_core_ops.size(), HAILO_INVALID_ARGUMENT);
-    auto core_op = std::dynamic_pointer_cast<VdmaConfigCoreOp>(m_core_ops[device_index]);
+    CHECK_AS_EXPECTED(m_core_ops.count(device_id), HAILO_INVALID_ARGUMENT);
+    auto core_op = std::dynamic_pointer_cast<VdmaConfigCoreOp>(m_core_ops[device_id][0]);
     CHECK_NOT_NULL_AS_EXPECTED(core_op, HAILO_INTERNAL_FAILURE);
     return core_op;
 }
@@ -405,6 +436,13 @@ Expected<std::unique_ptr<ActivatedNetworkGroup>> VDeviceCoreOp::create_activated
     m_activation_time_accumulator->add_data_point(elapsed_time_ms);
 
     return res;
+}
+
+Expected<HwInferResults> VDeviceCoreOp::run_hw_infer_estimator()
+{
+    CHECK_AS_EXPECTED(1 == m_core_ops.size(), HAILO_INVALID_OPERATION,
+        "run_hw_infer_estimator function is not supported on more than 1 physical device.");
+    return m_core_ops.begin()->second[0]->run_hw_infer_estimator();
 }
 
 } /* namespace hailort */

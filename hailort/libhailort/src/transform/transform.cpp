@@ -185,6 +185,7 @@ hailo_status transform__transpose_buffer(const void *src_ptr, const hailo_3d_ima
     switch (format.order)
     {
     case HAILO_FORMAT_ORDER_NHWC:
+    case HAILO_FORMAT_ORDER_RGB4:
     case HAILO_FORMAT_ORDER_NHW:
     case HAILO_FORMAT_ORDER_BAYER_RGB:
     case HAILO_FORMAT_ORDER_12_BIT_BAYER_RGB:
@@ -445,8 +446,8 @@ static inline void transform__parse_and_copy_bbox (hailo_bbox_t *dst, uint64_t* 
 void transform__d2h_NMS(const uint8_t *src_ptr, uint8_t *dst_ptr, const hailo_nms_info_t &nms_info, std::vector<size_t> &chunk_offsets)
 {
     /* Validate arguments */
-    ASSERT(NULL != src_ptr);
-    ASSERT(NULL != dst_ptr);
+    assert(NULL != src_ptr);
+    assert(NULL != dst_ptr);
 
     uint32_t num_of_classes = nms_info.number_of_classes;
     uint32_t bbox_size = nms_info.bbox_size;
@@ -485,6 +486,7 @@ void transform__d2h_NMS(const uint8_t *src_ptr, uint8_t *dst_ptr, const hailo_nm
             // Add bbox from all chunks of current class
             src_offset = chunk_offsets[chunk_index];
             class_bboxes_count = *((nms_bbox_counter_t*)((uint8_t*)src_ptr + src_offset));
+            assert(class_bboxes_count <= nms_info.max_bboxes_per_class);
             *dst_bbox_counter = static_cast<nms_bbox_counter_t>(*dst_bbox_counter + class_bboxes_count);
 
             src_offset += sizeof(nms_bbox_counter_t);
@@ -739,8 +741,8 @@ hailo_status transform__d2h_argmax_NHCW_to_NHW(const T *src_ptr, const hailo_3d_
     CHECK(dst_image_shape.features == 1, HAILO_INVALID_OPERATION,
         "NHCW_to_NHW argmax Transform is supported only when dst features ({}) is 1",
         dst_image_shape.features);
-    CHECK(src_image_shape.features < std::numeric_limits<T>::max(), HAILO_INVALID_OPERATION,
-        "NHCW_to_NHW argmax Transform is supported only when src features ({}) is smaller than {}",
+    CHECK(src_image_shape.features <= std::numeric_limits<T>::max(), HAILO_INVALID_OPERATION,
+        "NHCW_to_NHW argmax Transform is supported only when src features ({}) is equal/smaller than {}",
         src_image_shape.features, std::numeric_limits<T>::max());
 
     const auto src_row_size = src_image_shape.width * src_image_shape.features;
@@ -828,7 +830,7 @@ hailo_status transform__h2d_RGB4_to_NHCW(const T *src_ptr, const hailo_3d_image_
     const auto src_row_size = HailoRTCommon::align_to(row_size, RGB4_ALIGNMENT);
     const auto dst_row_size = dst_image_shape.width * dst_image_shape.features;
 
-    const auto pad_size = (dst_image_shape.width - src_image_shape.width) * dst_image_shape.features;
+    const auto pad_size = dst_image_shape.width - src_image_shape.width;
 
     uint32_t src_offset = 0;
     uint32_t dst_offset = 0;
@@ -841,7 +843,7 @@ hailo_status transform__h2d_RGB4_to_NHCW(const T *src_ptr, const hailo_3d_image_
                 dst_offset = r * dst_row_size + f * dst_image_shape.width + c;
                 dst_ptr[dst_offset] = src_ptr[src_offset];
             }
-            /* pad feature to 8 elemnts */
+            /* pad feature to 8 elements */
             if (pad_size != 0) {
                 dst_offset = r * dst_row_size + f * dst_image_shape.width + src_image_shape.width;
                 std::fill_n(dst_ptr + dst_offset, pad_size, static_cast<T>(0));
@@ -901,7 +903,11 @@ hailo_status FrameOutputTransformContext::quantize_stream(const void *dst_ptr)
     switch (m_dst_format.type) {
         case HAILO_FORMAT_TYPE_UINT8:
             if (HAILO_FORMAT_TYPE_UINT8 == m_src_format.type) {
-                Quantization::dequantize_output_buffer_in_place<uint8_t, uint8_t>((uint8_t*)dst_ptr, shape_size, m_dst_quant_info);
+                if (m_are_all_qps_the_same) {
+                    Quantization::dequantize_output_buffer_in_place<uint8_t, uint8_t>((uint8_t*)dst_ptr, shape_size, m_dst_quant_info);
+                } else {
+                    dequantize_output_by_feature<uint8_t, uint8_t>((uint8_t*)dst_ptr, shape_size, m_quant_info_per_feature, m_quant_infos_rep_count);
+                }
             }
             else {
                 return HAILO_INVALID_OPERATION;
@@ -909,10 +915,18 @@ hailo_status FrameOutputTransformContext::quantize_stream(const void *dst_ptr)
             break;
         case HAILO_FORMAT_TYPE_UINT16:
             if (HAILO_FORMAT_TYPE_UINT8 == m_src_format.type) {
-                Quantization::dequantize_output_buffer_in_place<uint16_t, uint8_t>((uint16_t*)dst_ptr, shape_size, m_dst_quant_info);
+                if (m_are_all_qps_the_same) {
+                    Quantization::dequantize_output_buffer_in_place<uint16_t, uint8_t>((uint16_t*)dst_ptr, shape_size, m_dst_quant_info);
+                } else {
+                    dequantize_output_by_feature<uint16_t, uint8_t>((uint16_t*)dst_ptr, shape_size, m_quant_info_per_feature, m_quant_infos_rep_count);
+                }
             }
             else if (HAILO_FORMAT_TYPE_UINT16 == m_src_format.type) {
-                Quantization::dequantize_output_buffer_in_place<uint16_t, uint16_t>((uint16_t*)dst_ptr, shape_size, m_dst_quant_info);
+                if (m_are_all_qps_the_same) {
+                    Quantization::dequantize_output_buffer_in_place<uint16_t, uint16_t>((uint16_t*)dst_ptr, shape_size, m_dst_quant_info);
+                } else {
+                    dequantize_output_by_feature<uint16_t, uint16_t>((uint16_t*)dst_ptr, shape_size, m_quant_info_per_feature, m_quant_infos_rep_count);
+                }
             }
             else {
                 return HAILO_INVALID_OPERATION;
@@ -922,10 +936,18 @@ hailo_status FrameOutputTransformContext::quantize_stream(const void *dst_ptr)
             /* if output layer is argmax - do not rescale */
             if (HAILO_FORMAT_ORDER_NHW != m_dst_format.order) {
                 if (HAILO_FORMAT_TYPE_UINT8 == m_src_format.type) {
-                    Quantization::dequantize_output_buffer_in_place<float32_t, uint8_t>((float32_t*)dst_ptr, shape_size, m_dst_quant_info);
+                    if (m_are_all_qps_the_same) {
+                        Quantization::dequantize_output_buffer_in_place<float32_t, uint8_t>((float32_t*)dst_ptr, shape_size, m_dst_quant_info);
+                    } else {
+                        dequantize_output_by_feature<float32_t, uint8_t>((float32_t*)dst_ptr, shape_size, m_quant_info_per_feature, m_quant_infos_rep_count);
+                    }
                 }
                 else if (HAILO_FORMAT_TYPE_UINT16 == m_src_format.type) {
-                    Quantization::dequantize_output_buffer_in_place<float32_t, uint16_t>((float32_t*)dst_ptr, shape_size, m_dst_quant_info);
+                    if (m_are_all_qps_the_same) {
+                        Quantization::dequantize_output_buffer_in_place<float32_t, uint16_t>((float32_t*)dst_ptr, shape_size, m_dst_quant_info);
+                    } else {
+                        dequantize_output_by_feature<float32_t, uint16_t>((float32_t*)dst_ptr, shape_size, m_quant_info_per_feature, m_quant_infos_rep_count);
+                    }
                 }
                 else {
                     return HAILO_INVALID_OPERATION;
@@ -1795,7 +1817,50 @@ FrameOutputTransformContext::FrameOutputTransformContext(size_t src_frame_size, 
         OutputTransformContext(src_frame_size, src_format, dst_frame_size, dst_format, dst_quant_info, should_quantize, 
             should_transpose, should_reorder), m_src_image_shape(src_image_shape), m_dst_image_shape(dst_image_shape), 
             m_transpose_buffer(std::move(transpose_buffer))
-{}
+{
+    std::vector<hailo_quant_info_t> dst_quant_infos = { dst_quant_info }; // TODO: Get vector from HEF
+    bool are_all_qps_the_same = true;
+    if (dst_quant_infos.size() > 1) {
+        for (const auto &quant_info : dst_quant_infos) {
+            if (0 != memcmp(&quant_info, &dst_quant_infos[0], sizeof(quant_info))) {
+                are_all_qps_the_same = false;
+                break;
+            }
+        }
+    }
+    m_are_all_qps_the_same = are_all_qps_the_same;
+
+    switch (dst_format.order) {
+    case HAILO_FORMAT_ORDER_NHW:
+    case HAILO_FORMAT_ORDER_BAYER_RGB:
+    case HAILO_FORMAT_ORDER_12_BIT_BAYER_RGB:
+    case HAILO_FORMAT_ORDER_NCHW:
+        for (const auto &quant_info : dst_quant_infos) {
+            m_quant_info_per_feature.emplace_back(quant_info.qp_zp, quant_info.qp_scale);
+        }
+        m_quant_infos_rep_count = static_cast<uint32_t>(dst_frame_size);
+        break;
+    case HAILO_FORMAT_ORDER_NHWC:
+    case HAILO_FORMAT_ORDER_FCR:
+    case HAILO_FORMAT_ORDER_F8CR:
+    case HAILO_FORMAT_ORDER_NC:
+    case HAILO_FORMAT_ORDER_RGB4:
+        for (const auto &quant_info : dst_quant_infos) {
+            m_quant_info_per_feature.emplace_back(quant_info.qp_zp, quant_info.qp_scale);
+        }
+        m_quant_infos_rep_count = 1;
+        break;
+    case HAILO_FORMAT_ORDER_NHCW:
+        for (const auto &quant_info : dst_quant_infos) {
+            m_quant_info_per_feature.emplace_back(quant_info.qp_zp, quant_info.qp_scale);
+        }
+        m_quant_infos_rep_count = dst_image_shape.width;
+        break;
+    default:
+        LOGGER__CRITICAL("Got unknown format order = {}", dst_format.order);
+        break;
+    }
+}
 
 Expected<std::unique_ptr<OutputTransformContext>> FrameOutputTransformContext::create(const hailo_3d_image_shape_t &src_image_shape,
     const hailo_format_t &src_format, const hailo_3d_image_shape_t &dst_image_shape,

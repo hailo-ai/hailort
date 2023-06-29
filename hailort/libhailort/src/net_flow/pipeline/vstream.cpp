@@ -7,8 +7,10 @@
  * @brief Implementation of the virtual stream
  **/
 
+#include "common/utils.hpp"
 #include "hailo/vstream.hpp"
 #include "hailo/hailort_defaults.hpp"
+#include "hailo/hailort_common.hpp"
 
 #include "common/runtime_statistics_internal.hpp"
 
@@ -130,8 +132,14 @@ Expected<PipelineBuffer> PreInferElement::action(PipelineBuffer &&input, Pipelin
 Expected<std::shared_ptr<PostInferElement>> PostInferElement::create(const hailo_3d_image_shape_t &src_image_shape,
     const hailo_format_t &src_format, const hailo_3d_image_shape_t &dst_image_shape, const hailo_format_t &dst_format,
     const hailo_quant_info_t &dst_quant_info, const hailo_nms_info_t &nms_info, const std::string &name,
-    hailo_pipeline_elem_stats_flags_t elem_flags, std::shared_ptr<std::atomic<hailo_status>> pipeline_status)
+    hailo_pipeline_elem_stats_flags_t elem_flags, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
+    std::chrono::milliseconds timeout, hailo_vstream_stats_flags_t vstream_flags, EventPtr shutdown_event,
+    size_t buffer_pool_size)
 {
+    auto frame_size = (dst_format.order == HAILO_FORMAT_ORDER_HAILO_NMS) ? HailoRTCommon::get_nms_host_frame_size(nms_info, dst_format) : HailoRTCommon::get_frame_size(dst_image_shape, dst_format);
+    auto buffer_pool_expected = BufferPool::create(frame_size, buffer_pool_size, shutdown_event, elem_flags, vstream_flags);
+    CHECK_EXPECTED(buffer_pool_expected, "Failed creating BufferPool for {}", name);
+
     auto transform_context = OutputTransformContext::create(src_image_shape, src_format, dst_image_shape, dst_format,
         dst_quant_info, nms_info);
     CHECK_EXPECTED(transform_context, "Failed Creating OutputTransformContext");
@@ -140,7 +148,7 @@ Expected<std::shared_ptr<PostInferElement>> PostInferElement::create(const hailo
     CHECK_EXPECTED(duration_collector);
 
     auto post_infer_elem_ptr = make_shared_nothrow<PostInferElement>(transform_context.release(),
-    name, duration_collector.release(), std::move(pipeline_status));
+        name, duration_collector.release(), std::move(pipeline_status), buffer_pool_expected.release(), timeout);
     CHECK_AS_EXPECTED(nullptr != post_infer_elem_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     LOGGER__INFO("Created {}", post_infer_elem_ptr->name());
@@ -150,17 +158,22 @@ Expected<std::shared_ptr<PostInferElement>> PostInferElement::create(const hailo
 
 Expected<std::shared_ptr<PostInferElement>> PostInferElement::create(const hailo_3d_image_shape_t &src_image_shape, const hailo_format_t &src_format,
         const hailo_3d_image_shape_t &dst_image_shape, const hailo_format_t &dst_format, const hailo_quant_info_t &dst_quant_info, const hailo_nms_info_t &nms_info,
-        const std::string &name, const hailo_vstream_params_t &vstream_params, std::shared_ptr<std::atomic<hailo_status>> pipeline_status)
+        const std::string &name, const hailo_vstream_params_t &vstream_params, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
+        EventPtr shutdown_event)
 {
     return PostInferElement::create(src_image_shape, src_format, dst_image_shape, dst_format, dst_quant_info, nms_info,
-        name, vstream_params.pipeline_elements_stats_flags, pipeline_status);
+        name, vstream_params.pipeline_elements_stats_flags, pipeline_status, std::chrono::milliseconds(vstream_params.timeout_ms),
+        vstream_params.vstream_stats_flags, shutdown_event, vstream_params.queue_size);
 }
 
 PostInferElement::PostInferElement(std::unique_ptr<OutputTransformContext> &&transform_context, const std::string &name,
                                    DurationCollector &&duration_collector,
-                                   std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status) :
+                                   std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
+                                   BufferPoolPtr buffer_pool, std::chrono::milliseconds timeout) :
     FilterElement(name, std::move(duration_collector), std::move(pipeline_status)),
-    m_transform_context(std::move(transform_context))
+    m_transform_context(std::move(transform_context)),
+    m_pool(buffer_pool),
+    m_timeout(timeout)
 {}
 
 hailo_status PostInferElement::run_push(PipelineBuffer &&/*buffer*/)
@@ -184,18 +197,30 @@ std::string PostInferElement::description() const
 
 Expected<PipelineBuffer> PostInferElement::action(PipelineBuffer &&input, PipelineBuffer &&optional)
 {
-    CHECK_AS_EXPECTED(optional, HAILO_INVALID_ARGUMENT, "Optional buffer must be valid in {}!", name());
+    auto buffer = m_pool->get_available_buffer(std::move(optional), m_timeout);
+    if (HAILO_SHUTDOWN_EVENT_SIGNALED == buffer.status()) {
+        return make_unexpected(buffer.status());
+    }
+    CHECK_EXPECTED(buffer, "{} (D2H) failed with status={}", name(), buffer.status());
 
     // Note: The latency to be measured starts as the buffer is read from the HW (it's 'input' in this case)
-    optional.set_metadata(input.get_metadata());
+    buffer->set_metadata(input.get_metadata());
 
-    auto dst = optional.as_view();
+    auto dst = buffer->as_view();
     m_duration_collector.start_measurement();
     const auto status = m_transform_context->transform(input.as_view(), dst);
     m_duration_collector.complete_measurement();
     CHECK_SUCCESS_AS_EXPECTED(status);
 
-    return std::move(optional);
+    return buffer.release();
+}
+
+std::vector<AccumulatorPtr> PostInferElement::get_queue_size_accumulators()
+{
+    if (nullptr == m_pool->get_queue_size_accumulator()) {
+        return std::vector<AccumulatorPtr>();
+    }
+    return {m_pool->get_queue_size_accumulator()};
 }
 
 static hailo_nms_info_t fuse_nms_info(const std::vector<hailo_nms_info_t> &nms_infos)
@@ -426,6 +451,116 @@ Expected<std::vector<PipelineBuffer>> TransformDemuxElement::action(PipelineBuff
     return outputs;
 }
 
+Expected<std::shared_ptr<ArgmaxPostProcessElement>> ArgmaxPostProcessElement::create(std::shared_ptr<net_flow::Op> argmax_op,
+    const std::string &name, hailo_pipeline_elem_stats_flags_t elem_flags,
+    std::shared_ptr<std::atomic<hailo_status>> pipeline_status)
+{
+    auto duration_collector = DurationCollector::create(elem_flags);
+    CHECK_EXPECTED(duration_collector);
+    auto argmax_elem_ptr = make_shared_nothrow<ArgmaxPostProcessElement>(argmax_op,
+        name, duration_collector.release(), std::move(pipeline_status));
+    CHECK_AS_EXPECTED(nullptr != argmax_elem_ptr, HAILO_OUT_OF_HOST_MEMORY);
+    LOGGER__INFO("Created {}", argmax_elem_ptr->name());
+    return argmax_elem_ptr;
+}
+
+ArgmaxPostProcessElement::ArgmaxPostProcessElement(std::shared_ptr<net_flow::Op> argmax_op, const std::string &name,
+                                   DurationCollector &&duration_collector,
+                                   std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status) :
+    FilterElement(name, std::move(duration_collector), std::move(pipeline_status)),
+    m_argmax_op(argmax_op)
+{}
+
+hailo_status ArgmaxPostProcessElement::run_push(PipelineBuffer &&/*buffer*/)
+{
+    LOGGER__ERROR("ArgmaxPostProcessElement does not support run_push operation");
+    return HAILO_INVALID_OPERATION;
+}
+
+PipelinePad &ArgmaxPostProcessElement::next_pad()
+{
+    // Note: The next elem to be run is upstream from this elem (i.e. buffers are pulled)
+    return *m_sinks[0].prev();
+}
+
+std::string ArgmaxPostProcessElement::description() const
+{
+    std::stringstream element_description;
+    element_description << "(" << this->name() << " | " << m_argmax_op->get_op_description() << ")";
+    return element_description.str();
+}
+
+Expected<PipelineBuffer> ArgmaxPostProcessElement::action(PipelineBuffer &&input, PipelineBuffer &&optional)
+{
+    std::map<std::string, MemoryView> inputs;
+    std::map<std::string, MemoryView> outputs;
+    auto &input_name = m_argmax_op->inputs_metadata().begin()->first;
+    auto &output_name = m_argmax_op->outputs_metadata().begin()->first;
+    inputs.insert({input_name, input.as_view()});
+    outputs.insert({output_name, optional.as_view()});
+    m_duration_collector.start_measurement();
+    auto post_process_result = m_argmax_op->execute(inputs, outputs);
+    CHECK_SUCCESS_AS_EXPECTED(post_process_result);
+    m_duration_collector.complete_measurement();
+
+    return std::move(optional);
+}
+
+Expected<std::shared_ptr<SoftmaxPostProcessElement>> SoftmaxPostProcessElement::create(std::shared_ptr<net_flow::Op> softmax_op,
+    const std::string &name, hailo_pipeline_elem_stats_flags_t elem_flags,
+    std::shared_ptr<std::atomic<hailo_status>> pipeline_status)
+{
+    auto duration_collector = DurationCollector::create(elem_flags);
+    CHECK_EXPECTED(duration_collector);
+    auto softmax_elem_ptr = make_shared_nothrow<SoftmaxPostProcessElement>(softmax_op,
+        name, duration_collector.release(), std::move(pipeline_status));
+    CHECK_AS_EXPECTED(nullptr != softmax_elem_ptr, HAILO_OUT_OF_HOST_MEMORY);
+    LOGGER__INFO("Created {}", softmax_elem_ptr->name());
+    return softmax_elem_ptr;
+}
+
+SoftmaxPostProcessElement::SoftmaxPostProcessElement(std::shared_ptr<net_flow::Op> softmax_op, const std::string &name,
+                                   DurationCollector &&duration_collector,
+                                   std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status) :
+    FilterElement(name, std::move(duration_collector), std::move(pipeline_status)),
+    m_softmax_op(softmax_op)
+{}
+
+hailo_status SoftmaxPostProcessElement::run_push(PipelineBuffer &&/*buffer*/)
+{
+    LOGGER__ERROR("SoftmaxPostProcessElement does not support run_push operation");
+    return HAILO_INVALID_OPERATION;
+}
+
+PipelinePad &SoftmaxPostProcessElement::next_pad()
+{
+    // Note: The next elem to be run is upstream from this elem (i.e. buffers are pulled)
+    return *m_sinks[0].prev();
+}
+
+std::string SoftmaxPostProcessElement::description() const
+{
+    std::stringstream element_description;
+    element_description << "(" << this->name() << " | " << m_softmax_op->get_op_description() << ")";
+    return element_description.str();
+}
+
+Expected<PipelineBuffer> SoftmaxPostProcessElement::action(PipelineBuffer &&input, PipelineBuffer &&optional)
+{
+    std::map<std::string, MemoryView> inputs;
+    std::map<std::string, MemoryView> outputs;
+    auto &input_name = m_softmax_op->inputs_metadata().begin()->first;
+    auto &output_name = m_softmax_op->outputs_metadata().begin()->first;
+    inputs.insert({input_name, input.as_view()});
+    outputs.insert({output_name, optional.as_view()});
+    m_duration_collector.start_measurement();
+    auto post_process_result = m_softmax_op->execute(inputs, outputs);
+    CHECK_SUCCESS_AS_EXPECTED(post_process_result);
+    m_duration_collector.complete_measurement();
+
+    return std::move(optional);
+}
+
 BaseVStream::BaseVStream(const hailo_vstream_info_t &vstream_info, const hailo_vstream_params_t &vstream_params,
                          std::shared_ptr<PipelineElement> pipeline_entry, std::vector<std::shared_ptr<PipelineElement>> &&pipeline,
                          std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
@@ -494,13 +629,13 @@ hailo_status BaseVStream::start_vstream()
     auto status = m_shutdown_event->reset();
     CHECK_SUCCESS(status);
 
-    LOGGER__DEBUG("Activating {}...", name());
-    status = m_entry_element->activate();
-    CHECK_SUCCESS(status);
-
     status = resume();
     CHECK(((status == HAILO_SUCCESS) || (status == HAILO_STREAM_NOT_ACTIVATED)), status,
         "Failed to resume stream in {}", name());
+
+    LOGGER__DEBUG("Activating {}...", name());
+    status = m_entry_element->activate();
+    CHECK_SUCCESS(status);
 
     m_is_activated = true;
     return HAILO_SUCCESS;
@@ -508,14 +643,24 @@ hailo_status BaseVStream::start_vstream()
 
 hailo_status BaseVStream::abort()
 {
+    auto status = m_entry_element->abort();
+    CHECK_SUCCESS(status);
     m_is_aborted = true;
-    return m_entry_element->abort();
+
+    return HAILO_SUCCESS;
 }
 
 hailo_status BaseVStream::resume()
 {
+    auto status = m_entry_element->clear_abort();
+    CHECK_SUCCESS(status);
     m_is_aborted = false;
-    return m_entry_element->resume();
+
+    if (m_is_activated) {
+        status = m_entry_element->activate();
+        CHECK_SUCCESS(status);
+    }
+    return HAILO_SUCCESS;
 }
 
 hailo_status BaseVStream::stop_vstream()
@@ -528,7 +673,10 @@ hailo_status BaseVStream::stop_vstream()
             LOGGER__WARNING("Failed deactivate of vstream {} status {}", name(), status);
         }
 
-        status = m_entry_element->post_deactivate();
+        // If VStream was aborted, do not clear low-level stream abortion,
+        // otherwise flush would be called on low-level stream d-tor when there is no receiver.
+        auto should_clear_abort = (!m_is_aborted);
+        status = m_entry_element->post_deactivate(should_clear_abort);
         if (HAILO_SUCCESS != status) {
             LOGGER__WARNING("Failed post deactivate of vstream {} status {}", name(), status);
         }
@@ -538,9 +686,12 @@ hailo_status BaseVStream::stop_vstream()
 
 hailo_status BaseVStream::stop_and_clear()
 {
-    auto status = m_core_op_activated_event->wait(std::chrono::milliseconds(0));
-    CHECK(HAILO_TIMEOUT == status, HAILO_INVALID_OPERATION,
-        "Trying to clear {} vstream before its network group is deactivated", name());
+    auto status = HAILO_SUCCESS;
+    if (nullptr != m_core_op_activated_event) {
+        status = m_core_op_activated_event->wait(std::chrono::milliseconds(0));
+        CHECK(HAILO_TIMEOUT == status, HAILO_INVALID_OPERATION,
+            "Trying to clear {} vstream before its network group is deactivated", name());
+    }
 
     status = stop_vstream();
     CHECK_SUCCESS(status);
@@ -553,8 +704,8 @@ hailo_status BaseVStream::stop_and_clear()
         LOGGER__TRACE("Overwritting current pipeline status {}", curr_pipeline_status);
         m_pipeline_status->store(HAILO_SUCCESS);
     }
-    
-    return HAILO_SUCCESS;
+
+    return status;
 }
 
 size_t BaseVStream::get_frame_size() const
@@ -758,6 +909,11 @@ hailo_status InputVStream::after_fork_in_child()
     return m_vstream->after_fork_in_child();
 }
 
+bool InputVStream::is_aborted()
+{
+    return m_vstream->is_aborted();
+}
+
 InputVStream::InputVStream(std::shared_ptr<InputVStreamInternal> vstream) : m_vstream(std::move(vstream)) {}
 
 Expected<OutputVStream> OutputVStream::create(
@@ -902,6 +1058,11 @@ hailo_status OutputVStream::after_fork_in_child()
     return m_vstream->after_fork_in_child();
 }
 
+bool OutputVStream::is_aborted()
+{
+    return m_vstream->is_aborted();
+}
+
 OutputVStream::OutputVStream(std::shared_ptr<OutputVStreamInternal> vstream) : m_vstream(std::move(vstream)) {}
 
 std::map<std::string, AccumulatorPtr> get_pipeline_accumulators_by_type(
@@ -1008,11 +1169,6 @@ InputVStreamImpl::InputVStreamImpl(const hailo_vstream_info_t &vstream_info, con
 InputVStreamImpl::~InputVStreamImpl()
 {
     (void)stop_vstream();
-    if (m_is_aborted) {
-        // If VStream was aborted, do not clear low-level stream abortion,
-        // otherwise flush would be called on low-level stream d-tor when there is no receiver.
-        (void)abort();
-    }
 }
 
 hailo_status InputVStreamImpl::write(const MemoryView &buffer)
@@ -1074,7 +1230,7 @@ InputVStreamClient::InputVStreamClient(std::unique_ptr<HailoRtRpcClient> client,
 
 InputVStreamClient::~InputVStreamClient()
 {
-    auto reply = m_client->InputVStream_release(m_handle);
+    auto reply = m_client->InputVStream_release(m_handle, OsUtils::get_curr_pid());
     if (reply != HAILO_SUCCESS) {
         LOGGER__CRITICAL("InputVStream_release failed!");
     }
@@ -1101,6 +1257,24 @@ hailo_status InputVStreamClient::abort()
 hailo_status InputVStreamClient::resume()
 {
     return m_client->InputVStream_resume(m_handle);
+}
+
+hailo_status InputVStreamClient::stop_and_clear()
+{
+    auto expected_client = HailoRtRpcClientUtils::create_client();
+    CHECK_EXPECTED_AS_STATUS(expected_client);
+    auto stop_and_clear_client = expected_client.release();
+
+    return stop_and_clear_client->InputVStream_stop_and_clear(m_handle);
+}
+
+hailo_status InputVStreamClient::start_vstream()
+{
+    auto expected_client = HailoRtRpcClientUtils::create_client();
+    CHECK_EXPECTED_AS_STATUS(expected_client);
+    auto start_vstream_client = expected_client.release();
+
+    return start_vstream_client->InputVStream_start_vstream(m_handle);
 }
 
 size_t InputVStreamClient::get_frame_size() const
@@ -1198,6 +1372,17 @@ hailo_status InputVStreamClient::after_fork_in_child()
     m_handle = expected_dup_handle.value();
     return HAILO_SUCCESS;
 }
+
+bool InputVStreamClient::is_aborted()
+{
+    auto is_aborted_exp = m_client->InputVStream_is_aborted(m_handle);
+    if (!is_aborted_exp) {
+        LOGGER__CRITICAL("InputVStream_is_aborted failed with status={}", is_aborted_exp.status());
+        return true;
+    }
+    return is_aborted_exp.release();
+}
+
 #endif // HAILO_SUPPORT_MULTI_PROCESS
 
 std::string InputVStreamInternal::get_pipeline_description() const
@@ -1300,11 +1485,6 @@ OutputVStreamImpl::OutputVStreamImpl(const hailo_vstream_info_t &vstream_info, c
 OutputVStreamImpl::~OutputVStreamImpl()
 {
     (void)stop_vstream();
-    if (m_is_aborted) {
-        // If VStream was aborted, do not clear low-level stream abortion,
-        // otherwise flush would be called on low-level stream d-tor when there is no receiver.
-        (void)abort();
-    }
 }
 
 hailo_status OutputVStreamImpl::read(MemoryView buffer)
@@ -1361,7 +1541,7 @@ OutputVStreamClient::OutputVStreamClient(std::unique_ptr<HailoRtRpcClient> clien
 
 OutputVStreamClient::~OutputVStreamClient()
 {
-    auto reply = m_client->OutputVStream_release(m_handle);
+    auto reply = m_client->OutputVStream_release(m_handle, OsUtils::get_curr_pid());
     if (reply != HAILO_SUCCESS) {
         LOGGER__CRITICAL("OutputVStream_release failed!");
     }
@@ -1383,6 +1563,24 @@ hailo_status OutputVStreamClient::abort()
 hailo_status OutputVStreamClient::resume()
 {
     return m_client->OutputVStream_resume(m_handle);
+}
+
+hailo_status OutputVStreamClient::stop_and_clear()
+{
+    auto expected_client = HailoRtRpcClientUtils::create_client();
+    CHECK_EXPECTED_AS_STATUS(expected_client);
+    auto stop_and_clear_client = expected_client.release();
+
+    return stop_and_clear_client->OutputVStream_stop_and_clear(m_handle);
+}
+
+hailo_status OutputVStreamClient::start_vstream()
+{
+    auto expected_client = HailoRtRpcClientUtils::create_client();
+    CHECK_EXPECTED_AS_STATUS(expected_client);
+    auto start_vstream_client = expected_client.release();
+
+    return start_vstream_client->OutputVStream_start_vstream(m_handle);
 }
 
 size_t OutputVStreamClient::get_frame_size() const
@@ -1409,7 +1607,7 @@ std::string OutputVStreamClient::name() const
 {
     auto expected_name = m_client->OutputVStream_name(m_handle);
     if (!expected_name) {
-        LOGGER__CRITICAL("InputVStream_name failed with status={}", expected_name.status());
+        LOGGER__CRITICAL("OutputVStream_name failed with status={}", expected_name.status());
         return "";
     }
     return expected_name.release();
@@ -1419,7 +1617,7 @@ std::string OutputVStreamClient::network_name() const
 {
     auto expected_name = m_client->OutputVStream_network_name(m_handle);
     if (!expected_name) {
-        LOGGER__CRITICAL("InputVStream_name failed with status={}", expected_name.status());
+        LOGGER__CRITICAL("OutputVStream_name failed with status={}", expected_name.status());
         return "";
     }
     return expected_name.release();
@@ -1480,6 +1678,16 @@ hailo_status OutputVStreamClient::after_fork_in_child()
     m_handle = expected_dup_handle.value();
     return HAILO_SUCCESS;
 }
+
+bool OutputVStreamClient::is_aborted()
+{
+    auto is_aborted_exp = m_client->OutputVStream_is_aborted(m_handle);
+    if (!is_aborted_exp) {
+        LOGGER__CRITICAL("OutputVStream_is_aborted failed with status={}", is_aborted_exp.status());
+        return true;
+    }
+    return is_aborted_exp.release();
+}
 #endif // HAILO_SUPPORT_MULTI_PROCESS
 
 Expected<std::shared_ptr<HwReadElement>> HwReadElement::create(std::shared_ptr<OutputStream> stream, const std::string &name, std::chrono::milliseconds timeout,
@@ -1535,11 +1743,13 @@ std::string HwReadElement::description() const
     return element_description.str();
 }
 
-hailo_status HwReadElement::execute_post_deactivate()
+hailo_status HwReadElement::execute_post_deactivate(bool should_clear_abort)
 {
-    auto status = m_stream->clear_abort();
-    CHECK(((HAILO_SUCCESS == status) || (HAILO_STREAM_NOT_ACTIVATED == status)), status,
-        "Failed to clear abort stream in {}", name());
+    if (should_clear_abort) {
+        auto status = m_stream->clear_abort();
+        CHECK(((HAILO_SUCCESS == status) || (HAILO_STREAM_NOT_ACTIVATED == status)), status,
+            "Failed to clear abort stream in {}", name());
+    }
     return HAILO_SUCCESS;
 }
 
@@ -1561,11 +1771,11 @@ hailo_status HwReadElement::execute_abort()
     return HAILO_SUCCESS;
 }
 
-hailo_status HwReadElement::execute_resume()
+hailo_status HwReadElement::execute_clear_abort()
 {
     auto status = m_stream->clear_abort();
     CHECK(((status == HAILO_SUCCESS) || (status == HAILO_STREAM_NOT_ACTIVATED)), status,
-        "Failed to execute resume stream in {}", name());
+        "Failed to execute clear_abort stream in {}", name());
     return HAILO_SUCCESS;
 }
 
@@ -1734,7 +1944,9 @@ hailo_status HwWriteElement::execute_deactivate()
     hailo_status flush_status = m_stream->flush();
     if (HAILO_STREAM_ABORTED_BY_USER == flush_status) {
         LOGGER__INFO("Failed flushing input stream {} because stream was aborted", m_stream->to_string());
-        // TODO: HRT-3621
+        return HAILO_SUCCESS;
+    } else if (HAILO_STREAM_NOT_ACTIVATED == flush_status) {
+        LOGGER__INFO("Failed flushing input stream {} because stream is not activated", m_stream->to_string());
         return HAILO_SUCCESS;
     } else if (HAILO_SUCCESS != flush_status) {
         LOGGER__ERROR("flush has failed in {} with status {}", name(), flush_status);
@@ -1746,11 +1958,13 @@ hailo_status HwWriteElement::execute_deactivate()
     return HAILO_SUCCESS;
 }
 
-hailo_status HwWriteElement::execute_post_deactivate()
+hailo_status HwWriteElement::execute_post_deactivate(bool should_clear_abort)
 {
-    auto status = m_stream->clear_abort();
-    CHECK(((status == HAILO_SUCCESS) || (status == HAILO_STREAM_NOT_ACTIVATED)), status,
-        "Failed to clear abort stream in {}", name());
+    if (should_clear_abort) {
+        auto status = m_stream->clear_abort();
+        CHECK(((status == HAILO_SUCCESS) || (status == HAILO_STREAM_NOT_ACTIVATED)), status,
+            "Failed to clear abort stream in {}", name());
+    }
     return HAILO_SUCCESS;
 }
 
@@ -1778,11 +1992,11 @@ hailo_status HwWriteElement::execute_abort()
     return HAILO_SUCCESS;
 }
 
-hailo_status HwWriteElement::execute_resume()
+hailo_status HwWriteElement::execute_clear_abort()
 {
     auto status = m_stream->clear_abort();
     CHECK(((status == HAILO_SUCCESS) || (status == HAILO_STREAM_NOT_ACTIVATED)), status,
-        "Failed to execute resume stream in {}", name());
+        "Failed to execute clear_abort stream in {}", name());
     return HAILO_SUCCESS;
 }
 
@@ -1876,9 +2090,48 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> VStre
 static hailo_vstream_params_t expand_vstream_params_autos(const hailo_stream_info_t &stream_info,
     const hailo_vstream_params_t &vstream_params)
 {
+    if (HAILO_FORMAT_ORDER_HAILO_NMS == stream_info.format.order) {
+        // TODO (HRT-11082): On NMS, return error if UINT16
+        if (HAILO_FORMAT_TYPE_UINT16 == vstream_params.user_buffer_format.type) {
+            LOGGER__WARNING("Passing 'HAILO_FORMAT_TYPE_UINT16' for NMS output is deprecated and will soon be unsupported. "\
+                "One should use HAILO_FORMAT_TYPE_FLOAT32");
+        }
+    }
     auto local_vstream_params = vstream_params;
     local_vstream_params.user_buffer_format = HailoRTDefaults::expand_auto_format(vstream_params.user_buffer_format,
         stream_info.format);
+    return local_vstream_params;
+}
+
+static hailo_vstream_params_t expand_vstream_params_autos_argmax(const hailo_vstream_params_t &vstream_params,
+    hailo_format_t &op_input_format)
+{
+    auto local_vstream_params = vstream_params;
+    if (local_vstream_params.user_buffer_format.type == HAILO_FORMAT_TYPE_AUTO) {
+        local_vstream_params.user_buffer_format.type = op_input_format.type;
+    }
+    if (local_vstream_params.user_buffer_format.order == HAILO_FORMAT_ORDER_AUTO) {
+        if (op_input_format.order == HAILO_FORMAT_ORDER_NHCW || op_input_format.order == HAILO_FORMAT_ORDER_NHWC) {
+            local_vstream_params.user_buffer_format.order = HAILO_FORMAT_ORDER_NHW;
+        }
+        if (op_input_format.order == HAILO_FORMAT_ORDER_NC) {
+            local_vstream_params.user_buffer_format.order = HAILO_FORMAT_ORDER_NC;
+        }
+    }
+    return local_vstream_params;
+}
+
+static hailo_vstream_params_t expand_vstream_params_autos_softmax(const hailo_vstream_params_t &vstream_params,
+    hailo_format_t &op_input_format)
+{
+    auto local_vstream_params = vstream_params;
+    // Type should be float32, after de-quantization, and order NHWC or NC in softmax
+    if (local_vstream_params.user_buffer_format.type == HAILO_FORMAT_TYPE_AUTO) {
+        local_vstream_params.user_buffer_format.type = HAILO_FORMAT_TYPE_FLOAT32;
+    }
+    if (local_vstream_params.user_buffer_format.order == HAILO_FORMAT_ORDER_AUTO) {
+        local_vstream_params.user_buffer_format.order = op_input_format.order;
+    }
     return local_vstream_params;
 }
 
@@ -2001,21 +2254,18 @@ Expected<std::vector<OutputVStream>> VStreamsBuilderUtils::create_outputs(std::s
     CHECK_AS_EXPECTED(!(hw_read_stream_stats_flags & HAILO_VSTREAM_STATS_MEASURE_FPS), HAILO_NOT_IMPLEMENTED,
         "Pipeline FPS statistics measurement is not implemented");
 
-    auto hw_read_elem = HwReadElement::create(output_stream,
-        PipelineObject::create_element_name("HwReadElement", output_stream->name(), output_stream->get_info().index),
-        HAILO_INFINITE_TIMEOUT, buffer_pool_size, hw_read_element_stats_flags, hw_read_stream_stats_flags, shutdown_event, pipeline_status);
-    CHECK_EXPECTED(hw_read_elem);
-    elements.push_back(hw_read_elem.value());
+    auto hw_read_element = add_hw_read_element(output_stream, pipeline_status, elements, "HwReadElement", shutdown_event,
+        buffer_pool_size, hw_read_element_stats_flags, hw_read_stream_stats_flags);
+    CHECK_EXPECTED(hw_read_element);
 
     if (output_stream->get_info().is_mux) {
-        hailo_status status = add_demux(output_stream, vstreams_params_map, std::move(elements), vstreams, hw_read_elem.value(),
+        hailo_status status = add_demux(output_stream, vstreams_params_map, std::move(elements), vstreams, hw_read_element.value(),
             shutdown_event, pipeline_status, output_vstream_infos);
         CHECK_SUCCESS_AS_EXPECTED(status);
     } else {
         auto vstream_info = output_vstream_infos.find(output_stream->name());
         CHECK_AS_EXPECTED(vstream_info != output_vstream_infos.end(), HAILO_NOT_FOUND,
             "Failed to find vstream info of {}", output_stream->name());
-
         assert(1 == vstreams_params_map.size());
         auto vstream_params = expand_vstream_params_autos(output_stream->get_info(), vstreams_params_map.begin()->second);
 
@@ -2027,37 +2277,27 @@ Expected<std::vector<OutputVStream>> VStreamsBuilderUtils::create_outputs(std::s
             vstream_params.user_buffer_format, output_stream->get_info().quant_info);
 
         if (should_transform) {
-            auto hw_read_queue_elem = PullQueueElement::create(
-                PipelineObject::create_element_name("PullQueueElement_hw_read", output_stream->name(), output_stream->get_info().index),
-                vstream_params, shutdown_event, pipeline_status);
-            CHECK_EXPECTED(hw_read_queue_elem);
-            elements.push_back(hw_read_queue_elem.value());
-            CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(hw_read_elem.value(), hw_read_queue_elem.value()));
+            auto hw_read_queue_element = add_pull_queue_element(output_stream, pipeline_status, elements, "PullQueueElement_hw_read",
+                shutdown_event, vstream_params);
+            CHECK_EXPECTED(hw_read_queue_element);
+            CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(hw_read_element.value(), hw_read_queue_element.value()));
 
-            auto post_infer_elem = PostInferElement::create(output_stream->get_info().hw_shape, output_stream->get_info().format, 
-                output_stream->get_info().shape, vstream_params.user_buffer_format, output_stream->get_info().quant_info, output_stream->get_info().nms_info,
-                PipelineObject::create_element_name("PostInferElement", output_stream->name(), output_stream->get_info().index),
-                vstream_params, pipeline_status);
-            CHECK_EXPECTED(post_infer_elem);
-            elements.push_back(post_infer_elem.value());
-            CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(hw_read_queue_elem.value(), post_infer_elem.value()));
-
-            auto post_infer_queue_elem = UserBufferQueueElement::create(
-                PipelineObject::create_element_name("UserBufferQueueElement_post_infer", output_stream->name(), output_stream->get_info().index),
-                vstream_params, shutdown_event, pipeline_status);
-            CHECK_EXPECTED(post_infer_queue_elem);
-            elements.push_back(post_infer_queue_elem.value());
-            CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(post_infer_elem.value(), post_infer_queue_elem.value()));
-
+            auto post_infer_element = add_post_infer_element(output_stream, pipeline_status, elements,
+                "PostInferElement", vstream_params, shutdown_event);
+            CHECK_EXPECTED(post_infer_element);
+            CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(hw_read_queue_element.value(), post_infer_element.value()));
+            auto user_buffer_queue_element = add_user_buffer_queue_element(output_stream, pipeline_status, elements,
+                "UserBufferQueueElement", shutdown_event, vstream_params);
+            CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(post_infer_element.value(), user_buffer_queue_element.value()));
             output_stream->set_timeout(std::chrono::milliseconds(HAILO_INFINITE));
-            hw_read_queue_elem->get()->set_timeout(std::chrono::milliseconds(HAILO_INFINITE));
-            auto vstream = OutputVStream::create(vstream_info->second, vstream_params, post_infer_queue_elem.release(), std::move(elements),
+            hw_read_queue_element->get()->set_timeout(std::chrono::milliseconds(HAILO_INFINITE));
+            auto vstream = OutputVStream::create(vstream_info->second, vstream_params, user_buffer_queue_element.release(), std::move(elements),
                 std::move(pipeline_status), shutdown_event, core_op_activated_event, pipeline_latency_accumulator.release());
             CHECK_EXPECTED(vstream);
             vstreams.emplace_back(vstream.release());
         } else {
             output_stream->set_timeout(std::chrono::milliseconds(vstream_params.timeout_ms));
-            auto vstream = OutputVStream::create(vstream_info->second, vstream_params, hw_read_elem.release(), std::move(elements),
+            auto vstream = OutputVStream::create(vstream_info->second, vstream_params, hw_read_element.release(), std::move(elements),
                 std::move(pipeline_status), shutdown_event, core_op_activated_event, pipeline_latency_accumulator.release());
             CHECK_EXPECTED(vstream);
             vstreams.emplace_back(vstream.release());
@@ -2066,6 +2306,91 @@ Expected<std::vector<OutputVStream>> VStreamsBuilderUtils::create_outputs(std::s
 
     for (const auto &vstream : vstreams) {
         LOGGER__INFO("{}", vstream.get_pipeline_description());
+    }
+
+    return vstreams;
+}
+
+Expected<std::vector<OutputVStream>> VStreamsBuilderUtils::create_output_post_process_softmax(std::shared_ptr<OutputStream> output_stream,
+    const NameToVStreamParamsMap &vstreams_params_map, const hailo_vstream_info_t &output_vstream_info, const NetFlowElement &softmax_op)
+{
+    std::vector<std::shared_ptr<PipelineElement>> elements;
+    std::vector<OutputVStream> vstreams;
+
+    EventPtr core_op_activated_event = nullptr;
+    if (!output_stream->is_scheduled()) {
+        core_op_activated_event = output_stream->get_core_op_activated_event();
+    }
+
+    auto shutdown_event = Event::create_shared(Event::State::not_signalled);
+    CHECK_AS_EXPECTED(nullptr != shutdown_event, HAILO_OUT_OF_HOST_MEMORY);
+
+    auto pipeline_status = make_shared_nothrow<std::atomic<hailo_status>>(HAILO_SUCCESS);
+    CHECK_AS_EXPECTED(nullptr != pipeline_status, HAILO_OUT_OF_HOST_MEMORY);
+
+    assert(!vstreams_params_map.empty());
+
+    // Note: In case of multiple values in vstreams_params_map (e.g. in the case of demux), we'll set the
+    //       pipeline_elements_stats_flags for the hw_read_element as bitwise or of all the flags.
+    hailo_pipeline_elem_stats_flags_t hw_read_element_stats_flags = HAILO_PIPELINE_ELEM_STATS_NONE;
+    hailo_vstream_stats_flags_t hw_read_stream_stats_flags = HAILO_VSTREAM_STATS_NONE;
+    size_t buffer_pool_size = 0;
+    for (const auto &elem_name_params : vstreams_params_map) {
+        hw_read_element_stats_flags |= elem_name_params.second.pipeline_elements_stats_flags;
+        hw_read_stream_stats_flags |= elem_name_params.second.vstream_stats_flags;
+        buffer_pool_size += elem_name_params.second.queue_size;
+    }
+
+    // TODO (HRT-4522): Support this measurement
+    CHECK_AS_EXPECTED(!(hw_read_stream_stats_flags & HAILO_VSTREAM_STATS_MEASURE_FPS), HAILO_NOT_IMPLEMENTED,
+        "Pipeline FPS statistics measurement is not implemented");
+
+    assert(1 == vstreams_params_map.size());
+    auto op_input_format = softmax_op.op->inputs_metadata().begin()->second.format;
+    auto vstream_params = expand_vstream_params_autos_softmax(vstreams_params_map.begin()->second, op_input_format);
+    if (HAILO_FORMAT_FLAGS_QUANTIZED & vstream_params.user_buffer_format.flags) {
+        vstream_params.user_buffer_format.flags &= ~HAILO_FORMAT_FLAGS_QUANTIZED;
+        LOGGER__WARNING("Note: The output_vstream {} format flag is marked as quantized, which is not supported with {}. "
+            "flag has been automatically set to False.", softmax_op.output_vstream_info.name, softmax_op.op->get_name());
+    }
+
+    auto pipeline_latency_accumulator = create_pipeline_latency_accumulator(vstream_params);
+    CHECK_EXPECTED(pipeline_latency_accumulator);
+
+    auto hw_read_element = add_hw_read_element(output_stream, pipeline_status, elements, "HwReadElement", shutdown_event,
+        buffer_pool_size, hw_read_element_stats_flags, hw_read_stream_stats_flags);
+    CHECK_EXPECTED(hw_read_element);
+
+    auto hw_read_queue_element = add_pull_queue_element(output_stream, pipeline_status, elements, "PullQueueElement_hw_read",
+        shutdown_event, vstream_params);
+    CHECK_EXPECTED(hw_read_queue_element);
+    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(hw_read_element.value(), hw_read_queue_element.value()));
+
+    auto post_infer_element = add_post_infer_element(output_stream, pipeline_status, elements,
+        "PostInferElement", vstream_params, shutdown_event);
+    CHECK_EXPECTED(post_infer_element);
+    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(hw_read_queue_element.value(), post_infer_element.value()));
+
+    auto pre_softmax_queue_element = add_pull_queue_element(output_stream, pipeline_status, elements, "PullQueueElement_pre_softmax",
+        shutdown_event, vstream_params);
+    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(post_infer_element.value(), pre_softmax_queue_element.value()));
+
+    auto softmax_element = add_softmax_element(output_stream, pipeline_status, elements, "SoftmaxPostProcessElement",
+        vstream_params, softmax_op);
+    CHECK_EXPECTED(softmax_element);
+    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(pre_softmax_queue_element.value(), softmax_element.value()));
+    auto user_buffer_queue_element = add_user_buffer_queue_element(output_stream, pipeline_status, elements,
+        "UserBufferQueueElement", shutdown_event, vstream_params);
+    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(softmax_element.value(), user_buffer_queue_element.value()));
+    output_stream->set_timeout(std::chrono::milliseconds(HAILO_INFINITE));
+    hw_read_queue_element->get()->set_timeout(std::chrono::milliseconds(HAILO_INFINITE));
+    auto vstream = OutputVStream::create(output_vstream_info, vstream_params, user_buffer_queue_element.release(), std::move(elements),
+        std::move(pipeline_status), shutdown_event, core_op_activated_event, pipeline_latency_accumulator.release());
+    CHECK_EXPECTED(vstream);
+    vstreams.emplace_back(vstream.release());
+
+    for (const auto &curr_vstream : vstreams) {
+        LOGGER__INFO("{}", curr_vstream.get_pipeline_description());
     }
 
     return vstreams;
@@ -2083,6 +2408,92 @@ OutputVStream VStreamsBuilderUtils::create_output(std::shared_ptr<OutputVStreamI
 
 static bool are_formats_equal(const hailo_format_t &format1, const hailo_format_t &format2) {
     return ((format1.order == format2.order) && (format1.flags == format2.flags) && (format1.type == format2.type));
+}
+
+Expected<std::vector<OutputVStream>> VStreamsBuilderUtils::create_output_vstreams_from_streams(const OutputStreamWithParamsVector &all_output_streams,
+    OutputStreamPtrVector &output_streams, const hailo_vstream_params_t &vstream_params,
+    const std::unordered_map<std::string, std::shared_ptr<NetFlowElement>> &post_process_ops,
+    const std::unordered_map<stream_name_t, op_name_t> &op_inputs_to_op_name, const std::map<std::string, hailo_vstream_info_t> &output_vstream_infos_map)
+{
+    auto first_stream_info = output_streams[0]->get_info();
+    if ((HAILO_FORMAT_ORDER_HAILO_NMS == first_stream_info.format.order) &&
+        (first_stream_info.nms_info.is_defused)) {
+        // Case defuse NMS
+        return create_output_nms(output_streams, vstream_params, output_vstream_infos_map);
+    } else if (contains(op_inputs_to_op_name, static_cast<stream_name_t>(first_stream_info.name))) {
+        // Case post-process on host
+        auto &op_name = op_inputs_to_op_name.at(first_stream_info.name);
+        auto &op = post_process_ops.at(op_name);
+        switch (op.get()->op_type) {
+            case HAILO_NET_FLOW_OP_TYPE_NMS:
+            {
+                assert(1 <= op->op->outputs_metadata().size());
+                auto updated_outputs_metadata = op->op->outputs_metadata();
+                updated_outputs_metadata.begin()->second.format = vstream_params.user_buffer_format;
+                if (HAILO_FORMAT_ORDER_AUTO == updated_outputs_metadata.begin()->second.format.order) {
+                    updated_outputs_metadata.begin()->second.format.order = HAILO_FORMAT_ORDER_HAILO_NMS;
+                }
+                if (HAILO_FORMAT_TYPE_AUTO == updated_outputs_metadata.begin()->second.format.type) {
+                    updated_outputs_metadata.begin()->second.format.type = HAILO_FORMAT_TYPE_FLOAT32;
+                }
+                if (HAILO_FORMAT_FLAGS_QUANTIZED & updated_outputs_metadata.begin()->second.format.flags) {
+                    updated_outputs_metadata.begin()->second.format.flags &= ~HAILO_FORMAT_FLAGS_QUANTIZED;
+                    LOGGER__WARNING("Note: The output_vstream {} format flag is marked as quantized, which is not supported with {}. "
+                        "flag has been automatically set to False.", op->output_vstream_info.name, op->op->get_name());
+                }
+
+                op->op->set_outputs_metadata(updated_outputs_metadata);
+                CHECK_SUCCESS_AS_EXPECTED(op->op->validate_metadata());
+                return create_output_post_process_nms(output_streams, vstream_params, output_vstream_infos_map, *op);
+            }
+
+            case HAILO_NET_FLOW_OP_TYPE_ARGMAX:
+            {
+                assert(output_streams.size() == 1);
+                NameToVStreamParamsMap name_to_vstream_params_map;
+                for (auto &output_stream : all_output_streams) {
+                    if (output_stream.first->get_info().name == output_streams[0]->get_info().name) {
+                        for (auto &vstream : output_stream.second) {
+                            name_to_vstream_params_map.insert(vstream);
+                        }
+                    }
+                }
+                auto output_vstream_info = output_vstream_infos_map.at(op.get()->name);
+                return create_output_post_process_argmax(output_streams[0], name_to_vstream_params_map, output_vstream_info, *op);
+            }
+
+             case HAILO_NET_FLOW_OP_TYPE_SOFTMAX:
+            {
+                assert(output_streams.size() == 1);
+                NameToVStreamParamsMap name_to_vstream_params_map;
+                for (auto &output_stream : all_output_streams) {
+                    if (output_stream.first->get_info().name == output_streams[0]->get_info().name) {
+                        for (auto &vstream : output_stream.second) {
+                            name_to_vstream_params_map.insert(vstream);
+                        }
+                    }
+                }
+                auto output_vstream_info = output_vstream_infos_map.at(op.get()->name);
+                return create_output_post_process_softmax(output_streams[0], name_to_vstream_params_map, output_vstream_info, *op);
+             }
+
+            default:
+                LOGGER__ERROR("op type {} of op {} is not in any of the supported post process OP types", op.get()->op_type, op_name);
+                return make_unexpected(HAILO_INVALID_OPERATION);
+        }
+    } else {
+        // All other cases
+        assert(output_streams.size() == 1);
+        NameToVStreamParamsMap name_to_vstream_params_map;
+        for (auto &output_stream : all_output_streams) {
+            if (output_stream.first->get_info().name == output_streams[0]->get_info().name) {
+                for (auto &vstream : output_stream.second) {
+                    name_to_vstream_params_map.insert(vstream);
+                }
+            }
+        }
+        return create_outputs(output_streams[0], name_to_vstream_params_map, output_vstream_infos_map);
+    }
 }
 
 Expected<std::vector<OutputVStream>> VStreamsBuilderUtils::create_output_nms(OutputStreamPtrVector &output_streams,
@@ -2134,6 +2545,174 @@ Expected<std::vector<OutputVStream>> VStreamsBuilderUtils::create_output_post_pr
 
     for (const auto &vstream : vstreams) {
         LOGGER__INFO("{}", vstream.get_pipeline_description());
+    }
+
+    return vstreams;
+}
+
+Expected<std::shared_ptr<HwReadElement>> VStreamsBuilderUtils::add_hw_read_element(std::shared_ptr<OutputStream> &output_stream,
+        std::shared_ptr<std::atomic<hailo_status>> &pipeline_status, std::vector<std::shared_ptr<PipelineElement>> &elements,
+        const std::string &element_name, EventPtr &shutdown_event, size_t buffer_pool_size,
+        const hailo_pipeline_elem_stats_flags_t &hw_read_element_stats_flags, const hailo_vstream_stats_flags_t &hw_read_stream_stats_flags)
+{
+    auto hw_read_elem = HwReadElement::create(output_stream,
+        PipelineObject::create_element_name(element_name, output_stream->name(), output_stream->get_info().index),
+        HAILO_INFINITE_TIMEOUT, buffer_pool_size, hw_read_element_stats_flags, hw_read_stream_stats_flags, shutdown_event, pipeline_status);
+    CHECK_EXPECTED(hw_read_elem);
+    elements.push_back(hw_read_elem.value());
+    return hw_read_elem;
+}
+
+Expected<std::shared_ptr<PullQueueElement>> VStreamsBuilderUtils::add_pull_queue_element(std::shared_ptr<OutputStream> &output_stream,
+    std::shared_ptr<std::atomic<hailo_status>> &pipeline_status, std::vector<std::shared_ptr<PipelineElement>> &elements,
+    const std::string &element_name, EventPtr &shutdown_event, const hailo_vstream_params_t &vstream_params)
+{
+    auto pull_queue_elem = PullQueueElement::create(
+        PipelineObject::create_element_name(element_name, output_stream->name(), output_stream->get_info().index),
+        vstream_params, shutdown_event, pipeline_status);
+    CHECK_EXPECTED(pull_queue_elem);
+    elements.push_back(pull_queue_elem.value());
+    return pull_queue_elem;
+}
+
+Expected<std::shared_ptr<ArgmaxPostProcessElement>> VStreamsBuilderUtils::add_argmax_element(std::shared_ptr<OutputStream> &output_stream,
+    std::shared_ptr<std::atomic<hailo_status>> &pipeline_status, std::vector<std::shared_ptr<PipelineElement>> &elements,
+    const std::string &element_name, hailo_vstream_params_t &vstream_params, const NetFlowElement &argmax_op)
+{
+    // Updating metadata according to user request. TODO: HRT-9737
+    auto updated_outputs_metadata = argmax_op.op.get()->outputs_metadata();
+    updated_outputs_metadata.begin()->second.format = vstream_params.user_buffer_format;
+    argmax_op.op.get()->set_outputs_metadata(updated_outputs_metadata);
+    CHECK_SUCCESS_AS_EXPECTED(argmax_op.op.get()->validate_metadata());
+    // Updating metadata according to use request. TODO: HRT-9737 - End
+    auto argmax_element = ArgmaxPostProcessElement::create(argmax_op.op,
+        PipelineObject::create_element_name(element_name, output_stream->name(), output_stream->get_info().index),
+        vstream_params.pipeline_elements_stats_flags, pipeline_status);
+    CHECK_EXPECTED(argmax_element);
+    elements.push_back(argmax_element.value());
+    return argmax_element;
+}
+
+Expected<std::shared_ptr<SoftmaxPostProcessElement>> VStreamsBuilderUtils::add_softmax_element(std::shared_ptr<OutputStream> &output_stream,
+    std::shared_ptr<std::atomic<hailo_status>> &pipeline_status, std::vector<std::shared_ptr<PipelineElement>> &elements,
+    const std::string &element_name, hailo_vstream_params_t &vstream_params, const NetFlowElement &softmax_op)
+{
+    // Updating metadata according to user request. TODO: HRT-9737
+    // Currently softmax only supports inputs to be float32 and order NHWC or NC
+    auto updated_inputs_metadata = softmax_op.op.get()->inputs_metadata();
+    updated_inputs_metadata.begin()->second.format = vstream_params.user_buffer_format;
+    softmax_op.op.get()->set_inputs_metadata(updated_inputs_metadata);
+
+    auto updated_outputs_metadata = softmax_op.op.get()->outputs_metadata();
+    updated_outputs_metadata.begin()->second.format = vstream_params.user_buffer_format;
+    softmax_op.op.get()->set_outputs_metadata(updated_outputs_metadata);
+    CHECK_SUCCESS_AS_EXPECTED(softmax_op.op.get()->validate_metadata());
+    // Updating metadata according to use request. TODO: HRT-9737 - End
+    auto softmax_element = SoftmaxPostProcessElement::create(softmax_op.op,
+        PipelineObject::create_element_name(element_name, output_stream->name(), output_stream->get_info().index),
+        vstream_params.pipeline_elements_stats_flags, pipeline_status);
+    CHECK_EXPECTED(softmax_element);
+    elements.push_back(softmax_element.value());
+    return softmax_element;
+}
+
+Expected<std::shared_ptr<UserBufferQueueElement>> VStreamsBuilderUtils::add_user_buffer_queue_element(std::shared_ptr<OutputStream> &output_stream,
+    std::shared_ptr<std::atomic<hailo_status>> &pipeline_status, std::vector<std::shared_ptr<PipelineElement>> &elements,
+    const std::string &element_name, EventPtr &shutdown_event, const hailo_vstream_params_t &vstream_params)
+{
+    auto post_argmax_queue_element = UserBufferQueueElement::create(
+        PipelineObject::create_element_name(element_name, output_stream->name(), output_stream->get_info().index),
+        vstream_params, shutdown_event, pipeline_status);
+    CHECK_EXPECTED(post_argmax_queue_element);
+    elements.push_back(post_argmax_queue_element.value());
+    return post_argmax_queue_element;
+}
+
+Expected<std::shared_ptr<PostInferElement>> VStreamsBuilderUtils::add_post_infer_element(std::shared_ptr<OutputStream> &output_stream,
+    std::shared_ptr<std::atomic<hailo_status>> &pipeline_status, std::vector<std::shared_ptr<PipelineElement>> &elements,
+    const std::string &element_name, const hailo_vstream_params_t &vstream_params, EventPtr shutdown_event)
+{
+    auto post_infer_element = PostInferElement::create(output_stream->get_info().hw_shape, output_stream->get_info().format,
+        output_stream->get_info().shape, vstream_params.user_buffer_format, output_stream->get_info().quant_info, output_stream->get_info().nms_info,
+        PipelineObject::create_element_name(element_name, output_stream->name(), output_stream->get_info().index),
+        vstream_params, pipeline_status, shutdown_event);
+    CHECK_EXPECTED(post_infer_element);
+    elements.push_back(post_infer_element.value());
+    return post_infer_element;
+}
+
+Expected<std::vector<OutputVStream>> VStreamsBuilderUtils::create_output_post_process_argmax(std::shared_ptr<OutputStream> output_stream,
+    const NameToVStreamParamsMap &vstreams_params_map, const hailo_vstream_info_t &output_vstream_info, const NetFlowElement &argmax_op)
+{
+    std::vector<std::shared_ptr<PipelineElement>> elements;
+    std::vector<OutputVStream> vstreams;
+
+    EventPtr core_op_activated_event = nullptr;
+    if (!output_stream->is_scheduled()) {
+        core_op_activated_event = output_stream->get_core_op_activated_event();
+    }
+
+    auto shutdown_event = Event::create_shared(Event::State::not_signalled);
+    CHECK_AS_EXPECTED(nullptr != shutdown_event, HAILO_OUT_OF_HOST_MEMORY);
+
+    auto pipeline_status = make_shared_nothrow<std::atomic<hailo_status>>(HAILO_SUCCESS);
+    CHECK_AS_EXPECTED(nullptr != pipeline_status, HAILO_OUT_OF_HOST_MEMORY);
+
+    assert(!vstreams_params_map.empty());
+
+    // Note: In case of multiple values in vstreams_params_map (e.g. in the case of demux), we'll set the
+    //       pipeline_elements_stats_flags for the hw_read_element as bitwise or of all the flags.
+    hailo_pipeline_elem_stats_flags_t hw_read_element_stats_flags = HAILO_PIPELINE_ELEM_STATS_NONE;
+    hailo_vstream_stats_flags_t hw_read_stream_stats_flags = HAILO_VSTREAM_STATS_NONE;
+    size_t buffer_pool_size = 0;
+    for (const auto &elem_name_params : vstreams_params_map) {
+        hw_read_element_stats_flags |= elem_name_params.second.pipeline_elements_stats_flags;
+        hw_read_stream_stats_flags |= elem_name_params.second.vstream_stats_flags;
+        buffer_pool_size += elem_name_params.second.queue_size;
+    }
+
+    // TODO (HRT-4522): Support this measurement
+    CHECK_AS_EXPECTED(!(hw_read_stream_stats_flags & HAILO_VSTREAM_STATS_MEASURE_FPS), HAILO_NOT_IMPLEMENTED,
+        "Pipeline FPS statistics measurement is not implemented");
+
+    auto hw_read_element = add_hw_read_element(output_stream, pipeline_status, elements, "HwReadElement", shutdown_event,
+        buffer_pool_size, hw_read_element_stats_flags, hw_read_stream_stats_flags);
+    CHECK_EXPECTED(hw_read_element);
+
+    assert(1 == vstreams_params_map.size());
+    auto op_input_format = argmax_op.op->inputs_metadata().begin()->second.format;
+    auto vstream_params = expand_vstream_params_autos_argmax(vstreams_params_map.begin()->second, op_input_format);
+
+    auto hw_read_queue_element = add_pull_queue_element(output_stream, pipeline_status, elements, "PullQueueElement_hw_read",
+        shutdown_event, vstream_params);
+    CHECK_EXPECTED(hw_read_queue_element);
+
+    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(hw_read_element.value(), hw_read_queue_element.value()));
+
+    auto argmax_element = add_argmax_element(output_stream, pipeline_status, elements, "ArgmaxPostProcessElement",
+        vstream_params, argmax_op);
+    CHECK_EXPECTED(argmax_element);
+
+    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(hw_read_queue_element.value(), argmax_element.value()));
+
+    auto post_argmax_queue_element = add_user_buffer_queue_element(output_stream, pipeline_status, elements,
+        "UserBufferQueueElement_post_argmax", shutdown_event, vstream_params);
+    CHECK_EXPECTED(post_argmax_queue_element);
+
+    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(argmax_element.value(), post_argmax_queue_element.value()));
+
+    auto pipeline_latency_accumulator = create_pipeline_latency_accumulator(vstream_params);
+    CHECK_EXPECTED(pipeline_latency_accumulator);
+
+    output_stream->set_timeout(std::chrono::milliseconds(HAILO_INFINITE));
+    hw_read_queue_element->get()->set_timeout(std::chrono::milliseconds(HAILO_INFINITE));
+    auto vstream = OutputVStream::create(output_vstream_info, vstream_params, post_argmax_queue_element.release(), std::move(elements),
+        std::move(pipeline_status), shutdown_event, core_op_activated_event, pipeline_latency_accumulator.release());
+    CHECK_EXPECTED(vstream);
+    vstreams.emplace_back(vstream.release());
+
+    for (const auto &current_vstream : vstreams) {
+        LOGGER__INFO("{}", current_vstream.get_pipeline_description());
     }
 
     return vstreams;
@@ -2212,7 +2791,7 @@ hailo_status VStreamsBuilderUtils::add_demux(std::shared_ptr<OutputStream> outpu
             auto post_infer_elem = PostInferElement::create(edge_info.hw_shape, edge_info.format, 
                 edge_info.shape, vstream_params.user_buffer_format, edge_info.quant_info, edge_info.nms_info,
                 PipelineObject::create_element_name("PostInferElement", edge_info.name, edge_info.index),
-                vstream_params, pipeline_status);
+                vstream_params, pipeline_status, shutdown_event);
             CHECK_EXPECTED_AS_STATUS(post_infer_elem);
             current_vstream_elements.push_back(post_infer_elem.value());
             CHECK_SUCCESS(PipelinePad::link_pads(demux_queue_elem.value(), post_infer_elem.value()));
@@ -2267,7 +2846,7 @@ hailo_status VStreamsBuilderUtils::add_nms_fuse(OutputStreamPtrVector &output_st
 
     auto vstream_info = output_vstream_infos.find(fused_layer_name);
     CHECK(vstream_info != output_vstream_infos.end(), HAILO_NOT_FOUND,
-        "Failed to find vstream info of {}", fused_layer_name);
+        "Failed to find vstream info of {}. Could be due to use of old HEF. Try to re-compile network with newer Dataflow Compiler version", fused_layer_name);
 
     vstreams_params = expand_vstream_params_autos(first_defused_stream_info, vstreams_params);
     auto nms_elem = NmsMuxElement::create(nms_infos,
@@ -2320,7 +2899,8 @@ hailo_status VStreamsBuilderUtils::add_nms_fuse(OutputStreamPtrVector &output_st
 
         auto post_infer_elem = PostInferElement::create({}, src_stream_format,
             {}, vstreams_params.user_buffer_format, vstream_info->second.quant_info, fused_layer_nms_info,
-            PipelineObject::create_element_name("PostInferElement", fused_layer_name, 0), vstreams_params, pipeline_status);
+            PipelineObject::create_element_name("PostInferElement", fused_layer_name, 0), vstreams_params, pipeline_status,
+            shutdown_event);
         CHECK_EXPECTED_AS_STATUS(post_infer_elem);
 
         elements.push_back(post_infer_elem.value());

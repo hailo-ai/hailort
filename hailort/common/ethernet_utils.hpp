@@ -86,13 +86,12 @@ public:
     static const uint32_t MAX_INTERFACE_SIZE = IFNAMSIZ;
     #endif
 
-    static hailo_status get_interface_from_board_ip(const char *board_ip, char *interface_name, size_t interface_name_length);
-    static hailo_status get_ip_from_interface(const char *interface_name, char *ip, size_t ip_length);
+    static Expected<std::string> get_interface_from_board_ip(const std::string &board_ip);
+    static Expected<std::string> get_ip_from_interface(const std::string &interface_name);
 
 private:
     #if defined(__GNUG__)
-    static hailo_status get_interface_from_arp_entry(char *arp_entry, char *interface_name,
-        size_t max_interface_name_length);
+    static Expected<std::string> get_interface_from_arp_entry(char *arp_entry);
     #endif
 };
 

@@ -19,6 +19,7 @@
 #include <vector>
 
 
+/** hailort namespace */
 namespace hailort
 {
 
@@ -35,8 +36,6 @@ public:
     static const uint32_t BBOX_PARAMS = sizeof(hailo_bbox_t) / sizeof(uint16_t);
     static const uint32_t MAX_DEFUSED_LAYER_COUNT = 9;
     static const size_t HW_DATA_ALIGNMENT = 8;
-    static const uint64_t NMS_DELIMITER = 0xFFFFFFFFFFFFFFFF;
-    static const uint64_t NMS_DUMMY_DELIMITER = 0xFFFFFFFFFFFFFFFE;
     static const uint32_t MUX_INFO_COUNT = 32;
     static const uint32_t MAX_MUX_PREDECESSORS = 4;
     static const uint16_t ETH_INPUT_BASE_PORT = 32401;
@@ -279,10 +278,11 @@ public:
     static constexpr uint32_t get_nms_hw_frame_size(const hailo_nms_info_t &nms_info)
     {
         const uint32_t size_per_class = static_cast<uint32_t>(sizeof(nms_bbox_counter_t)) +
-            nms_info.bbox_size * nms_info.max_bboxes_per_class;
+            nms_info.bbox_size * std::max(nms_info.burst_size, nms_info.max_bboxes_per_class);
         const uint32_t size_per_chunk = nms_info.number_of_classes * size_per_class;
-        // 1 delimiter for an entire frame (since we are reading delimiters directly into the buffer and replacing them)
-        return nms_info.bbox_size + (nms_info.chunks_per_frame * size_per_chunk);
+        // Extra Burst size for frame (since may be reading bursts directly into the buffer and replacing them)
+        const uint32_t size_for_extra_burst = nms_info.bbox_size * nms_info.burst_size;
+        return (nms_info.chunks_per_frame * size_per_chunk) + size_for_extra_burst;
     }
 
     /**
@@ -384,6 +384,22 @@ inline constexpr hailo_format_flags_t& operator|=(hailo_format_flags_t &a, hailo
 {
     a = a | b;
     return a;
+}
+
+inline constexpr hailo_format_flags_t operator&(hailo_format_flags_t a, hailo_format_flags_t b)
+{
+    return static_cast<hailo_format_flags_t>(static_cast<int>(a) & static_cast<int>(b));
+}
+
+inline constexpr hailo_format_flags_t& operator&=(hailo_format_flags_t &a, hailo_format_flags_t b)
+{
+    a = a & b;
+    return a;
+}
+
+inline constexpr hailo_format_flags_t operator~(hailo_format_flags_t a)
+{
+    return static_cast<hailo_format_flags_t>(~(static_cast<int>(a)));
 }
 
 inline constexpr hailo_vstream_stats_flags_t operator|(hailo_vstream_stats_flags_t a, hailo_vstream_stats_flags_t b)

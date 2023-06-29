@@ -7,12 +7,10 @@
  * @brief Implementation of binding to virtual stream usage over Python.
  **/
 
-#include "common/logger_macros.hpp"
-#include "common/utils.hpp"
-
 #include "vstream_api.hpp"
 #include "bindings_common.hpp"
 #include "utils.hpp"
+#include <iostream>
 
 
 namespace hailort
@@ -87,7 +85,7 @@ InputVStreamsWrapper InputVStreamsWrapper::create(ConfiguredNetworkGroup &net_gr
     std::unordered_map<std::string, std::shared_ptr<InputVStream>> input_vstreams;
     for (auto &input : input_vstreams_expected.value()) {
         auto input_name = input.name();
-        input_vstreams.emplace(input_name, make_shared_nothrow<InputVStream>(std::move(input)));
+        input_vstreams.emplace(input_name, std::make_unique<InputVStream>(std::move(input)));
     }
     return InputVStreamsWrapper(input_vstreams);
 }
@@ -106,7 +104,7 @@ std::shared_ptr<InputVStream> InputVStreamsWrapper::get_input_by_name(const std:
 {
     auto input = m_input_vstreams.find(name);
     if (m_input_vstreams.end() == input) {
-        LOGGER__ERROR("Input virtual stream for name={} not found", name);
+        std::cerr << "Input virtual stream for name=" << name << " not found";
         THROW_STATUS_ERROR(HAILO_NOT_FOUND);
     }
 
@@ -210,7 +208,9 @@ void OutputVStreamWrapper::add_to_python_module(py::module &m)
         // Note: The ownership of the buffer is transferred to Python wrapped as a py::array.
         //       When the py::array isn't referenced anymore in Python and is destructed, the py::capsule's dtor
         //       is called too (and it deletes the raw buffer)
-        const auto unmanaged_addr = buffer.release().release();
+        auto unmanaged_addr_exp = buffer->storage().release();
+        VALIDATE_EXPECTED(unmanaged_addr_exp);
+        const auto unmanaged_addr = unmanaged_addr_exp.release();
         return py::array(get_dtype(self), get_shape(self), unmanaged_addr,
             py::capsule(unmanaged_addr, [](void *p) { delete reinterpret_cast<uint8_t*>(p); }));
     })
@@ -263,7 +263,7 @@ OutputVStreamsWrapper OutputVStreamsWrapper::create(ConfiguredNetworkGroup &net_
     std::unordered_map<std::string, std::shared_ptr<OutputVStream>> output_vstreams;
     for (auto &output : output_vstreams_expected.value()) {
         auto output_name = output.name();
-        output_vstreams.emplace(output_name, make_shared_nothrow<OutputVStream>(std::move(output)));
+        output_vstreams.emplace(output_name, std::make_unique<OutputVStream>(std::move(output)));
     }
     return OutputVStreamsWrapper(output_vstreams);
 }
@@ -272,7 +272,7 @@ std::shared_ptr<OutputVStream> OutputVStreamsWrapper::get_output_by_name(const s
 {
     auto output = m_output_vstreams.find(name);
     if (m_output_vstreams.end() == output) {
-        LOGGER__ERROR("Output virtual stream for name={} not found", name);
+        std::cerr << "Output virtual stream for name=" << name << " not found";
         THROW_STATUS_ERROR(HAILO_NOT_FOUND);
     }
 
@@ -361,7 +361,7 @@ InferVStreamsWrapper InferVStreamsWrapper::create(ConfiguredNetworkGroup &networ
 {
     auto infer_pipeline = InferVStreams::create(network_group, input_vstreams_params, output_vstreams_params);
     VALIDATE_EXPECTED(infer_pipeline);
-    auto infer_vstream_ptr = make_shared_nothrow<InferVStreams>(std::move(infer_pipeline.value()));
+    auto infer_vstream_ptr = std::make_shared<InferVStreams>(std::move(infer_pipeline.value()));
 
     return InferVStreamsWrapper(infer_vstream_ptr);
 }
@@ -426,7 +426,7 @@ std::vector<size_t> InferVStreamsWrapper::get_shape(const std::string &stream_na
         return HailoRTBindingsCommon::get_pybind_shape(output->get().get_info(), output->get().get_user_buffer_format());
     }
 
-    LOGGER__ERROR("Stream {} not found", stream_name);
+    std::cerr << "Stream " << stream_name << " not found";
     THROW_STATUS_ERROR(HAILO_NOT_FOUND);
 }
 

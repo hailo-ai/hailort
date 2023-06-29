@@ -79,7 +79,8 @@ hailo_status EthernetDevice::wait_for_wakeup()
     CHECK_SUCCESS(status);
 
     /* Parse and validate the response */
-    return Control::parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
+    return Control::parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request,
+        *this);
 }
 
 Expected<std::unique_ptr<EthernetDevice>> EthernetDevice::create(const hailo_eth_device_info_t &device_info)
@@ -213,11 +214,10 @@ Expected<std::vector<hailo_eth_device_info_t>> EthernetDevice::scan(const std::s
     std::chrono::milliseconds timeout)
 {
     // Convert interface name to IP address
-    std::array<char, IPV4_STRING_MAX_LENGTH> interface_ip_address{};
-    auto status = EthernetUtils::get_ip_from_interface(interface_name.c_str(), interface_ip_address.data(), interface_ip_address.size());
-    CHECK_SUCCESS_AS_EXPECTED(status);
+    auto interface_ip_address = EthernetUtils::get_ip_from_interface(interface_name);
+    CHECK_EXPECTED(interface_ip_address);
 
-    return scan_by_host_address(interface_ip_address.data(), timeout);
+    return scan_by_host_address(*interface_ip_address, timeout);
 }
 
 hailo_status get_udp_broadcast_params(const char *host_address, struct in_addr &interface_ip_address,
@@ -348,7 +348,7 @@ hailo_status EthernetDevice::reset_impl(CONTROL_PROTOCOL__reset_type_t reset_typ
     // TODO: fix logic with respect to is_expecting_response
     if (0 != response_size) {
         status = Control::parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header,
-            &payload, &request);
+            &payload, &request, *this);
         CHECK_SUCCESS(status);
         CHECK(is_expecting_response, HAILO_INTERNAL_FAILURE,
             "Recived valid response from FW for control who is not expecting one.");
@@ -359,13 +359,6 @@ hailo_status EthernetDevice::reset_impl(CONTROL_PROTOCOL__reset_type_t reset_typ
 
     LOGGER__DEBUG("Board has been reset successfully");
     return HAILO_SUCCESS;
-}
-
-Expected<hailo_device_architecture_t> EthernetDevice::get_architecture() const
-{
-    // FW is always up if we got here (EthernetDevice's ctor would fail otherwise)
-    // Hence, just return it
-    return Expected<hailo_device_architecture_t>(m_device_architecture);
 }
 
 hailo_eth_device_info_t EthernetDevice::get_device_info() const
@@ -438,11 +431,9 @@ Expected<ConfiguredNetworkGroupVector> EthernetDevice::create_networks_group_vec
 
         auto core_op_metadata = hef.pimpl->get_core_op_metadata(network_group_name);
         CHECK_EXPECTED(core_op_metadata);
+        auto core_op_metadata_ptr = core_op_metadata.release();
 
-        auto core_op_metadata_ptr = make_shared_nothrow<CoreOpMetadata>(core_op_metadata.release());
-        CHECK_AS_EXPECTED(nullptr != core_op_metadata_ptr, HAILO_OUT_OF_HOST_MEMORY);
-
-        auto net_flow_ops = hef.pimpl->post_process_ops(core_op_metadata_ptr->core_op_name());
+        auto metadata = hef.pimpl->network_group_metadata(core_op_metadata_ptr->core_op_name());
 
         auto status = HAILO_UNINITIALIZED;
         auto single_context_app = HcpConfigCoreOp(*this, m_active_core_op_holder, net_group_config.release(),
@@ -462,7 +453,7 @@ Expected<ConfiguredNetworkGroupVector> EthernetDevice::create_networks_group_vec
         m_core_ops.push_back(core_op_ptr);
         core_ops_ptrs.push_back(core_op_ptr);
         
-        auto net_group_expected = ConfiguredNetworkGroupBase::create(config_params, std::move(core_ops_ptrs), std::move(net_flow_ops));
+        auto net_group_expected = ConfiguredNetworkGroupBase::create(config_params, std::move(core_ops_ptrs), std::move(metadata));
         CHECK_EXPECTED(net_group_expected);
         auto net_group_ptr = net_group_expected.release();
 

@@ -37,6 +37,7 @@ struct ResourceRef {
     std::shared_ptr<T> resource;
 };
 
+// TODO: Merge ExportedResourceManager and SharedResourceManager (HRT-10317)
 template<class Key, class T>
 class SharedResourceManager
 {

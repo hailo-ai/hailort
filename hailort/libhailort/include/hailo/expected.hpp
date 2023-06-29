@@ -168,6 +168,7 @@
 #include <type_traits>
 
 
+/** hailort namespace */
 namespace hailort
 {
 

@@ -22,7 +22,7 @@ namespace hailort
 
 Expected<TrafficControlUtil> TrafficControlUtil::create(const std::string &ip, uint16_t port, uint32_t rate_bytes_per_sec)
 {
-    auto interface_name = get_interface_name(ip);
+    auto interface_name = EthernetUtils::get_interface_from_board_ip(ip);
     CHECK_EXPECTED(interface_name, "get_interface_name failed with status {}", interface_name.status());
 
     auto board_id = ip_to_board_id(ip);
@@ -156,17 +156,6 @@ hailo_status TrafficControlUtil::tc_class_del_dev_for_board(const std::string &i
     std::stringstream cmd;
     cmd << "tc class del dev " << interface_name << " parent 1: classid 1:" << board_id;
     return run_command(cmd.str(), m_is_sudo_needed, {}, true);
-}
-
-Expected<std::string> TrafficControlUtil::get_interface_name(const std::string &ip)
-{
-    auto interface_name = Buffer::create(EthernetUtils::MAX_INTERFACE_SIZE, 0);
-    CHECK_EXPECTED(interface_name);
-
-    CHECK_SUCCESS_AS_EXPECTED(EthernetUtils::get_interface_from_board_ip(ip.c_str(),
-        interface_name->as_pointer<char>(), interface_name->size()));
-    
-    return interface_name->to_string();
 }
 
 Expected<uint32_t> TrafficControlUtil::ip_to_board_id(const std::string &ip)

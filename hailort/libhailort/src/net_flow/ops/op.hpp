@@ -50,6 +50,8 @@ public:
      */
     virtual hailo_status execute(const std::map<std::string, MemoryView> &inputs, std::map<std::string, MemoryView> &outputs) = 0;
 
+    virtual hailo_status validate_metadata() = 0;
+
     const std::map<std::string, BufferMetaData> &inputs_metadata() const
     {
         return m_inputs_metadata;
@@ -58,6 +60,16 @@ public:
     const std::map<std::string, BufferMetaData> &outputs_metadata() const
     {
         return m_outputs_metadata;
+    }
+
+    void set_outputs_metadata(std::map<std::string, BufferMetaData> &outputs_metadata)
+    {
+        m_outputs_metadata = outputs_metadata;
+    }
+
+    void set_inputs_metadata(std::map<std::string, BufferMetaData> &inputs_metadata)
+    {
+        m_inputs_metadata = inputs_metadata;
     }
 
     std::string get_name() {

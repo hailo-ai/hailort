@@ -32,19 +32,24 @@ public:
     virtual hailo_status wait_for_wakeup() override;
     virtual void increment_control_sequence() override;
     virtual hailo_reset_device_mode_t get_default_reset_mode() override;
-    uint16_t get_default_desc_page_size() const;
-
     hailo_status mark_as_used();
     virtual Expected<size_t> read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id) override;
 
-    HailoRTDriver &get_driver() {
+    HailoRTDriver &get_driver()
+    {
         return std::ref(m_driver);
+    };
+
+    virtual const char* get_dev_id() const override final
+    {
+        // m_driver.device_id() is reference. Hence, returning c_str is safe.
+        return m_driver.device_id().c_str();
     };
 
     ExpectedRef<vdma::InterruptsDispatcher> get_vdma_interrupts_dispatcher();
 
 protected:
-    VdmaDevice(HailoRTDriver &&driver, Type type, const std::string &device_id);
+    VdmaDevice(HailoRTDriver &&driver, Type type);
 
     virtual Expected<D2H_EVENT_MESSAGE_t> read_notification() override;
     virtual hailo_status disable_notifications() override;
@@ -55,7 +60,7 @@ protected:
     HailoRTDriver m_driver;
     std::vector<std::shared_ptr<CoreOp>> m_core_ops;
     std::vector<std::shared_ptr<ConfiguredNetworkGroup>> m_network_groups; // TODO: HRT-9547 - Remove when ConfiguredNetworkGroup will be kept in global context
-    
+
     // The vdma interrupts dispatcher contains a callback with a reference to the current activated network group
     // (reference to the ResourcesManager). Hence, it must be destructed before the networks groups are destructed.
     std::unique_ptr<vdma::InterruptsDispatcher> m_vdma_interrupts_dispatcher;
@@ -68,6 +73,7 @@ private:
         std::vector<std::shared_ptr<CoreOpMetadata>> &core_ops,
         Hef &hef, const ConfigureNetworkParams &config_params,
         uint8_t network_group_index);
+    hailo_status clear_configured_apps();
     Expected<ConfiguredNetworkGroupVector> create_networks_group_vector(Hef &hef, const NetworkGroupsParamsMap &configure_params);
     Expected<std::vector<std::shared_ptr<CoreOpMetadata>>> create_core_ops_metadata(Hef &hef, const std::string &network_group_name,
         uint32_t partial_clusters_layout_bitmap);

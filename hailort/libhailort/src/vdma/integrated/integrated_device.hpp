@@ -24,12 +24,11 @@ namespace hailort
 
 class IntegratedDevice : public VdmaDevice {
 public:
-    virtual ~IntegratedDevice() = default;
     static bool is_loaded();
     static Expected<std::unique_ptr<IntegratedDevice>> create();
 
-    virtual Expected<hailo_device_architecture_t> get_architecture() const override;
-    virtual const char* get_dev_id() const override {return DEVICE_ID;}
+    virtual ~IntegratedDevice() = default;
+
     Expected<size_t> read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id);
 
     virtual bool is_stream_interface_supported(const hailo_stream_interface_t &stream_interface) const override
@@ -53,7 +52,7 @@ protected:
     virtual hailo_status reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type) override;
 
 private:
-    IntegratedDevice(HailoRTDriver &&driver, hailo_status &status, const std::string &device_id);
+    IntegratedDevice(HailoRTDriver &&driver, hailo_status &status);
 };
 
 

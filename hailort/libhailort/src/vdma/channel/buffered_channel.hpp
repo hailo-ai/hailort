@@ -11,9 +11,9 @@
 #ifndef _HAILO_VDMA_BUFFERED_CHANNEL_HPP_
 #define _HAILO_VDMA_BUFFERED_CHANNEL_HPP_
 
-#include "hailo/hailort.h"
-#include "hailo/dma_mapped_buffer.hpp"
 
+#include "hailo/hailort.h"
+#include "vdma/memory/mapped_buffer.hpp"
 #include "vdma/channel/boundary_channel.hpp"
 
 
@@ -38,12 +38,15 @@ public:
     BufferedChannel &operator=(BufferedChannel &&other) = delete;
     virtual ~BufferedChannel() = default;
 
-    virtual hailo_status transfer(void *buf, size_t count) override;
+    // Writes/reads from the channel buffer. This function can work even if the channel is not activated (for example -
+    // reading data if it is ready).
+    virtual hailo_status transfer_sync(void *buf, size_t count, std::chrono::milliseconds timeout) override;
     // Either write_buffer + send_pending_buffer or transfer (h2d) should be used on a given channel, not both
     virtual hailo_status write_buffer(const MemoryView &buffer, std::chrono::milliseconds timeout,
         const std::function<bool()> &should_cancel) override;
     virtual hailo_status send_pending_buffer() override;
-    virtual hailo_status transfer(std::shared_ptr<DmaMappedBuffer>, const TransferDoneCallback &, void *) override;
+    // TODO: merge with "transfer_sync(void *buf, size_t count)"? (HRT-10207)
+    virtual hailo_status transfer_async(TransferRequest &&) override;
     virtual hailo_status cancel_pending_transfers() override;
     virtual hailo_status complete_channel_activation(uint32_t transfer_size, bool resume_pending_transfers) override;
     virtual hailo_status complete_channel_deactivation() override;
@@ -57,8 +60,6 @@ public:
     virtual void notify_all() override;
 
 private:
-    static Expected<std::shared_ptr<DmaMappedBuffer>> create_mapped_buffer(uint32_t descs_count, uint16_t desc_page_size,
-        Direction direction, HailoRTDriver &driver);
 
     hailo_status transfer_h2d(void *buf, size_t count);
     hailo_status write_buffer_impl(const MemoryView &buffer);
@@ -76,9 +77,9 @@ private:
     // TODO: m_channel_buffer gets bound to ChannelBase::m_desc_list meaning the desc in that list point to dma addrs
     //       that back m_channel_buffer. Because ChannelBase gets dtor'd after BufferedChannel, m_channel_buffer ChannelBase::m_desc_list
     //       will point to a freed buffer. This is ok because the channel objects only get dtor'd after they are deactivated by the fw.
-    //       Might want to enforce this in hailort as well (e.g. desc lists can hold shared_ptrs to DmaMappedBuffer while they are bound).
+    //       Might want to enforce this in hailort as well (e.g. desc lists can hold shared_ptrs to MappedBuffer while they are bound).
     //       (HRT-9110)
-    std::shared_ptr<DmaMappedBuffer> m_channel_buffer;
+    std::shared_ptr<MappedBuffer> m_channel_buffer;
     // Using CircularArray because it won't allocate or free memory wile pushing and popping. The fact that it is circular is not relevant here
     CircularArray<size_t> m_pending_buffers_sizes;
     std::atomic_uint16_t m_pending_num_avail_offset;

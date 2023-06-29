@@ -46,6 +46,12 @@ void add_device_options(CLI::App *app, hailo_device_params &device_params, bool 
 Expected<std::vector<std::unique_ptr<Device>>> create_devices(const hailo_device_params &device_params);
 Expected<std::vector<std::string>> get_device_ids(const hailo_device_params &device_params);
 
+
+enum class OptionVisibility {
+    VISIBLE,
+    HIDDEN
+};
+
 /**
  * CLI11 transformer object, converting enum argument from string.
  * Use this object instead of CLI::CheckedTransformer in order
@@ -55,12 +61,47 @@ template<typename EnumType>
 class HailoCheckedTransformer : public CLI::CheckedTransformer
 {
 public:
-    HailoCheckedTransformer(std::vector<std::pair<std::string, EnumType>> values) :
-        CLI::CheckedTransformer(values)
+
+    struct Enum
     {
-        desc_function_ = [values]() {
-            return CLI::detail::generate_map(CLI::detail::smart_deref(values), true);
+        std::string name;
+        EnumType value;
+        OptionVisibility visibility = OptionVisibility::VISIBLE;
+
+        std::pair<std::string, EnumType> to_pair() const { return std::make_pair(name, value); }
+    };
+
+    HailoCheckedTransformer(std::vector<Enum> values) :
+        CLI::CheckedTransformer(to_values_vector(values, true)) // Getting hidden value for the enum transformer.
+    {
+        // Hide hidden values for help and autocomplete.
+        const auto non_hidden_values = to_values_vector(values, false);
+
+        desc_function_ = [non_hidden_values]() {
+            return CLI::detail::generate_map(CLI::detail::smart_deref(non_hidden_values), true);
         };
+
+        autocomplete_func_ = [non_hidden_values](const std::string &) {
+            std::vector<std::string> completions;
+            for (const auto &completion : non_hidden_values) {
+                completions.emplace_back(completion.first);
+            }
+            return completions;
+        };
+    }
+
+private:
+    static std::vector<std::pair<std::string, EnumType>> to_values_vector(const std::vector<Enum> &values,
+        bool get_hidden)
+    {
+        std::vector<std::pair<std::string, EnumType>> values_vector;
+        for (const auto &value : values) {
+            if (get_hidden || (value.visibility == OptionVisibility::VISIBLE)) {
+                values_vector.emplace_back(value.to_pair());
+            }
+        }
+        return values_vector;
+
     }
 };
 

@@ -83,6 +83,14 @@ public:
     virtual hailo_status erase_user_config() override;
     static hailo_device_architecture_t hef_arch_to_device_arch(ProtoHEFHwArch hef_arch);
 
+    virtual Expected<hailo_device_architecture_t> get_architecture() const override
+    {
+        // FW is always up if we got here (device implementations's ctor would fail otherwise)
+        // Hence, just return it
+        return Expected<hailo_device_architecture_t>(m_device_architecture);
+    }
+
+
 protected:
     struct NotificationThreadSharedParams {
         NotificationThreadSharedParams() : is_running(false) {}

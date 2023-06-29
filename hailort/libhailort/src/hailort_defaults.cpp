@@ -361,6 +361,14 @@ std::string HailoRTDefaults::get_network_name(const std::string &net_group_name)
 
 hailo_format_t HailoRTDefaults::expand_auto_format(const hailo_format_t &host_format, const hailo_format_t &hw_format)
 {
+    if (HAILO_FORMAT_ORDER_HAILO_NMS == hw_format.order) {
+        assert(HAILO_FORMAT_TYPE_UINT16 == hw_format.type);
+        // TODO (HRT-11082): On NMS, change meaning of auto to float
+        if (HAILO_FORMAT_TYPE_AUTO == host_format.type) {
+            LOGGER__WARNING("Received 'HAILO_FORMAT_TYPE_AUTO' for NMS output, which is currently translated as HAILO_FORMAT_TYPE_UINT16. "\
+                "Starting HailoRT version 4.15, this will change to HAILO_FORMAT_TYPE_FLOAT32");
+        }
+    }
     auto host_format_copy = host_format;
     if (HAILO_FORMAT_TYPE_AUTO == host_format_copy.type) {
         host_format_copy.type = hw_format.type;

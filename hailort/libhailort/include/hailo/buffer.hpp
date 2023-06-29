@@ -11,6 +11,7 @@
 #define _HAILO_BUFFER_HPP_
 
 #include "hailo/expected.hpp"
+#include "hailo/buffer_storage.hpp"
 
 #include <memory>
 #include <cstdint>
@@ -19,6 +20,7 @@
 #include <cassert>
 
 
+/** hailort namespace */
 namespace hailort
 {
 
@@ -48,6 +50,8 @@ public:
 
     // Empty buffer (points to null, size is zero)
     Buffer();
+    // Buffer backed by the storage param
+    Buffer(BufferStoragePtr storage);
     ~Buffer() = default;
 
     Buffer(const Buffer& other) = delete;
@@ -60,18 +64,20 @@ public:
      * Create functions, may fail be due to out of memory
      */
     // Creates a buffer size bytes long, without setting the memory
-    static Expected<Buffer> create(size_t size);
+    static Expected<Buffer> create(size_t size, const BufferStorageParams &params = {});
     // Creates a buffer size bytes long, setting the memory to default_value
-    static Expected<Buffer> create(size_t size, uint8_t default_value);
+    static Expected<Buffer> create(size_t size, uint8_t default_value, const BufferStorageParams &params = {});
     // Creates a copy of the data pointed to by src, size bytes long
-    static Expected<Buffer> create(const uint8_t *src, size_t size);
+    static Expected<Buffer> create(const uint8_t *src, size_t size, const BufferStorageParams &params = {});
     // Creates a new buffer with the contents of the initializer_list
-    static Expected<Buffer> create(std::initializer_list<uint8_t> init);
- 
+    static Expected<Buffer> create(std::initializer_list<uint8_t> init, const BufferStorageParams &params = {});
+
     // Creates a buffer size bytes long, without setting the memory
-    static Expected<BufferPtr> create_shared(size_t size);
+    static Expected<BufferPtr> create_shared(size_t size, const BufferStorageParams &params = {});
     // Creates a buffer size bytes long, setting the memory to default_value
-    static Expected<BufferPtr> create_shared(size_t size, uint8_t default_value);
+    static Expected<BufferPtr> create_shared(size_t size, uint8_t default_value, const BufferStorageParams &params = {});
+    // Creates a copy of the data pointed to by src, size bytes long
+    static Expected<BufferPtr> create_shared(const uint8_t *src, size_t size, const BufferStorageParams &params = {});
 
     // Moves the data pointed to by other into the lvalue:
     // * other is invalidated.
@@ -92,16 +98,14 @@ public:
     iterator begin();
     iterator end();
 
+    BufferStorage &storage();
+
     // Returns a pointer to the start of the buffer
     uint8_t* data() noexcept;
     const uint8_t* data() const noexcept;
 
     // Returns the size of the buffer
     size_t size() const noexcept;
-    
-    // Returns a pointer to the start of the buffer and releases the ownership
-    // Free the returned pointer with `delete`
-    uint8_t* release() noexcept;
 
     // Casts the buffer to a string of length size().
     // If there's a null char in the buffer, the string will terminate at the null char
@@ -117,7 +121,7 @@ public:
     T* as_pointer() const
     {
         assert(m_size >= sizeof(T));
-        return reinterpret_cast<T*>(m_data.get());
+        return reinterpret_cast<T*>(m_data);
     }
 
     // Returns a copy of the data at the start of the buffer, cast to T
@@ -126,11 +130,11 @@ public:
     T as_type() const
     {
         assert(m_size >= sizeof(T));
-        return *(reinterpret_cast<const T*>(m_data.get()));
+        return *(reinterpret_cast<const T*>(m_data));
     }
 
     // The following functions return a copy of the data at the start of the buffer, cast to uint16/32/64_t
-    // Note: If this->size() is less than the size of the ineger type, then the copy will hold data
+    // Note: If this->size() is less than the size of the integer type, then the copy will hold data
     //       that isn't from the buffer!
     uint16_t as_uint16() const;
     uint32_t as_uint32() const;
@@ -146,16 +150,16 @@ public:
     }
 
     // The following functions return references of the data at the start of the buffer, cast to uint16/32/64_t
-    // Note: If this->size() is less than the size of the ineger type, then the copy will hold data
+    // Note: If this->size() is less than the size of the integer type, then the copy will hold data
     //       that isn't from the buffer!
     uint16_t& as_uint16();
     uint32_t& as_uint32();
     uint64_t& as_uint64();
 
 private:
-    Buffer(std::unique_ptr<uint8_t[]> data, size_t size);
-
-    std::unique_ptr<uint8_t[]> m_data;
+    // Initialization dependency
+    BufferStoragePtr m_storage;
+    uint8_t *m_data;
     size_t m_size;
 };
 
@@ -170,7 +174,7 @@ public:
     explicit MemoryView(Buffer &buffer);
     MemoryView(void *data, size_t size);
     ~MemoryView() = default;
-    
+
     MemoryView& operator=(MemoryView&& other) = default;
     MemoryView(const MemoryView &) = default;
     MemoryView& operator=(MemoryView &) = default;

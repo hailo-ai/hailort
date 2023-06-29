@@ -8,6 +8,7 @@
  **/
 
 #include "core_op_metadata.hpp"
+#include "hef_internal.hpp"
 #include <numeric>
 
 namespace hailort
@@ -181,25 +182,13 @@ CoreOpMetadata::CoreOpMetadata(const std::string &core_op_name,
     ContextMetadata &&preliminary_context,
     std::vector<ContextMetadata> &&dynamic_contexts,
     std::vector<ConfigChannelInfo> &&config_channels_info,
-    std::vector<std::string> &&sorted_output_names,
     SupportedFeatures &supported_features,
-    const std::vector<std::string> &sorted_network_names)
+    std::vector<std::string> sorted_network_names)
     :   m_preliminary_context(std::move(preliminary_context)),
         m_dynamic_contexts(std::move(dynamic_contexts)),
         m_config_channels_info(std::move(config_channels_info)),
-        m_core_op_name(core_op_name), m_sorted_output_names(std::move(sorted_output_names)),
-        m_supported_features(supported_features), m_sorted_network_names(sorted_network_names) {}
-
-Expected<LayerInfo> CoreOpMetadata::get_layer_info_by_stream_name(const std::string &stream_name) const
-{
-    for (auto layer_info : get_all_layer_infos()) {
-        if (layer_info.name == stream_name) {
-            return layer_info;
-        }
-    }
-    LOGGER__ERROR("Failed to find layer with name {}", stream_name);
-    return make_unexpected(HAILO_NOT_FOUND);
-}
+        m_core_op_name(core_op_name), m_supported_features(supported_features),
+        m_sorted_network_names(sorted_network_names) {}
 
 std::vector<LayerInfo> CoreOpMetadata::get_input_layer_infos() const
 {
@@ -301,18 +290,24 @@ Expected<std::vector<LayerInfo>> CoreOpMetadata::get_all_layer_infos(const std::
 
 Expected<std::vector<hailo_stream_info_t>> CoreOpMetadata::get_input_stream_infos(const std::string &network_name) const
 {
-    auto input_layer_infos = get_input_layer_infos(network_name);
-    CHECK_EXPECTED(input_layer_infos);
-
-    return convert_layer_infos_to_stream_infos(input_layer_infos.value());
+    std::vector<hailo_stream_info_t> res;
+    auto input_layers = get_input_layer_infos(network_name);
+    CHECK_EXPECTED(input_layers);
+    for (auto &layer_info : input_layers.value()) {
+        res.push_back(LayerInfoUtils::get_stream_info_from_layer_info(layer_info));
+    }
+    return res;
 }
 
 Expected<std::vector<hailo_stream_info_t>> CoreOpMetadata::get_output_stream_infos(const std::string &network_name) const
 {
-    auto output_layer_infos = get_output_layer_infos(network_name);
-    CHECK_EXPECTED(output_layer_infos);
-
-    return convert_layer_infos_to_stream_infos(output_layer_infos.value());
+    std::vector<hailo_stream_info_t> res;
+    auto output_layers = get_output_layer_infos(network_name);
+    CHECK_EXPECTED(output_layers);
+    for (auto &layer_info : output_layers.value()) {
+        res.push_back(LayerInfoUtils::get_stream_info_from_layer_info(layer_info));
+    }
+    return res;
 }
 
 Expected<std::vector<hailo_stream_info_t>> CoreOpMetadata::get_all_stream_infos(const std::string &network_name) const
@@ -331,42 +326,92 @@ Expected<std::vector<hailo_stream_info_t>> CoreOpMetadata::get_all_stream_infos(
     return res;
 }
 
-Expected<std::vector<hailo_vstream_info_t>> CoreOpMetadata::get_input_vstream_infos(const std::string &network_name) const
-{
-    auto input_layer_infos = get_input_layer_infos(network_name);
-    CHECK_EXPECTED(input_layer_infos);
 
-    return convert_layer_infos_to_vstream_infos(input_layer_infos.value());
+size_t CoreOpMetadata::get_contexts_count()
+{
+    return (m_dynamic_contexts.size() + CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS);
 }
 
-Expected<std::vector<hailo_vstream_info_t>> CoreOpMetadata::get_output_vstream_infos(const std::string &network_name) const
+Expected<size_t> CoreOpMetadata::get_total_transfer_size()
 {
-    std::vector<hailo_vstream_info_t> res;
-    if (m_supported_features.hailo_net_flow) {
-        res = m_output_vstreams_infos;
-        return res;
+    size_t total_transfer_size = 0;
+    for (const auto &dynamic_context : m_dynamic_contexts) {
+        auto context_size = dynamic_context.get_context_transfer_size();
+        CHECK_EXPECTED(context_size);
+        total_transfer_size += context_size.release();
     }
-    auto expected_output_layer_infos = get_output_layer_infos(network_name);
-    CHECK_EXPECTED(expected_output_layer_infos);
-    auto output_layer_infos = expected_output_layer_infos.release();
+    return total_transfer_size;
+}
 
-    res = convert_layer_infos_to_vstream_infos(output_layer_infos);
+Expected<CoreOpMetadataPtr> CoreOpMetadataPerArch::get_metadata(uint32_t partial_clusters_layout_bitmap) const
+{
+    if (PARTIAL_CLUSTERS_LAYOUT_IGNORE == partial_clusters_layout_bitmap) {
+        // Passing PARTIAL_CLUSTERS_LAYOUT_IGNORE is magic for getting one of the metadata
+        assert(0 != m_metadata_per_arch.size());
+        auto result = m_metadata_per_arch.begin()->second;
+        return result;
+    }
+    if (contains(m_metadata_per_arch, partial_clusters_layout_bitmap)) {
+        auto result = m_metadata_per_arch.at(partial_clusters_layout_bitmap);
+        return result;
+    }
+    LOGGER__ERROR("CoreOpPerArch does not contain metadata for partial_clusters_layout_bitmap {}", partial_clusters_layout_bitmap);
+    return make_unexpected(HAILO_INTERNAL_FAILURE);
+}
 
+void CoreOpMetadataPerArch::add_metadata(const CoreOpMetadataPtr &metadata, uint32_t partial_clusters_layout_bitmap)
+{
+    m_metadata_per_arch[partial_clusters_layout_bitmap] = metadata;
+}
+
+Expected<NetworkGroupMetadata> NetworkGroupMetadata::create(const std::string &network_group_name,
+    std::map<std::string, CoreOpMetadataPerArch> &&core_ops_metadata_per_arch, std::vector<std::string> &sorted_output_names,
+    SupportedFeatures &supported_features, const std::vector<std::string> &sorted_network_names,
+    std::vector<std::shared_ptr<NetFlowElement>> &net_flow_ops)
+{
+    auto all_layers_infos = get_all_layer_infos(core_ops_metadata_per_arch);
+    CHECK_EXPECTED(all_layers_infos);
+
+    std::vector<hailo_vstream_info_t> input_vstream_infos;
+    std::vector<hailo_vstream_info_t> output_vstream_infos;
+    for (auto &layer_info : all_layers_infos.value()) {
+        if (std::any_of(net_flow_ops.begin(), net_flow_ops.end(),
+            [&layer_info](auto &op) { return contains(op->input_streams, layer_info.name); })) {
+            continue; // all output_vstream_infos that relates to the op are coming from the op itself instead of layer_infos
+        }
+        auto vstreams_info = LayerInfoUtils::get_vstream_infos_from_layer_info(layer_info);
+        if (HAILO_D2H_STREAM == layer_info.direction) {
+            // In case of fused nms layers, several LayerInfos will contain data about the same fused layer
+            for (auto &vstream_info : vstreams_info) {
+                if (!LayerInfoUtils::vstream_info_already_in_vector(output_vstream_infos, vstream_info.name)) {
+                    output_vstream_infos.push_back(vstream_info);
+                }
+            }
+        } else {
+            input_vstream_infos.insert(input_vstream_infos.end(),
+                std::make_move_iterator(vstreams_info.begin()), std::make_move_iterator(vstreams_info.end()));
+        }
+    }
+    for (auto &op : net_flow_ops) {
+        output_vstream_infos.push_back(op->output_vstream_info);
+    }
+
+    // Sort vstream infos by sorted_output_names
     hailo_status status = HAILO_SUCCESS;
-    std::sort(res.begin(), res.end(),
-        [this, &status](const auto &info1, const auto &info2)
+    std::sort(output_vstream_infos.begin(), output_vstream_infos.end(),
+        [&sorted_output_names, &status](const auto &info1, const auto &info2)
     {
-        const auto index1 = std::find(m_sorted_output_names.begin(), m_sorted_output_names.end(), std::string(info1.name));
-        const auto index2 = std::find(m_sorted_output_names.begin(), m_sorted_output_names.end(), std::string(info2.name));
+        const auto index1 = std::find(sorted_output_names.begin(), sorted_output_names.end(), std::string(info1.name));
+        const auto index2 = std::find(sorted_output_names.begin(), sorted_output_names.end(), std::string(info2.name));
 
-        if (m_sorted_output_names.end() == index1) {
-            LOGGER__ERROR("Stream {} not found in sorted output names", info1.name);
+        if (sorted_output_names.end() == index1) {
+            LOGGER__ERROR("VStream {} not found in sorted output names", info1.name);
             status = HAILO_INTERNAL_FAILURE;
             return false;
         }
 
-        if (m_sorted_output_names.end() == index2) {
-            LOGGER__ERROR("Stream {} not found in sorted output names", info2.name);
+        if (sorted_output_names.end() == index2) {
+            LOGGER__ERROR("VStream {} not found in sorted output names", info2.name);
             status = HAILO_INTERNAL_FAILURE;
             return false;
         }
@@ -375,10 +420,37 @@ Expected<std::vector<hailo_vstream_info_t>> CoreOpMetadata::get_output_vstream_i
     });
     CHECK_SUCCESS_AS_EXPECTED(status);
 
+    return NetworkGroupMetadata(network_group_name, std::move(core_ops_metadata_per_arch), sorted_output_names, supported_features, sorted_network_names,
+        input_vstream_infos, output_vstream_infos, net_flow_ops);
+}
+
+Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_input_vstream_infos(const std::string &network_name) const
+{
+    std::vector<hailo_vstream_info_t> res;
+    for (auto &vstream_info : m_input_vstreams_infos) {
+        if ((network_name == std::string(vstream_info.network_name)) || (network_name.empty()) || (network_name == default_network_name())) {
+            res.push_back(vstream_info);
+        }
+    }
+    CHECK_AS_EXPECTED(0 != res.size(), HAILO_NOT_FOUND, "No VStreams where found for network {}", network_name);
+
     return res;
 }
 
-Expected<std::vector<hailo_vstream_info_t>> CoreOpMetadata::get_all_vstream_infos(const std::string &network_name) const
+Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_output_vstream_infos(const std::string &network_name) const
+{
+    std::vector<hailo_vstream_info_t> res;
+    for (auto &vstream_info : m_output_vstreams_infos) {
+        if ((network_name == std::string(vstream_info.network_name)) || (network_name.empty()) || (network_name == default_network_name())) {
+            res.push_back(vstream_info);
+        }
+    }
+    CHECK_AS_EXPECTED(0 != res.size(), HAILO_NOT_FOUND, "No VStreams where found for network {}", network_name);
+
+    return res;
+}
+
+Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_all_vstream_infos(const std::string &network_name) const
 {
     auto input_vstream_infos = get_input_vstream_infos(network_name);
     CHECK_EXPECTED(input_vstream_infos);
@@ -394,10 +466,21 @@ Expected<std::vector<hailo_vstream_info_t>> CoreOpMetadata::get_all_vstream_info
     return res;
 }
 
-Expected<std::vector<std::string>> CoreOpMetadata::get_vstream_names_from_stream_name(const std::string &stream_name) const
+Expected<std::vector<std::string>> NetworkGroupMetadata::get_vstream_names_from_stream_name(const std::string &stream_name)
 {
     std::vector<std::string> results;
-    for (auto &layer_info : get_all_layer_infos()) {
+    for (auto &pp : m_net_flow_ops) {
+        if (contains(pp->input_streams, stream_name)) {
+            for (auto &output_metadata : pp->op->outputs_metadata()) {
+                results.push_back(output_metadata.first);
+            }
+            return results;
+        }
+    }
+
+    auto all_layers_infos = get_all_layer_infos(m_core_ops_metadata_per_arch);
+    CHECK_EXPECTED(all_layers_infos);
+    for (auto &layer_info : all_layers_infos.release()) {
         if (stream_name == layer_info.name) {
             if (layer_info.is_defused_nms) {
                 return std::vector<std::string> (1, layer_info.fused_nms_layer[0].name);
@@ -411,10 +494,21 @@ Expected<std::vector<std::string>> CoreOpMetadata::get_vstream_names_from_stream
     return make_unexpected(HAILO_NOT_FOUND);
 }
 
-Expected<std::vector<std::string>> CoreOpMetadata::get_stream_names_from_vstream_name(const std::string &vstream_name) const
+Expected<std::vector<std::string>> NetworkGroupMetadata::get_stream_names_from_vstream_name(const std::string &vstream_name)
 {
     std::vector<std::string> results;
-    for (auto &layer_info : get_all_layer_infos()) {
+    for (auto &pp : m_net_flow_ops) {
+        if (contains(pp->op->outputs_metadata(), vstream_name)) {
+            for (auto &input_name : pp->input_streams) {
+                results.push_back(input_name);
+            }
+            return results;
+        }
+    }
+
+    auto all_layers_infos = get_all_layer_infos(m_core_ops_metadata_per_arch);
+    CHECK_EXPECTED(all_layers_infos);
+    for (auto &layer_info : all_layers_infos.release()) {
         if (layer_info.is_mux) {
             if (is_edge_under_mux(layer_info, vstream_name)) {
                 // vstream_name is a demux of the layer info
@@ -436,31 +530,7 @@ Expected<std::vector<std::string>> CoreOpMetadata::get_stream_names_from_vstream
     return results;
 }
 
-std::vector<hailo_stream_info_t> CoreOpMetadata::convert_layer_infos_to_stream_infos(const std::vector<LayerInfo> &layer_infos) const
-{
-    std::vector<hailo_stream_info_t> res;
-    for (auto &layer_info : layer_infos) {
-        res.push_back(LayerInfoUtils::get_stream_info_from_layer_info(layer_info));
-    }
-    return res;
-}
-
-std::vector<hailo_vstream_info_t> CoreOpMetadata::convert_layer_infos_to_vstream_infos(const std::vector<LayerInfo> &layer_infos) const
-{
-    std::vector<hailo_vstream_info_t> res;
-    for (auto &layer_info : layer_infos) {
-        auto vstream_infos = LayerInfoUtils::get_vstream_infos_from_layer_info(layer_info);
-        for (const auto &vstream_info : vstream_infos) {
-            // In case of fused nms layers, several LayerInfos will contain data about the same fused layer
-            if (!LayerInfoUtils::vstream_info_already_in_vector(res, vstream_info.name)) {
-                res.push_back(vstream_info);
-            }
-        }
-    }
-    return res;
-}
-
-Expected<std::vector<hailo_network_info_t>> CoreOpMetadata::get_network_infos() const
+Expected<std::vector<hailo_network_info_t>> NetworkGroupMetadata::get_network_infos() const
 {
     std::vector<hailo_network_info_t> network_infos;
     network_infos.reserve(m_sorted_network_names.size());
@@ -474,43 +544,6 @@ Expected<std::vector<hailo_network_info_t>> CoreOpMetadata::get_network_infos() 
     }
 
     return network_infos;
-}
-
-size_t CoreOpMetadata::get_contexts_count() 
-{
-    return (m_dynamic_contexts.size() + CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS);
-}
-
-Expected<size_t> CoreOpMetadata::get_total_transfer_size()
-{
-    size_t total_transfer_size = 0;
-    for (const auto &dynamic_context : m_dynamic_contexts) {
-        auto context_size = dynamic_context.get_context_transfer_size();
-        CHECK_EXPECTED(context_size);
-        total_transfer_size += context_size.release();
-    }
-    return total_transfer_size;
-}
-
-Expected<CoreOpMetadata> CoreOpMetadataPerArch::get_metadata(uint32_t partial_clusters_layout_bitmap)
-{
-    if (PARTIAL_CLUSTERS_LAYOUT_IGNORE == partial_clusters_layout_bitmap) {
-        // Passing PARTIAL_CLUSTERS_LAYOUT_IGNORE is magic for getting one of the metadata
-        assert(0 != m_metadata_per_arch.size());
-        auto result = m_metadata_per_arch.begin()->second;
-        return result;
-    }
-    if (contains(m_metadata_per_arch, partial_clusters_layout_bitmap)) {
-        auto result = m_metadata_per_arch[partial_clusters_layout_bitmap];
-        return result;
-    }
-    LOGGER__ERROR("CoreOpPerArch does not contain metadata for partial_clusters_layout_bitmap {}", partial_clusters_layout_bitmap);
-    return make_unexpected(HAILO_INTERNAL_FAILURE);
-}
-
-void CoreOpMetadataPerArch::add_metadata(const CoreOpMetadata &metadata, uint32_t partial_clusters_layout_bitmap)
-{
-    m_metadata_per_arch[partial_clusters_layout_bitmap] = metadata;
 }
 
 } /* namespace hailort */

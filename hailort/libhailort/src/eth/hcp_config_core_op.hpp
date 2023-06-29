@@ -50,6 +50,7 @@ public:
 
     virtual hailo_status activate_impl(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers) override;
     virtual hailo_status deactivate_impl(bool keep_nn_config_during_reset) override;
+    virtual Expected<HwInferResults> run_hw_infer_estimator() override;
 
     virtual ~HcpConfigCoreOp() = default;
     HcpConfigCoreOp(const HcpConfigCoreOp &other) = delete;

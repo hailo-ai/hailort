@@ -151,27 +151,35 @@ private:
     std::atomic_bool m_should_stop;
 };
 
-class MultiDeviceScheduledInputStream : public ScheduledInputStream {
+// Stream used on scheduler input multiple device with SYNC api (On async api, the ScheduledAsyncInputStream handles
+// both single and multiple devices).
+class MultiDeviceScheduledInputStream : public ScheduledInputStreamBase {
 public:
+    static Expected<std::unique_ptr<MultiDeviceScheduledInputStream>> create(
+        std::map<device_id_t, std::reference_wrapper<VdmaInputStreamBase>> &&streams,
+        const scheduler_core_op_handle_t &core_op_handle,
+        EventPtr &&core_op_activated_event,
+        const LayerInfo &layer_info,
+        CoreOpsSchedulerWeakPtr core_ops_scheduler);
+
     MultiDeviceScheduledInputStream(
-        std::vector<std::reference_wrapper<VdmaInputStream>> &&streams,
+        std::map<device_id_t, std::reference_wrapper<VdmaInputStreamBase>> &&streams,
         const scheduler_core_op_handle_t &core_op_handle,
         EventPtr &&core_op_activated_event,
         const LayerInfo &layer_info,
         CoreOpsSchedulerWeakPtr core_ops_scheduler,
         std::unique_ptr<BuffersQueue> &&frames_queue,
         hailo_status &status) :
-            ScheduledInputStream(std::move(streams), core_op_handle,
+            ScheduledInputStreamBase(std::move(streams), core_op_handle,
                 std::move(core_op_activated_event), layer_info, core_ops_scheduler, status),
                 m_queue(std::move(frames_queue))
     {}
 
-    virtual hailo_status send_pending_buffer(size_t device_index = 0) override;
+    virtual hailo_status send_pending_buffer(const device_id_t &device_id) override;
     virtual Expected<size_t> get_pending_frames_count() const override;
 
 protected:
-    virtual Expected<size_t> sync_write_raw_buffer(const MemoryView &buffer,
-        const std::function<bool()> &should_cancel = []() { return false; }) override;
+    virtual hailo_status write_impl(const MemoryView &buffer, const std::function<bool()> &should_cancel) override;
     virtual hailo_status abort() override;
     virtual hailo_status clear_abort() override;
 

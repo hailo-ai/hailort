@@ -14,7 +14,7 @@
 #include "hailo/expected.hpp"
 #include "hailo/network_group.hpp"
 
-
+/** hailort namespace */
 namespace hailort
 {
 

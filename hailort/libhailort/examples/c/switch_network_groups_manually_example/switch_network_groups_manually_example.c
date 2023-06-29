@@ -5,7 +5,7 @@
 /**
  * @file switch_network_groups_manually_example.c
  * This example demonstrates basic usage of HailoRT streaming api over multiple network groups, using vstreams.
- * It loads several HEF networks with a single input and a single output into a Hailo VDevice and performs a inference on each one. 
+ * It loads several HEF networks with a single input and a single output into a Hailo VDevice and performs a inference on each one.
  * After inference is finished, the example switches to the next HEF and start inference again.
  **/
 
@@ -116,14 +116,14 @@ thread_return_type output_vstream_thread_func(void *args)
                 status = hailo_vstream_read_raw_buffer(output_vstreams[hef_index],
                     dst_data[hef_index], output_frame_size[hef_index]);
                 REQUIRE_SUCCESS(status, l_deactivate_network_group, "Failed reading output frame from device");
-    
+
                 // Process data here
             }
-    
+
             // Deavticate network after finishing inference
             status = hailo_deactivate_network_group(*(output_vstream_args->activated_network_group));
             REQUIRE_SUCCESS(status, l_deactivate_network_group, "Failed Deactivating network");
-    
+
             // Dont activate on last iteration
             if (hef_index < HEF_COUNT - 1) {
                 // Activate next network so input thread can start sending again
@@ -192,25 +192,25 @@ int main()
         status = hailo_create_hef_file(&hef[hef_index], HEF_FILES[hef_index]);
         REQUIRE_SUCCESS(status, l_release_hef, "Failed creating hef file %s", HEF_FILES[hef_index]);
 
-        status = hailo_init_configure_params(hef[hef_index], HAILO_STREAM_INTERFACE_PCIE, &configure_params);
+        status = hailo_init_configure_params_by_vdevice(hef[hef_index], vdevice, &configure_params);
         REQUIRE_SUCCESS(status, l_release_hef, "Failed init configure params");
 
         status = hailo_configure_vdevice(vdevice, hef[hef_index], &configure_params, &network_groups[hef_index], &network_groups_size);
         REQUIRE_SUCCESS(status, l_release_hef, "Failed configuring vdevcie");
-        REQUIRE_ACTION(network_groups_size == 1, status = HAILO_INVALID_ARGUMENT, l_release_hef, 
+        REQUIRE_ACTION(network_groups_size == 1, status = HAILO_INVALID_ARGUMENT, l_release_hef,
             "Unexpected network group size");
 
         // Mae sure each hef is single input single output
         status = hailo_make_input_vstream_params(network_groups[hef_index], true, HAILO_FORMAT_TYPE_AUTO,
             &input_vstream_params[hef_index], &input_vstream_size);
         REQUIRE_SUCCESS(status, l_release_hef, "Failed making input virtual stream params");
-        REQUIRE_ACTION(input_vstream_size == 1, status = HAILO_INVALID_ARGUMENT, l_release_hef, 
+        REQUIRE_ACTION(input_vstream_size == 1, status = HAILO_INVALID_ARGUMENT, l_release_hef,
             "INVALID HEF - Only hefs with single input vstream are allowed");
 
         status = hailo_make_output_vstream_params(network_groups[hef_index], true, HAILO_FORMAT_TYPE_AUTO,
             &output_vstream_params[hef_index], &output_vstream_size);
         REQUIRE_SUCCESS(status, l_release_hef, "Failed making output virtual stream params");
-        REQUIRE_ACTION(output_vstream_size == 1, status = HAILO_INVALID_ARGUMENT, l_release_hef, 
+        REQUIRE_ACTION(output_vstream_size == 1, status = HAILO_INVALID_ARGUMENT, l_release_hef,
             "INVALID HEF - Only hefs with single output vstream are allowed");
     }
 
@@ -251,10 +251,10 @@ l_join_input_thread:
 l_release_hef:
     for (hef_index = 0; hef_index < HEF_COUNT; hef_index++) {
         if (NULL != hef[hef_index]) {
-            (void)hailo_release_hef(hef[hef_index]);            
+            (void)hailo_release_hef(hef[hef_index]);
         }
     }
     (void)hailo_release_vdevice(vdevice);
 l_exit:
-    return status;
+    return (int)status;
 }

@@ -16,9 +16,25 @@
 #include <math.h>
 #include <fenv.h>
 
+#ifdef _MSC_VER
+#include <immintrin.h>
+#endif
 
+/** hailort namespace */
 namespace hailort
 {
+
+inline float bankers_round(float x)
+{
+#ifdef _MSC_VER
+    // These instructions are intrinsics that the Microsoft C/C++ compiler supports when x86 is targeted
+    __m128 xmm = _mm_set_ss(x);
+    xmm = _mm_round_ss(xmm, xmm, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+    return _mm_cvtss_f32(xmm);
+#else
+    return rintf(x);
+#endif
+}
 
 class RoundingToNearestGuard final
 {
@@ -70,7 +86,6 @@ public:
                 dst_ptr[i] = (T)(src_ptr[i]);
             }
         } else {
-            auto rounding_tonearest_guard = RoundingToNearestGuard();
             for (uint32_t i = 0; i < buffer_elements_count; i++) {
                 dst_ptr[i] = dequantize_output<T, Q>(src_ptr[i], quant_info);
             }
@@ -79,7 +94,7 @@ public:
 
     /**
      * De-quantize in place the output buffer pointed by @a dst_ptr from data type @a Q to data type @a T.
-     * 
+     *
      * @param[inout] dst_ptr                A pointer to the buffer to be de-quantized.
      * @param[in] buffer_elements_count     The number of elements in @a dst_ptr array.
      * @param[in] quant_info                Quantization info.
@@ -87,14 +102,28 @@ public:
     template <typename T, typename Q>
     static void dequantize_output_buffer_in_place(T *dst_ptr, uint32_t buffer_elements_count, hailo_quant_info_t quant_info)
     {
-        if (is_identity_qp(quant_info)) {
+        dequantize_output_buffer_in_place<T, Q>(dst_ptr, 0, buffer_elements_count, quant_info.qp_zp, quant_info.qp_scale);
+    }
+
+    /**
+     * De-quantize in place the output buffer pointed by @a dst_ptr starting from @a offset from data type @a Q to data type @a T.
+     *
+     * @param[inout] dst_ptr                A pointer to the buffer to be de-quantized.
+     * @param[in] offset                    The offset in @a dst_ptr array to start from.
+     * @param[in] buffer_elements_count     The number of elements in @a dst_ptr array.
+     * @param[in] qp_zp                     Quantization zero point.
+     * @param[in] qp_scale                  Quantization scale.
+     */
+    template <typename T, typename Q>
+    static void dequantize_output_buffer_in_place(T *dst_ptr, uint32_t offset, uint32_t buffer_elements_count, float32_t qp_zp, float32_t qp_scale)
+    {
+        if (is_identity_qp(qp_zp, qp_scale)) {
             for (int32_t i = (int32_t)buffer_elements_count - 1; i >= 0; i--) {
-                dst_ptr[i] = (T)(*((Q*)dst_ptr + i));
+                dst_ptr[offset + i] = (T)(*((Q*)dst_ptr + offset + i));
             }
         } else {
-            auto rounding_tonearest_guard = RoundingToNearestGuard();
             for (int32_t i = (int32_t)buffer_elements_count - 1; i >= 0; i--) {
-                dst_ptr[i] = dequantize_output<T, Q>(*((Q*)dst_ptr + i), quant_info);
+                dst_ptr[offset + i] = dequantize_output<T, Q>(*((Q*)dst_ptr + offset + i), qp_zp, qp_scale);
             }
         }
     }
@@ -113,7 +142,7 @@ public:
         auto rounding_tonearest_guard = RoundingToNearestGuard();
         if (is_identity_qp(quant_info)) {
             for (uint32_t i = 0; i < buffer_elements_count; i++) {
-                dst_ptr[i] = (Q)rintf(src_ptr[i]);
+                dst_ptr[i] = (Q)bankers_round(src_ptr[i]);
             }
         } else {
             for (uint32_t i = 0; i < buffer_elements_count; i++) {
@@ -155,7 +184,16 @@ public:
      */
     static inline bool is_identity_qp(const hailo_quant_info_t &quant_info)
     {
-        return ((1 == quant_info.qp_scale) && (0 == quant_info.qp_zp));
+        return is_identity_qp(quant_info.qp_zp, quant_info.qp_scale);
+    }
+
+    /**
+     * Indicates whether the @a qp_zp and @a qp_scale is the identity scale.
+     * If true there is no need to fix the data's scale.
+     */
+    static inline bool is_identity_qp(float32_t qp_zp, float32_t qp_scale)
+    {
+        return ((1 == qp_scale) && (0 == qp_zp));
     }
 
     /**
@@ -170,7 +208,23 @@ public:
     template <typename T, typename Q>
     static inline T dequantize_output(Q number, hailo_quant_info_t quant_info)
     {
-        return (T)((number - quant_info.qp_zp) * quant_info.qp_scale);
+        return dequantize_output<T, Q>(number, quant_info.qp_zp, quant_info.qp_scale);
+    }
+
+    /**
+     * De-quantize @a number from data type @a Q to data type @a T and fix it's scale according to @a qp_zp and @a qp_scale.
+     *
+     * @param[in] number                   The value to be de-quantized.
+     * @param[in] qp_zp                    Quantization zero point.
+     * @param[in] qp_scale                 Quantization scale.
+     *
+     * @return Returns the dequantized value of @a number.
+     *
+     */
+    template <typename T, typename Q>
+    static inline T dequantize_output(Q number, float32_t qp_zp, float32_t qp_scale)
+    {
+        return (T)((number - qp_zp) * qp_scale);
     }
 
     static inline float32_t clip(float32_t n, float32_t limval_min, float32_t limval_max)
@@ -191,7 +245,7 @@ private:
     static inline Q quantize_input(T number, hailo_quant_info_t quant_info)
     {
         float32_t clipped_number = clip((float32_t)number, quant_info.limvals_min, quant_info.limvals_max);
-        return (Q)rintf((clipped_number / quant_info.qp_scale) + quant_info.qp_zp);
+        return (Q)bankers_round((clipped_number / quant_info.qp_scale) + quant_info.qp_zp);
     }
 };
 

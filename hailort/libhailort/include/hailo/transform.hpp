@@ -20,7 +20,7 @@
 #include <map>
 #include <vector>
 
-
+/** hailort namespace */
 namespace hailort
 {
 
@@ -284,6 +284,7 @@ public:
      * @param[in]  src               A buffer to be demultiplexed.
      * @param[out] raw_buffers       A vector of buffers that receives the demultiplexed data read from the stream.
      *                               The order of @a raw_buffers vector will remain as is.
+     * @note The order of @a raw_buffers should be the same as returned from the function 'get_edges_stream_info()'.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
     virtual hailo_status transform_demux(const MemoryView src, std::vector<MemoryView> &raw_buffers) = 0;

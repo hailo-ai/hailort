@@ -13,9 +13,11 @@
 
 #include "hailo/expected.hpp"
 #include "common/utils.hpp"
+#include "common/os_utils.hpp"
 
 #include <mutex>
 #include <shared_mutex>
+#include <unordered_set>
 
 namespace hailort
 {
@@ -23,11 +25,13 @@ namespace hailort
 template<class T>
 struct Resource {
     Resource(uint32_t pid, std::shared_ptr<T> resource)
-        : pid(pid), resource(std::move(resource))
-    {}
+        : resource(std::move(resource))
+    {
+        pids.insert(pid);
+    }
 
-    uint32_t pid;
     std::shared_ptr<T> resource;
+    std::unordered_set<uint32_t> pids;
 };
 
 template<class T>
@@ -69,42 +73,88 @@ public:
 
     uint32_t dup_handle(uint32_t pid, uint32_t handle)
     {
-        // Keeping this function for future possible usage
-        (void)pid;
+        std::unique_lock<std::mutex> lock(m_mutex);
+        auto resource_expected = resource_lookup(handle);
+        assert(resource_expected);
+        auto resource = resource_expected.release();
+
+        assert(contains(m_resources_mutexes, handle));
+        std::unique_lock<std::shared_timed_mutex> resource_lock(m_resources_mutexes[handle]);
+        resource->pids.insert(pid);
+
         return handle;
     }
 
-    hailo_status release_resource(uint32_t handle)
+    std::shared_ptr<T> release_resource(uint32_t handle, uint32_t pid)
     {
+        std::shared_ptr<T> res = nullptr;
         std::unique_lock<std::mutex> lock(m_mutex);
         auto found = m_resources.find(handle);
-        CHECK(found != m_resources.end(), HAILO_NOT_FOUND, "Failed to release resource with handle {}, resource does not exist", handle);
+        if (found == m_resources.end()) {
+            LOGGER__INFO("Failed to release resource with handle {} and PID {}. The resource no longer exists or may have already been released",
+                handle, pid);
+            return res;
+        }
+
         assert(contains(m_resources_mutexes, handle));
         auto resource = m_resources[handle];
+        bool release_resource = false;
         {
             std::unique_lock<std::shared_timed_mutex> resource_lock(m_resources_mutexes[handle]);
-            m_resources.erase(handle);
+            resource->pids.erase(pid);
+            if (all_pids_dead(resource)) {
+                release_resource = true;
+                res = resource->resource;
+                m_resources.erase(handle);
+            }
         }
-        m_resources_mutexes.erase(handle);
-        return HAILO_SUCCESS;
+        if (release_resource) {
+            m_resources_mutexes.erase(handle);
+        }
+        return res;
     }
 
-    void release_by_pid(uint32_t pid)
+    std::vector<std::shared_ptr<T>> release_by_pid(uint32_t pid)
     {
+        std::vector<std::shared_ptr<T>> res;
         std::unique_lock<std::mutex> lock(m_mutex);
         for (auto iter = m_resources.begin(); iter != m_resources.end(); ) {
             auto handle = iter->first;
-            if (iter->second->pid == pid) {
+            bool release_resource = false;
+            if (contains(iter->second->pids, pid)) {
                 assert(contains(m_resources_mutexes, handle));
                 {
                     std::unique_lock<std::shared_timed_mutex> resource_lock(m_resources_mutexes[handle]);
-                    iter = m_resources.erase(iter);
+                    iter->second->pids.erase(pid);
+                    if (iter->second->pids.empty()) {
+                        release_resource = true;
+                        res.push_back(iter->second->resource);
+                        iter = m_resources.erase(iter);
+                    }
                 }
+            }
+            if (release_resource) {
                 m_resources_mutexes.erase(handle);
             } else {
                 ++iter;
             }
         }
+
+        return res;
+    }
+
+    std::vector<uint32_t> resources_handles_by_pids(std::set<uint32_t> &pids)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        std::vector<uint32_t> resources_handles;
+        for (auto &handle_resource_pair : m_resources) {
+            for (auto &pid : pids) {
+                if (contains(handle_resource_pair.second->pids, pid)) {
+                    resources_handles.emplace_back(handle_resource_pair.first);
+                }
+            }
+        }
+        return resources_handles;
     }
 
 private:
@@ -118,6 +168,16 @@ private:
         CHECK_AS_EXPECTED(found != m_resources.end(), HAILO_NOT_FOUND, "Failed to find resource with handle {}", handle);
         auto resource = found->second;
         return resource;
+    }
+
+    bool all_pids_dead(std::shared_ptr<Resource<T>> resource)
+    {
+        for (auto &pid : resource->pids) {
+            if (OsUtils::is_pid_alive(pid)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     std::mutex m_mutex;

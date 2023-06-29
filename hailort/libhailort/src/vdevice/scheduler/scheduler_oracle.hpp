@@ -21,17 +21,23 @@
 namespace hailort
 {
 
+struct RunParams {
+    scheduler_core_op_handle_t core_op_handle;
+    device_id_t device_id;
+};
+
 class CoreOpsSchedulerOracle
 {
 public:
-    static bool choose_next_model(SchedulerBase &scheduler, uint32_t device_id, bool check_threshold);
-    static uint32_t get_avail_device(SchedulerBase &scheduler, scheduler_core_op_handle_t core_op_handle);
-    static bool should_stop_streaming(SchedulerBase &scheduler, core_op_priority_t core_op_priority);
+    static scheduler_core_op_handle_t choose_next_model(SchedulerBase &scheduler, const device_id_t &device_id, bool check_threshold);
+    static std::vector<RunParams> get_oracle_decisions(SchedulerBase &scheduler);
+    static bool should_stop_streaming(SchedulerBase &scheduler, core_op_priority_t core_op_priority, const device_id_t &device_id);
 
 private:
     CoreOpsSchedulerOracle() {}
     // TODO: Consider returning a vector of devices (we can use this function in other places)
     static bool is_core_op_active(SchedulerBase &scheduler, scheduler_core_op_handle_t core_op_handle);
+    static bool is_core_op_finished_batch(SchedulerBase &scheduler, const device_id_t &device_id);
 };
 
 } /* namespace hailort */

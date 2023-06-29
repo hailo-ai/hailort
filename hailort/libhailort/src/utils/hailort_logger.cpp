@@ -45,6 +45,7 @@ namespace hailort
 #define HAILORT_ANDROID_LOGGER_PATTERN ("%v")               // Android logger will print only message (additional info are built-in)
 
 #define HAILORT_LOGGER_PATH_ENV_VAR ("HAILORT_LOGGER_PATH")
+#define PERIODIC_LOGGER_FLUSH_TIME_IN_SECONDS (5)
 
 #ifdef _WIN32
 #define PATH_SEPARATOR "\\"
@@ -140,18 +141,24 @@ std::shared_ptr<spdlog::sinks::sink> HailoRTLogger::create_file_sink(const std::
         return make_shared_nothrow<spdlog::sinks::null_sink_st>();
     }
 
+    auto is_dir = Filesystem::is_directory(dir_path);
+    if (!is_dir) {
+        std::cerr << "HailoRT warning: Cannot create log file " << filename << "! Path " << dir_path << " is not valid." << std::endl;
+        return make_shared_nothrow<spdlog::sinks::null_sink_st>();
+    }
+    if (!is_dir.value()) {
+        std::cerr << "HailoRT warning: Cannot create log file " << filename << "! Path " << dir_path << " is not a directory." << std::endl;
+        return make_shared_nothrow<spdlog::sinks::null_sink_st>();
+    }
+
     if (!Filesystem::is_path_accesible(dir_path)) {
-        std::cerr << "HailoRT warning: Cannot create log file " << filename
-                    << "! Please check the directory " << dir_path << " write permissions." << std::endl;
-        // Create null sink instead (Will throw away its log)
+        std::cerr << "HailoRT warning: Cannot create log file " << filename << "! Please check the directory " << dir_path << " write permissions." << std::endl;
         return make_shared_nothrow<spdlog::sinks::null_sink_st>();
     }
 
     const auto file_path = dir_path + PATH_SEPARATOR + filename;
     if (Filesystem::does_file_exists(file_path) && !Filesystem::is_path_accesible(file_path)) {
-        std::cerr << "HailoRT warning: Cannot create log file " << filename
-                    << "! Please check the file " << file_path << " write permissions." << std::endl;
-        // Create null sink instead (Will throw away its log)
+        std::cerr << "HailoRT warning: Cannot create log file " << filename << "! Please check the file " << file_path << " write permissions." << std::endl;
         return make_shared_nothrow<spdlog::sinks::null_sink_st>();
     }
 
@@ -162,7 +169,7 @@ std::shared_ptr<spdlog::sinks::sink> HailoRTLogger::create_file_sink(const std::
     return make_shared_nothrow<spdlog::sinks::basic_file_sink_mt>(file_path);
 }
 
-HailoRTLogger::HailoRTLogger() :
+HailoRTLogger::HailoRTLogger(spdlog::level::level_enum console_level, spdlog::level::level_enum file_level, spdlog::level::level_enum flush_level) :
     m_console_sink(make_shared_nothrow<spdlog::sinks::stderr_color_sink_mt>()),
 #ifdef __ANDROID__
     m_main_log_file_sink(make_shared_nothrow<spdlog::sinks::android_sink_mt>(HAILORT_NAME))
@@ -171,6 +178,10 @@ HailoRTLogger::HailoRTLogger() :
     m_local_log_file_sink(create_file_sink(get_log_path(HAILORT_LOGGER_PATH_ENV_VAR), HAILORT_LOGGER_FILENAME, true))
 #endif
 {
+    if ((nullptr == m_console_sink) || (nullptr == m_main_log_file_sink) || (nullptr == m_local_log_file_sink)) {
+        std::cerr << "Allocating memory on heap for logger sinks has failed! Please check if this host has enough memory. Writing to log will result in a SEGFAULT!" << std::endl;
+        return;
+    }
 
 #ifdef __ANDROID__
     m_main_log_file_sink->set_pattern(HAILORT_ANDROID_LOGGER_PATTERN);
@@ -179,31 +190,26 @@ HailoRTLogger::HailoRTLogger() :
     m_local_log_file_sink->set_pattern(HAILORT_LOCAL_FILE_LOGGER_PATTERN);
 #endif
 
-    // TODO: Handle null pointers for logger and sinks
     m_console_sink->set_pattern(HAILORT_CONSOLE_LOGGER_PATTERN);
     spdlog::sinks_init_list sink_list = { m_console_sink, m_main_log_file_sink, m_local_log_file_sink };
     m_hailort_logger = make_shared_nothrow<spdlog::logger>(HAILORT_NAME, sink_list.begin(), sink_list.end());
+    if (nullptr == m_hailort_logger) {
+        std::cerr << "Allocating memory on heap for HailoRT logger has failed! Please check if this host has enough memory. Writing to log will result in a SEGFAULT!" << std::endl;
+        return;
+    }
 
-#ifdef NDEBUG
-    set_levels(spdlog::level::warn, spdlog::level::info, spdlog::level::warn);
-#else
-    set_levels(spdlog::level::warn, spdlog::level::debug, spdlog::level::debug);
-#endif
+    set_levels(console_level, file_level, flush_level);
     spdlog::set_default_logger(m_hailort_logger);
 }
 
-std::shared_ptr<spdlog::logger> HailoRTLogger::logger()
-{
-    return m_hailort_logger;
-}
-
-void HailoRTLogger::set_levels(spdlog::level::level_enum console_level,
-    spdlog::level::level_enum file_level, spdlog::level::level_enum flush_level)
+void HailoRTLogger::set_levels(spdlog::level::level_enum console_level, spdlog::level::level_enum file_level,
+    spdlog::level::level_enum flush_level)
 {
     m_console_sink->set_level(console_level);
     m_main_log_file_sink->set_level(file_level);
     m_local_log_file_sink->set_level(file_level);
     m_hailort_logger->flush_on(flush_level);
+    spdlog::flush_every(std::chrono::seconds(PERIODIC_LOGGER_FLUSH_TIME_IN_SECONDS));
 }
 
 

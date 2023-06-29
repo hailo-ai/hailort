@@ -14,8 +14,7 @@
 #include "hailo/event.hpp"
 
 #include "common/utils.hpp"
-
-#include "utils/event_internal.hpp"
+#include "common/event_internal.hpp"
 
 #include <poll.h>
 #include <utility>
@@ -31,10 +30,6 @@
 namespace hailort
 {
 
-Waitable::Waitable(underlying_waitable_handle_t handle) :
-    m_handle(handle)
-{}
-
 Waitable::~Waitable()
 {
     if (INVALID_EVENT_HANDLE != m_handle) {
@@ -48,11 +43,6 @@ Waitable::~Waitable()
 Waitable::Waitable(Waitable&& other) :
     m_handle(std::exchange(other.m_handle, INVALID_EVENT_HANDLE))
 {}
-
-underlying_waitable_handle_t Waitable::get_underlying_handle()
-{
-    return m_handle;
-}
 
 hailo_status Waitable::wait_for_single_object(underlying_waitable_handle_t handle, std::chrono::milliseconds timeout)
 {
@@ -86,11 +76,6 @@ EventPtr Event::create_shared(const State& initial_state)
     }
 
     return make_shared_nothrow<Event>(handle);
-}
-
-hailo_status Event::wait(std::chrono::milliseconds timeout)
-{
-    return wait_for_single_object(m_handle, timeout);
 }
 
 hailo_status Event::signal()
@@ -144,27 +129,6 @@ SemaphorePtr Semaphore::create_shared(uint32_t initial_count)
     return make_shared_nothrow<Semaphore>(handle, initial_count);
 }
 
-hailo_status Semaphore::wait(std::chrono::milliseconds timeout)
-{
-    auto wait_result = wait_for_single_object(m_handle, timeout);
-    if (HAILO_SUCCESS == wait_result) {
-        m_sem_mutex.lock();
-        if (0 == m_count.load()) {
-            LOGGER__ERROR("Waiting on semaphore with 0 value");
-        }
-        if (m_count > 0) {
-            m_count--;
-        }
-        // After decrementing the value of the semaphore - check if the new value is bigger than 0 and if it is signal the event
-        if (m_count > 0) {
-            neosmart::SetEvent(m_handle);
-        }
-        m_sem_mutex.unlock();
-    }
-    
-    return wait_result;
-}
-
 hailo_status Semaphore::signal()
 {
     m_sem_mutex.lock();
@@ -208,71 +172,41 @@ Semaphore::Semaphore(Semaphore&& other) :
     other.m_sem_mutex.unlock();
 }
 
-WaitOrShutdown::WaitOrShutdown(WaitablePtr waitable, EventPtr shutdown_event) :
-    m_waitable(waitable),
-    m_shutdown_event(shutdown_event),
-    m_wait_handle_array(create_wait_handle_array(waitable, shutdown_event))
-{}
+hailo_status Semaphore::post_wait()
+{
+    std::unique_lock<std::mutex> lock(m_sem_mutex);
+    CHECK(m_count.load() > 0, HAILO_INTERNAL_FAILURE, "Wait returned on semaphore with 0 value");
 
-void Event::post_wait()
-{}
+    m_count--;
 
-void Semaphore::post_wait(){
-    m_sem_mutex.lock();
-    if (0 == m_count.load()) {
-        LOGGER__ERROR("Wait Returned on semaphore with 0 value");
-    }
-    if (m_count > 0) {
-        m_count--;
-    }
     // After decrementing the value of the semaphore - check if the new value is bigger than 0 and if it is signal the event
     if (m_count > 0) {
         neosmart::SetEvent(m_handle);
     }
-    m_sem_mutex.unlock();
+
+    return HAILO_SUCCESS;
 }
 
-hailo_status WaitOrShutdown::wait(std::chrono::milliseconds timeout)
+Expected<size_t> WaitableGroup::wait_any(std::chrono::milliseconds timeout)
 {
     int wait_index = -1;
     const uint64_t timeout_ms = (timeout.count() > INT_MAX) ? INT_MAX : static_cast<uint64_t>(timeout.count());
-    const auto wait_result = neosmart::WaitForMultipleEvents(m_wait_handle_array.data(), static_cast<int>(m_wait_handle_array.size()),
-        false, timeout_ms, wait_index);
-    // If semaphore need to subtract from counter
+    const bool WAIT_FOR_ANY = false;
+    const auto wait_result = neosmart::WaitForMultipleEvents(m_waitable_handles.data(),
+        static_cast<int>(m_waitable_handles.size()), WAIT_FOR_ANY, timeout_ms, wait_index);
     if (0 != wait_result) {
         if (ETIMEDOUT == wait_result) {
-            return HAILO_TIMEOUT;
+            return make_unexpected(HAILO_TIMEOUT);
         } else {
             LOGGER__ERROR("WaitForMultipleEvents Failed, error: {}", wait_result);
-            return HAILO_INTERNAL_FAILURE;
+            return make_unexpected(HAILO_INTERNAL_FAILURE);
         }
     }
-    
-    if (WAITABLE_INDEX == wait_index) {
-        // Meaning it can be a semaphore object
-        m_waitable->post_wait();
-        return HAILO_SUCCESS;
-    } else if (SHUTDOWN_INDEX == wait_index) {
-        return HAILO_SHUTDOWN_EVENT_SIGNALED;
-    } else {
-        LOGGER__ERROR("Invalid event index signalled in WaitForMultipleEventsFailed, index: {}", wait_index);
-        return HAILO_INTERNAL_FAILURE;
-    }
-}
 
-hailo_status WaitOrShutdown::signal()
-{
-    return m_waitable->signal();
-}
+    auto status = m_waitables[wait_index].get().post_wait();
+    CHECK_SUCCESS_AS_EXPECTED(status);
 
-WaitOrShutdown::WaitHandleArray WaitOrShutdown::create_wait_handle_array(WaitablePtr waitable, EventPtr shutdown_event)
-{
-    // Note the order!
-    WaitHandleArray handles{
-        shutdown_event->get_underlying_handle(),
-        waitable->get_underlying_handle()
-    };
-    return handles;
+    return wait_index;
 }
 
 } /* namespace hailort */

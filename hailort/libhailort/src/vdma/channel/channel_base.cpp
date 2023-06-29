@@ -41,12 +41,6 @@ ChannelBase::ChannelBase(vdma::ChannelId channel_id, Direction direction, HailoR
         return;
     }
 
-    if (descs_count > MAX_DESCS_COUNT) {
-        LOGGER__ERROR("Vdma channel descs_count mustn't be larger than {}", MAX_DESCS_COUNT);
-        status = HAILO_INVALID_ARGUMENT;
-        return;
-    }
-
     auto state = VdmaChannelState::create(descs_count, (nullptr != m_latency_meter));
     if(!state) {
         LOGGER__ERROR("Failed to create channel's state");
@@ -55,7 +49,6 @@ ChannelBase::ChannelBase(vdma::ChannelId channel_id, Direction direction, HailoR
     }
     m_state = state.release();
 
-    // Allocate descriptor list (host side)
     status = allocate_descriptor_list(descs_count, desc_page_size);
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("Failed to allocate Vdma buffer for channel transfer! status={}", status);
@@ -134,6 +127,12 @@ uint16_t ChannelBase::get_num_available()
     return num_available;
 }
 
+void ChannelBase::set_num_proc_value(uint16_t new_value)
+{
+    assert(new_value < m_state->m_descs.size);
+    _CB_SET(m_state->m_descs.tail, new_value);
+}
+
 Expected<uint16_t> ChannelBase::get_hw_num_processed()
 {
     auto hw_num_processed = m_host_registers.get_num_processed();
@@ -153,10 +152,8 @@ ChannelBase::Direction ChannelBase::other_direction(Direction direction)
 
 hailo_status ChannelBase::allocate_descriptor_list(uint32_t descs_count, uint16_t desc_page_size)
 {
-    auto desc_page_size_value = m_driver.calc_desc_page_size(desc_page_size);
-    CHECK(is_powerof2(desc_page_size_value), HAILO_INVALID_ARGUMENT, "Descriptor page_size must be a power of two.");
-
-    auto desc_list_exp = DescriptorList::create(descs_count, desc_page_size_value, m_driver);
+    static const bool CIRCULAR = true;
+    auto desc_list_exp = DescriptorList::create(descs_count, desc_page_size, CIRCULAR, m_driver);
     CHECK_EXPECTED_AS_STATUS(desc_list_exp);
 
     m_desc_list = make_shared_nothrow<DescriptorList>(desc_list_exp.release());

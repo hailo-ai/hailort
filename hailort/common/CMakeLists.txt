@@ -19,6 +19,7 @@ set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/barrier.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/file_utils.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/string_utils.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/event_internal.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/device_measurements.cpp
 )

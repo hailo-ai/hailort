@@ -39,6 +39,7 @@ class YOLOPostProcessOp : public NmsPostProcessOp
 public:
     hailo_status execute(const std::map<std::string, MemoryView> &inputs, std::map<std::string, MemoryView> &outputs) override;
     std::string get_op_description() override;
+    virtual hailo_status validate_metadata() = 0; // TODO: HRT-10676
 
 protected:
     virtual hailo_bbox_float32_t decode(float32_t tx, float32_t ty, float32_t tw, float32_t th,
@@ -92,10 +93,10 @@ private:
         assert(layer_anchors.size() % 2 == 0);
         const size_t num_of_anchors = (layer_anchors.size() / 2);
 
-        uint32_t entry_size = (uint32_t)((CLASSES_START_INDEX + m_nms_config.classes) * sizeof(DeviceType));
+        uint32_t entry_size = (uint32_t)(CLASSES_START_INDEX + m_nms_config.number_of_classes);
         auto number_of_entries = padded_shape.height * padded_shape.width * num_of_anchors;
         // TODO: this can also be part of the Op configuration
-        auto buffer_size = number_of_entries * entry_size;
+        auto buffer_size = number_of_entries * entry_size * sizeof(DeviceType);
         CHECK(buffer_size == buffer.size(), HAILO_INVALID_ARGUMENT,
             "Failed to extract_detections, buffer_size should be {}, but is {}", buffer_size, buffer.size());
 
@@ -105,7 +106,6 @@ private:
             for (uint32_t col = 0; col < shape.width; col++) {
                 for (uint32_t anchor = 0; anchor < num_of_anchors; anchor++) {
                     auto entry_idx = (row_size * row) + col + ((anchor * entry_size) * padded_shape.width);
-
                     auto objectness = Quantization::dequantize_output<HostType, DeviceType>(data[entry_idx + OBJECTNESS_OFFSET], quant_info);
                     if (objectness < m_nms_config.nms_score_th) {
                         continue;
@@ -130,7 +130,7 @@ private:
                         }
                     }
                     else {
-                        for (uint32_t class_index = 0; class_index < m_nms_config.classes; class_index++) {
+                        for (uint32_t class_index = 0; class_index < m_nms_config.number_of_classes; class_index++) {
                             auto class_entry_idx = entry_idx + ((CLASSES_START_INDEX + class_index) * padded_shape.width);
                             auto class_confidence = Quantization::dequantize_output<HostType, DeviceType>(
                                 data[class_entry_idx], quant_info);
@@ -157,6 +157,7 @@ public:
                                                 const std::map<std::string, BufferMetaData> &outputs_metadata,
                                                 const NmsPostProcessConfig &nms_post_process_config,
                                                 const YoloPostProcessConfig &yolo_post_process_config);
+    hailo_status validate_metadata() override; // TODO: HRT-10676
 
 protected:
     virtual hailo_bbox_float32_t decode(float32_t tx, float32_t ty, float32_t tw, float32_t th,
@@ -168,27 +169,6 @@ private:
                         const NmsPostProcessConfig &nms_post_process_config,
                         const YoloPostProcessConfig &yolo_post_process_config)
         : YOLOPostProcessOp(inputs_metadata, outputs_metadata, nms_post_process_config, yolo_post_process_config, "YOLOv5-Post-Process")
-    {}
-};
-
-class YOLOXPostProcessOp : public YOLOPostProcessOp
-{
-public:
-    static Expected<std::shared_ptr<Op>> create(const std::map<std::string, BufferMetaData> &inputs_metadata,
-                                                const std::map<std::string, BufferMetaData> &outputs_metadata,
-                                                const NmsPostProcessConfig &nms_post_process_config,
-                                                const YoloPostProcessConfig &yolo_post_process_config);
-
-protected:
-    virtual hailo_bbox_float32_t decode(float32_t tx, float32_t ty, float32_t tw, float32_t th,
-        int wa, int ha, uint32_t col, uint32_t row, uint32_t w_stride, uint32_t h_stride) const override;
-
-private:
-    YOLOXPostProcessOp(const std::map<std::string, BufferMetaData> &inputs_metadata,
-                       const std::map<std::string, BufferMetaData> &outputs_metadata,
-                       const NmsPostProcessConfig &nms_post_process_config,
-                       const YoloPostProcessConfig &yolo_post_process_config)
-        : YOLOPostProcessOp(inputs_metadata, outputs_metadata, nms_post_process_config, yolo_post_process_config, "YOLOX-Post-Process")
     {}
 };
 

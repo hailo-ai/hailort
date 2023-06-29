@@ -12,9 +12,8 @@
 #define _DEVICE_API_HPP_
 
 #include "hailo/hailort.h"
+#include <hailo/platform.h>
 #include "hailo/device.hpp"
-
-#include "common/socket.hpp"
 
 #include "utils.hpp"
 #include "hef_api.hpp"

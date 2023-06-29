@@ -54,6 +54,9 @@ extern "C" {
         (vdma_channel_index) = ((src) & CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__VDMA_CHANNEL_INDEX_MASK); \
     } while (0)
 
+#define CONTEXT_SWITCH_DEFS__WRITE_ACTION_BY_TYPE_MAX_SIZE (4)
+
+
 #pragma pack(push, 1)
 typedef struct {
     uint16_t core_bytes_per_buffer;
@@ -104,6 +107,8 @@ typedef enum __attribute__((packed)) {
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_OPEN_BOUNDARY_INPUT_CHANNEL,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_OPEN_BOUNDARY_OUTPUT_CHANNEL,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_ENABLE_NMS,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_WRITE_DATA_BY_TYPE,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_SWITCH_LCU_BATCH,
 
     /* Must be last */
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT
@@ -358,7 +363,32 @@ typedef struct {
 typedef struct {
     uint8_t nms_unit_index;
     uint8_t network_index;
+    uint16_t number_of_classes;
+    uint16_t burst_size;
 } CONTEXT_SWITCH_DEFS__enable_nms_action_t;
+
+typedef enum {
+    WRITE_ACTION_TYPE_GENERAL = 0,
+    WRITE_ACTION_TYPE_WRITE_BATCH = 1,
+
+    /* Must be last */
+    WRITE_ACTION_BY_TYPE_COUNT
+} CONTEXT_SWITCH_DEFS__WRITE_ACTION_TYPE_t;
+
+typedef struct {
+    uint32_t address;
+    uint8_t data_type; //CONTEXT_SWITCH_DEFS__WRITE_ACTION_TYPE_t
+    uint32_t data;
+    uint8_t shift;
+    uint32_t mask;
+    uint8_t network_index;
+} CONTEXT_SWITCH_DEFS__write_data_by_type_action_t;
+
+typedef struct {
+    uint8_t packed_lcu_id;
+    uint8_t network_index;
+    uint32_t kernel_done_count;
+} CONTEXT_SWITCH_DEFS__switch_lcu_batch_action_data_t;
 
 #pragma pack(pop)
 

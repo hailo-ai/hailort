@@ -14,6 +14,7 @@
 
 
 #define HEF_FILE ("hefs/shortcut_net.hef")
+constexpr size_t BATCH_SIZE = 1;
 constexpr size_t FRAMES_COUNT = 100;
 constexpr bool QUANTIZED = true;
 constexpr hailo_format_type_t FORMAT_TYPE = HAILO_FORMAT_TYPE_AUTO;
@@ -21,20 +22,23 @@ constexpr size_t MAX_LAYER_EDGES = 16;
 
 using namespace hailort;
 
-Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(VDevice &vdevice)
+Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(VDevice &vdevice, Hef &hef, uint16_t batch_size)
 {
-    auto hef = Hef::create(HEF_FILE);
-    if (!hef) {
-        return make_unexpected(hef.status());
-    }
-
-    auto configure_params = vdevice.create_configure_params(hef.value());
+    auto configure_params = vdevice.create_configure_params(hef);
     if (!configure_params) {
+        std::cerr << "Failed to create configure params" << std::endl;
         return make_unexpected(configure_params.status());
     }
 
-    auto network_groups = vdevice.configure(hef.value(), configure_params.value());
+    // Modify batch_size and power_mode for each network group
+    for (auto& network_group_params : configure_params.value()) {
+        network_group_params.second.batch_size = batch_size;
+        network_group_params.second.power_mode = HAILO_POWER_MODE_ULTRA_PERFORMANCE;
+    }
+
+    auto network_groups = vdevice.configure(hef, configure_params.value());
     if (!network_groups) {
+        std::cerr << "Failed to configure vdevice" << std::endl;
         return make_unexpected(network_groups.status());
     }
 
@@ -82,7 +86,6 @@ void read_all(OutputVStream &output, hailo_status &status)
 
 hailo_status infer(std::vector<InputVStream> &input_streams, std::vector<OutputVStream> &output_streams)
 {
-
     hailo_status status = HAILO_SUCCESS; // Success oriented
     hailo_status input_status[MAX_LAYER_EDGES] = {HAILO_UNINITIALIZED};
     hailo_status output_status[MAX_LAYER_EDGES] = {HAILO_UNINITIALIZED};
@@ -128,11 +131,14 @@ hailo_status infer(std::vector<InputVStream> &input_streams, std::vector<OutputV
 
 int main()
 {
+    uint16_t batch_size = BATCH_SIZE;
+
     auto scan_res = hailort::Device::scan();
     if (!scan_res) {
         std::cerr << "Failed to scan, status = " << scan_res.status() << std::endl;
         return scan_res.status();
     }
+    std::cout << "Found " << scan_res.value().size() << " devices" << std::endl;
 
     hailo_vdevice_params_t params;
     auto status = hailo_init_vdevice_params(&params);
@@ -148,7 +154,13 @@ int main()
         return vdevice.status();
     }
 
-    auto network_group = configure_network_group(*vdevice.value());
+    auto hef = Hef::create(HEF_FILE);
+    if (!hef) {
+        std::cerr << "Failed to create hef: " << HEF_FILE  << ", status = " << hef.status() << std::endl;
+        return hef.status();
+    }
+
+    auto network_group = configure_network_group(*vdevice.value(), hef.value(), batch_size);
     if (!network_group) {
         std::cerr << "Failed to configure network group " << HEF_FILE << std::endl;
         return network_group.status();

@@ -28,9 +28,11 @@ PipelineMultiplexer::PipelineMultiplexer() :
     m_written_streams_count(0),
     m_read_streams_count(0),
     m_next_to_read_after_drain(INVALID_CORE_OP_HANDLE)
-{}
+{
+    assert(is_multiplexer_supported());
+}
 
-bool PipelineMultiplexer::should_use_multiplexer()
+bool PipelineMultiplexer::is_multiplexer_supported()
 {
     auto disable_multiplexer_env = std::getenv(DISABLE_MULTIPLEXER_ENV_VAR);
     if ((nullptr != disable_multiplexer_env) && (strnlen(disable_multiplexer_env, 2) == 1) && (strncmp(disable_multiplexer_env, "1", 1) == 0)) {
@@ -120,7 +122,7 @@ hailo_status PipelineMultiplexer::wait_for_write(multiplexer_core_op_handle_t co
         m_is_waiting_to_write[core_op_handle] = true;
         hailo_status status = HAILO_SUCCESS;
         m_writing_cv.wait(lock, [this, core_op_handle, &status] {
-            if (!has_more_than_one_core_op_instance() || !should_use_multiplexer()) {
+            if (!has_more_than_one_core_op_instance()) {
                 return true;
             }
 
@@ -213,7 +215,7 @@ Expected<uint32_t> PipelineMultiplexer::wait_for_read(multiplexer_core_op_handle
 
         hailo_status status = HAILO_SUCCESS;
         auto wait_res = m_reading_cv.wait_for(lock, timeout, [this, core_op_handle, stream_name, &drain_frames, &status] {
-            if (should_core_op_stop(core_op_handle)) {
+            if (m_should_core_op_stop[core_op_handle][stream_name]) {
                 status = HAILO_STREAM_ABORTED_BY_USER;
                 return true; // return true so that the wait will finish
             }

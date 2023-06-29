@@ -7,18 +7,19 @@
  * @brief Timer live track
  **/
 
-#include "live_printer.hpp"
+#include "live_stats.hpp"
 
 #ifndef _HAILO_HAILORTCLI_RUN2_TIMER_LIVE_TRACK_HPP_
 #define _HAILO_HAILORTCLI_RUN2_TIMER_LIVE_TRACK_HPP_
 
-class TimerLiveTrack : public LivePrinter::Track
+class TimerLiveTrack : public LiveStats::Track
 {
 public:
     TimerLiveTrack(std::chrono::milliseconds duration);
     virtual ~TimerLiveTrack() = default;
-    virtual hailo_status start() override;
-    virtual uint32_t get_text(std::stringstream &ss) override;
+    virtual hailo_status start_impl() override;
+    virtual uint32_t push_text_impl(std::stringstream &ss) override;
+    virtual void push_json_impl(nlohmann::ordered_json &json) override;
 
 private:
     std::chrono::milliseconds m_duration;

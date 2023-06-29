@@ -40,7 +40,7 @@ hailo_status ParseHefCommand::parse_hefs_info(const std::string &hef_path, bool 
     CHECK_EXPECTED_AS_STATUS(hef_exp, "Failed to parse HEF");
     auto hef = hef_exp.release();
 
-    auto hef_info = hef.get_hef_description(stream_infos, vstream_infos);
+    auto hef_info = hef.get_description(stream_infos, vstream_infos);
     CHECK_EXPECTED_AS_STATUS(hef_info, "Failed to parse HEF");
     std::cout << hef_info.release();
     return HAILO_SUCCESS;

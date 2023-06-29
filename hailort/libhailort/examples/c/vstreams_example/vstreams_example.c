@@ -137,6 +137,7 @@ int main()
     size_t output_vstreams_size = MAX_EDGE_LAYERS;
     hailo_input_vstream input_vstreams[MAX_EDGE_LAYERS] = {NULL};
     hailo_output_vstream output_vstreams[MAX_EDGE_LAYERS] = {NULL};
+    bool quantized = true;
 
     status = hailo_create_vdevice(NULL, &vdevice);
     REQUIRE_SUCCESS(status, l_exit, "Failed to create vdevice");
@@ -144,19 +145,31 @@ int main()
     status = hailo_create_hef_file(&hef, HEF_FILE);
     REQUIRE_SUCCESS(status, l_release_vdevice, "Failed reading hef file");
 
-    status = hailo_init_configure_params(hef, HAILO_STREAM_INTERFACE_PCIE, &config_params);
+    status = hailo_init_configure_params_by_vdevice(hef, vdevice, &config_params);
     REQUIRE_SUCCESS(status, l_release_hef, "Failed initializing configure parameters");
 
     status = hailo_configure_vdevice(vdevice, hef, &config_params, &network_group, &network_group_size);
-    REQUIRE_SUCCESS(status, l_release_hef, "Failed configure vdevcie from hef");
+    REQUIRE_SUCCESS(status, l_release_hef, "Failed configure vdevice from hef");
     REQUIRE_ACTION(network_group_size == 1, status = HAILO_INVALID_ARGUMENT, l_release_hef, 
         "Invalid network group size");
 
-    status = hailo_make_input_vstream_params(network_group, true, HAILO_FORMAT_TYPE_AUTO,
+
+    // Set input format type to auto, and mark the data as quantized - libhailort will not scale the data before writing to the HW
+    quantized = true;
+    status = hailo_make_input_vstream_params(network_group, quantized, HAILO_FORMAT_TYPE_AUTO,
         input_vstream_params, &input_vstreams_size);
     REQUIRE_SUCCESS(status, l_release_hef, "Failed making input virtual stream params");
 
-    status = hailo_make_output_vstream_params(network_group, true, HAILO_FORMAT_TYPE_AUTO,
+    /* The input format order in the example HEF is NHWC in the user-side (may be seen using 'hailortcli parse-hef <HEF_PATH>).
+       Here we override the user-side format order to be NCHW */
+    for (size_t i = 0 ; i < input_vstreams_size; i++) {
+        input_vstream_params[i].params.user_buffer_format.order = HAILO_FORMAT_ORDER_NCHW;
+    }
+
+    // Set output format type to float32, and mark the data as not quantized - libhailort will de-quantize the data after reading from the HW
+    // Note: this process might affect the overall performance
+    quantized = false;
+    status = hailo_make_output_vstream_params(network_group, quantized, HAILO_FORMAT_TYPE_FLOAT32,
         output_vstream_params, &output_vstreams_size);
     REQUIRE_SUCCESS(status, l_release_hef, "Failed making output virtual stream params");
 
@@ -186,5 +199,5 @@ l_release_hef:
 l_release_vdevice:
     (void) hailo_release_vdevice(vdevice);
 l_exit:
-    return status;
+    return (int)status;
 }

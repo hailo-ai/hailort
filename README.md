@@ -1,12 +1,12 @@
 <p align="left">
-  <img src=".hailort.png" />
+  <img src=".hailort.jpg" />
 </p>
 
 
 # HailoRT #
 
 HailoRT is a lightweight, production-grade runtime library that runs on the host processor and provides a robust
-user-space runtime library (the HailoRT Library) with intuitive APIs in C/C++ for optimized performance
+user-space library (the HailoRT Library) with intuitive APIs in C/C++ for optimized performance
 
 HailoRT consists of the following main components:
 - HailoRT Library.
@@ -42,8 +42,8 @@ Contact information and support is available at [**hailo.ai**](https://hailo.ai/
 
 ## About Hailo-8™
 
-Hailo-8 is a deep learning processor for edge devices. The Hailo-8 provides groundbraking efficiency for neural network deployment.
-The Hailo-8 edge AI processor, featuring up to 26 tera-operations per second (TOPS), significantly outperforms all other edge processors.
+Hailo-8 is a deep learning processor for edge devices. The Hailo-8 provides groundbreaking efficiency for neural network deployment.
+The Hailo-8 edge AI processor, featuring up to 26 Tera-Operations-Per-Second (TOPS), significantly outperforms all other edge processors.
 Hailo-8 is available in various form-factors, including the Hailo-8 M.2 Module.
 
 The Hailo-8 AI processor is designed to fit into a multitude of smart machines and devices, for a wide variety of sectors including Automotive, Smart Cities, Industry 4.0,

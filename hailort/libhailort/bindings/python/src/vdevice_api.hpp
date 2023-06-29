@@ -16,14 +16,8 @@
 #include "hailo/vdevice.hpp"
 #include "hailo/hailort_common.hpp"
 
-#include "common/logger_macros.hpp"
-
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-#include "service/rpc_client_utils.hpp"
-#endif // HAILO_SUPPORT_MULTI_PROCESS
-
 #include "utils.hpp"
-
+#include <iostream>
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <pybind11/detail/common.h>
@@ -57,7 +51,7 @@ public:
     static VDeviceWrapper create(const VDeviceParamsWrapper &params, const std::vector<std::string> &device_ids)
     {
         if (params.orig_params.device_ids != nullptr && (!device_ids.empty())) {
-            LOGGER__ERROR("VDevice device_ids can be set in params or device_ids argument. Both parameters were passed to the c'tor");
+            std::cerr << "VDevice device_ids can be set in params or device_ids argument. Both parameters were passed to the c'tor";
             throw HailoRTStatusException(std::to_string(HAILO_INVALID_OPERATION));
         }
         auto modified_params = params;
@@ -124,32 +118,26 @@ public:
 
     void before_fork()
     {
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
         if (m_vdevice != nullptr) {
             auto status = m_vdevice->before_fork();
             VALIDATE_STATUS(status);
         }
-#endif // HAILO_SUPPORT_MULTI_PROCESS
     }
 
     void after_fork_in_parent()
     {
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
         if (m_vdevice != nullptr) {
             auto status = m_vdevice->after_fork_in_parent();
             VALIDATE_STATUS(status);
         }
-#endif // HAILO_SUPPORT_MULTI_PROCESS
     }
 
     void after_fork_in_child()
     {
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
         if (m_vdevice != nullptr) {
             auto status = m_vdevice->after_fork_in_child();
             VALIDATE_STATUS(status);
         }
-#endif // HAILO_SUPPORT_MULTI_PROCESS
     }
 
 private:

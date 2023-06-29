@@ -39,6 +39,11 @@ const std::vector<CONTROL_PROTOCOL__context_switch_context_info_single_control_t
     return m_controls;
 }
 
+const CONTROL_PROTOCOL__context_switch_context_type_t &ContextSwitchBufferBuilder::get_context_type() const
+{
+    return m_context_type;
+}
+
 CONTROL_PROTOCOL__context_switch_context_info_single_control_t &ContextSwitchBufferBuilder::current_control()
 {
     assert(!m_controls.empty());

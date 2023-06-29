@@ -92,7 +92,7 @@ static std::vector<std::string> get_available_device_ids()
     return device_ids;
 }
 
-std::string get_device_filepath(const std::string &device_id)
+HailoRTDriver::DeviceInfo get_device_info(const std::string &device_id)
 {
     auto scan_results = HailoRTDriver::scan_devices();
     if (!scan_results) {
@@ -107,13 +107,13 @@ std::string get_device_filepath(const std::string &device_id)
         throw std::runtime_error("Requested device not found");
     }
 
-    return device_found->dev_path;
+    return *device_found;
 }
 
 std::shared_ptr<HailoRTDriver> create_driver_object(const std::string &device_id)
 {
-    auto device_path = get_device_filepath(device_id);
-    auto hailort_driver = HailoRTDriver::create(device_path);
+    auto device_info = get_device_info(device_id);
+    auto hailort_driver = HailoRTDriver::create(device_info);
     if (!hailort_driver) {
         throw std::runtime_error("Failed create hailort driver object");
     }

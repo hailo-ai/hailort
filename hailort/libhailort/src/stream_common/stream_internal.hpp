@@ -11,16 +11,23 @@
  * 
  * InputStream                      (External "interface")
  * |-- InputStreamBase              (Base class)
- *     |-- VdmaInputStream
+ *     |-- VdmaInputStreamBase
+ *          |-- VdmaInputStream
+ *          |-- VdmaAsyncInputStream
  *     |-- EthernetInputStream
  *     |-- MipiInputStream
+ *     |-- VDeviceInputStreamBase
+ *          |-- See vdevice_stream.hpp for subclasses
  * 
  *
  * OutputStream                      (External "interface")
  * |-- OutputStreamBase              (Base class)
- *     |-- VdmaOutputStream
+ *     |-- VdmaOutputStreamBase
+ *          |-- VdmaOutputStream
+ *          |-- VdmaAsyncOutputStream
  *     |-- EthernetOutputStream
- * 
+ *     |-- VDeviceOutputStreamBase
+ *          |-- See vdevice_stream.hpp for subclasses
  **/
 
 #ifndef _STREAM_INTERNAL_HPP_
@@ -30,10 +37,13 @@
 #include "hailo/event.hpp"
 #include "hailo/hailort_common.hpp"
 
+#include "stream_common/async_common.hpp"
 #include "hef/hef_internal.hpp"
 #include "device_common/control_protocol.hpp"
 #include "hef/layer_info.hpp"
 #include "vdma/channel/boundary_channel.hpp"
+
+using device_id_t = std::string;
 
 
 namespace hailort
@@ -64,9 +74,9 @@ public:
         return m_nn_stream_config;
     };
 
-    virtual hailo_status send_pending_buffer(size_t device_index = 0)
+    virtual hailo_status send_pending_buffer(const device_id_t &device_id)
     {
-        (void)device_index;
+        (void)device_id;
         return HAILO_INVALID_OPERATION;
     }
 
@@ -74,16 +84,17 @@ public:
     {
         return make_unexpected(HAILO_INVALID_OPERATION);
     }
-    
+
     virtual Expected<size_t> get_pending_frames_count() const
     {
         return make_unexpected(HAILO_INVALID_OPERATION);
     }
 
-    virtual hailo_status register_interrupt_callback(const vdma::ProcessingCompleteCallback &/*callback*/)
-    {
-        return HAILO_INVALID_OPERATION;
-    }
+    virtual hailo_status write_async(BufferPtr buffer, const TransferDoneCallback &user_callback) override final;
+    virtual hailo_status write_async(const MemoryView &buffer, const TransferDoneCallback &user_callback) override final;
+    virtual hailo_status write_async(const void *buffer, size_t size, const TransferDoneCallback &user_callback) override final;
+
+    virtual hailo_status write_async(TransferRequest &&transfer_request);
 
     CONTROL_PROTOCOL__nn_stream_config_t m_nn_stream_config;
 
@@ -94,7 +105,14 @@ protected:
     {
         m_stream_info = LayerInfoUtils::get_stream_info_from_layer_info(layer_info);
 
-        const bool hw_padding_supported = HefConfigurator::is_hw_padding_supported(layer_info);
+        auto max_periph_bytes_from_hef = HefConfigurator::max_periph_bytes_value(stream_interface);
+        if (HAILO_SUCCESS != max_periph_bytes_from_hef.status()) {
+            status = max_periph_bytes_from_hef.status();
+            return;
+        }
+        const auto max_periph_bytes = MIN(max_periph_bytes_from_hef.value(), layer_info.max_shmifo_size);
+        const bool hw_padding_supported = HefConfigurator::is_hw_padding_supported(layer_info, max_periph_bytes);
+
         auto nn_stream_config = HefConfigurator::parse_nn_stream_config(layer_info,
             hw_padding_supported && (HAILO_STREAM_INTERFACE_MIPI != stream_interface)); // On MIPI networks, we don't want to use hw padding nn stream config.
         if(!nn_stream_config) {
@@ -138,27 +156,41 @@ public:
     {
         return make_unexpected(HAILO_INVALID_OPERATION);
     }
-    
+
     virtual Expected<size_t> get_pending_frames_count() const
     {
         return make_unexpected(HAILO_INVALID_OPERATION);
     }
 
-    virtual hailo_status register_interrupt_callback(const vdma::ProcessingCompleteCallback &/*callback*/)
+    virtual hailo_status set_next_device_to_read(const device_id_t &device_id)
     {
+        (void)device_id;
         return HAILO_INVALID_OPERATION;
     }
+
+    virtual hailo_status read_async(BufferPtr buffer, const TransferDoneCallback &user_callback) override final;
+    virtual hailo_status read_async(MemoryView buffer, const TransferDoneCallback &user_callback) override final;
+    virtual hailo_status read_async(void *buffer, size_t size, const TransferDoneCallback &user_callback) override final;
+
+    virtual hailo_status read_async(TransferRequest &&transfer_request);
 
     CONTROL_PROTOCOL__nn_stream_config_t m_nn_stream_config;
 
 protected:
-    explicit OutputStreamBase(const LayerInfo &layer_info,
+    explicit OutputStreamBase(const LayerInfo &layer_info, hailo_stream_interface_t stream_interface,
         EventPtr &&core_op_activated_event, hailo_status &status) :
         m_layer_info(layer_info), m_core_op_activated_event(std::move(core_op_activated_event))
     {
         m_stream_info = LayerInfoUtils::get_stream_info_from_layer_info(m_layer_info);
 
-        const bool hw_padding_supported = HefConfigurator::is_hw_padding_supported(m_layer_info);
+        auto max_periph_bytes_from_hef = HefConfigurator::max_periph_bytes_value(stream_interface);
+        if (HAILO_SUCCESS != max_periph_bytes_from_hef.status()) {
+            status = max_periph_bytes_from_hef.status();
+            return;
+        }
+        const auto max_periph_bytes = MIN(max_periph_bytes_from_hef.value(), layer_info.max_shmifo_size);
+        const bool hw_padding_supported = HefConfigurator::is_hw_padding_supported(layer_info, max_periph_bytes);
+
         auto nn_stream_config = HefConfigurator::parse_nn_stream_config(m_layer_info, hw_padding_supported);
         if(!nn_stream_config) {
             LOGGER__ERROR("Failed parse nn stream config");

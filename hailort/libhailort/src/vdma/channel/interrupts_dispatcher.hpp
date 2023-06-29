@@ -13,10 +13,10 @@
 #include "os/hailort_driver.hpp"
 #include <thread>
 #include <functional>
+#include <condition_variable>
 
 namespace hailort {
 namespace vdma {
-
 
 /// When needed, creates thread (or threads) that waits for interrupts on all channels.
 class InterruptsDispatcher final {
@@ -33,19 +33,40 @@ public:
     InterruptsDispatcher(InterruptsDispatcher &&) = delete;
     InterruptsDispatcher &operator=(InterruptsDispatcher &&) = delete;
 
-    // TODO: HRT-9590 remove interrupt_thread_per_channel, use it by default
     hailo_status start(const ChannelsBitmap &channels_bitmap, bool enable_timestamp_measure,
         const ProcessIrqCallback &process_irq);
     hailo_status stop();
 
 private:
 
-    void wait_interrupts(const ChannelsBitmap &channels_bitmap, const ProcessIrqCallback &process_irq);
+    void wait_interrupts();
+    void signal_thread_quit();
+
+    struct WaitContext {
+        ChannelsBitmap bitmap;
+        ProcessIrqCallback process_irq;
+    };
+
+    enum class ThreadState {
+        // The interrupts thread is actually waiting for interrupts
+        active,
+
+        // The interrupts thread is done waiting for interrupts, it is waiting to be active.
+        not_active,
+    };
+
+    std::mutex m_mutex;
+    std::condition_variable m_cond;
 
     const std::reference_wrapper<HailoRTDriver> m_driver;
-    std::atomic<bool> m_is_running;
-    ChannelsBitmap m_channels_bitmap;
-    std::vector<std::thread> m_channel_threads;
+
+    ThreadState m_thread_state = ThreadState::not_active;
+    // When m_wait_context is not nullptr, the thread should start waiting for interrupts.
+    std::unique_ptr<WaitContext> m_wait_context;
+
+    // m_should_quit is used to quit the thread (called on destruction)
+    bool m_should_quit = false;
+    std::thread m_interrupts_thread;
 };
 
 } /* namespace vdma */

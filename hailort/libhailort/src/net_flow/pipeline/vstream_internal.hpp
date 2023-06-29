@@ -70,6 +70,7 @@ public:
     virtual hailo_status before_fork() { return HAILO_SUCCESS; };
     virtual hailo_status after_fork_in_parent() { return HAILO_SUCCESS; };
     virtual hailo_status after_fork_in_child() { return HAILO_SUCCESS; };
+    virtual bool is_aborted() { return m_is_aborted; };
 
 protected:
     BaseVStream(const hailo_vstream_info_t &vstream_info, const hailo_vstream_params_t &vstream_params,
@@ -235,6 +236,9 @@ public:
     virtual hailo_status before_fork() override;
     virtual hailo_status after_fork_in_parent() override;
     virtual hailo_status after_fork_in_child() override;
+    virtual hailo_status stop_and_clear() override;
+    virtual hailo_status start_vstream() override;
+    virtual bool is_aborted() override;
 
 private:
     InputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t input_vstream_handle, hailo_format_t &&user_buffer_format, 
@@ -274,6 +278,9 @@ public:
     virtual hailo_status before_fork() override;
     virtual hailo_status after_fork_in_parent() override;
     virtual hailo_status after_fork_in_child() override;
+    virtual hailo_status stop_and_clear() override;
+    virtual hailo_status start_vstream() override;
+    virtual bool is_aborted() override;
 
 private:
     OutputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t outputs_vstream_handle, hailo_format_t &&user_buffer_format,
@@ -323,13 +330,39 @@ public:
     static Expected<std::shared_ptr<PostInferElement>> create(const hailo_3d_image_shape_t &src_image_shape,
         const hailo_format_t &src_format, const hailo_3d_image_shape_t &dst_image_shape, const hailo_format_t &dst_format,
         const hailo_quant_info_t &dst_quant_info, const hailo_nms_info_t &nms_info, const std::string &name,
-        hailo_pipeline_elem_stats_flags_t elem_flags, std::shared_ptr<std::atomic<hailo_status>> pipeline_status);
+        hailo_pipeline_elem_stats_flags_t elem_flags, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
+        std::chrono::milliseconds timeout, hailo_vstream_stats_flags_t vstream_flags, EventPtr shutdown_event,
+        size_t buffer_pool_size);
     static Expected<std::shared_ptr<PostInferElement>> create(const hailo_3d_image_shape_t &src_image_shape, const hailo_format_t &src_format,
         const hailo_3d_image_shape_t &dst_image_shape, const hailo_format_t &dst_format, const hailo_quant_info_t &dst_quant_info, const hailo_nms_info_t &nms_info,
-        const std::string &name, const hailo_vstream_params_t &vstream_params, std::shared_ptr<std::atomic<hailo_status>> pipeline_status);
+        const std::string &name, const hailo_vstream_params_t &vstream_params, std::shared_ptr<std::atomic<hailo_status>> pipeline_status, EventPtr shutdown_event);
     PostInferElement(std::unique_ptr<OutputTransformContext> &&transform_context, const std::string &name,
-        DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status);
+        DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, BufferPoolPtr buffer_pool,
+        std::chrono::milliseconds timeout);
     virtual ~PostInferElement() = default;
+    virtual hailo_status run_push(PipelineBuffer &&buffer) override;
+    virtual PipelinePad &next_pad() override;
+    virtual std::string description() const override;
+    virtual std::vector<AccumulatorPtr> get_queue_size_accumulators() override;
+
+protected:
+    virtual Expected<PipelineBuffer> action(PipelineBuffer &&input, PipelineBuffer &&optional) override;
+
+private:
+    std::unique_ptr<OutputTransformContext> m_transform_context;
+    BufferPoolPtr m_pool;
+    std::chrono::milliseconds m_timeout;
+};
+
+class ArgmaxPostProcessElement : public FilterElement
+{
+public:
+    static Expected<std::shared_ptr<ArgmaxPostProcessElement>> create(std::shared_ptr<net_flow::Op> argmax_op,
+        const std::string &name, hailo_pipeline_elem_stats_flags_t elem_flags,
+        std::shared_ptr<std::atomic<hailo_status>> pipeline_status);
+    ArgmaxPostProcessElement(std::shared_ptr<net_flow::Op> argmax_op, const std::string &name,
+        DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status);
+    virtual ~ArgmaxPostProcessElement() = default;
     virtual hailo_status run_push(PipelineBuffer &&buffer) override;
     virtual PipelinePad &next_pad() override;
     virtual std::string description() const override;
@@ -338,7 +371,27 @@ protected:
     virtual Expected<PipelineBuffer> action(PipelineBuffer &&input, PipelineBuffer &&optional) override;
 
 private:
-    std::unique_ptr<OutputTransformContext> m_transform_context;
+    std::shared_ptr<net_flow::Op> m_argmax_op;
+};
+
+class SoftmaxPostProcessElement : public FilterElement
+{
+public:
+    static Expected<std::shared_ptr<SoftmaxPostProcessElement>> create(std::shared_ptr<net_flow::Op> softmax_op,
+        const std::string &name, hailo_pipeline_elem_stats_flags_t elem_flags,
+        std::shared_ptr<std::atomic<hailo_status>> pipeline_status);
+    SoftmaxPostProcessElement(std::shared_ptr<net_flow::Op> softmax_op, const std::string &name,
+        DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status);
+    virtual ~SoftmaxPostProcessElement() = default;
+    virtual hailo_status run_push(PipelineBuffer &&buffer) override;
+    virtual PipelinePad &next_pad() override;
+    virtual std::string description() const override;
+
+protected:
+    virtual Expected<PipelineBuffer> action(PipelineBuffer &&input, PipelineBuffer &&optional) override;
+
+private:
+    std::shared_ptr<net_flow::Op> m_softmax_op;
 };
 
 class NmsPostProcessMuxElement : public BaseMuxElement
@@ -429,11 +482,11 @@ public:
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
     virtual hailo_status execute_activate() override;
     virtual hailo_status execute_deactivate() override;
-    virtual hailo_status execute_post_deactivate() override;
+    virtual hailo_status execute_post_deactivate(bool should_clear_abort) override;
     virtual hailo_status execute_clear() override;
     virtual hailo_status execute_flush() override;
     virtual hailo_status execute_abort() override;
-    virtual hailo_status execute_resume() override;
+    virtual hailo_status execute_clear_abort() override;
     virtual hailo_status execute_wait_for_finish() override;
     uint32_t get_invalid_frames_count();
     virtual std::string description() const override;
@@ -461,11 +514,11 @@ public:
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
     virtual hailo_status execute_activate() override;
     virtual hailo_status execute_deactivate() override;
-    virtual hailo_status execute_post_deactivate() override;
+    virtual hailo_status execute_post_deactivate(bool should_clear_abort) override;
     virtual hailo_status execute_clear() override;
     virtual hailo_status execute_flush() override;
     virtual hailo_status execute_abort() override;
-    virtual hailo_status execute_resume() override;
+    virtual hailo_status execute_clear_abort() override;
     virtual hailo_status execute_wait_for_finish() override;
     virtual std::string description() const override;
 
@@ -498,10 +551,33 @@ public:
     static Expected<std::vector<OutputVStream>> create_output_nms(OutputStreamPtrVector &output_streams,
         hailo_vstream_params_t vstreams_params,
         const std::map<std::string, hailo_vstream_info_t> &output_vstream_infos);
+    static Expected<std::vector<OutputVStream>> create_output_vstreams_from_streams(const OutputStreamWithParamsVector &all_output_streams,
+        OutputStreamPtrVector &output_streams, const hailo_vstream_params_t &vstream_params,
+        const std::unordered_map<std::string, std::shared_ptr<NetFlowElement>> &post_process_ops,
+        const std::unordered_map<std::string, std::string> &op_inputs_to_op_name, const std::map<std::string, hailo_vstream_info_t> &output_vstream_infos_map);
     static Expected<std::vector<OutputVStream>> create_output_post_process_nms(OutputStreamPtrVector &output_streams,
         hailo_vstream_params_t vstreams_params,
         const std::map<std::string, hailo_vstream_info_t> &output_vstream_infos,
         const NetFlowElement &nms_op);
+    static Expected<std::shared_ptr<HwReadElement>> add_hw_read_element(std::shared_ptr<OutputStream> &output_stream,
+        std::shared_ptr<std::atomic<hailo_status>> &pipeline_status, std::vector<std::shared_ptr<PipelineElement>> &elements,
+        const std::string &element_name, EventPtr &shutdown_event, size_t buffer_pool_size,
+        const hailo_pipeline_elem_stats_flags_t &hw_read_element_stats_flags, const hailo_vstream_stats_flags_t &hw_read_stream_stats_flags);
+    static Expected<std::shared_ptr<PullQueueElement>> add_pull_queue_element(std::shared_ptr<OutputStream> &output_stream,
+        std::shared_ptr<std::atomic<hailo_status>> &pipeline_status, std::vector<std::shared_ptr<PipelineElement>> &elements,
+        const std::string &element_name, EventPtr &shutdown_event, const hailo_vstream_params_t &vstream_params);
+    static Expected<std::shared_ptr<ArgmaxPostProcessElement>> add_argmax_element(std::shared_ptr<OutputStream> &output_stream,
+        std::shared_ptr<std::atomic<hailo_status>> &pipeline_status, std::vector<std::shared_ptr<PipelineElement>> &elements,
+        const std::string &element_name, hailo_vstream_params_t &vstream_params, const NetFlowElement &argmax_op);
+    static Expected<std::shared_ptr<SoftmaxPostProcessElement>> add_softmax_element(std::shared_ptr<OutputStream> &output_stream,
+        std::shared_ptr<std::atomic<hailo_status>> &pipeline_status, std::vector<std::shared_ptr<PipelineElement>> &elements,
+        const std::string &element_name, hailo_vstream_params_t &vstream_params, const NetFlowElement &softmax_op);
+    static Expected<std::shared_ptr<UserBufferQueueElement>> add_user_buffer_queue_element(std::shared_ptr<OutputStream> &output_stream,
+        std::shared_ptr<std::atomic<hailo_status>> &pipeline_status, std::vector<std::shared_ptr<PipelineElement>> &elements,
+        const std::string &element_name, EventPtr &shutdown_event, const hailo_vstream_params_t &vstream_params);
+    static Expected<std::shared_ptr<PostInferElement>> add_post_infer_element(std::shared_ptr<OutputStream> &output_stream,
+        std::shared_ptr<std::atomic<hailo_status>> &pipeline_status, std::vector<std::shared_ptr<PipelineElement>> &elements,
+        const std::string &element_name, const hailo_vstream_params_t &vstream_params, EventPtr shutdown_event);
     static hailo_status add_demux(std::shared_ptr<OutputStream> output_stream, NameToVStreamParamsMap &vstreams_params_map,
         std::vector<std::shared_ptr<PipelineElement>> &&elements, std::vector<OutputVStream> &vstreams,
         std::shared_ptr<HwReadElement> hw_read_elem, EventPtr shutdown_event, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
@@ -516,6 +592,12 @@ public:
         const std::map<std::string, hailo_vstream_info_t> &output_vstream_infos,
         const NetFlowElement &nms_op);
     static Expected<AccumulatorPtr> create_pipeline_latency_accumulator(const hailo_vstream_params_t &vstreams_params);
+
+private:
+    static Expected<std::vector<OutputVStream>> create_output_post_process_argmax(std::shared_ptr<OutputStream> output_stream,
+        const NameToVStreamParamsMap &vstreams_params_map, const hailo_vstream_info_t &output_vstream_info, const NetFlowElement &argmax_op);
+    static Expected<std::vector<OutputVStream>> create_output_post_process_softmax(std::shared_ptr<OutputStream> output_stream,
+        const NameToVStreamParamsMap &vstreams_params_map, const hailo_vstream_info_t &output_vstream_info, const NetFlowElement &softmax_op);
 };
 
 } /* namespace hailort */

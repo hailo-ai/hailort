@@ -34,9 +34,6 @@ add_subdirectory(network_group)
 add_subdirectory(core_op)
 add_subdirectory(net_flow)
 
-
-set(HAILORT_CPP_SOURCES "${HAILORT_CPP_SOURCES}" "${HAILORT_OPS_CPP_SOURCES}")
-
 if(HAILO_BUILD_SERVICE)
     add_subdirectory(service)
 endif()
@@ -57,10 +54,8 @@ relative_to_absolute_paths(HAILO_FULL_OS_DIR ${HAILO_FULL_OS_DIR})
 set(HAILO_OS_DIR ${HAILO_OS_DIR} CACHE INTERNAL "Absolute path of os-dir")
 set(HAILO_FULL_OS_DIR ${HAILO_FULL_OS_DIR} CACHE INTERNAL "Absolute Full path of os-dir")
 set(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES} CACHE INTERNAL "Absolute paths of hailort's cpp source files")
-set(HAILORT_CPP_OS_SOURCES ${HAILORT_CPP_OS_SOURCES} CACHE INTERNAL "Absolute paths of os-related source files")
 set(COMMON_C_SOURCES ${COMMON_C_SOURCES} CACHE INTERNAL "Absolute paths of common source files")
-set(HAILORT_SRCS_ABS ${HAILORT_CPP_SOURCES} ${HAILORT_CPP_OS_SOURCES} ${HAILORT_COMMON_CPP_SOURCES} ${COMMON_C_SOURCES} CACHE INTERNAL "All absolute paths of hailort's source files")
-set(HAILORT_OPS_CPP_SOURCES ${HAILORT_OPS_CPP_SOURCES} PARENT_SCOPE)
+set(HAILORT_SRCS_ABS ${HAILORT_CPP_SOURCES} ${HAILORT_COMMON_CPP_SOURCES} ${COMMON_C_SOURCES} CACHE INTERNAL "All absolute paths of hailort's source files")
 
 SET_SOURCE_FILES_PROPERTIES(${C_SOURCES} PROPERTIES LANGUAGE CXX)
 add_library(libhailort SHARED ${HAILORT_SRCS_ABS})
@@ -102,6 +97,7 @@ set(HAILORT_PUBLIC_HEADERS
     ${HAILORT_INC_DIR}/hailo/platform.h
 
     ${HAILORT_INC_DIR}/hailo/hailort.hpp
+    ${HAILORT_INC_DIR}/hailo/buffer_storage.hpp
     ${HAILORT_INC_DIR}/hailo/buffer.hpp
     ${HAILORT_INC_DIR}/hailo/device.hpp
     ${HAILORT_INC_DIR}/hailo/event.hpp
@@ -117,7 +113,6 @@ set(HAILORT_PUBLIC_HEADERS
     ${HAILORT_INC_DIR}/hailo/network_rate_calculator.hpp
     ${HAILORT_INC_DIR}/hailo/vdevice.hpp
     ${HAILORT_INC_DIR}/hailo/quantization.hpp
-    ${HAILORT_INC_DIR}/hailo/dma_mapped_buffer.hpp
     ${HAILORT_INC_DIR}/hailo/hailort_defaults.hpp
 )
 

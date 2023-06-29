@@ -18,7 +18,6 @@
 
 #include "vstream_api.hpp"
 #include "utils.hpp"
-#include "common/logger_macros.hpp"
 
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>

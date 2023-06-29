@@ -48,7 +48,7 @@ extern "C" {
 #define HAILO_DEFAULT_INIT_AVERAGING_FACTOR (HAILO_AVERAGE_FACTOR_256)
 #define HAILO_DEFAULT_BUFFERS_THRESHOLD (0)
 #define HAILO_DEFAULT_MAX_ETHERNET_BANDWIDTH_BYTES_PER_SEC (106300000)
-#define HAILO_MAX_STREAMS_COUNT (32)
+#define HAILO_MAX_STREAMS_COUNT (40)
 #define HAILO_DEFAULT_BATCH_SIZE (0)
 #define HAILO_MAX_NETWORK_GROUPS (8)
 #define HAILO_MAX_NETWORK_GROUP_NAME_SIZE (HAILO_MAX_NAME_SIZE)
@@ -159,6 +159,10 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(77, HAILO_RPC_FAILED                              /*!< RPC failed */)\
     HAILO_STATUS__X(78, HAILO_INVALID_SERVICE_VERSION                 /*!< Invalid service version */)\
     HAILO_STATUS__X(79, HAILO_NOT_SUPPORTED                           /*!< Not supported operation */)\
+    HAILO_STATUS__X(80, HAILO_NMS_BURST_INVALID_DATA                  /*!< Invalid data in NMS burst */)\
+    HAILO_STATUS__X(81, HAILO_OUT_OF_HOST_CMA_MEMORY                  /*!< Cannot allocate more CMA memory at host */)\
+    HAILO_STATUS__X(82, HAILO_QUEUE_IS_FULL                           /*!< Cannot push more items into the queue */)\
+    HAILO_STATUS__X(83, HAILO_DMA_MAPPING_ALREADY_EXISTS              /*!< DMA mapping already exists */)\
 
 typedef enum {
 #define HAILO_STATUS__X(value, name) name = value,
@@ -167,7 +171,7 @@ typedef enum {
 
     /** Must be last! */
     HAILO_STATUS_COUNT,
-    
+
     /** Max enum value to maintain ABI Integrity */
     HAILO_STATUS_MAX_ENUM                       = HAILO_MAX_ENUM
 } hailo_status;
@@ -771,9 +775,6 @@ typedef enum {
     HAILO_STREAM_DIRECTION_MAX_ENUM     = HAILO_MAX_ENUM
 } hailo_stream_direction_t;
 
-// ******************************************** NOTE ******************************************** //
-// Async Stream API and DmaMappedBuffer are currently not supported and are for internal use only //
-// ********************************************************************************************** //
 /** Stream flags */
 typedef enum {
     HAILO_STREAM_FLAGS_NONE     = 0,        /*!< No flags */
@@ -783,15 +784,57 @@ typedef enum {
     HAILO_STREAM_FLAGS_MAX_ENUM     = HAILO_MAX_ENUM
 } hailo_stream_flags_t;
 
-/** Hailo vdma buffer direction */
+// ************************************* NOTE - START ************************************* //
+// Dma buffer allocation isn't currently supported and is for internal use only             //
+// **************************************************************************************** //
+/** Hailo dma buffer direction */
 typedef enum {
-    HAILO_VDMA_BUFFER_DIRECTION_FLAGS_NONE      = 0,
-    HAILO_VDMA_BUFFER_DIRECTION_FLAGS_H2D       = 1 << 0,
-    HAILO_VDMA_BUFFER_DIRECTION_FLAGS_D2H       = 1 << 1,
+    HAILO_DMA_BUFFER_DIRECTION_H2D    = 0,
+    HAILO_DMA_BUFFER_DIRECTION_D2H    = 1,
+    HAILO_DMA_BUFFER_DIRECTION_BOTH   = 2,
 
     /** Max enum value to maintain ABI Integrity */
-    HAILO_VDMA_BUFFER_DIRECTION_FLAGS_MAX_ENUM  = HAILO_MAX_ENUM
-} hailo_vdma_buffer_direction_flags_t;
+    HAILO_DMA_BUFFER_DIRECTION_MAX_ENUM  = HAILO_MAX_ENUM
+} hailo_dma_buffer_direction_t;
+
+/** Hailo buffer flags */
+typedef enum {
+    HAILO_BUFFER_FLAGS_NONE         = 0,        /*!< No flags - heap allocated buffer */
+    HAILO_BUFFER_FLAGS_DMA          = 1 << 0,   /*!< Buffer is mapped to DMA (will be page aligned implicitly) */
+
+    /** Max enum value to maintain ABI Integrity */
+    HAILO_BUFFER_FLAGS_MAX_ENUM     = HAILO_MAX_ENUM
+} hailo_buffer_flags_t;
+
+/** Hailo buffer heap parameters */
+typedef struct {
+    EMPTY_STRUCT_PLACEHOLDER
+} hailo_buffer_heap_params_t;
+
+// Hailo buffer dma mapping parameters.
+// - If device is not NULL, the resulting buffer created by hailo_allocate_buffer will be mapped to the device.
+// - If vdevice is not NULL, the resulting buffer created by hailo_allocate_buffer will be mapped to all the
+//   underlying devices held be vdevice.
+// - If both device and vdevice are null, the resulting buffer created by hailo_allocate_buffer will be lazily
+//   mapped upon the first async transfer (i.e. when the buffer is passed to hailo_stream_read_raw_buffer_async
+//   or hailo_stream_write_raw_buffer_async).
+typedef struct {
+    hailo_device device;
+    hailo_vdevice vdevice;
+    hailo_dma_buffer_direction_t direction;
+} hailo_buffer_dma_mapping_params_t;
+
+/** Hailo buffer parameters */
+typedef struct {
+    hailo_buffer_flags_t flags;
+    union {
+        hailo_buffer_heap_params_t heap_params;
+        hailo_buffer_dma_mapping_params_t dma_mapping_params;
+    };
+} hailo_buffer_parameters_t;
+// ************************************** NOTE - END ************************************** //
+// Dma buffer allocation isn't currently supported and is for internal use only             //
+// **************************************************************************************** //
 
 /** Input or output data transform parameters */
 typedef struct {
@@ -1159,6 +1202,13 @@ typedef struct {
     char original_name[HAILO_MAX_STREAM_NAME_SIZE];
 } hailo_nms_defuse_info_t;
 
+typedef enum {
+    HAILO_BURST_TYPE_NO_BURST       = 0,
+    HAILO_BURST_TYPE_H8_PER_CLASS   = 1,
+    HAILO_BURST_TYPE_H15_PER_CLASS  = 2,
+    HAILO_BURST_TYPE_H15_PER_FRAME  = 3
+} hailo_nms_burst_type_t;
+
 /** NMS Internal HW Info */
 typedef struct {
     /** Amount of NMS classes */
@@ -1171,6 +1221,10 @@ typedef struct {
     uint32_t chunks_per_frame;
     bool is_defused;
     hailo_nms_defuse_info_t defuse_info;
+    /** Size of NMS burst in bytes */
+    uint32_t burst_size;
+    /** NMS burst type */
+    hailo_nms_burst_type_t burst_type;
 } hailo_nms_info_t;
 
 /** NMS Fuse Input */
@@ -1206,13 +1260,61 @@ typedef struct {
 } hailo_bbox_float32_t;
 #pragma pack(pop)
 
+/**
+ * Completion info struct passed to the ::hailo_stream_write_async_callback_t after the async operation is
+ * done or has failed.
+ */
 typedef struct {
     /**
-     * - HAILO_SUCCESS when transfer is complete
-     * - HAILO_STREAM_NOT_ACTIVATED due to stream deactivation
+     * Status of the async transfer:
+     *  - ::HAILO_SUCCESS - The transfer is complete.
+     *  - ::HAILO_STREAM_ABORTED_BY_USER - The transfer was canceled (can happen after network deactivation).
+     *  - Any other ::hailo_status on unexpected errors.
      */
     hailo_status status;
-} hailo_async_transfer_completion_info_t;
+
+    /** Address of the buffer passed to the async operation */
+    const void *buffer_addr;
+
+    /** Size of the buffer passed to the async operation. */
+    size_t buffer_size;
+
+    /** User specific data. Can be used as a context for the callback. */
+    void *opaque;
+} hailo_stream_write_async_completion_info_t;
+
+/**
+ * Async stream write complete callback prototype.
+ */
+typedef void (*hailo_stream_write_async_callback_t)(const hailo_stream_write_async_completion_info_t *info);
+
+/**
+ * Completion info struct passed to the ::hailo_stream_read_async_callback_t after the async operation is
+ * done or has failed.
+ */
+typedef struct {
+    /**
+     * Status of the async transfer:
+     *  - ::HAILO_SUCCESS - The transfer is complete.
+     *  - ::HAILO_STREAM_ABORTED_BY_USER - The transfer was canceled (can happen after network deactivation).
+     *  - Any other ::hailo_status on unexpected errors.
+     */
+    hailo_status status;
+
+    /** Address of the buffer passed to the async operation */
+    void *buffer_addr;
+
+    /** Size of the buffer passed to the async operation. */
+    size_t buffer_size;
+
+    /** User specific data. Can be used as a context for the callback. */
+    void *opaque;
+} hailo_stream_read_async_completion_info_t;
+
+/**
+ * Async stream read complete callback prototype.
+ */
+typedef void (*hailo_stream_read_async_callback_t)(const hailo_stream_read_async_completion_info_t *info);
 
 /**
  * Input or output stream information. In case of multiple inputs or outputs, each one has
@@ -1358,6 +1460,8 @@ typedef enum {
     HAILO_NOTIFICATION_ID_CONTEXT_SWITCH_BREAKPOINT_REACHED,
     /** Matches hailo_notification_message_parameters_t::health_monitor_clock_changed_notification */
     HAILO_NOTIFICATION_ID_HEALTH_MONITOR_CLOCK_CHANGED_EVENT,
+    /** Matches hailo_notification_message_parameters_t::hailo_hw_infer_manager_infer_done_notification */
+    HAILO_NOTIFICATION_ID_HW_INFER_MANAGER_INFER_DONE,
 
     /** Must be last! */
     HAILO_NOTIFICATION_ID_COUNT,
@@ -1443,6 +1547,10 @@ typedef struct {
     uint32_t current_clock;
 } hailo_health_monitor_clock_changed_notification_message_t;
 
+typedef struct {
+    uint32_t infer_cycles;
+} hailo_hw_infer_manager_infer_done_notification_message_t;
+
 /** Union of all notification messages parameters. See ::hailo_notification_t */
 typedef union {
     /** Ethernet rx error */
@@ -1463,6 +1571,8 @@ typedef union {
     hailo_context_switch_breakpoint_reached_message_t context_switch_breakpoint_reached_notification;
     /** Neural network core clock changed due to health monitor event */
     hailo_health_monitor_clock_changed_notification_message_t health_monitor_clock_changed_notification;
+    /* HW infer manager finished infer notification */
+    hailo_hw_infer_manager_infer_done_notification_message_t hw_infer_manager_infer_done_notification;
 } hailo_notification_message_parameters_t;
 
 /** Notification data that will be passed to the callback passed in ::hailo_notification_callback */
@@ -1689,7 +1799,7 @@ HAILORTAPI const char* hailo_get_status_message(hailo_status status);
  *                                      device scanned.
  * @note ethernet devices are not considered "devices in the system", so they are not scanned in this function.
  *       use :hailo_scan_ethernet_devices for ethernet devices.
- * 
+ *
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  */
 HAILORTAPI hailo_status hailo_scan_devices(hailo_scan_devices_params_t *params, hailo_device_id_t *device_ids,
@@ -1697,15 +1807,15 @@ HAILORTAPI hailo_status hailo_scan_devices(hailo_scan_devices_params_t *params, 
 
 /**
  * Creates a device by the given device id.
- * 
+ *
  * @param[in] device_id      Device id, can represent several device types:
  *                              [-] for pcie devices - pcie bdf (XXXX:XX:XX.X or XX:XX.X)
  *                              [-] for ethernet devices - ip address (xxx.xxx.xxx.xxx)
- *                           If NULL is given and there is only one available system device, use this device.
+ *                           If NULL is given, uses an arbitrary device found on the system.
  * @param[out] device        A pointer to a ::hailo_device that receives the allocated PCIe device.
  * @return Upon success, returns Expected of a unique_ptr to Device object.
  *         Otherwise, returns Unexpected of ::hailo_status error.
- * 
+ *
  * @note To release a device, call the ::hailo_release_device function with the returned ::hailo_device.
  */
 HAILORTAPI hailo_status hailo_create_device_by_id(const hailo_device_id_t *device_id, hailo_device *device);
@@ -1727,7 +1837,7 @@ HAILORTAPI hailo_status hailo_scan_pcie_devices(
 
 /**
  * Parse PCIe device BDF string into hailo device info structure.
- * 
+ *
  * @param[in] device_info_str   BDF device info, format [\<domain\>].\<bus\>.\<device\>.\<func\>, same format as in lspci.
  * @param[out] device_info      A pointer to a ::hailo_pcie_device_info_t that receives the parsed device info.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
@@ -1738,9 +1848,9 @@ HAILORTAPI hailo_status hailo_parse_pcie_device_info(const char *device_info_str
 
 /**
  * Creates a PCIe device.
- * 
- * @param[in] device_info    Information about the device to open. If NULL is given and there is only
- *                           one available PCIe device, use this device.
+ *
+ * @param[in] device_info    Information about the device to open. If NULL is given, uses an arbitrary device found on
+ *                           the system.
  * @param[out] device        A pointer to a ::hailo_device that receives the allocated PCIe device.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
  * @note To release a device, call the ::hailo_release_device function with the returned ::hailo_device.
@@ -1749,7 +1859,7 @@ HAILORTAPI hailo_status hailo_create_pcie_device(hailo_pcie_device_info_t *devic
 
 /**
  * Returns information on all available ethernet devices in the system.
- * 
+ *
  * @param[in]  interface_name            The name of the network interface to scan.
  * @param[out] eth_device_infos          A pointer to a buffer of ::hailo_eth_device_info_t that receives the
  *                                       information.
@@ -1766,7 +1876,7 @@ HAILORTAPI hailo_status hailo_scan_ethernet_devices(const char *interface_name, 
 
 /**
  * Creates an ethernet device.
- * 
+ *
  * @param[in]  device_info   Information about the device to open.
  * @param[out] device        A pointer to a ::hailo_device that receives the allocated ethernet device corresponding to
  *                           the given information.
@@ -1777,7 +1887,7 @@ HAILORTAPI hailo_status hailo_create_ethernet_device(hailo_eth_device_info_t *de
 
 /**
  * Release an open device.
- * 
+ *
  * @param[in] device   A ::hailo_device object to be released.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  */
@@ -1785,7 +1895,7 @@ HAILORTAPI hailo_status hailo_release_device(hailo_device device);
 
 /**
  * Returns the device type of the given device id string.
- * 
+ *
  * @param[in] device_id       A :hailo_device_id_t device id to check.
  * @param[out] device_type    A :hailo_device_type_t returned device type.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
@@ -2452,6 +2562,28 @@ HAILORTAPI hailo_status hailo_init_configure_params(hailo_hef hef, hailo_stream_
     hailo_configure_params_t *params);
 
 /**
+ * Init configure params with default values for a given hef by virtual device.
+ *
+ * @param[in]  hef                      A  ::hailo_hef object to configure the @a device by.
+ * @param[in]  vdevice                  A @a hailo_vdevice for which we init the params for.
+ * @param[out] params                   A @a hailo_configure_params_t to be filled.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_init_configure_params_by_vdevice(hailo_hef hef, hailo_vdevice vdevice,
+    hailo_configure_params_t *params);
+
+/**
+ * Init configure params with default values for a given hef by device.
+ *
+ * @param[in]  hef                      A  ::hailo_hef object to configure the @a device by.
+ * @param[in]  device                   A @a hailo_device for which we init the params for.
+ * @param[out] params                   A @a hailo_configure_params_t to be filled.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_init_configure_params_by_device(hailo_hef hef, hailo_device device,
+    hailo_configure_params_t *params);
+
+/**
  * Init configure params with default values for a given hef, where all input_streams_params are init to be MIPI type.
  *
  * @param[in]  hef                      A  ::hailo_hef object to configure the @a device by.
@@ -2690,6 +2822,24 @@ HAILORTAPI hailo_status hailo_set_scheduler_priority(hailo_configured_network_gr
 
 /** @} */ // end of group_network_group_functions
 
+/** @defgroup group_buffer_functions Buffer functions
+ *  @{
+ */
+// ************************************* NOTE - START ************************************* //
+// Dma buffer allocation isn't currently supported and is for internal use only             //
+// **************************************************************************************** //
+// Free returned buffer via hailo_free_buffer
+HAILORTAPI hailo_status hailo_allocate_buffer(size_t size, const hailo_buffer_parameters_t *allocation_params, void **buffer_out);
+HAILORTAPI hailo_status hailo_free_buffer(void *buffer);
+// Maps buffer to dma. Free mapping by calling hailo_dma_unmap_buffer_from_device and then free buffer as needed
+// If buffer has already been mapped to device, then HAILO_DMA_MAPPING_ALREADY_EXISTS shall be returned
+HAILORTAPI hailo_status hailo_dma_map_buffer_to_device(void *buffer, size_t size, hailo_device device, hailo_dma_buffer_direction_t direction);
+HAILORTAPI hailo_status hailo_dma_unmap_buffer_from_device(void *buffer, hailo_device device, hailo_dma_buffer_direction_t direction);
+// ************************************** NOTE - END ************************************** //
+// Dma buffer allocation isn't currently supported and is for internal use only             //
+// **************************************************************************************** //
+/** @} */ // end of group_buffer_functions
+
 /** @defgroup group_stream_functions Stream functions
  *  @{
  */
@@ -2748,35 +2898,165 @@ HAILORTAPI hailo_status hailo_get_output_stream_info(hailo_output_stream stream,
 
 /**
  * Synchronously reads data from a stream.
- * 
+ *
  * @param[in] stream            A ::hailo_output_stream object.
  * @param[in] buffer            A pointer to a buffer that receives the data read from @a stream.
  * @param[in] size              The amount of bytes to read, should be the frame size.
- * 
+ *
  * @note The output buffer format comes from the \e format field inside ::hailo_stream_info_t and the shape comes from
  *            the \e hw_shape field inside ::hailo_stream_info_t.
+ * @note @a size is expected to be stream_info.hw_frame_size.
  *
- * @note @a size is expected to be a product of stream_info.hw_frame_size (i.e. more than one frame may be read)
- * 
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  */
 HAILORTAPI hailo_status hailo_stream_read_raw_buffer(hailo_output_stream stream, void *buffer, size_t size);
 
 /**
  * Synchronously writes all data to a stream.
- * 
+ *
  * @param[in] stream   A ::hailo_input_stream object.
  * @param[in] buffer   A pointer to a buffer that contains the data to be written to @a stream.
  * @param[in] size     The amount of bytes to write.
- * 
+ *
  * @note The input buffer format comes from the \e format field inside ::hailo_stream_info_t and the shape comes from
  *            the \e hw_shape field inside ::hailo_stream_info_t.
+ * @note @a size is expected to be stream_info.hw_frame_size.
  *
- * @note @a size is expected to be a product of stream_info.hw_frame_size (i.e. more than one frame may be read)
- * 
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  */
 HAILORTAPI hailo_status hailo_stream_write_raw_buffer(hailo_input_stream stream, const void *buffer, size_t size);
+
+/**
+ * Waits until the stream is ready to launch a new ::hailo_stream_read_raw_buffer_async operation. Each stream has a
+ * limited-size queue for ongoing transfers. You can retrieve the queue size for the given stream by calling
+ * ::hailo_output_stream_get_async_max_queue_size.
+ *
+ * @param[in] stream            A ::hailo_output_stream object.
+ * @param[in] transfer_size     Must be the result of ::hailo_get_output_stream_frame_size for the given stream.
+ * @param[in] timeout_ms        Amount of time to wait until the stream is ready in milliseconds.
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise:
+ *           - If @a timeout_ms has passed and the stream is not ready, returns ::HAILO_TIMEOUT.
+ *           - In any other error case, returns ::hailo_status error.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_stream_wait_for_async_output_ready(hailo_output_stream stream, size_t transfer_size,
+    uint32_t timeout_ms);
+
+/**
+ * Waits until the stream is ready to launch a new ::hailo_stream_write_raw_buffer_async operation. Each stream has a
+ * limited-size queue for ongoing transfers. You can retrieve the queue size for the given stream by calling
+ * ::hailo_input_stream_get_async_max_queue_size.
+ *
+ * @param[in] stream            A ::hailo_input_stream object.
+ * @param[in] transfer_size     Must be the result of ::hailo_get_input_stream_frame_size for the given stream.
+ * @param[in] timeout_ms        Amount of time to wait until the stream is ready in milliseconds.
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise:
+ *           - If @a timeout_ms has passed and the stream is not ready, returns ::HAILO_TIMEOUT.
+ *           - In any other error case, returns ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_stream_wait_for_async_input_ready(hailo_input_stream stream, size_t transfer_size,
+    uint32_t timeout_ms);
+
+/**
+ * Returns the maximum amount of frames that can be simultaneously read from the stream (by
+ * ::hailo_stream_read_raw_buffer_async calls) before any one of the read operations is complete, as signified by
+ * @a user_callback being called.
+ *
+ * @param[in] stream        A ::hailo_output_stream object.
+ * @param[out] queue_size   Returns value of the queue
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_output_stream_get_async_max_queue_size(hailo_output_stream stream, size_t *queue_size);
+
+/**
+ * Returns the maximum amount of frames that can be simultaneously written to the stream (by
+ * ::hailo_stream_write_raw_buffer_async calls) before any one of the write operations is complete, as signified by
+ *  @a user_callback being called.
+ *
+ * @param[in] stream        A ::hailo_input_stream object.
+ * @param[out] queue_size   Returns value of the queue
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_input_stream_get_async_max_queue_size(hailo_input_stream stream, size_t *queue_size);
+
+/**
+ * Reads into @a buffer from the stream asynchronously, initiating a deferred operation that will be completed
+ * later.
+ * - If the function call succeeds (i.e., ::hailo_stream_read_raw_buffer_async returns ::HAILO_SUCCESS), the deferred
+ *   operation has been initiated. Until @a user_callback is called, the user cannot change or delete @a buffer.
+ * - If the function call fails (i.e., ::hailo_stream_read_raw_buffer_async returns a status other than
+ *   ::HAILO_SUCCESS), the deferred operation will not be initiated and @a user_callback will not be invoked. The user
+ *   is free to change or delete @a buffer.
+ * - @a user_callback is triggered upon successful completion or failure of the deferred operation.
+ *   The callback receives a ::hailo_stream_read_async_completion_info_t object containing a pointer to the transferred
+ *   buffer (@a buffer_addr) and the transfer status (@a status). If the operation has completed successfully, the
+ *   contents of @a buffer will have been updated by the read operation.
+ *
+ * @param[in] stream        A ::hailo_output_stream object.
+ * @param[in] buffer        The buffer to be read into.
+ *                          The buffer must be aligned to the system page size.
+ * @param[in] size          The size of the given buffer, expected to be the result of
+ *                          ::hailo_get_output_stream_frame_size.
+ * @param[in] user_callback The callback that will be called when the transfer is complete or has failed.
+ * @param[in] opaque        Optional pointer to user-defined context (may be NULL if not desired).
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise:
+ *         - If the stream queue is full, returns ::HAILO_QUEUE_IS_FULL.
+ *           In this case, please wait until @a user_callback is called on previous
+ *           reads, or call ::hailo_stream_wait_for_async_output_ready. The size of the queue can be
+ *           determined by calling ::hailo_output_stream_get_async_max_queue_size.
+ *         - In any other error case, returns a ::hailo_status error.
+ *
+ * @note @a user_callback should execute as quickly as possible.
+ * @note The output buffer format comes from the \e format field inside ::hailo_stream_info_t and the shape comes from
+ *       the \e hw_shape field inside ::hailo_stream_info_t.
+ * @note The address provided must be aligned to the system's page size, and the rest of the page should not be in
+ *       use by any other part of the program to ensure proper functioning of the DMA operation. Memory for the
+ *       provided address can be allocated using `mmap` on Unix-like systems or `VirtualAlloc` on Windows.
+ */
+HAILORTAPI hailo_status hailo_stream_read_raw_buffer_async(hailo_output_stream stream, void *buffer, size_t size,
+    hailo_stream_read_async_callback_t user_callback, void *opaque);
+
+/**
+ * Writes the contents of @a buffer to the stream asynchronously, initiating a deferred operation that will be
+ * completed later.
+ * - If the function call succeeds (i.e., ::hailo_stream_write_raw_buffer_async returns ::HAILO_SUCCESS), the deferred
+ *   operation has been initiated. Until @a user_callback is called, the user cannot change or delete @a buffer.
+ * - If the function call fails (i.e., ::hailo_stream_write_raw_buffer_async returns a status other than
+ *   ::HAILO_SUCCESS), the deferred operation will not be initiated and @a user_callback will not be invoked. The user
+ *   is free to change or delete @a buffer.
+ * - @a user_callback is triggered upon successful completion or failure of the deferred operation. The callback
+ *   receives a ::hailo_stream_write_async_completion_info_t object containing a pointer to the transferred buffer
+ *   (@a buffer_addr) and the transfer status (@a status).
+ *
+ * @param[in] stream         A ::hailo_input_stream object.
+ * @param[in] buffer            The buffer to be written.
+ *                              The buffer must be aligned to the system page size.
+ * @param[in] size              The size of the given buffer, expected to be the result of
+ *                              ::hailo_get_input_stream_frame_size.
+ * @param[in] user_callback     The callback that will be called when the transfer is complete
+ *                              or has failed.
+ * @param[in] opaque         Optional pointer to user-defined context (may be NULL if not desired).
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise:
+ *           - If the stream queue is full, returns ::HAILO_QUEUE_IS_FULL. In this case please wait
+ *             until @a user_callback is called on previous writes, or call ::hailo_stream_wait_for_async_input_ready.
+ *             The size of the queue can be determined by calling ::hailo_input_stream_get_async_max_queue_size.
+ *           - In any other error case, returns a ::hailo_status error.
+ *
+ * @note @a user_callback should run as quickly as possible.
+ * @note The input buffer format comes from the \e format field inside ::hailo_stream_info_t and the shape comes from
+ *       the \e hw_shape field inside ::hailo_stream_info_t.
+ * @note The address provided must be aligned to the system's page size, and the rest of the page should not be in
+ *       use by any other part of the program to ensure proper functioning of the DMA operation. Memory for the
+ *       provided address can be allocated using `mmap` on Unix-like systems or `VirtualAlloc` on Windows.
+ */
+HAILORTAPI hailo_status hailo_stream_write_raw_buffer_async(hailo_input_stream stream, const void *buffer, size_t size,
+    hailo_stream_write_async_callback_t user_callback, void *opaque);
 
 /**
  * Gets the size of a stream's frame on the host side in bytes
@@ -2937,7 +3217,7 @@ HAILORTAPI hailo_status hailo_create_demuxer_by_stream(hailo_output_stream strea
 HAILORTAPI hailo_status hailo_release_output_demuxer(hailo_output_demuxer demuxer);
 
 /**
- * Demultiplexing an output frame pointed to by @a src directly to the buffer pointed to by @a dst.
+ * Demultiplexing an output frame pointed to by @a src directly to the buffers pointed to by @a raw_buffers.
  * 
  * @param[in]     demuxer            A ::hailo_output_demuxer object used for the demuxing.
  * @param[in]     src                A pointer to a buffer to be demultiplexed.
@@ -2947,10 +3227,28 @@ HAILORTAPI hailo_status hailo_release_output_demuxer(hailo_output_demuxer demuxe
  *                                   demultiplexed data read from the @a stream.
  * @param[in]     raw_buffers_count  The number of ::hailo_stream_raw_buffer_t elements in the array pointed to by
  *                                   @a raw_buffers.
+ * @note The order of @a raw_buffers should be the same as returned from the function 'hailo_get_mux_infos_by_output_demuxer()'.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  */
 HAILORTAPI hailo_status hailo_demux_raw_frame_by_output_demuxer(hailo_output_demuxer demuxer, const void *src,
     size_t src_size, hailo_stream_raw_buffer_t *raw_buffers, size_t raw_buffers_count);
+
+/**
+ * Demultiplexing an output frame pointed to by @a src directly to the buffers pointed to by @a raw_buffers_by_name.
+ *
+ * @param[in]     demuxer              A ::hailo_output_demuxer object used for the demuxing.
+ * @param[in]     src                  A pointer to a buffer to be demultiplexed.
+ * @param[in]     src_size             The number of bytes to demultiplexed. This number must be equal to the
+ *                                     hw_frame_size, and less than or equal to the size of @a src buffer.
+ * @param[in,out] raw_buffers_by_name  A pointer to an array of ::hailo_stream_raw_buffer_by_name_t that receives the
+ *                                     demultiplexed data read from the @a stream. hailo_stream_raw_buffer_by_name_t::name should
+ *                                     be filled with the demuxes names.
+ * @param[in]     raw_buffers_count    The number of ::hailo_stream_raw_buffer_by_name_t elements in the array pointed to by
+ *                                     @a raw_buffers_by_name.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_demux_by_name_raw_frame_by_output_demuxer(hailo_output_demuxer demuxer, const void *src,
+    size_t src_size, hailo_stream_raw_buffer_by_name_t *raw_buffers_by_name, size_t raw_buffers_count);
 
 /**
  * Gets all multiplexed stream infos.

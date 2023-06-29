@@ -204,12 +204,12 @@ public:
 
     hailo_status activate();
     hailo_status deactivate();
-    hailo_status post_deactivate();
+    hailo_status post_deactivate(bool should_clear_abort);
     hailo_status clear();
     hailo_status flush();
     hailo_status abort();
     hailo_status wait_for_finish();
-    hailo_status resume();
+    hailo_status clear_abort();
     virtual hailo_status run_push(PipelineBuffer &&buffer);
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional = PipelineBuffer());
     void set_push_complete_callback(PushCompleteCallback push_complete_callback);
@@ -252,11 +252,11 @@ public:
 
     hailo_status activate();
     hailo_status deactivate();
-    hailo_status post_deactivate();
+    hailo_status post_deactivate(bool should_clear_abort);
     hailo_status clear();
     hailo_status flush();
     hailo_status abort();
-    hailo_status resume();
+    hailo_status clear_abort();
     hailo_status wait_for_finish();
     virtual hailo_status run_push(PipelineBuffer &&buffer) = 0;
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) = 0;
@@ -291,11 +291,11 @@ protected:
     virtual std::vector<PipelinePad*> execution_pads() = 0;
     virtual hailo_status execute_activate();
     virtual hailo_status execute_deactivate();
-    virtual hailo_status execute_post_deactivate();
+    virtual hailo_status execute_post_deactivate(bool should_clear_abort);
     virtual hailo_status execute_clear();
     virtual hailo_status execute_flush();
     virtual hailo_status execute_abort();
-    virtual hailo_status execute_resume();
+    virtual hailo_status execute_clear_abort();
     virtual hailo_status execute_wait_for_finish();
 
     virtual hailo_status execute(std::function<hailo_status(PipelinePad*)>);
@@ -372,9 +372,9 @@ protected:
     hailo_status pipeline_status();
 
     virtual hailo_status execute_activate() override;
-    virtual hailo_status execute_post_deactivate() override;
+    virtual hailo_status execute_post_deactivate(bool should_clear_abort) override;
     virtual hailo_status execute_clear() override;
-    virtual hailo_status execute_resume() override;
+    virtual hailo_status execute_clear_abort() override;
     virtual hailo_status execute_wait_for_finish() override;
 
     /// Starts/stops the queue thread. This functions needs to be called on subclasses ctor and dtor
@@ -527,7 +527,7 @@ public:
 protected:
     virtual hailo_status execute_activate() override;
     virtual hailo_status execute_deactivate() override;
-    virtual hailo_status execute_post_deactivate() override;
+    virtual hailo_status execute_post_deactivate(bool should_clear_abort) override;
     virtual hailo_status execute_abort() override;
     virtual Expected<std::vector<PipelineBuffer>> action(PipelineBuffer &&input) = 0;
     virtual std::vector<PipelinePad*> execution_pads() override;

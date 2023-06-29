@@ -8,4 +8,3 @@
 
 reg ADD HKLM\SYSTEM\CurrentControlSet\Services\hailort_service /f /v Environment /t REG_MULTI_SZ /d ^
 HAILORT_LOGGER_PATH="%PROGRAMDATA%\HailoRT_Service\logs"\0^
-HAILO_DISABLE_MULTIPLEXER=0\0

@@ -8,7 +8,7 @@ if(NOT CMAKE_HOST_UNIX)
     message(FATAL_ERROR "Only unix hosts are supported, stopping build")
 endif()
 
-find_package(HailoRT 4.13.0 EXACT REQUIRED)
+find_package(HailoRT 4.14.0 EXACT REQUIRED)
 
 # GST_PLUGIN_DEFINE needs PACKAGE to be defined
 set(GST_HAILO_PACKAGE_NAME "hailo")
@@ -36,6 +36,12 @@ set_property(TARGET gsthailo PROPERTY CXX_STANDARD 14)
 
 set_target_properties(gsthailo PROPERTIES
     PUBLIC_HEADER "gst-hailo/metadata/tensor_meta.hpp"
+    CXX_STANDARD              14
+    CXX_STANDARD_REQUIRED     YES
+    CXX_EXTENSIONS            NO
+    C_VISIBILITY_PRESET       hidden
+    CXX_VISIBILITY_PRESET     hidden
+    # VISIBILITY_INLINES_HIDDEN YES
 )
 
 target_compile_options(gsthailo PRIVATE

@@ -12,11 +12,17 @@
 
 #include "hailo/hailort.h"
 
-#if defined(__unix__) || defined(__QNX__) 
+#if defined(__unix__) || defined(__QNX__)
 
 #include <pthread.h>
+#include <unistd.h>
+#include <stdatomic.h>
+
 typedef pthread_t hailo_thread;
 typedef void* thread_return_type;
+typedef atomic_int hailo_atomic_int;
+
+#define MICROSECONDS_PER_MILLISECOND (1000)
 
 hailo_status hailo_create_thread(thread_return_type(*func_ptr)(void*), void* args, hailo_thread *thread_out)
 {
@@ -34,11 +40,37 @@ hailo_status hailo_join_thread(hailo_thread *thread)
     return (hailo_status)results;
 }
 
+void hailo_atomic_init(hailo_atomic_int *atomic, int value)
+{
+    atomic_init(atomic, value);
+}
+
+int hailo_atomic_load(hailo_atomic_int *atomic)
+{
+    return atomic_load(atomic);
+}
+
+int hailo_atomic_fetch_add(hailo_atomic_int *atomic, int value)
+{
+    return atomic_fetch_add(atomic, value);
+}
+
+void hailo_atomic_increment(hailo_atomic_int *atomic)
+{
+    atomic_fetch_add(atomic, 1);
+}
+
+void hailo_atomic_store(hailo_atomic_int *atomic, int value)
+{
+    atomic_store(atomic, value);
+}
+
 #elif defined _MSC_VER // __unix__ || __QNX__
 
 #include <windows.h>
 typedef HANDLE hailo_thread;
 typedef DWORD thread_return_type;
+typedef LONG hailo_atomic_int;
 
 hailo_status hailo_create_thread(thread_return_type(func_ptr)(void*), void* args, hailo_thread *thread_out)
 {
@@ -60,6 +92,32 @@ hailo_status hailo_join_thread(hailo_thread *thread)
     CloseHandle(*thread);
     return (hailo_status)result;
 }
+
+void hailo_atomic_init(hailo_atomic_int *atomic, int value)
+{
+    InterlockedExchange(atomic, (LONG)value);
+}
+
+int hailo_atomic_load(hailo_atomic_int *atomic)
+{
+    return InterlockedExchangeAdd(atomic, (LONG)0);
+}
+
+int hailo_atomic_fetch_add(hailo_atomic_int *atomic, int value)
+{
+    return InterlockedExchangeAdd(atomic, (LONG)value);
+}
+
+void hailo_atomic_increment(hailo_atomic_int *atomic)
+{
+    InterlockedIncrement(atomic);
+}
+
+void hailo_atomic_store(hailo_atomic_int *atomic, int value)
+{
+    InterlockedExchange(atomic, value);
+}
+
 
 #endif
 

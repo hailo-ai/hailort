@@ -180,6 +180,11 @@ hailo_status NetworkGroupHandle::set_scheduler_threshold(const char *network_nam
     return m_cng->set_scheduler_threshold(threshold, network_name);
 }
 
+hailo_status NetworkGroupHandle::set_scheduler_priority(const char *network_name, uint8_t priority)
+{
+    return m_cng->set_scheduler_priority(priority, network_name);
+}
+
 Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> NetworkGroupHandle::create_vstreams(const char *network_name,
     hailo_scheduling_algorithm_t scheduling_algorithm, const std::vector<hailo_format_with_name_t> &output_formats, bool input_quantized, 
     bool output_quantized, hailo_format_type_t input_format_type, hailo_format_type_t output_format_type)
@@ -294,10 +299,10 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> NetworkGroupConfigManager::con
 
     std::shared_ptr<ConfiguredNetworkGroup> found_cng = get_configured_network_group(device_id, hef->hash(), network_group_name, batch_size);
     if (nullptr != found_cng) {
-        // If cng was already configured
         auto infos = found_cng->get_network_infos();
         GST_CHECK_EXPECTED(infos, element, RESOURCE, "Failed getting network infos");
         if ((infos.release().size() > 1) || (scheduling_algorithm == HAILO_SCHEDULING_ALGORITHM_NONE)) {
+            // If cng was already configured
             // But hailonet is not running all networks in the cng (or if not using scheduler) -
             // Do not use multiplexer!
             return found_cng;

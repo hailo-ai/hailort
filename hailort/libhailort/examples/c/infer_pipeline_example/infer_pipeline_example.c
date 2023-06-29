@@ -115,7 +115,7 @@ int main(int argc, char **argv)
     status = hailo_create_hef_file(&hef, HEF_FILE);
     REQUIRE_SUCCESS(status, l_release_device, "Failed reading hef file");
 
-    status = hailo_init_configure_params(hef, HAILO_STREAM_INTERFACE_ETH, &config_params);
+    status = hailo_init_configure_params_by_device(hef, device, &config_params);
     REQUIRE_SUCCESS(status, l_release_hef, "Failed initializing configure parameters");
 
     status = hailo_configure_device(device, hef, &config_params, &network_group, &network_group_size);
@@ -156,5 +156,5 @@ l_release_hef:
 l_release_device:
     (void) hailo_release_device(device);
 l_exit:
-    return status;
+    return (int)status;
 }

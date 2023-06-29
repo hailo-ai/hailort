@@ -29,7 +29,7 @@ public:
     using duration = std::chrono::nanoseconds;
     using TimestampsArray = CircularArray<duration>;
 
-    explicit LatencyMeter(const std::set<std::string> &output_names, size_t timestamps_list_length) :
+    LatencyMeter(const std::set<std::string> &output_names, size_t timestamps_list_length) :
         m_start_timestamps(timestamps_list_length),
         m_latency_count(0),
         m_latency_sum(0)

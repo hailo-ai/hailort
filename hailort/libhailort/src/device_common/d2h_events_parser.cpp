@@ -43,6 +43,7 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_cpu_ecc_error_noti
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_cpu_ecc_fatal_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message);
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_context_switch_breakpoint_reached(D2H_EVENT_MESSAGE_t *d2h_notification_message);
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_clock_changed_event_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message);
+static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_hw_infer_manager_infer_done_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message);
 
 /**********************************************************************
  * Globals
@@ -58,7 +59,8 @@ firmware_notifications_parser_t g_firmware_notifications_parser[D2H_EVENT_ID_COU
     D2H_EVENTS__parse_health_monitor_cpu_ecc_error_notification,
     D2H_EVENTS__parse_health_monitor_cpu_ecc_fatal_notification,
     D2H_EVENTS__parse_context_switch_breakpoint_reached,
-    D2H_EVENTS__parse_health_monitor_clock_changed_event_notification
+    D2H_EVENTS__parse_health_monitor_clock_changed_event_notification,
+    D2H_EVENTS__parse_hw_infer_manager_infer_done_notification
 };
 /**********************************************************************
  * Internal Functions
@@ -169,6 +171,25 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_clock_changed_even
     LOGGER__WARNING("Got health monitor notification - System's clock has been changed from {} to {}",
                         d2h_notification_message->message_parameters.health_monitor_clock_changed_event.previous_clock,
                         d2h_notification_message->message_parameters.health_monitor_clock_changed_event.current_clock);
+
+    status = HAILO_COMMON_STATUS__SUCCESS;
+
+l_exit:
+    return status;
+}
+
+static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_hw_infer_manager_infer_done_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message)
+{
+    HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
+
+    if (D2H_EVENT_HW_INFER_MANAGER_INFER_DONE_PARAMETER_COUNT != d2h_notification_message->header.parameter_count) {
+        LOGGER__ERROR("d2h notification invalid parameter count: {}", d2h_notification_message->header.parameter_count);
+        status = HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT;
+        goto l_exit;
+    }
+
+    LOGGER__INFO("Got hw infer done notification - Infer took {} cycles",
+        d2h_notification_message->message_parameters.hw_infer_manager_infer_done_event.infer_cycles);
 
     status = HAILO_COMMON_STATUS__SUCCESS;
 

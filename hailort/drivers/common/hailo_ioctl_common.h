@@ -27,6 +27,19 @@
 
 #define INVALID_VDMA_CHANNEL (0xff)
 
+#if !defined(__cplusplus) && defined(NTDDI_VERSION)
+#include <wdm.h>
+typedef ULONG uint32_t;
+typedef UCHAR uint8_t;
+typedef USHORT uint16_t;
+typedef ULONGLONG uint64_t;
+typedef uint64_t u64;
+typedef uint32_t u32;
+typedef uint16_t u16;
+typedef uint8_t  u8;
+#endif /*  !defined(__cplusplus) && defined(NTDDI_VERSION) */
+
+
 #ifdef _MSC_VER
 #if !defined(bool) && !defined(__cplusplus)
 typedef uint8_t bool;
@@ -64,6 +77,8 @@ typedef uint8_t bool;
 #include <stdint.h>
 #include <sys/types.h>
 #include <sys/mman.h>
+#include <stdbool.h>
+
 // defines for devctl
 #define _IOW_   __DIOF
 #define _IOR_   __DIOT
@@ -132,9 +147,9 @@ struct hailo_vdma_buffer_unmap_params {
 /* structure used in ioctl HAILO_DESC_LIST_CREATE */
 struct hailo_desc_list_create_params {
     size_t desc_count;          // in
+    bool is_circular;           // in
     uintptr_t desc_handle;      // out
-    // Note: The dma address is required for CONTEXT_SWITCH firmware controls
-    uint64_t dma_address;    // out
+    uint64_t dma_address;       // out
 };
 
 /* structure used in ioctl HAILO_NON_LINUX_DESC_LIST_MMAP */
@@ -277,7 +292,7 @@ struct hailo_vdma_channel_write_register_params {
 
 /* structure used in ioctl HAILO_VDMA_BUFFER_SYNC */
 enum hailo_vdma_buffer_sync_type {
-    HAILO_SYNC_FOR_HOST,
+    HAILO_SYNC_FOR_CPU,
     HAILO_SYNC_FOR_DEVICE,
 
     /** Max enum value to maintain ABI Integrity */

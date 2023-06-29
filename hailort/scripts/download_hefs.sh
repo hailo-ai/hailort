@@ -2,16 +2,17 @@
 set -e
 
 readonly BASE_URI="https://hailo-hailort.s3.eu-west-2.amazonaws.com"
-readonly HRT_VERSION=4.13.0
+readonly HRT_VERSION=4.14.0
 readonly REMOTE_HEF_DIR="Hailo8/${HRT_VERSION}/HEFS"
 readonly LOCAL_EXAMPLES_HEF_DIR="../libhailort/examples/hefs"
-readonly LOCAL_TUTORIALS_HEF_DIR="../libhailort/bindings/python/platform/tutorials/hefs/"
+readonly LOCAL_TUTORIALS_HEF_DIR="../libhailort/bindings/python/platform/hailo_tutorials/hefs"
 readonly EXAMPLES_HEFS=(
     "shortcut_net.hef"
     "multi_network_shortcut_net.hef"
 )
 readonly TUTORIALS_HEFS=(
     "resnet_v1_18.hef"
+    "shortcut_net.hef"
 )
 
 function create_hef_dir(){

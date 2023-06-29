@@ -28,19 +28,19 @@ Expected<std::unique_ptr<IntegratedDevice>> IntegratedDevice::create()
 {
     hailo_status status = HAILO_UNINITIALIZED;
 
-    auto driver = HailoRTDriver::create(INTEGRATED_NNC_DRIVER_PATH);
+    const HailoRTDriver::DeviceInfo device_info {INTEGRATED_NNC_DRIVER_PATH, DEVICE_ID};
+    auto driver = HailoRTDriver::create(device_info);
     CHECK_EXPECTED(driver, "Failed to initialize HailoRTDriver");
 
-    auto device = std::unique_ptr<IntegratedDevice>(new (std::nothrow) IntegratedDevice(driver.release(), status, DEVICE_ID));
+    auto device = std::unique_ptr<IntegratedDevice>(new (std::nothrow) IntegratedDevice(driver.release(), status));
     CHECK_AS_EXPECTED((nullptr != device), HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status, "Failed creating IntegratedDevice");
 
     return device;
 }
 
-
-IntegratedDevice::IntegratedDevice(HailoRTDriver &&driver, hailo_status &status, const std::string &device_id) : 
-    VdmaDevice::VdmaDevice(std::move(driver), Device::Type::INTEGRATED, device_id)
+IntegratedDevice::IntegratedDevice(HailoRTDriver &&driver, hailo_status &status) :
+    VdmaDevice::VdmaDevice(std::move(driver), Device::Type::INTEGRATED)
 {
     status = update_fw_state();
     if (HAILO_SUCCESS != status) {
@@ -49,10 +49,6 @@ IntegratedDevice::IntegratedDevice(HailoRTDriver &&driver, hailo_status &status,
     }
 
     status = HAILO_SUCCESS;
-}
-
-Expected<hailo_device_architecture_t> IntegratedDevice::get_architecture() const {
-    return Expected<hailo_device_architecture_t>(m_device_architecture);
 }
 
 hailo_status IntegratedDevice::reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type)

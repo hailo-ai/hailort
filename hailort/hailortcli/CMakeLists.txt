@@ -26,19 +26,21 @@ set(HAILORTCLI_CPP_FILES
 
     run2/run2_command.cpp
     run2/network_runner.cpp
-    run2/live_printer.cpp
+    run2/live_stats.cpp
     run2/timer_live_track.cpp
     run2/network_live_track.cpp
     run2/measurement_live_track.cpp
+    run2/io_wrappers.cpp
     )
-    
+
 if(UNIX)
     # Unix only modules
     set(HAILORTCLI_CPP_FILES ${HAILORTCLI_CPP_FILES}
         udp_rate_limiter_command.cpp
         # TODO: We dont compile download_action_list_command on windows, as it uses packed enums (HRT-5919)
         download_action_list_command.cpp
-    )
+        measure_nnc_performance_command.cpp
+        )
 endif()
 
 # 'config_definitions_json_file' is used in generate_definitions_json_str.in for configure_file()
@@ -70,7 +72,7 @@ target_link_libraries(hailortcli
     scheduler_mon_proto)
 
 if(WIN32)
-    target_link_libraries(hailortcli Ws2_32 Iphlpapi Shlwapi)
+    target_link_libraries(hailortcli Ws2_32 Iphlpapi Shlwapi winmm.lib)
 elseif(CMAKE_SYSTEM_NAME STREQUAL QNX)
     target_link_libraries(hailortcli pevents)
 endif()

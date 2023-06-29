@@ -20,6 +20,8 @@ constexpr bool QUANTIZED = true;
 constexpr hailo_format_type_t FORMAT_TYPE = HAILO_FORMAT_TYPE_AUTO;
 constexpr size_t INFER_FRAME_COUNT = 100;
 constexpr uint32_t DEVICE_COUNT = 1;
+constexpr size_t BATCH_SIZE_1 = 1;
+constexpr size_t BATCH_SIZE_2 = 2;
 
 constexpr std::chrono::milliseconds SCHEDULER_TIMEOUT_MS(100);
 constexpr uint32_t SCHEDULER_THRESHOLD = 3;
@@ -102,16 +104,32 @@ Expected<std::unique_ptr<VDevice>> create_vdevice()
     return VDevice::create(params);
 }
 
-Expected<std::vector<std::shared_ptr<ConfiguredNetworkGroup>>> configure_hefs(VDevice &vdevice, std::vector<std::string> &hef_paths)
+Expected<std::vector<std::shared_ptr<ConfiguredNetworkGroup>>> configure_hefs(VDevice &vdevice, std::vector<std::string> &hef_paths,
+    const std::vector<uint16_t> &batch_sizes)
 {
     std::vector<std::shared_ptr<ConfiguredNetworkGroup>> results;
+    assert(hef_paths.size() == batch_sizes.size());
 
+    size_t i = 0;
     for (const auto &path : hef_paths) {
         auto hef_exp = Hef::create(path);
         if (!hef_exp) {
             return make_unexpected(hef_exp.status());
         }
         auto hef = hef_exp.release();
+
+        auto configure_params = vdevice.create_configure_params(hef);
+        if (!configure_params) {
+            std::cerr << "Failed to create configure params" << std::endl;
+            return make_unexpected(configure_params.status());
+        }
+
+        // Modify batch_size for each network group
+        for (auto& network_group_params : configure_params.value()) {
+            network_group_params.second.batch_size = batch_sizes[i];
+            network_group_params.second.power_mode = HAILO_POWER_MODE_ULTRA_PERFORMANCE;
+        }
+        i++;
 
         auto added_network_groups = vdevice.configure(hef);
         if (!added_network_groups) {
@@ -132,15 +150,17 @@ int main()
     }
     auto vdevice = vdevice_exp.release();
 
+    std::vector<uint16_t> batch_sizes { BATCH_SIZE_1, BATCH_SIZE_2 };
     std::vector<std::string> hef_paths = {"hefs/multi_network_shortcut_net.hef", "hefs/shortcut_net.hef"};
-    auto configured_network_groups_exp = configure_hefs(*vdevice, hef_paths);
+
+    auto configured_network_groups_exp = configure_hefs(*vdevice, hef_paths, batch_sizes);
     if (!configured_network_groups_exp) {
         std::cerr << "Failed to configure HEFs, status = " << configured_network_groups_exp.status() << std::endl;
         return configured_network_groups_exp.status();
     }
     auto configured_network_groups = configured_network_groups_exp.release();
 
-    // Set scheduler's timeout and threshold for the first network group, in order to give priority to the second network group
+    // Set scheduler's timeout and threshold for the first network group, it will give priority to the second network group
     auto status =  configured_network_groups[0]->set_scheduler_timeout(SCHEDULER_TIMEOUT_MS);
     if (HAILO_SUCCESS != status) {
         std::cerr << "Failed to set scheduler timeout, status = "  << status << std::endl;
@@ -150,6 +170,16 @@ int main()
     status =  configured_network_groups[0]->set_scheduler_threshold(SCHEDULER_THRESHOLD);
     if (HAILO_SUCCESS != status) {
         std::cerr << "Failed to set scheduler threshold, status = "  << status << std::endl;
+        return status;
+    }
+
+    // Setting higher priority to the first network-group directly.
+    // The practical meaning is that the first network will be ready to run only if ``SCHEDULER_THRESHOLD`` send requests have been accumulated, 
+    // or more than ``SCHEDULER_TIMEOUT_MS`` time has passed and at least one send request has been accumulated.
+    // However when both the first and the second networks are ready to run, the first network will be preferred over the second network.
+    status =  configured_network_groups[0]->set_scheduler_priority(HAILO_SCHEDULER_PRIORITY_NORMAL+1);
+    if (HAILO_SUCCESS != status) {
+        std::cerr << "Failed to set scheduler priority, status = "  << status << std::endl;
         return status;
     }
 

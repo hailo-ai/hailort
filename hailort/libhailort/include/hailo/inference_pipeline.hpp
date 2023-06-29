@@ -13,6 +13,7 @@
 #include "hailo/vstream.hpp"
 
 
+/** hailort namespace */
 namespace hailort
 {
 

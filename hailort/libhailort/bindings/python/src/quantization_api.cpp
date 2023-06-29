@@ -12,6 +12,8 @@
 #include "quantization_api.hpp"
 #include "bindings_common.hpp"
 
+#include <iostream>
+
 namespace hailort
 {
 
@@ -32,8 +34,7 @@ void QuantizationBindings::dequantize_output_buffer_from_uint8(py::array src_buf
                 static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
             break;
         default:
-            LOGGER__ERROR("Output quantization isn't supported from src format type uint8 to dst format type = {}",
-                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            std::cerr << "Output quantization isn't supported from src format type uint8 to dst format type = " << HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype);
             THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
             break;
     }
@@ -52,8 +53,7 @@ void QuantizationBindings::dequantize_output_buffer_from_uint16(py::array src_bu
                 static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
             break;
         default:
-            LOGGER__ERROR("Output quantization isn't supported from src dormat type uint16 to dst format type = {}",
-                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            std::cerr << "Output quantization isn't supported from src dormat type uint16 to dst format type = " << HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype);
             THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
             break;
     }
@@ -68,8 +68,7 @@ void QuantizationBindings::dequantize_output_buffer_from_float32(py::array src_b
                 static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
             break;
         default:
-            LOGGER__ERROR("Output quantization isn't supported from src format type float32 to dst format type = {}",
-                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            std::cerr << "Output quantization isn't supported from src format type float32 to dst format type = " << HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype); 
             THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
             break;
     }
@@ -92,8 +91,7 @@ void QuantizationBindings::dequantize_output_buffer_from_uint8_in_place(py::arra
                 static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
             break;
         default:
-            LOGGER__ERROR("Output quantization isn't supported from src format type uint8 to dst format type = {}",
-                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            std::cerr << "Output quantization isn't supported from src format type uint8 to dst format type = " << HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype);
             THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
             break;
     }
@@ -112,8 +110,7 @@ void QuantizationBindings::dequantize_output_buffer_from_uint16_in_place(py::arr
                 static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
             break;
         default:
-            LOGGER__ERROR("Output quantization isn't supported from src dormat type uint16 to dst format type = {}",
-                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            std::cerr << "Output quantization isn't supported from src dormat type uint16 to dst format type = " << HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype);
             THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
             break;
     }
@@ -128,8 +125,7 @@ void QuantizationBindings::dequantize_output_buffer_from_float32_in_place(py::ar
                 static_cast<float32_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
             break;
         default:
-            LOGGER__ERROR("Output quantization isn't supported from src format type float32 to dst format type = {}",
-                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            std::cerr << "Output quantization isn't supported from src format type float32 to dst format type = " << HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype);
             THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
             break;
     }
@@ -149,7 +145,7 @@ void QuantizationBindings::dequantize_output_buffer_in_place(py::array dst_buffe
             QuantizationBindings::dequantize_output_buffer_from_float32_in_place(dst_buffer, dst_dtype, shape_size, quant_info);
             break;
         default:
-            LOGGER__ERROR("Unsupported src format type = {}", HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            std::cerr << "Unsupported src format type = " << HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype);
             THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
             break;
     }
@@ -169,7 +165,7 @@ void QuantizationBindings::dequantize_output_buffer(py::array src_buffer, py::ar
             QuantizationBindings::dequantize_output_buffer_from_float32(src_buffer, dst_buffer, dst_dtype, shape_size, quant_info);
             break;
         default:
-            LOGGER__ERROR("Unsupported src format type = {}", HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            std::cerr << "Unsupported src format type = " << HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype);
             THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
             break;
     }
@@ -184,7 +180,7 @@ void QuantizationBindings::quantize_input_buffer_from_uint8(py::array src_buffer
                 static_cast<uint8_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
             break;
         default:
-            LOGGER__ERROR("Input quantization isn't supported from src format type uint8 to dst format type = {}", HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            std::cerr << "Input quantization isn't supported from src format type uint8 to dst format type = " << HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype);
             THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
             break;
     }
@@ -203,8 +199,7 @@ void QuantizationBindings::quantize_input_buffer_from_uint16(py::array src_buffe
                 static_cast<uint16_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
             break;
         default:
-            LOGGER__ERROR("Input quantization isn't supported from src format type uint16 to dst format type = {}",
-                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            std::cerr << "Input quantization isn't supported from src format type uint16 to dst format type = " << HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype);
             THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
             break;
     }
@@ -223,8 +218,8 @@ void QuantizationBindings::quantize_input_buffer_from_float32(py::array src_buff
                 static_cast<uint16_t*>(dst_buffer.mutable_data()), shape_size, quant_info);
             break;
         default:
-            LOGGER__ERROR("Input quantization isn't supported from src format type float32 to dst format type = {}",
-                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            std::cerr << "Input quantization isn't supported from src format type float32 to dst format type = " <<
+                HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype);
             THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
             break;
     }
@@ -244,7 +239,7 @@ void QuantizationBindings::quantize_input_buffer(py::array src_buffer, py::array
             QuantizationBindings::quantize_input_buffer_from_float32(src_buffer, dst_buffer, dst_dtype, shape_size, quant_info);
             break;
         default:
-            LOGGER__ERROR("Input quantization isn't supported for src format type = {}", HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype));
+            std::cerr << "Input quantization isn't supported for src format type = " << HailoRTBindingsCommon::convert_format_type_to_string(dst_dtype);
             THROW_STATUS_ERROR(HAILO_INVALID_ARGUMENT);
             break;
     }

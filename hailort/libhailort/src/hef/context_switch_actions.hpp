@@ -71,6 +71,8 @@ public:
         WaitDmaIdle,
         WaitNmsIdle,
         EnableNms,
+        WriteDataByType,
+        SwitchLcuBatch,
     };
 
     ContextSwitchConfigAction(ContextSwitchConfigAction &&) = default;
@@ -744,7 +746,8 @@ private:
 class EnableNmsAction : public ContextSwitchConfigAction
 {
 public:
-    static Expected<ContextSwitchConfigActionPtr> create(uint8_t nms_unit_index, uint8_t network_index);
+    static Expected<ContextSwitchConfigActionPtr> create(uint8_t nms_unit_index, uint8_t network_index, uint16_t number_of_classes,
+        uint16_t burst_size);
     EnableNmsAction(EnableNmsAction &&) = default;
     EnableNmsAction(const EnableNmsAction &) = delete;
     EnableNmsAction &operator=(EnableNmsAction &&) = delete;
@@ -754,11 +757,57 @@ public:
     virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
 
 private:
-    EnableNmsAction(uint8_t nms_unit_index, uint8_t network_index);
+    EnableNmsAction(uint8_t nms_unit_index, uint8_t network_index, uint16_t number_of_classes, uint16_t burst_size);
 
     const uint8_t m_nms_unit_index;
     const uint8_t m_network_index;
+    const uint16_t m_number_of_classes;
+    const uint16_t m_burst_size;
 };
+
+class WriteDataByTypeAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create(uint32_t address, uint8_t data_type, uint32_t data,
+        uint8_t shift, uint32_t mask, uint8_t network_index);
+
+    virtual bool supports_repeated_block() const override;
+    virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
+
+private:
+    WriteDataByTypeAction(uint32_t address, uint8_t data_type, uint32_t data, uint8_t shift, uint32_t mask, uint8_t network_index);
+
+    const uint32_t m_address;
+    const uint8_t m_data_type;
+    const uint32_t m_data;
+    const uint8_t m_shift;
+    const uint32_t m_mask;
+    const uint8_t m_network_index;
+
+};
+
+class SwitchLcuBatchAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create(uint8_t cluster_index, uint8_t lcu_index, uint8_t network_index,
+        uint32_t kernel_done_count);
+    SwitchLcuBatchAction(SwitchLcuBatchAction &&) = default;
+    SwitchLcuBatchAction(const SwitchLcuBatchAction &) = delete;
+    SwitchLcuBatchAction &operator=(SwitchLcuBatchAction &&) = delete;
+    SwitchLcuBatchAction &operator=(const SwitchLcuBatchAction &) = delete;
+    virtual ~SwitchLcuBatchAction() = default;
+    virtual bool supports_repeated_block() const override;
+    virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
+
+private:
+    SwitchLcuBatchAction(uint8_t cluster_index, uint8_t lcu_index, uint8_t network_index, uint32_t kernel_done_count);
+
+    const uint8_t m_cluster_index;
+    const uint8_t m_lcu_index;
+    const uint8_t m_network_index;
+    const uint32_t m_kernel_done_count;
+};
+
 
 } /* namespace hailort */
 
