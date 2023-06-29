@@ -138,20 +138,19 @@ Expected<size_t> EthernetInputStream::sync_write_raw_buffer(const MemoryView &bu
     return size;
 }
 
-hailo_status EthernetInputStream::sync_write_all_raw_buffer_no_transform_impl(void *buffer, size_t offset, size_t size)
+hailo_status EthernetInputStream::write_impl(const MemoryView &buffer)
 {
     hailo_status status = HAILO_UNINITIALIZED;
 
-    ASSERT(NULL != buffer);
+    CHECK(buffer.size() >= MIN_UDP_PAYLOAD_SIZE, HAILO_INVALID_ARGUMENT, "Input must be larger than {}", MIN_UDP_PAYLOAD_SIZE);
+    CHECK(((buffer.size() % HailoRTCommon::HW_DATA_ALIGNMENT) == 0), HAILO_INVALID_ARGUMENT,
+        "Input must be aligned to {} (got {})", HailoRTCommon::HW_DATA_ALIGNMENT, buffer.size());
 
-    CHECK(size >= MIN_UDP_PAYLOAD_SIZE, HAILO_INVALID_ARGUMENT, "Input must be larger than {}", MIN_UDP_PAYLOAD_SIZE);
-    CHECK(((size % HailoRTCommon::HW_DATA_ALIGNMENT) == 0), HAILO_INVALID_ARGUMENT,
-        "Input must be aligned to {} (got {})", HailoRTCommon::HW_DATA_ALIGNMENT, size);
-
+    const size_t offset = 0;
     if (this->configuration.is_sync_enabled) {
-        status = eth_stream__write_all_with_sync(buffer, offset, size);
+        status = eth_stream__write_all_with_sync(buffer.data(), offset, buffer.size());
     } else {
-        status = eth_stream__write_all_no_sync(buffer, offset, size);
+        status = eth_stream__write_all_no_sync(buffer.data(), offset, buffer.size());
     }
     if (HAILO_STREAM_ABORTED_BY_USER == status) {
         LOGGER__INFO("eth_stream__write_all was aborted!");
@@ -163,7 +162,7 @@ hailo_status EthernetInputStream::sync_write_all_raw_buffer_no_transform_impl(vo
     return HAILO_SUCCESS;
 }
 
-hailo_status EthernetInputStream::eth_stream__write_all_no_sync(void *buffer, size_t offset, size_t size) {
+hailo_status EthernetInputStream::eth_stream__write_all_no_sync(const void *buffer, size_t offset, size_t size) {
     size_t remainder_size = 0;
     size_t packet_size = this->configuration.max_payload_size;
 
@@ -180,13 +179,13 @@ hailo_status EthernetInputStream::eth_stream__write_all_no_sync(void *buffer, si
     return eth_stream__write_with_remainder(buffer, offset, size, remainder_size);
 }
 
-hailo_status EthernetInputStream::eth_stream__write_with_remainder(void *buffer, size_t offset, size_t size, size_t remainder_size) {
+hailo_status EthernetInputStream::eth_stream__write_with_remainder(const void *buffer, size_t offset, size_t size, size_t remainder_size) {
     size_t transfer_size = 0;
     size_t offset_end_without_remainder = offset + size - remainder_size;
 
     while (offset < offset_end_without_remainder) {
         transfer_size = offset_end_without_remainder - offset;
-        auto expected_bytes_written = sync_write_raw_buffer(MemoryView(static_cast<uint8_t*>(buffer) + offset, transfer_size));
+        auto expected_bytes_written = sync_write_raw_buffer(MemoryView::create_const(static_cast<const uint8_t*>(buffer) + offset, transfer_size));
         if (HAILO_STREAM_ABORTED_BY_USER == expected_bytes_written.status()) {
             LOGGER__INFO("sync_write_raw_buffer was aborted!");
             return expected_bytes_written.status();
@@ -195,7 +194,7 @@ hailo_status EthernetInputStream::eth_stream__write_with_remainder(void *buffer,
         offset += expected_bytes_written.release();
     }
     if (0 < remainder_size) {
-        auto expected_bytes_written = sync_write_raw_buffer(MemoryView(static_cast<uint8_t*>(buffer) + offset, remainder_size));
+        auto expected_bytes_written = sync_write_raw_buffer(MemoryView::create_const(static_cast<const uint8_t*>(buffer) + offset, remainder_size));
         if (HAILO_STREAM_ABORTED_BY_USER == expected_bytes_written.status()) {
             LOGGER__INFO("sync_write_raw_buffer was aborted!");
             return expected_bytes_written.status();
@@ -220,7 +219,7 @@ TokenBucketEthernetInputStream::TokenBucketEthernetInputStream(Device &device, U
     token_bucket()
 {}
 
-hailo_status TokenBucketEthernetInputStream::eth_stream__write_with_remainder(void *buffer, size_t offset, size_t size, size_t remainder_size) {
+hailo_status TokenBucketEthernetInputStream::eth_stream__write_with_remainder(const void *buffer, size_t offset, size_t size, size_t remainder_size) {
     size_t transfer_size = 0;
     size_t offset_end_without_remainder = offset + size - remainder_size;
 
@@ -231,7 +230,7 @@ hailo_status TokenBucketEthernetInputStream::eth_stream__write_with_remainder(vo
         (void)token_bucket.consumeWithBorrowAndWait(MAX_CONSUME_SIZE, rate_bytes_per_sec, BURST_SIZE);
     
         transfer_size = offset_end_without_remainder - offset;
-        auto expected_bytes_written = sync_write_raw_buffer(MemoryView(static_cast<uint8_t*>(buffer) + offset, transfer_size));
+        auto expected_bytes_written = sync_write_raw_buffer(MemoryView::create_const(static_cast<const uint8_t*>(buffer) + offset, transfer_size));
         if (HAILO_STREAM_ABORTED_BY_USER == expected_bytes_written.status()) {
             LOGGER__INFO("sync_write_raw_buffer was aborted!");
             return expected_bytes_written.status();
@@ -244,7 +243,7 @@ hailo_status TokenBucketEthernetInputStream::eth_stream__write_with_remainder(vo
         // However, since remainder_size is modulo MAX_UDP_PAYLOAD_SIZE and BURST_SIZE == MAX_UDP_PAYLOAD_SIZE, it should be smaller.
         (void)token_bucket.consumeWithBorrowAndWait(static_cast<double>(remainder_size), rate_bytes_per_sec, BURST_SIZE);
         
-        auto expected_bytes_written = sync_write_raw_buffer(MemoryView(static_cast<uint8_t*>(buffer) + offset, remainder_size));
+        auto expected_bytes_written = sync_write_raw_buffer(MemoryView::create_const(static_cast<const uint8_t*>(buffer) + offset, remainder_size));
         if (HAILO_STREAM_ABORTED_BY_USER == expected_bytes_written.status()) {
             LOGGER__INFO("sync_write_raw_buffer was aborted!");
             return expected_bytes_written.status();
@@ -296,7 +295,7 @@ TrafficControlEthernetInputStream::TrafficControlEthernetInputStream(Device &dev
 {}
 #endif
 
-hailo_status EthernetInputStream::eth_stream__write_all_with_sync(void *buffer, size_t offset, size_t size) {
+hailo_status EthernetInputStream::eth_stream__write_all_with_sync(const void *buffer, size_t offset, size_t size) {
     hailo_status status = HAILO_UNINITIALIZED;
     size_t number_of_frames = 0;
     size_t frame_size = m_stream_info.hw_frame_size;
@@ -635,7 +634,7 @@ bool EthernetOutputStream::is_sync_packet(const void* buffer, size_t offset, siz
             ((hailo_output_sync_packet_t*)((uint8_t*)buffer + offset))->barker == BYTE_ORDER__ntohl(SYNC_PACKET_BARKER));
 }
 
-hailo_status EthernetOutputStream::read_all(MemoryView &buffer)
+hailo_status EthernetOutputStream::read_impl(MemoryView &buffer)
 {
     if ((buffer.size() % HailoRTCommon::HW_DATA_ALIGNMENT) != 0) {
         LOGGER__ERROR("Size must be aligned to {} (got {})", HailoRTCommon::HW_DATA_ALIGNMENT, buffer.size());
@@ -649,7 +648,7 @@ hailo_status EthernetOutputStream::read_all(MemoryView &buffer)
         status = this->read_all_no_sync(buffer.data(), 0, buffer.size());
     }
     if (HAILO_STREAM_ABORTED_BY_USER == status) {
-        LOGGER__INFO("read_all was aborted!");
+        LOGGER__INFO("read was aborted!");
         return status;
     }
     CHECK_SUCCESS(status);

@@ -16,7 +16,7 @@ function(git_clone proj repo tag)
     )
 endfunction()
 
-git_clone(pybind11          https://github.com/pybind/pybind11.git                                  80dc998efced8ceb2be59756668a7e90e8bef917)
+include(${CMAKE_CURRENT_LIST_DIR}/../../libhailort/bindings/python/externals/pybind11.cmake)
 git_clone(Catch2            https://github.com/catchorg/Catch2.git                                  c4e3767e265808590986d5db6ca1b5532a7f3d13)
 git_clone(CLI11             https://github.com/hailo-ai/CLI11.git                                   f1644f15f219303b7ad670732c21018a1e6f0e11)
 git_clone(spdlog            https://github.com/gabime/spdlog.git                                    e2789531912a5c6ab28a90387f97c52963eec08a)

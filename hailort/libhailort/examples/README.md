@@ -26,6 +26,11 @@ The following examples are provided, demonstrating the HailoRT API:
     - this example uses udp device.
   - `raw_streams_example` - Basic inference of a shortcut network using raw stream api.
     - The data is transformed before sent and after received in the same thread sending/receiving using the transformation api.
+  - `raw_async_streams_single_thread_example` - Basic inference of a shortcut network using raw stream async api with
+      a single thread.
+    - Each async read operation will re-launch some new async read operation.
+    - Each async write operation will re-launch some new async write operation.
+    - The main thread will stop the async operations by deactivating the network group.
   - `notification_callback_example` - Demonstrates how to work with notification callbacks.
 
 - C++ examples:
@@ -38,9 +43,19 @@ The following examples are provided, demonstrating the HailoRT API:
   - `infer_pipeline_example` - Basic inference of a shortcut network using inference pipeline (blocking) api.
     - same as `infer_pipeline_example` C example, uses HailoRT C++ api.
   - `raw_streams_example` - Basic inference of a shortcut network, same as `raw_streams_example` C example, uses HailoRT C++ api.
-  - `multi_process_example` - Demonstrates how to work with HailoRT as a service and using the HailoRT Model Scheduler for network groups switching.
+  - `raw_async_streams_single_thread_example` - Basic inference of a shortcut network using raw stream async api with
+      a single thread.
+    - Each async read operation will re-launch some new async read operation.
+    - Each async write operation will re-launch some new async write operation.
+    - The main thread will stop the async operations by deactivating the network group.
+  - `raw_async_streams_multi_thread_example` - Basic inference of a shortcut network using raw stream async api with
+      a thread for each stream.
+    - The threads will continuously initiate an async read or write operations.
+    - The main thread will stop the async operations and the threads by deactivating the network group.
+  - `multi_process_example` - Demonstrates how to work with HailoRT multi-process service and using the HailoRT Model Scheduler for network groups switching.
   Using the script `multi_process_example.sh` one can specify the number of processes to run each hef, see `multi_process_example.sh -h` for more information.
   - `notification_callback_example` - Demonstrates how to work with notification callbacks, same as `notification_callback_example` C example.
+You can find more details about each example in the HailoRT user guide.
 ## Compiling with CMake
 Examples are configured and compiled using the following commands:
 ```sh
@@ -58,9 +73,10 @@ cmake --build build --config release --target cpp_vstreams_example
 
 ## Running the examples
 
-Before running an example, download the HEFs using the [download script](../../scripts/download_hefs.sh):
+Before running an example, download the HEFs using the [download script](../../scripts/download_hefs.sh) from the scripts directory:
   ```sh
-  ../../scripts/download_hefs.sh
+  cd ../../scripts
+  ./download_hefs.sh
   ```
 
 To run an example, use (from this examples directory):

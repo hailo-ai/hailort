@@ -81,10 +81,6 @@ BoundaryChannel::BoundaryChannel(Type type, vdma::ChannelId channel_id, Directio
         status = HAILO_INVALID_ARGUMENT;
         return;
     }
-
-    m_transfer_done_callback = [this](std::shared_ptr<DmaMappedBuffer>, const hailo_async_transfer_completion_info_t &, void *) {
-        m_user_interrupt_callback(1);
-    };
 }
 
 void BoundaryChannel::clear_pending_buffers_descriptors()
@@ -103,22 +99,13 @@ void BoundaryChannel::clear_pending_buffers_descriptors()
 
 hailo_status BoundaryChannel::trigger_channel_completion(uint16_t hw_num_processed)
 {
-    size_t processed_no = 0;
+    PendingBuffersQueue completed_buffers{PENDING_BUFFERS_SIZE};
 
     {
         // NOTE: right now, we can retake the 'completion' descriptor for a new transfer before handling the interrupt.
         //      we should have our own pointers indicating whats free instead of reading from HW.
-        // TODO: consider calculating the last descriptor using the src_desc_avail and src_desc_proc instead of using
-        // status?
-        // TODO: we might free a pending buffer which we didn't get an interrupt for yet. we should still handle this
-        // situation correctly.
 
-        std::lock_guard<RecursiveSharedMutex> state_guard(m_state->mutex());
-
-        // Although the hw_num_processed should be a number between 0 and m_descs.size-1, if m_desc.size < 0x10000
-        // (the maximum desc size), the actual hw_num_processed is a number between 1 and m_descs.size. Therefore the
-        // value can be m_descs.size, in this case we change it to zero.
-        hw_num_processed = static_cast<uint16_t>(hw_num_processed & m_state->m_descs.size_mask);
+        std::unique_lock<RecursiveSharedMutex> state_guard(m_state->mutex());
 
         if (m_state->m_is_aborted) {
             return HAILO_STREAM_ABORTED_BY_USER;
@@ -127,6 +114,11 @@ hailo_status BoundaryChannel::trigger_channel_completion(uint16_t hw_num_process
         if (!m_state->m_is_channel_activated) {
             return HAILO_STREAM_NOT_ACTIVATED;
         }
+
+        // Although the hw_num_processed should be a number between 0 and m_descs.size-1, if m_desc.size < 0x10000
+        // (the maximum desc size), the actual hw_num_processed is a number between 1 and m_descs.size. Therefore the
+        // value can be m_descs.size, in this case we change it to zero.
+        hw_num_processed = static_cast<uint16_t>(hw_num_processed & m_state->m_descs.size_mask);
 
         if (m_latency_meter != nullptr) {
             // The latency meter gets an updated hw_num_processed via a call to vdma_interrupts_read_timestamps
@@ -141,61 +133,38 @@ hailo_status BoundaryChannel::trigger_channel_completion(uint16_t hw_num_process
             hw_num_processed = latency_meter_hw_num_processed.value();
         }
 
-        const auto last_num_processed = static_cast<uint16_t>(CB_TAIL(m_state->m_descs));
+        const auto previous_num_processed = static_cast<uint16_t>(CB_TAIL(m_state->m_descs));
 
-        // Calculate pending_buffers_count before iteration, because the iteration removes done transfers
+        // Calculate pending_buffers_count before iteration, because the iteration removes done transfers.
         const auto pending_buffers_count = m_state->m_pending_buffers.size();
         for (size_t i = 0; i < pending_buffers_count; i++) {
-            auto &last_pending_buffer_info = m_state->m_pending_buffers.front();
-            const auto last_desc_index = static_cast<uint16_t>(last_pending_buffer_info.last_desc);
-            // Transfer is complete if its last descriptor is in [last_num_processed, hw_num_processed) or
-            // the the buffer is empty (hw_num_processed == get_num_available())
-            const bool is_complete = is_desc_between(last_num_processed, hw_num_processed, last_desc_index) || 
-                (hw_num_processed == get_num_available());
-
-    #ifndef NDEBUG
-            static constexpr auto STATUS_MASK = 0xFF;
-            static constexpr auto ERROR_BIT = 1;
-            const auto status = (*m_desc_list)[last_desc_index].RemainingPageSize_Status & STATUS_MASK;
-            CHECK(!is_bit_set(status, ERROR_BIT), HAILO_INTERNAL_FAILURE,
-                "Error while processing descriptor {} of DMA {} on board {}.",
-                last_desc_index, m_channel_id, m_driver.dev_path());
-
-            // status is read after hw_num_processed, so we want is_complete -> (status == 1).
-            assert(!is_complete || ((status & 0x1) == 1));
-    #endif
-
-            if (!is_complete) {
+            if (!is_complete(m_state->m_pending_buffers.front(), previous_num_processed, hw_num_processed)) {
                 break;
             }
 
-            // Clear relevant descriptors from previous transfer
-            if (nullptr != m_latency_meter) {
-                const auto latency_desc_index = last_pending_buffer_info.latency_measure_desc;
-                m_desc_list->clear_descriptor(latency_desc_index);
-            }
-            m_desc_list->clear_descriptor(last_desc_index);
-
-            _CB_SET(m_state->m_descs.tail, (last_pending_buffer_info.last_desc + 1) & m_state->m_descs.size_mask);
-            last_pending_buffer_info.on_transfer_done(last_pending_buffer_info.buffer,
-                hailo_async_transfer_completion_info_t{HAILO_SUCCESS}, last_pending_buffer_info.opaque);
-            processed_no++;
+            // Move item from pending_buffers to completed_buffers
+            completed_buffers.push_back(std::move(m_state->m_pending_buffers.front()));
             m_state->m_pending_buffers.pop_front();
         }
     }
 
-    if (0 < processed_no) {
+    // completed_buffers were copied from m_pending_buffers inside the lock. Now we are free to process them and call
+    // the right completion callbacks without state mutex held.
+    for (auto &pending_buffer : completed_buffers) {
+        on_pending_buffer_irq(pending_buffer);
+    }
+
+    if (!completed_buffers.empty()) {
         m_state->transfer_buffer_cv().notify_all();
     }
 
     return HAILO_SUCCESS;
 }
 
-hailo_status BoundaryChannel::register_interrupt_callback(const ProcessingCompleteCallback &callback)
+void BoundaryChannel::register_interrupt_callback(const ProcessingCompleteCallback &callback)
 {
     std::lock_guard<RecursiveSharedMutex> state_guard(m_state->mutex());
     m_user_interrupt_callback = callback;
-    return HAILO_SUCCESS;
 }
 
 CONTROL_PROTOCOL__host_buffer_info_t BoundaryChannel::get_boundary_buffer_info(uint32_t transfer_size)
@@ -247,20 +216,19 @@ hailo_status BoundaryChannel::activate(uint32_t transfer_size, bool resume_pendi
 hailo_status BoundaryChannel::deactivate()
 {
     std::unique_lock<RecursiveSharedMutex> state_guard(m_state->mutex());
+    {
+        CHECK(m_state->m_is_channel_activated, HAILO_INTERNAL_FAILURE,
+            "Vdma channel {} is not activated", m_channel_id);
+        m_state->m_is_channel_activated = false;
 
-    CHECK(m_state->m_is_channel_activated, HAILO_INTERNAL_FAILURE,
-        "Vdma channel {} is not activated", m_channel_id);
-    m_state->m_is_channel_activated = false;
+        // Note: PendingBuffers held by m_pending_buffers may still hold copies of the current m_transfer_done_callback,
+        //       which in turn holds a reference to *this. Since we stop the m_wait_interrupts_thread there's no risk that
+        //       these callbacks will be called and we don't need to reset this callback.
 
-    // Reset the user callback, so as not to keep objects provided by the user alive (they may lead to a chain of refs
-    // back to this channel causing it to be leaked).
-    // Note: PendingBuffers held by m_pending_buffers may still hold copies of the current m_transfer_done_callback,
-    //       which in turn holds a reference to *this. Since we stop the m_wait_interrupts_thread there's no risk that
-    //       these callbacks will be called and we don't need to reset this callback.
-    m_user_interrupt_callback = ignore_processing_complete;
-
-    auto status = complete_channel_deactivation();
-    CHECK_SUCCESS(status);
+        auto status = complete_channel_deactivation();
+        CHECK_SUCCESS(status);
+    }
+    m_state->m_can_transfer_buffer_cv.notify_all();
 
     return HAILO_SUCCESS;
 }
@@ -268,6 +236,13 @@ hailo_status BoundaryChannel::deactivate()
 BoundaryChannel::Type BoundaryChannel::type() const
 {
     return m_type;
+}
+
+hailo_status BoundaryChannel::set_transfers_per_axi_intr(uint16_t transfers_per_axi_intr)
+{
+    CHECK(0 != transfers_per_axi_intr, HAILO_INVALID_ARGUMENT, "Invalid transfers per axi interrupt");
+    m_transfers_per_axi_intr = transfers_per_axi_intr;
+    return HAILO_SUCCESS;
 }
 
 hailo_status BoundaryChannel::flush(const std::chrono::milliseconds &timeout)
@@ -282,6 +257,10 @@ hailo_status BoundaryChannel::flush(const std::chrono::milliseconds &timeout)
     bool was_successful = m_state->transfer_buffer_cv().wait_for(state_guard, timeout, [this, &status] () {
         if (m_state->m_is_aborted) {
             status = HAILO_STREAM_ABORTED_BY_USER;
+            return true; // return true so that the wait will finish
+        }
+        if (!m_state->m_is_channel_activated) {
+            status = HAILO_STREAM_NOT_ACTIVATED;
             return true; // return true so that the wait will finish
         }
         return m_state->m_pending_buffers.empty();
@@ -315,7 +294,7 @@ bool BoundaryChannel::has_room_in_desc_list(size_t buffer_size)
 
     if (desc_num == m_state->m_descs.size) {
         // Special case when the checking if the buffer is empty
-        return num_available == num_processed; 
+        return num_available == num_processed;
     }
 
     int num_free = CB_AVAIL(m_state->m_descs, num_available, num_processed);
@@ -326,8 +305,12 @@ bool BoundaryChannel::has_room_in_desc_list(size_t buffer_size)
     return true;
 }
 
-hailo_status BoundaryChannel::wait(size_t buffer_size, std::chrono::milliseconds timeout)
+hailo_status BoundaryChannel::wait(size_t buffer_size, std::chrono::milliseconds timeout,
+    bool stop_if_deactivated)
 {
+    std::unique_lock<RecursiveSharedMutex> state_guard(m_state->mutex());
+    assert(state_guard.owns_lock());
+
     const auto max_transfer_size = m_desc_list->desc_page_size() * m_desc_list->count();
     CHECK(buffer_size < max_transfer_size, HAILO_INVALID_ARGUMENT,
         "Requested transfer size ({}) must be smaller than ({})", buffer_size, max_transfer_size);
@@ -336,25 +319,73 @@ hailo_status BoundaryChannel::wait(size_t buffer_size, std::chrono::milliseconds
         std::bind(&BoundaryChannel::is_ready_for_transfer_h2d, this, buffer_size) :
         std::bind(&BoundaryChannel::is_ready_for_transfer_d2h, this, buffer_size);
 
-    std::unique_lock<RecursiveSharedMutex> state_guard(m_state->mutex());
-    hailo_status status = HAILO_SUCCESS; // Best effort
-    bool was_successful = m_state->transfer_buffer_cv().wait_for(state_guard, timeout, [this, is_ready_for_transfer, &status] () {
-        if (m_state->m_is_aborted) {
-            status = HAILO_STREAM_ABORTED_BY_USER;
-            return true; // return true so that the wait will finish
-        }
+    auto status = HAILO_SUCCESS; // Best effort
+    bool was_successful = m_state->transfer_buffer_cv().wait_for(state_guard, timeout,
+        [this, is_ready_for_transfer, stop_if_deactivated, &status] () {
+            if (m_state->m_is_aborted) {
+                status = HAILO_STREAM_ABORTED_BY_USER;
+                return true; // return true so that the wait will finish
+            }
+            if (stop_if_deactivated && !m_state->m_is_channel_activated) {
+                status = HAILO_STREAM_NOT_ACTIVATED;
+                return true; // return true so that the wait will finish
+            }
 
-        return is_ready_for_transfer();
-    });
+            return is_ready_for_transfer();
+        }
+    );
     CHECK(was_successful, HAILO_TIMEOUT, "Got HAILO_TIMEOUT while waiting for channel {} interrupts", m_channel_id);
     return status;
 }
 
-hailo_status BoundaryChannel::set_transfers_per_axi_intr(uint16_t transfers_per_axi_intr)
+bool BoundaryChannel::is_complete(const PendingBuffer &pending_buffer, uint16_t previous_num_processed,
+    uint16_t current_num_processed)
 {
-    CHECK(0 != transfers_per_axi_intr, HAILO_INVALID_ARGUMENT, "Invalid transfers per axi interrupt");
-    m_transfers_per_axi_intr = transfers_per_axi_intr;
-    return HAILO_SUCCESS;
+    // Transfer is complete if its last descriptor is in [previous_num_processed, current_num_processed) or
+    // the the buffer is empty (previous_num_processed == get_num_available())
+    return is_desc_between(previous_num_processed, current_num_processed, pending_buffer.last_desc) ||
+        (current_num_processed == get_num_available());
+}
+
+
+void BoundaryChannel::on_pending_buffer_irq(PendingBuffer &pending_buffer)
+{
+#ifndef NDEBUG
+    auto &last_desc = (*m_desc_list)[pending_buffer.last_desc];
+    if (!last_desc.is_done() || last_desc.is_error()) {
+        LOGGER__ERROR("Error while processing descriptor {} of DMA {} on device {} DESC_STATUS=0x{:x}.",
+            pending_buffer.last_desc, m_channel_id, m_driver.device_id(), last_desc.status());
+        pending_buffer.on_transfer_done(HAILO_INTERNAL_FAILURE);
+        return;
+    }
+#endif
+
+    {
+        std::unique_lock<RecursiveSharedMutex> state_guard(m_state->mutex());
+
+        // First, we want to call m_user_interrupt_callback. This callback is meant to be called right after we
+        // got an interrupt and before the user can read the frame or write a new frame.
+        // We call this callback inside the lock to make sure it wont be called when the channel is aborted.
+        if (!m_state->m_is_aborted) {
+            m_user_interrupt_callback();
+        }
+
+        // Then we increase desc num_proc (can happen only in this flow). After it is increased -
+        //  1. On D2H channels - the output can be read by the user.
+        //  2. On H2D channels - new input can be written to the buffer.
+        // Clear relevant descriptors from previous transfer
+        if (nullptr != m_latency_meter) {
+            m_desc_list->clear_descriptor(pending_buffer.latency_measure_desc);
+        }
+        m_desc_list->clear_descriptor(pending_buffer.last_desc);
+
+        _CB_SET(m_state->m_descs.tail, (pending_buffer.last_desc + 1) & m_state->m_descs.size_mask);
+    }
+
+    // Finally, we notify user callbacks registered with the transfer.
+    // We want to make sure that the callbacks are called after the descriptors can be reused (So the user will
+    // be able to start new transfer).
+    pending_buffer.on_transfer_done(HAILO_SUCCESS);
 }
 
 } /* namespace vdma */

@@ -12,8 +12,6 @@
 #include "common/logger_macros.hpp"
 
 #include "vdma/channel/buffered_channel.hpp"
-#include "vdma/memory/mapped_buffer_factory.hpp"
-#include "vdma/memory/mapped_buffer_impl.hpp"
 #include "hw_consts.hpp"
 
 #include <list>
@@ -53,7 +51,7 @@ BufferedChannel::BufferedChannel(vdma::ChannelId channel_id, Direction direction
         return;
     }
 
-    auto mapped_buffer = create_mapped_buffer(descs_count, desc_page_size, direction, driver);
+    auto mapped_buffer = MappedBuffer::create_shared(driver, direction, descs_count * desc_page_size);
     if (!mapped_buffer) {
         LOGGER__ERROR("Failed building mapped vdma buffer");
         status = mapped_buffer.status();
@@ -70,21 +68,6 @@ BufferedChannel::BufferedChannel(vdma::ChannelId channel_id, Direction direction
     m_pending_buffers_sizes = CircularArray<size_t>(descs_count);
 
     status = HAILO_SUCCESS;
-}
-
-Expected<std::shared_ptr<DmaMappedBuffer>> BufferedChannel::create_mapped_buffer(uint32_t descs_count, uint16_t desc_page_size,
-    Direction direction, HailoRTDriver &driver)
-{
-    auto desc_page_size_value = driver.calc_desc_page_size(desc_page_size);
-    CHECK_AS_EXPECTED(is_powerof2(desc_page_size_value), HAILO_INVALID_ARGUMENT, "Descriptor page_size must be a power of two.");
-
-    auto mapped_buffer_exp = MappedBufferFactory::create_mapped_buffer(descs_count * desc_page_size_value, direction, driver);
-    CHECK_EXPECTED(mapped_buffer_exp);
-
-    auto mapped_buffer = make_shared_nothrow<DmaMappedBuffer>(mapped_buffer_exp.release());
-    CHECK_NOT_NULL_AS_EXPECTED(mapped_buffer, HAILO_OUT_OF_HOST_MEMORY);
-
-    return mapped_buffer;
 }
 
 hailo_status BufferedChannel::complete_channel_deactivation()
@@ -189,20 +172,19 @@ hailo_status BufferedChannel::complete_channel_activation(uint32_t transfer_size
     }
 
     if ((Direction::D2H == m_direction) && (transfer_size != 0)) {
-        const auto transfers_in_buffer = get_transfers_count_in_buffer(transfer_size);
+        const auto max_transfers_in_buffer = get_transfers_count_in_buffer(transfer_size);
+        const auto transfers_in_buffer = std::min(max_transfers_in_buffer, m_state->m_pending_buffers.capacity());
         const auto pending_descs = get_d2h_pending_descs_count();
         const auto descs_in_transfer = m_desc_list->descriptors_in_buffer(transfer_size);
         const auto pending_transfers = pending_descs.value() / descs_in_transfer;
         // We prepare descs in advance for D2H channels:
-        // (1) The channel's buffer can store up to 'transfers_in_buffer' frames of size transfer_size
-        // (2) There are 'pending_transfers' frames from the previous channel activation (we assume that the same
-        //     'transfer_size' was used)
-        // (3) Hence, we have room for 'transfers_in_buffer - pending_transfers' frames in the buffer currently.
-        // (4) However, we can allow at most 'm_state->m_pending_buffers.capacity()' transfers. We can't store more than 
+        // (1) The channel's buffer can store up to 'max_transfers_in_buffer' frames of size transfer_size
+        // (2) However, we can allow at most 'm_state->m_pending_buffers.capacity()' transfers. We can't store more than
         //     that in the pending buffers circular array.
-        // (5) Hence, we'll take the minimum between (3) and (4).
-        const auto transfers_count = std::min(transfers_in_buffer - pending_transfers,
-            m_state->m_pending_buffers.capacity());
+        // (3) There are 'pending_transfers' frames from the previous channel activation (we assume that the same
+        //     'transfer_size' was used)
+        // (4) Hence, we have room for 'min(transfers_in_buffer, pending_buffers.capacity()) - pending_transfers' frames in the buffer currently.
+        const auto transfers_count = transfers_in_buffer - pending_transfers;
         status = prepare_d2h_pending_descriptors(transfer_size, static_cast<uint32_t>(transfers_count));
         CHECK_SUCCESS(status);
     }
@@ -210,32 +192,31 @@ hailo_status BufferedChannel::complete_channel_activation(uint32_t transfer_size
     return HAILO_SUCCESS;
 }
 
-hailo_status BufferedChannel::transfer(void *buf, size_t count)
+hailo_status BufferedChannel::transfer_sync(void *buf, size_t count, std::chrono::milliseconds timeout)
 {
     CHECK_NOT_NULL(buf, HAILO_INVALID_ARGUMENT);
     CHECK(0 != count, HAILO_INVALID_ARGUMENT);
 
-    std::lock_guard<RecursiveSharedMutex> state_guard(m_state->mutex());
-    if (m_state->m_is_aborted) {
-        LOGGER__INFO("Tried to write to aborted channel {}", m_channel_id);
-        return HAILO_STREAM_ABORTED_BY_USER;
+    auto status = wait(count, timeout);
+    if ((HAILO_STREAM_NOT_ACTIVATED == status) || (HAILO_STREAM_ABORTED_BY_USER == status)) {
+        LOGGER__INFO("wait failed because channel {} is not activated/aborted (status {})", m_channel_id, status);
+        return status;
     }
+    CHECK_SUCCESS(status, "wait failed with status {} (channel id: {}, timeout: {}ms)", status, m_channel_id, timeout.count());
 
-    hailo_status status = HAILO_UNINITIALIZED;
+    std::unique_lock<RecursiveSharedMutex> state_guard(m_state->mutex());
     if (Direction::H2D == m_direction) {
         status = transfer_h2d(buf, count);
     } else {
         status = transfer_d2h(buf, count);
     }
 
-    if (HAILO_STREAM_NOT_ACTIVATED == status) {
-        LOGGER__INFO("Transfer failed because Channel {} is not activated", m_channel_id);
-        return HAILO_STREAM_NOT_ACTIVATED;
-    }
-    if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("Transfer failed for channel {} with status {}", m_channel_id, status);
+    if ((HAILO_STREAM_NOT_ACTIVATED == status) || (HAILO_STREAM_ABORTED_BY_USER == status)) {
+        LOGGER__INFO("transfer failed because channel {} is not activated/aborted (status {})", m_channel_id, status);
         return status;
     }
+    CHECK_SUCCESS(status, "transfer failed with status {} (channel id: {}, timeout: {}ms)", status, m_channel_id, timeout.count());
+
     return HAILO_SUCCESS;
 }
 
@@ -263,20 +244,21 @@ hailo_status BufferedChannel::write_to_channel_buffer_cyclic(const MemoryView &b
         "Can't write {} bytes to channel buffer (channel buffer size {})",
         buffer.size(), m_channel_buffer->size());
 
+    static const auto SYNC_TO_DEIVCE = HailoRTDriver::DmaSyncDirection::TO_DEVICE;
     const auto size_to_end = m_channel_buffer->size() - channel_buffer_write_offset;
     const auto first_chunk_size = std::min(size_to_end, buffer.size());
     const auto first_chunk_addr = static_cast<uint8_t *>(m_channel_buffer->user_address()) + channel_buffer_write_offset;
 
     // Copy from buffer to m_channel_buffer and then synchronize
     std::memcpy(first_chunk_addr, buffer.data(), first_chunk_size);
-    auto status = m_channel_buffer->pimpl->synchronize(channel_buffer_write_offset, first_chunk_size);
+    auto status = m_channel_buffer->synchronize(channel_buffer_write_offset, first_chunk_size, SYNC_TO_DEIVCE);
     CHECK_SUCCESS(status);
 
     const auto remaining_size = buffer.size() - first_chunk_size;
     if (remaining_size > 0) {
         // Copy the remainder from buffer to m_channel_buffer and then synchronize
         std::memcpy(m_channel_buffer->user_address(), buffer.data() + first_chunk_size, remaining_size);
-        status = m_channel_buffer->pimpl->synchronize(0, remaining_size);
+        status = m_channel_buffer->synchronize(0, remaining_size, SYNC_TO_DEIVCE);
         CHECK_SUCCESS(status);
     }
 
@@ -289,19 +271,20 @@ hailo_status BufferedChannel::read_from_channel_buffer_cyclic(uint8_t *dest_buff
         "Can't read {} bytes from channel buffer (channel buffer size {})",
         read_size, m_channel_buffer->size());
 
+    static const auto SYNC_TO_HOST = HailoRTDriver::DmaSyncDirection::TO_HOST;
     const auto size_to_end = m_channel_buffer->size() - channel_buffer_read_offset;
     const auto first_chunk_size = std::min(size_to_end, read_size);
     const auto first_chunk_addr = static_cast<uint8_t *>(m_channel_buffer->user_address()) + channel_buffer_read_offset;
 
     // Synchronize m_channel_buffer and copy to dest_buffer
-    auto status = m_channel_buffer->pimpl->synchronize(channel_buffer_read_offset, first_chunk_size);
+    auto status = m_channel_buffer->synchronize(channel_buffer_read_offset, first_chunk_size, SYNC_TO_HOST);
     CHECK_SUCCESS(status);
     std::memcpy(dest_buffer, first_chunk_addr, first_chunk_size);
 
     const auto remaining_size = read_size - first_chunk_size;
     if (remaining_size > 0) {
         // Synchronize m_channel_buffer and copy remainder to dest_buffer
-        status = m_channel_buffer->pimpl->synchronize(0, remaining_size);
+        status = m_channel_buffer->synchronize(0, remaining_size, SYNC_TO_HOST);
         CHECK_SUCCESS(status);
         std::memcpy(dest_buffer + first_chunk_size, m_channel_buffer->user_address(), remaining_size);
     }
@@ -431,7 +414,7 @@ hailo_status BufferedChannel::send_pending_buffer()
     return HAILO_SUCCESS;
 }
 
-hailo_status BufferedChannel::transfer(std::shared_ptr<DmaMappedBuffer>, const TransferDoneCallback &, void *)
+hailo_status BufferedChannel::transfer_async(TransferRequest &&)
 {
     return HAILO_NOT_IMPLEMENTED;
 }
@@ -507,9 +490,9 @@ hailo_status BufferedChannel::prepare_descriptors(size_t transfer_size, Interrup
     assert(desired_desc_num <= MAX_DESCS_COUNT);
     uint16_t desc_num = static_cast<uint16_t>(desired_desc_num);
 
-    int num_available = get_num_available();
-    int num_processed = CB_TAIL(m_state->m_descs);
-    int num_free = CB_AVAIL(m_state->m_descs, num_available, num_processed);
+    const auto num_available = get_num_available();
+    const auto num_processed = CB_TAIL(m_state->m_descs);
+    const auto num_free = CB_AVAIL(m_state->m_descs, num_available, num_processed);
     if (num_free < desc_num) {
         return HAILO_OUT_OF_DESCRIPTORS;
     }
@@ -520,15 +503,16 @@ hailo_status BufferedChannel::prepare_descriptors(size_t transfer_size, Interrup
             first_desc_interrupts_domain);
     }
     auto actual_desc_count = m_desc_list->program_last_descriptor(transfer_size, last_desc_interrupts_domain,
-        num_available, true);
+        num_available);
     if (!actual_desc_count) {
         LOGGER__ERROR("Failed to program desc_list for channel {}", m_channel_id);
         return actual_desc_count.status();
     }
-    assert (actual_desc_count.value() == desc_num);
-    int last_desc_avail = ((num_available + desc_num - 1) & m_state->m_descs.size_mask);
+    assert(actual_desc_count.value() == desc_num);
+    assert(desc_num > 0);
+    const auto last_desc_avail = static_cast<uint16_t>((num_available + desc_num - 1) & m_state->m_descs.size_mask);
 
-    m_state->add_pending_buffer(num_available, last_desc_avail, m_direction, m_transfer_done_callback);
+    m_state->add_pending_buffer(num_available, last_desc_avail, m_direction);
     return inc_num_available(desc_num);
 }
 

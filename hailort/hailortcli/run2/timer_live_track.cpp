@@ -13,23 +13,18 @@
 #include <sstream>
 
 TimerLiveTrack::TimerLiveTrack(std::chrono::milliseconds duration) :
-        LivePrinter::Track(), m_duration(duration), m_start_time()
+        LiveStats::Track(), m_duration(duration), m_start_time()
 {
 }
 
-hailo_status TimerLiveTrack::start()
+hailo_status TimerLiveTrack::start_impl()
 {
     m_start_time = std::chrono::steady_clock::now();
-    m_started = true;
-
     return HAILO_SUCCESS;
 }
 
-uint32_t TimerLiveTrack::get_text(std::stringstream &ss)
+uint32_t TimerLiveTrack::push_text_impl(std::stringstream &ss)
 {
-    if (!m_started) {
-        return 0;
-    }
     static const uint32_t MAX_PROGRESS_BAR_WIDTH = 20;
     auto elapsed_time = std::chrono::steady_clock::now() - m_start_time;
     auto eta = std::chrono::seconds(std::max<int32_t>(0, static_cast<int32_t>(std::round(std::chrono::duration<double>(m_duration - elapsed_time).count())))); // std::chrono::round is from C++17
@@ -39,4 +34,11 @@ uint32_t TimerLiveTrack::get_text(std::stringstream &ss)
 
     ss << fmt::format("[{:=>{}}{:{}}] {:>3}% {}\n", '>', progress_bar_width, "", MAX_PROGRESS_BAR_WIDTH - progress_bar_width, elapsed_percentage, CliCommon::duration_to_string(eta));
     return 1;
+}
+
+void TimerLiveTrack::push_json_impl(nlohmann::ordered_json &json)
+{
+    std::stringstream time_to_run;
+    time_to_run << std::fixed << std::setprecision(2) << std::round(std::chrono::duration<double>(m_duration).count()) << " seconds";
+    json["time_to_run"] = time_to_run.str();
 }

@@ -4,6 +4,7 @@ set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/hailort_common.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/hailort_logger.cpp
 
+    ${CMAKE_CURRENT_SOURCE_DIR}/buffer_storage.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/buffer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/sensor_config_utils.cpp
 )

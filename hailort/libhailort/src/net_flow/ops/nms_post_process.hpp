@@ -66,7 +66,7 @@ struct NmsPostProcessConfig
     uint32_t max_proposals_per_class = 0;
 
     // The model's number of classes. (This depends on the dataset that the model trained on).
-    uint32_t classes = 0;
+    uint32_t number_of_classes = 0;
 
     // Toggle background class removal from results
     bool background_removal = false;
@@ -107,7 +107,7 @@ protected:
         float32_t objectness, hailo_quant_info_t quant_info, uint32_t width)
     {
         std::pair<uint32_t, float32_t> max_id_score_pair;
-        for (uint32_t class_index = 0; class_index < m_nms_config.classes; class_index++) {
+        for (uint32_t class_index = 0; class_index < m_nms_config.number_of_classes; class_index++) {
             auto class_id = class_index;
             if (m_nms_config.background_removal) {
                 if (m_nms_config.background_removal_index == class_index) {
@@ -157,6 +157,8 @@ protected:
         MemoryView dst_view, std::vector<uint32_t> &classes_detections_count);
 
     std::string get_nms_config_description();
+
+    hailo_status validate_metadata() override;
 
 };
 

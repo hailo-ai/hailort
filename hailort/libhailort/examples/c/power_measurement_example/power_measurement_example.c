@@ -134,5 +134,5 @@ int main(int argc, char **argv)
 l_release_vdevice:
     (void) hailo_release_vdevice(vdevice);
 l_exit:
-    return status;
+    return (int)status;
 }

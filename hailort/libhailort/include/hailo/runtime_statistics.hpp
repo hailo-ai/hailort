@@ -16,7 +16,7 @@
 #include <type_traits>
 #include <memory>
 
-
+/** hailort namespace */
 namespace hailort
 {
 

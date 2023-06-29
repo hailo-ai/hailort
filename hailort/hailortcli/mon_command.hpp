@@ -14,7 +14,7 @@
 
 #include "hailortcli.hpp"
 #include "command.hpp"
-#include "vdevice/scheduler/scheduler_mon.hpp"
+#include "utils/profiler/monitor_handler.hpp"
 
 #include "CLI/CLI.hpp"
 

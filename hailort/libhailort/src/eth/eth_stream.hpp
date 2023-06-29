@@ -54,15 +54,15 @@ private:
     Device &m_device;
 
     hailo_status eth_stream__config_input_sync_params(uint32_t frames_per_sync);
-    hailo_status eth_stream__write_all_no_sync(void *buffer, size_t offset, size_t size);
-    hailo_status eth_stream__write_all_with_sync(void *buffer, size_t offset, size_t size);
+    hailo_status eth_stream__write_all_no_sync(const void *buffer, size_t offset, size_t size);
+    hailo_status eth_stream__write_all_with_sync(const void *buffer, size_t offset, size_t size);
     hailo_status set_timeout(std::chrono::milliseconds timeout);
     void set_max_payload_size(uint16_t size);
 
 protected:
-    virtual hailo_status eth_stream__write_with_remainder(void *buffer, size_t offset, size_t size, size_t remainder_size);
-    virtual Expected<size_t> sync_write_raw_buffer(const MemoryView &buffer) override;
-    virtual hailo_status sync_write_all_raw_buffer_no_transform_impl(void *buffer, size_t offset, size_t size) override;
+    virtual hailo_status eth_stream__write_with_remainder(const void *buffer, size_t offset, size_t size, size_t remainder_size);
+    Expected<size_t> sync_write_raw_buffer(const MemoryView &buffer);
+    virtual hailo_status write_impl(const MemoryView &buffer) override;
 
 public:
     EthernetInputStream(Device &device, Udp &&udp, EventPtr &&core_op_activated_event, const LayerInfo &layer_info, hailo_status &status) :
@@ -103,7 +103,7 @@ private:
     static const uint32_t MAX_CONSUME_SIZE = MAX_UDP_PAYLOAD_SIZE;
 
 protected:
-    virtual hailo_status eth_stream__write_with_remainder(void *buffer, size_t offset, size_t size, size_t remainder_size);
+    virtual hailo_status eth_stream__write_with_remainder(const void *buffer, size_t offset, size_t size, size_t remainder_size) override;
 
 public:
     TokenBucketEthernetInputStream(Device &device, Udp &&udp, EventPtr &&core_op_activated_event,
@@ -140,7 +140,7 @@ private:
     Device &m_device;
 
     EthernetOutputStream(Device &device, const LayerInfo &edge_layer, Udp &&udp, EventPtr &&core_op_activated_event, hailo_status &status) :
-        OutputStreamBase(edge_layer, std::move(core_op_activated_event), status),
+        OutputStreamBase(edge_layer, HAILO_STREAM_INTERFACE_ETH, std::move(core_op_activated_event), status),
         leftover_buffer(),
         leftover_size(0),
         // Firmware starts sending sync sequence from 0, so treating the first previous as max value (that will be overflowed to 0)
@@ -151,7 +151,7 @@ private:
         m_device(device)
     {}
 
-    hailo_status read_all(MemoryView &buffer) override;
+    hailo_status read_impl(MemoryView &buffer) override;
     hailo_status read_all_with_sync(void *buffer, size_t offset, size_t size);
     hailo_status read_all_no_sync(void *buffer, size_t offset, size_t size);
 
@@ -166,7 +166,7 @@ private:
 public:
     virtual ~EthernetOutputStream();
 
-    virtual Expected<size_t> sync_read_raw_buffer(MemoryView &buffer);
+    Expected<size_t> sync_read_raw_buffer(MemoryView &buffer);
 
     static Expected<std::unique_ptr<EthernetOutputStream>> create(Device &device, const LayerInfo &edge_layer,
         const hailo_eth_output_stream_params_t &params, EventPtr core_op_activated_event);

@@ -381,9 +381,9 @@ hailo_status PipelinePad::deactivate()
     return m_element.deactivate();
 }
 
-hailo_status PipelinePad::post_deactivate()
+hailo_status PipelinePad::post_deactivate(bool should_clear_abort)
 {
-    return m_element.post_deactivate();
+    return m_element.post_deactivate(should_clear_abort);
 }
 
 hailo_status PipelinePad::clear()
@@ -406,9 +406,9 @@ hailo_status PipelinePad::wait_for_finish()
     return m_element.wait_for_finish();
 }
 
-hailo_status PipelinePad::resume()
+hailo_status PipelinePad::clear_abort()
 {
-    return m_element.resume();
+    return m_element.clear_abort();
 }
 
 hailo_status PipelinePad::run_push(PipelineBuffer &&buffer)
@@ -582,9 +582,9 @@ hailo_status PipelineElement::deactivate()
     return execute_deactivate();
 }
 
-hailo_status PipelineElement::post_deactivate()
+hailo_status PipelineElement::post_deactivate(bool should_clear_abort)
 {
-    return execute_post_deactivate();
+    return execute_post_deactivate(should_clear_abort);
 }
 
 hailo_status PipelineElement::clear()
@@ -602,9 +602,9 @@ hailo_status PipelineElement::abort()
     return execute_abort();
 }
 
-hailo_status PipelineElement::resume()
+hailo_status PipelineElement::clear_abort()
 {
-    return execute_resume();
+    return execute_clear_abort();
 }
 
 hailo_status PipelineElement::wait_for_finish()
@@ -622,9 +622,9 @@ hailo_status PipelineElement::execute_deactivate()
     return execute([&](auto *pad){ return pad->deactivate(); });
 }
 
-hailo_status PipelineElement::execute_post_deactivate()
+hailo_status PipelineElement::execute_post_deactivate(bool should_clear_abort)
 {
-    return execute([&](auto *pad){ return pad->post_deactivate(); });
+    return execute([&](auto *pad){ return pad->post_deactivate(should_clear_abort); });
 }
 
 hailo_status PipelineElement::execute_clear()
@@ -642,9 +642,9 @@ hailo_status PipelineElement::execute_abort()
     return execute([&](auto *pad){ return pad->abort(); });
 }
 
-hailo_status PipelineElement::execute_resume()
+hailo_status PipelineElement::execute_clear_abort()
 {
-    return execute([&](auto *pad){ return pad->resume(); });
+    return execute([&](auto *pad){ return pad->clear_abort(); });
 }
 
 hailo_status PipelineElement::execute_wait_for_finish()
@@ -830,7 +830,7 @@ hailo_status BaseQueueElement::execute_activate()
     return HAILO_SUCCESS;
 }
 
-hailo_status BaseQueueElement::execute_post_deactivate()
+hailo_status BaseQueueElement::execute_post_deactivate(bool should_clear_abort)
 {
     hailo_status status = m_deactivation_event.wait(INIFINITE_TIMEOUT());
     if (HAILO_SUCCESS != status) {
@@ -842,7 +842,7 @@ hailo_status BaseQueueElement::execute_post_deactivate()
         LOGGER__ERROR("Failed to reset of deactivation event in {} with status {}", name(), status);
     }
 
-    return PipelineElement::execute_post_deactivate();
+    return PipelineElement::execute_post_deactivate(should_clear_abort);
 }
 
 hailo_status BaseQueueElement::execute_clear()
@@ -877,14 +877,12 @@ hailo_status PushQueueElement::execute_abort()
     return m_activation_event.signal();
 }
 
-hailo_status BaseQueueElement::execute_resume()
+hailo_status BaseQueueElement::execute_clear_abort()
 {
     auto status = m_shutdown_event->reset();
     CHECK_SUCCESS(status);
     m_pipeline_status->store(HAILO_SUCCESS);
-    status = PipelineElement::execute_resume();
-    CHECK_SUCCESS(status);
-    return m_activation_event.signal();
+    return PipelineElement::execute_clear_abort();
 }
 
 hailo_status BaseQueueElement::set_timeout(std::chrono::milliseconds timeout)
@@ -1258,7 +1256,8 @@ Expected<PipelineBuffer> UserBufferQueueElement::run_pull(PipelineBuffer &&optio
         LOGGER__INFO("Shutdown event was signaled in dequeue of queue element {}!", name());
         return make_unexpected(HAILO_SHUTDOWN_EVENT_SIGNALED);
     }
-    CHECK_AS_EXPECTED(HAILO_TIMEOUT != output.status(), HAILO_TIMEOUT, "{} (D2H) failed with status={} (timeout={}ms)", name(), HAILO_TIMEOUT, m_timeout.count());
+    CHECK_AS_EXPECTED(HAILO_TIMEOUT != output.status(), HAILO_TIMEOUT, "{} (D2H) failed with status={} (timeout={}ms)",
+        name(), HAILO_TIMEOUT, m_timeout.count());
     CHECK_EXPECTED(output);
 
     CHECK_AS_EXPECTED(output->data() == optional.data(), HAILO_INTERNAL_FAILURE, "The buffer received in {} was not the same as the user buffer!", name());
@@ -1461,6 +1460,7 @@ hailo_status BaseDemuxElement::execute_activate()
     }
     m_is_activated = true;// TODO Should this always be true, no matter the status of source().activate()?
     m_was_stream_aborted = false;
+
     return PipelineElement::execute_activate();
 }
 
@@ -1488,12 +1488,12 @@ hailo_status BaseDemuxElement::execute_deactivate()
     return HAILO_SUCCESS;
 }
 
-hailo_status BaseDemuxElement::execute_post_deactivate()
+hailo_status BaseDemuxElement::execute_post_deactivate(bool should_clear_abort)
 {
     for (uint32_t i = 0; i < m_was_source_called.size(); i++) {
         m_was_source_called[i] = false;
     }
-    return PipelineElement::execute_post_deactivate();
+    return PipelineElement::execute_post_deactivate(should_clear_abort);
 }
 
 hailo_status BaseDemuxElement::execute_abort()

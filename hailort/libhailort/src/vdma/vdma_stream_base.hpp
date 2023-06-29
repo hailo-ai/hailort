@@ -20,7 +20,6 @@
 
 namespace hailort
 {
-constexpr std::chrono::seconds VDMA_FLUSH_TIMEOUT(10);
 
 class VdmaInputStreamBase : public InputStreamBase {
 public:
@@ -41,7 +40,14 @@ public:
     Expected<vdma::BoundaryChannel::BufferState> get_buffer_state();
     virtual Expected<size_t> get_buffer_frames_size() const override;
     virtual Expected<size_t> get_pending_frames_count() const override;
-    virtual hailo_status register_interrupt_callback(const vdma::ProcessingCompleteCallback &callback) override;
+
+    virtual hailo_status write_buffer_only(const MemoryView &buffer, const std::function<bool()> &should_cancel = []() { return false; }) = 0;
+    virtual hailo_status send_pending_buffer(const device_id_t &device_id) = 0;
+
+    void notify_all()
+    {
+        m_channel->notify_all();
+    }
 
 protected:
     VdmaInputStreamBase(VdmaDevice &device, vdma::BoundaryChannelPtr channel, const LayerInfo &edge_layer,
@@ -52,6 +58,9 @@ protected:
     virtual hailo_status activate_stream(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers) override;
     virtual hailo_status deactivate_stream() override;
     hailo_status set_dynamic_batch_size(uint16_t dynamic_batch_size);
+
+    friend class VDeviceInputStreamBase;
+    friend class VDeviceNativeInputStream;
 
     VdmaDevice *m_device;
     vdma::BoundaryChannelPtr m_channel;
@@ -81,7 +90,7 @@ public:
     virtual Expected<size_t> get_buffer_frames_size() const override;
     virtual Expected<size_t> get_pending_frames_count() const override;
 
-    virtual hailo_status register_interrupt_callback(const vdma::ProcessingCompleteCallback &callback);
+    void register_interrupt_callback(const vdma::ProcessingCompleteCallback &callback);
 
 protected:
     VdmaOutputStreamBase(VdmaDevice &device, vdma::BoundaryChannelPtr channel, const LayerInfo &edge_layer,
@@ -91,8 +100,10 @@ protected:
 
     virtual hailo_status activate_stream(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers) override;
     virtual hailo_status deactivate_stream() override;
-    static uint32_t get_transfer_size(const hailo_stream_info_t &stream_info);
+    static uint32_t get_transfer_size(const hailo_stream_info_t &stream_info, const LayerInfo &layer_info);
     hailo_status set_dynamic_batch_size(uint16_t dynamic_batch_size);
+
+    friend class VDeviceOutputStreamBase;
 
     VdmaDevice *m_device;
     vdma::BoundaryChannelPtr m_channel;
@@ -102,7 +113,6 @@ protected:
     const uint16_t m_max_batch_size;
     uint16_t m_dynamic_batch_size;
     const uint32_t m_transfer_size;
-    std::mutex m_read_mutex;
 };
 
 

@@ -570,8 +570,6 @@ void DeviceBase::d2h_notification_thread_main(const std::string &device_id)
             continue;
         }
 
-        LOGGER__INFO("[{}] Got notification from fw with id: {}", device_id, hailo_notification_id);
-
         std::shared_ptr<NotificationCallback> callback_func = nullptr;
         void *callback_opaque = nullptr;
         {
@@ -664,6 +662,9 @@ hailo_status DeviceBase::fw_notification_id_to_hailo(D2H_EVENT_ID_t fw_notificat
             break;
         case HEALTH_MONITOR_CLOCK_CHANGED_EVENT_ID:
             *hailo_notification_id = HAILO_NOTIFICATION_ID_HEALTH_MONITOR_CLOCK_CHANGED_EVENT;
+            break;
+        case HW_INFER_MANAGER_INFER_DONE:
+            *hailo_notification_id = HAILO_NOTIFICATION_ID_HW_INFER_MANAGER_INFER_DONE;
             break;
         default:
             status = HAILO_INVALID_ARGUMENT;

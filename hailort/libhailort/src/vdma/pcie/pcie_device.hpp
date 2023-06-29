@@ -30,6 +30,7 @@ public:
     static Expected<hailo_pcie_device_info_t> parse_pcie_device_info(const std::string &device_info_str,
         bool log_on_failure);
     static Expected<std::string> pcie_device_info_to_string(const hailo_pcie_device_info_t &device_info);
+    static bool pcie_device_infos_equal(const hailo_pcie_device_info_t &first, const hailo_pcie_device_info_t &second);
 
     virtual ~PcieDevice() = default;
 
@@ -55,20 +56,10 @@ public:
     void set_is_control_version_supported(bool value);
     virtual Expected<hailo_device_architecture_t> get_architecture() const override;
 
-    const hailo_pcie_device_info_t get_device_info() const
-    {
-        return m_device_info;
-    }
-    virtual const char* get_dev_id() const override;
-
 private:
-    PcieDevice(HailoRTDriver &&driver, const hailo_pcie_device_info_t &device_info, hailo_status &status,
-        const std::string &device_id);
+    PcieDevice(HailoRTDriver &&driver, hailo_status &status);
 
     static Expected<HailoRTDriver::DeviceInfo> find_device_info(const hailo_pcie_device_info_t &pcie_device_info);
-
-    const hailo_pcie_device_info_t m_device_info;
-    std::string m_device_id;
 };
 
 } /* namespace hailort */

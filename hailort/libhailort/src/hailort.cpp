@@ -34,11 +34,35 @@
 #include "utils/shared_resource_manager.hpp"
 #include "vdevice/vdevice_internal.hpp"
 #include "utils/profiler/tracer_macros.hpp"
+#include "utils/exported_resource_manager.hpp"
 
 #include <chrono>
+#include <tuple>
 
 
 using namespace hailort;
+
+// Note: Async stream API uses BufferPtr as a param. When exporting BufferPtrs to the user via c-api, they must be
+//       stored in some container, otherwise their ref count may reach zero and they will be freed, despite the
+//       c-api user still using them. (shared_ptr<T> doesn't have a release method like unique_ptr<T>)
+// Singleton holding a mapping between the address of a buffer allocated/mapped via hailo_allocate_buffer/hailo_dma_map_buffer_to_device
+// to the underlying BufferPtr. When a buffer is freed via hailo_free_buffer, the BufferPtr object will be removed from
+// the storage.
+using ExportedBufferManager = ExportedResourceManager<BufferPtr, void *>;
+
+struct ThreeTupleHash {
+    template<typename T>
+    std::size_t operator()(const T& tuple) const {
+        auto hash = std::hash<typename std::tuple_element<0, T>::type>()(std::get<0>(tuple));
+        hash ^= std::hash<typename std::tuple_element<1, T>::type>()(std::get<1>(tuple));
+        hash ^= std::hash<typename std::tuple_element<2, T>::type>()(std::get<2>(tuple));
+        return hash;
+    }
+};
+
+// (buffer_addr, device_id, mapping_direction)
+using DmaMappingKey = std::tuple<void *, std::string, hailo_dma_buffer_direction_t>;
+using DmaMappingManager = ExportedResourceManager<DmaStoragePtr, DmaMappingKey, ThreeTupleHash>;
 
 COMPAT__INITIALIZER(hailort__initialize_logger)
 {
@@ -203,7 +227,7 @@ hailo_status hailo_create_pcie_device(hailo_pcie_device_info_t *device_info, hai
 {
     CHECK_ARG_NOT_NULL(device_out);
 
-    auto device = (device_info == nullptr) ? PcieDevice::create() : PcieDevice::create(*device_info);
+    auto device = (device_info == nullptr) ? Device::create_pcie() : Device::create_pcie(*device_info);
     CHECK_EXPECTED_AS_STATUS(device, "Failed creating pcie device");
     *device_out = reinterpret_cast<hailo_device>(device.release().release());
 
@@ -573,6 +597,71 @@ hailo_status hailo_init_configure_params(hailo_hef hef, hailo_stream_interface_t
 
     return HAILO_SUCCESS;
 }
+
+void fill_cfg_params_struct_by_class(const std::string &network_group_name, const ConfigureNetworkParams &class_in, hailo_configure_network_group_params_t *struct_out)
+{
+    strncpy(struct_out->name, network_group_name.c_str(), network_group_name.size() + 1);
+    struct_out->batch_size = class_in.batch_size;
+    struct_out->power_mode = class_in.power_mode;
+    struct_out->latency = class_in.latency;
+
+    int i = 0;
+    for (auto & pair: class_in.network_params_by_name) {
+        strncpy(struct_out->network_params_by_name[i].name, pair.first.c_str(), pair.first.length() + 1);
+        struct_out->network_params_by_name[i].network_params = pair.second;
+        i++;
+    }
+    struct_out->network_params_by_name_count = class_in.network_params_by_name.size();
+
+    i = 0;
+    for (auto & pair: class_in.stream_params_by_name) {
+        strncpy(struct_out->stream_params_by_name[i].name, pair.first.c_str(), pair.first.length() + 1);
+        struct_out->stream_params_by_name[i].stream_params = pair.second;
+        i++;
+    }
+    struct_out->stream_params_by_name_count = class_in.stream_params_by_name.size();
+}
+
+hailo_status hailo_init_configure_params_by_vdevice(hailo_hef hef, hailo_vdevice vdevice,
+    hailo_configure_params_t *params)
+{
+    CHECK_ARG_NOT_NULL(hef);
+    CHECK_ARG_NOT_NULL(vdevice);
+    CHECK_ARG_NOT_NULL(params);
+
+    auto configure_params = (reinterpret_cast<VDevice*>(vdevice))->create_configure_params(*reinterpret_cast<Hef*>(hef));
+    CHECK_EXPECTED_AS_STATUS(configure_params);
+
+    params->network_group_params_count = configure_params->size();
+    uint8_t net_group = 0;
+    for (auto &cfg_params : configure_params.value()) {
+        fill_cfg_params_struct_by_class(cfg_params.first, cfg_params.second, &(params->network_group_params[net_group]));
+        net_group++;
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_init_configure_params_by_device(hailo_hef hef, hailo_device device,
+    hailo_configure_params_t *params)
+{
+    CHECK_ARG_NOT_NULL(hef);
+    CHECK_ARG_NOT_NULL(device);
+    CHECK_ARG_NOT_NULL(params);
+
+    auto configure_params = (reinterpret_cast<Device*>(device))->create_configure_params(*reinterpret_cast<Hef*>(hef));
+    CHECK_EXPECTED_AS_STATUS(configure_params);
+
+    params->network_group_params_count = configure_params->size();
+    uint8_t net_group = 0;
+    for (auto &cfg_params : configure_params.value()) {
+        fill_cfg_params_struct_by_class(cfg_params.first, cfg_params.second, &(params->network_group_params[net_group]));
+        net_group++;
+    }
+
+    return HAILO_SUCCESS;
+}
+
 
 hailo_status hailo_init_configure_params_mipi_input(hailo_hef hef, hailo_stream_interface_t output_interface,
     hailo_mipi_input_stream_params_t *mipi_params, hailo_configure_params_t *params)
@@ -1008,6 +1097,106 @@ hailo_status hailo_set_scheduler_priority(hailo_configured_network_group configu
     return (reinterpret_cast<ConfiguredNetworkGroup*>(configured_network_group))->set_scheduler_priority(priority, network_name_str);
 }
 
+hailo_status hailo_allocate_buffer(size_t size, const hailo_buffer_parameters_t *allocation_params, void **buffer_out)
+{
+    CHECK_ARG_NOT_NULL(allocation_params);
+    CHECK_ARG_NOT_NULL(buffer_out);
+    CHECK(0 != size, HAILO_INVALID_ARGUMENT, "Buffer size must be greater than zero");
+
+    auto buffer_storage_params = BufferStorageParams::create(*allocation_params);
+    CHECK_EXPECTED_AS_STATUS(buffer_storage_params);
+
+    // Create buffer
+    auto buffer = Buffer::create_shared(size, *buffer_storage_params);
+    CHECK_EXPECTED_AS_STATUS(buffer);
+
+    // Store the buffer in manager (otherwise it'll be freed at the end of this func)
+    const auto status = ExportedBufferManager::register_resource(*buffer, buffer->get()->data());
+    CHECK_SUCCESS(status);
+
+    *buffer_out = buffer->get()->data();
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_free_buffer(void *buffer)
+{
+    CHECK_ARG_NOT_NULL(buffer);
+    return ExportedBufferManager::unregister_resource(buffer);
+}
+
+static Expected<DmaMappingKey> get_mapping_key(void *buffer, hailo_device device, hailo_dma_buffer_direction_t direction)
+{
+    hailo_device_id_t device_id{};
+    auto status = hailo_get_device_id(device, &device_id);
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    return std::make_tuple(buffer, std::string(device_id.id), direction);
+}
+
+// TODO: hailo_dma_map_buffer_to_device/hailo_dma_unmap_buffer_from_device aren't thread safe when crossed with
+//       hailo_allocate_buffer/hailo_free_buffer (HRT-10669)
+hailo_status hailo_dma_map_buffer_to_device(void *buffer, size_t size, hailo_device device, hailo_dma_buffer_direction_t direction)
+{
+    CHECK_ARG_NOT_NULL(buffer);
+    CHECK_ARG_NOT_NULL(device);
+
+    auto hailort_allocated_buffer = ExportedBufferManager::get_resource(buffer);
+    if (hailort_allocated_buffer) {
+        // TODO: this will change here HRT-10983
+        // The buffer has been allocated by hailort
+        // The mapping is held by the Buffer object
+        auto mapping_result = hailort_allocated_buffer->get()->storage().dma_map(*reinterpret_cast<Device*>(device), direction);
+        CHECK_EXPECTED_AS_STATUS(mapping_result);
+        const auto new_mapping = mapping_result.value();
+
+        if (!new_mapping) {
+            return HAILO_DMA_MAPPING_ALREADY_EXISTS;
+        }
+    } else {
+        // The buffer has been allocated by the user
+        // Create dma storage
+        auto dma_mapped_buffer = DmaStorage::create_from_user_address(buffer, size, direction, *reinterpret_cast<Device*>(device));
+        CHECK_EXPECTED_AS_STATUS(dma_mapped_buffer);
+        assert(buffer == dma_mapped_buffer.value()->user_address());
+        auto dma_mapped_buffer_ptr = dma_mapped_buffer.release();
+
+        // Store the mapping in manager (otherwise it'll be freed at the end of this func)
+        auto key = get_mapping_key(dma_mapped_buffer_ptr->user_address(), device, direction);
+        CHECK_EXPECTED_AS_STATUS(key);
+        const auto status = DmaMappingManager::register_resource(dma_mapped_buffer_ptr, key.release());
+        if (HAILO_INVALID_ARGUMENT == status) {
+            // TODO: This will change once we allow mapping the same buffer in different directions (HRT-10656).
+            //       Checking that the mapping exists will need to be at DmaStorage's level
+            return HAILO_DMA_MAPPING_ALREADY_EXISTS;
+        }
+        CHECK_SUCCESS(status);
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_dma_unmap_buffer_from_device(void *buffer, hailo_device device, hailo_dma_buffer_direction_t direction)
+{
+    // TODO: support mapping the same buffer in different directions (HRT-10656)
+    (void)direction;
+
+    CHECK_ARG_NOT_NULL(buffer);
+    CHECK_ARG_NOT_NULL(device);
+
+    auto hailort_allocated_buffer = ExportedBufferManager::get_resource(buffer);
+    if (hailort_allocated_buffer) {
+        // TODO: mappings get dtor'd when the Buffer object is dtor'd.
+        //       We want all the mapping to be held in one place for hailort::Buffers and for user alloacted buffers
+        //       so this will change (HRT-10983)
+        return HAILO_SUCCESS;
+    }
+
+    auto key = get_mapping_key(buffer, device, direction);
+    CHECK_EXPECTED_AS_STATUS(key);
+    return DmaMappingManager::unregister_resource(key.release());
+}
+
 hailo_status hailo_calculate_eth_input_rate_limits(hailo_hef hef, const char *network_group_name, uint32_t fps,
     hailo_rate_limit_t *rates, size_t *rates_length)
 {
@@ -1104,6 +1293,114 @@ hailo_status hailo_stream_write_raw_buffer(hailo_input_stream stream, const void
     auto status = (reinterpret_cast<InputStream*>(stream))->write(MemoryView::create_const(buffer, size));
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
+}
+
+hailo_status hailo_stream_wait_for_async_output_ready(hailo_output_stream stream, size_t transfer_size, uint32_t timeout_ms)
+{
+    CHECK_ARG_NOT_NULL(stream);
+    return (reinterpret_cast<OutputStream*>(stream))->wait_for_async_ready(transfer_size, std::chrono::milliseconds(timeout_ms));
+}
+
+hailo_status hailo_stream_wait_for_async_input_ready(hailo_input_stream stream, size_t transfer_size, uint32_t timeout_ms)
+{
+    CHECK_ARG_NOT_NULL(stream);
+    return (reinterpret_cast<InputStream*>(stream))->wait_for_async_ready(transfer_size, std::chrono::milliseconds(timeout_ms));
+}
+
+hailo_status hailo_output_stream_get_async_max_queue_size(hailo_output_stream stream, size_t *queue_size)
+{
+    CHECK_ARG_NOT_NULL(stream);
+    CHECK_ARG_NOT_NULL(queue_size);
+
+    auto local_queue_size = reinterpret_cast<OutputStream*>(stream)->get_async_max_queue_size();
+    CHECK_EXPECTED_AS_STATUS(local_queue_size);
+    *queue_size = local_queue_size.release();
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_input_stream_get_async_max_queue_size(hailo_input_stream stream, size_t *queue_size)
+{
+    CHECK_ARG_NOT_NULL(stream);
+    CHECK_ARG_NOT_NULL(queue_size);
+
+    auto local_queue_size = reinterpret_cast<InputStream*>(stream)->get_async_max_queue_size();
+    CHECK_EXPECTED_AS_STATUS(local_queue_size);
+    *queue_size = local_queue_size.release();
+
+    return HAILO_SUCCESS;
+}
+
+static InputStream::TransferDoneCallback wrap_c_user_callback(hailo_stream_write_async_callback_t callback, void *opaque)
+{
+    return [callback, opaque](const InputStream::CompletionInfo &completion_info) {
+        hailo_stream_write_async_completion_info_t c_completion_info{};
+        c_completion_info.status = completion_info.status;
+        c_completion_info.buffer_addr = completion_info.buffer_addr;
+        c_completion_info.buffer_size = completion_info.buffer_size;
+        c_completion_info.opaque = opaque;
+        callback(&c_completion_info);
+    };
+}
+
+static OutputStream::TransferDoneCallback wrap_c_user_callback(hailo_stream_read_async_callback_t callback, void *opaque)
+{
+    return [callback, opaque](const OutputStream::CompletionInfo &completion_info) {
+        hailo_stream_read_async_completion_info_t c_completion_info{};
+        c_completion_info.status = completion_info.status;
+        c_completion_info.buffer_addr = completion_info.buffer_addr;
+        c_completion_info.buffer_size = completion_info.buffer_size;
+        c_completion_info.opaque = opaque;
+        callback(&c_completion_info);
+    };
+}
+
+hailo_status hailo_stream_read_raw_buffer_async(hailo_output_stream stream, void *buffer, size_t size,
+    hailo_stream_read_async_callback_t callback, void *opaque)
+{
+    CHECK_ARG_NOT_NULL(stream);
+    CHECK_ARG_NOT_NULL(buffer);
+    CHECK_ARG_NOT_NULL(callback);
+
+    auto buffer_ref = ExportedBufferManager::get_resource(buffer);
+    if (HAILO_NOT_FOUND == buffer_ref.status()) {
+        // User addr (buffer hasn't been allocated by hailo_allocate_buffer)
+        return (reinterpret_cast<OutputStream*>(stream))->read_async(buffer, size,
+            wrap_c_user_callback(callback, opaque));
+    }
+
+    // buffer has been allocated by hailo_allocate_buffer
+    CHECK_EXPECTED_AS_STATUS(buffer_ref);
+    auto buffer_ptr = buffer_ref->get();
+    assert(buffer_ptr != nullptr);
+    CHECK(size == buffer_ptr->size(), HAILO_INVALID_ARGUMENT);
+
+    return (reinterpret_cast<OutputStream*>(stream))->read_async(buffer_ptr,
+        wrap_c_user_callback(callback, opaque));
+}
+
+hailo_status hailo_stream_write_raw_buffer_async(hailo_input_stream stream, const void *buffer, size_t size,
+    hailo_stream_write_async_callback_t callback, void *opaque)
+{
+    CHECK_ARG_NOT_NULL(stream);
+    CHECK_ARG_NOT_NULL(buffer);
+    CHECK_ARG_NOT_NULL(callback);
+
+    auto buffer_ref = ExportedBufferManager::get_resource(const_cast<void *>(buffer));
+    if (HAILO_NOT_FOUND == buffer_ref.status()) {
+        // User addr (buffer hasn't been allocated by hailo_allocate_buffer)
+        return (reinterpret_cast<InputStream*>(stream))->write_async(buffer, size,
+            wrap_c_user_callback(callback, opaque));
+    }
+
+    // buffer has been allocated by hailo_allocate_buffer
+    CHECK_EXPECTED_AS_STATUS(buffer_ref);
+    auto buffer_ptr = buffer_ref->get();
+    assert(buffer_ptr != nullptr);
+    CHECK(size == buffer_ptr->size(), HAILO_INVALID_ARGUMENT);
+
+    return (reinterpret_cast<InputStream*>(stream))->write_async(buffer_ptr,
+        wrap_c_user_callback(callback, opaque));
 }
 
 hailo_status hailo_fuse_nms_frames(const hailo_nms_fuse_input_t *nms_fuse_inputs, uint32_t inputs_count,
@@ -1323,6 +1620,25 @@ hailo_status hailo_demux_raw_frame_by_output_demuxer(hailo_output_demuxer demuxe
     }
     auto src_memview = MemoryView::create_const(src, src_size);
     auto status = reinterpret_cast<OutputDemuxer*>(demuxer)->transform_demux(src_memview, raw_buffers_vector);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_demux_by_name_raw_frame_by_output_demuxer(hailo_output_demuxer demuxer, const void *src,
+    size_t src_size, hailo_stream_raw_buffer_by_name_t *raw_buffers_by_name, size_t raw_buffers_count)
+{
+    CHECK_ARG_NOT_NULL(src);
+    CHECK_ARG_NOT_NULL(raw_buffers_by_name);
+    CHECK_ARG_NOT_NULL(demuxer);
+
+    std::map<std::string, MemoryView> raw_buffers_map;
+    for (size_t i = 0; i < raw_buffers_count; i++) {
+        raw_buffers_map.emplace(std::string(raw_buffers_by_name[i].name),
+            MemoryView(raw_buffers_by_name[i].raw_buffer.buffer, raw_buffers_by_name[i].raw_buffer.size));
+    }
+    auto src_memview = MemoryView::create_const(src, src_size);
+    auto status = reinterpret_cast<OutputDemuxer*>(demuxer)->transform_demux(src_memview, raw_buffers_map);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;

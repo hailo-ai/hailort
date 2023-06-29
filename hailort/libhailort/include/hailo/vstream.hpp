@@ -13,6 +13,7 @@
 #include "hailo/network_group.hpp"
 #include "hailo/runtime_statistics.hpp"
 
+/** hailort namespace */
 namespace hailort
 {
 
@@ -159,6 +160,10 @@ public:
     hailo_status before_fork();
     hailo_status after_fork_in_parent();
     hailo_status after_fork_in_child();
+    bool is_aborted();
+
+    // Added to match the same API as InputStream. Will be filled when async API will be implemented for vstreams.
+    using TransferDoneCallback = void(*);
 
 protected:
     explicit InputVStream(std::shared_ptr<InputVStreamInternal> vstream);
@@ -171,6 +176,7 @@ protected:
     std::shared_ptr<InputVStreamInternal> m_vstream;
 
     friend class VStreamsBuilderUtils;
+    friend class HailoRtRpcService;
 };
 
 class HAILORTAPI OutputVStream
@@ -304,6 +310,10 @@ public:
     hailo_status before_fork();
     hailo_status after_fork_in_parent();
     hailo_status after_fork_in_child();
+    bool is_aborted();
+
+    // Added to match the same API as InputStream. Will be filled when async API will be implemented for vstreams.
+    using TransferDoneCallback = void(*);
 
 protected:
     explicit OutputVStream(std::shared_ptr<OutputVStreamInternal> vstream);
@@ -317,6 +327,7 @@ protected:
 
     friend class VStreamsBuilderUtils;
     friend class VDeviceCoreOp;
+    friend class HailoRtRpcService;
 };
 
 /*! Contains the virtual streams creation functions */

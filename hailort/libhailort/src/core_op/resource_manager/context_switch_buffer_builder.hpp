@@ -29,6 +29,7 @@ public:
 
     void write_action(MemoryView action);
     const std::vector<CONTROL_PROTOCOL__context_switch_context_info_single_control_t> &get_controls() const;
+    const CONTROL_PROTOCOL__context_switch_context_type_t &get_context_type() const;
 
 private:
     CONTROL_PROTOCOL__context_switch_context_info_single_control_t &current_control();

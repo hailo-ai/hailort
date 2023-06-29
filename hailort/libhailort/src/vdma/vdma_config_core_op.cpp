@@ -40,7 +40,7 @@ hailo_status VdmaConfigCoreOp::activate_impl(uint16_t dynamic_batch_size, bool r
 
     m_active_core_op_holder.set(*this);
 
-    status = m_resources_manager->set_inter_context_channels_dynamic_batch_size(dynamic_batch_size);
+    status = m_resources_manager->set_dynamic_batch_size(dynamic_batch_size);
     CHECK_SUCCESS(status, "Failed to set inter-context channels dynamic batch size.");
 
     status = m_resources_manager->enable_state_machine(dynamic_batch_size);
@@ -163,6 +163,11 @@ Expected<std::shared_ptr<LatencyMetersMap>> VdmaConfigCoreOp::get_latency_meters
 Expected<vdma::BoundaryChannelPtr> VdmaConfigCoreOp::get_boundary_vdma_channel_by_stream_name(const std::string &stream_name)
 {
     return m_resources_manager->get_boundary_vdma_channel_by_stream_name(stream_name);
+}
+
+Expected<HwInferResults> VdmaConfigCoreOp::run_hw_infer_estimator()
+{
+    return m_resources_manager->run_hw_only_infer();
 }
 
 } /* namespace hailort */

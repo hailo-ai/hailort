@@ -17,6 +17,7 @@
 #include "hailo/device.hpp"
 
 
+/** hailort namespace */
 namespace hailort
 {
 

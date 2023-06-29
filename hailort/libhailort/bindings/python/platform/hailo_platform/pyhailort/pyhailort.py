@@ -29,8 +29,7 @@ from hailo_platform.pyhailort._pyhailort import (TemperatureInfo, # noqa F401
                                                  MipiClockSelection, MipiIspImageInOrder,
                                                  MipiIspImageOutDataType, IspLightFrequency,
                                                  BootSource, HailoSocketDefs, Endianness,
-                                                 MipiInputStreamParams, SensorConfigTypes,
-                                                 SensorConfigOpCode)
+                                                 MipiInputStreamParams, SensorConfigTypes)
 
 BBOX_PARAMS = _pyhailort.HailoRTDefaults.BBOX_PARAMS()
 HAILO_DEFAULT_ETH_CONTROL_PORT = _pyhailort.HailoRTDefaults.HAILO_DEFAULT_ETH_CONTROL_PORT()
@@ -73,6 +72,9 @@ class HailoRTTimeout(HailoRTException):
     pass
 
 class HailoRTStreamAborted(HailoRTException):
+    pass
+
+class HailoRTStreamAbortedByUser(HailoRTException):
     pass
 
 class HailoRTInvalidOperationException(HailoRTException):
@@ -127,6 +129,8 @@ class ExceptionWrapper(object):
             raise HailoRTTimeout("Received a timeout - hailort has failed because a timeout had occurred") from libhailort_exception
         if string_error_code == "HAILO_STREAM_ABORTED_BY_HW":
             raise HailoRTStreamAborted("Stream aborted due to an external event") from libhailort_exception
+        if string_error_code == "HAILO_STREAM_ABORTED_BY_USER":
+            raise HailoRTStreamAbortedByUser("Stream was aborted by user") from libhailort_exception
 
         if string_error_code == "HAILO_INVALID_OPERATION":
             raise HailoRTInvalidOperationException("Invalid operation. See hailort.log for more information") from libhailort_exception
@@ -170,23 +174,26 @@ class HailoUdpScan(object):
         return device_ip_addresses
 
 
-class TrafficControl(object):
+class NetworkRateLimiter(object):
     def __init__(self, ip, port, rate_bytes_per_sec):
         if sys.platform != 'linux':
-            raise HailoRTInvalidOperationException('TrafficControl is supported only on UNIX os')
-        with ExceptionWrapper():
-            self._tc_util = _pyhailort.TrafficControlUtil(ip, port, int(rate_bytes_per_sec))
-    
+            raise HailoRTInvalidOperationException('NetworkRateLimiter is supported only on UNIX os')
+        self._ip = ip
+        self._port = port
+        self._rate_bytes_per_sec = rate_bytes_per_sec
+
     def set_rate_limit(self):
-        self._tc_util.set_rate_limit()
+        with ExceptionWrapper():
+            return _pyhailort.NetworkRateLimiter.set_rate_limit(self._ip, self._port, self._rate_bytes_per_sec)
     
     def reset_rate_limit(self):
-        self._tc_util.reset_rate_limit()
+        with ExceptionWrapper():
+            return _pyhailort.NetworkRateLimiter.reset_rate_limit(self._ip, self._port)
 
     def get_interface_name(ip):
         "get the interface corresponding to the given ip"
         with ExceptionWrapper():
-            return _pyhailort.TrafficControlUtil.get_interface_name(ip)
+            return _pyhailort.NetworkRateLimiter.get_interface_name(ip)
 
 
 class ConfigureParams(object):
@@ -524,15 +531,13 @@ class HEF(object):
 class ConfiguredNetwork(object):
     """Represents a network group loaded to the device."""
 
-    def __init__(self, configured_network, target, hef):
+    def __init__(self, configured_network):
         self._configured_network = configured_network
         self._input_vstreams_holders = []
         self._output_vstreams_holders = []
-        self._target = target
-        self._hef = hef
 
     def get_networks_names(self):
-        return self._hef.get_networks_names(self.name)
+        return self._configured_network.get_networks_names()
 
     def activate(self, network_group_params=None):
         """Activate this network group in order to infer data through it.
@@ -544,14 +549,18 @@ class ConfiguredNetwork(object):
         Returns:
             :class:`ActivatedNetworkContextManager`: Context manager that returns the activated
             network group.
-        """
-        # TODO: HRT-9988 - Add deprecation warning when changing to service by default
-        network_group_params = network_group_params or self.create_params()
 
+        Note:
+            Usage of `activate` when scheduler enabled is deprecated. On this case, this function will return None and print deprecation warning.
+        """
+        if self._configured_network.is_scheduled():
+            default_logger().warning("Calls to `activate()` when working with scheduler are deprecated! On future versions this call will raise an error.")
+            return EmptyContextManager()
+
+        network_group_params = network_group_params or self.create_params()
         with ExceptionWrapper():
             return ActivatedNetworkContextManager(self,
-                self._configured_network.activate(network_group_params),
-                self._target, self._hef)
+                self._configured_network.activate(network_group_params))
 
     def wait_for_activation(self, timeout_ms=None):
         """Block until activated, or until ``timeout_ms`` is passed.
@@ -590,7 +599,7 @@ class ConfiguredNetwork(object):
         return tuple(results)
 
     def get_sorted_output_names(self):
-        return self._hef.get_sorted_output_names(self.name)
+        return self._configured_network.get_sorted_output_names()
 
     def get_input_vstream_infos(self, network_name=None):
         """Get input vstreams information.
@@ -602,8 +611,8 @@ class ConfiguredNetwork(object):
             list of :obj:`hailo_platform.pyhailort._pyhailort.VStreamInfo`: with all the information objects of all input vstreams
         """
 
-        name = network_name if network_name is not None else self.name
-        return self._hef.get_input_vstream_infos(name)
+        name = network_name if network_name is not None else ""
+        return self._configured_network.get_input_vstream_infos(name)
 
     def get_output_vstream_infos(self, network_name=None):
         """Get output vstreams information.
@@ -615,8 +624,8 @@ class ConfiguredNetwork(object):
             list of :obj:`hailo_platform.pyhailort._pyhailort.VStreamInfo`: with all the information objects of all output vstreams
         """
 
-        name = network_name if network_name is not None else self.name
-        return self._hef.get_output_vstream_infos(name)
+        name = network_name if network_name is not None else ""
+        return self._configured_network.get_output_vstream_infos(name)
 
     def get_all_vstream_infos(self, network_name=None):
         """Get input and output vstreams information.
@@ -628,8 +637,8 @@ class ConfiguredNetwork(object):
             list of :obj:`hailo_platform.pyhailort._pyhailort.VStreamInfo`: with all the information objects of all input and output vstreams
         """
 
-        name = network_name if network_name is not None else self.name
-        return self._hef.get_all_vstream_infos(name)
+        name = network_name if network_name is not None else ""
+        return self._configured_network.get_all_vstream_infos(name)
 
     def get_input_stream_infos(self, network_name=None):
         """Get the input low-level streams information of a specific network group.
@@ -642,8 +651,8 @@ class ConfiguredNetwork(object):
             of all input low-level streams.
         """
 
-        name = network_name if network_name is not None else self.name
-        return self._hef.get_input_stream_infos(name)
+        name = network_name if network_name is not None else ""
+        return self._configured_network.get_input_stream_infos(name)
 
     def get_output_stream_infos(self, network_name=None):
         """Get the output low-level streams information of a specific network group.
@@ -656,8 +665,8 @@ class ConfiguredNetwork(object):
             of all output low-level streams.
         """
 
-        name = network_name if network_name is not None else self.name
-        return self._hef.get_output_stream_infos(name)
+        name = network_name if network_name is not None else ""
+        return self._configured_network.get_output_stream_infos(name)
 
     def get_all_stream_infos(self, network_name=None):
         """Get input and output streams information of a specific network group.
@@ -669,8 +678,8 @@ class ConfiguredNetwork(object):
             list of :obj:`hailo_platform.pyhailort._pyhailort.StreamInfo`: with all the information objects of all input and output streams
         """
 
-        name = network_name if network_name is not None else self.name
-        return self._hef.get_all_stream_infos(name)
+        name = network_name if network_name is not None else ""
+        return self._configured_network.get_all_stream_infos(name)
 
     def get_udp_rates_dict(self, fps, max_supported_rate_bytes):
         with ExceptionWrapper():
@@ -720,7 +729,7 @@ class ConfiguredNetwork(object):
             list of str: All the underlying streams names for the provided vstream name.
         """
         with ExceptionWrapper():
-            return self._hef.get_stream_names_from_vstream_name(vstream_name, self.name)
+            return self._configured_network.get_stream_names_from_vstream_name(vstream_name)
 
     def get_vstream_names_from_stream_name(self, stream_name):
         """Get vstream names list from their underlying stream name for a specific network group.
@@ -732,7 +741,7 @@ class ConfiguredNetwork(object):
             list of str: All the matching vstream names for the provided stream name.
         """
         with ExceptionWrapper():
-            return self._hef.get_vstream_names_from_stream_name(stream_name, self.name)
+            return self._configured_network.get_vstream_names_from_stream_name(stream_name)
 
     def set_scheduler_timeout(self, timeout_ms, network_name=None):
         """Sets the maximum time period that may pass before getting run time from the scheduler,
@@ -767,19 +776,29 @@ class ConfiguredNetwork(object):
         return self._configured_network.set_scheduler_priority(priority)
 
 
+class EmptyContextManager(object):
+    """An empty context manager that returns instead of activated network group when scheduler is enabled`."""
+
+    def __init__(self):
+        pass
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, *args):
+        pass
+
+
 class ActivatedNetworkContextManager(object):
     """A context manager that returns the activated network group upon enter."""
 
-    def __init__(self, configured_network, activated_network, target, hef):
+    def __init__(self, configured_network, activated_network):
         self._configured_network = configured_network
         self._activated_network = activated_network
-        self._target = target
-        self._hef = hef
 
     def __enter__(self):
         with ExceptionWrapper():
-            activated_network_group = ActivatedNetwork(self._configured_network, self._activated_network.__enter__(), self._target,
-                self._hef)
+            activated_network_group = ActivatedNetwork(self._configured_network, self._activated_network.__enter__())
         return activated_network_group
     
     def __exit__(self, *args):
@@ -789,16 +808,10 @@ class ActivatedNetworkContextManager(object):
 class ActivatedNetwork(object):
     """The network group that is currently activated for inference."""
 
-    def __init__(self, configured_network, activated_network, target, hef):
+    def __init__(self, configured_network, activated_network):
         self._configured_network = configured_network
         self._activated_network = activated_network
-        self._target = target
-        self._hef = hef
         self._last_number_of_invalid_frames_read = 0
-    
-    @property
-    def target(self):
-        return self._target
 
     @property
     def name(self):
@@ -826,7 +839,7 @@ class ActivatedNetwork(object):
             raise HailoRTException("There are {} invalid frames.".format(number_of_invalid_frames))
 
     def get_sorted_output_names(self):
-        return self._hef.get_sorted_output_names(self.name)
+        return self._configured_network.get_sorted_output_names()
 
     def _get_intermediate_buffer(self, src_context_index, src_stream_index):
         with ExceptionWrapper():
@@ -859,7 +872,6 @@ class InferVStreams(object):
                   ``[class_count, BBOX_PARAMS, detections_count]`` padded with empty bboxes.
         """
 
-        self._logger = default_logger()
         self._configured_net_group = configured_net_group
         self._net_group_name = configured_net_group.name
         self._input_vstreams_params = input_vstreams_params
@@ -895,8 +907,9 @@ class InferVStreams(object):
             network_name = self._input_name_to_network_name[input_name]
             if (network_name not in already_seen_networks) :
                 already_seen_networks.add(network_name)
+                output_vstream_infos = self._configured_net_group.get_output_vstream_infos()
                 for output_name in self._network_name_to_outputs[network_name]:
-                    output_buffers_info[output_name] = OutputLayerUtils(self._configured_net_group._hef, output_name, self._infer_pipeline,
+                    output_buffers_info[output_name] = OutputLayerUtils(output_vstream_infos, output_name, self._infer_pipeline,
                         self._net_group_name)
                     output_tensor_info = output_buffers_info[output_name].output_tensor_info
                     shape, dtype = output_tensor_info
@@ -920,7 +933,7 @@ class InferVStreams(object):
             are output data tensors as :obj:`numpy.ndarray` (or list of :obj:`numpy.ndarray` in case of nms output and tf_nms_format=False).
         """
 
-        time_before_infer_calcs = time.time()
+        time_before_infer_calcs = time.perf_counter()
         if not isinstance(input_data, dict):
             input_stream_infos = self._configured_net_group.get_input_stream_infos()
             if len(input_stream_infos) != 1:
@@ -938,9 +951,9 @@ class InferVStreams(object):
             self._make_c_contiguous_if_needed(input_layer_name, input_data)
 
         with ExceptionWrapper():
-            time_before_infer = time.time()
+            time_before_infer = time.perf_counter()
             self._infer_pipeline.infer(input_data, output_buffers, batch_size)
-            self._hw_time = time.time() - time_before_infer
+            self._hw_time = time.perf_counter() - time_before_infer
 
         for name, result_array in output_buffers.items():
             is_nms = output_buffers_info[name].is_nms
@@ -957,7 +970,7 @@ class InferVStreams(object):
             else:
                 output_buffers[name] = HailoRTTransformUtils.output_raw_buffer_to_nms_format(result_array, nms_shape.number_of_classes)
         
-        self._total_time = time.time() - time_before_infer_calcs
+        self._total_time = time.perf_counter() - time_before_infer_calcs
         return output_buffers
 
     def get_hw_time(self):
@@ -982,7 +995,7 @@ class InferVStreams(object):
             input_expected_dtype = self._infer_pipeline.get_host_dtype(input_layer_name)
         if input_dtype != input_expected_dtype:
 
-            self._logger.warning("Given input data dtype ({}) is different than inferred dtype ({}). "
+            default_logger().warning("Given input data dtype ({}) is different than inferred dtype ({}). "
                 "conversion for every frame will reduce performance".format(input_dtype,
                     input_expected_dtype))
             input_data[input_layer_name] = input_data[input_layer_name].astype(input_expected_dtype)
@@ -1015,7 +1028,7 @@ class InferVStreams(object):
 
     def _make_c_contiguous_if_needed(self, input_layer_name, input_data):
         if not input_data[input_layer_name].flags.c_contiguous:
-            self._logger.warning("Converting {} numpy array to be C_CONTIGUOUS".format(
+            default_logger().warning("Converting {} numpy array to be C_CONTIGUOUS".format(
                 input_layer_name))
             input_data[input_layer_name] = numpy.asarray(input_data[input_layer_name], order='C')
 
@@ -1139,10 +1152,9 @@ class HailoRTTransformUtils(object):
             return FormatType.FLOAT32
         raise HailoRTException("unsupported data type {}".format(dtype))
 
+# TODO: HRT-10427 - Remove
 class InternalEthernetDevice(object):
     def __init__(self, address, port, response_timeout_seconds=10, max_number_of_attempts=3):
-        # TODO: HRT-9987 - Add this deprecation warning
-        # default_logger().warning("InternalEthernetDevice is deprecated! Please use VDevice object.")
         self.device = None
         self._address = address
         self._port = port
@@ -1204,7 +1216,7 @@ class PcieDeviceInfo(_pyhailort.PcieDeviceInfo):
         except HailoRTException:
             raise ArgumentTypeError('Invalid device info string, format is [<domain>]:<bus>:<device>.<func>')
 
-
+# TODO: HRT-10427 - Remove
 class InternalPcieDevice(object):
     def __init__(self, device_info=None):
         self.device = None
@@ -1224,6 +1236,7 @@ class InternalPcieDevice(object):
             self.device.release()
             self.device = None
 
+    # TODO: HRT-10427 - Move to a static method in pyhailort_internal when InternalPcieDevice removed
     @staticmethod
     def scan_devices():
         with ExceptionWrapper():
@@ -1242,7 +1255,7 @@ class InternalPcieDevice(object):
         with ExceptionWrapper():
             return self.device.direct_read_memory(address, size)
 
-
+# TODO: HRT-10427 - Remove when removing InternalPcieDevice
 class PcieDebugLog(object):
     def __init__(self, pci_device):
         self._pcie_device = pci_device
@@ -1300,7 +1313,7 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 4
-SUPPORTED_FW_MINOR = 13
+SUPPORTED_FW_MINOR = 14
 SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
@@ -1622,7 +1635,6 @@ class Control:
 
     def __init__(self, device: '_pyhailort.Device'):
         self.__device = device
-        self._logger = default_logger()
 
         # TODO: should remove?
         if sys.platform != "win32":
@@ -2269,7 +2281,6 @@ class Device:
         """
         gc.collect()
 
-        self._logger = default_logger()
         # Device __del__ function tries to release self._device.
         # to avoid AttributeError if the __init__ func fails, we set it to None first.
         # https://stackoverflow.com/questions/6409644/is-del-called-on-an-object-that-doesnt-complete-init
@@ -2323,12 +2334,16 @@ class Device:
         Args:
             hef (:class:`~hailo_platform.pyhailort.pyhailort.HEF`): HEF to configure the vdevice from
             configure_params_by_name (dict, optional): Maps between each net_group_name to configure_params. If not provided, default params will be applied
+
+        Note:
+            This function is deprecated. Support will be removed in future versions.
         """
+        default_logger().warning("Usage of Device.configure is deprecated! One should use VDevice for inference")
         if self._creation_pid != os.getpid():
             raise HailoRTException("Device can only be configured from the process it was created in.")
         with ExceptionWrapper():
-            configured_apps = self._device.configure(hef._hef, configure_params_by_name)
-        configured_networks = [ConfiguredNetwork(configured_app, self, hef) for configured_app in configured_apps]
+            configured_ngs_handles = self._device.configure(hef._hef, configure_params_by_name)
+        configured_networks = [ConfiguredNetwork(configured_ng_handle) for configured_ng_handle in configured_ngs_handles]
         self._loaded_network_groups.extend(configured_networks)
         return configured_networks
 
@@ -2385,7 +2400,6 @@ class VDevice(object):
                 list of all available devices. Excludes 'params'. Cannot be used together with device_id.
         """
         gc.collect()
-        self._logger = default_logger()
 
         # VDevice __del__ function tries to release self._vdevice.
         # to avoid AttributeError if the __init__ func fails, we set it to None first.
@@ -2461,8 +2475,8 @@ class VDevice(object):
         if self._creation_pid != os.getpid():
             raise HailoRTException("VDevice can only be configured from the process it was created in.")
         with ExceptionWrapper():
-            configured_apps = self._vdevice.configure(hef._hef, configure_params_by_name)
-        configured_networks = [ConfiguredNetwork(configured_app, self, hef) for configured_app in configured_apps]
+            configured_ngs_handles = self._vdevice.configure(hef._hef, configure_params_by_name)
+        configured_networks = [ConfiguredNetwork(configured_ng_handle) for configured_ng_handle in configured_ngs_handles]
         self._loaded_network_groups.extend(configured_networks)
         return configured_networks
 
@@ -2539,9 +2553,9 @@ class InputVStreamParams(object):
             timeout_ms = DEFAULT_VSTREAM_TIMEOUT_MS
         if queue_size is None:
             queue_size = DEFAULT_VSTREAM_QUEUE_SIZE
-        name = network_name if network_name is not None else configured_network.name
+        name = network_name if network_name is not None else ""
         with ExceptionWrapper():
-            return configured_network._hef._hef.get_input_vstreams_params(name, quantized,
+            return configured_network._configured_network.make_input_vstream_params(name, quantized,
                 format_type, timeout_ms, queue_size)
 
     @staticmethod
@@ -2613,9 +2627,9 @@ class OutputVStreamParams(object):
             timeout_ms = DEFAULT_VSTREAM_TIMEOUT_MS
         if queue_size is None:
             queue_size = DEFAULT_VSTREAM_QUEUE_SIZE
-        name = network_name if network_name is not None else configured_network.name
+        name = network_name if network_name is not None else ""
         with ExceptionWrapper():
-            return configured_network._hef._hef.get_output_vstreams_params(name, quantized,
+            return configured_network._configured_network.make_output_vstream_params(name, quantized,
                 format_type, timeout_ms, queue_size)
 
     @staticmethod
@@ -2820,8 +2834,8 @@ class InputVStreams(object):
 
 
 class OutputLayerUtils(object):
-    def __init__(self, hef, vstream_name, pipeline, net_group_name=""):
-        self._hef = hef
+    def __init__(self, output_vstream_infos, vstream_name, pipeline, net_group_name=""):
+        self._output_vstream_infos = output_vstream_infos
         self._vstream_info = self._get_vstream_info(net_group_name, vstream_name)
 
         if isinstance(pipeline, (_pyhailort.InferVStreams)):
@@ -2866,8 +2880,7 @@ class OutputLayerUtils(object):
         return self._quantized_empty_bbox
 
     def _get_vstream_info(self, net_group_name, vstream_name):
-        output_vstream_infos = self._hef.get_output_vstream_infos(net_group_name)
-        for info in output_vstream_infos:
+        for info in self._output_vstream_infos:
             if info.name == vstream_name:
                 return info
         raise HailoRTException("No vstream matches the given name {}".format(vstream_name))
@@ -2885,7 +2898,8 @@ class OutputVStream(object):
 
     def __init__(self, configured_network, recv_object, name, tf_nms_format=False, net_group_name=""):
         self._recv_object = recv_object
-        self._output_layer_utils = OutputLayerUtils(configured_network._hef, name, self._recv_object, net_group_name)
+        output_vstream_infos = configured_network.get_output_vstream_infos()
+        self._output_layer_utils = OutputLayerUtils(output_vstream_infos, name, self._recv_object, net_group_name)
         self._output_dtype = self._output_layer_utils.output_dtype
         self._vstream_info = self._output_layer_utils._vstream_info
         self._output_tensor_info = self._output_layer_utils.output_tensor_info
@@ -3030,15 +3044,3 @@ class OutputVStreams(object):
     def _after_fork_in_child(self):
         for vstream in self._vstreams.values():
             vstream._after_fork_in_child()
-
-
-class YOLOv5PostProcessOp(object):
-
-    def __init__(self, anchors, shapes, formats, quant_infos, image_height, image_width, confidence_threshold, iou_threshold, num_of_classes,
-            max_boxes, cross_classes=True):
-
-        self._op = _pyhailort.YOLOv5PostProcessOp.create(anchors, shapes, formats, quant_infos, image_height, image_width, confidence_threshold,
-            iou_threshold, num_of_classes, max_boxes, cross_classes)
-
-    def execute(self, net_flow_tensors):
-        return self._op.execute(net_flow_tensors)

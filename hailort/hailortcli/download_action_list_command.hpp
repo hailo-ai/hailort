@@ -100,6 +100,8 @@ static std::pair<CONTEXT_SWITCH_DEFS__ACTION_TYPE_t, std::string> mapping[] = {
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_OPEN_BOUNDARY_INPUT_CHANNEL, "open_boundary_input_channel"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_OPEN_BOUNDARY_OUTPUT_CHANNEL, "open_boundary_output_channel"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_ENABLE_NMS, "enable_nms"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_WRITE_DATA_BY_TYPE, "write_data_by_type"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_SWITCH_LCU_BATCH, "switch_lcu_batch"},
 };
 static_assert(ARRAY_ENTRIES(mapping) == CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT,
     "Missing a mapping from a CONTEXT_SWITCH_DEFS__ACTION_TYPE_t to it's string value");
@@ -112,8 +114,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__trigger_sequencer_action
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__sequencer_interrupt_data_t, sequencer_index);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__wait_nms_data_t, aggregator_index);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__module_config_done_interrupt_data_t, module_index);
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__fetch_ccw_bursts_action_data_t, config_stream_index);
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__enable_nms_action_t, nms_unit_index, network_index);
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__fetch_ccw_bursts_action_data_t, config_stream_index, ccw_bursts);
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__enable_nms_action_t, nms_unit_index, network_index, number_of_classes, burst_size);
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__write_data_by_type_action_t, address, data_type, data, shift, mask, network_index);
 
 // Non-default implementations
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__deactivate_vdma_channel_action_data_t &data);
@@ -138,5 +141,6 @@ void to_json(json &j, const CONTEXT_SWITCH_DEFS__deactivate_cfg_channel_t &data)
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__add_ddr_pair_info_action_data_t &data);
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__open_boundary_input_channel_data_t &data);
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__open_boundary_output_channel_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__switch_lcu_batch_action_data_t &data);
 
 #endif /* _HAILO_DOWNLOAD_ACTION_LIST_COMMAND_HPP_ */

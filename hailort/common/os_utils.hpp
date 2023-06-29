@@ -57,22 +57,12 @@ class OsUtils final
 {
 public:
     OsUtils() = delete;
+
     static uint32_t get_curr_pid();
-
-    static void set_current_thread_name(const std::string &name)
-    {
-        (void)name;
-#ifndef NDEBUG
-#ifndef _WIN32
-    // pthread_setname_np name size is limited to 16 chars (including null terminator)
-    assert(name.size() < 16);
-    pthread_setname_np(pthread_self(), name.c_str());
-#else
-// TODO: implement for windows
-#endif /* _WIN32 */
-#endif /* NDEBUG */
-    }
-
+    static bool is_pid_alive(uint32_t pid);
+    static void set_current_thread_name(const std::string &name);
+    static hailo_status set_current_thread_affinity(uint8_t cpu_index);
+    static size_t get_page_size();
 };
 
 } /* namespace hailort */

@@ -150,7 +150,7 @@ Expected<std::vector<std::string>> list_devices()
         &guid,
         NULL,
         CM_GET_DEVICE_INTERFACE_LIST_PRESENT);
-    CHECK_AS_EXPECTED(cr == CR_SUCCESS && len >= 2, HAILO_PCIE_DRIVER_NOT_INSTALLED,
+    CHECK_AS_EXPECTED((cr == CR_SUCCESS) && (len > 0), HAILO_PCIE_DRIVER_NOT_INSTALLED,
         "Driver interface not found error {}", cr);
 
     std::string names_str;

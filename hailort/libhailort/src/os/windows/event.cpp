@@ -11,8 +11,7 @@
 #include "hailo/event.hpp"
 
 #include "common/utils.hpp"
-
-#include "utils/event_internal.hpp"
+#include "common/event_internal.hpp"
 
 #include <utility>
 #include <limits>
@@ -20,10 +19,6 @@
 
 namespace hailort
 {
-
-Waitable::Waitable(underlying_waitable_handle_t handle) :
-    m_handle(handle)
-{}
 
 Waitable::~Waitable()
 {
@@ -35,11 +30,6 @@ Waitable::~Waitable()
 Waitable::Waitable(Waitable&& other) :
     m_handle(std::exchange(other.m_handle, nullptr))
 {}
-
-underlying_waitable_handle_t Waitable::get_underlying_handle()
-{
-    return m_handle;
-}
 
 static DWORD timeout_millies(long long value)
 {
@@ -87,11 +77,6 @@ EventPtr Event::create_shared(const State& initial_state)
     }
 
     return make_shared_nothrow<Event>(handle);
-}
-
-hailo_status Event::wait(std::chrono::milliseconds timeout)
-{
-    return wait_for_single_object(m_handle, timeout);
 }
 
 hailo_status Event::signal()
@@ -153,11 +138,6 @@ SemaphorePtr Semaphore::create_shared(uint32_t initial_count)
     return make_shared_nothrow<Semaphore>(handle);
 }
 
-hailo_status Semaphore::wait(std::chrono::milliseconds timeout)
-{
-    return wait_for_single_object(m_handle, timeout);
-}
-
 hailo_status Semaphore::signal()
 {
     static const LONG INCREMENT_BY_ONE = 1;
@@ -176,6 +156,12 @@ bool Semaphore::is_auto_reset()
     return true;
 }
 
+hailo_status Semaphore::post_wait()
+{
+    // On windows, after wait on semaphore the counters decrease automatically.
+    return HAILO_SUCCESS;
+}
+
 underlying_waitable_handle_t Semaphore::open_semaphore_handle(uint32_t initial_count)
 {
     static const LPSECURITY_ATTRIBUTES NO_INHERITANCE = nullptr;
@@ -188,45 +174,24 @@ underlying_waitable_handle_t Semaphore::open_semaphore_handle(uint32_t initial_c
     return handle;
 }
 
-WaitOrShutdown::WaitOrShutdown(WaitablePtr waitable, EventPtr shutdown_event) :
-    m_waitable(waitable),
-    m_shutdown_event(shutdown_event),
-    m_wait_handle_array(create_wait_handle_array(waitable, shutdown_event))
-{}
-
-hailo_status WaitOrShutdown::wait(std::chrono::milliseconds timeout)
+Expected<size_t> WaitableGroup::wait_any(std::chrono::milliseconds timeout)
 {
     DWORD wait_millies = timeout_millies(timeout.count());
 
-    static const BOOL WAIT_FOR_ANY = false;
-    const auto wait_result = WaitForMultipleObjects(static_cast<DWORD>(m_wait_handle_array.size()),
-        m_wait_handle_array.data(), WAIT_FOR_ANY, wait_millies);
-    switch (wait_result) {
-        case WAIT_OBJECT_0 + WAITABLE_INDEX:
-            return HAILO_SUCCESS;
-        case WAIT_OBJECT_0 + SHUTDOWN_INDEX:
-            return HAILO_SHUTDOWN_EVENT_SIGNALED;
-        case WAIT_TIMEOUT:
-            return HAILO_TIMEOUT;
-        default:
-            LOGGER__ERROR("WaitForMultipleObjects returned {}, last_error={}", wait_result, GetLastError());
-            return HAILO_INTERNAL_FAILURE;
+    const auto WAIT_OBJECT_N = WAIT_OBJECT_0 + m_waitable_handles.size();
+    const bool WAIT_FOR_ANY = false;
+    const auto wait_result = WaitForMultipleObjects(static_cast<DWORD>(m_waitable_handles.size()),
+        m_waitable_handles.data(), WAIT_FOR_ANY, wait_millies);
+    if (wait_result == WAIT_TIMEOUT) {
+        return make_unexpected(HAILO_TIMEOUT);
+    } else if ((wait_result >= WAIT_OBJECT_0) && (wait_result < WAIT_OBJECT_N)) {
+        // Object is signaled.
+        // Note! On windows there is no need to call post_wait() because it is done automatically.
+        return wait_result - WAIT_OBJECT_0;
+    } else {
+        LOGGER__ERROR("WaitForMultipleObjects returned {}, last_error={}", wait_result, GetLastError());
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
     }
-}
-
-hailo_status WaitOrShutdown::signal()
-{
-    return m_waitable->signal();
-}
-
-WaitOrShutdown::WaitHandleArray WaitOrShutdown::create_wait_handle_array(WaitablePtr waitable, EventPtr shutdown_event)
-{
-    // Note the order!
-    WaitHandleArray handles{
-        shutdown_event->get_underlying_handle(),
-        waitable->get_underlying_handle()
-    };
-    return handles;
 }
 
 } /* namespace hailort */

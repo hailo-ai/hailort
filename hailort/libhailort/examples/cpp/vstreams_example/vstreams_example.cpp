@@ -15,8 +15,6 @@
 
 #define HEF_FILE ("hefs/shortcut_net.hef")
 constexpr size_t FRAMES_COUNT = 100;
-constexpr bool QUANTIZED = true;
-constexpr hailo_format_type_t FORMAT_TYPE = HAILO_FORMAT_TYPE_AUTO;
 constexpr size_t MAX_LAYER_EDGES = 16;
 
 using namespace hailort;
@@ -140,19 +138,49 @@ int main()
         return network_group.status();
     }
 
-    auto vstreams = VStreamsBuilder::create_vstreams(*network_group.value(), QUANTIZED, FORMAT_TYPE);
-    if (!vstreams) {
-        std::cerr << "Failed creating vstreams " << vstreams.status() << std::endl;
-        return vstreams.status();
+    // Set input format type to auto, and mark the data as quantized - libhailort will not scale the data before writing to the HW
+    bool quantized = true;
+    auto input_vstream_params = network_group.value()->make_input_vstream_params(quantized, HAILO_FORMAT_TYPE_AUTO, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
+        HAILO_DEFAULT_VSTREAM_QUEUE_SIZE);
+    if (!input_vstream_params) {
+        std::cerr << "Failed creating input vstreams params " << input_vstream_params.status() << std::endl;
+        return input_vstream_params.status();
     }
 
-    if (vstreams->first.size() > MAX_LAYER_EDGES || vstreams->second.size() > MAX_LAYER_EDGES) {
+    /* The input format order in the example HEF is NHWC in the user-side (may be seen using 'hailortcli parse-hef <HEF_PATH>).
+       Here we override the user-side format order to be NCHW */
+    for (auto &params_pair : *input_vstream_params) {
+        params_pair.second.user_buffer_format.order = HAILO_FORMAT_ORDER_NCHW;
+    }
+
+    auto input_vstreams = VStreamsBuilder::create_input_vstreams(*network_group.value(), *input_vstream_params);
+    if (!input_vstreams) {
+        std::cerr << "Failed creating input vstreams " << input_vstreams.status() << std::endl;
+        return input_vstreams.status();
+    }
+
+    // Set output format type to float32, and mark the data as not quantized - libhailort will de-quantize the data after reading from the HW
+    // Note: this process might affect the overall performance
+    quantized = false;
+    auto output_vstream_params = network_group.value()->make_output_vstream_params(quantized, HAILO_FORMAT_TYPE_FLOAT32, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
+        HAILO_DEFAULT_VSTREAM_QUEUE_SIZE);
+    if (!output_vstream_params) {
+        std::cerr << "Failed creating output vstreams params " << output_vstream_params.status() << std::endl;
+        return output_vstream_params.status();
+    }
+    auto output_vstreams = VStreamsBuilder::create_output_vstreams(*network_group.value(), *output_vstream_params);
+    if (!output_vstreams) {
+        std::cerr << "Failed creating output vstreams " << output_vstreams.status() << std::endl;
+        return output_vstreams.status();
+    }
+
+    if (input_vstreams->size() > MAX_LAYER_EDGES || output_vstreams->size() > MAX_LAYER_EDGES) {
         std::cerr << "Trying to infer network with too many input/output virtual streams, Maximum amount is " <<
         MAX_LAYER_EDGES << " (either change HEF or change the definition of MAX_LAYER_EDGES)"<< std::endl;
         return HAILO_INVALID_OPERATION;
     }
 
-    auto status = infer(vstreams->first, vstreams->second);
+    auto status = infer(*input_vstreams, *output_vstreams);
     if (HAILO_SUCCESS != status) {
         std::cerr << "Inference failed "  << status << std::endl;
         return status;

@@ -14,19 +14,22 @@ namespace hailort
 
 void * const MmapBufferImpl::INVALID_ADDR = NULL;
 
-Expected<MmapBufferImpl> MmapBufferImpl::create_shared_memory(size_t length)
+Expected<MmapBufferImpl> MmapBufferImpl::create_shared_memory(size_t)
 {
-    void *address = VirtualAlloc(NULL, length, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    CHECK_AS_EXPECTED(INVALID_ADDR != address, HAILO_OUT_OF_HOST_MEMORY, "Failed to mmap buffer with error:{}", GetLastError());
-    return MmapBufferImpl(address, length, true);
+    LOGGER__ERROR("Creating shared memory is not implemented on windows");
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
+Expected<MmapBufferImpl> MmapBufferImpl::create_file_map(size_t, FileDescriptor &, uintptr_t )
+{
+    LOGGER__ERROR("Creating file mapping is not implemented on windows");
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
 
 hailo_status MmapBufferImpl::unmap()
 {
-    if (m_unmappable) {
-        VirtualFree(m_address, m_length, MEM_RELEASE);
-    }
-    return HAILO_SUCCESS;
+    LOGGER__ERROR("Unmapping is not implemented on windows");
+    return HAILO_NOT_IMPLEMENTED;
 }
 
 } /* namespace hailort */

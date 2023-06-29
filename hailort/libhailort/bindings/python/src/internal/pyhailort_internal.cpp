@@ -173,12 +173,15 @@ py::array PyhailortInternal::get_yolov5_post_process_expected_buffer()
     auto buffer = get_expected_buffer_float32();
     VALIDATE_EXPECTED(buffer);
 
+    auto type = py::dtype(HailoRTBindingsCommon::convert_format_type_to_string(HAILO_FORMAT_TYPE_FLOAT32));
+    auto shape = *py::array::ShapeContainer({buffer->size()});
+
     // Note: The ownership of the buffer is transferred to Python wrapped as a py::array.
     //       When the py::array isn't referenced anymore in Python and is destructed, the py::capsule's dtor
     //       is called too (and it deletes the raw buffer)
-    auto type = py::dtype(HailoRTBindingsCommon::convert_format_type_to_string(HAILO_FORMAT_TYPE_FLOAT32));
-    auto shape = *py::array::ShapeContainer({buffer->size()});
-    const auto unmanaged_addr = buffer.release().release();
+    auto unmanaged_addr_exp = buffer->storage().release();
+    VALIDATE_EXPECTED(unmanaged_addr_exp);
+    const auto unmanaged_addr = unmanaged_addr_exp.release();
     return py::array(type, shape, unmanaged_addr,
         py::capsule(unmanaged_addr, [](void *p) { delete reinterpret_cast<uint8_t*>(p); }));
 }
@@ -277,7 +280,7 @@ py::list PyhailortInternal::get_all_layers_info(const HefWrapper &hef, const std
     auto core_op_metadata = hef.hef_ptr()->pimpl->get_core_op_metadata(net_group_name);
     VALIDATE_EXPECTED(core_op_metadata);
 
-    return py::cast(core_op_metadata->get_all_layer_infos());
+    return py::cast(core_op_metadata.value()->get_all_layer_infos());
 }
 
 PYBIND11_MODULE(_pyhailort_internal, m) {
@@ -294,6 +297,13 @@ PYBIND11_MODULE(_pyhailort_internal, m) {
     py::class_<BufferIndices>(m, "BufferIndices", py::module_local())
         .def_readonly("index", &BufferIndices::index)
         .def_readonly("cluster_index", &BufferIndices::cluster_index)
+        ;
+
+    py::enum_<SENSOR_CONFIG_OPCODES_t>(m, "SensorConfigOpCode")
+        .value("SENSOR_CONFIG_OPCODES_WR", SENSOR_CONFIG_OPCODES_WR)
+        .value("SENSOR_CONFIG_OPCODES_RD", SENSOR_CONFIG_OPCODES_RD)
+        .value("SENSOR_CONFIG_OPCODES_RMW", SENSOR_CONFIG_OPCODES_RMW)
+        .value("SENSOR_CONFIG_OPCODES_DELAY", SENSOR_CONFIG_OPCODES_DELAY)
         ;
 
     py::class_<LayerInfo>(m, "HailoLayerInfo", py::module_local())

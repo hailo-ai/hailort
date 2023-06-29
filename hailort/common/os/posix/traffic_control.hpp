@@ -23,7 +23,6 @@ class TrafficControlUtil final
 {
 public:
     static Expected<TrafficControlUtil> create(const std::string &ip, uint16_t port, uint32_t rate_bytes_per_sec);
-    static Expected<std::string> get_interface_name(const std::string &ip);
     ~TrafficControlUtil() = default;
     TrafficControlUtil(TrafficControlUtil&) = delete;
     TrafficControlUtil &operator=(const TrafficControlUtil &) = delete;

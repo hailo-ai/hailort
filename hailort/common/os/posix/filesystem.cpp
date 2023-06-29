@@ -165,6 +165,13 @@ hailo_status Filesystem::create_directory(const std::string &dir_path)
     return HAILO_SUCCESS;
 }
 
+hailo_status Filesystem::remove_directory(const std::string &dir_path)
+{
+    auto ret_val = rmdir(dir_path.c_str());
+    CHECK(0 == ret_val, HAILO_FILE_OPERATION_FAILURE, "Failed to remove directory {}", dir_path);
+    return HAILO_SUCCESS;
+}
+
 Expected<std::string> Filesystem::get_current_dir()
 {
     char cwd[PATH_MAX];

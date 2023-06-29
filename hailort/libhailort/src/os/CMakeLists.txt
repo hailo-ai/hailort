@@ -8,7 +8,7 @@ elseif(UNIX)
     if (CMAKE_SYSTEM_NAME STREQUAL QNX)
         set(HAILO_FULL_OS_DIR ${HAILO_OS_DIR}/qnx)
     else()
-        set(HAILO_FULL_OS_DIR ${HAILO_OS_DIR}/unix)
+        set(HAILO_FULL_OS_DIR ${HAILO_OS_DIR}/linux)
     endif()
 else()
     message(FATAL_ERROR "Unexpeced platform target, stopping build")
@@ -19,13 +19,12 @@ set(HAILO_OS_DIR ${HAILO_OS_DIR} PARENT_SCOPE)
 set(HAILO_FULL_OS_DIR ${HAILO_FULL_OS_DIR} PARENT_SCOPE)
 
 
-set(files
-    ${HAILO_OS_DIR}/microsec_timer.cpp
-    ${HAILO_OS_DIR}/file_descriptor.cpp
-    ${HAILO_OS_DIR}/mmap_buffer.cpp
-    ${HAILO_OS_DIR}/hailort_driver.cpp
-    ${HAILO_FULL_OS_DIR}/event.cpp
-    ${HAILO_FULL_OS_DIR}/driver_scan.cpp
-)
+if(WIN32)
+    add_subdirectory(windows)
+elseif(UNIX)
+    add_subdirectory(posix)
+else()
+    message(FATAL_ERROR "Unexpeced platform target, stopping build")
+endif()
 
-set(HAILORT_CPP_OS_SOURCES ${files} PARENT_SCOPE)
+set(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES} ${SRC_FILES} PARENT_SCOPE)

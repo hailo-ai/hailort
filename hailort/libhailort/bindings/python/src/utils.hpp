@@ -68,11 +68,11 @@ class HailoRTStatusException : public HailoRTException {
         [](hailo_stream_parameters_t& self) -> const __property_type&                                             \
         {                                                                                                         \
             if (__interface_value != self.stream_interface) {                                                     \
-                LOGGER__ERROR("Stream params interface is not {}.", #__interface_value);                          \
+                std::cerr << "Stream params interface is not " << __interface_value << ".";                       \
                 THROW_STATUS_ERROR(HAILO_INVALID_OPERATION);                                                      \
             }                                                                                                     \
             if (__direction_value != self.direction) {                                                            \
-                LOGGER__ERROR("Stream params direction is not {}.", #__direction_value);                          \
+                std::cerr << "Stream params direction is not " << __direction_value << ".";                       \
                 THROW_STATUS_ERROR(HAILO_INVALID_OPERATION);                                                      \
             }                                                                                                     \
             return self.__property_name;                                                                          \
@@ -80,11 +80,11 @@ class HailoRTStatusException : public HailoRTException {
         [](hailo_stream_parameters_t& self, const __property_type& value)                                         \
         {                                                                                                         \
             if (__interface_value != self.stream_interface) {                                                     \
-                LOGGER__ERROR("Stream params interface is not {}.", #__interface_value);                          \
+                std::cerr << "Stream params interface is not " << __interface_value << ".";                       \
                 THROW_STATUS_ERROR(HAILO_INVALID_OPERATION);                                                      \
             }                                                                                                     \
             if (__direction_value != self.direction) {                                                            \
-                LOGGER__ERROR("Stream params direction is not {}.", #__direction_value);                          \
+                std::cerr << "Stream params direction is not " << __direction_value << ".";                       \
                 THROW_STATUS_ERROR(HAILO_INVALID_OPERATION);                                                      \
             }                                                                                                     \
             self.__property_name = value;                                                                         \

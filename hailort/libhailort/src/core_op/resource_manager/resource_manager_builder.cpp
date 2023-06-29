@@ -15,7 +15,7 @@ namespace hailort
 {
 
 
-static uint16_t calculate_periph_buffers_per_frame(const CONTROL_PROTOCOL__hw_consts_t &hw_consts,
+static uint16_t calculate_power_optimized_periph_buffers_per_frame(const CONTROL_PROTOCOL__hw_consts_t &hw_consts,
     uint16_t min_periph_buffers_per_frame, uint32_t frame_size, uint16_t periph_buffers_per_frame)
 {
     const auto max_periph_buffers_per_frame = MIN(frame_size, static_cast<uint32_t>(hw_consts.max_periph_buffers_per_frame));
@@ -37,78 +37,165 @@ static uint16_t calculate_periph_buffers_per_frame(const CONTROL_PROTOCOL__hw_co
     }
 }
 
-static hailo_status calculate_credit_params(const CONTROL_PROTOCOL__hw_consts_t &hw_consts, uint16_t desc_page_size,
-    hailo_stream_direction_t direction, bool should_optimize_credits, uint16_t *periph_bytes_per_buffer,
-    uint16_t *periph_buffers_per_frame)
+static Expected<LayerInfo> calculate_credit_params(const CONTROL_PROTOCOL__hw_consts_t &hw_consts, uint16_t desc_page_size,
+    bool should_optimize_credits, const LayerInfo &layer_info)
 {
     // Next parameters differ between RX and TX
 
-    auto local_periph_bytes_per_buffer = (*periph_bytes_per_buffer);
-    auto local_periph_buffers_per_frame = (*periph_buffers_per_frame);
-    uint32_t periph_frame_size = (*periph_bytes_per_buffer) * (*periph_buffers_per_frame);
-    const auto max_bytes_per_buffer = MAX(hw_consts.max_acceptable_bytes_per_buffer, (*periph_bytes_per_buffer));
+    auto local_periph_bytes_per_buffer = layer_info.nn_stream_config.periph_bytes_per_buffer;
+    auto local_periph_buffers_per_frame = layer_info.nn_stream_config.periph_buffers_per_frame;
+    uint32_t periph_frame_size = local_periph_bytes_per_buffer * local_periph_buffers_per_frame;
+    const auto max_bytes_per_buffer = MAX(hw_consts.max_acceptable_bytes_per_buffer, local_periph_bytes_per_buffer);
 
-    if (0 != (local_periph_bytes_per_buffer % hw_consts.fifo_word_granularity_bytes)) {
-        return HAILO_INTERNAL_FAILURE;
-    }
+    CHECK_AS_EXPECTED(0 == (local_periph_bytes_per_buffer % hw_consts.fifo_word_granularity_bytes), HAILO_INTERNAL_FAILURE,
+        "Error, Invalid periph bytes ber puffer value {} must divide by {} with no remainder",
+        local_periph_bytes_per_buffer, hw_consts.fifo_word_granularity_bytes);
 
     if (should_optimize_credits) {
         // If credits optimizations flag is on, assuming periph_buffers_per_frame * periph_bytes_per_buffer == periph_frame_size
         // Find the lowest periph_buffers_per_frame that divides periph_frame_size and is bigger than periph_frame_size / max_bytes_per_buffer
         // Also, periph_bytes_per_buffer must be a multiple of 8
         const auto min_periph_buffers_per_frame = DIV_ROUND_UP(periph_frame_size, max_bytes_per_buffer);
-        local_periph_buffers_per_frame = calculate_periph_buffers_per_frame(hw_consts, static_cast<uint16_t>(min_periph_buffers_per_frame),
-            periph_frame_size, local_periph_buffers_per_frame);
+        local_periph_buffers_per_frame = calculate_power_optimized_periph_buffers_per_frame(hw_consts,
+            static_cast<uint16_t>(min_periph_buffers_per_frame), periph_frame_size, local_periph_buffers_per_frame);
         assert(IS_FIT_IN_UINT16(periph_frame_size / local_periph_buffers_per_frame));
         local_periph_bytes_per_buffer = static_cast<uint16_t>(periph_frame_size / local_periph_buffers_per_frame); // Must be integer according to last function
     }
     // Periph credits size must be lower than the following value to make sure that the credit size allows
     // for at least desc_page_size bytes left in the FIFO for the last descriptor in the pattern
-    if ((direction == HAILO_D2H_STREAM) &&
-        (static_cast<uint32_t>(local_periph_bytes_per_buffer) > (hw_consts.outbound_data_stream_size - 8 - desc_page_size))) {
-        LOGGER__ERROR("Current periph_bytes_per_buffer is {} which is too high. Exiting.", local_periph_bytes_per_buffer);
-        return HAILO_INTERNAL_FAILURE;
+    const bool space_left_in_fifo = ((layer_info.direction != HAILO_D2H_STREAM) ||
+        (static_cast<uint32_t>(local_periph_bytes_per_buffer) <= (hw_consts.outbound_data_stream_size - 8 - desc_page_size)));
+    CHECK_AS_EXPECTED(space_left_in_fifo, HAILO_INTERNAL_FAILURE,
+        "Current periph_bytes_per_buffer is {} which is too high. Exiting.", local_periph_bytes_per_buffer);
+
+    auto updated_layer_info = layer_info;
+    updated_layer_info.nn_stream_config.periph_bytes_per_buffer = local_periph_bytes_per_buffer;
+    updated_layer_info.nn_stream_config.periph_buffers_per_frame = local_periph_buffers_per_frame;
+
+    return updated_layer_info;
+}
+
+// NOTE: in case of ddr where periph is aligned to PERIPH_BYTES_PER_BUFFER_DDR_ALIGNMENT_SIZE we cant force that
+// periph_bytes_per_buffer * periph_buffers_per_frame will equal exactly hw_frame_size.
+static bool is_logical_periph_bytes_per_buffer(const uint32_t periph_bytes_per_buffer, const size_t hw_frame_size, const bool is_ddr,
+    const uint32_t max_shmifo_size, const uint32_t desc_page_size, const uint32_t max_periph_bytes_value,
+    const uint16_t core_bytes_per_buffer)
+{
+    if (is_ddr) {
+        // In DDR there is no residue of descriptor - but has to divide with no remainder by core_bytes_per_buffer
+        // Calculated by DFC
+        return (periph_bytes_per_buffer < max_shmifo_size) && (periph_bytes_per_buffer <= max_periph_bytes_value) &&
+            (0 == (core_bytes_per_buffer % periph_bytes_per_buffer));
+    }
+    return ((periph_bytes_per_buffer < (max_shmifo_size - desc_page_size)) &&
+        (0 == (hw_frame_size % periph_bytes_per_buffer)) && (periph_bytes_per_buffer <= max_periph_bytes_value));
+}
+
+static Expected<std::tuple<uint16_t, uint16_t>> calculate_periph_requirements(const LayerInfo &layer_info, const uint32_t desc_page_size,
+    const bool is_periph_calculated_in_hailort, const uint32_t max_periph_bytes_value)
+{
+    // If extension for calculating periph values in hailort is false - copy values from core registers , otherwise 
+    // If extesnion is true - calculate them according to shape and other layer information
+    if (!is_periph_calculated_in_hailort) {
+        return std::make_tuple(static_cast<uint16_t>(layer_info.nn_stream_config.core_bytes_per_buffer),
+            static_cast<uint16_t>(layer_info.nn_stream_config.core_buffers_per_frame));
     }
 
-    *periph_bytes_per_buffer = local_periph_bytes_per_buffer;
-    *periph_buffers_per_frame = local_periph_buffers_per_frame;
-    return HAILO_SUCCESS;
+    if (HAILO_FORMAT_ORDER_HAILO_NMS == layer_info.format.order) {
+        CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(layer_info.nms_info.bbox_size * layer_info.nms_info.burst_size),
+            HAILO_INVALID_HEF, "Invalid burst size");
+        return std::make_tuple(static_cast<uint16_t>(layer_info.nms_info.bbox_size * layer_info.nms_info.burst_size),
+            static_cast<uint16_t>(1));
+    }
+
+    CHECK_AS_EXPECTED(IS_FIT_IN_UINT32(layer_info.hw_shape.width * layer_info.hw_shape.features *
+        layer_info.hw_shape.height * layer_info.hw_data_bytes), HAILO_INVALID_HEF, "Invalid core frame size");
+
+    const auto is_ddr = (LayerType::DDR == layer_info.type);
+    const uint32_t alignment = is_ddr ? PERIPH_BYTES_PER_BUFFER_DDR_ALIGNMENT_SIZE : PERIPH_BYTES_PER_BUFFER_ALIGNMENT_SIZE;
+    const auto row_size = static_cast<uint32_t>(layer_info.hw_shape.width * layer_info.hw_shape.features *
+        layer_info.hw_data_bytes);
+    const auto core_frame_size = layer_info.hw_shape.height * row_size;
+
+    // Currently takes the largest periph_bytes_per_buffer that is possible with shmifo size and desc page size
+    // TODO HRT-10961 : calculate optimal periph size
+    auto periph_bytes_per_buffer = HailoRTCommon::align_to(row_size, alignment);
+    while (!is_logical_periph_bytes_per_buffer(periph_bytes_per_buffer, core_frame_size, is_ddr, layer_info.max_shmifo_size,
+        desc_page_size, max_periph_bytes_value, layer_info.nn_stream_config.core_bytes_per_buffer) && (0 < periph_bytes_per_buffer)) {
+        periph_bytes_per_buffer -= alignment;
+    }
+
+    CHECK_AS_EXPECTED(0 != periph_bytes_per_buffer, HAILO_INVALID_ARGUMENT, "Error, Could not find logical periph bytes per buffer value");
+
+    uint32_t periph_buffers_per_frame = (core_frame_size / periph_bytes_per_buffer);
+    // In ddr if we get a periph bytes per buffer os small that the periph buffers per frame cant fit in uint16
+    // put uint16_t max - seeing as this value doesnt really affect anything and we should not fail in that case.
+    if (is_ddr && !IS_FIT_IN_UINT16(periph_buffers_per_frame)) {
+        LOGGER__DEBUG("periph buffers per frame in ddr too large for 16 bit register - putting uint16_t max");
+        periph_buffers_per_frame = UINT16_MAX;
+    }
+    CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(periph_buffers_per_frame), HAILO_INVALID_ARGUMENT);
+
+    return std::make_tuple(static_cast<uint16_t>(periph_bytes_per_buffer), static_cast<uint16_t>(periph_buffers_per_frame));
 }
 
 static Expected<LayerInfo> update_layer_info(const LayerInfo &original_layer_info,
     const CONTROL_PROTOCOL__host_buffer_info_t &buffer_info,
-    const CONTROL_PROTOCOL__hw_consts_t &hw_consts, bool should_optimize_credits)
+    const CONTROL_PROTOCOL__hw_consts_t &hw_consts, const ProtoHEFHwArch &hw_arch, const bool should_optimize_credits,
+    const bool is_periph_calculated_in_hailort)
 {
     LayerInfo local_layer_info = original_layer_info;
-
-    auto status = calculate_credit_params(hw_consts, buffer_info.desc_page_size, local_layer_info.direction,
-        should_optimize_credits, &local_layer_info.nn_stream_config.periph_bytes_per_buffer,
-        &local_layer_info.nn_stream_config.periph_buffers_per_frame);
-    CHECK_SUCCESS_AS_EXPECTED(status);
 
     if (local_layer_info.max_shmifo_size == 0) {
         local_layer_info.max_shmifo_size = hw_consts.default_initial_credit_size;
     }
 
-    return local_layer_info;
+    // If Hw padding supported dont update periph registers because they were updated in get_hw_padding
+    // TODO HRT-11006 : currently check is_hw_padding_supported and the feature_padding_payload because in MIPI Input stream
+    // Even if is_hw_padding_supported is true we will not use hw padding.
+    auto max_periph_bytes_from_hef = HefConfigurator::max_periph_bytes_value(DeviceBase::hef_arch_to_device_arch(hw_arch));
+    CHECK_EXPECTED(max_periph_bytes_from_hef);
+    const auto max_periph_bytes = MIN(max_periph_bytes_from_hef.value(), local_layer_info.max_shmifo_size);
+
+    const bool hw_padding_supported = HefConfigurator::is_hw_padding_supported(local_layer_info,
+        max_periph_bytes) && (0 != original_layer_info.nn_stream_config.feature_padding_payload);
+    if (!hw_padding_supported) {
+        // Update periph values
+        const auto periph_requirements = calculate_periph_requirements(local_layer_info, buffer_info.desc_page_size,
+            is_periph_calculated_in_hailort, max_periph_bytes);
+        CHECK_EXPECTED(periph_requirements);
+
+        // Calculate and update value of periph bytes per buffer and periph buffers per frame
+        local_layer_info.nn_stream_config.periph_bytes_per_buffer = std::get<0>(periph_requirements.value());
+        local_layer_info.nn_stream_config.periph_buffers_per_frame = std::get<1>(periph_requirements.value());
+    }
+
+    auto updated_local_layer_info = calculate_credit_params(hw_consts, buffer_info.desc_page_size, should_optimize_credits,
+        local_layer_info);
+    CHECK_EXPECTED(updated_local_layer_info);
+
+    return updated_local_layer_info;
 }
 
 static hailo_status fill_boundary_input_layer(ContextResources &context_resources, 
     ResourcesManager &resources_manager, const LayerInfo layer_info, const CONTROL_PROTOCOL__hw_consts_t &hw_consts,
-    bool should_optimize_credits)
+    const ProtoHEFHwArch &hw_arch, bool should_optimize_credits)
 {
-    const auto transfer_size = (layer_info.nn_stream_config.periph_bytes_per_buffer *
-        layer_info.nn_stream_config.core_buffers_per_frame);
+    const auto transfer_size = LayerInfoUtils::get_layer_transfer_size(layer_info);
 
     auto vdma_channel = resources_manager.get_boundary_vdma_channel_by_stream_name(layer_info.name);
     CHECK_EXPECTED_AS_STATUS(vdma_channel);
 
     const auto buffer_info = vdma_channel.value()->get_boundary_buffer_info(transfer_size);
-    auto local_layer_info = update_layer_info(layer_info, buffer_info, hw_consts, should_optimize_credits);
+    const bool is_periph_calculated_in_hailort = resources_manager.get_supported_features().periph_calculation_in_hailort;
+    auto local_layer_info = update_layer_info(layer_info, buffer_info, hw_consts, hw_arch, should_optimize_credits,
+        is_periph_calculated_in_hailort);
     CHECK_EXPECTED_AS_STATUS(local_layer_info);
 
     const auto channel_id = vdma_channel.value()->get_channel_id();
-    context_resources.add_edge_layer(local_layer_info.value(), channel_id, buffer_info);
+    auto status = context_resources.add_edge_layer(local_layer_info.value(), channel_id, buffer_info,
+        resources_manager.get_supported_features());
+    CHECK_SUCCESS(status);
 
     LOGGER__DEBUG("Boundary input stream: {} h2d_channel: {}.", layer_info.stream_index, channel_id);
     return HAILO_SUCCESS;
@@ -116,7 +203,7 @@ static hailo_status fill_boundary_input_layer(ContextResources &context_resource
 
 static hailo_status fill_inter_context_input_layer(ContextResources &context_resources,
     ResourcesManager &resources_manager, const LayerInfo &layer_info, const CONTROL_PROTOCOL__hw_consts_t &hw_consts,
-    bool should_optimize_credits)
+    const ProtoHEFHwArch &hw_arch, bool should_optimize_credits)
 {
     const auto channel_id = resources_manager.get_available_channel_id(to_layer_identifier(layer_info),
         HailoRTDriver::DmaDirection::H2D, layer_info.dma_engine_index);
@@ -125,17 +212,19 @@ static hailo_status fill_inter_context_input_layer(ContextResources &context_res
     /* Get inter context buffer previously created */
     const auto &connected_context = layer_info.connected_context_info;
     auto intermediate_buffer_key = std::make_pair(connected_context.context_index, connected_context.stream_index);
-    auto inter_context_buffer_exp = resources_manager.get_inter_context_buffer(intermediate_buffer_key);
+    auto inter_context_buffer_exp = resources_manager.get_intermediate_buffer(intermediate_buffer_key);
     CHECK_EXPECTED_AS_STATUS(inter_context_buffer_exp, "Failed to find inter context buffer for src context {}, src_stream_index {}",
         connected_context.context_index, connected_context.stream_index);
     auto &inter_context_buffer = inter_context_buffer_exp->get();
 
+    const bool is_periph_calculated_in_hailort = resources_manager.get_supported_features().periph_calculation_in_hailort;
     auto local_layer_info = update_layer_info(layer_info, inter_context_buffer.get_host_buffer_info(), hw_consts,
-        should_optimize_credits);
+        hw_arch, should_optimize_credits, is_periph_calculated_in_hailort);
     CHECK_EXPECTED_AS_STATUS(local_layer_info);
 
-    context_resources.add_edge_layer(local_layer_info.value(), channel_id.value(),
-        inter_context_buffer.get_host_buffer_info());
+    auto status = context_resources.add_edge_layer(local_layer_info.value(), channel_id.value(),
+        inter_context_buffer.get_host_buffer_info(), resources_manager.get_supported_features());
+    CHECK_SUCCESS(status);
 
     LOGGER__DEBUG("Intermediate input stream {}, src_context:{}, dst_context: {}, h2d_channel {}.",
         layer_info.stream_index, layer_info.context_index, layer_info.connected_context_info.context_index,
@@ -146,20 +235,23 @@ static hailo_status fill_inter_context_input_layer(ContextResources &context_res
 
 static hailo_status fill_boundary_output_layer(ContextResources &context_resources,
     ResourcesManager &resources_manager, const LayerInfo &layer_info, const CONTROL_PROTOCOL__hw_consts_t &hw_consts,
-    bool should_optimize_credits)
+    const ProtoHEFHwArch &hw_arch, bool should_optimize_credits)
 {
-    const auto transfer_size = (layer_info.nn_stream_config.periph_bytes_per_buffer *
-        layer_info.nn_stream_config.core_buffers_per_frame);
+    const auto transfer_size = LayerInfoUtils::get_layer_transfer_size(layer_info);
 
     auto vdma_channel = resources_manager.get_boundary_vdma_channel_by_stream_name(layer_info.name);
     CHECK_EXPECTED_AS_STATUS(vdma_channel);
 
     const auto buffer_info = vdma_channel.value()->get_boundary_buffer_info(transfer_size);
-    auto local_layer_info = update_layer_info(layer_info, buffer_info, hw_consts, should_optimize_credits);
+    const bool is_periph_calculated_in_hailort = resources_manager.get_supported_features().periph_calculation_in_hailort;
+    auto local_layer_info = update_layer_info(layer_info, buffer_info, hw_consts, hw_arch, should_optimize_credits,
+        is_periph_calculated_in_hailort);
     CHECK_EXPECTED_AS_STATUS(local_layer_info);
 
     const auto channel_id = vdma_channel.value()->get_channel_id();
-    context_resources.add_edge_layer(local_layer_info.value(), channel_id, buffer_info);
+    auto status = context_resources.add_edge_layer(local_layer_info.value(), channel_id, buffer_info,
+        resources_manager.get_supported_features());
+    CHECK_SUCCESS(status);
 
     LOGGER__DEBUG("Boundary output stream: {} d2h_channel: {}.", layer_info.stream_index, channel_id);
     return HAILO_SUCCESS;
@@ -167,26 +259,31 @@ static hailo_status fill_boundary_output_layer(ContextResources &context_resourc
 
 static hailo_status fill_inter_context_output_layer(ContextResources &context_resources,
     ResourcesManager &resources_manager, const LayerInfo &layer_info,
-    const CONTROL_PROTOCOL__hw_consts_t &hw_consts, bool should_optimize_credits)
+    const CONTROL_PROTOCOL__hw_consts_t &hw_consts, const ProtoHEFHwArch &hw_arch, bool should_optimize_credits)
 {
     const auto channel_id = resources_manager.get_available_channel_id(to_layer_identifier(layer_info),
         HailoRTDriver::DmaDirection::D2H, layer_info.dma_engine_index);
     CHECK_EXPECTED_AS_STATUS(channel_id);
 
-    const auto frame_credits_in_bytes = (layer_info.nn_stream_config.periph_bytes_per_buffer * 
-        layer_info.nn_stream_config.core_buffers_per_frame);
+    const auto frame_credits_in_bytes = LayerInfoUtils::get_layer_transfer_size(layer_info);
 
-    auto inter_context_buffer_exp = resources_manager.create_inter_context_buffer(frame_credits_in_bytes,
-        layer_info.stream_index, layer_info.context_index, layer_info.network_name, channel_id.value());
+    auto network_batch_size = resources_manager.get_network_batch_size(layer_info.network_name);
+    CHECK_EXPECTED_AS_STATUS(network_batch_size);
+
+    auto inter_context_buffer_exp = resources_manager.create_intermediate_buffer(frame_credits_in_bytes,
+        network_batch_size.value(), layer_info.stream_index, layer_info.context_index, channel_id.value(),
+        IntermediateBuffer::StreamingType::BURST);
     CHECK_EXPECTED_AS_STATUS(inter_context_buffer_exp);
     auto &inter_context_buffer = inter_context_buffer_exp->get();
 
+    const bool is_periph_calculated_in_hailort = resources_manager.get_supported_features().periph_calculation_in_hailort;
     auto local_layer_info = update_layer_info(layer_info, inter_context_buffer.get_host_buffer_info(), hw_consts,
-        should_optimize_credits);
+        hw_arch, should_optimize_credits, is_periph_calculated_in_hailort);
     CHECK_EXPECTED_AS_STATUS(local_layer_info);
 
-    context_resources.add_edge_layer(local_layer_info.value(), channel_id.value(),
-        inter_context_buffer.get_host_buffer_info());
+    auto status = context_resources.add_edge_layer(local_layer_info.value(), channel_id.value(),
+        inter_context_buffer.get_host_buffer_info(), resources_manager.get_supported_features());
+    CHECK_SUCCESS(status);
 
     LOGGER__DEBUG("Inter-context output stream {}, src_context:{}, d2h_channel {}.",
         layer_info.stream_index, layer_info.context_index, channel_id.value());
@@ -195,78 +292,103 @@ static hailo_status fill_inter_context_output_layer(ContextResources &context_re
 
 static hailo_status fill_ddr_output_layer(ContextResources &context_resources,
     ResourcesManager &resources_manager, const LayerInfo &layer_info,
-    const CONTROL_PROTOCOL__hw_consts_t &hw_consts)
+    const CONTROL_PROTOCOL__hw_consts_t &hw_consts, const ProtoHEFHwArch &hw_arch)
 {
     CHECK(resources_manager.get_supported_features().padded_ddr_buffers, HAILO_INVALID_HEF,
         "Failed opening non-compatible HEF that uses the following deprecated features: host-managed DDR buffers." 
         "Please re-compile the HEF using a newer Dataflow Compiler version (v3.11.0 or newer)");
-    // Allocate resources and prepare ddr_info
 
-    DdrChannelsInfo ddr_pair_info = {};
-    ddr_pair_info.h2d_stream_index = layer_info.connected_context_info.stream_index;
-    ddr_pair_info.d2h_stream_index = layer_info.stream_index;
-    ddr_pair_info.network_index = layer_info.network_index;
-
-    // It is assumed that output channels are parsed before input channels. 
+    // It is assumed that output channels are parsed before input channels.
     // Allocate vdma channel index for both edges
-    const auto h2d_layer_identifier = std::make_tuple(LayerType::DDR, layer_info.name, ddr_pair_info.h2d_stream_index);
+    const auto h2d_stream_index = layer_info.connected_context_info.stream_index;
+    const auto h2d_layer_identifier = std::make_tuple(LayerType::DDR, HAILO_H2D_STREAM, 
+            layer_info.name, h2d_stream_index);
     const auto h2d_channel_id = resources_manager.get_available_channel_id(h2d_layer_identifier,
         HailoRTDriver::DmaDirection::H2D, layer_info.connected_context_info.dma_engine_index);
     CHECK_EXPECTED_AS_STATUS(h2d_channel_id);
-    ddr_pair_info.h2d_channel_id = h2d_channel_id.value();
 
-    const auto d2h_layer_identifier = std::make_tuple(LayerType::DDR, layer_info.name, ddr_pair_info.d2h_stream_index);
+    const auto d2h_stream_index = layer_info.stream_index;
+    const auto d2h_layer_identifier = std::make_tuple(LayerType::DDR, HAILO_D2H_STREAM, 
+            layer_info.name, d2h_stream_index);
     const auto d2h_channel_id = resources_manager.get_available_channel_id(d2h_layer_identifier,
         HailoRTDriver::DmaDirection::D2H, layer_info.dma_engine_index);
     CHECK_EXPECTED_AS_STATUS(d2h_channel_id);
+
+    // In DDR layer there is no residue - so can ignore descriptor size
+    const auto IGNORE_DESCRIPTOR_SIZE = 0;
+    // Send layer info with updated shmifo size
+    auto layer_info_updated_shmifo = layer_info;
+    if (layer_info_updated_shmifo.max_shmifo_size == 0) {
+        layer_info_updated_shmifo.max_shmifo_size = hw_consts.default_initial_credit_size;
+    }
+
+    auto max_periph_bytes = HefConfigurator::max_periph_bytes_value(DeviceBase::hef_arch_to_device_arch(hw_arch));
+    CHECK_EXPECTED_AS_STATUS(max_periph_bytes, "Error calculating max periph bytes per buffer");
+    const auto periph_values = calculate_periph_requirements(layer_info_updated_shmifo, IGNORE_DESCRIPTOR_SIZE,
+        resources_manager.get_supported_features().periph_calculation_in_hailort, max_periph_bytes.value());
+    CHECK_EXPECTED_AS_STATUS(periph_values);
+
+    const auto row_size = std::get<0>(periph_values.value());
+    const auto min_buffered_rows = layer_info.ddr_info.min_buffered_rows;
+
+    // Allocate the ddr buffer
+    auto ddr_buffer = resources_manager.create_intermediate_buffer(row_size, min_buffered_rows,
+        d2h_stream_index, layer_info.context_index, d2h_channel_id.value(),
+        IntermediateBuffer::StreamingType::CIRCULAR_CONTINUOS);
+    CHECK_EXPECTED_AS_STATUS(ddr_buffer);
+
+    DdrChannelsInfo ddr_pair_info{};
+    ddr_pair_info.h2d_stream_index = h2d_stream_index;
+    ddr_pair_info.d2h_stream_index = d2h_stream_index;
+    ddr_pair_info.network_index = layer_info.network_index;
+    ddr_pair_info.h2d_channel_id = h2d_channel_id.value();
     ddr_pair_info.d2h_channel_id = d2h_channel_id.value();
-
-    ddr_pair_info.row_size = layer_info.nn_stream_config.core_bytes_per_buffer;
-    ddr_pair_info.min_buffered_rows = layer_info.ddr_info.min_buffered_rows;
+    ddr_pair_info.row_size = row_size;
+    ddr_pair_info.min_buffered_rows = min_buffered_rows;
     ddr_pair_info.total_buffers_per_frame = layer_info.ddr_info.total_buffers_per_frame;
-
-    // Create the ddr buffer
-    auto ddr_channels_pair = context_resources.create_ddr_channels_pair(ddr_pair_info);
-    CHECK_EXPECTED_AS_STATUS(ddr_channels_pair);
+    ddr_pair_info.host_buffer_info = ddr_buffer->get().get_host_buffer_info();
+    context_resources.add_ddr_channels_info(ddr_pair_info);
 
     // On ddr layers, we assume the periph credit size is aligned to the size of descriptor, so we don't want to
     // optimize the credits.
     const bool should_optimize_credits = false;
-    auto local_layer_info = update_layer_info(layer_info, ddr_channels_pair->get().get_host_buffer_info(), hw_consts,
-        should_optimize_credits);
+    const bool is_periph_calculated_in_hailort = resources_manager.get_supported_features().periph_calculation_in_hailort;
+    auto local_layer_info = update_layer_info(layer_info, ddr_buffer->get().get_host_buffer_info(), hw_consts,
+        hw_arch, should_optimize_credits, is_periph_calculated_in_hailort);
     CHECK_EXPECTED_AS_STATUS(local_layer_info);
 
-    context_resources.add_edge_layer(local_layer_info.value(), ddr_pair_info.d2h_channel_id,
-        ddr_channels_pair->get().get_host_buffer_info());
+    auto status = context_resources.add_edge_layer(local_layer_info.value(), ddr_pair_info.d2h_channel_id,
+        ddr_buffer->get().get_host_buffer_info(), resources_manager.get_supported_features());
+    CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
 }
 
-static hailo_status fill_ddr_input_layer(ContextResources &context_resources,
-    const LayerInfo &layer_info, const CONTROL_PROTOCOL__hw_consts_t &hw_consts)
+static hailo_status fill_ddr_input_layer(ContextResources &context_resources, ResourcesManager &resources_manager,
+    const LayerInfo &layer_info, const CONTROL_PROTOCOL__hw_consts_t &hw_consts, const ProtoHEFHwArch &hw_arch)
 {
     auto connected_stream_index = layer_info.connected_context_info.stream_index;
-    auto ddr_channels_pair = context_resources.get_ddr_channels_pair(connected_stream_index);
-    CHECK(ddr_channels_pair, HAILO_INVALID_HEF, "Matching DDR layer as not found for context {} src stream {}",
+    auto ddr_info = context_resources.get_ddr_channels_info(connected_stream_index);
+    CHECK_EXPECTED_AS_STATUS(ddr_info, "Matching DDR layer as not found for context {} src stream {}",
         layer_info.context_index, connected_stream_index);
-
-    const auto ddr_info = ddr_channels_pair->get().info();
     LOGGER__DEBUG("DDR layer: input stream_index: {}, output stream_index: {}, h2d_channel {}, d2h_channel: {}.",
-        ddr_info.h2d_stream_index, ddr_info.d2h_stream_index, ddr_info.h2d_channel_id, ddr_info.d2h_channel_id);
+        ddr_info->h2d_stream_index, ddr_info->d2h_stream_index, ddr_info->h2d_channel_id, ddr_info->d2h_channel_id);
 
-    CHECK(layer_info.stream_index == ddr_info.h2d_stream_index, HAILO_INVALID_HEF, "DDR channel pair mismatch in h2d channel");
-    CHECK(layer_info.connected_context_info.stream_index == ddr_info.d2h_stream_index, HAILO_INVALID_HEF, "DDR channel pair mismatch in d2h channel");
-    CHECK(layer_info.network_index == ddr_info.network_index, HAILO_INVALID_HEF, "DDR channel pair mismatch network_index");
+    CHECK(layer_info.stream_index == ddr_info->h2d_stream_index, HAILO_INVALID_HEF, "DDR channel pair mismatch in h2d channel");
+    CHECK(layer_info.connected_context_info.stream_index == ddr_info->d2h_stream_index, HAILO_INVALID_HEF, "DDR channel pair mismatch in d2h channel");
+    CHECK(layer_info.network_index == ddr_info->network_index, HAILO_INVALID_HEF, "DDR channel pair mismatch network_index");
 
     // On ddr layers, we assume the periph credit size is aligned to the size of descriptor, so we don't want to
     // optimize the credits.
     const bool should_optimize_credits = false;
-    auto local_layer_info = update_layer_info(layer_info, ddr_channels_pair->get().get_host_buffer_info(), hw_consts,
-        should_optimize_credits);
+    const bool is_periph_calculated_in_hailort = resources_manager.get_supported_features().periph_calculation_in_hailort;
+    auto local_layer_info = update_layer_info(layer_info, ddr_info->host_buffer_info, hw_consts,
+        hw_arch, should_optimize_credits, is_periph_calculated_in_hailort);
     CHECK_EXPECTED_AS_STATUS(local_layer_info);
 
-    context_resources.add_edge_layer(local_layer_info.value(), ddr_channels_pair->get().info().h2d_channel_id,
-        ddr_channels_pair->get().get_host_buffer_info());
+    auto status = context_resources.add_edge_layer(local_layer_info.value(), ddr_info->h2d_channel_id,
+        ddr_info->host_buffer_info, resources_manager.get_supported_features());
+    CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
 }
@@ -275,11 +397,10 @@ static hailo_status add_ddr_buffers_info(std::vector<ContextSwitchConfigActionPt
     const ContextResources &context_resources)
 {
     bool start_fw_ddr_buffer_task = false;
-    for (auto& ddr_channels_pair : context_resources.get_ddr_channels_pairs()) {
-        if (ddr_channels_pair.need_manual_credit_management()) {
-            const auto ddr_info = ddr_channels_pair.info();
+    for (const auto &ddr_info : context_resources.get_ddr_channels_infos()) {
+        if (ddr_info.need_manual_credit_management()) {
             auto ddr_pair_action = DdrPairInfoAction::create(ddr_info.h2d_channel_id, ddr_info.d2h_channel_id,
-                ddr_info.network_index, ddr_channels_pair.descriptors_per_frame(), ddr_channels_pair.descs_count());
+                ddr_info.network_index, ddr_info.descriptors_per_frame(), ddr_info.descs_count());
             CHECK_EXPECTED_AS_STATUS(ddr_pair_action);
             configuration_actions.emplace_back(ddr_pair_action.release());
 
@@ -299,7 +420,7 @@ static hailo_status add_ddr_buffers_info(std::vector<ContextSwitchConfigActionPt
 static hailo_status parse_and_fill_edge_layers_mapping(
     ContextResources &context_resources,
     const ContextMetadata &context_metadata,
-    ResourcesManager &resources_manager)
+    ResourcesManager &resources_manager, const ProtoHEFHwArch &hw_arch)
 {
     hailo_status status = HAILO_UNINITIALIZED;
 
@@ -313,41 +434,38 @@ static hailo_status parse_and_fill_edge_layers_mapping(
     // We parse ddr inputs before boundary/inter-context because otherwise on C2C mode we may lose some credit.
 
     for (const auto &output_layer_info : context_metadata.get_ddr_output_layers()) {
-        status = fill_ddr_output_layer(context_resources, resources_manager, output_layer_info, *hw_consts);
+        status = fill_ddr_output_layer(context_resources, resources_manager, output_layer_info, *hw_consts, hw_arch);
         CHECK_SUCCESS(status);
     }
 
     for (const auto &output_layer_info : context_metadata.get_boundary_output_layers()) {
         status = fill_boundary_output_layer(context_resources, resources_manager, output_layer_info,
-            *hw_consts, should_optimize_credits);
+            *hw_consts, hw_arch, should_optimize_credits);
         CHECK_SUCCESS(status);
     }
 
     for (const auto &output_layer_info : context_metadata.get_inter_context_output_layers()) {
         status = fill_inter_context_output_layer(context_resources, resources_manager, output_layer_info,
-            *hw_consts, should_optimize_credits);
+            *hw_consts, hw_arch, should_optimize_credits);
         CHECK_SUCCESS(status);
     }
 
     for (const auto &input_layer_info : context_metadata.get_ddr_input_layers()) {
-        status = fill_ddr_input_layer(context_resources, input_layer_info, *hw_consts);
+        status = fill_ddr_input_layer(context_resources, resources_manager, input_layer_info, *hw_consts, hw_arch);
         CHECK_SUCCESS(status);
     }
 
     for (const auto &input_layer_info : context_metadata.get_boundary_input_layers()) {
         status = fill_boundary_input_layer(context_resources, resources_manager, input_layer_info,
-            *hw_consts, should_optimize_credits);
+            *hw_consts, hw_arch, should_optimize_credits);
         CHECK_SUCCESS(status);
     }
 
     for (const auto &input_layer_info : context_metadata.get_inter_context_input_layers()) {
         status = fill_inter_context_input_layer(context_resources, resources_manager, input_layer_info,
-            *hw_consts, should_optimize_credits);
+            *hw_consts, hw_arch, should_optimize_credits);
         CHECK_SUCCESS(status);
     }
-
-    status = context_resources.validate_edge_layers();
-    CHECK_SUCCESS(status);
 
     /* UN-Lock resources at the end of the context - 
         h2d inter-context, d2h inter-context and DDR buffer channels */
@@ -362,13 +480,13 @@ static hailo_status parse_and_fill_edge_layers_mapping(
     }
 
     for (const auto &output_layer_info : context_metadata.get_ddr_output_layers()) {
-        const auto h2d_layer_identifier = std::make_tuple(LayerType::DDR, output_layer_info.name,
-            output_layer_info.connected_context_info.stream_index);
+        const auto h2d_layer_identifier = std::make_tuple(LayerType::DDR, HAILO_H2D_STREAM, 
+                output_layer_info.name, output_layer_info.connected_context_info.stream_index);
         status = resources_manager.free_channel_index(h2d_layer_identifier);
         CHECK_SUCCESS(status);
 
-        const auto d2h_layer_identifier = std::make_tuple(LayerType::DDR, output_layer_info.name,
-            output_layer_info.stream_index);
+        const auto d2h_layer_identifier = std::make_tuple(LayerType::DDR, HAILO_D2H_STREAM, 
+                output_layer_info.name, output_layer_info.stream_index);
         status = resources_manager.free_channel_index(d2h_layer_identifier);
         CHECK_SUCCESS(status);
     }
@@ -536,15 +654,28 @@ static hailo_status proccess_write_ccw_action(const ContextSwitchConfigActionPtr
     return HAILO_SUCCESS;
 }
 
-static Expected<uint8_t> find_dummy_stream(const LayerInfo &layer_info, const ContextResources &context_resources)
+// TODO HRT-10073: change to supported features list
+static bool is_hailo15_device_type(const hailo_device_architecture_t dev_arch)
 {
-    const auto other_direction = (HAILO_H2D_STREAM == layer_info.direction) ? HAILO_D2H_STREAM : HAILO_H2D_STREAM;
-    const auto other_direction_edge_layers = context_resources.get_edge_layers(other_direction);
-    CHECK_AS_EXPECTED(!other_direction_edge_layers.empty(), HAILO_INTERNAL_FAILURE, "Couldn't find dummy stream");
-    return Expected<uint8_t>(other_direction_edge_layers.front().layer_info.stream_index);
+    // Compare with HAILO15 device arch
+    return (HAILO_ARCH_HAILO15 == dev_arch);
 }
 
-static hailo_status add_change_vdma_to_stream_mapping(
+static Expected<uint8_t> find_dummy_stream(const LayerInfo &layer_info, const ContextResources &context_resources,
+    const bool is_null_shmifo_supported)
+{
+    if (is_null_shmifo_supported) {
+        static const uint8_t DUMMY_STREAM_INDEX = 31;
+        return Expected<uint8_t>(DUMMY_STREAM_INDEX);
+    } else {
+        const auto other_direction = (HAILO_H2D_STREAM == layer_info.direction) ? HAILO_D2H_STREAM : HAILO_H2D_STREAM;
+        const auto other_direction_edge_layers = context_resources.get_edge_layers(other_direction);
+        CHECK_AS_EXPECTED(!other_direction_edge_layers.empty(), HAILO_INTERNAL_FAILURE, "Couldn't find dummy stream");
+        return Expected<uint8_t>(other_direction_edge_layers.front().layer_info.stream_index);
+    }
+}
+
+static hailo_status add_change_vdma_to_stream_mapping(const ProtoHEFHwArch &hw_arch,
     const CoreOpMetadata &core_op_metadata, const ResourcesManager &resources_manager,
     ContextResources &context_resources, uint8_t context_index,
     std::vector<ContextSwitchConfigActionPtr> &processed_configuration_actions)
@@ -557,7 +688,8 @@ static hailo_status add_change_vdma_to_stream_mapping(
         const bool is_dummy_stream = layer_info.context_index != context_index;
         uint8_t stream_index = layer_info.stream_index;
         if (is_dummy_stream) {
-            auto dummy_stream_index = find_dummy_stream(layer_info, context_resources);
+            auto dummy_stream_index = find_dummy_stream(layer_info, context_resources,
+                is_hailo15_device_type(DeviceBase::hef_arch_to_device_arch(hw_arch)));
             CHECK_EXPECTED_AS_STATUS(dummy_stream_index);
             stream_index = *dummy_stream_index;
         }
@@ -603,9 +735,9 @@ static hailo_status push_edge_layer_activation_actions(
 
     for (const auto &edge_layer : context_resources.get_edge_layers(LayerType::DDR, HAILO_H2D_STREAM)) {
         const auto d2h_stream_index = edge_layer.layer_info.connected_context_info.stream_index;
-        auto pair = context_resources.get_ddr_channels_pair(d2h_stream_index);
-        CHECK_EXPECTED_AS_STATUS(pair);
-        const auto d2h_channel_id = pair->get().info().d2h_channel_id;
+        auto ddr_channels_info = context_resources.get_ddr_channels_info(d2h_stream_index);
+        CHECK_EXPECTED_AS_STATUS(ddr_channels_info);
+        const auto d2h_channel_id = ddr_channels_info->d2h_channel_id;
 
         auto activate_action = ActivateDdrInputChannelAction::create(edge_layer.channel_id,
             edge_layer.layer_info.stream_index, edge_layer.layer_info.nn_stream_config, edge_layer.buffer_info,
@@ -633,7 +765,8 @@ static hailo_status push_edge_layer_activation_actions(
     return HAILO_SUCCESS;
 }
 
-static hailo_status proccess_trigger_new_data_input_action(const ContextSwitchConfigActionPtr &configuration_action,
+static hailo_status proccess_trigger_new_data_input_action(const ProtoHEFHwArch &hw_arch,
+    const ContextSwitchConfigActionPtr &configuration_action,
     uint32_t trigger_new_data_from_input_group_start,
     uint32_t trigger_new_data_from_input_group_end,
     const uint32_t &action_index,
@@ -648,7 +781,7 @@ static hailo_status proccess_trigger_new_data_input_action(const ContextSwitchCo
         CHECK_SUCCESS(status);
 
         if (!is_single_context) {
-            status = add_change_vdma_to_stream_mapping(core_op_metadata, resources_manager,
+            status = add_change_vdma_to_stream_mapping(hw_arch, core_op_metadata, resources_manager,
                 context_resources, context_index, processed_configuration_actions);
             CHECK_SUCCESS(status);
         }
@@ -734,8 +867,8 @@ static hailo_status add_config_channel_activation_actions(std::vector<ContextSwi
 // * TriggerNewDataFromDataInput for each input layer (inter context/ boundary) in the context. This action is given
 //   from the HEF.
 // * Finally StartBurstCreditsTaskAction
-static hailo_status handle_edge_layer_activation_actions(std::vector<ContextSwitchConfigActionPtr> &configuration_actions,
-    const CoreOpMetadata &core_op_metadata,
+static hailo_status handle_edge_layer_activation_actions(const ProtoHEFHwArch &hw_arch,
+    std::vector<ContextSwitchConfigActionPtr> &configuration_actions, const CoreOpMetadata &core_op_metadata,
     const ResourcesManager &resources_manager, ContextResources &context_resources, uint8_t context_index,
     bool is_single_context)
 {
@@ -751,7 +884,7 @@ static hailo_status handle_edge_layer_activation_actions(std::vector<ContextSwit
     for (uint32_t action_index = 0; action_index < configuration_actions.size(); action_index++) {
         const auto &configuration_action = configuration_actions[action_index];
         if (ContextSwitchConfigAction::Type::TriggerNewDataFromDataInput == configuration_action->get_type()) {
-            auto status = proccess_trigger_new_data_input_action(configuration_action,
+            auto status = proccess_trigger_new_data_input_action(hw_arch, configuration_action,
                 trigger_new_data_from_input_group_start, trigger_new_data_from_input_group_end, action_index,
                 core_op_metadata, resources_manager, context_resources, context_index, processed_configuration_actions, is_single_context);
             CHECK_SUCCESS(status);
@@ -809,13 +942,6 @@ static hailo_status handle_repeated_actions(std::vector<ContextSwitchConfigActio
     return HAILO_SUCCESS;
 }
 
-static bool is_hailo15_device_type(const ProtoHEFHwArch &hw_arch)
-{
-    // Compare with HW_ARCH__LAVENDER and HW_ARCH__GINGER to support hefs compiled for them
-    return (PROTO__HW_ARCH__GINGER == hw_arch) || (PROTO__HW_ARCH__LAVENDER == hw_arch) ||
-        (PROTO__HW_ARCH__HAILO15H == hw_arch);
-}
-
 static hailo_status write_action_list(const ContextResources & context_resources, ContextSwitchBufferBuilder &builder,
     const std::vector<ContextSwitchConfigActionPtr> &actions)
 {
@@ -854,17 +980,17 @@ static hailo_status fill_context_recipes_for_multi_context(const ProtoHEFHwArch 
     hailo_status status = HAILO_UNINITIALIZED;
 
     // Add edge layers mapping
-    status = parse_and_fill_edge_layers_mapping(context_resources, context_metadata, resources_manager);
+    status = parse_and_fill_edge_layers_mapping(context_resources, context_metadata, resources_manager, hw_arch);
     CHECK_SUCCESS(status);
 
     // Parse context
     std::vector<ContextSwitchConfigActionPtr> actions = context_metadata.get_actions();
 
-    const auto support_pre_fetch = is_hailo15_device_type(hw_arch);
+    const auto support_pre_fetch = is_hailo15_device_type(DeviceBase::hef_arch_to_device_arch(hw_arch));
     status = add_fetch_config_actions(actions, context_resources.get_config_buffers(), support_pre_fetch);
     CHECK_SUCCESS(status);
 
-    status = handle_edge_layer_activation_actions(actions, core_op_metadata, resources_manager,
+    status = handle_edge_layer_activation_actions(hw_arch, actions, core_op_metadata, resources_manager,
         context_resources, context_index, is_single_context);
     CHECK_SUCCESS(status);
 
@@ -899,7 +1025,7 @@ static hailo_status create_boundary_channels(ResourcesManager &resources_manager
 
 static hailo_status fill_activation_config_recepies_for_multi_context(
     ContextResources &context_resources, ResourcesManager &resources_manager,
-    std::shared_ptr<CoreOpMetadata> core_op_metadata)
+    std::shared_ptr<CoreOpMetadata> core_op_metadata, const ProtoHEFHwArch &hw_arch)
 {
     auto hw_consts = Control::get_hw_consts(resources_manager.get_device());
     CHECK_EXPECTED_AS_STATUS(hw_consts);
@@ -908,18 +1034,15 @@ static hailo_status fill_activation_config_recepies_for_multi_context(
 
     for (const auto &layer_info : core_op_metadata->get_output_layer_infos()){
         auto status = fill_boundary_output_layer(context_resources, resources_manager, layer_info, *hw_consts,
-            should_optimize_credits);
+            hw_arch, should_optimize_credits);
         CHECK_SUCCESS(status);
     }
 
     for (const auto &layer_info : core_op_metadata->get_input_layer_infos()) {
         auto status = fill_boundary_input_layer(context_resources, resources_manager, layer_info, *hw_consts,
-            should_optimize_credits);
+            hw_arch, should_optimize_credits);
         CHECK_SUCCESS(status);
     }
-
-    auto status = context_resources.validate_edge_layers();
-    CHECK_SUCCESS(status);
 
     std::vector<ContextSwitchConfigActionPtr> actions;
     for (const auto &edge_layer : context_resources.get_edge_layers(LayerType::BOUNDARY)) {
@@ -933,6 +1056,38 @@ static hailo_status fill_activation_config_recepies_for_multi_context(
     return write_action_list(context_resources, context_resources.builder(), actions);
 }
 
+static Expected<ContextSwitchConfigActionPtr> create_switch_lcu_batch_action(const ContextSwitchConfigActionPtr action,
+    ContextResources &context_resources)
+{
+    uint8_t cluster_index = 0;
+    uint8_t lcu_index = 0;
+    uint8_t network_index = 0;
+    uint32_t kernel_done_count = 0;
+
+    CHECK_AS_EXPECTED((ContextSwitchConfigAction::Type::EnableLcuDefault == action->get_type()) ||
+        (ContextSwitchConfigAction::Type::EnableLcuNonDefault == action->get_type()), HAILO_INVALID_ARGUMENT,
+        "Invalid action type - must be enable lcu (default or non default), Received type {}", action->get_type());
+
+    const auto params_buffer = action->serialize_params(context_resources);
+    CHECK_EXPECTED(params_buffer);
+
+    if (ContextSwitchConfigAction::Type::EnableLcuDefault == action->get_type()) {
+        const auto params = reinterpret_cast<const CONTEXT_SWITCH_DEFS__enable_lcu_action_default_data_t*>(params_buffer.value().data());
+        cluster_index = CONTEXT_SWITCH_DEFS__PACKED_LCU_ID_CLUSTER_INDEX_READ(params->packed_lcu_id);
+        lcu_index = CONTEXT_SWITCH_DEFS__PACKED_LCU_ID_LCU_INDEX_READ(params->packed_lcu_id);
+        network_index = params->network_index;
+        kernel_done_count = CONTEXT_SWITCH_DEFS__ENABLE_LCU_DEFAULT_KERNEL_COUNT;
+    } else {
+        const auto params = reinterpret_cast<const CONTEXT_SWITCH_DEFS__enable_lcu_action_non_default_data_t*>(params_buffer.value().data());
+        cluster_index = CONTEXT_SWITCH_DEFS__PACKED_LCU_ID_CLUSTER_INDEX_READ(params->packed_lcu_id);
+        lcu_index = CONTEXT_SWITCH_DEFS__PACKED_LCU_ID_LCU_INDEX_READ(params->packed_lcu_id);
+        network_index = params->network_index;
+        kernel_done_count = params->kernel_done_count;
+    }
+
+    return SwitchLcuBatchAction::create(cluster_index, lcu_index, network_index, kernel_done_count);
+}
+
 static hailo_status fill_batch_switching_context_config_recepies_for_multi_context(
     ContextResources &context_resources, const CoreOpMetadata &core_op_metadata)
 {
@@ -943,14 +1098,19 @@ static hailo_status fill_batch_switching_context_config_recepies_for_multi_conte
     CHECK_EXPECTED_AS_STATUS(reset_ddr_action);
     actions.emplace_back(reset_ddr_action.release());
 
-    // We need to re-enable all the lcus of the first context since some of their config regs are batch dependent.
-    // => We'll filter out all of the "enable lcu" actions from the preliminary context
-    static const std::set<ContextSwitchConfigAction::Type> BATCH_SWITCHING_ACTIONS = {
+    // Find all the enabled lcus from the preliminary context in order to create coresponding switch lcu batch actions to run
+    // In the batch switch context 
+    static const std::set<ContextSwitchConfigAction::Type> ENABLE_LCU_ACTIONS = {
         ContextSwitchConfigAction::Type::EnableLcuDefault,
         ContextSwitchConfigAction::Type::EnableLcuNonDefault
     };
-    const auto batch_switch_actions = core_op_metadata.preliminary_context().get_actions_of_type(BATCH_SWITCHING_ACTIONS);
-    actions.insert(actions.end(), batch_switch_actions.begin(), batch_switch_actions.end());
+
+    const auto batch_switch_actions = core_op_metadata.preliminary_context().get_actions_of_type(ENABLE_LCU_ACTIONS);
+    for (const auto &action : batch_switch_actions) {
+        auto switch_lcu_batch_action = create_switch_lcu_batch_action(action, context_resources);
+        CHECK_EXPECTED_AS_STATUS(switch_lcu_batch_action);
+        actions.insert(actions.end(), switch_lcu_batch_action.release());
+    }
 
     auto status = handle_repeated_actions(actions);
     CHECK_SUCCESS(status);
@@ -969,19 +1129,19 @@ static hailo_status fill_preliminary_config_recepies_for_multi_context(const Pro
         // Add edge layers mapping (only preliminary_run_asap networks have edge layers in the preliminary context)
         assert(PRELIMINARY_CONTEXT_INDEX < core_op_metadata->dynamic_contexts().size());
         auto status = parse_and_fill_edge_layers_mapping(context_resources,
-            core_op_metadata->dynamic_contexts()[PRELIMINARY_CONTEXT_INDEX], resources_manager);
+            core_op_metadata->dynamic_contexts()[PRELIMINARY_CONTEXT_INDEX], resources_manager, hw_arch);
         CHECK_SUCCESS(status);
     }
 
     // Parse preliminary config
     std::vector<ContextSwitchConfigActionPtr> actions = preliminary_context.get_actions();
 
-    const auto support_pre_fetch = is_hailo15_device_type(hw_arch);
+    const auto support_pre_fetch = is_hailo15_device_type(DeviceBase::hef_arch_to_device_arch(hw_arch));
     auto status = add_fetch_config_actions(actions, context_resources.get_config_buffers(), support_pre_fetch);
     CHECK_SUCCESS(status);
 
     if (resources_manager.get_supported_features().preliminary_run_asap) {
-        status = handle_edge_layer_activation_actions(actions, *core_op_metadata, resources_manager,
+        status = handle_edge_layer_activation_actions(hw_arch, actions, *core_op_metadata, resources_manager,
             context_resources, PRELIMINARY_CONTEXT_INDEX, is_single_context);
         CHECK_SUCCESS(status);
     }
@@ -1026,7 +1186,7 @@ Expected<std::shared_ptr<ResourcesManager>> ResourcesManagerBuilder::build(uint8
     auto activation_context = resources_manager->add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_ACTIVATION);
     CHECK_EXPECTED(activation_context);
     status = fill_activation_config_recepies_for_multi_context(activation_context.value().get(),
-        resources_manager.value(), core_op_metadata);
+        resources_manager.value(), core_op_metadata, hw_arch);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     auto batch_switching_context = resources_manager->add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_BATCH_SWITCHING);

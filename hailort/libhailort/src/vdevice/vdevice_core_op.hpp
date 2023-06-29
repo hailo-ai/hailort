@@ -16,7 +16,7 @@
 #include "hailo/network_group.hpp"
 #include "hailo/vstream.hpp"
 
-#include "vdevice/scheduler/network_group_scheduler.hpp"
+#include "vdevice/scheduler/scheduler.hpp"
 #include "vdevice/pipeline_multiplexer.hpp"
 
 #include <cstdint>
@@ -28,7 +28,7 @@ namespace hailort
 class VDeviceActivatedCoreOp : public ActivatedCoreOp
 {
 public:
-    static Expected<std::unique_ptr<ActivatedNetworkGroup>> create(std::vector<std::shared_ptr<CoreOp>> &core_ops,
+    static Expected<std::unique_ptr<ActivatedNetworkGroup>> create(std::map<device_id_t, std::vector<std::shared_ptr<CoreOp>>> &core_ops,
         std::map<std::string, std::shared_ptr<InputStream>> &input_streams,
         std::map<std::string, std::shared_ptr<OutputStream>> &output_streams,
         const hailo_activate_network_group_params_t &network_group_params, EventPtr core_op_activated_event,
@@ -76,7 +76,7 @@ private:
 class VDeviceCoreOp : public CoreOp
 {
 public:
-    static Expected<std::shared_ptr<VDeviceCoreOp>> create(std::vector<std::shared_ptr<CoreOp>> core_ops,
+    static Expected<std::shared_ptr<VDeviceCoreOp>> create(const std::map<device_id_t, std::vector<std::shared_ptr<CoreOp>>> &core_ops,
         CoreOpsSchedulerWeakPtr core_ops_scheduler, const std::string &hef_hash);
 
     static Expected<std::shared_ptr<VDeviceCoreOp>> duplicate(std::shared_ptr<VDeviceCoreOp> other);
@@ -112,10 +112,19 @@ public:
         return false;
     }
 
-    uint32_t multiplexer_duplicates_count()
+    uint32_t multiplexer_duplicates_count() const
     {
-        assert(m_multiplexer->instances_count() > 0);
-        return static_cast<uint32_t>(m_multiplexer->instances_count() - 1);
+        if (m_multiplexer) {
+            assert(m_multiplexer->instances_count() > 0);
+            return static_cast<uint32_t>(m_multiplexer->instances_count() - 1);
+        } else {
+            return 0;
+        }
+    }
+
+    bool multiplexer_supported() const
+    {
+        return nullptr != m_multiplexer;
     }
 
     virtual Expected<hailo_stream_interface_t> get_default_streams_interface() override;
@@ -155,13 +164,15 @@ public:
         const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size,
         bool resume_pending_stream_transfers) override;
 
-    Expected<std::shared_ptr<VdmaConfigCoreOp>> get_core_op_by_device_index(uint32_t device_index);
+    Expected<std::shared_ptr<VdmaConfigCoreOp>> get_core_op_by_device_id(const device_id_t &device_bdf_id);
+
+    virtual Expected<HwInferResults> run_hw_infer_estimator() override;
 
 private:
-    VDeviceCoreOp(std::vector<std::shared_ptr<CoreOp>> core_ops, CoreOpsSchedulerWeakPtr core_ops_scheduler,
+    VDeviceCoreOp(const std::map<device_id_t, std::vector<std::shared_ptr<CoreOp>>> &core_ops, CoreOpsSchedulerWeakPtr core_ops_scheduler,
         const std::string &hef_hash, hailo_status &status);
 
-    std::vector<std::shared_ptr<CoreOp>> m_core_ops;
+    std::map<device_id_t, std::vector<std::shared_ptr<CoreOp>>> m_core_ops;
     CoreOpsSchedulerWeakPtr m_core_ops_scheduler;
     scheduler_core_op_handle_t m_scheduler_handle;
     multiplexer_core_op_handle_t m_multiplexer_handle;

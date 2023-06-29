@@ -8,6 +8,7 @@
  **/
 
 #include "common/os_utils.hpp"
+#include "common/utils.hpp"
 #include "hailo/hailort.h"
 
 #include <windows.h>
@@ -27,6 +28,54 @@ HailoRTOSLogger::HailoRTOSLogger()
 uint32_t OsUtils::get_curr_pid()
 {
     return static_cast<uint32_t>(GetCurrentProcessId());
+}
+
+bool OsUtils::is_pid_alive(uint32_t pid)
+{
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
+    if (hProcess == NULL) {
+        // Process is not running
+        return false;
+    }
+
+    DWORD exitCode;
+    BOOL result = GetExitCodeProcess(hProcess, &exitCode);
+
+    CloseHandle(hProcess);
+
+    if (result && exitCode == STILL_ACTIVE) {
+        return true;
+    }
+    else {
+        return false;
+    }
+}
+
+void OsUtils::set_current_thread_name(const std::string &name)
+{
+    (void)name;
+}
+
+hailo_status OsUtils::set_current_thread_affinity(uint8_t cpu_index)
+{
+    const DWORD_PTR affinity_mask = static_cast<DWORD_PTR>(1ULL << cpu_index);
+    CHECK(0 != SetThreadAffinityMask(GetCurrentThread(), affinity_mask), HAILO_INTERNAL_FAILURE,
+        "SetThreadAffinityMask failed. LE={}", GetLastError());
+
+    return HAILO_SUCCESS;
+}
+
+static size_t get_page_size_impl()
+{
+    SYSTEM_INFO system_info{};
+    GetSystemInfo(&system_info);
+    return system_info.dwPageSize;
+}
+
+size_t OsUtils::get_page_size()
+{
+    static const auto page_size = get_page_size_impl();
+    return page_size;
 }
 
 CursorAdjustment::CursorAdjustment()

@@ -1017,6 +1017,7 @@ typedef enum {
     CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_COUNT,
 } CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t;
 
+#define CONTROL_PROTOCOL__INIFINITE_BATCH_COUNT (0)
 typedef struct {
     uint32_t state_machine_status_length;
     uint8_t state_machine_status;
@@ -1024,6 +1025,8 @@ typedef struct {
     uint8_t application_index;
     uint32_t dynamic_batch_size_length;
     uint16_t dynamic_batch_size;
+    uint32_t batch_count_length;
+    uint16_t batch_count;
     uint32_t keep_nn_config_during_reset_length;
     uint8_t keep_nn_config_during_reset;
 } CONTROL_PROTOCOL__change_context_switch_status_request_t;
@@ -1315,6 +1318,8 @@ typedef struct {
     uint8_t application_index;
     uint32_t dynamic_batch_size_length;
     uint16_t dynamic_batch_size;
+    uint32_t batch_count_length;
+    uint16_t batch_count;
     uint32_t channels_info_length;
     CONTROL_PROTOCOL__hw_infer_channels_info_t channels_info;
 } CONTROL_PROTOCOL__change_hw_infer_status_request_t;

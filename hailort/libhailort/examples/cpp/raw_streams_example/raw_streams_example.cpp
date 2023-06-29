@@ -145,16 +145,7 @@ hailo_status infer(InputStreamRefVector &input_streams, OutputStreamRefVector &o
 
 int main()
 {
-    auto device_ids = Device::scan();
-    if (!device_ids) {
-        std::cerr << "Failed to scan, status = " << device_ids.status() << std::endl;
-        return device_ids.status();
-    }
-    if (device_ids->size() < 1){
-        std::cerr << "Failed to find a connected hailo device." << std::endl;
-        return HAILO_INVALID_OPERATION;
-    }
-    auto device = Device::create(device_ids->at(0));
+    auto device = Device::create();
     if (!device) {
         std::cerr << "Failed to create device " << device.status() << std::endl;
         return device.status();

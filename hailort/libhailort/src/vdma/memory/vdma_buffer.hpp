@@ -48,11 +48,11 @@ public:
         return static_cast<uint32_t>(DIV_ROUND_UP(buffer_size, page_size));
     }
 
-    virtual hailo_status read(void *buf_dst, size_t count, size_t offset, bool should_sync = true) = 0;
+    virtual hailo_status read(void *buf_dst, size_t count, size_t offset) = 0;
     virtual hailo_status write(const void *buf_src, size_t count, size_t offset) = 0;
 
     virtual Expected<uint32_t> program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
-        size_t desc_offset, bool is_circular) = 0;
+        size_t desc_offset) = 0;
     virtual hailo_status reprogram_device_interrupts_for_end_of_batch(size_t transfer_size, uint16_t batch_size,
         InterruptsDomain new_interrupts_domain) = 0;
         

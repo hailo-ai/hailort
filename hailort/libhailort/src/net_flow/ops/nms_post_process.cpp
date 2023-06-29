@@ -15,6 +15,44 @@ namespace hailort
 {
 namespace net_flow
 {
+
+    hailo_status NmsPostProcessOp::validate_metadata()
+    {
+        for (const auto& output_metadata : m_outputs_metadata) {
+            CHECK(HAILO_FORMAT_ORDER_HAILO_NMS == output_metadata.second.format.order, HAILO_INVALID_ARGUMENT, "The given output format order {} is not supported, "
+                "should be HAILO_FORMAT_ORDER_HAILO_NMS", HailoRTCommon::get_format_order_str(output_metadata.second.format.order));
+
+            CHECK(HAILO_FORMAT_TYPE_FLOAT32 == output_metadata.second.format.type, HAILO_INVALID_ARGUMENT, "The given output format type {} is not supported, "
+                "should be HAILO_FORMAT_TYPE_FLOAT32", HailoRTCommon::get_format_type_str(output_metadata.second.format.type));
+
+            CHECK(!(HAILO_FORMAT_FLAGS_TRANSPOSED & output_metadata.second.format.flags), HAILO_INVALID_ARGUMENT, "Output {} is marked as transposed, which is not supported for this model.",
+                output_metadata.first);
+            CHECK(!(HAILO_FORMAT_FLAGS_HOST_ARGMAX & output_metadata.second.format.flags), HAILO_INVALID_ARGUMENT, "Output {} is marked as argmax, which is not supported for this model.",
+                output_metadata.first);
+            CHECK(!(HAILO_FORMAT_FLAGS_QUANTIZED & output_metadata.second.format.flags), HAILO_INVALID_ARGUMENT, "Output {} is marked as quantized, which is not supported for this model.",
+                output_metadata.first);
+        }
+
+        assert(1 <= m_inputs_metadata.size());
+        const hailo_format_type_t& first_input_type = m_inputs_metadata.begin()->second.format.type;
+        for (const auto& input_metadata : m_inputs_metadata) {
+            CHECK(HAILO_FORMAT_ORDER_NHCW == input_metadata.second.format.order, HAILO_INVALID_ARGUMENT, "The given input format order {} is not supported, "
+                "should be HAILO_FORMAT_ORDER_NHCW", HailoRTCommon::get_format_order_str(input_metadata.second.format.order));
+
+            CHECK((HAILO_FORMAT_TYPE_UINT8 == input_metadata.second.format.type) ||
+                (HAILO_FORMAT_TYPE_UINT16 == input_metadata.second.format.type),
+                HAILO_INVALID_ARGUMENT, "The given input format type {} is not supported, should be HAILO_FORMAT_TYPE_UINT8 or HAILO_FORMAT_TYPE_UINT16",
+                HailoRTCommon::get_format_type_str(input_metadata.second.format.type));
+
+            CHECK(input_metadata.second.format.type == first_input_type, HAILO_INVALID_ARGUMENT,"All inputs format type should be the same");
+
+            CHECK(HAILO_FORMAT_FLAGS_QUANTIZED == input_metadata.second.format.flags, HAILO_INVALID_ARGUMENT, "The given input format flag is not supported,"
+                "should be HAILO_FORMAT_FLAGS_QUANTIZED");
+        }
+
+        return HAILO_SUCCESS;
+    }
+
     float NmsPostProcessOp::compute_iou(const hailo_bbox_float32_t &box_1, const hailo_bbox_float32_t &box_2)
     {
         const float overlap_area_width = std::min(box_1.x_max, box_2.x_max) - std::max(box_1.x_min, box_2.x_min);
@@ -64,10 +102,9 @@ namespace net_flow
         std::vector<uint32_t> &classes_detections_count)
     {
         // Calculate the number of detections before each class, to help us later calculate the buffer_offset for it's detections.
-        std::vector<uint32_t> num_of_detections_before;
-        num_of_detections_before.reserve(m_nms_config.classes);
+        std::vector<uint32_t> num_of_detections_before(m_nms_config.number_of_classes, 0);
         uint32_t ignored_detections_count = 0;
-        for (size_t class_idx = 0; class_idx < m_nms_config.classes; class_idx++) {
+        for (size_t class_idx = 0; class_idx < m_nms_config.number_of_classes; class_idx++) {
             if (classes_detections_count[class_idx] > m_nms_config.max_proposals_per_class) {
                 ignored_detections_count += (classes_detections_count[class_idx] - m_nms_config.max_proposals_per_class);
                 classes_detections_count[class_idx] = m_nms_config.max_proposals_per_class;
@@ -123,7 +160,7 @@ namespace net_flow
     std::string NmsPostProcessOp::get_nms_config_description()
     {
         auto config_info = fmt::format("Score threshold: {:.3f}, Iou threshold: {:.2f}, Classes: {}, Cross classes: {}", 
-                            m_nms_config.nms_score_th, m_nms_config.nms_iou_th, m_nms_config.classes, m_nms_config.cross_classes);
+                            m_nms_config.nms_score_th, m_nms_config.nms_iou_th, m_nms_config.number_of_classes, m_nms_config.cross_classes);
         if (m_nms_config.background_removal) {
             config_info += fmt::format(", Background removal index: {}", m_nms_config.background_removal_index);
         }

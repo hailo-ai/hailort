@@ -56,7 +56,6 @@ public:
 
     static Expected<std::unique_ptr<EthernetDevice>> create(const hailo_eth_device_info_t &device_info);
     static Expected<std::unique_ptr<EthernetDevice>> create(const std::string &ip_addr);
-    virtual Expected<hailo_device_architecture_t> get_architecture() const override;
     hailo_eth_device_info_t get_device_info() const;
     virtual const char* get_dev_id() const override;
 

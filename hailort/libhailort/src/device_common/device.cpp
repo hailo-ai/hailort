@@ -95,9 +95,9 @@ Expected<std::unique_ptr<Device>> Device::create()
 {
     auto device_ids = scan();
     CHECK_EXPECTED(device_ids, "Failed scan devices");
-    CHECK_AS_EXPECTED(device_ids->size() == 1, HAILO_INVALID_OPERATION,
-        "Expected only 1 device on the system (found {}). Pass device_id to create a specific device", device_ids->size());
+    CHECK_AS_EXPECTED(device_ids->size() >= 1, HAILO_INVALID_OPERATION, "There is no hailo device on the system");
 
+    // Choose the first device.
     return Device::create(device_ids->at(0));
 }
 
@@ -155,6 +155,31 @@ Expected<std::unique_ptr<Device>> Device::create_eth(const std::string &ip_addr)
     return device;
 }
 
+Expected<std::unique_ptr<Device>> Device::create_eth(const std::string &device_address, uint16_t port,
+    uint32_t timeout_milliseconds, uint8_t max_number_of_attempts)
+{
+    /* Validate address length */
+    CHECK_AS_EXPECTED(INET_ADDRSTRLEN >= device_address.size(),
+        HAILO_INVALID_ARGUMENT, "device_address is too long");
+
+    hailo_eth_device_info_t device_info = {};
+    device_info.host_address.sin_family = AF_INET;
+    device_info.host_address.sin_port = HAILO_ETH_PORT_ANY;
+    auto status = Socket::pton(AF_INET, HAILO_ETH_ADDRESS_ANY, &(device_info.host_address.sin_addr));
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    device_info.device_address.sin_family = AF_INET;
+    device_info.device_address.sin_port = port;
+    status = Socket::pton(AF_INET, device_address.c_str(), &(device_info.device_address.sin_addr));
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    device_info.timeout_millis = timeout_milliseconds;
+    device_info.max_number_of_attempts = max_number_of_attempts;
+    device_info.max_payload_size = HAILO_DEFAULT_ETH_MAX_PAYLOAD_SIZE;
+
+    return create_eth(device_info);
+}
+
 Expected<hailo_pcie_device_info_t> Device::parse_pcie_device_info(const std::string &device_info_str)
 {
     const bool LOG_ON_FAILURE = true;
@@ -181,6 +206,28 @@ Expected<Device::Type> Device::get_device_type(const std::string &device_id)
     else {
         LOGGER__ERROR("Invalid device id {}", device_id);
         return make_unexpected(HAILO_INVALID_ARGUMENT);
+    }
+}
+
+bool Device::device_ids_equal(const std::string &first, const std::string &second)
+{
+    const bool DONT_LOG_ON_FAILURE = false;
+    if (IntegratedDevice::DEVICE_ID == first) {
+        // On integrated devices device all ids should be the same
+        return first == second;
+    } else if (auto first_pcie_info = PcieDevice::parse_pcie_device_info(first, DONT_LOG_ON_FAILURE)) {
+        auto second_pcie_info = PcieDevice::parse_pcie_device_info(second, DONT_LOG_ON_FAILURE);
+        if (!second_pcie_info) {
+            // second is not pcie
+            return false;
+        }
+        return PcieDevice::pcie_device_infos_equal(*first_pcie_info, *second_pcie_info);
+    } else if (auto eth_info = EthernetDevice::parse_eth_device_info(first, DONT_LOG_ON_FAILURE)) {
+        // On ethernet devices, device ids should e equal
+        return first == second;
+    } else {
+        // first device does not match.
+        return false;
     }
 }
 

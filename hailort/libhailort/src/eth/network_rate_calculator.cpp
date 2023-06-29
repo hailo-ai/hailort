@@ -12,6 +12,7 @@
 #include "hailo/network_rate_calculator.hpp"
 
 #include "common/utils.hpp"
+#include "common/ethernet_utils.hpp"
 
 #include "eth/eth_stream.hpp"
 
@@ -146,6 +147,44 @@ Expected<std::map<uint16_t, uint32_t>> NetworkUdpRateCalculator::get_udp_ports_r
     }
 
     return results;
+}
+
+hailo_status NetworkUdpRateCalculator::set_rate_limit(const std::string &ip, uint16_t port, uint32_t rate_bytes_per_sec)
+{
+#if defined(__GNUC__)
+    auto tc = TrafficControlUtil::create(ip, port, rate_bytes_per_sec);
+    CHECK_EXPECTED_AS_STATUS(tc);
+    CHECK_SUCCESS(tc->set_rate_limit());
+
+    return HAILO_SUCCESS;
+#else
+    (void)ip;
+    (void)port;
+    (void)rate_bytes_per_sec;
+    LOGGER__ERROR("set_rate_limit is only supported on Unix platforms");
+    return HAILO_NOT_IMPLEMENTED;
+#endif
+}
+
+hailo_status NetworkUdpRateCalculator::reset_rate_limit(const std::string &ip, uint16_t port)
+{
+#if defined(__GNUC__)
+    auto tc = TrafficControlUtil::create(ip, port, 0);
+    CHECK_EXPECTED_AS_STATUS(tc);
+    CHECK_SUCCESS(tc->reset_rate_limit());
+
+    return HAILO_SUCCESS;
+#else
+    (void)ip;
+    (void)port;
+    LOGGER__ERROR("reset_rate_limit is only supported on Unix platforms");
+    return HAILO_NOT_IMPLEMENTED;
+#endif
+}
+
+Expected<std::string> NetworkUdpRateCalculator::get_interface_name(const std::string &ip)
+{
+    return EthernetUtils::get_interface_from_board_ip(ip);
 }
 
 } /* namespace hailort */

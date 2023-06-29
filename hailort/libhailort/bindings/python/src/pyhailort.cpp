@@ -10,23 +10,24 @@ using namespace std;
 
 #include "hailo/hailort.h"
 #include "hailo/hailort_defaults.hpp"
+#include "hailo/network_rate_calculator.hpp"
 
 #include "hef_api.hpp"
 #include "vstream_api.hpp"
 #include "vdevice_api.hpp"
 #include "device_api.hpp"
 #include "quantization_api.hpp"
-#include "net_flow_api.hpp"
 
 #include "utils.hpp"
-#include "utils.h"
 
 #include "bindings_common.hpp"
 
-#include "sensor_config_exports.h"
-#if defined(__GNUC__)
-#include "common/os/posix/traffic_control.hpp"
-#endif
+// should be same as socket.hpp
+#define PADDING_BYTES_SIZE (6)
+#define PADDING_ALIGN_BYTES (8 - PADDING_BYTES_SIZE)
+#define MIN_UDP_PAYLOAD_SIZE (24)
+#define MAX_UDP_PAYLOAD_SIZE (1456)
+#define MAX_UDP_PADDED_PAYLOAD_SIZE (MAX_UDP_PAYLOAD_SIZE - PADDING_BYTES_SIZE - PADDING_ALIGN_BYTES)
 
 namespace hailort
 {
@@ -102,36 +103,22 @@ std::string get_status_message(uint32_t status_in)
     }
 }
 
-#if defined(__GNUC__)
-
-class TrafficControlUtilWrapper final
+class NetworkRateLimiter final
 {
 public:
-    static TrafficControlUtilWrapper create(const std::string &ip, uint16_t port, uint32_t rate_bytes_per_sec)
+    static void set_rate_limit(const std::string &ip, uint16_t port, uint32_t rate_bytes_per_sec)
     {
-        auto tc_expected = TrafficControlUtil::create(ip, port, rate_bytes_per_sec);
-        VALIDATE_STATUS(tc_expected.status());
-
-        auto tc_ptr = make_unique_nothrow<TrafficControlUtil>(tc_expected.release());
-        if (nullptr == tc_ptr) {
-            VALIDATE_STATUS(HAILO_OUT_OF_HOST_MEMORY);
-        }
-        return TrafficControlUtilWrapper(std::move(tc_ptr));
+        VALIDATE_STATUS(NetworkUdpRateCalculator::set_rate_limit(ip, port, rate_bytes_per_sec));
     }
 
-    void set_rate_limit()
+    static void reset_rate_limit(const std::string &ip, uint16_t port)
     {
-        VALIDATE_STATUS(m_tc->set_rate_limit());
-    }
-
-    void reset_rate_limit()
-    {
-        VALIDATE_STATUS(m_tc->reset_rate_limit());
+        VALIDATE_STATUS(NetworkUdpRateCalculator::reset_rate_limit(ip, port));
     }
 
     static std::string get_interface_name(const std::string &ip)
     {
-        auto name = TrafficControlUtil::get_interface_name(ip);
+        auto name = NetworkUdpRateCalculator::get_interface_name(ip);
         VALIDATE_STATUS(name.status());
 
         return name.value();
@@ -139,25 +126,15 @@ public:
 
     static void add_to_python_module(py::module &m)
     {
-        py::class_<TrafficControlUtilWrapper>(m, "TrafficControlUtil")
-        .def(py::init(&TrafficControlUtilWrapper::create))
-        .def("set_rate_limit", &TrafficControlUtilWrapper::set_rate_limit)
-        .def("reset_rate_limit", &TrafficControlUtilWrapper::reset_rate_limit)
+        py::class_<NetworkRateLimiter>(m, "NetworkRateLimiter")
+        .def("set_rate_limit", &NetworkRateLimiter::set_rate_limit)
+        .def("reset_rate_limit", &NetworkRateLimiter::reset_rate_limit)
         .def_static("get_interface_name", [](const std::string &ip) {
-            return TrafficControlUtilWrapper::get_interface_name(ip);
+            return NetworkRateLimiter::get_interface_name(ip);
         })
         ;
     }
-
-private:
-    TrafficControlUtilWrapper(std::unique_ptr<TrafficControlUtil> tc) :
-        m_tc(std::move(tc))
-    {}
-    
-    std::unique_ptr<TrafficControlUtil> m_tc;
 };
-
-#endif
 
 static void validate_versions_match()
 {
@@ -435,13 +412,6 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("SENSOR_RASPICAM", HAILO_SENSOR_TYPES_RASPICAM)
         .value("ONSEMI_AS0149AT", HAILO_SENSOR_TYPES_ONSEMI_AS0149AT)
         .value("HAILO8_ISP", HAILO_SENSOR_TYPES_HAILO8_ISP)
-        ;
-
-    py::enum_<SENSOR_CONFIG_OPCODES_t>(m, "SensorConfigOpCode")
-        .value("SENSOR_CONFIG_OPCODES_WR", SENSOR_CONFIG_OPCODES_WR)
-        .value("SENSOR_CONFIG_OPCODES_RD", SENSOR_CONFIG_OPCODES_RD)
-        .value("SENSOR_CONFIG_OPCODES_RMW", SENSOR_CONFIG_OPCODES_RMW)
-        .value("SENSOR_CONFIG_OPCODES_DELAY", SENSOR_CONFIG_OPCODES_DELAY)
         ;
 
     py::class_<hailo_i2c_slave_config_t>(m, "I2CSlaveConfig")
@@ -755,11 +725,45 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("MIPI", HAILO_STREAM_INTERFACE_MIPI)
         ;
 
+    py::enum_<hailo_vstream_stats_flags_t>(m, "VStreamStatsFlags")
+        .value("NONE", hailo_vstream_stats_flags_t::HAILO_VSTREAM_STATS_NONE)
+        .value("MEASURE_FPS", hailo_vstream_stats_flags_t::HAILO_VSTREAM_STATS_MEASURE_FPS)
+        .value("MEASURE_LATENCY", hailo_vstream_stats_flags_t::HAILO_VSTREAM_STATS_MEASURE_LATENCY)
+        ;
+
+    py::enum_<hailo_pipeline_elem_stats_flags_t>(m, "PipelineElemStatsFlags")
+        .value("NONE", hailo_pipeline_elem_stats_flags_t::HAILO_PIPELINE_ELEM_STATS_NONE)
+        .value("MEASURE_FPS", hailo_pipeline_elem_stats_flags_t::HAILO_PIPELINE_ELEM_STATS_MEASURE_FPS)
+        .value("MEASURE_LATENCY", hailo_pipeline_elem_stats_flags_t::HAILO_PIPELINE_ELEM_STATS_MEASURE_LATENCY)
+        .value("MEASURE_QUEUE_SIZE", hailo_pipeline_elem_stats_flags_t::HAILO_PIPELINE_ELEM_STATS_MEASURE_QUEUE_SIZE)
+        ;
+
     py::class_<hailo_vstream_params_t>(m, "VStreamParams")
         .def(py::init<>())
         .def_readwrite("user_buffer_format", &hailo_vstream_params_t::user_buffer_format)
         .def_readwrite("timeout_ms", &hailo_vstream_params_t::timeout_ms)
         .def_readwrite("queue_size", &hailo_vstream_params_t::queue_size)
+        .def_readonly("vstream_stats_flags", &hailo_vstream_params_t::vstream_stats_flags)
+        .def_readonly("pipeline_elements_stats_flags", &hailo_vstream_params_t::pipeline_elements_stats_flags)
+        .def(py::pickle(
+            [](const hailo_vstream_params_t &vstream_params) { // __getstate__
+                return py::make_tuple(
+                    vstream_params.user_buffer_format,
+                    vstream_params.timeout_ms,
+                    vstream_params.queue_size,
+                    vstream_params.vstream_stats_flags,
+                    vstream_params.pipeline_elements_stats_flags);
+            },
+            [](py::tuple t) { // __setstate__
+                hailo_vstream_params_t vstream_params;
+                vstream_params.user_buffer_format = t[0].cast<hailo_format_t>();
+                vstream_params.timeout_ms = t[1].cast<uint32_t>();
+                vstream_params.queue_size = t[2].cast<uint32_t>();
+                vstream_params.vstream_stats_flags = t[3].cast<hailo_vstream_stats_flags_t>();
+                vstream_params.pipeline_elements_stats_flags = t[4].cast<hailo_pipeline_elem_stats_flags_t>();
+                return vstream_params;
+            }
+        ))
         ;
 
     py::enum_<hailo_latency_measurement_flags_t>(m, "LatencyMeasurementFlags")
@@ -794,7 +798,7 @@ PYBIND11_MODULE(_pyhailort, m) {
             },
             [](VDeviceParamsWrapper& params, const uint32_t& device_count) {
                 params.orig_params.device_count = device_count;
-            }        
+            }
         )
         .def_property("scheduling_algorithm",
             [](const VDeviceParamsWrapper& params) -> uint32_t {
@@ -802,7 +806,8 @@ PYBIND11_MODULE(_pyhailort, m) {
             },
             [](VDeviceParamsWrapper& params, hailo_scheduling_algorithm_t scheduling_algorithm) {
                 params.orig_params.scheduling_algorithm = scheduling_algorithm;
-            }        
+                params.orig_params.multi_process_service = (HAILO_SCHEDULING_ALGORITHM_NONE != scheduling_algorithm);
+            }
         )
         .def_property("group_id",
             [](const VDeviceParamsWrapper& params) -> py::str {
@@ -813,12 +818,9 @@ PYBIND11_MODULE(_pyhailort, m) {
                 params.orig_params.group_id = params.group_id_str.c_str();
             }
         )
-        .def_property("multi_process_service",
-            [](const VDeviceParamsWrapper& params) -> uint32_t {
+        .def_property_readonly("multi_process_service",
+            [](const VDeviceParamsWrapper& params) -> bool {
                 return params.orig_params.multi_process_service;
-            },
-            [](VDeviceParamsWrapper& params, bool multi_process_service) {
-                params.orig_params.multi_process_service = multi_process_service;
             }
         )
         .def_static("default", []() {
@@ -1103,11 +1105,8 @@ PYBIND11_MODULE(_pyhailort, m) {
     VStream_api_initialize_python_module(m);
     VDevice_api_initialize_python_module(m);
     DeviceWrapper::add_to_python_module(m);
-    hailort::net_flow::NetFlow_api_initialize_python_module(m);
 
-    #if defined(__GNUC__)
-    TrafficControlUtilWrapper::add_to_python_module(m);
-    #endif
+    NetworkRateLimiter::add_to_python_module(m);
 
     std::stringstream version;
     version << HAILORT_MAJOR_VERSION << "." << HAILORT_MINOR_VERSION << "." << HAILORT_REVISION_VERSION;

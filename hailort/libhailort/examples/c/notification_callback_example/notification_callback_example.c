@@ -73,5 +73,5 @@ int main()
 l_release_device:
     (void) hailo_release_device(device);
 l_exit:
-    return status;
+    return (int)status;
 }

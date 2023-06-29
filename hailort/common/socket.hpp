@@ -42,6 +42,8 @@ public:
       m_module_wrapper(std::move(other.m_module_wrapper)), m_socket_fd(std::exchange(other.m_socket_fd, INVALID_SOCKET))
         {};
 
+    socket_t get_fd() { return m_socket_fd; }
+
     static hailo_status ntop(int af, const void *src, char *dst, socklen_t size);
     static hailo_status pton(int af, const char *src, void *dst);
 

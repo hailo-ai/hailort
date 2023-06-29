@@ -6,10 +6,9 @@ from __future__ import division
 from builtins import object
 
 
-from hailo_platform.pyhailort.pyhailort import ConfiguredNetwork, HEF, TrafficControl, INPUT_DATAFLOW_BASE_PORT
+from hailo_platform.pyhailort.pyhailort import HEF, NetworkRateLimiter, INPUT_DATAFLOW_BASE_PORT
 
 DEFAULT_MAX_KBPS = 850e3
-DEFAULT_MAX_KBPS_PAPRIKA_B0 = 160e3
 
 BYTES_IN_Kbits = 125.0
 
@@ -28,15 +27,9 @@ class BadTCCallError(Exception):
     pass
 
 
-def get_max_supported_kbps(hw_arch="hailo8"):
-    # TODO: What should be here?
-    if hw_arch == "paprika_b0":
-        return DEFAULT_MAX_KBPS_PAPRIKA_B0
-    return DEFAULT_MAX_KBPS
-
 class RateLimiterWrapper(object):
     """UDPRateLimiter wrapper enabling ``with`` statements."""
-    def __init__(self, network_group, fps=1, fps_factor=1.0, remote_ip=None, hw_arch=None):
+    def __init__(self, configured_network_group, fps=1, fps_factor=1.0, remote_ip=None):
         """RateLimiterWrapper constructor.
 
         Args:
@@ -44,32 +37,24 @@ class RateLimiterWrapper(object):
                 target network_group.
             fps (int): Frame rate.
             fps_factor (float): Safety factor by which to multiply the calculated UDP rate.
+            remote_ip (str): Device IP address.
         """
-        if not isinstance(network_group, ConfiguredNetwork):
-            return RateLimiterException("The API was changed. RateLimiterWrapper accept ConfiguredNetwork instead of ActivatedNetwork")
-        self._network_group = network_group
-        if remote_ip is not None:
-            self._remote_ip = remote_ip
-        else:
-            # this line should be removed. this parameter will be removed from the object
-            self._remote_ip = network_group._target.device_id
+        self._network_group = configured_network_group
+        if remote_ip is None:
+            raise RateLimiterException("In order to use RateLimiterWrapper, one should pass 'remote_ip'")
+        self._remote_ip = remote_ip
         self._fps = fps
         self._fps_factor = fps_factor
-        if hw_arch is not None:
-            self._hw_arch = hw_arch
-        else:
-            # this line should be removed. this parameter will be removed from the object
-            self._hw_arch = network_group._target._hw_arch if hasattr(network_group._target, '_hw_arch') else None
         self._rates_dict = {}
         self._tc_dict = {}
 
     def __enter__(self):
-        max_supported_kbps_rate = get_max_supported_kbps(self._hw_arch)
+        max_supported_kbps_rate = DEFAULT_MAX_KBPS
 
         self._rates_dict = self._network_group.get_udp_rates_dict((self._fps * self._fps_factor),
             (max_supported_kbps_rate * BYTES_IN_Kbits))
         for port, rate in self._rates_dict.items():
-            self._tc_dict[port] = TrafficControl(self._remote_ip, port, rate)
+            self._tc_dict[port] = NetworkRateLimiter(self._remote_ip, port, rate)
             self._tc_dict[port].reset_rate_limit()
             self._tc_dict[port].set_rate_limit()
 
@@ -82,7 +67,7 @@ class RateLimiterWrapper(object):
 class UDPRateLimiter(object):
     """Enables limiting or removing limits on UDP communication rate to a board."""
     def __init__(self, remote_ip, port, rate_kbits_per_sec = 0):
-        self._tc = TrafficControl(remote_ip, port, rate_kbits_per_sec * BYTES_IN_Kbits)
+        self._tc = NetworkRateLimiter(remote_ip, port, rate_kbits_per_sec * BYTES_IN_Kbits)
     
     def set_rate_limit(self):
         return self._tc.set_rate_limit()

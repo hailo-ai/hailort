@@ -15,7 +15,7 @@
 
 #include "common/barrier.hpp"
 
-#include "vdevice/scheduler/network_group_scheduler.hpp"
+#include "vdevice/scheduler/scheduler.hpp"
 
 #include <mutex>
 #include <queue>
@@ -24,7 +24,7 @@
 namespace hailort
 {
 
-#define DISABLE_MULTIPLEXER_ENV_VAR "HAILO_DISABLE_MULTIPLEXER"
+#define DISABLE_MULTIPLEXER_ENV_VAR "HAILO_DISABLE_MULTIPLEXER_INTERNAL"
 
 using multiplexer_core_op_handle_t = uint32_t;
 using run_once_for_stream_handle_t = uint32_t;
@@ -58,7 +58,7 @@ public:
 
     void set_can_output_vstream_read(multiplexer_core_op_handle_t core_op_handle, const std::string &vstream_name, bool can_read);
 
-    static bool should_use_multiplexer();
+    static bool is_multiplexer_supported();
 
 private:
 

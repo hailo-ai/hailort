@@ -21,6 +21,7 @@
 
 #include <vector>
 
+/** hailort namespace */
 namespace hailort
 {
 
@@ -77,6 +78,11 @@ public:
     Expected<std::map<uint16_t, uint32_t>> get_udp_ports_rates_dict(
         std::vector<std::reference_wrapper<InputStream>> &udp_input_streams,
         uint32_t fps, uint32_t max_supported_bandwidth = HAILO_DEFAULT_MAX_ETHERNET_BANDWIDTH_BYTES_PER_SEC);
+
+    // Undocumented, exported here for pyhailort usage
+    static hailo_status set_rate_limit(const std::string &ip, uint16_t port, uint32_t rate_bytes_per_sec);
+    static hailo_status reset_rate_limit(const std::string &ip, uint16_t port);
+    static Expected<std::string> get_interface_name(const std::string &ip);
 };
 
 } /* namespace hailort */

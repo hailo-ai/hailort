@@ -34,9 +34,25 @@ ConfiguredNetworkGroupClient::ConfiguredNetworkGroupClient(std::unique_ptr<Hailo
     m_network_group_name = reply.value();
 }
 
+ConfiguredNetworkGroupClient::ConfiguredNetworkGroupClient(uint32_t handle, const std::string &network_group_name) :
+    m_handle(handle),
+    m_network_group_name(network_group_name)
+{}
+
+Expected<std::shared_ptr<ConfiguredNetworkGroupClient>> ConfiguredNetworkGroupClient::duplicate_network_group_client(uint32_t handle,
+    const std::string &network_group_name)
+{
+    auto duplicated_net_group = std::shared_ptr<ConfiguredNetworkGroupClient>(new (std::nothrow) ConfiguredNetworkGroupClient(handle, network_group_name));
+    CHECK_ARG_NOT_NULL_AS_EXPECTED(duplicated_net_group);
+    auto status = duplicated_net_group->after_fork_in_child();
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    return duplicated_net_group;
+}
+
 ConfiguredNetworkGroupClient::~ConfiguredNetworkGroupClient()
 {
-    auto reply = m_client->ConfiguredNetworkGroup_release(m_handle);
+    auto reply = m_client->ConfiguredNetworkGroup_release(m_handle, OsUtils::get_curr_pid());
     if (reply != HAILO_SUCCESS) {
         LOGGER__CRITICAL("ConfiguredNetworkGroup_release failed with status: {}", reply);
     }
@@ -65,9 +81,11 @@ hailo_status ConfiguredNetworkGroupClient::after_fork_in_child()
 {
     auto status = create_client();
     CHECK_SUCCESS(status);
+
     auto expected_dup_handle = m_client->ConfiguredNetworkGroup_dup_handle(OsUtils::get_curr_pid(), m_handle);
     CHECK_EXPECTED_AS_STATUS(expected_dup_handle);
     m_handle = expected_dup_handle.value();
+
     return HAILO_SUCCESS;
 }
 
@@ -75,7 +93,7 @@ Expected<std::unique_ptr<ActivatedNetworkGroup>> ConfiguredNetworkGroupClient::a
     const hailo_activate_network_group_params_t &/* network_group_params */)
 {
     LOGGER__WARNING("ConfiguredNetworkGroup::activate function is not supported when using multi-process service or HailoRT Scheduler.");
-    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+    return make_unexpected(HAILO_INVALID_OPERATION);
 }
 
 /* Network group base functions */
@@ -160,7 +178,7 @@ Expected<OutputStreamWithParamsVector> ConfiguredNetworkGroupClient::get_output_
 hailo_status ConfiguredNetworkGroupClient::wait_for_activation(const std::chrono::milliseconds&)
 {
     LOGGER__WARNING("ConfiguredNetworkGroup::wait_for_activation function is not supported when using multi-process service or HailoRT Scheduler.");
-    return HAILO_NOT_IMPLEMENTED;
+    return HAILO_INVALID_OPERATION;
 }
 
 Expected<std::vector<std::vector<std::string>>> ConfiguredNetworkGroupClient::get_output_vstream_groups()
@@ -266,6 +284,12 @@ bool ConfiguredNetworkGroupClient::is_multi_context() const
     return reply.value();
 }
 
+Expected<HwInferResults> ConfiguredNetworkGroupClient::run_hw_infer_estimator()
+{
+    LOGGER__ERROR("ConfiguredNetworkGroupClient::run_hw_infer_estimator function is not supported when using multi-process service.");
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
 const ConfigureNetworkParams ConfiguredNetworkGroupClient::get_config_params() const
 {
     auto reply = m_client->ConfiguredNetworkGroup_get_config_params(m_handle);
@@ -274,6 +298,21 @@ const ConfigureNetworkParams ConfiguredNetworkGroupClient::get_config_params() c
         return ConfigureNetworkParams();
     }
     return reply.value();
+}
+
+Expected<std::vector<std::string>> ConfiguredNetworkGroupClient::get_sorted_output_names()
+{
+    return m_client->ConfiguredNetworkGroup_get_sorted_output_names(m_handle);
+}
+
+Expected<std::vector<std::string>> ConfiguredNetworkGroupClient::get_stream_names_from_vstream_name(const std::string &vstream_name)
+{
+    return m_client->ConfiguredNetworkGroup_get_stream_names_from_vstream_name(m_handle, vstream_name);
+}
+
+Expected<std::vector<std::string>> ConfiguredNetworkGroupClient::get_vstream_names_from_stream_name(const std::string &stream_name)
+{
+    return m_client->ConfiguredNetworkGroup_get_vstream_names_from_stream_name(m_handle, stream_name);
 }
 
 Expected<std::vector<InputVStream>> ConfiguredNetworkGroupClient::create_input_vstreams(const std::map<std::string, hailo_vstream_params_t> &inputs_params)

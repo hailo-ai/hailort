@@ -16,7 +16,6 @@
 namespace hailort
 {
 
-
 static uint8_t pack_vdma_channel_id(const vdma::ChannelId &channel_id)
 {
     return static_cast<uint8_t>(channel_id.channel_index |
@@ -83,7 +82,7 @@ Expected<Buffer> ContextSwitchConfigAction::serialize_header() const
 Expected<ContextSwitchConfigActionPtr> NoneAction::create()
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) NoneAction());
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -113,7 +112,7 @@ Expected<ContextSwitchConfigActionPtr> ActivateConfigChannelAction::create(uint8
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ActivateConfigChannelAction(config_stream_index,
         channel_id, host_buffer_info));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -146,7 +145,7 @@ Expected<ContextSwitchConfigActionPtr> DeactivateConfigChannelAction::create(uin
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) DeactivateConfigChannelAction(config_stream_index,
         channel_id));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -179,7 +178,7 @@ Expected<ContextSwitchConfigActionPtr> WriteDataCcwAction::create(
         "Too many ccw burst {} (must fit in uint16)", total_ccw_burst);
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) WriteDataCcwAction(
         std::move(data), config_stream_index, static_cast<uint16_t>(total_ccw_burst)));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -211,7 +210,7 @@ Expected<Buffer> WriteDataCcwAction::serialize_params(const ContextResources &) 
 Expected<ContextSwitchConfigActionPtr> AddCcwBurstAction::create(uint8_t config_stream_index, uint16_t ccw_bursts)
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) AddCcwBurstAction(config_stream_index, ccw_bursts));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -241,7 +240,7 @@ Expected<ContextSwitchConfigActionPtr> FetchCfgChannelDescriptorsAction::create(
         "On cfg with continuous mode, max descriptors size must fit in uint16_t");
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) FetchCfgChannelDescriptorsAction(channel_id,
         static_cast<uint16_t>(desc_count)));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -267,7 +266,7 @@ Expected<Buffer> FetchCfgChannelDescriptorsAction::serialize_params(const Contex
 Expected<ContextSwitchConfigActionPtr> StartBurstCreditsTaskAction::create()
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) StartBurstCreditsTaskAction());
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -290,7 +289,7 @@ Expected<Buffer> StartBurstCreditsTaskAction::serialize_params(const ContextReso
 Expected<ContextSwitchConfigActionPtr> WaitForNetworkGroupChangeAction::create()
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) WaitForNetworkGroupChangeAction());
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -323,7 +322,7 @@ Expected<ContextSwitchConfigActionPtr> RepeatedAction::create(
         "Invalid repeated sub-action type (can't have sub-action with type CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT)");
 
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) RepeatedAction(std::move(actions)));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -371,7 +370,7 @@ Expected<std::vector<Buffer>> RepeatedAction::serialize(const ContextResources &
 Expected<ContextSwitchConfigActionPtr> DisableLcuAction::create(uint8_t cluster_index, uint8_t lcu_index)
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) DisableLcuAction(cluster_index, lcu_index));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -396,7 +395,7 @@ Expected<Buffer> DisableLcuAction::serialize_params(const ContextResources &) co
 Expected<ContextSwitchConfigActionPtr> WaitForLcuAction::create(uint8_t cluster_index, uint8_t lcu_index)
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) WaitForLcuAction(cluster_index, lcu_index));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -426,7 +425,7 @@ Expected<ContextSwitchConfigActionPtr> EnableLcuAction::create(uint8_t cluster_i
         (CONTEXT_SWITCH_DEFS__ENABLE_LCU_DEFAULT_KERNEL_COUNT == kernel_done_count);
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) EnableLcuAction(cluster_index, lcu_index,
         network_index, kernel_done_address, kernel_done_count, is_default));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -481,7 +480,7 @@ Expected<ContextSwitchConfigActionPtr> EnableSequencerAction::create(uint8_t clu
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) EnableSequencerAction(cluster_index, initial_l3_cut,
         initial_l3_offset, active_apu, active_ia, active_sc, active_l2, l2_offset_0, l2_offset_1));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -523,7 +522,7 @@ Expected<Buffer> EnableSequencerAction::serialize_params(const ContextResources 
 Expected<ContextSwitchConfigActionPtr> WaitForSequencerAction::create(uint8_t cluster_index)
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) WaitForSequencerAction(cluster_index));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -548,7 +547,7 @@ Expected<Buffer> WaitForSequencerAction::serialize_params(const ContextResources
 Expected<ContextSwitchConfigActionPtr> AllowInputDataflowAction::create(uint8_t stream_index)
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) AllowInputDataflowAction(stream_index));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -571,7 +570,8 @@ bool AllowInputDataflowAction::supports_repeated_block() const
 
 Expected<Buffer> AllowInputDataflowAction::serialize_params(const ContextResources &context_resources) const
 {
-    const auto edge_layer = context_resources.get_edge_layer_by_stream_index(m_stream_index);
+    // H2D direction because it is Input actions
+    const auto edge_layer = context_resources.get_edge_layer_by_stream_index(m_stream_index, HAILO_H2D_STREAM);
     CHECK_EXPECTED(edge_layer);
 
     CONTEXT_SWITCH_DEFS__fetch_data_action_data_t params{};
@@ -602,7 +602,7 @@ Expected<Buffer> AllowInputDataflowAction::serialize_params(const ContextResourc
 Expected<ContextSwitchConfigActionPtr> WaitForModuleConfigDoneAction::create(uint8_t module_index)
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) WaitForModuleConfigDoneAction(module_index));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -629,7 +629,7 @@ Expected<ContextSwitchConfigActionPtr> DdrPairInfoAction::create(const vdma::Cha
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) DdrPairInfoAction(
         h2d_channel_id, d2h_channel_id, network_index, descriptors_per_frame, descs_count));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -662,7 +662,7 @@ Expected<Buffer> DdrPairInfoAction::serialize_params(const ContextResources &) c
 Expected<ContextSwitchConfigActionPtr> StartDdrBufferingTaskAction::create()
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) StartDdrBufferingTaskAction());
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -685,7 +685,7 @@ Expected<Buffer> StartDdrBufferingTaskAction::serialize_params(const ContextReso
 Expected<ContextSwitchConfigActionPtr> ResetDdrBufferingTaskAction::create()
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ResetDdrBufferingTaskAction());
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -710,7 +710,7 @@ Expected<ContextSwitchConfigActionPtr> ChangeVdmaToStreamMapping::create(const v
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ChangeVdmaToStreamMapping(channel_id, stream_index,
         is_dummy_stream));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -740,7 +740,7 @@ Expected<Buffer> ChangeVdmaToStreamMapping::serialize_params(const ContextResour
 Expected<ContextSwitchConfigActionPtr> WaitOutputTransferDoneAction::create(uint8_t stream_index)
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) WaitOutputTransferDoneAction(stream_index));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -757,7 +757,8 @@ bool WaitOutputTransferDoneAction::supports_repeated_block() const
 
 Expected<Buffer> WaitOutputTransferDoneAction::serialize_params(const ContextResources &context_resources) const
 {
-    const auto edge_layer = context_resources.get_edge_layer_by_stream_index(m_stream_index);
+    // D2H direction because it is output action
+    const auto edge_layer = context_resources.get_edge_layer_by_stream_index(m_stream_index, HAILO_D2H_STREAM);
     CHECK_EXPECTED(edge_layer);
 
     CONTEXT_SWITCH_DEFS__vdma_dataflow_interrupt_data_t params{};
@@ -770,7 +771,7 @@ Expected<ContextSwitchConfigActionPtr> OpenBoundaryInputChannelAction::create(co
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) OpenBoundaryInputChannelAction(channel_id,
         host_buffer_info));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -801,7 +802,7 @@ Expected<ContextSwitchConfigActionPtr> OpenBoundaryOutputChannelAction::create(c
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) OpenBoundaryOutputChannelAction(channel_id,
         host_buffer_info));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -847,7 +848,7 @@ Expected<ContextSwitchConfigActionPtr> ActivateBoundaryInputChannelAction::creat
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ActivateBoundaryInputChannelAction(channel_id,
         stream_index, nn_stream_config, host_buffer_info, initial_credit_size));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -886,7 +887,7 @@ Expected<ContextSwitchConfigActionPtr> ActivateBoundaryOutputChannelAction::crea
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ActivateBoundaryOutputChannelAction(channel_id,
         stream_index, nn_stream_config, host_buffer_info));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -923,7 +924,7 @@ Expected<ContextSwitchConfigActionPtr> ActivateInterContextInputChannelAction::c
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ActivateInterContextInputChannelAction(channel_id,
         stream_index, nn_stream_config, host_buffer_info, initial_credit_size));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -962,7 +963,7 @@ Expected<ContextSwitchConfigActionPtr> ActivateInterContextOutputChannelAction::
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ActivateInterContextOutputChannelAction(channel_id,
         stream_index, network_index, nn_stream_config, host_buffer_info));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -1002,7 +1003,7 @@ Expected<ContextSwitchConfigActionPtr> ActivateDdrInputChannelAction::create(con
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ActivateDdrInputChannelAction(channel_id,
         stream_index, nn_stream_config, host_buffer_info, initial_credit_size, connected_d2h_channel_id));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -1044,7 +1045,7 @@ Expected<ContextSwitchConfigActionPtr> ActivateDdrOutputChannelAction::create(co
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ActivateDdrOutputChannelAction(channel_id,
         stream_index, nn_stream_config, host_buffer_info, buffered_rows_count));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -1084,7 +1085,7 @@ Expected<ContextSwitchConfigActionPtr> ValidateChannelAction::create(const EdgeL
         edge_layer.layer_info.direction, is_inter_context,
         static_cast<CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t>(edge_layer.buffer_info.buffer_type),
         edge_layer.layer_info.max_shmifo_size));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -1126,7 +1127,7 @@ Expected<ContextSwitchConfigActionPtr> DeactivateChannelAction::create(const Edg
         edge_layer.layer_info.direction, is_inter_context,
         static_cast<CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t>(edge_layer.buffer_info.buffer_type),
         edge_layer.layer_info.max_shmifo_size));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -1164,7 +1165,7 @@ Expected<Buffer> DeactivateChannelAction::serialize_params(const ContextResource
 Expected<ContextSwitchConfigActionPtr> WaitDmaIdleAction::create(uint8_t stream_index)
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) WaitDmaIdleAction(stream_index));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -1181,7 +1182,8 @@ bool WaitDmaIdleAction::supports_repeated_block() const
 
 Expected<Buffer> WaitDmaIdleAction::serialize_params(const ContextResources &context_resources) const
 {
-    const auto edge_layer = context_resources.get_edge_layer_by_stream_index(m_stream_index);
+    // D2H direction because it is output action
+    const auto edge_layer = context_resources.get_edge_layer_by_stream_index(m_stream_index, HAILO_D2H_STREAM);
     CHECK_EXPECTED(edge_layer);
 
     CONTEXT_SWITCH_DEFS__wait_dma_idle_data_t params{};
@@ -1198,7 +1200,7 @@ Expected<ContextSwitchConfigActionPtr> WaitNmsIdleAction::create(uint8_t aggrega
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) WaitNmsIdleAction(aggregator_index,
         pred_cluster_ob_index, pred_cluster_ob_cluster_index, pred_cluster_ob_interface, succ_prepost_ob_index,
         succ_prepost_ob_interface));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -1231,17 +1233,20 @@ Expected<Buffer> WaitNmsIdleAction::serialize_params(const ContextResources &) c
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 
-Expected<ContextSwitchConfigActionPtr> EnableNmsAction::create(uint8_t nms_unit_index, uint8_t network_index)
+Expected<ContextSwitchConfigActionPtr> EnableNmsAction::create(uint8_t nms_unit_index, uint8_t network_index, uint16_t number_of_classes,
+    uint16_t burst_size)
 {
-    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) EnableNmsAction(nms_unit_index, network_index));
-    CHECK_AS_EXPECTED((nullptr != result), HAILO_OUT_OF_HOST_MEMORY);
+    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) EnableNmsAction(nms_unit_index, network_index, number_of_classes, burst_size));
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
-EnableNmsAction::EnableNmsAction(uint8_t nms_unit_index, uint8_t network_index) :
+EnableNmsAction::EnableNmsAction(uint8_t nms_unit_index, uint8_t network_index, uint16_t number_of_classes, uint16_t burst_size) :
     ContextSwitchConfigAction(ContextSwitchConfigAction::Type::EnableNms, CONTEXT_SWITCH_DEFS__ACTION_TYPE_ENABLE_NMS),
     m_nms_unit_index(nms_unit_index),
-    m_network_index(network_index)
+    m_network_index(network_index),
+    m_number_of_classes(number_of_classes),
+    m_burst_size(burst_size)
 {}
 
 Expected<Buffer> EnableNmsAction::serialize_params(const ContextResources &) const
@@ -1249,12 +1254,80 @@ Expected<Buffer> EnableNmsAction::serialize_params(const ContextResources &) con
     CONTEXT_SWITCH_DEFS__enable_nms_action_t params{};
     params.nms_unit_index = m_nms_unit_index;
     params.network_index = m_network_index;
+    params.number_of_classes = m_number_of_classes;
+    params.burst_size = m_burst_size;
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 
 bool EnableNmsAction::supports_repeated_block() const
 {
     return true;
+}
+
+Expected<ContextSwitchConfigActionPtr> WriteDataByTypeAction::create(uint32_t address, uint8_t data_type, uint32_t data,
+    uint8_t shift, uint32_t mask, uint8_t network_index)
+{
+    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) WriteDataByTypeAction(address, data_type, data, shift, mask, network_index));
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+    return result;
+}
+
+WriteDataByTypeAction::WriteDataByTypeAction(uint32_t address, uint8_t data_type, uint32_t data, uint8_t shift, uint32_t mask, uint8_t network_index) :
+    ContextSwitchConfigAction(ContextSwitchConfigAction::Type::WriteDataByType, CONTEXT_SWITCH_DEFS__ACTION_TYPE_WRITE_DATA_BY_TYPE),
+    m_address(address),
+    m_data_type(data_type),
+    m_data(data),
+    m_shift(shift),
+    m_mask(mask),
+    m_network_index(network_index)
+{}
+
+Expected<Buffer> WriteDataByTypeAction::serialize_params(const ContextResources &) const
+{
+    CONTEXT_SWITCH_DEFS__write_data_by_type_action_t params{};
+    params.address = m_address;
+    params.data_type = m_data_type;
+    params.data = m_data;
+    params.shift = m_shift;
+    params.mask = m_mask;
+    params.network_index = m_network_index;
+
+    return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
+}
+
+bool WriteDataByTypeAction::supports_repeated_block() const
+{
+    return false;
+}
+
+Expected<ContextSwitchConfigActionPtr> SwitchLcuBatchAction::create(uint8_t cluster_index, uint8_t lcu_index, uint8_t network_index,
+    uint32_t kernel_done_count)
+{
+    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) SwitchLcuBatchAction(cluster_index, lcu_index, network_index, kernel_done_count));
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+    return result;
+}
+
+SwitchLcuBatchAction::SwitchLcuBatchAction(uint8_t cluster_index, uint8_t lcu_index, uint8_t network_index, uint32_t kernel_done_count) :
+    ContextSwitchConfigAction(Type::SwitchLcuBatch, CONTEXT_SWITCH_DEFS__ACTION_TYPE_SWITCH_LCU_BATCH),
+    m_cluster_index(cluster_index),
+    m_lcu_index(lcu_index),
+    m_network_index(network_index),
+    m_kernel_done_count(kernel_done_count)
+{}
+
+bool SwitchLcuBatchAction::supports_repeated_block() const
+{
+    return true;
+}
+
+Expected<Buffer> SwitchLcuBatchAction::serialize_params(const ContextResources &) const
+{
+    CONTEXT_SWITCH_DEFS__switch_lcu_batch_action_data_t params{};
+    params.packed_lcu_id = pack_lcu_id(m_cluster_index, m_lcu_index);
+    params.network_index = m_network_index;
+    params.kernel_done_count = m_kernel_done_count;
+    return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 
 } /* namespace hailort */

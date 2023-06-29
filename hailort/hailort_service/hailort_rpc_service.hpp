@@ -26,6 +26,7 @@
 #endif
 
 #include <thread>
+#include "hailo/hailort.h"
 
 namespace hailort
 {
@@ -98,6 +99,18 @@ public:
         dup_handle_Reply*) override;
     virtual grpc::Status OutputVStream_dup_handle(grpc::ServerContext *ctx, const dup_handle_Request *request,
         dup_handle_Reply*) override;
+    virtual grpc::Status InputVStream_stop_and_clear(grpc::ServerContext *ctx, const VStream_stop_and_clear_Request *request,
+        VStream_stop_and_clear_Reply*) override;
+    virtual grpc::Status OutputVStream_stop_and_clear(grpc::ServerContext *ctx, const VStream_stop_and_clear_Request *request,
+        VStream_stop_and_clear_Reply*) override;
+    virtual grpc::Status InputVStream_start_vstream(grpc::ServerContext *ctx, const VStream_start_vstream_Request *request,
+        VStream_start_vstream_Reply*) override;
+    virtual grpc::Status OutputVStream_start_vstream(grpc::ServerContext *ctx, const VStream_start_vstream_Request *request,
+        VStream_start_vstream_Reply*) override;
+    virtual grpc::Status InputVStream_is_aborted(grpc::ServerContext *ctx, const VStream_is_aborted_Request *request,
+        VStream_is_aborted_Reply*) override;
+    virtual grpc::Status OutputVStream_is_aborted(grpc::ServerContext *ctx, const VStream_is_aborted_Request *request,
+        VStream_is_aborted_Reply*) override;
 
     virtual grpc::Status ConfiguredNetworkGroup_dup_handle(grpc::ServerContext *ctx, const dup_handle_Request *request,
         dup_handle_Reply*) override;
@@ -157,9 +170,26 @@ public:
     virtual grpc::Status ConfiguredNetworkGroup_get_config_params(grpc::ServerContext*,
         const ConfiguredNetworkGroup_get_config_params_Request *request,
         ConfiguredNetworkGroup_get_config_params_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_get_sorted_output_names(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_get_sorted_output_names_Request *request,
+        ConfiguredNetworkGroup_get_sorted_output_names_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_get_stream_names_from_vstream_name(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Request *request,
+        ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_get_vstream_names_from_stream_name(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_get_vstream_names_from_stream_name_Request *request,
+        ConfiguredNetworkGroup_get_vstream_names_from_stream_name_Reply *reply) override;
 
 private:
     void keep_alive();
+    hailo_status abort_input_vstream(uint32_t handle);
+    hailo_status abort_output_vstream(uint32_t handle);
+    hailo_status resume_input_vstream(uint32_t handle);
+    hailo_status resume_output_vstream(uint32_t handle);
+    bool is_input_vstream_aborted(uint32_t handle);
+    bool is_output_vstream_aborted(uint32_t handle);
+    void abort_vstreams_by_pids(std::set<uint32_t> &pids);
+    void remove_disconnected_clients();
 
     std::mutex m_mutex;
     std::map<uint32_t, std::chrono::time_point<std::chrono::high_resolution_clock>> m_clients_pids;

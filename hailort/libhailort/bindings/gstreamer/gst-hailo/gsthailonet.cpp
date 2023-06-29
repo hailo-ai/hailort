@@ -102,6 +102,7 @@ enum
     PROP_SCHEDULING_ALGORITHM,
     PROP_SCHEDULER_TIMEOUT_MS,
     PROP_SCHEDULER_THRESHOLD,
+    PROP_SCHEDULER_PRIORITY,
     PROP_MULTI_PROCESS_SERVICE,
     PROP_INPUT_QUANTIZED,
     PROP_OUTPUT_QUANTIZED,
@@ -187,6 +188,10 @@ static void gst_hailonet_class_init(GstHailoNetClass *klass)
     g_object_class_install_property(gobject_class, PROP_SCHEDULER_THRESHOLD,
         g_param_spec_uint("scheduler-threshold", "Frames threshold for scheduler", "The minimum number of send requests required before the hailonet is considered ready to get run time from the scheduler.",
             HAILO_DEFAULT_SCHEDULER_THRESHOLD, std::numeric_limits<uint32_t>::max(), HAILO_DEFAULT_SCHEDULER_THRESHOLD, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+    g_object_class_install_property(gobject_class, PROP_SCHEDULER_PRIORITY,
+        g_param_spec_uint("scheduler-priority", "Priority index for scheduler", "When the scheduler will choose the next hailonet to run, higher priority will be prioritized in the selection. "
+            "Bigger number represent higher priority",
+            HAILO_SCHEDULER_PRIORITY_MIN, HAILO_SCHEDULER_PRIORITY_MAX, HAILO_SCHEDULER_PRIORITY_NORMAL, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
     g_object_class_install_property(gobject_class, PROP_MULTI_PROCESS_SERVICE,
         g_param_spec_boolean("multi-process-service", "Should run over HailoRT service", "Controls wether to run HailoRT over its service. "
             "To use this property, the service should be active and scheduling-algorithm should be set. Defaults to false.",
@@ -474,7 +479,7 @@ void HailoNetImpl::set_property(GObject *object, guint property_id, const GValue
         break;
     case PROP_SCHEDULER_TIMEOUT_MS:
         if (m_was_configured) {
-            g_warning("The network was already configured so changing the scheduling algorithm will not take place!");
+            g_warning("The network was already configured so changing the scheduling timeout will not take place!");
             break;
         }
         if (m_props.m_is_active.was_changed()) {
@@ -485,7 +490,7 @@ void HailoNetImpl::set_property(GObject *object, guint property_id, const GValue
         break;
     case PROP_SCHEDULER_THRESHOLD:
         if (m_was_configured) {
-            g_warning("The network was already configured so changing the scheduling algorithm will not take place!");
+            g_warning("The network was already configured so changing the scheduling threshold will not take place!");
             break;
         }
         if (m_props.m_is_active.was_changed()) {
@@ -493,6 +498,17 @@ void HailoNetImpl::set_property(GObject *object, guint property_id, const GValue
             break;
         }
         m_props.m_scheduler_threshold = g_value_get_uint(value);
+        break;
+    case PROP_SCHEDULER_PRIORITY:
+        if (m_was_configured) {
+            g_warning("The network was already configured so changing the scheduling priority will not take place!");
+            break;
+        }
+        if (m_props.m_is_active.was_changed()) {
+            g_error("scheduler usage (scheduler-priority) in combination with 'is-active' is not supported.");
+            break;
+        }
+        m_props.m_scheduler_priority = static_cast<guint8>(g_value_get_uint(value));
         break;
     case PROP_MULTI_PROCESS_SERVICE:
         if (m_was_configured) {
@@ -596,6 +612,9 @@ void HailoNetImpl::get_property(GObject *object, guint property_id, GValue *valu
     case PROP_SCHEDULER_THRESHOLD:
         g_value_set_uint(value, m_props.m_scheduler_threshold.get());
         break;
+    case PROP_SCHEDULER_PRIORITY:
+        g_value_set_uint(value, m_props.m_scheduler_priority.get());
+        break;
     case PROP_MULTI_PROCESS_SERVICE:
         g_value_set_boolean(value, m_props.m_multi_process_service.get());
         break;
@@ -695,6 +714,10 @@ hailo_status HailoNetImpl::configure_network_group()
     if (m_props.m_scheduler_threshold.was_changed()) {
         status = m_net_group_handle->set_scheduler_threshold(m_props.m_network_name.get(), m_props.m_scheduler_threshold.get());
         GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Setting scheduler threshold failed, status = %d", status);
+    }
+    if (m_props.m_scheduler_priority.was_changed()) {
+        status = m_net_group_handle->set_scheduler_priority(m_props.m_network_name.get(), m_props.m_scheduler_priority.get());
+        GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Setting scheduler priority failed, status = %d", status);
     }
 
     auto vstreams = m_net_group_handle->create_vstreams(m_props.m_network_name.get(), m_props.m_scheduling_algorithm.get(), m_output_formats, static_cast<bool>(m_props.m_input_quantized.get()), 

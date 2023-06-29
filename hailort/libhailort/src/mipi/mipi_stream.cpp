@@ -128,17 +128,9 @@ hailo_status MipiInputStream::activate_stream(uint16_t /* dynamic_batch_size */,
     return HAILO_SUCCESS;
 }
 
-Expected<size_t> MipiInputStream::sync_write_raw_buffer(const MemoryView &buffer)
+hailo_status MipiInputStream::write_impl(const MemoryView &buffer)
 {
     (void)buffer;
-    return make_unexpected(HAILO_INVALID_OPERATION);
-}
-
-hailo_status MipiInputStream::sync_write_all_raw_buffer_no_transform_impl(void *buffer, size_t offset, size_t size)
-{
-    (void)buffer;
-    (void)offset;
-    (void)size;
     return HAILO_INVALID_OPERATION;
 }
 

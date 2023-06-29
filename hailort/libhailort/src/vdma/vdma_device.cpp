@@ -31,11 +31,11 @@ static constexpr std::chrono::milliseconds DEFAULT_TIMEOUT(1000);
 static constexpr std::chrono::milliseconds DEFAULT_TIMEOUT(50000);
 #endif /* ifndef HAILO_EMULATOR */
 
-VdmaDevice::VdmaDevice(HailoRTDriver &&driver, Device::Type type, const std::string &device_id) :
+VdmaDevice::VdmaDevice(HailoRTDriver &&driver, Device::Type type) :
     DeviceBase::DeviceBase(type),
     m_driver(std::move(driver)), m_is_configured(false)
 {
-    activate_notifications(device_id);
+    activate_notifications(get_dev_id());
 }
 
 Expected<std::unique_ptr<VdmaDevice>> VdmaDevice::create(const std::string &device_id)
@@ -109,6 +109,26 @@ hailo_status VdmaDevice::fw_interact_impl(uint8_t *request_buffer, size_t reques
     return HAILO_SUCCESS;
 }
 
+hailo_status VdmaDevice::clear_configured_apps()
+{
+    static const auto DONT_KEEP_NN_CONFIG_DURING_RESET = false;
+    auto status = Control::reset_context_switch_state_machine(*this, DONT_KEEP_NN_CONFIG_DURING_RESET);
+    CHECK_SUCCESS(status);
+
+    // In case of mercury need to reset nn core before activating network group to clear prior nn core state
+    if (Device::Type::INTEGRATED == get_type()) {
+        // On core device, the nn_manager is not responsible to reset the nn-core so
+        // we use the SCU control for that.
+        status = m_driver.reset_nn_core();
+        CHECK_SUCCESS(status);
+    }
+
+    status = Control::clear_configured_apps(*this);
+    CHECK_SUCCESS(status, "Failed to clear configured network groups with status {}", status);
+
+    return HAILO_SUCCESS;
+}
+
 Expected<ConfiguredNetworkGroupVector> VdmaDevice::add_hef(Hef &hef, const NetworkGroupsParamsMap &configure_params)
 {
     auto status = mark_as_used();
@@ -118,20 +138,8 @@ Expected<ConfiguredNetworkGroupVector> VdmaDevice::add_hef(Hef &hef, const Netwo
         // TODO: Do we need this control after fixing HRT-7519?
         // Reset context_switch state machine - it may have been in an active state if a previous VdmaDevice
         // wasn't dtor'd (due to SIGKILL for example)
-        static const auto REMOVE_NN_CONFIG_DURING_RESET = false;
-        status = Control::reset_context_switch_state_machine(*this, REMOVE_NN_CONFIG_DURING_RESET);
+        status = clear_configured_apps();
         CHECK_SUCCESS_AS_EXPECTED(status);
-
-        // In case of mercury need to reset nn core before activating network group to clear prior nn core state
-        if (Device::Type::INTEGRATED == get_type()) {
-            // On core device, the nn_manager is not responsible to reset the nn-core so
-            // we use the SCU control for that.
-            status = reset(HAILO_RESET_DEVICE_MODE_NN_CORE);
-            CHECK_SUCCESS_AS_EXPECTED(status);
-        }
-
-        status = Control::clear_configured_apps(*this);
-        CHECK_SUCCESS_AS_EXPECTED(status, "Failed to clear configured network groups with status {}", status);
 
         assert(nullptr == m_vdma_interrupts_dispatcher);
         auto interrupts_dispatcher = vdma::InterruptsDispatcher::create(std::ref(m_driver));
@@ -185,8 +193,8 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> VdmaDevice::create_configured_
     m_core_ops.emplace_back(core_op_ptr);
 
     // TODO: HRT-8875
-    auto net_flow_ops = hef.pimpl->post_process_ops(core_op_metadata->core_op_name());
-    auto network_group_expected = ConfiguredNetworkGroupBase::create(config_params, std::move(core_ops), std::move(net_flow_ops));
+    auto metadata = hef.pimpl->network_group_metadata(core_op_metadata->core_op_name());
+    auto network_group_expected = ConfiguredNetworkGroupBase::create(config_params, std::move(core_ops), std::move(metadata));
     CHECK_EXPECTED(network_group_expected);
     auto network_group_ptr = network_group_expected.release();
 
@@ -215,11 +223,6 @@ hailo_reset_device_mode_t VdmaDevice::get_default_reset_mode()
     return HAILO_RESET_DEVICE_MODE_SOFT;
 }
 
-uint16_t VdmaDevice::get_default_desc_page_size() const
-{
-    return m_driver.calc_desc_page_size(vdma::DEFAULT_DESC_PAGE_SIZE);
-}
-
 hailo_status VdmaDevice::mark_as_used()
 {
     return m_driver.mark_as_used();
@@ -238,9 +241,9 @@ VdmaDevice::~VdmaDevice()
         LOGGER__WARNING("Stopping notification thread ungracefully");
     }
     if (m_is_configured) {
-        status = Control::clear_configured_apps(*this);
+        status = clear_configured_apps();
         if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed to clear configured core-ops with status {}", status);
+            LOGGER__WARNING("clear configured apps ended with status {}", status);
         }
     }
 }
@@ -334,10 +337,7 @@ Expected<std::vector<std::shared_ptr<CoreOpMetadata>>> VdmaDevice::create_core_o
         // TODO: decide about core_op names - align with the Compiler
         auto core_op_metadata = hef.pimpl->get_core_op_metadata(network_group_name, partial_clusters_layout_bitmap);
         CHECK_EXPECTED(core_op_metadata);
-
-        auto core_op_metadata_ptr = make_shared_nothrow<CoreOpMetadata>(core_op_metadata.release());
-        CHECK_AS_EXPECTED(nullptr != core_op_metadata_ptr, HAILO_OUT_OF_HOST_MEMORY);
-        core_ops_metadata_ptrs.emplace_back(core_op_metadata_ptr);
+        core_ops_metadata_ptrs.emplace_back(core_op_metadata.release());
     }
 
     return core_ops_metadata_ptrs;

@@ -52,8 +52,10 @@ Expected<std::unique_ptr<PcieDevice>> PcieDevice::create()
     // Take the first device
     auto scan_result = scan();
     CHECK_EXPECTED(scan_result, "Failed scanning pcie devices");
-    CHECK_AS_EXPECTED(scan_result->size() == 1, HAILO_INVALID_OPERATION,
-        "Expected only 1 PCIe device. Pass `hailo_pcie_device_info_t` to create a specific PCIe device");
+    CHECK_AS_EXPECTED(scan_result->size() >= 1, HAILO_INVALID_OPERATION,
+        "There are no PCIe devices on the system");
+
+    // choose first device
     return create(scan_result->at(0));
 }
 
@@ -62,15 +64,11 @@ Expected<std::unique_ptr<PcieDevice>> PcieDevice::create(const hailo_pcie_device
     auto device_info = find_device_info(pcie_device_info);
     CHECK_EXPECTED(device_info);
 
-    auto pcie_device_info_str = pcie_device_info_to_string(pcie_device_info);
-    CHECK_EXPECTED(pcie_device_info_str);
-
-    auto driver = HailoRTDriver::create(device_info->dev_path);
+    auto driver = HailoRTDriver::create(*device_info);
     CHECK_EXPECTED(driver);
 
     hailo_status status = HAILO_UNINITIALIZED;
-    auto device = std::unique_ptr<PcieDevice>(new (std::nothrow) PcieDevice(driver.release(), pcie_device_info, status,
-        pcie_device_info_str.release()));
+    auto device = std::unique_ptr<PcieDevice>(new (std::nothrow) PcieDevice(driver.release(), status));
     CHECK_AS_EXPECTED((nullptr != device), HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status, "Failed creating PcieDevice");
     return device;
@@ -130,10 +128,16 @@ Expected<std::string> PcieDevice::pcie_device_info_to_string(const hailo_pcie_de
     return std::string(device_string);
 }
 
-PcieDevice::PcieDevice(HailoRTDriver &&driver, const hailo_pcie_device_info_t &device_info, hailo_status &status,
-    const std::string &device_id) :
-        VdmaDevice::VdmaDevice(std::move(driver), Device::Type::PCIE, device_id),
-        m_device_info(device_info)
+bool PcieDevice::pcie_device_infos_equal(const hailo_pcie_device_info_t &first, const hailo_pcie_device_info_t &second)
+{
+    const bool bdf_equal = (first.bus == second.bus) && (first.device == second.device) && (first.func == second.func);
+    const bool domain_equal = (HAILO_PCIE_ANY_DOMAIN == first.domain) || (HAILO_PCIE_ANY_DOMAIN == second.domain) ||
+        (first.domain == second.domain);
+    return bdf_equal && domain_equal;
+}
+
+PcieDevice::PcieDevice(HailoRTDriver &&driver, hailo_status &status) :
+    VdmaDevice::VdmaDevice(std::move(driver), Device::Type::PCIE)
 {
     if (driver.is_fw_loaded()) {
         status = update_fw_state();
@@ -145,8 +149,6 @@ PcieDevice::PcieDevice(HailoRTDriver &&driver, const hailo_pcie_device_info_t &d
         LOGGER__WARNING("FW is not loaded to the device. Please load FW before using the device.");
         m_is_control_version_supported = false;
     }
-
-    m_device_id = device_id;
 
     status = HAILO_SUCCESS;
 }
@@ -174,11 +176,6 @@ hailo_status PcieDevice::direct_write_memory(uint32_t address, const void *buffe
 hailo_status PcieDevice::direct_read_memory(uint32_t address, void *buffer, uint32_t size)
 {
     return m_driver.read_memory(HailoRTDriver::MemoryType::DIRECT_MEMORY, address, buffer, size);
-}
-
-const char *PcieDevice::get_dev_id() const
-{
-    return m_device_id.c_str();
 }
 
 hailo_status PcieDevice::reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type)
@@ -210,7 +207,7 @@ hailo_status PcieDevice::reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type)
     // TODO: fix logic with respect to is_expecting_response, implement wait_for_wakeup();
     if (HAILO_SUCCESS == status) {
         status = Control::parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header,
-            &payload, &request);
+            &payload, &request, *this);
         CHECK_SUCCESS(status);
         CHECK(is_expecting_response, HAILO_INTERNAL_FAILURE, "Recived valid response from FW for control who is not expecting one.");
     } else if ((HAILO_FW_CONTROL_FAILURE == status) && (!is_expecting_response)){

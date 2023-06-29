@@ -24,7 +24,7 @@ static bool validate_device_interface_compatibility(hailo_stream_interface_t int
     case Device::Type::PCIE:
         interface_valid = (HAILO_STREAM_INTERFACE_PCIE == interface);
         break;
-    
+
     case Device::Type::INTEGRATED:
         interface_valid = (HAILO_STREAM_INTERFACE_INTEGRATED == interface);
         break;
@@ -48,29 +48,20 @@ Expected<std::shared_ptr<VdmaInputStreamBase>> VdmaInputStreamBase::create(hailo
 {
     CHECK_AS_EXPECTED(validate_device_interface_compatibility(interface, device.get_type()), HAILO_INTERNAL_FAILURE);
 
+    hailo_status status = HAILO_UNINITIALIZED;
+    std::shared_ptr<VdmaInputStreamBase> result = nullptr;
     if ((stream_params.flags & HAILO_STREAM_FLAGS_ASYNC) != 0) {
-        CHECK_AS_EXPECTED(channel->type() == vdma::BoundaryChannel::Type::ASYNC, HAILO_INVALID_ARGUMENT,
-            "Can't create a async vdma stream with a non async channel. Received channel type {}", channel->type());
-
-        hailo_status status = HAILO_UNINITIALIZED;
-        auto result = make_shared_nothrow<VdmaAsyncInputStream>(device, channel, edge_layer, core_op_activated_event,
+        result = make_shared_nothrow<VdmaAsyncInputStream>(device, channel, edge_layer, core_op_activated_event,
             batch_size, DEFAULT_TRANSFER_TIMEOUT, interface, status);
-        CHECK_SUCCESS_AS_EXPECTED(status);
-        CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
-
-        return std::static_pointer_cast<VdmaInputStreamBase>(result);
     } else {
-        CHECK_AS_EXPECTED(channel->type() == vdma::BoundaryChannel::Type::BUFFERED, HAILO_INVALID_ARGUMENT,
-            "Can't create a vdma stream with a non buffered channel. Received channel type {}", channel->type());
-
-        hailo_status status = HAILO_UNINITIALIZED;
-        auto result = make_shared_nothrow<VdmaInputStream>(device, channel, edge_layer, core_op_activated_event,
+        result = make_shared_nothrow<VdmaInputStream>(device, channel, edge_layer, core_op_activated_event,
             batch_size, DEFAULT_TRANSFER_TIMEOUT, interface, status);
-        CHECK_SUCCESS_AS_EXPECTED(status);
-        CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
-
-        return std::static_pointer_cast<VdmaInputStreamBase>(result);
     }
+
+    // Check that the creation of the various subclasses succeeded
+    CHECK_SUCCESS_AS_EXPECTED(status);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+    return result;
 }
 
 VdmaInputStreamBase::VdmaInputStreamBase(VdmaDevice &device, vdma::BoundaryChannelPtr channel,
@@ -134,7 +125,7 @@ hailo_status VdmaInputStreamBase::clear_abort()
 
 hailo_status VdmaInputStreamBase::flush()
 {
-    const auto dynamic_batch_size = (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == m_dynamic_batch_size) ? 
+    const auto dynamic_batch_size = (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == m_dynamic_batch_size) ?
         1 : m_dynamic_batch_size;
     return m_channel->flush(m_channel_timeout * dynamic_batch_size);
 }
@@ -158,16 +149,8 @@ hailo_status VdmaInputStreamBase::deactivate_stream()
         return HAILO_SUCCESS;
     }
 
-    // Flush is best effort
-    auto status = m_channel->flush(VDMA_FLUSH_TIMEOUT);
-    if (HAILO_STREAM_ABORTED_BY_USER == status) {
-        LOGGER__INFO("Flush input_channel is not needed because channel was aborted. (channel {})", m_channel->get_channel_id());
-        status = HAILO_SUCCESS;
-    } else if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("Failed to flush input_channel. (status {} channel {})", status, m_channel->get_channel_id());
-    }
 
-    status = m_channel->deactivate();
+    auto status = m_channel->deactivate();
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("Failed to stop channel with status {}", status);
     }
@@ -201,11 +184,6 @@ Expected<size_t> VdmaInputStreamBase::get_pending_frames_count() const
     return m_channel->get_h2d_pending_frames_count();
 }
 
-hailo_status VdmaInputStreamBase::register_interrupt_callback(const vdma::ProcessingCompleteCallback &callback)
-{
-    return m_channel->register_interrupt_callback(callback);
-}
-
 hailo_status VdmaInputStreamBase::set_dynamic_batch_size(uint16_t dynamic_batch_size)
 {
     // TODO: use std::max in the configure stage
@@ -218,7 +196,7 @@ hailo_status VdmaInputStreamBase::set_dynamic_batch_size(uint16_t dynamic_batch_
     CHECK(dynamic_batch_size <= m_max_batch_size, HAILO_INVALID_ARGUMENT,
         "Dynamic batch size ({}) must be <= than the configured batch size ({})",
         dynamic_batch_size, m_max_batch_size);
-    
+
     if (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == dynamic_batch_size) {
         LOGGER__TRACE("Received CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == dynamic_batch_size; "
                       "Leaving previously set value of {}", m_dynamic_batch_size);
@@ -240,36 +218,34 @@ Expected<std::shared_ptr<VdmaOutputStreamBase>> VdmaOutputStreamBase::create(hai
 {
     CHECK_AS_EXPECTED(validate_device_interface_compatibility(interface, device.get_type()), HAILO_INTERNAL_FAILURE);
 
+    hailo_status status = HAILO_UNINITIALIZED;
+    std::shared_ptr<VdmaOutputStreamBase> result = nullptr;
+    // TODO: after adding NMS single int, we can create an async channel for async nms output stream (HRT-10553)
     if ((stream_params.flags & HAILO_STREAM_FLAGS_ASYNC) != 0) {
-        CHECK_AS_EXPECTED(channel->type() == vdma::BoundaryChannel::Type::ASYNC, HAILO_INVALID_ARGUMENT,
-            "Can't create a async vdma stream with a non async channel. Received channel type {}", channel->type());
-
-        hailo_status status = HAILO_UNINITIALIZED;
-        auto result = make_shared_nothrow<VdmaAsyncOutputStream>(device, channel, edge_layer, core_op_activated_event,
-            batch_size, DEFAULT_TRANSFER_TIMEOUT, interface, status);
-        CHECK_SUCCESS_AS_EXPECTED(status);
-        CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
-
-        return std::static_pointer_cast<VdmaOutputStreamBase>(result);
+        if (edge_layer.format.order == HAILO_FORMAT_ORDER_HAILO_NMS) {
+            result = make_shared_nothrow<VdmaAsyncOutputNmsStream>(device, channel, edge_layer, core_op_activated_event,
+                batch_size, DEFAULT_TRANSFER_TIMEOUT, interface, status);
+        } else {
+            result = make_shared_nothrow<VdmaAsyncOutputStream>(device, channel, edge_layer, core_op_activated_event,
+                batch_size, DEFAULT_TRANSFER_TIMEOUT, interface, status);
+        }
     } else {
-        CHECK_AS_EXPECTED(channel->type() == vdma::BoundaryChannel::Type::BUFFERED, HAILO_INVALID_ARGUMENT,
-            "Can't create a vdma stream with a non buffered channel. Received channel type {}", channel->type());
-
-        hailo_status status = HAILO_UNINITIALIZED;
-        auto result = make_shared_nothrow<VdmaOutputStream>(device, channel, edge_layer, core_op_activated_event,
-            batch_size, DEFAULT_TRANSFER_TIMEOUT, interface, status);
-        CHECK_SUCCESS_AS_EXPECTED(status);
-        CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
-
-        return std::static_pointer_cast<VdmaOutputStreamBase>(result);
+        result = make_shared_nothrow<VdmaOutputStream>(device, channel, edge_layer, core_op_activated_event,
+                batch_size, DEFAULT_TRANSFER_TIMEOUT, interface, status);
     }
+
+    // Check that the creation of the various subclasses succeeded
+    CHECK_SUCCESS_AS_EXPECTED(status);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+
+    return result;
 }
 
 VdmaOutputStreamBase::VdmaOutputStreamBase(VdmaDevice &device, vdma::BoundaryChannelPtr channel, const LayerInfo &edge_layer,
                                            EventPtr core_op_activated_event, uint16_t batch_size,
                                            std::chrono::milliseconds transfer_timeout, hailo_stream_interface_t interface,
                                            hailo_status &status) :
-    OutputStreamBase(edge_layer, std::move(core_op_activated_event), status),
+    OutputStreamBase(edge_layer, interface, std::move(core_op_activated_event), status),
     m_device(&device),
     m_channel(std::move(channel)),
     m_interface(interface),
@@ -277,7 +253,7 @@ VdmaOutputStreamBase::VdmaOutputStreamBase(VdmaDevice &device, vdma::BoundaryCha
     m_transfer_timeout(transfer_timeout),
     m_max_batch_size(batch_size),
     m_dynamic_batch_size(batch_size),
-    m_transfer_size(get_transfer_size(m_stream_info))
+    m_transfer_size(get_transfer_size(m_stream_info, get_layer_info()))
 {
     // Check status for base class c'tor
     if (HAILO_SUCCESS != status) {
@@ -353,9 +329,9 @@ hailo_status VdmaOutputStreamBase::activate_stream(uint16_t dynamic_batch_size, 
     return HAILO_SUCCESS;
 }
 
-hailo_status VdmaOutputStreamBase::register_interrupt_callback(const vdma::ProcessingCompleteCallback &callback)
+void VdmaOutputStreamBase::register_interrupt_callback(const vdma::ProcessingCompleteCallback &callback)
 {
-    return m_channel->register_interrupt_callback(callback);
+    m_channel->register_interrupt_callback(callback);
 }
 
 hailo_status VdmaOutputStreamBase::deactivate_stream()
@@ -373,11 +349,9 @@ hailo_status VdmaOutputStreamBase::deactivate_stream()
     return HAILO_SUCCESS;
 }
 
-uint32_t VdmaOutputStreamBase::get_transfer_size(const hailo_stream_info_t &stream_info)
+uint32_t VdmaOutputStreamBase::get_transfer_size(const hailo_stream_info_t &stream_info, const LayerInfo &layer_info)
 {
-    // The ppu outputs one bbox per vdma buffer in the case of nms
-    return (HAILO_FORMAT_ORDER_HAILO_NMS == stream_info.format.order) ?
-        stream_info.nms_info.bbox_size : stream_info.hw_frame_size;
+    return LayerInfoUtils::get_stream_transfer_size(stream_info, layer_info);
 }
 
 hailo_status VdmaOutputStreamBase::set_dynamic_batch_size(uint16_t dynamic_batch_size)
@@ -392,7 +366,7 @@ hailo_status VdmaOutputStreamBase::set_dynamic_batch_size(uint16_t dynamic_batch
     CHECK(dynamic_batch_size <= m_max_batch_size, HAILO_INVALID_ARGUMENT,
         "Dynamic batch size ({}) must be <= than the configured batch size ({})",
         dynamic_batch_size, m_max_batch_size);
-    
+
     if (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == dynamic_batch_size) {
         LOGGER__TRACE("Received CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == dynamic_batch_size; "
                       "Leaving previously set value of {}", m_dynamic_batch_size);

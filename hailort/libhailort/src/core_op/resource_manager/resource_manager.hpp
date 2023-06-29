@@ -28,8 +28,7 @@
 
 #include "hailo/hailort.h"
 
-#include "core_op/resource_manager/inter_context_buffer.hpp"
-#include "core_op/resource_manager/ddr_channels_pair.hpp"
+#include "core_op/resource_manager/intermediate_buffer.hpp"
 #include "core_op/resource_manager/config_buffer.hpp"
 #include "core_op/resource_manager/channel_allocator.hpp"
 #include "core_op/resource_manager/context_switch_buffer_builder.hpp"
@@ -42,12 +41,46 @@ namespace hailort
 {
 
 #define DEFAULT_ACTUAL_BATCH_SIZE (1)
+#define MAX_NUMBER_DATA_STREAM_INDEX (20)
 
 
 struct EdgeLayer {
     LayerInfo layer_info;
     vdma::ChannelId channel_id;
     CONTROL_PROTOCOL__host_buffer_info_t buffer_info;
+};
+
+struct DdrChannelsInfo
+{
+    vdma::ChannelId d2h_channel_id;
+    uint8_t d2h_stream_index;
+    vdma::ChannelId h2d_channel_id;
+    uint8_t h2d_stream_index;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
+    uint8_t network_index;
+    uint16_t row_size;
+    uint16_t min_buffered_rows;
+    // total_buffers_per_frame not same as core_buffer_per frame. 
+    //(In DDR core buffer per frame is 1). Used to calc total host descriptors_per_frame. 
+    uint16_t total_buffers_per_frame;
+
+    // Checks if the credits are automaticaly going from d2h channel to its h2d channel, or it needs to be done manually
+    // (Using a fw task).
+    bool need_manual_credit_management() const
+    {
+        return host_buffer_info.buffer_type == CONTROL_PROTOCOL__HOST_BUFFER_TYPE_EXTERNAL_DESC;
+    }
+
+    uint16_t descs_count() const
+    {
+        assert(IS_FIT_IN_UINT16(host_buffer_info.total_desc_count));
+        return static_cast<uint16_t>(host_buffer_info.total_desc_count);
+    }
+
+    uint32_t descriptors_per_frame() const
+    {
+        return (row_size / host_buffer_info.desc_page_size) * total_buffers_per_frame;
+    }
 };
 
 class ContextResources final {
@@ -58,21 +91,23 @@ public:
     const std::vector<CONTROL_PROTOCOL__context_switch_context_info_single_control_t> &get_controls() const;
     ContextSwitchBufferBuilder &builder();
 
-    void add_edge_layer(const LayerInfo &layer_info, vdma::ChannelId channel_id,
-        const CONTROL_PROTOCOL__host_buffer_info_t &buffer_info);
+    hailo_status add_edge_layer(const LayerInfo &layer_info, vdma::ChannelId channel_id,
+        const CONTROL_PROTOCOL__host_buffer_info_t &buffer_info, const SupportedFeatures &supported_features);
+    void add_ddr_channels_info(const DdrChannelsInfo &ddr_info);
 
     std::vector<EdgeLayer> get_edge_layers() const;
     std::vector<EdgeLayer> get_edge_layers(LayerType layer_type) const;
     std::vector<EdgeLayer> get_edge_layers(hailo_stream_direction_t direction) const;
     std::vector<EdgeLayer> get_edge_layers(LayerType layer_type, hailo_stream_direction_t direction) const;
 
-    Expected<EdgeLayer> get_edge_layer_by_stream_index(uint8_t stream_index) const;
+    Expected<EdgeLayer> get_edge_layer_by_stream_index(const uint8_t stream_index,
+        const hailo_stream_direction_t direction) const;
 
-    ExpectedRef<DdrChannelsPair> create_ddr_channels_pair(const DdrChannelsInfo &ddr_info);
-    ExpectedRef<const DdrChannelsPair> get_ddr_channels_pair(uint8_t d2h_stream_index) const;
-    const std::vector<DdrChannelsPair> &get_ddr_channels_pairs() const;
+    Expected<DdrChannelsInfo> get_ddr_channels_info(uint8_t d2h_stream_index) const;
+    const std::vector<DdrChannelsInfo> &get_ddr_channels_infos() const;
 
-    hailo_status validate_edge_layers();
+    hailo_status validate_edge_layer(const LayerInfo &layer_info, vdma::ChannelId channel_id,
+        const SupportedFeatures &supported_features);
 
     std::vector<ConfigBuffer> &get_config_buffers();
 
@@ -87,9 +122,9 @@ private:
     std::reference_wrapper<HailoRTDriver> m_driver;
     ContextSwitchBufferBuilder m_builder;
     std::vector<ConfigBuffer> m_config_buffers;
-    std::vector<DdrChannelsPair> m_ddr_channels_pairs;
 
     std::vector<EdgeLayer> m_edge_layers;
+    std::vector<DdrChannelsInfo> m_ddr_channels_infos;
 };
 
 class ResourcesManager final
@@ -106,9 +141,11 @@ public:
     ResourcesManager &operator=(ResourcesManager &&other) = delete;
     ResourcesManager(ResourcesManager &&other) noexcept;
 
-    ExpectedRef<InterContextBuffer> create_inter_context_buffer(uint32_t transfer_size, uint8_t src_stream_index,
-        uint8_t src_context_index, const std::string &network_name, vdma::ChannelId d2h_channel_id);
-    ExpectedRef<InterContextBuffer> get_inter_context_buffer(const IntermediateBufferKey &key);
+    ExpectedRef<IntermediateBuffer> create_intermediate_buffer(uint32_t transfer_size, uint16_t batch_size,
+        uint8_t src_stream_index, uint8_t src_context_index, vdma::ChannelId d2h_channel_id,
+        IntermediateBuffer::StreamingType streaming_type);
+    ExpectedRef<IntermediateBuffer> get_intermediate_buffer(const IntermediateBufferKey &key);
+    Expected<vdma::BoundaryChannel::Type> get_boundary_vdma_channel_type(const LayerInfo &layer_info);
     hailo_status create_boundary_vdma_channel(const LayerInfo &layer_info);
 
     Expected<CONTROL_PROTOCOL__application_header_t> get_control_core_op_header();
@@ -149,9 +186,10 @@ public:
 
     Expected<Buffer> read_intermediate_buffer(const IntermediateBufferKey &key);
 
-    hailo_status set_inter_context_channels_dynamic_batch_size(uint16_t dynamic_batch_size);
+    hailo_status set_dynamic_batch_size(uint16_t dynamic_batch_size);
     hailo_status configure();
-    hailo_status enable_state_machine(uint16_t dynamic_batch_size);
+    hailo_status enable_state_machine(uint16_t dynamic_batch_size, 
+        uint16_t batch_count = CONTROL_PROTOCOL__INIFINITE_BATCH_COUNT);
     hailo_status reset_state_machine(bool keep_nn_config_during_reset = false);
     hailo_status cancel_pending_async_transfers();
     hailo_status start_vdma_interrupts_dispatcher();
@@ -163,14 +201,15 @@ public:
     Expected<uint16_t> program_desc_for_hw_only_flow(std::shared_ptr<vdma::DescriptorList> desc_list,
         const uint32_t single_transfer_size, const uint16_t dynamic_batch_size, const uint16_t batch_count);
     Expected<std::pair<vdma::ChannelId, uint16_t>> create_mapped_buffer_for_hw_only_infer(
-        vdma::BoundaryChannelPtr boundary_channel_ptr, const hailo_vdma_buffer_direction_flags_t direction,
+        vdma::BoundaryChannelPtr boundary_channel_ptr, const HailoRTDriver::DmaDirection direction,
         const uint32_t single_transfer_size, const uint16_t dynamic_batch_size, const uint16_t batch_count);
     void add_channel_to_hw_infer_channel_info(std::pair<vdma::ChannelId, uint16_t> channel_info,
         CONTROL_PROTOCOL__hw_infer_channels_info_t &channels_info);
     Expected<uint16_t> calc_hw_infer_batch_count(uint16_t dynamic_batch_size);
-    void hw_infer_calc_stats(uint16_t batch_count, uint16_t dynamic_batch_size,
+    HwInferResults hw_infer_calc_stats(uint16_t batch_count, uint16_t dynamic_batch_size,
         size_t single_frame_transfer_size, uint32_t infer_cycles);
-    Expected<CONTROL_PROTOCOL__hw_only_infer_results_t> run_hw_only_infer(uint16_t dynamic_batch_size);
+    hailo_status set_hw_infer_done_notification(std::condition_variable &infer_done_cond);
+    Expected<HwInferResults> run_hw_only_infer();
 
 private:
     hailo_status fill_infer_features(CONTROL_PROTOCOL__application_header_t &app_header);
@@ -184,7 +223,7 @@ private:
     VdmaDevice &m_vdma_device;
     HailoRTDriver &m_driver;
     const ConfigureNetworkParams m_config_params;
-    std::map<IntermediateBufferKey, InterContextBuffer> m_inter_context_buffers;
+    std::map<IntermediateBufferKey, IntermediateBuffer> m_intermediate_buffers;
     std::shared_ptr<CoreOpMetadata> m_core_op_metadata;
     uint8_t m_core_op_index;
     uint8_t m_dynamic_context_count;
@@ -198,7 +237,7 @@ private:
     // config_stream_index.
     std::vector<vdma::ChannelId> m_config_channels_ids;
     // Mapped buffers would be used only in hw only flow
-    std::vector<std::shared_ptr<DmaMappedBuffer>> m_hw_only_boundary_buffers;
+    std::vector<std::shared_ptr<vdma::MappedBuffer>> m_hw_only_boundary_buffers;
 
     ResourcesManager(VdmaDevice &vdma_device, HailoRTDriver &driver,
         ChannelAllocator &&channel_allocator, const ConfigureNetworkParams config_params,

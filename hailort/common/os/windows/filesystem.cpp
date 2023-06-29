@@ -164,6 +164,13 @@ hailo_status Filesystem::create_directory(const std::string &dir_path)
     return HAILO_SUCCESS;
 }
 
+hailo_status Filesystem::remove_directory(const std::string &dir_path)
+{
+    bool was_removed = RemoveDirectoryA(dir_path.c_str());
+    CHECK(was_removed, HAILO_FILE_OPERATION_FAILURE, "Failed to remove directory {}", dir_path);
+    return HAILO_SUCCESS;
+}
+
 bool Filesystem::is_path_accesible(const std::string &path)
 {
     // The code is based on examples from: https://cpp.hotexamples.com/examples/-/-/AccessCheck/cpp-accesscheck-function-examples.html

@@ -112,43 +112,21 @@ public:
     virtual std::vector<std::reference_wrapper<OutputStream>> get_output_streams_by_interface(hailo_stream_interface_t stream_interface);
     virtual ExpectedRef<InputStream> get_input_stream_by_name(const std::string& name);
     virtual ExpectedRef<OutputStream> get_output_stream_by_name(const std::string& name);
-    virtual Expected<OutputStreamWithParamsVector> get_output_streams_from_vstream_names(
-        const std::map<std::string, hailo_vstream_params_t> &outputs_params);
     virtual Expected<LatencyMeasurementResult> get_latency_measurement(const std::string &network_name="");
 
-    // TODO: HRT-9546 - Remove func, should be only in CNG
-    virtual Expected<std::map<std::string, hailo_vstream_params_t>> make_input_vstream_params(
-        bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
-        const std::string &network_name="");
-    // TODO: HRT-9546 - Remove func, should be only in CNG
-    virtual Expected<std::map<std::string, hailo_vstream_params_t>> make_output_vstream_params(
-        bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
-        const std::string &network_name="");
-    // TODO: HRT-9546 - Remove func, should be only in CNG
-    virtual Expected<std::vector<std::map<std::string, hailo_vstream_params_t>>> make_output_vstream_params_groups(
-        bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size);
-
-    // TODO: HRT-9546 - Remove func, should be only in CNG
-    virtual Expected<std::vector<std::vector<std::string>>> get_output_vstream_groups();
-
-    // TODO: HRT-9546 - Remove func, should be only in CNG
-    Expected<std::vector<std::string>> get_vstream_names_from_stream_name(const std::string &stream_name);
 
     virtual hailo_status activate_impl(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers = false) = 0;
     virtual hailo_status deactivate_impl(bool keep_nn_config_during_reset = false) = 0;
 
-    virtual Expected<std::vector<hailo_network_info_t>> get_network_infos() const;
     virtual Expected<std::vector<hailo_stream_info_t>> get_all_stream_infos(const std::string &network_name="") const;
-    virtual Expected<std::vector<hailo_vstream_info_t>> get_input_vstream_infos(const std::string &network_name="") const;
-    virtual Expected<std::vector<hailo_vstream_info_t>> get_output_vstream_infos(const std::string &network_name="") const;
-    virtual Expected<std::vector<hailo_vstream_info_t>> get_all_vstream_infos(const std::string &network_name="") const;
+
     virtual AccumulatorPtr get_activation_time_accumulator() const;
     virtual AccumulatorPtr get_deactivation_time_accumulator() const;
     hailo_status create_streams_from_config_params(Device &device);
 
     virtual bool is_multi_context() const;
     virtual const ConfigureNetworkParams get_config_params() const;
-
+    virtual Expected<HwInferResults> run_hw_infer_estimator() = 0;
 
     const SupportedFeatures &get_supported_features();
     Expected<uint16_t> get_stream_batch_size(const std::string &stream_name);
@@ -173,9 +151,6 @@ protected:
         const hailo_stream_parameters_t &stream_params, const std::string &stream_name);
     hailo_status create_input_stream_from_config_params(Device &device,
         const hailo_stream_parameters_t &stream_params, const std::string &stream_name);
-    hailo_status add_mux_streams_by_edges_names(OutputStreamWithParamsVector &result,
-        const std::unordered_map<std::string, hailo_vstream_params_t> &outputs_edges_params);
-    Expected<OutputStreamPtrVector> get_output_streams_by_vstream_name(const std::string &name);
 
     hailo_status activate_low_level_streams(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers);
     hailo_status deactivate_low_level_streams();

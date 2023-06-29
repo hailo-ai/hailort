@@ -16,6 +16,9 @@
 namespace hailort
 {
 
+class Barrier;
+using BarrierPtr = std::shared_ptr<Barrier>;
+
 /**
  * A barrier is a synchronization object that allows an expected number of threads to block until all of them
  * arrive at the barrier.

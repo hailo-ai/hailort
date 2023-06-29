@@ -90,7 +90,7 @@ public:
 
     hailo_status set_scheduler_timeout(const char *network_name, uint32_t timeout_ms);
     hailo_status set_scheduler_threshold(const char *network_name, uint32_t threshold);
-
+    hailo_status set_scheduler_priority(const char *network_name, uint8_t priority);
 
     std::shared_ptr<Hef> hef()
     {

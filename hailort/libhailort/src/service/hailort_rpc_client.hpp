@@ -12,6 +12,7 @@
 
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
+#include "hailo/device.hpp"
 
 #if defined(_MSC_VER)
 #pragma warning(push)
@@ -33,6 +34,17 @@
 namespace hailort
 {
 
+// Higher then default-hrt-timeout so we can differentiate errors
+static const std::chrono::milliseconds CONTEXT_TIMEOUT(HAILO_DEFAULT_VSTREAM_TIMEOUT_MS + 500);
+
+class ClientContextWithTimeout : public grpc::ClientContext {
+public:
+    ClientContextWithTimeout()
+    {
+        set_deadline(std::chrono::system_clock::now() + CONTEXT_TIMEOUT);
+    }
+};
+
 class HailoRtRpcClient final {
 public:
     HailoRtRpcClient(std::shared_ptr<grpc::Channel> channel)
@@ -43,13 +55,14 @@ public:
 
     Expected<uint32_t> VDevice_create(const hailo_vdevice_params_t &params, uint32_t pid);
     Expected<uint32_t> VDevice_dup_handle(uint32_t pid, uint32_t handle);
-    hailo_status VDevice_release(uint32_t handle);
+    hailo_status VDevice_release(uint32_t handle, uint32_t pid);
     Expected<std::vector<std::string>> VDevice_get_physical_devices_ids(uint32_t handle);
+    Expected<std::vector<std::unique_ptr<Device>>> VDevice_get_physical_devices(uint32_t handle);
     Expected<hailo_stream_interface_t> VDevice_get_default_streams_interface(uint32_t handle);
     Expected<std::vector<uint32_t>> VDevice_configure(uint32_t vdevice_handle, const Hef &hef, uint32_t pid, const NetworkGroupsParamsMap &configure_params={});
 
     Expected<uint32_t> ConfiguredNetworkGroup_dup_handle(uint32_t pid, uint32_t handle);
-    hailo_status ConfiguredNetworkGroup_release(uint32_t handle);
+    hailo_status ConfiguredNetworkGroup_release(uint32_t handle, uint32_t pid);
     Expected<std::map<std::string, hailo_vstream_params_t>> ConfiguredNetworkGroup_make_input_vstream_params(uint32_t handle,
         bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
         const std::string &network_name);
@@ -75,15 +88,18 @@ public:
     Expected<LatencyMeasurementResult> ConfiguredNetworkGroup_get_latency_measurement(uint32_t handle, const std::string &network_name);
     Expected<bool> ConfiguredNetworkGroup_is_multi_context(uint32_t handle);
     Expected<ConfigureNetworkParams> ConfiguredNetworkGroup_get_config_params(uint32_t handle);
+    Expected<std::vector<std::string>> ConfiguredNetworkGroup_get_sorted_output_names(uint32_t handle);
+    Expected<std::vector<std::string>> ConfiguredNetworkGroup_get_stream_names_from_vstream_name(uint32_t handle, const std::string &vstream_name);
+    Expected<std::vector<std::string>> ConfiguredNetworkGroup_get_vstream_names_from_stream_name(uint32_t handle, const std::string &stream_name);
 
     Expected<std::vector<uint32_t>> InputVStreams_create(uint32_t net_group_handle,
         const std::map<std::string, hailo_vstream_params_t> &inputs_params, uint32_t pid);
     Expected<uint32_t> InputVStream_dup_handle(uint32_t pid, uint32_t handle);
     Expected<uint32_t> OutputVStream_dup_handle(uint32_t pid, uint32_t handle);
-    hailo_status InputVStream_release(uint32_t handle);
+    hailo_status InputVStream_release(uint32_t handle, uint32_t pid);
     Expected<std::vector<uint32_t>> OutputVStreams_create(uint32_t net_group_handle,
         const std::map<std::string, hailo_vstream_params_t> &output_params, uint32_t pid);
-    hailo_status OutputVStream_release(uint32_t handle);
+    hailo_status OutputVStream_release(uint32_t handle, uint32_t pid);
     hailo_status InputVStream_write(uint32_t handle, const MemoryView &buffer);
     hailo_status OutputVStream_read(uint32_t handle, MemoryView buffer);
     Expected<size_t> InputVStream_get_frame_size(uint32_t handle);
@@ -101,12 +117,19 @@ public:
     hailo_status OutputVStream_abort(uint32_t handle);
     hailo_status InputVStream_resume(uint32_t handle);
     hailo_status OutputVStream_resume(uint32_t handle);
+    hailo_status InputVStream_stop_and_clear(uint32_t handle);
+    hailo_status OutputVStream_stop_and_clear(uint32_t handle);
+    hailo_status InputVStream_start_vstream(uint32_t handle);
+    hailo_status OutputVStream_start_vstream(uint32_t handle);
 
     Expected<hailo_format_t> InputVStream_get_user_buffer_format(uint32_t handle);
     Expected<hailo_format_t> OutputVStream_get_user_buffer_format(uint32_t handle);
 
     Expected<hailo_vstream_info_t> InputVStream_get_info(uint32_t handle);
     Expected<hailo_vstream_info_t> OutputVStream_get_info(uint32_t handle);
+
+    Expected<bool> InputVStream_is_aborted(uint32_t handle);
+    Expected<bool> OutputVStream_is_aborted(uint32_t handle);
 
 private:
     std::unique_ptr<ProtoHailoRtRpc::Stub> m_stub;

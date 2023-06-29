@@ -36,6 +36,12 @@ struct ChannelId
     {
         return std::make_pair(a.engine_index, a.channel_index) < std::make_pair(b.engine_index, b.channel_index);
     }
+
+    // Allow channel Id's to be compared
+    friend bool operator==(const ChannelId &a, const ChannelId &b)
+    {
+        return ((a.channel_index == b.channel_index) && (a.engine_index == b.engine_index));
+    }
 };
 
 } /* namespace vdma */

@@ -60,6 +60,7 @@ public:
 
     hailo_status execute(const std::map<std::string, MemoryView> &inputs, std::map<std::string, MemoryView> &outputs) override;
     std::string get_op_description() override;
+    hailo_status validate_metadata() override; // TODO: HRT-10676
 
     static const uint32_t DEFAULT_Y_OFFSET_IDX = 0;
     static const uint32_t DEFAULT_X_OFFSET_IDX = 1;
@@ -92,7 +93,7 @@ private:
                 classes_detections_count[max_id_score_pair.first]++;
             }
         } else {
-            for (uint32_t class_index = 0; class_index < m_nms_config.classes; class_index++) {
+            for (uint32_t class_index = 0; class_index < m_nms_config.number_of_classes; class_index++) {
                 auto class_id = class_index;
                 if (m_nms_config.background_removal) {
                     if (m_nms_config.background_removal_index == class_index) {

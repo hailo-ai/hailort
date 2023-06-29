@@ -20,6 +20,8 @@
 #define INFER_FRAME_COUNT (100)
 #define HEF_COUNT (2)
 #define DEVICE_COUNT (1)
+#define BATCH_SIZE_1 (1)
+#define BATCH_SIZE_2 (2)
 
 #define SCHEDULER_TIMEOUT_MS (100)
 #define SCHEDULER_THRESHOLD (3)
@@ -136,7 +138,7 @@ hailo_status build_vstreams(hailo_configured_network_group network_group,
         for (size_t frame_index = 0; frame_index < input_frame_sizes[i]; frame_index++) {
             src_data[i][frame_index] = (uint8_t)(rand() % 256);
         }
-    }  
+    }
 
     for (size_t i = 0; i < output_vstream_size; i++) {
         status = hailo_get_output_vstream_frame_size(output_vstreams[i], &output_frame_sizes[i]);
@@ -190,6 +192,7 @@ int main()
     read_thread_args_t read_args[HEF_COUNT][MAX_EDGE_LAYERS];
 
     char HEF_FILES[HEF_COUNT][MAX_HEF_PATH_LEN] = {"hefs/multi_network_shortcut_net.hef", "hefs/shortcut_net.hef"};
+    uint16_t batch_sizes[HEF_COUNT] = {BATCH_SIZE_1, BATCH_SIZE_2};
 
     status = hailo_init_vdevice_params(&params);
     REQUIRE_SUCCESS(status, l_exit, "Failed init vdevice_params");
@@ -203,21 +206,34 @@ int main()
         status = hailo_create_hef_file(&hef[hef_index], HEF_FILES[hef_index]);
         REQUIRE_SUCCESS(status, l_release_hef, "Failed creating hef file %s", HEF_FILES[hef_index]);
 
-        status = hailo_init_configure_params(hef[hef_index], HAILO_STREAM_INTERFACE_PCIE, &configure_params);
+        status = hailo_init_configure_params_by_vdevice(hef[hef_index], vdevice, &configure_params);
         REQUIRE_SUCCESS(status, l_release_hef, "Failed init configure params");
+
+        // Modify batch_size for each network group
+        for (size_t i = 0; i < configure_params.network_group_params_count; i++) {
+            configure_params.network_group_params[i].batch_size = batch_sizes[hef_index];
+            configure_params.network_group_params[i].power_mode = HAILO_POWER_MODE_ULTRA_PERFORMANCE;
+        }
 
         status = hailo_configure_vdevice(vdevice, hef[hef_index], &configure_params, &network_groups[hef_index], &network_groups_size);
         REQUIRE_SUCCESS(status, l_release_hef, "Failed configuring vdevcie");
         REQUIRE_ACTION(network_groups_size == 1, status = HAILO_INVALID_ARGUMENT, l_release_hef, 
             "Unexpected network group size");
 
-        // Set scheduler's timeout and threshold for the first network group, in order to give priority to the second network group
         if (0 == hef_index) {
+            // Set scheduler's timeout and threshold for the first network group, it will give priority to the second network group
             status =  hailo_set_scheduler_timeout(network_groups[hef_index], SCHEDULER_TIMEOUT_MS, NULL);
             REQUIRE_SUCCESS(status, l_release_hef, "Failed setting scheduler timeout");
 
             status =  hailo_set_scheduler_threshold(network_groups[hef_index], SCHEDULER_THRESHOLD, NULL);
             REQUIRE_SUCCESS(status, l_release_hef, "Failed setting scheduler threshold");
+
+            // Setting higher priority to the first network-group directly.
+            // The practical meaning is that the first network will be ready to run only if ``SCHEDULER_THRESHOLD`` send requests have been accumulated, 
+            // or more than ``SCHEDULER_TIMEOUT_MS`` time has passed and at least one send request has been accumulated.
+            // However when both the first and the second networks are ready to run, the first network will be preferred over the second network.
+            status =  hailo_set_scheduler_priority(network_groups[hef_index], HAILO_SCHEDULER_PRIORITY_NORMAL+1, NULL);
+            REQUIRE_SUCCESS(status, l_release_hef, "Failed setting scheduler priority");
         }
 
         status = build_vstreams(network_groups[hef_index],
@@ -282,10 +298,10 @@ l_release_vstreams:
 l_release_hef:
     for (hef_index = 0; hef_index < HEF_COUNT; hef_index++) {
         if (NULL != hef[hef_index]) {
-            (void)hailo_release_hef(hef[hef_index]);            
+            (void)hailo_release_hef(hef[hef_index]);
         }
     }
     (void)hailo_release_vdevice(vdevice);
 l_exit:
-    return status;
+    return (int)status;
 }

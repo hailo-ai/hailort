@@ -4,7 +4,7 @@
  **/
 /**
  * @file multi_process_example.cpp
- * This example demonstrates the basic usage of HailoRT as a service.
+ * This example demonstrates the basic usage of HailoRT multi-process service.
  * The program creates a virtual device with multi_process_service flag and uses the HailoRT API to run inference using VStreams.
  * The network_groups switching is performed automatically by the HailoRT scheduler.
  * 

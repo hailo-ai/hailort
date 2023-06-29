@@ -17,6 +17,7 @@
 #include "vdma/vdma_stream_base.hpp"
 #include "vdma/vdma_device.hpp"
 #include "vdma/channel/boundary_channel.hpp"
+#include "vdevice/scheduler/scheduled_core_op_state.hpp"
 
 
 namespace hailort
@@ -31,23 +32,14 @@ public:
                     hailo_status &status);
     virtual ~VdmaInputStream() = default;
 
-    hailo_status write_buffer_only(const MemoryView &buffer, const std::function<bool()> &should_cancel = []() { return false; });
-    hailo_status send_pending_buffer(size_t device_index = 0);
-
-    void notify_all()
-    {
-        return m_channel->notify_all();
-    }
+    virtual hailo_status write_buffer_only(const MemoryView &buffer, const std::function<bool()> &should_cancel = []() { return false; }) override;
+    virtual hailo_status send_pending_buffer(const device_id_t &device_id) override;
 
 private:
-    virtual Expected<size_t> sync_write_raw_buffer(const MemoryView &buffer) override;
-    virtual hailo_status sync_write_all_raw_buffer_no_transform_impl(void *buffer, size_t offset, size_t size) override;
+    virtual hailo_status write_impl(const MemoryView &buffer) override;
 
     std::mutex m_write_only_mutex;
     std::mutex m_send_pending_mutex;
-
-    friend class InputVDeviceBaseStream;
-    friend class InputVDeviceNativeStream;
 };
 
 class VdmaOutputStream : public VdmaOutputStreamBase
@@ -60,12 +52,7 @@ public:
     virtual ~VdmaOutputStream() = default;
 
 private:
-    virtual Expected<size_t> sync_read_raw_buffer(MemoryView &buffer);
-    virtual hailo_status read_all(MemoryView &buffer) override;
-
-    std::mutex m_read_mutex;
-
-    friend class OutputVDeviceBaseStream;
+    virtual hailo_status read_impl(MemoryView &buffer) override;
 };
 
 

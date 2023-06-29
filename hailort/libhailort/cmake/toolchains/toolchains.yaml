@@ -19,15 +19,15 @@
     python_versions:
     -   version: '3.8'
         installation: manual
-        package_name: https://launchpad.net/ubuntu/+source/python3.8/3.8.2-1ubuntu1/+build/18834117/+files/libpython3.8-dev_3.8.2-1ubuntu1_arm64.deb        
+        package_name: https://launchpad.net/ubuntu/+source/python3.8/3.8.2-1ubuntu1/+build/18834117/+files/libpython3.8-dev_3.8.2-1ubuntu1_arm64.deb
         package_dest: /usr/include/aarch64-linux-gnu
     -   version: '3.9'
         installation: manual
-        package_name: https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa/+build/24906233/+files/libpython3.9-dev_3.9.16-1+bionic1_arm64.deb
+        package_name: https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa/+build/26280901/+files/libpython3.9-dev_3.9.17-1+focal1_arm64.deb
         package_dest: /usr/include/aarch64-linux-gnu
     -   version: '3.10'
         installation: manual
-        package_name: https://launchpadlibrarian.net/569418529/libpython3.10-dev_3.10.0-5_arm64.deb       
+        package_name: https://launchpadlibrarian.net/569418529/libpython3.10-dev_3.10.0-5_arm64.deb
         package_dest: /usr/include/aarch64-linux-gnu
 -   name: linux.armv7l
     required_packages:

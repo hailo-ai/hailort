@@ -16,6 +16,7 @@
 #include "hailo/buffer.hpp"
 #include "hailo/hef.hpp"
 #include "hailo/transform.hpp"
+#include "hailo/quantization.hpp"
 
 #include "stream_common/stream_internal.hpp"
 #include "hef/layer_info.hpp"
@@ -74,6 +75,14 @@ private:
     std::vector<hailo_mux_info_t> m_mux_infos;
 };
 
+struct QuantInfoForDequantize
+{
+    float32_t m_qp_zp;
+    float32_t m_qp_scale;
+    QuantInfoForDequantize(float32_t qp_zp, float32_t qp_scale) : m_qp_zp(qp_zp), m_qp_scale(qp_scale)
+    {}
+};
+
 class HAILORTAPI FrameOutputTransformContext final : public OutputTransformContext
 {
 public:
@@ -95,9 +104,26 @@ public:
     virtual std::string description() const override;
 
 private:
+    template <typename T, typename Q>
+    static inline void dequantize_output_by_feature(T *dst_ptr, uint32_t buffer_elements_count,
+        const std::vector<QuantInfoForDequantize> &quant_infos, uint32_t repetition_count)
+    {
+        uint32_t elements_dequantized = 0;
+        while (elements_dequantized < buffer_elements_count) {
+            for (int32_t i = static_cast<int32_t>(quant_infos.size()) - 1; i >= 0; i--) {
+                Quantization::dequantize_output_buffer_in_place<T, Q>(dst_ptr, buffer_elements_count - repetition_count - elements_dequantized,
+                    repetition_count, quant_infos[i].m_qp_zp, quant_infos[i].m_qp_scale);
+                elements_dequantized += repetition_count;
+            }
+        }
+    }
+
     const hailo_3d_image_shape_t m_src_image_shape;
     const hailo_3d_image_shape_t m_dst_image_shape;
     Buffer m_transpose_buffer;
+    bool m_are_all_qps_the_same;
+    std::vector<QuantInfoForDequantize> m_quant_info_per_feature;
+    uint32_t m_quant_infos_rep_count;
 };
 
 class HAILORTAPI NMSOutputTransformContext final : public OutputTransformContext

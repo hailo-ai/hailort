@@ -73,6 +73,7 @@ public:
     virtual hailo_status set_scheduler_timeout(const std::chrono::milliseconds &timeout, const std::string &network_name) override;
     virtual hailo_status set_scheduler_threshold(uint32_t threshold, const std::string &network_name) override;
     virtual hailo_status set_scheduler_priority(uint8_t priority, const std::string &network_name) override;
+    virtual Expected<HwInferResults> run_hw_infer_estimator() override;
 
     virtual ~VdmaConfigCoreOp() = default;
     VdmaConfigCoreOp(const VdmaConfigCoreOp &other) = delete;

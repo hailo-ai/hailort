@@ -27,7 +27,7 @@
 #include "vdma/vdma_device.hpp"
 #include "vdma/vdma_config_manager.hpp"
 #include "vdevice/vdevice_core_op.hpp"
-#include "vdevice/scheduler/network_group_scheduler.hpp"
+#include "vdevice/scheduler/scheduler.hpp"
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
 #include "service/hailort_rpc_client.hpp"
@@ -55,7 +55,8 @@ public:
     {
         // Return Expected for future functionality
         std::vector<std::reference_wrapper<Device>> devices_refs;
-        for (auto &device : m_devices) {
+        for (const auto &pair : m_devices) {
+            auto &device = pair.second;
             devices_refs.push_back(*device);
         }
         return devices_refs;
@@ -65,8 +66,9 @@ public:
     {
         std::vector<std::string> device_ids;
         device_ids.reserve(m_devices.size());
-        for (auto &device : m_devices) {
-            device_ids.push_back(device.get()->get_dev_id());
+        for (const auto &pair : m_devices) {
+            auto &id = pair.first;
+            device_ids.push_back(id);
         }
         return device_ids;
     }
@@ -82,16 +84,18 @@ public:
     static hailo_status validate_params(const hailo_vdevice_params_t &params);
 
 private:
-    VDeviceBase(std::vector<std::unique_ptr<Device>> &&devices, CoreOpsSchedulerPtr core_ops_scheduler) :
+    VDeviceBase(std::map<device_id_t, std::unique_ptr<Device>> &&devices, CoreOpsSchedulerPtr core_ops_scheduler) :
         m_devices(std::move(devices)), m_core_ops_scheduler(core_ops_scheduler)
         {}
 
-    static Expected<std::vector<std::unique_ptr<Device>>> create_devices(const hailo_vdevice_params_t &params);
+    static Expected<std::map<device_id_t, std::unique_ptr<Device>>> create_devices(const hailo_vdevice_params_t &params);
     static Expected<std::vector<std::string>> get_device_ids(const hailo_vdevice_params_t &params);
     Expected<NetworkGroupsParamsMap> create_local_config_params(Hef &hef, const NetworkGroupsParamsMap &configure_params);
-    Expected<std::shared_ptr<VDeviceCoreOp>> create_vdevice_network_group(Hef &hef, const std::pair<const std::string, ConfigureNetworkParams> &params);
+    Expected<std::shared_ptr<VDeviceCoreOp>> create_vdevice_network_group(Hef &hef,
+        const std::pair<const std::string, ConfigureNetworkParams> &params, bool use_multiplexer);
+    bool should_use_multiplexer(const ConfigureNetworkParams &params);
 
-    std::vector<std::unique_ptr<Device>> m_devices;
+    std::map<device_id_t, std::unique_ptr<Device>> m_devices;
     CoreOpsSchedulerPtr m_core_ops_scheduler;
     std::vector<std::shared_ptr<VDeviceCoreOp>> m_vdevice_core_ops;
     std::vector<std::shared_ptr<ConfiguredNetworkGroup>> m_network_groups; // TODO: HRT-9547 - Remove when ConfiguredNetworkGroup will be kept in global context
@@ -124,12 +128,13 @@ public:
     virtual hailo_status after_fork_in_child() override;
 
 private:
-    VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t handle);
+    VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t handle, std::vector<std::unique_ptr<hailort::Device>> &&devices);
 
     hailo_status create_client();
 
     std::unique_ptr<HailoRtRpcClient> m_client;
     uint32_t m_handle;
+    std::vector<std::unique_ptr<Device>> m_devices;
     std::vector<std::shared_ptr<ConfiguredNetworkGroup>> m_network_groups;
 };
 

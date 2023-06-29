@@ -56,6 +56,7 @@ constexpr uint8_t MAX_H2D_CHANNEL_INDEX = 15;
 constexpr uint8_t MIN_D2H_CHANNEL_INDEX = MAX_H2D_CHANNEL_INDEX + 1;
 constexpr uint8_t MAX_D2H_CHANNEL_INDEX = 31;
 
+constexpr size_t SIZE_OF_SINGLE_DESCRIPTOR = 0x10;
 
 // NOTE: don't change members from this struct without updating all code using it (platform specific)
 struct ChannelInterruptTimestamp {
@@ -85,15 +86,21 @@ struct IrqData {
 using ChannelsBitmap = std::array<uint32_t, MAX_VDMA_ENGINES_COUNT>;
 
 #if defined(__linux__) || defined(_MSC_VER)
+// Unique handle returned from the driver.
 using vdma_mapped_buffer_driver_identifier = uintptr_t;
 #elif defined(__QNX__)
-struct vdma_mapped_buffer_driver_identifier {
-    shm_handle_t shm_handle;
-    int shm_fd;
-};
+// Identifier is the shared memory file descriptor.
+using vdma_mapped_buffer_driver_identifier = int;
 #else
 #error "unsupported platform!"
 #endif // defined(__linux__) || defined(_MSC_VER)
+
+struct DescriptorsListInfo {
+    uintptr_t handle; // Unique identifier for the driver.
+    uint64_t dma_address;
+    size_t desc_count;
+    void *user_address;
+};
 
 class HailoRTDriver final
 {
@@ -108,6 +115,11 @@ public:
         H2D = 0,
         D2H,
         BOTH
+    };
+
+    enum class DmaSyncDirection {
+        TO_HOST = 0,
+        TO_DEVICE
     };
 
     enum class DmaType {
@@ -136,7 +148,7 @@ public:
 
     using VdmaBufferHandle = size_t;
 
-    static Expected<HailoRTDriver> create(const std::string &dev_path);
+    static Expected<HailoRTDriver> create(const DeviceInfo &device_info);
 
 // TODO: HRT-7309 add implementation for Windows
 #if defined(__linux__) || defined(__QNX__)
@@ -153,7 +165,7 @@ public:
     hailo_status write_vdma_channel_register(vdma::ChannelId channel_id, DmaDirection data_direction, size_t offset,
         size_t reg_size, uint32_t data);
 
-    hailo_status vdma_buffer_sync(VdmaBufferHandle buffer, DmaDirection sync_direction, size_t offset, size_t count);
+    hailo_status vdma_buffer_sync(VdmaBufferHandle buffer, DmaSyncDirection sync_direction, size_t offset, size_t count);
 
     hailo_status vdma_interrupts_enable(const ChannelsBitmap &channels_bitmap, bool enable_timestamps_measure);
     hailo_status vdma_interrupts_disable(const ChannelsBitmap &channel_id);
@@ -197,18 +209,18 @@ public:
     hailo_status vdma_buffer_unmap(VdmaBufferHandle handle);
 
     /**
-     * Allocate vdma descriptors buffer that is accessable via kernel mode, user mode and the given board (using DMA).
-     * 
+     * Allocate vdma descriptors list object that can bind to some buffer. Used for scatter gather vdma.
+     *
      * @param[in] desc_count - number of descriptors to allocate. The descriptor max size is DESC_MAX_SIZE.
-     * @return Upon success, returns Expected of a pair <desc_handle, dma_address>.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @param[in] is_circular - if true, the descriptors list can be used in a circular (and desc_count must be power
+     *                          of 2)
      */
-    Expected<std::pair<uintptr_t, uint64_t>> descriptors_list_create(size_t desc_count);
-   
+    Expected<DescriptorsListInfo> descriptors_list_create(size_t desc_count, bool is_circular);
+
     /**
-     * Frees a vdma descriptors buffer allocated by 'create_descriptors_buffer'.
+     * Frees a vdma descriptors buffer allocated by 'descriptors_list_create'.
      */
-    hailo_status descriptors_list_release(uintptr_t desc_handle);
+    hailo_status descriptors_list_release(const DescriptorsListInfo &descriptors_list_info);
 
     /**
      * Configure vdma channel descriptors to point to the given user address.
@@ -233,15 +245,14 @@ public:
     hailo_status vdma_continuous_buffer_free(uintptr_t buffer_handle);
 
     /**
-     * The actual desc page size might be smaller than the once requested, depends on the host capabilities.
+     * Marks the device as used for vDMA operations. Only one open FD can be marked at once.
+     * The device is "unmarked" only on FD close.
      */
-    uint16_t calc_desc_page_size(uint16_t requested_size) const
+    hailo_status mark_as_used();
+
+    const std::string &device_id() const
     {
-        if (m_desc_max_page_size < requested_size) {
-            LOGGER__WARNING("Requested desc page size ({}) is bigger than max on this host ({}).",
-                requested_size, m_desc_max_page_size);
-        }
-        return static_cast<uint16_t>(std::min(static_cast<uint32_t>(requested_size), static_cast<uint32_t>(m_desc_max_page_size)));
+        return m_device_info.device_id;
     }
 
     inline DmaType dma_type() const
@@ -251,21 +262,8 @@ public:
 
     FileDescriptor& fd() {return m_fd;}
 
-    const std::string &dev_path() const
+    inline bool allocate_driver_buffer() const
     {
-        return m_dev_path;
-    }
-
-    hailo_status mark_as_used();
-
-#ifdef __QNX__
-    inline pid_t resource_manager_pid() const
-    {
-        return m_resource_manager_pid;
-    }
-#endif // __QNX__
-
-    inline bool allocate_driver_buffer() const {
         return m_allocate_driver_buffer;
     }
 
@@ -297,7 +295,12 @@ private:
     hailo_status read_memory_ioctl(MemoryType memory_type, uint64_t address, void *buf, size_t size);
     hailo_status write_memory_ioctl(MemoryType memory_type, uint64_t address, const void *buf, size_t size);
 
-    HailoRTDriver(const std::string &dev_path, FileDescriptor &&fd, hailo_status &status);
+    Expected<std::pair<uintptr_t, uint64_t>> descriptors_list_create_ioctl(size_t desc_count, bool is_circular);
+    hailo_status descriptors_list_release_ioctl(uintptr_t desc_handle);
+    Expected<void *> descriptors_list_create_mmap(uintptr_t desc_handle, size_t desc_count);
+    hailo_status descriptors_list_create_munmap(void *address, size_t desc_count);
+
+    HailoRTDriver(const DeviceInfo &device_info, FileDescriptor &&fd, hailo_status &status);
 
     bool is_valid_channel_id(const vdma::ChannelId &channel_id);
     bool is_valid_channels_bitmap(const ChannelsBitmap &bitmap)
@@ -313,7 +316,7 @@ private:
     }
 
     FileDescriptor m_fd;
-    std::string m_dev_path;
+    DeviceInfo m_device_info;
     uint16_t m_desc_max_page_size;
     DmaType m_dma_type;
     bool m_allocate_driver_buffer;

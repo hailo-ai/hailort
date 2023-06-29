@@ -17,30 +17,40 @@
 
 #include "hailo/hailort.h"
 #include "common/logger_macros.hpp"
+#include "common/utils.hpp"
 
 namespace hailort
 {
 
 class HailoRTLogger {
 public:
-    static HailoRTLogger& get_instance()
+#ifdef NDEBUG
+    static std::unique_ptr<HailoRTLogger> &get_instance(spdlog::level::level_enum console_level = spdlog::level::warn,
+        spdlog::level::level_enum file_level = spdlog::level::info, spdlog::level::level_enum flush_level = spdlog::level::warn)
+#else
+    static std::unique_ptr<HailoRTLogger> &get_instance(spdlog::level::level_enum console_level = spdlog::level::warn,
+        spdlog::level::level_enum file_level = spdlog::level::debug, spdlog::level::level_enum flush_level = spdlog::level::debug)
+#endif
     {
-        static HailoRTLogger instance;
+        static std::unique_ptr<HailoRTLogger> instance = nullptr;
+        if (nullptr == instance) {
+            instance = make_unique_nothrow<HailoRTLogger>(console_level, file_level, flush_level);
+        }
         return instance;
     }
+
+    HailoRTLogger(spdlog::level::level_enum console_level, spdlog::level::level_enum file_level, spdlog::level::level_enum flush_level);
+    ~HailoRTLogger() = default;
     HailoRTLogger(HailoRTLogger const&) = delete;
     void operator=(HailoRTLogger const&) = delete;
 
-    std::shared_ptr<spdlog::logger> logger();
-    void set_levels(spdlog::level::level_enum console_level, spdlog::level::level_enum file_level,
-        spdlog::level::level_enum flush_level);
     static std::string get_log_path(const std::string &path_env_var);
     static std::string get_main_log_path();
     static std::shared_ptr<spdlog::sinks::sink> create_file_sink(const std::string &dir_path, const std::string &filename, bool rotate);
 
 private:
-    HailoRTLogger();
     static std::string parse_log_path(const char *log_path);
+    void set_levels(spdlog::level::level_enum console_level, spdlog::level::level_enum file_level, spdlog::level::level_enum flush_level);
 
     std::shared_ptr<spdlog::sinks::sink> m_console_sink;
 

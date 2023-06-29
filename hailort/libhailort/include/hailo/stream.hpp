@@ -20,16 +20,12 @@
 #include <functional>
 
 
+/** hailort namespace */
 namespace hailort
 {
 
 // Forward declaration
 struct LayerInfo;
-class DmaMappedBuffer;
-
-using TransferDoneCallback = std::function<void(std::shared_ptr<DmaMappedBuffer> buffer,
-                                                const hailo_async_transfer_completion_info_t &status,
-                                                void *opaque)>;
 
 
 /*! Input (host to device) stream representation */
@@ -40,6 +36,24 @@ public:
 
     InputStream(const InputStream&) = delete;
     InputStream& operator=(const InputStream&) = delete;
+
+    /** Context passed to the \ref TransferDoneCallback after the async operation is done or has failed. */
+    struct CompletionInfo
+    {
+        /**
+         * Status of the async transfer.
+         * - ::HAILO_SUCCESS - When transfer is complete successfully.
+         * - ::HAILO_STREAM_ABORTED_BY_USER - The transfer was canceled (can happen after network deactivation).
+         * - Any other ::hailo_status on unexpected errors.
+         */
+        hailo_status status;
+
+        const void *buffer_addr;        /* Points to the transferred buffer. */
+        size_t buffer_size;             /* Size of the transferred buffer. */
+    };
+
+    /** Async transfer complete callback prototype. */
+    using TransferDoneCallback = std::function<void(const CompletionInfo &completion_info)>;
 
     /**
      * Set new timeout value to the input stream
@@ -61,21 +75,21 @@ public:
 
     /**
      * Aborting the stream.
-     * 
+     *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
     virtual hailo_status abort() = 0;
 
     /**
      * Clearing the aborted state of the stream.
-     * 
+     *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
     virtual hailo_status clear_abort() = 0;
 
     /**
      * Writes all pending data to the underlying stream.
-     * 
+     *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
     virtual hailo_status flush();
@@ -92,21 +106,117 @@ public:
     virtual bool is_scheduled() = 0;
 
     /**
-     * Writes the entire buffer to the stream without transformations
+     * Writes the entire buffer to the stream without transformations.
      *
      * @param[in] buffer    The buffer to be written.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
+     *
      * @note @a buffer is expected to be in the format dictated by this.stream_info.format
-     * @note @a size is expected to be a product of this.stream_info.hw_frame_size (i.e. more than one frame may be written)
+     * @note @a buffer.size() is expected to be get_frame_size().
      */
     virtual hailo_status write(const MemoryView &buffer);
 
-    // ******************************************** NOTE ******************************************** //
-    // Async Stream API and DmaMappedBuffer are currently not supported and are for internal use only //
-    // ********************************************************************************************** //
-    virtual hailo_status wait_for_ready(size_t transfer_size, std::chrono::milliseconds timeout); // Internal use only
-    virtual hailo_status write_async(std::shared_ptr<DmaMappedBuffer> buffer, const TransferDoneCallback &user_callback,
-        void *opaque = nullptr); // Internal use only
+    /**
+     * Writes the entire buffer to the stream without transformations.
+     *
+     * @param[in] buffer    The buffer to be written.
+     * @param[in] size      The size of the buffer given.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
+     *
+     * @note @a buffer is expected to be in the format dictated by this.stream_info.format
+     * @note @a size is expected to be get_frame_size().
+     */
+    virtual hailo_status write(const void *buffer, size_t size);
+
+    /**
+     * Waits until the stream is ready to launch a new write_async() operation. Each stream contains some limited sized
+     * queue for ongoing transfers. Calling get_async_max_queue_size() will return the queue size for current stream.
+     *
+     * @param[in] transfer_size     Must be get_frame_size().
+     * @param[in] timeout           Amount of time to wait until the stream is ready in milliseconds.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise:
+     *           - If @a timeout has passed and the stream is not ready, returns ::HAILO_TIMEOUT.
+     *           - In any other error case, returns ::hailo_status error.
+     */
+    virtual hailo_status wait_for_async_ready(size_t transfer_size, std::chrono::milliseconds timeout);
+
+    /**
+     * Returns the maximum amount of frames that can be simultaneously written to the stream (by write_async() calls)
+     * before any one of the write operations is complete, as signified by @a user_callback being called.
+     *
+     * @return Upon success, returns Expected of a the queue size.
+     *   Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    virtual Expected<size_t> get_async_max_queue_size() const;
+
+    /**
+     * Writes the contents of @a buffer to the stream asynchronously, initiating a deferred operation that will be
+     * completed later.
+     * - If the function call succeeds (i.e., write_async() returns ::HAILO_SUCCESS), the deferred operation has been
+     *   initiated. Until @a user_callback is called, the user cannot change or delete @a buffer.
+     * - If the function call fails (i.e., write_async() returns a status other than ::HAILO_SUCCESS), the deferred
+     *   operation will not be initiated and @a user_callback will not be invoked. The user is free to change or delete
+     *   @a buffer.
+     * - @a user_callback is triggered upon successful completion or failure of the deferred operation. The callback
+     *   receives a \ref CompletionInfo object containing a pointer to the transferred buffer (@a buffer_addr) and the
+     *   transfer status (@a status).
+     *
+     * @param[in] buffer            The buffer to be written.
+     *                              The buffer must be aligned to the system page size.
+     * @param[in] user_callback     The callback that will be called when the transfer is complete
+     *                              or has failed.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise:
+     *           - If the stream queue is full, returns ::HAILO_QUEUE_IS_FULL. In this case please wait
+     *             until @a user_callback is called on previous writes, or call wait_for_async_ready().
+     *             The size of the queue can be determined by calling get_async_max_queue_size().
+     *           - In any other error case, returns a ::hailo_status error.
+     *
+     * @note @a user_callback should run as quickly as possible.
+     * @note The buffer's format comes from the @a format field inside get_info() and the shape comes from
+     *       the @a hw_shape field inside get_info().
+     * @note The address provided must be aligned to the system's page size, and the rest of the page should not be in
+     *       use by any other part of the program to ensure proper functioning of the DMA operation. Memory for the
+     *       provided address can be allocated using `mmap` on Unix-like systems or `VirtualAlloc` on Windows.
+     */
+    virtual hailo_status write_async(const MemoryView &buffer, const TransferDoneCallback &user_callback) = 0;
+
+    /**
+     * Writes the contents of @a buffer to the stream asynchronously, initiating a deferred operation that will be
+     * completed later.
+     * - If the function call succeeds (i.e., write_async() returns ::HAILO_SUCCESS), the deferred operation has been
+     *   initiated. Until @a user_callback is called, the user cannot change or delete @a buffer.
+     * - If the function call fails (i.e., write_async() returns a status other than ::HAILO_SUCCESS), the deferred
+     *   operation will not be initiated and @a user_callback will not be invoked. The user is free to change or delete
+     *   @a buffer.
+     * - @a user_callback is triggered upon successful completion or failure of the deferred operation. The callback
+     *   receives a \ref CompletionInfo object containing a pointer to the transferred buffer (@a buffer_addr) and the
+     *   transfer status (@a status).
+     *
+     * @param[in] buffer            The buffer to be written.
+     *                              The buffer must be aligned to the system page size.
+     * @param[in] size              The size of the given buffer, expected to be get_frame_size().
+     * @param[in] user_callback     The callback that will be called when the transfer is complete
+     *                              or has failed.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise:
+     *           - If the stream queue is full, returns ::HAILO_QUEUE_IS_FULL. In this case please wait
+     *             until @a user_callback is called on previous writes, or call wait_for_async_ready().
+     *             The size of the queue can be determined by calling get_async_max_queue_size().
+     *           - In any other error case, returns a ::hailo_status error.
+     *
+     * @note @a user_callback should run as quickly as possible.
+     * @note The buffer's format comes from the @a format field inside get_info() and the shape comes from
+     *       the @a hw_shape field inside get_info().
+     * @note The address provided must be aligned to the system's page size, and the rest of the page should not be in
+     *       use by any other part of the program to ensure proper functioning of the DMA operation. Memory for the
+     *       provided address can be allocated using `mmap` on Unix-like systems or `VirtualAlloc` on Windows.
+     */
+    virtual hailo_status write_async(const void *buffer, size_t size, const TransferDoneCallback &user_callback) = 0;
+
+    // The usage of BufferPtr for async API isn't currently supported and is for internal use only.
+    virtual hailo_status write_async(BufferPtr buffer, const TransferDoneCallback &user_callback) = 0;
 
     /**
      * @returns A ::hailo_stream_info_t object containing the stream's info.
@@ -139,17 +249,16 @@ public:
 
     // get_network_group_activated_event is same as this function
     virtual EventPtr &get_core_op_activated_event() = 0;
+
 protected:
     InputStream() = default;
     InputStream(InputStream &&) = delete;
 
-    // Note: Implement sync_write_all_raw_buffer_no_transform_impl for the actual stream interaction in sub classes
-    virtual hailo_status sync_write_all_raw_buffer_no_transform_impl(void *buffer, size_t offset, size_t size) = 0;
+    // Note: Implement write_impl for the actual stream interaction in sub classes
+    virtual hailo_status write_impl(const MemoryView &buffer) = 0;
 
     virtual hailo_status activate_stream(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers) = 0;
     virtual hailo_status deactivate_stream() = 0;
-
-    virtual Expected<size_t> sync_write_raw_buffer(const MemoryView &buffer) = 0;
 
     hailo_stream_info_t m_stream_info;
     uint8_t m_dataflow_manager_id;
@@ -169,6 +278,24 @@ public:
     OutputStream(const OutputStream&) = delete;
     OutputStream& operator=(const OutputStream&) = delete;
 
+    /** Context passed to the \ref TransferDoneCallback after the async operation is done or has failed. */
+    struct CompletionInfo
+    {
+        /**
+         * Status of the async transfer.
+         * - ::HAILO_SUCCESS - When transfer is complete successfully.
+         * - ::HAILO_STREAM_ABORTED_BY_USER - The transfer was canceled (can happen after network deactivation).
+         * - Any other ::hailo_status on unexpected errors.
+         */
+        hailo_status status;
+
+        void *buffer_addr;              /* Points to the transferred buffer. */
+        size_t buffer_size;             /* Size of the transferred buffer. */
+    };
+
+    /** Async transfer complete callback prototype. */
+    using TransferDoneCallback = std::function<void(const CompletionInfo &completion_info)>;
+
     /**
      * Set new timeout value to the output stream
      *
@@ -181,7 +308,7 @@ public:
      * @return returns the output stream's timeout in milliseconds.
      */
     virtual std::chrono::milliseconds get_timeout() const = 0;
-    
+
     /**
      * @return returns the output stream's interface.
      */
@@ -189,14 +316,14 @@ public:
 
     /**
      * Aborting the stream.
-     * 
+     *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
     virtual hailo_status abort() = 0;
 
     /**
      * Clearing the abort flag of the stream.
-     * 
+     *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
     virtual hailo_status clear_abort() = 0;
@@ -249,19 +376,115 @@ public:
     /**
      * Reads the entire buffer from the stream without transformations
      *
-     * @param[out] buffer   A pointer to a buffer that receives the data read from the stream.
+     * @param[in] buffer            A buffer that receives the data read from the stream.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
-     * @note Upon return, @a buffer is expected to be in the format dictated by this.stream_info.format
-     * @note @a size is expected to be a product of this.stream_info.hw_frame_size (i.e. more than one frame may be read)
+     * @note Upon return, @a buffer is expected to be in the format dictated by this.get_info().format
+     * @note @a size is expected to be get_frame_size().
      */
     virtual hailo_status read(MemoryView buffer);
 
-    // ******************************************** NOTE ******************************************** //
-    // Async Stream API and DmaMappedBuffer are currently not supported and are for internal use only //
-    // ********************************************************************************************** //
-    virtual hailo_status wait_for_ready(size_t transfer_size, std::chrono::milliseconds timeout); // Internal use only
-    virtual hailo_status read_async(std::shared_ptr<DmaMappedBuffer> buffer, const TransferDoneCallback &user_callback,
-        void *opaque = nullptr); // Internal use only
+    /**
+     * Reads the entire buffer from the stream without transformations
+     *
+     * @param[in] buffer   A pointer to a buffer that receives the data read from the stream.
+     * @param[in] size     The size of the given buffer.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
+     *
+     * @note Upon return, @a buffer is expected to be in the format dictated by this.get_info().format
+     * @note @a size is expected to be get_frame_size().
+     */
+    virtual hailo_status read(void *buffer, size_t size);
+
+    /**
+     * Waits until the stream is ready to launch a new read_async() operation. Each stream contains some limited sized
+     * queue for ongoing transfers. Calling get_async_max_queue_size() will return the queue size for current stream.
+     *
+     * @param[in] transfer_size     Must be get_frame_size().
+     * @param[in] timeout           Amount of time to wait until the stream is ready in milliseconds.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise:
+     *           - If @a timeout has passed and the stream is not ready, returns ::HAILO_TIMEOUT.
+     *           - In any other error case, returns ::hailo_status error.
+     */
+    virtual hailo_status wait_for_async_ready(size_t transfer_size, std::chrono::milliseconds timeout);
+
+    /**
+     * Returns the maximum amount of frames that can be simultaneously read from the stream (by read_async() calls)
+     * before any one of the read operations is complete, as signified  by @a user_callback being called.
+     *
+     * @return Upon success, returns Expected of a the queue size.
+     *   Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    virtual Expected<size_t> get_async_max_queue_size() const;
+
+    /**
+     * Reads into @a buffer from the stream asynchronously, initiating a deferred operation that will be completed
+     * later.
+     * - If the function call succeeds (i.e., read_async() returns ::HAILO_SUCCESS), the deferred operation has been
+     *   initiated. Until @a user_callback is called, the user cannot change or delete @a buffer.
+     * - If the function call fails (i.e., read_async() returns a status other than ::HAILO_SUCCESS), the deferred
+     *   operation will not be initiated and @a user_callback will not be invoked. The user is free to change or
+     *   delete @a buffer.
+     * - @a user_callback is triggered upon successful completion or failure of the deferred operation.
+     *   The callback receives a \ref CompletionInfo object containing a pointer to the transferred buffer
+     *   (@a buffer_addr) and the transfer status (@a status). If the operation has completed successfully, the contents
+     *   of @a buffer will have been updated by the read operation.
+     *
+     * @param[in] buffer        The buffer to be read into.
+     *                          The buffer must be aligned to the system page size.
+     * @param[in] user_callback The callback that will be called when the transfer is complete or has failed.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise:
+     *         - If the stream queue is full, returns ::HAILO_QUEUE_IS_FULL.
+     *           In this case, please wait until @a user_callback is called on previous
+     *           reads, or call wait_for_async_ready(). The size of the queue can be
+     *           determined by calling get_async_max_queue_size().
+     *         - In any other error case, returns a ::hailo_status error.
+     * @note @a user_callback should execute as quickly as possible.
+     * @note The buffer's format is determined by the @a format field inside get_info(),
+     *       and the shape is determined by the @a hw_shape field inside get_info().
+     * @note The address provided must be aligned to the system's page size, and the rest of the page should not be in
+     *       use by any other part of the program to ensure proper functioning of the DMA operation. Memory for the
+     *       provided address can be allocated using `mmap` on Unix-like systems or `VirtualAlloc` on Windows.
+     */
+    virtual hailo_status read_async(MemoryView buffer, const TransferDoneCallback &user_callback) = 0;
+
+    /**
+     * Reads into @a buffer from the stream asynchronously, initiating a deferred operation that will be completed
+     * later.
+     * - If the function call succeeds (i.e., read_async() returns ::HAILO_SUCCESS), the deferred operation has been
+     *   initiated. Until @a user_callback is called, the user cannot change or delete @a buffer.
+     * - If the function call fails (i.e., read_async() returns a status other than ::HAILO_SUCCESS), the deferred
+     *   operation will not be initiated and @a user_callback will not be invoked. The user is free to change or
+     *   delete @a buffer.
+     * - @a user_callback is triggered upon successful completion or failure of the deferred operation.
+     *   The callback receives a \ref CompletionInfo object containing a pointer to the transferred buffer
+     *   (@a buffer_addr) and the transfer status (@a status). If the operation has completed successfully, the contents
+     *   of @a buffer will have been updated by the read operation.
+     *
+     * @param[in] buffer        The buffer to be read into.
+     *                          The buffer must be aligned to the system page size.
+     * @param[in] size          The size of the given buffer, expected to be get_frame_size().
+     * @param[in] user_callback The callback that will be called when the transfer is complete or has failed.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise:
+     *         - If the stream queue is full, returns ::HAILO_QUEUE_IS_FULL.
+     *           In this case, please wait until @a user_callback is called on previous
+     *           reads, or call wait_for_async_ready(). The size of the queue can be
+     *           determined by calling get_async_max_queue_size().
+     *         - In any other error case, returns a ::hailo_status error.
+     * @note @a user_callback should execute as quickly as possible.
+     * @note The buffer's format is determined by the @a format field inside get_info(),
+     *       and the shape is determined by the @a hw_shape field inside get_info()
+     * @note The address provided must be aligned to the system's page size, and the rest of the page should not be in
+     *       use by any other part of the program to ensure proper functioning of the DMA operation. Memory for the
+     *       provided address can be allocated using `mmap` on Unix-like systems or `VirtualAlloc` on Windows.
+     */
+    virtual hailo_status read_async(void *buffer, size_t size, const TransferDoneCallback &user_callback) = 0;
+
+    // The usage of BufferPtr for async API isn't currently supported and is for internal use only.
+    virtual hailo_status read_async(BufferPtr buffer, const TransferDoneCallback &user_callback) = 0;
 
     // get_network_group_activated_event is same as this function
     virtual EventPtr &get_core_op_activated_event() = 0;
@@ -271,17 +494,17 @@ protected:
 
     virtual hailo_status activate_stream(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers) = 0;
     virtual hailo_status deactivate_stream() = 0;
-    virtual hailo_status read_all(MemoryView &buffer) = 0;
-
-    virtual Expected<size_t> sync_read_raw_buffer(MemoryView &buffer) = 0;
+    virtual hailo_status read_impl(MemoryView &buffer) = 0;
 
     hailo_stream_info_t m_stream_info;
     uint8_t m_dataflow_manager_id;
     std::atomic<uint32_t> m_invalid_frames_count;
 
+protected:
+    hailo_status read_nms(void *buffer, size_t offset, size_t size);
+
 private:
     virtual const LayerInfo& get_layer_info() = 0;
-    hailo_status read_nms(void *buffer, size_t offset, size_t size);
     void increase_invalid_frames_count(uint32_t value);
 
     friend class HefConfigurator;
@@ -289,6 +512,7 @@ private:
     friend class HwReadElement;
     friend class OutputDemuxer;
     friend class CoreOp;
+    friend class NMSStreamReader;
 };
 
 } /* namespace hailort */

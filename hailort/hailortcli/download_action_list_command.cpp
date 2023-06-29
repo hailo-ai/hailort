@@ -308,6 +308,14 @@ Expected<ordered_json> DownloadActionListCommand::parse_action_data(uint32_t bas
             data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__enable_nms_action_t *>(action);
             action_length_local = sizeof(CONTEXT_SWITCH_DEFS__enable_nms_action_t);
             break;
+        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_WRITE_DATA_BY_TYPE:
+            data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__write_data_by_type_action_t *>(action);
+            action_length_local = sizeof(CONTEXT_SWITCH_DEFS__write_data_by_type_action_t);
+            break;
+        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_SWITCH_LCU_BATCH:
+            data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__switch_lcu_batch_action_data_t *>(action);
+            action_length_local = sizeof(CONTEXT_SWITCH_DEFS__switch_lcu_batch_action_data_t);
+            break;
         case CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT:
             // Fallthrough
             // Handling CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT is needed because we compile this file with -Wswitch-enum
@@ -621,4 +629,13 @@ void to_json(json &j, const CONTEXT_SWITCH_DEFS__open_boundary_input_channel_dat
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__open_boundary_output_channel_data_t &data)
 {
     j = unpack_vdma_channel_id(data);
+}
+
+void to_json(json& j, const CONTEXT_SWITCH_DEFS__switch_lcu_batch_action_data_t& data) {
+    const auto cluster_index = CONTEXT_SWITCH_DEFS__PACKED_LCU_ID_CLUSTER_INDEX_READ(data.packed_lcu_id);
+    const auto lcu_index = CONTEXT_SWITCH_DEFS__PACKED_LCU_ID_LCU_INDEX_READ(data.packed_lcu_id);
+    const auto network_index = data.network_index;
+    const auto kernel_done_count = data.kernel_done_count;
+    j = json{{"cluster_index", cluster_index}, {"lcu_index", lcu_index}, {"network_index", network_index},
+        {"kernel_done_count", kernel_done_count}};
 }

@@ -42,7 +42,7 @@ public:
 
     static hailo_status parse_and_validate_response(uint8_t *message, uint32_t message_size, 
         CONTROL_PROTOCOL__response_header_t **header, CONTROL_PROTOCOL__payload_t **payload, 
-        CONTROL_PROTOCOL__request_t *request);
+        CONTROL_PROTOCOL__request_t *request, Device &device);
 
     /**
      * Receive information about the device.
@@ -288,11 +288,14 @@ public:
      *  Enable core-op
      * 
      * @param[in]     device - The Hailo device.
-     * @param[in]     core_op_index - core_op index 
+     * @param[in]     core_op_index - core_op index
+     * @param[in]     dynamic_batch_size - actual batch size
+     * @param[in]     batch_count - number of batches user wish to run on hailo chip
      *
      * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
      */
-    static hailo_status enable_core_op(Device &device, uint8_t core_op_index, uint16_t dynamic_batch_size);
+    static hailo_status enable_core_op(Device &device, uint8_t core_op_index, uint16_t dynamic_batch_size,
+        uint16_t batch_count);
     /**
      *  reset context switch state machine
      * 
@@ -373,10 +376,10 @@ public:
     static Expected<CONTROL_PROTOCOL__hw_consts_t> get_hw_consts(Device &device);
     static hailo_status set_sleep_state(Device &device, hailo_sleep_state_t sleep_state);
     static hailo_status change_hw_infer_status(Device &device, CONTROL_PROTOCOL__hw_infer_state_t state,
-        uint8_t network_group_index, uint16_t dynamic_batch_size,
+        uint8_t network_group_index, uint16_t dynamic_batch_size, uint16_t batch_count,
         CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info, CONTROL_PROTOCOL__hw_only_infer_results_t *results);
     static hailo_status start_hw_only_infer(Device &device, uint8_t network_group_index, uint16_t dynamic_batch_size,
-        CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info);
+        uint16_t batch_count, CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info);
     static hailo_status stop_hw_only_infer(Device &device, CONTROL_PROTOCOL__hw_only_infer_results_t *results);
     // TODO: needed?
     static hailo_status power_measurement(Device &device, CONTROL_PROTOCOL__dvm_options_t dvm,
@@ -403,11 +406,11 @@ private:
         bool *is_action_list_end, uint32_t *batch_counter);
     static hailo_status context_switch_set_context_info_chunk(Device &device,
         const CONTROL_PROTOCOL__context_switch_context_info_single_control_t &context_info);
-    static hailo_status change_context_switch_status(Device &device, 
+    static hailo_status change_context_switch_status(Device &device,
             CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status,
-            uint8_t network_group_index, uint16_t dynamic_batch_size, bool keep_nn_config_during_reset);
+            uint8_t network_group_index, uint16_t dynamic_batch_size, uint16_t batch_count,
+            bool keep_nn_config_during_reset = false);
     static Expected<CONTROL_PROTOCOL__get_extended_device_information_response_t> get_extended_device_info_response(Device &device);
-    static hailo_status validate_arch_supported(Device &device, const std::vector<hailo_device_architecture_t> &supported_archs = { HAILO_ARCH_HAILO8, HAILO_ARCH_HAILO8L });
 };
 
 } /* namespace hailort */

@@ -12,6 +12,7 @@
 #include "hailo/hailort_common.hpp"
 #include "hailo/transform.hpp"
 #include "common/utils.hpp"
+#include "stream_common/nms_stream_reader.hpp"
 
 #include <sstream>
 
@@ -25,23 +26,30 @@ hailo_status InputStream::flush()
 
 hailo_status InputStream::write(const MemoryView &buffer)
 {
-    CHECK((buffer.size() % get_info().hw_frame_size) == 0, HAILO_INVALID_ARGUMENT,
-        "write size {} must be a multiple of hw size {}", buffer.size(), get_info().hw_frame_size);
+    CHECK(buffer.size() == get_frame_size(), HAILO_INVALID_ARGUMENT,
+        "write size {} must be {}", buffer.size(), get_frame_size());
 
     CHECK(((buffer.size() % HailoRTCommon::HW_DATA_ALIGNMENT) == 0), HAILO_INVALID_ARGUMENT,
         "Input must be aligned to {} (got {})", HailoRTCommon::HW_DATA_ALIGNMENT, buffer.size());
-    
-    return sync_write_all_raw_buffer_no_transform_impl(const_cast<uint8_t*>(buffer.data()), 0, buffer.size());
+
+    return write_impl(buffer);
 }
 
-hailo_status InputStream::wait_for_ready(size_t /* transfer_size */, std::chrono::milliseconds /* timeout */)
+hailo_status InputStream::write(const void *buffer, size_t size)
 {
+    return write(MemoryView::create_const(buffer, size));
+}
+
+hailo_status InputStream::wait_for_async_ready(size_t /* transfer_size */, std::chrono::milliseconds /* timeout */)
+{
+    LOGGER__ERROR("wait_for_async_ready not implemented for sync API");
     return HAILO_NOT_IMPLEMENTED;
 }
 
-hailo_status InputStream::write_async(std::shared_ptr<DmaMappedBuffer> /* buffer */, const TransferDoneCallback &/* user_callback */, void */* opaque */)
+Expected<size_t> InputStream::get_async_max_queue_size() const
 {
-    return HAILO_NOT_IMPLEMENTED;
+    LOGGER__ERROR("get_async_max_queue_size not implemented for sync API");
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
 
 std::string InputStream::to_string() const
@@ -60,76 +68,40 @@ EventPtr &InputStream::get_network_group_activated_event()
 
 hailo_status OutputStream::read_nms(void *buffer, size_t offset, size_t size)
 {
-    uint32_t num_of_classes = get_info().nms_info.number_of_classes;
-    uint32_t max_bboxes_per_class = get_info().nms_info.max_bboxes_per_class;
-    uint32_t chunks_per_frame = get_info().nms_info.chunks_per_frame;
-    size_t bbox_size = get_info().nms_info.bbox_size;
-    size_t transfer_size = bbox_size;
-
     CHECK(size == get_info().hw_frame_size, HAILO_INSUFFICIENT_BUFFER,
         "On nms stream buffer size should be {} (given size {})", get_info().hw_frame_size, size);
 
-    for (uint32_t chunk_index = 0; chunk_index < chunks_per_frame; chunk_index++) {
-        for (uint32_t class_index = 0; class_index < num_of_classes; class_index++) {
-            nms_bbox_counter_t class_bboxes_count = 0;
-            nms_bbox_counter_t* class_bboxes_count_ptr = (nms_bbox_counter_t*)(reinterpret_cast<uint8_t*>(buffer) + offset);
-            offset += sizeof(*class_bboxes_count_ptr);
-
-            // Read bboxes until reaching delimiter
-            for (;;) {
-                MemoryView buffer_view(static_cast<uint8_t*>(buffer) + offset, transfer_size);
-                auto expected_bytes_read = sync_read_raw_buffer(buffer_view);
-                if ((HAILO_STREAM_ABORTED_BY_USER == expected_bytes_read.status()) ||
-                    ((HAILO_STREAM_NOT_ACTIVATED == expected_bytes_read.status()))) {
-                    return expected_bytes_read.status();
-                }
-                CHECK_EXPECTED_AS_STATUS(expected_bytes_read, "Failed reading nms bbox");
-                transfer_size = expected_bytes_read.release();
-                CHECK(transfer_size == bbox_size, HAILO_INTERNAL_FAILURE,
-                    "Data read from the device was size {}, should be bbox size {}", transfer_size, bbox_size);
-
-                if (HailoRTCommon::NMS_DUMMY_DELIMITER == *(uint64_t*)((uint8_t*)buffer + offset)) {
-                    continue;
-                }
-
-                if (HailoRTCommon::NMS_DELIMITER == *(uint64_t*)((uint8_t*)buffer + offset)) {
-                    break;
-                }
-
-                class_bboxes_count++;
-                CHECK(class_bboxes_count <= max_bboxes_per_class, HAILO_INTERNAL_FAILURE,
-                    "Data read from the device for the current class was size {}, max size is {}", class_bboxes_count, max_bboxes_per_class);
-                offset += bbox_size;
-            }
-
-            *class_bboxes_count_ptr = class_bboxes_count;
-        }
-    }
-    return HAILO_SUCCESS;
+    return NMSStreamReader::read_nms((*this), buffer, offset, size);
 }
 
 hailo_status OutputStream::read(MemoryView buffer)
 {
-    CHECK((buffer.size() % get_info().hw_frame_size) == 0, HAILO_INVALID_ARGUMENT,
-        "Read size {} must be a multiple of hw size {}", buffer.size(), get_info().hw_frame_size);
+    CHECK(buffer.size() == get_frame_size(), HAILO_INVALID_ARGUMENT, "Read size {} must be {}", buffer.size(),
+        get_frame_size());
 
     if (get_info().format.order == HAILO_FORMAT_ORDER_HAILO_NMS){
         return read_nms(buffer.data(), 0, buffer.size());
     } else {
-        return this->read_all(buffer);
+        return read_impl(buffer);
     }
 }
 
-hailo_status OutputStream::wait_for_ready(size_t /* transfer_size */, std::chrono::milliseconds /* timeout */)
+hailo_status OutputStream::read(void *buffer, size_t size)
 {
+    return read(MemoryView(buffer, size));
+}
+
+hailo_status OutputStream::wait_for_async_ready(size_t /* transfer_size */, std::chrono::milliseconds /* timeout */)
+{
+    LOGGER__ERROR("wait_for_async_ready not implemented for sync API");
     return HAILO_NOT_IMPLEMENTED;
 }
 
-hailo_status OutputStream::read_async(std::shared_ptr<DmaMappedBuffer> /* buffer */, const TransferDoneCallback &/* user_callback */, void */* opaque */)
+Expected<size_t> OutputStream::get_async_max_queue_size() const
 {
-    return HAILO_NOT_IMPLEMENTED;
+    LOGGER__ERROR("get_async_max_queue_size not implemented for sync API");
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
-
 
 std::string OutputStream::to_string() const
 {

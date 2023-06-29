@@ -294,9 +294,9 @@ static hailo_status validate_driver_version(const hailo_driver_info &driver_info
     return HAILO_SUCCESS;
 }
 
-HailoRTDriver::HailoRTDriver(const std::string &dev_path, FileDescriptor &&fd, hailo_status &status) :
+HailoRTDriver::HailoRTDriver(const DeviceInfo &device_info, FileDescriptor &&fd, hailo_status &status) :
     m_fd(std::move(fd)),
-    m_dev_path(dev_path),
+    m_device_info(device_info),
     m_allocate_driver_buffer(false)
 {
     tCompatibleHailoIoctlData data = {};
@@ -353,17 +353,17 @@ Expected<std::vector<HailoRTDriver::DeviceInfo>> HailoRTDriver::scan_devices()
     return devices_info;
 }
 
-Expected<HailoRTDriver> HailoRTDriver::create(const std::string &dev_path)
+Expected<HailoRTDriver> HailoRTDriver::create(const DeviceInfo &device_info)
 {
     hailo_status status = HAILO_UNINITIALIZED;
-    CDeviceFile f(dev_path);
+    CDeviceFile f(device_info.dev_path);
     if (!f.Present()) {
-        LOGGER__ERROR("Failed to open board {}", dev_path);
+        LOGGER__ERROR("Failed to open board {}", device_info.dev_path);
         return make_unexpected(HAILO_OPEN_FILE_FAILURE);
     }
     FileDescriptor fd(f.Detach());
 
-    HailoRTDriver platform(dev_path, std::move(fd), status);
+    HailoRTDriver platform(device_info, std::move(fd), status);
     if (HAILO_SUCCESS != status) {
         return make_unexpected(status);
     }
@@ -564,13 +564,13 @@ hailo_status HailoRTDriver::write_vdma_channel_register(vdma::ChannelId channel_
     return HAILO_SUCCESS;
 }
 
-hailo_status HailoRTDriver::vdma_buffer_sync(VdmaBufferHandle handle, DmaDirection sync_direction, size_t offset, size_t count)
+hailo_status HailoRTDriver::vdma_buffer_sync(VdmaBufferHandle handle, DmaSyncDirection sync_direction,
+    size_t offset, size_t count)
 {
-    CHECK(sync_direction != DmaDirection::BOTH, HAILO_INVALID_ARGUMENT, "Can't sync vdma data both host and device");
     tCompatibleHailoIoctlData data = {};
     hailo_vdma_buffer_sync_params& sync_info = data.Buffer.VdmaBufferSync;
     sync_info.handle = handle;
-    sync_info.sync_type = (sync_direction == DmaDirection::H2D) ? HAILO_SYNC_FOR_DEVICE : HAILO_SYNC_FOR_HOST;
+    sync_info.sync_type = (sync_direction == DmaSyncDirection::TO_HOST) ? HAILO_SYNC_FOR_CPU : HAILO_SYNC_FOR_DEVICE;
     sync_info.offset = offset;
     sync_info.count = count;
     if (0 > ioctl(this->m_fd, HAILO_VDMA_BUFFER_SYNC, &data)) {
@@ -762,13 +762,54 @@ hailo_status HailoRTDriver::vdma_buffer_unmap(VdmaBufferHandle handle)
     return HAILO_SUCCESS;
 }
 
-Expected<std::pair<uintptr_t, uint64_t>> HailoRTDriver::descriptors_list_create(size_t desc_count)
+Expected<DescriptorsListInfo> HailoRTDriver::descriptors_list_create(size_t desc_count, bool is_circular)
+{
+    auto handle_to_dma_address_pair = descriptors_list_create_ioctl(desc_count, is_circular);
+    CHECK_EXPECTED(handle_to_dma_address_pair);
+
+    const auto desc_handle = handle_to_dma_address_pair->first;
+    const auto dma_address = handle_to_dma_address_pair->second;
+
+    auto user_address = descriptors_list_create_mmap(desc_handle, desc_count);
+    if (!user_address) {
+        auto status = descriptors_list_release_ioctl(desc_handle);
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed releasing descriptors list, status {}", status);
+            // continue
+        }
+        return make_unexpected(user_address.status());
+    }
+
+    return DescriptorsListInfo{desc_handle, dma_address, desc_count, user_address.release()};
+}
+
+hailo_status HailoRTDriver::descriptors_list_release(const DescriptorsListInfo &descriptors_list_info)
+{
+    hailo_status status = HAILO_SUCCESS;
+
+    auto unmap_status = descriptors_list_create_munmap(descriptors_list_info.user_address, descriptors_list_info.desc_count);
+    if (HAILO_SUCCESS != unmap_status) {
+        LOGGER__ERROR("Descriptors list unmap failed with {}", unmap_status);
+        status = unmap_status;
+        // continue
+    }
+
+    auto release_status = descriptors_list_release_ioctl(descriptors_list_info.handle);
+    if (HAILO_SUCCESS != release_status) {
+        LOGGER__ERROR("Descriptors list release status failed with {}", release_status);
+        status = release_status;
+        // continue
+    }
+
+    return status;
+}
+
+Expected<std::pair<uintptr_t, uint64_t>> HailoRTDriver::descriptors_list_create_ioctl(size_t desc_count, bool is_circular)
 {
     tCompatibleHailoIoctlData data = {};
     hailo_desc_list_create_params& create_desc_info = data.Buffer.DescListCreate;
     create_desc_info.desc_count = desc_count;
-    create_desc_info.desc_handle = 0;
-    create_desc_info.dma_address = 0;
+    create_desc_info.is_circular = is_circular;
 
     if (0 > ioctl(this->m_fd, HAILO_DESC_LIST_CREATE, &data)) {
         LOGGER__ERROR("Failed to create descriptors list with errno: {}", errno);
@@ -778,16 +819,36 @@ Expected<std::pair<uintptr_t, uint64_t>> HailoRTDriver::descriptors_list_create(
     return std::move(std::make_pair(create_desc_info.desc_handle, create_desc_info.dma_address));
 }
 
-hailo_status HailoRTDriver::descriptors_list_release(uintptr_t desc_handle)
+hailo_status HailoRTDriver::descriptors_list_release_ioctl(uintptr_t desc_handle)
 {
     tCompatibleHailoIoctlData data = {};
-    uintptr_t& release_desc_info = data.Buffer.DescListReleaseParam; 
+    uintptr_t& release_desc_info = data.Buffer.DescListReleaseParam;
     release_desc_info = desc_handle;
     if (0 > ioctl(this->m_fd, HAILO_DESC_LIST_RELEASE, &data)) {
         LOGGER__ERROR("Failed to release descriptors list with errno: {}", errno);
         return HAILO_DRIVER_FAIL;
     }
 
+    return HAILO_SUCCESS;
+}
+
+Expected<void *> HailoRTDriver::descriptors_list_create_mmap(uintptr_t desc_handle, size_t desc_count)
+{
+    tCompatibleHailoIoctlData data = {};
+    data.Buffer.DescListMmap.desc_handle = desc_handle;
+    data.Buffer.DescListMmap.size = desc_count * SIZE_OF_SINGLE_DESCRIPTOR;
+    if (0 > ioctl(m_fd, HAILO_NON_LINUX_DESC_LIST_MMAP, &data)) {
+        LOGGER__ERROR("Failed to map physical memory with errno: {}", errno);
+        return make_unexpected(HAILO_DRIVER_FAIL);
+    }
+
+    void *user_address = data.Buffer.DescListMmap.user_address;
+    return user_address;
+}
+
+hailo_status HailoRTDriver::descriptors_list_create_munmap(void *, size_t )
+{
+    // On windows, the unmap is done on the release ioctl
     return HAILO_SUCCESS;
 }
 
@@ -839,19 +900,6 @@ hailo_status HailoRTDriver::reset_nn_core()
 {
     LOGGER__ERROR("Reset nn core is not supported over the windows driver");
     return HAILO_NOT_IMPLEMENTED;
-}
-
-Expected<MmapBufferImpl> MmapBufferImpl::create_file_map(size_t length, FileDescriptor &file, uintptr_t offset)
-{
-    tCompatibleHailoIoctlData data = {};
-    data.Buffer.DescListMmap.desc_handle = offset;
-    data.Buffer.DescListMmap.size = length;
-    if (0 > ioctl(file, HAILO_NON_LINUX_DESC_LIST_MMAP, &data)) {
-        LOGGER__ERROR("Failed to map physical memory with errno: {}", errno);
-        return make_unexpected(HAILO_DRIVER_FAIL);
-    }
-    // this mapping will be deleted automatically with the physical allocation
-    return MmapBufferImpl(data.Buffer.DescListMmap.user_address, length, false);
 }
 
 Expected<uintptr_t> HailoRTDriver::vdma_low_memory_buffer_alloc(size_t size) {

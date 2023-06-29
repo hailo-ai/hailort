@@ -80,6 +80,12 @@ Expected<vdma::BoundaryChannelPtr> HcpConfigCoreOp::get_boundary_vdma_channel_by
     return make_unexpected(HAILO_INVALID_OPERATION);
 }
 
+Expected<HwInferResults> HcpConfigCoreOp::run_hw_infer_estimator()
+{
+    LOGGER__ERROR("run_hw_infer_estimator function is not supported on ETH core-ops");
+    return make_unexpected(HAILO_INVALID_OPERATION);
+}
+
 hailo_status HcpConfigCoreOp::activate_impl(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers)
 {
     m_active_core_op_holder.set(*this);

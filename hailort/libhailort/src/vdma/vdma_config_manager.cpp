@@ -14,7 +14,7 @@ namespace hailort
 {
 
 hailo_status VdmaConfigManager::switch_core_op(std::shared_ptr<VdmaConfigCoreOp> current_active_core_op,
-    std::shared_ptr<VdmaConfigCoreOp> next_core_op, const uint16_t batch_size, bool resume_pending_stream_transfers)
+    std::shared_ptr<VdmaConfigCoreOp> next_core_op, const uint16_t batch_size, const bool resume_pending_stream_transfers)
 {
     static const auto RESET_NN_CONFIG = false;
     CHECK((nullptr != current_active_core_op) || (nullptr != next_core_op), HAILO_INVALID_ARGUMENT);
@@ -33,6 +33,7 @@ hailo_status VdmaConfigManager::switch_core_op(std::shared_ptr<VdmaConfigCoreOp>
     auto status = current_active_core_op->deactivate_host_resources();
     CHECK_SUCCESS(status, "Failed deactivating current core-op");
 
+    // TODO HRT-10799 Fix when enabling batch switch flow for hailo15
     // TODO: In mercury we need to reset after deactivate. This will be fixed in MSW-762 and the "if" will be removed
     //       when we make the nn_manager responsible to reset the nn-core.
     if (Device::Type::INTEGRATED == current_active_core_op->get_resources_manager()->get_device().get_type()) {
@@ -50,6 +51,14 @@ hailo_status VdmaConfigManager::switch_core_op(std::shared_ptr<VdmaConfigCoreOp>
     CHECK_SUCCESS(status, "Failed canceling pending async transfers from previous core-op");
 
     return HAILO_SUCCESS;
+}
+
+hailo_status VdmaConfigManager::deactivate_core_op(std::shared_ptr<VdmaConfigCoreOp> current_active_core_op)
+{
+    static const auto RESUME_PENDING_STREAM_TRANSFERS = true;
+    static const uint16_t DEACTIVATE_BATCH_SIZE = 0;
+    const std::shared_ptr<VdmaConfigCoreOp> DEACTIVATE_NEXT_CORE_OP = nullptr;
+    return switch_core_op(current_active_core_op, DEACTIVATE_NEXT_CORE_OP, DEACTIVATE_BATCH_SIZE, RESUME_PENDING_STREAM_TRANSFERS);
 }
 
 } /* namespace hailort */

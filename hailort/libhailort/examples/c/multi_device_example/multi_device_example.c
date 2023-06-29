@@ -16,6 +16,7 @@
 #define INFER_FRAME_COUNT (100)
 #define MAX_EDGE_LAYERS (16)
 #define MAX_DEVICES (16)
+#define BATCH_SIZE (1)
 #define HEF_FILE ("hefs/shortcut_net.hef")
 
 
@@ -133,6 +134,7 @@ int main()
     hailo_vdevice_params_t params = {0};
     hailo_hef hef = NULL;
     hailo_configure_params_t config_params = {0};
+    uint16_t batch_size = BATCH_SIZE;
     hailo_configured_network_group network_group = NULL;
     size_t network_group_size = 1;
     hailo_input_vstream_params_by_name_t input_vstream_params[MAX_EDGE_LAYERS] = {0};
@@ -144,6 +146,7 @@ int main()
 
     status = hailo_scan_devices(NULL, device_ids, &actual_count);
     REQUIRE_SUCCESS(status, l_exit, "Failed to scan devices");
+    printf("Found %zu devices\n", actual_count);
 
     status = hailo_init_vdevice_params(&params);
     REQUIRE_SUCCESS(status, l_exit, "Failed init vdevice_params");
@@ -155,8 +158,14 @@ int main()
     status = hailo_create_hef_file(&hef, HEF_FILE);
     REQUIRE_SUCCESS(status, l_release_vdevice, "Failed reading hef file");
 
-    status = hailo_init_configure_params(hef, HAILO_STREAM_INTERFACE_PCIE, &config_params);
+    status = hailo_init_configure_params_by_vdevice(hef, vdevice, &config_params);
     REQUIRE_SUCCESS(status, l_release_hef, "Failed initializing configure parameters");
+
+    // Modify batch_size and power_mode for each network group
+    for (size_t i = 0; i < config_params.network_group_params_count; i++) {
+        config_params.network_group_params[i].batch_size = batch_size;
+        config_params.network_group_params[i].power_mode = HAILO_POWER_MODE_ULTRA_PERFORMANCE;
+    }
 
     status = hailo_configure_vdevice(vdevice, hef, &config_params, &network_group, &network_group_size);
     REQUIRE_SUCCESS(status, l_release_hef, "Failed configure vdevcie from hef");
@@ -196,5 +205,5 @@ l_release_hef:
 l_release_vdevice:
     (void) hailo_release_vdevice(vdevice);
 l_exit:
-    return status;
+    return (int)status;
 }
