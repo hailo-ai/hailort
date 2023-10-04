@@ -66,6 +66,7 @@ typedef struct {
     uint16_t feature_padding_payload;
     uint16_t buffer_padding_payload;
     uint16_t buffer_padding;
+    bool is_periph_calculated_in_hailort;
 } CONTEXT_SWITCH_DEFS__stream_reg_info_t;
 
 #if defined(_MSC_VER)
@@ -103,12 +104,16 @@ typedef enum __attribute__((packed)) {
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_FETCH_CCW_BURSTS,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_VALIDATE_VDMA_CHANNEL,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_BURST_CREDITS_TASK_START,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_BURST_CREDITS_TASK_RESET,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_DDR_BUFFERING_RESET,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_OPEN_BOUNDARY_INPUT_CHANNEL,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_OPEN_BOUNDARY_OUTPUT_CHANNEL,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_ENABLE_NMS,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_WRITE_DATA_BY_TYPE,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_SWITCH_LCU_BATCH,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_CHANGE_BOUNDARY_INPUT_BATCH,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_PAUSE_VDMA_CHANNEL,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_RESUME_VDMA_CHANNEL,
 
     /* Must be last */
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT
@@ -214,7 +219,7 @@ typedef struct {
 typedef struct {
     uint8_t packed_vdma_channel_id;
     uint8_t edge_layer_direction;
-    bool is_inter_context;
+    bool check_host_empty_num_available;
     uint8_t host_buffer_type;  // CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t
     uint32_t initial_credit_size;
 } CONTEXT_SWITCH_DEFS__deactivate_vdma_channel_action_data_t;
@@ -222,10 +227,20 @@ typedef struct {
 typedef struct {
     uint8_t packed_vdma_channel_id;
     uint8_t edge_layer_direction;
-    bool is_inter_context;
+    bool check_host_empty_num_available;
     uint8_t host_buffer_type;  // CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t
     uint32_t initial_credit_size;
 } CONTEXT_SWITCH_DEFS__validate_vdma_channel_action_data_t;
+
+typedef struct {
+    uint8_t packed_vdma_channel_id;
+    uint8_t edge_layer_direction;
+} CONTEXT_SWITCH_DEFS__pause_vdma_channel_action_data_t;
+
+typedef struct {
+    uint8_t packed_vdma_channel_id;
+    uint8_t edge_layer_direction;
+} CONTEXT_SWITCH_DEFS__resume_vdma_channel_action_data_t;
 
 typedef enum {
     CONTEXT_SWITCH_DEFS__CREDIT_TYPE_UNINITIALIZED = 0,
@@ -239,7 +254,6 @@ typedef struct {
     uint8_t network_index;
     uint32_t frame_periph_size;
     uint8_t credit_type;  // CONTEXT_SWITCH_DEFS__CREDIT_TYPE_t
-    uint16_t periph_bytes_per_buffer;
     uint8_t host_buffer_type;  // CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t, relevant only for descriptors credit.
 } CONTEXT_SWITCH_DEFS__fetch_data_action_data_t;
 
@@ -264,6 +278,10 @@ typedef struct {
 
 typedef struct {
     uint8_t packed_vdma_channel_id;
+    uint8_t stream_index;
+    uint8_t network_index;
+    bool is_inter_context;
+    uint8_t host_buffer_type;  // CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t
 } CONTEXT_SWITCH_DEFS__vdma_dataflow_interrupt_data_t;
 
 typedef struct {
@@ -283,6 +301,7 @@ typedef struct {
     uint8_t packed_vdma_channel_id;
     uint8_t stream_index;
     bool is_inter_context;
+    uint8_t host_buffer_type;  // CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t
 } CONTEXT_SWITCH_DEFS__wait_dma_idle_data_t;
 
 typedef struct {
@@ -319,6 +338,7 @@ typedef struct {
 typedef struct {
     uint8_t packed_vdma_channel_id;
     uint8_t stream_index;
+    uint8_t network_index;
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
     CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
 } CONTEXT_SWITCH_DEFS__activate_boundary_output_data_t;
@@ -342,6 +362,10 @@ typedef struct {
 typedef struct {
     uint8_t packed_vdma_channel_id;
     CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
+    uint8_t stream_index;
+    uint8_t network_index;
+    uint16_t periph_bytes_per_buffer;
+    uint32_t frame_periph_size;
 } CONTEXT_SWITCH_DEFS__open_boundary_input_channel_data_t;
 
 typedef struct {
@@ -365,6 +389,7 @@ typedef struct {
     uint8_t network_index;
     uint16_t number_of_classes;
     uint16_t burst_size;
+    uint8_t division_factor;
 } CONTEXT_SWITCH_DEFS__enable_nms_action_t;
 
 typedef enum {
@@ -389,6 +414,10 @@ typedef struct {
     uint8_t network_index;
     uint32_t kernel_done_count;
 } CONTEXT_SWITCH_DEFS__switch_lcu_batch_action_data_t;
+
+typedef struct {
+    uint8_t packed_vdma_channel_id;
+} CONTEXT_SWITCH_DEFS__change_boundary_input_batch_t;
 
 #pragma pack(pop)
 

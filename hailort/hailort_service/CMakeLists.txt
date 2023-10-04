@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.0.0)
 
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/spdlog.cmake)
+
 if(WIN32)
     set(HAILORT_SERVICE_OS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/windows")
 elseif(UNIX)

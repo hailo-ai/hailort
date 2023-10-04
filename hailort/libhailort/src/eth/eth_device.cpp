@@ -383,9 +383,7 @@ hailo_status EthernetDevice::disable_notifications()
 
 Expected<ConfiguredNetworkGroupVector> EthernetDevice::add_hef(Hef &hef, const NetworkGroupsParamsMap &configure_params)
 {
-    // Reset FW state_machine status - can be removed?
-    static const auto REMOVE_NN_CONFIG_DURING_RESET = false;
-    auto status = Control::reset_context_switch_state_machine(*this, REMOVE_NN_CONFIG_DURING_RESET);
+    auto status = Control::reset_context_switch_state_machine(*this);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     auto added_network_groups = create_networks_group_vector(hef, configure_params);

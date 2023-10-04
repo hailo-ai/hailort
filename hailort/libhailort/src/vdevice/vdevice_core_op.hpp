@@ -18,6 +18,7 @@
 
 #include "vdevice/scheduler/scheduler.hpp"
 #include "vdevice/pipeline_multiplexer.hpp"
+#include "utils/profiler/tracer_macros.hpp"
 
 #include <cstdint>
 
@@ -25,78 +26,25 @@
 namespace hailort
 {
 
-class VDeviceActivatedCoreOp : public ActivatedCoreOp
-{
-public:
-    static Expected<std::unique_ptr<ActivatedNetworkGroup>> create(std::map<device_id_t, std::vector<std::shared_ptr<CoreOp>>> &core_ops,
-        std::map<std::string, std::shared_ptr<InputStream>> &input_streams,
-        std::map<std::string, std::shared_ptr<OutputStream>> &output_streams,
-        const hailo_activate_network_group_params_t &network_group_params, EventPtr core_op_activated_event,
-        uint16_t dynamic_batch_size, AccumulatorPtr deactivation_time_accumulator,
-        bool resume_pending_stream_transfers);
-
-    virtual ~VDeviceActivatedCoreOp()
-    {
-        if (!m_should_reset_core_op) {
-            return;
-        }
-        const auto start_time = std::chrono::steady_clock::now();
-
-        m_core_op_activated_event->reset();
-        m_activated_network_groups.clear();
-
-        const auto elapsed_time_ms = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - start_time).count();
-        LOGGER__INFO("Deactivating took {} ms", elapsed_time_ms);
-        m_deactivation_time_accumulator->add_data_point(elapsed_time_ms);
-    }
-
-    VDeviceActivatedCoreOp(const VDeviceActivatedCoreOp &other) = delete;
-    VDeviceActivatedCoreOp &operator=(const VDeviceActivatedCoreOp &other) = delete;
-    VDeviceActivatedCoreOp &operator=(VDeviceActivatedCoreOp &&other) = delete;
-    VDeviceActivatedCoreOp(VDeviceActivatedCoreOp &&other) noexcept;
-
-    virtual const std::string &get_network_group_name() const override;
-    virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &key) override;
-    virtual hailo_status set_keep_nn_config_during_reset(const bool keep_nn_config_during_reset) override;
-
-private:
-    VDeviceActivatedCoreOp(
-        std::vector<std::unique_ptr<ActivatedNetworkGroup>> &&activated_network_groups,
-        std::map<std::string, std::shared_ptr<InputStream>> &input_streams,
-        std::map<std::string, std::shared_ptr<OutputStream>> &output_streams,
-        const hailo_activate_network_group_params_t &network_group_params, EventPtr core_op_activated_event,
-        AccumulatorPtr deactivation_time_accumulator, hailo_status &status);
-
-    std::vector<std::unique_ptr<ActivatedNetworkGroup>> m_activated_network_groups;
-    bool m_should_reset_core_op;
-    AccumulatorPtr m_deactivation_time_accumulator;
-};
 
 class VDeviceCoreOp : public CoreOp
 {
 public:
-    static Expected<std::shared_ptr<VDeviceCoreOp>> create(const std::map<device_id_t, std::vector<std::shared_ptr<CoreOp>>> &core_ops,
-        CoreOpsSchedulerWeakPtr core_ops_scheduler, const std::string &hef_hash);
+    static Expected<std::shared_ptr<VDeviceCoreOp>> create(
+        ActiveCoreOpHolder &active_core_op_holder,
+        const ConfigureNetworkParams &configure_params,
+        const std::map<device_id_t, std::shared_ptr<CoreOp>> &core_ops,
+        CoreOpsSchedulerWeakPtr core_ops_scheduler, vdevice_core_op_handle_t core_op_handle,
+        std::shared_ptr<PipelineMultiplexer> multiplexer, const std::string &hef_hash);
 
-    static Expected<std::shared_ptr<VDeviceCoreOp>> duplicate(std::shared_ptr<VDeviceCoreOp> other);
+    static Expected<std::shared_ptr<VDeviceCoreOp>> duplicate(std::shared_ptr<VDeviceCoreOp> other,
+        const ConfigureNetworkParams &configure_params);
 
     virtual ~VDeviceCoreOp() = default;
     VDeviceCoreOp(const VDeviceCoreOp &other) = delete;
     VDeviceCoreOp &operator=(const VDeviceCoreOp &other) = delete;
     VDeviceCoreOp &operator=(VDeviceCoreOp &&other) = delete;
     VDeviceCoreOp(VDeviceCoreOp &&other) = default;
-
-    hailo_status create_vdevice_streams_from_config_params(std::shared_ptr<PipelineMultiplexer> multiplexer,
-        scheduler_core_op_handle_t scheduler_handle);
-    hailo_status create_input_vdevice_stream_from_config_params(
-        const hailo_stream_parameters_t &stream_params, const std::string &stream_name,
-        std::shared_ptr<PipelineMultiplexer> multiplexer, scheduler_core_op_handle_t scheduler_handle);
-    hailo_status create_output_vdevice_stream_from_config_params(
-        const hailo_stream_parameters_t &stream_params, const std::string &stream_name,
-        std::shared_ptr<PipelineMultiplexer> multiplexer, scheduler_core_op_handle_t scheduler_handle);
-
-    hailo_status create_vdevice_streams_from_duplicate(std::shared_ptr<VDeviceCoreOp> other);
 
     bool equals(const Hef &hef, const std::pair<const std::string, ConfigureNetworkParams> &params_pair)
     {
@@ -133,8 +81,7 @@ public:
     virtual Expected<vdma::BoundaryChannelPtr> get_boundary_vdma_channel_by_stream_name(
         const std::string &stream_name) override;
 
-    void set_core_op_handle(scheduler_core_op_handle_t handle);
-    scheduler_core_op_handle_t core_op_handle() const;
+    vdevice_core_op_handle_t core_op_handle() const;
     virtual bool is_scheduled() const override;
     virtual hailo_status set_scheduler_timeout(const std::chrono::milliseconds &timeout, const std::string &network_name) override;
     virtual hailo_status set_scheduler_threshold(uint32_t threshold, const std::string &network_name) override;
@@ -150,33 +97,35 @@ public:
         return m_core_op_activated_event->wait(timeout);
     }
 
-    virtual hailo_status activate_impl(uint16_t /*dynamic_batch_size*/, bool /* resume_pending_stream_transfers */) override
-    {
-        return HAILO_INTERNAL_FAILURE;
-    }
-
-    virtual hailo_status deactivate_impl(bool /* keep_nn_config_during_reset */) override
-    {
-        return HAILO_INTERNAL_FAILURE;
-    }
-
-    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> create_activated_network_group(
-        const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size,
-        bool resume_pending_stream_transfers) override;
+    virtual hailo_status activate_impl(uint16_t dynamic_batch_size) override;
+    virtual hailo_status deactivate_impl() override;
 
     Expected<std::shared_ptr<VdmaConfigCoreOp>> get_core_op_by_device_id(const device_id_t &device_bdf_id);
 
     virtual Expected<HwInferResults> run_hw_infer_estimator() override;
+    virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &) override;
 
 private:
-    VDeviceCoreOp(const std::map<device_id_t, std::vector<std::shared_ptr<CoreOp>>> &core_ops, CoreOpsSchedulerWeakPtr core_ops_scheduler,
+    VDeviceCoreOp(ActiveCoreOpHolder &active_core_op_holder,
+        const ConfigureNetworkParams &configure_params,
+        const std::map<device_id_t, std::shared_ptr<CoreOp>> &core_ops,
+        CoreOpsSchedulerWeakPtr core_ops_scheduler, scheduler_core_op_handle_t core_op_handle,
+        std::shared_ptr<PipelineMultiplexer> multiplexer, // TODO: multiplexer handle
         const std::string &hef_hash, hailo_status &status);
 
-    std::map<device_id_t, std::vector<std::shared_ptr<CoreOp>>> m_core_ops;
+    hailo_status create_vdevice_streams_from_config_params();
+    hailo_status create_input_vdevice_stream_from_config_params(
+        const hailo_stream_parameters_t &stream_params, const std::string &stream_name);
+    hailo_status create_output_vdevice_stream_from_config_params(
+        const hailo_stream_parameters_t &stream_params, const std::string &stream_name);
+
+    hailo_status create_vdevice_streams_from_duplicate(std::shared_ptr<VDeviceCoreOp> other);
+
+    std::map<device_id_t, std::shared_ptr<CoreOp>> m_core_ops;
     CoreOpsSchedulerWeakPtr m_core_ops_scheduler;
-    scheduler_core_op_handle_t m_scheduler_handle;
-    multiplexer_core_op_handle_t m_multiplexer_handle;
+    const vdevice_core_op_handle_t m_core_op_handle;
     std::shared_ptr<PipelineMultiplexer> m_multiplexer;
+    multiplexer_core_op_handle_t m_multiplexer_handle;
     std::string m_hef_hash;
 };
 

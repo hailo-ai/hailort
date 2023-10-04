@@ -71,7 +71,7 @@ public:
         return index;
     }
 
-    uint32_t dup_handle(uint32_t pid, uint32_t handle)
+    uint32_t dup_handle(uint32_t handle, uint32_t pid)
     {
         std::unique_lock<std::mutex> lock(m_mutex);
         auto resource_expected = resource_lookup(handle);

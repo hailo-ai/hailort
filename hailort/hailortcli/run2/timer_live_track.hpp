@@ -20,6 +20,7 @@ public:
     virtual hailo_status start_impl() override;
     virtual uint32_t push_text_impl(std::stringstream &ss) override;
     virtual void push_json_impl(nlohmann::ordered_json &json) override;
+    virtual hailort::Expected<double> get_last_measured_fps();
 
 private:
     std::chrono::milliseconds m_duration;

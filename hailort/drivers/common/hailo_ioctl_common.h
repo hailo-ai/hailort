@@ -19,11 +19,13 @@
 
 #define INVALID_DRIVER_HANDLE_VALUE     ((uintptr_t)-1)
 
-// Used by windows and unix driver to raise the right CPU control handle to the FW. The same as in pcie_service FW 
+// Used by windows and unix driver to raise the right CPU control handle to the FW. The same as in pcie_service FW
 #define FW_ACCESS_CORE_CPU_CONTROL_SHIFT (1)
-#define FW_ACCESS_CORE_CPU_CONTROL_MASK  (1 << FW_ACCESS_CORE_CPU_CONTROL_SHIFT) 
+#define FW_ACCESS_CORE_CPU_CONTROL_MASK  (1 << FW_ACCESS_CORE_CPU_CONTROL_SHIFT)
 #define FW_ACCESS_CONTROL_INTERRUPT_SHIFT (0)
 #define FW_ACCESS_APP_CPU_CONTROL_MASK (1 << FW_ACCESS_CONTROL_INTERRUPT_SHIFT)
+#define FW_ACCESS_DRIVER_SHUTDOWN_SHIFT (2)
+#define FW_ACCESS_DRIVER_SHUTDOWN_MASK (1 << FW_ACCESS_DRIVER_SHUTDOWN_SHIFT)
 
 #define INVALID_VDMA_CHANNEL (0xff)
 
@@ -317,6 +319,7 @@ struct hailo_d2h_notification {
 enum hailo_board_type {
     HAILO_BOARD_TYPE_HAILO8 = 0,
     HAILO_BOARD_TYPE_HAILO15,
+    HAILO_BOARD_TYPE_PLUTO,
     HAILO_BOARD_TYPE_COUNT,
 
     /** Max enum value to maintain ABI Integrity */

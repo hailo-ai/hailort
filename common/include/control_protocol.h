@@ -158,6 +158,7 @@ extern "C" {
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_GET_HW_CONSTS,                             false, CPU_ID_CORE_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_SET_SLEEP_STATE,                           false, CPU_ID_APP_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CHANGE_HW_INFER_STATUS,                    false, CPU_ID_CORE_CPU)\
+    CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_SIGNAL_DRIVER_DOWN,                        false, CPU_ID_CORE_CPU)\
 
 typedef enum {
 #define CONTROL_PROTOCOL__OPCODE_X(name, is_critical, cpu_id) name,
@@ -344,7 +345,8 @@ typedef enum {
     CONTROL_PROTOCOL__HAILO8_A0 = 0,
     CONTROL_PROTOCOL__HAILO8,
     CONTROL_PROTOCOL__HAILO8L,
-    CONTROL_PROTOCOL__HAILO15,
+    CONTROL_PROTOCOL__HAILO15H,
+    CONTROL_PROTOCOL__PLUTO,
     /* Must be last!! */
     CONTROL_PROTOCOL__DEVICE_ARCHITECTURE_COUNT
 } CONTROL_PROTOCOL__device_architecture_t;
@@ -439,6 +441,7 @@ typedef struct {
     uint16_t feature_padding_payload;
     uint16_t buffer_padding_payload;
     uint16_t buffer_padding;
+    bool is_periph_calculated_in_hailort;
 } CONTROL_PROTOCOL__nn_stream_config_t;
 
 typedef struct {
@@ -1027,8 +1030,6 @@ typedef struct {
     uint16_t dynamic_batch_size;
     uint32_t batch_count_length;
     uint16_t batch_count;
-    uint32_t keep_nn_config_during_reset_length;
-    uint8_t keep_nn_config_during_reset;
 } CONTROL_PROTOCOL__change_context_switch_status_request_t;
 
 typedef struct {

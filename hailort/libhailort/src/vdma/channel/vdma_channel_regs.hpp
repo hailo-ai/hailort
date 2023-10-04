@@ -36,7 +36,7 @@ public:
         m_direction(direction)
     {}
 
-    Expected<uint16_t> get_num_available()
+    Expected<uint16_t> get_num_available() const
     {
         return read_integer<uint16_t>(VDMA_CHANNEL_NUM_AVAIL_OFFSET);
     }
@@ -46,13 +46,8 @@ public:
         return write_integer<uint16_t>(VDMA_CHANNEL_NUM_AVAIL_OFFSET, value);
     }
 
-    Expected<uint16_t> get_num_processed()
-    {
-        return read_integer<uint16_t>(VDMA_CHANNEL_NUM_PROC_OFFSET);
-    }
-
 #ifndef NDEBUG
-    Expected<bool> is_aborted()
+    Expected<bool> is_aborted() const
     {
         const auto control_reg = read_integer<uint8_t>(VDMA_CHANNEL_CONTROL_OFFSET);
         CHECK_EXPECTED(control_reg);
@@ -63,7 +58,7 @@ public:
 private:
 
     template<typename IntegerType>
-    Expected<IntegerType> read_integer(uint32_t offset)
+    Expected<IntegerType> read_integer(uint32_t offset) const
     {
         auto value = m_driver.read_vdma_channel_register(m_channel_id, m_direction, offset, sizeof(IntegerType));
         CHECK_EXPECTED(value);

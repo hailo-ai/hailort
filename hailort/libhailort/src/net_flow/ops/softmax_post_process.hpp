@@ -6,7 +6,7 @@
  * @file softmax_post_process.hpp
  * @brief: Softmax op perform softmax op as described: https://www.tensorflow.org/api_docs/python/tf/nn/softmax
  * A few notes:
- *  - Support only on features axis 
+ *  - Support only on features axis
  *  - Support only on NHWC and NC input data order
  **/
 
@@ -15,6 +15,8 @@
 
 #include "hailo/hailort.h"
 #include "net_flow/ops/op.hpp"
+#include "net_flow/ops/op_metadata.hpp"
+
 #include "common/utils.hpp"
 #include "hailo/quantization.hpp"
 
@@ -34,13 +36,34 @@ constexpr std::size_t SOFTMAX_NUMBER_OF_DSTS {1};
 typedef hailo_status (*SoftmaxFunction)(const BufferMetaData &input_metadata, const BufferMetaData &output_metadata,
     const std::map<std::string, MemoryView> &inputs, std::map<std::string, MemoryView> &outputs);
 
+class SoftmaxOpMetadata : public OpMetadata
+{
+public:
+    static Expected<std::shared_ptr<OpMetadata>> create(const std::unordered_map<std::string, BufferMetaData> &inputs_metadata,
+                                                        const std::unordered_map<std::string, BufferMetaData> &outputs_metadata,
+                                                        const std::string &network_name);
+    std::string get_op_description() override;
+    hailo_status validate_format_info() override;
+    static hailo_format_t expand_output_format_autos(const hailo_format_t &output_format, const hailo_format_t &input_format);
+
+    virtual Expected<hailo_vstream_info_t> get_output_vstream_info() override;
+
+private:
+    SoftmaxOpMetadata(const std::unordered_map<std::string, BufferMetaData> &inputs_metadata,
+                        const std::unordered_map<std::string, BufferMetaData> &outputs_metadata,
+                        const std::string &network_name)
+        : OpMetadata(inputs_metadata, outputs_metadata, "Softmax-Post-Process", network_name, OperationType::SOFTMAX)
+    {}
+
+    hailo_status validate_params() override;
+};
+
 class SoftmaxPostProcessOp : public Op
 {
 
 private:
-    SoftmaxPostProcessOp(const std::map<std::string, BufferMetaData> &inputs_metadata,
-                         const std::map<std::string, BufferMetaData> &outputs_metadata)
-        : Op(inputs_metadata, outputs_metadata, "Softmax-Post-Process")
+    SoftmaxPostProcessOp(std::shared_ptr<SoftmaxOpMetadata> metadata)
+        : Op(static_cast<std::shared_ptr<OpMetadata>>(metadata))
     {}
 
     template<typename src_type = float32_t, typename dst_type = float32_t>
@@ -58,7 +81,7 @@ private:
             dst_type *src_row = src_ptr + (r * src_row_size);
             src_type *dst_row = dst_ptr + (r * dst_row_size);
             for (uint32_t w = 0; w < input_metadata.shape.width; w++) { // W axis - coloums
-                dst_type *src_col = src_row + (w * src_width_size); 
+                dst_type *src_col = src_row + (w * src_width_size);
                 src_type *dst_col = dst_row + (w * dst_width_size);
                 // In order to avoid overflows, we will perform the following:
                 // For each HW, we will find the maximal c value and then we will substract this value from
@@ -113,17 +136,14 @@ private:
         }
         return HAILO_SUCCESS;
     }
-    
+
     static hailo_status execute_not_supported(const BufferMetaData &input_metadata, const BufferMetaData &output_metadata,
         const std::map<std::string, MemoryView> &inputs, std::map<std::string, MemoryView> &outputs);
 
     public:
-        static Expected<std::shared_ptr<Op>> create(const std::map<std::string, BufferMetaData> &inputs_metadata,
-                                                    std::map<std::string, BufferMetaData> &outputs_metadata);
+        static Expected<std::shared_ptr<Op>> create(std::shared_ptr<SoftmaxOpMetadata> metadata);
         virtual hailo_status execute(const std::map<std::string, MemoryView> &inputs,
             std::map<std::string, MemoryView> &outputs) override;
-        virtual std::string get_op_description() override;
-        hailo_status validate_metadata() override;
 
         // A 3D array of softmax functions to call:
         // 1st dim represent the data format order (NHWC and NC are supported)

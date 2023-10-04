@@ -15,6 +15,7 @@
 #include "hailo/hef.hpp"
 #include "hailo/network_group.hpp"
 #include "hailo/device.hpp"
+#include "hailo/infer_model.hpp"
 
 
 /** hailort namespace */
@@ -64,6 +65,8 @@ public:
     virtual Expected<ConfiguredNetworkGroupVector> configure(Hef &hef,
         const NetworkGroupsParamsMap &configure_params={}) = 0;
 
+    virtual Expected<InferModel> create_infer_model(const std::string &hef_path) = 0;
+
     /**
      * Gets the underlying physical devices.
      * 
@@ -108,15 +111,17 @@ public:
      */
     Expected<ConfigureNetworkParams> create_configure_params(Hef &hef, const std::string &network_group_name) const;
 
-    virtual hailo_status before_fork() { return HAILO_SUCCESS; }
-    virtual hailo_status after_fork_in_parent() { return HAILO_SUCCESS; }
-    virtual hailo_status after_fork_in_child() { return HAILO_SUCCESS; }
+    virtual hailo_status before_fork();
+    virtual hailo_status after_fork_in_parent();
+    virtual hailo_status after_fork_in_child();
 
     virtual ~VDevice() = default;
     VDevice(const VDevice &) = delete;
     VDevice &operator=(const VDevice &) = delete;
     VDevice(VDevice &&) = delete;
     VDevice &operator=(VDevice &&other) = delete;
+
+    static bool service_over_ip_mode();
 
 protected:
     VDevice() = default;

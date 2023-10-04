@@ -24,10 +24,13 @@ message ProtoMonStreamFramesInfo {
     ProtoMonStreamDirection stream_direction = 2;
     int32 buffer_frames_size = 3;
     int32 pending_frames_count = 4;
+    int32 min_pending_frames_count = 5;
+    int32 max_pending_frames_count = 6;
+    double avg_pending_frames_count = 7;
 }
 
 message ProtoMonNetworkFrames {
-    string network_name = 1; 
+    string network_name = 1;
     repeated ProtoMonStreamFramesInfo streams_frames_infos = 2;
 }
 

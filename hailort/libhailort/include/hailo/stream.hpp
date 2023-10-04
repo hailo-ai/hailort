@@ -24,9 +24,9 @@
 namespace hailort
 {
 
-// Forward declaration
-struct LayerInfo;
-
+#define INVALID_CORE_OP_HANDLE (UINT32_MAX)
+using device_id_t = std::string;
+using vdevice_core_op_handle_t = uint32_t;
 
 /*! Input (host to device) stream representation */
 class HAILORTAPI InputStream
@@ -114,7 +114,7 @@ public:
      * @note @a buffer is expected to be in the format dictated by this.stream_info.format
      * @note @a buffer.size() is expected to be get_frame_size().
      */
-    virtual hailo_status write(const MemoryView &buffer);
+    virtual hailo_status write(const MemoryView &buffer) = 0;
 
     /**
      * Writes the entire buffer to the stream without transformations.
@@ -126,7 +126,7 @@ public:
      * @note @a buffer is expected to be in the format dictated by this.stream_info.format
      * @note @a size is expected to be get_frame_size().
      */
-    virtual hailo_status write(const void *buffer, size_t size);
+    virtual hailo_status write(const void *buffer, size_t size) = 0;
 
     /**
      * Waits until the stream is ready to launch a new write_async() operation. Each stream contains some limited sized
@@ -227,6 +227,14 @@ public:
     }
 
     /**
+     * @returns the quant_infos - quant info per feature.
+     */
+    virtual const std::vector<hailo_quant_info_t> &get_quant_infos() const
+    {
+        return m_quant_infos;
+    }
+
+    /**
      * @returns the stream's hw frame size in bytes.
      */
     virtual inline size_t get_frame_size() const
@@ -254,19 +262,9 @@ protected:
     InputStream() = default;
     InputStream(InputStream &&) = delete;
 
-    // Note: Implement write_impl for the actual stream interaction in sub classes
-    virtual hailo_status write_impl(const MemoryView &buffer) = 0;
-
-    virtual hailo_status activate_stream(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers) = 0;
-    virtual hailo_status deactivate_stream() = 0;
-
     hailo_stream_info_t m_stream_info;
+    std::vector<hailo_quant_info_t> m_quant_infos;
     uint8_t m_dataflow_manager_id;
-
-private:
-    friend class HefConfigurator;
-    friend class ConfiguredNetworkGroupBase;
-    friend class CoreOp;
 };
 
 /*! Output (device to host) stream representation */
@@ -348,6 +346,14 @@ public:
     }
 
     /**
+     * @returns the quant_infos - quant info per feature.
+     */
+    virtual const std::vector<hailo_quant_info_t> &get_quant_infos() const
+    {
+        return m_quant_infos;
+    }
+
+    /**
      * @returns the stream's hw frame size.
      */
     virtual inline size_t get_frame_size() const
@@ -381,7 +387,7 @@ public:
      * @note Upon return, @a buffer is expected to be in the format dictated by this.get_info().format
      * @note @a size is expected to be get_frame_size().
      */
-    virtual hailo_status read(MemoryView buffer);
+    virtual hailo_status read(MemoryView buffer) = 0;
 
     /**
      * Reads the entire buffer from the stream without transformations
@@ -394,7 +400,7 @@ public:
      * @note Upon return, @a buffer is expected to be in the format dictated by this.get_info().format
      * @note @a size is expected to be get_frame_size().
      */
-    virtual hailo_status read(void *buffer, size_t size);
+    virtual hailo_status read(void *buffer, size_t size) = 0;
 
     /**
      * Waits until the stream is ready to launch a new read_async() operation. Each stream contains some limited sized
@@ -492,27 +498,15 @@ protected:
     OutputStream() = default;
     OutputStream(OutputStream&&) = delete;
 
-    virtual hailo_status activate_stream(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers) = 0;
-    virtual hailo_status deactivate_stream() = 0;
-    virtual hailo_status read_impl(MemoryView &buffer) = 0;
-
     hailo_stream_info_t m_stream_info;
+    std::vector<hailo_quant_info_t> m_quant_infos;
     uint8_t m_dataflow_manager_id;
     std::atomic<uint32_t> m_invalid_frames_count;
 
-protected:
-    hailo_status read_nms(void *buffer, size_t offset, size_t size);
-
 private:
-    virtual const LayerInfo& get_layer_info() = 0;
     void increase_invalid_frames_count(uint32_t value);
 
-    friend class HefConfigurator;
-    friend class ConfiguredNetworkGroupBase;
     friend class HwReadElement;
-    friend class OutputDemuxer;
-    friend class CoreOp;
-    friend class NMSStreamReader;
 };
 
 } /* namespace hailort */

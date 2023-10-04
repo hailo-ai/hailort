@@ -46,7 +46,7 @@ std::unique_ptr<grpc::Server> g_hailort_rpc_server = nullptr;
 
 void RunService()
 {
-    const std::string server_address = hailort::HAILORT_SERVICE_DEFAULT_ADDR;
+    const std::string server_address = hailort::HAILORT_SERVICE_ADDRESS;
     hailort::HailoRtRpcService service;
 
     grpc::ServerBuilder builder;

@@ -29,7 +29,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL QNX)
     # TODO: HRT-10956 support QNX async examples
     add_subdirectory(raw_async_streams_multi_thread_example)
     add_subdirectory(raw_async_streams_single_thread_example)
-    set(CPP_EXAMPLE_TARGETS ${C_EXAMPLE_TARGETS}
+    set(CPP_EXAMPLE_TARGETS ${CPP_EXAMPLE_TARGETS}
         cpp_raw_async_streams_multi_thread_example
         cpp_raw_async_streams_single_thread_example)
 endif()

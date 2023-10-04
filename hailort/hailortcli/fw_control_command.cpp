@@ -138,8 +138,10 @@ static std::string identity_arch_string(const hailo_device_identity_t &identity)
         return "HAILO8";
     case HAILO_ARCH_HAILO8L:
         return "HAILO8L";
-    case HAILO_ARCH_HAILO15:
-        return "HAILO15";
+    case HAILO_ARCH_HAILO15H:
+        return "HAILO15H";
+    case HAILO_ARCH_PLUTO:
+        return "PLUTO";
     default:
         return "Unknown";
     }
@@ -230,8 +232,5 @@ FwControlCommand::FwControlCommand(CLI::App &parent_app) :
     add_subcommand<FwControlIdentifyCommand>();
     add_subcommand<FwControlResetCommand>();
     add_subcommand<FwControlTestMemoriesCommand>();
-    // TODO: Support on windows (HRT-5919)
-    #if defined(__GNUC__)
     add_subcommand<DownloadActionListCommand>();
-    #endif
 }

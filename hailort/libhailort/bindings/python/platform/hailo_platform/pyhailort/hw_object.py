@@ -154,7 +154,7 @@ class HailoHWObject(object):
         if len(self._loaded_network_groups) == 1:
             return self._loaded_network_groups[0].name
         raise HailoHWObjectException(
-            "This function is only supported when there is exactly 1 loaded network group. one should use HEF.get_network_group_names() / ConfiguredNetwork.name / ActivatedNetwork.name")
+            "This function is only supported when there is exactly 1 loaded network group. Use HEF.get_network_group_names() / ConfiguredNetwork.name / ActivatedNetwork.name")
 
     def get_output_shapes(self):
         """Get the model output shapes, as returned to the user (without any hardware padding) (deprecated).

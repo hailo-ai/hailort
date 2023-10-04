@@ -150,6 +150,7 @@ int main()
     }
     auto vdevice = vdevice_exp.release();
 
+    // Note: default batch_size is 0, which is not used in this example
     std::vector<uint16_t> batch_sizes { BATCH_SIZE_1, BATCH_SIZE_2 };
     std::vector<std::string> hef_paths = {"hefs/multi_network_shortcut_net.hef", "hefs/shortcut_net.hef"};
 

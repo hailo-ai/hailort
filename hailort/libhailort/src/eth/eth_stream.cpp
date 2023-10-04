@@ -72,19 +72,24 @@ hailo_status EthernetInputStream::deactivate_stream()
 {
     hailo_status status = HAILO_UNINITIALIZED;
 
-    ASSERT(m_is_stream_activated);
+    if (!m_is_stream_activated) {
+        return HAILO_SUCCESS;
+    }
 
-    // TODO: Hold a ref not a pointer
+    m_is_stream_activated = false;
+
     status = Control::close_stream(m_device, m_dataflow_manager_id, true);
     CHECK_SUCCESS(status);
 
-    m_is_stream_activated = false;
+    // Aborting the stream to make sure all read/writes will exit.
+    // Note - on ethernet stream there is no true "clear_abort" - one abort was called, the socket can't be reused.
+    status = abort();
+    CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
 }
 
-// Note: Ethernet streams don't work with dynamic batch sizes
-hailo_status EthernetInputStream::activate_stream(uint16_t /* dynamic_batch_size */, bool /* resume_pending_stream_transfers */)
+hailo_status EthernetInputStream::activate_stream()
 {
     hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__config_stream_params_t params = {};
@@ -430,9 +435,9 @@ std::chrono::milliseconds EthernetInputStream::get_timeout() const
     return std::chrono::milliseconds((MILLISECONDS_IN_SECOND * m_udp.m_timeout.tv_sec) + (m_udp.m_timeout.tv_usec / MICROSECONDS_IN_MILLISECOND));
 }
 
-uint16_t EthernetInputStream::get_remote_port()
+hailo_status EthernetInputStream::abort()
 {
-    return ntohs(m_udp.m_device_address.sin_port);
+    return m_udp.abort();
 }
 
 /** Output stream **/
@@ -450,18 +455,24 @@ hailo_status EthernetOutputStream::deactivate_stream()
 {
     hailo_status status = HAILO_UNINITIALIZED;
 
-    ASSERT(m_is_stream_activated);
+    if (!m_is_stream_activated) {
+        return HAILO_SUCCESS;
+    }
+
+    m_is_stream_activated = false;
 
     status = Control::close_stream(m_device, m_dataflow_manager_id, false);
     CHECK_SUCCESS(status);
 
-    m_is_stream_activated = false;
+    // Aborting the stream to make sure all read/writes will exit.
+    // Note - on ethernet stream there is no true "clear_abort" - one abort was called, the socket can't be reused.
+    status = abort();
+    CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
 }
 
-// Note: Ethernet streams don't work with dynamic batch sizes
-hailo_status EthernetOutputStream::activate_stream(uint16_t /* dynamic_batch_size */, bool /* resume_pending_stream_transfers */)
+hailo_status EthernetOutputStream::activate_stream()
 {
     hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__config_stream_params_t params = {};
@@ -634,7 +645,7 @@ bool EthernetOutputStream::is_sync_packet(const void* buffer, size_t offset, siz
             ((hailo_output_sync_packet_t*)((uint8_t*)buffer + offset))->barker == BYTE_ORDER__ntohl(SYNC_PACKET_BARKER));
 }
 
-hailo_status EthernetOutputStream::read_impl(MemoryView &buffer)
+hailo_status EthernetOutputStream::read_impl(MemoryView buffer)
 {
     if ((buffer.size() % HailoRTCommon::HW_DATA_ALIGNMENT) != 0) {
         LOGGER__ERROR("Size must be aligned to {} (got {})", HailoRTCommon::HW_DATA_ALIGNMENT, buffer.size());
@@ -676,8 +687,7 @@ Expected<size_t> EthernetOutputStream::sync_read_raw_buffer(MemoryView &buffer)
 
 hailo_status EthernetOutputStream::fill_output_stream_ptr_with_info(const hailo_eth_output_stream_params_t &params, EthernetOutputStream *stream)
 {
-    if ((HAILO_FORMAT_ORDER_HAILO_NMS == stream->m_stream_info.format.order)
-        && (params.is_sync_enabled)) {
+    if ((HailoRTCommon::is_nms(stream->m_stream_info)) && (params.is_sync_enabled)) {
         LOGGER__WARNING("NMS is not supported with sync enabled. Setting sync flag to false");
         stream->configuration.is_sync_enabled = false;
     } else {
@@ -724,11 +734,6 @@ std::chrono::milliseconds EthernetOutputStream::get_timeout() const
 }
 
 hailo_status EthernetOutputStream::abort()
-{
-    return m_udp.abort();
-}
-
-hailo_status EthernetInputStream::abort()
 {
     return m_udp.abort();
 }

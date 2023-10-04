@@ -8,26 +8,28 @@
  *        "interface" (not technically an interface, but good enough). All internal input/output streams
  *        should inherit from the InputStreamBase/OutputStreamBase classes.
  *        Hence, the hierarchy is as follows:
- * 
+ *
  * InputStream                      (External "interface")
  * |-- InputStreamBase              (Base class)
- *     |-- VdmaInputStreamBase
+ *     |-- AsyncInputStreamBase
  *          |-- VdmaInputStream
- *          |-- VdmaAsyncInputStream
+ *          |-- ScheduledInputStream
  *     |-- EthernetInputStream
  *     |-- MipiInputStream
- *     |-- VDeviceInputStreamBase
- *          |-- See vdevice_stream.hpp for subclasses
- * 
+ *     |-- RemoteProcessInputStream (used for pyhailort to support fork)
+ *     |-- VDeviceNativeInputStream
+ *     |-- VDeviceInputStreamMultiplexerWrapper
  *
  * OutputStream                      (External "interface")
  * |-- OutputStreamBase              (Base class)
- *     |-- VdmaOutputStreamBase
+ *     |-- AsyncOutputStreamBase
  *          |-- VdmaOutputStream
- *          |-- VdmaAsyncOutputStream
+ *          |-- NmsOutputStream (wraps other OutputStreamBase, accumulate bbox/burst reads into frame reads).
+ *          |-- ScheduledOutputStream
  *     |-- EthernetOutputStream
- *     |-- VDeviceOutputStreamBase
- *          |-- See vdevice_stream.hpp for subclasses
+ *     |-- RemoteProcessOutputStream (used for pyhailort to support fork)
+ *     |-- VDeviceNativeOutputStream
+ *     |-- VDeviceOutputStreamMultiplexerWrapper
  **/
 
 #ifndef _STREAM_INTERNAL_HPP_
@@ -37,13 +39,10 @@
 #include "hailo/event.hpp"
 #include "hailo/hailort_common.hpp"
 
-#include "stream_common/async_common.hpp"
+#include "stream_common/transfer_common.hpp"
 #include "hef/hef_internal.hpp"
 #include "device_common/control_protocol.hpp"
 #include "hef/layer_info.hpp"
-#include "vdma/channel/boundary_channel.hpp"
-
-using device_id_t = std::string;
 
 
 namespace hailort
@@ -61,20 +60,42 @@ typedef struct hailo_mux_info_t{
     void* buffer;
 } hailo_mux_info_t;
 
-class InputStreamWrapper;
-class OutputStreamWrapper;
+
+enum class StreamBufferMode {
+    // The buffer mode is not determined yet.
+    // It will be set automatically based on the functions call (For example, calling write_async on input stream force
+    // usage of NOT_OWNING mode) or manually by calling set_stream_mode()
+    NOT_SET,
+
+    // The buffer is owned by the stream. On each write/read call we copy the buffer into/from the stream buffer.
+    OWNING,
+
+    // The buffer is owned by the user. On each write_async/read_async call, we launch the transfer directly on the
+    // user buffer.
+    NOT_OWNING
+};
 
 class InputStreamBase : public InputStream
 {
 public:
     virtual ~InputStreamBase() = default;
 
+    // Manually set the buffer mode, fails if the mode was already set (and different from buffer_mode)
+    virtual hailo_status set_buffer_mode(StreamBufferMode buffer_mode) = 0;
+
     virtual const CONTROL_PROTOCOL__nn_stream_config_t &get_nn_stream_config()
     {
         return m_nn_stream_config;
     };
 
-    virtual hailo_status send_pending_buffer(const device_id_t &device_id)
+    const LayerInfo& get_layer_info()
+    {
+        return m_layer_info;
+    };
+
+    // Use by the scheduler to launch the transfer on the given activated device.
+    // TODO HRT-11679: remove this.
+    virtual hailo_status launch_transfer(const device_id_t &device_id)
     {
         (void)device_id;
         return HAILO_INVALID_OPERATION;
@@ -85,10 +106,15 @@ public:
         return make_unexpected(HAILO_INVALID_OPERATION);
     }
 
-    virtual Expected<size_t> get_pending_frames_count() const
+    const std::vector<hailo_quant_info_t> &get_quant_infos() const
     {
-        return make_unexpected(HAILO_INVALID_OPERATION);
+        return m_quant_infos;
     }
+
+    virtual hailo_status write(const MemoryView &buffer) override final;
+    virtual hailo_status write(const void *buffer, size_t size) override final;
+
+    virtual hailo_status write_impl(const MemoryView &buffer) = 0;
 
     virtual hailo_status write_async(BufferPtr buffer, const TransferDoneCallback &user_callback) override final;
     virtual hailo_status write_async(const MemoryView &buffer, const TransferDoneCallback &user_callback) override final;
@@ -96,14 +122,39 @@ public:
 
     virtual hailo_status write_async(TransferRequest &&transfer_request);
 
+    virtual EventPtr &get_core_op_activated_event() override;
+    virtual bool is_scheduled() override;
+
+    virtual hailo_status activate_stream() = 0;
+    virtual hailo_status deactivate_stream() = 0;
+
+    using ProcessingCompleteCallback = std::function<void()>;
+    virtual hailo_status register_interrupt_callback(const ProcessingCompleteCallback &)
+    {
+        return HAILO_INVALID_OPERATION;
+    }
+
+    virtual void notify_all()
+    {
+        // Do nothing, override on subclass if notify is needed.
+    }
+
+    virtual vdevice_core_op_handle_t get_vdevice_core_op_handle();
+
+    virtual void set_vdevice_core_op_handle(vdevice_core_op_handle_t core_op_handle);
+
     CONTROL_PROTOCOL__nn_stream_config_t m_nn_stream_config;
 
 protected:
     explicit InputStreamBase(const LayerInfo &layer_info, hailo_stream_interface_t stream_interface,
-        EventPtr &&core_op_activated_event, hailo_status &status) :
+        EventPtr core_op_activated_event, hailo_status &status) :
+        m_layer_info(layer_info),
         m_core_op_activated_event(std::move(core_op_activated_event))
     {
-        m_stream_info = LayerInfoUtils::get_stream_info_from_layer_info(layer_info);
+        const auto &stream_infos = LayerInfoUtils::get_stream_infos_from_layer_info(layer_info);
+        assert(1 == stream_infos.size());
+        m_stream_info = stream_infos[0];
+        m_quant_infos = layer_info.quant_infos;
 
         auto max_periph_bytes_from_hef = HefConfigurator::max_periph_bytes_value(stream_interface);
         if (HAILO_SUCCESS != max_periph_bytes_from_hef.status()) {
@@ -124,30 +175,27 @@ protected:
         status = HAILO_SUCCESS;
     }
 
-    InputStreamBase(const hailo_stream_info_t &stream_info,
-        const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config, const EventPtr &core_op_activated_event);
-
-    virtual EventPtr &get_core_op_activated_event() override;
-    virtual bool is_scheduled() override;
+    LayerInfo m_layer_info;
 
 private:
-    friend class InputStreamWrapper;
 
     EventPtr m_core_op_activated_event;
 };
-
 
 class OutputStreamBase : public OutputStream
 {
 public:
     virtual ~OutputStreamBase() = default;
 
+    // Manually set the buffer mode, fails if the mode was already set (and different from buffer_mode)
+    virtual hailo_status set_buffer_mode(StreamBufferMode buffer_mode) = 0;
+
     virtual const CONTROL_PROTOCOL__nn_stream_config_t &get_nn_stream_config()
     {
         return m_nn_stream_config;
     };
 
-    virtual const LayerInfo& get_layer_info() override
+    const LayerInfo& get_layer_info()
     {
         return m_layer_info;
     };
@@ -157,16 +205,23 @@ public:
         return make_unexpected(HAILO_INVALID_OPERATION);
     }
 
-    virtual Expected<size_t> get_pending_frames_count() const
+    const std::vector<hailo_quant_info_t> &get_quant_infos() const override
     {
-        return make_unexpected(HAILO_INVALID_OPERATION);
+        return m_quant_infos;
     }
 
-    virtual hailo_status set_next_device_to_read(const device_id_t &device_id)
+    // Use by the scheduler to launch the transfer on the given activated device.
+    // TODO HRT-11679: remove this.
+    virtual hailo_status launch_transfer(const device_id_t &device_id)
     {
         (void)device_id;
         return HAILO_INVALID_OPERATION;
     }
+
+    virtual hailo_status read(MemoryView buffer) override;
+    virtual hailo_status read(void *buffer, size_t size) override;
+
+    virtual hailo_status read_impl(MemoryView buffer) = 0;
 
     virtual hailo_status read_async(BufferPtr buffer, const TransferDoneCallback &user_callback) override final;
     virtual hailo_status read_async(MemoryView buffer, const TransferDoneCallback &user_callback) override final;
@@ -174,14 +229,29 @@ public:
 
     virtual hailo_status read_async(TransferRequest &&transfer_request);
 
+    virtual EventPtr &get_core_op_activated_event() override;
+    virtual bool is_scheduled() override;
+
+    virtual hailo_status activate_stream() = 0;
+    virtual hailo_status deactivate_stream() = 0;
+
+    using ProcessingCompleteCallback = std::function<void()>;
+    virtual hailo_status register_interrupt_callback(const ProcessingCompleteCallback &)
+    {
+        return HAILO_INVALID_OPERATION;
+    }
+
     CONTROL_PROTOCOL__nn_stream_config_t m_nn_stream_config;
 
 protected:
     explicit OutputStreamBase(const LayerInfo &layer_info, hailo_stream_interface_t stream_interface,
-        EventPtr &&core_op_activated_event, hailo_status &status) :
+        EventPtr core_op_activated_event, hailo_status &status) :
         m_layer_info(layer_info), m_core_op_activated_event(std::move(core_op_activated_event))
     {
-        m_stream_info = LayerInfoUtils::get_stream_info_from_layer_info(m_layer_info);
+        const auto &stream_infos = LayerInfoUtils::get_stream_infos_from_layer_info(layer_info);
+        assert(1 == stream_infos.size());
+        m_stream_info = stream_infos[0];
+        m_quant_infos = m_layer_info.quant_infos;
 
         auto max_periph_bytes_from_hef = HefConfigurator::max_periph_bytes_value(stream_interface);
         if (HAILO_SUCCESS != max_periph_bytes_from_hef.status()) {
@@ -204,14 +274,9 @@ protected:
     OutputStreamBase(const LayerInfo &layer_info, const hailo_stream_info_t &stream_info,
         const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config, const EventPtr &core_op_activated_event);
 
-    virtual EventPtr &get_core_op_activated_event() override;
-    virtual bool is_scheduled() override;
-
     LayerInfo m_layer_info;
 
 private:
-    friend class OutputStreamWrapper;
-
     EventPtr m_core_op_activated_event;
 };
 

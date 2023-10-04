@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.15.0)
 
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/spdlog.cmake)
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/readerwriterqueue.cmake)
+
 pybind11_add_module(_pyhailort_internal SHARED
     pyhailort_internal.cpp
     control_api.cpp
@@ -27,6 +30,7 @@ target_link_libraries(_pyhailort_internal PRIVATE
     hef_proto
     spdlog::spdlog
     readerwriterqueue
+    profiler_proto
     scheduler_mon_proto)
 if(HAILO_BUILD_SERVICE)
     target_link_libraries(_pyhailort_internal PRIVATE grpc++_unsecure hailort_rpc_grpc_proto)

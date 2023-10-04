@@ -103,8 +103,7 @@ CONTROL_PROTOCOL__mipi_input_config_params_t MipiInputStream::hailo_mipi_params_
     return control_mipi_params;
 }
 
-// Note: Mipi streams don't work with dynamic batch sizes
-hailo_status MipiInputStream::activate_stream(uint16_t /* dynamic_batch_size */, bool /* resume_pending_stream_transfers */)
+hailo_status MipiInputStream::activate_stream()
 {
     hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__config_stream_params_t params = {};

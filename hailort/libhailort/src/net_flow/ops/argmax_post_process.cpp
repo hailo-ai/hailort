@@ -139,8 +139,10 @@ hailo_status ArgmaxPostProcessOp::execute(const std::map<std::string, MemoryView
 {
     auto &input_name = inputs.begin()->first;
     auto &output_name = outputs.begin()->first;
-    auto &input_metadata = m_inputs_metadata[input_name];
-    auto &output_metadata = m_outputs_metadata[output_name];
+    assert(contains(m_op_metadata->inputs_metadata(), input_name));
+    auto &input_metadata = m_op_metadata->inputs_metadata().at(input_name);
+    assert(contains(m_op_metadata->outputs_metadata(), output_name));
+    auto &output_metadata = m_op_metadata->outputs_metadata().at(output_name);
 
     uint8_t format_index = UINT8_MAX;
     switch (input_metadata.format.order) {
@@ -161,13 +163,27 @@ hailo_status ArgmaxPostProcessOp::execute(const std::map<std::string, MemoryView
     return ArgmaxPostProcessOp::m_argmax_function_array[format_index][input_metadata.format.type][output_metadata.format.type](input_metadata, output_metadata, inputs, outputs);
 }
 
-std::string ArgmaxPostProcessOp::get_op_description()
+Expected<std::shared_ptr<OpMetadata>> ArgmaxOpMetadata::create(const std::unordered_map<std::string, BufferMetaData> &inputs_metadata,
+                                                            const std::unordered_map<std::string, BufferMetaData> &outputs_metadata,
+                                                            const std::string &network_name)
 {
-    auto config_info = fmt::format("ArgmaxPostProcess Op, Name: {}", m_name);
+    auto op_metadata = std::shared_ptr<ArgmaxOpMetadata>(new (std::nothrow) ArgmaxOpMetadata(inputs_metadata, outputs_metadata, network_name));
+
+    CHECK_AS_EXPECTED(op_metadata != nullptr, HAILO_OUT_OF_HOST_MEMORY);
+
+    auto status = op_metadata->validate_params();
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    return std::shared_ptr<OpMetadata>(std::move(op_metadata));
+}
+
+std::string ArgmaxOpMetadata::get_op_description()
+{
+    auto config_info = fmt::format("{} Op, Name: {}", OpMetadata::get_operation_type_str(m_type), m_name);
     return config_info;
 }
 
-hailo_status ArgmaxPostProcessOp::validate_metadata()
+hailo_status ArgmaxOpMetadata::validate_params()
 {
     assert(m_inputs_metadata.size() == hailort::net_flow::ARGMAX_NUMBER_OF_SRCS);
     assert(m_outputs_metadata.size() == hailort::net_flow::ARGMAX_NUMBER_OF_DSTS);
@@ -175,41 +191,90 @@ hailo_status ArgmaxPostProcessOp::validate_metadata()
     auto &input_metadata = m_inputs_metadata.begin()->second;
     auto &output_metadata = m_outputs_metadata.begin()->second;
 
+    CHECK(output_metadata.shape.features == hailort::net_flow::ARGMAX_OUTPUT_FEATURES_SIZE, HAILO_INVALID_OPERATION,
+        "Output features ({}) must be 1 on Argmax op", output_metadata.shape.features);
+    CHECK(input_metadata.shape.height == output_metadata.shape.height, HAILO_INVALID_OPERATION,
+        "Argmax op is supported only when input height ({}) is equal to output height ({})",
+        input_metadata.shape.height, output_metadata.shape.height);
+    CHECK(input_metadata.shape.width == output_metadata.shape.width, HAILO_INVALID_OPERATION,
+        "Argmax op is supported only when input width ({}) is equal to output width ({})",
+        input_metadata.shape.width, output_metadata.shape.width);
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status ArgmaxOpMetadata::validate_format_info()
+{
+    auto &input_metadata = m_inputs_metadata.begin()->second;
+    auto &output_metadata = m_outputs_metadata.begin()->second;
+
     CHECK((
         ((output_metadata.format.type == HAILO_FORMAT_TYPE_UINT8) && (input_metadata.shape.features <= std::numeric_limits<uint8_t>::max())) ||
         ((output_metadata.format.type == HAILO_FORMAT_TYPE_UINT16) && (input_metadata.shape.features <= std::numeric_limits<uint16_t>::max())) ||
         ((output_metadata.format.type == HAILO_FORMAT_TYPE_FLOAT32) && (input_metadata.shape.features <= FLOAT_LAST_CONSECUTIVE_REPRESENTABLE_INT))),
-        HAILO_INVALID_OPERATION, "Dst format type {} can't represent possible range {} for Argmax op",
+        HAILO_INVALID_OPERATION, "Output format type {} can't represent possible range {} for Argmax op",
         HailoRTCommon::get_format_type_str(output_metadata.format.type), input_metadata.shape.features);
     CHECK(
         ((input_metadata.format.order == HAILO_FORMAT_ORDER_NHCW) &&  (output_metadata.format.order == HAILO_FORMAT_ORDER_NHW)) ||
         ((input_metadata.format.order == HAILO_FORMAT_ORDER_NHWC) && (output_metadata.format.order == HAILO_FORMAT_ORDER_NHW)) ||
         ((input_metadata.format.order == HAILO_FORMAT_ORDER_NC) && (output_metadata.format.order == HAILO_FORMAT_ORDER_NC)),
-        HAILO_INVALID_OPERATION, "Argmax op is not supported for src format order ({}) and dst format order ({})",
+        HAILO_INVALID_OPERATION, "Argmax op is not supported for input format order ({}) and output format order ({})",
         HailoRTCommon::get_format_order_str(input_metadata.format.order),
         HailoRTCommon::get_format_order_str(output_metadata.format.order));
-
-    CHECK(output_metadata.shape.features == hailort::net_flow::ARGMAX_OUTPUT_FEATURES_SIZE, HAILO_INVALID_OPERATION,
-        "Dst features ({}) must be 1 on Argmax op", output_metadata.shape.features);
-    CHECK(input_metadata.shape.height == output_metadata.shape.height, HAILO_INVALID_OPERATION,
-        "Argmax op is supported only when src height ({}) is equal to dst height ({})",
-        input_metadata.shape.height, output_metadata.shape.height);
-    CHECK(input_metadata.shape.width == output_metadata.shape.width, HAILO_INVALID_OPERATION,
-        "Argmax op is supported only when src width ({}) is equal to dst width ({})",
-        input_metadata.shape.width, output_metadata.shape.width);
     CHECK((
         (input_metadata.format.type == HAILO_FORMAT_TYPE_UINT8) || (input_metadata.format.type == HAILO_FORMAT_TYPE_UINT16)),
-        HAILO_INVALID_OPERATION, "Src format type {} is not valid. Must be either {} or {}",
+        HAILO_INVALID_OPERATION, "The given input format type {} is not supported, should be either {} or {}",
         HailoRTCommon::get_format_type_str(input_metadata.format.type), HailoRTCommon::get_format_type_str(HAILO_FORMAT_TYPE_UINT8),
         HailoRTCommon::get_format_type_str(HAILO_FORMAT_TYPE_UINT16));
 
     return HAILO_SUCCESS;
 }
 
-Expected<std::shared_ptr<Op>> ArgmaxPostProcessOp::create(const std::map<std::string, BufferMetaData> &inputs_metadata,
-    std::map<std::string, BufferMetaData> &outputs_metadata)
+hailo_format_t ArgmaxOpMetadata::expand_output_format_autos(const hailo_format_t &output_format, const hailo_format_t &input_format)
 {
-    auto op = std::shared_ptr<ArgmaxPostProcessOp>(new (std::nothrow) ArgmaxPostProcessOp(inputs_metadata, outputs_metadata));
+    auto format = output_format;
+
+    if (format.type == HAILO_FORMAT_TYPE_AUTO) {
+        format.type = input_format.type;
+    }
+    if (format.order == HAILO_FORMAT_ORDER_AUTO) {
+        if (input_format.order == HAILO_FORMAT_ORDER_NHCW || input_format.order == HAILO_FORMAT_ORDER_NHWC) {
+            format.order = HAILO_FORMAT_ORDER_NHW;
+        }
+        if (input_format.order == HAILO_FORMAT_ORDER_NC) {
+            format.order = HAILO_FORMAT_ORDER_NC;
+        }
+    }
+    return format;
+}
+
+Expected<hailo_vstream_info_t> ArgmaxOpMetadata::get_output_vstream_info()
+{
+    CHECK_AS_EXPECTED((m_outputs_metadata.size() == 1), HAILO_INVALID_OPERATION, "{} has more than 1 output", m_name);
+
+    hailo_vstream_info_t vstream_info{};
+    strncpy(vstream_info.name, m_outputs_metadata.begin()->first.c_str(), m_outputs_metadata.begin()->first.length() + 1);
+    strncpy(vstream_info.network_name, m_network_name.c_str(), m_network_name.length() + 1);
+    vstream_info.direction = HAILO_D2H_STREAM;
+    vstream_info.format.order = m_outputs_metadata.begin()->second.format.order;
+    vstream_info.format.type = m_outputs_metadata.begin()->second.format.type;
+    vstream_info.format.flags = HAILO_FORMAT_FLAGS_NONE;
+
+    assert(m_inputs_metadata.size() == 1);
+    vstream_info.format = ArgmaxOpMetadata::expand_output_format_autos(vstream_info.format, m_inputs_metadata.begin()->second.format);
+    vstream_info.shape = m_outputs_metadata.begin()->second.shape;
+
+    vstream_info.quant_info = m_inputs_metadata.begin()->second.quant_info;
+
+    return vstream_info;
+}
+
+Expected<std::shared_ptr<Op>> ArgmaxPostProcessOp::create(std::shared_ptr<ArgmaxOpMetadata> metadata)
+{
+    auto status = metadata->validate_format_info();
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    auto op = std::shared_ptr<ArgmaxPostProcessOp>(new (std::nothrow) ArgmaxPostProcessOp(metadata));
     CHECK_AS_EXPECTED(op != nullptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::shared_ptr<Op>(std::move(op));

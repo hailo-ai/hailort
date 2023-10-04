@@ -15,8 +15,10 @@ namespace hailort
 
 // Needed for the linker
 const uint32_t HailoRTCommon::BBOX_PARAMS;
+const uint32_t HailoRTCommon::MASK_PARAMS;
 const uint32_t HailoRTCommon::MAX_DEFUSED_LAYER_COUNT;
 const size_t HailoRTCommon::HW_DATA_ALIGNMENT;
+const uint32_t HailoRTCommon::MAX_NMS_BURST_SIZE;
 
 Expected<hailo_device_id_t> HailoRTCommon::to_device_id(const std::string &device_id)
 {
@@ -41,6 +43,23 @@ Expected<std::vector<hailo_device_id_t>> HailoRTCommon::to_device_ids_vector(con
         device_ids_vector.push_back(device_id_struct.release());
     }
     return device_ids_vector;
+}
+
+uint32_t HailoRTCommon::get_nms_host_frame_size(const hailo_nms_shape_t &nms_shape, const hailo_format_t &format)
+{
+    auto shape_size = 0;
+    if (HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK == format.order) {
+        shape_size = get_nms_with_byte_mask_host_shape_size(nms_shape, format);
+    } else {
+        shape_size = get_nms_host_shape_size(nms_shape);
+    }
+    double frame_size = shape_size * get_format_data_bytes(format);
+    if (frame_size < UINT32_MAX) {
+        return static_cast<uint32_t>(frame_size);
+    } else{
+        LOGGER__WARNING("NMS host frame size calculated is larger then UINT32_MAX. Therefore the frame size is UINT32_MAX");
+        return UINT32_MAX;
+    }
 }
 
 } /* namespace hailort */

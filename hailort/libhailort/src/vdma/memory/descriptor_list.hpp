@@ -95,6 +95,17 @@ enum class InterruptsDomain
     BOTH    = DEVICE | HOST
 };
 
+inline InterruptsDomain operator|(InterruptsDomain a, InterruptsDomain b)
+{
+    return static_cast<InterruptsDomain>(static_cast<int>(a) | static_cast<int>(b));
+}
+
+inline InterruptsDomain& operator|=(InterruptsDomain &a, InterruptsDomain b)
+{
+    a = a | b;
+    return a;
+}
+
 inline bool host_interuptes_enabled(InterruptsDomain interrupts_domain)
 {
     return 0 != (static_cast<uint32_t>(interrupts_domain) & static_cast<uint32_t>(InterruptsDomain::HOST));
@@ -160,7 +171,6 @@ public:
     Expected<uint16_t> program_last_descriptor(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
         size_t desc_offset);
     void program_single_descriptor(VdmaDescriptor &descriptor, uint16_t page_size, InterruptsDomain interrupts_domain);
-    hailo_status reprogram_descriptor_interrupts_domain(size_t desc_index, InterruptsDomain interrupts_domain);
     void clear_descriptor(const size_t desc_index);
 
     uint32_t descriptors_in_buffer(size_t buffer_size) const;
@@ -174,7 +184,6 @@ private:
     VdmaDescriptor *desc_list() { return reinterpret_cast<VdmaDescriptor*>(m_desc_list_info.user_address); }
 
     uint32_t get_interrupts_bitmask(InterruptsDomain interrupts_domain);
-    void reprogram_single_descriptor_interrupts_domain(VdmaDescriptor &descriptor, InterruptsDomain interrupts_domain);
 
 
     DescriptorsListInfo m_desc_list_info;

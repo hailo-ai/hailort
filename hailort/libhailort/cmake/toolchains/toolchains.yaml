@@ -23,7 +23,7 @@
         package_dest: /usr/include/aarch64-linux-gnu
     -   version: '3.9'
         installation: manual
-        package_name: https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa/+build/26280901/+files/libpython3.9-dev_3.9.17-1+focal1_arm64.deb
+        package_name: https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa/+files/libpython3.9-dev_3.9.18-1+focal1_arm64.deb
         package_dest: /usr/include/aarch64-linux-gnu
     -   version: '3.10'
         installation: manual

@@ -149,18 +149,26 @@ GstFlowReturn HailoSendImpl::handle_frame(GstVideoFilter */*filter*/, GstVideoFr
         return GST_FLOW_OK;
     }
 
-    guint8 *frame_buffer = reinterpret_cast<guint8*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
+    hailo_pix_buffer_t pix_buffer = {};
+    pix_buffer.index = 0;
+    pix_buffer.number_of_planes = GST_VIDEO_INFO_N_PLANES(&frame->info);
+    for (uint32_t plane_index = 0; plane_index < pix_buffer.number_of_planes; plane_index++) {
+        pix_buffer.planes[plane_index].bytes_used = GST_VIDEO_INFO_PLANE_STRIDE(&frame->info, plane_index) * GST_VIDEO_INFO_COMP_HEIGHT(&frame->info, plane_index);
+        pix_buffer.planes[plane_index].plane_size = GST_VIDEO_INFO_PLANE_STRIDE(&frame->info, plane_index) * GST_VIDEO_INFO_COMP_HEIGHT(&frame->info, plane_index);
+        pix_buffer.planes[plane_index].user_ptr = GST_VIDEO_FRAME_PLANE_DATA(frame, plane_index);
+    }
+
     hailo_status status = HAILO_UNINITIALIZED;
 
     if (m_props.m_debug.get()) {
         std::chrono::duration<double, std::milli> latency;
         std::chrono::time_point<std::chrono::system_clock> start_time;
         start_time = std::chrono::system_clock::now();
-        status = write_to_vstreams(frame_buffer, GST_VIDEO_FRAME_SIZE(frame));
+        status = write_to_vstreams(pix_buffer);
         latency = std::chrono::system_clock::now() - start_time;
         GST_DEBUG("hailosend latency: %f milliseconds", latency.count());
     } else {
-        status = write_to_vstreams(frame_buffer, GST_VIDEO_FRAME_SIZE(frame));
+        status = write_to_vstreams(pix_buffer);
     }
 
     if (HAILO_SUCCESS != status) {
@@ -169,10 +177,13 @@ GstFlowReturn HailoSendImpl::handle_frame(GstVideoFilter */*filter*/, GstVideoFr
     return GST_FLOW_OK;
 }
 
-hailo_status HailoSendImpl::write_to_vstreams(void *buf, size_t size)
+hailo_status HailoSendImpl::write_to_vstreams(const hailo_pix_buffer_t &pix_buffer)
 {
     for (auto &in_vstream : m_input_vstreams) {
-        auto status = in_vstream.write(MemoryView(buf, size));
+        auto status = in_vstream.write(pix_buffer);
+        if (HAILO_STREAM_ABORTED_BY_USER == status) {
+            return status;
+        }
         GST_CHECK_SUCCESS(status, m_element, STREAM, "Failed writing to input vstream %s, status = %d", in_vstream.name().c_str(), status);
     }
     return HAILO_SUCCESS;

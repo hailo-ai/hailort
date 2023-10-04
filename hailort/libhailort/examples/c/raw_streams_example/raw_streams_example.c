@@ -185,7 +185,7 @@ int main()
     hailo_output_stream output_streams [MAX_EDGE_LAYERS] = {NULL};
     size_t number_input_streams = 0;
     size_t number_output_streams = 0;
-    size_t index = 0;
+    size_t i = 0;
 
     status = hailo_scan_devices(NULL, device_ids, &actual_devices_count);
     REQUIRE_SUCCESS(status, l_exit, "Failed to scan devices");
@@ -214,14 +214,14 @@ int main()
         &number_output_streams);
     REQUIRE_SUCCESS(status, l_release_hef, "Failed getting output streams infos");
 
-    for (index = 0; index < number_input_streams; index++) {
-        status = hailo_get_input_stream(network_group, input_streams_info[index].name, &input_streams[index]);
-        REQUIRE_SUCCESS(status, l_release_hef, "Failed getting input stream %s", input_streams_info[index].name);
+    for (i = 0; i < number_input_streams; i++) {
+        status = hailo_get_input_stream(network_group, input_streams_info[i].name, &input_streams[i]);
+        REQUIRE_SUCCESS(status, l_release_hef, "Failed getting input stream %s", input_streams_info[i].name);
     }
 
-    for (index = 0; index < number_output_streams; index++) {
-        status = hailo_get_output_stream(network_group, output_streams_info[index].name, &output_streams[index]);
-        REQUIRE_SUCCESS(status, l_release_hef, "Failed getting output stream %s", output_streams_info[index].name);
+    for (i = 0; i < number_output_streams; i++) {
+        status = hailo_get_output_stream(network_group, output_streams_info[i].name, &output_streams[i]);
+        REQUIRE_SUCCESS(status, l_release_hef, "Failed getting output stream %s", output_streams_info[i].name);
     }
 
     status = hailo_activate_network_group(network_group, NULL, &activated_network_group);

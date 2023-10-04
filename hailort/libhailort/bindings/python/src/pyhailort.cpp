@@ -15,6 +15,7 @@ using namespace std;
 #include "hef_api.hpp"
 #include "vstream_api.hpp"
 #include "vdevice_api.hpp"
+#include "network_group_api.hpp"
 #include "device_api.hpp"
 #include "quantization_api.hpp"
 
@@ -164,6 +165,7 @@ PYBIND11_MODULE(_pyhailort, m) {
     m.def("dequantize_output_buffer_in_place", &QuantizationBindings::dequantize_output_buffer_in_place);
     m.def("dequantize_output_buffer", &QuantizationBindings::dequantize_output_buffer);
     m.def("quantize_input_buffer", &QuantizationBindings::quantize_input_buffer);
+    m.def("is_qp_valid", &QuantizationBindings::is_qp_valid);
 
     m.def("get_format_data_bytes", &HailoRTCommon::get_format_data_bytes);
     m.def("get_dtype", &HailoRTBindingsCommon::get_dtype);
@@ -209,7 +211,8 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("HAILO8_A0", HAILO_ARCH_HAILO8_A0)
         .value("HAILO8", HAILO_ARCH_HAILO8)
         .value("HAILO8L", HAILO_ARCH_HAILO8L)
-        .value("HAILO15", HAILO_ARCH_HAILO15)
+        .value("HAILO15H", HAILO_ARCH_HAILO15H)
+        .value("PLUTO", HAILO_ARCH_PLUTO)
     ;
 
     /* TODO: SDK-15648 */
@@ -462,16 +465,19 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def(py::init<>())
         .def_readonly("number_of_classes", &hailo_nms_shape_t::number_of_classes)
         .def_readonly("max_bboxes_per_class", &hailo_nms_shape_t::max_bboxes_per_class)
+        .def_readonly("max_mask_size", &hailo_nms_shape_t::max_mask_size)
         .def(py::pickle(
             [](const hailo_nms_shape_t &nms_shape) { // __getstate__
                 return py::make_tuple(
                     nms_shape.number_of_classes,
-                    nms_shape.max_bboxes_per_class);
+                    nms_shape.max_bboxes_per_class,
+                    nms_shape.max_mask_size);
             },
             [](py::tuple t) { // __setstate__
                 hailo_nms_shape_t nms_shape;
                 nms_shape.number_of_classes = t[0].cast<uint32_t>();
                 nms_shape.max_bboxes_per_class = t[1].cast<uint32_t>();
+                nms_shape.max_mask_size = t[2].cast<uint32_t>();
                 return nms_shape;
             }
         ))
@@ -513,6 +519,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("RGB4", HAILO_FORMAT_ORDER_RGB4)
         .value("I420", HAILO_FORMAT_ORDER_I420)
         .value("YYYYUV", HAILO_FORMAT_ORDER_HAILO_YYYYUV)
+        .value("HAILO_NMS_WITH_BYTE_MASK", HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK)
         ;
 
     py::enum_<hailo_format_flags_t>(m, "FormatFlags", py::arithmetic())
@@ -1010,7 +1017,7 @@ PYBIND11_MODULE(_pyhailort, m) {
             }
         })
         .def_property_readonly("nms_shape", [](const hailo_vstream_info_t &self) {
-            if (HAILO_FORMAT_ORDER_HAILO_NMS != self.format.order) {
+            if (!HailoRTCommon::is_nms(self)) {
                 throw HailoRTCustomException("nms_shape is availale only on nms order vstreams");
             }
             return self.nms_shape;
@@ -1025,7 +1032,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         })
         .def(py::pickle(
             [](const hailo_vstream_info_t &vstream_info) { // __getstate__
-                if (HAILO_FORMAT_ORDER_HAILO_NMS == vstream_info.format.order) {
+                if (HailoRTCommon::is_nms(vstream_info)) {
                     return py::make_tuple(
                         vstream_info.name,
                         vstream_info.network_name,
@@ -1050,7 +1057,7 @@ PYBIND11_MODULE(_pyhailort, m) {
                 strcpy(vstream_info.network_name, t[1].cast<std::string>().c_str());
                 vstream_info.direction = t[2].cast<hailo_stream_direction_t>();
                 vstream_info.format = t[3].cast<hailo_format_t>();
-                if (HAILO_FORMAT_ORDER_HAILO_NMS == vstream_info.format.order) {
+                if (HailoRTCommon::is_nms(vstream_info)) {
                     vstream_info.nms_shape = t[4].cast<hailo_nms_shape_t>();
                 }
                 else {
@@ -1104,6 +1111,7 @@ PYBIND11_MODULE(_pyhailort, m) {
     HefWrapper::initialize_python_module(m);
     VStream_api_initialize_python_module(m);
     VDevice_api_initialize_python_module(m);
+    NetworkGroup_api_initialize_python_module(m);
     DeviceWrapper::add_to_python_module(m);
 
     NetworkRateLimiter::add_to_python_module(m);

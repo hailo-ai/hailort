@@ -286,6 +286,29 @@ Expected<Buffer> StartBurstCreditsTaskAction::serialize_params(const ContextReso
     return Buffer::create(0);
 }
 
+Expected<ContextSwitchConfigActionPtr> ResetBurstCreditsTaskAction::create()
+{
+    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ResetBurstCreditsTaskAction());
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+    return result;
+}
+
+ResetBurstCreditsTaskAction::ResetBurstCreditsTaskAction() :
+    ContextSwitchConfigAction(Type::ResetBurstCreditsTask, CONTEXT_SWITCH_DEFS__ACTION_TYPE_BURST_CREDITS_TASK_RESET)
+{}
+
+bool ResetBurstCreditsTaskAction::supports_repeated_block() const
+{
+    // We don't support repeated blocks for this action, since only one is added per group of consecutive
+    // TriggerNewDataFromDataInput actions.
+    return false;
+}
+
+Expected<Buffer> ResetBurstCreditsTaskAction::serialize_params(const ContextResources &) const
+{
+    return Buffer::create(0);
+}
+
 Expected<ContextSwitchConfigActionPtr> WaitForNetworkGroupChangeAction::create()
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) WaitForNetworkGroupChangeAction());
@@ -579,7 +602,6 @@ Expected<Buffer> AllowInputDataflowAction::serialize_params(const ContextResourc
     params.stream_index = m_stream_index;
     params.network_index = edge_layer->layer_info.network_index;
     params.host_buffer_type = static_cast<CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t>(edge_layer->buffer_info.buffer_type);
-    params.periph_bytes_per_buffer = edge_layer->layer_info.nn_stream_config.periph_bytes_per_buffer;
 
     switch (edge_layer->layer_info.type) {
     case LayerType::BOUNDARY:
@@ -595,6 +617,35 @@ Expected<Buffer> AllowInputDataflowAction::serialize_params(const ContextResourc
         LOGGER__ERROR("Invalid layer type {} for stream {}", static_cast<int>(edge_layer->layer_info.type), m_stream_index);
         return make_unexpected(HAILO_INTERNAL_FAILURE);
     }
+
+    return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
+}
+
+Expected<ContextSwitchConfigActionPtr> ChangeBoundaryInputBatchAction::create(const vdma::ChannelId channel_id)
+{
+    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ChangeBoundaryInputBatchAction(channel_id));
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+    return result;
+}
+
+
+ChangeBoundaryInputBatchAction::ChangeBoundaryInputBatchAction(const vdma::ChannelId channel_id) :
+    ContextSwitchConfigAction(Type::ChangeBoundaryInputBatchAction,
+                              CONTEXT_SWITCH_DEFS__ACTION_TYPE_CHANGE_BOUNDARY_INPUT_BATCH),
+    m_channel_id(channel_id)
+{}
+
+bool ChangeBoundaryInputBatchAction::supports_repeated_block() const
+{
+    return false;
+}
+
+Expected<Buffer> ChangeBoundaryInputBatchAction::serialize_params(const ContextResources &) const
+{
+    // H2D direction because it is Input actions
+
+    CONTEXT_SWITCH_DEFS__change_boundary_input_batch_t params{};
+    params.packed_vdma_channel_id = pack_vdma_channel_id(m_channel_id);
 
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
@@ -667,7 +718,7 @@ Expected<ContextSwitchConfigActionPtr> StartDdrBufferingTaskAction::create()
 }
 
 StartDdrBufferingTaskAction::StartDdrBufferingTaskAction() :
-    ContextSwitchConfigAction(Type::StartDdrBufferingTask, CONTEXT_SWITCH_DEFS__ACTION_TYPE_DDR_BUFFERING_START)
+ContextSwitchConfigAction(Type::StartDdrBufferingTask, CONTEXT_SWITCH_DEFS__ACTION_TYPE_DDR_BUFFERING_START)
 {}
 
 bool StartDdrBufferingTaskAction::supports_repeated_block() const
@@ -763,10 +814,14 @@ Expected<Buffer> WaitOutputTransferDoneAction::serialize_params(const ContextRes
 
     CONTEXT_SWITCH_DEFS__vdma_dataflow_interrupt_data_t params{};
     params.packed_vdma_channel_id = pack_vdma_channel_id(edge_layer->channel_id);
+    params.stream_index = m_stream_index;
+    params.network_index = edge_layer->layer_info.network_index;
+    params.is_inter_context = static_cast<uint8_t>(LayerType::INTER_CONTEXT == edge_layer->layer_info.type);
+    params.host_buffer_type = static_cast<CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t>(edge_layer->buffer_info.buffer_type);
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 
-Expected<ContextSwitchConfigActionPtr> OpenBoundaryInputChannelAction::create(const vdma::ChannelId &channel_id,
+Expected<ContextSwitchConfigActionPtr> OpenBoundaryInputChannelAction::create(const vdma::ChannelId channel_id,
     const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info)
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) OpenBoundaryInputChannelAction(channel_id,
@@ -775,7 +830,7 @@ Expected<ContextSwitchConfigActionPtr> OpenBoundaryInputChannelAction::create(co
     return result;
 }
 
-OpenBoundaryInputChannelAction::OpenBoundaryInputChannelAction(const vdma::ChannelId &channel_id,
+OpenBoundaryInputChannelAction::OpenBoundaryInputChannelAction(const vdma::ChannelId channel_id,
     const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info) :
     ContextSwitchConfigAction(ContextSwitchConfigAction::Type::OpenBoundaryInputChannel,
                               CONTEXT_SWITCH_DEFS__ACTION_TYPE_OPEN_BOUNDARY_INPUT_CHANNEL),
@@ -789,11 +844,22 @@ bool OpenBoundaryInputChannelAction::supports_repeated_block() const
     return false;
 }
 
-Expected<Buffer> OpenBoundaryInputChannelAction::serialize_params(const ContextResources &) const
+Expected<Buffer> OpenBoundaryInputChannelAction::serialize_params(const ContextResources &context_resources) const
 {
     CONTEXT_SWITCH_DEFS__open_boundary_input_channel_data_t params{};
-    params.packed_vdma_channel_id = pack_vdma_channel_id(m_channel_id);
+
+    // H2D direction because it is Input actions
+    const auto edge_layer = context_resources.get_edge_layer_by_channel_id(m_channel_id);
+    CHECK_EXPECTED(edge_layer);
+
+    params.packed_vdma_channel_id = pack_vdma_channel_id(edge_layer->channel_id);
     params.host_buffer_info = m_host_buffer_info;
+    params.stream_index = edge_layer->layer_info.stream_index;
+    params.network_index = edge_layer->layer_info.network_index;
+    params.periph_bytes_per_buffer = edge_layer->layer_info.nn_stream_config.periph_bytes_per_buffer;
+    params.frame_periph_size = edge_layer->layer_info.nn_stream_config.periph_bytes_per_buffer *
+        edge_layer->layer_info.nn_stream_config.periph_buffers_per_frame;
+
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 
@@ -839,6 +905,7 @@ static CONTEXT_SWITCH_DEFS__stream_reg_info_t parse_nn_config(const CONTROL_PROT
     reg_info.buffer_padding = nn_config.buffer_padding;
     reg_info.periph_bytes_per_buffer = nn_config.periph_bytes_per_buffer;
     reg_info.periph_buffers_per_frame = nn_config.periph_buffers_per_frame;
+    reg_info.is_periph_calculated_in_hailort = nn_config.is_periph_calculated_in_hailort;
     return reg_info;
 }
 
@@ -882,22 +949,23 @@ Expected<Buffer> ActivateBoundaryInputChannelAction::serialize_params(const Cont
 }
 
 Expected<ContextSwitchConfigActionPtr> ActivateBoundaryOutputChannelAction::create(const vdma::ChannelId &channel_id,
-    uint8_t stream_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
+    uint8_t stream_index, uint8_t network_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
     const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info)
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ActivateBoundaryOutputChannelAction(channel_id,
-        stream_index, nn_stream_config, host_buffer_info));
+        stream_index, network_index, nn_stream_config, host_buffer_info));
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
 ActivateBoundaryOutputChannelAction::ActivateBoundaryOutputChannelAction(const vdma::ChannelId &channel_id,
-    uint8_t stream_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
+    uint8_t stream_index, uint8_t network_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
     const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info) :
     ContextSwitchConfigAction(ContextSwitchConfigAction::Type::ActivateBoundaryOutputChannel,
                               CONTEXT_SWITCH_DEFS__ACTION_TYPE_ACTIVATE_BOUNDARY_OUTPUT),
     m_channel_id(channel_id),
     m_stream_index(stream_index),
+    m_network_index(network_index),
     m_nn_stream_config(nn_stream_config),
     m_host_buffer_info(host_buffer_info)
 {}
@@ -913,6 +981,7 @@ Expected<Buffer> ActivateBoundaryOutputChannelAction::serialize_params(const Con
     CONTEXT_SWITCH_DEFS__activate_boundary_output_data_t params{};
     params.packed_vdma_channel_id = pack_vdma_channel_id(m_channel_id);
     params.stream_index = m_stream_index;
+    params.network_index = m_network_index;
     params.stream_reg_info = parse_nn_config(m_nn_stream_config);
     params.host_buffer_info = m_host_buffer_info;
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
@@ -1078,11 +1147,19 @@ Expected<Buffer> ActivateDdrOutputChannelAction::serialize_params(const ContextR
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 
-Expected<ContextSwitchConfigActionPtr> ValidateChannelAction::create(const EdgeLayer &edge_layer)
+Expected<ContextSwitchConfigActionPtr> ValidateChannelAction::create(const EdgeLayer &edge_layer,
+    const bool is_batch_switch_context)
 {
-    const bool is_inter_context = (LayerType::INTER_CONTEXT == edge_layer.layer_info.type);
+    const bool check_host_empty_num_available =
+        // In batch switch context we still have desc avail on the host side from both directions (from activate inter context input and output actions).
+        !is_batch_switch_context &&
+        // DDR and bonudary channels always has host descriptors ready to be sent.
+        (LayerType::INTER_CONTEXT == edge_layer.layer_info.type) &&
+        // For inter context output in CCB mode, the C2C always sets new avail descriptors from the host side.
+        !(edge_layer.layer_info.direction == HAILO_D2H_STREAM &&
+            static_cast<CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t>(edge_layer.buffer_info.buffer_type) == CONTROL_PROTOCOL__HOST_BUFFER_TYPE_CCB);
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ValidateChannelAction(edge_layer.channel_id,
-        edge_layer.layer_info.direction, is_inter_context,
+        edge_layer.layer_info.direction, check_host_empty_num_available,
         static_cast<CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t>(edge_layer.buffer_info.buffer_type),
         edge_layer.layer_info.max_shmifo_size));
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
@@ -1090,13 +1167,13 @@ Expected<ContextSwitchConfigActionPtr> ValidateChannelAction::create(const EdgeL
 }
 
 ValidateChannelAction::ValidateChannelAction(const vdma::ChannelId &channel_id,
-    hailo_stream_direction_t stream_direction, bool is_inter_context,
+    hailo_stream_direction_t stream_direction, bool check_host_empty_num_available,
     CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t host_buffer_type, uint32_t initial_credit_size) :
     ContextSwitchConfigAction(ContextSwitchConfigAction::Type::ValidateChannel,
                               CONTEXT_SWITCH_DEFS__ACTION_TYPE_VALIDATE_VDMA_CHANNEL),
     m_channel_id(channel_id),
     m_stream_direction(stream_direction),
-    m_is_inter_context(is_inter_context),
+    m_check_host_empty_num_available(check_host_empty_num_available),
     m_host_buffer_type(host_buffer_type),
     m_initial_credit_size(initial_credit_size)
 {}
@@ -1114,17 +1191,25 @@ Expected<Buffer> ValidateChannelAction::serialize_params(const ContextResources 
     params.edge_layer_direction = m_stream_direction == HAILO_H2D_STREAM ?
         static_cast<uint8_t>(CONTEXT_SWITCH_DEFS__EDGE_LAYER_DIRECTION_HOST_TO_DEVICE) :
         static_cast<uint8_t>(CONTEXT_SWITCH_DEFS__EDGE_LAYER_DIRECTION_DEVICE_TO_HOST);
-    params.is_inter_context = m_is_inter_context;
+    params.check_host_empty_num_available = m_check_host_empty_num_available;
     params.host_buffer_type = static_cast<uint8_t>(m_host_buffer_type);
     params.initial_credit_size = m_initial_credit_size;
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 
-Expected<ContextSwitchConfigActionPtr> DeactivateChannelAction::create(const EdgeLayer &edge_layer)
+Expected<ContextSwitchConfigActionPtr> DeactivateChannelAction::create(const EdgeLayer &edge_layer,
+    const bool is_batch_switch_context)
 {
-    const bool is_inter_context = (LayerType::INTER_CONTEXT == edge_layer.layer_info.type);
+    const bool check_host_empty_num_available =
+        // In batch switch context we still have desc avail on the host side from both directions (from activate inter context input and output actions).
+        !is_batch_switch_context &&
+        // DDR and bonudary channels always has host descriptors ready to be sent.
+        (LayerType::INTER_CONTEXT == edge_layer.layer_info.type) &&
+        // For inter context output in CCB mode, the C2C always sets new avail descriptors from the host side.
+        !(edge_layer.layer_info.direction == HAILO_D2H_STREAM &&
+            static_cast<CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t>(edge_layer.buffer_info.buffer_type) == CONTROL_PROTOCOL__HOST_BUFFER_TYPE_CCB);
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) DeactivateChannelAction(edge_layer.channel_id,
-        edge_layer.layer_info.direction, is_inter_context,
+        edge_layer.layer_info.direction, check_host_empty_num_available,
         static_cast<CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t>(edge_layer.buffer_info.buffer_type),
         edge_layer.layer_info.max_shmifo_size));
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
@@ -1132,13 +1217,13 @@ Expected<ContextSwitchConfigActionPtr> DeactivateChannelAction::create(const Edg
 }
 
 DeactivateChannelAction::DeactivateChannelAction(const vdma::ChannelId &channel_id,
-    hailo_stream_direction_t stream_direction, bool is_inter_context,
+    hailo_stream_direction_t stream_direction, bool check_host_empty_num_available,
     CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t host_buffer_type, uint32_t initial_credit_size) :
     ContextSwitchConfigAction(ContextSwitchConfigAction::Type::DeactivateChannel,
                               CONTEXT_SWITCH_DEFS__ACTION_TYPE_DEACTIVATE_VDMA_CHANNEL),
     m_channel_id(channel_id),
     m_stream_direction(stream_direction),
-    m_is_inter_context(is_inter_context),
+    m_check_host_empty_num_available(check_host_empty_num_available),
     m_host_buffer_type(host_buffer_type),
     m_initial_credit_size(initial_credit_size)
 {}
@@ -1156,9 +1241,73 @@ Expected<Buffer> DeactivateChannelAction::serialize_params(const ContextResource
     params.edge_layer_direction = m_stream_direction == HAILO_H2D_STREAM ? 
         static_cast<uint8_t>(CONTEXT_SWITCH_DEFS__EDGE_LAYER_DIRECTION_HOST_TO_DEVICE) : 
         static_cast<uint8_t>(CONTEXT_SWITCH_DEFS__EDGE_LAYER_DIRECTION_DEVICE_TO_HOST);
-    params.is_inter_context = m_is_inter_context;
+    params.check_host_empty_num_available = m_check_host_empty_num_available;
     params.host_buffer_type = static_cast<uint8_t>(m_host_buffer_type);
     params.initial_credit_size = m_initial_credit_size;
+    return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
+}
+
+Expected<ContextSwitchConfigActionPtr> PauseVdmaChannel::create(const EdgeLayer &edge_layer)
+{
+    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) PauseVdmaChannel(edge_layer.channel_id,
+        edge_layer.layer_info.direction));
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+    return result;
+}
+
+PauseVdmaChannel::PauseVdmaChannel(const vdma::ChannelId &channel_id,
+    hailo_stream_direction_t stream_direction) :
+    ContextSwitchConfigAction(ContextSwitchConfigAction::Type::PauseVdmaChannel,
+                              CONTEXT_SWITCH_DEFS__ACTION_TYPE_PAUSE_VDMA_CHANNEL),
+    m_channel_id(channel_id),
+    m_stream_direction(stream_direction)
+{}
+
+bool PauseVdmaChannel::supports_repeated_block() const
+{
+    // Validate action shouldn't be repeated (for easier debugging).
+    return false;
+}
+
+Expected<Buffer> PauseVdmaChannel::serialize_params(const ContextResources &) const
+{
+    CONTEXT_SWITCH_DEFS__pause_vdma_channel_action_data_t params{};
+    params.packed_vdma_channel_id = pack_vdma_channel_id(m_channel_id);
+    params.edge_layer_direction = m_stream_direction == HAILO_H2D_STREAM ?
+        static_cast<uint8_t>(CONTEXT_SWITCH_DEFS__EDGE_LAYER_DIRECTION_HOST_TO_DEVICE) :
+        static_cast<uint8_t>(CONTEXT_SWITCH_DEFS__EDGE_LAYER_DIRECTION_DEVICE_TO_HOST);
+    return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
+}
+
+Expected<ContextSwitchConfigActionPtr> ResumeVdmaChannel::create(const EdgeLayer &edge_layer)
+{
+    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ResumeVdmaChannel(edge_layer.channel_id,
+        edge_layer.layer_info.direction));
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+    return result;
+}
+
+ResumeVdmaChannel::ResumeVdmaChannel(const vdma::ChannelId &channel_id,
+    hailo_stream_direction_t stream_direction) :
+    ContextSwitchConfigAction(ContextSwitchConfigAction::Type::ResumeVdmaChannel,
+                              CONTEXT_SWITCH_DEFS__ACTION_TYPE_RESUME_VDMA_CHANNEL),
+    m_channel_id(channel_id),
+    m_stream_direction(stream_direction)
+{}
+
+bool ResumeVdmaChannel::supports_repeated_block() const
+{
+    // Validate action shouldn't be repeated (for easier debugging).
+    return false;
+}
+
+Expected<Buffer> ResumeVdmaChannel::serialize_params(const ContextResources &) const
+{
+    CONTEXT_SWITCH_DEFS__pause_vdma_channel_action_data_t params{};
+    params.packed_vdma_channel_id = pack_vdma_channel_id(m_channel_id);
+    params.edge_layer_direction = m_stream_direction == HAILO_H2D_STREAM ?
+        static_cast<uint8_t>(CONTEXT_SWITCH_DEFS__EDGE_LAYER_DIRECTION_HOST_TO_DEVICE) :
+        static_cast<uint8_t>(CONTEXT_SWITCH_DEFS__EDGE_LAYER_DIRECTION_DEVICE_TO_HOST);
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 
@@ -1190,6 +1339,7 @@ Expected<Buffer> WaitDmaIdleAction::serialize_params(const ContextResources &con
     params.packed_vdma_channel_id = pack_vdma_channel_id(edge_layer->channel_id);
     params.is_inter_context = static_cast<uint8_t>(LayerType::INTER_CONTEXT == edge_layer->layer_info.type);
     params.stream_index = m_stream_index;
+    params.host_buffer_type = static_cast<CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t>(edge_layer->buffer_info.buffer_type);
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 
@@ -1233,20 +1383,23 @@ Expected<Buffer> WaitNmsIdleAction::serialize_params(const ContextResources &) c
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 
-Expected<ContextSwitchConfigActionPtr> EnableNmsAction::create(uint8_t nms_unit_index, uint8_t network_index, uint16_t number_of_classes,
-    uint16_t burst_size)
+Expected<ContextSwitchConfigActionPtr> EnableNmsAction::create(uint8_t nms_unit_index, uint8_t network_index,
+    uint16_t number_of_classes, uint16_t burst_size, uint8_t division_factor)
 {
-    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) EnableNmsAction(nms_unit_index, network_index, number_of_classes, burst_size));
+    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) EnableNmsAction(nms_unit_index, network_index,
+        number_of_classes, burst_size, division_factor));
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
-EnableNmsAction::EnableNmsAction(uint8_t nms_unit_index, uint8_t network_index, uint16_t number_of_classes, uint16_t burst_size) :
+EnableNmsAction::EnableNmsAction(uint8_t nms_unit_index, uint8_t network_index, uint16_t number_of_classes,
+    uint16_t burst_size, uint8_t division_factor) :
     ContextSwitchConfigAction(ContextSwitchConfigAction::Type::EnableNms, CONTEXT_SWITCH_DEFS__ACTION_TYPE_ENABLE_NMS),
     m_nms_unit_index(nms_unit_index),
     m_network_index(network_index),
     m_number_of_classes(number_of_classes),
-    m_burst_size(burst_size)
+    m_burst_size(burst_size),
+    m_division_factor(division_factor)
 {}
 
 Expected<Buffer> EnableNmsAction::serialize_params(const ContextResources &) const
@@ -1256,6 +1409,7 @@ Expected<Buffer> EnableNmsAction::serialize_params(const ContextResources &) con
     params.network_index = m_network_index;
     params.number_of_classes = m_number_of_classes;
     params.burst_size = m_burst_size;
+    params.division_factor = m_division_factor;
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 

@@ -5,6 +5,8 @@ find_package(Threads REQUIRED)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/common_compiler_options.cmake)
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/spdlog.cmake)
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/readerwriterqueue.cmake)
 
 FUNCTION(relative_to_absolute_paths output)
     SET(listVar "")
@@ -81,6 +83,7 @@ endif()
 
 target_link_libraries(libhailort PRIVATE Threads::Threads)
 target_link_libraries(libhailort PRIVATE hef_proto)
+target_link_libraries(libhailort PRIVATE profiler_proto)
 target_link_libraries(libhailort PRIVATE scheduler_mon_proto)
 target_link_libraries(libhailort PRIVATE spdlog::spdlog)
 target_link_libraries(libhailort PRIVATE readerwriterqueue)
@@ -89,6 +92,7 @@ if(HAILO_BUILD_SERVICE)
     target_link_libraries(libhailort PRIVATE hailort_rpc_grpc_proto)
 endif()
 if(CMAKE_SYSTEM_NAME STREQUAL QNX)
+    include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/pevents.cmake)
     target_link_libraries(libhailort PRIVATE pevents pci)
 endif()
 
@@ -109,6 +113,7 @@ set(HAILORT_PUBLIC_HEADERS
     ${HAILORT_INC_DIR}/hailo/transform.hpp
     ${HAILORT_INC_DIR}/hailo/vstream.hpp
     ${HAILORT_INC_DIR}/hailo/inference_pipeline.hpp
+    ${HAILORT_INC_DIR}/hailo/infer_model.hpp
     ${HAILORT_INC_DIR}/hailo/runtime_statistics.hpp
     ${HAILORT_INC_DIR}/hailo/network_rate_calculator.hpp
     ${HAILORT_INC_DIR}/hailo/vdevice.hpp

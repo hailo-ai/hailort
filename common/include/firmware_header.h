@@ -19,6 +19,8 @@ extern "C" {
 
 #define FIRMWARE_HEADER_MAGIC_HAILO8 (0x1DD89DE0)
 #define FIRMWARE_HEADER_MAGIC_HAILO15 (0xE905DAAB)
+// TODO - HRT-11344 : change fw magic to pluto specific
+#define FIRMWARE_HEADER_MAGIC_PLUTO (0xE905DAAB)
 
 typedef enum {
     FIRMWARE_HEADER_VERSION_INITIAL = 0,
@@ -29,7 +31,8 @@ typedef enum {
 
 typedef enum {
     FIRMWARE_TYPE_HAILO8 = 0,
-    FIRMWARE_TYPE_HAILO15
+    FIRMWARE_TYPE_HAILO15,
+    FIRMWARE_TYPE_PLUTO
 } firmware_type_t;
 
 
@@ -37,6 +40,8 @@ typedef enum {
 #define COMPILED_FIRMWARE_TYPE (FIRMWARE_TYPE_HAILO15)
 #elif defined(HAILO8_B0)
 #define COMPILED_FIRMWARE_TYPE (FIRMWARE_TYPE_HAILO8)
+#elif defined(PLUTO)
+#define COMPILED_FIRMWARE_TYPE (FIRMWARE_TYPE_PLUTO)
 #endif /* MERCURY */
 
 typedef struct {

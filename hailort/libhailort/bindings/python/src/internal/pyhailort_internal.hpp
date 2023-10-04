@@ -34,17 +34,17 @@ public:
         std::map<std::string, py::array> dst_buffers, const LayerInfo &mux_layer_info);
     static void transform_input_buffer(py::array src, const hailo_format_t &src_format, const hailo_3d_image_shape_t &src_shape,
         uintptr_t dst, size_t dst_size, const hailo_format_t &dst_format, const hailo_3d_image_shape_t &dst_shape,
-        const hailo_quant_info_t &dst_quant_info);
+        const std::vector<hailo_quant_info_t> &dst_quant_infos);
     static void transform_output_buffer(py::bytes src, const hailo_format_t &src_format,
         const hailo_3d_image_shape_t &src_shape, py::array dst, const hailo_format_t &dst_format,
-        const hailo_3d_image_shape_t &dst_shape, const hailo_quant_info_t &dst_quant_info);
+        const hailo_3d_image_shape_t &dst_shape, const std::vector<hailo_quant_info_t> &dst_quant_infos);
     static void transform_output_buffer_nms(py::bytes src, const hailo_format_t &src_format,
         const hailo_3d_image_shape_t &src_shape, py::array dst, const hailo_format_t &dst_format,
-        const hailo_3d_image_shape_t &dst_shape, const hailo_quant_info_t &dst_quant_info, const hailo_nms_info_t &nms_info);
+        const hailo_3d_image_shape_t &dst_shape, const std::vector<hailo_quant_info_t> &dst_quant_infos, const hailo_nms_info_t &nms_info);
     static bool is_input_transformation_required(const hailo_3d_image_shape_t &src_shape, const hailo_format_t &src_format,
-        const hailo_3d_image_shape_t &dst_shape, const hailo_format_t &dst_format, const hailo_quant_info_t &quant_info);
+        const hailo_3d_image_shape_t &dst_shape, const hailo_format_t &dst_format, const std::vector<hailo_quant_info_t> &quant_infos);
     static bool is_output_transformation_required(const hailo_3d_image_shape_t &src_shape, const hailo_format_t &src_format,
-        const hailo_3d_image_shape_t &dst_shape, const hailo_format_t &dst_format, const hailo_quant_info_t &quant_info);
+        const hailo_3d_image_shape_t &dst_shape, const hailo_format_t &dst_format, const std::vector<hailo_quant_info_t> &quant_infos);
     static py::list get_all_layers_info(const HefWrapper &hef, const std::string &net_group_name);
 };
 

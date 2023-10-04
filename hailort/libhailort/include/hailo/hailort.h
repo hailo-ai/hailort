@@ -73,6 +73,8 @@ extern "C" {
 #define HAILO_SCHEDULER_PRIORITY_MAX (31)
 #define HAILO_SCHEDULER_PRIORITY_MIN (0)
 
+#define MAX_NUMBER_OF_PLANES (4)
+
 typedef float float32_t;
 typedef double float64_t;
 typedef uint16_t nms_bbox_counter_t;
@@ -113,7 +115,7 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(31, HAILO_STOP_VDMA_CHANNEL_FAIL                  /*!< Stopping VDMA channel failure */)\
     HAILO_STATUS__X(32, HAILO_CLOSE_VDMA_CHANNEL_FAIL                 /*!< Closing VDMA channel failure */)\
     HAILO_STATUS__X(33, HAILO_ATR_TABLES_CONF_VALIDATION_FAIL         /*!< Validating address translation tables failure, for FW control use */)\
-    HAILO_STATUS__X(34, HAILO_CONTROL_EVENT_CREATE_FAIL               /*!< Creating control event failure */)\
+    HAILO_STATUS__X(34, HAILO_EVENT_CREATE_FAIL                       /*!< Creating event failure */)\
     HAILO_STATUS__X(35, HAILO_READ_EVENT_FAIL                         /*!< Reading event failure */)\
     HAILO_STATUS__X(36, HAILO_DRIVER_FAIL                             /*!< Driver failure */)\
     HAILO_STATUS__X(37, HAILO_INVALID_FIRMWARE_MAGIC                  /*!< Invalid FW magic */)\
@@ -411,7 +413,8 @@ typedef enum hailo_device_architecture_e {
     HAILO_ARCH_HAILO8_A0 = 0,
     HAILO_ARCH_HAILO8,
     HAILO_ARCH_HAILO8L,
-    HAILO_ARCH_HAILO15,
+    HAILO_ARCH_HAILO15H,
+    HAILO_ARCH_PLUTO,
     
     /** Max enum value to maintain ABI Integrity */
     HAILO_ARCH_MAX_ENUM = HAILO_MAX_ENUM
@@ -557,28 +560,28 @@ typedef enum {
     /**
      * Chosen automatically to match the format expected by the device.
      */
-    HAILO_FORMAT_ORDER_AUTO                  = 0,
+    HAILO_FORMAT_ORDER_AUTO                             = 0,
 
     /**
      *  - Host side: [N, H, W, C]
-     *  - Device side: [N, H, W, C], where width is padded to 8 elements
+     *  - Device side: [N, H, W, C], where width is padded to 8 bytes
      */
-    HAILO_FORMAT_ORDER_NHWC                 = 1,
+    HAILO_FORMAT_ORDER_NHWC                             = 1,
 
     /**
      *  - Not used for host side
-     *  - Device side: [N, H, C, W], where width is padded to 8 elements
+     *  - Device side: [N, H, C, W], where width is padded to 8 bytes
      */
-    HAILO_FORMAT_ORDER_NHCW                 = 2,
+    HAILO_FORMAT_ORDER_NHCW                             = 2,
 
     /**
      * FCR means first channels (features) are sent to HW:
      *  - Host side: [N, H, W, C]
      *  - Device side: [N, H, W, C]:
-     *      - Input - channels are expected to be aligned to 8 elements
-     *      - Output - width is padded to 8 elements
+     *      - Input - channels are expected to be aligned to 8 bytes
+     *      - Output - width is padded to 8 bytes
      */
-    HAILO_FORMAT_ORDER_FCR                  = 3,
+    HAILO_FORMAT_ORDER_FCR                              = 3,
 
     /**
      * F8CR means first 8-channels X width are sent to HW:
@@ -590,39 +593,39 @@ typedef enum {
      *      - W X 8C_1, W X 8C_2, ... , W X 8C_n
      * ...
      */
-    HAILO_FORMAT_ORDER_F8CR                 = 4,
+    HAILO_FORMAT_ORDER_F8CR                             = 4,
 
     /**
      * Output format of argmax layer:
      * - Host side: [N, H, W, 1]
-     * - Device side: [N, H, W, 1], where width is padded to 8 elements
+     * - Device side: [N, H, W, 1], where width is padded to 8 bytes
      */
-    HAILO_FORMAT_ORDER_NHW                  = 5,
+    HAILO_FORMAT_ORDER_NHW                              = 5,
 
     /**
      * Channels only:
      * - Host side: [N,C]
-     * - Device side: [N, C], where channels are padded to 8 elements
+     * - Device side: [N, C], where channels are padded to 8 bytes
      */
-    HAILO_FORMAT_ORDER_NC                   = 6,
+    HAILO_FORMAT_ORDER_NC                               = 6,
 
     /**
      * Bayer format:
      * - Host side: [N, H, W, 1]
-     * - Device side: [N, H, W, 1], where width is padded to 8 elements
+     * - Device side: [N, H, W, 1], where width is padded to 8 bytes
      */
-    HAILO_FORMAT_ORDER_BAYER_RGB            = 7,
+    HAILO_FORMAT_ORDER_BAYER_RGB                        = 7,
 
     /**
      * Bayer format, same as ::HAILO_FORMAT_ORDER_BAYER_RGB where
      * Channel is 12 bit
      */
-    HAILO_FORMAT_ORDER_12_BIT_BAYER_RGB     = 8,
+    HAILO_FORMAT_ORDER_12_BIT_BAYER_RGB                 = 8,
 
     /**
      * NMS bbox
      * - Host side
-     * 
+     *
      *      For each class (::hailo_nms_shape_t.number_of_classes), the layout is
      *          \code
      *          struct (packed) {
@@ -632,25 +635,25 @@ typedef enum {
      *          \endcode
      *
      *      The host format type can be either ::HAILO_FORMAT_TYPE_FLOAT32 or ::HAILO_FORMAT_TYPE_UINT16.
-     * 
+     *
      *      Maximum amount of bboxes per class is ::hailo_nms_shape_t.max_bboxes_per_class.
      *
      * - Device side output (result of NMS layer):
      *      Internal implementation
      */
-    HAILO_FORMAT_ORDER_HAILO_NMS            = 9,
+    HAILO_FORMAT_ORDER_HAILO_NMS                        = 9,
 
     /**
      * - Not used for host side
      * - Device side: [N, H, W, C], where channels are 4 (RGB + 1 padded zero byte) and width is padded to 8 elements
      */
-    HAILO_FORMAT_ORDER_RGB888               = 10,
+    HAILO_FORMAT_ORDER_RGB888                           = 10,
 
     /**
      * - Host side: [N, C, H, W]
      * - Not used for device side
      */
-    HAILO_FORMAT_ORDER_NCHW                 = 11,
+    HAILO_FORMAT_ORDER_NCHW                             = 11,
 
     /**
      * YUV format, encoding 2 pixels in 32 bits
@@ -658,53 +661,79 @@ typedef enum {
      * - Host side: [Y0, U0, Y1, V0]
      * - Device side: [Y0, U0, Y1, V0]
      */
-    HAILO_FORMAT_ORDER_YUY2                 = 12,
+    HAILO_FORMAT_ORDER_YUY2                             = 12,
 
     /**
      * YUV format, encoding 8 pixels in 96 bits
      *      [Y0, Y1, Y2, Y3, Y4, Y5, Y6, Y7, U0, V0, U1, V1] represents
      *          [Y0, U0, V0], [Y1, U0, V0], [Y2, U0, V0], [Y3, U0, V0], [Y4, U1, V1], [Y5, U1, V1], [Y6, U1, V1], [Y7, U1, V1]
+     * - Not used for device side
      */
-    HAILO_FORMAT_ORDER_NV12                 = 13,
+    HAILO_FORMAT_ORDER_NV12                             = 13,
 
     /**
      * YUV format, encoding 8 pixels in 96 bits
      *      [Y0, Y1, Y2, Y3, Y4, Y5, Y6, Y7, V0, U0, V1, U1] represents
      *          [Y0, V0, U0], [Y1, V0, U0], [Y2, V0, U0], [Y3, V0, U0], [Y4, V1, U1], [Y5, V1, U1], [Y6, V1, U1], [Y7, V1, U1]
+     * - Not used for device side
      */
-    HAILO_FORMAT_ORDER_NV21                 = 14,
+    HAILO_FORMAT_ORDER_NV21                             = 14,
 
     /**
      * Internal implementation for HAILO_FORMAT_ORDER_NV12 format
      *      [Y0, Y1, Y2, Y3, Y4, Y5, Y6, Y7, U0, V0, U1, V1] is represented by [Y0, Y1, Y2, Y3, U0, V0, Y4, Y5, Y6, Y7, U1, V1]
+     * - Not used for host side
      */
-    HAILO_FORMAT_ORDER_HAILO_YYUV           = 15,
+    HAILO_FORMAT_ORDER_HAILO_YYUV                       = 15,
 
     /**
      * Internal implementation for HAILO_FORMAT_ORDER_NV21 format
      *      [Y0, Y1, Y2, Y3, Y4, Y5, Y6, Y7, V0, U0, V1, U1] is represented by [Y0, Y1, Y2, Y3, V0, U0, Y4, Y5, Y6, Y7, V1, U1]
+     * - Not used for host side
      */
-    HAILO_FORMAT_ORDER_HAILO_YYVU           = 16,
+    HAILO_FORMAT_ORDER_HAILO_YYVU                       = 16,
 
     /**
      * RGB, where every row is padded to 4.
      * - Host side: [N, H, W, C], where width*channels are padded to 4.
      * - Not used for device side
      */
-    HAILO_FORMAT_ORDER_RGB4                 = 17,
+    HAILO_FORMAT_ORDER_RGB4                             = 17,
 
     /**
      * YUV format, encoding 8 pixels in 96 bits
      *      [Y0, Y1, Y2, Y3, Y4, Y5, Y6, Y7, U0, U1, V0, V1] represents
      *          [Y0, U0, V0,], [Y1, U0, V0], [Y2, U0, V0], [Y3, U0, V0], [Y4, U1, V1], [Y5, U1, V1], [Y6, U1, V1], [Y7, U1, V1]
+     * - Not used for device side
      */
-    HAILO_FORMAT_ORDER_I420                 = 18,
+    HAILO_FORMAT_ORDER_I420                             = 18,
 
     /**
      * Internal implementation for HAILO_FORMAT_ORDER_I420 format
      *      [Y0, Y1, Y2, Y3, Y4, Y5, Y6, Y7, U0, U1, V0, V1] is represented by [Y0, Y1, Y2, Y3, U0, V0, Y4, Y5, Y6, Y7, U1, V1]
+     * - Not used for host side
      */
-    HAILO_FORMAT_ORDER_HAILO_YYYYUV         = 19,
+    HAILO_FORMAT_ORDER_HAILO_YYYYUV                     = 19,
+
+    /**
+     * NMS bbox
+     * - Host side
+     *
+     *      For each class (::hailo_nms_shape_t.number_of_classes), the layout is
+     *          \code
+     *          struct (packed) {
+     *              float32_t bbox_count;
+     *              hailo_bbox_with_byte_mask_t bbox_with_byte_mask[bbox_count];
+     *          };
+     *          \endcode
+     *
+     *      The host format type supported ::HAILO_FORMAT_TYPE_FLOAT32.
+     *
+     *      Maximum amount of bboxes per class is ::hailo_nms_shape_t.max_bboxes_per_class.
+     *
+     * - Not used for device side
+     */
+    HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK         = 20,
 
     /** Max enum value to maintain ABI Integrity */
     HAILO_FORMAT_ORDER_MAX_ENUM             = HAILO_MAX_ENUM
@@ -720,6 +749,8 @@ typedef enum {
      * - Input data: HailoRT assumes that the data is already quantized (scaled) by the user,
      *   so it does not perform the quantization (scaling) step.
      * - Output data: The data will be returned to the user without rescaling (i.e., the data won't be rescaled by HailoRT).
+     * @note This flag is deprecated and its usage is ignored. Determine whether to quantize (or de-quantize) the data will be decided by
+     *       the src-data and dst-data types.
      */
     HAILO_FORMAT_FLAGS_QUANTIZED            = 1 << 0,
 
@@ -1197,16 +1228,34 @@ typedef struct {
     uint32_t features;
 } hailo_3d_image_shape_t;
 
+/** image buffer plane */
+typedef struct {
+    /** actual data */
+    uint32_t bytes_used;
+    uint32_t plane_size;
+    void *user_ptr;
+} hailo_pix_buffer_plane_t;
+
+/** image buffer */
+typedef struct {
+    uint32_t index;
+    hailo_pix_buffer_plane_t planes[MAX_NUMBER_OF_PLANES];
+    uint32_t number_of_planes;
+} hailo_pix_buffer_t;
+
 typedef struct {
     uint32_t class_group_index;
     char original_name[HAILO_MAX_STREAM_NAME_SIZE];
 } hailo_nms_defuse_info_t;
 
 typedef enum {
-    HAILO_BURST_TYPE_NO_BURST       = 0,
-    HAILO_BURST_TYPE_H8_PER_CLASS   = 1,
-    HAILO_BURST_TYPE_H15_PER_CLASS  = 2,
-    HAILO_BURST_TYPE_H15_PER_FRAME  = 3
+    HAILO_BURST_TYPE_H8_BBOX = 0,
+    HAILO_BURST_TYPE_H15_BBOX,
+    HAILO_BURST_TYPE_H8_PER_CLASS,
+    HAILO_BURST_TYPE_H15_PER_CLASS,
+    HAILO_BURST_TYPE_H15_PER_FRAME,
+
+    HAILO_BURST_TYPE_COUNT
 } hailo_nms_burst_type_t;
 
 /** NMS Internal HW Info */
@@ -1240,6 +1289,8 @@ typedef struct {
     uint32_t number_of_classes;
     /** Maximum amount of bboxes per nms class */
     uint32_t max_bboxes_per_class;
+    /** Maximum mask size */
+    uint32_t max_mask_size;
 } hailo_nms_shape_t;
 
 #pragma pack(push, 1)
@@ -1258,6 +1309,17 @@ typedef struct {
     float32_t x_max;
     float32_t score;
 } hailo_bbox_float32_t;
+
+typedef struct {
+    hailo_bbox_float32_t bbox;
+
+    /** Mask size in bytes */
+    uint32_t mask_size;
+
+    /** Mask */
+    // TODO: HRT-11413 - Add documentation on byte mask
+    uint8_t *mask;
+} hailo_bbox_with_byte_mask_t;
 #pragma pack(pop)
 
 /**
@@ -1310,8 +1372,8 @@ typedef struct {
     /** User specific data. Can be used as a context for the callback. */
     void *opaque;
 } hailo_stream_read_async_completion_info_t;
-
 /**
+
  * Async stream read complete callback prototype.
  */
 typedef void (*hailo_stream_read_async_callback_t)(const hailo_stream_read_async_completion_info_t *info);
@@ -1323,7 +1385,7 @@ typedef void (*hailo_stream_read_async_callback_t)(const hailo_stream_read_async
 typedef struct {
     /* Union to contain shapes and nms parameters - they cannot exist at the same time */
     union
-    { 
+    {
         struct
         {
             hailo_3d_image_shape_t shape;
@@ -1462,6 +1524,8 @@ typedef enum {
     HAILO_NOTIFICATION_ID_HEALTH_MONITOR_CLOCK_CHANGED_EVENT,
     /** Matches hailo_notification_message_parameters_t::hailo_hw_infer_manager_infer_done_notification */
     HAILO_NOTIFICATION_ID_HW_INFER_MANAGER_INFER_DONE,
+    /** Matches hailo_notification_message_parameters_t::context_switch_run_time_error */
+    HAILO_NOTIFICATION_ID_CONTEXT_SWITCH_RUN_TIME_ERROR_EVENT,
 
     /** Must be last! */
     HAILO_NOTIFICATION_ID_COUNT,
@@ -1551,6 +1615,14 @@ typedef struct {
     uint32_t infer_cycles;
 } hailo_hw_infer_manager_infer_done_notification_message_t;
 
+typedef struct {
+    uint32_t exit_status;
+    uint8_t network_group_index;
+    uint16_t batch_index;
+    uint8_t context_index;
+    uint16_t action_index;
+} hailo_context_switch_run_time_error_message_t;
+
 /** Union of all notification messages parameters. See ::hailo_notification_t */
 typedef union {
     /** Ethernet rx error */
@@ -1573,6 +1645,8 @@ typedef union {
     hailo_health_monitor_clock_changed_notification_message_t health_monitor_clock_changed_notification;
     /* HW infer manager finished infer notification */
     hailo_hw_infer_manager_infer_done_notification_message_t hw_infer_manager_infer_done_notification;
+    /** context switch run time error event */
+    hailo_context_switch_run_time_error_message_t context_switch_run_time_error;
 } hailo_notification_message_parameters_t;
 
 /** Notification data that will be passed to the callback passed in ::hailo_notification_callback */
@@ -2011,7 +2085,7 @@ HAILORTAPI hailo_status hailo_get_previous_system_state(hailo_device device, hai
  * Enable/Disable Pause frames.
  *
  * @param[in] device                  A ::hailo_device object.
- * @param[in] rx_pause_frames_enable  Indicating weather to enable or disable pause frames.
+ * @param[in] rx_pause_frames_enable  Indicating whether to enable or disable pause frames.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
  */
 HAILORTAPI hailo_status hailo_set_pause_frames(hailo_device device, bool rx_pause_frames_enable);
@@ -2048,7 +2122,7 @@ HAILORTAPI hailo_status hailo_reset_device(hailo_device device, hailo_reset_devi
 /**
  * Updates firmware to device flash.
  * 
- * @param[in]  device                 A ::hailo_output_stream object.
+ * @param[in]  device                 A ::hailo_device object.
  * @param[in]  firmware_buffer        A pointer to a buffer that contains the firmware to be updated on the @a device.
  * @param[in]  firmware_buffer_size   The size in bytes of the buffer pointed by @a firmware_buffer.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
@@ -2060,7 +2134,7 @@ HAILORTAPI hailo_status hailo_update_firmware(hailo_device device, void *firmwar
 /**
  * Updates second stage to device flash.
  * 
- * @param[in]  device                 A ::hailo_output_stream object.
+ * @param[in]  device                 A ::hailo_device object.
  * @param[in]  second_stage_buffer        A pointer to a buffer that contains the second_stage to be updated on the @a device.
  * @param[in]  second_stage_buffer_size   The size in bytes of the buffer pointed by @a second_stage_buffer.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
@@ -2225,7 +2299,7 @@ HAILORTAPI hailo_status hailo_create_vdevice(hailo_vdevice_params_t *params, hai
  *
  * @param[in]  vdevice                     A ::hailo_vdevice object to be configured.
  * @param[in]  hef                         A ::hailo_hef object to configure the @a vdevice by.
- * @param[in]  params                      A @a hailo_configure_params_t (may be NULL). Can be initialzed to default values using ::hailo_init_configure_params.
+ * @param[in]  params                      A @a hailo_configure_params_t (may be NULL). Can be initialzed to default values using ::hailo_init_configure_params_by_vdevice.
  * @param[out] network_groups              Array of network_groups that were loaded from the HEF file.
  * @param[inout] number_of_network_groups  As input - the size of network_groups array. As output - the number of network_groups loaded.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
@@ -2433,7 +2507,7 @@ HAILORTAPI hailo_status hailo_hef_get_stream_info_by_name(hailo_hef hef, const c
  * @param[out] vstream_infos             A pointer to a buffer of ::hailo_stream_info_t that receives the informations.
  * @param[inout] vstream_infos_count     As input - the maximum amount of entries in @a vstream_infos array.
  *                                       As output - the actual amount of entries written if the function returns with ::HAILO_SUCCESS
- *                                       and the amount of entries needed if the function returns ::HAILO_INSUFFICIENT_BUFFER.
+ *                                       or the amount of entries needed if the function returns ::HAILO_INSUFFICIENT_BUFFER.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  */
 HAILORTAPI hailo_status hailo_hef_get_all_vstream_infos(hailo_hef hef, const char *name,
@@ -2631,7 +2705,7 @@ HAILORTAPI hailo_status hailo_init_configure_network_group_params_mipi_input(hai
  *
  * @param[in]  device                      A ::hailo_device object to be configured.
  * @param[in]  hef                         A ::hailo_hef object to configure the @a device by.
- * @param[in]  params                      A @a hailo_configure_params_t (may be NULL). Can be initialzed to default values using ::hailo_init_configure_params.
+ * @param[in]  params                      A @a hailo_configure_params_t (may be NULL). Can be initialzed to default values using ::hailo_init_configure_params_by_device.
  * @param[out] network_groups              Array of network_groups that were loaded from the HEF file.
  * @param[inout] number_of_network_groups  As input - the size of network_groups array. As output - the number of network_groups loaded.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
@@ -2897,6 +2971,34 @@ HAILORTAPI hailo_status hailo_get_input_stream_info(hailo_input_stream stream, h
 HAILORTAPI hailo_status hailo_get_output_stream_info(hailo_output_stream stream, hailo_stream_info_t *stream_info);
 
 /**
+ * Gets quant infos for a given input stream.
+ * 
+ * @param[in]     stream        A ::hailo_input_stream object.
+ * @param[out]    quant_infos   A pointer to a buffer of @a hailo_quant_info_t that will be filled with quant infos.
+ * @param[inout]  quant_infos_count   As input - the maximum amount of entries in @a quant_infos array.
+ *                                    As output - the actual amount of entries written if the function returns with ::HAILO_SUCCESS
+ *                                    or the amount of entries needed if the function returns ::HAILO_INSUFFICIENT_BUFFER.
+ * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
+ * @note In case a single qp is present - the returned list will be of size 1.
+ *       Otherwise - the returned list will be of the same length as the number of the frame's features.
+ */
+HAILORTAPI hailo_status hailo_get_input_stream_quant_infos(hailo_input_stream stream, hailo_quant_info_t *quant_infos, size_t *quant_infos_count);
+
+/**
+ * Gets quant infos for a given output stream.
+ * 
+ * @param[in]     stream       A ::hailo_output_stream object.
+ * @param[out]    quant_infos  A pointer to a buffer of @a hailo_quant_info_t that will be filled with quant infos.
+ * @param[inout]  quant_infos_count   As input - the maximum amount of entries in @a quant_infos array.
+ *                                    As output - the actual amount of entries written if the function returns with ::HAILO_SUCCESS
+ *                                    or the amount of entries needed if the function returns ::HAILO_INSUFFICIENT_BUFFER.
+ * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
+ * @note In case a single qp is present - the returned list will be of size 1.
+ *       Otherwise - the returned list will be of the same length as the number of the frame's features.
+ */
+HAILORTAPI hailo_status hailo_get_output_stream_quant_infos(hailo_output_stream stream, hailo_quant_info_t *quant_infos, size_t *quant_infos_count);
+
+/**
  * Synchronously reads data from a stream.
  *
  * @param[in] stream            A ::hailo_output_stream object.
@@ -3082,12 +3184,26 @@ HAILORTAPI size_t hailo_get_host_frame_size(const hailo_stream_info_t *stream_in
  * @param[out]    transform_context - A ::hailo_input_transform_context
  * 
  * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
- * 
  * @note To release the transform_context, call the ::hailo_release_input_transform_context function
  *      with the returned ::hailo_input_transform_context.
  * 
  */
 HAILORTAPI hailo_status hailo_create_input_transform_context(const hailo_stream_info_t *stream_info,
+    const hailo_transform_params_t *transform_params, hailo_input_transform_context *transform_context);
+
+/**
+ * Creates an input transform_context object. Allocates all necessary buffers used for the transformation (pre-process).
+ *
+ * @param[in]     stream              A ::hailo_input_stream object
+ * @param[in]     transform_params    A ::hailo_transform_params_t user transformation parameters.
+ * @param[out]    transform_context   A ::hailo_input_transform_context
+ *
+ * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
+ * @note To release the transform_context, call the ::hailo_release_input_transform_context function
+ *      with the returned ::hailo_input_transform_context.
+ *
+ */
+HAILORTAPI hailo_status hailo_create_input_transform_context_by_stream(hailo_input_stream stream,
     const hailo_transform_params_t *transform_params, hailo_input_transform_context *transform_context);
 
 /**
@@ -3100,21 +3216,23 @@ HAILORTAPI hailo_status hailo_create_input_transform_context(const hailo_stream_
 HAILORTAPI hailo_status hailo_release_input_transform_context(hailo_input_transform_context transform_context);
 
 /**
- * Check whether or not a transformation is needed.
+ * Check whether or not a transformation is needed - for quant_info per feature case.
  *
  * @param[in]  src_image_shape         The shape of the src buffer (host shape).
  * @param[in]  src_format              The format of the src buffer (host format).
  * @param[in]  dst_image_shape         The shape of the dst buffer (hw shape).
  * @param[in]  dst_format              The format of the dst buffer (hw format).
- * @param[in]  quant_info              A ::hailo_quant_info_t object containing quantization information.
+ * @param[in]  quant_infos             A pointer to an array of ::hailo_quant_info_t object containing quantization information.
+ * @param[in]  quant_infos_count       The number of ::hailo_quant_info_t elements pointed by quant_infos.
+ *                                     quant_infos_count should be equals to either 1, or src_image_shape.features
  * @param[out] transformation_required Indicates whether or not a transformation is needed.
  * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
  * @note In case @a transformation_required is false, the src frame is ready to be sent to HW without any transformation.
  */
-HAILORTAPI hailo_status hailo_is_input_transformation_required(
+HAILORTAPI hailo_status hailo_is_input_transformation_required2(
     const hailo_3d_image_shape_t *src_image_shape, const hailo_format_t *src_format,
     const hailo_3d_image_shape_t *dst_image_shape, const hailo_format_t *dst_format,
-    const hailo_quant_info_t *quant_info, bool *transformation_required);
+    const hailo_quant_info_t *quant_infos, size_t quant_infos_count, bool *transformation_required);
 
 /**
  * Transforms an input frame pointed to by @a src directly to the buffer pointed to by @a dst.
@@ -3133,6 +3251,25 @@ HAILORTAPI hailo_status hailo_transform_frame_by_input_transform_context(hailo_i
     const void *src, size_t src_size, void *dst, size_t dst_size);
 
 /**
+ * Check whether or not a transformation is needed - for quant_info per feature case.
+ *
+ * @param[in]  src_image_shape         The shape of the src buffer (hw shape).
+ * @param[in]  src_format              The format of the src buffer (hw format).
+ * @param[in]  dst_image_shape         The shape of the dst buffer (host shape).
+ * @param[in]  dst_format              The format of the dst buffer (host format).
+ * @param[in]  quant_infos             A pointer to an array of ::hailo_quant_info_t object containing quantization information.
+ * @param[in]  quant_infos_count       The number of ::hailo_quant_info_t elements pointed by quant_infos.
+ *                                     quant_infos_count should be equals to either 1, or dst_image_shape.features.
+ * @param[out] transformation_required Indicates whether or not a transformation is needed.
+ * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
+ * @note In case @a transformation_required is false, the src frame is already in the required format without any transformation.
+ */
+HAILORTAPI hailo_status hailo_is_output_transformation_required2(
+    const hailo_3d_image_shape_t *src_image_shape, const hailo_format_t *src_format,
+    const hailo_3d_image_shape_t *dst_image_shape, const hailo_format_t *dst_format,
+    const hailo_quant_info_t *quant_infos, size_t quant_infos_count, bool *transformation_required);
+
+/**
  * Creates an output transform_context object. Allocates all necessary buffers used for the transformation (post-process).
  * 
  * @param[in]     stream_info - A ::hailo_stream_info_t object
@@ -3140,13 +3277,25 @@ HAILORTAPI hailo_status hailo_transform_frame_by_input_transform_context(hailo_i
  * @param[out]    transform_context - A ::hailo_output_transform_context
  * 
  * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
- * 
  * @note To release the transform_context, call the ::hailo_release_output_transform_context function
  *      with the returned ::hailo_output_transform_context.
- * 
  */
 HAILORTAPI hailo_status hailo_create_output_transform_context(const hailo_stream_info_t *stream_info,
     const hailo_transform_params_t *transform_params, hailo_output_transform_context *transform_context);
+
+/**
+ * Creates an output transform_context object. Allocates all necessary buffers used for the transformation (post-process).
+ * 
+ * @param[in]     stream              A ::hailo_output_stream object
+ * @param[in]     transform_params    A ::hailo_transform_params_t user transformation parameters.
+ * @param[out]    transform_context   A ::hailo_output_transform_context
+ * 
+ * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
+ * @note To release the transform_context, call the ::hailo_release_output_transform_context function
+ *      with the returned ::hailo_output_transform_context.
+ */
+HAILORTAPI hailo_status hailo_create_output_transform_context_by_stream(hailo_output_stream stream,
+     const hailo_transform_params_t *transform_params, hailo_output_transform_context *transform_context);
 
 /**
  * Releases a transform_context object including all allocated buffers.
@@ -3156,23 +3305,6 @@ HAILORTAPI hailo_status hailo_create_output_transform_context(const hailo_stream
  * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
  */
 HAILORTAPI hailo_status hailo_release_output_transform_context(hailo_output_transform_context transform_context);
-
-/**
- * Check whether or not a transformation is needed.
- *
- * @param[in]  src_image_shape         The shape of the src buffer (hw shape).
- * @param[in]  src_format              The format of the src buffer (hw format).
- * @param[in]  dst_image_shape         The shape of the dst buffer (host shape).
- * @param[in]  dst_format              The format of the dst buffer (host format).
- * @param[in]  quant_info              A ::hailo_quant_info_t object containing quantization information.
- * @param[out] transformation_required Indicates whether or not a transformation is needed.
- * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
- * @note In case @a transformation_required is false, the src frame is already in the required format without any transformation.
- */
-HAILORTAPI hailo_status hailo_is_output_transformation_required(
-    const hailo_3d_image_shape_t *src_image_shape, const hailo_format_t *src_format,
-    const hailo_3d_image_shape_t *dst_image_shape, const hailo_format_t *dst_format,
-    const hailo_quant_info_t *quant_info, bool *transformation_required);
 
 /**
  * Transforms an output frame pointed to by @a src directly to the buffer pointed to by @a dst.
@@ -3189,6 +3321,19 @@ HAILORTAPI hailo_status hailo_is_output_transformation_required(
  */
 HAILORTAPI hailo_status hailo_transform_frame_by_output_transform_context(hailo_output_transform_context transform_context,
     const void *src, size_t src_size, void *dst, size_t dst_size);
+
+/**
+ * Returns whether or not qp is valid
+ *
+ * @param[in]     quant_info      A ::hailo_quant_info_t object.
+ * @param[out]    is_qp_valid     Indicates whether or not qp is valid.
+ *
+ * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
+ * @note QP will be invalid in case HEF file was compiled with multiple QPs, and then the user will try working with API for single QP.
+ *       For example - if HEF was compiled with multiple QPs and then the user calls hailo_get_input_stream_info,
+ *       The ::hailo_quant_info_t object of the ::hailo_stream_info_t object will be invalid.
+ */
+HAILORTAPI hailo_status hailo_is_qp_valid(const hailo_quant_info_t quant_info, bool *is_qp_valid);
 
 /**
  * Creates an demuxer for the given mux stream. Allocates all necessary buffers
@@ -3295,14 +3440,15 @@ HAILORTAPI hailo_status hailo_fuse_nms_frames(const hailo_nms_fuse_input_t *nms_
  *                                      the function returns input virtual stream params of the given network.
  *                                      If NULL is passed, the function returns the input virtual stream params of 
  *                                      all the networks of the first network group.
- * @param[in] quantized                 Whether the data fed into the chip is already quantized. True means
- *                                      the data is already quantized. False means it's HailoRT's responsibility
- *                                      to quantize (scale) the data.
+ * @param[in] quantized                 Deprecated parameter that will be ignored. Determine whether to quantize (scale)
+ *                                      the data will be decided by the src-data and dst-data types.
  * @param[in] format_type               The default format type for all input virtual streams.
  * @param[out] input_params             List of params for input virtual streams.
  * @param[inout] input_params_count     On input: Amount of @a input_params array.
  *                                      On output: Will be filled with the detected amount of input vstreams on the @a network or @a network_group.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to quantize (scale) the data will be decided by
+ *       the src-data and dst-data types.
  */
 HAILORTAPI hailo_status hailo_hef_make_input_vstream_params(hailo_hef hef, const char *name, 
     bool quantized, hailo_format_type_t format_type, 
@@ -3319,14 +3465,15 @@ HAILORTAPI hailo_status hailo_hef_make_input_vstream_params(hailo_hef hef, const
  *                                      the function returns output virtual stream params of the given network.
  *                                      If NULL is passed, the function returns the output virtual stream params of 
  *                                      all the networks of the first network group.
- * @param[in] quantized                 Whether the data returned from the device should be quantized. True
- *                                      means that the data returned to the user is still quantized. False
- *                                      means it's HailoRT's responsibility to de-quantize (rescale) the data.
+ * @param[in] quantized                 Deprecated parameter that will be ignored. Determine whether to de-quantize (rescale)
+ *                                      the data will be decided by the src-data and dst-data types.
  * @param[in] format_type               The default format type for all output virtual streams.
  * @param[out] output_params            List of params for output virtual streams.
  * @param[inout] output_params_count    On input: Amount of @a output_params array.
  *                                      On output: Will be filled with the detected amount of output vstreams on the @a network or @a network_group.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to de-quantize (rescale) the data will be decided by
+ *       the src-data and dst-data types.
  */
 HAILORTAPI hailo_status hailo_hef_make_output_vstream_params(hailo_hef hef, const char *name, 
     bool quantized, hailo_format_type_t format_type, 
@@ -3336,14 +3483,15 @@ HAILORTAPI hailo_status hailo_hef_make_output_vstream_params(hailo_hef hef, cons
  * Creates input virtual stream params for a given network_group.
  *
  * @param[in]  network_group            Network group that owns the streams.
- * @param[in]  quantized                Whether the data fed into the chip is already quantized. True means
- *                                      the data is already quantized. False means it's HailoRT's responsibility
- *                                      to quantize (scale) the data.
+ * @param[in]  quantized                Deprecated parameter that will be ignored. Determine whether to quantize (scale)
+ *                                      the data will be decided by the src-data and dst-data types.
  * @param[in]  format_type              The default format type for all input virtual streams.
  * @param[out] input_params             List of params for input virtual streams.
  * @param[inout] input_params_count     On input: Amount of @a input_params array.
  *                                      On output: Will be filled with the detected amount of input vstreams on the @a network_group.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to quantize (scale) the data will be decided by
+ *       the src-data and dst-data types.
  */
 HAILORTAPI hailo_status hailo_make_input_vstream_params(hailo_configured_network_group network_group, bool quantized,
     hailo_format_type_t format_type, hailo_input_vstream_params_by_name_t *input_params, size_t *input_params_count);
@@ -3352,14 +3500,15 @@ HAILORTAPI hailo_status hailo_make_input_vstream_params(hailo_configured_network
  * Creates output virtual stream params for given network_group.
  *
  * @param[in]  network_group            Network group that owns the streams.
- * @param[in]  quantized                Whether the data returned from the device should be quantized. True
- *                                      means that the data returned to the user is still quantized. False
- *                                      means it's HailoRT's responsibility to de-quantize (rescale) the data.
+ * @param[in]  quantized                Deprecated parameter that will be ignored. Determine whether to de-quantize (rescale)
+ *                                      the data will be decided by the src-data and dst-data types.
  * @param[in]  format_type              The default format type for all output virtual streams.
  * @param[out] output_params            List of params for output virtual streams.
  * @param[inout] output_params_count    On input: Amount of @a output_params array.
  *                                      On output: Will be filled with the detected amount of output vstreams on the @a network_group.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to de-quantize (rescale) the data will be decided by
+ *       the src-data and dst-data types.
  */
 HAILORTAPI hailo_status hailo_make_output_vstream_params(hailo_configured_network_group network_group, bool quantized,
     hailo_format_type_t format_type, hailo_output_vstream_params_by_name_t *output_params,
@@ -3433,6 +3582,34 @@ HAILORTAPI hailo_status hailo_get_input_vstream_info(hailo_input_vstream input_v
 HAILORTAPI hailo_status hailo_get_input_vstream_user_format(hailo_input_vstream input_vstream, hailo_format_t *user_buffer_format);
 
 /**
+ * Gets quant infos for a given input vstream.
+ *
+ * @param[in]     vstream      A ::hailo_input_vstream object.
+ * @param[out]    quant_infos  A pointer to a buffer of @a hailo_quant_info_t that will be filled with quant infos.
+ * @param[inout]  quant_infos_count   As input - the maximum amount of entries in @a quant_infos array.
+ *                                    As output - the actual amount of entries written if the function returns with ::HAILO_SUCCESS
+ *                                    or the amount of entries needed if the function returns ::HAILO_INSUFFICIENT_BUFFER.
+ * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
+ * @note In case a single qp is present - the returned list will be of size 1.
+ *       Otherwise - the returned list will be of the same length as the number of the frame's features.
+ */
+HAILORTAPI hailo_status hailo_get_input_vstream_quant_infos(hailo_input_vstream vstream, hailo_quant_info_t *quant_infos, size_t *quant_infos_count);
+
+/**
+ * Gets quant infos for a given output vstream.
+ *
+ * @param[in]     vstream      A ::hailo_output_vstream object.
+ * @param[out]    quant_infos  A pointer to a buffer of @a hailo_quant_info_t that will be filled with quant infos.
+ * @param[inout]  quant_infos_count   As input - the maximum amount of entries in @a quant_infos array.
+ *                                    As output - the actual amount of entries written if the function returns with ::HAILO_SUCCESS
+ *                                    or the amount of entries needed if the function returns ::HAILO_INSUFFICIENT_BUFFER.
+ * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
+ * @note In case a single qp is present - the returned list will be of size 1.
+ *       Otherwise - the returned list will be of the same length as the number of the frame's features.
+ */
+HAILORTAPI hailo_status hailo_get_output_vstream_quant_infos(hailo_output_vstream vstream, hailo_quant_info_t *quant_infos, size_t *quant_infos_count);
+
+/**
  * Gets the size of a virtual stream's frame on the host side in bytes
  * (the size could be affected by the format type - for example using UINT16, or by the data not being quantized yet)
  *
@@ -3480,10 +3657,21 @@ HAILORTAPI hailo_status hailo_get_vstream_frame_size(hailo_vstream_info_t *vstre
  *                             \e shape inside ::hailo_vstream_info_t (Can be obtained using ::hailo_get_input_vstream_info).
  * @param[in] buffer_size      @a buffer buffer size in bytes. The size is expected to be the size returned from
  *                             ::hailo_get_input_vstream_frame_size.
- * 
+ *
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  */
 HAILORTAPI hailo_status hailo_vstream_write_raw_buffer(hailo_input_vstream input_vstream, const void *buffer, size_t buffer_size);
+
+/**
+ * Writes thte buffer to hailo device via input virtual stream @a input_vstream.
+ *
+ * @param[in] input_vstream    A ::hailo_input_vstream object.
+ * @param[in] buffer           A pointer to the buffer containing
+ *                             pointers to the planes to where the data to
+ *                             be sent to the device is stored.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_vstream_write_pix_buffer(hailo_input_vstream input_vstream, const hailo_pix_buffer_t *buffer);
 
 /**
  * Blocks until the pipeline buffers of @a input_vstream are flushed.
@@ -3507,6 +3695,40 @@ HAILORTAPI hailo_status hailo_flush_input_vstream(hailo_input_vstream input_vstr
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  */
 HAILORTAPI hailo_status hailo_vstream_read_raw_buffer(hailo_output_vstream output_vstream, void *buffer, size_t buffer_size);
+
+/**
+ * Set NMS score threshold, used for filtering out candidates. Any box with score<TH is suppressed.
+ *
+ * @param[in] output_vstream   A ::hailo_output_vstream object.
+ * @param[in] threshold        NMS score threshold to set.
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ * @note This function will fail in cases where the output vstream has no NMS operations on the CPU.
+ */
+HAILORTAPI hailo_status hailo_vstream_set_nms_score_threshold(hailo_output_vstream output_vstream, float32_t threshold);
+
+/**
+ * Set NMS intersection over union overlap Threshold,
+ * used in the NMS iterative elimination process where potential duplicates of detected items are suppressed.
+ *
+ * @param[in] output_vstream   A ::hailo_output_vstream object.
+ * @param[in] threshold        NMS IoU threshold to set.
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ * @note This function will fail in cases where the output vstream has no NMS operations on the CPU.
+ */
+HAILORTAPI hailo_status hailo_vstream_set_nms_iou_threshold(hailo_output_vstream output_vstream, float32_t threshold);
+
+/**
+ * Set a limit for the maximum number of boxes per class.
+ *
+ * @param[in] output_vstream             A ::hailo_output_vstream object.
+ * @param[in] max_proposals_per_class    NMS max proposals per class to set.
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ * @note This function will fail in cases where the output vstream has no NMS operations on the CPU.
+ */
+HAILORTAPI hailo_status hailo_vstream_set_nms_max_proposals_per_class(hailo_output_vstream output_vstream, uint32_t max_proposals_per_class);
 
 /**
  * Release input virtual streams.
@@ -3583,7 +3805,7 @@ HAILORTAPI hailo_status hailo_infer(hailo_configured_network_group configured_ne
  * @param[out] networks_infos         A pointer to a buffer of ::hailo_network_info_t that receives the informations.
  * @param[inout] number_of_networks   As input - the maximum amount of entries in @a hailo_network_info_t array.
  *                                    As output - the actual amount of entries written if the function returns with ::HAILO_SUCCESS
- *                                    and the amount of entries needed if the function returns ::HAILO_INSUFFICIENT_BUFFER.
+ *                                    or the amount of entries needed if the function returns ::HAILO_INSUFFICIENT_BUFFER.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, if the buffer is
  *                                    insufficient to hold the information a ::HAILO_INSUFFICIENT_BUFFER would be
  *                                    returned. In any other case, returns a ::hailo_status error.
@@ -3598,7 +3820,7 @@ HAILORTAPI hailo_status hailo_hef_get_network_infos(hailo_hef hef, const char *n
  * @param[out] networks_infos         A pointer to a buffer of ::hailo_network_info_t that receives the informations.
  * @param[inout] number_of_networks   As input - the maximum amount of entries in @a hailo_network_info_t array.
  *                                    As output - the actual amount of entries written if the function returns with ::HAILO_SUCCESS
- *                                    and the amount of entries needed if the function returns ::HAILO_INSUFFICIENT_BUFFER.
+ *                                    or the amount of entries needed if the function returns ::HAILO_INSUFFICIENT_BUFFER.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, if the buffer is
  *                                    insufficient to hold the information a ::HAILO_INSUFFICIENT_BUFFER would be
  *                                    returned. In any other case, returns a ::hailo_status error.
@@ -3637,6 +3859,42 @@ HAILORTAPI hailo_status hailo_set_sleep_state(hailo_device device, hailo_sleep_s
 /** @defgroup group_deprecated_functions_and_defines Deprecated functions and defines
  *  @{
  */
+
+/**
+ * Check whether or not a transformation is needed.
+ *
+ * @param[in]  src_image_shape         The shape of the src buffer (host shape).
+ * @param[in]  src_format              The format of the src buffer (host format).
+ * @param[in]  dst_image_shape         The shape of the dst buffer (hw shape).
+ * @param[in]  dst_format              The format of the dst buffer (hw format).
+ * @param[in]  quant_info              A ::hailo_quant_info_t object containing quantization information.
+ * @param[out] transformation_required Indicates whether or not a transformation is needed.
+ * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
+ * @note In case @a transformation_required is false, the src frame is ready to be sent to HW without any transformation.
+ */
+HAILORTAPI hailo_status hailo_is_input_transformation_required(
+    const hailo_3d_image_shape_t *src_image_shape, const hailo_format_t *src_format,
+    const hailo_3d_image_shape_t *dst_image_shape, const hailo_format_t *dst_format,
+    const hailo_quant_info_t *quant_info, bool *transformation_required)
+    DEPRECATED("hailo_is_input_transformation_required is deprecated. Please use hailo_is_input_transformation_required2 instead.");
+
+/**
+ * Check whether or not a transformation is needed.
+ *
+ * @param[in]  src_image_shape         The shape of the src buffer (hw shape).
+ * @param[in]  src_format              The format of the src buffer (hw format).
+ * @param[in]  dst_image_shape         The shape of the dst buffer (host shape).
+ * @param[in]  dst_format              The format of the dst buffer (host format).
+ * @param[in]  quant_info              A ::hailo_quant_info_t object containing quantization information.
+ * @param[out] transformation_required Indicates whether or not a transformation is needed.
+ * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a hailo_status error.
+ * @note In case @a transformation_required is false, the src frame is already in the required format without any transformation.
+ */
+HAILORTAPI hailo_status hailo_is_output_transformation_required(
+    const hailo_3d_image_shape_t *src_image_shape, const hailo_format_t *src_format,
+    const hailo_3d_image_shape_t *dst_image_shape, const hailo_format_t *dst_format,
+    const hailo_quant_info_t *quant_info, bool *transformation_required)
+    DEPRECATED("hailo_is_output_transformation_required is deprecated. Please use hailo_is_output_transformation_required2 instead.");
 
 /** @} */ // end of group_deprecated_functions_and_defines
 

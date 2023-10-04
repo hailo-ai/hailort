@@ -13,6 +13,7 @@
 #define _HAILO_SSD_POST_PROCESS_HPP_
 
 #include "net_flow/ops/nms_post_process.hpp"
+#include "net_flow/ops/op_metadata.hpp"
 
 namespace hailort
 {
@@ -49,18 +50,39 @@ struct SSDPostProcessConfig
     bool normalize_boxes = false;
 };
 
+class SSDOpMetadata : public NmsOpMetadata
+{
+public:
+    static Expected<std::shared_ptr<OpMetadata>> create(const std::unordered_map<std::string, BufferMetaData> &inputs_metadata,
+                                                        const std::unordered_map<std::string, BufferMetaData> &outputs_metadata,
+                                                        const NmsPostProcessConfig &nms_post_process_config,
+                                                        const SSDPostProcessConfig &ssd_post_process_config,
+                                                        const std::string &network_name);
+    std::string get_op_description() override;
+    hailo_status validate_format_info() override;
+    SSDPostProcessConfig &ssd_config() { return m_ssd_config;};
+
+private:
+    SSDPostProcessConfig m_ssd_config;
+    SSDOpMetadata(const std::unordered_map<std::string, BufferMetaData> &inputs_metadata,
+                       const std::unordered_map<std::string, BufferMetaData> &outputs_metadata,
+                       const NmsPostProcessConfig &nms_post_process_config,
+                       const SSDPostProcessConfig &ssd_post_process_config,
+                       const std::string &network_name)
+        : NmsOpMetadata(inputs_metadata, outputs_metadata, nms_post_process_config, "SSD-Post-Process", network_name, OperationType::SSD)
+        , m_ssd_config(ssd_post_process_config)
+    {}
+
+    hailo_status validate_params() override;
+};
+
 class SSDPostProcessOp : public NmsPostProcessOp
 {
 
 public:
-    static Expected<std::shared_ptr<Op>> create(const std::map<std::string, BufferMetaData> &inputs_metadata,
-                                                const std::map<std::string, BufferMetaData> &outputs_metadata,
-                                                const NmsPostProcessConfig &nms_post_process_config,
-                                                const SSDPostProcessConfig &ssd_post_process_config);
+    static Expected<std::shared_ptr<Op>> create(std::shared_ptr<SSDOpMetadata> metadata);
 
     hailo_status execute(const std::map<std::string, MemoryView> &inputs, std::map<std::string, MemoryView> &outputs) override;
-    std::string get_op_description() override;
-    hailo_status validate_metadata() override; // TODO: HRT-10676
 
     static const uint32_t DEFAULT_Y_OFFSET_IDX = 0;
     static const uint32_t DEFAULT_X_OFFSET_IDX = 1;
@@ -68,39 +90,36 @@ public:
     static const uint32_t DEFAULT_W_OFFSET_IDX = 3;
 
 private:
-    SSDPostProcessOp(const std::map<std::string, BufferMetaData> &inputs_metadata,
-                     const std::map<std::string, BufferMetaData> &outputs_metadata,
-                     const NmsPostProcessConfig &nms_post_process_config,
-                     const SSDPostProcessConfig &ssd_post_process_config)
-        : NmsPostProcessOp(inputs_metadata, outputs_metadata, nms_post_process_config, "SSD-Post-Process")
-        , m_ssd_config(ssd_post_process_config)
+    SSDPostProcessOp(std::shared_ptr<SSDOpMetadata> metadata)
+        : NmsPostProcessOp(static_cast<std::shared_ptr<NmsOpMetadata>>(metadata))
+        , m_metadata(metadata)
     {}
+    std::shared_ptr<SSDOpMetadata> m_metadata;
 
-    SSDPostProcessConfig m_ssd_config;
-
-    template<typename HostType = float32_t, typename DeviceType>
-    void extract_bbox_classes(const hailo_bbox_float32_t &dims_bbox, DeviceType *cls_data, const BufferMetaData &cls_metadata, uint32_t cls_index,
+    template<typename DstType = float32_t, typename SrcType>
+    void extract_bbox_classes(const hailo_bbox_float32_t &dims_bbox, SrcType *cls_data, const BufferMetaData &cls_metadata, uint32_t cls_index,
         std::vector<DetectionBbox> &detections, std::vector<uint32_t> &classes_detections_count)
     {
-        if (m_nms_config.cross_classes) {
-            // Pre-NMS optimization. If NMS checks IOU over different classes, only the maximum class is relevant
-            auto max_id_score_pair = get_max_class<HostType, DeviceType>(cls_data, cls_index, 0, 1,
+        const auto &nms_config = m_metadata->nms_config();
+        if (nms_config.cross_classes) {
+            // Pre-NMS optimization. If NMS checks IoU over different classes, only the maximum class is relevant
+            auto max_id_score_pair = get_max_class<DstType, SrcType>(cls_data, cls_index, 0, 1,
                 cls_metadata.quant_info, cls_metadata.padded_shape.width);
             auto bbox = dims_bbox;
             bbox.score = max_id_score_pair.second;
-            if (max_id_score_pair.second >= m_nms_config.nms_score_th) {
+            if (max_id_score_pair.second >= nms_config.nms_score_th) {
                 detections.emplace_back(DetectionBbox(bbox, max_id_score_pair.first));
                 classes_detections_count[max_id_score_pair.first]++;
             }
         } else {
-            for (uint32_t class_index = 0; class_index < m_nms_config.number_of_classes; class_index++) {
+            for (uint32_t class_index = 0; class_index < nms_config.number_of_classes; class_index++) {
                 auto class_id = class_index;
-                if (m_nms_config.background_removal) {
-                    if (m_nms_config.background_removal_index == class_index) {
+                if (nms_config.background_removal) {
+                    if (nms_config.background_removal_index == class_index) {
                         // Ignore if class_index is background_removal_index
                         continue;
                     }
-                    else if (0 == m_nms_config.background_removal_index) {
+                    else if (0 == nms_config.background_removal_index) {
                         // background_removal_index will always be the first or last index.
                         // If it is the first one we need to reduce all classes id's in 1.
                         // If it is the last one we just ignore it in the previous if case.
@@ -109,9 +128,9 @@ private:
                 }
 
                 auto class_entry_idx = cls_index + (class_index * cls_metadata.padded_shape.width);
-                auto class_score = Quantization::dequantize_output<HostType, DeviceType>(cls_data[class_entry_idx],
+                auto class_score = Quantization::dequantize_output<DstType, SrcType>(cls_data[class_entry_idx],
                     cls_metadata.quant_info);
-                if (class_score < m_nms_config.nms_score_th) {
+                if (class_score < nms_config.nms_score_th) {
                     continue;
                 }
                 auto bbox = dims_bbox;
@@ -122,25 +141,28 @@ private:
         }
     }
 
-    template<typename HostType = float32_t, typename DeviceType>
+    template<typename DstType = float32_t, typename SrcType>
     hailo_status extract_bbox_detections(const std::string &reg_input_name, const std::string &cls_input_name,
         const MemoryView &reg_buffer, const MemoryView &cls_buffer,
         uint64_t x_index, uint64_t y_index, uint64_t w_index, uint64_t h_index,
         uint32_t cls_index, float32_t wa, float32_t ha, float32_t xcenter_a, float32_t ycenter_a,
         std::vector<DetectionBbox> &detections, std::vector<uint32_t> &classes_detections_count)
     {
-        const auto &shape = m_inputs_metadata[reg_input_name].shape;
-        const auto &reg_quant_info = m_inputs_metadata[reg_input_name].quant_info;
-        DeviceType *reg_data = (DeviceType*)reg_buffer.data();
+        const auto &inputs_metadata = m_metadata->inputs_metadata();
+        const auto &ssd_config = m_metadata->ssd_config();
+        assert(contains(inputs_metadata, reg_input_name));
+        const auto &shape = inputs_metadata.at(reg_input_name).shape;
+        const auto &reg_quant_info = inputs_metadata.at(reg_input_name).quant_info;
+        SrcType *reg_data = (SrcType*)reg_buffer.data();
         auto *cls_data = cls_buffer.data();
-        auto tx = Quantization::dequantize_output<HostType, DeviceType>(reg_data[x_index], reg_quant_info);
-        auto ty = Quantization::dequantize_output<HostType, DeviceType>(reg_data[y_index], reg_quant_info);
-        auto tw = Quantization::dequantize_output<HostType, DeviceType>(reg_data[w_index], reg_quant_info);
-        auto th = Quantization::dequantize_output<HostType, DeviceType>(reg_data[h_index], reg_quant_info);
-        tx /= static_cast<float32_t>(m_ssd_config.centers_scale_factor);
-        ty /= static_cast<float32_t>(m_ssd_config.centers_scale_factor);
-        tw /= static_cast<float32_t>(m_ssd_config.bbox_dimensions_scale_factor);
-        th /= static_cast<float32_t>(m_ssd_config.bbox_dimensions_scale_factor);
+        auto tx = Quantization::dequantize_output<DstType, SrcType>(reg_data[x_index], reg_quant_info);
+        auto ty = Quantization::dequantize_output<DstType, SrcType>(reg_data[y_index], reg_quant_info);
+        auto tw = Quantization::dequantize_output<DstType, SrcType>(reg_data[w_index], reg_quant_info);
+        auto th = Quantization::dequantize_output<DstType, SrcType>(reg_data[h_index], reg_quant_info);
+        tx /= static_cast<float32_t>(ssd_config.centers_scale_factor);
+        ty /= static_cast<float32_t>(ssd_config.centers_scale_factor);
+        tw /= static_cast<float32_t>(ssd_config.bbox_dimensions_scale_factor);
+        th /= static_cast<float32_t>(ssd_config.bbox_dimensions_scale_factor);
         auto w = exp(tw) * wa;
         auto h = exp(th) * ha;
         auto x_center = tx * wa + xcenter_a;
@@ -152,26 +174,27 @@ private:
 
         // TODO: HRT-10033 - Fix support for clip_boxes and normalize_output
         // Currently `normalize_boxes` is always false
-        if (m_ssd_config.normalize_boxes) {
+        if (ssd_config.normalize_boxes) {
             x_min = Quantization::clip(x_min, 0, static_cast<float32_t>(shape.width-1));
             y_min = Quantization::clip(y_min, 0, static_cast<float32_t>(shape.height-1));
             x_max = Quantization::clip(x_max, 0, static_cast<float32_t>(shape.width-1));
             y_max = Quantization::clip(y_max, 0, static_cast<float32_t>(shape.height-1));
         }
         hailo_bbox_float32_t dims_bbox{y_min, x_min, y_max, x_max, 0};
-        const auto &cls_metadata = m_inputs_metadata[cls_input_name];
+        assert(contains(inputs_metadata, cls_input_name));
+        const auto &cls_metadata = inputs_metadata.at(cls_input_name);
         if (cls_metadata.format.type == HAILO_FORMAT_TYPE_UINT8) {
-            extract_bbox_classes<HostType, uint8_t>(dims_bbox, (uint8_t*)cls_data, m_inputs_metadata[cls_input_name],
+            extract_bbox_classes<DstType, uint8_t>(dims_bbox, (uint8_t*)cls_data, cls_metadata,
                 cls_index, detections, classes_detections_count);
         } else if (cls_metadata.format.type == HAILO_FORMAT_TYPE_UINT16) {
-            extract_bbox_classes<HostType, uint16_t>(dims_bbox, (uint16_t*)cls_data, m_inputs_metadata[cls_input_name],
+            extract_bbox_classes<DstType, uint16_t>(dims_bbox, (uint16_t*)cls_data, cls_metadata,
                 cls_index, detections, classes_detections_count);
         } else if (cls_metadata.format.type == HAILO_FORMAT_TYPE_FLOAT32) {
-            extract_bbox_classes<HostType, float32_t>(dims_bbox, (float32_t*)cls_data, m_inputs_metadata[cls_input_name],
+            extract_bbox_classes<DstType, float32_t>(dims_bbox, (float32_t*)cls_data, cls_metadata,
                 cls_index, detections, classes_detections_count);
         } else {
             CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "SSD post-process received invalid cls input type: {}",
-                m_inputs_metadata[cls_input_name].format.type);
+                cls_metadata.format.type);
         }
         return HAILO_SUCCESS;
     }
@@ -185,14 +208,13 @@ private:
      * @param[in] cls_buffer                    Buffer containing the classes ids after inference.
      * @param[inout] detections                 A vector of ::DetectionBbox objects, to add the detected bboxes to.
      * @param[inout] classes_detections_count   A vector of uint32_t, to add count of detections count per class to.
-     * 
+     *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
     */
     hailo_status extract_detections(const std::string &reg_input_name, const std::string &cls_input_name,
         const MemoryView &reg_buffer, const MemoryView &cls_buffer,
         std::vector<DetectionBbox> &detections, std::vector<uint32_t> &classes_detections_count);
 };
-
 
 }
 

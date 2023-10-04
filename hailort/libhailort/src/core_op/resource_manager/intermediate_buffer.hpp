@@ -36,13 +36,11 @@ public:
     static Expected<IntermediateBuffer> create(HailoRTDriver &driver, uint32_t transfer_size,
         uint16_t max_batch_size, vdma::ChannelId d2h_channel_id, StreamingType streaming_type);
 
-    hailo_status set_dynamic_batch_size(uint16_t batch_size);
     Expected<Buffer> read();
     CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info() const;
 
 private:
-    IntermediateBuffer(std::unique_ptr<vdma::VdmaBuffer> &&buffer, uint32_t transfer_size, uint16_t batch_size,
-        StreamingType streaming_type);
+    IntermediateBuffer(std::unique_ptr<vdma::VdmaBuffer> &&buffer, uint32_t transfer_size, uint16_t batch_size);
 
     static Expected<std::unique_ptr<vdma::VdmaBuffer>> create_sg_buffer(HailoRTDriver &driver,
         uint32_t transfer_size, uint16_t batch_size, vdma::ChannelId d2h_channel_id, bool is_circular);
@@ -55,8 +53,6 @@ private:
 
     std::unique_ptr<vdma::VdmaBuffer> m_buffer;
     const uint32_t m_transfer_size;
-    const uint16_t m_max_batch_size;
-    const StreamingType m_streaming_type;
     uint16_t m_dynamic_batch_size;
 };
 

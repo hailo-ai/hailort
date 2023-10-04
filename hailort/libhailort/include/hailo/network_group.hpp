@@ -75,8 +75,6 @@ public:
     virtual const std::string &get_network_group_name() const = 0;
 
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &key) = 0;
-    // TODO HRT-10799: remove when enable batch switch flow for hailo15
-    virtual hailo_status set_keep_nn_config_during_reset(const bool keep_nn_config_during_reset) = 0;
 
     /**
      * @return The number of invalid frames.
@@ -231,9 +229,8 @@ public:
     /**
      * Creates input virtual stream params.
      *
-     * @param[in]  quantized                Whether the data fed into the chip is already quantized. True means
-     *                                      the data is already quantized. False means it's HailoRT's responsibility
-     *                                      to quantize (scale) the data.
+     * @param[in] quantized                 Deprecated parameter that will be ignored. Determine whether to quantize (scale)
+     *                                      the data will be decided by the src-data and dst-data types.
      * @param[in]  format_type              The default format type for all input virtual streams.
      * @param[in]  timeout_ms               The default timeout in milliseconds for all input virtual streams.
      * @param[in]  queue_size               The default queue size for all input virtual streams.
@@ -241,6 +238,8 @@ public:
      *                                      If not passed, all the networks in the network group will be addressed.
      * @return Upon success, returns Expected of a map of name to vstream params.
      *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to quantize (scale) the data will be decided by
+     *       the src-data and dst-data types.
      */
     virtual Expected<std::map<std::string, hailo_vstream_params_t>> make_input_vstream_params(
         bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
@@ -249,9 +248,8 @@ public:
     /**
      * Creates output virtual stream params.
      *
-     * @param[in]  quantized                Whether the data returned from the chip is already quantized. True means
-     *                                      the data is already quantized. False means it's HailoRT's responsibility
-     *                                      to quantize (scale) the data.
+     * @param[in] quantized                 Deprecated parameter that will be ignored. Determine whether to de-quantize (rescale)
+     *                                      the data will be decided by the src-data and dst-data types.
      * @param[in]  format_type              The default format type for all output virtual streams.
      * @param[in]  timeout_ms               The default timeout in milliseconds for all output virtual streams.
      * @param[in]  queue_size               The default queue size for all output virtual streams.
@@ -259,6 +257,8 @@ public:
      *                                      If not passed, all the networks in the network group will be addressed.
      * @return Upon success, returns Expected of a map of name to vstream params.
      *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to de-quantize (rescale) the data will be decided by
+     *       the src-data and dst-data types.
      */
     virtual Expected<std::map<std::string, hailo_vstream_params_t>> make_output_vstream_params(
         bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
@@ -267,14 +267,15 @@ public:
     /**
      * Creates output virtual stream params. The groups are splitted with respect to their low-level streams.
      *
-     * @param[in]  quantized                Whether the data returned from the chip is already quantized. True means
-     *                                      the data is already quantized. False means it's HailoRT's responsibility
-     *                                      to quantize (scale) the data.
+     * @param[in] quantized                 Deprecated parameter that will be ignored. Determine whether to de-quantize (rescale)
+     *                                      the data will be decided by the src-data and dst-data types.
      * @param[in]  format_type              The default format type for all output virtual streams.
      * @param[in]  timeout_ms               The default timeout in milliseconds for all output virtual streams.
      * @param[in]  queue_size               The default queue size for all output virtual streams.
      * @return Upon success, returns Expected of a vector of maps, mapping name to vstream params, where each map represents a params group.
      *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to de-quantize (rescale) the data will be decided by
+     *       the src-data and dst-data types.
      */
     virtual Expected<std::vector<std::map<std::string, hailo_vstream_params_t>>> make_output_vstream_params_groups(
         bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size) = 0;
@@ -396,16 +397,19 @@ public:
 
     virtual Expected<HwInferResults> run_hw_infer_estimator() = 0;
 
-    virtual hailo_status before_fork() { return HAILO_SUCCESS; }
-    virtual hailo_status after_fork_in_parent() { return HAILO_SUCCESS; }
-    virtual hailo_status after_fork_in_child() { return HAILO_SUCCESS; }
-
     virtual Expected<std::vector<std::string>> get_sorted_output_names() = 0;
     virtual Expected<std::vector<std::string>> get_stream_names_from_vstream_name(const std::string &vstream_name) = 0;
     virtual Expected<std::vector<std::string>> get_vstream_names_from_stream_name(const std::string &stream_name) = 0;
 
-    static Expected<std::shared_ptr<ConfiguredNetworkGroup>> duplicate_network_group_client(uint32_t handle, const std::string &network_group_name);
+    static Expected<std::shared_ptr<ConfiguredNetworkGroup>> duplicate_network_group_client(uint32_t ng_handle, uint32_t vdevice_handle,
+        const std::string &network_group_name);
     virtual Expected<uint32_t> get_client_handle() const;
+    virtual Expected<uint32_t> get_vdevice_client_handle() const;
+
+    virtual hailo_status before_fork();
+    virtual hailo_status after_fork_in_parent();
+    virtual hailo_status after_fork_in_child();
+
 protected:
     ConfiguredNetworkGroup() = default;
 

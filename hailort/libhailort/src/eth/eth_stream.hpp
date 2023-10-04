@@ -72,8 +72,14 @@ public:
     static Expected<std::unique_ptr<EthernetInputStream>> create(Device &device,
         const LayerInfo &edge_layer, const hailo_eth_input_stream_params_t &params, EventPtr core_op_activated_event);
 
-    uint16_t get_remote_port();
-    virtual hailo_status activate_stream(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers) override;
+    virtual hailo_status set_buffer_mode(StreamBufferMode buffer_mode) override
+    {
+        CHECK(buffer_mode == StreamBufferMode::OWNING, HAILO_INVALID_ARGUMENT,
+            "Ethernet streams supports only sync api");
+        return HAILO_SUCCESS;
+    }
+
+    virtual hailo_status activate_stream() override;
     virtual hailo_status deactivate_stream() override;
     virtual hailo_stream_interface_t get_interface() const override { return HAILO_STREAM_INTERFACE_ETH; }
     virtual std::chrono::milliseconds get_timeout() const override;
@@ -151,7 +157,14 @@ private:
         m_device(device)
     {}
 
-    hailo_status read_impl(MemoryView &buffer) override;
+    virtual hailo_status set_buffer_mode(StreamBufferMode buffer_mode) override
+    {
+        CHECK(buffer_mode == StreamBufferMode::OWNING, HAILO_INVALID_ARGUMENT,
+            "Ethernet streams supports only sync api");
+        return HAILO_SUCCESS;
+    }
+
+    hailo_status read_impl(MemoryView buffer) override;
     hailo_status read_all_with_sync(void *buffer, size_t offset, size_t size);
     hailo_status read_all_no_sync(void *buffer, size_t offset, size_t size);
 
@@ -171,7 +184,7 @@ public:
     static Expected<std::unique_ptr<EthernetOutputStream>> create(Device &device, const LayerInfo &edge_layer,
         const hailo_eth_output_stream_params_t &params, EventPtr core_op_activated_event);
 
-    virtual hailo_status activate_stream(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers) override;
+    virtual hailo_status activate_stream() override;
     virtual hailo_status deactivate_stream() override;
     virtual hailo_stream_interface_t get_interface() const override { return HAILO_STREAM_INTERFACE_ETH; }
     virtual std::chrono::milliseconds get_timeout() const override;

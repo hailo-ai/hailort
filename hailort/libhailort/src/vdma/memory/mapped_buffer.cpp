@@ -121,5 +121,95 @@ hailo_status MappedBuffer::synchronize(size_t offset, size_t count, HailoRTDrive
     return m_driver.vdma_buffer_sync(m_mapping_handle, sync_direction, offset, count);
 }
 
+hailo_status MappedBuffer::write(const void *buf_src, size_t count, size_t offset, bool should_sync)
+{
+    if ((count + offset) > size()) {
+        LOGGER__ERROR("Requested size {} from offset {} is more than the buffer size {}", count, offset, size());
+        return HAILO_INSUFFICIENT_BUFFER;
+    }
+
+    if (count > 0) {
+        auto dst_addr = static_cast<uint8_t*>(user_address()) + offset;
+        memcpy(dst_addr, buf_src, count);
+
+        if (should_sync) {
+            auto status = synchronize(offset, count, HailoRTDriver::DmaSyncDirection::TO_DEVICE);
+            CHECK_SUCCESS(status, "Failed synching vdma buffer on write");
+        }
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status MappedBuffer::read(void *buf_dst, size_t count, size_t offset, bool should_sync)
+{
+    if ((count + offset) > size()) {
+        LOGGER__ERROR("Requested size {} from offset {} is more than the buffer size {}", count, offset, size());
+        return HAILO_INSUFFICIENT_BUFFER;
+    }
+
+    if (count > 0) {
+        const auto src_addr = static_cast<uint8_t*>(user_address()) + offset;
+        if (should_sync) {
+            const auto status = synchronize(offset, count, HailoRTDriver::DmaSyncDirection::TO_HOST);
+            CHECK_SUCCESS(status, "Failed synching vdma buffer on read");
+        }
+
+        memcpy(buf_dst, src_addr, count);
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status MappedBuffer::write_cyclic(const void *buf_src, size_t count, size_t offset, bool should_sync)
+{
+    if (count > size()) {
+        LOGGER__ERROR("Requested size({}) is more than the buffer size {}", count, size());
+        return HAILO_INSUFFICIENT_BUFFER;
+    }
+
+    auto size_to_end = size() - offset;
+    auto copy_size = std::min(size_to_end, count);
+    auto status = write(buf_src, copy_size, offset, should_sync);
+    if (HAILO_SUCCESS != status) {
+        return status;
+    }
+
+    auto remaining_size = count - copy_size;
+    if (remaining_size > 0) {
+        status = write((uint8_t*)buf_src + copy_size, remaining_size, 0);
+        if (HAILO_SUCCESS != status) {
+            return status;
+        }
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status MappedBuffer::read_cyclic(void *buf_dst, size_t count, size_t offset, bool should_sync)
+{
+    if (count > size()) {
+        LOGGER__ERROR("Requested size({}) is more than the buffer size {}", count, size());
+        return HAILO_INSUFFICIENT_BUFFER;
+    }
+
+    auto size_to_end = size() - offset;
+    auto copy_size = std::min(size_to_end, count);
+    auto status = read(buf_dst, copy_size, offset, should_sync);
+    if (HAILO_SUCCESS != status) {
+        return status;
+    }
+
+    auto remaining_size = count - copy_size;
+    if (remaining_size > 0) {
+        status = read((uint8_t*)buf_dst + copy_size, remaining_size, 0, should_sync);
+        if (HAILO_SUCCESS != status) {
+            return status;
+        }
+    }
+
+    return HAILO_SUCCESS;
+}
+
 } /* namespace vdma */
 } /* namespace hailort */

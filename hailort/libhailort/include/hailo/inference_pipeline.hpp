@@ -82,6 +82,34 @@ public:
      */
     std::vector<std::reference_wrapper<OutputVStream>> get_output_vstreams();
 
+    /**
+     * Set NMS score threshold, used for filtering out candidates. Any box with score<TH is suppressed.
+     *
+     * @param[in] threshold        NMS score threshold to set.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This function will fail in cases where there is no output with NMS operations on the CPU.
+     */
+    hailo_status set_nms_score_threshold(float32_t threshold);
+
+    /**
+     * Set NMS intersection over union overlap Threshold,
+     * used in the NMS iterative elimination process where potential duplicates of detected items are suppressed.
+     *
+     * @param[in] threshold        NMS IoU threshold to set.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This function will fail in cases where there is no output with NMS operations on the CPU.
+     */
+    hailo_status set_nms_iou_threshold(float32_t threshold);
+
+    /**
+     * Set a limit for the maximum number of boxes per class.
+     *
+     * @param[in] max_proposals_per_class    NMS max proposals per class to set.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This function will fail in cases where there is no output with NMS operations on the CPU.
+     */
+    hailo_status set_nms_max_proposals_per_class(uint32_t max_proposals_per_class);
+
     InferVStreams(const InferVStreams &other) = delete;
     InferVStreams &operator=(const InferVStreams &other) = delete;
     InferVStreams &operator=(InferVStreams &&other) = delete;

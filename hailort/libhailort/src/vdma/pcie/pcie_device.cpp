@@ -136,10 +136,10 @@ bool PcieDevice::pcie_device_infos_equal(const hailo_pcie_device_info_t &first, 
     return bdf_equal && domain_equal;
 }
 
-PcieDevice::PcieDevice(HailoRTDriver &&driver, hailo_status &status) :
-    VdmaDevice::VdmaDevice(std::move(driver), Device::Type::PCIE)
+PcieDevice::PcieDevice(std::unique_ptr<HailoRTDriver> &&driver, hailo_status &status) :
+    VdmaDevice(std::move(driver), Device::Type::PCIE)
 {
-    if (driver.is_fw_loaded()) {
+    if (m_driver->is_fw_loaded()) {
         status = update_fw_state();
         if (HAILO_SUCCESS != status) {
             LOGGER__ERROR("update_fw_state() failed with status {}", status);
@@ -160,7 +160,7 @@ void PcieDevice::set_is_control_version_supported(bool value)
 
 Expected<hailo_device_architecture_t> PcieDevice::get_architecture() const
 {
-    if (!m_driver.is_fw_loaded()) {
+    if (!m_driver->is_fw_loaded()) {
         LOGGER__WARNING("FW is not loaded to the device. Please load FW before using the device.");
         return make_unexpected(HAILO_INVALID_OPERATION);
     }
@@ -170,12 +170,12 @@ Expected<hailo_device_architecture_t> PcieDevice::get_architecture() const
 
 hailo_status PcieDevice::direct_write_memory(uint32_t address, const void *buffer, uint32_t size)
 {
-    return m_driver.write_memory(HailoRTDriver::MemoryType::DIRECT_MEMORY, address, buffer, size);
+    return m_driver->write_memory(HailoRTDriver::MemoryType::DIRECT_MEMORY, address, buffer, size);
 }
 
 hailo_status PcieDevice::direct_read_memory(uint32_t address, void *buffer, uint32_t size)
 {
-    return m_driver.read_memory(HailoRTDriver::MemoryType::DIRECT_MEMORY, address, buffer, size);
+    return m_driver->read_memory(HailoRTDriver::MemoryType::DIRECT_MEMORY, address, buffer, size);
 }
 
 hailo_status PcieDevice::reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type)

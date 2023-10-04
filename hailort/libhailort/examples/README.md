@@ -53,7 +53,7 @@ The following examples are provided, demonstrating the HailoRT API:
     - The threads will continuously initiate an async read or write operations.
     - The main thread will stop the async operations and the threads by deactivating the network group.
   - `multi_process_example` - Demonstrates how to work with HailoRT multi-process service and using the HailoRT Model Scheduler for network groups switching.
-  Using the script `multi_process_example.sh` one can specify the number of processes to run each hef, see `multi_process_example.sh -h` for more information.
+  Using the script `multi_process_example.sh` / `multi_process_example.ps1` one can specify the number of processes to run each hef, see `multi_process_example.sh -h`  / `multi_process_example.ps1 -h` for more information.
   - `notification_callback_example` - Demonstrates how to work with notification callbacks, same as `notification_callback_example` C example.
 You can find more details about each example in the HailoRT user guide.
 ## Compiling with CMake

@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.0.0)
 
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/spdlog.cmake)
+
 set(FILES
     main.cpp
     shell.cpp

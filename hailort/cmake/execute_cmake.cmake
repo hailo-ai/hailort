@@ -8,7 +8,7 @@ function(execute_process_in_clean_env)
     else()
         # TODO: make it clean env for cross compile
         set(cmdline ${execute_process_in_clean_env_UNPARSED_ARGUMENTS})
-        execute_process(COMMAND cmd /C ${cmdline} OUTPUT_QUIET RESULT_VARIABLE result)
+        execute_process(COMMAND ${cmdline} OUTPUT_QUIET RESULT_VARIABLE result)
     endif()
     if(DEFINED ${execute_process_in_clean_env_RESULT_VARIABLE})
         set(${execute_process_in_clean_env_RESULT_VARIABLE} ${result} PARENT_SCOPE)

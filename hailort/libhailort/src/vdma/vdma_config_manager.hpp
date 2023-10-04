@@ -27,7 +27,7 @@ public:
     VdmaConfigManager() = delete;
 
     static hailo_status switch_core_op(std::shared_ptr<VdmaConfigCoreOp> current_active_core_op,
-        std::shared_ptr<VdmaConfigCoreOp> next_core_op, const uint16_t batch_size, const bool resume_pending_stream_transfers);
+        std::shared_ptr<VdmaConfigCoreOp> next_core_op, const uint16_t batch_size, const bool is_batch_switch);
 
     static hailo_status deactivate_core_op(std::shared_ptr<VdmaConfigCoreOp> current_active_core_op);
 };

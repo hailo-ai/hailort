@@ -105,7 +105,7 @@ public:
     using Waitable::Waitable;
 
     static Expected<Event> create(const State& initial_state);
-    static EventPtr create_shared(const State& initial_state);
+    static Expected<EventPtr> create_shared(const State& initial_state);
 
     virtual hailo_status signal() override;
     virtual bool is_auto_reset() override;

@@ -15,6 +15,7 @@
 #include "hailo/device.hpp"
 #include "hailo/hailort_common.hpp"
 #include "hailo/hailort_defaults.hpp"
+#include "hailo/quantization.hpp"
 
 #include "common/string_utils.hpp"
 #include "common/utils.hpp"
@@ -22,18 +23,18 @@
 #include "common/file_utils.hpp"
 
 #include "net_flow/ops/nms_post_process.hpp"
-#include "net_flow/ops/yolo_post_process.hpp"
+#include "net_flow/ops/yolov5_post_process.hpp"
 #include "net_flow/ops/yolox_post_process.hpp"
 #include "net_flow/ops/ssd_post_process.hpp"
 #include "net_flow/ops/argmax_post_process.hpp"
 #include "net_flow/ops/softmax_post_process.hpp"
+#include "net_flow/ops/yolov5_seg_post_process.hpp"
 #include "hef/hef_internal.hpp"
 #include "vdma/pcie/pcie_device.hpp"
 #include "vdma/vdma_config_manager.hpp"
 #include "eth/hcp_config_core_op.hpp"
 #include "hef/layer_info.hpp"
 #include "device_common/control.hpp"
-#include "stream_common/nms_stream_reader.hpp"
 
 #include "byte_order.h"
 #include "context_switch_defs.h"
@@ -56,9 +57,10 @@ namespace hailort
 #define DEFAULT_BATCH_SIZE (1)
 #define SKIP_SPACE_COMMA_CHARACTERS (2)
 #define ALIGNED_TO_4_BYTES (4)
-#define DEFAULT_NMS_NO_BURST_SIZE (1)
+constexpr uint8_t DEFAULT_DIVISION_FACTOR = 1;
 
 static const uint8_t ENABLE_LCU_CONTROL_WORD[4] = {1, 0, 0, 0};
+static const hailo_quant_info_t INVALID_QP = {INVALID_QP_VALUE, INVALID_QP_VALUE, INVALID_QP_VALUE, INVALID_QP_VALUE};
 
 #define TAB ("    ")
 
@@ -78,8 +80,8 @@ static std::string get_shape_str(const hailo_stream_info_t &stream_info)
     {
     case HAILO_FORMAT_ORDER_HAILO_NMS:
         return HailoRTCommon::get_format_type_str(stream_info.format.type) + ", " + HailoRTCommon::get_format_order_str(stream_info.format.order) +
-            "(number of classes: " + std::to_string(stream_info.nms_info.number_of_classes) +
-            ", max_bboxes_per_class: "+ std::to_string(stream_info.nms_info.max_bboxes_per_class) + ")";
+            "(maximum frame size: " + std::to_string(HailoRTCommon::get_nms_hw_frame_size(stream_info.nms_info)) + ")";
+
     case HAILO_FORMAT_ORDER_NC:
         return HailoRTCommon::get_format_type_str(stream_info.format.type) + ", " + HailoRTCommon::get_format_order_str(stream_info.format.order) +
             "(" + std::to_string(stream_info.hw_shape.features) + ")";
@@ -98,9 +100,11 @@ static std::string get_shape_str(const hailo_vstream_info_t &vstream_info)
     switch (vstream_info.format.order)
     {
     case HAILO_FORMAT_ORDER_HAILO_NMS:
+    case HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK:
         return HailoRTCommon::get_format_type_str(vstream_info.format.type) + ", " + HailoRTCommon::get_format_order_str(vstream_info.format.order) +
             "(number of classes: " + std::to_string(vstream_info.nms_shape.number_of_classes) +
-            ", max_bboxes_per_class: " + std::to_string(vstream_info.nms_shape.max_bboxes_per_class) + ")";
+            ", maximum bounding boxes per class: " + std::to_string(vstream_info.nms_shape.max_bboxes_per_class) +
+            ", maximum frame size: " + std::to_string(HailoRTCommon::get_nms_host_frame_size(vstream_info.nms_shape, vstream_info.format)) + ")";
     case HAILO_FORMAT_ORDER_NC:
         return HailoRTCommon::get_format_type_str(vstream_info.format.type) + ", " + HailoRTCommon::get_format_order_str(vstream_info.format.order) +
             "(" + std::to_string(vstream_info.shape.features) + ")";
@@ -533,9 +537,9 @@ hailo_status Hef::Impl::fill_networks_metadata()
                     CHECK_EXPECTED_AS_STATUS(metadata_per_arch_exp);
                     auto metadata_per_arch = metadata_per_arch_exp.release();
 
-                    auto expected_net_flow_ops = create_net_flow_ops(*network_group, *metadata_per_arch, get_device_arch());
-                    CHECK_EXPECTED_AS_STATUS(expected_net_flow_ops);
-                    m_post_process_ops_per_group.insert({metadata_per_arch->core_op_name(), expected_net_flow_ops.value()});
+                    auto expected_ops_metadata = create_ops_metadata(*network_group, *metadata_per_arch, get_device_arch());
+                    CHECK_EXPECTED_AS_STATUS(expected_ops_metadata);
+                    m_post_process_ops_metadata_per_group.insert({metadata_per_arch->core_op_name(), expected_ops_metadata.value()});
                     core_op_metadata.add_metadata(metadata_per_arch, partial_clusters_layout_bitmap);
                 }
             } else {
@@ -555,8 +559,8 @@ hailo_status Hef::Impl::fill_networks_metadata()
                     CHECK_EXPECTED_AS_STATUS(metadata_per_arch_exp);
                     auto metadata_per_arch = metadata_per_arch_exp.release();
 
-                    std::vector<std::shared_ptr<NetFlowElement>> empty_ops;
-                    m_post_process_ops_per_group.insert({metadata_per_arch->core_op_name(), empty_ops});
+                    std::vector<net_flow::PostProcessOpMetadataPtr> empty_metadata_ops;
+                    m_post_process_ops_metadata_per_group.insert({metadata_per_arch->core_op_name(), empty_metadata_ops});
                     core_op_metadata.add_metadata(metadata_per_arch, partial_clusters_layout_bitmap);
                 }
             }
@@ -566,9 +570,9 @@ hailo_status Hef::Impl::fill_networks_metadata()
             CHECK_EXPECTED_AS_STATUS(metadata_per_arch_exp);
             auto metadata_per_arch = metadata_per_arch_exp.release();
 
-            auto expected_net_flow_ops = create_net_flow_ops(*network_group, *metadata_per_arch, get_device_arch());
-            CHECK_EXPECTED_AS_STATUS(expected_net_flow_ops);
-            m_post_process_ops_per_group.insert({metadata_per_arch->core_op_name(), expected_net_flow_ops.value()});
+            auto expected_ops_metadata = create_ops_metadata(*network_group, *metadata_per_arch, get_device_arch());
+            CHECK_EXPECTED_AS_STATUS(expected_ops_metadata);
+            m_post_process_ops_metadata_per_group.insert({metadata_per_arch->core_op_name(), expected_ops_metadata.value()});
             core_op_metadata.add_metadata(metadata_per_arch, partial_clusters_layout_bitmap);
         }
 
@@ -610,9 +614,8 @@ hailo_status Hef::Impl::fill_networks_metadata()
                 sorted_output_names.push_back(name);
             }
         }
-
         auto network_group_metadata = NetworkGroupMetadata::create(network_group_name, std::move(core_op_metadata_map),
-            sorted_output_names, m_supported_features, sorted_network_names, m_post_process_ops_per_group.at(network_group_name));
+            sorted_output_names, m_supported_features, sorted_network_names, m_post_process_ops_metadata_per_group.at(network_group_name));
 
         CHECK_EXPECTED_AS_STATUS(network_group_metadata);
         m_network_group_metadata.emplace(network_group_name, network_group_metadata.release());
@@ -845,7 +848,7 @@ SupportedFeatures Hef::Impl::get_supported_features(const ProtoHEFHeader &header
     return supported_features;
 }
 
-net_flow::NmsPostProcessConfig create_nms_config(const ProtoHEFOp &op_proto)
+net_flow::NmsPostProcessConfig create_post_process_nms_config(const ProtoHEFOp &op_proto)
 {
     net_flow::NmsPostProcessConfig nms_config{};
     nms_config.nms_score_th = (float32_t)op_proto.nms_op().nms_score_th();
@@ -858,14 +861,13 @@ net_flow::NmsPostProcessConfig create_nms_config(const ProtoHEFOp &op_proto)
     return nms_config;
 }
 
-Expected<std::shared_ptr<net_flow::Op>> create_yolov5_op(const ProtoHEFOp &op_proto, hailo_format_t output_format,
-    const std::map<size_t, LayerInfo> &pad_index_to_streams_info, const std::map<size_t, size_t> &input_to_output_pads)
+Expected<net_flow::YoloPostProcessConfig> create_yolov5_config(const google::protobuf::RepeatedPtrField<ProtoHEFYoloBboxDecoder> &bbox_decoders,
+    double image_height, double image_width, const std::map<size_t, LayerInfo> &pad_index_to_streams_info)
 {
-    auto nms_config = create_nms_config(op_proto);
     net_flow::YoloPostProcessConfig yolo_config{};
-    yolo_config.image_height = (float32_t)op_proto.nms_op().yolo_nms_op().image_height();
-    yolo_config.image_width = (float32_t)op_proto.nms_op().yolo_nms_op().image_width();
-    for (auto &bbox_proto : op_proto.nms_op().yolo_nms_op().bbox_decoders()) {
+    yolo_config.image_height = static_cast<float32_t>(image_height);
+    yolo_config.image_width = static_cast<float32_t>(image_width);
+    for (auto &bbox_proto : bbox_decoders) {
         std::vector<int> bbox_anchors;
         CHECK_AS_EXPECTED((bbox_proto.h().size() == bbox_proto.w().size()), HAILO_INVALID_HEF,
             "YOLOv5 height anchors count {} doesn't mach the width anchors count {}", bbox_proto.h().size(), bbox_proto.w().size());
@@ -877,12 +879,13 @@ Expected<std::shared_ptr<net_flow::Op>> create_yolov5_op(const ProtoHEFOp &op_pr
         yolo_config.anchors.insert({pad_index_to_streams_info.at(bbox_proto.pad_index()).name, bbox_anchors});
     }
 
-    std::map<std::string, net_flow::BufferMetaData> inputs_metadata;
-    std::map<std::string, net_flow::BufferMetaData> outputs_metadata;
-    net_flow::BufferMetaData output_metadata{};
-    output_metadata.format = output_format;
-    outputs_metadata.insert({op_proto.output_pads()[0].name(), output_metadata});
+    return yolo_config;
+}
 
+Expected<std::unordered_map<std::string, net_flow::BufferMetaData>> create_inputs_metadata(const ProtoHEFOp &op_proto,
+    const std::map<size_t, LayerInfo> &pad_index_to_streams_info, const std::map<size_t, size_t> &input_to_output_pads)
+{
+    std::unordered_map<std::string, net_flow::BufferMetaData> inputs_metadata;
     for (auto &input_pad : op_proto.input_pads()) {
         CHECK_AS_EXPECTED(contains(input_to_output_pads, static_cast<size_t>(input_pad.index())), HAILO_INVALID_HEF,
             "NMS op is not connected to core op");
@@ -898,23 +901,79 @@ Expected<std::shared_ptr<net_flow::Op>> create_yolov5_op(const ProtoHEFOp &op_pr
         input_metadata.padded_shape = op_input_stream.hw_shape;
         inputs_metadata.insert({op_input_stream.name, input_metadata});
     }
-    return net_flow::YOLOv5PostProcessOp::create(inputs_metadata, outputs_metadata, nms_config, yolo_config);
+
+    return inputs_metadata;
 }
 
-Expected<std::shared_ptr<net_flow::Op>> create_yolox_op(const ProtoHEFOp &op_proto, hailo_format_t output_format,
-    const std::map<size_t, LayerInfo> &pad_index_to_streams_info, const std::map<size_t, size_t> &input_to_output_pads)
+Expected<net_flow::PostProcessOpMetadataPtr> create_yolov5_op_metadata(const ProtoHEFOp &op_proto,
+    const std::map<size_t, LayerInfo> &pad_index_to_streams_info, const std::map<size_t, size_t> &input_to_output_pads,
+    const std::string &network_name)
 {
-    auto nms_config = create_nms_config(op_proto);
+    auto nms_config = create_post_process_nms_config(op_proto);
+
+    auto yolo_config = create_yolov5_config(op_proto.nms_op().yolo_nms_op().bbox_decoders(),
+        op_proto.nms_op().yolo_nms_op().image_height(), op_proto.nms_op().yolo_nms_op().image_width(), pad_index_to_streams_info);
+    CHECK_EXPECTED(yolo_config);
+
+    auto inputs_metadata = create_inputs_metadata(op_proto, pad_index_to_streams_info, input_to_output_pads);
+    CHECK_EXPECTED(inputs_metadata);
+
+    std::unordered_map<std::string, net_flow::BufferMetaData> outputs_metadata;
+    net_flow::BufferMetaData output_metadata{};
+    output_metadata.format = net_flow::NmsOpMetadata::expand_output_format_autos_by_op_type(
+        { HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_AUTO, HAILO_FORMAT_FLAGS_NONE }, net_flow::OperationType::YOLOV5);
+    outputs_metadata.insert({op_proto.output_pads()[0].name(), output_metadata});
+
+    return net_flow::Yolov5OpMetadata::create(inputs_metadata.release(), outputs_metadata, nms_config, yolo_config.release(),
+        network_name);
+}
+
+Expected<net_flow::PostProcessOpMetadataPtr> create_yolov5_seg_op_metadata(const ProtoHEFOp &op_proto,
+    const std::map<size_t, LayerInfo> &pad_index_to_streams_info, const std::map<size_t, size_t> &input_to_output_pads,
+    const std::string &network_name)
+{
+    auto nms_config = create_post_process_nms_config(op_proto);
+    auto yolov5_config = create_yolov5_config(op_proto.nms_op().yolo_seg_op().bbox_decoders(),
+        op_proto.nms_op().yolo_seg_op().image_height(), op_proto.nms_op().yolo_seg_op().image_width(), pad_index_to_streams_info);
+    CHECK_EXPECTED(yolov5_config);
+
+    auto inputs_metadata = create_inputs_metadata(op_proto, pad_index_to_streams_info, input_to_output_pads);
+    CHECK_EXPECTED(inputs_metadata);
+
+    auto proto_layer_name = op_proto.nms_op().yolo_seg_op().proto_info().proto_layer();
+    CHECK_AS_EXPECTED(contains(inputs_metadata.value(), proto_layer_name), HAILO_INVALID_HEF);
+    net_flow::YoloV5SegPostProcessConfig yolov5_seg_config =
+    {static_cast<float32_t>(op_proto.nms_op().yolo_seg_op().mask_threshold()),
+    op_proto.nms_op().yolo_seg_op().proto_info().proto_layer()};
+
+    std::unordered_map<std::string, net_flow::BufferMetaData> outputs_metadata;
+    net_flow::BufferMetaData output_metadata{};
+    output_metadata.format = net_flow::NmsOpMetadata::expand_output_format_autos_by_op_type
+        ({ HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK, HAILO_FORMAT_FLAGS_NONE },
+        net_flow::OperationType::YOLOV5SEG);
+    outputs_metadata.insert({op_proto.output_pads()[0].name(), output_metadata});
+
+    return net_flow::Yolov5SegOpMetadata::create(inputs_metadata.release(), outputs_metadata, nms_config, yolov5_config.release(),
+        yolov5_seg_config, network_name);
+}
+
+Expected<net_flow::PostProcessOpMetadataPtr> create_yolox_op_metadata(const ProtoHEFOp &op_proto,
+    const std::map<size_t, LayerInfo> &pad_index_to_streams_info, const std::map<size_t, size_t> &input_to_output_pads,
+    const std::string &network_name)
+{
+    auto nms_config = create_post_process_nms_config(op_proto);
+
     net_flow::YoloxPostProcessConfig yolox_config{};
     yolox_config.image_height = (float32_t)op_proto.nms_op().yolox_nms_op().image_height();
     yolox_config.image_width = (float32_t)op_proto.nms_op().yolox_nms_op().image_width();
 
-    std::map<std::string, net_flow::BufferMetaData> inputs_metadata;
-    std::map<std::string, net_flow::BufferMetaData> outputs_metadata;
+    std::unordered_map<std::string, net_flow::BufferMetaData> inputs_metadata;
+    std::unordered_map<std::string, net_flow::BufferMetaData> outputs_metadata;
     net_flow::BufferMetaData output_metadata{};
-    output_metadata.format = output_format;
+    output_metadata.format = net_flow::NmsOpMetadata::expand_output_format_autos_by_op_type(
+        { HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_AUTO, HAILO_FORMAT_FLAGS_NONE }, net_flow::OperationType::YOLOX);
     outputs_metadata.insert({op_proto.output_pads()[0].name(), output_metadata});
-    
+
     for (auto &bbox_proto : op_proto.nms_op().yolox_nms_op().bbox_decoders()) {
         assert(contains(pad_index_to_streams_info, static_cast<size_t>(bbox_proto.reg_pad_index())));
         auto reg_name = pad_index_to_streams_info.at(bbox_proto.reg_pad_index()).name;
@@ -940,13 +999,17 @@ Expected<std::shared_ptr<net_flow::Op>> create_yolox_op(const ProtoHEFOp &op_pro
         input_metadata.padded_shape = op_input_stream.hw_shape;
         inputs_metadata.insert({op_input_stream.name, input_metadata});
     }
-    return net_flow::YOLOXPostProcessOp::create(inputs_metadata, outputs_metadata, nms_config, yolox_config);
+
+    return net_flow::YoloxOpMetadata::create(inputs_metadata, outputs_metadata, nms_config, yolox_config,
+        network_name);
 }
 
-Expected<std::shared_ptr<net_flow::Op>> create_ssd_op(const ProtoHEFOp &op_proto, hailo_format_t output_format,
-    const std::map<size_t, LayerInfo> &pad_index_to_streams_info, const std::map<size_t, size_t> &input_to_output_pads)
+Expected<net_flow::PostProcessOpMetadataPtr> create_ssd_op_metadata(const ProtoHEFOp &op_proto,
+    const std::map<size_t, LayerInfo> &pad_index_to_streams_info, const std::map<size_t, size_t> &input_to_output_pads,
+    const std::string &network_name)
 {
-    auto nms_config = create_nms_config(op_proto);
+    auto nms_config = create_post_process_nms_config(op_proto);
+
     net_flow::SSDPostProcessConfig ssd_config{};
     ssd_config.image_height = (float32_t)op_proto.nms_op().ssd_nms_op().image_height();
     ssd_config.image_width = (float32_t)op_proto.nms_op().ssd_nms_op().image_width();
@@ -980,10 +1043,11 @@ Expected<std::shared_ptr<net_flow::Op>> create_ssd_op(const ProtoHEFOp &op_proto
         ssd_config.reg_to_cls_inputs.insert({reg_name, cls_name});
     }
 
-    std::map<std::string, net_flow::BufferMetaData> inputs_metadata;
-    std::map<std::string, net_flow::BufferMetaData> outputs_metadata;
+    std::unordered_map<std::string, net_flow::BufferMetaData> inputs_metadata;
+    std::unordered_map<std::string, net_flow::BufferMetaData> outputs_metadata;
     net_flow::BufferMetaData output_metadata{};
-    output_metadata.format = output_format;
+    output_metadata.format = net_flow::NmsOpMetadata::expand_output_format_autos_by_op_type(
+        { HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_AUTO, HAILO_FORMAT_FLAGS_NONE }, net_flow::OperationType::SSD);
     outputs_metadata.insert({op_proto.output_pads()[0].name(), output_metadata});
 
     for (auto &input_pad : op_proto.input_pads()) {
@@ -1001,37 +1065,32 @@ Expected<std::shared_ptr<net_flow::Op>> create_ssd_op(const ProtoHEFOp &op_proto
         input_metadata.padded_shape = op_input_stream.hw_shape;
         inputs_metadata.insert({op_input_stream.name, input_metadata});
     }
-    return net_flow::SSDPostProcessOp::create(inputs_metadata, outputs_metadata, nms_config, ssd_config);
+
+    return net_flow::SSDOpMetadata::create(inputs_metadata, outputs_metadata, nms_config, ssd_config, network_name);
 }
 
-Expected<std::shared_ptr<net_flow::Op>> create_argmax_op(const ProtoHEFPad &input_pad, const ProtoHEFPad &output_pad,
-    const std::string &input_name, const std::string &output_name, const bool &is_hw_padding_supported)
+Expected<std::shared_ptr<net_flow::OpMetadata>> create_argmax_op_metadata(const LayerInfo &op_input_layer_info, const ProtoHEFPad &output_pad,
+    const std::string &output_name, const bool &is_hw_padding_supported, const std::string &network_name)
 {
     // create input meta
-    std::map<std::string, hailort::net_flow::BufferMetaData> inputs_metadata;
+    std::unordered_map<std::string, hailort::net_flow::BufferMetaData> inputs_metadata;
     hailort::net_flow::BufferMetaData input_metadata{};
-    input_metadata.shape = {input_pad.tensor_shape().height(), input_pad.tensor_shape().width(), input_pad.tensor_shape().features()};
+    input_metadata.shape = op_input_layer_info.shape;
     // If padding is done in HW, the padded shape is as the shape (TODO: Remove once HRT support hw_padding from DFC)
     if (is_hw_padding_supported) {
         input_metadata.padded_shape = input_metadata.shape;
     } else {
-        input_metadata.padded_shape = {input_pad.tensor_shape().padded_height(), input_pad.tensor_shape().padded_width(),
-            input_pad.tensor_shape().padded_features()};
+        input_metadata.padded_shape = op_input_layer_info.hw_shape;
     }
 
-    input_metadata.format.type = static_cast<hailo_format_type_t>(input_pad.format_type());
-    input_metadata.format.order = static_cast<hailo_format_order_t>(input_pad.format_order());
-    input_metadata.format.flags = HAILO_FORMAT_FLAGS_NONE;
-    input_metadata.quant_info.qp_zp = input_pad.numeric_info().qp_zp();
-    input_metadata.quant_info.qp_scale = input_pad.numeric_info().qp_scale();
-    input_metadata.quant_info.limvals_min = input_pad.numeric_info().limvals_min();
-    input_metadata.quant_info.limvals_max = input_pad.numeric_info().limvals_max();
-    inputs_metadata.insert({input_name, input_metadata});
+    input_metadata.format = op_input_layer_info.format;
+    input_metadata.quant_info = op_input_layer_info.quant_info;
+    inputs_metadata.insert({op_input_layer_info.name, input_metadata});
 
     // create output meta
-    std::map<std::string, hailort::net_flow::BufferMetaData> outputs_metadata;
+    std::unordered_map<std::string, hailort::net_flow::BufferMetaData> outputs_metadata;
     hailort::net_flow::BufferMetaData output_metadata{};
-    output_metadata.shape = {input_pad.tensor_shape().height(), input_pad.tensor_shape().width(), hailort::net_flow::ARGMAX_OUTPUT_FEATURES_SIZE};
+    output_metadata.shape = {input_metadata.shape.height, input_metadata.shape.width, hailort::net_flow::ARGMAX_OUTPUT_FEATURES_SIZE};
     output_metadata.padded_shape = output_metadata.shape;   // padded_shape is the same as the output_shape in argmax op
     output_metadata.format.order = static_cast<hailo_format_order_t>(output_pad.format_order());
     output_metadata.format.type = static_cast<hailo_format_type_t>(output_pad.format_type());
@@ -1041,32 +1100,61 @@ Expected<std::shared_ptr<net_flow::Op>> create_argmax_op(const ProtoHEFPad &inpu
     output_metadata.quant_info.limvals_max = output_pad.numeric_info().limvals_max();
     output_metadata.format.flags = HAILO_FORMAT_FLAGS_NONE;
     outputs_metadata.insert({output_name, output_metadata});
-    return net_flow::ArgmaxPostProcessOp::create(inputs_metadata, outputs_metadata);
+
+    return net_flow::ArgmaxOpMetadata::create(inputs_metadata, outputs_metadata, network_name);
 }
 
-Expected<std::shared_ptr<net_flow::Op>> create_softmax_op(const ProtoHEFPad &input_pad, const ProtoHEFPad &output_pad,
-    const std::string &input_name, const std::string &output_name)
+Expected<net_flow::PostProcessOpMetadataPtr> create_iou_op_metadata(const ProtoHEFOp &op_proto,
+    const std::map<size_t, LayerInfo> &pad_index_to_streams_info, const std::map<size_t, size_t> &input_to_output_pads,
+    const std::string &network_name)
+{
+    auto op_type = net_flow::OperationType::IOU;
+    auto nms_config = create_post_process_nms_config(op_proto);
+
+    std::unordered_map<std::string, net_flow::BufferMetaData> inputs_metadata;
+    std::unordered_map<std::string, net_flow::BufferMetaData> outputs_metadata;
+    net_flow::BufferMetaData output_metadata{};
+    output_metadata.format = net_flow::NmsOpMetadata::expand_output_format_autos_by_op_type(
+        { HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_AUTO, HAILO_FORMAT_FLAGS_NONE }, op_type);
+    outputs_metadata.insert({op_proto.output_pads()[0].name(), output_metadata});
+
+    for (auto &input_pad : op_proto.input_pads()) {
+        CHECK_AS_EXPECTED(contains(input_to_output_pads, static_cast<size_t>(input_pad.index())), HAILO_INVALID_HEF,
+            "NMS op is not connected to core op");
+        auto output_pad_index = input_to_output_pads.at(input_pad.index());
+        CHECK_AS_EXPECTED(contains(pad_index_to_streams_info, output_pad_index), HAILO_INVALID_HEF,
+            "Pad {} of post-process {} is not connected to any core output stream",
+                input_pad.index(), op_proto.name());
+        const auto &op_input_stream = pad_index_to_streams_info.at(output_pad_index);
+        net_flow::BufferMetaData input_metadata{};
+        input_metadata.format = op_input_stream.format;
+        input_metadata.quant_info = op_input_stream.quant_info;
+        input_metadata.shape = op_input_stream.shape;
+        input_metadata.padded_shape = op_input_stream.hw_shape;
+        inputs_metadata.insert({op_input_stream.name, input_metadata});
+    }
+
+    return net_flow::NmsOpMetadata::create(inputs_metadata, outputs_metadata, nms_config,network_name, op_type, "IoU-Post-Process");
+}
+
+Expected<std::shared_ptr<net_flow::OpMetadata>> create_softmax_op_metadata(const LayerInfo &op_input_layer_info, const ProtoHEFPad &output_pad,
+    const std::string &output_name, const std::string &network_name)
 {
     // create input meta
-    std::map<std::string, hailort::net_flow::BufferMetaData> inputs_metadata;
+    std::unordered_map<std::string, hailort::net_flow::BufferMetaData> inputs_metadata;
     hailort::net_flow::BufferMetaData input_metadata{};
-    input_metadata.shape = {input_pad.tensor_shape().height(), input_pad.tensor_shape().width(), input_pad.tensor_shape().features()};
-    input_metadata.padded_shape = input_metadata.shape;     // since softmax is connected to transform context, shape and padded shape are the same
+    input_metadata.shape = op_input_layer_info.shape;
+    input_metadata.padded_shape = input_metadata.shape; // Since softmax is connected to transform context, shape and padded shape are the same
 
-    input_metadata.format.type = static_cast<hailo_format_type_t>(input_pad.format_type());
-    input_metadata.format.order = static_cast<hailo_format_order_t>(input_pad.format_order());
-    input_metadata.format.flags = HAILO_FORMAT_FLAGS_NONE;
-    input_metadata.quant_info.qp_zp = input_pad.numeric_info().qp_zp();
-    input_metadata.quant_info.qp_scale = input_pad.numeric_info().qp_scale();
-    input_metadata.quant_info.limvals_min = input_pad.numeric_info().limvals_min();
-    input_metadata.quant_info.limvals_max = input_pad.numeric_info().limvals_max();
-    inputs_metadata.insert({input_name, input_metadata});
+    input_metadata.format = op_input_layer_info.format;
+    input_metadata.quant_info = op_input_layer_info.quant_info;
+    inputs_metadata.insert({op_input_layer_info.name, input_metadata});
 
     // create output meta
-    std::map<std::string, hailort::net_flow::BufferMetaData> outputs_metadata;
+    std::unordered_map<std::string, hailort::net_flow::BufferMetaData> outputs_metadata;
     hailort::net_flow::BufferMetaData output_metadata{};
-    output_metadata.shape = {input_pad.tensor_shape().height(), input_pad.tensor_shape().width(), input_pad.tensor_shape().features()};
-    output_metadata.padded_shape = output_metadata.shape;   // padded_shape is the same as the output_shape in softmax op
+    output_metadata.shape = input_metadata.shape;
+    output_metadata.padded_shape = output_metadata.shape; // padded_shape is the same as the output_shape in softmax op
     output_metadata.format.order = static_cast<hailo_format_order_t>(output_pad.format_order());
     output_metadata.format.type = static_cast<hailo_format_type_t>(output_pad.format_type());
     output_metadata.quant_info.qp_zp = output_pad.numeric_info().qp_zp();
@@ -1075,44 +1163,41 @@ Expected<std::shared_ptr<net_flow::Op>> create_softmax_op(const ProtoHEFPad &inp
     output_metadata.quant_info.limvals_max = output_pad.numeric_info().limvals_max();
     output_metadata.format.flags = HAILO_FORMAT_FLAGS_NONE;
     outputs_metadata.insert({output_name, output_metadata});
-    return net_flow::SoftmaxPostProcessOp::create(inputs_metadata, outputs_metadata);
+
+    return net_flow::SoftmaxOpMetadata::create(inputs_metadata, outputs_metadata, network_name);
 }
 
-Expected<std::shared_ptr<net_flow::Op>> create_logits_op(const ProtoHEFOp &op_proto, const std::map<size_t, size_t> &input_to_output_pads,
-    const std::map<size_t, ProtoHEFPad> &pad_index_to_pad_data, NetFlowElement &net_flow_element,
-    const std::map<size_t, LayerInfo> &pad_index_to_streams_info, const ProtoHEFHwArch &hef_arch)
+Expected<std::shared_ptr<net_flow::OpMetadata>> create_logits_op_metadata(const ProtoHEFOp &op_proto,
+    const std::map<size_t, LayerInfo> &pad_index_to_streams_info, const std::map<size_t, size_t> &input_to_output_pads,
+    const ProtoHEFHwArch &hef_arch, const std::string &network_name)
 {
     // connect input_streams to net_flow element
     CHECK_AS_EXPECTED(op_proto.input_pads().size() == 1, HAILO_INVALID_HEF, "Logits op must have 1 input only");
     CHECK_AS_EXPECTED(op_proto.output_pads().size() == 1, HAILO_INVALID_HEF, "Logits op must have 1 output only");
     auto input_pad = op_proto.input_pads()[0];
     auto output_pad = op_proto.output_pads()[0];
+
+    // Op's input_pad is fed by core's output_pad
     CHECK_AS_EXPECTED(contains(input_to_output_pads, static_cast<size_t>(input_pad.index())), HAILO_INVALID_HEF,
         "Logits op is not connected to core-op");
     auto output_pad_index = input_to_output_pads.at(input_pad.index());
     CHECK_AS_EXPECTED(contains(pad_index_to_streams_info, output_pad_index), HAILO_INVALID_HEF,
         "Pad {} of post-process {} is not connected to any core output stream", input_pad.index(), op_proto.name());
 
-    // Data of the input_pad is taken from the output_pad of the core op
-    const auto &connected_output_pad = pad_index_to_pad_data.at(output_pad_index);
-    net_flow_element.input_streams.insert(connected_output_pad.name());
     // TODO: HRT-10603
-    const auto &op_input_stream = pad_index_to_streams_info.at(output_pad_index);
+    const auto &op_input_layer_info = pad_index_to_streams_info.at(output_pad_index);
     auto max_periph_bytes_from_hef = HefConfigurator::max_periph_bytes_value(DeviceBase::hef_arch_to_device_arch(hef_arch));
     CHECK_EXPECTED(max_periph_bytes_from_hef);
-    const auto max_periph_bytes = (0 == op_input_stream.max_shmifo_size) ? max_periph_bytes_from_hef.value():
-        MIN(max_periph_bytes_from_hef.value(), op_input_stream.max_shmifo_size);
-    const auto is_hw_padding_supported = HefConfigurator::is_hw_padding_supported(op_input_stream, max_periph_bytes);
-    net_flow_element.name = op_proto.name();
+    const auto max_periph_bytes = (0 == op_input_layer_info.max_shmifo_size) ? max_periph_bytes_from_hef.value():
+        MIN(max_periph_bytes_from_hef.value(), op_input_layer_info.max_shmifo_size);
+    const auto is_hw_padding_supported = HefConfigurator::is_hw_padding_supported(op_input_layer_info, max_periph_bytes);
 
     switch (op_proto.logits_op().logits_type()) {
         case ProtoHEFLogitsType::PROTO_HEF_ARGMAX_TYPE: {
-            net_flow_element.op_type = HAILO_NET_FLOW_OP_TYPE_ARGMAX;
-            return create_argmax_op(connected_output_pad, output_pad, input_pad.name(), output_pad.name(), is_hw_padding_supported);
+            return create_argmax_op_metadata(op_input_layer_info, output_pad, output_pad.name(), is_hw_padding_supported, network_name);
         }
         case ProtoHEFLogitsType::PROTO_HEF_SOFTMAX_TYPE: {
-            net_flow_element.op_type = HAILO_NET_FLOW_OP_TYPE_SOFTMAX;
-            return create_softmax_op(connected_output_pad, output_pad, input_pad.name(), output_pad.name());
+            return create_softmax_op_metadata(op_input_layer_info, output_pad, output_pad.name(), network_name);
         }
         default: {
             LOGGER__ERROR("Invalid Net-Flow Logits-Op {}", ProtoHEFLogitsType_Name(op_proto.logits_op().logits_type()));
@@ -1120,10 +1205,11 @@ Expected<std::shared_ptr<net_flow::Op>> create_logits_op(const ProtoHEFOp &op_pr
         }
     }
 }
-Expected<std::vector<std::shared_ptr<NetFlowElement>>> Hef::Impl::create_net_flow_ops(const ProtoHEFNetworkGroup &network_group_proto,
+
+Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> Hef::Impl::create_ops_metadata(const ProtoHEFNetworkGroup &network_group_proto,
     CoreOpMetadata &core_op_metadata, const ProtoHEFHwArch &hef_arch) const
 {
-    std::vector<std::shared_ptr<NetFlowElement>> result;
+    std::vector<net_flow::PostProcessOpMetadataPtr> result;
     if (!m_supported_features.hailo_net_flow) {
         return result;
     }
@@ -1138,15 +1224,9 @@ Expected<std::vector<std::shared_ptr<NetFlowElement>>> Hef::Impl::create_net_flo
     for (auto &pad_edge : network_group_proto.pad_edges()) {
         input_to_output_pads.insert({pad_edge.dst(), pad_edge.src()});
     }
-    std::map<size_t, ProtoHEFPad> pad_index_to_pad_data;
-    for (auto &op_proto : network_group_proto.ops()) {
-        for (auto &output_pad : op_proto.output_pads()) {
-            pad_index_to_pad_data.insert({output_pad.index(), output_pad});
-        }
-        for (auto &input_pad : op_proto.input_pads()) {
-            pad_index_to_pad_data.insert({input_pad.index(), input_pad});
-        }
-    }
+
+    auto net_group_name = HefUtils::get_network_group_name(network_group_proto, m_supported_features);
+    auto network_name = HailoRTDefaults::get_network_name(net_group_name);
 
     for (auto &op_proto : network_group_proto.ops()) {
         switch (op_proto.op_case()) {
@@ -1154,23 +1234,6 @@ Expected<std::vector<std::shared_ptr<NetFlowElement>>> Hef::Impl::create_net_flo
                 break;
             }
             case ProtoHEFOp::kNmsOp: {
-                hailo_format_t output_format{};
-                output_format.order = HAILO_FORMAT_ORDER_HAILO_NMS; // TODO Remove- HRT-9737
-
-                NetFlowElement net_flow_element{};
-                net_flow_element.op_type = HAILO_NET_FLOW_OP_TYPE_NMS;
-
-                // TODO: HRT-9902 - Move nms_info to be an op member instead of NetFlowElement
-                net_flow_element.nms_info = {
-                    op_proto.nms_op().classes(),
-                    op_proto.nms_op().max_proposals_per_class(),
-                    sizeof(hailo_bbox_float32_t),
-                    1, // input_division_factor
-                    false,
-                    hailo_nms_defuse_info_t(),
-                    DEFAULT_NMS_NO_BURST_SIZE,
-                    HAILO_BURST_TYPE_NO_BURST
-                };
                 for (auto &input_pad : op_proto.input_pads()) {
                     CHECK_AS_EXPECTED(contains(input_to_output_pads, static_cast<size_t>(input_pad.index())), HAILO_INVALID_HEF,
                         "NMS op is not connected to core-op");
@@ -1178,34 +1241,43 @@ Expected<std::vector<std::shared_ptr<NetFlowElement>>> Hef::Impl::create_net_flo
                     CHECK_AS_EXPECTED(contains(pad_index_to_streams_info, output_pad_index), HAILO_INVALID_HEF,
                         "Pad {} of post-process {} is not connected to any core output stream",
                             input_pad.index(), op_proto.name());
-                    const auto &op_input_stream = pad_index_to_streams_info.at(output_pad_index);
-                    net_flow_element.input_streams.insert(op_input_stream.name);  
                 }
-                std::shared_ptr<net_flow::Op> post_process_op;
+
+                net_flow::PostProcessOpMetadataPtr post_process_op_metadata;
                 switch (op_proto.nms_op().nms_op_case()) {
                     case ProtoHEFNmsOp::kYoloNmsOp: {
-                        net_flow_element.name = "YOLO-Post-Process";
-                        auto expected_post_process_op = create_yolov5_op(op_proto, output_format, pad_index_to_streams_info, input_to_output_pads);
-                        CHECK_EXPECTED(expected_post_process_op);
-                        post_process_op = expected_post_process_op.release();
+                        auto expected_post_process_op_metadata = create_yolov5_op_metadata(op_proto, pad_index_to_streams_info,
+                            input_to_output_pads, network_name);
+                        CHECK_EXPECTED(expected_post_process_op_metadata);
+                        post_process_op_metadata = expected_post_process_op_metadata.release();
                         break;
                     }
                     case ProtoHEFNmsOp::kYoloxNmsOp: {
-                        net_flow_element.name = "YOLOX-Post-Process";
-                        auto expected_post_process_op = create_yolox_op(op_proto, output_format, pad_index_to_streams_info, input_to_output_pads);
-                        CHECK_EXPECTED(expected_post_process_op);
-                        post_process_op = expected_post_process_op.release();
+                        auto expected_post_process_op_metadata = create_yolox_op_metadata(op_proto, pad_index_to_streams_info,
+                           input_to_output_pads, network_name);
+                        CHECK_EXPECTED(expected_post_process_op_metadata);
+                        post_process_op_metadata = expected_post_process_op_metadata.release();
                         break;
                     }
                     case ProtoHEFNmsOp::kSsdNmsOp: {
-                        net_flow_element.name = "SSD-Post-Process";
-                        auto expected_post_process_op = create_ssd_op(op_proto, output_format, pad_index_to_streams_info, input_to_output_pads);
-                        CHECK_EXPECTED(expected_post_process_op);
-                        post_process_op = expected_post_process_op.release();
+                        auto expected_post_process_op_metadata = create_ssd_op_metadata(op_proto, pad_index_to_streams_info,
+                           input_to_output_pads, network_name);
+                        CHECK_EXPECTED(expected_post_process_op_metadata);
+                        post_process_op_metadata = expected_post_process_op_metadata.release();
                         break;
                     }
                     case ProtoHEFNmsOp::kIouOp: {
-                        // TODO (HRT-8827)
+                        auto expected_post_process_op_metadata = create_iou_op_metadata(op_proto, pad_index_to_streams_info,
+                           input_to_output_pads, network_name);
+                        CHECK_EXPECTED(expected_post_process_op_metadata);
+                        post_process_op_metadata = expected_post_process_op_metadata.release();
+                        break;
+                    }
+                    case ProtoHEFNmsOp::kYoloSegOp: {
+                        auto expected_post_process_op_metadata = create_yolov5_seg_op_metadata(op_proto, pad_index_to_streams_info,
+                           input_to_output_pads, network_name);
+                        CHECK_EXPECTED(expected_post_process_op_metadata);
+                        post_process_op_metadata = expected_post_process_op_metadata.release();
                         break;
                     }
                     default: {
@@ -1213,51 +1285,17 @@ Expected<std::vector<std::shared_ptr<NetFlowElement>>> Hef::Impl::create_net_flo
                         return make_unexpected(HAILO_INTERNAL_FAILURE);
                     }
                 }
-                net_flow_element.op = post_process_op;
-                // Fill meta-data output vstream info
-                auto net_group_name = HefUtils::get_network_group_name(network_group_proto, m_supported_features);
-                auto network_name = HailoRTDefaults::get_network_name(net_group_name);
-                hailo_vstream_info_t net_flow_output_vstream_info{};
-                assert(op_proto.output_pads().size() == 1);
-                auto proto_output_pad = op_proto.output_pads()[0];
-                strncpy(net_flow_output_vstream_info.name, proto_output_pad.name().c_str(), proto_output_pad.name().length() + 1);
-                strncpy(net_flow_output_vstream_info.network_name, network_name.c_str(), network_name.length() + 1);
-                net_flow_output_vstream_info.direction = HAILO_D2H_STREAM;
-                net_flow_output_vstream_info.format = output_format;
-                net_flow_output_vstream_info.nms_shape.max_bboxes_per_class = op_proto.nms_op().max_proposals_per_class();
-                net_flow_output_vstream_info.nms_shape.number_of_classes = op_proto.nms_op().classes();
-                if (op_proto.nms_op().background_removal()) {
-                    net_flow_output_vstream_info.nms_shape.number_of_classes--;
-                    net_flow_element.nms_info.number_of_classes--;
-                }
-                net_flow_element.output_vstream_info = net_flow_output_vstream_info;
 
-                auto net_flow_element_ptr = make_shared_nothrow<NetFlowElement>(net_flow_element);
-                CHECK_NOT_NULL_AS_EXPECTED(net_flow_element_ptr, HAILO_OUT_OF_HOST_MEMORY);
-                result.push_back(net_flow_element_ptr);
+                result.push_back(post_process_op_metadata);
                 break;
             }
             case ProtoHEFOp::kLogitsOp: {
-                NetFlowElement net_flow_element{};
-                auto expected_logits_op = create_logits_op(op_proto, input_to_output_pads, pad_index_to_pad_data, net_flow_element,
-                    pad_index_to_streams_info, hef_arch);
-                CHECK_EXPECTED(expected_logits_op);
-                net_flow_element.op = expected_logits_op.release();
+                auto expected_logits_op_metadata = create_logits_op_metadata(op_proto, pad_index_to_streams_info,
+                    input_to_output_pads, hef_arch, network_name);
+                CHECK_EXPECTED(expected_logits_op_metadata);
+                auto post_process_op_metadata = expected_logits_op_metadata.release();
 
-                hailo_vstream_info_t net_flow_output_vstream_info{};
-                auto proto_output_pad = op_proto.output_pads()[0];
-                auto net_group_name = HefUtils::get_network_group_name(network_group_proto, m_supported_features);
-                auto network_name = HailoRTDefaults::get_network_name(net_group_name);
-                strncpy(net_flow_output_vstream_info.name, proto_output_pad.name().c_str(), proto_output_pad.name().length() + 1);
-                strncpy(net_flow_output_vstream_info.network_name, network_name.c_str(), network_name.length() + 1);
-                net_flow_output_vstream_info.direction = HAILO_D2H_STREAM;
-                net_flow_output_vstream_info.format = net_flow_element.op.get()->outputs_metadata().begin()->second.format;
-                net_flow_output_vstream_info.shape = net_flow_element.op.get()->outputs_metadata().begin()->second.shape;
-                net_flow_element.output_vstream_info = net_flow_output_vstream_info;
-
-                auto net_flow_element_ptr = make_shared_nothrow<NetFlowElement>(net_flow_element);
-                CHECK_NOT_NULL_AS_EXPECTED(net_flow_element_ptr, HAILO_OUT_OF_HOST_MEMORY);
-                result.push_back(net_flow_element_ptr);
+                result.push_back(post_process_op_metadata);
                 break;
             }
             default: {
@@ -1294,51 +1332,11 @@ hailo_status Hef::Impl::validate_boundary_streams_were_created(const std::string
     CHECK_EXPECTED_AS_STATUS(number_of_inputs);
     CHECK((number_of_outputs.value() == core_op->get_output_streams().size()),
         HAILO_INVALID_ARGUMENT, "passed configure_params for network group {} did not contain all output streams", network_group_name);
-    
-    return HAILO_SUCCESS;
-}
-
-hailo_status get_hw_padding_params(hailo_format_order_t format_order, uint32_t width, uint32_t features, uint32_t hw_data_bytes, 
-    uint16_t &feature_padding_payload, uint16_t &periph_bytes_per_buffer)
-{
-    uint32_t feature_padding_payload_32bit = 0; 
-    uint32_t periph_bytes_per_buffer_32bit = 0;
-
-    // TODO: HRT-3278 dont assume core_buffers_per_frame == height    
-    switch (format_order)
-    {
-    case HAILO_FORMAT_ORDER_NHCW:
-    case HAILO_FORMAT_ORDER_NHW:
-        feature_padding_payload_32bit = width * hw_data_bytes;
-        periph_bytes_per_buffer_32bit = feature_padding_payload_32bit * features;
-        break;
-    case HAILO_FORMAT_ORDER_NHWC:
-    case HAILO_FORMAT_ORDER_FCR:
-    case HAILO_FORMAT_ORDER_F8CR:
-    case HAILO_FORMAT_ORDER_NC:
-    case HAILO_FORMAT_ORDER_BAYER_RGB:
-    case HAILO_FORMAT_ORDER_12_BIT_BAYER_RGB:
-    case HAILO_FORMAT_ORDER_RGB888:
-        feature_padding_payload_32bit = features * hw_data_bytes;
-        periph_bytes_per_buffer_32bit = feature_padding_payload_32bit * width;
-        break;
-    default:
-        LOGGER__ERROR("unsupported format for HW padding");
-        return HAILO_INTERNAL_FAILURE;
-    }
-
-    CHECK(IS_FIT_IN_UINT16(feature_padding_payload_32bit), HAILO_INVALID_HEF, 
-        "frame width {} is too big", feature_padding_payload_32bit);
-    CHECK(IS_FIT_IN_UINT16(periph_bytes_per_buffer_32bit), HAILO_INVALID_HEF,
-        "unpadded bytes per buffer {} is too big", periph_bytes_per_buffer_32bit);
-
-    feature_padding_payload = static_cast<uint16_t>(feature_padding_payload_32bit);
-    periph_bytes_per_buffer = static_cast<uint16_t>(periph_bytes_per_buffer_32bit);
 
     return HAILO_SUCCESS;
 }
 
-Expected<CONTROL_PROTOCOL__nn_stream_config_t> HefConfigurator::parse_nn_stream_config(hailo_format_order_t format_order, uint32_t width, uint32_t features,
+Expected<CONTROL_PROTOCOL__nn_stream_config_t> HefConfigurator::parse_nn_stream_config(uint32_t width,
     uint32_t hw_data_bytes, uint16_t core_buffers_per_frame, uint16_t core_bytes_per_buffer, bool hw_padding_supported, bool is_ddr,
     uint16_t periph_buffers_per_frame, uint16_t periph_bytes_per_buffer)
 {
@@ -1350,16 +1348,20 @@ Expected<CONTROL_PROTOCOL__nn_stream_config_t> HefConfigurator::parse_nn_stream_
     stream_config.periph_buffers_per_frame = periph_buffers_per_frame;
     stream_config.periph_bytes_per_buffer = periph_bytes_per_buffer;
 
+    // Set default to false and in case of extension enabled update value
+    stream_config.is_periph_calculated_in_hailort = false;
+
     /* For DDR buffering - core buffers is depended on the amount of buffers per PCIe interrupt. No HW padding required */
     if (is_ddr) {
-        stream_config.core_buffers_per_frame = 1;
         stream_config.feature_padding_payload = 0;
     } else {
         if (hw_padding_supported) {
-            auto status = get_hw_padding_params(format_order, width, features, hw_data_bytes,
-                stream_config.feature_padding_payload, stream_config.periph_bytes_per_buffer);
-            CHECK_SUCCESS_AS_EXPECTED(status);
-            stream_config.periph_buffers_per_frame = core_buffers_per_frame;
+            // We currently only support HW padding in hailort with format HAILO_FORMAT_ORDER_NHCW - which is padded by feature
+            // Padding should not affect the periph register values.
+            const uint32_t feature_padding_payload_32bit = static_cast<uint32_t>(width) * static_cast<uint32_t>(hw_data_bytes);
+            CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(width * hw_data_bytes), HAILO_INVALID_HEF, "frame width {} is too big",
+                feature_padding_payload_32bit);
+            stream_config.feature_padding_payload = static_cast<uint16_t>(feature_padding_payload_32bit);
         } else {
             stream_config.feature_padding_payload = 0;
         }
@@ -1378,9 +1380,6 @@ Expected<CONTROL_PROTOCOL__nn_stream_config_t> HefConfigurator::parse_nn_stream_
     CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(edge_layer.core_buffers_per_frame()), HAILO_INVALID_HEF,
         "core_buffers_per_frame is too big");
 
-    auto format_order_exp = HailoRTDefaults::get_device_format_order(edge_layer.format());
-    CHECK_EXPECTED(format_order_exp);
-    auto format_order = format_order_exp.release();
     auto is_ddr = ProtoHEFEdgeConnectionType::PROTO__EDGE_CONNECTION_TYPE__DDR == edge_connection_type;
 
     CHECK_AS_EXPECTED(IS_FIT_IN_UINT32(edge_layer.padded_width() * edge_layer.padded_features() *
@@ -1388,18 +1387,24 @@ Expected<CONTROL_PROTOCOL__nn_stream_config_t> HefConfigurator::parse_nn_stream_
 
     // TODO HRT-10993: Remove these parameters for the parse_nn_stream_config function call
     // These values will get overrided in update_layer_info in resource_manager_builder - except in case of
-    // MIPI stream with hw padding supported (HRT-11030)
-    // TODO HRT-11030 - in MIPI with hw padding supported - in this case because the layer thinks hw padding is
-    // supported it wont recalculate periph values , but when creating the InputStreamBase - it will not use hw padding
-    // and then will take the initial values. Should fix this behavior
-    const uint16_t INITIAL_PERIPH_BYTES_PER_BUFFER = static_cast<uint16_t>(edge_layer.core_bytes_per_buffer());
+    // where we dont have resource manager (ethernet)
+    uint16_t initial_periph_bytes_per_buffer = static_cast<uint16_t>(edge_layer.core_bytes_per_buffer());
     const uint16_t INITIAL_PERIPH_BUFFERS_PER_FRAME = static_cast<uint16_t>(edge_layer.core_buffers_per_frame());
 
+    // If hw padding is enabled - and shape fits in uint16t - change initial periph value to be row size - in any case
+    // Will get updated if there is resource manager - and in ethernet will have either core register values - and if hw 
+    // padding will have hw padding values
+    if (hw_padding_supported) {
+        if (IS_FIT_IN_UINT16(edge_layer.width() * edge_layer.features() * edge_layer.data_bytes())) {
+            initial_periph_bytes_per_buffer = static_cast<uint16_t>(edge_layer.width() * edge_layer.features() *
+                edge_layer.data_bytes());
+        }
+    }
+
     // Width and features only used in case hw_padding is supported. In that case, they represent the HW shape (without padding)
-    return parse_nn_stream_config(format_order, edge_layer.width(), edge_layer.features(),
-        edge_layer.data_bytes(), static_cast<uint16_t>(edge_layer.core_buffers_per_frame()),
+    return parse_nn_stream_config(edge_layer.width(),edge_layer.data_bytes(), static_cast<uint16_t>(edge_layer.core_buffers_per_frame()),
         static_cast<uint16_t>(edge_layer.core_bytes_per_buffer()), hw_padding_supported, is_ddr,
-        INITIAL_PERIPH_BUFFERS_PER_FRAME, INITIAL_PERIPH_BYTES_PER_BUFFER);
+        INITIAL_PERIPH_BUFFERS_PER_FRAME, initial_periph_bytes_per_buffer);
 }
 
 Expected<CONTROL_PROTOCOL__nn_stream_config_t> HefConfigurator::parse_nn_stream_config(const LayerInfo &edge_layer, bool hw_padding_supported)
@@ -1409,12 +1414,12 @@ Expected<CONTROL_PROTOCOL__nn_stream_config_t> HefConfigurator::parse_nn_stream_
     assert(LayerType::BOUNDARY == edge_layer.type);
     const auto is_ddr = false; // This function is called only on boundary layers, so no DDR
 
-    return parse_nn_stream_config(edge_layer.format.order, edge_layer.hw_shape.width, edge_layer.hw_shape.features,
-        edge_layer.hw_data_bytes, edge_layer.nn_stream_config.core_buffers_per_frame, 
+    return parse_nn_stream_config(edge_layer.hw_shape.width, edge_layer.hw_data_bytes, edge_layer.nn_stream_config.core_buffers_per_frame, 
         edge_layer.nn_stream_config.core_bytes_per_buffer, hw_padding_supported, is_ddr, edge_layer.nn_stream_config.periph_buffers_per_frame, 
         edge_layer.nn_stream_config.periph_bytes_per_buffer);
 }
 
+// TODO HRT-11452: change to use hw consts
 Expected<uint32_t> HefConfigurator::max_periph_bytes_value(const hailo_device_architecture_t hw_arch)
 {
     switch (hw_arch) {
@@ -1422,7 +1427,8 @@ Expected<uint32_t> HefConfigurator::max_periph_bytes_value(const hailo_device_ar
         case HAILO_ARCH_HAILO8:
         case HAILO_ARCH_HAILO8L:
             return HAILO8_INBOUND_DATA_STREAM_SIZE;
-        case HAILO_ARCH_HAILO15:
+        case HAILO_ARCH_HAILO15H:
+        case HAILO_ARCH_PLUTO:
             return HAILO15_PERIPH_BYTES_PER_BUFFER_MAX_SIZE;
         default:
             LOGGER__ERROR("Unknown device architecture!");
@@ -1879,18 +1885,39 @@ hailo_status HefUtils::fill_layer_info(const ProtoHEFEdgeLayerInfo &info,
     layer_info.quant_info.qp_scale = info.numeric_info().qp_scale();
     layer_info.quant_info.qp_zp = info.numeric_info().qp_zp();
 
-    for (uint32_t i = 0; i < layer_info.shape.features; i++) {
+    int number_of_qps = (HailoRTCommon::is_nms(layer_info.format.order)) ? NMS_NUMBER_OF_QPS : layer_info.shape.features;
+    if (supported_features.output_scale_by_feature) {
+        CHECK((info.numeric_info().qp_zps().size() == number_of_qps) && (info.numeric_info().qp_scales().size() == number_of_qps),
+            HAILO_INVALID_HEF, "Invalid quantization infos vector in HEF!");
+        // We set those values to 0 to idicate that we work with scale by feature
+        layer_info.quant_info = INVALID_QP;
+    }
+
+    for (int i = 0; i < number_of_qps; i++) {
         hailo_quant_info_t quant_info = {};
+        quant_info.limvals_min = info.numeric_info().limvals_min();
+        quant_info.limvals_max = info.numeric_info().limvals_max();
         if (supported_features.output_scale_by_feature) {
             quant_info.qp_zp = static_cast<float32_t>(info.numeric_info().qp_zps()[i]);
             quant_info.qp_scale = static_cast<float32_t>(info.numeric_info().qp_scales()[i]);
         } else {
             quant_info.qp_zp =  info.numeric_info().qp_zp();
             quant_info.qp_scale =  info.numeric_info().qp_scale();
+            layer_info.quant_infos.push_back(std::move(quant_info));
+            break; // When working without scale by feature, vector length will always be one
         }
-        quant_info.limvals_min = info.numeric_info().limvals_min();
-        quant_info.limvals_max = info.numeric_info().limvals_max();
         layer_info.quant_infos.push_back(std::move(quant_info));
+    }
+
+    if (HAILO_H2D_STREAM == direction) {
+        bool are_all_qps_the_same = true;
+        for (const auto &quant_info : layer_info.quant_infos) {
+            if (0 != memcmp(&quant_info, &layer_info.quant_infos[0], sizeof(quant_info))) {
+                are_all_qps_the_same = false;
+                break;
+            }
+        }
+        CHECK(are_all_qps_the_same, HAILO_INVALID_HEF, "Different quantization infos are not allowed for input streams (H2D)!");
     }
 
     // Simulation info
@@ -2025,6 +2052,86 @@ hailo_status HefUtils::fill_mux_info(const ProtoHEFEdgeLayerMux &info,
                 break;
         }
     }
+
+    return HAILO_SUCCESS;
+}
+
+Expected<hailo_format_order_t> convert_planes_format_to_hailo_format_order(const ProtoHEFEPlanesFormat &planes_format)
+{
+    switch (planes_format) {
+    case ProtoHEFEPlanesFormat::PROTO__PLANES__FORMAT__NV12:
+        return HAILO_FORMAT_ORDER_NV12;
+    case ProtoHEFEPlanesFormat::PROTO__PLANES__FORMAT__NV21:
+        return HAILO_FORMAT_ORDER_NV21;
+    case ProtoHEFEPlanesFormat::PROTO__PLANES__FORMAT__I420:
+        return HAILO_FORMAT_ORDER_I420;
+    default:
+        LOGGER__ERROR("Invalid planes format");
+        return make_unexpected(HAILO_INVALID_HEF);
+    }
+}
+
+hailo_status HefUtils::fill_planes_info(const ProtoHEFEdgeLayerPlanes &info,
+    const ProtoHEFEdgeConnectionType &edge_connection_type, 
+    const ProtoHEFCoreOpMock &core_op, hailo_stream_direction_t direction,
+    bool hw_padding_supported, const uint8_t context_index, const std::string &partial_network_name, 
+    uint8_t network_index, LayerInfo &layer_info, const SupportedFeatures &supported_features, const ProtoHEFHwArch &hef_arch)
+{
+    auto layer_type = get_layer_type(edge_connection_type);
+    CHECK_EXPECTED_AS_STATUS(layer_type);
+    layer_info.type = layer_type.value();
+    layer_info.direction = direction;
+
+    layer_info.shape.height = info.height();
+    layer_info.hw_shape.height = info.height();
+    layer_info.shape.width = info.width();
+    layer_info.hw_shape.width = info.width();
+    layer_info.shape.features = info.features();
+    layer_info.hw_shape.features = info.features();
+
+    auto format_order = convert_planes_format_to_hailo_format_order(info.planes_format());
+    CHECK_EXPECTED_AS_STATUS(format_order);
+    layer_info.format.order = format_order.release();
+    layer_info.format.flags = HAILO_FORMAT_FLAGS_NONE;
+    layer_info.quant_info = {}; // quant_info doesnt make any sense as this is a logical layer
+    layer_info.quant_infos = std::vector<hailo_quant_info_t>(1); // quant_info doesnt make any sense as this is a logical layer
+
+    CHECK(HAILO_MAX_STREAM_NAME_SIZE >= (info.name().length() + 1), HAILO_INTERNAL_FAILURE,
+        "The edge layer '{}' has a too long name (max is HAILO_MAX_STREAM_NAME_SIZE)", info.name());
+    CHECK(HAILO_MAX_NETWORK_NAME_SIZE >= (partial_network_name.length() + 1), HAILO_INTERNAL_FAILURE,
+        "The network '{}' has a too long name (max is HAILO_MAX_NETWORK_NAME_SIZE)", partial_network_name);
+
+    layer_info.name = info.name();
+    layer_info.network_name = HefUtils::get_network_name(core_op, partial_network_name);
+    layer_info.network_index = network_index;
+    layer_info.is_multi_planar = true;
+    layer_info.planes.reserve(info.planes_size());
+
+    for (uint8_t i = 0; i < info.planes_size(); i++) {
+        LayerInfo temp_layer = {};
+        if (info.planes(i).edge_case() == ProtoHefEdge::kLayerInfo) {
+            auto status = fill_layer_info(info.planes(i).layer_info(), edge_connection_type, core_op,
+                direction, hw_padding_supported, context_index, partial_network_name, network_index, temp_layer,
+                supported_features, hef_arch);
+            CHECK_SUCCESS(status);
+            temp_layer.plane_index = i;
+            layer_info.planes.push_back(temp_layer);
+        } else {
+            LOGGER__ERROR("Invalid layer type - only info layers are acceptible under a planes layer");
+            return HAILO_INTERNAL_FAILURE;
+            break;
+        }
+    }
+    // hw_data_bytes doesnt make any sense as this is a logical layer. we set the hw_data_bytes of one of its underlying layers
+    layer_info.hw_data_bytes = layer_info.planes.begin()->hw_data_bytes;
+    CHECK(std::all_of(layer_info.planes.begin(), layer_info.planes.end(),
+            [&layer_info](const auto &underlying_layer) {
+                return underlying_layer.hw_data_bytes == layer_info.hw_data_bytes;
+            }),
+        HAILO_INVALID_HEF, "Not all underlying layers of {} has the same format type", layer_info.name);
+    auto type = HailoRTCommon::get_format_type(layer_info.hw_data_bytes);
+    CHECK_EXPECTED_AS_STATUS(type);
+    layer_info.format.type = type.value();
 
     return HAILO_SUCCESS;
 }
@@ -2311,7 +2418,14 @@ static Expected<ContextSwitchConfigActionPtr> parse_action(const ProtoHEFAction 
 
             const auto nms_unit_index = static_cast<uint8_t>(proto_action.enable_nms().nms_unit_index());
 
-            return EnableNmsAction::create(nms_unit_index, network_index, number_of_classes, burst_size);
+            CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(proto_action.enable_nms().division_factor()), HAILO_INVALID_HEF,
+                "Failed to parse HEF. Invalid division factor: {}.", proto_action.enable_nms().division_factor());
+
+            // If division_factor is not defined - use division_factor = 1
+            const auto division_factor = (0 == proto_action.enable_nms().division_factor()) ? 
+                DEFAULT_DIVISION_FACTOR : static_cast<uint8_t>(proto_action.enable_nms().division_factor());
+
+            return EnableNmsAction::create(nms_unit_index, network_index, number_of_classes, burst_size, division_factor);
         }
 
         case ProtoHEFAction::kWriteDataByType:
@@ -2538,6 +2652,69 @@ Expected<std::vector<ContextMetadata>> HefUtils::parse_dynamic_contexts(const Pr
     return contexts_metadata;
 }
 
+static Expected<hailo_nms_burst_type_t> get_nms_burst_mode(const ProtoHEFNmsInfo &nms_info,
+    const ProtoHEFHwArch &hef_arch)
+{
+    switch (hef_arch) {
+    case PROTO__HW_ARCH__HAILO8:
+    case PROTO__HW_ARCH__HAILO8P:
+    case PROTO__HW_ARCH__HAILO8R:
+    case PROTO__HW_ARCH__SAGE_B0:
+    case PROTO__HW_ARCH__HAILO8L:
+        // First generation of hw NMS - included in hailo8.
+        switch (nms_info.burst_type()) {
+        case PROTO__NMS_BURST_TYPE__H8_PER_CLASS:
+            return HAILO_BURST_TYPE_H8_PER_CLASS;
+        default:
+            LOGGER__ERROR("Unsupported burst type was given {} for arch {}", nms_info.burst_type(), hef_arch);
+            return make_unexpected(HAILO_INVALID_HEF);
+        }
+    case PROTO__HW_ARCH__HAILO15H:
+    case PROTO__HW_ARCH__GINGER:
+    case PROTO__HW_ARCH__LAVENDER:
+    case PROTO__HW_ARCH__PLUTO:
+        // Second generation of hw NMS - included in hailo15 and pluto.
+        switch (nms_info.burst_type()) {
+        case PROTO__NMS_BURST_TYPE__H15_PER_CLASS:
+            return HAILO_BURST_TYPE_H15_PER_CLASS;
+        case PROTO__NMS_BURST_TYPE__H15_PER_FRAME:
+            return HAILO_BURST_TYPE_H15_PER_FRAME;
+        default:
+            LOGGER__ERROR("Unsupported burst type was given {} for arch {}", nms_info.burst_type(), hef_arch);
+            return make_unexpected(HAILO_INVALID_HEF);
+        }
+    default:
+        LOGGER__ERROR("Not supported hef arch {}", hef_arch);
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
+    }
+}
+
+static Expected<hailo_nms_burst_type_t> get_nms_bbox_mode(const ProtoHEFNmsInfo &nms_info,
+    const ProtoHEFHwArch &hef_arch)
+{
+    CHECK_AS_EXPECTED(0 == nms_info.burst_type(),
+        HAILO_INVALID_HEF, "Invalid HEF, nms burst extension is disabled yet burst type {} is not zero",
+        nms_info.burst_type());
+
+    switch (hef_arch) {
+    case PROTO__HW_ARCH__HAILO8:
+    case PROTO__HW_ARCH__HAILO8P:
+    case PROTO__HW_ARCH__HAILO8R:
+    case PROTO__HW_ARCH__SAGE_B0:
+    case PROTO__HW_ARCH__HAILO8L:
+        return HAILO_BURST_TYPE_H8_BBOX;
+    case PROTO__HW_ARCH__HAILO15H:
+    case PROTO__HW_ARCH__GINGER:
+    case PROTO__HW_ARCH__LAVENDER:
+    case PROTO__HW_ARCH__PLUTO:
+        return HAILO_BURST_TYPE_H15_BBOX;
+
+    default:
+        LOGGER__ERROR("Not supported hef arch {}", hef_arch);
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
+    }
+}
+
 Expected<hailo_nms_info_t> HefUtils::parse_proto_nms_info(const ProtoHEFNmsInfo &proto_nms_info, const bool burst_mode_enabled,
     const ProtoHEFHwArch &hef_arch)
 {
@@ -2549,26 +2726,20 @@ Expected<hailo_nms_info_t> HefUtils::parse_proto_nms_info(const ProtoHEFNmsInfo 
 
     if (burst_mode_enabled) {
         nms_info.burst_size = static_cast<uint32_t>(proto_nms_info.burst_size());
-        nms_info.burst_type = static_cast<hailo_nms_burst_type_t>(proto_nms_info.burst_type());
 
-        CHECK_AS_EXPECTED(nms_info.burst_type != HAILO_BURST_TYPE_NO_BURST, HAILO_INVALID_HEF,
-            "Invalid HEF, nms burst type is no burst but burst extension is enabled");
+        auto burst_type = get_nms_burst_mode(proto_nms_info, hef_arch);
+        CHECK_EXPECTED(burst_type);
+        nms_info.burst_type = *burst_type;
 
-        CHECK_AS_EXPECTED((nms_info.burst_size * nms_info.bbox_size) <= MAX_NMS_BURST_SIZE,
+        CHECK_AS_EXPECTED((nms_info.burst_size * nms_info.bbox_size) <= HailoRTCommon::MAX_NMS_BURST_SIZE,
             HAILO_INVALID_HEF, "Invalid HEF, nms burst size {} larger than maximum burst size {}",
-            (nms_info.burst_size * nms_info.bbox_size), MAX_NMS_BURST_SIZE);
-
-        // Validate that burst type matches architecture
-        const auto dev_arch = DeviceBase::hef_arch_to_device_arch(hef_arch);
-        CHECK_AS_EXPECTED(LayerInfoUtils::validate_nms_burst_type(nms_info.burst_type, dev_arch), HAILO_INVALID_HEF,
-            "Invalid HEF, nms burst type {} on device architecture {}", nms_info.burst_type, dev_arch);
+            (nms_info.burst_size * nms_info.bbox_size), HailoRTCommon::MAX_NMS_BURST_SIZE);
     } else {
-        CHECK_AS_EXPECTED(HAILO_BURST_TYPE_NO_BURST == static_cast<hailo_nms_burst_type_t>(proto_nms_info.burst_type()),
-            HAILO_INVALID_HEF, "Invalid HEF, nms burst extension is disabled yet burst type is {}", nms_info.burst_type);
-
-        // In case of HAILO_BURST_TYPE_NO_BURST make burst size DEFAULT_NMS_NO_BURST_SIZE
+        // In case of bbox mode make burst size DEFAULT_NMS_NO_BURST_SIZE
         nms_info.burst_size = DEFAULT_NMS_NO_BURST_SIZE;
-        nms_info.burst_type = static_cast<hailo_nms_burst_type_t>(proto_nms_info.burst_type());
+        auto burst_type = get_nms_bbox_mode(proto_nms_info, hef_arch);
+        CHECK_EXPECTED(burst_type);
+        nms_info.burst_type = *burst_type;
     }
 
     if (nms_info.chunks_per_frame == 0) {
@@ -2621,6 +2792,12 @@ Expected<LayerInfo> HefUtils::get_boundary_layer_info(const ProtoHEFCoreOpMock &
     } else if (ProtoHEFEdgeLayerType::PROTO__EDGE_LAYER_TYPE__MUX == layer.edge_layer_type()) {
         // TODO: return LayerInfo
         auto status = fill_mux_info(layer.layer_mux(), layer.context_switch_info().edge_connection_type(), 
+            core_op, direction, hw_padding_supported, context_index, partial_network_name.value(), network_index, result,
+            supported_features, hef_arch);
+        CHECK_SUCCESS_AS_EXPECTED(status);
+    } else if (ProtoHEFEdgeLayerType::PROTO__EDGE_LAYER_TYPE__PLANES == layer.edge_layer_type()) {
+        // TODO: return LayerInfo
+        auto status = fill_planes_info(layer.layer_planes(), layer.context_switch_info().edge_connection_type(), 
             core_op, direction, hw_padding_supported, context_index, partial_network_name.value(), network_index, result,
             supported_features, hef_arch);
         CHECK_SUCCESS_AS_EXPECTED(status);
@@ -3008,6 +3185,14 @@ Expected<std::string> Hef::Impl::get_vstream_name_from_original_name(const std::
                         results = stream_name.value();
                     }
                 }
+            } else if (is_h2d_boundary_planes_layer(layer_info)) {
+                for (const auto &plane : layer_info.layer_planes().planes()) {
+                    for (const auto &name : plane.layer_info().original_names()) {
+                        if (original_name == name) {
+                            results = std::string(layer_info.layer_planes().name());
+                        }
+                    }
+                }
             }
         }
     }
@@ -3067,6 +3252,15 @@ Expected<std::vector<std::string>> Hef::Impl::get_original_names_from_vstream_na
                         return std::move(names.value());
                     }
                 }
+            } else if (is_h2d_boundary_planes_layer(layer_info)) {
+                if (vstream_name == layer_info.layer_planes().name()) {
+                    for (const auto &plane : layer_info.layer_planes().planes()) {
+                        for (const auto &name : plane.layer_info().original_names()) {
+                            results.push_back(name);
+                        }
+                    }
+                    return results;
+                }
             }
         }
     }
@@ -3086,6 +3280,8 @@ hailo_status Hef::Impl::validate_core_op_unique_layer_names(const ProtoHEFCoreOp
                     layer_name = layer.layer_info().name();
                 } else if (ProtoHEFEdgeLayerType::PROTO__EDGE_LAYER_TYPE__MUX == layer.edge_layer_type()) {
                     layer_name = layer.layer_mux().name();
+                } else if (ProtoHEFEdgeLayerType::PROTO__EDGE_LAYER_TYPE__PLANES == layer.edge_layer_type()) {
+                    layer_name = layer.layer_planes().name();
                 } else {
                     LOGGER__ERROR("Invalid layer type.");
                     return HAILO_INVALID_HEF;
@@ -3167,7 +3363,7 @@ Expected<std::vector<hailo_network_group_info_t>> Hef::get_network_groups_infos(
 }
 
 Expected<std::vector<std::string>> Hef::Impl::get_stream_infos_description(const std::string &network_group_name, const std::string &network_name)
-{   
+{
     std::vector<std::string> infos_strings;
     auto input_stream_infos = get_input_stream_infos(network_group_name, network_name);
     CHECK_EXPECTED(input_stream_infos, "Failed to parse input stream infos");
@@ -3223,14 +3419,9 @@ Expected<std::vector<std::string>> Hef::Impl::get_post_processes_infos_descripti
 
     CHECK_AS_EXPECTED(contains(m_network_group_metadata, network_group_name), HAILO_INTERNAL_FAILURE);
 
-    auto post_process = m_network_group_metadata.at(network_group_name).m_net_flow_ops;
+    auto post_process = m_network_group_metadata.at(network_group_name).m_ops_metadata;
     for (const auto &post_process_info : post_process) {
-        infos_string = post_process_info->op->get_op_description();
-        if (HAILO_NET_FLOW_OP_TYPE_NMS == post_process_info->op_type) {
-
-            infos_string += ", Bbox size: " + std::to_string(post_process_info->nms_info.bbox_size) +
-                ", Max bboxes per class: " + std::to_string(post_process_info->nms_info.max_bboxes_per_class);
-        }
+        infos_string = post_process_info->get_op_description();
     }
     /* If the string is empty there is no need to continue. */
     if (infos_string.empty()) {
@@ -3270,8 +3461,10 @@ Expected<std::string> Hef::Impl::get_description(bool stream_infos, bool vstream
     for (const auto &network_group_info : network_group_infos.release()) {
         auto core_op_metadata = get_core_op_metadata(network_group_info.name);
         CHECK_EXPECTED(core_op_metadata);
-        auto number_of_contexts = core_op_metadata.value()->get_contexts_count();
-        auto contexts_str = (network_group_info.is_multi_context ? "Multi Context - Number of contexts: " + std::to_string(number_of_contexts) : "Single Context");
+        const auto number_of_dynamic_contexts = core_op_metadata.value()->get_dynamic_contexts_count();
+        auto contexts_str = network_group_info.is_multi_context ?
+            "Multi Context - Number of contexts: " + std::to_string(number_of_dynamic_contexts) :
+            "Single Context";
         hef_infos += "Network group name: " + std::string(network_group_info.name) + ", " + contexts_str + "\n";
 
         auto network_infos = get_network_infos(network_group_info.name);
@@ -3326,7 +3519,9 @@ Expected<std::vector<hailo_network_group_info_t>> Hef::Impl::get_network_groups_
         CHECK_AS_EXPECTED(HAILO_MAX_NETWORK_GROUP_NAME_SIZE >= (network_group_name.length() + 1), HAILO_INTERNAL_FAILURE,
             "The network group '{}' has a too long name (max is HAILO_MAX_NETWORK_GROUP_NAME_SIZE)", network_group_name);
         strncpy(info.name, network_group_name.c_str(), network_group_name.length() + 1);
-        info.is_multi_context = (1 < core_op.contexts.size());
+        const auto number_contexts = (ProtoHEFHwArch::PROTO__HW_ARCH__HAILO8L == get_device_arch()) ?
+            core_op.partial_core_ops[0]->core_op->contexts.size() : core_op.contexts.size();
+        info.is_multi_context = (1 < number_contexts);
         results.push_back(info);
     }
     return results;

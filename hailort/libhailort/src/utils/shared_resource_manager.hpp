@@ -79,7 +79,7 @@ public:
             // Create a new resource and register
             auto expected_resource = create();
             CHECK_EXPECTED(expected_resource);
-            m_resources.at(available_index) = std::make_shared<ResourceRef<Key, T>>(user_key, expected_resource.release());
+            m_resources.at(available_index) = std::make_unique<ResourceRef<Key, T>>(user_key, expected_resource.release());
             m_resources.at(available_index)->count++;
             return available_index;
         }
@@ -98,8 +98,22 @@ public:
 
 private:
     SharedResourceManager()
-        : m_resources(max_resources(), nullptr)
+        : m_resources(max_resources())
     {}
+
+#ifdef _WIN32
+    // On windows, when the process terminates, all threads are and only then the static variable are destroyed.
+    // If the user hasn't called release_resource, we will leak its objects (since otherwise the object destructor may
+    // wait on some terminated threads and hang).
+    // Notice that on graceful cleanup m_resources should be empty.
+    ~SharedResourceManager()
+    {
+        for (auto &resource : m_resources) {
+            // Releasing resource will leak its memory
+            resource.release();
+        }
+    }
+#endif /* _WIN32 */
 
     static uint32_t max_resources()
     {
@@ -116,7 +130,7 @@ private:
     }
 
     std::mutex m_mutex;
-    std::vector<std::shared_ptr<ResourceRef<Key, T>>> m_resources;
+    std::vector<std::unique_ptr<ResourceRef<Key, T>>> m_resources;
 };
 
 }

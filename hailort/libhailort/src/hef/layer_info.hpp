@@ -28,6 +28,7 @@ namespace hailort
 #define INVALID_PAD_INDEX (UINT32_MAX)
 #define PERIPH_BYTES_PER_BUFFER_ALIGNMENT_SIZE (8)
 #define PERIPH_BYTES_PER_BUFFER_DDR_ALIGNMENT_SIZE (512)
+#define NMS_NUMBER_OF_QPS (2)
 
 enum class LayerType
 {
@@ -84,6 +85,11 @@ struct LayerInfo {
     uint32_t height_gcd;
     std::vector<uint32_t> height_ratios;
 
+    // Multi planes info
+    bool is_multi_planar;
+    std::vector<LayerInfo> planes;
+    uint8_t plane_index; // relevant for the underlying planes only
+
     // Defused nms info
     bool is_defused_nms;
     // TODO HRT-4441 change fused_layer from vector.
@@ -107,31 +113,38 @@ inline LayerIdentifier to_layer_identifier(const LayerInfo &info)
 
 class LayerInfoUtils {
 public:
-    static hailo_stream_info_t get_stream_info_from_layer_info(const LayerInfo &layer_info)
+    static std::vector<hailo_stream_info_t> get_stream_infos_from_layer_info(const LayerInfo &layer_info)
     {
-        hailo_stream_info_t res = {};
-        res.hw_data_bytes = layer_info.hw_data_bytes;
-        res.format = layer_info.format;
-        if (HAILO_FORMAT_ORDER_HAILO_NMS == res.format.order) {
-            res.nms_info = layer_info.nms_info;
-            res.hw_frame_size =
-                HailoRTCommon::get_nms_hw_frame_size(res.nms_info);
-        } else {
-            res.shape.height = layer_info.shape.height;
-            res.shape.width = layer_info.shape.width;
-            res.shape.features = layer_info.shape.features;
-            res.hw_shape.height = layer_info.hw_shape.height;
-            res.hw_shape.width = layer_info.hw_shape.width;
-            res.hw_shape.features = layer_info.hw_shape.features;
-            res.hw_frame_size =
-                res.hw_shape.height * res.hw_shape.width * res.hw_shape.features * res.hw_data_bytes;
+        std::vector<hailo_stream_info_t> res = {};
+        size_t number_of_streams = (layer_info.is_multi_planar) ? layer_info.planes.size() : 1;
+        res.reserve(number_of_streams);
+        for (size_t i = 0; i < number_of_streams; i++) {
+            auto &layer = (layer_info.is_multi_planar) ? layer_info.planes[i] : layer_info;
+            hailo_stream_info_t stream_info = {};
+            stream_info.hw_data_bytes = layer.hw_data_bytes;
+            stream_info.format = layer.format;
+            if (HailoRTCommon::is_nms(stream_info)) {
+                stream_info.nms_info = layer.nms_info;
+                stream_info.hw_frame_size =
+                    HailoRTCommon::get_nms_hw_frame_size(stream_info.nms_info);
+            } else {
+                stream_info.shape.height = layer.shape.height;
+                stream_info.shape.width = layer.shape.width;
+                stream_info.shape.features = layer.shape.features;
+                stream_info.hw_shape.height = layer.hw_shape.height;
+                stream_info.hw_shape.width = layer.hw_shape.width;
+                stream_info.hw_shape.features = layer.hw_shape.features;
+                stream_info.hw_frame_size =
+                    stream_info.hw_shape.height * stream_info.hw_shape.width * stream_info.hw_shape.features * stream_info.hw_data_bytes;
+            }
+            stream_info.direction = layer.direction;
+            stream_info.index = layer.stream_index;
+            assert(layer.name.length() < HAILO_MAX_NAME_SIZE);
+            strncpy(stream_info.name, layer.name.c_str(), layer.name.length() + 1);
+            stream_info.quant_info = layer.quant_info;
+            stream_info.is_mux = layer.is_mux;
+            res.push_back(stream_info);
         }
-        res.direction = layer_info.direction;
-        res.index = layer_info.stream_index;
-        assert(layer_info.name.length() < HAILO_MAX_NAME_SIZE);
-        strncpy(res.name, layer_info.name.c_str(), layer_info.name.length() + 1);
-        res.quant_info = layer_info.quant_info;
-        res.is_mux = layer_info.is_mux;
 
         return res;
     }
@@ -178,33 +191,10 @@ public:
             }
             return layer_info.nn_stream_config.periph_bytes_per_buffer * layer_info.nn_stream_config.periph_buffers_per_frame;
         case LayerType::INTER_CONTEXT:
-            return layer_info.nn_stream_config.periph_bytes_per_buffer * layer_info.nn_stream_config.periph_buffers_per_frame;
         case LayerType::DDR:
-            return layer_info.nn_stream_config.periph_bytes_per_buffer * layer_info.ddr_info.total_buffers_per_frame;
+            return layer_info.nn_stream_config.periph_bytes_per_buffer * layer_info.nn_stream_config.periph_buffers_per_frame;
         default:
             return make_unexpected(HAILO_NOT_IMPLEMENTED);
-        }
-    }
-
-    /**
-     * Validate nms burst type vs device architecture
-     *
-     * @param[in] burst_type             A hailo_nms_burst_type_t burst_type.
-     * @param[in] arch            A ::hailo_device_architecture_t architecture.
-     * @return true if the burst type matches the device architecture, otherwise false.
-     */
-    static bool validate_nms_burst_type(const hailo_nms_burst_type_t burst_type, const hailo_device_architecture_t arch)
-    {
-        switch (arch)
-        {
-        case HAILO_ARCH_HAILO8_A0:
-        case HAILO_ARCH_HAILO8:
-        case HAILO_ARCH_HAILO8L:
-            return (HAILO_BURST_TYPE_H8_PER_CLASS == burst_type);
-        case HAILO_ARCH_HAILO15:
-            return ((HAILO_BURST_TYPE_H15_PER_CLASS == burst_type) || (HAILO_BURST_TYPE_H15_PER_FRAME == burst_type));
-        default:
-            return false;
         }
     }
 
@@ -233,7 +223,8 @@ public:
     {
         switch (layer_info.nms_info.burst_type) {
             // If No Burst mode - size of transfer is size of bbox
-            case HAILO_BURST_TYPE_NO_BURST:
+            case HAILO_BURST_TYPE_H8_BBOX:
+            case HAILO_BURST_TYPE_H15_BBOX:
                 return layer_info.nms_info.bbox_size;
             // In hailo8 per class and hailo15 per class mode - check if can support interrupt per frame and if not do interrupt per burst
             case HAILO_BURST_TYPE_H8_PER_CLASS:
@@ -245,7 +236,8 @@ public:
                 // If burst size is bigger than max bboxes per class + bboxes_needed_for_delimeter - we can enable 1 interrupt per frame
                 // Becasue we know output size will be burst size * num classes
                 if (layer_info.nms_info.burst_size >= (layer_info.nms_info.max_bboxes_per_class + bboxes_needed_for_delimeter)) {
-                    return layer_info.nms_info.burst_size * layer_info.nms_info.bbox_size * layer_info.nms_info.number_of_classes;
+                    return layer_info.nms_info.burst_size * layer_info.nms_info.bbox_size *
+                        layer_info.nms_info.number_of_classes * layer_info.nms_info.chunks_per_frame;
                 } else {
                     // support regular interrupt per burst
                     return layer_info.nms_info.burst_size * layer_info.nms_info.bbox_size;
@@ -290,10 +282,12 @@ private:
         hailo_vstream_info_t res = {};
         res.format.type = layer_info.format.type;
         res.format.flags = layer_info.format.flags;
-        res.format.order = HailoRTDefaults::get_default_host_format_order(layer_info.format);
-        if (HAILO_FORMAT_ORDER_HAILO_NMS == res.format.order) {
+        // If a layer is multi-planar, its format_order is already the host-side format order
+        res.format.order = (layer_info.is_multi_planar) ? layer_info.format.order : HailoRTDefaults::get_default_host_format_order(layer_info.format);
+        if (HailoRTCommon::is_nms(res)) {
             res.nms_shape.max_bboxes_per_class = layer_info.nms_info.max_bboxes_per_class * layer_info.nms_info.chunks_per_frame;
             res.nms_shape.number_of_classes = layer_info.nms_info.number_of_classes;
+            res.format.type = HAILO_FORMAT_TYPE_FLOAT32; // NMS on vstream is always float32s
         } else {
             res.shape.height = layer_info.shape.height;
             res.shape.width = layer_info.shape.width;

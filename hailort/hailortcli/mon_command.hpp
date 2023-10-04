@@ -15,6 +15,7 @@
 #include "hailortcli.hpp"
 #include "command.hpp"
 #include "utils/profiler/monitor_handler.hpp"
+#include "common/runtime_statistics_internal.hpp"
 
 #include "CLI/CLI.hpp"
 
@@ -30,13 +31,13 @@ public:
 
 private:
     hailo_status run_monitor();
-    void print_tables(const std::vector<ProtoMon> &mon_messages, uint32_t terminal_line_width);
+    hailo_status print_tables(const std::vector<ProtoMon> &mon_messages, uint32_t terminal_line_width);
     void print_devices_info_header();
     void print_networks_info_header();
     void print_frames_header();
     void print_devices_info_table(const ProtoMon &mon_message);
     void print_networks_info_table(const ProtoMon &mon_message);
-    void print_frames_table(const ProtoMon &mon_message);
+    hailo_status print_frames_table(const ProtoMon &mon_message);
     hailo_status run_in_alternative_terminal();
 };
 

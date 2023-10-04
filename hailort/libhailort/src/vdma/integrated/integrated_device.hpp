@@ -52,7 +52,7 @@ protected:
     virtual hailo_status reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type) override;
 
 private:
-    IntegratedDevice(HailoRTDriver &&driver, hailo_status &status);
+    IntegratedDevice(std::unique_ptr<HailoRTDriver> &&driver, hailo_status &status);
 };
 
 

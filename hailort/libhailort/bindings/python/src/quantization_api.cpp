@@ -245,4 +245,9 @@ void QuantizationBindings::quantize_input_buffer(py::array src_buffer, py::array
     }
 }
 
+bool QuantizationBindings::is_qp_valid(const hailo_quant_info_t &quant_info)
+{
+    return Quantization::is_qp_valid(quant_info);
+}
+
 } /* namespace hailort */

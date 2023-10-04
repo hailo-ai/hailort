@@ -5,8 +5,6 @@
 /**
  * @file hef_api.hpp
  * @brief Defines binding to an HEF class, and network_group usage over Python.
- *
- * TODO: doc
  **/
 
 #ifndef HEF_API_HPP_
@@ -72,20 +70,6 @@ private:
     std::unique_ptr<Hef> hef;
 };
 
-class ActivatedAppContextManagerWrapper final
-{
-public:
-    ActivatedAppContextManagerWrapper(ConfiguredNetworkGroup &net_group,
-        const hailo_activate_network_group_params_t &network_group_params);
-    
-    const ActivatedNetworkGroup& enter();
-    void exit();
-    static void add_to_python_module(py::module &m);
-private:
-    std::unique_ptr<ActivatedNetworkGroup> m_activated_net_group;
-    ConfiguredNetworkGroup &m_net_group;
-    hailo_activate_network_group_params_t m_network_group_params;
-};
 
 } /* namespace hailort */
 

@@ -93,6 +93,7 @@ public:
     // * On any failure an appropriate status shall be returned
     hailo_status wait(std::chrono::milliseconds timeout);
     hailo_status signal();
+    hailo_status shutdown();
 
 private:
     static WaitableGroup create_waitable_group(WaitablePtr waitable, EventPtr shutdown_event);

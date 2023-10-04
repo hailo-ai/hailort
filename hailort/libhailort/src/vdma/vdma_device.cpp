@@ -31,7 +31,7 @@ static constexpr std::chrono::milliseconds DEFAULT_TIMEOUT(1000);
 static constexpr std::chrono::milliseconds DEFAULT_TIMEOUT(50000);
 #endif /* ifndef HAILO_EMULATOR */
 
-VdmaDevice::VdmaDevice(HailoRTDriver &&driver, Device::Type type) :
+VdmaDevice::VdmaDevice(std::unique_ptr<HailoRTDriver> &&driver, Device::Type type) :
     DeviceBase::DeviceBase(type),
     m_driver(std::move(driver)), m_is_configured(false)
 {
@@ -64,7 +64,7 @@ hailo_status VdmaDevice::wait_for_wakeup()
 
 Expected<D2H_EVENT_MESSAGE_t> VdmaDevice::read_notification()
 {
-    auto notification_buffer = m_driver.read_notification();
+    auto notification_buffer = m_driver->read_notification();
     if (!notification_buffer.has_value()) {
         return make_unexpected(notification_buffer.status());
     }
@@ -78,7 +78,7 @@ Expected<D2H_EVENT_MESSAGE_t> VdmaDevice::read_notification()
 
 hailo_status VdmaDevice::disable_notifications()
 {
-    return m_driver.disable_notifications();
+    return m_driver->disable_notifications();
 }
 
 hailo_status VdmaDevice::fw_interact_impl(uint8_t *request_buffer, size_t request_size,
@@ -94,7 +94,7 @@ hailo_status VdmaDevice::fw_interact_impl(uint8_t *request_buffer, size_t reques
     uint8_t response_md5[PCIE_EXPECTED_MD5_LENGTH];
     uint8_t expected_response_md5[PCIE_EXPECTED_MD5_LENGTH];
 
-    auto status = m_driver.fw_control(request_buffer, request_size, request_md5,
+    auto status = m_driver->fw_control(request_buffer, request_size, request_md5,
         response_buffer, response_size, response_md5,
         DEFAULT_TIMEOUT, cpu_id);
     CHECK_SUCCESS(status, "Failed to send fw control");
@@ -111,15 +111,14 @@ hailo_status VdmaDevice::fw_interact_impl(uint8_t *request_buffer, size_t reques
 
 hailo_status VdmaDevice::clear_configured_apps()
 {
-    static const auto DONT_KEEP_NN_CONFIG_DURING_RESET = false;
-    auto status = Control::reset_context_switch_state_machine(*this, DONT_KEEP_NN_CONFIG_DURING_RESET);
+    auto status = Control::reset_context_switch_state_machine(*this);
     CHECK_SUCCESS(status);
 
     // In case of mercury need to reset nn core before activating network group to clear prior nn core state
     if (Device::Type::INTEGRATED == get_type()) {
         // On core device, the nn_manager is not responsible to reset the nn-core so
         // we use the SCU control for that.
-        status = m_driver.reset_nn_core();
+        status = m_driver->reset_nn_core();
         CHECK_SUCCESS(status);
     }
 
@@ -142,7 +141,7 @@ Expected<ConfiguredNetworkGroupVector> VdmaDevice::add_hef(Hef &hef, const Netwo
         CHECK_SUCCESS_AS_EXPECTED(status);
 
         assert(nullptr == m_vdma_interrupts_dispatcher);
-        auto interrupts_dispatcher = vdma::InterruptsDispatcher::create(std::ref(m_driver));
+        auto interrupts_dispatcher = vdma::InterruptsDispatcher::create(std::ref(*m_driver));
         CHECK_EXPECTED(interrupts_dispatcher);
         m_vdma_interrupts_dispatcher = interrupts_dispatcher.release();
 
@@ -205,7 +204,7 @@ Expected<size_t> VdmaDevice::read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id)
 {
     size_t read_bytes = 0;
     hailo_status status = HAILO_UNINITIALIZED;
-    status = m_driver.read_log(buffer.data(), buffer.size(), &read_bytes, cpu_id);
+    status = m_driver->read_log(buffer.data(), buffer.size(), &read_bytes, cpu_id);
     CHECK_SUCCESS_AS_EXPECTED(status);
     return read_bytes;
 }
@@ -225,7 +224,7 @@ hailo_reset_device_mode_t VdmaDevice::get_default_reset_mode()
 
 hailo_status VdmaDevice::mark_as_used()
 {
-    return m_driver.mark_as_used();
+    return m_driver->mark_as_used();
 }
 
 ExpectedRef<vdma::InterruptsDispatcher> VdmaDevice::get_vdma_interrupts_dispatcher()

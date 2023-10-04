@@ -3,8 +3,10 @@
 # To change an environment variable's value, follow the steps:
 # 1. Change the value of the selected environemt variable in this file
 # 2. Reload systemd unit files by running: `sudo systemctl daemon-reload`
-# 3. Enable and start service by running: `sudo systemctl enable --now hailort.service`
+# 3. Copy this file to /etc/default/hailort_service
+# 4. Enable and start service by running: `sudo systemctl enable --now hailort.service`
 
 [Service]
 HAILORT_LOGGER_PATH="/var/log/hailo"
+HAILORT_LOGGER_FLUSH_EVERY_PRINT=0
 HAILO_MONITOR=0

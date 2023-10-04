@@ -37,10 +37,10 @@ public:
 
     static Expected<BufferSizesRequirements> get_sg_buffer_requirements_single_transfer(uint16_t max_desc_page_size,
         uint16_t min_batch_size, uint16_t max_batch_size, uint32_t transfer_size, bool is_circular,
-        const bool force_default_page_size);
+        const bool force_default_page_size, const bool force_batch_size);
     static Expected<BufferSizesRequirements> get_sg_buffer_requirements_multiple_transfers(uint16_t max_desc_page_size,
         uint16_t batch_size, const std::vector<uint32_t> &transfer_sizes, bool is_circular,
-        const bool force_default_page_size);
+        const bool force_default_page_size, const bool force_batch_size);
 
     static Expected<BufferSizesRequirements> get_ccb_buffer_requirements_single_transfer(uint16_t batch_size,
         uint32_t transfer_size, bool is_circular);

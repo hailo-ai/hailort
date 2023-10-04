@@ -300,13 +300,10 @@ public:
      *  reset context switch state machine
      * 
      * @param[in]     device - The Hailo device.
-     * @param[in]     keep_nn_config_during_reset - 
-     *                Use if in the reset flow, user wise to remain in the same network group. 
-     *                this reset flow keep most of the configuration on the network group for faster batch switching. 
      *
      * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
      */
-    static hailo_status reset_context_switch_state_machine(Device &device, bool keep_nn_config_during_reset);
+    static hailo_status reset_context_switch_state_machine(Device &device);
     /**
      *  set dataflow interrupt by control
      * 
@@ -337,7 +334,7 @@ public:
      *  Enable/disable halt transmition following Rx pause frame
      * 
      * @param[in]     device - The Hailo device.
-     * @param[in]     rx_pause_frames_enable - Bool indicating weather to enable or disable rx pause frames
+     * @param[in]     rx_pause_frames_enable - Bool indicating whether to enable or disable rx pause frames
      * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
      */
     static hailo_status set_pause_frames(Device &device, uint8_t rx_pause_frames_enable);
@@ -408,8 +405,7 @@ private:
         const CONTROL_PROTOCOL__context_switch_context_info_single_control_t &context_info);
     static hailo_status change_context_switch_status(Device &device,
             CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status,
-            uint8_t network_group_index, uint16_t dynamic_batch_size, uint16_t batch_count,
-            bool keep_nn_config_during_reset = false);
+            uint8_t network_group_index, uint16_t dynamic_batch_size, uint16_t batch_count);
     static Expected<CONTROL_PROTOCOL__get_extended_device_information_response_t> get_extended_device_info_response(Device &device);
 };
 

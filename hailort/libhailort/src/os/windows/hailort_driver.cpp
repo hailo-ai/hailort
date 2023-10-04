@@ -353,9 +353,8 @@ Expected<std::vector<HailoRTDriver::DeviceInfo>> HailoRTDriver::scan_devices()
     return devices_info;
 }
 
-Expected<HailoRTDriver> HailoRTDriver::create(const DeviceInfo &device_info)
+Expected<std::unique_ptr<HailoRTDriver>> HailoRTDriver::create(const DeviceInfo &device_info)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
     CDeviceFile f(device_info.dev_path);
     if (!f.Present()) {
         LOGGER__ERROR("Failed to open board {}", device_info.dev_path);
@@ -363,11 +362,12 @@ Expected<HailoRTDriver> HailoRTDriver::create(const DeviceInfo &device_info)
     }
     FileDescriptor fd(f.Detach());
 
-    HailoRTDriver platform(device_info, std::move(fd), status);
-    if (HAILO_SUCCESS != status) {
-        return make_unexpected(status);
-    }
-    return platform;
+    hailo_status status = HAILO_UNINITIALIZED;
+    std::unique_ptr<HailoRTDriver> driver(new (std::nothrow) HailoRTDriver(device_info, std::move(fd), status));
+    CHECK_NOT_NULL_AS_EXPECTED(driver, HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    return driver;
 }
 
 Expected<std::vector<uint8_t>> HailoRTDriver::read_notification()

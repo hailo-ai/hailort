@@ -8,7 +8,7 @@ if(NOT CMAKE_HOST_UNIX)
     message(FATAL_ERROR "Only unix hosts are supported, stopping build")
 endif()
 
-find_package(HailoRT 4.14.0 EXACT REQUIRED)
+find_package(HailoRT 4.15.0 EXACT REQUIRED)
 
 # GST_PLUGIN_DEFINE needs PACKAGE to be defined
 set(GST_HAILO_PACKAGE_NAME "hailo")
@@ -54,6 +54,7 @@ target_link_libraries(gsthailo HailoRT::libhailort ${GSTREAMER_VIDEO_LDFLAGS})
 
 install(TARGETS gsthailo
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     # TODO: get gstreamer-1.0 in an automate way
     PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gstreamer-1.0/gst/hailo/"
     CONFIGURATIONS Release)

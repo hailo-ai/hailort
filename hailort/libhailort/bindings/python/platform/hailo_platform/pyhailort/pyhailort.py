@@ -685,30 +685,6 @@ class ConfiguredNetwork(object):
         with ExceptionWrapper():
             return self._configured_network.get_udp_rates_dict(int(fps), int(max_supported_rate_bytes))
 
-    def _before_fork(self):
-        if self._configured_network is not None:
-            self._configured_network.before_fork()
-            for input_vstreams in self._input_vstreams_holders:
-                input_vstreams.before_fork()
-            for output_vstreams in self._output_vstreams_holders:
-                output_vstreams.before_fork()
-
-    def _after_fork_in_parent(self):
-        if self._configured_network is not None:
-            self._configured_network.after_fork_in_parent()
-            for input_vstreams in self._input_vstreams_holders:
-                input_vstreams.after_fork_in_parent()
-            for output_vstreams in self._output_vstreams_holders:
-                output_vstreams.after_fork_in_parent()
-
-    def _after_fork_in_child(self):
-        if self._configured_network is not None:
-            self._configured_network.after_fork_in_child()
-            for input_vstreams in self._input_vstreams_holders:
-                input_vstreams.after_fork_in_child()
-            for output_vstreams in self._output_vstreams_holders:
-                output_vstreams.after_fork_in_child()
-
     def _create_input_vstreams(self, input_vstreams_params):
         input_vstreams_holder = self._configured_network.InputVStreams(input_vstreams_params)
         self._input_vstreams_holders.append(input_vstreams_holder)
@@ -752,7 +728,7 @@ class ConfiguredNetwork(object):
         Args:
             timeout_ms (int): Timeout in milliseconds.
         """
-        name = network_name if network_name is not None else self.name
+        name = network_name if network_name is not None else ""
         return self._configured_network.set_scheduler_timeout(timeout_ms, name)
 
     def set_scheduler_threshold(self, threshold):
@@ -956,6 +932,20 @@ class InferVStreams(object):
             self._hw_time = time.perf_counter() - time_before_infer
 
         for name, result_array in output_buffers.items():
+            # TODO: HRT-11726 - Combine Pyhailort NMS and NMS_WITH_BYTE_MASK decoding function
+            if output_buffers_info[name].output_order == FormatOrder.HAILO_NMS_WITH_BYTE_MASK:
+                nms_shape = output_buffers_info[name].vstream_info.nms_shape
+                output_dtype = output_buffers_info[name].output_dtype
+                input_stream_infos = self._configured_net_group.get_input_stream_infos()
+                if len(input_stream_infos) != 1:
+                    raise Exception("Output format HAILO_NMS_WITH_BYTE_MASK should have 1 input. Number of inputs: {}".format(len(input_stream_infos)))
+                input_height = input_stream_infos[0].shape[0]
+                input_width = input_stream_infos[0].shape[1]
+                output_buffers[name] = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_format(result_array,
+                    nms_shape.number_of_classes, batch_size, input_height, input_width,
+                    nms_shape.max_bboxes_per_class, output_dtype, self._tf_nms_format)
+                continue
+
             is_nms = output_buffers_info[name].is_nms
             if not is_nms:
                 continue
@@ -969,7 +959,7 @@ class InferVStreams(object):
                     output_dtype, quantized_empty_bbox)
             else:
                 output_buffers[name] = HailoRTTransformUtils.output_raw_buffer_to_nms_format(result_array, nms_shape.number_of_classes)
-        
+
         self._total_time = time.perf_counter() - time_before_infer_calcs
         return output_buffers
 
@@ -1032,10 +1022,89 @@ class InferVStreams(object):
                 input_layer_name))
             input_data[input_layer_name] = numpy.asarray(input_data[input_layer_name], order='C')
 
+    def set_nms_score_threshold(self, threshold):
+        """Set NMS score threshold, used for filtering out candidates. Any box with score<TH is suppressed.
+
+        Args:
+            threshold (float): NMS score threshold to set.
+
+        Note:
+            This function will fail in cases where there is no output with NMS operations on the CPU.
+        """
+        return self._infer_pipeline.set_nms_score_threshold(threshold)
+
+    def set_nms_iou_threshold(self, threshold):
+        """Set NMS intersection over union overlap Threshold,
+            used in the NMS iterative elimination process where potential duplicates of detected items are suppressed.
+
+        Args:
+            threshold (float): NMS IoU threshold to set.
+
+        Note:
+            This function will fail in cases where there is no output with NMS operations on the CPU.
+        """
+        return self._infer_pipeline.set_nms_iou_threshold(threshold)
+
+    def set_nms_max_proposals_per_class(self, max_proposals_per_class):
+        """Set a limit for the maximum number of boxes per class.
+
+        Args:
+            max_proposals_per_class (int): NMS max proposals per class to set.
+
+        Note:
+            This function will fail in cases where there is no output with NMS operations on the CPU.
+        """
+        return self._infer_pipeline.set_nms_max_proposals_per_class(max_proposals_per_class)
+
     def __exit__(self, *args):
         self._infer_pipeline.release()
         return False
 
+
+class HailoDetectionBox(object):
+# TODO: HRT-11492 - Add documentation to class and functions
+
+    def __init__(self, bbox, class_id, mask_size, mask):
+        self._bbox = bbox
+        self._mask_size = mask_size
+        self._mask = mask
+        self._class_id = class_id
+
+    @property
+    def bbox(self):
+        return self._bbox
+
+    @property
+    def y_min(self):
+        return self._bbox[0]
+
+    @property
+    def x_min(self):
+        return self._bbox[1]
+
+    @property
+    def y_max(self):
+        return self._bbox[2]
+
+    @property
+    def x_max(self):
+        return self._bbox[3]
+
+    @property
+    def score(self):
+        return self._bbox[4]
+
+    @property
+    def class_id(self):
+        return self._class_id
+
+    @property
+    def mask_size(self):
+        return self._mask_size
+
+    @property
+    def mask(self):
+        return self._mask
 
 class HailoRTTransformUtils(object):
     @staticmethod
@@ -1064,6 +1133,9 @@ class HailoRTTransformUtils(object):
         with ExceptionWrapper():
             src_format_type = HailoRTTransformUtils._get_format_type(src_buffer.dtype)
             dst_format_type = HailoRTTransformUtils._get_format_type(dst_buffer.dtype)
+            if not _pyhailort.is_qp_valid(quant_info):
+                raise HailoRTInvalidOperationException("quant_info is invalid as the model was compiled with multiple quant_infos. "
+                                                       "Please compile again or provide a list of quant_infos.")
             _pyhailort.dequantize_output_buffer(src_buffer, dst_buffer, src_format_type, dst_format_type, elements_count, quant_info)
 
     @staticmethod
@@ -1079,7 +1151,19 @@ class HailoRTTransformUtils(object):
         with ExceptionWrapper():
             src_format_type = HailoRTTransformUtils._get_format_type(raw_buffer.dtype)
             dst_format_type = HailoRTTransformUtils._get_format_type(dst_dtype)
+            if not _pyhailort.is_qp_valid(quant_info):
+                raise HailoRTInvalidOperationException("quant_info is invalid as the model was compiled with multiple quant_infos. "
+                                                       "Please compile again or provide a list of quant_infos.")
             _pyhailort.dequantize_output_buffer_in_place(raw_buffer, src_format_type, dst_format_type, elements_count, quant_info)
+
+    @staticmethod
+    def is_qp_valid(quant_info):
+        """Returns if quant_info is valid.
+
+        Args:
+            quant_info (:class:`~hailo_platform.pyhailort.pyhailort.QuantInfo`): The quantization info.
+        """
+        return _pyhailort.is_qp_valid(quant_info)
 
     @staticmethod
     def quantize_input_buffer(src_buffer, dst_buffer, elements_count, quant_info):
@@ -1096,6 +1180,9 @@ class HailoRTTransformUtils(object):
         with ExceptionWrapper():
             src_format_type = HailoRTTransformUtils._get_format_type(src_buffer.dtype)
             dst_format_type = HailoRTTransformUtils._get_format_type(dst_buffer.dtype)
+            if not _pyhailort.is_qp_valid(quant_info):
+                raise HailoRTInvalidOperationException("quant_info is invalid as the model was compiled with multiple quant_infos. "
+                                                       "Please compile again or provide a list of quant_infos.")
             _pyhailort.quantize_input_buffer(src_buffer, dst_buffer, src_format_type, dst_format_type, elements_count, quant_info)
 
     @staticmethod
@@ -1141,6 +1228,121 @@ class HailoRTTransformUtils(object):
                     class_bboxes_amount, BBOX_PARAMS))
                 offset += BBOX_PARAMS * class_bboxes_amount
         return converted_output_frame
+
+    @staticmethod
+    def _output_raw_buffer_to_nms_with_byte_mask_format(raw_output_buffer, number_of_classes, batch_size, image_height, image_width,
+            max_bboxes_per_class, output_dtype, is_tf_format=False):
+        if is_tf_format:
+            if os.environ.get('HAILO_TF_FORMAT_INTERNAL'):
+                return HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_tf_format(raw_output_buffer, number_of_classes,
+                    batch_size, image_height, image_width, max_bboxes_per_class, output_dtype)
+            else:
+                raise HailoRTException("TF format is not supported with HAILO_NMS_WITH_BYTE_MASK format order")
+        else:
+            return HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_hailo_format(raw_output_buffer, number_of_classes)
+
+    @staticmethod
+    def _output_raw_buffer_to_nms_with_byte_mask_hailo_format(raw_output_buffer, number_of_classes):
+        converted_output_buffer = []
+        for frame in raw_output_buffer:
+            converted_output_buffer.append(
+                HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_hailo_format_single_frame(frame, number_of_classes))
+        return converted_output_buffer
+
+    @staticmethod
+    def _output_raw_buffer_to_nms_with_byte_mask_hailo_format_single_frame(raw_output_buffer, number_of_classes):
+        offset = 0
+        converted_output_frame = []
+        for class_i in range(number_of_classes):
+            class_bboxes_amount = int(raw_output_buffer[offset])
+            offset += 1
+            classes_boxes = []
+
+            if class_bboxes_amount != 0:
+                for bbox_i in range(class_bboxes_amount):
+                    bbox = raw_output_buffer[offset : offset + BBOX_PARAMS]
+                    offset += BBOX_PARAMS
+
+                    bbox_mask_size_in_bytes = raw_output_buffer[offset]
+                    offset += 1
+                    bbox_mask_size = int(bbox_mask_size_in_bytes / 4)
+
+                    bbox_mask = raw_output_buffer[offset : (offset + bbox_mask_size)]
+                    offset += bbox_mask_size
+
+                    hailo_bbox = HailoDetectionBox(bbox, class_i, bbox_mask_size_in_bytes, bbox_mask)
+                    classes_boxes.append(hailo_bbox)
+
+            converted_output_frame.append(classes_boxes)
+        return converted_output_frame
+
+    @staticmethod
+    def _output_raw_buffer_to_nms_with_byte_mask_tf_format(raw_output_buffer, number_of_classes, batch_size, image_height, image_width,
+            max_bboxes_per_class, output_dtype):
+        offset = 0
+        # The + 1 is for the extra row containing the bbox coordinates, score and class_id
+        output_height = image_height + 1
+
+        # We create the tf_format buffer with reversed max_bboxes_per_class/features for performance optimization
+        converted_output_buffer = numpy.empty([batch_size, max_bboxes_per_class, output_height, image_width], dtype=output_dtype)
+
+        for frame_idx in range(len(raw_output_buffer)):
+            offset = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_tf_format_single_frame(
+                raw_output_buffer[frame_idx], converted_output_buffer[frame_idx], number_of_classes, max_bboxes_per_class,
+                image_height, image_width, offset)
+        converted_output_buffer = numpy.moveaxis(converted_output_buffer, 1, 3)
+        return converted_output_buffer
+
+    @staticmethod
+    def _output_raw_buffer_to_nms_with_byte_mask_tf_format_single_frame(raw_output_buffer, converted_output_frame, number_of_classes,
+        max_boxes, image_height, image_width, offset):
+
+        detections = []
+        for class_i in range(number_of_classes):
+            class_bboxes_amount = int(raw_output_buffer[offset])
+            offset += 1
+
+            if class_bboxes_amount != 0:
+                for bbox_i in range(class_bboxes_amount):
+                    bbox = raw_output_buffer[offset : offset + BBOX_PARAMS]
+                    offset += BBOX_PARAMS
+
+                    bbox_mask_size_in_bytes = raw_output_buffer[offset]
+                    offset += 1
+                    bbox_mask_size = int(bbox_mask_size_in_bytes // 4)
+
+                    bbox_mask = raw_output_buffer[offset : (offset + bbox_mask_size)]
+                    offset += bbox_mask_size
+
+                    y_min = bbox[0] * image_height
+                    x_min = bbox[1] * image_width
+                    bbox_width = round((bbox[3] - bbox[1]) * image_width)
+                    resized_mask = numpy.empty([image_height, image_width])
+
+                    for i in range(bbox_mask_size):
+                        if (bbox_mask[i] == 1):
+                            x = int(x_min + (i % bbox_width))
+                            y = int(y_min + (i // bbox_width))
+                            if (x >= image_width):
+                                x = image_width - 1
+                            if ( y >= image_height):
+                                y = image_height - 1
+                            resized_mask[y][x] = 1
+
+                    padding = image_width - len(bbox)
+                    bbox_padded = numpy.pad(bbox, pad_width=(0, padding), mode='constant')
+                    bbox_padded[len(bbox)] = class_i
+
+                    converted_detection = numpy.append(resized_mask ,[bbox_padded], axis=0)
+                    detections.append((bbox[4], converted_detection))
+
+        detections.sort(key=lambda tup: tup[0], reverse=True)
+        for detection_idx in range(len(detections)):
+            if (detection_idx >= max_boxes):
+                return offset
+            converted_output_frame[detection_idx] = detections[detection_idx][1]
+
+        return offset
 
     @staticmethod
     def _get_format_type(dtype):
@@ -1313,7 +1515,7 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 4
-SUPPORTED_FW_MINOR = 14
+SUPPORTED_FW_MINOR = 15
 SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
@@ -1323,7 +1525,8 @@ class DeviceArchitectureTypes(IntEnum):
     HAILO8_A0 = 0
     HAILO8 = 1
     HAILO8L = 2
-    HAILO15 = 3
+    HAILO15H = 3
+    PLUTO = 4
 
     def __str__(self):
         return self.name
@@ -1379,7 +1582,7 @@ class BoardInformation(object):
         if ((device_arch == DeviceArchitectureTypes.HAILO8) or
             (device_arch == DeviceArchitectureTypes.HAILO8L)):
             return 'hailo8'
-        elif device_arch == DeviceArchitectureTypes.HAILO15:
+        elif device_arch == DeviceArchitectureTypes.HAILO15H:
             return 'hailo15'
         else:
             raise HailoRTException("Unsupported device architecture.")
@@ -2415,31 +2618,9 @@ class VDevice(object):
 
         self._open_vdevice()
 
-    def _before_fork(self):
-        if self._vdevice is not None:
-            self._vdevice.before_fork()
-            for configured_network in self._loaded_network_groups:
-                configured_network._before_fork()
-
-    def _after_fork_in_parent(self):
-        if self._vdevice is not None:
-            self._vdevice.after_fork_in_parent()
-            for configured_network in self._loaded_network_groups:
-                configured_network._after_fork_in_parent()
-
-    def _after_fork_in_child(self):
-        if self._vdevice is not None:
-            self._vdevice.after_fork_in_child()
-            for configured_network in self._loaded_network_groups:
-                configured_network._after_fork_in_child()
-
     def _open_vdevice(self):
         if self._params is None:
             self._params = VDevice.create_params()
-        if  sys.platform != "win32" and self._params.multi_process_service:
-            os.register_at_fork(before=lambda: self._before_fork())
-            os.register_at_fork(after_in_parent=lambda: self._after_fork_in_parent())
-            os.register_at_fork(after_in_child=lambda: self._after_fork_in_child())
         with ExceptionWrapper():
             device_ids = [] if self._device_ids is None else self._device_ids
             self._vdevice = _pyhailort.VDevice.create(self._params, device_ids)
@@ -2518,20 +2699,18 @@ class InputVStreamParams(object):
     """Parameters of an input virtual stream (host to device)."""
 
     @staticmethod
-    def make(configured_network, quantized=True, format_type=None, timeout_ms=None, queue_size=None, network_name=None):
+    def make(configured_network, quantized=None, format_type=None, timeout_ms=None, queue_size=None, network_name=None):
         """Create input virtual stream params from a configured network group. These params determine the format of the
         data that will be fed into the network group.
 
         Args:
             configured_network (:class:`ConfiguredNetwork`): The configured network group for which
                 the params are created.
-            quantized (bool): Whether the data fed into the chip is already quantized. True means
-                the data is already quantized. False means it's HailoRT's responsibility to quantize
-                (scale) the data. Defaults to True.
+            quantized (bool): Deprecated parameter that will be ignored. Determine whether to quantize (scale)
+                the data will be decided by the src-data and dst-data types.
             format_type (:class:`~hailo_platform.pyhailort.pyhailort.FormatType`): The
-                default format type of the data for all input virtual streams. If quantized is False,
-                the default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.FLOAT32`. Otherwise,
-                the default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.AUTO`,
+                default format type of the data for all input virtual streams.
+                The default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.AUTO`,
                 which means the data is fed in the same format expected by the device (usually
                 uint8).
             timeout_ms (int): The default timeout in milliseconds for all input virtual streams.
@@ -2545,10 +2724,9 @@ class InputVStreamParams(object):
             params.
         """
         if format_type is None:
-            if not quantized:
-                format_type = FormatType.FLOAT32
-            else:
-                format_type = FormatType.AUTO
+            format_type = FormatType.AUTO
+        if quantized is None:
+            quantized = format_type != FormatType.FLOAT32
         if timeout_ms is None:
             timeout_ms = DEFAULT_VSTREAM_TIMEOUT_MS
         if queue_size is None:
@@ -2559,20 +2737,18 @@ class InputVStreamParams(object):
                 format_type, timeout_ms, queue_size)
 
     @staticmethod
-    def make_from_network_group(configured_network, quantized=True, format_type=None, timeout_ms=None, queue_size=None, network_name=None):
+    def make_from_network_group(configured_network, quantized=None, format_type=None, timeout_ms=None, queue_size=None, network_name=None):
         """Create input virtual stream params from a configured network group. These params determine the format of the
         data that will be fed into the network group.
 
         Args:
             configured_network (:class:`ConfiguredNetwork`): The configured network group for which
                 the params are created.
-            quantized (bool): Whether the data fed into the chip is already quantized. True means
-                the data is already quantized. False means it's HailoRT's responsibility to quantize
-                (scale) the data. Defaults to True.
+            quantized (bool): Deprecated parameter that will be ignored. Determine whether to quantize (scale)
+                the data will be decided by the src-data and dst-data types.
             format_type (:class:`~hailo_platform.pyhailort.pyhailort.FormatType`): The
-                default format type of the data for all input virtual streams. If quantized is False,
-                the default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.FLOAT32`. Otherwise,
-                the default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.AUTO`,
+                default format type of the data for all input virtual streams.
+                The default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.AUTO`,
                 which means the data is fed in the same format expected by the device (usually
                 uint8).
             timeout_ms (int): The default timeout in milliseconds for all input virtual streams.
@@ -2592,20 +2768,18 @@ class OutputVStreamParams(object):
     """Parameters of an output virtual stream (device to host)."""
 
     @staticmethod
-    def make(configured_network, quantized=True, format_type=None, timeout_ms=None, queue_size=None, network_name=None):
+    def make(configured_network, quantized=None, format_type=None, timeout_ms=None, queue_size=None, network_name=None):
         """Create output virtual stream params from a configured network group. These params determine the format of the
         data that will be returned from the network group.
 
         Args:
             configured_network (:class:`ConfiguredNetwork`): The configured network group for which
                 the params are created.
-            quantized (bool): Whether the data returned from the chip should be quantized. True means
-                the data is still quantized. False means it's HailoRT's responsibility to de-quantize
-                (rescale) the data. Defaults to True.
+            quantized (bool): Deprecated parameter that will be ignored. Determine whether to de-quantize (rescale)
+                the data will be decided by the src-data and dst-data types.
             format_type (:class:`~hailo_platform.pyhailort.pyhailort.FormatType`): The
-                default format type of the data for all output virtual streams. If quantized is False,
-                the default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.FLOAT32`. Otherwise,
-                the default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.AUTO`,
+                default format type of the data for all output virtual streams.
+                The default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.AUTO`,
                 which means the returned data is in the same format returned from the device (usually
                 uint8).
             timeout_ms (int): The default timeout in milliseconds for all output virtual streams.
@@ -2619,10 +2793,9 @@ class OutputVStreamParams(object):
             params.
         """
         if format_type is None:
-            if not quantized:
-                format_type = FormatType.FLOAT32
-            else:
-                format_type = FormatType.AUTO
+            format_type = FormatType.AUTO
+        if quantized is None:
+            quantized = format_type != FormatType.FLOAT32
         if timeout_ms is None:
             timeout_ms = DEFAULT_VSTREAM_TIMEOUT_MS
         if queue_size is None:
@@ -2633,21 +2806,19 @@ class OutputVStreamParams(object):
                 format_type, timeout_ms, queue_size)
 
     @staticmethod
-    def make_from_network_group(configured_network, quantized=True, format_type=None, timeout_ms=None, queue_size=None, network_name=None):
+    def make_from_network_group(configured_network, quantized=None, format_type=None, timeout_ms=None, queue_size=None, network_name=None):
         """Create output virtual stream params from a configured network group. These params determine the format of the
         data that will be returned from the network group.
 
         Args:
             configured_network (:class:`ConfiguredNetwork`): The configured network group for which
                 the params are created.
-            quantized (bool): Whether the data returned from the chip is already quantized. True means
-                the data is already quantized. False means it's HailoRT's responsibility to quantize
-                (scale) the data. Defaults to True.
+            quantized (bool): Deprecated parameter that will be ignored. Determine whether to de-quantize (rescale)
+                the data will be decided by the src-data and dst-data types.
             format_type (:class:`~hailo_platform.pyhailort.pyhailort.FormatType`): The
-                default format type of the data for all output virtual streams. If quantized is False,
-                the default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.FLOAT32`. Otherwise,
-                the default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.AUTO`,
-                which means the data is fed in the same format expected by the device (usually
+                default format type of the data for all output virtual streams.
+                The default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.AUTO`,
+                which means the returned data is in the same format returned from the device (usually
                 uint8).
             timeout_ms (int): The default timeout in milliseconds for all output virtual streams.
                 Defaults to DEFAULT_VSTREAM_TIMEOUT_MS. In case of timeout, :class:`HailoRTTimeout` will be raised.
@@ -2662,21 +2833,19 @@ class OutputVStreamParams(object):
         return OutputVStreamParams.make(configured_network, quantized, format_type, timeout_ms, queue_size, network_name)
 
     @staticmethod
-    def make_groups(configured_network, quantized=True, format_type=None, timeout_ms=None, queue_size=None):
+    def make_groups(configured_network, quantized=None, format_type=None, timeout_ms=None, queue_size=None):
         """Create output virtual stream params from a configured network group. These params determine the format of the
         data that will be returned from the network group. The params groups are splitted with respect to their underlying streams for multi process usges.
 
         Args:
             configured_network (:class:`ConfiguredNetwork`): The configured network group for which
                 the params are created.
-            quantized (bool): Whether the data returned from the chip is already quantized. True means
-                the data is already quantized. False means it's HailoRT's responsibility to quantize
-                (scale) the data. Defaults to True.
+            quantized (bool): Deprecated parameter that will be ignored. Determine whether to de-quantize (rescale)
+                the data will be decided by the src-data and dst-data types.
             format_type (:class:`~hailo_platform.pyhailort.pyhailort.FormatType`): The
-                default format type of the data for all output virtual streams. If quantized is False,
-                the default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.FLOAT32`. Otherwise,
-                the default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.AUTO`,
-                which means the data is fed in the same format expected by the device (usually
+                default format type of the data for all output virtual streams.
+                The default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.AUTO`,
+                which means the returned data is in the same format returned from the device (usually
                 uint8).
             timeout_ms (int): The default timeout in milliseconds for all output virtual streams.
                 Defaults to DEFAULT_VSTREAM_TIMEOUT_MS. In case of timeout, :class:`HailoRTTimeout` will be raised.
@@ -2731,7 +2900,7 @@ class InputVStream(object):
         Args:
             input_data (:obj:`numpy.ndarray`): Data to run inference on.
         """
-        
+
         if input_data.dtype != self._input_dtype:
             input_data = input_data.astype(self._input_dtype)
 
@@ -2757,19 +2926,6 @@ class InputVStream(object):
     def info(self):
         with ExceptionWrapper():
             return self._send_object.info
-
-    def _before_fork(self):
-        if self._send_object is not None:
-            self._send_object.before_fork()
-
-    def _after_fork_in_parent(self):
-        if self._send_object is not None:
-            self._send_object.after_fork_in_parent()
-
-    def _after_fork_in_child(self):
-        if self._send_object is not None:
-            self._send_object.after_fork_in_child()
-
 
 class InputVStreams(object):
     """Input vstreams pipelines that allows to send data, to be used as a context manager."""
@@ -2816,21 +2972,10 @@ class InputVStreams(object):
     def __exit__(self, *args):
         self._input_vstreams_holder.__exit__(*args)
         return False
-    
+
     def __iter__(self):
         return iter(self._vstreams.values())
 
-    def _before_fork(self):
-        for vstream in self._vstreams.values():
-            vstream._before_fork()
-
-    def _after_fork_in_parent(self):
-        for vstream in self._vstreams.values():
-            vstream._after_fork_in_parent()
-
-    def _after_fork_in_child(self):
-        for vstream in self._vstreams.values():
-            vstream._after_fork_in_child()
 
 
 class OutputLayerUtils(object):
@@ -2856,7 +3001,11 @@ class OutputLayerUtils(object):
     @property
     def output_dtype(self):
         return _pyhailort.get_dtype(self._user_buffer_format.type)
-    
+
+    @property
+    def output_order(self):
+        return self._user_buffer_format.order
+
     @property
     def output_shape(self):
         return self._output_shape
@@ -2864,7 +3013,7 @@ class OutputLayerUtils(object):
     @property
     def vstream_info(self):
         return self._vstream_info
-    
+
     @property
     def output_tensor_info(self):
         return self.output_shape, self.output_dtype
@@ -2887,7 +3036,8 @@ class OutputLayerUtils(object):
 
     @property
     def tf_nms_fomrat_shape(self):
-        if not self.is_nms:
+        # TODO: HRT-11726 - Combine is_nms for HAILO_NMS and NMS_WITH_BYTE_MASK
+        if not self.is_nms and not self.output_order == FormatOrder.HAILO_NMS_WITH_BYTE_MASK:
             raise HailoRTException("Requested NMS info for non-NMS layer")
         nms_shape = self._vstream_info.nms_shape
         return [nms_shape.number_of_classes, BBOX_PARAMS,
@@ -2907,6 +3057,11 @@ class OutputVStream(object):
         if self._is_nms:
             self._quantized_empty_bbox = self._output_layer_utils.quantized_empty_bbox
         self._tf_nms_format = tf_nms_format
+        self._input_stream_infos = configured_network.get_input_stream_infos()
+
+    @property
+    def output_order(self):
+        return self._output_layer_utils.output_order
 
     @property
     def shape(self):
@@ -2936,6 +3091,17 @@ class OutputVStream(object):
         with ExceptionWrapper():
             result_array = self._recv_object.recv()
 
+        if self.output_order == FormatOrder.HAILO_NMS_WITH_BYTE_MASK:
+            nms_shape = self._vstream_info.nms_shape
+            if len(self._input_stream_infos) != 1:
+                raise Exception("Output format HAILO_NMS_WITH_BYTE_MASK should have 1 input. Number of inputs: {}".format(len(self._input_stream_infos)))
+            input_height = self._input_stream_infos[0].shape[0]
+            input_width = self._input_stream_infos[0].shape[1]
+            res = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_format(result_array,
+                nms_shape.number_of_classes, 1, input_height, input_width, nms_shape.max_bboxes_per_class,
+                self._output_dtype, self._tf_nms_format)
+            return res
+
         if self._is_nms:
             nms_shape = self._vstream_info.nms_shape
             if self._tf_nms_format:
@@ -2957,17 +3123,39 @@ class OutputVStream(object):
         with ExceptionWrapper():
             return self._recv_object.info
 
-    def _before_fork(self):
-        if self._recv_object is not None:
-            self._recv_object.before_fork()
+    def set_nms_score_threshold(self, threshold):
+        """Set NMS score threshold, used for filtering out candidates. Any box with score<TH is suppressed.
 
-    def _after_fork_in_parent(self):
-        if self._recv_object is not None:
-            self._recv_object.after_fork_in_parent()
+        Args:
+            threshold (float): NMS score threshold to set.
 
-    def _after_fork_in_child(self):
-        if self._recv_object is not None:
-            self._recv_object.after_fork_in_child()
+        Note:
+            This function will fail in cases where the output vstream has no NMS operations on the CPU.
+        """
+        return self._recv_object.set_nms_score_threshold(threshold)
+
+    def set_nms_iou_threshold(self, threshold):
+        """Set NMS intersection over union overlap Threshold,
+            used in the NMS iterative elimination process where potential duplicates of detected items are suppressed.
+
+        Args:
+            threshold (float): NMS IoU threshold to set.
+
+        Note:
+            This function will fail in cases where the output vstream has no NMS operations on the CPU.
+        """
+        return self._recv_object.set_nms_iou_threshold(threshold)
+
+    def set_nms_max_proposals_per_class(self, max_proposals_per_class):
+        """Set a limit for the maximum number of boxes per class.
+
+        Args:
+            max_proposals_per_class (int): NMS max proposals per class to set.
+
+        Note:
+            This function will fail in cases where the output vstream has no NMS operations on the CPU.
+        """
+        return self._recv_object.set_nms_max_proposals_per_class(max_proposals_per_class)
 
 
 class OutputVStreams(object):
@@ -3032,15 +3220,3 @@ class OutputVStreams(object):
 
     def __iter__(self):
         return iter(self._vstreams.values())
-
-    def _before_fork(self):
-        for vstream in self._vstreams.values():
-            vstream._before_fork()
-
-    def _after_fork_in_parent(self):
-        for vstream in self._vstreams.values():
-            vstream._after_fork_in_parent()
-
-    def _after_fork_in_child(self):
-        for vstream in self._vstreams.values():
-            vstream._after_fork_in_child()

@@ -128,17 +128,6 @@ Expected<uint16_t> DescriptorList::program_last_descriptor(size_t transfer_size,
     return std::move(static_cast<uint16_t>(required_descriptors));
 }
 
-hailo_status DescriptorList::reprogram_descriptor_interrupts_domain(size_t desc_index,
-    InterruptsDomain interrupts_domain)
-{
-    if (desc_index >= count()){
-        LOGGER__ERROR("Requested desc (index={}) exceeds the number of descriptors in the list ({})", desc_index, count());
-        return HAILO_OUT_OF_DESCRIPTORS;
-    }
-    reprogram_single_descriptor_interrupts_domain((*this)[desc_index], interrupts_domain);
-    return HAILO_SUCCESS;
-}
-
 uint32_t DescriptorList::descriptors_in_buffer(size_t buffer_size) const
 {
     return descriptors_in_buffer(buffer_size, m_desc_page_size);
@@ -212,25 +201,6 @@ void DescriptorList::program_single_descriptor(VdmaDescriptor &descriptor, uint1
     // Clear status
     descriptor.RemainingPageSize_Status = 0;
 #endif
-}
-
-void DescriptorList::reprogram_single_descriptor_interrupts_domain(VdmaDescriptor &descriptor,
-    InterruptsDomain interrupts_domain)
-{
-    // Set the IRQ control bits to zero
-    // Make all edits to the local variable local_pagesize_desc_ctrl that is on the stack to save read/writes to DDR
-    auto local_pagesize_desc_ctrl = (descriptor.PageSize_DescControl & ~DESC_IRQ_MASK);
-
-    if (InterruptsDomain::NONE == interrupts_domain) {
-        // Nothing else to do
-        descriptor.PageSize_DescControl = local_pagesize_desc_ctrl;
-        return;
-    }
-
-    local_pagesize_desc_ctrl |= (DESC_REQUREST_IRQ_PROCESSED | DESC_REQUREST_IRQ_ERR |
-        get_interrupts_bitmask(interrupts_domain));
-
-    descriptor.PageSize_DescControl = local_pagesize_desc_ctrl;
 }
 
 void DescriptorList::clear_descriptor(const size_t desc_index)

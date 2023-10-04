@@ -45,6 +45,7 @@ public:
     void operator=(HailoRTLogger const&) = delete;
 
     static std::string get_log_path(const std::string &path_env_var);
+    static bool should_flush_every_print(const std::string &flush_every_print_env_var);
     static std::string get_main_log_path();
     static std::shared_ptr<spdlog::sinks::sink> create_file_sink(const std::string &dir_path, const std::string &filename, bool rotate);
 

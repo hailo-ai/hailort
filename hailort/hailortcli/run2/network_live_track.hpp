@@ -32,6 +32,8 @@ public:
 
     void progress();
 
+    hailort::Expected<double> get_last_measured_fps();
+
 private:
     double get_fps();
 
@@ -45,6 +47,8 @@ private:
     hailort::LatencyMeterPtr m_overall_latency_meter;
     const bool m_measure_fps;
     const std::string &m_hef_path;
+
+    double m_last_measured_fps;
 };
 
 #endif /* _HAILO_HAILORTCLI_RUN2_NETWORK_LIVE_TRACK_HPP_ */

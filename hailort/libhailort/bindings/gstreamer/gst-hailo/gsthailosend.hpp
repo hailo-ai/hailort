@@ -89,7 +89,7 @@ public:
     }
 
 private:
-    hailo_status write_to_vstreams(void *buf, size_t size);
+    hailo_status write_to_vstreams(const hailo_pix_buffer_t &pix_buffer);
     
     GstHailoSend *m_element;
     GstHailoNet *m_hailonet;

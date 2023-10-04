@@ -16,8 +16,6 @@
 
 #include "common/utils.hpp"
 
-#include "core_op/core_op.hpp"
-
 
 namespace hailort
 {

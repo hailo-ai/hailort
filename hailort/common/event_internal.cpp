@@ -61,6 +61,11 @@ hailo_status WaitOrShutdown::signal()
     return m_waitable->signal();
 }
 
+hailo_status WaitOrShutdown::shutdown()
+{
+    return m_shutdown_event->signal();
+}
+
 WaitableGroup WaitOrShutdown::create_waitable_group(WaitablePtr waitable, EventPtr shutdown_event)
 {
     // Note the order - consistent with SHUTDOWN_INDEX, WAITABLE_INDEX.

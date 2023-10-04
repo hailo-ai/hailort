@@ -28,13 +28,15 @@ Expected<std::shared_ptr<InferProgress>> InferProgress::create(const inference_r
 InferProgress::InferProgress(const inference_runner_params &params,
     std::chrono::milliseconds print_interval, hailo_status &status) :
       m_params(params), m_print_interval(print_interval), m_networks_progress(),
-      m_stop_event(Event::create_shared(Event::State::not_signalled)), m_finished(false)
+      m_stop_event(), m_finished(false)
 {
-    if (nullptr == m_stop_event) {
+    auto event_exp = Event::create_shared(Event::State::not_signalled);
+    if (!event_exp) {
         LOGGER__ERROR("Failed to create event for progress bar");
-        status = HAILO_OUT_OF_HOST_MEMORY;
+        status = event_exp.status();
         return;
     }
+    m_stop_event = event_exp.release(); 
     status = HAILO_SUCCESS;
 }
 

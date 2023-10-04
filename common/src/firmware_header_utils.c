@@ -50,6 +50,9 @@ static HAILO_COMMON_STATUS_t firmware_header_utils__validate_fw_header(uintptr_t
     case FIRMWARE_TYPE_HAILO15:
         firmware_magic = FIRMWARE_HEADER_MAGIC_HAILO15;
         break;
+    case FIRMWARE_TYPE_PLUTO:
+        firmware_magic = FIRMWARE_HEADER_MAGIC_PLUTO;
+        break;
     default:
         status = HAILO_STATUS__FIRMWARE_HEADER_UTILS__INVALID_FIRMWARE_TYPE;
         goto exit;

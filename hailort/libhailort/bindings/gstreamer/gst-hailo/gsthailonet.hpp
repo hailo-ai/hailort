@@ -55,7 +55,7 @@ public:
         m_is_active(false), m_device_count(0), m_vdevice_key(DEFAULT_VDEVICE_KEY), m_scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN),
         m_scheduler_timeout_ms(HAILO_DEFAULT_SCHEDULER_TIMEOUT_MS), m_scheduler_threshold(HAILO_DEFAULT_SCHEDULER_THRESHOLD), m_scheduler_priority(HAILO_SCHEDULER_PRIORITY_NORMAL),
         m_multi_process_service(HAILO_DEFAULT_MULTI_PROCESS_SERVICE), m_input_quantized(true), m_output_quantized(true), m_input_format_type(HAILO_FORMAT_TYPE_AUTO),
-        m_output_format_type(HAILO_FORMAT_TYPE_AUTO)
+        m_output_format_type(HAILO_FORMAT_TYPE_AUTO), m_nms_score_threshold(0), m_nms_iou_threshold(0), m_nms_max_proposals_per_class(0)
 
     {}
 
@@ -75,6 +75,9 @@ public:
     HailoElemProperty<gboolean> m_output_quantized;
     HailoElemProperty<hailo_format_type_t> m_input_format_type;
     HailoElemProperty<hailo_format_type_t> m_output_format_type;
+    HailoElemProperty<gfloat> m_nms_score_threshold;
+    HailoElemProperty<gfloat> m_nms_iou_threshold;
+    HailoElemProperty<guint32> m_nms_max_proposals_per_class;
 };
 
 class HailoNetImpl final

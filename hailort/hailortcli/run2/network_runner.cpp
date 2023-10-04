@@ -100,7 +100,8 @@ NetworkRunner::NetworkRunner(const NetworkParams &params, const std::string &nam
     m_name(name),
     m_cng(cng),
     m_overall_latency_meter(nullptr),
-    m_latency_barrier(nullptr)
+    m_latency_barrier(nullptr),
+    m_last_measured_fps(0)
 {
 }
 
@@ -134,7 +135,7 @@ Expected<std::shared_ptr<NetworkRunner>> NetworkRunner::create_shared(VDevice &v
         for (auto &stream_name_params_pair : cfg_params->stream_params_by_name) {
             stream_name_params_pair.second.flags = HAILO_STREAM_FLAGS_ASYNC;
         }
-    }
+    } 
     auto cfgr_net_groups = vdevice.configure(hef.value(), {{net_group_name, cfg_params.value()}});
     CHECK_EXPECTED(cfgr_net_groups);
     assert(1 == cfgr_net_groups->size());
@@ -262,6 +263,32 @@ void NetworkRunner::set_latency_barrier(BarrierPtr latency_barrier)
     m_latency_barrier = latency_barrier;
 }
 
+std::shared_ptr<ConfiguredNetworkGroup> NetworkRunner::get_configured_network_group()
+{
+    return m_cng;
+}
+
+void NetworkRunner::set_last_measured_fps(double fps)
+{
+    m_last_measured_fps = fps;
+}
+
+double NetworkRunner::get_last_measured_fps()
+{
+    return m_last_measured_fps;
+}
+
+hailo_vstream_params_t update_quantize_flag_in_vstream_param(const hailo_vstream_info_t &vstream_info, const hailo_vstream_params_t &old_vstream_params)
+{
+    hailo_vstream_params_t res = old_vstream_params;
+    if ((HAILO_FORMAT_TYPE_FLOAT32 == old_vstream_params.user_buffer_format.type) || (HailoRTCommon::is_nms(vstream_info))) {
+        res.user_buffer_format.flags &= (~HAILO_FORMAT_FLAGS_QUANTIZED);
+    } else {
+        res.user_buffer_format.flags |= (HAILO_FORMAT_FLAGS_QUANTIZED);
+    }
+    return res;
+}
+
 Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> NetworkRunner::create_vstreams(
     ConfiguredNetworkGroup &net_group, const std::map<std::string, hailo_vstream_params_t> &params)
 {//TODO: support network name
@@ -273,10 +300,12 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> Netwo
     for (auto &input_vstream_info : input_vstreams_info.value()) {
         auto elem_it = params.find(input_vstream_info.name);
         if (elem_it != params.end()) {
-            input_vstreams_params.emplace(input_vstream_info.name, elem_it->second);
+            auto vstream_param = update_quantize_flag_in_vstream_param(input_vstream_info, elem_it->second);
+            input_vstreams_params.emplace(input_vstream_info.name, vstream_param);
             match_count++;
         } else {
-            input_vstreams_params.emplace(input_vstream_info.name, HailoRTDefaults::get_vstreams_params());
+            auto vstream_param = update_quantize_flag_in_vstream_param(input_vstream_info, HailoRTDefaults::get_vstreams_params());
+            input_vstreams_params.emplace(input_vstream_info.name, vstream_param);
         }
     }
 
@@ -286,11 +315,13 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> Netwo
     for (auto &output_vstream_info : output_vstreams_info.value()) {
         auto elem_it = params.find(output_vstream_info.name);
         if (elem_it != params.end()) {
-            output_vstreams_params.emplace(output_vstream_info.name, elem_it->second);
+            auto vstream_param = update_quantize_flag_in_vstream_param(output_vstream_info, elem_it->second);
+            output_vstreams_params.emplace(output_vstream_info.name, vstream_param);
             match_count++;
         }
         else {
-            output_vstreams_params.emplace(output_vstream_info.name, HailoRTDefaults::get_vstreams_params());
+            auto vstream_param = update_quantize_flag_in_vstream_param(output_vstream_info, HailoRTDefaults::get_vstreams_params());
+            output_vstreams_params.emplace(output_vstream_info.name, vstream_param);
         }
     }
 

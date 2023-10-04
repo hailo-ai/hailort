@@ -12,7 +12,7 @@
 #ifndef _HAILO_CALLBACK_REORDER_QUEUE_HPP_
 #define _HAILO_CALLBACK_REORDER_QUEUE_HPP_
 
-#include "stream_common/async_common.hpp"
+#include "stream_common/transfer_common.hpp"
 
 #include <mutex>
 #include <queue>

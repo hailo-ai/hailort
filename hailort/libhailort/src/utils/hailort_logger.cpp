@@ -45,7 +45,8 @@ namespace hailort
 #define HAILORT_ANDROID_LOGGER_PATTERN ("%v")               // Android logger will print only message (additional info are built-in)
 
 #define HAILORT_LOGGER_PATH_ENV_VAR ("HAILORT_LOGGER_PATH")
-#define PERIODIC_LOGGER_FLUSH_TIME_IN_SECONDS (5)
+#define HAILORT_LOGGER_FLUSH_EVERY_PRINT_ENV_VAR ("HAILORT_LOGGER_FLUSH_EVERY_PRINT")
+#define PERIODIC_FLUSH_INTERVAL_IN_SECONDS (5)
 
 #ifdef _WIN32
 #define PATH_SEPARATOR "\\"
@@ -172,7 +173,8 @@ std::shared_ptr<spdlog::sinks::sink> HailoRTLogger::create_file_sink(const std::
 HailoRTLogger::HailoRTLogger(spdlog::level::level_enum console_level, spdlog::level::level_enum file_level, spdlog::level::level_enum flush_level) :
     m_console_sink(make_shared_nothrow<spdlog::sinks::stderr_color_sink_mt>()),
 #ifdef __ANDROID__
-    m_main_log_file_sink(make_shared_nothrow<spdlog::sinks::android_sink_mt>(HAILORT_NAME))
+    m_main_log_file_sink(make_shared_nothrow<spdlog::sinks::android_sink_mt>(HAILORT_NAME)),
+    m_local_log_file_sink(make_shared_nothrow<spdlog::sinks::null_sink_mt>())
 #else
     m_main_log_file_sink(create_file_sink(get_main_log_path(), HAILORT_LOGGER_FILENAME, true)),
     m_local_log_file_sink(create_file_sink(get_log_path(HAILORT_LOGGER_PATH_ENV_VAR), HAILORT_LOGGER_FILENAME, true))
@@ -202,14 +204,37 @@ HailoRTLogger::HailoRTLogger(spdlog::level::level_enum console_level, spdlog::le
     spdlog::set_default_logger(m_hailort_logger);
 }
 
+bool HailoRTLogger::should_flush_every_print(const std::string &flush_every_print_env_var)
+{
+    auto flush_every_print_c_str = std::getenv(flush_every_print_env_var.c_str());
+    if ((nullptr == flush_every_print_c_str) || (std::strlen(flush_every_print_c_str) == 0)) {
+        return false;
+    }
+    std::string flush_every_print_c_str_lower_case(flush_every_print_c_str);
+    for (char& ch : flush_every_print_c_str_lower_case) {
+        ch = static_cast<char>(std::tolower(ch));
+    }
+    if (strcmp(flush_every_print_c_str_lower_case.c_str(), "1") == 0) {
+        return true;
+    }
+    return false;
+}
+
 void HailoRTLogger::set_levels(spdlog::level::level_enum console_level, spdlog::level::level_enum file_level,
     spdlog::level::level_enum flush_level)
 {
     m_console_sink->set_level(console_level);
     m_main_log_file_sink->set_level(file_level);
     m_local_log_file_sink->set_level(file_level);
-    m_hailort_logger->flush_on(flush_level);
-    spdlog::flush_every(std::chrono::seconds(PERIODIC_LOGGER_FLUSH_TIME_IN_SECONDS));
+
+    bool flush_every_print = should_flush_every_print(HAILORT_LOGGER_FLUSH_EVERY_PRINT_ENV_VAR);
+    if (flush_every_print){
+        m_hailort_logger->flush_on(spdlog::level::debug);
+        std::cerr << "HailoRT warning: Flushing log file on every print. May reduce HailoRT performance!" << std::endl;
+    } else {
+        m_hailort_logger->flush_on(flush_level);
+    }
+    spdlog::flush_every(std::chrono::seconds(PERIODIC_FLUSH_INTERVAL_IN_SECONDS));
 }
 
 

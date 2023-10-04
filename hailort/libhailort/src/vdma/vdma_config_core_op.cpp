@@ -8,7 +8,7 @@ namespace hailort
 {
 
 Expected<VdmaConfigCoreOp> VdmaConfigCoreOp::create(ActiveCoreOpHolder &active_core_op_holder,
-        const ConfigureNetworkParams &config_params, 
+        const ConfigureNetworkParams &config_params,
         std::shared_ptr<ResourcesManager> resources_manager,
         std::shared_ptr<CoreOpMetadata> metadata)
 {
@@ -25,23 +25,19 @@ VdmaConfigCoreOp::VdmaConfigCoreOp(ActiveCoreOpHolder &active_core_op_holder,
     const ConfigureNetworkParams &config_params,
     std::shared_ptr<ResourcesManager> &&resources_manager,
     std::shared_ptr<CoreOpMetadata> metadata, hailo_status &status) :
-        CoreOp(config_params, metadata, status),
-        m_active_core_op_holder(active_core_op_holder),
+        CoreOp(config_params, metadata, active_core_op_holder, status),
         m_resources_manager(std::move(resources_manager))
 {}
 
-hailo_status VdmaConfigCoreOp::activate_impl(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers)
+hailo_status VdmaConfigCoreOp::activate_impl(uint16_t dynamic_batch_size)
 {
     auto status = HAILO_UNINITIALIZED;
 
-    // Check that no network is currently activated
-    CHECK(!m_active_core_op_holder.is_any_active(), HAILO_INTERNAL_FAILURE,
-        "Cant activate network because a network is already activated");
-
-    m_active_core_op_holder.set(*this);
-
-    status = m_resources_manager->set_dynamic_batch_size(dynamic_batch_size);
-    CHECK_SUCCESS(status, "Failed to set inter-context channels dynamic batch size.");
+    if (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE != dynamic_batch_size) {
+        CHECK(dynamic_batch_size <= get_smallest_configured_batch_size(get_config_params()),
+            HAILO_INVALID_ARGUMENT, "Batch size given is {} although max is {}", dynamic_batch_size,
+            get_smallest_configured_batch_size(get_config_params()));
+    }
 
     status = m_resources_manager->enable_state_machine(dynamic_batch_size);
     CHECK_SUCCESS(status, "Failed to activate state-machine");
@@ -51,46 +47,36 @@ hailo_status VdmaConfigCoreOp::activate_impl(uint16_t dynamic_batch_size, bool r
 
     // Low-level streams assume that the vdma channels are enabled (happens in `enable_state_machine`), and that
     // the interrupt dispatcher is running (so they can wait for interrupts).
-    status = activate_low_level_streams(dynamic_batch_size, resume_pending_stream_transfers);
+    status = activate_low_level_streams();
+    if (HAILO_STREAM_ABORTED_BY_USER == status) {
+        LOGGER__INFO("Low level streams activation failed because some were aborted by user");
+        return status;
+    }
     CHECK_SUCCESS(status, "Failed to activate low level streams");
 
-    status = m_core_op_activated_event->signal();
-    CHECK_SUCCESS(status, "Failed to signal network activation event");
+    TRACE(SwitchCoreOpTrace, std::string(m_resources_manager->get_dev_id()), vdevice_core_op_handle());
 
     return HAILO_SUCCESS;
 }
 
-hailo_status VdmaConfigCoreOp::deactivate_impl(bool keep_nn_config_during_reset)
+hailo_status VdmaConfigCoreOp::deactivate_impl()
 {
     auto status = deactivate_host_resources();
     CHECK_SUCCESS(status);
 
-    status = m_resources_manager->reset_state_machine(keep_nn_config_during_reset);
+    status = m_resources_manager->reset_state_machine();
     CHECK_SUCCESS(status, "Failed to reset context switch state machine");
 
     // After the state machine has been reset the vdma channels are no longer active, so we
-    // can cancel pending async transfers, thus allowing vdma buffers linked to said transfers to be freed
-    status = m_resources_manager->cancel_pending_async_transfers();
-    CHECK_SUCCESS(status, "Failed to cancel pending async transfers");
+    // can cancel pending transfers, thus allowing vdma buffers linked to said transfers to be freed
+    status = m_resources_manager->cancel_pending_transfers();
+    CHECK_SUCCESS(status, "Failed to cancel pending transfers");
 
     return HAILO_SUCCESS;
 }
 
 hailo_status VdmaConfigCoreOp::deactivate_host_resources()
 {
-    // Check that network is currently activated
-    CHECK(m_active_core_op_holder.is_any_active(), HAILO_INTERNAL_FAILURE,
-        "Cant Deactivate network because no network is already activated");
-
-    // Make sure the core op we are deactivating is this object
-    auto active_core_op_ref = m_active_core_op_holder.get().value();
-    CHECK(this == std::addressof(active_core_op_ref.get()), HAILO_INTERNAL_FAILURE,
-        "Trying to deactivate different network goup");
-
-    m_active_core_op_holder.clear();
-
-    m_core_op_activated_event->reset();
-
     auto status = deactivate_low_level_streams();
     CHECK_SUCCESS(status, "Failed to deactivate low level streams");
 
@@ -99,30 +85,6 @@ hailo_status VdmaConfigCoreOp::deactivate_host_resources()
     CHECK_SUCCESS(status, "Failed to stop vdma interrupts");
 
     return HAILO_SUCCESS;
-}
-
-Expected<std::unique_ptr<ActivatedNetworkGroup>> VdmaConfigCoreOp::create_activated_network_group(
-    const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size,
-    bool resume_pending_stream_transfers)
-{
-    auto start_time = std::chrono::steady_clock::now();
-    auto activated_net_group = VdmaConfigActivatedCoreOp::create(
-        m_active_core_op_holder, name(), m_resources_manager, network_group_params, dynamic_batch_size,
-        m_input_streams, m_output_streams, m_core_op_activated_event, m_deactivation_time_accumulator,
-        resume_pending_stream_transfers, *this);
-    const auto elapsed_time_ms = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - start_time).count();
-    CHECK_EXPECTED(activated_net_group);
-
-    LOGGER__INFO("Activating {} took {} milliseconds. Note that the function is asynchronous and"
-                 " thus the network is not fully activated yet.", name(), elapsed_time_ms);
-    m_activation_time_accumulator->add_data_point(elapsed_time_ms);
-
-    std::unique_ptr<ActivatedNetworkGroup> activated_net_group_ptr =
-        make_unique_nothrow<VdmaConfigActivatedCoreOp>(activated_net_group.release());
-    CHECK_AS_EXPECTED(nullptr != activated_net_group_ptr, HAILO_OUT_OF_HOST_MEMORY);
-
-    return activated_net_group_ptr;
 }
 
 Expected<hailo_stream_interface_t> VdmaConfigCoreOp::get_default_streams_interface()
@@ -157,7 +119,10 @@ hailo_status VdmaConfigCoreOp::set_scheduler_priority(uint8_t /*priority*/, cons
 Expected<std::shared_ptr<LatencyMetersMap>> VdmaConfigCoreOp::get_latency_meters()
 {
     auto latency_meters = m_resources_manager->get_latency_meters();
-    return make_shared_nothrow<LatencyMetersMap>(latency_meters);
+    auto res = make_shared_nothrow<LatencyMetersMap>(latency_meters);
+    CHECK_NOT_NULL_AS_EXPECTED(res, HAILO_OUT_OF_HOST_MEMORY);
+
+    return res;
 }
 
 Expected<vdma::BoundaryChannelPtr> VdmaConfigCoreOp::get_boundary_vdma_channel_by_stream_name(const std::string &stream_name)
@@ -168,6 +133,11 @@ Expected<vdma::BoundaryChannelPtr> VdmaConfigCoreOp::get_boundary_vdma_channel_b
 Expected<HwInferResults> VdmaConfigCoreOp::run_hw_infer_estimator()
 {
     return m_resources_manager->run_hw_only_infer();
+}
+
+Expected<Buffer> VdmaConfigCoreOp::get_intermediate_buffer(const IntermediateBufferKey &key)
+{
+    return m_resources_manager->read_intermediate_buffer(key);
 }
 
 } /* namespace hailort */

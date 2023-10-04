@@ -15,7 +15,6 @@
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
 
-#include "vdma/channel/boundary_channel.hpp"
 #include "vdma/vdma_device.hpp"
 
 
@@ -57,7 +56,7 @@ public:
     virtual Expected<hailo_device_architecture_t> get_architecture() const override;
 
 private:
-    PcieDevice(HailoRTDriver &&driver, hailo_status &status);
+    PcieDevice(std::unique_ptr<HailoRTDriver> &&driver, hailo_status &status);
 
     static Expected<HailoRTDriver::DeviceInfo> find_device_info(const hailo_pcie_device_info_t &pcie_device_info);
 };

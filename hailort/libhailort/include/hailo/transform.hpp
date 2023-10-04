@@ -36,13 +36,31 @@ public:
      * @param[in] src_format               The format of the src buffer to be transformed.
      * @param[in] dst_image_shape          The shape of the dst buffer that receives the transformed data.
      * @param[in] dst_format               The format of the dst buffer that receives the transformed data.
-     * @param[in] dst_quant_info           A ::hailo_quant_info_t object containing quantization information.
+     * @param[in] dst_quant_infos          A vector of ::hailo_quant_info_t object containing quantization information per feature.
+     *                                     Might also contain a vector with a single ::hailo_quant_info_t object.
      * @return Upon success, returns Expected of a pointer to InputTransformContext.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     static Expected<std::unique_ptr<InputTransformContext>> create(const hailo_3d_image_shape_t &src_image_shape,
         const hailo_format_t &src_format, const hailo_3d_image_shape_t &dst_image_shape,
-        const hailo_format_t &dst_format, const hailo_quant_info_t &dst_quant_info);
+        const hailo_format_t &dst_format, const std::vector<hailo_quant_info_t> &dst_quant_infos);
+
+    /**
+     * Creates input transform_context.
+     * 
+     * @param[in] src_image_shape          The shape of the src buffer to be transformed.
+     * @param[in] src_format               The format of the src buffer to be transformed.
+     * @param[in] dst_image_shape          The shape of the dst buffer that receives the transformed data.
+     * @param[in] dst_format               The format of the dst buffer that receives the transformed data.
+     * @param[in] dst_quant_info           A ::hailo_quant_info_t object containing quantization information.
+     * @return Upon success, returns Expected of a pointer to InputTransformContext.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note This function is deprecated
+     */
+    static Expected<std::unique_ptr<InputTransformContext>> create(const hailo_3d_image_shape_t &src_image_shape,
+        const hailo_format_t &src_format, const hailo_3d_image_shape_t &dst_image_shape,
+        const hailo_format_t &dst_format, const hailo_quant_info_t &dst_quant_info)
+        DEPRECATED("The use of a single hailo_quant_info_t in this function is deprecated. Please pass a vector of hailo_quant_info_t instead.");
 
     /**
      * Creates input transform_context.
@@ -59,15 +77,27 @@ public:
      * Creates input transform_context.
      * 
      * @param[in] stream_info    Creates transform_context that fits this stream info.
-     * @param[in] quantized      Whether the data fed into the transform_context is already quantized. True means
-     *                           the data is already quantized. False means it's transform_context responsibility to
-     *                           quantize (scale) the data.
+     * @param[in] quantized      Deprecated parameter that will be ignored. Determine weather to quantize (scale)
+     *                           the data will be decided by the src-data and dst-data types.
      * @param[in] format_type    The type of the buffer sent to the transform_context.
      * @return Upon success, returns Expected of a pointer to InputTransformContext.
      *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note The argument @a quantized is deprecated and its usage is ignored. Determine weather to quantize (scale) the data will be decided by
+     *       the src-data and dst-data types.
      */
     static Expected<std::unique_ptr<InputTransformContext>> create(const hailo_stream_info_t &stream_info, bool quantized,
         hailo_format_type_t format_type);
+
+    /**
+     * Creates input transform_context by output stream
+     * 
+     * @param[in] input_stream  Creates transform_context that fits this input stream.
+     * @param[in] transform_params  A ::hailo_transform_params_t object containing user transformation parameters.
+     * @return Upon success, returns Expected of a pointer to InputTransformContext.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    static Expected<std::unique_ptr<InputTransformContext>> create(InputStream &input_stream,
+    const hailo_transform_params_t &transform_params);
 
     /**
      * Transforms an input frame referred by @a src directly to the buffer referred by @a dst.
@@ -95,13 +125,30 @@ public:
      * @param[in] src_format               The format of the src buffer (host format).
      * @param[in] dst_image_shape          The shape of the dst buffer (hw shape).
      * @param[in] dst_format               The format of the dst buffer (hw format).
+     * @param[in] quant_infos              A vector of ::hailo_quant_info_t object containing quantization information per feature.
+     * @return Returns Expected of boolean, whether or not a transformation is needed.
+     * @note In case the function returns false, the src frame is ready to be sent to HW without any transformation.
+     */
+    static Expected<bool> is_transformation_required(const hailo_3d_image_shape_t &src_image_shape, const hailo_format_t &src_format,
+        const hailo_3d_image_shape_t &dst_image_shape, const hailo_format_t &dst_format,
+        const std::vector<hailo_quant_info_t> &quant_infos);
+
+    /**
+     * Check whether or not a transformation is needed. 
+     *
+     * @param[in] src_image_shape          The shape of the src buffer (host shape).
+     * @param[in] src_format               The format of the src buffer (host format).
+     * @param[in] dst_image_shape          The shape of the dst buffer (hw shape).
+     * @param[in] dst_format               The format of the dst buffer (hw format).
      * @param[in] quant_info               A ::hailo_quant_info_t object containing quantization information.
      * @return Returns whether or not a transformation is needed.
      * @note In case the function returns false, the src frame is ready to be sent to HW without any transformation.
+     * @note This function is deprecated.
      */
     static bool is_transformation_required(const hailo_3d_image_shape_t &src_image_shape, const hailo_format_t &src_format,
         const hailo_3d_image_shape_t &dst_image_shape, const hailo_format_t &dst_format,
-        const hailo_quant_info_t &quant_info);
+        const hailo_quant_info_t &quant_info)
+        DEPRECATED("The use of a single hailo_quant_info_t in this function is deprecated. Please pass a vector of hailo_quant_info_t instead.");
 
     /**
      * @return A human-readable description of the transformation parameters.
@@ -111,7 +158,7 @@ public:
 private:
     InputTransformContext(size_t src_frame_size, const hailo_3d_image_shape_t &src_image_shape,
         const hailo_format_t &src_format, size_t dst_frame_size, const hailo_3d_image_shape_t &dst_image_shape,
-        const hailo_format_t &dst_format, const hailo_quant_info_t &dst_quant_info, Buffer &&quant_buffer,
+        const hailo_format_t &dst_format, const std::vector<hailo_quant_info_t> &dst_quant_infos, Buffer &&quant_buffer,
         Buffer &&transpose_buffer, const bool should_quantize, const bool should_transpose, const bool should_reorder);
 
     inline MemoryView quant_buffer() {
@@ -133,7 +180,7 @@ private:
     const size_t m_dst_frame_size;
     const hailo_3d_image_shape_t m_dst_image_shape;
     const hailo_format_t m_dst_format;
-    const hailo_quant_info_t m_dst_quant_info;
+    const std::vector<hailo_quant_info_t> m_dst_quant_infos;
     const bool m_should_quantize;
     const bool m_should_transpose;
     const bool m_should_reorder;
@@ -159,17 +206,37 @@ public:
      * @param[in] src_format               The format of the src buffer to be transformed.
      * @param[in] dst_image_shape          The shape of the dst buffer that receives the transformed data.
      * @param[in] dst_format               The format of the dst buffer that receives the transformed data.
-     * @param[in] dst_quant_info           A ::hailo_quant_info_t object containing quantization information.
+     * @param[in] dst_quant_infos          A vector of ::hailo_quant_info_t object containing quantization information per feature.
+     *                                     Might also contain a vector with a single ::hailo_quant_info_t object.
      * @param[in] nms_info                 A ::hailo_nms_info_t object containing nms information.
      * @return Upon success, returns Expected of a pointer to OutputTransformContext.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     static Expected<std::unique_ptr<OutputTransformContext>> create(const hailo_3d_image_shape_t &src_image_shape,
         const hailo_format_t &src_format, const hailo_3d_image_shape_t &dst_image_shape,
-        const hailo_format_t &dst_format, const hailo_quant_info_t &dst_quant_info, const hailo_nms_info_t &nms_info);
+        const hailo_format_t &dst_format, const std::vector<hailo_quant_info_t> &dst_quant_infos, const hailo_nms_info_t &nms_info);
 
     /**
      * Creates output transform_context.
+     * 
+     * @param[in] src_image_shape          The shape of the src buffer to be transformed.
+     * @param[in] src_format               The format of the src buffer to be transformed.
+     * @param[in] dst_image_shape          The shape of the dst buffer that receives the transformed data.
+     * @param[in] dst_format               The format of the dst buffer that receives the transformed data.
+     * @param[in] dst_quant_info           A ::hailo_quant_info_t object containing quantization information.
+     * @param[in] nms_info                 A ::hailo_nms_info_t object containing nms information.
+     * @return Upon success, returns Expected of a pointer to OutputTransformContext.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note This function is deprecated.
+     */
+    static Expected<std::unique_ptr<OutputTransformContext>> create(const hailo_3d_image_shape_t &src_image_shape,
+        const hailo_format_t &src_format, const hailo_3d_image_shape_t &dst_image_shape,
+        const hailo_format_t &dst_format, const hailo_quant_info_t &dst_quant_info, const hailo_nms_info_t &nms_info)
+        DEPRECATED("The use of a single hailo_quant_info_t in this function is deprecated. Please pass a vector of hailo_quant_info_t instead.");
+
+    /**
+     * Creates output transform_context.
+     * 
      * @param[in] stream_info       Creates transform_context that fits this stream info.
      * @param[in] transform_params  A ::hailo_transform_params_t object containing user transformation parameters.
      * @return Upon success, returns Expected of a pointer to OutputTransformContext.
@@ -182,15 +249,27 @@ public:
      * Creates output transform_context with default transform parameters
      * 
      * @param[in] stream_info    Creates transform_context that fits this stream info.
-     * @param[in] quantized      Whether the data returned from the transform_context should be quantized. True
-     *                           means that the data returned to the user is still quantized. False means it's the
-     *                           transform_context responsibility to de-quantize (rescale) the data.
+     * @param[in] quantized      Deprecated parameter that will be ignored. Determine weather to de-quantize (rescale)
+     *                           the data will be decided by the src-data and dst-data types.
      * @param[in] format_type    The type of the buffer returned from the transform_context
      * @return Upon success, returns Expected of a pointer to OutputTransformContext.
      *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note The argument @a quantized is deprecated and its usage is ignored. Determine weather to de-quantize (rescale) the data will be decided by
+     *       the src-data and dst-data types.
      */
     static Expected<std::unique_ptr<OutputTransformContext>> create(const hailo_stream_info_t &stream_info, bool quantized,
         hailo_format_type_t format_type);
+
+    /**
+     * Creates output transform_context by output stream
+     * 
+     * @param[in] output_stream  Creates transform_context that fits this output stream.
+     * @param[in] transform_params  A ::hailo_transform_params_t object containing user transformation parameters.
+     * @return Upon success, returns Expected of a pointer to OutputTransformContext.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    static Expected<std::unique_ptr<OutputTransformContext>> create(OutputStream &output_stream,
+    const hailo_transform_params_t &transform_params);
 
     /**
      * Transforms an output frame referred by @a src directly to the buffer referred by @a dst.
@@ -218,13 +297,30 @@ public:
      * @param[in] src_format               The format of the src buffer (hw format).
      * @param[in] dst_image_shape          The shape of the dst buffer (host shape).
      * @param[in] dst_format               The format of the dst buffer (host format).
+     * @param[in] quant_infos              A vector of ::hailo_quant_info_t object containing quantization information per feature.
+     * @return Returns Expected of boolean, whether or not a transformation is needed.
+     * @note In case the function returns false, the src frame is already in the required format without any transformation.
+     */
+    static Expected<bool> is_transformation_required(const hailo_3d_image_shape_t &src_image_shape, const hailo_format_t &src_format,
+        const hailo_3d_image_shape_t &dst_image_shape, const hailo_format_t &dst_format, 
+        const std::vector<hailo_quant_info_t> &quant_infos);
+
+    /**
+     * Check whether or not a transformation is needed.
+     * 
+     * @param[in] src_image_shape          The shape of the src buffer (hw shape).
+     * @param[in] src_format               The format of the src buffer (hw format).
+     * @param[in] dst_image_shape          The shape of the dst buffer (host shape).
+     * @param[in] dst_format               The format of the dst buffer (host format).
      * @param[in] quant_info               A ::hailo_quant_info_t object containing quantization information.
      * @return Returns whether or not a transformation is needed.
      * @note In case the function returns false, the src frame is already in the required format without any transformation.
+     * @note This function is deprecated.
      */
     static bool is_transformation_required(const hailo_3d_image_shape_t &src_image_shape, const hailo_format_t &src_format,
         const hailo_3d_image_shape_t &dst_image_shape, const hailo_format_t &dst_format, 
-        const hailo_quant_info_t &quant_info);
+        const hailo_quant_info_t &quant_info)
+        DEPRECATED("The use of a single hailo_quant_info_t in this function is deprecated. Please pass a vector of hailo_quant_info_t instead.");
 
     /**
      * @return A human-readable description of the transformation parameters.
@@ -233,14 +329,14 @@ public:
 
 protected:
     OutputTransformContext(size_t src_frame_size, const hailo_format_t &src_format, size_t dst_frame_size,
-        const hailo_format_t &dst_format, const hailo_quant_info_t &dst_quant_info, const bool should_quantize,
+        const hailo_format_t &dst_format, const std::vector<hailo_quant_info_t> &dst_quant_infos, const bool should_quantize,
         const bool should_transpose, const bool should_reorder);
 
     const size_t m_src_frame_size;
     const hailo_format_t m_src_format;
     const size_t m_dst_frame_size;
     const hailo_format_t m_dst_format;
-    const hailo_quant_info_t m_dst_quant_info;
+    const std::vector<hailo_quant_info_t> m_dst_quant_infos;
     const bool m_should_quantize;
     const bool m_should_transpose;
     const bool m_should_reorder;

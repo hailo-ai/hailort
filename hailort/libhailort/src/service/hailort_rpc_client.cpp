@@ -66,22 +66,11 @@ Expected<uint32_t> HailoRtRpcClient::VDevice_create(const hailo_vdevice_params_t
     return reply.handle();
 }
 
-Expected<uint32_t> HailoRtRpcClient::VDevice_dup_handle(uint32_t pid, uint32_t handle)
-{
-    dup_handle_Request request;
-    request.set_pid(pid);
-    request.set_handle(handle);
-    dup_handle_Reply reply;
-    ClientContextWithTimeout context;
-    grpc::Status status = m_stub->VDevice_dup_handle(&context, request, &reply);
-    CHECK_GRPC_STATUS_AS_EXPECTED(status);
-    return reply.handle();
-}
-
-hailo_status HailoRtRpcClient::VDevice_release(uint32_t handle, uint32_t pid)
+hailo_status HailoRtRpcClient::VDevice_release(const VDeviceIdentifier &identifier, uint32_t pid)
 {
     Release_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_vdevice_identifier();
+    VDevice_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_pid(pid);
 
     Release_Reply reply;
@@ -93,11 +82,12 @@ hailo_status HailoRtRpcClient::VDevice_release(uint32_t handle, uint32_t pid)
     return HAILO_SUCCESS;
 }
 
-Expected<std::vector<uint32_t>> HailoRtRpcClient::InputVStreams_create(uint32_t net_group_handle,
+Expected<std::vector<uint32_t>> HailoRtRpcClient::InputVStreams_create(const NetworkGroupIdentifier &identifier,
     const std::map<std::string, hailo_vstream_params_t> &inputs_params, uint32_t pid)
 {
     VStream_create_Request request;
-    request.set_net_group(net_group_handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_pid(pid);
     auto proto_vstreams_params = request.mutable_vstreams_params();
     for (const auto &name_params_pair : inputs_params) {
@@ -136,11 +126,12 @@ Expected<std::vector<uint32_t>> HailoRtRpcClient::InputVStreams_create(uint32_t 
     return input_vstreams_handles;
 }
 
-hailo_status HailoRtRpcClient::InputVStream_release(uint32_t handle, uint32_t pid)
+hailo_status HailoRtRpcClient::InputVStream_release(const VStreamIdentifier &identifier, uint32_t pid)
 {
     Release_Request request;
-    request.set_handle(handle);
     request.set_pid(pid);
+    auto proto_identifier = request.mutable_vstream_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
 
     Release_Reply reply;
     ClientContextWithTimeout context;
@@ -151,11 +142,12 @@ hailo_status HailoRtRpcClient::InputVStream_release(uint32_t handle, uint32_t pi
     return HAILO_SUCCESS;
 }
 
-Expected<std::vector<uint32_t>> HailoRtRpcClient::OutputVStreams_create(uint32_t net_group_handle,
+Expected<std::vector<uint32_t>> HailoRtRpcClient::OutputVStreams_create(const NetworkGroupIdentifier &identifier,
         const std::map<std::string, hailo_vstream_params_t> &output_params, uint32_t pid)
 {
     VStream_create_Request request;
-    request.set_net_group(net_group_handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_pid(pid);
     auto proto_vstreams_params = request.mutable_vstreams_params();
     for (const auto &name_params_pair : output_params) {
@@ -194,11 +186,12 @@ Expected<std::vector<uint32_t>> HailoRtRpcClient::OutputVStreams_create(uint32_t
     return output_vstreams_handles;
 }
 
-hailo_status HailoRtRpcClient::OutputVStream_release(uint32_t handle, uint32_t pid)
+hailo_status HailoRtRpcClient::OutputVStream_release(const VStreamIdentifier &identifier, uint32_t pid)
 {
     Release_Request request;
-    request.set_handle(handle);
     request.set_pid(pid);
+    auto proto_identifier = request.mutable_vstream_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
 
     Release_Reply reply;
     ClientContextWithTimeout context;
@@ -209,35 +202,12 @@ hailo_status HailoRtRpcClient::OutputVStream_release(uint32_t handle, uint32_t p
     return HAILO_SUCCESS;
 }
 
-Expected<uint32_t> HailoRtRpcClient::InputVStream_dup_handle(uint32_t pid, uint32_t handle)
-{
-    dup_handle_Request request;
-    request.set_pid(pid);
-    request.set_handle(handle);
-    dup_handle_Reply reply;
-    ClientContextWithTimeout context;
-    grpc::Status status = m_stub->InputVStream_dup_handle(&context, request, &reply);
-    CHECK_GRPC_STATUS_AS_EXPECTED(status);
-    return reply.handle();
-}
-
-Expected<uint32_t> HailoRtRpcClient::OutputVStream_dup_handle(uint32_t pid, uint32_t handle)
-{
-    dup_handle_Request request;
-    request.set_pid(pid);
-    request.set_handle(handle);
-    dup_handle_Reply reply;
-    ClientContextWithTimeout context;
-    grpc::Status status = m_stub->OutputVStream_dup_handle(&context, request, &reply);
-    CHECK_GRPC_STATUS_AS_EXPECTED(status);
-    return reply.handle();
-}
-
-Expected<std::vector<uint32_t>> HailoRtRpcClient::VDevice_configure(uint32_t vdevice_handle, const Hef &hef,
+Expected<std::vector<uint32_t>> HailoRtRpcClient::VDevice_configure(const VDeviceIdentifier &identifier, const Hef &hef,
     uint32_t pid, const NetworkGroupsParamsMap &configure_params)
 {
     VDevice_configure_Request request;
-    request.set_handle(vdevice_handle);
+    auto proto_identifier = request.mutable_identifier();
+    VDevice_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_pid(pid);
     auto hef_memview = hef.pimpl->get_hef_memview();
     request.set_hef(hef_memview.data(), hef_memview.size());
@@ -287,10 +257,11 @@ Expected<std::vector<uint32_t>> HailoRtRpcClient::VDevice_configure(uint32_t vde
     return networks_handles;
 }
 
-Expected<std::vector<std::string>> HailoRtRpcClient::VDevice_get_physical_devices_ids(uint32_t handle)
+Expected<std::vector<std::string>> HailoRtRpcClient::VDevice_get_physical_devices_ids(const VDeviceIdentifier &identifier)
 {
     VDevice_get_physical_devices_ids_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VDevice_convert_identifier_to_proto(identifier, proto_identifier);
 
     VDevice_get_physical_devices_ids_Reply reply;
     ClientContextWithTimeout context;
@@ -305,11 +276,11 @@ Expected<std::vector<std::string>> HailoRtRpcClient::VDevice_get_physical_device
     return result;
 }
 
-Expected<std::vector<std::unique_ptr<Device>>> HailoRtRpcClient::VDevice_get_physical_devices(uint32_t handle)
+Expected<std::vector<std::unique_ptr<Device>>> HailoRtRpcClient::VDevice_get_physical_devices(const VDeviceIdentifier &identifier)
 {
     std::vector<std::unique_ptr<Device>> devices;
 
-    auto device_ids = VDevice_get_physical_devices_ids(handle);
+    auto device_ids = VDevice_get_physical_devices_ids(identifier);
     CHECK_EXPECTED(device_ids);
     devices.reserve(device_ids->size());
 
@@ -318,14 +289,14 @@ Expected<std::vector<std::unique_ptr<Device>>> HailoRtRpcClient::VDevice_get_phy
         CHECK_EXPECTED(device);
         devices.push_back(std::move(device.release())) ;
     }
-
     return devices;
 }
 
-Expected<hailo_stream_interface_t> HailoRtRpcClient::VDevice_get_default_streams_interface(uint32_t handle)
+Expected<hailo_stream_interface_t> HailoRtRpcClient::VDevice_get_default_streams_interface(const VDeviceIdentifier &identifier)
 {
     VDevice_get_default_streams_interface_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VDevice_convert_identifier_to_proto(identifier, proto_identifier);
 
     VDevice_get_default_streams_interface_Reply reply;
     ClientContextWithTimeout context;
@@ -338,22 +309,25 @@ Expected<hailo_stream_interface_t> HailoRtRpcClient::VDevice_get_default_streams
     return static_cast<hailo_stream_interface_t>(reply.stream_interface());
 }
 
-Expected<uint32_t> HailoRtRpcClient::ConfiguredNetworkGroup_dup_handle(uint32_t pid, uint32_t handle)
+Expected<uint32_t> HailoRtRpcClient::ConfiguredNetworkGroup_dup_handle(const NetworkGroupIdentifier &identifier, uint32_t pid)
 {
-    dup_handle_Request request;
+    ConfiguredNetworkGroup_dup_handle_Request request;
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_pid(pid);
-    request.set_handle(handle);
-    dup_handle_Reply reply;
+
+    ConfiguredNetworkGroup_dup_handle_Reply reply;
     ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_dup_handle(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     return reply.handle();
 }
 
-hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_release(uint32_t handle, uint32_t pid)
+hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_release(const NetworkGroupIdentifier &identifier, uint32_t pid)
 {
     Release_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_network_group_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_pid(pid);
 
     Release_Reply reply;
@@ -390,11 +364,12 @@ std::map<std::string, hailo_vstream_params_t> get_group(const ProtoNamedVStreamP
 }
 
 Expected<std::map<std::string, hailo_vstream_params_t>> HailoRtRpcClient::ConfiguredNetworkGroup_make_input_vstream_params(
-    uint32_t handle, bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
+    const NetworkGroupIdentifier &identifier, bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
     const std::string &network_name)
 {
     ConfiguredNetworkGroup_make_input_vstream_params_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_quantized(quantized);
     request.set_format_type(format_type);
     request.set_timeout_ms(timeout_ms);
@@ -411,10 +386,11 @@ Expected<std::map<std::string, hailo_vstream_params_t>> HailoRtRpcClient::Config
 }
 
 Expected<std::vector<std::map<std::string, hailo_vstream_params_t>>> HailoRtRpcClient::ConfiguredNetworkGroup_make_output_vstream_params_groups(
-    uint32_t handle, bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size)
+    const NetworkGroupIdentifier &identifier, bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size)
 {
     ConfiguredNetworkGroup_make_output_vstream_params_groups_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_quantized(quantized);
     request.set_format_type(format_type);
     request.set_timeout_ms(timeout_ms);
@@ -435,11 +411,12 @@ Expected<std::vector<std::map<std::string, hailo_vstream_params_t>>> HailoRtRpcC
 }
 
 Expected<std::map<std::string, hailo_vstream_params_t>> HailoRtRpcClient::ConfiguredNetworkGroup_make_output_vstream_params(
-    uint32_t handle, bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
+    const NetworkGroupIdentifier &identifier, bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
     const std::string &network_name)
 {
     ConfiguredNetworkGroup_make_output_vstream_params_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_quantized(quantized);
     request.set_format_type(format_type);
     request.set_timeout_ms(timeout_ms);
@@ -474,15 +451,16 @@ Expected<std::map<std::string, hailo_vstream_params_t>> HailoRtRpcClient::Config
     return result;
 }
 
-Expected<std::string> HailoRtRpcClient::ConfiguredNetworkGroup_get_network_group_name(uint32_t handle)
+Expected<std::string> HailoRtRpcClient::ConfiguredNetworkGroup_get_network_group_name(const NetworkGroupIdentifier &identifier)
 {
-    return ConfiguredNetworkGroup_name(handle);
+    return ConfiguredNetworkGroup_name(identifier);
 }
 
-Expected<std::string> HailoRtRpcClient::ConfiguredNetworkGroup_name(uint32_t handle)
+Expected<std::string> HailoRtRpcClient::ConfiguredNetworkGroup_name(const NetworkGroupIdentifier &identifier)
 {
     ConfiguredNetworkGroup_name_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
 
     ConfiguredNetworkGroup_name_Reply reply;
     ClientContextWithTimeout context;
@@ -494,10 +472,11 @@ Expected<std::string> HailoRtRpcClient::ConfiguredNetworkGroup_name(uint32_t han
     return network_group_name;
 }
 
-Expected<std::vector<hailo_network_info_t>> HailoRtRpcClient::ConfiguredNetworkGroup_get_network_infos(uint32_t handle)
+Expected<std::vector<hailo_network_info_t>> HailoRtRpcClient::ConfiguredNetworkGroup_get_network_infos(const NetworkGroupIdentifier &identifier)
 {
     ConfiguredNetworkGroup_get_network_infos_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
 
     ConfiguredNetworkGroup_get_network_infos_Reply reply;
     ClientContextWithTimeout context;
@@ -516,11 +495,12 @@ Expected<std::vector<hailo_network_info_t>> HailoRtRpcClient::ConfiguredNetworkG
     return network_infos;
 }
 
-Expected<std::vector<hailo_stream_info_t>> HailoRtRpcClient::ConfiguredNetworkGroup_get_all_stream_infos(uint32_t handle,
+Expected<std::vector<hailo_stream_info_t>> HailoRtRpcClient::ConfiguredNetworkGroup_get_all_stream_infos(const NetworkGroupIdentifier &identifier,
     const std::string &network_name)
 {
     ConfiguredNetworkGroup_get_all_stream_infos_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_network_name(network_name);
 
     ConfiguredNetworkGroup_get_all_stream_infos_Reply reply;
@@ -588,10 +568,11 @@ Expected<std::vector<hailo_stream_info_t>> HailoRtRpcClient::ConfiguredNetworkGr
     return result;
 }
 
-Expected<hailo_stream_interface_t> HailoRtRpcClient::ConfiguredNetworkGroup_get_default_stream_interface(uint32_t handle)
+Expected<hailo_stream_interface_t> HailoRtRpcClient::ConfiguredNetworkGroup_get_default_stream_interface(const NetworkGroupIdentifier &identifier)
 {
     ConfiguredNetworkGroup_get_default_stream_interface_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
 
     ConfiguredNetworkGroup_get_default_stream_interface_Reply reply;
     ClientContextWithTimeout context;
@@ -603,10 +584,11 @@ Expected<hailo_stream_interface_t> HailoRtRpcClient::ConfiguredNetworkGroup_get_
     return stream_interface;
 }
 
-Expected<std::vector<std::vector<std::string>>> HailoRtRpcClient::ConfiguredNetworkGroup_get_output_vstream_groups(uint32_t handle)
+Expected<std::vector<std::vector<std::string>>> HailoRtRpcClient::ConfiguredNetworkGroup_get_output_vstream_groups(const NetworkGroupIdentifier &identifier)
 {
     ConfiguredNetworkGroup_get_output_vstream_groups_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
 
     ConfiguredNetworkGroup_get_output_vstream_groups_Reply reply;
     ClientContextWithTimeout context;
@@ -643,7 +625,8 @@ hailo_vstream_info_t deserialize_vstream_info(const ProtoVStreamInfo &info_proto
     if (format.order == HAILO_FORMAT_ORDER_HAILO_NMS) {
         hailo_nms_shape_t nms_shape = {
             info_proto.nms_shape().number_of_classes(),
-            info_proto.nms_shape().max_bbox_per_class()
+            info_proto.nms_shape().max_bbox_per_class(),
+            info_proto.nms_shape().max_mask_size()
         };
         info.nms_shape = nms_shape;
     } else {
@@ -675,11 +658,12 @@ Expected<std::vector<hailo_vstream_info_t>> deserialize_vstream_infos(const Conf
     return result;
 } 
 
-Expected<std::vector<hailo_vstream_info_t>> HailoRtRpcClient::ConfiguredNetworkGroup_get_input_vstream_infos(uint32_t handle,
+Expected<std::vector<hailo_vstream_info_t>> HailoRtRpcClient::ConfiguredNetworkGroup_get_input_vstream_infos(const NetworkGroupIdentifier &identifier,
     std::string network_name)
 {
     ConfiguredNetworkGroup_get_vstream_infos_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_network_name(network_name);
 
     ConfiguredNetworkGroup_get_vstream_infos_Reply reply;
@@ -691,11 +675,12 @@ Expected<std::vector<hailo_vstream_info_t>> HailoRtRpcClient::ConfiguredNetworkG
     return deserialize_vstream_infos(reply);
 }
 
-Expected<std::vector<hailo_vstream_info_t>> HailoRtRpcClient::ConfiguredNetworkGroup_get_output_vstream_infos(uint32_t handle,
+Expected<std::vector<hailo_vstream_info_t>> HailoRtRpcClient::ConfiguredNetworkGroup_get_output_vstream_infos(const NetworkGroupIdentifier &identifier,
     std::string network_name)
 {
     ConfiguredNetworkGroup_get_vstream_infos_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_network_name(network_name);
 
     ConfiguredNetworkGroup_get_vstream_infos_Reply reply;
@@ -707,11 +692,12 @@ Expected<std::vector<hailo_vstream_info_t>> HailoRtRpcClient::ConfiguredNetworkG
     return deserialize_vstream_infos(reply);
 }
 
-Expected<std::vector<hailo_vstream_info_t>> HailoRtRpcClient::ConfiguredNetworkGroup_get_all_vstream_infos(uint32_t handle,
+Expected<std::vector<hailo_vstream_info_t>> HailoRtRpcClient::ConfiguredNetworkGroup_get_all_vstream_infos(const NetworkGroupIdentifier &identifier,
     std::string network_name)
 {
     ConfiguredNetworkGroup_get_vstream_infos_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_network_name(network_name);
 
     ConfiguredNetworkGroup_get_vstream_infos_Reply reply;
@@ -723,11 +709,12 @@ Expected<std::vector<hailo_vstream_info_t>> HailoRtRpcClient::ConfiguredNetworkG
     return deserialize_vstream_infos(reply);
 }
 
-Expected<bool> HailoRtRpcClient::ConfiguredNetworkGroup_is_scheduled(uint32_t handle)
+Expected<bool> HailoRtRpcClient::ConfiguredNetworkGroup_is_scheduled(const NetworkGroupIdentifier &identifier)
 {
     ConfiguredNetworkGroup_is_scheduled_Request request;
     ConfiguredNetworkGroup_is_scheduled_Reply reply;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_is_scheduled(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
@@ -736,11 +723,12 @@ Expected<bool> HailoRtRpcClient::ConfiguredNetworkGroup_is_scheduled(uint32_t ha
     return reply.is_scheduled();
 }
 
-hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_scheduler_timeout(uint32_t handle,
+hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_scheduler_timeout(const NetworkGroupIdentifier &identifier,
     const std::chrono::milliseconds &timeout, const std::string &network_name)
 {
     ConfiguredNetworkGroup_set_scheduler_timeout_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_timeout_ms(static_cast<uint32_t>(timeout.count()));
     request.set_network_name(network_name);
 
@@ -752,11 +740,12 @@ hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_scheduler_timeout(uint
     return static_cast<hailo_status>(reply.status());
 }
 
-hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_scheduler_threshold(uint32_t handle, uint32_t threshold,
+hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_scheduler_threshold(const NetworkGroupIdentifier &identifier, uint32_t threshold,
     const std::string &network_name)
 {
     ConfiguredNetworkGroup_set_scheduler_threshold_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_threshold(threshold);
     request.set_network_name(network_name);
 
@@ -768,11 +757,12 @@ hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_scheduler_threshold(ui
     return static_cast<hailo_status>(reply.status());
 }
 
-hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_scheduler_priority(uint32_t handle, uint8_t priority,
+hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_scheduler_priority(const NetworkGroupIdentifier &identifier, uint8_t priority,
     const std::string &network_name)
 {
     ConfiguredNetworkGroup_set_scheduler_priority_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_priority(priority);
     request.set_network_name(network_name);
 
@@ -784,12 +774,13 @@ hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_scheduler_priority(uin
     return static_cast<hailo_status>(reply.status());
 }
 
-Expected<LatencyMeasurementResult> HailoRtRpcClient::ConfiguredNetworkGroup_get_latency_measurement(uint32_t handle,
+Expected<LatencyMeasurementResult> HailoRtRpcClient::ConfiguredNetworkGroup_get_latency_measurement(const NetworkGroupIdentifier &identifier,
     const std::string &network_name)
 {
     ConfiguredNetworkGroup_get_latency_measurement_Request request;
     ConfiguredNetworkGroup_get_latency_measurement_Reply reply;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_network_name(network_name);
     ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_get_latency_measurement(&context, request, &reply);
@@ -805,11 +796,12 @@ Expected<LatencyMeasurementResult> HailoRtRpcClient::ConfiguredNetworkGroup_get_
     return result;
 }
 
-Expected<bool> HailoRtRpcClient::ConfiguredNetworkGroup_is_multi_context(uint32_t handle)
+Expected<bool> HailoRtRpcClient::ConfiguredNetworkGroup_is_multi_context(const NetworkGroupIdentifier &identifier)
 {
     ConfiguredNetworkGroup_is_multi_context_Request request;
     ConfiguredNetworkGroup_is_multi_context_Reply reply;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_is_multi_context(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
@@ -818,11 +810,12 @@ Expected<bool> HailoRtRpcClient::ConfiguredNetworkGroup_is_multi_context(uint32_
     return reply.is_multi_context();
 }
 
-Expected<ConfigureNetworkParams> HailoRtRpcClient::ConfiguredNetworkGroup_get_config_params(uint32_t handle)
+Expected<ConfigureNetworkParams> HailoRtRpcClient::ConfiguredNetworkGroup_get_config_params(const NetworkGroupIdentifier &identifier)
 {
     ConfiguredNetworkGroup_get_config_params_Request request;
     ConfiguredNetworkGroup_get_config_params_Reply reply;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_get_config_params(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
@@ -858,11 +851,12 @@ Expected<ConfigureNetworkParams> HailoRtRpcClient::ConfiguredNetworkGroup_get_co
     return network_configure_params;
 }
 
-Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_sorted_output_names(uint32_t handle)
+Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_sorted_output_names(const NetworkGroupIdentifier &identifier)
 {
     ConfiguredNetworkGroup_get_sorted_output_names_Request request;
     ConfiguredNetworkGroup_get_sorted_output_names_Reply reply;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_get_sorted_output_names(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
@@ -875,11 +869,13 @@ Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_
     return result;
 }
 
-Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_stream_names_from_vstream_name(uint32_t handle, const std::string &vstream_name)
+Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_stream_names_from_vstream_name(const NetworkGroupIdentifier &identifier,
+    const std::string &vstream_name)
 {
     ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Request request;
     ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Reply reply;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_vstream_name(vstream_name);
     ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_get_stream_names_from_vstream_name(&context, request, &reply);
@@ -893,11 +889,12 @@ Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_
     return result;
 }
 
-Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_vstream_names_from_stream_name(uint32_t handle, const std::string &stream_name)
+Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_vstream_names_from_stream_name(const NetworkGroupIdentifier &identifier, const std::string &stream_name)
 {
     ConfiguredNetworkGroup_get_vstream_names_from_stream_name_Request request;
     ConfiguredNetworkGroup_get_vstream_names_from_stream_name_Reply reply;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_stream_name(stream_name);
     ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_get_vstream_names_from_stream_name(&context, request, &reply);
@@ -911,11 +908,52 @@ Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_
     return result;
 }
 
-hailo_status HailoRtRpcClient::InputVStream_write(uint32_t handle, const MemoryView &buffer)
+Expected<bool> HailoRtRpcClient::InputVStream_is_multi_planar(const VStreamIdentifier &identifier)
+{
+    InputVStream_is_multi_planar_Request request;
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
+    ClientContextWithTimeout context;
+    InputVStream_is_multi_planar_Reply reply;
+    grpc::Status status = m_stub->InputVStream_is_multi_planar(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    auto is_multi_planar = reply.is_multi_planar();
+    return is_multi_planar;
+}
+
+hailo_status HailoRtRpcClient::InputVStream_write(const VStreamIdentifier &identifier, const hailo_pix_buffer_t &buffer)
+{
+    InputVStream_write_pix_Request request;
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+    request.set_index(buffer.index);
+    request.set_number_of_planes(buffer.number_of_planes);
+    for (uint32_t i = 0; i < buffer.number_of_planes; i++) {
+        request.add_planes_data(buffer.planes[i].user_ptr, buffer.planes[i].bytes_used);
+    }
+
+    ClientContextWithTimeout context;
+    InputVStream_write_pix_Reply reply;
+    grpc::Status status = m_stub->InputVStream_write_pix(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    if (reply.status() == HAILO_STREAM_ABORTED_BY_USER) {
+        return static_cast<hailo_status>(reply.status());
+    }
+    CHECK_SUCCESS(static_cast<hailo_status>(reply.status()));
+    return HAILO_SUCCESS;
+}
+
+hailo_status HailoRtRpcClient::InputVStream_write(const VStreamIdentifier &identifier, const MemoryView &buffer)
 {
     InputVStream_write_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_data(buffer.data(), buffer.size());
+
     ClientContextWithTimeout context;
     InputVStream_write_Reply reply;
     grpc::Status status = m_stub->InputVStream_write(&context, request, &reply);
@@ -928,11 +966,13 @@ hailo_status HailoRtRpcClient::InputVStream_write(uint32_t handle, const MemoryV
     return HAILO_SUCCESS;
 }
 
-hailo_status HailoRtRpcClient::OutputVStream_read(uint32_t handle, MemoryView buffer)
+hailo_status HailoRtRpcClient::OutputVStream_read(const VStreamIdentifier &identifier, MemoryView buffer)
 {
     OutputVStream_read_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_size(static_cast<uint32_t>(buffer.size()));
+
     ClientContextWithTimeout context;
     OutputVStream_read_Reply reply;
     grpc::Status status = m_stub->OutputVStream_read(&context, request, &reply);
@@ -946,10 +986,12 @@ hailo_status HailoRtRpcClient::OutputVStream_read(uint32_t handle, MemoryView bu
     return HAILO_SUCCESS;
 }
 
-Expected<size_t> HailoRtRpcClient::InputVStream_get_frame_size(uint32_t handle)
+Expected<size_t> HailoRtRpcClient::InputVStream_get_frame_size(const VStreamIdentifier &identifier)
 {
     VStream_get_frame_size_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_get_frame_size_Reply reply;
     grpc::Status status = m_stub->InputVStream_get_frame_size(&context, request, &reply);
@@ -959,10 +1001,12 @@ Expected<size_t> HailoRtRpcClient::InputVStream_get_frame_size(uint32_t handle)
     return reply.frame_size();
 }
 
-Expected<size_t> HailoRtRpcClient::OutputVStream_get_frame_size(uint32_t handle)
+Expected<size_t> HailoRtRpcClient::OutputVStream_get_frame_size(const VStreamIdentifier &identifier)
 {
     VStream_get_frame_size_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_get_frame_size_Reply reply;
     grpc::Status status = m_stub->OutputVStream_get_frame_size(&context, request, &reply);
@@ -972,10 +1016,12 @@ Expected<size_t> HailoRtRpcClient::OutputVStream_get_frame_size(uint32_t handle)
     return reply.frame_size();
 }
 
-hailo_status HailoRtRpcClient::InputVStream_flush(uint32_t handle)
+hailo_status HailoRtRpcClient::InputVStream_flush(const VStreamIdentifier &identifier)
 {
     InputVStream_flush_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     InputVStream_flush_Reply reply;
     grpc::Status status = m_stub->InputVStream_flush(&context, request, &reply);
@@ -984,10 +1030,12 @@ hailo_status HailoRtRpcClient::InputVStream_flush(uint32_t handle)
     return static_cast<hailo_status>(reply.status());
 }
 
-Expected<std::string> HailoRtRpcClient::InputVStream_name(uint32_t handle)
+Expected<std::string> HailoRtRpcClient::InputVStream_name(const VStreamIdentifier &identifier)
 {
     VStream_name_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_name_Reply reply;
     grpc::Status status = m_stub->InputVStream_name(&context, request, &reply);
@@ -998,10 +1046,12 @@ Expected<std::string> HailoRtRpcClient::InputVStream_name(uint32_t handle)
     return name;
 }
 
-Expected<std::string> HailoRtRpcClient::OutputVStream_name(uint32_t handle)
+Expected<std::string> HailoRtRpcClient::OutputVStream_name(const VStreamIdentifier &identifier)
 {
     VStream_name_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_name_Reply reply;
     grpc::Status status = m_stub->OutputVStream_name(&context, request, &reply);
@@ -1012,10 +1062,12 @@ Expected<std::string> HailoRtRpcClient::OutputVStream_name(uint32_t handle)
     return name;
 }
 
-Expected<std::string> HailoRtRpcClient::InputVStream_network_name(uint32_t handle)
+Expected<std::string> HailoRtRpcClient::InputVStream_network_name(const VStreamIdentifier &identifier)
 {
     VStream_network_name_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_network_name_Reply reply;
     grpc::Status status = m_stub->InputVStream_network_name(&context, request, &reply);
@@ -1026,10 +1078,12 @@ Expected<std::string> HailoRtRpcClient::InputVStream_network_name(uint32_t handl
     return name;
 }
 
-Expected<std::string> HailoRtRpcClient::OutputVStream_network_name(uint32_t handle)
+Expected<std::string> HailoRtRpcClient::OutputVStream_network_name(const VStreamIdentifier &identifier)
 {
     VStream_network_name_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_network_name_Reply reply;
     grpc::Status status = m_stub->OutputVStream_network_name(&context, request, &reply);
@@ -1040,10 +1094,12 @@ Expected<std::string> HailoRtRpcClient::OutputVStream_network_name(uint32_t hand
     return name;
 }
 
-hailo_status HailoRtRpcClient::InputVStream_abort(uint32_t handle)
+hailo_status HailoRtRpcClient::InputVStream_abort(const VStreamIdentifier &identifier)
 {
     VStream_abort_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_abort_Reply reply;
     grpc::Status status = m_stub->InputVStream_abort(&context, request, &reply);
@@ -1052,10 +1108,12 @@ hailo_status HailoRtRpcClient::InputVStream_abort(uint32_t handle)
     return static_cast<hailo_status>(reply.status());
 }
 
-hailo_status HailoRtRpcClient::OutputVStream_abort(uint32_t handle)
+hailo_status HailoRtRpcClient::OutputVStream_abort(const VStreamIdentifier &identifier)
 {
     VStream_abort_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_abort_Reply reply;
     grpc::Status status = m_stub->OutputVStream_abort(&context, request, &reply);
@@ -1064,10 +1122,12 @@ hailo_status HailoRtRpcClient::OutputVStream_abort(uint32_t handle)
     return static_cast<hailo_status>(reply.status());
 }
 
-hailo_status HailoRtRpcClient::InputVStream_resume(uint32_t handle)
+hailo_status HailoRtRpcClient::InputVStream_resume(const VStreamIdentifier &identifier)
 {
     VStream_resume_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_resume_Reply reply;
     grpc::Status status = m_stub->InputVStream_resume(&context, request, &reply);
@@ -1076,10 +1136,12 @@ hailo_status HailoRtRpcClient::InputVStream_resume(uint32_t handle)
     return static_cast<hailo_status>(reply.status());
 }
 
-hailo_status HailoRtRpcClient::OutputVStream_resume(uint32_t handle)
+hailo_status HailoRtRpcClient::OutputVStream_resume(const VStreamIdentifier &identifier)
 {
     VStream_resume_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_resume_Reply reply;
     grpc::Status status = m_stub->OutputVStream_resume(&context, request, &reply);
@@ -1088,10 +1150,12 @@ hailo_status HailoRtRpcClient::OutputVStream_resume(uint32_t handle)
     return static_cast<hailo_status>(reply.status());
 }
 
-hailo_status HailoRtRpcClient::InputVStream_stop_and_clear(uint32_t handle)
+hailo_status HailoRtRpcClient::InputVStream_stop_and_clear(const VStreamIdentifier &identifier)
 {
     VStream_stop_and_clear_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_stop_and_clear_Reply reply;
     grpc::Status status = m_stub->InputVStream_stop_and_clear(&context, request, &reply);
@@ -1100,10 +1164,12 @@ hailo_status HailoRtRpcClient::InputVStream_stop_and_clear(uint32_t handle)
     return static_cast<hailo_status>(reply.status());
 }
 
-hailo_status HailoRtRpcClient::OutputVStream_stop_and_clear(uint32_t handle)
+hailo_status HailoRtRpcClient::OutputVStream_stop_and_clear(const VStreamIdentifier &identifier)
 {
     VStream_stop_and_clear_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_stop_and_clear_Reply reply;
     grpc::Status status = m_stub->OutputVStream_stop_and_clear(&context, request, &reply);
@@ -1112,10 +1178,12 @@ hailo_status HailoRtRpcClient::OutputVStream_stop_and_clear(uint32_t handle)
     return static_cast<hailo_status>(reply.status());
 }
 
-hailo_status HailoRtRpcClient::InputVStream_start_vstream(uint32_t handle)
+hailo_status HailoRtRpcClient::InputVStream_start_vstream(const VStreamIdentifier &identifier)
 {
     VStream_start_vstream_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_start_vstream_Reply reply;
     grpc::Status status = m_stub->InputVStream_start_vstream(&context, request, &reply);
@@ -1124,10 +1192,12 @@ hailo_status HailoRtRpcClient::InputVStream_start_vstream(uint32_t handle)
     return static_cast<hailo_status>(reply.status());
 }
 
-hailo_status HailoRtRpcClient::OutputVStream_start_vstream(uint32_t handle)
+hailo_status HailoRtRpcClient::OutputVStream_start_vstream(const VStreamIdentifier &identifier)
 {
     VStream_start_vstream_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_start_vstream_Reply reply;
     grpc::Status status = m_stub->OutputVStream_start_vstream(&context, request, &reply);
@@ -1136,10 +1206,12 @@ hailo_status HailoRtRpcClient::OutputVStream_start_vstream(uint32_t handle)
     return static_cast<hailo_status>(reply.status());
 }
 
-Expected<hailo_format_t> HailoRtRpcClient::InputVStream_get_user_buffer_format(uint32_t handle)
+Expected<hailo_format_t> HailoRtRpcClient::InputVStream_get_user_buffer_format(const VStreamIdentifier &identifier)
 {
     VStream_get_user_buffer_format_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_get_user_buffer_format_Reply reply;
     grpc::Status status = m_stub->InputVStream_get_user_buffer_format(&context, request, &reply);
@@ -1157,10 +1229,12 @@ Expected<hailo_format_t> HailoRtRpcClient::InputVStream_get_user_buffer_format(u
     return format;
 }
 
-Expected<hailo_format_t> HailoRtRpcClient::OutputVStream_get_user_buffer_format(uint32_t handle)
+Expected<hailo_format_t> HailoRtRpcClient::OutputVStream_get_user_buffer_format(const VStreamIdentifier &identifier)
 {
     VStream_get_user_buffer_format_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_get_user_buffer_format_Reply reply;
     grpc::Status status = m_stub->OutputVStream_get_user_buffer_format(&context, request, &reply);
@@ -1178,10 +1252,12 @@ Expected<hailo_format_t> HailoRtRpcClient::OutputVStream_get_user_buffer_format(
     return format;
 }
 
-Expected<hailo_vstream_info_t> HailoRtRpcClient::InputVStream_get_info(uint32_t handle)
+Expected<hailo_vstream_info_t> HailoRtRpcClient::InputVStream_get_info(const VStreamIdentifier &identifier)
 {
     VStream_get_info_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_get_info_Reply reply;
     grpc::Status status = m_stub->InputVStream_get_info(&context, request, &reply);
@@ -1191,10 +1267,12 @@ Expected<hailo_vstream_info_t> HailoRtRpcClient::InputVStream_get_info(uint32_t 
     auto info_proto = reply.vstream_info();
     return deserialize_vstream_info(info_proto);
 }
-Expected<hailo_vstream_info_t> HailoRtRpcClient::OutputVStream_get_info(uint32_t handle)
+Expected<hailo_vstream_info_t> HailoRtRpcClient::OutputVStream_get_info(const VStreamIdentifier &identifier)
 {
     VStream_get_info_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_get_info_Reply reply;
     grpc::Status status = m_stub->OutputVStream_get_info(&context, request, &reply);
@@ -1205,10 +1283,12 @@ Expected<hailo_vstream_info_t> HailoRtRpcClient::OutputVStream_get_info(uint32_t
     return deserialize_vstream_info(info_proto);
 }
 
-Expected<bool> HailoRtRpcClient::InputVStream_is_aborted(uint32_t handle)
+Expected<bool> HailoRtRpcClient::InputVStream_is_aborted(const VStreamIdentifier &identifier)
 {
     VStream_is_aborted_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_is_aborted_Reply reply;
     grpc::Status status = m_stub->InputVStream_is_aborted(&context, request, &reply);
@@ -1219,10 +1299,12 @@ Expected<bool> HailoRtRpcClient::InputVStream_is_aborted(uint32_t handle)
     return is_aborted;
 }
 
-Expected<bool> HailoRtRpcClient::OutputVStream_is_aborted(uint32_t handle)
+Expected<bool> HailoRtRpcClient::OutputVStream_is_aborted(const VStreamIdentifier &identifier)
 {
     VStream_is_aborted_Request request;
-    request.set_handle(handle);
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+
     ClientContextWithTimeout context;
     VStream_is_aborted_Reply reply;
     grpc::Status status = m_stub->OutputVStream_is_aborted(&context, request, &reply);
@@ -1231,6 +1313,68 @@ Expected<bool> HailoRtRpcClient::OutputVStream_is_aborted(uint32_t handle)
     CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
     auto is_aborted = reply.is_aborted();
     return is_aborted;
+}
+
+hailo_status HailoRtRpcClient::OutputVStream_set_nms_score_threshold(const VStreamIdentifier &identifier, float32_t threshold)
+{
+    VStream_set_nms_score_threshold_Request request;
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+    request.set_threshold(threshold);
+
+    ClientContextWithTimeout context;
+    VStream_set_nms_score_threshold_Reply reply;
+    grpc::Status status = m_stub->OutputVStream_set_nms_score_threshold(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    return static_cast<hailo_status>(reply.status());
+}
+hailo_status HailoRtRpcClient::OutputVStream_set_nms_iou_threshold(const VStreamIdentifier &identifier, float32_t threshold)
+{
+    VStream_set_nms_iou_threshold_Request request;
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+    request.set_threshold(threshold);
+
+    ClientContextWithTimeout context;
+    VStream_set_nms_iou_threshold_Reply reply;
+    grpc::Status status = m_stub->OutputVStream_set_nms_iou_threshold(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    return static_cast<hailo_status>(reply.status());
+}
+
+hailo_status HailoRtRpcClient::OutputVStream_set_nms_max_proposals_per_class(const VStreamIdentifier &identifier, uint32_t max_proposals_per_class)
+{
+    VStream_set_nms_max_proposals_per_class_Request request;
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+    request.set_max_proposals_per_class(max_proposals_per_class);
+
+    ClientContextWithTimeout context;
+    VStream_set_nms_max_proposals_per_class_Reply reply;
+    grpc::Status status = m_stub->OutputVStream_set_nms_max_proposals_per_class(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    return static_cast<hailo_status>(reply.status());
+}
+
+void HailoRtRpcClient::VDevice_convert_identifier_to_proto(const VDeviceIdentifier &identifier, ProtoVDeviceIdentifier *proto_identifier)
+{
+    proto_identifier->set_vdevice_handle(identifier.m_vdevice_handle);
+}
+
+void HailoRtRpcClient::ConfiguredNetworkGroup_convert_identifier_to_proto(const NetworkGroupIdentifier &identifier, ProtoConfiguredNetworkGroupIdentifier *proto_identifier)
+{
+    proto_identifier->set_network_group_handle(identifier.m_network_group_handle);
+    proto_identifier->set_vdevice_handle(identifier.m_vdevice_identifier.m_vdevice_handle);
+}
+
+void HailoRtRpcClient::VStream_convert_identifier_to_proto(const VStreamIdentifier &identifier, ProtoVStreamIdentifier *proto_identifier)
+{
+    proto_identifier->set_vdevice_handle(identifier.m_network_group_identifier.m_vdevice_identifier.m_vdevice_handle);
+    proto_identifier->set_network_group_handle(identifier.m_network_group_identifier.m_network_group_handle);
+    proto_identifier->set_vstream_handle(identifier.m_vstream_handle);
 }
 
 }

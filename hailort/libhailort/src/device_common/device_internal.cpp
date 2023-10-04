@@ -13,6 +13,7 @@
 
 #include "device_common/control.hpp"
 #include "device_common/device_internal.hpp"
+#include "network_group/network_group_internal.hpp"
 #include "utils/sensor_config_utils.hpp"
 
 
@@ -165,8 +166,11 @@ Expected<firmware_type_t> DeviceBase::get_fw_type()
     if ((architecture.value() == HAILO_ARCH_HAILO8) || (architecture.value() == HAILO_ARCH_HAILO8L)) {
         firmware_type = FIRMWARE_TYPE_HAILO8;
     }
-    else if (architecture.value() == HAILO_ARCH_HAILO15) {
+    else if (architecture.value() == HAILO_ARCH_HAILO15H) {
         firmware_type = FIRMWARE_TYPE_HAILO15;
+    }
+    else if (architecture.value() == HAILO_ARCH_PLUTO) {
+        firmware_type = FIRMWARE_TYPE_PLUTO;
     }
     else {
         LOGGER__ERROR("Invalid device arcitecture. {}", architecture.value());
@@ -666,6 +670,9 @@ hailo_status DeviceBase::fw_notification_id_to_hailo(D2H_EVENT_ID_t fw_notificat
         case HW_INFER_MANAGER_INFER_DONE:
             *hailo_notification_id = HAILO_NOTIFICATION_ID_HW_INFER_MANAGER_INFER_DONE;
             break;
+        case CONTEXT_SWITCH_RUN_TIME_ERROR:
+            *hailo_notification_id = HAILO_NOTIFICATION_ID_CONTEXT_SWITCH_RUN_TIME_ERROR_EVENT;
+            break;
         default:
             status = HAILO_INVALID_ARGUMENT;
             goto l_exit;
@@ -714,10 +721,12 @@ bool DeviceBase::is_hef_compatible(hailo_device_architecture_t device_arch, Prot
         return (hef_arch == PROTO__HW_ARCH__HAILO8P) || (hef_arch == PROTO__HW_ARCH__HAILO8R) || (hef_arch == PROTO__HW_ARCH__HAILO8L);
     case HAILO_ARCH_HAILO8L:
         return (hef_arch == PROTO__HW_ARCH__HAILO8L);
-    case HAILO_ARCH_HAILO15:
+    case HAILO_ARCH_HAILO15H:
         // Compare with HW_ARCH__LAVENDER and HW_ARCH__GINGER to support hefs compiled for them
         return (hef_arch == PROTO__HW_ARCH__GINGER) || (hef_arch == PROTO__HW_ARCH__LAVENDER) ||
             (hef_arch == PROTO__HW_ARCH__HAILO15H);
+    case HAILO_ARCH_PLUTO:
+        return (hef_arch == PROTO__HW_ARCH__PLUTO);
     default:
         return false;
     }
@@ -739,7 +748,9 @@ hailo_device_architecture_t DeviceBase::hef_arch_to_device_arch(ProtoHEFHwArch h
     case PROTO__HW_ARCH__HAILO15H:
     case PROTO__HW_ARCH__GINGER:
     case PROTO__HW_ARCH__LAVENDER:
-        return HAILO_ARCH_HAILO15;
+        return HAILO_ARCH_HAILO15H;
+    case PROTO__HW_ARCH__PLUTO:
+        return HAILO_ARCH_PLUTO;
 
     default:
         return HAILO_ARCH_MAX_ENUM;

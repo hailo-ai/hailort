@@ -55,6 +55,7 @@ public:
         ResetDdrBufferingTask,
         AddRepeated,
         StartBurstCreditsTask,
+        ResetBurstCreditsTask,
         WaitForNetworkGroupChange,
         ChangeVdmaToStreamMapping,
         WaitOutputTransferDone,
@@ -73,6 +74,9 @@ public:
         EnableNms,
         WriteDataByType,
         SwitchLcuBatch,
+        ChangeBoundaryInputBatchAction,
+        PauseVdmaChannel,
+        ResumeVdmaChannel,
     };
 
     ContextSwitchConfigAction(ContextSwitchConfigAction &&) = default;
@@ -228,6 +232,23 @@ public:
 
 private:
     StartBurstCreditsTaskAction();
+};
+
+class ResetBurstCreditsTaskAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create();
+
+    ResetBurstCreditsTaskAction(ResetBurstCreditsTaskAction &&) = default;
+    ResetBurstCreditsTaskAction(const ResetBurstCreditsTaskAction &) = delete;
+    ResetBurstCreditsTaskAction &operator=(ResetBurstCreditsTaskAction &&) = delete;
+    ResetBurstCreditsTaskAction &operator=(const ResetBurstCreditsTaskAction &) = delete;
+    virtual ~ResetBurstCreditsTaskAction() = default;
+    virtual bool supports_repeated_block() const override;
+    virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
+
+private:
+    ResetBurstCreditsTaskAction();
 };
 
 class WaitForNetworkGroupChangeAction : public ContextSwitchConfigAction
@@ -391,6 +412,24 @@ private:
     const uint8_t m_stream_index;
 };
 
+class ChangeBoundaryInputBatchAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create(const vdma::ChannelId channel_id);
+    ChangeBoundaryInputBatchAction(ChangeBoundaryInputBatchAction &&) = default;
+    ChangeBoundaryInputBatchAction(const ChangeBoundaryInputBatchAction &) = delete;
+    ChangeBoundaryInputBatchAction &operator=(ChangeBoundaryInputBatchAction &&) = delete;
+    ChangeBoundaryInputBatchAction &operator=(const ChangeBoundaryInputBatchAction &) = delete;
+    virtual ~ChangeBoundaryInputBatchAction() = default;
+    virtual bool supports_repeated_block() const override;
+    virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
+
+private:
+    explicit ChangeBoundaryInputBatchAction(const vdma::ChannelId channel_id);
+
+    const vdma::ChannelId m_channel_id;
+};
+
 class WaitForModuleConfigDoneAction : public ContextSwitchConfigAction
 {
 public:
@@ -502,14 +541,14 @@ private:
 class OpenBoundaryInputChannelAction : public ContextSwitchConfigAction
 {
 public:
-    static Expected<ContextSwitchConfigActionPtr> create(const vdma::ChannelId &channel_id,
+    static Expected<ContextSwitchConfigActionPtr> create(const vdma::ChannelId channel_id,
         const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info);
 
     virtual bool supports_repeated_block() const override;
     virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
 
 private:
-    OpenBoundaryInputChannelAction(const vdma::ChannelId &channel_id,
+    OpenBoundaryInputChannelAction(const vdma::ChannelId channel_id,
         const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info);
 
     const vdma::ChannelId m_channel_id;
@@ -560,7 +599,7 @@ class ActivateBoundaryOutputChannelAction : public ContextSwitchConfigAction
 {
 public:
     static Expected<ContextSwitchConfigActionPtr> create(const vdma::ChannelId &channel_id,
-        uint8_t stream_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
+        uint8_t stream_index, uint8_t network_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
         const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info);
 
     virtual bool supports_repeated_block() const override;
@@ -568,11 +607,12 @@ public:
 
 private:
     ActivateBoundaryOutputChannelAction(const vdma::ChannelId &channel_id,
-        uint8_t stream_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
+        uint8_t stream_index, uint8_t network_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
         const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info);
 
     const vdma::ChannelId m_channel_id;
     const uint8_t m_stream_index;
+    const uint8_t m_network_index;
     const CONTROL_PROTOCOL__nn_stream_config_t m_nn_stream_config;
     const CONTROL_PROTOCOL__host_buffer_info_t m_host_buffer_info;
 };
@@ -672,23 +712,43 @@ private:
 class ValidateChannelAction : public ContextSwitchConfigAction
 {
 public:
-    static Expected<ContextSwitchConfigActionPtr> create(const EdgeLayer &edge_layer);
+    static Expected<ContextSwitchConfigActionPtr> create(const EdgeLayer &edge_layer,
+        const bool is_batch_switch_context);
 
     virtual bool supports_repeated_block() const override;
     virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
 
 private:
     ValidateChannelAction(const vdma::ChannelId &channel_id, hailo_stream_direction_t stream_direction,
-        bool is_inter_context, CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t host_buffer_type, uint32_t initial_credit_size);
+        bool check_host_empty_num_available, CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t host_buffer_type, uint32_t initial_credit_size);
 
     const vdma::ChannelId m_channel_id;
     const hailo_stream_direction_t m_stream_direction;
-    const bool m_is_inter_context;
+    const bool m_check_host_empty_num_available;
     const CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t m_host_buffer_type;
     const uint32_t m_initial_credit_size;
 };
 
 class DeactivateChannelAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create(const EdgeLayer &edge_layer, const bool is_batch_switch_context);
+
+    virtual bool supports_repeated_block() const override;
+    virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
+
+private:
+    DeactivateChannelAction(const vdma::ChannelId &channel_id, hailo_stream_direction_t stream_direction,
+        bool check_host_empty_num_available, CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t host_buffer_type, uint32_t initial_credit_size);
+
+    const vdma::ChannelId m_channel_id;
+    const hailo_stream_direction_t m_stream_direction;
+    const bool m_check_host_empty_num_available;
+    const CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t m_host_buffer_type;
+    const uint32_t m_initial_credit_size;
+};
+
+class PauseVdmaChannel : public ContextSwitchConfigAction
 {
 public:
     static Expected<ContextSwitchConfigActionPtr> create(const EdgeLayer &edge_layer);
@@ -697,14 +757,25 @@ public:
     virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
 
 private:
-    DeactivateChannelAction(const vdma::ChannelId &channel_id, hailo_stream_direction_t stream_direction,
-        bool is_inter_context, CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t host_buffer_type, uint32_t initial_credit_size);
+    PauseVdmaChannel(const vdma::ChannelId &channel_id, hailo_stream_direction_t stream_direction);
 
     const vdma::ChannelId m_channel_id;
     const hailo_stream_direction_t m_stream_direction;
-    const bool m_is_inter_context;
-    const CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t m_host_buffer_type;
-    const uint32_t m_initial_credit_size;
+};
+
+class ResumeVdmaChannel : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create(const EdgeLayer &edge_layer);
+
+    virtual bool supports_repeated_block() const override;
+    virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
+
+private:
+    ResumeVdmaChannel(const vdma::ChannelId &channel_id, hailo_stream_direction_t stream_direction);
+
+    const vdma::ChannelId m_channel_id;
+    const hailo_stream_direction_t m_stream_direction;
 };
 
 class WaitDmaIdleAction : public ContextSwitchConfigAction
@@ -747,7 +818,7 @@ class EnableNmsAction : public ContextSwitchConfigAction
 {
 public:
     static Expected<ContextSwitchConfigActionPtr> create(uint8_t nms_unit_index, uint8_t network_index, uint16_t number_of_classes,
-        uint16_t burst_size);
+        uint16_t burst_size, uint8_t division_factor);
     EnableNmsAction(EnableNmsAction &&) = default;
     EnableNmsAction(const EnableNmsAction &) = delete;
     EnableNmsAction &operator=(EnableNmsAction &&) = delete;
@@ -757,12 +828,13 @@ public:
     virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
 
 private:
-    EnableNmsAction(uint8_t nms_unit_index, uint8_t network_index, uint16_t number_of_classes, uint16_t burst_size);
+    EnableNmsAction(uint8_t nms_unit_index, uint8_t network_index, uint16_t number_of_classes, uint16_t burst_size, uint8_t division_factor);
 
     const uint8_t m_nms_unit_index;
     const uint8_t m_network_index;
     const uint16_t m_number_of_classes;
     const uint16_t m_burst_size;
+    const uint8_t m_division_factor;
 };
 
 class WriteDataByTypeAction : public ContextSwitchConfigAction

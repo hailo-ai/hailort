@@ -142,8 +142,9 @@ Expected<std::unique_ptr<vdma::VdmaBuffer>> ConfigBuffer::create_sg_buffer(Hailo
     // For config channels (In Hailo15), the page size must be a multiplication of host default page size.
     // Therefore we use the flag force_default_page_size for those types of buffers.
     auto const FORCE_DEFAULT_PAGE_SIZE = true;
+    auto const FORCE_BATCH_SIZE = true;
     auto buffer_size_requirements = vdma::BufferSizesRequirements::get_sg_buffer_requirements_multiple_transfers(
-        driver.desc_max_page_size(), 1, cfg_sizes, NOT_CIRCULAR, FORCE_DEFAULT_PAGE_SIZE);
+        driver.desc_max_page_size(), 1, cfg_sizes, NOT_CIRCULAR, FORCE_DEFAULT_PAGE_SIZE, FORCE_BATCH_SIZE);
     CHECK_EXPECTED(buffer_size_requirements);
     const auto page_size = buffer_size_requirements->desc_page_size();
     const auto descs_count = buffer_size_requirements->descs_count();

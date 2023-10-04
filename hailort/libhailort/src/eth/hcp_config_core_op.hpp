@@ -17,8 +17,6 @@
 
 #include "common/utils.hpp"
 
-#include "eth/hcp_config_activated_core_op.hpp"
-#include "core_op/active_core_op_holder.hpp"
 #include "core_op/core_op.hpp"
 
 #include <vector>
@@ -28,6 +26,12 @@
 namespace hailort
 {
 
+struct WriteMemoryInfo
+{
+    uint32_t address;
+    Buffer data;
+};
+
 class HcpConfigCoreOp : public CoreOp
 {
 public:
@@ -35,9 +39,6 @@ public:
         Device &device, ActiveCoreOpHolder &active_core_op_holder, std::vector<WriteMemoryInfo> &&config,
         const ConfigureNetworkParams &config_params, std::shared_ptr<CoreOpMetadata> metadata, hailo_status &status);
 
-    virtual Expected<std::unique_ptr<ActivatedNetworkGroup>> create_activated_network_group(
-        const hailo_activate_network_group_params_t &network_group_params, uint16_t dynamic_batch_size,
-        bool resume_pending_stream_transfers) override;
     virtual Expected<hailo_stream_interface_t> get_default_streams_interface() override;
 
     virtual Expected<std::shared_ptr<LatencyMetersMap>> get_latency_meters() override;
@@ -48,8 +49,8 @@ public:
     virtual hailo_status set_scheduler_threshold(uint32_t threshold, const std::string &network_name) override;
     virtual hailo_status set_scheduler_priority(uint8_t priority, const std::string &network_name) override;
 
-    virtual hailo_status activate_impl(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers) override;
-    virtual hailo_status deactivate_impl(bool keep_nn_config_during_reset) override;
+    virtual hailo_status activate_impl(uint16_t dynamic_batch_size) override;
+    virtual hailo_status deactivate_impl() override;
     virtual Expected<HwInferResults> run_hw_infer_estimator() override;
 
     virtual ~HcpConfigCoreOp() = default;
@@ -57,13 +58,12 @@ public:
     HcpConfigCoreOp &operator=(const HcpConfigCoreOp &other) = delete;
     HcpConfigCoreOp &operator=(HcpConfigCoreOp &&other) = delete;
     HcpConfigCoreOp(HcpConfigCoreOp &&other) noexcept : CoreOp(std::move(other)),
-        m_config(std::move(other.m_config)), m_active_core_op_holder(other.m_active_core_op_holder),
+        m_config(std::move(other.m_config)),
         m_device(other.m_device) {}
 
 private:
-        std::vector<WriteMemoryInfo> m_config;
-        ActiveCoreOpHolder &m_active_core_op_holder;
-        Device &m_device;
+    std::vector<WriteMemoryInfo> m_config;
+    Device &m_device;
 };
 
 } /* namespace hailort */

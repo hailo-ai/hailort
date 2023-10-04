@@ -3,20 +3,14 @@ cmake_minimum_required(VERSION 3.0.0)
 set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/vdma_device.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vdma_config_core_op.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/vdma_config_activated_core_op.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vdma_config_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vdma_stream.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/vdma_stream_base.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/vdma_async_stream.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/circular_stream_buffer_pool.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/pcie/pcie_device.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/integrated/integrated_device.cpp
 
-    ${CMAKE_CURRENT_SOURCE_DIR}/channel/channel_state.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/channel/channel_base.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/channel/buffered_channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/boundary_channel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/channel/async_channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/interrupts_dispatcher.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/descriptor_list.cpp

@@ -46,7 +46,7 @@ public:
     VDeviceBase(const VDeviceBase &) = delete;
     VDeviceBase &operator=(VDeviceBase &&) = delete;
     VDeviceBase &operator=(const VDeviceBase &) = delete;
-    virtual ~VDeviceBase() = default;
+    virtual ~VDeviceBase();
 
     virtual Expected<ConfiguredNetworkGroupVector> configure(Hef &hef,
         const NetworkGroupsParamsMap &configure_params={}) override;
@@ -78,6 +78,8 @@ public:
         return m_core_ops_scheduler;
     }
 
+    virtual Expected<InferModel> create_infer_model(const std::string &hef_path) override;
+
     // Currently only homogeneous vDevice is allow (= all devices are from the same type)
     virtual Expected<hailo_stream_interface_t> get_default_streams_interface() const override;
 
@@ -85,7 +87,7 @@ public:
 
 private:
     VDeviceBase(std::map<device_id_t, std::unique_ptr<Device>> &&devices, CoreOpsSchedulerPtr core_ops_scheduler) :
-        m_devices(std::move(devices)), m_core_ops_scheduler(core_ops_scheduler)
+        m_devices(std::move(devices)), m_core_ops_scheduler(core_ops_scheduler), m_next_core_op_handle(0)
         {}
 
     static Expected<std::map<device_id_t, std::unique_ptr<Device>>> create_devices(const hailo_vdevice_params_t &params);
@@ -94,12 +96,14 @@ private:
     Expected<std::shared_ptr<VDeviceCoreOp>> create_vdevice_network_group(Hef &hef,
         const std::pair<const std::string, ConfigureNetworkParams> &params, bool use_multiplexer);
     bool should_use_multiplexer(const ConfigureNetworkParams &params);
+    vdevice_core_op_handle_t allocate_core_op_handle();
 
     std::map<device_id_t, std::unique_ptr<Device>> m_devices;
     CoreOpsSchedulerPtr m_core_ops_scheduler;
     std::vector<std::shared_ptr<VDeviceCoreOp>> m_vdevice_core_ops;
     std::vector<std::shared_ptr<ConfiguredNetworkGroup>> m_network_groups; // TODO: HRT-9547 - Remove when ConfiguredNetworkGroup will be kept in global context
-
+    ActiveCoreOpHolder m_active_core_op_holder;
+    vdevice_core_op_handle_t m_next_core_op_handle;
     std::mutex m_mutex;
 };
 
@@ -122,18 +126,19 @@ public:
 
     Expected<std::vector<std::string>> get_physical_devices_ids() const override;
     Expected<hailo_stream_interface_t> get_default_streams_interface() const override;
+    virtual Expected<InferModel> create_infer_model(const std::string &hef_path) override;
 
     virtual hailo_status before_fork() override;
     virtual hailo_status after_fork_in_parent() override;
     virtual hailo_status after_fork_in_child() override;
 
 private:
-    VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t handle, std::vector<std::unique_ptr<hailort::Device>> &&devices);
+    VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, VDeviceIdentifier &&identifier, std::vector<std::unique_ptr<hailort::Device>> &&devices);
 
     hailo_status create_client();
 
     std::unique_ptr<HailoRtRpcClient> m_client;
-    uint32_t m_handle;
+    VDeviceIdentifier m_identifier;
     std::vector<std::unique_ptr<Device>> m_devices;
     std::vector<std::shared_ptr<ConfiguredNetworkGroup>> m_network_groups;
 };
@@ -157,6 +162,7 @@ public:
     Expected<std::vector<std::reference_wrapper<Device>>> get_physical_devices() const override;
     Expected<std::vector<std::string>> get_physical_devices_ids() const override;
     Expected<hailo_stream_interface_t> get_default_streams_interface() const override;
+    Expected<InferModel> create_infer_model(const std::string &hef_path) override;
 
 private:
     VDeviceHandle(uint32_t handle);
