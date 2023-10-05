@@ -10,132 +10,36 @@
 
 #include "scheduled_stream.hpp"
 
+#include "stream_common/queued_stream_buffer_pool.hpp"
+
 #include "utils/profiler/tracer_macros.hpp"
+
+#include "stream_common/queued_stream_buffer_pool.hpp"
 
 namespace hailort
 {
 
 /** Input stream **/
 Expected<std::unique_ptr<ScheduledInputStream>> ScheduledInputStream::create(
-    std::map<device_id_t, std::reference_wrapper<VdmaInputStreamBase>> &&streams,
-    const scheduler_core_op_handle_t &core_op_handle,
-    EventPtr &&core_op_activated_event,
+    std::map<device_id_t, std::reference_wrapper<InputStreamBase>> &&streams,
     const LayerInfo &layer_info,
-    CoreOpsSchedulerWeakPtr core_ops_scheduler)
-{
-    auto status = HAILO_UNINITIALIZED;
-    auto local_vdevice_stream = make_unique_nothrow<ScheduledInputStream>(std::move(streams),
-        core_op_handle, std::move(core_op_activated_event), layer_info,
-        core_ops_scheduler, status);
-    CHECK_NOT_NULL_AS_EXPECTED(local_vdevice_stream, HAILO_OUT_OF_HOST_MEMORY);
-    CHECK_SUCCESS_AS_EXPECTED(status);
-
-    return local_vdevice_stream;
-}
-
-hailo_status ScheduledInputStreamBase::abort()
-{
-    return abort_impl(m_core_op_handle);
-}
-
-hailo_status ScheduledInputStreamBase::abort_impl(scheduler_core_op_handle_t core_op_handle)
-{
-    auto status = HAILO_SUCCESS; // Best effort
-    assert(1 == m_streams.size());
-    auto abort_status = m_streams.begin()->second.get().abort();
-    if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("Failed to abort input stream. (status: {} device: {})", status, m_streams.begin()->second.get().get_dev_id());
-        status = abort_status;
-    }
-
-    auto core_ops_scheduler = m_core_ops_scheduler.lock();
-    CHECK(core_ops_scheduler, HAILO_INTERNAL_FAILURE);
-
-    auto disable_status = core_ops_scheduler->disable_stream(core_op_handle, name());
-    if (HAILO_SUCCESS != disable_status) {
-        LOGGER__ERROR("Failed to disable stream in the core-op scheduler. (status: {})", disable_status);
-        status = disable_status;
-    }
-
-    return status;
-}
-
-hailo_status ScheduledInputStreamBase::clear_abort()
-{
-    return clear_abort_impl(m_core_op_handle);
-}
-
-hailo_status ScheduledInputStreamBase::flush()
-{
-    auto core_ops_scheduler = m_core_ops_scheduler.lock();
-    CHECK(core_ops_scheduler, HAILO_INTERNAL_FAILURE);
-
-    auto status = core_ops_scheduler->flush_pending_buffers(m_core_op_handle, name(), get_timeout());
-    if (HAILO_STREAM_ABORTED_BY_USER == status) {
-        LOGGER__INFO("Got HAILO_STREAM_ABORTED_BY_USER in flush of stream {}", name());
-        return status;
-    }
-    CHECK_SUCCESS(status);
-
-    return VDeviceInputStreamBase::flush();
-}
-
-hailo_status ScheduledInputStreamBase::clear_abort_impl(scheduler_core_op_handle_t core_op_handle)
-{
-    auto status = HAILO_SUCCESS; // Best effort
-    assert(1 == m_streams.size());
-    auto clear_abort_status = m_streams.begin()->second.get().clear_abort();
-    if ((HAILO_SUCCESS != clear_abort_status) && (HAILO_STREAM_NOT_ACTIVATED != clear_abort_status)) {
-            LOGGER__ERROR("Failed to clear abort input stream. (status: {} device: {})", clear_abort_status, m_streams.begin()->second.get().get_dev_id());
-            status = clear_abort_status;
-    }
-
-    auto core_ops_scheduler = m_core_ops_scheduler.lock();
-    CHECK(core_ops_scheduler, HAILO_INTERNAL_FAILURE);
-
-    auto enable_status = core_ops_scheduler->enable_stream(core_op_handle, name());
-    if (HAILO_SUCCESS != enable_status) {
-        LOGGER__ERROR("Failed to enable stream in the core-op scheduler. (status: {})", enable_status);
-        status = enable_status;
-    }
-
-    return status;
-}
-
-hailo_status ScheduledInputStream::write_impl(const MemoryView &buffer, const std::function<bool()> &should_cancel)
-{
-    auto core_ops_scheduler = m_core_ops_scheduler.lock();
-    CHECK(core_ops_scheduler, HAILO_INTERNAL_FAILURE);
-
-    assert(1 == m_streams.size());
-    auto status = m_streams.begin()->second.get().write_buffer_only(buffer, should_cancel);
-    if (HAILO_SUCCESS != status) {
-        LOGGER__INFO("Write to stream has failed! status = {}", status);
-        return status;
-    }
-
-    auto write_finish_status = core_ops_scheduler->signal_frame_pending_to_send(m_core_op_handle, name());
-    if (HAILO_STREAM_ABORTED_BY_USER == write_finish_status) {
-        return write_finish_status;
-    }
-    CHECK_SUCCESS(write_finish_status);
-
-    return HAILO_SUCCESS;
-}
-
-Expected<std::unique_ptr<ScheduledAsyncInputStream>> ScheduledAsyncInputStream::create(
-    std::map<device_id_t, std::reference_wrapper<VdmaInputStreamBase>> &&streams,
     const scheduler_core_op_handle_t &core_op_handle,
-    EventPtr &&core_op_activated_event,
-    const LayerInfo &layer_info,
-    CoreOpsSchedulerWeakPtr core_ops_scheduler)
+    CoreOpsSchedulerWeakPtr core_ops_scheduler,
+    EventPtr core_op_activated_event)
 {
     auto max_queue_size_per_stream = streams.begin()->second.get().get_buffer_frames_size();
     CHECK_EXPECTED(max_queue_size_per_stream);
     const auto max_queue_size = max_queue_size_per_stream.value() * streams.size();
 
+    // In all cases, the buffer mode of the low level streams is always NOT_OWNING (the buffer is owned either by
+    // ScheduledInputStream or by the user)
+    for (auto &stream : streams) {
+        auto status = stream.second.get().set_buffer_mode(StreamBufferMode::NOT_OWNING);
+        CHECK_SUCCESS_AS_EXPECTED(status);
+    }
+
     auto status = HAILO_UNINITIALIZED;
-    auto local_vdevice_stream = make_unique_nothrow<ScheduledAsyncInputStream>(std::move(streams),
+    auto local_vdevice_stream = make_unique_nothrow<ScheduledInputStream>(std::move(streams),
         core_op_handle, std::move(core_op_activated_event), layer_info,
         core_ops_scheduler, max_queue_size, status);
     CHECK_NOT_NULL_AS_EXPECTED(local_vdevice_stream, HAILO_OUT_OF_HOST_MEMORY);
@@ -144,191 +48,211 @@ Expected<std::unique_ptr<ScheduledAsyncInputStream>> ScheduledAsyncInputStream::
     return local_vdevice_stream;
 }
 
-hailo_status ScheduledAsyncInputStream::send_pending_buffer(const device_id_t &device_id)
+hailo_status ScheduledInputStream::launch_transfer(const device_id_t &device_id)
 {
-    // TODO HRT-10583 - allow option to remove reorder queue
-    auto pending_buffer = m_pending_buffers.dequeue();
+    auto core_ops_scheduler = m_core_ops_scheduler.lock();
+    CHECK(core_ops_scheduler, HAILO_INTERNAL_FAILURE, "core_op_scheduler was destructed");
+
+    auto pending_buffer = m_transfer_requests.dequeue();
     CHECK_EXPECTED_AS_STATUS(pending_buffer);
 
-    pending_buffer->callback = m_callback_reorder_queue.wrap_callback(pending_buffer->callback);
+    auto reorder_queue_callback = m_callback_reorder_queue.wrap_callback(pending_buffer->callback);
+    pending_buffer->callback = reorder_queue_callback;
+
+    // Wrap callback with scheduler signal read finish.
+    pending_buffer->callback = [this, device_id, callback=reorder_queue_callback](hailo_status status) {
+        if (HAILO_SUCCESS == status) {
+            auto scheduler = m_core_ops_scheduler.lock();
+            assert(scheduler);
+            scheduler->signal_frame_transferred(m_core_op_handle, name(), device_id, HAILO_H2D_STREAM);
+        }
+
+        callback(status);
+    };
+
     assert(contains(m_streams, device_id));
     auto status = m_streams.at(device_id).get().write_async(pending_buffer.release());
     if (HAILO_SUCCESS != status) {
-        m_callback_reorder_queue.cancel_last_callback();
+        LOGGER__ERROR("write_async on device {} failed with {}", device_id, status);
+        // The pending_buffer was already registered so we must call the callback to give the error back to the user.
+        reorder_queue_callback(status);
     }
     return status;
 }
 
-hailo_status ScheduledAsyncInputStream::wait_for_async_ready(size_t transfer_size, std::chrono::milliseconds timeout)
+hailo_stream_interface_t ScheduledInputStream::get_interface() const
 {
-    (void)transfer_size;
-    return m_pending_buffers.wait_for_room(timeout);
+    // All interface values of m_streams should be the same
+    return m_streams.begin()->second.get().get_interface();
 }
 
-hailo_status ScheduledAsyncInputStream::write_async(TransferRequest &&transfer_request)
+Expected<std::unique_ptr<StreamBufferPool>> ScheduledInputStream::allocate_buffer_pool()
+{
+    if (m_streams.size() == 1) {
+        // On single device, we use the stream allocate_buffer_pool for best optimization (The buffer can be circular
+        // dma buffer)
+        auto &async_stream = dynamic_cast<AsyncInputStreamBase&>(m_streams.begin()->second.get());
+        return async_stream.allocate_buffer_pool();
+    } else {
+        auto queued_pool = QueuedStreamBufferPool::create(m_transfer_requests.max_size(), get_frame_size(),
+            BufferStorageParams::create_dma());
+        CHECK_EXPECTED(queued_pool);
+
+        return std::unique_ptr<StreamBufferPool>(queued_pool.release());
+    }
+}
+
+size_t ScheduledInputStream::get_max_ongoing_transfers() const
+{
+    return m_transfer_requests.max_size();
+}
+
+hailo_status ScheduledInputStream::write_async_impl(TransferRequest &&transfer_request)
 {
     auto core_ops_scheduler = m_core_ops_scheduler.lock();
-    CHECK(core_ops_scheduler, HAILO_INTERNAL_FAILURE);
+    CHECK(core_ops_scheduler, HAILO_INTERNAL_FAILURE, "core_op_scheduler was destructed");
 
-    auto status = m_pending_buffers.enqueue(std::move(transfer_request));
+    auto status = m_transfer_requests.enqueue(std::move(transfer_request));
+    if (HAILO_QUEUE_IS_FULL == status) {
+        return status;
+    }
     CHECK_SUCCESS(status);
 
-    auto write_finish_status = core_ops_scheduler->signal_frame_pending_to_send(m_core_op_handle, name());
-    if (HAILO_STREAM_ABORTED_BY_USER == write_finish_status) {
-        return write_finish_status;
+    status = core_ops_scheduler->signal_frame_pending(m_core_op_handle, name(), HAILO_H2D_STREAM);
+    if (HAILO_STREAM_ABORTED_BY_USER == status) {
+        return status;
     }
-    CHECK_SUCCESS(write_finish_status);
+    CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
 }
 
-Expected<size_t> ScheduledAsyncInputStream::get_async_max_queue_size() const
+hailo_status ScheduledInputStream::abort()
 {
-    return m_pending_buffers.max_size();
+    auto core_ops_scheduler = m_core_ops_scheduler.lock();
+    CHECK(core_ops_scheduler, HAILO_INTERNAL_FAILURE, "core_op_scheduler was destructed");
+
+    core_ops_scheduler->disable_stream(m_core_op_handle, name());
+
+    return AsyncInputStreamBase::abort();
 }
 
-
-hailo_status ScheduledAsyncInputStream::abort()
+hailo_status ScheduledInputStream::clear_abort()
 {
-    m_pending_buffers.abort();
-    return ScheduledInputStreamBase::abort();
-}
+    auto core_ops_scheduler = m_core_ops_scheduler.lock();
+    CHECK(core_ops_scheduler, HAILO_INTERNAL_FAILURE);
 
-hailo_status ScheduledAsyncInputStream::clear_abort()
-{
-    m_pending_buffers.clear_abort();
-    return ScheduledInputStreamBase::clear_abort();
-}
+    core_ops_scheduler->enable_stream(m_core_op_handle, name());
 
-hailo_status ScheduledAsyncInputStream::write_impl(const MemoryView &, const std::function<bool()> &)
-{
-    LOGGER__ERROR("Sync write is not supported by async streams");
-    return HAILO_NOT_SUPPORTED;
+    return AsyncInputStreamBase::clear_abort();
 }
 
 /** Output stream **/
 Expected<std::unique_ptr<ScheduledOutputStream>> ScheduledOutputStream::create(
-    std::map<device_id_t, std::reference_wrapper<VdmaOutputStreamBase>> &&streams,
+    std::map<device_id_t, std::reference_wrapper<OutputStreamBase>> &&streams,
     const scheduler_core_op_handle_t &core_op_handle,
     const LayerInfo &layer_info,
-    EventPtr &&core_op_activated_event,
+    EventPtr core_op_activated_event,
     CoreOpsSchedulerWeakPtr core_ops_scheduler)
 {
+    auto max_queue_size_per_stream = streams.begin()->second.get().get_buffer_frames_size();
+    CHECK_EXPECTED(max_queue_size_per_stream);
+    const auto max_queue_size = max_queue_size_per_stream.value() * streams.size();
+
+    // In all cases, the buffer mode of the low level streams is always NOT_OWNING (the buffer is owned either by
+    // ScheduledOutputStream or by the user)
+    for (auto &stream : streams) {
+        auto status = stream.second.get().set_buffer_mode(StreamBufferMode::NOT_OWNING);
+        CHECK_SUCCESS_AS_EXPECTED(status);
+    }
+
+
     auto status = HAILO_UNINITIALIZED;
     auto stream = make_unique_nothrow<ScheduledOutputStream>(std::move(streams), core_op_handle,
-        layer_info, std::move(core_op_activated_event), core_ops_scheduler, status);
+        layer_info, std::move(core_op_activated_event), core_ops_scheduler, max_queue_size, status);
     CHECK_NOT_NULL_AS_EXPECTED(stream, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status);
+
     return stream;
 }
 
-ScheduledOutputStream::ScheduledOutputStream(
-        std::map<device_id_t, std::reference_wrapper<VdmaOutputStreamBase>> &&streams,
-        const scheduler_core_op_handle_t &core_op_handle,
-        const LayerInfo &layer_info,
-        EventPtr &&core_op_activated_event,
-        CoreOpsSchedulerWeakPtr core_ops_scheduler,
-        hailo_status &status) : ScheduledOutputStreamBase(std::move(streams), core_op_handle, layer_info,
-            std::move(core_op_activated_event), core_ops_scheduler, status)
-    {
-        for (auto &stream_pair : m_streams) {
-            stream_pair.second.get().register_interrupt_callback(
-                [scheduler_weak=m_core_ops_scheduler, core_op_handle=m_core_op_handle, name=name(), device_id=stream_pair.first]() {
-                    auto scheduler = scheduler_weak.lock();
-                    assert(scheduler);
-                    scheduler->signal_frame_transferred_d2h(core_op_handle, name, device_id);
-                }
-            );
-        }
-    }
-
-hailo_status ScheduledOutputStream::set_next_device_to_read(const device_id_t &device_id)
-{
-    std::lock_guard<std::mutex> lock(m_device_read_order_mutex);
-    m_device_read_order.push(device_id);
-    return HAILO_SUCCESS;
-}
-
-hailo_status ScheduledOutputStreamBase::abort()
-{
-    return abort_impl(m_core_op_handle);
-}
-
-hailo_status ScheduledOutputStreamBase::abort_impl(scheduler_core_op_handle_t core_op_handle)
-{
-    auto status = HAILO_SUCCESS; // Best effort
-    for (const auto &pair : m_streams) {
-        auto &stream = pair.second;
-        auto abort_status = stream.get().abort();
-        if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed to abort output stream. (status: {} device: {})", status, stream.get().get_dev_id());
-            status = abort_status;
-        }
-    }
-    auto core_ops_scheduler = m_core_ops_scheduler.lock();
-    CHECK(core_ops_scheduler, HAILO_INTERNAL_FAILURE);
-
-    auto disable_status = core_ops_scheduler->disable_stream(core_op_handle, name());
-    if (HAILO_SUCCESS != disable_status) {
-        LOGGER__ERROR("Failed to disable stream in the core-op scheduler. (status: {})", disable_status);
-        status = disable_status;
-    }
-
-    return status;
-}
-
-hailo_status ScheduledOutputStreamBase::clear_abort()
-{
-    return clear_abort_impl(m_core_op_handle);
-}
-
-hailo_status ScheduledOutputStreamBase::clear_abort_impl(scheduler_core_op_handle_t core_op_handle)
-{
-    auto status = HAILO_SUCCESS; // Best effort
-    for (const auto &pair : m_streams) {
-        auto &stream = pair.second;
-        auto clear_abort_status = stream.get().clear_abort();
-        if ((HAILO_SUCCESS != clear_abort_status) && (HAILO_STREAM_NOT_ACTIVATED != clear_abort_status)) {
-            LOGGER__ERROR("Failed to clear abort output stream. (status: {} device: {})", clear_abort_status, stream.get().get_dev_id());
-            status = clear_abort_status;
-        }
-    }
-
-    auto core_ops_scheduler = m_core_ops_scheduler.lock();
-    CHECK(core_ops_scheduler, HAILO_INTERNAL_FAILURE);
-
-    auto enable_status = core_ops_scheduler->enable_stream(core_op_handle, name());
-    if (HAILO_SUCCESS != enable_status) {
-        LOGGER__ERROR("Failed to enable stream in the core-op scheduler. (status: {})", enable_status);
-        status = enable_status;
-    }
-
-    return status;
-}
-
-hailo_status ScheduledOutputStream::read(MemoryView buffer)
+hailo_status ScheduledOutputStream::launch_transfer(const device_id_t &device_id)
 {
     auto core_ops_scheduler = m_core_ops_scheduler.lock();
-    CHECK(core_ops_scheduler, HAILO_INTERNAL_FAILURE);
+    CHECK(core_ops_scheduler, HAILO_INTERNAL_FAILURE, "core_op_scheduler was destructed");
 
-    auto status = core_ops_scheduler->signal_frame_pending_to_read(m_core_op_handle, name());
-    CHECK_SUCCESS(status);
+    auto pending_buffer = m_transfer_requests.dequeue();
+    CHECK_EXPECTED_AS_STATUS(pending_buffer);
 
-    auto device_id = wait_for_read();
-    if (HAILO_STREAM_ABORTED_BY_USER == device_id.status()) {
-        LOGGER__INFO("Read from stream was aborted.");
-        return device_id.status();
-    }
-    CHECK_EXPECTED_AS_STATUS(device_id);
+    // Wrap callback with reorder queue.
+    auto reorder_queue_callback = m_callback_reorder_queue.wrap_callback(pending_buffer->callback);
 
-    assert(contains(m_streams, device_id.value()));
-    status = m_streams.at(device_id.value()).get().read(buffer);
+    // Wrap callback with scheduler signal read finish.
+    pending_buffer->callback = [this, device_id, callback=reorder_queue_callback](hailo_status status) {
+        if (HAILO_SUCCESS == status) {
+            auto scheduler = m_core_ops_scheduler.lock();
+            assert(scheduler);
+            scheduler->signal_frame_transferred(m_core_op_handle, name(), device_id, HAILO_D2H_STREAM);
+
+            if (buffer_mode() == StreamBufferMode::NOT_OWNING) {
+                // On OWNING mode this trace is called after read_impl is called.
+                TRACE(ReadFrameTrace, m_core_op_handle, name());
+            }
+        }
+
+        callback(status);
+    };
+
+    assert(contains(m_streams, device_id));
+    auto status = m_streams.at(device_id).get().read_async(pending_buffer.release());
     if (HAILO_SUCCESS != status) {
-        LOGGER__INFO("Read from stream has failed! status = {}", status);
+        LOGGER__ERROR("read_async on device {} failed with {}", device_id, status);
+        // The pending_buffer was already registered so we must call the callback to give the error back to the user.
+        reorder_queue_callback(status);
+    }
+    return status;
+}
+
+hailo_stream_interface_t ScheduledOutputStream::get_interface() const
+{
+    // All interface values of m_streams should be the same
+    return m_streams.begin()->second.get().get_interface();
+}
+
+Expected<std::unique_ptr<StreamBufferPool>> ScheduledOutputStream::allocate_buffer_pool()
+{
+    if (m_streams.size() == 1) {
+        // On single device, we use the stream allocate_buffer_pool for best optimization (The buffer can be circular
+        // dma buffer)
+        auto &async_stream = dynamic_cast<AsyncOutputStreamBase&>(m_streams.begin()->second.get());
+        return async_stream.allocate_buffer_pool();
+    } else {
+        auto queued_pool = QueuedStreamBufferPool::create(m_transfer_requests.max_size(), get_frame_size(),
+            BufferStorageParams::create_dma());
+        CHECK_EXPECTED(queued_pool);
+
+        return std::unique_ptr<StreamBufferPool>(queued_pool.release());
+    }
+}
+
+size_t ScheduledOutputStream::get_max_ongoing_transfers() const
+{
+    return m_transfer_requests.max_size();
+}
+
+
+hailo_status ScheduledOutputStream::read_async_impl(TransferRequest &&transfer_request)
+{
+    auto core_ops_scheduler = m_core_ops_scheduler.lock();
+    CHECK(core_ops_scheduler, HAILO_INTERNAL_FAILURE, "core_op_scheduler was destructed");
+
+    auto status = m_transfer_requests.enqueue(std::move(transfer_request));
+    if (HAILO_QUEUE_IS_FULL == status) {
         return status;
     }
+    CHECK_SUCCESS(status);
 
-    status = core_ops_scheduler->signal_read_finish(m_core_op_handle, name(), device_id.value());
+    status = core_ops_scheduler->signal_frame_pending(m_core_op_handle, name(), HAILO_D2H_STREAM);
     if (HAILO_STREAM_ABORTED_BY_USER == status) {
         return status;
     }
@@ -337,25 +261,24 @@ hailo_status ScheduledOutputStream::read(MemoryView buffer)
     return HAILO_SUCCESS;
 }
 
-Expected<device_id_t> ScheduledOutputStream::wait_for_read()
+hailo_status ScheduledOutputStream::abort()
 {
     auto core_ops_scheduler = m_core_ops_scheduler.lock();
-    CHECK_AS_EXPECTED(core_ops_scheduler, HAILO_INTERNAL_FAILURE);
+    CHECK(core_ops_scheduler, HAILO_INTERNAL_FAILURE, "core_op_scheduler was destructed");
 
-    auto status = core_ops_scheduler->wait_for_read(m_core_op_handle, name(), get_timeout(), [this]() {
-        std::lock_guard<std::mutex> lock(m_device_read_order_mutex);
-        return !m_device_read_order.empty();
-    });
-    if (HAILO_STREAM_ABORTED_BY_USER == status) {
-        LOGGER__INFO("Read from stream was aborted.");
-        return make_unexpected(status);
-    }
-    CHECK_SUCCESS_AS_EXPECTED(status);
+    core_ops_scheduler->disable_stream(m_core_op_handle, name());
 
-    std::lock_guard<std::mutex> lock(m_device_read_order_mutex);
-    auto device_id = m_device_read_order.front();
-    m_device_read_order.pop();
-    return device_id;
+    return AsyncOutputStreamBase::abort();
+}
+
+hailo_status ScheduledOutputStream::clear_abort()
+{
+    auto core_ops_scheduler = m_core_ops_scheduler.lock();
+    CHECK(core_ops_scheduler, HAILO_INTERNAL_FAILURE);
+
+    core_ops_scheduler->enable_stream(m_core_op_handle, name());
+
+    return AsyncOutputStreamBase::clear_abort();
 }
 
 } /* namespace hailort */

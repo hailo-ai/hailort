@@ -65,6 +65,32 @@ public:
     // TODO: validate that offset is cache aligned (HRT-9811)
     hailo_status synchronize(size_t offset, size_t count, HailoRTDriver::DmaSyncDirection sync_direction);
 
+    /**
+     * Copy data from buf_src parameter to this buffer.
+     */
+    hailo_status write(const void *buf_src, size_t count, size_t offset, bool should_sync = true);
+
+    /**
+     * Copy data from this buffer to buf_dst.
+     */
+    hailo_status read(void *buf_dst, size_t count, size_t offset, bool should_sync = true);
+
+    /**
+     * Copy data from buf_src parameter to this buffer.
+     *
+     * Similar to 'write' but if (offset + count) is larger than the buffer size, the copy continues
+     * from the start of the buffer.
+     */
+    hailo_status write_cyclic(const void *buf_src, size_t count, size_t offset,  bool should_sync = true);
+
+    /**
+     * Copy data from this buffer to buf_dst.
+     *
+     * Similar to 'read' but if (offset + count) is larger than the DmaMappedBuffer size, the copy continues
+     * from the start of the buffer.
+     */
+    hailo_status read_cyclic(void *buf_dst, size_t count, size_t offset, bool should_sync = true);
+
 private:
     MappedBuffer(HailoRTDriver &driver, std::shared_ptr<DmaAbleBuffer> buffer, HailoRTDriver::DmaDirection data_direction,
         hailo_status &status);

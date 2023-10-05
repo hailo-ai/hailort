@@ -21,6 +21,7 @@
 #include "hailo/event.hpp"
 #include "hailo/network_rate_calculator.hpp"
 #include "hailo/inference_pipeline.hpp"
+#include "hailo/quantization.hpp"
 
 #include "common/compiler_extensions_compat.hpp"
 #include "common/os_utils.hpp"
@@ -85,7 +86,7 @@ hailo_status hailo_get_library_version(hailo_version_t *version)
 }
 
 // TODO(oro): wrap with try/catch over C++
-// TODO: Fill eth_device_infos_length items into pcie_device_infos, 
+// TODO: Fill eth_device_infos_length items into pcie_device_infos,
 //       even if 'scan_results->size() > eth_device_infos_length' (HRT-3163)
 hailo_status hailo_scan_ethernet_devices(const char *interface_name, hailo_eth_device_info_t *eth_device_infos,
     size_t eth_device_infos_length, size_t *number_of_devices, uint32_t timeout_ms)
@@ -1489,7 +1490,28 @@ hailo_status hailo_create_input_transform_context(const hailo_stream_info_t *str
     CHECK_ARG_NOT_NULL(transform_params);
     CHECK_ARG_NOT_NULL(transform_context);
 
+    if (!Quantization::is_qp_valid(stream_info->quant_info)) {
+        LOGGER__ERROR("quant_info of stream_info is invalid as the model was compiled with multiple quant_infos. "
+                    "Please compile again or call hailo_create_input_transform_context_by_stream instead");
+        return HAILO_INVALID_ARGUMENT;
+    }
+
     auto local_transform_context = InputTransformContext::create(*stream_info, *transform_params);
+    CHECK_EXPECTED_AS_STATUS(local_transform_context);
+
+    *transform_context = reinterpret_cast<hailo_input_transform_context>(local_transform_context.release().release());
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_create_input_transform_context_by_stream(hailo_input_stream stream,
+    const hailo_transform_params_t *transform_params, hailo_input_transform_context *transform_context)
+{
+    CHECK_ARG_NOT_NULL(stream);
+    CHECK_ARG_NOT_NULL(transform_params);
+    CHECK_ARG_NOT_NULL(transform_context);
+
+    InputStream *input_stream = reinterpret_cast<InputStream*>(stream);
+    auto local_transform_context = InputTransformContext::create(*input_stream, *transform_params);
     CHECK_EXPECTED_AS_STATUS(local_transform_context);
 
     *transform_context = reinterpret_cast<hailo_input_transform_context>(local_transform_context.release().release());
@@ -1507,6 +1529,7 @@ hailo_status hailo_is_input_transformation_required(const hailo_3d_image_shape_t
     const hailo_3d_image_shape_t *dst_image_shape, const hailo_format_t *dst_format, const hailo_quant_info_t *quant_info,
     bool *transformation_required)
 {
+    LOGGER__WARNING("Using a deprecated function. Use hailo_is_input_transformation_required2 instead");
     CHECK_ARG_NOT_NULL(src_image_shape);
     CHECK_ARG_NOT_NULL(src_format);
     CHECK_ARG_NOT_NULL(dst_image_shape);
@@ -1514,8 +1537,36 @@ hailo_status hailo_is_input_transformation_required(const hailo_3d_image_shape_t
     CHECK_ARG_NOT_NULL(quant_info);
     CHECK_ARG_NOT_NULL(transformation_required);
 
-    *transformation_required = InputTransformContext::is_transformation_required(*src_image_shape, *src_format, *dst_image_shape, *dst_format,
-        *quant_info);
+    auto exp = InputTransformContext::is_transformation_required(*src_image_shape, *src_format, *dst_image_shape, *dst_format,
+        std::vector<hailo_quant_info_t>{*quant_info}); // TODO: Get quant vector (HRT-11052)
+    CHECK_EXPECTED_AS_STATUS(exp);
+    *transformation_required  = exp.value();
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_is_input_transformation_required2(const hailo_3d_image_shape_t *src_image_shape, const hailo_format_t *src_format,
+    const hailo_3d_image_shape_t *dst_image_shape, const hailo_format_t *dst_format, const hailo_quant_info_t *quant_infos, 
+    size_t quant_infos_count, bool *transformation_required)
+{
+    CHECK_ARG_NOT_NULL(src_image_shape);
+    CHECK_ARG_NOT_NULL(src_format);
+    CHECK_ARG_NOT_NULL(dst_image_shape);
+    CHECK_ARG_NOT_NULL(dst_format);
+    CHECK_ARG_NOT_NULL(quant_infos);
+    CHECK_ARG_NOT_NULL(transformation_required);
+
+    std::vector<hailo_quant_info_t> quant_info_vector;
+    const hailo_quant_info_t* ptr = quant_infos;
+    size_t count = quant_infos_count;
+    for (size_t i = 0; i < count; ++i) {
+        const hailo_quant_info_t& quant_info = *(ptr + i);
+        quant_info_vector.push_back(quant_info);
+    }
+    auto exp = InputTransformContext::is_transformation_required(*src_image_shape, *src_format, *dst_image_shape, *dst_format, quant_info_vector);
+    CHECK_EXPECTED_AS_STATUS(exp);
+    *transformation_required  = exp.value();
+
     return HAILO_SUCCESS;
 }
 
@@ -1533,6 +1584,47 @@ hailo_status hailo_transform_frame_by_input_transform_context(hailo_input_transf
     return HAILO_SUCCESS;
 }
 
+static hailo_status convert_quant_infos_vector_to_array(std::vector<hailo_quant_info_t> quant_infos_vec, 
+    hailo_quant_info_t *quant_infos, size_t *quant_infos_count)
+{
+    size_t quant_infos_array_entries = *quant_infos_count;
+    *quant_infos_count = quant_infos_vec.size();
+
+    CHECK(quant_infos_vec.size() <= quant_infos_array_entries, HAILO_INSUFFICIENT_BUFFER,
+          "The given buffer is too small to contain all quant infos. there are {} quant infos in the given stream, given buffer size is {}",
+          quant_infos_vec.size(), quant_infos_array_entries);
+
+    std::copy(quant_infos_vec.begin(), quant_infos_vec.end(), quant_infos);
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_get_input_stream_quant_infos(hailo_input_stream stream, hailo_quant_info_t *quant_infos, size_t *quant_infos_count)
+{
+    CHECK_ARG_NOT_NULL(stream);
+    CHECK_ARG_NOT_NULL(quant_infos);
+    CHECK_ARG_NOT_NULL(quant_infos_count);
+
+    const auto quant_infos_vector = (reinterpret_cast<const InputStream*>(stream))->get_quant_infos();
+    auto status = convert_quant_infos_vector_to_array(quant_infos_vector, quant_infos, quant_infos_count);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_get_input_vstream_quant_infos(hailo_input_vstream vstream, hailo_quant_info_t *quant_infos, size_t *quant_infos_count)
+{
+    CHECK_ARG_NOT_NULL(vstream);
+    CHECK_ARG_NOT_NULL(quant_infos);
+    CHECK_ARG_NOT_NULL(quant_infos_count);
+
+    const auto quant_infos_vector = (reinterpret_cast<const InputVStream*>(vstream))->get_quant_infos();
+    auto status = convert_quant_infos_vector_to_array(quant_infos_vector, quant_infos, quant_infos_count);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
 hailo_status hailo_create_output_transform_context(const hailo_stream_info_t *stream_info,
     const hailo_transform_params_t *transform_params, hailo_output_transform_context *transform_context)
 {
@@ -1540,7 +1632,28 @@ hailo_status hailo_create_output_transform_context(const hailo_stream_info_t *st
     CHECK_ARG_NOT_NULL(transform_params);
     CHECK_ARG_NOT_NULL(transform_context);
 
+    if (!Quantization::is_qp_valid(stream_info->quant_info)) {
+        LOGGER__ERROR("quant_info of stream_info is invalid as the model was compiled with multiple quant_infos. "
+                    "Please compile again or call hailo_create_output_transform_context_by_stream instead");
+        return HAILO_INVALID_ARGUMENT;
+    }
+
     auto local_transform_context = OutputTransformContext::create(*stream_info, *transform_params);
+    CHECK_EXPECTED_AS_STATUS(local_transform_context);
+
+    *transform_context = reinterpret_cast<hailo_output_transform_context>(local_transform_context.release().release());
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_create_output_transform_context_by_stream(hailo_output_stream stream,
+    const hailo_transform_params_t *transform_params, hailo_output_transform_context *transform_context)
+{
+    CHECK_ARG_NOT_NULL(stream);
+    CHECK_ARG_NOT_NULL(transform_params);
+    CHECK_ARG_NOT_NULL(transform_context);
+
+    OutputStream *output_stream = reinterpret_cast<OutputStream*>(stream);
+    auto local_transform_context = OutputTransformContext::create(*output_stream, *transform_params);
     CHECK_EXPECTED_AS_STATUS(local_transform_context);
 
     *transform_context = reinterpret_cast<hailo_output_transform_context>(local_transform_context.release().release());
@@ -1565,8 +1678,37 @@ hailo_status hailo_is_output_transformation_required(const hailo_3d_image_shape_
     CHECK_ARG_NOT_NULL(quant_info);
     CHECK_ARG_NOT_NULL(transformation_required);
 
-    *transformation_required = OutputTransformContext::is_transformation_required(*src_image_shape, *src_format, *dst_image_shape, *dst_format,
-        *quant_info);
+    auto exp = OutputTransformContext::is_transformation_required(*src_image_shape, *src_format, *dst_image_shape, *dst_format,
+        std::vector<hailo_quant_info_t>{*quant_info}); // TODO: Get quant vector (HRT-11052)
+    CHECK_EXPECTED_AS_STATUS(exp);
+    *transformation_required = exp.value();
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_is_output_transformation_required2(
+    const hailo_3d_image_shape_t *src_image_shape, const hailo_format_t *src_format,
+    const hailo_3d_image_shape_t *dst_image_shape, const hailo_format_t *dst_format,
+    const hailo_quant_info_t *quant_infos, size_t quant_infos_count, bool *transformation_required)
+{
+    CHECK_ARG_NOT_NULL(src_image_shape);
+    CHECK_ARG_NOT_NULL(src_format);
+    CHECK_ARG_NOT_NULL(dst_image_shape);
+    CHECK_ARG_NOT_NULL(dst_format);
+    CHECK_ARG_NOT_NULL(quant_infos);
+    CHECK_ARG_NOT_NULL(transformation_required);
+
+    std::vector<hailo_quant_info_t> quant_info_vector;
+    const hailo_quant_info_t* ptr = quant_infos;
+    size_t count = quant_infos_count;
+    for (size_t i = 0; i < count; ++i) {
+        const hailo_quant_info_t& quant_info = *(ptr + i);
+        quant_info_vector.push_back(quant_info);
+    }
+    auto expected_tranformation_required = OutputTransformContext::is_transformation_required(*src_image_shape, *src_format, *dst_image_shape, *dst_format, quant_info_vector);
+    CHECK_EXPECTED_AS_STATUS(expected_tranformation_required);
+    *transformation_required = expected_tranformation_required.release();
+
     return HAILO_SUCCESS;
 }
 
@@ -1581,6 +1723,41 @@ hailo_status hailo_transform_frame_by_output_transform_context(hailo_output_tran
     auto status = reinterpret_cast<OutputTransformContext*>(transform_context)->transform(MemoryView::create_const(src,
         src_size), dst_buffer);
     CHECK_SUCCESS(status);
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_get_output_stream_quant_infos(hailo_output_stream stream, hailo_quant_info_t *quant_infos, size_t *quant_infos_count)
+{
+    CHECK_ARG_NOT_NULL(stream);
+    CHECK_ARG_NOT_NULL(quant_infos);
+    CHECK_ARG_NOT_NULL(quant_infos_count);
+
+    auto quant_infos_vector = (reinterpret_cast<OutputStream*>(stream))->get_quant_infos();
+    auto status = convert_quant_infos_vector_to_array(quant_infos_vector, quant_infos, quant_infos_count);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_get_output_vstream_quant_infos(hailo_output_vstream vstream, hailo_quant_info_t *quant_infos, size_t *quant_infos_count)
+{
+    CHECK_ARG_NOT_NULL(vstream);
+    CHECK_ARG_NOT_NULL(quant_infos);
+    CHECK_ARG_NOT_NULL(quant_infos_count);
+
+    const auto quant_infos_vector = (reinterpret_cast<const OutputVStream*>(vstream))->get_quant_infos();
+    auto status = convert_quant_infos_vector_to_array(quant_infos_vector, quant_infos, quant_infos_count);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_is_qp_valid(const hailo_quant_info_t quant_info, bool *is_qp_valid)
+{
+    CHECK_ARG_NOT_NULL(is_qp_valid);
+
+    *is_qp_valid = Quantization::is_qp_valid(quant_info);
+
     return HAILO_SUCCESS;
 }
 
@@ -2082,8 +2259,18 @@ hailo_status hailo_vstream_write_raw_buffer(hailo_input_vstream input_vstream, c
 {
     CHECK_ARG_NOT_NULL(input_vstream);
     CHECK_ARG_NOT_NULL(buffer);
-    
+
     auto status = reinterpret_cast<InputVStream*>(input_vstream)->write(MemoryView::create_const(buffer, buffer_size));
+    CHECK_SUCCESS(status);
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_vstream_write_pix_buffer(hailo_input_vstream input_vstream, const hailo_pix_buffer_t *buffer)
+{
+    CHECK_ARG_NOT_NULL(input_vstream);
+    CHECK_ARG_NOT_NULL(buffer);
+
+    auto status = reinterpret_cast<InputVStream*>(input_vstream)->write(*buffer);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -2094,6 +2281,33 @@ hailo_status hailo_vstream_read_raw_buffer(hailo_output_vstream output_vstream, 
     CHECK_ARG_NOT_NULL(dst);
     
     auto status = reinterpret_cast<OutputVStream*>(output_vstream)->read(MemoryView(dst, dst_size));
+    CHECK_SUCCESS(status);
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_vstream_set_nms_score_threshold(hailo_output_vstream output_vstream, float32_t threshold)
+{
+    CHECK_ARG_NOT_NULL(output_vstream);
+
+    auto status = reinterpret_cast<OutputVStream*>(output_vstream)->set_nms_score_threshold(threshold);
+    CHECK_SUCCESS(status);
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_vstream_set_nms_iou_threshold(hailo_output_vstream output_vstream, float32_t threshold)
+{
+    CHECK_ARG_NOT_NULL(output_vstream);
+
+    auto status = reinterpret_cast<OutputVStream*>(output_vstream)->set_nms_iou_threshold(threshold);
+    CHECK_SUCCESS(status);
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_vstream_set_nms_max_proposals_per_class(hailo_output_vstream output_vstream, uint32_t max_proposals_per_class)
+{
+    CHECK_ARG_NOT_NULL(output_vstream);
+
+    auto status = reinterpret_cast<OutputVStream*>(output_vstream)->set_nms_max_proposals_per_class(max_proposals_per_class);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }

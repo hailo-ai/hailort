@@ -51,8 +51,6 @@ public:
 
     virtual Expected<uint32_t> program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
         size_t desc_offset) override;
-    virtual hailo_status reprogram_device_interrupts_for_end_of_batch(size_t transfer_size, uint16_t batch_size,
-        InterruptsDomain new_interrupts_domain) override;
 
 private:
     SgBuffer(std::shared_ptr<MappedBuffer> mapped_buffer, std::shared_ptr<DescriptorList> desc_list);

@@ -22,7 +22,8 @@
 #include "common/utils.hpp"
 #include "d2h_events.h"
 #include "byte_order.h"
-#include "common/logger_macros.hpp"
+#include "firmware_status.h"
+
 
 using namespace hailort;
 
@@ -44,6 +45,7 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_cpu_ecc_fatal_noti
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_context_switch_breakpoint_reached(D2H_EVENT_MESSAGE_t *d2h_notification_message);
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_clock_changed_event_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message);
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_hw_infer_manager_infer_done_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message);
+static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_context_switch_run_time_error_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message);
 
 /**********************************************************************
  * Globals
@@ -60,7 +62,8 @@ firmware_notifications_parser_t g_firmware_notifications_parser[D2H_EVENT_ID_COU
     D2H_EVENTS__parse_health_monitor_cpu_ecc_fatal_notification,
     D2H_EVENTS__parse_context_switch_breakpoint_reached,
     D2H_EVENTS__parse_health_monitor_clock_changed_event_notification,
-    D2H_EVENTS__parse_hw_infer_manager_infer_done_notification
+    D2H_EVENTS__parse_hw_infer_manager_infer_done_notification,
+    D2H_EVENTS__parse_context_switch_run_time_error_notification
 };
 /**********************************************************************
  * Internal Functions
@@ -385,6 +388,39 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_context_switch_breakpoint_reached
             d2h_notification_message->message_parameters.context_switch_breakpoint_reached_event.batch_index,
             d2h_notification_message->message_parameters.context_switch_breakpoint_reached_event.context_index,
             d2h_notification_message->message_parameters.context_switch_breakpoint_reached_event.action_index);
+
+    status = HAILO_COMMON_STATUS__SUCCESS;
+
+    return status;
+}
+
+static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_context_switch_run_time_error_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message)
+{
+    HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
+    const char *run_time_error_status_text = NULL;
+    uint32_t run_time_error_status = 0;
+
+    CHECK(D2H_EVENT_CONTEXT_SWITCH_RUN_TIME_ERROR_EVENT_PARAMETER_COUNT == d2h_notification_message->header.parameter_count,
+            HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT,
+            "d2h event invalid parameter count: {}", d2h_notification_message->header.parameter_count);
+
+    CHECK(d2h_notification_message->header.payload_length == 
+            sizeof(d2h_notification_message->message_parameters.context_switch_run_time_error_event),
+            HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_LENGTH,
+            "d2h event invalid payload_length: {}", d2h_notification_message->header.payload_length);
+
+    run_time_error_status = d2h_notification_message->message_parameters.context_switch_run_time_error_event.exit_status;
+    
+    status = FIRMWARE_STATUS__get_textual((FIRMWARE_STATUS_t)run_time_error_status, &run_time_error_status_text);
+    CHECK((HAILO_COMMON_STATUS__SUCCESS == status), status, 
+        "Cannot find textual address for run time status {:#x}, status = {}", (FIRMWARE_STATUS_t)run_time_error_status, status);
+
+    LOGGER__ERROR("Got Context switch run time error on net_group index {}, batch index {}, context index {}, action index {} with status {}",
+        d2h_notification_message->message_parameters.context_switch_run_time_error_event.application_index,
+        d2h_notification_message->message_parameters.context_switch_run_time_error_event.batch_index,
+        d2h_notification_message->message_parameters.context_switch_run_time_error_event.context_index,
+        d2h_notification_message->message_parameters.context_switch_run_time_error_event.action_index,
+        run_time_error_status_text);
 
     status = HAILO_COMMON_STATUS__SUCCESS;
 

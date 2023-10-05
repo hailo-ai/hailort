@@ -44,8 +44,10 @@ private:
 };
 
 // Wrapper for InputStream or InputVStream objects.
+// We use std::enable_from_this because on async api the callback is using `this`. We want to increase the reference
+// count until the callback is over.
 template<typename Writer>
-class WriterWrapper final
+class WriterWrapper final : public std::enable_shared_from_this<WriterWrapper<Writer>>
 {
 public:
     template<typename WriterParams>
@@ -85,8 +87,12 @@ public:
     hailo_status write_async(typename Writer::TransferDoneCallback callback)
     {
         before_write_start();
-        // We can use the same buffer for multiple writes simultaneously. That is OK since we don't modify the buffers.
-        auto status = get().write_async(MemoryView(*next_buffer()), callback);
+        auto self = std::enable_shared_from_this<WriterWrapper<Writer>>::shared_from_this();
+        auto status = get().write_async(MemoryView(*next_buffer()),
+            [self, original=callback](const typename Writer::CompletionInfo &completion_info) {
+                (void)self; // Keeping self here so the buffer won't be deleted until the callback is called.
+                original(completion_info);
+            });
         if (HAILO_SUCCESS != status) {
             return status;
         }
@@ -149,9 +155,6 @@ private:
         CHECK_AS_EXPECTED(0 == (buffer->size() % frame_size), HAILO_INVALID_ARGUMENT,
             "Input file ({}) size {} must be a multiple of the frame size {}",
             file_path, buffer->size(), frame_size);
-
-        auto buffer_ptr = make_shared_nothrow<Buffer>(buffer.release());
-        CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
         std::vector<BufferPtr> dataset;
         const size_t frames_count = buffer->size() / frame_size;

@@ -30,7 +30,7 @@ endif()
 
 # Set firmware version
 add_definitions( -DFIRMWARE_VERSION_MAJOR=4 )
-add_definitions( -DFIRMWARE_VERSION_MINOR=14 )
+add_definitions( -DFIRMWARE_VERSION_MINOR=15 )
 add_definitions( -DFIRMWARE_VERSION_REVISION=0 )
 if(HAILO_BUILD_SERVICE)
     add_definitions( -DHAILO_SUPPORT_MULTI_PROCESS )
@@ -38,11 +38,6 @@ endif()
 
 # The logic of prepare_externals is executed in a sperate module so that it can be run externally (via cmake -P prepare_externals.cmake)
 include(prepare_externals.cmake)
-
-# BENCHMARK_ENABLE_TESTING can be used by other 3rd party projects, therefore we define it
-# before adding projects
-set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "Enable testing of the benchmark library.")
-add_subdirectory(external/benchmark EXCLUDE_FROM_ALL)
 
 # Include host protobuf for protoc (https://stackoverflow.com/questions/53651181/cmake-find-protobuf-package-in-custom-directory)
 if(CMAKE_HOST_UNIX)
@@ -52,6 +47,8 @@ else()
     include(${CMAKE_CURRENT_LIST_DIR}/pre_build/install/cmake/protobuf-config.cmake)
     include(${CMAKE_CURRENT_LIST_DIR}/pre_build/install/cmake/protobuf-module.cmake)
 endif()
+
+set(HAILO_EXTERNALS_CMAKE_SCRIPTS ${CMAKE_CURRENT_LIST_DIR}/cmake/external/)
 
 # Add target protobuf directory and exclude its targets from all
 # Disable protobuf tests, protoc and MSVC static runtime unless they are already defined
@@ -90,16 +87,9 @@ set(COMMON_INC_DIR ${PROJECT_SOURCE_DIR}/common/include)
 set(DRIVER_INC_DIR ${PROJECT_SOURCE_DIR}/hailort/drivers/common)
 set(RPC_DIR ${PROJECT_SOURCE_DIR}/hailort/rpc)
 
-add_subdirectory(external/Catch2 EXCLUDE_FROM_ALL)
 add_subdirectory(external/CLI11 EXCLUDE_FROM_ALL)
-add_subdirectory(external/json EXCLUDE_FROM_ALL)
-add_subdirectory(external/DotWriter EXCLUDE_FROM_ALL)
-add_subdirectory(external/spdlog EXCLUDE_FROM_ALL)
-set_target_properties(spdlog PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(CMAKE_SYSTEM_NAME STREQUAL QNX)
-    add_library(pevents STATIC EXCLUDE_FROM_ALL external/pevents/src/pevents.cpp)
-    target_include_directories(pevents PUBLIC external/pevents/src)
-    target_compile_definitions(pevents PRIVATE -DWFMO)
+    include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/pevents.cmake)
 endif()
 
 if(HAILO_BUILD_SERVICE)

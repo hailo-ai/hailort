@@ -177,7 +177,8 @@ public:
 
     MemoryView& operator=(MemoryView&& other) = default;
     MemoryView(const MemoryView &) = default;
-    MemoryView& operator=(MemoryView &) = default;
+    MemoryView& operator=(const MemoryView &) = default;
+    MemoryView(MemoryView &&) = default;
 
     static const MemoryView create_const(const void *data, size_t size);
 

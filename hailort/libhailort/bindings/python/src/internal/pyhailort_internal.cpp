@@ -212,10 +212,10 @@ void PyhailortInternal::demux_output_buffer(
 void PyhailortInternal::transform_input_buffer(
     py::array src, const hailo_format_t &src_format, const hailo_3d_image_shape_t &src_shape,
     uintptr_t dst, size_t dst_size, const hailo_format_t &dst_format, const hailo_3d_image_shape_t &dst_shape,
-    const hailo_quant_info_t &dst_quant_info)
+    const std::vector<hailo_quant_info_t> &dst_quant_infos)
 {
     auto transform_context = InputTransformContext::create(src_shape, src_format, dst_shape, dst_format,
-        dst_quant_info);
+        dst_quant_infos);
     VALIDATE_EXPECTED(transform_context);
 
     MemoryView dst_buffer(reinterpret_cast<uint8_t*>(dst), dst_size);
@@ -228,10 +228,10 @@ void PyhailortInternal::transform_input_buffer(
 void PyhailortInternal::transform_output_buffer(
     py::bytes src, const hailo_format_t &src_format, const hailo_3d_image_shape_t &src_shape,
     py::array dst, const hailo_format_t &dst_format, const hailo_3d_image_shape_t &dst_shape,
-    const hailo_quant_info_t &dst_quant_info)
+    const std::vector<hailo_quant_info_t> &dst_quant_infos)
 {
     auto transform_context = OutputTransformContext::create(src_shape, src_format, dst_shape, dst_format,
-        dst_quant_info, {});
+        dst_quant_infos, {});
     VALIDATE_EXPECTED(transform_context);
 
     const auto src_str = static_cast<std::string>(src);
@@ -244,10 +244,10 @@ void PyhailortInternal::transform_output_buffer(
 void PyhailortInternal::transform_output_buffer_nms(
     py::bytes src, const hailo_format_t &src_format, const hailo_3d_image_shape_t &src_shape,
     py::array dst, const hailo_format_t &dst_format, const hailo_3d_image_shape_t &dst_shape,
-    const hailo_quant_info_t &dst_quant_info, const hailo_nms_info_t &nms_info)
+    const std::vector<hailo_quant_info_t> &dst_quant_infos, const hailo_nms_info_t &nms_info)
 {
     auto transform_context = OutputTransformContext::create(src_shape, src_format, dst_shape, dst_format,
-        dst_quant_info, nms_info);
+        dst_quant_infos, nms_info);
     VALIDATE_EXPECTED(transform_context);
 
     const auto src_str = static_cast<std::string>(src);
@@ -260,19 +260,25 @@ void PyhailortInternal::transform_output_buffer_nms(
 bool PyhailortInternal::is_input_transformation_required(
     const hailo_3d_image_shape_t &src_shape, const hailo_format_t &src_format,
     const hailo_3d_image_shape_t &dst_shape, const hailo_format_t &dst_format,
-    const hailo_quant_info_t &quant_info)
+    const std::vector<hailo_quant_info_t> &quant_infos)
 {
-    return InputTransformContext::is_transformation_required(src_shape, src_format, dst_shape, dst_format,
-        quant_info);
+    auto expected_is_transforamtion_required = InputTransformContext::is_transformation_required(src_shape, src_format, dst_shape, dst_format,
+        quant_infos);
+    VALIDATE_EXPECTED(expected_is_transforamtion_required);
+
+    return expected_is_transforamtion_required.release();
 }
 
 bool PyhailortInternal::is_output_transformation_required(
     const hailo_3d_image_shape_t &src_shape, const hailo_format_t &src_format,
     const hailo_3d_image_shape_t &dst_shape, const hailo_format_t &dst_format,
-    const hailo_quant_info_t &quant_info)
+    const std::vector<hailo_quant_info_t> &quant_infos)
 {
-    return OutputTransformContext::is_transformation_required(src_shape, src_format, dst_shape, dst_format,
-        quant_info);
+    auto expected_is_transforamtion_required = OutputTransformContext::is_transformation_required(src_shape, src_format, dst_shape, dst_format,
+        quant_infos);
+    VALIDATE_EXPECTED(expected_is_transforamtion_required);
+
+    return expected_is_transforamtion_required.release();
 }
 
 py::list PyhailortInternal::get_all_layers_info(const HefWrapper &hef, const std::string &net_group_name)
@@ -309,6 +315,9 @@ PYBIND11_MODULE(_pyhailort_internal, m) {
     py::class_<LayerInfo>(m, "HailoLayerInfo", py::module_local())
         .def_readonly("is_mux", &LayerInfo::is_mux)
         .def_readonly("mux_predecessors", &LayerInfo::predecessor)
+        .def_readonly("is_multi_planar", &LayerInfo::is_multi_planar)
+        .def_readonly("planes", &LayerInfo::planes)
+        .def_readonly("plane_index", &LayerInfo::plane_index)
         .def_readonly("is_defused_nms", &LayerInfo::is_defused_nms)
         .def_readonly("fused_nms_layer", &LayerInfo::fused_nms_layer)
         .def_property_readonly("shape", [](LayerInfo& self)
@@ -359,7 +368,7 @@ PYBIND11_MODULE(_pyhailort_internal, m) {
         .def_readonly("direction", &LayerInfo::direction)
         .def_readonly("sys_index", &LayerInfo::stream_index)
         .def_readonly("name", &LayerInfo::name)
-        .def_readonly("quant_info", &LayerInfo::quant_info)
+        .def_readonly("quant_infos", &LayerInfo::quant_infos)
         // For backwards compatibility (accessing qp through layer_info directly)
         .def_property_readonly("qp_zp", [](LayerInfo& self)
         {

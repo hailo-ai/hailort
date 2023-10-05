@@ -18,13 +18,23 @@
 #include "../common.hpp"
 #include "hailo/vdevice.hpp"
 #include "hailo/hef.hpp"
+#include "../download_action_list_command.hpp"
 
 #include <memory>
 #include <vector>
+#include <regex>
 
 using namespace hailort;
 
 constexpr uint32_t DEFAULT_TIME_TO_RUN_SECONDS = 5;
+
+static const char *JSON_SUFFIX = ".json";
+static const char *RUNTIME_DATA_OUTPUT_PATH_HEF_PLACE_HOLDER = "<hef>";
+static const std::vector<uint16_t> DEFAULT_BATCH_SIZES = {1, 2, 4, 8, 16};
+static const uint16_t RUNTIME_DATA_BATCH_INDEX_TO_MEASURE_DEFAULT = 2;
+
+using json = nlohmann::json;
+using ordered_json = nlohmann::ordered_json;
 
 /** VStreamNameValidator */
 class VStreamNameValidator : public CLI::Validator {
@@ -199,13 +209,11 @@ VStreamApp::VStreamApp(const std::string &description, const std::string &name, 
         }))
         ->default_val("auto");
 
-    add_flag_callback(format_opt_group, "-q,--quantized,!--no-quantized", "Whether or not data is quantized",
-        [this](bool result){
-            m_vstream_params.params.user_buffer_format.flags = result ?
-                static_cast<hailo_format_flags_t>(m_vstream_params.params.user_buffer_format.flags | HAILO_FORMAT_FLAGS_QUANTIZED) :
-                static_cast<hailo_format_flags_t>(m_vstream_params.params.user_buffer_format.flags & (~HAILO_FORMAT_FLAGS_QUANTIZED));})
-        ->run_callback_for_default()
+    auto quantized_option = format_opt_group->add_flag("-q,--quantized,!--no-quantized",
+        "Whether or not data is quantized. This flag is ignored - Determine if the data requires quantization is decided by the src-data and dst-data types.")
         ->default_val(true); // default_val() must be after run_callback_for_default()
+
+        hailo_deprecate_options(format_opt_group, { std::make_shared<OptionDeprecation>(quantized_option) }, false);
 }
 
 CLI::Option* VStreamApp::add_flag_callback(CLI::App *app, const std::string &name, const std::string &description,
@@ -307,6 +315,9 @@ class Run2 : public CLI::App
 public:
     Run2();
 
+    Expected<std::unique_ptr<VDevice>> create_vdevice();
+    Expected<std::vector<std::shared_ptr<NetworkRunner>>> init_and_run_net_runners(VDevice *vdevice);
+
     const std::vector<NetworkParams>& get_network_params();
     std::chrono::seconds get_time_to_run();
     std::vector<hailo_device_id_t> get_dev_ids();
@@ -317,6 +328,8 @@ public:
     bool get_measure_hw_latency();
     bool get_measure_overall_latency();
     bool get_multi_process_service();
+    bool get_measure_fw_actions();
+    std::string get_measure_fw_actions_output_path();
     const std::string &get_group_id();
     InferenceMode get_mode() const;
     const std::string &get_output_json_path();
@@ -324,8 +337,10 @@ public:
     void set_scheduling_algorithm(hailo_scheduling_algorithm_t scheduling_algorithm);
     void set_inference_mode();
     void set_measure_latency();
+    void set_batch_size(uint16_t batch_size);
 
 private:
+    void add_measure_fw_actions_subcom();
     void add_net_app_subcom();
     std::vector<NetworkParams> m_network_params;
     uint32_t m_time_to_run;
@@ -342,11 +357,15 @@ private:
     bool m_measure_power;
     bool m_measure_current;
     bool m_measure_temp;
+
+    bool m_measure_fw_actions;
+    std::string m_measure_fw_actions_output_path;
 };
 
 
-Run2::Run2() : CLI::App("Run networks (preview)", "run2")
+Run2::Run2() : CLI::App("Run networks", "run2")
 {
+    add_measure_fw_actions_subcom();
     add_net_app_subcom();
     add_option("-t,--time-to-run", m_time_to_run, "Time to run (seconds)")
         ->default_val(DEFAULT_TIME_TO_RUN_SECONDS)
@@ -358,7 +377,6 @@ Run2::Run2() : CLI::App("Run networks (preview)", "run2")
             { "raw_async", InferenceMode::RAW_ASYNC },
             { "raw_async_single_thread", InferenceMode::RAW_ASYNC_SINGLE_THREAD, OptionVisibility::HIDDEN }
         }))->default_val("full");
-    static const char *JSON_SUFFIX = ".json";
     add_option("-j,--json", m_stats_json_path, "If set save statistics as json to the specified path")
     ->default_val("")
     ->check(FileSuffixValidator(JSON_SUFFIX));
@@ -373,9 +391,6 @@ Run2::Run2() : CLI::App("Run networks (preview)", "run2")
         ->check(CLI::PositiveNumber)
         ->excludes(dev_id_opt);
 
-    vdevice_options_group->add_flag("--multi-process-service", m_multi_process_service, "VDevice multi process service")
-        ->default_val(false);
-
     vdevice_options_group->add_option("--group-id", m_group_id, "VDevice group id")
         ->default_val(HAILO_DEFAULT_VDEVICE_GROUP_ID);
 
@@ -384,7 +399,7 @@ Run2::Run2() : CLI::App("Run networks (preview)", "run2")
     auto measure_power_opt = measurement_options_group->add_flag("--measure-power", m_measure_power, "Measure power consumption")
         ->default_val(false);
 
-    measurement_options_group->add_flag("--measure-current", m_measure_current, "Measure current")->excludes(measure_power_opt)
+    auto measure_current_opt = measurement_options_group->add_flag("--measure-current", m_measure_current, "Measure current")->excludes(measure_power_opt)
         ->default_val(false);
 
     measurement_options_group->add_flag("--measure-latency", m_measure_hw_latency, "Measure network latency on the NN core")
@@ -393,8 +408,41 @@ Run2::Run2() : CLI::App("Run networks (preview)", "run2")
     measurement_options_group->add_flag("--measure-overall-latency", m_measure_overall_latency, "Measure overall latency measurement")
         ->default_val(false);
 
-    measurement_options_group->add_flag("--measure-temp", m_measure_temp, "Measure chip temperature")
+    auto measure_temp_opt = measurement_options_group->add_flag("--measure-temp", m_measure_temp, "Measure chip temperature")
         ->default_val(false);
+
+    auto multi_process_flag = vdevice_options_group->add_flag("--multi-process-service", m_multi_process_service, "VDevice multi process service")
+        ->default_val(false);
+
+    if (VDevice::service_over_ip_mode()) {
+        multi_process_flag
+        ->excludes(measure_power_opt)
+        ->excludes(measure_current_opt)
+        ->excludes(measure_temp_opt);
+        // When working with service over ip - client doesn't have access to physical devices
+    } else {
+        (void)measure_power_opt;
+        (void)measure_current_opt;
+        (void)measure_temp_opt;
+        (void)multi_process_flag;
+    }
+}
+
+void Run2::add_measure_fw_actions_subcom()
+{
+    m_measure_fw_actions = false;
+    auto measure_fw_actions_subcommand = std::make_shared<NetworkApp>("Collect runtime data to be used by the Profiler", "measure-fw-actions");
+    measure_fw_actions_subcommand->parse_complete_callback([this]() {
+        m_measure_fw_actions = true;
+    });
+    measure_fw_actions_subcommand->add_option("--output-path", m_measure_fw_actions_output_path,
+        fmt::format("Runtime data output file path\n'{}' will be replaced with the current running hef", RUNTIME_DATA_OUTPUT_PATH_HEF_PLACE_HOLDER))
+        ->default_val(fmt::format("runtime_data_{}.json", RUNTIME_DATA_OUTPUT_PATH_HEF_PLACE_HOLDER))
+        ->check(FileSuffixValidator(JSON_SUFFIX));
+
+    measure_fw_actions_subcommand->alias("collect-runtime-data");
+
+    add_subcommand(measure_fw_actions_subcommand);
 }
 
 void Run2::add_net_app_subcom()
@@ -499,9 +547,26 @@ void Run2::set_measure_latency()
     }
 }
 
+void Run2::set_batch_size(uint16_t batch_size)
+{
+    for (auto &params: m_network_params) {
+        params.batch_size = batch_size;
+    }
+}
+
 bool Run2::get_multi_process_service()
 {
     return m_multi_process_service;
+}
+
+bool Run2::get_measure_fw_actions()
+{
+    return m_measure_fw_actions;
+}
+
+std::string Run2::get_measure_fw_actions_output_path()
+{
+    return m_measure_fw_actions_output_path;
 }
 
 const std::string &Run2::get_group_id()
@@ -560,69 +625,83 @@ std::string get_str_infer_mode(const InferenceMode& infer_mode)
     return "<Unknown>";
 }
 
-hailo_status Run2Command::execute()
+// We assume that hef_place_holder_regex is valid
+std::string format_measure_fw_actions_output_path(const std::string &base_output_path, const std::string &hef_path,
+    const std::string &hef_place_holder_regex = RUNTIME_DATA_OUTPUT_PATH_HEF_PLACE_HOLDER,
+    const std::string &hef_suffix = ".hef")
 {
-    Run2 *app = reinterpret_cast<Run2*>(m_app);
+    const auto hef_basename = Filesystem::basename(hef_path);
+    const auto hef_no_suffix = Filesystem::remove_suffix(hef_basename, hef_suffix);
+    return std::regex_replace(base_output_path, std::regex(hef_place_holder_regex), hef_no_suffix);
+}
 
-    app->set_inference_mode();
-    app->set_measure_latency();
+Expected<std::reference_wrapper<Device>> get_single_physical_device(VDevice &vdevice)
+{
+    auto expected_physical_devices = vdevice.get_physical_devices();
+    CHECK_EXPECTED(expected_physical_devices);
+    CHECK_AS_EXPECTED(1 == expected_physical_devices->size(), HAILO_INVALID_OPERATION, "Operation not allowed for multi-device");
+    auto &res = expected_physical_devices->at(0);
+    return std::move(res);
+}
 
-    if (0 == app->get_network_params().size()) {
-        LOGGER__ERROR("Nothing to run");
-        return HAILO_INVALID_OPERATION;
-    }
-    if (1 == app->get_network_params().size()) {
-        LOGGER__WARN("\"hailortcli run2\" is in preview. It is recommended to use \"hailortcli run\" command for a single network group");
-    }
-    if (app->get_measure_hw_latency() || app->get_measure_overall_latency()) {
-        CHECK(1 == app->get_network_params().size(), HAILO_INVALID_OPERATION, "When latency measurement is enabled, only one model is allowed");
-        LOGGER__WARN("Measuring latency; frames are sent one at a time and FPS will not be measured");
-    }
+Expected<std::unique_ptr<VDevice>> Run2::create_vdevice()
+{
+    // hailo_vdevice_params_t is a c-structure that have pointers of device_ids, we must keep reference to the devices
+    // object alive until vdevice_params is destructed.
+    auto dev_ids = get_dev_ids();
 
     hailo_vdevice_params_t vdevice_params{};
-    CHECK_SUCCESS(hailo_init_vdevice_params(&vdevice_params));
-    auto dev_ids = app->get_dev_ids();
+    CHECK_SUCCESS_AS_EXPECTED(hailo_init_vdevice_params(&vdevice_params));
     if (!dev_ids.empty()) {
         vdevice_params.device_count = static_cast<uint32_t>(dev_ids.size());
         vdevice_params.device_ids = dev_ids.data();
-
         // Disable scheduler for eth VDevice
         if ((1 == dev_ids.size()) && (is_valid_ip(dev_ids[0].id))) {
             vdevice_params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_NONE;
-            CHECK(1 == app->get_network_params().size(), HAILO_INVALID_OPERATION, "On Ethernet inference only one model is allowed");
-            app->set_scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_NONE);
+            CHECK_AS_EXPECTED(1 == get_network_params().size(), HAILO_INVALID_OPERATION, "On Ethernet inference only one model is allowed");
+            set_scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_NONE);
         }
     } else {
-        vdevice_params.device_count = app->get_device_count();
+        vdevice_params.device_count = get_device_count();
     }
-    // TODO: Async stream support for scheduler (HRT-9878)
-    if ((app->get_mode() == InferenceMode::RAW_ASYNC) || (app->get_mode() == InferenceMode::RAW_ASYNC_SINGLE_THREAD)) {
+
+    if (get_measure_fw_actions()) {
+        CHECK_AS_EXPECTED(1 == get_network_params().size(), HAILO_INVALID_OPERATION, "Only one model is allowed when collecting runtime data");
+        CHECK_AS_EXPECTED(!get_multi_process_service(), HAILO_INVALID_OPERATION, "Collecting runtime data is not supported with multi process service");
+        CHECK_AS_EXPECTED(get_device_count() == 1, HAILO_INVALID_OPERATION, "Collecting runtime data is not supported with multi device");
+        CHECK_AS_EXPECTED(!(get_measure_hw_latency() || get_measure_overall_latency()), HAILO_INVALID_OPERATION, "Latency measurement is not allowed when collecting runtime data");
+        CHECK_AS_EXPECTED((get_mode() == InferenceMode::RAW) || (get_mode() == InferenceMode::RAW_ASYNC), HAILO_INVALID_OPERATION,
+            "'measure-fw-actions' is only supported with '--mode=raw'. Received mode: '{}'", get_str_infer_mode(get_mode()));
+
         vdevice_params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_NONE;
-        CHECK(1 == app->get_network_params().size(), HAILO_INVALID_OPERATION, "Only one model is allowed with aw async inference mode");
-        app->set_scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_NONE);
+        set_scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_NONE);
     }
 
-    vdevice_params.group_id = app->get_group_id().c_str();
-    vdevice_params.multi_process_service = app->get_multi_process_service();
+    vdevice_params.group_id = get_group_id().c_str();
+    vdevice_params.multi_process_service = get_multi_process_service();
 
-    auto vdevice = VDevice::create(vdevice_params);
-    CHECK_EXPECTED_AS_STATUS(vdevice);
+    return VDevice::create(vdevice_params);
+}
+
+Expected<std::vector<std::shared_ptr<NetworkRunner>>> Run2::init_and_run_net_runners(VDevice *vdevice)
+{
+    std::vector<std::shared_ptr<NetworkRunner>> net_runners;
+
+    auto shutdown_event_exp = Event::create_shared(Event::State::not_signalled);
+    CHECK_EXPECTED(shutdown_event_exp);
+    auto shutdown_event = shutdown_event_exp.release();
 
     // create network runners
-    std::vector<std::shared_ptr<NetworkRunner>> net_runners;
-    for (auto &net_params : app->get_network_params()) {
-        auto net_runner = NetworkRunner::create_shared(*vdevice->get(), net_params);
-        CHECK_EXPECTED_AS_STATUS(net_runner);
-
-        net_runners.emplace_back(net_runner.release());
+    for (auto &net_params : get_network_params()) {
+        auto expected_net_runner = NetworkRunner::create_shared(*vdevice, net_params);
+        CHECK_EXPECTED(expected_net_runner);
+        auto net_runner = expected_net_runner.release();
+        net_runners.emplace_back(net_runner);
     }
 
     auto live_stats = std::make_unique<LiveStats>(std::chrono::seconds(1));
 
-    live_stats->add(std::make_shared<TimerLiveTrack>(app->get_time_to_run()), 0);
-
-    auto shutdown_event = Event::create_shared(Event::State::not_signalled);
-    CHECK_NOT_NULL(shutdown_event, HAILO_OUT_OF_HOST_MEMORY);
+    live_stats->add(std::make_shared<TimerLiveTrack>(get_time_to_run()), 0);
 
     std::vector<AsyncThreadPtr<hailo_status>> threads;
     Barrier activation_barrier(net_runners.size() + 1); // We wait for all nets to finish activation + this thread to start sampling
@@ -635,32 +714,115 @@ hailo_status Run2Command::execute()
 
     auto signal_event_scope_guard = SignalEventScopeGuard(*shutdown_event);
 
-    auto physical_devices = vdevice.value()->get_physical_devices();
-    CHECK_EXPECTED_AS_STATUS(physical_devices);
+    if (get_measure_power() || get_measure_current() || get_measure_temp()) {
+        auto physical_devices = vdevice->get_physical_devices();
+        CHECK_EXPECTED(physical_devices);
 
-    for (auto &device : physical_devices.value()) {
-        auto measurement_live_track = MeasurementLiveTrack::create_shared(device.get(), app->get_measure_power(),
-            app->get_measure_current(), app->get_measure_temp());
-        if (HAILO_SUCCESS != measurement_live_track.status()) {
-            activation_barrier.terminate();
+        for (auto &device : physical_devices.value()) {
+            auto measurement_live_track = MeasurementLiveTrack::create_shared(device.get(), get_measure_power(),
+                get_measure_current(), get_measure_temp());
+            if (HAILO_SUCCESS != measurement_live_track.status()) {
+                activation_barrier.terminate();
+            }
+            CHECK_EXPECTED(measurement_live_track);
+
+            live_stats->add(measurement_live_track.release(), 2);
         }
-        CHECK_EXPECTED_AS_STATUS(measurement_live_track);
-
-        live_stats->add(measurement_live_track.release(), 2);
     }
 
     // TODO: wait for all nets before starting timer. start() should update TimerLiveTrack to start. or maybe append here but first in vector...
     activation_barrier.arrive_and_wait();
-    CHECK_SUCCESS(live_stats->start());
-    auto status = shutdown_event->wait(app->get_time_to_run());
+    CHECK_SUCCESS_AS_EXPECTED(live_stats->start());
+    auto status = shutdown_event->wait(get_time_to_run());
     if (HAILO_TIMEOUT != status) {
         // if shutdown_event is signaled its because one of the send/recv threads failed
         LOGGER__ERROR("Encountered error during inference. See log for more information.");
     }
-    if (!app->get_output_json_path().empty()){
-        live_stats->dump_stats(app->get_output_json_path(), get_str_infer_mode(app->get_mode()));
+    if (!get_output_json_path().empty()){
+        live_stats->dump_stats(get_output_json_path(), get_str_infer_mode(get_mode()));
+    }
+    auto expected_fps_per_network = live_stats->get_last_measured_fps_per_network_group();
+    CHECK_EXPECTED(expected_fps_per_network);
+    auto fps_per_network = expected_fps_per_network.release();
+    for (size_t network_runner_index = 0; network_runner_index < fps_per_network.size(); network_runner_index++) {
+        net_runners[network_runner_index]->set_last_measured_fps(fps_per_network[network_runner_index]);
     }
     live_stats.reset(); // Ensures that the final print will include real values and not with values of when streams are already aborted.
     shutdown_event->signal();
-    return wait_for_threads(threads);
+    wait_for_threads(threads);
+    return net_runners;
+}
+
+hailo_status Run2Command::execute()
+{
+    Run2 *app = reinterpret_cast<Run2*>(m_app);
+
+    app->set_inference_mode();
+    app->set_measure_latency();
+
+    CHECK(0 < app->get_network_params().size(), HAILO_INVALID_OPERATION, "Nothing to run");
+
+    if (app->get_measure_hw_latency() || app->get_measure_overall_latency()) {
+        CHECK(1 == app->get_network_params().size(), HAILO_INVALID_OPERATION, "When latency measurement is enabled, only one model is allowed");
+        LOGGER__WARNING("Measuring latency; frames are sent one at a time and FPS will not be measured");
+    }
+
+    if (1 == app->get_network_params().size()) {
+        LOGGER__WARNING("\"hailortcli run2\" is not optimized for single model usage. It is recommended to use \"hailortcli run\" command for a single model");
+    }
+
+    auto expected_vdevice = app->create_vdevice();
+    CHECK_EXPECTED_AS_STATUS(expected_vdevice);
+    auto vdevice = expected_vdevice.release();
+
+    std::vector<uint16_t> batch_sizes_to_run = { app->get_network_params()[0].batch_size };
+    if(app->get_measure_fw_actions() && app->get_network_params()[0].batch_size == HAILO_DEFAULT_BATCH_SIZE) {
+        // In case measure-fw-actions is enabled and no batch size was provided - we want to run with batch sizes 1,2,4,8,16
+        batch_sizes_to_run = DEFAULT_BATCH_SIZES;
+    }
+
+    std::string runtime_data_output_path;
+    ordered_json action_list_json;
+
+    if (app->get_measure_fw_actions()) {
+        auto device = get_single_physical_device(*vdevice);
+        CHECK_EXPECTED_AS_STATUS(device);
+
+        auto expected_action_list_json = DownloadActionListCommand::init_json_object(device.release(), app->get_network_params()[0].hef_path);
+        CHECK_EXPECTED_AS_STATUS(expected_action_list_json);
+        action_list_json = expected_action_list_json.release();
+        runtime_data_output_path = format_measure_fw_actions_output_path(
+            app->get_measure_fw_actions_output_path(), app->get_network_params()[0].hef_path);
+    }
+
+    uint32_t network_group_index = 0;
+    for (auto batch_size : batch_sizes_to_run) {
+        if(app->get_measure_fw_actions()) {
+            app->set_batch_size(batch_size);
+
+            auto device = get_single_physical_device(*vdevice);
+            CHECK_EXPECTED_AS_STATUS(device);
+
+            auto status = DownloadActionListCommand::set_batch_to_measure(device.release(), RUNTIME_DATA_BATCH_INDEX_TO_MEASURE_DEFAULT);
+            CHECK_SUCCESS(status);
+        }
+
+        auto expected_net_runners = app->init_and_run_net_runners(vdevice.get());
+        CHECK_EXPECTED_AS_STATUS(expected_net_runners);
+        auto net_runners = expected_net_runners.release();
+
+        if(app->get_measure_fw_actions()) { // Collecting runtime data
+            auto device = get_single_physical_device(*vdevice);
+            CHECK_EXPECTED_AS_STATUS(device);
+
+            auto status = DownloadActionListCommand::execute(device.release(), net_runners[0]->get_configured_network_group(), batch_size, action_list_json, net_runners[0]->get_last_measured_fps(), network_group_index);
+            CHECK_SUCCESS(status);
+
+            network_group_index++;
+        }
+    }
+    if(app->get_measure_fw_actions()) { // In case measure-fw-actions is enabled - write data to JSON file
+        CHECK_SUCCESS(DownloadActionListCommand::write_to_json(action_list_json, runtime_data_output_path));
+    }
+    return HAILO_SUCCESS;
 }

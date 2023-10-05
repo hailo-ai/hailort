@@ -34,12 +34,14 @@ public:
     static_assert(sizeof(hailo_bbox_t) / sizeof(uint16_t) == sizeof(hailo_bbox_float32_t) / sizeof(float32_t),
         "Mismatch bbox params size");
     static const uint32_t BBOX_PARAMS = sizeof(hailo_bbox_t) / sizeof(uint16_t);
+    static const uint32_t MASK_PARAMS = 1; // mask_size
     static const uint32_t MAX_DEFUSED_LAYER_COUNT = 9;
     static const size_t HW_DATA_ALIGNMENT = 8;
     static const uint32_t MUX_INFO_COUNT = 32;
     static const uint32_t MAX_MUX_PREDECESSORS = 4;
     static const uint16_t ETH_INPUT_BASE_PORT = 32401;
     static const uint16_t ETH_OUTPUT_BASE_PORT = 32501;
+    static const uint32_t MAX_NMS_BURST_SIZE = 65536;
 
     /**
      * Gets the NMS host shape size (number of elements) from NMS info.
@@ -153,6 +155,8 @@ public:
             return "UINT16";
         case HAILO_FORMAT_TYPE_FLOAT32:
             return "FLOAT32";
+        case HAILO_FORMAT_TYPE_AUTO:
+            return "AUTO";
         default:
             return "Nan";
         }
@@ -174,8 +178,10 @@ public:
             return "HAILO8";
         case HAILO_ARCH_HAILO8L:
             return "HAILO8L";
-        case HAILO_ARCH_HAILO15:
-            return "HAILO15";
+        case HAILO_ARCH_HAILO15H:
+            return "HAILO15H";
+        case HAILO_ARCH_PLUTO:
+            return "PLUTO";
         default:
             return "UNKNOWN ARCHITECTURE";
         }
@@ -229,6 +235,8 @@ public:
             return "I420";
         case HAILO_FORMAT_ORDER_HAILO_YYYYUV:
             return "YYYYUV";
+        case HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK:
+            return "HAILO NMS WITH METADATA";
         default:
             return "Nan";
         }
@@ -264,9 +272,26 @@ public:
      * @param[in] format            A ::hailo_format_t object.
      * @return The NMS host frame size in bytes.
      */
-    static constexpr uint32_t get_nms_host_frame_size(const hailo_nms_shape_t &nms_shape, const hailo_format_t &format)
+    static uint32_t get_nms_host_frame_size(const hailo_nms_shape_t &nms_shape, const hailo_format_t &format);
+
+    /**
+     * Gets HAILO_NMS_WITH_BYTE_MASK host shape size in bytes by nms_shape and buffer format.
+     *
+     * @param[in] nms_shape             The NMS shape to get size from.
+     * @param[in] format                A ::hailo_format_t object.
+     * @return The HAILO_NMS_WITH_BYTE_MASK host shape size.
+     */
+    static constexpr uint32_t get_nms_with_byte_mask_host_shape_size(const hailo_nms_shape_t &nms_shape, const hailo_format_t &format)
     {
-        return get_nms_host_shape_size(nms_shape) * get_format_data_bytes(format);
+        // Assuming 1 byte per pixel for the mask
+        auto bbox_size = BBOX_PARAMS + MASK_PARAMS + nms_shape.max_mask_size;
+        const uint32_t size_per_class = 1 + (bbox_size * nms_shape.max_bboxes_per_class);
+        double shape_size = size_per_class * nms_shape.number_of_classes;
+        if ((shape_size * get_format_data_bytes(format)) < UINT32_MAX) {
+            return static_cast<uint32_t>(shape_size);
+        } else {
+            return UINT32_MAX / get_format_data_bytes(format);
+        }
     }
 
     /**
@@ -315,7 +340,7 @@ public:
             trans_params.user_buffer_format.type = stream_info.format.type;
         }
 
-        if (HAILO_FORMAT_ORDER_HAILO_NMS == stream_info.format.order) {
+        if (HailoRTCommon::is_nms(stream_info)) {
             return get_nms_host_frame_size(stream_info.nms_info, trans_params.user_buffer_format);
         } else {
             auto shape = (HAILO_STREAM_NO_TRANSFORM == trans_params.transform_mode) ? stream_info.hw_shape :
@@ -331,14 +356,13 @@ public:
      * @param[in] format               A ::hailo_format_t object.
      * @return The frame's size in bytes.
      */
-    static constexpr uint32_t get_frame_size(const hailo_vstream_info_t &vstream_info,
-        hailo_format_t format)
+    static constexpr uint32_t get_frame_size(const hailo_vstream_info_t &vstream_info, hailo_format_t format)
     {
         if (HAILO_FORMAT_TYPE_AUTO == format.type) {
             format.type = vstream_info.format.type;
         }
 
-        if (HAILO_FORMAT_ORDER_HAILO_NMS == vstream_info.format.order) {
+        if (HailoRTCommon::is_nms(vstream_info)) {
             return get_nms_host_frame_size(vstream_info.nms_shape, format);
         } else {
             return get_frame_size(vstream_info.shape, format);
@@ -348,6 +372,21 @@ public:
     static constexpr bool is_vdma_stream_interface(hailo_stream_interface_t stream_interface)
     {
         return (HAILO_STREAM_INTERFACE_PCIE == stream_interface) || (HAILO_STREAM_INTERFACE_INTEGRATED == stream_interface);
+    }
+
+    static constexpr bool is_nms(const hailo_vstream_info_t &vstream_info)
+    {
+        return is_nms(vstream_info.format.order);
+    }
+
+    static constexpr bool is_nms(const hailo_stream_info_t &stream_info)
+    {
+        return is_nms(stream_info.format.order);
+    }
+
+    static constexpr bool is_nms(const hailo_format_order_t &order)
+    {
+        return ((HAILO_FORMAT_ORDER_HAILO_NMS == order) || (HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK == order));
     }
 
     static Expected<hailo_device_id_t> to_device_id(const std::string &device_id);
@@ -419,6 +458,17 @@ inline constexpr hailo_pipeline_elem_stats_flags_t operator|(hailo_pipeline_elem
 }
 
 inline constexpr hailo_pipeline_elem_stats_flags_t& operator|=(hailo_pipeline_elem_stats_flags_t &a, hailo_pipeline_elem_stats_flags_t b)
+{
+    a = a | b;
+    return a;
+}
+
+inline constexpr hailo_stream_flags_t operator|(hailo_stream_flags_t a, hailo_stream_flags_t b)
+{
+    return static_cast<hailo_stream_flags_t>(static_cast<int>(a) | static_cast<int>(b));
+}
+
+inline constexpr hailo_stream_flags_t& operator|=(hailo_stream_flags_t &a, hailo_stream_flags_t b)
 {
     a = a | b;
     return a;

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.0.0)
 # set(CMAKE_C_CLANG_TIDY "clang-tidy;-checks=*")
 
 set(HAILORT_MAJOR_VERSION    4)
-set(HAILORT_MINOR_VERSION    14)
+set(HAILORT_MINOR_VERSION    15)
 set(HAILORT_REVISION_VERSION 0)
 
 # Add the cmake folder so the modules there are found
@@ -43,9 +43,19 @@ target_include_directories(scheduler_mon_proto
     $<BUILD_INTERFACE: ${Protobuf_INCLUDE_DIRS}>
 )
 
-# Add readerwriterqueue as a header-only library
-add_library(readerwriterqueue INTERFACE)
-target_include_directories(readerwriterqueue INTERFACE ${HAILO_EXTERNAL_DIR}/readerwriterqueue)
+protobuf_generate_cpp(PROTO_PROFILER_SRC PROTO_PROFILER_HEADR tracer_profiler.proto)
+add_library(profiler_proto ${PROTO_PROFILER_SRC} ${PROTO_PROFILER_HEADR})
+target_link_libraries(profiler_proto libprotobuf-lite)
+set_target_properties(profiler_proto PROPERTIES CXX_STANDARD 14 GENERATED TRUE POSITION_INDEPENDENT_CODE ON)
+if(CMAKE_HOST_WIN32)
+    target_compile_options(profiler_proto PRIVATE /wd4244)
+endif()
+get_filename_component(PROTO_PROFILER_HEADER_DIRECTORY ${PROTO_PROFILER_HEADR} DIRECTORY)
+target_include_directories(profiler_proto
+    PUBLIC
+    $<BUILD_INTERFACE: ${PROTO_PROFILER_HEADER_DIRECTORY}>
+    $<BUILD_INTERFACE: ${Protobuf_INCLUDE_DIRS}>
+)
 
 add_subdirectory(src)
 set(NET_FLOW_INFRA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/infra/net_flow")

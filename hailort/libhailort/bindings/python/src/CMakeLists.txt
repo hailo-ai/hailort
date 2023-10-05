@@ -34,6 +34,7 @@ set(PYHAILORT_DIR ${CMAKE_CURRENT_LIST_DIR})
 pybind11_add_module(_pyhailort
     pyhailort.cpp
     device_api.cpp
+    network_group_api.cpp
     hef_api.cpp
     vstream_api.cpp
     quantization_api.cpp
@@ -48,7 +49,7 @@ set_target_properties(_pyhailort PROPERTIES
     # VISIBILITY_INLINES_HIDDEN YES
 )
 
-find_package(HailoRT 4.14.0 EXACT REQUIRED)
+find_package(HailoRT 4.15.0 EXACT REQUIRED)
 
 target_link_libraries(_pyhailort PRIVATE HailoRT::libhailort)
 if(WIN32)

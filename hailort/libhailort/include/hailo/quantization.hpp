@@ -16,6 +16,8 @@
 #include <math.h>
 #include <fenv.h>
 
+static const float32_t INVALID_QP_VALUE = 0;
+
 #ifdef _MSC_VER
 #include <immintrin.h>
 #endif
@@ -238,6 +240,22 @@ public:
         else {
             return n;
         }
+    }
+
+    /**
+     * Returns whether or not qp is valid
+     *
+     * @param[in]     quant_info      A ::hailo_quant_info_t object.
+     *
+     * @return a bool, Indicates whether or not qp is valid.
+     * @note QP will be invalid in case HEF file was compiled with multiple QPs, and then the user will try working with API for single QP.
+     *       For example - if HEF was compiled with multiple QPs and then the user calls hailo_get_input_stream_info,
+     *       The ::hailo_quant_info_t object of the ::hailo_stream_info_t object will be invalid.
+     */
+    static inline bool is_qp_valid(const hailo_quant_info_t &quant_info)
+    {
+        return !((quant_info.qp_zp == INVALID_QP_VALUE) && (quant_info.qp_scale == INVALID_QP_VALUE) 
+            && (quant_info.limvals_min == INVALID_QP_VALUE) && (quant_info.limvals_max == INVALID_QP_VALUE));
     }
 
 private:

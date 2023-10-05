@@ -15,24 +15,31 @@ namespace hailort
 namespace net_flow
 {
 
-Expected<std::shared_ptr<Op>> YOLOXPostProcessOp::create(const std::map<std::string, BufferMetaData> &inputs_metadata,
-                                                         const std::map<std::string, BufferMetaData> &outputs_metadata,
-                                                         const NmsPostProcessConfig &nms_post_process_config,
-                                                         const YoloxPostProcessConfig &yolox_post_process_config)
+Expected<std::shared_ptr<OpMetadata>> YoloxOpMetadata::create(const std::unordered_map<std::string, BufferMetaData> &inputs_metadata,
+    const std::unordered_map<std::string, BufferMetaData> &outputs_metadata, const NmsPostProcessConfig &nms_post_process_config,
+    const YoloxPostProcessConfig &yolox_post_process_config, const std::string &network_name)
 {
-    auto op = std::shared_ptr<YOLOXPostProcessOp>(new (std::nothrow) YOLOXPostProcessOp(inputs_metadata, outputs_metadata, nms_post_process_config,
-        yolox_post_process_config));
-    CHECK_AS_EXPECTED(op != nullptr, HAILO_OUT_OF_HOST_MEMORY);
+    auto op_metadata = std::shared_ptr<YoloxOpMetadata>(new (std::nothrow) YoloxOpMetadata(inputs_metadata, outputs_metadata, nms_post_process_config,
+        yolox_post_process_config, network_name));
+    CHECK_AS_EXPECTED(op_metadata != nullptr, HAILO_OUT_OF_HOST_MEMORY);
 
-    return std::shared_ptr<Op>(std::move(op));
+    auto status = op_metadata->validate_params();
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    return std::shared_ptr<OpMetadata>(std::move(op_metadata));
 }
 
-hailo_status YOLOXPostProcessOp::validate_metadata()
+std::string YoloxOpMetadata::get_op_description()
 {
-    auto status = NmsPostProcessOp::validate_metadata();
-    if (HAILO_SUCCESS != status) {
-        return status;
-    }
+    auto nms_config_info = get_nms_config_description();
+    auto config_info = fmt::format("Op {}, Name: {}, {}, Image height: {:.2f}, Image width: {:.2f}",
+                        OpMetadata::get_operation_type_str(m_type), m_name, nms_config_info, m_yolox_config.image_height, m_yolox_config.image_width);
+    return config_info;
+}
+
+hailo_status YoloxOpMetadata::validate_params()
+{
+    CHECK_SUCCESS(NmsOpMetadata::validate_params());
 
     // Validate regs, clss and objs matching layers have same shape
     for (const auto &layer_names : m_yolox_config.input_names) {
@@ -43,8 +50,11 @@ hailo_status YOLOXPostProcessOp::validate_metadata()
         CHECK(contains(m_inputs_metadata, layer_names.obj), HAILO_INVALID_ARGUMENT,
             "YOLOXPostProcessOp: inputs_metadata does not contain obj layer {}", layer_names.obj);
 
+        assert(contains(m_inputs_metadata, layer_names.reg));
         const auto &reg_input_metadata = m_inputs_metadata.at(layer_names.reg);
+        assert(contains(m_inputs_metadata, layer_names.cls));
         const auto &cls_input_metadata = m_inputs_metadata.at(layer_names.cls);
+        assert(contains(m_inputs_metadata, layer_names.obj));
         const auto &obj_input_metadata = m_inputs_metadata.at(layer_names.obj);
 
         // NOTE: padded shape might be different because features might be different,
@@ -68,29 +78,47 @@ hailo_status YOLOXPostProcessOp::validate_metadata()
             && (obj_input_metadata.format.order == reg_input_metadata.format.order),
             HAILO_INVALID_ARGUMENT, "YOLOXPostProcess: reg input {} has different format than obj input {}",
                 layer_names.reg, layer_names.obj);
-
     }
 
     return HAILO_SUCCESS;
 }
 
+hailo_status YoloxOpMetadata::validate_format_info()
+{
+    return NmsOpMetadata::validate_format_info();
+}
+
+Expected<std::shared_ptr<Op>> YOLOXPostProcessOp::create(std::shared_ptr<YoloxOpMetadata> metadata)
+{
+    auto status = metadata->validate_format_info();
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    auto op = std::shared_ptr<YOLOXPostProcessOp>(new (std::nothrow) YOLOXPostProcessOp(metadata));
+    CHECK_AS_EXPECTED(op != nullptr, HAILO_OUT_OF_HOST_MEMORY);
+
+    return std::shared_ptr<Op>(std::move(op));
+}
+
 hailo_status YOLOXPostProcessOp::execute(const std::map<std::string, MemoryView> &inputs, std::map<std::string, MemoryView> &outputs)
 {
+    const auto &yolox_config = m_metadata->yolox_config();
+    const auto &inputs_metadata = m_metadata->inputs_metadata();
+    const auto &nms_config = m_metadata->nms_config();
     std::vector<DetectionBbox> detections;
-    std::vector<uint32_t> classes_detections_count(m_nms_config.number_of_classes, 0);
-    detections.reserve(m_nms_config.max_proposals_per_class * m_nms_config.number_of_classes);
-    for (const auto &layers_names_triplet : m_yolox_config.input_names) {
+    std::vector<uint32_t> classes_detections_count(nms_config.number_of_classes, 0);
+    detections.reserve(nms_config.max_proposals_per_class * nms_config.number_of_classes);
+    for (const auto &layers_names_triplet : yolox_config.input_names) {
         hailo_status status;
         assert(contains(inputs, layers_names_triplet.cls));
         assert(contains(inputs, layers_names_triplet.obj));
         assert(contains(inputs, layers_names_triplet.reg));
 
-        auto &input_metadata = m_inputs_metadata[layers_names_triplet.reg];
+        auto &input_metadata = inputs_metadata.at(layers_names_triplet.reg);
         if (input_metadata.format.type == HAILO_FORMAT_TYPE_UINT8) {
-            status = extract_detections<float32_t, uint8_t>(layers_names_triplet, inputs.at(layers_names_triplet.reg), inputs.at(layers_names_triplet.cls), 
+            status = extract_detections<float32_t, uint8_t>(layers_names_triplet, inputs.at(layers_names_triplet.reg), inputs.at(layers_names_triplet.cls),
                 inputs.at(layers_names_triplet.obj), detections, classes_detections_count);
         } else if (input_metadata.format.type == HAILO_FORMAT_TYPE_UINT16) {
-            status = extract_detections<float32_t, uint16_t>(layers_names_triplet, inputs.at(layers_names_triplet.reg), inputs.at(layers_names_triplet.cls), 
+            status = extract_detections<float32_t, uint16_t>(layers_names_triplet, inputs.at(layers_names_triplet.reg), inputs.at(layers_names_triplet.cls),
                 inputs.at(layers_names_triplet.obj), detections, classes_detections_count);
         } else {
             CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "YOLO post-process received invalid input type {}", input_metadata.format.type);
@@ -118,14 +146,6 @@ hailo_bbox_float32_t YOLOXPostProcessOp::decode(float32_t tx, float32_t ty, floa
     auto y_min = (y_center - (h / 2.0f));
 
     return hailo_bbox_float32_t{y_min, x_min, (y_min+h), (x_min+w), 0};
-}
-
-std::string YOLOXPostProcessOp::get_op_description()
-{
-    auto nms_config_info = get_nms_config_description();
-    auto config_info = fmt::format("Name: {}, {}, Image height: {:.2f}, Image width: {:.2f}",
-                        m_name, nms_config_info, m_yolox_config.image_height, m_yolox_config.image_width);
-    return config_info;
 }
 
 }

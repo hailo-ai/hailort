@@ -9,11 +9,21 @@
 
 #include "continuous_buffer.hpp"
 
+/* TODO - Support non default CCB page sizes */
+#define CCB_PAGE_SIZE (512)
+#define MAX_PAGES_PER_INTERRUPT (0x0003FFFF)
+#define MAX_CCB_BUFFER_SIZE (CCB_PAGE_SIZE * MAX_PAGES_PER_INTERRUPT)
+
 namespace hailort {
 namespace vdma {
 
 Expected<ContinuousBuffer> ContinuousBuffer::create(size_t size, HailoRTDriver &driver)
 {
+    if (size > MAX_CCB_BUFFER_SIZE) {
+        LOGGER__INFO("continious memory size {} must be smaller/equal to {}.", size, MAX_CCB_BUFFER_SIZE);
+        return make_unexpected(HAILO_OUT_OF_HOST_CMA_MEMORY);
+    }
+
     auto result = driver.vdma_continuous_buffer_alloc(size);
     /* Don't print error here since this might be expected error that the libhailoRT can recover from
         (out of host memory). If it's not the case, there is a print in hailort_driver.cpp file */
@@ -103,17 +113,6 @@ Expected<uint32_t> ContinuousBuffer::program_descriptors(size_t transfer_size, I
 
     // The descriptors in continuous mode are programmed by the hw, nothing to do here.
     return descriptors_in_buffer(transfer_size);
-}
-
-hailo_status ContinuousBuffer::reprogram_device_interrupts_for_end_of_batch(size_t transfer_size, uint16_t batch_size,
-        InterruptsDomain new_interrupts_domain)
-{
-    (void)transfer_size;
-    (void)batch_size;
-    (void)new_interrupts_domain;
-
-    // The descriptors in continuous mode are programmed by the hw, nothing to do here.
-    return HAILO_SUCCESS;
 }
 
 ContinuousBuffer::ContinuousBuffer(size_t size, HailoRTDriver &driver, uintptr_t handle, uint64_t dma_address,

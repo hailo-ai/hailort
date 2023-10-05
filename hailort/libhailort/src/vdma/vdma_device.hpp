@@ -37,19 +37,19 @@ public:
 
     HailoRTDriver &get_driver()
     {
-        return std::ref(m_driver);
+        return std::ref(*m_driver);
     };
 
     virtual const char* get_dev_id() const override final
     {
         // m_driver.device_id() is reference. Hence, returning c_str is safe.
-        return m_driver.device_id().c_str();
+        return m_driver->device_id().c_str();
     };
 
     ExpectedRef<vdma::InterruptsDispatcher> get_vdma_interrupts_dispatcher();
 
 protected:
-    VdmaDevice(HailoRTDriver &&driver, Type type);
+    VdmaDevice(std::unique_ptr<HailoRTDriver> &&driver, Type type);
 
     virtual Expected<D2H_EVENT_MESSAGE_t> read_notification() override;
     virtual hailo_status disable_notifications() override;
@@ -57,7 +57,7 @@ protected:
         uint8_t *response_buffer, size_t *response_size, hailo_cpu_id_t cpu_id) override;
     virtual Expected<ConfiguredNetworkGroupVector> add_hef(Hef &hef, const NetworkGroupsParamsMap &configure_params) override;
 
-    HailoRTDriver m_driver;
+    std::unique_ptr<HailoRTDriver> m_driver;
     std::vector<std::shared_ptr<CoreOp>> m_core_ops;
     std::vector<std::shared_ptr<ConfiguredNetworkGroup>> m_network_groups; // TODO: HRT-9547 - Remove when ConfiguredNetworkGroup will be kept in global context
 

@@ -335,4 +335,58 @@ std::vector<std::reference_wrapper<OutputVStream>> InferVStreams::get_output_vst
     return vsterams_refs;
 }
 
+hailo_status InferVStreams::set_nms_score_threshold(float32_t threshold)
+{
+    // Check that we have NMS outputs in the model
+    auto has_nms_output = std::any_of(m_outputs.begin(), m_outputs.end(), [](const auto &vs)
+    {
+        return HailoRTCommon::is_nms(vs.get_info());
+    });
+    CHECK(has_nms_output, HAILO_INVALID_OPERATION, "'set_nms_score_threshold()' is called, but there is no NMS output in this model.");
+
+    for (auto &ouput_vstream : m_outputs) {
+        if (HailoRTCommon::is_nms(ouput_vstream.get_info())) {
+            CHECK_SUCCESS(ouput_vstream.set_nms_score_threshold(threshold));
+        }
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status InferVStreams::set_nms_iou_threshold(float32_t threshold)
+{
+    // Check that we have NMS outputs in the model
+    auto has_nms_output = std::any_of(m_outputs.begin(), m_outputs.end(), [](const auto &vs)
+    {
+        return HailoRTCommon::is_nms(vs.get_info());
+    });
+    CHECK(has_nms_output, HAILO_INVALID_OPERATION, "'set_nms_iou_threshold()' is called, but there is no NMS output in this model.");
+
+    for (auto &ouput_vstream : m_outputs) {
+        if (HailoRTCommon::is_nms(ouput_vstream.get_info())) {
+            CHECK_SUCCESS(ouput_vstream.set_nms_iou_threshold(threshold));
+        }
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status InferVStreams::set_nms_max_proposals_per_class(uint32_t max_proposals_per_class)
+{
+    // Check that we have NMS outputs in the model
+    auto has_nms_output = std::any_of(m_outputs.begin(), m_outputs.end(), [](const auto &vs)
+    {
+        return HailoRTCommon::is_nms(vs.get_info());
+    });
+    CHECK(has_nms_output, HAILO_INVALID_OPERATION, "'set_nms_max_proposals_per_class()' is called, but there is no NMS output in this model.");
+
+    for (auto &ouput_vstream : m_outputs) {
+        if (HailoRTCommon::is_nms(ouput_vstream.get_info())) {
+            CHECK_SUCCESS(ouput_vstream.set_nms_max_proposals_per_class(max_proposals_per_class));
+        }
+    }
+
+    return HAILO_SUCCESS;
+}
+
 } /* namespace hailort */

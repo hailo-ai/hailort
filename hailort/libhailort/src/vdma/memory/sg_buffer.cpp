@@ -66,48 +66,17 @@ uint32_t SgBuffer::descs_count() const
 
 hailo_status SgBuffer::read(void *buf_dst, size_t count, size_t offset)
 {
-    CHECK(count + offset <= m_mapped_buffer->size(), HAILO_INSUFFICIENT_BUFFER);
-    if (count == 0) {
-        return HAILO_SUCCESS;
-    }
-
-    const auto status = m_mapped_buffer->synchronize(offset, count, HailoRTDriver::DmaSyncDirection::TO_HOST);
-    CHECK_SUCCESS(status, "Failed synching SgBuffer buffer on read");
-
-    const auto src_addr = static_cast<uint8_t*>(m_mapped_buffer->user_address()) + offset;
-    memcpy(buf_dst, src_addr, count);
-
-    return HAILO_SUCCESS;
+    return m_mapped_buffer->read(buf_dst, count, offset);
 }
 hailo_status SgBuffer::write(const void *buf_src, size_t count, size_t offset)
 {
-    CHECK(count + offset <= m_mapped_buffer->size(), HAILO_INSUFFICIENT_BUFFER);
-    if (count == 0) {
-        return HAILO_SUCCESS;
-    }
-
-    const auto dst_addr = static_cast<uint8_t*>(m_mapped_buffer->user_address()) + offset;
-    std::memcpy(dst_addr, buf_src, count);
-
-    const auto status = m_mapped_buffer->synchronize(offset, count, HailoRTDriver::DmaSyncDirection::TO_DEVICE);
-    CHECK_SUCCESS(status, "Failed synching SgBuffer buffer on write");
-
-    return HAILO_SUCCESS;
+    return m_mapped_buffer->write(buf_src, count, offset);
 }
 
 Expected<uint32_t> SgBuffer::program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
     size_t desc_offset)
 {
     return m_desc_list->program_last_descriptor(transfer_size, last_desc_interrupts_domain, desc_offset);
-}
-
-hailo_status SgBuffer::reprogram_device_interrupts_for_end_of_batch(size_t transfer_size, uint16_t batch_size,
-        InterruptsDomain new_interrupts_domain)
-{
-    const auto desc_per_transfer = m_desc_list->descriptors_in_buffer(transfer_size);
-    const auto num_desc_in_batch = desc_per_transfer * batch_size;
-    const auto last_desc_index_in_batch = num_desc_in_batch - 1;
-    return m_desc_list->reprogram_descriptor_interrupts_domain(last_desc_index_in_batch, new_interrupts_domain);
 }
 
 }

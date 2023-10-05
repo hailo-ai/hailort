@@ -7,6 +7,7 @@
 
 #include <numeric>
 
+#define HAILO15H_NMS_MAX_CLASSES (1024)
 
 namespace hailort
 {
@@ -104,6 +105,18 @@ Expected<EdgeLayer> ContextResources::get_edge_layer_by_stream_index(const uint8
     return make_unexpected(HAILO_INTERNAL_FAILURE);
 }
 
+Expected<EdgeLayer> ContextResources::get_edge_layer_by_channel_id(const vdma::ChannelId channel_id) const
+{
+    for (const auto &edge_layer : m_edge_layers) {
+        if (channel_id == edge_layer.channel_id) {
+            return EdgeLayer(edge_layer);
+        }
+    }
+
+    LOGGER__ERROR("Edge layer does not exists for channel id {}", channel_id);
+    return make_unexpected(HAILO_INTERNAL_FAILURE);
+}
+
 Expected<DdrChannelsInfo> ContextResources::get_ddr_channels_info(uint8_t d2h_stream_index) const
 {
     for (const auto &ddr_channels_info : m_ddr_channels_infos) {
@@ -183,7 +196,10 @@ static Expected<LatencyMeterPtr> create_hw_latency_meter(const std::vector<Layer
         return make_unexpected(HAILO_INVALID_OPERATION);
     }
 
-    return make_shared_nothrow<LatencyMeter>(d2h_channel_names, MAX_IRQ_TIMESTAMPS_SIZE);
+    auto res = make_shared_nothrow<LatencyMeter>(d2h_channel_names, MAX_IRQ_TIMESTAMPS_SIZE);
+    CHECK_NOT_NULL_AS_EXPECTED(res, HAILO_OUT_OF_HOST_MEMORY);
+
+    return res;
 }
 
 static Expected<LatencyMetersMap> create_latency_meters_from_config_params( 
@@ -363,22 +379,21 @@ void ResourcesManager::process_interrupts(IrqData &&irq_data)
     }
 }
 
-// TODO: after adding NMS single int, we can create an async channel for async nms output stream (HRT-10553)
-Expected<vdma::BoundaryChannel::Type> ResourcesManager::get_boundary_vdma_channel_type(const LayerInfo &layer_info)
+Expected<uint16_t> ResourcesManager::get_batch_size() const
 {
-    CHECK_AS_EXPECTED(contains(m_config_params.stream_params_by_name, layer_info.name), HAILO_INVALID_ARGUMENT,
-        "Can't find stream params for layer {}", layer_info.name);
-    const auto async_stream = (0 != (m_config_params.stream_params_by_name.at(layer_info.name).flags & HAILO_STREAM_FLAGS_ASYNC));
-    if (async_stream) {
-        // NMS async streams use buffered channels
-        if (layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS) {
-            return vdma::BoundaryChannel::Type::BUFFERED;
+    uint16_t batch_size = UINT16_MAX;
+    for (auto const &network_map : m_config_params.network_params_by_name) {
+        auto const network_name_from_params = network_map.first;
+
+        if (UINT16_MAX == batch_size) {
+            batch_size = network_map.second.batch_size;
+        } else {
+            CHECK_AS_EXPECTED(batch_size == network_map.second.batch_size, HAILO_INVALID_OPERATION,
+                "The same batch size must be applied to all networks inside the network group");
         }
-        // Non-nms async streams use async channels
-        return vdma::BoundaryChannel::Type::ASYNC;
     }
-    // Buffered streams => buffered channels
-    return vdma::BoundaryChannel::Type::BUFFERED;
+    return batch_size;
+
 }
 
 hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &layer_info)
@@ -399,6 +414,16 @@ hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &lay
     const auto max_active_transfers_scale = (layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS) ?
         (nms_max_detections_per_frame * MAX_ACTIVE_TRANSFERS_SCALE) : MAX_ACTIVE_TRANSFERS_SCALE;
 
+    auto device_arch = m_vdma_device.get_architecture();
+    CHECK_EXPECTED_AS_STATUS(device_arch);
+    /* Add error in configure phase for invalid NMS parameters */
+    if (layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS && 
+        (device_arch.value() == HAILO_ARCH_HAILO15H || device_arch.value() == HAILO_ARCH_PLUTO)) {
+        CHECK(layer_info.nms_info.number_of_classes * layer_info.nms_info.chunks_per_frame * network_batch_size.value() < HAILO15H_NMS_MAX_CLASSES, 
+        HAILO_INVALID_ARGUMENT, "Invalid NMS parameters. Number of classes ({}) * division factor ({}) * batch size ({}) must be under {}",
+        layer_info.nms_info.number_of_classes, layer_info.nms_info.chunks_per_frame, network_batch_size.value(), HAILO15H_NMS_MAX_CLASSES);
+    }
+
     const auto min_active_trans = MIN_ACTIVE_TRANSFERS_SCALE * network_batch_size.value();
     const auto max_active_trans = (layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS) ?
         /* NMS Case - Value be be higher than UINT16_MAX. in this case we only limit to UART16_MAX with no error */
@@ -415,21 +440,25 @@ hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &lay
     /* TODO - HRT-6829- page_size should be calculated inside the vDMA channel class create function */
     static const bool IS_CIRCULAR = true;
     const auto transfer_size = LayerInfoUtils::get_layer_transfer_size(layer_info);
-    
-    auto const DONT_FORCE_DEFAULT_PAGE_SIZE = false;
+
+    const auto DONT_FORCE_DEFAULT_PAGE_SIZE = false;
+    const auto DONT_FORCE_BATCH_SIZE = false;
+    // Hack to reduce max page size if the driver page size is equal to stream size. 
+    // In this case page size == stream size is invalid solution. 
+    // TODO - remove this WA after HRT-11747
+    const uint16_t max_page_size = (m_driver.desc_max_page_size() == layer_info.max_shmifo_size) ?
+        (m_driver.desc_max_page_size() / 2) : m_driver.desc_max_page_size();
     auto buffer_sizes_requirements = vdma::BufferSizesRequirements::get_sg_buffer_requirements_single_transfer(
-        m_driver.desc_max_page_size(), static_cast<uint16_t>(min_active_trans), static_cast<uint16_t>(max_active_trans),
-        transfer_size, IS_CIRCULAR, DONT_FORCE_DEFAULT_PAGE_SIZE);
+        max_page_size, static_cast<uint16_t>(min_active_trans), static_cast<uint16_t>(max_active_trans),
+        transfer_size, IS_CIRCULAR, DONT_FORCE_DEFAULT_PAGE_SIZE, DONT_FORCE_BATCH_SIZE);
     CHECK_EXPECTED_AS_STATUS(buffer_sizes_requirements);
 
     const auto page_size = buffer_sizes_requirements->desc_page_size();
     const auto descs_count = (nullptr != std::getenv("HAILO_CONFIGURE_FOR_HW_INFER")) ?
         MAX_DESCS_COUNT : buffer_sizes_requirements->descs_count();
 
-    auto channel_type = get_boundary_vdma_channel_type(layer_info);
-    CHECK_EXPECTED_AS_STATUS(channel_type);
     auto channel = vdma::BoundaryChannel::create(channel_id.value(), channel_direction, m_driver, descs_count, page_size,
-        layer_info.name, latency_meter, network_batch_size.value(), channel_type.release());
+        layer_info.name, latency_meter);
     CHECK_EXPECTED_AS_STATUS(channel);
 
     m_boundary_channels.emplace(channel_id.value(), channel.release());
@@ -541,21 +570,6 @@ Expected<hailo_stream_interface_t> ResourcesManager::get_default_streams_interfa
     return m_vdma_device.get_default_streams_interface();
 }
 
-hailo_status ResourcesManager::set_dynamic_batch_size(uint16_t dynamic_batch_size)
-{
-    if (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == dynamic_batch_size) {
-        LOGGER__TRACE("Received CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == batch_size");
-        return HAILO_SUCCESS;
-    }
-
-    for (auto &key_buff_pair : m_intermediate_buffers) {
-        const auto status = key_buff_pair.second.set_dynamic_batch_size(dynamic_batch_size);
-        CHECK_SUCCESS(status);
-    }
-
-    return HAILO_SUCCESS;
-}
-
 Expected<uint16_t> ResourcesManager::get_network_batch_size(const std::string &network_name) const
 {
     for (auto const &network_map : m_config_params.network_params_by_name) {
@@ -607,12 +621,12 @@ hailo_status ResourcesManager::enable_state_machine(uint16_t dynamic_batch_size,
     return Control::enable_core_op(m_vdma_device, m_core_op_index, dynamic_batch_size, batch_count);
 }
 
-hailo_status ResourcesManager::reset_state_machine(bool keep_nn_config_during_reset)
+hailo_status ResourcesManager::reset_state_machine()
 {
-    auto status = Control::reset_context_switch_state_machine(m_vdma_device, keep_nn_config_during_reset);
+    auto status = Control::reset_context_switch_state_machine(m_vdma_device);
     CHECK_SUCCESS(status);
 
-    if (!keep_nn_config_during_reset && (Device::Type::INTEGRATED == m_vdma_device.get_type())) {
+    if (Device::Type::INTEGRATED == m_vdma_device.get_type()) {
         // On core device, the nn_manager is not responsible to reset the nn-core so
         // we use the SCU control for that.
         status = m_vdma_device.reset(HAILO_RESET_DEVICE_MODE_NN_CORE);
@@ -622,18 +636,10 @@ hailo_status ResourcesManager::reset_state_machine(bool keep_nn_config_during_re
     return HAILO_SUCCESS;
 }
 
-hailo_status ResourcesManager::cancel_pending_async_transfers()
+hailo_status ResourcesManager::cancel_pending_transfers()
 {
     for (const auto &boundary_channel : m_boundary_channels) {
-        if (boundary_channel.second->type() != vdma::BoundaryChannel::Type::ASYNC) {
-            continue;
-        }
-
-        // Best effort
-        const auto status = boundary_channel.second->cancel_pending_transfers();
-        if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed cancellation of pending transfers on async channel {}", boundary_channel.second->stream_name());
-        }
+        boundary_channel.second->cancel_pending_transfers();
     }
     return HAILO_SUCCESS;
 }
@@ -685,11 +691,11 @@ Expected<std::pair<vdma::ChannelId, uint16_t>> ResourcesManager::create_mapped_b
     vdma::BoundaryChannelPtr boundary_channel_ptr, const HailoRTDriver::DmaDirection direction,
     const uint32_t single_transfer_size, const uint16_t dynamic_batch_size, const uint16_t batch_count)
 {
-    auto total_frames_per_run = dynamic_batch_size * batch_count;
-    auto total_run_transfer_size = total_frames_per_run * single_transfer_size;
+    const auto total_frames_per_run = dynamic_batch_size * batch_count;
 
     auto desc_list = boundary_channel_ptr->get_desc_list();
-    auto total_desc_count = desc_list->descriptors_in_buffer(total_run_transfer_size);
+    const auto descs_per_transfer = desc_list->descriptors_in_buffer(single_transfer_size);
+    const auto total_desc_count = total_frames_per_run * descs_per_transfer;
 
     CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(total_desc_count), HAILO_INVALID_ARGUMENT,
         "calculated total_desc_count for vdma descriptor list is out of UINT16 range");
@@ -704,6 +710,7 @@ Expected<std::pair<vdma::ChannelId, uint16_t>> ResourcesManager::create_mapped_b
 
     auto desc_programed = program_desc_for_hw_only_flow(desc_list, single_transfer_size, dynamic_batch_size, batch_count);
     CHECK_EXPECTED(desc_programed);
+    assert(static_cast<uint16_t>(total_desc_count) == desc_programed.value());
 
     auto channel_info_pair = std::make_pair(boundary_channel_ptr->get_channel_id(), desc_programed.release());
 
@@ -747,14 +754,16 @@ Expected<uint16_t> ResourcesManager::calc_hw_infer_batch_count(uint16_t dynamic_
 {
     uint16_t batch_count = UINT16_MAX;
     for (const auto &layer_info : m_core_op_metadata->get_all_layer_infos()) {
-        const auto stream_info = LayerInfoUtils::get_stream_info_from_layer_info(layer_info);
-        uint32_t single_transfer_size = LayerInfoUtils::get_stream_transfer_size(stream_info, layer_info);
-        auto boundary_channel_ptr_exp = get_boundary_vdma_channel_by_stream_name(layer_info.name);
-        CHECK_EXPECTED(boundary_channel_ptr_exp);
-        auto boundary_channel_ptr = boundary_channel_ptr_exp.release();
-        const auto max_batch_transfers = boundary_channel_ptr->get_desc_list()->max_transfers(single_transfer_size * dynamic_batch_size);
-        // infer batch count is the lowest number of "Max transfers" per descriptor list that for all given boundary channels.
-        batch_count = MIN(batch_count, max_batch_transfers);
+        const auto &stream_infos = LayerInfoUtils::get_stream_infos_from_layer_info(layer_info);
+        for (auto &stream_info : stream_infos) {
+            uint32_t single_transfer_size = LayerInfoUtils::get_stream_transfer_size(stream_info, layer_info);
+            auto boundary_channel_ptr_exp = get_boundary_vdma_channel_by_stream_name(layer_info.name);
+            CHECK_EXPECTED(boundary_channel_ptr_exp);
+            auto boundary_channel_ptr = boundary_channel_ptr_exp.release();
+            const auto max_batch_transfers = boundary_channel_ptr->get_desc_list()->max_transfers(single_transfer_size * dynamic_batch_size);
+            // infer batch count is the lowest number of "Max transfers" per descriptor list that for all given boundary channels.
+            batch_count = MIN(batch_count, max_batch_transfers);
+        }
     }
     return batch_count;
 }
@@ -792,23 +801,28 @@ Expected<HwInferResults> ResourcesManager::run_hw_only_infer()
     channels_info.channel_count = 0;
     static constexpr auto INFER_TIMEOUT = std::chrono::milliseconds(120000);
 
-    auto batch_count = calc_hw_infer_batch_count(m_config_params.batch_size);
+    auto batch_size = get_batch_size();
+    CHECK_EXPECTED(batch_size);
+
+    auto batch_count = calc_hw_infer_batch_count(*batch_size);
     CHECK_EXPECTED(batch_count);
 
     for (const auto &layer_info : m_core_op_metadata->get_all_layer_infos()) {
         auto boundary_channel_ptr = get_boundary_vdma_channel_by_stream_name(layer_info.name);
         CHECK_EXPECTED(boundary_channel_ptr);
-        auto stream_info = LayerInfoUtils::get_stream_info_from_layer_info(layer_info);
-        auto single_transfer_size = (HAILO_FORMAT_ORDER_HAILO_NMS == stream_info.format.order) ?
-            stream_info.nms_info.bbox_size : stream_info.hw_frame_size;
-        const auto direction = (layer_info.direction == HAILO_H2D_STREAM) ?
-            HailoRTDriver::DmaDirection::H2D : HailoRTDriver::DmaDirection::D2H;
+        const auto &stream_infos = LayerInfoUtils::get_stream_infos_from_layer_info(layer_info);
+        for (auto &stream_info : stream_infos) {
+            auto single_transfer_size = (HAILO_FORMAT_ORDER_HAILO_NMS == stream_info.format.order) ?
+                stream_info.nms_info.bbox_size : stream_info.hw_frame_size;
+            const auto direction = (layer_info.direction == HAILO_H2D_STREAM) ?
+                HailoRTDriver::DmaDirection::H2D : HailoRTDriver::DmaDirection::D2H;
 
-        auto channel_info_pair = create_mapped_buffer_for_hw_only_infer(boundary_channel_ptr.release(), direction,
-            single_transfer_size, m_config_params.batch_size, batch_count.value());
-        CHECK_EXPECTED(channel_info_pair);
+            auto channel_info_pair = create_mapped_buffer_for_hw_only_infer(boundary_channel_ptr.release(), direction,
+                single_transfer_size, *batch_size, batch_count.value());
+            CHECK_EXPECTED(channel_info_pair);
 
-        add_channel_to_hw_infer_channel_info(channel_info_pair.release(), channels_info);
+            add_channel_to_hw_infer_channel_info(channel_info_pair.release(), channels_info);
+        }
     }
 
     std::condition_variable infer_done_cond;
@@ -818,7 +832,7 @@ Expected<HwInferResults> ResourcesManager::run_hw_only_infer()
     std::mutex mutex;
     std::unique_lock<std::mutex> lock(mutex);
 
-    status = Control::start_hw_only_infer(m_vdma_device, m_core_op_index, m_config_params.batch_size,
+    status = Control::start_hw_only_infer(m_vdma_device, m_core_op_index, *batch_size,
         batch_count.value(), &channels_info);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
@@ -830,7 +844,7 @@ Expected<HwInferResults> ResourcesManager::run_hw_only_infer()
     auto single_frame_transfer_size = m_core_op_metadata->get_total_transfer_size();
     CHECK_EXPECTED(single_frame_transfer_size);
 
-    return hw_infer_calc_stats(batch_count.value(), m_config_params.batch_size, single_frame_transfer_size.release(),
+    return hw_infer_calc_stats(batch_count.value(), *batch_size, single_frame_transfer_size.release(),
         fw_infer_results.infer_cycles);
 }
 

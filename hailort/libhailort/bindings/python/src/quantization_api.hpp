@@ -30,6 +30,7 @@ public:
         const hailo_format_type_t &dst_dtype, uint32_t shape_size, const hailo_quant_info_t &quant_info);
     static void dequantize_output_buffer(py::array src_buffer, py::array dst_buffer, const hailo_format_type_t &src_dtype,
         const hailo_format_type_t &dst_dtype, uint32_t shape_size, const hailo_quant_info_t &quant_info);
+    static bool is_qp_valid(const hailo_quant_info_t &quant_info);
 private:
     static void dequantize_output_buffer_from_uint8(py::array src_buffer, py::array dst_buffer,
         const hailo_format_type_t &dst_dtype, uint32_t shape_size, const hailo_quant_info_t &quant_info);

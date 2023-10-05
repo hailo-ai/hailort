@@ -128,6 +128,9 @@ public:
     // Must be called prior to run
     void set_overall_latency_meter(LatencyMeterPtr latency_meter);
     void set_latency_barrier(BarrierPtr latency_barrier);
+    std::shared_ptr<ConfiguredNetworkGroup> get_configured_network_group();
+    void set_last_measured_fps(double fps);
+    double get_last_measured_fps();
 
 protected:
     static bool inference_succeeded(hailo_status status);
@@ -177,8 +180,9 @@ protected:
         // sync_event will be used to send one frame at a time
         EventPtr sync_event = nullptr;
         if (m_params.measure_hw_latency || m_params.measure_overall_latency) {
-            sync_event = Event::create_shared(Event::State::not_signalled);
-            CHECK_NOT_NULL(sync_event, HAILO_OUT_OF_HOST_MEMORY);
+            auto sync_event_exp = Event::create_shared(Event::State::not_signalled);
+            CHECK_EXPECTED_AS_STATUS(sync_event_exp);
+            sync_event = sync_event_exp.release();
         }
 
         while (true) {
@@ -253,8 +257,9 @@ protected:
         // sync_event will be used to send one frame at a time
         EventPtr sync_event = nullptr;
         if (m_params.measure_hw_latency || m_params.measure_overall_latency) {
-            sync_event = Event::create_shared(Event::State::not_signalled);
-            CHECK_NOT_NULL(sync_event, HAILO_OUT_OF_HOST_MEMORY);
+            auto sync_event_exp = Event::create_shared(Event::State::not_signalled);
+            CHECK_EXPECTED_AS_STATUS(sync_event_exp);
+            sync_event = sync_event_exp.release();
         }
 
         while (true) {
@@ -301,6 +306,7 @@ protected:
     std::shared_ptr<ConfiguredNetworkGroup> m_cng;
     LatencyMeterPtr m_overall_latency_meter;
     BarrierPtr m_latency_barrier;
+    double m_last_measured_fps;
 
 private:
     static const std::vector<hailo_status> ALLOWED_INFERENCE_RETURN_VALUES;

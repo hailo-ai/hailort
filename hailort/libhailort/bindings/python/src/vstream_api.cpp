@@ -10,6 +10,8 @@
 #include "vstream_api.hpp"
 #include "bindings_common.hpp"
 #include "utils.hpp"
+#include "network_group_api.hpp"
+
 #include <iostream>
 
 
@@ -25,36 +27,6 @@ void InputVStreamWrapper::add_to_python_module(py::module &m)
             MemoryView(const_cast<void*>(reinterpret_cast<const void*>(data.data())), data.nbytes()));
         VALIDATE_STATUS(status);
     })
-    .def("before_fork", [](InputVStream &self)
-    {
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-        auto status = self.before_fork();
-        VALIDATE_STATUS(status);
-#else
-        (void)self;
-#endif // HAILO_SUPPORT_MULTI_PROCESS
-    }
-    )
-    .def("after_fork_in_parent", [](InputVStream &self)
-    {
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-        auto status = self.after_fork_in_parent();
-        VALIDATE_STATUS(status);
-#else
-        (void)self;
-#endif // HAILO_SUPPORT_MULTI_PROCESS
-    }
-    )
-    .def("after_fork_in_child", [](InputVStream &self)
-    {
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-        auto status = self.after_fork_in_child();
-        VALIDATE_STATUS(status);
-#else
-        (void)self;
-#endif // HAILO_SUPPORT_MULTI_PROCESS
-    }
-    )
     .def("flush", [](InputVStream &self)
     {
         hailo_status status = self.flush();
@@ -76,7 +48,7 @@ void InputVStreamWrapper::add_to_python_module(py::module &m)
     ;
 }
 
-InputVStreamsWrapper InputVStreamsWrapper::create(ConfiguredNetworkGroup &net_group,
+InputVStreamsWrapperPtr InputVStreamsWrapper::create(ConfiguredNetworkGroup &net_group,
     const std::map<std::string, hailo_vstream_params_t> &input_vstreams_params)
 {
     auto input_vstreams_expected = VStreamsBuilder::create_input_vstreams(net_group, input_vstreams_params);
@@ -87,7 +59,7 @@ InputVStreamsWrapper InputVStreamsWrapper::create(ConfiguredNetworkGroup &net_gr
         auto input_name = input.name();
         input_vstreams.emplace(input_name, std::make_unique<InputVStream>(std::move(input)));
     }
-    return InputVStreamsWrapper(input_vstreams);
+    return std::make_shared<InputVStreamsWrapper>(input_vstreams);
 }
 
 const InputVStreamsWrapper &InputVStreamsWrapper::enter()
@@ -128,53 +100,28 @@ void InputVStreamsWrapper::clear()
     VALIDATE_STATUS(status);
 }
 
-void InputVStreamsWrapper::before_fork()
-{
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-    for (auto &input_vstream : m_input_vstreams) {
-        auto status = input_vstream.second->before_fork();
-        VALIDATE_STATUS(status);
-    }
-#endif // HAILO_SUPPORT_MULTI_PROCESS
-}
-
-void InputVStreamsWrapper::after_fork_in_parent()
-{
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-    for (auto &input_vstream : m_input_vstreams) {
-        auto status = input_vstream.second->after_fork_in_parent();
-        VALIDATE_STATUS(status);
-    }
-#endif // HAILO_SUPPORT_MULTI_PROCESS
-}
-
-void InputVStreamsWrapper::after_fork_in_child()
-{
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-    for (auto &input_vstream : m_input_vstreams) {
-        auto status = input_vstream.second->after_fork_in_child();
-        VALIDATE_STATUS(status);
-    }
-#endif // HAILO_SUPPORT_MULTI_PROCESS    
-}
-
 void InputVStreamsWrapper::add_to_python_module(py::module &m)
 {
-    py::class_<InputVStreamsWrapper>(m, "InputVStreams")
+    py::class_<InputVStreamsWrapper, InputVStreamsWrapperPtr>(m, "InputVStreams")
     .def(py::init(&InputVStreamsWrapper::create))
     .def("get_input_by_name", &InputVStreamsWrapper::get_input_by_name)
     .def("get_all_inputs", &InputVStreamsWrapper::get_all_inputs)
     .def("clear", &InputVStreamsWrapper::clear)
     .def("__enter__", &InputVStreamsWrapper::enter, py::return_value_policy::reference)
     .def("__exit__",  [&](InputVStreamsWrapper &self, py::args) { self.exit(); })
-    .def("before_fork", &InputVStreamsWrapper::before_fork)
-    .def("after_fork_in_parent",  &InputVStreamsWrapper::after_fork_in_parent)
-    .def("after_fork_in_child", &InputVStreamsWrapper::after_fork_in_child)
     ;
 }
 
-InputVStreamsWrapper::InputVStreamsWrapper(std::unordered_map<std::string, std::shared_ptr<InputVStream>> &input_vstreams)
-    : m_input_vstreams(std::move(input_vstreams))
+InputVStreamsWrapper::InputVStreamsWrapper(std::unordered_map<std::string, std::shared_ptr<InputVStream>> &input_vstreams) :
+    m_input_vstreams(std::move(input_vstreams))
+#ifdef HAILO_IS_FORK_SUPPORTED
+        ,
+        m_atfork_guard(this, {
+            .before_fork = [this]() { before_fork(); },
+            .after_fork_in_parent = [this]() { after_fork_in_parent(); },
+            .after_fork_in_child = [this]() { after_fork_in_child(); }
+        })
+#endif
 {}
 
 py::dtype OutputVStreamWrapper::get_dtype(OutputVStream &self)
@@ -214,36 +161,21 @@ void OutputVStreamWrapper::add_to_python_module(py::module &m)
         return py::array(get_dtype(self), get_shape(self), unmanaged_addr,
             py::capsule(unmanaged_addr, [](void *p) { delete reinterpret_cast<uint8_t*>(p); }));
     })
-    .def("before_fork", [](OutputVStream &self)
+    .def("set_nms_score_threshold", [](OutputVStream &self, float32_t threshold)
     {
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-        auto status = self.before_fork();
+        hailo_status status = self.set_nms_score_threshold(threshold);
         VALIDATE_STATUS(status);
-#else
-        (void)self;
-#endif // HAILO_SUPPORT_MULTI_PROCESS
-    }
-    )
-    .def("after_fork_in_parent", [](OutputVStream &self)
+    })
+    .def("set_nms_iou_threshold", [](OutputVStream &self, float32_t threshold)
     {
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-        auto status = self.after_fork_in_parent();
+        hailo_status status = self.set_nms_iou_threshold(threshold);
         VALIDATE_STATUS(status);
-#else
-        (void)self;
-#endif // HAILO_SUPPORT_MULTI_PROCESS
-    }
-    )
-    .def("after_fork_in_child", [](OutputVStream &self)
+    })
+    .def("set_nms_max_proposals_per_class", [](OutputVStream &self, uint32_t max_proposals_per_class)
     {
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-        auto status = self.after_fork_in_child();
+        hailo_status status = self.set_nms_max_proposals_per_class(max_proposals_per_class);
         VALIDATE_STATUS(status);
-#else
-        (void)self;
-#endif // HAILO_SUPPORT_MULTI_PROCESS
-    }
-    )
+    })
     .def_property_readonly("info", [](OutputVStream &self)
     {
         return self.get_info();
@@ -254,7 +186,7 @@ void OutputVStreamWrapper::add_to_python_module(py::module &m)
     ;
 }
 
-OutputVStreamsWrapper OutputVStreamsWrapper::create(ConfiguredNetworkGroup &net_group,
+OutputVStreamsWrapperPtr OutputVStreamsWrapper::create(ConfiguredNetworkGroup &net_group,
         const std::map<std::string, hailo_vstream_params_t> &output_vstreams_params)
 {
     auto output_vstreams_expected = VStreamsBuilder::create_output_vstreams(net_group, output_vstreams_params);
@@ -265,7 +197,7 @@ OutputVStreamsWrapper OutputVStreamsWrapper::create(ConfiguredNetworkGroup &net_
         auto output_name = output.name();
         output_vstreams.emplace(output_name, std::make_unique<OutputVStream>(std::move(output)));
     }
-    return OutputVStreamsWrapper(output_vstreams);
+    return std::make_shared<OutputVStreamsWrapper>(output_vstreams);
 }
 
 std::shared_ptr<OutputVStream> OutputVStreamsWrapper::get_output_by_name(const std::string &name)
@@ -301,65 +233,61 @@ void OutputVStreamsWrapper::clear()
     for (auto &name_vstream_pair : m_output_vstreams) {
         outputs.emplace_back(std::ref(*name_vstream_pair.second));
     }
-    
+
     auto status = OutputVStream::clear(outputs);
     VALIDATE_STATUS(status);
 }
 
 void OutputVStreamsWrapper::before_fork()
 {
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-    for (auto &output_vstream : m_output_vstreams) {
-        auto status = output_vstream.second->before_fork();
-        VALIDATE_STATUS(status);
+    for (auto &vstream : m_output_vstreams) {
+        vstream.second->before_fork();
     }
-#endif // HAILO_SUPPORT_MULTI_PROCESS
 }
 
 void OutputVStreamsWrapper::after_fork_in_parent()
 {
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-    for (auto &output_vstream : m_output_vstreams) {
-        auto status = output_vstream.second->after_fork_in_parent();
-        VALIDATE_STATUS(status);
+    for (auto &vstream : m_output_vstreams) {
+        vstream.second->after_fork_in_parent();
     }
-#endif // HAILO_SUPPORT_MULTI_PROCESS
 }
 
 void OutputVStreamsWrapper::after_fork_in_child()
 {
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-    for (auto &output_vstream : m_output_vstreams) {
-        auto status = output_vstream.second->after_fork_in_child();
-        VALIDATE_STATUS(status);
+    for (auto &vstream : m_output_vstreams) {
+        vstream.second->after_fork_in_child();
     }
-#endif // HAILO_SUPPORT_MULTI_PROCESS    
 }
 
 void OutputVStreamsWrapper::add_to_python_module(py::module &m)
 {
-    py::class_<OutputVStreamsWrapper>(m, "OutputVStreams")
+    py::class_<OutputVStreamsWrapper, OutputVStreamsWrapperPtr>(m, "OutputVStreams")
     .def(py::init(&OutputVStreamsWrapper::create))
     .def("get_output_by_name", &OutputVStreamsWrapper::get_output_by_name)
     .def("get_all_outputs", &OutputVStreamsWrapper::get_all_outputs)
     .def("clear", &OutputVStreamsWrapper::clear)
     .def("__enter__", &OutputVStreamsWrapper::enter, py::return_value_policy::reference)
     .def("__exit__",  [&](OutputVStreamsWrapper &self, py::args) { self.exit(); })
-    .def("before_fork", &OutputVStreamsWrapper::before_fork)
-    .def("after_fork_in_parent",  &OutputVStreamsWrapper::after_fork_in_parent)
-    .def("after_fork_in_child", &OutputVStreamsWrapper::after_fork_in_child)
     ;
 }
 
-OutputVStreamsWrapper::OutputVStreamsWrapper(std::unordered_map<std::string, std::shared_ptr<OutputVStream>> &output_vstreams)
-    : m_output_vstreams(std::move(output_vstreams))
+OutputVStreamsWrapper::OutputVStreamsWrapper(std::unordered_map<std::string, std::shared_ptr<OutputVStream>> &output_vstreams) :
+    m_output_vstreams(std::move(output_vstreams))
+#ifdef HAILO_IS_FORK_SUPPORTED
+        ,
+        m_atfork_guard(this, {
+            .before_fork = [this]() { before_fork(); },
+            .after_fork_in_parent = [this]() { after_fork_in_parent(); },
+            .after_fork_in_child = [this]() { after_fork_in_child(); }
+        })
+#endif
 {}
 
-InferVStreamsWrapper InferVStreamsWrapper::create(ConfiguredNetworkGroup &network_group,
+InferVStreamsWrapper InferVStreamsWrapper::create(ConfiguredNetworkGroupWrapper &network_group,
     const std::map<std::string, hailo_vstream_params_t> &input_vstreams_params,
     const std::map<std::string, hailo_vstream_params_t> &output_vstreams_params)
 {
-    auto infer_pipeline = InferVStreams::create(network_group, input_vstreams_params, output_vstreams_params);
+    auto infer_pipeline = InferVStreams::create(network_group.get(), input_vstreams_params, output_vstreams_params);
     VALIDATE_EXPECTED(infer_pipeline);
     auto infer_vstream_ptr = std::make_shared<InferVStreams>(std::move(infer_pipeline.value()));
 
@@ -435,6 +363,25 @@ void InferVStreamsWrapper::release()
     m_infer_pipeline.reset();
 }
 
+void InputVStreamsWrapper::before_fork()
+{
+    for (auto &vstream : m_input_vstreams) {
+        vstream.second->before_fork();
+    }
+}
+void InputVStreamsWrapper::after_fork_in_parent()
+{
+    for (auto &vstream : m_input_vstreams) {
+        vstream.second->after_fork_in_parent();
+    }
+}
+void InputVStreamsWrapper::after_fork_in_child()
+{
+    for (auto &vstream : m_input_vstreams) {
+        vstream.second->after_fork_in_child();
+    }
+}
+
 void InferVStreamsWrapper::add_to_python_module(py::module &m)
 {
     py::class_<InferVStreamsWrapper>(m, "InferVStreams")
@@ -444,6 +391,18 @@ void InferVStreamsWrapper::add_to_python_module(py::module &m)
     .def("get_user_buffer_format", &InferVStreamsWrapper::get_user_buffer_format)
     .def("infer", &InferVStreamsWrapper::infer)
     .def("release",  [](InferVStreamsWrapper &self, py::args) { self.release(); })
+    .def("set_nms_score_threshold", [](InferVStreamsWrapper &self, float32_t threshold)
+    {
+        VALIDATE_STATUS(self.m_infer_pipeline->set_nms_score_threshold(threshold));
+    })
+    .def("set_nms_iou_threshold", [](InferVStreamsWrapper &self, float32_t threshold)
+    {
+        VALIDATE_STATUS(self.m_infer_pipeline->set_nms_iou_threshold(threshold));
+    })
+    .def("set_nms_max_proposals_per_class", [](InferVStreamsWrapper &self, uint32_t max_proposals_per_class)
+    {
+        VALIDATE_STATUS(self.m_infer_pipeline->set_nms_max_proposals_per_class(max_proposals_per_class));
+    })
     ;
 }
 

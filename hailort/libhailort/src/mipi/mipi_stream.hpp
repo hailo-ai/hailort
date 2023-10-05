@@ -44,7 +44,14 @@ public:
         EventPtr core_op_activated_event);
     virtual ~MipiInputStream();
 
-    virtual hailo_status activate_stream(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers) override;
+    virtual hailo_status set_buffer_mode(StreamBufferMode buffer_mode) override
+    {
+        CHECK(buffer_mode == StreamBufferMode::OWNING, HAILO_INVALID_ARGUMENT,
+            "Mipi streams supports only sync api");
+        return HAILO_SUCCESS;
+    }
+
+    virtual hailo_status activate_stream() override;
     virtual hailo_status deactivate_stream() override;
     virtual hailo_stream_interface_t get_interface() const override { return HAILO_STREAM_INTERFACE_MIPI; }
     virtual std::chrono::milliseconds get_timeout() const override;

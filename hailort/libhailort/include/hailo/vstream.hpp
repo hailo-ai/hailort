@@ -25,7 +25,7 @@ class PipelineElement;
 class HAILORTAPI InputVStream
 {
 public:
-    static Expected<InputVStream> create(const hailo_vstream_info_t &vstream_info,
+    static Expected<InputVStream> create(const hailo_vstream_info_t &vstream_info, const std::vector<hailo_quant_info_t> &quant_infos,
         const hailo_vstream_params_t &vstream_params, std::shared_ptr<PipelineElement> pipeline_entry,
         std::shared_ptr<SinkElement> pipeline_exit, std::vector<std::shared_ptr<PipelineElement>> &&pipeline,
         std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr shutdown_event, EventPtr core_op_activated_event,
@@ -43,6 +43,15 @@ public:
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
     hailo_status write(const MemoryView &buffer);
+
+    /**
+     * Writes @a buffer to hailo device.
+     *
+     * @param[in] buffer            The buffer containing pointers to the planes where the data to
+     *                              be sent to the device is stored.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     */
+    hailo_status write(const hailo_pix_buffer_t &buffer);
 
     /**
      * Flushes the vstream pipeline buffers. This will block until the vstream pipeline is clear.
@@ -91,6 +100,11 @@ public:
      * @return ::hailo_vstream_info_t object containing the vstream info.
      */
     const hailo_vstream_info_t &get_info() const;
+
+    /**
+     * @returns the stream's vector of quantization infos.
+     */
+    const std::vector<hailo_quant_info_t> &get_quant_infos() const;
 
     /**
      * @return ::hailo_format_t object containing the user buffer format.
@@ -157,10 +171,12 @@ public:
      */
     const std::vector<std::shared_ptr<PipelineElement>> &get_pipeline() const;
 
+    bool is_aborted();
+    bool is_multi_planar();
+
     hailo_status before_fork();
     hailo_status after_fork_in_parent();
     hailo_status after_fork_in_child();
-    bool is_aborted();
 
     // Added to match the same API as InputStream. Will be filled when async API will be implemented for vstreams.
     using TransferDoneCallback = void(*);
@@ -183,10 +199,10 @@ class HAILORTAPI OutputVStream
 {
 public:
     static Expected<OutputVStream> create(
-        const hailo_vstream_info_t &vstream_info, const hailo_vstream_params_t &vstream_params,
-        std::shared_ptr<PipelineElement> pipeline_entry, std::vector<std::shared_ptr<PipelineElement>> &&pipeline,
-        std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr shutdown_event,
-        EventPtr core_op_activated_event, AccumulatorPtr pipeline_latency_accumulator);
+        const hailo_vstream_info_t &vstream_info, const std::vector<hailo_quant_info_t> &quant_infos,
+        const hailo_vstream_params_t &vstream_params, std::shared_ptr<PipelineElement> pipeline_entry,
+        std::vector<std::shared_ptr<PipelineElement>> &&pipeline, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
+        EventPtr shutdown_event, EventPtr core_op_activated_event, AccumulatorPtr pipeline_latency_accumulator);
     OutputVStream(OutputVStream &&other) noexcept = default;
     OutputVStream &operator=(OutputVStream &&other) noexcept = default;
     virtual ~OutputVStream() = default;
@@ -243,6 +259,11 @@ public:
     const hailo_vstream_info_t &get_info() const;
 
     /**
+     * @returns the stream's vector of quantization infos.
+     */
+    const std::vector<hailo_quant_info_t> &get_quant_infos() const;
+
+    /**
      * @return ::hailo_format_t object containing the user buffer format.
      */
     const hailo_format_t &get_user_buffer_format() const;
@@ -307,10 +328,40 @@ public:
      */
     const std::vector<std::shared_ptr<PipelineElement>> &get_pipeline() const;
 
+    /**
+     * Set NMS score threshold, used for filtering out candidates. Any box with score<TH is suppressed.
+     *
+     * @param[in] threshold        NMS score threshold to set.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This function will fail in cases where the output vstream has no NMS operations on the CPU.
+     */
+    hailo_status set_nms_score_threshold(float32_t threshold);
+
+    /**
+     * Set NMS intersection over union overlap Threshold,
+     * used in the NMS iterative elimination process where potential duplicates of detected items are suppressed.
+     *
+     * @param[in] threshold        NMS IoU threshold to set.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This function will fail in cases where the output vstream has no NMS operations on the CPU.
+     */
+    hailo_status set_nms_iou_threshold(float32_t threshold);
+
+    /**
+     * Set a limit for the maximum number of boxes per class.
+     *
+     * @param[in] max_proposals_per_class    NMS max proposals per class to set.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This function will fail in cases where the output vstream has no NMS operations on the CPU.
+     */
+    hailo_status set_nms_max_proposals_per_class(uint32_t max_proposals_per_class);
+
+
+    bool is_aborted();
+
     hailo_status before_fork();
     hailo_status after_fork_in_parent();
     hailo_status after_fork_in_child();
-    bool is_aborted();
 
     // Added to match the same API as InputStream. Will be filled when async API will be implemented for vstreams.
     using TransferDoneCallback = void(*);

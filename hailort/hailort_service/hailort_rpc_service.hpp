@@ -39,8 +39,6 @@ public:
         empty*) override;
     virtual grpc::Status get_service_version(grpc::ServerContext *, const get_service_version_Request *request,
         get_service_version_Reply *reply) override;
-    virtual grpc::Status VDevice_dup_handle(grpc::ServerContext *ctx, const dup_handle_Request *request,
-        dup_handle_Reply*) override;
 
     virtual grpc::Status VDevice_create(grpc::ServerContext *, const VDevice_create_Request *request,
         VDevice_create_Reply *reply) override;
@@ -61,8 +59,12 @@ public:
          VStreams_create_Reply *reply) override;
     virtual grpc::Status OutputVStream_release(grpc::ServerContext *, const Release_Request *request,
         Release_Reply *reply) override;
+    virtual grpc::Status InputVStream_is_multi_planar(grpc::ServerContext*, const InputVStream_is_multi_planar_Request *request,
+        InputVStream_is_multi_planar_Reply *reply) override;
     virtual grpc::Status InputVStream_write(grpc::ServerContext*, const InputVStream_write_Request *request,
         InputVStream_write_Reply *reply) override;
+    virtual grpc::Status InputVStream_write_pix(grpc::ServerContext*, const InputVStream_write_pix_Request *request,
+        InputVStream_write_pix_Reply *reply) override;
     virtual grpc::Status OutputVStream_read(grpc::ServerContext*, const OutputVStream_read_Request *request,
         OutputVStream_read_Reply *reply) override;
     virtual grpc::Status InputVStream_get_frame_size(grpc::ServerContext*, const VStream_get_frame_size_Request *request,
@@ -95,10 +97,6 @@ public:
         VStream_get_info_Reply *reply) override;
     virtual grpc::Status OutputVStream_get_info(grpc::ServerContext*, const VStream_get_info_Request *request,
         VStream_get_info_Reply *reply) override;
-    virtual grpc::Status InputVStream_dup_handle(grpc::ServerContext *ctx, const dup_handle_Request *request,
-        dup_handle_Reply*) override;
-    virtual grpc::Status OutputVStream_dup_handle(grpc::ServerContext *ctx, const dup_handle_Request *request,
-        dup_handle_Reply*) override;
     virtual grpc::Status InputVStream_stop_and_clear(grpc::ServerContext *ctx, const VStream_stop_and_clear_Request *request,
         VStream_stop_and_clear_Reply*) override;
     virtual grpc::Status OutputVStream_stop_and_clear(grpc::ServerContext *ctx, const VStream_stop_and_clear_Request *request,
@@ -111,9 +109,15 @@ public:
         VStream_is_aborted_Reply*) override;
     virtual grpc::Status OutputVStream_is_aborted(grpc::ServerContext *ctx, const VStream_is_aborted_Request *request,
         VStream_is_aborted_Reply*) override;
+    virtual grpc::Status OutputVStream_set_nms_score_threshold(grpc::ServerContext *ctx,
+        const VStream_set_nms_score_threshold_Request *request, VStream_set_nms_score_threshold_Reply*) override;
+    virtual grpc::Status OutputVStream_set_nms_iou_threshold(grpc::ServerContext *ctx,
+        const VStream_set_nms_iou_threshold_Request *request, VStream_set_nms_iou_threshold_Reply*) override;
+    virtual grpc::Status OutputVStream_set_nms_max_proposals_per_class(grpc::ServerContext *ctx,
+        const VStream_set_nms_max_proposals_per_class_Request *request, VStream_set_nms_max_proposals_per_class_Reply*) override;
 
-    virtual grpc::Status ConfiguredNetworkGroup_dup_handle(grpc::ServerContext *ctx, const dup_handle_Request *request,
-        dup_handle_Reply*) override;
+    virtual grpc::Status ConfiguredNetworkGroup_dup_handle(grpc::ServerContext *ctx, const ConfiguredNetworkGroup_dup_handle_Request *request,
+        ConfiguredNetworkGroup_dup_handle_Reply*) override;
     virtual grpc::Status ConfiguredNetworkGroup_release(grpc::ServerContext*, const Release_Request* request,
         Release_Reply* reply) override;
     virtual grpc::Status ConfiguredNetworkGroup_make_input_vstream_params(grpc::ServerContext*,
@@ -182,6 +186,7 @@ public:
 
 private:
     void keep_alive();
+    hailo_status flush_input_vstream(uint32_t handle);
     hailo_status abort_input_vstream(uint32_t handle);
     hailo_status abort_output_vstream(uint32_t handle);
     hailo_status resume_input_vstream(uint32_t handle);
@@ -190,6 +195,7 @@ private:
     bool is_output_vstream_aborted(uint32_t handle);
     void abort_vstreams_by_pids(std::set<uint32_t> &pids);
     void remove_disconnected_clients();
+    void update_client_id_timestamp(uint32_t pid);
 
     std::mutex m_mutex;
     std::map<uint32_t, std::chrono::time_point<std::chrono::high_resolution_clock>> m_clients_pids;

@@ -4,24 +4,20 @@
  **/
 /**
  * @file boundary_channel.hpp
- * @brief BoundaryChannel - vdma boundary channel interface
- *      The hierarchy is as follows:
- *        -------------------------------------------------------------------------
- *        |             ChannelBase               | (Base class - includes state) |
- *        |                   |                   |                               |
- *        |           BoundaryChannel             | (Boundary interface)          |
- *        |            /           \              |                               |
- *        | AsyncChannel       BufferedChannel    | (Impls)                       |
- *        -------------------------------------------------------------------------
+ * @brief BoundaryChannel - vdma boundary channel
  **/
 
 #ifndef _HAILO_VDMA_BOUNDARY_CHANNEL_HPP_
 #define _HAILO_VDMA_BOUNDARY_CHANNEL_HPP_
 
-#include "hailo/hailort.h"
-#include "hailo/stream.hpp"
+#include "vdma/channel/vdma_channel_regs.hpp"
+#include "vdma/channel/channel_id.hpp"
+#include "vdma/memory/descriptor_list.hpp"
+#include "stream_common/transfer_common.hpp"
 
-#include "vdma/channel/channel_base.hpp"
+#include "common/latency_meter.hpp"
+
+#include "context_switch_defs.h"
 
 #include <memory>
 
@@ -29,26 +25,24 @@
 namespace hailort {
 namespace vdma {
 
+struct OngoingTransfer {
+    TransferRequest request;
+    uint16_t last_desc;
+    uint16_t latency_measure_desc;
+};
+
 class BoundaryChannel;
 using BoundaryChannelPtr = std::shared_ptr<BoundaryChannel>;
-
-using ProcessingCompleteCallback = std::function<void()>;
-
-class BoundaryChannel : public ChannelBase
+class BoundaryChannel final
 {
 public:
-    enum class Type
-    {
-        BUFFERED = 0,
-        ASYNC
-    };
+    using Direction = HailoRTDriver::DmaDirection;
 
     static Expected<BoundaryChannelPtr> create(vdma::ChannelId channel_id, Direction direction, HailoRTDriver &driver,
-        uint32_t descs_count, uint16_t desc_page_size, const std::string &stream_name = "", LatencyMeterPtr latency_meter = nullptr,
-        uint16_t transfers_per_axi_intr = 1, Type type = Type::BUFFERED);
+        uint32_t descs_count, uint16_t desc_page_size, const std::string &stream_name = "", LatencyMeterPtr latency_meter = nullptr);
 
-    BoundaryChannel(Type type, vdma::ChannelId channel_id, Direction direction, HailoRTDriver &driver, uint32_t descs_count,
-        uint16_t desc_page_size, const std::string &stream_name, LatencyMeterPtr latency_meter, uint16_t transfers_per_axi_intr,
+    BoundaryChannel(vdma::ChannelId channel_id, Direction direction, HailoRTDriver &driver, uint32_t descs_count,
+        uint16_t desc_page_size, const std::string &stream_name, LatencyMeterPtr latency_meter,
         hailo_status &status);
     BoundaryChannel(const BoundaryChannel &other) = delete;
     BoundaryChannel &operator=(const BoundaryChannel &other) = delete;
@@ -57,92 +51,97 @@ public:
     virtual ~BoundaryChannel() = default;
 
     // Called after the FW activated the channel.
-    hailo_status activate(uint32_t transfer_size, bool resume_pending_transfers);
+    hailo_status activate();
 
     // Called before the FW deactivated the channel.
     hailo_status deactivate();
 
-    Type type() const;
-    hailo_status set_transfers_per_axi_intr(uint16_t transfers_per_axi_intr);
-
-    void clear_pending_buffers_descriptors();
     hailo_status trigger_channel_completion(uint16_t hw_num_processed);
-
-    // Register some new interrupt callback (and reset previous).
-    // Note - when reseting an old callback, it may still be called (until interrupts are stopped).
-    void register_interrupt_callback(const ProcessingCompleteCallback &callback);
-
-    CONTROL_PROTOCOL__host_buffer_info_t get_boundary_buffer_info(uint32_t transfer_size);
-    virtual hailo_status abort();
-    virtual hailo_status clear_abort();
-
-    // For D2H channels, we don't buffer data
-    // Hence there's nothing to be "flushed" and the function will return with HAILO_SUCCESS
-    virtual hailo_status flush(const std::chrono::milliseconds &timeout);
-
-    // Blocks until buffer_size bytes can transferred to/from the channel or until timeout has elapsed.
-    // If stop_if_deactivated is true, this function will return HAILO_STREAM_NOT_ACTIVATED after deactivate()
-    // is called. Otherwise, this function can be used to access the buffer while the channel is not active.
-    hailo_status wait(size_t buffer_size, std::chrono::milliseconds timeout, bool stop_if_deactivated=false);
-
-    // Transfers count bytes to/from buf via the channel.
-    // Blocks until the transfer can be registered or timeout has elapsed. Hence, calling 'wait(buffer_size, timeout)'
-    // prior to 'transfer(buf, buffer_size)' is redundant.
-    virtual hailo_status transfer_sync(void *buf, size_t count, std::chrono::milliseconds timeout) = 0;
-
-    // TODO: can write_buffer + send_pending_buffer move to BufferedChannel? (HRT-9105)
-    // Either write_buffer + send_pending_buffer or transfer (h2d) should be used on a given channel, not both
-    virtual hailo_status write_buffer(const MemoryView &buffer, std::chrono::milliseconds timeout,
-        const std::function<bool()> &should_cancel) = 0;
-    virtual hailo_status send_pending_buffer() = 0;
-
-    // When the transfer is complete (i.e. data is written to/from buffer with a D2H/H2D channel) callback is called
-    // transfer_request.buffer can't be freed/changed until callback is called.
-    virtual hailo_status transfer_async(TransferRequest &&transfer_request) = 0;
 
     // Calls all pending transfer callbacks (if they exist), marking them as canceled by passing
     // HAILO_STREAM_ABORTED_BY_USER as a status to the callbacks.
     // Note: This function is to be called on a deactivated channel object. Calling on an active channel will lead to
     // unexpected results
-    virtual hailo_status cancel_pending_transfers() = 0;
+    void cancel_pending_transfers();
 
-    virtual void notify_all() = 0;
+    // user_owns_buffer is set when the buffer is owned by the user (otherwise we may have some assumtions).
+    hailo_status launch_transfer(TransferRequest &&transfer_request, bool user_owns_buffer);
 
-    class BufferState {
-    public:
-        std::vector<std::pair<uint16_t, Buffer>> desc_buffer_pairing;
-        uint16_t num_avail;
-        uint16_t num_processed;
-        uint16_t hw_num_avail;
-        uint16_t hw_num_processed;
-    };
+    size_t get_max_ongoing_transfers(size_t transfer_size) const;
 
-    // Assumes that the channel is idle; doesn't block changes to the channel
-    // To be used for debugging purposes
-    // TODO: these will move to BufferedChannel (HRT-9105)
-    virtual Expected<BufferState> get_buffer_state() = 0;
-    virtual Expected<size_t> get_h2d_pending_frames_count() = 0;
-    virtual Expected<size_t> get_d2h_pending_descs_count() = 0;
+    CONTROL_PROTOCOL__host_buffer_info_t get_boundary_buffer_info(uint32_t transfer_size) const;
 
-protected:
-    static void ignore_processing_complete() {}
-    void stop_interrupts_thread(std::unique_lock<RecursiveSharedMutex> &lock);
-    virtual bool is_ready_for_transfer_h2d(size_t buffer_size);
-    virtual bool is_ready_for_transfer_d2h(size_t buffer_size);
+    vdma::ChannelId get_channel_id() const
+    {
+        return m_channel_id;
+    }
 
-    // Called after activate/deactivate with the state mutex held
-    virtual hailo_status complete_channel_activation(uint32_t transfer_size, bool resume_pending_transfers) = 0;
-    virtual hailo_status complete_channel_deactivation() = 0;
+    const std::string &stream_name() const
+    {
+        return m_stream_name;
+    }
 
-    const Type m_type;
-    ProcessingCompleteCallback m_user_interrupt_callback;
-    uint16_t m_transfers_per_axi_intr;
+    std::shared_ptr<DescriptorList> get_desc_list()
+    {
+        return m_desc_list;
+    }
 
 private:
-    bool has_room_in_desc_list(size_t buffer_size);
-    bool is_complete(const PendingBuffer &pending_buffer, uint16_t previous_num_processed,
-        uint16_t current_num_processed);
-    void on_pending_buffer_irq(PendingBuffer &buffer);
+    static void empty_transfer_done_callback(hailo_status){}
+
+    // Returns the desc index of the last desc whose timestamp was measured in the driver
+    Expected<uint16_t> update_latency_meter();
+
+    bool is_transfer_complete(const OngoingTransfer &transfer, uint16_t previous_num_processed,
+        uint16_t current_num_processed) const;
+    void on_transfer_complete(std::unique_lock<std::mutex> &lock, OngoingTransfer &transfer,
+        hailo_status complete_status);
+    hailo_status prepare_descriptors(size_t transfer_size, uint16_t starting_desc,
+        MappedBufferPtr mapped_buffer, size_t buffer_offset);
+
+    bool is_buffer_already_configured(MappedBufferPtr buffer, size_t buffer_offset_in_descs, size_t starting_desc) const;
+    void add_ongoing_transfer(TransferRequest &&transfer_request, uint16_t first_desc, uint16_t last_desc);
+
+    static bool is_desc_between(uint16_t begin, uint16_t end, uint16_t desc);
+    uint16_t get_num_available() const;
+    hailo_status inc_num_available(uint16_t value);
+    hailo_status allocate_descriptor_list(uint32_t descs_count, uint16_t desc_page_size);
+
+    const vdma::ChannelId m_channel_id;
+    const Direction m_direction;
+    HailoRTDriver &m_driver;
+    VdmaChannelRegs m_host_registers;
+    std::shared_ptr<DescriptorList> m_desc_list; // Host side descriptor list
+    const std::string m_stream_name;
+    circbuf_t m_descs;
+    LatencyMeterPtr m_latency_meter;
+    bool m_is_channel_activated;
+    std::mutex m_channel_mutex;
+    CircularArray<OngoingTransfer> m_ongoing_transfers;
+
+    // Contains the last num_processed of the last interrupt (only used on latency measurement)
+    uint16_t m_last_timestamp_num_processed;
+
+    struct BoundedBuffer {
+        MappedBufferPtr buffer;
+
+        // The buffer is bounded starting from this descriptor.
+        uint16_t starting_desc;
+
+        // Offset inside the buffer (in desc_page_size granularity) of the "actual start" of the buffer.
+        // It implies that:
+        //      desc_list[starting_desc] will point to buffer[buffers_desc_offset * desc_page_size].
+        uint16_t buffer_offset_in_descs;
+    };
+
+    // We store the last bounded buffer as cache in order to avoid unnecessary descriptors list reprogramming.
+    // It is good enough to store only the last bounded buffer because we have two modes of execution:
+    //      1. User allocated buffers - On each transfer we bind new buffer. Even if the user always uses the same
+    //         buffers, due to the circular nature of descriptor list, reprogramming will almost always be needed (So
+    //         cacheing won't help).
+    //      2. Single circular buffer (internally) - In this case we don't need to bind each time (maybe after the
+    //         channel is re-activated). Caching the last bounded buffer is enough.
+    BoundedBuffer m_last_bounded_buffer;
 };
 
 } /* namespace vdma */

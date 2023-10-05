@@ -44,73 +44,57 @@ namespace hailort
 
 #define DEFAULT_TIMEOUT_MS (1000)
 
-// A threadsafe-queue. - https://stackoverflow.com/a/16075550
 template <class T>
-class SafeQueue {
+class SafeQueue final {
 public:
-    SafeQueue() : m_queue(), m_mutex(), m_queue_not_empty(), m_timeout(DEFAULT_TIMEOUT_MS) {}
-    virtual ~SafeQueue() = default;
+    static constexpr size_t UNLIMITED_QUEUE_SIZE = std::numeric_limits<size_t>::max();
 
-    // Add an element to the queue.
-    virtual void push(T t) {
+    SafeQueue(size_t max_size) :
+        m_max_size(max_size)
+    {}
+
+    SafeQueue() :
+        SafeQueue(UNLIMITED_QUEUE_SIZE)
+    {}
+
+
+    ~SafeQueue() = default;
+
+    hailo_status enqueue(T &&t)
+    {
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_queue.push(t);
-        m_queue_not_empty.notify_one();
+        if ((m_max_size != UNLIMITED_QUEUE_SIZE) && (m_queue.size() >= m_max_size)) {
+            return HAILO_QUEUE_IS_FULL;
+        }
+        m_queue.push(std::move(t));
+        return HAILO_SUCCESS;
     }
 
-    // Get the "front"-element.
-    // If the queue is empty, wait till a element is available.
-    virtual T pop() {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        while (m_queue.empty()) {
-            // release lock as long as the wait and require it afterwards.
-            m_queue_not_empty.wait_for(lock, m_timeout);
-        }
+    Expected<T> dequeue()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        CHECK_AS_EXPECTED(!m_queue.empty(), HAILO_INTERNAL_FAILURE, "Can't dequeue if queue is empty");
         T val = m_queue.front();
         m_queue.pop();
         return val;
     }
 
+    void clear()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        while (!m_queue.empty()) {
+            m_queue.pop();
+        }
+    }
+
+    bool empty() const { return m_queue.empty(); }
+    size_t size() const { return m_queue.size(); }
+    size_t max_size() const { return m_max_size; }
+
 protected:
+    const size_t m_max_size;
     std::queue<T> m_queue;
     mutable std::mutex m_mutex;
-    std::condition_variable m_queue_not_empty;
-    const std::chrono::milliseconds m_timeout;
-};
-
- template <class T>
- class SafeQueueMaxSize : public SafeQueue<T> {
- public:
-    SafeQueueMaxSize(uint32_t max_size) :
-        SafeQueue<T>::SafeQueue(),
-        m_max_size(max_size),
-        m_queue_not_full()
-    {}
-    virtual ~SafeQueueMaxSize() = default;
-
-    virtual void push(T t) override {
-        std::unique_lock<std::mutex> lock(this->m_mutex);
-        m_queue_not_full.wait(lock, [&]{return this->m_queue.size() < m_max_size;});
-
-        this->m_queue.push(t);
-        this->m_queue_not_empty.notify_one();
-    }
-
-    virtual T pop() override {
-        std::unique_lock<std::mutex> lock(this->m_mutex);
-        this->m_queue_not_empty.wait(lock, [&]{return !this->m_queue.empty();});
-        
-        T val = this->m_queue.front();
-        this->m_queue.pop();
-        
-        if (this->m_queue.size() < m_max_size) {
-            m_queue_not_full.notify_one();
-        }
-        return val;
-    }
-protected:
-    const uint32_t m_max_size;
-    std::condition_variable m_queue_not_full;
 };
 
 // Single-Producer Single-Consumer Queue

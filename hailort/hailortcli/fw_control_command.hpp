@@ -12,10 +12,7 @@
 
 #include "hailortcli.hpp"
 #include "command.hpp"
-#if defined(__GNUC__)
-// TODO: Support on windows (HRT-5919)
 #include "download_action_list_command.hpp"
-#endif
 
 class FwControlIdentifyCommand : public DeviceCommand {
 public:

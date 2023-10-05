@@ -17,6 +17,8 @@
 
 using namespace hailort;
 
+const uint8_t NETWORK_STATS_LEVEL = 1;
+
 hailo_status LiveStats::Track::start()
 {
     CHECK_SUCCESS(start_impl());
@@ -40,15 +42,25 @@ void LiveStats::Track::push_json(nlohmann::ordered_json &json)
     push_json_impl(json);
 }
 
+Expected<double> LiveStats::Track::get_last_measured_fps()
+{
+    // This virtual getter is supported only for the derived class NetworkLiveTrack
+    return make_unexpected(HAILO_NOT_AVAILABLE);
+}
+
+
 LiveStats::LiveStats(std::chrono::milliseconds interval) :
     m_running(false),
     m_interval(interval),
-    m_stop_event(Event::create_shared(Event::State::not_signalled)),
+    m_stop_event(),
     m_tracks(),
     m_mutex(),
     m_prev_count(0),
     m_enable_ansi_escape_sequences(CursorAdjustment())
 {
+    auto event_exp = Event::create_shared(Event::State::not_signalled);
+    assert(event_exp);
+    m_stop_event = event_exp.release();
 }
 
 LiveStats::~LiveStats()
@@ -112,6 +124,20 @@ hailo_status LiveStats::dump_stats(const std::string &json_path, const std::stri
         "Failed writing to file '{}'", json_path);
 
     return HAILO_SUCCESS;
+}
+
+Expected<std::vector<double>> LiveStats::get_last_measured_fps_per_network_group()
+{
+    std::vector<double> last_measured_fpss;
+    CHECK_AS_EXPECTED(contains(m_tracks, NETWORK_STATS_LEVEL), HAILO_NOT_AVAILABLE);
+
+    for (size_t network_stats_track_index = 0; network_stats_track_index < m_tracks[NETWORK_STATS_LEVEL].size(); network_stats_track_index++) {
+        auto expected_fps = m_tracks[NETWORK_STATS_LEVEL][network_stats_track_index]->get_last_measured_fps();
+        CHECK_EXPECTED(expected_fps);
+        last_measured_fpss.emplace_back(expected_fps.release());
+    }
+
+    return last_measured_fpss;
 }
 
 hailo_status LiveStats::start()

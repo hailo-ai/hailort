@@ -125,19 +125,20 @@ Expected<Event> Event::create(const State& initial_state)
 {
     const auto handle = open_event_handle(initial_state);
     if (-1 == handle) {
-        return make_unexpected(HAILO_INTERNAL_FAILURE);
+        return make_unexpected(HAILO_EVENT_CREATE_FAIL);
     }
     return Event(handle);
 }
 
-EventPtr Event::create_shared(const State& initial_state)
+Expected<EventPtr> Event::create_shared(const State& initial_state)
 {
     const auto handle = open_event_handle(initial_state);
-    if (-1 == handle) {
-        return nullptr;
-    }
+    CHECK_AS_EXPECTED(-1 != handle, HAILO_EVENT_CREATE_FAIL);
 
-    return make_shared_nothrow<Event>(handle);
+    auto res = make_shared_nothrow<Event>(handle);
+    CHECK_NOT_NULL_AS_EXPECTED(res, HAILO_OUT_OF_HOST_MEMORY);
+
+    return res;
 }
 
 hailo_status Event::signal()
@@ -174,7 +175,7 @@ Expected<Semaphore> Semaphore::create(uint32_t initial_count)
 {
     const auto handle = open_semaphore_handle(initial_count);
     if (-1 == handle) {
-        return make_unexpected(HAILO_INTERNAL_FAILURE);
+        return make_unexpected(HAILO_EVENT_CREATE_FAIL);
     }
     return Semaphore(handle);
 }

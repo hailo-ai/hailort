@@ -111,7 +111,6 @@ Expected<std::shared_ptr<VDevice>> NetworkGroupHandle::create_vdevice(const void
     }
     auto result = create_unique_vdevice(element, device_count, scheduling_algorithm, multi_process_service);
     GST_CHECK_EXPECTED(result, element, RESOURCE, "Failed creating vdevice, status = %d", result.status());
-    m_vdevices.insert(result.value());
     return result;
 }
 
@@ -361,7 +360,7 @@ std::shared_ptr<ConfiguredNetworkGroup> NetworkGroupConfigManager::get_configure
         return nullptr;
     }
 
-    return found->second;
+    return found->second.lock();
 }
 
 std::string NetworkGroupConfigManager::get_configure_string(const std::string &device_id, const std::string &hef_hash,

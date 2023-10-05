@@ -12,10 +12,7 @@
 #include "inference_progress.hpp"
 #include "infer_stats_printer.hpp"
 #include "graph_printer.hpp"
-#if defined(__GNUC__)
-// TODO: Support on windows (HRT-5919)
 #include "download_action_list_command.hpp"
-#endif
 #include "common.hpp"
 
 #include "common/string_utils.hpp"
@@ -183,9 +180,9 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
         ->default_val("true");
 
     auto transformation_group = run_subcommand->add_option_group("Transformations");
-    transformation_group->add_option("--quantized", params.transform.quantized,
+    auto quantized_option = transformation_group->add_option("--quantized", params.transform.quantized,
         "true means the tool assumes that the data is already quantized,\n"
-        "false means it is the tool's responsability to quantize (scale) the data.")
+        "false means it is the tool's responsibility to quantize (scale) the data.")
         ->default_val("true");
     transformation_group->add_option("--user-format-type", params.transform.format_type,
         "The host data type")
@@ -221,8 +218,6 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
             "No measurement flags provided; Run 'hailortcli run measure-stats --help' for options");
     });
 
-    // TODO: Support on windows (HRT-5919)
-    #if defined(__GNUC__)
     auto *collect_runtime_data_subcommand = run_subcommand->add_subcommand("collect-runtime-data",
         "Collect runtime data to be used by the Profiler");
     static const char *JSON_SUFFIX = ".json";
@@ -240,7 +235,6 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
         // If this subcommand was parsed, then we need to download runtime_data
         params.runtime_data.collect_runtime_data = true;
     });
-    #endif
 
     auto measure_power_group = run_subcommand->add_option_group("Measure Power/Current");
     CLI::Option *power_sampling_period = measure_power_group->add_option("--sampling-period",
@@ -263,13 +257,13 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
                         ->excludes(elem_latency_option)
                         ->excludes(elem_queue_size_option);
 
+    hailo_deprecate_options(run_subcommand, { std::make_shared<OptionDeprecation>(quantized_option) }, false);
+
     run_subcommand->parse_complete_callback([&params, hef_new, power_sampling_period,
             power_averaging_factor, measure_power_opt, measure_current_opt]() {
         PARSE_CHECK(!hef_new->empty(), "Single HEF file/directory is required");
         bool is_hw_only = InferMode::HW_ONLY == params.mode;
         params.transform.transform = (!is_hw_only || (params.inputs_name_and_file_path.size() > 0));
-        PARSE_CHECK((!params.transform.quantized || (HAILO_FORMAT_TYPE_AUTO == params.transform.format_type)),
-            "User data type must be auto when quantized is set");
         bool has_oneof_measure_flags = (!measure_power_opt->empty() || !measure_current_opt->empty());
         PARSE_CHECK(power_sampling_period->empty() || has_oneof_measure_flags,
             "--sampling-period requires --measure-power or --measure-current");
@@ -302,6 +296,10 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
                     params.runtime_data.batch_to_measure);
             }
         }
+
+        PARSE_CHECK((params.dot_output.empty() || !is_hw_only),
+            "Generating .dot file for pipeline graph is impossible when running in 'hw-only' mode");
+
     });
 }
 
@@ -476,7 +474,8 @@ Expected<std::map<std::string, std::vector<InputVStream>>> create_input_vstreams
     auto network_infos = configured_net_group.get_network_infos();
     CHECK_EXPECTED(network_infos);
     for (auto &network_info : network_infos.value()) {
-        auto input_vstreams_params = configured_net_group.make_input_vstream_params(params.transform.quantized,
+        auto quantized = (params.transform.format_type != HAILO_FORMAT_TYPE_FLOAT32);
+        auto input_vstreams_params = configured_net_group.make_input_vstream_params(quantized,
             params.transform.format_type, HAILORTCLI_DEFAULT_VSTREAM_TIMEOUT_MS, HAILO_DEFAULT_VSTREAM_QUEUE_SIZE, network_info.name);
         CHECK_EXPECTED(input_vstreams_params);
 
@@ -498,7 +497,15 @@ Expected<std::map<std::string, std::vector<OutputVStream>>> create_output_vstrea
     auto network_infos = configured_net_group.get_network_infos();
     CHECK_EXPECTED(network_infos);
     for (auto &network_info : network_infos.value()) {
-        auto output_vstreams_params = configured_net_group.make_output_vstream_params(params.transform.quantized,
+        // Data is not quantized if format_type is explicitly float32, or if an output is NMS (which also enforces float32 output)
+        // We don't cover a case of multiple outputs where only some of them are NMS (no such model currently), and anyway it is handled in run2
+        auto vstream_infos = configured_net_group.get_output_vstream_infos();
+        CHECK_EXPECTED(vstream_infos);
+        auto nms_output = std::any_of(vstream_infos->begin(), vstream_infos->end(), [] (const hailo_vstream_info_t &output_info) {
+            return HailoRTCommon::is_nms(output_info);
+        });
+        auto quantized = ((params.transform.format_type != HAILO_FORMAT_TYPE_FLOAT32) && !nms_output);
+        auto output_vstreams_params = configured_net_group.make_output_vstream_params(quantized,
             params.transform.format_type, HAILORTCLI_DEFAULT_VSTREAM_TIMEOUT_MS, HAILO_DEFAULT_VSTREAM_QUEUE_SIZE, network_info.name);
         CHECK_EXPECTED(output_vstreams_params);
 
@@ -958,43 +965,59 @@ static Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_network_group(C
 }
 
 static Expected<std::map<std::string, BufferPtr>> create_constant_dataset(
-    const std::vector<hailo_stream_info_t> &input_streams_infos, const hailo_transform_params_t &trans_params)
+    const std::pair<std::vector<hailo_stream_info_t>, std::vector<hailo_vstream_info_t>> &input_infos, const hailo_transform_params_t &trans_params,
+    InferMode mode)
 {
     const uint8_t const_byte = 0xAB;
     std::map<std::string, BufferPtr> dataset;
-    for (const auto &input_stream_info : input_streams_infos) {
-        const auto frame_size = hailo_get_host_frame_size(&input_stream_info, &trans_params);
-        auto constant_buffer = Buffer::create_shared(frame_size, const_byte);
-        if (!constant_buffer) {
-            std::cerr << "Out of memory, tried to allocate " << frame_size << std::endl;
-            return make_unexpected(constant_buffer.status());
-        }
 
-        dataset.emplace(std::string(input_stream_info.name), constant_buffer.release());
+    if (InferMode::HW_ONLY == mode) {
+        for (const auto &input_stream_info : input_infos.first) {
+            const auto frame_size = input_stream_info.hw_frame_size;
+            auto constant_buffer = Buffer::create_shared(frame_size, const_byte);
+            if (!constant_buffer) {
+                std::cerr << "Out of memory, tried to allocate " << frame_size << std::endl;
+                return make_unexpected(constant_buffer.status());
+            }
+            dataset.emplace(std::string(input_stream_info.name), constant_buffer.release());
+        }
+    } else {
+        for (const auto &input_vstream_info : input_infos.second) {
+            const auto frame_size = HailoRTCommon::get_frame_size(input_vstream_info, trans_params.user_buffer_format);
+            auto constant_buffer = Buffer::create_shared(frame_size, const_byte);
+            if (!constant_buffer) {
+                std::cerr << "Out of memory, tried to allocate " << frame_size << std::endl;
+                return make_unexpected(constant_buffer.status());
+            }
+            dataset.emplace(std::string(input_vstream_info.name), constant_buffer.release());
+        }
     }
 
     return dataset;
 }
 
 static Expected<std::map<std::string, BufferPtr>> create_dataset_from_files(
-    const std::vector<hailo_stream_info_t> &input_streams_infos, const std::vector<std::string> &input_files,
+    const std::pair<std::vector<hailo_stream_info_t>, std::vector<hailo_vstream_info_t>> &input_infos, const std::vector<std::string> &input_files,
     const hailo_transform_params_t &trans_params, InferMode mode)
 {
-    CHECK_AS_EXPECTED(input_streams_infos.size() == input_files.size(), HAILO_INVALID_ARGUMENT, "Number of input files ({}) must be equal to the number of inputs ({})", input_files.size(), input_streams_infos.size());
+    // When creating dataset from files we always care about the logic-inputs (e.g. vstreams)
+    CHECK_AS_EXPECTED(input_infos.second.size() == input_files.size(),
+        HAILO_INVALID_ARGUMENT, "Number of input files ({}) must be equal to the number of inputs ({})", input_files.size(), input_infos.second.size());
 
     std::map<std::string, std::string> file_paths;
-    if ((input_streams_infos.size() == 1) && (input_files[0].find("=") == std::string::npos)) { // Legacy single input format
-        file_paths.emplace(std::string(input_streams_infos[0].name), input_files[0]);
+    if ((input_infos.second.size() == 1) && (input_files[0].find("=") == std::string::npos)) { // Legacy single input format
+        file_paths.emplace(std::string(input_infos.second.begin()->name), input_files[0]);
     }
     else {
         file_paths = format_strings_to_key_value_pairs(input_files);
     }
 
     std::map<std::string, BufferPtr> dataset;
-    for (const auto &input_stream_info : input_streams_infos) {
-        const auto host_frame_size = hailo_get_host_frame_size(&input_stream_info, &trans_params);
-        const auto stream_name = std::string(input_stream_info.name);
-        CHECK_AS_EXPECTED(stream_name.find("=") == std::string::npos, HAILO_INVALID_ARGUMENT, "stream inputs must not contain '=' characters: {}", stream_name);
+    for (const auto &input_vstream_info : input_infos.second) {
+        const auto host_frame_size = HailoRTCommon::get_frame_size(input_vstream_info, trans_params.user_buffer_format);
+        const auto stream_name = std::string(input_vstream_info.name);
+        CHECK_AS_EXPECTED(stream_name.find("=") == std::string::npos,
+            HAILO_INVALID_ARGUMENT, "stream inputs must not contain '=' characters: {}", stream_name);
 
         const auto file_path_it = file_paths.find(stream_name);
         CHECK_AS_EXPECTED(file_paths.end() != file_path_it, HAILO_INVALID_ARGUMENT, "Missing input file for input: {}", stream_name);
@@ -1005,13 +1028,17 @@ static Expected<std::map<std::string, BufferPtr>> create_dataset_from_files(
             "Input file ({}) size {} must be a multiple of the frame size {} ({})", file_path_it->second, host_buffer->size(), host_frame_size, stream_name);
 
         if (InferMode::HW_ONLY == mode) {
+            auto matching_stream_info = std::find_if(input_infos.first.begin(), input_infos.first.end(), [&stream_name] (const auto &stream_info) {
+                return std::string(stream_info.name) == stream_name;
+            });
+            CHECK_AS_EXPECTED(matching_stream_info != input_infos.first.end(), HAILO_INVALID_OPERATION, "Failed to find raw-stream with name {}.", stream_name);
             const size_t frames_count = (host_buffer->size() / host_frame_size);
-            const size_t hw_frame_size = input_stream_info.hw_frame_size;
+            const size_t hw_frame_size = matching_stream_info->hw_frame_size;
             const size_t hw_buffer_size = frames_count * hw_frame_size;
             auto hw_buffer = Buffer::create_shared(hw_buffer_size);
             CHECK_EXPECTED(hw_buffer);
 
-            auto transform_context = InputTransformContext::create(input_stream_info, trans_params);
+            auto transform_context = InputTransformContext::create(*matching_stream_info, trans_params);
             CHECK_EXPECTED(transform_context);
             
             for (size_t i = 0; i < frames_count; i++) {
@@ -1022,8 +1049,7 @@ static Expected<std::map<std::string, BufferPtr>> create_dataset_from_files(
                 CHECK_SUCCESS_AS_EXPECTED(status);
             }
             dataset[stream_name] = hw_buffer.release();
-        }
-        else {
+        } else {
             auto host_buffer_shared = make_shared_nothrow<Buffer>(host_buffer.release());
             CHECK_NOT_NULL_AS_EXPECTED(host_buffer_shared, HAILO_OUT_OF_HOST_MEMORY);
             dataset[stream_name] = host_buffer_shared;
@@ -1044,17 +1070,22 @@ static Expected<std::vector<std::map<std::string, BufferPtr>>> create_dataset(
     trans_params.user_buffer_format.order = HAILO_FORMAT_ORDER_AUTO;
     trans_params.user_buffer_format.flags = (params.transform.quantized ? HAILO_FORMAT_FLAGS_QUANTIZED : HAILO_FORMAT_FLAGS_NONE);
     trans_params.user_buffer_format.type = params.transform.format_type;
-    std::vector<std::vector<hailo_stream_info_t>> input_infos;
+
+    // Vector of len(ng.conut), each element is pair of all input_stream_infos, and all input_vstream_infos
+    std::vector<std::pair<std::vector<hailo_stream_info_t>, std::vector<hailo_vstream_info_t>>> input_infos;
     for (auto &network_group : network_groups) {
         auto expected_all_streams_infos = network_group->get_all_stream_infos();
         CHECK_EXPECTED(expected_all_streams_infos);
-        auto &all_infos = expected_all_streams_infos.value();
-        std::vector<hailo_stream_info_t> group_input_infos;
-        std::copy_if(all_infos.begin(), all_infos.end(), std::back_inserter(group_input_infos), [](auto &info) {
+        auto &all_stream_infos = expected_all_streams_infos.value();
+        std::vector<hailo_stream_info_t> group_input_stream_infos;
+        std::copy_if(all_stream_infos.begin(), all_stream_infos.end(), std::back_inserter(group_input_stream_infos), [](const auto &info) {
             return info.direction == HAILO_H2D_STREAM;
         });
-        input_infos.push_back(group_input_infos);
+        auto expected_input_vstreams_infos = network_group->get_input_vstream_infos();
+        CHECK_EXPECTED(expected_input_vstreams_infos);
+        input_infos.push_back({group_input_stream_infos, expected_input_vstreams_infos.release()});
     }
+
     if (!params.inputs_name_and_file_path.empty()) {
         for (auto &group_input_infos : input_infos) {
             auto network_group_dataset = create_dataset_from_files(group_input_infos, params.inputs_name_and_file_path,
@@ -1062,10 +1093,9 @@ static Expected<std::vector<std::map<std::string, BufferPtr>>> create_dataset(
             CHECK_EXPECTED(network_group_dataset);
             results.emplace_back(network_group_dataset.release());
         }
-    }
-    else {
+    } else {
         for (auto &group_input_infos : input_infos) {
-            auto network_group_dataset = create_constant_dataset(group_input_infos, trans_params);
+            auto network_group_dataset = create_constant_dataset(group_input_infos, trans_params, params.mode);
             CHECK_EXPECTED(network_group_dataset);
             results.emplace_back(network_group_dataset.release());
         }
@@ -1179,18 +1209,13 @@ Expected<InferResult> run_command_hef_single_device(const inference_runner_param
     auto network_group_list = device->configure(hef.value(), configure_params.value());
     CHECK_EXPECTED(network_group_list, "Failed configure device from hef");
 
-#if defined(__GNUC__)
-    // TODO: Support on windows (HRT-5919)
     if (use_batch_to_measure_opt(params)) {
         auto status = DownloadActionListCommand::set_batch_to_measure(*device, params.runtime_data.batch_to_measure);
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
-#endif
 
     auto inference_result = activate_and_run_single_device(*device, network_group_list.value(), params);
 
-#if defined(__GNUC__)
-    // TODO: Support on windows (HRT-5919)
     if (use_batch_to_measure_opt(params) && (0 == params.frames_count) && inference_result) {
         auto min_frames_count = get_min_inferred_frames_count(inference_result.value());
         CHECK_EXPECTED(min_frames_count);
@@ -1208,7 +1233,6 @@ Expected<InferResult> run_command_hef_single_device(const inference_runner_param
             params.hef_path);
     }
 
-#endif
     CHECK_EXPECTED(inference_result);
     return inference_result;
 }
@@ -1356,22 +1380,17 @@ Expected<InferResult> run_command_hef_vdevice(const inference_runner_params &par
     auto network_group_list = vdevice.value()->configure(hef.value(), configure_params.value());
     CHECK_EXPECTED(network_group_list, "Failed configure vdevice from hef");
 
-#if defined(__GNUC__)
     for (auto &device : physical_devices) {
-        // TODO: Support on windows (HRT-5919)
         if (use_batch_to_measure_opt(params)) {
             status = DownloadActionListCommand::set_batch_to_measure(device.get(), params.runtime_data.batch_to_measure);
             CHECK_SUCCESS_AS_EXPECTED(status);
         }
     }
-#endif
 
     auto infer_result = activate_and_run_vdevice(physical_devices, scheduler_is_used, network_group_list.value(), params);
     CHECK_EXPECTED(infer_result, "Error failed running inference");
 
-#if defined(__GNUC__)
     for (auto &device : physical_devices) {
-        // TODO: Support on windows (HRT-5919)
         if (use_batch_to_measure_opt(params) && (0 == params.frames_count) && infer_result) {
             auto min_frames_count = get_min_inferred_frames_count(infer_result.value());
             CHECK_EXPECTED(min_frames_count);
@@ -1390,7 +1409,6 @@ Expected<InferResult> run_command_hef_vdevice(const inference_runner_params &par
                 params.hef_path);
         }
     }
-#endif
 
     return infer_result;
 }

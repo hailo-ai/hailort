@@ -398,14 +398,15 @@ public:
      *                              the function returns the input virtual stream params of the given network.
      *                              If NULL is passed, the function returns the input virtual stream params of 
      *                              all the networks of the first network group.
-     * @param[in] quantized         Whether the data fed into the chip is already quantized. True means
-     *                              the data is already quantized. False means it's HailoRT's responsibility
-     *                              to quantize (scale) the data.
+     * @param[in] quantized         Deprecated parameter that will be ignored. Determine whether to quantize (scale)
+     *                              the data will be decided by the src-data and dst-data types.
      * @param[in] format_type       The default format type for all input virtual streams.
      * @param[in] timeout_ms        The default timeout in milliseconds for all input virtual streams.
      * @param[in] queue_size        The default queue size for all input virtual streams.
      * @return Upon success, returns Expected of a map of input virtual stream name to params.
      *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to quantize (scale) the data will be decided by
+     *       the src-data and dst-data types.
      */
     Expected<std::map<std::string, hailo_vstream_params_t>> make_input_vstream_params(
         const std::string &name, bool quantized, hailo_format_type_t format_type,
@@ -421,14 +422,15 @@ public:
      *                              the function returns the output virtual stream params of the given network.
      *                              If NULL is passed, the function returns the output virtual stream params of
      *                              all the networks of the first network group.
-     * @param[in] quantized         Whether the data returned from the chip is already quantized. True means
-     *                              the data is already quantized. False means it's HailoRT's responsibility
-     *                              to quantize (scale) the data.
+     * @param[in] quantized         Deprecated parameter that will be ignored. Determine whether to de-quantize (rescale)
+     *                              the data will be decided by the src-data and dst-data types.
      * @param[in] format_type       The default format type for all output virtual streams.
      * @param[in] timeout_ms        The default timeout in milliseconds for all output virtual streams.
      * @param[in] queue_size        The default queue size for all output virtual streams.
      * @return Upon success, returns Expected of a map of output virtual stream name to params.
      *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to de-quantize (rescale) the data will be decided by
+     *       the src-data and dst-data types.
      */
     Expected<std::map<std::string, hailo_vstream_params_t>> make_output_vstream_params(
         const std::string &name, bool quantized, hailo_format_type_t format_type,

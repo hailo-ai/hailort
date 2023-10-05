@@ -16,10 +16,8 @@
 namespace hailort
 {
 
-#define SINGLE_CONTEXT_BATCH_SIZE (1)
-
 ScheduledCoreOp::ScheduledCoreOp(std::shared_ptr<CoreOp> core_op, std::chrono::milliseconds timeout,
-    uint16_t max_batch_size, bool use_dynamic_batch_flow, StreamInfoVector &stream_infos, std::string core_op_name) :
+    uint16_t max_batch_size, bool use_dynamic_batch_flow, StreamInfoVector &stream_infos) :
     m_core_op(core_op),
     m_last_run_time_stamp(std::chrono::steady_clock::now()),
     m_timeout(std::move(timeout)),
@@ -28,27 +26,18 @@ ScheduledCoreOp::ScheduledCoreOp(std::shared_ptr<CoreOp> core_op, std::chrono::m
     m_use_dynamic_batch_flow(use_dynamic_batch_flow),
     m_priority(HAILO_SCHEDULER_PRIORITY_NORMAL),
     m_last_device_id(INVALID_DEVICE_ID),
-    m_core_op_name(core_op_name),
     m_inputs_names(),
-    m_outputs_names(),
-    m_is_nms(false)
+    m_outputs_names()
 {
     // Prepare empty counters for the added core-op
     for (const auto &stream_info : stream_infos) {
         m_min_threshold_per_stream[stream_info.name] = DEFAULT_SCHEDULER_MIN_THRESHOLD;
+        m_is_stream_enabled[stream_info.name] = true;
+        m_pending_frames.insert(stream_info.name);
         if (HAILO_H2D_STREAM == stream_info.direction) {
-            m_pending_to_send_frames.insert(stream_info.name);
-            m_h2d_finished_transferred_frames.insert(stream_info.name);
             m_inputs_names.push_back(stream_info.name);
         } else {
-            m_requested_read_frames.insert(stream_info.name);
-            m_finished_read_frames.insert(stream_info.name);
-            m_d2h_finished_transferred_frames.insert(stream_info.name);
             m_outputs_names.push_back(stream_info.name);
-
-            if (HAILO_FORMAT_ORDER_HAILO_NMS == stream_info.format.order) {
-                m_is_nms = true;
-            }
         }
     }
 }
@@ -63,10 +52,19 @@ Expected<std::shared_ptr<ScheduledCoreOp>> ScheduledCoreOp::create(std::shared_p
 
     // DEFAULT_BATCH_SIZE and SINGLE_CONTEXT_BATCH_SIZE support streaming and therfore we are not using dynamic batch flow
     auto use_dynamic_batch_flow = added_core_op->get_supported_features().multi_context && (max_batch_size > SINGLE_CONTEXT_BATCH_SIZE);
-    return make_shared_nothrow<ScheduledCoreOp>(added_core_op, timeout, max_batch_size, use_dynamic_batch_flow, stream_infos, added_core_op->name());
+    auto res = make_shared_nothrow<ScheduledCoreOp>(added_core_op, timeout, max_batch_size, use_dynamic_batch_flow,
+        stream_infos);
+    CHECK_NOT_NULL_AS_EXPECTED(res, HAILO_OUT_OF_HOST_MEMORY);
+
+    return res;
 }
 
-uint16_t ScheduledCoreOp::get_min_input_buffers_count()
+uint32_t ScheduledCoreOp::get_max_ongoing_frames_per_device() const
+{
+    return std::min(get_min_input_buffers_count(), get_min_output_buffers_count());
+}
+
+uint16_t ScheduledCoreOp::get_min_input_buffers_count() const
 {
     auto input_streams = m_core_op->get_input_streams();
     uint16_t buffers_count = UINT16_MAX;
@@ -79,7 +77,7 @@ uint16_t ScheduledCoreOp::get_min_input_buffers_count()
     return buffers_count;
 }
 
-uint16_t ScheduledCoreOp::get_min_output_buffers_count()
+uint16_t ScheduledCoreOp::get_min_output_buffers_count() const
 {
     auto output_streams = m_core_op->get_output_streams();
     uint16_t buffers_count = UINT16_MAX;
@@ -92,37 +90,9 @@ uint16_t ScheduledCoreOp::get_min_output_buffers_count()
     return buffers_count;
 }
 
-bool ScheduledCoreOp::use_dynamic_batch_flow()
+bool ScheduledCoreOp::use_dynamic_batch_flow() const
 {
     return m_use_dynamic_batch_flow;
-}
-
-bool ScheduledCoreOp::has_core_op_drained_everything()
-{
-    uint32_t written_frames = m_h2d_finished_transferred_frames.get_max_value();
-    for (const auto &name : get_outputs_names()) {
-        if ((m_finished_read_frames[name] + m_d2h_finished_transferred_frames[name]) < written_frames) {
-            return false;
-        }
-    }
-    return true;
-}
-
-void ScheduledCoreOp::decrease_current_core_op_counters()
-{
-    if (!m_h2d_finished_transferred_frames.all_values_bigger_or_equal(1)) {
-            return;
-    }
-    if (!m_finished_read_frames.all_values_bigger_or_equal(1)) {
-            return;
-    }
-
-    for (const auto &name : get_inputs_names()) {
-        m_h2d_finished_transferred_frames[name]--;
-    }
-    for (const auto &name : get_outputs_names()) {
-        m_finished_read_frames[name]--;
-    }
 }
 
 hailo_status ScheduledCoreOp::set_timeout(const std::chrono::milliseconds &timeout, const stream_name_t &stream_name)
@@ -131,7 +101,7 @@ hailo_status ScheduledCoreOp::set_timeout(const std::chrono::milliseconds &timeo
         "Setting scheduler timeout is allowed only before sending / receiving frames on the core-op.");
     m_timeout = timeout;
 
-    auto name = (stream_name.empty()) ? get_core_op_name() : stream_name;
+    auto name = (stream_name.empty()) ? m_core_op->name() : stream_name;
     LOGGER__INFO("Setting scheduler timeout of {} to {}ms", name, timeout.count());
 
     return HAILO_SUCCESS;
@@ -150,7 +120,7 @@ hailo_status ScheduledCoreOp::set_threshold(uint32_t threshold, const stream_nam
         threshold_per_stream_pair.second = threshold;
     }
 
-    auto name = (stream_name.empty()) ? get_core_op_name() : stream_name;
+    auto name = (stream_name.empty()) ? m_core_op->name() : stream_name;
     LOGGER__INFO("Setting scheduler threshold of {} to {} frames", name, threshold);
 
     return HAILO_SUCCESS;
@@ -174,11 +144,6 @@ device_id_t ScheduledCoreOp::get_last_device()
 void ScheduledCoreOp::set_last_device(const device_id_t &device_id)
 {
     m_last_device_id = device_id;
-}
-
-std::string ScheduledCoreOp::get_core_op_name()
-{
-    return m_core_op_name;
 }
 
 std::shared_ptr<CoreOp> ScheduledCoreOp::get_core_op()
@@ -214,78 +179,58 @@ Expected<uint32_t> ScheduledCoreOp::get_threshold(const stream_name_t &stream_na
     return m_min_threshold_per_stream[stream_name].load();
 }
 
-uint16_t ScheduledCoreOp::get_max_batch_size()
+uint16_t ScheduledCoreOp::get_max_batch_size() const
 {
-    if (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE == m_max_batch_size) {
-        // In nms networks we dont know the output buffers count and therfore we are using the input buffer count
-        return is_nms() ? get_min_input_buffers_count() : get_min_output_buffers_count();
-    }
     return m_max_batch_size;
 }
 
-Counter &ScheduledCoreOp::pending_to_send_frames()
+uint16_t ScheduledCoreOp::get_burst_size() const
 {
-    return m_pending_to_send_frames;
+    // When the user don't explicitly pass batch size, in order to preserve performance from previous scheduler version,
+    // we don't want to stop streaming until we transferred at least get_min_output_buffers_count() frames (This was
+    // the behaviour in previous scheduler versions).
+    return m_core_op->is_default_batch_size() ? get_min_output_buffers_count() : get_max_batch_size();
 }
 
-std::atomic_uint32_t &ScheduledCoreOp::pending_to_send_frames(const stream_name_t &stream_name)
+SchedulerCounter &ScheduledCoreOp::pending_frames()
 {
-    return m_pending_to_send_frames[stream_name];
+    return m_pending_frames;
 }
 
-uint32_t ScheduledCoreOp::pending_to_send_frames_min_value()
+uint32_t ScheduledCoreOp::get_min_input_pending_frames() const
 {
-    return m_pending_to_send_frames.get_min_value();
+    uint32_t min_count = std::numeric_limits<uint32_t>::max();
+    for (const auto &input_name : m_inputs_names) {
+        min_count = std::min(min_count, m_pending_frames[input_name]);
+    }
+    return min_count;
 }
 
-Counter &ScheduledCoreOp::h2d_finished_transferred_frames()
+bool ScheduledCoreOp::is_stream_enabled(const stream_name_t &stream_name) const
 {
-    return m_h2d_finished_transferred_frames;
+    return m_is_stream_enabled.at(stream_name);
 }
 
-std::atomic_uint32_t &ScheduledCoreOp::h2d_finished_transferred_frames(const stream_name_t &stream_name)
+void ScheduledCoreOp::enable_stream(const stream_name_t &stream_name)
 {
-    return m_h2d_finished_transferred_frames[stream_name];
+    m_is_stream_enabled.at(stream_name) = true;
 }
 
-uint32_t ScheduledCoreOp::h2d_finished_transferred_frames_max_value()
+void ScheduledCoreOp::disable_stream(const stream_name_t &stream_name)
 {
-    return m_h2d_finished_transferred_frames.get_max_value();
+    m_is_stream_enabled.at(stream_name) = false;
 }
 
-Counter &ScheduledCoreOp::requested_read_frames()
+bool ScheduledCoreOp::any_stream_disabled() const
 {
-    return m_requested_read_frames;
+    auto is_disabled = [](const std::pair<const stream_name_t, std::atomic_bool> &is_enabled) { return !is_enabled.second; };
+    return std::any_of(m_is_stream_enabled.begin(), m_is_stream_enabled.end(), is_disabled);
 }
 
-std::atomic_uint32_t &ScheduledCoreOp::requested_read_frames(const stream_name_t &stream_name)
+bool ScheduledCoreOp::all_stream_disabled() const
 {
-    return m_requested_read_frames[stream_name];
-}
-
-Counter &ScheduledCoreOp::d2h_finished_transferred_frames()
-{
-    return m_d2h_finished_transferred_frames;
-}
-
-std::atomic_uint32_t &ScheduledCoreOp::d2h_finished_transferred_frames(const stream_name_t &stream_name)
-{
-    return m_d2h_finished_transferred_frames[stream_name];
-}
-
-Counter &ScheduledCoreOp::finished_read_frames()
-{
-    return m_finished_read_frames;
-}
-
-std::atomic_uint32_t &ScheduledCoreOp::finished_read_frames(const stream_name_t &stream_name)
-{
-    return m_finished_read_frames[stream_name];
-}
-
-uint32_t ScheduledCoreOp::finished_read_frames_min_value()
-{
-    return m_finished_read_frames.get_min_value();
+    auto is_disabled = [](const std::pair<const stream_name_t, std::atomic_bool> &is_enabled) { return !is_enabled.second; };
+    return std::all_of(m_is_stream_enabled.begin(), m_is_stream_enabled.end(), is_disabled);
 }
 
 const std::vector<stream_name_t> &ScheduledCoreOp::get_inputs_names()

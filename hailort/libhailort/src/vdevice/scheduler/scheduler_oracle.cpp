@@ -25,9 +25,11 @@ scheduler_core_op_handle_t CoreOpsSchedulerOracle::choose_next_model(SchedulerBa
             uint32_t index = scheduler.get_next_core_op(iter->first) + i;
             index %= static_cast<uint32_t>(priority_group_size);
             auto core_op_handle = iter->second[index];
-            auto ready_info = scheduler.is_core_op_ready(core_op_handle, check_threshold);
+            auto ready_info = scheduler.is_core_op_ready(core_op_handle, check_threshold, device_id);
             if (ready_info.is_ready) {
-                TRACE(ChooseCoreOpTrace, "", core_op_handle, ready_info.over_threshold, ready_info.over_timeout, iter->first);
+                // In cases device is idle the check_threshold is not needed, therefore is false.
+                bool switch_because_idle = !(check_threshold);
+                TRACE(OracleDecisionTrace, switch_because_idle, device_id, core_op_handle, ready_info.over_threshold, ready_info.over_timeout);
                 device_info->is_switching_core_op = true;
                 device_info->next_core_op_handle = core_op_handle;
                 // Set next to run as next in round-robin
@@ -43,6 +45,13 @@ scheduler_core_op_handle_t CoreOpsSchedulerOracle::choose_next_model(SchedulerBa
 
 bool CoreOpsSchedulerOracle::should_stop_streaming(SchedulerBase &scheduler, core_op_priority_t core_op_priority, const device_id_t &device_id)
 {
+    const auto device_info = scheduler.get_device_info(device_id);
+    if (device_info->frames_left_before_stop_streaming > 0) {
+        // Only when frames_left_before_stop_streaming we consider stop streaming
+        return false;
+    }
+
+    // Now check if there is another qualified core op.
     auto priority_map = scheduler.get_core_op_priority_map();
     for (auto iter = priority_map.rbegin(); (iter != priority_map.rend()) && (iter->first >= core_op_priority); ++iter) {
         auto priority_group_size = iter->second.size();
@@ -51,9 +60,7 @@ bool CoreOpsSchedulerOracle::should_stop_streaming(SchedulerBase &scheduler, cor
             uint32_t index = scheduler.get_next_core_op(iter->first) + i;
             index %= static_cast<uint32_t>(priority_group_size);
             auto core_op_handle = iter->second[index];
-            // We dont want to stay with the same network group if there is a other qualified network group
-            if ((!is_core_op_active(scheduler, core_op_handle)) && scheduler.is_core_op_ready(core_op_handle, true).is_ready &&
-                is_core_op_finished_batch(scheduler, device_id)) {
+            if (!is_core_op_active(scheduler, core_op_handle) && scheduler.is_core_op_ready(core_op_handle, true, device_id).is_ready) {
                 return true;
             }
         }
@@ -75,14 +82,6 @@ bool CoreOpsSchedulerOracle::is_core_op_active(SchedulerBase &scheduler, schedul
     return false;
 }
 
-bool CoreOpsSchedulerOracle::is_core_op_finished_batch(SchedulerBase &scheduler, const device_id_t &device_id)
-{
-    auto device_info = scheduler.get_device_info(device_id);
-    auto max_transferred_h2d = get_max_value_of_unordered_map(device_info->current_cycle_requested_transferred_frames_h2d[device_info->current_core_op_handle]);
-
-    return device_info->current_batch_size <= max_transferred_h2d;
-}
-
 std::vector<RunParams> CoreOpsSchedulerOracle::get_oracle_decisions(SchedulerBase &scheduler)
 {
     auto &devices = scheduler.get_device_infos();
@@ -97,10 +96,15 @@ std::vector<RunParams> CoreOpsSchedulerOracle::get_oracle_decisions(SchedulerBas
         }
 
         // Check if device is idle
-        if (!active_device_info->is_switching_core_op &&
-            scheduler.has_core_op_drained_everything(active_device_info->current_core_op_handle, active_device_info->device_id)) {
-            auto core_op_handle = choose_next_model(scheduler, active_device_info->device_id, false);
+        if (!active_device_info->is_switching_core_op && scheduler.is_device_idle(active_device_info->device_id)) {
+            const bool CHECK_THRESHOLD = true;
+            auto core_op_handle = choose_next_model(scheduler, active_device_info->device_id, CHECK_THRESHOLD);
+            if (core_op_handle == INVALID_CORE_OP_HANDLE) {
+                core_op_handle = choose_next_model(scheduler, active_device_info->device_id, !CHECK_THRESHOLD);
+            }
+
             if (core_op_handle != INVALID_CORE_OP_HANDLE) {
+                // We have a decision
                 oracle_decision.push_back({core_op_handle, active_device_info->device_id});
             }
         }

@@ -12,7 +12,6 @@
 #include "hailo/hailort_common.hpp"
 #include "hailo/transform.hpp"
 #include "common/utils.hpp"
-#include "stream_common/nms_stream_reader.hpp"
 
 #include <sstream>
 
@@ -22,22 +21,6 @@ namespace hailort
 hailo_status InputStream::flush()
 {
     return HAILO_SUCCESS;
-}
-
-hailo_status InputStream::write(const MemoryView &buffer)
-{
-    CHECK(buffer.size() == get_frame_size(), HAILO_INVALID_ARGUMENT,
-        "write size {} must be {}", buffer.size(), get_frame_size());
-
-    CHECK(((buffer.size() % HailoRTCommon::HW_DATA_ALIGNMENT) == 0), HAILO_INVALID_ARGUMENT,
-        "Input must be aligned to {} (got {})", HailoRTCommon::HW_DATA_ALIGNMENT, buffer.size());
-
-    return write_impl(buffer);
-}
-
-hailo_status InputStream::write(const void *buffer, size_t size)
-{
-    return write(MemoryView::create_const(buffer, size));
 }
 
 hailo_status InputStream::wait_for_async_ready(size_t /* transfer_size */, std::chrono::milliseconds /* timeout */)
@@ -64,31 +47,6 @@ EventPtr &InputStream::get_network_group_activated_event()
 {
     LOGGER__WARNING("VDevice InputStream::get_network_group_activated_event() is deprecated.");
     return get_core_op_activated_event();
-}
-
-hailo_status OutputStream::read_nms(void *buffer, size_t offset, size_t size)
-{
-    CHECK(size == get_info().hw_frame_size, HAILO_INSUFFICIENT_BUFFER,
-        "On nms stream buffer size should be {} (given size {})", get_info().hw_frame_size, size);
-
-    return NMSStreamReader::read_nms((*this), buffer, offset, size);
-}
-
-hailo_status OutputStream::read(MemoryView buffer)
-{
-    CHECK(buffer.size() == get_frame_size(), HAILO_INVALID_ARGUMENT, "Read size {} must be {}", buffer.size(),
-        get_frame_size());
-
-    if (get_info().format.order == HAILO_FORMAT_ORDER_HAILO_NMS){
-        return read_nms(buffer.data(), 0, buffer.size());
-    } else {
-        return read_impl(buffer);
-    }
-}
-
-hailo_status OutputStream::read(void *buffer, size_t size)
-{
-    return read(MemoryView(buffer, size));
 }
 
 hailo_status OutputStream::wait_for_async_ready(size_t /* transfer_size */, std::chrono::milliseconds /* timeout */)

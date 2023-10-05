@@ -258,7 +258,7 @@ MemoryView::MemoryView(void *data, size_t size) :
 
 const MemoryView MemoryView::create_const(const void *data, size_t size)
 {
-    return std::move(MemoryView(const_cast<void *>(data), size));
+    return MemoryView(const_cast<void *>(data), size);
 }
 
 uint8_t* MemoryView::data() noexcept

@@ -10,6 +10,8 @@
 #include "vdma/memory/descriptor_list.hpp"
 #include "utils.h"
 
+#include <numeric>
+
 namespace hailort {
 namespace vdma {
 
@@ -18,11 +20,11 @@ static constexpr uint32_t MIN_CCB_DESCRIPTORS_COUNT = 16;
 
 Expected<BufferSizesRequirements> BufferSizesRequirements::get_sg_buffer_requirements_single_transfer(
     uint16_t max_desc_page_size, uint16_t min_batch_size, uint16_t max_batch_size, uint32_t transfer_size,
-    bool is_circular, const bool force_default_page_size)
+    bool is_circular, const bool force_default_page_size, const bool force_batch_size)
 {
     // First, get the result for the min size
     auto results = get_sg_buffer_requirements_multiple_transfers(max_desc_page_size, min_batch_size,
-        {transfer_size}, is_circular, force_default_page_size);
+        {transfer_size}, is_circular, force_default_page_size, force_batch_size);
     CHECK_EXPECTED(results);
 
     // In order to fetch all descriptors, the amount of active descs is lower by one that the amount
@@ -39,7 +41,7 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_sg_buffer_require
 
 Expected<BufferSizesRequirements> BufferSizesRequirements::get_sg_buffer_requirements_multiple_transfers(
     uint16_t max_desc_page_size, uint16_t batch_size, const std::vector<uint32_t> &transfer_sizes,
-    bool is_circular, const bool force_default_page_size)
+    bool is_circular, const bool force_default_page_size, const bool force_batch_size)
 {
     const uint16_t initial_desc_page_size = force_default_page_size ?
         DEFAULT_DESC_PAGE_SIZE : find_initial_desc_page_size(transfer_sizes);
@@ -58,6 +60,13 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_sg_buffer_require
     CHECK_AS_EXPECTED(initial_desc_page_size >= min_desc_page_size, HAILO_INTERNAL_FAILURE,
         "Initial descriptor page size ({}) is smaller than minimum descriptor page size ({})",
         initial_desc_page_size, min_desc_page_size);
+    CHECK_AS_EXPECTED(MAX_DESCS_COUNT >= get_required_descriptor_count(transfer_sizes, max_desc_page_size),
+        HAILO_OUT_OF_DESCRIPTORS,
+        "Network shapes exceeds driver descriptors capabilities."
+        "Minimal descriptors count: {}, max allowed on the driver: {}."
+        "(A common cause for this error could be the large transfer size - which is {}).",
+        get_required_descriptor_count(transfer_sizes, max_desc_page_size), (MAX_DESCS_COUNT - 1),
+        std::accumulate(transfer_sizes.begin(), transfer_sizes.end(), 0));
 
     // Defined as uint32_t to prevent overflow (as we multiply it by two in each iteration of the while loop bellow)
     uint32_t local_desc_page_size = initial_desc_page_size;
@@ -69,11 +78,21 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_sg_buffer_require
             "Descriptor page size needs to fit in 16B");
         local_desc_page_size = static_cast<uint16_t>(local_desc_page_size << 1);
 
-        CHECK_AS_EXPECTED(local_desc_page_size <= max_desc_page_size, HAILO_OUT_OF_DESCRIPTORS,
-            "Network shapes and batch size exceeds driver descriptors capabilities. "
-            "Required descriptors count: {}, max allowed on the driver: {}. "
-            "(A common cause for this error could be the batch size - which is {}).",
-            (batch_size * descs_count), (MAX_DESCS_COUNT - 1), batch_size);
+        if (local_desc_page_size > max_desc_page_size) {
+            if (force_batch_size) {
+                LOGGER__ERROR("Network shapes and batch size exceeds driver descriptors capabilities. "
+                "Required descriptors count: {}, max allowed on the driver: {}. "
+                "(A common cause for this error could be the batch size - which is {}).",
+                (batch_size * descs_count), (MAX_DESCS_COUNT - 1), batch_size);
+                return make_unexpected(HAILO_OUT_OF_DESCRIPTORS);
+            } else {
+                // If not forcing minimum batch (It's acceptable to run infer on lower batch instead of returning error)
+                // once reached over the max page size, stop
+                local_desc_page_size = max_desc_page_size;
+                descs_count = get_required_descriptor_count(transfer_sizes, static_cast<uint16_t>(local_desc_page_size));
+                break;
+            }
+        }
 
         descs_count = get_required_descriptor_count(transfer_sizes, static_cast<uint16_t>(local_desc_page_size));
     }

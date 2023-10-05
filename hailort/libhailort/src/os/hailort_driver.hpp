@@ -35,16 +35,16 @@ namespace hailort
 
 #define DEVICE_NODE_NAME       "hailo"
 
-#define PENDING_BUFFERS_SIZE (128)
-static_assert((0 == ((PENDING_BUFFERS_SIZE - 1) & PENDING_BUFFERS_SIZE)), "PENDING_BUFFERS_SIZE must be a power of 2");
+constexpr size_t ONGOING_TRANSFERS_SIZE = 128;
+static_assert((0 == ((ONGOING_TRANSFERS_SIZE - 1) & ONGOING_TRANSFERS_SIZE)), "ONGOING_TRANSFERS_SIZE must be a power of 2");
 
 #define MIN_ACTIVE_TRANSFERS_SCALE (2)
 #define MAX_ACTIVE_TRANSFERS_SCALE (4)
 
-#define HAILO_MAX_BATCH_SIZE ((PENDING_BUFFERS_SIZE / MIN_ACTIVE_TRANSFERS_SCALE) - 1)
+#define HAILO_MAX_BATCH_SIZE ((ONGOING_TRANSFERS_SIZE / MIN_ACTIVE_TRANSFERS_SCALE) - 1)
 
-// When measuring latency, each channel is capable of PENDING_BUFFERS_SIZE active transfers, each transfer raises max of 2 timestamps
-#define MAX_IRQ_TIMESTAMPS_SIZE (PENDING_BUFFERS_SIZE * 2)
+// When measuring latency, each channel is capable of ONGOING_TRANSFERS_SIZE active transfers, each transfer raises max of 2 timestamps
+#define MAX_IRQ_TIMESTAMPS_SIZE (ONGOING_TRANSFERS_SIZE * 2)
 
 #define PCIE_EXPECTED_MD5_LENGTH (16)
 
@@ -148,11 +148,11 @@ public:
 
     using VdmaBufferHandle = size_t;
 
-    static Expected<HailoRTDriver> create(const DeviceInfo &device_info);
+    static Expected<std::unique_ptr<HailoRTDriver>> create(const DeviceInfo &device_info);
 
 // TODO: HRT-7309 add implementation for Windows
 #if defined(__linux__) || defined(__QNX__)
-    static hailo_status hailo_ioctl(int fd, int request, void* request_struct, int &error_status);
+    hailo_status hailo_ioctl(int fd, unsigned long request, void* request_struct, int &error_status);
 #endif // defined(__linux__) || defined(__QNX__)
 
     static Expected<std::vector<DeviceInfo>> scan_devices();
@@ -284,8 +284,8 @@ public:
 
     HailoRTDriver(const HailoRTDriver &other) = delete;
     HailoRTDriver &operator=(const HailoRTDriver &other) = delete;
-    HailoRTDriver(HailoRTDriver &&other) noexcept = default;
-    HailoRTDriver &operator=(HailoRTDriver &&other) = default;
+    HailoRTDriver(HailoRTDriver &&other) noexcept = delete;
+    HailoRTDriver &operator=(HailoRTDriver &&other) = delete;
 
     static const uintptr_t INVALID_DRIVER_BUFFER_HANDLE_VALUE;
     static const size_t INVALID_DRIVER_VDMA_MAPPING_HANDLE_VALUE;
@@ -325,7 +325,24 @@ private:
 #ifdef __QNX__
     pid_t m_resource_manager_pid;
 #endif // __QNX__
+
+#ifdef __linux__
+    // TODO: HRT-11595 fix linux driver deadlock and remove the mutex.
+    // Currently, on the linux, the mmap syscall is called under current->mm lock held. Inside, we lock the board
+    // mutex. On other ioctls, we first lock the board mutex, and then lock current->mm mutex (For example - before
+    // pinning user address to memory and on copy_to_user/copy_from_user calls).
+    // Need to refactor the driver lock mechanism and then remove the mutex from here.
+    std::mutex m_driver_lock;
+#endif
 };
+
+inline hailo_dma_buffer_direction_t to_hailo_dma_direction(HailoRTDriver::DmaDirection dma_direction)
+{
+    return (dma_direction == HailoRTDriver::DmaDirection::H2D)  ? HAILO_DMA_BUFFER_DIRECTION_H2D :
+           (dma_direction == HailoRTDriver::DmaDirection::D2H)  ? HAILO_DMA_BUFFER_DIRECTION_D2H :
+           (dma_direction == HailoRTDriver::DmaDirection::BOTH) ? HAILO_DMA_BUFFER_DIRECTION_BOTH :
+                                                                  HAILO_DMA_BUFFER_DIRECTION_MAX_ENUM;
+}
 
 } /* namespace hailort */
 

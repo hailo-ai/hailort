@@ -2645,8 +2645,7 @@ hailo_status Control::download_context_action_list(Device &device, uint32_t netw
 
 hailo_status Control::change_context_switch_status(Device &device,
         CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status,
-        uint8_t network_group_index, uint16_t dynamic_batch_size, uint16_t batch_count,
-        bool keep_nn_config_during_reset)
+        uint8_t network_group_index, uint16_t dynamic_batch_size, uint16_t batch_count)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     HAILO_COMMON_STATUS_t common_status = HAILO_COMMON_STATUS__UNINITIALIZED;
@@ -2658,8 +2657,7 @@ hailo_status Control::change_context_switch_status(Device &device,
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
     common_status = CONTROL_PROTOCOL__pack_change_context_switch_status_request(&request, &request_size,
-            device.get_control_sequence(), state_machine_status, network_group_index, dynamic_batch_size, 
-            batch_count, keep_nn_config_during_reset);
+            device.get_control_sequence(), state_machine_status, network_group_index, dynamic_batch_size, batch_count);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -2689,13 +2687,13 @@ hailo_status Control::enable_core_op(Device &device, uint8_t network_group_index
         network_group_index, dynamic_batch_size, batch_count);
 }
 
-hailo_status Control::reset_context_switch_state_machine(Device &device, bool keep_nn_config_during_reset)
+hailo_status Control::reset_context_switch_state_machine(Device &device)
 {
-    static const auto IGNORE_NETWORK_GROUP_INDEX = 0;
+    static const auto IGNORE_NETWORK_GROUP_INDEX = 255;
     static const auto IGNORE_DYNAMIC_BATCH_SIZE = 0;
     static const auto DEFAULT_BATCH_COUNT = 0;
     return Control::change_context_switch_status(device, CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_RESET,
-        IGNORE_NETWORK_GROUP_INDEX, IGNORE_DYNAMIC_BATCH_SIZE, DEFAULT_BATCH_COUNT, keep_nn_config_during_reset);
+        IGNORE_NETWORK_GROUP_INDEX, IGNORE_DYNAMIC_BATCH_SIZE, DEFAULT_BATCH_COUNT);
 }
 
 hailo_status Control::wd_enable(Device &device, uint8_t cpu_id, bool should_enable)

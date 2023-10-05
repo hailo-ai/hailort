@@ -17,6 +17,7 @@
 #include "common/filesystem.hpp"
 
 #include "stream_common/stream_internal.hpp"
+#include "vdevice/scheduler/scheduler_counter.hpp"
 
 #include <condition_variable>
 
@@ -27,7 +28,6 @@ namespace hailort
 #define DEFAULT_SCHEDULER_TIMEOUT (std::chrono::milliseconds(0))
 #define DEFAULT_SCHEDULER_MIN_THRESHOLD (0)
 
-#define INVALID_CORE_OP_HANDLE (UINT32_MAX)
 
 using scheduler_core_op_handle_t = uint32_t;
 using core_op_priority_t = uint8_t;
@@ -37,16 +37,39 @@ using stream_name_t = std::string;
 struct ActiveDeviceInfo {
     ActiveDeviceInfo(const device_id_t &device_id, const std::string &device_arch) : 
         current_core_op_handle(INVALID_CORE_OP_HANDLE), next_core_op_handle(INVALID_CORE_OP_HANDLE), is_switching_core_op(false), 
-        current_batch_size(0), current_cycle_requested_transferred_frames_h2d(), current_cycle_finished_transferred_frames_d2h(), 
-        pending_to_read_frames(), device_id(device_id), device_arch(device_arch)
+        current_batch_size(0),
+        frames_left_before_stop_streaming(0),
+        device_id(device_id), device_arch(device_arch)
     {}
+
+    uint32_t get_ongoing_frames() const
+    {
+        if (current_core_op_handle == INVALID_CORE_OP_HANDLE) {
+            // No ongoing frames
+            return 0;
+        }
+
+        return ongoing_frames.at(current_core_op_handle).get_max_value();
+    }
+
+    bool is_idle() const
+    {
+        return 0 == get_ongoing_frames();
+    }
+
     scheduler_core_op_handle_t current_core_op_handle;
     scheduler_core_op_handle_t next_core_op_handle;
     std::atomic_bool is_switching_core_op;
     std::atomic_uint32_t current_batch_size;
-    std::unordered_map<scheduler_core_op_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> current_cycle_requested_transferred_frames_h2d;
-    std::unordered_map<scheduler_core_op_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> current_cycle_finished_transferred_frames_d2h;
-    std::unordered_map<scheduler_core_op_handle_t, std::unordered_map<stream_name_t, std::atomic_uint32_t>> pending_to_read_frames;
+
+    // Until this counter is greater than zero, we won't stop streaming on current core op if we have ready frames
+    // (even if there is another core op ready).
+    size_t frames_left_before_stop_streaming;
+
+    // For each stream (both input and output) we store a counter for all ongoing frames. We increase the counter when
+    // launching transfer and decrease it when we get the transfer callback called.
+    std::unordered_map<scheduler_core_op_handle_t, SchedulerCounter> ongoing_frames;
+
     device_id_t device_id;
     std::string device_arch;
 };
@@ -66,8 +89,9 @@ public:
         bool is_ready = false;
     };
 
-    virtual ReadyInfo is_core_op_ready(const scheduler_core_op_handle_t &core_op_handle, bool check_threshold) = 0;
-    virtual bool has_core_op_drained_everything(const scheduler_core_op_handle_t &core_op_handle, const device_id_t &device_id) = 0;
+    virtual ReadyInfo is_core_op_ready(const scheduler_core_op_handle_t &core_op_handle, bool check_threshold,
+        const device_id_t &device_id) = 0;
+    virtual bool is_device_idle(const device_id_t &device_id) = 0;
 
     virtual uint32_t get_device_count() const
     {
@@ -89,17 +113,14 @@ public:
         return m_core_op_priority;
     }
 
-    virtual scheduler_core_op_handle_t get_next_core_op(core_op_priority_t priority)
+    virtual scheduler_core_op_handle_t get_next_core_op(core_op_priority_t priority) const
     {
-        if (!contains(m_next_core_op, priority)) {
-            m_next_core_op[priority] = 0;
-        }
-        return m_next_core_op[priority];
+        return m_next_core_op.at(priority);
     }
 
     virtual void set_next_core_op(const core_op_priority_t priority, const scheduler_core_op_handle_t &core_op_handle)
     {
-        m_next_core_op[priority] = core_op_handle;
+        m_next_core_op.at(priority) = core_op_handle;
     }
 
 protected:

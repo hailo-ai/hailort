@@ -12,6 +12,7 @@
 
 #include "hef/layer_info.hpp"
 #include "hef/context_switch_actions.hpp"
+#include "net_flow/ops/op_metadata.hpp"
 
 
 namespace hailort
@@ -103,6 +104,7 @@ public:
     Expected<std::vector<hailo_stream_info_t>> get_all_stream_infos(const std::string &network_name = "") const;
 
     size_t get_contexts_count();
+    size_t get_dynamic_contexts_count();
 
     const std::string &core_op_name() const
     {
@@ -151,8 +153,6 @@ private:
     std::map<uint32_t, CoreOpMetadataPtr> m_metadata_per_arch;
 };
 
-struct NetFlowElement;
-
 class NetworkGroupMetadata final {
 public:
     static Expected<NetworkGroupMetadata> create(const std::string &network_group_name,
@@ -160,7 +160,7 @@ public:
         std::vector<std::string> &sorted_output_names,
         SupportedFeatures &supported_features,
         const std::vector<std::string> &sorted_network_names,
-        std::vector<std::shared_ptr<hailort::NetFlowElement>> &net_flow_ops);
+        std::vector<net_flow::PostProcessOpMetadataPtr> &ops_metadata);
 
     NetworkGroupMetadata(const std::string &network_group_name,
         std::map<std::string, CoreOpMetadataPerArch> &&core_ops_metadata_per_arch,
@@ -169,7 +169,7 @@ public:
         const std::vector<std::string> &sorted_network_names,
         std::vector<hailo_vstream_info_t> &input_vstreams_infos,
         std::vector<hailo_vstream_info_t> &output_vstreams_infos,
-        std::vector<std::shared_ptr<hailort::NetFlowElement>> &net_flow_ops) :
+        std::vector<net_flow::PostProcessOpMetadataPtr> &ops_metadata) :
             m_network_group_name(network_group_name),
             m_sorted_output_names(sorted_output_names),
             m_supported_features(supported_features),
@@ -177,7 +177,7 @@ public:
             m_input_vstreams_infos(input_vstreams_infos),
             m_output_vstreams_infos(output_vstreams_infos),
             m_core_ops_metadata_per_arch(std::move(core_ops_metadata_per_arch)),
-            m_net_flow_ops(net_flow_ops)
+            m_ops_metadata(ops_metadata)
         {};
 
     Expected<std::vector<hailo_vstream_info_t>> get_input_vstream_infos(const std::string &network_name = "") const;
@@ -235,7 +235,7 @@ private:
     std::vector<hailo_vstream_info_t> m_output_vstreams_infos;
 
     std::map<std::string, CoreOpMetadataPerArch> m_core_ops_metadata_per_arch; // Key is core_op_name
-    std::vector<std::shared_ptr<NetFlowElement>> m_net_flow_ops;
+    std::vector<net_flow::PostProcessOpMetadataPtr> m_ops_metadata;
 
     friend class Hef;
     friend class ConfiguredNetworkGroupBase;

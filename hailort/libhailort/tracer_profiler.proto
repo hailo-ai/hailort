@@ -1,0 +1,122 @@
+syntax = "proto3";
+
+option optimize_for = LITE_RUNTIME;
+
+message ProtoProfiler {
+    ProtoProfilerTopHeader top_header = 1;
+    // Each event is under this added trace
+    repeated ProtoTraceMessage added_trace = 2;
+}
+
+message ProtoProfilerTopHeader {
+    // Relative time, nanosec
+    uint64 time_stamp = 1;
+    ProtoDateTime time = 2;
+    // Hailort version
+    string hailort_ver = 3;
+    string os_name = 4;
+    string os_ver = 5;
+    string cpu_arch = 6;
+    uint64 sys_ram_size = 7; //bytes
+    uint64 time_stamp_since_epoch =8; //nanosec
+}
+
+message ProtoTraceMessage {
+    oneof trace {
+        ProtoProfilerSetSchedulerParam core_op_set_value = 1;
+        ProtoProfilerAddStreamTrace added_stream = 2;
+        ProtoProfilerAddCoreOpTrace added_core_op = 3;
+        ProtoProfilerAddDeviceTrace added_device = 4;
+        ProtoProfilerSwitchedCoreOpTrace switched_core_op = 5;
+        ProtoProfilerFrameEnqueueTrace frame_enqueue = 6;
+        ProtoProfilerFrameDequeueTrace frame_dequeue = 7;
+        ProtoProfilerCoreOpSwitchDecision switch_core_op_decision = 8;
+    }
+}
+
+message ProtoDateTime {
+    uint32 year = 1;
+    uint32 month = 2;
+    uint32 day = 3;
+    uint32 hour = 4;
+    uint32 min = 5;
+}
+
+message ProtoProfilerDeviceInfo {
+    string device_id = 1;
+    string device_arch = 2;
+}
+
+// The direction of the event, Host-To-Device/Device-To-Host
+enum ProtoProfilerStreamDirection {
+    PROTO__STREAM_DIRECTION__H2D = 0;
+    PROTO__STREAM_DIRECTION__D2H = 1;
+}
+
+message ProtoProfilerAddCoreOpTrace {
+    uint64 time_stamp = 1; // nanosec
+    int32 core_op_handle = 2;
+    string core_op_name = 3;
+}
+
+// Frame dequeue means transferring a frame from the buffer to device
+// or from the buffer to host
+message ProtoProfilerFrameDequeueTrace {
+    uint64 time_stamp = 1; // nanosec
+    int32 core_op_handle = 2;
+    string device_id = 3;
+    string stream_name = 4;
+    ProtoProfilerStreamDirection direction = 5;
+}
+
+// Frame enqueue means transferring a frame from the user to buffer
+// or from the device to buffer
+message ProtoProfilerFrameEnqueueTrace {
+    uint64 time_stamp = 1; // nanosec
+    int32 core_op_handle = 2;
+    string device_id = 3;
+    string stream_name = 4;
+    ProtoProfilerStreamDirection direction = 5;
+}
+
+// Relevant when using scheduler
+message ProtoProfilerCoreOpSwitchDecision {
+    uint64 time_stamp = 1; // nanosec
+    int32 core_op_handle = 2;
+    bool over_threshold = 3;
+    bool over_timeout = 4;
+    bool switch_because_idle = 5;
+}
+
+message ProtoProfilerSwitchedCoreOpTrace {
+    uint64 time_stamp = 1; // nanosec
+    int32 new_core_op_handle = 2;
+    string core_op_name = 3;
+    string device_id = 4;
+}
+
+// Low level streams adding
+message ProtoProfilerAddStreamTrace {
+    uint64 time_stamp = 1; // nanosec
+    int32 core_op_handle = 2;
+    string device_id = 3;
+    string stream_name = 4;
+    int32 queue_size = 5;
+    ProtoProfilerStreamDirection direction = 6;
+}
+
+// Setting a new params relevant a specific core_op_handle
+message ProtoProfilerSetSchedulerParam {
+    uint64 time_stamp = 1; // nanosec
+    int32 core_op_handle = 2;
+    oneof value {
+        int64 timeout = 3; // millisec
+        int32 threshold = 4;
+        int32 priority = 5;
+    }
+}
+
+message ProtoProfilerAddDeviceTrace {
+    uint64 time_stamp = 1; // nanosec
+    ProtoProfilerDeviceInfo  device_info = 2;
+}

@@ -58,6 +58,7 @@ typedef enum {
     CONTEXT_SWITCH_BREAKPOINT_REACHED,
     HEALTH_MONITOR_CLOCK_CHANGED_EVENT_ID,
     HW_INFER_MANAGER_INFER_DONE,
+    CONTEXT_SWITCH_RUN_TIME_ERROR,
 
     D2H_EVENT_ID_COUNT /* Must be last*/
 } D2H_EVENT_ID_t;
@@ -146,6 +147,16 @@ typedef struct {
 
 #define D2H_EVENT_HW_INFER_MANAGER_INFER_DONE_PARAMETER_COUNT  (1)
 
+typedef struct {
+    uint32_t exit_status;
+    uint8_t application_index;
+    uint16_t batch_index;
+    uint8_t context_index;
+    uint16_t action_index;
+} D2H_EVENT_context_switch_run_time_error_event_message_t;
+
+#define D2H_EVENT_CONTEXT_SWITCH_RUN_TIME_ERROR_EVENT_PARAMETER_COUNT  (5)
+
 /* D2H_EVENT__message_parameters_t should be in the same order as hailo_notification_message_parameters_t */
 typedef union {
    D2H_EVENT_rx_error_event_message_t rx_error_event;
@@ -158,6 +169,7 @@ typedef union {
    D2H_EVENT_context_switch_breakpoint_reached_event_massage_t context_switch_breakpoint_reached_event;
    D2H_EVENT_health_monitor_clock_changed_event_message_t health_monitor_clock_changed_event;
    D2H_EVENT_hw_infer_mamager_infer_done_message_t hw_infer_manager_infer_done_event;
+   D2H_EVENT_context_switch_run_time_error_event_message_t context_switch_run_time_error_event;
 } D2H_EVENT__message_parameters_t;
 
 typedef struct {

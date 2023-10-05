@@ -37,7 +37,7 @@ enum ProtoHEFExtensionType {
     HW_PADDING = 11;
     KO_RUN_ASAP = 12;
     HAILO_NET_FLOW = 13;
-    HAILO_NET_FLOW_YOLO_NMS = 14;
+    HAILO_NET_FLOW_YOLOV5_NMS = 14;
     HAILO_NET_FLOW_YOLOX_NMS = 15;
     HAILO_NET_FLOW_SSD_NMS = 16;
     HAILO_NET_FLOW_IOU_NMS = 17;
@@ -47,6 +47,7 @@ enum ProtoHEFExtensionType {
     HAILO_NET_FLOW_ARGMAX = 21;
     HAILO_NET_FLOW_SOFTMAX = 22;
     ALIGNED_FORMAT_TYPE = 23;
+    HAILO_NET_FLOW_YOLOV5_SEG_NMS = 24;
     OUTPUT_SCALE_PER_FEATURE = 25;
     PERIPH_CALCULATION_IN_HAILORT = 26;
     UNUSED = 0XFFFF;
@@ -72,7 +73,7 @@ message ProtoHEFHeader {
     // The version of the SDK the HEF has been created with
     string sdk_version = 3;
 
-    // The format version of the hef file 
+    // The format version of the hef file
     uint64 version = 4;
 }
 
@@ -90,6 +91,7 @@ enum ProtoHEFHwArch {
     PROTO__HW_ARCH__HAILO15H = 103;
     PROTO__HW_ARCH__GINGER = 104;
     PROTO__HW_ARCH__LAVENDER = 105;
+    PROTO__HW_ARCH__PLUTO = 106;
 }
 
 
@@ -217,6 +219,32 @@ message ProtoHEFSSDNmsOp {
 
 message ProtoHEFIOUNmsOp {};
 
+message ProtoHEFYoloSegProtoInfo {
+    // Prototype info mask number
+    uint32 number = 1;
+
+    // Prototype info mask number pixels stride
+    uint32 stride = 2;
+
+    // The name of the proto layer
+    string proto_layer = 3;
+};
+
+message ProtoHEFYoloSegNmsOp {
+    // Input image dimensions
+    double image_height = 1;
+    double image_width = 2;
+
+    // List of bbox decoders (anchors) for the NMS layer. Each model has its own number of boxes per anchor
+    repeated ProtoHEFYoloBboxDecoder bbox_decoders = 3;
+
+    // Prototype info masks
+    ProtoHEFYoloSegProtoInfo proto_info = 4;
+
+    // Mask threshold
+    double mask_threshold = 5;
+};
+
 message ProtoHEFNmsOp {
     // NMS score threshold
     double nms_score_th = 1;
@@ -242,6 +270,7 @@ message ProtoHEFNmsOp {
         ProtoHEFYoloxNmsOp yolox_nms_op = 8; // YOLO-X post process
         ProtoHEFSSDNmsOp ssd_nms_op = 9; // SSD post process
         ProtoHEFIOUNmsOp iou_op = 10; // IoU only
+        ProtoHEFYoloSegNmsOp yolo_seg_op = 11; // YOLOv5 seg post process
     }
 };
 
@@ -656,6 +685,9 @@ message ProtoHEFActionEnableNMS {
 
     // Burst-size
     uint32 burst_size = 4;
+
+    // Division-factor
+    uint32 division_factor = 5;
 }
 
 // None action - Do not do anything
@@ -717,6 +749,7 @@ message ProtoHEFEdgeLayer {
     oneof edge {
         ProtoHEFEdgeLayerInfo layer_info = 3;
         ProtoHEFEdgeLayerMux layer_mux = 4;
+        ProtoHEFEdgeLayerPlanes layer_planes = 8;
     };
     ProtoHEFContextSwitchInformation context_switch_info = 5;
     uint32 network_index = 6;
@@ -735,6 +768,7 @@ enum ProtoHEFEdgeLayerDirection {
 enum ProtoHEFEdgeLayerType {
     PROTO__EDGE_LAYER_TYPE__INFO = 0;
     PROTO__EDGE_LAYER_TYPE__MUX = 1;
+    PROTO__EDGE_LAYER_TYPE__PLANES = 2;
 }
 
 message ProtoHEFEdgeLayerInfo {
@@ -750,6 +784,7 @@ message ProtoHefEdge {
     oneof edge {
         ProtoHEFEdgeLayerInfo layer_info = 1;
         ProtoHEFEdgeLayerMux layer_mux = 2;
+        ProtoHEFEdgeLayerPlanes layer_planes = 3;
     };
 }
 
@@ -760,6 +795,21 @@ message ProtoHEFEdgeLayerMux {
     ProtoHEFEdgeLayerMuxData mux_data = 3;
     repeated ProtoHefEdge predecessors = 5;
     repeated string original_names = 6;
+}
+
+enum ProtoHEFEPlanesFormat {
+    PROTO__PLANES__FORMAT__NV12 = 0;
+    PROTO__PLANES__FORMAT__NV21= 1;
+    PROTO__PLANES__FORMAT__I420 = 2;
+}
+
+message ProtoHEFEdgeLayerPlanes {
+    string name = 1;
+    ProtoHEFEPlanesFormat planes_format = 2;
+    repeated ProtoHefEdge planes = 3;
+    uint32 height = 4;
+    uint32 width = 5;
+    uint32 features = 6;
 }
 
 message ProtoHEFEdgeLayerMuxData {

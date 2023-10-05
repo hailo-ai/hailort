@@ -29,6 +29,10 @@ public:
     // To be used from external commands
     static hailo_status execute(Device &device, const std::string &output_file_path,
         const ConfiguredNetworkGroupVector &network_groups={}, const std::string &hef_file_path="");
+    static hailo_status execute(Device &device, std::shared_ptr<ConfiguredNetworkGroup> network_group,
+        uint16_t batch_size, ordered_json &action_list_json, double fps, uint32_t network_group_index);
+    static hailo_status write_to_json(ordered_json &action_list_json_param, const std::string &output_file_path);
+    static Expected<ordered_json> init_json_object(Device &device, const std::string &hef_file_path);
     static hailo_status set_batch_to_measure(Device &device, uint16_t batch_to_measure);
 
 protected:
@@ -38,7 +42,7 @@ private:
     std::string m_output_file_path;
     static constexpr int DEFAULT_JSON_TAB_WIDTH = 4;
     static constexpr int INVALID_NUMERIC_VALUE = -1;
-    static std::string ACTION_LIST_FORMAT_VERSION() { return "1.0"; }
+    static std::string ACTION_LIST_FORMAT_VERSION() { return "2.0"; }
 
     static Expected<ordered_json> parse_hef_metadata(const std::string &hef_file_path);
     static bool is_valid_hef(const std::string &hef_file_path);
@@ -61,6 +65,8 @@ private:
         const std::string &context_name);
     static double get_accumulator_mean_value(const AccumulatorPtr &accumulator, double default_value = INVALID_NUMERIC_VALUE);
     static Expected<ordered_json> parse_network_groups(Device &device, const ConfiguredNetworkGroupVector &network_groups);
+    static Expected<ordered_json> parse_network_group(Device &device,
+        const std::shared_ptr<ConfiguredNetworkGroup> network_group, uint32_t network_group_id);
 };
 
 // JSON serialization
@@ -84,6 +90,7 @@ static std::pair<CONTEXT_SWITCH_DEFS__ACTION_TYPE_t, std::string> mapping[] = {
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_ADD_DDR_PAIR_INFO, "add_ddr_pair_info"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_DDR_BUFFERING_START, "ddr_buffering_start"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_BURST_CREDITS_TASK_START, "burst_credits_task_start"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_BURST_CREDITS_TASK_RESET, "burst_credits_task_reset"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_LCU_INTERRUPT, "lcu_interrupt"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_SEQUENCER_DONE_INTERRUPT, "sequencer_done_interrupt"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_INPUT_CHANNEL_TRANSFER_DONE_INTERRUPT, "input_channel_transfer_done_interrupt"},
@@ -102,6 +109,9 @@ static std::pair<CONTEXT_SWITCH_DEFS__ACTION_TYPE_t, std::string> mapping[] = {
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_ENABLE_NMS, "enable_nms"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_WRITE_DATA_BY_TYPE, "write_data_by_type"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_SWITCH_LCU_BATCH, "switch_lcu_batch"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_CHANGE_BOUNDARY_INPUT_BATCH, "change boundary input batch"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_PAUSE_VDMA_CHANNEL, "pause vdma channel"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_RESUME_VDMA_CHANNEL, "resume vdma channel"},
 };
 static_assert(ARRAY_ENTRIES(mapping) == CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT,
     "Missing a mapping from a CONTEXT_SWITCH_DEFS__ACTION_TYPE_t to it's string value");
@@ -142,5 +152,8 @@ void to_json(json &j, const CONTEXT_SWITCH_DEFS__add_ddr_pair_info_action_data_t
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__open_boundary_input_channel_data_t &data);
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__open_boundary_output_channel_data_t &data);
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__switch_lcu_batch_action_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__pause_vdma_channel_action_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__resume_vdma_channel_action_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__change_boundary_input_batch_t &data);
 
 #endif /* _HAILO_DOWNLOAD_ACTION_LIST_COMMAND_HPP_ */

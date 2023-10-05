@@ -117,7 +117,7 @@ std::shared_ptr<HailoRTDriver> create_driver_object(const std::string &device_id
     if (!hailort_driver) {
         throw std::runtime_error("Failed create hailort driver object");
     }
-    return std::make_shared<HailoRTDriver>(hailort_driver.release());
+    return hailort_driver.release();
 }
 
 int main(int argc, char **argv)

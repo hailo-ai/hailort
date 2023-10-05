@@ -53,9 +53,7 @@ public:
 
     virtual Expected<uint32_t> program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
         size_t desc_offset) = 0;
-    virtual hailo_status reprogram_device_interrupts_for_end_of_batch(size_t transfer_size, uint16_t batch_size,
-        InterruptsDomain new_interrupts_domain) = 0;
-        
+
     CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info(uint32_t transfer_size);
     static CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info(Type type, uint64_t dma_address,
         uint16_t desc_page_size, uint32_t total_desc_count, uint32_t transfer_size);

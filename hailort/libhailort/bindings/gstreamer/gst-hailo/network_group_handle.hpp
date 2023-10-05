@@ -51,7 +51,7 @@ private:
         const char *net_group_name, uint16_t batch_size);
 
     // TODO: change this map to store only the shared network_groups (used by multiple hailonets with the same vdevices)
-    std::unordered_map<std::string, std::shared_ptr<ConfiguredNetworkGroup>> m_configured_net_groups;
+    std::unordered_map<std::string, std::weak_ptr<ConfiguredNetworkGroup>> m_configured_net_groups;
     std::unordered_map<device_id_t, std::unordered_map<network_name_t, hailonet_name_t>> m_configured_networks;
     std::mutex m_mutex;
 };

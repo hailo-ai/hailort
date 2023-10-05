@@ -30,13 +30,13 @@
 #include "hailo/hef.hpp"
 #include "hailo/network_group.hpp"
 #include "hailo/hailort_defaults.hpp"
+#include "net_flow/ops/op_metadata.hpp"
 
 #include "hef/core_op_metadata.hpp"
 #include "hef/layer_info.hpp"
 #include "hef/context_switch_actions.hpp"
 #include "net_flow/ops/op.hpp"
 #include "net_flow/pipeline/pipeline.hpp"
-#include "core_op/core_op.hpp"
 #include "device_common/control_protocol.hpp"
 
 #include "control_protocol.h"
@@ -51,6 +51,8 @@ extern "C" {
 
 namespace hailort
 {
+
+#define DEFAULT_NMS_NO_BURST_SIZE (1)
 
 class CoreOpMetadata;
 class CoreOp;
@@ -139,30 +141,20 @@ typedef enum {
     HAILO_NET_FLOW_OP_TYPE_MAX_ENUM          = HAILO_MAX_ENUM
 } hailo_net_flow_op_type_t;
 
-struct NetFlowElement
-{
-    std::string name;
-    std::shared_ptr<net_flow::Op> op;
-    std::set<std::string> input_streams;
-    hailo_nms_info_t nms_info;
-    hailo_net_flow_op_type_t op_type;
-    hailo_vstream_info_t output_vstream_info; // Should be vector?
-};
-
 const static uint32_t SUPPORTED_EXTENSIONS_BITSET_SIZE = 1000;
 static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
-    ABBALE, 
-    POSTED_WRITES, 
-    DDR, 
-    PADDED_DDR_BUFFERS, 
-    IS_MULTI_CONTEXTS, 
-    COMPRESSED_PARAMS, 
+    ABBALE,
+    POSTED_WRITES,
+    DDR,
+    PADDED_DDR_BUFFERS,
+    IS_MULTI_CONTEXTS,
+    COMPRESSED_PARAMS,
     TRANSPOSE_COMPONENT,
     IS_NMS_MULTI_CONTEXT,
     OFFLOAD_ARGMAX,
     KO_RUN_ASAP,
     HAILO_NET_FLOW,
-    HAILO_NET_FLOW_YOLO_NMS, // Extention added in platform 4.12 release
+    HAILO_NET_FLOW_YOLOV5_NMS, // Extention added in platform 4.12 release
     HAILO_NET_FLOW_SSD_NMS, // Extention added in platform 4.14 release
     WRITE_DATA_BY_TYPE, // Extention added in platform 4.14 release
     NMS_OUTPUT_BURST, // Extention added in platform 4.14 release
@@ -173,6 +165,8 @@ static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
     HAILO_NET_FLOW_YOLOX_NMS, // Extention added in platform 4.14 release
     OUTPUT_SCALE_PER_FEATURE, // Extension added in platform 4.14 release
     PERIPH_CALCULATION_IN_HAILORT, // Extension added in platform 4.14 release
+    HAILO_NET_FLOW_YOLOV5_SEG_NMS, // Extension added in platform 4.15 release
+    HAILO_NET_FLOW_IOU_NMS // Extension added in platform 4.15 release
 };
 
 static inline bool is_h2d_boundary_info_layer(const ProtoHEFEdgeLayer& layer)
@@ -205,6 +199,14 @@ static inline bool is_d2h_boundary_mux_layer(const ProtoHEFEdgeLayer& layer)
         (ProtoHEFEdgeConnectionType::PROTO__EDGE_CONNECTION_TYPE__BOUNDARY ==
             layer.context_switch_info().edge_connection_type()) &&
         (ProtoHEFEdgeLayerType::PROTO__EDGE_LAYER_TYPE__MUX == layer.edge_layer_type()));
+}
+
+static inline bool is_h2d_boundary_planes_layer(const ProtoHEFEdgeLayer& layer)
+{
+    return ((ProtoHEFEdgeLayerDirection::PROTO__EDGE_LAYER_DIRECTION__HOST_TO_DEVICE == layer.direction()) &&
+        (ProtoHEFEdgeConnectionType::PROTO__EDGE_CONNECTION_TYPE__BOUNDARY ==
+            layer.context_switch_info().edge_connection_type()) &&
+        (ProtoHEFEdgeLayerType::PROTO__EDGE_LAYER_TYPE__PLANES == layer.edge_layer_type()));
 }
 
 // TODO: Fix the circular dependency (with HRT-2899, InputStream/OutputStream related code will move elsewhere)
@@ -312,7 +314,7 @@ public:
         uint32_t queue_size);
     // Also adds information to CoreOpMetadata
     // TODO: When supporting multiple core ops in same netflow - Change metadata param to a map of core_ops_metadata.
-    Expected<std::vector<std::shared_ptr<NetFlowElement>>> create_net_flow_ops(const ProtoHEFNetworkGroup &network_group_proto,
+    Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> create_ops_metadata(const ProtoHEFNetworkGroup &network_group_proto,
         CoreOpMetadata &core_op_metadata, const ProtoHEFHwArch &hef_arch) const;
 
     // TODO: Should return map of NG's core_ops metadata?
@@ -348,6 +350,9 @@ public:
             for (auto &network_params : network_group_config_params.network_params_by_name) {
                 network_params.second.batch_size = network_group_config_params.batch_size;
             }
+
+            // Change batch_size to default for later update_network_batch_size runs.
+            network_group_config_params.batch_size = HAILO_DEFAULT_BATCH_SIZE;
         }
 
         return HAILO_SUCCESS;
@@ -403,7 +408,7 @@ private:
     SupportedFeatures m_supported_features;
     std::vector<ProtoHEFNetworkGroupPtr> m_groups;
     std::map<std::string, std::vector<ProtoHEFCoreOpMock>> m_core_ops_per_group;
-    std::map<std::string, std::vector<std::shared_ptr<NetFlowElement>>> m_post_process_ops_per_group;
+    std::map<std::string, std::vector<net_flow::PostProcessOpMetadataPtr>> m_post_process_ops_metadata_per_group;
     std::vector<ProtoHEFExtension> m_hef_extensions;
     std::vector<ProtoHEFOptionalExtension> m_hef_optional_extensions;
     std::bitset<SUPPORTED_EXTENSIONS_BITSET_SIZE> m_supported_extensions_bitset;
@@ -435,10 +440,9 @@ public:
     static bool is_hw_padding_supported(const ProtoHEFEdgeLayer &edge_layer, const uint32_t max_periph_bytes_value);
     static bool is_hw_padding_supported(const LayerInfo &layer_info, const uint32_t max_periph_bytes_value);
 private:
-    static Expected<CONTROL_PROTOCOL__nn_stream_config_t> parse_nn_stream_config(hailo_format_order_t format_order,
-        uint32_t width, uint32_t features, uint32_t hw_data_bytes, uint16_t core_buffers_per_frame,
-        uint16_t core_bytes_per_buffer, bool hw_padding_supported, bool is_ddr, uint16_t periph_buffers_per_frame,
-        uint16_t periph_bytes_per_buffer);
+    static Expected<CONTROL_PROTOCOL__nn_stream_config_t> parse_nn_stream_config(uint32_t width, uint32_t hw_data_bytes,
+        uint16_t core_buffers_per_frame, uint16_t core_bytes_per_buffer, bool hw_padding_supported, bool is_ddr,
+        uint16_t periph_buffers_per_frame, uint16_t periph_bytes_per_buffer);
 
     static bool is_hw_padding_supported(bool is_boundary, bool is_mux, hailo_format_order_t format_order,
         uint16_t core_buffers_per_frame, uint32_t height, uint32_t width, uint32_t features, uint32_t hw_data_bytes,
@@ -514,6 +518,12 @@ private:
             LayerInfo &layer_info, hailo_quant_info_t &defuse_quant_info, const std::string &network_name,
             const bool burst_mode_enabled, const ProtoHEFHwArch &hef_arch);
     static hailo_status fill_mux_info(const ProtoHEFEdgeLayerMux &info,
+        const ProtoHEFEdgeConnectionType &edge_connection_type,
+        const ProtoHEFCoreOpMock &core_op, hailo_stream_direction_t direction,
+        bool hw_padding_supported, const uint8_t context_index, const std::string &partial_network_name, 
+        uint8_t network_index, LayerInfo &layer_info, const SupportedFeatures &supported_features,
+        const ProtoHEFHwArch &hef_arch);
+    static hailo_status fill_planes_info(const ProtoHEFEdgeLayerPlanes &info,
         const ProtoHEFEdgeConnectionType &edge_connection_type,
         const ProtoHEFCoreOpMock &core_op, hailo_stream_direction_t direction,
         bool hw_padding_supported, const uint8_t context_index, const std::string &partial_network_name, 

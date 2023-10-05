@@ -17,6 +17,7 @@
 
 #include "utils.hpp"
 #include "hef_api.hpp"
+#include "network_group_api.hpp"
 
 #include <pybind11/pybind11.h>
 
@@ -140,6 +141,7 @@ private:
         : m_device(std::move(device)) {}
 
     std::unique_ptr<Device> m_device;
+    std::vector<ConfiguredNetworkGroupWrapperPtr> m_net_groups;
 };
 
 } /* namespace hailort */

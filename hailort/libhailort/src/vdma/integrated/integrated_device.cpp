@@ -39,7 +39,7 @@ Expected<std::unique_ptr<IntegratedDevice>> IntegratedDevice::create()
     return device;
 }
 
-IntegratedDevice::IntegratedDevice(HailoRTDriver &&driver, hailo_status &status) :
+IntegratedDevice::IntegratedDevice(std::unique_ptr<HailoRTDriver> &&driver, hailo_status &status) :
     VdmaDevice::VdmaDevice(std::move(driver), Device::Type::INTEGRATED)
 {
     status = update_fw_state();
@@ -54,7 +54,7 @@ IntegratedDevice::IntegratedDevice(HailoRTDriver &&driver, hailo_status &status)
 hailo_status IntegratedDevice::reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type)
 {
     if (CONTROL_PROTOCOL__RESET_TYPE__NN_CORE == reset_type) {
-        return m_driver.reset_nn_core();
+        return m_driver->reset_nn_core();
     }
 
     LOGGER__ERROR("Can't reset IntegratedDevice, please use linux reboot");

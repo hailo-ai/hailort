@@ -12,6 +12,8 @@
 
 #include "common/os_utils.hpp"
 #include "hailo/event.hpp"
+#include "hailo/expected.hpp"
+
 #include <nlohmann/json.hpp>
 #include <stdint.h>
 #include <chrono>
@@ -32,6 +34,7 @@ public:
         hailo_status start();
         uint32_t push_text(std::stringstream &ss);
         void push_json(nlohmann::ordered_json &json);
+        virtual hailort::Expected<double> get_last_measured_fps();
 
     protected:
         virtual hailo_status start_impl() = 0;
@@ -48,6 +51,7 @@ public:
     hailo_status dump_stats(const std::string &json_path, const std::string &inference_mode);
     hailo_status start();
     void stop();
+    hailort::Expected<std::vector<double>> get_last_measured_fps_per_network_group();
 
 private:
     bool m_running;

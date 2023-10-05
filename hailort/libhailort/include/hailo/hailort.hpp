@@ -21,6 +21,7 @@
 #include "hailo/stream.hpp"
 #include "hailo/vstream.hpp"
 #include "hailo/inference_pipeline.hpp"
+#include "hailo/infer_model.hpp"
 #include "hailo/transform.hpp"
 #include "hailo/expected.hpp"
 #include "hailo/buffer.hpp"

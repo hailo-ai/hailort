@@ -11,29 +11,9 @@ namespace hailort
 HcpConfigCoreOp::HcpConfigCoreOp(Device &device, ActiveCoreOpHolder &active_core_op_holder,
     std::vector<WriteMemoryInfo> &&config, const ConfigureNetworkParams &config_params, std::shared_ptr<CoreOpMetadata> metadata,
     hailo_status &status)
-        : CoreOp(config_params, metadata, status),
-    m_config(std::move(config)), m_active_core_op_holder(active_core_op_holder), m_device(device)
+        : CoreOp(config_params, metadata, active_core_op_holder, status),
+    m_config(std::move(config)), m_device(device)
 {}
-
-Expected<std::unique_ptr<ActivatedNetworkGroup>> HcpConfigCoreOp::create_activated_network_group(
-    const hailo_activate_network_group_params_t &network_group_params, uint16_t /* dynamic_batch_size */,
-    bool /* resume_pending_stream_transfers */)
-{
-    auto start_time = std::chrono::steady_clock::now();
-
-    auto activated_net_group = HcpConfigActivatedCoreOp::create(m_device, m_config, name(), network_group_params,
-        m_input_streams, m_output_streams, m_active_core_op_holder, m_config_params.power_mode,
-        m_core_op_activated_event, (*this));
-    CHECK_EXPECTED(activated_net_group);
-
-    std::unique_ptr<ActivatedNetworkGroup> activated_net_group_ptr = make_unique_nothrow<HcpConfigActivatedCoreOp>(activated_net_group.release());
-    CHECK_AS_EXPECTED(nullptr != activated_net_group_ptr, HAILO_OUT_OF_HOST_MEMORY);
-
-    auto elapsed_time_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time).count();
-    LOGGER__INFO("Activating {} took {} milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.", name(), elapsed_time_ms);
-
-    return activated_net_group_ptr;
-}
 
 Expected<hailo_stream_interface_t> HcpConfigCoreOp::get_default_streams_interface()
 {
@@ -69,7 +49,10 @@ Expected<std::shared_ptr<LatencyMetersMap>> HcpConfigCoreOp::get_latency_meters(
 {
     /* hcp does not support latnecy. return empty map */
     LatencyMetersMap empty_map; 
-    return make_shared_nothrow<LatencyMetersMap>(empty_map);
+    auto res = make_shared_nothrow<LatencyMetersMap>(empty_map);
+    CHECK_NOT_NULL_AS_EXPECTED(res, HAILO_OUT_OF_HOST_MEMORY);
+
+    return res;
 }
 
 Expected<vdma::BoundaryChannelPtr> HcpConfigCoreOp::get_boundary_vdma_channel_by_stream_name(
@@ -86,36 +69,29 @@ Expected<HwInferResults> HcpConfigCoreOp::run_hw_infer_estimator()
     return make_unexpected(HAILO_INVALID_OPERATION);
 }
 
-hailo_status HcpConfigCoreOp::activate_impl(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers)
+hailo_status HcpConfigCoreOp::activate_impl(uint16_t /* dynamic_batch_size */)
 {
-    m_active_core_op_holder.set(*this);
+    // Close older dataflows
+    auto status = Control::close_all_streams(m_device);
+    CHECK_SUCCESS(status);
 
-    auto status = activate_low_level_streams(dynamic_batch_size, resume_pending_stream_transfers);
+    // Reset nn_core before writing configurations
+    status = m_device.reset(HAILO_RESET_DEVICE_MODE_NN_CORE);
+    CHECK_SUCCESS(status);
+
+    for (auto &m : m_config) {
+        status = m_device.write_memory(m.address, MemoryView(m.data));
+        CHECK_SUCCESS(status);
+    }
+
+    status = activate_low_level_streams();
     CHECK_SUCCESS(status, "Failed activating low level streams");
-
-    status = m_core_op_activated_event->signal();
-    CHECK_SUCCESS(status, "Failed to signal network activation event");
 
     return HAILO_SUCCESS;
 }
-hailo_status HcpConfigCoreOp::deactivate_impl(bool /* keep_nn_config_during_reset */)
+
+hailo_status HcpConfigCoreOp::deactivate_impl()
 {
-    auto expected_core_op_ref = m_active_core_op_holder.get();
-    CHECK(expected_core_op_ref.has_value(), HAILO_INTERNAL_FAILURE, "Error getting configured core-op");
-
-    const auto &core_op = expected_core_op_ref.value();
-    // Make sure the core-op we are deactivating is this object
-    CHECK(this == std::addressof(core_op.get()), HAILO_INTERNAL_FAILURE,
-        "Trying to deactivate different core-op");
-
-    m_active_core_op_holder.clear();
-
-    if (!m_core_op_activated_event) {
-        return HAILO_SUCCESS;
-    }
-
-    m_core_op_activated_event->reset();
-
     for (auto &name_pair : m_input_streams) {
         const auto status = name_pair.second->flush();
         CHECK_SUCCESS(status, "Failed to flush input stream {}", name_pair.first);

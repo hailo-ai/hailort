@@ -45,7 +45,7 @@ public:
 
     static Expected<std::unique_ptr<HailoRtRpcClient>> create_client()
     {
-        auto channel = grpc::CreateChannel(HAILORT_SERVICE_DEFAULT_ADDR, grpc::InsecureChannelCredentials());
+        auto channel = grpc::CreateChannel(hailort::HAILORT_SERVICE_ADDRESS, grpc::InsecureChannelCredentials());
         CHECK_AS_EXPECTED(channel != nullptr, HAILO_INTERNAL_FAILURE);
         auto client = make_unique_nothrow<HailoRtRpcClient>(channel);
         CHECK_NOT_NULL_AS_EXPECTED(client, HAILO_INTERNAL_FAILURE);
@@ -57,7 +57,7 @@ public:
         std::unique_lock<std::mutex> lock(*m_mutex);
         if (!m_initialized) {
             // Create client
-            auto channel = grpc::CreateChannel(hailort::HAILORT_SERVICE_DEFAULT_ADDR, grpc::InsecureChannelCredentials());
+            auto channel = grpc::CreateChannel(hailort::HAILORT_SERVICE_ADDRESS, grpc::InsecureChannelCredentials());
             auto client = make_unique_nothrow<HailoRtRpcClient>(channel);
             CHECK_NOT_NULL(client, HAILO_OUT_OF_HOST_MEMORY);
 
@@ -145,7 +145,7 @@ private:
 
     hailo_status keep_alive()
     {
-        auto channel = grpc::CreateChannel(hailort::HAILORT_SERVICE_DEFAULT_ADDR, grpc::InsecureChannelCredentials());
+        auto channel = grpc::CreateChannel(hailort::HAILORT_SERVICE_ADDRESS, grpc::InsecureChannelCredentials());
         auto client = make_unique_nothrow<HailoRtRpcClient>(channel);
         CHECK_NOT_NULL(client, HAILO_OUT_OF_HOST_MEMORY);
 
@@ -164,8 +164,9 @@ private:
 
     hailo_status init_keep_alive_shutdown_event()
     {
-        m_keep_alive_shutdown_event = Event::create_shared(Event::State::not_signalled);
-        CHECK(nullptr != m_keep_alive_shutdown_event, HAILO_OUT_OF_HOST_MEMORY);
+        auto shutdown_event_exp = Event::create_shared(Event::State::not_signalled);
+        CHECK_EXPECTED_AS_STATUS(shutdown_event_exp);
+        m_keep_alive_shutdown_event = shutdown_event_exp.release();
 
         return HAILO_SUCCESS;
     }

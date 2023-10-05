@@ -59,34 +59,7 @@ Expected<IntermediateBuffer> IntermediateBuffer::create(HailoRTDriver &driver, u
         CHECK_EXPECTED(desc_count_local);
     }
 
-    return IntermediateBuffer(std::move(buffer_ptr), transfer_size, max_batch_size, streaming_type);
-}
-
-hailo_status IntermediateBuffer::set_dynamic_batch_size(uint16_t batch_size)
-{
-    if (m_streaming_type == StreamingType::CIRCULAR_CONTINUOS) {
-        // The buffer pattern does not depend on the batch for circular continuous buffers.
-        return HAILO_SUCCESS;
-    }
-
-    CHECK(batch_size <= m_max_batch_size, HAILO_INVALID_ARGUMENT,
-        "batch_size ({}) must be <= than m_max_batch_size ({})",
-        batch_size, m_max_batch_size);
-
-    LOGGER__TRACE("Setting intermediate buffer's batch_size to {}", batch_size);
-    const auto prev_batch_size = m_dynamic_batch_size;
-    m_dynamic_batch_size = batch_size;
-
-    auto status = m_buffer->reprogram_device_interrupts_for_end_of_batch(m_transfer_size, prev_batch_size,
-        vdma::InterruptsDomain::NONE);
-    CHECK_SUCCESS(status, "Failed reprogramming device interrupts for the end of the previous batch (size {})",
-        prev_batch_size);
-    status = m_buffer->reprogram_device_interrupts_for_end_of_batch(m_transfer_size, m_dynamic_batch_size,
-        vdma::InterruptsDomain::DEVICE);
-    CHECK_SUCCESS(status, "Failed reprogramming device interrupts for the end of the current batch (size {})",
-        m_dynamic_batch_size);
-
-    return HAILO_SUCCESS;
+    return IntermediateBuffer(std::move(buffer_ptr), transfer_size, max_batch_size);
 }
 
 Expected<Buffer> IntermediateBuffer::read()
@@ -109,11 +82,9 @@ CONTROL_PROTOCOL__host_buffer_info_t IntermediateBuffer::get_host_buffer_info() 
 }
 
 IntermediateBuffer::IntermediateBuffer(std::unique_ptr<vdma::VdmaBuffer> &&buffer, uint32_t transfer_size,
-                                       uint16_t batch_size, StreamingType streaming_type) :
+                                       uint16_t batch_size) :
     m_buffer(std::move(buffer)),
     m_transfer_size(transfer_size),
-    m_max_batch_size(batch_size),
-    m_streaming_type(streaming_type),
     m_dynamic_batch_size(batch_size)
 {}
 
@@ -121,8 +92,10 @@ Expected<std::unique_ptr<vdma::VdmaBuffer>> IntermediateBuffer::create_sg_buffer
     uint32_t transfer_size, uint16_t batch_size, vdma::ChannelId d2h_channel_id, bool is_circular)
 {
     auto const DONT_FORCE_DEFAULT_PAGE_SIZE = false;
+    auto const FORCE_BATCH_SIZE = true;
     auto buffer_requirements = vdma::BufferSizesRequirements::get_sg_buffer_requirements_single_transfer(
-        driver.desc_max_page_size(), batch_size, batch_size, transfer_size, is_circular, DONT_FORCE_DEFAULT_PAGE_SIZE);
+        driver.desc_max_page_size(), batch_size, batch_size, transfer_size, is_circular, DONT_FORCE_DEFAULT_PAGE_SIZE,
+        FORCE_BATCH_SIZE);
     CHECK_EXPECTED(buffer_requirements);
     const auto desc_page_size = buffer_requirements->desc_page_size();
     const auto descs_count = buffer_requirements->descs_count();

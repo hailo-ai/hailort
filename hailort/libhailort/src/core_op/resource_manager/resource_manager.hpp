@@ -41,7 +41,6 @@ namespace hailort
 {
 
 #define DEFAULT_ACTUAL_BATCH_SIZE (1)
-#define MAX_NUMBER_DATA_STREAM_INDEX (20)
 
 
 struct EdgeLayer {
@@ -102,6 +101,7 @@ public:
 
     Expected<EdgeLayer> get_edge_layer_by_stream_index(const uint8_t stream_index,
         const hailo_stream_direction_t direction) const;
+    Expected<EdgeLayer> get_edge_layer_by_channel_id(const vdma::ChannelId channel_id) const;
 
     Expected<DdrChannelsInfo> get_ddr_channels_info(uint8_t d2h_stream_index) const;
     const std::vector<DdrChannelsInfo> &get_ddr_channels_infos() const;
@@ -145,7 +145,6 @@ public:
         uint8_t src_stream_index, uint8_t src_context_index, vdma::ChannelId d2h_channel_id,
         IntermediateBuffer::StreamingType streaming_type);
     ExpectedRef<IntermediateBuffer> get_intermediate_buffer(const IntermediateBufferKey &key);
-    Expected<vdma::BoundaryChannel::Type> get_boundary_vdma_channel_type(const LayerInfo &layer_info);
     hailo_status create_boundary_vdma_channel(const LayerInfo &layer_info);
 
     Expected<CONTROL_PROTOCOL__application_header_t> get_control_core_op_header();
@@ -186,12 +185,11 @@ public:
 
     Expected<Buffer> read_intermediate_buffer(const IntermediateBufferKey &key);
 
-    hailo_status set_dynamic_batch_size(uint16_t dynamic_batch_size);
     hailo_status configure();
     hailo_status enable_state_machine(uint16_t dynamic_batch_size, 
         uint16_t batch_count = CONTROL_PROTOCOL__INIFINITE_BATCH_COUNT);
-    hailo_status reset_state_machine(bool keep_nn_config_during_reset = false);
-    hailo_status cancel_pending_async_transfers();
+    hailo_status reset_state_machine();
+    hailo_status cancel_pending_transfers();
     hailo_status start_vdma_interrupts_dispatcher();
     hailo_status stop_vdma_interrupts_dispatcher();
     Expected<uint16_t> get_network_batch_size(const std::string &network_name) const;
@@ -217,6 +215,7 @@ private:
     hailo_status fill_network_batch_size(CONTROL_PROTOCOL__application_header_t &app_header);
     hailo_status fill_csm_buffer_size(CONTROL_PROTOCOL__application_header_t &app_header);
     void process_interrupts(IrqData &&irq_data);
+    Expected<uint16_t> get_batch_size() const;
 
     std::vector<ContextResources> m_contexts_resources;
     ChannelAllocator m_channel_allocator;

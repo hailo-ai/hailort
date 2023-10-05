@@ -35,15 +35,10 @@ void MonitorHandler::clear_monitor() {
     m_core_ops_info.clear();
 }
 
-void MonitorHandler::handle_trace(const SchedulerStartTrace &trace)
+void MonitorHandler::handle_trace(const MonitorStartTrace &trace)
 {
     m_device_count = trace.device_count;
     start_mon();
-}
-
-void MonitorHandler::handle_trace(const CoreOpIdleTrace &trace)
-{
-    update_utilization_read_buffers_finished(trace.device_id, trace.core_op_handle, true);
 }
 
 void MonitorHandler::handle_trace(const AddCoreOpTrace &trace)
@@ -56,7 +51,7 @@ void MonitorHandler::handle_trace(const AddCoreOpTrace &trace)
 void MonitorHandler::handle_trace(const AddDeviceTrace &trace)
 {
     DeviceInfo device_info(trace.device_id, trace.device_arch);
-    m_devices_info.emplace(trace.device_id, device_info); 
+    m_devices_info.emplace(trace.device_id, device_info);
 }
 
 void MonitorHandler::handle_trace(const SwitchCoreOpTrace &trace)
@@ -71,7 +66,12 @@ void MonitorHandler::handle_trace(const CreateCoreOpInputStreamsTrace &trace)
     if (!m_is_monitor_currently_working) { return; }
     auto core_op_handle = get_core_op_handle_by_name(trace.core_op_name);
     assert(contains(m_core_ops_info, core_op_handle));
-    m_core_ops_info[core_op_handle].input_streams_info[trace.stream_name] = StreamsInfo{trace.queue_size, 0};
+    assert(contains(m_devices_info, trace.device_id));
+    m_core_ops_info[core_op_handle].input_streams_info[trace.stream_name] = StreamsInfo{trace.queue_size};
+    if (!contains(m_devices_info.at(trace.device_id).requested_transferred_frames_h2d, core_op_handle)) {
+        m_devices_info.at(trace.device_id).requested_transferred_frames_h2d.emplace(core_op_handle, make_shared_nothrow<SchedulerCounter>());
+    }
+    m_devices_info.at(trace.device_id).requested_transferred_frames_h2d[core_op_handle]->insert(trace.stream_name);
 }
 
 void MonitorHandler::handle_trace(const CreateCoreOpOutputStreamsTrace &trace)
@@ -80,36 +80,67 @@ void MonitorHandler::handle_trace(const CreateCoreOpOutputStreamsTrace &trace)
     if (!m_is_monitor_currently_working) { return; }
     auto core_op_handle = get_core_op_handle_by_name(trace.core_op_name);
     assert(contains(m_core_ops_info, core_op_handle));
-    m_core_ops_info[core_op_handle].output_streams_info[trace.stream_name] = StreamsInfo{trace.queue_size, 0};
+    assert(contains(m_devices_info, trace.device_id));
+    m_core_ops_info[core_op_handle].output_streams_info[trace.stream_name] = StreamsInfo{trace.queue_size};
+    if (!contains(m_devices_info.at(trace.device_id).finished_transferred_frames_d2h, core_op_handle)) {
+        m_devices_info.at(trace.device_id).finished_transferred_frames_d2h.emplace(core_op_handle, make_shared_nothrow<SchedulerCounter>());
+    }
+    m_devices_info.at(trace.device_id).finished_transferred_frames_d2h[core_op_handle]->insert(trace.stream_name);
 }
 
 void MonitorHandler::handle_trace(const WriteFrameTrace &trace)
 {
     assert(contains(m_core_ops_info, trace.core_op_handle));
     assert(contains(m_core_ops_info[trace.core_op_handle].input_streams_info, trace.queue_name));
-    m_core_ops_info[trace.core_op_handle].input_streams_info[trace.queue_name].pending_frames_count++;
+    auto &queue = m_core_ops_info[trace.core_op_handle].input_streams_info[trace.queue_name];
+    queue.pending_frames_count->fetch_add(1);
+    queue.pending_frames_count_acc->add_data_point(queue.pending_frames_count->load());
 }
 
 void MonitorHandler::handle_trace(const ReadFrameTrace &trace)
 {
     assert(contains(m_core_ops_info, trace.core_op_handle));
     assert(contains(m_core_ops_info[trace.core_op_handle].output_streams_info, trace.queue_name));
-    m_core_ops_info[trace.core_op_handle].output_streams_info[trace.queue_name].pending_frames_count--;
-    m_core_ops_info[trace.core_op_handle].output_streams_info[trace.queue_name].total_frames_count++;
+    auto &queue = m_core_ops_info[trace.core_op_handle].output_streams_info[trace.queue_name];
+    queue.pending_frames_count->fetch_sub(1);
+    queue.pending_frames_count_acc->add_data_point(queue.pending_frames_count->load());
+    queue.total_frames_count->fetch_add(1);
 }
 
 void MonitorHandler::handle_trace(const OutputVdmaEnqueueTrace &trace)
 {
     assert(contains(m_core_ops_info, trace.core_op_handle));
     assert(contains(m_core_ops_info[trace.core_op_handle].output_streams_info, trace.queue_name));
-    m_core_ops_info[trace.core_op_handle].output_streams_info[trace.queue_name].pending_frames_count += trace.frames;
+
+    assert(contains(m_devices_info, trace.device_id));
+    assert(contains(m_devices_info.at(trace.device_id).requested_transferred_frames_h2d, trace.core_op_handle));
+
+    auto &queue = m_core_ops_info[trace.core_op_handle].output_streams_info[trace.queue_name];
+    queue.pending_frames_count->fetch_add(1);
+    queue.pending_frames_count_acc->add_data_point(queue.pending_frames_count->load());
+
+    m_devices_info.at(trace.device_id).finished_transferred_frames_d2h[trace.core_op_handle]->increase(trace.queue_name);
+
+    const auto max_transferred_h2d = m_devices_info.at(trace.device_id).requested_transferred_frames_h2d[trace.core_op_handle]->get_max_value();
+    const auto min_transferred_d2h = m_devices_info.at(trace.device_id).finished_transferred_frames_d2h[trace.core_op_handle]->get_min_value();
+    if(max_transferred_h2d == min_transferred_d2h) {
+            update_utilization_read_buffers_finished(trace.device_id, trace.core_op_handle, true);
+    }
 }
 
 void MonitorHandler::handle_trace(const InputVdmaDequeueTrace &trace)
 {
     assert(contains(m_core_ops_info, trace.core_op_handle));
     assert(contains(m_core_ops_info[trace.core_op_handle].input_streams_info, trace.queue_name));
-    m_core_ops_info[trace.core_op_handle].input_streams_info[trace.queue_name].pending_frames_count--;
+    assert(contains(m_devices_info, trace.device_id));
+    assert(contains(m_devices_info.at(trace.device_id).requested_transferred_frames_h2d, trace.core_op_handle));
+
+    auto &queue = m_core_ops_info[trace.core_op_handle].input_streams_info[trace.queue_name];
+    queue.pending_frames_count->fetch_sub(1);
+    queue.pending_frames_count_acc->add_data_point(queue.pending_frames_count->load());
+
+    m_devices_info.at(trace.device_id).requested_transferred_frames_h2d[trace.core_op_handle]->increase(trace.queue_name);
+
     update_utilization_send_started(trace.device_id);
 }
 
@@ -127,16 +158,17 @@ hailo_status MonitorHandler::start_mon()
 {
 #if defined(__GNUC__)
 
-    /* Clearing monitor members. Since the owner of monitor_handler is tracer, which is static, 
+    /* Clearing monitor members. Since the owner of monitor_handler is tracer, which is static,
     the monitor may get rerun without destructor being called. */
     if (m_is_monitor_currently_working) {
         clear_monitor();
     }
     m_is_monitor_currently_working = true;
 
-    m_mon_shutdown_event = Event::create_shared(Event::State::not_signalled);
+    auto event_exp = Event::create_shared(Event::State::not_signalled);
+    CHECK_EXPECTED_AS_STATUS(event_exp);
+    m_mon_shutdown_event = event_exp.release();
     m_last_measured_timestamp = std::chrono::steady_clock::now();
-    CHECK(nullptr != m_mon_shutdown_event, HAILO_OUT_OF_HOST_MEMORY);
 
     auto tmp_file = open_temp_mon_file();
     CHECK_EXPECTED_AS_STATUS(tmp_file);
@@ -175,7 +207,7 @@ Expected<std::shared_ptr<TempFile>> MonitorHandler::open_temp_mon_file()
     std::string file_name = get_curr_pid_as_str();
     auto tmp_file = TempFile::create(file_name, SCHEDULER_MON_TMP_DIR);
     CHECK_EXPECTED(tmp_file);
-    
+
     auto tmp_file_ptr = make_shared_nothrow<TempFile>(tmp_file.release());
     CHECK_AS_EXPECTED(nullptr != tmp_file_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
@@ -221,14 +253,13 @@ void MonitorHandler::time_dependent_events_cycle_calc()
 void MonitorHandler::log_monitor_device_infos(ProtoMon &mon)
 {
     for (auto const &device_info_pair : m_devices_info) {
-        auto device_info = device_info_pair.second;
-        auto curr_device_utilization = device_info.device_utilization_duration;
+        auto curr_device_utilization = device_info_pair.second.device_utilization_duration;
         auto utilization_percentage = ((curr_device_utilization * 100) /  m_last_measured_time_duration);
 
         auto device_infos = mon.add_device_infos();
-        device_infos->set_device_id(device_info.device_id);
+        device_infos->set_device_id(device_info_pair.second.device_id);
         device_infos->set_utilization(utilization_percentage);
-        device_infos->set_device_arch(device_info.device_arch);
+        device_infos->set_device_arch(device_info_pair.second.device_arch);
     }
 }
 
@@ -240,7 +271,7 @@ void MonitorHandler::log_monitor_networks_infos(ProtoMon &mon)
         double min_fps = std::numeric_limits<double>::max();
 
         for (auto const &stream : m_core_ops_info[core_op_handle].output_streams_info) {
-            double fps = stream.second.total_frames_count / m_last_measured_time_duration;
+            double fps = stream.second.total_frames_count->load() / m_last_measured_time_duration;
             min_fps = (fps < min_fps) ? fps : min_fps;
         }
 
@@ -250,7 +281,7 @@ void MonitorHandler::log_monitor_networks_infos(ProtoMon &mon)
         net_info->set_fps(min_fps);
     }
 }
- 
+
 void MonitorHandler::log_monitor_frames_infos(ProtoMon &mon)
 {
     for (uint32_t core_op_handle = 0; core_op_handle < m_core_ops_info.size(); core_op_handle++) {
@@ -262,9 +293,32 @@ void MonitorHandler::log_monitor_frames_infos(ProtoMon &mon)
             stream_frames_info->set_stream_name(stream.first);
             stream_frames_info->set_stream_direction(PROTO__STREAM_DIRECTION__HOST_TO_DEVICE);
             stream_frames_info->set_buffer_frames_size(static_cast<int32_t>(stream.second.queue_size * m_device_count));
-            stream_frames_info->set_pending_frames_count(static_cast<int32_t>(stream.second.pending_frames_count));
+            stream_frames_info->set_pending_frames_count(static_cast<int32_t>(stream.second.pending_frames_count->load()));
+
+            auto expected_min_val = stream.second.pending_frames_count_acc->min();
+            if (expected_min_val.status() == HAILO_SUCCESS) {
+                stream_frames_info->set_min_pending_frames_count(static_cast<int32_t>(expected_min_val.release()));
+            } else {
+                stream_frames_info->set_min_pending_frames_count(-1);
+            }
+
+            auto expected_max_val = stream.second.pending_frames_count_acc->max();
+            if (expected_max_val.status() == HAILO_SUCCESS) {
+                stream_frames_info->set_max_pending_frames_count(static_cast<int32_t>(expected_max_val.release()));
+            } else {
+                stream_frames_info->set_max_pending_frames_count(-1);
+            }
+
+            auto expected_avg_val = stream.second.pending_frames_count_acc->mean();
+            if (expected_avg_val.status() == HAILO_SUCCESS) {
+                stream_frames_info->set_avg_pending_frames_count(expected_avg_val.release());
+            } else {
+                stream_frames_info->set_avg_pending_frames_count(-1);
+            }
+
+            stream.second.pending_frames_count_acc->get_and_clear();
         }
-        
+
         for (auto const &stream : m_core_ops_info[core_op_handle].output_streams_info) {
             net_frames_info->set_network_name(m_core_ops_info[core_op_handle].core_op_name);
             auto stream_frames_info = net_frames_info->add_streams_frames_infos();
@@ -274,8 +328,31 @@ void MonitorHandler::log_monitor_frames_infos(ProtoMon &mon)
                 stream_frames_info->set_pending_frames_count(SCHEDULER_MON_NAN_VAL);
                 stream_frames_info->set_buffer_frames_size(SCHEDULER_MON_NAN_VAL);
             } else {
-                stream_frames_info->set_pending_frames_count(static_cast<int32_t>(stream.second.pending_frames_count));
+                stream_frames_info->set_pending_frames_count(static_cast<int32_t>(stream.second.pending_frames_count->load()));
                 stream_frames_info->set_buffer_frames_size(static_cast<int32_t>(stream.second.queue_size * m_device_count));
+
+                auto expected_min_val = stream.second.pending_frames_count_acc->min();
+                if (expected_min_val.status() == HAILO_SUCCESS) {
+                    stream_frames_info->set_min_pending_frames_count(static_cast<int32_t>(expected_min_val.release()));
+                } else {
+                    stream_frames_info->set_min_pending_frames_count(-1);
+                }
+
+                auto expected_max_val = stream.second.pending_frames_count_acc->max();
+                if (expected_max_val.status() == HAILO_SUCCESS) {
+                    stream_frames_info->set_max_pending_frames_count(static_cast<int32_t>(expected_max_val.release()));
+                } else {
+                    stream_frames_info->set_max_pending_frames_count(-1);
+                }
+
+                auto expected_avg_val = stream.second.pending_frames_count_acc->mean();
+                if (expected_avg_val.status() == HAILO_SUCCESS) {
+                    stream_frames_info->set_avg_pending_frames_count(expected_avg_val.release());
+                } else {
+                    stream_frames_info->set_avg_pending_frames_count(-1);
+                }
+
+                stream.second.pending_frames_count_acc->get_and_clear();
             }
         }
     }
@@ -314,7 +391,7 @@ void MonitorHandler::update_device_drained_state(const device_id_t &device_id, b
     m_devices_info.at(device_id).device_has_drained_everything = state;
 }
 
-void MonitorHandler::update_utilization_read_buffers_finished(const device_id_t &device_id, 
+void MonitorHandler::update_utilization_read_buffers_finished(const device_id_t &device_id,
     scheduler_core_op_handle_t core_op_handle, bool is_drained_everything)
 {
     update_utilization_timers(device_id, core_op_handle);
@@ -332,7 +409,7 @@ void MonitorHandler::clear_accumulators()
 
     for (auto &handle_core_op_pair : m_core_ops_info) {
         for (auto &handle_streams_pair : handle_core_op_pair.second.output_streams_info) {
-            handle_streams_pair.second.total_frames_count = 0;
+            handle_streams_pair.second.total_frames_count->store(0);
         }
         handle_core_op_pair.second.utilization = 0;
     }

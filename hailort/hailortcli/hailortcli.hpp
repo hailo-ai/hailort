@@ -215,7 +215,7 @@ private:
 
 inline void hailo_deprecate_options(CLI::App *app, const std::vector<DeprecationActionPtr> &actions, bool set_footer = true)
 {
-    // std::set and not std::vector in case two actions have the smae deprection string
+    // std::set and not std::vector in case two actions have the same deprecation string
     std::set<std::string> deprecation_messages;
     for (const auto& deprecation_action : actions) {
         deprecation_messages.insert(deprecation_action->deprecate(!set_footer));

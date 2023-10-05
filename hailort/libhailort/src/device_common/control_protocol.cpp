@@ -1810,11 +1810,11 @@ exit:
     return status;
 }
 
-#define CONTEXT_SWITCH_SWITCH_STATUS_REQUEST_PARAMS (5)
+#define CONTEXT_SWITCH_SWITCH_STATUS_REQUEST_PARAMS (4)
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_context_switch_status_request(
         CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
         CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status, uint8_t application_index,
-        uint16_t dynamic_batch_size, uint16_t batch_count, bool keep_nn_config_during_reset)
+        uint16_t dynamic_batch_size, uint16_t batch_count)
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
     size_t local_request_size = 0;
@@ -1851,11 +1851,6 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_context_switch_status_reques
     request->parameters.change_context_switch_status_request.batch_count_length =
         BYTE_ORDER__htonl(sizeof(request->parameters.change_context_switch_status_request.batch_count));
     request->parameters.change_context_switch_status_request.batch_count = batch_count;
-
-    /* keep_nn_config_during_reset */
-    request->parameters.change_context_switch_status_request.keep_nn_config_during_reset_length = 
-        BYTE_ORDER__htonl(sizeof(request->parameters.change_context_switch_status_request.keep_nn_config_during_reset));
-    request->parameters.change_context_switch_status_request.keep_nn_config_during_reset = keep_nn_config_during_reset;
 
     *request_size = local_request_size;
     status = HAILO_COMMON_STATUS__SUCCESS;

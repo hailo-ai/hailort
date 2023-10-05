@@ -24,7 +24,8 @@ NetworkLiveTrack::NetworkLiveTrack(const std::string &name, std::shared_ptr<Conf
     m_cng(cng),
     m_overall_latency_meter(overall_latency_meter),
     m_measure_fps(measure_fps),
-    m_hef_path(hef_path)
+    m_hef_path(hef_path),
+    m_last_measured_fps(0)
 {
     std::lock_guard<std::mutex> lock(mutex);
     max_ng_name = std::max(m_name.size(), max_ng_name);
@@ -43,7 +44,13 @@ double NetworkLiveTrack::get_fps()
     auto elapsed_time = std::chrono::steady_clock::now() - m_last_get_time;
     auto count = m_count.load();
     auto fps = count / std::chrono::duration<double>(elapsed_time).count();
+    m_last_measured_fps = fps;
     return fps;
+}
+
+Expected<double> NetworkLiveTrack::get_last_measured_fps()
+{
+    return Expected<double>(m_last_measured_fps);
 }
 
 uint32_t NetworkLiveTrack::push_text_impl(std::stringstream &ss)

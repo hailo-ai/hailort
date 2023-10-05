@@ -106,7 +106,7 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_download_context_action_list_reques
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_context_switch_status_request(
         CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
         CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status, uint8_t application_index,
-        uint16_t dynamic_batch_size, uint16_t batch_count, bool keep_nn_config_during_reset);
+        uint16_t dynamic_batch_size, uint16_t batch_count);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_wd_enable(
     CONTROL_PROTOCOL__request_t *request,
     size_t *request_size,

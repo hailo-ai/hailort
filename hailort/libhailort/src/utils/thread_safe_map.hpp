@@ -12,75 +12,44 @@
 
 #include <map>
 #include <mutex>
+#include <unordered_map>
+#include <shared_mutex>
 
 namespace hailort
 {
 
-template<class K, class V>
-class SafeMap {
+/// Thread safe map is a wrapper to std::unordered_map std::map that allows multi-thread access to the map.
+/// This class guards the map structure itself in thread safe way, and not the members.
+template<typename Key, typename Value, typename MapType=std::unordered_map<Key, Value>>
+class ThreadSafeMap final {
 public:
-    SafeMap() : m_map(), m_mutex() {}
-    virtual ~SafeMap() = default;
-    SafeMap(SafeMap &&map) : m_map(std::move(map.m_map)), m_mutex() {};
 
-    V& operator[](const K& k) {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        return m_map[k];
+    template <typename... Args>
+    auto emplace(const Key& key, Args&&... args)
+    {
+        std::unique_lock<std::shared_timed_mutex> lock(m_mutex);
+        return m_map.emplace(key, std::forward<Args>(args)...);
     }
 
-    V& operator[](K&& k) {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        return m_map[k];
+    // Return by value (and not by reference) since after the mutex is unlocked, the reference may change.
+    Value at(const Key &key) const
+    {
+        std::shared_lock<std::shared_timed_mutex> lock(m_mutex);
+        return m_map.at(key);
     }
 
-    V& at(K& k) {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        return m_map.at(k);
+    template<typename Func>
+    void for_each(Func &&func) const
+    {
+        std::shared_lock<std::shared_timed_mutex> lock(m_mutex);
+        std::for_each(m_map.begin(), m_map.end(), func);
     }
 
-    V& at(const K& k) {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        return m_map.at(k);
-    }
-
-    std::size_t size() {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        return m_map.size();
-    }
-
-    typename std::map<K, V>::iterator find(K& k) {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        return m_map.find(k);
-    }
-
-    typename std::map<K, V>::iterator find(const K& k) {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        return m_map.find(k);
-    }
-
-    bool contains(const K &k) {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        return m_map.find(k) != m_map.end();
-    }
-
-    void clear() {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_map.clear();
-    }
-
-    typename std::map<K, V>::iterator begin() {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        return m_map.begin();
-    }
-
-    typename std::map<K, V>::iterator end() {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        return m_map.end();
-    }
-
-protected:
-    std::map<K, V> m_map;
-    mutable std::mutex m_mutex;
+private:
+    // Const operation on the map can be executed on parallel, hence we can use shared_lock, while non-const operations
+    // (such as emplace) must have unique access.
+    mutable std::shared_timed_mutex m_mutex;
+    MapType m_map;
 };
 
 } /* namespace hailort */

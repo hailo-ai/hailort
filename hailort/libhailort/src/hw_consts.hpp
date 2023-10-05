@@ -30,7 +30,6 @@
 /** Vdma Channel registers ***************************************************/
 #define VDMA_CHANNEL_CONTROL_OFFSET         (0x00)
 #define VDMA_CHANNEL_NUM_AVAIL_OFFSET       (0x02)
-#define VDMA_CHANNEL_NUM_PROC_OFFSET        (0x04)
 
 
 #endif /* _HAILO_HW_CONSTS_HPP_ */

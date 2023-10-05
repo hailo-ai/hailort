@@ -107,35 +107,58 @@ const uintptr_t HailoRTDriver::INVALID_DRIVER_BUFFER_HANDLE_VALUE = INVALID_DRIV
 const size_t HailoRTDriver::INVALID_DRIVER_VDMA_MAPPING_HANDLE_VALUE = INVALID_DRIVER_HANDLE_VALUE;
 const uint8_t HailoRTDriver::INVALID_VDMA_CHANNEL_INDEX = INVALID_VDMA_CHANNEL;
 
-Expected<HailoRTDriver> HailoRTDriver::create(const DeviceInfo &device_info)
+Expected<std::unique_ptr<HailoRTDriver>> HailoRTDriver::create(const DeviceInfo &device_info)
 {
     auto fd = FileDescriptor(open(device_info.dev_path.c_str(), O_RDWR));
     CHECK_AS_EXPECTED(fd >= 0, HAILO_DRIVER_FAIL,
         "Failed to open device file {} with error {}", device_info.dev_path, errno);
 
     hailo_status status = HAILO_UNINITIALIZED;
-    HailoRTDriver object(device_info, std::move(fd), status);
+    std::unique_ptr<HailoRTDriver> driver(new (std::nothrow) HailoRTDriver(device_info, std::move(fd), status));
+    CHECK_NOT_NULL_AS_EXPECTED(driver, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
-    return object;
+    return driver;
 }
 
-hailo_status HailoRTDriver::hailo_ioctl(int fd, int request, void* request_struct, int &error_status)
-{
-    int res = ioctl(fd, request, request_struct);
-    if (0 > res) {
 #if defined(__linux__)
-        error_status = errno;
-#elif defined(__QNX__)
-        error_status = -res;
-#else
-#error "unsupported platform!"
-#endif // __linux__
+static bool is_blocking_ioctl(unsigned long request)
+{
+    switch (request) {
+    case HAILO_VDMA_INTERRUPTS_WAIT:
+    case HAILO_FW_CONTROL:
+    case HAILO_READ_NOTIFICATION:
+        return true;
+    default:
+        return false;
+    }
+}
 
+hailo_status HailoRTDriver::hailo_ioctl(int fd, unsigned long request, void* request_struct, int &error_status)
+{
+    // We lock m_driver lock on all request but the blocking onces. Read m_driver_lock doc in the header
+    std::unique_lock<std::mutex> lock;
+    if (!is_blocking_ioctl(request)) {
+        lock = std::unique_lock<std::mutex>(m_driver_lock);
+    }
+
+    int res = ioctl(fd, request, request_struct);
+    error_status = errno;
+    return (res >= 0) ? HAILO_SUCCESS : HAILO_DRIVER_FAIL;
+}
+#elif defined(__QNX__)
+hailo_status HailoRTDriver::hailo_ioctl(int fd, unsigned long request, void* request_struct, int &error_status)
+{
+    int res = ioctl(fd, static_cast<int>(request), request_struct);
+    if (0 > res) {
+        error_status = -res;
         return HAILO_DRIVER_FAIL;
     }
     return HAILO_SUCCESS;
 }
+#else
+#error "Unsupported platform"
+#endif
 
 static hailo_status validate_driver_version(const hailo_driver_info &driver_info)
 {
@@ -770,6 +793,9 @@ hailo_status HailoRTDriver::descriptors_list_release_ioctl(uintptr_t desc_handle
 #if defined(__linux__)
 Expected<void *> HailoRTDriver::descriptors_list_create_mmap(uintptr_t desc_handle, size_t desc_count)
 {
+    // We lock m_driver_lock before calling mmap. Read m_driver_lock doc in the header
+    std::unique_lock<std::mutex> lock(m_driver_lock);
+
     const size_t buffer_size = desc_count * SIZE_OF_SINGLE_DESCRIPTOR;
     void *address = mmap(nullptr, buffer_size, PROT_WRITE | PROT_READ, MAP_SHARED, m_fd, (off_t)desc_handle);
     if (MAP_FAILED == address) {

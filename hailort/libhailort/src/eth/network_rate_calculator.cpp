@@ -140,8 +140,10 @@ Expected<std::map<uint16_t, uint32_t>> NetworkUdpRateCalculator::get_udp_ports_r
 
     std::map<uint16_t, uint32_t> results = {};
     for (const auto &input_stream : udp_input_streams) {
-        uint16_t remote_port = 0;
-        remote_port = reinterpret_cast<EthernetInputStream*>(&(input_stream.get()))->get_remote_port();
+        const auto stream_index = input_stream.get().get_info().index;
+        CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(stream_index + HailoRTCommon::ETH_INPUT_BASE_PORT), HAILO_INTERNAL_FAILURE,
+            "Invalid stream index {}", stream_index);
+        const uint16_t remote_port = static_cast<uint16_t>(stream_index + HailoRTCommon::ETH_INPUT_BASE_PORT);
         results.insert(std::make_pair(remote_port,
             rates_per_name->at(input_stream.get().name())));
     }

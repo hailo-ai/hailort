@@ -9,6 +9,7 @@
  **/
 
 #include "device_api.hpp"
+
 #include <memory>
 
 
@@ -341,8 +342,11 @@ py::list DeviceWrapper::configure(const HefWrapper &hef,
     VALIDATE_EXPECTED(network_groups);
 
     py::list results;
+    m_net_groups.reserve(m_net_groups.size() + network_groups->size());
     for (const auto &network_group : network_groups.value()) {
-        results.append(network_group.get());
+        auto wrapper = ConfiguredNetworkGroupWrapper::create(network_group);
+        results.append(wrapper);
+        m_net_groups.emplace_back(wrapper);
     }
 
     return results;

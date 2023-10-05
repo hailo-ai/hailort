@@ -23,6 +23,7 @@
 #include "hailo_events/hailo_events.hpp"
 #include "metadata/hailo_buffer_flag_meta.hpp"
 #include "hailo/hailort_common.hpp"
+#include "hailo/hailort_defaults.hpp"
 
 #include <sstream>
 #include <algorithm>
@@ -108,6 +109,9 @@ enum
     PROP_OUTPUT_QUANTIZED,
     PROP_INPUT_FORMAT_TYPE,
     PROP_OUTPUT_FORMAT_TYPE,
+    PROP_NMS_SCORE_THRESHOLD,
+    PROP_NMS_IOU_THRESHOLD,
+    PROP_NMS_MAX_PROPOSALS_PER_CLASS,
 };
 
 G_DEFINE_TYPE(GstHailoNet, gst_hailonet, GST_TYPE_BIN);
@@ -197,12 +201,12 @@ static void gst_hailonet_class_init(GstHailoNetClass *klass)
             "To use this property, the service should be active and scheduling-algorithm should be set. Defaults to false.",
             HAILO_DEFAULT_MULTI_PROCESS_SERVICE, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
     g_object_class_install_property(gobject_class, PROP_INPUT_QUANTIZED,
-        g_param_spec_boolean("input-quantized", "Is the input quantized or not", "Passing `true` under the argument means that the input data sent to the stream is quantized to begin with."
-            "This will result in an input stream that doesn't quantize the input data. Passing `false` under the argument, will lead to input data being quantized.",
+        g_param_spec_boolean("input-quantized", "Is the input quantized or not", "Deprecated parameter that will be ignored. "
+        "Determine whether to quantize (scale) the data will be decided by the src-data and dst-data types.",
             true, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
     g_object_class_install_property(gobject_class, PROP_OUTPUT_QUANTIZED,
-        g_param_spec_boolean("output-quantized", "Should the output be quantized or de-quantized","Passing `true` under the argument means that the output data received from the stream is to remain quantized" 
-            "(such as it is upon exiting the device). This will result in an output stream that doesn't de-quantize the output data. Passing `false` under the argument will lead to output data being de-quantized.",
+        g_param_spec_boolean("output-quantized", "Should the output be quantized or de-quantized","Deprecated parameter that will be ignored. "
+        "Determine whether to de-quantize (rescale) the data will be decided by the src-data and dst-data types.",
             true, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
     g_object_class_install_property(gobject_class, PROP_INPUT_FORMAT_TYPE,
         g_param_spec_enum("input-format-type", "Input format type", "Input format type(auto, float32, uint16, uint8). Default value is auto."
@@ -214,6 +218,16 @@ static void gst_hailonet_class_init(GstHailoNetClass *klass)
             "Gets values from the enum GstHailoFormatType. ",
             GST_TYPE_HAILO_FORMAT_TYPE, HAILO_FORMAT_TYPE_AUTO,
         (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+    g_object_class_install_property(gobject_class, PROP_NMS_SCORE_THRESHOLD,
+        g_param_spec_float("nms-score-threshold", "NMS score threshold", "Threshold used for filtering out candidates. Any box with score<TH is suppressed.",
+            0, 1, 0, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+    g_object_class_install_property(gobject_class, PROP_NMS_IOU_THRESHOLD,
+        g_param_spec_float("nms-iou-threshold", "NMS IoU threshold", "Intersection over union overlap Threshold, used in the NMS iterative elimination process where potential duplicates of detected items are suppressed.",
+            0, 1, 0, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+    g_object_class_install_property(gobject_class, PROP_NMS_MAX_PROPOSALS_PER_CLASS,
+        g_param_spec_uint("nms-max-proposals-per-class", "NMS max proposals per class", "Set a limit for the maximum number of boxes per class.",
+            0, std::numeric_limits<uint32_t>::max(), 0, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
     // See information about the "flush" signal in the element description
     g_signal_new(
         "flush",
@@ -271,9 +285,9 @@ Expected<std::unique_ptr<HailoNetImpl>> HailoNetImpl::create(GstHailoNet *elemen
     g_signal_connect(element, "flush", G_CALLBACK(gst_hailonet_flush_callback), nullptr);
 
     auto was_flushed_event = Event::create_shared(Event::State::not_signalled);
-    GST_CHECK(nullptr != was_flushed_event, make_unexpected(HAILO_OUT_OF_HOST_MEMORY), element, RESOURCE, "Failed allocating memory for event!");
+    GST_CHECK_EXPECTED(was_flushed_event, element, RESOURCE, "Failed allocating memory for event!");
 
-    auto ptr = make_unique_nothrow<HailoNetImpl>(element, hailosend, queue, hailorecv, was_flushed_event);
+    auto ptr = make_unique_nothrow<HailoNetImpl>(element, hailosend, queue, hailorecv, was_flushed_event.release());
     if (nullptr == ptr) {
         return make_unexpected(HAILO_OUT_OF_HOST_MEMORY);
     }
@@ -518,6 +532,7 @@ void HailoNetImpl::set_property(GObject *object, guint property_id, const GValue
         m_props.m_multi_process_service = g_value_get_boolean(value);
         break;
     case PROP_INPUT_QUANTIZED:
+        g_warning("'input-quantized' is a deprecated parameter that will be ignored.");
         if (m_was_configured) {
             g_warning("The network was already configured so changing the quantized flag will not take place!");
             break;
@@ -525,6 +540,7 @@ void HailoNetImpl::set_property(GObject *object, guint property_id, const GValue
         m_props.m_input_quantized = g_value_get_boolean(value);
         break;
     case PROP_OUTPUT_QUANTIZED:
+        g_warning("'output-quantized' is a deprecated parameter that will be ignored.");
         if (m_was_configured) {
             g_warning("The network was already configured so changing the quantized flag will not take place!");
             break;
@@ -544,6 +560,27 @@ void HailoNetImpl::set_property(GObject *object, guint property_id, const GValue
             break;
         }
         m_props.m_output_format_type = static_cast<hailo_format_type_t>(g_value_get_enum(value));
+        break;
+    case PROP_NMS_SCORE_THRESHOLD:
+        if (m_was_configured) {
+            g_warning("The network was already configured so changing the score threshold will not take place!");
+            break;
+        }
+        m_props.m_nms_score_threshold = static_cast<gfloat>(g_value_get_float(value));
+        break;
+    case PROP_NMS_IOU_THRESHOLD:
+        if (m_was_configured) {
+            g_warning("The network was already configured so changing the IoU threshold will not take place!");
+            break;
+        }
+        m_props.m_nms_iou_threshold = static_cast<gfloat>(g_value_get_float(value));
+        break;
+    case PROP_NMS_MAX_PROPOSALS_PER_CLASS:
+        if (m_was_configured) {
+            g_warning("The network was already configured so changing the max proposals per class will not take place!");
+            break;
+        }
+        m_props.m_nms_max_proposals_per_class = static_cast<guint32>(g_value_get_uint(value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
@@ -630,6 +667,15 @@ void HailoNetImpl::get_property(GObject *object, guint property_id, GValue *valu
     case PROP_OUTPUT_FORMAT_TYPE:
         g_value_set_enum(value, m_props.m_output_format_type.get());
         break;
+    case PROP_NMS_SCORE_THRESHOLD:
+        g_value_set_float(value, m_props.m_nms_score_threshold.get());
+        break;
+    case PROP_NMS_IOU_THRESHOLD:
+        g_value_set_float(value, m_props.m_nms_iou_threshold.get());
+        break;
+    case PROP_NMS_MAX_PROPOSALS_PER_CLASS:
+        g_value_set_uint(value, m_props.m_nms_max_proposals_per_class.get());
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
         break;
@@ -657,11 +703,15 @@ hailo_status HailoNetImpl::set_hef()
         // TODO: HRT-4957
         GST_CHECK(m_net_group_handle->hef()->get_network_groups_names().size() == 1, HAILO_INVALID_ARGUMENT, m_element, RESOURCE,
             "Network group has to be specified when there are more than one network groups in the HEF!");
-        auto networks_infos = m_net_group_handle->hef()->get_network_infos(m_net_group_handle->hef()->get_network_groups_names()[0].c_str());
+        auto network_group_name = m_net_group_handle->hef()->get_network_groups_names()[0];
+
+        auto networks_infos = m_net_group_handle->hef()->get_network_infos(network_group_name.c_str());
         GST_CHECK_EXPECTED_AS_STATUS(networks_infos, m_element, RESOURCE, "Getting network infos from network group name was failed, status %d", networks_infos.status());
         GST_CHECK(networks_infos.value().size() == 1, HAILO_INVALID_ARGUMENT, m_element, RESOURCE,
             "Network has to be specified when there are more than one network in the network group!");
-        m_props.m_network_name = g_strdup(networks_infos.release()[0].name);
+
+        std::string default_ng_name = HailoRTDefaults::get_network_name(network_group_name);
+        m_props.m_network_name = g_strdup(default_ng_name.c_str());
     }
 
     auto input_vstream_infos = m_net_group_handle->hef()->get_input_vstream_infos(m_props.m_network_name.get());
@@ -720,11 +770,47 @@ hailo_status HailoNetImpl::configure_network_group()
         GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Setting scheduler priority failed, status = %d", status);
     }
 
-    auto vstreams = m_net_group_handle->create_vstreams(m_props.m_network_name.get(), m_props.m_scheduling_algorithm.get(), m_output_formats, static_cast<bool>(m_props.m_input_quantized.get()), 
-        static_cast<bool>(m_props.m_output_quantized.get()), m_props.m_input_format_type.get(), m_props.m_output_format_type.get());
+    auto input_quantized = (m_props.m_input_quantized.was_changed()) ? static_cast<bool>(m_props.m_input_quantized.get()) :
+        (m_props.m_input_format_type.get() != HAILO_FORMAT_TYPE_FLOAT32);
+
+    auto output_quantized = (m_props.m_output_quantized.was_changed()) ? static_cast<bool>(m_props.m_output_quantized.get()) :
+        (m_props.m_output_format_type.get() != HAILO_FORMAT_TYPE_FLOAT32);
+
+    auto vstreams = m_net_group_handle->create_vstreams(m_props.m_network_name.get(), m_props.m_scheduling_algorithm.get(), m_output_formats,
+        input_quantized, output_quantized, m_props.m_input_format_type.get(), m_props.m_output_format_type.get());
     GST_CHECK_EXPECTED_AS_STATUS(vstreams, m_element, RESOURCE, "Creating vstreams failed, status = %d", status);
 
     GST_HAILOSEND(m_hailosend)->impl->set_input_vstreams(std::move(vstreams->first));
+
+    // Check that if one of the NMS params are changed, we have NMS outputs in the model
+    auto has_nms_output = std::any_of(vstreams->second.begin(), vstreams->second.end(), [](const auto &vs)
+    {
+        return HailoRTCommon::is_nms(vs.get_info());
+    });
+
+    for (auto &out_vs : vstreams->second) {
+        if (m_props.m_nms_score_threshold.was_changed()) {
+            GST_CHECK(has_nms_output, HAILO_INVALID_OPERATION, m_element, RESOURCE, "NMS score threshold is set, but there is no NMS output in this model.");
+            if (HailoRTCommon::is_nms(out_vs.get_info())) {
+                status = out_vs.set_nms_score_threshold(m_props.m_nms_score_threshold.get());
+                GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Setting NMS score threshold failed, status = %d", status);
+            }
+        }
+        if (m_props.m_nms_iou_threshold.was_changed()) {
+            GST_CHECK(has_nms_output, HAILO_INVALID_OPERATION, m_element, RESOURCE, "NMS IoU threshold is set, but there is no NMS output in this model.");
+            if (HailoRTCommon::is_nms(out_vs.get_info())) {
+                status = out_vs.set_nms_iou_threshold(m_props.m_nms_iou_threshold.get());
+                GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Setting NMS IoU threshold failed, status = %d", status);
+            }
+        }
+        if (m_props.m_nms_max_proposals_per_class.was_changed()) {
+            GST_CHECK(has_nms_output, HAILO_INVALID_OPERATION, m_element, RESOURCE, "NMS max proposals per class is set, but there is no NMS output in this model.");
+            if (HailoRTCommon::is_nms(out_vs.get_info())) {
+                status = out_vs.set_nms_max_proposals_per_class(m_props.m_nms_max_proposals_per_class.get());
+                GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Setting NMS max proposals per class failed, status = %d", status);
+            }
+        }
+    }
 
     status = GST_HAILORECV(m_hailorecv)->impl->set_output_vstreams(std::move(vstreams->second), m_props.m_batch_size.get());
     GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Setting output vstreams failed, status = %d", status);
@@ -760,7 +846,7 @@ Expected<std::string> HailoNetImpl::get_network_group_name(const std::string &ne
 {
     for (const auto &network_group_name : m_net_group_handle->hef()->get_network_groups_names()) {
         // Look for network_group with the given name
-        if (network_name == network_group_name) {
+        if ((network_name == network_group_name) || (network_name == HailoRTDefaults::get_network_name(network_group_name))) {
             return std::string(network_group_name);
         }
 

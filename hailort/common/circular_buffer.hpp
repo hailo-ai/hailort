@@ -36,7 +36,7 @@ typedef struct {
 #define _CB_FETCH(x) (InterlockedOr((LONG volatile*)(&x), (LONG)0))
 #define _CB_SET(x, value) (InterlockedExchange((LONG volatile*)(&x), (LONG)(value)))
 #else
-#define _CB_FETCH(x) (__sync_fetch_and_or(&(x), 0))
+#define _CB_FETCH(x) (__sync_fetch_and_or(const_cast<volatile int*>(&(x)), 0))
 #define _CB_SET(x, value) ((void)__sync_lock_test_and_set(&(x), value))
 #endif
 
@@ -155,22 +155,22 @@ public:
         }
     }
 
-    bool empty()
+    bool empty() const
     {
         return CB_HEAD(m_circ) == CB_TAIL(m_circ);
     }
 
-    bool full()
+    bool full() const
     {
         return 0 == CB_AVAIL(m_circ, CB_HEAD(m_circ), CB_TAIL(m_circ));
     }
 
-    size_t size()
+    size_t size() const
     {
         return CB_PROG(m_circ, CB_HEAD(m_circ), CB_TAIL(m_circ));
     }
 
-    size_t capacity()
+    size_t capacity() const
     {
         return CB_SIZE(m_circ) - 1;
     }

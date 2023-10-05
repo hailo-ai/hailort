@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.0.0)
 
 include(GNUInstallDirs)
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/spdlog.cmake)
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/json.cmake)
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/readerwriterqueue.cmake)
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/dotwriter.cmake)
 
 set(HAILORTCLI_CPP_FILES
     hailortcli.cpp
@@ -31,14 +35,13 @@ set(HAILORTCLI_CPP_FILES
     run2/network_live_track.cpp
     run2/measurement_live_track.cpp
     run2/io_wrappers.cpp
+    download_action_list_command.cpp
     )
 
 if(UNIX)
     # Unix only modules
     set(HAILORTCLI_CPP_FILES ${HAILORTCLI_CPP_FILES}
         udp_rate_limiter_command.cpp
-        # TODO: We dont compile download_action_list_command on windows, as it uses packed enums (HRT-5919)
-        download_action_list_command.cpp
         measure_nnc_performance_command.cpp
         )
 endif()
@@ -69,11 +72,13 @@ target_link_libraries(hailortcli
     spdlog::spdlog
     readerwriterqueue
     DotWriter
-    scheduler_mon_proto)
+    scheduler_mon_proto
+    profiler_proto)
 
 if(WIN32)
     target_link_libraries(hailortcli Ws2_32 Iphlpapi Shlwapi winmm.lib)
 elseif(CMAKE_SYSTEM_NAME STREQUAL QNX)
+    include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/pevents.cmake)
     target_link_libraries(hailortcli pevents)
 endif()
 target_include_directories(hailortcli

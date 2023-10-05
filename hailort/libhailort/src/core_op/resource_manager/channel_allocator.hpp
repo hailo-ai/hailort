@@ -14,7 +14,6 @@
 
 #include "vdma/memory/descriptor_list.hpp"
 #include "vdma/channel/channel_id.hpp"
-#include "vdma/channel/boundary_channel.hpp"
 #include "hef/layer_info.hpp"
 
 #include <array>

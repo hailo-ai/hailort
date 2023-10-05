@@ -42,3 +42,8 @@ void TimerLiveTrack::push_json_impl(nlohmann::ordered_json &json)
     time_to_run << std::fixed << std::setprecision(2) << std::round(std::chrono::duration<double>(m_duration).count()) << " seconds";
     json["time_to_run"] = time_to_run.str();
 }
+
+Expected<double> TimerLiveTrack::get_last_measured_fps()
+{
+    return make_unexpected(HAILO_NOT_AVAILABLE);
+}

@@ -18,61 +18,34 @@
 #include "core_op/resource_manager/resource_manager.hpp"
 #include "hef/hef_internal.hpp"
 #include "eth/eth_stream.hpp"
-#include "vdma/vdma_stream_base.hpp"
+#include "vdma/vdma_stream.hpp"
 #include "mipi/mipi_stream.hpp"
 #include "device_common/control_protocol.hpp"
+#include "stream_common/nms_stream.hpp"
+#include "stream_common/remote_process_stream.hpp"
 
 
 namespace hailort
 {
 
-ActivatedCoreOp::ActivatedCoreOp(const hailo_activate_network_group_params_t &network_group_params,
-        std::map<std::string, std::shared_ptr<InputStream>> &input_streams,
-        std::map<std::string, std::shared_ptr<OutputStream>> &output_streams,         
-        EventPtr &&core_op_activated_event, hailo_status &status) :
-    m_network_group_params(network_group_params),
-    m_core_op_activated_event(std::move(core_op_activated_event)),
-    m_input_streams(input_streams),
-    m_output_streams(output_streams)
-{
-    status = validate_network_group_params(network_group_params);
-    if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("Failed to validate network_group params");
-        return;
-    }
-}
-
-uint32_t ActivatedCoreOp::get_invalid_frames_count()
-{
-    uint32_t total_invalid_frames_count = 0;
-    for (auto& name_stream_pair : m_output_streams) {
-        total_invalid_frames_count += name_stream_pair.second->get_invalid_frames_count();
-    }
-    return total_invalid_frames_count;
-}
-
-// TODO: Implement function (HRT-3174)
-hailo_status ActivatedCoreOp::validate_network_group_params(
-    const hailo_activate_network_group_params_t &/*network_group_params*/)
-{
-    return HAILO_SUCCESS;
-}
-
 CoreOp::CoreOp(
-    const ConfigureNetworkParams &config_params, std::shared_ptr<CoreOpMetadata> metadata, hailo_status &status) :
+    const ConfigureNetworkParams &config_params, std::shared_ptr<CoreOpMetadata> metadata,
+    ActiveCoreOpHolder &active_core_op_holder, hailo_status &status) :
         m_config_params(config_params),
+        m_active_core_op_holder(active_core_op_holder),
         m_min_configured_batch_size(get_smallest_configured_batch_size(config_params)),
         m_activation_time_accumulator(),
         m_deactivation_time_accumulator(),
-        m_metadata(metadata)
+        m_metadata(metadata),
+        m_vdevice_core_op_handle(INVALID_CORE_OP_HANDLE)
 {
     auto event = Event::create_shared(Event::State::not_signalled);
-    if (nullptr == event) {
+    if (!event) {
         LOGGER__ERROR("Failed to create activation event");
-        status = HAILO_INTERNAL_FAILURE;
+        status = event.status();
         return;
     }
-    m_core_op_activated_event = std::move(std::move(event));
+    m_core_op_activated_event = event.release();
 
     m_activation_time_accumulator = make_shared_nothrow<FullAccumulator<double>>("activation_time");
     if (nullptr == m_activation_time_accumulator) {
@@ -89,13 +62,6 @@ CoreOp::CoreOp(
     };
 
     status = HAILO_SUCCESS;
-}
-
-Expected<std::unique_ptr<ActivatedNetworkGroup>> CoreOp::activate(const hailo_activate_network_group_params_t &network_group_params)
-{
-    static const auto RESET_PENDING_STREAM_TRANSFERS = false;
-    return create_activated_network_group(network_group_params, CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE,
-        RESET_PENDING_STREAM_TRANSFERS);
 }
 
 Expected<std::chrono::nanoseconds> get_latency(LatencyMeterPtr &latency_meter, bool clear)
@@ -119,6 +85,9 @@ Expected<LatencyMeasurementResult> CoreOp::get_latency_measurement(const std::st
     auto latency_meters = latency_meters_exp.release();
 
     if (network_name.empty()) {
+        if (1 != m_input_streams.size()) {
+            return make_unexpected(HAILO_NOT_AVAILABLE);
+        }
         std::chrono::nanoseconds latency_sum(0);
         uint32_t measurements_count = 0;
         for (auto &latency_meter_pair : *latency_meters.get()) {
@@ -150,15 +119,142 @@ Expected<LatencyMeasurementResult> CoreOp::get_latency_measurement(const std::st
     return result;
 }
 
+hailo_status CoreOp::activate(uint16_t dynamic_batch_size)
+{
+    auto start_time = std::chrono::steady_clock::now();
+
+    CHECK(!is_scheduled(), HAILO_INVALID_OPERATION,
+        "Manually activate a core-op is not allowed when the core-op scheduler is active!");
+
+    // Check that no network is currently activated
+    CHECK(!m_active_core_op_holder.is_any_active(), HAILO_INVALID_OPERATION,
+        "Cant activate network because a network is already activated");
+    m_active_core_op_holder.set(*this);
+
+    auto status = activate_impl(dynamic_batch_size);
+    if (HAILO_SUCCESS != status) {
+        auto deactivate_status = deactivate_impl();
+        if (HAILO_SUCCESS != deactivate_status) {
+            LOGGER__ERROR("Failed deactivate {}", deactivate_status);
+        }
+        m_active_core_op_holder.clear();
+    }
+    if (HAILO_STREAM_ABORTED_BY_USER == status) {
+        return status;
+    }
+    CHECK_SUCCESS(status);
+
+    const auto elapsed_time_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start_time).count();
+
+    status = m_core_op_activated_event->signal();
+    if (HAILO_SUCCESS != status) {
+        auto deactivate_status = deactivate_impl();
+        if (HAILO_SUCCESS != deactivate_status) {
+            LOGGER__ERROR("Failed deactivate {}", deactivate_status);
+        }
+        m_active_core_op_holder.clear();
+    }
+    CHECK_SUCCESS(status, "Failed to signal network activation event");
+
+    LOGGER__INFO("Activating {} took {} milliseconds. Note that the function is asynchronous and"
+                 " thus the network is not fully activated yet.", name(), elapsed_time_ms);
+    m_activation_time_accumulator->add_data_point(elapsed_time_ms);
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status CoreOp::deactivate()
+{
+    const auto start_time = std::chrono::steady_clock::now();
+
+    CHECK(!is_scheduled(), HAILO_INVALID_OPERATION,
+        "Manually deactivate a core-op is not allowed when the core-op scheduler is active!");
+
+    auto core_op_ref = m_active_core_op_holder.get();
+    CHECK_EXPECTED_AS_STATUS(core_op_ref, "Trying to deactivate while no network is running");
+
+    CHECK(this == std::addressof(core_op_ref->get()), HAILO_INTERNAL_FAILURE,
+        "Trying to deactivate different core-op");
+    m_active_core_op_holder.clear();
+
+    m_core_op_activated_event->reset();
+
+    auto deactivate_status = deactivate_impl();
+    if (HAILO_SUCCESS != deactivate_status) {
+        LOGGER__ERROR("Failed deactivating core-op (status {})", deactivate_status);
+    }
+
+    const auto elapsed_time_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start_time).count();
+    LOGGER__INFO("Deactivating took {} ms", elapsed_time_ms);
+    m_deactivation_time_accumulator->add_data_point(elapsed_time_ms);
+
+    return deactivate_status;
+}
+
 Expected<LayerInfo> CoreOp::get_layer_info(const std::string &stream_name)
 {
-    for (auto layer_info : m_metadata->get_all_layer_infos()) {
+    for (const auto &layer_info : m_metadata->get_all_layer_infos()) {
+        if (layer_info.is_multi_planar) {
+            for (const auto &plane : layer_info.planes) {
+                if (plane.name == stream_name) {
+                    auto cpy = plane;
+                    return cpy;
+                }
+            }
+        }
         if (layer_info.name == stream_name) {
-            return layer_info;
+            auto cpy = layer_info;
+            return cpy;
         }
     }
     LOGGER__ERROR("Failed to find layer with name {}", stream_name);
     return make_unexpected(HAILO_NOT_FOUND);
+}
+
+bool CoreOp::is_nms()
+{
+    for (auto layer_info : m_metadata->get_output_layer_infos()) {
+        if (HAILO_FORMAT_ORDER_HAILO_NMS == layer_info.format.order) {
+            return true;
+        }
+    }
+    return false;
+}
+
+hailo_status CoreOp::add_input_stream(std::shared_ptr<InputStreamBase> &&stream,
+    const hailo_stream_parameters_t &stream_params)
+{
+    if ((stream_params.flags & HAILO_STREAM_FLAGS_ASYNC) != 0) {
+        // When the user forces async streams, we use NOT_OWNING mode.
+        auto status = stream->set_buffer_mode(StreamBufferMode::NOT_OWNING);
+        CHECK_SUCCESS(status);
+    } else {
+        // When the user forces async streams, we use OWNING mode.
+        auto status = stream->set_buffer_mode(StreamBufferMode::OWNING);
+        CHECK_SUCCESS(status);
+    }
+
+    m_input_streams.emplace(stream->name(), std::move(stream));
+    return HAILO_SUCCESS;
+}
+
+hailo_status CoreOp::add_output_stream(std::shared_ptr<OutputStreamBase> &&stream,
+    const hailo_stream_parameters_t &stream_params)
+{
+    if ((stream_params.flags & HAILO_STREAM_FLAGS_ASYNC) != 0) {
+        // When the user forces async streams, we use NOT_OWNING mode.
+        auto status = stream->set_buffer_mode(StreamBufferMode::NOT_OWNING);
+        CHECK_SUCCESS(status);
+    } else {
+        // When the user forces async streams, we use OWNING mode.
+        auto status = stream->set_buffer_mode(StreamBufferMode::OWNING);
+        CHECK_SUCCESS(status);
+    }
+
+    m_output_streams.emplace(stream->name(), std::move(stream));
+    return HAILO_SUCCESS;
 }
 
 uint16_t CoreOp::get_smallest_configured_batch_size(const ConfigureNetworkParams &config_params)
@@ -184,25 +280,27 @@ uint16_t CoreOp::get_smallest_configured_batch_size(const ConfigureNetworkParams
     return (UINT16_MAX == min_batch_size) ? DEFAULT_ACTUAL_BATCH_SIZE : min_batch_size;
 }
 
-Expected<std::unique_ptr<ActivatedNetworkGroup>> CoreOp::activate_with_batch(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers)
-{
-    return create_activated_network_group(HailoRTDefaults::get_active_network_group_params(), dynamic_batch_size,
-        resume_pending_stream_transfers);
-}
-
 const std::string &CoreOp::name() const
 {
     return m_metadata->core_op_name();
 }
 
-hailo_status CoreOp::activate_low_level_streams(uint16_t dynamic_batch_size, bool resume_pending_stream_transfers)
+hailo_status CoreOp::activate_low_level_streams()
 {
     for (auto &name_pair : m_input_streams) {
-        auto status = name_pair.second->activate_stream(dynamic_batch_size, resume_pending_stream_transfers);
+        auto status = name_pair.second->activate_stream();
+        if (HAILO_STREAM_ABORTED_BY_USER == status) {
+            LOGGER__INFO("Stream {} activation failed because it was aborted by user", name_pair.first);
+            return status;
+        }
         CHECK_SUCCESS(status);
     }
     for (auto &name_pair : m_output_streams) {
-        auto status = name_pair.second->activate_stream(dynamic_batch_size, resume_pending_stream_transfers);
+        auto status = name_pair.second->activate_stream();
+        if (HAILO_STREAM_ABORTED_BY_USER == status) {
+            LOGGER__INFO("Stream {} activation failed because it was aborted by user", name_pair.first);
+            return status;
+        }
         CHECK_SUCCESS(status);
     }
 
@@ -240,17 +338,59 @@ const SupportedFeatures &CoreOp::get_supported_features()
 Expected<uint16_t> CoreOp::get_stream_batch_size(const std::string &stream_name)
 {
     for (const auto &layer_info : m_metadata->get_all_layer_infos()) {
-        if (layer_info.name == stream_name) {
+        auto stream_under_multi_planes_layer = (layer_info.is_multi_planar && std::any_of(layer_info.planes.begin(), layer_info.planes.end(),
+            [&stream_name](const auto &plane){ return plane.name == stream_name; }));
+        if ((layer_info.name == stream_name) || (stream_under_multi_planes_layer)) {
             for (auto const &network_params_pair : m_config_params.network_params_by_name) {
                 if (network_params_pair.first == layer_info.network_name) {
                     auto batch_size = network_params_pair.second.batch_size;
-                    return batch_size;
+                    return (batch_size == HAILO_DEFAULT_BATCH_SIZE) ? DEFAULT_ACTUAL_BATCH_SIZE : batch_size;
                 }
             }
         }
     }
-    LOGGER__ERROR("Failed to find network name output stream {}", stream_name);
+    LOGGER__ERROR("Failed to find batch for stream {}", stream_name);
     return make_unexpected(HAILO_NOT_FOUND);
+}
+
+bool CoreOp::is_default_batch_size() const
+{
+    for (auto const &network_params_pair : m_config_params.network_params_by_name) {
+        if (network_params_pair.second.batch_size != HAILO_DEFAULT_BATCH_SIZE) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+Expected<Buffer> CoreOp::get_intermediate_buffer(const IntermediateBufferKey &)
+{
+    LOGGER__ERROR("Getting intermediate buffer is not supported for this core op");
+    return make_unexpected(HAILO_NOT_SUPPORTED);
+}
+
+hailo_status CoreOp::wrap_streams_for_remote_process()
+{
+    for (auto &input_stream_pair : m_input_streams) {
+        auto base_stream = input_stream_pair.second;
+
+        auto remote_proc_stream = RemoteProcessInputStream::create(base_stream);
+        CHECK_EXPECTED_AS_STATUS(remote_proc_stream);
+
+        input_stream_pair.second = remote_proc_stream.release();
+    }
+
+    for (auto &output_stream_pair : m_output_streams) {
+        auto base_stream = output_stream_pair.second;
+
+        auto remote_proc_stream = RemoteProcessOutputStream::create(base_stream);
+        CHECK_EXPECTED_AS_STATUS(remote_proc_stream);
+
+        output_stream_pair.second = remote_proc_stream.release();
+    }
+
+    return HAILO_SUCCESS;
 }
 
 bool CoreOp::is_multi_context() const
@@ -263,118 +403,140 @@ const ConfigureNetworkParams CoreOp::get_config_params() const
     return m_config_params;
 }
 
-hailo_status CoreOp::create_input_stream_from_config_params(Device &device,
+Expected<std::shared_ptr<InputStreamBase>> CoreOp::create_input_stream_from_config_params(Device &device,
     const hailo_stream_parameters_t &stream_params, const std::string &stream_name)
 {
     auto layer_info = get_layer_info(stream_name);
-    CHECK_EXPECTED_AS_STATUS(layer_info);
+    CHECK_EXPECTED(layer_info);
 
-    CHECK(device.is_stream_interface_supported(stream_params.stream_interface), HAILO_INVALID_OPERATION,
+    CHECK_AS_EXPECTED(device.is_stream_interface_supported(stream_params.stream_interface), HAILO_INVALID_OPERATION,
         "Device does not supports the given stream interface streams. Please update input_stream_params for stream {}.",
         stream_name);
 
+    std::shared_ptr<InputStreamBase> input_stream = nullptr;
     switch (stream_params.stream_interface) {
         case HAILO_STREAM_INTERFACE_PCIE:
             // Fallthrough
         case HAILO_STREAM_INTERFACE_INTEGRATED:
-            return create_vdma_input_stream(device, stream_name, layer_info.value(), stream_params);
-        
+            {
+                auto input_stream_exp = create_vdma_input_stream(device, stream_name, layer_info.value(), stream_params);
+                CHECK_EXPECTED(input_stream_exp);
+                input_stream = input_stream_exp.release();
+                break;
+            }
+
         case HAILO_STREAM_INTERFACE_ETH:
             {
-                auto input_stream = EthernetInputStream::create(device,
+                auto input_stream_exp = EthernetInputStream::create(device,
                     layer_info.value(), stream_params.eth_input_params, m_core_op_activated_event);
-                CHECK_EXPECTED_AS_STATUS(input_stream);
-                m_input_streams.insert(make_pair(stream_name, input_stream.release()));
-                return HAILO_SUCCESS;
+                CHECK_EXPECTED(input_stream_exp);
+                input_stream = input_stream_exp.release();
+                break;
             }
-        
+
         case HAILO_STREAM_INTERFACE_MIPI:
             {
-                auto input_stream = MipiInputStream::create(device,
+                auto input_stream_exp = MipiInputStream::create(device,
                     layer_info.value(), stream_params.mipi_input_params, m_core_op_activated_event);
-                CHECK_EXPECTED_AS_STATUS(input_stream);
-                m_input_streams.insert(make_pair(stream_name, input_stream.release()));
-                return HAILO_SUCCESS;
+                CHECK_EXPECTED(input_stream_exp);
+                input_stream = input_stream_exp.release();
+                break;
             }
-        
+
         default:
             LOGGER__ERROR("{} interface is not supported.", stream_params.stream_interface);
-            return HAILO_NOT_IMPLEMENTED;
+            return make_unexpected(HAILO_NOT_IMPLEMENTED);
     }
+
+    return input_stream;
 }
 
-hailo_status CoreOp::create_vdma_input_stream(Device &device, const std::string &stream_name,
+Expected<std::shared_ptr<InputStreamBase>> CoreOp::create_vdma_input_stream(Device &device, const std::string &stream_name,
     const LayerInfo &layer_info, const hailo_stream_parameters_t &stream_params)
 {
     // Make sure the downcast is safe
-    CHECK((Device::Type::INTEGRATED == device.get_type()) || (Device::Type::PCIE == device.get_type()),
+    CHECK_AS_EXPECTED((Device::Type::INTEGRATED == device.get_type()) || (Device::Type::PCIE == device.get_type()),
         HAILO_INTERNAL_FAILURE, "Invalid device type");
     VdmaDevice *vdma_device = reinterpret_cast<VdmaDevice*>(&device);
-    
-    auto batch_size_exp = get_stream_batch_size(stream_name);
-    CHECK_EXPECTED_AS_STATUS(batch_size_exp);
+
     auto vdma_channel_ptr_exp = get_boundary_vdma_channel_by_stream_name(stream_name);
-    CHECK_EXPECTED_AS_STATUS(vdma_channel_ptr_exp, "Failed to get vdma channel for output stream {}", stream_name);
+    CHECK_EXPECTED(vdma_channel_ptr_exp, "Failed to get vdma channel for output stream {}", stream_name);
 
-    auto input_stream = VdmaInputStreamBase::create(stream_params.stream_interface, *vdma_device, vdma_channel_ptr_exp.value(),
-        layer_info, stream_params, batch_size_exp.value(), m_core_op_activated_event);
-    CHECK_EXPECTED_AS_STATUS(input_stream);
-    m_input_streams.insert(make_pair(stream_name, input_stream.release()));
-
-    return HAILO_SUCCESS;
+    return VdmaInputStream::create(stream_params.stream_interface, *vdma_device, vdma_channel_ptr_exp.value(),
+        layer_info, m_core_op_activated_event);
 }
 
-hailo_status CoreOp::create_output_stream_from_config_params(Device &device,
+Expected<std::shared_ptr<OutputStreamBase>> CoreOp::create_output_stream_from_config_params(Device &device,
     const hailo_stream_parameters_t &stream_params, const std::string &stream_name)
 {
     auto layer_info = get_layer_info(stream_name);
-    CHECK_EXPECTED_AS_STATUS(layer_info);
+    CHECK_EXPECTED(layer_info);
 
-    CHECK(device.is_stream_interface_supported(stream_params.stream_interface), HAILO_INVALID_OPERATION,
+    CHECK_AS_EXPECTED(device.is_stream_interface_supported(stream_params.stream_interface), HAILO_INVALID_OPERATION,
         "Device does not supports the given stream interface streams. Please update input_stream_params for stream {}.",
         stream_name);
 
+    std::shared_ptr<OutputStreamBase> output_stream = nullptr;
     switch (stream_params.stream_interface) {
         case HAILO_STREAM_INTERFACE_PCIE:
             // Fallthrough
         case HAILO_STREAM_INTERFACE_INTEGRATED:
-            return create_vdma_output_stream(device, stream_name, layer_info.value(), stream_params);
-        
+            {
+                auto output_stream_exp = create_vdma_output_stream(device, stream_name, layer_info.value(), stream_params);
+                CHECK_EXPECTED(output_stream_exp);
+                output_stream = output_stream_exp.release();
+                break;
+            }
+
         case HAILO_STREAM_INTERFACE_ETH:
             {
-                auto output_stream =  EthernetOutputStream::create(device,
+                auto output_stream_exp =  EthernetOutputStream::create(device,
                     layer_info.value(), stream_params.eth_output_params, 
                     m_core_op_activated_event);
-                CHECK_EXPECTED_AS_STATUS(output_stream);
-                m_output_streams.insert(make_pair(stream_name, output_stream.release()));
-                return HAILO_SUCCESS;
+                CHECK_EXPECTED(output_stream_exp);
+                output_stream = output_stream_exp.release();
+                break;
             }
-        
+
         default:
             LOGGER__ERROR("{} interface is not supported.", stream_params.stream_interface);
-            return HAILO_NOT_IMPLEMENTED;
+            return make_unexpected(HAILO_NOT_IMPLEMENTED);
     }
+
+    if (HAILO_FORMAT_ORDER_HAILO_NMS == layer_info->format.order) {
+        // In NMS we create some new stream object that wraps the original stream (and converts
+        // bbox/burst reads into frame reads).
+        // After HRT-10553 is implemented, we won't need this wrapper anymore.
+        auto base_stream = std::move(output_stream);
+
+        const auto batch_size = get_smallest_configured_batch_size(m_config_params);
+        const auto max_queue_size = batch_size * MAX_ACTIVE_TRANSFERS_SCALE;
+
+        auto nms_stream = NmsOutputStream::create(base_stream, layer_info.value(), max_queue_size,
+            m_core_op_activated_event);
+        CHECK_EXPECTED(nms_stream);
+        output_stream = nms_stream.release();
+    }
+
+    return output_stream;
 }
 
-hailo_status CoreOp::create_vdma_output_stream(Device &device, const std::string &stream_name,
+Expected<std::shared_ptr<OutputStreamBase>> CoreOp::create_vdma_output_stream(Device &device, const std::string &stream_name,
     const LayerInfo &layer_info, const hailo_stream_parameters_t &stream_params)
 {
     // Make sure the downcast is safe
-    CHECK((Device::Type::INTEGRATED == device.get_type()) || (Device::Type::PCIE == device.get_type()),
+    CHECK_AS_EXPECTED((Device::Type::INTEGRATED == device.get_type()) || (Device::Type::PCIE == device.get_type()),
         HAILO_INTERNAL_FAILURE, "Invalid device type");
     VdmaDevice *vdma_device = reinterpret_cast<VdmaDevice*>(&device);
 
     auto batch_size_exp = get_stream_batch_size(stream_name);
-    CHECK_EXPECTED_AS_STATUS(batch_size_exp);
+    CHECK_EXPECTED(batch_size_exp);
+
     auto vdma_channel_ptr_exp = get_boundary_vdma_channel_by_stream_name(stream_name);
-    CHECK_EXPECTED_AS_STATUS(vdma_channel_ptr_exp, "Failed to get vdma channel for output stream {}", stream_name);
+    CHECK_EXPECTED(vdma_channel_ptr_exp, "Failed to get vdma channel for output stream {}", stream_name);
 
-    auto output_stream = VdmaOutputStreamBase::create(stream_params.stream_interface, *vdma_device, vdma_channel_ptr_exp.value(),
-        layer_info, batch_size_exp.value(), stream_params, m_core_op_activated_event);
-    CHECK_EXPECTED_AS_STATUS(output_stream);
-    m_output_streams.insert(make_pair(stream_name, output_stream.release()));
-
-    return HAILO_SUCCESS;
+    return VdmaOutputStream::create(stream_params.stream_interface, *vdma_device, vdma_channel_ptr_exp.value(),
+        layer_info, m_core_op_activated_event);
 }
 
 hailo_status CoreOp::create_streams_from_config_params(Device &device)
@@ -383,17 +545,23 @@ hailo_status CoreOp::create_streams_from_config_params(Device &device)
         switch (stream_parameters_pair.second.direction) {
             case HAILO_H2D_STREAM:
                 {
-                    auto status = create_input_stream_from_config_params(device,
+                    auto stream = create_input_stream_from_config_params(device,
                         stream_parameters_pair.second,
                         stream_parameters_pair.first);
+                    CHECK_EXPECTED_AS_STATUS(stream);
+
+                    auto status = add_input_stream(stream.release(), stream_parameters_pair.second);
                     CHECK_SUCCESS(status);
                 }
                 break;
             case HAILO_D2H_STREAM:
                 {
-                    auto status = create_output_stream_from_config_params(device,
+                    auto stream = create_output_stream_from_config_params(device,
                         stream_parameters_pair.second,
                         stream_parameters_pair.first);
+                    CHECK_EXPECTED_AS_STATUS(stream);
+
+                    auto status = add_output_stream(stream.release(), stream_parameters_pair.second);
                     CHECK_SUCCESS(status);
                 }
                 break;
@@ -415,7 +583,7 @@ Expected<InputStreamRefVector> CoreOp::get_input_streams_by_network(const std::s
     for (auto &stream_info : input_stream_infos.value()) {
         auto stream_ref = get_input_stream_by_name(stream_info.name);
         CHECK_EXPECTED(stream_ref);
-        result.push_back(stream_ref.release());
+        result.emplace_back(stream_ref.release());
     }
     return result;
 }
@@ -429,7 +597,7 @@ Expected<OutputStreamRefVector> CoreOp::get_output_streams_by_network(const std:
     for (auto &stream_info : output_stream_infos.value()) {
         auto stream_ref = get_output_stream_by_name(stream_info.name);
         CHECK_EXPECTED(stream_ref);
-        result.push_back(stream_ref.release());
+        result.emplace_back(stream_ref.release());
     }
     return result;
 }
@@ -452,7 +620,7 @@ OutputStreamRefVector CoreOp::get_output_streams()
     return result;
 }
 
-ExpectedRef<InputStream> CoreOp::get_input_stream_by_name(const std::string& name)
+ExpectedRef<InputStreamBase> CoreOp::get_input_stream_by_name(const std::string& name)
 {
     auto iterator = m_input_streams.find(name);
     if (m_input_streams.end() == iterator) {
@@ -460,10 +628,10 @@ ExpectedRef<InputStream> CoreOp::get_input_stream_by_name(const std::string& nam
         return make_unexpected(HAILO_NOT_FOUND);
     }
 
-    return std::ref<InputStream>(*iterator->second);
+    return std::ref<InputStreamBase>(*iterator->second);
 }
 
-ExpectedRef<OutputStream> CoreOp::get_output_stream_by_name(const std::string& name)
+ExpectedRef<OutputStreamBase> CoreOp::get_output_stream_by_name(const std::string& name)
 {
     auto iterator = m_output_streams.find(name);
     if (m_output_streams.end() == iterator) {
@@ -471,7 +639,7 @@ ExpectedRef<OutputStream> CoreOp::get_output_stream_by_name(const std::string& n
         return make_unexpected(HAILO_NOT_FOUND);
     }
 
-    return std::ref<OutputStream>(*iterator->second);
+    return std::ref<OutputStreamBase>(*iterator->second);
 }
 
 std::vector<std::reference_wrapper<InputStream>> CoreOp::get_input_streams_by_interface(
@@ -480,7 +648,7 @@ std::vector<std::reference_wrapper<InputStream>> CoreOp::get_input_streams_by_in
     std::vector<std::reference_wrapper<InputStream>> results;
     for (auto &name_pair : m_input_streams) {
         if (stream_interface == name_pair.second->get_interface()) {
-            results.push_back(std::ref(*name_pair.second));
+            results.emplace_back(std::ref(*name_pair.second));
         }
     }
     return results;
@@ -492,7 +660,7 @@ std::vector<std::reference_wrapper<OutputStream>> CoreOp::get_output_streams_by_
     std::vector<std::reference_wrapper<OutputStream>> results;
     for (auto &name_pair : m_output_streams) {
         if (stream_interface == name_pair.second->get_interface()) {
-            results.push_back(std::ref(*name_pair.second));
+            results.emplace_back(std::ref(*name_pair.second));
         }
     }
     return results;
@@ -519,16 +687,16 @@ AccumulatorPtr CoreOp::get_deactivation_time_accumulator() const
     return m_deactivation_time_accumulator;
 }
 
-Expected<std::shared_ptr<InputStream>> CoreOp::get_shared_input_stream_by_name(const std::string &stream_name)
+Expected<std::shared_ptr<InputStreamBase>> CoreOp::get_shared_input_stream_by_name(const std::string &stream_name)
 {
-    CHECK_AS_EXPECTED(contains(m_input_streams, stream_name), HAILO_NOT_FOUND, "Input stream {} not found.");
+    CHECK_AS_EXPECTED(contains(m_input_streams, stream_name), HAILO_NOT_FOUND, "Input stream {} not found.", stream_name);
     auto stream_ptr = m_input_streams.at(stream_name);
     return stream_ptr;
 }
 
-Expected<std::shared_ptr<OutputStream>> CoreOp::get_shared_output_stream_by_name(const std::string &stream_name)
+Expected<std::shared_ptr<OutputStreamBase>> CoreOp::get_shared_output_stream_by_name(const std::string &stream_name)
 {
-    CHECK_AS_EXPECTED(contains(m_output_streams, stream_name), HAILO_NOT_FOUND, "Output stream {} not found.");
+    CHECK_AS_EXPECTED(contains(m_output_streams, stream_name), HAILO_NOT_FOUND, "Output stream {} not found.", stream_name);
     auto stream_ptr = m_output_streams.at(stream_name);
     return stream_ptr;
 }

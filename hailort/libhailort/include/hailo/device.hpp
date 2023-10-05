@@ -298,7 +298,7 @@ public:
      * Get current throttling state of temperature protection and overcurrent protection components.
      * If any throttling is enabled, the function return true.
      *
-     * @return Upon success, returns Expected of @a bool, indicates weather the throttling state is active or not.
+     * @return Upon success, returns Expected of @a bool, indicates whether the throttling state is active or not.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     Expected<bool> get_throttling_state();
@@ -347,7 +347,7 @@ public:
     /**
      * Enable/Disable Pause frames.
      *
-     * @param[in] rx_pause_frames_enable  Indicating weather to enable or disable pause frames.
+     * @param[in] rx_pause_frames_enable  Indicating whether to enable or disable pause frames.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
      */
     hailo_status set_pause_frames(bool rx_pause_frames_enable);
@@ -498,7 +498,7 @@ public:
      *  Update the firmware of a Hailo device.
      * 
      * @param[in] firmware_binary       The firmware code to be updated to the device.
-     * @param[in] should_reset          Bool indicating weather to reset the device after updating.
+     * @param[in] should_reset          Bool indicating whether to reset the device after updating.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      * @note Calling this function while running other operations on the device (including inference) will
      * lead to unexpected results!

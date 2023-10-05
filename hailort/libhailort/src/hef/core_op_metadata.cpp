@@ -294,7 +294,8 @@ Expected<std::vector<hailo_stream_info_t>> CoreOpMetadata::get_input_stream_info
     auto input_layers = get_input_layer_infos(network_name);
     CHECK_EXPECTED(input_layers);
     for (auto &layer_info : input_layers.value()) {
-        res.push_back(LayerInfoUtils::get_stream_info_from_layer_info(layer_info));
+        const auto &stream_infos = LayerInfoUtils::get_stream_infos_from_layer_info(layer_info);
+        res.insert(res.end(), stream_infos.begin(), stream_infos.end());
     }
     return res;
 }
@@ -305,7 +306,8 @@ Expected<std::vector<hailo_stream_info_t>> CoreOpMetadata::get_output_stream_inf
     auto output_layers = get_output_layer_infos(network_name);
     CHECK_EXPECTED(output_layers);
     for (auto &layer_info : output_layers.value()) {
-        res.push_back(LayerInfoUtils::get_stream_info_from_layer_info(layer_info));
+        const auto &stream_infos = LayerInfoUtils::get_stream_infos_from_layer_info(layer_info);
+        res.insert(res.end(), stream_infos.begin(), stream_infos.end());
     }
     return res;
 }
@@ -330,6 +332,11 @@ Expected<std::vector<hailo_stream_info_t>> CoreOpMetadata::get_all_stream_infos(
 size_t CoreOpMetadata::get_contexts_count()
 {
     return (m_dynamic_contexts.size() + CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS);
+}
+
+size_t CoreOpMetadata::get_dynamic_contexts_count()
+{
+    return m_dynamic_contexts.size();
 }
 
 Expected<size_t> CoreOpMetadata::get_total_transfer_size()
@@ -367,7 +374,7 @@ void CoreOpMetadataPerArch::add_metadata(const CoreOpMetadataPtr &metadata, uint
 Expected<NetworkGroupMetadata> NetworkGroupMetadata::create(const std::string &network_group_name,
     std::map<std::string, CoreOpMetadataPerArch> &&core_ops_metadata_per_arch, std::vector<std::string> &sorted_output_names,
     SupportedFeatures &supported_features, const std::vector<std::string> &sorted_network_names,
-    std::vector<std::shared_ptr<NetFlowElement>> &net_flow_ops)
+    std::vector<hailort::net_flow::PostProcessOpMetadataPtr> &ops_metadata)
 {
     auto all_layers_infos = get_all_layer_infos(core_ops_metadata_per_arch);
     CHECK_EXPECTED(all_layers_infos);
@@ -375,8 +382,8 @@ Expected<NetworkGroupMetadata> NetworkGroupMetadata::create(const std::string &n
     std::vector<hailo_vstream_info_t> input_vstream_infos;
     std::vector<hailo_vstream_info_t> output_vstream_infos;
     for (auto &layer_info : all_layers_infos.value()) {
-        if (std::any_of(net_flow_ops.begin(), net_flow_ops.end(),
-            [&layer_info](auto &op) { return contains(op->input_streams, layer_info.name); })) {
+        if (std::any_of(ops_metadata.begin(), ops_metadata.end(),
+            [&layer_info](auto &op_metadata) { return contains(op_metadata->get_input_names(), layer_info.name); })) {
             continue; // all output_vstream_infos that relates to the op are coming from the op itself instead of layer_infos
         }
         auto vstreams_info = LayerInfoUtils::get_vstream_infos_from_layer_info(layer_info);
@@ -392,8 +399,10 @@ Expected<NetworkGroupMetadata> NetworkGroupMetadata::create(const std::string &n
                 std::make_move_iterator(vstreams_info.begin()), std::make_move_iterator(vstreams_info.end()));
         }
     }
-    for (auto &op : net_flow_ops) {
-        output_vstream_infos.push_back(op->output_vstream_info);
+    for (auto &metadata : ops_metadata) {
+        auto vstream_info = metadata->get_output_vstream_info();
+        CHECK_EXPECTED(vstream_info);
+        output_vstream_infos.push_back(vstream_info.release());
     }
 
     // Sort vstream infos by sorted_output_names
@@ -421,7 +430,7 @@ Expected<NetworkGroupMetadata> NetworkGroupMetadata::create(const std::string &n
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     return NetworkGroupMetadata(network_group_name, std::move(core_ops_metadata_per_arch), sorted_output_names, supported_features, sorted_network_names,
-        input_vstream_infos, output_vstream_infos, net_flow_ops);
+        input_vstream_infos, output_vstream_infos, ops_metadata);
 }
 
 Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_input_vstream_infos(const std::string &network_name) const
@@ -469,9 +478,9 @@ Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_all_vstrea
 Expected<std::vector<std::string>> NetworkGroupMetadata::get_vstream_names_from_stream_name(const std::string &stream_name)
 {
     std::vector<std::string> results;
-    for (auto &pp : m_net_flow_ops) {
-        if (contains(pp->input_streams, stream_name)) {
-            for (auto &output_metadata : pp->op->outputs_metadata()) {
+    for (auto &pp : m_ops_metadata) {
+        if (contains(pp->get_input_names(), stream_name)) {
+            for (auto &output_metadata : pp->outputs_metadata()) {
                 results.push_back(output_metadata.first);
             }
             return results;
@@ -481,6 +490,13 @@ Expected<std::vector<std::string>> NetworkGroupMetadata::get_vstream_names_from_
     auto all_layers_infos = get_all_layer_infos(m_core_ops_metadata_per_arch);
     CHECK_EXPECTED(all_layers_infos);
     for (auto &layer_info : all_layers_infos.release()) {
+        if (layer_info.is_multi_planar) {
+            for (auto &plane : layer_info.planes) {
+                if (stream_name == plane.name) {
+                    return std::vector<std::string> (1, layer_info.name);
+                }
+            }
+        }
         if (stream_name == layer_info.name) {
             if (layer_info.is_defused_nms) {
                 return std::vector<std::string> (1, layer_info.fused_nms_layer[0].name);
@@ -497,9 +513,9 @@ Expected<std::vector<std::string>> NetworkGroupMetadata::get_vstream_names_from_
 Expected<std::vector<std::string>> NetworkGroupMetadata::get_stream_names_from_vstream_name(const std::string &vstream_name)
 {
     std::vector<std::string> results;
-    for (auto &pp : m_net_flow_ops) {
-        if (contains(pp->op->outputs_metadata(), vstream_name)) {
-            for (auto &input_name : pp->input_streams) {
+    for (auto &pp : m_ops_metadata) {
+        if (contains(pp->outputs_metadata(), vstream_name)) {
+            for (auto &input_name : pp->get_input_names()) {
                 results.push_back(input_name);
             }
             return results;
@@ -519,11 +535,16 @@ Expected<std::vector<std::string>> NetworkGroupMetadata::get_stream_names_from_v
                 // vstream_name is the fused-layer of the layer info
                 results.push_back(layer_info.name);
             }
-        } else if (m_supported_features.hailo_net_flow && layer_info.direction == HAILO_D2H_STREAM) {
-            results.push_back(layer_info.name);
         } else if (vstream_name == layer_info.name) {
-            // vstream_name is a regular stream
-            results.push_back(layer_info.name);
+            // Multi planar case
+            if (layer_info.is_multi_planar) {
+                for (auto &plane : layer_info.planes) {
+                    results.push_back(plane.name);
+                }
+            } else {
+                // vstream_name is a regular stream
+                results.push_back(layer_info.name);
+            }
         }
     }
     CHECK_AS_EXPECTED(0 < results.size(), HAILO_NOT_FOUND, "Did not found vstream {}", vstream_name);
@@ -537,7 +558,7 @@ Expected<std::vector<hailo_network_info_t>> NetworkGroupMetadata::get_network_in
     for (auto const &network_name : m_sorted_network_names) {
         hailo_network_info_t network_info = {};
         CHECK_AS_EXPECTED(HAILO_MAX_NETWORK_NAME_SIZE >= (network_name.length() + 1), HAILO_INTERNAL_FAILURE,
-            "The network '{}' has a too long name (max is HAILO_MAX_NETWORK_NAME_SIZE)", network_name);  
+            "The network '{}' has a too long name (max is HAILO_MAX_NETWORK_NAME_SIZE)", network_name);
         memcpy(network_info.name, network_name.c_str(), network_name.length() + 1);
 
         network_infos.push_back(network_info);

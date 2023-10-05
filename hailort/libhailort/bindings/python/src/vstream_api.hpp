@@ -10,9 +10,12 @@
 #ifndef _VSTREAM_API_HPP_
 #define _VSTREAM_API_HPP_
 
+#include "utils.hpp"
+
+#include "common/fork_support.hpp"
+
 #include "hailo/vstream.hpp"
 #include "hailo/inference_pipeline.hpp"
-#include "utils.hpp"
 
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
@@ -23,16 +26,22 @@
 namespace hailort
 {
 
+class ConfiguredNetworkGroupWrapper;
+
 class InputVStreamWrapper final
 {
 public:
     static void add_to_python_module(py::module &m);
 };
 
-class InputVStreamsWrapper final 
+
+class InputVStreamsWrapper;
+using InputVStreamsWrapperPtr = std::shared_ptr<InputVStreamsWrapper>;
+
+class InputVStreamsWrapper final
 {
 public:
-    static InputVStreamsWrapper create(ConfiguredNetworkGroup &net_group,
+    static InputVStreamsWrapperPtr create(ConfiguredNetworkGroup &net_group,
         const std::map<std::string, hailo_vstream_params_t> &input_vstreams_params);
     const InputVStreamsWrapper &enter();
     void exit();
@@ -42,11 +51,17 @@ public:
     void before_fork();
     void after_fork_in_parent();
     void after_fork_in_child();
+
     static void add_to_python_module(py::module &m);
 
-private:
     InputVStreamsWrapper(std::unordered_map<std::string, std::shared_ptr<InputVStream>> &input_vstreams);
+
     std::unordered_map<std::string, std::shared_ptr<InputVStream>> m_input_vstreams;
+
+private:
+#ifdef HAILO_IS_FORK_SUPPORTED
+    AtForkRegistry::AtForkGuard m_atfork_guard;
+#endif
 };
 
 class OutputVStreamWrapper final
@@ -58,10 +73,13 @@ public:
     static void add_to_python_module(py::module &m);
 };
 
+class OutputVStreamsWrapper;
+using OutputVStreamsWrapperPtr = std::shared_ptr<OutputVStreamsWrapper>;
+
 class OutputVStreamsWrapper final
 {
 public:
-    static OutputVStreamsWrapper create(ConfiguredNetworkGroup &net_group,
+    static OutputVStreamsWrapperPtr create(ConfiguredNetworkGroup &net_group,
         const std::map<std::string, hailo_vstream_params_t> &output_vstreams_params);
     std::shared_ptr<OutputVStream> get_output_by_name(const std::string &name);
     const OutputVStreamsWrapper &enter();
@@ -73,15 +91,20 @@ public:
     void after_fork_in_child();
     static void add_to_python_module(py::module &m);
 
-private:
     OutputVStreamsWrapper(std::unordered_map<std::string, std::shared_ptr<OutputVStream>> &output_vstreams);
+
     std::unordered_map<std::string, std::shared_ptr<OutputVStream>> m_output_vstreams;
+
+private:
+#ifdef HAILO_IS_FORK_SUPPORTED
+    AtForkRegistry::AtForkGuard m_atfork_guard;
+#endif
 };
 
 class InferVStreamsWrapper final
 {
 public:
-    static InferVStreamsWrapper create(ConfiguredNetworkGroup &network_group,
+    static InferVStreamsWrapper create(ConfiguredNetworkGroupWrapper &network_group,
         const std::map<std::string, hailo_vstream_params_t> &input_vstreams_params,
         const std::map<std::string, hailo_vstream_params_t> &output_vstreams_params);
     void infer(std::map<std::string, py::array> input_data, std::map<std::string, py::array> output_data,
@@ -90,11 +113,14 @@ public:
     hailo_format_t get_user_buffer_format(const std::string &stream_name);
     std::vector<size_t> get_shape(const std::string &stream_name);
     void release();
+    void before_fork();
+    void after_fork_in_parent();
+    void after_fork_in_child();
     static void add_to_python_module(py::module &m);
 
 private:
     InferVStreamsWrapper(std::shared_ptr<InferVStreams> &infer_pipeline);
-    
+
     std::shared_ptr<InferVStreams> m_infer_pipeline;
 };
 

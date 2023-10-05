@@ -37,7 +37,6 @@ private:
     CoreOpsSchedulerOracle() {}
     // TODO: Consider returning a vector of devices (we can use this function in other places)
     static bool is_core_op_active(SchedulerBase &scheduler, scheduler_core_op_handle_t core_op_handle);
-    static bool is_core_op_finished_batch(SchedulerBase &scheduler, const device_id_t &device_id);
 };
 
 } /* namespace hailort */
