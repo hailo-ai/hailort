@@ -909,7 +909,54 @@ hailo_status HailoRTDriver::vdma_low_memory_buffer_free(uintptr_t buffer_handle)
     return HAILO_SUCCESS; 
 }
 
-Expected<std::pair<uintptr_t, uint64_t>> HailoRTDriver::vdma_continuous_buffer_alloc(size_t size)
+
+#if defined(__linux__)
+Expected<ContinousBufferInfo> HailoRTDriver::vdma_continuous_buffer_alloc(size_t size)
+{
+    auto handle_to_dma_address_pair = continous_buffer_alloc_ioctl(size);
+    if (!handle_to_dma_address_pair) {
+        // Log in continous_buffer_alloc_ioctl
+        return make_unexpected(handle_to_dma_address_pair.status());
+    }
+
+    const auto desc_handle = handle_to_dma_address_pair->first;
+    const auto dma_address = handle_to_dma_address_pair->second;
+
+    auto user_address = continous_buffer_mmap(desc_handle, size);
+    if (!user_address) {
+        auto status = continous_buffer_free_ioctl(desc_handle);
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed releasing conitnous buffer, status {}", status);
+            // continue
+        }
+        return make_unexpected(user_address.status());
+    }
+
+    return ContinousBufferInfo{desc_handle, dma_address, size, user_address.release()};
+}
+
+hailo_status HailoRTDriver::vdma_continuous_buffer_free(const ContinousBufferInfo &buffer_info)
+{
+    hailo_status status = HAILO_SUCCESS;
+
+    auto unmap_status = continous_buffer_munmap(buffer_info.user_address, buffer_info.size);
+    if (HAILO_SUCCESS != unmap_status) {
+        LOGGER__ERROR("Continous buffer list unmap failed with {}", unmap_status);
+        status = unmap_status;
+        // continue
+    }
+
+    auto release_status = continous_buffer_free_ioctl(buffer_info.handle);
+    if (HAILO_SUCCESS != release_status) {
+        LOGGER__ERROR("Continous buffer release status failed with {}", release_status);
+        status = release_status;
+        // continue
+    }
+
+    return status;
+}
+
+Expected<std::pair<uintptr_t, uint64_t>> HailoRTDriver::continous_buffer_alloc_ioctl(size_t size)
 {
     hailo_allocate_continuous_buffer_params params { .buffer_size = size, .buffer_handle = 0, .dma_address = 0 };
 
@@ -928,10 +975,10 @@ Expected<std::pair<uintptr_t, uint64_t>> HailoRTDriver::vdma_continuous_buffer_a
     return std::make_pair(params.buffer_handle, params.dma_address);
 }
 
-hailo_status HailoRTDriver::vdma_continuous_buffer_free(uintptr_t buffer_handle)
+hailo_status HailoRTDriver::continous_buffer_free_ioctl(uintptr_t desc_handle)
 {
     int err = 0;
-    auto status = hailo_ioctl(this->m_fd, HAILO_VDMA_CONTINUOUS_BUFFER_FREE, (void*)buffer_handle, err);
+    auto status = hailo_ioctl(this->m_fd, HAILO_VDMA_CONTINUOUS_BUFFER_FREE, (void*)desc_handle, err);
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("Failed to free continuous buffer with errno: {}", err);
         return HAILO_DRIVER_FAIL;
@@ -939,6 +986,46 @@ hailo_status HailoRTDriver::vdma_continuous_buffer_free(uintptr_t buffer_handle)
 
     return HAILO_SUCCESS;
 }
+
+Expected<void *> HailoRTDriver::continous_buffer_mmap(uintptr_t desc_handle, size_t size)
+{
+    // We lock m_driver_lock before calling mmap. Read m_driver_lock doc in the header
+    std::unique_lock<std::mutex> lock(m_driver_lock);
+
+    void *address = mmap(nullptr, size, PROT_WRITE | PROT_READ, MAP_SHARED, m_fd, (off_t)desc_handle);
+    if (MAP_FAILED == address) {
+        LOGGER__ERROR("Failed to continous buffer buffer with errno: {}", errno);
+        return make_unexpected(HAILO_DRIVER_FAIL);
+    }
+    return address;
+}
+
+hailo_status HailoRTDriver::continous_buffer_munmap(void *address, size_t size)
+{
+    if (0 != munmap(address, size)) {
+        LOGGER__ERROR("munmap of address {}, length: {} failed with errno: {}", address, size, errno);
+        return HAILO_DRIVER_FAIL;
+    }
+    return HAILO_SUCCESS;
+}
+
+#elif defined(__QNX__)
+
+Expected<ContinousBufferInfo> HailoRTDriver::vdma_continuous_buffer_alloc(size_t /* size */)
+{
+    LOGGER__ERROR("Continous buffer not supported for platform");
+    return make_unexpected(HAILO_NOT_SUPPORTED);
+}
+
+hailo_status HailoRTDriver::vdma_continuous_buffer_free(const ContinousBufferInfo &/* buffer_info */)
+{
+    LOGGER__ERROR("Continous buffer not supported for platform");
+    return HAILO_NOT_SUPPORTED;
+}
+
+#else
+#error "unsupported platform!"
+#endif
 
 hailo_status HailoRTDriver::mark_as_used()
 {

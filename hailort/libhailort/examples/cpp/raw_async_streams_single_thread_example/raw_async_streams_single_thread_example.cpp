@@ -36,8 +36,12 @@ static AlignedBuffer page_aligned_alloc(size_t size)
 #endif
 }
 
-static hailo_status infer(ConfiguredNetworkGroup &network_group, InputStream &input, OutputStream &output)
+static hailo_status infer(ConfiguredNetworkGroup &network_group)
 {
+    // Assume one input and output
+    auto &output = network_group.get_output_streams()[0].get();
+    auto &input = network_group.get_input_streams()[0].get();
+
     auto input_queue_size = input.get_async_max_queue_size();
     auto output_queue_size = output.get_async_max_queue_size();
     if (!input_queue_size || !output_queue_size) {
@@ -45,8 +49,10 @@ static hailo_status infer(ConfiguredNetworkGroup &network_group, InputStream &in
         return HAILO_INTERNAL_FAILURE;
     }
 
-    // We store buffers vector here as a guard for the memory. The buffer will be freed only after
-    // activated_network_group will be released.
+    // Allocate buffers. The buffers sent to the async API must be page aligned.
+    // Note - the buffers can be freed only after all callbacks are called. The user can either wait for all
+    // callbacks, or as done in this example, call ConfiguredNetworkGroup::shutdown that will make sure all callbacks
+    // are called.
     std::vector<AlignedBuffer> buffer_guards;
 
     OutputStream::TransferDoneCallback read_done = [&output, &read_done](const OutputStream::CompletionInfo &completion_info) {
@@ -55,7 +61,7 @@ static hailo_status infer(ConfiguredNetworkGroup &network_group, InputStream &in
         case HAILO_SUCCESS:
             // Real applications can forward the buffer to post-process/display. Here we just re-launch new async read.
             status = output.read_async(completion_info.buffer_addr, completion_info.buffer_size, read_done);
-            if ((HAILO_SUCCESS != status) && (HAILO_STREAM_NOT_ACTIVATED != status)) {
+            if ((HAILO_SUCCESS != status) && (HAILO_STREAM_ABORTED_BY_USER != status)) {
                 std::cerr << "Failed read async with status=" << status << std::endl;
             }
             break;
@@ -74,7 +80,7 @@ static hailo_status infer(ConfiguredNetworkGroup &network_group, InputStream &in
             // Real applications may free the buffer and replace it with new buffer ready to be sent. Here we just
             // re-launch new async write.
             status = input.write_async(completion_info.buffer_addr, completion_info.buffer_size, write_done);
-            if ((HAILO_SUCCESS != status) && (HAILO_STREAM_NOT_ACTIVATED != status)) {
+            if ((HAILO_SUCCESS != status) && (HAILO_STREAM_ABORTED_BY_USER != status)) {
                 std::cerr << "Failed read async with status=" << status << std::endl;
             }
             break;
@@ -85,16 +91,6 @@ static hailo_status infer(ConfiguredNetworkGroup &network_group, InputStream &in
             std::cerr << "Got an unexpected status on callback. status=" << completion_info.status << std::endl;
         }
     };
-
-    // The destructor of activated_network_group will make sure that all async operations are done. All pending
-    // operations will be canceled and their callbacks will be called with status=HAILO_STREAM_ABORTED_BY_USER.
-    // Be sure to capture variables in the callbacks that will be destructed after the activated_network_group.
-    // Otherwise, the lambda would have access an uninitialized data.
-    auto activated_network_group = network_group.activate();
-    if (!activated_network_group) {
-        std::cerr << "Failed to activate network group "  << activated_network_group.status() << std::endl;
-        return activated_network_group.status();
-    }
 
     // We launch "*output_queue_size" async read operation. On each async callback, we launch a new async read operation.
     for (size_t i = 0; i < *output_queue_size; i++) {
@@ -122,9 +118,13 @@ static hailo_status infer(ConfiguredNetworkGroup &network_group, InputStream &in
         buffer_guards.emplace_back(buffer);
     }
 
-    // After all async operations are launched, the inference will continue until the activated_network_group
-    // destructor is called.
     std::this_thread::sleep_for(std::chrono::seconds(5));
+
+    // Calling shutdown on a network group will ensure that all async operations are done. All pending
+    // operations will be canceled and their callbacks will be called with status=HAILO_STREAM_ABORTED_BY_USER.
+    // Only after the shutdown is called, we can safely free the buffers and any variable captured inside the async
+    // callback lambda.
+    network_group.shutdown();
 
     return HAILO_SUCCESS;
 }
@@ -167,27 +167,29 @@ int main()
     auto device = Device::create();
     if (!device) {
         std::cerr << "Failed to create device " << device.status() << std::endl;
-        return device.status();
+        return EXIT_FAILURE;
     }
 
     static const auto HEF_FILE = "hefs/shortcut_net.hef";
     auto network_group = configure_network_group(*device.value(), HEF_FILE);
     if (!network_group) {
         std::cerr << "Failed to configure network group" << HEF_FILE << std::endl;
-        return network_group.status();
+        return EXIT_FAILURE;
     }
 
-    // Assume one input and output
-    auto output = network_group->get()->get_output_streams()[0];
-    auto input = network_group->get()->get_input_streams()[0];
+    auto activated_network_group = network_group.value()->activate();
+    if (!activated_network_group) {
+        std::cerr << "Failed to activate network group "  << activated_network_group.status() << std::endl;
+        return EXIT_FAILURE;
+    }
 
     // Now start the inference
-    auto status = infer(*network_group.value(), input.get(), output.get());
+    auto status = infer(*network_group.value());
     if (HAILO_SUCCESS != status) {
         std::cerr << "Inference failed with " << status << std::endl;
-        return status;
+        return EXIT_FAILURE;
     }
 
     std::cout << "Inference finished successfully" << std::endl;
-    return HAILO_SUCCESS;
+    return EXIT_SUCCESS;
 }

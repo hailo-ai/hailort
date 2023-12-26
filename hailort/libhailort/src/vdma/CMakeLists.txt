@@ -19,6 +19,7 @@ set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/dma_able_buffer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/sg_buffer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/continuous_buffer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/memory/mapping_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/buffer_requirements.cpp
 )
 

@@ -49,13 +49,29 @@ public:
     {
         std::unique_lock<std::mutex> lock(m_mutex);
         auto resource_expected = resource_lookup(handle);
-        assert(resource_expected);
+        CHECK_EXPECTED(resource_expected);
         auto resource = resource_expected.release();
 
         assert(contains(m_resources_mutexes, handle));
         std::shared_lock<std::shared_timed_mutex> resource_lock(m_resources_mutexes[handle]);
         lock.unlock();
-        K ret = lambda(resource->resource, args...);
+        auto ret = lambda(resource->resource, args...);
+
+        return ret;
+    }
+
+    template<class Func, typename... Args>
+    hailo_status execute(uint32_t handle, Func &lambda, Args... args)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        auto resource_expected = resource_lookup(handle);
+        CHECK_EXPECTED_AS_STATUS(resource_expected);
+        auto resource = resource_expected.release();
+
+        assert(contains(m_resources_mutexes, handle));
+        std::shared_lock<std::shared_timed_mutex> resource_lock(m_resources_mutexes[handle]);
+        lock.unlock();
+        auto ret = lambda(resource->resource, args...);
 
         return ret;
     }
@@ -71,18 +87,18 @@ public:
         return index;
     }
 
-    uint32_t dup_handle(uint32_t handle, uint32_t pid)
+    Expected<uint32_t> dup_handle(uint32_t handle, uint32_t pid)
     {
         std::unique_lock<std::mutex> lock(m_mutex);
         auto resource_expected = resource_lookup(handle);
-        assert(resource_expected);
+        CHECK_EXPECTED(resource_expected);
         auto resource = resource_expected.release();
 
         assert(contains(m_resources_mutexes, handle));
         std::unique_lock<std::shared_timed_mutex> resource_lock(m_resources_mutexes[handle]);
         resource->pids.insert(pid);
 
-        return handle;
+        return Expected<uint32_t>(handle);
     }
 
     std::shared_ptr<T> release_resource(uint32_t handle, uint32_t pid)

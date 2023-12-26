@@ -66,7 +66,7 @@ protected:
 
 public:
     EthernetInputStream(Device &device, Udp &&udp, EventPtr &&core_op_activated_event, const LayerInfo &layer_info, hailo_status &status) :
-        InputStreamBase(layer_info, HAILO_STREAM_INTERFACE_ETH, std::move(core_op_activated_event), status), m_udp(std::move(udp)), m_device(device) {}
+        InputStreamBase(layer_info, std::move(core_op_activated_event), status), m_udp(std::move(udp)), m_device(device) {}
     virtual ~EthernetInputStream();
 
     static Expected<std::unique_ptr<EthernetInputStream>> create(Device &device,
@@ -83,8 +83,8 @@ public:
     virtual hailo_status deactivate_stream() override;
     virtual hailo_stream_interface_t get_interface() const override { return HAILO_STREAM_INTERFACE_ETH; }
     virtual std::chrono::milliseconds get_timeout() const override;
-    virtual hailo_status abort() override;
-    virtual hailo_status clear_abort() override {return HAILO_SUCCESS;}; // TODO (HRT-3799): clear abort state in the eth stream
+    virtual hailo_status abort_impl() override;
+    virtual hailo_status clear_abort_impl() override {return HAILO_SUCCESS;}; // TODO (HRT-3799): clear abort state in the eth stream
 };
 
 class EthernetInputStreamRateLimited : public EthernetInputStream {
@@ -146,7 +146,7 @@ private:
     Device &m_device;
 
     EthernetOutputStream(Device &device, const LayerInfo &edge_layer, Udp &&udp, EventPtr &&core_op_activated_event, hailo_status &status) :
-        OutputStreamBase(edge_layer, HAILO_STREAM_INTERFACE_ETH, std::move(core_op_activated_event), status),
+        OutputStreamBase(edge_layer, std::move(core_op_activated_event), status),
         leftover_buffer(),
         leftover_size(0),
         // Firmware starts sending sync sequence from 0, so treating the first previous as max value (that will be overflowed to 0)
@@ -188,8 +188,8 @@ public:
     virtual hailo_status deactivate_stream() override;
     virtual hailo_stream_interface_t get_interface() const override { return HAILO_STREAM_INTERFACE_ETH; }
     virtual std::chrono::milliseconds get_timeout() const override;
-    virtual hailo_status abort() override;
-    virtual hailo_status clear_abort() override {return HAILO_SUCCESS;}; // TODO (HRT-3799): clear abort state in the eth stream
+    virtual hailo_status abort_impl() override;
+    virtual hailo_status clear_abort_impl() override {return HAILO_SUCCESS;}; // TODO (HRT-3799): clear abort state in the eth stream
 };
 
 } /* namespace hailort */

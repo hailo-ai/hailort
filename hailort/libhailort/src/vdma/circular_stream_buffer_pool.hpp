@@ -13,6 +13,7 @@
 #include "vdma/memory/mapped_buffer.hpp"
 #include "common/circular_buffer.hpp"
 #include "stream_common/stream_buffer_pool.hpp"
+#include "vdma/vdma_device.hpp"
 
 #include <condition_variable>
 
@@ -27,7 +28,7 @@ namespace hailort
 // and one producer (calls enqueue).
 class CircularStreamBufferPool final : public StreamBufferPool {
 public:
-    static Expected<std::unique_ptr<CircularStreamBufferPool>> create(HailoRTDriver &driver,
+    static Expected<std::unique_ptr<CircularStreamBufferPool>> create(VdmaDevice &device,
         HailoRTDriver::DmaDirection direction, size_t desc_page_size, size_t descs_count, size_t transfer_size);
 
     CircularStreamBufferPool(size_t desc_page_size, size_t descs_count, size_t transfer_size,
@@ -45,7 +46,7 @@ public:
     virtual void reset_pointers() override;
 
 private:
-    static Expected<BufferPtr> allocate_buffer(HailoRTDriver &driver,
+    static Expected<BufferPtr> allocate_buffer(VdmaDevice &device,
         HailoRTDriver::DmaDirection direction, size_t size);
 
     size_t descs_in_transfer() const;

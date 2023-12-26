@@ -83,7 +83,7 @@ hailo_status EthernetInputStream::deactivate_stream()
 
     // Aborting the stream to make sure all read/writes will exit.
     // Note - on ethernet stream there is no true "clear_abort" - one abort was called, the socket can't be reused.
-    status = abort();
+    status = abort_impl();
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -94,7 +94,7 @@ hailo_status EthernetInputStream::activate_stream()
     hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__config_stream_params_t params = {};
     
-    params.nn_stream_config = m_nn_stream_config;
+    params.nn_stream_config = m_layer_info.nn_stream_config;
     params.communication_type = CONTROL_PROTOCOL__COMMUNICATION_TYPE_UDP;
     params.is_input = true;
     params.stream_index = m_stream_info.index;
@@ -435,7 +435,7 @@ std::chrono::milliseconds EthernetInputStream::get_timeout() const
     return std::chrono::milliseconds((MILLISECONDS_IN_SECOND * m_udp.m_timeout.tv_sec) + (m_udp.m_timeout.tv_usec / MICROSECONDS_IN_MILLISECOND));
 }
 
-hailo_status EthernetInputStream::abort()
+hailo_status EthernetInputStream::abort_impl()
 {
     return m_udp.abort();
 }
@@ -466,7 +466,7 @@ hailo_status EthernetOutputStream::deactivate_stream()
 
     // Aborting the stream to make sure all read/writes will exit.
     // Note - on ethernet stream there is no true "clear_abort" - one abort was called, the socket can't be reused.
-    status = abort();
+    status = abort_impl();
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -477,7 +477,7 @@ hailo_status EthernetOutputStream::activate_stream()
     hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__config_stream_params_t params = {};
 
-    params.nn_stream_config = m_nn_stream_config;
+    params.nn_stream_config = m_layer_info.nn_stream_config;
     params.communication_type = CONTROL_PROTOCOL__COMMUNICATION_TYPE_UDP;
     params.is_input = false;
     params.stream_index = m_stream_info.index;
@@ -733,7 +733,7 @@ std::chrono::milliseconds EthernetOutputStream::get_timeout() const
     return std::chrono::milliseconds((MILLISECONDS_IN_SECOND * m_udp.m_timeout.tv_sec) + (m_udp.m_timeout.tv_usec / MICROSECONDS_IN_MILLISECOND));
 }
 
-hailo_status EthernetOutputStream::abort()
+hailo_status EthernetOutputStream::abort_impl()
 {
     return m_udp.abort();
 }

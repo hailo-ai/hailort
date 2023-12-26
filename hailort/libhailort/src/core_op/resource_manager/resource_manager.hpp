@@ -189,7 +189,6 @@ public:
     hailo_status enable_state_machine(uint16_t dynamic_batch_size, 
         uint16_t batch_count = CONTROL_PROTOCOL__INIFINITE_BATCH_COUNT);
     hailo_status reset_state_machine();
-    hailo_status cancel_pending_transfers();
     hailo_status start_vdma_interrupts_dispatcher();
     hailo_status stop_vdma_interrupts_dispatcher();
     Expected<uint16_t> get_network_batch_size(const std::string &network_name) const;

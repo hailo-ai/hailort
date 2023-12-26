@@ -142,6 +142,8 @@ static std::string identity_arch_string(const hailo_device_identity_t &identity)
         return "HAILO15H";
     case HAILO_ARCH_PLUTO:
         return "PLUTO";
+    case HAILO_ARCH_HAILO15M:
+        return "HAILO15M";
     default:
         return "Unknown";
     }
@@ -222,7 +224,7 @@ hailo_status FwControlTestMemoriesCommand::execute_on_device(Device &device)
     auto status = device.test_chip_memories();
     CHECK_SUCCESS(status, "Failed memory test");
 
-    std::cout << "Memory test has completed succesfully" << std::endl;
+    std::cout << "Memory test has completed successfully" << std::endl;
     return HAILO_SUCCESS;
 }
 

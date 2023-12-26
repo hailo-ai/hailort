@@ -11,6 +11,14 @@
 
 #include "hef/hef_internal.hpp"
 #include "hailort_rpc_client.hpp"
+#include "net_flow/ops/yolov8_post_process.hpp"
+#include "net_flow/ops/yolox_post_process.hpp"
+#include "net_flow/ops/ssd_post_process.hpp"
+#include "net_flow/ops/softmax_post_process.hpp"
+#include "net_flow/ops/argmax_post_process.hpp"
+#include "net_flow/ops/nms_post_process.hpp"
+#include "net_flow/ops/yolov5_op_metadata.hpp"
+#include "net_flow/ops/yolov5_seg_op_metadata.hpp"
 
 #include <grpcpp/health_check_service_interface.h>
 
@@ -257,6 +265,40 @@ Expected<std::vector<uint32_t>> HailoRtRpcClient::VDevice_configure(const VDevic
     return networks_handles;
 }
 
+Expected<ProtoCallbackIdentifier> HailoRtRpcClient::VDevice_get_callback_id(const VDeviceIdentifier &identifier)
+{
+    VDevice_get_callback_id_Request request;
+    auto proto_identifier = request.mutable_identifier();
+    VDevice_convert_identifier_to_proto(identifier, proto_identifier);
+
+    VDevice_get_callback_id_Reply reply;
+    ClientContextWithTimeout context;
+    grpc::Status status = m_stub->VDevice_get_callback_id(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    if (reply.status() == HAILO_SHUTDOWN_EVENT_SIGNALED) {
+        return make_unexpected(HAILO_SHUTDOWN_EVENT_SIGNALED);
+    }
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    auto cb_id = reply.callback_id();
+    return cb_id;
+}
+
+hailo_status HailoRtRpcClient::VDevice_finish_callback_listener(const VDeviceIdentifier &identifier)
+{
+    VDevice_finish_callback_listener_Request request;
+    auto proto_identifier = request.mutable_identifier();
+    VDevice_convert_identifier_to_proto(identifier, proto_identifier);
+
+    VDevice_finish_callback_listener_Reply reply;
+    ClientContextWithTimeout context;
+    grpc::Status status = m_stub->VDevice_finish_callback_listener(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS(static_cast<hailo_status>(reply.status()));
+    return HAILO_SUCCESS;
+}
+
 Expected<std::vector<std::string>> HailoRtRpcClient::VDevice_get_physical_devices_ids(const VDeviceIdentifier &identifier)
 {
     VDevice_get_physical_devices_ids_Request request;
@@ -320,6 +362,8 @@ Expected<uint32_t> HailoRtRpcClient::ConfiguredNetworkGroup_dup_handle(const Net
     ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_dup_handle(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
     return reply.handle();
 }
 
@@ -364,13 +408,12 @@ std::map<std::string, hailo_vstream_params_t> get_group(const ProtoNamedVStreamP
 }
 
 Expected<std::map<std::string, hailo_vstream_params_t>> HailoRtRpcClient::ConfiguredNetworkGroup_make_input_vstream_params(
-    const NetworkGroupIdentifier &identifier, bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
+    const NetworkGroupIdentifier &identifier, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
     const std::string &network_name)
 {
     ConfiguredNetworkGroup_make_input_vstream_params_Request request;
     auto proto_identifier = request.mutable_identifier();
     ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
-    request.set_quantized(quantized);
     request.set_format_type(format_type);
     request.set_timeout_ms(timeout_ms);
     request.set_queue_size(queue_size);
@@ -386,12 +429,11 @@ Expected<std::map<std::string, hailo_vstream_params_t>> HailoRtRpcClient::Config
 }
 
 Expected<std::vector<std::map<std::string, hailo_vstream_params_t>>> HailoRtRpcClient::ConfiguredNetworkGroup_make_output_vstream_params_groups(
-    const NetworkGroupIdentifier &identifier, bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size)
+    const NetworkGroupIdentifier &identifier, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size)
 {
     ConfiguredNetworkGroup_make_output_vstream_params_groups_Request request;
     auto proto_identifier = request.mutable_identifier();
     ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
-    request.set_quantized(quantized);
     request.set_format_type(format_type);
     request.set_timeout_ms(timeout_ms);
     request.set_queue_size(queue_size);
@@ -411,13 +453,12 @@ Expected<std::vector<std::map<std::string, hailo_vstream_params_t>>> HailoRtRpcC
 }
 
 Expected<std::map<std::string, hailo_vstream_params_t>> HailoRtRpcClient::ConfiguredNetworkGroup_make_output_vstream_params(
-    const NetworkGroupIdentifier &identifier, bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
+    const NetworkGroupIdentifier &identifier, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
     const std::string &network_name)
 {
     ConfiguredNetworkGroup_make_output_vstream_params_Request request;
     auto proto_identifier = request.mutable_identifier();
     ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
-    request.set_quantized(quantized);
     request.set_format_type(format_type);
     request.set_timeout_ms(timeout_ms);
     request.set_queue_size(queue_size);
@@ -584,6 +625,20 @@ Expected<hailo_stream_interface_t> HailoRtRpcClient::ConfiguredNetworkGroup_get_
     return stream_interface;
 }
 
+hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_shutdown(const NetworkGroupIdentifier &identifier)
+{
+    ConfiguredNetworkGroup_shutdown_Request request;
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
+
+    ClientContextWithTimeout context;
+    ConfiguredNetworkGroup_shutdown_Reply reply;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_shutdown(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    return static_cast<hailo_status>(reply.status());
+}
+
 Expected<std::vector<std::vector<std::string>>> HailoRtRpcClient::ConfiguredNetworkGroup_get_output_vstream_groups(const NetworkGroupIdentifier &identifier)
 {
     ConfiguredNetworkGroup_get_output_vstream_groups_Request request;
@@ -608,6 +663,376 @@ Expected<std::vector<std::vector<std::string>>> HailoRtRpcClient::ConfiguredNetw
         result.push_back(group);
     }
     return result;
+}
+
+std::pair<std::string, hailort::net_flow::BufferMetaData> deserialize_buffer_metadata(const ProtoNamedMetadata &op_metadata_proto)
+{
+    auto &named_params_proto = op_metadata_proto.params();
+
+    hailo_3d_image_shape_t shape = {
+        named_params_proto.shape().height(),
+        named_params_proto.shape().width(),
+        named_params_proto.shape().features()
+    };
+
+    hailo_3d_image_shape_t padded_shape = {
+        named_params_proto.padded_shape().height(),
+        named_params_proto.padded_shape().width(),
+        named_params_proto.padded_shape().features()
+    };
+
+    hailo_format_t format = {
+        static_cast<hailo_format_type_t>(named_params_proto.format().type()),
+        static_cast<hailo_format_order_t>(named_params_proto.format().order()),
+        static_cast<hailo_format_flags_t>(named_params_proto.format().flags())
+    };
+
+    hailo_quant_info_t single_quant_info = {
+        named_params_proto.quant_info().qp_zp(),
+        named_params_proto.quant_info().qp_scale(),
+        named_params_proto.quant_info().limvals_min(),
+        named_params_proto.quant_info().limvals_max()
+    };
+
+    std::pair<std::string, hailort::net_flow::BufferMetaData> named_metadata_to_insert(op_metadata_proto.name(),
+                                                                {shape, padded_shape, format, single_quant_info});
+    return named_metadata_to_insert;
+}
+
+std::unordered_map<std::string, hailort::net_flow::BufferMetaData> deserialize_inputs_buffer_metadata(const ProtoOpMetadata &ops_metadatas_proto)
+{
+    std::unordered_map<std::string, hailort::net_flow::BufferMetaData> inputs_metadata;
+    auto &inputs_metadata_proto = ops_metadatas_proto.inputs_metadata();
+    for (auto &input_metadata_proto : inputs_metadata_proto) {
+        auto input_metadata = deserialize_buffer_metadata(input_metadata_proto);
+        inputs_metadata.insert(input_metadata);
+    }
+    return inputs_metadata;
+}
+
+std::unordered_map<std::string, hailort::net_flow::BufferMetaData> deserialize_outputs_buffer_metadata(const ProtoOpMetadata &ops_metadatas_proto)
+{
+    std::unordered_map<std::string, hailort::net_flow::BufferMetaData> outputs_metadata;
+    auto &outputs_metadata_proto = ops_metadatas_proto.outputs_metadata();
+    for (auto &output_metadata_proto : outputs_metadata_proto) {
+        auto output_metadata = deserialize_buffer_metadata(output_metadata_proto);
+        outputs_metadata.insert(output_metadata);
+    }
+    return outputs_metadata;
+}
+
+Expected<hailort::net_flow::Yolov8PostProcessConfig> create_yolov8_post_process_config(const ProtoOpMetadata &op_metadata_proto)
+{
+    auto yolov8_config_proto = op_metadata_proto.yolov8_config();
+    std::vector<hailort::net_flow::Yolov8MatchingLayersNames> reg_to_cls_inputs;
+    auto &reg_to_cls_inputs_proto = yolov8_config_proto.reg_to_cls_inputs();
+    for (auto &reg_to_cls_input_proto : reg_to_cls_inputs_proto) {
+        hailort::net_flow::Yolov8MatchingLayersNames yolov8_matching_layers_name;
+        yolov8_matching_layers_name.reg = reg_to_cls_input_proto.reg();
+        yolov8_matching_layers_name.cls = reg_to_cls_input_proto.cls();
+        yolov8_matching_layers_name.stride = reg_to_cls_input_proto.stride();
+        reg_to_cls_inputs.push_back(yolov8_matching_layers_name);
+    }
+
+    hailort::net_flow::Yolov8PostProcessConfig yolov8_post_process_config = {yolov8_config_proto.image_height(),
+                                                            yolov8_config_proto.image_width(), reg_to_cls_inputs};
+    return yolov8_post_process_config;
+}
+
+Expected<hailort::net_flow::YoloPostProcessConfig> create_yolov5_post_process_config(const ProtoOpMetadata &op_metadata_proto)
+{
+    auto yolov5_config_proto = op_metadata_proto.yolov5_config();
+    std::map<std::string, std::vector<int>> anchors_per_layer;
+    auto &yolov5_anchors_list_proto = yolov5_config_proto.yolov5_anchors();
+    for (auto &anchors_list_proto : yolov5_anchors_list_proto) {
+        std::vector<int> anchors;
+        for(auto &anchor : anchors_list_proto.anchors()) {
+            anchors.push_back(anchor);
+        }
+        anchors_per_layer.emplace(anchors_list_proto.layer(), anchors);
+    }
+
+    hailort::net_flow::YoloPostProcessConfig yolov5_post_process_config = {yolov5_config_proto.image_height(),
+                                                            yolov5_config_proto.image_width(), anchors_per_layer};
+    return yolov5_post_process_config;
+}
+
+Expected<hailort::net_flow::YoloxPostProcessConfig> create_yolox_post_process_config(const ProtoOpMetadata &op_metadata_proto)
+{
+    auto yolox_config_proto = op_metadata_proto.yolox_config();
+    std::vector<hailort::net_flow::YoloxMatchingLayersNames> input_names;
+    auto &yolox_anchors_list_proto = yolox_config_proto.input_names();
+    for (auto &input_name : yolox_anchors_list_proto) {
+        input_names.push_back({input_name.reg(), input_name.obj(), input_name.cls()});
+    }
+
+    hailort::net_flow::YoloxPostProcessConfig yolox_post_process_config = {yolox_config_proto.image_height(),
+                                                            yolox_config_proto.image_width(), input_names};
+    return yolox_post_process_config;
+}
+
+Expected<hailort::net_flow::SSDPostProcessConfig> create_ssd_post_process_config(const ProtoOpMetadata &op_metadata_proto)
+{
+    auto ssd_config_proto = op_metadata_proto.ssd_config();
+    std::map<std::string, std::string> reg_to_cls_inputs;
+    auto &ssd_reg_to_cls_proto = ssd_config_proto.reg_to_cls_inputs();
+    for (auto &reg_to_cls_input : ssd_reg_to_cls_proto) {
+        reg_to_cls_inputs.emplace(reg_to_cls_input.reg(), reg_to_cls_input.cls());
+    }
+
+    std::map<std::string, std::vector<float32_t>> anchors_per_layer;
+    auto &ssd_anchors_proto = ssd_config_proto.anchors();
+    for (auto &ssd_anchors : ssd_anchors_proto) {
+        std::vector<float32_t> anchors;
+        for (auto &anchor : ssd_anchors.anchors_per_layer()) {
+            anchors.push_back(anchor);
+        }
+        anchors_per_layer.emplace(ssd_anchors.layer(), anchors);
+    }
+
+    hailort::net_flow::SSDPostProcessConfig ssd_post_process_config = {ssd_config_proto.image_height(), ssd_config_proto.image_width(),
+                                                                        ssd_config_proto.centers_scale_factor(),
+                                                                        ssd_config_proto.bbox_dimensions_scale_factor(),
+                                                                        ssd_config_proto.ty_index(), ssd_config_proto.tx_index(),
+                                                                        ssd_config_proto.th_index(), ssd_config_proto.tw_index(),
+                                                                        reg_to_cls_inputs, anchors_per_layer, ssd_config_proto.normalize_boxes()};
+    return ssd_post_process_config;
+}
+
+Expected<hailort::net_flow::YoloV5SegPostProcessConfig> create_yolov5seg_post_process_config(const ProtoOpMetadata &op_metadata_proto)
+{
+    auto yolov5seg_config_proto = op_metadata_proto.yolov5seg_config();
+    hailort::net_flow::YoloV5SegPostProcessConfig yolov5seg_post_process_config = {yolov5seg_config_proto.mask_threshold(),
+                                                                                    yolov5seg_config_proto.layer_name()};
+    return yolov5seg_post_process_config;
+}
+
+Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> deserialize_ops_metadata(const ProtoOpsMetadata &ops_metadatas_proto)
+{
+    std::vector<hailort::net_flow::PostProcessOpMetadataPtr> ops_metadata_ptr;
+    auto ops_metadata_proto = ops_metadatas_proto.ops_metadata();
+    for (auto &op_metadata_proto : ops_metadata_proto) {
+        auto inputs_metadata = deserialize_inputs_buffer_metadata(op_metadata_proto);
+        auto outputs_metadata = deserialize_outputs_buffer_metadata(op_metadata_proto);
+
+        hailort::net_flow::NmsPostProcessConfig nms_post_process_config;
+        if ((op_metadata_proto.type() == static_cast<uint32_t>(net_flow::OperationType::YOLOV5)) |
+            (op_metadata_proto.type() == static_cast<uint32_t>(net_flow::OperationType::YOLOV8)) |
+            (op_metadata_proto.type() == static_cast<uint32_t>(net_flow::OperationType::YOLOX)) |
+            (op_metadata_proto.type() == static_cast<uint32_t>(net_flow::OperationType::IOU)) |
+            (op_metadata_proto.type() == static_cast<uint32_t>(net_flow::OperationType::SSD)) |
+            (op_metadata_proto.type() == static_cast<uint32_t>(net_flow::OperationType::YOLOV5SEG))) {
+            // In case this is an NMS PP - initilize the values for the nms post process config
+            auto &nms_config_proto = op_metadata_proto.nms_post_process_config();
+            nms_post_process_config = {nms_config_proto.nms_score_th(),
+                                        nms_config_proto.nms_iou_th(),
+                                        nms_config_proto.max_proposals_per_class(),
+                                        nms_config_proto.number_of_classes(),
+                                        nms_config_proto.background_removal(),
+                                        nms_config_proto.background_removal_index(),
+                                        nms_config_proto.cross_classes()};
+            }
+
+        switch (static_cast<net_flow::OperationType>(op_metadata_proto.type())) {
+        case net_flow::OperationType::YOLOV8:
+        {
+            auto expected_yolov8_post_process_config = create_yolov8_post_process_config(op_metadata_proto);
+            CHECK_EXPECTED(expected_yolov8_post_process_config);
+            auto expteted_yolov8_metadata = hailort::net_flow::Yolov8OpMetadata::create(inputs_metadata, outputs_metadata, nms_post_process_config,
+                                                                                        expected_yolov8_post_process_config.value(), 
+                                                                                        op_metadata_proto.network_name());
+            CHECK_EXPECTED(expteted_yolov8_metadata);
+            ops_metadata_ptr.push_back(expteted_yolov8_metadata.value());
+            break;
+        }
+
+        case net_flow::OperationType::YOLOV5:
+        {
+            auto exected_yolov5_post_process_config = create_yolov5_post_process_config(op_metadata_proto);
+            CHECK_EXPECTED(exected_yolov5_post_process_config);
+            auto expteted_yolov5_metadata = hailort::net_flow::Yolov5OpMetadata::create(inputs_metadata, outputs_metadata, nms_post_process_config,
+                                                                                        exected_yolov5_post_process_config.value(),
+                                                                                        op_metadata_proto.network_name());
+            CHECK_EXPECTED(expteted_yolov5_metadata);
+            ops_metadata_ptr.push_back(expteted_yolov5_metadata.value());
+            break;
+        }
+
+        case net_flow::OperationType::YOLOX:
+        {
+            auto expected_yolox_post_process_config = create_yolox_post_process_config(op_metadata_proto);
+            CHECK_EXPECTED(expected_yolox_post_process_config);
+            auto expected_yolox_metadata = hailort::net_flow::YoloxOpMetadata::create(inputs_metadata, outputs_metadata, nms_post_process_config,
+                                                                                        expected_yolox_post_process_config.value(),
+                                                                                        op_metadata_proto.network_name());
+            CHECK_EXPECTED(expected_yolox_metadata);
+            ops_metadata_ptr.push_back(expected_yolox_metadata.value());
+            break;
+        }
+
+        case net_flow::OperationType::SSD:
+        {
+            auto expected_ssd_post_process_config = create_ssd_post_process_config(op_metadata_proto);
+            CHECK_EXPECTED(expected_ssd_post_process_config);
+            auto expteted_ssd_metadata = hailort::net_flow::SSDOpMetadata::create(inputs_metadata, outputs_metadata, nms_post_process_config,
+                                                                                    expected_ssd_post_process_config.value(),
+                                                                                    op_metadata_proto.network_name());
+            CHECK_EXPECTED(expteted_ssd_metadata);
+            ops_metadata_ptr.push_back(expteted_ssd_metadata.value());
+            break;
+        }
+
+        case net_flow::OperationType::SOFTMAX:
+        {
+            auto expteted_softmax_metadata = hailort::net_flow::SoftmaxOpMetadata::create(inputs_metadata, outputs_metadata,
+                                                                                            op_metadata_proto.network_name());
+            CHECK_EXPECTED(expteted_softmax_metadata);
+            ops_metadata_ptr.push_back(expteted_softmax_metadata.value());
+            break;
+        }
+
+        case net_flow::OperationType::ARGMAX:
+        {
+            auto expteted_argmax_metadata = hailort::net_flow::ArgmaxOpMetadata::create(inputs_metadata, outputs_metadata,
+                                                                                        op_metadata_proto.network_name());
+            CHECK_EXPECTED(expteted_argmax_metadata);
+            ops_metadata_ptr.push_back(expteted_argmax_metadata.value());
+            break;
+        }
+
+        case net_flow::OperationType::YOLOV5SEG:
+        {
+            auto expected_yolov5_post_process_config = create_yolov5_post_process_config(op_metadata_proto);
+            CHECK_EXPECTED(expected_yolov5_post_process_config);
+
+            auto expected_yolov5seg_post_process_config = create_yolov5seg_post_process_config(op_metadata_proto);
+            CHECK_EXPECTED(expected_yolov5seg_post_process_config);
+
+            auto expected_yolov5seg_metadata = hailort::net_flow::Yolov5SegOpMetadata::create(inputs_metadata, outputs_metadata, nms_post_process_config,
+                                                                                                expected_yolov5_post_process_config.value(),
+                                                                                                expected_yolov5seg_post_process_config.value(),
+                                                                                                op_metadata_proto.network_name());
+            CHECK_EXPECTED(expected_yolov5seg_metadata);
+            ops_metadata_ptr.push_back(expected_yolov5seg_metadata.value());
+            break;
+        }
+
+        case net_flow::OperationType::IOU:
+        {
+            auto expected_nms_op_metadata = hailort::net_flow::NmsOpMetadata::create(inputs_metadata, outputs_metadata, nms_post_process_config,
+                                                                                        op_metadata_proto.network_name(),
+                                                                                        static_cast<hailort::net_flow::OperationType>(op_metadata_proto.type()),
+                                                                                        op_metadata_proto.name());
+            CHECK_EXPECTED(expected_nms_op_metadata);
+            ops_metadata_ptr.push_back(expected_nms_op_metadata.value());
+            break;
+        }
+        }
+    }
+    return ops_metadata_ptr;
+}
+
+LayerInfo deserialize_layer_info(const ProtoLayerInfo &info_proto)
+{
+    LayerInfo info;
+    info.type = static_cast<LayerType>(info_proto.type());
+    info.direction = static_cast<hailo_stream_direction_t>(info_proto.direction());
+    info.stream_index = static_cast<uint8_t>(info_proto.stream_index());
+    info.dma_engine_index = static_cast<uint8_t>(info_proto.dma_engine_index());
+    info.name = info_proto.name();
+    info.network_name = info_proto.network_name();
+    info.network_index = static_cast<uint8_t>(info_proto.network_index());
+    info.max_shmifo_size = info_proto.max_shmifo_size();
+    info.context_index = static_cast<uint8_t>(info_proto.context_index());
+    info.pad_index = info_proto.pad_index();
+
+    // Transformation and shape info
+    hailo_3d_image_shape_t shape = {
+        info_proto.shape().height(),
+        info_proto.shape().width(),
+        info_proto.shape().features()
+    };
+    info.shape = shape;
+    
+    hailo_3d_image_shape_t hw_shape = {
+        info_proto.hw_shape().height(),
+        info_proto.hw_shape().width(),
+        info_proto.hw_shape().features()
+    };
+    info.hw_shape = hw_shape;
+
+    info.hw_data_bytes = info_proto.hw_data_bytes();
+
+    hailo_format_t format = {
+        static_cast<hailo_format_type_t>(info_proto.format().type()),
+        static_cast<hailo_format_order_t>(info_proto.format().order()),
+        static_cast<hailo_format_flags_t>(info_proto.format().flags())
+    };
+    info.format = format;
+
+    hailo_quant_info_t single_quant_info = {
+        info_proto.quant_info().qp_zp(),
+        info_proto.quant_info().qp_scale(),
+        info_proto.quant_info().limvals_min(),
+        info_proto.quant_info().limvals_max()
+    };
+    info.quant_info = single_quant_info;
+
+    for (const auto &quant_info : info_proto.quant_infos()) {
+        single_quant_info = {
+            quant_info.qp_zp(),
+            quant_info.qp_scale(),
+            quant_info.limvals_min(),
+            quant_info.limvals_max()
+        };
+        info.quant_infos.push_back(single_quant_info);
+    }
+
+    hailo_nms_defuse_info_t nms_defuse_info{
+        info_proto.nms_info().defuse_info().class_group_index(),
+        {0}
+    };
+    strcpy(nms_defuse_info.original_name, info_proto.nms_info().defuse_info().original_name().c_str());
+    hailo_nms_info_t nms_info{
+        info_proto.nms_info().number_of_classes(),
+        info_proto.nms_info().max_bboxes_per_class(),
+        info_proto.nms_info().bbox_size(),
+        info_proto.nms_info().chunks_per_frame(),
+        info_proto.nms_info().is_defused(),
+        nms_defuse_info,
+        info_proto.nms_info().burst_size(),
+        static_cast<hailo_nms_burst_type_t>(info_proto.nms_info().burst_type()),
+    };
+    info.nms_info = nms_info;
+
+
+    // Mux info
+    info.is_mux = info_proto.is_mux();
+    for (const auto &pred_proto : info_proto.predecessor()) {
+        auto pred = deserialize_layer_info(pred_proto);
+        info.predecessor.push_back(pred);
+    }
+    info.height_gcd = info_proto.height_gcd();
+    for (const auto &height_ratio : info_proto.height_ratios()) {
+        info.height_ratios.push_back(height_ratio);
+    }
+
+    // Multi planes info
+    info.is_multi_planar = info_proto.is_multi_planar();
+    for (const auto &planes_proto : info_proto.planes()) {
+        auto plane = deserialize_layer_info(planes_proto);
+        info.planes.push_back(plane);
+    }
+    info.plane_index = static_cast<uint8_t>(info_proto.plane_index());
+
+    // Defused nms info
+    info.is_defused_nms = info_proto.is_defused_nms();
+    for (const auto &fused_proto : info_proto.fused_nms_layer()) {
+        auto fused = deserialize_layer_info(fused_proto);
+        info.fused_nms_layer.push_back(fused);
+    }
+
+    return info;
 }
 
 hailo_vstream_info_t deserialize_vstream_info(const ProtoVStreamInfo &info_proto)
@@ -869,6 +1294,107 @@ Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_
     return result;
 }
 
+Expected<size_t> HailoRtRpcClient::ConfiguredNetworkGroup_get_min_buffer_pool_size(const NetworkGroupIdentifier &identifier)
+{
+    ConfiguredNetworkGroup_get_min_buffer_pool_size_Request request;
+    ConfiguredNetworkGroup_get_min_buffer_pool_size_Reply reply;
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
+    ClientContextWithTimeout context;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_get_min_buffer_pool_size(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    auto min_buffer_pool_size = reply.min_buffer_pool_size();
+    return min_buffer_pool_size;
+}
+
+Expected<std::unique_ptr<LayerInfo>> HailoRtRpcClient::ConfiguredNetworkGroup_get_layer_info(const NetworkGroupIdentifier &identifier, const std::string &stream_name)
+{
+    ConfiguredNetworkGroup_get_layer_info_Request request;
+    ConfiguredNetworkGroup_get_layer_info_Reply reply;
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
+    request.set_stream_name(stream_name);
+    ClientContextWithTimeout context;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_get_layer_info(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
+    auto info_proto = reply.layer_info();
+    auto layer = deserialize_layer_info(info_proto);
+    auto layer_ptr = make_unique_nothrow<LayerInfo>(std::move(layer));
+    CHECK_NOT_NULL_AS_EXPECTED(layer_ptr, HAILO_OUT_OF_HOST_MEMORY);
+    return layer_ptr;
+}
+
+Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> HailoRtRpcClient::ConfiguredNetworkGroup_get_ops_metadata(const NetworkGroupIdentifier &identifier)
+{
+    ConfiguredNetworkGroup_get_ops_metadata_Request request;
+    ConfiguredNetworkGroup_get_ops_metadata_Reply reply;
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
+    ClientContextWithTimeout context;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_get_ops_metadata(&context, request, &reply);
+    CHECK_GRPC_STATUS_AS_EXPECTED(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    auto ops_meta_data_proto = reply.ops_metadata();
+    auto ops_metadata = deserialize_ops_metadata(ops_meta_data_proto);
+    CHECK_EXPECTED(ops_metadata);
+    return ops_metadata;
+}
+
+hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_nms_score_threshold(const NetworkGroupIdentifier &identifier,
+                                                                                const std::string &edge_name, float32_t nms_score_th)
+{
+    ConfiguredNetworkGroup_set_nms_score_threshold_Request request;
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
+    request.set_edge_name(edge_name);
+    request.set_nms_score_th(nms_score_th);
+
+    ConfiguredNetworkGroup_set_nms_score_threshold_Reply reply;
+    ClientContextWithTimeout context;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_set_nms_score_threshold(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    return static_cast<hailo_status>(reply.status());
+}
+
+hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_nms_iou_threshold(const NetworkGroupIdentifier &identifier,
+                                                                                const std::string &edge_name, float32_t nms_iou_threshold)
+{
+    ConfiguredNetworkGroup_set_nms_iou_threshold_Request request;
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
+    request.set_edge_name(edge_name);
+    request.set_nms_iou_th(nms_iou_threshold);
+
+    ConfiguredNetworkGroup_set_nms_iou_threshold_Reply reply;
+    ClientContextWithTimeout context;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_set_nms_iou_threshold(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    return static_cast<hailo_status>(reply.status());
+}
+
+hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_nms_max_bboxes_per_class(const NetworkGroupIdentifier &identifier,
+                                                                                    const std::string &edge_name, uint32_t max_bboxes)
+{
+    ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Request request;
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
+    request.set_edge_name(edge_name);
+    request.set_nms_max_bboxes_per_class(max_bboxes);
+
+    ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Reply reply;
+    ClientContextWithTimeout context;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_set_nms_max_bboxes_per_class(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    return static_cast<hailo_status>(reply.status());
+}
+
 Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_stream_names_from_vstream_name(const NetworkGroupIdentifier &identifier,
     const std::string &vstream_name)
 {
@@ -906,6 +1432,42 @@ Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_
         result.push_back(name);
     }
     return result;
+}
+
+hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_infer_async(const NetworkGroupIdentifier &identifier,
+   const std::vector<std::tuple<callback_idx_t, std::string, MemoryView>> &cb_idx_to_stream_buffer,
+   const callback_idx_t infer_request_done_cb, const std::unordered_set<std::string> &input_streams_names)
+{
+    ConfiguredNetworkGroup_infer_async_Request request;
+    ConfiguredNetworkGroup_infer_async_Reply reply;
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
+    auto proto_transfer_buffers = request.mutable_transfer_requests();
+    for (const auto &idx_named_buffer : cb_idx_to_stream_buffer) {
+        ProtoTransferRequest proto_transfer_request;
+        proto_transfer_request.set_cb_idx(std::get<0>(idx_named_buffer));
+        const auto &stream_name = std::get<1>(idx_named_buffer);
+        proto_transfer_request.set_stream_name(stream_name);
+        if (contains(input_streams_names, stream_name)) {
+            proto_transfer_request.set_direction(HAILO_H2D_STREAM);
+            proto_transfer_request.set_data(std::get<2>(idx_named_buffer).data(), std::get<2>(idx_named_buffer).size());
+        } else {
+            proto_transfer_request.set_direction(HAILO_D2H_STREAM);
+        }
+        proto_transfer_request.set_size(static_cast<uint32_t>(std::get<2>(idx_named_buffer).size()));
+        proto_transfer_buffers->Add(std::move(proto_transfer_request));
+    }
+    request.set_infer_request_done_cb_idx(infer_request_done_cb);
+
+    ClientContextWithTimeout context;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_infer_async(&context, request, &reply);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    if (reply.status() == HAILO_STREAM_ABORTED_BY_USER) {
+        return static_cast<hailo_status>(reply.status());
+    }
+    CHECK_GRPC_STATUS(status);
+    CHECK_SUCCESS(static_cast<hailo_status>(reply.status()));
+    return HAILO_SUCCESS;
 }
 
 Expected<bool> HailoRtRpcClient::InputVStream_is_multi_planar(const VStreamIdentifier &identifier)

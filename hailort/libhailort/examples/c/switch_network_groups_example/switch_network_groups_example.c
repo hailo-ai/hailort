@@ -102,17 +102,18 @@ hailo_status build_vstreams(hailo_configured_network_group network_group,
     hailo_status status = HAILO_UNINITIALIZED;
     hailo_input_vstream_params_by_name_t input_vstream_params[MAX_EDGE_LAYERS];
     hailo_output_vstream_params_by_name_t output_vstream_params[MAX_EDGE_LAYERS];
+    bool unused = {0};
 
     // Make sure it can hold amount of vstreams for hailo_make_input/output_vstream_params
     size_t input_vstream_size = MAX_EDGE_LAYERS;
     size_t output_vstream_size = MAX_EDGE_LAYERS;
 
-    status = hailo_make_input_vstream_params(network_group, true, HAILO_FORMAT_TYPE_AUTO,
+    status = hailo_make_input_vstream_params(network_group, unused, HAILO_FORMAT_TYPE_AUTO,
         input_vstream_params, &input_vstream_size);
     REQUIRE_SUCCESS(status, l_exit, "Failed making input virtual stream params");
     *num_input_vstreams = input_vstream_size;
 
-    status = hailo_make_output_vstream_params(network_group, true, HAILO_FORMAT_TYPE_AUTO,
+    status = hailo_make_output_vstream_params(network_group, unused, HAILO_FORMAT_TYPE_AUTO,
         output_vstream_params, &output_vstream_size);
     REQUIRE_SUCCESS(status, l_exit, "Failed making output virtual stream params");
     *num_output_vstreams = output_vstream_size;

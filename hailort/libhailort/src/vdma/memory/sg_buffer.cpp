@@ -22,7 +22,7 @@ Expected<SgBuffer> SgBuffer::create(HailoRTDriver &driver, size_t size, uint32_t
     CHECK_AS_EXPECTED((size % desc_page_size) == 0, HAILO_INTERNAL_FAILURE,
         "SgBuffer size must be a multiple of descriptors page size (size {})", size);
 
-    auto mapped_buffer = MappedBuffer::create_shared(driver, data_direction, size);
+    auto mapped_buffer = MappedBuffer::create_shared_by_allocation(size, driver, data_direction);
     CHECK_EXPECTED(mapped_buffer);
 
     auto desc_list_exp = DescriptorList::create(desc_count, desc_page_size, is_circular, driver);

@@ -101,6 +101,7 @@ int main(int argc, char **argv)
     hailo_activated_network_group activated_network_group = NULL;
     size_t vstreams_infos_size = MAX_EDGE_LAYERS;
     hailo_vstream_info_t vstreams_infos[MAX_EDGE_LAYERS] = {0};
+    bool unused = {0};
 
     parse_arguments(argc, argv, &interface_name);
 
@@ -123,11 +124,11 @@ int main(int argc, char **argv)
     REQUIRE_ACTION(network_group_size == 1, status = HAILO_INVALID_ARGUMENT, l_release_hef, 
         "Invalid network group size");
 
-    status = hailo_make_input_vstream_params(network_group, true, HAILO_FORMAT_TYPE_AUTO,
+    status = hailo_make_input_vstream_params(network_group, unused, HAILO_FORMAT_TYPE_AUTO,
         input_vstream_params, &input_vstreams_size);
     REQUIRE_SUCCESS(status, l_release_hef, "Failed making input virtual stream params");
 
-    status = hailo_make_output_vstream_params(network_group, true, HAILO_FORMAT_TYPE_AUTO,
+    status = hailo_make_output_vstream_params(network_group, unused, HAILO_FORMAT_TYPE_AUTO,
         output_vstream_params, &output_vstreams_size);
     REQUIRE_SUCCESS(status, l_release_hef, "Failed making output virtual stream params");
 

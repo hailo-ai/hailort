@@ -34,6 +34,14 @@ namespace hailort
 class Device;
 using NotificationCallback = std::function<void(Device &device, const hailo_notification_t &notification, void *opaque)>;
 
+namespace vdma {
+    class DmaAbleBuffer;
+    using DmaAbleBufferPtr = std::shared_ptr<DmaAbleBuffer>;
+
+    class MappedBuffer;
+    using MappedBufferPtr = std::shared_ptr<MappedBuffer>;
+}
+
 /** @} */ // end of group_type_definitions
 
 /*! Represents the Hailo device (chip). */
@@ -392,8 +400,8 @@ public:
      * 
      * @param[in]   averaging_factor     Number of samples per time period, sensor configuration value.
      * @param[in]   sampling_period      Related conversion time, sensor configuration value.
-     *                                   The sensor samples the power every sampling_period {ms} and averages every
-     *                                   averaging_factor samples. The sensor provides a new value every: 2 * sampling_period * averaging_factor {ms}.
+     *                                   The sensor samples the power every sampling_period {us} and averages every
+     *                                   averaging_factor samples. The sensor provides a new value every: (2 * sampling_period * averaging_factor){ms}.
      *                                   The firmware wakes up every interval_milliseconds {ms} and checks the sensor.
      *                                   If there is a new value to read from the sensor, the firmware reads it.
      *                                   Note that the average calculated by the firmware is 'average of averages',
@@ -692,6 +700,42 @@ public:
      */
     virtual bool is_stream_interface_supported(const hailo_stream_interface_t &stream_interface) const = 0;
 
+    // TODO: Also link to async infer - ConfiguredInferModel, Bindings etc. Just like we did for
+    //       InputStream::write_async and OutputStream::read_async (HRT-11039)
+    /**
+     * Maps the buffer pointed to by @a address for DMA transfers to/from this device, in the specified
+     * @a direction.
+     * DMA mapping of buffers in advance may improve the performance of `InputStream::write_async()` or
+     * `OutputStream::read_async()`. This improvement will be realized if the buffer is reused multiple times
+     * across different async operations.
+     * - For buffers that will be written to the device via `InputStream::write_async()`, use `HAILO_H2D_STREAM`
+     *   for the @a direction parameter.
+     * - For buffers that will be read from the device via `OutputStream::read_async()`, use `HAILO_D2H_STREAM`
+     *   for the @a direction parameter.
+     *
+     * @param[in] address       The address of the buffer to be mapped
+     * @param[in] size          The buffer's size in bytes
+     * @param[in] direction     The direction of the mapping
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note The DMA mapping will be freed upon calling dma_unmap() with @a address and @a direction, or when the
+     *       @a Device object is destroyed.
+     * @note The buffer pointed to by @a address cannot be freed until it is unmapped (via dma_unmap() or @a Device
+     *       destruction).
+     */
+    virtual hailo_status dma_map(void *address, size_t size, hailo_stream_direction_t direction);
+
+    /**
+     * Un-maps a buffer buffer pointed to by @a address for DMA transfers to/from this device, in the direction
+     * @a direction.
+     *
+     * @param[in] address       The address of the buffer to be un-mapped
+     * @param[in] direction     The direction of the mapping
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     */
+    virtual hailo_status dma_unmap(void *address, hailo_stream_direction_t direction);
+
+    virtual Expected<std::pair<vdma::MappedBufferPtr, bool>> try_dma_map(vdma::DmaAbleBufferPtr buffer,
+        hailo_stream_direction_t direction);
     virtual hailo_status direct_write_memory(uint32_t address, const void *buffer, uint32_t size);
     virtual hailo_status direct_read_memory(uint32_t address, void *buffer, uint32_t size);
     hailo_status set_overcurrent_state(bool should_activate);

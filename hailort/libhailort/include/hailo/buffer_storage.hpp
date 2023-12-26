@@ -28,10 +28,13 @@ namespace hailort
 // Forward declarations
 class Device;
 class VDevice;
+class VdmaDevice;
 class BufferStorage;
 class HeapStorage;
 class DmaStorage;
+class UserBufferStorage;
 class HailoRTDriver;
+class Buffer;
 
 namespace vdma {
     class DmaAbleBuffer;
@@ -98,7 +101,8 @@ class HAILORTAPI BufferStorage
 public:
     enum class Type {
         HEAP,
-        DMA
+        DMA,
+        USER_BUFFER
     };
 
     static Expected<BufferStoragePtr> create(size_t size, const BufferStorageParams &params);
@@ -122,12 +126,11 @@ public:
     // - If the mapping is new - true is returned.
     // - If the mapping already exists - false is returned.
     // - Otherwise - Unexpected with a failure status is returned.
+    // Note: This buffer storage must be destroyed before the device it is mapped to is destroyed!
+    //       Failing to do so will lead to unexpected results
+    // TODO: resolve this issue (HRT-12361)
     virtual Expected<bool> dma_map(Device &device, hailo_dma_buffer_direction_t data_direction) = 0;
-    // Maps the backing buffer to a device via driver in data_direction, returning a pointer to it.
-    // - If the mapping is new - true is returned.
-    // - If the mapping already exists - false is returned.
-    // - Otherwise - Unexpected with a failure status is returned.
-    virtual Expected<bool> dma_map(HailoRTDriver &driver, hailo_dma_buffer_direction_t data_direction) = 0;
+    virtual Expected<bool> dma_map(VdmaDevice &device, hailo_dma_buffer_direction_t data_direction) = 0;
 
     // Internal functions
     virtual Expected<vdma::MappedBufferPtr> get_dma_mapped_buffer(const std::string &device_id) = 0;
@@ -155,7 +158,7 @@ public:
     virtual void *user_address() override;
     virtual Expected<void *> release() noexcept override;
     virtual Expected<bool> dma_map(Device &device, hailo_dma_buffer_direction_t data_direction) override;
-    virtual Expected<bool> dma_map(HailoRTDriver &driver, hailo_dma_buffer_direction_t data_direction) override;
+    virtual Expected<bool> dma_map(VdmaDevice &device, hailo_dma_buffer_direction_t data_direction) override;
 
     // Internal functions
     virtual Expected<vdma::MappedBufferPtr> get_dma_mapped_buffer(const std::string &device_id) override;
@@ -199,38 +202,80 @@ public:
     // The buffer is mapped to vdevice.get_physical_devices() in data_direction.
     static Expected<DmaStoragePtr> create_from_user_address(void *user_address, size_t size,
         hailo_dma_buffer_direction_t data_direction, VDevice &device);
+    // Creates a DMA-able buffer from given user buffer at address given of size length if possible,
+    // Otherwise allocates new one length of size
+    static Expected<std::shared_ptr<Buffer>> create_dma_able_buffer_from_user_size(void *addr, size_t size);
 
     DmaStorage(const DmaStorage &other) = delete;
     DmaStorage &operator=(const DmaStorage &other) = delete;
     DmaStorage(DmaStorage &&other) noexcept = default;
     DmaStorage &operator=(DmaStorage &&other) = delete;
-    virtual ~DmaStorage() = default;
+    virtual ~DmaStorage();
 
     virtual size_t size() const override;
     virtual void *user_address() override;
     virtual Expected<void *> release() noexcept override;
     // TODO: thread safety (HRT-10669)
     virtual Expected<bool> dma_map(Device &device, hailo_dma_buffer_direction_t data_direction) override;
-    virtual Expected<bool> dma_map(HailoRTDriver &driver, hailo_dma_buffer_direction_t data_direction) override;
+    virtual Expected<bool> dma_map(VdmaDevice &device, hailo_dma_buffer_direction_t data_direction) override;
 
     // Internal functions
     DmaStorage(vdma::DmaAbleBufferPtr &&dma_able_buffer);
     virtual Expected<vdma::MappedBufferPtr> get_dma_mapped_buffer(const std::string &device_id) override;
 
 private:
-    // Creates a backing dma-able buffer (either user or hailort allocated).
-    // Maps said buffer to physical_devices in data_direction.
-    // By default (if physical_devices is empty), no mapping will occur
+    // - Creates a backing DmaAbleBuffer:
+    //   - If user_address is null, it'll be allocated by hailort
+    //   - Otherwise, it'll be a non owning wrapper of the user's buffer
+    // - The said buffer is mapped physical_devices in data_direction.
+    // - By default (if physical_devices is empty), no mapping will occur
     static Expected<DmaStoragePtr> create(void *user_address, size_t size,
         hailo_dma_buffer_direction_t data_direction = HAILO_DMA_BUFFER_DIRECTION_MAX_ENUM,
         std::vector<std::reference_wrapper<Device>> &&physical_devices = {});
 
+    // Initialization dependency
     vdma::DmaAbleBufferPtr m_dma_able_buffer;
-
     // For each device (key is device_id), we store some vdma mapping.
-    // TODO: use (device_id, direction) as key - HRT-10656
-    std::unordered_map<std::string, vdma::MappedBufferPtr> m_mappings;
+    // TODO: use (device_id, direction) as key or have two dicts (HRT-10656)
+    using UnmappingCallback = std::function<void()>;
+    std::unordered_map<std::string, std::pair<vdma::MappedBufferPtr, UnmappingCallback>> m_mappings;
 };
+
+
+using UserBufferStoragePtr = std::shared_ptr<UserBufferStorage>;
+class HAILORTAPI UserBufferStorage : public BufferStorage
+{
+public:
+    static Expected<UserBufferStoragePtr> create(void *user_address, const size_t size);
+
+    UserBufferStorage(void *user_address, const size_t size);
+    UserBufferStorage(const UserBufferStorage &other) = delete;
+    UserBufferStorage &operator=(const UserBufferStorage &other) = delete;
+    UserBufferStorage(UserBufferStorage &&other) noexcept = default;
+    UserBufferStorage &operator=(UserBufferStorage &&other) = delete;
+    virtual ~UserBufferStorage() = default;
+
+    virtual size_t size() const override;
+    virtual void *user_address() override;
+    virtual Expected<void *> release() noexcept override;
+    virtual Expected<bool> dma_map(Device &device, hailo_dma_buffer_direction_t data_direction) override;
+    virtual Expected<bool> dma_map(VdmaDevice &device, hailo_dma_buffer_direction_t data_direction) override;
+
+    // Internal functions
+    virtual Expected<vdma::MappedBufferPtr> get_dma_mapped_buffer(const std::string &device_id) override;
+
+    // Craete storage for user buffer to store mappings. Used internally not by the user.
+    static Expected<std::shared_ptr<Buffer>> create_storage_from_user_buffer(void *addr, size_t size);
+
+private:
+
+    void * m_user_address;
+    const size_t m_size;
+
+    using UnmappingCallback = std::function<void()>;
+    std::unordered_map<std::string, std::pair<vdma::MappedBufferPtr, UnmappingCallback>> m_mappings;
+};
+
 // ************************************** NOTE - END ************************************** //
 // DmaStorage isn't currently supported and is for internal use only                      //
 // **************************************************************************************** //

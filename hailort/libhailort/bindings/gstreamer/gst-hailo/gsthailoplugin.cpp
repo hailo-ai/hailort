@@ -20,6 +20,7 @@
 #include "gsthailonet.hpp"
 #include "gsthailosend.hpp"
 #include "gsthailorecv.hpp"
+#include "gsthailonet2.hpp"
 #include "gsthailodevicestats.hpp"
 #include "metadata/tensor_meta.hpp"
 
@@ -31,7 +32,8 @@ static gboolean plugin_init(GstPlugin *plugin)
     return gst_element_register(plugin, "hailonet", GST_RANK_PRIMARY, GST_TYPE_HAILONET) &&
         gst_element_register(plugin, "hailodevicestats", GST_RANK_PRIMARY, GST_TYPE_HAILODEVICESTATS) &&
         gst_element_register(nullptr, "hailosend", GST_RANK_PRIMARY, GST_TYPE_HAILOSEND) &&
-        gst_element_register(nullptr, "hailorecv", GST_RANK_PRIMARY, GST_TYPE_HAILORECV);
+        gst_element_register(nullptr, "hailorecv", GST_RANK_PRIMARY, GST_TYPE_HAILORECV) &&
+        gst_element_register(plugin, "hailonet2", GST_RANK_PRIMARY, GST_TYPE_HAILONET2);
 }
 
 GST_PLUGIN_DEFINE(GST_VERSION_MAJOR, GST_VERSION_MINOR, hailo, "hailo gstreamer plugin", plugin_init, VERSION,

@@ -77,15 +77,19 @@ public:
      * Aborting the stream.
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This function is deprecated. One should use ConfiguredNetworkGroup::shutdown()
      */
-    virtual hailo_status abort() = 0;
+    virtual hailo_status abort()
+        DEPRECATED("InputStream::abort is deprecated. One should use ConfiguredNetworkGroup::shutdown()") = 0;
 
     /**
      * Clearing the aborted state of the stream.
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This function is deprecated. To reuse network after shutdown, reconfigure it.
      */
-    virtual hailo_status clear_abort() = 0;
+    virtual hailo_status clear_abort()
+        DEPRECATED("InputStream::clear_abort() is deprecated. To reuse network after shutdown, reconfigure it") = 0;
 
     /**
      * Writes all pending data to the underlying stream.
@@ -179,6 +183,8 @@ public:
      * @note The address provided must be aligned to the system's page size, and the rest of the page should not be in
      *       use by any other part of the program to ensure proper functioning of the DMA operation. Memory for the
      *       provided address can be allocated using `mmap` on Unix-like systems or `VirtualAlloc` on Windows.
+     * @note Pre-mapping @a buffer to DMA via `Device::dma_map()` may improve performance, if @a buffer is used for
+     *       multiple async transfers.
      */
     virtual hailo_status write_async(const MemoryView &buffer, const TransferDoneCallback &user_callback) = 0;
 
@@ -212,6 +218,8 @@ public:
      * @note The address provided must be aligned to the system's page size, and the rest of the page should not be in
      *       use by any other part of the program to ensure proper functioning of the DMA operation. Memory for the
      *       provided address can be allocated using `mmap` on Unix-like systems or `VirtualAlloc` on Windows.
+     * @note Pre-mapping @a buffer to DMA via `Device::dma_map()` may improve performance, if @a buffer is used for
+     *       multiple async transfers.
      */
     virtual hailo_status write_async(const void *buffer, size_t size, const TransferDoneCallback &user_callback) = 0;
 
@@ -316,15 +324,19 @@ public:
      * Aborting the stream.
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This function is deprecated. One should use ConfiguredNetworkGroup::shutdown()
      */
-    virtual hailo_status abort() = 0;
+    virtual hailo_status abort()
+        DEPRECATED("OutputStream::abort is deprecated. One should use ConfiguredNetworkGroup::shutdown()")= 0;
 
     /**
      * Clearing the abort flag of the stream.
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This function is deprecated. To reuse network after shutdown, reconfigure it.
      */
-    virtual hailo_status clear_abort() = 0;
+    virtual hailo_status clear_abort()
+        DEPRECATED("OutputStream::clear_abort is deprecated. To reuse network after shutdown, reconfigure it") = 0;
 
     /**
      * @returns a pointer for network group activated event.
@@ -453,6 +465,8 @@ public:
      * @note The address provided must be aligned to the system's page size, and the rest of the page should not be in
      *       use by any other part of the program to ensure proper functioning of the DMA operation. Memory for the
      *       provided address can be allocated using `mmap` on Unix-like systems or `VirtualAlloc` on Windows.
+     * @note Pre-mapping @a buffer to DMA via `Device::dma_map()` may improve performance, if @a buffer is used for
+     *       multiple async transfers.
      */
     virtual hailo_status read_async(MemoryView buffer, const TransferDoneCallback &user_callback) = 0;
 
@@ -486,6 +500,8 @@ public:
      * @note The address provided must be aligned to the system's page size, and the rest of the page should not be in
      *       use by any other part of the program to ensure proper functioning of the DMA operation. Memory for the
      *       provided address can be allocated using `mmap` on Unix-like systems or `VirtualAlloc` on Windows.
+     * @note Pre-mapping @a buffer to DMA via `Device::dma_map()` may improve performance, if @a buffer is used for
+     *       multiple async transfers.
      */
     virtual hailo_status read_async(void *buffer, size_t size, const TransferDoneCallback &user_callback) = 0;
 

@@ -56,6 +56,8 @@ public:
 
     size_t get_max_ongoing_transfers() const;
 
+    void cancel_pending_transfers();
+
 private:
 
     void signal_thread_quit();
@@ -84,10 +86,14 @@ public:
 
     NmsOutputStream(std::shared_ptr<OutputStreamBase> base_stream, const LayerInfo &edge_layer, size_t max_queue_size,
         EventPtr core_op_activated_event, hailo_status &status) :
-            AsyncOutputStreamBase(edge_layer, base_stream->get_interface(), std::move(core_op_activated_event), status),
+            AsyncOutputStreamBase(edge_layer, std::move(core_op_activated_event), status),
             m_base_stream(base_stream),
             m_reader_thread(base_stream, max_queue_size)
     {}
+
+    void set_vdevice_core_op_handle(vdevice_core_op_handle_t core_op_handle) override;
+
+    virtual hailo_status cancel_pending_transfers() override;
 
 protected:
     virtual Expected<std::unique_ptr<StreamBufferPool>> allocate_buffer_pool() override;

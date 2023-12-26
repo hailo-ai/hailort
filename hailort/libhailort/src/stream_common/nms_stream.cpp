@@ -51,6 +51,7 @@
 #include "hef/layer_info.hpp"
 #include "common/os_utils.hpp"
 #include "stream_common/queued_stream_buffer_pool.hpp"
+#include "utils/profiler/tracer_macros.hpp"
 
 namespace hailort
 {
@@ -341,6 +342,11 @@ hailo_stream_interface_t NmsOutputStream::get_interface() const
     return m_base_stream->get_interface();
 }
 
+void NmsOutputStream::set_vdevice_core_op_handle(vdevice_core_op_handle_t core_op_handle)
+{
+    return m_base_stream->set_vdevice_core_op_handle(core_op_handle);
+}
+
 Expected<std::unique_ptr<StreamBufferPool>> NmsOutputStream::allocate_buffer_pool()
 {
     const size_t queue_size = m_reader_thread.get_max_ongoing_transfers();
@@ -358,6 +364,10 @@ size_t NmsOutputStream::get_max_ongoing_transfers() const
 
 hailo_status NmsOutputStream::read_async_impl(TransferRequest &&transfer_request)
 {
+    CHECK(1 == transfer_request.transfer_buffers.size(), HAILO_INVALID_OPERATION,
+        "NMS Reader stream supports only 1 transfer buffer");
+    // Currently leave as transfer request - because nms reader uses transfer request queue
+    // TODO HRT-12239: Chagge when support async read with any aligned void ptr
     return m_reader_thread.launch_transfer(std::move(transfer_request));
 }
 
@@ -369,6 +379,12 @@ hailo_status NmsOutputStream::activate_stream_impl()
 hailo_status NmsOutputStream::deactivate_stream_impl()
 {
     return m_base_stream->deactivate_stream();
+}
+
+hailo_status NmsOutputStream::cancel_pending_transfers()
+{
+    m_reader_thread.cancel_pending_transfers();
+    return m_base_stream->cancel_pending_transfers();
 }
 
 NmsReaderThread::NmsReaderThread(std::shared_ptr<OutputStreamBase> base_stream, size_t max_queue_size) :
@@ -395,13 +411,25 @@ NmsReaderThread::~NmsReaderThread()
 
 hailo_status NmsReaderThread::launch_transfer(TransferRequest &&transfer_request)
 {
-    CHECK(0 == transfer_request.buffer.offset(), HAILO_INVALID_OPERATION,
+    CHECK(1 == transfer_request.transfer_buffers.size(), HAILO_INVALID_OPERATION,
+        "NMS Reader stream supports only 1 transfer buffer");
+    CHECK(0 == transfer_request.transfer_buffers[0].offset(), HAILO_INVALID_OPERATION,
         "NMS stream doesn't support buffer with offset");
 
     {
         std::lock_guard<std::mutex> lock(m_queue_mutex);
         if (m_queue.size() >= m_queue_max_size) {
             return HAILO_QUEUE_IS_FULL;
+        }
+
+        if (INVALID_CORE_OP_HANDLE != m_base_stream->get_vdevice_core_op_handle()) {
+            transfer_request.callback = [original_callback=transfer_request.callback, this](hailo_status status) {
+                if (HAILO_SUCCESS == status) {
+                    TRACE(FrameEnqueueD2HTrace, m_base_stream->get_device_id(), m_base_stream->get_vdevice_core_op_handle(),
+                        m_base_stream->name());
+                }
+                original_callback(status);
+            };
         }
 
         m_queue.emplace(std::move(transfer_request));
@@ -441,8 +469,9 @@ void NmsReaderThread::process_transfer_requests()
             m_queue.pop();
         }
 
-        assert(0 == transfer_request.buffer.offset());
-        auto buffer = transfer_request.buffer.base_buffer();
+        assert(1 == transfer_request.transfer_buffers.size());
+        assert(0 == transfer_request.transfer_buffers[0].offset());
+        auto buffer = transfer_request.transfer_buffers[0].base_buffer();
         auto status = NMSStreamReader::read_nms(*m_base_stream, buffer->data(), 0, buffer->size());
 
         if ((HAILO_STREAM_NOT_ACTIVATED == status) || (HAILO_STREAM_ABORTED_BY_USER == status)) {
@@ -452,6 +481,16 @@ void NmsReaderThread::process_transfer_requests()
         } else {
             transfer_request.callback(status);
         }
+    }
+}
+
+void NmsReaderThread::cancel_pending_transfers()
+{
+    std::unique_lock<std::mutex> lock(m_queue_mutex);
+    while(!m_queue.empty()) {
+        auto transfer_request = m_queue.front();
+        m_queue.pop();
+        transfer_request.callback(HAILO_STREAM_ABORTED_BY_USER);
     }
 }
 

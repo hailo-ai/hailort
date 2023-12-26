@@ -96,6 +96,74 @@ using namespace hailort;
         }                               \
     } while(0)
 
+#define _CHECK(cond, ret_val, ...)      \
+    do {                                \
+        if (!(cond)) {                  \
+            g_print(__VA_ARGS__); \
+            g_print("\n"); \
+            return (ret_val);           \
+        }                               \
+    } while(0)
+
+#define CHECK(cond, ret_val, ...) _CHECK((cond), (ret_val),  ##__VA_ARGS__)
+
+#define CHECK_AS_EXPECTED(cond, ret_val, ...) \
+    _CHECK((cond), (make_unexpected(ret_val)),  ##__VA_ARGS__)
+
+#define CHECK_NOT_NULL(arg, status) _CHECK(nullptr != (arg), status, "CHECK_NOT_NULL for %s failed", #arg)
+
+#define _CHECK_SUCCESS(status, ...)                                                                            \
+    do {                                                                                                                        \
+        const auto &__check_success_status = (status);                                                                          \
+        _CHECK(                                                                                                                 \
+            HAILO_SUCCESS == __check_success_status,                                                                            \
+            __check_success_status,                                                                                             \
+            "CHECK_SUCCESS failed with status=%d", status       \
+        );                                                                                                                      \
+    } while(0)
+#define CHECK_SUCCESS(status, ...) _CHECK_SUCCESS(status, "" __VA_ARGS__)
+
+#define _CHECK_SUCCESS_AS_EXPECTED(status, ...)                                                                       \
+    do {                                                                                                                               \
+        const auto &__check_success_status = (status);                                                                                 \
+        _CHECK(                                                                                                                        \
+            HAILO_SUCCESS == __check_success_status,                                                                                   \
+            make_unexpected(__check_success_status),                                                                                   \
+            "CHECK_SUCCESS_AS_EXPECTED failed with status=%d", status  \
+        );                                                                                                                             \
+    } while(0)
+#define CHECK_SUCCESS_AS_EXPECTED(status, ...) _CHECK_SUCCESS_AS_EXPECTED(status, "" __VA_ARGS__)
+
+#define _CHECK_EXPECTED_AS_STATUS(obj, ...)                                                                                      \
+    do {                                                                                                                                          \
+        const auto &__check_expected_obj = (obj);                                                                                                 \
+        _CHECK(                                                                                                                                   \
+            __check_expected_obj.has_value(),                                                                                                     \
+            __check_expected_obj.status(),                                                                                                        \
+            "CHECK_EXPECTED_AS_STATUS failed with status=%d", __check_expected_obj.status()       \
+        );                                                                                                                                        \
+    } while(0)
+#define CHECK_EXPECTED_AS_STATUS(obj, ...) _CHECK_EXPECTED_AS_STATUS(obj, "" __VA_ARGS__)
+
+#define _CHECK_EXPECTED(obj, ...)                                                                                      \
+    do {                                                                                                                                \
+        const auto &__check_expected_obj = (obj);                                                                                       \
+        _CHECK(                                                                                                                         \
+            __check_expected_obj.has_value(),                                                                                           \
+            make_unexpected(__check_expected_obj.status()),                                                                             \
+            "CHECK_EXPECTED failed with status=%d",  __check_expected_obj.status()       \
+        );                                                                                                                              \
+    } while(0)
+#define CHECK_EXPECTED(obj, ...) _CHECK_EXPECTED(obj, "" __VA_ARGS__)
+
+#define RGB_FEATURES_SIZE (3)
+#define RGBA_FEATURES_SIZE (4)
+#define GRAY8_FEATURES_SIZE (1)
+#define YUY2_FEATURES_SIZE (2)
+#define NV12_FEATURES_SIZE (3)
+#define NV21_FEATURES_SIZE (3)
+#define I420_FEATURES_SIZE (3)
+
 // From https://stackoverflow.com/questions/57092289/do-stdmake-shared-and-stdmake-unique-have-a-nothrow-version
 template <class T, class... Args>
 static inline std::unique_ptr<T> make_unique_nothrow(Args&&... args)
@@ -143,5 +211,13 @@ private:
 
 template<>
 HailoElemProperty<gchar*>::~HailoElemProperty();
+
+#define GST_TYPE_SCHEDULING_ALGORITHM (gst_scheduling_algorithm_get_type ())
+GType gst_scheduling_algorithm_get_type (void);
+
+#define GST_TYPE_HAILO_FORMAT_TYPE (gst_hailo_format_type_get_type ())
+GType gst_hailo_format_type_get_type (void);
+
+bool do_versions_match(GstElement *self);
 
 #endif /* _GST_HAILO_COMMON_HPP_ */

@@ -11,6 +11,7 @@
 #define _HAILO_HAILORTCLI_RUN2_NETWORK_LIVE_TRACK_HPP_
 
 #include "hailo/hailort.h"
+#include "hailo/infer_model.hpp"
 #include "hailo/network_group.hpp"
 
 #include "common/latency_meter.hpp"
@@ -24,7 +25,8 @@ class NetworkLiveTrack : public LiveStats::Track
 {
 public:
     NetworkLiveTrack(const std::string &name, std::shared_ptr<hailort::ConfiguredNetworkGroup> cng,
-                     hailort::LatencyMeterPtr overall_latency_meter, bool measure_fps, const std::string &hef_path);
+        std::shared_ptr<hailort::ConfiguredInferModel> configured_infer_model,
+        hailort::LatencyMeterPtr overall_latency_meter, bool measure_fps, const std::string &hef_path);
     virtual ~NetworkLiveTrack() = default;
     virtual hailo_status start_impl() override;
     virtual uint32_t push_text_impl(std::stringstream &ss) override;
@@ -44,6 +46,7 @@ private:
     std::atomic<uint32_t> m_count;
     std::chrono::time_point<std::chrono::steady_clock> m_last_get_time;
     std::shared_ptr<hailort::ConfiguredNetworkGroup> m_cng;
+    std::shared_ptr<hailort::ConfiguredInferModel> m_configured_infer_model;
     hailort::LatencyMeterPtr m_overall_latency_meter;
     const bool m_measure_fps;
     const std::string &m_hef_path;

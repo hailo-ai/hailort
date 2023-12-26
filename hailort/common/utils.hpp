@@ -244,13 +244,13 @@ _ISEMPTY(                                                               \
     } while(0)
 #define CHECK_AS_RPC_STATUS(cond, reply, ret_val, ...) _CHECK_AS_RPC_STATUS((cond), (reply), (ret_val), ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
 
-#define _CHECK_GRPC_STATUS(status, ret_val, warning_msg)                                                    \
-    do {                                                                                                    \
-        if (!status.ok()) {                                                                                 \
-            LOGGER__ERROR("CHECK_GRPC_STATUS failed with error massage: {}.", status.error_message());      \
-            LOGGER__WARNING(warning_msg);                                                                   \
-            return ret_val;                                                                                 \
-        }                                                                                                   \
+#define _CHECK_GRPC_STATUS(status, ret_val, warning_msg)                                                                         \
+    do {                                                                                                                         \
+        if (!status.ok()) {                                                                                                      \
+            LOGGER__ERROR("CHECK_GRPC_STATUS failed with error code: {}.", status.error_code());                                 \
+            LOGGER__WARNING(warning_msg);                                                                                        \
+            return ret_val;                                                                                                      \
+        }                                                                                                                        \
     } while(0)
 
 #define SERVICE_WARNING_MSG ("Make sure HailoRT service is enabled and active!")

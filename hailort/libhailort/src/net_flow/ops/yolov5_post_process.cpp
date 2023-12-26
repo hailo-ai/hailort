@@ -66,14 +66,11 @@ hailo_status YOLOv5PostProcessOp::execute(const std::map<std::string, MemoryView
 {
     const auto &inputs_metadata = m_metadata->inputs_metadata();
     const auto &yolo_config = m_metadata->yolov5_config();
-    const auto &nms_config = m_metadata->nms_config();
     CHECK(inputs.size() == yolo_config.anchors.size(), HAILO_INVALID_ARGUMENT,
         "Anchors vector count must be equal to data vector count. Anchors size is {}, data size is {}",
             yolo_config.anchors.size(), inputs.size());
 
-    std::vector<DetectionBbox> detections;
-    std::vector<uint32_t> classes_detections_count(nms_config.number_of_classes, 0);
-    detections.reserve(nms_config.max_proposals_per_class * nms_config.number_of_classes);
+    clear_before_frame();
     for (const auto &name_to_input : inputs) {
         hailo_status status;
         auto &name = name_to_input.first;
@@ -82,10 +79,10 @@ hailo_status YOLOv5PostProcessOp::execute(const std::map<std::string, MemoryView
         assert(contains(yolo_config.anchors, name));
         if (input_metadata.format.type == HAILO_FORMAT_TYPE_UINT8) {
             status = extract_detections<float32_t, uint8_t>(name_to_input.second, input_metadata.quant_info, input_metadata.shape,
-                input_metadata.padded_shape, yolo_config.anchors.at(name), detections, classes_detections_count);
+                input_metadata.padded_shape, yolo_config.anchors.at(name));
         } else if (input_metadata.format.type == HAILO_FORMAT_TYPE_UINT16) {
             status = extract_detections<float32_t, uint16_t>(name_to_input.second, input_metadata.quant_info, input_metadata.shape,
-                input_metadata.padded_shape, yolo_config.anchors.at(name), detections, classes_detections_count);
+                input_metadata.padded_shape, yolo_config.anchors.at(name));
         } else {
             CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "YOLO post-process received invalid input type {}", input_metadata.format.type);
         }
@@ -93,7 +90,7 @@ hailo_status YOLOv5PostProcessOp::execute(const std::map<std::string, MemoryView
     }
 
     // TODO: Add support for TF_FORMAT_ORDER
-    return hailo_nms_format(std::move(detections), outputs.begin()->second, classes_detections_count);
+    return hailo_nms_format(outputs.begin()->second);
 }
 
 hailo_bbox_float32_t YOLOv5PostProcessOp::decode(float32_t tx, float32_t ty, float32_t tw, float32_t th,

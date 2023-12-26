@@ -134,8 +134,7 @@ public:
                 stream_info.hw_shape.height = layer.hw_shape.height;
                 stream_info.hw_shape.width = layer.hw_shape.width;
                 stream_info.hw_shape.features = layer.hw_shape.features;
-                stream_info.hw_frame_size =
-                    stream_info.hw_shape.height * stream_info.hw_shape.width * stream_info.hw_shape.features * stream_info.hw_data_bytes;
+                stream_info.hw_frame_size = HailoRTCommon::get_periph_frame_size(stream_info.hw_shape, stream_info.format);
             }
             stream_info.direction = layer.direction;
             stream_info.index = layer.stream_index;
@@ -273,7 +272,7 @@ public:
         if (HAILO_FORMAT_ORDER_HAILO_NMS == layer_info.format.order) {
             return get_nms_layer_transfer_size(layer_info);
         }
-        return (layer_info.hw_shape.width * layer_info.hw_shape.features * layer_info.hw_shape.height * layer_info.hw_data_bytes);
+        return HailoRTCommon::get_periph_frame_size(layer_info.hw_shape, layer_info.format);
     }
 
 private:

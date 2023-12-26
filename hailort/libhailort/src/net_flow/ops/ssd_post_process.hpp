@@ -97,8 +97,7 @@ private:
     std::shared_ptr<SSDOpMetadata> m_metadata;
 
     template<typename DstType = float32_t, typename SrcType>
-    void extract_bbox_classes(const hailo_bbox_float32_t &dims_bbox, SrcType *cls_data, const BufferMetaData &cls_metadata, uint32_t cls_index,
-        std::vector<DetectionBbox> &detections, std::vector<uint32_t> &classes_detections_count)
+    void extract_bbox_classes(const hailo_bbox_float32_t &dims_bbox, SrcType *cls_data, const BufferMetaData &cls_metadata, uint32_t cls_index)
     {
         const auto &nms_config = m_metadata->nms_config();
         if (nms_config.cross_classes) {
@@ -108,8 +107,8 @@ private:
             auto bbox = dims_bbox;
             bbox.score = max_id_score_pair.second;
             if (max_id_score_pair.second >= nms_config.nms_score_th) {
-                detections.emplace_back(DetectionBbox(bbox, max_id_score_pair.first));
-                classes_detections_count[max_id_score_pair.first]++;
+                m_detections.emplace_back(DetectionBbox(bbox, max_id_score_pair.first));
+                m_classes_detections_count[max_id_score_pair.first]++;
             }
         } else {
             for (uint32_t class_index = 0; class_index < nms_config.number_of_classes; class_index++) {
@@ -135,8 +134,8 @@ private:
                 }
                 auto bbox = dims_bbox;
                 bbox.score = class_score;
-                detections.emplace_back(bbox, class_id);
-                classes_detections_count[class_id]++;
+                m_detections.emplace_back(bbox, class_id);
+                m_classes_detections_count[class_id]++;
             }
         }
     }
@@ -145,8 +144,7 @@ private:
     hailo_status extract_bbox_detections(const std::string &reg_input_name, const std::string &cls_input_name,
         const MemoryView &reg_buffer, const MemoryView &cls_buffer,
         uint64_t x_index, uint64_t y_index, uint64_t w_index, uint64_t h_index,
-        uint32_t cls_index, float32_t wa, float32_t ha, float32_t xcenter_a, float32_t ycenter_a,
-        std::vector<DetectionBbox> &detections, std::vector<uint32_t> &classes_detections_count)
+        uint32_t cls_index, float32_t wa, float32_t ha, float32_t xcenter_a, float32_t ycenter_a)
     {
         const auto &inputs_metadata = m_metadata->inputs_metadata();
         const auto &ssd_config = m_metadata->ssd_config();
@@ -185,13 +183,13 @@ private:
         const auto &cls_metadata = inputs_metadata.at(cls_input_name);
         if (cls_metadata.format.type == HAILO_FORMAT_TYPE_UINT8) {
             extract_bbox_classes<DstType, uint8_t>(dims_bbox, (uint8_t*)cls_data, cls_metadata,
-                cls_index, detections, classes_detections_count);
+                cls_index);
         } else if (cls_metadata.format.type == HAILO_FORMAT_TYPE_UINT16) {
             extract_bbox_classes<DstType, uint16_t>(dims_bbox, (uint16_t*)cls_data, cls_metadata,
-                cls_index, detections, classes_detections_count);
+                cls_index);
         } else if (cls_metadata.format.type == HAILO_FORMAT_TYPE_FLOAT32) {
             extract_bbox_classes<DstType, float32_t>(dims_bbox, (float32_t*)cls_data, cls_metadata,
-                cls_index, detections, classes_detections_count);
+                cls_index);
         } else {
             CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "SSD post-process received invalid cls input type: {}",
                 cls_metadata.format.type);
@@ -206,14 +204,11 @@ private:
      * @param[in] cls_input_name                Name of the classes input
      * @param[in] reg_buffer                    Buffer containing the boxes data after inference
      * @param[in] cls_buffer                    Buffer containing the classes ids after inference.
-     * @param[inout] detections                 A vector of ::DetectionBbox objects, to add the detected bboxes to.
-     * @param[inout] classes_detections_count   A vector of uint32_t, to add count of detections count per class to.
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
     */
     hailo_status extract_detections(const std::string &reg_input_name, const std::string &cls_input_name,
-        const MemoryView &reg_buffer, const MemoryView &cls_buffer,
-        std::vector<DetectionBbox> &detections, std::vector<uint32_t> &classes_detections_count);
+        const MemoryView &reg_buffer, const MemoryView &cls_buffer);
 };
 
 }

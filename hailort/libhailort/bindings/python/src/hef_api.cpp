@@ -111,22 +111,6 @@ py::list HefWrapper::get_vstream_names_from_stream_name(const std::string &strea
     return py::cast(results.release());
 }
 
-py::dict HefWrapper::get_input_vstreams_params(const std::string &name, bool quantized, hailo_format_type_t format_type,
-    uint32_t timeout_ms, uint32_t queue_size)
-{
-    auto result = hef->make_input_vstream_params(name, quantized, format_type, timeout_ms, queue_size);
-    VALIDATE_EXPECTED(result);
-    return py::cast(result.value());
-}
-
-py::dict HefWrapper::get_output_vstreams_params(const std::string &name, bool quantized, hailo_format_type_t format_type,
-    uint32_t timeout_ms, uint32_t queue_size)
-{
-    auto result = hef->make_output_vstream_params(name, quantized, format_type, timeout_ms, queue_size);
-    VALIDATE_EXPECTED(result);
-    return py::cast(result.value());
-}
-
 py::list HefWrapper::get_input_vstream_infos(const std::string &name)
 {
     auto result = hef->get_input_vstream_infos(name);
@@ -215,8 +199,6 @@ void HefWrapper::initialize_python_module(py::module &m)
         .def("get_udp_rates_dict", &HefWrapper::get_udp_rates_dict)
         .def("create_configure_params", &HefWrapper::create_configure_params)
         .def("create_configure_params_mipi_input", &HefWrapper::create_configure_params_mipi_input)
-        .def("get_input_vstreams_params", &HefWrapper::get_input_vstreams_params)
-        .def("get_output_vstreams_params", &HefWrapper::get_output_vstreams_params)
         .def("get_input_vstream_infos", &HefWrapper::get_input_vstream_infos)
         .def("get_output_vstream_infos", &HefWrapper::get_output_vstream_infos)
         .def("get_all_vstream_infos", &HefWrapper::get_all_vstream_infos)

@@ -8,6 +8,7 @@
 
 #include "transfer_common.hpp"
 #include "vdma/memory/mapped_buffer.hpp"
+#include "vdma/vdma_device.hpp"
 
 namespace hailort
 {
@@ -32,16 +33,16 @@ TransferBuffer::TransferBuffer(BufferPtr base_buffer)
     : TransferBuffer(base_buffer, base_buffer->size(), 0)
 {}
 
-Expected<vdma::MappedBufferPtr> TransferBuffer::map_buffer(HailoRTDriver &driver, HailoRTDriver::DmaDirection direction)
+Expected<vdma::MappedBufferPtr> TransferBuffer::map_buffer(VdmaDevice &device, HailoRTDriver::DmaDirection direction)
 {
     CHECK_AS_EXPECTED(m_base_buffer->storage().type() == BufferStorage::Type::DMA, HAILO_INVALID_ARGUMENT,
-        "Buffer must be dma-able (provided buffer type {})", static_cast<int>(m_base_buffer->storage().type()));
+       "Buffer must be dma-able (provided buffer type {})", static_cast<int>(m_base_buffer->storage().type()));
 
     // Map if not already mapped
-    auto is_new_mapping_exp = m_base_buffer->storage().dma_map(driver, to_hailo_dma_direction(direction));
+    auto is_new_mapping_exp = m_base_buffer->storage().dma_map(device, to_hailo_dma_direction(direction));
     CHECK_EXPECTED(is_new_mapping_exp);
 
-    return m_base_buffer->storage().get_dma_mapped_buffer(driver.device_id());
+    return m_base_buffer->storage().get_dma_mapped_buffer(device.get_dev_id());
 }
 
 hailo_status TransferBuffer::copy_to(MemoryView buffer)
@@ -71,9 +72,9 @@ hailo_status TransferBuffer::copy_from(const MemoryView buffer)
     return HAILO_SUCCESS;
 }
 
-hailo_status TransferBuffer::synchronize(HailoRTDriver &driver, HailoRTDriver::DmaSyncDirection sync_direction)
+hailo_status TransferBuffer::synchronize(VdmaDevice &device, HailoRTDriver::DmaSyncDirection sync_direction)
 {
-    auto mapped_buffer = m_base_buffer->storage().get_dma_mapped_buffer(driver.device_id());
+    auto mapped_buffer = m_base_buffer->storage().get_dma_mapped_buffer(device.get_dev_id());
     CHECK_EXPECTED_AS_STATUS(mapped_buffer);
 
     auto continuous_parts = get_continuous_parts();

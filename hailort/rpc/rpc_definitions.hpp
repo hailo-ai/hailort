@@ -32,6 +32,11 @@ static const std::string HAILORT_SERVICE_ADDRESS = []() {
     }
 }();
 
+typedef enum {
+    CALLBACK_TYPE_TRANSFER              = 0,
+    CALLBACK_TYPE_INFER_REQUEST         = 1,
+} callback_type_t;
+
 class VDeviceIdentifier {
 public:
     VDeviceIdentifier(uint32_t vdevice_handle) : m_vdevice_handle(vdevice_handle)

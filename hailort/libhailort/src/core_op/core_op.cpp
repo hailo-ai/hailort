@@ -330,6 +330,28 @@ hailo_status CoreOp::deactivate_low_level_streams()
     return status;
 }
 
+hailo_status CoreOp::abort_low_level_streams()
+{
+    auto status = HAILO_SUCCESS; // Success oriented
+
+    for (auto &name_pair : m_input_streams) {
+        auto abort_status = name_pair.second->abort_impl();
+        if (HAILO_SUCCESS != abort_status) {
+            LOGGER__ERROR("Failed to abort stream {}", name_pair.first);
+            status = abort_status;
+        }
+    }
+    for (auto &name_pair : m_output_streams) {
+        auto abort_status = name_pair.second->abort_impl();
+        if (HAILO_SUCCESS != abort_status) {
+            LOGGER__ERROR("Failed to abort stream {}", name_pair.first);
+            status = abort_status;
+        }
+    }
+
+    return status;
+}
+
 const SupportedFeatures &CoreOp::get_supported_features()
 {
     return m_metadata->supported_features();
@@ -393,6 +415,50 @@ hailo_status CoreOp::wrap_streams_for_remote_process()
     return HAILO_SUCCESS;
 }
 
+Expected<size_t> CoreOp::get_async_max_queue_size() const
+{
+    size_t queue_size = std::numeric_limits<size_t>::max();
+
+    for (const auto &input : m_input_streams) {
+        auto stream_queue_size = input.second->get_async_max_queue_size();
+        CHECK_EXPECTED(stream_queue_size);
+        queue_size = std::min(queue_size, *stream_queue_size);
+    }
+
+    for (const auto &output : m_output_streams) {
+        auto stream_queue_size = output.second->get_async_max_queue_size();
+        CHECK_EXPECTED(stream_queue_size);
+        queue_size = std::min(queue_size, *stream_queue_size);
+    }
+
+    return queue_size;
+}
+
+hailo_status CoreOp::infer_async(InferRequest &&request)
+{
+    assert(request.transfers.size() == (m_input_streams.size() + m_output_streams.size()));
+
+    // To optimize allocation on runtime, we can use some fixed slab-allocator
+    auto state = make_shared_nothrow<OngoingInferState>();
+    CHECK_NOT_NULL(state, HAILO_OUT_OF_HOST_MEMORY);
+    state->callbacks_left = request.transfers.size();
+    state->status = HAILO_SUCCESS; // Success oriented, on any failure, modify this
+
+    auto transfers_copy = request.transfers;
+    auto status = infer_async_impl(transfers_copy, state, request.callback);
+    if (HAILO_SUCCESS != status) {
+        // infer_async_impl remove all launched transfers from transfer_copy. Here, we finish all callbacks left
+        for (auto &transfer : transfers_copy) {
+            transfer.second.callback(status);
+        }
+        // Note: See `CoreOp::infer_async` docs
+        return HAILO_SUCCESS;
+    }
+    assert(transfers_copy.empty());
+
+    return HAILO_SUCCESS;
+}
+
 bool CoreOp::is_multi_context() const
 {
     return m_metadata->supported_features().multi_context;
@@ -451,6 +517,65 @@ Expected<std::shared_ptr<InputStreamBase>> CoreOp::create_input_stream_from_conf
     return input_stream;
 }
 
+hailo_status CoreOp::infer_async_impl(std::unordered_map<std::string, TransferRequest> &transfers,
+    std::shared_ptr<OngoingInferState> state, TransferDoneCallback done_callback)
+{
+    for ( auto &name_to_transfer : transfers) {
+        name_to_transfer.second.callback = wrap_user_callback(std::move(name_to_transfer.second.callback), state, done_callback);
+    }
+
+    for (auto &input : m_input_streams) {
+        auto transfer = transfers.find(input.second->name());
+        CHECK(transfer != transfers.end(), HAILO_INTERNAL_FAILURE, "Invalid stream {}", input.second->name());
+
+        CHECK(input.second->get_frame_size() == transfer->second.get_total_transfer_size(), HAILO_INVALID_ARGUMENT,
+            "for input '{}', passed buffer size is {} (expected {})", input.first, transfer->second.get_total_transfer_size(),
+            input.second->get_frame_size());
+
+        auto status = input.second->write_async(std::move(transfer->second));
+        if (HAILO_STREAM_ABORTED_BY_USER == status) {
+            return status;
+        }
+        CHECK_SUCCESS(status);
+        transfers.erase(transfer);
+    }
+
+    for (auto &output : m_output_streams) {
+        auto transfer = transfers.find(output.second->name());
+        CHECK(transfer != transfers.end(), HAILO_INTERNAL_FAILURE, "Invalid stream {}", output.second->name());
+
+        CHECK(output.second->get_frame_size() == transfer->second.get_total_transfer_size(), HAILO_INVALID_ARGUMENT,
+            "for output '{}', passed buffer size is {} (expected {})", output.first, transfer->second.get_total_transfer_size(),
+            output.second->get_frame_size());
+
+        auto status = output.second->read_async(std::move(transfer->second));
+        if (HAILO_STREAM_ABORTED_BY_USER == status) {
+            return status;
+        }
+        CHECK_SUCCESS(status);
+        transfers.erase(transfer);
+    }
+
+    return HAILO_SUCCESS;
+}
+
+TransferDoneCallback CoreOp::wrap_user_callback(TransferDoneCallback &&original_callback,
+    std::shared_ptr<OngoingInferState> state,
+    TransferDoneCallback infer_callback)
+{
+    return [original_callback, state, infer_callback](hailo_status status) {
+        original_callback(status);
+
+        if (HAILO_SUCCESS != status) {
+            state->status = status;
+        }
+
+        if (0 == (--state->callbacks_left)) {
+            infer_callback(state->status);
+        }
+    };
+}
+
 Expected<std::shared_ptr<InputStreamBase>> CoreOp::create_vdma_input_stream(Device &device, const std::string &stream_name,
     const LayerInfo &layer_info, const hailo_stream_parameters_t &stream_params)
 {
@@ -490,7 +615,7 @@ Expected<std::shared_ptr<OutputStreamBase>> CoreOp::create_output_stream_from_co
 
         case HAILO_STREAM_INTERFACE_ETH:
             {
-                auto output_stream_exp =  EthernetOutputStream::create(device,
+                auto output_stream_exp = EthernetOutputStream::create(device,
                     layer_info.value(), stream_params.eth_output_params, 
                     m_core_op_activated_event);
                 CHECK_EXPECTED(output_stream_exp);

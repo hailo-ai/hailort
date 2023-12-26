@@ -36,6 +36,7 @@ namespace hailort
 
 // Higher then default-hrt-timeout so we can differentiate errors
 static const std::chrono::milliseconds CONTEXT_TIMEOUT(HAILO_DEFAULT_VSTREAM_TIMEOUT_MS + 500);
+using callback_idx_t = uint32_t;
 
 class ClientContextWithTimeout : public grpc::ClientContext {
 public:
@@ -59,14 +60,16 @@ public:
     Expected<std::vector<std::unique_ptr<Device>>> VDevice_get_physical_devices(const VDeviceIdentifier &identifier);
     Expected<hailo_stream_interface_t> VDevice_get_default_streams_interface(const VDeviceIdentifier &identifier);
     Expected<std::vector<uint32_t>> VDevice_configure(const VDeviceIdentifier &identifier, const Hef &hef, uint32_t pid, const NetworkGroupsParamsMap &configure_params={});
+    Expected<ProtoCallbackIdentifier> VDevice_get_callback_id(const VDeviceIdentifier &identifier);
+    hailo_status VDevice_finish_callback_listener(const VDeviceIdentifier &identifier);
 
     Expected<uint32_t> ConfiguredNetworkGroup_dup_handle(const NetworkGroupIdentifier &identifier, uint32_t pid);
     hailo_status ConfiguredNetworkGroup_release(const NetworkGroupIdentifier &identifier, uint32_t pid);
     Expected<std::map<std::string, hailo_vstream_params_t>> ConfiguredNetworkGroup_make_input_vstream_params(const NetworkGroupIdentifier &identifier,
-        bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
+        hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
         const std::string &network_name);
     Expected<std::map<std::string, hailo_vstream_params_t>> ConfiguredNetworkGroup_make_output_vstream_params(const NetworkGroupIdentifier &identifier,
-        bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
+        hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
         const std::string &network_name);
     Expected<std::string> ConfiguredNetworkGroup_get_network_group_name(const NetworkGroupIdentifier &identifier);
     Expected<std::string> ConfiguredNetworkGroup_name(const NetworkGroupIdentifier &identifier);
@@ -74,7 +77,8 @@ public:
     Expected<std::vector<hailo_stream_info_t>> ConfiguredNetworkGroup_get_all_stream_infos(const NetworkGroupIdentifier &identifier, const std::string &network_name);
     Expected<hailo_stream_interface_t> ConfiguredNetworkGroup_get_default_stream_interface(const NetworkGroupIdentifier &identifier);
     Expected<std::vector<std::map<std::string, hailo_vstream_params_t>>> ConfiguredNetworkGroup_make_output_vstream_params_groups(const NetworkGroupIdentifier &identifier,
-        bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size);
+        hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size);
+    hailo_status ConfiguredNetworkGroup_shutdown(const NetworkGroupIdentifier &identifier);
     Expected<std::vector<std::vector<std::string>>> ConfiguredNetworkGroup_get_output_vstream_groups(const NetworkGroupIdentifier &identifier);
     Expected<std::vector<hailo_vstream_info_t>> ConfiguredNetworkGroup_get_input_vstream_infos(const NetworkGroupIdentifier &identifier, std::string network_name);
     Expected<std::vector<hailo_vstream_info_t>> ConfiguredNetworkGroup_get_output_vstream_infos(const NetworkGroupIdentifier &identifier, std::string network_name);
@@ -88,8 +92,17 @@ public:
     Expected<bool> ConfiguredNetworkGroup_is_multi_context(const NetworkGroupIdentifier &identifier);
     Expected<ConfigureNetworkParams> ConfiguredNetworkGroup_get_config_params(const NetworkGroupIdentifier &identifier);
     Expected<std::vector<std::string>> ConfiguredNetworkGroup_get_sorted_output_names(const NetworkGroupIdentifier &identifier);
+    Expected<size_t> ConfiguredNetworkGroup_get_min_buffer_pool_size(const NetworkGroupIdentifier &identifier);
+    Expected<std::unique_ptr<LayerInfo>> ConfiguredNetworkGroup_get_layer_info(const NetworkGroupIdentifier &identifier, const std::string &stream_name);
+    Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> ConfiguredNetworkGroup_get_ops_metadata(const NetworkGroupIdentifier &identifier);
+    hailo_status ConfiguredNetworkGroup_set_nms_score_threshold(const NetworkGroupIdentifier &identifier, const std::string &edge_name, float32_t nms_score_th);
+    hailo_status ConfiguredNetworkGroup_set_nms_iou_threshold(const NetworkGroupIdentifier &identifier, const std::string &edge_name, float32_t iou_th);
+    hailo_status ConfiguredNetworkGroup_set_nms_max_bboxes_per_class(const NetworkGroupIdentifier &identifier, const std::string &edge_name, uint32_t max_bboxes);
     Expected<std::vector<std::string>> ConfiguredNetworkGroup_get_stream_names_from_vstream_name(const NetworkGroupIdentifier &identifier, const std::string &vstream_name);
     Expected<std::vector<std::string>> ConfiguredNetworkGroup_get_vstream_names_from_stream_name(const NetworkGroupIdentifier &identifier, const std::string &stream_name);
+    hailo_status ConfiguredNetworkGroup_infer_async(const NetworkGroupIdentifier &identifier,
+        const std::vector<std::tuple<callback_idx_t, std::string, MemoryView>> &cb_idx_to_stream_buffer,
+        const callback_idx_t infer_request_done_cb, const std::unordered_set<std::string> &input_streams_names);
 
     Expected<std::vector<uint32_t>> InputVStreams_create(const NetworkGroupIdentifier &identifier,
         const std::map<std::string, hailo_vstream_params_t> &inputs_params, uint32_t pid);

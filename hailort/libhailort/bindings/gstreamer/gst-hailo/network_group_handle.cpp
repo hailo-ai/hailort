@@ -185,8 +185,8 @@ hailo_status NetworkGroupHandle::set_scheduler_priority(const char *network_name
 }
 
 Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> NetworkGroupHandle::create_vstreams(const char *network_name,
-    hailo_scheduling_algorithm_t scheduling_algorithm, const std::vector<hailo_format_with_name_t> &output_formats, bool input_quantized, 
-    bool output_quantized, hailo_format_type_t input_format_type, hailo_format_type_t output_format_type)
+    hailo_scheduling_algorithm_t scheduling_algorithm, const std::vector<hailo_format_with_name_t> &output_formats,
+    hailo_format_type_t input_format_type, hailo_format_type_t output_format_type)
 {
     GST_CHECK(nullptr != network_name, make_unexpected(HAILO_INVALID_ARGUMENT), m_element, RESOURCE, "Got nullptr in network name!");
 
@@ -200,7 +200,7 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> Netwo
     auto expected_input_vstream_infos = hef()->get_input_vstream_infos(network_name);
     GST_CHECK_EXPECTED(expected_input_vstream_infos, m_element, RESOURCE, "Failed getting input vstream infos, status = %d",
         expected_input_vstream_infos.status());
-    auto expected_input_params_map = m_cng->make_input_vstream_params(input_quantized, input_format_type, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
+    auto expected_input_params_map = m_cng->make_input_vstream_params({}, input_format_type, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
         HAILO_DEFAULT_VSTREAM_QUEUE_SIZE, m_network_name);
     GST_CHECK_EXPECTED(expected_input_params_map, m_element, RESOURCE, "Failed making input vstream params, status = %d",
         expected_input_params_map.status());
@@ -223,7 +223,7 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> Netwo
     GST_CHECK(1 == input_vstreams->size(), make_unexpected(HAILO_INVALID_OPERATION), m_element, RESOURCE,
         "hailosend element supports only HEFs with one input for now!");
 
-    auto output_params_map = m_cng->make_output_vstream_params(output_quantized, output_format_type, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
+    auto output_params_map = m_cng->make_output_vstream_params({}, output_format_type, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
         HAILO_DEFAULT_VSTREAM_QUEUE_SIZE, m_network_name);
     GST_CHECK_EXPECTED(output_params_map, m_element, RESOURCE, "Failed making output vstream params, status = %d",
         output_params_map.status());

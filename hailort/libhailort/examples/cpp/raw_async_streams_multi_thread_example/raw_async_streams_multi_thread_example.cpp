@@ -86,42 +86,20 @@ static void input_async_callback(const InputStream::CompletionInfo &completion_i
     }
 }
 
-int main()
+static hailo_status infer(ConfiguredNetworkGroup &network_group)
 {
-    auto device = Device::create();
-    if (!device) {
-        std::cerr << "Failed create device " << device.status() << std::endl;
-        return EXIT_FAILURE;
-    }
-
-    static const auto HEF_FILE = "hefs/shortcut_net.hef";
-    auto network_group = configure_network_group(*device.value(), HEF_FILE);
-    if (!network_group) {
-        std::cerr << "Failed to configure network group " << HEF_FILE << std::endl;
-        return EXIT_FAILURE;
-    }
-
     // Assume one input and output
-    auto &output = network_group->get()->get_output_streams()[0].get();
-    auto &input = network_group->get()->get_input_streams()[0].get();
+    auto &output = network_group.get_output_streams()[0].get();
+    auto &input = network_group.get_input_streams()[0].get();
 
     // Allocate buffers. The buffers sent to the async API must be page aligned.
     // For simplicity, in this example, we pass one buffer for each stream (It may be problematic in output since the
     // buffer will be overridden on each read).
-    // Note - the buffers are allocated before we activate the network group. This will ensure that they won't be freed
-    // until the network group will become inactive.
+    // Note - the buffers can be freed only after all callbacks are called. The user can either wait for all
+    // callbacks, or as done in this example, call ConfiguredNetworkGroup::shutdown that will make sure all callbacks
+    // are called.
     auto output_buffer = page_aligned_alloc(output.get_frame_size());
     auto input_buffer = page_aligned_alloc(input.get_frame_size());
-
-    // The destructor of activated_network_group will make sure that all async operations are done. All pending
-    // operations will be canceled and their callbacks will be called with status=HAILO_STREAM_ABORTED_BY_USER.
-    // Be sure to capture variables in the callbacks that will be destructed after the activated_network_group.
-    // Otherwise, the lambda would have access an uninitialized data.
-    auto activated_network_group = network_group.value()->activate();
-    if (!activated_network_group) {
-        std::cerr << "Failed to activate network group "  << activated_network_group.status() << std::endl;
-        return EXIT_FAILURE;
-    }
 
     std::atomic<hailo_status> output_status(HAILO_UNINITIALIZED);
     std::thread output_thread([&]() {
@@ -148,14 +126,47 @@ int main()
     // After all async operations are launched, the inference is running.
     std::this_thread::sleep_for(std::chrono::seconds(5));
 
-    // Make it stop. We explicitly destruct activated_network_group to stop all async I/O.
-    activated_network_group->reset();
+    // Calling shutdown on a network group will ensure that all async operations are done. All pending
+    // operations will be canceled and their callbacks will be called with status=HAILO_STREAM_ABORTED_BY_USER.
+    // Only after the shutdown is called, we can safely free the buffers and any variable captured inside the async
+    // callback lambda.
+    network_group.shutdown();
 
-    // Thread should be stopped with HAILO_STREAM_NOT_ACTIVATED status.
+    // Thread should be stopped with HAILO_STREAM_ABORTED_BY_USER status.
     output_thread.join();
     input_thread.join();
-    if ((HAILO_STREAM_NOT_ACTIVATED != output_status) || (HAILO_STREAM_NOT_ACTIVATED != input_status)) {
+
+    if ((HAILO_STREAM_ABORTED_BY_USER != output_status) || (HAILO_STREAM_ABORTED_BY_USER != input_status)) {
         std::cerr << "Got unexpected statues from thread: " << output_status << ", " << input_status << std::endl;
+        return HAILO_INTERNAL_FAILURE;
+    }
+
+    return HAILO_SUCCESS;
+}
+
+int main()
+{
+    auto device = Device::create();
+    if (!device) {
+        std::cerr << "Failed create device " << device.status() << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    static const auto HEF_FILE = "hefs/shortcut_net.hef";
+    auto network_group = configure_network_group(*device.value(), HEF_FILE);
+    if (!network_group) {
+        std::cerr << "Failed to configure network group " << HEF_FILE << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    auto activated_network_group = network_group.value()->activate();
+    if (!activated_network_group) {
+        std::cerr << "Failed to activate network group "  << activated_network_group.status() << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    auto status = infer(*network_group.value());
+    if (HAILO_SUCCESS != status) {
         return EXIT_FAILURE;
     }
 

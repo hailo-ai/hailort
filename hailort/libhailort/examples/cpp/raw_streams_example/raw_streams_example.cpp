@@ -15,7 +15,6 @@
 
 #define HEF_FILE ("hefs/shortcut_net.hef")
 constexpr size_t FRAMES_COUNT = 100;
-constexpr bool QUANTIZED = true;
 constexpr hailo_format_type_t FORMAT_TYPE = HAILO_FORMAT_TYPE_AUTO;
 constexpr size_t MAX_LAYER_EDGES = 16;
 
@@ -48,7 +47,7 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(Device
 
 void write_all(InputStream &input, hailo_status &status)
 {
-    auto transform_context = InputTransformContext::create(input.get_info(), QUANTIZED, FORMAT_TYPE);
+    auto transform_context = InputTransformContext::create(input.get_info(), {}, FORMAT_TYPE);
     if (!transform_context) {
         status = transform_context.status();
         return;
@@ -74,7 +73,7 @@ void write_all(InputStream &input, hailo_status &status)
 
 void read_all(OutputStream &output, hailo_status &status)
 {
-    auto transform_context = OutputTransformContext::create(output.get_info(), QUANTIZED, FORMAT_TYPE);
+    auto transform_context = OutputTransformContext::create(output.get_info(), {}, FORMAT_TYPE);
     if (!transform_context) {
         status = transform_context.status();
         return;

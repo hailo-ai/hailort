@@ -135,11 +135,8 @@ hailo_status Yolov5SegPostProcess::execute(const std::map<std::string, MemoryVie
     const auto &inputs_metadata = m_metadata->inputs_metadata();
     const auto &yolo_config = m_metadata->yolov5_config();
     const auto &yolov5seg_config = m_metadata->yolov5seg_config();
-    const auto &nms_config = m_metadata->nms_config();
 
-    std::vector<DetectionBbox> detections;
-    std::vector<uint32_t> classes_detections_count(nms_config.number_of_classes, 0);
-    detections.reserve(nms_config.max_proposals_per_class * nms_config.number_of_classes);
+    clear_before_frame();
     for (const auto &name_to_input : inputs) {
         hailo_status status;
         auto &name = name_to_input.first;
@@ -163,16 +160,16 @@ hailo_status Yolov5SegPostProcess::execute(const std::map<std::string, MemoryVie
         assert(contains(yolo_config.anchors, name));
         if (input_metadata.format.type == HAILO_FORMAT_TYPE_UINT8) {
             status = extract_detections<float32_t, uint8_t>(name_to_input.second, input_metadata.quant_info, input_metadata.shape,
-                input_metadata.padded_shape, yolo_config.anchors.at(name), detections, classes_detections_count);
+                input_metadata.padded_shape, yolo_config.anchors.at(name));
         } else if (input_metadata.format.type == HAILO_FORMAT_TYPE_UINT16) {
             status = extract_detections<float32_t, uint16_t>(name_to_input.second, input_metadata.quant_info, input_metadata.shape,
-                input_metadata.padded_shape, yolo_config.anchors.at(name), detections, classes_detections_count);
+                input_metadata.padded_shape, yolo_config.anchors.at(name));
         }
         CHECK_SUCCESS(status);
     }
 
-    remove_overlapping_boxes(detections, classes_detections_count, m_metadata->nms_config().nms_iou_th);
-    auto status = fill_nms_with_byte_mask_format(outputs.begin()->second, detections, classes_detections_count);
+    remove_overlapping_boxes(m_detections, m_classes_detections_count, m_metadata->nms_config().nms_iou_th);
+    auto status = fill_nms_with_byte_mask_format(outputs.begin()->second);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -193,7 +190,7 @@ void Yolov5SegPostProcess::mult_mask_vector_and_proto_matrix(const DetectionBbox
     for (uint32_t i = 0; i < mult_size; i++) {
         float32_t sum = 0.0f;
         for (uint32_t j = 0; j < proto_layer_shape.features; j++) {
-            sum += detection.m_mask[j] * proto_layer[j * mult_size + i];
+            sum += detection.m_coefficients[j] * proto_layer[j * mult_size + i];
         }
         mult_result[i] = sigmoid(sum);
     }
@@ -213,22 +210,22 @@ hailo_status Yolov5SegPostProcess::crop_and_copy_mask(const DetectionBbox &detec
         static_cast<uint32_t>(yolov5_config.image_height), 0, 1, STBIR_ALPHA_CHANNEL_NONE, 0,
         STBIR_EDGE_CLAMP, STBIR_FILTER_TRIANGLE, STBIR_COLORSPACE_LINEAR, NULL);
 
-    auto x_min = static_cast<uint32_t>(std::round(detection.m_bbox.x_min * yolov5_config.image_width));
-    auto x_max = static_cast<uint32_t>(std::round(detection.m_bbox.x_max * yolov5_config.image_width));
-    auto y_min = static_cast<uint32_t>(std::round(detection.m_bbox.y_min * yolov5_config.image_height));
-    auto y_max = static_cast<uint32_t>(std::round(detection.m_bbox.y_max * yolov5_config.image_height));
-    auto box_width = detection.get_bbox_rounded_width(yolov5_config.image_width);
+    auto x_min = static_cast<uint32_t>(std::ceil(detection.m_bbox.x_min * yolov5_config.image_width));
+    auto x_max = static_cast<uint32_t>(std::ceil(detection.m_bbox.x_max * yolov5_config.image_width));
+    auto y_min = static_cast<uint32_t>(std::ceil(detection.m_bbox.y_min * yolov5_config.image_height));
+    auto y_max = static_cast<uint32_t>(std::ceil(detection.m_bbox.y_max * yolov5_config.image_height));
+    auto box_width = detection.get_bbox_width(yolov5_config.image_width);
 
-    float32_t *dst_mask = (float32_t*)(buffer.data() + buffer_offset);
+    uint8_t *dst_mask = (uint8_t*)(buffer.data() + buffer_offset);
     for (uint32_t i = y_min; i <= y_max; i++) {
         for (uint32_t j = x_min; j <= x_max; j++) {
             auto image_mask_idx = (i * static_cast<uint32_t>(yolov5_config.image_width)) + j;
             auto cropped_mask_idx = ((i-y_min) * box_width) + (j-x_min);
 
             if (resized_mask_to_image_dim_ptr[image_mask_idx] > mask_threshold) {
-                dst_mask[cropped_mask_idx] = 1.0f;
+                dst_mask[cropped_mask_idx] = 1;
             } else {
-                dst_mask[cropped_mask_idx] = 0.0f;
+                dst_mask[cropped_mask_idx] = 0;
             }
         }
     }
@@ -245,122 +242,63 @@ hailo_status Yolov5SegPostProcess::calc_and_copy_mask(const DetectionBbox &detec
     return HAILO_SUCCESS;
 }
 
-uint32_t Yolov5SegPostProcess::get_mask_size(const DetectionBbox &detection)
+Expected<uint32_t> Yolov5SegPostProcess::copy_detection_to_result_buffer(MemoryView &buffer, DetectionBbox &detection,
+    uint32_t buffer_offset)
 {
-    auto &yolov5_config = m_metadata->yolov5_config();
-    auto box_height = detection.get_bbox_rounded_height(yolov5_config.image_height);
-    auto box_width = detection.get_bbox_rounded_width(yolov5_config.image_width);
-    auto mask_size = box_width * box_height;
-
-    // Add padding if needed
-    uint32_t remainder = mask_size % 8;
-    uint32_t adjustment = (remainder != 0) ? (8 - remainder) : 0;
-    uint32_t result = static_cast<uint32_t>(mask_size + adjustment);
-    return result;
-}
-
-Expected<uint32_t> Yolov5SegPostProcess::copy_detection_to_result_buffer(MemoryView &buffer, const DetectionBbox &detection,
-    uint32_t buffer_offset, std::vector<uint32_t> &classes_detections_count)
-{
-    auto detection_byte_size = 0;
-    float32_t mask_size_bytes = static_cast<float32_t>(get_mask_size(detection)) * sizeof(float32_t);
+    uint32_t copied_bytes_amount = 0;
 
     // Copy bbox
-    uint32_t size_to_copy = sizeof(detection.m_bbox);
+    uint32_t size_to_copy = sizeof(detection.m_bbox_with_mask);
     assert((buffer_offset + size_to_copy) <= buffer.size());
-    memcpy((hailo_bbox_float32_t*)(buffer.data() + buffer_offset), &detection.m_bbox, size_to_copy);
-    buffer_offset += size_to_copy;
-    detection_byte_size += size_to_copy;
+    detection.m_bbox_with_mask.mask = (buffer.data() + buffer_offset + size_to_copy);
 
-    // Copy mask size
-    size_to_copy = sizeof(mask_size_bytes);
-    assert((buffer_offset + size_to_copy) <= buffer.size());
-    memcpy((buffer.data() + buffer_offset), &mask_size_bytes, size_to_copy);
+    *(hailo_detection_with_byte_mask_t*)(buffer.data() + buffer_offset) =
+        *(hailo_detection_with_byte_mask_t*)&(detection.m_bbox_with_mask);
     buffer_offset += size_to_copy;
-    detection_byte_size += size_to_copy;
+    copied_bytes_amount += size_to_copy;
 
     // Calc and copy mask
     auto status = calc_and_copy_mask(detection, buffer, buffer_offset);
     CHECK_SUCCESS_AS_EXPECTED(status);
-    detection_byte_size += static_cast<uint32_t>(mask_size_bytes);
+    copied_bytes_amount += static_cast<uint32_t>(detection.m_bbox_with_mask.mask_size);
 
-    classes_detections_count[detection.m_class_id]--;
-    return detection_byte_size;
+    m_classes_detections_count[detection.m_class_id]--;
+    return copied_bytes_amount;
 }
 
-uint32_t Yolov5SegPostProcess::copy_bbox_count_to_result_buffer(MemoryView &buffer, uint32_t class_detection_count, uint32_t buffer_offset)
+hailo_status Yolov5SegPostProcess::fill_nms_with_byte_mask_format(MemoryView &buffer)
 {
-    float32_t bbox_count_casted = static_cast<float32_t>(class_detection_count);
-    uint32_t size_to_copy = sizeof(bbox_count_casted);
-
-    assert((buffer_offset + size_to_copy) <= buffer.size());
-    memcpy((buffer.data() + buffer_offset), &bbox_count_casted, size_to_copy);
-    return size_to_copy;
-}
-
-uint32_t Yolov5SegPostProcess::copy_zero_bbox_count(MemoryView &buffer, uint32_t classes_with_zero_detections_count, uint32_t buffer_offset)
-{
-    uint32_t size_to_copy = static_cast<uint32_t>(sizeof(float32_t)) * classes_with_zero_detections_count;
-
-    assert((buffer_offset + size_to_copy) <= buffer.size());
-    memset((buffer.data() + buffer_offset), 0, size_to_copy);
-    return size_to_copy;
-}
-
-hailo_status Yolov5SegPostProcess::fill_nms_with_byte_mask_format(MemoryView &buffer, std::vector<DetectionBbox> &detections,
-    std::vector<uint32_t> &classes_detections_count)
-{
-    // TODO: HRT-11734 - Improve performance by adding a new format that doesn't require the sort
-    // Sort by class_id
-    std::sort(detections.begin(), detections.end(),
-        [](DetectionBbox a, DetectionBbox b)
-        { return (a.m_class_id != b.m_class_id) ? (a.m_class_id < b.m_class_id) : (a.m_bbox.score > b.m_bbox.score); });
-
     const auto &nms_config = m_metadata->nms_config();
     uint32_t ignored_detections_count = 0;
-    int curr_class_id = -1;
-    uint32_t buffer_offset = 0;
-    for (auto &detection : detections) {
+    uint16_t detections_count = 0;
+    // The beginning of the output buffer will contain the detections_count first, here we save space for it.
+    uint32_t buffer_offset = sizeof(detections_count);
+    for (auto &detection : m_detections) {
         if (REMOVED_CLASS_SCORE == detection.m_bbox.score) {
             // Detection was removed in remove_overlapping_boxes()
             continue;
         }
-        if (0 == classes_detections_count[detection.m_class_id]) {
+        if (0 == m_classes_detections_count[detection.m_class_id]) {
             // This class' detections count is higher then m_nms_config.max_proposals_per_class.
             // This detection is ignored due to having lower score (detections vector is sorted by score).
             continue;
         }
 
         // If class's detections count is higher then max_proposals_per_class we set the detection count of that class to the max
-        // and ignore the rest by reducing the classes_detections_count[detection.m_class_id] after copying the bbox to result buffer.
-        if (nms_config.max_proposals_per_class < classes_detections_count[detection.m_class_id]) {
-            ignored_detections_count += (classes_detections_count[detection.m_class_id] - nms_config.max_proposals_per_class);
-            classes_detections_count[detection.m_class_id] = nms_config.max_proposals_per_class;
+        // and ignore the rest by reducing the m_classes_detections_count[detection.m_class_id] after copying the bbox to result buffer.
+        if (nms_config.max_proposals_per_class < m_classes_detections_count[detection.m_class_id]) {
+            ignored_detections_count += (m_classes_detections_count[detection.m_class_id] - nms_config.max_proposals_per_class);
+            m_classes_detections_count[detection.m_class_id] = nms_config.max_proposals_per_class;
         }
 
-        if (static_cast<int>(detection.m_class_id) == curr_class_id) {
-            auto buffer_offset_expected = copy_detection_to_result_buffer(buffer, detection, buffer_offset, classes_detections_count);
-            CHECK_EXPECTED_AS_STATUS(buffer_offset_expected);
-            buffer_offset += buffer_offset_expected.value();
-        }
-        else if (static_cast<int>(detection.m_class_id) == (curr_class_id + 1)) {
-            buffer_offset += copy_bbox_count_to_result_buffer(buffer, classes_detections_count[detection.m_class_id], buffer_offset);
-            auto buffer_offset_expected = copy_detection_to_result_buffer(buffer, detection, buffer_offset, classes_detections_count);
-            buffer_offset += buffer_offset_expected.value();
-            curr_class_id = detection.m_class_id;
-        }
-        else {
-            // no detections for classes between (curr_class_id, detection.m_class_id)
-            auto zero_detections_classes_count = (detection.m_class_id - curr_class_id);
-            buffer_offset += copy_zero_bbox_count(buffer, zero_detections_classes_count, buffer_offset);
-
-            // Copy the new class box
-            buffer_offset += copy_bbox_count_to_result_buffer(buffer, classes_detections_count[detection.m_class_id], buffer_offset);
-            auto buffer_offset_expected = copy_detection_to_result_buffer(buffer, detection, buffer_offset, classes_detections_count);
-            buffer_offset += buffer_offset_expected.value();
-            curr_class_id = detection.m_class_id;
-        }
+        auto copied_bytes_amount = copy_detection_to_result_buffer(buffer, detection, buffer_offset);
+        CHECK_EXPECTED_AS_STATUS(copied_bytes_amount);
+        buffer_offset += copied_bytes_amount.release();
+        detections_count++;
     }
+
+    // Copy detections count to the beginning of the buffer
+    *(uint16_t*)buffer.data() = detections_count;
 
     if (0 != ignored_detections_count) {
         LOGGER__INFO("{} Detections were ignored, due to `max_bboxes_per_class` defined as {}.",

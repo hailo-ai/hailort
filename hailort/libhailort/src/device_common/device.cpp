@@ -387,6 +387,29 @@ hailo_status Device::set_sleep_state(hailo_sleep_state_t sleep_state)
     return Control::set_sleep_state(*this, sleep_state);
 }
 
+hailo_status Device::dma_map(void *address, size_t size, hailo_stream_direction_t direction)
+{
+    (void) address;
+    (void) size;
+    (void) direction;
+    return HAILO_NOT_IMPLEMENTED;
+}
+
+hailo_status Device::dma_unmap(void *address, hailo_stream_direction_t direction)
+{
+    (void) address;
+    (void) direction;
+    return HAILO_NOT_IMPLEMENTED;
+}
+
+Expected<std::pair<vdma::MappedBufferPtr, bool>> Device::try_dma_map(vdma::DmaAbleBufferPtr buffer,
+    hailo_stream_direction_t direction)
+{
+    (void) buffer;
+    (void) direction;
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
 hailo_status Device::direct_write_memory(uint32_t address, const void *buffer, uint32_t size)
 {
     (void) address;

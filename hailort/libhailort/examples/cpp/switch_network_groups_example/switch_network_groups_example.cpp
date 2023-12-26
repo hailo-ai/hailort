@@ -16,7 +16,6 @@
 #include <thread>
 
 
-constexpr bool QUANTIZED = true;
 constexpr hailo_format_type_t FORMAT_TYPE = HAILO_FORMAT_TYPE_AUTO;
 constexpr size_t INFER_FRAME_COUNT = 100;
 constexpr uint32_t DEVICE_COUNT = 1;
@@ -66,7 +65,7 @@ Expected<std::vector<std::pair<std::vector<InputVStream>, std::vector<OutputVStr
     std::vector<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> vstreams_per_network_group;
 
     for (auto &network_group : configured_network_groups) {
-        auto vstreams_exp = VStreamsBuilder::create_vstreams(*network_group, QUANTIZED, FORMAT_TYPE);
+        auto vstreams_exp = VStreamsBuilder::create_vstreams(*network_group, {}, FORMAT_TYPE);
         if (!vstreams_exp) {
             return make_unexpected(vstreams_exp.status());
         }

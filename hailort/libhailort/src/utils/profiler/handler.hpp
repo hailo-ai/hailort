@@ -40,16 +40,6 @@ struct InitProfilerProtoTrace : Trace
     InitProfilerProtoTrace () : Trace("init_profiler_proto") {}
 };
 
-struct CoreOpIdleTrace : Trace
-{
-    CoreOpIdleTrace(const device_id_t &device_id, scheduler_core_op_handle_t core_op_handle)
-        : Trace("core_op_idle"), device_id(device_id), core_op_handle(core_op_handle)
-    {}
-
-    device_id_t device_id;
-    scheduler_core_op_handle_t core_op_handle;
-};
-
 struct AddDeviceTrace : Trace
 {
     AddDeviceTrace(const device_id_t &device_id, const std::string &device_arch)
@@ -62,33 +52,30 @@ struct AddDeviceTrace : Trace
 
 struct MonitorStartTrace : Trace
 {
-    MonitorStartTrace(uint32_t device_count)
-        : Trace("scheduler_start"), device_count(device_count)
+    MonitorStartTrace()
+        : Trace("scheduler_start")
     {}
 
-    uint32_t device_count = 0;
 };
 
 struct AddCoreOpTrace : Trace
 {
-    AddCoreOpTrace(const device_id_t &device_id, const std::string &core_op_name, uint64_t timeout, uint32_t threshold,
-        scheduler_core_op_handle_t handle, bool is_nms, int batch_size)
-        : Trace("add_core_op"), device_id(device_id), core_op_name(core_op_name), timeout(timeout), threshold(threshold),
-            core_op_handle(handle), is_nms(is_nms), batch_size(batch_size)
+    AddCoreOpTrace(const std::string &core_op_name, uint64_t timeout, uint32_t threshold,
+        scheduler_core_op_handle_t handle, int batch_size)
+        : Trace("add_core_op"), core_op_name(core_op_name), timeout(timeout), threshold(threshold),
+            core_op_handle(handle), batch_size(batch_size)
     {}
 
-    device_id_t device_id;
     std::string core_op_name;
     uint64_t timeout = 0;
     uint32_t threshold = 0;
     scheduler_core_op_handle_t core_op_handle = INVALID_CORE_OP_HANDLE;
-    bool is_nms = false;
     int batch_size = 0;
 };
 
-struct CreateCoreOpInputStreamsTrace : Trace
+struct AddStreamH2DTrace : Trace
 {
-    CreateCoreOpInputStreamsTrace(const device_id_t &device_id, const std::string &core_op_name, const std::string &stream_name, uint32_t queue_size,
+    AddStreamH2DTrace(const device_id_t &device_id, const std::string &core_op_name, const std::string &stream_name, uint32_t queue_size,
         scheduler_core_op_handle_t core_op_handle)
         : Trace("create_input_stream"), device_id(device_id), core_op_name(core_op_name), stream_name(stream_name), queue_size(queue_size),
         core_op_handle(core_op_handle)
@@ -101,9 +88,9 @@ struct CreateCoreOpInputStreamsTrace : Trace
     scheduler_core_op_handle_t core_op_handle;
 };
 
-struct CreateCoreOpOutputStreamsTrace : Trace
+struct AddStreamD2HTrace : Trace
 {
-    CreateCoreOpOutputStreamsTrace(const device_id_t &device_id, const std::string &core_op_name, const std::string &stream_name, uint32_t queue_size,
+    AddStreamD2HTrace(const device_id_t &device_id, const std::string &core_op_name, const std::string &stream_name, uint32_t queue_size,
         scheduler_core_op_handle_t core_op_handle)
         : Trace("create_output_stream"), device_id(device_id), core_op_name(core_op_name), stream_name(stream_name), queue_size(queue_size),
         core_op_handle(core_op_handle)
@@ -116,9 +103,9 @@ struct CreateCoreOpOutputStreamsTrace : Trace
     scheduler_core_op_handle_t core_op_handle;
 };
 
-struct WriteFrameTrace : Trace
+struct FrameEnqueueH2DTrace : Trace
 {
-    WriteFrameTrace(scheduler_core_op_handle_t core_op_handle, const std::string &queue_name)
+    FrameEnqueueH2DTrace(scheduler_core_op_handle_t core_op_handle, const std::string &queue_name)
         : Trace("write_frame"), core_op_handle(core_op_handle), queue_name(queue_name)
     {}
 
@@ -126,9 +113,9 @@ struct WriteFrameTrace : Trace
     std::string queue_name;
 };
 
-struct InputVdmaDequeueTrace : Trace
+struct FrameDequeueH2DTrace : Trace
 {
-    InputVdmaDequeueTrace(const device_id_t &device_id, scheduler_core_op_handle_t core_op_handle, const std::string &queue_name)
+    FrameDequeueH2DTrace(const device_id_t &device_id, scheduler_core_op_handle_t core_op_handle, const std::string &queue_name)
         : Trace("input_vdma_dequeue"), device_id(device_id), core_op_handle(core_op_handle), queue_name(queue_name)
     {}
 
@@ -137,9 +124,9 @@ struct InputVdmaDequeueTrace : Trace
     std::string queue_name;
 };
 
-struct ReadFrameTrace : Trace
+struct FrameDequeueD2HTrace : Trace
 {
-    ReadFrameTrace(scheduler_core_op_handle_t core_op_handle, const std::string &queue_name)
+    FrameDequeueD2HTrace(scheduler_core_op_handle_t core_op_handle, const std::string &queue_name)
         : Trace("read_frame"), core_op_handle(core_op_handle), queue_name(queue_name)
     {}
 
@@ -147,9 +134,9 @@ struct ReadFrameTrace : Trace
     std::string queue_name;
 };
 
-struct OutputVdmaEnqueueTrace : Trace
+struct FrameEnqueueD2HTrace : Trace
 {
-    OutputVdmaEnqueueTrace(const device_id_t &device_id, scheduler_core_op_handle_t core_op_handle, const std::string &queue_name)
+    FrameEnqueueD2HTrace(const device_id_t &device_id, scheduler_core_op_handle_t core_op_handle, const std::string &queue_name)
         : Trace("output_vdma_enqueue"), device_id(device_id), core_op_handle(core_op_handle), queue_name(queue_name)
     {}
 
@@ -213,9 +200,9 @@ struct OracleDecisionTrace : Trace
     bool over_timeout;
 };
 
-struct DumpProfilerState : Trace
+struct DumpProfilerStateTrace : Trace
 {
-    DumpProfilerState() : Trace("dump_profiler_state") {}
+    DumpProfilerStateTrace() : Trace("dump_profiler_state") {}
 };
 
 class Handler
@@ -225,21 +212,20 @@ public:
 
     virtual void handle_trace(const InitTrace&) {};
     virtual void handle_trace(const AddCoreOpTrace&) {};
-    virtual void handle_trace(const CreateCoreOpInputStreamsTrace&) {};
-    virtual void handle_trace(const CreateCoreOpOutputStreamsTrace&) {};
-    virtual void handle_trace(const WriteFrameTrace&) {};
-    virtual void handle_trace(const InputVdmaDequeueTrace&) {};
-    virtual void handle_trace(const ReadFrameTrace&) {};
-    virtual void handle_trace(const OutputVdmaEnqueueTrace&) {};
+    virtual void handle_trace(const AddStreamH2DTrace&) {};
+    virtual void handle_trace(const AddStreamD2HTrace&) {};
+    virtual void handle_trace(const FrameEnqueueH2DTrace&) {};
+    virtual void handle_trace(const FrameDequeueH2DTrace&) {};
+    virtual void handle_trace(const FrameDequeueD2HTrace&) {};
+    virtual void handle_trace(const FrameEnqueueD2HTrace&) {};
     virtual void handle_trace(const SwitchCoreOpTrace&) {};
     virtual void handle_trace(const MonitorStartTrace&) {};
-    virtual void handle_trace(const CoreOpIdleTrace&) {};
     virtual void handle_trace(const AddDeviceTrace&) {};
     virtual void handle_trace(const SetCoreOpTimeoutTrace&) {};
     virtual void handle_trace(const SetCoreOpThresholdTrace&) {};
     virtual void handle_trace(const SetCoreOpPriorityTrace&) {};
     virtual void handle_trace(const OracleDecisionTrace&) {};
-    virtual void handle_trace(const DumpProfilerState&) {};
+    virtual void handle_trace(const DumpProfilerStateTrace&) {};
     virtual void handle_trace(const InitProfilerProtoTrace&) {};
 
 };

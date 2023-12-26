@@ -170,8 +170,8 @@ RemoteProcessInputStream::~RemoteProcessInputStream()
             // continue
         }
 
-        // Calling abort() to make sure the thread will exit
-        status = abort();
+        // Calling abort_impl() to make sure the thread will exit
+        status = abort_impl();
         if (HAILO_SUCCESS != status) {
             LOGGER__ERROR("Failed to abort stream with {}", status);
             // continue
@@ -198,22 +198,16 @@ hailo_status RemoteProcessInputStream::set_timeout(std::chrono::milliseconds tim
     return HAILO_SUCCESS;
 }
 
-hailo_status RemoteProcessInputStream::abort()
+hailo_status RemoteProcessInputStream::abort_impl()
 {
     m_buffer_pool->abort();
     return HAILO_SUCCESS;
 }
 
-hailo_status RemoteProcessInputStream::clear_abort()
+hailo_status RemoteProcessInputStream::clear_abort_impl()
 {
     m_buffer_pool->clear_abort();
     return HAILO_SUCCESS;
-}
-
-Expected<size_t> RemoteProcessInputStream::get_buffer_frames_size() const
-{
-    // Must be called on main process
-    return make_unexpected(HAILO_INTERNAL_FAILURE);
 }
 
 bool RemoteProcessInputStream::is_scheduled()
@@ -259,6 +253,11 @@ hailo_status RemoteProcessInputStream::deactivate_stream()
     return m_base_stream->deactivate_stream();
 }
 
+hailo_status RemoteProcessInputStream::cancel_pending_transfers()
+{
+    return m_base_stream->cancel_pending_transfers();
+}
+
 hailo_status RemoteProcessInputStream::write_impl(const MemoryView &buffer)
 {
     // Get available buffer
@@ -281,8 +280,7 @@ hailo_status RemoteProcessInputStream::write_impl(const MemoryView &buffer)
 
 RemoteProcessInputStream::RemoteProcessInputStream(std::shared_ptr<InputStreamBase> base_stream,
     EventPtr thread_stop_event, hailo_status &status) :
-        InputStreamBase(base_stream->get_layer_info(), base_stream->get_interface(),
-                        base_stream->get_core_op_activated_event(), status),
+        InputStreamBase(base_stream->get_layer_info(), base_stream->get_core_op_activated_event(), status),
         m_base_stream(base_stream),
         m_timeout(m_base_stream->get_timeout()),
         m_wait_for_activation(m_base_stream->get_core_op_activated_event(), thread_stop_event)
@@ -301,8 +299,8 @@ RemoteProcessInputStream::RemoteProcessInputStream(std::shared_ptr<InputStreamBa
         return;
     }
 
-    // Not all streams supports get_buffer_frames_size, fallback to default.
-    auto queue_size_exp = m_base_stream->get_buffer_frames_size();
+    // Not all streams supports get_async_max_queue_size, fallback to default.
+    auto queue_size_exp = m_base_stream->get_async_max_queue_size();
     const auto queue_size = queue_size_exp ? *queue_size_exp : DEFAULT_QUEUE_SIZE;
 
     auto buffer_pool = RemoteProcessBufferPool::create(HAILO_H2D_STREAM, base_stream->get_frame_size(), queue_size);
@@ -412,8 +410,8 @@ RemoteProcessOutputStream::~RemoteProcessOutputStream()
             // continue
         }
 
-        // Calling abort() to make sure the thread will exit
-        status = abort();
+        // Calling abort_impl() to make sure the thread will exit
+        status = abort_impl();
         if (HAILO_SUCCESS != status) {
             LOGGER__ERROR("Failed to abort stream with {}", status);
             // continue
@@ -440,22 +438,16 @@ hailo_status RemoteProcessOutputStream::set_timeout(std::chrono::milliseconds ti
     return HAILO_SUCCESS;
 }
 
-hailo_status RemoteProcessOutputStream::abort()
+hailo_status RemoteProcessOutputStream::abort_impl()
 {
     m_buffer_pool->abort();
     return HAILO_SUCCESS;
 }
 
-hailo_status RemoteProcessOutputStream::clear_abort()
+hailo_status RemoteProcessOutputStream::clear_abort_impl()
 {
     m_buffer_pool->clear_abort();
     return HAILO_SUCCESS;
-}
-
-Expected<size_t> RemoteProcessOutputStream::get_buffer_frames_size() const
-{
-    // Must be called on main process
-    return make_unexpected(HAILO_INTERNAL_FAILURE);
 }
 
 bool RemoteProcessOutputStream::is_scheduled()
@@ -473,11 +465,9 @@ hailo_status RemoteProcessOutputStream::deactivate_stream()
     return m_base_stream->deactivate_stream();
 }
 
-hailo_status RemoteProcessOutputStream::register_interrupt_callback(const ProcessingCompleteCallback &)
+hailo_status RemoteProcessOutputStream::cancel_pending_transfers()
 {
-    // register_interrupt_callback is an internal function (used by the scheduler)
-    // and it shouldn't be called from here.
-    return HAILO_NOT_SUPPORTED;
+    return m_base_stream->cancel_pending_transfers();
 }
 
 hailo_status RemoteProcessOutputStream::read_impl(MemoryView buffer)
@@ -500,8 +490,7 @@ hailo_status RemoteProcessOutputStream::read_impl(MemoryView buffer)
 
 RemoteProcessOutputStream::RemoteProcessOutputStream(std::shared_ptr<OutputStreamBase> base_stream,
     EventPtr thread_stop_event, hailo_status &status) :
-        OutputStreamBase(base_stream->get_layer_info(), base_stream->get_interface(),
-                         base_stream->get_core_op_activated_event(), status),
+        OutputStreamBase(base_stream->get_layer_info(), base_stream->get_core_op_activated_event(), status),
         m_base_stream(base_stream),
         m_timeout(m_base_stream->get_timeout()),
         m_wait_for_activation(m_base_stream->get_core_op_activated_event(), thread_stop_event)
@@ -519,8 +508,8 @@ RemoteProcessOutputStream::RemoteProcessOutputStream(std::shared_ptr<OutputStrea
         return;
     }
 
-    // Not all streams supports get_buffer_frames_size, fallback to default.
-    auto queue_size_exp = m_base_stream->get_buffer_frames_size();
+    // Not all streams supports get_async_max_queue_size, fallback to default.
+    auto queue_size_exp = m_base_stream->get_async_max_queue_size();
     auto queue_size = queue_size_exp ? *queue_size_exp : DEFAULT_QUEUE_SIZE;
 
     auto buffer_pool = RemoteProcessBufferPool::create(HAILO_D2H_STREAM, base_stream->get_frame_size(), queue_size);

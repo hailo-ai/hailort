@@ -24,6 +24,7 @@
 #include "hailo/vstream.hpp"
 #include "hailo/event.hpp"
 #include "hailo/network_group.hpp"
+#include "hailo/infer_model.hpp"
 #include "hailo/expected.hpp"
 #include "hailo/buffer.hpp"
 
@@ -37,6 +38,7 @@ constexpr std::chrono::milliseconds SYNC_EVENT_TIMEOUT(1000);
 
 enum class InferenceMode {
     FULL,
+    FULL_ASYNC,
 
     RAW,
     RAW_ASYNC,
@@ -74,6 +76,7 @@ struct NetworkParams
     std::vector<VStreamParams> vstream_params;
     std::vector<StreamParams> stream_params;
     hailo_scheduling_algorithm_t scheduling_algorithm;
+    bool multi_process_service;
 
     // Network parameters
     uint16_t batch_size;
@@ -90,7 +93,7 @@ struct NetworkParams
 
     bool is_async() const
     {
-        return (mode == InferenceMode::RAW_ASYNC) || (mode == InferenceMode::RAW_ASYNC_SINGLE_THREAD);
+        return (mode == InferenceMode::RAW_ASYNC) || (mode == InferenceMode::RAW_ASYNC_SINGLE_THREAD) || (mode == InferenceMode::FULL_ASYNC);
     }
 };
 
@@ -121,6 +124,8 @@ public:
 
     NetworkRunner(const NetworkParams &params, const std::string &name,
         VDevice &vdevice, std::shared_ptr<ConfiguredNetworkGroup> cng);
+    NetworkRunner(const NetworkParams &params, const std::string &name,
+        VDevice &vdevice, std::shared_ptr<InferModel> infer_model, std::shared_ptr<ConfiguredInferModel> configured_infer_model);
     virtual ~NetworkRunner() = default;
 
     hailo_status run(EventPtr shutdown_event, LiveStats &live_stats, Barrier &activation_barrier);
@@ -134,6 +139,7 @@ public:
 
 protected:
     static bool inference_succeeded(hailo_status status);
+    static Expected<std::string> get_network_group_name(const NetworkParams &params, const Hef &hef);
     // Use 'inference_succeeded(async_thread->get())' to check for a thread's success
     virtual Expected<std::vector<AsyncThreadPtr<hailo_status>>> start_inference_threads(EventPtr shutdown_event,
         std::shared_ptr<NetworkLiveTrack> net_live_track) = 0;
@@ -304,6 +310,8 @@ protected:
     const NetworkParams m_params;
     std::string m_name;
     std::shared_ptr<ConfiguredNetworkGroup> m_cng;
+    std::shared_ptr<InferModel> m_infer_model;
+    std::shared_ptr<ConfiguredInferModel> m_configured_infer_model;
     LatencyMeterPtr m_overall_latency_meter;
     BarrierPtr m_latency_barrier;
     double m_last_measured_fps;
@@ -337,6 +345,70 @@ public:
 private:
     std::vector<InputVStream> m_input_vstreams;
     std::vector<OutputVStream> m_output_vstreams;
+};
+
+class FullAsyncNetworkRunner : public NetworkRunner
+{
+public:
+    class ConfiguredInferModelActivationGuard final {
+    public:
+        static Expected<std::unique_ptr<ConfiguredInferModelActivationGuard>> create(
+            std::shared_ptr<ConfiguredInferModel> configured_infer_model)
+        {
+            auto status = HAILO_UNINITIALIZED;
+            auto ptr = std::make_unique<ConfiguredInferModelActivationGuard>(ConfiguredInferModelActivationGuard(configured_infer_model, status));
+            CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
+            CHECK_SUCCESS_AS_EXPECTED(status);
+
+            return ptr;
+        }
+
+        ~ConfiguredInferModelActivationGuard()
+        {
+            if (HAILO_SUCCESS == m_activation_status) {
+                (void)m_configured_infer_model->deactivate();
+            }
+        }
+
+        ConfiguredInferModelActivationGuard(const ConfiguredInferModelActivationGuard &) = delete;
+        ConfiguredInferModelActivationGuard &operator=(const ConfiguredInferModelActivationGuard &) = delete;
+        ConfiguredInferModelActivationGuard &operator=(ConfiguredInferModelActivationGuard &&other) = delete;
+        ConfiguredInferModelActivationGuard(ConfiguredInferModelActivationGuard &&other) :
+            m_configured_infer_model(other.m_configured_infer_model), m_activation_status(std::exchange(other.m_activation_status, HAILO_UNINITIALIZED))
+        {};
+
+    private:
+        ConfiguredInferModelActivationGuard(std::shared_ptr<ConfiguredInferModel> configured_infer_model, hailo_status &status) :
+            m_configured_infer_model(configured_infer_model), m_activation_status(HAILO_UNINITIALIZED)
+        {
+            status = m_configured_infer_model->activate();
+            m_activation_status = status;
+        }
+
+        std::shared_ptr<ConfiguredInferModel> m_configured_infer_model;
+        hailo_status m_activation_status;
+    };
+
+    static Expected<std::shared_ptr<FullAsyncNetworkRunner>> create_shared(VDevice &vdevice, NetworkParams params);
+
+    FullAsyncNetworkRunner(const NetworkParams &params, const std::string &name, VDevice &vdevice, std::shared_ptr<InferModel> infer_model,
+        std::shared_ptr<ConfiguredInferModel> configured_infer_model);
+
+    virtual Expected<std::vector<AsyncThreadPtr<hailo_status>>> start_inference_threads(EventPtr /*shutdown_event*/,
+        std::shared_ptr<NetworkLiveTrack> /*net_live_track*/) override
+    {
+        return make_unexpected(HAILO_NOT_IMPLEMENTED);
+    };
+
+    virtual hailo_status run_single_thread_async_infer(EventPtr, std::shared_ptr<NetworkLiveTrack>) override;
+
+    Expected<AsyncInferJob> create_infer_job(const ConfiguredInferModel::Bindings &bindings,
+        std::weak_ptr<NetworkLiveTrack> net_live_track, FramerateThrottle &frame_rate_throttle, hailo_status &inference_status);
+
+    virtual void stop() override;
+    virtual std::set<std::string> get_input_names() override;
+    virtual std::set<std::string> get_output_names() override;
+    VStreamParams get_params(const std::string &name);
 };
 
 class RawNetworkRunner : public NetworkRunner

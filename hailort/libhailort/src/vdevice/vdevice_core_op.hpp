@@ -17,7 +17,7 @@
 #include "hailo/vstream.hpp"
 
 #include "vdevice/scheduler/scheduler.hpp"
-#include "vdevice/pipeline_multiplexer.hpp"
+#include "vdevice/scheduler/infer_request_accumulator.hpp"
 #include "utils/profiler/tracer_macros.hpp"
 
 #include <cstdint>
@@ -35,7 +35,7 @@ public:
         const ConfigureNetworkParams &configure_params,
         const std::map<device_id_t, std::shared_ptr<CoreOp>> &core_ops,
         CoreOpsSchedulerWeakPtr core_ops_scheduler, vdevice_core_op_handle_t core_op_handle,
-        std::shared_ptr<PipelineMultiplexer> multiplexer, const std::string &hef_hash);
+        const std::string &hef_hash);
 
     static Expected<std::shared_ptr<VDeviceCoreOp>> duplicate(std::shared_ptr<VDeviceCoreOp> other,
         const ConfigureNetworkParams &configure_params);
@@ -60,21 +60,6 @@ public:
         return false;
     }
 
-    uint32_t multiplexer_duplicates_count() const
-    {
-        if (m_multiplexer) {
-            assert(m_multiplexer->instances_count() > 0);
-            return static_cast<uint32_t>(m_multiplexer->instances_count() - 1);
-        } else {
-            return 0;
-        }
-    }
-
-    bool multiplexer_supported() const
-    {
-        return nullptr != m_multiplexer;
-    }
-
     virtual Expected<hailo_stream_interface_t> get_default_streams_interface() override;
 
     virtual Expected<std::shared_ptr<LatencyMetersMap>> get_latency_meters() override;
@@ -87,8 +72,6 @@ public:
     virtual hailo_status set_scheduler_threshold(uint32_t threshold, const std::string &network_name) override;
     virtual hailo_status set_scheduler_priority(uint8_t priority, const std::string &network_name) override;
 
-    void set_vstreams_multiplexer_callbacks(std::vector<OutputVStream> &output_vstreams) override;
-
     virtual hailo_status wait_for_activation(const std::chrono::milliseconds &timeout) override
     {
         CHECK(!m_core_ops_scheduler.lock(), HAILO_INVALID_OPERATION,
@@ -99,20 +82,25 @@ public:
 
     virtual hailo_status activate_impl(uint16_t dynamic_batch_size) override;
     virtual hailo_status deactivate_impl() override;
+    virtual hailo_status shutdown() override;
 
+    size_t devices_count() const { return m_core_ops.size(); }
     Expected<std::shared_ptr<VdmaConfigCoreOp>> get_core_op_by_device_id(const device_id_t &device_bdf_id);
+
+    Expected<size_t> get_async_max_queue_size_per_device() const;
 
     virtual Expected<HwInferResults> run_hw_infer_estimator() override;
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &) override;
 
-private:
     VDeviceCoreOp(ActiveCoreOpHolder &active_core_op_holder,
         const ConfigureNetworkParams &configure_params,
         const std::map<device_id_t, std::shared_ptr<CoreOp>> &core_ops,
         CoreOpsSchedulerWeakPtr core_ops_scheduler, scheduler_core_op_handle_t core_op_handle,
-        std::shared_ptr<PipelineMultiplexer> multiplexer, // TODO: multiplexer handle
-        const std::string &hef_hash, hailo_status &status);
+        const std::string &hef_hash,
+        size_t max_queue_size,
+        hailo_status &status);
 
+private:
     hailo_status create_vdevice_streams_from_config_params();
     hailo_status create_input_vdevice_stream_from_config_params(
         const hailo_stream_parameters_t &stream_params, const std::string &stream_name);
@@ -121,12 +109,14 @@ private:
 
     hailo_status create_vdevice_streams_from_duplicate(std::shared_ptr<VDeviceCoreOp> other);
 
+    hailo_status add_to_trace();
+
     std::map<device_id_t, std::shared_ptr<CoreOp>> m_core_ops;
     CoreOpsSchedulerWeakPtr m_core_ops_scheduler;
     const vdevice_core_op_handle_t m_core_op_handle;
-    std::shared_ptr<PipelineMultiplexer> m_multiplexer;
-    multiplexer_core_op_handle_t m_multiplexer_handle;
     std::string m_hef_hash;
+
+    std::shared_ptr<InferRequestAccumulator> m_infer_requests_accumulator;
 };
 
 }

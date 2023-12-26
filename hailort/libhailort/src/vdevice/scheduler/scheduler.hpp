@@ -36,6 +36,8 @@ using CoreOpsSchedulerWeakPtr = std::weak_ptr<CoreOpsScheduler>;
 
 using stream_name_t = std::string;
 
+class VDeviceCoreOp;
+
 class CoreOpsScheduler : public SchedulerBase
 {
 public:
@@ -50,20 +52,14 @@ public:
     CoreOpsScheduler &operator=(CoreOpsScheduler &&other) = delete;
     CoreOpsScheduler(CoreOpsScheduler &&other) noexcept = delete;
 
-    hailo_status add_core_op(scheduler_core_op_handle_t core_op_handle, std::shared_ptr<CoreOp> added_core_op);
+    hailo_status add_core_op(scheduler_core_op_handle_t core_op_handle, std::shared_ptr<VDeviceCoreOp> added_core_op);
+    void remove_core_op(scheduler_core_op_handle_t core_op_handle);
 
     // Shutdown the scheduler, stops interrupt thread and deactivate all core ops from all devices. This operation
     // is not recoverable.
     void shutdown();
 
-    hailo_status signal_frame_pending(const scheduler_core_op_handle_t &core_op_handle, const std::string &stream_name,
-        hailo_stream_direction_t direction);
-
-    void signal_frame_transferred(const scheduler_core_op_handle_t &core_op_handle,
-        const std::string &stream_name, const device_id_t &device_id, hailo_stream_direction_t direction);
-
-    void enable_stream(const scheduler_core_op_handle_t &core_op_handle, const std::string &stream_name);
-    void disable_stream(const scheduler_core_op_handle_t &core_op_handle, const std::string &stream_name);
+    hailo_status enqueue_infer_request(const scheduler_core_op_handle_t &core_op_handle, InferRequest &&infer_request);
 
     hailo_status set_timeout(const scheduler_core_op_handle_t &core_op_handle, const std::chrono::milliseconds &timeout, const std::string &network_name);
     hailo_status set_threshold(const scheduler_core_op_handle_t &core_op_handle, uint32_t threshold, const std::string &network_name);
@@ -71,19 +67,23 @@ public:
 
     virtual ReadyInfo is_core_op_ready(const scheduler_core_op_handle_t &core_op_handle, bool check_threshold,
         const device_id_t &device_id) override;
-    virtual bool is_device_idle(const device_id_t &device_id) override;
 
 private:
     hailo_status switch_core_op(const scheduler_core_op_handle_t &core_op_handle, const device_id_t &device_id);
+    hailo_status deactivate_core_op(const device_id_t &device_id);
 
     hailo_status send_all_pending_buffers(const scheduler_core_op_handle_t &core_op_handle, const device_id_t &device_id, uint32_t burst_size);
-
-    bool should_core_op_stop(const scheduler_core_op_handle_t &core_op_handle);
+    hailo_status infer_async(const scheduler_core_op_handle_t &core_op_handle, const device_id_t &device_id);
 
     hailo_status optimize_streaming_if_enabled(const scheduler_core_op_handle_t &core_op_handle);
 
+    Expected<InferRequest> dequeue_infer_request(scheduler_core_op_handle_t core_op_handle);
     uint16_t get_frames_ready_to_transfer(scheduler_core_op_handle_t core_op_handle, const device_id_t &device_id) const;
 
+    std::shared_ptr<VdmaConfigCoreOp> get_vdma_core_op(scheduler_core_op_handle_t core_op_handle,
+        const device_id_t &device_id);
+
+    void shutdown_core_op(scheduler_core_op_handle_t core_op_handle);
     void schedule();
 
     class SchedulerThread final {
@@ -109,12 +109,15 @@ private:
         std::thread m_thread;
     };
 
-    ThreadSafeMap<vdevice_core_op_handle_t, ScheduledCoreOpPtr> m_scheduled_core_ops;
+    std::unordered_map<vdevice_core_op_handle_t, ScheduledCoreOpPtr> m_scheduled_core_ops;
+
+    using InferRequestQueue = SafeQueue<InferRequest>;
+    std::unordered_map<vdevice_core_op_handle_t, InferRequestQueue> m_infer_requests;
 
     // This shared mutex guards accessing the scheduler data structures including:
     //   - m_scheduled_core_ops
+    //   - m_infer_requests
     //   - m_core_op_priority
-    //   - m_next_core_op
     // Any function that is modifing these structures (for example by adding/removing items) must lock this mutex using
     // unique_lock. Any function accessing these structures (for example access to
     // m_scheduled_core_ops.at(core_op_handle) can use shared_lock.

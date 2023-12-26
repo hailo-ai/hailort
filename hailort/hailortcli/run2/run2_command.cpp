@@ -208,12 +208,6 @@ VStreamApp::VStreamApp(const std::string &description, const std::string &name, 
             { "i420", HAILO_FORMAT_ORDER_I420 }
         }))
         ->default_val("auto");
-
-    auto quantized_option = format_opt_group->add_flag("-q,--quantized,!--no-quantized",
-        "Whether or not data is quantized. This flag is ignored - Determine if the data requires quantization is decided by the src-data and dst-data types.")
-        ->default_val(true); // default_val() must be after run_callback_for_default()
-
-        hailo_deprecate_options(format_opt_group, { std::make_shared<OptionDeprecation>(quantized_option) }, false);
 }
 
 CLI::Option* VStreamApp::add_flag_callback(CLI::App *app, const std::string &name, const std::string &description,
@@ -242,16 +236,6 @@ StreamApp::StreamApp(const std::string &description, const std::string &name, CL
     add_option("--input-file", m_stream_params.input_file_path,
         "Input file path. If not given, random data will be used. File format should be raw binary data with size that is a factor of the input shape size")
         ->default_val("");
-
-    // TODO: async option (HRT-9580)
-    // TODO: flag callback?
-    // add_flag_callback(format_opt_group, "-q,--quantized,!--no-quantized", "Whether or not data is quantized",
-    //     [this](bool result){
-    //         m_params.params.user_buffer_format.flags = result ?
-    //             static_cast<hailo_format_flags_t>(m_params.params.user_buffer_format.flags | HAILO_FORMAT_FLAGS_QUANTIZED) :
-    //             static_cast<hailo_format_flags_t>(m_params.params.user_buffer_format.flags & (~HAILO_FORMAT_FLAGS_QUANTIZED));})
-    //     ->run_callback_for_default()
-    //     ->default_val(true); // default_val() must be after run_callback_for_default()
 }
 
 /** NetworkGroupNameValidator */
@@ -294,9 +278,6 @@ NetworkApp::NetworkApp(const std::string &description, const std::string &name) 
     auto run_params = add_option_group("Run Parameters");
     run_params->add_option("--framerate", m_params.framerate, "Input vStreams framerate")->default_val(UNLIMITED_FRAMERATE);
 
-    // TODO: support multiple scheduling algorithms
-    m_params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN;
-
     auto vstream_subcommand = add_io_app_subcom<VStreamApp>("Set vStream", "set-vstream", hef_path_option, net_group_name_option);
     auto stream_subcommand = add_io_app_subcom<StreamApp>("Set Stream", "set-stream", hef_path_option, net_group_name_option);
     // TODO: doesn't seam to be working (HRT-9886)
@@ -334,19 +315,22 @@ public:
     InferenceMode get_mode() const;
     const std::string &get_output_json_path();
 
-    void set_scheduling_algorithm(hailo_scheduling_algorithm_t scheduling_algorithm);
-    void set_inference_mode();
-    void set_measure_latency();
+    void update_network_params();
     void set_batch_size(uint16_t batch_size);
 
 private:
     void add_measure_fw_actions_subcom();
     void add_net_app_subcom();
+
+    bool is_ethernet_device() const;
+    void validate_and_set_scheduling_algorithm();
+
     std::vector<NetworkParams> m_network_params;
     uint32_t m_time_to_run;
     InferenceMode m_mode;
+    hailo_scheduling_algorithm_t m_scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_MAX_ENUM;
     std::string m_stats_json_path;
-    std::vector<std::string> m_device_id;
+    std::vector<std::string> m_device_ids;
     uint32_t m_device_count;
     bool m_multi_process_service;
     std::string m_group_id;
@@ -373,26 +357,35 @@ Run2::Run2() : CLI::App("Run networks", "run2")
     add_option("-m,--mode", m_mode, "Inference mode")
         ->transform(HailoCheckedTransformer<InferenceMode>({
             { "full", InferenceMode::FULL },
+            { "full_async", InferenceMode::FULL_ASYNC },
             { "raw", InferenceMode::RAW },
             { "raw_async", InferenceMode::RAW_ASYNC },
             { "raw_async_single_thread", InferenceMode::RAW_ASYNC_SINGLE_THREAD, OptionVisibility::HIDDEN }
         }))->default_val("full");
     add_option("-j,--json", m_stats_json_path, "If set save statistics as json to the specified path")
-    ->default_val("")
-    ->check(FileSuffixValidator(JSON_SUFFIX));
+        ->default_val("")
+        ->check(FileSuffixValidator(JSON_SUFFIX));
+
+    add_option("--scheduling-algorithm", m_scheduling_algorithm, "Scheduling algorithm")
+        ->transform(HailoCheckedTransformer<hailo_scheduling_algorithm_t>({
+            { "round_robin", HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN },
+            { "none", HAILO_SCHEDULING_ALGORITHM_NONE },
+        }));
 
     auto vdevice_options_group = add_option_group("VDevice Options");
 
-    auto dev_id_opt = vdevice_options_group->add_option("-s,--device-id", m_device_id,
+    auto dev_id_opt = vdevice_options_group->add_option("-s,--device-id", m_device_ids,
         "Device id, same as returned from `hailortcli scan` command. For multiple devices, use space as separator.");
 
     vdevice_options_group->add_option("--device-count", m_device_count, "VDevice device count")
         ->default_val(HAILO_DEFAULT_DEVICE_COUNT)
         ->check(CLI::PositiveNumber)
         ->excludes(dev_id_opt);
-
     vdevice_options_group->add_option("--group-id", m_group_id, "VDevice group id")
         ->default_val(HAILO_DEFAULT_VDEVICE_GROUP_ID);
+    auto multi_process_flag = vdevice_options_group
+        ->add_flag("--multi-process-service", m_multi_process_service,"VDevice multi process service")
+        ->default_val(false);
 
     auto measurement_options_group = add_option_group("Measurement Options");
 
@@ -411,21 +404,17 @@ Run2::Run2() : CLI::App("Run networks", "run2")
     auto measure_temp_opt = measurement_options_group->add_flag("--measure-temp", m_measure_temp, "Measure chip temperature")
         ->default_val(false);
 
-    auto multi_process_flag = vdevice_options_group->add_flag("--multi-process-service", m_multi_process_service, "VDevice multi process service")
-        ->default_val(false);
-
     if (VDevice::service_over_ip_mode()) {
         multi_process_flag
         ->excludes(measure_power_opt)
         ->excludes(measure_current_opt)
         ->excludes(measure_temp_opt);
         // When working with service over ip - client doesn't have access to physical devices
-    } else {
-        (void)measure_power_opt;
-        (void)measure_current_opt;
-        (void)measure_temp_opt;
-        (void)multi_process_flag;
     }
+
+    parse_complete_callback([this]() {
+        validate_and_set_scheduling_algorithm();
+    });
 }
 
 void Run2::add_measure_fw_actions_subcom()
@@ -510,8 +499,8 @@ bool Run2::get_measure_overall_latency()
 std::vector<hailo_device_id_t> Run2::get_dev_ids()
 {
     std::vector<hailo_device_id_t> res;
-    res.reserve(m_device_id.size());
-    for (auto &id_str : m_device_id) {
+    res.reserve(m_device_ids.size());
+    for (auto &id_str : m_device_ids) {
         hailo_device_id_t id = {};
         std::memset(id.id, 0, sizeof(id.id));
         std::strncpy(id.id, id_str.c_str(), sizeof(id.id) - 1);
@@ -525,25 +514,14 @@ uint32_t Run2::get_device_count()
     return m_device_count;
 }
 
-void Run2::set_inference_mode()
+void Run2::update_network_params()
 {
     for (auto &params : m_network_params) {
         params.mode = m_mode;
-    }
-}
-
-void Run2::set_scheduling_algorithm(hailo_scheduling_algorithm_t scheduling_algorithm)
-{
-    for (auto &params: m_network_params) {
-        params.scheduling_algorithm = scheduling_algorithm;
-    }
-}
-
-void Run2::set_measure_latency()
-{
-    for (auto &params : m_network_params) {
+        params.multi_process_service = m_multi_process_service;
         params.measure_hw_latency = m_measure_hw_latency;
         params.measure_overall_latency = m_measure_overall_latency;
+        params.scheduling_algorithm = m_scheduling_algorithm;
     }
 }
 
@@ -584,6 +562,51 @@ const std::string &Run2::get_output_json_path()
     return m_stats_json_path;
 }
 
+static bool is_valid_ip(const std::string &ip)
+{
+    int a,b,c,d;
+    return (4 == sscanf(ip.c_str(),"%d.%d.%d.%d", &a, &b, &c, &d)) &&
+        IS_FIT_IN_UINT8(a) && IS_FIT_IN_UINT8(b) && IS_FIT_IN_UINT8(c) && IS_FIT_IN_UINT8(d);
+}
+
+bool Run2::is_ethernet_device() const
+{
+    if (m_device_ids.empty()) {
+        // By default, if no device ids are given we don't scan for ethernet devices.
+        return false;
+    }
+    return is_valid_ip(m_device_ids[0]);
+}
+
+void Run2::validate_and_set_scheduling_algorithm()
+{
+    if (m_scheduling_algorithm == HAILO_SCHEDULING_ALGORITHM_NONE) {
+        PARSE_CHECK(1 == get_network_params().size(), "When setting --scheduling-algorithm=none only one model is allowed");
+    }
+
+    if (is_ethernet_device()) {
+        PARSE_CHECK((m_scheduling_algorithm == HAILO_SCHEDULING_ALGORITHM_MAX_ENUM) ||
+                    (m_scheduling_algorithm == HAILO_SCHEDULING_ALGORITHM_NONE),
+                    "On ethernet devices, only --scheduling-algorithm=none is supported");
+        PARSE_CHECK(1 == get_network_params().size(), "On Ethernet device only one model is allowed");
+        m_scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_NONE;
+    }
+
+    if (get_measure_fw_actions()) {
+        PARSE_CHECK((m_scheduling_algorithm == HAILO_SCHEDULING_ALGORITHM_MAX_ENUM) ||
+                    (m_scheduling_algorithm == HAILO_SCHEDULING_ALGORITHM_NONE),
+                    "When measuring fw actions, only --scheduling-algorithm=none is allowed");
+        PARSE_CHECK(1 == get_network_params().size(),
+            "Only one model is allowed when measuring fw actions");
+        m_scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_NONE;
+    }
+
+    if (HAILO_SCHEDULING_ALGORITHM_MAX_ENUM == m_scheduling_algorithm) {
+        // algorithm wasn't passed, using ROUND_ROBIN as default
+        m_scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN;
+    }
+}
+
 /** Run2Command */
 Run2Command::Run2Command(CLI::App &parent_app) : Command(parent_app.add_subcommand(std::make_shared<Run2>()))
 {
@@ -602,18 +625,13 @@ static hailo_status wait_for_threads(std::vector<AsyncThreadPtr<hailo_status>> &
     return last_error_status;
 }
 
-bool is_valid_ip(const std::string &ip)
-{
-    int a,b,c,d;
-    return (4 == sscanf(ip.c_str(),"%d.%d.%d.%d", &a, &b, &c, &d)) &&
-        IS_FIT_IN_UINT8(a) && IS_FIT_IN_UINT8(b) && IS_FIT_IN_UINT8(c) && IS_FIT_IN_UINT8(d);
-}
-
 std::string get_str_infer_mode(const InferenceMode& infer_mode)
 {
     switch(infer_mode){
     case InferenceMode::FULL:
         return "full";
+    case InferenceMode::FULL_ASYNC:
+        return "full_async";
     case InferenceMode::RAW:
         return "raw";
     case InferenceMode::RAW_ASYNC:
@@ -655,12 +673,6 @@ Expected<std::unique_ptr<VDevice>> Run2::create_vdevice()
     if (!dev_ids.empty()) {
         vdevice_params.device_count = static_cast<uint32_t>(dev_ids.size());
         vdevice_params.device_ids = dev_ids.data();
-        // Disable scheduler for eth VDevice
-        if ((1 == dev_ids.size()) && (is_valid_ip(dev_ids[0].id))) {
-            vdevice_params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_NONE;
-            CHECK_AS_EXPECTED(1 == get_network_params().size(), HAILO_INVALID_OPERATION, "On Ethernet inference only one model is allowed");
-            set_scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_NONE);
-        }
     } else {
         vdevice_params.device_count = get_device_count();
     }
@@ -672,13 +684,12 @@ Expected<std::unique_ptr<VDevice>> Run2::create_vdevice()
         CHECK_AS_EXPECTED(!(get_measure_hw_latency() || get_measure_overall_latency()), HAILO_INVALID_OPERATION, "Latency measurement is not allowed when collecting runtime data");
         CHECK_AS_EXPECTED((get_mode() == InferenceMode::RAW) || (get_mode() == InferenceMode::RAW_ASYNC), HAILO_INVALID_OPERATION,
             "'measure-fw-actions' is only supported with '--mode=raw'. Received mode: '{}'", get_str_infer_mode(get_mode()));
-
-        vdevice_params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_NONE;
-        set_scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_NONE);
     }
 
     vdevice_params.group_id = get_group_id().c_str();
     vdevice_params.multi_process_service = get_multi_process_service();
+    assert(HAILO_SCHEDULING_ALGORITHM_MAX_ENUM != m_scheduling_algorithm);
+    vdevice_params.scheduling_algorithm = m_scheduling_algorithm;
 
     return VDevice::create(vdevice_params);
 }
@@ -757,8 +768,7 @@ hailo_status Run2Command::execute()
 {
     Run2 *app = reinterpret_cast<Run2*>(m_app);
 
-    app->set_inference_mode();
-    app->set_measure_latency();
+    app->update_network_params();
 
     CHECK(0 < app->get_network_params().size(), HAILO_INVALID_OPERATION, "Nothing to run");
 
@@ -767,7 +777,7 @@ hailo_status Run2Command::execute()
         LOGGER__WARNING("Measuring latency; frames are sent one at a time and FPS will not be measured");
     }
 
-    if (1 == app->get_network_params().size()) {
+    if (1 == app->get_network_params().size() && (HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN == app->get_network_params().begin()->scheduling_algorithm)) {
         LOGGER__WARNING("\"hailortcli run2\" is not optimized for single model usage. It is recommended to use \"hailortcli run\" command for a single model");
     }
 

@@ -906,6 +906,7 @@ static CONTEXT_SWITCH_DEFS__stream_reg_info_t parse_nn_config(const CONTROL_PROT
     reg_info.periph_bytes_per_buffer = nn_config.periph_bytes_per_buffer;
     reg_info.periph_buffers_per_frame = nn_config.periph_buffers_per_frame;
     reg_info.is_periph_calculated_in_hailort = nn_config.is_periph_calculated_in_hailort;
+    reg_info.is_core_hw_padding_config_in_dfc = nn_config.is_core_hw_padding_config_in_dfc;
     return reg_info;
 }
 

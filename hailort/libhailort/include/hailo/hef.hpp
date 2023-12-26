@@ -89,10 +89,10 @@ public:
      *                                    the function returns the input stream infos of the given network.
      *                                    If NULL is passed, the function returns the input stream infos of 
      *                                    all the networks of the first network group.
-     * @return Upon success, returns a vector of ::hailo_stream_info_t, containing each stream's informmation.
+     * @return Upon success, returns a vector of ::hailo_stream_info_t, containing each stream's information.
      *         Otherwise, returns a ::hailo_status error.
      */
-    Expected<std::vector<hailo_stream_info_t>> get_input_stream_infos(const std::string &name="");
+    Expected<std::vector<hailo_stream_info_t>> get_input_stream_infos(const std::string &name="") const;
     
     /**
      * Gets output streams informations.
@@ -104,10 +104,10 @@ public:
      *                                    the function returns the output stream infos of the given network.
      *                                    If NULL is passed, the function returns the output stream infos of 
      *                                    all the networks of the first network group.
-     * @return Upon success, returns a vector of ::hailo_stream_info_t, containing each stream's informmation.
+     * @return Upon success, returns a vector of ::hailo_stream_info_t, containing each stream's information.
      *         Otherwise, returns a ::hailo_status error.
      */
-    Expected<std::vector<hailo_stream_info_t>> get_output_stream_infos(const std::string &name="");
+    Expected<std::vector<hailo_stream_info_t>> get_output_stream_infos(const std::string &name="") const;
 
     /**
      * Gets all streams informations.
@@ -119,10 +119,10 @@ public:
      *                                    the function returns all stream infos of the given network.
      *                                    If NULL is passed, the function returns all the stream infos of 
      *                                    all the networks of the first network group.
-     * @return Upon success, returns Expected of a vector of ::hailo_stream_info_t, containing each stream's informmation.
+     * @return Upon success, returns Expected of a vector of ::hailo_stream_info_t, containing each stream's information.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
-    Expected<std::vector<hailo_stream_info_t>> get_all_stream_infos(const std::string &name="");
+    Expected<std::vector<hailo_stream_info_t>> get_all_stream_infos(const std::string &name="") const;
 
     /**
      * Gets stream's information from it's name.
@@ -135,7 +135,7 @@ public:
      * 
      */
     Expected<hailo_stream_info_t> get_stream_info_by_name(const std::string &stream_name,
-        hailo_stream_direction_t stream_direction, const std::string &net_group_name="");
+        hailo_stream_direction_t stream_direction, const std::string &net_group_name="") const;
 
     /**
      * Gets input virtual streams infos.
@@ -150,7 +150,7 @@ public:
      * @return Upon success, returns Expected of a vector of ::hailo_vstream_info_t.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
-    Expected<std::vector<hailo_vstream_info_t>> get_input_vstream_infos(const std::string &name="");
+    Expected<std::vector<hailo_vstream_info_t>> get_input_vstream_infos(const std::string &name="") const;
 
     /**
      * Gets output virtual streams infos.
@@ -166,7 +166,7 @@ public:
      * @return Upon success, returns Expected of a vector of ::hailo_vstream_info_t.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
-    Expected<std::vector<hailo_vstream_info_t>> get_output_vstream_infos(const std::string &name="");
+    Expected<std::vector<hailo_vstream_info_t>> get_output_vstream_infos(const std::string &name="") const;
 
     /**
      * Gets all virtual streams infos.
@@ -182,7 +182,7 @@ public:
      * @return Upon success, returns Expected of a vector of ::hailo_vstream_info_t.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
-    Expected<std::vector<hailo_vstream_info_t>> get_all_vstream_infos(const std::string &name="");
+    Expected<std::vector<hailo_vstream_info_t>> get_all_vstream_infos(const std::string &name="") const;
 
     /**
      * Gets sorted output vstreams names.
@@ -192,7 +192,7 @@ public:
      * @return Upon success, returns Expected of a sorted vector of output vstreams names.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
-    Expected<std::vector<std::string>> get_sorted_output_names(const std::string &net_group_name="");
+    Expected<std::vector<std::string>> get_sorted_output_names(const std::string &net_group_name="") const;
 
     /**
      * Gets the number of low-level input streams.
@@ -202,7 +202,7 @@ public:
      * @return Upon success, returns Expected containing the number of low-level input streams.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
-    Expected<size_t> get_number_of_input_streams(const std::string &net_group_name="");
+    Expected<size_t> get_number_of_input_streams(const std::string &net_group_name="") const;
 
     /**
      * Gets the number of low-level output streams.
@@ -212,7 +212,7 @@ public:
      * @return Upon success, returns Expected containing the number of low-level output streams.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
-    Expected<size_t> get_number_of_output_streams(const std::string &net_group_name="");
+    Expected<size_t> get_number_of_output_streams(const std::string &net_group_name="") const;
 
     /**
      * Gets bottleneck FPS.
@@ -222,7 +222,7 @@ public:
      * @return Upon success, returns Expected containing the bottleneck FPS number.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
-    Expected<float64_t> get_bottleneck_fps(const std::string &net_group_name="");
+    Expected<float64_t> get_bottleneck_fps(const std::string &net_group_name="") const;
 
     /**
      * Get device Architecture HEF was compiled for.
@@ -230,7 +230,7 @@ public:
      * @return Upon success, returns Expected containing the device architecture the HEF was compiled for.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
-    Expected<hailo_device_architecture_t> get_hef_device_arch();
+    Expected<hailo_device_architecture_t> get_hef_device_arch() const;
 
     /**
      * Get string of device architecture HEF was compiled for.
@@ -251,7 +251,7 @@ public:
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     Expected<std::vector<std::string>> get_stream_names_from_vstream_name(const std::string &vstream_name,
-        const std::string &net_group_name="");
+        const std::string &net_group_name="") const;
 
     /**
      * Get all vstream names under the given stream name
@@ -264,7 +264,7 @@ public:
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     Expected<std::vector<std::string>> get_vstream_names_from_stream_name(const std::string &stream_name,
-        const std::string &net_group_name="");
+        const std::string &net_group_name="") const;
 
     /**
      * Gets vstream name from original layer name.
@@ -276,7 +276,7 @@ public:
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     Expected<std::string> get_vstream_name_from_original_name(const std::string &original_name,
-        const std::string &net_group_name="");
+        const std::string &net_group_name="") const;
 
     /**
      * Gets original names from vstream name.
@@ -288,14 +288,14 @@ public:
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     Expected<std::vector<std::string>> get_original_names_from_vstream_name(const std::string &vstream_name,
-        const std::string &net_group_name="");
+        const std::string &net_group_name="") const;
 
     /**
      * Gets all network groups names in the Hef.
      *
      * @return Returns a vector of all network groups names.
      */
-    std::vector<std::string> get_network_groups_names();
+    std::vector<std::string> get_network_groups_names() const;
 
     /**
      * Gets all network groups infos in the Hef.
@@ -303,7 +303,7 @@ public:
      * @return Upon success, returns Expected of a vector of ::hailo_network_group_info_t.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
-    Expected<std::vector<hailo_network_group_info_t>> get_network_groups_infos();
+    Expected<std::vector<hailo_network_group_info_t>> get_network_groups_infos() const;
 
     /**
      * Creates the default configure params for the Hef. The user can modify the given params before
@@ -398,18 +398,15 @@ public:
      *                              the function returns the input virtual stream params of the given network.
      *                              If NULL is passed, the function returns the input virtual stream params of 
      *                              all the networks of the first network group.
-     * @param[in] quantized         Deprecated parameter that will be ignored. Determine whether to quantize (scale)
-     *                              the data will be decided by the src-data and dst-data types.
+     * @param[in] unused            Unused.
      * @param[in] format_type       The default format type for all input virtual streams.
      * @param[in] timeout_ms        The default timeout in milliseconds for all input virtual streams.
      * @param[in] queue_size        The default queue size for all input virtual streams.
      * @return Upon success, returns Expected of a map of input virtual stream name to params.
      *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to quantize (scale) the data will be decided by
-     *       the src-data and dst-data types.
      */
     Expected<std::map<std::string, hailo_vstream_params_t>> make_input_vstream_params(
-        const std::string &name, bool quantized, hailo_format_type_t format_type,
+        const std::string &name, bool unused, hailo_format_type_t format_type,
         uint32_t timeout_ms, uint32_t queue_size);
 
     /**
@@ -422,18 +419,15 @@ public:
      *                              the function returns the output virtual stream params of the given network.
      *                              If NULL is passed, the function returns the output virtual stream params of
      *                              all the networks of the first network group.
-     * @param[in] quantized         Deprecated parameter that will be ignored. Determine whether to de-quantize (rescale)
-     *                              the data will be decided by the src-data and dst-data types.
+     * @param[in] unused            Unused.
      * @param[in] format_type       The default format type for all output virtual streams.
      * @param[in] timeout_ms        The default timeout in milliseconds for all output virtual streams.
      * @param[in] queue_size        The default queue size for all output virtual streams.
      * @return Upon success, returns Expected of a map of output virtual stream name to params.
      *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to de-quantize (rescale) the data will be decided by
-     *       the src-data and dst-data types.
      */
     Expected<std::map<std::string, hailo_vstream_params_t>> make_output_vstream_params(
-        const std::string &name, bool quantized, hailo_format_type_t format_type,
+        const std::string &name, bool unused, hailo_format_type_t format_type,
         uint32_t timeout_ms, uint32_t queue_size);
 
     /**
@@ -442,10 +436,10 @@ public:
      * @param[in] net_group_name      The name of the network_group which contains the network information.
      *                                If NULL is passed, the function returns the network infos of 
      *                                all the networks of the first network group.
-     * @return Upon success, returns Expected of a vector of ::hailo_network_info_t, containing each networks's informmation.
+     * @return Upon success, returns Expected of a vector of ::hailo_network_info_t, containing each networks's information.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
-    Expected<std::vector<hailo_network_info_t>> get_network_infos(const std::string &net_group_name="");
+    Expected<std::vector<hailo_network_info_t>> get_network_infos(const std::string &net_group_name="") const;
 
     /**
      * Returns a unique hash for the specific Hef.
@@ -454,7 +448,7 @@ public:
      */
     std::string hash() const;
 
-    Expected<std::string> get_description(bool stream_infos, bool vstream_infos);
+    Expected<std::string> get_description(bool stream_infos, bool vstream_infos) const;
 
     ~Hef();
     Hef(Hef &&);

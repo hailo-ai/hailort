@@ -26,6 +26,7 @@ struct ProfilerTime {
     uint32_t day;
     uint32_t hour;
     uint32_t min;
+    int64_t time_since_epoch;
 };
 
 #if defined(__linux__)
@@ -86,6 +87,8 @@ ProfilerTime get_curr_time()
     curr_time.year = t_time.tm_year + 1900;
     curr_time.hour = t_time.tm_hour;
     curr_time.min = t_time.tm_min;
+    curr_time.time_since_epoch = std::chrono::duration_cast<std::chrono::nanoseconds>
+        (std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 
     return curr_time;
 }

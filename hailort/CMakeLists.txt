@@ -30,55 +30,25 @@ endif()
 
 # Set firmware version
 add_definitions( -DFIRMWARE_VERSION_MAJOR=4 )
-add_definitions( -DFIRMWARE_VERSION_MINOR=15 )
+add_definitions( -DFIRMWARE_VERSION_MINOR=16 )
 add_definitions( -DFIRMWARE_VERSION_REVISION=0 )
 if(HAILO_BUILD_SERVICE)
     add_definitions( -DHAILO_SUPPORT_MULTI_PROCESS )
 endif()
 
-# The logic of prepare_externals is executed in a sperate module so that it can be run externally (via cmake -P prepare_externals.cmake)
-include(prepare_externals.cmake)
-
-# Include host protobuf for protoc (https://stackoverflow.com/questions/53651181/cmake-find-protobuf-package-in-custom-directory)
-if(CMAKE_HOST_UNIX)
-    include(${CMAKE_CURRENT_LIST_DIR}/pre_build/install/lib/cmake/protobuf/protobuf-config.cmake)
-    include(${CMAKE_CURRENT_LIST_DIR}/pre_build/install/lib/cmake/protobuf/protobuf-module.cmake)
-else()
-    include(${CMAKE_CURRENT_LIST_DIR}/pre_build/install/cmake/protobuf-config.cmake)
-    include(${CMAKE_CURRENT_LIST_DIR}/pre_build/install/cmake/protobuf-module.cmake)
+# TODO: temporary hack to support offline builds. Remove HAILO_OFFLINE_COMPILATION and use FETCHCONTENT_FULLY_DISCONNECTED
+if(HAILO_OFFLINE_COMPILATION)
+    set(FETCHCONTENT_FULLY_DISCONNECTED ON CACHE INTERNAL "")
+    set(HAILO_OFFLINE_COMPILATION OFF CACHE INTERNAL "")
 endif()
 
+# TODO: move protobuf and grpc to inner cmake files
+set(HAILO_EXTERNAL_DIR ${CMAKE_CURRENT_LIST_DIR}/external)
 set(HAILO_EXTERNALS_CMAKE_SCRIPTS ${CMAKE_CURRENT_LIST_DIR}/cmake/external/)
-
-# Add target protobuf directory and exclude its targets from all
-# Disable protobuf tests, protoc and MSVC static runtime unless they are already defined
-# NOTE: we can also force - set(protobuf_BUILD_TESTS OFF CACHE BOOL "Build protobuf tests" FORCE)
-if(NOT protobuf_BUILD_TESTS)
-    set(protobuf_BUILD_TESTS OFF CACHE BOOL "Build protobuf tests")
-endif()
-if(NOT protobuf_BUILD_PROTOC_BINARIES)
-    set(protobuf_BUILD_PROTOC_BINARIES OFF CACHE BOOL "Build libprotoc and protoc compiler")
-endif()
-if(MSVC AND NOT protobuf_MSVC_STATIC_RUNTIME)
-    set(protobuf_MSVC_STATIC_RUNTIME OFF CACHE BOOL "Protobuf MSVC static runtime")
-endif()
-if(NOT protobuf_WITH_ZLIB)
-    set(protobuf_WITH_ZLIB OFF CACHE BOOL "Compile protobuf with zlib")
-endif()
-add_subdirectory(external/protobuf/cmake EXCLUDE_FROM_ALL)
-if(NOT MSVC)
-    set_target_properties(libprotobuf PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    set_target_properties(libprotobuf-lite PROPERTIES POSITION_INDEPENDENT_CODE ON)
-endif()
-
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/protobuf.cmake)
 if(HAILO_BUILD_SERVICE)
-    if(CMAKE_HOST_UNIX)
-        set(HAILO_GRPC_CPP_PLUGIN_EXECUTABLE "${HAILO_PRE_BUILD_BUILD_TOOLS}/build_grpc/grpc_cpp_plugin")
-    else()
-        set(HAILO_GRPC_CPP_PLUGIN_EXECUTABLE "${HAILO_PRE_BUILD_BUILD_TOOLS}/build_grpc/${PRE_BUILD_BUILD_TYPE}/grpc_cpp_plugin.exe")
-    endif()
+    include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/grpc.cmake)
 endif()
-set(HAILO_PROTOBUF_PROTOC $<TARGET_FILE:protobuf::protoc>)
 
 set(HAILORT_INC_DIR ${PROJECT_SOURCE_DIR}/hailort/libhailort/include)
 set(HAILORT_SRC_DIR ${PROJECT_SOURCE_DIR}/hailort/libhailort/src)
@@ -87,19 +57,11 @@ set(COMMON_INC_DIR ${PROJECT_SOURCE_DIR}/common/include)
 set(DRIVER_INC_DIR ${PROJECT_SOURCE_DIR}/hailort/drivers/common)
 set(RPC_DIR ${PROJECT_SOURCE_DIR}/hailort/rpc)
 
-add_subdirectory(external/CLI11 EXCLUDE_FROM_ALL)
 if(CMAKE_SYSTEM_NAME STREQUAL QNX)
     include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/pevents.cmake)
 endif()
 
 if(HAILO_BUILD_SERVICE)
-    set(BUILD_TESTING OFF) # disabe abseil tests
-    set(gRPC_ZLIB_PROVIDER "module" CACHE STRING "Provider of zlib library")
-    # The following is an awful hack needed in order to force grpc to use our libprotobuf+liborotoc targets
-    # ('formal' options are to let grpc recompile it which causes a name conflict,
-    # or let it use find_package and take the risk it will use a different installed lib)
-    set(gRPC_PROTOBUF_PROVIDER "hack" CACHE STRING "Provider of protobuf library")
-    add_subdirectory(external/grpc EXCLUDE_FROM_ALL)
     add_subdirectory(rpc)
 endif()
 

@@ -103,4 +103,9 @@ hailo_status HcpConfigCoreOp::deactivate_impl()
     return HAILO_SUCCESS;
 }
 
+hailo_status HcpConfigCoreOp::shutdown()
+{
+    return abort_low_level_streams();
+}
+
 } /* namespace hailort */

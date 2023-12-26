@@ -223,18 +223,18 @@ public:
         return py::cast(result.release());
     }
 
-    auto make_input_vstream_params(const std::string &name, bool quantized, hailo_format_type_t format_type,
+    auto make_input_vstream_params(const std::string &name, hailo_format_type_t format_type,
         uint32_t timeout_ms, uint32_t queue_size)
     {
-        auto result = get().make_input_vstream_params(quantized, format_type, timeout_ms, queue_size, name);
+        auto result = get().make_input_vstream_params({}, format_type, timeout_ms, queue_size, name);
         VALIDATE_EXPECTED(result);
         return py::cast(result.release());
     }
 
-    auto make_output_vstream_params(const std::string &name, bool quantized, hailo_format_type_t format_type,
+    auto make_output_vstream_params(const std::string &name, hailo_format_type_t format_type,
         uint32_t timeout_ms, uint32_t queue_size)
     {
-        auto result = get().make_output_vstream_params(quantized, format_type, timeout_ms, queue_size, name);
+        auto result = get().make_output_vstream_params({}, format_type, timeout_ms, queue_size, name);
         VALIDATE_EXPECTED(result);
         return py::cast(result.release());
     }

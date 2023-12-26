@@ -44,10 +44,6 @@ public:
     std::string get_vstream_name_from_original_name(const std::string &original_name, const std::string &net_group_name);
     py::list get_stream_names_from_vstream_name(const std::string &vstream_name, const std::string &net_group_name);
     py::list get_vstream_names_from_stream_name(const std::string &stream_name, const std::string &net_group_name);
-    py::dict get_input_vstreams_params(const std::string &name, bool quantized, hailo_format_type_t format_type,
-        uint32_t timeout_ms, uint32_t queue_size);
-    py::dict get_output_vstreams_params(const std::string &name, bool quantized, hailo_format_type_t format_type,
-        uint32_t timeout_ms, uint32_t queue_size);
     py::list get_input_vstream_infos(const std::string &name);
     py::list get_output_vstream_infos(const std::string &name);
     py::list get_all_vstream_infos(const std::string &name);

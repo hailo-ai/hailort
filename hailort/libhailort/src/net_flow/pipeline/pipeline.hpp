@@ -26,15 +26,6 @@
 
 namespace hailort
 {
-struct ElementBuildParams
-{
-    std::shared_ptr<std::atomic<hailo_status>> pipeline_status;
-    std::chrono::milliseconds timeout;
-    EventPtr shutdown_event;
-    size_t buffer_pool_size;
-    hailo_pipeline_elem_stats_flags_t elem_stats_flags;
-    hailo_vstream_stats_flags_t vstream_stats_flags;
-};
 
 enum class PipelineDirection
 {
@@ -42,16 +33,21 @@ enum class PipelineDirection
     PUSH,
 };
 
-// TODO: need to think about naming and the right place to declare the CompletionInfoAsyncInferInternal and TransferDoneCallbackAsyncInfer
-struct CompletionInfoAsyncInferInternal
+enum class BufferType
 {
-    hailo_status status;
+    UNINITIALIZED,
+    VIEW,
+    PIX_BUFFER,
 };
-using TransferDoneCallbackAsyncInfer = std::function<void(const CompletionInfoAsyncInferInternal &completion_info)>;;
+
+using TransferDoneCallbackAsyncInfer = std::function<void(hailo_status)>;
 
 using PipelineTimePoint = std::chrono::steady_clock::time_point;
 #define BUFFER_POOL_DEFAULT_QUEUE_TIMEOUT (std::chrono::milliseconds(10000))
 #define DEFAULT_NUM_FRAMES_BEFORE_COLLECTION_START (100)
+
+#define NUMBER_OF_PLANES_NV12_NV21 (2)
+#define NUMBER_OF_PLANES_I420 (3)
 
 struct AdditionalData {};
 
@@ -88,7 +84,7 @@ public:
         Metadata();
         ~Metadata() = default;
         Metadata(const Metadata &) = default;
-        Metadata &operator=(const Metadata &) = delete;
+        Metadata &operator=(const Metadata &) = default;
         Metadata(Metadata &&other) = default;
         Metadata &operator=(Metadata &&other) = default;
 
@@ -116,11 +112,12 @@ public:
     // Creates an empty PipelineBuffer (with no buffer/memory view)
     PipelineBuffer();
     PipelineBuffer(Type type);
-    PipelineBuffer(hailo_status status);
+    PipelineBuffer(hailo_status status, const TransferDoneCallbackAsyncInfer &exec_done = [](hailo_status){});
     PipelineBuffer(MemoryView view, bool is_user_buffer = true, BufferPoolPtr pool = nullptr, bool should_measure = false, hailo_status status = HAILO_SUCCESS);
     PipelineBuffer(MemoryView view, const TransferDoneCallbackAsyncInfer &exec_done,
         bool is_user_buffer = true, BufferPoolPtr pool = nullptr, bool should_measure = false, hailo_status status = HAILO_SUCCESS);
     PipelineBuffer(hailo_pix_buffer_t buffer);
+    PipelineBuffer(hailo_pix_buffer_t buffer, const TransferDoneCallbackAsyncInfer &exec_done);
     ~PipelineBuffer();
 
     PipelineBuffer(const PipelineBuffer &) = delete;
@@ -137,7 +134,7 @@ public:
     Metadata get_metadata() const;
     void set_metadata(Metadata &&val);
     void set_additional_data(std::shared_ptr<AdditionalData> data) { m_metadata.set_additional_data(data);}
-    TransferDoneCallbackAsyncInfer get_exec_done_cb() const;
+    TransferDoneCallbackAsyncInfer get_exec_done_cb();
     hailo_status action_status();
     void set_action_status(hailo_status status);
 
@@ -148,9 +145,11 @@ private:
     TransferDoneCallbackAsyncInfer m_exec_done;
     Metadata m_metadata;
     bool m_is_user_buffer;
+    bool m_should_call_exec_done;
     hailo_status m_action_status;
 
     static PipelineTimePoint add_timestamp(bool should_measure);
+    static void release_buffer(BufferPoolPtr buffer_pool_ptr, MemoryView mem_view, bool is_user_buffer);
 };
 
 // The buffer pool has to be created as a shared pointer (via the create function) because we use shared_from_this(),
@@ -169,16 +168,18 @@ public:
     size_t buffer_size();
     hailo_status enqueue_buffer(MemoryView mem_view);
     hailo_status enqueue_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done);
-    hailo_status allocate_buffers(bool is_dma_able);
-    Expected<PipelineBuffer> acquire_buffer(std::chrono::milliseconds timeout);
+    hailo_status allocate_buffers(bool is_dma_able, size_t num_of_buffers);
+    Expected<PipelineBuffer> acquire_buffer(std::chrono::milliseconds timeout, bool ignore_shutdown_event = false);
     Expected<std::shared_ptr<PipelineBuffer>> acquire_buffer_ptr(std::chrono::milliseconds timeout);
     AccumulatorPtr get_queue_size_accumulator();
     Expected<PipelineBuffer> get_available_buffer(PipelineBuffer &&optional, std::chrono::milliseconds timeout);
     bool is_full();
+    size_t num_of_buffers_in_pool();
+    bool is_holding_user_buffers();
 
 private:
-    Expected<MemoryView> acquire_free_mem_view(std::chrono::milliseconds timeout);
-    Expected<TransferDoneCallbackAsyncInfer> acquire_on_done_cb(std::chrono::milliseconds timeout);
+    Expected<MemoryView> acquire_free_mem_view(std::chrono::milliseconds timeout, bool ignore_shutdown_event = false);
+    Expected<TransferDoneCallbackAsyncInfer> acquire_on_done_cb(std::chrono::milliseconds timeout, bool ignore_shutdown_event = false);
     hailo_status release_buffer(MemoryView mem_view);
 
     const size_t m_buffer_size;
@@ -289,6 +290,8 @@ public:
     hailo_status clear();
     hailo_status flush();
     hailo_status abort();
+    hailo_status terminate(hailo_status error_status);
+    hailo_status dequeue_user_buffers(hailo_status error_status);
     hailo_status wait_for_finish();
     hailo_status clear_abort();
     virtual hailo_status run_push(PipelineBuffer &&buffer);
@@ -339,23 +342,46 @@ public:
     hailo_status clear();
     hailo_status flush();
     hailo_status abort();
+    hailo_status terminate(hailo_status error_status);
+    hailo_status dequeue_user_buffers(hailo_status error_status);
     hailo_status clear_abort();
     hailo_status wait_for_finish();
     AccumulatorPtr get_fps_accumulator();
     AccumulatorPtr get_latency_accumulator();
+    bool is_terminating_element();
     virtual std::vector<AccumulatorPtr> get_queue_size_accumulators();
     std::vector<PipelinePad> &sinks();
     std::vector<PipelinePad> &sources();
     const std::vector<PipelinePad> &sinks() const;
     const std::vector<PipelinePad> &sources() const;
     virtual std::string description() const;
-    virtual void set_on_cant_pull_callback(std::function<void()> callback);
-    virtual void set_on_can_pull_callback(std::function<void()> callback);
+
     virtual hailo_status enqueue_execution_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done, const std::string &source_name);
     hailo_status enqueue_execution_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done);
-    virtual Expected<bool> are_buffer_pools_full();
-    virtual hailo_status fill_buffer_pools(bool is_dma_able);
-    void handle_non_recoverable_async_error(hailo_status error_status);
+    hailo_status empty_buffer_pool(BufferPoolPtr pool, hailo_status error_status, std::chrono::milliseconds timeout);
+    virtual Expected<bool> can_push_buffer_upstream(const uint32_t source_index = UINT32_MAX);
+    virtual Expected<bool> can_push_buffer_downstream(const uint32_t source_index = UINT32_MAX);
+    virtual hailo_status fill_buffer_pool(bool is_dma_able, size_t num_of_buffers, const uint32_t source_index = UINT32_MAX);
+    virtual Expected<bool> can_push_buffer_upstream(const std::string &source_name = "");
+    virtual Expected<bool> can_push_buffer_downstream(const std::string &source_name = "");
+    virtual hailo_status fill_buffer_pool(bool is_dma_able, size_t num_of_buffers, const std::string &source_name = "");
+
+    virtual Expected<uint32_t> get_source_index_from_source_name(const std::string &/*source_name*/) {
+        // This function is overriden in multi-srcs elements
+        return 0;
+    }
+
+    virtual hailo_status set_nms_score_threshold(float32_t /*threshold*/) {
+        return HAILO_INVALID_OPERATION;
+    }
+
+    virtual hailo_status set_nms_iou_threshold(float32_t /*threshold*/) {
+        return HAILO_INVALID_OPERATION;
+    }
+
+    virtual hailo_status set_nms_max_proposals_per_class(uint32_t /*max_proposals_per_class*/) {
+        return HAILO_INVALID_OPERATION;
+    }
 
 protected:
     DurationCollector m_duration_collector;
@@ -363,9 +389,8 @@ protected:
     std::vector<PipelinePad> m_sinks;
     std::vector<PipelinePad> m_sources;
     PipelineDirection m_pipeline_direction;
-
-    std::function<void()> m_cant_pull_callback;
-    std::function<void()> m_can_pull_callback;
+    bool m_is_terminating_element;
+    bool m_is_terminated;
 
     virtual hailo_status run_push(PipelineBuffer &&buffer, const PipelinePad &sink) = 0;
     virtual void run_push_async(PipelineBuffer &&buffer, const PipelinePad &sink) = 0;
@@ -377,334 +402,14 @@ protected:
     virtual hailo_status execute_clear();
     virtual hailo_status execute_flush();
     virtual hailo_status execute_abort();
+    virtual hailo_status execute_terminate(hailo_status error_status);
+    virtual hailo_status execute_dequeue_user_buffers(hailo_status error_status);
     virtual hailo_status execute_clear_abort();
     virtual hailo_status execute_wait_for_finish();
 
     virtual hailo_status execute(std::function<hailo_status(PipelinePad*)>);
 
     friend class PipelinePad;
-};
-
-// An element with one source pad only (generates data)
-class SourceElement : public PipelineElement
-{
-public:
-    SourceElement(const std::string &name, DurationCollector &&duration_collector,
-                  std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
-                  PipelineDirection pipeline_direction);
-    PipelinePad &source();
-
-protected:
-    virtual std::vector<PipelinePad*> execution_pads() override;
-};
-
-// An element with one sink pad only (consumes data)
-class SinkElement : public PipelineElement
-{
-public:
-    SinkElement(const std::string &name, DurationCollector &&duration_collector,
-                std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
-                PipelineDirection pipeline_direction);
-    PipelinePad &sink();
-
-protected:
-    virtual std::vector<PipelinePad*> execution_pads() override;
-};
-
-// Transfers data from one pad to another pad. Has one sink pad and one source pad.
-class IntermediateElement : public PipelineElement
-{
-public:
-    IntermediateElement(const std::string &name, DurationCollector &&duration_collector,
-                        std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
-                        PipelineDirection pipeline_direction);
-    virtual PipelinePad &next_pad() = 0;
-
-protected:
-    virtual std::vector<PipelinePad*> execution_pads() override;
-};
-
-class FilterElement : public IntermediateElement
-{
-public:
-    FilterElement(const std::string &name, DurationCollector &&duration_collector,
-                  std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
-                  PipelineDirection pipeline_direction, BufferPoolPtr buffer_pool, std::chrono::milliseconds timeout);
-    virtual ~FilterElement() = default;
-
-    virtual hailo_status run_push(PipelineBuffer &&buffer, const PipelinePad &sink) override;
-    virtual void run_push_async(PipelineBuffer &&buffer, const PipelinePad &sink) override;
-    virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
-    virtual hailo_status enqueue_execution_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done, const std::string &source_name) override;
-    virtual Expected<bool> are_buffer_pools_full() override;
-    virtual hailo_status fill_buffer_pools(bool is_dma_able) override;
-    virtual std::vector<AccumulatorPtr> get_queue_size_accumulators() override;
-
-protected:
-    // The optional buffer functions as an output buffer that the user can write to instead of acquiring a new buffer
-    virtual Expected<PipelineBuffer> action(PipelineBuffer &&input, PipelineBuffer &&optional) = 0;
-    BufferPoolPtr m_pool;
-    std::chrono::milliseconds m_timeout;
-};
-
-class BaseQueueElement : public IntermediateElement
-{
-public:
-    virtual ~BaseQueueElement();
-
-    hailo_status set_timeout(std::chrono::milliseconds timeout);
-    virtual std::string description() const override;
-
-    static constexpr auto INIFINITE_TIMEOUT() { return std::chrono::milliseconds(HAILO_INFINITE); }
-
-protected:
-    static Expected<SpscQueue<PipelineBuffer>> create_queue(size_t queue_size, EventPtr shutdown_event);
-    BaseQueueElement(SpscQueue<PipelineBuffer> &&queue, EventPtr shutdown_event, const std::string &name,
-        std::chrono::milliseconds timeout, DurationCollector &&duration_collector,
-        AccumulatorPtr &&queue_size_accumulator, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
-        Event &&activation_event, Event &&deactivation_event,
-        PipelineDirection pipeline_direction);
-
-    hailo_status pipeline_status();
-
-    virtual hailo_status execute_activate() override;
-    virtual hailo_status execute_post_deactivate(bool should_clear_abort) override;
-    virtual hailo_status execute_clear() override;
-    virtual hailo_status execute_clear_abort() override;
-    virtual hailo_status execute_wait_for_finish() override;
-
-    virtual hailo_status enqueue_execution_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done, const std::string &source_name) override;
-    virtual Expected<bool> are_buffer_pools_full() override;
-    virtual hailo_status fill_buffer_pools(bool is_dma_able) override;
-
-    /// Starts/stops the queue thread. This functions needs to be called on subclasses ctor and dtor
-    /// accordingly because otherwise, if we will start/stop thread in this class we will face pure-call
-    /// to `run_in_thread`.
-    /// This functions don't return status because they are meant to be called on ctor and dtor 
-    virtual void start_thread();
-    virtual void stop_thread();
-
-    virtual std::vector<AccumulatorPtr> get_queue_size_accumulators() override;
-
-    virtual hailo_status run_in_thread() = 0;
-    virtual std::string thread_name() = 0;
-
-    SpscQueue<PipelineBuffer> m_queue;
-    EventPtr m_shutdown_event;
-    std::chrono::milliseconds m_timeout;
-    std::thread m_thread;
-    std::atomic_bool m_is_thread_running;
-    Event m_activation_event;
-    Event m_deactivation_event;
-    AccumulatorPtr m_queue_size_accumulator;
-    std::atomic_bool m_is_run_in_thread_running;
-    std::condition_variable m_cv;
-    std::mutex m_mutex;
-};
-
-class PushQueueElement : public BaseQueueElement
-{
-public:
-    static Expected<std::shared_ptr<PushQueueElement>> create(const std::string &name, std::chrono::milliseconds timeout,
-        size_t queue_size, hailo_pipeline_elem_stats_flags_t flags, EventPtr shutdown_event,
-        std::shared_ptr<std::atomic<hailo_status>> pipeline_status, PipelineDirection pipeline_direction = PipelineDirection::PUSH);
-    static Expected<std::shared_ptr<PushQueueElement>> create(const std::string &name, const hailo_vstream_params_t &vstream_params,
-        EventPtr shutdown_event, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
-        PipelineDirection pipeline_direction = PipelineDirection::PUSH);
-    PushQueueElement(SpscQueue<PipelineBuffer> &&queue, EventPtr shutdown_event, const std::string &name,
-        std::chrono::milliseconds timeout, DurationCollector &&duration_collector, AccumulatorPtr &&queue_size_accumulator,
-        std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, Event &&activation_event, Event &&deactivation_event,
-        PipelineDirection pipeline_direction, bool should_start_thread = true);
-    virtual ~PushQueueElement();
-
-    virtual hailo_status run_push(PipelineBuffer &&buffer, const PipelinePad &sink) override;
-    virtual void run_push_async(PipelineBuffer &&buffer, const PipelinePad &sink) override;
-    virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
-    virtual PipelinePad &next_pad() override;
-
-protected:
-    virtual hailo_status execute_deactivate() override;
-    virtual hailo_status run_in_thread() override;
-    virtual std::string thread_name() override { return "PUSH_QUEUE"; };
-    virtual hailo_status execute_abort() override;
-};
-
-class AsyncPushQueueElement : public PushQueueElement
-{
-public:
-    static Expected<std::shared_ptr<AsyncPushQueueElement>> create(const std::string &name, std::chrono::milliseconds timeout,
-        size_t queue_size, hailo_pipeline_elem_stats_flags_t flags, EventPtr shutdown_event,
-        std::shared_ptr<std::atomic<hailo_status>> pipeline_status, PipelineDirection pipeline_direction = PipelineDirection::PUSH);
-    static Expected<std::shared_ptr<AsyncPushQueueElement>> create(const std::string &name, const ElementBuildParams &build_params,
-        PipelineDirection pipeline_direction);
-    AsyncPushQueueElement(SpscQueue<PipelineBuffer> &&queue, EventPtr shutdown_event, const std::string &name,
-        std::chrono::milliseconds timeout, DurationCollector &&duration_collector, AccumulatorPtr &&queue_size_accumulator,
-        std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, Event &&activation_event, Event &&deactivation_event,
-        PipelineDirection pipeline_direction);
-
-    virtual hailo_status run_push(PipelineBuffer &&buffer, const PipelinePad &sink) override;
-    virtual void run_push_async(PipelineBuffer &&buffer, const PipelinePad &sink) override;
-
-protected:
-    virtual hailo_status run_in_thread() override;
-    virtual std::string thread_name() override { return "ASYNC_PUSH_Q"; };
-    virtual void start_thread() override;
-};
-
-class PullQueueElement : public BaseQueueElement
-{
-public:
-    static Expected<std::shared_ptr<PullQueueElement>> create(const std::string &name, std::chrono::milliseconds timeout,
-        size_t queue_size, hailo_pipeline_elem_stats_flags_t flags, EventPtr shutdown_event,
-        std::shared_ptr<std::atomic<hailo_status>> pipeline_status, PipelineDirection pipeline_direction = PipelineDirection::PULL);
-    static Expected<std::shared_ptr<PullQueueElement>> create(const std::string &name, const hailo_vstream_params_t &vstream_params,
-        EventPtr shutdown_event, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
-        PipelineDirection pipeline_direction = PipelineDirection::PULL);
-    PullQueueElement(SpscQueue<PipelineBuffer> &&queue, EventPtr shutdown_event, const std::string &name,
-        std::chrono::milliseconds timeout, DurationCollector &&duration_collector, AccumulatorPtr &&queue_size_accumulator,
-        std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, Event &&activation_event, Event &&deactivation_event,
-        PipelineDirection pipeline_direction);
-    virtual ~PullQueueElement();
-
-    virtual hailo_status run_push(PipelineBuffer &&buffer, const PipelinePad &sink) override;
-    virtual void run_push_async(PipelineBuffer &&buffer, const PipelinePad &sink) override;
-    virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
-    virtual PipelinePad &next_pad() override;
-
-    virtual void set_on_cant_pull_callback(std::function<void()> callback) override
-    {
-        m_cant_pull_callback = callback;
-        m_queue.set_on_cant_enqueue_callback([this] () {
-            m_cant_pull_callback();
-        });
-    }
-
-    virtual void set_on_can_pull_callback(std::function<void()> callback) override
-    {
-        m_can_pull_callback = callback;
-        m_queue.set_on_can_enqueue_callback([this] () {
-            m_can_pull_callback();
-        });
-    }
-
-protected:
-    virtual hailo_status execute_deactivate() override;
-    virtual hailo_status run_in_thread() override;
-    virtual std::string thread_name() override { return "PULL_QUEUE"; };
-};
-
-class UserBufferQueueElement : public PullQueueElement
-{
-public:
-    static Expected<std::shared_ptr<UserBufferQueueElement>> create(const std::string &name, std::chrono::milliseconds timeout,
-        hailo_pipeline_elem_stats_flags_t flags, EventPtr shutdown_event, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
-        PipelineDirection pipeline_direction = PipelineDirection::PULL);
-    static Expected<std::shared_ptr<UserBufferQueueElement>> create(const std::string &name, const hailo_vstream_params_t &vstream_params,
-        EventPtr shutdown_event, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
-        PipelineDirection pipeline_direction = PipelineDirection::PULL);
-    UserBufferQueueElement(SpscQueue<PipelineBuffer> &&queue, SpscQueue<PipelineBuffer> &&full_buffer_queue, EventPtr shutdown_event,
-        const std::string &name, std::chrono::milliseconds timeout, DurationCollector &&duration_collector, AccumulatorPtr &&queue_size_accumulator,
-        std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, Event &&activation_event, Event &&deactivation_event,
-        PipelineDirection pipeline_direction);
-
-    virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
-
-    virtual void set_on_cant_pull_callback(std::function<void()> callback) override
-    {
-        m_cant_pull_callback = callback;
-    }
-
-    virtual void set_on_can_pull_callback(std::function<void()> callback) override
-    {
-        m_can_pull_callback = callback;
-    }
-
-protected:
-    virtual hailo_status execute_clear() override;
-    virtual hailo_status run_in_thread() override;
-
-private:
-    SpscQueue<PipelineBuffer> m_full_buffer_queue;
-};
-
-class BaseMuxElement : public PipelineElement
-{
-public:
-    BaseMuxElement(size_t sink_count, const std::string &name, std::chrono::milliseconds timeout,
-        DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
-        BufferPoolPtr buffer_pool, PipelineDirection pipeline_direction = PipelineDirection::PULL);
-    virtual ~BaseMuxElement() = default;
-
-    virtual hailo_status run_push(PipelineBuffer &&buffer, const PipelinePad &sink) override;
-    virtual void run_push_async(PipelineBuffer &&buffer, const PipelinePad &sink) override;
-    virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
-    virtual hailo_status enqueue_execution_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done, const std::string &source_name) override;
-    virtual Expected<bool> are_buffer_pools_full() override;
-    virtual hailo_status fill_buffer_pools(bool is_dma_able) override;
-
-protected:
-    virtual Expected<PipelineBuffer> action(std::vector<PipelineBuffer> &&inputs, PipelineBuffer &&optional) = 0;
-    virtual std::vector<PipelinePad*> execution_pads() override;
-
-    std::chrono::milliseconds m_timeout;
-    BufferPoolPtr m_pool;
-
-private:
-    bool has_all_sinks_arrived();
-    std::unordered_map<std::string, bool> m_sink_has_arrived;
-    std::mutex m_mutex;
-    std::unordered_map<std::string, uint32_t> m_index_of_sink;
-    std::unordered_map<std::string, PipelineBuffer> m_input_buffers;
-    std::vector<PipelinePad*> m_next_pads;
-    std::condition_variable m_cv;
-};
-
-class BaseDemuxElement : public PipelineElement
-{
-public:
-    BaseDemuxElement(size_t source_count, const std::string &name, std::chrono::milliseconds timeout,
-        DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
-        std::vector<BufferPoolPtr> pools, PipelineDirection pipeline_direction);
-    virtual ~BaseDemuxElement() = default;
-
-    virtual hailo_status run_push(PipelineBuffer &&buffer, const PipelinePad &sink) override;
-    virtual void run_push_async(PipelineBuffer &&buffer, const PipelinePad &sink) override;
-    virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
-    hailo_status set_timeout(std::chrono::milliseconds timeout);
-    virtual hailo_status enqueue_execution_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done, const std::string &source_name) override;
-    virtual Expected<bool> are_buffer_pools_full() override;
-    virtual hailo_status fill_buffer_pools(bool is_dma_able) override;
-    hailo_status fill_buffer_pool(bool is_dma_able, size_t pool_id);
-
-protected:
-    virtual hailo_status execute_activate() override;
-    virtual hailo_status execute_deactivate() override;
-    virtual hailo_status execute_post_deactivate(bool should_clear_abort) override;
-    virtual hailo_status execute_abort() override;
-    virtual Expected<std::vector<PipelineBuffer>> action(PipelineBuffer &&input) = 0;
-    virtual std::vector<PipelinePad*> execution_pads() override;
-
-    std::chrono::milliseconds m_timeout;
-    std::vector<BufferPoolPtr> m_pools;
-
-private:
-    bool were_all_srcs_arrived();
-
-    std::atomic_bool m_is_activated;
-    std::atomic_bool m_was_stream_aborted;
-    std::unordered_map<std::string, uint32_t> m_index_of_source;
-    std::vector<bool> m_was_source_called;
-    std::vector<PipelineBuffer> m_buffers_for_action;
-    std::mutex m_mutex;
-    std::condition_variable m_cv;
-    std::vector<PipelinePad*> m_next_pads;
-};
-
-enum class AccumulatorType
-{
-    FPS,
-    LATENCY,
-    QUEUE_SIZE
 };
 
 } /* namespace hailort */

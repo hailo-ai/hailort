@@ -34,7 +34,7 @@ Expected<size_t> get_istream_size(std::ifstream &s)
     return Expected<size_t>(static_cast<size_t>(total_size));
 }
 
-Expected<Buffer> read_binary_file(const std::string &file_path)
+Expected<Buffer> read_binary_file(const std::string &file_path, const BufferStorageParams &output_buffer_params)
 {
     std::ifstream file(file_path, std::ios::in | std::ios::binary);
     CHECK_AS_EXPECTED(file.good(), HAILO_OPEN_FILE_FAILURE, "Error opening file {}", file_path);
@@ -42,7 +42,7 @@ Expected<Buffer> read_binary_file(const std::string &file_path)
     auto file_size = get_istream_size(file);
     CHECK_EXPECTED(file_size, "Failed to get file size");
 
-    auto buffer = Buffer::create(file_size.value());
+    auto buffer = Buffer::create(file_size.value(), output_buffer_params);
     CHECK_EXPECTED(buffer, "Failed to allocate file buffer ({} bytes}", file_size.value());
 
     // Read the data

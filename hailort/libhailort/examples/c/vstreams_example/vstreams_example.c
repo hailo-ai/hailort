@@ -137,7 +137,7 @@ int main()
     size_t output_vstreams_size = MAX_EDGE_LAYERS;
     hailo_input_vstream input_vstreams[MAX_EDGE_LAYERS] = {NULL};
     hailo_output_vstream output_vstreams[MAX_EDGE_LAYERS] = {NULL};
-    bool quantized = true;
+    bool unused = {0};
 
     status = hailo_create_vdevice(NULL, &vdevice);
     REQUIRE_SUCCESS(status, l_exit, "Failed to create vdevice");
@@ -154,9 +154,8 @@ int main()
         "Invalid network group size");
 
 
-    // Set input format type to auto, and mark the data as quantized - libhailort will not scale the data before writing to the HW
-    quantized = true;
-    status = hailo_make_input_vstream_params(network_group, quantized, HAILO_FORMAT_TYPE_AUTO,
+    // Set input format type to auto - libhailort will not scale the data before writing to the HW
+    status = hailo_make_input_vstream_params(network_group, unused, HAILO_FORMAT_TYPE_AUTO,
         input_vstream_params, &input_vstreams_size);
     REQUIRE_SUCCESS(status, l_release_hef, "Failed making input virtual stream params");
 
@@ -166,10 +165,9 @@ int main()
         input_vstream_params[i].params.user_buffer_format.order = HAILO_FORMAT_ORDER_NCHW;
     }
 
-    // Set output format type to float32, and mark the data as not quantized - libhailort will de-quantize the data after reading from the HW
+    // Set output format type to float32 - libhailort will de-quantize the data after reading from the HW
     // Note: this process might affect the overall performance
-    quantized = false;
-    status = hailo_make_output_vstream_params(network_group, quantized, HAILO_FORMAT_TYPE_FLOAT32,
+    status = hailo_make_output_vstream_params(network_group, unused, HAILO_FORMAT_TYPE_FLOAT32,
         output_vstream_params, &output_vstreams_size);
     REQUIRE_SUCCESS(status, l_release_hef, "Failed making output virtual stream params");
 

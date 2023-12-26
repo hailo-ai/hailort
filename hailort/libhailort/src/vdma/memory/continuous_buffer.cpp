@@ -33,45 +33,27 @@ Expected<ContinuousBuffer> ContinuousBuffer::create(size_t size, HailoRTDriver &
         CHECK_EXPECTED(result);
     }
 
-    uintptr_t handle = 0;
-    uint64_t dma_address = 0;
-    std::tie(handle, dma_address) = result.release();
-
-    auto mmap = MmapBuffer<void>::create_file_map(size, driver.fd(), handle);
-    if (!mmap) {
-        LOGGER__ERROR("Failed mmap continuous buffer");
-        driver.vdma_continuous_buffer_free(handle);
-        return make_unexpected(mmap.status());
-    }
-
-    return ContinuousBuffer(size, driver, handle, dma_address, mmap.release());
+    return ContinuousBuffer(driver, result.release());
 }
 
 ContinuousBuffer::~ContinuousBuffer()
 {
-    if (0 != m_handle) {
-        auto status = m_mmap.unmap();
-        if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed unmap mmap buffer {}", status);
-        }
-
-        status = m_driver.vdma_continuous_buffer_free(m_handle);
+    if (HailoRTDriver::INVALID_DRIVER_BUFFER_HANDLE_VALUE != m_buffer_info.handle) {
+        auto status = m_driver.vdma_continuous_buffer_free(m_buffer_info);
         if (HAILO_SUCCESS != status) {
             LOGGER__ERROR("Failed free continuous buffer, {}", status);
         }
-
-        m_handle = 0;
     }
 }
 
 size_t ContinuousBuffer::size() const
 {
-    return m_size;
+    return m_buffer_info.size;
 }
 
 uint64_t ContinuousBuffer::dma_address() const
 {
-    return m_dma_address;
+    return m_buffer_info.dma_address;
 }
 
 uint16_t ContinuousBuffer::desc_page_size() const
@@ -82,25 +64,25 @@ uint16_t ContinuousBuffer::desc_page_size() const
 
 uint32_t ContinuousBuffer::descs_count() const
 {
-    return descriptors_in_buffer(m_size);
+    return descriptors_in_buffer(m_buffer_info.size);
 }
 
 hailo_status ContinuousBuffer::read(void *buf_dst, size_t count, size_t offset)
 {
-    CHECK((count + offset) <= m_size, HAILO_INSUFFICIENT_BUFFER,
-        "Requested size {} from offset {} is more than the buffer size {}", count, offset, m_size);
+    CHECK((count + offset) <= m_buffer_info.size, HAILO_INSUFFICIENT_BUFFER,
+        "Requested size {} from offset {} is more than the buffer size {}", count, offset, m_buffer_info.size);
     // We use dma coherent mmap, so no need to sync the buffer after the memcpy.
-    const auto src_address = reinterpret_cast<uint8_t*>(m_mmap.address()) + offset;
+    const auto src_address = reinterpret_cast<uint8_t*>(m_buffer_info.user_address) + offset;
     memcpy(buf_dst, src_address, count);
     return HAILO_SUCCESS;
 }
 
 hailo_status ContinuousBuffer::write(const void *buf_src, size_t count, size_t offset)
 {
-    CHECK((count + offset) <= m_size, HAILO_INSUFFICIENT_BUFFER,
-        "Requested size {} from offset {} is more than the buffer size {}", count, offset, m_size);
+    CHECK((count + offset) <= m_buffer_info.size, HAILO_INSUFFICIENT_BUFFER,
+        "Requested size {} from offset {} is more than the buffer size {}", count, offset, m_buffer_info.size);
     // We use dma coherent mmap, so no need to sync the buffer after the memcpy.
-    const auto dst_address = reinterpret_cast<uint8_t*>(m_mmap.address()) + offset;
+    const auto dst_address = reinterpret_cast<uint8_t*>(m_buffer_info.user_address) + offset;
     memcpy(dst_address, buf_src, count);
     return HAILO_SUCCESS;
 }
@@ -115,13 +97,9 @@ Expected<uint32_t> ContinuousBuffer::program_descriptors(size_t transfer_size, I
     return descriptors_in_buffer(transfer_size);
 }
 
-ContinuousBuffer::ContinuousBuffer(size_t size, HailoRTDriver &driver, uintptr_t handle, uint64_t dma_address,
-    MmapBuffer<void> &&mmap) :
-    m_size(size),
+ContinuousBuffer::ContinuousBuffer(HailoRTDriver &driver, const ContinousBufferInfo &buffer_info) :
     m_driver(driver),
-    m_handle(handle),
-    m_dma_address(dma_address),
-    m_mmap(std::move(mmap))
+    m_buffer_info(buffer_info)
 {}
 
 }; /* namespace vdma */

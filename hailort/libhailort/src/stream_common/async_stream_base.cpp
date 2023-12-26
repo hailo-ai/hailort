@@ -7,6 +7,7 @@
  **/
 
 #include "async_stream_base.hpp"
+#include "common/os_utils.hpp"
 
 namespace hailort
 {
@@ -27,18 +28,24 @@ static const char *get_buffer_mode_api_name(StreamBufferMode mode)
     }
 }
 
-AsyncInputStreamBase::AsyncInputStreamBase(const LayerInfo &edge_layer,
-    hailo_stream_interface_t stream_interface, EventPtr core_op_activated_event, hailo_status &status) :
-        InputStreamBase(edge_layer, stream_interface, core_op_activated_event, status),
+AsyncInputStreamBase::AsyncInputStreamBase(const LayerInfo &edge_layer, EventPtr core_op_activated_event,
+    hailo_status &status) :
+        InputStreamBase(edge_layer, core_op_activated_event, status),
         m_is_stream_activated(false),
         m_is_aborted(false),
         m_timeout(DEFAULT_TRANSFER_TIMEOUT),
         m_buffer_mode(StreamBufferMode::NOT_SET),
-        m_ongoing_transfers(0),
-        m_interrupt_callback(ignore_interrupts_callback)
-{}
+        m_ongoing_transfers(0)
+{
+    // Checking status for base class c'tor
+    if (HAILO_SUCCESS != status) {
+        return;
+    }
 
-hailo_status AsyncInputStreamBase::abort()
+    status = HAILO_SUCCESS;
+}
+
+hailo_status AsyncInputStreamBase::abort_impl()
 {
     {
         std::lock_guard<std::mutex> lock(m_stream_mutex);
@@ -48,7 +55,7 @@ hailo_status AsyncInputStreamBase::abort()
     return HAILO_SUCCESS;
 }
 
-hailo_status AsyncInputStreamBase::clear_abort()
+hailo_status AsyncInputStreamBase::clear_abort_impl()
 {
     {
         std::lock_guard<std::mutex> lock(m_stream_mutex);
@@ -56,16 +63,6 @@ hailo_status AsyncInputStreamBase::clear_abort()
     }
 
     return HAILO_SUCCESS;
-}
-
-void AsyncInputStreamBase::notify_all()
-{
-    {
-        // Acquire mutex to make sure the notify_all will wake the blocking threads on the cv.
-        std::unique_lock<std::mutex> lock(m_stream_mutex);
-    }
-
-    m_has_ready_buffer.notify_all();
 }
 
 hailo_status AsyncInputStreamBase::set_buffer_mode(StreamBufferMode buffer_mode)
@@ -117,14 +114,14 @@ hailo_status AsyncInputStreamBase::flush()
     });
 }
 
-hailo_status AsyncInputStreamBase::write_impl(const MemoryView &user_buffer, std::function<bool()> should_cancel)
+hailo_status AsyncInputStreamBase::write_impl(const MemoryView &user_buffer)
 {
     auto status = set_buffer_mode(StreamBufferMode::OWNING);
     CHECK_SUCCESS(status);
 
     std::unique_lock<std::mutex> lock(m_stream_mutex);
     auto is_ready = [this]() { return is_ready_for_transfer() && is_ready_for_dequeue(); };
-    status = cv_wait_for(lock, m_timeout, is_ready, should_cancel);
+    status = cv_wait_for(lock, m_timeout, is_ready);
     if (HAILO_SUCCESS != status) {
         // errors logs on cv_wait_for
         return status;
@@ -137,8 +134,7 @@ hailo_status AsyncInputStreamBase::write_impl(const MemoryView &user_buffer, std
     status = stream_buffer.copy_from(user_buffer);
     CHECK_SUCCESS(status);
 
-    return call_write_async_impl(TransferRequest{
-        stream_buffer,
+    return call_write_async_impl(TransferRequest(std::move(stream_buffer),
         [this, stream_buffer](hailo_status) {
             std::unique_lock<std::mutex> lock(m_stream_mutex);
             auto enqueue_status = m_buffer_pool->enqueue(TransferBuffer{stream_buffer});
@@ -146,25 +142,7 @@ hailo_status AsyncInputStreamBase::write_impl(const MemoryView &user_buffer, std
                 LOGGER__ERROR("Failed enqueue stream buffer {}", enqueue_status);
             }
         }
-    });
-}
-
-hailo_status AsyncInputStreamBase::write_impl(const MemoryView &user_buffer)
-{
-    const auto SHOULD_CANCEL = []() { return false; };
-    return write_impl(user_buffer, SHOULD_CANCEL);
-}
-
-hailo_status AsyncInputStreamBase::register_interrupt_callback(const ProcessingCompleteCallback &callback)
-{
-    std::unique_lock<std::mutex> lock(m_stream_mutex);
-    m_interrupt_callback = callback;
-    return HAILO_SUCCESS;
-}
-
-Expected<size_t> AsyncInputStreamBase::get_buffer_frames_size() const
-{
-    return get_max_ongoing_transfers();
+    ));
 }
 
 Expected<size_t> AsyncInputStreamBase::get_async_max_queue_size() const
@@ -192,6 +170,13 @@ hailo_status AsyncInputStreamBase::write_async(TransferRequest &&transfer_reques
     CHECK_SUCCESS(status);
 
     std::unique_lock<std::mutex> lock(m_stream_mutex);
+
+    if (m_is_aborted) {
+        return HAILO_STREAM_ABORTED_BY_USER;
+    } else if (!m_is_stream_activated) {
+        return HAILO_STREAM_NOT_ACTIVATED;
+    }
+
     return call_write_async_impl(std::move(transfer_request));
 }
 
@@ -234,12 +219,6 @@ hailo_status AsyncInputStreamBase::deactivate_stream()
 hailo_status AsyncInputStreamBase::call_write_async_impl(TransferRequest &&transfer_request)
 {
     transfer_request.callback = [this, callback=transfer_request.callback](hailo_status callback_status) {
-        if (HAILO_SUCCESS == callback_status) {
-            // Calling interrupt callback first (only if successful), since callback() may update the state (and we call
-            // interrupt_callback before the state is activated).
-            m_interrupt_callback();
-        }
-
         callback(callback_status);
 
         {
@@ -272,18 +251,17 @@ bool AsyncInputStreamBase::is_ready_for_dequeue() const
     return m_ongoing_transfers < m_buffer_pool->max_queue_size();
 }
 
-AsyncOutputStreamBase::AsyncOutputStreamBase(const LayerInfo &edge_layer, hailo_stream_interface_t interface,
-    EventPtr core_op_activated_event, hailo_status &status) :
-        OutputStreamBase(edge_layer, interface, std::move(core_op_activated_event), status),
+AsyncOutputStreamBase::AsyncOutputStreamBase(const LayerInfo &edge_layer, EventPtr core_op_activated_event,
+    hailo_status &status) :
+        OutputStreamBase(edge_layer, std::move(core_op_activated_event), status),
         m_is_stream_activated(false),
         m_is_aborted(false),
         m_timeout(DEFAULT_TRANSFER_TIMEOUT),
         m_buffer_mode(StreamBufferMode::NOT_SET),
-        m_ongoing_transfers(0),
-        m_interrupt_callback(ignore_interrupts_callback)
+        m_ongoing_transfers(0)
 {}
 
-hailo_status AsyncOutputStreamBase::abort()
+hailo_status AsyncOutputStreamBase::abort_impl()
 {
     {
         std::lock_guard<std::mutex> lock(m_stream_mutex);
@@ -293,7 +271,7 @@ hailo_status AsyncOutputStreamBase::abort()
     return HAILO_SUCCESS;
 }
 
-hailo_status AsyncOutputStreamBase::clear_abort()
+hailo_status AsyncOutputStreamBase::clear_abort_impl()
 {
     {
         std::lock_guard<std::mutex> lock(m_stream_mutex);
@@ -327,18 +305,19 @@ hailo_status AsyncOutputStreamBase::read_async(TransferRequest &&transfer_reques
     CHECK_SUCCESS(status);
 
     std::unique_lock<std::mutex> lock(m_stream_mutex);
+
+    if (m_is_aborted) {
+        return HAILO_STREAM_ABORTED_BY_USER;
+    } else if (!m_is_stream_activated) {
+        return HAILO_STREAM_NOT_ACTIVATED;
+    }
+
     return call_read_async_impl(std::move(transfer_request));
 }
 
 hailo_status AsyncOutputStreamBase::call_read_async_impl(TransferRequest &&transfer_request)
 {
     transfer_request.callback = [this, callback=transfer_request.callback](hailo_status callback_status) {
-        if (HAILO_SUCCESS == callback_status) {
-            // Calling interrupt callback first (only if successful), since callback() may update the state (and we call
-            // interrupt_callback before the state is activated).
-            m_interrupt_callback();
-        }
-
         callback(callback_status);
 
         {
@@ -349,7 +328,6 @@ hailo_status AsyncOutputStreamBase::call_read_async_impl(TransferRequest &&trans
         m_has_ready_buffer.notify_all();
     };
 
-
     auto status = read_async_impl(std::move(transfer_request));
     if (HAILO_STREAM_ABORTED_BY_USER == status) {
         return status;
@@ -358,13 +336,6 @@ hailo_status AsyncOutputStreamBase::call_read_async_impl(TransferRequest &&trans
 
     m_ongoing_transfers++;
 
-    return HAILO_SUCCESS;
-}
-
-hailo_status AsyncOutputStreamBase::register_interrupt_callback(const ProcessingCompleteCallback &callback)
-{
-    std::unique_lock<std::mutex> lock(m_stream_mutex);
-    m_interrupt_callback = callback;
     return HAILO_SUCCESS;
 }
 
@@ -420,12 +391,8 @@ bool AsyncOutputStreamBase::is_ready_for_transfer() const
 
 hailo_status AsyncOutputStreamBase::prepare_all_transfers()
 {
-    const auto max_transfers_in_buffer = get_buffer_frames_size();
-    CHECK_EXPECTED_AS_STATUS(max_transfers_in_buffer);
-
-    assert(*max_transfers_in_buffer >= m_pending_buffers.size());
-    const auto transfers_count = *max_transfers_in_buffer - m_pending_buffers.size();
-    for (size_t i = 0; i < transfers_count; i++) {
+    const auto queue_size = get_max_ongoing_transfers();
+    for (size_t i = 0; i < queue_size; i++) {
         auto status = dequeue_and_launch_transfer();
         CHECK_SUCCESS(status);
     }
@@ -474,12 +441,6 @@ std::chrono::milliseconds AsyncOutputStreamBase::get_timeout() const
     return m_timeout;
 }
 
-Expected<size_t> AsyncOutputStreamBase::get_buffer_frames_size() const
-{
-    return get_max_ongoing_transfers();
-}
-
-
 hailo_status AsyncOutputStreamBase::read_impl(MemoryView user_buffer)
 {
     auto status = set_buffer_mode(StreamBufferMode::OWNING);
@@ -517,7 +478,7 @@ hailo_status AsyncOutputStreamBase::dequeue_and_launch_transfer()
     auto buffer = m_buffer_pool->dequeue();
     CHECK_EXPECTED_AS_STATUS(buffer);
 
-    auto callback  = [this, buffer=buffer.value()](hailo_status status) {
+    auto callback = [this, buffer=buffer.value()](hailo_status status) {
         if (HAILO_STREAM_ABORTED_BY_USER == status) {
             // On deactivation flow, we should get this status. We just ignore the callback here, and in the next
             // activation we should reset the buffers.
@@ -530,7 +491,7 @@ hailo_status AsyncOutputStreamBase::dequeue_and_launch_transfer()
         }
     };
 
-    auto status = call_read_async_impl(TransferRequest{buffer.value(), callback});
+    auto status = call_read_async_impl(TransferRequest(std::move(buffer.value()), callback));
     if (HAILO_STREAM_ABORTED_BY_USER == status) {
         // The buffer_pool state will reset on next activation.
         return status;

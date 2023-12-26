@@ -49,8 +49,6 @@ hailo_status NmsOpMetadata::validate_format_info()
             output_metadata.first);
         CHECK(!(HAILO_FORMAT_FLAGS_HOST_ARGMAX & output_metadata.second.format.flags), HAILO_INVALID_ARGUMENT, "Output {} is marked as argmax, which is not supported for this model.",
             output_metadata.first);
-        CHECK(!(HAILO_FORMAT_FLAGS_QUANTIZED & output_metadata.second.format.flags), HAILO_INVALID_ARGUMENT, "Output {} is marked as quantized, which is not supported for this model.",
-            output_metadata.first);
     }
     if (m_type == OperationType::IOU) {
         assert(1 == m_inputs_metadata.size());
@@ -69,9 +67,6 @@ hailo_status NmsOpMetadata::validate_format_info()
                 HailoRTCommon::get_format_type_str(input_metadata.second.format.type));
 
             CHECK(input_metadata.second.format.type == first_input_type, HAILO_INVALID_ARGUMENT,"All inputs format type should be the same");
-
-            CHECK(HAILO_FORMAT_FLAGS_QUANTIZED == input_metadata.second.format.flags, HAILO_INVALID_ARGUMENT, "The given input format flag is not supported,"
-                "should be HAILO_FORMAT_FLAGS_QUANTIZED");
         }
     }
 
@@ -180,7 +175,7 @@ void NmsPostProcessOp::fill_nms_format_buffer(MemoryView &buffer, const std::vec
                                 + (num_of_detections_before[detection.m_class_id] * sizeof(hailo_bbox_float32_t));
 
         assert((buffer_offset + sizeof(hailo_bbox_float32_t)) <= buffer.size());
-        memcpy((hailo_bbox_float32_t*)(buffer.data() + buffer_offset), &detection.m_bbox, sizeof(hailo_bbox_float32_t));
+        *(hailo_bbox_float32_t*)(buffer.data() + buffer_offset) = *(hailo_bbox_float32_t*)&(detection.m_bbox);
         num_of_detections_before[detection.m_class_id]++;
         classes_detections_count[detection.m_class_id]--;
     }
@@ -191,11 +186,10 @@ void NmsPostProcessOp::fill_nms_format_buffer(MemoryView &buffer, const std::vec
     }
 }
 
-hailo_status NmsPostProcessOp::hailo_nms_format(std::vector<DetectionBbox> &&detections,
-    MemoryView dst_view, std::vector<uint32_t> &classes_detections_count)
+hailo_status NmsPostProcessOp::hailo_nms_format(MemoryView dst_view)
 {
-    remove_overlapping_boxes(detections, classes_detections_count, m_nms_metadata->nms_config().nms_iou_th);
-    fill_nms_format_buffer(dst_view, detections, classes_detections_count, m_nms_metadata->nms_config());
+    remove_overlapping_boxes(m_detections, m_classes_detections_count, m_nms_metadata->nms_config().nms_iou_th);
+    fill_nms_format_buffer(dst_view, m_detections, m_classes_detections_count, m_nms_metadata->nms_config());
     return HAILO_SUCCESS;
 }
 

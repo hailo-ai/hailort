@@ -26,13 +26,18 @@
 #include "hef/hef_internal.hpp"
 #include "hef/core_op_metadata.hpp"
 #include "control_protocol.h"
-#include "vdma/channel/boundary_channel.hpp"
 #include "core_op/active_core_op_holder.hpp"
 #include "stream_common/stream_internal.hpp"
 
 
-namespace hailort
-{
+namespace hailort {
+
+namespace vdma {
+    class BoundaryChannel;
+    using BoundaryChannelPtr = std::shared_ptr<BoundaryChannel>;
+} /* namespace vdma */
+
+
 /** Represents a vector of InputStream ptrs */
 using InputStreamPtrVector = std::vector<std::shared_ptr<InputStreamBase>>;
 
@@ -75,6 +80,9 @@ public:
     hailo_status activate(uint16_t dynamic_batch_size = CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE);
     hailo_status deactivate();
 
+    // Shutdown the core-op, make sure all ongoing transfers are completed with status HAILO_STREAM_ABORTED_BY_USER
+    virtual hailo_status shutdown() = 0;
+
     virtual hailo_status activate_impl(uint16_t dynamic_batch_size = CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE) = 0;
     virtual hailo_status deactivate_impl() = 0;
 
@@ -99,15 +107,20 @@ public:
     void set_vdevice_core_op_handle(vdevice_core_op_handle_t handle) { m_vdevice_core_op_handle = handle;}
     vdevice_core_op_handle_t vdevice_core_op_handle() { return m_vdevice_core_op_handle;}
 
+    Expected<size_t> get_async_max_queue_size() const;
+
+    /**
+     * The function returns `HAILO_SUCCESS` if at least one of the writes or reads happened.
+     * This assures that all the callbacks will be called: The callbacks per transfer and the `infer_request` callback.
+     *
+     * If the function fails, then we can assume that no callback has being called.
+     * Neither the transfers callbacks nor the `infer_request` callback.
+     *
+     */
+    hailo_status infer_async(InferRequest &&request);
+
     std::map<std::string, std::shared_ptr<InputStreamBase>> m_input_streams;
     std::map<std::string, std::shared_ptr<OutputStreamBase>> m_output_streams;
-
-    // This function is called when a user is creating VStreams and is only relevant for VDeviceCoreOp.
-    // In case a user is using VdmaConfigCoreOp or HcpConfigCoreOp this function should do nothing.
-    virtual void set_vstreams_multiplexer_callbacks(std::vector<OutputVStream> &output_vstreams) 
-    {
-        (void)output_vstreams;
-    }
 
 protected:
     CoreOp(const ConfigureNetworkParams &config_params, std::shared_ptr<CoreOpMetadata> metadata,
@@ -120,6 +133,7 @@ protected:
 
     hailo_status activate_low_level_streams();
     hailo_status deactivate_low_level_streams();
+    hailo_status abort_low_level_streams();
 
     Expected<LayerInfo> get_layer_info(const std::string &stream_name);
     bool is_nms();
@@ -134,6 +148,21 @@ protected:
     static uint16_t get_smallest_configured_batch_size(const ConfigureNetworkParams &config_params);
 
 private:
+    struct OngoingInferState {
+        std::atomic_size_t callbacks_left;
+        hailo_status status;
+    };
+
+    // Launch write_async/read_async on all streams with wrapped callback.
+    // We remove all transfer that was launched successfully from transfers in order to call those callback
+    // with HAILO_STREAM_ABORTED_BY_USER status on the case of a failure.
+    hailo_status infer_async_impl(std::unordered_map<std::string, TransferRequest> &transfers,
+        std::shared_ptr<OngoingInferState> state,
+         TransferDoneCallback done_callback);
+    TransferDoneCallback wrap_user_callback(TransferDoneCallback &&original_callback,
+        std::shared_ptr<OngoingInferState> state,
+        TransferDoneCallback infer_callback);
+
     const ConfigureNetworkParams m_config_params;
     ActiveCoreOpHolder &m_active_core_op_holder;
     const uint16_t m_min_configured_batch_size; // TODO: remove after HRT-6535

@@ -103,10 +103,8 @@ hailo_status YOLOXPostProcessOp::execute(const std::map<std::string, MemoryView>
 {
     const auto &yolox_config = m_metadata->yolox_config();
     const auto &inputs_metadata = m_metadata->inputs_metadata();
-    const auto &nms_config = m_metadata->nms_config();
-    std::vector<DetectionBbox> detections;
-    std::vector<uint32_t> classes_detections_count(nms_config.number_of_classes, 0);
-    detections.reserve(nms_config.max_proposals_per_class * nms_config.number_of_classes);
+    
+    clear_before_frame();
     for (const auto &layers_names_triplet : yolox_config.input_names) {
         hailo_status status;
         assert(contains(inputs, layers_names_triplet.cls));
@@ -116,10 +114,10 @@ hailo_status YOLOXPostProcessOp::execute(const std::map<std::string, MemoryView>
         auto &input_metadata = inputs_metadata.at(layers_names_triplet.reg);
         if (input_metadata.format.type == HAILO_FORMAT_TYPE_UINT8) {
             status = extract_detections<float32_t, uint8_t>(layers_names_triplet, inputs.at(layers_names_triplet.reg), inputs.at(layers_names_triplet.cls),
-                inputs.at(layers_names_triplet.obj), detections, classes_detections_count);
+                inputs.at(layers_names_triplet.obj));
         } else if (input_metadata.format.type == HAILO_FORMAT_TYPE_UINT16) {
             status = extract_detections<float32_t, uint16_t>(layers_names_triplet, inputs.at(layers_names_triplet.reg), inputs.at(layers_names_triplet.cls),
-                inputs.at(layers_names_triplet.obj), detections, classes_detections_count);
+                inputs.at(layers_names_triplet.obj));
         } else {
             CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "YOLO post-process received invalid input type {}", input_metadata.format.type);
         }
@@ -127,7 +125,7 @@ hailo_status YOLOXPostProcessOp::execute(const std::map<std::string, MemoryView>
         CHECK_SUCCESS(status);
     }
 
-    return hailo_nms_format(std::move(detections), outputs.begin()->second, classes_detections_count);
+    return hailo_nms_format(outputs.begin()->second);
 }
 
 hailo_bbox_float32_t YOLOXPostProcessOp::decode(float32_t tx, float32_t ty, float32_t tw, float32_t th,

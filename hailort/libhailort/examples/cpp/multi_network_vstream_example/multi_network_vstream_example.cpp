@@ -15,7 +15,6 @@
 
 #define HEF_FILE ("hefs/multi_network_shortcut_net.hef")
 constexpr size_t INFER_FRAME_COUNT = 100;
-constexpr bool QUANTIZED = true;
 constexpr hailo_format_type_t FORMAT_TYPE = HAILO_FORMAT_TYPE_AUTO;
 constexpr size_t MAX_LAYER_EDGES = 16;
 constexpr size_t NET_GROUPS_COUNT = 1;
@@ -81,7 +80,7 @@ Expected<std::map<std::string, InOutVStreams>> create_vstreams_per_network(Confi
     // Create vstreams for each network
     std::map<std::string, InOutVStreams> networks_vstreams;
     for (auto &network_info : networks_infos) {
-        auto vstreams = VStreamsBuilder::create_vstreams(net_group, QUANTIZED, FORMAT_TYPE, network_info.name);
+        auto vstreams = VStreamsBuilder::create_vstreams(net_group, {}, FORMAT_TYPE, network_info.name);
         if (!vstreams) {
             std::cerr << "Failed to create vstreams for network " << network_info.name << std::endl;
             return make_unexpected(vstreams.status());

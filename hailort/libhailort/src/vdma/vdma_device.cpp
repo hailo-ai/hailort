@@ -11,6 +11,7 @@
 
 #include "vdma/vdma_device.hpp"
 #include "vdma/memory/descriptor_list.hpp"
+#include "vdma/memory/mapping_manager.hpp"
 #include "vdma/vdma_config_manager.hpp"
 #include "vdma/pcie/pcie_device.hpp"
 #include "vdma/integrated/integrated_device.hpp"
@@ -33,7 +34,9 @@ static constexpr std::chrono::milliseconds DEFAULT_TIMEOUT(50000);
 
 VdmaDevice::VdmaDevice(std::unique_ptr<HailoRTDriver> &&driver, Device::Type type) :
     DeviceBase::DeviceBase(type),
-    m_driver(std::move(driver)), m_is_configured(false)
+    m_driver(std::move(driver)),
+    m_mapping_manager(*m_driver),
+    m_is_configured(false)
 {
     activate_notifications(get_dev_id());
 }
@@ -245,6 +248,22 @@ VdmaDevice::~VdmaDevice()
             LOGGER__WARNING("clear configured apps ended with status {}", status);
         }
     }
+}
+
+hailo_status VdmaDevice::dma_map(void *address, size_t size, hailo_stream_direction_t direction)
+{
+    return m_mapping_manager.map_buffer(address, size, direction);
+}
+
+hailo_status VdmaDevice::dma_unmap(void *address, hailo_stream_direction_t direction)
+{
+    return m_mapping_manager.unmap_buffer(address, direction);
+}
+
+Expected<std::pair<vdma::MappedBufferPtr, bool>> VdmaDevice::try_dma_map(vdma::DmaAbleBufferPtr buffer,
+    hailo_stream_direction_t direction)
+{
+    return m_mapping_manager.try_dma_map(buffer, direction);
 }
 
 Expected<ConfiguredNetworkGroupVector> VdmaDevice::create_networks_group_vector(Hef &hef, const NetworkGroupsParamsMap &configure_params)

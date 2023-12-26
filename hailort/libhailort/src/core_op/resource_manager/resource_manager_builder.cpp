@@ -9,6 +9,7 @@
 
 #include "resource_manager_builder.hpp"
 #include "device_common/control.hpp"
+#include "periph_calculator.hpp"
 
 
 namespace hailort
@@ -75,122 +76,27 @@ static Expected<LayerInfo> calculate_credit_params(const CONTROL_PROTOCOL__hw_co
     return updated_layer_info;
 }
 
-// NOTE: in case of ddr where periph is aligned to PERIPH_BYTES_PER_BUFFER_DDR_ALIGNMENT_SIZE we cant force that
-// periph_bytes_per_buffer * periph_buffers_per_frame will equal exactly hw_frame_size.
-static bool is_logical_periph_bytes_per_buffer(const uint32_t periph_bytes_per_buffer, const size_t hw_frame_size, const bool is_ddr,
-    const uint32_t max_shmifo_size, const uint32_t desc_page_size, const uint32_t max_periph_bytes_value,
-    const uint16_t core_bytes_per_buffer)
-{
-    if (0 == periph_bytes_per_buffer) {
-        return false;
-    }
-
-    if (is_ddr) {
-        // In DDR there is no residue of descriptor - but has to divide with no remainder by core_bytes_per_buffer
-        // Calculated by DFC
-        return (periph_bytes_per_buffer < max_shmifo_size) && (periph_bytes_per_buffer <= max_periph_bytes_value) &&
-            (0 == (core_bytes_per_buffer % periph_bytes_per_buffer));
-    }
-    return ((periph_bytes_per_buffer < (max_shmifo_size - desc_page_size)) &&
-        (0 == (hw_frame_size % periph_bytes_per_buffer)) && (periph_bytes_per_buffer <= max_periph_bytes_value));
-}
-
-static Expected<std::tuple<uint16_t, uint16_t>> calculate_periph_requirements(const LayerInfo &layer_info, const uint32_t desc_page_size,
-    const bool is_periph_calculated_in_hailort, const uint32_t max_periph_bytes_value)
-{
-    // If extension for calculating periph values in hailort is false and hw padding is not supported - copy values from
-    // Core registers, calculate them according to shape and other layer information
-    const bool hw_padding_supported = HefConfigurator::is_hw_padding_supported(layer_info, max_periph_bytes_value);
-    if (!is_periph_calculated_in_hailort && !hw_padding_supported) {
-        return std::make_tuple(static_cast<uint16_t>(layer_info.nn_stream_config.core_bytes_per_buffer),
-            static_cast<uint16_t>(layer_info.nn_stream_config.core_buffers_per_frame));
-    }
-
-    if (HAILO_FORMAT_ORDER_HAILO_NMS == layer_info.format.order) {
-        CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(layer_info.nms_info.bbox_size * layer_info.nms_info.burst_size),
-            HAILO_INVALID_HEF, "Invalid NMS parameters");
-        const auto nms_periph_bytes = static_cast<uint16_t>(layer_info.nms_info.bbox_size * layer_info.nms_info.burst_size);
-
-        const auto transfer_size = LayerInfoUtils::get_nms_layer_transfer_size(layer_info);
-        CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(transfer_size / nms_periph_bytes), HAILO_INVALID_HEF, "Invalid NMS parameters");
-        // Will divide with no remainder seeing as transfer size is multiple of (bbox_size * burst_size)
-        assert(0 == (transfer_size % nms_periph_bytes));
-        const auto nms_periph_buffers = static_cast<uint16_t>(transfer_size / nms_periph_bytes);
-
-        // In NMS - update periph variables to represent size of frame in case of "interrupt per frame" (where we know frame size)
-        // Otherwise - size of burst / bbox (transfer size)
-        return std::make_tuple(nms_periph_bytes, nms_periph_buffers);
-    }
-
-    CHECK_AS_EXPECTED(IS_FIT_IN_UINT32(layer_info.hw_shape.width * layer_info.hw_shape.features *
-        layer_info.hw_shape.height * layer_info.hw_data_bytes), HAILO_INVALID_HEF, "Invalid core frame size");
-
-    const auto is_ddr = (LayerType::DDR == layer_info.type);
-    const uint32_t alignment = is_ddr ? PERIPH_BYTES_PER_BUFFER_DDR_ALIGNMENT_SIZE : PERIPH_BYTES_PER_BUFFER_ALIGNMENT_SIZE;
-    const auto row_size = static_cast<uint32_t>(layer_info.hw_shape.width * layer_info.hw_shape.features *
-        layer_info.hw_data_bytes);
-    const auto core_frame_size = layer_info.hw_shape.height * row_size;
-
-    // Currently takes the largest periph_bytes_per_buffer that is possible with shmifo size and desc page size
-    // TODO HRT-10961 : calculate optimal periph size
-    auto periph_bytes_per_buffer = HailoRTCommon::align_to(row_size, alignment);
-    while ((0 < periph_bytes_per_buffer) && !is_logical_periph_bytes_per_buffer(periph_bytes_per_buffer, core_frame_size,
-        is_ddr, layer_info.max_shmifo_size, desc_page_size, max_periph_bytes_value, layer_info.nn_stream_config.core_bytes_per_buffer)) {
-        periph_bytes_per_buffer -= alignment;
-    }
-
-    CHECK_AS_EXPECTED(0 != periph_bytes_per_buffer, HAILO_INVALID_ARGUMENT, "Error, Could not find logical periph bytes per buffer value");
-
-    uint32_t periph_buffers_per_frame = (core_frame_size / periph_bytes_per_buffer);
-    // In ddr - the core make sure that row size is aligned to PERIPH_BYTES_PER_BUFFER_DDR_ALIGNMENT_SIZE but if a row
-    // Is too large to fit in core bytes per buffer - they will divide it and put it in mutliple buffers - so in order to 
-    // Get the exact size in periph buffers per frame - we must muttiply core registers and divide by periph bytes per buffer 
-    if (is_ddr) {
-        periph_buffers_per_frame = layer_info.nn_stream_config.core_bytes_per_buffer *
-            layer_info.nn_stream_config.core_buffers_per_frame / periph_bytes_per_buffer;
-
-        // if we get a periph bytes per buffer so small that the periph buffers per frame cant fit in uint16
-        // put uint16_t max - seeing as this value doesnt really affect anything and we should not fail in that case.
-        if (!IS_FIT_IN_UINT16(periph_buffers_per_frame)) {
-            LOGGER__WARNING("periph buffers per frame in DDR too large - putting uint16_t max (This may affect HW infer estimator results");
-            periph_buffers_per_frame = UINT16_MAX;
-        }
-    }
-    CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(periph_buffers_per_frame), HAILO_INVALID_ARGUMENT);
-
-    return std::make_tuple(static_cast<uint16_t>(periph_bytes_per_buffer), static_cast<uint16_t>(periph_buffers_per_frame));
-}
-
 static Expected<LayerInfo> update_layer_info(const LayerInfo &original_layer_info,
     const CONTROL_PROTOCOL__host_buffer_info_t &buffer_info,
     const CONTROL_PROTOCOL__hw_consts_t &hw_consts, const ProtoHEFHwArch &hw_arch, const bool should_optimize_credits,
-    const bool is_periph_calculated_in_hailort)
+    const bool is_periph_calculated_in_hailort, const bool is_core_hw_padding_config_in_dfc)
 {
     LayerInfo local_layer_info = original_layer_info;
 
+    // TODO HRT-12099 - remove when we remove support for hefs with no max_shmifo size
     if (local_layer_info.max_shmifo_size == 0) {
         local_layer_info.max_shmifo_size = hw_consts.default_initial_credit_size;
     }
 
     local_layer_info.nn_stream_config.is_periph_calculated_in_hailort = is_periph_calculated_in_hailort;
+    local_layer_info.nn_stream_config.is_core_hw_padding_config_in_dfc = is_core_hw_padding_config_in_dfc;
 
-    // If Hw padding supported dont update periph registers because they were updated in get_hw_padding
-    // TODO HRT-11006 : currently check is_hw_padding_supported and the feature_padding_payload because in MIPI Input stream
-    // Even if is_hw_padding_supported is true we will not use hw padding.
-    auto max_periph_bytes_from_hef = HefConfigurator::max_periph_bytes_value(DeviceBase::hef_arch_to_device_arch(hw_arch));
-    CHECK_EXPECTED(max_periph_bytes_from_hef);
-    const auto max_periph_bytes = MIN(max_periph_bytes_from_hef.value(), local_layer_info.max_shmifo_size);
-
-    const auto periph_requirements = calculate_periph_requirements(local_layer_info, buffer_info.desc_page_size,
-        is_periph_calculated_in_hailort, max_periph_bytes);
-    CHECK_EXPECTED(periph_requirements);
-
-    // Calculate and update value of periph bytes per buffer and periph buffers per frame
-    local_layer_info.nn_stream_config.periph_bytes_per_buffer = std::get<0>(periph_requirements.value());
-    local_layer_info.nn_stream_config.periph_buffers_per_frame = std::get<1>(periph_requirements.value());
+    auto updated_periph_layer_info = PeriphCalculator::calculate_periph_registers(local_layer_info,
+        buffer_info.desc_page_size, is_periph_calculated_in_hailort, hw_arch, is_core_hw_padding_config_in_dfc);
+    CHECK_EXPECTED(updated_periph_layer_info);
 
     auto updated_local_layer_info = calculate_credit_params(hw_consts, buffer_info.desc_page_size, should_optimize_credits,
-        local_layer_info);
+        updated_periph_layer_info.release());
     CHECK_EXPECTED(updated_local_layer_info);
 
     return updated_local_layer_info;
@@ -207,8 +113,9 @@ static hailo_status fill_boundary_input_layer_impl(ContextResources &context_res
 
     const auto buffer_info = vdma_channel.value()->get_boundary_buffer_info(transfer_size);
     const bool is_periph_calculated_in_hailort = resources_manager.get_supported_features().periph_calculation_in_hailort;
+    const bool is_core_hw_padding_config_in_dfc = resources_manager.get_supported_features().core_hw_padding_config_in_dfc;
     auto local_layer_info = update_layer_info(layer_info, buffer_info, hw_consts, hw_arch, should_optimize_credits,
-        is_periph_calculated_in_hailort);
+        is_periph_calculated_in_hailort, is_core_hw_padding_config_in_dfc);
     CHECK_EXPECTED_AS_STATUS(local_layer_info);
 
     const auto channel_id = vdma_channel.value()->get_channel_id();
@@ -252,8 +159,9 @@ static hailo_status fill_inter_context_input_layer(ContextResources &context_res
     auto &inter_context_buffer = inter_context_buffer_exp->get();
 
     const bool is_periph_calculated_in_hailort = resources_manager.get_supported_features().periph_calculation_in_hailort;
+    const bool is_core_hw_padding_config_in_dfc = resources_manager.get_supported_features().core_hw_padding_config_in_dfc;
     auto local_layer_info = update_layer_info(layer_info, inter_context_buffer.get_host_buffer_info(), hw_consts,
-        hw_arch, should_optimize_credits, is_periph_calculated_in_hailort);
+        hw_arch, should_optimize_credits, is_periph_calculated_in_hailort, is_core_hw_padding_config_in_dfc);
     CHECK_EXPECTED_AS_STATUS(local_layer_info);
 
     auto status = context_resources.add_edge_layer(local_layer_info.value(), channel_id.value(),
@@ -278,8 +186,9 @@ static hailo_status fill_boundary_output_layer(ContextResources &context_resourc
 
     const auto buffer_info = vdma_channel.value()->get_boundary_buffer_info(transfer_size);
     const bool is_periph_calculated_in_hailort = resources_manager.get_supported_features().periph_calculation_in_hailort;
+    const bool is_core_hw_padding_config_in_dfc = resources_manager.get_supported_features().core_hw_padding_config_in_dfc;
     auto local_layer_info = update_layer_info(layer_info, buffer_info, hw_consts, hw_arch, should_optimize_credits,
-        is_periph_calculated_in_hailort);
+        is_periph_calculated_in_hailort, is_core_hw_padding_config_in_dfc);
     CHECK_EXPECTED_AS_STATUS(local_layer_info);
 
     const auto channel_id = vdma_channel.value()->get_channel_id();
@@ -311,8 +220,9 @@ static hailo_status fill_inter_context_output_layer(ContextResources &context_re
     auto &inter_context_buffer = inter_context_buffer_exp->get();
 
     const bool is_periph_calculated_in_hailort = resources_manager.get_supported_features().periph_calculation_in_hailort;
+    const bool is_core_hw_padding_config_in_dfc = resources_manager.get_supported_features().core_hw_padding_config_in_dfc;
     auto local_layer_info = update_layer_info(layer_info, inter_context_buffer.get_host_buffer_info(), hw_consts,
-        hw_arch, should_optimize_credits, is_periph_calculated_in_hailort);
+        hw_arch, should_optimize_credits, is_periph_calculated_in_hailort, is_core_hw_padding_config_in_dfc);
     CHECK_EXPECTED_AS_STATUS(local_layer_info);
 
     auto status = context_resources.add_edge_layer(local_layer_info.value(), channel_id.value(),
@@ -376,8 +286,9 @@ static hailo_status fill_ddr_output_layer(ContextResources &context_resources,
     // optimize the credits.
     const bool should_optimize_credits = false;
     const bool is_periph_calculated_in_hailort = resources_manager.get_supported_features().periph_calculation_in_hailort;
+    const bool is_core_hw_padding_config_in_dfc = resources_manager.get_supported_features().core_hw_padding_config_in_dfc;
     auto local_layer_info = update_layer_info(layer_info, ddr_buffer->get().get_host_buffer_info(), hw_consts,
-        hw_arch, should_optimize_credits, is_periph_calculated_in_hailort);
+        hw_arch, should_optimize_credits, is_periph_calculated_in_hailort, is_core_hw_padding_config_in_dfc);
     CHECK_EXPECTED_AS_STATUS(local_layer_info);
 
     auto status = context_resources.add_edge_layer(local_layer_info.value(), ddr_pair_info.d2h_channel_id,
@@ -405,8 +316,9 @@ static hailo_status fill_ddr_input_layer(ContextResources &context_resources, Re
     // optimize the credits.
     const bool should_optimize_credits = false;
     const bool is_periph_calculated_in_hailort = resources_manager.get_supported_features().periph_calculation_in_hailort;
+    const bool is_core_hw_padding_config_in_dfc = resources_manager.get_supported_features().core_hw_padding_config_in_dfc;
     auto local_layer_info = update_layer_info(layer_info, ddr_info->host_buffer_info, hw_consts,
-        hw_arch, should_optimize_credits, is_periph_calculated_in_hailort);
+        hw_arch, should_optimize_credits, is_periph_calculated_in_hailort, is_core_hw_padding_config_in_dfc);
     CHECK_EXPECTED_AS_STATUS(local_layer_info);
 
     auto status = context_resources.add_edge_layer(local_layer_info.value(), ddr_info->h2d_channel_id,
@@ -681,7 +593,7 @@ static hailo_status proccess_write_ccw_action(const ContextSwitchConfigActionPtr
 static bool is_hailo1x_device_type(const hailo_device_architecture_t dev_arch)
 {
     // Compare with HAILO1X device archs
-    return (HAILO_ARCH_HAILO15H == dev_arch) || (HAILO_ARCH_PLUTO == dev_arch);
+    return (HAILO_ARCH_HAILO15H == dev_arch) || (HAILO_ARCH_HAILO15M == dev_arch) || (HAILO_ARCH_PLUTO == dev_arch);
 }
 
 static Expected<uint8_t> find_dummy_stream(const LayerInfo &layer_info, const ContextResources &context_resources,

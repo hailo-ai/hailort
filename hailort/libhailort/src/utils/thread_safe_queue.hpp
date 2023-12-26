@@ -115,26 +115,11 @@ public:
         m_items_enqueued_sema(items_enqueued_sema),
         m_items_dequeued_sema_or_shutdown(items_dequeued_sema, shutdown_event),
         m_items_dequeued_sema(items_dequeued_sema),
-        m_default_timeout(default_timeout),
-        m_size(max_size),
-        m_enqueues_count(0),
-        m_callback_mutex()
+        m_default_timeout(default_timeout)
     {}
 
     virtual ~SpscQueue() = default;
-    SpscQueue(SpscQueue &&other) :
-        m_inner(std::move(other.m_inner)),
-        m_items_enqueued_sema_or_shutdown(std::move(other.m_items_enqueued_sema_or_shutdown)),
-        m_items_enqueued_sema(std::move(other.m_items_enqueued_sema)),
-        m_items_dequeued_sema_or_shutdown(std::move(other.m_items_dequeued_sema_or_shutdown)),
-        m_items_dequeued_sema(std::move(other.m_items_dequeued_sema)),
-        m_default_timeout(std::move(other.m_default_timeout)),
-        m_size(std::move(other.m_size)),
-        m_enqueues_count(std::move(other.m_enqueues_count.load())),
-        m_cant_enqueue_callback(std::move(other.m_cant_enqueue_callback)),
-        m_can_enqueue_callback(std::move(other.m_can_enqueue_callback)),
-        m_callback_mutex()
-    {}
+    SpscQueue(SpscQueue &&other) = default;
 
     static Expected<SpscQueue> create(size_t max_size, const EventPtr& shutdown_event,
         std::chrono::milliseconds default_timeout = std::chrono::milliseconds(1000))
@@ -213,14 +198,6 @@ public:
         assert(success);
         AE_UNUSED(success);
 
-        {
-            std::unique_lock<std::mutex> lock(m_callback_mutex);
-            if ((m_size == m_enqueues_count) && m_can_enqueue_callback) {
-                m_can_enqueue_callback();
-            }
-            m_enqueues_count--;
-        }
-
         const auto signal_result = m_items_dequeued_sema_or_shutdown.signal();
         if (HAILO_SUCCESS != signal_result) {
             return make_unexpected(signal_result);
@@ -253,14 +230,6 @@ public:
         const bool success = m_inner.try_enqueue(result);
         assert(success);
         AE_UNUSED(success);
-
-        {
-            std::unique_lock<std::mutex> lock(m_callback_mutex);
-            m_enqueues_count++;
-            if ((m_size == m_enqueues_count) && m_cant_enqueue_callback) {
-                m_cant_enqueue_callback();
-            }
-        }
 
         return m_items_enqueued_sema_or_shutdown.signal();
     }
@@ -298,14 +267,6 @@ public:
         assert(success);
         AE_UNUSED(success);
 
-        {
-            std::unique_lock<std::mutex> lock(m_callback_mutex);
-            m_enqueues_count++;
-            if ((m_size == m_enqueues_count) && m_cant_enqueue_callback) {
-                m_cant_enqueue_callback();
-            }
-        }
-
         return m_items_enqueued_sema_or_shutdown.signal();
     }
 
@@ -318,6 +279,11 @@ public:
     size_t size_approx()
     {
         return m_inner.size_approx();
+    }
+
+    bool is_queue_full()
+    {
+        return (m_inner.size_approx() == m_inner.max_capacity());
     }
 
     hailo_status clear() AE_NO_TSAN
@@ -334,16 +300,6 @@ public:
         return status;
     }
 
-    void set_on_cant_enqueue_callback(std::function<void()> callback)
-    {
-        m_cant_enqueue_callback = callback;
-    }
-
-    void set_on_can_enqueue_callback(std::function<void()> callback)
-    {
-        m_can_enqueue_callback = callback;
-    }
-
 private:
     ReaderWriterQueue m_inner;
     WaitOrShutdown m_items_enqueued_sema_or_shutdown;
@@ -351,12 +307,6 @@ private:
     WaitOrShutdown m_items_dequeued_sema_or_shutdown;
     SemaphorePtr m_items_dequeued_sema;
     std::chrono::milliseconds m_default_timeout;
-
-    const size_t m_size;
-    std::atomic_uint32_t m_enqueues_count;
-    std::function<void()> m_cant_enqueue_callback;
-    std::function<void()> m_can_enqueue_callback;
-    std::mutex m_callback_mutex;
 };
 
 } /* namespace hailort */

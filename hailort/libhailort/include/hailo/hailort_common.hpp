@@ -42,6 +42,8 @@ public:
     static const uint16_t ETH_INPUT_BASE_PORT = 32401;
     static const uint16_t ETH_OUTPUT_BASE_PORT = 32501;
     static const uint32_t MAX_NMS_BURST_SIZE = 65536;
+    static const size_t DMA_ABLE_ALIGNMENT_WRITE_HW_LIMITATION = 64;
+    static const size_t DMA_ABLE_ALIGNMENT_READ_HW_LIMITATION = 4096;
 
     /**
      * Gets the NMS host shape size (number of elements) from NMS info.
@@ -82,7 +84,8 @@ public:
      * @param[in] alignment       Returned number should be aligned to this parameter.
      * @return aligned number
      */
-    static constexpr uint32_t align_to(uint32_t num, uint32_t alignment) {
+    template<typename T>
+    static constexpr T align_to(T num, T alignment) {
         auto remainder = num % alignment;
         return remainder == 0 ? num : num + (alignment - remainder);
     }
@@ -182,6 +185,8 @@ public:
             return "HAILO15H";
         case HAILO_ARCH_PLUTO:
             return "PLUTO";
+        case HAILO_ARCH_HAILO15M:
+            return "HAILO15M";
         default:
             return "UNKNOWN ARCHITECTURE";
         }
@@ -362,11 +367,28 @@ public:
             format.type = vstream_info.format.type;
         }
 
+        if (HAILO_FORMAT_ORDER_AUTO == format.order) {
+            format.order = vstream_info.format.order;
+        }
+
         if (HailoRTCommon::is_nms(vstream_info)) {
             return get_nms_host_frame_size(vstream_info.nms_shape, format);
         } else {
             return get_frame_size(vstream_info.shape, format);
         }
+    }
+
+    /**
+     * Gets periph frame size in bytes by image shape and format - periph frame size is amount of bytes transferred
+     * through peripherals which must be aligned to HW_DATA_ALIGNMENT (8). Note: this function always aligns to next largest HW_DATA_ALIGNMENT 
+     *
+     * @param[in] shape         A ::hailo_3d_image_shape_t object.
+     * @param[in] format        A ::hailo_format_t object.
+     * @return The periph frame's size in bytes.
+     */
+    static constexpr uint32_t get_periph_frame_size(const hailo_3d_image_shape_t &shape, const hailo_format_t &format)
+    {
+        return align_to(get_frame_size(shape, format), static_cast<uint32_t>(HW_DATA_ALIGNMENT));
     }
 
     static constexpr bool is_vdma_stream_interface(hailo_stream_interface_t stream_interface)

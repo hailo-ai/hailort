@@ -137,6 +137,22 @@ public:
     }
 };
 
+std::vector<hailo_detection_with_byte_mask_t> convert_nms_with_byte_mask_buffer_to_detections(py::array src_buffer)
+{
+    std::vector<hailo_detection_with_byte_mask_t> detections;
+    uint8_t *src_ptr = static_cast<uint8_t*>(src_buffer.mutable_data());
+    uint16_t detections_count = *(uint16_t*)src_ptr;
+    detections.reserve(detections_count);
+
+    size_t buffer_offset = sizeof(uint16_t);
+    for (size_t i = 0; i < detections_count; i++) {
+        hailo_detection_with_byte_mask_t detection = *(hailo_detection_with_byte_mask_t*)(src_ptr + buffer_offset);
+        buffer_offset += sizeof(hailo_detection_with_byte_mask_t) + detection.mask_size;
+        detections.emplace_back(std::move(detection));
+    }
+    return detections;
+}
+
 static void validate_versions_match()
 {
     hailo_version_t libhailort_version = {};
@@ -162,6 +178,7 @@ PYBIND11_MODULE(_pyhailort, m) {
     validate_versions_match();
 
     m.def("get_status_message", &get_status_message);
+    m.def("convert_nms_with_byte_mask_buffer_to_detections", &convert_nms_with_byte_mask_buffer_to_detections);
     m.def("dequantize_output_buffer_in_place", &QuantizationBindings::dequantize_output_buffer_in_place);
     m.def("dequantize_output_buffer", &QuantizationBindings::dequantize_output_buffer);
     m.def("quantize_input_buffer", &QuantizationBindings::quantize_input_buffer);
@@ -207,12 +224,31 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def(py::pickle(&PowerMeasurementData::get_state, &PowerMeasurementData::set_state))
         ;
 
+    py::class_<hailo_rectangle_t>(m, "HailoRectangle")
+        .def_readonly("y_min", &hailo_rectangle_t::y_min)
+        .def_readonly("x_min", &hailo_rectangle_t::x_min)
+        .def_readonly("y_max", &hailo_rectangle_t::y_max)
+        .def_readonly("x_max", &hailo_rectangle_t::x_max)
+        ;
+
+    py::class_<hailo_detection_with_byte_mask_t>(m, "HailoDetectionWithByteMask")
+        .def_readonly("box", &hailo_detection_with_byte_mask_t::box)
+        .def_readonly("mask_size", &hailo_detection_with_byte_mask_t::mask_size)
+        .def_readonly("score", &hailo_detection_with_byte_mask_t::score)
+        .def_readonly("class_id", &hailo_detection_with_byte_mask_t::class_id)
+        .def("mask", [](const hailo_detection_with_byte_mask_t &detection) -> py::array {
+            auto shape = *py::array::ShapeContainer({detection.mask_size});
+            return py::array(py::dtype("uint8"), shape, detection.mask);
+        })
+        ;
+
     py::enum_<hailo_device_architecture_t>(m, "DeviceArchitecture")
         .value("HAILO8_A0", HAILO_ARCH_HAILO8_A0)
         .value("HAILO8", HAILO_ARCH_HAILO8)
         .value("HAILO8L", HAILO_ARCH_HAILO8L)
         .value("HAILO15H", HAILO_ARCH_HAILO15H)
         .value("PLUTO", HAILO_ARCH_PLUTO)
+        .value("HAILO15M", HAILO_ARCH_HAILO15M)
     ;
 
     /* TODO: SDK-15648 */
@@ -524,7 +560,6 @@ PYBIND11_MODULE(_pyhailort, m) {
 
     py::enum_<hailo_format_flags_t>(m, "FormatFlags", py::arithmetic())
         .value("NONE", HAILO_FORMAT_FLAGS_NONE)
-        .value("QUANTIZED", HAILO_FORMAT_FLAGS_QUANTIZED)
         .value("TRANSPOSED", HAILO_FORMAT_FLAGS_TRANSPOSED)
         .value("HOST_ARGMAX", HAILO_FORMAT_FLAGS_HOST_ARGMAX)
         ;

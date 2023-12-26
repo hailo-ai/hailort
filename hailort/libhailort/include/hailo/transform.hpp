@@ -77,15 +77,12 @@ public:
      * Creates input transform_context.
      * 
      * @param[in] stream_info    Creates transform_context that fits this stream info.
-     * @param[in] quantized      Deprecated parameter that will be ignored. Determine weather to quantize (scale)
-     *                           the data will be decided by the src-data and dst-data types.
+     * @param[in] unused         Unused.
      * @param[in] format_type    The type of the buffer sent to the transform_context.
      * @return Upon success, returns Expected of a pointer to InputTransformContext.
      *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note The argument @a quantized is deprecated and its usage is ignored. Determine weather to quantize (scale) the data will be decided by
-     *       the src-data and dst-data types.
      */
-    static Expected<std::unique_ptr<InputTransformContext>> create(const hailo_stream_info_t &stream_info, bool quantized,
+    static Expected<std::unique_ptr<InputTransformContext>> create(const hailo_stream_info_t &stream_info, bool unused,
         hailo_format_type_t format_type);
 
     /**
@@ -159,7 +156,8 @@ private:
     InputTransformContext(size_t src_frame_size, const hailo_3d_image_shape_t &src_image_shape,
         const hailo_format_t &src_format, size_t dst_frame_size, const hailo_3d_image_shape_t &dst_image_shape,
         const hailo_format_t &dst_format, const std::vector<hailo_quant_info_t> &dst_quant_infos, Buffer &&quant_buffer,
-        Buffer &&transpose_buffer, const bool should_quantize, const bool should_transpose, const bool should_reorder);
+        Buffer &&transpose_buffer, const bool should_quantize, const bool should_transpose, const bool should_reorder,
+        const bool should_pad_periph);
 
     inline MemoryView quant_buffer() {
         return MemoryView(m_quant_buffer);
@@ -184,6 +182,7 @@ private:
     const bool m_should_quantize;
     const bool m_should_transpose;
     const bool m_should_reorder;
+    const bool m_should_pad_periph;
 
     Buffer m_quant_buffer;
     Buffer m_transpose_buffer;
@@ -249,15 +248,12 @@ public:
      * Creates output transform_context with default transform parameters
      * 
      * @param[in] stream_info    Creates transform_context that fits this stream info.
-     * @param[in] quantized      Deprecated parameter that will be ignored. Determine weather to de-quantize (rescale)
-     *                           the data will be decided by the src-data and dst-data types.
+     * @param[in] unused         Unused.
      * @param[in] format_type    The type of the buffer returned from the transform_context
      * @return Upon success, returns Expected of a pointer to OutputTransformContext.
      *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note The argument @a quantized is deprecated and its usage is ignored. Determine weather to de-quantize (rescale) the data will be decided by
-     *       the src-data and dst-data types.
      */
-    static Expected<std::unique_ptr<OutputTransformContext>> create(const hailo_stream_info_t &stream_info, bool quantized,
+    static Expected<std::unique_ptr<OutputTransformContext>> create(const hailo_stream_info_t &stream_info, bool unused,
         hailo_format_type_t format_type);
 
     /**
@@ -330,7 +326,7 @@ public:
 protected:
     OutputTransformContext(size_t src_frame_size, const hailo_format_t &src_format, size_t dst_frame_size,
         const hailo_format_t &dst_format, const std::vector<hailo_quant_info_t> &dst_quant_infos, const bool should_quantize,
-        const bool should_transpose, const bool should_reorder);
+        const bool should_transpose, const bool should_reorder, const bool should_pad_periph);
 
     const size_t m_src_frame_size;
     const hailo_format_t m_src_format;
@@ -340,6 +336,7 @@ protected:
     const bool m_should_quantize;
     const bool m_should_transpose;
     const bool m_should_reorder;
+    const bool m_should_pad_periph;
 };
 
 /*! Object used to demux muxed stream */

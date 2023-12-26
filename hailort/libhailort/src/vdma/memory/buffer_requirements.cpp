@@ -20,7 +20,7 @@ static constexpr uint32_t MIN_CCB_DESCRIPTORS_COUNT = 16;
 
 Expected<BufferSizesRequirements> BufferSizesRequirements::get_sg_buffer_requirements_single_transfer(
     uint16_t max_desc_page_size, uint16_t min_batch_size, uint16_t max_batch_size, uint32_t transfer_size,
-    bool is_circular, const bool force_default_page_size, const bool force_batch_size)
+    bool is_circular, const bool force_default_page_size, const bool force_batch_size, const bool is_vdma_aligned_buffer)
 {
     // First, get the result for the min size
     auto results = get_sg_buffer_requirements_multiple_transfers(max_desc_page_size, min_batch_size,
@@ -30,7 +30,11 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_sg_buffer_require
     // In order to fetch all descriptors, the amount of active descs is lower by one that the amount
     // of descs given  (Otherwise we won't be able to determine if the buffer is empty or full).
     // Therefore we add 1 in order to compensate.
-    const uint32_t descs_per_transfer = DIV_ROUND_UP(transfer_size, results->desc_page_size());
+    uint32_t descs_per_transfer = DIV_ROUND_UP(transfer_size, results->desc_page_size());
+    if (!is_vdma_aligned_buffer) {
+        // Add desc for boundary channel because might need extra descriptor for user non aligned buffer async API
+        descs_per_transfer++;
+    }
     uint32_t descs_count = std::min((descs_per_transfer * max_batch_size) + 1, MAX_DESCS_COUNT);
     if (is_circular) {
         descs_count = get_nearest_powerof_2(descs_count, MIN_DESCS_COUNT);
@@ -43,8 +47,7 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_sg_buffer_require
     uint16_t max_desc_page_size, uint16_t batch_size, const std::vector<uint32_t> &transfer_sizes,
     bool is_circular, const bool force_default_page_size, const bool force_batch_size)
 {
-    const uint16_t initial_desc_page_size = force_default_page_size ?
-        DEFAULT_DESC_PAGE_SIZE : find_initial_desc_page_size(transfer_sizes);
+    const uint16_t initial_desc_page_size = find_initial_desc_page_size(transfer_sizes, max_desc_page_size, force_default_page_size);
 
     CHECK_AS_EXPECTED(max_desc_page_size <= MAX_DESC_PAGE_SIZE, HAILO_INTERNAL_FAILURE,
         "max_desc_page_size given {} is bigger than hw max desc page size {}",
@@ -133,17 +136,20 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_ccb_buffer_requir
 }
 
 
-uint16_t BufferSizesRequirements::find_initial_desc_page_size(const std::vector<uint32_t> &transfer_sizes)
+uint16_t BufferSizesRequirements::find_initial_desc_page_size(const std::vector<uint32_t> &transfer_sizes,
+    const uint16_t max_desc_page_size, const bool force_default_page_size)
 {
+    const uint16_t channel_max_page_size = std::min(DEFAULT_DESC_PAGE_SIZE, max_desc_page_size);
     const auto max_transfer_size = *std::max_element(transfer_sizes.begin(), transfer_sizes.end());
     // Note: If the pages pointed to by the descriptors are copied in their entirety, then DEFAULT_DESC_PAGE_SIZE
     //       is the optimal value. For transfer_sizes smaller than DEFAULT_DESC_PAGE_SIZE using smaller descriptor page
     //       sizes will save memory consuption without harming performance. In the case of nms for example, only one bbox
     //       is copied from each page. Hence, we'll use MIN_DESC_PAGE_SIZE for nms.
-    const uint16_t initial_desc_page_size = (DEFAULT_DESC_PAGE_SIZE > max_transfer_size) ?
-        static_cast<uint16_t>(get_nearest_powerof_2(max_transfer_size, MIN_DESC_PAGE_SIZE)) : 
-        DEFAULT_DESC_PAGE_SIZE;
-    if (DEFAULT_DESC_PAGE_SIZE != initial_desc_page_size) {
+    const auto optimize_low_page_size = ((channel_max_page_size > max_transfer_size) && !force_default_page_size);
+    const uint16_t initial_desc_page_size = optimize_low_page_size ?
+        static_cast<uint16_t>(get_nearest_powerof_2(max_transfer_size, MIN_DESC_PAGE_SIZE)) :
+        channel_max_page_size;
+    if (channel_max_page_size != initial_desc_page_size) {
         LOGGER__INFO("Using non-default initial_desc_page_size of {}, due to a small transfer size ({})",
             initial_desc_page_size, max_transfer_size);
     }

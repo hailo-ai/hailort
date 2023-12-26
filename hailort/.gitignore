@@ -1,12 +1,2 @@
-/external/
-cmake/external/benchmark/
-cmake/external/catch2/
-cmake/external/dotwriter/
-cmake/external/json/
-cmake/external/pybind11/
-cmake/external/readerwriterqueue/
-cmake/external/spdlog/
-
-pre_build/external/build/
-pre_build/tools/build_protoc/
-pre_build/install/
+external/
+prepare_externals/build/

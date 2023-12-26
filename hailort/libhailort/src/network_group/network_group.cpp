@@ -14,6 +14,7 @@
 
 #include "common/utils.hpp"
 #include "common/runtime_statistics_internal.hpp"
+#include "common/os_utils.hpp"
 
 #include "network_group/network_group_internal.hpp"
 #include "hef/hef_internal.hpp"
@@ -103,6 +104,12 @@ private:
     bool m_is_activated;
 };
 
+ConfiguredNetworkGroup::ConfiguredNetworkGroup() :
+    m_infer_requests_mutex(),
+    m_ongoing_transfers(0),
+    m_cv()
+{}
+
 Expected<std::shared_ptr<ConfiguredNetworkGroup>> ConfiguredNetworkGroup::duplicate_network_group_client(uint32_t ng_handle, uint32_t vdevice_handle,
     const std::string &network_group_name)
 {
@@ -150,6 +157,37 @@ hailo_status ConfiguredNetworkGroup::after_fork_in_child()
 Expected<std::unique_ptr<ActivatedNetworkGroup>> ConfiguredNetworkGroup::activate()
 {
     return activate(HailoRTDefaults::get_active_network_group_params());
+}
+
+hailo_status ConfiguredNetworkGroup::wait_for_callbacks_finish()
+{
+    return wait_for_callbacks_to_maintain_below_threshold(1);
+}
+
+hailo_status ConfiguredNetworkGroup::wait_for_callbacks_to_maintain_below_threshold(const size_t threshold)
+{
+    std::unique_lock<std::mutex> lock(m_infer_requests_mutex);
+    bool done = m_cv.wait_for(lock, DEFAULT_TRANSFER_TIMEOUT, [&, threshold](){
+        return (m_ongoing_transfers.load() < threshold);
+    });
+    CHECK(done, HAILO_TIMEOUT, "Got timeout in `wait_for_callbacks_to_maintain_below_threshold`");
+
+    return HAILO_SUCCESS;
+}
+
+void ConfiguredNetworkGroup::decrease_ongoing_callbacks()
+{
+    {
+        std::unique_lock<std::mutex> lock(m_infer_requests_mutex);
+        m_ongoing_transfers--;
+    }
+    m_cv.notify_all();
+}
+
+void ConfiguredNetworkGroup::increase_ongoing_callbacks()
+{
+    std::unique_lock<std::mutex> lock(m_infer_requests_mutex);
+    m_ongoing_transfers++;
 }
 
 Expected<std::unique_ptr<ActivatedNetworkGroup>> ConfiguredNetworkGroupBase::activate(
@@ -256,14 +294,65 @@ Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> ConfiguredNetworkGroup
     return std::vector<net_flow::PostProcessOpMetadataPtr>(m_network_group_metadata.m_ops_metadata);
 }
 
-Expected<LayerInfo> ConfiguredNetworkGroupBase::get_layer_info(const std::string &stream_name)
+Expected<std::unique_ptr<LayerInfo>> ConfiguredNetworkGroupBase::get_layer_info(const std::string &stream_name)
 {
-    return get_core_op()->get_layer_info(stream_name);
+    auto layer_info = get_core_op()->get_layer_info(stream_name);
+    CHECK_EXPECTED(layer_info);
+    auto res = make_unique_nothrow<LayerInfo>(layer_info.release());
+    CHECK_NOT_NULL_AS_EXPECTED(res, HAILO_OUT_OF_HOST_MEMORY);
+    return res;
+}
+
+Expected<std::shared_ptr<net_flow::NmsOpMetadata>> ConfiguredNetworkGroupBase::get_nms_meta_data(const std::string &edge_name)
+{
+    auto expected_ops_metadata = get_ops_metadata();
+    CHECK_EXPECTED(expected_ops_metadata);
+    auto ops_metadata = expected_ops_metadata.release();
+
+    auto matching_metadata = std::find_if(ops_metadata.begin(), ops_metadata.end(),
+        [&edge_name] (const auto &metadata) {
+            for (const auto &metadata_output_pair : metadata->outputs_metadata()) {
+                if (metadata_output_pair.first == edge_name) {
+                    return true;
+                }
+            }
+            return false;
+        });
+    CHECK_AS_EXPECTED(matching_metadata != ops_metadata.end(), HAILO_INVALID_ARGUMENT,
+        "There is no NMS post-process for '{}'", edge_name);
+    auto nms_metadata = std::dynamic_pointer_cast<net_flow::NmsOpMetadata>(*matching_metadata);
+    CHECK_NOT_NULL_AS_EXPECTED(nms_metadata, HAILO_INVALID_ARGUMENT);
+    return nms_metadata;
+}
+
+hailo_status ConfiguredNetworkGroupBase::set_nms_score_threshold(const std::string &edge_name, float32_t nms_score_threshold)
+{
+    auto expected_nms_op_metadata = get_nms_meta_data(edge_name);
+    CHECK_EXPECTED_AS_STATUS(expected_nms_op_metadata);
+    expected_nms_op_metadata.value()->nms_config().nms_score_th = nms_score_threshold;
+    return HAILO_SUCCESS;
+}
+
+hailo_status ConfiguredNetworkGroupBase::set_nms_iou_threshold(const std::string &edge_name, float32_t iou_threshold)
+{
+    auto expected_nms_op_metadata = get_nms_meta_data(edge_name);
+    CHECK_EXPECTED_AS_STATUS(expected_nms_op_metadata);
+    expected_nms_op_metadata.value()->nms_config().nms_iou_th = iou_threshold;
+    return HAILO_SUCCESS;
+}
+
+hailo_status ConfiguredNetworkGroupBase::set_nms_max_bboxes_per_class(const std::string &edge_name, uint32_t max_bboxes_per_class)
+{
+    auto expected_nms_op_metadata = get_nms_meta_data(edge_name);
+    CHECK_EXPECTED_AS_STATUS(expected_nms_op_metadata);
+    expected_nms_op_metadata.value()->nms_config().max_proposals_per_class = max_bboxes_per_class;
+    return HAILO_SUCCESS;
 }
 
 ConfiguredNetworkGroupBase::ConfiguredNetworkGroupBase(
     const ConfigureNetworkParams &config_params, std::vector<std::shared_ptr<CoreOp>> &&core_ops,
     NetworkGroupMetadata &&metadata) :
+        ConfiguredNetworkGroup(),
         m_config_params(config_params),
         m_core_ops(std::move(core_ops)),
         m_network_group_metadata(std::move(metadata)),
@@ -421,6 +510,16 @@ hailo_status ConfiguredNetworkGroupBase::deactivate_impl()
     return get_core_op()->deactivate();
 }
 
+hailo_status ConfiguredNetworkGroupBase::shutdown()
+{
+    std::unique_lock<std::mutex> lock(m_shutdown_mutex);
+    if (!m_is_shutdown) {
+        m_is_shutdown = true;
+        return get_core_op()->shutdown();
+    }
+    return HAILO_SUCCESS;
+}
+
 Expected<std::vector<std::vector<std::string>>> ConfiguredNetworkGroupBase::get_output_vstream_groups()
 {
     std::vector<std::vector<std::string>> results;
@@ -435,9 +534,9 @@ Expected<std::vector<std::vector<std::string>>> ConfiguredNetworkGroupBase::get_
 }
 
 Expected<std::vector<std::map<std::string, hailo_vstream_params_t>>> ConfiguredNetworkGroupBase::make_output_vstream_params_groups(
-    bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size)
+    bool /*unused*/, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size)
 {
-    auto params = make_output_vstream_params(quantized, format_type, timeout_ms, queue_size);
+    auto params = make_output_vstream_params({}, format_type, timeout_ms, queue_size);
     CHECK_EXPECTED(params);
 
     auto groups = get_output_vstream_groups();
@@ -459,27 +558,27 @@ Expected<std::vector<std::map<std::string, hailo_vstream_params_t>>> ConfiguredN
 }
 
 Expected<std::map<std::string, hailo_vstream_params_t>> ConfiguredNetworkGroupBase::make_input_vstream_params(
-    bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
+    bool /*unused*/, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
     const std::string &network_name)
 {
     auto input_vstream_infos = m_network_group_metadata.get_input_vstream_infos(network_name);
     CHECK_EXPECTED(input_vstream_infos);
 
     std::map<std::string, hailo_vstream_params_t> res;
-    auto status = Hef::Impl::fill_missing_vstream_params_with_default(res, input_vstream_infos.value(), quantized, 
+    auto status = Hef::Impl::fill_missing_vstream_params_with_default(res, input_vstream_infos.value(),
         format_type, timeout_ms, queue_size);
     CHECK_SUCCESS_AS_EXPECTED(status);
     return res;
 }
 
 Expected<std::map<std::string, hailo_vstream_params_t>> ConfiguredNetworkGroupBase::make_output_vstream_params(
-    bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
+    bool /*unused*/, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
     const std::string &network_name)
 {
     auto output_vstream_infos = m_network_group_metadata.get_output_vstream_infos(network_name);
     CHECK_EXPECTED(output_vstream_infos);
     std::map<std::string, hailo_vstream_params_t> res;
-    auto status = Hef::Impl::fill_missing_vstream_params_with_default(res, output_vstream_infos.value(), quantized, 
+    auto status = Hef::Impl::fill_missing_vstream_params_with_default(res, output_vstream_infos.value(), 
         format_type, timeout_ms, queue_size);
     CHECK_SUCCESS_AS_EXPECTED(status);
     return res;
@@ -533,22 +632,6 @@ static hailo_vstream_params_t expand_vstream_params_autos(const hailo_stream_inf
     return local_vstream_params;
 }
 
-static hailo_vstream_params_t expand_vstream_params_autos_multi_planar(const hailo_vstream_info_t &vstream_info,
-    const hailo_vstream_params_t &vstream_params)
-{
-    /* In multi planar case we compare to vstream_info instead of stream_info,
-        as the ll-streams formats doesnt indicate the format of the vstreams */
-    auto local_vstream_params = vstream_params;
-    if (HAILO_FORMAT_TYPE_AUTO == local_vstream_params.user_buffer_format.type) {
-        local_vstream_params.user_buffer_format.type = vstream_info.format.type;
-    }
-    if (HAILO_FORMAT_ORDER_AUTO == local_vstream_params.user_buffer_format.order) {
-        local_vstream_params.user_buffer_format.order = vstream_info.format.order;
-    }
-
-    return local_vstream_params;
-}
-
 static std::map<std::string, hailo_vstream_info_t> vstream_infos_vector_to_map(std::vector<hailo_vstream_info_t> &&vstream_info_vector)
 {
     std::map<std::string, hailo_vstream_info_t> vstream_infos_map;
@@ -569,9 +652,9 @@ Expected<std::vector<InputVStream>> ConfiguredNetworkGroupBase::create_input_vst
     vstreams.reserve(inputs_params.size());
 
     for (const auto &name_params_pair : inputs_params) {
-        std::vector<std::shared_ptr<InputStream>> streams;
+        std::vector<std::shared_ptr<InputStreamBase>> streams;
         auto &vstream_name = name_params_pair.first;
-        auto &vstream_params = name_params_pair.second;
+        auto vstream_params = name_params_pair.second;
 
         auto stream_names = m_network_group_metadata.get_stream_names_from_vstream_name(vstream_name);
         CHECK_EXPECTED(stream_names);
@@ -588,9 +671,14 @@ Expected<std::vector<InputVStream>> ConfiguredNetworkGroupBase::create_input_vst
             streams.push_back(input_stream);
         }
 
-        auto expanded_vstream_params = (streams.size() > 1) ? expand_vstream_params_autos_multi_planar(vstream_info->second, vstream_params) :
-            expand_vstream_params_autos(streams.back()->get_info(), vstream_params);
-        auto inputs = VStreamsBuilderUtils::create_inputs(streams, vstream_info->second, expanded_vstream_params);
+        if (streams.size() > 1) {
+            auto expanded_user_buffer_format =
+                VStreamsBuilderUtils::expand_user_buffer_format_autos_multi_planar(vstream_info->second, vstream_params.user_buffer_format);
+            vstream_params.user_buffer_format = expanded_user_buffer_format;
+        } else {
+            vstream_params = expand_vstream_params_autos(streams.back()->get_info(), vstream_params);
+        }
+        auto inputs = VStreamsBuilderUtils::create_inputs(streams, vstream_info->second, vstream_params);
         CHECK_EXPECTED(inputs);
 
         vstreams.insert(vstreams.end(), std::make_move_iterator(inputs->begin()), std::make_move_iterator(inputs->end()));
@@ -640,7 +728,6 @@ Expected<std::vector<OutputVStream>> ConfiguredNetworkGroupBase::create_output_v
         vstreams.insert(vstreams.end(), std::make_move_iterator(outputs->begin()), std::make_move_iterator(outputs->end()));
     }
 
-    get_core_op()->set_vstreams_multiplexer_callbacks(vstreams);
     return vstreams;
 }
 
@@ -662,6 +749,84 @@ hailo_status ConfiguredNetworkGroupBase::before_fork()
 Expected<Buffer> ConfiguredNetworkGroupBase::get_intermediate_buffer(const IntermediateBufferKey &key)
 {
     return get_core_op()->get_intermediate_buffer(key);
+}
+
+Expected<size_t> ConfiguredNetworkGroupBase::get_min_buffer_pool_size()
+{
+    uint32_t buffer_pool_size = UINT32_MAX;
+
+    auto input_streams = get_input_streams();
+    for (const auto &input_stream : input_streams) {
+        auto async_max_queue_size = input_stream.get().get_async_max_queue_size();
+        CHECK_EXPECTED(async_max_queue_size);
+        if (buffer_pool_size > async_max_queue_size.value()) {
+            buffer_pool_size = static_cast<uint32_t>(async_max_queue_size.value());
+        }
+    }
+
+    auto output_streams = get_output_streams();
+    for (const auto &output_stream : output_streams) {
+        auto async_max_queue_size = output_stream.get().get_async_max_queue_size();
+        CHECK_EXPECTED(async_max_queue_size);
+        if (buffer_pool_size > async_max_queue_size.value()) {
+            buffer_pool_size = static_cast<uint32_t>(async_max_queue_size.value());
+        }
+    }
+
+    // TODO (HRT-11294): In some cases, buffer_pool_size is lower then batch_size. we should remove this line.
+    buffer_pool_size = std::max(buffer_pool_size, static_cast<uint32_t>(get_smallest_configured_batch_size(get_config_params())));
+
+    return buffer_pool_size;
+}
+
+hailo_status ConfiguredNetworkGroupBase::infer_async(const NamedBuffersCallbacks &named_buffers_callbacks,
+    const std::function<void(hailo_status)> &infer_request_done_cb)
+{
+    InferRequest infer_request{};
+    const auto dma_able_alignment = OsUtils::get_dma_able_alignment();
+    for (auto &named_buffer_callback : named_buffers_callbacks) {
+        const auto &name = named_buffer_callback.first;
+        const auto &buffer = named_buffer_callback.second.first;
+        const auto &callback = named_buffer_callback.second.second;
+        TransferRequest trans_req{};
+        trans_req.callback = callback;
+        BufferPtr buffer_ptr = nullptr;
+        // TODO (HRT-12239): Avoid this section
+        if (reinterpret_cast<size_t>(buffer.data()) % dma_able_alignment == 0) {
+            auto hailo_buffer = DmaStorage::create_dma_able_buffer_from_user_size(const_cast<uint8_t*>(buffer.data()),
+                buffer.size());
+            CHECK_EXPECTED_AS_STATUS(hailo_buffer);
+            buffer_ptr = hailo_buffer.release();
+        } else {
+            auto hailo_buffer = UserBufferStorage::create_storage_from_user_buffer(const_cast<uint8_t*>(buffer.data()),
+                buffer.size());
+            CHECK_EXPECTED_AS_STATUS(hailo_buffer);
+            buffer_ptr = hailo_buffer.release();
+        }
+        trans_req.transfer_buffers.emplace_back(buffer_ptr);
+        infer_request.transfers.emplace(name, trans_req);
+    }
+    infer_request.callback = [this, infer_request_done_cb](hailo_status status){
+        if (status == HAILO_STREAM_ABORTED_BY_USER) {
+            LOGGER__INFO("Infer request was aborted by user");
+        }
+        else if (status != HAILO_SUCCESS) {
+            LOGGER__ERROR("Infer request callback failed with status = {}", status);
+        }
+
+        infer_request_done_cb(status);
+        decrease_ongoing_callbacks();
+    };
+
+    increase_ongoing_callbacks();
+    auto status = get_core_op()->infer_async(std::move(infer_request));
+    if (status != HAILO_SUCCESS) {
+        // If we got error in `infer_async()`, then the callbacks will not be called.
+        decrease_ongoing_callbacks();
+    }
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
 }
 
 } /* namespace hailort */

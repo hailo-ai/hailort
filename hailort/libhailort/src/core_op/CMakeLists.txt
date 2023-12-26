@@ -9,6 +9,7 @@ set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/resource_manager/intermediate_buffer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/resource_manager/channel_allocator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/resource_manager/context_switch_buffer_builder.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/resource_manager/periph_calculator.cpp
 )
 
 set(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES} ${SRC_FILES} PARENT_SCOPE)

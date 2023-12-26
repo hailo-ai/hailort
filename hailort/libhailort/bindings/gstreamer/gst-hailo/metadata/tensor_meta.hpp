@@ -53,7 +53,7 @@ inline const void *get_tensor_data(GstStructure *s) {
  * @brief This struct represents raw tensor metadata and contains instance of parent GstMeta and fields describing
  * inference result tensor. This metadata instances is attached to buffer by gvainference elements
  */
-struct GstHailoTensorMeta {
+struct HAILORTAPI GstHailoTensorMeta {
     GstMeta meta;              /**< parent meta object */
     hailo_vstream_info_t info; /**< struct that holds vstream info, e.g. shape, quant_info, layer_name etc... */
 };
@@ -62,14 +62,14 @@ struct GstHailoTensorMeta {
  * @brief This function registers, if needed, and returns GstMetaInfo for _GstHailoTensorMeta
  * @return GstMetaInfo* for registered type
  */
-const GstMetaInfo *gst_tensor_meta_get_info(void);
+HAILORTAPI const GstMetaInfo *gst_tensor_meta_get_info(void);
 
 /**
  * @brief This function registers, if needed, and returns a GType for api "GstHailoTensorMetaAPI" and associate it with
  * TENSOR_META_TAG tag
  * @return GType type
  */
-GType gst_tensor_meta_api_get_type(void);
+HAILORTAPI GType gst_tensor_meta_api_get_type(void);
 #define GST_TENSOR_META_API_TYPE (gst_tensor_meta_api_get_type())
 
 /**

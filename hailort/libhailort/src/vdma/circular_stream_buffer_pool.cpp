@@ -14,7 +14,7 @@
 namespace hailort
 {
 
-Expected<std::unique_ptr<CircularStreamBufferPool>> CircularStreamBufferPool::create(HailoRTDriver &driver,
+Expected<std::unique_ptr<CircularStreamBufferPool>> CircularStreamBufferPool::create(VdmaDevice &device,
     HailoRTDriver::DmaDirection direction, size_t desc_page_size, size_t descs_count, size_t transfer_size)
 {
     // TODO: HRT-11220 calculate desc_count/desc_page_size base on transfer_size and queue_size
@@ -26,7 +26,7 @@ Expected<std::unique_ptr<CircularStreamBufferPool>> CircularStreamBufferPool::cr
     CHECK_AS_EXPECTED(transfer_size < buffer_size, HAILO_INTERNAL_FAILURE, "Transfer size {} must be smaller than buffer size {}",
         transfer_size, buffer_size);
 
-    auto mapped_buffer = allocate_buffer(driver, direction, buffer_size);
+    auto mapped_buffer = allocate_buffer(device, direction, buffer_size);
     CHECK_EXPECTED(mapped_buffer);
 
     auto circular_buffer_pool = make_unique_nothrow<CircularStreamBufferPool>(desc_page_size, descs_count,
@@ -99,10 +99,10 @@ void CircularStreamBufferPool::reset_pointers()
     m_next_enqueue_desc_offset = 0;
 }
 
-Expected<BufferPtr> CircularStreamBufferPool::allocate_buffer(HailoRTDriver &driver,
+Expected<BufferPtr> CircularStreamBufferPool::allocate_buffer(VdmaDevice &device,
     HailoRTDriver::DmaDirection direction, size_t size)
 {
-    auto dma_able_buffer = vdma::DmaAbleBuffer::create(driver, size);
+    auto dma_able_buffer = vdma::DmaAbleBuffer::create_by_allocation(size, device.get_driver());
     CHECK_EXPECTED(dma_able_buffer);
 
     auto dma_storage = make_shared_nothrow<DmaStorage>(dma_able_buffer.release());
@@ -110,7 +110,7 @@ Expected<BufferPtr> CircularStreamBufferPool::allocate_buffer(HailoRTDriver &dri
 
     // TODO HRT-11595: We map the buffer here to avoid mapping buffer during descriptors list creation (it cause
     // deadlock on the linux driver). After HRT-11595, we won't need to call dma_map.
-    auto map_result = dma_storage->dma_map(driver, to_hailo_dma_direction(direction));
+    auto map_result = dma_storage->dma_map(device, to_hailo_dma_direction(direction));
     CHECK_EXPECTED(map_result);
 
     auto mapped_buffer = make_shared_nothrow<Buffer>(std::move(dma_storage));

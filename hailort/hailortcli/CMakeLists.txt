@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.0.0)
 
 include(GNUInstallDirs)
-include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/spdlog.cmake)
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/cli11.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/json.cmake)
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/spdlog.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/readerwriterqueue.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/dotwriter.cmake)
 
