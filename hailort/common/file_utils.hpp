@@ -24,7 +24,8 @@ Expected<size_t> get_istream_size(std::ifstream &s);
 /**
  * Reads full file content into a `Buffer`
  */
-Expected<Buffer> read_binary_file(const std::string &file_path);
+Expected<Buffer> read_binary_file(const std::string &file_path,
+    const BufferStorageParams &output_buffer_params = {});
 
 } /* namespace hailort */
 

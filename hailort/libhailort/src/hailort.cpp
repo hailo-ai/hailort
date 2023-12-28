@@ -51,20 +51,6 @@ using namespace hailort;
 // the storage.
 using ExportedBufferManager = ExportedResourceManager<BufferPtr, void *>;
 
-struct ThreeTupleHash {
-    template<typename T>
-    std::size_t operator()(const T& tuple) const {
-        auto hash = std::hash<typename std::tuple_element<0, T>::type>()(std::get<0>(tuple));
-        hash ^= std::hash<typename std::tuple_element<1, T>::type>()(std::get<1>(tuple));
-        hash ^= std::hash<typename std::tuple_element<2, T>::type>()(std::get<2>(tuple));
-        return hash;
-    }
-};
-
-// (buffer_addr, device_id, mapping_direction)
-using DmaMappingKey = std::tuple<void *, std::string, hailo_dma_buffer_direction_t>;
-using DmaMappingManager = ExportedResourceManager<DmaStoragePtr, DmaMappingKey, ThreeTupleHash>;
-
 COMPAT__INITIALIZER(hailort__initialize_logger)
 {
     // Init logger singleton if compiling only HailoRT
@@ -1126,15 +1112,6 @@ hailo_status hailo_free_buffer(void *buffer)
     return ExportedBufferManager::unregister_resource(buffer);
 }
 
-static Expected<DmaMappingKey> get_mapping_key(void *buffer, hailo_device device, hailo_dma_buffer_direction_t direction)
-{
-    hailo_device_id_t device_id{};
-    auto status = hailo_get_device_id(device, &device_id);
-    CHECK_SUCCESS_AS_EXPECTED(status);
-
-    return std::make_tuple(buffer, std::string(device_id.id), direction);
-}
-
 // TODO: hailo_dma_map_buffer_to_device/hailo_dma_unmap_buffer_from_device aren't thread safe when crossed with
 //       hailo_allocate_buffer/hailo_free_buffer (HRT-10669)
 hailo_status hailo_dma_map_buffer_to_device(void *buffer, size_t size, hailo_device device, hailo_dma_buffer_direction_t direction)
@@ -1149,39 +1126,17 @@ hailo_status hailo_dma_map_buffer_to_device(void *buffer, size_t size, hailo_dev
         // The mapping is held by the Buffer object
         auto mapping_result = hailort_allocated_buffer->get()->storage().dma_map(*reinterpret_cast<Device*>(device), direction);
         CHECK_EXPECTED_AS_STATUS(mapping_result);
-        const auto new_mapping = mapping_result.value();
-
-        if (!new_mapping) {
-            return HAILO_DMA_MAPPING_ALREADY_EXISTS;
-        }
-    } else {
-        // The buffer has been allocated by the user
-        // Create dma storage
-        auto dma_mapped_buffer = DmaStorage::create_from_user_address(buffer, size, direction, *reinterpret_cast<Device*>(device));
-        CHECK_EXPECTED_AS_STATUS(dma_mapped_buffer);
-        assert(buffer == dma_mapped_buffer.value()->user_address());
-        auto dma_mapped_buffer_ptr = dma_mapped_buffer.release();
-
-        // Store the mapping in manager (otherwise it'll be freed at the end of this func)
-        auto key = get_mapping_key(dma_mapped_buffer_ptr->user_address(), device, direction);
-        CHECK_EXPECTED_AS_STATUS(key);
-        const auto status = DmaMappingManager::register_resource(dma_mapped_buffer_ptr, key.release());
-        if (HAILO_INVALID_ARGUMENT == status) {
-            // TODO: This will change once we allow mapping the same buffer in different directions (HRT-10656).
-            //       Checking that the mapping exists will need to be at DmaStorage's level
-            return HAILO_DMA_MAPPING_ALREADY_EXISTS;
-        }
-        CHECK_SUCCESS(status);
+        const auto is_new_mapping = mapping_result.value();
+        return is_new_mapping ? HAILO_SUCCESS : HAILO_DMA_MAPPING_ALREADY_EXISTS;
     }
 
-    return HAILO_SUCCESS;
+    // The buffer has been allocated by the user
+    return reinterpret_cast<Device*>(device)->dma_map(buffer, size,
+        (HAILO_DMA_BUFFER_DIRECTION_H2D == direction) ? HAILO_H2D_STREAM : HAILO_D2H_STREAM);
 }
 
 hailo_status hailo_dma_unmap_buffer_from_device(void *buffer, hailo_device device, hailo_dma_buffer_direction_t direction)
 {
-    // TODO: support mapping the same buffer in different directions (HRT-10656)
-    (void)direction;
-
     CHECK_ARG_NOT_NULL(buffer);
     CHECK_ARG_NOT_NULL(device);
 
@@ -1193,9 +1148,9 @@ hailo_status hailo_dma_unmap_buffer_from_device(void *buffer, hailo_device devic
         return HAILO_SUCCESS;
     }
 
-    auto key = get_mapping_key(buffer, device, direction);
-    CHECK_EXPECTED_AS_STATUS(key);
-    return DmaMappingManager::unregister_resource(key.release());
+    // The buffer has been allocated by the user
+    return reinterpret_cast<Device*>(device)->dma_unmap(buffer,
+        (HAILO_DMA_BUFFER_DIRECTION_H2D == direction) ? HAILO_H2D_STREAM : HAILO_D2H_STREAM);
 }
 
 hailo_status hailo_calculate_eth_input_rate_limits(hailo_hef hef, const char *network_group_name, uint32_t fps,
@@ -1439,8 +1394,14 @@ hailo_status hailo_deactivate_network_group(hailo_activated_network_group activa
 
     auto net_group_casted = reinterpret_cast<ActivatedNetworkGroup*>(activated_network_group);
     delete net_group_casted;
-    
+
     return HAILO_SUCCESS;
+}
+
+hailo_status hailo_shutdown_network_group(hailo_configured_network_group network_group)
+{
+    CHECK_ARG_NOT_NULL(network_group);
+    return reinterpret_cast<ConfiguredNetworkGroup *>(network_group)->shutdown();
 }
 
 hailo_status hailo_set_notification_callback(hailo_device device, hailo_notification_callback callback,
@@ -2015,7 +1976,7 @@ hailo_status hailo_hef_get_bottleneck_fps(hailo_hef hef, const char *network_gro
     return HAILO_SUCCESS;
 }
 
-hailo_status hailo_make_input_vstream_params(hailo_configured_network_group network_group, bool quantized,
+hailo_status hailo_make_input_vstream_params(hailo_configured_network_group network_group, bool /*unused*/,
     hailo_format_type_t format_type, hailo_input_vstream_params_by_name_t *input_params,
     size_t *input_params_count)
 {
@@ -2024,7 +1985,7 @@ hailo_status hailo_make_input_vstream_params(hailo_configured_network_group netw
     CHECK_ARG_NOT_NULL(input_params_count);
 
     auto net_group_ptr = reinterpret_cast<ConfiguredNetworkGroup*>(network_group);
-    auto input_params_map = net_group_ptr->make_input_vstream_params(quantized, format_type, 
+    auto input_params_map = net_group_ptr->make_input_vstream_params({}, format_type, 
         HAILO_DEFAULT_VSTREAM_TIMEOUT_MS , HAILO_DEFAULT_VSTREAM_QUEUE_SIZE);
     CHECK_EXPECTED_AS_STATUS(input_params_map);
 
@@ -2050,7 +2011,7 @@ hailo_status hailo_make_input_vstream_params(hailo_configured_network_group netw
     return HAILO_SUCCESS;
 }
 
-hailo_status hailo_make_output_vstream_params(hailo_configured_network_group network_group, bool quantized,
+hailo_status hailo_make_output_vstream_params(hailo_configured_network_group network_group, bool /*unused*/,
     hailo_format_type_t format_type, hailo_output_vstream_params_by_name_t *output_vstream_params,
     size_t *output_params_count)
 {
@@ -2059,7 +2020,7 @@ hailo_status hailo_make_output_vstream_params(hailo_configured_network_group net
     CHECK_ARG_NOT_NULL(output_params_count);
 
     auto net_group_ptr = reinterpret_cast<ConfiguredNetworkGroup*>(network_group);
-    auto output_params_map = net_group_ptr->make_output_vstream_params(quantized, format_type,
+    auto output_params_map = net_group_ptr->make_output_vstream_params({}, format_type,
         HAILO_DEFAULT_VSTREAM_TIMEOUT_MS , HAILO_DEFAULT_VSTREAM_QUEUE_SIZE);
     CHECK_EXPECTED_AS_STATUS(output_params_map);
 
@@ -2597,14 +2558,14 @@ HAILORTAPI hailo_status hailo_get_network_infos(hailo_configured_network_group n
 }
 
 HAILORTAPI hailo_status hailo_hef_make_input_vstream_params(hailo_hef hef, const char *name, 
-    bool quantized, hailo_format_type_t format_type, 
+    bool /*unused*/, hailo_format_type_t format_type, 
     hailo_input_vstream_params_by_name_t *input_params, size_t *input_params_count)
 {
     CHECK_ARG_NOT_NULL(input_params);
     CHECK_ARG_NOT_NULL(input_params_count);
     const auto name_str = get_name_as_str(name);
 
-    auto input_params_map = (reinterpret_cast<Hef*>(hef))->make_input_vstream_params(name_str, quantized, format_type, 
+    auto input_params_map = (reinterpret_cast<Hef*>(hef))->make_input_vstream_params(name_str, {}, format_type, 
         HAILO_DEFAULT_VSTREAM_TIMEOUT_MS , HAILO_DEFAULT_VSTREAM_QUEUE_SIZE);
     CHECK_EXPECTED_AS_STATUS(input_params_map);
 
@@ -2631,14 +2592,14 @@ HAILORTAPI hailo_status hailo_hef_make_input_vstream_params(hailo_hef hef, const
 }
 
 hailo_status hailo_hef_make_output_vstream_params(hailo_hef hef, const char *name,
-    bool quantized, hailo_format_type_t format_type, 
+    bool /*unused*/, hailo_format_type_t format_type, 
     hailo_output_vstream_params_by_name_t *output_vstream_params, size_t *output_params_count)
 {
     CHECK_ARG_NOT_NULL(output_vstream_params);
     CHECK_ARG_NOT_NULL(output_params_count);
     const auto name_str = get_name_as_str(name);
 
-    auto output_params_map = (reinterpret_cast<Hef*>(hef))->make_output_vstream_params(name_str, quantized, format_type,
+    auto output_params_map = (reinterpret_cast<Hef*>(hef))->make_output_vstream_params(name_str, {}, format_type,
         HAILO_DEFAULT_VSTREAM_TIMEOUT_MS , HAILO_DEFAULT_VSTREAM_QUEUE_SIZE);
     CHECK_EXPECTED_AS_STATUS(output_params_map);
 

@@ -418,7 +418,7 @@ hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &lay
     CHECK_EXPECTED_AS_STATUS(device_arch);
     /* Add error in configure phase for invalid NMS parameters */
     if (layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS && 
-        (device_arch.value() == HAILO_ARCH_HAILO15H || device_arch.value() == HAILO_ARCH_PLUTO)) {
+        (device_arch.value() == HAILO_ARCH_HAILO15H || device_arch.value() == HAILO_ARCH_HAILO15M || device_arch.value() == HAILO_ARCH_PLUTO)) {
         CHECK(layer_info.nms_info.number_of_classes * layer_info.nms_info.chunks_per_frame * network_batch_size.value() < HAILO15H_NMS_MAX_CLASSES, 
         HAILO_INVALID_ARGUMENT, "Invalid NMS parameters. Number of classes ({}) * division factor ({}) * batch size ({}) must be under {}",
         layer_info.nms_info.number_of_classes, layer_info.nms_info.chunks_per_frame, network_batch_size.value(), HAILO15H_NMS_MAX_CLASSES);
@@ -439,6 +439,7 @@ hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &lay
 
     /* TODO - HRT-6829- page_size should be calculated inside the vDMA channel class create function */
     static const bool IS_CIRCULAR = true;
+    static const bool IS_VDMA_ALIGNED_BUFFER = false;
     const auto transfer_size = LayerInfoUtils::get_layer_transfer_size(layer_info);
 
     const auto DONT_FORCE_DEFAULT_PAGE_SIZE = false;
@@ -450,15 +451,15 @@ hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &lay
         (m_driver.desc_max_page_size() / 2) : m_driver.desc_max_page_size();
     auto buffer_sizes_requirements = vdma::BufferSizesRequirements::get_sg_buffer_requirements_single_transfer(
         max_page_size, static_cast<uint16_t>(min_active_trans), static_cast<uint16_t>(max_active_trans),
-        transfer_size, IS_CIRCULAR, DONT_FORCE_DEFAULT_PAGE_SIZE, DONT_FORCE_BATCH_SIZE);
+        transfer_size, IS_CIRCULAR, DONT_FORCE_DEFAULT_PAGE_SIZE, DONT_FORCE_BATCH_SIZE, IS_VDMA_ALIGNED_BUFFER);
     CHECK_EXPECTED_AS_STATUS(buffer_sizes_requirements);
 
     const auto page_size = buffer_sizes_requirements->desc_page_size();
     const auto descs_count = (nullptr != std::getenv("HAILO_CONFIGURE_FOR_HW_INFER")) ?
         MAX_DESCS_COUNT : buffer_sizes_requirements->descs_count();
 
-    auto channel = vdma::BoundaryChannel::create(channel_id.value(), channel_direction, m_driver, descs_count, page_size,
-        layer_info.name, latency_meter);
+    auto channel = vdma::BoundaryChannel::create(channel_id.value(), channel_direction, m_vdma_device, descs_count,
+        page_size, layer_info.name, latency_meter);
     CHECK_EXPECTED_AS_STATUS(channel);
 
     m_boundary_channels.emplace(channel_id.value(), channel.release());
@@ -636,14 +637,6 @@ hailo_status ResourcesManager::reset_state_machine()
     return HAILO_SUCCESS;
 }
 
-hailo_status ResourcesManager::cancel_pending_transfers()
-{
-    for (const auto &boundary_channel : m_boundary_channels) {
-        boundary_channel.second->cancel_pending_transfers();
-    }
-    return HAILO_SUCCESS;
-}
-
 hailo_status ResourcesManager::start_vdma_interrupts_dispatcher()
 {
     auto interrupts_dispatcher = m_vdma_device.get_vdma_interrupts_dispatcher();
@@ -700,7 +693,8 @@ Expected<std::pair<vdma::ChannelId, uint16_t>> ResourcesManager::create_mapped_b
     CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(total_desc_count), HAILO_INVALID_ARGUMENT,
         "calculated total_desc_count for vdma descriptor list is out of UINT16 range");
 
-    auto mapped_buffer = vdma::MappedBuffer::create_shared(m_driver, direction, total_desc_count * desc_list->desc_page_size());
+    auto mapped_buffer = vdma::MappedBuffer::create_shared_by_allocation(
+        total_desc_count * desc_list->desc_page_size(), m_driver, direction);
     CHECK_EXPECTED(mapped_buffer);
     m_hw_only_boundary_buffers.emplace_back(mapped_buffer.release());
 

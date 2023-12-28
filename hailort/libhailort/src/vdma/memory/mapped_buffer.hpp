@@ -38,20 +38,16 @@ using MappedBufferPtr = std::shared_ptr<MappedBuffer>;
 class MappedBuffer final
 {
 public:
-    // Maps the given DmaAbleBuffer in the right direction.
-    static Expected<MappedBuffer> create(HailoRTDriver &driver, std::shared_ptr<DmaAbleBuffer> buffer,
-        HailoRTDriver::DmaDirection data_direction);
-    static Expected<MappedBufferPtr> create_shared(HailoRTDriver &driver, std::shared_ptr<DmaAbleBuffer> buffer,
+    // Maps the given DmaAbleBuffer in 'data_direction'
+    static Expected<MappedBufferPtr> create_shared(DmaAbleBufferPtr buffer, HailoRTDriver &driver,
         HailoRTDriver::DmaDirection data_direction);
 
-    // If user_address is nullptr, a buffer of size 'size' will be allocated and mapped to dma in 'data_direction'
-    // Otherwise, the buffer pointed to by user_address will be mapped to dma in 'data_direction'
-    static Expected<MappedBuffer> create(HailoRTDriver &driver, HailoRTDriver::DmaDirection data_direction,
-        size_t size, void *user_address = nullptr);
-    static Expected<MappedBufferPtr> create_shared(HailoRTDriver &driver, HailoRTDriver::DmaDirection data_direction,
-        size_t size, void *user_address = nullptr);
+    // A DmaAbleBuffer of 'size' bytes will be allocated and mapped to dma in 'data_direction'
+    static Expected<MappedBufferPtr> create_shared_by_allocation(size_t size, HailoRTDriver &driver,
+        HailoRTDriver::DmaDirection data_direction);
 
-
+    MappedBuffer(HailoRTDriver &driver, DmaAbleBufferPtr buffer, HailoRTDriver::DmaDirection data_direction,
+        hailo_status &status);
     MappedBuffer(MappedBuffer &&other) noexcept;
     MappedBuffer(const MappedBuffer &other) = delete;
     MappedBuffer &operator=(const MappedBuffer &other) = delete;
@@ -92,11 +88,9 @@ public:
     hailo_status read_cyclic(void *buf_dst, size_t count, size_t offset, bool should_sync = true);
 
 private:
-    MappedBuffer(HailoRTDriver &driver, std::shared_ptr<DmaAbleBuffer> buffer, HailoRTDriver::DmaDirection data_direction,
-        hailo_status &status);
-
     HailoRTDriver &m_driver;
-    std::shared_ptr<DmaAbleBuffer> m_buffer;
+    // TODO: do we need to hold a DmaAbleBuffer here? (HRT-12389)
+    DmaAbleBufferPtr m_buffer;
     HailoRTDriver::VdmaBufferHandle m_mapping_handle;
     const HailoRTDriver::DmaDirection m_data_direction;
 };

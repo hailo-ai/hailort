@@ -50,6 +50,7 @@ enum ProtoHEFExtensionType {
     HAILO_NET_FLOW_YOLOV5_SEG_NMS = 24;
     OUTPUT_SCALE_PER_FEATURE = 25;
     PERIPH_CALCULATION_IN_HAILORT = 26;
+    HAILO_NET_FLOW_YOLOV8_NMS = 27;
     UNUSED = 0XFFFF;
 }
 
@@ -83,12 +84,13 @@ enum ProtoHEFHwArch {
     PROTO__HW_ARCH__HAILO8P = 1;
     PROTO__HW_ARCH__HAILO8R = 2;
     PROTO__HW_ARCH__HAILO8L = 3;
+    PROTO__HW_ARCH__HAILO15H = 103;
+    PROTO__HW_ARCH__HAILO15M = 4;
 
     // Reserving low numbers to public hw archs
     PROTO__HW_ARCH__SAGE_A0 = 100;
     PROTO__HW_ARCH__SAGE_B0 = 101;
     PROTO__HW_ARCH__PAPRIKA_B0 = 102;
-    PROTO__HW_ARCH__HAILO15H = 103;
     PROTO__HW_ARCH__GINGER = 104;
     PROTO__HW_ARCH__LAVENDER = 105;
     PROTO__HW_ARCH__PLUTO = 106;
@@ -245,6 +247,31 @@ message ProtoHEFYoloSegNmsOp {
     double mask_threshold = 5;
 };
 
+message ProtoHEFYolov8BboxDecoder {
+    // Pixels stride for given bbox
+    uint32 stride = 1;
+
+    // Index of the pad connected to the encoded layer in the decoder (reg layer)
+    uint32 reg_pad_index = 2;
+
+    // Index of the pad connected to the classes scores layer in the decoder (cls layer)
+    uint32 cls_pad_index = 3;
+};
+
+message ProtoHEFYolov8NmsOp {
+    // Input image dimensions
+    double image_height = 1;
+    double image_width = 2;
+
+    // Division factor of proposals sent to the NMS per class, instead of running NMS on all proposal together
+    uint32 input_division_factor = 3;
+
+    // List of bbox decoders (anchors) for the NMS layer. Each model has its own number of boxes per anchor
+    repeated ProtoHEFYolov8BboxDecoder bbox_decoders = 4;
+
+    uint32 regression_length = 5;
+};
+
 message ProtoHEFNmsOp {
     // NMS score threshold
     double nms_score_th = 1;
@@ -271,6 +298,7 @@ message ProtoHEFNmsOp {
         ProtoHEFSSDNmsOp ssd_nms_op = 9; // SSD post process
         ProtoHEFIOUNmsOp iou_op = 10; // IoU only
         ProtoHEFYoloSegNmsOp yolo_seg_op = 11; // YOLOv5 seg post process
+        ProtoHEFYolov8NmsOp yolov8_nms_op = 12; // YOLOv8 post process
     }
 };
 

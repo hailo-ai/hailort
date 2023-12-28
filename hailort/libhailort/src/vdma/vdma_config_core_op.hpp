@@ -48,8 +48,10 @@ public:
     virtual hailo_status activate_impl(uint16_t dynamic_batch_size) override;
     // Will first deactivate host resources (via deactivate_host_resources) and then reset the core-op on the fw
     virtual hailo_status deactivate_impl() override;
+    virtual hailo_status shutdown() override;
     // Deactivate all resources related to the core-op on the host, but without resetting the core-op on the fw
     hailo_status deactivate_host_resources();
+    hailo_status cancel_pending_transfers();
 
     virtual Expected<hailo_stream_interface_t> get_default_streams_interface() override;
 

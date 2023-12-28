@@ -201,7 +201,7 @@ Expected<bool> HeapStorage::dma_map(Device &, hailo_dma_buffer_direction_t)
     return make_unexpected(HAILO_INVALID_OPERATION);
 }
 
-Expected<bool> HeapStorage::dma_map(HailoRTDriver &, hailo_dma_buffer_direction_t)
+Expected<bool> HeapStorage::dma_map(VdmaDevice &, hailo_dma_buffer_direction_t)
 {
     LOGGER__ERROR("Heap allocated buffers can't be mapped to DMA");
     return make_unexpected(HAILO_INVALID_OPERATION);
@@ -258,15 +258,34 @@ Expected<DmaStoragePtr> DmaStorage::create_from_user_address(void *user_address,
     return create(user_address, size, data_direction, physical_devices.release());
 }
 
+Expected<std::shared_ptr<Buffer>> DmaStorage::create_dma_able_buffer_from_user_size(void *addr, size_t size)
+{
+    auto storage = create_from_user_address(addr, size);
+    CHECK_EXPECTED(storage);
+
+    auto buffer = make_shared_nothrow<Buffer>(storage.release());
+    CHECK_NOT_NULL_AS_EXPECTED(buffer, HAILO_OUT_OF_HOST_MEMORY);
+
+    return buffer;
+}
+
 Expected<DmaStoragePtr> DmaStorage::create(void *user_address, size_t size,
     hailo_dma_buffer_direction_t data_direction,
     std::vector<std::reference_wrapper<Device>> &&physical_devices)
 {
-    // TODO: HRT-10283 support sharing low memory buffers for DART and similar systems.
-    auto dma_able_buffer = vdma::DmaAbleBuffer::create(size, user_address);
-    CHECK_EXPECTED(dma_able_buffer);
+    vdma::DmaAbleBufferPtr dma_able_buffer_ptr = nullptr;
+    if (nullptr == user_address) {
+        // TODO: HRT-10283 support sharing low memory buffers for DART and similar systems.
+        auto dma_able_buffer = vdma::DmaAbleBuffer::create_by_allocation(size);
+        CHECK_EXPECTED(dma_able_buffer);
+        dma_able_buffer_ptr = dma_able_buffer.release();
+    } else {
+        auto dma_able_buffer = vdma::DmaAbleBuffer::create_from_user_address(user_address, size);
+        CHECK_EXPECTED(dma_able_buffer);
+        dma_able_buffer_ptr = dma_able_buffer.release();
+    }
 
-    auto result = make_shared_nothrow<DmaStorage>(dma_able_buffer.release());
+    auto result = make_shared_nothrow<DmaStorage>(std::move(dma_able_buffer_ptr));
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
 
     for (auto &device : physical_devices) {
@@ -283,6 +302,19 @@ DmaStorage::DmaStorage(vdma::DmaAbleBufferPtr &&dma_able_buffer) :
     m_dma_able_buffer(std::move(dma_able_buffer)),
     m_mappings()
 {}
+
+DmaStorage::~DmaStorage()
+{
+    // TODO: deleter callback holds a reference to a device, which is bad since this BufferStorage could outlive
+    //       the device. We need to doc that it isn't allowed. Later on, I think devices should use shared_ptrs
+    //       and then the mapping will inc the reference count (HRT-12361)
+    for (const auto &device_mapping_pair : m_mappings) {
+        const auto &mapping = device_mapping_pair.second;
+        if (nullptr != mapping.second) {
+            mapping.second();
+        }
+    }
+}
 
 size_t DmaStorage::size() const
 {
@@ -304,30 +336,42 @@ Expected<bool> DmaStorage::dma_map(Device &device, hailo_dma_buffer_direction_t 
     const auto device_type = device.get_type();
     CHECK_AS_EXPECTED(((Device::Type::INTEGRATED == device_type) || (Device::Type::PCIE == device_type)),
         HAILO_INVALID_ARGUMENT, "Invalid device type (expected integrated/pcie, received {})", device_type);
-    VdmaDevice *vdma_device = reinterpret_cast<VdmaDevice*>(&device);
-
-    return dma_map(vdma_device->get_driver(), data_direction);
+    return dma_map(*reinterpret_cast<VdmaDevice*>(&device), data_direction);
 }
 
-Expected<bool> DmaStorage::dma_map(HailoRTDriver &driver, hailo_dma_buffer_direction_t data_direction)
+// TODO: change data_direction to hailo_stream_direction_t (HRT-12391)
+Expected<bool> DmaStorage::dma_map(VdmaDevice &device, hailo_dma_buffer_direction_t data_direction)
 {
     CHECK_AS_EXPECTED(data_direction <= HAILO_DMA_BUFFER_DIRECTION_BOTH, HAILO_INVALID_ARGUMENT,
         "Invalid data direction {}", data_direction);
 
-    const auto &device_id = driver.device_id();
+    const auto device_id = device.get_dev_id();
     auto find_result = m_mappings.find(device_id);
     if (find_result != m_mappings.end()) {
-        // The buffer has been mapped => don't map it again
+        // The buffer has been mapped in this object => don't map it again
         return Expected<bool>(false); // not a new mapping
     }
 
-    // The buffer hasn't been mapped => map it now
-    auto mapped_buffer = vdma::MappedBuffer::create_shared(driver, m_dma_able_buffer,
-        static_cast<HailoRTDriver::DmaDirection>(data_direction));
-    CHECK_EXPECTED(mapped_buffer);
+    const auto direction = (data_direction == HAILO_DMA_BUFFER_DIRECTION_H2D) ? HAILO_H2D_STREAM : HAILO_D2H_STREAM;
 
-    m_mappings.emplace(device_id, mapped_buffer.value());
-    return Expected<bool>(true); // new mapping
+    auto mapping_result = device.try_dma_map(m_dma_able_buffer, direction);
+    CHECK_EXPECTED(mapping_result);
+
+    const auto is_new_mapping = mapping_result->second;
+    if (is_new_mapping) {
+        const auto deleter = [&device, address = m_dma_able_buffer->user_address(), direction]() {
+            // Best effort
+            auto status = device.dma_unmap(address, direction);
+            if (HAILO_SUCCESS != status) {
+                LOGGER__ERROR("Failed to un-map buffer {} from device {} in direction {}",
+                address, device.get_dev_id(), direction);
+            }
+        };
+        m_mappings.emplace(device_id, std::make_pair(mapping_result->first, deleter));
+    } else {
+        m_mappings.emplace(device_id, std::make_pair(mapping_result->first, nullptr));
+    }
+    return Expected<bool>(is_new_mapping);
 }
 
 Expected<vdma::MappedBufferPtr> DmaStorage::get_dma_mapped_buffer(const std::string &device_id)
@@ -339,7 +383,63 @@ Expected<vdma::MappedBufferPtr> DmaStorage::get_dma_mapped_buffer(const std::str
         return make_unexpected(HAILO_NOT_FOUND);
     }
 
-    return Expected<vdma::MappedBufferPtr>(mapped_buffer->second);
+    return Expected<vdma::MappedBufferPtr>(mapped_buffer->second.first);
+}
+
+Expected<UserBufferStoragePtr> UserBufferStorage::create(void *user_address, const size_t size)
+{
+    auto result = make_shared_nothrow<UserBufferStorage>(user_address, size);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+
+    return result;
+}
+
+UserBufferStorage::UserBufferStorage(void * user_address, const size_t size) :
+    BufferStorage(Type::USER_BUFFER),
+    m_user_address(user_address),
+    m_size(size)
+{}
+
+size_t UserBufferStorage::size() const
+{
+    return m_size;
+}
+
+void *UserBufferStorage::user_address()
+{
+    return const_cast<void *>(m_user_address);
+}
+
+Expected<void *> UserBufferStorage::release() noexcept
+{
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
+Expected<bool> UserBufferStorage::dma_map(Device &/* device */, hailo_dma_buffer_direction_t /* data_direction */)
+{
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
+// TODO: change data_direction to hailo_stream_direction_t (HRT-12391)
+Expected<bool> UserBufferStorage::dma_map(VdmaDevice &/* device */, hailo_dma_buffer_direction_t /* data_direction */)
+{
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
+Expected<vdma::MappedBufferPtr> UserBufferStorage::get_dma_mapped_buffer(const std::string &/* device_id */)
+{
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
+Expected<std::shared_ptr<Buffer>> UserBufferStorage::create_storage_from_user_buffer(void *addr, size_t size)
+{
+    auto storage = UserBufferStorage::create(addr, size);
+    CHECK_EXPECTED(storage);
+
+    auto buffer = make_shared_nothrow<Buffer>(storage.release());
+    CHECK_NOT_NULL_AS_EXPECTED(buffer, HAILO_OUT_OF_HOST_MEMORY);
+
+    return buffer;
 }
 
 } /* namespace hailort */

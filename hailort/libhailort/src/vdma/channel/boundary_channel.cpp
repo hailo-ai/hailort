@@ -25,24 +25,25 @@ namespace vdma {
 
 
 Expected<BoundaryChannelPtr> BoundaryChannel::create(vdma::ChannelId channel_id, Direction direction,
-    HailoRTDriver &driver, uint32_t descs_count, uint16_t desc_page_size, const std::string &stream_name,
+    VdmaDevice &vdma_device, uint32_t descs_count, uint16_t desc_page_size, const std::string &stream_name,
     LatencyMeterPtr latency_meter)
 {
     hailo_status status = HAILO_UNINITIALIZED;
-    auto channel_ptr = make_shared_nothrow<BoundaryChannel>(channel_id, direction, driver, descs_count,
+    auto channel_ptr = make_shared_nothrow<BoundaryChannel>(channel_id, direction, vdma_device, descs_count,
         desc_page_size, stream_name, latency_meter, status);
     CHECK_NOT_NULL_AS_EXPECTED(channel_ptr, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status, "Failed creating BoundaryChannel");
     return channel_ptr;
 }
 
-BoundaryChannel::BoundaryChannel(vdma::ChannelId channel_id, Direction direction, HailoRTDriver &driver,
+BoundaryChannel::BoundaryChannel(vdma::ChannelId channel_id, Direction direction, VdmaDevice &vdma_device,
                                  uint32_t descs_count, uint16_t desc_page_size, const std::string &stream_name,
                                  LatencyMeterPtr latency_meter, hailo_status &status) :
     m_channel_id(channel_id),
     m_direction(direction),
-    m_driver(driver),
-    m_host_registers(driver, channel_id, direction),
+    m_vdma_device(vdma_device),
+    m_driver(vdma_device.get_driver()),
+    m_host_registers(vdma_device.get_driver(), channel_id, direction),
     m_desc_list(nullptr),
     m_stream_name(stream_name),
     m_latency_meter(latency_meter),
@@ -62,8 +63,8 @@ BoundaryChannel::BoundaryChannel(vdma::ChannelId channel_id, Direction direction
         return;
     }
 
-    if (channel_id.engine_index >= driver.dma_engines_count()) {
-        LOGGER__ERROR("Invalid DMA engine index {}, max {}", channel_id.engine_index, driver.dma_engines_count());
+    if (channel_id.engine_index >= m_driver.dma_engines_count()) {
+        LOGGER__ERROR("Invalid DMA engine index {}, max {}", channel_id.engine_index, m_driver.dma_engines_count());
         status = HAILO_INVALID_ARGUMENT;
         return;
     }
@@ -122,10 +123,11 @@ hailo_status BoundaryChannel::trigger_channel_completion(uint16_t hw_num_process
         hailo_status complete_status = HAILO_SUCCESS;
 
         #ifndef NDEBUG
-            auto &last_desc = (*m_desc_list)[transfer.last_desc];
+            assert(!transfer.last_descs.empty());
+            auto &last_desc = (*m_desc_list)[transfer.last_descs.back()];
             if (!last_desc.is_done() || last_desc.is_error()) {
                 LOGGER__ERROR("Error while processing descriptor {} of DMA {} on device {} DESC_STATUS=0x{:x}.",
-                    transfer.last_desc, m_channel_id, m_driver.device_id(), last_desc.status());
+                    transfer.last_descs.back(), m_channel_id, m_driver.device_id(), last_desc.status());
                 complete_status = HAILO_INTERNAL_FAILURE;
             }
         #endif
@@ -176,37 +178,57 @@ hailo_status BoundaryChannel::launch_transfer(TransferRequest &&transfer_request
         return HAILO_STREAM_NOT_ACTIVATED;
     }
 
-    if (m_ongoing_transfers.size() >= get_max_ongoing_transfers(transfer_request.buffer.size())) {
+    if (m_ongoing_transfers.size() >= get_max_ongoing_transfers(transfer_request.get_total_transfer_size())) {
         return HAILO_QUEUE_IS_FULL;
     }
 
-    auto mapped_buffer_exp = transfer_request.buffer.map_buffer(m_driver, m_direction);
-    CHECK_EXPECTED_AS_STATUS(mapped_buffer_exp);
-    auto mapped_buffer = mapped_buffer_exp.release();
+    auto num_available = get_num_available();
+    const uint16_t first_desc = num_available;
+    std::vector<uint16_t> transfer_last_descs;
+    uint16_t total_descs_count = 0;
 
-    // Syncing the buffer to device change its ownership from host to the device.
-    // We sync on D2H as well if the user owns the buffer since the buffer might have been changed by
-    // the host between the time it was mapped and the current async transfer. If the buffer is not owned by the user,
-    // it won't be accessed for write.
-    if ((Direction::H2D == m_direction) || user_owns_buffer) {
-        auto status = transfer_request.buffer.synchronize(m_driver, HailoRTDriver::DmaSyncDirection::TO_DEVICE);
+    for (size_t i = 0; i < transfer_request.transfer_buffers.size(); i++) {
+        auto mapped_buffer_exp = transfer_request.transfer_buffers[i].map_buffer(m_vdma_device, m_direction);
+        CHECK_EXPECTED_AS_STATUS(mapped_buffer_exp);
+        auto mapped_buffer = mapped_buffer_exp.release();
+
+        // Syncing the buffer to device change its ownership from host to the device.
+        // We sync on D2H as well if the user owns the buffer since the buffer might have been changed by
+        // the host between the time it was mapped and the current async transfer. If the buffer is not owned by the user,
+        // it won't be accessed for write.
+        if ((Direction::H2D == m_direction) || user_owns_buffer) {
+            auto status = transfer_request.transfer_buffers[i].synchronize(m_vdma_device, HailoRTDriver::DmaSyncDirection::TO_DEVICE);
+            CHECK_SUCCESS(status);
+        }
+
+        const auto desired_desc_num = m_desc_list->descriptors_in_buffer(transfer_request.transfer_buffers[i].size());
+        CHECK(desired_desc_num <= MAX_DESCS_COUNT, HAILO_INTERNAL_FAILURE);
+        const uint16_t desc_num = static_cast<uint16_t>(desired_desc_num);
+        assert(total_descs_count + desc_num < MAX_DESCS_COUNT);
+        total_descs_count = static_cast<uint16_t>(total_descs_count + desc_num);
+
+        const auto last_desc_avail = static_cast<uint16_t>((num_available + desc_num - 1) & m_descs.size_mask);
+
+        transfer_last_descs.emplace_back(last_desc_avail);
+
+        // Raise interrupt on last buffer
+        const auto should_buffer_raise_int = (i == (transfer_request.transfer_buffers.size() - 1));
+        auto status = prepare_descriptors(transfer_request.transfer_buffers[i].size(), num_available, mapped_buffer,
+            transfer_request.transfer_buffers[i].offset(), should_buffer_raise_int);
         CHECK_SUCCESS(status);
+
+        num_available = static_cast<uint16_t>((last_desc_avail + 1) & m_descs.size_mask);
     }
 
-    const auto desired_desc_num = m_desc_list->descriptors_in_buffer(transfer_request.buffer.size());
-    CHECK(desired_desc_num <= MAX_DESCS_COUNT, HAILO_INTERNAL_FAILURE);
-    const uint16_t desc_num = static_cast<uint16_t>(desired_desc_num);
+    if ((nullptr != m_latency_meter) && (m_direction == Direction::H2D)) {
+        // If we measure latency, we need an interrupt on the first descriptor for each H2D channel.
+        m_desc_list->program_single_descriptor((*m_desc_list)[first_desc], m_desc_list->desc_page_size(),
+            InterruptsDomain::HOST);
+    }
 
-    const auto num_available = get_num_available();
-    const auto last_desc_avail = static_cast<uint16_t>((num_available + desc_num - 1) & m_descs.size_mask);
+    add_ongoing_transfer(std::move(transfer_request), first_desc, std::move(transfer_last_descs));
 
-    auto status = prepare_descriptors(transfer_request.buffer.size(), num_available, mapped_buffer,
-        transfer_request.buffer.offset());
-    CHECK_SUCCESS(status);
-
-    add_ongoing_transfer(std::move(transfer_request), num_available, last_desc_avail);
-
-    status = inc_num_available(desc_num);
+    auto status = inc_num_available(total_descs_count);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -225,7 +247,8 @@ void BoundaryChannel::cancel_pending_transfers()
 
 size_t BoundaryChannel::get_max_ongoing_transfers(size_t transfer_size) const
 {
-    const auto descs_in_transfer = m_desc_list->descriptors_in_buffer(transfer_size);
+    // Add desc for boundary channel because might need extra for non aligned async API
+    const auto descs_in_transfer = m_desc_list->descriptors_in_buffer(transfer_size) + 1;
     const auto descs_count = CB_SIZE(m_descs);
     size_t max_transfers_in_buffer = (descs_count - 1) / descs_in_transfer;
 
@@ -276,7 +299,8 @@ bool BoundaryChannel::is_transfer_complete(const OngoingTransfer &transfer, uint
 {
     // Transfer is complete if its last descriptor is in [previous_num_processed, current_num_processed) or
     // the the buffer is empty (previous_num_processed == get_num_available())
-    return is_desc_between(previous_num_processed, current_num_processed, transfer.last_desc) ||
+    assert(!transfer.last_descs.empty());
+    return is_desc_between(previous_num_processed, current_num_processed, transfer.last_descs.back()) ||
         (current_num_processed == get_num_available());
 }
 
@@ -287,12 +311,16 @@ void BoundaryChannel::on_transfer_complete(std::unique_lock<std::mutex> &lock,
     if (nullptr != m_latency_meter) {
         m_desc_list->clear_descriptor(transfer.latency_measure_desc);
     }
-    m_desc_list->clear_descriptor(transfer.last_desc);
+
+    assert(!transfer.last_descs.empty());
+    for (const auto& last_desc : transfer.last_descs) {
+        m_desc_list->clear_descriptor(last_desc);
+    }
 
     // We increase desc num_proc (can happen only in this flow). After it is increased -
     //  1. On D2H channels - the output can be read by the user.
     //  2. On H2D channels - new input can be written to the buffer.
-    _CB_SET(m_descs.tail, (transfer.last_desc + 1) & m_descs.size_mask);
+    _CB_SET(m_descs.tail, (transfer.last_descs.back() + 1) & m_descs.size_mask);
 
     // Finally, we notify user callbacks registered with the transfer.
     // We want to make sure that the callbacks are called after the descriptors can be reused (So the user will
@@ -300,14 +328,15 @@ void BoundaryChannel::on_transfer_complete(std::unique_lock<std::mutex> &lock,
     lock.unlock();
 
     if (Direction::D2H == m_direction) {
-        auto sync_status = transfer.request.buffer.synchronize(m_driver, HailoRTDriver::DmaSyncDirection::TO_HOST);
-        if (HAILO_SUCCESS != sync_status) {
-            LOGGER__ERROR("Failed to sync buffer for output channel {} device {}", m_channel_id, m_driver.device_id());
-            if (HAILO_SUCCESS != complete_status) {
-                complete_status = sync_status;
+        for (auto& transfer_buffer : transfer.request.transfer_buffers) {
+            auto sync_status = transfer_buffer.synchronize(m_vdma_device, HailoRTDriver::DmaSyncDirection::TO_HOST);
+            if (HAILO_SUCCESS != sync_status) {
+                LOGGER__ERROR("Failed to sync buffer for output channel {} device {}", m_channel_id, m_driver.device_id());
+                if (HAILO_SUCCESS != complete_status) {
+                    complete_status = sync_status;
+                }
             }
         }
-
     }
 
     transfer.request.callback(complete_status);
@@ -315,7 +344,7 @@ void BoundaryChannel::on_transfer_complete(std::unique_lock<std::mutex> &lock,
 }
 
 hailo_status BoundaryChannel::prepare_descriptors(size_t transfer_size, uint16_t starting_desc,
-    MappedBufferPtr mapped_buffer, size_t buffer_offset)
+    MappedBufferPtr mapped_buffer, size_t buffer_offset, bool raise_interrupt)
 {
     if (mapped_buffer != nullptr) {
         CHECK((buffer_offset % m_desc_list->desc_page_size()) == 0, HAILO_INTERNAL_FAILURE,
@@ -342,12 +371,7 @@ hailo_status BoundaryChannel::prepare_descriptors(size_t transfer_size, uint16_t
         }
     }
 
-    if ((nullptr != m_latency_meter) && (m_direction == Direction::H2D)) {
-        // If we measure latency, we need an interrupt on the first descriptor for each H2D channel.
-        m_desc_list->program_single_descriptor((*m_desc_list)[starting_desc], m_desc_list->desc_page_size(),
-            InterruptsDomain::HOST);
-    }
-    auto last_desc_interrupts_domain = InterruptsDomain::HOST;
+    auto last_desc_interrupts_domain = raise_interrupt ? InterruptsDomain::HOST : InterruptsDomain::NONE;
     // TODO: HRT-11188 - fix starting_desc parameter
     auto actual_desc_count = m_desc_list->program_last_descriptor(transfer_size, last_desc_interrupts_domain,
         starting_desc);
@@ -373,12 +397,14 @@ bool BoundaryChannel::is_buffer_already_configured(MappedBufferPtr buffer, size_
     return starting_desc_diff == buffer_offset_diff_in_descs;
 }
 
-void BoundaryChannel::add_ongoing_transfer(TransferRequest &&transfer_request, uint16_t first_desc, uint16_t last_desc)
+void BoundaryChannel::add_ongoing_transfer(TransferRequest &&transfer_request, uint16_t first_desc,
+        std::vector<uint16_t> &&last_descs)
 {
     OngoingTransfer transfer{};
     transfer.request = std::move(transfer_request);
-    transfer.last_desc = last_desc;
-    transfer.latency_measure_desc = (m_direction == HailoRTDriver::DmaDirection::H2D) ? first_desc : last_desc;
+    transfer.last_descs = std::move(last_descs);
+    transfer.latency_measure_desc = (m_direction == HailoRTDriver::DmaDirection::H2D) ? first_desc :
+        transfer.last_descs.back();
     m_ongoing_transfers.push_back(std::move(transfer));
 }
 

@@ -32,10 +32,8 @@ public:
     virtual ~VdmaInputStream();
 
     virtual hailo_stream_interface_t get_interface() const override;
-
-    virtual vdevice_core_op_handle_t get_vdevice_core_op_handle() override;
-
     virtual void set_vdevice_core_op_handle(vdevice_core_op_handle_t core_op_handle) override;
+    virtual hailo_status cancel_pending_transfers() override;
 
 private:
     Expected<std::unique_ptr<StreamBufferPool>> allocate_buffer_pool() override;
@@ -44,7 +42,17 @@ private:
     virtual hailo_status activate_stream_impl() override;
     virtual hailo_status deactivate_stream_impl() override;
 
+    static std::unique_ptr<StreamBufferPool> init_dma_bounce_buffer_pool(vdma::BoundaryChannelPtr channel,
+        const LayerInfo &edge_layer, hailo_status &status);
+    Expected<TransferRequest> align_transfer_request(TransferRequest &&transfer_request);
+
     VdmaDevice &m_device;
+
+    // Buffer pool for DMA able bounce buffers
+    // TODO HRT-12542- create new class for bounce buffers
+    std::mutex m_dma_pool_mutex;
+    std::unique_ptr<StreamBufferPool> m_dma_bounce_buffer_pool;
+
     vdma::BoundaryChannelPtr m_channel;
     const hailo_stream_interface_t m_interface;
     vdevice_core_op_handle_t m_core_op_handle;
@@ -69,13 +77,23 @@ public:
     virtual hailo_status read_async_impl(TransferRequest &&transfer_request) override;
     virtual hailo_status activate_stream_impl() override;
     virtual hailo_status deactivate_stream_impl() override;
+
+    virtual void set_vdevice_core_op_handle(vdevice_core_op_handle_t core_op_handle) override;
+
+    virtual inline const char *get_device_id() override { return m_device.get_dev_id(); };
+    // TODO - HRT-11739 - remove vdevice related members/functions (get/set_vdevice_core_op_handle)
+    virtual inline vdevice_core_op_handle_t get_vdevice_core_op_handle() override { return m_core_op_handle; };
+    virtual hailo_status cancel_pending_transfers() override;
+
 private:
     static uint32_t get_transfer_size(const hailo_stream_info_t &stream_info, const LayerInfo &layer_info);
+    Expected<TransferRequest> align_transfer_request(TransferRequest &&transfer_request);
 
     VdmaDevice &m_device;
     vdma::BoundaryChannelPtr m_channel;
     const hailo_stream_interface_t m_interface;
     const uint32_t m_transfer_size;
+    vdevice_core_op_handle_t m_core_op_handle;
 };
 
 

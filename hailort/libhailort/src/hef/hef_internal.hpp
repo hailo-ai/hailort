@@ -17,6 +17,7 @@
 #else
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
 #endif
 #include "hef.pb.h"
 #if defined(_MSC_VER)
@@ -36,7 +37,7 @@
 #include "hef/layer_info.hpp"
 #include "hef/context_switch_actions.hpp"
 #include "net_flow/ops/op.hpp"
-#include "net_flow/pipeline/pipeline.hpp"
+#include "net_flow/pipeline/pipeline_internal.hpp"
 #include "device_common/control_protocol.hpp"
 
 #include "control_protocol.h"
@@ -154,19 +155,21 @@ static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
     OFFLOAD_ARGMAX,
     KO_RUN_ASAP,
     HAILO_NET_FLOW,
-    HAILO_NET_FLOW_YOLOV5_NMS, // Extention added in platform 4.12 release
-    HAILO_NET_FLOW_SSD_NMS, // Extention added in platform 4.14 release
-    WRITE_DATA_BY_TYPE, // Extention added in platform 4.14 release
-    NMS_OUTPUT_BURST, // Extention added in platform 4.14 release
-    DUAL_DIRECTION_STREAM_INDEX, // Extention added in platform 4.14 release
-    HAILO_NET_FLOW_ARGMAX, // Extention added in platform 4.14 release
-    HAILO_NET_FLOW_SOFTMAX, // Extention added in platform 4.14 release
-    ALIGNED_FORMAT_TYPE, // Extention added in platform 4.14 release
-    HAILO_NET_FLOW_YOLOX_NMS, // Extention added in platform 4.14 release
+    HAILO_NET_FLOW_YOLOV5_NMS, // Extension added in platform 4.12 release
+    HAILO_NET_FLOW_SSD_NMS, // Extension added in platform 4.14 release
+    WRITE_DATA_BY_TYPE, // Extension added in platform 4.14 release
+    NMS_OUTPUT_BURST, // Extension added in platform 4.14 release
+    DUAL_DIRECTION_STREAM_INDEX, // Extension added in platform 4.14 release
+    HAILO_NET_FLOW_ARGMAX, // Extension added in platform 4.14 release
+    HAILO_NET_FLOW_SOFTMAX, // Extension added in platform 4.14 release
+    ALIGNED_FORMAT_TYPE, // Extension added in platform 4.14 release
+    HAILO_NET_FLOW_YOLOX_NMS, // Extension added in platform 4.14 release
     OUTPUT_SCALE_PER_FEATURE, // Extension added in platform 4.14 release
     PERIPH_CALCULATION_IN_HAILORT, // Extension added in platform 4.14 release
     HAILO_NET_FLOW_YOLOV5_SEG_NMS, // Extension added in platform 4.15 release
-    HAILO_NET_FLOW_IOU_NMS // Extension added in platform 4.15 release
+    HAILO_NET_FLOW_IOU_NMS, // Extension added in platform 4.15 release
+    HW_PADDING, // Extension added in platform 4.16 release
+    HAILO_NET_FLOW_YOLOV8_NMS // Extension added in platform 4.16 release
 };
 
 static inline bool is_h2d_boundary_info_layer(const ProtoHEFEdgeLayer& layer)
@@ -298,19 +301,19 @@ public:
         const hailo_mipi_input_stream_params_t &mipi_params);
 
     Expected<std::map<std::string, hailo_vstream_params_t>> make_input_vstream_params(
-        const std::string &net_group_name, const std::string &network_name, bool quantized, 
+        const std::string &net_group_name, const std::string &network_name,
         hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size);
     hailo_status fill_missing_input_vstream_params_with_default(const std::string &net_group_name,
         const std::string &network_name, std::map<std::string, hailo_vstream_params_t> &input_vstreams_params,
-        bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size);
+        hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size);
     Expected<std::map<std::string, hailo_vstream_params_t>> make_output_vstream_params(
-        const std::string &net_group_name, const std::string &network_name, bool quantized, 
+        const std::string &net_group_name, const std::string &network_name,
         hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size);
     hailo_status fill_missing_output_vstream_params_with_default(const std::string &net_group_name,
         const std::string &network_name, std::map<std::string, hailo_vstream_params_t> &output_vstream_params,
-        bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size);
+        hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size);
     static hailo_status fill_missing_vstream_params_with_default(std::map<std::string, hailo_vstream_params_t> &vstream_params,
-        std::vector<hailo_vstream_info_t> &name_to_format_info, bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms,
+        std::vector<hailo_vstream_info_t> &name_to_format_info, hailo_format_type_t format_type, uint32_t timeout_ms,
         uint32_t queue_size);
     // Also adds information to CoreOpMetadata
     // TODO: When supporting multiple core ops in same netflow - Change metadata param to a map of core_ops_metadata.
@@ -431,22 +434,13 @@ public:
 
     static Expected<CONTROL_PROTOCOL__nn_stream_config_t> parse_nn_stream_config(const ProtoHEFEdgeLayerBase &edge_layer,
         bool hw_padding_supported, const ProtoHEFEdgeConnectionType &edge_connection_type);
-    static Expected<CONTROL_PROTOCOL__nn_stream_config_t> parse_nn_stream_config(const LayerInfo &edge_layer,
-        bool hw_padding_supported);
 
     static Expected<uint32_t> max_periph_bytes_value(const hailo_device_architecture_t hw_arch);
-    static Expected<uint32_t> max_periph_bytes_value(const hailo_stream_interface_t interface);
+    static Expected<uint32_t> max_periph_padding_payload_value(const hailo_device_architecture_t hw_arch);
 
-    static bool is_hw_padding_supported(const ProtoHEFEdgeLayer &edge_layer, const uint32_t max_periph_bytes_value);
-    static bool is_hw_padding_supported(const LayerInfo &layer_info, const uint32_t max_periph_bytes_value);
-private:
-    static Expected<CONTROL_PROTOCOL__nn_stream_config_t> parse_nn_stream_config(uint32_t width, uint32_t hw_data_bytes,
-        uint16_t core_buffers_per_frame, uint16_t core_bytes_per_buffer, bool hw_padding_supported, bool is_ddr,
-        uint16_t periph_buffers_per_frame, uint16_t periph_bytes_per_buffer);
 
-    static bool is_hw_padding_supported(bool is_boundary, bool is_mux, hailo_format_order_t format_order,
-        uint16_t core_buffers_per_frame, uint32_t height, uint32_t width, uint32_t features, uint32_t hw_data_bytes,
-        const uint32_t max_periph_bytes_value);
+    static bool is_core_hw_padding_supported(const LayerInfo &layer_info, const uint32_t max_periph_bytes_value,
+        const bool is_core_hw_padding_config_in_dfc);
 };
 
 class HefUtils final
@@ -463,22 +457,22 @@ public:
         const ProtoHEFHwArch &hef_arch);
     static Expected<LayerInfo> get_inter_context_layer_info(
         const ProtoHEFCoreOpMock &core_op, const uint8_t context_index,
-        const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features, const ProtoHEFHwArch &hef_arch);
+        const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features);
     static hailo_status fill_inter_context_layers_info(
         const ProtoHEFCoreOpMock &core_op,
         const uint8_t context_index,
         const ProtoHEFEdgeLayer &layer,
         const SupportedFeatures &supported_features,
-        ContextMetadata &context_metadata, const ProtoHEFHwArch &hef_arch);
+        ContextMetadata &context_metadata);
     static Expected<LayerInfo> get_ddr_layer_info(
         const ProtoHEFCoreOpMock &core_op, const uint8_t context_index,
-        const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features, const ProtoHEFHwArch &hef_arch);
+        const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features);
     static hailo_status fill_ddr_layers_info(
         const ProtoHEFCoreOpMock &core_op,
         const uint8_t context_index,
         const ProtoHEFEdgeLayer &layer,
         const SupportedFeatures &supported_features,
-        ContextMetadata &context_metadata, const ProtoHEFHwArch &hef_arch);
+        ContextMetadata &context_metadata);
     static hailo_status check_ddr_pairs_match(
         const std::vector<LayerInfo> &context_ddr_input_layers,
         const std::vector<LayerInfo> &context_ddr_output_layers,
@@ -503,30 +497,28 @@ public:
     static std::string get_network_name(const std::string &net_group_name, const std::string &partial_network_name);
 
 private:
+    // TODO HRT-12051: Remove is_part_of_mux_layer parameter when core_hw_padding is removed
     static hailo_status fill_layer_info_with_base_info(const ProtoHEFEdgeLayerBase &base_info,
-        const ProtoHEFEdgeConnectionType &edge_connection_type,
-        const ProtoHEFNetworkGroupMetadata &network_group_proto, bool hw_padding_supported, bool transposed, 
-        const uint8_t context_index, const uint8_t network_index, LayerInfo &layer_info,
-        const SupportedFeatures &supported_features, const ProtoHEFHwArch &hef_arch);
+        const ProtoHEFEdgeConnectionType &edge_connection_type, const ProtoHEFNetworkGroupMetadata &network_group_proto,
+        bool transposed, const uint8_t context_index, const uint8_t network_index, LayerInfo &layer_info,
+        const SupportedFeatures &supported_features, const ProtoHEFHwArch &hef_arch, const bool is_part_of_mux_layer);
+    // TODO HRT-12051: Remove is_part_of_mux_layer parameter when core_hw_padding is removed
     static hailo_status fill_layer_info(const ProtoHEFEdgeLayerInfo &info,
-        const ProtoHEFEdgeConnectionType &edge_connection_type,
-        const ProtoHEFCoreOpMock &core_op, hailo_stream_direction_t direction,
-        bool hw_padding_supported, const uint8_t context_index, const std::string &partial_network_name, 
+        const ProtoHEFEdgeConnectionType &edge_connection_type, const ProtoHEFCoreOpMock &core_op,
+        hailo_stream_direction_t direction, const uint8_t context_index, const std::string &partial_network_name, 
         uint8_t network_index, LayerInfo &layer_info, const SupportedFeatures &supported_features,
-        const ProtoHEFHwArch &hef_arch);
+        const ProtoHEFHwArch &hef_arch, const bool is_part_of_mux_layer);
     static hailo_status fill_fused_nms_info(const ProtoHEFEdgeLayerFused &info,
             LayerInfo &layer_info, hailo_quant_info_t &defuse_quant_info, const std::string &network_name,
             const bool burst_mode_enabled, const ProtoHEFHwArch &hef_arch);
     static hailo_status fill_mux_info(const ProtoHEFEdgeLayerMux &info,
-        const ProtoHEFEdgeConnectionType &edge_connection_type,
-        const ProtoHEFCoreOpMock &core_op, hailo_stream_direction_t direction,
-        bool hw_padding_supported, const uint8_t context_index, const std::string &partial_network_name, 
+        const ProtoHEFEdgeConnectionType &edge_connection_type, const ProtoHEFCoreOpMock &core_op,
+        hailo_stream_direction_t direction, const uint8_t context_index, const std::string &partial_network_name, 
         uint8_t network_index, LayerInfo &layer_info, const SupportedFeatures &supported_features,
         const ProtoHEFHwArch &hef_arch);
     static hailo_status fill_planes_info(const ProtoHEFEdgeLayerPlanes &info,
-        const ProtoHEFEdgeConnectionType &edge_connection_type,
-        const ProtoHEFCoreOpMock &core_op, hailo_stream_direction_t direction,
-        bool hw_padding_supported, const uint8_t context_index, const std::string &partial_network_name, 
+        const ProtoHEFEdgeConnectionType &edge_connection_type, const ProtoHEFCoreOpMock &core_op,
+        hailo_stream_direction_t direction, const uint8_t context_index, const std::string &partial_network_name, 
         uint8_t network_index, LayerInfo &layer_info, const SupportedFeatures &supported_features,
         const ProtoHEFHwArch &hef_arch);
 };

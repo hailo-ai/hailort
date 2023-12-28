@@ -12,6 +12,7 @@
 #include "hailo/hailort.h"
 #include "hailo/vdevice.hpp"
 #include "hailo/hailort_defaults.hpp"
+#include "hailo/infer_model.hpp"
 #include "utils/profiler/tracer_macros.hpp"
 
 #include "vdevice/vdevice_internal.hpp"
@@ -100,6 +101,21 @@ Expected<ConfigureNetworkParams> VDevice::create_configure_params(Hef &hef, cons
     return hef.create_configure_params(stream_interface.release(), network_group_name);
 }
 
+hailo_status VDevice::dma_map(void *address, size_t size, hailo_stream_direction_t direction)
+{
+    (void) address;
+    (void) size;
+    (void) direction;
+    return HAILO_NOT_IMPLEMENTED;
+}
+
+hailo_status VDevice::dma_unmap(void *address, hailo_stream_direction_t direction)
+{
+    (void) address;
+    (void) direction;
+    return HAILO_NOT_IMPLEMENTED;
+}
+
 hailo_status VDevice::before_fork()
 {
     return HAILO_SUCCESS;
@@ -182,7 +198,7 @@ Expected<hailo_stream_interface_t> VDeviceHandle::get_default_streams_interface(
     return vdevice.value()->get_default_streams_interface();
 }
 
-Expected<InferModel> VDeviceHandle::create_infer_model(const std::string &hef_path)
+Expected<std::shared_ptr<InferModel>> VDeviceHandle::create_infer_model(const std::string &hef_path)
 {
     auto &manager = SharedResourceManager<std::string, VDeviceBase>::get_instance();
     auto vdevice = manager.resource_lookup(m_handle);
@@ -206,17 +222,27 @@ VDeviceClient::VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, VDeviceId
     std::vector<std::unique_ptr<Device>> &&devices) :
         m_client(std::move(client)),
         m_identifier(std::move(identifier)),
-        m_devices(std::move(devices))
+        m_devices(std::move(devices)),
+        m_is_listener_thread_running(false)
 {}
 
 VDeviceClient::~VDeviceClient()
 {
+    auto status = finish_listener_thread();
+    if (status != HAILO_SUCCESS) {
+        LOGGER__CRITICAL("Failed to finish_listener_thread in VDevice");
+    }
+
     // Note: We clear m_network_groups to prevent double destruction on ConfiguredNetworkGroupBase.
     // Explanation: When the VDeviceClient is destructed, it's members are destructed last.
     // That would cause the m_network_groups (vector of ConfiguredNetworkGroupClient) to be destructed after the vdevice in the service.
     // The vdevice in the service will destruct the ConfiguredNetworkGroupBase,
     // and then the ConfiguredNetworkGroupClient destructor will be called - causing double destruction on ConfiguredNetworkGroupBase.
-    m_network_groups.clear();
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_network_groups.clear();
+    }
+
     auto pid = OsUtils::get_curr_pid();
     auto reply = m_client->VDevice_release(m_identifier, pid);
     if (reply != HAILO_SUCCESS) {
@@ -226,8 +252,12 @@ VDeviceClient::~VDeviceClient()
 
 hailo_status VDeviceClient::before_fork()
 {
+    m_is_listener_thread_running = false;
+
     HailoRtRpcClientUtils::get_instance().before_fork();
     m_client.reset();
+    m_cb_listener_thread.reset();
+
     return HAILO_SUCCESS;
 }
 
@@ -246,12 +276,21 @@ hailo_status VDeviceClient::create_client()
 hailo_status VDeviceClient::after_fork_in_parent()
 {
     HailoRtRpcClientUtils::get_instance().after_fork_in_parent();
-    return create_client();
+    auto status = create_client();
+    CHECK_SUCCESS(status);
+
+    auto listener_status = start_listener_thread(m_identifier);
+    CHECK_SUCCESS(listener_status);
+
+    return HAILO_SUCCESS;
 }
 
 hailo_status VDeviceClient::after_fork_in_child()
 {
     HailoRtRpcClientUtils::get_instance().after_fork_in_child();
+    auto listener_status = start_listener_thread(m_identifier);
+    CHECK_SUCCESS(listener_status);
+
     return HAILO_SUCCESS;
 }
 
@@ -299,9 +338,74 @@ Expected<ConfiguredNetworkGroupVector> VDeviceClient::configure(Hef &hef,
         CHECK_NOT_NULL_AS_EXPECTED(network_group, HAILO_OUT_OF_HOST_MEMORY);
 
         networks.emplace_back(network_group);
-        m_network_groups.push_back(network_group);
+        {
+            std::unique_lock<std::mutex> lock(m_mutex);
+            m_network_groups.emplace(ng_handle, network_group);
+        }
     }
+
+    // Init listener thread only in case configure happens with async api
+    if ((configure_params.size() > 0) &&
+            configure_params.begin()->second.stream_params_by_name.begin()->second.flags == HAILO_STREAM_FLAGS_ASYNC) {
+        auto init_status = start_listener_thread(m_identifier);
+        CHECK_SUCCESS_AS_EXPECTED(init_status);
+    }
+
     return networks;
+}
+
+hailo_status VDeviceClient::start_listener_thread(VDeviceIdentifier identifier)
+{
+    if (m_is_listener_thread_running) {
+        return HAILO_SUCCESS;
+    }
+
+    m_cb_listener_thread = make_unique_nothrow<AsyncThread<hailo_status>>("SVC_LISTENER", [this, identifier] () {
+        return this->listener_run_in_thread(identifier);
+    });
+    CHECK_NOT_NULL(m_cb_listener_thread, HAILO_OUT_OF_HOST_MEMORY);
+    m_is_listener_thread_running = true;
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status VDeviceClient::listener_run_in_thread(VDeviceIdentifier identifier)
+{
+    grpc::ChannelArguments ch_args;
+    ch_args.SetMaxReceiveMessageSize(-1);
+    auto channel = grpc::CreateCustomChannel(hailort::HAILORT_SERVICE_ADDRESS, grpc::InsecureChannelCredentials(), ch_args);
+    auto client = make_unique_nothrow<HailoRtRpcClient>(channel);
+    CHECK_NOT_NULL(client, HAILO_OUT_OF_HOST_MEMORY);
+
+    while (m_is_listener_thread_running) {
+        auto callback_id = client->VDevice_get_callback_id(identifier);
+        if (callback_id.status() == HAILO_SHUTDOWN_EVENT_SIGNALED) {
+            LOGGER__INFO("Shutdown event was signaled in listener_run_in_thread");
+            break;
+        }
+        CHECK_EXPECTED_AS_STATUS(callback_id);
+
+        std::shared_ptr<ConfiguredNetworkGroupClient> ng_ptr;
+        {
+            std::unique_lock<std::mutex> lock(m_mutex);
+            assert(contains(m_network_groups, callback_id->network_group_handle()));
+            ng_ptr = m_network_groups.at(callback_id->network_group_handle());
+        }
+        auto status = ng_ptr->execute_callback(callback_id.value());
+        CHECK_SUCCESS(status);
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status VDeviceClient::finish_listener_thread()
+{
+    m_is_listener_thread_running = false;
+    auto status = m_client->VDevice_finish_callback_listener(m_identifier);
+    CHECK_SUCCESS(status);
+
+    m_cb_listener_thread.reset();
+    return HAILO_SUCCESS;
 }
 
 Expected<std::vector<std::reference_wrapper<Device>>> VDeviceClient::get_physical_devices() const
@@ -324,12 +428,6 @@ Expected<std::vector<std::string>> VDeviceClient::get_physical_devices_ids() con
 Expected<hailo_stream_interface_t> VDeviceClient::get_default_streams_interface() const
 {
     return m_client->VDevice_get_default_streams_interface(m_identifier);
-}
-
-Expected<InferModel> VDeviceClient::create_infer_model(const std::string &hef_path)
-{
-    (void)hef_path;
-    return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
 
 #endif // HAILO_SUPPORT_MULTI_PROCESS
@@ -403,6 +501,7 @@ hailo_status VDeviceBase::validate_params(const hailo_vdevice_params_t &params)
 Expected<std::unique_ptr<VDeviceBase>> VDeviceBase::create(const hailo_vdevice_params_t &params)
 {
     TRACE(InitProfilerProtoTrace);
+    TRACE(MonitorStartTrace);
 
     auto devices_expected = create_devices(params);
     CHECK_EXPECTED(devices_expected);
@@ -426,8 +525,6 @@ Expected<std::unique_ptr<VDeviceBase>> VDeviceBase::create(const hailo_vdevice_p
         TRACE(AddDeviceTrace, id_info_str, device_arch_str);
     }
     LOGGER__INFO("{}", vdevice_ids);
-
-    TRACE(MonitorStartTrace, uint32_t(device_ids.size()));
 
     CoreOpsSchedulerPtr scheduler_ptr;
     if (HAILO_SCHEDULING_ALGORITHM_NONE != params.scheduling_algorithm) {
@@ -458,7 +555,7 @@ VDeviceBase::~VDeviceBase()
         // all interrupt dispatcher threads are idle.
         m_core_ops_scheduler->shutdown();
     }
-    TRACE(DumpProfilerState);
+    TRACE(DumpProfilerStateTrace);
 }
 
 Expected<ConfiguredNetworkGroupVector> VDeviceBase::configure(Hef &hef,
@@ -475,31 +572,47 @@ Expected<ConfiguredNetworkGroupVector> VDeviceBase::configure(Hef &hef,
 
     for (const auto &network_params_pair : local_config_params.value()) {
         std::vector<std::shared_ptr<CoreOp>> core_ops;
-        const bool use_multiplexer = should_use_multiplexer(network_params_pair.second);
+        const bool use_multiplexer = should_use_multiplexer();
 
         std::shared_ptr<VDeviceCoreOp> identical_core_op = nullptr;
         if (use_multiplexer) {
             for (auto &network_group : m_vdevice_core_ops) {
-                if (network_group->multiplexer_supported() && network_group->equals(hef, network_params_pair)) {
+                if (network_group->equals(hef, network_params_pair)) {
                     identical_core_op = network_group;
                     break;
                 }
             }
         }
-        std::shared_ptr<VDeviceCoreOp> vdevice_network_group = nullptr;
+        std::shared_ptr<VDeviceCoreOp> vdevice_core_op = nullptr;
         if (identical_core_op) {
-            auto vdevice_network_group_exp = VDeviceCoreOp::duplicate(identical_core_op, network_params_pair.second);
-            CHECK_EXPECTED(vdevice_network_group_exp);
-            vdevice_network_group = vdevice_network_group_exp.release();
+            auto vdevice_core_op_exp = VDeviceCoreOp::duplicate(identical_core_op, network_params_pair.second);
+            CHECK_EXPECTED(vdevice_core_op_exp);
+            vdevice_core_op = vdevice_core_op_exp.release();
         } else {
-            auto vdevice_network_group_expected = create_vdevice_network_group(hef, network_params_pair, use_multiplexer);
-            CHECK_EXPECTED(vdevice_network_group_expected);
-            vdevice_network_group = vdevice_network_group_expected.release();
-            m_vdevice_core_ops.push_back(vdevice_network_group);
+            auto vdevice_core_op_exp = create_vdevice_core_op(hef, network_params_pair);
+            CHECK_EXPECTED(vdevice_core_op_exp);
+            vdevice_core_op = vdevice_core_op_exp.release();
+            m_vdevice_core_ops.emplace_back(vdevice_core_op);
         }
 
-        core_ops.push_back(vdevice_network_group);
-        auto metadata = hef.pimpl->network_group_metadata(vdevice_network_group->name());
+        if (m_core_ops_scheduler) {
+            auto status = m_core_ops_scheduler->add_core_op(vdevice_core_op->core_op_handle(), vdevice_core_op);
+            CHECK_SUCCESS_AS_EXPECTED(status);
+
+            // On scheduler, the streams are always activated
+            for (auto &input : vdevice_core_op->get_input_streams()) {
+                status = dynamic_cast<InputStreamBase&>(input.get()).activate_stream();
+                CHECK_SUCCESS_AS_EXPECTED(status);
+            }
+
+            for (auto &output : vdevice_core_op->get_output_streams()) {
+                status = dynamic_cast<OutputStreamBase&>(output.get()).activate_stream();
+                CHECK_SUCCESS_AS_EXPECTED(status);
+            }
+        }
+
+        core_ops.push_back(vdevice_core_op);
+        auto metadata = hef.pimpl->network_group_metadata(vdevice_core_op->name());
         auto net_group_expected = ConfiguredNetworkGroupBase::create(network_params_pair.second, std::move(core_ops), std::move(metadata));
         CHECK_EXPECTED(net_group_expected);
         auto network_group_ptr = net_group_expected.release();
@@ -514,7 +627,7 @@ Expected<ConfiguredNetworkGroupVector> VDeviceBase::configure(Hef &hef,
     return added_network_groups;
 }
 
-Expected<InferModel> VDeviceBase::create_infer_model(const std::string &hef_path)
+Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(const std::string &hef_path)
 {
     auto hef_expected = Hef::create(hef_path);
     CHECK_EXPECTED(hef_expected);
@@ -545,7 +658,10 @@ Expected<InferModel> VDeviceBase::create_infer_model(const std::string &hef_path
         outputs.emplace(vstream_info.name, std::move(stream));
     }
 
-    return InferModel(*this, std::move(hef), std::move(inputs), std::move(outputs));
+    auto res = make_shared_nothrow<InferModel>(InferModel(*this, std::move(hef), std::move(inputs), std::move(outputs)));
+    CHECK_NOT_NULL_AS_EXPECTED(res, HAILO_OUT_OF_HOST_MEMORY);
+
+    return res;
 }
 
 Expected<hailo_stream_interface_t> VDeviceBase::get_default_streams_interface() const
@@ -584,6 +700,8 @@ Expected<std::map<device_id_t, std::unique_ptr<Device>>> VDeviceBase::create_dev
             CHECK_EXPECTED(device_arch);
             CHECK_AS_EXPECTED(HAILO_ARCH_HAILO8L != device_arch.value(), HAILO_INVALID_OPERATION,
                 "VDevice with multiple devices is not supported on HAILO_ARCH_HAILO8L. device {} is HAILO_ARCH_HAILO8L", device_id);
+            CHECK_AS_EXPECTED(HAILO_ARCH_HAILO15M != device_arch.value(), HAILO_INVALID_OPERATION,
+                "VDevice with multiple devices is not supported on HAILO_ARCH_HAILO15M. device {} is HAILO_ARCH_HAILO15M", device_id);
         }
 
         auto dev_type = Device::get_device_type(device_id);
@@ -663,75 +781,54 @@ Expected<NetworkGroupsParamsMap> VDeviceBase::create_local_config_params(Hef &he
     return local_config_params;
 }
 
-Expected<std::shared_ptr<VDeviceCoreOp>> VDeviceBase::create_vdevice_network_group(Hef &hef,
-    const std::pair<const std::string, ConfigureNetworkParams> &params, bool use_multiplexer)
+Expected<std::shared_ptr<CoreOp>> VDeviceBase::create_physical_core_op(Device &device, Hef &hef,
+    const std::string &core_op_name, const ConfigureNetworkParams &params)
 {
-    std::map<device_id_t, std::shared_ptr<CoreOp>> core_ops;
-
-    // configure all the devices to this ng and then push the core ops to bundle vector
-	for (const auto &pair : m_devices) {
-        auto &device = pair.second;
-
-        ConfigureNetworkParams low_level_params = params.second;
-        if (m_core_ops_scheduler) {
-            // When the scheduler is enabled, all low level streams must be async (even if the user uses sync API).
-            for (auto &stream_params : low_level_params.stream_params_by_name) {
-                stream_params.second.flags |= HAILO_STREAM_FLAGS_ASYNC;
-            }
+    ConfigureNetworkParams params_copy = params;
+    if (m_core_ops_scheduler) {
+        // When the scheduler is enabled, all low level streams must be async (even if the user uses sync API).
+        for (auto &stream_params : params_copy.stream_params_by_name) {
+            stream_params.second.flags |= HAILO_STREAM_FLAGS_ASYNC;
         }
-
-        auto ng_vector = device->configure(hef, { std::make_pair(params.first, low_level_params) });
-        CHECK_EXPECTED(ng_vector);
-
-        assert(1 == ng_vector->size());
-        auto network_group_base = std::dynamic_pointer_cast<ConfiguredNetworkGroupBase>(ng_vector.value()[0]);
-
-        auto networks_info = network_group_base->get_network_infos();
-        CHECK_EXPECTED(networks_info);
-        if (m_core_ops_scheduler && 1 < networks_info->size()) {
-            LOGGER__WARNING("Configuring '{}' which is a multi-networks model with scheduler enabled."
-                " The model will be scheduled only when all inputs and outputs of the network group will be ready",
-                network_group_base->name());
-        }
-
-        auto ng_core_ops = network_group_base->get_core_ops();
-        // To support several ng_core_ops, one should return vector of VDeviceCoreOp.
-        CHECK_AS_EXPECTED(ng_core_ops.size() == 1, HAILO_NOT_IMPLEMENTED,
-            "Only one core op for network group is supported");
-
-        core_ops.emplace(device->get_dev_id(), ng_core_ops[0]);
     }
 
-    std::shared_ptr<PipelineMultiplexer> multiplexer = nullptr;
-    if (use_multiplexer) {
-        multiplexer = make_shared_nothrow<PipelineMultiplexer>();
-        CHECK_NOT_NULL_AS_EXPECTED(multiplexer, HAILO_OUT_OF_HOST_MEMORY);
+    auto ng_vector = device.configure(hef, { std::make_pair(core_op_name, params_copy) });
+    CHECK_EXPECTED(ng_vector);
+
+    assert(1 == ng_vector->size());
+    auto &network_group_base = dynamic_cast<ConfiguredNetworkGroupBase&>(*ng_vector.value()[0]);
+
+    auto networks_info = network_group_base.get_network_infos();
+    CHECK_EXPECTED(networks_info);
+    if (m_core_ops_scheduler && (networks_info->size() > 1)) {
+        LOGGER__WARNING("Configuring '{}' which is a multi-networks model with scheduler enabled."
+            " The model will be scheduled only when all inputs and outputs of the network group will be ready",
+            core_op_name);
+    }
+
+    auto ng_core_ops = network_group_base.get_core_ops();
+    CHECK_AS_EXPECTED(ng_core_ops.size() == 1, HAILO_NOT_IMPLEMENTED,
+        "Only one core op for network group is supported");
+
+    auto core_op = ng_core_ops[0];
+    return core_op;
+}
+
+Expected<std::shared_ptr<VDeviceCoreOp>> VDeviceBase::create_vdevice_core_op(Hef &hef,
+    const std::pair<const std::string, ConfigureNetworkParams> &params)
+{
+    std::map<device_id_t, std::shared_ptr<CoreOp>> physical_core_ops;
+
+	for (const auto &device : m_devices) {
+        auto physical_core_op = create_physical_core_op(*device.second, hef, params.first, params.second);
+        CHECK_EXPECTED(physical_core_op);
+        physical_core_ops.emplace(device.first, physical_core_op.release());
     }
 
     auto core_op_handle = allocate_core_op_handle();
 
-    auto vdevice_network_group_exp = VDeviceCoreOp::create(m_active_core_op_holder, params.second, core_ops,
-        m_core_ops_scheduler, core_op_handle, multiplexer, hef.hash());
-    CHECK_EXPECTED(vdevice_network_group_exp);
-    auto vdevice_network_group = vdevice_network_group_exp.release();
-
-    if (m_core_ops_scheduler) {
-        auto status = m_core_ops_scheduler->add_core_op(core_op_handle, vdevice_network_group);
-        CHECK_SUCCESS_AS_EXPECTED(status);
-
-        // On scheduler, the streams are always activated
-        for (auto &input : vdevice_network_group->get_input_streams()) {
-            status = dynamic_cast<InputStreamBase&>(input.get()).activate_stream();
-            CHECK_SUCCESS_AS_EXPECTED(status);
-        }
-
-        for (auto &output : vdevice_network_group->get_output_streams()) {
-            status = dynamic_cast<OutputStreamBase&>(output.get()).activate_stream();
-            CHECK_SUCCESS_AS_EXPECTED(status);
-        }
-    }
-
-    return vdevice_network_group;
+    return VDeviceCoreOp::create(m_active_core_op_holder, params.second, physical_core_ops,
+        m_core_ops_scheduler, core_op_handle, hef.hash());
 }
 
 vdevice_core_op_handle_t VDeviceBase::allocate_core_op_handle()
@@ -739,24 +836,16 @@ vdevice_core_op_handle_t VDeviceBase::allocate_core_op_handle()
     return m_next_core_op_handle++;
 }
 
-bool VDeviceBase::should_use_multiplexer(const ConfigureNetworkParams &network_params)
+bool VDeviceBase::should_use_multiplexer()
 {
-    const auto &stream_params_by_name = network_params.stream_params_by_name;
-    const auto input_counts = std::count_if(stream_params_by_name.begin(), stream_params_by_name.end(),
-       [](const std::pair<std::string, hailo_stream_parameters_t> &stream_params) {
-            return HAILO_H2D_STREAM == stream_params.second.direction;
-       });
-
-    const bool has_async_stream = std::any_of(stream_params_by_name.begin(), stream_params_by_name.end(),
-         [](const std::pair<std::string, hailo_stream_parameters_t> &stream_params) {
-            return 0 != (stream_params.second.flags & HAILO_STREAM_FLAGS_ASYNC);
-        });
-
-    return
-        PipelineMultiplexer::is_multiplexer_supported() &&
-        m_core_ops_scheduler &&
-        input_counts == 1 && // TODO (HRT-8634): Support multi-inputs NGs (multi networks)
-        !has_async_stream;   // TODO (HRT-10557): Support async multiplexer
+    auto disable_multiplexer_env = std::getenv(DISABLE_MULTIPLEXER_ENV_VAR);
+    bool disabled_by_flag = (nullptr != disable_multiplexer_env) &&
+        (strnlen(disable_multiplexer_env, 2) == 1) &&
+        (strncmp(disable_multiplexer_env, "1", 1) == 0);
+    if (disabled_by_flag) {
+        LOGGER__WARNING("Usage of '{}' env variable is deprecated.", DISABLE_MULTIPLEXER_ENV_VAR);
+    }
+    return (!disabled_by_flag && m_core_ops_scheduler);
 }
 
 } /* namespace hailort */

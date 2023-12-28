@@ -889,6 +889,12 @@ class InferVStreams(object):
                         self._net_group_name)
                     output_tensor_info = output_buffers_info[output_name].output_tensor_info
                     shape, dtype = output_tensor_info
+                    if (output_buffers_info[output_name].output_order == FormatOrder.HAILO_NMS_WITH_BYTE_MASK):
+                        # Note: In python bindings the output data gets converted to py::array with dtype=dtype.
+                        #   In `HAILO_NMS_WITH_BYTE_MASK` we would like to get the data as uint8 and convert it by it's format.
+                        #   Therefore we need to get it as uint8 instead of float32 and adjust the shape size.
+                        dtype = numpy.uint8
+                        shape[0] = shape[0] * 4
                     output_buffers[output_name] = numpy.empty([batch_size] + list(shape), dtype=dtype)
         return output_buffers, output_buffers_info
 
@@ -1061,49 +1067,60 @@ class InferVStreams(object):
         return False
 
 
-class HailoDetectionBox(object):
-# TODO: HRT-11492 - Add documentation to class and functions
+class HailoDetection(object):
+    """Represents Hailo detection information"""
 
-    def __init__(self, bbox, class_id, mask_size, mask):
-        self._bbox = bbox
-        self._mask_size = mask_size
-        self._mask = mask
-        self._class_id = class_id
-
-    @property
-    def bbox(self):
-        return self._bbox
+    def __init__(self, detection):
+        self._y_min = detection.box.y_min
+        self._x_min = detection.box.x_min
+        self._y_max = detection.box.y_max
+        self._x_max = detection.box.x_max
+        self._score = detection.score
+        self._class_id = detection.class_id
+        self._mask = detection.mask()
 
     @property
     def y_min(self):
-        return self._bbox[0]
+        """Get detection's box y_min coordinate"""
+        return self._y_min
 
     @property
     def x_min(self):
-        return self._bbox[1]
+        """Get detection's box x_min coordinate"""
+        return self._x_min
 
     @property
     def y_max(self):
-        return self._bbox[2]
+        """Get detection's box y_max coordinate"""
+        return self._y_max
 
     @property
     def x_max(self):
-        return self._bbox[3]
+        """Get detection's box x_max coordinate"""
+        return self._x_max
 
     @property
     def score(self):
-        return self._bbox[4]
+        """Get detection's score"""
+        return self._score
 
     @property
     def class_id(self):
+        """Get detection's class_id"""
         return self._class_id
 
     @property
-    def mask_size(self):
-        return self._mask_size
-
-    @property
     def mask(self):
+        """Byte Mask:
+        The mask is a binary mask that defines a region of interest (ROI) of the image.
+        Mask pixel values of 1 indicate image pixels that belong to the ROI.
+        Mask pixel values of 0 indicate image pixels that are part of the background.
+
+        The size of the mask is the size of the box, in the original input image's dimensions.
+        Mask width = ceil((x_max - x_min) * image_width)
+        Mask height = ceil((y_max - y_min) * image_height)
+        First pixel represents the pixel (x_min * image_width, y_min * image_height) in the original input image.
+        """
         return self._mask
 
 class HailoRTTransformUtils(object):
@@ -1155,15 +1172,6 @@ class HailoRTTransformUtils(object):
                 raise HailoRTInvalidOperationException("quant_info is invalid as the model was compiled with multiple quant_infos. "
                                                        "Please compile again or provide a list of quant_infos.")
             _pyhailort.dequantize_output_buffer_in_place(raw_buffer, src_format_type, dst_format_type, elements_count, quant_info)
-
-    @staticmethod
-    def is_qp_valid(quant_info):
-        """Returns if quant_info is valid.
-
-        Args:
-            quant_info (:class:`~hailo_platform.pyhailort.pyhailort.QuantInfo`): The quantization info.
-        """
-        return _pyhailort.is_qp_valid(quant_info)
 
     @staticmethod
     def quantize_input_buffer(src_buffer, dst_buffer, elements_count, quant_info):
@@ -1233,116 +1241,80 @@ class HailoRTTransformUtils(object):
     def _output_raw_buffer_to_nms_with_byte_mask_format(raw_output_buffer, number_of_classes, batch_size, image_height, image_width,
             max_bboxes_per_class, output_dtype, is_tf_format=False):
         if is_tf_format:
-            if os.environ.get('HAILO_TF_FORMAT_INTERNAL'):
-                return HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_tf_format(raw_output_buffer, number_of_classes,
-                    batch_size, image_height, image_width, max_bboxes_per_class, output_dtype)
-            else:
-                raise HailoRTException("TF format is not supported with HAILO_NMS_WITH_BYTE_MASK format order")
+            return HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_tf_format(raw_output_buffer, number_of_classes,
+                batch_size, image_height, image_width, max_bboxes_per_class, output_dtype)
         else:
-            return HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_hailo_format(raw_output_buffer, number_of_classes)
+            return HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_hailo_format(raw_output_buffer)
 
     @staticmethod
-    def _output_raw_buffer_to_nms_with_byte_mask_hailo_format(raw_output_buffer, number_of_classes):
+    def _output_raw_buffer_to_nms_with_byte_mask_hailo_format(raw_output_buffer):
         converted_output_buffer = []
         for frame in raw_output_buffer:
             converted_output_buffer.append(
-                HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_hailo_format_single_frame(frame, number_of_classes))
+                HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_hailo_format_single_frame(frame))
         return converted_output_buffer
 
     @staticmethod
-    def _output_raw_buffer_to_nms_with_byte_mask_hailo_format_single_frame(raw_output_buffer, number_of_classes):
-        offset = 0
+    def _output_raw_buffer_to_nms_with_byte_mask_hailo_format_single_frame(raw_output_buffer):
+        detections = _pyhailort.convert_nms_with_byte_mask_buffer_to_detections(raw_output_buffer)
         converted_output_frame = []
-        for class_i in range(number_of_classes):
-            class_bboxes_amount = int(raw_output_buffer[offset])
-            offset += 1
-            classes_boxes = []
+        for detection in detections:
+            converted_output_frame.append(HailoDetection(detection))
 
-            if class_bboxes_amount != 0:
-                for bbox_i in range(class_bboxes_amount):
-                    bbox = raw_output_buffer[offset : offset + BBOX_PARAMS]
-                    offset += BBOX_PARAMS
-
-                    bbox_mask_size_in_bytes = raw_output_buffer[offset]
-                    offset += 1
-                    bbox_mask_size = int(bbox_mask_size_in_bytes / 4)
-
-                    bbox_mask = raw_output_buffer[offset : (offset + bbox_mask_size)]
-                    offset += bbox_mask_size
-
-                    hailo_bbox = HailoDetectionBox(bbox, class_i, bbox_mask_size_in_bytes, bbox_mask)
-                    classes_boxes.append(hailo_bbox)
-
-            converted_output_frame.append(classes_boxes)
         return converted_output_frame
 
     @staticmethod
     def _output_raw_buffer_to_nms_with_byte_mask_tf_format(raw_output_buffer, number_of_classes, batch_size, image_height, image_width,
             max_bboxes_per_class, output_dtype):
-        offset = 0
-        # The + 1 is for the extra row containing the bbox coordinates, score and class_id
-        output_height = image_height + 1
+
+        BBOX_WITH_MASK_PARAMS = 6 # 4 coordinates + score + class_idx
+        BBOX_WITH_MASK_AXIS = 2
+        CLASSES_AXIS = 1
 
         # We create the tf_format buffer with reversed max_bboxes_per_class/features for performance optimization
-        converted_output_buffer = numpy.empty([batch_size, max_bboxes_per_class, output_height, image_width], dtype=output_dtype)
+        converted_output_buffer = numpy.empty([batch_size, max_bboxes_per_class, (image_height * image_width + BBOX_WITH_MASK_PARAMS)], dtype=output_dtype)
 
         for frame_idx in range(len(raw_output_buffer)):
-            offset = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_tf_format_single_frame(
+            HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_tf_format_single_frame(
                 raw_output_buffer[frame_idx], converted_output_buffer[frame_idx], number_of_classes, max_bboxes_per_class,
-                image_height, image_width, offset)
-        converted_output_buffer = numpy.moveaxis(converted_output_buffer, 1, 3)
+                image_height, image_width)
+        converted_output_buffer = numpy.moveaxis(converted_output_buffer, CLASSES_AXIS, BBOX_WITH_MASK_AXIS)
+        converted_output_buffer = numpy.expand_dims(converted_output_buffer, 1)
         return converted_output_buffer
 
     @staticmethod
     def _output_raw_buffer_to_nms_with_byte_mask_tf_format_single_frame(raw_output_buffer, converted_output_frame, number_of_classes,
-        max_boxes, image_height, image_width, offset):
+        max_boxes, image_height, image_width):
 
-        detections = []
-        for class_i in range(number_of_classes):
-            class_bboxes_amount = int(raw_output_buffer[offset])
-            offset += 1
+        detections = _pyhailort.convert_nms_with_byte_mask_buffer_to_detections(raw_output_buffer)
+        bbox_idx = 0
+        for detection in detections:
+            if (bbox_idx >= max_boxes):
+                return
+            bbox = numpy.array([detection.box.y_min, detection.box.x_min, detection.box.y_max, detection.box.x_max,
+                    detection.score, detection.class_id])
+            bbox_mask = detection.mask()
 
-            if class_bboxes_amount != 0:
-                for bbox_i in range(class_bboxes_amount):
-                    bbox = raw_output_buffer[offset : offset + BBOX_PARAMS]
-                    offset += BBOX_PARAMS
+            y_min = numpy.ceil(bbox[0] * image_height)
+            x_min = numpy.ceil(bbox[1] * image_width)
+            bbox_width = numpy.ceil((bbox[3] - bbox[1]) * image_width)
+            resized_mask = numpy.zeros(image_height*image_width, dtype="uint8")
 
-                    bbox_mask_size_in_bytes = raw_output_buffer[offset]
-                    offset += 1
-                    bbox_mask_size = int(bbox_mask_size_in_bytes // 4)
+            for i in range(bbox_mask.size):
+                if (bbox_mask[i] == 1):
+                    x = int(x_min + (i % bbox_width))
+                    y = int(y_min + (i // bbox_width))
+                    if (x >= image_width):
+                        x = image_width - 1
+                    if ( y >= image_height):
+                        y = image_height - 1
+                    idx = (image_width * y) + x
+                    resized_mask[idx] = 1
 
-                    bbox_mask = raw_output_buffer[offset : (offset + bbox_mask_size)]
-                    offset += bbox_mask_size
+            bbox_with_mask = numpy.append(bbox, resized_mask)
+            converted_output_frame[bbox_idx] = bbox_with_mask
+            bbox_idx += 1
 
-                    y_min = bbox[0] * image_height
-                    x_min = bbox[1] * image_width
-                    bbox_width = round((bbox[3] - bbox[1]) * image_width)
-                    resized_mask = numpy.empty([image_height, image_width])
-
-                    for i in range(bbox_mask_size):
-                        if (bbox_mask[i] == 1):
-                            x = int(x_min + (i % bbox_width))
-                            y = int(y_min + (i // bbox_width))
-                            if (x >= image_width):
-                                x = image_width - 1
-                            if ( y >= image_height):
-                                y = image_height - 1
-                            resized_mask[y][x] = 1
-
-                    padding = image_width - len(bbox)
-                    bbox_padded = numpy.pad(bbox, pad_width=(0, padding), mode='constant')
-                    bbox_padded[len(bbox)] = class_i
-
-                    converted_detection = numpy.append(resized_mask ,[bbox_padded], axis=0)
-                    detections.append((bbox[4], converted_detection))
-
-        detections.sort(key=lambda tup: tup[0], reverse=True)
-        for detection_idx in range(len(detections)):
-            if (detection_idx >= max_boxes):
-                return offset
-            converted_output_frame[detection_idx] = detections[detection_idx][1]
-
-        return offset
 
     @staticmethod
     def _get_format_type(dtype):
@@ -1515,7 +1487,7 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 4
-SUPPORTED_FW_MINOR = 15
+SUPPORTED_FW_MINOR = 16
 SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
@@ -2706,8 +2678,7 @@ class InputVStreamParams(object):
         Args:
             configured_network (:class:`ConfiguredNetwork`): The configured network group for which
                 the params are created.
-            quantized (bool): Deprecated parameter that will be ignored. Determine whether to quantize (scale)
-                the data will be decided by the src-data and dst-data types.
+            quantized: Unused.
             format_type (:class:`~hailo_platform.pyhailort.pyhailort.FormatType`): The
                 default format type of the data for all input virtual streams.
                 The default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.AUTO`,
@@ -2725,16 +2696,13 @@ class InputVStreamParams(object):
         """
         if format_type is None:
             format_type = FormatType.AUTO
-        if quantized is None:
-            quantized = format_type != FormatType.FLOAT32
         if timeout_ms is None:
             timeout_ms = DEFAULT_VSTREAM_TIMEOUT_MS
         if queue_size is None:
             queue_size = DEFAULT_VSTREAM_QUEUE_SIZE
         name = network_name if network_name is not None else ""
         with ExceptionWrapper():
-            return configured_network._configured_network.make_input_vstream_params(name, quantized,
-                format_type, timeout_ms, queue_size)
+            return configured_network._configured_network.make_input_vstream_params(name, format_type, timeout_ms, queue_size)
 
     @staticmethod
     def make_from_network_group(configured_network, quantized=None, format_type=None, timeout_ms=None, queue_size=None, network_name=None):
@@ -2744,8 +2712,7 @@ class InputVStreamParams(object):
         Args:
             configured_network (:class:`ConfiguredNetwork`): The configured network group for which
                 the params are created.
-            quantized (bool): Deprecated parameter that will be ignored. Determine whether to quantize (scale)
-                the data will be decided by the src-data and dst-data types.
+            quantized: Unused.
             format_type (:class:`~hailo_platform.pyhailort.pyhailort.FormatType`): The
                 default format type of the data for all input virtual streams.
                 The default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.AUTO`,
@@ -2761,7 +2728,8 @@ class InputVStreamParams(object):
             dict: The created virtual streams params. The keys are the vstreams names. The values are the
             params.
         """
-        return InputVStreamParams.make(configured_network, quantized, format_type, timeout_ms, queue_size, network_name)
+        return InputVStreamParams.make(configured_network=configured_network, format_type=format_type, timeout_ms=timeout_ms,
+            queue_size=queue_size, network_name=network_name)
 
 
 class OutputVStreamParams(object):
@@ -2775,8 +2743,7 @@ class OutputVStreamParams(object):
         Args:
             configured_network (:class:`ConfiguredNetwork`): The configured network group for which
                 the params are created.
-            quantized (bool): Deprecated parameter that will be ignored. Determine whether to de-quantize (rescale)
-                the data will be decided by the src-data and dst-data types.
+            quantized: Unused.
             format_type (:class:`~hailo_platform.pyhailort.pyhailort.FormatType`): The
                 default format type of the data for all output virtual streams.
                 The default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.AUTO`,
@@ -2794,16 +2761,13 @@ class OutputVStreamParams(object):
         """
         if format_type is None:
             format_type = FormatType.AUTO
-        if quantized is None:
-            quantized = format_type != FormatType.FLOAT32
         if timeout_ms is None:
             timeout_ms = DEFAULT_VSTREAM_TIMEOUT_MS
         if queue_size is None:
             queue_size = DEFAULT_VSTREAM_QUEUE_SIZE
         name = network_name if network_name is not None else ""
         with ExceptionWrapper():
-            return configured_network._configured_network.make_output_vstream_params(name, quantized,
-                format_type, timeout_ms, queue_size)
+            return configured_network._configured_network.make_output_vstream_params(name, format_type, timeout_ms, queue_size)
 
     @staticmethod
     def make_from_network_group(configured_network, quantized=None, format_type=None, timeout_ms=None, queue_size=None, network_name=None):
@@ -2813,8 +2777,7 @@ class OutputVStreamParams(object):
         Args:
             configured_network (:class:`ConfiguredNetwork`): The configured network group for which
                 the params are created.
-            quantized (bool): Deprecated parameter that will be ignored. Determine whether to de-quantize (rescale)
-                the data will be decided by the src-data and dst-data types.
+            quantized: Unused.
             format_type (:class:`~hailo_platform.pyhailort.pyhailort.FormatType`): The
                 default format type of the data for all output virtual streams.
                 The default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.AUTO`,
@@ -2830,7 +2793,8 @@ class OutputVStreamParams(object):
             dict: The created virtual streams params. The keys are the vstreams names. The values are the
             params.
         """
-        return OutputVStreamParams.make(configured_network, quantized, format_type, timeout_ms, queue_size, network_name)
+        return OutputVStreamParams.make(configured_network=configured_network, format_type=format_type, timeout_ms=timeout_ms,
+            queue_size=queue_size, network_name=network_name)
 
     @staticmethod
     def make_groups(configured_network, quantized=None, format_type=None, timeout_ms=None, queue_size=None):
@@ -2840,8 +2804,7 @@ class OutputVStreamParams(object):
         Args:
             configured_network (:class:`ConfiguredNetwork`): The configured network group for which
                 the params are created.
-            quantized (bool): Deprecated parameter that will be ignored. Determine whether to de-quantize (rescale)
-                the data will be decided by the src-data and dst-data types.
+            quantized: Unused.
             format_type (:class:`~hailo_platform.pyhailort.pyhailort.FormatType`): The
                 default format type of the data for all output virtual streams.
                 The default is :attr:`~hailo_platform.pyhailort.pyhailort.FormatType.AUTO`,
@@ -2855,7 +2818,7 @@ class OutputVStreamParams(object):
             list of dicts: Each element in the list represent a group of params, where the keys are the vstreams names, and the values are the
             params. The params groups are splitted with respect to their underlying streams for multi process usges.
         """
-        all_params = OutputVStreamParams.make(configured_network, quantized=quantized, format_type=format_type, timeout_ms=timeout_ms, queue_size=queue_size)
+        all_params = OutputVStreamParams.make(configured_network=configured_network, format_type=format_type, timeout_ms=timeout_ms, queue_size=queue_size)
         low_level_streams_names = [stream_info.name for stream_info in configured_network.get_output_stream_infos()]
         stream_name_to_vstream_names = {stream_name: configured_network.get_vstream_names_from_stream_name(stream_name) for stream_name in low_level_streams_names}
         results = []
@@ -2994,7 +2957,7 @@ class OutputLayerUtils(object):
 
         if self._is_nms:
             self._quantized_empty_bbox = numpy.asarray([0] * BBOX_PARAMS, dtype=self.output_dtype)
-            if not (self._user_buffer_format.flags & _pyhailort.FormatFlags.QUANTIZED):
+            if self.output_dtype == numpy.float32:
                 HailoRTTransformUtils.dequantize_output_buffer_in_place(self._quantized_empty_bbox, self.output_dtype,
                     BBOX_PARAMS, self._vstream_info.quant_info)
 

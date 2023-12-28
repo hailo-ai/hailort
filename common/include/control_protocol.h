@@ -439,9 +439,10 @@ typedef struct {
     uint16_t periph_bytes_per_buffer;
     uint16_t periph_buffers_per_frame;
     uint16_t feature_padding_payload;
-    uint16_t buffer_padding_payload;
+    uint32_t buffer_padding_payload;
     uint16_t buffer_padding;
     bool is_periph_calculated_in_hailort;
+    bool is_core_hw_padding_config_in_dfc;
 } CONTROL_PROTOCOL__nn_stream_config_t;
 
 typedef struct {

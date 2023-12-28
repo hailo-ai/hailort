@@ -16,6 +16,7 @@
 #else
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
 #endif
 #include <grpcpp/grpcpp.h>
 #include "hailort_rpc.grpc.pb.h"
@@ -25,8 +26,11 @@
 #pragma GCC diagnostic pop
 #endif
 
-#include <thread>
 #include "hailo/hailort.h"
+#include "hailo/network_group.hpp"
+#include "vdevice_callbacks_queue.hpp"
+
+#include <thread>
 
 namespace hailort
 {
@@ -50,6 +54,10 @@ public:
         VDevice_get_physical_devices_ids_Reply* reply) override;
     virtual grpc::Status VDevice_get_default_streams_interface(grpc::ServerContext*, const VDevice_get_default_streams_interface_Request* request,
         VDevice_get_default_streams_interface_Reply* reply) override;
+    virtual grpc::Status VDevice_get_callback_id(grpc::ServerContext*, const VDevice_get_callback_id_Request* request,
+        VDevice_get_callback_id_Reply* reply) override;
+    virtual grpc::Status VDevice_finish_callback_listener(grpc::ServerContext*, const VDevice_finish_callback_listener_Request* request,
+        VDevice_finish_callback_listener_Reply* reply) override;
 
     virtual grpc::Status InputVStreams_create(grpc::ServerContext *, const VStream_create_Request *request,
          VStreams_create_Reply *reply) override;
@@ -141,6 +149,9 @@ public:
     virtual grpc::Status ConfiguredNetworkGroup_get_default_stream_interface(grpc::ServerContext*,
         const ConfiguredNetworkGroup_get_default_stream_interface_Request *request,
         ConfiguredNetworkGroup_get_default_stream_interface_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_shutdown(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_shutdown_Request *request,
+        ConfiguredNetworkGroup_shutdown_Reply *reply) override;
     virtual grpc::Status ConfiguredNetworkGroup_get_output_vstream_groups(grpc::ServerContext*,
         const ConfiguredNetworkGroup_get_output_vstream_groups_Request *request,
         ConfiguredNetworkGroup_get_output_vstream_groups_Reply *reply) override;
@@ -177,22 +188,39 @@ public:
     virtual grpc::Status ConfiguredNetworkGroup_get_sorted_output_names(grpc::ServerContext*,
         const ConfiguredNetworkGroup_get_sorted_output_names_Request *request,
         ConfiguredNetworkGroup_get_sorted_output_names_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_get_min_buffer_pool_size(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_get_min_buffer_pool_size_Request *request,
+        ConfiguredNetworkGroup_get_min_buffer_pool_size_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_get_layer_info(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_get_layer_info_Request *request,
+        ConfiguredNetworkGroup_get_layer_info_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_get_ops_metadata(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_get_ops_metadata_Request *request,
+        ConfiguredNetworkGroup_get_ops_metadata_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_set_nms_score_threshold(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_set_nms_score_threshold_Request *request,
+        ConfiguredNetworkGroup_set_nms_score_threshold_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_set_nms_iou_threshold(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_set_nms_iou_threshold_Request *request,
+        ConfiguredNetworkGroup_set_nms_iou_threshold_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_set_nms_max_bboxes_per_class(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Request *request,
+        ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Reply *reply) override;
     virtual grpc::Status ConfiguredNetworkGroup_get_stream_names_from_vstream_name(grpc::ServerContext*,
         const ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Request *request,
         ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Reply *reply) override;
     virtual grpc::Status ConfiguredNetworkGroup_get_vstream_names_from_stream_name(grpc::ServerContext*,
         const ConfiguredNetworkGroup_get_vstream_names_from_stream_name_Request *request,
         ConfiguredNetworkGroup_get_vstream_names_from_stream_name_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_infer_async(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_infer_async_Request *request,
+        ConfiguredNetworkGroup_infer_async_Reply *reply) override;
 
 private:
     void keep_alive();
     hailo_status flush_input_vstream(uint32_t handle);
     hailo_status abort_input_vstream(uint32_t handle);
     hailo_status abort_output_vstream(uint32_t handle);
-    hailo_status resume_input_vstream(uint32_t handle);
-    hailo_status resume_output_vstream(uint32_t handle);
-    bool is_input_vstream_aborted(uint32_t handle);
-    bool is_output_vstream_aborted(uint32_t handle);
     void abort_vstreams_by_pids(std::set<uint32_t> &pids);
     void remove_disconnected_clients();
     void update_client_id_timestamp(uint32_t pid);
@@ -200,6 +228,8 @@ private:
     std::mutex m_mutex;
     std::map<uint32_t, std::chrono::time_point<std::chrono::high_resolution_clock>> m_clients_pids;
     std::unique_ptr<std::thread> m_keep_alive;
+
+    std::mutex m_vdevice_creation_mutex;
 };
 
 }

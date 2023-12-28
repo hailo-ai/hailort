@@ -83,26 +83,7 @@ private:
             for (uint32_t w = 0; w < input_metadata.shape.width; w++) { // W axis - coloums
                 dst_type *src_col = src_row + (w * src_width_size);
                 src_type *dst_col = dst_row + (w * dst_width_size);
-                // In order to avoid overflows, we will perform the following:
-                // For each HW, we will find the maximal c value and then we will substract this value from
-                // all of the values in this HW. This will preserve the original softmax values + prevent overflows
-                src_type max_val = std::numeric_limits<float>::min();
-                for (uint32_t c = 0; c < input_metadata.shape.features; c++) {
-                    auto &current_value = *(src_col + c);
-                    if (current_value > max_val)
-                        max_val = current_value;
-                }
-                dst_type sum_exp = 0; // denominator
-                for (uint32_t c = 0; c < input_metadata.shape.features; c++) { // C axis - features
-                    auto &current_value = *(src_col + c);
-                    current_value -= max_val; // This step preserves the original softmax values + prevent overflows
-                    current_value = std::exp(static_cast<float32_t>(current_value)); // Set src_ptr[c] to e^(src_ptr[c]) so that we only calculate it once
-                    sum_exp += current_value;
-                }
-                for (uint32_t c = 0; c < input_metadata.shape.features; c++) {
-                    const auto &current_value = *(src_col + c);
-                    dst_col[c] = static_cast<dst_type>(current_value / sum_exp);
-                }
+                softmax(src_col, dst_col, input_metadata.shape.features);
             }
         }
         return HAILO_SUCCESS;
@@ -115,25 +96,7 @@ private:
         (void) output_metadata;
         auto src_ptr = (src_type*)inputs.begin()->second.data();
         auto dst_ptr = (dst_type*)outputs.begin()->second.data();
-        // In order to avoid overflows, we will perform the following:
-        // For each HW, we will find the maximal c value and then we will substract this value from
-        // all of the values in this HW. This will preserve the original softmax values + prevent overflows
-        src_type max_val = std::numeric_limits<float>::min();
-        for (uint32_t c = 0; c < input_metadata.shape.features; c++) {
-            auto &current_value = *(src_ptr + c);
-            if (current_value > max_val)
-                max_val = current_value;
-        }
-        dst_type sum_exp = 0;
-        for (uint32_t c = 0; c < input_metadata.shape.features; c++) {
-            auto &current_value = *(src_ptr + c);
-            current_value -= max_val; // This step preserves the original softmax values + prevent overflows
-            current_value = std::exp(static_cast<dst_type>(current_value)); // Set src_ptr[c] to e^(src_ptr[c])
-            sum_exp += current_value;
-        }
-        for (uint32_t c = 0; c < input_metadata.shape.features; c++) {
-            dst_ptr[c] = static_cast<dst_type>(src_ptr[c] / sum_exp);
-        }
+        softmax(src_ptr, dst_ptr, input_metadata.shape.features);
         return HAILO_SUCCESS;
     }
 
@@ -150,6 +113,8 @@ private:
         // 2nd dim represent the input data type (only float_32 is supported)
         // 3rd dim represent the output data type (only float_32 is supported)
         static SoftmaxFunction m_softmax_function_array[SOFTMAX_NUM_OF_POSSIBLE_FORMAT_ORDERS][SOFTMAX_NUM_OF_POSSIBLE_FORMAT_TYPES][SOFTMAX_NUM_OF_POSSIBLE_FORMAT_TYPES];
+
+        static hailo_status softmax(float32_t *src, float32_t *dst, size_t num_of_elements);
 
 };
 

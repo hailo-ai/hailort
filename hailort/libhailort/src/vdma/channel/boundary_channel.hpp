@@ -10,6 +10,7 @@
 #ifndef _HAILO_VDMA_BOUNDARY_CHANNEL_HPP_
 #define _HAILO_VDMA_BOUNDARY_CHANNEL_HPP_
 
+#include "vdma/vdma_device.hpp"
 #include "vdma/channel/vdma_channel_regs.hpp"
 #include "vdma/channel/channel_id.hpp"
 #include "vdma/memory/descriptor_list.hpp"
@@ -27,7 +28,7 @@ namespace vdma {
 
 struct OngoingTransfer {
     TransferRequest request;
-    uint16_t last_desc;
+    std::vector<uint16_t> last_descs;
     uint16_t latency_measure_desc;
 };
 
@@ -38,10 +39,10 @@ class BoundaryChannel final
 public:
     using Direction = HailoRTDriver::DmaDirection;
 
-    static Expected<BoundaryChannelPtr> create(vdma::ChannelId channel_id, Direction direction, HailoRTDriver &driver,
+    static Expected<BoundaryChannelPtr> create(vdma::ChannelId channel_id, Direction direction, VdmaDevice &vdma_device,
         uint32_t descs_count, uint16_t desc_page_size, const std::string &stream_name = "", LatencyMeterPtr latency_meter = nullptr);
 
-    BoundaryChannel(vdma::ChannelId channel_id, Direction direction, HailoRTDriver &driver, uint32_t descs_count,
+    BoundaryChannel(vdma::ChannelId channel_id, Direction direction, VdmaDevice &vdma_device, uint32_t descs_count,
         uint16_t desc_page_size, const std::string &stream_name, LatencyMeterPtr latency_meter,
         hailo_status &status);
     BoundaryChannel(const BoundaryChannel &other) = delete;
@@ -97,10 +98,11 @@ private:
     void on_transfer_complete(std::unique_lock<std::mutex> &lock, OngoingTransfer &transfer,
         hailo_status complete_status);
     hailo_status prepare_descriptors(size_t transfer_size, uint16_t starting_desc,
-        MappedBufferPtr mapped_buffer, size_t buffer_offset);
+        MappedBufferPtr mapped_buffer, size_t buffer_offset, bool raise_interrupt = true);
 
     bool is_buffer_already_configured(MappedBufferPtr buffer, size_t buffer_offset_in_descs, size_t starting_desc) const;
-    void add_ongoing_transfer(TransferRequest &&transfer_request, uint16_t first_desc, uint16_t last_desc);
+    void add_ongoing_transfer(TransferRequest &&transfer_request, uint16_t first_desc,
+        std::vector<uint16_t> &&last_descs);
 
     static bool is_desc_between(uint16_t begin, uint16_t end, uint16_t desc);
     uint16_t get_num_available() const;
@@ -109,6 +111,7 @@ private:
 
     const vdma::ChannelId m_channel_id;
     const Direction m_direction;
+    VdmaDevice &m_vdma_device;
     HailoRTDriver &m_driver;
     VdmaChannelRegs m_host_registers;
     std::shared_ptr<DescriptorList> m_desc_list; // Host side descriptor list

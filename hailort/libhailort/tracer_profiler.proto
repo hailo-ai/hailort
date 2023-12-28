@@ -57,6 +57,7 @@ message ProtoProfilerAddCoreOpTrace {
     uint64 time_stamp = 1; // nanosec
     int32 core_op_handle = 2;
     string core_op_name = 3;
+    uint32 max_batch_size = 4;
 }
 
 // Frame dequeue means transferring a frame from the buffer to device

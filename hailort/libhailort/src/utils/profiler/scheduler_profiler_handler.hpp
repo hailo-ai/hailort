@@ -17,6 +17,7 @@
 #else
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
 #endif
 #include "tracer_profiler.pb.h"
 #if defined(_MSC_VER)
@@ -39,19 +40,19 @@ public:
     ~SchedulerProfilerHandler();
 
     virtual void handle_trace(const AddCoreOpTrace&) override;
-    virtual void handle_trace(const CreateCoreOpInputStreamsTrace&) override;
-    virtual void handle_trace(const CreateCoreOpOutputStreamsTrace&) override;
-    virtual void handle_trace(const WriteFrameTrace&) override;
-    virtual void handle_trace(const InputVdmaDequeueTrace&) override;
-    virtual void handle_trace(const ReadFrameTrace&) override;
-    virtual void handle_trace(const OutputVdmaEnqueueTrace&) override;
+    virtual void handle_trace(const AddStreamH2DTrace&) override;
+    virtual void handle_trace(const AddStreamD2HTrace&) override;
+    virtual void handle_trace(const FrameEnqueueH2DTrace&) override;
+    virtual void handle_trace(const FrameDequeueH2DTrace&) override;
+    virtual void handle_trace(const FrameDequeueD2HTrace&) override;
+    virtual void handle_trace(const FrameEnqueueD2HTrace&) override;
     virtual void handle_trace(const SwitchCoreOpTrace&) override;
     virtual void handle_trace(const AddDeviceTrace&) override;
     virtual void handle_trace(const SetCoreOpTimeoutTrace&) override;
     virtual void handle_trace(const SetCoreOpThresholdTrace&) override;
     virtual void handle_trace(const SetCoreOpPriorityTrace&) override;
     virtual void handle_trace(const OracleDecisionTrace&) override;
-    virtual void handle_trace(const DumpProfilerState&) override;
+    virtual void handle_trace(const DumpProfilerStateTrace&) override;
     virtual void handle_trace(const InitProfilerProtoTrace&) override;
 
 private:
@@ -64,7 +65,6 @@ private:
     std::atomic<bool> m_first_write;
     ProtoProfiler m_profiler_trace_proto;
     std::mutex m_proto_lock;
-    int64_t m_start_time;
 };
 
 }

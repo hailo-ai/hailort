@@ -17,7 +17,6 @@
 #include <thread>
 
 
-constexpr bool QUANTIZED = true;
 constexpr hailo_format_type_t FORMAT_TYPE = HAILO_FORMAT_TYPE_AUTO;
 
 constexpr size_t INFER_FRAME_COUNT = 100;
@@ -151,7 +150,7 @@ void network_group_thread_main(std::shared_ptr<ConfiguredNetworkGroup> network_g
     std::shared_ptr<std::atomic_bool> should_threads_run, hailo_status &status_out)
 {
     // Create VStreams
-    auto vstreams_exp = VStreamsBuilder::create_vstreams(*network_group, QUANTIZED, FORMAT_TYPE);
+    auto vstreams_exp = VStreamsBuilder::create_vstreams(*network_group, {}, FORMAT_TYPE);
     if (!vstreams_exp) {
         std::cerr << "Failed to create vstreams, status = " << vstreams_exp.status() << std::endl;
         status_out = vstreams_exp.status();

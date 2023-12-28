@@ -51,6 +51,7 @@ public:
 
     virtual hailo_status activate_impl(uint16_t dynamic_batch_size) override;
     virtual hailo_status deactivate_impl() override;
+    virtual hailo_status shutdown() override;
     virtual Expected<HwInferResults> run_hw_infer_estimator() override;
 
     virtual ~HcpConfigCoreOp() = default;

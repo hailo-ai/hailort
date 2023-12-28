@@ -58,6 +58,8 @@ extern "C" {
 #define HAILO_PCIE_ANY_DOMAIN (UINT32_MAX)
 #define HAILO_DEFAULT_VSTREAM_QUEUE_SIZE (2)
 #define HAILO_DEFAULT_VSTREAM_TIMEOUT_MS (10000)
+#define HAILO_DEFAULT_ASYNC_INFER_TIMEOUT_MS (10000)
+#define HAILO_DEFAULT_ASYNC_INFER_QUEUE_SIZE (2)
 #define HAILO_DEFAULT_DEVICE_COUNT (1)
 
 #define HAILO_SOC_ID_LENGTH (32)
@@ -415,6 +417,7 @@ typedef enum hailo_device_architecture_e {
     HAILO_ARCH_HAILO8L,
     HAILO_ARCH_HAILO15H,
     HAILO_ARCH_PLUTO,
+    HAILO_ARCH_HAILO15M,
     
     /** Max enum value to maintain ABI Integrity */
     HAILO_ARCH_MAX_ENUM = HAILO_MAX_ENUM
@@ -716,20 +719,17 @@ typedef enum {
     HAILO_FORMAT_ORDER_HAILO_YYYYUV                     = 19,
 
     /**
-     * NMS bbox
-     * - Host side
+     * NMS_WITH_BYTE_MASK format
      *
-     *      For each class (::hailo_nms_shape_t.number_of_classes), the layout is
-     *          \code
-     *          struct (packed) {
-     *              float32_t bbox_count;
-     *              hailo_bbox_with_byte_mask_t bbox_with_byte_mask[bbox_count];
-     *          };
-     *          \endcode
+     * - Host side
+     *      \code
+     *      struct (packed) {
+     *          uint16_t detections_count;
+     *          hailo_detection_with_byte_mask_t[detections_count];
+     *      };
+     *      \endcode
      *
      *      The host format type supported ::HAILO_FORMAT_TYPE_FLOAT32.
-     *
-     *      Maximum amount of bboxes per class is ::hailo_nms_shape_t.max_bboxes_per_class.
      *
      * - Not used for device side
      */
@@ -818,6 +818,7 @@ typedef enum {
 // ************************************* NOTE - START ************************************* //
 // Dma buffer allocation isn't currently supported and is for internal use only             //
 // **************************************************************************************** //
+// TODO: remove hailo_dma_buffer_direction_t (HRT-12391)
 /** Hailo dma buffer direction */
 typedef enum {
     HAILO_DMA_BUFFER_DIRECTION_H2D    = 0,
@@ -1311,15 +1312,38 @@ typedef struct {
 } hailo_bbox_float32_t;
 
 typedef struct {
-    hailo_bbox_float32_t bbox;
+    float32_t y_min;
+    float32_t x_min;
+    float32_t y_max;
+    float32_t x_max;
+} hailo_rectangle_t;
+
+typedef struct {
+    /** Detection's box coordinates */
+    hailo_rectangle_t box;
+
+    /** Detection's score */
+    float32_t score;
+
+    /** Detection's class id */
+    uint16_t class_id;
 
     /** Mask size in bytes */
-    uint32_t mask_size;
+    size_t mask_size;
 
-    /** Mask */
-    // TODO: HRT-11413 - Add documentation on byte mask
+    /**
+     * Byte Mask:
+     * The mask is a binary mask that defines a region of interest (ROI) of the image.
+     * Mask pixel values of 1 indicate image pixels that belong to the ROI.
+     * Mask pixel values of 0 indicate image pixels that are part of the background.
+     *
+     * The size of the mask is the size of the box, in the original input image's dimensions.
+     * Mask width = ceil((box.x_max - box.x_min) * image_width)
+     * Mask height = ceil((box.y_max - box.y_min) * image_height)
+     * First pixel represents the pixel (x_min * image_width, y_min * image_height) in the original input image.
+    */
     uint8_t *mask;
-} hailo_bbox_with_byte_mask_t;
+} hailo_detection_with_byte_mask_t;
 #pragma pack(pop)
 
 /**
@@ -2370,8 +2394,8 @@ HAILORTAPI hailo_status hailo_power_measurement(hailo_device device, hailo_dvm_o
  * @param[in]   device               A ::hailo_device object.
  * @param[in]   averaging_factor     Number of samples per time period, sensor configuration value.
  * @param[in]   sampling_period      Related conversion time, sensor configuration value.
- *                                   The sensor samples the power every sampling_period {ms} and averages every
- *                                   averaging_factor samples. The sensor provides a new value every: 2 * sampling_period * averaging_factor {ms}.
+ *                                   The sensor samples the power every sampling_period {us} and averages every
+ *                                   averaging_factor samples. The sensor provides a new value every: (2 * sampling_period * averaging_factor) {ms}.
  *                                   The firmware wakes up every interval_milliseconds {ms} and checks the sensor.
  *                                   If there is a new value to read from the sensor, the firmware reads it.
  *                                   Note that the average calculated by the firmware is 'average of averages',
@@ -2786,6 +2810,19 @@ HAILORTAPI hailo_status hailo_network_group_get_output_stream_infos(hailo_config
     hailo_stream_info_t *stream_infos, size_t stream_infos_length, size_t *number_of_streams);
 
 /**
+ * Shutdown a given network group. Makes sure all ongoing async operations are canceled. All async callbacks
+ * of transfers that have not been completed will be called with status ::HAILO_STREAM_ABORTED_BY_USER.
+ * Any resources attached to the network group may be released after function returns.
+ *
+ * @param[in]  network_group                NetworkGroup to be shutdown.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ *
+ * @note Calling this function is optional, and it is used to shutdown network group while there is still ongoing
+ *       inference.
+ */
+HAILORTAPI hailo_status hailo_shutdown_network_group(hailo_configured_network_group network_group);
+
+/**
  * Activates hailo_device inner-resources for context_switch inference.
  *
  * @param[in]  network_group                NetworkGroup to be activated.
@@ -2851,7 +2888,7 @@ HAILORTAPI hailo_status hailo_get_latency_measurement(hailo_configured_network_g
  * @param[in]  network_name                 Network name for which to set the timeout.
  *                                          If NULL is passed, the timeout will be set for all the networks in the network group.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE, and before the creation of any vstreams.
+ * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE.
  * @note The default timeout is 0ms.
  * @note Currently, setting the timeout for a specific network is not supported.
  * @note The timeout may be ignored to prevent idle time from the device.
@@ -2869,7 +2906,7 @@ HAILORTAPI hailo_status hailo_set_scheduler_timeout(hailo_configured_network_gro
  * @param[in]  network_name                 Network name for which to set the threshold.
  *                                          If NULL is passed, the threshold will be set for all the networks in the network group.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE, and before the creation of any vstreams.
+ * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE.
  * @note The default threshold is 0, which means HailoRT will apply an automatic heuristic to choose the threshold.
  * @note Currently, setting the threshold for a specific network is not supported.
  * @note The threshold may be ignored to prevent idle time from the device.
@@ -3440,18 +3477,15 @@ HAILORTAPI hailo_status hailo_fuse_nms_frames(const hailo_nms_fuse_input_t *nms_
  *                                      the function returns input virtual stream params of the given network.
  *                                      If NULL is passed, the function returns the input virtual stream params of 
  *                                      all the networks of the first network group.
- * @param[in] quantized                 Deprecated parameter that will be ignored. Determine whether to quantize (scale)
- *                                      the data will be decided by the src-data and dst-data types.
+ * @param[in] unused                    Unused.
  * @param[in] format_type               The default format type for all input virtual streams.
  * @param[out] input_params             List of params for input virtual streams.
  * @param[inout] input_params_count     On input: Amount of @a input_params array.
  *                                      On output: Will be filled with the detected amount of input vstreams on the @a network or @a network_group.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to quantize (scale) the data will be decided by
- *       the src-data and dst-data types.
  */
 HAILORTAPI hailo_status hailo_hef_make_input_vstream_params(hailo_hef hef, const char *name, 
-    bool quantized, hailo_format_type_t format_type, 
+    bool unused, hailo_format_type_t format_type, 
     hailo_input_vstream_params_by_name_t *input_params, size_t *input_params_count);
 
 /**
@@ -3465,52 +3499,43 @@ HAILORTAPI hailo_status hailo_hef_make_input_vstream_params(hailo_hef hef, const
  *                                      the function returns output virtual stream params of the given network.
  *                                      If NULL is passed, the function returns the output virtual stream params of 
  *                                      all the networks of the first network group.
- * @param[in] quantized                 Deprecated parameter that will be ignored. Determine whether to de-quantize (rescale)
- *                                      the data will be decided by the src-data and dst-data types.
+ * @param[in] unused                    Unused.
  * @param[in] format_type               The default format type for all output virtual streams.
  * @param[out] output_params            List of params for output virtual streams.
  * @param[inout] output_params_count    On input: Amount of @a output_params array.
  *                                      On output: Will be filled with the detected amount of output vstreams on the @a network or @a network_group.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to de-quantize (rescale) the data will be decided by
- *       the src-data and dst-data types.
  */
 HAILORTAPI hailo_status hailo_hef_make_output_vstream_params(hailo_hef hef, const char *name, 
-    bool quantized, hailo_format_type_t format_type, 
+    bool unused, hailo_format_type_t format_type, 
     hailo_output_vstream_params_by_name_t *output_params, size_t *output_params_count);
 
 /**
  * Creates input virtual stream params for a given network_group.
  *
  * @param[in]  network_group            Network group that owns the streams.
- * @param[in]  quantized                Deprecated parameter that will be ignored. Determine whether to quantize (scale)
- *                                      the data will be decided by the src-data and dst-data types.
+ * @param[in]  unused                   Unused.
  * @param[in]  format_type              The default format type for all input virtual streams.
  * @param[out] input_params             List of params for input virtual streams.
  * @param[inout] input_params_count     On input: Amount of @a input_params array.
  *                                      On output: Will be filled with the detected amount of input vstreams on the @a network_group.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to quantize (scale) the data will be decided by
- *       the src-data and dst-data types.
  */
-HAILORTAPI hailo_status hailo_make_input_vstream_params(hailo_configured_network_group network_group, bool quantized,
+HAILORTAPI hailo_status hailo_make_input_vstream_params(hailo_configured_network_group network_group, bool unused,
     hailo_format_type_t format_type, hailo_input_vstream_params_by_name_t *input_params, size_t *input_params_count);
 
 /**
  * Creates output virtual stream params for given network_group.
  *
  * @param[in]  network_group            Network group that owns the streams.
- * @param[in]  quantized                Deprecated parameter that will be ignored. Determine whether to de-quantize (rescale)
- *                                      the data will be decided by the src-data and dst-data types.
+ * @param[in]  unused                   Unused.
  * @param[in]  format_type              The default format type for all output virtual streams.
  * @param[out] output_params            List of params for output virtual streams.
  * @param[inout] output_params_count    On input: Amount of @a output_params array.
  *                                      On output: Will be filled with the detected amount of output vstreams on the @a network_group.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to de-quantize (rescale) the data will be decided by
- *       the src-data and dst-data types.
  */
-HAILORTAPI hailo_status hailo_make_output_vstream_params(hailo_configured_network_group network_group, bool quantized,
+HAILORTAPI hailo_status hailo_make_output_vstream_params(hailo_configured_network_group network_group, bool unused,
     hailo_format_type_t format_type, hailo_output_vstream_params_by_name_t *output_params,
     size_t *output_params_count);
 

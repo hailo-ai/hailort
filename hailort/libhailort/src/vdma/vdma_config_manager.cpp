@@ -47,7 +47,7 @@ hailo_status VdmaConfigManager::switch_core_op(std::shared_ptr<VdmaConfigCoreOp>
         CHECK_SUCCESS(status, "Failed activating next core-op");
 
         // Current core-op is now deactivated (we are not on batch switch), so we can cancel pending transfers.
-        status = current_active_core_op->get_resources_manager()->cancel_pending_transfers();
+        status = current_active_core_op->cancel_pending_transfers();
         CHECK_SUCCESS(status, "Failed canceling pending transfers from previous core-op");
     }
 

@@ -13,6 +13,7 @@
 #include "hef/hef_internal.hpp"
 #include "device_common/control.hpp"
 #include "hw_consts.hpp"
+#include "utils/soc_utils/partial_cluster_reader.hpp"
 
 #include "control_protocol.h"
 #include "byte_order.h"
@@ -37,6 +38,8 @@ namespace hailort
         "If only taking one measurement, the protection will resume automatically.\n" \
         "If doing continuous measurement, to enable overcurrent protection again you have to stop the power measurement on this dvm." \
     )
+
+#define FORCE_LAYOUT_INTERNAL_ENV_VAR "FORCE_LAYOUT_INTERNAL"
 
 typedef std::array<std::array<float64_t, CONTROL_PROTOCOL__POWER_MEASUREMENT_TYPES__COUNT>, CONTROL_PROTOCOL__DVM_OPTIONS_COUNT> power_conversion_multiplier_t;
 
@@ -3057,15 +3060,25 @@ Expected<CONTROL_PROTOCOL__get_extended_device_information_response_t> Control::
 
 Expected<uint32_t> Control::get_partial_clusters_layout_bitmap(Device &device)
 {
+    auto force_layout_env = std::getenv(FORCE_LAYOUT_INTERNAL_ENV_VAR);
+    if (force_layout_env) {
+        return std::stoi(std::string(force_layout_env));
+    }
+
     auto device_arch_exp = device.get_architecture();
     CHECK_EXPECTED(device_arch_exp);
-    if (HAILO_ARCH_HAILO8L != device_arch_exp.value()) {
-        // Partial clusters layout is only relevant in HAILO_ARCH_HAILO8L arch
+    if (HAILO_ARCH_HAILO8L != device_arch_exp.value() && HAILO_ARCH_HAILO15M != device_arch_exp.value()) {
+        // Partial clusters layout is only relevant in HAILO_ARCH_HAILO8L and HAILO_ARCH_HAILO15M arch
         return Expected<uint32_t>(PARTIAL_CLUSTERS_LAYOUT_IGNORE);
     }
-    auto extended_device_info_response = get_extended_device_info_response(device);
-    CHECK_EXPECTED(extended_device_info_response);
-    return BYTE_ORDER__ntohl(extended_device_info_response->partial_clusters_layout_bitmap);
+
+    if (HAILO_ARCH_HAILO15M == device_arch_exp.value()) {
+        return PartialClusterReader::get_partial_clusters_layout_bitmap(device_arch_exp.value());
+    } else {
+        auto extended_device_info_response = get_extended_device_info_response(device);
+        CHECK_EXPECTED(extended_device_info_response);
+        return BYTE_ORDER__ntohl(extended_device_info_response->partial_clusters_layout_bitmap);
+    }
 }
 
 Expected<hailo_extended_device_information_t> Control::get_extended_device_information(Device &device)

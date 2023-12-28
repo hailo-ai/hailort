@@ -29,15 +29,8 @@ namespace hailort
 {
 
 #define RGB_FEATURES (3)
+#define F8CR_MIN_FEATURES_FOR_TRANSFORMATION (8)
 
-
-bool TransformContextUtils::should_quantize_by_flags(const hailo_stream_direction_t stream_direction,
-    const hailo_format_flags_t &src_format_flags, const hailo_format_flags_t &dst_format_flags)
-{
-    return (HAILO_H2D_STREAM == stream_direction) ?
-        (!(HAILO_FORMAT_FLAGS_QUANTIZED & src_format_flags) && (HAILO_FORMAT_FLAGS_QUANTIZED & dst_format_flags)) :
-        ((HAILO_FORMAT_FLAGS_QUANTIZED & src_format_flags) && !(HAILO_FORMAT_FLAGS_QUANTIZED & dst_format_flags));
-}
 
 Expected<bool> TransformContextUtils::should_quantize_by_type(const hailo_stream_direction_t stream_direction,
     const hailo_format_type_t &src_format_type, const hailo_format_type_t &dst_format_type)
@@ -70,26 +63,9 @@ Expected<bool> TransformContextUtils::should_quantize_by_type(const hailo_stream
 }
 
 Expected<bool> TransformContextUtils::should_quantize(const hailo_stream_direction_t stream_direction, 
-    const hailo_format_t &src_format, const hailo_format_t &dst_format, const std::vector<hailo_quant_info_t> &quant_infos)
+    const hailo_format_t &src_format, const hailo_format_t &dst_format)
 {
-    auto should_quantize_by_flags = TransformContextUtils::should_quantize_by_flags(stream_direction, src_format.flags, dst_format.flags);
-    auto should_quantize_by_type = TransformContextUtils::should_quantize_by_type(stream_direction, src_format.type, dst_format.type);
-    CHECK_EXPECTED(should_quantize_by_type);
-
-    if (should_quantize_by_type.value() != should_quantize_by_flags) {
-        auto direction_str = (HAILO_H2D_STREAM == stream_direction) ? "H2D" : "D2H";
-        auto quantization_by_type_needed_str = (should_quantize_by_type.value()) ? "" : "not ";
-        LOGGER__WARNING(
-            "{} stream is marked as quantized={}, but according to format types (src={}, dst={}), quantization is {}needed. Usage of HAILO_FORMAT_FLAGS_QUANTIZED is deprecated and will be ignored.",
-            direction_str, !should_quantize_by_flags, HailoRTCommon::get_format_type_str(src_format.type), HailoRTCommon::get_format_type_str(dst_format.type),
-            quantization_by_type_needed_str);
-    }
-
-    if (HAILO_H2D_STREAM == stream_direction) {
-        return (should_quantize_by_type.value() && !((are_all_quant_infos_identity(quant_infos)) && (src_format.type == dst_format.type)));
-    } else {
-        return should_quantize_by_type;
-    }
+    return TransformContextUtils::should_quantize_by_type(stream_direction, src_format.type, dst_format.type);
 }
 
 bool TransformContextUtils::should_transpose(const hailo_format_flags_t &src_flags, const hailo_format_flags_t &dst_flags)
@@ -114,11 +90,25 @@ bool TransformContextUtils::should_reorder(const hailo_3d_image_shape_t &src_ima
     switch (src_format.order) {
         // Orders that are supported both on host and hw sides, and where transformation is still needed when shapes are equals
         case HAILO_FORMAT_ORDER_F8CR:
+            // In F8CR - if amount of features is less (or equal) than F8CR_MIN_FEATURES_FOR_TRANSFORMATION (8) - dont transform
+            if (F8CR_MIN_FEATURES_FOR_TRANSFORMATION >= src_image_shape.features) {
+                return false;
+            } else {
+                return true;
+            }
         case HAILO_FORMAT_ORDER_HAILO_NMS:
             return true;
         default:
             return false;
     }
+}
+
+bool TransformContextUtils::should_pad_periph(const hailo_3d_image_shape_t &dst_image_shape, const hailo_format_t &dst_format)
+{
+    // Check if hw frame size is aligned to 8 for periph transfer
+    const auto shape_size = dst_image_shape.height * dst_image_shape.width * dst_image_shape.features *
+        HailoRTCommon::get_data_bytes(dst_format.type);
+    return (0 != (shape_size % HailoRTCommon::HW_DATA_ALIGNMENT));
 }
 
 Expected<bool> TransformContextUtils::is_transformation_required(const hailo_stream_direction_t stream_direction,
@@ -133,11 +123,12 @@ Expected<bool> TransformContextUtils::is_transformation_required(const hailo_str
     assert((HAILO_FORMAT_ORDER_AUTO != src_format.order) && (HAILO_FORMAT_ORDER_AUTO != dst_format.order));
     assert((HAILO_FORMAT_TYPE_AUTO != src_format.type) && (HAILO_FORMAT_TYPE_AUTO != dst_format.type));
 
-    auto should_quantize_exp = should_quantize(stream_direction, src_format, dst_format, quant_infos);
+    auto should_quantize_exp = should_quantize(stream_direction, src_format, dst_format);
     CHECK_EXPECTED(should_quantize_exp);
 
     return (*should_quantize_exp || should_transpose(src_format.flags, dst_format.flags) ||
-        should_reorder(src_image_shape, src_format, dst_image_shape, dst_format));
+        should_reorder(src_image_shape, src_format, dst_image_shape, dst_format) ||
+        should_pad_periph(dst_image_shape, dst_format));
 }
 
 std::string TransformContextUtils::make_quantization_description(hailo_format_type_t src_type,
@@ -173,16 +164,6 @@ std::string TransformContextUtils::make_transpose_description(hailo_3d_image_sha
         ", dst_shape: (" << transposed_shape.height << ", " << transposed_shape.width << ", " << transposed_shape.features << ")";
 
     return transpose_description.str();
-}
-
-bool TransformContextUtils::are_all_quant_infos_identity(const std::vector<hailo_quant_info_t> &quant_infos)
-{
-    for (const auto &quant_info : quant_infos) {
-        if (!Quantization::is_identity_qp(quant_info)) {
-            return false;
-        }
-    }
-    return true;
 }
 
 template<typename T, typename Q>
@@ -610,7 +591,7 @@ void transform__h2d_F8CR(const T *src_ptr, hailo_3d_image_shape_t *src_image_sha
     /* Validate arguments */
     ASSERT(NULL != src_ptr);
     ASSERT(NULL != dst_ptr);
-    ASSERT(0 == (dst_image_shape->features % HW_DATA_ALIGNMENT));
+    ASSERT(0 == (dst_image_shape->features % HailoRTCommon::HW_DATA_ALIGNMENT));
 
     uint32_t src_row_size = src_image_shape->width * src_image_shape->features;
     uint32_t dst_row_size = dst_image_shape->width * dst_image_shape->features;
@@ -623,15 +604,15 @@ void transform__h2d_F8CR(const T *src_ptr, hailo_3d_image_shape_t *src_image_sha
         for (uint32_t c = 0; c < src_image_shape->width; c++) {
             for (uint32_t f = 0; f < src_image_shape->features; f+=8) {
                 src_offset = r * src_row_size + c * src_image_shape->features + f;
-                dst_offset = r * dst_row_size + c * HW_DATA_ALIGNMENT + f * dst_image_shape->width;
-                if (f + HW_DATA_ALIGNMENT <= src_image_shape->features) {
+                dst_offset = r * dst_row_size + c * HailoRTCommon::HW_DATA_ALIGNMENT + f * dst_image_shape->width;
+                if (f + HailoRTCommon::HW_DATA_ALIGNMENT <= src_image_shape->features) {
                     /* take 8 full features for each column and write them */
-                    memcpy(dst_ptr + dst_offset, src_ptr + src_offset, HW_DATA_ALIGNMENT * sizeof(T));
+                    memcpy(dst_ptr + dst_offset, src_ptr + src_offset, HailoRTCommon::HW_DATA_ALIGNMENT * sizeof(T));
                 }
                 else {
                     /* take the last 8 or less features, pad features to 8 and write */
-                    auto last_features = (src_features % HW_DATA_ALIGNMENT);
-                    auto remainder = (HW_DATA_ALIGNMENT - last_features);
+                    auto last_features = (src_features % HailoRTCommon::HW_DATA_ALIGNMENT);
+                    auto remainder = (HailoRTCommon::HW_DATA_ALIGNMENT - last_features);
                     memcpy(dst_ptr + dst_offset, src_ptr + src_offset, last_features * sizeof(T));
                     dst_offset += last_features;
                     memset(dst_ptr + dst_offset, 0, remainder * sizeof(T));
@@ -658,15 +639,16 @@ void transform__d2h_F8CR(const T *src_ptr, hailo_3d_image_shape_t *src_image_sha
     for (uint32_t r = 0; r < dst_image_shape->height ; r++) {
         for (uint32_t c = 0; c < dst_image_shape->width; c++) {
             for (uint32_t f = 0; f < dst_image_shape->features; f+=8) {
-                src_offset = r * src_row_size + c * HW_DATA_ALIGNMENT + f * src_image_shape->width;
+                src_offset = r * src_row_size + c * static_cast<uint32_t>(HailoRTCommon::HW_DATA_ALIGNMENT) +
+                    f * src_image_shape->width;
                 dst_offset = r * dst_row_size + c * dst_image_shape->features + f;
-                if (f + HW_DATA_ALIGNMENT <= dst_image_shape->features) {
+                if (f + HailoRTCommon::HW_DATA_ALIGNMENT <= dst_image_shape->features) {
                     /* copy the first dst_image_features (which are aligned to 8)! */
-                    memcpy(dst_ptr + dst_offset, src_ptr + src_offset, HW_DATA_ALIGNMENT * sizeof(T));
+                    memcpy(dst_ptr + dst_offset, src_ptr + src_offset, HailoRTCommon::HW_DATA_ALIGNMENT * sizeof(T));
                     }
                 else {
                     /* copy the last 8 or less features, remove pad */
-                    memcpy(dst_ptr + dst_offset, src_ptr + src_offset, (dst_features % HW_DATA_ALIGNMENT) * sizeof(T));
+                    memcpy(dst_ptr + dst_offset, src_ptr + src_offset, (dst_features % HailoRTCommon::HW_DATA_ALIGNMENT) * sizeof(T));
                 }
             }
         }
@@ -741,8 +723,8 @@ hailo_status transform__h2d_NCHW_to_NHCW(
           "NCHW_to_NHCW Transform height src/dst should be the same");
     CHECK(src_image_shape->width <= dst_image_shape->width, HAILO_INVALID_ARGUMENT,
           "NCHW_to_NHCW Transform src width should be smaller/equal than dst width");
-    CHECK(((dst_image_shape->width * sizeof(T)) % HW_DATA_ALIGNMENT) == 0, HAILO_INVALID_ARGUMENT,
-          "NCHW_to_NHCW Transform dst width must be aligned to {}", HW_DATA_ALIGNMENT);
+    CHECK(((dst_image_shape->width * sizeof(T)) % HailoRTCommon::HW_DATA_ALIGNMENT) == 0, HAILO_INVALID_ARGUMENT,
+          "NCHW_to_NHCW Transform dst width must be aligned to {}", HailoRTCommon::HW_DATA_ALIGNMENT);
 
     size_t width_size = src_image_shape->width;
     size_t pad_size = (dst_image_shape->width - src_image_shape->width);
@@ -824,8 +806,8 @@ hailo_status transform__h2d_YUY2_to_YUY2(const T *src_ptr, T *dst_ptr, uint32_t 
     
     auto shape_size_in_bytes = shape_size * sizeof(T);
 
-    CHECK((shape_size_in_bytes % HW_DATA_ALIGNMENT) == 0, HAILO_INVALID_ARGUMENT,
-          "YUY2_to_YUY2 Transform shape_size must be aligned to {}", HW_DATA_ALIGNMENT);
+    CHECK((shape_size_in_bytes % HailoRTCommon::HW_DATA_ALIGNMENT) == 0, HAILO_INVALID_ARGUMENT,
+          "YUY2_to_YUY2 Transform shape_size must be aligned to {}", HailoRTCommon::HW_DATA_ALIGNMENT);
 
     std::copy_n(src_ptr, shape_size, dst_ptr);
 
@@ -841,7 +823,7 @@ hailo_status transform__h2d_RGB4_to_NHWC(const T *src_ptr, const hailo_3d_image_
     ASSERT(NULL != dst_ptr);
 
     const auto row_size = src_image_shape.width * src_image_shape.features;
-    const auto src_row_size = HailoRTCommon::align_to(row_size, RGB4_ALIGNMENT);
+    const auto src_row_size = HailoRTCommon::align_to(row_size, static_cast<uint32_t>(RGB4_ALIGNMENT));
     const auto dst_row_size = dst_image_shape.width * dst_image_shape.features;
 
     const auto pad_size = (dst_image_shape.width - src_image_shape.width) * dst_image_shape.features;
@@ -870,7 +852,7 @@ hailo_status transform__h2d_RGB4_to_NHCW(const T *src_ptr, const hailo_3d_image_
     ASSERT(NULL != dst_ptr);
 
     const auto row_size = src_image_shape.width * src_image_shape.features;
-    const auto src_row_size = HailoRTCommon::align_to(row_size, RGB4_ALIGNMENT);
+    const auto src_row_size = HailoRTCommon::align_to(row_size, static_cast<uint32_t>(RGB4_ALIGNMENT));
     const auto dst_row_size = dst_image_shape.width * dst_image_shape.features;
 
     const auto pad_size = dst_image_shape.width - src_image_shape.width;
@@ -1050,7 +1032,7 @@ hailo_status reorder_input_stream(const void *src_ptr, hailo_3d_image_shape_t sr
     if (((HAILO_FORMAT_ORDER_FCR == src_format.order) || (HAILO_FORMAT_ORDER_NHWC == src_format.order)) &&
         (HAILO_FORMAT_ORDER_FCR == dst_format.order)) {
         //Check that there is alignment for 8 bytes
-        assert(0 == ((HailoRTCommon::get_data_bytes(dst_format.type) * dst_image_shape.features) % HW_DATA_ALIGNMENT));
+        assert(0 == ((HailoRTCommon::get_data_bytes(dst_format.type) * dst_image_shape.features) % HailoRTCommon::HW_DATA_ALIGNMENT));
         switch (dst_format.type) {
             case HAILO_FORMAT_TYPE_UINT8:
                 transform__h2d_FCR<uint8_t>((uint8_t*)src_ptr, &src_image_shape, (uint8_t*)dst_ptr, &dst_image_shape);
@@ -1394,7 +1376,7 @@ hailo_status InputTransformContext::transform_inner(const void *src_ptr, void *q
     hailo_3d_image_shape_t transposed_image_shape = m_src_image_shape;
     hailo_format_t quantized_src_format = m_src_format;
 
-    if (!(m_should_quantize || m_should_transpose || m_should_reorder)) {
+    if (!(m_should_quantize || m_should_transpose || m_should_reorder || m_should_pad_periph)) {
         /* If transform was created without any actual use - just copy src_ptr to dst_ptr */
         LOGGER__WARN("Transformer was created, but not needed and can be removed. copies src buffer to dst buffer");
         auto frame_size = HailoRTCommon::get_frame_size(m_dst_image_shape, m_dst_format);
@@ -1457,7 +1439,7 @@ hailo_status FrameOutputTransformContext::transform_inner(const void *src_ptr, v
     void *orig_dst_ptr = nullptr;
     void *orig_src_ptr = nullptr;
 
-    if (!(m_should_quantize || m_should_transpose || m_should_reorder)) {
+    if (!(m_should_quantize || m_should_transpose || m_should_reorder || m_should_pad_periph)) {
         /* If transform context was created without any actual use - just copy src_ptr to dst_ptr */
         LOGGER__WARN("Transform context was created, but not needed and can be removed. copies src buffer to dst buffer");
         auto frame_size = HailoRTCommon::get_frame_size(m_dst_image_shape, m_dst_format);
@@ -1566,9 +1548,9 @@ hailo_status validate_input_transform_params(hailo_3d_image_shape_t src_image_sh
     if ((HAILO_FORMAT_ORDER_FCR == src_format.order) &&
         (HAILO_FORMAT_ORDER_FCR == dst_format.order)) {
         //Check that there is alignment for 8 bytes
-        if (0 != ((HailoRTCommon::get_data_bytes(dst_format.type) * dst_image_shape.features) % HW_DATA_ALIGNMENT)) {
+        if (0 != ((HailoRTCommon::get_data_bytes(dst_format.type) * dst_image_shape.features) % HailoRTCommon::HW_DATA_ALIGNMENT)) {
             LOGGER__ERROR("HW features must be aligned to {}. passed hw features - {}",
-                HW_DATA_ALIGNMENT, dst_image_shape.features);
+                HailoRTCommon::HW_DATA_ALIGNMENT, dst_image_shape.features);
             return HAILO_INVALID_ARGUMENT;
         }
     } else if ((HAILO_FORMAT_ORDER_BAYER_RGB == src_format.order) &&
@@ -1586,8 +1568,8 @@ hailo_status validate_input_transform_params(hailo_3d_image_shape_t src_image_sh
     } else if ((HAILO_FORMAT_ORDER_YUY2 == src_format.order) &&
         (HAILO_FORMAT_ORDER_YUY2 == dst_format.order)) {
         auto shape_size_in_bytes = HailoRTCommon::get_shape_size(src_image_shape) * HailoRTCommon::get_data_bytes(src_format.type);
-        CHECK(shape_size_in_bytes % HW_DATA_ALIGNMENT == 0, HAILO_INVALID_ARGUMENT,
-          "YUY2_to_YUY2 Transform shape_size must be aligned to {}", HW_DATA_ALIGNMENT);
+        CHECK(shape_size_in_bytes % HailoRTCommon::HW_DATA_ALIGNMENT == 0, HAILO_INVALID_ARGUMENT,
+          "YUY2_to_YUY2 Transform shape_size must be aligned to {}", HailoRTCommon::HW_DATA_ALIGNMENT);
     }
 
     return HAILO_SUCCESS;
@@ -1685,11 +1667,10 @@ Expected<std::unique_ptr<InputTransformContext>> InputTransformContext::create(c
     const auto internal_src_format = HailoRTDefaults::expand_auto_format(src_format, dst_format);
 
     const auto src_frame_size = HailoRTCommon::get_frame_size(src_image_shape, internal_src_format);
-    const auto dst_frame_size = HailoRTCommon::get_frame_size(dst_image_shape, dst_format);
+    const auto dst_frame_size = HailoRTCommon::get_periph_frame_size(dst_image_shape, dst_format);
 
     Buffer quant_buffer;
-    auto should_quantize = TransformContextUtils::should_quantize(HAILO_H2D_STREAM, src_format, dst_format, 
-        dst_quant_infos);
+    auto should_quantize = TransformContextUtils::should_quantize(HAILO_H2D_STREAM, src_format, dst_format);
     CHECK_EXPECTED(should_quantize);
     if (should_quantize.value()) {
         auto expected_quant_buffer = Buffer::create(src_frame_size, 0);
@@ -1707,10 +1688,11 @@ Expected<std::unique_ptr<InputTransformContext>> InputTransformContext::create(c
     }
 
     auto should_reorder = TransformContextUtils::should_reorder(src_image_shape, src_format, dst_image_shape, dst_format);
+    auto should_pad_periph = TransformContextUtils::should_pad_periph(dst_image_shape, dst_format);
 
     std::unique_ptr<InputTransformContext> transform_context(new (std::nothrow) InputTransformContext(src_frame_size, src_image_shape,
         internal_src_format, dst_frame_size, dst_image_shape, dst_format, dst_quant_infos, std::move(quant_buffer),
-        std::move(transpose_buffer), *should_quantize, should_transpose, should_reorder));
+        std::move(transpose_buffer), *should_quantize, should_transpose, should_reorder, should_pad_periph));
     CHECK_AS_EXPECTED(nullptr != transform_context, HAILO_OUT_OF_HOST_MEMORY);
 
     return transform_context;
@@ -1753,7 +1735,8 @@ Expected<std::unique_ptr<InputTransformContext>> InputTransformContext::create(I
 InputTransformContext::InputTransformContext(size_t src_frame_size, const hailo_3d_image_shape_t &src_image_shape,
     const hailo_format_t &src_format, size_t dst_frame_size, const hailo_3d_image_shape_t &dst_image_shape,
     const hailo_format_t &dst_format, const std::vector<hailo_quant_info_t> &dst_quant_infos, Buffer &&quant_buffer,
-    Buffer &&transpose_buffer,const bool should_quantize, const bool should_transpose, const bool should_reorder) :
+    Buffer &&transpose_buffer,const bool should_quantize, const bool should_transpose, const bool should_reorder,
+    const bool should_pad_periph) :
         m_src_frame_size(src_frame_size),
         m_src_image_shape(src_image_shape),
         m_src_format(src_format),
@@ -1764,6 +1747,7 @@ InputTransformContext::InputTransformContext(size_t src_frame_size, const hailo_
         m_should_quantize(should_quantize),
         m_should_transpose(should_transpose),
         m_should_reorder(should_reorder),
+        m_should_pad_periph(should_pad_periph),
         m_quant_buffer(std::move(quant_buffer)),
         m_transpose_buffer(std::move(transpose_buffer))
 {}
@@ -1876,7 +1860,7 @@ Expected<std::unique_ptr<OutputTransformContext>> OutputTransformContext::create
 
 OutputTransformContext::OutputTransformContext(size_t src_frame_size, const hailo_format_t &src_format, size_t dst_frame_size,
     const hailo_format_t &dst_format, const std::vector<hailo_quant_info_t> &dst_quant_infos, const bool should_quantize, 
-    const bool should_transpose, const bool should_reorder) :
+    const bool should_transpose, const bool should_reorder, const bool should_pad_periph) :
         m_src_frame_size(src_frame_size),
         m_src_format(src_format),
         m_dst_frame_size(dst_frame_size),
@@ -1884,15 +1868,16 @@ OutputTransformContext::OutputTransformContext(size_t src_frame_size, const hail
         m_dst_quant_infos(dst_quant_infos),
         m_should_quantize(should_quantize),
         m_should_transpose(should_transpose),
-        m_should_reorder(should_reorder)
+        m_should_reorder(should_reorder),
+        m_should_pad_periph(should_pad_periph)
 {}
 
 FrameOutputTransformContext::FrameOutputTransformContext(size_t src_frame_size, const hailo_3d_image_shape_t &src_image_shape,
     const hailo_format_t &src_format, size_t dst_frame_size, const hailo_3d_image_shape_t &dst_image_shape,
     const hailo_format_t &dst_format, const std::vector<hailo_quant_info_t> &dst_quant_infos, Buffer&& transpose_buffer,
-    const bool should_quantize, const bool should_transpose, const bool should_reorder) :
+    const bool should_quantize, const bool should_transpose, const bool should_reorder, const bool should_pad_periph) :
         OutputTransformContext(src_frame_size, src_format, dst_frame_size, dst_format, dst_quant_infos, should_quantize, 
-            should_transpose, should_reorder), m_src_image_shape(src_image_shape), m_dst_image_shape(dst_image_shape), 
+            should_transpose, should_reorder, should_pad_periph), m_src_image_shape(src_image_shape), m_dst_image_shape(dst_image_shape), 
             m_transpose_buffer(std::move(transpose_buffer))
 {
     // TODO: Add verification that quant infos size equals to features count (HRT-11052)
@@ -1946,11 +1931,10 @@ Expected<std::unique_ptr<OutputTransformContext>> FrameOutputTransformContext::c
 {
     const auto internal_dst_format = HailoRTDefaults::expand_auto_format(dst_format, src_format);
 
-    const auto src_frame_size = HailoRTCommon::get_frame_size(src_image_shape, src_format);
+    const auto src_frame_size = HailoRTCommon::get_periph_frame_size(src_image_shape, src_format);
     const auto dst_frame_size = HailoRTCommon::get_frame_size(dst_image_shape, internal_dst_format);
 
-    auto should_quantize = TransformContextUtils::should_quantize(HAILO_D2H_STREAM, src_format, dst_format, 
-        dst_quant_infos);
+    auto should_quantize = TransformContextUtils::should_quantize(HAILO_D2H_STREAM, src_format, dst_format);
     CHECK_EXPECTED(should_quantize);
 
     Buffer transpose_buffer;
@@ -1962,10 +1946,11 @@ Expected<std::unique_ptr<OutputTransformContext>> FrameOutputTransformContext::c
     }
 
     auto should_reorder = TransformContextUtils::should_reorder(src_image_shape, src_format, dst_image_shape, dst_format);
+    auto should_pad_periph = TransformContextUtils::should_pad_periph(dst_image_shape, dst_format);
 
     std::unique_ptr<OutputTransformContext> frame_transform_context = std::make_unique<FrameOutputTransformContext>(src_frame_size,
         src_image_shape, src_format, dst_frame_size, dst_image_shape, internal_dst_format, dst_quant_infos, std::move(transpose_buffer),
-        *should_quantize, should_transpose, should_reorder);
+        *should_quantize, should_transpose, should_reorder, should_pad_periph);
 
     CHECK_AS_EXPECTED(nullptr != frame_transform_context, HAILO_OUT_OF_HOST_MEMORY);
 
@@ -1976,7 +1961,7 @@ NMSOutputTransformContext::NMSOutputTransformContext(size_t src_frame_size, cons
     size_t dst_frame_size, const hailo_format_t &dst_format, const std::vector<hailo_quant_info_t> &dst_quant_infos,
     const hailo_nms_info_t &nms_info, Buffer &&quant_buffer, const bool should_quantize, const bool should_transpose) :
         OutputTransformContext(src_frame_size, src_format, dst_frame_size, dst_format, dst_quant_infos, should_quantize ,should_transpose, 
-        true), m_nms_info(nms_info), m_chunk_offsets(nms_info.chunks_per_frame, 0), m_quant_buffer(std::move(quant_buffer))
+        true, false), m_nms_info(nms_info), m_chunk_offsets(nms_info.chunks_per_frame, 0), m_quant_buffer(std::move(quant_buffer))
 {}
 
 Expected<std::unique_ptr<OutputTransformContext>> NMSOutputTransformContext::create(const hailo_format_t &src_format,
@@ -1998,7 +1983,7 @@ Expected<std::unique_ptr<OutputTransformContext>> NMSOutputTransformContext::cre
     auto dst_frame_size = HailoRTCommon::get_nms_host_frame_size(nms_info, internal_dst_format);
 
     Buffer quant_buffer;
-    auto should_quantize = TransformContextUtils::should_quantize(HAILO_D2H_STREAM, src_format, dst_format, dst_quant_infos);
+    auto should_quantize = TransformContextUtils::should_quantize(HAILO_D2H_STREAM, src_format, dst_format);
     CHECK_EXPECTED(should_quantize);
     if (*should_quantize) {
         dst_frame_size = HailoRTCommon::get_nms_host_frame_size(nms_info, internal_dst_format);

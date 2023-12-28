@@ -40,8 +40,7 @@ public:
         vdevice_core_op_handle_t core_op_handle,
         std::unique_ptr<CallbackReorderQueue> &&callback_reorder_queue,
         hailo_status &status) :
-            InputStreamBase(layer_info, streams.begin()->second.get().get_interface(),
-                            std::move(core_op_activated_event), status),
+            InputStreamBase(layer_info, std::move(core_op_activated_event), status),
             m_streams(std::move(streams)),
             m_next_transfer_stream(m_streams.begin()->first),
             m_acc_frames(0),
@@ -53,15 +52,14 @@ public:
     virtual hailo_status set_buffer_mode(StreamBufferMode buffer_mode) override;
     virtual hailo_status activate_stream() override;
     virtual hailo_status deactivate_stream() override;
-    virtual hailo_status abort() override;
-    virtual hailo_status clear_abort() override;
+    virtual hailo_status abort_impl() override;
+    virtual hailo_status clear_abort_impl() override;
     virtual bool is_scheduled() override { return false; };
 
     virtual hailo_stream_interface_t get_interface() const override;
     virtual std::chrono::milliseconds get_timeout() const override;
     virtual hailo_status set_timeout(std::chrono::milliseconds timeout) override;
 
-    virtual Expected<size_t> get_buffer_frames_size() const override;
     virtual hailo_status flush() override;
 
     virtual hailo_status write_impl(const MemoryView &buffer) override;
@@ -98,44 +96,31 @@ public:
         vdevice_core_op_handle_t core_op_handle,
         std::unique_ptr<CallbackReorderQueue> &&callback_reorder_queue,
         hailo_status &status) :
-            OutputStreamBase(layer_info, streams.begin()->second.get().get_interface(),
-                                    std::move(core_op_activated_event), status),
+            OutputStreamBase(layer_info, std::move(core_op_activated_event), status),
             m_streams(std::move(streams)),
             m_next_transfer_stream(m_streams.begin()->first),
             m_acc_frames(0),
             m_batch_size(batch_size),
             m_core_op_handle(core_op_handle),
             m_callback_reorder_queue(std::move(callback_reorder_queue))
-    {
-        for (auto &output_stream :  m_streams) {
-            if (HAILO_STREAM_INTERFACE_ETH != output_stream.second.get().get_interface()) {
-                auto register_status = output_stream.second.get().register_interrupt_callback(
-                    [core_op_handle=m_core_op_handle, name=name(), device_id=output_stream.first]() {
-                        TRACE(OutputVdmaEnqueueTrace, device_id, core_op_handle, name);
-                    }
-                );
-                if (HAILO_SUCCESS != register_status) {
-                    LOGGER__ERROR("Failing register interrupt callback {}", register_status);
-                }
-            }
-        }
-    }
+    {}
 
     virtual hailo_status set_buffer_mode(StreamBufferMode buffer_mode) override;
     virtual hailo_status activate_stream() override;
     virtual hailo_status deactivate_stream() override;
-    virtual hailo_status abort() override;
-    virtual hailo_status clear_abort() override;
+    virtual hailo_status abort_impl() override;
+    virtual hailo_status clear_abort_impl() override;
     virtual bool is_scheduled() override { return false; };
     virtual hailo_stream_interface_t get_interface() const override;
     virtual std::chrono::milliseconds get_timeout() const override;
     virtual hailo_status set_timeout(std::chrono::milliseconds timeout) override;
-    virtual Expected<size_t> get_buffer_frames_size() const override;
 
     virtual hailo_status read_impl(MemoryView buffer) override;
 
     virtual hailo_status wait_for_async_ready(size_t transfer_size, std::chrono::milliseconds timeout) override;
     virtual hailo_status read_async(TransferRequest &&transfer_request) override;
+    virtual hailo_status read_unaligned_address_async(const MemoryView &buffer,
+        const TransferDoneCallback &user_callback) override;
     virtual Expected<size_t> get_async_max_queue_size() const override;
 
 private:

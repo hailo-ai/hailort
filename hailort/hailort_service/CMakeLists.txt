@@ -24,6 +24,7 @@ target_link_libraries(hailort_service
     spdlog::spdlog
     grpc++_unsecure
     hailort_rpc_grpc_proto
+    readerwriterqueue
 )
 if(WIN32)
     # Needed in order to compile eth utils (we compile here ${HAILORT_COMMON_CPP_SOURCES}, consider removing)
@@ -35,6 +36,7 @@ target_include_directories(hailort_service
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HAILORT_INC_DIR}
     ${HAILORT_COMMON_DIR}
+    ${HAILORT_SRC_DIR}
     ${COMMON_INC_DIR}
     ${RPC_DIR}
 )

@@ -138,9 +138,8 @@ int main()
         return network_group.status();
     }
 
-    // Set input format type to auto, and mark the data as quantized - libhailort will not scale the data before writing to the HW
-    bool quantized = true;
-    auto input_vstream_params = network_group.value()->make_input_vstream_params(quantized, HAILO_FORMAT_TYPE_AUTO, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
+    // Set input format type to auto - libhailort will not scale the data before writing to the HW
+    auto input_vstream_params = network_group.value()->make_input_vstream_params({}, HAILO_FORMAT_TYPE_AUTO, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
         HAILO_DEFAULT_VSTREAM_QUEUE_SIZE);
     if (!input_vstream_params) {
         std::cerr << "Failed creating input vstreams params " << input_vstream_params.status() << std::endl;
@@ -159,10 +158,9 @@ int main()
         return input_vstreams.status();
     }
 
-    // Set output format type to float32, and mark the data as not quantized - libhailort will de-quantize the data after reading from the HW
+    // Set output format type to float32 - libhailort will de-quantize the data after reading from the HW
     // Note: this process might affect the overall performance
-    quantized = false;
-    auto output_vstream_params = network_group.value()->make_output_vstream_params(quantized, HAILO_FORMAT_TYPE_FLOAT32, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
+    auto output_vstream_params = network_group.value()->make_output_vstream_params({}, HAILO_FORMAT_TYPE_FLOAT32, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS,
         HAILO_DEFAULT_VSTREAM_QUEUE_SIZE);
     if (!output_vstream_params) {
         std::cerr << "Failed creating output vstreams params " << output_vstream_params.status() << std::endl;

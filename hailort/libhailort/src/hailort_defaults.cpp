@@ -143,26 +143,21 @@ hailo_format_t HailoRTDefaults::get_user_buffer_format()
     return get_user_buffer_format(true, HAILO_FORMAT_TYPE_AUTO);
 }
 
-hailo_format_t HailoRTDefaults::get_user_buffer_format(bool quantized, hailo_format_type_t format_type)
+hailo_format_t HailoRTDefaults::get_user_buffer_format(bool /*unused*/, hailo_format_type_t format_type)
 {
     hailo_format_t user_buffer_format{};
     user_buffer_format.type = format_type;
     user_buffer_format.order = HAILO_FORMAT_ORDER_AUTO;
+    user_buffer_format.flags = HAILO_FORMAT_FLAGS_NONE;
 
-    hailo_format_flags_t flags = HAILO_FORMAT_FLAGS_NONE;
-    if (quantized) {
-        flags = static_cast<hailo_format_flags_t>(flags | HAILO_FORMAT_FLAGS_QUANTIZED);
-    }
-
-    user_buffer_format.flags = flags;
     return user_buffer_format;
 }
 
-hailo_transform_params_t HailoRTDefaults::get_transform_params(bool quantized, hailo_format_type_t format_type)
+hailo_transform_params_t HailoRTDefaults::get_transform_params(bool /*unused*/, hailo_format_type_t format_type)
 {
     hailo_transform_params_t params{};
     params.transform_mode = HAILO_STREAM_TRANSFORM_COPY;
-    params.user_buffer_format = get_user_buffer_format(quantized, format_type);
+    params.user_buffer_format = get_user_buffer_format({}, format_type);
     return params;
 }
 
@@ -176,10 +171,10 @@ hailo_vstream_params_t HailoRTDefaults::get_vstreams_params()
     return get_vstreams_params(true, HAILO_FORMAT_TYPE_AUTO);
 }
 
-hailo_vstream_params_t HailoRTDefaults::get_vstreams_params(bool quantized, hailo_format_type_t format_type)
+hailo_vstream_params_t HailoRTDefaults::get_vstreams_params(bool /*unused*/, hailo_format_type_t format_type)
 {
     hailo_vstream_params_t params{};
-    params.user_buffer_format = get_user_buffer_format(quantized, format_type);
+    params.user_buffer_format = get_user_buffer_format({}, format_type);
     params.queue_size = HAILO_DEFAULT_VSTREAM_QUEUE_SIZE;
     params.timeout_ms = HAILO_DEFAULT_VSTREAM_TIMEOUT_MS;
     params.vstream_stats_flags = HAILO_VSTREAM_STATS_NONE;
@@ -193,9 +188,7 @@ hailo_transform_params_t HailoRTDefaults::get_transform_params(const hailo_strea
     params.transform_mode = HAILO_STREAM_TRANSFORM_COPY;
     params.user_buffer_format.type = stream_info.format.type;
     params.user_buffer_format.order = get_default_host_format_order(stream_info.format);
-    params.user_buffer_format.flags = static_cast<hailo_format_flags_t>(
-        HAILO_FORMAT_FLAGS_QUANTIZED &
-        ~HAILO_FORMAT_FLAGS_TRANSPOSED);
+    params.user_buffer_format.flags = HAILO_FORMAT_FLAGS_NONE;
     return params;
 }
 

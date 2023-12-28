@@ -19,7 +19,7 @@ namespace hailort
 namespace net_flow
 {
 
-struct MatchingLayersNames
+struct YoloxMatchingLayersNames
 {
     // Regression layer
     std::string reg;
@@ -40,7 +40,7 @@ struct YoloxPostProcessConfig
     float32_t image_width = 0;
 
     // A vector off three strings that represents the relations between the outputs names.
-    std::vector<MatchingLayersNames> input_names;
+    std::vector<YoloxMatchingLayersNames> input_names;
 };
 
 class YoloxOpMetadata : public NmsOpMetadata
@@ -85,8 +85,8 @@ private:
     {}
 
     template<typename DstType = float32_t, typename SrcType>
-    hailo_status extract_detections(const MatchingLayersNames &layers_names, const MemoryView &reg_buffer, const MemoryView &cls_buffer,
-        const MemoryView &obj_buffer, std::vector<DetectionBbox> &detections, std::vector<uint32_t> &classes_detections_count)
+    hailo_status extract_detections(const YoloxMatchingLayersNames &layers_names, const MemoryView &reg_buffer, const MemoryView &cls_buffer,
+        const MemoryView &obj_buffer)
     {
         const auto &inputs_metadata = m_metadata->inputs_metadata();
         const auto &nms_config = m_metadata->nms_config();
@@ -167,8 +167,8 @@ private:
                     auto max_id_score_pair = get_max_class<DstType, SrcType>(cls_data, cls_idx, CLASSES_START_INDEX, objectness, cls_quant_info, cls_padded_shape.width);
                     bbox.score = max_id_score_pair.second;
                     if (max_id_score_pair.second >= nms_config.nms_score_th) {
-                        detections.emplace_back(DetectionBbox(bbox, max_id_score_pair.first));
-                        classes_detections_count[max_id_score_pair.first]++;
+                        m_detections.emplace_back(DetectionBbox(bbox, max_id_score_pair.first));
+                        m_classes_detections_count[max_id_score_pair.first]++;
                     }
                 }
                 else {
@@ -179,8 +179,8 @@ private:
                         auto class_score = class_confidence * objectness;
                         if (class_score >= nms_config.nms_score_th) {
                             bbox.score = class_score;
-                            detections.emplace_back(DetectionBbox(bbox, curr_class_idx));
-                            classes_detections_count[curr_class_idx]++;
+                            m_detections.emplace_back(DetectionBbox(bbox, curr_class_idx));
+                            m_classes_detections_count[curr_class_idx]++;
                         }
                     }
                 }

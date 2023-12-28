@@ -114,25 +114,21 @@ hailo_status SSDPostProcessOp::execute(const std::map<std::string, MemoryView> &
         "Anchors vector count must be equal to data vector count. Anchors size is {}, data size is {}",
             m_metadata->ssd_config().anchors.size(), inputs.size());
 
-    std::vector<DetectionBbox> detections;
-    std::vector<uint32_t> classes_detections_count(m_metadata->nms_config().number_of_classes, 0);
-    detections.reserve(m_metadata->nms_config().max_proposals_per_class * m_metadata->nms_config().number_of_classes);
+    clear_before_frame();
     for (const auto &reg_to_cls : m_metadata->ssd_config().reg_to_cls_inputs) {
         assert(contains(inputs, reg_to_cls.first));
         assert(contains(inputs, reg_to_cls.second));
         auto status = extract_detections(reg_to_cls.first, reg_to_cls.second,
-            inputs.at(reg_to_cls.first), inputs.at(reg_to_cls.second),
-            detections, classes_detections_count);
+            inputs.at(reg_to_cls.first), inputs.at(reg_to_cls.second));
         CHECK_SUCCESS(status);
     }
 
     // TODO: Add support for TF_FORMAT_ORDER
-    return hailo_nms_format(std::move(detections), outputs.begin()->second, classes_detections_count);
+    return hailo_nms_format(outputs.begin()->second);
 }
 
 hailo_status SSDPostProcessOp::extract_detections(const std::string &reg_input_name, const std::string &cls_input_name,
-    const MemoryView &reg_buffer, const MemoryView &cls_buffer,
-    std::vector<DetectionBbox> &detections, std::vector<uint32_t> &classes_detections_count)
+    const MemoryView &reg_buffer, const MemoryView &cls_buffer)
 {
     const auto &inputs_metadata = m_metadata->inputs_metadata();
     const auto &ssd_config = m_metadata->ssd_config();
@@ -202,8 +198,7 @@ hailo_status SSDPostProcessOp::extract_detections(const std::string &reg_input_n
                         reg_idx + Y_OFFSET,
                         reg_idx + W_OFFSET,
                         reg_idx + H_OFFSET,
-                        cls_idx, wa, ha, xcenter_a, ycenter_a,
-                        detections, classes_detections_count);
+                        cls_idx, wa, ha, xcenter_a, ycenter_a);
                     CHECK_SUCCESS(status);
                 } else if (inputs_metadata.at(reg_input_name).format.type == HAILO_FORMAT_TYPE_UINT16) {
                     auto status = extract_bbox_detections<float32_t, uint16_t>(
@@ -213,8 +208,7 @@ hailo_status SSDPostProcessOp::extract_detections(const std::string &reg_input_n
                         reg_idx + Y_OFFSET,
                         reg_idx + W_OFFSET,
                         reg_idx + H_OFFSET,
-                        cls_idx, wa, ha, xcenter_a, ycenter_a,
-                        detections, classes_detections_count);
+                        cls_idx, wa, ha, xcenter_a, ycenter_a);
                     CHECK_SUCCESS(status);
                 } else if (inputs_metadata.at(reg_input_name).format.type == HAILO_FORMAT_TYPE_FLOAT32) {
                     // For testing - TODO: HRT-9341 - Remove after generator tests are in, and return error.
@@ -225,8 +219,7 @@ hailo_status SSDPostProcessOp::extract_detections(const std::string &reg_input_n
                         reg_idx + Y_OFFSET,
                         reg_idx + W_OFFSET,
                         reg_idx + H_OFFSET,
-                        cls_idx, wa, ha, xcenter_a, ycenter_a,
-                        detections, classes_detections_count);
+                        cls_idx, wa, ha, xcenter_a, ycenter_a);
                     CHECK_SUCCESS(status);
                 } else {
                     CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "SSD post-process received invalid reg input type: {}",

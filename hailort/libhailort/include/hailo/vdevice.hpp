@@ -15,13 +15,13 @@
 #include "hailo/hef.hpp"
 #include "hailo/network_group.hpp"
 #include "hailo/device.hpp"
-#include "hailo/infer_model.hpp"
 
 
 /** hailort namespace */
 namespace hailort
 {
 
+class InferModel;
 /*! Represents a bundle of physical devices. */
 class HAILORTAPI VDevice
 {
@@ -64,8 +64,8 @@ public:
      */
     virtual Expected<ConfiguredNetworkGroupVector> configure(Hef &hef,
         const NetworkGroupsParamsMap &configure_params={}) = 0;
-
-    virtual Expected<InferModel> create_infer_model(const std::string &hef_path) = 0;
+    
+    virtual Expected<std::shared_ptr<InferModel>> create_infer_model(const std::string &hef_path);
 
     /**
      * Gets the underlying physical devices.
@@ -110,6 +110,40 @@ public:
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     Expected<ConfigureNetworkParams> create_configure_params(Hef &hef, const std::string &network_group_name) const;
+
+    // TODO: Also link to async infer - ConfiguredInferModel, Bindings etc. Just like we did for
+    //       InputStream::write_async and OutputStream::read_async (HRT-11039)
+    /**
+     * Maps the buffer pointed to by @a address for DMA transfers to/from this vdevice, in the specified
+     * @a data_direction.
+     * DMA mapping of buffers in advance may improve the performance of `InputStream::write_async()` or
+     * `OutputStream::read_async()`. This improvement will be realized if the buffer is reused multiple times
+     * across different async operations.
+     * - For buffers that will be written to the vdevice via `InputStream::write_async()`, use `HAILO_H2D_STREAM`
+     *   for the @a direction parameter.
+     * - For buffers that will be read from the vdevice via `OutputStream::read_async()`, use `HAILO_D2H_STREAM`
+     *   for the @a direction parameter.
+     *
+     * @param[in] address       The address of the buffer to be mapped
+     * @param[in] size          The buffer's size in bytes
+     * @param[in] direction     The direction of the mapping
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note The DMA mapping will be freed upon calling dma_unmap() with @a address and @a data_direction, or when the
+     *       @a VDevice object is destroyed.
+     * @note The buffer pointed to by @a address cannot be freed until it is unmapped (via dma_unmap() or @a VDevice
+     *       destruction).
+     */
+    virtual hailo_status dma_map(void *address, size_t size, hailo_stream_direction_t direction);
+
+    /**
+     * Un-maps a buffer buffer pointed to by @a address for DMA transfers to/from this vdevice, in the direction
+     * @a direction.
+     *
+     * @param[in] address       The address of the buffer to be un-mapped
+     * @param[in] direction     The direction of the mapping
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     */
+    virtual hailo_status dma_unmap(void *address, hailo_stream_direction_t direction);
 
     virtual hailo_status before_fork();
     virtual hailo_status after_fork_in_parent();

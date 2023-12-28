@@ -28,13 +28,6 @@
 
 GST_DEBUG_CATEGORY_STATIC(gst_hailosend_debug_category);
 #define GST_CAT_DEFAULT gst_hailosend_debug_category
-#define RGB_FEATURES_SIZE (3)
-#define RGBA_FEATURES_SIZE (4)
-#define GRAY8_FEATURES_SIZE (1)
-#define YUY2_FEATURES_SIZE (2)
-#define NV12_FEATURES_SIZE (3)
-#define NV21_FEATURES_SIZE (3)
-#define I420_FEATURES_SIZE (3)
 
 static void gst_hailosend_set_property(GObject *object, guint property_id, const GValue *value, GParamSpec *pspec);
 static void gst_hailosend_get_property(GObject *object, guint property_id, GValue *value, GParamSpec *pspec);

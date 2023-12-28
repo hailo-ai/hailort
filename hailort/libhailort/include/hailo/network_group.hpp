@@ -17,13 +17,24 @@
 #include <string>
 #include <map>
 #include <unordered_map>
+#include <mutex>
+#include <condition_variable>
 
 /** hailort namespace */
 namespace hailort
 {
 
+namespace net_flow {
+class OpMetadata;
+using PostProcessOpMetadataPtr = std::shared_ptr<OpMetadata>;
+}
+
+using NamedBuffersCallbacks = std::unordered_map<std::string, std::pair<MemoryView, std::function<void(hailo_status)>>>;
+
 class InputVStream;
 class OutputVStream;
+struct LayerInfo;
+
 
 /** @addtogroup group_type_definitions */
 /*@{*/
@@ -93,7 +104,7 @@ public:
     ConfiguredNetworkGroup(const ConfiguredNetworkGroup &other) = delete;
     ConfiguredNetworkGroup &operator=(const ConfiguredNetworkGroup &other) = delete;
     ConfiguredNetworkGroup &operator=(ConfiguredNetworkGroup &&other) = delete;
-    ConfiguredNetworkGroup(ConfiguredNetworkGroup &&other) noexcept = default;
+    ConfiguredNetworkGroup(ConfiguredNetworkGroup &&other) noexcept = delete;
 
     /**
      * @return The network group name.
@@ -227,10 +238,21 @@ public:
     virtual hailo_status wait_for_activation(const std::chrono::milliseconds &timeout) = 0;
 
     /**
+     * Shutdown the network group. Makes sure all ongoing async operations are canceled. All async callbacks
+     * of transfers that have not been completed will be called with status ::HAILO_STREAM_ABORTED_BY_USER.
+     * Any resources attached to the network group may be released after function returns.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     *
+     * @note Calling this function is optional, and it is used to shutdown network group while there is still ongoing
+     *       inference.
+     */
+    virtual hailo_status shutdown() = 0;
+
+    /**
      * Creates input virtual stream params.
      *
-     * @param[in] quantized                 Deprecated parameter that will be ignored. Determine whether to quantize (scale)
-     *                                      the data will be decided by the src-data and dst-data types.
+     * @param[in]  unused                   Unused.
      * @param[in]  format_type              The default format type for all input virtual streams.
      * @param[in]  timeout_ms               The default timeout in milliseconds for all input virtual streams.
      * @param[in]  queue_size               The default queue size for all input virtual streams.
@@ -238,18 +260,15 @@ public:
      *                                      If not passed, all the networks in the network group will be addressed.
      * @return Upon success, returns Expected of a map of name to vstream params.
      *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to quantize (scale) the data will be decided by
-     *       the src-data and dst-data types.
      */
     virtual Expected<std::map<std::string, hailo_vstream_params_t>> make_input_vstream_params(
-        bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
+        bool unused, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
         const std::string &network_name="") = 0;
 
     /**
      * Creates output virtual stream params.
      *
-     * @param[in] quantized                 Deprecated parameter that will be ignored. Determine whether to de-quantize (rescale)
-     *                                      the data will be decided by the src-data and dst-data types.
+     * @param[in]  unused                   Unused.
      * @param[in]  format_type              The default format type for all output virtual streams.
      * @param[in]  timeout_ms               The default timeout in milliseconds for all output virtual streams.
      * @param[in]  queue_size               The default queue size for all output virtual streams.
@@ -257,28 +276,23 @@ public:
      *                                      If not passed, all the networks in the network group will be addressed.
      * @return Upon success, returns Expected of a map of name to vstream params.
      *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to de-quantize (rescale) the data will be decided by
-     *       the src-data and dst-data types.
      */
     virtual Expected<std::map<std::string, hailo_vstream_params_t>> make_output_vstream_params(
-        bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
+        bool unused, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size,
         const std::string &network_name="") = 0;
 
     /**
      * Creates output virtual stream params. The groups are splitted with respect to their low-level streams.
      *
-     * @param[in] quantized                 Deprecated parameter that will be ignored. Determine whether to de-quantize (rescale)
-     *                                      the data will be decided by the src-data and dst-data types.
+     * @param[in]  unused                   Unused.
      * @param[in]  format_type              The default format type for all output virtual streams.
      * @param[in]  timeout_ms               The default timeout in milliseconds for all output virtual streams.
      * @param[in]  queue_size               The default queue size for all output virtual streams.
      * @return Upon success, returns Expected of a vector of maps, mapping name to vstream params, where each map represents a params group.
      *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note The argument @a quantized is deprecated and its usage is ignored. Determine whether to de-quantize (rescale) the data will be decided by
-     *       the src-data and dst-data types.
      */
     virtual Expected<std::vector<std::map<std::string, hailo_vstream_params_t>>> make_output_vstream_params_groups(
-        bool quantized, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size) = 0;
+        bool unused, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size) = 0;
 
     /**
      * Gets output virtual stream groups for given network_group. The groups are splitted with respect to their low-level streams.
@@ -343,7 +357,7 @@ public:
      * @param[in]  network_name         Network name for which to set the timeout.
      *                                  If not passed, the timeout will be set for all the networks in the network group.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE, and before the creation of any vstreams.
+     * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE.
      * @note The default timeout is 0ms.
      * @note Currently, setting the timeout for a specific network is not supported.
      */
@@ -358,7 +372,7 @@ public:
      * @param[in]  network_name         Network name for which to set the threshold.
      *                                  If not passed, the threshold will be set for all the networks in the network group.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE, and before the creation of any vstreams.
+     * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE.
      * @note The default threshold is 1.
      * @note Currently, setting the threshold for a specific network is not supported.
      */
@@ -394,6 +408,7 @@ public:
 
     virtual Expected<std::vector<InputVStream>> create_input_vstreams(const std::map<std::string, hailo_vstream_params_t> &inputs_params) = 0;
     virtual Expected<std::vector<OutputVStream>> create_output_vstreams(const std::map<std::string, hailo_vstream_params_t> &outputs_params) = 0;
+    virtual Expected<size_t> get_min_buffer_pool_size() = 0;
 
     virtual Expected<HwInferResults> run_hw_infer_estimator() = 0;
 
@@ -410,11 +425,28 @@ public:
     virtual hailo_status after_fork_in_parent();
     virtual hailo_status after_fork_in_child();
 
-protected:
-    ConfiguredNetworkGroup() = default;
+    virtual hailo_status infer_async(const NamedBuffersCallbacks &named_buffers_callbacks,
+        const std::function<void(hailo_status)> &infer_request_done_cb) = 0;
+    virtual Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> get_ops_metadata() = 0;
+    virtual Expected<std::unique_ptr<LayerInfo>> get_layer_info(const std::string &stream_name) = 0;
+    hailo_status wait_for_callbacks_finish();
+    hailo_status wait_for_callbacks_to_maintain_below_threshold(size_t threshold);
+    void decrease_ongoing_callbacks();
+    void increase_ongoing_callbacks();
 
+    virtual hailo_status set_nms_score_threshold(const std::string &edge_name, float32_t nms_score_threshold) = 0;
+    virtual hailo_status set_nms_iou_threshold(const std::string &edge_name, float32_t iou_threshold) = 0;
+    virtual hailo_status set_nms_max_bboxes_per_class(const std::string &edge_name, uint32_t max_bboxes_per_class) = 0;
+
+protected:
+    ConfiguredNetworkGroup();
+
+    std::mutex m_infer_requests_mutex;
+    std::atomic_size_t m_ongoing_transfers;
+    std::condition_variable m_cv;
 private:
     friend class ActivatedNetworkGroup;
+    friend class PipelineBuilder;
 };
 using ConfiguredNetworkGroupVector = std::vector<std::shared_ptr<ConfiguredNetworkGroup>>;
 

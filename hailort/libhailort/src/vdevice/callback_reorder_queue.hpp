@@ -28,7 +28,7 @@ public:
     {}
 
     // Wraps the given original callback so it will be called in the same wrap_callback order.
-    InternalTransferDoneCallback wrap_callback(const InternalTransferDoneCallback &original);
+    TransferDoneCallback wrap_callback(const TransferDoneCallback &original);
 
     // If some wrapped callback wasn't registered to some async API (for example because the queue is full), we need to
     // remove the counters we added in `wrap_callback` (otherwise, next callback will wait forever).

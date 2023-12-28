@@ -28,13 +28,18 @@ namespace vdma {
 class DmaAbleBuffer;
 using DmaAbleBufferPtr = std::shared_ptr<DmaAbleBuffer>;
 
-class DmaAbleBuffer {
+class DmaAbleBuffer
+{
 public:
-    // If user_address is not nullptr, allocation is not needed.
-    static Expected<DmaAbleBufferPtr> create(size_t size, void *user_address = nullptr);
+    // Create a DmaAbleBuffer from the user's provided address.
+    static Expected<DmaAbleBufferPtr> create_from_user_address(void *user_address, size_t size);
 
-    // The driver is used only if driver.allocate_driver_buffer is true, and that the user address is nullptr.
-    static Expected<DmaAbleBufferPtr> create(HailoRTDriver &driver, size_t size, void *user_address = nullptr);
+    // Create a DmaAbleBuffer by allocating memory.
+    static Expected<DmaAbleBufferPtr> create_by_allocation(size_t size);
+
+    // Create a DmaAbleBuffer by allocating memory, using the driver if needed (i.e.
+    // if driver.allocate_driver_buffer is true)
+    static Expected<DmaAbleBufferPtr> create_by_allocation(size_t size, HailoRTDriver &driver);
 
     DmaAbleBuffer() = default;
     DmaAbleBuffer(DmaAbleBuffer &&other) = delete;

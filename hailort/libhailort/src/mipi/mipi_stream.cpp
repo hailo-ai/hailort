@@ -25,7 +25,7 @@ namespace hailort
 
 MipiInputStream::MipiInputStream(Device &device, const CONTROL_PROTOCOL__mipi_input_config_params_t &mipi_params,
     EventPtr &&core_op_activated_event, const LayerInfo &layer_info, hailo_status &status) :
-    InputStreamBase(layer_info, HAILO_STREAM_INTERFACE_MIPI, std::move(core_op_activated_event), status),
+    InputStreamBase(layer_info, std::move(core_op_activated_event), status),
     m_device(device),
     m_is_stream_activated(false),
     m_mipi_input_params(mipi_params)
@@ -61,12 +61,12 @@ std::chrono::milliseconds MipiInputStream::get_timeout() const
     return std::chrono::milliseconds(0);
 }
 
-hailo_status MipiInputStream::abort()
+hailo_status MipiInputStream::abort_impl()
 {
     return HAILO_INVALID_OPERATION;
 }
 
-hailo_status MipiInputStream::clear_abort()
+hailo_status MipiInputStream::clear_abort_impl()
 {
     return HAILO_INVALID_OPERATION;
 }
@@ -108,7 +108,10 @@ hailo_status MipiInputStream::activate_stream()
     hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__config_stream_params_t params = {};
 
-    params.nn_stream_config = m_nn_stream_config;
+    // Core HW padding is not supported on MIPI
+    m_layer_info.nn_stream_config.feature_padding_payload = 0;
+    params.nn_stream_config = m_layer_info.nn_stream_config;
+
     params.communication_type = CONTROL_PROTOCOL__COMMUNICATION_TYPE_MIPI;
     params.is_input = true;
     params.stream_index = m_stream_info.index;

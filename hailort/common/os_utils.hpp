@@ -11,6 +11,8 @@
 #define _HAILO_OS_UTILS_HPP_
 
 #include "hailo/hailort.h"
+#include "hailo/expected.hpp"
+#include "hailo/hailort_common.hpp"
 
 #include "common/logger_macros.hpp"
 
@@ -63,6 +65,7 @@ public:
     static void set_current_thread_name(const std::string &name);
     static hailo_status set_current_thread_affinity(uint8_t cpu_index);
     static size_t get_page_size();
+    static size_t get_dma_able_alignment();
 };
 
 } /* namespace hailort */

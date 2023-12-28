@@ -176,6 +176,7 @@ int main()
     hailo_thread output_vstream_thread = {0};
     input_vstream_thread_args_t input_args = {0};
     output_vstream_thread_args_t output_args = {0};
+    bool unused = {0};
 
     char HEF_FILES[HEF_COUNT][250] = {"hefs/shortcut_net.hef","hefs/shortcut_net.hef"};
 
@@ -201,13 +202,13 @@ int main()
             "Unexpected network group size");
 
         // Mae sure each hef is single input single output
-        status = hailo_make_input_vstream_params(network_groups[hef_index], true, HAILO_FORMAT_TYPE_AUTO,
+        status = hailo_make_input_vstream_params(network_groups[hef_index], unused, HAILO_FORMAT_TYPE_AUTO,
             &input_vstream_params[hef_index], &input_vstream_size);
         REQUIRE_SUCCESS(status, l_release_hef, "Failed making input virtual stream params");
         REQUIRE_ACTION(input_vstream_size == 1, status = HAILO_INVALID_ARGUMENT, l_release_hef,
             "INVALID HEF - Only hefs with single input vstream are allowed");
 
-        status = hailo_make_output_vstream_params(network_groups[hef_index], true, HAILO_FORMAT_TYPE_AUTO,
+        status = hailo_make_output_vstream_params(network_groups[hef_index], unused, HAILO_FORMAT_TYPE_AUTO,
             &output_vstream_params[hef_index], &output_vstream_size);
         REQUIRE_SUCCESS(status, l_release_hef, "Failed making output virtual stream params");
         REQUIRE_ACTION(output_vstream_size == 1, status = HAILO_INVALID_ARGUMENT, l_release_hef,

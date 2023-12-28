@@ -31,14 +31,14 @@ public:
 
     static hailo_format_t expand_auto_format(const hailo_format_t &host_format, const hailo_format_t &hw_format);
     static hailo_format_t get_user_buffer_format();
-    static hailo_format_t get_user_buffer_format(bool quantized, hailo_format_type_t format_type);
+    static hailo_format_t get_user_buffer_format(bool unused, hailo_format_type_t format_type);
 
-    static hailo_transform_params_t get_transform_params(bool quantized, hailo_format_type_t format_type);
+    static hailo_transform_params_t get_transform_params(bool unused, hailo_format_type_t format_type);
     static hailo_transform_params_t get_transform_params(const hailo_stream_info_t &stream_info);
     static hailo_transform_params_t get_transform_params();
 
     static hailo_vstream_params_t get_vstreams_params();
-    static hailo_vstream_params_t get_vstreams_params(bool quantized, hailo_format_type_t format_type);
+    static hailo_vstream_params_t get_vstreams_params(bool unused, hailo_format_type_t format_type);
 
     static Expected<hailo_stream_parameters_t> get_stream_parameters(hailo_stream_interface_t interface,
             hailo_stream_direction_t direction);

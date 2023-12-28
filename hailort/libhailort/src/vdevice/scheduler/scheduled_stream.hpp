@@ -18,7 +18,7 @@
 #include "stream_common/async_stream_base.hpp"
 #include "vdevice/vdevice_internal.hpp"
 #include "vdevice/callback_reorder_queue.hpp"
-#include "vdevice/scheduler/scheduler.hpp"
+#include "vdevice/scheduler/infer_request_accumulator.hpp"
 #include "stream_common/stream_buffer_pool.hpp"
 #include "stream_common/async_stream_base.hpp"
 #include "vdma/vdma_device.hpp"
@@ -34,24 +34,21 @@ public:
         std::map<device_id_t, std::reference_wrapper<InputStreamBase>> &&streams,
         const LayerInfo &layer_info,
         const scheduler_core_op_handle_t &core_op_handle,
-        CoreOpsSchedulerWeakPtr core_ops_scheduler,
-        EventPtr core_op_activated_event);
+        EventPtr core_op_activated_event,
+        std::shared_ptr<InferRequestAccumulator> infer_requests_accumulator);
 
     ScheduledInputStream(
         std::map<device_id_t, std::reference_wrapper<InputStreamBase>> &&streams,
         const scheduler_core_op_handle_t &core_op_handle,
         EventPtr &&core_op_activated_event,
         const LayerInfo &layer_info,
-        CoreOpsSchedulerWeakPtr core_ops_scheduler,
-        size_t max_queue_size,
+        std::shared_ptr<InferRequestAccumulator> &&infer_requests_accumulator,
         hailo_status &status) :
-            AsyncInputStreamBase(layer_info, streams.begin()->second.get().get_interface(),
-                                   std::move(core_op_activated_event), status),
+            AsyncInputStreamBase(layer_info, std::move(core_op_activated_event), status),
             m_streams(std::move(streams)),
-            m_core_ops_scheduler(core_ops_scheduler),
             m_core_op_handle(core_op_handle),
-            m_transfer_requests(max_queue_size),
-            m_callback_reorder_queue(max_queue_size) // TODO HRT-1058 - use reorder queue only when needed
+            m_infer_requests_accumulator(infer_requests_accumulator),
+            m_callback_reorder_queue(infer_requests_accumulator->queue_size()) // TODO HRT-1058 - use reorder queue only when needed
     {}
 
     virtual hailo_stream_interface_t get_interface() const override;
@@ -60,27 +57,13 @@ public:
     virtual size_t get_max_ongoing_transfers() const override;
     virtual hailo_status write_async_impl(TransferRequest &&transfer_request) override;
 
-    virtual hailo_status launch_transfer(const device_id_t &device_id) override;
-    virtual hailo_status abort() override;
-    virtual hailo_status clear_abort() override;
 
     virtual bool is_scheduled() override final { return true; };
 
-    // Returns the amount of frames buffered on a single device.
-    virtual Expected<size_t> get_buffer_frames_size() const override
-    {
-        return m_streams.begin()->second.get().get_buffer_frames_size();
-    }
-
 private:
     std::map<device_id_t, std::reference_wrapper<InputStreamBase>> m_streams;
-    CoreOpsSchedulerWeakPtr m_core_ops_scheduler;
     scheduler_core_op_handle_t m_core_op_handle;
-
-    // All buffers written by the user using write_async are first stored in this queue.
-    // When the scheduler decides to activate the network on a specific device, send_pending_buffer is called, and
-    // the buffers are sent to the underlying stream.
-    SafeQueue<TransferRequest> m_transfer_requests;
+    std::shared_ptr<InferRequestAccumulator> m_infer_requests_accumulator;
 
     CallbackReorderQueue m_callback_reorder_queue;
 };
@@ -92,62 +75,55 @@ public:
         const scheduler_core_op_handle_t &core_op_handle,
         const LayerInfo &layer_info,
         EventPtr core_op_activated_event,
-        CoreOpsSchedulerWeakPtr core_ops_scheduler);
+        std::shared_ptr<InferRequestAccumulator> infer_requests_accumulator);
 
     ScheduledOutputStream(
         std::map<device_id_t, std::reference_wrapper<OutputStreamBase>> &&streams,
         const scheduler_core_op_handle_t &core_op_handle,
         const LayerInfo &layer_info,
         EventPtr &&core_op_activated_event,
-        CoreOpsSchedulerWeakPtr core_ops_scheduler,
-        size_t max_queue_size,
+        std::shared_ptr<InferRequestAccumulator> &&infer_requests_accumulator,
         hailo_status &status) :
-            AsyncOutputStreamBase(layer_info, streams.begin()->second.get().get_interface(),
-                                  std::move(core_op_activated_event), status),
+            AsyncOutputStreamBase(layer_info, std::move(core_op_activated_event), status),
             m_streams(std::move(streams)),
-            m_core_ops_scheduler(core_ops_scheduler),
             m_core_op_handle(core_op_handle),
-            m_transfer_requests(max_queue_size),
-            m_callback_reorder_queue(max_queue_size) // TODO HRT-1058 - use reorder queue only when needed
+            m_infer_requests_accumulator(infer_requests_accumulator),
+            m_callback_reorder_queue(infer_requests_accumulator->queue_size()) // TODO HRT-1058 - use reorder queue only when needed
     {}
-
-    virtual hailo_status launch_transfer(const device_id_t &device_id) override;
-
-    virtual hailo_status abort() override;
-    virtual hailo_status clear_abort() override;
 
     virtual hailo_stream_interface_t get_interface() const override;
 
     virtual Expected<std::unique_ptr<StreamBufferPool>> allocate_buffer_pool() override;
     virtual size_t get_max_ongoing_transfers() const override;
+    virtual hailo_status read_async(TransferRequest &&transfer_request) override
+    {
+        transfer_request.callback = [original_callback=transfer_request.callback, this](hailo_status status) {
+            original_callback(status);
+            if ((HAILO_SUCCESS == status) && (INVALID_CORE_OP_HANDLE != m_core_op_handle)) {
+                TRACE(FrameDequeueD2HTrace, m_core_op_handle, name());
+            }
+        };
+        return AsyncOutputStreamBase::read_async(std::move(transfer_request));
+    }
+
     virtual hailo_status read_async_impl(TransferRequest &&transfer_request) override;
 
     virtual bool is_scheduled() override final { return true; };
 
-    // Returns the amount of frames buffered on a single device.
-    virtual Expected<size_t> get_buffer_frames_size() const override
-    {
-        return m_streams.begin()->second.get().get_buffer_frames_size();
-    }
-
     virtual hailo_status read_impl(MemoryView user_buffer) override
     {
         auto status = AsyncOutputStreamBase::read_impl(user_buffer);
-        if (HAILO_SUCCESS == status) {
-            TRACE(ReadFrameTrace, m_core_op_handle, name());
+        if ((HAILO_SUCCESS == status) && (INVALID_CORE_OP_HANDLE != m_core_op_handle)) {
+            TRACE(FrameDequeueD2HTrace, m_core_op_handle, name());
         }
         return status;
     }
 
+
 private:
     std::map<device_id_t, std::reference_wrapper<OutputStreamBase>> m_streams;
-    CoreOpsSchedulerWeakPtr m_core_ops_scheduler;
     scheduler_core_op_handle_t m_core_op_handle;
-
-    // All buffers written by the user using write_async are first stored in this queue.
-    // When the scheduler decides to activate the network on a specific device, send_pending_buffer is called, and
-    // the buffers are sent to the underlying stream.
-    SafeQueue<TransferRequest> m_transfer_requests;
+    std::shared_ptr<InferRequestAccumulator> m_infer_requests_accumulator;
 
     CallbackReorderQueue m_callback_reorder_queue;
 };

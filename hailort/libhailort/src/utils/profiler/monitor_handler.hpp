@@ -51,6 +51,79 @@ namespace hailort
 
 using stream_name = std::string;
 
+class SchedulerCounter
+{
+public:
+    SchedulerCounter() : m_map()
+    {}
+
+    void insert(const stream_name_t &name)
+    {
+        assert(!contains(m_map, name));
+        m_map[name] = 0;
+    }
+
+    uint32_t operator[](const stream_name_t &name) const
+    {
+        assert(contains(m_map, name));
+        return m_map.at(name);
+    }
+
+    void increase(const stream_name_t &name)
+    {
+        assert(contains(m_map, name));
+        m_map[name]++;
+    }
+
+    void decrease(const stream_name_t &name)
+    {
+        assert(contains(m_map, name));
+        assert(m_map[name] > 0);
+        m_map[name]--;
+    }
+
+    uint32_t get_min_value() const
+    {
+        return get_min_value_of_unordered_map(m_map);
+    }
+
+    uint32_t get_max_value() const
+    {
+        return get_max_value_of_unordered_map(m_map);
+    }
+
+    bool all_values_bigger_or_equal(uint32_t value) const
+    {
+        for (const auto &pair : m_map) {
+            if (value > pair.second) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool empty() const
+    {
+        for (const auto &pair : m_map) {
+            if (0 != pair.second) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void reset()
+    {
+        for (auto &pair : m_map) {
+            pair.second = 0;
+        }
+    }
+
+private:
+    std::unordered_map<stream_name_t, std::atomic_uint32_t> m_map;
+};
+
+
 struct DeviceInfo {
     DeviceInfo(const device_id_t &device_id, const std::string &device_arch) :
         device_id(device_id), device_arch(device_arch), device_has_drained_everything(true),
@@ -78,7 +151,6 @@ struct CoreOpInfo {
     std::unordered_map<stream_name, StreamsInfo> input_streams_info;
     std::unordered_map<stream_name, StreamsInfo> output_streams_info;
     std::string core_op_name;
-    bool is_nms;
     double utilization;
 };
 
@@ -93,12 +165,12 @@ public:
     void clear_monitor();
 
     virtual void handle_trace(const AddCoreOpTrace&) override;
-    virtual void handle_trace(const CreateCoreOpInputStreamsTrace&) override;
-    virtual void handle_trace(const CreateCoreOpOutputStreamsTrace&) override;
-    virtual void handle_trace(const WriteFrameTrace&) override;
-    virtual void handle_trace(const ReadFrameTrace&) override;
-    virtual void handle_trace(const InputVdmaDequeueTrace&) override;
-    virtual void handle_trace(const OutputVdmaEnqueueTrace&) override;
+    virtual void handle_trace(const AddStreamH2DTrace&) override;
+    virtual void handle_trace(const AddStreamD2HTrace&) override;
+    virtual void handle_trace(const FrameEnqueueH2DTrace&) override;
+    virtual void handle_trace(const FrameDequeueD2HTrace&) override;
+    virtual void handle_trace(const FrameDequeueH2DTrace&) override;
+    virtual void handle_trace(const FrameEnqueueD2HTrace&) override;
     virtual void handle_trace(const SwitchCoreOpTrace&) override;
     virtual void handle_trace(const MonitorStartTrace&) override;
     virtual void handle_trace(const AddDeviceTrace&) override;
@@ -122,7 +194,6 @@ private:
     scheduler_core_op_handle_t get_core_op_handle_by_name(const std::string &name);
 
     bool m_is_monitor_currently_working = false;
-    uint32_t m_device_count;
     std::thread m_mon_thread;
     EventPtr m_mon_shutdown_event;
 #if defined(__GNUC__)

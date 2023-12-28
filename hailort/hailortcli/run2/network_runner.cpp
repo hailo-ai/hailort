@@ -87,9 +87,9 @@ StreamParams::StreamParams() : IoParams(), flags(HAILO_STREAM_FLAGS_NONE)
 }
 
 NetworkParams::NetworkParams() : hef_path(), net_group_name(), vstream_params(), stream_params(),
-    scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN), batch_size(HAILO_DEFAULT_BATCH_SIZE),
-    scheduler_threshold(0), scheduler_timeout_ms(0), framerate(UNLIMITED_FRAMERATE), measure_hw_latency(false),
-    measure_overall_latency(false)
+    scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN), multi_process_service(false),
+    batch_size(HAILO_DEFAULT_BATCH_SIZE), scheduler_threshold(0), scheduler_timeout_ms(0),
+    framerate(UNLIMITED_FRAMERATE), measure_hw_latency(false),measure_overall_latency(false)
 {
 }
 
@@ -99,10 +99,114 @@ NetworkRunner::NetworkRunner(const NetworkParams &params, const std::string &nam
     m_params(params),
     m_name(name),
     m_cng(cng),
+    m_infer_model(nullptr),
+    m_configured_infer_model(nullptr),
     m_overall_latency_meter(nullptr),
     m_latency_barrier(nullptr),
     m_last_measured_fps(0)
 {
+}
+
+NetworkRunner::NetworkRunner(const NetworkParams &params, const std::string &name, VDevice &vdevice,
+    std::shared_ptr<InferModel> infer_model, std::shared_ptr<ConfiguredInferModel> configured_infer_model) :
+    m_vdevice(vdevice),
+    m_params(params),
+    m_name(name),
+    m_cng(nullptr),
+    m_infer_model(infer_model),
+    m_configured_infer_model(configured_infer_model),
+    m_overall_latency_meter(nullptr),
+    m_latency_barrier(nullptr)
+{
+}
+
+Expected<std::string> NetworkRunner::get_network_group_name(const NetworkParams &params, const Hef &hef)
+{
+    // Get NG's name if single
+    auto net_group_name = params.net_group_name;
+
+    // if net_group_name is an empty string - take the name from hef
+    if (net_group_name.empty()) {
+        auto net_groups_names = hef.get_network_groups_names();
+        CHECK_AS_EXPECTED(net_groups_names.size() == 1, HAILO_INVALID_ARGUMENT, "HEF {} doesn't contain a single NetworkGroup. Pass --name", params.hef_path);
+        net_group_name = net_groups_names[0];
+    }
+
+    return net_group_name;
+}
+
+Expected<std::shared_ptr<FullAsyncNetworkRunner>> FullAsyncNetworkRunner::create_shared(VDevice &vdevice,
+    NetworkParams params)
+{
+        auto infer_model = vdevice.create_infer_model(params.hef_path);
+        CHECK_EXPECTED(infer_model);
+        auto infer_model_ptr = infer_model.release();
+
+        auto expected_net_group_name = get_network_group_name(params, infer_model_ptr->hef());
+        CHECK_EXPECTED(expected_net_group_name);
+
+        /* Configure Params */
+        infer_model_ptr->set_batch_size(params.batch_size);
+        if (params.batch_size == HAILO_DEFAULT_BATCH_SIZE) {
+            // Changing batch_size to 1 (after configuring the vdevice) - as we iterate over 'params.batch_size' in latency measurements scenarios
+            params.batch_size = 1;
+        }
+        if (params.measure_hw_latency) {
+            infer_model_ptr->set_hw_latency_measurement_flags(HAILO_LATENCY_MEASURE);
+        }
+
+        /* Pipeline Params */
+        for (const auto &input_name : infer_model_ptr->get_input_names()) {
+            auto input_params_it = std::find_if(params.vstream_params.begin(), params.vstream_params.end(),
+                [&input_name](const VStreamParams &params) -> bool {
+                    return params.name == input_name;
+                });
+            auto input_params = (input_params_it == params.vstream_params.end()) ? VStreamParams() : *input_params_it;
+
+            auto input_config = infer_model_ptr->input(input_name);
+            CHECK_EXPECTED(input_config);
+            input_config->set_format_order(input_params.params.user_buffer_format.order);
+            input_config->set_format_type(input_params.params.user_buffer_format.type);
+        }
+        for (const auto &output_name : infer_model_ptr->get_output_names()) {
+            auto output_params_it = std::find_if(params.vstream_params.begin(), params.vstream_params.end(),
+                [&output_name](const VStreamParams &params) -> bool {
+                    return params.name == output_name;
+                });
+            auto output_params = (output_params_it == params.vstream_params.end()) ? VStreamParams() : *output_params_it;
+
+            auto output_config = infer_model_ptr->output(output_name);
+            CHECK_EXPECTED(output_config);
+            output_config->set_format_order(output_params.params.user_buffer_format.order);
+            output_config->set_format_type(output_params.params.user_buffer_format.type);
+        }
+
+        auto configured_model = infer_model_ptr->configure();
+        CHECK_EXPECTED(configured_model);
+        auto configured_infer_model_ptr = make_shared_nothrow<ConfiguredInferModel>(configured_model.release());
+        CHECK_NOT_NULL_AS_EXPECTED(configured_infer_model_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+        auto res = make_shared_nothrow<FullAsyncNetworkRunner>(params, expected_net_group_name.value(), vdevice,
+            infer_model_ptr, configured_infer_model_ptr);
+        CHECK_NOT_NULL_AS_EXPECTED(res, HAILO_OUT_OF_HOST_MEMORY);
+
+        if (params.measure_overall_latency || params.measure_hw_latency) {
+            CHECK_AS_EXPECTED((1 == res->get_input_names().size()), HAILO_INVALID_OPERATION,
+                "Latency measurement over multiple inputs network is not supported");
+
+            if (params.measure_overall_latency) {
+                auto overall_latency_meter = make_shared_nothrow<LatencyMeter>(std::set<std::string>{ "INFERENCE" }, // Since we check 'infer()' with single callback, we only address 1 output
+                    OVERALL_LATENCY_TIMESTAMPS_LIST_LENGTH);
+                CHECK_NOT_NULL_AS_EXPECTED(overall_latency_meter, HAILO_OUT_OF_HOST_MEMORY);
+                res->set_overall_latency_meter(overall_latency_meter);
+            }
+
+            // We use a barrier for both hw and overall latency
+            auto latency_barrier = make_shared_nothrow<Barrier>(1); // Only 1 frame at a time
+            CHECK_NOT_NULL_AS_EXPECTED(latency_barrier, HAILO_OUT_OF_HOST_MEMORY);
+            res->set_latency_barrier(latency_barrier);
+        }
+    return res;
 }
 
 Expected<std::shared_ptr<NetworkRunner>> NetworkRunner::create_shared(VDevice &vdevice, const NetworkParams &params)
@@ -110,101 +214,101 @@ Expected<std::shared_ptr<NetworkRunner>> NetworkRunner::create_shared(VDevice &v
     // The network params passed to the NetworkRunner may be changed by this function, hence we copy them.
     auto final_net_params = params;
 
-    auto hef = Hef::create(final_net_params.hef_path);
-    CHECK_EXPECTED(hef);
-
-    // Get NG's name if single
-    auto net_group_name = final_net_params.net_group_name;
-    if (net_group_name.empty()) {
-        auto net_groups_names = hef->get_network_groups_names();
-        CHECK_AS_EXPECTED(net_groups_names.size() == 1, HAILO_INVALID_ARGUMENT, "HEF {} doesn't contain a single NetworkGroup. Pass --name", final_net_params.hef_path);
-        net_group_name = net_groups_names[0];
-    }
-
-    auto cfg_params = vdevice.create_configure_params(hef.value(), net_group_name);
-    CHECK_EXPECTED(cfg_params);
-    cfg_params->batch_size = final_net_params.batch_size;
-    if (final_net_params.batch_size == HAILO_DEFAULT_BATCH_SIZE) {
-        // Changing batch_size to 1. If HAILO_DEFAULT_BATCH_SIZE is configured, the sched will send one frame per batch
-        final_net_params.batch_size = 1;
-    }
-    if (final_net_params.measure_hw_latency) {
-        cfg_params->latency |= HAILO_LATENCY_MEASURE;
-    }
-    if (final_net_params.is_async()) {
-        for (auto &stream_name_params_pair : cfg_params->stream_params_by_name) {
-            stream_name_params_pair.second.flags = HAILO_STREAM_FLAGS_ASYNC;
-        }
-    } 
-    auto cfgr_net_groups = vdevice.configure(hef.value(), {{net_group_name, cfg_params.value()}});
-    CHECK_EXPECTED(cfgr_net_groups);
-    assert(1 == cfgr_net_groups->size());
-    auto cfgr_net_group = cfgr_net_groups.value()[0];
-
-    if (HAILO_SCHEDULING_ALGORITHM_NONE!= final_net_params.scheduling_algorithm) {
-        CHECK_SUCCESS_AS_EXPECTED(cfgr_net_group->set_scheduler_threshold(final_net_params.scheduler_threshold));
-        CHECK_SUCCESS_AS_EXPECTED(cfgr_net_group->set_scheduler_timeout(std::chrono::milliseconds(final_net_params.scheduler_timeout_ms)));
-        CHECK_SUCCESS_AS_EXPECTED(cfgr_net_group->set_scheduler_priority(final_net_params.scheduler_priority));
-    }
-
     std::shared_ptr<NetworkRunner> net_runner_ptr = nullptr;
-    switch (final_net_params.mode)
-    {
-    case InferenceMode::FULL:
-    {
-        std::map<std::string, hailo_vstream_params_t> vstreams_params;
-        for (auto &vstream_params : final_net_params.vstream_params) {
-            vstreams_params.emplace(vstream_params.name, vstream_params.params);
+    if (InferenceMode::FULL_ASYNC == final_net_params.mode) {
+        auto runner_exp = FullAsyncNetworkRunner::create_shared(vdevice, final_net_params);
+        CHECK_EXPECTED(runner_exp);
+        net_runner_ptr = runner_exp.release();
+    } else {
+        auto hef = Hef::create(final_net_params.hef_path);
+        CHECK_EXPECTED(hef);
+
+        auto expected_net_group_name = get_network_group_name(final_net_params, hef.value());
+        CHECK_EXPECTED(expected_net_group_name);
+
+        auto cfg_params = vdevice.create_configure_params(hef.value(), expected_net_group_name.value());
+        CHECK_EXPECTED(cfg_params);
+        cfg_params->batch_size = final_net_params.batch_size;
+        if (final_net_params.batch_size == HAILO_DEFAULT_BATCH_SIZE) {
+            // Changing batch_size to 1 (after configuring the vdevice) - as we iterate over 'final_net_params.batch_size' in latency measurements scenarios
+            final_net_params.batch_size = 1;
         }
-        auto vstreams = create_vstreams(*cfgr_net_group, vstreams_params);
-        CHECK_EXPECTED(vstreams);
+        if (final_net_params.measure_hw_latency) {
+            cfg_params->latency |= HAILO_LATENCY_MEASURE;
+        }
+        if (final_net_params.is_async()) {
+            for (auto &stream_name_params_pair : cfg_params->stream_params_by_name) {
+                stream_name_params_pair.second.flags = HAILO_STREAM_FLAGS_ASYNC;
+            }
+        }
+        auto cfgr_net_groups = vdevice.configure(hef.value(), {{expected_net_group_name.value(), cfg_params.value()}});
+        CHECK_EXPECTED(cfgr_net_groups);
+        assert(1 == cfgr_net_groups->size());
+        auto cfgr_net_group = cfgr_net_groups.value()[0];
 
-        auto net_runner = make_shared_nothrow<FullNetworkRunner>(final_net_params, net_group_name, vdevice,
-            std::move(vstreams->first), std::move(vstreams->second), cfgr_net_group);
-        CHECK_NOT_NULL_AS_EXPECTED(net_runner, HAILO_OUT_OF_HOST_MEMORY);
-        net_runner_ptr = std::static_pointer_cast<NetworkRunner>(net_runner);
-        break;
-    }
-
-    case InferenceMode::RAW:            // Fallthrough
-    case InferenceMode::RAW_ASYNC:      // Fallthrough
-    case InferenceMode::RAW_ASYNC_SINGLE_THREAD:
-    {
-        auto input_streams = cfgr_net_group->get_input_streams();
-        CHECK_AS_EXPECTED(input_streams.size() > 0, HAILO_INTERNAL_FAILURE);
-
-        auto output_streams = cfgr_net_group->get_output_streams();
-        CHECK_AS_EXPECTED(output_streams.size() > 0, HAILO_INTERNAL_FAILURE);
-
-        auto net_runner = make_shared_nothrow<RawNetworkRunner>(final_net_params, net_group_name, vdevice,
-            std::move(input_streams), std::move(output_streams), cfgr_net_group);
-        CHECK_NOT_NULL_AS_EXPECTED(net_runner, HAILO_OUT_OF_HOST_MEMORY);
-        net_runner_ptr = std::static_pointer_cast<NetworkRunner>(net_runner);
-        break;
-    }
-
-    default:
-        // Shouldn't get here
-        return make_unexpected(HAILO_INTERNAL_FAILURE);
-    }
-
-    if (final_net_params.measure_overall_latency || final_net_params.measure_hw_latency) {
-        auto input_names = net_runner_ptr->get_input_names();
-        auto output_names = net_runner_ptr->get_output_names();
-
-        CHECK_AS_EXPECTED((1 == input_names.size()), HAILO_INVALID_OPERATION,
-            "Latency measurement over multiple inputs network is not supported");
-
-        if (final_net_params.measure_overall_latency) {
-            auto overall_latency_meter = make_shared_nothrow<LatencyMeter>(output_names, OVERALL_LATENCY_TIMESTAMPS_LIST_LENGTH);
-            CHECK_NOT_NULL_AS_EXPECTED(overall_latency_meter, HAILO_OUT_OF_HOST_MEMORY);
-            net_runner_ptr->set_overall_latency_meter(overall_latency_meter);
+        if (HAILO_SCHEDULING_ALGORITHM_NONE != final_net_params.scheduling_algorithm) {
+            CHECK_SUCCESS_AS_EXPECTED(cfgr_net_group->set_scheduler_threshold(final_net_params.scheduler_threshold));
+            CHECK_SUCCESS_AS_EXPECTED(cfgr_net_group->set_scheduler_timeout(std::chrono::milliseconds(final_net_params.scheduler_timeout_ms)));
+            CHECK_SUCCESS_AS_EXPECTED(cfgr_net_group->set_scheduler_priority(final_net_params.scheduler_priority));
         }
 
-        // We use a barrier for both hw and overall latency
-        auto latency_barrier = make_shared_nothrow<Barrier>(input_names.size() + output_names.size());
-        CHECK_NOT_NULL_AS_EXPECTED(latency_barrier, HAILO_OUT_OF_HOST_MEMORY);
-        net_runner_ptr->set_latency_barrier(latency_barrier);
+        switch (final_net_params.mode)
+        {
+        case InferenceMode::FULL:
+        {
+            std::map<std::string, hailo_vstream_params_t> vstreams_params;
+            for (auto &vstream_params : final_net_params.vstream_params) {
+                vstreams_params.emplace(vstream_params.name, vstream_params.params);
+            }
+            auto vstreams = create_vstreams(*cfgr_net_group, vstreams_params);
+            CHECK_EXPECTED(vstreams);
+
+            auto net_runner = make_shared_nothrow<FullNetworkRunner>(final_net_params, expected_net_group_name.value(), vdevice,
+                std::move(vstreams->first), std::move(vstreams->second), cfgr_net_group);
+            CHECK_NOT_NULL_AS_EXPECTED(net_runner, HAILO_OUT_OF_HOST_MEMORY);
+            net_runner_ptr = std::static_pointer_cast<NetworkRunner>(net_runner);
+            break;
+        }
+        case InferenceMode::RAW:            // Fallthrough
+        case InferenceMode::RAW_ASYNC:      // Fallthrough
+        case InferenceMode::RAW_ASYNC_SINGLE_THREAD:
+        {
+            auto input_streams = cfgr_net_group->get_input_streams();
+            CHECK_AS_EXPECTED(input_streams.size() > 0, HAILO_INTERNAL_FAILURE);
+
+            auto output_streams = cfgr_net_group->get_output_streams();
+            CHECK_AS_EXPECTED(output_streams.size() > 0, HAILO_INTERNAL_FAILURE);
+
+            auto net_runner = make_shared_nothrow<RawNetworkRunner>(final_net_params, expected_net_group_name.value(), vdevice,
+                std::move(input_streams), std::move(output_streams), cfgr_net_group);
+            CHECK_NOT_NULL_AS_EXPECTED(net_runner, HAILO_OUT_OF_HOST_MEMORY);
+            net_runner_ptr = std::static_pointer_cast<NetworkRunner>(net_runner);
+            break;
+        }
+
+        default:
+            // Shouldn't get here
+            return make_unexpected(HAILO_INTERNAL_FAILURE);
+        }
+
+        if (final_net_params.measure_overall_latency || final_net_params.measure_hw_latency) {
+            auto input_names = net_runner_ptr->get_input_names();
+            auto output_names = net_runner_ptr->get_output_names();
+
+            CHECK_AS_EXPECTED((1 == input_names.size()), HAILO_INVALID_OPERATION,
+                "Latency measurement over multiple inputs network is not supported");
+
+            if (final_net_params.measure_overall_latency) {
+                auto overall_latency_meter = make_shared_nothrow<LatencyMeter>(output_names, OVERALL_LATENCY_TIMESTAMPS_LIST_LENGTH);
+                CHECK_NOT_NULL_AS_EXPECTED(overall_latency_meter, HAILO_OUT_OF_HOST_MEMORY);
+                net_runner_ptr->set_overall_latency_meter(overall_latency_meter);
+            }
+
+            // We use a barrier for both hw and overall latency
+            auto latency_barrier = make_shared_nothrow<Barrier>(input_names.size() + output_names.size());
+            CHECK_NOT_NULL_AS_EXPECTED(latency_barrier, HAILO_OUT_OF_HOST_MEMORY);
+            net_runner_ptr->set_latency_barrier(latency_barrier);
+        }
     }
 
     return net_runner_ptr;
@@ -222,17 +326,19 @@ hailo_status NetworkRunner::run(EventPtr shutdown_event, LiveStats &live_stats, 
 {
     auto ang = std::unique_ptr<ActivatedNetworkGroup>(nullptr);
     if (HAILO_SCHEDULING_ALGORITHM_NONE == m_params.scheduling_algorithm) {
-        auto ang_exp = m_cng->activate();
-        if (!ang_exp) {
-            activation_barrier.terminate();
+        if (m_cng) {
+            auto ang_exp = m_cng->activate();
+            if (!ang_exp) {
+                activation_barrier.terminate();
+            }
+            CHECK_EXPECTED_AS_STATUS(ang_exp);
+            ang = ang_exp.release();
         }
-        CHECK_EXPECTED_AS_STATUS(ang_exp);
-        ang = ang_exp.release();
     }
 
     // If we measure latency (hw or overall) we send frames one at a time. Hence we don't measure fps.
     const auto measure_fps = !m_params.measure_hw_latency && !m_params.measure_overall_latency;
-    auto net_live_track = std::make_shared<NetworkLiveTrack>(m_name, m_cng, m_overall_latency_meter, measure_fps, m_params.hef_path);
+    auto net_live_track = std::make_shared<NetworkLiveTrack>(m_name, m_cng, m_configured_infer_model, m_overall_latency_meter, measure_fps, m_params.hef_path);
     live_stats.add(net_live_track, 1); //support progress over multiple outputs
 
 #if defined(_MSC_VER)
@@ -241,7 +347,7 @@ hailo_status NetworkRunner::run(EventPtr shutdown_event, LiveStats &live_stats, 
 
     activation_barrier.arrive_and_wait();
 
-    if (m_params.mode == InferenceMode::RAW_ASYNC_SINGLE_THREAD) {
+    if ((InferenceMode::RAW_ASYNC_SINGLE_THREAD == m_params.mode) || (InferenceMode::FULL_ASYNC == m_params.mode)) {
         return run_single_thread_async_infer(shutdown_event, net_live_track);
     } else {
         auto threads = start_inference_threads(shutdown_event, net_live_track);
@@ -278,17 +384,6 @@ double NetworkRunner::get_last_measured_fps()
     return m_last_measured_fps;
 }
 
-hailo_vstream_params_t update_quantize_flag_in_vstream_param(const hailo_vstream_info_t &vstream_info, const hailo_vstream_params_t &old_vstream_params)
-{
-    hailo_vstream_params_t res = old_vstream_params;
-    if ((HAILO_FORMAT_TYPE_FLOAT32 == old_vstream_params.user_buffer_format.type) || (HailoRTCommon::is_nms(vstream_info))) {
-        res.user_buffer_format.flags &= (~HAILO_FORMAT_FLAGS_QUANTIZED);
-    } else {
-        res.user_buffer_format.flags |= (HAILO_FORMAT_FLAGS_QUANTIZED);
-    }
-    return res;
-}
-
 Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> NetworkRunner::create_vstreams(
     ConfiguredNetworkGroup &net_group, const std::map<std::string, hailo_vstream_params_t> &params)
 {//TODO: support network name
@@ -298,14 +393,11 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> Netwo
     auto input_vstreams_info = net_group.get_input_vstream_infos();
     CHECK_EXPECTED(input_vstreams_info);
     for (auto &input_vstream_info : input_vstreams_info.value()) {
-        auto elem_it = params.find(input_vstream_info.name);
-        if (elem_it != params.end()) {
-            auto vstream_param = update_quantize_flag_in_vstream_param(input_vstream_info, elem_it->second);
-            input_vstreams_params.emplace(input_vstream_info.name, vstream_param);
+        if (params.end() != params.find(input_vstream_info.name)) {
             match_count++;
+            input_vstreams_params.emplace(input_vstream_info.name, params.at(input_vstream_info.name));
         } else {
-            auto vstream_param = update_quantize_flag_in_vstream_param(input_vstream_info, HailoRTDefaults::get_vstreams_params());
-            input_vstreams_params.emplace(input_vstream_info.name, vstream_param);
+            input_vstreams_params.emplace(input_vstream_info.name, HailoRTDefaults::get_vstreams_params());
         }
     }
 
@@ -313,15 +405,11 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> Netwo
     auto output_vstreams_info = net_group.get_output_vstream_infos();
     CHECK_EXPECTED(output_vstreams_info);
     for (auto &output_vstream_info : output_vstreams_info.value()) {
-        auto elem_it = params.find(output_vstream_info.name);
-        if (elem_it != params.end()) {
-            auto vstream_param = update_quantize_flag_in_vstream_param(output_vstream_info, elem_it->second);
-            output_vstreams_params.emplace(output_vstream_info.name, vstream_param);
+        if (params.end() != params.find(output_vstream_info.name)) {
             match_count++;
-        }
-        else {
-            auto vstream_param = update_quantize_flag_in_vstream_param(output_vstream_info, HailoRTDefaults::get_vstreams_params());
-            output_vstreams_params.emplace(output_vstream_info.name, vstream_param);
+            output_vstreams_params.emplace(output_vstream_info.name, params.at(output_vstream_info.name));
+        } else {
+            output_vstreams_params.emplace(output_vstream_info.name, HailoRTDefaults::get_vstreams_params());
         }
     }
 
@@ -383,12 +471,7 @@ Expected<std::vector<AsyncThreadPtr<hailo_status>>> FullNetworkRunner::start_inf
 
 void FullNetworkRunner::stop()
 {
-    for (auto &input_vstream : m_input_vstreams) {
-        (void) input_vstream.abort();
-    }
-    for (auto &output_vstream : m_output_vstreams) {
-        (void) output_vstream.abort();
-    }
+    (void) m_cng->shutdown();
 }
 
 std::set<std::string> FullNetworkRunner::get_input_names()
@@ -421,6 +504,158 @@ VStreamParams FullNetworkRunner::get_params(const std::string &name)
         }
     }
     return VStreamParams();
+}
+
+
+FullAsyncNetworkRunner::FullAsyncNetworkRunner(const NetworkParams &params, const std::string &name, VDevice &vdevice,
+    std::shared_ptr<InferModel> infer_model, std::shared_ptr<ConfiguredInferModel> configured_infer_model) :
+    NetworkRunner(params, name, vdevice, infer_model, configured_infer_model)
+{
+}
+
+void FullAsyncNetworkRunner::stop()
+{}
+
+std::set<std::string> FullAsyncNetworkRunner::get_input_names()
+{
+    std::set<std::string> results;
+    for (const auto &name : m_infer_model->get_input_names()) {
+        results.insert(name);
+    }
+    return results;
+}
+
+std::set<std::string> FullAsyncNetworkRunner::get_output_names()
+{
+    std::set<std::string> results;
+    for (const auto &name : m_infer_model->get_output_names()) {
+        results.insert(name);
+    }
+    return results;
+}
+
+VStreamParams FullAsyncNetworkRunner::get_params(const std::string &name)
+{
+    for (const auto &params : m_params.vstream_params) {
+        if (name == params.name) {
+            return params;
+        }
+    }
+    return VStreamParams();
+}
+
+Expected<AsyncInferJob> FullAsyncNetworkRunner::create_infer_job(const ConfiguredInferModel::Bindings &bindings,
+    std::weak_ptr<NetworkLiveTrack> net_live_track_weak, FramerateThrottle &frame_rate_throttle, hailo_status &inference_status)
+{
+    frame_rate_throttle.throttle();
+    if (m_overall_latency_meter) {
+        m_overall_latency_meter->add_start_sample(std::chrono::steady_clock::now().time_since_epoch());
+    }
+    auto job = m_configured_infer_model->run_async(bindings, [=, &inference_status] (const AsyncInferCompletionInfo &completion_info) {
+        if (HAILO_SUCCESS != completion_info.status) {
+            inference_status = completion_info.status;
+            LOGGER__ERROR("Failed in infer async request");
+            return;
+        }
+        if (m_overall_latency_meter) {
+            m_overall_latency_meter->add_end_sample("INFERENCE", std::chrono::steady_clock::now().time_since_epoch());
+        }
+        if (auto net_live_track = net_live_track_weak.lock()) {
+            /* Using weak_ptr as net_live_track holds a reference to m_configured_infer_model (for stuff like latency measurement),
+                so there's a circular dependency */
+            net_live_track->progress();
+        }
+    });
+    CHECK_EXPECTED(job);
+    return job.release();
+}
+
+hailo_status FullAsyncNetworkRunner::run_single_thread_async_infer(EventPtr shutdown_event,
+    std::shared_ptr<NetworkLiveTrack> net_live_track)
+{
+    auto signal_event_scope_guard = SignalEventScopeGuard(*shutdown_event);
+
+    std::map<std::string, Buffer> inputs_buffer_pool;
+    const uint8_t const_byte = 0xAB;
+    for (const auto &input_name : get_input_names()) {
+        inputs_buffer_pool[input_name] = {};
+        auto input_config = m_infer_model->input(input_name);
+        CHECK_EXPECTED_AS_STATUS(input_config);
+
+        auto params = get_params(input_name);
+        if (params.input_file_path.empty()) {
+            auto constant_buffer = Buffer::create(input_config->get_frame_size(), const_byte, BufferStorageParams::create_dma());
+            CHECK_EXPECTED_AS_STATUS(constant_buffer);
+            inputs_buffer_pool[input_name] = constant_buffer.release();
+        } else {
+            auto buffer = read_binary_file(params.input_file_path, BufferStorageParams::create_dma());
+            CHECK_EXPECTED_AS_STATUS(buffer);
+            inputs_buffer_pool[input_name] = buffer.release();
+        }
+    }
+
+    std::map<std::string, Buffer> outputs_buffer_pool;
+    for (const auto &output_name : get_output_names()) {
+        outputs_buffer_pool[output_name] = {};
+        auto output_config = m_infer_model->output(output_name);
+        CHECK_EXPECTED_AS_STATUS(output_config);
+
+        auto constant_buffer = Buffer::create(output_config->get_frame_size(), 0, BufferStorageParams::create_dma());
+        CHECK_EXPECTED_AS_STATUS(constant_buffer);
+        outputs_buffer_pool[output_name] = constant_buffer.release();
+    }
+
+    std::unique_ptr<ConfiguredInferModelActivationGuard> guard = nullptr;
+    if (HAILO_SCHEDULING_ALGORITHM_NONE != m_params.scheduling_algorithm) {
+        auto status = m_configured_infer_model->set_scheduler_threshold(m_params.scheduler_threshold);
+        CHECK_SUCCESS(status);
+
+        status = m_configured_infer_model->set_scheduler_timeout(std::chrono::milliseconds(m_params.scheduler_timeout_ms));
+        CHECK_SUCCESS(status);
+
+        status = m_configured_infer_model->set_scheduler_priority(m_params.scheduler_priority);
+        CHECK_SUCCESS(status);
+    } else {
+        auto guard_exp = ConfiguredInferModelActivationGuard::create(m_configured_infer_model);
+        CHECK_EXPECTED_AS_STATUS(guard_exp);
+        guard = guard_exp.release();
+    }
+
+    auto bindings = m_configured_infer_model->create_bindings();
+    CHECK_EXPECTED_AS_STATUS(bindings);
+
+    for (auto &pair : inputs_buffer_pool) {
+        auto &name = pair.first;
+        auto &buffer = pair.second;
+        bindings->input(name)->set_buffer(hailort::MemoryView(buffer));
+    }
+    for (auto &pair : outputs_buffer_pool) {
+        auto &name = pair.first;
+        auto &buffer = pair.second;
+        bindings->output(name)->set_buffer(hailort::MemoryView(buffer));
+    }
+
+    FramerateThrottle frame_rate_throttle(m_params.framerate);
+
+    AsyncInferJob last_job;
+    auto inference_status = HAILO_SUCCESS;
+    while (HAILO_TIMEOUT == shutdown_event->wait(std::chrono::milliseconds(0)) && (HAILO_SUCCESS == inference_status)) {
+        for (uint32_t frames_in_cycle = 0; frames_in_cycle < m_params.batch_size; frames_in_cycle++) {
+            if (HAILO_SUCCESS == m_configured_infer_model->wait_for_async_ready(HAILO_INFINITE_TIMEOUT)) {
+                auto job_exp = create_infer_job(*bindings, net_live_track, frame_rate_throttle, inference_status);
+                CHECK_EXPECTED_AS_STATUS(job_exp);
+                last_job = job_exp.release();
+                last_job.detach();
+            }
+        }
+        if (m_latency_barrier) {
+            // When measuring latency we want to send 'batch' frames at a time
+            last_job.wait(HAILO_INFINITE_TIMEOUT);
+        }
+    }
+    last_job.wait(HAILO_INFINITE_TIMEOUT);
+
+    return inference_status;
 }
 
 RawNetworkRunner::RawNetworkRunner(const NetworkParams &params, const std::string &name, VDevice &vdevice,
@@ -570,12 +805,7 @@ hailo_status RawNetworkRunner::run_single_thread_async_infer(EventPtr shutdown_e
 
 void RawNetworkRunner::stop()
 {
-    for (auto &input_stream : m_input_streams) {
-        (void) input_stream.get().abort();
-    }
-    for (auto &output_stream : m_output_streams) {
-        (void) output_stream.get().abort();
-    }
+    m_cng->shutdown();
 }
 
 std::set<std::string> RawNetworkRunner::get_input_names()

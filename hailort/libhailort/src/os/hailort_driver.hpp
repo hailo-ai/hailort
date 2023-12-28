@@ -102,6 +102,13 @@ struct DescriptorsListInfo {
     void *user_address;
 };
 
+struct ContinousBufferInfo {
+    uintptr_t handle;  // Unique identifer for the driver.
+    uint64_t dma_address;
+    size_t size;
+    void *user_address;
+};
+
 class HailoRTDriver final
 {
 public:
@@ -237,12 +244,12 @@ public:
      * @param[in] size - Buffer size
      * @return pair <buffer_handle, dma_address>.
      */
-    Expected<std::pair<uintptr_t, uint64_t>> vdma_continuous_buffer_alloc(size_t size);
+    Expected<ContinousBufferInfo> vdma_continuous_buffer_alloc(size_t size);
 
     /**
      * Frees a vdma continuous buffer allocated by 'vdma_continuous_buffer_alloc'.
      */
-    hailo_status vdma_continuous_buffer_free(uintptr_t buffer_handle);
+    hailo_status vdma_continuous_buffer_free(const ContinousBufferInfo &buffer_info);
 
     /**
      * Marks the device as used for vDMA operations. Only one open FD can be marked at once.
@@ -299,6 +306,11 @@ private:
     hailo_status descriptors_list_release_ioctl(uintptr_t desc_handle);
     Expected<void *> descriptors_list_create_mmap(uintptr_t desc_handle, size_t desc_count);
     hailo_status descriptors_list_create_munmap(void *address, size_t desc_count);
+
+    Expected<std::pair<uintptr_t, uint64_t>> continous_buffer_alloc_ioctl(size_t size);
+    hailo_status continous_buffer_free_ioctl(uintptr_t desc_handle);
+    Expected<void *> continous_buffer_mmap(uintptr_t desc_handle, size_t size);
+    hailo_status continous_buffer_munmap(void *address, size_t size);
 
     HailoRTDriver(const DeviceInfo &device_info, FileDescriptor &&fd, hailo_status &status);
 

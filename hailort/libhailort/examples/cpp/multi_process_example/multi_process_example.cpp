@@ -17,7 +17,6 @@
 
 
 constexpr size_t FRAMES_COUNT = 100;
-constexpr bool QUANTIZED = true;
 constexpr hailo_format_type_t FORMAT_TYPE = HAILO_FORMAT_TYPE_AUTO;
 constexpr size_t MAX_LAYER_EDGES = 16;
 constexpr uint32_t DEVICE_COUNT = 1;
@@ -156,7 +155,7 @@ int main(int argc, char **argv)
         return network_group.status();
     }
 
-    auto vstreams = VStreamsBuilder::create_vstreams(*network_group.value(), QUANTIZED, FORMAT_TYPE);
+    auto vstreams = VStreamsBuilder::create_vstreams(*network_group.value(), {}, FORMAT_TYPE);
     if (!vstreams) {
         std::cerr << "Failed creating vstreams " << vstreams.status() << std::endl;
         return vstreams.status();

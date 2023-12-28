@@ -11,7 +11,7 @@
 namespace hailort
 {
 
-InternalTransferDoneCallback CallbackReorderQueue::wrap_callback(const InternalTransferDoneCallback &original)
+TransferDoneCallback CallbackReorderQueue::wrap_callback(const TransferDoneCallback &original)
 {
     std::lock_guard<std::mutex> lock_guard(m_queue_mutex);
     const uint64_t current_callback_index = m_registered_callbacks++;

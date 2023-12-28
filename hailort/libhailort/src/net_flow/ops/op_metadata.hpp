@@ -30,6 +30,7 @@ struct BufferMetaData
 enum class OperationType {
     YOLOX,
     YOLOV5,
+    YOLOV8,
     YOLOV5SEG,
     SSD,
     SOFTMAX,
@@ -78,6 +79,8 @@ public:
             return "YOLOV5";
         case OperationType::YOLOV5SEG:
             return "YOLOV5SEG";
+        case OperationType::YOLOV8:
+            return "YOLOV8";
         case OperationType::SSD:
             return "SSD";
         case OperationType::SOFTMAX:
@@ -108,8 +111,6 @@ protected:
 
     virtual hailo_status validate_params() = 0;
 };
-
-using PostProcessOpMetadataPtr = std::shared_ptr<OpMetadata>;
 
 }
 }

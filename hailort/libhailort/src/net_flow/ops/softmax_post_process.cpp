@@ -34,6 +34,26 @@ hailo_status SoftmaxPostProcessOp::execute_not_supported(const BufferMetaData &i
         return HAILO_INVALID_ARGUMENT;
     }
 
+hailo_status SoftmaxPostProcessOp::softmax(float32_t *src, float32_t *dst, size_t num_of_elements)
+{
+    // In order to avoid overflows, we will perform the following:
+    // We find the maximal value and then we substract it from all of the values.
+    // This will preserve the original softmax values + prevent overflows
+    float32_t max_val = *std::max_element(src, src + num_of_elements);
+    float32_t sum_exp = 0; // denominator
+    for (uint32_t c = 0; c < num_of_elements; c++) {
+        auto &current_value = *(src + c);
+        current_value -= max_val; // This step preserves the original softmax values + prevent overflows
+        current_value = std::exp(static_cast<float32_t>(current_value)); // Set src[c] to e^(src[c]) so that we only calculate it once
+        sum_exp += current_value;
+    }
+    for (uint32_t c = 0; c < num_of_elements; c++) {
+        const auto &current_value = *(src + c);
+        dst[c] = static_cast<float32_t>(current_value / sum_exp);
+    }
+    return HAILO_SUCCESS;
+}
+
 SoftmaxFunction SoftmaxPostProcessOp::m_softmax_function_array[SOFTMAX_NUM_OF_POSSIBLE_FORMAT_ORDERS][SOFTMAX_NUM_OF_POSSIBLE_FORMAT_TYPES][SOFTMAX_NUM_OF_POSSIBLE_FORMAT_TYPES]
 {
     // Currently supported on:
@@ -177,10 +197,6 @@ hailo_status SoftmaxOpMetadata::validate_format_info()
     auto &output_metadata = m_outputs_metadata.begin()->second;
 
     CHECK(
-        ((input_metadata.format.flags & HAILO_FORMAT_FLAGS_QUANTIZED) == 0) && ((output_metadata.format.flags & HAILO_FORMAT_FLAGS_QUANTIZED) == 0),
-        HAILO_INVALID_OPERATION, "Softmax op is supported only on dequantized data");
-
-    CHECK(
         ((input_metadata.format.order == HAILO_FORMAT_ORDER_NHWC) &&  (output_metadata.format.order == HAILO_FORMAT_ORDER_NHWC)) ||
         ((input_metadata.format.order == HAILO_FORMAT_ORDER_NC) && (output_metadata.format.order == HAILO_FORMAT_ORDER_NC)),
         HAILO_INVALID_OPERATION, "Softmax op is not supported for input format order ({}) and output format order ({})",
@@ -196,8 +212,6 @@ hailo_status SoftmaxOpMetadata::validate_format_info()
         HailoRTCommon::get_format_type_str(output_metadata.format.type),
         HailoRTCommon::get_format_type_str(HAILO_FORMAT_TYPE_FLOAT32));
     CHECK(!(HAILO_FORMAT_FLAGS_HOST_ARGMAX & output_metadata.format.flags), HAILO_INVALID_ARGUMENT, "Output {} is marked as argmax, which is not supported for this model.",
-        m_outputs_metadata.begin()->first);
-    CHECK(!(HAILO_FORMAT_FLAGS_QUANTIZED & output_metadata.format.flags), HAILO_INVALID_ARGUMENT, "Output {} is marked as quantized, which is not supported for this model.",
         m_outputs_metadata.begin()->first);
 
     return HAILO_SUCCESS;

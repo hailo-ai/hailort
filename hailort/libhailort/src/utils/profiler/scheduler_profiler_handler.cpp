@@ -39,7 +39,7 @@ namespace hailort
 SchedulerProfilerHandler::SchedulerProfilerHandler(int64_t &start_time)
 #ifndef __ANDROID__
     : m_file_sink(HailoRTLogger::create_file_sink(HailoRTLogger::get_log_path(SCHEDULER_PROFILER_LOGGER_PATH), SCHEDULER_PROFILER_LOGGER_FILENAME, false)),
-      m_first_write(true), m_start_time(start_time)
+      m_first_write(true)
 #endif
 {
 #ifndef __ANDROID__
@@ -151,7 +151,7 @@ void SchedulerProfilerHandler::handle_trace(const InitProfilerProtoTrace &trace)
     init->mutable_time()->set_hour(curr_time.hour);
     init->mutable_time()->set_min(curr_time.min);
     init->set_time_stamp(trace.timestamp);
-    init->set_time_stamp_since_epoch(m_start_time);
+    init->set_time_stamp_since_epoch(curr_time.time_since_epoch);
 }
 
 void SchedulerProfilerHandler::handle_trace(const AddCoreOpTrace &trace)
@@ -159,11 +159,11 @@ void SchedulerProfilerHandler::handle_trace(const AddCoreOpTrace &trace)
     log(JSON({
         {"action", json_to_string(trace.name)},
         {"timestamp", json_to_string(trace.timestamp)},
-        {"device_id", json_to_string(trace.device_id)},
         {"core_op_name", json_to_string(trace.core_op_name)},
         {"core_op_handle", json_to_string(trace.core_op_handle)},
         {"timeout", json_to_string((uint64_t)trace.timeout)},
-        {"threshold", json_to_string((uint64_t)trace.threshold)}
+        {"threshold", json_to_string((uint64_t)trace.threshold)},
+        {"max_batch_size", json_to_string((uint64_t)trace.batch_size)}
     }));
 
     std::lock_guard<std::mutex> lock(m_proto_lock);
@@ -171,6 +171,7 @@ void SchedulerProfilerHandler::handle_trace(const AddCoreOpTrace &trace)
     added_trace->mutable_added_core_op()->set_time_stamp(trace.timestamp);
     added_trace->mutable_added_core_op()->set_core_op_handle(trace.core_op_handle);
     added_trace->mutable_added_core_op()->set_core_op_name(trace.core_op_name);
+    added_trace->mutable_added_core_op()->set_max_batch_size(trace.batch_size);
 }
 
 void SchedulerProfilerHandler::handle_trace(const AddDeviceTrace &trace)
@@ -182,7 +183,7 @@ void SchedulerProfilerHandler::handle_trace(const AddDeviceTrace &trace)
     added_trace->mutable_added_device()->set_time_stamp(trace.timestamp);
 }
 
-void SchedulerProfilerHandler::handle_trace(const CreateCoreOpInputStreamsTrace &trace)
+void SchedulerProfilerHandler::handle_trace(const AddStreamH2DTrace &trace)
 {
     log(JSON({
         {"action", json_to_string(trace.name)},
@@ -203,7 +204,7 @@ void SchedulerProfilerHandler::handle_trace(const CreateCoreOpInputStreamsTrace 
     added_trace->mutable_added_stream()->set_time_stamp(trace.timestamp);
 }
 
-void SchedulerProfilerHandler::handle_trace(const CreateCoreOpOutputStreamsTrace &trace)
+void SchedulerProfilerHandler::handle_trace(const AddStreamD2HTrace &trace)
 {
     log(JSON({
         {"action", json_to_string(trace.name)},
@@ -224,7 +225,7 @@ void SchedulerProfilerHandler::handle_trace(const CreateCoreOpOutputStreamsTrace
     added_trace->mutable_added_stream()->set_time_stamp(trace.timestamp);
 }
 
-void SchedulerProfilerHandler::handle_trace(const WriteFrameTrace &trace)
+void SchedulerProfilerHandler::handle_trace(const FrameEnqueueH2DTrace &trace)
 {
     log(JSON({
         {"action", json_to_string(trace.name)},
@@ -241,7 +242,7 @@ void SchedulerProfilerHandler::handle_trace(const WriteFrameTrace &trace)
     added_trace->mutable_frame_enqueue()->set_time_stamp(trace.timestamp);
 }
 
-void SchedulerProfilerHandler::handle_trace(const InputVdmaDequeueTrace &trace)
+void SchedulerProfilerHandler::handle_trace(const FrameDequeueH2DTrace &trace)
 {
     log(JSON({
         {"action", json_to_string(trace.name)},
@@ -260,7 +261,7 @@ void SchedulerProfilerHandler::handle_trace(const InputVdmaDequeueTrace &trace)
     added_trace->mutable_frame_dequeue()->set_time_stamp(trace.timestamp);
 }
 
-void SchedulerProfilerHandler::handle_trace(const ReadFrameTrace &trace)
+void SchedulerProfilerHandler::handle_trace(const FrameDequeueD2HTrace &trace)
 {
     log(JSON({
         {"action", json_to_string(trace.name)},
@@ -277,7 +278,7 @@ void SchedulerProfilerHandler::handle_trace(const ReadFrameTrace &trace)
     added_trace->mutable_frame_dequeue()->set_time_stamp(trace.timestamp);
 }
 
-void SchedulerProfilerHandler::handle_trace(const OutputVdmaEnqueueTrace &trace)
+void SchedulerProfilerHandler::handle_trace(const FrameEnqueueD2HTrace &trace)
 {
     log(JSON({
         {"action", json_to_string(trace.name)},
@@ -371,7 +372,7 @@ void SchedulerProfilerHandler::handle_trace(const OracleDecisionTrace &trace)
     added_trace->mutable_switch_core_op_decision()->set_over_timeout(trace.over_timeout);
 }
 
-void SchedulerProfilerHandler::handle_trace(const DumpProfilerState &trace)
+void SchedulerProfilerHandler::handle_trace(const DumpProfilerStateTrace &trace)
 {
     (void)trace;
     serialize_and_dump_proto();

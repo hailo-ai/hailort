@@ -8,6 +8,7 @@
  *        See hpp for more information.
  **/
 
+#include "hailo/hailort_common.hpp"
 #include "dma_able_buffer.hpp"
 #include "common/os_utils.hpp"
 
@@ -30,9 +31,13 @@ class UserAllocatedDmaAbleBuffer : public DmaAbleBuffer {
 public:
     static Expected<DmaAbleBufferPtr> create(void *user_address, size_t size)
     {
-        CHECK_AS_EXPECTED(0 == (reinterpret_cast<size_t>(user_address) % OsUtils::get_page_size()),
-            HAILO_INVALID_ARGUMENT, "User address mapped as dma must be paged aligned (page size {})",
-            OsUtils::get_page_size());
+        CHECK_ARG_NOT_NULL_AS_EXPECTED(user_address);
+        CHECK_AS_EXPECTED(0 != size, HAILO_INVALID_ARGUMENT);
+
+        const auto dma_able_alignment = OsUtils::get_dma_able_alignment();
+
+        CHECK_AS_EXPECTED(0 == (reinterpret_cast<size_t>(user_address) % dma_able_alignment),
+            HAILO_INVALID_ARGUMENT, "User address mapped as dma must be aligned (alignment value {})", dma_able_alignment);
 
         auto buffer = make_shared_nothrow<UserAllocatedDmaAbleBuffer>(user_address, size);
         CHECK_NOT_NULL_AS_EXPECTED(buffer, HAILO_OUT_OF_HOST_MEMORY);
@@ -172,22 +177,23 @@ private:
     MmapBuffer<void> m_mmapped_buffer;
 };
 
-Expected<DmaAbleBufferPtr> DmaAbleBuffer::create(size_t size, void *user_address)
+Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_from_user_address(void *user_address, size_t size)
 {
-    if (nullptr != user_address) {
-        return UserAllocatedDmaAbleBuffer::create(user_address, size);
-    } else {
-        return PageAlignedDmaAbleBuffer::create(size);
-    }
+    return UserAllocatedDmaAbleBuffer::create(user_address, size);
 }
 
-Expected<DmaAbleBufferPtr> DmaAbleBuffer::create(HailoRTDriver &driver, size_t size, void *user_address)
+Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_by_allocation(size_t size)
 {
-    if ((nullptr == user_address) && driver.allocate_driver_buffer()) {
+    return PageAlignedDmaAbleBuffer::create(size);
+}
+
+Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_by_allocation(size_t size, HailoRTDriver &driver)
+{
+    if (driver.allocate_driver_buffer()) {
         return DriverAllocatedDmaAbleBuffer::create(driver, size);
     } else {
         // The driver is not needed.
-        return create(size, user_address);
+        return create_by_allocation(size);
     }
 }
 
@@ -246,17 +252,23 @@ private:
     MmapBuffer<void> m_mmapped_buffer;
 };
 
-Expected<DmaAbleBufferPtr> DmaAbleBuffer::create(size_t size, void *user_address)
+Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_from_user_address(void */* user_address */, size_t /* size */)
 {
-    CHECK_AS_EXPECTED(nullptr == user_address, HAILO_NOT_SUPPORTED, "Mapping user address is not supported on QNX");
+    LOGGER__ERROR("Mapping user address is not supported on QNX");
+
+    return make_unexpected(HAILO_NOT_SUPPORTED);
+}
+
+Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_by_allocation(size_t size)
+{
     return SharedMemoryDmaAbleBuffer::create(size);
 }
 
-Expected<DmaAbleBufferPtr> DmaAbleBuffer::create(HailoRTDriver &driver, size_t size, void *user_address)
+Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_by_allocation(size_t size, HailoRTDriver &driver)
 {
-    // qnx don't need the driver for the allocation
+    // qnx doesn't need the driver for the allocation
     (void)driver;
-    return DmaAbleBuffer::create(size, user_address);
+    return create_by_allocation(size);
 }
 
 #else

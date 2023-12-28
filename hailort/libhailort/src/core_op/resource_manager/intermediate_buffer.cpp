@@ -93,9 +93,10 @@ Expected<std::unique_ptr<vdma::VdmaBuffer>> IntermediateBuffer::create_sg_buffer
 {
     auto const DONT_FORCE_DEFAULT_PAGE_SIZE = false;
     auto const FORCE_BATCH_SIZE = true;
+    auto const IS_VDMA_ALIGNED_BUFFER = true;
     auto buffer_requirements = vdma::BufferSizesRequirements::get_sg_buffer_requirements_single_transfer(
         driver.desc_max_page_size(), batch_size, batch_size, transfer_size, is_circular, DONT_FORCE_DEFAULT_PAGE_SIZE,
-        FORCE_BATCH_SIZE);
+        FORCE_BATCH_SIZE, IS_VDMA_ALIGNED_BUFFER);
     CHECK_EXPECTED(buffer_requirements);
     const auto desc_page_size = buffer_requirements->desc_page_size();
     const auto descs_count = buffer_requirements->descs_count();
@@ -153,11 +154,12 @@ bool IntermediateBuffer::should_use_ccb(HailoRTDriver &driver, StreamingType str
     case StreamingType::CIRCULAR_CONTINUOS:
         // On circular_continuous (aka ddr), the buffers are relatively small and we want to verify the C2C mechanism,
         // therefore the CCB is the default behaviour.
-        if (nullptr != std::getenv("HAILO_FORCE_DDR_CHANNEL_OVER_DESC")) {
-            LOGGER__WARNING("Using desc instead of CCB for ddr channel is not optimal for performance.\n");
-            return false;
-        } else {
+        // Due to request from the DFC group (Memory issues) - DDR buffers would run over DESC and not CCB buffers.
+        if (nullptr != std::getenv("HAILO_FORCE_DDR_CHANNEL_OVER_CCB")) {
+            LOGGER__INFO("Using Non default buffer type (CCB instead of DESC) for ddr channel. \n");
             return true;
+        } else {
+            return false;
         }
     }
 

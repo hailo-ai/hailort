@@ -166,7 +166,7 @@ Expected<firmware_type_t> DeviceBase::get_fw_type()
     if ((architecture.value() == HAILO_ARCH_HAILO8) || (architecture.value() == HAILO_ARCH_HAILO8L)) {
         firmware_type = FIRMWARE_TYPE_HAILO8;
     }
-    else if (architecture.value() == HAILO_ARCH_HAILO15H) {
+    else if ((architecture.value() == HAILO_ARCH_HAILO15H ) || (architecture.value() == HAILO_ARCH_HAILO15M)) {
         firmware_type = FIRMWARE_TYPE_HAILO15;
     }
     else if (architecture.value() == HAILO_ARCH_PLUTO) {
@@ -724,9 +724,11 @@ bool DeviceBase::is_hef_compatible(hailo_device_architecture_t device_arch, Prot
     case HAILO_ARCH_HAILO15H:
         // Compare with HW_ARCH__LAVENDER and HW_ARCH__GINGER to support hefs compiled for them
         return (hef_arch == PROTO__HW_ARCH__GINGER) || (hef_arch == PROTO__HW_ARCH__LAVENDER) ||
-            (hef_arch == PROTO__HW_ARCH__HAILO15H);
+            (hef_arch == PROTO__HW_ARCH__HAILO15H) || (hef_arch == PROTO__HW_ARCH__HAILO15M);
     case HAILO_ARCH_PLUTO:
         return (hef_arch == PROTO__HW_ARCH__PLUTO);
+    case HAILO_ARCH_HAILO15M:
+        return (hef_arch == PROTO__HW_ARCH__HAILO15M);
     default:
         return false;
     }
@@ -751,6 +753,8 @@ hailo_device_architecture_t DeviceBase::hef_arch_to_device_arch(ProtoHEFHwArch h
         return HAILO_ARCH_HAILO15H;
     case PROTO__HW_ARCH__PLUTO:
         return HAILO_ARCH_PLUTO;
+    case PROTO__HW_ARCH__HAILO15M:
+        return HAILO_ARCH_HAILO15M;
 
     default:
         return HAILO_ARCH_MAX_ENUM;

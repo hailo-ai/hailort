@@ -13,47 +13,12 @@
 #include "hailo/hailort.h"
 #include "net_flow/ops/yolov5_post_process.hpp"
 #include "transform/transform_internal.hpp"
+#include "net_flow/ops/yolov5_seg_op_metadata.hpp"
 
 namespace hailort
 {
 namespace net_flow
 {
-
-struct YoloV5SegPostProcessConfig
-{
-    // User given mask threshold. A pixel will consider part of the mask if it's value is higher then the mask_threshold.
-    double mask_threshold;
-    std::string proto_layer_name;
-};
-
-class Yolov5SegOpMetadata : public Yolov5OpMetadata
-{
-public:
-    static Expected<std::shared_ptr<OpMetadata>> create(const std::unordered_map<std::string, BufferMetaData> &inputs_metadata,
-                                                        const std::unordered_map<std::string, BufferMetaData> &outputs_metadata,
-                                                        const NmsPostProcessConfig &nms_post_process_config,
-                                                        const YoloPostProcessConfig &yolov5_config,
-                                                        const YoloV5SegPostProcessConfig &yolov5_seg_config,
-                                                        const std::string &network_name);
-    hailo_status validate_format_info() override;
-    std::string get_op_description() override;
-    YoloV5SegPostProcessConfig &yolov5seg_config() { return m_yolo_seg_config;};
-    virtual Expected<hailo_vstream_info_t> get_output_vstream_info() override;
-
-private:
-    Yolov5SegOpMetadata(const std::unordered_map<std::string, BufferMetaData> &inputs_metadata,
-                       const std::unordered_map<std::string, BufferMetaData> &outputs_metadata,
-                       const NmsPostProcessConfig &nms_post_process_config,
-                       const YoloPostProcessConfig &yolo_config,
-                       const YoloV5SegPostProcessConfig &yolo_seg_config,
-                       const std::string &network_name)
-        : Yolov5OpMetadata(inputs_metadata, outputs_metadata, nms_post_process_config, "YOLOv5Seg-Post-Process",
-            network_name, yolo_config, OperationType::YOLOV5SEG),
-        m_yolo_seg_config(yolo_seg_config)
-    {}
-
-    YoloV5SegPostProcessConfig m_yolo_seg_config;
-};
 
 class Yolov5SegPostProcess : public YOLOv5PostProcessOp
 {
@@ -98,17 +63,14 @@ private:
     Yolov5SegPostProcess(std::shared_ptr<Yolov5SegOpMetadata> metadata, Buffer &&mask_mult_result_buffer,
         Buffer &&resized_mask, Buffer &&transformed_proto_buffer, Buffer &&dequantized_proto_buffer);
 
-    hailo_status fill_nms_with_byte_mask_format(MemoryView &buffer, std::vector<DetectionBbox> &detections,
-        std::vector<uint32_t> &classes_detections_count);
+    hailo_status fill_nms_with_byte_mask_format(MemoryView &buffer);
     void mult_mask_vector_and_proto_matrix(const DetectionBbox &detection);
-    uint32_t get_mask_size(const DetectionBbox &detection);
 
     hailo_status calc_and_copy_mask(const DetectionBbox &detection, MemoryView &buffer, uint32_t buffer_offset);
     hailo_status crop_and_copy_mask(const DetectionBbox &detection, MemoryView &buffer, uint32_t buffer_offset);
-    uint32_t copy_zero_bbox_count(MemoryView &buffer, uint32_t classes_with_zero_detections_count, uint32_t buffer_offset);
-    uint32_t copy_bbox_count_to_result_buffer(MemoryView &buffer, uint32_t class_detection_count, uint32_t buffer_offset);
-    Expected<uint32_t> copy_detection_to_result_buffer(MemoryView &buffer, const DetectionBbox &detection, uint32_t buffer_offset,
-        std::vector<uint32_t> &classes_detections_count);
+
+    // Returns the number of copied bytes
+    Expected<uint32_t> copy_detection_to_result_buffer(MemoryView &buffer, DetectionBbox &detection, uint32_t buffer_offset);
 
     std::shared_ptr<Yolov5SegOpMetadata> m_metadata;
     Buffer m_mask_mult_result_buffer;

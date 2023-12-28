@@ -913,15 +913,15 @@ hailo_status HailoRTDriver::vdma_low_memory_buffer_free(uintptr_t buffer_handle)
     return HAILO_INVALID_OPERATION;
 }
 
-Expected<std::pair<uintptr_t, uint64_t>> HailoRTDriver::vdma_continuous_buffer_alloc(size_t size)
+Expected<ContinousBufferInfo> HailoRTDriver::vdma_continuous_buffer_alloc(size_t size)
 {
     (void) size;
     return make_unexpected(HAILO_INVALID_OPERATION);
 }
 
-hailo_status HailoRTDriver::vdma_continuous_buffer_free(uintptr_t buffer_handle)
+hailo_status HailoRTDriver::vdma_continuous_buffer_free(const ContinousBufferInfo &buffer_info)
 {
-    (void) buffer_handle;
+    (void) buffer_info;
     return HAILO_INVALID_OPERATION;
 }
 

@@ -63,7 +63,11 @@ hailo_status InterruptsDispatcher::start(const ChannelsBitmap &channels_bitmap, 
 hailo_status InterruptsDispatcher::stop()
 {
     std::unique_lock<std::mutex> lock(m_mutex);
-    CHECK(m_wait_context != nullptr, HAILO_INVALID_OPERATION, "Interrupt thread not running");
+
+    if (!m_wait_context) {
+        // Already stopped
+        return HAILO_SUCCESS;
+    }
 
     // Nullify wait context so the thread will pause
     const auto bitmap = m_wait_context->bitmap;

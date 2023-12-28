@@ -109,13 +109,13 @@ int main(int argc, char **argv)
         return network_group.status();
     }
 
-    auto input_params = network_group.value()->make_input_vstream_params(true, FORMAT_TYPE, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS, HAILO_DEFAULT_VSTREAM_QUEUE_SIZE);
+    auto input_params = network_group.value()->make_input_vstream_params({}, FORMAT_TYPE, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS, HAILO_DEFAULT_VSTREAM_QUEUE_SIZE);
     if (!input_params) {
         std::cerr << "Failed make_input_vstream_params " << input_params.status() << std::endl;
         return input_params.status();
     }
 
-    auto output_params = network_group.value()->make_output_vstream_params(true, FORMAT_TYPE, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS, HAILO_DEFAULT_VSTREAM_QUEUE_SIZE);
+    auto output_params = network_group.value()->make_output_vstream_params({}, FORMAT_TYPE, HAILO_DEFAULT_VSTREAM_TIMEOUT_MS, HAILO_DEFAULT_VSTREAM_QUEUE_SIZE);
     if (!output_params) {
         std::cerr << "Failed make_output_vstream_params " << output_params.status() << std::endl;
         return output_params.status();

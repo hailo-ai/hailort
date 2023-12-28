@@ -30,6 +30,7 @@ struct SupportedFeatures {
     bool nms_burst_mode = false;
     bool output_scale_by_feature = false;
     bool periph_calculation_in_hailort = false;
+    bool core_hw_padding_config_in_dfc = false;
 };
 
 // For each config_stream_index we store vector of all ccw write length. The vector is used to build the config buffer.g

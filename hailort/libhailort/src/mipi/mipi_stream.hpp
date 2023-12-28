@@ -55,8 +55,8 @@ public:
     virtual hailo_status deactivate_stream() override;
     virtual hailo_stream_interface_t get_interface() const override { return HAILO_STREAM_INTERFACE_MIPI; }
     virtual std::chrono::milliseconds get_timeout() const override;
-    virtual hailo_status abort() override;
-    virtual hailo_status clear_abort() override;
+    virtual hailo_status abort_impl() override;
+    virtual hailo_status clear_abort_impl() override;
 };
 
 } /* namespace hailort */

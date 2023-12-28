@@ -19,24 +19,26 @@ namespace hailort
 class Tracer
 {
 public:
+    Tracer();
     template<class TraceType, typename... Args>
     static void trace(Args... trace_args)
     {
         auto &tracer = get_instance();
-        tracer.execute_trace<TraceType>(trace_args...);
+        tracer->execute_trace<TraceType>(trace_args...);
     }
 
-private:
-    Tracer();
-    void init_monitor_handler();
-    void init_scheduler_profiler_handler();
-
-    static Tracer& get_instance()
+    static std::unique_ptr<Tracer> &get_instance()
     {
-        static Tracer tracer;
+        static std::unique_ptr<Tracer> tracer = nullptr;
+        if (nullptr == tracer) {
+            tracer = make_unique_nothrow<Tracer>();
+        }
         return tracer;
     }
 
+private:
+    void init_monitor_handler();
+    void init_scheduler_profiler_handler();
     template<class TraceType, typename... Args>
     void execute_trace(Args... trace_args)
     {

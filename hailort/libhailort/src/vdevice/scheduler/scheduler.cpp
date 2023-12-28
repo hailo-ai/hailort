@@ -13,7 +13,7 @@
 #include "vdevice/scheduler/scheduler.hpp"
 #include "vdevice/vdevice_core_op.hpp"
 #include "vdevice/scheduler/scheduler_oracle.hpp"
-#include "vdevice/vdevice_stream_multiplexer_wrapper.hpp"
+#include "vdma/vdma_config_manager.hpp"
 #include "hef/hef_internal.hpp"
 
 #include <fstream>
@@ -44,32 +44,38 @@ Expected<CoreOpsSchedulerPtr> CoreOpsScheduler::create_round_robin(std::vector<s
 }
 
 hailo_status CoreOpsScheduler::add_core_op(scheduler_core_op_handle_t core_op_handle,
-     std::shared_ptr<CoreOp> added_cng)
+     std::shared_ptr<VDeviceCoreOp> added_cng)
 {
     std::unique_lock<std::shared_timed_mutex> lock(m_scheduler_mutex);
 
-    auto stream_infos = added_cng->get_all_stream_infos();
-    CHECK_EXPECTED_AS_STATUS(stream_infos);
+    auto scheduled_core_op_it = m_scheduled_core_ops.find(core_op_handle);
+    if (scheduled_core_op_it != m_scheduled_core_ops.end()) {
+        scheduled_core_op_it->second->add_instance();
+    } else {
+        auto stream_infos = added_cng->get_all_stream_infos();
+        CHECK_EXPECTED_AS_STATUS(stream_infos);
 
-    auto scheduled_core_op = ScheduledCoreOp::create(added_cng, stream_infos.value());
-    CHECK_EXPECTED_AS_STATUS(scheduled_core_op);
+        auto scheduled_core_op = ScheduledCoreOp::create(added_cng, stream_infos.value());
+        CHECK_EXPECTED_AS_STATUS(scheduled_core_op);
 
-    m_scheduled_core_ops.emplace(core_op_handle, scheduled_core_op.release());
+        m_scheduled_core_ops.emplace(core_op_handle, scheduled_core_op.release());
 
-    for (const auto &pair : m_devices) {
-        auto &device_info = pair.second;
-        for (const auto &stream_info : stream_infos.value()) {
-            device_info->ongoing_frames[core_op_handle].insert(stream_info.name);
-        }
-    }
+        // To allow multiple instances of the same phyiscal core op, we don't limit the queue here. Each core-op and
+        // scheduled should limit themself. Since the ctor accept no argument, we init it using operator[].
+        // TODO HRT-12136: limit the queue size (based on instances count)
+        m_infer_requests[core_op_handle];
 
-    const core_op_priority_t normal_priority = HAILO_SCHEDULER_PRIORITY_NORMAL;
-    m_core_op_priority[normal_priority].emplace_back(core_op_handle);
-    if (!contains(m_next_core_op, normal_priority)) {
-        m_next_core_op[normal_priority] = 0;
+        const core_op_priority_t normal_priority = HAILO_SCHEDULER_PRIORITY_NORMAL;
+        m_core_op_priority[normal_priority].add(core_op_handle);
     }
 
     return HAILO_SUCCESS;
+}
+
+void CoreOpsScheduler::remove_core_op(scheduler_core_op_handle_t core_op_handle)
+{
+    std::unique_lock<std::shared_timed_mutex> lock(m_scheduler_mutex);
+    m_scheduled_core_ops.at(core_op_handle)->remove_instance();
 }
 
 void CoreOpsScheduler::shutdown()
@@ -80,20 +86,9 @@ void CoreOpsScheduler::shutdown()
 
     // After the scheduler thread have stopped, we can safely deactivate all core ops
     for (const auto &pair : m_devices) {
-        auto &device_info = pair.second;
-        if (INVALID_CORE_OP_HANDLE != device_info->current_core_op_handle) {
-            auto current_core_op = m_scheduled_core_ops.at(device_info->current_core_op_handle)->get_core_op();
-            auto current_core_op_bundle = std::dynamic_pointer_cast<VDeviceCoreOp>(current_core_op);
-            assert(nullptr != current_core_op_bundle);
-            auto vdma_core_op = current_core_op_bundle->get_core_op_by_device_id(device_info->device_id);
-            if (!vdma_core_op) {
-                LOGGER__ERROR("Error retrieving core-op in scheduler destructor");
-            } else {
-                if (HAILO_SUCCESS != VdmaConfigManager::deactivate_core_op(vdma_core_op.value())) {
-                    LOGGER__ERROR("Error deactivating core-op when destroying scheduler");
-                }
-                device_info->current_core_op_handle = INVALID_CORE_OP_HANDLE;
-            }
+        auto status = deactivate_core_op(pair.first);
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Error deactivating core-op when destroying scheduler {}", status);
         }
     }
 }
@@ -102,8 +97,8 @@ hailo_status CoreOpsScheduler::switch_core_op(const scheduler_core_op_handle_t &
 {
     auto scheduled_core_op = m_scheduled_core_ops.at(core_op_handle);
     assert(contains(m_devices, device_id));
-    assert(is_device_idle(device_id));
     auto curr_device_info = m_devices[device_id];
+    assert(curr_device_info->is_idle());
     curr_device_info->is_switching_core_op = false;
 
     const auto burst_size = scheduled_core_op->get_burst_size();
@@ -122,25 +117,15 @@ hailo_status CoreOpsScheduler::switch_core_op(const scheduler_core_op_handle_t &
     curr_device_info->current_batch_size = hw_batch_size;
 
     if ((core_op_handle != curr_device_info->current_core_op_handle) || (!has_same_hw_batch_size_as_previous)) {
-        auto next_active_cng = scheduled_core_op->get_core_op();
-        auto next_active_cng_wrapper = std::dynamic_pointer_cast<VDeviceCoreOp>(next_active_cng);
-        assert(nullptr != next_active_cng_wrapper);
-        auto next_active_cng_expected = next_active_cng_wrapper->get_core_op_by_device_id(curr_device_info->device_id);
-        CHECK_EXPECTED_AS_STATUS(next_active_cng_expected);
+        auto next_core_op = get_vdma_core_op(core_op_handle, device_id);
 
-        std::shared_ptr<VdmaConfigCoreOp> current_active_vdma_cng = nullptr;
+        std::shared_ptr<VdmaConfigCoreOp> current_core_op = nullptr;
         if (curr_device_info->current_core_op_handle != INVALID_CORE_OP_HANDLE) {
-            auto current_active_cng = m_scheduled_core_ops.at(curr_device_info->current_core_op_handle)->get_core_op();
-            auto current_active_cng_bundle = std::dynamic_pointer_cast<VDeviceCoreOp>(current_active_cng);
-            assert(nullptr != current_active_cng_bundle);
-            auto current_active_cng_expected = current_active_cng_bundle->get_core_op_by_device_id(curr_device_info->device_id);
-            CHECK_EXPECTED_AS_STATUS(current_active_cng_expected);
-            current_active_vdma_cng = current_active_cng_expected.release();
+            current_core_op = get_vdma_core_op(curr_device_info->current_core_op_handle, device_id);
         }
 
         const bool is_batch_switch = (core_op_handle == curr_device_info->current_core_op_handle);
-        auto status = VdmaConfigManager::switch_core_op(current_active_vdma_cng, next_active_cng_expected.value(), hw_batch_size,
-            is_batch_switch);
+        auto status = VdmaConfigManager::switch_core_op(current_core_op, next_core_op, hw_batch_size, is_batch_switch);
         CHECK_SUCCESS(status, "Failed switching core-op");
     }
 
@@ -148,12 +133,23 @@ hailo_status CoreOpsScheduler::switch_core_op(const scheduler_core_op_handle_t &
     curr_device_info->current_core_op_handle = core_op_handle;
 
     auto status = send_all_pending_buffers(core_op_handle, device_id, frames_count);
-    if (HAILO_STREAM_ABORTED_BY_USER == status) {
-        LOGGER__INFO("send_all_pending_buffers has failed with status=HAILO_STREAM_ABORTED_BY_USER");
-        return status;
-    }
     CHECK_SUCCESS(status);
 
+    return HAILO_SUCCESS;
+}
+
+hailo_status CoreOpsScheduler::deactivate_core_op(const device_id_t &device_id)
+{
+    const auto core_op_handle = m_devices[device_id]->current_core_op_handle;
+    if (INVALID_CORE_OP_HANDLE == core_op_handle) {
+        return HAILO_SUCCESS;
+    }
+
+    auto vdma_core_op = get_vdma_core_op(core_op_handle, device_id);
+    auto status = VdmaConfigManager::deactivate_core_op(vdma_core_op);
+    CHECK_SUCCESS(status, "Scheduler failed deactivate core op on {}", device_id);
+
+    m_devices[device_id]->current_core_op_handle = INVALID_CORE_OP_HANDLE;
     return HAILO_SUCCESS;
 }
 
@@ -171,39 +167,38 @@ hailo_status CoreOpsScheduler::send_all_pending_buffers(const scheduler_core_op_
             current_device_info->frames_left_before_stop_streaming--;
         }
 
-        for (auto &input_stream : scheduled_core_op->get_core_op()->get_input_streams()) {
-            const auto &stream_name = input_stream.get().name();
-            scheduled_core_op->pending_frames().decrease(stream_name);
-            current_device_info->ongoing_frames[core_op_handle].increase(stream_name);
+        auto status = infer_async(core_op_handle, device_id);
+        CHECK_SUCCESS(status);
+    }
 
-            // After launching the transfer, signal_frame_transferred may be called (and ongoing frames will be
-            // decreased).
-            auto &input_stream_base = static_cast<InputStreamBase&>(input_stream.get());
-            auto status = input_stream_base.launch_transfer(device_id);
-            if (HAILO_STREAM_ABORTED_BY_USER == status) {
-                LOGGER__INFO("launch_transfer has failed with status=HAILO_STREAM_ABORTED_BY_USER");
-                return status;
-            }
-            CHECK_SUCCESS(status);
-        }
+    scheduled_core_op->set_last_device(device_id);
+    return HAILO_SUCCESS;
+}
 
-        for (auto &output_stream : scheduled_core_op->get_core_op()->get_output_streams()) {
-            const auto &stream_name = output_stream.get().name();
-            scheduled_core_op->pending_frames().decrease(stream_name);
-            current_device_info->ongoing_frames[core_op_handle].increase(stream_name);
+hailo_status CoreOpsScheduler::infer_async(const scheduler_core_op_handle_t &core_op_handle,
+    const device_id_t &device_id)
+{
+    auto current_device_info = m_devices[device_id];
+    assert(core_op_handle == current_device_info->current_core_op_handle);
+    auto scheduled_core_op = m_scheduled_core_ops.at(core_op_handle);
+    auto vdma_core_op = get_vdma_core_op(core_op_handle, device_id);
 
-            // After launching the transfer, signal_frame_transferred may be called (and ongoing frames will be
-            // decreased).
-            auto &output_stream_base = static_cast<OutputStreamBase&>(output_stream.get());
-            auto status = output_stream_base.launch_transfer(device_id);
-            if (HAILO_STREAM_ABORTED_BY_USER == status) {
-                LOGGER__INFO("launch_transfer has failed with status=HAILO_STREAM_ABORTED_BY_USER");
-                return status;
-            }
-            CHECK_SUCCESS(status);
-        }
+    auto infer_request = dequeue_infer_request(core_op_handle);
+    CHECK_EXPECTED_AS_STATUS(infer_request);
 
-        scheduled_core_op->set_last_device(device_id);
+    current_device_info->ongoing_infer_requests.fetch_add(1);
+
+    auto original_callback = infer_request->callback;
+    infer_request->callback = [current_device_info, this, original_callback](hailo_status status) {
+        current_device_info->ongoing_infer_requests.fetch_sub(1);
+        m_scheduler_thread.signal();
+        original_callback(status);
+    };
+    auto status = vdma_core_op->infer_async(infer_request.release());
+    if (HAILO_SUCCESS != status) {
+        current_device_info->ongoing_infer_requests.fetch_sub(1);
+        original_callback(status);
+        CHECK_SUCCESS(status);
     }
 
     return HAILO_SUCCESS;
@@ -215,118 +210,36 @@ CoreOpsScheduler::ReadyInfo CoreOpsScheduler::is_core_op_ready(const scheduler_c
     ReadyInfo result;
     result.is_ready = false;
 
-    if (should_core_op_stop(core_op_handle)) {
-        // Do not switch to an aborted core-op
-        return result;
-    }
-
     auto scheduled_core_op = m_scheduled_core_ops.at(core_op_handle);
 
-    std::vector<bool> over_threshold;
-    over_threshold.reserve(scheduled_core_op->get_inputs_names().size());
-    std::vector<bool> over_timeout;
-    over_timeout.reserve(scheduled_core_op->get_inputs_names().size());
+    result.is_ready = (get_frames_ready_to_transfer(core_op_handle, device_id) > 0);
 
     if (check_threshold) {
-        for (const auto &name : scheduled_core_op->get_inputs_names()) {
-            auto threshold_exp = scheduled_core_op->get_threshold(name);
-            if (!threshold_exp) {
-                LOGGER__ERROR("Failed to get threshold for stream {}", name);
-                return result;
-            }
-            auto threshold = (DEFAULT_SCHEDULER_MIN_THRESHOLD == threshold_exp.value()) ? 1 : threshold_exp.value();
-            auto timeout_exp = scheduled_core_op->get_timeout();
-            if (!timeout_exp) {
-                LOGGER__ERROR("Failed to get timeout for stream {}", name);
-                return result;
-            }
-            auto timeout = timeout_exp.release();
+        result.over_threshold = scheduled_core_op->is_over_threshold();
+        result.over_timeout = scheduled_core_op->is_over_timeout();
 
-            // Check if there arent enough write requests to reach threshold and timeout didnt passed
-            const auto write_requests = scheduled_core_op->pending_frames()[name];
-            auto stream_over_threshold = write_requests >= threshold;
-            auto stream_over_timeout = timeout <= (std::chrono::steady_clock::now() - scheduled_core_op->get_last_run_timestamp());
-            over_threshold.push_back(stream_over_threshold);
-            over_timeout.push_back(stream_over_timeout);
-            if (stream_over_threshold || stream_over_timeout) {
-                continue;
-            } else {
-                result.is_ready = false;
-                return result;
-            }
+        if (!result.over_threshold && !result.over_timeout){
+            result.is_ready = false;
         }
-        result.over_threshold = std::all_of(over_threshold.begin(), over_threshold.end(), [](auto over) { return over; });
-        result.over_timeout = std::all_of(over_timeout.begin(), over_timeout.end(), [](auto over) { return over; });
     }
-
-    result.is_ready = (get_frames_ready_to_transfer(core_op_handle, device_id) > 0);
 
     return result;
 }
 
-hailo_status CoreOpsScheduler::signal_frame_pending(const scheduler_core_op_handle_t &core_op_handle,
-    const std::string &stream_name, hailo_stream_direction_t direction)
-{
-    std::shared_lock<std::shared_timed_mutex> lock(m_scheduler_mutex);
-    auto scheduled_core_op = m_scheduled_core_ops.at(core_op_handle);
-
-    if (should_core_op_stop(core_op_handle)) {
-        return HAILO_STREAM_ABORTED_BY_USER;
-    }
-
-    if (HAILO_H2D_STREAM == direction) {
-        TRACE(WriteFrameTrace, core_op_handle, stream_name);
-        scheduled_core_op->mark_frame_sent();
-    }
-
-    scheduled_core_op->pending_frames().increase(stream_name);
-    m_scheduler_thread.signal();
-
-    return HAILO_SUCCESS;
-}
-
-void CoreOpsScheduler::signal_frame_transferred(const scheduler_core_op_handle_t &core_op_handle,
-    const std::string &stream_name, const device_id_t &device_id, hailo_stream_direction_t stream_direction)
+hailo_status CoreOpsScheduler::enqueue_infer_request(const scheduler_core_op_handle_t &core_op_handle,
+    InferRequest &&infer_request)
 {
     std::shared_lock<std::shared_timed_mutex> lock(m_scheduler_mutex);
 
-    auto scheduled_core_op = m_scheduled_core_ops.at(core_op_handle);
+    CHECK(m_scheduled_core_ops.at(core_op_handle)->instances_count() > 0, HAILO_INTERNAL_FAILURE,
+        "Trying to enqueue infer request on a core-op with instances_count==0");
 
-    m_devices[device_id]->ongoing_frames[core_op_handle].decrease(stream_name);
-    if (HAILO_D2H_STREAM == stream_direction) {
-        TRACE(OutputVdmaEnqueueTrace, device_id, core_op_handle, stream_name);
+    auto status = m_infer_requests.at(core_op_handle).enqueue(std::move(infer_request));
+    if (HAILO_SUCCESS == status) {
+        m_scheduled_core_ops.at(core_op_handle)->requested_infer_requests().fetch_add(1);
+        m_scheduler_thread.signal();
     }
-
-    m_scheduler_thread.signal();
-}
-
-bool CoreOpsScheduler::is_device_idle(const device_id_t &device_id)
-{
-    const auto &device_info = m_devices[device_id];
-    auto core_op_handle = device_info->current_core_op_handle;
-    if (INVALID_CORE_OP_HANDLE == core_op_handle) {
-        // If no core-op is running, consider it as drained
-        return true;
-    }
-
-    if (m_scheduled_core_ops.at(core_op_handle)->all_stream_disabled()) {
-        // We treat core-op as drained only if all streams are aborted - to make sure there aren't any ongoing transfers
-        return true;
-    }
-
-    return m_devices[device_id]->is_idle();
-}
-
-void CoreOpsScheduler::enable_stream(const scheduler_core_op_handle_t &core_op_handle, const std::string &stream_name)
-{
-    std::shared_lock<std::shared_timed_mutex> lock(m_scheduler_mutex);
-    m_scheduled_core_ops.at(core_op_handle)->enable_stream(stream_name);
-}
-
-void CoreOpsScheduler::disable_stream(const scheduler_core_op_handle_t &core_op_handle, const std::string &stream_name)
-{
-    std::shared_lock<std::shared_timed_mutex> lock(m_scheduler_mutex);
-    m_scheduled_core_ops.at(core_op_handle)->disable_stream(stream_name);
+    return status;
 }
 
 hailo_status CoreOpsScheduler::set_timeout(const scheduler_core_op_handle_t &core_op_handle, const std::chrono::milliseconds &timeout, const std::string &/*network_name*/)
@@ -354,29 +267,22 @@ hailo_status CoreOpsScheduler::set_priority(const scheduler_core_op_handle_t &co
 {
     CHECK(priority <= HAILO_SCHEDULER_PRIORITY_MAX, HAILO_INVALID_ARGUMENT);
 
-    // Remove core of from previous priority map
     std::unique_lock<std::shared_timed_mutex> lock(m_scheduler_mutex);
-    auto old_priority = m_scheduled_core_ops.at(core_op_handle)->get_priority();
-    auto &priority_vector = m_core_op_priority[old_priority];
-    auto it = std::find(priority_vector.begin(), priority_vector.end(), core_op_handle);
-    CHECK(it != priority_vector.end(), HAILO_INTERNAL_FAILURE);
-    priority_vector.erase(it);
-    m_next_core_op[old_priority] = 0; // Avoiding overflow by reseting next core op.
+
+    auto scheduled_core_op = m_scheduled_core_ops.at(core_op_handle);
+
+    // Remove core op from previous priority map
+    auto &priority_group = m_core_op_priority[scheduled_core_op->get_priority()];
+    assert(priority_group.contains(core_op_handle));
+    priority_group.erase(core_op_handle);
 
     // Add it to the new priority map.
     m_scheduled_core_ops.at(core_op_handle)->set_priority(priority);
-    m_core_op_priority[priority].push_back(core_op_handle);
-    if (!contains(m_next_core_op, priority)) {
-        m_next_core_op[priority] = 0;
-    }
+    m_core_op_priority[priority].add(core_op_handle);
+
 
     TRACE(SetCoreOpPriorityTrace, core_op_handle, priority);
     return HAILO_SUCCESS;
-}
-
-bool CoreOpsScheduler::should_core_op_stop(const scheduler_core_op_handle_t &core_op_handle)
-{
-    return m_scheduled_core_ops.at(core_op_handle)->any_stream_disabled();
 }
 
 hailo_status CoreOpsScheduler::optimize_streaming_if_enabled(const scheduler_core_op_handle_t &core_op_handle)
@@ -392,14 +298,19 @@ hailo_status CoreOpsScheduler::optimize_streaming_if_enabled(const scheduler_cor
             !CoreOpsSchedulerOracle::should_stop_streaming(*this, scheduled_core_op->get_priority(), device_info->device_id) &&
             (get_frames_ready_to_transfer(core_op_handle, device_info->device_id) >= DEFAULT_BURST_SIZE)) {
             auto status = send_all_pending_buffers(core_op_handle, device_info->device_id, DEFAULT_BURST_SIZE);
-            if (HAILO_STREAM_ABORTED_BY_USER == status) {
-                LOGGER__INFO("send_all_pending_buffers has failed with status=HAILO_STREAM_ABORTED_BY_USER");
-                return status;
-            }
             CHECK_SUCCESS(status);
         }
     }
     return HAILO_SUCCESS;
+}
+
+Expected<InferRequest> CoreOpsScheduler::dequeue_infer_request(scheduler_core_op_handle_t core_op_handle)
+{
+    auto infer_request = m_infer_requests.at(core_op_handle).dequeue();
+    CHECK_EXPECTED(infer_request);
+
+    m_scheduled_core_ops.at(core_op_handle)->requested_infer_requests().fetch_sub(1);
+    return infer_request.release();
 }
 
 uint16_t CoreOpsScheduler::get_frames_ready_to_transfer(scheduler_core_op_handle_t core_op_handle,
@@ -408,38 +319,81 @@ uint16_t CoreOpsScheduler::get_frames_ready_to_transfer(scheduler_core_op_handle
     auto scheduled_core_op = m_scheduled_core_ops.at(core_op_handle);
     auto device_info = m_devices.at(device_id);
 
+    if (scheduled_core_op->instances_count() == 0) {
+        // We don't want to schedule/execute core ops with instances_count() == 0. There may still be
+        // requested_infer_requests until shutdown_core_op is called.
+        // TODO: HRT-12218 after dequeue all infer requests for the instance in remove_core_op, this flow can be
+        // removed any simplified (since on this case requested_infer_requests == 0).
+        return 0;
+    }
+
     const auto max_ongoing_frames = scheduled_core_op->get_max_ongoing_frames_per_device();
-    const auto ongoing_frames = device_info->ongoing_frames[core_op_handle].get_max_value();
+    const uint32_t ongoing_frames = (device_info->current_core_op_handle == core_op_handle) ?
+        device_info->ongoing_infer_requests.load() : 0;
     assert(ongoing_frames <= max_ongoing_frames);
 
-    const auto pending_frames = scheduled_core_op->pending_frames().get_min_value();
+    const uint32_t requested_frames = scheduled_core_op->requested_infer_requests();
 
-    return static_cast<uint16_t>(std::min(pending_frames, max_ongoing_frames - ongoing_frames));
+    return static_cast<uint16_t>(std::min(requested_frames, max_ongoing_frames - ongoing_frames));
+}
+
+std::shared_ptr<VdmaConfigCoreOp> CoreOpsScheduler::get_vdma_core_op(scheduler_core_op_handle_t core_op_handle,
+    const device_id_t &device_id)
+{
+    return m_scheduled_core_ops.at(core_op_handle)->get_vdma_core_op(device_id);
+}
+
+void CoreOpsScheduler::shutdown_core_op(scheduler_core_op_handle_t core_op_handle)
+{
+    // Deactivate core op from all devices
+    for (const auto &device_state : m_devices) {
+        if (device_state.second->current_core_op_handle == core_op_handle) {
+            auto status = deactivate_core_op(device_state.first);
+            if (HAILO_SUCCESS != status) {
+                LOGGER__ERROR("Scheduler failed deactivate core op on {}", device_state.first);
+                // continue
+            }
+        }
+    }
+
+    // Cancel all requests on the queue
+    auto core_op = m_scheduled_core_ops.at(core_op_handle);
+    while (core_op->requested_infer_requests() > 0) {
+        auto request = dequeue_infer_request(core_op_handle);
+        assert(request);
+        for (auto &transfer : request->transfers) {
+            transfer.second.callback(HAILO_STREAM_ABORTED_BY_USER);
+        }
+        request->callback(HAILO_STREAM_ABORTED_BY_USER);
+    }
 }
 
 void CoreOpsScheduler::schedule()
 {
     std::shared_lock<std::shared_timed_mutex> lock(m_scheduler_mutex);
-    m_scheduled_core_ops.for_each([this](const std::pair<vdevice_core_op_handle_t, ScheduledCoreOpPtr> &core_op_pair) {
+    // First, we are using streaming optimization (where switch is not needed)
+    for (auto &core_op_pair : m_scheduled_core_ops) {
         auto status = optimize_streaming_if_enabled(core_op_pair.first);
         if ((HAILO_SUCCESS != status) &&
             (HAILO_STREAM_ABORTED_BY_USER != status)) {
             LOGGER__ERROR("optimize_streaming_if_enabled thread failed with status={}", status);
         }
+    };
 
-    });
-
+    // Now, get decisions which requires core op switch
     auto oracle_decisions = CoreOpsSchedulerOracle::get_oracle_decisions(*this);
-
     for (const auto &run_params : oracle_decisions) {
         auto status = switch_core_op(run_params.core_op_handle, run_params.device_id);
-        if (HAILO_STREAM_ABORTED_BY_USER == status) {
-            continue;
-        }
-
         if (HAILO_SUCCESS != status) {
             LOGGER__ERROR("Scheduler thread failed with status={}", status);
             break;
+        }
+    }
+
+    // Finally, we want to deactivate all core ops with instances_count() == 0
+    for (auto &core_op_pair : m_scheduled_core_ops) {
+        if (core_op_pair.second->instances_count() == 0) {
+            shutdown_core_op(core_op_pair.first);
         }
     }
 }

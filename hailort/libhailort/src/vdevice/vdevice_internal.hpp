@@ -24,6 +24,7 @@
 #include "hailo/hailort.h"
 #include "hailo/vdevice.hpp"
 
+#include "common/async_thread.hpp"
 #include "vdma/vdma_device.hpp"
 #include "vdma/vdma_config_manager.hpp"
 #include "vdevice/vdevice_core_op.hpp"
@@ -37,7 +38,7 @@
 namespace hailort
 {
 
-
+#define DISABLE_MULTIPLEXER_ENV_VAR "HAILO_DISABLE_MULTIPLEXER_INTERNAL"
 class VDeviceBase : public VDevice
 {
 public:
@@ -78,10 +79,36 @@ public:
         return m_core_ops_scheduler;
     }
 
-    virtual Expected<InferModel> create_infer_model(const std::string &hef_path) override;
-
     // Currently only homogeneous vDevice is allow (= all devices are from the same type)
     virtual Expected<hailo_stream_interface_t> get_default_streams_interface() const override;
+
+    virtual hailo_status dma_map(void *address, size_t size, hailo_stream_direction_t direction) override
+    {
+        for (const auto &pair : m_devices) {
+            auto &device = pair.second;
+            const auto status = device->dma_map(address, size, direction);
+            CHECK_SUCCESS(status);
+        }
+        return HAILO_SUCCESS;
+    }
+
+    virtual hailo_status dma_unmap(void *address, hailo_stream_direction_t direction) override
+    {
+        hailo_status status = HAILO_SUCCESS;
+        for (const auto &pair : m_devices) {
+            auto &device = pair.second;
+            // Best effort, propagate first error
+            const auto unmap_status = device->dma_unmap(address, direction);
+            if (HAILO_SUCCESS != unmap_status) {
+                LOGGER__ERROR("Failed unmapping user buffer {} with status {}", address, unmap_status);
+                if (HAILO_SUCCESS == status) {
+                    status = unmap_status;
+                }
+            }
+        }
+
+        return status;
+    }
 
     static hailo_status validate_params(const hailo_vdevice_params_t &params);
 
@@ -93,9 +120,11 @@ private:
     static Expected<std::map<device_id_t, std::unique_ptr<Device>>> create_devices(const hailo_vdevice_params_t &params);
     static Expected<std::vector<std::string>> get_device_ids(const hailo_vdevice_params_t &params);
     Expected<NetworkGroupsParamsMap> create_local_config_params(Hef &hef, const NetworkGroupsParamsMap &configure_params);
-    Expected<std::shared_ptr<VDeviceCoreOp>> create_vdevice_network_group(Hef &hef,
-        const std::pair<const std::string, ConfigureNetworkParams> &params, bool use_multiplexer);
-    bool should_use_multiplexer(const ConfigureNetworkParams &params);
+    Expected<std::shared_ptr<VDeviceCoreOp>> create_vdevice_core_op(Hef &hef,
+        const std::pair<const std::string, ConfigureNetworkParams> &params);
+    Expected<std::shared_ptr<CoreOp>> create_physical_core_op(Device &device, Hef &hef, const std::string &core_op_name,
+        const ConfigureNetworkParams &params);
+    bool should_use_multiplexer();
     vdevice_core_op_handle_t allocate_core_op_handle();
 
     std::map<device_id_t, std::unique_ptr<Device>> m_devices;
@@ -108,6 +137,8 @@ private:
 };
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
+using network_group_handle_t = uint32_t;
+
 class VDeviceClient : public VDevice
 {
 public:
@@ -126,7 +157,6 @@ public:
 
     Expected<std::vector<std::string>> get_physical_devices_ids() const override;
     Expected<hailo_stream_interface_t> get_default_streams_interface() const override;
-    virtual Expected<InferModel> create_infer_model(const std::string &hef_path) override;
 
     virtual hailo_status before_fork() override;
     virtual hailo_status after_fork_in_parent() override;
@@ -136,11 +166,19 @@ private:
     VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, VDeviceIdentifier &&identifier, std::vector<std::unique_ptr<hailort::Device>> &&devices);
 
     hailo_status create_client();
+    hailo_status start_listener_thread(VDeviceIdentifier identifier);
+    hailo_status listener_run_in_thread(VDeviceIdentifier identifier);
+    hailo_status finish_listener_thread();
 
     std::unique_ptr<HailoRtRpcClient> m_client;
     VDeviceIdentifier m_identifier;
     std::vector<std::unique_ptr<Device>> m_devices;
-    std::vector<std::shared_ptr<ConfiguredNetworkGroup>> m_network_groups;
+
+    std::mutex m_mutex;
+    std::unordered_map<network_group_handle_t, std::shared_ptr<ConfiguredNetworkGroupClient>> m_network_groups;
+
+    AsyncThreadPtr<hailo_status> m_cb_listener_thread;
+    std::atomic_bool m_is_listener_thread_running;
 };
 
 #endif // HAILO_SUPPORT_MULTI_PROCESS
@@ -162,7 +200,7 @@ public:
     Expected<std::vector<std::reference_wrapper<Device>>> get_physical_devices() const override;
     Expected<std::vector<std::string>> get_physical_devices_ids() const override;
     Expected<hailo_stream_interface_t> get_default_streams_interface() const override;
-    Expected<InferModel> create_infer_model(const std::string &hef_path) override;
+    Expected<std::shared_ptr<InferModel>> create_infer_model(const std::string &hef_path) override;
 
 private:
     VDeviceHandle(uint32_t handle);

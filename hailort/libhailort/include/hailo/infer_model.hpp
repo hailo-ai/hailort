@@ -22,6 +22,7 @@ namespace hailort
 {
 
 class ConfiguredInferModelImpl;
+class AsyncInferRunnerImpl;
 class HAILORTAPI AsyncInferJob
 {
 public:
@@ -45,18 +46,24 @@ private:
     bool m_should_wait_in_dtor;
 };
 
-struct CompletionInfoAsyncInfer;
+struct AsyncInferCompletionInfo;
 class HAILORTAPI ConfiguredInferModel
 {
 public:
+    ConfiguredInferModel() = default;
+
     class HAILORTAPI Bindings
     {
     public:
+        Bindings() = default;
+
         class HAILORTAPI InferStream
         {
         public:
             hailo_status set_buffer(MemoryView view);
-            MemoryView get_buffer();
+            Expected<MemoryView> get_buffer();
+            hailo_status set_pix_buffer(const hailo_pix_buffer_t &pix_buffer);
+            Expected<hailo_pix_buffer_t> get_pix_buffer();
 
         private:
             friend class ConfiguredInferModelImpl;
@@ -87,7 +94,12 @@ public:
     void deactivate();
     hailo_status run(Bindings bindings, std::chrono::milliseconds timeout);
     Expected<AsyncInferJob> run_async(Bindings bindings,
-        std::function<void(const CompletionInfoAsyncInfer &)> callback = [] (const CompletionInfoAsyncInfer &) {});
+        std::function<void(const AsyncInferCompletionInfo &)> callback = [] (const AsyncInferCompletionInfo &) {});
+    Expected<LatencyMeasurementResult> get_hw_latency_measurement(const std::string &network_name = "");
+    hailo_status set_scheduler_timeout(const std::chrono::milliseconds &timeout);
+    hailo_status set_scheduler_threshold(uint32_t threshold);
+    hailo_status set_scheduler_priority(uint8_t priority);
+    Expected<size_t> get_async_queue_size();
 
 private:
     friend class InferModel;
@@ -97,9 +109,9 @@ private:
     std::shared_ptr<ConfiguredInferModelImpl> m_pimpl;
 };
 
-struct HAILORTAPI CompletionInfoAsyncInfer
+struct HAILORTAPI AsyncInferCompletionInfo
 {
-    CompletionInfoAsyncInfer(ConfiguredInferModel::Bindings _bindings, hailo_status _status) : bindings(_bindings), status(_status)
+    AsyncInferCompletionInfo(ConfiguredInferModel::Bindings _bindings, hailo_status _status) : bindings(_bindings), status(_status)
     {
     }
 
@@ -115,21 +127,35 @@ public:
     class HAILORTAPI InferStream
     {
     public:
+        // TODO: explain that the getters return what the user defined with set_ functions
         const std::string name() const;
+        hailo_3d_image_shape_t shape() const;
+        hailo_format_t format() const;
         size_t get_frame_size() const;
+        Expected<hailo_nms_shape_t> get_nms_shape() const;
+        
         void set_format_type(hailo_format_type_t type);
         void set_format_order(hailo_format_order_t order);
+        std::vector<hailo_quant_info_t> get_quant_infos() const;
+        bool is_nms() const;
+        void set_nms_score_threshold(float32_t threshold);
+        void set_nms_iou_threshold(float32_t threshold);
+        void set_nms_max_proposals_per_class(uint32_t max_proposals_per_class);
 
     private:
         friend class InferModel;
-        friend class VDeviceBase;
+        friend class VDevice;
 
         class Impl;
         InferStream(std::shared_ptr<Impl> pimpl);
-        hailo_format_t get_user_buffer_format();
 
         std::shared_ptr<Impl> m_pimpl;
     };
+
+    const Hef &hef() const;
+    void set_batch_size(uint16_t batch_size);
+    void set_power_mode(hailo_power_mode_t power_mode);
+    void set_hw_latency_measurement_flags(hailo_latency_measurement_flags_t latency);
 
     Expected<ConfiguredInferModel> configure(const std::string &network_name = "");
     Expected<InferStream> input();
@@ -143,8 +169,11 @@ public:
     
     InferModel(InferModel &&);
 
+    Expected<ConfiguredInferModel> configure_for_ut(std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner,
+        const std::vector<std::string> &input_names, const std::vector<std::string> &output_names);
+
 private:
-    friend class VDeviceBase;
+    friend class VDevice;
 
     InferModel(VDevice &vdevice, Hef &&hef, std::unordered_map<std::string, InferStream> &&inputs,
         std::unordered_map<std::string, InferStream> &&outputs);
@@ -157,6 +186,7 @@ private:
     std::vector<InferStream> m_outputs_vector;
     std::vector<std::string> m_input_names;
     std::vector<std::string> m_output_names;
+    ConfigureNetworkParams m_config_params;
 };
 
 } /* namespace hailort */

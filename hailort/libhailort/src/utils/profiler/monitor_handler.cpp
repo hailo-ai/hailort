@@ -37,7 +37,7 @@ void MonitorHandler::clear_monitor() {
 
 void MonitorHandler::handle_trace(const MonitorStartTrace &trace)
 {
-    m_device_count = trace.device_count;
+    (void)trace;
     start_mon();
 }
 
@@ -45,7 +45,6 @@ void MonitorHandler::handle_trace(const AddCoreOpTrace &trace)
 {
     m_core_ops_info[trace.core_op_handle].utilization = 0;
     m_core_ops_info[trace.core_op_handle].core_op_name = trace.core_op_name;
-    m_core_ops_info[trace.core_op_handle].is_nms = trace.is_nms;
 }
 
 void MonitorHandler::handle_trace(const AddDeviceTrace &trace)
@@ -56,14 +55,14 @@ void MonitorHandler::handle_trace(const AddDeviceTrace &trace)
 
 void MonitorHandler::handle_trace(const SwitchCoreOpTrace &trace)
 {
+    // TODO: 'if' should be removed, this is temporary solution since this trace is called out of the scheduler or vdevice.
+    if (!m_is_monitor_currently_working) { return; }
     assert(contains(m_devices_info, trace.device_id));
     m_devices_info.at(trace.device_id).current_core_op_handle = trace.core_op_handle;
 }
 
-void MonitorHandler::handle_trace(const CreateCoreOpInputStreamsTrace &trace)
+void MonitorHandler::handle_trace(const AddStreamH2DTrace &trace)
 {
-    // TODO- HRT-10371 'if' should be removed, this is temporary solution since this trace is called out of the scheduler.
-    if (!m_is_monitor_currently_working) { return; }
     auto core_op_handle = get_core_op_handle_by_name(trace.core_op_name);
     assert(contains(m_core_ops_info, core_op_handle));
     assert(contains(m_devices_info, trace.device_id));
@@ -74,10 +73,8 @@ void MonitorHandler::handle_trace(const CreateCoreOpInputStreamsTrace &trace)
     m_devices_info.at(trace.device_id).requested_transferred_frames_h2d[core_op_handle]->insert(trace.stream_name);
 }
 
-void MonitorHandler::handle_trace(const CreateCoreOpOutputStreamsTrace &trace)
+void MonitorHandler::handle_trace(const AddStreamD2HTrace &trace)
 {
-    // TODO- HRT-10371 'if' should be removed, this is temporary solution since this trace is called out of the scheduler.
-    if (!m_is_monitor_currently_working) { return; }
     auto core_op_handle = get_core_op_handle_by_name(trace.core_op_name);
     assert(contains(m_core_ops_info, core_op_handle));
     assert(contains(m_devices_info, trace.device_id));
@@ -88,7 +85,7 @@ void MonitorHandler::handle_trace(const CreateCoreOpOutputStreamsTrace &trace)
     m_devices_info.at(trace.device_id).finished_transferred_frames_d2h[core_op_handle]->insert(trace.stream_name);
 }
 
-void MonitorHandler::handle_trace(const WriteFrameTrace &trace)
+void MonitorHandler::handle_trace(const FrameEnqueueH2DTrace &trace)
 {
     assert(contains(m_core_ops_info, trace.core_op_handle));
     assert(contains(m_core_ops_info[trace.core_op_handle].input_streams_info, trace.queue_name));
@@ -97,7 +94,7 @@ void MonitorHandler::handle_trace(const WriteFrameTrace &trace)
     queue.pending_frames_count_acc->add_data_point(queue.pending_frames_count->load());
 }
 
-void MonitorHandler::handle_trace(const ReadFrameTrace &trace)
+void MonitorHandler::handle_trace(const FrameDequeueD2HTrace &trace)
 {
     assert(contains(m_core_ops_info, trace.core_op_handle));
     assert(contains(m_core_ops_info[trace.core_op_handle].output_streams_info, trace.queue_name));
@@ -107,8 +104,10 @@ void MonitorHandler::handle_trace(const ReadFrameTrace &trace)
     queue.total_frames_count->fetch_add(1);
 }
 
-void MonitorHandler::handle_trace(const OutputVdmaEnqueueTrace &trace)
+void MonitorHandler::handle_trace(const FrameEnqueueD2HTrace &trace)
 {
+    // TODO: 'if' should be removed, this is temporary solution since this trace is called out of the scheduler or vdevice.
+    if (!m_is_monitor_currently_working) { return; }
     assert(contains(m_core_ops_info, trace.core_op_handle));
     assert(contains(m_core_ops_info[trace.core_op_handle].output_streams_info, trace.queue_name));
 
@@ -128,8 +127,10 @@ void MonitorHandler::handle_trace(const OutputVdmaEnqueueTrace &trace)
     }
 }
 
-void MonitorHandler::handle_trace(const InputVdmaDequeueTrace &trace)
+void MonitorHandler::handle_trace(const FrameDequeueH2DTrace &trace)
 {
+    // TODO: 'if' should be removed, this is temporary solution since this trace is called out of the scheduler or vdevice.
+    if (!m_is_monitor_currently_working) { return; }
     assert(contains(m_core_ops_info, trace.core_op_handle));
     assert(contains(m_core_ops_info[trace.core_op_handle].input_streams_info, trace.queue_name));
     assert(contains(m_devices_info, trace.device_id));
@@ -292,7 +293,7 @@ void MonitorHandler::log_monitor_frames_infos(ProtoMon &mon)
             auto stream_frames_info = net_frames_info->add_streams_frames_infos();
             stream_frames_info->set_stream_name(stream.first);
             stream_frames_info->set_stream_direction(PROTO__STREAM_DIRECTION__HOST_TO_DEVICE);
-            stream_frames_info->set_buffer_frames_size(static_cast<int32_t>(stream.second.queue_size * m_device_count));
+            stream_frames_info->set_buffer_frames_size(static_cast<int32_t>(stream.second.queue_size * m_devices_info.size()));
             stream_frames_info->set_pending_frames_count(static_cast<int32_t>(stream.second.pending_frames_count->load()));
 
             auto expected_min_val = stream.second.pending_frames_count_acc->min();
@@ -324,36 +325,32 @@ void MonitorHandler::log_monitor_frames_infos(ProtoMon &mon)
             auto stream_frames_info = net_frames_info->add_streams_frames_infos();
             stream_frames_info->set_stream_name(stream.first);
             stream_frames_info->set_stream_direction(PROTO__STREAM_DIRECTION__DEVICE_TO_HOST);
-            if (m_core_ops_info[core_op_handle].is_nms) {
-                stream_frames_info->set_pending_frames_count(SCHEDULER_MON_NAN_VAL);
-                stream_frames_info->set_buffer_frames_size(SCHEDULER_MON_NAN_VAL);
+
+            stream_frames_info->set_pending_frames_count(static_cast<int32_t>(stream.second.pending_frames_count->load()));
+            stream_frames_info->set_buffer_frames_size(static_cast<int32_t>(stream.second.queue_size * m_devices_info.size()));
+
+            auto expected_min_val = stream.second.pending_frames_count_acc->min();
+            if (expected_min_val.status() == HAILO_SUCCESS) {
+                stream_frames_info->set_min_pending_frames_count(static_cast<int32_t>(expected_min_val.release()));
             } else {
-                stream_frames_info->set_pending_frames_count(static_cast<int32_t>(stream.second.pending_frames_count->load()));
-                stream_frames_info->set_buffer_frames_size(static_cast<int32_t>(stream.second.queue_size * m_device_count));
-
-                auto expected_min_val = stream.second.pending_frames_count_acc->min();
-                if (expected_min_val.status() == HAILO_SUCCESS) {
-                    stream_frames_info->set_min_pending_frames_count(static_cast<int32_t>(expected_min_val.release()));
-                } else {
-                    stream_frames_info->set_min_pending_frames_count(-1);
-                }
-
-                auto expected_max_val = stream.second.pending_frames_count_acc->max();
-                if (expected_max_val.status() == HAILO_SUCCESS) {
-                    stream_frames_info->set_max_pending_frames_count(static_cast<int32_t>(expected_max_val.release()));
-                } else {
-                    stream_frames_info->set_max_pending_frames_count(-1);
-                }
-
-                auto expected_avg_val = stream.second.pending_frames_count_acc->mean();
-                if (expected_avg_val.status() == HAILO_SUCCESS) {
-                    stream_frames_info->set_avg_pending_frames_count(expected_avg_val.release());
-                } else {
-                    stream_frames_info->set_avg_pending_frames_count(-1);
-                }
-
-                stream.second.pending_frames_count_acc->get_and_clear();
+                stream_frames_info->set_min_pending_frames_count(-1);
             }
+
+            auto expected_max_val = stream.second.pending_frames_count_acc->max();
+            if (expected_max_val.status() == HAILO_SUCCESS) {
+                stream_frames_info->set_max_pending_frames_count(static_cast<int32_t>(expected_max_val.release()));
+            } else {
+                stream_frames_info->set_max_pending_frames_count(-1);
+            }
+
+            auto expected_avg_val = stream.second.pending_frames_count_acc->mean();
+            if (expected_avg_val.status() == HAILO_SUCCESS) {
+                stream_frames_info->set_avg_pending_frames_count(expected_avg_val.release());
+            } else {
+                stream_frames_info->set_avg_pending_frames_count(-1);
+            }
+
+            stream.second.pending_frames_count_acc->get_and_clear();
         }
     }
 }

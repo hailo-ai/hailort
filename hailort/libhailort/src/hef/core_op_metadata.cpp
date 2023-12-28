@@ -328,7 +328,6 @@ Expected<std::vector<hailo_stream_info_t>> CoreOpMetadata::get_all_stream_infos(
     return res;
 }
 
-
 size_t CoreOpMetadata::get_contexts_count()
 {
     return (m_dynamic_contexts.size() + CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS);
@@ -524,7 +523,7 @@ Expected<std::vector<std::string>> NetworkGroupMetadata::get_stream_names_from_v
 
     auto all_layers_infos = get_all_layer_infos(m_core_ops_metadata_per_arch);
     CHECK_EXPECTED(all_layers_infos);
-    for (auto &layer_info : all_layers_infos.release()) {
+    for (auto &layer_info : all_layers_infos.value()) {
         if (layer_info.is_mux) {
             if (is_edge_under_mux(layer_info, vstream_name)) {
                 // vstream_name is a demux of the layer info
@@ -538,7 +537,12 @@ Expected<std::vector<std::string>> NetworkGroupMetadata::get_stream_names_from_v
         } else if (vstream_name == layer_info.name) {
             // Multi planar case
             if (layer_info.is_multi_planar) {
-                for (auto &plane : layer_info.planes) {
+                auto planes = layer_info.planes;
+                // In multi-planar case we need to sort the streams based on their plane index -> we count on order to know which plane belongs to which stream
+                std::sort(planes.begin(), planes.end(), [](const auto &a, const auto & b) {
+                    return a.plane_index < b.plane_index;
+                });
+                for (const auto &plane : planes) {
                     results.push_back(plane.name);
                 }
             } else {
@@ -548,6 +552,7 @@ Expected<std::vector<std::string>> NetworkGroupMetadata::get_stream_names_from_v
         }
     }
     CHECK_AS_EXPECTED(0 < results.size(), HAILO_NOT_FOUND, "Did not found vstream {}", vstream_name);
+
     return results;
 }
 

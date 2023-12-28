@@ -32,6 +32,7 @@ namespace net_flow
 #define INVALID_BBOX_DIM (std::numeric_limits<float32_t>::max())
 #define INVALID_NMS_DETECTION (std::numeric_limits<uint32_t>::max())
 #define INVALID_NMS_SCORE (std::numeric_limits<float32_t>::max())
+#define INVALID_NMS_CONFIG (-1)
 
 inline bool operator==(const hailo_bbox_float32_t &first, const hailo_bbox_float32_t &second) {
     return first.y_min == second.y_min && first.x_min == second.x_min && first.y_max == second.y_max && first.x_max == second.x_max && first.score == second.score;
@@ -44,13 +45,17 @@ inline bool operator==(const hailo_bbox_t &first, const hailo_bbox_t &second) {
 struct DetectionBbox
 {
     DetectionBbox(float32_t x_min, float32_t y_min, float32_t width, float32_t height, float32_t score, uint32_t class_id)
-        : m_class_id(class_id), m_bbox{y_min, x_min, (y_min + height), (x_min + width), score} {}
+        : m_class_id(class_id), m_bbox{y_min, x_min, (y_min + height), (x_min + width), score}, m_bbox_with_mask{} {}
 
     DetectionBbox(const hailo_bbox_float32_t &bbox, uint32_t class_id)
-        : m_class_id(class_id), m_bbox(bbox) {}
+        : m_class_id(class_id), m_bbox(bbox), m_bbox_with_mask{} {}
 
-    DetectionBbox(const hailo_bbox_float32_t &bbox, uint32_t class_id, std::vector<float32_t> &&mask)
-        : m_class_id(class_id), m_bbox(bbox), m_mask(std::move(mask)) {}
+    DetectionBbox(const hailo_bbox_float32_t &bbox, uint16_t class_id, std::vector<float32_t> &&mask,
+        float32_t image_height, float32_t image_width)
+        : m_class_id(class_id), m_coefficients(std::move(mask)), m_bbox(bbox),
+            m_bbox_with_mask{{bbox.y_min, bbox.x_min, bbox.y_max, bbox.x_max}, bbox.score, class_id,
+                get_mask_size_in_bytes(image_height, image_width), nullptr}
+        {}
 
     DetectionBbox() : DetectionBbox(hailo_bbox_float32_t{
         INVALID_BBOX_DIM,
@@ -60,19 +65,30 @@ struct DetectionBbox
         INVALID_BBOX_DIM
     }, INVALID_NMS_DETECTION) {}
 
-    inline uint32_t get_bbox_rounded_height(float32_t image_height) const
+    inline uint32_t get_bbox_height(float32_t image_height) const
     {
-        return static_cast<uint32_t>(std::round((m_bbox.y_max - m_bbox.y_min) * image_height));
+        return static_cast<uint32_t>(std::ceil((m_bbox.y_max - m_bbox.y_min) * image_height));
     }
 
-    inline uint32_t get_bbox_rounded_width(float32_t image_width) const
+    inline uint32_t get_bbox_width(float32_t image_width) const
     {
-        return static_cast<uint32_t>(std::round((m_bbox.x_max - m_bbox.x_min) * image_width));
+        return static_cast<uint32_t>(std::ceil((m_bbox.x_max - m_bbox.x_min) * image_width));
+    }
+
+    inline size_t get_mask_size_in_bytes(float32_t image_height, float32_t image_width) const
+    {
+        auto box_height = get_bbox_height(image_height);
+        auto box_width = get_bbox_width(image_width);
+        auto mask_size = box_width * box_height;
+
+        return mask_size;
     }
 
     uint32_t m_class_id;
+    std::vector<float32_t> m_coefficients; // Used in segmentation networks
+    // TODO: HRT-12093 - Unite usage and remove `hailo_bbox_float32_t`.
     hailo_bbox_float32_t m_bbox;
-    std::vector<float32_t> m_mask; // Used in segmentation networks, otherwise there is no mask.
+    hailo_detection_with_byte_mask_t m_bbox_with_mask;
 };
 
 inline bool operator==(const DetectionBbox &first, const DetectionBbox &second) {
@@ -246,8 +262,19 @@ public:
 protected:
     NmsPostProcessOp(std::shared_ptr<NmsOpMetadata> metadata)
         : Op(static_cast<PostProcessOpMetadataPtr>(metadata))
+        , m_classes_detections_count(metadata->nms_config().number_of_classes, 0)
         , m_nms_metadata(metadata)
-    {}
+    {
+        m_detections.reserve(metadata->nms_config().max_proposals_per_class * metadata->nms_config().number_of_classes);
+    }
+
+    void clear_before_frame()  
+    {
+        m_detections.clear();
+        m_detections.reserve(m_nms_metadata->nms_config().max_proposals_per_class * m_nms_metadata->nms_config().number_of_classes);
+
+        m_classes_detections_count.assign(m_nms_metadata->nms_config().number_of_classes, 0);
+    }
 
     template<typename DstType = float32_t, typename SrcType>
     std::pair<uint32_t, float32_t> get_max_class(const SrcType *data, uint32_t entry_idx, uint32_t classes_start_index,
@@ -281,9 +308,10 @@ protected:
         return max_id_score_pair;
     }
 
-    hailo_status hailo_nms_format(std::vector<DetectionBbox> &&detections,
-        MemoryView dst_view, std::vector<uint32_t> &classes_detections_count);
+    hailo_status hailo_nms_format(MemoryView dst_view);
 
+    std::vector<DetectionBbox> m_detections;
+    std::vector<uint32_t> m_classes_detections_count;
 private:
     std::shared_ptr<NmsOpMetadata> m_nms_metadata;
 

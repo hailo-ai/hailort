@@ -445,28 +445,6 @@ hailo_status recv_loop(const inference_runner_params &params, RecvObject &recv_o
     return HAILO_SUCCESS;
 }
 
-template<typename SendObject, typename RecvObject>
-hailo_status abort_streams(std::vector<std::reference_wrapper<SendObject>> &send_objects,
-    std::vector<std::reference_wrapper<RecvObject>> &recv_objects)
-{
-    auto status = HAILO_SUCCESS; // Best effort
-    for (auto &output_stream : recv_objects) {
-        auto abort_status = output_stream.get().abort();
-        if (HAILO_SUCCESS != abort_status) {
-            LOGGER__ERROR("Failed to abort output stream {}", output_stream.get().name());
-            status = abort_status;
-        }
-    }
-    for (auto &input_stream : send_objects) {
-        auto abort_status = input_stream.get().abort();
-        if (HAILO_SUCCESS != abort_status) {
-            LOGGER__ERROR("Failed to abort input stream {}", input_stream.get().name());
-            status = abort_status;
-        }
-    }
-    return status;
-}
-
 Expected<std::map<std::string, std::vector<InputVStream>>> create_input_vstreams(ConfiguredNetworkGroup &configured_net_group,
     const inference_runner_params &params)
 {
@@ -705,7 +683,7 @@ static hailo_status run_streaming_impl(std::shared_ptr<ConfiguredNetworkGroup> c
         auto status = wait_for_exit_with_timeout(std::chrono::seconds(params.time_to_run));
         CHECK_SUCCESS(status);
 
-        status = abort_streams(send_objects, recv_objects);
+        status = configured_net_group->shutdown();
         barrier.terminate();
         CHECK_SUCCESS(status);
     }

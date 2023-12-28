@@ -167,6 +167,7 @@ int main()
     hailo_input_vstream input_vstreams[NET_COUNT][MAX_EDGE_LAYERS];
     hailo_output_vstream output_vstreams[NET_COUNT][MAX_EDGE_LAYERS];
     uint16_t batch_size[NET_COUNT] = {FIRST_NET_BATCH_SIZE, SECOND_NET_BATCH_SIZE};
+    bool unused = {0};
 
     status = hailo_init_vdevice_params(&params);
     REQUIRE_SUCCESS(status, l_exit, "Failed init vdevice_params");
@@ -201,11 +202,11 @@ int main()
 
     /* Build vstream params per network */
     for (uint8_t network_index = 0; network_index < NET_COUNT; network_index++) {
-        status = hailo_hef_make_input_vstream_params(hef, network_info[network_index].name, true, HAILO_FORMAT_TYPE_AUTO,
+        status = hailo_hef_make_input_vstream_params(hef, network_info[network_index].name, unused, HAILO_FORMAT_TYPE_AUTO,
             input_vstream_params[network_index], &input_vstreams_size[network_index]);
         REQUIRE_SUCCESS(status, l_release_hef, "Failed making input virtual stream params");
 
-        status = hailo_hef_make_output_vstream_params(hef, network_info[network_index].name, true, HAILO_FORMAT_TYPE_AUTO,
+        status = hailo_hef_make_output_vstream_params(hef, network_info[network_index].name, unused, HAILO_FORMAT_TYPE_AUTO,
             output_vstream_params[network_index], &output_vstreams_size[network_index]);
         REQUIRE_SUCCESS(status, l_release_hef, "Failed making output virtual stream params");
 

@@ -123,23 +123,36 @@ hailo_status PowerMeasurement::sanity_check()
 
 hailo_status PowerMeasurement::start_measurement()
 {
+    auto status = m_device.stop_power_measurement();
+    CHECK_SUCCESS(status, "Failed to stop power measurement");   
+
+    status = m_device.set_power_measurement(HAILO_MEASUREMENT_BUFFER_INDEX_0, HAILO_DVM_OPTIONS_AUTO, m_measurement_type);
+    CHECK_SUCCESS(status, "Failed to start power measurement");   
+
+    //Note: important to keep the chip sampling period lower than the interval between measurements (DEFAULT_MEASUREMENTS_INTERVAL)
+    status = m_device.start_power_measurement(HAILO_AVERAGE_FACTOR_1, HAILO_SAMPLING_PERIOD_140US);
+    CHECK_SUCCESS(status, "Failed to start power measurement");
+   
     m_is_thread_running = true;
     m_thread = std::thread([this] () {
-        while (m_is_thread_running.load()) {
-            auto power_info = m_device.power_measurement(HAILO_DVM_OPTIONS_AUTO, m_measurement_type);
-            if (HAILO_SUCCESS != power_info.status()) {
-                LOGGER__ERROR("Failed to get chip's power, status = {}", power_info.status());
+        const bool clear_power_measurement_history = true;
+        while (m_is_thread_running.load()) { 
+            std::this_thread::sleep_for(DEFAULT_MEASUREMENTS_INTERVAL);
+            auto power_data = m_device.get_power_measurement(HAILO_MEASUREMENT_BUFFER_INDEX_0, clear_power_measurement_history);
+            if (HAILO_SUCCESS != power_data.status()) {
+                LOGGER__ERROR("Failed to get chip's power, status = {}", power_data.status());
                 m_is_thread_running = false;
                 break;
             }
 
             {
                 std::unique_lock<std::mutex> lock(m_mutex);
-                m_acc->add_data_point(*power_info);
-            }
-            
-            std::this_thread::sleep_for(DEFAULT_MEASUREMENTS_INTERVAL); 
+                m_acc->add_data_point(power_data->average_value);
+            } 
         }
+        auto status = m_device.stop_power_measurement();
+        CHECK_SUCCESS(status, "Failed to start power measurement");
+        return HAILO_SUCCESS;
     });
 
     return HAILO_SUCCESS;

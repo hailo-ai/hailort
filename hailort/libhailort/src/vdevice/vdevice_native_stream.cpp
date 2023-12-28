@@ -22,7 +22,7 @@ Expected<std::unique_ptr<VDeviceNativeInputStream>> VDeviceNativeInputStream::cr
     vdevice_core_op_handle_t core_op_handle)
 {
     std::unique_ptr<CallbackReorderQueue> reorder_queue = nullptr;
-    if (auto max_queue_size_per_stream = streams.begin()->second.get().get_buffer_frames_size()) {
+    if (auto max_queue_size_per_stream = streams.begin()->second.get().get_async_max_queue_size()) {
         const auto max_queue_size = max_queue_size_per_stream.value() * streams.size();
         reorder_queue = make_unique_nothrow<CallbackReorderQueue>(max_queue_size);
         CHECK_NOT_NULL_AS_EXPECTED(reorder_queue, HAILO_OUT_OF_HOST_MEMORY);
@@ -60,13 +60,13 @@ hailo_status VDeviceNativeInputStream::deactivate_stream()
     return HAILO_SUCCESS;
 }
 
-hailo_status VDeviceNativeInputStream::abort()
+hailo_status VDeviceNativeInputStream::abort_impl()
 {
     auto status = HAILO_SUCCESS; // Best effort
     for (auto &pair: m_streams){
         const auto &device_id = pair.first;
         auto &stream = pair.second;
-        auto abort_status = stream.get().abort();
+        auto abort_status = stream.get().abort_impl();
         if (HAILO_SUCCESS != status) {
             LOGGER__ERROR("Failed to abort input stream. (status: {} device: {})", status, device_id);
             status = abort_status;
@@ -75,13 +75,13 @@ hailo_status VDeviceNativeInputStream::abort()
     return status;
 }
 
-hailo_status VDeviceNativeInputStream::clear_abort()
+hailo_status VDeviceNativeInputStream::clear_abort_impl()
 {
     auto status = HAILO_SUCCESS; // Best effort
     for (auto &pair: m_streams){
         const auto &device_id = pair.first;
         auto &stream = pair.second;
-        auto clear_abort_status = stream.get().clear_abort();
+        auto clear_abort_status = stream.get().clear_abort_impl();
         if ((HAILO_SUCCESS != clear_abort_status) && (HAILO_STREAM_NOT_ACTIVATED != clear_abort_status)) {
             LOGGER__ERROR("Failed to clear abort input stream. (status: {} device: {})", clear_abort_status, device_id);
             status = clear_abort_status;
@@ -114,12 +114,6 @@ hailo_stream_interface_t VDeviceNativeInputStream::get_interface() const
     return m_streams.begin()->second.get().get_interface();
 }
 
-Expected<size_t> VDeviceNativeInputStream::get_buffer_frames_size() const
-{
-    // All get_buffer_frames_size values of m_streams should be the same
-    return m_streams.begin()->second.get().get_buffer_frames_size();
-}
-
 hailo_status VDeviceNativeInputStream::flush()
 {
     auto status = HAILO_SUCCESS; // Best effort
@@ -137,7 +131,7 @@ hailo_status VDeviceNativeInputStream::flush()
 
 hailo_status VDeviceNativeInputStream::write_impl(const MemoryView &buffer)
 {
-    TRACE(WriteFrameTrace, m_core_op_handle, name());
+    TRACE(FrameEnqueueH2DTrace, m_core_op_handle, name());
 
     auto status = next_stream().write_impl(buffer);
     if ((HAILO_STREAM_ABORTED_BY_USER == status) || (HAILO_STREAM_NOT_ACTIVATED == status)){
@@ -161,19 +155,26 @@ Expected<size_t> VDeviceNativeInputStream::get_async_max_queue_size() const
     // since we transfer an entire batch for each device at a time (so even if we have place
     // to transfer in other streams, we first finishes the batch).
     // To overcome this problem, we check how many "batches" we can transfer at a time (batch_count_queued)
-    // and make sure the queue for each stream contains a specific batch. We can potentaily transfer
-    // the resuide of the batch from last device, but then we will have problems with non-batch aligned
+    // and make sure the queue for each stream contains a specific batch. We can potentially transfer
+    // the residue of the batch from last device, but then we will have problems with non-batch aligned
     // transfers.
     auto &first_stream = m_streams.begin()->second.get();
     const auto max_queue_per_stream = first_stream.get_async_max_queue_size();
     CHECK_EXPECTED(max_queue_per_stream);
 
-    assert(*max_queue_per_stream >= m_batch_size);
-
-    const auto batch_count_queued = *max_queue_per_stream / m_batch_size;
-    const auto actual_queue_per_stream = m_batch_size * batch_count_queued;
-
-    return actual_queue_per_stream * m_streams.size();
+    if (*max_queue_per_stream >= m_batch_size) {
+        const auto batch_count_queued = *max_queue_per_stream / m_batch_size;
+        const auto actual_queue_per_stream = m_batch_size * batch_count_queued;
+        return actual_queue_per_stream * m_streams.size();
+    } else {
+        size_t max_queue_size = 0;
+        for (size_t i = 1; i <= *max_queue_per_stream; i++) {
+            if ((m_batch_size % i) == 0) {
+                max_queue_size = i;
+            }
+        }
+        return max_queue_size * m_streams.size();
+    }
 }
 
 hailo_status VDeviceNativeInputStream::write_async(TransferRequest &&transfer_request)
@@ -182,7 +183,7 @@ hailo_status VDeviceNativeInputStream::write_async(TransferRequest &&transfer_re
     CHECK(m_callback_reorder_queue, HAILO_INVALID_OPERATION, "Stream does not support async api");
     transfer_request.callback = m_callback_reorder_queue->wrap_callback(transfer_request.callback);
 
-    TRACE(WriteFrameTrace, m_core_op_handle, name());
+    TRACE(FrameEnqueueH2DTrace, m_core_op_handle, name());
 
     auto status = next_stream().write_async(std::move(transfer_request));
     if (HAILO_SUCCESS != status) {
@@ -220,7 +221,7 @@ Expected<std::unique_ptr<VDeviceNativeOutputStream>> VDeviceNativeOutputStream::
     vdevice_core_op_handle_t core_op_handle)
 {
     std::unique_ptr<CallbackReorderQueue> reorder_queue = nullptr;
-    if (auto max_queue_size_per_stream = streams.begin()->second.get().get_buffer_frames_size()) {
+    if (auto max_queue_size_per_stream = streams.begin()->second.get().get_async_max_queue_size()) {
         const auto max_queue_size = max_queue_size_per_stream.value() * streams.size();
         reorder_queue = make_unique_nothrow<CallbackReorderQueue>(max_queue_size);
         CHECK_NOT_NULL_AS_EXPECTED(reorder_queue, HAILO_OUT_OF_HOST_MEMORY);
@@ -258,13 +259,13 @@ hailo_status VDeviceNativeOutputStream::deactivate_stream()
     return HAILO_SUCCESS;
 }
 
-hailo_status VDeviceNativeOutputStream::abort()
+hailo_status VDeviceNativeOutputStream::abort_impl()
 {
     auto status = HAILO_SUCCESS; // Best effort
     for (const auto &pair : m_streams) {
         const auto &device_id = pair.first;
         auto &stream = pair.second;
-        auto abort_status = stream.get().abort();
+        auto abort_status = stream.get().abort_impl();
         if (HAILO_SUCCESS != status) {
             LOGGER__ERROR("Failed to abort output stream. (status: {} device: {})", status, device_id);
             status = abort_status;
@@ -274,13 +275,13 @@ hailo_status VDeviceNativeOutputStream::abort()
     return status;
 }
 
-hailo_status VDeviceNativeOutputStream::clear_abort()
+hailo_status VDeviceNativeOutputStream::clear_abort_impl()
 {
     auto status = HAILO_SUCCESS; // Best effort
     for (const auto &pair : m_streams) {
         const auto &device_id = pair.first;
         auto &stream = pair.second;
-        auto clear_abort_status = stream.get().clear_abort();
+        auto clear_abort_status = stream.get().clear_abort_impl();
         if ((HAILO_SUCCESS != clear_abort_status) && (HAILO_STREAM_NOT_ACTIVATED != clear_abort_status)) {
             LOGGER__ERROR("Failed to clear abort output stream. (status: {} device: {})", clear_abort_status, device_id);
             status = clear_abort_status;
@@ -313,12 +314,6 @@ hailo_stream_interface_t VDeviceNativeOutputStream::get_interface() const
     return m_streams.begin()->second.get().get_interface();
 }
 
-Expected<size_t> VDeviceNativeOutputStream::get_buffer_frames_size() const
-{
-    // All get_buffer_frames_size values of m_streams should be the same
-    return m_streams.begin()->second.get().get_buffer_frames_size();
-}
-
 hailo_status VDeviceNativeOutputStream::read_impl(MemoryView buffer)
 {
     auto status = next_stream().read_impl(buffer);
@@ -328,7 +323,9 @@ hailo_status VDeviceNativeOutputStream::read_impl(MemoryView buffer)
     }
     CHECK_SUCCESS(status, "Failed read from stream (device: {})", m_next_transfer_stream);
 
-    TRACE(ReadFrameTrace, m_core_op_handle, name());
+    if (INVALID_CORE_OP_HANDLE != m_core_op_handle) {
+        TRACE(FrameDequeueD2HTrace, m_core_op_handle, name());
+    }
 
     advance_stream();
     return HAILO_SUCCESS;
@@ -352,12 +349,19 @@ Expected<size_t> VDeviceNativeOutputStream::get_async_max_queue_size() const
     const auto max_queue_per_stream = first_stream.get_async_max_queue_size();
     CHECK_EXPECTED(max_queue_per_stream);
 
-    assert(*max_queue_per_stream >= m_batch_size);
-
-    const auto batch_count_queued = *max_queue_per_stream / m_batch_size;
-    const auto actual_queue_per_stream = m_batch_size * batch_count_queued;
-
-    return actual_queue_per_stream * m_streams.size();
+    if (*max_queue_per_stream >= m_batch_size) {
+        const auto batch_count_queued = *max_queue_per_stream / m_batch_size;
+        const auto actual_queue_per_stream = m_batch_size * batch_count_queued;
+        return actual_queue_per_stream * m_streams.size();
+    } else {
+        size_t max_queue_size = 0;
+        for (size_t i = 1; i <= *max_queue_per_stream; i++) {
+            if ((m_batch_size % i) == 0) {
+                max_queue_size = i;
+            }
+        }
+        return max_queue_size * m_streams.size();
+    }
 }
 
 hailo_status VDeviceNativeOutputStream::read_async(TransferRequest &&transfer_request)
@@ -369,11 +373,10 @@ hailo_status VDeviceNativeOutputStream::read_async(TransferRequest &&transfer_re
     auto reorder_queue_callback = m_callback_reorder_queue->wrap_callback(transfer_request.callback);
 
     transfer_request.callback = [this, callback=reorder_queue_callback](hailo_status status) {
-        if (HAILO_SUCCESS == status) {
-            TRACE(ReadFrameTrace, m_core_op_handle, name());
-        }
-
         callback(status);
+        if ((HAILO_SUCCESS == status) && (INVALID_CORE_OP_HANDLE != m_core_op_handle)) {
+            TRACE(FrameDequeueD2HTrace, m_core_op_handle, name());
+        }
     };
 
     auto status = next_stream().read_async(std::move(transfer_request));
@@ -383,6 +386,15 @@ hailo_status VDeviceNativeOutputStream::read_async(TransferRequest &&transfer_re
     }
 
     // Update m_next_transfer_stream_index only if 'batch' frames has been transferred
+    advance_stream();
+    return HAILO_SUCCESS;
+}
+
+hailo_status VDeviceNativeOutputStream::read_unaligned_address_async(const MemoryView &buffer,
+    const TransferDoneCallback &user_callback)
+{
+    auto status = next_stream().read_unaligned_address_async(buffer, user_callback);
+    CHECK_SUCCESS(status);
     advance_stream();
     return HAILO_SUCCESS;
 }

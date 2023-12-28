@@ -19,6 +19,8 @@ const uint32_t HailoRTCommon::MASK_PARAMS;
 const uint32_t HailoRTCommon::MAX_DEFUSED_LAYER_COUNT;
 const size_t HailoRTCommon::HW_DATA_ALIGNMENT;
 const uint32_t HailoRTCommon::MAX_NMS_BURST_SIZE;
+const size_t HailoRTCommon::DMA_ABLE_ALIGNMENT_WRITE_HW_LIMITATION;
+const size_t HailoRTCommon::DMA_ABLE_ALIGNMENT_READ_HW_LIMITATION;
 
 Expected<hailo_device_id_t> HailoRTCommon::to_device_id(const std::string &device_id)
 {

@@ -391,13 +391,7 @@ public:
      * Creates input virtual streams and output virtual streams.
      *
      * @param[in] net_group            Configured network group that owns the streams.
-     * @param[in] quantized            Default quantized parameter for all virtual streams.
-     *                                 For input vstreams indicates whether the data fed into the chip is already quantized.
-     *                                 True means the data is already quantized.
-     *                                 False means it's HailoRT's responsibility to quantize (scale) the data.
-     *                                 For output vstreams indicates whether the data returned from the device should be quantized.
-     *                                 True means that the data returned to the user is still quantized.
-     *                                 False means it's HailoRT's responsibility to de-quantize (rescale) the data.
+     * @param[in] unused               Unused.
      * @param[in] format_type          The default format type for all virtual streams.
      * @param[in] network_name         Request to create vstreams of specific network inside the configured network group.
      *                                 If not passed, all the networks in the network group will be addressed.
@@ -405,7 +399,7 @@ public:
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     static Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> create_vstreams(
-        ConfiguredNetworkGroup &net_group, bool quantized, hailo_format_type_t format_type,
+        ConfiguredNetworkGroup &net_group, bool unused, hailo_format_type_t format_type,
         const std::string &network_name="");
 
     /**

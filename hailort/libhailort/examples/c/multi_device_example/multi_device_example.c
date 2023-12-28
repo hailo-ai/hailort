@@ -143,6 +143,7 @@ int main()
     size_t output_vstreams_size = MAX_EDGE_LAYERS;
     hailo_input_vstream input_vstreams[MAX_EDGE_LAYERS] = {NULL};
     hailo_output_vstream output_vstreams[MAX_EDGE_LAYERS] = {NULL};
+    bool unused = {0};
 
     status = hailo_scan_devices(NULL, device_ids, &actual_count);
     REQUIRE_SUCCESS(status, l_exit, "Failed to scan devices");
@@ -172,11 +173,11 @@ int main()
     REQUIRE_ACTION(network_group_size == 1, status = HAILO_INVALID_ARGUMENT, l_release_hef, 
         "Invalid network group size");
 
-    status = hailo_make_input_vstream_params(network_group, true, HAILO_FORMAT_TYPE_AUTO,
+    status = hailo_make_input_vstream_params(network_group, unused, HAILO_FORMAT_TYPE_AUTO,
         input_vstream_params, &input_vstreams_size);
     REQUIRE_SUCCESS(status, l_release_hef, "Failed making input virtual stream params");
 
-    status = hailo_make_output_vstream_params(network_group, true, HAILO_FORMAT_TYPE_AUTO,
+    status = hailo_make_output_vstream_params(network_group, unused, HAILO_FORMAT_TYPE_AUTO,
         output_vstream_params, &output_vstreams_size);
     REQUIRE_SUCCESS(status, l_release_hef, "Failed making output virtual stream params");
 

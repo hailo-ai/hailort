@@ -29,6 +29,30 @@ VdmaConfigCoreOp::VdmaConfigCoreOp(ActiveCoreOpHolder &active_core_op_holder,
         m_resources_manager(std::move(resources_manager))
 {}
 
+
+hailo_status VdmaConfigCoreOp::cancel_pending_transfers()
+{
+    // Best effort
+    auto status = HAILO_SUCCESS;
+    auto deactivate_status = HAILO_UNINITIALIZED;
+    for (const auto &name_pair : m_input_streams) {
+        deactivate_status = name_pair.second->cancel_pending_transfers();
+        if (HAILO_SUCCESS != deactivate_status) {
+            LOGGER__ERROR("Failed to cancel pending transfers for input stream {}", name_pair.first);
+            status = deactivate_status;
+        }
+    }
+    for (const auto &name_pair : m_output_streams) {
+        deactivate_status = name_pair.second->cancel_pending_transfers();
+        if (HAILO_SUCCESS != deactivate_status) {
+            LOGGER__ERROR("Failed to cancel pending transfers for output stream {}", name_pair.first);
+            status = deactivate_status;
+        }
+    }
+
+    return status;
+}
+
 hailo_status VdmaConfigCoreOp::activate_impl(uint16_t dynamic_batch_size)
 {
     auto status = HAILO_UNINITIALIZED;
@@ -69,10 +93,31 @@ hailo_status VdmaConfigCoreOp::deactivate_impl()
 
     // After the state machine has been reset the vdma channels are no longer active, so we
     // can cancel pending transfers, thus allowing vdma buffers linked to said transfers to be freed
-    status = m_resources_manager->cancel_pending_transfers();
+    status = cancel_pending_transfers();
     CHECK_SUCCESS(status, "Failed to cancel pending transfers");
 
     return HAILO_SUCCESS;
+}
+
+hailo_status VdmaConfigCoreOp::shutdown()
+{
+    hailo_status status = HAILO_SUCCESS; // Success oriented
+
+    auto abort_status = abort_low_level_streams();
+    if (HAILO_SUCCESS != abort_status) {
+        LOGGER__ERROR("Failed abort low level streams {}", abort_status);
+        status = abort_status;
+    }
+
+    // On VdmaConfigCoreOp, shutdown is the same as deactivate. In the future, we can release the resources inside
+    // the resource manager and free space in the firmware SRAM
+    auto deactivate_status = deactivate_impl();
+    if (HAILO_SUCCESS != deactivate_status) {
+        LOGGER__ERROR("Failed deactivate core op with status {}", deactivate_status);
+        status = deactivate_status;
+    }
+
+    return status;
 }
 
 hailo_status VdmaConfigCoreOp::deactivate_host_resources()

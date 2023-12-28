@@ -18,6 +18,8 @@
 namespace hailort
 {
 
+class VdmaDevice;
+
 // Contains buffer that can be transferred. The buffer can be circular -
 // It relies at [m_offset, m_base_buffer.size()) and [0, m_base_buffer.size() - m_size).
 class TransferBuffer final {
@@ -31,13 +33,13 @@ public:
     size_t offset() const { return m_offset; }
     size_t size() const { return m_size; }
 
-    Expected<vdma::MappedBufferPtr> map_buffer(HailoRTDriver &driver, HailoRTDriver::DmaDirection direction);
+    Expected<vdma::MappedBufferPtr> map_buffer(VdmaDevice &device, HailoRTDriver::DmaDirection direction);
 
     hailo_status copy_to(MemoryView buffer);
     hailo_status copy_from(const MemoryView buffer);
 
     // Sync the buffer to the given direction, fails if the buffer is not mapped.
-    hailo_status synchronize(HailoRTDriver &driver, HailoRTDriver::DmaSyncDirection sync_direction);
+    hailo_status synchronize(VdmaDevice &device, HailoRTDriver::DmaSyncDirection sync_direction);
 
 private:
 
@@ -61,11 +63,41 @@ private:
 };
 
 // Internal function, wrapper to the user callbacks, accepts the callback status as an argument.
-using InternalTransferDoneCallback = std::function<void(hailo_status)>;
+using TransferDoneCallback = std::function<void(hailo_status)>;
 
 struct TransferRequest {
-    TransferBuffer buffer;
-    InternalTransferDoneCallback callback;
+    std::vector<TransferBuffer> transfer_buffers;
+    TransferDoneCallback callback;
+    TransferRequest() = default;
+    TransferRequest(TransferBuffer &&transfer_buffers_arg, const TransferDoneCallback &callback_arg):
+        transfer_buffers(), callback(callback_arg)
+    {
+        transfer_buffers.emplace_back(std::move(transfer_buffers_arg));
+    }
+    TransferRequest(const TransferBuffer& transfer_buffers_arg, const TransferDoneCallback &callback_arg):
+        transfer_buffers(), callback(callback_arg)
+    {
+        transfer_buffers.emplace_back(std::move(transfer_buffers_arg));
+    }
+    TransferRequest(std::vector<TransferBuffer> &&transfer_buffers_arg, const TransferDoneCallback &callback_arg) :
+        transfer_buffers(std::move(transfer_buffers_arg)), callback(callback_arg)
+    {}
+
+    size_t get_total_transfer_size() const {
+        size_t total_transfer_size = 0;
+        for (size_t i = 0; i < transfer_buffers.size(); i++) {
+            total_transfer_size += transfer_buffers[i].size();
+        }
+        return total_transfer_size;
+    }
+};
+
+struct InferRequest {
+    // Transfer for each stream
+    std::unordered_map<std::string, TransferRequest> transfers;
+
+    // Callback to be called when all transfer finishes
+    TransferDoneCallback callback;
 };
 
 } /* namespace hailort */

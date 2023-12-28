@@ -17,7 +17,6 @@
 #include "common/filesystem.hpp"
 
 #include "stream_common/stream_internal.hpp"
-#include "vdevice/scheduler/scheduler_counter.hpp"
 
 #include <condition_variable>
 
@@ -39,22 +38,14 @@ struct ActiveDeviceInfo {
         current_core_op_handle(INVALID_CORE_OP_HANDLE), next_core_op_handle(INVALID_CORE_OP_HANDLE), is_switching_core_op(false), 
         current_batch_size(0),
         frames_left_before_stop_streaming(0),
-        device_id(device_id), device_arch(device_arch)
+        ongoing_infer_requests(0),
+        device_id(device_id),
+        device_arch(device_arch)
     {}
-
-    uint32_t get_ongoing_frames() const
-    {
-        if (current_core_op_handle == INVALID_CORE_OP_HANDLE) {
-            // No ongoing frames
-            return 0;
-        }
-
-        return ongoing_frames.at(current_core_op_handle).get_max_value();
-    }
 
     bool is_idle() const
     {
-        return 0 == get_ongoing_frames();
+        return 0 == ongoing_infer_requests;
     }
 
     scheduler_core_op_handle_t current_core_op_handle;
@@ -66,12 +57,57 @@ struct ActiveDeviceInfo {
     // (even if there is another core op ready).
     size_t frames_left_before_stop_streaming;
 
-    // For each stream (both input and output) we store a counter for all ongoing frames. We increase the counter when
-    // launching transfer and decrease it when we get the transfer callback called.
-    std::unordered_map<scheduler_core_op_handle_t, SchedulerCounter> ongoing_frames;
+    std::atomic_uint32_t ongoing_infer_requests;
 
     device_id_t device_id;
     std::string device_arch;
+};
+
+// Group of core ops with the same priority.
+class PriorityGroup {
+public:
+    PriorityGroup() = default;
+
+    void add(scheduler_core_op_handle_t core_op_handle)
+    {
+        m_core_ops.emplace_back(core_op_handle);
+    }
+
+    void erase(scheduler_core_op_handle_t core_op_handle)
+    {
+        auto it = std::find(m_core_ops.begin(), m_core_ops.end(), core_op_handle);
+        assert(it != m_core_ops.end());
+        m_core_ops.erase(it);
+        m_next_core_op_index = 0; // Avoiding overflow by reseting next core op.
+    }
+
+    bool contains(scheduler_core_op_handle_t core_op_handle) const
+    {
+        return ::hailort::contains(m_core_ops, core_op_handle);
+    }
+
+    // Returns a core op at m_next_core_op_index + relative_index
+    scheduler_core_op_handle_t get(size_t relative_index) const
+    {
+        assert(relative_index < m_core_ops.size());
+        const auto abs_index = (m_next_core_op_index + relative_index) % m_core_ops.size();
+        return m_core_ops[abs_index];
+    }
+
+    void set_next(size_t relative_index)
+    {
+        assert(relative_index <= m_core_ops.size()); // allowing wrap around
+        m_next_core_op_index = (m_next_core_op_index + relative_index) % m_core_ops.size();
+    }
+
+    size_t size() const { return m_core_ops.size(); }
+
+private:
+    std::vector<scheduler_core_op_handle_t> m_core_ops;
+
+    // index inside core_ops vector, next core to be executed from this priority. Used to implement round robin on the
+    // group.
+    size_t m_next_core_op_index = 0;
 };
 
 
@@ -91,7 +127,6 @@ public:
 
     virtual ReadyInfo is_core_op_ready(const scheduler_core_op_handle_t &core_op_handle, bool check_threshold,
         const device_id_t &device_id) = 0;
-    virtual bool is_device_idle(const device_id_t &device_id) = 0;
 
     virtual uint32_t get_device_count() const
     {
@@ -108,19 +143,9 @@ public:
         return m_devices;
     }
 
-    virtual std::map<core_op_priority_t, std::vector<scheduler_core_op_handle_t>> get_core_op_priority_map()
+    virtual std::map<core_op_priority_t, PriorityGroup> &get_core_op_priority_map()
     {
         return m_core_op_priority;
-    }
-
-    virtual scheduler_core_op_handle_t get_next_core_op(core_op_priority_t priority) const
-    {
-        return m_next_core_op.at(priority);
-    }
-
-    virtual void set_next_core_op(const core_op_priority_t priority, const scheduler_core_op_handle_t &core_op_handle)
-    {
-        m_next_core_op.at(priority) = core_op_handle;
     }
 
 protected:
@@ -140,10 +165,9 @@ protected:
 
     std::map<device_id_t, std::shared_ptr<ActiveDeviceInfo>> m_devices;
 
-    std::map<core_op_priority_t, std::vector<scheduler_core_op_handle_t>> m_core_op_priority;
+    std::map<core_op_priority_t, PriorityGroup> m_core_op_priority;
 
     hailo_scheduling_algorithm_t m_algorithm;
-    std::unordered_map<core_op_priority_t, scheduler_core_op_handle_t> m_next_core_op;
 };
 
 } /* namespace hailort */

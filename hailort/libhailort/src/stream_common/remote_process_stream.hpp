@@ -119,14 +119,14 @@ public:
     virtual hailo_stream_interface_t get_interface() const override;
     virtual std::chrono::milliseconds get_timeout() const override;
     virtual hailo_status set_timeout(std::chrono::milliseconds timeout) override;
-    virtual hailo_status abort() override;
-    virtual hailo_status clear_abort() override;
-    virtual Expected<size_t> get_buffer_frames_size() const override;
+    virtual hailo_status abort_impl() override;
+    virtual hailo_status clear_abort_impl() override;
     virtual bool is_scheduled() override;
     virtual hailo_status flush() override;
 
     virtual hailo_status activate_stream() override;
     virtual hailo_status deactivate_stream() override;
+    virtual hailo_status cancel_pending_transfers() override;
 
 
     RemoteProcessInputStream(std::shared_ptr<InputStreamBase> base_stream, EventPtr thread_stop_event,
@@ -168,15 +168,13 @@ public:
     virtual hailo_stream_interface_t get_interface() const override;
     virtual std::chrono::milliseconds get_timeout() const override;
     virtual hailo_status set_timeout(std::chrono::milliseconds timeout) override;
-    virtual hailo_status abort() override;
-    virtual hailo_status clear_abort() override;
-    virtual Expected<size_t> get_buffer_frames_size() const override;
+    virtual hailo_status abort_impl() override;
+    virtual hailo_status clear_abort_impl() override;
     virtual bool is_scheduled() override;
 
     virtual hailo_status activate_stream() override;
     virtual hailo_status deactivate_stream() override;
-
-    virtual hailo_status register_interrupt_callback(const ProcessingCompleteCallback &);
+    virtual hailo_status cancel_pending_transfers() override;
 
     RemoteProcessOutputStream(std::shared_ptr<OutputStreamBase> base_stream, EventPtr thread_stop_event,
         hailo_status &status);

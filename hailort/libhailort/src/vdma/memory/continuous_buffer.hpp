@@ -30,11 +30,9 @@ public:
 
     ContinuousBuffer(ContinuousBuffer &&other) noexcept :
         VdmaBuffer(std::move(other)),
-        m_size(other.m_size),
         m_driver(other.m_driver),
-        m_handle(std::exchange(other.m_handle, 0)),
-        m_dma_address(std::exchange(other.m_dma_address, 0)),
-        m_mmap(std::move(other.m_mmap))
+        m_buffer_info(std::exchange(other.m_buffer_info,
+            ContinousBufferInfo{HailoRTDriver::INVALID_DRIVER_BUFFER_HANDLE_VALUE, 0, 0, nullptr}))
     {}
 
     virtual Type type() const override
@@ -54,14 +52,11 @@ public:
         size_t desc_offset) override;
 
 private:
-    ContinuousBuffer(size_t size, HailoRTDriver &driver, uintptr_t handle, uint64_t dma_address,
-        MmapBuffer<void> &&mmap);
+    ContinuousBuffer(HailoRTDriver &driver, const ContinousBufferInfo &buffer_info);
 
-    const size_t m_size;
     HailoRTDriver &m_driver;
-    uintptr_t m_handle;
-    uint64_t m_dma_address;
-    MmapBuffer<void> m_mmap;
+
+    ContinousBufferInfo m_buffer_info;
 };
 
 }; /* namespace vdma */

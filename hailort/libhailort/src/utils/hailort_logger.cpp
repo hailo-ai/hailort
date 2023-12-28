@@ -229,7 +229,7 @@ void HailoRTLogger::set_levels(spdlog::level::level_enum console_level, spdlog::
 
     bool flush_every_print = should_flush_every_print(HAILORT_LOGGER_FLUSH_EVERY_PRINT_ENV_VAR);
     if (flush_every_print){
-        m_hailort_logger->flush_on(spdlog::level::debug);
+        m_hailort_logger->flush_on(spdlog::level::trace);
         std::cerr << "HailoRT warning: Flushing log file on every print. May reduce HailoRT performance!" << std::endl;
     } else {
         m_hailort_logger->flush_on(flush_level);

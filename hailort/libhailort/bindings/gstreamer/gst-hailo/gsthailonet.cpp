@@ -31,51 +31,6 @@
 GST_DEBUG_CATEGORY_STATIC(gst_hailonet_debug_category);
 #define GST_CAT_DEFAULT gst_hailonet_debug_category
 
-#define GST_TYPE_SCHEDULING_ALGORITHM (gst_scheduling_algorithm_get_type ())
-static GType
-gst_scheduling_algorithm_get_type (void)
-{
-    static GType scheduling_algorithm_type = 0;
-
-    /* Tightly coupled to hailo_scheduling_algorithm_e */
-
-    if (!scheduling_algorithm_type) {
-        static GEnumValue algorithm_types[] = {
-            { HAILO_SCHEDULING_ALGORITHM_NONE,         "Scheduler is not active", "HAILO_SCHEDULING_ALGORITHM_NONE" },
-            { HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN,  "Round robin",             "HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN" },
-            { HAILO_SCHEDULING_ALGORITHM_MAX_ENUM,     NULL,                      NULL },
-        };
-
-        scheduling_algorithm_type =
-            g_enum_register_static ("GstHailoSchedulingAlgorithms", algorithm_types);
-    }
-
-    return scheduling_algorithm_type;
-}
-
-#define GST_TYPE_HAILO_FORMAT_TYPE (gst_hailo_format_type_get_type ())
-static GType
-gst_hailo_format_type_get_type (void)
-{
-    static GType format_type_enum = 0;
-
-    /* Tightly coupled to hailo_format_type_t */
-    
-    if (!format_type_enum) {
-        static GEnumValue format_types[] = {
-            { HAILO_FORMAT_TYPE_AUTO,     "auto",     "HAILO_FORMAT_TYPE_AUTO"},
-            { HAILO_FORMAT_TYPE_UINT8,    "uint8",    "HAILO_FORMAT_TYPE_UINT8"},
-            { HAILO_FORMAT_TYPE_UINT16,   "uint16",   "HAILO_FORMAT_TYPE_UINT16"},
-            { HAILO_FORMAT_TYPE_FLOAT32,  "float32",  "HAILO_FORMAT_TYPE_FLOAT32"},
-            { HAILO_FORMAT_TYPE_MAX_ENUM,  NULL,      NULL },
-        };
-
-        format_type_enum = g_enum_register_static ("GstHailoFormatTypes", format_types);
-    }
-
-    return format_type_enum;
-}
-
 constexpr std::chrono::milliseconds WAIT_FOR_FLUSH_TIMEOUT_MS(1000);
 
 static void gst_hailonet_set_property(GObject *object, guint property_id, const GValue *value, GParamSpec *pspec);
@@ -105,8 +60,6 @@ enum
     PROP_SCHEDULER_THRESHOLD,
     PROP_SCHEDULER_PRIORITY,
     PROP_MULTI_PROCESS_SERVICE,
-    PROP_INPUT_QUANTIZED,
-    PROP_OUTPUT_QUANTIZED,
     PROP_INPUT_FORMAT_TYPE,
     PROP_OUTPUT_FORMAT_TYPE,
     PROP_NMS_SCORE_THRESHOLD,
@@ -200,14 +153,6 @@ static void gst_hailonet_class_init(GstHailoNetClass *klass)
         g_param_spec_boolean("multi-process-service", "Should run over HailoRT service", "Controls wether to run HailoRT over its service. "
             "To use this property, the service should be active and scheduling-algorithm should be set. Defaults to false.",
             HAILO_DEFAULT_MULTI_PROCESS_SERVICE, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
-    g_object_class_install_property(gobject_class, PROP_INPUT_QUANTIZED,
-        g_param_spec_boolean("input-quantized", "Is the input quantized or not", "Deprecated parameter that will be ignored. "
-        "Determine whether to quantize (scale) the data will be decided by the src-data and dst-data types.",
-            true, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
-    g_object_class_install_property(gobject_class, PROP_OUTPUT_QUANTIZED,
-        g_param_spec_boolean("output-quantized", "Should the output be quantized or de-quantized","Deprecated parameter that will be ignored. "
-        "Determine whether to de-quantize (rescale) the data will be decided by the src-data and dst-data types.",
-            true, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
     g_object_class_install_property(gobject_class, PROP_INPUT_FORMAT_TYPE,
         g_param_spec_enum("input-format-type", "Input format type", "Input format type(auto, float32, uint16, uint8). Default value is auto."
             "Gets values from the enum GstHailoFormatType. ",
@@ -531,22 +476,6 @@ void HailoNetImpl::set_property(GObject *object, guint property_id, const GValue
         }
         m_props.m_multi_process_service = g_value_get_boolean(value);
         break;
-    case PROP_INPUT_QUANTIZED:
-        g_warning("'input-quantized' is a deprecated parameter that will be ignored.");
-        if (m_was_configured) {
-            g_warning("The network was already configured so changing the quantized flag will not take place!");
-            break;
-        }
-        m_props.m_input_quantized = g_value_get_boolean(value);
-        break;
-    case PROP_OUTPUT_QUANTIZED:
-        g_warning("'output-quantized' is a deprecated parameter that will be ignored.");
-        if (m_was_configured) {
-            g_warning("The network was already configured so changing the quantized flag will not take place!");
-            break;
-        }
-        m_props.m_output_quantized = g_value_get_boolean(value);
-        break;
     case PROP_INPUT_FORMAT_TYPE:
         if (m_was_configured) {
             g_warning("The network was already configured so changing the format type will not take place!");
@@ -654,12 +583,6 @@ void HailoNetImpl::get_property(GObject *object, guint property_id, GValue *valu
         break;
     case PROP_MULTI_PROCESS_SERVICE:
         g_value_set_boolean(value, m_props.m_multi_process_service.get());
-        break;
-    case PROP_INPUT_QUANTIZED:
-        g_value_set_boolean(value, m_props.m_input_quantized.get());
-        break;
-    case PROP_OUTPUT_QUANTIZED:
-        g_value_set_boolean(value, m_props.m_output_quantized.get());
         break;
     case PROP_INPUT_FORMAT_TYPE:
         g_value_set_enum(value, m_props.m_input_format_type.get());
@@ -770,14 +693,8 @@ hailo_status HailoNetImpl::configure_network_group()
         GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Setting scheduler priority failed, status = %d", status);
     }
 
-    auto input_quantized = (m_props.m_input_quantized.was_changed()) ? static_cast<bool>(m_props.m_input_quantized.get()) :
-        (m_props.m_input_format_type.get() != HAILO_FORMAT_TYPE_FLOAT32);
-
-    auto output_quantized = (m_props.m_output_quantized.was_changed()) ? static_cast<bool>(m_props.m_output_quantized.get()) :
-        (m_props.m_output_format_type.get() != HAILO_FORMAT_TYPE_FLOAT32);
-
     auto vstreams = m_net_group_handle->create_vstreams(m_props.m_network_name.get(), m_props.m_scheduling_algorithm.get(), m_output_formats,
-        input_quantized, output_quantized, m_props.m_input_format_type.get(), m_props.m_output_format_type.get());
+        m_props.m_input_format_type.get(), m_props.m_output_format_type.get());
     GST_CHECK_EXPECTED_AS_STATUS(vstreams, m_element, RESOURCE, "Creating vstreams failed, status = %d", status);
 
     GST_HAILOSEND(m_hailosend)->impl->set_input_vstreams(std::move(vstreams->first));
@@ -969,30 +886,9 @@ hailo_status HailoNetImpl::signal_was_flushed_event()
     return m_was_flushed_event->signal();
 }
 
-static bool do_versions_match(GstHailoNet *self)
-{
-    hailo_version_t libhailort_version = {};
-    auto status = hailo_get_library_version(&libhailort_version);
-    if (HAILO_SUCCESS != status) {
-        GST_ELEMENT_ERROR(self, RESOURCE, FAILED, ("Fetching libhailort version has failed! status = %d", status), (NULL));
-        return false;
-    }
-
-    bool versions_match = ((HAILORT_MAJOR_VERSION == libhailort_version.major) &&
-        (HAILORT_MINOR_VERSION == libhailort_version.minor) &&
-        (HAILORT_REVISION_VERSION == libhailort_version.revision));
-    if (!versions_match) {
-        GST_ELEMENT_ERROR(self, RESOURCE, FAILED, ("libhailort version (%d.%d.%d) does not match gsthailonet version (%d.%d.%d)",
-            libhailort_version.major, libhailort_version.minor, libhailort_version.revision,
-            HAILORT_MAJOR_VERSION, HAILORT_MINOR_VERSION, HAILORT_REVISION_VERSION), (NULL));
-        return false;
-    }
-    return true;
-}
-
 static void gst_hailonet_init(GstHailoNet *self)
 {
-    if (!do_versions_match(self)) {
+    if (!do_versions_match(GST_ELEMENT(self))) {
         return;
     }
 
