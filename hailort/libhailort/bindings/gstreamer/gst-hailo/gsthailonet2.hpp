@@ -72,7 +72,7 @@ public:
         m_scheduler_threshold(HAILO_DEFAULT_SCHEDULER_THRESHOLD), m_scheduler_priority(HAILO_SCHEDULER_PRIORITY_NORMAL),
         m_input_format_type(HAILO_FORMAT_TYPE_AUTO), m_output_format_type(HAILO_FORMAT_TYPE_AUTO),
         m_nms_score_threshold(0), m_nms_iou_threshold(0), m_nms_max_proposals_per_class(0), m_input_from_meta(false),
-        m_multi_process_service(HAILO_DEFAULT_MULTI_PROCESS_SERVICE),
+        m_no_transform(false), m_multi_process_service(HAILO_DEFAULT_MULTI_PROCESS_SERVICE),
         m_vdevice_key(DEFAULT_VDEVICE_KEY)
     {}
 
@@ -107,6 +107,7 @@ public:
     HailoElemProperty<gfloat> m_nms_iou_threshold;
     HailoElemProperty<guint32> m_nms_max_proposals_per_class;
     HailoElemProperty<gboolean> m_input_from_meta;
+    HailoElemProperty<gboolean> m_no_transform;
     HailoElemProperty<gboolean> m_multi_process_service;
 
     // Deprecated

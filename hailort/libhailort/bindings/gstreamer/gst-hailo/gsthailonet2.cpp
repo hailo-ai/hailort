@@ -50,6 +50,7 @@ enum
     PROP_NMS_IOU_THRESHOLD,
     PROP_NMS_MAX_PROPOSALS_PER_CLASS,
     PROP_INPUT_FROM_META,
+    PROP_NO_TRANSFORM,
     PROP_MULTI_PROCESS_SERVICE,
 
     // Deprecated
@@ -269,20 +270,22 @@ static hailo_status gst_hailonet2_configure(GstHailoNet2 *self)
 
     // In RGB formats, Gstreamer is padding each row to 4.
     for (const auto &input_name : self->infer_model->get_input_names()) {
-        // TODO (HRT-12492): change transformations to be togglable
-        if (self->props.m_input_from_meta.get()) {
-            // do not apply transformations when taking input from meta
-            self->infer_model->input(input_name)->set_format_order(HAILO_FORMAT_ORDER_NHCW);
+        if(self->props.m_no_transform.get()) {
+            // In case transformation is disabled - format order will be the same as we get from the HW (stream info).
+            auto input_stream_infos = self->infer_model->hef().get_stream_info_by_name(input_name, HAILO_H2D_STREAM);
+            CHECK_EXPECTED_AS_STATUS(input_stream_infos);
+            self->infer_model->input(input_name)->set_format_order(input_stream_infos.value().format.order);
         } else if (self->infer_model->input(input_name)->format().order == HAILO_FORMAT_ORDER_NHWC) {
             self->infer_model->input(input_name)->set_format_order(HAILO_FORMAT_ORDER_RGB4);
         }
     }
 
-    if (self->props.m_input_from_meta.get()) {
+    if (self->props.m_no_transform.get()) {
         for (const auto &output_name : self->infer_model->get_output_names()) {
-            // TODO (HRT-12492): change transformations to be togglable
-            // do not apply transformations when taking output to meta
-            self->infer_model->output(output_name)->set_format_order(HAILO_FORMAT_ORDER_NHCW);
+            // In case transformation is disabled - format order will be the same as we get from the HW (stream info).
+            auto output_stream_infos = self->infer_model->hef().get_stream_info_by_name(output_name, HAILO_D2H_STREAM);
+            CHECK_EXPECTED_AS_STATUS(output_stream_infos);
+            self->infer_model->output(output_name)->set_format_order(output_stream_infos.value().format.order);
         }
     }
 
@@ -567,6 +570,12 @@ static void gst_hailonet2_set_property(GObject *object, guint property_id, const
         }
         self->props.m_input_from_meta = g_value_get_boolean(value);
         break;
+    case PROP_NO_TRANSFORM:
+        if (self->is_configured) {
+            g_warning("The network was already configured so disabling the transformation will not take place!");
+        }
+        self->props.m_no_transform = g_value_get_boolean(value);
+        break;
     case PROP_MULTI_PROCESS_SERVICE:
         if (self->is_configured) {
             g_warning("The network was already configured so changing the multi-process-service property will not take place!");
@@ -646,6 +655,9 @@ static void gst_hailonet2_get_property(GObject *object, guint property_id, GValu
         break; 
     case PROP_INPUT_FROM_META:
         g_value_set_boolean(value, self->props.m_input_from_meta.get());
+        break;
+    case PROP_NO_TRANSFORM:
+        g_value_set_boolean(value, self->props.m_no_transform.get());
         break;
     case PROP_MULTI_PROCESS_SERVICE:
         g_value_set_boolean(value, self->props.m_multi_process_service.get());
@@ -745,6 +757,9 @@ static void gst_hailonet2_class_init(GstHailoNet2Class *klass)
         (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
     g_object_class_install_property(gobject_class, PROP_INPUT_FROM_META,
         g_param_spec_boolean("input-from-meta", "Enable input from meta", "Take network input from metadata instead of video frame.", false,
+            (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+    g_object_class_install_property(gobject_class, PROP_NO_TRANSFORM,
+        g_param_spec_boolean("no-transform", "Disable transformations", "Format will remain the same as the HW format.", false,
             (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
     g_object_class_install_property(gobject_class, PROP_NMS_SCORE_THRESHOLD,

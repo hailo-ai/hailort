@@ -49,7 +49,7 @@ set_target_properties(_pyhailort PROPERTIES
     # VISIBILITY_INLINES_HIDDEN YES
 )
 
-find_package(HailoRT 4.16.0 EXACT REQUIRED)
+find_package(HailoRT 4.16.1 EXACT REQUIRED)
 
 target_link_libraries(_pyhailort PRIVATE HailoRT::libhailort)
 if(WIN32)
