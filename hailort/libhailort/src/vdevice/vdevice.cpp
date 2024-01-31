@@ -223,7 +223,8 @@ VDeviceClient::VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, VDeviceId
         m_client(std::move(client)),
         m_identifier(std::move(identifier)),
         m_devices(std::move(devices)),
-        m_is_listener_thread_running(false)
+        m_is_listener_thread_running(false),
+        m_should_use_listener_thread(false)
 {}
 
 VDeviceClient::~VDeviceClient()
@@ -288,6 +289,7 @@ hailo_status VDeviceClient::after_fork_in_parent()
 hailo_status VDeviceClient::after_fork_in_child()
 {
     HailoRtRpcClientUtils::get_instance().after_fork_in_child();
+
     auto listener_status = start_listener_thread(m_identifier);
     CHECK_SUCCESS(listener_status);
 
@@ -347,6 +349,7 @@ Expected<ConfiguredNetworkGroupVector> VDeviceClient::configure(Hef &hef,
     // Init listener thread only in case configure happens with async api
     if ((configure_params.size() > 0) &&
             configure_params.begin()->second.stream_params_by_name.begin()->second.flags == HAILO_STREAM_FLAGS_ASYNC) {
+        m_should_use_listener_thread = true;
         auto init_status = start_listener_thread(m_identifier);
         CHECK_SUCCESS_AS_EXPECTED(init_status);
     }
@@ -356,7 +359,7 @@ Expected<ConfiguredNetworkGroupVector> VDeviceClient::configure(Hef &hef,
 
 hailo_status VDeviceClient::start_listener_thread(VDeviceIdentifier identifier)
 {
-    if (m_is_listener_thread_running) {
+    if (!m_should_use_listener_thread || m_is_listener_thread_running) {
         return HAILO_SUCCESS;
     }
 

@@ -179,6 +179,7 @@ private:
 
     AsyncThreadPtr<hailo_status> m_cb_listener_thread;
     std::atomic_bool m_is_listener_thread_running;
+    std::atomic_bool m_should_use_listener_thread; // True only on async inference
 };
 
 #endif // HAILO_SUPPORT_MULTI_PROCESS
