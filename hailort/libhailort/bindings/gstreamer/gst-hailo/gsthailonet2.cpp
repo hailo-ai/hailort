@@ -52,6 +52,7 @@ enum
     PROP_INPUT_FROM_META,
     PROP_NO_TRANSFORM,
     PROP_MULTI_PROCESS_SERVICE,
+    PROP_PASS_THROUGH,
 
     // Deprecated
     PROP_VDEVICE_KEY,
@@ -332,6 +333,7 @@ static hailo_status gst_hailonet2_allocate_infer_resources(GstHailoNet2 *self)
                 buffer = static_cast<GstBuffer*>(gst_queue_array_pop_head(self->thread_queue));
                 self->buffers_in_thread_queue--;
             }
+            self->thread_cv.notify_all();
             if (GST_IS_PAD(self->srcpad)) { // Checking because we fail here when exiting the application
                 GstFlowReturn ret = gst_pad_push(self->srcpad, buffer);
                 if ((GST_FLOW_OK != ret) && (GST_FLOW_FLUSHING != ret) && (!self->has_got_eos)) {
@@ -482,9 +484,12 @@ static void gst_hailonet2_set_property(GObject *object, guint property_id, const
     case PROP_IS_ACTIVE:
         (void)gst_hailonet2_toggle_activation(self, self->props.m_is_active.get(), g_value_get_boolean(value));
         break;
+    case PROP_PASS_THROUGH:
+        self->props.m_pass_through = g_value_get_boolean(value);
+        break;
     case PROP_OUTPUTS_MIN_POOL_SIZE:
         if (self->is_configured) {
-            g_warning("The network was already configured so changing the outputs minimum pool size will not take place!");
+            g_warning("The network has already been configured, the output's minimum pool size cannot be changed!");
             break;
         }
         self->props.m_outputs_min_pool_size = g_value_get_uint(value);
@@ -620,6 +625,9 @@ static void gst_hailonet2_get_property(GObject *object, guint property_id, GValu
     case PROP_IS_ACTIVE:
         g_value_set_boolean(value, self->props.m_is_active.get());
         break;
+    case PROP_PASS_THROUGH:
+        g_value_set_boolean(value, self->props.m_pass_through.get());
+        break;
     case PROP_OUTPUTS_MIN_POOL_SIZE:
         g_value_set_uint(value, self->props.m_outputs_min_pool_size.get());
         break;
@@ -725,6 +733,11 @@ static void gst_hailonet2_class_init(GstHailoNet2Class *klass)
             "By default, the hailonet element will not be active unless it is the only one. "
             "Setting this property in combination with 'scheduling-algorithm' different than HAILO_SCHEDULING_ALGORITHM_NONE is not supported.", false,
         (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+    g_object_class_install_property(gobject_class, PROP_PASS_THROUGH,
+        g_param_spec_boolean("pass-through", "Is Element pass-through", "Controls whether the element will perform inference or simply pass buffers through. "
+            "By default, the hailonet element will not be pass-through. "
+            "Setting this property to true disables inference, regardless of the scheduler settings.", false,
+        (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
     g_object_class_install_property(gobject_class, PROP_SCHEDULING_ALGORITHM,
         g_param_spec_enum("scheduling-algorithm", "Scheduling policy for automatic network group switching", "Controls the Model Scheduler algorithm of HailoRT. "
@@ -798,6 +811,9 @@ static void gst_hailonet2_push_buffer_to_thread(GstHailoNet2 *self, GstBuffer *b
 {
     {
         std::unique_lock<std::mutex> lock(self->thread_queue_mutex);
+        self->thread_cv.wait(lock, [self] () {
+            return self->buffers_in_thread_queue < self->props.m_outputs_max_pool_size.get();
+        });
         gst_queue_array_push_tail(self->thread_queue, buffer);
         self->buffers_in_thread_queue++;
     }
@@ -1010,7 +1026,7 @@ static GstFlowReturn gst_hailonet2_chain(GstPad * /*pad*/, GstObject * parent, G
     GstHailoNet2 *self = GST_HAILONET2(parent);
     std::unique_lock<std::mutex> lock(self->infer_mutex);
 
-    if (!self->props.m_is_active.get() || (nullptr == self->configured_infer_model)) {
+    if (self->props.m_pass_through.get() || !self->props.m_is_active.get()) {
         gst_hailonet2_push_buffer_to_thread(self, buffer);
         return GST_FLOW_OK;
     }
