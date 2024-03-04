@@ -66,7 +66,7 @@ struct HailoNet2Properties final
 {
 public:
     HailoNet2Properties() : m_hef_path(nullptr), m_batch_size(HAILO_DEFAULT_BATCH_SIZE),
-        m_device_id(nullptr), m_device_count(0), m_vdevice_group_id(nullptr), m_is_active(false),
+        m_device_id(nullptr), m_device_count(0), m_vdevice_group_id(nullptr), m_is_active(false), m_pass_through(false),
         m_outputs_min_pool_size(MIN_OUTPUTS_POOL_SIZE), m_outputs_max_pool_size(MAX_OUTPUTS_POOL_SIZE),
         m_scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN), m_scheduler_timeout_ms(HAILO_DEFAULT_SCHEDULER_TIMEOUT_MS),
         m_scheduler_threshold(HAILO_DEFAULT_SCHEDULER_THRESHOLD), m_scheduler_priority(HAILO_SCHEDULER_PRIORITY_NORMAL),
@@ -95,6 +95,7 @@ public:
     HailoElemProperty<guint16> m_device_count;
     HailoElemProperty<gchar*> m_vdevice_group_id;
     HailoElemProperty<gboolean> m_is_active;
+    HailoElemProperty<gboolean> m_pass_through;
     HailoElemProperty<guint> m_outputs_min_pool_size;
     HailoElemProperty<guint> m_outputs_max_pool_size;
     HailoElemProperty<hailo_scheduling_algorithm_t> m_scheduling_algorithm;

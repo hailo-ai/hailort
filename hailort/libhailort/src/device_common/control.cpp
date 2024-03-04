@@ -88,6 +88,14 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
 
     board_info.device_architecture = static_cast<hailo_device_architecture_t>(BYTE_ORDER__ntohl(identify_response->device_architecture));
 
+    // Device architecture can be HAILO_ARCH_HAILO15H or HAILO_ARCH_HAILO15M - but the FW will always return HAILO_ARCH_HAILO15H
+    // Based on a file the SCU gives us we can deduce the actual type
+    if (HAILO_ARCH_HAILO15H == board_info.device_architecture) {
+        auto dev_arch_exp = PartialClusterReader::get_actual_dev_arch_from_fuse(board_info.device_architecture);
+        CHECK_EXPECTED(dev_arch_exp);
+        board_info.device_architecture = dev_arch_exp.release();
+    }
+
     /* Write identify results to log */
     LOGGER__INFO("firmware_version is: {}.{}.{}",
             board_info.fw_version.major,
@@ -3065,15 +3073,22 @@ Expected<uint32_t> Control::get_partial_clusters_layout_bitmap(Device &device)
         return std::stoi(std::string(force_layout_env));
     }
 
-    auto device_arch_exp = device.get_architecture();
-    CHECK_EXPECTED(device_arch_exp);
-    if (HAILO_ARCH_HAILO8L != device_arch_exp.value() && HAILO_ARCH_HAILO15M != device_arch_exp.value()) {
+    auto dev_arch_exp = device.get_architecture();
+    CHECK_EXPECTED(dev_arch_exp);
+    const auto dev_arch = dev_arch_exp.release();
+    // In Both cases of Hailo15H and Hailo15M read fuse file (If no file found will return default value of all clusters)
+    if ((HAILO_ARCH_HAILO15H == dev_arch) || (HAILO_ARCH_HAILO15M == dev_arch)) {
+        auto bitmap_exp = PartialClusterReader::get_partial_clusters_layout_bitmap(dev_arch);
+        CHECK_EXPECTED(bitmap_exp);
+        const auto bitmap = bitmap_exp.release();
+        if (PARTIAL_CLUSTERS_LAYOUT_BITMAP__HAILO15_DEFAULT == bitmap) {
+            return Expected<uint32_t>(PARTIAL_CLUSTERS_LAYOUT_IGNORE);
+        } else {
+            return Expected<uint32_t>(bitmap);
+        }
+    } else if (HAILO_ARCH_HAILO8L != dev_arch) {
         // Partial clusters layout is only relevant in HAILO_ARCH_HAILO8L and HAILO_ARCH_HAILO15M arch
         return Expected<uint32_t>(PARTIAL_CLUSTERS_LAYOUT_IGNORE);
-    }
-
-    if (HAILO_ARCH_HAILO15M == device_arch_exp.value()) {
-        return PartialClusterReader::get_partial_clusters_layout_bitmap(device_arch_exp.value());
     } else {
         auto extended_device_info_response = get_extended_device_info_response(device);
         CHECK_EXPECTED(extended_device_info_response);
