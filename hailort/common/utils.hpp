@@ -12,10 +12,13 @@
 #ifndef HAILO_UTILS_H_
 #define HAILO_UTILS_H_
 
-#include <assert.h>
-#include <hailo/hailort.h>
+#include "hailo/hailort.h"
+#include "hailo/expected.hpp"
+
 #include "common/logger_macros.hpp"
 #include <spdlog/fmt/bundled/core.h>
+
+#include <assert.h>
 #include <map>
 #include <set>
 #include <unordered_set>
@@ -166,6 +169,17 @@ _ISEMPTY(                                                               \
 #define CONSTRUCT_MSG(dft_fmt, ...) _CONSTRUCT_MSG(ISEMPTY(__VA_ARGS__), dft_fmt, "" __VA_ARGS__)
 
 
+inline hailo_status get_status(hailo_status status)
+{
+    return status;
+}
+
+template<typename T>
+inline hailo_status get_status(const Expected<T> &exp)
+{
+    return exp.status();
+}
+
 #define _CHECK(cond, ret_val, ...)      \
     do {                                \
         if (!(cond)) {                  \
@@ -175,39 +189,31 @@ _ISEMPTY(                                                               \
     } while(0)
 
 /** Returns ret_val when cond is false */
-#define CHECK(cond, ret_val, ...) _CHECK((cond), (ret_val), CONSTRUCT_MSG("CHECK failed", ##__VA_ARGS__))
-#define CHECK_AS_EXPECTED(cond, ret_val, ...) \
-    _CHECK((cond), (make_unexpected(ret_val)), CONSTRUCT_MSG("CHECK_AS_EXPECTED failed", ##__VA_ARGS__))
+#define CHECK(cond, ret_val, ...) \
+    _CHECK((cond), make_unexpected(ret_val), CONSTRUCT_MSG("CHECK failed", ##__VA_ARGS__))
+#define CHECK_AS_EXPECTED CHECK
 
-#define CHECK_ARG_NOT_NULL(arg) _CHECK(nullptr != (arg), HAILO_INVALID_ARGUMENT, "CHECK_ARG_NOT_NULL for {} failed", #arg)
+#define CHECK_ARG_NOT_NULL(arg) _CHECK(nullptr != (arg), make_unexpected(HAILO_INVALID_ARGUMENT), "CHECK_ARG_NOT_NULL for {} failed", #arg)
+#define CHECK_ARG_NOT_NULL_AS_EXPECTED CHECK_ARG_NOT_NULL
 
-#define CHECK_ARG_NOT_NULL_AS_EXPECTED(arg) _CHECK(nullptr != (arg), make_unexpected(HAILO_INVALID_ARGUMENT), "CHECK_ARG_NOT_NULL_AS_EXPECTED for {} failed", #arg)
+#define CHECK_NOT_NULL(arg, status) _CHECK(nullptr != (arg), make_unexpected(status), "CHECK_NOT_NULL for {} failed", #arg)
+#define CHECK_NOT_NULL_AS_EXPECTED CHECK_NOT_NULL
 
-#define CHECK_NOT_NULL(arg, status) _CHECK(nullptr != (arg), status, "CHECK_NOT_NULL for {} failed", #arg)
-
-#define CHECK_NOT_NULL_AS_EXPECTED(arg, status) _CHECK(nullptr != (arg), make_unexpected(status), "CHECK_NOT_NULL_AS_EXPECTED for {} failed", #arg)
-
-#define _CHECK_SUCCESS(status, is_default, fmt, ...)                                                                            \
+#define _CHECK_SUCCESS(res, is_default, fmt, ...)                                                                               \
     do {                                                                                                                        \
-        const auto &__check_success_status = (status);                                                                          \
+        const auto &__check_success_status = get_status(res);                                                                   \
         _CHECK(                                                                                                                 \
-            HAILO_SUCCESS == __check_success_status,                                                                            \
-            __check_success_status,                                                                                             \
+            (HAILO_SUCCESS == __check_success_status),                                                                          \
+            make_unexpected(__check_success_status),                                                                            \
             _CONSTRUCT_MSG(is_default, "CHECK_SUCCESS failed with status={}", fmt, __check_success_status, ##__VA_ARGS__)       \
         );                                                                                                                      \
     } while(0)
 #define CHECK_SUCCESS(status, ...) _CHECK_SUCCESS(status, ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
+#define CHECK_SUCCESS_AS_EXPECTED CHECK_SUCCESS
 
-#define _CHECK_SUCCESS_AS_EXPECTED(status, is_default, fmt, ...)                                                                       \
-    do {                                                                                                                               \
-        const auto &__check_success_status = (status);                                                                                 \
-        _CHECK(                                                                                                                        \
-            HAILO_SUCCESS == __check_success_status,                                                                                   \
-            make_unexpected(__check_success_status),                                                                                   \
-            _CONSTRUCT_MSG(is_default, "CHECK_SUCCESS_AS_EXPECTED failed with status={}", fmt, __check_success_status, ##__VA_ARGS__)  \
-        );                                                                                                                             \
-    } while(0)
-#define CHECK_SUCCESS_AS_EXPECTED(status, ...) _CHECK_SUCCESS_AS_EXPECTED(status, ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
+#define _CHECK_EXPECTED _CHECK_SUCCESS
+#define CHECK_EXPECTED(obj, ...) _CHECK_EXPECTED(obj, ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
+#define CHECK_EXPECTED_AS_STATUS CHECK_EXPECTED
 
 // Define macro CHECK_IN_DEBUG - that checks cond in debug with CHECK macro but in release does nothing and will get optimized out
 #ifdef NDEBUG
@@ -258,28 +264,30 @@ _ISEMPTY(                                                               \
 #define CHECK_GRPC_STATUS_AS_EXPECTED(status) _CHECK_GRPC_STATUS(status, make_unexpected(HAILO_RPC_FAILED), SERVICE_WARNING_MSG)
 #endif
 
-#define _CHECK_EXPECTED(obj, is_default, fmt, ...)                                                                                      \
-    do {                                                                                                                                \
-        const auto &__check_expected_obj = (obj);                                                                                       \
-        _CHECK(                                                                                                                         \
-            __check_expected_obj.has_value(),                                                                                           \
-            make_unexpected(__check_expected_obj.status()),                                                                             \
-            _CONSTRUCT_MSG(is_default, "CHECK_EXPECTED failed with status={}", fmt, __check_expected_obj.status(), ##__VA_ARGS__)       \
-        );                                                                                                                              \
-    } while(0)
-#define CHECK_EXPECTED(obj, ...) _CHECK_EXPECTED(obj, ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
+#define __HAILO_CONCAT(x, y) x ## y
+#define _HAILO_CONCAT(x, y) __HAILO_CONCAT(x, y)
 
+#define _TRY(expected_var_name, var_decl, expr, ...) \
+    auto expected_var_name = (expr); \
+    CHECK_EXPECTED(expected_var_name, __VA_ARGS__); \
+    var_decl = expected_var_name.release()
 
-#define _CHECK_EXPECTED_AS_STATUS(obj, is_default, fmt, ...)                                                                                      \
-    do {                                                                                                                                          \
-        const auto &__check_expected_obj = (obj);                                                                                                 \
-        _CHECK(                                                                                                                                   \
-            __check_expected_obj.has_value(),                                                                                                     \
-            __check_expected_obj.status(),                                                                                                        \
-            _CONSTRUCT_MSG(is_default, "CHECK_EXPECTED_AS_STATUS failed with status={}", fmt, __check_expected_obj.status(), ##__VA_ARGS__)       \
-        );                                                                                                                                        \
-    } while(0)
-#define CHECK_EXPECTED_AS_STATUS(obj, ...) _CHECK_EXPECTED_AS_STATUS(obj, ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
+/**
+ * The TRY macro is used to allow easier validation and access for variables returned as Expected<T>.
+ * If the expression returns an Expected<T> with status HAILO_SUCCESS, the macro will release the expected and assign
+ * the var_decl.
+ * Otherwise, the macro will cause current function to return the failed status.
+ *
+ * Usage example:
+ *
+ * Expected<int> func() {
+ *     TRY(auto var, return_5());
+ *     // Now var is int with value 5
+ *
+ *     // func will return Unexpected with status HAILO_INTERNAL_FAILURE
+ *     TRY(auto var2, return_error(HAILO_INTERNAL_FAILURE), "Failed doing stuff {}", 5);
+ */
+#define TRY(var_decl, expr, ...) _TRY(_HAILO_CONCAT(__expected, __COUNTER__), var_decl, expr, __VA_ARGS__)
 
 #ifndef _MSC_VER
 #define IGNORE_DEPRECATION_WARNINGS_BEGIN _Pragma("GCC diagnostic push") \

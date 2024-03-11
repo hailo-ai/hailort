@@ -23,9 +23,11 @@ class ConfiguredInferModel::Bindings::InferStream::Impl
 public:
     Impl(const hailo_vstream_info_t &vstream_info);
     hailo_status set_buffer(MemoryView view);
-    Expected<MemoryView> get_buffer();
+    Expected<MemoryView> get_buffer() const;
     hailo_status set_pix_buffer(const hailo_pix_buffer_t &pix_buffer);
     Expected<hailo_pix_buffer_t> get_pix_buffer();
+    hailo_status set_dma_buffer(hailo_dma_buffer_t dma_buffer);
+    Expected<hailo_dma_buffer_t> get_dma_buffer();
     BufferType get_type();
 
     void set_stream_callback(TransferDoneCallbackAsyncInfer callback);
@@ -36,6 +38,7 @@ private:
     union {
         MemoryView m_view;
         hailo_pix_buffer_t m_pix_buffer;
+        hailo_dma_buffer_t m_dma_buffer;
     };
     TransferDoneCallbackAsyncInfer m_stream_callback;
 };
@@ -45,7 +48,7 @@ class InferModel::InferStream::Impl
 public:
     Impl(const hailo_vstream_info_t &vstream_info) : m_vstream_info(vstream_info), m_user_buffer_format(vstream_info.format),
         m_nms_score_threshold(static_cast<float32_t>(INVALID_NMS_CONFIG)), m_nms_iou_threshold(static_cast<float32_t>(INVALID_NMS_CONFIG)),
-        m_nms_max_proposals_per_class(static_cast<uint32_t>(INVALID_NMS_CONFIG))
+        m_nms_max_proposals_per_class(static_cast<uint32_t>(INVALID_NMS_CONFIG)), m_nms_max_accumulated_mask_size(static_cast<uint32_t>(INVALID_NMS_CONFIG))
     {}
 
     std::string name() const;
@@ -61,6 +64,7 @@ public:
     void set_nms_score_threshold(float32_t threshold);
     void set_nms_iou_threshold(float32_t threshold);
     void set_nms_max_proposals_per_class(uint32_t max_proposals_per_class);
+    void set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size);
 
 private:
     friend class InferModel;
@@ -71,6 +75,7 @@ private:
     float32_t m_nms_score_threshold;
     float32_t m_nms_iou_threshold;
     uint32_t m_nms_max_proposals_per_class;
+    uint32_t m_nms_max_accumulated_mask_size;
 };
 
 class AsyncInferJob::Impl
@@ -95,7 +100,8 @@ class ConfiguredInferModelImpl
 public:
     static Expected<std::shared_ptr<ConfiguredInferModelImpl>> create(std::shared_ptr<ConfiguredNetworkGroup> net_group,
         const std::unordered_map<std::string, hailo_format_t> &inputs_formats, const std::unordered_map<std::string, hailo_format_t> &outputs_formats,
-        const std::vector<std::string> &input_names, const std::vector<std::string> &output_names, const uint32_t timeout = HAILO_DEFAULT_VSTREAM_TIMEOUT_MS);
+        const std::vector<std::string> &input_names, const std::vector<std::string> &output_names, VDevice &vdevice,
+        const uint32_t timeout = HAILO_DEFAULT_VSTREAM_TIMEOUT_MS);
 
     ConfiguredInferModelImpl(std::shared_ptr<ConfiguredNetworkGroup> cng,
         std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner,
@@ -110,7 +116,7 @@ public:
     hailo_status run(ConfiguredInferModel::Bindings bindings, std::chrono::milliseconds timeout);
     Expected<AsyncInferJob> run_async(ConfiguredInferModel::Bindings bindings,
         std::function<void(const AsyncInferCompletionInfo &)> callback);
-    Expected<LatencyMeasurementResult> get_hw_latency_measurement(const std::string &network_name);
+    Expected<LatencyMeasurementResult> get_hw_latency_measurement();
     hailo_status set_scheduler_timeout(const std::chrono::milliseconds &timeout);
     hailo_status set_scheduler_threshold(uint32_t threshold);
     hailo_status set_scheduler_priority(uint8_t priority);

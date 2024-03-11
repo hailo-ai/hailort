@@ -12,6 +12,7 @@
 
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
+#include "hailo/buffer.hpp"
 
 #include <cmath>
 #include <chrono>
@@ -34,7 +35,7 @@ public:
     static_assert(sizeof(hailo_bbox_t) / sizeof(uint16_t) == sizeof(hailo_bbox_float32_t) / sizeof(float32_t),
         "Mismatch bbox params size");
     static const uint32_t BBOX_PARAMS = sizeof(hailo_bbox_t) / sizeof(uint16_t);
-    static const uint32_t MASK_PARAMS = 1; // mask_size
+    static const uint32_t DETECTION_WITH_BYTE_MASK_SIZE = sizeof(hailo_detection_with_byte_mask_t);
     static const uint32_t MAX_DEFUSED_LAYER_COUNT = 9;
     static const size_t HW_DATA_ALIGNMENT = 8;
     static const uint32_t MUX_INFO_COUNT = 32;
@@ -84,10 +85,15 @@ public:
      * @param[in] alignment       Returned number should be aligned to this parameter.
      * @return aligned number
      */
-    template<typename T>
-    static constexpr T align_to(T num, T alignment) {
+    template<typename T, typename U>
+    static constexpr T align_to(T num, U alignment) {
         auto remainder = num % alignment;
         return remainder == 0 ? num : num + (alignment - remainder);
+    }
+
+    static void *align_to(void *addr, size_t alignment)
+    {
+        return reinterpret_cast<void *>(align_to(reinterpret_cast<uintptr_t>(addr), alignment));
     }
 
     /**
@@ -241,7 +247,7 @@ public:
         case HAILO_FORMAT_ORDER_HAILO_YYYYUV:
             return "YYYYUV";
         case HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK:
-            return "HAILO NMS WITH METADATA";
+            return "HAILO NMS WITH BYTE MASK";
         default:
             return "Nan";
         }
@@ -280,23 +286,18 @@ public:
     static uint32_t get_nms_host_frame_size(const hailo_nms_shape_t &nms_shape, const hailo_format_t &format);
 
     /**
-     * Gets HAILO_NMS_WITH_BYTE_MASK host shape size in bytes by nms_shape and buffer format.
+     * Gets `HAILO_NMS_WITH_BYTE_MASK` host frame size in bytes by nms_shape.
      *
      * @param[in] nms_shape             The NMS shape to get size from.
-     * @param[in] format                A ::hailo_format_t object.
-     * @return The HAILO_NMS_WITH_BYTE_MASK host shape size.
+     * @return The HAILO_NMS_WITH_BYTE_MASK host frame size.
      */
-    static constexpr uint32_t get_nms_with_byte_mask_host_shape_size(const hailo_nms_shape_t &nms_shape, const hailo_format_t &format)
+    static constexpr uint32_t get_nms_with_byte_mask_host_frame_size(const hailo_nms_shape_t &nms_shape)
     {
-        // Assuming 1 byte per pixel for the mask
-        auto bbox_size = BBOX_PARAMS + MASK_PARAMS + nms_shape.max_mask_size;
-        const uint32_t size_per_class = 1 + (bbox_size * nms_shape.max_bboxes_per_class);
-        double shape_size = size_per_class * nms_shape.number_of_classes;
-        if ((shape_size * get_format_data_bytes(format)) < UINT32_MAX) {
-            return static_cast<uint32_t>(shape_size);
-        } else {
-            return UINT32_MAX / get_format_data_bytes(format);
-        }
+        // TODO: HRT-12035 - Change `max_bboxes_per_class` to `max_boxes`
+        auto max_detections = nms_shape.number_of_classes * nms_shape.max_bboxes_per_class;
+        auto max_detections_size = max_detections * DETECTION_WITH_BYTE_MASK_SIZE;
+        auto frame_size = max_detections_size + nms_shape.max_accumulated_mask_size;
+        return frame_size;
     }
 
     /**
@@ -411,8 +412,16 @@ public:
         return ((HAILO_FORMAT_ORDER_HAILO_NMS == order) || (HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK == order));
     }
 
+    // TODO HRT-10073: change to supported features list
+    static bool is_hailo1x_device_type(const hailo_device_architecture_t dev_arch)
+    {
+        // Compare with HAILO1X device archs
+        return (HAILO_ARCH_HAILO15H == dev_arch) || (HAILO_ARCH_HAILO15M == dev_arch) || (HAILO_ARCH_PLUTO == dev_arch);
+    }
+
     static Expected<hailo_device_id_t> to_device_id(const std::string &device_id);
     static Expected<std::vector<hailo_device_id_t>> to_device_ids_vector(const std::vector<std::string> &device_ids_str);
+    static Expected<hailo_pix_buffer_t> as_hailo_pix_buffer(MemoryView &memory_view, hailo_format_order_t order);
 };
 
 #ifndef HAILO_EMULATOR

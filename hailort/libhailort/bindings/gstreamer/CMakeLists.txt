@@ -8,7 +8,7 @@ if(NOT CMAKE_HOST_UNIX)
     message(FATAL_ERROR "Only unix hosts are supported, stopping build")
 endif()
 
-find_package(HailoRT 4.16.2 EXACT REQUIRED)
+find_package(HailoRT 4.17.0 EXACT REQUIRED)
 
 # GST_PLUGIN_DEFINE needs PACKAGE to be defined
 set(GST_HAILO_PACKAGE_NAME "hailo")
@@ -19,13 +19,14 @@ pkg_search_module(GLIB REQUIRED glib-2.0)
 pkg_search_module(GSTREAMER REQUIRED gstreamer-1.0)
 pkg_search_module(GSTREAMER_BASE REQUIRED gstreamer-base-1.0)
 pkg_search_module(GSTREAMER_VIDEO REQUIRED gstreamer-video-1.0)
+pkg_search_module(GSTREAMER_PLUGINS_BASE REQUIRED gstreamer-plugins-base-1.0)
 
 add_library(gsthailo SHARED
     gst-hailo/gsthailoplugin.cpp
+    gst-hailo/sync_gsthailonet.cpp
+    gst-hailo/sync_gst_hailosend.cpp
+    gst-hailo/sync_gst_hailorecv.cpp
     gst-hailo/gsthailonet.cpp
-    gst-hailo/gsthailosend.cpp
-    gst-hailo/gsthailorecv.cpp
-    gst-hailo/gsthailonet2.cpp
     gst-hailo/gsthailodevicestats.cpp
     gst-hailo/common.cpp
     gst-hailo/network_group_handle.cpp
@@ -51,7 +52,7 @@ target_compile_options(gsthailo PRIVATE
     -DPACKAGE="${GST_HAILO_PACKAGE_NAME}")
 
 target_include_directories(gsthailo PRIVATE ${GSTREAMER_VIDEO_INCLUDE_DIRS})
-target_link_libraries(gsthailo HailoRT::libhailort ${GSTREAMER_VIDEO_LDFLAGS})
+target_link_libraries(gsthailo HailoRT::libhailort ${GSTREAMER_VIDEO_LDFLAGS} -lgstallocators-1.0)
 
 install(TARGETS gsthailo
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}

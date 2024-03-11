@@ -11,6 +11,7 @@
 #include "vdma/vdma_stream.hpp"
 #include "vdma/circular_stream_buffer_pool.hpp"
 #include "utils/profiler/tracer_macros.hpp"
+#include "utils/buffer_storage.hpp"
 #include "common/os_utils.hpp"
 
 
@@ -24,44 +25,53 @@ Expected<std::shared_ptr<VdmaInputStream>> VdmaInputStream::create(hailo_stream_
 {
     assert((interface == HAILO_STREAM_INTERFACE_PCIE) || (interface == HAILO_STREAM_INTERFACE_INTEGRATED));
 
+    TRY(auto bounce_buffers_pool, init_dma_bounce_buffer_pool(device, channel, edge_layer));
+
     hailo_status status = HAILO_UNINITIALIZED;
     auto result = make_shared_nothrow<VdmaInputStream>(device, channel, edge_layer,
-        core_op_activated_event, interface, status);
+        core_op_activated_event, interface, std::move(bounce_buffers_pool), status);
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status);
     return result;
 }
 
-std::unique_ptr<StreamBufferPool> VdmaInputStream::init_dma_bounce_buffer_pool(
-    vdma::BoundaryChannelPtr channel, const LayerInfo &edge_layer, hailo_status &status)
+Expected<BounceBufferQueuePtr> VdmaInputStream::init_dma_bounce_buffer_pool(
+    VdmaDevice &device, vdma::BoundaryChannelPtr channel, const LayerInfo &edge_layer)
 {
     const auto dma_able_alignment = OsUtils::get_dma_able_alignment();
     const auto dma_bounce_buffer_pool_size = channel->get_max_ongoing_transfers(
         LayerInfoUtils::get_layer_transfer_size(edge_layer));
 
-    // Checking status for base class c'tor
-    if (HAILO_SUCCESS != status) {
-        return nullptr;
-    }
+    const auto bounce_buffer_size = std::min(
+        static_cast<uint32_t>(dma_able_alignment), LayerInfoUtils::get_layer_transfer_size(edge_layer));
 
-    // Initialize dma buffer pool for support for non-aligned user buffers
-    auto dma_queued_pool = QueuedStreamBufferPool::create(dma_bounce_buffer_pool_size, dma_able_alignment,
-        BufferStorageParams::create_dma());
-    if (dma_queued_pool.status() != HAILO_SUCCESS) {
-        LOGGER__ERROR("Failed creating DMA bounce buffer pool with status {}", dma_queued_pool.status());
-        status = dma_queued_pool.status();
-        return nullptr;
-    }
+    auto bounce_buffers_pool = make_unique_nothrow<BounceBufferQueue>(dma_bounce_buffer_pool_size);
+    CHECK_NOT_NULL(bounce_buffers_pool, HAILO_OUT_OF_HOST_MEMORY);
 
-    return std::unique_ptr<StreamBufferPool>(dma_queued_pool.release());
+    for (size_t i = 0; i < dma_bounce_buffer_pool_size; i++) {
+        TRY(auto dma_able_buffer, vdma::DmaAbleBuffer::create_by_allocation(bounce_buffer_size, device.get_driver()));
+
+        auto dma_storage = make_shared_nothrow<DmaStorage>(std::move(dma_able_buffer));
+        CHECK_NOT_NULL(dma_storage, HAILO_OUT_OF_HOST_MEMORY);
+
+        TRY(auto buffer, Buffer::create(std::move(dma_storage)));
+        TRY(auto mapping, DmaMappedBuffer::create(device, buffer.data(), buffer.size(), HAILO_DMA_BUFFER_DIRECTION_H2D));
+
+        auto bounce_buffer = make_shared_nothrow<BounceBuffer>(BounceBuffer{std::move(buffer), std::move(mapping)});
+        CHECK_NOT_NULL(bounce_buffer, HAILO_OUT_OF_HOST_MEMORY);
+
+        CHECK_SUCCESS(bounce_buffers_pool->enqueue(std::move(bounce_buffer)));
+    }
+    return bounce_buffers_pool;
 }
 
 VdmaInputStream::VdmaInputStream(VdmaDevice &device, vdma::BoundaryChannelPtr channel,
                                  const LayerInfo &edge_layer, EventPtr core_op_activated_event,
-                                 hailo_stream_interface_t stream_interface, hailo_status &status) :
+                                 hailo_stream_interface_t stream_interface, BounceBufferQueuePtr &&bounce_buffers_pool,
+                                 hailo_status &status) :
     AsyncInputStreamBase(edge_layer, std::move(core_op_activated_event), status),
     m_device(device),
-    m_dma_bounce_buffer_pool(init_dma_bounce_buffer_pool(channel, edge_layer, status)),
+    m_bounce_buffers_pool(std::move(bounce_buffers_pool)),
     m_channel(std::move(channel)),
     m_interface(stream_interface),
     m_core_op_handle(INVALID_CORE_OP_HANDLE)
@@ -96,11 +106,16 @@ void VdmaInputStream::set_vdevice_core_op_handle(vdevice_core_op_handle_t core_o
 
 Expected<std::unique_ptr<StreamBufferPool>> VdmaInputStream::allocate_buffer_pool()
 {
-    auto circular_pool = CircularStreamBufferPool::create(m_device, HailoRTDriver::DmaDirection::H2D,
-        m_channel->get_desc_list()->desc_page_size(), m_channel->get_desc_list()->count(), get_frame_size());
-    CHECK_EXPECTED(circular_pool);
+    TRY(auto circular_pool, CircularStreamBufferPool::create(m_device, HAILO_DMA_BUFFER_DIRECTION_H2D,
+        m_channel->get_desc_list()->desc_page_size(), m_channel->get_desc_list()->count(), get_frame_size()));
 
-    return std::unique_ptr<StreamBufferPool>(circular_pool.release());
+    // Bind the buffer to the channel to avoid the need to do it on every transfer.
+    TRY(auto pool_dma_able_buffer, circular_pool->get_base_buffer().storage().get_dma_able_buffer());
+    TRY(auto mapped_buffer, vdma::MappedBuffer::create_shared(pool_dma_able_buffer, m_device.get_driver(),
+        HailoRTDriver::DmaDirection::H2D));
+    CHECK_SUCCESS(m_channel->bind_buffer(mapped_buffer));
+
+    return std::unique_ptr<StreamBufferPool>(std::move(circular_pool));
 }
 
 size_t VdmaInputStream::get_max_ongoing_transfers() const
@@ -112,17 +127,10 @@ Expected<TransferRequest> VdmaInputStream::align_transfer_request(TransferReques
 {
     const auto dma_alignment = OsUtils::get_dma_able_alignment();
     std::vector<TransferBuffer> transfer_buffers;
-    TransferBuffer dma_able_bounce_buffer;
-    const auto buffer_address = transfer_request.transfer_buffers[0].base_buffer()->data();
+    const auto buffer_address = transfer_request.transfer_buffers[0].base_buffer().data();
     const auto buffer_size = transfer_request.transfer_buffers[0].size();
 
-    {
-        std::unique_lock<std::mutex> lock(m_dma_pool_mutex);
-        // Initialize dma able bounce buffer the size of alignment size to read pre alignment data
-        auto dma_able_bounce_buffer_exp = m_dma_bounce_buffer_pool->dequeue();
-        CHECK_EXPECTED(dma_able_bounce_buffer_exp);
-        dma_able_bounce_buffer = dma_able_bounce_buffer_exp.release();
-    }
+    TRY(const auto dma_able_bounce_buffer, m_bounce_buffers_pool->dequeue());
 
     // If buffer size is larger than alignment size - will create bounce buffer for non aligned buffer part and then use
     // User's buffer from aligned address - otherwise will create bounce buffer size of user buffer and copy whole frame
@@ -135,25 +143,20 @@ Expected<TransferRequest> VdmaInputStream::align_transfer_request(TransferReques
         const auto user_buffer_size = buffer_size - bounce_buffer_exact_size;
 
         // Create another transfer buffer with same base address but exact size for actual transfer
-        auto dma_able_exact_bounce_buffer = TransferBuffer(dma_able_bounce_buffer.base_buffer(), bounce_buffer_exact_size, 0);
-        memcpy((dma_able_exact_bounce_buffer.base_buffer())->data(), buffer_address, bounce_buffer_exact_size);
+        auto dma_able_exact_bounce_buffer = TransferBuffer(MemoryView(dma_able_bounce_buffer->buffer_storage),
+            bounce_buffer_exact_size, 0);
+        dma_able_exact_bounce_buffer.copy_from(MemoryView(buffer_address, bounce_buffer_exact_size));
         transfer_buffers.emplace_back(dma_able_exact_bounce_buffer);
-
-        auto dma_able_user_buffer = DmaStorage::create_dma_able_buffer_from_user_size(
-            reinterpret_cast<uint8_t*>(aligned_user_buffer_addr), user_buffer_size);
-        CHECK_EXPECTED(dma_able_user_buffer);
-        transfer_buffers.emplace_back(dma_able_user_buffer.release());
+        transfer_buffers.emplace_back(MemoryView(reinterpret_cast<uint8_t*>(aligned_user_buffer_addr), user_buffer_size));
     } else {
-        auto dma_able_exact_bounce_buffer = TransferBuffer(dma_able_bounce_buffer.base_buffer(), buffer_size, 0);
-        memcpy((dma_able_exact_bounce_buffer.base_buffer())->data(), buffer_address, buffer_size);
+        auto dma_able_exact_bounce_buffer = TransferBuffer(MemoryView(dma_able_bounce_buffer->buffer_storage), buffer_size, 0);
+        dma_able_exact_bounce_buffer.copy_from(MemoryView(buffer_address, buffer_size));
         transfer_buffers.emplace_back(dma_able_exact_bounce_buffer);
     }
 
-    auto wrapped_callback = [user_callback=transfer_request.callback, dma_able_bounce_buffer, this](hailo_status callback_status) {
-        {
-            std::unique_lock<std::mutex> lock(m_dma_pool_mutex);
-            m_dma_bounce_buffer_pool->enqueue(TransferBuffer{dma_able_bounce_buffer});
-        }
+    auto wrapped_callback = [user_callback=transfer_request.callback,
+                             dma_able_bounce_buffer=std::move(dma_able_bounce_buffer), this](hailo_status callback_status) mutable {
+        m_bounce_buffers_pool->enqueue(std::move(dma_able_bounce_buffer));
         user_callback(callback_status);
     };
 
@@ -163,18 +166,15 @@ Expected<TransferRequest> VdmaInputStream::align_transfer_request(TransferReques
 hailo_status VdmaInputStream::write_async_impl(TransferRequest &&transfer_request)
 {
     TRACE(FrameDequeueH2DTrace, m_device.get_dev_id(), m_core_op_handle, name());
-    const auto user_owns_buffer = (buffer_mode() == StreamBufferMode::NOT_OWNING);
 
     const auto dma_able_alignment = OsUtils::get_dma_able_alignment();
-    if (reinterpret_cast<size_t>(transfer_request.transfer_buffers[0].base_buffer()->data()) % dma_able_alignment == 0) {
-        return m_channel->launch_transfer(std::move(transfer_request), user_owns_buffer);
+    if (reinterpret_cast<size_t>(transfer_request.transfer_buffers[0].base_buffer().data()) % dma_able_alignment == 0) {
+        return m_channel->launch_transfer(std::move(transfer_request));
     } else {
         auto unaligned_transfer_request = align_transfer_request(std::move(transfer_request));
         CHECK_EXPECTED_AS_STATUS(unaligned_transfer_request);
-        return m_channel->launch_transfer(unaligned_transfer_request.release(), user_owns_buffer);
+        return m_channel->launch_transfer(unaligned_transfer_request.release());
     }
-
-    return HAILO_INTERNAL_FAILURE;
 }
 
 hailo_status VdmaInputStream::activate_stream_impl()
@@ -246,11 +246,16 @@ hailo_stream_interface_t VdmaOutputStream::get_interface() const
 
 Expected<std::unique_ptr<StreamBufferPool>> VdmaOutputStream::allocate_buffer_pool()
 {
-    auto circular_pool = CircularStreamBufferPool::create(m_device, HailoRTDriver::DmaDirection::D2H,
-        m_channel->get_desc_list()->desc_page_size(), m_channel->get_desc_list()->count(), m_transfer_size);
-    CHECK_EXPECTED(circular_pool);
+    TRY(auto circular_pool, CircularStreamBufferPool::create(m_device, HAILO_DMA_BUFFER_DIRECTION_D2H,
+        m_channel->get_desc_list()->desc_page_size(), m_channel->get_desc_list()->count(), m_transfer_size));
 
-    return std::unique_ptr<StreamBufferPool>(circular_pool.release());
+    // Bind the buffer to the channel to avoid the need to do it on every transfer.
+    TRY(auto pool_dma_able_buffer, circular_pool->get_base_buffer().storage().get_dma_able_buffer());
+    TRY(auto mapped_buffer, vdma::MappedBuffer::create_shared(pool_dma_able_buffer, m_device.get_driver(),
+        HailoRTDriver::DmaDirection::D2H));
+    CHECK_SUCCESS(m_channel->bind_buffer(mapped_buffer));
+
+    return std::unique_ptr<StreamBufferPool>(std::move(circular_pool));
 }
 
 size_t VdmaOutputStream::get_max_ongoing_transfers() const
@@ -260,18 +265,18 @@ size_t VdmaOutputStream::get_max_ongoing_transfers() const
 
 Expected<TransferRequest> VdmaOutputStream::align_transfer_request(TransferRequest &&transfer_request)
 {
-    auto aligned_bounce_buffer_exp = DmaStorage::create_dma_able_buffer_from_user_size(nullptr,
-        transfer_request.transfer_buffers[0].size());
-    CHECK_EXPECTED(aligned_bounce_buffer_exp);
-    auto aligned_bounce_buffer = aligned_bounce_buffer_exp.release();
+    // Allocate a bounce buffer and store it inside the lambda to keep it alive until not needed.
+    auto bounce_buffer_exp = Buffer::create_shared(transfer_request.transfer_buffers[0].size(), BufferStorageParams::create_dma());
+    CHECK_EXPECTED(bounce_buffer_exp);
+    auto bounce_buffer = bounce_buffer_exp.release();
 
     auto wrapped_callback = [unaligned_user_buffer = transfer_request.transfer_buffers[0].base_buffer(),
-            aligned_bounce_buffer, user_callback = transfer_request.callback](hailo_status callback_status) {
-        memcpy(const_cast<uint8_t*>(unaligned_user_buffer->data()), aligned_bounce_buffer->data(), unaligned_user_buffer->size());
+            bounce_buffer=bounce_buffer, user_callback=transfer_request.callback](hailo_status callback_status) {
+        memcpy(const_cast<uint8_t*>(unaligned_user_buffer.data()), bounce_buffer->data(), unaligned_user_buffer.size());
         user_callback(callback_status);
     };
 
-    return TransferRequest(std::move(aligned_bounce_buffer), wrapped_callback);
+    return TransferRequest(MemoryView(bounce_buffer->data(), bounce_buffer->size()), wrapped_callback);
 }
 
 hailo_status VdmaOutputStream::read_async_impl(TransferRequest &&transfer_request)
@@ -285,18 +290,17 @@ hailo_status VdmaOutputStream::read_async_impl(TransferRequest &&transfer_reques
             original_callback(status);
         };
     }
-    const auto user_owns_buffer = (buffer_mode() == StreamBufferMode::NOT_OWNING);
     const auto dma_able_alignment = OsUtils::get_dma_able_alignment();
-    if (reinterpret_cast<size_t>(transfer_request.transfer_buffers[0].base_buffer()->data()) % dma_able_alignment == 0) {
-        return m_channel->launch_transfer(std::move(transfer_request), user_owns_buffer);
+    if (reinterpret_cast<size_t>(transfer_request.transfer_buffers[0].base_buffer().data()) % dma_able_alignment == 0) {
+        return m_channel->launch_transfer(std::move(transfer_request));
     } else {
         // In case of read unaligned - currently doesnt support using users buffer - so allocate complete new buffer size of user's buffer
         LOGGER__WARNING("read_async() was provided an unaligned buffer (address=0x{:x}), which causes performance degradation. Use buffers algined to {} bytes for optimal performance",
-            reinterpret_cast<size_t>(transfer_request.transfer_buffers[0].base_buffer()->data()), dma_able_alignment);
+            reinterpret_cast<size_t>(transfer_request.transfer_buffers[0].base_buffer().data()), dma_able_alignment);
 
         auto realigned_transfer_request = align_transfer_request(std::move(transfer_request));
         CHECK_EXPECTED_AS_STATUS(realigned_transfer_request);
-        return m_channel->launch_transfer(realigned_transfer_request.release(), user_owns_buffer);
+        return m_channel->launch_transfer(realigned_transfer_request.release());
     }
 }
 

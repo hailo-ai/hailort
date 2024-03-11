@@ -10,7 +10,6 @@
 #ifndef _PYHAILORT_INTERNAL_
 #define _PYHAILORT_INTERNAL_
 
-#include "hef/hef_internal.hpp"
 
 #include "hef_api.hpp"
 #include "utils.hpp"

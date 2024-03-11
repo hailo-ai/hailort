@@ -3,17 +3,22 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @file continuous_buffer.hpp
- * @brief Continuous physical vdma buffer. 
+ * @file continuous_edge_layer.hpp
+ * @brief Continuous physical vdma edge layer.
  **/
 
 #ifndef _HAILO_VDMA_CONTINUOUS_BUFFER_HPP_
 #define _HAILO_VDMA_CONTINUOUS_BUFFER_HPP_
 
-#include "os/hailort_driver.hpp"
+#include "vdma/driver/hailort_driver.hpp"
 #include "os/mmap_buffer.hpp"
 #include "vdma/memory/vdma_buffer.hpp"
 
+#define MAX_CCB_DESCS_COUNT (0x00040000)
+#define MIN_CCB_DESCS_COUNT (16u)
+#define MAX_CCB_PAGE_SIZE (4096)
+#define MIN_CCB_PAGE_SIZE (512)
+#define DEFAULT_CCB_PAGE_SIZE (512)
 
 namespace hailort {
 namespace vdma {
@@ -41,16 +46,10 @@ public:
     }
 
     virtual size_t size() const override;
-    virtual uint64_t dma_address() const override;
-    virtual uint16_t desc_page_size() const override;
-    virtual uint32_t descs_count() const override;
-
     virtual hailo_status read(void *buf_dst, size_t count, size_t offset) override;
     virtual hailo_status write(const void *buf_src, size_t count, size_t offset) override;
 
-    virtual Expected<uint32_t> program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
-        size_t desc_offset) override;
-
+    uint64_t dma_address() const;
 private:
     ContinuousBuffer(HailoRTDriver &driver, const ContinousBufferInfo &buffer_info);
 

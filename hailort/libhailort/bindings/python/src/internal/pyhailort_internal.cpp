@@ -3,6 +3,7 @@
 #include "hailo/hailort.h"
 
 #include "transform/transform_internal.hpp"
+#include "hef/hef_internal.hpp"
 #include "bindings_common.hpp"
 
 #include "pyhailort_internal.hpp"
@@ -179,7 +180,7 @@ py::array PyhailortInternal::get_yolov5_post_process_expected_buffer()
     // Note: The ownership of the buffer is transferred to Python wrapped as a py::array.
     //       When the py::array isn't referenced anymore in Python and is destructed, the py::capsule's dtor
     //       is called too (and it deletes the raw buffer)
-    auto unmanaged_addr_exp = buffer->storage().release();
+    auto unmanaged_addr_exp = buffer->release();
     VALIDATE_EXPECTED(unmanaged_addr_exp);
     const auto unmanaged_addr = unmanaged_addr_exp.release();
     return py::array(type, shape, unmanaged_addr,

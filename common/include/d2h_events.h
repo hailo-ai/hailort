@@ -123,14 +123,14 @@ typedef struct {
 
 #define D2H_EVENT_HEALTH_MONITOR_CPU_ECC_EVENT_PARAMETER_COUNT  (1)
 
-/* D2H_EVENT_context_switch_breakpoint_reached_event_massage_t should be the same as 
+/* D2H_EVENT_context_switch_breakpoint_reached_event_message_t should be the same as 
  * CONTROL_PROTOCOL__context_switch_breakpoint_data_t and hailo_context_switch_breakpoint_reached_notification_message_t */
 typedef struct {
     uint8_t application_index;
     uint16_t batch_index;
-    uint8_t context_index;
+    uint16_t context_index;
     uint16_t action_index;
-} D2H_EVENT_context_switch_breakpoint_reached_event_massage_t;
+} D2H_EVENT_context_switch_breakpoint_reached_event_message_t;
 
 #define D2H_EVENT_CONTEXT_SWITCH_BREAKPOINT_REACHED_EVENT_PARAMETER_COUNT  (4)
 
@@ -151,7 +151,7 @@ typedef struct {
     uint32_t exit_status;
     uint8_t application_index;
     uint16_t batch_index;
-    uint8_t context_index;
+    uint16_t context_index;
     uint16_t action_index;
 } D2H_EVENT_context_switch_run_time_error_event_message_t;
 
@@ -166,7 +166,7 @@ typedef union {
    D2H_EVENT_health_monitor_overcurrent_alert_event_message_t health_monitor_overcurrent_alert_event;
    D2H_EVENT_health_monitor_lcu_ecc_error_event_message_t health_monitor_lcu_ecc_error_event;
    D2H_EVENT_health_monitor_cpu_ecc_event_message_t health_monitor_cpu_ecc_event;
-   D2H_EVENT_context_switch_breakpoint_reached_event_massage_t context_switch_breakpoint_reached_event;
+   D2H_EVENT_context_switch_breakpoint_reached_event_message_t context_switch_breakpoint_reached_event;
    D2H_EVENT_health_monitor_clock_changed_event_message_t health_monitor_clock_changed_event;
    D2H_EVENT_hw_infer_mamager_infer_done_message_t hw_infer_manager_infer_done_event;
    D2H_EVENT_context_switch_run_time_error_event_message_t context_switch_run_time_error_event;

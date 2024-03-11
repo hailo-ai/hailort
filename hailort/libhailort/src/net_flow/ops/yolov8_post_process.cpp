@@ -34,14 +34,16 @@ Expected<std::shared_ptr<OpMetadata>> Yolov8OpMetadata::create(const std::unorde
 std::string Yolov8OpMetadata::get_op_description()
 {
     auto nms_config_info = get_nms_config_description();
-    auto config_info = fmt::format("Op {}, Name: {}, {}, Image height: {:.2f}, Image width: {:.2f}",
-                        OpMetadata::get_operation_type_str(m_type), m_name, nms_config_info, m_yolov8_config.image_height, m_yolov8_config.image_width);
+    auto config_info = fmt::format("Op {}, Name: {}, {}, Image height: {:d}, Image width: {:d}",
+                        OpMetadata::get_operation_type_str(m_type), m_name, nms_config_info, static_cast<int>(m_yolov8_config.image_height), static_cast<int>(m_yolov8_config.image_width));
     return config_info;
 }
 
 hailo_status Yolov8OpMetadata::validate_params()
 {
     CHECK_SUCCESS(NmsOpMetadata::validate_params());
+
+    CHECK(!nms_config().bbox_only, HAILO_INVALID_ARGUMENT, "YOLOV8PostProcessOp: bbox_only is not supported for YOLOV8 model");
 
     // We go over the inputs metadata and check that it includes all of the regs and clss
     for (const auto &layer_names : m_yolov8_config.reg_to_cls_inputs) {
@@ -98,7 +100,7 @@ hailo_status YOLOV8PostProcessOp::execute(const std::map<std::string, MemoryView
 
     clear_before_frame();
     for (const auto &reg_to_cls_name : yolov8_config.reg_to_cls_inputs) {
-        hailo_status status;
+        hailo_status status = HAILO_UNINITIALIZED;
         assert(contains(inputs, reg_to_cls_name.cls));
         assert(contains(inputs, reg_to_cls_name.reg));
 

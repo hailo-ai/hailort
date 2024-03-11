@@ -56,6 +56,7 @@ hailo_status VdmaConfigCoreOp::cancel_pending_transfers()
 hailo_status VdmaConfigCoreOp::activate_impl(uint16_t dynamic_batch_size)
 {
     auto status = HAILO_UNINITIALIZED;
+    auto start_time = std::chrono::steady_clock::now();
 
     if (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE != dynamic_batch_size) {
         CHECK(dynamic_batch_size <= get_smallest_configured_batch_size(get_config_params()),
@@ -66,25 +67,20 @@ hailo_status VdmaConfigCoreOp::activate_impl(uint16_t dynamic_batch_size)
     status = m_resources_manager->enable_state_machine(dynamic_batch_size);
     CHECK_SUCCESS(status, "Failed to activate state-machine");
 
-    status = m_resources_manager->start_vdma_interrupts_dispatcher();
-    CHECK_SUCCESS(status, "Failed to start vdma interrupts");
+    CHECK_SUCCESS(activate_host_resources(), "Failed to activate host resources");
 
-    // Low-level streams assume that the vdma channels are enabled (happens in `enable_state_machine`), and that
-    // the interrupt dispatcher is running (so they can wait for interrupts).
-    status = activate_low_level_streams();
-    if (HAILO_STREAM_ABORTED_BY_USER == status) {
-        LOGGER__INFO("Low level streams activation failed because some were aborted by user");
-        return status;
-    }
-    CHECK_SUCCESS(status, "Failed to activate low level streams");
-
-    TRACE(SwitchCoreOpTrace, std::string(m_resources_manager->get_dev_id()), vdevice_core_op_handle());
+    //TODO: HRT-13019 - Unite with the calculation in core_op.cpp
+    const auto elapsed_time_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start_time).count();
+    TRACE(ActivateCoreOpTrace, std::string(m_resources_manager->get_dev_id()), vdevice_core_op_handle(), elapsed_time_ms);
 
     return HAILO_SUCCESS;
 }
 
 hailo_status VdmaConfigCoreOp::deactivate_impl()
 {
+    auto start_time = std::chrono::steady_clock::now();
+
     auto status = deactivate_host_resources();
     CHECK_SUCCESS(status);
 
@@ -95,6 +91,11 @@ hailo_status VdmaConfigCoreOp::deactivate_impl()
     // can cancel pending transfers, thus allowing vdma buffers linked to said transfers to be freed
     status = cancel_pending_transfers();
     CHECK_SUCCESS(status, "Failed to cancel pending transfers");
+
+    //TODO: HRT-13019 - Unite with the calculation in core_op.cpp
+    const auto elapsed_time_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start_time).count();
+    TRACE(DeactivateCoreOpTrace, std::string(m_resources_manager->get_dev_id()), vdevice_core_op_handle(), elapsed_time_ms);
 
     return HAILO_SUCCESS;
 }
@@ -120,15 +121,19 @@ hailo_status VdmaConfigCoreOp::shutdown()
     return status;
 }
 
+hailo_status VdmaConfigCoreOp::activate_host_resources()
+{
+    CHECK_SUCCESS(m_resources_manager->start_vdma_transfer_launcher(), "Failed to start vdma transfer launcher");
+    CHECK_SUCCESS(m_resources_manager->start_vdma_interrupts_dispatcher(), "Failed to start vdma interrupts");
+    CHECK_SUCCESS(activate_low_level_streams(), "Failed to activate low level streams");
+    return HAILO_SUCCESS;
+}
+
 hailo_status VdmaConfigCoreOp::deactivate_host_resources()
 {
-    auto status = deactivate_low_level_streams();
-    CHECK_SUCCESS(status, "Failed to deactivate low level streams");
-
-    // After disabling the vdma interrupts, we may still get some interrupts. On HRT-9430 we need to clean them.
-    status = m_resources_manager->stop_vdma_interrupts_dispatcher();
-    CHECK_SUCCESS(status, "Failed to stop vdma interrupts");
-
+    CHECK_SUCCESS(deactivate_low_level_streams(), "Failed to deactivate low level streams");
+    CHECK_SUCCESS(m_resources_manager->stop_vdma_interrupts_dispatcher(), "Failed to stop vdma interrupts");
+    CHECK_SUCCESS(m_resources_manager->stop_vdma_transfer_launcher(), "Failed to stop vdma transfers pending launch");
     return HAILO_SUCCESS;
 }
 

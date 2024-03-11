@@ -324,6 +324,7 @@ private:
 
     bool is_ethernet_device() const;
     void validate_and_set_scheduling_algorithm();
+    void validate_mode_supports_service();
 
     std::vector<NetworkParams> m_network_params;
     uint32_t m_time_to_run;
@@ -346,7 +347,6 @@ private:
     std::string m_measure_fw_actions_output_path;
 };
 
-
 Run2::Run2() : CLI::App("Run networks", "run2")
 {
     add_measure_fw_actions_subcom();
@@ -354,14 +354,17 @@ Run2::Run2() : CLI::App("Run networks", "run2")
     add_option("-t,--time-to-run", m_time_to_run, "Time to run (seconds)")
         ->default_val(DEFAULT_TIME_TO_RUN_SECONDS)
         ->check(CLI::PositiveNumber);
-    add_option("-m,--mode", m_mode, "Inference mode")
+    auto mode = add_option("-m,--mode", m_mode, "Inference mode")
         ->transform(HailoCheckedTransformer<InferenceMode>({
-            { "full", InferenceMode::FULL },
+            { "full_sync", InferenceMode::FULL_SYNC },
+            { "full", InferenceMode::FULL_SYNC, OptionVisibility::HIDDEN }, // TODO: Remove option
             { "full_async", InferenceMode::FULL_ASYNC },
-            { "raw", InferenceMode::RAW },
+            { "raw_sync", InferenceMode::RAW_SYNC },
+            { "raw", InferenceMode::RAW_SYNC, OptionVisibility::HIDDEN }, // TODO: Remove option
             { "raw_async", InferenceMode::RAW_ASYNC },
             { "raw_async_single_thread", InferenceMode::RAW_ASYNC_SINGLE_THREAD, OptionVisibility::HIDDEN }
-        }))->default_val("full");
+        }))->default_val("full_sync");
+
     add_option("-j,--json", m_stats_json_path, "If set save statistics as json to the specified path")
         ->default_val("")
         ->check(FileSuffixValidator(JSON_SUFFIX));
@@ -412,8 +415,12 @@ Run2::Run2() : CLI::App("Run networks", "run2")
         // When working with service over ip - client doesn't have access to physical devices
     }
 
+    hailo_deprecate_options(this, { std::make_shared<ValueDeprecation>(mode, "full", "full_sync"),
+        std::make_shared<ValueDeprecation>(mode, "raw", "raw_sync") }, false);
+
     parse_complete_callback([this]() {
         validate_and_set_scheduling_algorithm();
+        validate_mode_supports_service();
     });
 }
 
@@ -578,6 +585,14 @@ bool Run2::is_ethernet_device() const
     return is_valid_ip(m_device_ids[0]);
 }
 
+void Run2::validate_mode_supports_service()
+{
+    if (m_multi_process_service) {
+        PARSE_CHECK(((InferenceMode::FULL_SYNC == m_mode) || (InferenceMode::FULL_ASYNC == m_mode)),
+            "When running multi-process, only FULL_SYNC or FULL_ASYNC modes are allowed");
+    }
+}
+
 void Run2::validate_and_set_scheduling_algorithm()
 {
     if (m_scheduling_algorithm == HAILO_SCHEDULING_ALGORITHM_NONE) {
@@ -617,9 +632,9 @@ static hailo_status wait_for_threads(std::vector<AsyncThreadPtr<hailo_status>> &
     auto last_error_status = HAILO_SUCCESS;
     for (auto& thread : threads) {
         auto thread_status = thread->get();
-        if ((HAILO_SUCCESS != thread_status) && (HAILO_STREAM_ABORTED_BY_USER != thread_status)) {
+        if ((HAILO_SUCCESS != thread_status) && (HAILO_STREAM_ABORT != thread_status)) {
             last_error_status = thread_status;
-            LOGGER__ERROR("Thread failed with with status {}", thread_status);
+            LOGGER__ERROR("Thread failed with status {}", thread_status);
         }
     }
     return last_error_status;
@@ -628,12 +643,12 @@ static hailo_status wait_for_threads(std::vector<AsyncThreadPtr<hailo_status>> &
 std::string get_str_infer_mode(const InferenceMode& infer_mode)
 {
     switch(infer_mode){
-    case InferenceMode::FULL:
-        return "full";
+    case InferenceMode::FULL_SYNC:
+        return "full_sync";
     case InferenceMode::FULL_ASYNC:
         return "full_async";
-    case InferenceMode::RAW:
-        return "raw";
+    case InferenceMode::RAW_SYNC:
+        return "raw_sync";
     case InferenceMode::RAW_ASYNC:
         return "raw_async";
     case InferenceMode::RAW_ASYNC_SINGLE_THREAD:
@@ -682,8 +697,8 @@ Expected<std::unique_ptr<VDevice>> Run2::create_vdevice()
         CHECK_AS_EXPECTED(!get_multi_process_service(), HAILO_INVALID_OPERATION, "Collecting runtime data is not supported with multi process service");
         CHECK_AS_EXPECTED(get_device_count() == 1, HAILO_INVALID_OPERATION, "Collecting runtime data is not supported with multi device");
         CHECK_AS_EXPECTED(!(get_measure_hw_latency() || get_measure_overall_latency()), HAILO_INVALID_OPERATION, "Latency measurement is not allowed when collecting runtime data");
-        CHECK_AS_EXPECTED((get_mode() == InferenceMode::RAW) || (get_mode() == InferenceMode::RAW_ASYNC), HAILO_INVALID_OPERATION,
-            "'measure-fw-actions' is only supported with '--mode=raw'. Received mode: '{}'", get_str_infer_mode(get_mode()));
+        CHECK_AS_EXPECTED((get_mode() == InferenceMode::RAW_SYNC) || (get_mode() == InferenceMode::RAW_ASYNC), HAILO_INVALID_OPERATION,
+            "'measure-fw-actions' is only supported with '--mode=raw_sync' or '--mode=raw_async'. Received mode: '{}'", get_str_infer_mode(get_mode()));
     }
 
     vdevice_params.group_id = get_group_id().c_str();
@@ -725,6 +740,8 @@ Expected<std::vector<std::shared_ptr<NetworkRunner>>> Run2::init_and_run_net_run
 
     auto signal_event_scope_guard = SignalEventScopeGuard(*shutdown_event);
 
+    activation_barrier.arrive_and_wait();
+
     if (get_measure_power() || get_measure_current() || get_measure_temp()) {
         auto physical_devices = vdevice->get_physical_devices();
         CHECK_EXPECTED(physical_devices);
@@ -732,17 +749,12 @@ Expected<std::vector<std::shared_ptr<NetworkRunner>>> Run2::init_and_run_net_run
         for (auto &device : physical_devices.value()) {
             auto measurement_live_track = MeasurementLiveTrack::create_shared(device.get(), get_measure_power(),
                 get_measure_current(), get_measure_temp());
-            if (HAILO_SUCCESS != measurement_live_track.status()) {
-                activation_barrier.terminate();
-            }
             CHECK_EXPECTED(measurement_live_track);
 
             live_stats->add(measurement_live_track.release(), 2);
         }
     }
 
-    // TODO: wait for all nets before starting timer. start() should update TimerLiveTrack to start. or maybe append here but first in vector...
-    activation_barrier.arrive_and_wait();
     CHECK_SUCCESS_AS_EXPECTED(live_stats->start());
     auto status = shutdown_event->wait(get_time_to_run());
     if (HAILO_TIMEOUT != status) {

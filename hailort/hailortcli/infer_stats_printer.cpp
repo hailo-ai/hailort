@@ -30,27 +30,7 @@ static std::string infer_mode_to_string(InferMode infer_mode)
     }
 }
 
-std::string InferResultsFormatUtils::format_statistic(const Expected<double> &statistic, uint32_t precision)
-{
-    if (!statistic.has_value()) {
-        return "-";
-    }
-
-    std::stringstream string_stream;
-    string_stream << std::fixed << std::setprecision(precision) << statistic.value();
-    return string_stream.str();
-}
-
-std::string InferResultsFormatUtils::format_statistic(const Expected<size_t> &statistic)
-{
-    if (!statistic.has_value()) {
-        return "-";
-    }
-
-    return std::to_string(statistic.value());
-}
-
-double InferResultsFormatUtils::latency_result_to_ms(std::chrono::nanoseconds latency)
+double InferStatsPrinter::latency_result_to_ms(std::chrono::nanoseconds latency)
 {
     return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(latency).count();
 }
@@ -172,12 +152,12 @@ void InferStatsPrinter::print_csv(const std::vector<std::string> &network_groups
             m_results_csv_file << ",";
 
             if (auto hw_latency = results.hw_latency()) {
-                m_results_csv_file << InferResultsFormatUtils::latency_result_to_ms(hw_latency.value());
+                m_results_csv_file << InferStatsPrinter::latency_result_to_ms(hw_latency.value());
             }
             m_results_csv_file << ",";
 
             if (auto overall_latency = results.overall_latency()) {
-                m_results_csv_file << InferResultsFormatUtils::latency_result_to_ms(overall_latency.value());
+                m_results_csv_file << InferStatsPrinter::latency_result_to_ms(overall_latency.value());
             }
 
             // TODO HRT-5363 support multiple devices (Currently assumes 1 device in the map)
@@ -327,12 +307,12 @@ void InferStatsPrinter::print_benchmark_csv(InferResult &hw_inference_result,
         m_results_csv_file << ",";
 
         if (auto hw_latency = latency_res->hw_latency()) {
-            m_results_csv_file << InferResultsFormatUtils::latency_result_to_ms(hw_latency.value());
+            m_results_csv_file << InferStatsPrinter::latency_result_to_ms(hw_latency.value());
         }
         m_results_csv_file << ",";
 
         if (auto overall_latency = latency_res->overall_latency()) {
-            m_results_csv_file << InferResultsFormatUtils::latency_result_to_ms(overall_latency.value());
+            m_results_csv_file << InferStatsPrinter::latency_result_to_ms(overall_latency.value());
         }
 
         // TODO HRT-5363 support multiple devices (Currently assumes 1 device in the map)
@@ -378,11 +358,11 @@ void InferStatsPrinter::print_stdout_single_element(const T &results, size_t fra
     }
 
     if (auto hw_latency = results.hw_latency()) {
-        std::cout << "    HW Latency: " << InferResultsFormatUtils::latency_result_to_ms(hw_latency.value()) << " ms" << std::endl;
+        std::cout << "    HW Latency: " << InferStatsPrinter::latency_result_to_ms(hw_latency.value()) << " ms" << std::endl;
     }
 
     if (auto overall_latency = results.overall_latency()) {
-        std::cout << "    Overall Latency: " << InferResultsFormatUtils::latency_result_to_ms(overall_latency.value()) << " ms" << std::endl;
+        std::cout << "    Overall Latency: " << InferStatsPrinter::latency_result_to_ms(overall_latency.value()) << " ms" << std::endl;
     }
 
 }
@@ -489,12 +469,12 @@ void InferStatsPrinter::write_accumulator_results(std::ofstream &output_stream, 
     output_stream << vstream_name << ",";
     output_stream << accumulator->get_data_type() << ",";
     output_stream << elem_name << ",";
-    output_stream << InferResultsFormatUtils::format_statistic(accumulator_result.mean()) << ",";
-    output_stream << InferResultsFormatUtils::format_statistic(accumulator_result.min()) << ",";
-    output_stream << InferResultsFormatUtils::format_statistic(accumulator_result.max()) << ",";
-    output_stream << InferResultsFormatUtils::format_statistic(accumulator_result.var()) << ",";
-    output_stream << InferResultsFormatUtils::format_statistic(accumulator_result.sd()) << ",";
-    output_stream << InferResultsFormatUtils::format_statistic(accumulator_result.mean_sd()) << ",";
+    output_stream << AccumulatorResultsHelper::format_statistic(accumulator_result.mean()) << ",";
+    output_stream << AccumulatorResultsHelper::format_statistic(accumulator_result.min()) << ",";
+    output_stream << AccumulatorResultsHelper::format_statistic(accumulator_result.max()) << ",";
+    output_stream << AccumulatorResultsHelper::format_statistic(accumulator_result.var()) << ",";
+    output_stream << AccumulatorResultsHelper::format_statistic(accumulator_result.sd()) << ",";
+    output_stream << AccumulatorResultsHelper::format_statistic(accumulator_result.mean_sd()) << ",";
     if (NO_INDEX != index) {
         output_stream << index;
     }

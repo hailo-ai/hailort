@@ -24,8 +24,6 @@
 namespace hailort {
 namespace vdma {
 
-#if defined(__linux__) || defined(_MSC_VER)
-
 // User buffer. This class does not own the buffer.
 class UserAllocatedDmaAbleBuffer : public DmaAbleBuffer {
 public:
@@ -52,13 +50,14 @@ public:
 
     virtual size_t size() const override { return m_size; }
     virtual void *user_address() override { return m_user_address; }
-    virtual vdma_mapped_buffer_driver_identifier buffer_identifier() override { return HailoRTDriver::INVALID_DRIVER_BUFFER_HANDLE_VALUE; }
+    virtual vdma_mapped_buffer_driver_identifier buffer_identifier() override { return HailoRTDriver::INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER; }
 
 private:
     const size_t m_size;
     void *m_user_address;
 };
 
+#if defined(__linux__) || defined(_MSC_VER)
 
 #if defined(__linux__)
 class PageAlignedDmaAbleBuffer : public DmaAbleBuffer {
@@ -80,7 +79,7 @@ public:
 
     virtual void* user_address() override { return m_mmapped_buffer.address(); }
     virtual size_t size() const override { return m_mmapped_buffer.size(); }
-    virtual vdma_mapped_buffer_driver_identifier buffer_identifier() override { return HailoRTDriver::INVALID_DRIVER_BUFFER_HANDLE_VALUE; }
+    virtual vdma_mapped_buffer_driver_identifier buffer_identifier() override { return HailoRTDriver::INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER; }
 
 private:
     // Using mmap instead of aligned_alloc to enable MEM_SHARE flag - used for multi-process fork.
@@ -106,7 +105,7 @@ public:
 
     virtual size_t size() const override { return m_memory_guard.size(); }
     virtual void *user_address() override { return m_memory_guard.address(); }
-    virtual vdma_mapped_buffer_driver_identifier buffer_identifier() override { return HailoRTDriver::INVALID_DRIVER_BUFFER_HANDLE_VALUE; }
+    virtual vdma_mapped_buffer_driver_identifier buffer_identifier() override { return HailoRTDriver::INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER; }
 
 private:
     VirtualAllocGuard m_memory_guard;
@@ -252,11 +251,9 @@ private:
     MmapBuffer<void> m_mmapped_buffer;
 };
 
-Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_from_user_address(void */* user_address */, size_t /* size */)
+Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_from_user_address(void *user_address, size_t size)
 {
-    LOGGER__ERROR("Mapping user address is not supported on QNX");
-
-    return make_unexpected(HAILO_NOT_SUPPORTED);
+    return UserAllocatedDmaAbleBuffer::create(user_address, size);
 }
 
 Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_by_allocation(size_t size)

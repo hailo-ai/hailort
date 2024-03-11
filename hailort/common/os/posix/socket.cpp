@@ -230,7 +230,7 @@ hailo_status Socket::send_to(const uint8_t *src_buffer, size_t src_buffer_size, 
         } else if (EPIPE == errno) {
             // When socket is aborted from another thread sendto will return errno EPIPE
             LOGGER__INFO("Udp send aborted!");
-            return HAILO_STREAM_ABORTED_BY_USER;
+            return HAILO_STREAM_ABORT;
         } else {
             LOGGER__ERROR("Udp failed to send data, errno:{}.", errno);
             return HAILO_ETH_SEND_FAILURE;
@@ -272,7 +272,7 @@ hailo_status Socket::recv_from(uint8_t *dest_buffer, size_t dest_buffer_size, in
     }
     else if ((0 == number_of_received_bytes) && (0 != dest_buffer_size)) {
         LOGGER__INFO("Udp socket was aborted");
-        return HAILO_STREAM_ABORTED_BY_USER;
+        return HAILO_STREAM_ABORT;
     }
 
     if (result_src_addr_size > src_addr_size) {

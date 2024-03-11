@@ -8,58 +8,94 @@
  **/
 
 #include "vdma_config_manager.hpp"
-#include "hailo/hailort.h"
+#include "utils/profiler/tracer_macros.hpp"
 
 namespace hailort
 {
 
-hailo_status VdmaConfigManager::switch_core_op(std::shared_ptr<VdmaConfigCoreOp> current_active_core_op,
-    std::shared_ptr<VdmaConfigCoreOp> next_core_op, const uint16_t batch_size, const bool is_batch_switch)
+
+hailo_status VdmaConfigManager::set_core_op(const std::string &device_id, std::shared_ptr<VdmaConfigCoreOp> current,
+    std::shared_ptr<VdmaConfigCoreOp> next, const uint16_t batch_size)
 {
-    CHECK((nullptr != current_active_core_op) || (nullptr != next_core_op), HAILO_INVALID_ARGUMENT);
+    CHECK((nullptr != current) || (nullptr != next), HAILO_INVALID_ARGUMENT);
 
-    if (nullptr == current_active_core_op) {
-        // Activate first core-op
-        return next_core_op->activate_impl(batch_size);
-    } else if (nullptr == next_core_op) {
-        // Deactivate last core-op
-        return current_active_core_op->deactivate_impl();
-    } else if (is_batch_switch) {
-        auto status = current_active_core_op->get_resources_manager()->enable_state_machine(batch_size);
-        CHECK_SUCCESS(status, "Failed to activate state-machine");
+    const auto start_time = std::chrono::steady_clock::now();
+
+    const bool is_batch_switch = (current == next) && current->get_resources_manager()->get_can_fast_batch_switch();
+    if (is_batch_switch) {
+        CHECK_SUCCESS(fast_batch_switch(current, batch_size), "Failed to fast batch switch");
     } else {
-        // We're switching from current_active_core_op to next_core_op.
-        // Deactivate the current core-op on the host, meaning the fw state machine won't be reset.
-        // This will be handled by activating the next core-op.
-        auto status = current_active_core_op->deactivate_host_resources();
-        CHECK_SUCCESS(status, "Failed deactivating current core-op");
-
-        // TODO: In mercury we need to reset after deactivate. This will be fixed in MSW-762 and the "if" will be removed
-        //       when we make the nn_manager responsible to reset the nn-core.
-        if (Device::Type::INTEGRATED == current_active_core_op->get_resources_manager()->get_device().get_type()) {
-            status = current_active_core_op->get_resources_manager()->reset_state_machine();
-            CHECK_SUCCESS(status, "Failed to reset state machine in switch core-op");
-        }
-
-        // Switch from the current core-op to the next core-op. I.e. current core-op will be deactivated and
-        // next core-op will be activated
-        status = next_core_op->activate_impl(batch_size);
-        CHECK_SUCCESS(status, "Failed activating next core-op");
-
-        // Current core-op is now deactivated (we are not on batch switch), so we can cancel pending transfers.
-        status = current_active_core_op->cancel_pending_transfers();
-        CHECK_SUCCESS(status, "Failed canceling pending transfers from previous core-op");
+        CHECK_SUCCESS(switch_core_op(current, next, batch_size), "Failed to switch core-op");
     }
+
+    const auto core_op_handle = next ? next->vdevice_core_op_handle() : INVALID_CORE_OP_HANDLE;
+    const auto elapsed_time_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start_time).count();
+    TRACE(SwitchCoreOpTrace, device_id, core_op_handle, elapsed_time_ms);
 
     return HAILO_SUCCESS;
 }
+
 
 hailo_status VdmaConfigManager::deactivate_core_op(std::shared_ptr<VdmaConfigCoreOp> current_active_core_op)
 {
     static const uint16_t DEACTIVATE_BATCH_SIZE = 0;
     const std::shared_ptr<VdmaConfigCoreOp> DEACTIVATE_NEXT_CORE_OP = nullptr;
-    static const bool IS_NOT_BATCH_SWITCH = false;
-    return switch_core_op(current_active_core_op, DEACTIVATE_NEXT_CORE_OP, DEACTIVATE_BATCH_SIZE, IS_NOT_BATCH_SWITCH);
+    return switch_core_op(current_active_core_op, DEACTIVATE_NEXT_CORE_OP, DEACTIVATE_BATCH_SIZE);
+}
+
+hailo_status VdmaConfigManager::set_state_machine(std::shared_ptr<VdmaConfigCoreOp> current,
+    std::shared_ptr<VdmaConfigCoreOp> next, uint16_t batch_size)
+{
+    // TODO: HRT-13253 don't use resources manager instead call m_vdma_device directly. The device should store the 
+    // current active core op.
+    if (next != nullptr) {
+        CHECK_SUCCESS(next->get_resources_manager()->enable_state_machine(batch_size), "Failed to enable state machine");
+        // In the case of switch NG, we call FW switch to next NG without marking the current NG as deactivated.
+        // Added setter to mark the current NG as deactivated.
+        if ((current != nullptr) && (current != next)) {
+            current->get_resources_manager()->set_is_activated(false);
+        }
+    } else {
+        assert(current != nullptr);
+        CHECK_SUCCESS(current->get_resources_manager()->reset_state_machine(), "Failed to disable state machine");
+    }
+    return HAILO_SUCCESS;
+}
+
+hailo_status VdmaConfigManager::switch_core_op(std::shared_ptr<VdmaConfigCoreOp> current,
+    std::shared_ptr<VdmaConfigCoreOp> next, const uint16_t batch_size)
+{
+    assert((nullptr != current) || (nullptr != next));
+
+    if (current != nullptr) {
+        CHECK_SUCCESS(current->deactivate_host_resources(), "Failed deactivating host resources for current core-op");
+
+        // TODO: In mercury we need to reset after deactivate. This will be fixed in MSW-762 and the "if" will be removed
+        //       when we make the nn_manager responsible to reset the nn-core.
+        if (Device::Type::INTEGRATED == current->get_resources_manager()->get_device().get_type()) {
+            CHECK_SUCCESS(current->get_resources_manager()->reset_state_machine(), "Failed to reset state machine in switch core-op");
+        }
+    }
+
+    CHECK_SUCCESS(set_state_machine(current, next, batch_size), "Failed to set state machine");
+
+    // Activate next core op resources
+    if (next != nullptr) {
+        CHECK_SUCCESS(next->activate_host_resources(), "Failed activating host resources for next core-op");
+    }
+
+    if (current != nullptr) {
+        CHECK_SUCCESS(current->cancel_pending_transfers(), "Failed canceling pending transfers from previous core-op");
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status VdmaConfigManager::fast_batch_switch(std::shared_ptr<VdmaConfigCoreOp> current, const uint16_t batch_size)
+{
+    assert(nullptr != current);
+    return set_state_machine(current, current, batch_size);
 }
 
 } /* namespace hailort */

@@ -14,6 +14,7 @@
 #include "hailo/expected.hpp"
 #include "hailo/hailort.h"
 #include "hailo/runtime_statistics.hpp"
+#include "hailo/dma_mapped_buffer.hpp"
 #include "net_flow/ops/nms_post_process.hpp"
 
 #include "utils/thread_safe_queue.hpp"
@@ -38,6 +39,7 @@ enum class BufferType
     UNINITIALIZED,
     VIEW,
     PIX_BUFFER,
+    DMA_BUFFER,
 };
 
 using TransferDoneCallbackAsyncInfer = std::function<void(hailo_status)>;
@@ -46,8 +48,7 @@ using PipelineTimePoint = std::chrono::steady_clock::time_point;
 #define BUFFER_POOL_DEFAULT_QUEUE_TIMEOUT (std::chrono::milliseconds(10000))
 #define DEFAULT_NUM_FRAMES_BEFORE_COLLECTION_START (100)
 
-#define NUMBER_OF_PLANES_NV12_NV21 (2)
-#define NUMBER_OF_PLANES_I420 (3)
+class VDevice;
 
 struct AdditionalData {};
 
@@ -110,14 +111,13 @@ public:
     };
 
     // Creates an empty PipelineBuffer (with no buffer/memory view)
-    PipelineBuffer();
     PipelineBuffer(Type type);
-    PipelineBuffer(hailo_status status, const TransferDoneCallbackAsyncInfer &exec_done = [](hailo_status){});
-    PipelineBuffer(MemoryView view, bool is_user_buffer = true, BufferPoolPtr pool = nullptr, bool should_measure = false, hailo_status status = HAILO_SUCCESS);
-    PipelineBuffer(MemoryView view, const TransferDoneCallbackAsyncInfer &exec_done,
-        bool is_user_buffer = true, BufferPoolPtr pool = nullptr, bool should_measure = false, hailo_status status = HAILO_SUCCESS);
-    PipelineBuffer(hailo_pix_buffer_t buffer);
-    PipelineBuffer(hailo_pix_buffer_t buffer, const TransferDoneCallbackAsyncInfer &exec_done);
+    // TODO HRT-12185: remove the option to pass a lambda as a parameter and save it as a member since it increases the memory consumption Significantly
+    PipelineBuffer(hailo_status action_status = HAILO_SUCCESS, const TransferDoneCallbackAsyncInfer &exec_done = [](hailo_status){});
+    PipelineBuffer(MemoryView view, const TransferDoneCallbackAsyncInfer &exec_done = [](hailo_status){},
+                    hailo_status action_status = HAILO_SUCCESS, bool is_user_buffer = true, BufferPoolPtr pool = nullptr, bool should_measure = false);
+    PipelineBuffer(hailo_pix_buffer_t buffer, const TransferDoneCallbackAsyncInfer &exec_done = [](hailo_status){});
+
     ~PipelineBuffer();
 
     PipelineBuffer(const PipelineBuffer &) = delete;
@@ -134,9 +134,9 @@ public:
     Metadata get_metadata() const;
     void set_metadata(Metadata &&val);
     void set_additional_data(std::shared_ptr<AdditionalData> data) { m_metadata.set_additional_data(data);}
-    TransferDoneCallbackAsyncInfer get_exec_done_cb();
     hailo_status action_status();
     void set_action_status(hailo_status status);
+    void call_exec_done();
 
 private:
     Type m_type;
@@ -166,23 +166,22 @@ public:
     virtual ~BufferPool() = default;
 
     size_t buffer_size();
-    hailo_status enqueue_buffer(MemoryView mem_view);
-    hailo_status enqueue_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done);
-    hailo_status allocate_buffers(bool is_dma_able, size_t num_of_buffers);
+    hailo_status enqueue_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done = [](hailo_status){});
     Expected<PipelineBuffer> acquire_buffer(std::chrono::milliseconds timeout, bool ignore_shutdown_event = false);
-    Expected<std::shared_ptr<PipelineBuffer>> acquire_buffer_ptr(std::chrono::milliseconds timeout);
     AccumulatorPtr get_queue_size_accumulator();
     Expected<PipelineBuffer> get_available_buffer(PipelineBuffer &&optional, std::chrono::milliseconds timeout);
     bool is_full();
     size_t num_of_buffers_in_pool();
     bool is_holding_user_buffers();
 
+    hailo_status map_to_vdevice(VDevice &vdevice, hailo_dma_buffer_direction_t direction);
+    hailo_status set_buffer_size(uint32_t buffer_size);
 private:
     Expected<MemoryView> acquire_free_mem_view(std::chrono::milliseconds timeout, bool ignore_shutdown_event = false);
     Expected<TransferDoneCallbackAsyncInfer> acquire_on_done_cb(std::chrono::milliseconds timeout, bool ignore_shutdown_event = false);
     hailo_status release_buffer(MemoryView mem_view);
 
-    const size_t m_buffer_size;
+    std::atomic<size_t> m_buffer_size;
     bool m_is_holding_user_buffers;
     size_t m_max_buffer_count;
     const bool m_measure_vstream_latency;
@@ -192,10 +191,20 @@ private:
     // So when the pool has allocated buffers, it will hold them in the vector and have pointers to them in the queue.
     // And when the pool holds user buffers, the vector will be empty and only the queue will hold the user's buffers.
     std::vector<Buffer> m_buffers;
+
+    // When m_buffers is not empty, and we need to pre-map the buffers to the vdevice, this vector will hold reference
+    // to the mapping objects.
+    std::vector<hailort::DmaMappedBuffer> m_dma_mapped_buffers;
+
     SpscQueue<MemoryView> m_free_mem_views;
     SpscQueue<TransferDoneCallbackAsyncInfer> m_done_cbs;
     AccumulatorPtr m_queue_size_accumulator;
-    std::mutex m_release_buffer_mutex;
+    // we have enqueue and dequeue mutex to allow mpmc
+    std::mutex m_enqueue_mutex;
+    std::mutex m_dequeue_mutex;
+    std::mutex m_buffer_size_mutex;
+
+    std::atomic<bool> m_is_already_running;
 
     friend class PipelineBuffer;
 };
@@ -292,7 +301,6 @@ public:
     hailo_status abort();
     hailo_status terminate(hailo_status error_status);
     hailo_status dequeue_user_buffers(hailo_status error_status);
-    hailo_status wait_for_finish();
     hailo_status clear_abort();
     virtual hailo_status run_push(PipelineBuffer &&buffer);
     void run_push_async(PipelineBuffer &&buffer);
@@ -345,7 +353,6 @@ public:
     hailo_status terminate(hailo_status error_status);
     hailo_status dequeue_user_buffers(hailo_status error_status);
     hailo_status clear_abort();
-    hailo_status wait_for_finish();
     AccumulatorPtr get_fps_accumulator();
     AccumulatorPtr get_latency_accumulator();
     bool is_terminating_element();
@@ -355,16 +362,13 @@ public:
     const std::vector<PipelinePad> &sinks() const;
     const std::vector<PipelinePad> &sources() const;
     virtual std::string description() const;
+    std::string links_description() const;
+    void print_deep_description(std::vector<std::string> &visited_elements);
 
-    virtual hailo_status enqueue_execution_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done, const std::string &source_name);
-    hailo_status enqueue_execution_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done);
+    virtual hailo_status enqueue_execution_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done);
     hailo_status empty_buffer_pool(BufferPoolPtr pool, hailo_status error_status, std::chrono::milliseconds timeout);
-    virtual Expected<bool> can_push_buffer_upstream(const uint32_t source_index = UINT32_MAX);
-    virtual Expected<bool> can_push_buffer_downstream(const uint32_t source_index = UINT32_MAX);
-    virtual hailo_status fill_buffer_pool(bool is_dma_able, size_t num_of_buffers, const uint32_t source_index = UINT32_MAX);
-    virtual Expected<bool> can_push_buffer_upstream(const std::string &source_name = "");
-    virtual Expected<bool> can_push_buffer_downstream(const std::string &source_name = "");
-    virtual hailo_status fill_buffer_pool(bool is_dma_able, size_t num_of_buffers, const std::string &source_name = "");
+    virtual Expected<bool> can_push_buffer_upstream();
+    virtual Expected<bool> can_push_buffer_downstream();
 
     virtual Expected<uint32_t> get_source_index_from_source_name(const std::string &/*source_name*/) {
         // This function is overriden in multi-srcs elements
@@ -381,6 +385,16 @@ public:
 
     virtual hailo_status set_nms_max_proposals_per_class(uint32_t /*max_proposals_per_class*/) {
         return HAILO_INVALID_OPERATION;
+    }
+
+    virtual hailo_status set_nms_max_accumulated_mask_size(uint32_t /*max_accumulated_mask_size*/) {
+        return HAILO_INVALID_OPERATION;
+    }
+
+    virtual BufferPoolPtr get_buffer_pool() const
+    {
+        // This method should be overriden by element with local pools
+        return nullptr;
     }
 
 protected:
@@ -405,7 +419,6 @@ protected:
     virtual hailo_status execute_terminate(hailo_status error_status);
     virtual hailo_status execute_dequeue_user_buffers(hailo_status error_status);
     virtual hailo_status execute_clear_abort();
-    virtual hailo_status execute_wait_for_finish();
 
     virtual hailo_status execute(std::function<hailo_status(PipelinePad*)>);
 

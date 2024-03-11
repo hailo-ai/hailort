@@ -12,9 +12,8 @@ set(FILES
     hailo15_fields.cpp
 
     # Depends on hailort_driver and its dependencies
-    ${HAILO_OS_DIR}/hailort_driver.cpp
+    ${HAILO_DRIVER_SRC_FILES}
     ${HAILO_OS_DIR}/file_descriptor.cpp
-    ${HAILO_FULL_OS_DIR}/driver_scan.cpp
 )
 
 if(WIN32)

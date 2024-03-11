@@ -16,9 +16,11 @@
 #else
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
 #endif
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include "stb_image_resize.h"
+#include <Eigen/Dense>
 #if defined(_MSC_VER)
 #pragma warning(pop)
 #else
@@ -29,6 +31,9 @@ namespace hailort
 {
 namespace net_flow
 {
+
+constexpr uint32_t VECTOR_DIM = 1;
+using Eigen_Vector32f = Eigen::Matrix<float32_t, MASK_COEFFICIENT_SIZE, VECTOR_DIM>;
 
 Expected<std::shared_ptr<OpMetadata>> Yolov5SegOpMetadata::create(const std::unordered_map<std::string, BufferMetaData> &inputs_metadata,
     const std::unordered_map<std::string, BufferMetaData> &outputs_metadata, const NmsPostProcessConfig &nms_post_process_config,
@@ -43,6 +48,13 @@ Expected<std::shared_ptr<OpMetadata>> Yolov5SegOpMetadata::create(const std::uno
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     return std::shared_ptr<OpMetadata>(std::move(op_metadata));
+}
+
+hailo_status Yolov5SegOpMetadata::validate_params()
+{
+    CHECK(!nms_config().bbox_only, HAILO_INVALID_ARGUMENT, "YOLOv5SegPostProcessOp: bbox_only is not supported for YOLOv5Seg model");
+
+    return Yolov5OpMetadata::validate_params();
 }
 
 hailo_status Yolov5SegOpMetadata::validate_format_info()
@@ -90,7 +102,7 @@ Expected<hailo_vstream_info_t> Yolov5SegOpMetadata::get_output_vstream_info()
     auto vstream_info = NmsOpMetadata::get_output_vstream_info();
     CHECK_EXPECTED(vstream_info);
 
-    vstream_info->nms_shape.max_mask_size = static_cast<uint32_t>(yolov5_config().image_height * yolov5_config().image_width);
+    vstream_info->nms_shape.max_accumulated_mask_size = m_yolo_seg_config.max_accumulated_mask_size;
     return vstream_info.release();
 }
 
@@ -105,8 +117,6 @@ Expected<std::shared_ptr<Op>> Yolov5SegPostProcess::create(std::shared_ptr<Yolov
     auto transformed_proto_layer_frame_size = HailoRTCommon::get_shape_size(proto_layer_metadata.shape) * sizeof(float32_t);
     auto transformed_proto_buffer = Buffer::create(transformed_proto_layer_frame_size);
     CHECK_EXPECTED(transformed_proto_buffer);
-    auto dequantized_proto_buffer = Buffer::create(transformed_proto_layer_frame_size);
-    CHECK_EXPECTED(dequantized_proto_buffer);
     auto mask_mult_result_buffer = Buffer::create(proto_layer_metadata.shape.height * proto_layer_metadata.shape.width * sizeof(float32_t));
     CHECK_EXPECTED(mask_mult_result_buffer);
 
@@ -115,19 +125,18 @@ Expected<std::shared_ptr<Op>> Yolov5SegPostProcess::create(std::shared_ptr<Yolov
     CHECK_EXPECTED(resized_buffer);
 
     auto op = std::shared_ptr<Yolov5SegPostProcess>(new (std::nothrow) Yolov5SegPostProcess(std::move(metadata),
-        mask_mult_result_buffer.release(), resized_buffer.release(), transformed_proto_buffer.release(), dequantized_proto_buffer.release()));
+        mask_mult_result_buffer.release(), resized_buffer.release(), transformed_proto_buffer.release()));
     CHECK_NOT_NULL_AS_EXPECTED(op, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::shared_ptr<Op>(std::move(op));
 }
 
 Yolov5SegPostProcess::Yolov5SegPostProcess(std::shared_ptr<Yolov5SegOpMetadata> metadata,
-    Buffer &&mask_mult_result_buffer, Buffer &&resized_mask, Buffer &&transformed_proto_buffer, Buffer &&dequantized_proto_buffer)
+    Buffer &&mask_mult_result_buffer, Buffer &&resized_mask, Buffer &&transformed_proto_buffer)
     : YOLOv5PostProcessOp(static_cast<std::shared_ptr<Yolov5OpMetadata>>(metadata)), m_metadata(metadata),
     m_mask_mult_result_buffer(std::move(mask_mult_result_buffer)),
     m_resized_mask_to_image_dim(std::move(resized_mask)),
-    m_transformed_proto_buffer(std::move(transformed_proto_buffer)),
-    m_dequantized_proto_buffer(std::move(dequantized_proto_buffer))
+    m_transformed_proto_buffer(std::move(transformed_proto_buffer))
 {}
 
 hailo_status Yolov5SegPostProcess::execute(const std::map<std::string, MemoryView> &inputs, std::map<std::string, MemoryView> &outputs)
@@ -138,7 +147,7 @@ hailo_status Yolov5SegPostProcess::execute(const std::map<std::string, MemoryVie
 
     clear_before_frame();
     for (const auto &name_to_input : inputs) {
-        hailo_status status;
+        hailo_status status = HAILO_UNINITIALIZED;
         auto &name = name_to_input.first;
         assert(contains(inputs_metadata, name));
         auto &input_metadata = inputs_metadata.at(name);
@@ -182,18 +191,18 @@ uint32_t Yolov5SegPostProcess::get_entry_size()
 
 void Yolov5SegPostProcess::mult_mask_vector_and_proto_matrix(const DetectionBbox &detection)
 {
-    float32_t *proto_layer = (float32_t*)m_transformed_proto_buffer.data();
-    float32_t *mult_result = (float32_t*)m_mask_mult_result_buffer.data();
+    static auto shape = get_proto_layer_shape();
+    static uint32_t proto_mat_cols = shape.height * shape.width;
 
-    auto proto_layer_shape = get_proto_layer_shape();
-    uint32_t mult_size = proto_layer_shape.height * proto_layer_shape.width;
-    for (uint32_t i = 0; i < mult_size; i++) {
-        float32_t sum = 0.0f;
-        for (uint32_t j = 0; j < proto_layer_shape.features; j++) {
-            sum += detection.m_coefficients[j] * proto_layer[j * mult_size + i];
-        }
-        mult_result[i] = sigmoid(sum);
-    }
+    Eigen::Map<Eigen::Matrix<float, MASK_COEFFICIENT_SIZE, Eigen::Dynamic, Eigen::RowMajor>> proto_layer(
+        (float32_t*)m_transformed_proto_buffer.data(), MASK_COEFFICIENT_SIZE, proto_mat_cols);
+
+    Eigen_Vector32f coefficients(detection.m_coefficients.data());
+    auto mult_result = (coefficients.transpose() * proto_layer);
+
+    Eigen::Map<Eigen::Matrix<float, VECTOR_DIM, Eigen::Dynamic, Eigen::RowMajor>> result(
+        (float32_t*)m_mask_mult_result_buffer.data(), VECTOR_DIM, proto_mat_cols);
+    result = 1.0f / (1.0f + (-1*mult_result).array().exp());
 }
 
 hailo_status Yolov5SegPostProcess::crop_and_copy_mask(const DetectionBbox &detection, MemoryView &buffer, uint32_t buffer_offset)
@@ -210,10 +219,10 @@ hailo_status Yolov5SegPostProcess::crop_and_copy_mask(const DetectionBbox &detec
         static_cast<uint32_t>(yolov5_config.image_height), 0, 1, STBIR_ALPHA_CHANNEL_NONE, 0,
         STBIR_EDGE_CLAMP, STBIR_FILTER_TRIANGLE, STBIR_COLORSPACE_LINEAR, NULL);
 
-    auto x_min = static_cast<uint32_t>(std::ceil(detection.m_bbox.x_min * yolov5_config.image_width));
-    auto x_max = static_cast<uint32_t>(std::ceil(detection.m_bbox.x_max * yolov5_config.image_width));
-    auto y_min = static_cast<uint32_t>(std::ceil(detection.m_bbox.y_min * yolov5_config.image_height));
-    auto y_max = static_cast<uint32_t>(std::ceil(detection.m_bbox.y_max * yolov5_config.image_height));
+    auto x_min = static_cast<uint32_t>(MAX(std::ceil(detection.m_bbox.x_min * yolov5_config.image_width), 0.0f));
+    auto x_max = static_cast<uint32_t>(MIN(std::ceil(detection.m_bbox.x_max * yolov5_config.image_width), yolov5_config.image_width));
+    auto y_min = static_cast<uint32_t>(MAX(std::ceil(detection.m_bbox.y_min * yolov5_config.image_height), 0.0f));
+    auto y_max = static_cast<uint32_t>(MIN(std::ceil(detection.m_bbox.y_max * yolov5_config.image_height), yolov5_config.image_height));
     auto box_width = detection.get_bbox_width(yolov5_config.image_width);
 
     uint8_t *dst_mask = (uint8_t*)(buffer.data() + buffer_offset);
@@ -245,22 +254,26 @@ hailo_status Yolov5SegPostProcess::calc_and_copy_mask(const DetectionBbox &detec
 Expected<uint32_t> Yolov5SegPostProcess::copy_detection_to_result_buffer(MemoryView &buffer, DetectionBbox &detection,
     uint32_t buffer_offset)
 {
-    uint32_t copied_bytes_amount = 0;
+    uint32_t detection_size = sizeof(detection.m_bbox_with_mask);
+    uint32_t mask_size = static_cast<uint32_t>(detection.m_bbox_with_mask.mask_size);
+    CHECK((buffer_offset + detection_size + mask_size) < buffer.size(), HAILO_INSUFFICIENT_BUFFER,
+        "The given buffer is too small to contain all detections." \
+        " The output buffer will contain the highest scored detections that could be filled." \
+        " One can use `set_nms_max_accumulated_mask_size` to change the output buffer size.");
 
     // Copy bbox
-    uint32_t size_to_copy = sizeof(detection.m_bbox_with_mask);
-    assert((buffer_offset + size_to_copy) <= buffer.size());
-    detection.m_bbox_with_mask.mask = (buffer.data() + buffer_offset + size_to_copy);
+    uint32_t copied_bytes_amount = 0;
+    detection.m_bbox_with_mask.mask = (buffer.data() + buffer_offset + detection_size);
 
     *(hailo_detection_with_byte_mask_t*)(buffer.data() + buffer_offset) =
         *(hailo_detection_with_byte_mask_t*)&(detection.m_bbox_with_mask);
-    buffer_offset += size_to_copy;
-    copied_bytes_amount += size_to_copy;
+    buffer_offset += detection_size;
+    copied_bytes_amount += detection_size;
 
     // Calc and copy mask
     auto status = calc_and_copy_mask(detection, buffer, buffer_offset);
     CHECK_SUCCESS_AS_EXPECTED(status);
-    copied_bytes_amount += static_cast<uint32_t>(detection.m_bbox_with_mask.mask_size);
+    copied_bytes_amount += mask_size;
 
     m_classes_detections_count[detection.m_class_id]--;
     return copied_bytes_amount;
@@ -268,6 +281,7 @@ Expected<uint32_t> Yolov5SegPostProcess::copy_detection_to_result_buffer(MemoryV
 
 hailo_status Yolov5SegPostProcess::fill_nms_with_byte_mask_format(MemoryView &buffer)
 {
+    auto status = HAILO_SUCCESS;
     const auto &nms_config = m_metadata->nms_config();
     uint32_t ignored_detections_count = 0;
     uint16_t detections_count = 0;
@@ -292,6 +306,10 @@ hailo_status Yolov5SegPostProcess::fill_nms_with_byte_mask_format(MemoryView &bu
         }
 
         auto copied_bytes_amount = copy_detection_to_result_buffer(buffer, detection, buffer_offset);
+        if (HAILO_INSUFFICIENT_BUFFER == copied_bytes_amount.status()) {
+            status = copied_bytes_amount.status();
+            break;
+        }
         CHECK_EXPECTED_AS_STATUS(copied_bytes_amount);
         buffer_offset += copied_bytes_amount.release();
         detections_count++;
@@ -305,7 +323,7 @@ hailo_status Yolov5SegPostProcess::fill_nms_with_byte_mask_format(MemoryView &bu
             ignored_detections_count, nms_config.max_proposals_per_class);
     }
 
-    return HAILO_SUCCESS;
+    return status;
 }
 
 } /* namespace net_flow */

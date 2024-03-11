@@ -186,6 +186,8 @@ public:
         m_status(status)
     {}
 
+    operator hailo_status() { return m_status; }
+
     hailo_status m_status;
 };
 
@@ -216,6 +218,17 @@ public:
      */
     template<class U>
     friend class Expected;
+
+    /**
+     * Construct a new Expected<T> from an Unexpected status.
+     *
+     * NOTE: Asserting that status is not HAILO_SUCCESS if NDEBUG is not defined.
+     */
+    Expected(Unexpected unexpected) :
+        m_status(unexpected.m_status)
+    {
+        assert(unexpected.m_status != HAILO_SUCCESS);
+    }
 
     /**
      * Default constructor
@@ -334,17 +347,6 @@ public:
         m_value(ExpectedKey(), std::forward<Args>(args)...),
         m_status(HAILO_SUCCESS)
     {}
-
-    /**
-     * Construct a new Expected<T> from an Unexpected status.
-     * 
-     * NOTE: Asserting that status is not HAILO_SUCCESS if NDEBUG is not defined.
-     */
-    Expected(const Unexpected &unexpected) :
-        m_status(unexpected.m_status)
-    {
-        assert(unexpected.m_status != HAILO_SUCCESS);
-    }
 
     Expected<T>& operator=(const Expected<T> &other) = delete;
     Expected<T>& operator=(Expected<T> &&other) noexcept = delete;

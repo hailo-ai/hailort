@@ -69,7 +69,7 @@ hailo_status InferRequestAccumulator::shutdown(std::chrono::milliseconds timeout
     // Now cancel all partial request
     for (auto &partial_request : m_partial_infer_requests) {
         for (auto &stream_transfer_request : partial_request) {
-            stream_transfer_request.second.callback(HAILO_STREAM_ABORTED_BY_USER);
+            stream_transfer_request.second.callback(HAILO_STREAM_ABORT);
         }
     }
     m_partial_infer_requests.clear();

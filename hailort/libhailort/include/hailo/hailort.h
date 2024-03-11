@@ -76,6 +76,8 @@ extern "C" {
 #define HAILO_SCHEDULER_PRIORITY_MIN (0)
 
 #define MAX_NUMBER_OF_PLANES (4)
+#define NUMBER_OF_PLANES_NV12_NV21 (2)
+#define NUMBER_OF_PLANES_I420 (3)
 
 typedef float float32_t;
 typedef double float64_t;
@@ -145,8 +147,8 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(59, HAILO_THREAD_NOT_ACTIVATED                    /*!< The given thread has not been activated */)\
     HAILO_STATUS__X(60, HAILO_THREAD_NOT_JOINABLE                     /*!< The given thread is not joinable */)\
     HAILO_STATUS__X(61, HAILO_NOT_FOUND                               /*!< Could not find element */)\
-    HAILO_STATUS__X(62, HAILO_STREAM_ABORTED_BY_HW                    /*!< Stream aborted due to an external event */)\
-    HAILO_STATUS__X(63, HAILO_STREAM_ABORTED_BY_USER                  /*!< Stream recv/send was aborted */)\
+    HAILO_STATUS__X(62, HAILO_RESERVED_STATUS                         /*!< Reserved for future use */)\
+    HAILO_STATUS__X(63, HAILO_STREAM_ABORT                            /*!< Stream recv/send was aborted */)\
     HAILO_STATUS__X(64, HAILO_PCIE_DRIVER_NOT_INSTALLED               /*!< Pcie driver is not installed */)\
     HAILO_STATUS__X(65, HAILO_NOT_AVAILABLE                           /*!< Component is not available */)\
     HAILO_STATUS__X(66, HAILO_TRAFFIC_CONTROL_FAILURE                 /*!< Traffic control failure */)\
@@ -167,6 +169,7 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(81, HAILO_OUT_OF_HOST_CMA_MEMORY                  /*!< Cannot allocate more CMA memory at host */)\
     HAILO_STATUS__X(82, HAILO_QUEUE_IS_FULL                           /*!< Cannot push more items into the queue */)\
     HAILO_STATUS__X(83, HAILO_DMA_MAPPING_ALREADY_EXISTS              /*!< DMA mapping already exists */)\
+    HAILO_STATUS__X(84, HAILO_CANT_MEET_BUFFER_REQUIREMENTS           /*!< can't meet buffer requirements */)\
 
 typedef enum {
 #define HAILO_STATUS__X(value, name) name = value,
@@ -180,8 +183,7 @@ typedef enum {
     HAILO_STATUS_MAX_ENUM                       = HAILO_MAX_ENUM
 } hailo_status;
 
-#define HAILO_STREAM_ABORTED HAILO_STREAM_ABORTED_BY_HW /* 'HAILO_STREAM_ABORTED' is deprecated. One should use 'HAILO_STREAM_ABORTED_BY_HW' */
-#define HAILO_STREAM_INTERNAL_ABORT HAILO_STREAM_ABORTED_BY_USER /* 'HAILO_STREAM_INTERNAL_ABORT' is deprecated. One should use 'HAILO_STREAM_ABORTED_BY_USER' */
+#define HAILO_STREAM_ABORTED_BY_USER HAILO_STREAM_ABORT /* 'HAILO_STREAM_ABORTED_BY_USER' is deprecated. One should use 'HAILO_STREAM_ABORT' */
 
 /** HailoRT library version */
 typedef struct {
@@ -632,8 +634,8 @@ typedef enum {
      *      For each class (::hailo_nms_shape_t.number_of_classes), the layout is
      *          \code
      *          struct (packed) {
-     *              uint16_t/float32_t bbox_count;
-     *              hailo_bbox_t/hailo_bbox_float32_t bbox[bbox_count];
+     *              float32_t bbox_count;
+     *              hailo_bbox_float32_t bbox[bbox_count];
      *          };
      *          \endcode
      *
@@ -815,20 +817,24 @@ typedef enum {
     HAILO_STREAM_FLAGS_MAX_ENUM     = HAILO_MAX_ENUM
 } hailo_stream_flags_t;
 
-// ************************************* NOTE - START ************************************* //
-// Dma buffer allocation isn't currently supported and is for internal use only             //
-// **************************************************************************************** //
-// TODO: remove hailo_dma_buffer_direction_t (HRT-12391)
 /** Hailo dma buffer direction */
 typedef enum {
+    /** Buffers sent from the host (H) to the device (D). Used for input streams */
     HAILO_DMA_BUFFER_DIRECTION_H2D    = 0,
+
+    /** Buffers received from the device (D) to the host (H). Used for output streams */
     HAILO_DMA_BUFFER_DIRECTION_D2H    = 1,
+
+    /** Buffers can be used both send to the device and received from the device */
     HAILO_DMA_BUFFER_DIRECTION_BOTH   = 2,
 
     /** Max enum value to maintain ABI Integrity */
     HAILO_DMA_BUFFER_DIRECTION_MAX_ENUM  = HAILO_MAX_ENUM
 } hailo_dma_buffer_direction_t;
 
+// ************************************* NOTE - START ************************************* //
+// Dma buffer allocation isn't currently supported and is for internal use only             //
+// **************************************************************************************** //
 /** Hailo buffer flags */
 typedef enum {
     HAILO_BUFFER_FLAGS_NONE         = 0,        /*!< No flags - heap allocated buffer */
@@ -838,31 +844,9 @@ typedef enum {
     HAILO_BUFFER_FLAGS_MAX_ENUM     = HAILO_MAX_ENUM
 } hailo_buffer_flags_t;
 
-/** Hailo buffer heap parameters */
-typedef struct {
-    EMPTY_STRUCT_PLACEHOLDER
-} hailo_buffer_heap_params_t;
-
-// Hailo buffer dma mapping parameters.
-// - If device is not NULL, the resulting buffer created by hailo_allocate_buffer will be mapped to the device.
-// - If vdevice is not NULL, the resulting buffer created by hailo_allocate_buffer will be mapped to all the
-//   underlying devices held be vdevice.
-// - If both device and vdevice are null, the resulting buffer created by hailo_allocate_buffer will be lazily
-//   mapped upon the first async transfer (i.e. when the buffer is passed to hailo_stream_read_raw_buffer_async
-//   or hailo_stream_write_raw_buffer_async).
-typedef struct {
-    hailo_device device;
-    hailo_vdevice vdevice;
-    hailo_dma_buffer_direction_t direction;
-} hailo_buffer_dma_mapping_params_t;
-
 /** Hailo buffer parameters */
 typedef struct {
     hailo_buffer_flags_t flags;
-    union {
-        hailo_buffer_heap_params_t heap_params;
-        hailo_buffer_dma_mapping_params_t dma_mapping_params;
-    };
 } hailo_buffer_parameters_t;
 // ************************************** NOTE - END ************************************** //
 // Dma buffer allocation isn't currently supported and is for internal use only             //
@@ -1229,12 +1213,23 @@ typedef struct {
     uint32_t features;
 } hailo_3d_image_shape_t;
 
+typedef enum
+{
+  HAILO_PIX_BUFFER_MEMORY_TYPE_USERPTR,
+  HAILO_PIX_BUFFER_MEMORY_TYPE_DMABUF,
+} hailo_pix_buffer_memory_type_t;
+
 /** image buffer plane */
 typedef struct {
     /** actual data */
     uint32_t bytes_used;
     uint32_t plane_size;
-    void *user_ptr;
+    /* Union in case the buffer is a user buffer or DMA buffer */
+    union
+    {
+        void *user_ptr;
+        int fd;
+    };
 } hailo_pix_buffer_plane_t;
 
 /** image buffer */
@@ -1242,7 +1237,14 @@ typedef struct {
     uint32_t index;
     hailo_pix_buffer_plane_t planes[MAX_NUMBER_OF_PLANES];
     uint32_t number_of_planes;
+    hailo_pix_buffer_memory_type_t memory_type;
 } hailo_pix_buffer_t;
+
+/** dma buffer - intended for use with Linux's dma-buf sub system */
+typedef struct {
+    int fd;
+    size_t size;
+} hailo_dma_buffer_t;
 
 typedef struct {
     uint32_t class_group_index;
@@ -1290,8 +1292,11 @@ typedef struct {
     uint32_t number_of_classes;
     /** Maximum amount of bboxes per nms class */
     uint32_t max_bboxes_per_class;
-    /** Maximum mask size */
-    uint32_t max_mask_size;
+    /** Maximum accumulated mask size for all of the detections in a frame.
+     *  Used only with 'HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK' format order.
+     *  The default value is (`input_image_size` * 2)
+     */
+    uint32_t max_accumulated_mask_size;
 } hailo_nms_shape_t;
 
 #pragma pack(push, 1)
@@ -1354,7 +1359,7 @@ typedef struct {
     /**
      * Status of the async transfer:
      *  - ::HAILO_SUCCESS - The transfer is complete.
-     *  - ::HAILO_STREAM_ABORTED_BY_USER - The transfer was canceled (can happen after network deactivation).
+     *  - ::HAILO_STREAM_ABORT - The transfer was canceled (can happen after network deactivation).
      *  - Any other ::hailo_status on unexpected errors.
      */
     hailo_status status;
@@ -1382,7 +1387,7 @@ typedef struct {
     /**
      * Status of the async transfer:
      *  - ::HAILO_SUCCESS - The transfer is complete.
-     *  - ::HAILO_STREAM_ABORTED_BY_USER - The transfer was canceled (can happen after network deactivation).
+     *  - ::HAILO_STREAM_ABORT - The transfer was canceled (can happen after network deactivation).
      *  - Any other ::hailo_status on unexpected errors.
      */
     hailo_status status;
@@ -1625,7 +1630,7 @@ typedef struct {
 typedef struct {
     uint8_t network_group_index;
     uint16_t batch_index;
-    uint8_t context_index;
+    uint16_t context_index;
     uint16_t action_index;
 } hailo_context_switch_breakpoint_reached_message_t;
 
@@ -1643,7 +1648,7 @@ typedef struct {
     uint32_t exit_status;
     uint8_t network_group_index;
     uint16_t batch_index;
-    uint8_t context_index;
+    uint16_t context_index;
     uint16_t action_index;
 } hailo_context_switch_run_time_error_message_t;
 
@@ -2811,7 +2816,7 @@ HAILORTAPI hailo_status hailo_network_group_get_output_stream_infos(hailo_config
 
 /**
  * Shutdown a given network group. Makes sure all ongoing async operations are canceled. All async callbacks
- * of transfers that have not been completed will be called with status ::HAILO_STREAM_ABORTED_BY_USER.
+ * of transfers that have not been completed will be called with status ::HAILO_STREAM_ABORT.
  * Any resources attached to the network group may be released after function returns.
  *
  * @param[in]  network_group                NetworkGroup to be shutdown.
@@ -2878,16 +2883,16 @@ HAILORTAPI hailo_status hailo_get_latency_measurement(hailo_configured_network_g
     const char *network_name, hailo_latency_measurement_result_t *result);
 
 /**
- * Sets the maximum time period that may pass before getting run time from the scheduler,
- *  even without reaching the minimum required send requests (e.g. threshold - see hailo_set_scheduler_threshold()),
- *  as long as at least one send request has been sent.
- *  This time period is measured since the last time the scheduler gave this network group run time.
+ * Sets the maximum time period that may pass before receiving run time from the scheduler.
+ * This will occur providing at least one send request has been sent, there is no minimum requirement for send
+ *  requests, (e.g. threshold - see set_scheduler_threshold()).
  *
  * @param[in]  configured_network_group     NetworkGroup for which to set the scheduler timeout.
  * @param[in]  timeout_ms                   Timeout in milliseconds.
  * @param[in]  network_name                 Network name for which to set the timeout.
  *                                          If NULL is passed, the timeout will be set for all the networks in the network group.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ * @note The new time period will be measured after the previous time the scheduler allocated run time to this network group.
  * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE.
  * @note The default timeout is 0ms.
  * @note Currently, setting the timeout for a specific network is not supported.
@@ -2942,13 +2947,86 @@ HAILORTAPI hailo_status hailo_set_scheduler_priority(hailo_configured_network_gr
 // Free returned buffer via hailo_free_buffer
 HAILORTAPI hailo_status hailo_allocate_buffer(size_t size, const hailo_buffer_parameters_t *allocation_params, void **buffer_out);
 HAILORTAPI hailo_status hailo_free_buffer(void *buffer);
-// Maps buffer to dma. Free mapping by calling hailo_dma_unmap_buffer_from_device and then free buffer as needed
-// If buffer has already been mapped to device, then HAILO_DMA_MAPPING_ALREADY_EXISTS shall be returned
-HAILORTAPI hailo_status hailo_dma_map_buffer_to_device(void *buffer, size_t size, hailo_device device, hailo_dma_buffer_direction_t direction);
-HAILORTAPI hailo_status hailo_dma_unmap_buffer_from_device(void *buffer, hailo_device device, hailo_dma_buffer_direction_t direction);
 // ************************************** NOTE - END ************************************** //
 // Dma buffer allocation isn't currently supported and is for internal use only             //
 // **************************************************************************************** //
+
+/**
+ * Maps the buffer pointed to by @a address for DMA transfers to/from the given @a device, in the specified
+ * @a data_direction.
+ * DMA mapping of buffers in advance may improve the performance of async API. This improvement will become
+ * apparent when the buffer is reused multiple times across different async operations.
+ * For low level API (aka ::hailo_input_stream or ::hailo_output_stream), buffers passed to
+ * ::hailo_stream_write_raw_buffer_async and ::hailo_stream_read_raw_buffer_async can be mapped.
+ *
+ * @param[in] device        A ::hailo_device object.
+ * @param[in] address       The address of the buffer to be mapped
+ * @param[in] size          The buffer's size in bytes
+ * @param[in] direction     The direction of the mapping. For input streams, use `HAILO_DMA_BUFFER_DIRECTION_H2D`
+ *                          and for output streams, use `HAILO_DMA_BUFFER_DIRECTION_D2H`.
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ *
+ * @note The DMA mapping will be released upon calling ::hailo_device_dma_unmap_buffer with @a address, @a size and
+ *       @a data_direction, or when the @a device object is destroyed.
+ * @note The buffer pointed to by @a address cannot be released until it is unmapped (via
+ *       ::hailo_device_dma_unmap_buffer or ::hailo_release_device).
+ */
+HAILORTAPI hailo_status hailo_device_dma_map_buffer(hailo_device device, void *address, size_t size,
+    hailo_dma_buffer_direction_t direction);
+
+/**
+ * Un-maps a buffer buffer pointed to by @a address for DMA transfers to/from the given @a device, in the direction
+ * @a direction.
+ *
+ * @param[in] device        A ::hailo_device object.
+ * @param[in] address       The address of the buffer to be un-mapped.
+ * @param[in] size          The buffer's size in bytes.
+ * @param[in] direction     The direction of the mapping.
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_device_dma_unmap_buffer(hailo_device device, void *address, size_t size,
+    hailo_dma_buffer_direction_t direction);
+
+/**
+ * Maps the buffer pointed to by @a address for DMA transfers to/from the given @a vdevice, in the specified
+ * @a data_direction.
+ * DMA mapping of buffers in advance may improve the performance of async API. This improvement will become
+ * apparent when the buffer is reused multiple times across different async operations.
+ * For low level API (aka ::hailo_input_stream or ::hailo_output_stream), buffers passed to
+ * ::hailo_stream_write_raw_buffer_async and ::hailo_stream_read_raw_buffer_async can be mapped.
+ *
+ * @param[in] vdevice       A ::hailo_vdevice object.
+ * @param[in] address       The address of the buffer to be mapped
+ * @param[in] size          The buffer's size in bytes
+ * @param[in] direction     The direction of the mapping. For input streams, use `HAILO_DMA_BUFFER_DIRECTION_H2D`
+ *                          and for output streams, use `HAILO_DMA_BUFFER_DIRECTION_D2H`.
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ *
+ * @note The DMA mapping will be released upon calling ::hailo_vdevice_dma_unmap_buffer with @a address, @a size and
+ *       @a data_direction, or when the @a vdevice object is destroyed.
+ * @note The buffer pointed to by @a address cannot be released until it is unmapped (via
+ *       ::hailo_vdevice_dma_unmap_buffer or ::hailo_release_vdevice).
+ */
+HAILORTAPI hailo_status hailo_vdevice_dma_map_buffer(hailo_vdevice vdevice, void *address, size_t size,
+    hailo_dma_buffer_direction_t direction);
+
+/**
+ * Un-maps a buffer buffer pointed to by @a address for DMA transfers to/from the given @a vdevice, in the direction
+ * @a direction.
+ *
+ * @param[in] vdevice       A ::hailo_vdevice object.
+ * @param[in] address       The address of the buffer to be un-mapped.
+ * @param[in] size          The buffer's size in bytes.
+ * @param[in] direction     The direction of the mapping.
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_vdevice_dma_unmap_buffer(hailo_vdevice vdevice, void *address, size_t size,
+    hailo_dma_buffer_direction_t direction);
+
 /** @} */ // end of group_buffer_functions
 
 /** @defgroup group_stream_functions Stream functions
@@ -3695,6 +3773,7 @@ HAILORTAPI hailo_status hailo_vstream_write_raw_buffer(hailo_input_vstream input
  *                             pointers to the planes to where the data to
  *                             be sent to the device is stored.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ * @note Currently only support memory_type field of buffer to be HAILO_PIX_BUFFER_MEMORY_TYPE_USERPTR.
  */
 HAILORTAPI hailo_status hailo_vstream_write_pix_buffer(hailo_input_vstream input_vstream, const hailo_pix_buffer_t *buffer);
 

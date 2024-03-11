@@ -14,7 +14,7 @@
 #include "common/os_utils.hpp"
 
 #include "network_group/network_group_internal.hpp"
-#include "net_flow/pipeline/vstream_internal.hpp"
+#include "net_flow/pipeline/vstream_builder.hpp"
 #include "net_flow/ops/nms_post_process.hpp"
 #include "rpc_client_utils.hpp"
 
@@ -77,6 +77,11 @@ ConfiguredNetworkGroupClient::~ConfiguredNetworkGroupClient()
     auto reply = m_client->ConfiguredNetworkGroup_release(m_identifier, OsUtils::get_curr_pid());
     if (reply != HAILO_SUCCESS) {
         LOGGER__CRITICAL("ConfiguredNetworkGroup_release failed with status: {}", reply);
+    }
+    execute_callbacks_on_error(HAILO_INTERNAL_FAILURE); // At this point there should'nt be any callbacks left. if there are any, raise HAILO_INTERNAL_FAILURE
+    auto status = wait_for_ongoing_callbacks_count_under(1);
+    if (HAILO_SUCCESS != status) {
+        LOGGER__CRITICAL("Failed to wait for callbacks to finish");
     }
 }
 
@@ -212,7 +217,12 @@ hailo_status ConfiguredNetworkGroupClient::wait_for_activation(const std::chrono
 
 hailo_status ConfiguredNetworkGroupClient::shutdown()
 {
-    return m_client->ConfiguredNetworkGroup_shutdown(m_identifier);
+    auto status = m_client->ConfiguredNetworkGroup_shutdown(m_identifier);
+    CHECK_SUCCESS(status, "Failed to shutdown");
+    status = wait_for_ongoing_callbacks_count_under(1);
+    CHECK_SUCCESS(status, "Failed to wait for callbacks to finish");
+
+    return status;
 }
 
 Expected<std::vector<std::vector<std::string>>> ConfiguredNetworkGroupClient::get_output_vstream_groups()
@@ -413,6 +423,11 @@ hailo_status ConfiguredNetworkGroupClient::set_nms_max_bboxes_per_class(const st
     return m_client->ConfiguredNetworkGroup_set_nms_max_bboxes_per_class(m_identifier, edge_name, max_bboxes_per_class);
 }
 
+hailo_status ConfiguredNetworkGroupClient::set_nms_max_accumulated_mask_size(const std::string &edge_name, uint32_t max_accumulated_mask_size)
+{
+    return m_client->ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size(m_identifier, edge_name, max_accumulated_mask_size);
+}
+
 hailo_status ConfiguredNetworkGroupClient::execute_callback(const ProtoCallbackIdentifier &cb_id)
 {
     if (cb_id.cb_type() == CALLBACK_TYPE_TRANSFER) {
@@ -425,6 +440,19 @@ hailo_status ConfiguredNetworkGroupClient::execute_callback(const ProtoCallbackI
     }
 
     return HAILO_SUCCESS;
+}
+
+void ConfiguredNetworkGroupClient::execute_callbacks_on_error(hailo_status error_status)
+{
+    std::unique_lock<std::mutex> lock(m_mutex);
+    for (auto cb_pair : m_idx_to_callbacks) {
+        std::get<2>(*cb_pair.second)(error_status);
+    }
+    m_idx_to_callbacks.clear();
+    for (auto cb_pair : m_infer_request_idx_to_callbacks) {
+        cb_pair.second(error_status);
+    }
+    m_infer_request_idx_to_callbacks.clear();
 }
 
 hailo_status ConfiguredNetworkGroupClient::execute_infer_request_callback(const ProtoCallbackIdentifier &cb_id)
@@ -485,7 +513,7 @@ hailo_status ConfiguredNetworkGroupClient::infer_async(const NamedBuffersCallbac
     }
 
     auto infer_request_callback = [this, infer_request_done_cb](hailo_status status){
-        if (status == HAILO_STREAM_ABORTED_BY_USER) {
+        if (status == HAILO_STREAM_ABORT) {
             LOGGER__INFO("Infer request was aborted by user");
         }
         else if (status != HAILO_SUCCESS) {
@@ -503,10 +531,22 @@ hailo_status ConfiguredNetworkGroupClient::infer_async(const NamedBuffersCallbac
         m_infer_request_idx_to_callbacks.emplace(infer_request_cb_idx, infer_request_callback);
     }
 
-    increase_ongoing_callbacks();
+    increase_ongoing_callbacks(); // Increase before lunch, as the cb may be called before we got the chance to increase the counter
     auto status = m_client->ConfiguredNetworkGroup_infer_async(m_identifier, cb_idx_to_stream_buffer,
         infer_request_cb_idx, m_input_streams_names);
-    if (status == HAILO_STREAM_ABORTED_BY_USER) {
+
+    if (HAILO_SUCCESS != status) {
+        // If we got error in `infer_async()`, then the callbacks will not be called in the service domain.
+        // remove them from the cb lists so they wont be called in the client domain as well.
+        std::unique_lock<std::mutex> lock(m_mutex);
+        for (auto &pair : cb_idx_to_stream_buffer) {
+            m_idx_to_callbacks.erase(std::get<0>(pair));
+        }
+        m_infer_request_idx_to_callbacks.erase(infer_request_cb_idx);
+        decrease_ongoing_callbacks();
+    }
+
+    if (status == HAILO_STREAM_ABORT) {
         LOGGER__INFO("Infer request was aborted by user");
         return status;
     }

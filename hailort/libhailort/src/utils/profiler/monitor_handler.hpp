@@ -31,6 +31,7 @@
 #pragma warning(disable: 4244 4267 4127)
 #else
 #pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wconversion"
 #endif
 #include "scheduler_mon.pb.h"
@@ -59,25 +60,25 @@ public:
 
     void insert(const stream_name_t &name)
     {
-        assert(!contains(m_map, name));
+        if(contains(m_map, name)) { return; } // TODO (HRT-8835): Support multiple vdevices
         m_map[name] = 0;
     }
 
     uint32_t operator[](const stream_name_t &name) const
     {
-        assert(contains(m_map, name));
+        if (!contains(m_map, name)) { return 0; } // TODO (HRT-8835): Support multiple vdevices
         return m_map.at(name);
     }
 
     void increase(const stream_name_t &name)
     {
-        assert(contains(m_map, name));
+        if (!contains(m_map, name)) {return; } // TODO (HRT-8835): Support multiple vdevices
         m_map[name]++;
     }
 
     void decrease(const stream_name_t &name)
     {
-        assert(contains(m_map, name));
+        if (!contains(m_map, name)) { return; } // TODO (HRT-8835): Support multiple vdevices
         assert(m_map[name] > 0);
         m_map[name]--;
     }
@@ -171,12 +172,13 @@ public:
     virtual void handle_trace(const FrameDequeueD2HTrace&) override;
     virtual void handle_trace(const FrameDequeueH2DTrace&) override;
     virtual void handle_trace(const FrameEnqueueD2HTrace&) override;
-    virtual void handle_trace(const SwitchCoreOpTrace&) override;
+    virtual void handle_trace(const ActivateCoreOpTrace&) override;
     virtual void handle_trace(const MonitorStartTrace&) override;
+    virtual void handle_trace(const MonitorEndTrace&) override;
     virtual void handle_trace(const AddDeviceTrace&) override;
 
 private:
-    hailo_status start_mon();
+    hailo_status start_mon(const std::string &unique_vdevice_hash);
 #if defined(__GNUC__)
     Expected<std::shared_ptr<TempFile>> open_temp_mon_file();
     void dump_state();
@@ -204,6 +206,7 @@ private:
     // TODO: Consider adding Accumulator classes for more info (min, max, mean, etc..)
     std::unordered_map<scheduler_core_op_handle_t, CoreOpInfo> m_core_ops_info;
     std::unordered_map<device_id_t, DeviceInfo> m_devices_info;
+    std::string m_unique_vdevice_hash; // only one vdevice is allowed at a time. vdevice will be unregistered in its destruction.
 };
 }
 

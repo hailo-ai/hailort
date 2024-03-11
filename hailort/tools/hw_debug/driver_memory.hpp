@@ -7,7 +7,7 @@
 #define _HW_DEBUG_DRIVER_MEMORY_HPP_
 
 #include "memory_commands.hpp"
-#include "os/hailort_driver.hpp"
+#include "vdma/driver/hailort_driver.hpp"
 
 using hailort::HailoRTDriver;
 using MemoryType = HailoRTDriver::MemoryType;

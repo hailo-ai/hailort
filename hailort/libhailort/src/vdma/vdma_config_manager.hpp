@@ -26,10 +26,17 @@ class VdmaConfigManager final
 public:
     VdmaConfigManager() = delete;
 
-    static hailo_status switch_core_op(std::shared_ptr<VdmaConfigCoreOp> current_active_core_op,
-        std::shared_ptr<VdmaConfigCoreOp> next_core_op, const uint16_t batch_size, const bool is_batch_switch);
-
+    static hailo_status set_core_op(const std::string &device_id, std::shared_ptr<VdmaConfigCoreOp> current,
+        std::shared_ptr<VdmaConfigCoreOp> next, uint16_t batch_size);
     static hailo_status deactivate_core_op(std::shared_ptr<VdmaConfigCoreOp> current_active_core_op);
+
+private:
+    static hailo_status set_state_machine(std::shared_ptr<VdmaConfigCoreOp> current,
+        std::shared_ptr<VdmaConfigCoreOp> next, uint16_t batch_size);
+
+    static hailo_status switch_core_op(std::shared_ptr<VdmaConfigCoreOp> current,
+        std::shared_ptr<VdmaConfigCoreOp> next, uint16_t batch_size);
+    static hailo_status fast_batch_switch(std::shared_ptr<VdmaConfigCoreOp> current, uint16_t batch_size);
 };
 
 } /* namespace hailort */

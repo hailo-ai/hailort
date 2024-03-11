@@ -38,7 +38,6 @@
 #include "hailo/hailort_common.hpp"
 
 #include "stream_common/transfer_common.hpp"
-#include "hef/hef_internal.hpp"
 #include "device_common/control_protocol.hpp"
 #include "hef/layer_info.hpp"
 
@@ -96,7 +95,6 @@ public:
 
     virtual hailo_status write_impl(const MemoryView &buffer) = 0;
 
-    virtual hailo_status write_async(BufferPtr buffer, const TransferDoneCallback &user_callback) override final;
     virtual hailo_status write_async(const MemoryView &buffer, const TransferDoneCallback &user_callback) override final;
     virtual hailo_status write_async(const void *buffer, size_t size, const TransferDoneCallback &user_callback) override final;
 
@@ -160,7 +158,6 @@ public:
 
     virtual hailo_status read_impl(MemoryView buffer) = 0;
 
-    virtual hailo_status read_async(BufferPtr buffer, const TransferDoneCallback &user_callback) override final;
     virtual hailo_status read_async(MemoryView buffer, const TransferDoneCallback &user_callback) override final;
     virtual hailo_status read_async(void *buffer, size_t size, const TransferDoneCallback &user_callback) override final;
 

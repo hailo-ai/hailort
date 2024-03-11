@@ -8,7 +8,6 @@
  **/
 
 #include "core_op_metadata.hpp"
-#include "hef_internal.hpp"
 #include <numeric>
 
 namespace hailort
@@ -52,9 +51,10 @@ static bool is_edge_under_mux(const LayerInfo &info, const std::string &edge_nam
 }
 
 ContextMetadata::ContextMetadata(std::vector<ContextSwitchConfigActionPtr> &&actions,
-    ConfigBufferInfoMap&& config_buffers_info) :
+    ConfigBufferInfoMap&& config_buffers_info, bool const_input_layer_found) :
     m_actions(std::move(actions)),
-    m_config_buffers_info(std::move(config_buffers_info))
+    m_config_buffers_info(std::move(config_buffers_info)),
+    m_const_input_layer_found(const_input_layer_found)
 {}
 
 const ConfigBufferInfoMap &ContextMetadata::config_buffers_info() const
@@ -65,6 +65,11 @@ const ConfigBufferInfoMap &ContextMetadata::config_buffers_info() const
 const std::vector<ContextSwitchConfigActionPtr> &ContextMetadata::get_actions() const
 {
     return m_actions;
+}
+
+bool ContextMetadata::const_input_layer_found() const
+{
+    return m_const_input_layer_found;
 }
 
 std::vector<ContextSwitchConfigActionPtr> ContextMetadata::get_actions_of_type(
@@ -183,12 +188,15 @@ CoreOpMetadata::CoreOpMetadata(const std::string &core_op_name,
     std::vector<ContextMetadata> &&dynamic_contexts,
     std::vector<ConfigChannelInfo> &&config_channels_info,
     SupportedFeatures &supported_features,
-    std::vector<std::string> sorted_network_names)
+    std::vector<std::string> sorted_network_names,
+    bool can_fast_batch_switch)
     :   m_preliminary_context(std::move(preliminary_context)),
         m_dynamic_contexts(std::move(dynamic_contexts)),
         m_config_channels_info(std::move(config_channels_info)),
         m_core_op_name(core_op_name), m_supported_features(supported_features),
-        m_sorted_network_names(sorted_network_names) {}
+        m_sorted_network_names(sorted_network_names),
+        m_can_fast_batch_switch(can_fast_batch_switch)
+        {}
 
 std::vector<LayerInfo> CoreOpMetadata::get_input_layer_infos() const
 {
@@ -375,30 +383,83 @@ Expected<NetworkGroupMetadata> NetworkGroupMetadata::create(const std::string &n
     SupportedFeatures &supported_features, const std::vector<std::string> &sorted_network_names,
     std::vector<hailort::net_flow::PostProcessOpMetadataPtr> &ops_metadata)
 {
-    auto all_layers_infos = get_all_layer_infos(core_ops_metadata_per_arch);
-    CHECK_EXPECTED(all_layers_infos);
+    return NetworkGroupMetadata(network_group_name, std::move(core_ops_metadata_per_arch), sorted_output_names,
+        supported_features, sorted_network_names, ops_metadata);
+}
+
+Expected<CoreOpMetadataPtr> NetworkGroupMetadata::get_core_op_metadata() const
+/* This function is used for names getters (such as get_vstream_names_from_stream_name),
+    so should be same across all clusters layouts */
+{
+    CHECK_AS_EXPECTED(1 == m_core_ops_metadata_per_arch.size(), HAILO_INTERNAL_FAILURE);
+    auto core_op_metadata_exp = m_core_ops_metadata_per_arch.begin()->second.get_metadata(PARTIAL_CLUSTERS_LAYOUT_IGNORE);
+    CHECK_EXPECTED(core_op_metadata_exp);
+
+    auto core_op_metadata = core_op_metadata_exp.release();
+    return core_op_metadata;
+}
+
+Expected<std::vector<LayerInfo>> NetworkGroupMetadata::get_all_layer_infos() const
+{
+    auto core_op_metadata = get_core_op_metadata();
+    CHECK_EXPECTED(core_op_metadata);
+
+    return core_op_metadata.value()->get_all_layer_infos();
+}
+
+Expected<std::vector<LayerInfo>> NetworkGroupMetadata::get_input_layer_infos(const std::string &network_name) const
+{
+    auto core_op_metadata = get_core_op_metadata();
+    CHECK_EXPECTED(core_op_metadata);
+
+    return core_op_metadata.value()->get_input_layer_infos(network_name);
+}
+
+Expected<std::vector<LayerInfo>> NetworkGroupMetadata::get_output_layer_infos(const std::string &network_name) const
+{
+    auto core_op_metadata = get_core_op_metadata();
+    CHECK_EXPECTED(core_op_metadata);
+
+    return core_op_metadata.value()->get_output_layer_infos(network_name);
+}
+
+Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_input_vstream_infos(const std::string &network_name) const
+{
+    auto input_layer_infos = get_input_layer_infos(network_name);
+    CHECK_EXPECTED(input_layer_infos);
 
     std::vector<hailo_vstream_info_t> input_vstream_infos;
+    for (auto &layer_info : input_layer_infos.value()) {
+        auto vstreams_info = LayerInfoUtils::get_vstream_infos_from_layer_info(layer_info);
+        input_vstream_infos.insert(input_vstream_infos.end(),
+            std::make_move_iterator(vstreams_info.begin()), std::make_move_iterator(vstreams_info.end()));
+    }
+    CHECK_AS_EXPECTED(0 != input_vstream_infos.size(), HAILO_NOT_FOUND, "No VStreams where found for network {}", network_name);
+
+    return input_vstream_infos;
+}
+
+Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_output_vstream_infos(const std::string &network_name) const
+{
+    auto output_layer_infos = get_output_layer_infos(network_name);
+    CHECK_EXPECTED(output_layer_infos);
+
     std::vector<hailo_vstream_info_t> output_vstream_infos;
-    for (auto &layer_info : all_layers_infos.value()) {
-        if (std::any_of(ops_metadata.begin(), ops_metadata.end(),
+    for (auto &layer_info : output_layer_infos.value()) {
+        if (std::any_of(m_ops_metadata.begin(), m_ops_metadata.end(),
             [&layer_info](auto &op_metadata) { return contains(op_metadata->get_input_names(), layer_info.name); })) {
             continue; // all output_vstream_infos that relates to the op are coming from the op itself instead of layer_infos
         }
+
         auto vstreams_info = LayerInfoUtils::get_vstream_infos_from_layer_info(layer_info);
-        if (HAILO_D2H_STREAM == layer_info.direction) {
-            // In case of fused nms layers, several LayerInfos will contain data about the same fused layer
-            for (auto &vstream_info : vstreams_info) {
-                if (!LayerInfoUtils::vstream_info_already_in_vector(output_vstream_infos, vstream_info.name)) {
-                    output_vstream_infos.push_back(vstream_info);
-                }
+        // In case of fused nms layers, several LayerInfos will contain data about the same fused layer
+        for (auto &vstream_info : vstreams_info) {
+            if (!LayerInfoUtils::vstream_info_already_in_vector(output_vstream_infos, vstream_info.name)) {
+                output_vstream_infos.push_back(vstream_info);
             }
-        } else {
-            input_vstream_infos.insert(input_vstream_infos.end(),
-                std::make_move_iterator(vstreams_info.begin()), std::make_move_iterator(vstreams_info.end()));
         }
     }
-    for (auto &metadata : ops_metadata) {
+    for (auto &metadata : m_ops_metadata) {
         auto vstream_info = metadata->get_output_vstream_info();
         CHECK_EXPECTED(vstream_info);
         output_vstream_infos.push_back(vstream_info.release());
@@ -407,18 +468,18 @@ Expected<NetworkGroupMetadata> NetworkGroupMetadata::create(const std::string &n
     // Sort vstream infos by sorted_output_names
     hailo_status status = HAILO_SUCCESS;
     std::sort(output_vstream_infos.begin(), output_vstream_infos.end(),
-        [&sorted_output_names, &status](const auto &info1, const auto &info2)
+        [this, &status](const auto &info1, const auto &info2)
     {
-        const auto index1 = std::find(sorted_output_names.begin(), sorted_output_names.end(), std::string(info1.name));
-        const auto index2 = std::find(sorted_output_names.begin(), sorted_output_names.end(), std::string(info2.name));
+        const auto index1 = std::find(m_sorted_output_names.begin(), m_sorted_output_names.end(), std::string(info1.name));
+        const auto index2 = std::find(m_sorted_output_names.begin(), m_sorted_output_names.end(), std::string(info2.name));
 
-        if (sorted_output_names.end() == index1) {
+        if (m_sorted_output_names.end() == index1) {
             LOGGER__ERROR("VStream {} not found in sorted output names", info1.name);
             status = HAILO_INTERNAL_FAILURE;
             return false;
         }
 
-        if (sorted_output_names.end() == index2) {
+        if (m_sorted_output_names.end() == index2) {
             LOGGER__ERROR("VStream {} not found in sorted output names", info2.name);
             status = HAILO_INTERNAL_FAILURE;
             return false;
@@ -428,34 +489,9 @@ Expected<NetworkGroupMetadata> NetworkGroupMetadata::create(const std::string &n
     });
     CHECK_SUCCESS_AS_EXPECTED(status);
 
-    return NetworkGroupMetadata(network_group_name, std::move(core_ops_metadata_per_arch), sorted_output_names, supported_features, sorted_network_names,
-        input_vstream_infos, output_vstream_infos, ops_metadata);
-}
+    CHECK_AS_EXPECTED(0 != output_vstream_infos.size(), HAILO_NOT_FOUND, "No VStreams where found for network {}", network_name);
 
-Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_input_vstream_infos(const std::string &network_name) const
-{
-    std::vector<hailo_vstream_info_t> res;
-    for (auto &vstream_info : m_input_vstreams_infos) {
-        if ((network_name == std::string(vstream_info.network_name)) || (network_name.empty()) || (network_name == default_network_name())) {
-            res.push_back(vstream_info);
-        }
-    }
-    CHECK_AS_EXPECTED(0 != res.size(), HAILO_NOT_FOUND, "No VStreams where found for network {}", network_name);
-
-    return res;
-}
-
-Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_output_vstream_infos(const std::string &network_name) const
-{
-    std::vector<hailo_vstream_info_t> res;
-    for (auto &vstream_info : m_output_vstreams_infos) {
-        if ((network_name == std::string(vstream_info.network_name)) || (network_name.empty()) || (network_name == default_network_name())) {
-            res.push_back(vstream_info);
-        }
-    }
-    CHECK_AS_EXPECTED(0 != res.size(), HAILO_NOT_FOUND, "No VStreams where found for network {}", network_name);
-
-    return res;
+    return output_vstream_infos;
 }
 
 Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_all_vstream_infos(const std::string &network_name) const
@@ -486,7 +522,7 @@ Expected<std::vector<std::string>> NetworkGroupMetadata::get_vstream_names_from_
         }
     }
 
-    auto all_layers_infos = get_all_layer_infos(m_core_ops_metadata_per_arch);
+    auto all_layers_infos = get_all_layer_infos();
     CHECK_EXPECTED(all_layers_infos);
     for (auto &layer_info : all_layers_infos.release()) {
         if (layer_info.is_multi_planar) {
@@ -521,7 +557,7 @@ Expected<std::vector<std::string>> NetworkGroupMetadata::get_stream_names_from_v
         }
     }
 
-    auto all_layers_infos = get_all_layer_infos(m_core_ops_metadata_per_arch);
+    auto all_layers_infos = get_all_layer_infos();
     CHECK_EXPECTED(all_layers_infos);
     for (auto &layer_info : all_layers_infos.value()) {
         if (layer_info.is_mux) {

@@ -127,10 +127,8 @@ class ExceptionWrapper(object):
             raise HailoRTInvalidFrameException("An invalid frame was received") from libhailort_exception
         if string_error_code == "HAILO_TIMEOUT":
             raise HailoRTTimeout("Received a timeout - hailort has failed because a timeout had occurred") from libhailort_exception
-        if string_error_code == "HAILO_STREAM_ABORTED_BY_HW":
-            raise HailoRTStreamAborted("Stream aborted due to an external event") from libhailort_exception
-        if string_error_code == "HAILO_STREAM_ABORTED_BY_USER":
-            raise HailoRTStreamAbortedByUser("Stream was aborted by user") from libhailort_exception
+        if string_error_code == "HAILO_STREAM_ABORT":
+            raise HailoRTStreamAborted("Stream was aborted") from libhailort_exception
 
         if string_error_code == "HAILO_INVALID_OPERATION":
             raise HailoRTInvalidOperationException("Invalid operation. See hailort.log for more information") from libhailort_exception
@@ -720,11 +718,10 @@ class ConfiguredNetwork(object):
             return self._configured_network.get_vstream_names_from_stream_name(stream_name)
 
     def set_scheduler_timeout(self, timeout_ms, network_name=None):
-        """Sets the maximum time period that may pass before getting run time from the scheduler,
-            even without reaching the minimum required send requests (e.g. threshold - see set_scheduler_threshold()),
-            as long as at least one send request has been sent.
-            This time period is measured since the last time the scheduler gave this network group run time.
-        
+        """Sets the maximum time period that may pass before receiving run time from the scheduler.
+            This will occur providing at least one send request has been sent, there is no minimum requirement for send
+            requests, (e.g. threshold - see set_scheduler_threshold()).
+
         Args:
             timeout_ms (int): Timeout in milliseconds.
         """
@@ -1058,9 +1055,24 @@ class InferVStreams(object):
             max_proposals_per_class (int): NMS max proposals per class to set.
 
         Note:
+            This function must be called before starting inference!
             This function will fail in cases where there is no output with NMS operations on the CPU.
         """
         return self._infer_pipeline.set_nms_max_proposals_per_class(max_proposals_per_class)
+
+    def set_nms_max_accumulated_mask_size(self, max_accumulated_mask_size):
+        """Set maximum accumulated mask size for all the detections in a frame.
+            Used in order to change the output buffer frame size,
+            in cases where the output buffer is too small for all the segmentation detections.
+
+        Args:
+            max_accumulated_mask_size (int): NMS max accumulated mask size.
+
+        Note:
+            This function must be called before starting inference!
+            This function will fail in cases where there is no output with NMS operations on the CPU.
+        """
+        return self._infer_pipeline.set_nms_max_accumulated_mask_size(max_accumulated_mask_size)
 
     def __exit__(self, *args):
         self._infer_pipeline.release()
@@ -1487,8 +1499,8 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 4
-SUPPORTED_FW_MINOR = 16
-SUPPORTED_FW_REVISION = 2
+SUPPORTED_FW_MINOR = 17
+SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
 
@@ -3119,6 +3131,20 @@ class OutputVStream(object):
             This function will fail in cases where the output vstream has no NMS operations on the CPU.
         """
         return self._recv_object.set_nms_max_proposals_per_class(max_proposals_per_class)
+
+    def set_nms_max_accumulated_mask_size(self, max_accumulated_mask_size):
+        """Set maximum accumulated mask size for all the detections in a frame.
+            Used in order to change the output buffer frame size,
+            in cases where the output buffer is too small for all the segmentation detections.
+
+        Args:
+            max_accumulated_mask_size (int): NMS max accumulated mask size.
+
+        Note:
+            This function must be called before starting inference!
+            This function will fail in cases where there is no output with NMS operations on the CPU.
+        """
+        return self._recv_object.set_nms_max_accumulated_mask_size(max_accumulated_mask_size)
 
 
 class OutputVStreams(object):

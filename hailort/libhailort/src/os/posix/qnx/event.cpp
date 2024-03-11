@@ -120,14 +120,15 @@ Expected<Semaphore> Semaphore::create(uint32_t initial_count)
     return std::move(Semaphore(handle, initial_count));
 }
 
-SemaphorePtr Semaphore::create_shared(uint32_t initial_count)
+Expected<SemaphorePtr> Semaphore::create_shared(uint32_t initial_count)
 {
     const auto handle = open_semaphore_handle(initial_count);
-    if (INVALID_EVENT_HANDLE == handle) {
-        return nullptr;
-    }
+    CHECK(INVALID_EVENT_HANDLE != handle, HAILO_EVENT_CREATE_FAIL);
 
-    return make_shared_nothrow<Semaphore>(handle, initial_count);
+    auto res = make_shared_nothrow<Semaphore>(handle, initial_count);
+    CHECK_NOT_NULL(res, HAILO_OUT_OF_HOST_MEMORY);
+
+    return res;
 }
 
 hailo_status Semaphore::signal()

@@ -100,7 +100,7 @@ size_t OsUtils::get_dma_able_alignment()
 // TODO: implement on qnx (HRT-12356) - only needed when async api is implemented on qnx
 // TODO - URT-13534 - use sys call for QNX OS to get page size
 #elif defined(__QNX__)
-    return OS_UTILS__QNX_PAGE_SIZE
+    return OS_UTILS__QNX_PAGE_SIZE;
 #endif
 }
 

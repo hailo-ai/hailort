@@ -54,7 +54,7 @@ public:
     static void set_context_switch_breakpoint(DeviceWrapper &device, uint8_t breakpoint_id,
         bool break_at_any_network_group_index, uint8_t network_group_index, 
         bool break_at_any_batch_index, uint16_t batch_index, 
-        bool break_at_any_context_index,uint8_t context_index, 
+        bool break_at_any_context_index,uint16_t context_index, 
         bool break_at_any_action_index, uint16_t action_index);
     static void continue_context_switch_breakpoint(DeviceWrapper &device, uint8_t breakpoint_id);
     static void clear_context_switch_breakpoint(DeviceWrapper &device, uint8_t breakpoint_id);

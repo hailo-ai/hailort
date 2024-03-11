@@ -11,13 +11,16 @@
 
 #include "vdma/vdma_device.hpp"
 #include "vdma/memory/descriptor_list.hpp"
-#include "vdma/memory/mapping_manager.hpp"
 #include "vdma/vdma_config_manager.hpp"
 #include "vdma/pcie/pcie_device.hpp"
 #include "vdma/integrated/integrated_device.hpp"
 #include "device_common/control.hpp"
+#include "device_common/device_internal.hpp"
 #include "core_op/resource_manager/resource_manager_builder.hpp"
 #include "core_op/core_op.hpp"
+#include "common/os_utils.hpp"
+#include "utils/buffer_storage.hpp"
+#include "hef/hef_internal.hpp"
 
 #include <new>
 #include <algorithm>
@@ -35,7 +38,6 @@ static constexpr std::chrono::milliseconds DEFAULT_TIMEOUT(50000);
 VdmaDevice::VdmaDevice(std::unique_ptr<HailoRTDriver> &&driver, Device::Type type) :
     DeviceBase::DeviceBase(type),
     m_driver(std::move(driver)),
-    m_mapping_manager(*m_driver),
     m_is_configured(false)
 {
     activate_notifications(get_dev_id());
@@ -144,9 +146,10 @@ Expected<ConfiguredNetworkGroupVector> VdmaDevice::add_hef(Hef &hef, const Netwo
         CHECK_SUCCESS_AS_EXPECTED(status);
 
         assert(nullptr == m_vdma_interrupts_dispatcher);
-        auto interrupts_dispatcher = vdma::InterruptsDispatcher::create(std::ref(*m_driver));
-        CHECK_EXPECTED(interrupts_dispatcher);
-        m_vdma_interrupts_dispatcher = interrupts_dispatcher.release();
+        TRY(m_vdma_interrupts_dispatcher, vdma::InterruptsDispatcher::create(std::ref(*m_driver)));
+
+        assert(nullptr == m_vdma_transfer_launcher);
+        TRY(m_vdma_transfer_launcher, vdma::TransferLauncher::create());
 
         m_is_configured = true;
     }
@@ -173,7 +176,8 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> VdmaDevice::create_configured_
 
     /* build HEF supported features */
     auto resource_manager = ResourcesManagerBuilder::build(current_core_op_index,
-        *this, get_driver(), config_params, core_op_metadata, hef.pimpl->get_device_arch());
+        *this, get_driver(), config_params, core_op_metadata, static_cast<HEFHwArch>(hef.pimpl->get_device_arch()),
+        hef.pimpl->get_shef_file_handle());
     CHECK_EXPECTED(resource_manager);
 
 
@@ -194,7 +198,6 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> VdmaDevice::create_configured_
     core_ops.emplace_back(core_op_ptr);
     m_core_ops.emplace_back(core_op_ptr);
 
-    // TODO: HRT-8875
     auto metadata = hef.pimpl->network_group_metadata(core_op_metadata->core_op_name());
     auto network_group_expected = ConfiguredNetworkGroupBase::create(config_params, std::move(core_ops), std::move(metadata));
     CHECK_EXPECTED(network_group_expected);
@@ -225,6 +228,17 @@ hailo_reset_device_mode_t VdmaDevice::get_default_reset_mode()
     return HAILO_RESET_DEVICE_MODE_SOFT;
 }
 
+// TODO - HRT-13234, move to DeviceBase
+void VdmaDevice::shutdown_core_ops()
+{
+    for (auto core_op : m_core_ops) {
+        auto status = core_op->shutdown();
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to shutdown core op with status {}", status);
+        }
+    }
+}
+
 hailo_status VdmaDevice::mark_as_used()
 {
     return m_driver->mark_as_used();
@@ -234,6 +248,12 @@ ExpectedRef<vdma::InterruptsDispatcher> VdmaDevice::get_vdma_interrupts_dispatch
 {
     CHECK_AS_EXPECTED(m_vdma_interrupts_dispatcher, HAILO_INTERNAL_FAILURE, "vDMA interrupt dispatcher wasn't created");
     return std::ref(*m_vdma_interrupts_dispatcher);
+}
+
+ExpectedRef<vdma::TransferLauncher> VdmaDevice::get_vdma_transfer_launcher()
+{
+    CHECK_AS_EXPECTED(m_vdma_transfer_launcher, HAILO_INTERNAL_FAILURE, "vDMA transfer launcher wasn't created");
+    return std::ref(*m_vdma_transfer_launcher);
 }
 
 VdmaDevice::~VdmaDevice()
@@ -250,20 +270,50 @@ VdmaDevice::~VdmaDevice()
     }
 }
 
-hailo_status VdmaDevice::dma_map(void *address, size_t size, hailo_stream_direction_t direction)
+static std::pair<void *, size_t> aligned_part_to_map(void *original, size_t size)
 {
-    return m_mapping_manager.map_buffer(address, size, direction);
+    const auto dma_alignment = OsUtils::get_dma_able_alignment();
+    const auto aligned_address = HailoRTCommon::align_to(original, dma_alignment);
+    const auto unaligned_part = reinterpret_cast<uintptr_t>(aligned_address) - reinterpret_cast<uintptr_t>(original);
+    const auto aligned_size = size > unaligned_part ? size - unaligned_part : 0;
+    return std::make_pair(aligned_address, aligned_size);
 }
 
-hailo_status VdmaDevice::dma_unmap(void *address, hailo_stream_direction_t direction)
+hailo_status VdmaDevice::dma_map(void *address, size_t size, hailo_dma_buffer_direction_t data_direction)
 {
-    return m_mapping_manager.unmap_buffer(address, direction);
+    // Since we can't map unaligned addresses (to dma alignment), we map only the aligned part of the buffer. The other
+    // unaligned part will be copied into some bounce buffer (which is already mapped).
+    std::tie(address, size) = aligned_part_to_map(address, size);
+
+    if (size == 0) {
+        // The aligned part is not in range (Can happen when the buffer is smaller than the dma alignment), nothing to
+        // map.
+        return HAILO_SUCCESS;
+    }
+
+    // Find buffer_identifier if registered to BufferStorageResourceManager.
+    auto buffer_identifier = HailoRTDriver::INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER;
+    if (auto storage = BufferStorageResourceManager::get_resource(std::make_pair(address, size))) {
+        TRY(const auto buffer, storage->get()->get_dma_able_buffer());
+        buffer_identifier = buffer->buffer_identifier();
+    }
+
+    CHECK_EXPECTED(m_driver->vdma_buffer_map(address, size, to_hailo_driver_direction(data_direction), buffer_identifier));
+    return HAILO_SUCCESS;
 }
 
-Expected<std::pair<vdma::MappedBufferPtr, bool>> VdmaDevice::try_dma_map(vdma::DmaAbleBufferPtr buffer,
-    hailo_stream_direction_t direction)
+hailo_status VdmaDevice::dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t data_direction)
 {
-    return m_mapping_manager.try_dma_map(buffer, direction);
+    // Since we can't map unaligned addresses (to dma alignment), we map only the aligned part of the buffer. The other
+    // unaligned part will be copied into some bounce buffer (which is already mapped).
+    std::tie(address, size) = aligned_part_to_map(address, size);
+    if (size == 0) {
+        // The aligned part is not in range (Can happen when the buffer is smaller than the dma alignment), nothing to
+        // map.
+        return HAILO_SUCCESS;
+    }
+
+    return m_driver->vdma_buffer_unmap(address, size, to_hailo_driver_direction(data_direction));
 }
 
 Expected<ConfiguredNetworkGroupVector> VdmaDevice::create_networks_group_vector(Hef &hef, const NetworkGroupsParamsMap &configure_params)

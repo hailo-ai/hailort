@@ -31,16 +31,15 @@
 #include "core_op/resource_manager/intermediate_buffer.hpp"
 #include "core_op/resource_manager/config_buffer.hpp"
 #include "core_op/resource_manager/channel_allocator.hpp"
-#include "core_op/resource_manager/context_switch_buffer_builder.hpp"
+#include "core_op/resource_manager/action_list_buffer_builder/control_action_list_buffer_builder.hpp"
+#include "core_op/resource_manager/action_list_buffer_builder/ddr_action_list_buffer_builder.hpp"
 #include "device_common/control_protocol.hpp"
 #include "vdma/channel/boundary_channel.hpp"
 #include "vdma/pcie/pcie_device.hpp"
-
+#include "internal_buffer_manager.hpp"
 
 namespace hailort
 {
-
-#define DEFAULT_ACTUAL_BATCH_SIZE (1)
 
 
 struct EdgeLayer {
@@ -84,11 +83,10 @@ struct DdrChannelsInfo
 
 class ContextResources final {
 public:
-    static Expected<ContextResources> create(HailoRTDriver &driver, CONTROL_PROTOCOL__context_switch_context_type_t context_type,
-        const std::vector<vdma::ChannelId> &config_channels_ids, const ConfigBufferInfoMap &config_buffer_infos);
-
-    const std::vector<CONTROL_PROTOCOL__context_switch_context_info_single_control_t> &get_controls() const;
-    ContextSwitchBufferBuilder &builder();
+    static Expected<ContextResources> create(HailoRTDriver &driver,
+        CONTROL_PROTOCOL__context_switch_context_type_t context_type, const uint16_t context_index,
+        const std::vector<vdma::ChannelId> &config_channels_ids, const ConfigBufferInfoMap &config_buffer_infos,
+        std::shared_ptr<InternalBufferManager> internal_buffer_manager);
 
     hailo_status add_edge_layer(const LayerInfo &layer_info, vdma::ChannelId channel_id,
         const CONTROL_PROTOCOL__host_buffer_info_t &buffer_info, const SupportedFeatures &supported_features);
@@ -110,21 +108,26 @@ public:
         const SupportedFeatures &supported_features);
 
     std::vector<ConfigBuffer> &get_config_buffers();
+    CONTROL_PROTOCOL__context_switch_context_type_t get_context_type() const {
+        return m_context_type;
+    }
 
 private:
     ContextResources(HailoRTDriver &driver, CONTROL_PROTOCOL__context_switch_context_type_t context_type,
-        std::vector<ConfigBuffer> &&config_buffers) :
+        std::vector<ConfigBuffer> &&config_buffers, std::shared_ptr<InternalBufferManager> internal_buffer_manager) :
         m_driver(std::ref(driver)),
-        m_builder(context_type),
-        m_config_buffers(std::move(config_buffers))
+        m_context_type(context_type),
+        m_config_buffers(std::move(config_buffers)),
+        m_internal_buffer_manager(std::move(internal_buffer_manager))
     {}
 
     std::reference_wrapper<HailoRTDriver> m_driver;
-    ContextSwitchBufferBuilder m_builder;
+    CONTROL_PROTOCOL__context_switch_context_type_t m_context_type;
     std::vector<ConfigBuffer> m_config_buffers;
 
     std::vector<EdgeLayer> m_edge_layers;
     std::vector<DdrChannelsInfo> m_ddr_channels_infos;
+    std::shared_ptr<InternalBufferManager> m_internal_buffer_manager;
 };
 
 class ResourcesManager final
@@ -134,23 +137,24 @@ public:
         const ConfigureNetworkParams &config_params, std::shared_ptr<CoreOpMetadata> core_op_metadata,
         uint8_t core_op_index);
 
-    // TODO: HRT-9432 needs to call stop_vdma_interrupts_dispatcher and any other resource on dtor. 
+    // TODO: HRT-9432 needs to call stop_vdma_interrupts_dispatcher and any other resource on dtor.
     ~ResourcesManager() = default;
     ResourcesManager(const ResourcesManager &other) = delete;
     ResourcesManager &operator=(const ResourcesManager &other) = delete;
     ResourcesManager &operator=(ResourcesManager &&other) = delete;
     ResourcesManager(ResourcesManager &&other) noexcept;
 
-    ExpectedRef<IntermediateBuffer> create_intermediate_buffer(uint32_t transfer_size, uint16_t batch_size,
-        uint8_t src_stream_index, uint8_t src_context_index, vdma::ChannelId d2h_channel_id,
-        IntermediateBuffer::StreamingType streaming_type);
+    ExpectedRef<IntermediateBuffer> create_intermediate_buffer(
+        uint32_t transfer_size, uint16_t batch_size, uint8_t src_stream_index, uint16_t src_context_index,
+        vdma::ChannelId d2h_channel_id, IntermediateBuffer::StreamingType streaming_type);
     ExpectedRef<IntermediateBuffer> get_intermediate_buffer(const IntermediateBufferKey &key);
     hailo_status create_boundary_vdma_channel(const LayerInfo &layer_info);
 
     Expected<CONTROL_PROTOCOL__application_header_t> get_control_core_op_header();
 
-    Expected<std::reference_wrapper<ContextResources>> add_new_context(CONTROL_PROTOCOL__context_switch_context_type_t type,
-        const ConfigBufferInfoMap &config_info={});
+    Expected<std::reference_wrapper<ContextResources>> add_new_context(
+        CONTROL_PROTOCOL__context_switch_context_type_t context_type,
+        const uint16_t context_index, const ConfigBufferInfoMap &config_info={});
 
     const SupportedFeatures &get_supported_features() const
     {
@@ -181,16 +185,23 @@ public:
         return m_boundary_channels;
     }
 
+    std::shared_ptr<ActionListBufferBuilder>& get_action_list_buffer_builder()
+    {
+        return m_action_list_buffer_builder;
+    }
+
     Expected<hailo_stream_interface_t> get_default_streams_interface();
 
     Expected<Buffer> read_intermediate_buffer(const IntermediateBufferKey &key);
 
     hailo_status configure();
-    hailo_status enable_state_machine(uint16_t dynamic_batch_size, 
+    hailo_status enable_state_machine(uint16_t dynamic_batch_size,
         uint16_t batch_count = CONTROL_PROTOCOL__INIFINITE_BATCH_COUNT);
     hailo_status reset_state_machine();
     hailo_status start_vdma_interrupts_dispatcher();
     hailo_status stop_vdma_interrupts_dispatcher();
+    hailo_status start_vdma_transfer_launcher();
+    hailo_status stop_vdma_transfer_launcher();
     Expected<uint16_t> get_network_batch_size(const std::string &network_name) const;
     Expected<vdma::BoundaryChannelPtr> get_boundary_vdma_channel_by_stream_name(const std::string &stream_name);
     Expected<std::shared_ptr<const vdma::BoundaryChannel>> get_boundary_vdma_channel_by_stream_name(const std::string &stream_name) const;
@@ -207,6 +218,24 @@ public:
         size_t single_frame_transfer_size, uint32_t infer_cycles);
     hailo_status set_hw_infer_done_notification(std::condition_variable &infer_done_cond);
     Expected<HwInferResults> run_hw_only_infer();
+    hailo_status fill_internal_buffers_info();
+    static bool should_use_ddr_action_list(size_t num_contexts, HailoRTDriver::DmaType dma_type);
+    static Expected<std::shared_ptr<ActionListBufferBuilder>> create_action_list_buffer_builder(
+        size_t num_dynamic_contexts, HailoRTDriver &driver);
+    bool get_can_fast_batch_switch()
+    {
+        return m_core_op_metadata->get_can_fast_batch_switch();
+    }
+
+    void set_is_activated(bool is_activated)
+    {
+        m_is_activated = is_activated;
+    }
+
+    bool get_is_activated() const
+    {
+        return m_is_activated;
+    }
 
 private:
     hailo_status fill_infer_features(CONTROL_PROTOCOL__application_header_t &app_header);
@@ -224,24 +253,29 @@ private:
     std::map<IntermediateBufferKey, IntermediateBuffer> m_intermediate_buffers;
     std::shared_ptr<CoreOpMetadata> m_core_op_metadata;
     uint8_t m_core_op_index;
-    uint8_t m_dynamic_context_count;
-    uint8_t m_total_context_count;
+    uint16_t m_dynamic_context_count;
+    uint16_t m_total_context_count;
     const std::vector<std::string> m_network_index_map;
     LatencyMetersMap m_latency_meters; // Latency meter per network
     // TODO: HRT-9429 - fast access to channel by id, using array, using engine_index and channel_index.
     std::map<vdma::ChannelId, vdma::BoundaryChannelPtr> m_boundary_channels;
     bool m_is_configured;
+    bool m_is_activated;
     // Config channels ids are shared between all context. The following vector contains the channel id for each
     // config_stream_index.
     std::vector<vdma::ChannelId> m_config_channels_ids;
     // Mapped buffers would be used only in hw only flow
     std::vector<std::shared_ptr<vdma::MappedBuffer>> m_hw_only_boundary_buffers;
+    std::shared_ptr<InternalBufferManager> m_internal_buffer_manager;
+    std::shared_ptr<ActionListBufferBuilder> m_action_list_buffer_builder;
 
     ResourcesManager(VdmaDevice &vdma_device, HailoRTDriver &driver,
         ChannelAllocator &&channel_allocator, const ConfigureNetworkParams config_params,
         std::shared_ptr<CoreOpMetadata> &&core_op_metadata, uint8_t core_op_index,
         const std::vector<std::string> &&network_index_map, LatencyMetersMap &&latency_meters,
-        std::vector<vdma::ChannelId> &&config_channels_ids);
+        std::vector<vdma::ChannelId> &&config_channels_ids,
+        std::shared_ptr<InternalBufferManager> internal_buffer_manager,
+        std::shared_ptr<ActionListBufferBuilder> &&action_list_buffer_builder);
 };
 
 } /* namespace hailort */

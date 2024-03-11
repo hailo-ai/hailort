@@ -61,7 +61,7 @@ private:
         uint32_t current_buffer_offset, uint32_t *action_length, bool *is_repeated, uint8_t *num_repeated,
         CONTEXT_SWITCH_DEFS__ACTION_TYPE_t *sub_action_type, uint32_t *time_stamp);
     static Expected<ordered_json> parse_context(Device &device, uint32_t network_group_id,
-        CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index,
+        CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint16_t context_index,
         const std::string &context_name);
     static double get_accumulator_mean_value(const AccumulatorPtr &accumulator, double default_value = INVALID_NUMERIC_VALUE);
     static Expected<ordered_json> parse_network_groups(Device &device, const ConfiguredNetworkGroupVector &network_groups);

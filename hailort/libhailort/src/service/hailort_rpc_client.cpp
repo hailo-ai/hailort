@@ -11,14 +11,14 @@
 
 #include "hef/hef_internal.hpp"
 #include "hailort_rpc_client.hpp"
-#include "net_flow/ops/yolov8_post_process.hpp"
-#include "net_flow/ops/yolox_post_process.hpp"
-#include "net_flow/ops/ssd_post_process.hpp"
-#include "net_flow/ops/softmax_post_process.hpp"
-#include "net_flow/ops/argmax_post_process.hpp"
-#include "net_flow/ops/nms_post_process.hpp"
-#include "net_flow/ops/yolov5_op_metadata.hpp"
-#include "net_flow/ops/yolov5_seg_op_metadata.hpp"
+#include "net_flow/ops_metadata/yolov8_op_metadata.hpp"
+#include "net_flow/ops_metadata/yolox_op_metadata.hpp"
+#include "net_flow/ops_metadata/ssd_op_metadata.hpp"
+#include "net_flow/ops_metadata/softmax_op_metadata.hpp"
+#include "net_flow/ops_metadata/argmax_op_metadata.hpp"
+#include "net_flow/ops_metadata/nms_op_metadata.hpp"
+#include "net_flow/ops_metadata/yolov5_op_metadata.hpp"
+#include "net_flow/ops_metadata/yolov5_seg_op_metadata.hpp"
 
 #include <grpcpp/health_check_service_interface.h>
 
@@ -82,7 +82,12 @@ hailo_status HailoRtRpcClient::VDevice_release(const VDeviceIdentifier &identifi
     request.set_pid(pid);
 
     Release_Reply reply;
-    ClientContextWithTimeout context;
+    // Note: In multiple devices app and multiple networks, there are many mapped buffers for each device.
+    // Theerefore, the release of the devices might take a longer time to finished un-mapping all the buffers,
+    // so we increase the timeout for the VDevice_release context.
+    // TODO: HRT-13274
+    const std::chrono::minutes release_timeout(2);
+    ClientContextWithTimeout context(release_timeout);
     grpc::Status status = m_stub->VDevice_release(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -803,7 +808,7 @@ Expected<hailort::net_flow::YoloV5SegPostProcessConfig> create_yolov5seg_post_pr
 {
     auto yolov5seg_config_proto = op_metadata_proto.yolov5seg_config();
     hailort::net_flow::YoloV5SegPostProcessConfig yolov5seg_post_process_config = {yolov5seg_config_proto.mask_threshold(),
-                                                                                    yolov5seg_config_proto.layer_name()};
+        yolov5seg_config_proto.max_accumulated_mask_size(), yolov5seg_config_proto.layer_name()};
     return yolov5seg_post_process_config;
 }
 
@@ -1051,7 +1056,7 @@ hailo_vstream_info_t deserialize_vstream_info(const ProtoVStreamInfo &info_proto
         hailo_nms_shape_t nms_shape = {
             info_proto.nms_shape().number_of_classes(),
             info_proto.nms_shape().max_bbox_per_class(),
-            info_proto.nms_shape().max_mask_size()
+            info_proto.nms_shape().max_accumulated_mask_size()
         };
         info.nms_shape = nms_shape;
     } else {
@@ -1395,6 +1400,23 @@ hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_nms_max_bboxes_per_cla
     return static_cast<hailo_status>(reply.status());
 }
 
+hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size(const NetworkGroupIdentifier &identifier,
+    const std::string &edge_name, uint32_t max_accumulated_mask_size)
+{
+    ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Request request;
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
+    request.set_edge_name(edge_name);
+    request.set_max_accumulated_mask_size(max_accumulated_mask_size);
+
+    ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Reply reply;
+    ClientContextWithTimeout context;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    return static_cast<hailo_status>(reply.status());
+}
+
 Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_stream_names_from_vstream_name(const NetworkGroupIdentifier &identifier,
     const std::string &vstream_name)
 {
@@ -1454,7 +1476,6 @@ hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_infer_async(const NetworkG
         } else {
             proto_transfer_request.set_direction(HAILO_D2H_STREAM);
         }
-        proto_transfer_request.set_size(static_cast<uint32_t>(std::get<2>(idx_named_buffer).size()));
         proto_transfer_buffers->Add(std::move(proto_transfer_request));
     }
     request.set_infer_request_done_cb_idx(infer_request_done_cb);
@@ -1462,7 +1483,7 @@ hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_infer_async(const NetworkG
     ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_infer_async(&context, request, &reply);
     assert(reply.status() < HAILO_STATUS_COUNT);
-    if (reply.status() == HAILO_STREAM_ABORTED_BY_USER) {
+    if (reply.status() == HAILO_STREAM_ABORT) {
         return static_cast<hailo_status>(reply.status());
     }
     CHECK_GRPC_STATUS(status);
@@ -1488,6 +1509,8 @@ Expected<bool> HailoRtRpcClient::InputVStream_is_multi_planar(const VStreamIdent
 
 hailo_status HailoRtRpcClient::InputVStream_write(const VStreamIdentifier &identifier, const hailo_pix_buffer_t &buffer)
 {
+    CHECK(HAILO_PIX_BUFFER_MEMORY_TYPE_USERPTR == buffer.memory_type, HAILO_NOT_SUPPORTED, "Memory type of pix buffer must be of type USERPTR!");
+
     InputVStream_write_pix_Request request;
     auto proto_identifier = request.mutable_identifier();
     VStream_convert_identifier_to_proto(identifier, proto_identifier);
@@ -1502,7 +1525,7 @@ hailo_status HailoRtRpcClient::InputVStream_write(const VStreamIdentifier &ident
     grpc::Status status = m_stub->InputVStream_write_pix(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
-    if (reply.status() == HAILO_STREAM_ABORTED_BY_USER) {
+    if (reply.status() == HAILO_STREAM_ABORT) {
         return static_cast<hailo_status>(reply.status());
     }
     CHECK_SUCCESS(static_cast<hailo_status>(reply.status()));
@@ -1521,7 +1544,7 @@ hailo_status HailoRtRpcClient::InputVStream_write(const VStreamIdentifier &ident
     grpc::Status status = m_stub->InputVStream_write(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
-    if (reply.status() == HAILO_STREAM_ABORTED_BY_USER) {
+    if (reply.status() == HAILO_STREAM_ABORT) {
         return static_cast<hailo_status>(reply.status());
     }
     CHECK_SUCCESS(static_cast<hailo_status>(reply.status()));
@@ -1540,7 +1563,7 @@ hailo_status HailoRtRpcClient::OutputVStream_read(const VStreamIdentifier &ident
     grpc::Status status = m_stub->OutputVStream_read(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
-    if (reply.status() == HAILO_STREAM_ABORTED_BY_USER) {
+    if (reply.status() == HAILO_STREAM_ABORT) {
         return static_cast<hailo_status>(reply.status());
     }
     CHECK_SUCCESS(static_cast<hailo_status>(reply.status()));
@@ -1916,6 +1939,21 @@ hailo_status HailoRtRpcClient::OutputVStream_set_nms_max_proposals_per_class(con
     ClientContextWithTimeout context;
     VStream_set_nms_max_proposals_per_class_Reply reply;
     grpc::Status status = m_stub->OutputVStream_set_nms_max_proposals_per_class(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    return static_cast<hailo_status>(reply.status());
+}
+
+hailo_status HailoRtRpcClient::OutputVStream_set_nms_max_accumulated_mask_size(const VStreamIdentifier &identifier, uint32_t max_accumulated_mask_size)
+{
+    VStream_set_nms_max_accumulated_mask_size_Request request;
+    auto proto_identifier = request.mutable_identifier();
+    VStream_convert_identifier_to_proto(identifier, proto_identifier);
+    request.set_max_accumulated_mask_size(max_accumulated_mask_size);
+
+    ClientContextWithTimeout context;
+    VStream_set_nms_max_accumulated_mask_size_Reply reply;
+    grpc::Status status = m_stub->OutputVStream_set_nms_max_accumulated_mask_size(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     return static_cast<hailo_status>(reply.status());
