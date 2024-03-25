@@ -15,6 +15,8 @@
 #include "common/logger_macros.hpp"
 #include "common/os_utils.hpp"
 
+#include "utils/buffer_storage.hpp"
+
 #include "stream_common/stream_internal.hpp"
 
 
@@ -37,35 +39,18 @@ hailo_status InputStreamBase::write(const void *buffer, size_t size)
     return write(MemoryView::create_const(buffer, size));
 }
 
-hailo_status InputStreamBase::write_async(BufferPtr buffer, const TransferDoneCallback &user_callback)
-{
-    CHECK_ARG_NOT_NULL(buffer);
-    CHECK_ARG_NOT_NULL(buffer->data());
-    CHECK(buffer->size() == get_frame_size(), HAILO_INVALID_ARGUMENT, "Write size {} must be frame size {}", buffer->size(),
-        get_frame_size());
-
-    auto wrapped_callback = [buffer, user_callback](hailo_status status) {
-        user_callback(CompletionInfo{status, buffer->data(), buffer->size()});
-    };
-    return write_async(TransferRequest(std::move(buffer), wrapped_callback));
-}
-
 hailo_status InputStreamBase::write_async(const MemoryView &buffer, const TransferDoneCallback &user_callback)
 {
+    CHECK(!buffer.empty(), HAILO_INVALID_ARGUMENT, "Invalid buffer was passed to write_async");
     CHECK(0 == (reinterpret_cast<size_t>(buffer.data()) % HailoRTCommon::HW_DATA_ALIGNMENT), HAILO_INVALID_ARGUMENT,
         "User address must be aligned to {}", HailoRTCommon::HW_DATA_ALIGNMENT);
+    CHECK(buffer.size() == get_frame_size(), HAILO_INVALID_ARGUMENT, "Write size {} must be frame size {}",
+        buffer.size(), get_frame_size());
 
-    const auto dma_able_alignment = OsUtils::get_dma_able_alignment();
-    // User address is not aligned to page size
-    if ((0 != (reinterpret_cast<size_t>(buffer.data()) % dma_able_alignment))) {
-        auto user_buffer = UserBufferStorage::create_storage_from_user_buffer(const_cast<uint8_t*>(buffer.data()), buffer.size());
-        CHECK_EXPECTED_AS_STATUS(user_buffer);
-        return write_async(user_buffer.release(), user_callback);
-    } else {
-        auto dma_able_buffer = DmaStorage::create_dma_able_buffer_from_user_size(const_cast<uint8_t*>(buffer.data()), buffer.size());
-        CHECK_EXPECTED_AS_STATUS(dma_able_buffer);
-        return write_async(dma_able_buffer.release(), user_callback);
-    }
+    auto wrapped_callback = [buffer, user_callback](hailo_status status) {
+        user_callback(CompletionInfo{status, buffer.data(), buffer.size()});
+    };
+    return write_async(TransferRequest(buffer, wrapped_callback));
 }
 
 hailo_status InputStreamBase::write_async(const void *buffer, size_t size, const TransferDoneCallback &user_callback)
@@ -131,38 +116,22 @@ hailo_status OutputStreamBase::read(void *buffer, size_t size)
     return read(MemoryView(buffer, size));
 }
 
-hailo_status OutputStreamBase::read_async(BufferPtr buffer, const TransferDoneCallback &user_callback)
-{
-    CHECK_ARG_NOT_NULL(buffer);
-    CHECK_ARG_NOT_NULL(buffer->data());
-    CHECK(buffer->size() == get_frame_size(), HAILO_INVALID_ARGUMENT, "Read size {} must be frame size {}", buffer->size(),
-        get_frame_size());
-
-    auto wrapped_callback = [buffer, user_callback](hailo_status status) {
-        user_callback(CompletionInfo{status, const_cast<uint8_t*>(buffer->data()), buffer->size()});
-    };
-    return read_async(TransferRequest(std::move(buffer), wrapped_callback));
-}
-
 hailo_status OutputStreamBase::read_async(MemoryView buffer, const TransferDoneCallback &user_callback)
 {
     CHECK_ARG_NOT_NULL(buffer.data());
     CHECK(buffer.size() == get_frame_size(), HAILO_INVALID_ARGUMENT, "Read size {} must be frame size {}", buffer.size(),
         get_frame_size());
 
-    const auto dma_able_alignment = HailoRTCommon::DMA_ABLE_ALIGNMENT_READ_HW_LIMITATION;
-    BufferPtr wrapped_buffer = nullptr;
-    if ((0 != (reinterpret_cast<size_t>(buffer.data()) % dma_able_alignment))) {
-        auto user_buffer = UserBufferStorage::create_storage_from_user_buffer(const_cast<uint8_t*>(buffer.data()), buffer.size());
-        CHECK_EXPECTED_AS_STATUS(user_buffer);
-        wrapped_buffer = user_buffer.release();
-    } else {
-        auto dma_able_buffer = DmaStorage::create_dma_able_buffer_from_user_size(const_cast<uint8_t*>(buffer.data()), buffer.size());
-        CHECK_EXPECTED_AS_STATUS(dma_able_buffer);
-        wrapped_buffer = dma_able_buffer.release();
-    }
+    CHECK(!buffer.empty(), HAILO_INVALID_ARGUMENT, "Invalid buffer was passed to read_async");
+    CHECK(0 == (reinterpret_cast<size_t>(buffer.data()) % HailoRTCommon::HW_DATA_ALIGNMENT), HAILO_INVALID_ARGUMENT,
+        "User address must be aligned to {}", HailoRTCommon::HW_DATA_ALIGNMENT);
+    CHECK(buffer.size() == get_frame_size(), HAILO_INVALID_ARGUMENT, "Read size {} must be frame size {}",
+        buffer.size(), get_frame_size());
 
-    return read_async(wrapped_buffer, user_callback);
+    auto wrapped_callback = [buffer, user_callback](hailo_status status) {
+        user_callback(CompletionInfo{status, const_cast<uint8_t*>(buffer.data()), buffer.size()});
+    };
+    return read_async(TransferRequest(buffer, wrapped_callback));
 }
 
 hailo_status OutputStreamBase::read_async(void *buffer, size_t size, const TransferDoneCallback &user_callback)

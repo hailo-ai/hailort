@@ -134,7 +134,7 @@ Expected<size_t> EthernetInputStream::sync_write_raw_buffer(const MemoryView &bu
 
     size_t size = buffer.size();
     status = m_udp.send((uint8_t*)buffer.data(), &size, this->configuration.use_dataflow_padding, this->configuration.max_payload_size);
-    if (HAILO_STREAM_ABORTED_BY_USER == status) {
+    if (HAILO_STREAM_ABORT == status) {
         LOGGER__INFO("Udp send was aborted!");
         return make_unexpected(status);
     }
@@ -157,7 +157,7 @@ hailo_status EthernetInputStream::write_impl(const MemoryView &buffer)
     } else {
         status = eth_stream__write_all_no_sync(buffer.data(), offset, buffer.size());
     }
-    if (HAILO_STREAM_ABORTED_BY_USER == status) {
+    if (HAILO_STREAM_ABORT == status) {
         LOGGER__INFO("eth_stream__write_all was aborted!");
         return status;
     }
@@ -191,7 +191,7 @@ hailo_status EthernetInputStream::eth_stream__write_with_remainder(const void *b
     while (offset < offset_end_without_remainder) {
         transfer_size = offset_end_without_remainder - offset;
         auto expected_bytes_written = sync_write_raw_buffer(MemoryView::create_const(static_cast<const uint8_t*>(buffer) + offset, transfer_size));
-        if (HAILO_STREAM_ABORTED_BY_USER == expected_bytes_written.status()) {
+        if (HAILO_STREAM_ABORT == expected_bytes_written.status()) {
             LOGGER__INFO("sync_write_raw_buffer was aborted!");
             return expected_bytes_written.status();
         }
@@ -200,7 +200,7 @@ hailo_status EthernetInputStream::eth_stream__write_with_remainder(const void *b
     }
     if (0 < remainder_size) {
         auto expected_bytes_written = sync_write_raw_buffer(MemoryView::create_const(static_cast<const uint8_t*>(buffer) + offset, remainder_size));
-        if (HAILO_STREAM_ABORTED_BY_USER == expected_bytes_written.status()) {
+        if (HAILO_STREAM_ABORT == expected_bytes_written.status()) {
             LOGGER__INFO("sync_write_raw_buffer was aborted!");
             return expected_bytes_written.status();
         }
@@ -236,7 +236,7 @@ hailo_status TokenBucketEthernetInputStream::eth_stream__write_with_remainder(co
     
         transfer_size = offset_end_without_remainder - offset;
         auto expected_bytes_written = sync_write_raw_buffer(MemoryView::create_const(static_cast<const uint8_t*>(buffer) + offset, transfer_size));
-        if (HAILO_STREAM_ABORTED_BY_USER == expected_bytes_written.status()) {
+        if (HAILO_STREAM_ABORT == expected_bytes_written.status()) {
             LOGGER__INFO("sync_write_raw_buffer was aborted!");
             return expected_bytes_written.status();
         }
@@ -249,7 +249,7 @@ hailo_status TokenBucketEthernetInputStream::eth_stream__write_with_remainder(co
         (void)token_bucket.consumeWithBorrowAndWait(static_cast<double>(remainder_size), rate_bytes_per_sec, BURST_SIZE);
         
         auto expected_bytes_written = sync_write_raw_buffer(MemoryView::create_const(static_cast<const uint8_t*>(buffer) + offset, remainder_size));
-        if (HAILO_STREAM_ABORTED_BY_USER == expected_bytes_written.status()) {
+        if (HAILO_STREAM_ABORT == expected_bytes_written.status()) {
             LOGGER__INFO("sync_write_raw_buffer was aborted!");
             return expected_bytes_written.status();
         }
@@ -316,7 +316,7 @@ hailo_status EthernetInputStream::eth_stream__write_all_with_sync(const void *bu
     for (size_t i = 0; i < number_of_frames; i++) {
         // Write frame by frame, whereas the remainder packet is the sync packet
         status = eth_stream__write_with_remainder(buffer, offset, frame_size, this->configuration.sync_size);
-        if (HAILO_STREAM_ABORTED_BY_USER == status) {
+        if (HAILO_STREAM_ABORT == status) {
             LOGGER__INFO("eth_stream__write_with_remainder was aborted!");
             return status;
         }
@@ -515,7 +515,7 @@ hailo_status EthernetOutputStream::read_all_no_sync(void *buffer, size_t offset,
         transfer_size = offset_end - offset;
         MemoryView buffer_view(static_cast<uint8_t*>(buffer) + offset, transfer_size);
         auto expected_bytes_read = this->sync_read_raw_buffer(buffer_view);
-        if (HAILO_STREAM_ABORTED_BY_USER == expected_bytes_read.status()) {
+        if (HAILO_STREAM_ABORT == expected_bytes_read.status()) {
             LOGGER__INFO("sync_read_raw_buffer was aborted!");
             return expected_bytes_read.status();
         }
@@ -555,7 +555,7 @@ hailo_status EthernetOutputStream::read_all_with_sync(void *buffer, size_t offse
         status = expected_bytes_read.status();
         if (HAILO_TIMEOUT == status) {
             return handle_timeout(buffer, offset, initial_offset, frame_size);
-        } else if (HAILO_STREAM_ABORTED_BY_USER == status) {
+        } else if (HAILO_STREAM_ABORT == status) {
             LOGGER__INFO("sync_read_raw_buffer was aborted");
             return status;
         } else if (HAILO_SUCCESS != status) {
@@ -658,7 +658,7 @@ hailo_status EthernetOutputStream::read_impl(MemoryView buffer)
     } else {
         status = this->read_all_no_sync(buffer.data(), 0, buffer.size());
     }
-    if (HAILO_STREAM_ABORTED_BY_USER == status) {
+    if (HAILO_STREAM_ABORT == status) {
         LOGGER__INFO("read was aborted!");
         return status;
     }
@@ -676,7 +676,7 @@ Expected<size_t> EthernetOutputStream::sync_read_raw_buffer(MemoryView &buffer)
 
     auto buffer_size = buffer.size();
     status = m_udp.recv((uint8_t*)buffer.data(),&buffer_size);
-    if (HAILO_STREAM_ABORTED_BY_USER == status) {
+    if (HAILO_STREAM_ABORT == status) {
         LOGGER__INFO("Udp recv was aborted!");
         return make_unexpected(status);
     }

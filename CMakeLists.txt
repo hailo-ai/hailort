@@ -1,8 +1,12 @@
 cmake_minimum_required(VERSION 3.0.0)
 
 find_program(CCACHE_PROGRAM ccache)
+find_program(CLACHE_PROGRAM clcache)
+
 if(CCACHE_PROGRAM)
     set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
+elseif(CLCACHE_PROGRAM)
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CLCACHE_PROGRAM}")
 endif()
 
 project(HailoRT)

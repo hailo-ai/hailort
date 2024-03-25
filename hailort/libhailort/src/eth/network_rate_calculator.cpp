@@ -117,10 +117,10 @@ Expected<std::map<std::string, uint32_t>> NetworkUdpRateCalculator::calculate_in
             total_input_rate, total_output_rate, max_supported_bandwidth);
         if (total_output_rate > total_input_rate) {
             // Output is bigger than max rate. Adjusting input rate accordingly
-            auto input_output_ratio = (total_input_rate / total_output_rate);
+            double input_output_ratio = ((double)total_input_rate / total_output_rate);
             LOGGER__WARNING("Output Bps ({}) is bigger than input Bps ({}) output (ratio is: {})", total_output_rate,
                 total_input_rate, input_output_ratio);
-            max_supported_bandwidth *= input_output_ratio;
+            max_supported_bandwidth = static_cast<uint32_t>(input_output_ratio * max_supported_bandwidth);
         }
         auto total_inputs_rate_to_max_supported_ratio = (static_cast<float64_t>(max_supported_bandwidth) / total_input_rate);
         for (auto &rate_pair : input_rates) {

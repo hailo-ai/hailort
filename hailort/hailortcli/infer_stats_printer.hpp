@@ -15,19 +15,9 @@
 
 #include <limits>
 
-class InferResultsFormatUtils final {
-public:
-    InferResultsFormatUtils() = delete;
-
-    static const uint32_t DEFAULT_FLOATING_POINT_PRECISION = 4;
-
-    static std::string format_statistic(const Expected<double> &statistic, uint32_t precision = DEFAULT_FLOATING_POINT_PRECISION);
-    static std::string format_statistic(const Expected<size_t> &statistic);
-    static double latency_result_to_ms(std::chrono::nanoseconds latency);
-};
-
 class InferStatsPrinter final {
 public:
+    static double latency_result_to_ms(std::chrono::nanoseconds latency);
     static Expected<InferStatsPrinter> create(const inference_runner_params &params, bool print_running_info = true);
     void print(const std::vector<std::string> &network_groups_names, Expected<InferResult> &inference_result);
     void print_benchmark_csv(InferResult &hw_inference_result,

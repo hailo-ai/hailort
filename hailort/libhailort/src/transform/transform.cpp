@@ -156,6 +156,16 @@ std::string TransformContextUtils::make_reorder_description(hailo_format_order_t
     return reorder_description.str();
 }
 
+std::string TransformContextUtils::make_pad_periph_description(hailo_3d_image_shape_t src_shape, hailo_3d_image_shape_t dst_shape)
+{
+    std::stringstream reorder_description;
+    reorder_description << "Padding Periph shape - src_shape: (" << src_shape.height << ", " << src_shape.width << ", "
+        << src_shape.features << "), dst_shape: (" << dst_shape.height << ", " << dst_shape.width << ", "
+        << dst_shape.features << ")";
+
+    return reorder_description.str();
+}
+
 std::string TransformContextUtils::make_transpose_description(hailo_3d_image_shape_t src_shape, hailo_3d_image_shape_t transposed_shape)
 {
     std::stringstream transpose_description;
@@ -1031,8 +1041,6 @@ hailo_status reorder_input_stream(const void *src_ptr, hailo_3d_image_shape_t sr
 
     if (((HAILO_FORMAT_ORDER_FCR == src_format.order) || (HAILO_FORMAT_ORDER_NHWC == src_format.order)) &&
         (HAILO_FORMAT_ORDER_FCR == dst_format.order)) {
-        //Check that there is alignment for 8 bytes
-        assert(0 == ((HailoRTCommon::get_data_bytes(dst_format.type) * dst_image_shape.features) % HailoRTCommon::HW_DATA_ALIGNMENT));
         switch (dst_format.type) {
             case HAILO_FORMAT_TYPE_UINT8:
                 transform__h2d_FCR<uint8_t>((uint8_t*)src_ptr, &src_image_shape, (uint8_t*)dst_ptr, &dst_image_shape);
@@ -1536,7 +1544,7 @@ hailo_status transform_demux_raw_frame(const void *src, uint32_t offset,
 }
 
 hailo_status validate_input_transform_params(hailo_3d_image_shape_t src_image_shape, hailo_format_t src_format,
-    hailo_3d_image_shape_t dst_image_shape, hailo_format_t dst_format)
+    hailo_format_t dst_format)
 {
     /* Check device type */
     if (!((HAILO_FORMAT_TYPE_UINT16 == dst_format.type) || (HAILO_FORMAT_TYPE_UINT8 == dst_format.type))) {
@@ -1545,15 +1553,7 @@ hailo_status validate_input_transform_params(hailo_3d_image_shape_t src_image_sh
     }
 
     /* Check reorder flags - where no reorder is needed */
-    if ((HAILO_FORMAT_ORDER_FCR == src_format.order) &&
-        (HAILO_FORMAT_ORDER_FCR == dst_format.order)) {
-        //Check that there is alignment for 8 bytes
-        if (0 != ((HailoRTCommon::get_data_bytes(dst_format.type) * dst_image_shape.features) % HailoRTCommon::HW_DATA_ALIGNMENT)) {
-            LOGGER__ERROR("HW features must be aligned to {}. passed hw features - {}",
-                HailoRTCommon::HW_DATA_ALIGNMENT, dst_image_shape.features);
-            return HAILO_INVALID_ARGUMENT;
-        }
-    } else if ((HAILO_FORMAT_ORDER_BAYER_RGB == src_format.order) &&
+    if ((HAILO_FORMAT_ORDER_BAYER_RGB == src_format.order) &&
         (HAILO_FORMAT_ORDER_BAYER_RGB == dst_format.order)) {
         if (src_image_shape.features != 1) {
             LOGGER__ERROR("Invalid Bayer user features. Expected 1, received {}", src_image_shape.features);
@@ -1565,11 +1565,6 @@ hailo_status validate_input_transform_params(hailo_3d_image_shape_t src_image_sh
             LOGGER__ERROR("Invalid Bayer user features. Expected 1, received {}", src_image_shape.features);
             return HAILO_INVALID_ARGUMENT;
         }
-    } else if ((HAILO_FORMAT_ORDER_YUY2 == src_format.order) &&
-        (HAILO_FORMAT_ORDER_YUY2 == dst_format.order)) {
-        auto shape_size_in_bytes = HailoRTCommon::get_shape_size(src_image_shape) * HailoRTCommon::get_data_bytes(src_format.type);
-        CHECK(shape_size_in_bytes % HailoRTCommon::HW_DATA_ALIGNMENT == 0, HAILO_INVALID_ARGUMENT,
-          "YUY2_to_YUY2 Transform shape_size must be aligned to {}", HailoRTCommon::HW_DATA_ALIGNMENT);
     }
 
     return HAILO_SUCCESS;
@@ -1654,6 +1649,15 @@ std::string InputTransformContext::description() const
         transform_description << TransformContextUtils::make_reorder_description(m_src_format.order, m_src_image_shape, m_dst_format.order, m_dst_image_shape);
     }
 
+    if (m_should_pad_periph) {
+        if (!first) {
+            transform_description << " | ";
+        } else {
+            first = false;
+        }
+        transform_description << TransformContextUtils::make_pad_periph_description(m_src_image_shape, m_dst_image_shape);
+    }
+
     return transform_description.str();
 }
 
@@ -1661,7 +1665,7 @@ Expected<std::unique_ptr<InputTransformContext>> InputTransformContext::create(c
     const hailo_format_t &src_format, const hailo_3d_image_shape_t &dst_image_shape,
     const hailo_format_t &dst_format, const std::vector<hailo_quant_info_t> &dst_quant_infos)
 {
-    auto status = validate_input_transform_params(src_image_shape, src_format, dst_image_shape, dst_format);
+    auto status = validate_input_transform_params(src_image_shape, src_format, dst_format);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     const auto internal_src_format = HailoRTDefaults::expand_auto_format(src_format, dst_format);
@@ -2077,6 +2081,15 @@ std::string FrameOutputTransformContext::description() const
         transform_description << TransformContextUtils::make_reorder_description(m_src_format.order, m_src_image_shape, m_dst_format.order, m_dst_image_shape);
     }
 
+    if (m_should_pad_periph) {
+        if (!first) {
+            transform_description << " | ";
+        } else {
+            first = false;
+        }
+        transform_description << TransformContextUtils::make_pad_periph_description(m_src_image_shape, m_dst_image_shape);
+    }
+
     return transform_description.str();
 }
 
@@ -2192,8 +2205,9 @@ hailo_status fuse_buffers(const std::vector<MemoryView> &buffers,
             HailoRTCommon::get_nms_hw_frame_size(info));
     }
 
-    // We keep the size of the dst buffer 1 bbox_size too big to stay in the format of not defused nms frames.
-    total_size_of_buffers += frames[0].first->bbox_size;
+    // We keep the size of the dst buffer 1 burst_size too big to stay in the format of not defused nms frames.
+    const auto burst_size = (frames[0].first->bbox_size * frames[0].first->burst_size);
+    total_size_of_buffers += burst_size;
 
     CHECK(dst.size() == total_size_of_buffers, HAILO_INVALID_ARGUMENT,
         "Size of destination buffer is not same as the expected size of the fused frame! (size: {}, expected: {})",

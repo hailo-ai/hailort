@@ -72,6 +72,7 @@ target_link_libraries(hailortcli
     nlohmann_json
     spdlog::spdlog
     readerwriterqueue
+    eigen
     DotWriter
     scheduler_mon_proto
     profiler_proto)

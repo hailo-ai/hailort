@@ -17,8 +17,8 @@
 #include "device_common/device_internal.hpp"
 #include "network_group/network_group_internal.hpp"
 #include "vdma/channel/interrupts_dispatcher.hpp"
-#include "vdma/memory/mapping_manager.hpp"
-#include "os/hailort_driver.hpp"
+#include "vdma/channel/transfer_launcher.hpp"
+#include "vdma/driver/hailort_driver.hpp"
 
 
 namespace hailort
@@ -32,6 +32,7 @@ public:
 
     virtual hailo_status wait_for_wakeup() override;
     virtual void increment_control_sequence() override;
+    virtual void shutdown_core_ops() override;
     virtual hailo_reset_device_mode_t get_default_reset_mode() override;
     hailo_status mark_as_used();
     virtual Expected<size_t> read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id) override;
@@ -48,11 +49,10 @@ public:
     };
 
     ExpectedRef<vdma::InterruptsDispatcher> get_vdma_interrupts_dispatcher();
+    ExpectedRef<vdma::TransferLauncher> get_vdma_transfer_launcher();
 
-    virtual hailo_status dma_map(void *address, size_t size, hailo_stream_direction_t direction) override;
-    virtual hailo_status dma_unmap(void *address, hailo_stream_direction_t direction) override;
-    virtual Expected<std::pair<vdma::MappedBufferPtr, bool>> try_dma_map(vdma::DmaAbleBufferPtr buffer,
-        hailo_stream_direction_t direction) override;
+    virtual hailo_status dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
+    virtual hailo_status dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
 
 protected:
     VdmaDevice(std::unique_ptr<HailoRTDriver> &&driver, Type type);
@@ -63,16 +63,15 @@ protected:
         uint8_t *response_buffer, size_t *response_size, hailo_cpu_id_t cpu_id) override;
     virtual Expected<ConfiguredNetworkGroupVector> add_hef(Hef &hef, const NetworkGroupsParamsMap &configure_params) override;
 
-    // Initialization dependency: MappingManager holds dma mappings for all buffers relative to this device!
-    // (CoreOp for example holds streams with mapped buffers)
     std::unique_ptr<HailoRTDriver> m_driver;
-    vdma::MappingManager m_mapping_manager;
+    // TODO - HRT-13234, move to DeviceBase
     std::vector<std::shared_ptr<CoreOp>> m_core_ops;
     std::vector<std::shared_ptr<ConfiguredNetworkGroup>> m_network_groups; // TODO: HRT-9547 - Remove when ConfiguredNetworkGroup will be kept in global context
 
     // The vdma interrupts dispatcher contains a callback with a reference to the current activated network group
-    // (reference to the ResourcesManager). Hence, it must be destructed before the networks groups are destructed.
+    // (reference to the ResourcesManager). Hence, it must be destroyed before the networks groups are destroyed.
     std::unique_ptr<vdma::InterruptsDispatcher> m_vdma_interrupts_dispatcher;
+    std::unique_ptr<vdma::TransferLauncher> m_vdma_transfer_launcher;
 
     ActiveCoreOpHolder m_active_core_op_holder;
     bool m_is_configured;

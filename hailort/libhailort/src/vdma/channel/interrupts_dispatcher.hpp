@@ -10,7 +10,7 @@
 #ifndef _HAILO_VDMA_INTERRUPTS_DISPATCHER_HPP_
 #define _HAILO_VDMA_INTERRUPTS_DISPATCHER_HPP_
 
-#include "os/hailort_driver.hpp"
+#include "vdma/driver/hailort_driver.hpp"
 #include <thread>
 #include <functional>
 #include <condition_variable>

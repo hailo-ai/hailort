@@ -61,11 +61,11 @@ static hailo_status infer(ConfiguredNetworkGroup &network_group)
         case HAILO_SUCCESS:
             // Real applications can forward the buffer to post-process/display. Here we just re-launch new async read.
             status = output.read_async(completion_info.buffer_addr, completion_info.buffer_size, read_done);
-            if ((HAILO_SUCCESS != status) && (HAILO_STREAM_ABORTED_BY_USER != status)) {
+            if ((HAILO_SUCCESS != status) && (HAILO_STREAM_ABORT != status)) {
                 std::cerr << "Failed read async with status=" << status << std::endl;
             }
             break;
-        case HAILO_STREAM_ABORTED_BY_USER:
+        case HAILO_STREAM_ABORT:
             // Transfer was canceled, finish gracefully.
             break;
         default:
@@ -80,11 +80,11 @@ static hailo_status infer(ConfiguredNetworkGroup &network_group)
             // Real applications may free the buffer and replace it with new buffer ready to be sent. Here we just
             // re-launch new async write.
             status = input.write_async(completion_info.buffer_addr, completion_info.buffer_size, write_done);
-            if ((HAILO_SUCCESS != status) && (HAILO_STREAM_ABORTED_BY_USER != status)) {
+            if ((HAILO_SUCCESS != status) && (HAILO_STREAM_ABORT != status)) {
                 std::cerr << "Failed read async with status=" << status << std::endl;
             }
             break;
-        case HAILO_STREAM_ABORTED_BY_USER:
+        case HAILO_STREAM_ABORT:
             // Transfer was canceled, finish gracefully.
             break;
         default:
@@ -121,7 +121,7 @@ static hailo_status infer(ConfiguredNetworkGroup &network_group)
     std::this_thread::sleep_for(std::chrono::seconds(5));
 
     // Calling shutdown on a network group will ensure that all async operations are done. All pending
-    // operations will be canceled and their callbacks will be called with status=HAILO_STREAM_ABORTED_BY_USER.
+    // operations will be canceled and their callbacks will be called with status=HAILO_STREAM_ABORT.
     // Only after the shutdown is called, we can safely free the buffers and any variable captured inside the async
     // callback lambda.
     network_group.shutdown();

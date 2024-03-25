@@ -5,7 +5,7 @@ Param(
 )
 
 $max_processes_count = 8
-$first_hef="hefs\multi_network_shortcut_net.hef"
+$first_hef="hefs\shortcut_net_nv12.hef"
 $second_hef="hefs\shortcut_net.hef"
 $executable_base_name="cpp_multi_process_example"
 $executable_name="$executable_base_name.exe"

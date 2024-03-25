@@ -1,11 +1,11 @@
 :: cmd
 @ECHO OFF
 set BASE_URI=https://hailo-hailort.s3.eu-west-2.amazonaws.com
-set HRT_VERSION=4.16.2
+set HRT_VERSION=4.17.0
 set REMOTE_HEF_DIR=Hailo8/%HRT_VERSION%/HEFS
 set LOCAL_EXAMPLES_HEF_DIR=..\libhailort\examples\hefs
 set LOCAL_TUTORIALS_HEF_DIR=..\libhailort\bindings\python\platform\hailo_tutorials\hefs
-set EXAMPLES_HEFS=(multi_network_shortcut_net.hef shortcut_net.hef)
+set EXAMPLES_HEFS=(multi_network_shortcut_net.hef shortcut_net.hef shortcut_net_nv12.hef)
 set TUTORIALS_HEFS=(resnet_v1_18.hef shortcut_net.hef)
 
 if not exist %LOCAL_EXAMPLES_HEF_DIR% mkdir %LOCAL_EXAMPLES_HEF_DIR%

@@ -15,7 +15,7 @@
 #include "device_common/device_internal.hpp"
 #include "network_group/network_group_internal.hpp"
 #include "utils/sensor_config_utils.hpp"
-
+#include "hef/hef_internal.hpp"
 
 namespace hailort
 {
@@ -26,7 +26,8 @@ DeviceBase::DeviceBase(Type type) :
     m_d2h_notification_thread(),
     m_notif_fetch_thread_params(make_shared_nothrow<NotificationThreadSharedParams>()),
     m_d2h_callbacks{{0,0}},
-    m_callbacks_lock()
+    m_callbacks_lock(),
+    m_is_shutdown_core_ops_called(false)
     // TODO: Handle m_notif_fetch_thread_params null pointer
 {
 #ifndef NDEBUG
@@ -565,8 +566,17 @@ void DeviceBase::d2h_notification_thread_main(const std::string &device_id)
             continue;
         }
 
-        hailo_notification_t callback_notification;
         uint32_t notification_fw_id = notification.header.event_id;
+
+        if (HEALTH_MONITOR_CLOSED_STREAMS_D2H_EVENT_ID == notification_fw_id) {
+            if (!m_is_shutdown_core_ops_called) {
+                LOGGER__WARNING("Aborting Infer, Device {} got closed streams notification from \'Health Monitor\'", device_id);
+                shutdown_core_ops();
+                m_is_shutdown_core_ops_called = true;
+            }
+        }
+
+        hailo_notification_t callback_notification;
         hailo_notification_id_t hailo_notification_id;
         hailo_status status = fw_notification_id_to_hailo((D2H_EVENT_ID_t)notification_fw_id, &hailo_notification_id);
         if (HAILO_SUCCESS != status) {
@@ -600,9 +610,10 @@ hailo_status DeviceBase::check_hef_is_compatible(Hef &hef)
     const auto device_arch = get_architecture();
     CHECK_EXPECTED_AS_STATUS(device_arch, "Can't get device architecture (is the FW loaded?)");
 
-    if (!is_hef_compatible(device_arch.value(), hef.pimpl->get_device_arch())) {
+    if (!is_hef_compatible(device_arch.value(), static_cast<HEFHwArch>(hef.pimpl->get_device_arch()))) {
         auto device_arch_str = HailoRTCommon::get_device_arch_str(device_arch.value());
-        auto hef_arch_str = HailoRTCommon::get_device_arch_str(hef_arch_to_device_arch(hef.pimpl->get_device_arch()));
+        auto hef_arch_str =
+            HailoRTCommon::get_device_arch_str(hef_arch_to_device_arch(static_cast<HEFHwArch>(hef.pimpl->get_device_arch())));
 
         LOGGER__ERROR("HEF format is not compatible with device. Device arch: {}, HEF arch: {}",
             device_arch_str.c_str(), hef_arch_str.c_str());
@@ -615,15 +626,18 @@ hailo_status DeviceBase::check_hef_is_compatible(Hef &hef)
         CHECK_EXPECTED_AS_STATUS(extended_device_info_expected,  "Can't get device extended info");
         hailo_extended_device_information_t extended_device_information = extended_device_info_expected.release();
         check_clock_rate_for_hailo8(extended_device_information.neural_network_core_clock_rate,
-            hef.pimpl->get_device_arch());
+            static_cast<HEFHwArch>(hef.pimpl->get_device_arch()));
     }
 
-    if ((ProtoHEFHwArch::PROTO__HW_ARCH__HAILO8L == hef.pimpl->get_device_arch()) && (HAILO_ARCH_HAILO8 == device_arch.value())) {
-        LOGGER__WARNING(
-            "HEF was compiled for Hailo8L device, while the device itself is Hailo8. " \
-            "This will result in lower performance.");
+    if ((static_cast<ProtoHEFHwArch>(HEFHwArch::HW_ARCH__HAILO8L) == hef.pimpl->get_device_arch()) &&
+        (HAILO_ARCH_HAILO8 == device_arch.value())) {
+        LOGGER__WARNING("HEF was compiled for Hailo8L device, while the device itself is Hailo8. " \
+        "This will result in lower performance.");
+    } else if ((static_cast<ProtoHEFHwArch>(HEFHwArch::HW_ARCH__HAILO15M) == hef.pimpl->get_device_arch()) &&
+        (HAILO_ARCH_HAILO15H == device_arch.value())) {
+        LOGGER__WARNING("HEF was compiled for Hailo15M device, while the device itself is Hailo15H. " \
+        "This will result in lower performance.");
     }
-
 
     return HAILO_SUCCESS;
 }
@@ -714,46 +728,46 @@ hailo_status DeviceBase::validate_fw_version_for_platform(const hailo_device_ide
     return validate_binary_version_for_platform(&fw_version, &min_supported_fw_version, fw_binary_type);
 }
 
-bool DeviceBase::is_hef_compatible(hailo_device_architecture_t device_arch, ProtoHEFHwArch hef_arch)
+bool DeviceBase::is_hef_compatible(hailo_device_architecture_t device_arch, HEFHwArch hef_arch)
 {
     switch (device_arch) {
     case HAILO_ARCH_HAILO8:
-        return (hef_arch == PROTO__HW_ARCH__HAILO8P) || (hef_arch == PROTO__HW_ARCH__HAILO8R) || (hef_arch == PROTO__HW_ARCH__HAILO8L);
+        return (hef_arch == HEFHwArch::HW_ARCH__HAILO8P) || (hef_arch == HEFHwArch::HW_ARCH__HAILO8R) || (hef_arch == HEFHwArch::HW_ARCH__HAILO8L);
     case HAILO_ARCH_HAILO8L:
-        return (hef_arch == PROTO__HW_ARCH__HAILO8L);
+        return (hef_arch == HEFHwArch::HW_ARCH__HAILO8L);
     case HAILO_ARCH_HAILO15H:
         // Compare with HW_ARCH__LAVENDER and HW_ARCH__GINGER to support hefs compiled for them
-        return (hef_arch == PROTO__HW_ARCH__GINGER) || (hef_arch == PROTO__HW_ARCH__LAVENDER) ||
-            (hef_arch == PROTO__HW_ARCH__HAILO15H) || (hef_arch == PROTO__HW_ARCH__HAILO15M);
+        return (hef_arch == HEFHwArch::HW_ARCH__GINGER) || (hef_arch == HEFHwArch::HW_ARCH__LAVENDER) ||
+            (hef_arch == HEFHwArch::HW_ARCH__HAILO15H) || (hef_arch == HEFHwArch::HW_ARCH__HAILO15M);
     case HAILO_ARCH_PLUTO:
-        return (hef_arch == PROTO__HW_ARCH__PLUTO);
+        return (hef_arch == HEFHwArch::HW_ARCH__PLUTO);
     case HAILO_ARCH_HAILO15M:
-        return (hef_arch == PROTO__HW_ARCH__HAILO15M);
+        return (hef_arch == HEFHwArch::HW_ARCH__HAILO15M);
     default:
         return false;
     }
 }
 
-hailo_device_architecture_t DeviceBase::hef_arch_to_device_arch(ProtoHEFHwArch hef_arch)
+hailo_device_architecture_t DeviceBase::hef_arch_to_device_arch(HEFHwArch hef_arch)
 {
     switch (hef_arch) {
-    case PROTO__HW_ARCH__SAGE_A0:
+    case HEFHwArch::HW_ARCH__SAGE_A0:
         return HAILO_ARCH_HAILO8_A0;
-    case PROTO__HW_ARCH__HAILO8:
-    case PROTO__HW_ARCH__HAILO8P:
-    case PROTO__HW_ARCH__HAILO8R:
-    case PROTO__HW_ARCH__SAGE_B0:
-    case PROTO__HW_ARCH__PAPRIKA_B0:
+    case HEFHwArch::HW_ARCH__HAILO8:
+    case HEFHwArch::HW_ARCH__HAILO8P:
+    case HEFHwArch::HW_ARCH__HAILO8R:
+    case HEFHwArch::HW_ARCH__SAGE_B0:
+    case HEFHwArch::HW_ARCH__PAPRIKA_B0:
         return HAILO_ARCH_HAILO8;
-    case PROTO__HW_ARCH__HAILO8L:
+    case HEFHwArch::HW_ARCH__HAILO8L:
         return HAILO_ARCH_HAILO8L;
-    case PROTO__HW_ARCH__HAILO15H:
-    case PROTO__HW_ARCH__GINGER:
-    case PROTO__HW_ARCH__LAVENDER:
+    case HEFHwArch::HW_ARCH__HAILO15H:
+    case HEFHwArch::HW_ARCH__GINGER:
+    case HEFHwArch::HW_ARCH__LAVENDER:
         return HAILO_ARCH_HAILO15H;
-    case PROTO__HW_ARCH__PLUTO:
+    case HEFHwArch::HW_ARCH__PLUTO:
         return HAILO_ARCH_PLUTO;
-    case PROTO__HW_ARCH__HAILO15M:
+    case HEFHwArch::HW_ARCH__HAILO15M:
         return HAILO_ARCH_HAILO15M;
 
     default:
@@ -761,9 +775,9 @@ hailo_device_architecture_t DeviceBase::hef_arch_to_device_arch(ProtoHEFHwArch h
     }
 }
 
-void DeviceBase::check_clock_rate_for_hailo8(uint32_t clock_rate, ProtoHEFHwArch hef_hw_arch)
+void DeviceBase::check_clock_rate_for_hailo8(uint32_t clock_rate, HEFHwArch hef_hw_arch)
 {
-    uint32_t expected_clock_rate = (hef_hw_arch == ProtoHEFHwArch::PROTO__HW_ARCH__HAILO8R) ? HAILO8R_CLOCK_RATE : HAILO8_CLOCK_RATE;
+    uint32_t expected_clock_rate = (hef_hw_arch == HEFHwArch::HW_ARCH__HAILO8R) ? HAILO8R_CLOCK_RATE : HAILO8_CLOCK_RATE;
     if (expected_clock_rate != clock_rate) {
         LOGGER__WARNING(
             "HEF was compiled assuming clock rate of {} MHz, while the device clock rate is {} MHz. " \

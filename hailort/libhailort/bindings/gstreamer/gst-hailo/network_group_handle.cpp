@@ -302,7 +302,7 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> NetworkGroupConfigManager::con
         GST_CHECK_EXPECTED(infos, element, RESOURCE, "Failed getting network infos");
         if ((infos.release().size() > 1) || (scheduling_algorithm == HAILO_SCHEDULING_ALGORITHM_NONE)) {
             // If cng was already configured
-            // But hailonet is not running all networks in the cng (or if not using scheduler) -
+            // But sync_hailonet is not running all networks in the cng (or if not using scheduler) -
             // Do not use multiplexer!
             return found_cng;
         }

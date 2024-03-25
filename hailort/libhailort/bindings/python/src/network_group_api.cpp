@@ -71,7 +71,7 @@ void ActivatedAppContextManagerWrapper::add_to_python_module(py::module &m)
     ;
 
     py::class_<ActivatedNetworkGroup>(m, "ActivatedNetworkGroup")
-        .def("get_intermediate_buffer", [](ActivatedNetworkGroup& self, uint8_t src_context_index,
+        .def("get_intermediate_buffer", [](ActivatedNetworkGroup& self, uint16_t src_context_index,
             uint8_t src_stream_index)
         {
             auto buff = self.get_intermediate_buffer(std::make_pair(src_context_index, src_stream_index));

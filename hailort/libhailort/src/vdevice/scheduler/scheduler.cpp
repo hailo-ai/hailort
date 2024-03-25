@@ -14,7 +14,6 @@
 #include "vdevice/vdevice_core_op.hpp"
 #include "vdevice/scheduler/scheduler_oracle.hpp"
 #include "vdma/vdma_config_manager.hpp"
-#include "hef/hef_internal.hpp"
 
 #include <fstream>
 
@@ -76,6 +75,7 @@ void CoreOpsScheduler::remove_core_op(scheduler_core_op_handle_t core_op_handle)
 {
     std::unique_lock<std::shared_timed_mutex> lock(m_scheduler_mutex);
     m_scheduled_core_ops.at(core_op_handle)->remove_instance();
+    m_scheduler_thread.signal();
 }
 
 void CoreOpsScheduler::shutdown()
@@ -124,8 +124,7 @@ hailo_status CoreOpsScheduler::switch_core_op(const scheduler_core_op_handle_t &
             current_core_op = get_vdma_core_op(curr_device_info->current_core_op_handle, device_id);
         }
 
-        const bool is_batch_switch = (core_op_handle == curr_device_info->current_core_op_handle);
-        auto status = VdmaConfigManager::switch_core_op(current_core_op, next_core_op, hw_batch_size, is_batch_switch);
+        auto status = VdmaConfigManager::set_core_op(device_id, current_core_op, next_core_op, hw_batch_size);
         CHECK_SUCCESS(status, "Failed switching core-op");
     }
 
@@ -362,9 +361,13 @@ void CoreOpsScheduler::shutdown_core_op(scheduler_core_op_handle_t core_op_handl
         auto request = dequeue_infer_request(core_op_handle);
         assert(request);
         for (auto &transfer : request->transfers) {
-            transfer.second.callback(HAILO_STREAM_ABORTED_BY_USER);
+            transfer.second.callback(HAILO_STREAM_ABORT);
         }
-        request->callback(HAILO_STREAM_ABORTED_BY_USER);
+
+        // Before calling infer_callback, we must ensure all stream callbacks were called and released (since the
+        // user may capture some variables in the callbacks).
+        request->transfers.clear();
+        request->callback(HAILO_STREAM_ABORT);
     }
 }
 
@@ -375,7 +378,7 @@ void CoreOpsScheduler::schedule()
     for (auto &core_op_pair : m_scheduled_core_ops) {
         auto status = optimize_streaming_if_enabled(core_op_pair.first);
         if ((HAILO_SUCCESS != status) &&
-            (HAILO_STREAM_ABORTED_BY_USER != status)) {
+            (HAILO_STREAM_ABORT != status)) {
             LOGGER__ERROR("optimize_streaming_if_enabled thread failed with status={}", status);
         }
     };

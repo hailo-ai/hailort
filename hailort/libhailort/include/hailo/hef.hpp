@@ -22,6 +22,9 @@
 namespace hailort
 {
 
+#define DEFAULT_NMS_NO_BURST_SIZE (1)
+#define DEFAULT_ACTUAL_BATCH_SIZE (1)
+
 /*! Hailo configure parameters per network_group. Analogical to hailo_configure_network_group_params_t */
 struct ConfigureNetworkParams
 {
@@ -466,6 +469,7 @@ private:
     friend class ConfiguredNetworkGroupBase;
     friend class CoreOp;
     friend class VDeviceBase;
+    friend class InferModel;
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
     friend class HailoRtRpcClient;

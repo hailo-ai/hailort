@@ -12,7 +12,7 @@
 
 #include "hef/layer_info.hpp"
 #include "hef/context_switch_actions.hpp"
-#include "net_flow/ops/op_metadata.hpp"
+#include "net_flow/ops_metadata/op_metadata.hpp"
 
 
 namespace hailort
@@ -31,6 +31,7 @@ struct SupportedFeatures {
     bool output_scale_by_feature = false;
     bool periph_calculation_in_hailort = false;
     bool core_hw_padding_config_in_dfc = false;
+    bool batch_register_config = false;
 };
 
 // For each config_stream_index we store vector of all ccw write length. The vector is used to build the config buffer.g
@@ -40,7 +41,7 @@ using ConfigBufferInfoMap = std::unordered_map<uint8_t, std::vector<uint32_t>>;
 class ContextMetadata final {
 public:
     ContextMetadata(std::vector<ContextSwitchConfigActionPtr> &&actions,
-        ConfigBufferInfoMap&& config_buffers_info);
+        ConfigBufferInfoMap&& config_buffers_info, bool const_input_layer_found);
 
     const std::vector<ContextSwitchConfigActionPtr> &get_actions() const;
     std::vector<ContextSwitchConfigActionPtr> get_actions_of_type(
@@ -61,9 +62,12 @@ public:
 
     Expected<size_t> get_layers_transfer_size(const std::vector<LayerInfo> &layer_infos) const;
     Expected<size_t> get_context_transfer_size() const;
+
+    bool const_input_layer_found() const;
 private:
     std::vector<ContextSwitchConfigActionPtr> m_actions;
     ConfigBufferInfoMap m_config_buffers_info;
+    bool m_const_input_layer_found;
 
     std::vector<LayerInfo> m_boundary_input_layers;
     std::vector<LayerInfo> m_boundary_output_layers;
@@ -84,7 +88,8 @@ public:
         std::vector<ContextMetadata> &&dynamic_contexts,
         std::vector<ConfigChannelInfo> &&config_channels_info,
         SupportedFeatures &supported_features,
-        std::vector<std::string> sorted_network_names);
+        std::vector<std::string> sorted_network_names,
+        bool can_fast_batch_switch);
 
     std::vector<LayerInfo> get_input_layer_infos() const;
     std::vector<LayerInfo> get_output_layer_infos() const;
@@ -125,6 +130,11 @@ public:
         return m_sorted_network_names;
     }
 
+    bool get_can_fast_batch_switch() const
+    {
+        return m_can_fast_batch_switch;
+    }
+
 private:
     // TODO: Remove
     const std::string default_network_name() const
@@ -138,6 +148,7 @@ private:
     std::string m_core_op_name;
     SupportedFeatures m_supported_features;
     std::vector<std::string> m_sorted_network_names;
+    bool m_can_fast_batch_switch;
 };
 
 using CoreOpMetadataPtr = std::shared_ptr<CoreOpMetadata>;
@@ -168,15 +179,11 @@ public:
         std::vector<std::string> &sorted_output_names,
         SupportedFeatures &supported_features,
         const std::vector<std::string> &sorted_network_names,
-        std::vector<hailo_vstream_info_t> &input_vstreams_infos,
-        std::vector<hailo_vstream_info_t> &output_vstreams_infos,
         std::vector<net_flow::PostProcessOpMetadataPtr> &ops_metadata) :
             m_network_group_name(network_group_name),
             m_sorted_output_names(sorted_output_names),
             m_supported_features(supported_features),
             m_sorted_network_names(sorted_network_names),
-            m_input_vstreams_infos(input_vstreams_infos),
-            m_output_vstreams_infos(output_vstreams_infos),
             m_core_ops_metadata_per_arch(std::move(core_ops_metadata_per_arch)),
             m_ops_metadata(ops_metadata)
         {};
@@ -216,24 +223,15 @@ public:
     }
 
 private:
-    static Expected<std::vector<LayerInfo>> get_all_layer_infos(std::map<std::string, CoreOpMetadataPerArch> &core_ops_metadata_per_arch)
-    /* This function is used for names getters (such as get_vstream_names_from_stream_name),
-       so should be same across all clusters layouts */
-    {
-        CHECK_AS_EXPECTED(1 == core_ops_metadata_per_arch.size(), HAILO_INTERNAL_FAILURE);
-        auto core_op_metadata = core_ops_metadata_per_arch.begin()->second.get_metadata(PARTIAL_CLUSTERS_LAYOUT_IGNORE);
-        CHECK_EXPECTED(core_op_metadata);
-
-        return core_op_metadata.value()->get_all_layer_infos();
-    }
+    Expected<CoreOpMetadataPtr> get_core_op_metadata() const;
+    Expected<std::vector<LayerInfo>> get_all_layer_infos() const;
+    Expected<std::vector<LayerInfo>> get_input_layer_infos(const std::string &network_name) const;
+    Expected<std::vector<LayerInfo>> get_output_layer_infos(const std::string &network_name) const;
 
     std::string m_network_group_name;
     std::vector<std::string> m_sorted_output_names;
     SupportedFeatures m_supported_features;
     std::vector<std::string> m_sorted_network_names;
-
-    std::vector<hailo_vstream_info_t> m_input_vstreams_infos;
-    std::vector<hailo_vstream_info_t> m_output_vstreams_infos;
 
     std::map<std::string, CoreOpMetadataPerArch> m_core_ops_metadata_per_arch; // Key is core_op_name
     std::vector<net_flow::PostProcessOpMetadataPtr> m_ops_metadata;

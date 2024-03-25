@@ -18,7 +18,7 @@
 #define PORTS_COUNT (16)     // Should be same as HW_PACKAGE__CORE_PKG__N_AXIS_IN
 
 UdpRateLimiterCommand::UdpRateLimiterCommand (CLI::App &parent_app) :
-    Command(parent_app.add_subcommand("udp-rate-limiter", "Limit UDP rate"))
+    Command(parent_app.add_subcommand("udp-rate-limiter", "Limit the UDP rate"))
 {
     m_set_command = m_app->add_subcommand("set", "Sets the udp rate limit");
     m_set_command->add_option("--kbit-rate", m_rate_kbit_sec, "rate in Kbit/s")

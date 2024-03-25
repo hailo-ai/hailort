@@ -221,8 +221,8 @@ hailo_status RemoteProcessInputStream::flush()
 
     // Get available buffer. We don't use the buffer, just use it to send flush request
     auto write_buffer = m_buffer_pool->dequeue_host_buffer(flush_timeout);
-    if (HAILO_STREAM_ABORTED_BY_USER == write_buffer.status()) {
-        return HAILO_STREAM_ABORTED_BY_USER;
+    if (HAILO_STREAM_ABORT == write_buffer.status()) {
+        return HAILO_STREAM_ABORT;
     }
     CHECK_EXPECTED_AS_STATUS(write_buffer);
 
@@ -235,8 +235,8 @@ hailo_status RemoteProcessInputStream::flush()
 
     // Now wait until available buffers is full
     status = m_buffer_pool->wait_until_host_queue_full(flush_timeout);
-    if (HAILO_STREAM_ABORTED_BY_USER == status) {
-        return HAILO_STREAM_ABORTED_BY_USER;
+    if (HAILO_STREAM_ABORT == status) {
+        return HAILO_STREAM_ABORT;
     }
     CHECK_SUCCESS(status);
 
@@ -262,8 +262,8 @@ hailo_status RemoteProcessInputStream::write_impl(const MemoryView &buffer)
 {
     // Get available buffer
     auto write_buffer = m_buffer_pool->dequeue_host_buffer(m_timeout);
-    if (HAILO_STREAM_ABORTED_BY_USER == write_buffer.status()) {
-        return HAILO_STREAM_ABORTED_BY_USER;
+    if (HAILO_STREAM_ABORT == write_buffer.status()) {
+        return HAILO_STREAM_ABORT;
     }
     CHECK_EXPECTED_AS_STATUS(write_buffer);
 
@@ -300,8 +300,15 @@ RemoteProcessInputStream::RemoteProcessInputStream(std::shared_ptr<InputStreamBa
     }
 
     // Not all streams supports get_async_max_queue_size, fallback to default.
-    auto queue_size_exp = m_base_stream->get_async_max_queue_size();
-    const auto queue_size = queue_size_exp ? *queue_size_exp : DEFAULT_QUEUE_SIZE;
+    auto queue_size = DEFAULT_QUEUE_SIZE;
+    if (HAILO_STREAM_INTERFACE_ETH != m_base_stream->get_interface() && HAILO_STREAM_INTERFACE_MIPI != m_base_stream->get_interface()) {
+        auto queue_size_exp = m_base_stream->get_async_max_queue_size();
+        if (!queue_size_exp) {
+            status = queue_size_exp.status();
+            return;
+        }
+        queue_size = *queue_size_exp;
+    }
 
     auto buffer_pool = RemoteProcessBufferPool::create(HAILO_H2D_STREAM, base_stream->get_frame_size(), queue_size);
     if (!buffer_pool) {
@@ -332,7 +339,7 @@ void RemoteProcessInputStream::run_write_thread()
         }
 
         status = write_single_buffer();
-        if ((HAILO_STREAM_ABORTED_BY_USER == status) || (HAILO_STREAM_NOT_ACTIVATED == status)) {
+        if ((HAILO_STREAM_ABORT == status) || (HAILO_STREAM_NOT_ACTIVATED == status)) {
             continue;
         } else if (HAILO_SUCCESS != status) {
             LOGGER__ERROR("Failure on read thread {}", status);
@@ -473,8 +480,8 @@ hailo_status RemoteProcessOutputStream::cancel_pending_transfers()
 hailo_status RemoteProcessOutputStream::read_impl(MemoryView buffer)
 {
     auto read_buffer = m_buffer_pool->dequeue_host_buffer(m_timeout);
-    if (HAILO_STREAM_ABORTED_BY_USER == read_buffer.status()) {
-        return HAILO_STREAM_ABORTED_BY_USER;
+    if (HAILO_STREAM_ABORT == read_buffer.status()) {
+        return HAILO_STREAM_ABORT;
     }
     CHECK_EXPECTED_AS_STATUS(read_buffer);
 
@@ -509,8 +516,15 @@ RemoteProcessOutputStream::RemoteProcessOutputStream(std::shared_ptr<OutputStrea
     }
 
     // Not all streams supports get_async_max_queue_size, fallback to default.
-    auto queue_size_exp = m_base_stream->get_async_max_queue_size();
-    auto queue_size = queue_size_exp ? *queue_size_exp : DEFAULT_QUEUE_SIZE;
+    auto queue_size = DEFAULT_QUEUE_SIZE;
+    if (HAILO_STREAM_INTERFACE_ETH != m_base_stream->get_interface() && HAILO_STREAM_INTERFACE_MIPI != m_base_stream->get_interface()) {
+        auto queue_size_exp = m_base_stream->get_async_max_queue_size();
+        if (!queue_size_exp) {
+            status = queue_size_exp.status();
+            return;
+        }
+        queue_size = *queue_size_exp;
+    }
 
     auto buffer_pool = RemoteProcessBufferPool::create(HAILO_D2H_STREAM, base_stream->get_frame_size(), queue_size);
     if (!buffer_pool) {
@@ -544,7 +558,7 @@ void RemoteProcessOutputStream::run_read_thread()
         }
 
         status = read_single_buffer();
-        if ((HAILO_STREAM_ABORTED_BY_USER == status) || (HAILO_STREAM_NOT_ACTIVATED == status)) {
+        if ((HAILO_STREAM_ABORT == status) || (HAILO_STREAM_NOT_ACTIVATED == status)) {
             continue;
         } else if (HAILO_SUCCESS != status) {
             LOGGER__ERROR("Failure on read thread {}", status);

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-readonly first_hef="hefs/multi_network_shortcut_net.hef"
+readonly first_hef="hefs/shortcut_net_nv12.hef"
 readonly second_hef="hefs/shortcut_net.hef"
 readonly max_processes_count=8
 readonly default_processes_count=1

@@ -3,25 +3,20 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @file continuous_buffer.hpp
+ * @file continuous_buffer.cpp
  * @brief Continuous physical vdma buffer.
  **/
 
 #include "continuous_buffer.hpp"
-
-/* TODO - Support non default CCB page sizes */
-#define CCB_PAGE_SIZE (512)
-#define MAX_PAGES_PER_INTERRUPT (0x0003FFFF)
-#define MAX_CCB_BUFFER_SIZE (CCB_PAGE_SIZE * MAX_PAGES_PER_INTERRUPT)
 
 namespace hailort {
 namespace vdma {
 
 Expected<ContinuousBuffer> ContinuousBuffer::create(size_t size, HailoRTDriver &driver)
 {
-    if (size > MAX_CCB_BUFFER_SIZE) {
-        LOGGER__INFO("continious memory size {} must be smaller/equal to {}.", size, MAX_CCB_BUFFER_SIZE);
-        return make_unexpected(HAILO_OUT_OF_HOST_CMA_MEMORY);
+    if (size < MIN_CCB_PAGE_SIZE * MIN_CCB_DESCS_COUNT) {
+        LOGGER__ERROR("continuous memory size ({}) must be larger/equal to {}.", size, (MIN_CCB_PAGE_SIZE * MIN_CCB_DESCS_COUNT));
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
     }
 
     auto result = driver.vdma_continuous_buffer_alloc(size);
@@ -56,17 +51,6 @@ uint64_t ContinuousBuffer::dma_address() const
     return m_buffer_info.dma_address;
 }
 
-uint16_t ContinuousBuffer::desc_page_size() const
-{
-    // Currently we support only the default desc page size, TODO: HRT-5381 support more desc page size?
-    return DEFAULT_DESC_PAGE_SIZE;
-}
-
-uint32_t ContinuousBuffer::descs_count() const
-{
-    return descriptors_in_buffer(m_buffer_info.size);
-}
-
 hailo_status ContinuousBuffer::read(void *buf_dst, size_t count, size_t offset)
 {
     CHECK((count + offset) <= m_buffer_info.size, HAILO_INSUFFICIENT_BUFFER,
@@ -87,17 +71,8 @@ hailo_status ContinuousBuffer::write(const void *buf_src, size_t count, size_t o
     return HAILO_SUCCESS;
 }
 
-Expected<uint32_t> ContinuousBuffer::program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
-    size_t desc_offset)
-{
-    (void)last_desc_interrupts_domain;
-    (void)desc_offset;
-
-    // The descriptors in continuous mode are programmed by the hw, nothing to do here.
-    return descriptors_in_buffer(transfer_size);
-}
-
-ContinuousBuffer::ContinuousBuffer(HailoRTDriver &driver, const ContinousBufferInfo &buffer_info) :
+ContinuousBuffer::ContinuousBuffer(HailoRTDriver &driver,
+        const ContinousBufferInfo &buffer_info) :
     m_driver(driver),
     m_buffer_info(buffer_info)
 {}

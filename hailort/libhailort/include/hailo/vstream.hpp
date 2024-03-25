@@ -28,7 +28,7 @@ public:
     static Expected<InputVStream> create(const hailo_vstream_info_t &vstream_info, const std::vector<hailo_quant_info_t> &quant_infos,
         const hailo_vstream_params_t &vstream_params, std::shared_ptr<PipelineElement> pipeline_entry,
         std::shared_ptr<SinkElement> pipeline_exit, std::vector<std::shared_ptr<PipelineElement>> &&pipeline,
-        std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr shutdown_event, EventPtr core_op_activated_event,
+        std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, EventPtr core_op_activated_event,
         AccumulatorPtr pipeline_latency_accumulator);
     InputVStream(InputVStream &&other) noexcept = default;
     InputVStream &operator=(InputVStream &&other) noexcept = default;
@@ -50,6 +50,7 @@ public:
      * @param[in] buffer            The buffer containing pointers to the planes where the data to
      *                              be sent to the device is stored.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note Currently only support memory_type field of buffer to be HAILO_PIX_BUFFER_MEMORY_TYPE_USERPTR.
      */
     hailo_status write(const hailo_pix_buffer_t &buffer);
 
@@ -202,7 +203,7 @@ public:
         const hailo_vstream_info_t &vstream_info, const std::vector<hailo_quant_info_t> &quant_infos,
         const hailo_vstream_params_t &vstream_params, std::shared_ptr<PipelineElement> pipeline_entry,
         std::vector<std::shared_ptr<PipelineElement>> &&pipeline, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
-        EventPtr shutdown_event, EventPtr core_op_activated_event, AccumulatorPtr pipeline_latency_accumulator);
+        EventPtr core_op_activated_event, AccumulatorPtr pipeline_latency_accumulator);
     OutputVStream(OutputVStream &&other) noexcept = default;
     OutputVStream &operator=(OutputVStream &&other) noexcept = default;
     virtual ~OutputVStream() = default;
@@ -302,8 +303,8 @@ public:
 
     /**
      * Gets a reference to a map between pipeline element names to their respective queue size accumulators.
-     * These accumulators measure the number of free buffers in the queue, right before a buffer is removed
-     * from the queue to be used.
+     * These accumulators measure the number of buffers in the queue, waiting to be processed downstream.
+     * The measurements take place right before we try to enqueue the next buffer.
      * 
      * @return A const reference to a map between pipeline element names to their respective queue size accumulators.
      * @note Queue size accumulators are created for pipeline elements, if the vstream is created with the flag
@@ -352,9 +353,22 @@ public:
      *
      * @param[in] max_proposals_per_class    NMS max proposals per class to set.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note This function will fail in cases where the output vstream has no NMS operations on the CPU.
+     * @note This function must be called before starting inference!
+     * This function will fail in cases where the output vstream has no NMS operations on the CPU.
      */
     hailo_status set_nms_max_proposals_per_class(uint32_t max_proposals_per_class);
+
+    /**
+     * Set maximum accumulated mask size for all the detections in a frame.
+     *
+     * Note: Used in order to change the output buffer frame size,
+     * in cases where the output buffer is too small for all the segmentation detections.
+     *
+     * @param[in] max_accumulated_mask_size NMS max accumulated mask size.
+     * @note This function must be called before starting inference!
+     * This function will fail in cases where the output vstream has no NMS operations on the CPU.
+     */
+    hailo_status set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size);
 
 
     bool is_aborted();

@@ -15,6 +15,7 @@
 #include "common/utils.hpp"
 #include "hailo/network_group.hpp"
 #include "hailo/vstream.hpp"
+#include "hailo/vdevice.hpp"
 
 #include "vdevice/scheduler/scheduler.hpp"
 #include "vdevice/scheduler/infer_request_accumulator.hpp"
@@ -31,6 +32,7 @@ class VDeviceCoreOp : public CoreOp
 {
 public:
     static Expected<std::shared_ptr<VDeviceCoreOp>> create(
+        VDevice &vdevice,
         ActiveCoreOpHolder &active_core_op_holder,
         const ConfigureNetworkParams &configure_params,
         const std::map<device_id_t, std::shared_ptr<CoreOp>> &core_ops,
@@ -44,7 +46,6 @@ public:
     VDeviceCoreOp(const VDeviceCoreOp &other) = delete;
     VDeviceCoreOp &operator=(const VDeviceCoreOp &other) = delete;
     VDeviceCoreOp &operator=(VDeviceCoreOp &&other) = delete;
-    VDeviceCoreOp(VDeviceCoreOp &&other) = default;
 
     bool equals(const Hef &hef, const std::pair<const std::string, ConfigureNetworkParams> &params_pair)
     {
@@ -92,7 +93,8 @@ public:
     virtual Expected<HwInferResults> run_hw_infer_estimator() override;
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &) override;
 
-    VDeviceCoreOp(ActiveCoreOpHolder &active_core_op_holder,
+    VDeviceCoreOp(VDevice &vdevice,
+        ActiveCoreOpHolder &active_core_op_holder,
         const ConfigureNetworkParams &configure_params,
         const std::map<device_id_t, std::shared_ptr<CoreOp>> &core_ops,
         CoreOpsSchedulerWeakPtr core_ops_scheduler, scheduler_core_op_handle_t core_op_handle,
@@ -111,6 +113,7 @@ private:
 
     hailo_status add_to_trace();
 
+    VDevice &m_vdevice;
     std::map<device_id_t, std::shared_ptr<CoreOp>> m_core_ops;
     CoreOpsSchedulerWeakPtr m_core_ops_scheduler;
     const vdevice_core_op_handle_t m_core_op_handle;

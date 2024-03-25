@@ -43,11 +43,16 @@ hailo_status Yolov5OpMetadata::validate_format_info()
     return NmsOpMetadata::validate_format_info();
 }
 
+Expected<hailo_vstream_info_t> Yolov5OpMetadata::get_output_vstream_info()
+{
+    return NmsOpMetadata::get_output_vstream_info();
+}
+
 std::string Yolov5OpMetadata::get_op_description()
 {
     auto nms_config_info = get_nms_config_description();
-    auto config_info = fmt::format("Op {}, Name: {}, {}, Image height: {:.2f}, Image width: {:.2f}",
-        OpMetadata::get_operation_type_str(m_type), m_name, nms_config_info, m_yolov5_config.image_height, m_yolov5_config.image_width);
+    auto config_info = fmt::format("Op {}, Name: {}, {}, Image height: {:d}, Image width: {:d}",
+        OpMetadata::get_operation_type_str(m_type), m_name, nms_config_info, static_cast<int>(m_yolov5_config.image_height), static_cast<int>(m_yolov5_config.image_width));
     return config_info;
 }
 
@@ -72,7 +77,7 @@ hailo_status YOLOv5PostProcessOp::execute(const std::map<std::string, MemoryView
 
     clear_before_frame();
     for (const auto &name_to_input : inputs) {
-        hailo_status status;
+        hailo_status status = HAILO_UNINITIALIZED;
         auto &name = name_to_input.first;
         assert(contains(inputs_metadata, name));
         auto &input_metadata = inputs_metadata.at(name);
@@ -110,6 +115,15 @@ hailo_bbox_float32_t YOLOv5PostProcessOp::decode(float32_t tx, float32_t ty, flo
 uint32_t YOLOv5PostProcessOp::get_entry_size()
 {
     return (CLASSES_START_INDEX + m_metadata->nms_config().number_of_classes);
+}
+
+size_t YOLOv5PostProcessOp::get_num_of_anchors(const std::vector<int> &layer_anchors)
+{
+    // Each layer anchors vector is structured as {w,h} pairs.
+    // For example, if we have a vector of size 6 (default YOLOv5 vector) then we have 3 anchors for this layer.
+    assert(layer_anchors.size() % 2 == 0);
+    size_t num_of_anchors = (layer_anchors.size() / 2);
+    return num_of_anchors;
 }
 
 } // namespace net_flow

@@ -134,7 +134,7 @@ hailo_status PowerMeasurement::start_measurement()
     CHECK_SUCCESS(status, "Failed to start power measurement");
    
     m_is_thread_running = true;
-    m_thread = std::thread([this] () {
+    m_thread = std::thread([this] () -> hailo_status {
         const bool clear_power_measurement_history = true;
         while (m_is_thread_running.load()) { 
             std::this_thread::sleep_for(DEFAULT_MEASUREMENTS_INTERVAL);

@@ -7,6 +7,7 @@ include(CMakePackageConfigHelpers)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/common_compiler_options.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/spdlog.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/readerwriterqueue.cmake)
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/eigen.cmake)
 
 FUNCTION(relative_to_absolute_paths output)
     SET(listVar "")
@@ -53,8 +54,10 @@ relative_to_absolute_paths(C_OS_SOURCES ${C_OS_SOURCES})
 relative_to_absolute_paths(COMMON_C_SOURCES ${COMMON_C_SOURCES})
 relative_to_absolute_paths(HAILO_OS_DIR ${HAILO_OS_DIR})
 relative_to_absolute_paths(HAILO_FULL_OS_DIR ${HAILO_FULL_OS_DIR})
+relative_to_absolute_paths(HAILO_DRIVER_SRC_FILES ${HAILO_DRIVER_SRC_FILES})
 set(HAILO_OS_DIR ${HAILO_OS_DIR} CACHE INTERNAL "Absolute path of os-dir")
 set(HAILO_FULL_OS_DIR ${HAILO_FULL_OS_DIR} CACHE INTERNAL "Absolute Full path of os-dir")
+set(HAILO_DRIVER_SRC_FILES ${HAILO_DRIVER_SRC_FILES} CACHE INTERNAL "Absolute Full path of driver src files")
 set(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES} CACHE INTERNAL "Absolute paths of hailort's cpp source files")
 set(COMMON_C_SOURCES ${COMMON_C_SOURCES} CACHE INTERNAL "Absolute paths of common source files")
 set(HAILORT_SRCS_ABS ${HAILORT_CPP_SOURCES} ${HAILORT_COMMON_CPP_SOURCES} ${COMMON_C_SOURCES} CACHE INTERNAL "All absolute paths of hailort's source files")
@@ -87,6 +90,7 @@ target_link_libraries(libhailort PRIVATE profiler_proto)
 target_link_libraries(libhailort PRIVATE scheduler_mon_proto)
 target_link_libraries(libhailort PRIVATE spdlog::spdlog)
 target_link_libraries(libhailort PRIVATE readerwriterqueue)
+target_link_libraries(libhailort PRIVATE Eigen3::Eigen)
 if(HAILO_BUILD_SERVICE)
     target_link_libraries(libhailort PRIVATE grpc++_unsecure)
     target_link_libraries(libhailort PRIVATE hailort_rpc_grpc_proto)
@@ -101,7 +105,6 @@ set(HAILORT_PUBLIC_HEADERS
     ${HAILORT_INC_DIR}/hailo/platform.h
 
     ${HAILORT_INC_DIR}/hailo/hailort.hpp
-    ${HAILORT_INC_DIR}/hailo/buffer_storage.hpp
     ${HAILORT_INC_DIR}/hailo/buffer.hpp
     ${HAILORT_INC_DIR}/hailo/device.hpp
     ${HAILORT_INC_DIR}/hailo/event.hpp
@@ -119,6 +122,7 @@ set(HAILORT_PUBLIC_HEADERS
     ${HAILORT_INC_DIR}/hailo/vdevice.hpp
     ${HAILORT_INC_DIR}/hailo/quantization.hpp
     ${HAILORT_INC_DIR}/hailo/hailort_defaults.hpp
+    ${HAILORT_INC_DIR}/hailo/dma_mapped_buffer.hpp
 )
 
 set_target_properties(libhailort PROPERTIES
