@@ -22,7 +22,11 @@ Expected<std::unique_ptr<VDeviceNativeInputStream>> VDeviceNativeInputStream::cr
     vdevice_core_op_handle_t core_op_handle)
 {
     std::unique_ptr<CallbackReorderQueue> reorder_queue = nullptr;
-    if (auto max_queue_size_per_stream = streams.begin()->second.get().get_async_max_queue_size()) {
+    // Ifaces of all streams should be the same
+    auto iface = streams.begin()->second.get().get_interface();
+    if ((iface != HAILO_STREAM_INTERFACE_ETH) && (iface != HAILO_STREAM_INTERFACE_MIPI)) {
+        auto max_queue_size_per_stream = streams.begin()->second.get().get_async_max_queue_size();
+        CHECK_EXPECTED(max_queue_size_per_stream);
         const auto max_queue_size = max_queue_size_per_stream.value() * streams.size();
         reorder_queue = make_unique_nothrow<CallbackReorderQueue>(max_queue_size);
         CHECK_NOT_NULL_AS_EXPECTED(reorder_queue, HAILO_OUT_OF_HOST_MEMORY);
@@ -134,7 +138,7 @@ hailo_status VDeviceNativeInputStream::write_impl(const MemoryView &buffer)
     TRACE(FrameEnqueueH2DTrace, m_core_op_handle, name());
 
     auto status = next_stream().write_impl(buffer);
-    if ((HAILO_STREAM_ABORTED_BY_USER == status) || (HAILO_STREAM_NOT_ACTIVATED == status)){
+    if ((HAILO_STREAM_ABORT == status) || (HAILO_STREAM_NOT_ACTIVATED == status)){
         LOGGER__INFO("Failed write to stream {} (device: {}) with status={}", name(), m_next_transfer_stream, status);
         return status;
     }
@@ -160,7 +164,9 @@ Expected<size_t> VDeviceNativeInputStream::get_async_max_queue_size() const
     // transfers.
     auto &first_stream = m_streams.begin()->second.get();
     const auto max_queue_per_stream = first_stream.get_async_max_queue_size();
-    CHECK_EXPECTED(max_queue_per_stream);
+    if (!max_queue_per_stream) {
+        return make_unexpected(max_queue_per_stream.status()); // Not all streams has max_queue_size (e.g. eth) , so its not necessarily an error
+    }
 
     if (*max_queue_per_stream >= m_batch_size) {
         const auto batch_count_queued = *max_queue_per_stream / m_batch_size;
@@ -221,7 +227,11 @@ Expected<std::unique_ptr<VDeviceNativeOutputStream>> VDeviceNativeOutputStream::
     vdevice_core_op_handle_t core_op_handle)
 {
     std::unique_ptr<CallbackReorderQueue> reorder_queue = nullptr;
-    if (auto max_queue_size_per_stream = streams.begin()->second.get().get_async_max_queue_size()) {
+    // Ifaces of all streams should be the same
+    auto iface = streams.begin()->second.get().get_interface();
+    if ((iface != HAILO_STREAM_INTERFACE_ETH) && (iface != HAILO_STREAM_INTERFACE_MIPI)) {
+        auto max_queue_size_per_stream = streams.begin()->second.get().get_async_max_queue_size();
+        CHECK_EXPECTED(max_queue_size_per_stream);
         const auto max_queue_size = max_queue_size_per_stream.value() * streams.size();
         reorder_queue = make_unique_nothrow<CallbackReorderQueue>(max_queue_size);
         CHECK_NOT_NULL_AS_EXPECTED(reorder_queue, HAILO_OUT_OF_HOST_MEMORY);
@@ -317,7 +327,7 @@ hailo_stream_interface_t VDeviceNativeOutputStream::get_interface() const
 hailo_status VDeviceNativeOutputStream::read_impl(MemoryView buffer)
 {
     auto status = next_stream().read_impl(buffer);
-    if ((HAILO_STREAM_ABORTED_BY_USER == status) || (HAILO_STREAM_NOT_ACTIVATED == status)){
+    if ((HAILO_STREAM_ABORT == status) || (HAILO_STREAM_NOT_ACTIVATED == status)){
       LOGGER__INFO("Failed read from stream {} (device: {})", status, m_next_transfer_stream);
       return status;
     }
@@ -347,7 +357,9 @@ Expected<size_t> VDeviceNativeOutputStream::get_async_max_queue_size() const
     // transfers.
     auto &first_stream = m_streams.begin()->second.get();
     const auto max_queue_per_stream = first_stream.get_async_max_queue_size();
-    CHECK_EXPECTED(max_queue_per_stream);
+    if (!max_queue_per_stream) {
+        return make_unexpected(max_queue_per_stream.status()); // Not all streams has max_queue_size (e.g. eth) , so its not necessarily an error
+    }
 
     if (*max_queue_per_stream >= m_batch_size) {
         const auto batch_count_queued = *max_queue_per_stream / m_batch_size;

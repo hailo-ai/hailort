@@ -280,7 +280,7 @@ public:
      */
     // TODO: fix
     static hailo_status download_context_action_list(Device &device, uint32_t network_group_id,
-        CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index,
+        CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint16_t context_index,
         size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length,
         uint32_t *batch_counter);
             
@@ -343,7 +343,7 @@ public:
     static hailo_status write_memory(Device &device, uint32_t address, const uint8_t *data, uint32_t data_length);
     static hailo_status read_memory(Device &device, uint32_t address, uint8_t *data, uint32_t data_length);
     static hailo_status context_switch_set_context_info(Device &device,
-        const std::vector<CONTROL_PROTOCOL__context_switch_context_info_single_control_t> &context_infos);
+        const std::vector<CONTROL_PROTOCOL__context_switch_context_info_chunk_t> &context_infos);
     static hailo_status context_switch_set_network_group_header(Device &device,
         const CONTROL_PROTOCOL__application_header_t &network_group_header);
     static hailo_status wd_enable(Device &device, uint8_t cpu_id, bool should_enable);
@@ -398,11 +398,11 @@ private:
         uint8_t *buffer, uint32_t *actual_read_data_length);
     static hailo_status write_user_config_chunk(Device &device, uint32_t offset, const uint8_t *data, uint32_t chunk_size);
     static hailo_status download_context_action_list_chunk(Device &device, uint32_t network_group_id,
-        CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index, uint16_t action_list_offset,
+        CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint16_t context_index, uint16_t action_list_offset,
         size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length,
         bool *is_action_list_end, uint32_t *batch_counter);
     static hailo_status context_switch_set_context_info_chunk(Device &device,
-        const CONTROL_PROTOCOL__context_switch_context_info_single_control_t &context_info);
+        const CONTROL_PROTOCOL__context_switch_context_info_chunk_t &context_info);
     static hailo_status change_context_switch_status(Device &device,
             CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status,
             uint8_t network_group_index, uint16_t dynamic_batch_size, uint16_t batch_count);

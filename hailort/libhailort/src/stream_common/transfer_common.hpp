@@ -13,12 +13,11 @@
 #include "hailo/stream.hpp"
 #include "hailo/buffer.hpp"
 
-#include "os/hailort_driver.hpp"
+#include "vdma/driver/hailort_driver.hpp"
+#include "vdma/memory/mapped_buffer.hpp"
 
 namespace hailort
 {
-
-class VdmaDevice;
 
 // Contains buffer that can be transferred. The buffer can be circular -
 // It relies at [m_offset, m_base_buffer.size()) and [0, m_base_buffer.size() - m_size).
@@ -26,26 +25,20 @@ class TransferBuffer final {
 public:
 
     TransferBuffer();
-    TransferBuffer(BufferPtr base_buffer);
-    TransferBuffer(BufferPtr base_buffer, size_t size, size_t offset);
 
-    BufferPtr base_buffer() { return m_base_buffer; }
+    TransferBuffer(MemoryView base_buffer);
+    TransferBuffer(MemoryView base_buffer, size_t size, size_t offset);
+
+    MemoryView base_buffer() { return m_base_buffer; }
     size_t offset() const { return m_offset; }
     size_t size() const { return m_size; }
 
-    Expected<vdma::MappedBufferPtr> map_buffer(VdmaDevice &device, HailoRTDriver::DmaDirection direction);
+    Expected<vdma::MappedBufferPtr> map_buffer(HailoRTDriver &driver, HailoRTDriver::DmaDirection direction);
 
     hailo_status copy_to(MemoryView buffer);
     hailo_status copy_from(const MemoryView buffer);
 
-    // Sync the buffer to the given direction, fails if the buffer is not mapped.
-    hailo_status synchronize(VdmaDevice &device, HailoRTDriver::DmaSyncDirection sync_direction);
-
 private:
-
-    // Sync a signal continuous part
-    hailo_status synchronize_part(vdma::MappedBufferPtr &mapped_buffer, MemoryView continuous_part,
-        HailoRTDriver::DmaSyncDirection sync_direction);
 
     bool is_wrap_around() const;
 
@@ -57,9 +50,12 @@ private:
     //      2. If the buffer is not circular, the first part will contain the buffer, the second will point to nullptr.
     std::pair<MemoryView, MemoryView> get_continuous_parts();
 
-    BufferPtr m_base_buffer;
+    MemoryView m_base_buffer;
     size_t m_size;
     size_t m_offset;
+
+    // Once map_buffer is called, a MappedBuffer object is stored here to make sure the buffer is mapped.
+    vdma::MappedBufferPtr m_mappings;
 };
 
 // Internal function, wrapper to the user callbacks, accepts the callback status as an argument.

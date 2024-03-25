@@ -19,6 +19,7 @@
 
 #include "device_common/control_protocol.hpp"
 #include "context_switch_defs.h"
+#include "core_op/resource_manager/config_buffer.hpp"
 
 
 namespace hailort
@@ -155,11 +156,12 @@ private:
     const vdma::ChannelId m_channel_id;
 };
 
+class ShefFileHandle;
 class WriteDataCcwAction : public ContextSwitchConfigAction
 {
 public:
-    static Expected<ContextSwitchConfigActionPtr> create(Buffer &&data, uint8_t config_stream_index,
-        size_t total_ccw_burst);
+    static Expected<ContextSwitchConfigActionPtr> create(uint32_t offset, size_t size, uint8_t config_stream_index,
+        size_t total_ccw_burst, std::shared_ptr<ShefFileHandle> shef_file_handle);
     WriteDataCcwAction(WriteDataCcwAction &&) = default;
     WriteDataCcwAction(const WriteDataCcwAction &) = delete;
     WriteDataCcwAction &operator=(WriteDataCcwAction &&) = delete;
@@ -170,17 +172,41 @@ public:
     virtual bool supports_repeated_block() const override;
     virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
 
-    const MemoryView data() const { return MemoryView::create_const(m_data.data(), m_data.size()); }
     uint8_t config_stream_index() const { return m_config_stream_index; }
     uint16_t total_ccw_burst() const { return m_total_ccw_burst; }
+    virtual size_t size() const { return m_size; }
+    virtual hailo_status write_to_config_buffer(ConfigBuffer& config_buffer, bool should_support_pre_fetch);
+
+protected:
+    WriteDataCcwAction(uint32_t offset, size_t size, uint8_t config_stream_index,
+        uint16_t total_ccw_burst, std::shared_ptr<ShefFileHandle> shef_file_handle);
+
+    uint32_t m_offset;
+    size_t m_size;
+    const uint8_t m_config_stream_index;
+    const uint16_t m_total_ccw_burst;
+    std::shared_ptr<ShefFileHandle> m_shef_file_handle;
+};
+
+class WriteDataCcwActionByBuffer : public WriteDataCcwAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create(Buffer &&data, uint8_t config_stream_index,
+        size_t total_ccw_burst);
+    WriteDataCcwActionByBuffer(WriteDataCcwActionByBuffer &&) = default;
+    WriteDataCcwActionByBuffer(const WriteDataCcwActionByBuffer &) = delete;
+    WriteDataCcwActionByBuffer &operator=(WriteDataCcwActionByBuffer &&) = delete;
+    WriteDataCcwActionByBuffer &operator=(const WriteDataCcwActionByBuffer &) = delete;
+    virtual ~WriteDataCcwActionByBuffer() = default;
+
+    virtual size_t size() const override { return m_data.size(); }
+    virtual hailo_status write_to_config_buffer(ConfigBuffer& config_buffer, bool should_support_pre_fetch) override;
 
 private:
-    WriteDataCcwAction(Buffer &&data, uint8_t config_stream_index,
+    WriteDataCcwActionByBuffer(Buffer &&data, uint8_t config_stream_index,
         uint16_t total_ccw_burst);
 
     Buffer m_data;
-    const uint8_t m_config_stream_index;
-    const uint16_t m_total_ccw_burst;
 };
 
 class AddCcwBurstAction : public ContextSwitchConfigAction

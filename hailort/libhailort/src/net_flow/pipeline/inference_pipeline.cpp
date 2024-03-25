@@ -218,7 +218,7 @@ hailo_status InferVStreams::infer(const std::map<std::string, MemoryView>& input
                     auto status = input_vstream.write(MemoryView::create_const(
                         input_buffer.data() + offset,
                         input_vstream.get_frame_size()));
-                    if (HAILO_STREAM_ABORTED_BY_USER == status) {
+                    if (HAILO_STREAM_ABORT == status) {
                         LOGGER__DEBUG("Input stream was aborted!");
                         return status;
                     }
@@ -249,7 +249,7 @@ hailo_status InferVStreams::infer(const std::map<std::string, MemoryView>& input
     auto error_status = HAILO_SUCCESS;
     for (auto& result : results) {
         status = result->get();
-        if (HAILO_STREAM_ABORTED_BY_USER == status) {
+        if (HAILO_STREAM_ABORT == status) {
             continue;
         }
         if (HAILO_SUCCESS != status) {
@@ -385,6 +385,21 @@ hailo_status InferVStreams::set_nms_max_proposals_per_class(uint32_t max_proposa
             CHECK_SUCCESS(ouput_vstream.set_nms_max_proposals_per_class(max_proposals_per_class));
         }
     }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status InferVStreams::set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size)
+{
+    auto has_mask_output = false;
+    for (auto &ouput_vstream : m_outputs) {
+        if (HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK == ouput_vstream.get_info().format.order) {
+            has_mask_output = true;
+            CHECK_SUCCESS(ouput_vstream.set_nms_max_accumulated_mask_size(max_accumulated_mask_size));
+        }
+    }
+    CHECK(has_mask_output, HAILO_INVALID_OPERATION,
+        "'set_nms_max_accumulated_mask_size()' is called, but there is no NMS WITH BYTE MASK output in this model.");
 
     return HAILO_SUCCESS;
 }

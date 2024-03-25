@@ -155,7 +155,7 @@ void OutputVStreamWrapper::add_to_python_module(py::module &m)
         // Note: The ownership of the buffer is transferred to Python wrapped as a py::array.
         //       When the py::array isn't referenced anymore in Python and is destructed, the py::capsule's dtor
         //       is called too (and it deletes the raw buffer)
-        auto unmanaged_addr_exp = buffer->storage().release();
+        auto unmanaged_addr_exp = buffer->release();
         VALIDATE_EXPECTED(unmanaged_addr_exp);
         const auto unmanaged_addr = unmanaged_addr_exp.release();
         return py::array(get_dtype(self), get_shape(self), unmanaged_addr,
@@ -174,6 +174,11 @@ void OutputVStreamWrapper::add_to_python_module(py::module &m)
     .def("set_nms_max_proposals_per_class", [](OutputVStream &self, uint32_t max_proposals_per_class)
     {
         hailo_status status = self.set_nms_max_proposals_per_class(max_proposals_per_class);
+        VALIDATE_STATUS(status);
+    })
+    .def("set_nms_max_accumulated_mask_size", [](OutputVStream &self, uint32_t max_accumulated_mask_size)
+    {
+        hailo_status status = self.set_nms_max_accumulated_mask_size(max_accumulated_mask_size);
         VALIDATE_STATUS(status);
     })
     .def_property_readonly("info", [](OutputVStream &self)
@@ -402,6 +407,10 @@ void InferVStreamsWrapper::add_to_python_module(py::module &m)
     .def("set_nms_max_proposals_per_class", [](InferVStreamsWrapper &self, uint32_t max_proposals_per_class)
     {
         VALIDATE_STATUS(self.m_infer_pipeline->set_nms_max_proposals_per_class(max_proposals_per_class));
+    })
+    .def("set_nms_max_accumulated_mask_size", [](InferVStreamsWrapper &self, uint32_t max_accumulated_mask_size)
+    {
+        VALIDATE_STATUS(self.m_infer_pipeline->set_nms_max_accumulated_mask_size(max_accumulated_mask_size));
     })
     ;
 }

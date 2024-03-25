@@ -24,6 +24,7 @@
 #include "network_group/network_group_internal.hpp"
 #include "net_flow/pipeline/infer_model_internal.hpp"
 #include "core_op/core_op.hpp"
+#include "hef/hef_internal.hpp"
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
 #include "service/rpc_client_utils.hpp"
@@ -99,21 +100,6 @@ Expected<ConfigureNetworkParams> VDevice::create_configure_params(Hef &hef, cons
     CHECK_EXPECTED(stream_interface, "Failed to get default streams interface");
 
     return hef.create_configure_params(stream_interface.release(), network_group_name);
-}
-
-hailo_status VDevice::dma_map(void *address, size_t size, hailo_stream_direction_t direction)
-{
-    (void) address;
-    (void) size;
-    (void) direction;
-    return HAILO_NOT_IMPLEMENTED;
-}
-
-hailo_status VDevice::dma_unmap(void *address, hailo_stream_direction_t direction)
-{
-    (void) address;
-    (void) direction;
-    return HAILO_NOT_IMPLEMENTED;
 }
 
 hailo_status VDevice::before_fork()
@@ -198,13 +184,32 @@ Expected<hailo_stream_interface_t> VDeviceHandle::get_default_streams_interface(
     return vdevice.value()->get_default_streams_interface();
 }
 
-Expected<std::shared_ptr<InferModel>> VDeviceHandle::create_infer_model(const std::string &hef_path)
+Expected<std::shared_ptr<InferModel>> VDeviceHandle::create_infer_model(const std::string &hef_path,
+    const std::string &network_name)
 {
     auto &manager = SharedResourceManager<std::string, VDeviceBase>::get_instance();
     auto vdevice = manager.resource_lookup(m_handle);
     CHECK_EXPECTED(vdevice);
 
-    return vdevice.value()->create_infer_model(hef_path);
+    return vdevice.value()->create_infer_model(hef_path, network_name);
+}
+
+hailo_status VDeviceHandle::dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction)
+{
+    auto &manager = SharedResourceManager<std::string, VDeviceBase>::get_instance();
+    auto vdevice = manager.resource_lookup(m_handle);
+    CHECK_EXPECTED_AS_STATUS(vdevice);
+
+    return vdevice.value()->dma_map(address, size, direction);
+}
+
+hailo_status VDeviceHandle::dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction)
+{
+    auto &manager = SharedResourceManager<std::string, VDeviceBase>::get_instance();
+    auto vdevice = manager.resource_lookup(m_handle);
+    CHECK_EXPECTED_AS_STATUS(vdevice);
+
+    return vdevice.value()->dma_unmap(address, size, direction);
 }
 
 bool VDevice::service_over_ip_mode()
@@ -382,8 +387,18 @@ hailo_status VDeviceClient::listener_run_in_thread(VDeviceIdentifier identifier)
 
     while (m_is_listener_thread_running) {
         auto callback_id = client->VDevice_get_callback_id(identifier);
-        if (callback_id.status() == HAILO_SHUTDOWN_EVENT_SIGNALED) {
-            LOGGER__INFO("Shutdown event was signaled in listener_run_in_thread");
+        if (HAILO_SUCCESS != callback_id.status()) {
+            std::unique_lock<std::mutex> lock(m_mutex);
+            for (auto &ng_ptr_pair : m_network_groups) {
+                ng_ptr_pair.second->execute_callbacks_on_error(callback_id.status());
+            }
+            if (callback_id.status() == HAILO_SHUTDOWN_EVENT_SIGNALED) {
+                LOGGER__INFO("Shutdown event was signaled in listener_run_in_thread");
+            } else if (callback_id.status() == HAILO_RPC_FAILED) {
+                LOGGER__ERROR("Lost communication with the service..");
+            } else {
+                LOGGER__ERROR("Failed to get callback_id from listener thread with {}", callback_id.status());
+            }
             break;
         }
         CHECK_EXPECTED_AS_STATUS(callback_id);
@@ -413,9 +428,8 @@ hailo_status VDeviceClient::finish_listener_thread()
 
 Expected<std::vector<std::reference_wrapper<Device>>> VDeviceClient::get_physical_devices() const
 {
+    // In case of service-over-ip, the returned list will be empty
     std::vector<std::reference_wrapper<Device>> devices_refs;
-    CHECK_AS_EXPECTED(0 < m_devices.size(), HAILO_INVALID_OPERATION, "get_physical_devices() usage is invalid when working with service over IP. In order to use a local service, unset env var {}", HAILORT_SERVICE_ADDRESS_ENV_VAR);
-
     for (auto &device : m_devices) {
         devices_refs.push_back(*device);
     }
@@ -431,6 +445,26 @@ Expected<std::vector<std::string>> VDeviceClient::get_physical_devices_ids() con
 Expected<hailo_stream_interface_t> VDeviceClient::get_default_streams_interface() const
 {
     return m_client->VDevice_get_default_streams_interface(m_identifier);
+}
+
+hailo_status VDeviceClient::dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction)
+{
+    (void) address;
+    (void) size;
+    (void) direction;
+    // It is ok to do nothing on service, because the buffer is copied anyway to the service.
+    LOGGER__TRACE("VDevice `dma_map()` is doing nothing on service");
+    return HAILO_SUCCESS;
+}
+
+hailo_status VDeviceClient::dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction)
+{
+    (void) address;
+    (void) size;
+    (void) direction;
+    // It is ok to do nothing on service, because the buffer is copied anyway to the service.
+    LOGGER__TRACE("VDevice `dma_map()` is doing nothing on service");
+    return HAILO_SUCCESS;
 }
 
 #endif // HAILO_SUPPORT_MULTI_PROCESS
@@ -504,7 +538,9 @@ hailo_status VDeviceBase::validate_params(const hailo_vdevice_params_t &params)
 Expected<std::unique_ptr<VDeviceBase>> VDeviceBase::create(const hailo_vdevice_params_t &params)
 {
     TRACE(InitProfilerProtoTrace);
-    TRACE(MonitorStartTrace);
+    auto unique_vdevice_hash = std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+    TRACE(MonitorStartTrace, unique_vdevice_hash);
 
     auto devices_expected = create_devices(params);
     CHECK_EXPECTED(devices_expected);
@@ -541,7 +577,7 @@ Expected<std::unique_ptr<VDeviceBase>> VDeviceBase::create(const hailo_vdevice_p
         }
     }
 
-    auto vdevice = std::unique_ptr<VDeviceBase>(new (std::nothrow) VDeviceBase(std::move(devices), scheduler_ptr));
+    auto vdevice = std::unique_ptr<VDeviceBase>(new (std::nothrow) VDeviceBase(std::move(devices), scheduler_ptr, unique_vdevice_hash));
     CHECK_AS_EXPECTED(nullptr != vdevice, HAILO_OUT_OF_HOST_MEMORY);
 
     return vdevice;
@@ -559,6 +595,7 @@ VDeviceBase::~VDeviceBase()
         m_core_ops_scheduler->shutdown();
     }
     TRACE(DumpProfilerStateTrace);
+    TRACE(MonitorEndTrace, m_unique_vdevice_hash);
 }
 
 Expected<ConfiguredNetworkGroupVector> VDeviceBase::configure(Hef &hef,
@@ -630,8 +667,10 @@ Expected<ConfiguredNetworkGroupVector> VDeviceBase::configure(Hef &hef,
     return added_network_groups;
 }
 
-Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(const std::string &hef_path)
+Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(const std::string &hef_path, const std::string &network_name)
 {
+    CHECK_AS_EXPECTED(network_name.empty(), HAILO_NOT_IMPLEMENTED, "Passing network name is not supported yet!");
+
     auto hef_expected = Hef::create(hef_path);
     CHECK_EXPECTED(hef_expected);
     auto hef = hef_expected.release();
@@ -830,7 +869,7 @@ Expected<std::shared_ptr<VDeviceCoreOp>> VDeviceBase::create_vdevice_core_op(Hef
 
     auto core_op_handle = allocate_core_op_handle();
 
-    return VDeviceCoreOp::create(m_active_core_op_holder, params.second, physical_core_ops,
+    return VDeviceCoreOp::create(*this, m_active_core_op_holder, params.second, physical_core_ops,
         m_core_ops_scheduler, core_op_handle, hef.hash());
 }
 

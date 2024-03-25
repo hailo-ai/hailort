@@ -31,19 +31,19 @@
 #include "hailo/hef.hpp"
 #include "hailo/network_group.hpp"
 #include "hailo/hailort_defaults.hpp"
-#include "net_flow/ops/op_metadata.hpp"
+#include "net_flow/ops_metadata/op_metadata.hpp"
 
 #include "hef/core_op_metadata.hpp"
 #include "hef/layer_info.hpp"
 #include "hef/context_switch_actions.hpp"
 #include "net_flow/ops/op.hpp"
-#include "net_flow/pipeline/pipeline_internal.hpp"
 #include "device_common/control_protocol.hpp"
 
 #include "control_protocol.h"
 #include <functional>
 #include <bitset>
 #include <memory>
+#include <fstream>
 
 extern "C" {
 #include "md5.h"
@@ -52,8 +52,6 @@ extern "C" {
 
 namespace hailort
 {
-
-#define DEFAULT_NMS_NO_BURST_SIZE (1)
 
 class CoreOpMetadata;
 class CoreOp;
@@ -116,10 +114,17 @@ struct ProtoHEFCoreOpMock {
 typedef struct {
     uint32_t magic;
     uint32_t version;
-    uint32_t hef_proto_length;
-    uint32_t reserved;
+    uint32_t hef_proto_size;
+    uint32_t ccws_size;
     MD5_SUM_t expected_md5;
 } hef__header_t;
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+typedef struct {
+    uint32_t offset;
+    uint32_t size;
+} shef__ccw_offset_t;
 #pragma pack(pop)
 
 typedef enum {
@@ -169,7 +174,9 @@ static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
     HAILO_NET_FLOW_YOLOV5_SEG_NMS, // Extension added in platform 4.15 release
     HAILO_NET_FLOW_IOU_NMS, // Extension added in platform 4.15 release
     HW_PADDING, // Extension added in platform 4.16 release
-    HAILO_NET_FLOW_YOLOV8_NMS // Extension added in platform 4.16 release
+    HAILO_NET_FLOW_YOLOV8_NMS, // Extension added in platform 4.16 release
+    BATCH_REGISTER_CONFIG, // Extension added in platform 4.17 release
+    HAILO_NET_FLOW_BBOX_DECODING // Extension added in platform 4.18 release
 };
 
 static inline bool is_h2d_boundary_info_layer(const ProtoHEFEdgeLayer& layer)
@@ -223,12 +230,26 @@ class VdmaConfigCoreOp;
 class VdmaDevice;
 class HailoRTDriver;
 
+class ShefFileHandle final
+{
+public:
+    ShefFileHandle(const std::string &hef_path, uint32_t ccws_buffer_offset);
+    hailo_status open();
+    Expected<Buffer> read(uint32_t offset, size_t size);
+    hailo_status close();
+
+private:
+    std::string m_hef_path;
+    std::ifstream m_hef_file;
+    uint32_t m_ccws_buffer_offset;
+};
 
 class Hef::Impl final
 {
 public:
     static const uint32_t HEADER_MAGIC = 0x01484546;
-    static const uint32_t HEADER_VERSION = 0;
+    static const uint32_t HEADER_VERSION_0 = 0; // Old HEF
+    static const uint32_t HEADER_VERSION_1 = 1; // New HEF (SHEF)
 
     static Expected<Impl> create(const std::string &hef_path);
     static Expected<Impl> create(const MemoryView &hef_buffer);
@@ -238,6 +259,8 @@ public:
     const NetworkGroupMetadata network_group_metadata(const std::string &net_group_name) const;
 
     Expected<std::pair<std::string, std::string>> get_network_group_and_network_name(const std::string &name);
+
+    void clear_hef_buffer();
 
     Expected<std::shared_ptr<ProtoHEFCoreOpMock>> get_core_op_by_net_group_name(const std::string &net_group_name="");
     Expected<std::vector<hailo_network_info_t>> get_network_infos(const std::string &net_group_name="");
@@ -261,6 +284,7 @@ public:
     Expected<size_t> get_number_of_input_streams(const std::string &net_group_name="");
     Expected<size_t> get_number_of_output_streams(const std::string &net_group_name="");
     ProtoHEFHwArch get_device_arch();
+    std::shared_ptr<ShefFileHandle> get_shef_file_handle();
     Expected<float64_t> get_bottleneck_fps(const std::string &net_group_name="");
     static bool contains_ddr_layers(const ProtoHEFCoreOpMock &core_op);
     static hailo_status validate_core_op_unique_layer_names(const ProtoHEFCoreOpMock &core_op);
@@ -416,6 +440,7 @@ private:
     std::vector<ProtoHEFOptionalExtension> m_hef_optional_extensions;
     std::bitset<SUPPORTED_EXTENSIONS_BITSET_SIZE> m_supported_extensions_bitset;
     MD5_SUM_t m_md5;
+    std::shared_ptr<ShefFileHandle> m_shef_file_handle;
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
     Buffer m_hef_buffer;
@@ -450,46 +475,46 @@ public:
 
     static hailo_status fill_boundary_layers_info(
         const ProtoHEFCoreOpMock &core_op,
-        const uint8_t context_index,
+        const uint16_t context_index,
         const ProtoHEFEdgeLayer &layer,
         const SupportedFeatures &supported_features,
         ContextMetadata &context_metadata,
         const ProtoHEFHwArch &hef_arch);
     static Expected<LayerInfo> get_inter_context_layer_info(
-        const ProtoHEFCoreOpMock &core_op, const uint8_t context_index,
+        const ProtoHEFCoreOpMock &core_op, const uint16_t context_index,
         const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features);
     static hailo_status fill_inter_context_layers_info(
         const ProtoHEFCoreOpMock &core_op,
-        const uint8_t context_index,
+        const uint16_t context_index,
         const ProtoHEFEdgeLayer &layer,
         const SupportedFeatures &supported_features,
         ContextMetadata &context_metadata);
     static Expected<LayerInfo> get_ddr_layer_info(
-        const ProtoHEFCoreOpMock &core_op, const uint8_t context_index,
+        const ProtoHEFCoreOpMock &core_op, const uint16_t context_index,
         const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features);
     static hailo_status fill_ddr_layers_info(
         const ProtoHEFCoreOpMock &core_op,
-        const uint8_t context_index,
+        const uint16_t context_index,
         const ProtoHEFEdgeLayer &layer,
         const SupportedFeatures &supported_features,
         ContextMetadata &context_metadata);
     static hailo_status check_ddr_pairs_match(
         const std::vector<LayerInfo> &context_ddr_input_layers,
         const std::vector<LayerInfo> &context_ddr_output_layers,
-        const uint8_t context_index);
+        const uint16_t context_index);
     static Expected<ContextMetadata> parse_preliminary_context(const ProtoHEFPreliminaryConfig &preliminary_proto,
-        const SupportedFeatures &supported_features);
+        const SupportedFeatures &supported_features, std::shared_ptr<ShefFileHandle> shef_file_handle);
     static Expected<ContextMetadata> parse_single_dynamic_context(const ProtoHEFCoreOpMock &core_op,
-        const ProtoHEFContext &context_proto, uint8_t context_index, const SupportedFeatures &supported_features,
-        const ProtoHEFHwArch &hef_arch);
+        const ProtoHEFContext &context_proto, uint16_t context_index, const SupportedFeatures &supported_features,
+        const ProtoHEFHwArch &hef_arch, std::shared_ptr<ShefFileHandle> shef_file_handle);
     static Expected<std::vector<ContextMetadata>> parse_dynamic_contexts(const ProtoHEFCoreOpMock &core_op,
-        const SupportedFeatures &supported_features, const ProtoHEFHwArch &hef_arch);
+        const SupportedFeatures &supported_features, const ProtoHEFHwArch &hef_arch, std::shared_ptr<ShefFileHandle> shef_file_handle);
     static Expected<hailo_nms_info_t> parse_proto_nms_info(const ProtoHEFNmsInfo &proto_nms_info,
         const bool burst_mode_enabled, const ProtoHEFHwArch &hef_arch);
     static Expected<LayerInfo> get_boundary_layer_info(const ProtoHEFCoreOpMock &core_op,
-        const uint8_t context_index, const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features,
+        const uint16_t context_index, const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features,
         const ProtoHEFHwArch &hef_arch);
-    
+
     static Expected<std::string> get_partial_network_name_by_index(const ProtoHEFCoreOpMock &core_op, uint8_t network_index, const SupportedFeatures &supported_features);
 
     static std::string get_network_group_name(const ProtoHEFNetworkGroup &net_group, const SupportedFeatures &supported_features);
@@ -500,12 +525,12 @@ private:
     // TODO HRT-12051: Remove is_part_of_mux_layer parameter when core_hw_padding is removed
     static hailo_status fill_layer_info_with_base_info(const ProtoHEFEdgeLayerBase &base_info,
         const ProtoHEFEdgeConnectionType &edge_connection_type, const ProtoHEFNetworkGroupMetadata &network_group_proto,
-        bool transposed, const uint8_t context_index, const uint8_t network_index, LayerInfo &layer_info,
+        bool transposed, const uint16_t context_index, const uint8_t network_index, LayerInfo &layer_info,
         const SupportedFeatures &supported_features, const ProtoHEFHwArch &hef_arch, const bool is_part_of_mux_layer);
     // TODO HRT-12051: Remove is_part_of_mux_layer parameter when core_hw_padding is removed
     static hailo_status fill_layer_info(const ProtoHEFEdgeLayerInfo &info,
         const ProtoHEFEdgeConnectionType &edge_connection_type, const ProtoHEFCoreOpMock &core_op,
-        hailo_stream_direction_t direction, const uint8_t context_index, const std::string &partial_network_name, 
+        hailo_stream_direction_t direction, const uint16_t context_index, const std::string &partial_network_name, 
         uint8_t network_index, LayerInfo &layer_info, const SupportedFeatures &supported_features,
         const ProtoHEFHwArch &hef_arch, const bool is_part_of_mux_layer);
     static hailo_status fill_fused_nms_info(const ProtoHEFEdgeLayerFused &info,
@@ -513,12 +538,12 @@ private:
             const bool burst_mode_enabled, const ProtoHEFHwArch &hef_arch);
     static hailo_status fill_mux_info(const ProtoHEFEdgeLayerMux &info,
         const ProtoHEFEdgeConnectionType &edge_connection_type, const ProtoHEFCoreOpMock &core_op,
-        hailo_stream_direction_t direction, const uint8_t context_index, const std::string &partial_network_name, 
+        hailo_stream_direction_t direction, const uint16_t context_index, const std::string &partial_network_name, 
         uint8_t network_index, LayerInfo &layer_info, const SupportedFeatures &supported_features,
         const ProtoHEFHwArch &hef_arch);
     static hailo_status fill_planes_info(const ProtoHEFEdgeLayerPlanes &info,
         const ProtoHEFEdgeConnectionType &edge_connection_type, const ProtoHEFCoreOpMock &core_op,
-        hailo_stream_direction_t direction, const uint8_t context_index, const std::string &partial_network_name, 
+        hailo_stream_direction_t direction, const uint16_t context_index, const std::string &partial_network_name, 
         uint8_t network_index, LayerInfo &layer_info, const SupportedFeatures &supported_features,
         const ProtoHEFHwArch &hef_arch);
 };

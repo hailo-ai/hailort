@@ -52,10 +52,20 @@ struct AddDeviceTrace : Trace
 
 struct MonitorStartTrace : Trace
 {
-    MonitorStartTrace()
-        : Trace("scheduler_start")
+    MonitorStartTrace(const std::string &unique_vdevice_hash)
+        : Trace("scheduler_start"), unique_vdevice_hash(unique_vdevice_hash)
     {}
 
+    std::string unique_vdevice_hash;
+};
+
+struct MonitorEndTrace : Trace
+{
+    MonitorEndTrace(const std::string &unique_vdevice_hash)
+        : Trace("scheduler_end"), unique_vdevice_hash(unique_vdevice_hash)
+    {}
+
+    std::string unique_vdevice_hash;
 };
 
 struct AddCoreOpTrace : Trace
@@ -145,14 +155,30 @@ struct FrameEnqueueD2HTrace : Trace
     std::string queue_name;
 };
 
-struct SwitchCoreOpTrace : Trace
+struct ActivateCoreOpTrace : Trace
 {
-    SwitchCoreOpTrace(const device_id_t &device_id, scheduler_core_op_handle_t handle)
-        : Trace("switch_core_op"), device_id(device_id), core_op_handle(handle)
+    ActivateCoreOpTrace(const device_id_t &device_id, vdevice_core_op_handle_t handle, double duration)
+        : Trace("activate_core_op"), device_id(device_id), core_op_handle(handle), duration(duration)
     {}
 
     device_id_t device_id;
-    scheduler_core_op_handle_t core_op_handle;
+    vdevice_core_op_handle_t core_op_handle;
+    double duration;
+};
+
+// Currently, activate and switch are the same trace to make scheduler and fast-switch flow similar (although in the
+// scheduler we have no deactivate).
+using SwitchCoreOpTrace = ActivateCoreOpTrace;
+
+struct DeactivateCoreOpTrace : Trace
+{
+    DeactivateCoreOpTrace(const device_id_t &device_id, vdevice_core_op_handle_t handle, double duration)
+        : Trace("deactivate_core_op"), device_id(device_id), core_op_handle(handle), duration(duration)
+    {}
+
+    device_id_t device_id;
+    vdevice_core_op_handle_t core_op_handle;
+    double duration;
 };
 
 struct SetCoreOpTimeoutTrace : Trace
@@ -200,6 +226,19 @@ struct OracleDecisionTrace : Trace
     bool over_timeout;
 };
 
+struct HefLoadedTrace : Trace
+{
+    HefLoadedTrace(const std::string &hef_name, const std::string &dfc_version, const unsigned char *md5_hash)
+        : Trace("hef_loaded"), hef_name(hef_name), dfc_version(dfc_version)
+    {
+        std::memcpy(this->md5_hash, md5_hash, MD5_DIGEST_LENGTH);
+    }
+
+    std::string hef_name;
+    std::string dfc_version;
+    MD5_SUM_t md5_hash;
+};
+
 struct DumpProfilerStateTrace : Trace
 {
     DumpProfilerStateTrace() : Trace("dump_profiler_state") {}
@@ -218,8 +257,10 @@ public:
     virtual void handle_trace(const FrameDequeueH2DTrace&) {};
     virtual void handle_trace(const FrameDequeueD2HTrace&) {};
     virtual void handle_trace(const FrameEnqueueD2HTrace&) {};
-    virtual void handle_trace(const SwitchCoreOpTrace&) {};
+    virtual void handle_trace(const ActivateCoreOpTrace&) {};
+    virtual void handle_trace(const DeactivateCoreOpTrace&) {};
     virtual void handle_trace(const MonitorStartTrace&) {};
+    virtual void handle_trace(const MonitorEndTrace&) {};
     virtual void handle_trace(const AddDeviceTrace&) {};
     virtual void handle_trace(const SetCoreOpTimeoutTrace&) {};
     virtual void handle_trace(const SetCoreOpThresholdTrace&) {};
@@ -227,6 +268,7 @@ public:
     virtual void handle_trace(const OracleDecisionTrace&) {};
     virtual void handle_trace(const DumpProfilerStateTrace&) {};
     virtual void handle_trace(const InitProfilerProtoTrace&) {};
+    virtual void handle_trace(const HefLoadedTrace&) {};
 
 };
 

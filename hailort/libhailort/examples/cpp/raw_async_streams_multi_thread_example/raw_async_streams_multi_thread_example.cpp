@@ -71,8 +71,8 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> configure_network_group(Device
 static void output_async_callback(const OutputStream::CompletionInfo &completion_info)
 {
     // Real applications can free the buffer or forward it to post-process/display.
-    if ((HAILO_SUCCESS != completion_info.status) && (HAILO_STREAM_ABORTED_BY_USER != completion_info.status)) {
-        // We will get HAILO_STREAM_ABORTED_BY_USER when activated_network_group is destructed.
+    if ((HAILO_SUCCESS != completion_info.status) && (HAILO_STREAM_ABORT != completion_info.status)) {
+        // We will get HAILO_STREAM_ABORT when activated_network_group is destructed.
         std::cerr << "Got an unexpected status on callback. status=" << completion_info.status << std::endl;
     }
 }
@@ -80,13 +80,13 @@ static void output_async_callback(const OutputStream::CompletionInfo &completion
 static void input_async_callback(const InputStream::CompletionInfo &completion_info)
 {
     // Real applications can free the buffer or reuse it for next transfer.
-    if ((HAILO_SUCCESS != completion_info.status) && (HAILO_STREAM_ABORTED_BY_USER  != completion_info.status)) {
-        // We will get HAILO_STREAM_ABORTED_BY_USER  when activated_network_group is destructed.
+    if ((HAILO_SUCCESS != completion_info.status) && (HAILO_STREAM_ABORT  != completion_info.status)) {
+        // We will get HAILO_STREAM_ABORT  when activated_network_group is destructed.
         std::cerr << "Got an unexpected status on callback. status=" << completion_info.status << std::endl;
     }
 }
 
-static hailo_status infer(ConfiguredNetworkGroup &network_group)
+static hailo_status infer(Device &device, ConfiguredNetworkGroup &network_group)
 {
     // Assume one input and output
     auto &output = network_group.get_output_streams()[0].get();
@@ -100,6 +100,16 @@ static hailo_status infer(ConfiguredNetworkGroup &network_group)
     // are called.
     auto output_buffer = page_aligned_alloc(output.get_frame_size());
     auto input_buffer = page_aligned_alloc(input.get_frame_size());
+
+    // If the same buffer is used multiple times on async-io, to improve performance, it is recommended to pre-map it
+    // into the device. The DmaMappedBuffer object manages the mapping, and it'll be unmapped when it is destroyed.
+    // Notice that the buffer must be alive as long as the mapping is alive, so we define it after the buffers.
+    auto output_mapping = DmaMappedBuffer::create(device, output_buffer.get(), output.get_frame_size(), HAILO_DMA_BUFFER_DIRECTION_D2H);
+    auto input_mapping = DmaMappedBuffer::create(device, input_buffer.get(), input.get_frame_size(), HAILO_DMA_BUFFER_DIRECTION_H2D);
+    if (!output_mapping || !input_mapping) {
+        std::cerr << "Failed to map buffer with status=" << input_mapping.status() << ", " << output_mapping.status() << std::endl;
+        return HAILO_INTERNAL_FAILURE;
+    }
 
     std::atomic<hailo_status> output_status(HAILO_UNINITIALIZED);
     std::thread output_thread([&]() {
@@ -127,16 +137,16 @@ static hailo_status infer(ConfiguredNetworkGroup &network_group)
     std::this_thread::sleep_for(std::chrono::seconds(5));
 
     // Calling shutdown on a network group will ensure that all async operations are done. All pending
-    // operations will be canceled and their callbacks will be called with status=HAILO_STREAM_ABORTED_BY_USER.
+    // operations will be canceled and their callbacks will be called with status=HAILO_STREAM_ABORT.
     // Only after the shutdown is called, we can safely free the buffers and any variable captured inside the async
     // callback lambda.
     network_group.shutdown();
 
-    // Thread should be stopped with HAILO_STREAM_ABORTED_BY_USER status.
+    // Thread should be stopped with HAILO_STREAM_ABORT status.
     output_thread.join();
     input_thread.join();
 
-    if ((HAILO_STREAM_ABORTED_BY_USER != output_status) || (HAILO_STREAM_ABORTED_BY_USER != input_status)) {
+    if ((HAILO_STREAM_ABORT != output_status) || (HAILO_STREAM_ABORT != input_status)) {
         std::cerr << "Got unexpected statues from thread: " << output_status << ", " << input_status << std::endl;
         return HAILO_INTERNAL_FAILURE;
     }
@@ -165,7 +175,7 @@ int main()
         return EXIT_FAILURE;
     }
 
-    auto status = infer(*network_group.value());
+    auto status = infer(*device.value(), *network_group.value());
     if (HAILO_SUCCESS != status) {
         return EXIT_FAILURE;
     }

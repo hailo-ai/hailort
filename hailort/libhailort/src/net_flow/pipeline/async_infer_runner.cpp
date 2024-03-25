@@ -12,11 +12,13 @@
 #include "common/utils.hpp"
 #include "common/os_utils.hpp"
 #include "hailo/event.hpp"
+#include "utils/dma_buffer_utils.hpp"
 #include "hailo/hailort_defaults.hpp"
 #include "hailo/hailort_common.hpp"
 #include "net_flow/pipeline/async_infer_runner.hpp"
+#include "net_flow/pipeline/infer_model_internal.hpp"
 #include "net_flow/pipeline/pipeline_internal.hpp"
-#include "net_flow/ops/op_metadata.hpp"
+#include "net_flow/ops_metadata/op_metadata.hpp"
 
 namespace hailort
 {
@@ -80,8 +82,8 @@ The flow in case of shutdown is:
 
 */
 {
-    if (HAILO_STREAM_ABORTED_BY_USER == error_status) {
-        LOGGER__INFO("Pipeline was aborted by user. Shutting it down");
+    if (HAILO_STREAM_ABORT == error_status) {
+        LOGGER__INFO("Pipeline was aborted. Shutting it down");
     } else {
         LOGGER__ERROR("Shutting down the pipeline with status {}", error_status);
     }
@@ -131,6 +133,11 @@ const ElementBuildParams AsyncPipeline::get_build_params()
     return m_build_params;
 }
 
+std::shared_ptr<std::atomic<hailo_status>> AsyncPipeline::get_pipeline_status()
+{
+    return m_build_params.pipeline_status;
+}
+
 void AsyncPipeline::set_as_multi_planar()
 {
     m_is_multi_planar = true;
@@ -148,7 +155,7 @@ Expected<std::shared_ptr<AsyncInferRunnerImpl>> AsyncInferRunnerImpl::create(std
     auto pipeline_status = make_shared_nothrow<std::atomic<hailo_status>>(HAILO_SUCCESS);
     CHECK_AS_EXPECTED(nullptr != pipeline_status, HAILO_OUT_OF_HOST_MEMORY);
 
-    auto async_pipeline_expected = PipelineBuilder::create_pipeline(net_group, inputs_formats, outputs_formats, timeout, pipeline_status);
+    auto async_pipeline_expected = AsyncPipelineBuilder::create_pipeline(net_group, inputs_formats, outputs_formats, timeout, pipeline_status);
     CHECK_EXPECTED(async_pipeline_expected);
 
     auto async_infer_runner_ptr = make_shared_nothrow<AsyncInferRunnerImpl>(async_pipeline_expected.release(), pipeline_status);
@@ -208,15 +215,16 @@ hailo_status AsyncInferRunnerImpl::start_pipeline()
 
 void AsyncInferRunnerImpl::abort()
 {
+    std::unique_lock<std::mutex> lock(m_mutex);
     m_is_aborted = true;
-    m_async_pipeline->shutdown(HAILO_STREAM_ABORTED_BY_USER);
+    m_async_pipeline->shutdown(HAILO_STREAM_ABORT);
     return;
 }
 
 Expected<bool> AsyncInferRunnerImpl::can_push_buffers()
 {
     for (auto &last_element : m_async_pipeline->get_last_elements()) {
-        auto can_push_buffer = last_element.second->can_push_buffer_upstream(last_element.first);
+        auto can_push_buffer = last_element.second->can_push_buffer_upstream();
         CHECK_EXPECTED(can_push_buffer);
         if (!can_push_buffer.release()) {
             return false;
@@ -224,7 +232,7 @@ Expected<bool> AsyncInferRunnerImpl::can_push_buffers()
     }
 
     for (auto &entry_element : m_async_pipeline->get_entry_elements()) {
-        auto can_push_buffer = entry_element.second->can_push_buffer_downstream(entry_element.first);
+        auto can_push_buffer = entry_element.second->can_push_buffer_downstream();
         CHECK_EXPECTED(can_push_buffer);
         if (!can_push_buffer.release()) {
             return false;
@@ -234,28 +242,170 @@ Expected<bool> AsyncInferRunnerImpl::can_push_buffers()
     return true;
 }
 
-hailo_status AsyncInferRunnerImpl::async_infer()
+hailo_status AsyncInferRunnerImpl::set_buffers(std::unordered_map<std::string, PipelineBuffer> &inputs,
+    std::unordered_map<std::string, std::pair<MemoryView, TransferDoneCallbackAsyncInfer>> &outputs)
 {
-    hailo_status status = m_async_pipeline->get_build_params().pipeline_status->load();
-    CHECK_SUCCESS(status, "Can't handle infer request since Pipeline status is {}.", status);
-
-    auto pools_are_ready = can_push_buffers();
-    CHECK_EXPECTED_AS_STATUS(pools_are_ready);
-    CHECK(pools_are_ready.release(), HAILO_QUEUE_IS_FULL, "Can't handle infer request since a queue in the pipeline is full.");
-
     for (auto &last_element : m_async_pipeline->get_last_elements()) {
-        assert(contains(m_output_buffers, last_element.first));
-        auto output_buffer = m_output_buffers.at(last_element.first);
-        auto read_done = m_read_dones.at(last_element.first);
         // TODO: handle the non-recoverable case where one buffer is enqueued successfully and the second isn't (HRT-11783)
-        status = last_element.second->enqueue_execution_buffer(output_buffer, read_done);
+        auto status = last_element.second->enqueue_execution_buffer(outputs.at(last_element.first).first,
+            outputs.at(last_element.first).second);
         CHECK_SUCCESS(status);
     }
 
     for (auto &entry_element : m_async_pipeline->get_entry_elements()) {
-        assert(contains(m_input_buffers, entry_element.first));
-        entry_element.second->sinks()[0].run_push_async(std::move(m_input_buffers.at(entry_element.first)));
+        entry_element.second->sinks()[0].run_push_async(std::move(inputs.at(entry_element.first)));
     }
+
+    return HAILO_SUCCESS;
+}
+
+void AsyncInferRunnerImpl::set_pix_buffer_inputs(std::unordered_map<std::string, PipelineBuffer> &inputs, hailo_pix_buffer_t userptr_pix_buffer,
+    TransferDoneCallbackAsyncInfer input_done, const std::string &input_name)
+{
+    if (1 == userptr_pix_buffer.number_of_planes) {
+        inputs[input_name] = PipelineBuffer(MemoryView(userptr_pix_buffer.planes[0].user_ptr, userptr_pix_buffer.planes[0].bytes_used), input_done);
+    } else if (m_async_pipeline->is_multi_planar()) {
+        // If model is multi-planar
+        inputs[input_name] = PipelineBuffer(userptr_pix_buffer, input_done);
+    } else {
+        // Other cases - return error, as on async flow we do not support copy to new buffer
+        LOGGER__ERROR("HEF was compiled for single input layer, while trying to pass non-contiguous planes buffers.");
+        inputs[input_name] = PipelineBuffer(HAILO_INVALID_OPERATION, input_done);
+    }
+
+}
+
+Expected<hailo_pix_buffer_t> AsyncInferRunnerImpl::convert_dma_pix_buffer_to_userptr_pix_buffer(const hailo_pix_buffer_t &dma_pix_buffer)
+{
+    hailo_pix_buffer_t userptr_pix_buffer;
+    userptr_pix_buffer.index = dma_pix_buffer.index;
+    userptr_pix_buffer.number_of_planes = dma_pix_buffer.number_of_planes;
+    userptr_pix_buffer.memory_type = HAILO_PIX_BUFFER_MEMORY_TYPE_USERPTR;
+
+    for (uint32_t i = 0; i < dma_pix_buffer.number_of_planes; i++ ) {
+        auto current_plane  = dma_pix_buffer.planes[i];
+        hailo_dma_buffer_t dma_buffer = {current_plane.fd, current_plane.bytes_used};
+
+        auto dma_buffer_memview_expected = DmaBufferUtils::mmap_dma_buffer_read(dma_buffer);
+        CHECK_EXPECTED_AS_STATUS(dma_buffer_memview_expected);
+        auto dma_buffer_memview = dma_buffer_memview_expected.release();
+
+        hailo_pix_buffer_plane_t new_plane;
+        new_plane.bytes_used = current_plane.bytes_used;
+        new_plane.plane_size = current_plane.plane_size;
+        new_plane.user_ptr = dma_buffer_memview.data();
+
+        userptr_pix_buffer.planes[i] = new_plane;
+    }
+
+    return userptr_pix_buffer;
+}
+
+hailo_status AsyncInferRunnerImpl::run(ConfiguredInferModel::Bindings &bindings, TransferDoneCallbackAsyncInfer transfer_done)
+{
+    std::unique_lock<std::mutex> lock(m_mutex);
+    hailo_status status = m_async_pipeline->get_pipeline_status()->load();
+    CHECK_SUCCESS(status, "Can't handle infer request since Pipeline status is {}.", status);
+
+    TRY(auto are_pools_ready, can_push_buffers());
+    CHECK(are_pools_ready, HAILO_QUEUE_IS_FULL, "Can't handle infer request since a queue in the pipeline is full.");
+
+    std::unordered_map<std::string, std::pair<MemoryView, TransferDoneCallbackAsyncInfer>> outputs;
+    for (auto &last_element : m_async_pipeline->get_last_elements()) {
+        auto buff_type = bindings.output(last_element.first)->m_pimpl->get_type();
+        if (BufferType::DMA_BUFFER == buff_type) {
+            TRY(auto dma_buffer, bindings.output(last_element.first)->get_dma_buffer(), "Couldnt find output buffer for '{}'", last_element.first);
+
+            TRY(auto dma_buffer_memview, DmaBufferUtils::mmap_dma_buffer_write(dma_buffer));
+
+            auto output_done = [dma_buffer_memview, dma_buffer=dma_buffer, transfer_done](hailo_status status) {
+                auto mumap_status = DmaBufferUtils::munmap_dma_buffer_write(dma_buffer, dma_buffer_memview);
+                if (HAILO_SUCCESS != mumap_status) {
+                    LOGGER__ERROR("Failed to unmap dma buffer");
+                    status = HAILO_FILE_OPERATION_FAILURE;
+                }
+                transfer_done(status);
+            };
+            std::pair<MemoryView, TransferDoneCallbackAsyncInfer> buffer_cb_pair (dma_buffer_memview, output_done);
+            outputs[last_element.first] = buffer_cb_pair;
+
+        } else {
+            TRY(auto buffer, bindings.output(last_element.first)->get_buffer(), "Couldnt find output buffer for '{}'", last_element.first);
+
+            std::pair<MemoryView, TransferDoneCallbackAsyncInfer> buffer_cb_pair (buffer, transfer_done);
+            outputs[last_element.first] = buffer_cb_pair;
+        }
+    }
+
+    std::unordered_map<std::string, PipelineBuffer> inputs;
+    for (auto &entry_element : m_async_pipeline->get_entry_elements()) {
+        auto buff_type = bindings.input(entry_element.first)->m_pimpl->get_type();
+
+        switch (buff_type) {
+        case BufferType::VIEW:
+        {
+            TRY(auto buffer, bindings.input(entry_element.first)->get_buffer(), "Couldnt find input buffer for '{}'", entry_element.first);
+            inputs[entry_element.first] = PipelineBuffer(buffer, transfer_done);
+            break;
+        }
+        case BufferType::DMA_BUFFER:
+        {
+            TRY(auto dma_buffer, bindings.input(entry_element.first)->get_dma_buffer(), "Couldnt find input buffer for '{}'", entry_element.first);
+
+            TRY(auto dma_buffer_memview, DmaBufferUtils::mmap_dma_buffer_read(dma_buffer));
+
+            auto input_done = [dma_buffer_memview, dma_buffer, transfer_done](hailo_status status) {
+                auto mumap_status = DmaBufferUtils::munmap_dma_buffer_read(dma_buffer, dma_buffer_memview);
+                if (HAILO_SUCCESS != mumap_status) {
+                    // Note: we overide the status even if it was not success before (but either way it's set to non-success)
+                    LOGGER__ERROR("Failed to unmap dma buffer");
+                    status = mumap_status;
+                }
+                transfer_done(status);
+            };
+            inputs[entry_element.first] = PipelineBuffer(dma_buffer_memview, input_done);
+            break;
+        }
+        case BufferType::PIX_BUFFER:
+        {
+            // TODO: handle a case in which the pix_buffer is DMA buffers (HRT-12771)
+            TRY(auto pix_buffer, bindings.input(entry_element.first)->get_pix_buffer(), "Couldnt find input buffer for '{}'", entry_element.first);
+
+            if (HAILO_PIX_BUFFER_MEMORY_TYPE_DMABUF == pix_buffer.memory_type) {
+                TRY(auto userptr_pix_buffer, convert_dma_pix_buffer_to_userptr_pix_buffer(pix_buffer));
+
+                auto input_done = [userptr_pix_buffer, transfer_done, dma_pix_buffer=pix_buffer](hailo_status status) {
+                    for (uint32_t i = 0; i < dma_pix_buffer.number_of_planes; i++ ) {
+                        auto plane_in_dma_buffer  = dma_pix_buffer.planes[i];
+                        hailo_dma_buffer_t dma_buffer = {plane_in_dma_buffer.fd, plane_in_dma_buffer.bytes_used};
+
+                        auto dma_buffer_memview = MemoryView(userptr_pix_buffer.planes[i].user_ptr, userptr_pix_buffer.planes[i].bytes_used);
+
+                        auto mumap_status = DmaBufferUtils::munmap_dma_buffer_read(dma_buffer, dma_buffer_memview);
+                        if (HAILO_SUCCESS != mumap_status) {
+                            // Note: we overide the status even if it was not success before (but either way it's set to non-success)
+                            LOGGER__ERROR("Failed to unmap dma buffer");
+                            status = mumap_status;
+                        }
+                    }
+                    transfer_done(status);
+                };
+
+                set_pix_buffer_inputs(inputs, userptr_pix_buffer, input_done, entry_element.first);
+            } else {
+                set_pix_buffer_inputs(inputs, pix_buffer, transfer_done, entry_element.first);
+            }
+            break;
+        }
+
+        default:
+            CHECK(false, HAILO_NOT_FOUND, "Couldnt find input buffer for '{}'", entry_element.first);
+        }
+    }
+
+    status = set_buffers(inputs, outputs);
+    CHECK_SUCCESS(status);
+
     return HAILO_SUCCESS;
 }
 
@@ -282,32 +432,6 @@ std::unordered_map<std::string, std::shared_ptr<PipelineElement>> AsyncInferRunn
 std::unordered_map<std::string, std::shared_ptr<PipelineElement>> AsyncInferRunnerImpl::get_last_elements()
 {
     return m_async_pipeline->get_last_elements();
-}
-
-void AsyncInferRunnerImpl::set_input(const std::string &input_name, MemoryView &&input_buffer, TransferDoneCallbackAsyncInfer &write_done)
-{
-    m_input_buffers[input_name] = PipelineBuffer(std::move(input_buffer), write_done);
-}
-
-void AsyncInferRunnerImpl::set_input(const std::string &input_name, hailo_pix_buffer_t input_buffer, TransferDoneCallbackAsyncInfer &write_done)
-{
-    // If only one plane is passed, address it as memview
-    if (1 == input_buffer.number_of_planes) {
-        m_input_buffers[input_name] = PipelineBuffer(MemoryView(input_buffer.planes[0].user_ptr, input_buffer.planes[0].bytes_used), write_done);
-    } else if (m_async_pipeline->is_multi_planar()) {
-        // If model is multi-planar
-        m_input_buffers[input_name] = PipelineBuffer(std::move(input_buffer), write_done);
-    } else {
-        // Other cases - return error, as on async flow we do not support copy to new buffer
-        LOGGER__ERROR("HEF was compiled for single input layer, while trying to pass non-contiguous planes buffers.");
-        m_input_buffers[input_name] = PipelineBuffer(HAILO_INVALID_OPERATION, write_done);
-    }
-}
-
-void AsyncInferRunnerImpl::set_output(const std::string &output_name, MemoryView &&output_buffer, TransferDoneCallbackAsyncInfer &read_done)
-{
-    m_output_buffers[output_name] = std::move(output_buffer);
-    m_read_dones[output_name] = read_done;
 }
 
 std::vector<std::shared_ptr<PipelineElement>> AsyncInferRunnerImpl::get_pipeline() const

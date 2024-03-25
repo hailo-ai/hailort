@@ -10,7 +10,8 @@
 #include "common/utils.hpp"
 #include "common/logger_macros.hpp"
 
-#include "hef/hef_internal.hpp"
+#include "hailo/hailort_common.hpp"
+#include "hef/core_op_metadata.hpp"
 #include "device_common/control.hpp"
 #include "hw_consts.hpp"
 #include "utils/soc_utils/partial_cluster_reader.hpp"
@@ -91,9 +92,8 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
     // Device architecture can be HAILO_ARCH_HAILO15H or HAILO_ARCH_HAILO15M - but the FW will always return HAILO_ARCH_HAILO15H
     // Based on a file the SCU gives us we can deduce the actual type
     if (HAILO_ARCH_HAILO15H == board_info.device_architecture) {
-        auto dev_arch_exp = PartialClusterReader::get_actual_dev_arch_from_fuse(board_info.device_architecture);
-        CHECK_EXPECTED(dev_arch_exp);
-        board_info.device_architecture = dev_arch_exp.release();
+        TRY(const auto dev_arch, PartialClusterReader::get_actual_dev_arch_from_fuse(board_info.device_architecture));
+        board_info.device_architecture = dev_arch;
     }
 
     /* Write identify results to log */
@@ -208,6 +208,57 @@ hailo_status control__parse_core_identify_results(CONTROL_PROTOCOL__core_identif
     return HAILO_SUCCESS;
 }
 
+hailo_status log_detailed_fw_error(const Device &device, const CONTROL_PROTOCOL__status_t &fw_status, const CONTROL_PROTOCOL__OPCODE_t opcode)
+{
+    const char *firmware_status_text = NULL;
+    // Special care for user_config_examine - warning log will be printed if not loaded, since it can happen on happy-flow (e.g. no EEPROM)
+    if ((fw_status.major_status == CONTROL_PROTOCOL_STATUS_USER_CONFIG_EXAMINE_FAILED) &&
+        (fw_status.minor_status == FIRMWARE_CONFIGS_STATUS_USER_CONFIG_NOT_LOADED)) {
+            LOGGER__WARNING("Failed to examine user config, as it is not loaded or is not supported by the device.");
+    }
+
+    LOGGER__ERROR("Firmware control has failed. Major status: {:#x}, Minor status: {:#x}",
+            fw_status.major_status,
+            fw_status.minor_status);
+    auto common_status = FIRMWARE_STATUS__get_textual((FIRMWARE_STATUS_t)fw_status.major_status, &firmware_status_text);
+    if (HAILO_COMMON_STATUS__SUCCESS == common_status) {
+        LOGGER__ERROR("Firmware major status: {}", firmware_status_text);
+    } else {
+        LOGGER__ERROR("Cannot find textual address for firmware status {:#x}, common_status = {}",
+            (FIRMWARE_STATUS_t)fw_status.major_status, common_status);
+    }
+    common_status = FIRMWARE_STATUS__get_textual((FIRMWARE_STATUS_t)fw_status.minor_status, &firmware_status_text);
+    if (HAILO_COMMON_STATUS__SUCCESS == common_status) {
+        LOGGER__ERROR("Firmware minor status: {}", firmware_status_text);
+    } else {
+        LOGGER__ERROR("Cannot find textual address for firmware status {:#x}, common_status = {}",
+            (FIRMWARE_STATUS_t)fw_status.minor_status, common_status);
+    }
+
+    if ((CONTROL_PROTOCOL_STATUS_CONTROL_UNSUPPORTED == fw_status.minor_status) ||
+        (CONTROL_PROTOCOL_STATUS_CONTROL_UNSUPPORTED == fw_status.major_status)) {
+        auto device_arch = device.get_architecture();
+        auto dev_arch_str = (device_arch) ? HailoRTCommon::get_device_arch_str(*device_arch) : "Unable to parse arch";
+        LOGGER__ERROR("Opcode {} is not supported on the device." \
+            " This error usually occurs when the control is not supported for the device arch - ({}), or not compiled to the FW",
+            CONTROL_PROTOCOL__get_textual_opcode(opcode), dev_arch_str);
+    }
+
+    if ((CONTROL_PROTOCOL_STATUS_UNSUPPORTED_DEVICE == fw_status.minor_status) ||
+        (CONTROL_PROTOCOL_STATUS_UNSUPPORTED_DEVICE == fw_status.major_status)) {
+        LOGGER__ERROR("Opcode {} is not supported on the current board.", CONTROL_PROTOCOL__get_textual_opcode(opcode));
+        return HAILO_UNSUPPORTED_OPCODE;
+    }
+
+    if ((HAILO_CONTROL_STATUS_UNSUPPORTED_OPCODE == fw_status.minor_status) ||
+        (HAILO_CONTROL_STATUS_UNSUPPORTED_OPCODE == fw_status.major_status)) {
+        LOGGER__ERROR("Opcode {} is not supported", CONTROL_PROTOCOL__get_textual_opcode(opcode));
+        return HAILO_UNSUPPORTED_OPCODE;
+    }
+
+    return HAILO_FW_CONTROL_FAILURE;
+}
+
 hailo_status Control::parse_and_validate_response(uint8_t *message, uint32_t message_size,
     CONTROL_PROTOCOL__response_header_t **header, CONTROL_PROTOCOL__payload_t **payload,
     CONTROL_PROTOCOL__request_t *request, Device &device)
@@ -215,7 +266,6 @@ hailo_status Control::parse_and_validate_response(uint8_t *message, uint32_t mes
     hailo_status status = HAILO_UNINITIALIZED;
     HAILO_COMMON_STATUS_t common_status = HAILO_COMMON_STATUS__UNINITIALIZED;
     CONTROL_PROTOCOL__status_t fw_status = {};
-    const char *firmware_status_text = NULL;
 
     /* Parse the response */
     common_status = CONTROL_PROTOCOL__parse_response(message, message_size, header, payload, &fw_status);
@@ -228,51 +278,12 @@ hailo_status Control::parse_and_validate_response(uint8_t *message, uint32_t mes
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
-    /* Valdiate response was succesfull - both major and minor should be error free */
+    /* Validate response was successful - both major and minor should be error free */
     if (0 != fw_status.major_status) {
-        status = HAILO_FW_CONTROL_FAILURE;
-        LOGGER__ERROR("Firmware control has failed. Major status: {:#x}, Minor status: {:#x}",
-                fw_status.major_status,
-                fw_status.minor_status);
-        common_status = FIRMWARE_STATUS__get_textual((FIRMWARE_STATUS_t)fw_status.major_status, &firmware_status_text);
-        if (HAILO_COMMON_STATUS__SUCCESS == common_status) {
-            LOGGER__ERROR("Firmware major status: {}", firmware_status_text);
-        } else {
-            LOGGER__ERROR("Cannot find textual address for firmware status {:#x}, common_status = {}",
-                (FIRMWARE_STATUS_t)fw_status.major_status, common_status);
-        }
-        common_status = FIRMWARE_STATUS__get_textual((FIRMWARE_STATUS_t)fw_status.minor_status, &firmware_status_text);
-        if (HAILO_COMMON_STATUS__SUCCESS == common_status) {
-            LOGGER__ERROR("Firmware minor status: {}", firmware_status_text);
-        } else {
-            LOGGER__ERROR("Cannot find textual address for firmware status {:#x}, common_status = {}",
-                (FIRMWARE_STATUS_t)fw_status.minor_status, common_status);
-        }
-
-        if ((CONTROL_PROTOCOL_STATUS_CONTROL_UNSUPPORTED == fw_status.minor_status) ||
-            (CONTROL_PROTOCOL_STATUS_CONTROL_UNSUPPORTED == fw_status.major_status)) {
-            auto device_arch = device.get_architecture();
-            auto dev_arch_str = (device_arch) ? HailoRTCommon::get_device_arch_str(*device_arch) : "Unable to parse arch";
-            LOGGER__ERROR("Opcode {} is not supported on the device." \
-                " This error usually occurs when the control is not supported for the device arch - ({}), or not compiled to the FW",
-                CONTROL_PROTOCOL__get_textual_opcode((CONTROL_PROTOCOL__OPCODE_t)BYTE_ORDER__ntohl(request->header.common_header.opcode)),
-                dev_arch_str);
-        }
-
-        if ((CONTROL_PROTOCOL_STATUS_UNSUPPORTED_DEVICE == fw_status.minor_status) ||
-            (CONTROL_PROTOCOL_STATUS_UNSUPPORTED_DEVICE == fw_status.major_status)) {
-            LOGGER__ERROR("Opcode {} is not supported on the current board.",
-                CONTROL_PROTOCOL__get_textual_opcode((CONTROL_PROTOCOL__OPCODE_t)BYTE_ORDER__ntohl(request->header.common_header.opcode)));
-        }
-
-        if ((HAILO_CONTROL_STATUS_UNSUPPORTED_OPCODE == fw_status.minor_status) ||
-            (HAILO_CONTROL_STATUS_UNSUPPORTED_OPCODE == fw_status.major_status)) {
-            status = HAILO_UNSUPPORTED_OPCODE;
-            LOGGER__ERROR("Opcode {} is not supported",
-                CONTROL_PROTOCOL__get_textual_opcode((CONTROL_PROTOCOL__OPCODE_t)BYTE_ORDER__ntohl(request->header.common_header.opcode)));
-        }
-
+        status = log_detailed_fw_error(device, fw_status,
+            static_cast<CONTROL_PROTOCOL__OPCODE_t>(BYTE_ORDER__ntohl(request->header.common_header.opcode)));
         goto exit;
+
     }
 
     /* Validate response opcode is same as request */
@@ -2382,7 +2393,7 @@ exit:
 }
 
 hailo_status Control::context_switch_set_context_info_chunk(Device &device,
-    const CONTROL_PROTOCOL__context_switch_context_info_single_control_t &context_info)
+    const CONTROL_PROTOCOL__context_switch_context_info_chunk_t &context_info)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     HAILO_COMMON_STATUS_t common_status = HAILO_COMMON_STATUS__UNINITIALIZED;
@@ -2422,7 +2433,7 @@ exit:
 }
 
 hailo_status Control::context_switch_set_context_info(Device &device,
-    const std::vector<CONTROL_PROTOCOL__context_switch_context_info_single_control_t> &context_infos)
+    const std::vector<CONTROL_PROTOCOL__context_switch_context_info_chunk_t> &context_infos)
 {
     for (const auto &context_info : context_infos) {
         auto status = context_switch_set_context_info_chunk(device, context_info);
@@ -2543,7 +2554,7 @@ hailo_status Control::set_pause_frames(Device &device, uint8_t rx_pause_frames_e
 }
 
 hailo_status Control::download_context_action_list_chunk(Device &device, uint32_t network_group_id,
-    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index,
+    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint16_t context_index,
     uint16_t action_list_offset, size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list,
     uint16_t *action_list_length, bool *is_action_list_end, uint32_t *batch_counter)
 {
@@ -2614,7 +2625,7 @@ exit:
 }
 
 hailo_status Control::download_context_action_list(Device &device, uint32_t network_group_id,
-    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index, size_t action_list_max_size,
+    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint16_t context_index, size_t action_list_max_size,
     uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length, uint32_t *batch_counter)
 {
     hailo_status status = HAILO_UNINITIALIZED;
@@ -3073,14 +3084,10 @@ Expected<uint32_t> Control::get_partial_clusters_layout_bitmap(Device &device)
         return std::stoi(std::string(force_layout_env));
     }
 
-    auto dev_arch_exp = device.get_architecture();
-    CHECK_EXPECTED(dev_arch_exp);
-    const auto dev_arch = dev_arch_exp.release();
+    TRY(const auto dev_arch, device.get_architecture());
     // In Both cases of Hailo15H and Hailo15M read fuse file (If no file found will return default value of all clusters)
     if ((HAILO_ARCH_HAILO15H == dev_arch) || (HAILO_ARCH_HAILO15M == dev_arch)) {
-        auto bitmap_exp = PartialClusterReader::get_partial_clusters_layout_bitmap(dev_arch);
-        CHECK_EXPECTED(bitmap_exp);
-        const auto bitmap = bitmap_exp.release();
+        TRY(const auto bitmap, PartialClusterReader::get_partial_clusters_layout_bitmap(dev_arch));
         if (PARTIAL_CLUSTERS_LAYOUT_BITMAP__HAILO15_DEFAULT == bitmap) {
             return Expected<uint32_t>(PARTIAL_CLUSTERS_LAYOUT_IGNORE);
         } else {

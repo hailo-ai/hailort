@@ -81,6 +81,7 @@ extern "C" {
 /* Value to represent an operation should be performed on all streams. */
 #define CONTROL_PROTOCOL__ALL_DATAFLOW_MANAGERS (0xFF)
 
+#define CONTROL_PROTOCOL__MAX_CONTEXT_SIZE (3072)
 
 #define CONTROL_PROTOCOL__OPCODES_VARIABLES \
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_IDENTIFY,                                  true,  CPU_ID_APP_CPU)\
@@ -868,15 +869,18 @@ typedef struct {
 
 typedef struct {
     bool preliminary_run_asap;
+    bool batch_register_config;
+    bool can_fast_batch_switch;
 } CONTROL_PROTOCOL__INFER_FEATURE_LIST_t;
 
 typedef struct {
-    uint8_t dynamic_contexts_count;
+    uint16_t dynamic_contexts_count;
     CONTROL_PROTOCOL__INFER_FEATURE_LIST_t infer_features;
     CONTROL_PROTOCOL__VALIDATION_FEATURE_LIST_t validation_features;
     uint8_t networks_count;
     uint16_t csm_buffer_size;
     uint16_t batch_size[CONTROL_PROTOCOL__MAX_NETWORKS_PER_NETWORK_GROUP];
+    uint32_t external_action_list_address;
     uint32_t boundary_channels_bitmap[CONTROL_PROTOCOL__MAX_VDMA_ENGINES_COUNT];
 } CONTROL_PROTOCOL__application_header_t;
 
@@ -954,10 +958,10 @@ typedef struct {
 #pragma warning(disable: 4200)
 #endif
 typedef struct {
-    uint32_t is_first_control_per_context_length;
-    uint8_t is_first_control_per_context;
-    uint32_t is_last_control_per_context_length;
-    uint8_t is_last_control_per_context;
+    uint32_t is_first_chunk_per_context_length;
+    uint8_t is_first_chunk_per_context;
+    uint32_t is_last_chunk_per_context_length;
+    uint8_t is_last_chunk_per_context;
     uint32_t context_type_length;
     uint8_t context_type; // CONTROL_PROTOCOL__context_switch_context_type_t
     uint32_t context_network_data_length;
@@ -988,7 +992,7 @@ typedef struct {
     uint32_t context_type_length;
     uint8_t context_type; // CONTROL_PROTOCOL__context_switch_context_type_t
     uint32_t context_index_length;
-    uint8_t context_index;
+    uint16_t context_index;
     uint32_t action_list_offset_length;
     uint16_t action_list_offset;
 } CONTROL_PROTOCOL__download_context_action_list_request_t;
@@ -1160,7 +1164,7 @@ typedef struct {
     bool break_at_any_batch_index;
     uint16_t batch_index;
     bool break_at_any_context_index;
-    uint8_t context_index;
+    uint16_t context_index;
     bool break_at_any_action_index;
     uint16_t action_index;
 } CONTROL_PROTOCOL__context_switch_breakpoint_data_t;
@@ -1470,15 +1474,21 @@ typedef enum {
     CONTROL_PROTOCOL__CONTEXT_SWITCH_INDEX_COUNT,
 } CONTROL_PROTOCOL__context_switch_context_index_t;
 
-#define CONTROL_PROTOCOL__MAX_CONTEXTS_PER_NETWORK_GROUP (64)
+#define CONTROL_PROTOCOL__MAX_CONTEXTS_PER_NETWORK_GROUP (1024)
 
+// This struct will be used for both ControlActionList and DDRActionlist (in order to keep flow in FW as similar as possible)
+// The context_network_data array will never have more data than CONTROL_PROTOCOL__CONTEXT_NETWORK_DATA_SINGLE_CONTROL_MAX_SIZE
+// In case of ControlActionList - this is verified when sending and receiving control. We make it larger here to be
+// able to hold DDRActionList Contexts without needing to copy or do more processing in fw.
+// In both cases this struct holds a chunk of the context - in ControlActionList - it will be as much of the context a
+// Single control message is able to carry and in DDRActionlist will be the whole context
 typedef struct {
-    bool is_first_control_per_context;
-    bool is_last_control_per_context;
+    bool is_first_chunk_per_context;
+    bool is_last_chunk_per_context;
     uint8_t context_type; // CONTROL_PROTOCOL__context_switch_context_type_t
     uint32_t context_network_data_length;
-    uint8_t context_network_data[CONTROL_PROTOCOL__CONTEXT_NETWORK_DATA_SINGLE_CONTROL_MAX_SIZE];
-} CONTROL_PROTOCOL__context_switch_context_info_single_control_t;
+    uint8_t context_network_data[CONTROL_PROTOCOL__MAX_CONTEXT_SIZE];
+} CONTROL_PROTOCOL__context_switch_context_info_chunk_t;
 
 CASSERT(sizeof(CONTROL_PROTOCOL__context_switch_context_index_t)<=UINT8_MAX, control_protocol_h);
 CASSERT(sizeof(CONTROL_PROTOCOL__context_switch_context_type_t)<=UINT8_MAX, control_protocol_h);

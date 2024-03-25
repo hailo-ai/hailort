@@ -37,10 +37,10 @@ constexpr std::chrono::milliseconds SYNC_EVENT_TIMEOUT(1000);
 
 
 enum class InferenceMode {
-    FULL,
+    FULL_SYNC,
     FULL_ASYNC,
 
-    RAW,
+    RAW_SYNC,
     RAW_ASYNC,
     RAW_ASYNC_SINGLE_THREAD,
 };
@@ -166,7 +166,7 @@ protected:
 
             for (auto i = 0; i < m_params.batch_size; i++) {
                 auto status = writer->write();
-                if (status == HAILO_STREAM_ABORTED_BY_USER) {
+                if (status == HAILO_STREAM_ABORT) {
                     return status;
                 }
                 CHECK_SUCCESS(status);
@@ -198,7 +198,7 @@ protected:
 
             for (auto i = 0; i < m_params.batch_size; i++) {
                 auto status = writer->wait_for_async_ready();
-                if (status == HAILO_STREAM_ABORTED_BY_USER) {
+                if (status == HAILO_STREAM_ABORT) {
                     return status;
                 }
                 CHECK_SUCCESS(status);
@@ -209,7 +209,7 @@ protected:
                             (void)sync_event->signal();
                         }
                     });
-                if (status == HAILO_STREAM_ABORTED_BY_USER) {
+                if (status == HAILO_STREAM_ABORT) {
                     return status;
                 }
                 CHECK_SUCCESS(status);
@@ -243,7 +243,7 @@ protected:
 
             for (auto i = 0; i < m_params.batch_size; i++) {
                 auto status = reader->read();
-                if (status == HAILO_STREAM_ABORTED_BY_USER) {
+                if (status == HAILO_STREAM_ABORT) {
                     return status;
                 }
                 CHECK_SUCCESS(status);
@@ -275,7 +275,7 @@ protected:
 
             for (auto i = 0; i < m_params.batch_size; i++) {
                 auto status = reader->wait_for_async_ready();
-                if (status == HAILO_STREAM_ABORTED_BY_USER) {
+                if (status == HAILO_STREAM_ABORT) {
                     return status;
                 }
                 CHECK_SUCCESS(status);
@@ -286,7 +286,7 @@ protected:
                             (void)sync_event->signal();
                         }
                     });
-                if (status == HAILO_STREAM_ABORTED_BY_USER) {
+                if (status == HAILO_STREAM_ABORT) {
                     return status;
                 }
                 CHECK_SUCCESS(status);
@@ -323,10 +323,10 @@ private:
     static Expected<BufferPtr> create_dataset_from_input_file(const std::string &file_path, size_t size);
 };
 
-class FullNetworkRunner : public NetworkRunner
+class FullSyncNetworkRunner : public NetworkRunner
 {
 public:
-    FullNetworkRunner(const NetworkParams &params, const std::string &name, VDevice &vdevice,
+    FullSyncNetworkRunner(const NetworkParams &params, const std::string &name, VDevice &vdevice,
         std::vector<InputVStream> &&input_vstreams, std::vector<OutputVStream> &&output_vstreams,
         std::shared_ptr<ConfiguredNetworkGroup> cng);
 

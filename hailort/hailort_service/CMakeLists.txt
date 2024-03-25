@@ -12,6 +12,7 @@ endif()
 
 add_executable(hailort_service
     hailort_rpc_service.cpp
+    cng_buffer_pool.cpp
     service_resource_manager.hpp
     ${HAILORT_SERVICE_OS_DIR}/hailort_service.cpp
     ${HAILORT_COMMON_CPP_SOURCES}

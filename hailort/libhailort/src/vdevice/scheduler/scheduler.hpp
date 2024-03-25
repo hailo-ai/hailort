@@ -17,6 +17,7 @@
 #include "common/filesystem.hpp"
 
 #include "utils/thread_safe_map.hpp"
+#include "utils/thread_safe_queue.hpp"
 
 #include "vdevice/scheduler/scheduled_core_op_state.hpp"
 #include "vdevice/scheduler/scheduler_base.hpp"

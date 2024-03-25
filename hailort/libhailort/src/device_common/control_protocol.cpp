@@ -59,6 +59,10 @@ const char *CONTROL_PROTOCOL__get_textual_opcode(CONTROL_PROTOCOL__OPCODE_t opco
 
 #define CHANGE_HW_INFER_REQUEST_PARAMETER_COUNT (5)
 
+#define CHECK_NOT_NULL_COMMON_STATUS(arg, status) _CHECK(nullptr != (arg), (status), "CHECK_NOT_NULL for {} failed", #arg)
+#define CHECK_COMMON_STATUS(cond, ret_val, ...) \
+    _CHECK((cond), (ret_val), CONSTRUCT_MSG("CHECK failed", ##__VA_ARGS__))
+
 /* Functions declarations */
 HAILO_COMMON_STATUS_t control_protocol__parse_message(uint8_t *message,
         uint32_t message_size,
@@ -252,11 +256,11 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_fw_logger_request(CONTROL_PROTO
 {
     size_t local_request_size = 0;
 
-    CHECK(request != nullptr, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
-    CHECK(request_size != nullptr, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
+    CHECK_COMMON_STATUS(request != nullptr, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
+    CHECK_COMMON_STATUS(request_size != nullptr, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
 
-    CHECK(level <= (uint8_t) CONTROL_PROTOCOL__FW_MAX_LOGGER_LEVEL, HAILO_STATUS__CONTROL_PROTOCOL__INVALID_ARGUMENT);
-    CHECK(interface_mask <= CONTROL_PROTOCOL__FW_MAX_LOGGER_INTERFACE, HAILO_STATUS__CONTROL_PROTOCOL__INVALID_ARGUMENT);
+    CHECK_COMMON_STATUS(level <= (uint8_t) CONTROL_PROTOCOL__FW_MAX_LOGGER_LEVEL, HAILO_STATUS__CONTROL_PROTOCOL__INVALID_ARGUMENT);
+    CHECK_COMMON_STATUS(interface_mask <= CONTROL_PROTOCOL__FW_MAX_LOGGER_INTERFACE, HAILO_STATUS__CONTROL_PROTOCOL__INVALID_ARGUMENT);
 
     static_assert((uint32_t) FW_LOGGER_LEVEL_TRACE == (uint32_t) HAILO_FW_LOGGER_LEVEL_TRACE,
         "mismatch in FW_LOGGER_LEVEL_TRACE and HAILO_FW_LOGGER_LEVEL_TRACE");
@@ -294,8 +298,8 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_throttling_state_request(CONTRO
 {
     size_t local_request_size = 0;
 
-    CHECK_NOT_NULL(request, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
-    CHECK_NOT_NULL(request_size, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
+    CHECK_NOT_NULL_COMMON_STATUS(request, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
+    CHECK_NOT_NULL_COMMON_STATUS(request_size, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
 
     /* Header */
     local_request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE + sizeof(CONTROL_PROTOCOL__set_throttling_state_request_t);
@@ -318,8 +322,8 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_overcurrent_state_request(CONTR
 {
     size_t local_request_size = 0;
 
-    CHECK_NOT_NULL(request, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
-    CHECK_NOT_NULL(request_size, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
+    CHECK_NOT_NULL_COMMON_STATUS(request, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
+    CHECK_NOT_NULL_COMMON_STATUS(request_size, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
 
     /* Header */
     local_request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE + sizeof(CONTROL_PROTOCOL__set_overcurrent_state_request_t);
@@ -347,8 +351,8 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_clock_freq_request(CONTROL_PROT
 {
     size_t local_request_size = 0;
 
-    CHECK(request != nullptr, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
-    CHECK(request_size != nullptr, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
+    CHECK_COMMON_STATUS(request != nullptr, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
+    CHECK_COMMON_STATUS(request_size != nullptr, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
 
     /* Header */
     local_request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE + sizeof(CONTROL_PROTOCOL__set_clock_freq_request_t);
@@ -1663,7 +1667,7 @@ exit:
 
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_context_info_request(
     CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
-    const CONTROL_PROTOCOL__context_switch_context_info_single_control_t *context_info)
+    const CONTROL_PROTOCOL__context_switch_context_info_chunk_t *context_info)
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
     size_t local_request_size = 0;
@@ -1678,17 +1682,17 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_context_info_req
         sizeof(CONTROL_PROTOCOL__context_switch_set_context_info_request_t) + context_info->context_network_data_length;
     control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_SET_CONTEXT_INFO, 4);
 
-    /* is_first_control_per_context */
-    request->parameters.context_switch_set_context_info_request.is_first_control_per_context_length = 
-        BYTE_ORDER__htonl(sizeof(request->parameters.context_switch_set_context_info_request.is_first_control_per_context));
-    request->parameters.context_switch_set_context_info_request.is_first_control_per_context = 
-        context_info->is_first_control_per_context;
+    /* is_first_chunk_per_context */
+    request->parameters.context_switch_set_context_info_request.is_first_chunk_per_context_length = 
+        BYTE_ORDER__htonl(sizeof(request->parameters.context_switch_set_context_info_request.is_first_chunk_per_context));
+    request->parameters.context_switch_set_context_info_request.is_first_chunk_per_context = 
+        context_info->is_first_chunk_per_context;
 
-    /* is_last_control_per_context */
-    request->parameters.context_switch_set_context_info_request.is_last_control_per_context_length = 
-        BYTE_ORDER__htonl(sizeof(request->parameters.context_switch_set_context_info_request.is_last_control_per_context));
-    request->parameters.context_switch_set_context_info_request.is_last_control_per_context = 
-        context_info->is_last_control_per_context;
+    /* is_last_chunk_per_context */
+    request->parameters.context_switch_set_context_info_request.is_last_chunk_per_context_length = 
+        BYTE_ORDER__htonl(sizeof(request->parameters.context_switch_set_context_info_request.is_last_chunk_per_context));
+    request->parameters.context_switch_set_context_info_request.is_last_chunk_per_context = 
+        context_info->is_last_chunk_per_context;
 
     /* context_type */
     request->parameters.context_switch_set_context_info_request.context_type_length = 
@@ -1751,8 +1755,8 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_pause_frames_request(CONTROL_PR
             size_t *request_size, uint32_t sequence, uint8_t rx_pause_frames_enable)
 {
 
-    CHECK_NOT_NULL(request, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
-    CHECK_NOT_NULL(request_size, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
+    CHECK_NOT_NULL_COMMON_STATUS(request, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
+    CHECK_NOT_NULL_COMMON_STATUS(request_size, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
 
     /* Header */
     size_t local_request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE + sizeof(CONTROL_PROTOCOL__set_pause_frames_t);
@@ -1770,7 +1774,7 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_pause_frames_request(CONTROL_PR
 
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_download_context_action_list_request(CONTROL_PROTOCOL__request_t *request, 
     size_t *request_size, uint32_t sequence, uint32_t network_group_id,
-    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index, uint16_t action_list_offset)
+    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint16_t context_index, uint16_t action_list_offset)
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
     size_t local_request_size = 0;
@@ -2325,8 +2329,8 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_run_bist_test_request(
 {
     size_t local_request_size = 0;
 
-    CHECK_NOT_NULL(request, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
-    CHECK_NOT_NULL(request_size, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
+    CHECK_NOT_NULL_COMMON_STATUS(request, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
+    CHECK_NOT_NULL_COMMON_STATUS(request_size, HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
 
     /* Header */
     local_request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE + 

@@ -16,7 +16,6 @@
 
 #include "core_op/core_op.hpp"
 #include "core_op/resource_manager/resource_manager.hpp"
-#include "hef/hef_internal.hpp"
 #include "eth/eth_stream.hpp"
 #include "vdma/vdma_stream.hpp"
 #include "mipi/mipi_stream.hpp"
@@ -139,11 +138,12 @@ hailo_status CoreOp::activate(uint16_t dynamic_batch_size)
         }
         m_active_core_op_holder.clear();
     }
-    if (HAILO_STREAM_ABORTED_BY_USER == status) {
+    if (HAILO_STREAM_ABORT == status) {
         return status;
     }
     CHECK_SUCCESS(status);
 
+    //TODO: HRT-13019 - Unite with the calculation in vmda_config_core_op.cpp
     const auto elapsed_time_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - start_time).count();
 
@@ -185,6 +185,7 @@ hailo_status CoreOp::deactivate()
         LOGGER__ERROR("Failed deactivating core-op (status {})", deactivate_status);
     }
 
+    //TODO: HRT-13019 - Unite with the calculation in vmda_config_core_op.cpp
     const auto elapsed_time_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - start_time).count();
     LOGGER__INFO("Deactivating took {} ms", elapsed_time_ms);
@@ -289,7 +290,7 @@ hailo_status CoreOp::activate_low_level_streams()
 {
     for (auto &name_pair : m_input_streams) {
         auto status = name_pair.second->activate_stream();
-        if (HAILO_STREAM_ABORTED_BY_USER == status) {
+        if (HAILO_STREAM_ABORT == status) {
             LOGGER__INFO("Stream {} activation failed because it was aborted by user", name_pair.first);
             return status;
         }
@@ -297,7 +298,7 @@ hailo_status CoreOp::activate_low_level_streams()
     }
     for (auto &name_pair : m_output_streams) {
         auto status = name_pair.second->activate_stream();
-        if (HAILO_STREAM_ABORTED_BY_USER == status) {
+        if (HAILO_STREAM_ABORT == status) {
             LOGGER__INFO("Stream {} activation failed because it was aborted by user", name_pair.first);
             return status;
         }
@@ -532,8 +533,8 @@ hailo_status CoreOp::infer_async_impl(std::unordered_map<std::string, TransferRe
             "for input '{}', passed buffer size is {} (expected {})", input.first, transfer->second.get_total_transfer_size(),
             input.second->get_frame_size());
 
-        auto status = input.second->write_async(std::move(transfer->second));
-        if (HAILO_STREAM_ABORTED_BY_USER == status) {
+        auto status = input.second->write_async(TransferRequest{transfer->second});
+        if (HAILO_STREAM_ABORT == status) {
             return status;
         }
         CHECK_SUCCESS(status);
@@ -548,8 +549,8 @@ hailo_status CoreOp::infer_async_impl(std::unordered_map<std::string, TransferRe
             "for output '{}', passed buffer size is {} (expected {})", output.first, transfer->second.get_total_transfer_size(),
             output.second->get_frame_size());
 
-        auto status = output.second->read_async(std::move(transfer->second));
-        if (HAILO_STREAM_ABORTED_BY_USER == status) {
+        auto status = output.second->read_async(TransferRequest{transfer->second});
+        if (HAILO_STREAM_ABORT == status) {
             return status;
         }
         CHECK_SUCCESS(status);
@@ -563,8 +564,13 @@ TransferDoneCallback CoreOp::wrap_user_callback(TransferDoneCallback &&original_
     std::shared_ptr<OngoingInferState> state,
     TransferDoneCallback infer_callback)
 {
-    return [original_callback, state, infer_callback](hailo_status status) {
-        original_callback(status);
+    return [original_callback, state, infer_callback](hailo_status status) mutable {
+        {
+            // Before calling infer_callback, we must ensure all stream callbacks were called and released (since the
+            // user may capture some variables in the callbacks).
+            auto moved_callback = std::move(original_callback);
+            moved_callback(status);
+        }
 
         if (HAILO_SUCCESS != status) {
             state->status = status;
@@ -638,7 +644,7 @@ Expected<std::shared_ptr<OutputStreamBase>> CoreOp::create_output_stream_from_co
         const auto max_queue_size = batch_size * MAX_ACTIVE_TRANSFERS_SCALE;
 
         auto nms_stream = NmsOutputStream::create(base_stream, layer_info.value(), max_queue_size,
-            m_core_op_activated_event);
+            m_core_op_activated_event, stream_params.stream_interface);
         CHECK_EXPECTED(nms_stream);
         output_stream = nms_stream.release();
     }

@@ -97,12 +97,12 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_network_group_he
     const CONTROL_PROTOCOL__application_header_t *network_group_header);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_context_info_request(
         CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
-        const CONTROL_PROTOCOL__context_switch_context_info_single_control_t *context_info);
+        const CONTROL_PROTOCOL__context_switch_context_info_chunk_t *context_info);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_idle_time_set_measuremment_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint8_t measurement_enable);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_idle_time_get_measuremment_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_download_context_action_list_request(CONTROL_PROTOCOL__request_t *request,
     size_t *request_size, uint32_t sequence, uint32_t network_group_id,
-    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index, uint16_t action_list_offset);
+    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint16_t context_index, uint16_t action_list_offset);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_context_switch_status_request(
         CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
         CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status, uint8_t application_index,

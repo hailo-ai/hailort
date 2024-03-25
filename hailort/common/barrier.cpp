@@ -36,6 +36,9 @@ void Barrier::arrive_and_wait()
 void Barrier::terminate()
 {
     m_is_activated.store(false);
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+    }
     m_cv.notify_all();
 }
 

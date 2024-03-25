@@ -46,6 +46,7 @@ public:
     static std::string make_reorder_description(hailo_format_order_t src_order, hailo_3d_image_shape_t src_shape,
                                                 hailo_format_order_t dst_order, hailo_3d_image_shape_t dst_shape);
     static std::string make_transpose_description(hailo_3d_image_shape_t original_shape, hailo_3d_image_shape_t transposed_shape);
+    static std::string make_pad_periph_description(hailo_3d_image_shape_t src_shape, hailo_3d_image_shape_t dst_shape);
 
     template<typename T>
     static hailo_status transform__d2h_NHCW_to_NCHW(

@@ -12,60 +12,12 @@
 #define _HAILO_YOLOV8_POST_PROCESS_HPP_
 
 #include "net_flow/ops/nms_post_process.hpp"
-#include "net_flow/ops/op_metadata.hpp"
+#include "net_flow/ops/softmax_post_process.hpp"
+#include "net_flow/ops_metadata/yolov8_op_metadata.hpp"
 namespace hailort
 {
 namespace net_flow
 {
-
-struct Yolov8MatchingLayersNames
-{
-    // Regression layer
-    std::string reg;
-
-    // Classifications layer
-    std::string cls;
-
-    uint32_t stride;
-};
-
-struct Yolov8PostProcessConfig
-{
-    // The image height.
-    float32_t image_height = 0;
-
-    // The image width.
-    float32_t image_width = 0;
-
-    // A vector off two strings that represents the relations between the outputs names.
-    std::vector<Yolov8MatchingLayersNames> reg_to_cls_inputs;
-};
-
-class Yolov8OpMetadata : public NmsOpMetadata
-{
-public:
-    static Expected<std::shared_ptr<OpMetadata>> create(const std::unordered_map<std::string, BufferMetaData> &inputs_metadata,
-                                                        const std::unordered_map<std::string, BufferMetaData> &outputs_metadata,
-                                                        const NmsPostProcessConfig &nms_post_process_config,
-                                                        const Yolov8PostProcessConfig &yolov8_post_process_config,
-                                                        const std::string &network_name);
-    hailo_status validate_format_info() override;
-    std::string get_op_description() override;
-    Yolov8PostProcessConfig &yolov8_config() { return m_yolov8_config;};
-
-private:
-    Yolov8PostProcessConfig m_yolov8_config;
-    Yolov8OpMetadata(const std::unordered_map<std::string, BufferMetaData> &inputs_metadata,
-                       const std::unordered_map<std::string, BufferMetaData> &outputs_metadata,
-                       const NmsPostProcessConfig &nms_post_process_config,
-                       const Yolov8PostProcessConfig &yolov8_post_process_config,
-                       const std::string &network_name)
-        : NmsOpMetadata(inputs_metadata, outputs_metadata, nms_post_process_config, "YOLOV8-Post-Process", network_name, OperationType::YOLOV8)
-        , m_yolov8_config(yolov8_post_process_config)
-    {}
-
-    hailo_status validate_params() override;
-};
 
 class YOLOV8PostProcessOp : public NmsPostProcessOp
 {
@@ -84,8 +36,44 @@ private:
     {
         for (const auto &input_metadata : m_metadata->inputs_metadata()) {
             m_d_matrix[input_metadata.first] = std::vector<std::vector<float32_t>>(NUM_OF_D_VALUES,
-                                                    std::vector<float32_t>(input_metadata.second.padded_shape.features / NUM_OF_D_VALUES));
+                                                    std::vector<float32_t>(input_metadata.second.shape.features / NUM_OF_D_VALUES));
         }
+    }
+
+    template<typename DstType = float32_t, typename SrcType>
+    hailo_bbox_float32_t get_bbox(uint32_t row, uint32_t col, uint32_t stride, const hailo_3d_image_shape_t &reg_padded_shape,
+        const hailo_3d_image_shape_t &reg_shape, const hailo_quant_info_t &reg_quant_info, SrcType *reg_data,
+        std::vector<std::vector<DstType>> &d_matrix, DstType class_confidence = 0)
+    {
+        auto reg_row_size = reg_padded_shape.width * reg_padded_shape.features; // should be the padded values - we use it to get to the relevant row
+        auto reg_feature_size = reg_padded_shape.width; // Also should be the padded value - we use it to get to the relevant feature
+        auto reg_idx = (reg_row_size * row) + col;
+
+        // For each HxW - reshape from features to 4 x (features/4) + dequantize
+        // For example - reshape from 64 to 4X16 - 4 vectors of 16 values
+        for (uint32_t feature = 0; feature < reg_shape.features; feature++) {
+            auto &tmp_vector = d_matrix.at(feature / (reg_shape.features / NUM_OF_D_VALUES));
+            tmp_vector[feature % (reg_shape.features / NUM_OF_D_VALUES)] = Quantization::dequantize_output<DstType, SrcType>(reg_data[reg_idx + feature*reg_feature_size], reg_quant_info);
+        }
+
+        // Performing softmax operation on each of the vectors
+        for (uint32_t vector_index = 0; vector_index < d_matrix.size(); vector_index++) {
+            auto &tmp_vector = d_matrix.at(vector_index);
+            SoftmaxPostProcessOp::softmax(tmp_vector.data(), tmp_vector.data(), tmp_vector.size());
+        }
+        // Performing dot product on each vector
+        // (A, B, C, ..., F, G) -> 0*A + 1*B + 2*C + ... + 14*F + 15*G
+        for (uint32_t vector_index = 0; vector_index < NUM_OF_D_VALUES; vector_index++) {
+            m_d_values_matrix[vector_index] = dot_product(d_matrix.at(vector_index));
+        }
+        // The decode function extract x_min, y_min, x_max, y_max from d1, d2, d3, d4
+        const auto &d1 = m_d_values_matrix.at(0);
+        const auto &d2 = m_d_values_matrix.at(1);
+        const auto &d3 = m_d_values_matrix.at(2);
+        const auto &d4 = m_d_values_matrix.at(3);
+        auto bbox = decode(d1, d2, d3, d4, col, row, stride);
+        bbox.score = class_confidence;
+        return bbox;
     }
 
     static const uint32_t CLASSES_START_INDEX = 0;
@@ -101,6 +89,8 @@ private:
 
         assert(contains(inputs_metadata, layers_names.reg));
         assert(contains(inputs_metadata, layers_names.cls));
+        const auto &reg_shape = inputs_metadata.at(layers_names.reg).shape;
+        const auto &cls_shape = inputs_metadata.at(layers_names.cls).shape;
         const auto &reg_padded_shape = inputs_metadata.at(layers_names.reg).padded_shape;
         const auto &cls_padded_shape = inputs_metadata.at(layers_names.cls).padded_shape;
         const auto &reg_quant_info = inputs_metadata.at(layers_names.reg).quant_info;
@@ -119,14 +109,14 @@ private:
         CHECK(buffer_size == cls_buffer.size(), HAILO_INVALID_ARGUMENT,
             "Failed to extract_detections, cls {} buffer_size should be {}, but is {}", layers_names.cls, buffer_size, cls_buffer.size());
 
-        // Format is NHCW -> each row size is C size * W size
+        // Format is NHCW -> each row size is (padded C size) * (padded W size)
         auto cls_row_size = cls_padded_shape.features * cls_padded_shape.width;
 
         SrcType *reg_data = (SrcType*)reg_buffer.data();
         SrcType *cls_data = (SrcType*)cls_buffer.data();
 
-        for (uint32_t row = 0; row < cls_padded_shape.height; row++) {
-            for (uint32_t col = 0; col < cls_padded_shape.width; col++) {
+        for (uint32_t row = 0; row < cls_shape.height; row++) {
+            for (uint32_t col = 0; col < cls_shape.width; col++) {
                 auto cls_idx = (cls_row_size * row) + col;
 
                 if (nms_config.cross_classes) {
@@ -137,7 +127,7 @@ private:
                         // If passes threshold - get the relevant bbox and add this detection
                         assert(contains(m_d_matrix, layers_names.reg));
                         auto &d_matrix = m_d_matrix.at(layers_names.reg);
-                        auto bbox = get_bbox<DstType, SrcType>(row, col, stride, reg_padded_shape, reg_quant_info,
+                        auto bbox = get_bbox<DstType, SrcType>(row, col, stride, reg_padded_shape, reg_shape, reg_quant_info,
                                                                 (SrcType*)reg_data, d_matrix, max_id_score_pair.second);
                         m_detections.emplace_back(DetectionBbox(bbox, max_id_score_pair.first));
                         m_classes_detections_count[max_id_score_pair.first]++;
@@ -153,7 +143,7 @@ private:
                             // If passes threshold - get the relevant bbox and add this detection
                             assert(contains(m_d_matrix, layers_names.reg));
                             auto &d_matrix = m_d_matrix.at(layers_names.reg);
-                            auto bbox = get_bbox<DstType, SrcType>(row, col, stride, reg_padded_shape, reg_quant_info, 
+                            auto bbox = get_bbox<DstType, SrcType>(row, col, stride, reg_padded_shape, reg_shape, reg_quant_info,
                                                                     (SrcType*)reg_data, d_matrix, class_confidence);
                             m_detections.emplace_back(DetectionBbox(bbox, curr_class_idx));
                             m_classes_detections_count[curr_class_idx]++;

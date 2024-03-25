@@ -39,6 +39,8 @@ hailo_status SSDOpMetadata::validate_params()
         return status;
     }
 
+    CHECK(!nms_config().bbox_only, HAILO_INVALID_ARGUMENT, "SSDPostProcessOp: bbox_only is not supported for SSD model");
+
     // Validate each anchor is mapped by reg and cls inputs
     for (const auto &reg_to_cls_name : m_ssd_config.reg_to_cls_inputs) {
         CHECK(m_ssd_config.anchors.count(reg_to_cls_name.first), HAILO_INVALID_ARGUMENT,
@@ -90,9 +92,9 @@ hailo_status SSDOpMetadata::validate_format_info()
 std::string SSDOpMetadata::get_op_description()
 {
     auto nms_config_info = get_nms_config_description();
-    auto config_info = fmt::format("Op {}, Name: {}, {}, Image height: {:.2f}, Image width: {:.2f}, Centers scales factor: {}, "
+    auto config_info = fmt::format("Op {}, Name: {}, {}, Image height: {:d}, Image width: {:d}, Centers scales factor: {}, "
         "Bbox dimension scale factor: {}, Normalize boxes: {}", OpMetadata::get_operation_type_str(m_type), m_name, nms_config_info,
-        m_ssd_config.image_height, m_ssd_config.image_width, m_ssd_config.centers_scale_factor, m_ssd_config.bbox_dimensions_scale_factor,
+        static_cast<int>(m_ssd_config.image_height), static_cast<int>(m_ssd_config.image_width), m_ssd_config.centers_scale_factor, m_ssd_config.bbox_dimensions_scale_factor,
         m_ssd_config.normalize_boxes);
     return config_info;
 }

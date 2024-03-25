@@ -48,7 +48,7 @@ public:
         case HAILO_FORMAT_ORDER_HAILO_NMS:
             return { HailoRTCommon::get_nms_host_shape_size(vstream_info.nms_shape) };
         case HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK: {
-            return { HailoRTCommon::get_nms_with_byte_mask_host_shape_size(vstream_info.nms_shape, user_format) };
+            return {HailoRTCommon::get_nms_host_frame_size(vstream_info.nms_shape, user_format) / HailoRTCommon::get_format_data_bytes(user_format)};
         }
         case HAILO_FORMAT_ORDER_NC:
             return {shape.features};

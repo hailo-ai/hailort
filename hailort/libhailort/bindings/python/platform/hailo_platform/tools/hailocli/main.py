@@ -23,7 +23,7 @@ class PlatformCommands:
         'fw-update': ('Firmware update tool', FWUpdaterCLI),
         'ssb-update': ('Second stage boot update tool', SSBUpdaterCLI),
         'fw-config': ('Firmware configuration tool', FWConfigCommandCLI),
-        'udp-rate-limiter': ('Limit UDP rate', UDPRateLimiterCLI),
+        'udp-rate-limiter': ('Limit the UDP rate', UDPRateLimiterCLI),
         'fw-control': ('Useful firmware control operations', ControlCommandCLI),
         'fw-logger': ('Download fw logs to a file', LoggerCommandCLI),
         'scan': ('Scans for devices (Ethernet or PCIE)', ScanCommandCLI),

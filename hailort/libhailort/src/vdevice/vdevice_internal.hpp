@@ -82,7 +82,7 @@ public:
     // Currently only homogeneous vDevice is allow (= all devices are from the same type)
     virtual Expected<hailo_stream_interface_t> get_default_streams_interface() const override;
 
-    virtual hailo_status dma_map(void *address, size_t size, hailo_stream_direction_t direction) override
+    virtual hailo_status dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction) override
     {
         for (const auto &pair : m_devices) {
             auto &device = pair.second;
@@ -92,13 +92,13 @@ public:
         return HAILO_SUCCESS;
     }
 
-    virtual hailo_status dma_unmap(void *address, hailo_stream_direction_t direction) override
+    virtual hailo_status dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction) override
     {
         hailo_status status = HAILO_SUCCESS;
         for (const auto &pair : m_devices) {
             auto &device = pair.second;
             // Best effort, propagate first error
-            const auto unmap_status = device->dma_unmap(address, direction);
+            const auto unmap_status = device->dma_unmap(address, size, direction);
             if (HAILO_SUCCESS != unmap_status) {
                 LOGGER__ERROR("Failed unmapping user buffer {} with status {}", address, unmap_status);
                 if (HAILO_SUCCESS == status) {
@@ -113,8 +113,9 @@ public:
     static hailo_status validate_params(const hailo_vdevice_params_t &params);
 
 private:
-    VDeviceBase(std::map<device_id_t, std::unique_ptr<Device>> &&devices, CoreOpsSchedulerPtr core_ops_scheduler) :
-        m_devices(std::move(devices)), m_core_ops_scheduler(core_ops_scheduler), m_next_core_op_handle(0)
+    VDeviceBase(std::map<device_id_t, std::unique_ptr<Device>> &&devices, CoreOpsSchedulerPtr core_ops_scheduler,
+        const std::string &unique_vdevice_hash="") :
+        m_devices(std::move(devices)), m_core_ops_scheduler(core_ops_scheduler), m_next_core_op_handle(0), m_unique_vdevice_hash(unique_vdevice_hash)
         {}
 
     static Expected<std::map<device_id_t, std::unique_ptr<Device>>> create_devices(const hailo_vdevice_params_t &params);
@@ -133,6 +134,7 @@ private:
     std::vector<std::shared_ptr<ConfiguredNetworkGroup>> m_network_groups; // TODO: HRT-9547 - Remove when ConfiguredNetworkGroup will be kept in global context
     ActiveCoreOpHolder m_active_core_op_holder;
     vdevice_core_op_handle_t m_next_core_op_handle;
+    const std::string m_unique_vdevice_hash; // Used to identify this vdevice in the monitor. consider removing - TODO (HRT-8835)
     std::mutex m_mutex;
 };
 
@@ -161,6 +163,8 @@ public:
     virtual hailo_status before_fork() override;
     virtual hailo_status after_fork_in_parent() override;
     virtual hailo_status after_fork_in_child() override;
+    virtual hailo_status dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
+    virtual hailo_status dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
 
 private:
     VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, VDeviceIdentifier &&identifier, std::vector<std::unique_ptr<hailort::Device>> &&devices);
@@ -201,7 +205,10 @@ public:
     Expected<std::vector<std::reference_wrapper<Device>>> get_physical_devices() const override;
     Expected<std::vector<std::string>> get_physical_devices_ids() const override;
     Expected<hailo_stream_interface_t> get_default_streams_interface() const override;
-    Expected<std::shared_ptr<InferModel>> create_infer_model(const std::string &hef_path) override;
+    Expected<std::shared_ptr<InferModel>> create_infer_model(const std::string &hef_path,
+        const std::string &network_name = "") override;
+    virtual hailo_status dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
+    virtual hailo_status dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
 
 private:
     VDeviceHandle(uint32_t handle);

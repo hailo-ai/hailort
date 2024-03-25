@@ -116,18 +116,11 @@ Expected<uint32_t> PartialClusterReader::get_partial_clusters_layout_bitmap(hail
     // If file does not exist - get default values for dev_arch
     if (!Filesystem::does_file_exists(std::string(PARTIAL_CLUSTER_READER_CLUSTER_LAYOUT_FILE_PATH))) {
         LOGGER__INFO("partial cluster layout bitmap file not found, Enabling all clusters by default");
-        auto default_bitmap_exp = get_arch_default_bitmap(dev_arch);
-        CHECK_EXPECTED(default_bitmap_exp);
-        fuse_file_data.first = default_bitmap_exp.release();
-
-        auto sku_value_exp = get_sku_value_from_arch(dev_arch);
-        CHECK_EXPECTED(sku_value_exp);
-        fuse_file_data.second = sku_value_exp.release();
+        TRY(fuse_file_data.first, get_arch_default_bitmap(dev_arch));
+        TRY(fuse_file_data.second, get_sku_value_from_arch(dev_arch));
     } else {
         // This will read bitmap and verify with SKU value
-        auto fuse_file_exp = read_fuse_file();
-        CHECK_EXPECTED(fuse_file_exp);
-        fuse_file_data = fuse_file_exp.release();
+        TRY(fuse_file_data, read_fuse_file());
     }
 
     const auto sku_value = fuse_file_data.second;
@@ -155,10 +148,7 @@ Expected<hailo_device_architecture_t> PartialClusterReader::get_actual_dev_arch_
         && (HAILO_ARCH_HAILO15H == fw_dev_arch)) {
         return HAILO_ARCH_HAILO15H;
     } else {
-        auto fuse_file_exp = read_fuse_file();
-        CHECK_EXPECTED(fuse_file_exp);
-        const auto fuse_file_data = fuse_file_exp.release();
-
+        TRY(const auto fuse_file_data, read_fuse_file());
         const auto sku_value = fuse_file_data.second;
         if (HAILO15M_SKU_VALUE == sku_value) {
             return HAILO_ARCH_HAILO15M;

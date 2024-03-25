@@ -36,6 +36,7 @@
 #include "vdevice/vdevice_internal.hpp"
 #include "utils/profiler/tracer_macros.hpp"
 #include "utils/exported_resource_manager.hpp"
+#include "utils/buffer_storage.hpp"
 
 #include <chrono>
 #include <tuple>
@@ -46,9 +47,10 @@ using namespace hailort;
 // Note: Async stream API uses BufferPtr as a param. When exporting BufferPtrs to the user via c-api, they must be
 //       stored in some container, otherwise their ref count may reach zero and they will be freed, despite the
 //       c-api user still using them. (shared_ptr<T> doesn't have a release method like unique_ptr<T>)
-// Singleton holding a mapping between the address of a buffer allocated/mapped via hailo_allocate_buffer/hailo_dma_map_buffer_to_device
+// Singleton holding a mapping between the address of a buffer allocated/mapped via hailo_allocate_buffer
 // to the underlying BufferPtr. When a buffer is freed via hailo_free_buffer, the BufferPtr object will be removed from
 // the storage.
+// TODO HRT-12726: remove the export manager
 using ExportedBufferManager = ExportedResourceManager<BufferPtr, void *>;
 
 COMPAT__INITIALIZER(hailort__initialize_logger)
@@ -1090,11 +1092,11 @@ hailo_status hailo_allocate_buffer(size_t size, const hailo_buffer_parameters_t 
     CHECK_ARG_NOT_NULL(buffer_out);
     CHECK(0 != size, HAILO_INVALID_ARGUMENT, "Buffer size must be greater than zero");
 
-    auto buffer_storage_params = BufferStorageParams::create(*allocation_params);
-    CHECK_EXPECTED_AS_STATUS(buffer_storage_params);
+    BufferStorageParams buffer_storage_params{};
+    buffer_storage_params.flags = allocation_params->flags;
 
     // Create buffer
-    auto buffer = Buffer::create_shared(size, *buffer_storage_params);
+    auto buffer = Buffer::create_shared(size, buffer_storage_params);
     CHECK_EXPECTED_AS_STATUS(buffer);
 
     // Store the buffer in manager (otherwise it'll be freed at the end of this func)
@@ -1112,45 +1114,34 @@ hailo_status hailo_free_buffer(void *buffer)
     return ExportedBufferManager::unregister_resource(buffer);
 }
 
-// TODO: hailo_dma_map_buffer_to_device/hailo_dma_unmap_buffer_from_device aren't thread safe when crossed with
+// TODO: hailo_device_dma_map_buffer/hailo_device_dma_unmap_buffer aren't thread safe when crossed with
 //       hailo_allocate_buffer/hailo_free_buffer (HRT-10669)
-hailo_status hailo_dma_map_buffer_to_device(void *buffer, size_t size, hailo_device device, hailo_dma_buffer_direction_t direction)
+hailo_status hailo_device_dma_map_buffer(hailo_device device,void *address, size_t size, hailo_dma_buffer_direction_t direction)
 {
-    CHECK_ARG_NOT_NULL(buffer);
     CHECK_ARG_NOT_NULL(device);
-
-    auto hailort_allocated_buffer = ExportedBufferManager::get_resource(buffer);
-    if (hailort_allocated_buffer) {
-        // TODO: this will change here HRT-10983
-        // The buffer has been allocated by hailort
-        // The mapping is held by the Buffer object
-        auto mapping_result = hailort_allocated_buffer->get()->storage().dma_map(*reinterpret_cast<Device*>(device), direction);
-        CHECK_EXPECTED_AS_STATUS(mapping_result);
-        const auto is_new_mapping = mapping_result.value();
-        return is_new_mapping ? HAILO_SUCCESS : HAILO_DMA_MAPPING_ALREADY_EXISTS;
-    }
-
-    // The buffer has been allocated by the user
-    return reinterpret_cast<Device*>(device)->dma_map(buffer, size,
-        (HAILO_DMA_BUFFER_DIRECTION_H2D == direction) ? HAILO_H2D_STREAM : HAILO_D2H_STREAM);
+    CHECK_ARG_NOT_NULL(address);
+    return reinterpret_cast<Device*>(device)->dma_map(address, size, direction);
 }
 
-hailo_status hailo_dma_unmap_buffer_from_device(void *buffer, hailo_device device, hailo_dma_buffer_direction_t direction)
+hailo_status hailo_device_dma_unmap_buffer(hailo_device device, void *address, size_t size, hailo_dma_buffer_direction_t direction)
 {
-    CHECK_ARG_NOT_NULL(buffer);
     CHECK_ARG_NOT_NULL(device);
+    CHECK_ARG_NOT_NULL(address);
+    return reinterpret_cast<Device*>(device)->dma_unmap(address, size, direction);
+}
 
-    auto hailort_allocated_buffer = ExportedBufferManager::get_resource(buffer);
-    if (hailort_allocated_buffer) {
-        // TODO: mappings get dtor'd when the Buffer object is dtor'd.
-        //       We want all the mapping to be held in one place for hailort::Buffers and for user alloacted buffers
-        //       so this will change (HRT-10983)
-        return HAILO_SUCCESS;
-    }
+hailo_status hailo_vdevice_dma_map_buffer(hailo_vdevice vdevice,void *address, size_t size, hailo_dma_buffer_direction_t direction)
+{
+    CHECK_ARG_NOT_NULL(vdevice);
+    CHECK_ARG_NOT_NULL(address);
+    return reinterpret_cast<VDevice*>(vdevice)->dma_map(address, size, direction);
+}
 
-    // The buffer has been allocated by the user
-    return reinterpret_cast<Device*>(device)->dma_unmap(buffer,
-        (HAILO_DMA_BUFFER_DIRECTION_H2D == direction) ? HAILO_H2D_STREAM : HAILO_D2H_STREAM);
+hailo_status hailo_vdevice_dma_unmap_buffer(hailo_vdevice vdevice, void *address, size_t size, hailo_dma_buffer_direction_t direction)
+{
+    CHECK_ARG_NOT_NULL(vdevice);
+    CHECK_ARG_NOT_NULL(address);
+    return reinterpret_cast<VDevice*>(vdevice)->dma_unmap(address, size, direction);
 }
 
 hailo_status hailo_calculate_eth_input_rate_limits(hailo_hef hef, const char *network_group_name, uint32_t fps,
@@ -1318,20 +1309,7 @@ hailo_status hailo_stream_read_raw_buffer_async(hailo_output_stream stream, void
     CHECK_ARG_NOT_NULL(buffer);
     CHECK_ARG_NOT_NULL(callback);
 
-    auto buffer_ref = ExportedBufferManager::get_resource(buffer);
-    if (HAILO_NOT_FOUND == buffer_ref.status()) {
-        // User addr (buffer hasn't been allocated by hailo_allocate_buffer)
-        return (reinterpret_cast<OutputStream*>(stream))->read_async(buffer, size,
-            wrap_c_user_callback(callback, opaque));
-    }
-
-    // buffer has been allocated by hailo_allocate_buffer
-    CHECK_EXPECTED_AS_STATUS(buffer_ref);
-    auto buffer_ptr = buffer_ref->get();
-    assert(buffer_ptr != nullptr);
-    CHECK(size == buffer_ptr->size(), HAILO_INVALID_ARGUMENT);
-
-    return (reinterpret_cast<OutputStream*>(stream))->read_async(buffer_ptr,
+    return (reinterpret_cast<OutputStream*>(stream))->read_async(buffer, size,
         wrap_c_user_callback(callback, opaque));
 }
 
@@ -1342,20 +1320,7 @@ hailo_status hailo_stream_write_raw_buffer_async(hailo_input_stream stream, cons
     CHECK_ARG_NOT_NULL(buffer);
     CHECK_ARG_NOT_NULL(callback);
 
-    auto buffer_ref = ExportedBufferManager::get_resource(const_cast<void *>(buffer));
-    if (HAILO_NOT_FOUND == buffer_ref.status()) {
-        // User addr (buffer hasn't been allocated by hailo_allocate_buffer)
-        return (reinterpret_cast<InputStream*>(stream))->write_async(buffer, size,
-            wrap_c_user_callback(callback, opaque));
-    }
-
-    // buffer has been allocated by hailo_allocate_buffer
-    CHECK_EXPECTED_AS_STATUS(buffer_ref);
-    auto buffer_ptr = buffer_ref->get();
-    assert(buffer_ptr != nullptr);
-    CHECK(size == buffer_ptr->size(), HAILO_INVALID_ARGUMENT);
-
-    return (reinterpret_cast<InputStream*>(stream))->write_async(buffer_ptr,
+    return (reinterpret_cast<InputStream*>(stream))->write_async(buffer, size,
         wrap_c_user_callback(callback, opaque));
 }
 
@@ -2222,16 +2187,24 @@ hailo_status hailo_vstream_write_raw_buffer(hailo_input_vstream input_vstream, c
     CHECK_ARG_NOT_NULL(buffer);
 
     auto status = reinterpret_cast<InputVStream*>(input_vstream)->write(MemoryView::create_const(buffer, buffer_size));
+    if (HAILO_STREAM_ABORT == status) {
+        return status;
+    }
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
 
 hailo_status hailo_vstream_write_pix_buffer(hailo_input_vstream input_vstream, const hailo_pix_buffer_t *buffer)
 {
+    CHECK(HAILO_PIX_BUFFER_MEMORY_TYPE_USERPTR == buffer->memory_type, HAILO_NOT_SUPPORTED, "Memory type of pix buffer must be of type USERPTR!");
+
     CHECK_ARG_NOT_NULL(input_vstream);
     CHECK_ARG_NOT_NULL(buffer);
 
     auto status = reinterpret_cast<InputVStream*>(input_vstream)->write(*buffer);
+    if (HAILO_STREAM_ABORT == status) {
+        return status;
+    }
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -2240,8 +2213,11 @@ hailo_status hailo_vstream_read_raw_buffer(hailo_output_vstream output_vstream, 
 {
     CHECK_ARG_NOT_NULL(output_vstream);
     CHECK_ARG_NOT_NULL(dst);
-    
+
     auto status = reinterpret_cast<OutputVStream*>(output_vstream)->read(MemoryView(dst, dst_size));
+    if (HAILO_STREAM_ABORT == status) {
+        return status;
+    }
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }

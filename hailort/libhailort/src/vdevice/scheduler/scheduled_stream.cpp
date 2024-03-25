@@ -21,6 +21,7 @@ namespace hailort
 
 /** Input stream **/
 Expected<std::unique_ptr<ScheduledInputStream>> ScheduledInputStream::create(
+    VDevice &vdevice,
     std::map<device_id_t, std::reference_wrapper<InputStreamBase>> &&streams,
     const LayerInfo &layer_info,
     const scheduler_core_op_handle_t &core_op_handle,
@@ -35,7 +36,7 @@ Expected<std::unique_ptr<ScheduledInputStream>> ScheduledInputStream::create(
     }
 
     auto status = HAILO_UNINITIALIZED;
-    auto local_vdevice_stream = make_unique_nothrow<ScheduledInputStream>(std::move(streams), core_op_handle,
+    auto local_vdevice_stream = make_unique_nothrow<ScheduledInputStream>(vdevice, std::move(streams), core_op_handle,
         std::move(core_op_activated_event), layer_info, std::move(infer_requests_accumulator), status);
     CHECK_NOT_NULL_AS_EXPECTED(local_vdevice_stream, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status);
@@ -51,10 +52,12 @@ hailo_stream_interface_t ScheduledInputStream::get_interface() const
 
 Expected<std::unique_ptr<StreamBufferPool>> ScheduledInputStream::allocate_buffer_pool()
 {
-    auto queued_pool = QueuedStreamBufferPool::create(m_infer_requests_accumulator->queue_size(), get_frame_size(),
-        BufferStorageParams::create_dma());
-    CHECK_EXPECTED(queued_pool);
-    return std::unique_ptr<StreamBufferPool>(queued_pool.release());
+    TRY(auto queued_pool, QueuedStreamBufferPool::create(m_infer_requests_accumulator->queue_size(), get_frame_size(),
+        BufferStorageParams::create_dma()));
+
+    CHECK_SUCCESS(queued_pool->dma_map(m_vdevice, HAILO_DMA_BUFFER_DIRECTION_H2D));
+
+    return std::unique_ptr<StreamBufferPool>(std::move(queued_pool));
 }
 
 size_t ScheduledInputStream::get_max_ongoing_transfers() const
@@ -81,6 +84,7 @@ hailo_status ScheduledInputStream::write_async_impl(TransferRequest &&transfer_r
 
 /** Output stream **/
 Expected<std::unique_ptr<ScheduledOutputStream>> ScheduledOutputStream::create(
+    VDevice &vdevice,
     std::map<device_id_t, std::reference_wrapper<OutputStreamBase>> &&streams,
     const scheduler_core_op_handle_t &core_op_handle,
     const LayerInfo &layer_info,
@@ -96,7 +100,7 @@ Expected<std::unique_ptr<ScheduledOutputStream>> ScheduledOutputStream::create(
 
 
     auto status = HAILO_UNINITIALIZED;
-    auto stream = make_unique_nothrow<ScheduledOutputStream>(std::move(streams), core_op_handle,
+    auto stream = make_unique_nothrow<ScheduledOutputStream>(vdevice, std::move(streams), core_op_handle,
         layer_info, std::move(core_op_activated_event), std::move(infer_requests_accumulator), status);
     CHECK_NOT_NULL_AS_EXPECTED(stream, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status);
@@ -112,10 +116,12 @@ hailo_stream_interface_t ScheduledOutputStream::get_interface() const
 
 Expected<std::unique_ptr<StreamBufferPool>> ScheduledOutputStream::allocate_buffer_pool()
 {
-    auto queued_pool = QueuedStreamBufferPool::create(m_infer_requests_accumulator->queue_size(), get_frame_size(),
-        BufferStorageParams::create_dma());
-    CHECK_EXPECTED(queued_pool);
-    return std::unique_ptr<StreamBufferPool>(queued_pool.release());
+    TRY(auto queued_pool, QueuedStreamBufferPool::create(m_infer_requests_accumulator->queue_size(), get_frame_size(),
+        BufferStorageParams::create_dma()));
+
+    CHECK_SUCCESS(queued_pool->dma_map(m_vdevice, HAILO_DMA_BUFFER_DIRECTION_D2H));
+
+    return std::unique_ptr<StreamBufferPool>(std::move(queued_pool));
 }
 
 size_t ScheduledOutputStream::get_max_ongoing_transfers() const

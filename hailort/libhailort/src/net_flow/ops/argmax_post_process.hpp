@@ -17,7 +17,7 @@
 
 #include "hailo/hailort.h"
 #include "net_flow/ops/op.hpp"
-#include "net_flow/ops/op_metadata.hpp"
+#include "net_flow/ops_metadata/argmax_op_metadata.hpp"
 #include "common/utils.hpp"
 
 #include <iostream>
@@ -27,38 +27,12 @@ namespace hailort
 namespace net_flow
 {
 
-#define ARGMAX_NUM_OF_POSSIBLE_FORMAT_ORDERS (3)
+#define ARGMAX_NUM_OF_POSSIBLE_FORMAT_ORDERS (4)
 #define ARGMAX_NUM_OF_POSSIBLE_FORMAT_TYPES (4)
-
-constexpr std::size_t ARGMAX_OUTPUT_FEATURES_SIZE {1};
-constexpr std::size_t ARGMAX_NUMBER_OF_SRCS {1};
-constexpr std::size_t ARGMAX_NUMBER_OF_DSTS {1};
+#define F8CR_FEATURES_IN_CHUNK (8)
 
 typedef hailo_status (*ArgmaxFunction)(const BufferMetaData &input_metadata, const BufferMetaData &output_metadata,
     const std::map<std::string, MemoryView> &inputs, std::map<std::string, MemoryView> &outputs);
-
-
-class ArgmaxOpMetadata : public OpMetadata
-{
-public:
-    static Expected<std::shared_ptr<OpMetadata>> create(const std::unordered_map<std::string, BufferMetaData> &inputs_metadata,
-                                                        const std::unordered_map<std::string, BufferMetaData> &outputs_metadata,
-                                                        const std::string &network_name);
-    std::string get_op_description() override;
-    hailo_status validate_format_info() override;
-    static hailo_format_t expand_output_format_autos(const hailo_format_t &output_format, const hailo_format_t &input_format);
-
-    virtual Expected<hailo_vstream_info_t> get_output_vstream_info() override;
-
-private:
-    ArgmaxOpMetadata(const std::unordered_map<std::string, BufferMetaData> &inputs_metadata,
-                        const std::unordered_map<std::string, BufferMetaData> &outputs_metadata,
-                        const std::string &network_name)
-        : OpMetadata(inputs_metadata, outputs_metadata, "Argmax-Post-Process", network_name, OperationType::ARGMAX)
-    {}
-
-    hailo_status validate_params() override;
-};
 
 class ArgmaxPostProcessOp : public Op
 {
@@ -145,6 +119,41 @@ private:
             }
         }
         *dst_ptr = max_index;
+        return HAILO_SUCCESS;
+    }
+
+    template<typename SrcType, typename DstType>
+    static hailo_status F8CR_to_NHW_feature_axis(const BufferMetaData &input_metadata, const BufferMetaData &output_metadata,
+        const std::map<std::string, MemoryView> &inputs, std::map<std::string, MemoryView> &outputs)
+    {
+        auto src_ptr = (SrcType*)inputs.begin()->second.data();
+        auto dst_ptr = (DstType*)outputs.begin()->second.data();
+        const auto src_row_size = input_metadata.padded_shape.width * input_metadata.padded_shape.features;
+        const auto dst_row_size = output_metadata.shape.width;
+        const auto num_of_eight_channels_chunks = input_metadata.padded_shape.features / F8CR_FEATURES_IN_CHUNK;
+        const auto eight_channels_x_width_size = input_metadata.padded_shape.width * F8CR_FEATURES_IN_CHUNK;
+
+        for (uint32_t r = 0; r < input_metadata.shape.height; r++) {
+            const SrcType *src_row = src_ptr + (r * src_row_size);
+            DstType *dst_row = dst_ptr + (r * dst_row_size);
+            for (uint32_t w = 0; w < input_metadata.shape.width; w++) {
+                const SrcType *offset_in_row = src_row + (w * F8CR_FEATURES_IN_CHUNK);
+                DstType max_index = 0;
+                auto max_value = *offset_in_row;
+                for (uint32_t channel_chunk_id = 0; channel_chunk_id < num_of_eight_channels_chunks; channel_chunk_id++) {
+                    const SrcType *offset_in_column = offset_in_row + (eight_channels_x_width_size * channel_chunk_id);
+                    uint32_t num_of_channels_in_chunk = ((channel_chunk_id + 1 == num_of_eight_channels_chunks) ? (input_metadata.shape.features % F8CR_FEATURES_IN_CHUNK) : F8CR_FEATURES_IN_CHUNK );
+                    for (uint32_t c = 0; c < num_of_channels_in_chunk; c++) {
+                        const auto &current_value = *(offset_in_column + c);
+                        if (current_value > max_value) {
+                            max_index = static_cast<DstType>(c + F8CR_FEATURES_IN_CHUNK * channel_chunk_id);
+                            max_value = current_value;
+                        }
+                    }
+                }
+                dst_row[w] = max_index;
+            }
+        }
         return HAILO_SUCCESS;
     }
 

@@ -34,14 +34,16 @@ Expected<std::shared_ptr<OpMetadata>> Yolov8OpMetadata::create(const std::unorde
 std::string Yolov8OpMetadata::get_op_description()
 {
     auto nms_config_info = get_nms_config_description();
-    auto config_info = fmt::format("Op {}, Name: {}, {}, Image height: {:.2f}, Image width: {:.2f}",
-                        OpMetadata::get_operation_type_str(m_type), m_name, nms_config_info, m_yolov8_config.image_height, m_yolov8_config.image_width);
+    auto config_info = fmt::format("Op {}, Name: {}, {}, Image height: {:d}, Image width: {:d}",
+                        OpMetadata::get_operation_type_str(m_type), m_name, nms_config_info, static_cast<int>(m_yolov8_config.image_height), static_cast<int>(m_yolov8_config.image_width));
     return config_info;
 }
 
 hailo_status Yolov8OpMetadata::validate_params()
 {
     CHECK_SUCCESS(NmsOpMetadata::validate_params());
+
+    CHECK(!nms_config().bbox_only, HAILO_INVALID_ARGUMENT, "YOLOV8PostProcessOp: bbox_only is not supported for YOLOV8 model");
 
     // We go over the inputs metadata and check that it includes all of the regs and clss
     for (const auto &layer_names : m_yolov8_config.reg_to_cls_inputs) {
@@ -98,7 +100,7 @@ hailo_status YOLOV8PostProcessOp::execute(const std::map<std::string, MemoryView
 
     clear_before_frame();
     for (const auto &reg_to_cls_name : yolov8_config.reg_to_cls_inputs) {
-        hailo_status status;
+        hailo_status status = HAILO_UNINITIALIZED;
         assert(contains(inputs, reg_to_cls_name.cls));
         assert(contains(inputs, reg_to_cls_name.reg));
 
@@ -117,43 +119,6 @@ hailo_status YOLOV8PostProcessOp::execute(const std::map<std::string, MemoryView
         CHECK_SUCCESS(status);
     }
     return hailo_nms_format(outputs.begin()->second);
-}
-
-template<typename DstType, typename SrcType>
-hailo_bbox_float32_t YOLOV8PostProcessOp::get_bbox(uint32_t row, uint32_t col, uint32_t stride, const hailo_3d_image_shape_t &reg_padded_shape,
-    const hailo_quant_info_t &reg_quant_info, SrcType *reg_data, std::vector<std::vector<DstType>> &d_matrix, DstType class_confidence)
-{
-    auto reg_row_size = reg_padded_shape.width * reg_padded_shape.features;
-    auto reg_feature_size = reg_padded_shape.width;
-    auto reg_idx = (reg_row_size * row) + col;
-
-    // For each HxW - reshape from features to 4 x (features/4) + dequantize
-    // For example - reshape from 64 to 4X16 - 4 vectors of 16 values
-    for (uint32_t feature = 0; feature < reg_padded_shape.features; feature++) {
-        auto &tmp_vector = d_matrix.at(feature / (reg_padded_shape.features / NUM_OF_D_VALUES));
-        tmp_vector[feature % (reg_padded_shape.features / NUM_OF_D_VALUES)] = Quantization::dequantize_output<DstType, SrcType>(reg_data[reg_idx + feature*reg_feature_size], reg_quant_info);
-    }
-
-    // Performing softmax operation on each of the vectors
-    for (uint32_t vector_index = 0; vector_index < d_matrix.size(); vector_index++) {
-        auto &tmp_vector = d_matrix.at(vector_index);
-        SoftmaxPostProcessOp::softmax(tmp_vector.data(), tmp_vector.data(), tmp_vector.size());
-    }
-
-    // Performing dot product on each vector
-    // (A, B, C, ..., F, G) -> 0*A + 1*B + 2*C + ... + 14*F + 15*G
-    for (uint32_t vector_index = 0; vector_index < NUM_OF_D_VALUES; vector_index++) {
-        m_d_values_matrix[vector_index] = dot_product(d_matrix.at(vector_index));
-    }
-
-    // The decode function extract x_min, y_min, x_max, y_max from d1, d2, d3, d4
-    const auto &d1 = m_d_values_matrix.at(0);
-    const auto &d2 = m_d_values_matrix.at(1);
-    const auto &d3 = m_d_values_matrix.at(2);
-    const auto &d4 = m_d_values_matrix.at(3);
-    auto bbox = decode(d1, d2, d3, d4, col, row, stride);
-    bbox.score = class_confidence;
-    return bbox;
 }
 
 hailo_bbox_float32_t YOLOV8PostProcessOp::decode(float32_t d1, float32_t d2, float32_t d3, float32_t d4,

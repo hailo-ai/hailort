@@ -16,7 +16,7 @@
 #include "hailo/hailort.h"
 #include "hailo/buffer.hpp"
 #include "hailo/network_group.hpp"
-#include "net_flow/ops/op_metadata.hpp"
+#include "net_flow/ops_metadata/op_metadata.hpp"
 
 #include "common/utils.hpp"
 #include "common/logger_macros.hpp"

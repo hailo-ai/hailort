@@ -19,12 +19,6 @@
 // Max periph bytes per buffer for hailo1x because (we use its value shifted right by 3 - according to the spec) to
 // configure shmifo credit size - which in hailo15 only has a width of 10 bits
 #define HAILO1X_PERIPH_BYTES_PER_BUFFER_MAX_SIZE                            (0x00002000L)
-#define HAILO1X_PERIPH_PAYLOAD_MAX_VALUE                                    (0x007FFFFFL)
-
-
-/** Vdma Channel registers ***************************************************/
-#define VDMA_CHANNEL_CONTROL_OFFSET         (0x00)
-#define VDMA_CHANNEL_NUM_AVAIL_OFFSET       (0x02)
-
+#define HAILO1X_PERIPH_PAYLOAD_MAX_VALUE                                    (0x01FFFFFFL)
 
 #endif /* _HAILO_HW_CONSTS_HPP_ */

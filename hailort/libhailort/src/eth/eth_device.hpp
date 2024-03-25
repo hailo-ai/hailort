@@ -30,6 +30,7 @@ public:
     virtual Expected<size_t> read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id) override;
     virtual hailo_status wait_for_wakeup() override;
     virtual void increment_control_sequence() override;
+    virtual void shutdown_core_ops() override;
     virtual hailo_reset_device_mode_t get_default_reset_mode() override;
     virtual hailo_status reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type) override;
 
@@ -72,6 +73,7 @@ private:
     const hailo_eth_device_info_t m_device_info;
     std::string m_device_id;
     Udp m_control_udp;
+    // TODO - HRT-13234, move to DeviceBase
     std::vector<std::shared_ptr<CoreOp>> m_core_ops;
     std::vector<std::shared_ptr<ConfiguredNetworkGroup>> m_network_groups; // TODO: HRT-9547 - Remove when ConfiguredNetworkGroup will be kept in global context
     ActiveCoreOpHolder m_active_core_op_holder;

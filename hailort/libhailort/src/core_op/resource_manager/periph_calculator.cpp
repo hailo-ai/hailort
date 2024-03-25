@@ -8,7 +8,7 @@
  **/
 
 #include "periph_calculator.hpp"
-#include "device_common/device_internal.hpp"
+#include "hef/hef_internal.hpp"
 
 namespace hailort
 {
@@ -70,7 +70,7 @@ uint32_t PeriphCalculator::calculate_ddr_periph_buffers_per_frame(const LayerInf
 
 Expected<LayerInfo> PeriphCalculator::calculate_periph_registers_impl(const LayerInfo &layer_info,
     const uint32_t desc_page_size, const uint32_t max_periph_bytes_value, const bool is_core_hw_padding_config_in_dfc,
-    const ProtoHEFHwArch &hw_arch)
+    const HEFHwArch &hw_arch)
 {
     // Calculate periph according to hw shape - the shape the core is epecting to get
     const hailo_3d_image_shape_t& periph_shape = layer_info.hw_shape;
@@ -84,18 +84,22 @@ Expected<LayerInfo> PeriphCalculator::calculate_periph_registers_impl(const Laye
     const auto row_size = static_cast<uint32_t>(periph_shape.width * periph_shape.features * layer_info.hw_data_bytes);
     auto periph_frame_size = periph_shape.height * row_size;
 
-    // In case of core hw padding in DFC extension - hw shape might not be aligned - use aligned frame size and 
+    CHECK_AS_EXPECTED(desc_page_size < layer_info.max_shmifo_size, HAILO_INVALID_ARGUMENT,
+        "Cannot find possible periph buffer size solution since desc_page_size ({}) is equal or larger than max stream size ({}) for layer name {}",
+        desc_page_size, layer_info.max_shmifo_size, layer_info.name);
+
+    // In case of core hw padding in DFC extension - hw shape might not be aligned - use aligned frame size and
     // confgured periph registers will add / removed the extra padding
     if (is_core_hw_padding_config_in_dfc) {
         if (0 != (periph_frame_size % PERIPH_FRAME_ALIGNMENT)) {
             auto max_periph_padding_payload = HefConfigurator::max_periph_padding_payload_value(
                     DeviceBase::hef_arch_to_device_arch(hw_arch));
             CHECK_EXPECTED(max_periph_padding_payload);
-            
+
             // Currently case of payload larger than max periph padding payload value - not supported
             CHECK_AS_EXPECTED(max_periph_padding_payload.value() > periph_frame_size, HAILO_INVALID_HEF,
                 "Error, padded frame size larger than {} Currently not supported", max_periph_padding_payload.value());
-            
+
             const auto padded_periph_frame_size = HailoRTCommon::align_to(periph_frame_size,
                 static_cast<uint32_t>(PERIPH_FRAME_ALIGNMENT));
             // Configure periph padding registers
@@ -116,7 +120,7 @@ Expected<LayerInfo> PeriphCalculator::calculate_periph_registers_impl(const Laye
     }
     CHECK_AS_EXPECTED(0 != periph_bytes_per_buffer, HAILO_INVALID_ARGUMENT,
         "Error, Could not find valid periph bytes per buffer value");
-    
+
     // In ddr - the core make sure that row size is aligned to PERIPH_BYTES_PER_BUFFER_DDR_ALIGNMENT_SIZE but if a row
     // Is too large to fit in core bytes per buffer - they will divide it and put it in mutliple buffers - so in order to 
     // Get the exact size in periph buffers per frame - we must multiply core registers and divide by periph bytes per buffer
@@ -131,7 +135,7 @@ Expected<LayerInfo> PeriphCalculator::calculate_periph_registers_impl(const Laye
 }
 
 Expected<LayerInfo> PeriphCalculator::calculate_periph_registers(const LayerInfo &layer_info,
-    const uint32_t desc_page_size, const bool is_periph_calculated_in_hailort, const ProtoHEFHwArch &hw_arch,
+    const uint32_t desc_page_size, const bool is_periph_calculated_in_hailort, const HEFHwArch &hw_arch,
     const bool is_core_hw_padding_config_in_dfc)
 {
     auto max_periph_bytes_from_hef = HefConfigurator::max_periph_bytes_value(DeviceBase::hef_arch_to_device_arch(hw_arch));

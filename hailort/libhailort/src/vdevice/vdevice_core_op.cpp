@@ -18,7 +18,8 @@
 namespace hailort
 {
 
-Expected<std::shared_ptr<VDeviceCoreOp>> VDeviceCoreOp::create(ActiveCoreOpHolder &active_core_op_holder,
+Expected<std::shared_ptr<VDeviceCoreOp>> VDeviceCoreOp::create(VDevice &vdevice,
+    ActiveCoreOpHolder &active_core_op_holder,
     const ConfigureNetworkParams &configure_params,
     const std::map<device_id_t, std::shared_ptr<CoreOp>> &core_ops,
     CoreOpsSchedulerWeakPtr core_ops_scheduler, vdevice_core_op_handle_t core_op_handle,
@@ -38,11 +39,17 @@ Expected<std::shared_ptr<VDeviceCoreOp>> VDeviceCoreOp::create(ActiveCoreOpHolde
     }
 
     // On HcpConfigCoreOp, we don't support get_async_max_queue_size (and the core op doesn't use the queue).
-    auto per_device_queue_size = core_ops.begin()->second->get_async_max_queue_size();
-    const auto queue_size = per_device_queue_size ? (*per_device_queue_size * core_ops.size()) : 0;
+    size_t queue_size = 0;
+    auto iface = core_ops.begin()->second->get_default_streams_interface();
+    CHECK_EXPECTED(iface);
+    if ((iface.value() != HAILO_STREAM_INTERFACE_ETH) && (iface.value() != HAILO_STREAM_INTERFACE_MIPI)) {
+        auto per_device_queue_size = core_ops.begin()->second->get_async_max_queue_size();
+        CHECK_EXPECTED(per_device_queue_size);
+        queue_size = *per_device_queue_size * core_ops.size();
+    }
 
     auto status = HAILO_UNINITIALIZED;
-    auto vdevice_core_op = make_shared_nothrow<VDeviceCoreOp>(active_core_op_holder, configure_params,
+    auto vdevice_core_op = make_shared_nothrow<VDeviceCoreOp>(vdevice, active_core_op_holder, configure_params,
         std::move(core_ops), core_ops_scheduler, core_op_handle, hef_hash, queue_size, status);
     CHECK_NOT_NULL_AS_EXPECTED(vdevice_core_op, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status);
@@ -67,8 +74,8 @@ Expected<std::shared_ptr<VDeviceCoreOp>> VDeviceCoreOp::duplicate(std::shared_pt
         other->m_infer_requests_accumulator->queue_size() : 0;
 
     auto status = HAILO_UNINITIALIZED;
-    auto vdevice_core_op = make_shared_nothrow<VDeviceCoreOp>(other->m_active_core_op_holder, configure_params,
-        std::move(copy), other->m_core_ops_scheduler, other->m_core_op_handle,
+    auto vdevice_core_op = make_shared_nothrow<VDeviceCoreOp>(other->m_vdevice, other->m_active_core_op_holder,
+        configure_params, std::move(copy), other->m_core_ops_scheduler, other->m_core_op_handle,
         other->m_hef_hash, queue_size, status);
     CHECK_NOT_NULL_AS_EXPECTED(vdevice_core_op, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status);
@@ -79,13 +86,15 @@ Expected<std::shared_ptr<VDeviceCoreOp>> VDeviceCoreOp::duplicate(std::shared_pt
     return vdevice_core_op;
 }
 
-VDeviceCoreOp::VDeviceCoreOp(ActiveCoreOpHolder &active_core_op_holder,
+VDeviceCoreOp::VDeviceCoreOp(VDevice &vdevice,
+    ActiveCoreOpHolder &active_core_op_holder,
     const ConfigureNetworkParams &configure_params,
     const std::map<device_id_t, std::shared_ptr<CoreOp>> &core_ops,
     CoreOpsSchedulerWeakPtr core_ops_scheduler, vdevice_core_op_handle_t core_op_handle,
     const std::string &hef_hash, size_t max_queue_size,
     hailo_status &status) :
         CoreOp(configure_params, core_ops.begin()->second->m_metadata, active_core_op_holder, status),
+        m_vdevice(vdevice),
         m_core_ops(std::move(core_ops)),
         m_core_ops_scheduler(core_ops_scheduler),
         m_core_op_handle(core_op_handle),
@@ -191,7 +200,7 @@ hailo_status VDeviceCoreOp::create_input_vdevice_stream_from_config_params(const
 
     if (m_core_ops_scheduler.lock()) {
         assert(m_infer_requests_accumulator);
-        auto scheduled_stream = ScheduledInputStream::create(std::move(low_level_streams),
+        auto scheduled_stream = ScheduledInputStream::create(m_vdevice, std::move(low_level_streams),
             edge_layer.value(), m_core_op_handle, m_core_op_activated_event, m_infer_requests_accumulator);
         CHECK_EXPECTED_AS_STATUS(scheduled_stream);
 
@@ -232,7 +241,7 @@ hailo_status VDeviceCoreOp::create_output_vdevice_stream_from_config_params(cons
 
     if (m_core_ops_scheduler.lock()) {
         assert(m_infer_requests_accumulator);
-        auto scheduled_stream = ScheduledOutputStream::create(std::move(low_level_streams),
+        auto scheduled_stream = ScheduledOutputStream::create(m_vdevice, std::move(low_level_streams),
             m_core_op_handle, edge_layer.value(), m_core_op_activated_event, m_infer_requests_accumulator);
         CHECK_EXPECTED_AS_STATUS(scheduled_stream);
 

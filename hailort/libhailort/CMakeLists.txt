@@ -2,23 +2,24 @@ cmake_minimum_required(VERSION 3.0.0)
 # set(CMAKE_C_CLANG_TIDY "clang-tidy;-checks=*")
 
 set(HAILORT_MAJOR_VERSION    4)
-set(HAILORT_MINOR_VERSION    16)
-set(HAILORT_REVISION_VERSION 2)
+set(HAILORT_MINOR_VERSION    17)
+set(HAILORT_REVISION_VERSION 0)
 
 # Add the cmake folder so the modules there are found
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 
 # Generate hef-proto files using host protobuf
-protobuf_generate_cpp(PROTO_HEF_SRC PROTO_HEF_HEADR hef.proto)
+protobuf_generate_cpp(PROTO_HEF_SRC PROTO_HEF_HEADER hef.proto)
+protobuf_generate_python(PROTO_HEF_PY hef.proto) # TODO (HRT-12504): Copy hef_pb2.py to tools directory
 
-add_library(hef_proto ${PROTO_HEF_SRC} ${PROTO_HEF_HEADR})
+add_library(hef_proto ${PROTO_HEF_SRC} ${PROTO_HEF_HEADER} ${PROTO_HEF_PY})
 target_link_libraries(hef_proto libprotobuf-lite)
 set_target_properties(hef_proto PROPERTIES CXX_STANDARD 14 GENERATED TRUE POSITION_INDEPENDENT_CODE ON)
 if(CMAKE_HOST_WIN32)
     # https://github.com/protocolbuffers/protobuf/tree/master/cmake#notes-on-compiler-warnings
     target_compile_options(hef_proto PRIVATE /wd4244)
 endif()
-get_filename_component(PROTO_HEADER_DIRECTORY ${PROTO_HEF_HEADR} DIRECTORY)
+get_filename_component(PROTO_HEADER_DIRECTORY ${PROTO_HEF_HEADER} DIRECTORY)
 target_include_directories(hef_proto
     PUBLIC
     $<BUILD_INTERFACE: ${PROTO_HEADER_DIRECTORY}>

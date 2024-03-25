@@ -34,7 +34,8 @@ enum class NMSBurstState {
 // For explanation on the different burst modes and types and state machine and logic of the class please check out the cpp.
 class NMSStreamReader {
 public:
-    static hailo_status read_nms(OutputStreamBase &stream, void *buffer, size_t offset, size_t size);
+    static hailo_status read_nms(OutputStreamBase &stream, void *buffer, size_t offset, size_t size,
+        hailo_stream_interface_t stream_interface);
 private:
     static hailo_status read_nms_bbox_mode(OutputStreamBase &stream, void *buffer, size_t offset);
     static hailo_status read_nms_burst_mode(OutputStreamBase &stream, void *buffer, size_t offset, size_t buffer_size);
@@ -46,7 +47,8 @@ private:
 class NmsReaderThread final {
 public:
 
-    NmsReaderThread(std::shared_ptr<OutputStreamBase> base_stream, size_t max_queue_size);
+    NmsReaderThread(std::shared_ptr<OutputStreamBase> base_stream, size_t max_queue_size,
+        hailo_stream_interface_t stream_interface);
     ~NmsReaderThread();
 
     NmsReaderThread(const NmsReaderThread &) = delete;
@@ -71,6 +73,7 @@ private:
     std::queue<TransferRequest> m_queue;
     // m_should_quit is used to quit the thread (called on destruction)
     bool m_should_quit;
+    hailo_stream_interface_t m_stream_interface;
     std::thread m_worker_thread;
 };
 
@@ -80,15 +83,16 @@ private:
 class NmsOutputStream : public AsyncOutputStreamBase {
 public:
     static Expected<std::shared_ptr<NmsOutputStream>> create(std::shared_ptr<OutputStreamBase> base_stream,
-        const LayerInfo &edge_layer, size_t max_queue_size, EventPtr core_op_activated_event);
+        const LayerInfo &edge_layer, size_t max_queue_size, EventPtr core_op_activated_event,
+        hailo_stream_interface_t stream_interface);
 
     virtual hailo_stream_interface_t get_interface() const override;
 
     NmsOutputStream(std::shared_ptr<OutputStreamBase> base_stream, const LayerInfo &edge_layer, size_t max_queue_size,
-        EventPtr core_op_activated_event, hailo_status &status) :
+        EventPtr core_op_activated_event, hailo_stream_interface_t stream_interface, hailo_status &status) :
             AsyncOutputStreamBase(edge_layer, std::move(core_op_activated_event), status),
             m_base_stream(base_stream),
-            m_reader_thread(base_stream, max_queue_size)
+            m_reader_thread(base_stream, max_queue_size, stream_interface)
     {}
 
     void set_vdevice_core_op_handle(vdevice_core_op_handle_t core_op_handle) override;

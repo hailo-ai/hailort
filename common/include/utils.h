@@ -54,6 +54,10 @@
 #define DIV_ROUND_UP(n,d) (((n) + (d) - 1) / (d))
 #endif
 
+#ifndef DIV_ROUND_DOWN
+#define DIV_ROUND_DOWN(n,d) ((n) / (d))
+#endif
+
 #ifndef ROUND_UNSIGNED_FLOAT
 #define ROUND_UNSIGNED_FLOAT(n) ((n - (uint32_t)(n)) > 0.5) ? (uint32_t)(n + 1) : (uint32_t)(n)
 #endif

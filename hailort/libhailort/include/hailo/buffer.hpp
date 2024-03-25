@@ -11,7 +11,6 @@
 #define _HAILO_BUFFER_HPP_
 
 #include "hailo/expected.hpp"
-#include "hailo/buffer_storage.hpp"
 
 #include <memory>
 #include <cstdint>
@@ -24,8 +23,24 @@
 namespace hailort
 {
 
+class BufferStorage;
+using BufferStoragePtr = std::shared_ptr<BufferStorage>;
+
 class Buffer;
 using BufferPtr = std::shared_ptr<Buffer>;
+
+
+/*! Buffer storage parameters. Analogical to hailo_buffer_parameters_t */
+struct HAILORTAPI BufferStorageParams
+{
+public:
+
+    static BufferStorageParams create_dma();
+    // Defaults to heap params
+    BufferStorageParams();
+
+    hailo_buffer_flags_t flags;
+};
 
 class HAILORTAPI Buffer final
 {
@@ -50,9 +65,7 @@ public:
 
     // Empty buffer (points to null, size is zero)
     Buffer();
-    // Buffer backed by the storage param
-    Buffer(BufferStoragePtr storage);
-    ~Buffer() = default;
+    ~Buffer();
 
     Buffer(const Buffer& other) = delete;
     Buffer& operator=(const Buffer& other) = delete;
@@ -156,9 +169,20 @@ public:
     uint32_t& as_uint32();
     uint64_t& as_uint64();
 
+    // Returns the pointer managed by this object and releases ownership
+    Expected<void *> release() noexcept;
+
+    // Internal functions
+    static Expected<Buffer> create(BufferStoragePtr storage, bool register_storage = true);
+
 private:
+    class StorageImpl;
+
+    // Buffer backed by the storage param
+    Buffer(std::unique_ptr<StorageImpl> storage);
+
     // Initialization dependency
-    BufferStoragePtr m_storage;
+    std::unique_ptr<StorageImpl> m_storage_impl;
     uint8_t *m_data;
     size_t m_size;
 };

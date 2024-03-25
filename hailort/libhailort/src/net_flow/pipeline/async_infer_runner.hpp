@@ -10,9 +10,10 @@
 #ifndef _HAILO_ASYNC_INFER_RUNNER_HPP_
 #define _HAILO_ASYNC_INFER_RUNNER_HPP_
 
+#include "hailo/infer_model.hpp"
 #include "network_group/network_group_internal.hpp"
 #include "net_flow/pipeline/pipeline.hpp"
-#include "net_flow/pipeline/pipeline_builder.hpp"
+#include "net_flow/pipeline/async_pipeline_builder.hpp"
 #include "net_flow/pipeline/vstream_internal.hpp"
 #include "net_flow/ops/op.hpp"
 
@@ -39,6 +40,8 @@ public:
     const std::unordered_map<std::string, std::shared_ptr<PipelineElement>>& get_last_elements() const;
     const std::shared_ptr<AsyncHwElement> get_async_hw_element();
     const ElementBuildParams get_build_params();
+    std::shared_ptr<std::atomic<hailo_status>> get_pipeline_status();
+
     void set_as_multi_planar();
     bool is_multi_planar();
 
@@ -64,20 +67,17 @@ public:
     virtual ~AsyncInferRunnerImpl();
     AsyncInferRunnerImpl(std::shared_ptr<AsyncPipeline> async_pipeline, std::shared_ptr<std::atomic<hailo_status>> pipeline_status);
 
-    hailo_status async_infer();
+    hailo_status run(ConfiguredInferModel::Bindings &bindings, TransferDoneCallbackAsyncInfer transfer_done);
+    hailo_status set_buffers(std::unordered_map<std::string, PipelineBuffer> &inputs,
+        std::unordered_map<std::string, std::pair<MemoryView, TransferDoneCallbackAsyncInfer>> &outputs);
 
     void abort();
 
     Expected<bool> can_push_buffers();
 
-    // TODO: consider removing the methods below (needed for unit testing)
     void add_element_to_pipeline(std::shared_ptr<PipelineElement> pipeline_element);
     void add_entry_element(std::shared_ptr<PipelineElement> pipeline_element, const std::string &input_name);
     void add_last_element(std::shared_ptr<PipelineElement> pipeline_element, const std::string &output_name);
-
-    void set_input(const std::string &input_name, MemoryView &&input_buffer, TransferDoneCallbackAsyncInfer &write_done);
-    void set_input(const std::string &input_name, hailo_pix_buffer_t input_buffer, TransferDoneCallbackAsyncInfer &write_done);
-    void set_output(const std::string &output_name, MemoryView &&output_buffer, TransferDoneCallbackAsyncInfer &read_done);
 
     std::unordered_map<std::string, std::shared_ptr<PipelineElement>> get_entry_elements();
     std::unordered_map<std::string, std::shared_ptr<PipelineElement>> get_last_elements();
@@ -91,13 +91,15 @@ protected:
     hailo_status start_pipeline();
     hailo_status stop_pipeline();
 
+    static Expected<hailo_pix_buffer_t> convert_dma_pix_buffer_to_userptr_pix_buffer(const hailo_pix_buffer_t &dma_pix_buffer);
+    void set_pix_buffer_inputs(std::unordered_map<std::string, PipelineBuffer> &inputs, hailo_pix_buffer_t userptr_pix_buffer,
+        TransferDoneCallbackAsyncInfer input_done, const std::string &input_name);
+
     std::shared_ptr<AsyncPipeline> m_async_pipeline;
-    std::unordered_map<std::string, PipelineBuffer> m_input_buffers;
-    std::unordered_map<std::string, MemoryView> m_output_buffers;
-    std::unordered_map<std::string, TransferDoneCallbackAsyncInfer> m_read_dones;
     volatile bool m_is_activated;
     volatile bool m_is_aborted;
     std::shared_ptr<std::atomic<hailo_status>> m_pipeline_status;
+    std::mutex m_mutex;
 };
 
 } /* namespace hailort */

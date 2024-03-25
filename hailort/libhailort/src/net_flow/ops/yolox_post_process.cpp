@@ -32,14 +32,16 @@ Expected<std::shared_ptr<OpMetadata>> YoloxOpMetadata::create(const std::unorder
 std::string YoloxOpMetadata::get_op_description()
 {
     auto nms_config_info = get_nms_config_description();
-    auto config_info = fmt::format("Op {}, Name: {}, {}, Image height: {:.2f}, Image width: {:.2f}",
-                        OpMetadata::get_operation_type_str(m_type), m_name, nms_config_info, m_yolox_config.image_height, m_yolox_config.image_width);
+    auto config_info = fmt::format("Op {}, Name: {}, {}, Image height: {:d}, Image width: {:d}",
+                        OpMetadata::get_operation_type_str(m_type), m_name, nms_config_info, static_cast<int>(m_yolox_config.image_height), static_cast<int>(m_yolox_config.image_width));
     return config_info;
 }
 
 hailo_status YoloxOpMetadata::validate_params()
 {
     CHECK_SUCCESS(NmsOpMetadata::validate_params());
+
+    CHECK(!nms_config().bbox_only, HAILO_INVALID_ARGUMENT, "YOLOXPostProcessOp: bbox_only is not supported for YOLOX model");
 
     // Validate regs, clss and objs matching layers have same shape
     for (const auto &layer_names : m_yolox_config.input_names) {
@@ -106,7 +108,7 @@ hailo_status YOLOXPostProcessOp::execute(const std::map<std::string, MemoryView>
     
     clear_before_frame();
     for (const auto &layers_names_triplet : yolox_config.input_names) {
-        hailo_status status;
+        hailo_status status = HAILO_UNINITIALIZED;
         assert(contains(inputs, layers_names_triplet.cls));
         assert(contains(inputs, layers_names_triplet.obj));
         assert(contains(inputs, layers_names_triplet.reg));

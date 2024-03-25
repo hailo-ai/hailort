@@ -30,6 +30,9 @@ using namespace hailort;
 /* Function prototype for control operations */
 typedef HAILO_COMMON_STATUS_t (*firmware_notifications_parser_t) (D2H_EVENT_MESSAGE_t *d2h_notification_message);
 
+#define CHECK_COMMON_STATUS(cond, ret_val, ...) \
+    _CHECK((cond), (ret_val), CONSTRUCT_MSG("CHECK failed", ##__VA_ARGS__))
+
 /**********************************************************************
  * Private Declarations
  **********************************************************************/
@@ -328,11 +331,11 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_cpu_ecc_error_noti
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
 
-    CHECK(D2H_EVENT_HEALTH_MONITOR_CPU_ECC_EVENT_PARAMETER_COUNT == d2h_notification_message->header.parameter_count,
+    CHECK_COMMON_STATUS(D2H_EVENT_HEALTH_MONITOR_CPU_ECC_EVENT_PARAMETER_COUNT == d2h_notification_message->header.parameter_count,
             HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT,
             "d2h event invalid parameter count: {}", d2h_notification_message->header.parameter_count);
 
-    CHECK(sizeof(d2h_notification_message->message_parameters.health_monitor_cpu_ecc_event) == d2h_notification_message->header.payload_length,
+    CHECK_COMMON_STATUS(sizeof(d2h_notification_message->message_parameters.health_monitor_cpu_ecc_event) == d2h_notification_message->header.payload_length,
             HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_LENGTH,
             "d2h event invalid payload_length: {}", d2h_notification_message->header.payload_length);
 
@@ -374,11 +377,11 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_context_switch_breakpoint_reached
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
 
-    CHECK(D2H_EVENT_CONTEXT_SWITCH_BREAKPOINT_REACHED_EVENT_PARAMETER_COUNT == d2h_notification_message->header.parameter_count,
+    CHECK_COMMON_STATUS(D2H_EVENT_CONTEXT_SWITCH_BREAKPOINT_REACHED_EVENT_PARAMETER_COUNT == d2h_notification_message->header.parameter_count,
             HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT,
             "d2h event invalid parameter count: {}", d2h_notification_message->header.parameter_count);
 
-    CHECK(d2h_notification_message->header.payload_length == 
+    CHECK_COMMON_STATUS(d2h_notification_message->header.payload_length == 
             sizeof(d2h_notification_message->message_parameters.context_switch_breakpoint_reached_event),
             HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_LENGTH,
             "d2h event invalid payload_length: {}", d2h_notification_message->header.payload_length);
@@ -400,11 +403,11 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_context_switch_run_time_error_not
     const char *run_time_error_status_text = NULL;
     uint32_t run_time_error_status = 0;
 
-    CHECK(D2H_EVENT_CONTEXT_SWITCH_RUN_TIME_ERROR_EVENT_PARAMETER_COUNT == d2h_notification_message->header.parameter_count,
+    CHECK_COMMON_STATUS(D2H_EVENT_CONTEXT_SWITCH_RUN_TIME_ERROR_EVENT_PARAMETER_COUNT == d2h_notification_message->header.parameter_count,
             HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT,
             "d2h event invalid parameter count: {}", d2h_notification_message->header.parameter_count);
 
-    CHECK(d2h_notification_message->header.payload_length == 
+    CHECK_COMMON_STATUS(d2h_notification_message->header.payload_length == 
             sizeof(d2h_notification_message->message_parameters.context_switch_run_time_error_event),
             HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_LENGTH,
             "d2h event invalid payload_length: {}", d2h_notification_message->header.payload_length);
@@ -412,7 +415,7 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_context_switch_run_time_error_not
     run_time_error_status = d2h_notification_message->message_parameters.context_switch_run_time_error_event.exit_status;
     
     status = FIRMWARE_STATUS__get_textual((FIRMWARE_STATUS_t)run_time_error_status, &run_time_error_status_text);
-    CHECK((HAILO_COMMON_STATUS__SUCCESS == status), status, 
+    CHECK_COMMON_STATUS((HAILO_COMMON_STATUS__SUCCESS == status), status, 
         "Cannot find textual address for run time status {:#x}, status = {}", (FIRMWARE_STATUS_t)run_time_error_status, status);
 
     LOGGER__ERROR("Got Context switch run time error on net_group index {}, batch index {}, context index {}, action index {} with status {}",

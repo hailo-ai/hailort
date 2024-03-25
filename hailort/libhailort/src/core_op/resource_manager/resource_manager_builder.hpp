@@ -10,21 +10,20 @@
 #ifndef _HAILO_RESOURCE_MANAGER_BUILDER_HPP_
 #define _HAILO_RESOURCE_MANAGER_BUILDER_HPP_
 
-#include "hef/hef_internal.hpp"
 #include "core_op/resource_manager/resource_manager.hpp"
 
 
 namespace hailort
 {
 
+class ShefFileHandle;
 class ResourcesManagerBuilder final {
 public:
     ResourcesManagerBuilder() = delete;
 
-    /* TODO HRT-5067 - work with hailo_device_architecture_t instead of ProtoHEFHwArch */
     static Expected<std::shared_ptr<ResourcesManager>> build(uint8_t net_group_index, VdmaDevice &device,
         HailoRTDriver &driver, const ConfigureNetworkParams &config_params,
-        std::shared_ptr<CoreOpMetadata> core_op, const ProtoHEFHwArch &hw_arch);
+        std::shared_ptr<CoreOpMetadata> core_op, const HEFHwArch &hw_arch, std::shared_ptr<ShefFileHandle> shef_file_handle);
 
 };
 

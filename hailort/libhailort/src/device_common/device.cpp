@@ -387,7 +387,7 @@ hailo_status Device::set_sleep_state(hailo_sleep_state_t sleep_state)
     return Control::set_sleep_state(*this, sleep_state);
 }
 
-hailo_status Device::dma_map(void *address, size_t size, hailo_stream_direction_t direction)
+hailo_status Device::dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction)
 {
     (void) address;
     (void) size;
@@ -395,19 +395,12 @@ hailo_status Device::dma_map(void *address, size_t size, hailo_stream_direction_
     return HAILO_NOT_IMPLEMENTED;
 }
 
-hailo_status Device::dma_unmap(void *address, hailo_stream_direction_t direction)
+hailo_status Device::dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction)
 {
     (void) address;
+    (void) size;
     (void) direction;
     return HAILO_NOT_IMPLEMENTED;
-}
-
-Expected<std::pair<vdma::MappedBufferPtr, bool>> Device::try_dma_map(vdma::DmaAbleBufferPtr buffer,
-    hailo_stream_direction_t direction)
-{
-    (void) buffer;
-    (void) direction;
-    return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
 
 hailo_status Device::direct_write_memory(uint32_t address, const void *buffer, uint32_t size)
@@ -538,7 +531,7 @@ Expected<std::vector<uint8_t>> Device::get_number_of_dynamic_contexts_per_networ
 }
 
 Expected<Buffer> Device::download_context_action_list(uint32_t network_group_id, uint8_t context_type,
-    uint8_t context_index, uint32_t *base_address, uint32_t *batch_counter, uint16_t max_size)
+    uint16_t context_index, uint32_t *base_address, uint32_t *batch_counter, uint16_t max_size)
 {
     CHECK_ARG_NOT_NULL_AS_EXPECTED(base_address);
     CHECK_ARG_NOT_NULL_AS_EXPECTED(batch_counter);
@@ -575,7 +568,7 @@ hailo_status Device::set_context_action_list_timestamp_batch(uint16_t batch_inde
 
 hailo_status Device::set_context_switch_breakpoint(uint8_t breakpoint_id, bool break_at_any_network_group_index,
     uint8_t network_group_index, bool break_at_any_batch_index, uint16_t batch_index, bool break_at_any_context_index,
-    uint8_t context_index, bool break_at_any_action_index, uint16_t action_index) 
+    uint16_t context_index, bool break_at_any_action_index, uint16_t action_index) 
 {
     CONTROL_PROTOCOL__context_switch_breakpoint_data_t breakpoint_data = {
         break_at_any_network_group_index,

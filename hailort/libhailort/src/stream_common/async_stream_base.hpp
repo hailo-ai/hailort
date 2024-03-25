@@ -66,7 +66,7 @@ private:
         const auto wait_done = m_has_ready_buffer.wait_for(lock, timeout,
             [this, pred, &status] {
                 if (m_is_aborted) {
-                    status = HAILO_STREAM_ABORTED_BY_USER;
+                    status = HAILO_STREAM_ABORT;
                     return true;
                 }
 
@@ -151,7 +151,7 @@ private:
         const auto wait_done = m_has_ready_buffer.wait_for(lock, timeout,
             [this, pred, &status] {
                 if (m_is_aborted) {
-                    status = HAILO_STREAM_ABORTED_BY_USER;
+                    status = HAILO_STREAM_ABORT;
                     return true;
                 }
 

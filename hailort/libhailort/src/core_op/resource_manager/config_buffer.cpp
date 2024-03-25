@@ -9,8 +9,8 @@
  */
 
 #include "core_op/resource_manager/config_buffer.hpp"
-#include "vdma/memory/sg_buffer.hpp"
-#include "vdma/memory/continuous_buffer.hpp"
+#include "vdma/memory/sg_edge_layer.hpp"
+#include "vdma/memory/continuous_edge_layer.hpp"
 #include "vdma/memory/buffer_requirements.hpp"
 
 #include <numeric>
@@ -18,7 +18,7 @@
 
 namespace hailort {
 
-Expected<std::unique_ptr<vdma::VdmaBuffer>> ConfigBuffer::create_buffer(HailoRTDriver &driver, vdma::ChannelId channel_id,
+Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> ConfigBuffer::create_buffer(HailoRTDriver &driver, vdma::ChannelId channel_id,
     const std::vector<uint32_t> &cfg_sizes, const uint32_t buffer_size)
 {
     auto buffer_ptr = should_use_ccb(driver) ?
@@ -43,7 +43,7 @@ Expected<ConfigBuffer> ConfigBuffer::create(HailoRTDriver &driver, vdma::Channel
     return ConfigBuffer(buffer_ptr.release(), channel_id, buffer_size);
 }
 
-ConfigBuffer::ConfigBuffer(std::unique_ptr<vdma::VdmaBuffer> &&buffer,
+ConfigBuffer::ConfigBuffer(std::unique_ptr<vdma::VdmaEdgeLayer> &&buffer,
     vdma::ChannelId channel_id, size_t total_buffer_size)
     : m_buffer(std::move(buffer)),
       m_channel_id(channel_id),
@@ -55,7 +55,7 @@ Expected<uint32_t> ConfigBuffer::program_descriptors()
 {
     // TODO HRT-9657: remove DEVICE interrupts
     auto descriptors_count =
-        m_buffer->program_descriptors(m_acc_buffer_offset, vdma::InterruptsDomain::DEVICE, m_acc_desc_count);
+        m_buffer->program_descriptors(m_acc_buffer_offset, InterruptsDomain::DEVICE, m_acc_desc_count);
     CHECK_EXPECTED(descriptors_count);
 
     m_acc_desc_count += descriptors_count.value();
@@ -71,7 +71,7 @@ hailo_status ConfigBuffer::pad_with_nops()
     auto page_size = desc_page_size();
     auto buffer_size = m_total_buffer_size;
     auto buffer_residue = buffer_size % page_size;
-    if (0 != buffer_residue % CCW_HEADER_SIZE) {
+    if (0 != (page_size - buffer_residue) % CCW_HEADER_SIZE) {
         LOGGER__ERROR("CFG channel buffer size must be a multiple of CCW header size ({})", CCW_HEADER_SIZE);
         return HAILO_INTERNAL_FAILURE;
     }
@@ -135,40 +135,56 @@ hailo_status ConfigBuffer::write_inner(const MemoryView &data)
     return HAILO_SUCCESS;
 }
 
-Expected<std::unique_ptr<vdma::VdmaBuffer>> ConfigBuffer::create_sg_buffer(HailoRTDriver &driver,
+Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> ConfigBuffer::create_sg_buffer(HailoRTDriver &driver,
     vdma::ChannelId channel_id, const std::vector<uint32_t> &cfg_sizes)
 {
-    static const bool NOT_CIRCULAR = false;
+    static const auto NOT_CIRCULAR = false;
     // For config channels (In Hailo15), the page size must be a multiplication of host default page size.
     // Therefore we use the flag force_default_page_size for those types of buffers.
-    auto const FORCE_DEFAULT_PAGE_SIZE = true;
-    auto const FORCE_BATCH_SIZE = true;
-    auto buffer_size_requirements = vdma::BufferSizesRequirements::get_sg_buffer_requirements_multiple_transfers(
-        driver.desc_max_page_size(), 1, cfg_sizes, NOT_CIRCULAR, FORCE_DEFAULT_PAGE_SIZE, FORCE_BATCH_SIZE);
+    static const auto FORCE_DEFAULT_PAGE_SIZE = true;
+    static const auto FORCE_BATCH_SIZE = true;
+    auto buffer_size_requirements = vdma::BufferSizesRequirements::get_buffer_requirements_multiple_transfers(
+        vdma::VdmaBuffer::Type::SCATTER_GATHER, driver.desc_max_page_size(), 1, cfg_sizes, NOT_CIRCULAR,
+        FORCE_DEFAULT_PAGE_SIZE, FORCE_BATCH_SIZE);
     CHECK_EXPECTED(buffer_size_requirements);
     const auto page_size = buffer_size_requirements->desc_page_size();
     const auto descs_count = buffer_size_requirements->descs_count();
     const auto buffer_size = buffer_size_requirements->buffer_size();
 
-    auto buffer = vdma::SgBuffer::create(driver, buffer_size, descs_count, page_size, NOT_CIRCULAR,
-        HailoRTDriver::DmaDirection::H2D, channel_id);
+    auto buffer = vdma::SgBuffer::create(driver, buffer_size, HailoRTDriver::DmaDirection::H2D);
     CHECK_EXPECTED(buffer);
 
-    auto buffer_ptr = make_unique_nothrow<vdma::SgBuffer>(buffer.release());
+    auto buffer_ptr = make_shared_nothrow<vdma::SgBuffer>(buffer.release());
     CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
-    return std::unique_ptr<vdma::VdmaBuffer>(std::move(buffer_ptr));
+    static const auto DEFAULT_OFFSET = 0;
+    auto edge_layer = vdma::SgEdgeLayer::create(std::move(buffer_ptr), buffer_size, DEFAULT_OFFSET, driver, descs_count,
+        page_size, NOT_CIRCULAR, channel_id);
+    CHECK_EXPECTED(edge_layer);
+
+    auto edge_layer_ptr = make_unique_nothrow<vdma::SgEdgeLayer>(edge_layer.release());
+    CHECK_NOT_NULL_AS_EXPECTED(edge_layer_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+    return std::unique_ptr<vdma::VdmaEdgeLayer>(std::move(edge_layer_ptr));
 }
 
-Expected<std::unique_ptr<vdma::VdmaBuffer>> ConfigBuffer::create_ccb_buffer(HailoRTDriver &driver,
+Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> ConfigBuffer::create_ccb_buffer(HailoRTDriver &driver,
     uint32_t buffer_size)
 {
-    static const bool NOT_CIRCULAR = false;
-    static const uint16_t SINGLE_TRANSFER = 1;
-    auto buffer_size_requirements = vdma::BufferSizesRequirements::get_ccb_buffer_requirements_single_transfer(
-        SINGLE_TRANSFER, buffer_size, NOT_CIRCULAR);
+    static const auto NOT_CIRCULAR = false;
+    // For config channels (In Hailo15), the page size must be a multiplication of host default page size.
+    // Therefore we use the flag force_default_page_size for those types of buffers.
+    static const auto FORCE_DEFAULT_PAGE_SIZE = true;
+    static const auto FORCE_BATCH_SIZE = true;
+    static const auto DEFAULT_BATCH_SIZE = 1;
+    static const auto IS_VDMA_ALIGNED_BUFFER = true;
+    auto buffer_size_requirements = vdma::BufferSizesRequirements::get_buffer_requirements_single_transfer(
+        vdma::VdmaBuffer::Type::CONTINUOUS, driver.desc_max_page_size(), DEFAULT_BATCH_SIZE, DEFAULT_BATCH_SIZE,
+        buffer_size, NOT_CIRCULAR, FORCE_DEFAULT_PAGE_SIZE, FORCE_BATCH_SIZE, IS_VDMA_ALIGNED_BUFFER);
     CHECK_EXPECTED(buffer_size_requirements);
 
+    const auto page_size = buffer_size_requirements->desc_page_size();
+    const auto descs_count = buffer_size_requirements->descs_count();
     auto buffer = vdma::ContinuousBuffer::create(buffer_size_requirements->buffer_size(), driver);
     /* Don't print error here since this might be expected error that the libhailoRT can recover from
         (out of host memory). If it's not the case, there is a print in hailort_driver.cpp file */
@@ -178,10 +194,17 @@ Expected<std::unique_ptr<vdma::VdmaBuffer>> ConfigBuffer::create_ccb_buffer(Hail
         CHECK_EXPECTED(buffer);
     }
 
-    auto buffer_ptr = make_unique_nothrow<vdma::ContinuousBuffer>(buffer.release());
+    auto buffer_ptr = make_shared_nothrow<vdma::ContinuousBuffer>(buffer.release());
     CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
-    return std::unique_ptr<vdma::VdmaBuffer>(std::move(buffer_ptr));
+    static const auto DEFAULT_OFFSET = 0;
+    auto edge_layer = vdma::ContinuousEdgeLayer::create(std::move(buffer_ptr), buffer_size, DEFAULT_OFFSET, page_size, descs_count);
+    CHECK_EXPECTED(edge_layer);
+
+    auto edge_layer_ptr = make_unique_nothrow<vdma::ContinuousEdgeLayer>(edge_layer.release());
+    CHECK_NOT_NULL_AS_EXPECTED(edge_layer_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+    return std::unique_ptr<vdma::VdmaEdgeLayer>(std::move(edge_layer_ptr));
 }
 
 bool ConfigBuffer::should_use_ccb(HailoRTDriver &driver)

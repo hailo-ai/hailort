@@ -14,7 +14,7 @@
 #define _HAILO_YOLO_POST_PROCESS_HPP_
 
 #include "net_flow/ops/nms_post_process.hpp"
-#include "net_flow/ops/yolov5_op_metadata.hpp"
+#include "net_flow/ops_metadata/yolov5_op_metadata.hpp"
 
 namespace hailort
 {
@@ -29,6 +29,7 @@ public:
     static Expected<std::shared_ptr<Op>> create(std::shared_ptr<Yolov5OpMetadata> metadata);
 
     hailo_status execute(const std::map<std::string, MemoryView> &inputs, std::map<std::string, MemoryView> &outputs) override;
+    static size_t get_num_of_anchors(const std::vector<int> &layer_anchors);
 
 protected:
     hailo_bbox_float32_t decode(float32_t tx, float32_t ty, float32_t tw, float32_t th,
@@ -48,7 +49,18 @@ protected:
     static const uint32_t OBJECTNESS_INDEX = 4;
     static const uint32_t CLASSES_START_INDEX = 5;
 
-
+    template<typename DstType = float32_t, typename SrcType>
+    hailo_bbox_float32_t decode_bbox(SrcType* data, uint32_t entry_idx, const uint32_t X_OFFSET, const uint32_t Y_OFFSET,
+        const uint32_t W_OFFSET, const uint32_t H_OFFSET, hailo_quant_info_t quant_info, uint32_t anchor,
+        const std::vector<int> &layer_anchors, uint32_t col, uint32_t row, hailo_3d_image_shape_t shape)
+    {
+    auto tx = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + X_OFFSET], quant_info);
+    auto ty = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + Y_OFFSET], quant_info);
+    auto tw = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + W_OFFSET], quant_info);
+    auto th = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + H_OFFSET], quant_info);
+    return decode(tx, ty, tw, th, layer_anchors[anchor * 2], layer_anchors[anchor * 2 + 1], col, row,
+        shape.width, shape.height);
+    }
 
     template<typename DstType = float32_t, typename SrcType>
     void check_threshold_and_add_detection(hailo_bbox_float32_t bbox, hailo_quant_info_t &quant_info,
@@ -126,10 +138,7 @@ protected:
 
         const auto &nms_config = m_metadata->nms_config();
 
-        // Each layer anchors vector is structured as {w,h} pairs.
-        // For example, if we have a vector of size 6 (default YOLOv5 vector) then we have 3 anchors for this layer.
-        assert(layer_anchors.size() % 2 == 0);
-        const size_t num_of_anchors = (layer_anchors.size() / 2);
+        auto num_of_anchors = get_num_of_anchors(layer_anchors);
 
         uint32_t entry_size = get_entry_size();
         auto number_of_entries = padded_shape.height * padded_shape.width * num_of_anchors;
@@ -149,12 +158,8 @@ protected:
                         continue;
                     }
 
-                    auto tx = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + X_OFFSET], quant_info);
-                    auto ty = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + Y_OFFSET], quant_info);
-                    auto tw = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + W_OFFSET], quant_info);
-                    auto th = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + H_OFFSET], quant_info);
-                    auto bbox = decode(tx, ty, tw, th, layer_anchors[anchor * 2], layer_anchors[anchor * 2 + 1], col, row,
-                        shape.width, shape.height);
+                    auto bbox = decode_bbox(data, entry_idx, X_OFFSET, Y_OFFSET, W_OFFSET, H_OFFSET,
+                        quant_info, anchor, layer_anchors, col, row, shape);
 
                     decode_classes_scores(bbox, quant_info, data, entry_idx,
                         CLASSES_START_INDEX, objectness, padded_shape.width);
@@ -164,12 +169,12 @@ protected:
 
         return HAILO_SUCCESS;
     }
-private:
-   std::shared_ptr<Yolov5OpMetadata> m_metadata;
+
+    std::shared_ptr<Yolov5OpMetadata> m_metadata;
 
 };
 
-} // namespace net_flow
-} // namespace hailort
+} /* namespace net_flow */
+} /* namespace hailort */
 
-#endif // _HAILO_YOLO_POST_PROCESS_HPP_
+#endif /* _HAILO_YOLO_POST_PROCESS_HPP_ */

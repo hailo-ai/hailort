@@ -50,11 +50,11 @@ static void output_done_callback(const hailo_stream_read_async_completion_info_t
         // Real applications can forward the buffer to post-process/display. Here we just re-launch new async reads.
         status = hailo_stream_read_raw_buffer_async(stream, completion_info->buffer_addr, completion_info->buffer_size,
             output_done_callback, stream);
-        if ((HAILO_SUCCESS != status) && (HAILO_STREAM_ABORTED_BY_USER != status)) {
+        if ((HAILO_SUCCESS != status) && (HAILO_STREAM_ABORT != status)) {
             fprintf(stderr, "Failed read async with status=%d\n", status);
         }
         break;
-    case HAILO_STREAM_ABORTED_BY_USER:
+    case HAILO_STREAM_ABORT:
         // Transfer was canceled, finish gracefully.
         break;
     default:
@@ -73,11 +73,11 @@ static void input_done_callback(const hailo_stream_write_async_completion_info_t
         // new async writes.
         status = hailo_stream_write_raw_buffer_async(stream, completion_info->buffer_addr, completion_info->buffer_size,
             input_done_callback, stream);
-        if ((HAILO_SUCCESS != status) && (HAILO_STREAM_ABORTED_BY_USER != status)) {
+        if ((HAILO_SUCCESS != status) && (HAILO_STREAM_ABORT != status)) {
             fprintf(stderr, "Failed write async with status=%d\n", status);
         }
         break;
-    case HAILO_STREAM_ABORTED_BY_USER:
+    case HAILO_STREAM_ABORT:
         // Transfer was canceled, finish gracefully.
         break;
     default:
@@ -85,7 +85,13 @@ static void input_done_callback(const hailo_stream_write_async_completion_info_t
     }
 }
 
-static hailo_status infer(hailo_configured_network_group network_group, size_t number_input_streams,
+typedef struct {
+    void *addr;
+    size_t size;
+    hailo_dma_buffer_direction_t direction;
+} allocated_buffer_t;
+
+static hailo_status infer(hailo_device device, hailo_configured_network_group network_group, size_t number_input_streams,
     hailo_input_stream *input_streams, size_t number_output_streams, hailo_output_stream *output_streams,
     size_t ongoing_transfers)
 {
@@ -95,7 +101,8 @@ static hailo_status infer(hailo_configured_network_group network_group, size_t n
     size_t frame_size = 0;
     size_t stream_index = 0;
     void *current_buffer = NULL;
-    void *buffers[MAX_EDGE_LAYERS * MAX_ONGOING_TRANSFERS] = {0};
+
+    allocated_buffer_t buffers[MAX_EDGE_LAYERS * MAX_ONGOING_TRANSFERS] = {0};
     size_t allocated_buffers = 0;
 
     // We launch "ongoing_transfers" async operations for both input and output streams. On each async callback, we launch
@@ -108,7 +115,12 @@ static hailo_status infer(hailo_configured_network_group network_group, size_t n
             // Buffers read from async operation must be page aligned.
             current_buffer = page_aligned_alloc(frame_size);
             REQUIRE_ACTION(INVALID_ADDR != current_buffer, status=HAILO_OUT_OF_HOST_MEMORY, l_shutdown, "allocation failed");
-            buffers[allocated_buffers++] = current_buffer;
+            buffers[allocated_buffers++] = (allocated_buffer_t){ current_buffer, frame_size, HAILO_DMA_BUFFER_DIRECTION_D2H };
+
+            // If the same buffer is used multiple times on async-io, to improve performance, it is recommended to
+            // pre-map it into the device.
+            status = hailo_device_dma_map_buffer(device, current_buffer, frame_size, HAILO_DMA_BUFFER_DIRECTION_D2H);
+            REQUIRE_SUCCESS(status, l_shutdown, "Failed map buffer with status=%d", status);
 
             status = hailo_stream_read_raw_buffer_async(output_streams[stream_index], current_buffer, frame_size,
                 output_done_callback, output_streams[stream_index]);
@@ -124,7 +136,12 @@ static hailo_status infer(hailo_configured_network_group network_group, size_t n
             // Buffers written to async operation must be page aligned.
             current_buffer = page_aligned_alloc(frame_size);
             REQUIRE_ACTION(INVALID_ADDR != current_buffer, status=HAILO_OUT_OF_HOST_MEMORY, l_shutdown, "allocation failed");
-            buffers[allocated_buffers++] = current_buffer;
+            buffers[allocated_buffers++] = (allocated_buffer_t){ current_buffer, frame_size, HAILO_DMA_BUFFER_DIRECTION_H2D };
+
+            // If the same buffer is used multiple times on async-io, to improve performance, it is recommended to
+            // pre-map it into the device.
+            status = hailo_device_dma_map_buffer(device, current_buffer, frame_size, HAILO_DMA_BUFFER_DIRECTION_H2D);
+            REQUIRE_SUCCESS(status, l_shutdown, "Failed map buffer with status=%d", status);
 
             status = hailo_stream_write_raw_buffer_async(input_streams[stream_index], current_buffer, frame_size,
                 input_done_callback, input_streams[stream_index]);
@@ -138,11 +155,14 @@ static hailo_status infer(hailo_configured_network_group network_group, size_t n
     status = HAILO_SUCCESS;
 l_shutdown:
     // Calling hailo_shutdown_network_group will ensure that all async operations are done. All pending async I/O
-    // operations will be canceled and their callbacks called with status=HAILO_STREAM_ABORTED_BY_USER.
+    // operations will be canceled and their callbacks called with status=HAILO_STREAM_ABORT.
     (void) hailo_shutdown_network_group(network_group);
 
     // There are no async I/O operations ongoing so it is safe to free the buffers now.
-    for (i = 0; i < allocated_buffers; i++) page_aligned_free(buffers[i], frame_size);
+    for (i = 0; i < allocated_buffers; i++) {
+        (void) hailo_device_dma_unmap_buffer(device, buffers[i].addr, buffers[i].size, buffers[i].direction);
+        page_aligned_free(buffers[i].addr, buffers[i].size);
+    }
 
     return status;
 }
@@ -239,7 +259,7 @@ int main()
     REQUIRE_SUCCESS(status, l_release_device, "Failed activate network group");
 
     // Run infer.
-    status = infer(network_group, number_input_streams, input_streams, number_output_streams, output_streams,
+    status = infer(device, network_group, number_input_streams, input_streams, number_output_streams, output_streams,
         ongoing_transfers);
     REQUIRE_SUCCESS(status, l_deactivate, "Failed performing inference");
 

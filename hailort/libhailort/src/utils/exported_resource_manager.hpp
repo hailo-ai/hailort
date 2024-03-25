@@ -11,8 +11,11 @@
 #define _HAILO_EXPORTED_RESOURCE_MANAGER_HPP_
 
 #include "hailo/hailort.h"
+#include "common/logger_macros.hpp"
+#include "common/utils.hpp"
 
 #include <unordered_map>
+#include <mutex>
 
 namespace hailort
 {
@@ -87,6 +90,62 @@ private:
 
     std::mutex m_mutex;
     std::unordered_map<Key, Resource, Hash> m_storage;
+};
+
+template<typename Resource, typename Key, typename Hash  = std::hash<Key>>
+class RegisteredResource final {
+public:
+    using Manager = ExportedResourceManager<Resource, Key, Hash>;
+
+    static Expected<RegisteredResource> create(const Resource &resource, const Key &key)
+    {
+        hailo_status status = HAILO_UNINITIALIZED;
+        RegisteredResource registered_resource(resource, key, status);
+        if (HAILO_SUCCESS != status) {
+            LOGGER__TRACE("Resource registration failed with status {}", status);
+            return make_unexpected(status);
+        }
+        return registered_resource;
+    }
+
+    RegisteredResource(const Resource &resource, const Key &key, hailo_status &status) :
+        m_key(key)
+    {
+        status = Manager::register_resource(resource, key);
+        if (HAILO_SUCCESS != status) {
+            return;
+        }
+        m_should_release = true;
+        status = HAILO_SUCCESS;
+    }
+
+    ~RegisteredResource()
+    {
+        if (m_should_release) {
+            Manager::unregister_resource(m_key);
+        }
+    }
+
+    RegisteredResource(const RegisteredResource &) = delete;
+    RegisteredResource& operator=(const RegisteredResource &) = delete;
+
+    RegisteredResource(RegisteredResource &&other) :
+        m_key(other.m_key),
+        m_should_release(std::exchange(other.m_should_release, false))
+    {}
+
+    RegisteredResource& operator=(RegisteredResource &&other)
+    {
+        if (this != &other) {
+            m_key = other.m_key;
+            m_should_release = std::exchange(other.m_should_release, false);
+        }
+        return *this;
+    }
+
+private:
+    Key m_key;
+    bool m_should_release = false;
 };
 
 } /* namespace hailort */

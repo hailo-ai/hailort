@@ -106,9 +106,22 @@ public:
      *
      * @param[in] max_proposals_per_class    NMS max proposals per class to set.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note This function will fail in cases where there is no output with NMS operations on the CPU.
+     * @note This function must be called before starting inference!
+     * This function will fail in cases where there is no output with NMS operations on the CPU.
      */
     hailo_status set_nms_max_proposals_per_class(uint32_t max_proposals_per_class);
+
+    /**
+     * Set maximum accumulated mask size for all the detections in a frame.
+     *
+     * Note: Used in order to change the output buffer frame size,
+     * in cases where the output buffer is too small for all the segmentation detections.
+     *
+     * @param[in] max_accumulated_mask_size NMS max accumulated mask size.
+     * @note This function must be called before starting inference!
+     * This function will fail in cases where the output vstream has no NMS operations on the CPU.
+     */
+    hailo_status set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size);
 
     InferVStreams(const InferVStreams &other) = delete;
     InferVStreams &operator=(const InferVStreams &other) = delete;

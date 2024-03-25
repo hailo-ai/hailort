@@ -192,7 +192,7 @@ int main()
     write_thread_args_t write_args[HEF_COUNT][MAX_EDGE_LAYERS];
     read_thread_args_t read_args[HEF_COUNT][MAX_EDGE_LAYERS];
 
-    char HEF_FILES[HEF_COUNT][MAX_HEF_PATH_LEN] = {"hefs/multi_network_shortcut_net.hef", "hefs/shortcut_net.hef"};
+    char HEF_FILES[HEF_COUNT][MAX_HEF_PATH_LEN] = {"hefs/shortcut_net_nv12.hef", "hefs/shortcut_net.hef"};
     // Note: default batch_size is 0, which is not used in this example
     uint16_t batch_sizes[HEF_COUNT] = {BATCH_SIZE_1, BATCH_SIZE_2};
 

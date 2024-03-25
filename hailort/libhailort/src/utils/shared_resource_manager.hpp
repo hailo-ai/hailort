@@ -101,11 +101,15 @@ private:
         : m_resources(max_resources())
     {}
 
-#ifdef _WIN32
-    // On windows, when the process terminates, all threads are and only then the static variable are destroyed.
-    // If the user hasn't called release_resource, we will leak its objects (since otherwise the object destructor may
-    // wait on some terminated threads and hang).
-    // Notice that on graceful cleanup m_resources should be empty.
+    // On graceful process clean, the destructor of this class will be called, and m_resources should be an empty
+    // list (since all resources we released). If it is not the case (for example, the user called ExitProcess), we
+    // don't want to release the objects - just leak them. It is OK to leak the objects since the user didn't call
+    // release_resource (what they expect us to do?).
+    // It is important to leak the memory since we may not be able to free the objects when the process is being
+    // destructed:
+    //    1. On windows for example, the static variables are destroyed *after* the threads stops.
+    //       Some shared resources waits for their threads to do something, and they can stack for ever.
+    //    2. The object destruction may relay on other singleton object destruction.
     ~SharedResourceManager()
     {
         for (auto &resource : m_resources) {
@@ -113,7 +117,6 @@ private:
             resource.release();
         }
     }
-#endif /* _WIN32 */
 
     static uint32_t max_resources()
     {

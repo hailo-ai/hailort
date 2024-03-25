@@ -51,6 +51,8 @@ enum ProtoHEFExtensionType {
     OUTPUT_SCALE_PER_FEATURE = 25;
     PERIPH_CALCULATION_IN_HAILORT = 26;
     HAILO_NET_FLOW_YOLOV8_NMS = 27;
+    BATCH_REGISTER_CONFIG = 28;
+    HAILO_NET_FLOW_BBOX_DECODING = 29;
     UNUSED = 0XFFFF;
 }
 
@@ -78,7 +80,7 @@ message ProtoHEFHeader {
     uint64 version = 4;
 }
 
-// Enum describing the different possible hw_archs
+// Enum describing the different possible hw_archs. Must be aligned to device_internal::HEFHwArch
 enum ProtoHEFHwArch {
     PROTO__HW_ARCH__HAILO8 = 0;
     PROTO__HW_ARCH__HAILO8P = 1;
@@ -290,6 +292,9 @@ message ProtoHEFNmsOp {
 
     // Index of background class for background removal
     uint32 background_removal_index = 6;
+
+    // Whether the op contains bbox decoding only
+    bool bbox_decoding_only = 13;
 
     // Additional information needed for specific NMS types
     oneof nms_op {
@@ -574,6 +579,7 @@ message ProtoHEFAction {
         ProtoHEFActionDebugSleep debug_sleep = 12;
         ProtoHEFActionEnableNMS enable_nms = 13;
         ProtoHEFActionWriteDataByType write_data_by_type = 14;
+        ProtoHEFActionSwitchLcuBatch switch_lcu_batch = 15;
     }
 }
 
@@ -690,13 +696,25 @@ message ProtoHEFActionEnableLcu {
     // Address at lcu to mark as complete apon reach (after lcu_kernel_done_count times)
     uint32 lcu_kernel_done_address = 3;
 
-    // Amount of times lcu_kernel_done_addess should be reached before marking is done
+    // Amount of times lcu_kernel_done_addess should be visited before done
     uint32 lcu_kernel_done_count = 4;
 
     // Address to indicate where the FW should write to
     uint32 lcu_enable_address = 5;
 
     // network index index- name given by networks_names 
+    // in ProtoHEFNetworkGroup
+    uint32 network_index = 6;
+}
+
+message ProtoHEFActionSwitchLcuBatch {
+    // Index of the lcu
+    uint32 lcu_index = 1;
+
+    // Index of the cluster of the lcu
+    uint32 cluster_index = 2;
+
+    // network index index- name given by networks_names
     // in ProtoHEFNetworkGroup
     uint32 network_index = 6;
 }

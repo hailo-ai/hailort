@@ -32,9 +32,10 @@
 
 #include "common/latency_meter.hpp"
 
-#include "hef/hef_internal.hpp"
 #include "core_op/active_core_op_holder.hpp"
 #include "core_op/core_op.hpp"
+
+#include "net_flow/ops_metadata/nms_op_metadata.hpp"
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
 #include "service/hailort_rpc_client.hpp"
@@ -198,10 +199,12 @@ public:
 
     virtual Expected<std::unique_ptr<LayerInfo>> get_layer_info(const std::string &stream_name) override;
     virtual Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> get_ops_metadata() override;
+    Expected<net_flow::PostProcessOpMetadataPtr> get_op_meta_data(const std::string &edge_name);
 
     virtual hailo_status set_nms_score_threshold(const std::string &edge_name, float32_t nms_score_threshold) override;
     virtual hailo_status set_nms_iou_threshold(const std::string &edge_name, float32_t iou_threshold) override;
     virtual hailo_status set_nms_max_bboxes_per_class(const std::string &edge_name, uint32_t max_bboxes_per_class) override;
+    virtual hailo_status set_nms_max_accumulated_mask_size(const std::string &edge_name, uint32_t max_accumulated_mask_size) override;
 
     Expected<std::shared_ptr<net_flow::NmsOpMetadata>> get_nms_meta_data(const std::string &edge_name);
 private:
@@ -221,10 +224,10 @@ private:
     bool m_is_shutdown = false;
     bool m_is_forked;
 
-    std::mutex m_shutdown_mutex;
+    std::mutex m_mutex;
 
     friend class VDeviceCoreOp;
-    friend class PipelineBuilder;
+    friend class AsyncPipelineBuilder;
 };
 
 // Move client ng to different header
@@ -322,12 +325,15 @@ public:
         const std::function<void(hailo_status)> &infer_request_done_cb) override;
     hailo_status execute_callback(const ProtoCallbackIdentifier &cb_id);
 
+    void execute_callbacks_on_error(hailo_status error_status);
+
     virtual Expected<std::unique_ptr<LayerInfo>> get_layer_info(const std::string &stream_name) override;
     virtual Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> get_ops_metadata() override;
 
     virtual hailo_status set_nms_score_threshold(const std::string &edge_name, float32_t nms_score_threshold) override;
     virtual hailo_status set_nms_iou_threshold(const std::string &edge_name, float32_t iou_threshold) override;
     virtual hailo_status set_nms_max_bboxes_per_class(const std::string &edge_name, uint32_t max_bboxes_per_class) override;
+    virtual hailo_status set_nms_max_accumulated_mask_size(const std::string &edge_name, uint32_t max_accumulated_mask_size) override;
 
 private:
     ConfiguredNetworkGroupClient(NetworkGroupIdentifier &&identifier, const std::string &network_group_name);

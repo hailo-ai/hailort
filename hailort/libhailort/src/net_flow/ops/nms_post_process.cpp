@@ -10,7 +10,6 @@
  **/
 
 #include "net_flow/ops/nms_post_process.hpp"
-#include "hef/hef_internal.hpp"
 
 namespace hailort
 {
@@ -193,7 +192,7 @@ hailo_status NmsPostProcessOp::hailo_nms_format(MemoryView dst_view)
     return HAILO_SUCCESS;
 }
 
-hailo_format_t NmsOpMetadata::expand_output_format_autos_by_op_type(const hailo_format_t &output_format, OperationType type)
+hailo_format_t NmsOpMetadata::expand_output_format_autos_by_op_type(const hailo_format_t &output_format, OperationType type, bool bbox_only)
 {
     auto format = output_format;
 
@@ -201,6 +200,8 @@ hailo_format_t NmsOpMetadata::expand_output_format_autos_by_op_type(const hailo_
     {
         if (OperationType::YOLOV5SEG == type) {
             format.order = HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK;
+        } else if (bbox_only) {
+            format.order = HAILO_FORMAT_ORDER_NHWC;
         } else {
             format.order = HAILO_FORMAT_ORDER_HAILO_NMS;
         }

@@ -15,12 +15,10 @@
 
 #include "hailo/hailort.h"
 #include "net_flow/ops/op.hpp"
-#include "net_flow/ops/op_metadata.hpp"
+#include "net_flow/ops_metadata/softmax_op_metadata.hpp"
 
 #include "common/utils.hpp"
 #include "hailo/quantization.hpp"
-
-#include <iostream>
 
 namespace hailort
 {
@@ -30,33 +28,8 @@ namespace net_flow
 #define SOFTMAX_NUM_OF_POSSIBLE_FORMAT_ORDERS (2) // NHWC, NC
 #define SOFTMAX_NUM_OF_POSSIBLE_FORMAT_TYPES (4) // Auto, UINT8, UINT16, FLOAT32
 
-constexpr std::size_t SOFTMAX_NUMBER_OF_SRCS {1};
-constexpr std::size_t SOFTMAX_NUMBER_OF_DSTS {1};
-
 typedef hailo_status (*SoftmaxFunction)(const BufferMetaData &input_metadata, const BufferMetaData &output_metadata,
     const std::map<std::string, MemoryView> &inputs, std::map<std::string, MemoryView> &outputs);
-
-class SoftmaxOpMetadata : public OpMetadata
-{
-public:
-    static Expected<std::shared_ptr<OpMetadata>> create(const std::unordered_map<std::string, BufferMetaData> &inputs_metadata,
-                                                        const std::unordered_map<std::string, BufferMetaData> &outputs_metadata,
-                                                        const std::string &network_name);
-    std::string get_op_description() override;
-    hailo_status validate_format_info() override;
-    static hailo_format_t expand_output_format_autos(const hailo_format_t &output_format, const hailo_format_t &input_format);
-
-    virtual Expected<hailo_vstream_info_t> get_output_vstream_info() override;
-
-private:
-    SoftmaxOpMetadata(const std::unordered_map<std::string, BufferMetaData> &inputs_metadata,
-                        const std::unordered_map<std::string, BufferMetaData> &outputs_metadata,
-                        const std::string &network_name)
-        : OpMetadata(inputs_metadata, outputs_metadata, "Softmax-Post-Process", network_name, OperationType::SOFTMAX)
-    {}
-
-    hailo_status validate_params() override;
-};
 
 class SoftmaxPostProcessOp : public Op
 {

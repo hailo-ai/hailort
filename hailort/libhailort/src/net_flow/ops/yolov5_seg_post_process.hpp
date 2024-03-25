@@ -13,7 +13,7 @@
 #include "hailo/hailort.h"
 #include "net_flow/ops/yolov5_post_process.hpp"
 #include "transform/transform_internal.hpp"
-#include "net_flow/ops/yolov5_seg_op_metadata.hpp"
+#include "net_flow/ops_metadata/yolov5_seg_op_metadata.hpp"
 
 namespace hailort
 {
@@ -45,23 +45,36 @@ public:
         return m_metadata->inputs_metadata().at(m_metadata->yolov5seg_config().proto_layer_name).shape;
     };
 
+    template<typename DstType = float32_t, typename SrcType>
+    static void transform__d2h_NHCW_to_NCHW_with_dequantize(SrcType *src_ptr, hailo_3d_image_shape_t shape,
+        DstType *dst_ptr, hailo_quant_info_t quant_info)
+    {
+        assert(nullptr != src_ptr);
+        assert(nullptr != dst_ptr);
+
+        uint32_t width_size = shape.width;
+        for (uint32_t r = 0; r < shape.height; r++) {
+            for (uint32_t c = 0; c < shape.features; c++) {
+                SrcType *src = src_ptr + shape.features * shape.width * r + shape.width * c;
+                DstType *dst = dst_ptr + shape.width * shape.height * c + shape.width * r;
+                Quantization::dequantize_output_buffer<DstType, SrcType>(src, dst, width_size, quant_info);
+            }
+        }
+    }
+
     // Transform proto layer - To multiply between the box mask coefficients (of shape (1, 32)), in the proto layer,
     // we change the proto layer shape to be (features=32, height * width)
     template<typename DstType = float32_t, typename SrcType>
     void transform_proto_layer(SrcType *src_buffer, const hailo_quant_info_t &quant_info)
     {
         hailo_3d_image_shape_t shape = get_proto_layer_shape();
-
-         // TODO: HRT-11734 Improve performance - Make both funcs in one run?
-        Quantization::dequantize_output_buffer<float32_t, SrcType>(src_buffer, (float32_t*)m_dequantized_proto_buffer.data(),
-            HailoRTCommon::get_shape_size(shape), quant_info);
-        TransformContextUtils::transform__d2h_NHCW_to_NCHW<float32_t>((float32_t*)m_dequantized_proto_buffer.data(), &shape,
-            (float32_t*)m_transformed_proto_buffer.data(), &shape);
+        transform__d2h_NHCW_to_NCHW_with_dequantize<DstType, SrcType>(src_buffer, shape,
+            (float32_t*)m_transformed_proto_buffer.data(), quant_info);
     }
 
 private:
     Yolov5SegPostProcess(std::shared_ptr<Yolov5SegOpMetadata> metadata, Buffer &&mask_mult_result_buffer,
-        Buffer &&resized_mask, Buffer &&transformed_proto_buffer, Buffer &&dequantized_proto_buffer);
+        Buffer &&resized_mask, Buffer &&transformed_proto_buffer);
 
     hailo_status fill_nms_with_byte_mask_format(MemoryView &buffer);
     void mult_mask_vector_and_proto_matrix(const DetectionBbox &detection);
@@ -76,9 +89,7 @@ private:
     Buffer m_mask_mult_result_buffer;
     Buffer m_resized_mask_to_image_dim;
 
-    // TODO: HRT-11734 - Try use one buffer for both actions
     Buffer m_transformed_proto_buffer;
-    Buffer m_dequantized_proto_buffer;
 };
 
 } /* namespace hailort */

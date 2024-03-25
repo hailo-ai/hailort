@@ -37,8 +37,8 @@ Expected<DescriptorList> DescriptorList::create(uint32_t desc_count, uint16_t de
     hailo_status status = HAILO_UNINITIALIZED;
     assert(desc_page_size <= driver.desc_max_page_size());
 
-    CHECK_AS_EXPECTED(desc_count <= MAX_DESCS_COUNT, HAILO_INVALID_ARGUMENT,
-        "descs_count {} must be smaller/equal to {}", desc_count, MAX_DESCS_COUNT);
+    CHECK_AS_EXPECTED(desc_count <= MAX_SG_DESCS_COUNT, HAILO_INVALID_ARGUMENT,
+        "descs_count {} must be smaller/equal to {}", desc_count, MAX_SG_DESCS_COUNT);
 
     DescriptorList object(desc_count, desc_page_size, is_circular, driver, status);
     if (HAILO_SUCCESS != status) {
@@ -63,7 +63,7 @@ DescriptorList::DescriptorList(uint32_t desc_count, uint16_t desc_page_size, boo
         return;
     }
 
-    auto desc_list_info = m_driver.descriptors_list_create(desc_count, m_is_circular);
+    auto desc_list_info = m_driver.descriptors_list_create(desc_count, m_desc_page_size, m_is_circular);
     if (!desc_list_info) {
         status = desc_list_info.status();
         return;
@@ -96,15 +96,16 @@ DescriptorList::DescriptorList(DescriptorList &&other) noexcept :
     m_desc_list_info.user_address = std::exchange(other.m_desc_list_info.user_address, nullptr);
 }
 
-hailo_status DescriptorList::configure_to_use_buffer(MappedBuffer& buffer, ChannelId channel_id, uint32_t starting_desc)
+hailo_status DescriptorList::configure_to_use_buffer(MappedBuffer& buffer, size_t buffer_size,
+    size_t buffer_offset, ChannelId channel_id, uint32_t starting_desc)
 {
     const auto desc_list_capacity = m_desc_page_size * count();
-    CHECK(buffer.size() <= desc_list_capacity, HAILO_INVALID_ARGUMENT,
+    CHECK(buffer_size <= desc_list_capacity, HAILO_INVALID_ARGUMENT,
         "Can't bind a buffer larger than the descriptor list's capacity. Buffer size {}, descriptor list capacity {}",
-        buffer.size(), desc_list_capacity);
+        buffer_size, desc_list_capacity);
 
-    return m_driver.descriptors_list_bind_vdma_buffer(m_desc_list_info.handle, buffer.handle(), m_desc_page_size,
-        channel_id.channel_index, starting_desc);
+    return m_driver.descriptors_list_bind_vdma_buffer(m_desc_list_info.handle, buffer.handle(), buffer_size, 
+        buffer_offset, channel_id.channel_index, starting_desc);
 }
 
 Expected<uint16_t> DescriptorList::program_last_descriptor(size_t transfer_size,
@@ -123,7 +124,7 @@ Expected<uint16_t> DescriptorList::program_last_descriptor(size_t transfer_size,
     auto resuide = transfer_size - (required_descriptors - 1) * m_desc_page_size;
     assert(IS_FIT_IN_UINT16(resuide));
     size_t last_desc = (desc_offset + required_descriptors - 1) % count();
-    program_single_descriptor((*this)[last_desc], static_cast<uint16_t>(resuide), last_desc_interrupts_domain);
+    program_single_descriptor(last_desc, static_cast<uint16_t>(resuide), last_desc_interrupts_domain);
 
     return std::move(static_cast<uint16_t>(required_descriptors));
 }
@@ -145,9 +146,9 @@ uint32_t DescriptorList::calculate_descriptors_count(uint32_t buffer_size, uint1
     // of descs given  (Otherwise we won't be able to determine if the buffer is empty or full).
     // Therefore we add 1 in order to compensate.
     uint32_t descs_count = std::min(((descriptors_in_buffer(buffer_size, desc_page_size) * batch_size) + 1),
-        MAX_DESCS_COUNT);
+        MAX_SG_DESCS_COUNT);
 
-    return get_nearest_powerof_2(descs_count, MIN_DESCS_COUNT);
+    return get_nearest_powerof_2(descs_count, MIN_SG_DESCS_COUNT);
 }
 
 uint32_t DescriptorList::get_interrupts_bitmask(InterruptsDomain interrupts_domain)
@@ -179,9 +180,11 @@ uint32_t DescriptorList::get_interrupts_bitmask(InterruptsDomain interrupts_doma
     return bitmask;
 }
 
-void DescriptorList::program_single_descriptor(VdmaDescriptor &descriptor, uint16_t page_size,
+void DescriptorList::program_single_descriptor(size_t desc_index, uint16_t page_size,
     InterruptsDomain interrupts_domain)
 {
+    auto &descriptor = (*this)[desc_index];
+
     // Update the descriptor's PAGE_SIZE field in the control register with the maximum size of the DMA page.
     // Make all edits to the local variable local_pagesize_desc_ctrl that is on the stack to save read/writes to DDR
     auto local_pagesize_desc_ctrl = static_cast<uint32_t>(page_size << DESC_PAGE_SIZE_SHIFT) & DESC_PAGE_SIZE_MASK;
@@ -201,12 +204,6 @@ void DescriptorList::program_single_descriptor(VdmaDescriptor &descriptor, uint1
     // Clear status
     descriptor.RemainingPageSize_Status = 0;
 #endif
-}
-
-void DescriptorList::clear_descriptor(const size_t desc_index)
-{
-    // Clear previous descriptor properties
-    program_single_descriptor((*this)[desc_index], m_desc_page_size, InterruptsDomain::NONE);
 }
 
 } /* namespace vdma */

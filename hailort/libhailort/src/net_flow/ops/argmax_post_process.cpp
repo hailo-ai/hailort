@@ -131,6 +131,38 @@ ArgmaxFunction ArgmaxPostProcessOp::m_argmax_function_array[ARGMAX_NUM_OF_POSSIB
             ArgmaxPostProcessOp::execute_not_supported,
             ArgmaxPostProcessOp::execute_not_supported
         }
+    },
+    {
+        {
+            // F8CR x AUTO
+            // We don't support input_format_type to be auto
+            ArgmaxPostProcessOp::execute_not_supported,
+            ArgmaxPostProcessOp::execute_not_supported,
+            ArgmaxPostProcessOp::execute_not_supported,
+            ArgmaxPostProcessOp::execute_not_supported
+        },
+        {
+            // F8CR x UINT8
+            ArgmaxPostProcessOp::execute_not_supported, // We don't support output_format_type to be auto
+            ArgmaxPostProcessOp::F8CR_to_NHW_feature_axis<uint8_t, uint8_t>,
+            ArgmaxPostProcessOp::F8CR_to_NHW_feature_axis<uint8_t, uint16_t>,
+            ArgmaxPostProcessOp::F8CR_to_NHW_feature_axis<uint8_t, float32_t>,
+        },
+        {
+            // F8CR x UINT16
+            ArgmaxPostProcessOp::execute_not_supported, // We don't support output_format_type to be auto
+            ArgmaxPostProcessOp::F8CR_to_NHW_feature_axis<uint16_t, uint8_t>,
+            ArgmaxPostProcessOp::F8CR_to_NHW_feature_axis<uint16_t, uint16_t>,
+            ArgmaxPostProcessOp::F8CR_to_NHW_feature_axis<uint16_t, float32_t>,
+        },
+        {
+            // F8CR x FLOAT32
+            // We don't support input_format_type to be float32
+            ArgmaxPostProcessOp::execute_not_supported,
+            ArgmaxPostProcessOp::execute_not_supported,
+            ArgmaxPostProcessOp::execute_not_supported,
+            ArgmaxPostProcessOp::execute_not_supported
+        }
     }
 };
 
@@ -154,6 +186,9 @@ hailo_status ArgmaxPostProcessOp::execute(const std::map<std::string, MemoryView
             break;
         case HAILO_FORMAT_ORDER_NC:
             format_index = 2;
+            break;
+        case HAILO_FORMAT_ORDER_F8CR:
+            format_index = 3;
             break;
         default:
             LOGGER__ERROR("Argmax post-process received invalid input order {}",
@@ -217,6 +252,7 @@ hailo_status ArgmaxOpMetadata::validate_format_info()
     CHECK(
         ((input_metadata.format.order == HAILO_FORMAT_ORDER_NHCW) &&  (output_metadata.format.order == HAILO_FORMAT_ORDER_NHW)) ||
         ((input_metadata.format.order == HAILO_FORMAT_ORDER_NHWC) && (output_metadata.format.order == HAILO_FORMAT_ORDER_NHW)) ||
+        ((input_metadata.format.order == HAILO_FORMAT_ORDER_F8CR) &&  (output_metadata.format.order == HAILO_FORMAT_ORDER_NHW)) ||
         ((input_metadata.format.order == HAILO_FORMAT_ORDER_NC) && (output_metadata.format.order == HAILO_FORMAT_ORDER_NC)),
         HAILO_INVALID_OPERATION, "Argmax op is not supported for input format order ({}) and output format order ({})",
         HailoRTCommon::get_format_order_str(input_metadata.format.order),
@@ -238,7 +274,7 @@ hailo_format_t ArgmaxOpMetadata::expand_output_format_autos(const hailo_format_t
         format.type = input_format.type;
     }
     if (format.order == HAILO_FORMAT_ORDER_AUTO) {
-        if (input_format.order == HAILO_FORMAT_ORDER_NHCW || input_format.order == HAILO_FORMAT_ORDER_NHWC) {
+        if (input_format.order == HAILO_FORMAT_ORDER_NHCW || input_format.order == HAILO_FORMAT_ORDER_NHWC || input_format.order == HAILO_FORMAT_ORDER_F8CR) {
             format.order = HAILO_FORMAT_ORDER_NHW;
         }
         if (input_format.order == HAILO_FORMAT_ORDER_NC) {

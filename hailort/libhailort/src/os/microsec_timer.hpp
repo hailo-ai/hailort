@@ -32,6 +32,11 @@ public:
      * @note This function is guaranteed to sleep for at least the desired time, though it may sleep for more.
      */
     static void sleep(uint64_t microsecs);
+
+    static void sleep(std::chrono::microseconds microsecs)
+    {
+        sleep(microsecs.count());
+    }
 };
 
 } /* namespace hailort */

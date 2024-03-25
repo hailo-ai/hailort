@@ -66,7 +66,7 @@ struct HwInferResults {
 };
 /*@}*/
 
-using src_context_t = uint8_t;
+using src_context_t = uint16_t;
 using src_stream_index_t = uint8_t;
 using IntermediateBufferKey = std::pair<src_context_t, src_stream_index_t>;
 
@@ -239,7 +239,7 @@ public:
 
     /**
      * Shutdown the network group. Makes sure all ongoing async operations are canceled. All async callbacks
-     * of transfers that have not been completed will be called with status ::HAILO_STREAM_ABORTED_BY_USER.
+     * of transfers that have not been completed will be called with status ::HAILO_STREAM_ABORT.
      * Any resources attached to the network group may be released after function returns.
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
@@ -348,15 +348,15 @@ public:
     virtual bool is_scheduled() const = 0;
 
     /**
-     * Sets the maximum time period that may pass before getting run time from the scheduler,
-     *  even without reaching the minimum required send requests (e.g. threshold - see set_scheduler_threshold()),
-     *  as long as at least one send request has been sent.
-     *  This time period is measured since the last time the scheduler gave this network group run time.
+     * Sets the maximum time period that may pass before receiving run time from the scheduler.
+     * This will occur providing at least one send request has been sent, there is no minimum requirement for send
+     *  requests, (e.g. threshold - see set_scheduler_threshold()).
      *
      * @param[in]  timeout              Timeout in milliseconds.
      * @param[in]  network_name         Network name for which to set the timeout.
      *                                  If not passed, the timeout will be set for all the networks in the network group.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note The new time period will be measured after the previous time the scheduler allocated run time to this network group.
      * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE.
      * @note The default timeout is 0ms.
      * @note Currently, setting the timeout for a specific network is not supported.
@@ -365,8 +365,6 @@ public:
 
     /**
      * Sets the minimum number of send requests required before the network is considered ready to get run time from the scheduler.
-     * If at least one send request has been sent, but the threshold is not reached within a set time period (e.g. timeout - see hailo_set_scheduler_timeout()),
-     *  the scheduler will consider the network ready regardless.
      *
      * @param[in]  threshold            Threshold in number of frames.
      * @param[in]  network_name         Network name for which to set the threshold.
@@ -374,6 +372,8 @@ public:
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE.
      * @note The default threshold is 1.
+     * @note If at least one send request has been sent, but the threshold is not reached within a set time period (e.g. timeout - see
+     *  hailo_set_scheduler_timeout()), the scheduler will consider the network ready regardless.
      * @note Currently, setting the threshold for a specific network is not supported.
      */
     virtual hailo_status set_scheduler_threshold(uint32_t threshold, const std::string &network_name="") = 0;
@@ -429,14 +429,14 @@ public:
         const std::function<void(hailo_status)> &infer_request_done_cb) = 0;
     virtual Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> get_ops_metadata() = 0;
     virtual Expected<std::unique_ptr<LayerInfo>> get_layer_info(const std::string &stream_name) = 0;
-    hailo_status wait_for_callbacks_finish();
-    hailo_status wait_for_callbacks_to_maintain_below_threshold(size_t threshold);
+    hailo_status wait_for_ongoing_callbacks_count_under(size_t threshold);
     void decrease_ongoing_callbacks();
     void increase_ongoing_callbacks();
 
     virtual hailo_status set_nms_score_threshold(const std::string &edge_name, float32_t nms_score_threshold) = 0;
     virtual hailo_status set_nms_iou_threshold(const std::string &edge_name, float32_t iou_threshold) = 0;
     virtual hailo_status set_nms_max_bboxes_per_class(const std::string &edge_name, uint32_t max_bboxes_per_class) = 0;
+    virtual hailo_status set_nms_max_accumulated_mask_size(const std::string &edge_name, uint32_t max_accumulated_mask_size) = 0;
 
 protected:
     ConfiguredNetworkGroup();
@@ -446,7 +446,7 @@ protected:
     std::condition_variable m_cv;
 private:
     friend class ActivatedNetworkGroup;
-    friend class PipelineBuilder;
+    friend class AsyncAsyncPipelineBuilder;
 };
 using ConfiguredNetworkGroupVector = std::vector<std::shared_ptr<ConfiguredNetworkGroup>>;
 

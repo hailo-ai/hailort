@@ -172,7 +172,7 @@ hailo_status AsyncInputStreamBase::write_async(TransferRequest &&transfer_reques
     std::unique_lock<std::mutex> lock(m_stream_mutex);
 
     if (m_is_aborted) {
-        return HAILO_STREAM_ABORTED_BY_USER;
+        return HAILO_STREAM_ABORT;
     } else if (!m_is_stream_activated) {
         return HAILO_STREAM_NOT_ACTIVATED;
     }
@@ -186,6 +186,12 @@ hailo_status AsyncInputStreamBase::activate_stream()
 
     auto status = activate_stream_impl();
     CHECK_SUCCESS(status);
+
+    // If the mode is OWNING is set, it means we use the write/write_impl API. We want to make sure the buffer starts
+    // from the beginning of the buffer pool (to avoid unnecessary buffer bindings).
+    if (StreamBufferMode::OWNING == m_buffer_mode) {
+        m_buffer_pool->reset_pointers();
+    }
 
     m_is_stream_activated = true;
 
@@ -231,7 +237,7 @@ hailo_status AsyncInputStreamBase::call_write_async_impl(TransferRequest &&trans
 
 
     auto status = write_async_impl(std::move(transfer_request));
-    if ((HAILO_STREAM_NOT_ACTIVATED == status) || (HAILO_STREAM_ABORTED_BY_USER == status)) {
+    if ((HAILO_STREAM_NOT_ACTIVATED == status) || (HAILO_STREAM_ABORT == status)) {
         return status;
     }
     CHECK_SUCCESS(status);
@@ -307,7 +313,7 @@ hailo_status AsyncOutputStreamBase::read_async(TransferRequest &&transfer_reques
     std::unique_lock<std::mutex> lock(m_stream_mutex);
 
     if (m_is_aborted) {
-        return HAILO_STREAM_ABORTED_BY_USER;
+        return HAILO_STREAM_ABORT;
     } else if (!m_is_stream_activated) {
         return HAILO_STREAM_NOT_ACTIVATED;
     }
@@ -329,7 +335,7 @@ hailo_status AsyncOutputStreamBase::call_read_async_impl(TransferRequest &&trans
     };
 
     auto status = read_async_impl(std::move(transfer_request));
-    if (HAILO_STREAM_ABORTED_BY_USER == status) {
+    if (HAILO_STREAM_ABORT == status) {
         return status;
     }
     CHECK_SUCCESS(status);
@@ -464,7 +470,7 @@ hailo_status AsyncOutputStreamBase::read_impl(MemoryView user_buffer)
     CHECK_SUCCESS(status);
 
     status = dequeue_and_launch_transfer();
-    if (HAILO_STREAM_ABORTED_BY_USER == status) {
+    if (HAILO_STREAM_ABORT == status) {
         // The buffer_pool state will reset on next activation.
         return status;
     }
@@ -479,7 +485,7 @@ hailo_status AsyncOutputStreamBase::dequeue_and_launch_transfer()
     CHECK_EXPECTED_AS_STATUS(buffer);
 
     auto callback = [this, buffer=buffer.value()](hailo_status status) {
-        if (HAILO_STREAM_ABORTED_BY_USER == status) {
+        if (HAILO_STREAM_ABORT == status) {
             // On deactivation flow, we should get this status. We just ignore the callback here, and in the next
             // activation we should reset the buffers.
             return;
@@ -492,7 +498,7 @@ hailo_status AsyncOutputStreamBase::dequeue_and_launch_transfer()
     };
 
     auto status = call_read_async_impl(TransferRequest(std::move(buffer.value()), callback));
-    if (HAILO_STREAM_ABORTED_BY_USER == status) {
+    if (HAILO_STREAM_ABORT == status) {
         // The buffer_pool state will reset on next activation.
         return status;
     }

@@ -173,7 +173,7 @@ hailo_status NMSStreamReader::read_nms_bbox_mode(OutputStreamBase &stream, void 
         while (true) {
             MemoryView buffer_view(static_cast<uint8_t*>(buffer) + offset, bbox_size);
             auto status = stream.read_impl(buffer_view);
-            if ((HAILO_STREAM_ABORTED_BY_USER == status) ||
+            if ((HAILO_STREAM_ABORT == status) ||
                 ((HAILO_STREAM_NOT_ACTIVATED == status))) {
                 return status;
             }
@@ -189,7 +189,7 @@ hailo_status NMSStreamReader::read_nms_bbox_mode(OutputStreamBase &stream, void 
             }
 
             class_bboxes_count++;
-            CHECK_IN_DEBUG(class_bboxes_count <= stream.get_info().nms_info.max_bboxes_per_class, HAILO_INTERNAL_FAILURE,
+            CHECK(class_bboxes_count <= stream.get_info().nms_info.max_bboxes_per_class, HAILO_INTERNAL_FAILURE,
                 "Data read from the device for the current class was size {}, max size is {}", class_bboxes_count,
                 stream.get_info().nms_info.max_bboxes_per_class);
             offset += bbox_size;
@@ -203,7 +203,7 @@ hailo_status NMSStreamReader::read_nms_bbox_mode(OutputStreamBase &stream, void 
         // last class delimeter)
         uint64_t last_bbox = 0;
         auto status = stream.read_impl(MemoryView(&last_bbox, sizeof(last_bbox)));
-        if ((HAILO_STREAM_ABORTED_BY_USER == status) ||
+        if ((HAILO_STREAM_ABORT == status) ||
             ((HAILO_STREAM_NOT_ACTIVATED == status))) {
             return status;
         }
@@ -249,7 +249,7 @@ hailo_status NMSStreamReader::read_nms_burst_mode(OutputStreamBase &stream, void
             assert(offset + transfer_size <= buffer_size);
             current_burst = MemoryView(static_cast<uint8_t*>(buffer) + offset, transfer_size);
             auto status = stream.read_impl(current_burst);
-            if ((HAILO_STREAM_ABORTED_BY_USER == status) || ((HAILO_STREAM_NOT_ACTIVATED == status))) {
+            if ((HAILO_STREAM_ABORT == status) || ((HAILO_STREAM_NOT_ACTIVATED == status))) {
                 return status;
             }
             CHECK_SUCCESS(status, "Failed reading nms burst");
@@ -290,7 +290,7 @@ hailo_status NMSStreamReader::read_nms_burst_mode(OutputStreamBase &stream, void
             }
 
             class_bboxes_count++;
-            CHECK_IN_DEBUG(class_bboxes_count <= stream.get_info().nms_info.max_bboxes_per_class, HAILO_INTERNAL_FAILURE,
+            CHECK(class_bboxes_count <= stream.get_info().nms_info.max_bboxes_per_class, HAILO_INTERNAL_FAILURE,
                 "Data read from the device for the current class was size {}, max size is {}", class_bboxes_count,
                 stream.get_info().nms_info.max_bboxes_per_class);
 
@@ -303,17 +303,22 @@ hailo_status NMSStreamReader::read_nms_burst_mode(OutputStreamBase &stream, void
     return HAILO_SUCCESS;
 }
 
-hailo_status NMSStreamReader::read_nms(OutputStreamBase &stream, void *buffer, size_t offset, size_t size)
+hailo_status NMSStreamReader::read_nms(OutputStreamBase &stream, void *buffer, size_t offset, size_t size,
+    hailo_stream_interface_t stream_interface)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     const auto burst_type = stream.get_layer_info().nms_info.burst_type;
     const bool is_burst_mode = (HAILO_BURST_TYPE_H8_BBOX != burst_type) && (HAILO_BURST_TYPE_H15_BBOX != burst_type);
+    // Burst mode in Ethernet is not supported - Return Error in this case
+    CHECK(!(is_burst_mode && (HAILO_STREAM_INTERFACE_ETH == stream_interface)), HAILO_NOT_SUPPORTED,
+        "NMS Burst mode is not supported in Ethernet interface");
+    
     if (is_burst_mode) {
         status = NMSStreamReader::read_nms_burst_mode(stream, buffer, offset, size);
     } else {
         status = NMSStreamReader::read_nms_bbox_mode(stream, buffer, offset);
     }
-    if ((HAILO_STREAM_ABORTED_BY_USER == status) || (HAILO_STREAM_NOT_ACTIVATED == status)) {
+    if ((HAILO_STREAM_ABORT == status) || (HAILO_STREAM_NOT_ACTIVATED == status)) {
         return status;
     }
     CHECK_SUCCESS(status, "Failed reading nms");
@@ -322,11 +327,12 @@ hailo_status NMSStreamReader::read_nms(OutputStreamBase &stream, void *buffer, s
 }
 
 Expected<std::shared_ptr<NmsOutputStream>> NmsOutputStream::create(std::shared_ptr<OutputStreamBase> base_stream,
-    const LayerInfo &edge_layer, size_t max_queue_size, EventPtr core_op_activated_event)
+    const LayerInfo &edge_layer, size_t max_queue_size, EventPtr core_op_activated_event,
+    hailo_stream_interface_t stream_interface)
 {
     auto status = HAILO_UNINITIALIZED;
     auto nms_stream = make_shared_nothrow<NmsOutputStream>(base_stream, edge_layer, max_queue_size,
-        std::move(core_op_activated_event), status);
+        std::move(core_op_activated_event), stream_interface, status);
     CHECK_NOT_NULL_AS_EXPECTED(nms_stream, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
@@ -387,10 +393,12 @@ hailo_status NmsOutputStream::cancel_pending_transfers()
     return m_base_stream->cancel_pending_transfers();
 }
 
-NmsReaderThread::NmsReaderThread(std::shared_ptr<OutputStreamBase> base_stream, size_t max_queue_size) :
+NmsReaderThread::NmsReaderThread(std::shared_ptr<OutputStreamBase> base_stream, size_t max_queue_size,
+    hailo_stream_interface_t stream_interface) :
     m_base_stream(base_stream),
     m_queue_max_size(max_queue_size),
     m_should_quit(false),
+    m_stream_interface(stream_interface),
     m_worker_thread([this] { process_transfer_requests(); })
 {}
 
@@ -472,12 +480,12 @@ void NmsReaderThread::process_transfer_requests()
         assert(1 == transfer_request.transfer_buffers.size());
         assert(0 == transfer_request.transfer_buffers[0].offset());
         auto buffer = transfer_request.transfer_buffers[0].base_buffer();
-        auto status = NMSStreamReader::read_nms(*m_base_stream, buffer->data(), 0, buffer->size());
+        auto status = NMSStreamReader::read_nms(*m_base_stream, buffer.data(), 0, buffer.size(), m_stream_interface);
 
-        if ((HAILO_STREAM_NOT_ACTIVATED == status) || (HAILO_STREAM_ABORTED_BY_USER == status)) {
-            // On both deactivation/abort, we want to send HAILO_STREAM_ABORTED_BY_USER since it is part of the callback
+        if ((HAILO_STREAM_NOT_ACTIVATED == status) || (HAILO_STREAM_ABORT == status)) {
+            // On both deactivation/abort, we want to send HAILO_STREAM_ABORT since it is part of the callback
             // API.
-            transfer_request.callback(HAILO_STREAM_ABORTED_BY_USER);
+            transfer_request.callback(HAILO_STREAM_ABORT);
         } else {
             transfer_request.callback(status);
         }
@@ -490,7 +498,7 @@ void NmsReaderThread::cancel_pending_transfers()
     while(!m_queue.empty()) {
         auto transfer_request = m_queue.front();
         m_queue.pop();
-        transfer_request.callback(HAILO_STREAM_ABORTED_BY_USER);
+        transfer_request.callback(HAILO_STREAM_ABORT);
     }
 }
 

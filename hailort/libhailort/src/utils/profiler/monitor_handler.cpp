@@ -37,8 +37,14 @@ void MonitorHandler::clear_monitor() {
 
 void MonitorHandler::handle_trace(const MonitorStartTrace &trace)
 {
-    (void)trace;
-    start_mon();
+    start_mon(trace.unique_vdevice_hash);
+}
+
+void MonitorHandler::handle_trace(const MonitorEndTrace &trace)
+{
+    if (m_unique_vdevice_hash == trace.unique_vdevice_hash) {
+        m_unique_vdevice_hash = {};
+    }
 }
 
 void MonitorHandler::handle_trace(const AddCoreOpTrace &trace)
@@ -53,19 +59,19 @@ void MonitorHandler::handle_trace(const AddDeviceTrace &trace)
     m_devices_info.emplace(trace.device_id, device_info);
 }
 
-void MonitorHandler::handle_trace(const SwitchCoreOpTrace &trace)
+void MonitorHandler::handle_trace(const ActivateCoreOpTrace &trace)
 {
     // TODO: 'if' should be removed, this is temporary solution since this trace is called out of the scheduler or vdevice.
     if (!m_is_monitor_currently_working) { return; }
-    assert(contains(m_devices_info, trace.device_id));
+    if (!contains(m_devices_info, trace.device_id)) { return; } // TODO (HRT-8835): Support multiple vdevices
     m_devices_info.at(trace.device_id).current_core_op_handle = trace.core_op_handle;
 }
 
 void MonitorHandler::handle_trace(const AddStreamH2DTrace &trace)
 {
     auto core_op_handle = get_core_op_handle_by_name(trace.core_op_name);
-    assert(contains(m_core_ops_info, core_op_handle));
-    assert(contains(m_devices_info, trace.device_id));
+    if (!contains(m_core_ops_info, core_op_handle)) { return; } // TODO (HRT-8835): Support multiple vdevices
+    if (!contains(m_devices_info, trace.device_id)) { return; } // TODO (HRT-8835): Support multiple vdevices
     m_core_ops_info[core_op_handle].input_streams_info[trace.stream_name] = StreamsInfo{trace.queue_size};
     if (!contains(m_devices_info.at(trace.device_id).requested_transferred_frames_h2d, core_op_handle)) {
         m_devices_info.at(trace.device_id).requested_transferred_frames_h2d.emplace(core_op_handle, make_shared_nothrow<SchedulerCounter>());
@@ -76,8 +82,8 @@ void MonitorHandler::handle_trace(const AddStreamH2DTrace &trace)
 void MonitorHandler::handle_trace(const AddStreamD2HTrace &trace)
 {
     auto core_op_handle = get_core_op_handle_by_name(trace.core_op_name);
-    assert(contains(m_core_ops_info, core_op_handle));
-    assert(contains(m_devices_info, trace.device_id));
+    if (!contains(m_core_ops_info, core_op_handle)) { return ;} // TODO (HRT-8835): Support multiple vdevices
+    if (!contains(m_devices_info, trace.device_id)) { return ;} // TODO (HRT-8835): Support multiple vdevices
     m_core_ops_info[core_op_handle].output_streams_info[trace.stream_name] = StreamsInfo{trace.queue_size};
     if (!contains(m_devices_info.at(trace.device_id).finished_transferred_frames_d2h, core_op_handle)) {
         m_devices_info.at(trace.device_id).finished_transferred_frames_d2h.emplace(core_op_handle, make_shared_nothrow<SchedulerCounter>());
@@ -87,8 +93,8 @@ void MonitorHandler::handle_trace(const AddStreamD2HTrace &trace)
 
 void MonitorHandler::handle_trace(const FrameEnqueueH2DTrace &trace)
 {
-    assert(contains(m_core_ops_info, trace.core_op_handle));
-    assert(contains(m_core_ops_info[trace.core_op_handle].input_streams_info, trace.queue_name));
+    if (!contains(m_core_ops_info, trace.core_op_handle)) { return ;} // TODO (HRT-8835): Support multiple vdevices
+    if (!contains(m_core_ops_info[trace.core_op_handle].input_streams_info, trace.queue_name)) { return ;} // TODO (HRT-8835): Support multiple vdevices
     auto &queue = m_core_ops_info[trace.core_op_handle].input_streams_info[trace.queue_name];
     queue.pending_frames_count->fetch_add(1);
     queue.pending_frames_count_acc->add_data_point(queue.pending_frames_count->load());
@@ -96,8 +102,8 @@ void MonitorHandler::handle_trace(const FrameEnqueueH2DTrace &trace)
 
 void MonitorHandler::handle_trace(const FrameDequeueD2HTrace &trace)
 {
-    assert(contains(m_core_ops_info, trace.core_op_handle));
-    assert(contains(m_core_ops_info[trace.core_op_handle].output_streams_info, trace.queue_name));
+    if (!contains(m_core_ops_info, trace.core_op_handle)) { return ;} // TODO (HRT-8835): Support multiple vdevices
+    if (!contains(m_core_ops_info[trace.core_op_handle].output_streams_info, trace.queue_name)) { return ;} // TODO (HRT-8835): Support multiple vdevices
     auto &queue = m_core_ops_info[trace.core_op_handle].output_streams_info[trace.queue_name];
     queue.pending_frames_count->fetch_sub(1);
     queue.pending_frames_count_acc->add_data_point(queue.pending_frames_count->load());
@@ -108,11 +114,11 @@ void MonitorHandler::handle_trace(const FrameEnqueueD2HTrace &trace)
 {
     // TODO: 'if' should be removed, this is temporary solution since this trace is called out of the scheduler or vdevice.
     if (!m_is_monitor_currently_working) { return; }
-    assert(contains(m_core_ops_info, trace.core_op_handle));
-    assert(contains(m_core_ops_info[trace.core_op_handle].output_streams_info, trace.queue_name));
+    if (!contains(m_core_ops_info, trace.core_op_handle)) { return ;} // TODO (HRT-8835): Support multiple vdevices
+    if (!contains(m_core_ops_info[trace.core_op_handle].output_streams_info, trace.queue_name)) { return ;} // TODO (HRT-8835): Support multiple vdevices
 
-    assert(contains(m_devices_info, trace.device_id));
-    assert(contains(m_devices_info.at(trace.device_id).requested_transferred_frames_h2d, trace.core_op_handle));
+    if (!contains(m_devices_info, trace.device_id)) { return ;} // TODO (HRT-8835): Support multiple vdevices
+    if (!contains(m_devices_info.at(trace.device_id).requested_transferred_frames_h2d, trace.core_op_handle)) { return ;} // TODO (HRT-8835): Support multiple vdevices
 
     auto &queue = m_core_ops_info[trace.core_op_handle].output_streams_info[trace.queue_name];
     queue.pending_frames_count->fetch_add(1);
@@ -131,10 +137,10 @@ void MonitorHandler::handle_trace(const FrameDequeueH2DTrace &trace)
 {
     // TODO: 'if' should be removed, this is temporary solution since this trace is called out of the scheduler or vdevice.
     if (!m_is_monitor_currently_working) { return; }
-    assert(contains(m_core_ops_info, trace.core_op_handle));
-    assert(contains(m_core_ops_info[trace.core_op_handle].input_streams_info, trace.queue_name));
-    assert(contains(m_devices_info, trace.device_id));
-    assert(contains(m_devices_info.at(trace.device_id).requested_transferred_frames_h2d, trace.core_op_handle));
+    if (!contains(m_core_ops_info, trace.core_op_handle)) { return ;} // TODO (HRT-8835): Support multiple vdevices
+    if (!contains(m_core_ops_info[trace.core_op_handle].input_streams_info, trace.queue_name)) { return ;} // TODO (HRT-8835): Support multiple vdevices
+    if (!contains(m_devices_info, trace.device_id)) { return ;} // TODO (HRT-8835): Support multiple vdevices
+    if (!contains(m_devices_info.at(trace.device_id).requested_transferred_frames_h2d, trace.core_op_handle)) { return ;} // TODO (HRT-8835): Support multiple vdevices
 
     auto &queue = m_core_ops_info[trace.core_op_handle].input_streams_info[trace.queue_name];
     queue.pending_frames_count->fetch_sub(1);
@@ -155,15 +161,21 @@ scheduler_core_op_handle_t MonitorHandler::get_core_op_handle_by_name(const std:
     return INVALID_CORE_OP_HANDLE;
 }
 
-hailo_status MonitorHandler::start_mon()
+hailo_status MonitorHandler::start_mon(const std::string &unique_vdevice_hash)
 {
 #if defined(__GNUC__)
 
     /* Clearing monitor members. Since the owner of monitor_handler is tracer, which is static,
     the monitor may get rerun without destructor being called. */
     if (m_is_monitor_currently_working) {
+        if (!m_unique_vdevice_hash.empty() && (unique_vdevice_hash != m_unique_vdevice_hash)) {
+            LOGGER__WARNING("Trying to register a vdevice to hailo-monitor, "\
+                "while other vdevice is registered. Monitor currently supports single vdevice, which will result in non-consistent tracing.");
+            return HAILO_INVALID_OPERATION;
+        }
         clear_monitor();
     }
+    m_unique_vdevice_hash = unique_vdevice_hash;
     m_is_monitor_currently_working = true;
 
     auto event_exp = Event::create_shared(Event::State::not_signalled);
@@ -193,6 +205,7 @@ hailo_status MonitorHandler::start_mon()
 
     return HAILO_SUCCESS;
 #else
+    (void)unique_vdevice_hash;
     return HAILO_NOT_IMPLEMENTED;
 #endif
 }

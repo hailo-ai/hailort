@@ -13,7 +13,11 @@
 
 #include "hailo/expected.hpp"
 #include "hailo/hailort.h"
+#include "hailo/hailort_common.hpp"
+#include "hailo/vdevice.hpp"
 #include "net_flow/pipeline/pipeline.hpp"
+#include "utils/buffer_storage.hpp"
+
 #include <cstdint>
 
 namespace hailort
@@ -36,10 +40,6 @@ void PipelineBuffer::Metadata::set_start_time(PipelineTimePoint val)
 {
     m_start_time = val;
 }
-
-PipelineBuffer::PipelineBuffer() :
-    PipelineBuffer(Type::DATA)
-{}
 
 PipelineBuffer::PipelineBuffer(Type type) :
     m_type(type),
@@ -70,22 +70,8 @@ PipelineBuffer::PipelineBuffer(hailo_status action_status, const TransferDoneCal
     };
 }
 
-PipelineBuffer::PipelineBuffer(MemoryView view, bool is_user_buffer, BufferPoolPtr pool, bool should_measure, hailo_status action_status) :
-    m_type(Type::DATA),
-    m_pool(pool),
-    m_view(view),
-    m_metadata(Metadata(add_timestamp(should_measure))),
-    m_is_user_buffer(is_user_buffer),
-    m_should_call_exec_done(true),
-    m_action_status(action_status)
-{
-    m_exec_done = [buffer_pool = m_pool, mem_view = m_view, is_user_buffer = m_is_user_buffer](hailo_status){
-        release_buffer(buffer_pool, mem_view, is_user_buffer);
-    };
-}
-
-PipelineBuffer::PipelineBuffer(MemoryView view, const TransferDoneCallbackAsyncInfer &exec_done, bool is_user_buffer, BufferPoolPtr pool, bool should_measure,
-    hailo_status action_status) :
+PipelineBuffer::PipelineBuffer(MemoryView view, const TransferDoneCallbackAsyncInfer &exec_done, hailo_status action_status, bool is_user_buffer, BufferPoolPtr pool, 
+    bool should_measure) :
     m_type(Type::DATA),
     m_pool(pool),
     m_view(view),
@@ -112,20 +98,6 @@ PipelineBuffer::PipelineBuffer(hailo_pix_buffer_t buffer, const TransferDoneCall
     set_additional_data(std::make_shared<PixBufferPipelineData>(buffer));
     m_exec_done = [buffer_pool = m_pool, mem_view = m_view, is_user_buffer = m_is_user_buffer, exec_done = exec_done](hailo_status status){
         exec_done(status);
-        release_buffer(buffer_pool, mem_view, is_user_buffer);
-    };
-}
-
-PipelineBuffer::PipelineBuffer(hailo_pix_buffer_t buffer) :
-    m_type(Type::DATA),
-    m_pool(nullptr),
-    m_view(),
-    m_metadata(),
-    m_is_user_buffer(false),
-    m_should_call_exec_done(true)
-{
-    set_additional_data(std::make_shared<PixBufferPipelineData>(buffer));
-    m_exec_done = [buffer_pool = m_pool, mem_view = m_view, is_user_buffer = m_is_user_buffer](hailo_status){
         release_buffer(buffer_pool, mem_view, is_user_buffer);
     };
 }
@@ -196,43 +168,8 @@ Expected<hailo_pix_buffer_t> PipelineBuffer::as_hailo_pix_buffer(hailo_format_or
     auto pix_buffer = get_metadata().get_additional_data<PixBufferPipelineData>();
 
     if (nullptr == pix_buffer) {
-        switch(order){
-            case HAILO_FORMAT_ORDER_NV12:
-            case HAILO_FORMAT_ORDER_NV21: {
-                CHECK_AS_EXPECTED(0 == (m_view.size() % 3), HAILO_INVALID_ARGUMENT, "buffer size must be divisible by 3");
-
-                auto y_plane_size = m_view.size() * 2 / 3;
-                auto uv_plane_size = m_view.size() * 1 / 3;
-
-                auto uv_data_ptr = reinterpret_cast<uint8_t*>(m_view.data()) + y_plane_size;
-
-                hailo_pix_buffer_plane_t y {uint32_t(y_plane_size), uint32_t(y_plane_size), m_view.data()};
-                hailo_pix_buffer_plane_t uv {uint32_t(uv_plane_size), uint32_t(uv_plane_size), uv_data_ptr};
-                hailo_pix_buffer_t buffer{0, {y, uv}, NUMBER_OF_PLANES_NV12_NV21};
-
-                return buffer;
-            }
-            case HAILO_FORMAT_ORDER_I420: {
-                CHECK_AS_EXPECTED(0 == (m_view.size() % 6), HAILO_INVALID_ARGUMENT, "buffer size must be divisible by 6");
-
-                auto y_plane_size = m_view.size() * 2 / 3;
-                auto u_plane_size = m_view.size() * 1 / 6;
-                auto v_plane_size = m_view.size() * 1 / 6;
-
-                auto u_data_ptr = (char*)m_view.data() + y_plane_size;
-                auto v_data_ptr = u_data_ptr + u_plane_size;
-
-                hailo_pix_buffer_plane_t y {uint32_t(y_plane_size), uint32_t(y_plane_size), m_view.data()};
-                hailo_pix_buffer_plane_t u {uint32_t(u_plane_size), uint32_t(u_plane_size), u_data_ptr};
-                hailo_pix_buffer_plane_t v {uint32_t(v_plane_size), uint32_t(v_plane_size), v_data_ptr};
-                hailo_pix_buffer_t buffer{0, {y, u, v}, NUMBER_OF_PLANES_I420};
-
-                return buffer;
-            }
-            default: {
-                CHECK_AS_EXPECTED(false, HAILO_INTERNAL_FAILURE, "unsupported format order");
-            }
-        }
+        auto mem_view = as_view();
+        return HailoRTCommon::as_hailo_pix_buffer(mem_view, order);
     } else {
         uint32_t expected_number_of_planes;
         switch(order){
@@ -262,12 +199,6 @@ void PipelineBuffer::set_metadata(Metadata &&val)
     m_metadata = std::move(val);
 }
 
-TransferDoneCallbackAsyncInfer PipelineBuffer::get_exec_done_cb()
-{
-    m_should_call_exec_done = false;
-    return m_exec_done;
-}
-
 PipelineTimePoint PipelineBuffer::add_timestamp(bool should_measure)
 {
     return should_measure ? std::chrono::steady_clock::now() : PipelineTimePoint{};
@@ -291,6 +222,14 @@ hailo_status PipelineBuffer::action_status()
 void PipelineBuffer::set_action_status(hailo_status status)
 {
     m_action_status = status;
+}
+
+void PipelineBuffer::call_exec_done()
+{
+    if (m_should_call_exec_done) {
+        m_exec_done(action_status());
+        m_should_call_exec_done = false;
+    }
 }
 
 Expected<BufferPoolPtr> BufferPool::create(size_t buffer_size, size_t buffer_count, EventPtr shutdown_event,
@@ -345,31 +284,33 @@ BufferPool::BufferPool(size_t buffer_size, bool is_holding_user_buffers, bool me
     m_buffers(std::move(buffers)),
     m_free_mem_views(std::move(free_mem_views)),
     m_done_cbs(std::move(done_cbs)),
-    m_queue_size_accumulator(std::move(queue_size_accumulator))
+    m_queue_size_accumulator(std::move(queue_size_accumulator)),
+    m_is_already_running(false)
 {
 }
 
 size_t BufferPool::buffer_size()
 {
-    return m_buffer_size;
-}
-
-hailo_status BufferPool::enqueue_buffer(MemoryView mem_view)
-{
-    CHECK(mem_view.size() == m_buffer_size, HAILO_INTERNAL_FAILURE, "Buffer size is not the same as expected for pool! ({} != {})", mem_view.size(), m_buffer_size);
-
-    auto status = m_free_mem_views.enqueue(mem_view);
-    CHECK_SUCCESS(status);
-
-    return HAILO_SUCCESS;
+    std::unique_lock<std::mutex> lock(m_buffer_size_mutex);
+    return m_buffer_size.load();
 }
 
 hailo_status BufferPool::enqueue_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done)
 {
-    auto status = enqueue_buffer(mem_view);
+    m_is_already_running = true;
+    auto pool_buffer_size = buffer_size();
+    CHECK(mem_view.size() == pool_buffer_size, HAILO_INTERNAL_FAILURE,
+        "Buffer size is not the same as expected for pool! ({} != {})", mem_view.size(), pool_buffer_size);
+
+    std::unique_lock<std::mutex> lock(m_enqueue_mutex);
+    auto status = m_free_mem_views.enqueue(mem_view);
+    if (HAILO_SHUTDOWN_EVENT_SIGNALED == status) {
+        return HAILO_SHUTDOWN_EVENT_SIGNALED;
+    }
     CHECK_SUCCESS(status);
 
-    status = m_done_cbs.enqueue(exec_done);
+    // TODO: Stop using 2 queues, hold a queue of pipeline_buffer instead.
+    status = m_done_cbs.enqueue(exec_done, true); // we get here only if acquire_free_mem_view succeeded, so we want to push cb to keep sync between the queues
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -377,12 +318,12 @@ hailo_status BufferPool::enqueue_buffer(MemoryView mem_view, const TransferDoneC
 
 bool BufferPool::is_full()
 {
-    return (m_max_buffer_count - m_free_mem_views.size_approx() == 0);
+    return (m_max_buffer_count - num_of_buffers_in_pool() == 0);
 }
 
 size_t BufferPool::num_of_buffers_in_pool()
 {
-    return m_done_cbs.size_approx();
+    return m_free_mem_views.size_approx();
 }
 
 bool BufferPool::is_holding_user_buffers()
@@ -390,33 +331,18 @@ bool BufferPool::is_holding_user_buffers()
     return m_is_holding_user_buffers;
 }
 
-// This function changes the m_max_buffer_count to be num_of_buffers, and it must be called when pool is empty of buffers
-hailo_status BufferPool::allocate_buffers(bool is_dma_able, size_t num_of_buffers)
-{
-    m_is_holding_user_buffers = false;
-    CHECK(m_free_mem_views.size_approx() == 0, HAILO_INTERNAL_FAILURE, "Cannot allocate buffers for pool, since pool is not empty!");
-    m_max_buffer_count = num_of_buffers;
-    for (size_t i = 0; i < m_max_buffer_count; i++) {
-        BufferStorageParams buffer_storage_params;
-        if (is_dma_able) {
-            buffer_storage_params = BufferStorageParams::create_dma();
-        }
-        auto buffer = Buffer::create(m_buffer_size, buffer_storage_params);
-        CHECK_EXPECTED_AS_STATUS(buffer);
-
-        auto status = m_free_mem_views.enqueue(MemoryView(buffer.value()));
-        CHECK_SUCCESS(status);
-        m_buffers.emplace_back(buffer.release());
-    }
-    return HAILO_SUCCESS;
-}
-
 Expected<PipelineBuffer> BufferPool::acquire_buffer(std::chrono::milliseconds timeout,
     bool ignore_shutdown_event)
 {
+    m_is_already_running = true;
+
+    std::unique_lock<std::mutex> lock(m_dequeue_mutex);
     auto mem_view = acquire_free_mem_view(timeout, ignore_shutdown_event);
     if ((HAILO_SUCCESS != mem_view.status()) && (m_is_holding_user_buffers)) {
-        auto done_cb = acquire_on_done_cb(timeout, true);
+        auto done_cb = acquire_on_done_cb(timeout, ignore_shutdown_event);
+        if (HAILO_SHUTDOWN_EVENT_SIGNALED == done_cb.status()) {
+            return make_unexpected(HAILO_SHUTDOWN_EVENT_SIGNALED);
+        }
         CHECK_EXPECTED(done_cb);
 
         done_cb.value()(mem_view.status());
@@ -427,41 +353,16 @@ Expected<PipelineBuffer> BufferPool::acquire_buffer(std::chrono::milliseconds ti
     CHECK_EXPECTED(mem_view);
 
     if (m_is_holding_user_buffers) {
-        auto done_cb = acquire_on_done_cb(timeout, true);
+        auto done_cb = acquire_on_done_cb(timeout, true); // we get here only if acquire_free_mem_view succeeded, so we want to pop cb to keep sync between the queues
+        if (HAILO_SHUTDOWN_EVENT_SIGNALED == done_cb.status()) {
+            return make_unexpected(HAILO_SHUTDOWN_EVENT_SIGNALED);
+        }
         CHECK_EXPECTED(done_cb);
 
-        return PipelineBuffer(mem_view.release(), done_cb.release(), m_is_holding_user_buffers, shared_from_this(), m_measure_vstream_latency);
+        return PipelineBuffer(mem_view.release(), done_cb.release(), HAILO_SUCCESS, m_is_holding_user_buffers, shared_from_this(), m_measure_vstream_latency);
     }
 
-    return PipelineBuffer(mem_view.release(), m_is_holding_user_buffers, shared_from_this(), m_measure_vstream_latency);
-}
-
-Expected<std::shared_ptr<PipelineBuffer>> BufferPool::acquire_buffer_ptr(std::chrono::milliseconds timeout)
-{
-    auto mem_view = acquire_free_mem_view(timeout);
-    if ((HAILO_SUCCESS != mem_view.status()) && (m_is_holding_user_buffers)) {
-        auto done_cb = acquire_on_done_cb(timeout, true);
-        CHECK_EXPECTED(done_cb);
-
-        done_cb.value()(mem_view.status());
-    }
-    if (HAILO_SHUTDOWN_EVENT_SIGNALED == mem_view.status()) {
-        return make_unexpected(HAILO_SHUTDOWN_EVENT_SIGNALED);
-    }
-    CHECK_EXPECTED(mem_view);
-
-    std::shared_ptr<PipelineBuffer> ptr = nullptr;
-    if (m_is_holding_user_buffers) {
-        auto done_cb = acquire_on_done_cb(timeout, true);
-        CHECK_EXPECTED(done_cb);
-
-        ptr = make_shared_nothrow<PipelineBuffer>(mem_view.release(), done_cb.release(), m_is_holding_user_buffers, shared_from_this(), m_measure_vstream_latency);
-    } else {
-        ptr = make_shared_nothrow<PipelineBuffer>(mem_view.release(), m_is_holding_user_buffers, shared_from_this(), m_measure_vstream_latency);
-    }
-
-    CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
-    return ptr;
+    return PipelineBuffer(mem_view.release(), [](hailo_status){}, HAILO_SUCCESS, m_is_holding_user_buffers, shared_from_this(), m_measure_vstream_latency);
 }
 
 Expected<MemoryView> BufferPool::acquire_free_mem_view(std::chrono::milliseconds timeout,
@@ -511,10 +412,13 @@ AccumulatorPtr BufferPool::get_queue_size_accumulator()
 
 Expected<PipelineBuffer> BufferPool::get_available_buffer(PipelineBuffer &&optional, std::chrono::milliseconds timeout)
 {
+    m_is_already_running = true;
+
     if (optional) {
-        CHECK_AS_EXPECTED(optional.size() == buffer_size(), HAILO_INVALID_OPERATION,
+        auto pool_buffer_size = buffer_size();
+        CHECK_AS_EXPECTED(optional.size() == pool_buffer_size, HAILO_INVALID_OPERATION,
             "Optional buffer size must be equal to pool buffer size. Optional buffer size = {}, buffer pool size = {}",
-            optional.size(), buffer_size());
+            optional.size(), pool_buffer_size);
         return std::move(optional);
     }
 
@@ -528,9 +432,29 @@ Expected<PipelineBuffer> BufferPool::get_available_buffer(PipelineBuffer &&optio
 
 hailo_status BufferPool::release_buffer(MemoryView mem_view)
 {
-    std::unique_lock<std::mutex> lock(m_release_buffer_mutex);
+    std::unique_lock<std::mutex> lock(m_enqueue_mutex);
     // This can be called after the shutdown event was signaled so we ignore it here
     return m_free_mem_views.enqueue(std::move(mem_view), true);
+}
+
+hailo_status BufferPool::map_to_vdevice(VDevice &vdevice, hailo_dma_buffer_direction_t direction)
+{
+    for (auto &buff : m_buffers) {
+        auto dma_mapped_buffer = DmaMappedBuffer::create(vdevice, buff.data(), buff.size(), direction);
+        CHECK_EXPECTED(dma_mapped_buffer);
+        m_dma_mapped_buffers.emplace_back(dma_mapped_buffer.release());
+    }
+    return HAILO_SUCCESS;
+}
+
+hailo_status BufferPool::set_buffer_size(uint32_t buffer_size)
+{
+    std::unique_lock<std::mutex> lock(m_buffer_size_mutex);
+    CHECK(!m_is_already_running, HAILO_INVALID_OPERATION,
+        "Setting buffer size of pool size after starting inference in not allowed");
+
+    m_buffer_size = buffer_size;
+    return HAILO_SUCCESS;
 }
 
 Expected<DurationCollector> DurationCollector::create(hailo_pipeline_elem_stats_flags_t flags,
@@ -629,7 +553,7 @@ const std::string &PipelineObject::name() const
 std::string PipelineObject::create_element_name(const std::string &element_name, const std::string &stream_name, uint8_t stream_index)
 {
     std::stringstream name;
-    name << element_name << static_cast<uint32_t>(stream_index) << "_" << stream_name;
+    name << element_name << static_cast<uint32_t>(stream_index) << stream_name;
     return name.str();
 }
 
@@ -717,11 +641,6 @@ hailo_status PipelinePad::terminate(hailo_status error_status)
 hailo_status PipelinePad::dequeue_user_buffers(hailo_status error_status)
 {
     return m_element.dequeue_user_buffers(error_status);
-}
-
-hailo_status PipelinePad::wait_for_finish()
-{
-    return m_element.wait_for_finish();
 }
 
 hailo_status PipelinePad::clear_abort()
@@ -873,22 +792,64 @@ std::string PipelineElement::description() const
     return element_description.str();
 }
 
-hailo_status PipelineElement::enqueue_execution_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done, const std::string &source_name)
+std::string PipelineElement::links_description() const
+{
+    std::stringstream element_base_description;
+
+    element_base_description << "| inputs:";
+    if ((!sinks().empty()) && (nullptr != sinks()[0].prev())) {
+        for(const auto &sink : sinks()) {
+            if (sink.prev()) {
+                element_base_description << " " << sink.prev()->element().name();
+            }
+        }
+    } else {
+        element_base_description << " user";
+    }
+
+    element_base_description << " | outputs:";
+    if ((!sources().empty()) && (nullptr != sources()[0].next())) {
+        for(const auto &source : sources()) {
+            if (source.next()) {
+                element_base_description << " " << source.next()->element().name();
+            }
+        }
+    } else {
+        element_base_description << " user";
+    }
+
+    return element_base_description.str();
+}
+
+void PipelineElement::print_deep_description(std::vector<std::string> &visited_elements)
+{
+    auto visited_node = find(visited_elements.begin(), visited_elements.end(), this->name());
+    if (visited_elements.end() != visited_node) {
+        return;
+    }
+
+    LOGGER__INFO("{} {}", this->name().c_str(), this->links_description().c_str());
+    visited_elements.emplace_back(this->name());
+
+    for (auto &source : sources()) {
+        source.next()->element().print_deep_description(visited_elements);
+    }
+}
+
+hailo_status PipelineElement::enqueue_execution_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done)
 {
     (void)mem_view;
     (void)exec_done;
-    (void)source_name;
     LOGGER__ERROR("enqueue_execution_buffer is not implemented for {}!", name());
     return HAILO_NOT_IMPLEMENTED;
 };
 
-hailo_status PipelineElement::enqueue_execution_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done)
-{
-    return enqueue_execution_buffer(mem_view, exec_done, "");
-};
-
 hailo_status PipelineElement::empty_buffer_pool(BufferPoolPtr pool, hailo_status error_status, std::chrono::milliseconds timeout)
 {
+    if (!pool) {
+        return HAILO_SUCCESS;
+    }
+
     if (!pool->is_holding_user_buffers()) {
         return HAILO_SUCCESS;
     }
@@ -901,38 +862,17 @@ hailo_status PipelineElement::empty_buffer_pool(BufferPoolPtr pool, hailo_status
             return acquired_buffer.status();
         }
 
-        auto exec_done_cb = acquired_buffer->get_exec_done_cb();
-        exec_done_cb(error_status);
+        acquired_buffer->set_action_status(error_status);
     }
     return HAILO_SUCCESS;
 }
 
-hailo_status PipelineElement::fill_buffer_pool(bool /*is_dma_able*/, size_t /*num_of_buffers*/, const uint32_t /*source_index*/)
-{
-    return HAILO_NOT_IMPLEMENTED;
-}
-
-Expected<bool> PipelineElement::can_push_buffer_upstream(const uint32_t /*source_index*/)
+Expected<bool> PipelineElement::can_push_buffer_upstream()
 {
     return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
 
-Expected<bool> PipelineElement::can_push_buffer_downstream(const uint32_t /*source_index*/)
-{
-    return make_unexpected(HAILO_NOT_IMPLEMENTED);
-}
-
-hailo_status PipelineElement::fill_buffer_pool(bool /*is_dma_able*/, size_t /*num_of_buffers*/, const std::string &/*source_name*/)
-{
-    return HAILO_NOT_IMPLEMENTED;
-}
-
-Expected<bool> PipelineElement::can_push_buffer_upstream(const std::string &/*source_name*/)
-{
-    return make_unexpected(HAILO_NOT_IMPLEMENTED);
-}
-
-Expected<bool> PipelineElement::can_push_buffer_downstream(const std::string &/*source_name*/)
+Expected<bool> PipelineElement::can_push_buffer_downstream()
 {
     return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
@@ -982,11 +922,6 @@ hailo_status PipelineElement::dequeue_user_buffers(hailo_status error_status)
     return execute_dequeue_user_buffers(error_status);
 }
 
-hailo_status PipelineElement::wait_for_finish()
-{
-    return execute_wait_for_finish();
-}
-
 hailo_status PipelineElement::execute_activate()
 {
     return execute([&](auto *pad){ return pad->activate(); });
@@ -1031,11 +966,6 @@ hailo_status PipelineElement::execute_terminate(hailo_status error_status)
 hailo_status PipelineElement::execute_dequeue_user_buffers(hailo_status error_status)
 {
     return execute([&](auto *pad){ return pad->dequeue_user_buffers(error_status); });
-}
-
-hailo_status PipelineElement::execute_wait_for_finish()
-{
-    return execute([&](auto *pad){ return pad->wait_for_finish(); });
 }
 
 hailo_status PipelineElement::execute(std::function<hailo_status(PipelinePad*)> func)

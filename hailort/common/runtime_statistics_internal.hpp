@@ -15,9 +15,68 @@
 #include <cmath>
 #include <mutex>
 #include <limits>
+#include <ostream>
+#include <sstream>
+#include <iomanip>
 
 namespace hailort
 {
+
+class AccumulatorResultsHelper final
+{
+public:
+    AccumulatorResultsHelper() = delete;
+
+    static const uint32_t DEFAULT_FLOATING_POINT_PRECISION = 4;
+
+    static std::string format_results(const AccumulatorResults &results, bool verbose = false,
+        uint32_t precision = DEFAULT_FLOATING_POINT_PRECISION)
+    {
+        std::stringstream stream;
+        stream << format_statistic(results.count(), "count") << ", ";
+        stream << format_statistic(results.mean(), "mean", precision);
+        if (verbose) {
+            stream << ", ";
+            stream << format_statistic(results.min(), "min", precision) << ", ";
+            stream << format_statistic(results.max(), "max", precision) << ", ";
+            stream << format_statistic(results.var(), "var", precision) << ", ";
+            stream << format_statistic(results.sd(), "sd", precision) << ", ";
+            stream << format_statistic(results.mean_sd(), "mean_sd", precision);
+        }
+        return stream.str();
+    }
+
+    static std::string format_statistic(const Expected<double> &statistic, const std::string &name = "",
+        uint32_t precision = DEFAULT_FLOATING_POINT_PRECISION)
+    {
+        return format_statistic<double>(statistic, name, precision);
+    }
+
+    static std::string format_statistic(const Expected<size_t> &statistic, const std::string &name = "")
+    {
+        return format_statistic<size_t>(statistic, name);
+    }
+
+private:
+    template<typename T, std::enable_if_t<std::is_arithmetic<T>::value, int> = 0>
+    static std::string format_statistic(const Expected<T> &statistic, const std::string &name,
+        uint32_t precision = DEFAULT_FLOATING_POINT_PRECISION)
+    {
+        static const std::string NO_VALUE = "-";
+        std::stringstream stream;
+        if (!name.empty()) {
+            stream << name << "=";
+        }
+
+        if (statistic.has_value()) {
+            stream << std::fixed << std::setprecision(precision) << statistic.value();
+        } else {
+            stream << NO_VALUE;
+        }
+
+        return stream.str();
+    }
+};
 
 template<typename T, std::enable_if_t<std::is_arithmetic<T>::value, int> = 0>
 class FullAccumulator : public Accumulator<T>

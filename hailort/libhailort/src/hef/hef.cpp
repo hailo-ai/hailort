@@ -24,6 +24,7 @@
 
 #include "net_flow/ops/nms_post_process.hpp"
 #include "net_flow/ops/yolov5_post_process.hpp"
+#include "net_flow/ops/yolov5_bbox_only_post_process.hpp"
 #include "net_flow/ops/yolox_post_process.hpp"
 #include "net_flow/ops/ssd_post_process.hpp"
 #include "net_flow/ops/argmax_post_process.hpp"
@@ -36,6 +37,8 @@
 #include "eth/hcp_config_core_op.hpp"
 #include "hef/layer_info.hpp"
 #include "device_common/control.hpp"
+#include "hw_consts.hpp"
+#include "utils/profiler/tracer_macros.hpp"
 
 #include "byte_order.h"
 #include "context_switch_defs.h"
@@ -49,6 +52,7 @@
 #include <algorithm>
 #include <cstring>
 #include <numeric>
+#include <google/protobuf/io/zero_copy_stream_impl.h>
 
 
 namespace hailort
@@ -280,7 +284,7 @@ Expected<float64_t> Hef::get_bottleneck_fps(const std::string &net_group_name) c
 
 Expected<hailo_device_architecture_t> Hef::get_hef_device_arch() const
 {
-    return DeviceBase::hef_arch_to_device_arch(pimpl->get_device_arch());
+    return DeviceBase::hef_arch_to_device_arch(static_cast<HEFHwArch>(pimpl->get_device_arch()));
 }
 
 Expected<std::string> Hef::device_arch_to_string(const hailo_device_architecture_t arch)
@@ -318,6 +322,37 @@ Expected<std::vector<std::string>> Hef::get_vstream_names_from_stream_name(const
     auto net_group_name_str = network_group_name_pair->first;
 
     return pimpl->get_vstream_names_from_stream_name(stream_name, net_group_name_str);
+}
+
+ShefFileHandle::ShefFileHandle(const std::string &hef_path, uint32_t ccws_buffer_offset)
+    : m_hef_path(hef_path), m_ccws_buffer_offset(ccws_buffer_offset) {}
+
+hailo_status ShefFileHandle::open()
+{
+    m_hef_file = std::ifstream(m_hef_path, std::ios::in | std::ios::binary);
+    CHECK(m_hef_file.is_open(), HAILO_OPEN_FILE_FAILURE, "Failed to open HEF file \"{}\". errno: {}", m_hef_path, errno);
+    return HAILO_SUCCESS;
+}
+
+Expected<Buffer> ShefFileHandle::read(uint32_t offset, size_t size)
+{
+    auto buffer = Buffer::create(size);
+    CHECK_EXPECTED(buffer);
+
+    m_hef_file.seekg(m_ccws_buffer_offset + offset, m_hef_file.beg);
+    CHECK_AS_EXPECTED(m_hef_file.good(), HAILO_FILE_OPERATION_FAILURE, "Seeking in file failed");
+
+    m_hef_file.read(reinterpret_cast<char*>(buffer->data()), size);
+    CHECK_AS_EXPECTED(m_hef_file.good(), HAILO_FILE_OPERATION_FAILURE, "Failed reading ccw");
+
+    return buffer;
+}
+
+hailo_status ShefFileHandle::close()
+{
+    m_hef_file.close();
+    CHECK_AS_EXPECTED(m_hef_file.good(), HAILO_CLOSE_FAILURE, "Closing file failed");
+    return HAILO_SUCCESS;
 }
 
 Expected<Hef::Impl> Hef::Impl::create(const std::string &hef_path)
@@ -358,7 +393,7 @@ static hailo_status calc_istream_md5(std::ifstream &s, MD5_SUM_t &calculated_md5
     while (!s.eof()) {
         s.read(md5_buffer, HEF__MD5_BUFFER_SIZE);
         CHECK(!s.bad(), HAILO_FILE_OPERATION_FAILURE, "ifstream::read() failed");
-        MD5_Update(&md5, &md5_buffer, static_cast<size_t>(s.gcount()));
+        MD5_Update(&md5, &md5_buffer, s.gcount());
     }
     MD5_Final(calculated_md5, &md5);
 
@@ -369,14 +404,15 @@ static hailo_status calc_istream_md5(std::ifstream &s, MD5_SUM_t &calculated_md5
     return HAILO_SUCCESS;
 }
 
-hailo_status Hef::Impl::validate_hef_header(const hef__header_t &header, MD5_SUM_t &calculated_md5, size_t proto_size)
+hailo_status Hef::Impl::validate_hef_header(const hef__header_t &header, MD5_SUM_t &calculated_md5, size_t hef_file_residue_size)
 {
-    CHECK(HEADER_MAGIC == BYTE_ORDER__htonl(header.magic), HAILO_INVALID_HEF,
+    CHECK(HEADER_MAGIC == header.magic, HAILO_INVALID_HEF,
         "HEF magic does not match. detected magic - {:x}", header.magic);
 
-    CHECK(HEADER_VERSION == BYTE_ORDER__htonl(header.version), HAILO_INVALID_HEF, "HEF version does not match");
+    auto version = header.version;
+    CHECK((HEADER_VERSION_0 == version) || (HEADER_VERSION_1 == version), HAILO_INVALID_HEF, "HEF version does not match");
 
-    CHECK(proto_size == BYTE_ORDER__htonl(header.hef_proto_length), HAILO_INVALID_HEF,
+    CHECK(hef_file_residue_size == header.hef_proto_size + header.ccws_size, HAILO_INVALID_HEF,
         "HEF file length does not match");
 
     CHECK(0 == memcmp(&calculated_md5, &header.expected_md5, sizeof(MD5_SUM_t)), HAILO_INVALID_HEF,
@@ -406,6 +442,13 @@ void Hef::Impl::init_md5(MD5_SUM_t &calculated_md5)
     memcpy(m_md5, calculated_md5, sizeof(m_md5));
 }
 
+void Hef::Impl::clear_hef_buffer()
+{
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+    m_hef_buffer = Buffer();
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+}
+
 hailo_status Hef::Impl::parse_hef_file(const std::string &hef_path)
 {
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
@@ -418,23 +461,36 @@ hailo_status Hef::Impl::parse_hef_file(const std::string &hef_path)
     CHECK(hef_file.is_open(), HAILO_OPEN_FILE_FAILURE, "Failed to open HEF file \"{}\". errno: {}", hef_path, errno);
 
     hef__header_t header = {};
-    hef_file.read((char*)&header, sizeof(header));
+    hef_file.read(reinterpret_cast<char*>(&header), sizeof(header));
     CHECK(hef_file.good(), HAILO_FILE_OPERATION_FAILURE, "Failed reading HEF header");
 
-    auto proto_size = get_istream_size(hef_file);
-    CHECK_EXPECTED_AS_STATUS(proto_size);
+    header.magic = BYTE_ORDER__htonl(header.magic);
+    header.version = BYTE_ORDER__htonl(header.version);
+    header.hef_proto_size = BYTE_ORDER__htonl(header.hef_proto_size);
+    header.ccws_size = BYTE_ORDER__htonl(header.ccws_size);
+
+    auto hef_file_residue_size = get_istream_size(hef_file);
+    CHECK_EXPECTED_AS_STATUS(hef_file_residue_size);
 
     MD5_SUM_t calculated_md5 = {};
     auto status = calc_istream_md5(hef_file, calculated_md5);
     CHECK_SUCCESS(status);
 
-    status = validate_hef_header(header, calculated_md5, proto_size.value());
+    status = validate_hef_header(header, calculated_md5, hef_file_residue_size.value());
     CHECK_SUCCESS(status);
+
+    if (HEADER_VERSION_1 == header.version) {
+        auto ptr = make_shared_nothrow<ShefFileHandle>(hef_path,
+            static_cast<uint32_t>(sizeof(header) + header.hef_proto_size));
+        CHECK_NOT_NULL(ptr, HAILO_OUT_OF_HOST_MEMORY);
+        m_shef_file_handle = ptr;
+    }
 
     init_md5(calculated_md5);
 
     ProtoHEFHef hef_message;
-    auto rb = hef_message.ParseFromIstream(&hef_file);
+    google::protobuf::io::IstreamInputStream zero_copy_input(&hef_file);
+    auto rb = hef_message.ParseFromBoundedZeroCopyStream(&zero_copy_input, header.hef_proto_size);
     CHECK(rb, HAILO_INVALID_HEF, "Failed parsing HEF file");
     status = transfer_protobuf_field_ownership(hef_message);
     CHECK_SUCCESS(status);
@@ -448,6 +504,7 @@ hailo_status Hef::Impl::parse_hef_file(const std::string &hef_path)
     status = validate_hef_extensions();
     CHECK_SUCCESS(status);
 
+    TRACE(HefLoadedTrace, hef_path, m_header.sdk_version(), m_md5);
     return HAILO_SUCCESS;
 }
 
@@ -460,7 +517,12 @@ hailo_status Hef::Impl::parse_hef_memview(const MemoryView &hef_memview)
 #endif // HAILO_SUPPORT_MULTI_PROCESS
 
     CHECK(hef_memview.size() >= sizeof(hef__header_t), HAILO_INVALID_HEF, "Invalid HEF header");
-    const hef__header_t &header = reinterpret_cast<const hef__header_t&>(*hef_memview.data());
+    const hef__header_t &raw_header = reinterpret_cast<const hef__header_t&>(*hef_memview.data());
+    auto header = raw_header;
+    header.magic = BYTE_ORDER__htonl(header.magic);
+    header.version = BYTE_ORDER__htonl(header.version);
+    header.hef_proto_size = BYTE_ORDER__htonl(header.hef_proto_size);
+    header.ccws_size = BYTE_ORDER__htonl(header.ccws_size);
 
     auto proto_buffer = (hef_memview.data() + sizeof(header));
     auto proto_size = (hef_memview.size() - sizeof(header));
@@ -664,19 +726,24 @@ static Expected<std::vector<ConfigChannelInfo>> parse_config_channels_info(const
 
 Expected<CoreOpMetadataPtr> Hef::Impl::create_metadata_per_arch(const ProtoHEFCoreOpMock &core_op, const std::vector<std::string> &sorted_network_names)
 {
-    auto preliminary_context = HefUtils::parse_preliminary_context(core_op.preliminary_config, m_supported_features);
+    auto preliminary_context = HefUtils::parse_preliminary_context(core_op.preliminary_config, m_supported_features, m_shef_file_handle);
     CHECK_EXPECTED(preliminary_context);
 
-    auto dynamic_contexts = HefUtils::parse_dynamic_contexts(core_op, m_supported_features, get_device_arch());
+    auto dynamic_contexts = HefUtils::parse_dynamic_contexts(core_op, m_supported_features, get_device_arch(), m_shef_file_handle);
     CHECK_EXPECTED(dynamic_contexts);
 
-    auto config_channels_info = parse_config_channels_info(core_op);
+    auto config_channels_info =  parse_config_channels_info(core_op);
     CHECK_EXPECTED(config_channels_info);
+
+    // If const input layer is found in the preliminary context, or first dynamic context we can't use fast batch switch
+    const auto can_fast_batch_switch =
+        !(preliminary_context.value().const_input_layer_found() || dynamic_contexts.value()[0].const_input_layer_found());
 
     // Currently, CoreOp name is the same as network_group_name, thats why we init it with it.
     // TODO: HRT-9551 - Change it when supporting multi core ops.
     auto metadata_per_arch = make_shared_nothrow<CoreOpMetadata>(core_op.network_group_metadata.network_group_name(),
-        preliminary_context.release(), dynamic_contexts.release(), config_channels_info.release(), m_supported_features, sorted_network_names);
+        preliminary_context.release(), dynamic_contexts.release(), config_channels_info.release(),
+        m_supported_features, sorted_network_names, can_fast_batch_switch);
     CHECK_NOT_NULL_AS_EXPECTED(metadata_per_arch, HAILO_OUT_OF_HOST_MEMORY);
     return metadata_per_arch;
 }
@@ -792,7 +859,7 @@ const MemoryView Hef::Impl::get_hef_memview()
 }
 #endif // HAILO_SUPPORT_MULTI_PROCESS
 
-Hef::Impl::Impl(const std::string &hef_path, hailo_status &status)
+Hef::Impl::Impl(const std::string &hef_path, hailo_status &status) : m_shef_file_handle(nullptr)
 {
     status = HAILO_UNINITIALIZED;
     GOOGLE_PROTOBUF_VERIFY_VERSION;
@@ -806,7 +873,7 @@ Hef::Impl::Impl(const std::string &hef_path, hailo_status &status)
     status = HAILO_SUCCESS;
 }
 
-Hef::Impl::Impl(const MemoryView &hef_memview, hailo_status &status)
+Hef::Impl::Impl(const MemoryView &hef_memview, hailo_status &status) : m_shef_file_handle(nullptr)
 {
     status = HAILO_UNINITIALIZED;
     GOOGLE_PROTOBUF_VERIFY_VERSION;
@@ -852,6 +919,8 @@ SupportedFeatures Hef::Impl::get_supported_features(const ProtoHEFHeader &header
         header, hef_extensions, included_features);
     supported_features.core_hw_padding_config_in_dfc = check_hef_optional_extension(ProtoHEFExtensionType::HW_PADDING,
         header, hef_optional_extensions);
+    supported_features.batch_register_config = check_hef_extension(ProtoHEFExtensionType::BATCH_REGISTER_CONFIG,
+        header, hef_extensions, included_features);
 
     return supported_features;
 }
@@ -865,6 +934,7 @@ net_flow::NmsPostProcessConfig create_post_process_nms_config(const ProtoHEFOp &
     nms_config.number_of_classes = op_proto.nms_op().classes();
     nms_config.background_removal = op_proto.nms_op().background_removal();
     nms_config.background_removal_index = op_proto.nms_op().background_removal_index();
+    nms_config.bbox_only = op_proto.nms_op().bbox_decoding_only();
 
     return nms_config;
 }
@@ -913,6 +983,21 @@ Expected<std::unordered_map<std::string, net_flow::BufferMetaData>> create_input
     return inputs_metadata;
 }
 
+uint32_t compute_num_of_proposals(const std::unordered_map<std::string, net_flow::BufferMetaData> &inputs_metadatas, std::map<std::string, 
+    std::vector<int>> &anchors)
+{
+    uint32_t num_of_proposals = 0;
+    for (const auto &input_metadata_pair : inputs_metadatas) {
+        auto &name = input_metadata_pair.first;
+        auto &input_metadata = input_metadata_pair.second;
+        assert(contains(anchors, name));
+        auto &layer_anchors = anchors.at(name);
+        auto num_of_anchors = net_flow::YOLOv5PostProcessOp::get_num_of_anchors(layer_anchors);
+        num_of_proposals += static_cast<uint32_t>(num_of_anchors * input_metadata.shape.height * input_metadata.shape.width);
+    }
+    return num_of_proposals;
+}
+
 Expected<net_flow::PostProcessOpMetadataPtr> create_yolov5_op_metadata(const ProtoHEFOp &op_proto,
     const std::map<size_t, LayerInfo> &pad_index_to_streams_info, const std::map<size_t, size_t> &input_to_output_pads,
     const std::string &network_name)
@@ -929,10 +1014,38 @@ Expected<net_flow::PostProcessOpMetadataPtr> create_yolov5_op_metadata(const Pro
     std::unordered_map<std::string, net_flow::BufferMetaData> outputs_metadata;
     net_flow::BufferMetaData output_metadata{};
     output_metadata.format = net_flow::NmsOpMetadata::expand_output_format_autos_by_op_type(
-        { HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_AUTO, HAILO_FORMAT_FLAGS_NONE }, net_flow::OperationType::YOLOV5);
+        { HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_AUTO, HAILO_FORMAT_FLAGS_NONE }, net_flow::OperationType::YOLOV5,
+        nms_config.bbox_only);
+
     outputs_metadata.insert({op_proto.output_pads()[0].name(), output_metadata});
 
     return net_flow::Yolov5OpMetadata::create(inputs_metadata.release(), outputs_metadata, nms_config, yolo_config.release(),
+        network_name);
+}
+
+Expected<net_flow::PostProcessOpMetadataPtr> create_yolov5_bbox_only_op_metadata(const ProtoHEFOp &op_proto,
+    const std::map<size_t, LayerInfo> &pad_index_to_streams_info, const std::map<size_t, size_t> &input_to_output_pads,
+    const std::string &network_name)
+{
+    auto nms_config = create_post_process_nms_config(op_proto);
+
+    auto yolo_v5_config = create_yolov5_config(op_proto.nms_op().yolo_nms_op().bbox_decoders(),
+        op_proto.nms_op().yolo_nms_op().image_height(), op_proto.nms_op().yolo_nms_op().image_width(), pad_index_to_streams_info);
+    CHECK_EXPECTED(yolo_v5_config);
+
+    auto inputs_metadata = create_inputs_metadata(op_proto, pad_index_to_streams_info, input_to_output_pads);
+    CHECK_EXPECTED(inputs_metadata);
+
+    std::unordered_map<std::string, net_flow::BufferMetaData> outputs_metadata;
+    net_flow::BufferMetaData output_metadata{};
+    uint32_t num_of_proposals = compute_num_of_proposals(inputs_metadata.value(), yolo_v5_config->anchors);
+    output_metadata.shape = {1, num_of_proposals, YOLOV5_BBOX_NUM_OF_VALUES + op_proto.nms_op().classes()};
+
+    output_metadata.format = net_flow::NmsOpMetadata::expand_output_format_autos_by_op_type(
+        { HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_AUTO, HAILO_FORMAT_FLAGS_NONE }, net_flow::OperationType::YOLOV5, nms_config.bbox_only);
+    outputs_metadata.insert({op_proto.output_pads()[0].name(), output_metadata});
+
+    return net_flow::Yolov5BboxOnlyOpMetadata::create(inputs_metadata.release(), outputs_metadata, nms_config, yolo_v5_config.release(),
         network_name);
 }
 
@@ -950,15 +1063,19 @@ Expected<net_flow::PostProcessOpMetadataPtr> create_yolov5_seg_op_metadata(const
 
     auto proto_layer_name = op_proto.nms_op().yolo_seg_op().proto_info().proto_layer();
     CHECK_AS_EXPECTED(contains(inputs_metadata.value(), proto_layer_name), HAILO_INVALID_HEF);
-    net_flow::YoloV5SegPostProcessConfig yolov5_seg_config =
-    {static_cast<float32_t>(op_proto.nms_op().yolo_seg_op().mask_threshold()),
-    op_proto.nms_op().yolo_seg_op().proto_info().proto_layer()};
+
+    const uint32_t SIZE_FACTOR = 2;
+    net_flow::YoloV5SegPostProcessConfig yolov5_seg_config = {};
+    yolov5_seg_config.mask_threshold = static_cast<float32_t>(op_proto.nms_op().yolo_seg_op().mask_threshold());
+    yolov5_seg_config.max_accumulated_mask_size = static_cast<uint32_t>(
+        yolov5_config->image_height * yolov5_config->image_width * SIZE_FACTOR);
+    yolov5_seg_config.proto_layer_name = proto_layer_name;
 
     std::unordered_map<std::string, net_flow::BufferMetaData> outputs_metadata;
     net_flow::BufferMetaData output_metadata{};
     output_metadata.format = net_flow::NmsOpMetadata::expand_output_format_autos_by_op_type
         ({ HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK, HAILO_FORMAT_FLAGS_NONE },
-        net_flow::OperationType::YOLOV5SEG);
+        net_flow::OperationType::YOLOV5SEG, nms_config.bbox_only);
     outputs_metadata.insert({op_proto.output_pads()[0].name(), output_metadata});
 
     return net_flow::Yolov5SegOpMetadata::create(inputs_metadata.release(), outputs_metadata, nms_config, yolov5_config.release(),
@@ -979,7 +1096,7 @@ Expected<net_flow::PostProcessOpMetadataPtr> create_yolov8_op_metadata(const Pro
     std::unordered_map<std::string, net_flow::BufferMetaData> outputs_metadata;
     net_flow::BufferMetaData output_metadata{};
     output_metadata.format = net_flow::NmsOpMetadata::expand_output_format_autos_by_op_type(
-        { HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_AUTO, HAILO_FORMAT_FLAGS_NONE }, net_flow::OperationType::YOLOV8);
+        { HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_AUTO, HAILO_FORMAT_FLAGS_NONE }, net_flow::OperationType::YOLOV8, nms_config.bbox_only);
     outputs_metadata.insert({op_proto.output_pads()[0].name(), output_metadata});
 
     for (auto &bbox_proto : op_proto.nms_op().yolov8_nms_op().bbox_decoders()) {
@@ -1024,7 +1141,7 @@ Expected<net_flow::PostProcessOpMetadataPtr> create_yolox_op_metadata(const Prot
     std::unordered_map<std::string, net_flow::BufferMetaData> outputs_metadata;
     net_flow::BufferMetaData output_metadata{};
     output_metadata.format = net_flow::NmsOpMetadata::expand_output_format_autos_by_op_type(
-        { HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_AUTO, HAILO_FORMAT_FLAGS_NONE }, net_flow::OperationType::YOLOX);
+        { HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_AUTO, HAILO_FORMAT_FLAGS_NONE }, net_flow::OperationType::YOLOX, nms_config.bbox_only);
     outputs_metadata.insert({op_proto.output_pads()[0].name(), output_metadata});
 
     for (const auto &bbox_proto : op_proto.nms_op().yolox_nms_op().bbox_decoders()) {
@@ -1100,7 +1217,7 @@ Expected<net_flow::PostProcessOpMetadataPtr> create_ssd_op_metadata(const ProtoH
     std::unordered_map<std::string, net_flow::BufferMetaData> outputs_metadata;
     net_flow::BufferMetaData output_metadata{};
     output_metadata.format = net_flow::NmsOpMetadata::expand_output_format_autos_by_op_type(
-        { HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_AUTO, HAILO_FORMAT_FLAGS_NONE }, net_flow::OperationType::SSD);
+        { HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_AUTO, HAILO_FORMAT_FLAGS_NONE }, net_flow::OperationType::SSD, nms_config.bbox_only);
     outputs_metadata.insert({op_proto.output_pads()[0].name(), output_metadata});
 
     for (auto &input_pad : op_proto.input_pads()) {
@@ -1168,7 +1285,7 @@ Expected<net_flow::PostProcessOpMetadataPtr> create_iou_op_metadata(const ProtoH
     std::unordered_map<std::string, net_flow::BufferMetaData> outputs_metadata;
     net_flow::BufferMetaData output_metadata{};
     output_metadata.format = net_flow::NmsOpMetadata::expand_output_format_autos_by_op_type(
-        { HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_AUTO, HAILO_FORMAT_FLAGS_NONE }, op_type);
+        { HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_AUTO, HAILO_FORMAT_FLAGS_NONE }, op_type, nms_config.bbox_only);
     outputs_metadata.insert({op_proto.output_pads()[0].name(), output_metadata});
 
     for (auto &input_pad : op_proto.input_pads()) {
@@ -1239,7 +1356,8 @@ Expected<std::shared_ptr<net_flow::OpMetadata>> create_logits_op_metadata(const 
 
     // TODO: HRT-10603
     const auto &op_input_layer_info = pad_index_to_streams_info.at(output_pad_index);
-    auto max_periph_bytes_from_hef = HefConfigurator::max_periph_bytes_value(DeviceBase::hef_arch_to_device_arch(hef_arch));
+    auto max_periph_bytes_from_hef = HefConfigurator::max_periph_bytes_value(
+        DeviceBase::hef_arch_to_device_arch(static_cast<HEFHwArch>(hef_arch)));
     CHECK_EXPECTED(max_periph_bytes_from_hef);
 
     // TODO HRT-12099 - return invalid hef error when remove support for hefs with no max_shmifo size
@@ -1303,11 +1421,19 @@ Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> Hef::Impl::create_ops_
                 net_flow::PostProcessOpMetadataPtr post_process_op_metadata;
                 switch (op_proto.nms_op().nms_op_case()) {
                     case ProtoHEFNmsOp::kYoloNmsOp: {
-                        auto expected_post_process_op_metadata = create_yolov5_op_metadata(op_proto, pad_index_to_streams_info,
+                        if (op_proto.nms_op().bbox_decoding_only()) {
+                            auto expected_post_process_op_metadata = create_yolov5_bbox_only_op_metadata(op_proto, pad_index_to_streams_info,
+                                input_to_output_pads, network_name);
+                            CHECK_EXPECTED(expected_post_process_op_metadata);
+                            post_process_op_metadata = expected_post_process_op_metadata.release();
+                            break;
+                        } else {
+                            auto expected_post_process_op_metadata = create_yolov5_op_metadata(op_proto, pad_index_to_streams_info,
                             input_to_output_pads, network_name);
-                        CHECK_EXPECTED(expected_post_process_op_metadata);
-                        post_process_op_metadata = expected_post_process_op_metadata.release();
-                        break;
+                            CHECK_EXPECTED(expected_post_process_op_metadata);
+                            post_process_op_metadata = expected_post_process_op_metadata.release();
+                            break;
+                        }
                     }
                     case ProtoHEFNmsOp::kYoloxNmsOp: {
                         auto expected_post_process_op_metadata = create_yolox_op_metadata(op_proto, pad_index_to_streams_info,
@@ -1791,7 +1917,7 @@ static hailo_3d_image_shape_t parse_layer_hw_shape(const ProtoHEFEdgeLayerBase &
 
 hailo_status HefUtils::fill_layer_info_with_base_info(const ProtoHEFEdgeLayerBase &base_info, 
     const ProtoHEFEdgeConnectionType &edge_connection_type, const ProtoHEFNetworkGroupMetadata &network_group_proto,
-    bool transposed, const uint8_t context_index, const uint8_t network_index, LayerInfo &layer_info,
+    bool transposed, const uint16_t context_index, const uint8_t network_index, LayerInfo &layer_info,
     const SupportedFeatures &supported_features, const ProtoHEFHwArch &hef_arch, const bool is_part_of_mux_layer)
 {
     auto format_order_exp = HailoRTDefaults::get_device_format_order(base_info.format());
@@ -1826,7 +1952,8 @@ hailo_status HefUtils::fill_layer_info_with_base_info(const ProtoHEFEdgeLayerBas
     CHECK_EXPECTED_AS_STATUS(type);
     layer_info.format.type = type.value();
 
-    auto max_periph_bytes_from_hef = HefConfigurator::max_periph_bytes_value(DeviceBase::hef_arch_to_device_arch(hef_arch));
+    auto max_periph_bytes_from_hef =
+        HefConfigurator::max_periph_bytes_value(DeviceBase::hef_arch_to_device_arch(static_cast<HEFHwArch>(hef_arch)));
     CHECK_EXPECTED_AS_STATUS(max_periph_bytes_from_hef);
     // TODO HRT-12099 - return invalid hef error when remove support for hefs with no max_shmifo size
     const auto max_periph_bytes = (0 == base_info.max_shmifo_size()) ? max_periph_bytes_from_hef.value() :
@@ -1871,7 +1998,7 @@ hailo_status HefUtils::fill_layer_info_with_base_info(const ProtoHEFEdgeLayerBas
 
 hailo_status HefUtils::fill_layer_info(const ProtoHEFEdgeLayerInfo &info, 
     const ProtoHEFEdgeConnectionType &edge_connection_type, const ProtoHEFCoreOpMock &core_op,
-    hailo_stream_direction_t direction, const uint8_t context_index, const std::string &partial_network_name, 
+    hailo_stream_direction_t direction, const uint16_t context_index, const std::string &partial_network_name, 
     uint8_t network_index, LayerInfo &layer_info, const SupportedFeatures &supported_features, const ProtoHEFHwArch &hef_arch,
     const bool is_part_of_mux_layer)
 {
@@ -2005,7 +2132,7 @@ hailo_status HefUtils::fill_fused_nms_info(const ProtoHEFEdgeLayerFused &info, L
 
 hailo_status HefUtils::fill_mux_info(const ProtoHEFEdgeLayerMux &info,
     const ProtoHEFEdgeConnectionType &edge_connection_type, const ProtoHEFCoreOpMock &core_op,
-    hailo_stream_direction_t direction, const uint8_t context_index, const std::string &partial_network_name, 
+    hailo_stream_direction_t direction, const uint16_t context_index, const std::string &partial_network_name, 
     uint8_t network_index, LayerInfo &layer_info, const SupportedFeatures &supported_features, const ProtoHEFHwArch &hef_arch)
 {
     if (HAILO_MAX_STREAM_NAME_SIZE < (info.name().length() + 1)) {
@@ -2083,7 +2210,7 @@ Expected<hailo_format_order_t> convert_planes_format_to_hailo_format_order(const
 
 hailo_status HefUtils::fill_planes_info(const ProtoHEFEdgeLayerPlanes &info,
     const ProtoHEFEdgeConnectionType &edge_connection_type, const ProtoHEFCoreOpMock &core_op,
-    hailo_stream_direction_t direction, const uint8_t context_index, const std::string &partial_network_name, 
+    hailo_stream_direction_t direction, const uint16_t context_index, const std::string &partial_network_name, 
     uint8_t network_index, LayerInfo &layer_info, const SupportedFeatures &supported_features, const ProtoHEFHwArch &hef_arch)
 {
     auto layer_type = get_layer_type(edge_connection_type);
@@ -2146,7 +2273,7 @@ hailo_status HefUtils::fill_planes_info(const ProtoHEFEdgeLayerPlanes &info,
 
 hailo_status HefUtils::fill_boundary_layers_info(
     const ProtoHEFCoreOpMock &core_op,
-    const uint8_t context_index,
+    const uint16_t context_index,
     const ProtoHEFEdgeLayer &layer,
     const SupportedFeatures &supported_features,
     ContextMetadata &context_metadata,
@@ -2154,7 +2281,7 @@ hailo_status HefUtils::fill_boundary_layers_info(
 {
     auto layer_info = get_boundary_layer_info(core_op, context_index, layer, supported_features, hef_arch);
     CHECK_EXPECTED_AS_STATUS(layer_info);
-    
+
     context_metadata.add_boundary_layer(layer_info.release());
 
     return HAILO_SUCCESS;
@@ -2162,7 +2289,7 @@ hailo_status HefUtils::fill_boundary_layers_info(
 
 hailo_status HefUtils::fill_inter_context_layers_info(
     const ProtoHEFCoreOpMock &core_op,
-    const uint8_t context_index,
+    const uint16_t context_index,
     const ProtoHEFEdgeLayer &layer,
     const SupportedFeatures &supported_features,
     ContextMetadata &context_metadata)
@@ -2176,7 +2303,7 @@ hailo_status HefUtils::fill_inter_context_layers_info(
 
 hailo_status HefUtils::fill_ddr_layers_info(
     const ProtoHEFCoreOpMock &core_op,
-    const uint8_t context_index,
+    const uint16_t context_index,
     const ProtoHEFEdgeLayer &layer,
     const SupportedFeatures &supported_features,
     ContextMetadata &context_metadata)
@@ -2191,7 +2318,7 @@ hailo_status HefUtils::fill_ddr_layers_info(
 hailo_status HefUtils::check_ddr_pairs_match(
     const std::vector<LayerInfo> &context_ddr_input_layers,
     const std::vector<LayerInfo> &context_ddr_output_layers,
-    const uint8_t context_index)
+    const uint16_t context_index)
 {
     CHECK(context_ddr_input_layers.size() == context_ddr_output_layers.size(), HAILO_INVALID_HEF,
         "DDR pairs must be equal in size for context {}" ,context_index);
@@ -2310,7 +2437,7 @@ static std::pair<uint8_t, uint16_t> old_hef_parse_initial_l3(uint32_t initial_l3
 }
 
 static Expected<ContextSwitchConfigActionPtr> parse_action(const ProtoHEFAction &proto_action,
-    const SupportedFeatures &supported_features)
+    const SupportedFeatures &supported_features, bool &const_input_layer_found)
 {
     switch (proto_action.action_case()) {
         case ProtoHEFAction::kDisableLcu:
@@ -2328,6 +2455,8 @@ static Expected<ContextSwitchConfigActionPtr> parse_action(const ProtoHEFAction 
                 "Failed to parse HEF. Invalid lcu_index: {}.", proto_action.enable_lcu().lcu_index());
             CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(proto_action.enable_lcu().lcu_kernel_done_address()), HAILO_INVALID_HEF,
                 "Failed to parse HEF. Invalid lcu_kernel_done_address: {}.", proto_action.enable_lcu().lcu_kernel_done_address());
+            CHECK_AS_EXPECTED(IS_FIT_IN_UINT32(proto_action.enable_lcu().lcu_kernel_done_count()), HAILO_INVALID_HEF,
+                "Failed to parse HEF. Invalid lcu_kernel_done_count: {}.", proto_action.enable_lcu().lcu_kernel_done_count());
 
             auto support_multi_networks = supported_features.multi_network_support;
             auto network_index = static_cast<uint8_t>((support_multi_networks) ? proto_action.enable_lcu().network_index() : 0);
@@ -2339,6 +2468,24 @@ static Expected<ContextSwitchConfigActionPtr> parse_action(const ProtoHEFAction 
 
             return EnableLcuAction::create(cluster_index, lcu_index, network_index, kernel_done_address,
                 kernel_done_count);
+        }
+        case ProtoHEFAction::kSwitchLcuBatch:
+        {
+            CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(proto_action.switch_lcu_batch().cluster_index()), HAILO_INVALID_HEF,
+                "Failed to parse HEF. Invalid cluster_index: {}.", proto_action.switch_lcu_batch().cluster_index());
+            CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(proto_action.switch_lcu_batch().lcu_index()), HAILO_INVALID_HEF,
+                "Failed to parse HEF. Invalid lcu_index: {}.", proto_action.switch_lcu_batch().lcu_index());
+
+            auto support_multi_networks = supported_features.multi_network_support;
+            auto network_index = static_cast<uint8_t>((support_multi_networks) ? proto_action.switch_lcu_batch().network_index() : 0);
+
+            const auto cluster_index = static_cast<uint8_t>(proto_action.switch_lcu_batch().cluster_index());
+            const auto lcu_index = static_cast<uint8_t>(proto_action.switch_lcu_batch().lcu_index());
+            // the kernel_done_count field isn't used but required as legacy.
+            const auto NULL_KERNEL_DONE_COUNT = (uint32_t)0;
+
+            return SwitchLcuBatchAction::create(cluster_index, lcu_index, network_index,
+                NULL_KERNEL_DONE_COUNT);
         }
         case ProtoHEFAction::kEnableSequencer:
         {
@@ -2465,6 +2612,11 @@ static Expected<ContextSwitchConfigActionPtr> parse_action(const ProtoHEFAction 
             const auto network_index = static_cast<uint8_t>((support_multi_networks) ? proto_action.write_data_by_type().network_index() : 0);
             const auto shift = static_cast<uint8_t>(proto_action.write_data_by_type().shift());
 
+            // If data_type is BATCH_SIZE - can't fast batch switch
+            if (ProtoHEFWriteDataType::BATCH_SIZE == data_type) {
+                const_input_layer_found = true;
+            }
+
             return WriteDataByTypeAction::create(address, data_type, data, shift, mask, network_index);
         }
         default:
@@ -2521,9 +2673,46 @@ static hailo_status merge_write_ccw_actions(
         config_buffer_infos[config_stream_index].emplace_back(static_cast<uint32_t>(config_buffer->size()));
 
         const size_t total_ccw_burst = ccw_buffers.size();
-        auto action = WriteDataCcwAction::create(config_buffer.release(), config_stream_index, total_ccw_burst);
-
+        auto action = WriteDataCcwActionByBuffer::create(config_buffer.release(), config_stream_index, total_ccw_burst);
         CHECK_EXPECTED_AS_STATUS(action);
+
+        actions.emplace_back(action.release());
+    }
+
+    return HAILO_SUCCESS;
+}
+
+static hailo_status build_write_ccw_actions(
+    std::vector<ContextSwitchConfigActionPtr> &actions,
+    ConfigBufferInfoMap &config_buffer_infos,
+    const std::vector<const ProtoHEFActionWriteDataCcw *> &write_ccw_actions,
+    std::shared_ptr<ShefFileHandle> shef_file_handle)
+{
+    std::unordered_map<uint8_t, uint32_t> ccws_per_config_index;
+    for (const auto *write_ccw_action : write_ccw_actions) {
+        CHECK(IS_FIT_IN_UINT8(write_ccw_action->cfg_channel_index()), HAILO_INVALID_HEF,
+            "Invalid cfg channel index");
+        const auto config_stream_index = static_cast<uint8_t>(write_ccw_action->cfg_channel_index());
+        if (ccws_per_config_index.find(config_stream_index) == ccws_per_config_index.end()) {
+            ccws_per_config_index[config_stream_index] = 0;
+        }
+        ccws_per_config_index[config_stream_index]++;
+    }
+    for (const auto *write_ccw_action : write_ccw_actions) {
+        if (write_ccw_action->data().size() == 0) {
+            continue;
+        }
+        const shef__ccw_offset_t *ccw_offset = reinterpret_cast<const shef__ccw_offset_t*>(write_ccw_action->data().data());
+        const auto config_stream_index = static_cast<uint8_t>(write_ccw_action->cfg_channel_index());
+
+        assert(BYTE_ORDER__htonl(ccw_offset->size) < std::numeric_limits<uint32_t>::max());
+        config_buffer_infos[config_stream_index].emplace_back(static_cast<uint32_t>(BYTE_ORDER__htonl(ccw_offset->size)));
+
+        const size_t total_ccw_burst = ccws_per_config_index[config_stream_index];
+        auto action = WriteDataCcwAction::create(BYTE_ORDER__htonl(ccw_offset->offset), BYTE_ORDER__htonl(ccw_offset->size),
+            config_stream_index, total_ccw_burst, shef_file_handle);
+        CHECK_EXPECTED_AS_STATUS(action);
+
         actions.emplace_back(action.release());
     }
 
@@ -2533,7 +2722,9 @@ static hailo_status merge_write_ccw_actions(
 static hailo_status parse_operation(std::vector<ContextSwitchConfigActionPtr> &actions,
     ConfigBufferInfoMap &config_buffer_infos,
     const ProtoHEFOperation &operation_proto,
-    const SupportedFeatures &supported_features)
+    const SupportedFeatures &supported_features,
+    std::shared_ptr<ShefFileHandle> shef_file_handle,
+    bool &const_input_layer_found)
 {
     auto trigger_action = parse_trigger_action(operation_proto.trigger());
     CHECK_EXPECTED_AS_STATUS(trigger_action);
@@ -2554,12 +2745,17 @@ static hailo_status parse_operation(std::vector<ContextSwitchConfigActionPtr> &a
                 (next_action_index == operation_proto.actions_size()) ||
                 (operation_proto.actions(next_action_index).action_case() != ProtoHEFAction::kWriteDataCcw);
             if (is_last_ccw) {
-                auto status = merge_write_ccw_actions(actions, config_buffer_infos, current_write_ccw_actions);
-                CHECK_SUCCESS(status);
+                if (nullptr != shef_file_handle) {
+                    auto status = build_write_ccw_actions(actions, config_buffer_infos, current_write_ccw_actions, shef_file_handle);
+                    CHECK_SUCCESS(status);
+                } else {
+                    auto status = merge_write_ccw_actions(actions, config_buffer_infos, current_write_ccw_actions);
+                    CHECK_SUCCESS(status);
+                }
                 current_write_ccw_actions.clear();
             }
         } else {
-            auto action = parse_action(proto_action, supported_features);
+            auto action = parse_action(proto_action, supported_features, const_input_layer_found);
             CHECK_EXPECTED_AS_STATUS(action);
             actions.emplace_back(action.release());
         }
@@ -2571,30 +2767,32 @@ static hailo_status parse_operation(std::vector<ContextSwitchConfigActionPtr> &a
 
 static Expected<ContextMetadata> parse_operations(
     const google::protobuf::RepeatedPtrField<ProtoHEFOperation> &operations_proto,
-    const SupportedFeatures &supported_features)
+    const SupportedFeatures &supported_features, std::shared_ptr<ShefFileHandle> shef_file_handle)
 {
     std::vector<ContextSwitchConfigActionPtr> actions;
     ConfigBufferInfoMap config_buffer_infos;
+    bool const_input_layer_found = false;
 
     for (const auto &operation_proto : operations_proto) {
-        auto status = parse_operation(actions, config_buffer_infos, operation_proto, supported_features);
+        auto status = parse_operation(actions, config_buffer_infos, operation_proto, supported_features, shef_file_handle,
+            const_input_layer_found);
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
 
-    return ContextMetadata(std::move(actions), std::move(config_buffer_infos));
+    return ContextMetadata(std::move(actions), std::move(config_buffer_infos), const_input_layer_found);
 }
 
 Expected<ContextMetadata> HefUtils::parse_preliminary_context(const ProtoHEFPreliminaryConfig &preliminary_proto,
-    const SupportedFeatures &supported_features)
+    const SupportedFeatures &supported_features, std::shared_ptr<ShefFileHandle> shef_file_handle)
 {
-    return parse_operations(preliminary_proto.operation(), supported_features);
+    return parse_operations(preliminary_proto.operation(), supported_features, shef_file_handle);
 }
 
 Expected<ContextMetadata> HefUtils::parse_single_dynamic_context(const ProtoHEFCoreOpMock &core_op,
-    const ProtoHEFContext &context_proto, uint8_t context_index, const SupportedFeatures &supported_features,
-    const ProtoHEFHwArch &hef_arch)
+    const ProtoHEFContext &context_proto, uint16_t context_index, const SupportedFeatures &supported_features,
+    const ProtoHEFHwArch &hef_arch, std::shared_ptr<ShefFileHandle> shef_file_handle)
 {
-    auto context_metadata_exp = parse_operations(context_proto.operations(), supported_features);
+    auto context_metadata_exp = parse_operations(context_proto.operations(), supported_features, shef_file_handle);
     CHECK_EXPECTED(context_metadata_exp);
     ContextMetadata context_metadata = context_metadata_exp.release();
 
@@ -2644,12 +2842,13 @@ static hailo_status validate_unique_boundary_names(const std::vector<ContextMeta
 }
 
 Expected<std::vector<ContextMetadata>> HefUtils::parse_dynamic_contexts(const ProtoHEFCoreOpMock &core_op, const SupportedFeatures &supported_features,
-    const ProtoHEFHwArch &hef_arch)
+    const ProtoHEFHwArch &hef_arch, std::shared_ptr<ShefFileHandle> shef_file_handle)
 {
     std::vector<ContextMetadata> contexts_metadata;
-    for (uint8_t context_index = 0; context_index < core_op.contexts.size(); context_index++) {
+    for (uint16_t context_index = 0; context_index < core_op.contexts.size(); context_index++) {
         auto &context_proto = core_op.contexts[context_index];
-        auto context_metadata = parse_single_dynamic_context(core_op, context_proto, context_index, supported_features, hef_arch);
+        auto context_metadata = parse_single_dynamic_context(core_op, context_proto, context_index, supported_features,
+            hef_arch, shef_file_handle);
         CHECK_EXPECTED(context_metadata);
         contexts_metadata.emplace_back(context_metadata.release());
     }
@@ -2772,7 +2971,7 @@ Expected<hailo_nms_info_t> HefUtils::parse_proto_nms_info(const ProtoHEFNmsInfo 
 }
 
 Expected<LayerInfo> HefUtils::get_boundary_layer_info(const ProtoHEFCoreOpMock &core_op,
-    const uint8_t context_index, const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features,
+    const uint16_t context_index, const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features,
     const ProtoHEFHwArch &hef_arch)
 {
     // We parse only boundary layers for user usage
@@ -2826,18 +3025,18 @@ static Expected<ConnectedContextInfo> parse_connected_context_info(
         "Failed to parse HEF. Invalid connected_sys_index: {}.", connected_context_proto.sys_index());
     CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(connected_context_proto.engine_id()), HAILO_INVALID_HEF,
         "Failed to parse HEF. Invalid engine_id: {}. in connected_contexts", connected_context_proto.engine_id());
-    CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(connected_context_proto.index()), HAILO_INVALID_HEF,
+    CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(connected_context_proto.index()), HAILO_INVALID_HEF,
         "Failed to parse HEF. Invalid connected_context_index: {}.", connected_context_proto.index());
 
     ConnectedContextInfo connected_context{};
-    connected_context.context_index = static_cast<uint8_t>(connected_context_proto.index());
+    connected_context.context_index = static_cast<uint16_t>(connected_context_proto.index());
     connected_context.stream_index = static_cast<uint8_t>(connected_context_proto.sys_index());
     connected_context.dma_engine_index = static_cast<uint8_t>(connected_context_proto.engine_id());
     return connected_context;
 }
 
 Expected<LayerInfo> HefUtils::get_inter_context_layer_info(const ProtoHEFCoreOpMock &core_op,
-    const uint8_t context_index, const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features)
+    const uint16_t context_index, const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features)
 {
     LayerInfo result = {};
     CHECK_AS_EXPECTED(PROTO__EDGE_LAYER_TYPE__INFO == layer.edge_layer_type(), HAILO_INVALID_HEF, "Inter-context layer can't be mux.");
@@ -2893,7 +3092,7 @@ Expected<LayerInfo> HefUtils::get_inter_context_layer_info(const ProtoHEFCoreOpM
 }
 
 Expected<LayerInfo> HefUtils::get_ddr_layer_info(const ProtoHEFCoreOpMock &core_op,
-    const uint8_t context_index, const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features)
+    const uint16_t context_index, const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features)
 {
     LayerInfo result = {};
     CHECK_AS_EXPECTED(PROTO__EDGE_LAYER_TYPE__INFO == layer.edge_layer_type(), HAILO_INVALID_HEF, "DDR layer can't be mux.");
@@ -3075,7 +3274,7 @@ Expected<std::vector<WriteMemoryInfo>> Hef::Impl::create_single_context_core_op_
                     break;
                 }
                 case ProtoHEFAction::kWriteDataCcw: {
-                    auto config_buffer = parse_ccw_buffer(action.write_data_ccw().data());
+                    auto config_buffer = parse_ccw_buffer(action.write_data_ccw().data()); // TODO: make this not supported in sHEF
                     CHECK_EXPECTED(config_buffer);
                     config_buffers.emplace_back(config_buffer.release());
                     break;
@@ -3092,6 +3291,12 @@ Expected<std::vector<WriteMemoryInfo>> Hef::Impl::create_single_context_core_op_
                     write_memory_info.data = data_buff.release();
                     config_buffers.emplace_back(std::move(write_memory_info));
                     break;
+                }
+                case ProtoHEFAction::kSwitchLcuBatch: {
+                    LOGGER__ERROR("Parsing error. Context-switch optimization related actions are not supported over Ethernet. "
+                        "If you use the Ethernet interface, please disable context-switch optimizations in the Dataflow Compiler (SDK) and then re-create the HEF. "
+                        "See the Dataflow Compiler user guide for more information.");
+                    return make_unexpected(HAILO_INVALID_HEF);
                 }
                 case ProtoHEFAction::kAllowInputDataflow: {
                 case ProtoHEFAction::kWaitForModuleConfigDone:
@@ -3120,6 +3325,11 @@ Expected<std::vector<WriteMemoryInfo>> Hef::Impl::create_single_context_core_op_
 ProtoHEFHwArch Hef::Impl::get_device_arch()
 {
     return m_header.hw_arch();
+}
+
+std::shared_ptr<ShefFileHandle> Hef::Impl::get_shef_file_handle()
+{
+    return m_shef_file_handle;
 }
 
 Expected<float64_t> Hef::Impl::get_bottleneck_fps(const std::string &net_group_name)

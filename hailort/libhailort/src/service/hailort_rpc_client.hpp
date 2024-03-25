@@ -40,9 +40,9 @@ using callback_idx_t = uint32_t;
 
 class ClientContextWithTimeout : public grpc::ClientContext {
 public:
-    ClientContextWithTimeout()
+    ClientContextWithTimeout(const std::chrono::milliseconds context_timeout = CONTEXT_TIMEOUT)
     {
-        set_deadline(std::chrono::system_clock::now() + CONTEXT_TIMEOUT);
+        set_deadline(std::chrono::system_clock::now() + context_timeout);
     }
 };
 
@@ -98,6 +98,7 @@ public:
     hailo_status ConfiguredNetworkGroup_set_nms_score_threshold(const NetworkGroupIdentifier &identifier, const std::string &edge_name, float32_t nms_score_th);
     hailo_status ConfiguredNetworkGroup_set_nms_iou_threshold(const NetworkGroupIdentifier &identifier, const std::string &edge_name, float32_t iou_th);
     hailo_status ConfiguredNetworkGroup_set_nms_max_bboxes_per_class(const NetworkGroupIdentifier &identifier, const std::string &edge_name, uint32_t max_bboxes);
+    hailo_status ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size(const NetworkGroupIdentifier &identifier, const std::string &edge_name, uint32_t max_accumulated_mask_size);
     Expected<std::vector<std::string>> ConfiguredNetworkGroup_get_stream_names_from_vstream_name(const NetworkGroupIdentifier &identifier, const std::string &vstream_name);
     Expected<std::vector<std::string>> ConfiguredNetworkGroup_get_vstream_names_from_stream_name(const NetworkGroupIdentifier &identifier, const std::string &stream_name);
     hailo_status ConfiguredNetworkGroup_infer_async(const NetworkGroupIdentifier &identifier,
@@ -150,6 +151,7 @@ public:
     hailo_status OutputVStream_set_nms_score_threshold(const VStreamIdentifier &identifier, float32_t threshold);
     hailo_status OutputVStream_set_nms_iou_threshold(const VStreamIdentifier &identifier, float32_t threshold);
     hailo_status OutputVStream_set_nms_max_proposals_per_class(const VStreamIdentifier &identifier, uint32_t max_proposals_per_class);
+    hailo_status OutputVStream_set_nms_max_accumulated_mask_size(const VStreamIdentifier &identifier, uint32_t max_accumulated_mask_size);
 
 private:
     void VDevice_convert_identifier_to_proto(const VDeviceIdentifier &identifier, ProtoVDeviceIdentifier *proto_identifier);

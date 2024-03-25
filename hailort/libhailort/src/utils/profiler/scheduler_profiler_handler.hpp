@@ -46,7 +46,8 @@ public:
     virtual void handle_trace(const FrameDequeueH2DTrace&) override;
     virtual void handle_trace(const FrameDequeueD2HTrace&) override;
     virtual void handle_trace(const FrameEnqueueD2HTrace&) override;
-    virtual void handle_trace(const SwitchCoreOpTrace&) override;
+    virtual void handle_trace(const ActivateCoreOpTrace&) override;
+    virtual void handle_trace(const DeactivateCoreOpTrace&) override;
     virtual void handle_trace(const AddDeviceTrace&) override;
     virtual void handle_trace(const SetCoreOpTimeoutTrace&) override;
     virtual void handle_trace(const SetCoreOpThresholdTrace&) override;
@@ -54,6 +55,7 @@ public:
     virtual void handle_trace(const OracleDecisionTrace&) override;
     virtual void handle_trace(const DumpProfilerStateTrace&) override;
     virtual void handle_trace(const InitProfilerProtoTrace&) override;
+    virtual void handle_trace(const HefLoadedTrace&) override;
 
 private:
     void log(JSON json);

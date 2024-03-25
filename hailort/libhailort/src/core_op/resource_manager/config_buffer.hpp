@@ -13,7 +13,7 @@
 
 #include "hailo/buffer.hpp"
 
-#include "vdma/memory/vdma_buffer.hpp"
+#include "vdma/memory/vdma_edge_layer.hpp"
 
 
 namespace hailort {
@@ -48,20 +48,20 @@ public:
     CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info() const;
 
 private:
-    ConfigBuffer(std::unique_ptr<vdma::VdmaBuffer> &&buffer, vdma::ChannelId channel_id, size_t total_buffer_size);
+    ConfigBuffer(std::unique_ptr<vdma::VdmaEdgeLayer> &&buffer, vdma::ChannelId channel_id, size_t total_buffer_size);
 
     hailo_status write_inner(const MemoryView &data);
 
-    static Expected<std::unique_ptr<vdma::VdmaBuffer>> create_sg_buffer(HailoRTDriver &driver,
+    static Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> create_sg_buffer(HailoRTDriver &driver,
         vdma::ChannelId channel_id, const std::vector<uint32_t> &cfg_sizes);
-    static Expected<std::unique_ptr<vdma::VdmaBuffer>> create_ccb_buffer(HailoRTDriver &driver,
+    static Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> create_ccb_buffer(HailoRTDriver &driver,
         uint32_t buffer_size);
-    static Expected<std::unique_ptr<vdma::VdmaBuffer>> create_buffer(HailoRTDriver &driver, vdma::ChannelId channel_id,
+    static Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> create_buffer(HailoRTDriver &driver, vdma::ChannelId channel_id,
         const std::vector<uint32_t> &cfg_sizes, const uint32_t buffer_size);
 
     static bool should_use_ccb(HailoRTDriver &driver);
 
-    std::unique_ptr<vdma::VdmaBuffer> m_buffer;
+    std::unique_ptr<vdma::VdmaEdgeLayer> m_buffer;
     vdma::ChannelId m_channel_id;
     const size_t m_total_buffer_size; 
     size_t m_acc_buffer_offset;

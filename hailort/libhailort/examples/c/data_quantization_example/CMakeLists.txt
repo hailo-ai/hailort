@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.0.0)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
-find_package(HailoRT 4.16.2 EXACT REQUIRED)
+find_package(HailoRT 4.17.0 EXACT REQUIRED)
 
 SET_SOURCE_FILES_PROPERTIES(data_quantization_example.c PROPERTIES LANGUAGE C)
 

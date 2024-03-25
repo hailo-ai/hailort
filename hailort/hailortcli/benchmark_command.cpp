@@ -98,10 +98,10 @@ hailo_status BenchmarkCommand::execute()
         std::cout << "FPS     (hw_only)                 = " << hw_only_res.fps().value() <<std::endl;
         std::cout << "        (streaming)               = " << streaming_res->fps().value() <<std::endl;
         if (auto hw_latency = latency_res->hw_latency()) {
-            std::cout << "Latency (hw)                      = " << InferResultsFormatUtils::latency_result_to_ms(hw_latency.value()) << " ms" << std::endl;
+            std::cout << "Latency (hw)                      = " << InferStatsPrinter::latency_result_to_ms(hw_latency.value()) << " ms" << std::endl;
         }
         if (auto overall_latency = latency_res->overall_latency()) {
-            std::cout << "        (overall)                 = " << InferResultsFormatUtils::latency_result_to_ms(overall_latency.value()) << " ms" << std::endl;
+            std::cout << "        (overall)                 = " << InferStatsPrinter::latency_result_to_ms(overall_latency.value()) << " ms" << std::endl;
         }
     }
     if (!m_not_measure_power) {

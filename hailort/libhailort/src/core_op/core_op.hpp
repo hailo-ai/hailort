@@ -20,10 +20,10 @@
 #define _HAILO_CORE_OP_HPP_
 
 #include "hailo/network_group.hpp"
+#include "hailo/device.hpp"
 
 #include "common/latency_meter.hpp"
 
-#include "hef/hef_internal.hpp"
 #include "hef/core_op_metadata.hpp"
 #include "control_protocol.h"
 #include "core_op/active_core_op_holder.hpp"
@@ -80,7 +80,7 @@ public:
     hailo_status activate(uint16_t dynamic_batch_size = CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE);
     hailo_status deactivate();
 
-    // Shutdown the core-op, make sure all ongoing transfers are completed with status HAILO_STREAM_ABORTED_BY_USER
+    // Shutdown the core-op, make sure all ongoing transfers are completed with status HAILO_STREAM_ABORT
     virtual hailo_status shutdown() = 0;
 
     virtual hailo_status activate_impl(uint16_t dynamic_batch_size = CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE) = 0;
@@ -155,7 +155,7 @@ private:
 
     // Launch write_async/read_async on all streams with wrapped callback.
     // We remove all transfer that was launched successfully from transfers in order to call those callback
-    // with HAILO_STREAM_ABORTED_BY_USER status on the case of a failure.
+    // with HAILO_STREAM_ABORT status on the case of a failure.
     hailo_status infer_async_impl(std::unordered_map<std::string, TransferRequest> &transfers,
         std::shared_ptr<OngoingInferState> state,
          TransferDoneCallback done_callback);

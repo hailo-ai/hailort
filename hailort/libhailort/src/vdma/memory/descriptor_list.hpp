@@ -17,8 +17,8 @@
 
 #include "vdma/channel/channel_id.hpp"
 #include "vdma/memory/mapped_buffer.hpp"
+#include "vdma/driver/hailort_driver.hpp"
 
-#include "os/hailort_driver.hpp"
 #include "os/mmap_buffer.hpp"
 
 
@@ -26,14 +26,14 @@ namespace hailort {
 namespace vdma {
 
 
-#define MAX_DESCS_COUNT (64 * 1024u)
-#define MIN_DESCS_COUNT (2u)
+#define MAX_SG_DESCS_COUNT (64 * 1024u)
+#define MIN_SG_DESCS_COUNT (2u)
 #define DEFAULT_DESC_COUNT (64 * 1024u)
 
-static_assert(is_powerof2(MAX_DESCS_COUNT), "MAX_DESCS_COUNT must be a power of 2");
-static_assert(is_powerof2(MIN_DESCS_COUNT), "MIN_DESCS_COUNT must be a power of 2");
+static_assert(is_powerof2(MAX_SG_DESCS_COUNT), "MAX_SG_DESCS_COUNT must be a power of 2");
+static_assert(is_powerof2(MIN_SG_DESCS_COUNT), "MIN_SG_DESCS_COUNT must be a power of 2");
 static_assert(is_powerof2(DEFAULT_DESC_COUNT), "DEFAULT_DESC_COUNT must be a power of 2");
-static_assert(DEFAULT_DESC_COUNT <= MAX_DESCS_COUNT && DEFAULT_DESC_COUNT >= MIN_DESCS_COUNT,
+static_assert(DEFAULT_DESC_COUNT <= MAX_SG_DESCS_COUNT && DEFAULT_DESC_COUNT >= MIN_SG_DESCS_COUNT,
     "DEFAULT_DESC_COUNT not in range");
 
 // From PLDA's vDMA controller reference:
@@ -42,16 +42,16 @@ static_assert(DEFAULT_DESC_COUNT <= MAX_DESCS_COUNT && DEFAULT_DESC_COUNT >= MIN
 // - G_PAGE_SIZE_MAX dictates the maximum desc page size:
 //     max_page_size = 2 ^ (G_PAGE_SIZE_MAX - 1)
 //   In our case max_page_size = 2 ^ (13 - 1) = 4096
-static constexpr uint16_t MIN_DESC_PAGE_SIZE = 64;
-static constexpr uint16_t MAX_DESC_PAGE_SIZE = 4096;
-static constexpr uint16_t DEFAULT_DESC_PAGE_SIZE = 512;
+static constexpr uint16_t MIN_SG_PAGE_SIZE = 64;
+static constexpr uint16_t MAX_SG_PAGE_SIZE = 4096;
+static constexpr uint16_t DEFAULT_SG_PAGE_SIZE = 512;
 
-static_assert(is_powerof2(MIN_DESC_PAGE_SIZE), "MIN_DESC_PAGE_SIZE must be a power of 2");
-static_assert(MIN_DESC_PAGE_SIZE > 0, "MIN_DESC_PAGE_SIZE must be larger then 0");
-static_assert(is_powerof2(MAX_DESC_PAGE_SIZE), "MAX_DESC_PAGE_SIZE must be a power of 2");
-static_assert(MAX_DESC_PAGE_SIZE > 0, "MAX_DESC_PAGE_SIZE must be larger then 0");
-static_assert(is_powerof2(DEFAULT_DESC_PAGE_SIZE), "DEFAULT_DESC_PAGE_SIZE must be a power of 2");
-static_assert(DEFAULT_DESC_PAGE_SIZE > 0, "DEFAULT_DESC_PAGE_SIZE must be larger then 0");
+static_assert(is_powerof2(MIN_SG_PAGE_SIZE), "MIN_SG_PAGE_SIZE must be a power of 2");
+static_assert(MIN_SG_PAGE_SIZE > 0, "MIN_SG_PAGE_SIZE must be larger then 0");
+static_assert(is_powerof2(MAX_SG_PAGE_SIZE), "MAX_SG_PAGE_SIZE must be a power of 2");
+static_assert(MAX_SG_PAGE_SIZE > 0, "MAX_SG_PAGE_SIZE must be larger then 0");
+static_assert(is_powerof2(DEFAULT_SG_PAGE_SIZE), "DEFAULT_SG_PAGE_SIZE must be a power of 2");
+static_assert(DEFAULT_SG_PAGE_SIZE > 0, "DEFAULT_SG_PAGE_SIZE must be larger then 0");
 
 
 static constexpr auto DESCRIPTOR_STATUS_MASK = 0xFF;
@@ -86,25 +86,6 @@ struct VdmaDescriptor
 };
 
 static_assert(SIZE_OF_SINGLE_DESCRIPTOR == sizeof(VdmaDescriptor), "Invalid size of descriptor");
-
-enum class InterruptsDomain
-{
-    NONE    = 0,
-    DEVICE  = 1 << 0,
-    HOST    = 1 << 1,
-    BOTH    = DEVICE | HOST
-};
-
-inline InterruptsDomain operator|(InterruptsDomain a, InterruptsDomain b)
-{
-    return static_cast<InterruptsDomain>(static_cast<int>(a) | static_cast<int>(b));
-}
-
-inline InterruptsDomain& operator|=(InterruptsDomain &a, InterruptsDomain b)
-{
-    a = a | b;
-    return a;
-}
 
 inline bool host_interuptes_enabled(InterruptsDomain interrupts_domain)
 {
@@ -164,14 +145,14 @@ public:
 
     // Map descriptors starting at offset to the start of buffer, wrapping around the descriptor list as needed
     // On hailo8, we allow configuring buffer without specific channel index (default is INVALID_VDMA_CHANNEL_INDEX).
-    hailo_status configure_to_use_buffer(MappedBuffer& buffer, ChannelId channel_id, uint32_t starting_desc = 0);
+    hailo_status configure_to_use_buffer(MappedBuffer& buffer, size_t buffer_size, size_t buffer_offset,
+        ChannelId channel_id, uint32_t starting_desc = 0);
     // All descritors are initialized to have size of m_desc_page_size - so all we do is set the last descritor for the
     // Interrupt - and then after transfer has finished clear the previously used first and last decsriptors.
     // This saves us write/ reads to the desscriptor list which is DMA memory.
     Expected<uint16_t> program_last_descriptor(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
         size_t desc_offset);
-    void program_single_descriptor(VdmaDescriptor &descriptor, uint16_t page_size, InterruptsDomain interrupts_domain);
-    void clear_descriptor(const size_t desc_index);
+    void program_single_descriptor(size_t desc_index, uint16_t page_size, InterruptsDomain interrupts_domain);
 
     uint32_t descriptors_in_buffer(size_t buffer_size) const;
     static uint32_t descriptors_in_buffer(size_t buffer_size, uint16_t desc_page_size);

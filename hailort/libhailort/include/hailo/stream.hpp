@@ -43,7 +43,7 @@ public:
         /**
          * Status of the async transfer.
          * - ::HAILO_SUCCESS - When transfer is complete successfully.
-         * - ::HAILO_STREAM_ABORTED_BY_USER - The transfer was canceled (can happen after network deactivation).
+         * - ::HAILO_STREAM_ABORT - The transfer was canceled (can happen after network deactivation).
          * - Any other ::hailo_status on unexpected errors.
          */
         hailo_status status;
@@ -223,9 +223,6 @@ public:
      */
     virtual hailo_status write_async(const void *buffer, size_t size, const TransferDoneCallback &user_callback) = 0;
 
-    // The usage of BufferPtr for async API isn't currently supported and is for internal use only.
-    virtual hailo_status write_async(BufferPtr buffer, const TransferDoneCallback &user_callback) = 0;
-
     /**
      * @returns A ::hailo_stream_info_t object containing the stream's info.
      */
@@ -290,7 +287,7 @@ public:
         /**
          * Status of the async transfer.
          * - ::HAILO_SUCCESS - When transfer is complete successfully.
-         * - ::HAILO_STREAM_ABORTED_BY_USER - The transfer was canceled (can happen after network deactivation).
+         * - ::HAILO_STREAM_ABORT - The transfer was canceled (can happen after network deactivation).
          * - Any other ::hailo_status on unexpected errors.
          */
         hailo_status status;
@@ -504,9 +501,6 @@ public:
      *       multiple async transfers.
      */
     virtual hailo_status read_async(void *buffer, size_t size, const TransferDoneCallback &user_callback) = 0;
-
-    // The usage of BufferPtr for async API isn't currently supported and is for internal use only.
-    virtual hailo_status read_async(BufferPtr buffer, const TransferDoneCallback &user_callback) = 0;
 
     // get_network_group_activated_event is same as this function
     virtual EventPtr &get_core_op_activated_event() = 0;

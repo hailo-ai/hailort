@@ -45,6 +45,7 @@ service ProtoHailoRtRpc {
     rpc ConfiguredNetworkGroup_set_nms_score_threshold(ConfiguredNetworkGroup_set_nms_score_threshold_Request) returns (ConfiguredNetworkGroup_set_nms_score_threshold_Reply) {}
     rpc ConfiguredNetworkGroup_set_nms_iou_threshold(ConfiguredNetworkGroup_set_nms_iou_threshold_Request) returns (ConfiguredNetworkGroup_set_nms_iou_threshold_Reply) {}
     rpc ConfiguredNetworkGroup_set_nms_max_bboxes_per_class(ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Request) returns (ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Reply) {}
+    rpc ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size(ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Request) returns (ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Reply) {}
 
 
     rpc InputVStreams_create (VStream_create_Request) returns (VStreams_create_Reply) {}
@@ -79,6 +80,7 @@ service ProtoHailoRtRpc {
     rpc OutputVStream_set_nms_score_threshold (VStream_set_nms_score_threshold_Request) returns (VStream_set_nms_score_threshold_Reply) {}
     rpc OutputVStream_set_nms_iou_threshold (VStream_set_nms_iou_threshold_Request) returns (VStream_set_nms_iou_threshold_Reply) {}
     rpc OutputVStream_set_nms_max_proposals_per_class (VStream_set_nms_max_proposals_per_class_Request) returns (VStream_set_nms_max_proposals_per_class_Reply) {}
+    rpc OutputVStream_set_nms_max_accumulated_mask_size (VStream_set_nms_max_accumulated_mask_size_Request) returns (VStream_set_nms_max_accumulated_mask_size_Reply) {}
 }
 
 message empty {}
@@ -117,7 +119,6 @@ message ProtoTransferRequest {
     string stream_name = 1;
     uint32 direction = 2;
     bytes data = 3;
-    uint32 size = 4;
     uint32 cb_idx = 5;
 }
 
@@ -301,7 +302,7 @@ message ProtoNamedNetworkParams {
 message ProtoNmsShape {
     uint32 number_of_classes = 1;
     uint32 max_bbox_per_class = 2;
-    uint32 max_mask_size = 3;
+    uint32 max_accumulated_mask_size = 3;
 }
 
 message ProtoVStreamInfo {
@@ -447,7 +448,8 @@ message ProtoYoloxPostProcessConfig {
 
 message ProtoYoloV5SegPostProcessConfig {
     double mask_threshold = 1;
-    string layer_name = 2;
+    uint32 max_accumulated_mask_size  = 2;
+    string layer_name = 3;
 }
 
 message ProtoOpMetadata {
@@ -773,6 +775,16 @@ message ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Reply {
     uint32 status = 1;
 }
 
+message ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    string edge_name = 2;
+    uint32 max_accumulated_mask_size = 3;
+}
+
+message ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Reply {
+    uint32 status = 1;
+}
+
 message ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Request {
     ProtoConfiguredNetworkGroupIdentifier identifier = 1;
     string vstream_name = 2;
@@ -950,5 +962,14 @@ message VStream_set_nms_max_proposals_per_class_Request {
 }
 
 message VStream_set_nms_max_proposals_per_class_Reply {
+    uint32 status = 1;
+}
+
+message VStream_set_nms_max_accumulated_mask_size_Request {
+    ProtoVStreamIdentifier identifier = 1;
+    uint32 max_accumulated_mask_size = 2;
+}
+
+message VStream_set_nms_max_accumulated_mask_size_Reply {
     uint32 status = 1;
 }

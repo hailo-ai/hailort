@@ -39,7 +39,7 @@ Expected<VdmaConfigActivatedCoreOp> VdmaConfigActivatedCoreOp::create(
     VdmaConfigActivatedCoreOp object(core_op_name, network_group_params, dynamic_batch_size, input_streams, output_streams,
         std::move(resources_manager), active_core_op_holder, std::move(core_op_activated_event),
         deactivation_time_accumulator, core_op, status);
-    if (HAILO_STREAM_ABORTED_BY_USER == status) {
+    if (HAILO_STREAM_ABORT == status) {
         return make_unexpected(status);
     }
     CHECK_SUCCESS_AS_EXPECTED(status);
@@ -74,7 +74,7 @@ VdmaConfigActivatedCoreOp::VdmaConfigActivatedCoreOp(
     
     // We know core_op is a VdmaConfigCoreOp
     status = core_op.activate_impl(dynamic_batch_size);
-    if (HAILO_STREAM_ABORTED_BY_USER == status) {
+    if (HAILO_STREAM_ABORT == status) {
         LOGGER__INFO("Core-op activation failed because it was aborted by user");
         return;
     }

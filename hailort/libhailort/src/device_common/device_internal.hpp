@@ -23,7 +23,6 @@
 #include "hailo/hailort.h"
 
 #include "d2h_event_queue.hpp"
-#include "hef/hef_internal.hpp"
 
 #include "firmware_header.h"
 #include "firmware_header_utils.h"
@@ -42,6 +41,23 @@ namespace hailort
 #define PART_NUMBER_PREFIX_LENGTH (11)
 
 #define CLOCKS_IN_MHZ (1000 * 1000)
+
+enum class HEFHwArch // Must be aligned to ProtoHEFHwArch
+{
+    HW_ARCH__HAILO8 = 0,
+    HW_ARCH__HAILO8P = 1,
+    HW_ARCH__HAILO8R = 2,
+    HW_ARCH__HAILO8L = 3,
+    HW_ARCH__HAILO15H = 103,
+    HW_ARCH__HAILO15M = 4,
+
+    HW_ARCH__SAGE_A0 = 100,
+    HW_ARCH__SAGE_B0 = 101,
+    HW_ARCH__PAPRIKA_B0 = 102,
+    HW_ARCH__GINGER = 104,
+    HW_ARCH__LAVENDER = 105,
+    HW_ARCH__PLUTO = 106,
+};
 
 class DeviceBase : public Device
 {
@@ -81,7 +97,7 @@ public:
     virtual Expected<Buffer> read_user_config() override;
     virtual hailo_status write_user_config(const MemoryView &buffer) override;
     virtual hailo_status erase_user_config() override;
-    static hailo_device_architecture_t hef_arch_to_device_arch(ProtoHEFHwArch hef_arch);
+    static hailo_device_architecture_t hef_arch_to_device_arch(HEFHwArch hef_arch);
 
     virtual Expected<hailo_device_architecture_t> get_architecture() const override
     {
@@ -101,6 +117,7 @@ protected:
     // Special value to signal the d2h notification thread to terminate
     static const uint32_t TERMINATE_EVENT_ID = std::numeric_limits<uint32_t>::max();
     
+    virtual void shutdown_core_ops() = 0;
     virtual hailo_reset_device_mode_t get_default_reset_mode() = 0;
     virtual hailo_status reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type) = 0;
     virtual Expected<D2H_EVENT_MESSAGE_t> read_notification() = 0;
@@ -126,8 +143,8 @@ private:
         firmware_version_t *min_supported_binary_version, FW_BINARY_TYPE_t fw_binary_type);
     static hailo_status validate_fw_version_for_platform(const hailo_device_identity_t &board_info,
         firmware_version_t fw_version, FW_BINARY_TYPE_t fw_binary_type);
-    static bool is_hef_compatible(hailo_device_architecture_t device_arch, ProtoHEFHwArch hw_arch);
-    static void check_clock_rate_for_hailo8(uint32_t clock_rate, ProtoHEFHwArch hef_hw_arch);
+    static bool is_hef_compatible(hailo_device_architecture_t device_arch, HEFHwArch hw_arch);
+    static void check_clock_rate_for_hailo8(uint32_t clock_rate, HEFHwArch hef_hw_arch);
     hailo_status store_sensor_control_buffers(const std::vector<SENSOR_CONFIG__operation_cfg_t> &control_buffers, uint32_t section_index, hailo_sensor_types_t sensor_type,
         uint32_t reset_config_size, uint16_t config_height, uint16_t config_width, uint16_t config_fps, const std::string &config_name);
     virtual void notification_fetch_thread(std::shared_ptr<NotificationThreadSharedParams> params);
@@ -140,6 +157,7 @@ private:
 
     d2h_notification_callback_t m_d2h_callbacks[HAILO_NOTIFICATION_ID_COUNT];
     std::mutex m_callbacks_lock;
+    bool m_is_shutdown_core_ops_called;
 };
 
 } /* namespace hailort */

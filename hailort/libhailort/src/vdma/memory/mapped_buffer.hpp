@@ -18,11 +18,11 @@
  *         so we need to allocate the pages in driver.
  **/
 
-#ifndef _HAILO_DMA_MAPPED_BUFFER_HPP_
-#define _HAILO_DMA_MAPPED_BUFFER_HPP_
+#ifndef _HAILO_VDMA_MAPPED_BUFFER_HPP_
+#define _HAILO_VDMA_MAPPED_BUFFER_HPP_
 
 #include "hailo/expected.hpp"
-#include "os/hailort_driver.hpp"
+#include "vdma/driver/hailort_driver.hpp"
 #include "vdma/memory/dma_able_buffer.hpp"
 
 #include <memory>
@@ -98,4 +98,4 @@ private:
 } /* namespace vdma */
 } /* namespace hailort */
 
-#endif /* _HAILO_DMA_MAPPED_BUFFER_HPP_ */
+#endif /* _HAILO_VDMA_MAPPED_BUFFER_HPP_ */

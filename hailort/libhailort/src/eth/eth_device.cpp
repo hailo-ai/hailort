@@ -20,6 +20,7 @@
 #include "eth/udp.hpp"
 #include "device_common/control.hpp"
 #include "network_group/network_group_internal.hpp"
+#include "hef/hef_internal.hpp"
 
 #include <stdlib.h>
 #include <errno.h>
@@ -302,6 +303,17 @@ void EthernetDevice::increment_control_sequence()
 hailo_reset_device_mode_t EthernetDevice::get_default_reset_mode()
 {
     return HAILO_RESET_DEVICE_MODE_CHIP;
+}
+
+// TODO - HRT-13234, move to DeviceBase
+void EthernetDevice::shutdown_core_ops()
+{
+    for (auto core_op : m_core_ops) {
+        auto status = core_op->shutdown();
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to shutdown core op with status {}", status);
+        }
+    }
 }
 
 hailo_status EthernetDevice::reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type)

@@ -20,6 +20,15 @@
 namespace hailort
 {
 
+struct BounceBuffer {
+    Buffer buffer_storage;
+    DmaMappedBuffer mapping;
+};
+using BounceBufferPtr = std::shared_ptr<BounceBuffer>;
+
+using BounceBufferQueue = SafeQueue<BounceBufferPtr>;
+using BounceBufferQueuePtr = std::unique_ptr<BounceBufferQueue>;
+
 class VdmaInputStream : public AsyncInputStreamBase {
 public:
 
@@ -28,7 +37,8 @@ public:
         EventPtr core_op_activated_event);
 
     VdmaInputStream(VdmaDevice &device, vdma::BoundaryChannelPtr channel, const LayerInfo &edge_layer,
-                    EventPtr core_op_activated_event, hailo_stream_interface_t stream_interface, hailo_status &status);
+                    EventPtr core_op_activated_event, hailo_stream_interface_t stream_interface,
+                    BounceBufferQueuePtr &&bounce_buffers_pool, hailo_status &status);
     virtual ~VdmaInputStream();
 
     virtual hailo_stream_interface_t get_interface() const override;
@@ -42,16 +52,12 @@ private:
     virtual hailo_status activate_stream_impl() override;
     virtual hailo_status deactivate_stream_impl() override;
 
-    static std::unique_ptr<StreamBufferPool> init_dma_bounce_buffer_pool(vdma::BoundaryChannelPtr channel,
-        const LayerInfo &edge_layer, hailo_status &status);
+    static Expected<BounceBufferQueuePtr> init_dma_bounce_buffer_pool(VdmaDevice &device,
+        vdma::BoundaryChannelPtr channel, const LayerInfo &edge_layer);
     Expected<TransferRequest> align_transfer_request(TransferRequest &&transfer_request);
 
     VdmaDevice &m_device;
-
-    // Buffer pool for DMA able bounce buffers
-    // TODO HRT-12542- create new class for bounce buffers
-    std::mutex m_dma_pool_mutex;
-    std::unique_ptr<StreamBufferPool> m_dma_bounce_buffer_pool;
+    BounceBufferQueuePtr m_bounce_buffers_pool;
 
     vdma::BoundaryChannelPtr m_channel;
     const hailo_stream_interface_t m_interface;

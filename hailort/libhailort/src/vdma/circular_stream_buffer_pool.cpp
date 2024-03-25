@@ -8,6 +8,7 @@
 
 #include "circular_stream_buffer_pool.hpp"
 #include "vdma/memory/descriptor_list.hpp"
+#include "utils/buffer_storage.hpp"
 
 #include "utils.h"
 
@@ -15,36 +16,37 @@ namespace hailort
 {
 
 Expected<std::unique_ptr<CircularStreamBufferPool>> CircularStreamBufferPool::create(VdmaDevice &device,
-    HailoRTDriver::DmaDirection direction, size_t desc_page_size, size_t descs_count, size_t transfer_size)
+    hailo_dma_buffer_direction_t direction, size_t desc_page_size, size_t descs_count, size_t transfer_size)
 {
     // TODO: HRT-11220 calculate desc_count/desc_page_size base on transfer_size and queue_size
-    CHECK_AS_EXPECTED(is_powerof2(descs_count), HAILO_INTERNAL_FAILURE, "descs_count {} must be power of 2", descs_count);
-    CHECK_AS_EXPECTED(is_powerof2(desc_page_size), HAILO_INTERNAL_FAILURE, "desc_page_size {} must be power of 2",
+    CHECK(is_powerof2(descs_count), HAILO_INTERNAL_FAILURE, "descs_count {} must be power of 2", descs_count);
+    CHECK(is_powerof2(desc_page_size), HAILO_INTERNAL_FAILURE, "desc_page_size {} must be power of 2",
         desc_page_size);
 
     const auto buffer_size = desc_page_size * descs_count;
-    CHECK_AS_EXPECTED(transfer_size < buffer_size, HAILO_INTERNAL_FAILURE, "Transfer size {} must be smaller than buffer size {}",
+    CHECK(transfer_size < buffer_size, HAILO_INTERNAL_FAILURE, "Transfer size {} must be smaller than buffer size {}",
         transfer_size, buffer_size);
 
-    auto mapped_buffer = allocate_buffer(device, direction, buffer_size);
-    CHECK_EXPECTED(mapped_buffer);
+    TRY(auto base_buffer, allocate_buffer(device, buffer_size));
+    TRY(auto mapping, DmaMappedBuffer::create(device, base_buffer.data(), base_buffer.size(), direction));
 
     auto circular_buffer_pool = make_unique_nothrow<CircularStreamBufferPool>(desc_page_size, descs_count,
-        transfer_size, mapped_buffer.release());
-    CHECK_NOT_NULL_AS_EXPECTED(circular_buffer_pool, HAILO_OUT_OF_HOST_MEMORY);
+        transfer_size, std::move(base_buffer), std::move(mapping));
+    CHECK_NOT_NULL(circular_buffer_pool, HAILO_OUT_OF_HOST_MEMORY);
 
     return circular_buffer_pool;
 }
 
 CircularStreamBufferPool::CircularStreamBufferPool(size_t desc_page_size, size_t descs_count, size_t transfer_size,
-    BufferPtr &&mapped_buffer) :
+    Buffer &&base_buffer, DmaMappedBuffer &&mappings) :
         m_desc_page_size(desc_page_size),
         m_transfer_size(transfer_size),
-        m_mapped_buffer(std::move(mapped_buffer)),
+        m_base_buffer(std::move(base_buffer)),
+        m_mappings(std::move(mappings)),
         m_next_enqueue_desc_offset(0)
 {
     assert(is_powerof2(descs_count) && (descs_count > 0));
-    assert(m_mapped_buffer->size() == (m_desc_page_size * descs_count));
+    assert(m_base_buffer.size() == (m_desc_page_size * descs_count));
     CB_INIT(m_queue, descs_count);
     m_queue.head = static_cast<int>(descs_count - 1);
 }
@@ -67,7 +69,7 @@ Expected<TransferBuffer> CircularStreamBufferPool::dequeue()
     const size_t offset_in_buffer = CB_TAIL(m_queue) * m_desc_page_size;
     CB_DEQUEUE(m_queue, descs_in_transfer());
     return TransferBuffer {
-        m_mapped_buffer,
+        MemoryView(m_base_buffer),
         m_transfer_size,
         offset_in_buffer
     };
@@ -78,7 +80,7 @@ hailo_status CircularStreamBufferPool::enqueue(TransferBuffer &&buffer_info)
     const size_t descs_required = descs_in_transfer();
     const size_t descs_available = CB_AVAIL(m_queue, CB_HEAD(m_queue), CB_TAIL(m_queue));
     CHECK(descs_available >= descs_required, HAILO_INTERNAL_FAILURE, "Can enqueue without previous dequeue");
-    CHECK(buffer_info.base_buffer() == m_mapped_buffer, HAILO_INTERNAL_FAILURE, "Got the wrong buffer");
+    CHECK(buffer_info.base_buffer().data() == m_base_buffer.data(), HAILO_INTERNAL_FAILURE, "Got the wrong buffer");
     CHECK(buffer_info.size() == m_transfer_size, HAILO_INTERNAL_FAILURE, "Got invalid buffer size {}, expected {}",
         buffer_info.size(), m_transfer_size);
 
@@ -99,24 +101,14 @@ void CircularStreamBufferPool::reset_pointers()
     m_next_enqueue_desc_offset = 0;
 }
 
-Expected<BufferPtr> CircularStreamBufferPool::allocate_buffer(VdmaDevice &device,
-    HailoRTDriver::DmaDirection direction, size_t size)
+Expected<Buffer> CircularStreamBufferPool::allocate_buffer(VdmaDevice &device, size_t size)
 {
-    auto dma_able_buffer = vdma::DmaAbleBuffer::create_by_allocation(size, device.get_driver());
-    CHECK_EXPECTED(dma_able_buffer);
+    TRY(auto dma_able_buffer, vdma::DmaAbleBuffer::create_by_allocation(size, device.get_driver()));
 
-    auto dma_storage = make_shared_nothrow<DmaStorage>(dma_able_buffer.release());
+    auto dma_storage = make_shared_nothrow<DmaStorage>(std::move(dma_able_buffer));
     CHECK_NOT_NULL_AS_EXPECTED(dma_storage, HAILO_OUT_OF_HOST_MEMORY);
 
-    // TODO HRT-11595: We map the buffer here to avoid mapping buffer during descriptors list creation (it cause
-    // deadlock on the linux driver). After HRT-11595, we won't need to call dma_map.
-    auto map_result = dma_storage->dma_map(device, to_hailo_dma_direction(direction));
-    CHECK_EXPECTED(map_result);
-
-    auto mapped_buffer = make_shared_nothrow<Buffer>(std::move(dma_storage));
-    CHECK_NOT_NULL_AS_EXPECTED(mapped_buffer, HAILO_OUT_OF_HOST_MEMORY);
-
-    return mapped_buffer;
+    return Buffer::create(dma_storage);
 }
 
 size_t CircularStreamBufferPool::descs_in_transfer() const

@@ -119,16 +119,16 @@ DotWriter::HtmlString PipelineGraphNode::format_runtime_stats(const std::vector<
         // We split the statistics into two lines
         std::stringstream string_stream;
         string_stream << "<B>" << accumulator->get_data_type() << ": </B>";
-        string_stream << "mean=" << InferResultsFormatUtils::format_statistic(accumulator_result.mean()) << ", ";
-        string_stream << "min=" << InferResultsFormatUtils::format_statistic(accumulator_result.min()) << ", ";
-        string_stream << "max=" << InferResultsFormatUtils::format_statistic(accumulator_result.max()) << ", ";
+        string_stream << AccumulatorResultsHelper::format_statistic(accumulator_result.mean(), "mean") << ", ";
+        string_stream << AccumulatorResultsHelper::format_statistic(accumulator_result.min(), "min") << ", ";
+        string_stream << AccumulatorResultsHelper::format_statistic(accumulator_result.max(), "max") << ", ";
         lines.emplace_back(string_stream.str());
 
         // Clear the stream and format the next line
         string_stream.str("");
-        string_stream << "var=" << InferResultsFormatUtils::format_statistic(accumulator_result.var()) << ", ";
-        string_stream << "sd=" << InferResultsFormatUtils::format_statistic(accumulator_result.sd()) << ", ";
-        string_stream << "mean_sd=" << InferResultsFormatUtils::format_statistic(accumulator_result.mean_sd());
+        string_stream << AccumulatorResultsHelper::format_statistic(accumulator_result.var(), "var") << ", ";
+        string_stream << AccumulatorResultsHelper::format_statistic(accumulator_result.sd(), "sd") << ", ";
+        string_stream << AccumulatorResultsHelper::format_statistic(accumulator_result.mean_sd(), "mean_sd");
         lines.emplace_back(string_stream.str());
     }
 

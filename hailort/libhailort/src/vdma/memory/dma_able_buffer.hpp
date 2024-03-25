@@ -19,7 +19,7 @@
 #define _HAILO_DMA_ABLE_BUFFER_HPP_
 
 #include "hailo/expected.hpp"
-#include "os/hailort_driver.hpp"
+#include "vdma/driver/hailort_driver.hpp"
 #include "os/mmap_buffer.hpp"
 
 namespace hailort {

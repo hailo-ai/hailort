@@ -75,7 +75,7 @@ uint32_t NetworkLiveTrack::push_text_impl(std::stringstream &ss)
     if (m_cng) {
         auto hw_latency_measurement = m_cng->get_latency_measurement();
         if (hw_latency_measurement) {
-            ss << fmt::format("{}hw latency: {:.2f} ms", get_separator(), InferResultsFormatUtils::latency_result_to_ms(hw_latency_measurement->avg_hw_latency));
+            ss << fmt::format("{}hw latency: {:.2f} ms", get_separator(), InferStatsPrinter::latency_result_to_ms(hw_latency_measurement->avg_hw_latency));
         } else if (HAILO_NOT_AVAILABLE != hw_latency_measurement.status()) { // HAILO_NOT_AVAILABLE is a valid error, we ignore it
             ss << fmt::format("{}hw latency: NaN (err)", get_separator());
         }
@@ -83,7 +83,7 @@ uint32_t NetworkLiveTrack::push_text_impl(std::stringstream &ss)
     else {
         auto hw_latency_measurement = m_configured_infer_model->get_hw_latency_measurement();
         if (hw_latency_measurement) {
-            ss << fmt::format("{}hw latency: {:.2f} ms", get_separator(), InferResultsFormatUtils::latency_result_to_ms(hw_latency_measurement->avg_hw_latency));
+            ss << fmt::format("{}hw latency: {:.2f} ms", get_separator(), InferStatsPrinter::latency_result_to_ms(hw_latency_measurement->avg_hw_latency));
         }
         else if (HAILO_NOT_AVAILABLE != hw_latency_measurement.status()) { // HAILO_NOT_AVAILABLE is a valid error, we ignore it
             ss << fmt::format("{}hw latency: NaN (err)", get_separator());
@@ -93,7 +93,7 @@ uint32_t NetworkLiveTrack::push_text_impl(std::stringstream &ss)
     if (m_overall_latency_meter) {
         auto overall_latency_measurement = m_overall_latency_meter->get_latency(false);
         if (overall_latency_measurement) {
-            ss << fmt::format("{}overall latency: {:.2f} ms", get_separator(), InferResultsFormatUtils::latency_result_to_ms(*overall_latency_measurement));
+            ss << fmt::format("{}overall latency: {:.2f} ms", get_separator(), InferStatsPrinter::latency_result_to_ms(*overall_latency_measurement));
         }
         else if (HAILO_NOT_AVAILABLE != overall_latency_measurement.status()) { // HAILO_NOT_AVAILABLE is a valid error, we ignore it
             ss << fmt::format("{}overall latency: NaN (err)", get_separator());
@@ -127,13 +127,13 @@ void NetworkLiveTrack::push_json_impl(nlohmann::ordered_json &json)
     if (m_cng) {
         auto hw_latency_measurement = m_cng->get_latency_measurement();
         if (hw_latency_measurement){
-            network_group_json["hw_latency"] = InferResultsFormatUtils::latency_result_to_ms(hw_latency_measurement->avg_hw_latency);
+            network_group_json["hw_latency"] = InferStatsPrinter::latency_result_to_ms(hw_latency_measurement->avg_hw_latency);
         }
     }
     else {
         auto hw_latency_measurement = m_configured_infer_model->get_hw_latency_measurement();
         if (hw_latency_measurement){
-            network_group_json["hw_latency"] = InferResultsFormatUtils::latency_result_to_ms(hw_latency_measurement->avg_hw_latency);
+            network_group_json["hw_latency"] = InferStatsPrinter::latency_result_to_ms(hw_latency_measurement->avg_hw_latency);
         }
     }
 
@@ -141,7 +141,7 @@ void NetworkLiveTrack::push_json_impl(nlohmann::ordered_json &json)
     if (m_overall_latency_meter){
         auto overall_latency_measurement = m_overall_latency_meter->get_latency(false);
         if (overall_latency_measurement){
-            network_group_json["overall_latency"] = InferResultsFormatUtils::latency_result_to_ms(*overall_latency_measurement);
+            network_group_json["overall_latency"] = InferStatsPrinter::latency_result_to_ms(*overall_latency_measurement);
         }
     }
     json["network_groups"].emplace_back(network_group_json);

@@ -4,20 +4,22 @@
 #include "vdma/channel/boundary_channel.hpp"
 #include "vdma/memory/buffer_requirements.hpp"
 #include "device_common/control.hpp"
+#include "core_op/resource_manager/internal_buffer_manager.hpp"
 
 #include <numeric>
 
 #define HAILO15H_NMS_MAX_CLASSES (1024)
+#define MAX_NUM_CONTEXTS_FOR_CONTROL_BUILDER (64)
 
 namespace hailort
 {
 
 Expected<ContextResources> ContextResources::create(HailoRTDriver &driver,
-    CONTROL_PROTOCOL__context_switch_context_type_t context_type, const std::vector<vdma::ChannelId> &config_channels_ids,
-    const ConfigBufferInfoMap &config_buffer_infos)
+    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint16_t context_index,
+    const std::vector<vdma::ChannelId> &config_channels_ids, const ConfigBufferInfoMap &config_buffer_infos,
+    std::shared_ptr<InternalBufferManager> internal_buffer_manager)
 {
     CHECK_AS_EXPECTED(context_type < CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_COUNT, HAILO_INVALID_ARGUMENT);
-
     CHECK_AS_EXPECTED(config_buffer_infos.size() <= config_channels_ids.size(), HAILO_INTERNAL_FAILURE,
         "config_buffer_infos size ({}) is bigger than config_channels_id count  ({})",
         config_buffer_infos.size(), config_channels_ids.size());
@@ -29,19 +31,11 @@ Expected<ContextResources> ContextResources::create(HailoRTDriver &driver,
             config_buffer_infos.at(config_stream_index));
         CHECK_EXPECTED(buffer_resource);
         config_buffers.emplace_back(buffer_resource.release());
+
+        internal_buffer_manager->add_config_buffer_info(context_index, config_stream_index, config_buffer_infos.at(config_stream_index));
     }
 
-    return ContextResources(driver, context_type, std::move(config_buffers));
-}
-
-const std::vector<CONTROL_PROTOCOL__context_switch_context_info_single_control_t> &ContextResources::get_controls() const
-{
-    return m_builder.get_controls();
-}
-
-ContextSwitchBufferBuilder &ContextResources::builder()
-{
-    return m_builder;
+    return ContextResources(driver, context_type, std::move(config_buffers), internal_buffer_manager);
 }
 
 hailo_status ContextResources::add_edge_layer(const LayerInfo &layer_info, vdma::ChannelId channel_id,
@@ -145,7 +139,7 @@ hailo_status ContextResources::validate_edge_layer(const LayerInfo &layer_info, 
 
         // In Activation Context it is ok to have multiple edge layers with same stream index seeing as they could be for
         // Different contexts etc...
-        if (CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_ACTIVATION != m_builder.get_context_type()) {
+        if (CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_ACTIVATION != get_context_type()) {
             if (edge_layer.layer_info.stream_index == layer_info.stream_index) {
                 // Validate that the amount of edge layers with the same stream index per context is 2 (And with opposite directions)
                 // In the case of dual direction supported feature - otherwise 1
@@ -185,14 +179,18 @@ static Expected<LatencyMeterPtr> create_hw_latency_meter(const std::vector<Layer
             }
 
             d2h_channel_names.insert(layer.name);
-        }
-        else {
-            h2d_streams_count++;
+        } else {
+            if (layer.is_multi_planar) {
+                h2d_streams_count = h2d_streams_count + layer.planes.size();
+            } else {
+                h2d_streams_count++;
+            }
         }
     }
 
     if (h2d_streams_count > 1) {
-        LOGGER__WARNING("HW Latency measurement is supported on networks with a single input");
+        LOGGER__WARNING("HW Latency measurement is supported on networks with a single input. the model has {} physical inputs.",
+            h2d_streams_count);
         return make_unexpected(HAILO_INVALID_OPERATION);
     }
 
@@ -242,13 +240,20 @@ Expected<ResourcesManager> ResourcesManager::create(VdmaDevice &vdma_device, Hai
         config_channels_ids.push_back(channel_id.release());
     }
 
+    auto internal_buffer_manager = InternalBufferManager::create(driver, config_params);
+    CHECK_EXPECTED(internal_buffer_manager);
+
+    auto action_list_buffer_builder = create_action_list_buffer_builder(core_op_metadata->dynamic_contexts().size(),
+        driver);
+    CHECK_EXPECTED(action_list_buffer_builder);
+
     auto network_index_map = core_op_metadata->get_network_names();
 
     auto latency_meters = create_latency_meters_from_config_params(config_params, core_op_metadata);
     CHECK_EXPECTED(latency_meters);
     ResourcesManager resources_manager(vdma_device, driver, std::move(allocator), config_params,
-        std::move(core_op_metadata), core_op_index,
-        std::move(network_index_map), latency_meters.release(), std::move(config_channels_ids));
+        std::move(core_op_metadata), core_op_index, std::move(network_index_map), latency_meters.release(),
+        std::move(config_channels_ids), internal_buffer_manager.release(), action_list_buffer_builder.release());
 
     return resources_manager;
 }
@@ -258,7 +263,9 @@ ResourcesManager::ResourcesManager(VdmaDevice &vdma_device, HailoRTDriver &drive
                                    std::shared_ptr<CoreOpMetadata> &&core_op_metadata,
                                    uint8_t core_op_index, const std::vector<std::string> &&network_index_map,
                                    LatencyMetersMap &&latency_meters,
-                                   std::vector<vdma::ChannelId> &&config_channels_ids) :
+                                   std::vector<vdma::ChannelId> &&config_channels_ids,
+                                   std::shared_ptr<InternalBufferManager> internal_buffer_manager,
+                                   std::shared_ptr<ActionListBufferBuilder> &&action_list_buffer_builder) :
     m_contexts_resources(),
     m_channel_allocator(std::move(channel_allocator)),
     m_vdma_device(vdma_device),
@@ -273,8 +280,11 @@ ResourcesManager::ResourcesManager(VdmaDevice &vdma_device, HailoRTDriver &drive
     m_latency_meters(std::move(latency_meters)),
     m_boundary_channels(),
     m_is_configured(false),
+    m_is_activated(false),
     m_config_channels_ids(std::move(config_channels_ids)),
-    m_hw_only_boundary_buffers()
+    m_hw_only_boundary_buffers(),
+    m_internal_buffer_manager(std::move(internal_buffer_manager)),
+    m_action_list_buffer_builder(std::move(action_list_buffer_builder))
 {}
 
 ResourcesManager::ResourcesManager(ResourcesManager &&other) noexcept :
@@ -286,19 +296,24 @@ ResourcesManager::ResourcesManager(ResourcesManager &&other) noexcept :
     m_intermediate_buffers(std::move(other.m_intermediate_buffers)),
     m_core_op_metadata(std::move(other.m_core_op_metadata)),
     m_core_op_index(other.m_core_op_index),
-    m_dynamic_context_count(std::exchange(other.m_dynamic_context_count, static_cast<uint8_t>(0))),
-    m_total_context_count(std::exchange(other.m_total_context_count, static_cast<uint8_t>(0))),
+    m_dynamic_context_count(std::exchange(other.m_dynamic_context_count, static_cast<uint16_t>(0))),
+    m_total_context_count(std::exchange(other.m_total_context_count, static_cast<uint16_t>(0))),
     m_network_index_map(std::move(other.m_network_index_map)),
     m_latency_meters(std::move(other.m_latency_meters)),
     m_boundary_channels(std::move(other.m_boundary_channels)),
     m_is_configured(std::exchange(other.m_is_configured, false)),
+    m_is_activated(std::exchange(other.m_is_activated, false)),
     m_config_channels_ids(std::move(other.m_config_channels_ids)),
-    m_hw_only_boundary_buffers(std::move(other.m_hw_only_boundary_buffers))
+    m_hw_only_boundary_buffers(std::move(other.m_hw_only_boundary_buffers)),
+    m_internal_buffer_manager(std::move(other.m_internal_buffer_manager)),
+    m_action_list_buffer_builder(std::move(other.m_action_list_buffer_builder))
 {}
 
 hailo_status ResourcesManager::fill_infer_features(CONTROL_PROTOCOL__application_header_t &app_header)
 {
     app_header.infer_features.preliminary_run_asap = m_core_op_metadata->supported_features().preliminary_run_asap;
+    app_header.infer_features.batch_register_config = m_core_op_metadata->supported_features().batch_register_config;
+    app_header.infer_features.can_fast_batch_switch = m_core_op_metadata->get_can_fast_batch_switch();
     return HAILO_SUCCESS;
 }
 
@@ -343,7 +358,7 @@ hailo_status ResourcesManager::fill_network_batch_size(CONTROL_PROTOCOL__applica
 hailo_status ResourcesManager::fill_csm_buffer_size(CONTROL_PROTOCOL__application_header_t &app_header)
 {
     // All config buffers on the same platform will have the same desc_page_size - because it is derived from the host
-    app_header.csm_buffer_size = std::min(m_driver.desc_max_page_size(), vdma::DEFAULT_DESC_PAGE_SIZE);
+    app_header.csm_buffer_size = std::min(m_driver.desc_max_page_size(), vdma::DEFAULT_SG_PAGE_SIZE);
     return HAILO_SUCCESS;
 }
 
@@ -364,6 +379,11 @@ void ResourcesManager::process_interrupts(IrqData &&irq_data)
             continue;
         }
 
+        if (!channel_irq_data.validation_success) {
+            LOGGER__CRITICAL("Got validation error on channel {}", channel_irq_data.channel_id);
+            continue;
+        }
+
         if (!channel_irq_data.is_active) {
             LOGGER__CRITICAL("Channel {} was aborted by external source", channel_irq_data.channel_id);
             continue;
@@ -371,7 +391,7 @@ void ResourcesManager::process_interrupts(IrqData &&irq_data)
 
         auto status = boundary_channel->second->trigger_channel_completion(channel_irq_data.desc_num_processed);
         if ((status != HAILO_SUCCESS) &&
-            (status != HAILO_STREAM_ABORTED_BY_USER) &&
+            (status != HAILO_STREAM_ABORT) &&
             (status != HAILO_STREAM_NOT_ACTIVATED)) {
             // Log error and continue gracefully to process other interrupts
             LOGGER__ERROR("Trigger channel completion failed on channel {} with status {}", channel_irq_data.channel_id, status);
@@ -449,16 +469,21 @@ hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &lay
     // TODO - remove this WA after HRT-11747
     const uint16_t max_page_size = (m_driver.desc_max_page_size() == layer_info.max_shmifo_size) ?
         (m_driver.desc_max_page_size() / 2) : m_driver.desc_max_page_size();
-    auto buffer_sizes_requirements = vdma::BufferSizesRequirements::get_sg_buffer_requirements_single_transfer(
-        max_page_size, static_cast<uint16_t>(min_active_trans), static_cast<uint16_t>(max_active_trans),
-        transfer_size, IS_CIRCULAR, DONT_FORCE_DEFAULT_PAGE_SIZE, DONT_FORCE_BATCH_SIZE, IS_VDMA_ALIGNED_BUFFER);
+    auto buffer_sizes_requirements = vdma::BufferSizesRequirements::get_buffer_requirements_single_transfer(
+        vdma::VdmaBuffer::Type::SCATTER_GATHER, max_page_size, static_cast<uint16_t>(min_active_trans),
+        static_cast<uint16_t>(max_active_trans), transfer_size, IS_CIRCULAR, DONT_FORCE_DEFAULT_PAGE_SIZE,
+        DONT_FORCE_BATCH_SIZE, IS_VDMA_ALIGNED_BUFFER);
+    if (HAILO_CANT_MEET_BUFFER_REQUIREMENTS == buffer_sizes_requirements.status()) {
+        LOGGER__ERROR("Network shapes and batch size exceeds driver descriptors capabilities. "
+                "(A common cause for this error could be the batch size - which is {}).", network_batch_size.value());
+    }
     CHECK_EXPECTED_AS_STATUS(buffer_sizes_requirements);
 
     const auto page_size = buffer_sizes_requirements->desc_page_size();
     const auto descs_count = (nullptr != std::getenv("HAILO_CONFIGURE_FOR_HW_INFER")) ?
-        MAX_DESCS_COUNT : buffer_sizes_requirements->descs_count();
+        MAX_SG_DESCS_COUNT : buffer_sizes_requirements->descs_count();
 
-    auto channel = vdma::BoundaryChannel::create(channel_id.value(), channel_direction, m_vdma_device, descs_count,
+    auto channel = vdma::BoundaryChannel::create(channel_id.value(), channel_direction, m_driver, descs_count,
         page_size, layer_info.name, latency_meter);
     CHECK_EXPECTED_AS_STATUS(channel);
 
@@ -493,16 +518,19 @@ hailo_power_mode_t ResourcesManager::get_power_mode() const
     return m_config_params.power_mode;
 }
 
-ExpectedRef<IntermediateBuffer> ResourcesManager::create_intermediate_buffer(uint32_t transfer_size,
-    uint16_t batch_size, uint8_t src_stream_index, uint8_t src_context_index,
+ExpectedRef<IntermediateBuffer> ResourcesManager::create_intermediate_buffer(
+    uint32_t transfer_size, uint16_t batch_size, uint8_t src_stream_index, uint16_t src_context_index,
     vdma::ChannelId d2h_channel_id, IntermediateBuffer::StreamingType streaming_type)
 {
-    auto buffer = IntermediateBuffer::create(m_driver, transfer_size, batch_size, d2h_channel_id,
-        streaming_type);
-    CHECK_EXPECTED(buffer);
+    auto edge_layer_key = std::make_pair(src_context_index, src_stream_index);
+    TRY(auto buffer_info, m_internal_buffer_manager->get_intermediate_buffer(edge_layer_key));
+
+    auto intermediate_buffer = IntermediateBuffer::create(m_driver, transfer_size, batch_size, d2h_channel_id,
+        streaming_type, std::move(buffer_info.buffer), buffer_info.offset);
+    CHECK_EXPECTED(intermediate_buffer);
 
     const auto key = std::make_pair(src_context_index, src_stream_index);
-    auto emplace_res = m_intermediate_buffers.emplace(key, buffer.release());
+    auto emplace_res = m_intermediate_buffers.emplace(key, intermediate_buffer.release());
     return std::ref(emplace_res.first->second);
 }
 
@@ -530,20 +558,27 @@ Expected<CONTROL_PROTOCOL__application_header_t> ResourcesManager::get_control_c
     status = fill_csm_buffer_size(app_header);
     CHECK_SUCCESS_AS_EXPECTED(status, "Invalid csm buffer size");
 
+    const auto mapped_addr = get_action_list_buffer_builder()->get_mapped_buffer_dma_address();
+    CHECK(IS_FIT_IN_UINT32(mapped_addr), HAILO_INVALID_ARGUMENT, "Invalid Mapped Address {} must fit in uint32",
+        mapped_addr);
+    app_header.external_action_list_address = static_cast<uint32_t>(mapped_addr);
+
     return app_header;
 }
 
-Expected<std::reference_wrapper<ContextResources>> ResourcesManager::add_new_context(CONTROL_PROTOCOL__context_switch_context_type_t type,
+Expected<std::reference_wrapper<ContextResources>> ResourcesManager::add_new_context(
+    CONTROL_PROTOCOL__context_switch_context_type_t context_type, const uint16_t context_index,
     const ConfigBufferInfoMap &config_info)
 {
-    CHECK_AS_EXPECTED(m_total_context_count < std::numeric_limits<uint8_t>::max(), HAILO_INVALID_CONTEXT_COUNT);
+    CHECK_AS_EXPECTED(m_total_context_count < std::numeric_limits<uint16_t>::max(), HAILO_INVALID_CONTEXT_COUNT);
 
-    auto context_resources = ContextResources::create(m_driver, type, m_config_channels_ids, config_info);
+    auto context_resources = ContextResources::create(m_driver, context_type, context_index,
+        m_config_channels_ids, config_info, m_internal_buffer_manager);
     CHECK_EXPECTED(context_resources);
 
     m_contexts_resources.emplace_back(context_resources.release());
     m_total_context_count++;
-    if (CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_DYNAMIC == type) {
+    if (CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_DYNAMIC == context_type) {
         m_dynamic_context_count++;
     }
 
@@ -609,8 +644,11 @@ hailo_status ResourcesManager::configure()
     auto status = Control::context_switch_set_network_group_header(m_vdma_device, core_op_header.release());
     CHECK_SUCCESS(status);
 
-    for (const auto &context : m_contexts_resources) {
-        status = Control::context_switch_set_context_info(m_vdma_device, context.get_controls());
+    // Only send controls to FW in case of control action list builder
+    if (ActionListBufferBuilder::Type::CONTROL == get_action_list_buffer_builder()->get_builder_type()) {
+        const auto control_action_list = std::static_pointer_cast<ControlActionListBufferBuilder>(
+            get_action_list_buffer_builder());
+        status = Control::context_switch_set_context_info(m_vdma_device, control_action_list->get_controls());
         CHECK_SUCCESS(status);
     }
 
@@ -619,11 +657,21 @@ hailo_status ResourcesManager::configure()
 
 hailo_status ResourcesManager::enable_state_machine(uint16_t dynamic_batch_size, uint16_t batch_count)
 {
-    return Control::enable_core_op(m_vdma_device, m_core_op_index, dynamic_batch_size, batch_count);
+    CHECK_SUCCESS(Control::enable_core_op(m_vdma_device, m_core_op_index, dynamic_batch_size, batch_count));
+    // Enable over enable is possible (batch switch in the same NG), so there is no need to verify the state.
+    set_is_activated(true);
+
+    return HAILO_SUCCESS;
 }
 
 hailo_status ResourcesManager::reset_state_machine()
 {
+    if (!get_is_activated()) {
+        return HAILO_SUCCESS;
+    }
+
+    set_is_activated(false);
+
     auto status = Control::reset_context_switch_state_machine(m_vdma_device);
     CHECK_SUCCESS(status);
 
@@ -639,6 +687,8 @@ hailo_status ResourcesManager::reset_state_machine()
 
 hailo_status ResourcesManager::start_vdma_interrupts_dispatcher()
 {
+    CHECK(get_is_activated(), HAILO_INTERNAL_FAILURE, "Cannot call start_vdma_interrupts_dispatcher when core-op already deactivated");
+
     auto interrupts_dispatcher = m_vdma_device.get_vdma_interrupts_dispatcher();
     CHECK_EXPECTED_AS_STATUS(interrupts_dispatcher);
 
@@ -656,9 +706,31 @@ hailo_status ResourcesManager::start_vdma_interrupts_dispatcher()
 
 hailo_status ResourcesManager::stop_vdma_interrupts_dispatcher()
 {
-    auto interrupts_dispatcher = m_vdma_device.get_vdma_interrupts_dispatcher();
-    CHECK_EXPECTED_AS_STATUS(interrupts_dispatcher);
-    return interrupts_dispatcher->get().stop();
+    if (!get_is_activated()) {
+        return HAILO_SUCCESS;
+    }
+
+    TRY(auto interrupts_dispatcher, m_vdma_device.get_vdma_interrupts_dispatcher());
+    return interrupts_dispatcher.get().stop();
+}
+
+hailo_status ResourcesManager::start_vdma_transfer_launcher()
+{
+    CHECK(get_is_activated(), HAILO_INTERNAL_FAILURE, "Cannot call start_vdma_transfer_launcher when core-op already deactivated");
+    TRY(auto vdma_transfer_launcher, m_vdma_device.get_vdma_transfer_launcher());
+    vdma_transfer_launcher.get().start();
+    return HAILO_SUCCESS;
+}
+
+hailo_status ResourcesManager::stop_vdma_transfer_launcher()
+{
+    if (!get_is_activated()) {
+        return HAILO_SUCCESS;
+    }
+
+    TRY(auto vdma_transfer_launcher, m_vdma_device.get_vdma_transfer_launcher());
+    vdma_transfer_launcher.get().stop();
+    return HAILO_SUCCESS;
 }
 
 Expected<uint16_t> ResourcesManager::program_desc_for_hw_only_flow(std::shared_ptr<vdma::DescriptorList> desc_list,
@@ -668,7 +740,7 @@ Expected<uint16_t> ResourcesManager::program_desc_for_hw_only_flow(std::shared_p
     for (uint16_t batch_index = 0; batch_index < batch_count; batch_index++) {
         for (uint16_t transfer_index = 0; transfer_index < dynamic_batch_size; transfer_index++) {
             const auto last_desc_interrupts_domain = ((dynamic_batch_size - 1) == transfer_index) ?
-                vdma::InterruptsDomain::DEVICE : vdma::InterruptsDomain::NONE;
+                InterruptsDomain::DEVICE : InterruptsDomain::NONE;
             auto desc_count_local = desc_list->program_last_descriptor(single_transfer_size,
                 last_desc_interrupts_domain, acc_desc_offset);
             CHECK_EXPECTED(desc_count_local, "Failed to program descs for inter context channels. Given max_batch_size is too big.");
@@ -698,8 +770,9 @@ Expected<std::pair<vdma::ChannelId, uint16_t>> ResourcesManager::create_mapped_b
     CHECK_EXPECTED(mapped_buffer);
     m_hw_only_boundary_buffers.emplace_back(mapped_buffer.release());
 
-    uint32_t STARTING_DESC = 0;
-    auto status = desc_list->configure_to_use_buffer(*m_hw_only_boundary_buffers.back(), boundary_channel_ptr->get_channel_id(), STARTING_DESC);
+    static const auto DEFAULT_BUFFER_OFFSET = 0;
+    auto status = desc_list->configure_to_use_buffer(*m_hw_only_boundary_buffers.back(),
+        m_hw_only_boundary_buffers.back()->size(), DEFAULT_BUFFER_OFFSET, boundary_channel_ptr->get_channel_id());
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     auto desc_programed = program_desc_for_hw_only_flow(desc_list, single_transfer_size, dynamic_batch_size, batch_count);
@@ -840,6 +913,54 @@ Expected<HwInferResults> ResourcesManager::run_hw_only_infer()
 
     return hw_infer_calc_stats(batch_count.value(), *batch_size, single_frame_transfer_size.release(),
         fw_infer_results.infer_cycles);
+}
+
+hailo_status ResourcesManager::fill_internal_buffers_info()
+{
+    for (const auto &context_metadata : m_core_op_metadata->dynamic_contexts()) {
+        for (const auto &layer_info : context_metadata.get_ddr_output_layers()) {
+            auto status = m_internal_buffer_manager->add_layer_buffer_info(layer_info);
+            CHECK_SUCCESS(status);
+        }
+        for (const auto &layer_info : context_metadata.get_inter_context_input_layers()) {
+            auto status = m_internal_buffer_manager->add_layer_buffer_info(layer_info);
+            CHECK_SUCCESS(status);
+        }
+    }
+
+    auto status = m_internal_buffer_manager->plan_and_execute(InternalBufferPlanner::Type::SINGLE_BUFFER_PER_BUFFER_TYPE,
+        m_core_op_metadata->dynamic_contexts().size());
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+bool ResourcesManager::should_use_ddr_action_list(size_t num_contexts, HailoRTDriver::DmaType dma_type)
+{
+    // Only allow env variable to affect in case of DmaType DRAM
+    if ((HailoRTDriver::DmaType::DRAM == dma_type) && ((MAX_NUM_CONTEXTS_FOR_CONTROL_BUILDER < num_contexts)
+        || (is_env_variable_on(DDR_ACTION_LIST_ENV_VAR, DDR_ACTION_LIST_ENV_VAR_VALUE, sizeof(DDR_ACTION_LIST_ENV_VAR_VALUE))))) {
+        return true;
+    }
+    return false;
+}
+
+Expected<std::shared_ptr<ActionListBufferBuilder>> ResourcesManager::create_action_list_buffer_builder(
+    size_t num_dynamic_contexts, HailoRTDriver &driver)
+{
+    static const auto total_num_contexts = CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS +
+        num_dynamic_contexts;
+
+    if (should_use_ddr_action_list(total_num_contexts, driver.dma_type())) {
+        auto ddr_action_list_buffer_builder = DDRActionListBufferBuilder::create(total_num_contexts, driver);
+        CHECK_EXPECTED(ddr_action_list_buffer_builder);
+        return std::static_pointer_cast<ActionListBufferBuilder>(ddr_action_list_buffer_builder.release());
+    } else {
+        auto control_action_list_buffer_builder = ControlActionListBufferBuilder::create();
+        CHECK_EXPECTED(control_action_list_buffer_builder);
+        return std::static_pointer_cast<ActionListBufferBuilder>(control_action_list_buffer_builder.release());
+    }
+
 }
 
 } /* namespace hailort */

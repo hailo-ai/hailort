@@ -123,6 +123,8 @@ public:
         const VStream_set_nms_iou_threshold_Request *request, VStream_set_nms_iou_threshold_Reply*) override;
     virtual grpc::Status OutputVStream_set_nms_max_proposals_per_class(grpc::ServerContext *ctx,
         const VStream_set_nms_max_proposals_per_class_Request *request, VStream_set_nms_max_proposals_per_class_Reply*) override;
+    virtual grpc::Status OutputVStream_set_nms_max_accumulated_mask_size(grpc::ServerContext *ctx,
+        const VStream_set_nms_max_accumulated_mask_size_Request *request, VStream_set_nms_max_accumulated_mask_size_Reply*) override;
 
     virtual grpc::Status ConfiguredNetworkGroup_dup_handle(grpc::ServerContext *ctx, const ConfiguredNetworkGroup_dup_handle_Request *request,
         ConfiguredNetworkGroup_dup_handle_Reply*) override;
@@ -206,6 +208,9 @@ public:
     virtual grpc::Status ConfiguredNetworkGroup_set_nms_max_bboxes_per_class(grpc::ServerContext*,
         const ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Request *request,
         ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Request *request,
+        ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Reply *reply) override;
     virtual grpc::Status ConfiguredNetworkGroup_get_stream_names_from_vstream_name(grpc::ServerContext*,
         const ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Request *request,
         ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Reply *reply) override;
@@ -224,12 +229,30 @@ private:
     void abort_vstreams_by_pids(std::set<uint32_t> &pids);
     void remove_disconnected_clients();
     void update_client_id_timestamp(uint32_t pid);
+    Expected<size_t> get_min_buffer_pool_size(uint32_t ng_handle);
+    Expected<std::vector<hailo_stream_info_t>> get_all_stream_infos(uint32_t ng_handle);
+    Expected<std::vector<hailo_vstream_info_t>> get_all_vstream_infos(uint32_t ng_handle);
+    Expected<std::string> output_vstream_name(uint32_t vstream_handle);
+    hailo_status create_buffer_pools_for_ng(uint32_t vdevice_handle, uint32_t ng_handle, uint32_t request_pid,
+        bool allocate_for_raw_streams);
+    Expected<NamedBuffersCallbacks> prepare_named_buffers_callbacks(uint32_t vdevice_handle,
+        uint32_t ng_handle, std::shared_ptr<ConfiguredNetworkGroup_infer_async_Request> infer_async_request);
+    hailo_status add_input_named_buffer(const ProtoTransferRequest &proto_stream_transfer_request, uint32_t vdevice_handle,
+        uint32_t ng_handle, std::shared_ptr<ConfiguredNetworkGroup_infer_async_Request> infer_async_request,
+        NamedBuffersCallbacks &named_buffers_callbacks);
+    hailo_status add_output_named_buffer(const ProtoTransferRequest &proto_stream_transfer_request, uint32_t vdevice_handle,
+        uint32_t ng_handle, NamedBuffersCallbacks &named_buffers_callbacks);
+    void enqueue_cb_identifier(uint32_t vdevice_handle, ProtoCallbackIdentifier &&cb_identifier);
+    hailo_status return_buffer_to_cng_pool(uint32_t ng_handle, const std::string &output_name, BufferPtr buffer);
+    Expected<BufferPtr> acquire_buffer_from_cng_pool(uint32_t ng_handle, const std::string &output_name);
+    Expected<size_t> output_vstream_frame_size(uint32_t vstream_handle);
+    hailo_status update_buffer_size_in_pool(uint32_t vstream_handle, uint32_t network_group_handle);
 
-    std::mutex m_mutex;
+    std::mutex m_keep_alive_mutex;
     std::map<uint32_t, std::chrono::time_point<std::chrono::high_resolution_clock>> m_clients_pids;
     std::unique_ptr<std::thread> m_keep_alive;
 
-    std::mutex m_vdevice_creation_mutex;
+    std::mutex m_vdevice_mutex;
 };
 
 }

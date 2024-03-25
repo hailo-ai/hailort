@@ -137,13 +137,13 @@ public:
         //   +1 for each dequeued item
         //   -1 for each enqueued item
         //   Blocks when the queue is full (which happens when it's value reaches zero, hence it starts at queue size)
-        const auto items_enqueued_sema = Semaphore::create_shared(0);
-        CHECK_AS_EXPECTED(nullptr != items_enqueued_sema, HAILO_OUT_OF_HOST_MEMORY, "Failed creating items_enqueued_sema semaphore");
+        auto items_enqueued_sema = Semaphore::create_shared(0);
+        CHECK_EXPECTED(items_enqueued_sema, "Failed creating items_enqueued_sema semaphore");
 
-        const auto items_dequeued_sema = Semaphore::create_shared(static_cast<uint32_t>(max_size));
-        CHECK_AS_EXPECTED(nullptr != items_dequeued_sema, HAILO_OUT_OF_HOST_MEMORY, "Failed creating items_dequeued_sema semaphore");
+        auto items_dequeued_sema = Semaphore::create_shared(static_cast<uint32_t>(max_size));
+        CHECK_EXPECTED(items_dequeued_sema, "Failed creating items_dequeued_sema semaphore");
 
-        return SpscQueue(max_size, items_enqueued_sema, items_dequeued_sema, shutdown_event, default_timeout);
+        return SpscQueue(max_size, items_enqueued_sema.release(), items_dequeued_sema.release(), shutdown_event, default_timeout);
     }
 
     static std::shared_ptr<SpscQueue> create_shared(size_t max_size, const EventPtr& shutdown_event,
@@ -210,9 +210,15 @@ public:
         return dequeue(m_default_timeout);
     }
 
-    hailo_status enqueue(const T& result, std::chrono::milliseconds timeout) AE_NO_TSAN
+    hailo_status enqueue(const T& result, std::chrono::milliseconds timeout, bool ignore_shutdown_event = false) AE_NO_TSAN
     {
-        const auto wait_result = m_items_dequeued_sema_or_shutdown.wait(timeout);
+        hailo_status wait_result = HAILO_UNINITIALIZED;
+        if (ignore_shutdown_event) {
+            wait_result = m_items_dequeued_sema->wait(timeout);
+        } else {
+            wait_result = m_items_dequeued_sema_or_shutdown.wait(timeout);
+        }
+
         if (HAILO_SHUTDOWN_EVENT_SIGNALED == wait_result) {
             LOGGER__TRACE("Shutdown event has been signaled");
             return wait_result;
@@ -234,9 +240,9 @@ public:
         return m_items_enqueued_sema_or_shutdown.signal();
     }
 
-    inline hailo_status enqueue(const T& result) AE_NO_TSAN
+    inline hailo_status enqueue(const T& result, bool ignore_shutdown_event = false) AE_NO_TSAN
     {
-        return enqueue(result, m_default_timeout);
+        return enqueue(result, m_default_timeout, ignore_shutdown_event);
     }
 
     // TODO: Do away with two copies of this function? (SDK-16481)

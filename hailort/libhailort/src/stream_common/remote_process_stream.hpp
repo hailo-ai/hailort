@@ -12,6 +12,7 @@
 #ifndef _HAILO_REMOTE_PROCESS_STREAM_HPP_
 #define _HAILO_REMOTE_PROCESS_STREAM_HPP_
 
+#include "common/event_internal.hpp"
 #include "common/fork_support.hpp"
 
 #include "stream_common/stream_internal.hpp"
@@ -77,7 +78,7 @@ private:
         });
         CHECK(done, HAILO_TIMEOUT, "Timeout waiting on cond variable");
         if (m_is_aborted) {
-            return HAILO_STREAM_ABORTED_BY_USER;
+            return HAILO_STREAM_ABORT;
         }
         return HAILO_SUCCESS;
     }
