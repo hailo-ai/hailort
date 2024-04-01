@@ -17,14 +17,15 @@
 #include "common/os_utils.hpp"
 
 #include "network_group/network_group_internal.hpp"
-#include "hef/hef_internal.hpp"
 #include "eth/eth_stream.hpp"
 #include "vdma/vdma_stream.hpp"
 #include "mipi/mipi_stream.hpp"
 #include "device_common/control.hpp"
-#include "net_flow/pipeline/vstream_internal.hpp"
+#include "net_flow/pipeline/vstream_builder.hpp"
+#include "net_flow/ops_metadata/yolov5_seg_op_metadata.hpp"
 #include "core_op/resource_manager/resource_manager.hpp"
-
+#include "utils/buffer_storage.hpp"
+#include "hef/hef_internal.hpp"
 
 namespace hailort
 {
@@ -37,7 +38,7 @@ public:
         auto status = HAILO_UNINITIALIZED;
         std::unique_ptr<ActivatedNetworkGroup> ang = make_unique_nothrow<ActivatedNetworkGroupImpl>(cng, status);
         CHECK_NOT_NULL_AS_EXPECTED(ang, HAILO_OUT_OF_HOST_MEMORY);
-        if (HAILO_STREAM_ABORTED_BY_USER == status) {
+        if (HAILO_STREAM_ABORT == status) {
             LOGGER__ERROR("Network group activation failed because some of the low level streams are aborted. Make sure to run clear_abort before activating!");
             return make_unexpected(status);
         }
@@ -84,7 +85,7 @@ public:
         m_cng(cng)
     {
         auto activate_status = m_cng.activate_impl();
-        if (HAILO_STREAM_ABORTED_BY_USER == activate_status) {
+        if (HAILO_STREAM_ABORT == activate_status) {
             LOGGER__INFO("Network group activation failed because it was aborted by user");
             status = activate_status;
             return;
@@ -159,18 +160,13 @@ Expected<std::unique_ptr<ActivatedNetworkGroup>> ConfiguredNetworkGroup::activat
     return activate(HailoRTDefaults::get_active_network_group_params());
 }
 
-hailo_status ConfiguredNetworkGroup::wait_for_callbacks_finish()
-{
-    return wait_for_callbacks_to_maintain_below_threshold(1);
-}
-
-hailo_status ConfiguredNetworkGroup::wait_for_callbacks_to_maintain_below_threshold(const size_t threshold)
+hailo_status ConfiguredNetworkGroup::wait_for_ongoing_callbacks_count_under(const size_t threshold)
 {
     std::unique_lock<std::mutex> lock(m_infer_requests_mutex);
     bool done = m_cv.wait_for(lock, DEFAULT_TRANSFER_TIMEOUT, [&, threshold](){
         return (m_ongoing_transfers.load() < threshold);
     });
-    CHECK(done, HAILO_TIMEOUT, "Got timeout in `wait_for_callbacks_to_maintain_below_threshold`");
+    CHECK(done, HAILO_TIMEOUT);
 
     return HAILO_SUCCESS;
 }
@@ -303,7 +299,7 @@ Expected<std::unique_ptr<LayerInfo>> ConfiguredNetworkGroupBase::get_layer_info(
     return res;
 }
 
-Expected<std::shared_ptr<net_flow::NmsOpMetadata>> ConfiguredNetworkGroupBase::get_nms_meta_data(const std::string &edge_name)
+Expected<net_flow::PostProcessOpMetadataPtr> ConfiguredNetworkGroupBase::get_op_meta_data(const std::string &edge_name)
 {
     auto expected_ops_metadata = get_ops_metadata();
     CHECK_EXPECTED(expected_ops_metadata);
@@ -319,9 +315,19 @@ Expected<std::shared_ptr<net_flow::NmsOpMetadata>> ConfiguredNetworkGroupBase::g
             return false;
         });
     CHECK_AS_EXPECTED(matching_metadata != ops_metadata.end(), HAILO_INVALID_ARGUMENT,
-        "There is no NMS post-process for '{}'", edge_name);
+        "There is no post-process metadata for '{}'", edge_name);
+    auto metadata = (*matching_metadata);
+    return metadata;
+}
+
+Expected<std::shared_ptr<net_flow::NmsOpMetadata>> ConfiguredNetworkGroupBase::get_nms_meta_data(const std::string &edge_name)
+{
+    auto matching_metadata = get_op_meta_data(edge_name);
+    CHECK_EXPECTED(matching_metadata);
+
     auto nms_metadata = std::dynamic_pointer_cast<net_flow::NmsOpMetadata>(*matching_metadata);
-    CHECK_NOT_NULL_AS_EXPECTED(nms_metadata, HAILO_INVALID_ARGUMENT);
+    CHECK((nms_metadata != nullptr), HAILO_INVALID_ARGUMENT,
+        "Failed to get nms metadata for `{}`. Op's metadata is not nms metadata", edge_name);
     return nms_metadata;
 }
 
@@ -346,6 +352,19 @@ hailo_status ConfiguredNetworkGroupBase::set_nms_max_bboxes_per_class(const std:
     auto expected_nms_op_metadata = get_nms_meta_data(edge_name);
     CHECK_EXPECTED_AS_STATUS(expected_nms_op_metadata);
     expected_nms_op_metadata.value()->nms_config().max_proposals_per_class = max_bboxes_per_class;
+    return HAILO_SUCCESS;
+}
+
+hailo_status ConfiguredNetworkGroupBase::set_nms_max_accumulated_mask_size(const std::string &edge_name, uint32_t max_accumulated_mask_size)
+{
+    auto expected_op_metadata = get_op_meta_data(edge_name);
+    CHECK_EXPECTED_AS_STATUS(expected_op_metadata);
+
+    auto nms_metadata = std::dynamic_pointer_cast<net_flow::Yolov5SegOpMetadata>(expected_op_metadata.value());
+    CHECK((nms_metadata != nullptr), HAILO_INVALID_ARGUMENT,
+        "Failed to `set_nms_max_accumulated_mask_size` for `{}`. Op's metadata is not YOLOv5-Seg metadata", edge_name);
+
+    nms_metadata->yolov5seg_config().max_accumulated_mask_size = max_accumulated_mask_size;
     return HAILO_SUCCESS;
 }
 
@@ -512,7 +531,7 @@ hailo_status ConfiguredNetworkGroupBase::deactivate_impl()
 
 hailo_status ConfiguredNetworkGroupBase::shutdown()
 {
-    std::unique_lock<std::mutex> lock(m_shutdown_mutex);
+    std::unique_lock<std::mutex> lock(m_mutex);
     if (!m_is_shutdown) {
         m_is_shutdown = true;
         return get_core_op()->shutdown();
@@ -773,9 +792,6 @@ Expected<size_t> ConfiguredNetworkGroupBase::get_min_buffer_pool_size()
         }
     }
 
-    // TODO (HRT-11294): In some cases, buffer_pool_size is lower then batch_size. we should remove this line.
-    buffer_pool_size = std::max(buffer_pool_size, static_cast<uint32_t>(get_smallest_configured_batch_size(get_config_params())));
-
     return buffer_pool_size;
 }
 
@@ -783,31 +799,14 @@ hailo_status ConfiguredNetworkGroupBase::infer_async(const NamedBuffersCallbacks
     const std::function<void(hailo_status)> &infer_request_done_cb)
 {
     InferRequest infer_request{};
-    const auto dma_able_alignment = OsUtils::get_dma_able_alignment();
     for (auto &named_buffer_callback : named_buffers_callbacks) {
         const auto &name = named_buffer_callback.first;
         const auto &buffer = named_buffer_callback.second.first;
         const auto &callback = named_buffer_callback.second.second;
-        TransferRequest trans_req{};
-        trans_req.callback = callback;
-        BufferPtr buffer_ptr = nullptr;
-        // TODO (HRT-12239): Avoid this section
-        if (reinterpret_cast<size_t>(buffer.data()) % dma_able_alignment == 0) {
-            auto hailo_buffer = DmaStorage::create_dma_able_buffer_from_user_size(const_cast<uint8_t*>(buffer.data()),
-                buffer.size());
-            CHECK_EXPECTED_AS_STATUS(hailo_buffer);
-            buffer_ptr = hailo_buffer.release();
-        } else {
-            auto hailo_buffer = UserBufferStorage::create_storage_from_user_buffer(const_cast<uint8_t*>(buffer.data()),
-                buffer.size());
-            CHECK_EXPECTED_AS_STATUS(hailo_buffer);
-            buffer_ptr = hailo_buffer.release();
-        }
-        trans_req.transfer_buffers.emplace_back(buffer_ptr);
-        infer_request.transfers.emplace(name, trans_req);
+        infer_request.transfers.emplace(name, TransferRequest{buffer, callback});
     }
     infer_request.callback = [this, infer_request_done_cb](hailo_status status){
-        if (status == HAILO_STREAM_ABORTED_BY_USER) {
+        if (status == HAILO_STREAM_ABORT) {
             LOGGER__INFO("Infer request was aborted by user");
         }
         else if (status != HAILO_SUCCESS) {
@@ -818,7 +817,8 @@ hailo_status ConfiguredNetworkGroupBase::infer_async(const NamedBuffersCallbacks
         decrease_ongoing_callbacks();
     };
 
-    increase_ongoing_callbacks();
+    increase_ongoing_callbacks(); // Increase before lunch, as the cb may be called before we got the chance to increase the counter
+    std::unique_lock<std::mutex> lock(m_mutex);
     auto status = get_core_op()->infer_async(std::move(infer_request));
     if (status != HAILO_SUCCESS) {
         // If we got error in `infer_async()`, then the callbacks will not be called.

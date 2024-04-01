@@ -14,6 +14,7 @@
 #include "common/circular_buffer.hpp"
 #include "stream_common/stream_buffer_pool.hpp"
 #include "vdma/vdma_device.hpp"
+#include "hailo/dma_mapped_buffer.hpp"
 
 #include <condition_variable>
 
@@ -29,10 +30,10 @@ namespace hailort
 class CircularStreamBufferPool final : public StreamBufferPool {
 public:
     static Expected<std::unique_ptr<CircularStreamBufferPool>> create(VdmaDevice &device,
-        HailoRTDriver::DmaDirection direction, size_t desc_page_size, size_t descs_count, size_t transfer_size);
+        hailo_dma_buffer_direction_t direction, size_t desc_page_size, size_t descs_count, size_t transfer_size);
 
     CircularStreamBufferPool(size_t desc_page_size, size_t descs_count, size_t transfer_size,
-        BufferPtr &&mapped_buffer);
+        Buffer &&base_buffer, DmaMappedBuffer &&mappings);
 
     virtual size_t max_queue_size() const override;
     size_t buffers_ready_to_dequeue() const;
@@ -41,13 +42,12 @@ public:
 
     virtual hailo_status enqueue(TransferBuffer &&buffer_info) override;
 
-    BufferPtr get_mapped_buffer() { return m_mapped_buffer; }
+    Buffer &get_base_buffer() { return m_base_buffer; }
 
     virtual void reset_pointers() override;
 
 private:
-    static Expected<BufferPtr> allocate_buffer(VdmaDevice &device,
-        HailoRTDriver::DmaDirection direction, size_t size);
+    static Expected<Buffer> allocate_buffer(VdmaDevice &device, size_t size);
 
     size_t descs_in_transfer() const;
 
@@ -57,7 +57,8 @@ private:
     const size_t m_transfer_size;
 
     // m_mapped_buffer.size() must be CB_SIZE(m_queue) * m_desc_page_size
-    BufferPtr m_mapped_buffer;
+    Buffer m_base_buffer;
+    DmaMappedBuffer m_mappings;
 
     // Head/tail based queue that manages the buffer pool.
     // The head and tail are in m_desc_page_size granularity.

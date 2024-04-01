@@ -19,6 +19,12 @@
 
 namespace hailort
 {
+#define PCIE_GEN1_SPEED "2.5GT/s"
+#define PCIE_GEN2_SPEED "5GT/s"
+#define PCIE_GEN3_SPEED "8GT/s"
+#define PCIE_GEN4_SPEED "16GT/s"
+#define PCIE_GEN5_SPEED "32GT/s"
+#define PCIE_GEN6_SPEED "64GT/s"
 
 struct ProfilerTime {
     uint32_t year;
@@ -27,6 +33,13 @@ struct ProfilerTime {
     uint32_t hour;
     uint32_t min;
     int64_t time_since_epoch;
+};
+
+struct pci_info {
+    std::string gen;
+    std::string lanes;
+
+    pci_info() : gen("N/A"), lanes("N/A") {}
 };
 
 #if defined(__linux__)
@@ -70,6 +83,79 @@ std::uint64_t system_ram_size()
     }
 
     return sys_info.totalram;
+}
+
+std::string exec(const char *cmd) {
+    const int buffer_size = 128;
+    std::array<char, buffer_size> buffer;
+    std::string result;
+    std::shared_ptr<FILE> pipe(popen(cmd, "r"), pclose);
+
+    if (!pipe) {
+        LOGGER__WARNING("Couldn't execute {}, popen() failed!", cmd);
+        return "";
+    }
+
+    while (!feof(pipe.get())) {
+        if (fgets(buffer.data(), buffer_size, pipe.get()) != nullptr) {
+            result += buffer.data();
+        }
+    }
+
+    return result;
+}
+
+pci_info parse_lspci_output(const std::string &output) {
+    std::istringstream lspci_stream(output);
+    pci_info pcie_info = {};
+    std::string line;
+    bool in_hailo_section = false;
+    int hailo_device_count = 0;
+
+    while (std::getline(lspci_stream, line)) {
+        // Sample output line: "LnkCap:	Port #0, Speed 8GT/s, Width x8, ASPM L0s L1, Exit Latency L0s <256ns, L1 <4us"
+        if (line.find("Co-processor: Hailo") != std::string::npos) {
+            in_hailo_section = true;
+            hailo_device_count++;
+            // TODO: HRT-8834/8835 Support multiple Hailo devices connected to the same host
+            if (1 < hailo_device_count) {
+                pcie_info.gen = "N/A";
+                pcie_info.lanes = "N/A";
+                return pcie_info;
+            }
+        }
+        if (!in_hailo_section) {
+            continue;
+        }
+        if (line.find("LnkCap") != std::string::npos) {
+            std::istringstream line_stream(line);
+            std::string token;
+            while (line_stream >> token) {
+                if ("Speed" == token) {
+                    line_stream >> token;
+                    if (!token.empty() && token.back() == ',') {
+                        token.pop_back();
+                    }
+                    if (PCIE_GEN1_SPEED == token) { pcie_info.gen = "1"; }
+                    else if (PCIE_GEN2_SPEED == token) { pcie_info.gen = "2"; }
+                    else if (PCIE_GEN3_SPEED == token) { pcie_info.gen = "3"; }
+                    else if (PCIE_GEN4_SPEED == token) { pcie_info.gen = "4"; }
+                    else if (PCIE_GEN5_SPEED == token) { pcie_info.gen = "5"; }
+                    else if (PCIE_GEN6_SPEED == token) { pcie_info.gen = "6"; }
+                }
+                if ("Width" == token) {
+                    line_stream >> token;
+                    pcie_info.lanes = token.substr(1);
+                }
+            }
+        }
+    }
+    return pcie_info;
+}
+
+pci_info get_pcie_info() {
+    std::string lspci_output = exec("lspci -vvv");
+    return parse_lspci_output(lspci_output);
 }
 #endif
 

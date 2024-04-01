@@ -501,19 +501,19 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def(py::init<>())
         .def_readonly("number_of_classes", &hailo_nms_shape_t::number_of_classes)
         .def_readonly("max_bboxes_per_class", &hailo_nms_shape_t::max_bboxes_per_class)
-        .def_readonly("max_mask_size", &hailo_nms_shape_t::max_mask_size)
+        .def_readonly("max_accumulated_mask_size", &hailo_nms_shape_t::max_accumulated_mask_size)
         .def(py::pickle(
             [](const hailo_nms_shape_t &nms_shape) { // __getstate__
                 return py::make_tuple(
                     nms_shape.number_of_classes,
                     nms_shape.max_bboxes_per_class,
-                    nms_shape.max_mask_size);
+                    nms_shape.max_accumulated_mask_size);
             },
             [](py::tuple t) { // __setstate__
                 hailo_nms_shape_t nms_shape;
                 nms_shape.number_of_classes = t[0].cast<uint32_t>();
                 nms_shape.max_bboxes_per_class = t[1].cast<uint32_t>();
-                nms_shape.max_mask_size = t[2].cast<uint32_t>();
+                nms_shape.max_accumulated_mask_size = t[2].cast<uint32_t>();
                 return nms_shape;
             }
         ))

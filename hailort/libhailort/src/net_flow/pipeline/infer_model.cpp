@@ -13,8 +13,11 @@
 #include "hailo/hailort_common.hpp"
 #include "hailo/vdevice.hpp"
 #include "hailo/infer_model.hpp"
+#include "vdevice/vdevice_internal.hpp"
+#include "hef/hef_internal.hpp"
 #include "net_flow/pipeline/infer_model_internal.hpp"
 #include "net_flow/pipeline/async_infer_runner.hpp"
+
 
 #define WAIT_FOR_ASYNC_IN_DTOR_TIMEOUT (std::chrono::milliseconds(10000))
 
@@ -86,6 +89,12 @@ void InferModel::InferStream::Impl::set_nms_max_proposals_per_class(uint32_t max
     m_vstream_info.nms_shape.max_bboxes_per_class = max_proposals_per_class;
 }
 
+void InferModel::InferStream::Impl::set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size)
+{
+    m_nms_max_accumulated_mask_size = max_accumulated_mask_size;
+    m_vstream_info.nms_shape.max_accumulated_mask_size = max_accumulated_mask_size;
+}
+
 InferModel::InferStream::InferStream(std::shared_ptr<InferModel::InferStream::Impl> pimpl) : m_pimpl(pimpl)
 {
 }
@@ -150,6 +159,11 @@ void InferModel::InferStream::set_nms_max_proposals_per_class(uint32_t max_propo
     m_pimpl->set_nms_max_proposals_per_class(max_proposals_per_class);
 }
 
+void InferModel::InferStream::set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size)
+{
+    m_pimpl->set_nms_max_accumulated_mask_size(max_accumulated_mask_size);
+}
+
 InferModel::InferModel(VDevice &vdevice, Hef &&hef, std::unordered_map<std::string, InferModel::InferStream> &&inputs,
         std::unordered_map<std::string, InferModel::InferStream> &&outputs)
     : m_vdevice(vdevice), m_hef(std::move(hef)), m_inputs(std::move(inputs)), m_outputs(std::move(outputs)),
@@ -203,11 +217,8 @@ void InferModel::set_hw_latency_measurement_flags(hailo_latency_measurement_flag
     m_config_params.latency = latency;
 }
 
-// TODO: document that this will check validity of format tpyes/orders
-Expected<ConfiguredInferModel> InferModel::configure(const std::string &network_name)
+Expected<ConfiguredInferModel> InferModel::configure()
 {
-    CHECK_AS_EXPECTED(network_name.empty(), HAILO_NOT_IMPLEMENTED, "Passing network name is not supported yet!");
-
     auto configure_params = m_vdevice.get().create_configure_params(m_hef);
     CHECK_EXPECTED(configure_params);
 
@@ -226,6 +237,15 @@ Expected<ConfiguredInferModel> InferModel::configure(const std::string &network_
 
     auto network_groups = m_vdevice.get().configure(m_hef, configure_params.value());
     CHECK_EXPECTED(network_groups);
+
+    CHECK_AS_EXPECTED(1 == network_groups->size(), HAILO_INVALID_HEF,
+        "InferModel expects HEF with a single network group. found {}.", network_groups->size());
+
+    // TODO (HRT-11293) : Remove this check
+    TRY(auto internal_queue_size, network_groups.value()[0]->get_min_buffer_pool_size());
+    CHECK_AS_EXPECTED(internal_queue_size >= m_config_params.batch_size, HAILO_INVALID_OPERATION,
+        "Trying to configure a model with a batch={} bigger than internal_queue_size={}, which is not supported. Try using a smaller batch.",
+            m_config_params.batch_size, internal_queue_size);
 
     std::unordered_map<std::string, hailo_format_t> inputs_formats;
     std::unordered_map<std::string, hailo_format_t> outputs_formats;
@@ -249,6 +269,7 @@ Expected<ConfiguredInferModel> InferModel::configure(const std::string &network_
     CHECK_AS_EXPECTED(std::all_of(m_inputs.begin(), m_inputs.end(), [](const auto &input_pair) {
         return ((input_pair.second.m_pimpl->m_nms_score_threshold == INVALID_NMS_CONFIG) &&
                 (input_pair.second.m_pimpl->m_nms_iou_threshold == INVALID_NMS_CONFIG) &&
+                (input_pair.second.m_pimpl->m_nms_max_accumulated_mask_size == static_cast<uint32_t>(INVALID_NMS_CONFIG)) &&
                 (input_pair.second.m_pimpl->m_nms_max_proposals_per_class == static_cast<uint32_t>(INVALID_NMS_CONFIG)));
     }), HAILO_INVALID_OPERATION, "NMS config was changed for input");
 
@@ -256,6 +277,7 @@ Expected<ConfiguredInferModel> InferModel::configure(const std::string &network_
         auto &edge_name = output_pair.first;
         if ((output_pair.second.m_pimpl->m_nms_score_threshold == INVALID_NMS_CONFIG) &&
             (output_pair.second.m_pimpl->m_nms_iou_threshold == INVALID_NMS_CONFIG) &&
+            (output_pair.second.m_pimpl->m_nms_max_accumulated_mask_size == static_cast<uint32_t>(INVALID_NMS_CONFIG)) &&
             (output_pair.second.m_pimpl->m_nms_max_proposals_per_class == static_cast<uint32_t>(INVALID_NMS_CONFIG))) {
                 continue;
             }
@@ -271,25 +293,51 @@ Expected<ConfiguredInferModel> InferModel::configure(const std::string &network_
             auto status = network_groups.value()[0]->set_nms_max_bboxes_per_class(edge_name, output_pair.second.m_pimpl->m_nms_max_proposals_per_class);
             CHECK_SUCCESS_AS_EXPECTED(status);
         }
+        if (output_pair.second.m_pimpl->m_nms_max_accumulated_mask_size != static_cast<uint32_t>(INVALID_NMS_CONFIG)) {
+            auto status = network_groups.value()[0]->set_nms_max_accumulated_mask_size(edge_name, output_pair.second.m_pimpl->m_nms_max_accumulated_mask_size);
+            CHECK_SUCCESS_AS_EXPECTED(status);
+        }
     }
 
     auto configured_infer_model_pimpl = ConfiguredInferModelImpl::create(network_groups.value()[0], inputs_formats, outputs_formats,
-        get_input_names(), get_output_names());
+        get_input_names(), get_output_names(), m_vdevice);
     CHECK_EXPECTED(configured_infer_model_pimpl);
+
+    // The hef buffer is being used only when working with the service.
+    // TODO HRT-12636 - Besides clearing the hef buffer, clear also unnecessary members of Hef object.
+    // After HRT-12636 is done - The user can configure an infer model only once, with or without the service.
+    m_hef.pimpl->clear_hef_buffer();
 
     return ConfiguredInferModel(configured_infer_model_pimpl.release());
 }
 
 Expected<ConfiguredInferModel> InferModel::configure_for_ut(std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner,
-    const std::vector<std::string> &input_names, const std::vector<std::string> &output_names)
+    const std::vector<std::string> &input_names, const std::vector<std::string> &output_names,
+    std::shared_ptr<ConfiguredNetworkGroup> net_group)
 {
-    auto configure_params = m_vdevice.get().create_configure_params(m_hef);
-    CHECK_EXPECTED(configure_params);
+    if (nullptr == net_group) {
+        auto configure_params = m_vdevice.get().create_configure_params(m_hef);
+        CHECK_EXPECTED(configure_params);
 
-    auto network_groups = m_vdevice.get().configure(m_hef, configure_params.value());
-    CHECK_EXPECTED(network_groups);
+        for (auto &network_group_name_params_pair : *configure_params) {
+            for (auto &stream_params_name_pair : network_group_name_params_pair.second.stream_params_by_name) {
+                stream_params_name_pair.second.flags = HAILO_STREAM_FLAGS_ASYNC;
+            }
 
-    auto configured_infer_model_pimpl = ConfiguredInferModelImpl::create_for_ut(network_groups.value()[0], async_infer_runner, input_names, output_names);
+            for (auto &network_name_params_pair : network_group_name_params_pair.second.network_params_by_name) {
+                network_name_params_pair.second.batch_size = m_config_params.batch_size;
+            }
+
+            network_group_name_params_pair.second.power_mode = m_config_params.power_mode;
+            network_group_name_params_pair.second.latency = m_config_params.latency;
+        }
+
+        auto network_groups = m_vdevice.get().configure(m_hef, configure_params.value());
+        CHECK_EXPECTED(network_groups);
+        net_group = network_groups.value()[0];
+    }
+
+    auto configured_infer_model_pimpl = ConfiguredInferModelImpl::create_for_ut(net_group, async_infer_runner, input_names, output_names);
     CHECK_EXPECTED(configured_infer_model_pimpl);
 
     return ConfiguredInferModel(configured_infer_model_pimpl.release());
@@ -378,9 +426,9 @@ Expected<AsyncInferJob> ConfiguredInferModel::run_async(ConfiguredInferModel::Bi
     return m_pimpl->run_async(bindings, callback);
 }
 
-Expected<LatencyMeasurementResult> ConfiguredInferModel::get_hw_latency_measurement(const std::string &network_name)
+Expected<LatencyMeasurementResult> ConfiguredInferModel::get_hw_latency_measurement()
 {
-    return m_pimpl->get_hw_latency_measurement(network_name);
+    return m_pimpl->get_hw_latency_measurement();
 }
 
 hailo_status ConfiguredInferModel::set_scheduler_timeout(const std::chrono::milliseconds &timeout)
@@ -403,13 +451,30 @@ Expected<size_t> ConfiguredInferModel::get_async_queue_size()
     return m_pimpl->get_async_queue_size();
 }
 
+void ConfiguredInferModel::shutdown()
+{
+    m_pimpl->abort();
+}
+
 Expected<std::shared_ptr<ConfiguredInferModelImpl>> ConfiguredInferModelImpl::create(std::shared_ptr<ConfiguredNetworkGroup> net_group,
     const std::unordered_map<std::string, hailo_format_t> &inputs_formats,
     const std::unordered_map<std::string, hailo_format_t> &outputs_formats,
-    const std::vector<std::string> &input_names, const std::vector<std::string> &output_names, const uint32_t timeout)
+    const std::vector<std::string> &input_names, const std::vector<std::string> &output_names, VDevice &vdevice, const uint32_t timeout)
 {
     auto async_infer_runner = AsyncInferRunnerImpl::create(net_group, inputs_formats, outputs_formats, timeout);
     CHECK_EXPECTED(async_infer_runner);
+
+    auto &hw_elem = async_infer_runner.value()->get_async_pipeline()->get_async_hw_element();
+    for (auto &pool : hw_elem->get_hw_interacted_buffer_pools_h2d()) {
+        if (!pool->is_holding_user_buffers()) {
+            CHECK_SUCCESS_AS_EXPECTED(pool->map_to_vdevice(vdevice, HAILO_DMA_BUFFER_DIRECTION_H2D));
+        }
+    }
+    for (auto &pool : hw_elem->get_hw_interacted_buffer_pools_d2h()) {
+        if (!pool->is_holding_user_buffers()) {
+            CHECK_SUCCESS_AS_EXPECTED(pool->map_to_vdevice(vdevice, HAILO_DMA_BUFFER_DIRECTION_D2H));
+        }
+    }
 
     auto configured_infer_model_pimpl = make_shared_nothrow<ConfiguredInferModelImpl>(net_group, async_infer_runner.release(),
         input_names, output_names);
@@ -527,14 +592,48 @@ hailo_status ConfiguredInferModelImpl::run(ConfiguredInferModel::Bindings bindin
 hailo_status ConfiguredInferModelImpl::validate_bindings(ConfiguredInferModel::Bindings bindings)
 {
     for (const auto &input_name : m_input_names) {
-        if (BufferType::VIEW == bindings.input(input_name)->m_pimpl->get_type()) {
-            CHECK_EXPECTED_AS_STATUS(bindings.input(input_name)->get_buffer());
-        } else {
-            CHECK_EXPECTED_AS_STATUS(bindings.input(input_name)->get_pix_buffer());
+        auto buffer_type = bindings.input(input_name)->m_pimpl->get_type();
+        switch (buffer_type) {
+            case BufferType::VIEW:
+            {
+                CHECK_EXPECTED_AS_STATUS(bindings.input(input_name)->get_buffer());
+                break;
+            }
+            case BufferType::PIX_BUFFER:
+            {
+                CHECK_EXPECTED_AS_STATUS(bindings.input(input_name)->get_pix_buffer());
+                break;
+            }
+            case BufferType::DMA_BUFFER:
+            {
+                CHECK_EXPECTED_AS_STATUS(bindings.input(input_name)->get_dma_buffer());
+                break;
+            }
+            default:
+                CHECK(false, HAILO_NOT_FOUND, "Couldnt find input buffer for '{}'", input_name);
         }
     }
     for (const auto &output_name : m_output_names) {
-        CHECK_EXPECTED_AS_STATUS(bindings.output(output_name)->get_buffer());
+        auto buffer_type = bindings.output(output_name)->m_pimpl->get_type();
+        switch (buffer_type) {
+            case BufferType::VIEW:
+            {
+                CHECK_EXPECTED_AS_STATUS(bindings.output(output_name)->get_buffer());
+                break;
+            }
+            case BufferType::PIX_BUFFER:
+            {
+                CHECK(false, HAILO_NOT_SUPPORTED, "pix_buffer isn't supported for outputs in '{}'", output_name);
+                break;
+            }
+            case BufferType::DMA_BUFFER:
+            {
+                CHECK_EXPECTED_AS_STATUS(bindings.output(output_name)->get_dma_buffer());
+                break;
+            }
+            default:
+                CHECK(false, HAILO_NOT_FOUND, "Couldnt find output buffer for '{}'", output_name);
+        }
     }
 
     return HAILO_SUCCESS;
@@ -547,62 +646,40 @@ Expected<AsyncInferJob> ConfiguredInferModelImpl::run_async(ConfiguredInferModel
 
     auto job_pimpl = make_shared_nothrow<AsyncInferJob::Impl>(static_cast<uint32_t>(m_input_names.size() + m_output_names.size()));
     CHECK_NOT_NULL_AS_EXPECTED(job_pimpl, HAILO_OUT_OF_HOST_MEMORY);
-    AsyncInferJob job(job_pimpl);
 
     TransferDoneCallbackAsyncInfer transfer_done = [this, bindings, job_pimpl, callback](hailo_status status) {
         bool should_call_callback = job_pimpl->stream_done(status);
         if (should_call_callback) {
+            auto final_status = (m_async_infer_runner->get_pipeline_status() == HAILO_SUCCESS) ?
+                job_pimpl->completion_status() : m_async_infer_runner->get_pipeline_status();
+
+            AsyncInferCompletionInfo completion_info(final_status);
+            callback(completion_info);
+            job_pimpl->mark_callback_done();
+
             {
                 std::unique_lock<std::mutex> lock(m_mutex);
                 m_ongoing_parallel_transfers--;
             }
             m_cv.notify_all();
-
-            auto final_status = (m_async_infer_runner->get_pipeline_status() == HAILO_SUCCESS) ?
-                job_pimpl->completion_status() : m_async_infer_runner->get_pipeline_status();
-
-            AsyncInferCompletionInfo completion_info(bindings, final_status);
-            callback(completion_info);
-            job_pimpl->mark_callback_done();
         }
     };
 
-    for (const auto &input_name : m_input_names) {
-        auto buff_type = bindings.input(input_name)->m_pimpl->get_type();
-        if (BufferType::VIEW == buff_type) {
-            auto buffer = bindings.input(input_name)->get_buffer();
-            CHECK_EXPECTED(buffer, "Couldnt find input buffer for '{}'", input_name);
-            m_async_infer_runner->set_input(input_name, buffer.release(), transfer_done);
-        } else if (BufferType::PIX_BUFFER == buff_type) {
-            auto buffer = bindings.input(input_name)->get_pix_buffer();
-            CHECK_EXPECTED(buffer, "Couldnt find input buffer for '{}'", input_name);
-            m_async_infer_runner->set_input(input_name, buffer.release(), transfer_done);
-        } else {
-            CHECK_AS_EXPECTED(false, HAILO_NOT_FOUND, "Couldnt find input buffer for '{}'", input_name);
-        }
-    }
-
-    for (const auto &output_name : m_output_names) {
-        auto buffer = bindings.output(output_name)->get_buffer();
-        CHECK_EXPECTED(buffer, "Couldnt find output buffer for '{}'", output_name);
-        m_async_infer_runner->set_output(output_name, buffer.release(), transfer_done);
-    }
-
     {
         std::unique_lock<std::mutex> lock(m_mutex);
-        auto status = m_async_infer_runner->async_infer();
+        auto status = m_async_infer_runner->run(bindings, transfer_done);
         CHECK_SUCCESS_AS_EXPECTED(status);
         m_ongoing_parallel_transfers++;
     }
-
     m_cv.notify_all();
 
+    AsyncInferJob job(job_pimpl);
     return job;
 }
 
-Expected<LatencyMeasurementResult> ConfiguredInferModelImpl::get_hw_latency_measurement(const std::string &network_name)
+Expected<LatencyMeasurementResult> ConfiguredInferModelImpl::get_hw_latency_measurement()
 {
-    return m_cng->get_latency_measurement(network_name);
+    return m_cng->get_latency_measurement();
 }
 
 hailo_status ConfiguredInferModelImpl::set_scheduler_timeout(const std::chrono::milliseconds &timeout)
@@ -683,7 +760,7 @@ hailo_status AsyncInferJob::Impl::wait(std::chrono::milliseconds timeout)
     bool was_successful = m_cv.wait_for(lock, timeout, [this] () -> bool {
         return (m_callback_called);
     });
-    CHECK(was_successful, HAILO_TIMEOUT, "Waiting for async job to finish has failed with timeout {}!", timeout.count());
+    CHECK(was_successful, HAILO_TIMEOUT, "Waiting for async job to finish has failed with timeout ({}ms)", timeout.count());
 
     return HAILO_SUCCESS;
 }
@@ -762,7 +839,7 @@ hailo_status ConfiguredInferModel::Bindings::InferStream::Impl::set_buffer(Memor
     return HAILO_SUCCESS;
 }
 
-Expected<MemoryView> ConfiguredInferModel::Bindings::InferStream::Impl::get_buffer()
+Expected<MemoryView> ConfiguredInferModel::Bindings::InferStream::Impl::get_buffer() const
 {
     CHECK_AS_EXPECTED(BufferType::VIEW == m_buffer_type, HAILO_INVALID_OPERATION,
         "Trying to get buffer as view for '{}', while it is not configured as view", m_name);
@@ -782,6 +859,22 @@ Expected<hailo_pix_buffer_t> ConfiguredInferModel::Bindings::InferStream::Impl::
     CHECK_AS_EXPECTED(BufferType::PIX_BUFFER == m_buffer_type, HAILO_INVALID_OPERATION,
         "Trying to get buffer as pix_buffer for '{}', while it is not configured as pix_buffer", m_name);
     auto cp = m_pix_buffer;
+    return cp;
+}
+
+hailo_status ConfiguredInferModel::Bindings::InferStream::Impl::set_dma_buffer(hailo_dma_buffer_t dma_buffer)
+{
+    m_buffer_type = BufferType::DMA_BUFFER;
+    m_dma_buffer = dma_buffer;
+
+    return HAILO_SUCCESS;
+}
+
+Expected<hailo_dma_buffer_t> ConfiguredInferModel::Bindings::InferStream::Impl::get_dma_buffer()
+{
+    CHECK_AS_EXPECTED(BufferType::DMA_BUFFER == m_buffer_type, HAILO_INVALID_OPERATION,
+        "Trying to get buffer as dma_buffer for '{}', while it is not configured as dma_buffer", m_name);
+    auto cp = m_dma_buffer;
     return cp;
 }
 
@@ -809,6 +902,11 @@ hailo_status ConfiguredInferModel::Bindings::InferStream::set_pix_buffer(const h
     return m_pimpl->set_pix_buffer(pix_buffer);
 }
 
+hailo_status ConfiguredInferModel::Bindings::InferStream::set_dma_buffer(hailo_dma_buffer_t dma_buffer)
+{
+    return m_pimpl->set_dma_buffer(dma_buffer);
+}
+
 Expected<MemoryView> ConfiguredInferModel::Bindings::InferStream::get_buffer()
 {
     return m_pimpl->get_buffer();
@@ -817,6 +915,11 @@ Expected<MemoryView> ConfiguredInferModel::Bindings::InferStream::get_buffer()
 Expected<hailo_pix_buffer_t> ConfiguredInferModel::Bindings::InferStream::get_pix_buffer()
 {
     return m_pimpl->get_pix_buffer();
+}
+
+Expected<hailo_dma_buffer_t> ConfiguredInferModel::Bindings::InferStream::get_dma_buffer()
+{
+    return m_pimpl->get_dma_buffer();
 }
 
 } /* namespace hailort */

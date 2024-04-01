@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.0.0)
 
 add_subdirectory(vstreams_example)
 add_subdirectory(infer_pipeline_example)
-add_subdirectory(async_infer_example)
-add_subdirectory(async_infer_functionality_example)
+add_subdirectory(async_infer_basic_example)
+add_subdirectory(async_infer_advanced_example)
 add_subdirectory(raw_streams_example)
 add_subdirectory(multi_network_vstream_example)
 add_subdirectory(switch_network_groups_example)
@@ -17,8 +17,8 @@ add_subdirectory(notification_callback_example)
 set(CPP_EXAMPLE_TARGETS
     cpp_vstreams_example
     cpp_infer_pipeline_example
-    cpp_async_infer_example
-    cpp_async_infer_functionality_example
+    cpp_async_infer_basic_example
+    cpp_async_infer_advanced_example
     cpp_raw_streams_example
     cpp_multi_network_vstream_example
     cpp_switch_network_groups_example

@@ -411,7 +411,7 @@ Expected<ordered_json> DownloadActionListCommand::parse_single_action(uint32_t b
 }
 
 Expected<ordered_json> DownloadActionListCommand::parse_context(Device &device, uint32_t network_group_id,
-    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint8_t context_index, const std::string &context_name)
+    CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint16_t context_index, const std::string &context_name)
 {
     uint8_t converted_context_type = static_cast<uint8_t>(context_type);
     uint32_t action_list_base_address = 0;
@@ -521,7 +521,7 @@ Expected<ordered_json> DownloadActionListCommand::parse_network_group(Device &de
     network_group_json["contexts"].emplace_back(preliminary_context_json.release());
 
     const auto dynamic_contexts_count = number_of_dynamic_contexts_per_network_group.value()[network_group_id];
-    for (uint8_t context_index = 0; context_index < dynamic_contexts_count; context_index++) {
+    for (uint16_t context_index = 0; context_index < dynamic_contexts_count; context_index++) {
         auto context_json = parse_context(device, network_group_id,
             CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_DYNAMIC, context_index,
             fmt::format("dynamic_{}", context_index));

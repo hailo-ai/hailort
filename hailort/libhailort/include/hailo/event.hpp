@@ -129,7 +129,7 @@ public:
     using Waitable::Waitable;
 
     static Expected<Semaphore> create(uint32_t initial_count);
-    static SemaphorePtr create_shared(uint32_t initial_count);
+    static Expected<SemaphorePtr> create_shared(uint32_t initial_count);
 
     virtual hailo_status signal() override;
     virtual bool is_auto_reset() override;

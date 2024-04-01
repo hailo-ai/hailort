@@ -56,6 +56,13 @@ extern "C" {
 
 #define CONTEXT_SWITCH_DEFS__WRITE_ACTION_BY_TYPE_MAX_SIZE (4)
 
+// TODO HRT-12512: Update variable when / If DDR has it's own CMA region
+#define CONTEXT_SWITCH_DEFS__START_M4_MAPPED_DDR_ADDRESS (0x80000000)
+#define CONTEXT_SWITCH_DEFS__END_M4_MAPPED_DDR_ADDRESS (0x90000000)
+#define CONTEXT_SWITCH_DEFS__START_M4_MAPPED_DDR_ADDRESS_AFTER_LUT (0x50000000)
+#define CONTEXT_SWITCH_DEFS__DDR_ADDRESS_MASK (0x0FFFFFFF)
+#define CONTEXT_SWITCH_DEFS__INVALID_DDR_CONTEXTS_BUFFER_ADDRESS (0)
+
 
 #pragma pack(push, 1)
 typedef struct {
@@ -207,7 +214,7 @@ typedef struct {
     uint32_t kernel_done_count;
 } CONTEXT_SWITCH_DEFS__enable_lcu_action_non_default_data_t;
 
-/* Default action - kernel_done_address and kernel_done_count has default values */
+/* Default action - kernel_done_address, kernel_done_count have default values */
 typedef struct {
     uint8_t packed_lcu_id;
     uint8_t network_index;

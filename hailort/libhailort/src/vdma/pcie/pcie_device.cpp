@@ -18,7 +18,7 @@
 
 #include "vdma/pcie/pcie_device.hpp"
 #include "device_common/control.hpp"
-#include "os/hailort_driver.hpp"
+#include "vdma/driver/hailort_driver.hpp"
 #include "core_op/resource_manager/resource_manager.hpp"
 #include "vdma/vdma_config_manager.hpp"
 

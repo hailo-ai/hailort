@@ -31,7 +31,6 @@ hailo_status InputStream::wait_for_async_ready(size_t /* transfer_size */, std::
 
 Expected<size_t> InputStream::get_async_max_queue_size() const
 {
-    LOGGER__ERROR("get_async_max_queue_size not implemented for sync API");
     return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
 
@@ -57,7 +56,6 @@ hailo_status OutputStream::wait_for_async_ready(size_t /* transfer_size */, std:
 
 Expected<size_t> OutputStream::get_async_max_queue_size() const
 {
-    LOGGER__ERROR("get_async_max_queue_size not implemented for sync API");
     return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
 

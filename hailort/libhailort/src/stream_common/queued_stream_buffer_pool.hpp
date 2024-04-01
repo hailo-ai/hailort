@@ -11,6 +11,7 @@
 #define _HAILO_QUEUED_STREAM_BUFFER_POOL_HPP_
 
 #include "stream_common/stream_buffer_pool.hpp"
+#include "hailo/dma_mapped_buffer.hpp"
 
 #include <queue>
 
@@ -24,6 +25,8 @@ public:
 
     explicit QueuedStreamBufferPool(std::vector<BufferPtr> &&storage);
 
+    hailo_status dma_map(VDevice &vdevice, hailo_dma_buffer_direction_t direction);
+
     virtual size_t max_queue_size() const override;
     virtual Expected<TransferBuffer> dequeue() override;
     virtual hailo_status enqueue(TransferBuffer &&buffer_info) override;
@@ -33,7 +36,10 @@ private:
     // Hold the buffer storage, keeps all buffers alive.
     std::vector<BufferPtr> m_storage;
 
-    std::queue<BufferPtr> m_queue;
+    // Keeps mappings alive (only if dma_map was called).
+    std::vector<DmaMappedBuffer> m_dma_mappings;
+
+    std::queue<MemoryView> m_queue;
 
     // Used for buffer enqueue order validation.
     size_t m_next_enqueue_buffer_index = 0;

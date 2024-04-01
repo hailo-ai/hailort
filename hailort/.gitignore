@@ -1,3 +1,4 @@
+build/
+dist/
 /external/
 cmake/external/*/
-prepare_externals/build/

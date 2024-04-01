@@ -142,7 +142,7 @@ std::string NetworkProgressBar::get_progress_text()
         double avg_hw_latency = 0;
         auto latency_expected = m_configured_network_group->get_latency_measurement(m_network_name);
         if (latency_expected) {
-            avg_hw_latency = InferResultsFormatUtils::latency_result_to_ms(latency_expected.release().avg_hw_latency);
+            avg_hw_latency = InferStatsPrinter::latency_result_to_ms(latency_expected.release().avg_hw_latency);
         }
 
         if (avg_hw_latency > 0) {

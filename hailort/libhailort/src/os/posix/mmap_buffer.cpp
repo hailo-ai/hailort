@@ -8,7 +8,7 @@
  **/
 
 #include "os/mmap_buffer.hpp"
-#include "os/hailort_driver.hpp"
+#include "vdma/driver/hailort_driver.hpp"
 #include "hailo_ioctl_common.h"
 #include <sys/ioctl.h>
 

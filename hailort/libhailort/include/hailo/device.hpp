@@ -34,14 +34,6 @@ namespace hailort
 class Device;
 using NotificationCallback = std::function<void(Device &device, const hailo_notification_t &notification, void *opaque)>;
 
-namespace vdma {
-    class DmaAbleBuffer;
-    using DmaAbleBufferPtr = std::shared_ptr<DmaAbleBuffer>;
-
-    class MappedBuffer;
-    using MappedBufferPtr = std::shared_ptr<MappedBuffer>;
-}
-
 /** @} */ // end of group_type_definitions
 
 /*! Represents the Hailo device (chip). */
@@ -700,42 +692,44 @@ public:
      */
     virtual bool is_stream_interface_supported(const hailo_stream_interface_t &stream_interface) const = 0;
 
-    // TODO: Also link to async infer - ConfiguredInferModel, Bindings etc. Just like we did for
-    //       InputStream::write_async and OutputStream::read_async (HRT-11039)
     /**
      * Maps the buffer pointed to by @a address for DMA transfers to/from this device, in the specified
-     * @a direction.
-     * DMA mapping of buffers in advance may improve the performance of `InputStream::write_async()` or
-     * `OutputStream::read_async()`. This improvement will be realized if the buffer is reused multiple times
-     * across different async operations.
-     * - For buffers that will be written to the device via `InputStream::write_async()`, use `HAILO_H2D_STREAM`
-     *   for the @a direction parameter.
-     * - For buffers that will be read from the device via `OutputStream::read_async()`, use `HAILO_D2H_STREAM`
-     *   for the @a direction parameter.
+     * @a data_direction.
+     * DMA mapping of buffers in advance may improve the performance of async API. This improvement will become
+     * apparent when the buffer is reused multiple times across different async operations.
      *
-     * @param[in] address       The address of the buffer to be mapped
-     * @param[in] size          The buffer's size in bytes
-     * @param[in] direction     The direction of the mapping
+     * For high level API (aka InferModel), buffers bound using ConfiguredInferModel::Bindings::InferStream::set_buffer
+     * can be mapped.
+     *
+     * For low level API (aka InputStream/OutputStream), buffers passed to InputStream::write_async and
+     * OutputStream::read_async can be mapped.
+     *
+     * @param[in] address       The address of the buffer to be mapped.
+     * @param[in] size          The buffer's size in bytes.
+     * @param[in] direction     The direction of the mapping. For input streams, use `HAILO_DMA_BUFFER_DIRECTION_H2D`
+     *                          and for output streams, use `HAILO_DMA_BUFFER_DIRECTION_D2H`.
+     *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note The DMA mapping will be freed upon calling dma_unmap() with @a address and @a direction, or when the
-     *       @a Device object is destroyed.
-     * @note The buffer pointed to by @a address cannot be freed until it is unmapped (via dma_unmap() or @a Device
+     *
+     * @note The DMA mapping will be released upon calling dma_unmap() with @a address, @a size and @a data_direction, or
+     *       when the @a VDevice object is destroyed.
+     * @note The buffer pointed to by @a address cannot be released until it is unmapped (via dma_unmap() or @a Device
      *       destruction).
      */
-    virtual hailo_status dma_map(void *address, size_t size, hailo_stream_direction_t direction);
+    virtual hailo_status dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction);
 
     /**
      * Un-maps a buffer buffer pointed to by @a address for DMA transfers to/from this device, in the direction
      * @a direction.
      *
-     * @param[in] address       The address of the buffer to be un-mapped
-     * @param[in] direction     The direction of the mapping
+     * @param[in] address       The address of the buffer to be un-mapped.
+     * @param[in] size          The buffer's size in bytes.
+     * @param[in] direction     The direction of the mapping.
+     *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
-    virtual hailo_status dma_unmap(void *address, hailo_stream_direction_t direction);
+    virtual hailo_status dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction);
 
-    virtual Expected<std::pair<vdma::MappedBufferPtr, bool>> try_dma_map(vdma::DmaAbleBufferPtr buffer,
-        hailo_stream_direction_t direction);
     virtual hailo_status direct_write_memory(uint32_t address, const void *buffer, uint32_t size);
     virtual hailo_status direct_read_memory(uint32_t address, void *buffer, uint32_t size);
     hailo_status set_overcurrent_state(bool should_activate);
@@ -745,12 +739,12 @@ public:
     // The sum of the number of contexts will fit in uint8_t
     Expected<std::vector<uint8_t>> get_number_of_dynamic_contexts_per_network_group();
     Expected<Buffer> download_context_action_list(uint32_t network_group_id, uint8_t context_type,
-        uint8_t context_index, uint32_t *base_address, uint32_t *batch_counter, uint16_t max_size = 10000);
+        uint16_t context_index, uint32_t *base_address, uint32_t *batch_counter, uint16_t max_size = 10000);
     // The batch configured is reset between network groups
     hailo_status set_context_action_list_timestamp_batch(uint16_t batch_index);
     hailo_status set_context_switch_breakpoint(uint8_t breakpoint_id, bool break_at_any_network_group_index,
         uint8_t network_group_index, bool break_at_any_batch_index, uint16_t batch_index,  bool break_at_any_context_index,
-        uint8_t context_index, bool break_at_any_action_index, uint16_t action_index);
+        uint16_t context_index, bool break_at_any_action_index, uint16_t action_index);
     hailo_status continue_context_switch_breakpoint(uint8_t breakpoint_id);
     hailo_status clear_context_switch_breakpoint(uint8_t breakpoint_id);
     Expected<uint8_t> get_context_switch_breakpoint_status(uint8_t breakpoint_id);

@@ -18,7 +18,8 @@ message ProtoProfilerTopHeader {
     string os_ver = 5;
     string cpu_arch = 6;
     uint64 sys_ram_size = 7; //bytes
-    uint64 time_stamp_since_epoch =8; //nanosec
+    uint64 time_stamp_since_epoch = 8; //nanosec
+    ProtoProfilerPcieInfo pcie_info = 9;
 }
 
 message ProtoTraceMessage {
@@ -27,10 +28,12 @@ message ProtoTraceMessage {
         ProtoProfilerAddStreamTrace added_stream = 2;
         ProtoProfilerAddCoreOpTrace added_core_op = 3;
         ProtoProfilerAddDeviceTrace added_device = 4;
-        ProtoProfilerSwitchedCoreOpTrace switched_core_op = 5;
+        ProtoProfilerActivateCoreOpTrace activate_core_op = 5;
         ProtoProfilerFrameEnqueueTrace frame_enqueue = 6;
         ProtoProfilerFrameDequeueTrace frame_dequeue = 7;
         ProtoProfilerCoreOpSwitchDecision switch_core_op_decision = 8;
+        ProtoProfilerDeactivateCoreOpTrace deactivate_core_op = 9;
+        ProtoProfilerLoadedHefTrace loaded_hef = 10;
     }
 }
 
@@ -89,11 +92,18 @@ message ProtoProfilerCoreOpSwitchDecision {
     bool switch_because_idle = 5;
 }
 
-message ProtoProfilerSwitchedCoreOpTrace {
+message ProtoProfilerActivateCoreOpTrace {
     uint64 time_stamp = 1; // nanosec
     int32 new_core_op_handle = 2;
-    string core_op_name = 3;
-    string device_id = 4;
+    string device_id = 3;
+    double duration = 4; //millisec
+}
+
+message ProtoProfilerDeactivateCoreOpTrace {
+    uint64 time_stamp = 1; // nanosec
+    int32 core_op_handle = 2;
+    string device_id = 3;
+    double duration = 4; //millisec
 }
 
 // Low level streams adding
@@ -120,4 +130,16 @@ message ProtoProfilerSetSchedulerParam {
 message ProtoProfilerAddDeviceTrace {
     uint64 time_stamp = 1; // nanosec
     ProtoProfilerDeviceInfo  device_info = 2;
+}
+
+message ProtoProfilerPcieInfo {
+    string lanes = 1;
+    string  gen = 2;
+}
+
+message ProtoProfilerLoadedHefTrace {
+    uint64 time_stamp = 1; // nanosec
+    string hef_name = 2;
+    string dfc_version = 3;
+    bytes hef_md5 = 4;
 }

@@ -31,6 +31,7 @@ class ScheduledInputStream : public AsyncInputStreamBase {
 public:
 
     static Expected<std::unique_ptr<ScheduledInputStream>> create(
+        VDevice &vdevice,
         std::map<device_id_t, std::reference_wrapper<InputStreamBase>> &&streams,
         const LayerInfo &layer_info,
         const scheduler_core_op_handle_t &core_op_handle,
@@ -38,6 +39,7 @@ public:
         std::shared_ptr<InferRequestAccumulator> infer_requests_accumulator);
 
     ScheduledInputStream(
+        VDevice &vdevice,
         std::map<device_id_t, std::reference_wrapper<InputStreamBase>> &&streams,
         const scheduler_core_op_handle_t &core_op_handle,
         EventPtr &&core_op_activated_event,
@@ -45,6 +47,7 @@ public:
         std::shared_ptr<InferRequestAccumulator> &&infer_requests_accumulator,
         hailo_status &status) :
             AsyncInputStreamBase(layer_info, std::move(core_op_activated_event), status),
+            m_vdevice(vdevice),
             m_streams(std::move(streams)),
             m_core_op_handle(core_op_handle),
             m_infer_requests_accumulator(infer_requests_accumulator),
@@ -61,6 +64,7 @@ public:
     virtual bool is_scheduled() override final { return true; };
 
 private:
+    VDevice &m_vdevice;
     std::map<device_id_t, std::reference_wrapper<InputStreamBase>> m_streams;
     scheduler_core_op_handle_t m_core_op_handle;
     std::shared_ptr<InferRequestAccumulator> m_infer_requests_accumulator;
@@ -71,6 +75,7 @@ private:
 class ScheduledOutputStream : public AsyncOutputStreamBase {
 public:
     static Expected<std::unique_ptr<ScheduledOutputStream>> create(
+        VDevice &vdevice,
         std::map<device_id_t, std::reference_wrapper<OutputStreamBase>> &&streams,
         const scheduler_core_op_handle_t &core_op_handle,
         const LayerInfo &layer_info,
@@ -78,6 +83,7 @@ public:
         std::shared_ptr<InferRequestAccumulator> infer_requests_accumulator);
 
     ScheduledOutputStream(
+        VDevice &vdevice,
         std::map<device_id_t, std::reference_wrapper<OutputStreamBase>> &&streams,
         const scheduler_core_op_handle_t &core_op_handle,
         const LayerInfo &layer_info,
@@ -85,6 +91,7 @@ public:
         std::shared_ptr<InferRequestAccumulator> &&infer_requests_accumulator,
         hailo_status &status) :
             AsyncOutputStreamBase(layer_info, std::move(core_op_activated_event), status),
+            m_vdevice(vdevice),
             m_streams(std::move(streams)),
             m_core_op_handle(core_op_handle),
             m_infer_requests_accumulator(infer_requests_accumulator),
@@ -121,6 +128,7 @@ public:
 
 
 private:
+    VDevice &m_vdevice;
     std::map<device_id_t, std::reference_wrapper<OutputStreamBase>> m_streams;
     scheduler_core_op_handle_t m_core_op_handle;
     std::shared_ptr<InferRequestAccumulator> m_infer_requests_accumulator;

@@ -32,7 +32,7 @@ using core_op_priority_t = uint8_t;
 constexpr const uint16_t SINGLE_CONTEXT_BATCH_SIZE = 1;
 
 class VDeviceCoreOp;
-
+class VdmaConfigCoreOp;
 
 class ScheduledCoreOp
 {

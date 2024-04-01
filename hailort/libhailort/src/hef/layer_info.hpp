@@ -14,7 +14,7 @@
 #include "hailo/hailort_common.hpp"
 #include "hailo/hailort_defaults.hpp"
 
-#include "os/hailort_driver.hpp"
+#include "vdma/driver/hailort_driver.hpp"
 
 #include "control_protocol.h"
 #include <vector>
@@ -45,7 +45,7 @@ struct BufferIndices {
 };
 
 struct ConnectedContextInfo {
-    uint8_t context_index;
+    uint16_t context_index;
     uint8_t dma_engine_index;
     uint8_t stream_index;
 };
@@ -67,7 +67,7 @@ struct LayerInfo {
     uint8_t network_index;
     CONTROL_PROTOCOL__nn_stream_config_t nn_stream_config;
     uint32_t max_shmifo_size;
-    uint8_t context_index;
+    uint16_t context_index;
     uint32_t pad_index = INVALID_PAD_INDEX;
 
     // Transformation and shape info

@@ -401,7 +401,7 @@ hailo_status send_loop(const inference_runner_params &params, SendObject &send_o
             auto status = send_object.write(MemoryView(
                 const_cast<uint8_t*>(input_buffer->data()) + offset,
                 send_object.get_frame_size()));
-            if (HAILO_STREAM_ABORTED_BY_USER == status) {
+            if (HAILO_STREAM_ABORT == status) {
                 LOGGER__DEBUG("Input stream was aborted!");
                 return status;
             }
@@ -692,7 +692,7 @@ static hailo_status run_streaming_impl(std::shared_ptr<ConfiguredNetworkGroup> c
     auto error_status = HAILO_SUCCESS;
     for (auto& result : results) {
         auto status = result->get();
-        if (HAILO_STREAM_ABORTED_BY_USER == status) {
+        if (HAILO_STREAM_ABORT == status) {
             continue;
         }
         if (HAILO_SUCCESS != status) {

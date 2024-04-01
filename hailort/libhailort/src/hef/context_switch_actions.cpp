@@ -10,6 +10,7 @@
 
 #include "context_switch_actions.hpp"
 #include "core_op/resource_manager/resource_manager.hpp"
+#include "hef/hef_internal.hpp"
 
 #include "context_switch_defs.h"
 
@@ -171,22 +172,60 @@ Expected<Buffer> DeactivateConfigChannelAction::serialize_params(const ContextRe
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 
-Expected<ContextSwitchConfigActionPtr> WriteDataCcwAction::create(
+Expected<ContextSwitchConfigActionPtr> WriteDataCcwActionByBuffer::create(
     Buffer &&data, uint8_t config_stream_index, size_t total_ccw_burst)
 {
     CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(total_ccw_burst), HAILO_INVALID_HEF,
         "Too many ccw burst {} (must fit in uint16)", total_ccw_burst);
-    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) WriteDataCcwAction(
+    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) WriteDataCcwActionByBuffer(
         std::move(data), config_stream_index, static_cast<uint16_t>(total_ccw_burst)));
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
-WriteDataCcwAction::WriteDataCcwAction(Buffer &&data, uint8_t config_stream_index, uint16_t total_ccw_burst) :
+hailo_status WriteDataCcwActionByBuffer::write_to_config_buffer(ConfigBuffer& config_buffer, bool should_support_pre_fetch)
+{
+    bool is_last_write = config_buffer.size_left() == size();
+    if (should_support_pre_fetch && is_last_write) {
+        auto status = config_buffer.pad_with_nops();
+        CHECK_SUCCESS(status);
+    }
+
+    auto status = config_buffer.write(MemoryView(m_data));
+    CHECK_SUCCESS(status);
+
+    if (should_support_pre_fetch && is_last_write) {
+        auto desc_count = config_buffer.program_descriptors();
+        CHECK_EXPECTED_AS_STATUS(desc_count);
+    }
+
+    return HAILO_SUCCESS;
+}
+
+Expected<ContextSwitchConfigActionPtr> WriteDataCcwAction::create(uint32_t offset, size_t size, uint8_t config_stream_index,
+    size_t total_ccw_burst, std::shared_ptr<ShefFileHandle> shef_file_handle)
+{
+    CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(total_ccw_burst), HAILO_INVALID_HEF,
+        "Too many ccw burst {} (must fit in uint16)", total_ccw_burst);
+    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) WriteDataCcwAction(
+        offset, size, config_stream_index, static_cast<uint16_t>(total_ccw_burst), shef_file_handle));
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+    return result;
+}
+
+WriteDataCcwActionByBuffer::WriteDataCcwActionByBuffer(Buffer &&data, uint8_t config_stream_index, uint16_t total_ccw_burst) :
+    WriteDataCcwAction(0, 0, config_stream_index, total_ccw_burst, nullptr),
+    m_data(std::move(data))
+{}
+
+WriteDataCcwAction::WriteDataCcwAction(uint32_t offset, size_t size, uint8_t config_stream_index, uint16_t total_ccw_burst,
+        std::shared_ptr<ShefFileHandle> shef_file_handle) :
     ContextSwitchConfigAction(Type::WriteDataCcw),
-    m_data(std::move(data)),
+    m_offset(offset),
+    m_size(size),
     m_config_stream_index(config_stream_index),
-    m_total_ccw_burst(total_ccw_burst)
+    m_total_ccw_burst(total_ccw_burst),
+    m_shef_file_handle(shef_file_handle)
 {}
 
 Expected<std::vector<Buffer>> WriteDataCcwAction::serialize(const ContextResources &) const
@@ -205,6 +244,24 @@ bool WriteDataCcwAction::supports_repeated_block() const
 Expected<Buffer> WriteDataCcwAction::serialize_params(const ContextResources &) const
 {
     return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
+hailo_status WriteDataCcwAction::write_to_config_buffer(ConfigBuffer& config_buffer, bool should_support_pre_fetch)
+{
+    bool is_last_write = config_buffer.size_left() == size();
+
+    auto buffer = m_shef_file_handle->read(m_offset, m_size);
+    CHECK_EXPECTED_AS_STATUS(buffer);
+
+    auto status = config_buffer.write(MemoryView(buffer.value()));
+    CHECK_SUCCESS(status);
+
+    if (should_support_pre_fetch && is_last_write) {
+        auto desc_count = config_buffer.program_descriptors();
+        CHECK_EXPECTED_AS_STATUS(desc_count);
+    }
+
+    return HAILO_SUCCESS;
 }
 
 Expected<ContextSwitchConfigActionPtr> AddCcwBurstAction::create(uint8_t config_stream_index, uint16_t ccw_bursts)

@@ -143,6 +143,14 @@ void SchedulerProfilerHandler::handle_trace(const InitProfilerProtoTrace &trace)
     init->set_os_ver(os_ver());
     init->set_cpu_arch(cpu_arch());
     init->set_sys_ram_size(system_ram_size());
+    if (0 == geteuid()) {
+        auto pcie_info = get_pcie_info();
+        init->mutable_pcie_info()->set_gen(pcie_info.gen);
+        init->mutable_pcie_info()->set_lanes(pcie_info.lanes);
+    } else {
+        init->mutable_pcie_info()->set_gen("Failed fetching info, root privilege is required");
+        init->mutable_pcie_info()->set_lanes("Failed fetching info, root privilege is required");
+    }
     #endif
     init->set_hailort_ver(get_libhailort_version_representation());
     init->mutable_time()->set_day(curr_time.day);
@@ -152,6 +160,17 @@ void SchedulerProfilerHandler::handle_trace(const InitProfilerProtoTrace &trace)
     init->mutable_time()->set_min(curr_time.min);
     init->set_time_stamp(trace.timestamp);
     init->set_time_stamp_since_epoch(curr_time.time_since_epoch);
+}
+
+void SchedulerProfilerHandler::handle_trace(const HefLoadedTrace &trace)
+{
+    std::lock_guard<std::mutex> lock(m_proto_lock);
+
+    auto added_trace = m_profiler_trace_proto.add_added_trace();
+    added_trace->mutable_loaded_hef()->set_hef_md5(reinterpret_cast<const char*>(trace.md5_hash));
+    added_trace->mutable_loaded_hef()->set_hef_name(trace.hef_name);
+    added_trace->mutable_loaded_hef()->set_dfc_version(trace.dfc_version);
+    added_trace->mutable_loaded_hef()->set_time_stamp(trace.timestamp);
 }
 
 void SchedulerProfilerHandler::handle_trace(const AddCoreOpTrace &trace)
@@ -297,7 +316,7 @@ void SchedulerProfilerHandler::handle_trace(const FrameEnqueueD2HTrace &trace)
     added_trace->mutable_frame_enqueue()->set_time_stamp(trace.timestamp);
 }
 
-void SchedulerProfilerHandler::handle_trace(const SwitchCoreOpTrace &trace)
+void SchedulerProfilerHandler::handle_trace(const ActivateCoreOpTrace &trace)
 {
     log(JSON({
         {"action", json_to_string(trace.name)},
@@ -308,9 +327,20 @@ void SchedulerProfilerHandler::handle_trace(const SwitchCoreOpTrace &trace)
 
     std::lock_guard<std::mutex> lock(m_proto_lock);
     auto added_trace = m_profiler_trace_proto.add_added_trace();
-    added_trace->mutable_switched_core_op()->set_device_id(trace.device_id);
-    added_trace->mutable_switched_core_op()->set_new_core_op_handle(trace.core_op_handle);
-    added_trace->mutable_switched_core_op()->set_time_stamp(trace.timestamp);
+    added_trace->mutable_activate_core_op()->set_device_id(trace.device_id);
+    added_trace->mutable_activate_core_op()->set_new_core_op_handle(trace.core_op_handle);
+    added_trace->mutable_activate_core_op()->set_time_stamp(trace.timestamp);
+    added_trace->mutable_activate_core_op()->set_duration(trace.duration);
+}
+
+void SchedulerProfilerHandler::handle_trace(const DeactivateCoreOpTrace &trace)
+{
+    std::lock_guard<std::mutex> lock(m_proto_lock);
+    auto added_trace = m_profiler_trace_proto.add_added_trace();
+    added_trace->mutable_deactivate_core_op()->set_device_id(trace.device_id);
+    added_trace->mutable_deactivate_core_op()->set_core_op_handle(trace.core_op_handle);
+    added_trace->mutable_deactivate_core_op()->set_time_stamp(trace.timestamp);
+    added_trace->mutable_deactivate_core_op()->set_duration(trace.duration);
 }
 
 void SchedulerProfilerHandler::handle_trace(const SetCoreOpTimeoutTrace &trace)
