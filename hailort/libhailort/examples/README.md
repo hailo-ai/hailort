@@ -87,3 +87,11 @@ To run an example, use (from this examples directory):
   ```sh
   build/<c/cpp>/<example_name>/<example_name> [params..]
   ```
+
+## Hailo Application Code Examples
+
+The examples in this page are for demonstrating HailoRT API usage.
+
+Hailo also offers an additional set of
+[Application Code Examples](https://github.com/hailo-ai/Hailo-Application-Code-Examples),
+which are more application-oriented.
