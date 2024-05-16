@@ -96,7 +96,10 @@ std::vector<RunParams> CoreOpsSchedulerOracle::get_oracle_decisions(SchedulerBas
         if (!active_device_info->is_switching_core_op && active_device_info->is_idle()) {
             const bool CHECK_THRESHOLD = true;
             auto core_op_handle = choose_next_model(scheduler, active_device_info->device_id, CHECK_THRESHOLD);
-            if (core_op_handle == INVALID_CORE_OP_HANDLE) {
+
+            // If there is no suitable model when checking with threshold, and the idle optimization is disabled,
+            // try again without threshold.
+            if (!is_env_variable_on("HAILO_DISABLE_IDLE_OPT") && (core_op_handle == INVALID_CORE_OP_HANDLE)) {
                 core_op_handle = choose_next_model(scheduler, active_device_info->device_id, !CHECK_THRESHOLD);
             }
 
