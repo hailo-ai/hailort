@@ -939,7 +939,7 @@ bool ResourcesManager::should_use_ddr_action_list(size_t num_contexts, HailoRTDr
 {
     // Only allow env variable to affect in case of DmaType DRAM
     if ((HailoRTDriver::DmaType::DRAM == dma_type) && ((MAX_NUM_CONTEXTS_FOR_CONTROL_BUILDER < num_contexts)
-        || (is_env_variable_on(DDR_ACTION_LIST_ENV_VAR, DDR_ACTION_LIST_ENV_VAR_VALUE, sizeof(DDR_ACTION_LIST_ENV_VAR_VALUE))))) {
+        || (is_env_variable_on(DDR_ACTION_LIST_ENV_VAR, DDR_ACTION_LIST_ENV_VAR_VALUE)))) {
         return true;
     }
     return false;

@@ -337,10 +337,10 @@ static uint32_t get_min_value_of_unordered_map(const std::unordered_map<K, V> &m
     return min_count;
 }
 
-static inline bool is_env_variable_on(const char* env_var_name, const char* required_value, size_t size)
+static inline bool is_env_variable_on(const char* env_var_name, const std::string &required_value = "1")
 {
     auto env_var  = std::getenv(env_var_name);
-    return ((nullptr != env_var) && (strncmp(env_var, required_value, size) == 0));
+    return ((nullptr != env_var) && (strncmp(env_var, required_value.c_str(), required_value.size()) == 0));
 }
 
 } /* namespace hailort */

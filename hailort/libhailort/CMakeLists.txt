@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.0.0)
 
 set(HAILORT_MAJOR_VERSION    4)
 set(HAILORT_MINOR_VERSION    17)
-set(HAILORT_REVISION_VERSION 0)
+set(HAILORT_REVISION_VERSION 1)
 
 # Add the cmake folder so the modules there are found
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
