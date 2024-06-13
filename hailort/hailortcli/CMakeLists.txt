@@ -65,7 +65,9 @@ add_executable(hailortcli
 
 target_compile_options(hailortcli PRIVATE ${HAILORT_COMPILE_OPTIONS})
 set_property(TARGET hailortcli PROPERTY CXX_STANDARD 14)
-set_property(TARGET hailortcli PROPERTY INSTALL_RPATH "$ORIGIN" "../lib/") # Link with a relative libhailort
+set_property(TARGET hailortcli PROPERTY INSTALL_RPATH "\$ORIGIN/../lib/") # Link with a relative libhailort
+set_property(TARGET hailortcli PROPERTY BUILD_WITH_INSTALL_RPATH true) # Link with a relative libhailort
+
 target_link_libraries(hailortcli
     libhailort
     CLI11::CLI11
