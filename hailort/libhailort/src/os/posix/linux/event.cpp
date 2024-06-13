@@ -14,6 +14,7 @@
 #include "common/event_internal.hpp"
 
 #include <sys/eventfd.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <utility>
 
@@ -167,8 +168,17 @@ underlying_waitable_handle_t Event::open_event_handle(const State& initial_state
     const auto handle = eventfd(state, NO_FLAGS);
     if (-1 == handle) {
         LOGGER__ERROR("Call to eventfd failed with errno={}", errno);
+        return handle;
     }
-    return handle;
+
+    int new_fd = fcntl(handle, F_DUPFD, 1024);
+    if (-1 == new_fd) 
+    {
+        LOGGER__ERROR("failed to duplicate event FD new_fd={} handle={} errno={}", new_fd, handle, errno);
+    }
+    close(handle);
+
+    return new_fd;
 }
 
 Expected<Semaphore> Semaphore::create(uint32_t initial_count)
@@ -213,7 +223,16 @@ underlying_waitable_handle_t Semaphore::open_semaphore_handle(uint32_t initial_c
     if (-1 == handle) {
         LOGGER__ERROR("Call to eventfd failed with errno={}", errno);
     }
-    return handle;
+
+    int new_fd = fcntl(handle, F_DUPFD, 1024);
+    if (-1 == new_fd) 
+    {
+        LOGGER__ERROR("failed to duplicate semaphore FD new_fd={} handle={} errno={}", new_fd, handle, errno);
+    }
+    close(handle);
+    
+    return new_fd;
+    
 }
 
 Expected<size_t> WaitableGroup::wait_any(std::chrono::milliseconds timeout)
