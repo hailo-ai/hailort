@@ -19,7 +19,7 @@
 #include "vdma/channel/interrupts_dispatcher.hpp"
 #include "vdma/channel/transfer_launcher.hpp"
 #include "vdma/driver/hailort_driver.hpp"
-
+#include "core_op/resource_manager/cache_manager.hpp"
 
 namespace hailort
 {
@@ -53,9 +53,11 @@ public:
 
     virtual hailo_status dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
     virtual hailo_status dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
+    virtual hailo_status dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
+    virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
 
 protected:
-    VdmaDevice(std::unique_ptr<HailoRTDriver> &&driver, Type type);
+    VdmaDevice(std::unique_ptr<HailoRTDriver> &&driver, Type type, hailo_status &status);
 
     virtual Expected<D2H_EVENT_MESSAGE_t> read_notification() override;
     virtual hailo_status disable_notifications() override;
@@ -64,6 +66,7 @@ protected:
     virtual Expected<ConfiguredNetworkGroupVector> add_hef(Hef &hef, const NetworkGroupsParamsMap &configure_params) override;
 
     std::unique_ptr<HailoRTDriver> m_driver;
+    CacheManagerPtr m_cache_manager;
     // TODO - HRT-13234, move to DeviceBase
     std::vector<std::shared_ptr<CoreOp>> m_core_ops;
     std::vector<std::shared_ptr<ConfiguredNetworkGroup>> m_network_groups; // TODO: HRT-9547 - Remove when ConfiguredNetworkGroup will be kept in global context

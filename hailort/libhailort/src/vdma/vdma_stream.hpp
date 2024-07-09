@@ -90,8 +90,10 @@ public:
     // TODO - HRT-11739 - remove vdevice related members/functions (get/set_vdevice_core_op_handle)
     virtual inline vdevice_core_op_handle_t get_vdevice_core_op_handle() override { return m_core_op_handle; };
     virtual hailo_status cancel_pending_transfers() override;
+    void set_d2h_callback(std::function<void(hailo_status)> callback);
 
 private:
+    static void default_d2h_callback(hailo_status) {};
     static uint32_t get_transfer_size(const hailo_stream_info_t &stream_info, const LayerInfo &layer_info);
     Expected<TransferRequest> align_transfer_request(TransferRequest &&transfer_request);
 
@@ -100,6 +102,7 @@ private:
     const hailo_stream_interface_t m_interface;
     const uint32_t m_transfer_size;
     vdevice_core_op_handle_t m_core_op_handle;
+    std::function<void(hailo_status)> m_d2h_callback;
 };
 
 

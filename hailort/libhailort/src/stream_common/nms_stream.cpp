@@ -372,6 +372,8 @@ hailo_status NmsOutputStream::read_async_impl(TransferRequest &&transfer_request
 {
     CHECK(1 == transfer_request.transfer_buffers.size(), HAILO_INVALID_OPERATION,
         "NMS Reader stream supports only 1 transfer buffer");
+    CHECK(TransferBufferType::MEMORYVIEW == transfer_request.transfer_buffers[0].type(), HAILO_INVALID_OPERATION,
+        "NMS stream doesn't support DMABUF buffer type");
     // Currently leave as transfer request - because nms reader uses transfer request queue
     // TODO HRT-12239: Chagge when support async read with any aligned void ptr
     return m_reader_thread.launch_transfer(std::move(transfer_request));
@@ -479,8 +481,10 @@ void NmsReaderThread::process_transfer_requests()
 
         assert(1 == transfer_request.transfer_buffers.size());
         assert(0 == transfer_request.transfer_buffers[0].offset());
+        // TODO HRT-13827: Add support for nms stream read with dmabuf
         auto buffer = transfer_request.transfer_buffers[0].base_buffer();
-        auto status = NMSStreamReader::read_nms(*m_base_stream, buffer.data(), 0, buffer.size(), m_stream_interface);
+        assert(buffer.has_value());
+        auto status = NMSStreamReader::read_nms(*m_base_stream, buffer.value().data(), 0, buffer.value().size(), m_stream_interface);
 
         if ((HAILO_STREAM_NOT_ACTIVATED == status) || (HAILO_STREAM_ABORT == status)) {
             // On both deactivation/abort, we want to send HAILO_STREAM_ABORT since it is part of the callback

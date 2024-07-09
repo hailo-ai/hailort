@@ -63,13 +63,12 @@ Expected<int32_t> StringUtils::to_int32(const std::string &str, int base)
 
 Expected<uint8_t> StringUtils::to_uint8(const std::string &str, int base)
 {
-    auto number = to_uint32(str, base);
-    CHECK_EXPECTED(number);
+    TRY(const auto number, to_uint32(str, base));
 
-    CHECK_AS_EXPECTED(((number.value() >= std::numeric_limits<uint8_t>::min()) && (number.value() <= std::numeric_limits<uint8_t>::max())), 
+    CHECK_AS_EXPECTED(((number >= std::numeric_limits<uint8_t>::min()) && (number <= std::numeric_limits<uint8_t>::max())), 
         HAILO_INVALID_ARGUMENT, "Failed to convert string {} to uint8_t.", str);
 
-    return static_cast<uint8_t>(number.value());
+    return static_cast<uint8_t>(number);
 }
 
 std::string StringUtils::to_hex_string(const uint8_t *array, size_t size, bool uppercase, const std::string &delimiter)

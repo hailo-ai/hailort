@@ -24,9 +24,6 @@
 namespace hailort
 {
 
-// Macros that check status. If status is HAILO_CANT_MEET_BUFFER_REQUIREMENTS, return without printing error to the prompt.
-#define CHECK_EXPECTED_OUT_OF_CMA_MEMORY(type) if (HAILO_OUT_OF_HOST_CMA_MEMORY == (type).status()) {return make_unexpected(HAILO_OUT_OF_HOST_CMA_MEMORY);} CHECK_SUCCESS(type);
-
 Expected<std::shared_ptr<InternalBufferManager>> InternalBufferManager::create(HailoRTDriver &driver,
     const ConfigureNetworkParams &config_params)
 {
@@ -169,10 +166,9 @@ hailo_status InternalBufferManager::add_config_buffer_info(const uint16_t contex
 Expected<std::shared_ptr<vdma::VdmaBuffer>> InternalBufferManager::create_intermediate_sg_buffer(
     const size_t buffer_size)
 {
-    auto buffer = vdma::SgBuffer::create(m_driver, buffer_size, HailoRTDriver::DmaDirection::BOTH);
-    CHECK_EXPECTED(buffer);
+    TRY(auto buffer, vdma::SgBuffer::create(m_driver, buffer_size, HailoRTDriver::DmaDirection::BOTH));
 
-    auto buffer_ptr = make_shared_nothrow<vdma::SgBuffer>(buffer.release());
+    auto buffer_ptr = make_shared_nothrow<vdma::SgBuffer>(std::move(buffer));
     CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::shared_ptr<vdma::VdmaBuffer>(std::move(buffer_ptr));
@@ -181,10 +177,10 @@ Expected<std::shared_ptr<vdma::VdmaBuffer>> InternalBufferManager::create_interm
 Expected<std::shared_ptr<vdma::VdmaBuffer>> InternalBufferManager::create_intermediate_ccb_buffer(
     const size_t buffer_size)
 {
-    auto buffer = vdma::ContinuousBuffer::create(buffer_size, m_driver);
-    CHECK_EXPECTED_OUT_OF_CMA_MEMORY(buffer);
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_OUT_OF_HOST_CMA_MEMORY, auto buffer,
+        vdma::ContinuousBuffer::create(buffer_size, m_driver));
 
-    auto buffer_ptr = make_shared_nothrow<vdma::ContinuousBuffer>(buffer.release());
+    auto buffer_ptr = make_shared_nothrow<vdma::ContinuousBuffer>(std::move(buffer));
     CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::shared_ptr<vdma::VdmaBuffer>(std::move(buffer_ptr));
@@ -300,7 +296,7 @@ hailo_status InternalBufferManager::execute_plan(InternalBufferPlanning &buffer_
         for (const auto &edge_layer_offset : buffer_plan.edge_layer_offsets) {
             m_edge_layer_to_buffer_map.emplace(
                 edge_layer_offset.first,
-                EdgeLayerToBufferMap{buffer_ptr.value(), edge_layer_offset.second});
+                EdgeLayerBuffer{buffer_ptr.value(), edge_layer_offset.second});
         }
         // Add edge layers to executed list
         for (const auto &edge_layer_info : buffer_plan.edge_layer_infos) {
@@ -314,14 +310,24 @@ hailo_status InternalBufferManager::execute_plan(InternalBufferPlanning &buffer_
     return execution_status;
 }
 
-Expected<EdgeLayerToBufferMap> InternalBufferManager::get_intermediate_buffer(const EdgeLayerKey &key)
+ExpectedRef<EdgeLayerInfo> InternalBufferManager::get_layer_buffer_info(const EdgeLayerKey &key)
+{
+    const auto buffer_it = m_edge_layer_infos.find(key);
+    if (std::end(m_edge_layer_infos) == buffer_it) {
+        return make_unexpected(HAILO_NOT_FOUND);
+    }
+
+    return ExpectedRef<EdgeLayerInfo>(buffer_it->second);
+}
+
+Expected<EdgeLayerBuffer> InternalBufferManager::get_intermediate_buffer(const EdgeLayerKey &key)
 {
     const auto buffer_it = m_edge_layer_to_buffer_map.find(key);
     if (std::end(m_edge_layer_to_buffer_map) == buffer_it) {
         return make_unexpected(HAILO_NOT_FOUND);
     }
 
-    return Expected<EdgeLayerToBufferMap>(buffer_it->second);
+    return Expected<EdgeLayerBuffer>(buffer_it->second);
 }
 
 } /* namespace hailort */

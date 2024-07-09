@@ -670,10 +670,10 @@ std::string format_measure_fw_actions_output_path(const std::string &base_output
 
 Expected<std::reference_wrapper<Device>> get_single_physical_device(VDevice &vdevice)
 {
-    auto expected_physical_devices = vdevice.get_physical_devices();
-    CHECK_EXPECTED(expected_physical_devices);
-    CHECK_AS_EXPECTED(1 == expected_physical_devices->size(), HAILO_INVALID_OPERATION, "Operation not allowed for multi-device");
-    auto &res = expected_physical_devices->at(0);
+    TRY(auto physical_devices, vdevice.get_physical_devices());
+    CHECK_AS_EXPECTED(1 == physical_devices.size(), HAILO_INVALID_OPERATION,
+        "Operation not allowed for multi-device");
+    auto &res = physical_devices.at(0);
     return std::move(res);
 }
 
@@ -712,16 +712,11 @@ Expected<std::unique_ptr<VDevice>> Run2::create_vdevice()
 Expected<std::vector<std::shared_ptr<NetworkRunner>>> Run2::init_and_run_net_runners(VDevice *vdevice)
 {
     std::vector<std::shared_ptr<NetworkRunner>> net_runners;
-
-    auto shutdown_event_exp = Event::create_shared(Event::State::not_signalled);
-    CHECK_EXPECTED(shutdown_event_exp);
-    auto shutdown_event = shutdown_event_exp.release();
+    TRY(auto shutdown_event, Event::create_shared(Event::State::not_signalled));
 
     // create network runners
     for (auto &net_params : get_network_params()) {
-        auto expected_net_runner = NetworkRunner::create_shared(*vdevice, net_params);
-        CHECK_EXPECTED(expected_net_runner);
-        auto net_runner = expected_net_runner.release();
+        TRY(auto net_runner, NetworkRunner::create_shared(*vdevice, net_params));
         net_runners.emplace_back(net_runner);
     }
 
@@ -743,15 +738,24 @@ Expected<std::vector<std::shared_ptr<NetworkRunner>>> Run2::init_and_run_net_run
     activation_barrier.arrive_and_wait();
 
     if (get_measure_power() || get_measure_current() || get_measure_temp()) {
-        auto physical_devices = vdevice->get_physical_devices();
-        CHECK_EXPECTED(physical_devices);
+        TRY(auto physical_devices, vdevice->get_physical_devices());
 
-        for (auto &device : physical_devices.value()) {
-            auto measurement_live_track = MeasurementLiveTrack::create_shared(device.get(), get_measure_power(),
-                get_measure_current(), get_measure_temp());
-            CHECK_EXPECTED(measurement_live_track);
+        for (auto &device : physical_devices) {
+            TRY(const auto identity, device.get().identify());
+            CHECK_AS_EXPECTED(HailoRTCommon::is_power_measurement_supported(identity.device_architecture) || !(get_measure_power()),
+                HAILO_INVALID_OPERATION, "HW arch {} does not support power measurement. Disable the power-measure option", 
+                HailoRTCommon::get_device_arch_str(identity.device_architecture));
+            CHECK_AS_EXPECTED(HailoRTCommon::is_current_measurement_supported(identity.device_architecture) || !(get_measure_current()),
+                HAILO_INVALID_OPERATION, "HW arch {} does not support current measurement. Disable the current-measure option",
+                HailoRTCommon::get_device_arch_str(identity.device_architecture));
+            CHECK_AS_EXPECTED(HailoRTCommon::is_temp_measurement_supported(identity.device_architecture) || !(get_measure_temp()),
+                HAILO_INVALID_OPERATION, "HW arch {} does not support temperature measurement. Disable the temp-measure option",
+                HailoRTCommon::get_device_arch_str(identity.device_architecture));
 
-            live_stats->add(measurement_live_track.release(), 2);
+            TRY(auto measurement_live_track, MeasurementLiveTrack::create_shared(device.get(),
+                get_measure_power(), get_measure_current(), get_measure_temp()));
+
+            live_stats->add(measurement_live_track, 2);
         }
     }
 
@@ -764,9 +768,7 @@ Expected<std::vector<std::shared_ptr<NetworkRunner>>> Run2::init_and_run_net_run
     if (!get_output_json_path().empty()){
         live_stats->dump_stats(get_output_json_path(), get_str_infer_mode(get_mode()));
     }
-    auto expected_fps_per_network = live_stats->get_last_measured_fps_per_network_group();
-    CHECK_EXPECTED(expected_fps_per_network);
-    auto fps_per_network = expected_fps_per_network.release();
+    TRY(auto fps_per_network, live_stats->get_last_measured_fps_per_network_group());
     for (size_t network_runner_index = 0; network_runner_index < fps_per_network.size(); network_runner_index++) {
         net_runners[network_runner_index]->set_last_measured_fps(fps_per_network[network_runner_index]);
     }
@@ -793,10 +795,7 @@ hailo_status Run2Command::execute()
         LOGGER__WARNING("\"hailortcli run2\" is not optimized for single model usage. It is recommended to use \"hailortcli run\" command for a single model");
     }
 
-    auto expected_vdevice = app->create_vdevice();
-    CHECK_EXPECTED_AS_STATUS(expected_vdevice);
-    auto vdevice = expected_vdevice.release();
-
+    TRY(auto vdevice, app->create_vdevice());
     std::vector<uint16_t> batch_sizes_to_run = { app->get_network_params()[0].batch_size };
     if(app->get_measure_fw_actions() && app->get_network_params()[0].batch_size == HAILO_DEFAULT_BATCH_SIZE) {
         // In case measure-fw-actions is enabled and no batch size was provided - we want to run with batch sizes 1,2,4,8,16
@@ -807,12 +806,9 @@ hailo_status Run2Command::execute()
     ordered_json action_list_json;
 
     if (app->get_measure_fw_actions()) {
-        auto device = get_single_physical_device(*vdevice);
-        CHECK_EXPECTED_AS_STATUS(device);
-
-        auto expected_action_list_json = DownloadActionListCommand::init_json_object(device.release(), app->get_network_params()[0].hef_path);
-        CHECK_EXPECTED_AS_STATUS(expected_action_list_json);
-        action_list_json = expected_action_list_json.release();
+        TRY(auto device, get_single_physical_device(*vdevice));
+        TRY(action_list_json,
+            DownloadActionListCommand::init_json_object(device, app->get_network_params()[0].hef_path));
         runtime_data_output_path = format_measure_fw_actions_output_path(
             app->get_measure_fw_actions_output_path(), app->get_network_params()[0].hef_path);
     }
@@ -821,23 +817,16 @@ hailo_status Run2Command::execute()
     for (auto batch_size : batch_sizes_to_run) {
         if(app->get_measure_fw_actions()) {
             app->set_batch_size(batch_size);
-
-            auto device = get_single_physical_device(*vdevice);
-            CHECK_EXPECTED_AS_STATUS(device);
-
-            auto status = DownloadActionListCommand::set_batch_to_measure(device.release(), RUNTIME_DATA_BATCH_INDEX_TO_MEASURE_DEFAULT);
+            TRY(auto device, get_single_physical_device(*vdevice));
+            auto status = DownloadActionListCommand::set_batch_to_measure(device, RUNTIME_DATA_BATCH_INDEX_TO_MEASURE_DEFAULT);
             CHECK_SUCCESS(status);
         }
 
-        auto expected_net_runners = app->init_and_run_net_runners(vdevice.get());
-        CHECK_EXPECTED_AS_STATUS(expected_net_runners);
-        auto net_runners = expected_net_runners.release();
-
+        TRY(auto net_runners, app->init_and_run_net_runners(vdevice.get()));
         if(app->get_measure_fw_actions()) { // Collecting runtime data
-            auto device = get_single_physical_device(*vdevice);
-            CHECK_EXPECTED_AS_STATUS(device);
-
-            auto status = DownloadActionListCommand::execute(device.release(), net_runners[0]->get_configured_network_group(), batch_size, action_list_json, net_runners[0]->get_last_measured_fps(), network_group_index);
+            TRY(auto device, get_single_physical_device(*vdevice));
+            auto status = DownloadActionListCommand::execute(device, net_runners[0]->get_configured_network_group(),
+                batch_size, action_list_json, net_runners[0]->get_last_measured_fps(), network_group_index);
             CHECK_SUCCESS(status);
 
             network_group_index++;

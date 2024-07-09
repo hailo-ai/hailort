@@ -287,6 +287,11 @@ public:
         return m_inner.size_approx();
     }
 
+    size_t max_capacity()
+    {
+        return m_inner.max_capacity();
+    }
+
     bool is_queue_full()
     {
         return (m_inner.size_approx() == m_inner.max_capacity());

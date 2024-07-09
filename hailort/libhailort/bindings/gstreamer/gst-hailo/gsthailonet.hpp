@@ -30,6 +30,8 @@
 
 #include "hailo/infer_model.hpp"
 #include "common.hpp"
+#include "gsthailo_allocator.hpp"
+#include "gsthailo_dmabuf_allocator.hpp"
 
 #include <queue>
 #include <condition_variable>
@@ -40,35 +42,14 @@ using namespace hailort;
 
 G_BEGIN_DECLS
 
-#define GST_TYPE_HAILO_ALLOCATOR (gst_hailo_allocator_get_type())
-#define GST_HAILO_ALLOCATOR(obj) (G_TYPE_CHECK_INSTANCE_CAST ((obj), GST_TYPE_HAILO_ALLOCATOR, GstHailoAllocator))
-#define GST_HAILO_ALLOCATOR_CLASS(klass) (G_TYPE_CHECK_CLASS_CAST ((klass), GST_TYPE_HAILO_ALLOCATOR, GstHailoAllocatorClass))
-#define GST_IS_HAILO_ALLOCATOR(obj) (G_TYPE_CHECK_INSTANCE_TYPE ((obj), GST_TYPE_HAILO_ALLOCATOR))
-#define GST_IS_HAILO_ALLOCATOR_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass), GST_TYPE_HAILO_ALLOCATOR))
-
 #define MIN_OUTPUTS_POOL_SIZE (MAX_GSTREAMER_BATCH_SIZE)
 #define MAX_OUTPUTS_POOL_SIZE (MAX_GSTREAMER_BATCH_SIZE * 4)
-
-#define GST_HAILO_USE_DMA_BUFFER_ENV_VAR "GST_HAILO_USE_DMA_BUFFER"
-
-struct GstHailoAllocator
-{
-    GstAllocator parent;
-    std::unordered_map<GstMemory*, Buffer> buffers;
-};
-
-struct GstHailoAllocatorClass
-{
-    GstAllocatorClass parent;
-};
-
-GType gst_hailo_allocator_get_type(void);
 
 struct HailoNetProperties final
 {
 public:
-    HailoNetProperties() : m_hef_path(nullptr), m_batch_size(HAILO_DEFAULT_BATCH_SIZE),
-        m_device_id(nullptr), m_device_count(0), m_vdevice_group_id(nullptr), m_is_active(false), m_pass_through(false),
+    HailoNetProperties() : m_hef_path(""), m_batch_size(HAILO_DEFAULT_BATCH_SIZE),
+        m_device_id(""), m_device_count(0), m_vdevice_group_id(""), m_is_active(false), m_pass_through(false),
         m_outputs_min_pool_size(MIN_OUTPUTS_POOL_SIZE), m_outputs_max_pool_size(MAX_OUTPUTS_POOL_SIZE),
         m_scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN), m_scheduler_timeout_ms(HAILO_DEFAULT_SCHEDULER_TIMEOUT_MS),
         m_scheduler_threshold(HAILO_DEFAULT_SCHEDULER_THRESHOLD), m_scheduler_priority(HAILO_SCHEDULER_PRIORITY_NORMAL),
@@ -78,24 +59,11 @@ public:
         m_vdevice_key(DEFAULT_VDEVICE_KEY)
     {}
 
-    void free_strings()
-    {
-      if (m_hef_path.was_changed()) {
-        g_free(m_hef_path.get());
-      }
-      if (m_device_id.was_changed()) {
-        g_free(m_device_id.get());
-      }
-      if (m_vdevice_group_id.was_changed()) {
-        g_free(m_vdevice_group_id.get());
-      }
-    }
-
-    HailoElemProperty<gchar*> m_hef_path;
+    HailoElemStringProperty m_hef_path;
     HailoElemProperty<guint16> m_batch_size;
-    HailoElemProperty<gchar*> m_device_id;
+    HailoElemStringProperty m_device_id;
     HailoElemProperty<guint16> m_device_count;
-    HailoElemProperty<gchar*> m_vdevice_group_id;
+    HailoElemStringProperty m_vdevice_group_id;
     HailoElemProperty<gboolean> m_is_active;
     HailoElemProperty<gboolean> m_pass_through;
     HailoElemProperty<guint> m_outputs_min_pool_size;
@@ -119,42 +87,47 @@ public:
 };
 
 typedef struct _GstHailoNet {
-  GstElement element;
-  GstPad *sinkpad;
-  GstPad *srcpad;
-  GstQueueArray *input_queue;
-  GstQueueArray *thread_queue;
-  std::atomic_uint32_t buffers_in_thread_queue;
-  std::thread thread;
-  HailoNetProperties props;
-  GstCaps *input_caps;
-  std::atomic_bool is_thread_running;
-  std::atomic_bool has_got_eos;
-  std::mutex sink_probe_change_state_mutex;
-  bool did_critical_failure_happen;
+    GstElement element;
+    GstPad *sinkpad;
+    GstPad *srcpad;
 
-  std::unique_ptr<VDevice> vdevice;
-  std::shared_ptr<InferModel> infer_model;
-  std::shared_ptr<ConfiguredInferModel> configured_infer_model;
-  ConfiguredInferModel::Bindings infer_bindings;
-  bool is_configured;
-  std::mutex infer_mutex;
+    std::unordered_map<GstBuffer*, std::queue<GstEvent*>> events_queue_per_buffer;
+    std::queue<GstEvent*> curr_event_queue;
+    GstQueueArray *input_queue;
 
-  bool has_called_activate;
-  std::atomic_uint32_t ongoing_frames;
-  std::condition_variable flush_cv;
-  std::mutex flush_mutex;
+    GstQueueArray *thread_queue;
+    std::atomic_uint32_t buffers_in_thread_queue;
+    std::thread thread;
+    HailoNetProperties props;
+    GstCaps *input_caps;
+    std::atomic_bool is_thread_running;
+    std::atomic_bool has_got_eos;
+    std::mutex sink_probe_change_state_mutex;
+    bool did_critical_failure_happen;
 
-  GstVideoInfo input_frame_info;
+    std::unique_ptr<VDevice> vdevice;
+    std::shared_ptr<InferModel> infer_model;
+    std::shared_ptr<ConfiguredInferModel> configured_infer_model;
+    ConfiguredInferModel::Bindings infer_bindings;
+    bool is_configured;
+    std::mutex infer_mutex;
 
-  GstHailoAllocator *allocator;
-  GstAllocator *dma_allocator;
-  std::unordered_map<std::string, GstBufferPool*> output_buffer_pools;
-  std::unordered_map<std::string, hailo_vstream_info_t> output_vstream_infos;
+    bool has_called_activate;
+    std::atomic_uint32_t ongoing_frames;
+    std::condition_variable flush_cv;
+    std::mutex flush_mutex;
+    std::mutex input_caps_mutex;
 
-  std::mutex input_queue_mutex;
-  std::mutex thread_queue_mutex;
-  std::condition_variable thread_cv;
+    GstVideoInfo input_frame_info;
+
+    GstHailoAllocator *allocator;
+    GstHailoDmabufAllocator *dmabuf_allocator;
+    std::unordered_map<std::string, GstBufferPool*> output_buffer_pools;
+    std::unordered_map<std::string, hailo_vstream_info_t> output_vstream_infos;
+
+    std::mutex input_queue_mutex;
+    std::mutex thread_queue_mutex;
+    std::condition_variable thread_cv;
 } GstHailoNet;
 
 typedef struct _GstHailoNetClass {

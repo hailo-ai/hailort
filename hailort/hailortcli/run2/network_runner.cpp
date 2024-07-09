@@ -138,12 +138,8 @@ Expected<std::string> NetworkRunner::get_network_group_name(const NetworkParams 
 Expected<std::shared_ptr<FullAsyncNetworkRunner>> FullAsyncNetworkRunner::create_shared(VDevice &vdevice,
     NetworkParams params)
 {
-        auto infer_model = vdevice.create_infer_model(params.hef_path);
-        CHECK_EXPECTED(infer_model);
-        auto infer_model_ptr = infer_model.release();
-
-        auto expected_net_group_name = get_network_group_name(params, infer_model_ptr->hef());
-        CHECK_EXPECTED(expected_net_group_name);
+        TRY(auto infer_model_ptr, vdevice.create_infer_model(params.hef_path));
+        TRY(auto net_group_name, get_network_group_name(params, infer_model_ptr->hef()));
 
         /* Configure Params */
         infer_model_ptr->set_batch_size(params.batch_size);
@@ -163,10 +159,9 @@ Expected<std::shared_ptr<FullAsyncNetworkRunner>> FullAsyncNetworkRunner::create
                 });
             auto input_params = (input_params_it == params.vstream_params.end()) ? VStreamParams() : *input_params_it;
 
-            auto input_config = infer_model_ptr->input(input_name);
-            CHECK_EXPECTED(input_config);
-            input_config->set_format_order(input_params.params.user_buffer_format.order);
-            input_config->set_format_type(input_params.params.user_buffer_format.type);
+            TRY(auto input_config, infer_model_ptr->input(input_name));
+            input_config.set_format_order(input_params.params.user_buffer_format.order);
+            input_config.set_format_type(input_params.params.user_buffer_format.type);
         }
         for (const auto &output_name : infer_model_ptr->get_output_names()) {
             auto output_params_it = std::find_if(params.vstream_params.begin(), params.vstream_params.end(),
@@ -175,18 +170,16 @@ Expected<std::shared_ptr<FullAsyncNetworkRunner>> FullAsyncNetworkRunner::create
                 });
             auto output_params = (output_params_it == params.vstream_params.end()) ? VStreamParams() : *output_params_it;
 
-            auto output_config = infer_model_ptr->output(output_name);
-            CHECK_EXPECTED(output_config);
-            output_config->set_format_order(output_params.params.user_buffer_format.order);
-            output_config->set_format_type(output_params.params.user_buffer_format.type);
+            TRY(auto output_config, infer_model_ptr->output(output_name));
+            output_config.set_format_order(output_params.params.user_buffer_format.order);
+            output_config.set_format_type(output_params.params.user_buffer_format.type);
         }
 
-        auto configured_model = infer_model_ptr->configure();
-        CHECK_EXPECTED(configured_model);
-        auto configured_infer_model_ptr = make_shared_nothrow<ConfiguredInferModel>(configured_model.release());
+        TRY(auto configured_model, infer_model_ptr->configure());
+        auto configured_infer_model_ptr = make_shared_nothrow<ConfiguredInferModel>(std::move(configured_model));
         CHECK_NOT_NULL_AS_EXPECTED(configured_infer_model_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
-        auto res = make_shared_nothrow<FullAsyncNetworkRunner>(params, expected_net_group_name.value(), vdevice,
+        auto res = make_shared_nothrow<FullAsyncNetworkRunner>(params, net_group_name, vdevice,
             infer_model_ptr, configured_infer_model_ptr);
         CHECK_NOT_NULL_AS_EXPECTED(res, HAILO_OUT_OF_HOST_MEMORY);
 
@@ -216,35 +209,27 @@ Expected<std::shared_ptr<NetworkRunner>> NetworkRunner::create_shared(VDevice &v
 
     std::shared_ptr<NetworkRunner> net_runner_ptr = nullptr;
     if (InferenceMode::FULL_ASYNC == final_net_params.mode) {
-        auto runner_exp = FullAsyncNetworkRunner::create_shared(vdevice, final_net_params);
-        CHECK_EXPECTED(runner_exp);
-        net_runner_ptr = runner_exp.release();
+        TRY(net_runner_ptr, FullAsyncNetworkRunner::create_shared(vdevice, final_net_params));
     } else {
-        auto hef = Hef::create(final_net_params.hef_path);
-        CHECK_EXPECTED(hef);
-
-        auto expected_net_group_name = get_network_group_name(final_net_params, hef.value());
-        CHECK_EXPECTED(expected_net_group_name);
-
-        auto cfg_params = vdevice.create_configure_params(hef.value(), expected_net_group_name.value());
-        CHECK_EXPECTED(cfg_params);
-        cfg_params->batch_size = final_net_params.batch_size;
+        TRY(auto hef, Hef::create(final_net_params.hef_path));
+        TRY(auto net_group_name, get_network_group_name(final_net_params, hef));
+        TRY(auto cfg_params, vdevice.create_configure_params(hef, net_group_name));
+        cfg_params.batch_size = final_net_params.batch_size;
         if (final_net_params.batch_size == HAILO_DEFAULT_BATCH_SIZE) {
             // Changing batch_size to 1 (after configuring the vdevice) - as we iterate over 'final_net_params.batch_size' in latency measurements scenarios
             final_net_params.batch_size = 1;
         }
         if (final_net_params.measure_hw_latency) {
-            cfg_params->latency |= HAILO_LATENCY_MEASURE;
+            cfg_params.latency |= HAILO_LATENCY_MEASURE;
         }
         if (final_net_params.is_async()) {
-            for (auto &stream_name_params_pair : cfg_params->stream_params_by_name) {
+            for (auto &stream_name_params_pair : cfg_params.stream_params_by_name) {
                 stream_name_params_pair.second.flags = HAILO_STREAM_FLAGS_ASYNC;
             }
         }
-        auto cfgr_net_groups = vdevice.configure(hef.value(), {{expected_net_group_name.value(), cfg_params.value()}});
-        CHECK_EXPECTED(cfgr_net_groups);
-        assert(1 == cfgr_net_groups->size());
-        auto cfgr_net_group = cfgr_net_groups.value()[0];
+        TRY(auto cfgr_net_groups, vdevice.configure(hef, {{ net_group_name, cfg_params }}));
+        assert(1 == cfgr_net_groups.size());
+        auto cfgr_net_group = cfgr_net_groups[0];
 
         if (HAILO_SCHEDULING_ALGORITHM_NONE != final_net_params.scheduling_algorithm) {
             CHECK_SUCCESS_AS_EXPECTED(cfgr_net_group->set_scheduler_threshold(final_net_params.scheduler_threshold));
@@ -260,11 +245,10 @@ Expected<std::shared_ptr<NetworkRunner>> NetworkRunner::create_shared(VDevice &v
             for (auto &vstream_params : final_net_params.vstream_params) {
                 vstreams_params.emplace(vstream_params.name, vstream_params.params);
             }
-            auto vstreams = create_vstreams(*cfgr_net_group, vstreams_params);
-            CHECK_EXPECTED(vstreams);
+            TRY(auto vstreams, create_vstreams(*cfgr_net_group, vstreams_params));
 
-            auto net_runner = make_shared_nothrow<FullSyncNetworkRunner>(final_net_params, expected_net_group_name.value(), vdevice,
-                std::move(vstreams->first), std::move(vstreams->second), cfgr_net_group);
+            auto net_runner = make_shared_nothrow<FullSyncNetworkRunner>(final_net_params, net_group_name, vdevice,
+                std::move(vstreams.first), std::move(vstreams.second), cfgr_net_group);
             CHECK_NOT_NULL_AS_EXPECTED(net_runner, HAILO_OUT_OF_HOST_MEMORY);
             net_runner_ptr = std::static_pointer_cast<NetworkRunner>(net_runner);
             break;
@@ -279,7 +263,7 @@ Expected<std::shared_ptr<NetworkRunner>> NetworkRunner::create_shared(VDevice &v
             auto output_streams = cfgr_net_group->get_output_streams();
             CHECK_AS_EXPECTED(output_streams.size() > 0, HAILO_INTERNAL_FAILURE);
 
-            auto net_runner = make_shared_nothrow<RawNetworkRunner>(final_net_params, expected_net_group_name.value(), vdevice,
+            auto net_runner = make_shared_nothrow<RawNetworkRunner>(final_net_params, net_group_name, vdevice,
                 std::move(input_streams), std::move(output_streams), cfgr_net_group);
             CHECK_NOT_NULL_AS_EXPECTED(net_runner, HAILO_OUT_OF_HOST_MEMORY);
             net_runner_ptr = std::static_pointer_cast<NetworkRunner>(net_runner);
@@ -331,7 +315,7 @@ hailo_status NetworkRunner::run(EventPtr shutdown_event, LiveStats &live_stats, 
             if (!ang_exp) {
                 activation_barrier.terminate();
             }
-            CHECK_EXPECTED_AS_STATUS(ang_exp);
+            CHECK_EXPECTED_AS_STATUS(ang_exp); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
             ang = ang_exp.release();
         }
     }
@@ -350,12 +334,11 @@ hailo_status NetworkRunner::run(EventPtr shutdown_event, LiveStats &live_stats, 
     if ((InferenceMode::RAW_ASYNC_SINGLE_THREAD == m_params.mode) || (InferenceMode::FULL_ASYNC == m_params.mode)) {
         return run_single_thread_async_infer(shutdown_event, net_live_track);
     } else {
-        auto threads = start_inference_threads(shutdown_event, net_live_track);
-        CHECK_EXPECTED_AS_STATUS(threads);
+        TRY(auto threads, start_inference_threads(shutdown_event, net_live_track));
 
         CHECK_SUCCESS(shutdown_event->wait(HAILO_INFINITE_TIMEOUT));
         stop();
-        return wait_for_threads(threads.value());
+        return wait_for_threads(threads);
     }
 }
 
@@ -390,9 +373,8 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> Netwo
     size_t match_count = 0;
 
     std::map<std::string, hailo_vstream_params_t> input_vstreams_params;
-    auto input_vstreams_info = net_group.get_input_vstream_infos();
-    CHECK_EXPECTED(input_vstreams_info);
-    for (auto &input_vstream_info : input_vstreams_info.value()) {
+    TRY(auto input_vstreams_info, net_group.get_input_vstream_infos());
+    for (auto &input_vstream_info : input_vstreams_info) {
         if (params.end() != params.find(input_vstream_info.name)) {
             match_count++;
             input_vstreams_params.emplace(input_vstream_info.name, params.at(input_vstream_info.name));
@@ -402,9 +384,8 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> Netwo
     }
 
     std::map<std::string, hailo_vstream_params_t> output_vstreams_params;
-    auto output_vstreams_info = net_group.get_output_vstream_infos();
-    CHECK_EXPECTED(output_vstreams_info);
-    for (auto &output_vstream_info : output_vstreams_info.value()) {
+    TRY(auto output_vstreams_info, net_group.get_output_vstream_infos());
+    for (auto &output_vstream_info : output_vstreams_info) {
         if (params.end() != params.find(output_vstream_info.name)) {
             match_count++;
             output_vstreams_params.emplace(output_vstream_info.name, params.at(output_vstream_info.name));
@@ -415,13 +396,10 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> Netwo
 
     CHECK(match_count == params.size(), make_unexpected(HAILO_INVALID_ARGUMENT), "One of the params has an invalid vStream name");
 
-    auto input_vstreams = VStreamsBuilder::create_input_vstreams(net_group, input_vstreams_params);
-    CHECK_EXPECTED(input_vstreams);
+    TRY(auto input_vstreams, VStreamsBuilder::create_input_vstreams(net_group, input_vstreams_params));
+    TRY(auto output_vstreams, VStreamsBuilder::create_output_vstreams(net_group, output_vstreams_params));
 
-    auto output_vstreams = VStreamsBuilder::create_output_vstreams(net_group, output_vstreams_params);
-    CHECK_EXPECTED(output_vstreams);
-
-    return {{input_vstreams.release(), output_vstreams.release()}};//TODO: move? copy elision?
+    return std::make_pair(std::move(input_vstreams), std::move(output_vstreams));
 }
 
 const std::vector<hailo_status> NetworkRunner::ALLOWED_INFERENCE_RETURN_VALUES{
@@ -444,24 +422,22 @@ Expected<std::vector<AsyncThreadPtr<hailo_status>>> FullSyncNetworkRunner::start
     std::vector<AsyncThreadPtr<hailo_status>> threads;
     for (auto &input_vstream : m_input_vstreams) {
         const auto vstream_params = get_params(input_vstream.name());
-        auto writer = WriterWrapper<InputVStream>::create(input_vstream, vstream_params, m_vdevice,
-            m_overall_latency_meter, m_params.framerate, SYNC_API);
-        CHECK_EXPECTED(writer);
+        TRY(auto writer, WriterWrapper<InputVStream>::create(input_vstream, vstream_params, m_vdevice,
+            m_overall_latency_meter, m_params.framerate, SYNC_API));
 
         threads.emplace_back(std::make_unique<AsyncThread<hailo_status>>("WRITE",
-            [this, writer = writer.release(), shutdown_event]() mutable {
+            [this, writer, shutdown_event]() mutable {
                 return run_write(writer, shutdown_event, m_latency_barrier);
             }));
     }
 
     bool first = true; //TODO: check with multiple outputs
     for (auto &output_vstream : m_output_vstreams) {
-        auto reader = ReaderWrapper<OutputVStream>::create(output_vstream, m_vdevice,
-            m_overall_latency_meter, first ? net_live_track : nullptr, SYNC_API);
-        CHECK_EXPECTED(reader);
+        TRY(auto reader, ReaderWrapper<OutputVStream>::create(output_vstream, m_vdevice,
+            m_overall_latency_meter, first ? net_live_track : nullptr, SYNC_API));
 
         threads.emplace_back(std::make_unique<AsyncThread<hailo_status>>("READ",
-            [this, reader=reader.release(), shutdown_event]() mutable {
+            [this, reader, shutdown_event]() mutable {
                 return run_read(reader, shutdown_event, m_latency_barrier);
             }));
         first = false;
@@ -552,8 +528,8 @@ Expected<AsyncInferJob> FullAsyncNetworkRunner::create_infer_job(const Configure
     if (m_overall_latency_meter) {
         m_overall_latency_meter->add_start_sample(std::chrono::steady_clock::now().time_since_epoch());
     }
-    auto job = m_configured_infer_model->run_async(bindings, [=, &inference_status] (const AsyncInferCompletionInfo &completion_info) {
 
+    TRY(auto job, m_configured_infer_model->run_async(bindings, [=, &inference_status] (const AsyncInferCompletionInfo &completion_info) {
         if (HAILO_SUCCESS != completion_info.status) {
             inference_status = completion_info.status;
             if (HAILO_STREAM_ABORT != completion_info.status) {
@@ -569,9 +545,8 @@ Expected<AsyncInferJob> FullAsyncNetworkRunner::create_infer_job(const Configure
                 so there's a circular dependency */
             net_live_track->progress();
         }
-    });
-    CHECK_EXPECTED(job);
-    return job.release();
+    }));
+    return job;
 }
 
 hailo_status FullAsyncNetworkRunner::run_single_thread_async_infer(EventPtr shutdown_event,
@@ -590,13 +565,10 @@ hailo_status FullAsyncNetworkRunner::run_single_thread_async_infer(EventPtr shut
         status = m_configured_infer_model->set_scheduler_priority(m_params.scheduler_priority);
         CHECK_SUCCESS(status);
     } else {
-        auto guard_exp = ConfiguredInferModelActivationGuard::create(m_configured_infer_model);
-        CHECK_EXPECTED_AS_STATUS(guard_exp);
-        guard = guard_exp.release();
+        TRY(guard, ConfiguredInferModelActivationGuard::create(m_configured_infer_model));
     }
 
-    auto bindings = m_configured_infer_model->create_bindings();
-    CHECK_EXPECTED_AS_STATUS(bindings);
+    TRY(auto bindings, m_configured_infer_model->create_bindings());
 
     std::unordered_map<std::string, Buffer> input_buffers; // Keys are inputs names
     std::vector<Buffer> output_buffers;
@@ -604,40 +576,36 @@ hailo_status FullAsyncNetworkRunner::run_single_thread_async_infer(EventPtr shut
 
     const uint8_t const_byte = 0xAB;
     for (const auto &name : get_input_names()) {
-        auto input_config = m_infer_model->input(name);
-        CHECK_EXPECTED_AS_STATUS(input_config);
+        TRY(auto input_config, m_infer_model->input(name));
 
         auto params = get_params(name);
-        auto buffer = params.input_file_path.empty() ?
-            Buffer::create(input_config->get_frame_size(), const_byte, BufferStorageParams::create_dma()) :
-            read_binary_file(params.input_file_path, BufferStorageParams::create_dma());
-        CHECK_EXPECTED_AS_STATUS(buffer);
-        CHECK(0 == (buffer->size() % input_config->get_frame_size()), HAILO_INVALID_ARGUMENT,
-            "Size of data for input '{}' must be a multiple of the frame size {}. Received - {}", name, input_config->get_frame_size(), buffer->size());
-        input_buffers.emplace(name, buffer.release());
+        Buffer buffer {};
+        if (params.input_file_path.empty()) {
+            TRY(buffer, Buffer::create(input_config.get_frame_size(), const_byte, BufferStorageParams::create_dma()));
+        } else {
+            TRY(buffer, read_binary_file(params.input_file_path, BufferStorageParams::create_dma()));
+        }
+        CHECK(0 == (buffer.size() % input_config.get_frame_size()), HAILO_INVALID_ARGUMENT,
+            "Size of data for input '{}' must be a multiple of the frame size {}. Received - {}", name, input_config.get_frame_size(), buffer.size());
+        input_buffers.emplace(name, std::move(buffer));
 
-        for (uint32_t i = 0; i < (input_buffers.at(name).size() % input_config->get_frame_size()); i++) {
-            auto mapped_buffer = DmaMappedBuffer::create(m_vdevice, input_buffers.at(name).data() + (i * input_config->get_frame_size()),
-                input_config->get_frame_size(), HAILO_DMA_BUFFER_DIRECTION_H2D);
-            CHECK_EXPECTED_AS_STATUS(mapped_buffer);
-            dma_mapped_buffers.emplace_back(mapped_buffer.release());
+        for (uint32_t i = 0; i < (input_buffers.at(name).size() % input_config.get_frame_size()); i++) {
+            TRY(auto mapped_buffer, DmaMappedBuffer::create(m_vdevice, input_buffers.at(name).data() + (i * input_config.get_frame_size()),
+                input_config.get_frame_size(), HAILO_DMA_BUFFER_DIRECTION_H2D));
+            dma_mapped_buffers.emplace_back(std::move(mapped_buffer));
         }
     }
 
     for (const auto &name : get_output_names()) {
-        auto output_config = m_infer_model->output(name);
-        CHECK_EXPECTED_AS_STATUS(output_config);
+        TRY(auto output_config, m_infer_model->output(name));
+        TRY(auto buffer, Buffer::create(output_config.get_frame_size(), 0, BufferStorageParams::create_dma()));
+        output_buffers.emplace_back(std::move(buffer));
 
-        auto buffer = Buffer::create(output_config->get_frame_size(), 0, BufferStorageParams::create_dma());
-        CHECK_EXPECTED_AS_STATUS(buffer);
-        output_buffers.emplace_back(buffer.release());
+        TRY(auto mapped_buffer, DmaMappedBuffer::create(m_vdevice, output_buffers.back().data(), output_buffers.back().size(),
+            HAILO_DMA_BUFFER_DIRECTION_D2H));
+        dma_mapped_buffers.emplace_back(std::move(mapped_buffer));
 
-        auto mapped_buffer = DmaMappedBuffer::create(m_vdevice, output_buffers.back().data(), output_buffers.back().size(),
-            HAILO_DMA_BUFFER_DIRECTION_D2H);
-        CHECK_EXPECTED_AS_STATUS(mapped_buffer);
-        dma_mapped_buffers.emplace_back(mapped_buffer.release());
-
-        CHECK_SUCCESS(bindings->output(name)->set_buffer(MemoryView(output_buffers.back())));
+        CHECK_SUCCESS(bindings.output(name)->set_buffer(MemoryView(output_buffers.back())));
     }
 
     FramerateThrottle frame_rate_throttle(m_params.framerate);
@@ -648,17 +616,14 @@ hailo_status FullAsyncNetworkRunner::run_single_thread_async_infer(EventPtr shut
     while (HAILO_TIMEOUT == shutdown_event->wait(std::chrono::milliseconds(0)) && (HAILO_SUCCESS == inference_status)) {
         for (uint32_t frames_in_cycle = 0; frames_in_cycle < m_params.batch_size; frames_in_cycle++) {
             for (const auto &name : get_input_names()) {
-                auto input_config = m_infer_model->input(name);
-                CHECK_EXPECTED_AS_STATUS(input_config);
-                auto offset = (frame_id % (input_buffers.at(name).size() / input_config->get_frame_size())) * input_config->get_frame_size();
-                CHECK_SUCCESS(bindings->input(name)->set_buffer(MemoryView(input_buffers.at(name).data() + offset,
-                    input_config->get_frame_size())));
+                TRY(auto input_config, m_infer_model->input(name));
+                auto offset = (frame_id % (input_buffers.at(name).size() / input_config.get_frame_size())) * input_config.get_frame_size();
+                CHECK_SUCCESS(bindings.input(name)->set_buffer(MemoryView(input_buffers.at(name).data() + offset,
+                    input_config.get_frame_size())));
             }
             frame_id++;
             if (HAILO_SUCCESS == m_configured_infer_model->wait_for_async_ready(DEFAULT_TRANSFER_TIMEOUT)) {
-                auto job_exp = create_infer_job(*bindings, net_live_track, frame_rate_throttle, inference_status);
-                CHECK_EXPECTED_AS_STATUS(job_exp);
-                last_job = job_exp.release();
+                TRY(last_job, create_infer_job(bindings, net_live_track, frame_rate_throttle, inference_status));
                 last_job.detach();
             }
         }
@@ -689,18 +654,17 @@ Expected<std::vector<AsyncThreadPtr<hailo_status>>> RawNetworkRunner::start_infe
     std::vector<AsyncThreadPtr<hailo_status>> threads;
     for (auto &input_stream : m_input_streams) {
         const auto stream_params = get_params(input_stream.get().name());
-        auto writer = WriterWrapper<InputStream>::create(input_stream.get(), stream_params, m_vdevice,
-            m_overall_latency_meter, m_params.framerate, async_streams);
-        CHECK_EXPECTED(writer);
+        TRY(auto writer, WriterWrapper<InputStream>::create(input_stream.get(), stream_params, m_vdevice,
+            m_overall_latency_meter, m_params.framerate, async_streams));
 
         if (async_streams) {
             threads.emplace_back(std::make_unique<AsyncThread<hailo_status>>("WRITE_ASYNC",
-                [this, writer = writer.release(), shutdown_event]() mutable {
+                [this, writer, shutdown_event]() mutable {
                     return run_write_async(writer, shutdown_event, m_latency_barrier);
                 }));
         } else {
             threads.emplace_back(std::make_unique<AsyncThread<hailo_status>>("WRITE",
-                [this, writer = writer.release(), shutdown_event]() mutable {
+                [this, writer, shutdown_event]() mutable {
                     return run_write(writer, shutdown_event, m_latency_barrier);
                 }));
         }
@@ -708,18 +672,17 @@ Expected<std::vector<AsyncThreadPtr<hailo_status>>> RawNetworkRunner::start_infe
 
     bool first = true; //TODO: check with multiple outputs
     for (auto &output_stream : m_output_streams) {
-        auto reader = ReaderWrapper<OutputStream>::create(output_stream.get(), m_vdevice,
-            m_overall_latency_meter, first ? net_live_track : nullptr, async_streams);
-        CHECK_EXPECTED(reader);
+        TRY(auto reader, ReaderWrapper<OutputStream>::create(output_stream.get(), m_vdevice,
+            m_overall_latency_meter, first ? net_live_track : nullptr, async_streams));
 
         if (async_streams) {
             threads.emplace_back(std::make_unique<AsyncThread<hailo_status>>("READ_ASYNC",
-                [this, reader=reader.release(), shutdown_event]() mutable {
+                [this, reader, shutdown_event]() mutable {
                     return run_read_async(reader, shutdown_event, m_latency_barrier);
                 }));
         } else {
             threads.emplace_back(std::make_unique<AsyncThread<hailo_status>>("READ",
-                [this, reader=reader.release(), shutdown_event]() mutable {
+                [this, reader, shutdown_event]() mutable {
                     return run_read(reader, shutdown_event, m_latency_barrier);
                 }));
         }
@@ -739,37 +702,29 @@ hailo_status RawNetworkRunner::run_single_thread_async_infer(EventPtr shutdown_e
     std::vector<SemaphorePtr> output_semaphores;
     bool is_first_output = true;
     for (auto &output_stream : m_output_streams) {
-        auto reader_wrapper = ReaderWrapper<OutputStream>::create(output_stream.get(), m_vdevice,
-            m_overall_latency_meter, is_first_output ? net_live_track : nullptr, ASYNC_API);
-        CHECK_EXPECTED_AS_STATUS(reader_wrapper);
+        TRY(auto reader_wrapper, ReaderWrapper<OutputStream>::create(output_stream.get(), m_vdevice,
+            m_overall_latency_meter, is_first_output ? net_live_track : nullptr, ASYNC_API));
         is_first_output = false;
 
-        auto max_queue_size = reader_wrapper.value()->get().get_async_max_queue_size();
-        CHECK_EXPECTED_AS_STATUS(max_queue_size);
+        TRY(auto max_queue_size, reader_wrapper->get().get_async_max_queue_size());
+        TRY(auto semaphore, Semaphore::create_shared(static_cast<uint32_t>(max_queue_size)));
 
-        auto semaphore = Semaphore::create_shared(static_cast<uint32_t>(*max_queue_size));
-        CHECK_EXPECTED_AS_STATUS(semaphore);
-
-        output_semaphores.emplace_back(semaphore.release());
-        reader_wrappers.emplace_back(reader_wrapper.release());
+        output_semaphores.emplace_back(semaphore);
+        reader_wrappers.emplace_back(reader_wrapper);
     }
 
     // Build input wrappers
     std::vector<WriterWrapperPtr<InputStream>> writer_wrappers;
     std::vector<SemaphorePtr> input_semaphores;
     for (auto &input_stream : m_input_streams) {
-        auto writer_wrapper = WriterWrapper<InputStream>::create(input_stream.get(),
-            get_params(input_stream.get().name()), m_vdevice, m_overall_latency_meter, m_params.framerate, ASYNC_API);
-        CHECK_EXPECTED_AS_STATUS(writer_wrapper);
+        TRY(auto writer_wrapper, WriterWrapper<InputStream>::create(input_stream.get(),
+            get_params(input_stream.get().name()), m_vdevice, m_overall_latency_meter, m_params.framerate, ASYNC_API));
 
-        auto max_queue_size = writer_wrapper.value()->get().get_async_max_queue_size();
-        CHECK_EXPECTED_AS_STATUS(max_queue_size);
+        TRY(auto max_queue_size, writer_wrapper->get().get_async_max_queue_size());
+        TRY(auto semaphore, Semaphore::create_shared(static_cast<uint32_t>(max_queue_size)));
 
-        auto semaphore = Semaphore::create_shared(static_cast<uint32_t>(*max_queue_size));
-        CHECK_EXPECTED_AS_STATUS(semaphore);
-
-        input_semaphores.emplace_back(semaphore.release());
-        writer_wrappers.emplace_back(writer_wrapper.release());
+        input_semaphores.emplace_back(semaphore);
+        writer_wrappers.emplace_back(writer_wrapper);
     }
 
     // Build waitables list with reference to previous input/output semaphores.
@@ -788,17 +743,16 @@ hailo_status RawNetworkRunner::run_single_thread_async_infer(EventPtr shutdown_e
 
     // Inference
     while (true) {
-        auto wait_index = wait_group.wait_any(HAILORTCLI_DEFAULT_TIMEOUT);
-        CHECK_EXPECTED_AS_STATUS(wait_index);
+        TRY(auto wait_index, wait_group.wait_any(HAILORTCLI_DEFAULT_TIMEOUT));
 
-        if (*wait_index == shutdown_index) {
+        if (wait_index == shutdown_index) {
             // Stopping the network so we won't get timeout on the flush. The async operations may still be active
             // (until network deactivation).
             stop();
             break;
-        } else if ((*wait_index >= output_index_start) && (*wait_index < input_index_start)) {
+        } else if ((wait_index >= output_index_start) && (wait_index < input_index_start)) {
             // output is ready
-            const size_t output_index = *wait_index - output_index_start;
+            const size_t output_index = wait_index - output_index_start;
             auto status = reader_wrappers[output_index]->read_async(
                 [semaphore=output_semaphores[output_index]](const OutputStream::CompletionInfo &) {
                     (void)semaphore->signal();
@@ -807,7 +761,7 @@ hailo_status RawNetworkRunner::run_single_thread_async_infer(EventPtr shutdown_e
             CHECK_SUCCESS(status);
         } else {
             // input is ready
-            const size_t input_index = *wait_index - input_index_start;
+            const size_t input_index = wait_index - input_index_start;
             auto status = writer_wrappers[input_index]->write_async(
                 [semaphore=input_semaphores[input_index]](const InputStream::CompletionInfo &) {
                     (void)semaphore->signal();

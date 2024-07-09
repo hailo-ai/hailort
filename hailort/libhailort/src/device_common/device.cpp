@@ -58,16 +58,14 @@ Expected<std::vector<std::string>> Device::scan()
         return std::vector<std::string>{IntegratedDevice::DEVICE_ID};
     }
     else {
-        auto pcie_device_infos = PcieDevice::scan();
-        CHECK_EXPECTED(pcie_device_infos);
+        TRY(auto pcie_device_infos, PcieDevice::scan());
 
         std::vector<std::string> results;
-        results.reserve(pcie_device_infos->size());
+        results.reserve(pcie_device_infos.size());
 
-        for (const auto pcie_device_info : pcie_device_infos.release()) {
-            auto device_id = pcie_device_info_to_string(pcie_device_info);
-            CHECK_EXPECTED(device_id);
-            results.emplace_back(device_id.release());
+        for (const auto pcie_device_info : pcie_device_infos) {
+            TRY(auto device_id, pcie_device_info_to_string(pcie_device_info));
+            results.emplace_back(device_id);
         }
 
         return results;
@@ -93,12 +91,12 @@ Expected<std::vector<hailo_eth_device_info_t>> Device::scan_eth_by_host_address(
 
 Expected<std::unique_ptr<Device>> Device::create()
 {
-    auto device_ids = scan();
-    CHECK_EXPECTED(device_ids, "Failed scan devices");
-    CHECK_AS_EXPECTED(device_ids->size() >= 1, HAILO_INVALID_OPERATION, "There is no hailo device on the system");
+    TRY(const auto device_ids, scan(), "Failed scan devices");
+    CHECK_AS_EXPECTED(device_ids.size() >= 1, HAILO_INVALID_OPERATION,
+        "There is no hailo device on the system");
 
     // Choose the first device.
-    return Device::create(device_ids->at(0));
+    return Device::create(device_ids.at(0));
 }
 
 Expected<std::unique_ptr<Device>> Device::create(const std::string &device_id)
@@ -121,37 +119,33 @@ Expected<std::unique_ptr<Device>> Device::create(const std::string &device_id)
 
 Expected<std::unique_ptr<Device>> Device::create_pcie()
 {
-    auto pcie_device = PcieDevice::create();
-    CHECK_EXPECTED(pcie_device);
+    TRY(auto pcie_device, PcieDevice::create());
     // Upcasting to Device unique_ptr (from PcieDevice unique_ptr)
-    auto device = std::unique_ptr<Device>(pcie_device.release());
+    auto device = std::unique_ptr<Device>(std::move(pcie_device));
     return device;
 }
 
 Expected<std::unique_ptr<Device>> Device::create_pcie(const hailo_pcie_device_info_t &device_info)
 {
-    auto pcie_device = PcieDevice::create(device_info);
-    CHECK_EXPECTED(pcie_device);
+    TRY(auto pcie_device, PcieDevice::create(device_info));
     // Upcasting to Device unique_ptr (from PcieDevice unique_ptr)
-    auto device = std::unique_ptr<Device>(pcie_device.release());
+    auto device = std::unique_ptr<Device>(std::move(pcie_device));
     return device;
 }
 
 Expected<std::unique_ptr<Device>> Device::create_eth(const hailo_eth_device_info_t &device_info)
 {
-    auto eth_device = EthernetDevice::create(device_info);
-    CHECK_EXPECTED(eth_device);
+    TRY(auto eth_device, EthernetDevice::create(device_info));
     // Upcasting to Device unique_ptr (from EthernetDevice unique_ptr)
-    auto device = std::unique_ptr<Device>(eth_device.release());
+    auto device = std::unique_ptr<Device>(std::move(eth_device));
     return device;
 }
 
 Expected<std::unique_ptr<Device>> Device::create_eth(const std::string &ip_addr)
 {
-    auto eth_device = EthernetDevice::create(ip_addr);
-    CHECK_EXPECTED(eth_device);
+    TRY(auto eth_device, EthernetDevice::create(ip_addr));
     // Upcasting to Device unique_ptr (from EthernetDevice unique_ptr)
-    auto device = std::unique_ptr<Device>(eth_device.release());
+    auto device = std::unique_ptr<Device>(std::move(eth_device));
     return device;
 }
 
@@ -403,6 +397,22 @@ hailo_status Device::dma_unmap(void *address, size_t size, hailo_dma_buffer_dire
     return HAILO_NOT_IMPLEMENTED;
 }
 
+hailo_status Device::dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
+{
+    (void) dmabuf_fd;
+    (void) size;
+    (void) direction;
+    return HAILO_NOT_IMPLEMENTED;
+}
+
+hailo_status Device::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
+{
+    (void) dmabuf_fd;
+    (void) size;
+    (void) direction;
+    return HAILO_NOT_IMPLEMENTED;
+}
+
 hailo_status Device::direct_write_memory(uint32_t address, const void *buffer, uint32_t size)
 {
     (void) address;
@@ -442,9 +452,7 @@ Expected<hailo_extended_device_information_t> Device::get_extended_device_inform
 hailo_status Device::update_fw_state()
 {
     // Assuming FW is loaded, send identify
-    auto board_info_expected = Control::identify(*this);
-    CHECK_EXPECTED_AS_STATUS(board_info_expected);
-    hailo_device_identity_t board_info = board_info_expected.release();
+    TRY(auto board_info, Control::identify(*this));
 
     if ((FIRMWARE_VERSION_MAJOR == board_info.fw_version.major) &&
          (FIRMWARE_VERSION_MINOR == board_info.fw_version.minor)) {
@@ -537,27 +545,25 @@ Expected<Buffer> Device::download_context_action_list(uint32_t network_group_id,
     CHECK_ARG_NOT_NULL_AS_EXPECTED(batch_counter);
 
     // Allocate room for an action list of at most max_size bytes
-    auto action_list = Buffer::create(max_size);
-    CHECK_EXPECTED(action_list);
+    TRY(auto action_list, Buffer::create(max_size));
 
     uint32_t base_address_local = 0;
     uint32_t batch_counter_local = 0;
     uint16_t actual_size = 0;
     const auto status = Control::download_context_action_list(*this, network_group_id,
-        (CONTROL_PROTOCOL__context_switch_context_type_t)context_type, context_index, action_list->size(),
-        &base_address_local, action_list->data(), &actual_size, &batch_counter_local);
+        (CONTROL_PROTOCOL__context_switch_context_type_t)context_type, context_index, action_list.size(),
+        &base_address_local, action_list.data(), &actual_size, &batch_counter_local);
     CHECK_SUCCESS_AS_EXPECTED(status);
     CHECK_AS_EXPECTED(actual_size <= max_size, HAILO_INTERNAL_FAILURE);
 
     // Create a copy of the list, truncating to the needed size
-    auto final_action_list = Buffer::create(action_list->data(), actual_size);
-    CHECK_EXPECTED(action_list);
+    TRY(auto final_action_list, Buffer::create(action_list.data(), actual_size));
 
     // Transfer ownership of out params
     *base_address = base_address_local;
     *batch_counter = batch_counter_local;
 
-    return final_action_list.release();
+    return final_action_list;
 }
 
 hailo_status Device::set_context_action_list_timestamp_batch(uint16_t batch_index)
@@ -621,29 +627,46 @@ Expected<uint8_t> Device::get_context_switch_breakpoint_status(uint8_t breakpoin
     return static_cast<uint8_t>(breakpoint_status);
 }
 
+// TODO: remove init_cache_info, get_cache_info and update_cache_read_offset (HRT-13896)
+hailo_status Device::init_cache_info(const hailo_cache_info_t &cache_info)
+{
+    CONTROL_PROTOCOL__context_switch_cache_info_t control_cache_info = {
+        cache_info.cache_size,
+        cache_info.current_read_offset,
+        cache_info.write_offset_delta
+    };
+    return Control::context_switch_init_cache_info(*this, control_cache_info);
+}
+
+Expected<hailo_cache_info_t> Device::get_cache_info()
+{
+    TRY(const auto cache_info, Control::context_switch_get_cache_info(*this));
+    return hailo_cache_info_t{cache_info.cache_size, cache_info.current_read_offset, cache_info.write_offset_delta};
+}
+
+hailo_status Device::update_cache_read_offset(int32_t read_offset_delta)
+{
+    return Control::context_switch_update_cache_read_offset(*this, read_offset_delta);
+}
+
 Expected<std::unique_ptr<Device>> Device::create_core()
 {
-    auto integrated_device = IntegratedDevice::create();
-    CHECK_EXPECTED(integrated_device);
+    TRY(auto integrated_device, IntegratedDevice::create());
     // Upcasting to Device unique_ptr (from IntegratedDevice unique_ptr)
-    auto device = std::unique_ptr<Device>(integrated_device.release());
+    auto device = std::unique_ptr<Device>(std::move(integrated_device));
     return device;
 }
 
 Expected<NetworkGroupsParamsMap> Device::create_configure_params(Hef &hef) const
 {
-    auto stream_interface = get_default_streams_interface();
-    CHECK_EXPECTED(stream_interface, "Failed to get default streams interface");
-
-    return hef.create_configure_params(stream_interface.release());
+    TRY(const auto stream_interface, get_default_streams_interface(), "Failed to get default streams interface");
+    return hef.create_configure_params(stream_interface);
 }
 
 Expected<ConfigureNetworkParams> Device::create_configure_params(Hef &hef, const std::string &network_group_name) const
 {
-    auto stream_interface = get_default_streams_interface();
-    CHECK_EXPECTED(stream_interface, "Failed to get default streams interface");
-
-    return hef.create_configure_params(stream_interface.release(), network_group_name);
+    TRY(const auto stream_interface, get_default_streams_interface(), "Failed to get default streams interface");
+    return hef.create_configure_params(stream_interface, network_group_name);
 }
 
 } /* namespace hailort */

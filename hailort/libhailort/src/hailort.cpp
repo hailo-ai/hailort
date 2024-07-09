@@ -1116,7 +1116,7 @@ hailo_status hailo_free_buffer(void *buffer)
 
 // TODO: hailo_device_dma_map_buffer/hailo_device_dma_unmap_buffer aren't thread safe when crossed with
 //       hailo_allocate_buffer/hailo_free_buffer (HRT-10669)
-hailo_status hailo_device_dma_map_buffer(hailo_device device,void *address, size_t size, hailo_dma_buffer_direction_t direction)
+hailo_status hailo_device_dma_map_buffer(hailo_device device, void *address, size_t size, hailo_dma_buffer_direction_t direction)
 {
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(address);
@@ -1130,7 +1130,7 @@ hailo_status hailo_device_dma_unmap_buffer(hailo_device device, void *address, s
     return reinterpret_cast<Device*>(device)->dma_unmap(address, size, direction);
 }
 
-hailo_status hailo_vdevice_dma_map_buffer(hailo_vdevice vdevice,void *address, size_t size, hailo_dma_buffer_direction_t direction)
+hailo_status hailo_vdevice_dma_map_buffer(hailo_vdevice vdevice, void *address, size_t size, hailo_dma_buffer_direction_t direction)
 {
     CHECK_ARG_NOT_NULL(vdevice);
     CHECK_ARG_NOT_NULL(address);
@@ -1142,6 +1142,30 @@ hailo_status hailo_vdevice_dma_unmap_buffer(hailo_vdevice vdevice, void *address
     CHECK_ARG_NOT_NULL(vdevice);
     CHECK_ARG_NOT_NULL(address);
     return reinterpret_cast<VDevice*>(vdevice)->dma_unmap(address, size, direction);
+}
+
+hailo_status hailo_device_dma_map_dmabuf(hailo_device device, int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
+{
+    CHECK_ARG_NOT_NULL(device);
+    return reinterpret_cast<Device*>(device)->dma_map_dmabuf(dmabuf_fd, size, direction);
+}
+
+hailo_status hailo_device_dma_unmap_dmabuf(hailo_device device, int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
+{
+    CHECK_ARG_NOT_NULL(device);
+    return reinterpret_cast<Device*>(device)->dma_unmap_dmabuf(dmabuf_fd, size, direction);
+}
+
+hailo_status hailo_vdevice_dma_map_dmabuf(hailo_vdevice vdevice, int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
+{
+    CHECK_ARG_NOT_NULL(vdevice);
+    return reinterpret_cast<VDevice*>(vdevice)->dma_map_dmabuf(dmabuf_fd, size, direction);
+}
+
+hailo_status hailo_vdevice_dma_unmap_dmabuf(hailo_vdevice vdevice, int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
+{
+    CHECK_ARG_NOT_NULL(vdevice);
+    return reinterpret_cast<VDevice*>(vdevice)->dma_unmap_dmabuf(dmabuf_fd, size, direction);
 }
 
 hailo_status hailo_calculate_eth_input_rate_limits(hailo_hef hef, const char *network_group_name, uint32_t fps,
@@ -1228,6 +1252,9 @@ hailo_status hailo_stream_read_raw_buffer(hailo_output_stream stream, void *buff
 
     MemoryView buffer_view(buffer, size);
     auto status = (reinterpret_cast<OutputStream*>(stream))->read(buffer_view);
+    if (HAILO_STREAM_ABORT == status) {
+        return status;
+    }
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -1238,6 +1265,9 @@ hailo_status hailo_stream_write_raw_buffer(hailo_input_stream stream, const void
     CHECK_ARG_NOT_NULL(buffer);
 
     auto status = (reinterpret_cast<InputStream*>(stream))->write(MemoryView::create_const(buffer, size));
+    if (HAILO_STREAM_ABORT == status) {
+        return status;
+    }
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }

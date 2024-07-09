@@ -153,28 +153,27 @@ private:
     {
         const uint8_t const_byte = 0xAB;
 
-        auto constant_buffer = Buffer::create_shared(frame_size, const_byte, BufferStorageParams::create_dma());
-        CHECK_EXPECTED(constant_buffer);
+        TRY(auto constant_buffer,
+            Buffer::create_shared(frame_size, const_byte, BufferStorageParams::create_dma()));
 
-        return std::vector<BufferPtr>{constant_buffer.release()};
+        return std::vector<BufferPtr>{ constant_buffer };
     }
 
     static Expected<std::vector<BufferPtr>> create_dataset_from_input_file(const std::string &file_path, size_t frame_size)
     {
-        auto buffer = read_binary_file(file_path);
-        CHECK_EXPECTED(buffer);
-        CHECK_AS_EXPECTED(0 == (buffer->size() % frame_size), HAILO_INVALID_ARGUMENT,
+        TRY(auto buffer, read_binary_file(file_path));
+        CHECK_AS_EXPECTED(0 == (buffer.size() % frame_size), HAILO_INVALID_ARGUMENT,
             "Input file ({}) size {} must be a multiple of the frame size {}",
-            file_path, buffer->size(), frame_size);
+            file_path, buffer.size(), frame_size);
 
         std::vector<BufferPtr> dataset;
-        const size_t frames_count = buffer->size() / frame_size;
+        const size_t frames_count = buffer.size() / frame_size;
         dataset.reserve(frames_count);
         for (size_t i = 0; i < frames_count; i++) {
             const auto offset = frame_size * i;
-            auto frame_buffer = Buffer::create_shared(buffer->data() + offset, frame_size, BufferStorageParams::create_dma());
-            CHECK_EXPECTED(frame_buffer);
-            dataset.emplace_back(frame_buffer.release());
+            TRY(auto frame_buffer,
+                Buffer::create_shared(buffer.data() + offset, frame_size, BufferStorageParams::create_dma()));
+            dataset.emplace_back(frame_buffer);
         }
 
         return dataset;
@@ -183,9 +182,9 @@ private:
     static Expected<std::vector<DmaMappedBuffer>> dma_map_dataset(const std::vector<BufferPtr> &dataset, VDevice &vdevice) {
         std::vector<DmaMappedBuffer> dataset_mapped_buffers;
         for (const auto &buffer : dataset) {
-            auto mapped_buffer = DmaMappedBuffer::create(vdevice, buffer->data(), buffer->size(), HAILO_DMA_BUFFER_DIRECTION_H2D);
-            CHECK_EXPECTED(mapped_buffer);
-            dataset_mapped_buffers.emplace_back(mapped_buffer.release());
+            TRY(auto mapped_buffer,
+                DmaMappedBuffer::create(vdevice, buffer->data(), buffer->size(), HAILO_DMA_BUFFER_DIRECTION_H2D));
+            dataset_mapped_buffers.emplace_back(std::move(mapped_buffer));
         }
         return dataset_mapped_buffers;
     }

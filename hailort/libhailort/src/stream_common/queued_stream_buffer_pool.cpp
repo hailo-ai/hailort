@@ -62,10 +62,11 @@ hailo_status QueuedStreamBufferPool::enqueue(TransferBuffer &&buffer_info)
 {
     CHECK(buffer_info.offset() == 0, HAILO_INTERNAL_FAILURE, "Cant use offset on queued buffer pool");
     CHECK(buffer_info.size() == m_storage[0]->size(), HAILO_INTERNAL_FAILURE, "Invalid enqueue buffer size");
-    CHECK(buffer_info.base_buffer().data() == m_storage[m_next_enqueue_buffer_index]->data(), HAILO_INTERNAL_FAILURE,
+    TRY(auto base_buffer, buffer_info.base_buffer());
+    CHECK(base_buffer.data() == m_storage[m_next_enqueue_buffer_index]->data(), HAILO_INTERNAL_FAILURE,
         "Out of order enqueue for queued stream buffer pool");
 
-    m_queue.push(buffer_info.base_buffer());
+    m_queue.push(base_buffer);
     m_next_enqueue_buffer_index = (m_next_enqueue_buffer_index + 1) % (m_storage.size());
     return HAILO_SUCCESS;
 }

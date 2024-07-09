@@ -14,6 +14,8 @@
 #include "net_flow/ops/nms_post_process.hpp"
 #include "net_flow/ops/softmax_post_process.hpp"
 #include "net_flow/ops_metadata/yolov8_op_metadata.hpp"
+#include "net_flow/ops/softmax_post_process.hpp"
+
 namespace hailort
 {
 namespace net_flow
@@ -26,9 +28,8 @@ public:
 
     hailo_status execute(const std::map<std::string, MemoryView> &inputs, std::map<std::string, MemoryView> &outputs) override;
 
-private:
+protected:
     std::shared_ptr<Yolov8OpMetadata> m_metadata;
-    std::vector<float32_t> m_d_values_matrix;  // Holds the values of the bbox boundaries distances from the stride's center
     std::unordered_map<std::string, std::vector<std::vector<float32_t>>> m_d_matrix; // Holds the values from which we compute those distances
     YOLOV8PostProcessOp(std::shared_ptr<Yolov8OpMetadata> metadata)
         : NmsPostProcessOp(static_cast<std::shared_ptr<NmsOpMetadata>>(metadata))
@@ -36,7 +37,7 @@ private:
     {
         for (const auto &input_metadata : m_metadata->inputs_metadata()) {
             m_d_matrix[input_metadata.first] = std::vector<std::vector<float32_t>>(NUM_OF_D_VALUES,
-                                                    std::vector<float32_t>(input_metadata.second.shape.features / NUM_OF_D_VALUES));
+                                                    std::vector<float32_t>(input_metadata.second.padded_shape.features / NUM_OF_D_VALUES));
         }
     }
 
@@ -61,11 +62,13 @@ private:
             auto &tmp_vector = d_matrix.at(vector_index);
             SoftmaxPostProcessOp::softmax(tmp_vector.data(), tmp_vector.data(), tmp_vector.size());
         }
+
         // Performing dot product on each vector
         // (A, B, C, ..., F, G) -> 0*A + 1*B + 2*C + ... + 14*F + 15*G
         for (uint32_t vector_index = 0; vector_index < NUM_OF_D_VALUES; vector_index++) {
             m_d_values_matrix[vector_index] = dot_product(d_matrix.at(vector_index));
         }
+
         // The decode function extract x_min, y_min, x_max, y_max from d1, d2, d3, d4
         const auto &d1 = m_d_values_matrix.at(0);
         const auto &d2 = m_d_values_matrix.at(1);
@@ -75,6 +78,32 @@ private:
         bbox.score = class_confidence;
         return bbox;
     }
+
+    template<typename SrcType>
+    hailo_status validate_regression_buffer_size(const hailo_3d_image_shape_t &reg_padded_shape, const MemoryView &reg_buffer,
+        const Yolov8MatchingLayersNames &layers_names)
+    {
+        auto number_of_entries = reg_padded_shape.height * reg_padded_shape.width;
+        auto buffer_size = number_of_entries * reg_padded_shape.features * sizeof(SrcType);
+        CHECK(buffer_size == reg_buffer.size(), HAILO_INVALID_ARGUMENT,
+            "Failed to extract_detections, reg {} buffer_size should be {}, but is {}", layers_names.reg, buffer_size, reg_buffer.size());
+        return HAILO_SUCCESS;
+    }
+
+    template<typename SrcType>
+    hailo_status validate_classes_buffer_size(const hailo_3d_image_shape_t &cls_padded_shape, const MemoryView &cls_buffer,
+        const Yolov8MatchingLayersNames &layers_names, const NmsPostProcessConfig &nms_config)
+    {
+        const uint32_t cls_entry_size = nms_config.number_of_classes;
+        auto number_of_entries = cls_padded_shape.height * cls_padded_shape.width;
+        auto buffer_size = number_of_entries * cls_entry_size * sizeof(SrcType);
+        CHECK(buffer_size == cls_buffer.size(), HAILO_INVALID_ARGUMENT,
+            "Failed to extract_detections, cls {} buffer_size should be {}, but is {}", layers_names.cls, buffer_size, cls_buffer.size());
+        return HAILO_SUCCESS;
+    }
+
+private:
+    std::vector<float32_t> m_d_values_matrix;  // Holds the values of the bbox boundaries distances from the stride's center
 
     static const uint32_t CLASSES_START_INDEX = 0;
     static const uint32_t NO_OBJECTNESS = 1;
@@ -96,18 +125,8 @@ private:
         const auto &reg_quant_info = inputs_metadata.at(layers_names.reg).quant_info;
         const auto &cls_quant_info = inputs_metadata.at(layers_names.cls).quant_info;
 
-        // Validate regression buffer size
-        auto number_of_entries = reg_padded_shape.height * reg_padded_shape.width;
-        auto buffer_size = number_of_entries * reg_padded_shape.features * sizeof(SrcType);
-        CHECK(buffer_size == reg_buffer.size(), HAILO_INVALID_ARGUMENT,
-            "Failed to extract_detections, reg {} buffer_size should be {}, but is {}", layers_names.reg, buffer_size, reg_buffer.size());
-
-        // Validate classes buffer size
-        const uint32_t cls_entry_size = nms_config.number_of_classes;
-        number_of_entries = cls_padded_shape.height * cls_padded_shape.width;
-        buffer_size = number_of_entries * cls_entry_size * sizeof(SrcType);
-        CHECK(buffer_size == cls_buffer.size(), HAILO_INVALID_ARGUMENT,
-            "Failed to extract_detections, cls {} buffer_size should be {}, but is {}", layers_names.cls, buffer_size, cls_buffer.size());
+        CHECK_SUCCESS(validate_regression_buffer_size<SrcType>(reg_padded_shape, reg_buffer, layers_names));
+        CHECK_SUCCESS(validate_classes_buffer_size<SrcType>(cls_padded_shape, cls_buffer, layers_names, nms_config));
 
         // Format is NHCW -> each row size is (padded C size) * (padded W size)
         auto cls_row_size = cls_padded_shape.features * cls_padded_shape.width;
@@ -154,10 +173,6 @@ private:
         }
         return HAILO_SUCCESS;
     }
-
-    template<typename DstType = float32_t, typename SrcType>
-    hailo_bbox_float32_t get_bbox(uint32_t row, uint32_t col, uint32_t stride, const hailo_3d_image_shape_t &reg_padded_shape,
-        const hailo_quant_info_t &reg_quant_info, SrcType *reg_data, std::vector<std::vector<DstType>> &d_matrix, DstType class_confidence);
 
     virtual hailo_bbox_float32_t decode(float32_t tx, float32_t ty, float32_t tw, float32_t th,
         uint32_t col, uint32_t row, uint32_t stride) const;

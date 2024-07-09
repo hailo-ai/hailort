@@ -29,14 +29,12 @@ class VDeviceCallbacksQueue final
 public:
     static Expected<std::unique_ptr<VDeviceCallbacksQueue>> create(uint32_t max_queue_size)
     {
-        auto shutdown_event_exp = Event::create_shared(Event::State::not_signalled);
-        CHECK_EXPECTED(shutdown_event_exp);
-        auto shutdown_event = shutdown_event_exp.release();
+        TRY(auto shutdown_event, Event::create_shared(Event::State::not_signalled));
 
-        auto cb_ids_queue = SpscQueue<ProtoCallbackIdentifier>::create(max_queue_size, shutdown_event, HAILO_INFINITE_TIMEOUT);
-        CHECK_EXPECTED(cb_ids_queue);
+        TRY(auto cb_ids_queue,
+            SpscQueue<ProtoCallbackIdentifier>::create(max_queue_size, shutdown_event, HAILO_INFINITE_TIMEOUT));
 
-        auto queue_ptr = make_unique_nothrow<VDeviceCallbacksQueue>(cb_ids_queue.release(), shutdown_event);
+        auto queue_ptr = make_unique_nothrow<VDeviceCallbacksQueue>(std::move(cb_ids_queue), shutdown_event);
         CHECK_AS_EXPECTED(nullptr != queue_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
         return queue_ptr;
@@ -57,16 +55,8 @@ public:
 
     Expected<ProtoCallbackIdentifier> dequeue()
     {
-        auto callback_id = m_callbacks_ids_queue.dequeue();
-        if (HAILO_SHUTDOWN_EVENT_SIGNALED == callback_id.status()) {
-            return make_unexpected(callback_id.status());
-        }
-        else if (HAILO_TIMEOUT == callback_id.status()) {
-            LOGGER__WARNING("Failed to dequeue callback_id because the queue is empty, status={}", HAILO_TIMEOUT);
-            return make_unexpected(callback_id.status());
-        }
-        CHECK_EXPECTED(callback_id);
-
+        TRY_WITH_ACCEPTABLE_STATUS(HAILO_SHUTDOWN_EVENT_SIGNALED, auto callback_id,
+            m_callbacks_ids_queue.dequeue());
         return callback_id;
     }
 

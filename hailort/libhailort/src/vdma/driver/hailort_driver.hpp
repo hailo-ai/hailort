@@ -58,8 +58,6 @@ constexpr uint8_t MAX_H2D_CHANNEL_INDEX = 15;
 constexpr uint8_t MIN_D2H_CHANNEL_INDEX = MAX_H2D_CHANNEL_INDEX + 1;
 constexpr uint8_t MAX_D2H_CHANNEL_INDEX = 31;
 
-constexpr size_t SIZE_OF_SINGLE_DESCRIPTOR = 0x10;
-
 // NOTE: don't change members from this struct without updating all code using it (platform specific)
 struct ChannelInterruptTimestamp {
     std::chrono::nanoseconds timestamp;
@@ -74,7 +72,7 @@ struct ChannelInterruptTimestampList {
 struct ChannelIrqData {
     vdma::ChannelId channel_id;
     bool is_active;
-    uint16_t desc_num_processed;
+    uint8_t transfers_completed;
     uint8_t host_error;
     uint8_t device_error;
     bool validation_success;
@@ -101,8 +99,6 @@ using vdma_mapped_buffer_driver_identifier = int;
 struct DescriptorsListInfo {
     uintptr_t handle; // Unique identifier for the driver.
     uint64_t dma_address;
-    size_t desc_count;
-    void *user_address;
 };
 
 struct ContinousBufferInfo {
@@ -135,15 +131,27 @@ class HailoRTDriver final
 {
 public:
 
+    enum class AcceleratorType {
+        NNC_ACCELERATOR,
+        SOC_ACCELERATOR,
+        ACC_TYPE_MAX_VALUE
+    };
+
     struct DeviceInfo {
         std::string dev_path;
         std::string device_id;
+        enum AcceleratorType accelerator_type;
     };
 
     enum class DmaDirection {
         H2D = 0,
         D2H,
         BOTH
+    };
+
+    enum class DmaBufferType {
+        USER_PTR_BUFFER = 0,
+        DMABUF_BUFFER
     };
 
     enum class DmaSyncDirection {
@@ -153,7 +161,8 @@ public:
 
     enum class DmaType {
         PCIE,
-        DRAM
+        DRAM,
+        PCIE_EP
     };
 
     enum class MemoryType {
@@ -173,21 +182,39 @@ public:
         DMA_ENGINE0,
         DMA_ENGINE1,
         DMA_ENGINE2,
+
+        // PCIe EP driver memories
+        PCIE_EP_CONFIG,
+        PCIE_EP_BRIDGE,
+    };
+
+    enum class PcieSessionType {
+        CLIENT,   // (soc)
+        SERVER  // (A53 - pci_ep)
     };
 
     using VdmaBufferHandle = size_t;
 
-    static Expected<std::unique_ptr<HailoRTDriver>> create(const DeviceInfo &device_info);
+    static Expected<std::unique_ptr<HailoRTDriver>> create(const std::string &device_id, const std::string &dev_path);
 
-    ~HailoRTDriver();
+    static Expected<std::unique_ptr<HailoRTDriver>> create_pcie(const std::string &device_id);
+
+    static Expected<std::unique_ptr<HailoRTDriver>> create_integrated_nnc();
+    static bool is_integrated_nnc_loaded();
+
+    static Expected<std::unique_ptr<HailoRTDriver>> create_pcie_ep();
+    static bool is_pcie_ep_loaded();
 
     static Expected<std::vector<DeviceInfo>> scan_devices();
+    static Expected<std::vector<DeviceInfo>> scan_devices(AcceleratorType accelerator_type);
+
+    ~HailoRTDriver();
 
     hailo_status read_memory(MemoryType memory_type, uint64_t address, void *buf, size_t size);
     hailo_status write_memory(MemoryType memory_type, uint64_t address, const void *buf, size_t size);
 
-    hailo_status vdma_interrupts_enable(const ChannelsBitmap &channels_bitmap, bool enable_timestamps_measure);
-    hailo_status vdma_interrupts_disable(const ChannelsBitmap &channel_id);
+    hailo_status vdma_enable_channels(const ChannelsBitmap &channels_bitmap, bool enable_timestamps_measure);
+    hailo_status vdma_disable_channels(const ChannelsBitmap &channel_id);
     Expected<IrqData> vdma_interrupts_wait(const ChannelsBitmap &channels_bitmap);
     Expected<ChannelInterruptTimestampList> vdma_interrupts_read_timestamps(vdma::ChannelId channel_id);
 
@@ -212,6 +239,17 @@ public:
     hailo_status reset_nn_core();
 
     /**
+     * Maps a dmabuf to physical memory.
+     *
+     * @param[in] dmabuf_fd - File decsriptor to the dmabuf.
+     * @param[in] required_size - size of dmabug we are mapping.
+     * @param[in] data_direction - direction is used for optimization.
+     * @param[in] buffer_type - buffer type must be DMABUF
+     */ 
+    Expected<VdmaBufferHandle> vdma_buffer_map_dmabuf(int dmabuf_fd, size_t required_size, DmaDirection data_direction,
+        DmaBufferType buffer_type);
+
+    /**
      * Pins a page aligned user buffer to physical memory, creates an IOMMU mapping (pci_mag_sg).
      * The buffer is used for streaming D2H or H2D using DMA.
      *
@@ -219,14 +257,14 @@ public:
      * @param[in] driver_buff_handle - handle to driver allocated buffer - INVALID_DRIVER_BUFFER_HANDLE_VALUE in case
      *  of user allocated buffer
      */ 
-    Expected<VdmaBufferHandle> vdma_buffer_map(void *user_address, size_t required_size, DmaDirection data_direction,
-        const vdma_mapped_buffer_driver_identifier &driver_buff_handle);
+    Expected<VdmaBufferHandle> vdma_buffer_map(uintptr_t user_address, size_t required_size, DmaDirection data_direction,
+        const vdma_mapped_buffer_driver_identifier &driver_buff_handle, DmaBufferType buffer_type);
 
     /**
     * Unmaps user buffer mapped using HailoRTDriver::map_buffer.
     */
     hailo_status vdma_buffer_unmap(VdmaBufferHandle handle);
-    hailo_status vdma_buffer_unmap(void *user_address, size_t size, DmaDirection data_direction);
+    hailo_status vdma_buffer_unmap(uintptr_t user_address, size_t size, DmaDirection data_direction);
 
     hailo_status vdma_buffer_sync(VdmaBufferHandle buffer, DmaSyncDirection sync_direction, size_t offset, size_t count);
 
@@ -247,11 +285,11 @@ public:
     hailo_status descriptors_list_release(const DescriptorsListInfo &descriptors_list_info);
 
     /**
-     * Configure vdma channel descriptors to point to the given user address.
+     * Program the given descriptors list to point to the given buffer.
      */
-    hailo_status descriptors_list_bind_vdma_buffer(uintptr_t desc_handle, VdmaBufferHandle buffer_handle,
+    hailo_status descriptors_list_program(uintptr_t desc_handle, VdmaBufferHandle buffer_handle,
         size_t buffer_size, size_t buffer_offset, uint8_t channel_index,
-        uint32_t starting_desc);
+        uint32_t starting_desc, bool should_bind, InterruptsDomain last_desc_interrupts);
 
     struct TransferBuffer {
         VdmaBufferHandle buffer_handle;
@@ -288,9 +326,18 @@ public:
      */
     hailo_status mark_as_used();
 
+    Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> soc_connect(uintptr_t input_buffer_desc_handle,
+        uintptr_t output_buffer_desc_handle);
+
+    Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> pci_ep_accept(uintptr_t input_buffer_desc_handle,
+        uintptr_t output_buffer_desc_handle);
+
+    hailo_status close_connection(vdma::ChannelId input_channel, vdma::ChannelId output_channel,
+        PcieSessionType session_type);
+
     const std::string &device_id() const
     {
-        return m_device_info.device_id;
+        return m_device_id;
     }
 
     inline DmaType dma_type() const
@@ -330,6 +377,9 @@ public:
     static const uint8_t INVALID_VDMA_CHANNEL_INDEX;
     static const vdma_mapped_buffer_driver_identifier INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER;
 
+    static constexpr const char *INTEGRATED_NNC_DEVICE_ID = "[integrated]";
+    static constexpr const char *PCIE_EP_DEVICE_ID = "[pci_ep]";
+
 private:
     template<typename PointerType>
     int run_ioctl(uint32_t ioctl_code, PointerType param);
@@ -337,22 +387,17 @@ private:
     hailo_status read_memory_ioctl(MemoryType memory_type, uint64_t address, void *buf, size_t size);
     hailo_status write_memory_ioctl(MemoryType memory_type, uint64_t address, const void *buf, size_t size);
 
-    Expected<VdmaBufferHandle> vdma_buffer_map_ioctl(void *user_address, size_t required_size,
-        DmaDirection data_direction, const vdma_mapped_buffer_driver_identifier &driver_buff_handle);
+    Expected<VdmaBufferHandle> vdma_buffer_map_ioctl(uintptr_t user_address, size_t required_size,
+        DmaDirection data_direction, const vdma_mapped_buffer_driver_identifier &driver_buff_handle,
+        DmaBufferType buffer_type);
     hailo_status vdma_buffer_unmap_ioctl(VdmaBufferHandle handle);
-
-    Expected<std::pair<uintptr_t, uint64_t>> descriptors_list_create_ioctl(size_t desc_count, uint16_t desc_page_size,
-        bool is_circular);
-    hailo_status descriptors_list_release_ioctl(uintptr_t desc_handle);
-    Expected<void *> descriptors_list_create_mmap(uintptr_t desc_handle, size_t desc_count);
-    hailo_status descriptors_list_create_munmap(void *address, size_t desc_count);
 
     Expected<std::pair<uintptr_t, uint64_t>> continous_buffer_alloc_ioctl(size_t size);
     hailo_status continous_buffer_free_ioctl(uintptr_t desc_handle);
     Expected<void *> continous_buffer_mmap(uintptr_t desc_handle, size_t size);
     hailo_status continous_buffer_munmap(void *address, size_t size);
 
-    HailoRTDriver(const DeviceInfo &device_info, FileDescriptor &&fd, hailo_status &status);
+    HailoRTDriver(const std::string &device_id, FileDescriptor &&fd, hailo_status &status);
 
     bool is_valid_channel_id(const vdma::ChannelId &channel_id);
     bool is_valid_channels_bitmap(const ChannelsBitmap &bitmap)
@@ -369,6 +414,7 @@ private:
 
     FileDescriptor m_fd;
     DeviceInfo m_device_info;
+    std::string m_device_id;
     uint16_t m_desc_max_page_size;
     DmaType m_dma_type;
     bool m_allocate_driver_buffer;
@@ -390,7 +436,7 @@ private:
     // TODO HRT-11937: when ioctl is combined, move caching to driver
     struct MappedBufferInfo {
         VdmaBufferHandle handle;
-        void *address;
+        uintptr_t address;
         DmaDirection direction;
         size_t size;
         vdma_mapped_buffer_driver_identifier driver_buff_handle;

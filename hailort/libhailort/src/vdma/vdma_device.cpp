@@ -35,12 +35,14 @@ static constexpr std::chrono::milliseconds DEFAULT_TIMEOUT(1000);
 static constexpr std::chrono::milliseconds DEFAULT_TIMEOUT(50000);
 #endif /* ifndef HAILO_EMULATOR */
 
-VdmaDevice::VdmaDevice(std::unique_ptr<HailoRTDriver> &&driver, Device::Type type) :
+VdmaDevice::VdmaDevice(std::unique_ptr<HailoRTDriver> &&driver, Device::Type type, hailo_status &status) :
     DeviceBase::DeviceBase(type),
     m_driver(std::move(driver)),
     m_is_configured(false)
 {
     activate_notifications(get_dev_id());
+
+    status = HAILO_SUCCESS;
 }
 
 Expected<std::unique_ptr<VdmaDevice>> VdmaDevice::create(const std::string &device_id)
@@ -145,8 +147,11 @@ Expected<ConfiguredNetworkGroupVector> VdmaDevice::add_hef(Hef &hef, const Netwo
         status = clear_configured_apps();
         CHECK_SUCCESS_AS_EXPECTED(status);
 
+        assert(nullptr == m_cache_manager);
+        TRY(m_cache_manager, CacheManager::create_shared(get_driver()));
+
         assert(nullptr == m_vdma_interrupts_dispatcher);
-        TRY(m_vdma_interrupts_dispatcher, vdma::InterruptsDispatcher::create(std::ref(*m_driver)));
+        TRY(m_vdma_interrupts_dispatcher, vdma::InterruptsDispatcher::create(get_driver()));
 
         assert(nullptr == m_vdma_transfer_launcher);
         TRY(m_vdma_transfer_launcher, vdma::TransferLauncher::create());
@@ -174,26 +179,23 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> VdmaDevice::create_configured_
     assert(core_ops_metadata.size() == 1);
     auto core_op_metadata = core_ops_metadata[0];
 
-    /* build HEF supported features */
-    auto resource_manager = ResourcesManagerBuilder::build(current_core_op_index,
-        *this, get_driver(), config_params, core_op_metadata, static_cast<HEFHwArch>(hef.pimpl->get_device_arch()),
-        hef.pimpl->get_shef_file_handle());
-    CHECK_EXPECTED(resource_manager);
+    auto status = m_cache_manager->create_caches_from_core_op(core_op_metadata);
+    CHECK_SUCCESS(status);
 
+    TRY(auto resource_manager, ResourcesManagerBuilder::build(current_core_op_index,
+        *this, get_driver(), m_cache_manager, config_params, core_op_metadata,
+        static_cast<HEFHwArch>(hef.pimpl->get_device_arch())));
 
-    auto core_op = VdmaConfigCoreOp::create(m_active_core_op_holder, config_params,
-        resource_manager.release(), core_op_metadata);
-
-    auto core_op_ptr = make_shared_nothrow<VdmaConfigCoreOp>(core_op.release());
-    CHECK_AS_EXPECTED(nullptr != core_op_ptr, HAILO_OUT_OF_HOST_MEMORY);
+    TRY(auto core_op_ptr, VdmaConfigCoreOp::create_shared(m_active_core_op_holder, config_params,
+        resource_manager, m_cache_manager, core_op_metadata));
 
     // TODO: move this func into VdmaConfigCoreOp c'tor
-    auto status = core_op_ptr->create_streams_from_config_params(*this);
-    CHECK_SUCCESS_AS_EXPECTED(status);
+    status = core_op_ptr->create_streams_from_config_params(*this);
+    CHECK_SUCCESS(status);
 
-    // Check that all boundary streams were created 
+    // Check that all boundary streams were created
     status = hef.pimpl->validate_boundary_streams_were_created(core_op_metadata->core_op_name(), core_op_ptr);
-    CHECK_SUCCESS_AS_EXPECTED(status);
+    CHECK_SUCCESS(status);
 
     core_ops.emplace_back(core_op_ptr);
     m_core_ops.emplace_back(core_op_ptr);
@@ -298,7 +300,8 @@ hailo_status VdmaDevice::dma_map(void *address, size_t size, hailo_dma_buffer_di
         buffer_identifier = buffer->buffer_identifier();
     }
 
-    CHECK_EXPECTED(m_driver->vdma_buffer_map(address, size, to_hailo_driver_direction(data_direction), buffer_identifier));
+    CHECK_EXPECTED(m_driver->vdma_buffer_map(reinterpret_cast<uintptr_t>(address), size, to_hailo_driver_direction(data_direction), buffer_identifier,
+        HailoRTDriver::DmaBufferType::USER_PTR_BUFFER));
     return HAILO_SUCCESS;
 }
 
@@ -313,7 +316,21 @@ hailo_status VdmaDevice::dma_unmap(void *address, size_t size, hailo_dma_buffer_
         return HAILO_SUCCESS;
     }
 
-    return m_driver->vdma_buffer_unmap(address, size, to_hailo_driver_direction(data_direction));
+    return m_driver->vdma_buffer_unmap(reinterpret_cast<uintptr_t>(address), size, to_hailo_driver_direction(data_direction));
+}
+
+hailo_status VdmaDevice::dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t data_direction)
+{
+    // Dont use BufferStorageResourceManager for dmabuf seeing as dmabufs are not allocated from hailoRT
+    auto buffer_identifier = HailoRTDriver::INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER;
+    CHECK_EXPECTED(m_driver->vdma_buffer_map(dmabuf_fd, size, to_hailo_driver_direction(data_direction), buffer_identifier,
+        HailoRTDriver::DmaBufferType::DMABUF_BUFFER));
+    return HAILO_SUCCESS;
+}
+
+hailo_status VdmaDevice::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t data_direction)
+{
+    return m_driver->vdma_buffer_unmap(dmabuf_fd, size, to_hailo_driver_direction(data_direction));
 }
 
 Expected<ConfiguredNetworkGroupVector> VdmaDevice::create_networks_group_vector(Hef &hef, const NetworkGroupsParamsMap &configure_params)

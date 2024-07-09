@@ -428,6 +428,22 @@ hailo_status ConfiguredNetworkGroupClient::set_nms_max_accumulated_mask_size(con
     return m_client->ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size(m_identifier, edge_name, max_accumulated_mask_size);
 }
 
+// TODO: support kv-cache over service (HRT-13968)
+hailo_status ConfiguredNetworkGroupClient::init_cache(uint32_t /* read_offset */, int32_t /* write_offset_delta */)
+{
+    return HAILO_NOT_IMPLEMENTED;
+}
+
+Expected<hailo_cache_info_t> ConfiguredNetworkGroupClient::get_cache_info() const
+{
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
+hailo_status ConfiguredNetworkGroupClient::update_cache_offset(int32_t /* offset_delta_bytes */)
+{
+    return HAILO_NOT_IMPLEMENTED;
+}
+
 hailo_status ConfiguredNetworkGroupClient::execute_callback(const ProtoCallbackIdentifier &cb_id)
 {
     if (cb_id.cb_type() == CALLBACK_TYPE_TRANSFER) {
@@ -503,12 +519,15 @@ hailo_status ConfiguredNetworkGroupClient::infer_async(const NamedBuffersCallbac
         std::unique_lock<std::mutex> lock(m_mutex);
         for (const auto &name_buffer_cb : named_buffers_callbacks) {
             auto cb_idx = get_unique_callback_idx();
-            auto name_buffer_cb_tuple = std::make_tuple(name_buffer_cb.first, name_buffer_cb.second.first, name_buffer_cb.second.second);
+            CHECK(BufferType::VIEW == name_buffer_cb.second.first.buffer_type, HAILO_INVALID_OPERATION,
+                "Using dmabuf is not supported when working with hailort_service");
+
+            auto name_buffer_cb_tuple = std::make_tuple(name_buffer_cb.first, name_buffer_cb.second.first.view, name_buffer_cb.second.second);
             auto tuple_ptr = make_shared_nothrow<NamedBufferCallbackTuple>(name_buffer_cb_tuple);
             CHECK_NOT_NULL(tuple_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
             m_idx_to_callbacks.emplace(cb_idx, tuple_ptr);
-            cb_idx_to_stream_buffer.emplace_back(std::make_tuple(cb_idx, name_buffer_cb.first, name_buffer_cb.second.first));
+            cb_idx_to_stream_buffer.emplace_back(std::make_tuple(cb_idx, name_buffer_cb.first, name_buffer_cb.second.first.view));
         }
     }
 

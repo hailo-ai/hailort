@@ -48,19 +48,15 @@ namespace hailort
 using stream_name_t = std::string;
 using op_name_t = std::string;
 
+#define HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR "HAILORT_AUTO_UPDATE_CACHE_OFFSET"
+#define HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR_DEFAULT "default"
+#define HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR_DISABLED "disabled"
 
 class ConfiguredNetworkGroupBase : public ConfiguredNetworkGroup
 {
 public:
     static Expected<std::shared_ptr<ConfiguredNetworkGroupBase>> create(const ConfigureNetworkParams &config_params,
-        std::vector<std::shared_ptr<CoreOp>> &&core_ops, NetworkGroupMetadata &&metadata)
-    {
-        auto net_group_ptr = std::shared_ptr<ConfiguredNetworkGroupBase>(new (std::nothrow) 
-            ConfiguredNetworkGroupBase(config_params, std::move(core_ops), std::move(metadata)));
-        CHECK_NOT_NULL_AS_EXPECTED(net_group_ptr, HAILO_OUT_OF_HOST_MEMORY);
-
-        return net_group_ptr;
-    }
+        std::vector<std::shared_ptr<CoreOp>> &&core_ops, NetworkGroupMetadata &&metadata);
 
     virtual ~ConfiguredNetworkGroupBase() = default;
     ConfiguredNetworkGroupBase(const ConfiguredNetworkGroupBase &other) = delete;
@@ -207,6 +203,11 @@ public:
     virtual hailo_status set_nms_max_accumulated_mask_size(const std::string &edge_name, uint32_t max_accumulated_mask_size) override;
 
     Expected<std::shared_ptr<net_flow::NmsOpMetadata>> get_nms_meta_data(const std::string &edge_name);
+
+    virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) override;
+    virtual Expected<hailo_cache_info_t> get_cache_info() const override;
+    virtual hailo_status update_cache_offset(int32_t offset_delta_bytes) override;
+
 private:
     ConfiguredNetworkGroupBase(const ConfigureNetworkParams &config_params,
         std::vector<std::shared_ptr<CoreOp>> &&core_ops, NetworkGroupMetadata &&metadata);
@@ -217,6 +218,8 @@ private:
 
     hailo_status activate_low_level_streams();
     hailo_status deactivate_low_level_streams();
+    Expected<uint32_t> get_cache_read_size() const;
+    Expected<uint32_t> get_cache_write_size() const;
 
     const ConfigureNetworkParams m_config_params;
     std::vector<std::shared_ptr<CoreOp>> m_core_ops;
@@ -334,6 +337,10 @@ public:
     virtual hailo_status set_nms_iou_threshold(const std::string &edge_name, float32_t iou_threshold) override;
     virtual hailo_status set_nms_max_bboxes_per_class(const std::string &edge_name, uint32_t max_bboxes_per_class) override;
     virtual hailo_status set_nms_max_accumulated_mask_size(const std::string &edge_name, uint32_t max_accumulated_mask_size) override;
+
+    virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) override;
+    virtual Expected<hailo_cache_info_t> get_cache_info() const override;
+    virtual hailo_status update_cache_offset(int32_t offset_delta_bytes) override;
 
 private:
     ConfiguredNetworkGroupClient(NetworkGroupIdentifier &&identifier, const std::string &network_group_name);

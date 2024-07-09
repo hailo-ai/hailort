@@ -29,7 +29,23 @@ class OpMetadata;
 using PostProcessOpMetadataPtr = std::shared_ptr<OpMetadata>;
 }
 
-using NamedBuffersCallbacks = std::unordered_map<std::string, std::pair<MemoryView, std::function<void(hailo_status)>>>;
+enum class BufferType
+{
+    UNINITIALIZED,
+    VIEW,
+    PIX_BUFFER,
+    DMA_BUFFER,
+};
+
+struct BufferRepresentation {
+    BufferType buffer_type;
+    union {
+        MemoryView view;
+        hailo_dma_buffer_t dma_buffer;
+    };
+};
+
+using NamedBuffersCallbacks = std::unordered_map<std::string, std::pair<BufferRepresentation, std::function<void(hailo_status)>>>;
 
 class InputVStream;
 class OutputVStream;
@@ -211,7 +227,7 @@ public:
         const std::map<std::string, hailo_vstream_params_t> &outputs_params) = 0;
 
     /**
-     * Activates hailo device inner-resources for context_switch inference.
+     * Activates hailo device inner-resources for inference.
 
      * @return Upon success, returns Expected of a pointer to ActivatedNetworkGroup object.
      *         Otherwise, returns Unexpected of ::hailo_status error.
@@ -219,7 +235,7 @@ public:
     Expected<std::unique_ptr<ActivatedNetworkGroup>> activate();
 
     /**
-     * Activates hailo device inner-resources for context_switch inference.
+     * Activates hailo device inner-resources for inference.
      *
      * @param[in] network_group_params         Parameters for the activation.
      * @return Upon success, returns Expected of a pointer to ActivatedNetworkGroup object.
@@ -437,6 +453,10 @@ public:
     virtual hailo_status set_nms_iou_threshold(const std::string &edge_name, float32_t iou_threshold) = 0;
     virtual hailo_status set_nms_max_bboxes_per_class(const std::string &edge_name, uint32_t max_bboxes_per_class) = 0;
     virtual hailo_status set_nms_max_accumulated_mask_size(const std::string &edge_name, uint32_t max_accumulated_mask_size) = 0;
+
+    virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) = 0;
+    virtual Expected<hailo_cache_info_t> get_cache_info() const = 0;
+    virtual hailo_status update_cache_offset(int32_t offset_delta_bytes) = 0;
 
 protected:
     ConfiguredNetworkGroup();

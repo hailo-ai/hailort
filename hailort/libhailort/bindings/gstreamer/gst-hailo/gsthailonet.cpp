@@ -23,12 +23,10 @@
 #include "hailo/hailort_common.hpp"
 #include "hailo/hailort_defaults.hpp"
 
-#include <gst/allocators/gstdmabuf.h>
 #include <algorithm>
 #include <unordered_map>
 
 #define WAIT_FOR_ASYNC_READY_TIMEOUT (std::chrono::milliseconds(10000))
-#define ERROR(msg, ...) g_print(msg, ##__VA_ARGS__)
 
 enum
 {
@@ -63,7 +61,6 @@ enum
 static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE("sink", GST_PAD_SINK, GST_PAD_ALWAYS, GST_STATIC_CAPS_ANY);
 static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE("src", GST_PAD_SRC, GST_PAD_ALWAYS, GST_STATIC_CAPS_ANY);
 
-G_DEFINE_TYPE (GstHailoAllocator, gst_hailo_allocator, GST_TYPE_ALLOCATOR);
 G_DEFINE_TYPE (GstHailoNet, gst_hailonet, GST_TYPE_ELEMENT);
 
 static std::atomic_uint32_t hailonet_count(0);
@@ -72,41 +69,6 @@ static bool gst_hailo_should_use_dma_buffers()
 {
     const char *env = g_getenv(GST_HAILO_USE_DMA_BUFFER_ENV_VAR);
     return (nullptr != env) && (0 == g_strcmp0(env, "1"));
-}
-
-static GstMemory *gst_hailo_allocator_alloc(GstAllocator* allocator, gsize size, GstAllocationParams* /*params*/) {
-    GstHailoAllocator *hailo_allocator = GST_HAILO_ALLOCATOR(allocator);
-    auto buffer = Buffer::create(size, BufferStorageParams::create_dma());
-    if (!buffer) {
-        ERROR("Creating buffer for allocator has failed, status = %d\n", buffer.status());
-        return nullptr;
-    }
-
-    GstMemory *memory = gst_memory_new_wrapped(static_cast<GstMemoryFlags>(0), buffer->data(),
-        buffer->size(), 0, buffer->size(), nullptr, nullptr);
-    if (nullptr == memory) {
-        ERROR("Creating new GstMemory for allocator has failed!\n");
-        return nullptr;
-    }
-
-    hailo_allocator->buffers[memory] = std::move(buffer.release());
-    return memory;
-}
-
-static void gst_hailo_allocator_free(GstAllocator* allocator, GstMemory *mem) {
-    GstHailoAllocator *hailo_allocator = GST_HAILO_ALLOCATOR(allocator);
-    hailo_allocator->buffers.erase(mem);
-}
-
-static void gst_hailo_allocator_class_init(GstHailoAllocatorClass* klass) {
-    GstAllocatorClass* allocator_class = GST_ALLOCATOR_CLASS(klass);
-
-    allocator_class->alloc = gst_hailo_allocator_alloc;
-    allocator_class->free = gst_hailo_allocator_free;
-}
-
-static void gst_hailo_allocator_init(GstHailoAllocator* allocator) {
-    allocator->buffers = std::unordered_map<GstMemory*, Buffer>();
 }
 
 static hailo_status gst_hailonet_deconfigure(GstHailoNet *self)
@@ -120,6 +82,14 @@ static hailo_status gst_hailonet_deconfigure(GstHailoNet *self)
     self->configured_infer_model.reset();
     self->is_configured = false;
     return HAILO_SUCCESS;
+}
+
+static void gst_hailonet_unref_input_caps(GstHailoNet *self)
+{
+    if (nullptr != self->input_caps) {
+        gst_caps_unref(self->input_caps);
+        self->input_caps = nullptr;
+    }
 }
 
 static hailo_status gst_hailonet_free(GstHailoNet *self)
@@ -147,8 +117,24 @@ static hailo_status gst_hailonet_free(GstHailoNet *self)
         gst_queue_array_free(self->thread_queue);
     }
 
-    if (nullptr != self->input_caps) {
-        gst_caps_unref(self->input_caps);
+    while(!self->curr_event_queue.empty()) {
+        auto event = self->curr_event_queue.front();
+        gst_event_unref(event);
+        self->curr_event_queue.pop();
+    }
+
+    for (auto &buffer_events_queue_pair : self->events_queue_per_buffer) {
+        while(!buffer_events_queue_pair.second.empty()) {
+            auto event = buffer_events_queue_pair.second.front();
+            gst_event_unref(event);
+            buffer_events_queue_pair.second.pop();
+        }
+    }
+    self->events_queue_per_buffer.clear();
+
+    {
+        std::unique_lock<std::mutex> lock(self->input_caps_mutex);
+        gst_hailonet_unref_input_caps(self);
     }
 
     for (auto &name_pool_pair : self->output_buffer_pools) {
@@ -156,13 +142,20 @@ static hailo_status gst_hailonet_free(GstHailoNet *self)
         CHECK(result, HAILO_INTERNAL_FAILURE, "Could not release buffer pool");
         gst_object_unref(name_pool_pair.second);
     }
+    self->output_buffer_pools.clear();
+
     if (gst_hailo_should_use_dma_buffers()) {
-        gst_object_unref(self->dma_allocator);
-    } else {
+        if (GstHailoDmaHeapControl::dma_heap_fd_open) {
+            close(GstHailoDmaHeapControl::dma_heap_fd);
+            GstHailoDmaHeapControl::dma_heap_fd_open = false;
+        }
+
+        if (nullptr != self->dmabuf_allocator) {
+            gst_object_unref(self->dmabuf_allocator);
+        }
+    } else if (nullptr != self->allocator) {
         gst_object_unref(self->allocator);
     }
-
-    self->props.free_strings();
 
     return HAILO_SUCCESS;
 }
@@ -171,18 +164,15 @@ static hailo_status gst_hailonet_set_format_types(GstHailoNet *self, std::shared
 {
     if (self->props.m_input_format_type.was_changed()) {
         for (const auto &input_name : infer_model->get_input_names()) {
-            auto input = infer_model->input(input_name);
-            CHECK_EXPECTED_AS_STATUS(input);
-
-            input->set_format_type(self->props.m_input_format_type.get());
+            TRY(auto input, infer_model->input(input_name));
+            input.set_format_type(self->props.m_input_format_type.get());
         }
     }
     if (self->props.m_output_format_type.was_changed()) {
         for (const auto &output_name : infer_model->get_output_names()) {
-            auto output = infer_model->output(output_name);
-            CHECK_EXPECTED_AS_STATUS(output);
+            TRY(auto output, infer_model->output(output_name));
 
-            output->set_format_type(self->props.m_output_format_type.get());
+            output.set_format_type(self->props.m_output_format_type.get());
         }
     }
 
@@ -198,25 +188,24 @@ static hailo_status gst_hailonet_set_nms_params(GstHailoNet *self, std::shared_p
     });
 
     for (const auto &output_name : infer_model->get_output_names()) {
-        auto output = infer_model->output(output_name);
-        CHECK_EXPECTED_AS_STATUS(output);
+        TRY(auto output, infer_model->output(output_name));
 
         if (self->props.m_nms_score_threshold.was_changed()) {
             CHECK(has_nms_output, HAILO_INVALID_OPERATION, "NMS score threshold is set, but there is no NMS output in this model.");
-            if (output->is_nms()) {
-                output->set_nms_score_threshold(self->props.m_nms_score_threshold.get());
+            if (output.is_nms()) {
+                output.set_nms_score_threshold(self->props.m_nms_score_threshold.get());
             }
         }
         if (self->props.m_nms_iou_threshold.was_changed()) {
             CHECK(has_nms_output, HAILO_INVALID_OPERATION, "NMS IoU threshold is set, but there is no NMS output in this model.");
-            if (output->is_nms()) {
-                output->set_nms_iou_threshold(self->props.m_nms_iou_threshold.get());
+            if (output.is_nms()) {
+                output.set_nms_iou_threshold(self->props.m_nms_iou_threshold.get());
             }
         }
         if (self->props.m_nms_max_proposals_per_class.was_changed()) {
             CHECK(has_nms_output, HAILO_INVALID_OPERATION, "NMS max proposals per class is set, but there is no NMS output in this model.");
-            if (output->is_nms()) {
-                output->set_nms_max_proposals_per_class(self->props.m_nms_max_proposals_per_class.get());
+            if (output.is_nms()) {
+                output.set_nms_max_proposals_per_class(self->props.m_nms_max_proposals_per_class.get());
             }
         }
     }
@@ -252,7 +241,7 @@ static Expected<GstBufferPool*> gst_hailonet_create_buffer_pool(GstHailoNet *sel
         self->props.m_outputs_max_pool_size.get());
 
     if (gst_hailo_should_use_dma_buffers()) {
-        gst_buffer_pool_config_set_allocator(config, self->dma_allocator, nullptr);
+        gst_buffer_pool_config_set_allocator(config, GST_ALLOCATOR(self->dmabuf_allocator), nullptr);
     } else {
         gst_buffer_pool_config_set_allocator(config, GST_ALLOCATOR(self->allocator), nullptr);
     }
@@ -264,6 +253,43 @@ static Expected<GstBufferPool*> gst_hailonet_create_buffer_pool(GstHailoNet *sel
     CHECK_AS_EXPECTED(result, HAILO_INTERNAL_FAILURE, "Could not set buffer pool as active");
 
     return pool;
+}
+
+static void gst_hailonet_push_event_to_queue(GstHailoNet *self, GstEvent *event)
+{
+    std::unique_lock<std::mutex> lock(self->input_queue_mutex);
+    self->curr_event_queue.push(event);
+}
+
+static gboolean gst_hailonet_handle_queued_event(GstHailoNet *self, GstEvent *event)
+{
+    switch (GST_EVENT_TYPE(event)) {
+        case GST_EVENT_CAPS:
+        {
+            GstCaps *caps;
+            gst_event_parse_caps(event, &caps);
+            auto result = gst_pad_set_caps(self->srcpad, caps);
+            gst_event_unref(event);
+            return result;
+        }
+        default:
+            return gst_pad_push_event(self->srcpad, event);
+    }
+}
+
+static void gst_hailonet_handle_buffer_events(GstHailoNet *self, GstBuffer *buffer)
+{
+    if (self->events_queue_per_buffer.find(buffer) == self->events_queue_per_buffer.end()) {
+        // The buffer does not have any events to send
+        return;
+    }
+
+    while (!self->events_queue_per_buffer.at(buffer).empty()) {
+        GstEvent* event = self->events_queue_per_buffer.at(buffer).front();
+        (void)gst_hailonet_handle_queued_event(self, event);
+        self->events_queue_per_buffer.at(buffer).pop();
+    }
+    self->events_queue_per_buffer.erase(buffer);
 }
 
 static hailo_status gst_hailonet_configure(GstHailoNet *self)
@@ -288,9 +314,8 @@ static hailo_status gst_hailonet_configure(GstHailoNet *self)
     for (const auto &input_name : self->infer_model->get_input_names()) {
         if(self->props.m_no_transform.get()) {
             // In case transformation is disabled - format order will be the same as we get from the HW (stream info).
-            auto input_stream_infos = self->infer_model->hef().get_stream_info_by_name(input_name, HAILO_H2D_STREAM);
-            CHECK_EXPECTED_AS_STATUS(input_stream_infos);
-            self->infer_model->input(input_name)->set_format_order(input_stream_infos.value().format.order);
+            TRY(const auto input_stream_infos, self->infer_model->hef().get_stream_info_by_name(input_name, HAILO_H2D_STREAM));
+            self->infer_model->input(input_name)->set_format_order(input_stream_infos.format.order);
         } else if (self->infer_model->input(input_name)->format().order == HAILO_FORMAT_ORDER_NHWC) {
             self->infer_model->input(input_name)->set_format_order(HAILO_FORMAT_ORDER_RGB4);
         }
@@ -299,16 +324,14 @@ static hailo_status gst_hailonet_configure(GstHailoNet *self)
     if (self->props.m_no_transform.get()) {
         for (const auto &output_name : self->infer_model->get_output_names()) {
             // In case transformation is disabled - format order will be the same as we get from the HW (stream info).
-            auto output_stream_infos = self->infer_model->hef().get_stream_info_by_name(output_name, HAILO_D2H_STREAM);
-            CHECK_EXPECTED_AS_STATUS(output_stream_infos);
-            self->infer_model->output(output_name)->set_format_order(output_stream_infos.value().format.order);
+            TRY(const auto output_stream_infos, self->infer_model->hef().get_stream_info_by_name(output_name, HAILO_D2H_STREAM));
+            self->infer_model->output(output_name)->set_format_order(output_stream_infos.format.order);
         }
     }
 
-    auto configured_infer_model = self->infer_model->configure();
-    CHECK_EXPECTED_AS_STATUS(configured_infer_model);
+    TRY(auto configured_infer_model, self->infer_model->configure());
 
-    auto ptr = make_shared_nothrow<ConfiguredInferModel>(configured_infer_model.release());
+    auto ptr = make_shared_nothrow<ConfiguredInferModel>(std::move(configured_infer_model));
     CHECK_NOT_NULL(ptr, HAILO_OUT_OF_HOST_MEMORY);
     self->configured_infer_model = ptr;
 
@@ -319,19 +342,33 @@ static hailo_status gst_hailonet_configure(GstHailoNet *self)
     return HAILO_SUCCESS;
 }
 
+static void gst_hailonet_init_allocator(GstHailoNet *self)
+{
+    gchar *parent_name = gst_object_get_name(GST_OBJECT(self));
+    gchar *name = g_strconcat(parent_name, ":hailo_allocator", NULL);
+    g_free(parent_name);
+
+    if (gst_hailo_should_use_dma_buffers()) {
+        self->dmabuf_allocator = GST_HAILO_DMABUF_ALLOCATOR(g_object_new(GST_TYPE_HAILO_DMABUF_ALLOCATOR, "name", name, NULL));
+        gst_object_ref_sink(self->dmabuf_allocator);
+    } else {
+        self->allocator = GST_HAILO_ALLOCATOR(g_object_new(GST_TYPE_HAILO_ALLOCATOR, "name", name, NULL));
+        gst_object_ref_sink(self->allocator);
+    }
+
+    g_free(name);
+}
+
 static hailo_status gst_hailonet_allocate_infer_resources(GstHailoNet *self)
 {
-    auto bindings = self->configured_infer_model->create_bindings();
-    CHECK_EXPECTED_AS_STATUS(bindings);
-    self->infer_bindings = std::move(bindings.release());
+    TRY(self->infer_bindings, self->configured_infer_model->create_bindings());
 
     self->output_buffer_pools = std::unordered_map<std::string, GstBufferPool*>();
     self->output_vstream_infos = std::unordered_map<std::string, hailo_vstream_info_t>();
 
-    auto async_queue_size = self->configured_infer_model->get_async_queue_size();
-    CHECK_EXPECTED_AS_STATUS(async_queue_size);
-    self->input_queue = gst_queue_array_new(static_cast<guint>(async_queue_size.value()));
-    self->thread_queue = gst_queue_array_new(static_cast<guint>(async_queue_size.value()));
+    TRY(const auto async_queue_size, self->configured_infer_model->get_async_queue_size());
+    self->input_queue = gst_queue_array_new(static_cast<guint>(async_queue_size));
+    self->thread_queue = gst_queue_array_new(static_cast<guint>(async_queue_size));
     self->is_thread_running = true;
     self->thread = std::thread([self] () {
         while (self->is_thread_running) {
@@ -351,7 +388,7 @@ static hailo_status gst_hailonet_allocate_infer_resources(GstHailoNet *self)
             self->thread_cv.notify_all();
             if (GST_IS_PAD(self->srcpad)) { // Checking because we fail here when exiting the application
                 GstFlowReturn ret = gst_pad_push(self->srcpad, buffer);
-                if ((GST_FLOW_OK != ret) && (GST_FLOW_FLUSHING != ret) && (!self->has_got_eos)) {
+                if ((GST_FLOW_OK != ret) && (GST_FLOW_FLUSHING != ret) && ((GST_FLOW_EOS != ret)) && (!self->has_got_eos)) {
                     ERROR("gst_pad_push failed with status = %d\n", ret);
                     break;
                 }
@@ -359,21 +396,56 @@ static hailo_status gst_hailonet_allocate_infer_resources(GstHailoNet *self)
         }
     });
 
+    gst_hailonet_init_allocator(self);
     for (auto &output : self->infer_model->outputs()) {
-        auto buffer_pool = gst_hailonet_create_buffer_pool(self, output.get_frame_size());
-        CHECK_EXPECTED_AS_STATUS(buffer_pool);
-
-        self->output_buffer_pools[output.name()] = buffer_pool.release();
+        TRY(self->output_buffer_pools[output.name()], gst_hailonet_create_buffer_pool(self, output.get_frame_size()));
     }
 
-    auto vstream_infos = self->infer_model->hef().get_output_vstream_infos();
-    CHECK_EXPECTED_AS_STATUS(vstream_infos);
-
-    for (const auto &vstream_info : vstream_infos.value()) {
+    TRY(const auto vstream_infos, self->infer_model->hef().get_output_vstream_infos());
+    for (const auto &vstream_info : vstream_infos) {
         self->output_vstream_infos[vstream_info.name] = vstream_info;
     }
 
     return HAILO_SUCCESS;
+}
+
+static GstPadProbeReturn gst_hailonet_sink_probe(GstPad */*pad*/, GstPadProbeInfo */*info*/, gpointer user_data)
+{
+    GstHailoNet *self = static_cast<GstHailoNet*>(user_data);
+    std::unique_lock<std::mutex> lock(self->sink_probe_change_state_mutex);
+
+    if (self->did_critical_failure_happen) {
+        return GST_PAD_PROBE_REMOVE;
+    }
+
+    auto status = gst_hailonet_configure(self);
+    if (HAILO_SUCCESS != status) {
+        return GST_PAD_PROBE_REMOVE;
+    }
+
+    status = gst_hailonet_allocate_infer_resources(self);
+    if (HAILO_SUCCESS != status) {
+        return GST_PAD_PROBE_REMOVE;
+    }
+
+    if (HAILO_SCHEDULING_ALGORITHM_NONE != self->props.m_scheduling_algorithm.get()) {
+        self->props.m_is_active = true;
+        return GST_PAD_PROBE_REMOVE;
+    }
+
+    if ((1 == hailonet_count) && (!self->props.m_is_active.was_changed())) {
+        self->props.m_is_active = true;
+    }
+
+    if (self->props.m_is_active.get()) {
+        status = self->configured_infer_model->activate();
+        if (HAILO_SUCCESS != status) {
+            return GST_PAD_PROBE_REMOVE;
+        }
+    }
+
+    self->has_called_activate = true;
+    return GST_PAD_PROBE_REMOVE;
 }
 
 static GstStateChangeReturn gst_hailonet_change_state(GstElement *element, GstStateChange transition)
@@ -409,6 +481,8 @@ static GstStateChangeReturn gst_hailonet_change_state(GstElement *element, GstSt
         if (HAILO_SUCCESS != status) {
             return GST_STATE_CHANGE_FAILURE;
         }
+
+        gst_pad_add_probe(self->sinkpad, GST_PAD_PROBE_TYPE_BUFFER, static_cast<GstPadProbeCallback>(gst_hailonet_sink_probe), self, nullptr);
         break;
     }
     default:
@@ -456,10 +530,7 @@ static void gst_hailonet_set_property(GObject *object, guint property_id, const 
             g_warning("The network was already configured so changing the HEF path will not take place!");
             break;
         }
-        if (nullptr != self->props.m_hef_path.get()) {
-            g_free(self->props.m_hef_path.get());
-        }
-        self->props.m_hef_path = g_strdup(g_value_get_string(value));
+        self->props.m_hef_path = g_value_get_string(value);
         break;
     case PROP_BATCH_SIZE:
         if (self->is_configured) {
@@ -478,15 +549,12 @@ static void gst_hailonet_set_property(GObject *object, guint property_id, const 
             g_warning("The network was already configured so changing the device ID will not take place!");
             break;
         }
-        if (nullptr != self->props.m_device_id.get()) {
-            g_free(self->props.m_device_id.get());
-        }
-        self->props.m_device_id = g_strdup(g_value_get_string(value));
+        self->props.m_device_id = g_value_get_string(value);
         break;
     case PROP_DEVICE_COUNT:
-        if (nullptr != self->props.m_device_id.get()) {
+        if (!self->props.m_device_id.get().empty()) {
             g_error("device-id and device-count excludes eachother. received device-id=%s, device-count=%d",
-                self->props.m_device_id.get(), g_value_get_uint(value));
+                self->props.m_device_id.get().c_str(), g_value_get_uint(value));
             break;
         }
         if (self->is_configured) {
@@ -500,10 +568,7 @@ static void gst_hailonet_set_property(GObject *object, guint property_id, const 
             g_warning("The network was already configured so changing the vdevice group ID will not take place!");
             break;
         }
-        if (nullptr != self->props.m_vdevice_group_id.get()) {
-            g_free(self->props.m_vdevice_group_id.get());
-        }
-        self->props.m_vdevice_group_id = g_strdup(g_value_get_string(value));
+        self->props.m_vdevice_group_id = g_value_get_string(value);
         break;
     case PROP_IS_ACTIVE:
         (void)gst_hailonet_toggle_activation(self, self->props.m_is_active.get(), g_value_get_boolean(value));
@@ -635,19 +700,19 @@ static void gst_hailonet_get_property(GObject *object, guint property_id, GValue
     GstHailoNet *self = GST_HAILONET(object);
     switch (property_id) {
     case PROP_HEF_PATH:
-        g_value_set_string(value, self->props.m_hef_path.get());
+        g_value_set_string(value, self->props.m_hef_path.get().c_str());
         break;
     case PROP_BATCH_SIZE:
         g_value_set_uint(value, self->props.m_batch_size.get());
         break;
     case PROP_DEVICE_ID:
-        g_value_set_string(value, self->props.m_device_id.get());
+        g_value_set_string(value, self->props.m_device_id.get().c_str());
         break;
     case PROP_DEVICE_COUNT:
         g_value_set_uint(value, self->props.m_device_count.get());
         break;
     case PROP_VDEVICE_GROUP_ID:
-        g_value_set_string(value, self->props.m_vdevice_group_id.get());
+        g_value_set_string(value, self->props.m_vdevice_group_id.get().c_str());
         break;
     case PROP_IS_ACTIVE:
         g_value_set_boolean(value, self->props.m_is_active.get());
@@ -911,11 +976,9 @@ static Expected<std::unordered_map<std::string, hailo_dma_buffer_t>> gst_hailone
 
 static hailo_status gst_hailonet_fill_multiple_input_bindings_dma_buffers(GstHailoNet *self, GstBuffer *buffer)
 {
-    auto input_buffers = gst_hailonet_read_input_dma_buffers_from_meta(self, buffer);
-    CHECK_EXPECTED_AS_STATUS(input_buffers);
-    for (const auto &name : self->infer_model->get_input_names())
-    {
-        auto status = self->infer_bindings.input(name)->set_dma_buffer(input_buffers.value().at(name));
+    TRY(auto input_buffers, gst_hailonet_read_input_dma_buffers_from_meta(self, buffer));
+    for (const auto &name : self->infer_model->get_input_names()) {
+        auto status = self->infer_bindings.input(name)->set_dma_buffer(input_buffers.at(name));
         CHECK_SUCCESS(status);
     }
 
@@ -950,10 +1013,9 @@ static Expected<std::unordered_map<std::string, uint8_t*>> gst_hailonet_read_inp
 
 static hailo_status gst_hailonet_fill_multiple_input_bindings(GstHailoNet *self, GstBuffer *buffer)
 {
-    auto input_buffers = gst_hailonet_read_input_buffers_from_meta(self, buffer);
-    CHECK_EXPECTED_AS_STATUS(input_buffers);
+    TRY(auto input_buffers, gst_hailonet_read_input_buffers_from_meta(self, buffer));
     for (const auto &name : self->infer_model->get_input_names()) {
-        auto status = self->infer_bindings.input(name)->set_buffer(MemoryView(input_buffers.value().at(name),
+        auto status = self->infer_bindings.input(name)->set_buffer(MemoryView(input_buffers.at(name),
             self->infer_model->input(name)->get_frame_size()));
         CHECK_SUCCESS(status);
     }
@@ -961,9 +1023,20 @@ static hailo_status gst_hailonet_fill_multiple_input_bindings(GstHailoNet *self,
     return HAILO_SUCCESS;
 }
 
+static void store_buffer_events(GstHailoNet *self, GstBuffer *buffer)
+{
+    self->events_queue_per_buffer[buffer] = std::queue<GstEvent*>();
+    while (!self->curr_event_queue.empty()) {
+        GstEvent *event = self->curr_event_queue.front();
+        self->events_queue_per_buffer[buffer].push(event);
+        self->curr_event_queue.pop();
+    }
+}
+
 static hailo_status gst_hailonet_push_buffer_to_input_queue(GstHailoNet *self, GstBuffer *buffer)
 {
     std::unique_lock<std::mutex> lock(self->input_queue_mutex);
+    store_buffer_events(self, buffer);
     gst_queue_array_push_tail(self->input_queue, buffer);
 
     return HAILO_SUCCESS;
@@ -1022,11 +1095,12 @@ static hailo_status gst_hailonet_call_run_async(GstHailoNet *self, const std::un
         self->ongoing_frames++;
     }
 
-    auto job = self->configured_infer_model->run_async(self->infer_bindings, [self, tensors] (const AsyncInferCompletionInfo &/*completion_info*/) {
+    TRY(auto job, self->configured_infer_model->run_async(self->infer_bindings, [self, tensors] (const AsyncInferCompletionInfo &/*completion_info*/) {
         GstBuffer *buffer = nullptr;
         {
             std::unique_lock<std::mutex> lock(self->input_queue_mutex);
             buffer = static_cast<GstBuffer*>(gst_queue_array_pop_head(self->input_queue));
+            gst_hailonet_handle_buffer_events(self, buffer);
         }
 
         for (auto &output : self->infer_model->outputs()) {
@@ -1047,9 +1121,8 @@ static hailo_status gst_hailonet_call_run_async(GstHailoNet *self, const std::un
         self->flush_cv.notify_all();
 
         gst_hailonet_push_buffer_to_thread(self, buffer);
-    });
-    CHECK_EXPECTED_AS_STATUS(job);
-    job->detach();
+    }));
+    job.detach();
 
     return HAILO_SUCCESS;
 }
@@ -1071,7 +1144,7 @@ static hailo_status gst_hailonet_async_infer_multi_input(GstHailoNet *self, GstB
     if (HAILO_STREAM_ABORT == tensors.status()) {
         return HAILO_SUCCESS;
     }
-    CHECK_EXPECTED_AS_STATUS(tensors);
+    CHECK_EXPECTED_AS_STATUS(tensors); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
 
     status = gst_hailonet_call_run_async(self, tensors.value());
     CHECK_SUCCESS(status);
@@ -1090,7 +1163,7 @@ static hailo_status gst_hailonet_async_infer_single_input(GstHailoNet *self, Gst
     if (HAILO_STREAM_ABORT == tensors.status()) {
         return HAILO_SUCCESS;
     }
-    CHECK_EXPECTED_AS_STATUS(tensors);
+    CHECK_EXPECTED_AS_STATUS(tensors); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
 
     status = gst_hailonet_call_run_async(self, tensors.value());
     CHECK_SUCCESS(status);
@@ -1125,6 +1198,10 @@ static GstFlowReturn gst_hailonet_chain(GstPad * /*pad*/, GstObject * parent, Gs
     GstHailoNet *self = GST_HAILONET(parent);
     std::unique_lock<std::mutex> lock(self->infer_mutex);
 
+    if (self->did_critical_failure_happen) {
+        return GST_FLOW_ERROR;
+    }
+
     if (self->props.m_pass_through.get() || !self->props.m_is_active.get() || !self->is_configured) {
         gst_hailonet_push_buffer_to_thread(self, buffer);
         return GST_FLOW_OK;
@@ -1134,11 +1211,11 @@ static GstFlowReturn gst_hailonet_chain(GstPad * /*pad*/, GstObject * parent, Gs
         if (self->props.m_should_force_writable.get()) {
             buffer = gst_buffer_make_writable(buffer);
             if (nullptr == buffer) {
-                ERROR("Failed to make buffer writable!");
+                ERROR("Failed to make buffer writable!\n");
                 return GST_FLOW_ERROR;
             }
         } else {
-            ERROR("Input buffer is not writable! Use force-writable property to force the buffer to be writable");
+            ERROR("Input buffer is not writable! Use force-writable property to force the buffer to be writable\n");
             return GST_FLOW_ERROR;
         }
     }
@@ -1168,17 +1245,14 @@ static hailo_status gst_hailonet_init_infer_model(GstHailoNet * self)
 
     hailo_device_id_t device_id = {0};
     if (self->props.m_device_id.was_changed()) {
-        auto expected_device_id = HailoRTCommon::to_device_id(self->props.m_device_id.get());
-        CHECK_EXPECTED_AS_STATUS(expected_device_id);
-        device_id = std::move(expected_device_id.release());
-
+        TRY(device_id, HailoRTCommon::to_device_id(self->props.m_device_id.get()));
         vdevice_params.device_ids = &device_id;
     }
     if (self->props.m_device_count.was_changed()) {
         vdevice_params.device_count = self->props.m_device_count.get();
     }
     if (self->props.m_vdevice_group_id.was_changed()) {
-        vdevice_params.group_id = self->props.m_vdevice_group_id.get();
+        vdevice_params.group_id = self->props.m_vdevice_group_id.get().c_str();
     } else if (self->props.m_vdevice_key.was_changed()) {
         auto key_str = std::to_string(self->props.m_vdevice_key.get());
         vdevice_params.group_id = key_str.c_str();
@@ -1192,13 +1266,8 @@ static hailo_status gst_hailonet_init_infer_model(GstHailoNet * self)
             "To use multi-process-service please set scheduling-algorithm to a value other than 'none'");
     }
 
-    auto vdevice = VDevice::create(vdevice_params);
-    CHECK_EXPECTED_AS_STATUS(vdevice);
-    self->vdevice = std::move(vdevice.release());
-
-    auto infer_model = self->vdevice->create_infer_model(self->props.m_hef_path.get());
-    CHECK_EXPECTED_AS_STATUS(infer_model);
-    self->infer_model = infer_model.release();
+    TRY(self->vdevice, VDevice::create(vdevice_params));
+    TRY(self->infer_model, self->vdevice->create_infer_model(self->props.m_hef_path.get()));
 
     if(!(self->props.m_input_from_meta.get())){
         CHECK(self->infer_model->inputs().size() == 1, HAILO_INVALID_OPERATION,
@@ -1275,6 +1344,10 @@ static GstCaps *gst_hailonet_get_caps(GstHailoNet *self)
         return nullptr;
     }
 
+    if (nullptr != self->input_caps) {
+        return gst_caps_copy(self->input_caps);
+    }
+
     if (nullptr == self->vdevice) {
         auto status = gst_hailonet_init_infer_model(self);
         if (HAILO_SUCCESS != status) {
@@ -1283,9 +1356,10 @@ static GstCaps *gst_hailonet_get_caps(GstHailoNet *self)
         }
     }
 
-    // TODO (HRT-12491): check caps based on incoming metadata
     if (self->props.m_input_from_meta.get()) {
         GstCaps *new_caps = gst_caps_new_any();
+        std::unique_lock<std::mutex> lock(self->input_caps_mutex);
+        gst_hailonet_unref_input_caps(self);
         self->input_caps = new_caps;
         return gst_caps_copy(new_caps);
     }
@@ -1312,6 +1386,8 @@ static GstCaps *gst_hailonet_get_caps(GstHailoNet *self)
         return nullptr;
     }
 
+    std::unique_lock<std::mutex> lock(self->input_caps_mutex);
+    gst_hailonet_unref_input_caps(self);
     self->input_caps = new_caps;
     return gst_caps_copy(new_caps);
 }
@@ -1341,81 +1417,19 @@ static gboolean gst_hailonet_handle_sink_query(GstPad * pad, GstObject * parent,
     }
 }
 
-static gboolean gst_hailonet_handle_caps_event(GstHailoNet *self, GstCaps */*caps*/)
-{
-    if (nullptr == self->input_caps) {
-        return FALSE;
-    }
-
-    GstCaps *caps_result = gst_pad_peer_query_caps(self->srcpad, self->input_caps);
-    if (gst_caps_is_empty(caps_result)) {
-        return FALSE;
-    }
-
-    if (gst_caps_is_any(caps_result)) {
-        gst_caps_unref(caps_result);
-        return TRUE;
-    }
-
-    GstCaps *outcaps = gst_caps_fixate(caps_result);
-    gboolean res = gst_pad_set_caps(self->srcpad, outcaps);
-    gst_caps_unref(outcaps);
-    return res;
-}
-
 static gboolean gst_hailonet_sink_event(GstPad *pad, GstObject *parent, GstEvent *event)
 {
     GstHailoNet *self = GST_HAILONET(parent);
-    switch (GST_EVENT_TYPE(event)) {
-    case GST_EVENT_CAPS:
-    {
-        GstCaps *caps;
-        gst_event_parse_caps(event, &caps);
-        auto result = gst_hailonet_handle_caps_event(self, caps);
-        gst_event_unref(event);
-        return result;
-    }
-    case GST_EVENT_EOS:
+    if (GST_EVENT_TYPE(event) == GST_EVENT_EOS) {
         self->has_got_eos = true;
         return gst_pad_push_event(self->srcpad, event);
-    default:
+    }
+    if (GST_EVENT_IS_STICKY(event)) {
+        gst_hailonet_push_event_to_queue(self, event);
+        return TRUE;
+    } else {
         return gst_pad_event_default(pad, parent, event);
     }
-}
-
-static GstPadProbeReturn gst_hailonet_sink_probe(GstPad */*pad*/, GstPadProbeInfo */*info*/, gpointer user_data)
-{
-    GstHailoNet *self = static_cast<GstHailoNet*>(user_data);
-    std::unique_lock<std::mutex> lock(self->sink_probe_change_state_mutex);
-
-    auto status = gst_hailonet_configure(self);
-    if (HAILO_SUCCESS != status) {
-        return GST_PAD_PROBE_DROP;
-    }
-
-    status = gst_hailonet_allocate_infer_resources(self);
-    if (HAILO_SUCCESS != status) {
-        return GST_PAD_PROBE_DROP;
-    }
-
-    if (HAILO_SCHEDULING_ALGORITHM_NONE != self->props.m_scheduling_algorithm.get()) {
-        self->props.m_is_active = true;
-        return GST_PAD_PROBE_REMOVE;
-    }
-
-    if ((1 == hailonet_count) && (!self->props.m_is_active.was_changed())) {
-        self->props.m_is_active = true;
-    }
-
-    if (self->props.m_is_active.get()) {
-        status = self->configured_infer_model->activate();
-        if (HAILO_SUCCESS != status) {
-            return GST_PAD_PROBE_DROP;
-        }
-    }
-
-    self->has_called_activate = true;
-    return GST_PAD_PROBE_REMOVE;
 }
 
 static void gst_hailonet_flush_callback(GstHailoNet *self, gpointer /*data*/)
@@ -1454,18 +1468,8 @@ static void gst_hailonet_init(GstHailoNet *self)
     self->has_called_activate = false;
     self->ongoing_frames = 0;
     self->did_critical_failure_happen = false;
-
-    gchar *parent_name = gst_object_get_name(GST_OBJECT(self));
-    gchar *name = g_strconcat(parent_name, ":hailo_allocator", NULL);
-    g_free(parent_name);
-
-    if (gst_hailo_should_use_dma_buffers()) {
-        self->dma_allocator = gst_dmabuf_allocator_new();
-    } else {
-        self->allocator = GST_HAILO_ALLOCATOR(g_object_new(GST_TYPE_HAILO_ALLOCATOR, "name", name, NULL));
-        gst_object_ref_sink(self->allocator);
-        g_free(name);
-    }
+    self->events_queue_per_buffer = std::unordered_map<GstBuffer*, std::queue<GstEvent*>>();
+    self->curr_event_queue = std::queue<GstEvent*>();
 
     g_signal_connect(self, "flush", G_CALLBACK(gst_hailonet_flush_callback), nullptr);
 

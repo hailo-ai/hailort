@@ -31,7 +31,7 @@ class ConfiguredNetworkGroupWrapper;
 class InputVStreamWrapper final
 {
 public:
-    static void add_to_python_module(py::module &m);
+    static void bind(py::module &m);
 };
 
 
@@ -52,7 +52,7 @@ public:
     void after_fork_in_parent();
     void after_fork_in_child();
 
-    static void add_to_python_module(py::module &m);
+    static void bind(py::module &m);
 
     InputVStreamsWrapper(std::unordered_map<std::string, std::shared_ptr<InputVStream>> &input_vstreams);
 
@@ -70,7 +70,7 @@ public:
     static py::dtype get_dtype(OutputVStream &self);
     static hailo_format_t get_user_buffer_format(OutputVStream &self);
     static auto get_shape(OutputVStream &self);
-    static void add_to_python_module(py::module &m);
+    static void bind(py::module &m);
 };
 
 class OutputVStreamsWrapper;
@@ -89,7 +89,7 @@ public:
     void before_fork();
     void after_fork_in_parent();
     void after_fork_in_child();
-    static void add_to_python_module(py::module &m);
+    static void bind(py::module &m);
 
     OutputVStreamsWrapper(std::unordered_map<std::string, std::shared_ptr<OutputVStream>> &output_vstreams);
 
@@ -116,7 +116,7 @@ public:
     void before_fork();
     void after_fork_in_parent();
     void after_fork_in_child();
-    static void add_to_python_module(py::module &m);
+    static void bind(py::module &m);
 
 private:
     InferVStreamsWrapper(std::shared_ptr<InferVStreams> &infer_pipeline);

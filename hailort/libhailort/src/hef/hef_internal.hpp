@@ -39,6 +39,8 @@
 #include "net_flow/ops/op.hpp"
 #include "device_common/control_protocol.hpp"
 
+#include "common/file_utils.hpp"
+
 #include "control_protocol.h"
 #include <functional>
 #include <bitset>
@@ -111,21 +113,31 @@ struct ProtoHEFCoreOpMock {
 };
 
 #pragma pack(push, 1)
+// TODO HRT-13921: change structure of hef header types
+
+typedef union {
+    struct {
+        uint32_t reserved;
+        MD5_SUM_t expected_md5;
+    } v0;
+    struct {
+        uint32_t crc;
+        uint64_t ccws_size;
+        uint32_t reserved;
+    } v1;
+} hef__header_distinct_t;
+
 typedef struct {
     uint32_t magic;
     uint32_t version;
     uint32_t hef_proto_size;
-    uint32_t ccws_size;
-    MD5_SUM_t expected_md5;
+    hef__header_distinct_t distinct;
 } hef__header_t;
 #pragma pack(pop)
 
-#pragma pack(push, 1)
-typedef struct {
-    uint32_t offset;
-    uint32_t size;
-} shef__ccw_offset_t;
-#pragma pack(pop)
+static const size_t HEF_COMMON_SIZE = sizeof(hef__header_t) - sizeof(hef__header_distinct_t);
+static const size_t HEF_HEADER_SIZE_V0 = HEF_COMMON_SIZE + sizeof(hef__header_distinct_t::v0);
+static const size_t HEF_HEADER_SIZE_V1 = HEF_COMMON_SIZE + sizeof(hef__header_distinct_t::v1);
 
 typedef enum {
     HEF__FORMAT__TF_RGB = 0,
@@ -146,6 +158,10 @@ typedef enum {
     /** Max enum value to maintain ABI Integrity */
     HAILO_NET_FLOW_OP_TYPE_MAX_ENUM          = HAILO_MAX_ENUM
 } hailo_net_flow_op_type_t;
+
+#define HEADER_MAGIC (0x01484546)
+#define HEADER_VERSION_0 (0)
+#define HEADER_VERSION_1 (1)
 
 const static uint32_t SUPPORTED_EXTENSIONS_BITSET_SIZE = 1000;
 static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
@@ -230,26 +246,9 @@ class VdmaConfigCoreOp;
 class VdmaDevice;
 class HailoRTDriver;
 
-class ShefFileHandle final
-{
-public:
-    ShefFileHandle(const std::string &hef_path, uint32_t ccws_buffer_offset);
-    hailo_status open();
-    Expected<Buffer> read(uint32_t offset, size_t size);
-    hailo_status close();
-
-private:
-    std::string m_hef_path;
-    std::ifstream m_hef_file;
-    uint32_t m_ccws_buffer_offset;
-};
-
 class Hef::Impl final
 {
 public:
-    static const uint32_t HEADER_MAGIC = 0x01484546;
-    static const uint32_t HEADER_VERSION_0 = 0; // Old HEF
-    static const uint32_t HEADER_VERSION_1 = 1; // New HEF (SHEF)
 
     static Expected<Impl> create(const std::string &hef_path);
     static Expected<Impl> create(const MemoryView &hef_buffer);
@@ -284,7 +283,7 @@ public:
     Expected<size_t> get_number_of_input_streams(const std::string &net_group_name="");
     Expected<size_t> get_number_of_output_streams(const std::string &net_group_name="");
     ProtoHEFHwArch get_device_arch();
-    std::shared_ptr<ShefFileHandle> get_shef_file_handle();
+    std::shared_ptr<SeekableBytesReader> get_hef_reader();
     Expected<float64_t> get_bottleneck_fps(const std::string &net_group_name="");
     static bool contains_ddr_layers(const ProtoHEFCoreOpMock &core_op);
     static hailo_status validate_core_op_unique_layer_names(const ProtoHEFCoreOpMock &core_op);
@@ -337,7 +336,7 @@ public:
         const std::string &network_name, std::map<std::string, hailo_vstream_params_t> &output_vstream_params,
         hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size);
     static hailo_status fill_missing_vstream_params_with_default(std::map<std::string, hailo_vstream_params_t> &vstream_params,
-        std::vector<hailo_vstream_info_t> &name_to_format_info, hailo_format_type_t format_type, uint32_t timeout_ms,
+        const std::vector<hailo_vstream_info_t> &vstream_infos, hailo_format_type_t format_type, uint32_t timeout_ms,
         uint32_t queue_size);
     // Also adds information to CoreOpMetadata
     // TODO: When supporting multiple core ops in same netflow - Change metadata param to a map of core_ops_metadata.
@@ -349,9 +348,13 @@ public:
 
     Expected<std::string> get_description(bool stream_infos, bool vstream_infos, hailo_device_architecture_t device_arch);
 
-    const MD5_SUM_t &md5() const
+    const MemoryView get_hash_as_memview() const
     {
-        return m_md5;
+        if (HEADER_VERSION_0 == m_hef_version){
+            return MemoryView::create_const(m_md5, sizeof(m_md5));
+        } else { // HEADER_VERSION_1
+            return MemoryView::create_const(&m_crc, sizeof(m_crc));
+        }
     }
 
     static hailo_status update_network_batch_size(ConfigureNetworkParams &network_group_config_params)
@@ -398,11 +401,18 @@ private:
 
     hailo_status parse_hef_file(const std::string &hef_path);
     hailo_status parse_hef_memview(const MemoryView &hef_memview);
+    hailo_status parse_hef_memview_internal(const size_t proto_size, const uint8_t *proto_buffer, const uint32_t hef_version,
+        std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset);
+    Expected<hef__header_t> parse_hef_header_before_distinct(std::shared_ptr<SeekableBytesReader> hef_reader);
+    hailo_status fill_v1_hef_header(hef__header_t &hef_header, std::shared_ptr<SeekableBytesReader> hef_reader);
+    hailo_status fill_core_ops_and_networks_metadata(uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset);
     hailo_status transfer_protobuf_field_ownership(ProtoHEFHef &hef_message);
     void fill_core_ops();
-    hailo_status fill_networks_metadata();
+    hailo_status fill_networks_metadata(uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset);
     void fill_extensions_bitset();
     void init_md5(MD5_SUM_t &calculated_md5);
+    void init_crc(uint32_t crc_32);
+    void init_hef_version(uint32_t version);
 
     static bool check_hef_extension(const ProtoHEFExtensionType &extension, const ProtoHEFHeader &header,
         const std::vector<ProtoHEFExtension> &hef_extensions, const ProtoHEFIncludedFeatures &included_features);
@@ -415,6 +425,8 @@ private:
 
     hailo_status validate_hef_extensions();
     static hailo_status validate_hef_header(const hef__header_t &header, MD5_SUM_t &calculated_md5, size_t proto_size);
+    static hailo_status validate_hef_header(const hef__header_t &header, const uint32_t &crc_32, size_t hef_file_residue_size);
+
 
     Expected<std::map<std::string, hailo_format_t>> get_inputs_vstream_names_and_format_info(
         const std::string &net_group_name, const std::string &network_name);
@@ -424,7 +436,8 @@ private:
     static Expected<std::string> get_vstream_name_from_original_name_mux(const std::string &original_name, const ProtoHefEdge &layer);
     static Expected<std::vector<std::string>> get_original_names_from_vstream_name_mux(const std::string &vstream_name, const ProtoHefEdge &layer);
 
-    Expected<CoreOpMetadataPtr> create_metadata_per_arch(const ProtoHEFCoreOpMock &core_op, const std::vector<std::string> &sorted_network_names); // TODO: Remove sorted_network_names
+    Expected<CoreOpMetadataPtr> create_metadata_per_arch(const ProtoHEFCoreOpMock &core_op, const std::vector<std::string> &sorted_network_names,
+        uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset); // TODO: Remove sorted_network_names
     Expected<std::vector<std::string>> get_stream_infos_description(const std::string &network_group_name, const std::string &network_name);
     Expected<std::vector<std::string>> get_vstream_infos_description(const std::string &network_group_name, const std::string &network_name);
     Expected<std::vector<std::string>> get_post_processes_infos_description(const std::string &network_group_name);
@@ -439,8 +452,10 @@ private:
     std::vector<ProtoHEFExtension> m_hef_extensions;
     std::vector<ProtoHEFOptionalExtension> m_hef_optional_extensions;
     std::bitset<SUPPORTED_EXTENSIONS_BITSET_SIZE> m_supported_extensions_bitset;
+    uint32_t m_hef_version;
     MD5_SUM_t m_md5;
-    std::shared_ptr<ShefFileHandle> m_shef_file_handle;
+    uint32_t m_crc;
+    std::shared_ptr<SeekableBytesReader> m_hef_reader;
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
     Buffer m_hef_buffer;
@@ -502,13 +517,23 @@ public:
         const std::vector<LayerInfo> &context_ddr_input_layers,
         const std::vector<LayerInfo> &context_ddr_output_layers,
         const uint16_t context_index);
+    static hailo_status fill_cache_layers_info(
+        const ProtoHEFCoreOpMock &core_op,
+        const uint16_t context_index,
+        const ProtoHEFEdgeLayer &layer,
+        const SupportedFeatures &supported_features,
+        ContextMetadata &context_metadata);
+    static Expected<LayerInfo> get_cache_layer_info(
+        const ProtoHEFCoreOpMock &core_op, const uint16_t context_index,
+        const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features);
     static Expected<ContextMetadata> parse_preliminary_context(const ProtoHEFPreliminaryConfig &preliminary_proto,
-        const SupportedFeatures &supported_features, std::shared_ptr<ShefFileHandle> shef_file_handle);
+        const SupportedFeatures &supported_features, const uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset);
     static Expected<ContextMetadata> parse_single_dynamic_context(const ProtoHEFCoreOpMock &core_op,
         const ProtoHEFContext &context_proto, uint16_t context_index, const SupportedFeatures &supported_features,
-        const ProtoHEFHwArch &hef_arch, std::shared_ptr<ShefFileHandle> shef_file_handle);
+        const ProtoHEFHwArch &hef_arch, const uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset);
     static Expected<std::vector<ContextMetadata>> parse_dynamic_contexts(const ProtoHEFCoreOpMock &core_op,
-        const SupportedFeatures &supported_features, const ProtoHEFHwArch &hef_arch, std::shared_ptr<ShefFileHandle> shef_file_handle);
+        const SupportedFeatures &supported_features, const ProtoHEFHwArch &hef_arch, const uint32_t hef_version,
+        std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset);
     static Expected<hailo_nms_info_t> parse_proto_nms_info(const ProtoHEFNmsInfo &proto_nms_info,
         const bool burst_mode_enabled, const ProtoHEFHwArch &hef_arch);
     static Expected<LayerInfo> get_boundary_layer_info(const ProtoHEFCoreOpMock &core_op,

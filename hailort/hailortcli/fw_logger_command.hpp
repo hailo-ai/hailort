@@ -24,11 +24,16 @@ public:
     explicit FwLoggerCommand(CLI::App &parent_app);
 
 protected:
+    virtual void pre_execute() override;
     virtual hailo_status execute_on_device(Device &device) override;
 
 private:
     std::string m_output_file;
     bool m_should_overwrite;
+    bool m_stdout;
+    bool m_continuos;
+
+    hailo_status write_logs(Device &device, std::ostream *os, hailo_cpu_id_t cpu_id);
 };
 
 #endif /* _HAILO_FW_LOGGER_COMMAND_COMMAND_HPP_ */

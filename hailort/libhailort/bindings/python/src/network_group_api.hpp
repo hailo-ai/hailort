@@ -30,7 +30,7 @@ public:
 
     const ActivatedNetworkGroup& enter();
     void exit();
-    static void add_to_python_module(py::module &m);
+    static void bind(py::module &m);
 private:
     std::unique_ptr<ActivatedNetworkGroup> m_activated_net_group;
     ConfiguredNetworkGroup &m_net_group;
@@ -133,6 +133,26 @@ public:
     void set_scheduler_priority(uint8_t priority)
     {
         auto status = get().set_scheduler_priority(priority);
+        VALIDATE_STATUS(status);
+    }
+
+    void init_cache(uint32_t read_offset, int32_t write_offset_delta)
+    {
+        auto status = get().init_cache(read_offset, write_offset_delta);
+        VALIDATE_STATUS(status);
+    }
+
+    hailo_cache_info_t get_cache_info()
+    {
+        auto cache_info = get().get_cache_info();
+        VALIDATE_EXPECTED(cache_info);
+
+        return cache_info.release();
+    }
+
+    void update_cache_offset(int32_t offset_delta_bytes)
+    {
+        auto status = get().update_cache_offset(offset_delta_bytes);
         VALIDATE_STATUS(status);
     }
 
@@ -300,7 +320,7 @@ public:
         return std::make_shared<ConfiguredNetworkGroupWrapper>(net_group.release(), store_guard_for_multi_process);
     }
 
-    static void add_to_python_module(py::module &m);
+    static void bind(py::module &m);
 
 private:
     // Normally, the ownership of the network group is the Device/VDevice objects. We keep weak_ptr

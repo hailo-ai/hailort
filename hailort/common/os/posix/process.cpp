@@ -17,12 +17,10 @@ namespace hailort
 
 Expected<std::pair<int32_t, std::string>> Process::create_and_wait_for_output(const std::string &command_line, uint32_t max_output_size)
 {
-    auto popen_expected = PopenWrapper::create(command_line);
-    CHECK_EXPECTED(popen_expected);
-    const auto output_expected = popen_expected->read_stdout(max_output_size);
-    CHECK_EXPECTED(output_expected);
-    const auto process_exit_code = popen_expected->close();
-    return std::make_pair(process_exit_code, output_expected.value());
+    TRY(auto popen, PopenWrapper::create(command_line));
+    TRY(const auto output, popen.read_stdout(max_output_size));
+    const auto process_exit_code = popen.close();
+    return std::make_pair(process_exit_code, output);
 }
 
 Expected<Process::PopenWrapper> Process::PopenWrapper::create(const std::string &command_line)
@@ -61,15 +59,14 @@ Expected<std::string> Process::PopenWrapper::read_stdout(uint32_t max_output_siz
 {
     assert (nullptr != m_pipe);
 
-    // We zero out the bufer so that output won't contain junk from the heap
-    auto output = Buffer::create(max_output_size, 0);
-    CHECK_EXPECTED(output);
+    // We zero out the buffer so that output won't contain junk from the heap
+    TRY(auto output, Buffer::create(max_output_size, 0));
     
-    const auto num_read = fread(reinterpret_cast<char*>(output->data()), sizeof(uint8_t), output->size(), m_pipe);
-    if (num_read != output->size()) {
+    const auto num_read = fread(reinterpret_cast<char*>(output.data()), sizeof(uint8_t), output.size(), m_pipe);
+    if (num_read != output.size()) {
         if (feof(m_pipe)) {
             // We remove the trailing newline we get from fread
-            const auto output_as_str = output->to_string();
+            const auto output_as_str = output.to_string();
             if (output_as_str[output_as_str.length() - 1] == '\n') {
                 return output_as_str.substr(0, num_read - 1);
             }
@@ -81,7 +78,7 @@ Expected<std::string> Process::PopenWrapper::read_stdout(uint32_t max_output_siz
     } else {
         // Truncate output
         LOGGER__TRACE("Truncating output to {} chars long", max_output_size);
-        return output->to_string();
+        return output.to_string();
     }
 }
 

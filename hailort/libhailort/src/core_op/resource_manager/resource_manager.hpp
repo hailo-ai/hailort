@@ -29,6 +29,8 @@
 #include "hailo/hailort.h"
 
 #include "core_op/resource_manager/intermediate_buffer.hpp"
+#include "core_op/resource_manager/cache_buffer.hpp"
+#include "core_op/resource_manager/cache_manager.hpp"
 #include "core_op/resource_manager/config_buffer.hpp"
 #include "core_op/resource_manager/channel_allocator.hpp"
 #include "core_op/resource_manager/action_list_buffer_builder/control_action_list_buffer_builder.hpp"
@@ -134,8 +136,8 @@ class ResourcesManager final
 {
 public:
     static Expected<ResourcesManager> create(VdmaDevice &vdma_device, HailoRTDriver &driver,
-        const ConfigureNetworkParams &config_params, std::shared_ptr<CoreOpMetadata> core_op_metadata,
-        uint8_t core_op_index);
+        const ConfigureNetworkParams &config_params, CacheManagerPtr cache_manager,
+        std::shared_ptr<CoreOpMetadata> core_op_metadata, uint8_t core_op_index);
 
     // TODO: HRT-9432 needs to call stop_vdma_interrupts_dispatcher and any other resource on dtor.
     ~ResourcesManager() = default;
@@ -148,6 +150,9 @@ public:
         uint32_t transfer_size, uint16_t batch_size, uint8_t src_stream_index, uint16_t src_context_index,
         vdma::ChannelId d2h_channel_id, IntermediateBuffer::StreamingType streaming_type);
     ExpectedRef<IntermediateBuffer> get_intermediate_buffer(const IntermediateBufferKey &key);
+    ExpectedRef<IntermediateBuffer> set_cache_input_channel(uint32_t cache_id, uint16_t batch_size, vdma::ChannelId channel_id);
+    ExpectedRef<IntermediateBuffer> set_cache_output_channel(uint32_t cache_id, uint16_t batch_size, vdma::ChannelId channel_id);
+    std::unordered_map<uint32_t, CacheBuffer> &get_cache_buffers();
     hailo_status create_boundary_vdma_channel(const LayerInfo &layer_info);
 
     Expected<CONTROL_PROTOCOL__application_header_t> get_control_core_op_header();
@@ -180,11 +185,6 @@ public:
         return m_latency_meters;
     }
 
-    std::map<vdma::ChannelId, vdma::BoundaryChannelPtr> get_boundary_vdma_channels() const
-    {
-        return m_boundary_channels;
-    }
-
     std::shared_ptr<ActionListBufferBuilder>& get_action_list_buffer_builder()
     {
         return m_action_list_buffer_builder;
@@ -193,6 +193,8 @@ public:
     Expected<hailo_stream_interface_t> get_default_streams_interface();
 
     Expected<Buffer> read_intermediate_buffer(const IntermediateBufferKey &key);
+    Expected<Buffer> read_cache_buffer(uint32_t cache_id);
+    Expected<std::map<uint32_t, Buffer>> read_cache_buffers();
 
     hailo_status configure();
     hailo_status enable_state_machine(uint16_t dynamic_batch_size,
@@ -206,7 +208,8 @@ public:
     Expected<vdma::BoundaryChannelPtr> get_boundary_vdma_channel_by_stream_name(const std::string &stream_name);
     Expected<std::shared_ptr<const vdma::BoundaryChannel>> get_boundary_vdma_channel_by_stream_name(const std::string &stream_name) const;
     hailo_power_mode_t get_power_mode() const;
-    Expected<uint16_t> program_desc_for_hw_only_flow(std::shared_ptr<vdma::DescriptorList> desc_list,
+    Expected<uint16_t> program_desc_for_hw_only_flow(vdma::DescriptorList &desc_list,
+        vdma::MappedBuffer &mapped_buffer, vdma::ChannelId channel_id,
         const uint32_t single_transfer_size, const uint16_t dynamic_batch_size, const uint16_t batch_count);
     Expected<std::pair<vdma::ChannelId, uint16_t>> create_mapped_buffer_for_hw_only_infer(
         vdma::BoundaryChannelPtr boundary_channel_ptr, const HailoRTDriver::DmaDirection direction,
@@ -221,7 +224,7 @@ public:
     hailo_status fill_internal_buffers_info();
     static bool should_use_ddr_action_list(size_t num_contexts, HailoRTDriver::DmaType dma_type);
     static Expected<std::shared_ptr<ActionListBufferBuilder>> create_action_list_buffer_builder(
-        size_t num_dynamic_contexts, HailoRTDriver &driver);
+        size_t num_dynamic_contexts, VdmaDevice &vdma_device);
     bool get_can_fast_batch_switch()
     {
         return m_core_op_metadata->get_can_fast_batch_switch();
@@ -242,14 +245,18 @@ private:
     hailo_status fill_validation_features(CONTROL_PROTOCOL__application_header_t &app_header);
     hailo_status fill_network_batch_size(CONTROL_PROTOCOL__application_header_t &app_header);
     hailo_status fill_csm_buffer_size(CONTROL_PROTOCOL__application_header_t &app_header);
-    void process_interrupts(IrqData &&irq_data);
     Expected<uint16_t> get_batch_size() const;
+
+    // <ongoing_transfers, pending_transfers>
+    static std::pair<size_t, size_t> calculate_transfer_queue_sizes(const vdma::DescriptorList &desc_list,
+        uint32_t transfer_size, uint32_t max_active_trans, bool use_latency_meter);
 
     std::vector<ContextResources> m_contexts_resources;
     ChannelAllocator m_channel_allocator;
     VdmaDevice &m_vdma_device;
     HailoRTDriver &m_driver;
     const ConfigureNetworkParams m_config_params;
+    CacheManagerPtr m_cache_manager;
     std::map<IntermediateBufferKey, IntermediateBuffer> m_intermediate_buffers;
     std::shared_ptr<CoreOpMetadata> m_core_op_metadata;
     uint8_t m_core_op_index;
@@ -257,8 +264,7 @@ private:
     uint16_t m_total_context_count;
     const std::vector<std::string> m_network_index_map;
     LatencyMetersMap m_latency_meters; // Latency meter per network
-    // TODO: HRT-9429 - fast access to channel by id, using array, using engine_index and channel_index.
-    std::map<vdma::ChannelId, vdma::BoundaryChannelPtr> m_boundary_channels;
+    vdma::ChannelsGroup m_boundary_channels;
     bool m_is_configured;
     bool m_is_activated;
     // Config channels ids are shared between all context. The following vector contains the channel id for each
@@ -271,6 +277,7 @@ private:
 
     ResourcesManager(VdmaDevice &vdma_device, HailoRTDriver &driver,
         ChannelAllocator &&channel_allocator, const ConfigureNetworkParams config_params,
+        CacheManagerPtr cache_manager,
         std::shared_ptr<CoreOpMetadata> &&core_op_metadata, uint8_t core_op_index,
         const std::vector<std::string> &&network_index_map, LatencyMetersMap &&latency_meters,
         std::vector<vdma::ChannelId> &&config_channels_ids,

@@ -28,11 +28,9 @@ Expected<std::shared_ptr<Op>> YOLOv5BboxOnlyPostProcessOp::create(std::shared_pt
 
 Expected<hailo_vstream_info_t> Yolov5BboxOnlyOpMetadata::get_output_vstream_info()
 {
-    auto vstream_info = NmsOpMetadata::get_output_vstream_info();
-    CHECK_EXPECTED(vstream_info);
-
-    vstream_info->shape = m_outputs_metadata.begin()->second.shape;
-    return vstream_info.release();
+    TRY(auto vstream_info, NmsOpMetadata::get_output_vstream_info());
+    vstream_info.shape = m_outputs_metadata.begin()->second.shape;
+    return vstream_info;
 }
 
 hailo_status Yolov5BboxOnlyOpMetadata::validate_format_info()

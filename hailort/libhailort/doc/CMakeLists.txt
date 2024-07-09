@@ -27,6 +27,6 @@ if(DOXYGEN_FOUND)
         DIRECTORY "${DOXYGEN_OUTPUT_DIR}" DESTINATION "doc/"
         CONFIGURATIONS Release)
 
-    add_custom_target(doc DEPENDS doxygen)
+    add_custom_target(doc ALL DEPENDS doxygen)
 
 endif()

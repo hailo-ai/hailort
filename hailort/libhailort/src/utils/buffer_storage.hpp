@@ -15,6 +15,7 @@
 #include "hailo/buffer.hpp"
 
 #include "utils/exported_resource_manager.hpp"
+#include "vdma/memory/continuous_buffer.hpp"
 
 #include <memory>
 #include <cstdint>
@@ -35,6 +36,7 @@ class VdmaDevice;
 class BufferStorage;
 class HeapStorage;
 class DmaStorage;
+class ContinuousStorage;
 class HailoRTDriver;
 class Buffer;
 
@@ -85,6 +87,7 @@ public:
 
     // Internal functions
     virtual Expected<vdma::DmaAbleBufferPtr> get_dma_able_buffer();
+    virtual Expected<uint64_t> dma_address();
 
     BufferStorage() = default;
 };
@@ -143,6 +146,32 @@ private:
     vdma::DmaAbleBufferPtr m_dma_able_buffer;
 };
 
+
+using ContinuousStoragePtr = std::shared_ptr<ContinuousStorage>;
+
+/**
+ * Storage class for buffer that is continuous
+ */
+class ContinuousStorage : public BufferStorage
+{
+public:
+    static Expected<ContinuousStoragePtr> create(size_t size);
+    ContinuousStorage(std::unique_ptr<HailoRTDriver> driver, vdma::ContinuousBuffer &&continuous_buffer);
+    ContinuousStorage(ContinuousStorage&& other) noexcept;
+    ContinuousStorage(const ContinuousStorage &) = delete;
+    ContinuousStorage &operator=(ContinuousStorage &&) = delete;
+    ContinuousStorage &operator=(const ContinuousStorage &) = delete;
+    virtual ~ContinuousStorage() = default;
+
+    virtual size_t size() const override;
+    virtual void *user_address() override;
+    virtual Expected<uint64_t> dma_address() override;
+    virtual Expected<void *> release() noexcept override;
+
+private:
+    std::unique_ptr<HailoRTDriver> m_driver;
+    vdma::ContinuousBuffer m_continuous_buffer;
+};
 
 } /* namespace hailort */
 

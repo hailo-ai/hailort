@@ -86,7 +86,10 @@ private:
     // Guards memory allocation.
     std::vector<BufferPtr> m_buffers_guard;
 
-    using BufferQueue = CircularArray<SharedBuffer, std::array<SharedBuffer, ONGOING_TRANSFERS_SIZE>>;
+    // Note: We use a fixed size array to avoid dynamic memory allocation, needed for shared memory.
+    //       CircularArrays support working with sizes less than the backing array length.
+    static constexpr size_t BACKING_ARRAY_LENGTH = 1024;
+    using BufferQueue = CircularArray<SharedBuffer, IsNotPow2Tag, std::array<SharedBuffer, BACKING_ARRAY_LENGTH>>;
 
     // On input streams - buffers with user data, ready to be sent to the hw.
     // On output streams - buffers that are ready, the stream can receive into them.

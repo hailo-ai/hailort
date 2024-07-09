@@ -11,6 +11,7 @@ elseif(UNIX)
 else()
     message(FATAL_ERROR "Unexpeced platform target, stopping build")
 endif()
+set(DRIVER_OS_DIR ${DRIVER_OS_DIR} PARENT_SCOPE)
 
 set(DRIVER_SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/driver/hailort_driver.cpp
@@ -24,12 +25,15 @@ set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/vdma_stream.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/circular_stream_buffer_pool.cpp
 
+    ${CMAKE_CURRENT_SOURCE_DIR}/pcie_session.cpp
+
     ${CMAKE_CURRENT_SOURCE_DIR}/dma_mapped_buffer.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/pcie/pcie_device.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/integrated/integrated_device.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/boundary_channel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/channel/channels_group.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/interrupts_dispatcher.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/transfer_launcher.cpp
 

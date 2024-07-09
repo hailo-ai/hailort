@@ -40,13 +40,10 @@ hailo_status Socket::SocketModuleWrapper::free_module()
 
 Expected<Socket> Socket::create(int af, int type, int protocol)
 {
-    auto module_wrapper = SocketModuleWrapper::create();
-    CHECK_EXPECTED(module_wrapper);
-    
-    auto socket_fd = create_socket_fd(af, type, protocol);
-    CHECK_EXPECTED(socket_fd);
+    TRY(auto module_wrapper, SocketModuleWrapper::create());    
+    TRY(const auto socket_fd, create_socket_fd(af, type, protocol));
 
-    auto obj = Socket(module_wrapper.release(), socket_fd.release());
+    auto obj = Socket(std::move(module_wrapper), socket_fd);
     return std::move(obj);
 }
 
@@ -118,8 +115,7 @@ hailo_status Socket::ntop(int af, const void *src, char *dst, socklen_t size)
     CHECK_ARG_NOT_NULL(src);
     CHECK_ARG_NOT_NULL(dst);
 
-    auto module_wrapper = SocketModuleWrapper::create();
-    CHECK_EXPECTED_AS_STATUS(module_wrapper);
+    TRY(const auto module_wrapper, SocketModuleWrapper::create());
 
     const char *inet_result = inet_ntop(af, src, dst, size);
     CHECK(nullptr != inet_result, HAILO_ETH_FAILURE, "Failed inet_ntop. WSALE={}", WSAGetLastError());
@@ -134,8 +130,7 @@ hailo_status Socket::pton(int af, const char *src, void *dst)
     CHECK_ARG_NOT_NULL(src);
     CHECK_ARG_NOT_NULL(dst);
 
-    auto module_wrapper = SocketModuleWrapper::create();
-    CHECK_EXPECTED_AS_STATUS(module_wrapper);
+    TRY(const auto module_wrapper, SocketModuleWrapper::create());
 
     inet_result = inet_pton(af, src, dst);
     if (1 != inet_result) {

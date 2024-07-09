@@ -114,7 +114,7 @@ public:
     virtual hailo_status run_push(PipelineBuffer &&buffer, const PipelinePad &sink) override;
     virtual void run_push_async(PipelineBuffer &&buffer, const PipelinePad &sink) override;
     virtual hailo_status execute_dequeue_user_buffers(hailo_status error_status) override;
-    virtual Expected<bool> can_push_buffer_downstream() override;
+    virtual Expected<bool> can_push_buffer_downstream(uint32_t frames_count) override;
 
 protected:
     virtual hailo_status run_in_thread() override;

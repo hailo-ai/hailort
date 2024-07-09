@@ -50,6 +50,7 @@ enum class HEFHwArch // Must be aligned to ProtoHEFHwArch
     HW_ARCH__HAILO8L = 3,
     HW_ARCH__HAILO15H = 103,
     HW_ARCH__HAILO15M = 4,
+    HW_ARCH__HAILO10H = 5,
 
     HW_ARCH__SAGE_A0 = 100,
     HW_ARCH__SAGE_B0 = 101,

@@ -108,9 +108,8 @@ SensorSectionsInfoSubcommand::SensorSectionsInfoSubcommand(CLI::App &parent_app)
 
 hailo_status SensorSectionsInfoSubcommand::execute_on_device(Device &device)
 {
-    auto sections_info = device.sensor_get_sections_info();
-    CHECK_EXPECTED_AS_STATUS(sections_info);
-    return print_sections_info((SENSOR_CONFIG__section_info_t*)sections_info->data());
+    TRY(auto sections_info, device.sensor_get_sections_info());
+    return print_sections_info((SENSOR_CONFIG__section_info_t*)sections_info.data());
 }
 
 hailo_status SensorSectionsInfoSubcommand::print_sections_info(SENSOR_CONFIG__section_info_t *operation_cfg)
@@ -125,11 +124,11 @@ hailo_status SensorSectionsInfoSubcommand::print_sections_info(SENSOR_CONFIG__se
         }
         else {
             std::string reset_config = section_info->no_reset_offset ? "not valid" : "valid";
-            auto sensor_type_expected = convert_sensor_type_to_string(section_info->sensor_type);
-            CHECK_EXPECTED_AS_STATUS(sensor_type_expected, "Failed convert sensor type to string");
+            TRY( const auto sensor_type, convert_sensor_type_to_string(section_info->sensor_type),
+                "Failed convert sensor type to string");
 
             std::cout << "Configuration Name:               " << section_info->config_name << "\n";
-            std::cout << "Sensor Type:                      " << sensor_type_expected.value() << "\n";
+            std::cout << "Sensor Type:                      " << sensor_type << "\n";
             std::cout << "Configuration lines number:       " << (section_info->config_size / sizeof(SENSOR_CONFIG__operation_cfg_t)) << "\n";
             std::cout << "Configuration size in bytes:      " << section_info->config_size << "\n";
             std::cout << "Reset configuration:              " << reset_config << "\n";

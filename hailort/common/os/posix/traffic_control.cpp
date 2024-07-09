@@ -22,17 +22,12 @@ namespace hailort
 
 Expected<TrafficControlUtil> TrafficControlUtil::create(const std::string &ip, uint16_t port, uint32_t rate_bytes_per_sec)
 {
-    auto interface_name = EthernetUtils::get_interface_from_board_ip(ip);
-    CHECK_EXPECTED(interface_name, "get_interface_name failed with status {}", interface_name.status());
+    TRY(const auto interface_name, EthernetUtils::get_interface_from_board_ip(ip), "get_interface_name failed");
+    TRY(const auto board_id, ip_to_board_id(ip), "ip_to_board_id failed");
+    TRY(const auto is_sudo_needed, check_is_sudo_needed(), "check_is_sudo_needed failed");
 
-    auto board_id = ip_to_board_id(ip);
-    CHECK_EXPECTED(board_id, "ip_to_board_id failed with status {}", board_id.status());
-
-    auto is_sudo_needed = check_is_sudo_needed();
-    CHECK_EXPECTED(is_sudo_needed, "check_is_sudo_needed failed with status {}", is_sudo_needed.status());
-
-    return TrafficControlUtil(ip, interface_name.release(), board_id.release(), port, port_to_port_id(port),
-        rate_bytes_per_sec, is_sudo_needed.release());
+    return TrafficControlUtil(ip, interface_name, board_id, port, port_to_port_id(port),
+        rate_bytes_per_sec, is_sudo_needed);
 }
 
 TrafficControlUtil::TrafficControlUtil(const std::string& board_address, const std::string& interface_name,
@@ -185,28 +180,26 @@ uint16_t TrafficControlUtil::port_to_port_id(uint16_t port)
 
 Expected<bool> TrafficControlUtil::check_is_sudo_needed()
 {
-    const auto result = Process::create_and_wait_for_output("id -u", MAX_COMMAND_OUTPUT_LENGTH);
-    CHECK_EXPECTED(result);
+    TRY(const auto result, Process::create_and_wait_for_output("id -u", MAX_COMMAND_OUTPUT_LENGTH));
     
     // If the user id is zero then we don't need to add `sudo` to our commands
-    return std::move(result->second != "0");
+    return std::move(result.second != "0");
 }
 
 hailo_status TrafficControlUtil::run_command(const std::string &commnad, bool add_sudo,
     const std::vector<std::string> &allowed_errors, bool ignore_fails)
 {
     // Note: we redirect stderr to stdout
-    const auto result = Process::create_and_wait_for_output(
+    TRY(const auto result, Process::create_and_wait_for_output(
         add_sudo ? "sudo " + commnad + " 2>&1" : commnad + " 2>&1",
-        MAX_COMMAND_OUTPUT_LENGTH);
-    CHECK_EXPECTED_AS_STATUS(result);
+        MAX_COMMAND_OUTPUT_LENGTH));
 
-    const uint32_t exit_code = result->first;
+    const uint32_t exit_code = result.first;
     if (0 == exit_code) {
         return HAILO_SUCCESS;
     }
 
-    std::string cmd_output = result->second;
+    std::string cmd_output = result.second;
     // No output = everything was OK
     bool is_output_valid = cmd_output.empty();
     if ((!is_output_valid) && (!allowed_errors.empty())) {
@@ -225,11 +218,10 @@ hailo_status TrafficControlUtil::run_command(const std::string &commnad, bool ad
 
 Expected<TrafficControl> TrafficControl::create(const std::string &ip, uint16_t port, uint32_t rate_bytes_per_sec)
 {
-    auto tc_util = TrafficControlUtil::create(ip, port, rate_bytes_per_sec);
-    CHECK_EXPECTED(tc_util);
+    TRY(auto tc_util, TrafficControlUtil::create(ip, port, rate_bytes_per_sec));
     
     hailo_status rate_set_status = HAILO_UNINITIALIZED;
-    TrafficControl tc(tc_util.release(), rate_set_status);
+    TrafficControl tc(std::move(tc_util), rate_set_status);
     CHECK_SUCCESS_AS_EXPECTED(rate_set_status, "Failed setting rate limit with status {}", rate_set_status);
 
     return tc;

@@ -48,6 +48,10 @@ Expected<BufferStoragePtr> BufferStorage::create(size_t size, const BufferStorag
         auto result = DmaStorage::create(size);
         CHECK_EXPECTED(result);
         return std::static_pointer_cast<BufferStorage>(result.release());
+    } else if (0 != (params.flags & HAILO_BUFFER_FLAGS_CONTINUOUS)) {
+        auto result = ContinuousStorage::create(size);
+        CHECK_EXPECTED(result);
+        return std::static_pointer_cast<BufferStorage>(result.release());
     }
 
     // TODO: HRT-10903
@@ -56,6 +60,11 @@ Expected<BufferStoragePtr> BufferStorage::create(size_t size, const BufferStorag
 }
 
 Expected<vdma::DmaAbleBufferPtr> BufferStorage::get_dma_able_buffer()
+{
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
+Expected<uint64_t> BufferStorage::dma_address()
 {
     return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
@@ -125,12 +134,54 @@ void *DmaStorage::user_address()
 
 Expected<void *> DmaStorage::release() noexcept
 {
-    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+    return make_unexpected(HAILO_INVALID_OPERATION);
 }
 
 Expected<vdma::DmaAbleBufferPtr> DmaStorage::get_dma_able_buffer()
 {
     return vdma::DmaAbleBufferPtr{m_dma_able_buffer};
+}
+
+Expected<ContinuousStoragePtr> ContinuousStorage::create(size_t size)
+{
+    TRY(auto driver, HailoRTDriver::create_integrated_nnc());
+    TRY(auto continuous_buffer, vdma::ContinuousBuffer::create(size, *driver.get()));
+
+    auto result = make_shared_nothrow<ContinuousStorage>(std::move(driver), std::move(continuous_buffer));
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+
+    return result;
+}
+
+ContinuousStorage::ContinuousStorage(std::unique_ptr<HailoRTDriver> driver, vdma::ContinuousBuffer &&continuous_buffer) :
+    m_driver(std::move(driver)),
+    m_continuous_buffer(std::move(continuous_buffer))
+{}
+
+ContinuousStorage::ContinuousStorage(ContinuousStorage&& other) noexcept :
+    BufferStorage(std::move(other)),
+    m_driver(std::move(other.m_driver)),
+    m_continuous_buffer(std::move(other.m_continuous_buffer))
+{}
+
+size_t ContinuousStorage::size() const
+{
+    return m_continuous_buffer.size();
+}
+
+void *ContinuousStorage::user_address()
+{
+    return m_continuous_buffer.user_address();
+}
+
+Expected<uint64_t> ContinuousStorage::dma_address()
+{
+    return m_continuous_buffer.dma_address();
+}
+
+Expected<void *> ContinuousStorage::release() noexcept
+{
+    return make_unexpected(HAILO_INVALID_OPERATION);
 }
 
 } /* namespace hailort */

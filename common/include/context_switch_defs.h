@@ -122,6 +122,9 @@ typedef enum __attribute__((packed)) {
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_CHANGE_BOUNDARY_INPUT_BATCH,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_PAUSE_VDMA_CHANNEL,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_RESUME_VDMA_CHANNEL,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_ACTIVATE_CACHE_INPUT,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_ACTIVATE_CACHE_OUTPUT,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_CACHE_UPDATED,
 
     /* Must be last */
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT
@@ -349,6 +352,15 @@ typedef struct {
     uint8_t network_index;
     CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
     CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
+    uint32_t initial_credit_size;
+} CONTEXT_SWITCH_DEFS__activate_cache_input_data_t;
+
+typedef struct {
+    uint8_t packed_vdma_channel_id;
+    uint8_t stream_index;
+    uint8_t network_index;
+    CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
 } CONTEXT_SWITCH_DEFS__activate_boundary_output_data_t;
 
 typedef struct {
@@ -366,6 +378,14 @@ typedef struct {
     CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
     uint32_t buffered_rows_count;
 } CONTEXT_SWITCH_DEFS__activate_ddr_buffer_output_data_t;
+
+typedef struct {
+    uint8_t packed_vdma_channel_id;
+    uint8_t stream_index;
+    uint8_t network_index;
+    CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
+} CONTEXT_SWITCH_DEFS__activate_cache_output_data_t;
 
 typedef struct {
     uint8_t packed_vdma_channel_id;

@@ -65,7 +65,9 @@ public:
 
 protected:
     hailo_device_params m_device_params;
+    bool m_show_stdout; // Set to false in subclasses to disable this class' prints to stdout
 
+    virtual void pre_execute(); // Override this function to do any pre-execution setup
     virtual hailo_status execute_on_device(Device &device) = 0;
     hailo_status execute_on_devices(std::vector<std::unique_ptr<Device>> &devices);
     hailo_status validate_specific_device_is_given();

@@ -48,8 +48,17 @@ public:
          */
         hailo_status status;
 
-        const void *buffer_addr;        /* Points to the transferred buffer. */
+        union {
+            const void *buffer_addr;    /* Points to the transferred buffer. */
+            int dmabuf_fd;              /* File descriptor to dmabuf*/
+        };
         size_t buffer_size;             /* Size of the transferred buffer. */
+
+        CompletionInfo(hailo_status status, const uint8_t *addr, size_t size):
+            status(status), buffer_addr(static_cast<const void*>(addr)), buffer_size(size) {}
+        
+        CompletionInfo(hailo_status status, int fd, size_t size):
+            status(status), dmabuf_fd(fd), buffer_size(size) {}
     };
 
     /** Async transfer complete callback prototype. */
@@ -224,6 +233,35 @@ public:
     virtual hailo_status write_async(const void *buffer, size_t size, const TransferDoneCallback &user_callback) = 0;
 
     /**
+     * Writes the contents of the dmabuf associated with the fd @a dmabuf_fd to the stream asynchronously, initiating a deferred operation that will be
+     * completed later.
+     * - If the function call succeeds (i.e., write_async() returns ::HAILO_SUCCESS), the deferred operation has been
+     *   initiated. Until @a user_callback is called, the user cannot change or delete @a dmabuf_fd.
+     * - If the function call fails (i.e., write_async() returns a status other than ::HAILO_SUCCESS), the deferred
+     *   operation will not be initiated and @a user_callback will not be invoked. The user is free to change or delete
+     *   @a dmabuf_fd.
+     * - @a user_callback is triggered upon successful completion or failure of the deferred operation. The callback
+     *   receives a \ref CompletionInfo object containing a fd representing the transferred buffer (@a dmabuf_fd) and the
+     *   transfer status (@a status).
+     *
+     * @param[in] dmabuf_fd         The File descriptor to the dmabuf
+     * @param[in] size              The size of the given buffer, expected to be get_frame_size().
+     * @param[in] user_callback     The callback that will be called when the transfer is complete
+     *                              or has failed.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise:
+     *           - If the stream queue is full, returns ::HAILO_QUEUE_IS_FULL. In this case please wait
+     *             until @a user_callback is called on previous writes, or call wait_for_async_ready().
+     *             The size of the queue can be determined by calling get_async_max_queue_size().
+     *           - In any other error case, returns a ::hailo_status error.
+     *
+     * @note @a user_callback should run as quickly as possible.
+     * @note The dmabuf fd must be a linux-system dmabuf fd - otherwise behavior will fail.
+     * @note This API of write_async is currently experimental.
+     **/
+    virtual hailo_status write_async(int dmabuf_fd, size_t size, const TransferDoneCallback &user_callback) = 0;
+
+    /**
      * @returns A ::hailo_stream_info_t object containing the stream's info.
      */
     virtual const hailo_stream_info_t &get_info() const
@@ -284,6 +322,7 @@ public:
     /** Context passed to the \ref TransferDoneCallback after the async operation is done or has failed. */
     struct CompletionInfo
     {
+        public:
         /**
          * Status of the async transfer.
          * - ::HAILO_SUCCESS - When transfer is complete successfully.
@@ -292,8 +331,18 @@ public:
          */
         hailo_status status;
 
-        void *buffer_addr;              /* Points to the transferred buffer. */
+        union {
+            void *buffer_addr;          /* Points to the transferred buffer. */
+            int dmabuf_fd;              /* File descriptor to dmabuf*/
+        };
+        
         size_t buffer_size;             /* Size of the transferred buffer. */
+
+        CompletionInfo(hailo_status status, uint8_t *addr, size_t size):
+            status(status), buffer_addr(static_cast<void*>(addr)), buffer_size(size) {}
+        
+        CompletionInfo(hailo_status status, int fd, size_t size):
+            status(status), dmabuf_fd(fd), buffer_size(size) {}
     };
 
     /** Async transfer complete callback prototype. */
@@ -501,6 +550,35 @@ public:
      *       multiple async transfers.
      */
     virtual hailo_status read_async(void *buffer, size_t size, const TransferDoneCallback &user_callback) = 0;
+
+    /**
+     * Reads into dmabuf represented by fd @a dmabuf_fd from the stream asynchronously, initiating a deferred operation that will be completed
+     * later.
+     * - If the function call succeeds (i.e., read_async() returns ::HAILO_SUCCESS), the deferred operation has been
+     *   initiated. Until @a user_callback is called, the user cannot change or delete @a dmabuf_fd.
+     * - If the function call fails (i.e., read_async() returns a status other than ::HAILO_SUCCESS), the deferred
+     *   operation will not be initiated and @a user_callback will not be invoked. The user is free to change or
+     *   delete @a dmabuf_fd.
+     * - @a user_callback is triggered upon successful completion or failure of the deferred operation.
+     *   The callback receives a \ref CompletionInfo object containing a fd representing the transferred buffer
+     *   (@a dmabuf_fd) and the transfer status (@a status). If the operation has completed successfully, the contents
+     *   of the dmabuf will have been updated by the read operation.
+     *
+     * @param[in] dmabuf_fd     The File descriptor to the dmabuf
+     * @param[in] size          The size of the given buffer, expected to be get_frame_size().
+     * @param[in] user_callback The callback that will be called when the transfer is complete or has failed.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise:
+     *         - If the stream queue is full, returns ::HAILO_QUEUE_IS_FULL.
+     *           In this case, please wait until @a user_callback is called on previous
+     *           reads, or call wait_for_async_ready(). The size of the queue can be
+     *           determined by calling get_async_max_queue_size().
+     *         - In any other error case, returns a ::hailo_status error.
+     * @note @a user_callback should execute as quickly as possible.
+     * @note The dmabuf fd must be a linux-system dmabuf fd - otherwise behavior will fail.
+     * @note This API of read_async is currently experimental.
+     */
+    virtual hailo_status read_async(int dmabuf_fd, size_t size, const TransferDoneCallback &user_callback) = 0;
 
     // get_network_group_activated_event is same as this function
     virtual EventPtr &get_core_op_activated_event() = 0;

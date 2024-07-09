@@ -10,6 +10,7 @@
 #ifndef VDEVICE_API_HPP_
 #define VDEVICE_API_HPP_
 
+#include "hef_api.hpp"
 #include "utils.hpp"
 #include "network_group_api.hpp"
 
@@ -18,6 +19,7 @@
 #include "hailo/hailort_common.hpp"
 
 #include <iostream>
+#include <memory>
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <pybind11/detail/common.h>
@@ -31,11 +33,13 @@
 namespace hailort
 {
 
+class InferModelWrapper;
+
 struct VDeviceParamsWrapper {
     hailo_vdevice_params_t orig_params;
     std::string group_id_str;
+    std::vector<hailo_device_id_t> ids;
 };
-
 
 class VDeviceWrapper;
 using VDeviceWrapperPtr = std::shared_ptr<VDeviceWrapper>;
@@ -58,11 +62,10 @@ public:
             std::cerr << "VDevice device_ids can be set in params or device_ids argument. Both parameters were passed to the c'tor";
             throw HailoRTStatusException(std::to_string(HAILO_INVALID_OPERATION));
         }
-        auto modified_params = params;
-        auto device_ids_vector = HailoRTCommon::to_device_ids_vector(device_ids);
-        VALIDATE_EXPECTED(device_ids_vector);
-        modified_params.orig_params.device_ids = device_ids_vector->data();
-        return std::make_shared<VDeviceWrapper>(modified_params.orig_params);
+        if (!device_ids.empty()) {
+            return create_from_ids(device_ids);
+        }
+        return create(params);
     }
 
     static VDeviceWrapperPtr create_from_ids(const std::vector<std::string> &device_ids)
@@ -95,6 +98,7 @@ public:
         VALIDATE_EXPECTED(vdevice_expected);
 
         m_vdevice = vdevice_expected.release();
+        m_is_using_service = params.multi_process_service;
     };
 
     py::list get_physical_devices_ids() const
@@ -128,27 +132,33 @@ public:
         m_vdevice.reset();
     }
 
+    InferModelWrapper create_infer_model_from_file(const std::string &hef_path, const std::string &network_name);
+    InferModelWrapper create_infer_model_from_buffer(const py::bytes &buffer, const std::string &network_name);
+
+    static void bind(py::module &m)
+    {
+        py::class_<VDeviceWrapper, VDeviceWrapperPtr>(m, "VDevice")
+            .def("create", py::overload_cast<const hailo_vdevice_params_t&>(&VDeviceWrapper::create))
+            .def("create", py::overload_cast<const VDeviceParamsWrapper&>(&VDeviceWrapper::create))
+            .def("create", py::overload_cast<const VDeviceParamsWrapper&, const std::vector<std::string>&>(&VDeviceWrapper::create))
+            .def("create_from_ids", &VDeviceWrapper::create_from_ids)
+            .def("get_physical_devices_ids", &VDeviceWrapper::get_physical_devices_ids)
+            .def("configure", &VDeviceWrapper::configure)
+            .def("release", &VDeviceWrapper::release)
+            .def("create_infer_model_from_file", &VDeviceWrapper::create_infer_model_from_file)
+            .def("create_infer_model_from_buffer", &VDeviceWrapper::create_infer_model_from_buffer)
+            ;
+    }
+
 private:
     std::unique_ptr<VDevice> m_vdevice;
     std::vector<ConfiguredNetworkGroupWrapperPtr> m_net_groups;
+    bool m_is_using_service;
 
 #ifdef HAILO_IS_FORK_SUPPORTED
     AtForkRegistry::AtForkGuard m_atfork_guard;
 #endif
 };
-
-void VDevice_api_initialize_python_module(py::module &m)
-{
-    py::class_<VDeviceWrapper, VDeviceWrapperPtr>(m, "VDevice")
-        .def("create", py::overload_cast<const hailo_vdevice_params_t&>(&VDeviceWrapper::create))
-        .def("create", py::overload_cast<const VDeviceParamsWrapper&>(&VDeviceWrapper::create))
-        .def("create", py::overload_cast<const VDeviceParamsWrapper&, const std::vector<std::string>&>(&VDeviceWrapper::create))
-        .def("create_from_ids", &VDeviceWrapper::create_from_ids)
-        .def("get_physical_devices_ids", &VDeviceWrapper::get_physical_devices_ids)
-        .def("configure", &VDeviceWrapper::configure)
-        .def("release", &VDeviceWrapper::release)
-        ;
-}
 
 } /* namespace hailort */
 

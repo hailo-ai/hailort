@@ -84,6 +84,9 @@ static std::pair<CONTEXT_SWITCH_DEFS__ACTION_TYPE_t, std::string> mapping[] = {
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_ACTIVATE_INTER_CONTEXT_OUTPUT, "activate_inter_context_output"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_ACTIVATE_DDR_BUFFER_INPUT, "activate_ddr_buffer_input"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_ACTIVATE_DDR_BUFFER_OUTPUT, "activate_ddr_buffer_output"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_ACTIVATE_CACHE_INPUT, "activate_cache_input"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_ACTIVATE_CACHE_OUTPUT, "activate_cache_output"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_CACHE_UPDATED, "wait_for_cache_updated"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_DEACTIVATE_VDMA_CHANNEL, "deactivate_vdma_channel"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_VALIDATE_VDMA_CHANNEL, "validate_vdma_channel"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_CHANGE_VDMA_TO_STREAM_MAPPING, "change_vdma_to_stream_mapping"},
@@ -137,6 +140,8 @@ void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_ddr_buffer_input_data_
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_boundary_output_data_t &data);
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_inter_context_output_data_t &data);
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_ddr_buffer_output_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_cache_input_data_t &data);
+void to_json(json &j, const CONTEXT_SWITCH_DEFS__activate_cache_output_data_t &data);
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__enable_lcu_action_default_data_t &data);
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__enable_lcu_action_non_default_data_t &data);
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__disable_lcu_action_data_t &data);

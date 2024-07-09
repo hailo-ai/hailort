@@ -1,4 +1,3 @@
 build/
 dist/
 /external/
-cmake/external/*/

@@ -33,16 +33,17 @@ Expected<SgEdgeLayer> SgEdgeLayer::create(std::shared_ptr<SgBuffer> &&buffer, si
 
     assert((desc_count * desc_page_size) <= std::numeric_limits<uint32_t>::max());
 
-    auto status = desc_list_exp->configure_to_use_buffer(*(buffer->get_mapped_buffer()), size , offset, channel_id);
+    auto status = desc_list_exp->program(*(buffer->get_mapped_buffer()), size , offset, channel_id);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
-    return SgEdgeLayer(std::move(buffer), desc_list_exp.release(), size, offset);
+    return SgEdgeLayer(std::move(buffer), desc_list_exp.release(), size, offset, channel_id);
 }
 
 SgEdgeLayer::SgEdgeLayer(std::shared_ptr<SgBuffer> &&buffer, DescriptorList &&desc_list,
-        size_t size, size_t offset) :
+        size_t size, size_t offset, ChannelId channel_id) :
     VdmaEdgeLayer(std::move(buffer), size, offset),
-    m_desc_list(std::move(desc_list))
+    m_desc_list(std::move(desc_list)),
+    m_channel_id(channel_id)
 {}
 
 uint64_t SgEdgeLayer::dma_address() const
@@ -61,9 +62,11 @@ uint32_t SgEdgeLayer::descs_count() const
 }
 
 Expected<uint32_t> SgEdgeLayer::program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
-    size_t desc_offset)
+    size_t desc_offset, size_t buffer_offset, bool should_bind)
 {
-    return m_desc_list.program_last_descriptor(transfer_size, last_desc_interrupts_domain, desc_offset);
+    CHECK_SUCCESS(m_desc_list.program(*get_mapped_buffer(), transfer_size, buffer_offset, m_channel_id,
+        static_cast<uint32_t>(desc_offset), should_bind, last_desc_interrupts_domain));
+    return descriptors_in_buffer(transfer_size);
 }
 
 }

@@ -97,6 +97,7 @@ message ProtoProfilerActivateCoreOpTrace {
     int32 new_core_op_handle = 2;
     string device_id = 3;
     double duration = 4; //millisec
+    int32 dynamic_batch_size = 5;
 }
 
 message ProtoProfilerDeactivateCoreOpTrace {

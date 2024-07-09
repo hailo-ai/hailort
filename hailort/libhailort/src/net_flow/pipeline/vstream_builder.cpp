@@ -13,6 +13,7 @@
 #include "net_flow/ops/ssd_post_process.hpp"
 #include "net_flow/ops/yolox_post_process.hpp"
 #include "net_flow/ops/yolov8_post_process.hpp"
+#include "net_flow/ops/yolov8_bbox_only_post_process.hpp"
 #include "net_flow/ops/yolov5_post_process.hpp"
 #include "net_flow/ops/yolov5_bbox_only_post_process.hpp"
 #include "net_flow/ops/argmax_post_process.hpp"
@@ -473,10 +474,15 @@ Expected<std::vector<OutputVStream>> VStreamsBuilderUtils::create_output_vstream
             {
                 auto metadata = std::dynamic_pointer_cast<net_flow::Yolov8OpMetadata>(op_metadata);
                 assert(nullptr != metadata);
-                auto op_expected = net_flow::YOLOV8PostProcessOp::create(metadata);
-                CHECK_EXPECTED(op_expected);
-                op = op_expected.release();
-                break;
+                if (metadata->nms_config().bbox_only) {
+                    auto bbox_only_metadata = std::dynamic_pointer_cast<net_flow::Yolov8BboxOnlyOpMetadata>(op_metadata);
+                    assert(nullptr != bbox_only_metadata);
+                    TRY(op, net_flow::YOLOv8BboxOnlyPostProcessOp::create(bbox_only_metadata));
+                    break;
+                } else {
+                    TRY(op, net_flow::YOLOV8PostProcessOp::create(metadata));
+                    break;
+                }
             }
             case (net_flow::OperationType::YOLOV5):
             {

@@ -12,6 +12,22 @@
 #include "hailo/hailort_common.hpp"
 #include "hailo/hailort_defaults.hpp"
 
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable: 4244 4267 4127)
+#else
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wclass-memaccess"
+#endif
+#include <Eigen/Dense>
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#else
+#pragma GCC diagnostic pop
+#endif
+
 #include "common/utils.hpp"
 
 #include <limits>
@@ -36,21 +52,19 @@ hailo_status SoftmaxPostProcessOp::execute_not_supported(const BufferMetaData &i
 
 hailo_status SoftmaxPostProcessOp::softmax(float32_t *src, float32_t *dst, size_t num_of_elements)
 {
-    // In order to avoid overflows, we will perform the following:
-    // We find the maximal value and then we substract it from all of the values.
-    // This will preserve the original softmax values + prevent overflows
-    float32_t max_val = *std::max_element(src, src + num_of_elements);
-    float32_t sum_exp = 0; // denominator
-    for (uint32_t c = 0; c < num_of_elements; c++) {
-        auto &current_value = *(src + c);
-        current_value -= max_val; // This step preserves the original softmax values + prevent overflows
-        current_value = std::exp(static_cast<float32_t>(current_value)); // Set src[c] to e^(src[c]) so that we only calculate it once
-        sum_exp += current_value;
-    }
-    for (uint32_t c = 0; c < num_of_elements; c++) {
-        const auto &current_value = *(src + c);
-        dst[c] = static_cast<float32_t>(current_value / sum_exp);
-    }
+    // Create an Eigen Matrix view for src and dst
+    Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, 1>> src_eigen(src, num_of_elements);
+    Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, 1>> dst_eigen(dst, num_of_elements);
+
+    src_eigen = src_eigen.array().exp(); // Compute exponentials in place
+
+    assert(!src_eigen.hasNaN()); // Checks if any element in the array is NaN (Not a Number)
+
+    float sum_exp = src_eigen.sum(); // Compute the sum of exponentials
+
+    assert(0.0f != sum_exp); // Checks for division by zero
+    dst_eigen = src_eigen / sum_exp; // Perform softmax operation
+
     return HAILO_SUCCESS;
 }
 

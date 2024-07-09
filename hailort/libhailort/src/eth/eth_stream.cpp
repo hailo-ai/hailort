@@ -190,22 +190,15 @@ hailo_status EthernetInputStream::eth_stream__write_with_remainder(const void *b
 
     while (offset < offset_end_without_remainder) {
         transfer_size = offset_end_without_remainder - offset;
-        auto expected_bytes_written = sync_write_raw_buffer(MemoryView::create_const(static_cast<const uint8_t*>(buffer) + offset, transfer_size));
-        if (HAILO_STREAM_ABORT == expected_bytes_written.status()) {
-            LOGGER__INFO("sync_write_raw_buffer was aborted!");
-            return expected_bytes_written.status();
-        }
-        CHECK_EXPECTED_AS_STATUS(expected_bytes_written);
-        offset += expected_bytes_written.release();
+        TRY_WITH_ACCEPTABLE_STATUS(HAILO_STREAM_ABORT, const auto bytes_written,
+            sync_write_raw_buffer(MemoryView::create_const(static_cast<const uint8_t*>(buffer) + offset, transfer_size)));
+        offset += bytes_written;
     }
     if (0 < remainder_size) {
-        auto expected_bytes_written = sync_write_raw_buffer(MemoryView::create_const(static_cast<const uint8_t*>(buffer) + offset, remainder_size));
-        if (HAILO_STREAM_ABORT == expected_bytes_written.status()) {
-            LOGGER__INFO("sync_write_raw_buffer was aborted!");
-            return expected_bytes_written.status();
-        }
-        CHECK_EXPECTED_AS_STATUS(expected_bytes_written);
-        assert(expected_bytes_written.value() == remainder_size);
+        TRY_WITH_ACCEPTABLE_STATUS(HAILO_STREAM_ABORT, const auto bytes_written,
+            sync_write_raw_buffer(MemoryView::create_const(static_cast<const uint8_t*>(buffer) + offset, remainder_size)));
+        (void)bytes_written;
+        assert(bytes_written == remainder_size);
     }
 
     return HAILO_SUCCESS;
@@ -235,26 +228,19 @@ hailo_status TokenBucketEthernetInputStream::eth_stream__write_with_remainder(co
         (void)token_bucket.consumeWithBorrowAndWait(MAX_CONSUME_SIZE, rate_bytes_per_sec, BURST_SIZE);
     
         transfer_size = offset_end_without_remainder - offset;
-        auto expected_bytes_written = sync_write_raw_buffer(MemoryView::create_const(static_cast<const uint8_t*>(buffer) + offset, transfer_size));
-        if (HAILO_STREAM_ABORT == expected_bytes_written.status()) {
-            LOGGER__INFO("sync_write_raw_buffer was aborted!");
-            return expected_bytes_written.status();
-        }
-        CHECK_EXPECTED_AS_STATUS(expected_bytes_written);
-        offset += expected_bytes_written.release();
+        TRY_WITH_ACCEPTABLE_STATUS(HAILO_STREAM_ABORT, const auto bytes_written,
+            sync_write_raw_buffer(MemoryView::create_const(static_cast<const uint8_t*>(buffer) + offset, transfer_size)));
+        offset += bytes_written;
     }
     if (0 < remainder_size) {
         // We don't static_assert that "remainder_size <= BURST_SIZE", so the call could fail in theory.
         // However, since remainder_size is modulo MAX_UDP_PAYLOAD_SIZE and BURST_SIZE == MAX_UDP_PAYLOAD_SIZE, it should be smaller.
         (void)token_bucket.consumeWithBorrowAndWait(static_cast<double>(remainder_size), rate_bytes_per_sec, BURST_SIZE);
-        
-        auto expected_bytes_written = sync_write_raw_buffer(MemoryView::create_const(static_cast<const uint8_t*>(buffer) + offset, remainder_size));
-        if (HAILO_STREAM_ABORT == expected_bytes_written.status()) {
-            LOGGER__INFO("sync_write_raw_buffer was aborted!");
-            return expected_bytes_written.status();
-        }
-        CHECK_EXPECTED_AS_STATUS(expected_bytes_written);
-        assert(expected_bytes_written.value() == remainder_size);
+
+        TRY_WITH_ACCEPTABLE_STATUS(HAILO_STREAM_ABORT, const auto bytes_written,
+            sync_write_raw_buffer(MemoryView::create_const(static_cast<const uint8_t*>(buffer) + offset, remainder_size)));
+        (void)bytes_written;
+        assert(bytes_written == remainder_size);
     }
 
     return HAILO_SUCCESS;
@@ -264,19 +250,17 @@ hailo_status TokenBucketEthernetInputStream::eth_stream__write_with_remainder(co
 Expected<std::unique_ptr<TrafficControlEthernetInputStream>> TrafficControlEthernetInputStream::create(
     Device &device, Udp &&udp, EventPtr &&core_op_activated_event, uint32_t rate_bytes_per_sec, const LayerInfo &layer_info)
 {
-    auto board_ip = get_interface_address(&udp.m_device_address.sin_addr);
-    CHECK_EXPECTED(board_ip, "get_interface_address failed with status {}", board_ip.status());
-
+    TRY(const auto board_ip, get_interface_address(&udp.m_device_address.sin_addr));
     const auto board_port = BYTE_ORDER__ntohs(udp.m_device_address.sin_port);
 
-    auto tc = TrafficControl::create(board_ip.value(), board_port, rate_bytes_per_sec);
-    CHECK_EXPECTED(tc, "Creating traffic control at rate {} failed with error {}", rate_bytes_per_sec, tc.status());
+    TRY(auto tc, TrafficControl::create(board_ip, board_port, rate_bytes_per_sec),
+        "Creating traffic control at rate {} failed", rate_bytes_per_sec);
 
     auto status = HAILO_UNINITIALIZED;
     // Note: we don't use make_unique because TrafficControlEthernetInputStream's ctor is private
     auto tc_ptr = std::unique_ptr<TrafficControlEthernetInputStream>(new (std::nothrow)
         TrafficControlEthernetInputStream(device, std::move(udp), std::move(core_op_activated_event), rate_bytes_per_sec,
-        tc.release(), layer_info, status));
+        std::move(tc), layer_info, status));
     CHECK_AS_EXPECTED(nullptr != tc_ptr, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status);
     return tc_ptr;
@@ -284,13 +268,12 @@ Expected<std::unique_ptr<TrafficControlEthernetInputStream>> TrafficControlEther
 
 Expected<std::string> TrafficControlEthernetInputStream::get_interface_address(const struct in_addr *addr)
 {
-    auto ip = Buffer::create(IPV4_STRING_MAX_LENGTH, 0);
-    CHECK_EXPECTED(ip);
+    TRY(const auto ip, Buffer::create(IPV4_STRING_MAX_LENGTH, 0));
 
-    const auto result = Socket::ntop(AF_INET, addr, ip->as_pointer<char>(), EthernetUtils::MAX_INTERFACE_SIZE);
+    const auto result = Socket::ntop(AF_INET, addr, ip.as_pointer<char>(), EthernetUtils::MAX_INTERFACE_SIZE);
     CHECK_SUCCESS_AS_EXPECTED(result, "Failed parsing IP to string with status {}", result);
     
-    return ip->to_string();
+    return ip.to_string();
 }
 
 TrafficControlEthernetInputStream::TrafficControlEthernetInputStream(Device &device, Udp &&udp,
@@ -370,34 +353,30 @@ Expected<std::unique_ptr<EthernetInputStream>> EthernetInputStream::create(Devic
     std::unique_ptr<EthernetInputStream> local_stream;
 
     auto stream_index = edge_layer.stream_index;
-    auto udp = eth_stream__create_udp(eth_device, params.host_address, stream_index, params.device_port, true);
-    CHECK_EXPECTED(udp);
+    TRY(auto udp, eth_stream__create_udp(eth_device, params.host_address, stream_index, params.device_port, true));
 
     if (params.rate_limit_bytes_per_sec == 0) {
         local_stream = std::unique_ptr<EthernetInputStream>(
-            new (std::nothrow) EthernetInputStream(device, udp.release(), std::move(core_op_activated_event), edge_layer, status));
+            new (std::nothrow) EthernetInputStream(device, std::move(udp), std::move(core_op_activated_event), edge_layer, status));
         CHECK_SUCCESS_AS_EXPECTED(status);
     } else {
 #ifdef _MSC_VER
         // TODO: Add factory class
         local_stream = std::unique_ptr<EthernetInputStream>(
-            new (std::nothrow) TokenBucketEthernetInputStream(device, udp.release(),
+            new (std::nothrow) TokenBucketEthernetInputStream(device, std::move(udp),
             std::move(core_op_activated_event), params.rate_limit_bytes_per_sec, edge_layer, status));
         CHECK_SUCCESS_AS_EXPECTED(status);
 #else
-        auto stream_expected = TrafficControlEthernetInputStream::create(device, udp.release(),
-            std::move(core_op_activated_event), params.rate_limit_bytes_per_sec, edge_layer);
-        CHECK_EXPECTED(stream_expected);
-        local_stream = stream_expected.release();
+        TRY(local_stream, TrafficControlEthernetInputStream::create(device, std::move(udp),
+            std::move(core_op_activated_event), params.rate_limit_bytes_per_sec, edge_layer));
 #endif
     }
 
     CHECK_AS_EXPECTED((nullptr != local_stream), HAILO_OUT_OF_HOST_MEMORY);
     local_stream->m_is_stream_activated = false;
 
-    auto device_architecture = eth_device->get_architecture();
-    CHECK_EXPECTED(device_architecture);
-    if ((HAILO_ARCH_HAILO8 == device_architecture.value()) || (HAILO_ARCH_HAILO8L == device_architecture.value())) {
+    TRY(const auto device_architecture, eth_device->get_architecture());
+    if ((HAILO_ARCH_HAILO8 == device_architecture) || (HAILO_ARCH_HAILO8L == device_architecture)) {
         local_stream->configuration.use_dataflow_padding = true;
     }
     else {
@@ -514,13 +493,8 @@ hailo_status EthernetOutputStream::read_all_no_sync(void *buffer, size_t offset,
     while (offset < offset_end) {
         transfer_size = offset_end - offset;
         MemoryView buffer_view(static_cast<uint8_t*>(buffer) + offset, transfer_size);
-        auto expected_bytes_read = this->sync_read_raw_buffer(buffer_view);
-        if (HAILO_STREAM_ABORT == expected_bytes_read.status()) {
-            LOGGER__INFO("sync_read_raw_buffer was aborted!");
-            return expected_bytes_read.status();
-        }
-        CHECK_EXPECTED_AS_STATUS(expected_bytes_read);
-        offset += expected_bytes_read.release();
+        TRY_WITH_ACCEPTABLE_STATUS(HAILO_STREAM_ABORT, auto bytes_read, this->sync_read_raw_buffer(buffer_view));
+        offset += bytes_read;
     }
 
     return HAILO_SUCCESS;
@@ -608,7 +582,7 @@ hailo_status EthernetOutputStream::get_last_sync() {
     MemoryView leftover_buffer_view(this->leftover_buffer, last_packet_size);
     auto expected_bytes_read = sync_read_raw_buffer(leftover_buffer_view);
     CHECK(HAILO_TIMEOUT != expected_bytes_read.status(), HAILO_INVALID_FRAME, "Got timeout on last sync, marking last frame as invalid");
-    CHECK_EXPECTED_AS_STATUS(expected_bytes_read, "Recv error");
+    CHECK_EXPECTED_AS_STATUS(expected_bytes_read, "Recv error"); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
     last_packet_size = expected_bytes_read.release();
 
     if (is_sync_packet(this->leftover_buffer, 0, last_packet_size)) {
@@ -710,11 +684,9 @@ Expected<std::unique_ptr<EthernetOutputStream>> EthernetOutputStream::create(Dev
     auto eth_device = reinterpret_cast<EthernetDevice*>(&device);
 
     const auto stream_index = edge_layer.stream_index;
-    auto udp = eth_stream__create_udp(eth_device, params.host_address, stream_index, params.device_port, false);
-    CHECK_EXPECTED(udp);
+    TRY(auto udp, eth_stream__create_udp(eth_device, params.host_address, stream_index, params.device_port, false));
     local_stream = std::unique_ptr<EthernetOutputStream>(new (std::nothrow) EthernetOutputStream(device,
-        edge_layer, 
-        udp.release(), std::move(core_op_activated_event), status));
+        edge_layer, std::move(udp), std::move(core_op_activated_event), status));
     CHECK((nullptr != local_stream), make_unexpected(HAILO_OUT_OF_HOST_MEMORY));
     CHECK_SUCCESS_AS_EXPECTED(status);
 

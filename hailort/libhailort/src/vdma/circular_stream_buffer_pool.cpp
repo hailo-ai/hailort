@@ -43,22 +43,22 @@ CircularStreamBufferPool::CircularStreamBufferPool(size_t desc_page_size, size_t
         m_transfer_size(transfer_size),
         m_base_buffer(std::move(base_buffer)),
         m_mappings(std::move(mappings)),
+        m_queue(static_cast<int>(descs_count)),
         m_next_enqueue_desc_offset(0)
 {
     assert(is_powerof2(descs_count) && (descs_count > 0));
     assert(m_base_buffer.size() == (m_desc_page_size * descs_count));
-    CB_INIT(m_queue, descs_count);
-    m_queue.head = static_cast<int>(descs_count - 1);
+    m_queue.set_head(static_cast<int>(descs_count) - 1);
 }
 
 size_t CircularStreamBufferPool::max_queue_size() const
 {
-    return (m_queue.size - 1) / DIV_ROUND_UP(m_transfer_size, m_desc_page_size);
+    return (m_queue.size() - 1) / DIV_ROUND_UP(m_transfer_size, m_desc_page_size);
 }
 
 size_t CircularStreamBufferPool::buffers_ready_to_dequeue() const
 {
-    const size_t descs_available = CB_PROG(m_queue, CB_HEAD(m_queue), CB_TAIL(m_queue));
+    const size_t descs_available = m_queue.prog(m_queue.head(), m_queue.tail());
     return descs_available / descs_in_transfer();
 }
 
@@ -66,8 +66,8 @@ Expected<TransferBuffer> CircularStreamBufferPool::dequeue()
 {
     CHECK_AS_EXPECTED(buffers_ready_to_dequeue() > 0, HAILO_INTERNAL_FAILURE, "CircularStreamBufferPool is empty");
 
-    const size_t offset_in_buffer = CB_TAIL(m_queue) * m_desc_page_size;
-    CB_DEQUEUE(m_queue, descs_in_transfer());
+    const size_t offset_in_buffer = m_queue.tail() * m_desc_page_size;
+    m_queue.dequeue(static_cast<int>(descs_in_transfer()));
     return TransferBuffer {
         MemoryView(m_base_buffer),
         m_transfer_size,
@@ -78,9 +78,10 @@ Expected<TransferBuffer> CircularStreamBufferPool::dequeue()
 hailo_status CircularStreamBufferPool::enqueue(TransferBuffer &&buffer_info)
 {
     const size_t descs_required = descs_in_transfer();
-    const size_t descs_available = CB_AVAIL(m_queue, CB_HEAD(m_queue), CB_TAIL(m_queue));
+    const size_t descs_available = m_queue.avail(m_queue.head(), m_queue.tail());
     CHECK(descs_available >= descs_required, HAILO_INTERNAL_FAILURE, "Can enqueue without previous dequeue");
-    CHECK(buffer_info.base_buffer().data() == m_base_buffer.data(), HAILO_INTERNAL_FAILURE, "Got the wrong buffer");
+    TRY(auto base_buffer, buffer_info.base_buffer());
+    CHECK(base_buffer.data() == m_base_buffer.data(), HAILO_INTERNAL_FAILURE, "Got the wrong buffer");
     CHECK(buffer_info.size() == m_transfer_size, HAILO_INTERNAL_FAILURE, "Got invalid buffer size {}, expected {}",
         buffer_info.size(), m_transfer_size);
 
@@ -89,15 +90,15 @@ hailo_status CircularStreamBufferPool::enqueue(TransferBuffer &&buffer_info)
         "Out of order enqueue is not supported in CircularStreamBufferPool. Got offset {}, expected {}",
         buffer_info.offset(), expected_offset);
 
-    CB_ENQUEUE(m_queue, descs_required);
-    m_next_enqueue_desc_offset = (m_next_enqueue_desc_offset + descs_required) & m_queue.size_mask;
+    m_queue.enqueue(static_cast<int>(descs_required));
+    m_next_enqueue_desc_offset = (m_next_enqueue_desc_offset + descs_required) & m_queue.size_mask();
     return HAILO_SUCCESS;
 }
 
 void CircularStreamBufferPool::reset_pointers()
 {
-    CB_RESET(m_queue);
-    m_queue.head = static_cast<int>(m_queue.size - 1);
+    m_queue.reset();
+    m_queue.set_head(static_cast<int>(m_queue.size()) - 1);
     m_next_enqueue_desc_offset = 0;
 }
 

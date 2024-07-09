@@ -79,13 +79,8 @@ hailo_status TransferLauncher::stop()
     m_thread_active = false;
 
     while (!m_queue.empty()) {
+        // No need signal that the transfer was aborted, it'll be done in BoundaryChannel::cancel_pending_transfers
         m_queue.pop();
-        // TODO: need to call the callbacks to signal that they were aborted? (HRT-13110)
-        //       like this:
-        //         auto transfer_request = m_queue.front();
-        //         m_queue.pop();
-        //         transfer_request.callback(HAILO_STREAM_ABORT);
-        //       or can it be done in BoundaryChannel::cancel_pending_transfers?
     }
 
     // TODO: Keep stop flow used in interrupt thread? (HRT-13110)

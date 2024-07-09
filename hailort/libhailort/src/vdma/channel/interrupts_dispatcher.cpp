@@ -52,12 +52,20 @@ hailo_status InterruptsDispatcher::start(const ChannelsBitmap &channels_bitmap, 
         CHECK_NOT_NULL(wait_context, HAILO_OUT_OF_HOST_MEMORY);
         m_wait_context = std::move(wait_context);
 
-        auto status = m_driver.get().vdma_interrupts_enable(m_wait_context->bitmap, enable_timestamp_measure);
-        CHECK_SUCCESS(status, "Failed to enable vdma interrupts");
+        auto status = m_driver.get().vdma_enable_channels(m_wait_context->bitmap, enable_timestamp_measure);
+        CHECK_SUCCESS(status, "Failed to enable vdma channels");
     }
     m_cond.notify_one();
 
     return HAILO_SUCCESS;
+}
+
+hailo_status InterruptsDispatcher::start(const ChannelsGroup &channels_group)
+{
+    return start(channels_group.bitmap(), channels_group.should_measure_timestamp(),
+        [channels_group=channels_group](IrqData &&irq_data) mutable {
+            channels_group.process_interrupts(std::move(irq_data));
+        });
 }
 
 hailo_status InterruptsDispatcher::stop()
@@ -74,7 +82,7 @@ hailo_status InterruptsDispatcher::stop()
     m_wait_context = nullptr;
 
     // Calling disable interrupts will cause the vdma_interrupts_wait to return.
-    auto status = m_driver.get().vdma_interrupts_disable(bitmap);
+    auto status = m_driver.get().vdma_disable_channels(bitmap);
     CHECK_SUCCESS(status, "Failed to disable vdma interrupts");
 
     // Needs to make sure that the interrupts thread is disabled.
@@ -105,7 +113,7 @@ void InterruptsDispatcher::wait_interrupts()
 
         // vdma_interrupts_wait is a blocking function that returns in this scenarios:
         //   1. We got a new interrupts, irq_data will be passed to the process_irq callback
-        //   2. vdma_interrupts_disable will be called, vdma_interrupts_wait will return with an empty list.
+        //   2. vdma_disable_channels will be called, vdma_interrupts_wait will return with an empty list.
         //   3. Other error returns - shouldn't really happen, we exit the interrupt thread.
         lock.unlock();
         auto irq_data = m_driver.get().vdma_interrupts_wait(wait_context.bitmap);

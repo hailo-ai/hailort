@@ -15,13 +15,13 @@ namespace hailort
 
 constexpr size_t MIN_QUEUE_SIZE = 2;
 constexpr size_t DEFAULT_QUEUE_SIZE = 4;
+constexpr size_t RemoteProcessBufferPool::BACKING_ARRAY_LENGTH;
 
 Expected<std::unique_ptr<RemoteProcessBufferPool>> RemoteProcessBufferPool::create(
     hailo_stream_direction_t stream_direction, size_t frame_size, size_t queue_size)
 {
-    // queue_size must be some (power-of-2 minus 1) in order to fit CircularArray.
-    queue_size = get_nearest_powerof_2(static_cast<uint32_t>(queue_size + 1), MIN_QUEUE_SIZE) - 1;
-    queue_size = std::min(queue_size, ONGOING_TRANSFERS_SIZE);
+    CHECK((queue_size >= MIN_QUEUE_SIZE) && (queue_size < BACKING_ARRAY_LENGTH), HAILO_INVALID_ARGUMENT,
+        "Queue size must be in the range [{}, {}) (received {})", MIN_QUEUE_SIZE, BACKING_ARRAY_LENGTH, queue_size);
 
     hailo_status status = HAILO_UNINITIALIZED;
     auto buffer_pool = make_unique_nothrow<RemoteProcessBufferPool>(stream_direction, frame_size, queue_size,

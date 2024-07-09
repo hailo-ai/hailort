@@ -88,7 +88,7 @@ private:
         FindFile &operator=(FindFile &&other) = delete;
         FindFile(FindFile &&other);
         
-        Filesystem::FileInfo get_cur_file_info();
+        Filesystem::FileInfo get_cur_file_info() const;
         // Will return HAILO_INVALID_OPERATION when the iteration is complete or HAILO_FILE_OPERATION_FAILURE upon failure
         hailo_status next_file();
 

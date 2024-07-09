@@ -95,8 +95,16 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_sensor_get_sections_info_request(CO
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_network_group_header_request(
     CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
     const CONTROL_PROTOCOL__application_header_t *network_group_header);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_init_cache_info_request(
+    CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint32_t cache_size,
+    uint32_t current_read_offset, int32_t write_offset_delta);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_get_cache_info_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_update_cache_read_offset_request(
+    CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, int32_t read_offset_delta);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_signal_cache_updated_request(
+    CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_context_info_request(
-        CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
+        CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
         const CONTROL_PROTOCOL__context_switch_context_info_chunk_t *context_info);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_idle_time_set_measuremment_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint8_t measurement_enable);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_idle_time_get_measuremment_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);

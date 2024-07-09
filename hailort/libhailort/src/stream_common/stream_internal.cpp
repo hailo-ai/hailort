@@ -48,7 +48,7 @@ hailo_status InputStreamBase::write_async(const MemoryView &buffer, const Transf
         buffer.size(), get_frame_size());
 
     auto wrapped_callback = [buffer, user_callback](hailo_status status) {
-        user_callback(CompletionInfo{status, buffer.data(), buffer.size()});
+        user_callback(CompletionInfo(status, buffer.data(), buffer.size()));
     };
     return write_async(TransferRequest(buffer, wrapped_callback));
 }
@@ -56,6 +56,16 @@ hailo_status InputStreamBase::write_async(const MemoryView &buffer, const Transf
 hailo_status InputStreamBase::write_async(const void *buffer, size_t size, const TransferDoneCallback &user_callback)
 {
     return write_async(MemoryView::create_const(buffer, size), user_callback);
+}
+
+hailo_status InputStreamBase::write_async(int dmabuf_fd, size_t size, const TransferDoneCallback &user_callback)
+{
+    CHECK(0 != size, HAILO_INVALID_ARGUMENT, "Invalid size was passed to write_async");
+
+    auto wrapped_callback = [dmabuf_fd, size, user_callback](hailo_status status) {
+        user_callback(CompletionInfo(status, dmabuf_fd, size));
+    };
+    return write_async(TransferRequest(hailo_dma_buffer_t{dmabuf_fd, size}, wrapped_callback));
 }
 
 hailo_status InputStreamBase::write_async(TransferRequest &&)
@@ -129,7 +139,7 @@ hailo_status OutputStreamBase::read_async(MemoryView buffer, const TransferDoneC
         buffer.size(), get_frame_size());
 
     auto wrapped_callback = [buffer, user_callback](hailo_status status) {
-        user_callback(CompletionInfo{status, const_cast<uint8_t*>(buffer.data()), buffer.size()});
+        user_callback(CompletionInfo(status, const_cast<uint8_t*>(buffer.data()), buffer.size()));
     };
     return read_async(TransferRequest(buffer, wrapped_callback));
 }
@@ -137,6 +147,16 @@ hailo_status OutputStreamBase::read_async(MemoryView buffer, const TransferDoneC
 hailo_status OutputStreamBase::read_async(void *buffer, size_t size, const TransferDoneCallback &user_callback)
 {
     return read_async(MemoryView(buffer, size), user_callback);
+}
+
+hailo_status OutputStreamBase::read_async(int dmabuf_fd, size_t size, const TransferDoneCallback &user_callback)
+{
+    CHECK(0 != size, HAILO_INVALID_ARGUMENT, "Invalid size was passed to read_async");
+
+    auto wrapped_callback = [dmabuf_fd, size, user_callback](hailo_status status) {
+        user_callback(CompletionInfo(status, dmabuf_fd, size));
+    };
+    return read_async(TransferRequest(hailo_dma_buffer_t{dmabuf_fd, size}, wrapped_callback));
 }
 
 hailo_status OutputStreamBase::read_unaligned_address_async(const MemoryView &, const TransferDoneCallback &)

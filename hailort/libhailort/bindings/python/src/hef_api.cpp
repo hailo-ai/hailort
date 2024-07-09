@@ -37,9 +37,12 @@ HefWrapper::HefWrapper(const MemoryView &hef_buffer)
     }
 }
 
-HefWrapper HefWrapper::create_from_buffer(py::bytes data)
+HefWrapper HefWrapper::create_from_buffer(const py::bytes &data)
 {
-    return HefWrapper(MemoryView((uint8_t*)std::string(data).c_str(), std::string(data).size()));
+    // TODO: HRT-13713 - When adding support to read the hef from pre-allocated memory,
+    //  we will need to make sure the hef memory is not released here.
+    py::buffer_info info(py::buffer(data).request());
+    return HefWrapper(MemoryView::create_const(info.ptr, info.size));
 }
 
 HefWrapper HefWrapper::create_from_file(const std::string &hef_path)
@@ -183,7 +186,7 @@ py::list HefWrapper::get_networks_names(const std::string &net_group_name)
     return py::cast(res);
 }
 
-void HefWrapper::initialize_python_module(py::module &m)
+void HefWrapper::bind(py::module &m)
 {
     py::class_<HefWrapper>(m, "Hef")
         .def("create_from_buffer", &HefWrapper::create_from_buffer)

@@ -27,11 +27,10 @@ Expected<StreamInfoVector> NetworkUdpRateCalculator::get_streams_from_hef(Hef* h
 {
     assert(nullptr != hef);
 
-    auto all_streams_infos = hef->get_all_stream_infos(network_group_name);
-    CHECK_EXPECTED(all_streams_infos);
+    TRY(auto all_streams_infos, hef->get_all_stream_infos(network_group_name));
 
     // We expect to have two or more streams (atleast one for input and one for output)
-    if (all_streams_infos->size() < 2) {
+    if (all_streams_infos.size() < 2) {
         return make_unexpected(HAILO_INVALID_HEF);
     }
 
@@ -135,8 +134,7 @@ Expected<std::map<std::string, uint32_t>> NetworkUdpRateCalculator::calculate_in
 Expected<std::map<uint16_t, uint32_t>> NetworkUdpRateCalculator::get_udp_ports_rates_dict(
     std::vector<std::reference_wrapper<InputStream>> &udp_input_streams, uint32_t fps, uint32_t max_supported_bandwidth)
 {
-    auto rates_per_name = calculate_inputs_bandwith(fps, max_supported_bandwidth);
-    CHECK_EXPECTED(rates_per_name);
+    TRY(const auto rates_per_name, calculate_inputs_bandwith(fps, max_supported_bandwidth));
 
     std::map<uint16_t, uint32_t> results = {};
     for (const auto &input_stream : udp_input_streams) {
@@ -145,7 +143,7 @@ Expected<std::map<uint16_t, uint32_t>> NetworkUdpRateCalculator::get_udp_ports_r
             "Invalid stream index {}", stream_index);
         const uint16_t remote_port = static_cast<uint16_t>(stream_index + HailoRTCommon::ETH_INPUT_BASE_PORT);
         results.insert(std::make_pair(remote_port,
-            rates_per_name->at(input_stream.get().name())));
+            rates_per_name.at(input_stream.get().name())));
     }
 
     return results;
@@ -154,9 +152,8 @@ Expected<std::map<uint16_t, uint32_t>> NetworkUdpRateCalculator::get_udp_ports_r
 hailo_status NetworkUdpRateCalculator::set_rate_limit(const std::string &ip, uint16_t port, uint32_t rate_bytes_per_sec)
 {
 #if defined(__GNUC__)
-    auto tc = TrafficControlUtil::create(ip, port, rate_bytes_per_sec);
-    CHECK_EXPECTED_AS_STATUS(tc);
-    CHECK_SUCCESS(tc->set_rate_limit());
+    TRY(auto tc, TrafficControlUtil::create(ip, port, rate_bytes_per_sec));
+    CHECK_SUCCESS(tc.set_rate_limit());
 
     return HAILO_SUCCESS;
 #else
@@ -171,9 +168,8 @@ hailo_status NetworkUdpRateCalculator::set_rate_limit(const std::string &ip, uin
 hailo_status NetworkUdpRateCalculator::reset_rate_limit(const std::string &ip, uint16_t port)
 {
 #if defined(__GNUC__)
-    auto tc = TrafficControlUtil::create(ip, port, 0);
-    CHECK_EXPECTED_AS_STATUS(tc);
-    CHECK_SUCCESS(tc->reset_rate_limit());
+    TRY(auto tc, TrafficControlUtil::create(ip, port, 0));
+    CHECK_SUCCESS(tc.reset_rate_limit());
 
     return HAILO_SUCCESS;
 #else

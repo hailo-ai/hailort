@@ -67,49 +67,44 @@ Expected<std::map<std::string, ConfigureNetworkParams>> get_configure_params(con
 
 hailo_status HwInferEstimatorCommand::execute()
 {
-    auto devices = create_devices(m_params.vdevice_params.device_params);
-    CHECK_EXPECTED_AS_STATUS(devices, "Failed creating device");
+    TRY(auto devices, create_devices(m_params.vdevice_params.device_params), "Failed creating device");
     /* This function supports controls for multiple devices.
        We validate there is only 1 device generated as we are on a single device flow */
-    CHECK(1 == devices->size(), HAILO_INTERNAL_FAILURE, "Hw infer command support only one physical device");
-    auto &device = devices.value()[0];
+    CHECK(1 == devices.size(), HAILO_INTERNAL_FAILURE, "Hw infer command support only one physical device");
+    auto &device = devices[0];
 
-    auto hef = Hef::create(m_params.hef_path.c_str());
-    CHECK_EXPECTED_AS_STATUS(hef, "Failed reading hef file {}", m_params.hef_path);
+    TRY(auto hef,
+        Hef::create(m_params.hef_path.c_str()), "Failed reading hef file {}", m_params.hef_path);
 
-    auto interface = device->get_default_streams_interface();
-    CHECK_EXPECTED_AS_STATUS(interface, "Failed to get default streams interface");
+    TRY(const auto interface, device->get_default_streams_interface(), "Failed to get default streams interface");
 
-    auto configure_params = get_configure_params(m_params, hef.value(), interface.value());
-    CHECK_EXPECTED_AS_STATUS(configure_params);
+    TRY(auto configure_params, get_configure_params(m_params, hef, interface));
 
     /* Use Env var to configure all desc list with max depth */
     setenv("HAILO_CONFIGURE_FOR_HW_INFER","Y",1);
-    auto network_group_list = device->configure(hef.value(), configure_params.value());
-    CHECK_EXPECTED_AS_STATUS(network_group_list, "Failed configure device from hef");
+    TRY(auto network_group_list,
+        device->configure(hef, configure_params), "Failed configure device from hef");
     unsetenv("HAILO_CONFIGURE_FOR_HW_INFER");
 
-    CHECK(1 == network_group_list->size(), HAILO_INVALID_OPERATION,
+    CHECK(1 == network_group_list.size(), HAILO_INVALID_OPERATION,
         "HW Inference is not supported on HEFs with multiple network groups");
 
-    auto network_group_ptr = network_group_list.value()[0];
+    auto network_group_ptr = network_group_list[0];
 
     std::cout << "Starting HW infer Estimator..." << std::endl;
-
-    auto results = network_group_ptr->run_hw_infer_estimator();
-    CHECK_EXPECTED_AS_STATUS(results);
+    TRY(const auto results, network_group_ptr->run_hw_infer_estimator());
 
     std::cout << std::endl;
     std::cout << "======================" << std::endl;
     std::cout << "        Summary" << std::endl;
     std::cout << "======================" << std::endl;
 
-    std::cout << "Batch count: " << results->batch_count << std::endl;
-    std::cout << "Total transfer size [KB]: " << (results->total_transfer_size / BYTES_TO_KILOBYTES) << std::endl;
-    std::cout << "Total frames passed: " << results->total_frames_passed << std::endl;
-    std::cout << "Total time [s]: " << results->time_sec << std::endl;
-    std::cout << "Total FPS [1/s]: " << results->fps << std::endl;
-    std::cout << "BW [Gbps]: " << results->BW_Gbps << std::endl;
+    std::cout << "Batch count: " << results.batch_count << std::endl;
+    std::cout << "Total transfer size [KB]: " << (results.total_transfer_size / BYTES_TO_KILOBYTES) << std::endl;
+    std::cout << "Total frames passed: " << results.total_frames_passed << std::endl;
+    std::cout << "Total time [s]: " << results.time_sec << std::endl;
+    std::cout << "Total FPS [1/s]: " << results.fps << std::endl;
+    std::cout << "BW [Gbps]: " << results.BW_Gbps << std::endl;
 
     std::cout << "======================" << std::endl;
     std::cout << "    End of report" << std::endl;

@@ -12,7 +12,7 @@
 namespace hailort
 {
 
-void ConfiguredNetworkGroupWrapper::add_to_python_module(py::module &m)
+void ConfiguredNetworkGroupWrapper::bind(py::module &m)
 {
     py::class_<ConfiguredNetworkGroupWrapper, ConfiguredNetworkGroupWrapperPtr>(m, "ConfiguredNetworkGroup")
         .def("is_scheduled", &ConfiguredNetworkGroupWrapper::is_scheduled)
@@ -26,6 +26,9 @@ void ConfiguredNetworkGroupWrapper::add_to_python_module(py::module &m)
         .def("set_scheduler_timeout", &ConfiguredNetworkGroupWrapper::set_scheduler_timeout)
         .def("set_scheduler_threshold", &ConfiguredNetworkGroupWrapper::set_scheduler_threshold)
         .def("set_scheduler_priority", &ConfiguredNetworkGroupWrapper::set_scheduler_priority)
+        .def("init_cache", &ConfiguredNetworkGroupWrapper::init_cache)
+        .def("get_cache_info", &ConfiguredNetworkGroupWrapper::get_cache_info)
+        .def("update_cache_offset", &ConfiguredNetworkGroupWrapper::update_cache_offset)
         .def("get_networks_names", &ConfiguredNetworkGroupWrapper::get_networks_names)
         .def("get_sorted_output_names", &ConfiguredNetworkGroupWrapper::get_sorted_output_names)
         .def("get_input_vstream_infos", &ConfiguredNetworkGroupWrapper::get_input_vstream_infos)
@@ -63,7 +66,7 @@ void ActivatedAppContextManagerWrapper::exit()
     m_activated_net_group.reset();
 }
 
-void ActivatedAppContextManagerWrapper::add_to_python_module(py::module &m)
+void ActivatedAppContextManagerWrapper::bind(py::module &m)
 {
     py::class_<ActivatedAppContextManagerWrapper>(m, "ActivatedApp")
     .def("__enter__", &ActivatedAppContextManagerWrapper::enter, py::return_value_policy::reference)
@@ -84,12 +87,6 @@ void ActivatedAppContextManagerWrapper::add_to_python_module(py::module &m)
             return self.get_invalid_frames_count();
         })
         ;
-}
-
-void NetworkGroup_api_initialize_python_module(py::module &m)
-{
-    ConfiguredNetworkGroupWrapper::add_to_python_module(m);
-    ActivatedAppContextManagerWrapper::add_to_python_module(m);
 }
 
 } /* namespace hailort */

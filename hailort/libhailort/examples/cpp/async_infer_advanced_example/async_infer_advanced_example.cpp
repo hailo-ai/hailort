@@ -17,7 +17,8 @@
 #include <sys/mman.h>
 #endif
 
-#define FRAMES_COUNT (100)
+#define BATCH_COUNT (100)
+#define BATCH_SIZE (2)
 
 using namespace hailort;
 
@@ -43,6 +44,7 @@ int main()
         std::cerr << "Failed create vdevice, status = " << vdevice.status() << std::endl;
         return vdevice.status();
     }
+    std::cout << "VDevice created" << std::endl;
 
     // Create infer model from HEF file.
     auto infer_model_exp = vdevice.value()->create_infer_model("hefs/shortcut_net_nv12.hef");
@@ -50,9 +52,13 @@ int main()
         std::cerr << "Failed to create infer model, status = " << infer_model_exp.status() << std::endl;
         return infer_model_exp.status();
     }
+    std::cout << "InferModel created" << std::endl;
     auto infer_model = infer_model_exp.release();
 
     infer_model->output()->set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
+    std::cout << "Set output format_type to float32" << std::endl;
+    infer_model->set_batch_size(BATCH_SIZE);
+    std::cout << "Set batch_size to " << BATCH_SIZE << std::endl;
 
     // Configure the infer model
     auto configured_infer_model = infer_model->configure();
@@ -60,19 +66,14 @@ int main()
         std::cerr << "Failed to create configured infer model, status = " << configured_infer_model.status() << std::endl;
         return configured_infer_model.status();
     }
+    std::cout << "ConfiguredInferModel created" << std::endl;
 
     // The buffers are stored here as a guard for the memory. The buffer will be freed only after
     // configured_infer_model will be released.
     std::vector<std::shared_ptr<uint8_t>> buffer_guards;
 
-    // Create infer bindings
-    auto bindings = configured_infer_model->create_bindings();
-    if (!bindings) {
-        std::cerr << "Failed to create infer bindings, status = " << bindings.status() << std::endl;
-        return bindings.status();
-    }
-
-    // Set the input buffers of the bindings.
+    // Create input buffers.
+    std::unordered_map<std::string, hailo_pix_buffer_t> input_buffers;
     for (const auto &input_name : infer_model->get_input_names()) {
         size_t input_frame_size = infer_model->input(input_name)->get_frame_size();
 
@@ -94,40 +95,62 @@ int main()
         pix_buffer.planes[1].plane_size = UV_PLANE_SIZE;
         pix_buffer.planes[1].user_ptr = reinterpret_cast<void*>(uv_plane_buffer.get());
 
-        auto status = bindings->input(input_name)->set_pix_buffer(pix_buffer);
-        if (HAILO_SUCCESS != status) {
-            std::cerr << "Failed to set infer input buffer, status = " << status << std::endl;
-            return status;
-        }
-
+        input_buffers[input_name] = pix_buffer;
         buffer_guards.push_back(y_plane_buffer);
         buffer_guards.push_back(uv_plane_buffer);
     }
 
-    // Set the output buffers of the bindings.
+    // Create output buffers.
+    std::unordered_map<std::string, MemoryView> output_buffers;
     for (const auto &output_name : infer_model->get_output_names()) {
         size_t output_frame_size = infer_model->output(output_name)->get_frame_size();
         auto output_buffer = page_aligned_alloc(output_frame_size);
-        auto status = bindings->output(output_name)->set_buffer(MemoryView(output_buffer.get(), output_frame_size));
-        if (HAILO_SUCCESS != status) {
-            std::cerr << "Failed to set infer output buffer, status = " << status << std::endl;
-            return status;
-        }
 
+        output_buffers[output_name] = MemoryView(output_buffer.get(), output_frame_size);
         buffer_guards.push_back(output_buffer);
     }
 
+    std::cout << "Running inference..." << std::endl;
     AsyncInferJob last_infer_job;
-    for (uint32_t i = 0; i < FRAMES_COUNT; i++) {
+    for (uint32_t i = 0; i < BATCH_COUNT; i++) {
         // Waiting for available requests in the pipeline
-        auto status = configured_infer_model->wait_for_async_ready(std::chrono::milliseconds(1000));
+        auto status = configured_infer_model->wait_for_async_ready(std::chrono::milliseconds(1000), BATCH_SIZE);
         if (HAILO_SUCCESS != status) {
             std::cerr << "Failed to wait for async ready, status = " << status << std::endl;
             return status;
         }
 
-        auto job = configured_infer_model->run_async(bindings.value(), [] (const AsyncInferCompletionInfo &/*completion_info*/) {
-            // Use completion_info to get the job status and the corresponding bindings
+        // In this example we infer the same buffers, so setting 'BATCH_SIZE' identical bindings in the 'multiple_bindings' vector
+        std::vector<ConfiguredInferModel::Bindings> bindings_batch;
+        for (uint32_t b = 0; b < BATCH_SIZE; b++) {
+            auto bindings = configured_infer_model->create_bindings();
+            if (!bindings) {
+                std::cerr << "Failed to create infer bindings, status = " << bindings.status() << std::endl;
+                return bindings.status();
+            }
+
+            for (auto &input_buffer : input_buffers) {
+                status = bindings->input(input_buffer.first)->set_pix_buffer(input_buffer.second);
+                if (HAILO_SUCCESS != status) {
+                    std::cerr << "Failed to set infer input buffer, status = " << status << std::endl;
+                    return status;
+                }
+            }
+            for (auto &output_buffer : output_buffers) {
+                status = bindings->output(output_buffer.first)->set_buffer(output_buffer.second);
+                if (HAILO_SUCCESS != status) {
+                    std::cerr << "Failed to set infer output buffer, status = " << status << std::endl;
+                    return status;
+                }
+            }
+
+            bindings_batch.emplace_back(bindings.release());
+        }
+
+        auto job = configured_infer_model->run_async(bindings_batch, [] (const AsyncInferCompletionInfo &completion_info) {
+            // Use completion_info to get the async operation status
+            // Note that this callback must be executed as quickly as possible
+            (void)completion_info.status;
         });
         if (!job) {
             std::cerr << "Failed to start async infer job, status = " << job.status() << std::endl;
@@ -136,7 +159,7 @@ int main()
         // detach() is called in order for jobs to run in parallel (and not one after the other)
         job->detach();
 
-        if (i == FRAMES_COUNT - 1) {
+        if (i == BATCH_COUNT - 1) {
             last_infer_job = job.release();
         }
     }
@@ -148,6 +171,6 @@ int main()
         return status;
     }
 
-    std::cout << "Inference finished successfully" << std::endl;
+    std::cout << "Inference finished successfully on " << BATCH_COUNT * BATCH_SIZE << " frames" << std::endl;
     return HAILO_SUCCESS;
 }

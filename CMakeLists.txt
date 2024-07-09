@@ -9,6 +9,16 @@ elseif(CLCACHE_PROGRAM)
     set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CLCACHE_PROGRAM}")
 endif()
 
+if(WIN32)
+    find_program(SCCACHE sccache)
+    if(SCCACHE)
+        set(CMAKE_C_COMPILER_LAUNCHER ${SCCACHE})
+        set(CMAKE_CXX_COMPILER_LAUNCHER ${SCCACHE})
+        set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
+        cmake_policy(SET CMP0141 NEW)
+    endif()
+endif()
+
 project(HailoRT)
 
 # Prevent in-tree building

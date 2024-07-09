@@ -37,9 +37,12 @@ public:
     hailo_status add_config_buffer_info(const uint16_t context_index, const size_t config_stream_index,
         const std::vector<uint32_t> &cfg_sizes);
     hailo_status add_layer_buffer_info(const LayerInfo &layer_info);
-    Expected<EdgeLayerToBufferMap> get_intermediate_buffer(const EdgeLayerKey &key);
+    ExpectedRef<EdgeLayerInfo> get_layer_buffer_info(const EdgeLayerKey &key);
+    Expected<EdgeLayerBuffer> get_intermediate_buffer(const EdgeLayerKey &key);
     hailo_status plan_and_execute(InternalBufferPlanner::Type default_planner_type, const size_t number_of_contexts);
+
 private:
+    InternalBufferManager(HailoRTDriver &driver, const ConfigureNetworkParams &config_params);
 
     // Add buffer info phase functions
     void add_buffer_info(const EdgeLayerKey &edge_layer_key, const EdgeLayerInfo &buffer_info);
@@ -65,10 +68,7 @@ private:
     const ConfigureNetworkParams &m_config_params;
     // m_edge_layer_infos is filled by add_buffer_info API
     std::map<EdgeLayerKey, EdgeLayerInfo> m_edge_layer_infos;
-
-    std::map<EdgeLayerKey, EdgeLayerToBufferMap> m_edge_layer_to_buffer_map;
-
-    InternalBufferManager(HailoRTDriver &driver, const ConfigureNetworkParams &config_params);
+    std::map<EdgeLayerKey, EdgeLayerBuffer> m_edge_layer_to_buffer_map;
 };
 
 } /* namespace hailort */

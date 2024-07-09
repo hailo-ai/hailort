@@ -241,12 +241,12 @@ l_deactivate_network_group:
     (void)hailo_deactivate_network_group(activated_network_group);
 l_release_vstreams:
     for (size_t net_index = 0; net_index < NET_COUNT; net_index++) {
-        if (NULL != output_vstreams[net_index]) {
+        if (NULL != output_vstreams[net_index][0]) {
             (void)hailo_release_output_vstreams(output_vstreams[net_index], output_vstreams_size[net_index]);
         }
     }
     for (size_t net_index = 0; net_index < NET_COUNT; net_index++) {
-        if (NULL != input_vstreams[net_index]) {
+        if (NULL != input_vstreams[net_index][0]) {
             (void)hailo_release_input_vstreams(input_vstreams[net_index], input_vstreams_size[net_index]);
         }
     }

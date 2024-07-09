@@ -10,6 +10,7 @@ set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/ops/softmax_post_process.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ops/yolov5_seg_post_process.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ops/yolov8_post_process.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ops/yolov8_bbox_only_post_process.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/pipeline/pipeline.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pipeline/pipeline_internal.cpp
@@ -21,6 +22,8 @@ set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/pipeline/async_pipeline_builder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pipeline/async_infer_runner.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pipeline/infer_model.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pipeline/infer_model_hrpc_client.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pipeline/configured_infer_model_hrpc_client.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/pipeline/vstream_builder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pipeline/vstream.cpp

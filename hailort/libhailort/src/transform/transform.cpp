@@ -76,9 +76,20 @@ bool TransformContextUtils::should_transpose(const hailo_format_flags_t &src_fla
 bool TransformContextUtils::should_reorder(const hailo_3d_image_shape_t &src_image_shape, const hailo_format_t &src_format,
     const hailo_3d_image_shape_t &dst_image_shape, const hailo_format_t &dst_format)
 {
-    /* If shapes and format are different - need to use transform_context */
+    /* If the orders are NHCW <-> NHWC, but C == 1, no reordering is needed */
+    if  ((src_image_shape.features          == dst_image_shape.features) &&
+           (src_image_shape.features        == 1)                        &&
+           (src_image_shape.height          == dst_image_shape.height)   &&
+           (src_image_shape.width           == dst_image_shape.width)    &&
+           (((src_format.order == HAILO_FORMAT_ORDER_NHCW) && (dst_format.order == HAILO_FORMAT_ORDER_NHWC)) ||
+           ((src_format.order == HAILO_FORMAT_ORDER_NHWC) && (dst_format.order == HAILO_FORMAT_ORDER_NHCW)))) {
+        return false;
+    }
+
+
+    /* If not all shapes and formats are the same - reordering is needed */
     if  (!((src_image_shape.features        == dst_image_shape.features) &&
-           (src_image_shape.height          == dst_image_shape.height)   && 
+           (src_image_shape.height          == dst_image_shape.height)   &&
            (src_image_shape.width           == dst_image_shape.width)    &&
            (src_format.order                == dst_format.order))) {
         return true;
@@ -1674,7 +1685,7 @@ Expected<std::unique_ptr<InputTransformContext>> InputTransformContext::create(c
     const auto dst_frame_size = HailoRTCommon::get_periph_frame_size(dst_image_shape, dst_format);
 
     Buffer quant_buffer;
-    auto should_quantize = TransformContextUtils::should_quantize(HAILO_H2D_STREAM, src_format, dst_format);
+    auto should_quantize = TransformContextUtils::should_quantize(HAILO_H2D_STREAM, internal_src_format, dst_format);
     CHECK_EXPECTED(should_quantize);
     if (should_quantize.value()) {
         auto expected_quant_buffer = Buffer::create(src_frame_size, 0);
@@ -1683,7 +1694,7 @@ Expected<std::unique_ptr<InputTransformContext>> InputTransformContext::create(c
     }
 
     Buffer transpose_buffer;
-    bool should_transpose = TransformContextUtils::should_transpose(src_format.flags, dst_format.flags);
+    bool should_transpose = TransformContextUtils::should_transpose(internal_src_format.flags, dst_format.flags);
     if (should_transpose) {
         auto expected_transpose_buffer = Buffer::create(get_transpose_buffer_size(src_image_shape,
             dst_format.type));
@@ -1691,7 +1702,7 @@ Expected<std::unique_ptr<InputTransformContext>> InputTransformContext::create(c
         transpose_buffer = expected_transpose_buffer.release();
     }
 
-    auto should_reorder = TransformContextUtils::should_reorder(src_image_shape, src_format, dst_image_shape, dst_format);
+    auto should_reorder = TransformContextUtils::should_reorder(src_image_shape, internal_src_format, dst_image_shape, dst_format);
     auto should_pad_periph = TransformContextUtils::should_pad_periph(dst_image_shape, dst_format);
 
     std::unique_ptr<InputTransformContext> transform_context(new (std::nothrow) InputTransformContext(src_frame_size, src_image_shape,
@@ -1938,19 +1949,19 @@ Expected<std::unique_ptr<OutputTransformContext>> FrameOutputTransformContext::c
     const auto src_frame_size = HailoRTCommon::get_periph_frame_size(src_image_shape, src_format);
     const auto dst_frame_size = HailoRTCommon::get_frame_size(dst_image_shape, internal_dst_format);
 
-    auto should_quantize = TransformContextUtils::should_quantize(HAILO_D2H_STREAM, src_format, dst_format);
+    auto should_quantize = TransformContextUtils::should_quantize(HAILO_D2H_STREAM, src_format, internal_dst_format);
     CHECK_EXPECTED(should_quantize);
 
     Buffer transpose_buffer;
-    auto should_transpose = TransformContextUtils::should_transpose(src_format.flags, dst_format.flags);
+    auto should_transpose = TransformContextUtils::should_transpose(src_format.flags, internal_dst_format.flags);
     if (should_transpose) {
         auto expected_transpose_buffer = Buffer::create(get_transpose_buffer_size(dst_image_shape, src_format.type));
         CHECK_EXPECTED(expected_transpose_buffer);
         transpose_buffer = expected_transpose_buffer.release();
     }
 
-    auto should_reorder = TransformContextUtils::should_reorder(src_image_shape, src_format, dst_image_shape, dst_format);
-    auto should_pad_periph = TransformContextUtils::should_pad_periph(dst_image_shape, dst_format);
+    auto should_reorder = TransformContextUtils::should_reorder(src_image_shape, src_format, dst_image_shape, internal_dst_format);
+    auto should_pad_periph = TransformContextUtils::should_pad_periph(dst_image_shape, internal_dst_format);
 
     std::unique_ptr<OutputTransformContext> frame_transform_context = std::make_unique<FrameOutputTransformContext>(src_frame_size,
         src_image_shape, src_format, dst_frame_size, dst_image_shape, internal_dst_format, dst_quant_infos, std::move(transpose_buffer),
@@ -1987,7 +1998,7 @@ Expected<std::unique_ptr<OutputTransformContext>> NMSOutputTransformContext::cre
     auto dst_frame_size = HailoRTCommon::get_nms_host_frame_size(nms_info, internal_dst_format);
 
     Buffer quant_buffer;
-    auto should_quantize = TransformContextUtils::should_quantize(HAILO_D2H_STREAM, src_format, dst_format);
+    auto should_quantize = TransformContextUtils::should_quantize(HAILO_D2H_STREAM, src_format, internal_dst_format);
     CHECK_EXPECTED(should_quantize);
     if (*should_quantize) {
         dst_frame_size = HailoRTCommon::get_nms_host_frame_size(nms_info, internal_dst_format);
@@ -1996,7 +2007,7 @@ Expected<std::unique_ptr<OutputTransformContext>> NMSOutputTransformContext::cre
         quant_buffer = expected_nms_quant_buffer.release();
     }
 
-    auto should_transpose = TransformContextUtils::should_transpose(src_format.flags, dst_format.flags);
+    auto should_transpose = TransformContextUtils::should_transpose(src_format.flags, internal_dst_format.flags);
 
     std::unique_ptr<OutputTransformContext> nms_transform_context = std::make_unique<NMSOutputTransformContext>(src_frame_size,
         src_format, dst_frame_size, internal_dst_format, dst_quant_infos, nms_info, std::move(quant_buffer),

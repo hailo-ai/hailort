@@ -33,7 +33,7 @@ class HefWrapper {
 public:
     HefWrapper(const std::string &hef_path);
     HefWrapper(const MemoryView &hef_buffer);
-    static HefWrapper create_from_buffer(py::bytes data);
+    static HefWrapper create_from_buffer(const py::bytes &data);
     static HefWrapper create_from_file(const std::string &hef_path);
     py::list get_network_group_names();
     py::list get_network_groups_infos();
@@ -60,7 +60,7 @@ public:
     py::dict create_configure_params_mipi_input(hailo_stream_interface_t output_interface,
         const hailo_mipi_input_stream_params_t &mipi_params);
     py::list get_networks_names(const std::string &net_group_name);
-    static void initialize_python_module(py::module &m);
+    static void bind(py::module &m);
 
 private:
     std::unique_ptr<Hef> hef;

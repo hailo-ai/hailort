@@ -186,6 +186,16 @@ void ConfiguredNetworkGroup::increase_ongoing_callbacks()
     m_ongoing_transfers++;
 }
 
+Expected<std::shared_ptr<ConfiguredNetworkGroupBase>> ConfiguredNetworkGroupBase::create(const ConfigureNetworkParams &config_params,
+    std::vector<std::shared_ptr<CoreOp>> &&core_ops, NetworkGroupMetadata &&metadata)
+{
+    auto net_group_ptr = std::shared_ptr<ConfiguredNetworkGroupBase>(new (std::nothrow)
+        ConfiguredNetworkGroupBase(config_params, std::move(core_ops), std::move(metadata)));
+    CHECK_NOT_NULL_AS_EXPECTED(net_group_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+    return net_group_ptr;
+}
+
 Expected<std::unique_ptr<ActivatedNetworkGroup>> ConfiguredNetworkGroupBase::activate(
     const hailo_activate_network_group_params_t &network_group_params)
 {
@@ -801,9 +811,17 @@ hailo_status ConfiguredNetworkGroupBase::infer_async(const NamedBuffersCallbacks
     InferRequest infer_request{};
     for (auto &named_buffer_callback : named_buffers_callbacks) {
         const auto &name = named_buffer_callback.first;
-        const auto &buffer = named_buffer_callback.second.first;
         const auto &callback = named_buffer_callback.second.second;
-        infer_request.transfers.emplace(name, TransferRequest{buffer, callback});
+        if (BufferType::VIEW == named_buffer_callback.second.first.buffer_type) {
+            const auto &buffer = named_buffer_callback.second.first.view;
+            infer_request.transfers.emplace(name, TransferRequest{buffer, callback});
+        } else if (BufferType::DMA_BUFFER == named_buffer_callback.second.first.buffer_type) {
+            const auto &dma_buffer = named_buffer_callback.second.first.dma_buffer;
+            infer_request.transfers.emplace(name, TransferRequest{dma_buffer, callback});
+        } else {
+            LOGGER__ERROR("infer_async does not support buffers with type {}", named_buffer_callback.second.first.buffer_type);
+            return HAILO_INVALID_ARGUMENT;
+        }
     }
     infer_request.callback = [this, infer_request_done_cb](hailo_status status){
         if (status == HAILO_STREAM_ABORT) {
@@ -827,6 +845,48 @@ hailo_status ConfiguredNetworkGroupBase::infer_async(const NamedBuffersCallbacks
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
+}
+
+Expected<uint32_t> ConfiguredNetworkGroupBase::get_cache_read_size() const
+{
+    CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
+        "get_cache_read_size() is not supported for multi core-op network groups");
+
+    return m_core_ops[0]->get_cache_read_size();
+
+}
+
+Expected<uint32_t> ConfiguredNetworkGroupBase::get_cache_write_size() const
+{
+    CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
+        "get_cache_write_size() is not supported for multi core-op network groups");
+
+    return m_core_ops[0]->get_cache_write_size();
+}
+
+
+hailo_status ConfiguredNetworkGroupBase::init_cache(uint32_t read_offset, int32_t write_offset_delta)
+{
+    CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
+        "init_cache() is not supported for multi core-op network groups");
+
+    return m_core_ops[0]->init_cache(read_offset, write_offset_delta);
+}
+
+Expected<hailo_cache_info_t> ConfiguredNetworkGroupBase::get_cache_info() const
+{
+    CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
+        "get_cache_info() is not supported for multi core-op network groups");
+
+    return m_core_ops[0]->get_cache_info();
+}
+
+hailo_status ConfiguredNetworkGroupBase::update_cache_offset(int32_t offset_delta_bytes)
+{
+    CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
+        "update_cache_offset() is not supported for multi core-op network groups");
+
+    return m_core_ops[0]->update_cache_offset(offset_delta_bytes);
 }
 
 } /* namespace hailort */

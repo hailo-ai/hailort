@@ -15,9 +15,15 @@
 
 #include "vdma/driver/hailort_driver.hpp"
 #include "vdma/memory/mapped_buffer.hpp"
+#include "common/os_utils.hpp"
 
 namespace hailort
 {
+
+enum class TransferBufferType {
+    MEMORYVIEW = 0,
+    DMABUF
+};
 
 // Contains buffer that can be transferred. The buffer can be circular -
 // It relies at [m_offset, m_base_buffer.size()) and [0, m_base_buffer.size() - m_size).
@@ -25,11 +31,11 @@ class TransferBuffer final {
 public:
 
     TransferBuffer();
-
+    TransferBuffer(hailo_dma_buffer_t dmabuf);
     TransferBuffer(MemoryView base_buffer);
     TransferBuffer(MemoryView base_buffer, size_t size, size_t offset);
 
-    MemoryView base_buffer() { return m_base_buffer; }
+    Expected<MemoryView> base_buffer();
     size_t offset() const { return m_offset; }
     size_t size() const { return m_size; }
 
@@ -37,6 +43,8 @@ public:
 
     hailo_status copy_to(MemoryView buffer);
     hailo_status copy_from(const MemoryView buffer);
+
+    TransferBufferType type () const {return m_type;}
 
 private:
 
@@ -50,9 +58,14 @@ private:
     //      2. If the buffer is not circular, the first part will contain the buffer, the second will point to nullptr.
     std::pair<MemoryView, MemoryView> get_continuous_parts();
 
-    MemoryView m_base_buffer;
+    union {
+        MemoryView m_base_buffer;
+        hailo_dma_buffer_t m_dmabuf;
+    };
+
     size_t m_size;
     size_t m_offset;
+    TransferBufferType m_type;
 
     // Once map_buffer is called, a MappedBuffer object is stored here to make sure the buffer is mapped.
     vdma::MappedBufferPtr m_mappings;
@@ -85,6 +98,16 @@ struct TransferRequest {
             total_transfer_size += transfer_buffers[i].size();
         }
         return total_transfer_size;
+    }
+
+    Expected<bool> is_request_aligned() {
+        CHECK(!transfer_buffers.empty(), HAILO_INVALID_ARGUMENT, "TransferRequest is empty");
+        CHECK(TransferBufferType::MEMORYVIEW == transfer_buffers[0].type(), HAILO_INVALID_ARGUMENT,
+            "get_aligned_request is only supported in MEMORYVIEW type TransferBuffer");
+        
+        const auto dma_able_alignment = OsUtils::get_dma_able_alignment();
+        TRY(auto base_buffer, transfer_buffers[0].base_buffer());
+        return (0 == reinterpret_cast<size_t>(base_buffer.data()) % dma_able_alignment);
     }
 };
 

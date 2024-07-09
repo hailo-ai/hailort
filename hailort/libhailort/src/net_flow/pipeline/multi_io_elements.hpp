@@ -246,7 +246,7 @@ public:
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
 
     Expected<uint32_t> get_source_index_from_output_stream_name(const std::string &output_stream_name);
-    Expected<uint32_t> get_sink_index_from_input_stream_name(const std::string &input_stream_name);
+    Expected<uint8_t> get_sink_index_from_input_stream_name(const std::string &input_stream_name);
     virtual Expected<uint32_t> get_source_index_from_source_name(const std::string &source_name) override;
 
     std::vector<BufferPoolPtr> get_hw_interacted_buffer_pools_h2d();
@@ -260,7 +260,7 @@ private:
     void handle_error_in_hw_async_elem(hailo_status error_status);
 
     std::chrono::milliseconds m_timeout;
-    std::shared_ptr<ConfiguredNetworkGroup> m_net_group;
+    std::weak_ptr<ConfiguredNetworkGroup> m_net_group;
     size_t m_max_ongoing_transfers;
 
     std::unordered_map<std::string, std::string> m_sink_name_to_stream_name;

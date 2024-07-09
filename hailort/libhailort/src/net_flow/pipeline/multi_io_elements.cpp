@@ -83,10 +83,13 @@ void BaseMuxElement::run_push_async(PipelineBuffer &&buffer, const PipelinePad &
 
     m_barrier->arrive_and_wait();
     if (HAILO_SUCCESS == m_pipeline_status->load()) {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_input_buffers[sink.name()] = std::move(buffer);
-        if (m_input_buffers.size() == m_sink_name_to_index.size()) { // Last sink to set its buffer
-
+        size_t input_buffers_size = 0;
+        {
+            std::unique_lock<std::mutex> lock(m_mutex);
+            m_input_buffers[sink.name()] = std::move(buffer);
+            input_buffers_size = m_input_buffers.size();
+        }
+        if (input_buffers_size == m_sink_name_to_index.size()) { // Last sink to set its buffer
             for (auto &input_buffer : m_input_buffers) {
                 if (HAILO_SUCCESS != input_buffer.second.action_status()) {
                     handle_non_recoverable_async_error(input_buffer.second.action_status());
@@ -190,7 +193,8 @@ Expected<PipelineBuffer> NmsPostProcessMuxElement::action(std::vector<PipelineBu
     std::map<std::string, MemoryView> inputs;
     std::map<std::string, MemoryView> outputs;
     for (size_t i = 0; i < input_buffers.size(); ++i) {
-        inputs.insert({m_sinks_names[i], input_buffers[i].as_view()});
+        TRY(auto src, input_buffers[i].as_view(BufferProtection::READ));
+        inputs.insert({m_sinks_names[i], src});
     }
     auto pool = next_pad_downstream().element().get_buffer_pool();
     assert(pool);
@@ -206,7 +210,8 @@ Expected<PipelineBuffer> NmsPostProcessMuxElement::action(std::vector<PipelineBu
         }
     }
     CHECK_EXPECTED(acquired_buffer);
-    outputs.insert({"", acquired_buffer->as_view()}); // TODO: fill with correct name
+    TRY(auto dst, acquired_buffer->as_view(BufferProtection::WRITE));
+    outputs.insert({"", dst}); // TODO: fill with correct name
     m_duration_collector.start_measurement();
 
     auto post_process_result = m_nms_op->execute(inputs, outputs);
@@ -310,7 +315,8 @@ Expected<PipelineBuffer> NmsMuxElement::action(std::vector<PipelineBuffer> &&inp
 
     input_views.reserve(inputs.size());
     for (auto &input_buf : inputs) {
-        input_views.push_back(input_buf.as_view());
+        TRY(auto src, input_buf.as_view(BufferProtection::READ));
+        input_views.push_back(src);
     }
     auto pool = next_pad_downstream().element().get_buffer_pool();
     assert(pool);
@@ -330,7 +336,8 @@ Expected<PipelineBuffer> NmsMuxElement::action(std::vector<PipelineBuffer> &&inp
     CHECK_EXPECTED(acquired_buffer);
 
     m_duration_collector.start_measurement();
-    const auto status = fuse_buffers(input_views, m_nms_infos, acquired_buffer.value().as_view());
+    TRY(auto dst, acquired_buffer.value().as_view(BufferProtection::WRITE));
+    const auto status = fuse_buffers(input_views, m_nms_infos, dst);
     m_duration_collector.complete_measurement();
 
     for (auto &input : inputs) {
@@ -658,11 +665,13 @@ Expected<std::vector<PipelineBuffer>> TransformDemuxElement::action(PipelineBuff
         } 
         CHECK_EXPECTED(acquired_buffer, "Failed to acquire buffer");
         outputs.emplace_back(acquired_buffer.release());
-        raw_buffers.push_back(outputs.back().as_view());
+        TRY(auto dst, outputs.back().as_view(BufferProtection::WRITE));
+        raw_buffers.push_back(dst);
     }
 
     m_duration_collector.start_measurement();
-    const auto status = m_demuxer->transform_demux(input.as_view(), raw_buffers);
+    TRY(auto src, input.as_view(BufferProtection::READ));
+    const auto status = m_demuxer->transform_demux(src, raw_buffers);
     m_duration_collector.complete_measurement();
 
     input.set_action_status(status);
@@ -721,13 +730,28 @@ Expected<std::vector<PipelineBuffer>> PixBufferElement::action(PipelineBuffer &&
         CHECK_NOT_NULL_AS_EXPECTED(shared_input_buff, HAILO_OUT_OF_HOST_MEMORY);
 
         for (uint32_t i = 0; i < input_pix_buffer.number_of_planes; i++) {
-            outputs.emplace_back(MemoryView(input_pix_buffer.planes[i].user_ptr, input_pix_buffer.planes[i].bytes_used),
-                [input_ptr = shared_input_buff](hailo_status status)
-                {
+            if (HAILO_PIX_BUFFER_MEMORY_TYPE_USERPTR == input_pix_buffer.memory_type) {
+                outputs.emplace_back(MemoryView(input_pix_buffer.planes[i].user_ptr, input_pix_buffer.planes[i].bytes_used),
+                    [input_ptr = shared_input_buff](hailo_status status)
+                    {
+                        if (HAILO_SUCCESS != status) {
+                            input_ptr->set_action_status(status);
+                        }
+                    });
+            } else if (HAILO_PIX_BUFFER_MEMORY_TYPE_DMABUF == input_pix_buffer.memory_type) {
+                hailo_dma_buffer_t dma_buffer;
+                dma_buffer.fd = input_pix_buffer.planes[i].fd;
+                dma_buffer.size = input_pix_buffer.planes[i].plane_size;
+                TransferDoneCallbackAsyncInfer exec_done = [input_ptr = shared_input_buff](hailo_status status) {
                     if (HAILO_SUCCESS != status) {
                         input_ptr->set_action_status(status);
-                    }
-                });
+                    }};
+                hailo_status action_status = HAILO_SUCCESS;
+                BufferPoolPtr pool = m_sources[i].next()->element().get_buffer_pool();
+                outputs.emplace_back(PipelineBuffer(dma_buffer, exec_done, action_status, pool->is_holding_user_buffers(), pool));
+            } else {
+                return make_unexpected(HAILO_INVALID_ARGUMENT);
+            }
         }
     }
 
@@ -854,13 +878,59 @@ void AsyncHwElement::action()
             m_barrier->terminate();
             return;
         }
-        named_buffers_callbacks.emplace(stream_name, std::make_pair(buffer_shared->as_view(),
+
+        BufferRepresentation buffer_representation{};
+        if (buffer_shared->get_buffer_type() == BufferType::VIEW) {
+            auto src = buffer_shared->as_view(BufferProtection::READ);
+            if (HAILO_SUCCESS != src.status()) {
+                handle_non_recoverable_async_error(src.status());
+                m_input_buffers.clear();
+                m_barrier->terminate();
+                return;
+            }
+            buffer_representation.buffer_type = BufferType::VIEW;
+            buffer_representation.view = src.value();
+        } else if (buffer_shared->get_buffer_type() == BufferType::DMA_BUFFER) {
+            auto dma_buffer = buffer_shared->get_metadata().get_additional_data<DmaBufferPipelineData>();
+            buffer_representation.buffer_type = BufferType::DMA_BUFFER;
+            buffer_representation.dma_buffer = dma_buffer->m_dma_buffer;
+        } else {
+            handle_non_recoverable_async_error(HAILO_INVALID_ARGUMENT);
+            m_input_buffers.clear();
+            m_barrier->terminate();
+            return;
+        }
+
+        named_buffers_callbacks.emplace(stream_name, std::make_pair(buffer_representation,
             [buffer_shared](hailo_status status) { buffer_shared->set_action_status(status); }));
     }
 
     for (auto &output_buffer : source_name_to_output_buffer) {
         const auto &stream_name = m_source_name_to_stream_name.at(output_buffer.first);
-        named_buffers_callbacks.emplace(stream_name, std::make_pair(output_buffer.second->as_view(),
+
+        BufferRepresentation buffer_representation{};
+        if (output_buffer.second->get_buffer_type() == BufferType::VIEW) {
+            auto dst = output_buffer.second->as_view(BufferProtection::WRITE);
+            if (HAILO_SUCCESS != dst.status()) {
+                handle_non_recoverable_async_error(dst.status());
+                m_input_buffers.clear();
+                m_barrier->terminate();
+                return;
+            }
+            buffer_representation.buffer_type = BufferType::VIEW;
+            buffer_representation.view = dst.value();
+        } else if (output_buffer.second->get_buffer_type() == BufferType::DMA_BUFFER) {
+            auto dma_buffer = output_buffer.second->get_metadata().get_additional_data<DmaBufferPipelineData>();
+            buffer_representation.buffer_type = BufferType::DMA_BUFFER;
+            buffer_representation.dma_buffer = dma_buffer->m_dma_buffer;
+        } else {
+            handle_non_recoverable_async_error(HAILO_INVALID_ARGUMENT);
+            m_input_buffers.clear();
+            m_barrier->terminate();
+            return;
+        }
+
+        named_buffers_callbacks.emplace(stream_name, std::make_pair(buffer_representation,
             [this, buffer = output_buffer.second, source_name = output_buffer.first](hailo_status status){
                 buffer->set_action_status(status);
                 if (HAILO_SUCCESS == m_pipeline_status->load()) {
@@ -872,7 +942,16 @@ void AsyncHwElement::action()
         }));
     }
 
-    auto status = m_net_group->wait_for_ongoing_callbacks_count_under(m_max_ongoing_transfers);
+    auto cng = m_net_group.lock();
+    if (!cng) {
+        // Error - cng (VDevice) was released mid inference
+        handle_non_recoverable_async_error(HAILO_INTERNAL_FAILURE);
+        m_input_buffers.clear();
+        m_barrier->terminate();
+        return;
+    }
+
+    auto status = cng->wait_for_ongoing_callbacks_count_under(m_max_ongoing_transfers);
     if (HAILO_SUCCESS != status ) {
         handle_non_recoverable_async_error(status);
         m_input_buffers.clear();
@@ -880,7 +959,7 @@ void AsyncHwElement::action()
         return;
     }
 
-    status = m_net_group->infer_async(named_buffers_callbacks, [](hailo_status){});
+    status = cng->infer_async(named_buffers_callbacks, [](hailo_status){});
     if (HAILO_SUCCESS != status ) {
         handle_non_recoverable_async_error(status);
         m_input_buffers.clear();
@@ -929,11 +1008,12 @@ Expected<uint32_t> AsyncHwElement::get_source_index_from_source_name(const std::
     return ret_val;
 }
 
-Expected<uint32_t> AsyncHwElement::get_sink_index_from_input_stream_name(const std::string &input_stream_name)
+Expected<uint8_t> AsyncHwElement::get_sink_index_from_input_stream_name(const std::string &input_stream_name)
 {
     for (const auto &name_pair : m_sink_name_to_stream_name) {
         if (name_pair.second == input_stream_name) {
-            return Expected<uint32_t>(m_sink_name_to_index.at(name_pair.first));
+            auto cpy = static_cast<uint8_t>(m_sink_name_to_index.at(name_pair.first));
+            return cpy;
         }
     }
     return make_unexpected(HAILO_INVALID_ARGUMENT);
@@ -962,8 +1042,14 @@ hailo_status AsyncHwElement::execute_terminate(hailo_status error_status)
 
     m_barrier->terminate();
 
+    // Best effort - if cng is already released - nothing to shut-down
+    auto shutdown_status = HAILO_SUCCESS;
+    auto cng = m_net_group.lock();
+    if (cng) {
+        shutdown_status = cng->shutdown();
+    }
+
     // Checking success of shutdown is best effort (terminate should be called even if shutdown fails)
-    auto shutdown_status = m_net_group->shutdown();
     auto terminate_status = PipelineElement::execute_terminate(error_status);
     CHECK_SUCCESS(shutdown_status);
     CHECK_SUCCESS(terminate_status);

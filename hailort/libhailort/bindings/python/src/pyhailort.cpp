@@ -12,6 +12,7 @@ using namespace std;
 #include "hailo/hailort_defaults.hpp"
 #include "hailo/network_rate_calculator.hpp"
 
+#include "infer_model_api.hpp"
 #include "hef_api.hpp"
 #include "vstream_api.hpp"
 #include "vdevice_api.hpp"
@@ -125,7 +126,7 @@ public:
         return name.value();
     }
 
-    static void add_to_python_module(py::module &m)
+    static void bind(py::module &m)
     {
         py::class_<NetworkRateLimiter>(m, "NetworkRateLimiter")
         .def("set_rate_limit", &NetworkRateLimiter::set_rate_limit)
@@ -249,6 +250,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("HAILO15H", HAILO_ARCH_HAILO15H)
         .value("PLUTO", HAILO_ARCH_PLUTO)
         .value("HAILO15M", HAILO_ARCH_HAILO15M)
+        .value("HAILO10H", HAILO_ARCH_HAILO10H)
     ;
 
     /* TODO: SDK-15648 */
@@ -833,7 +835,29 @@ PYBIND11_MODULE(_pyhailort, m) {
 
     py::class_<VDeviceParamsWrapper>(m, "VDeviceParams")
         .def(py::init<>())
-        // Add device_ids
+        .def_property("device_ids",
+            [](const VDeviceParamsWrapper &params) -> py::list {
+                py::list ids;
+                if (params.orig_params.device_ids != nullptr) {
+                    for (size_t i = 0; i < params.orig_params.device_count; i++) {
+                        ids.append(std::string(params.orig_params.device_ids[i].id));
+                    }
+                }
+                return ids;
+            },
+            [](VDeviceParamsWrapper &params, const py::list &device_ids) {
+                uint32_t count = static_cast<uint32_t>(py::len(device_ids));
+                params.ids.resize(count);
+                for (size_t i = 0; i < count; i++) {
+                    std::string id_str = py::cast<std::string>(device_ids[i]);
+                    auto expected_device_id = HailoRTCommon::to_device_id(id_str);
+                    VALIDATE_EXPECTED(expected_device_id);
+                    params.ids[i] = expected_device_id.release();
+                }
+                params.orig_params.device_ids = params.ids.data();
+                params.orig_params.device_count = count;
+            }
+        )
         .def_property("device_count",
             [](const VDeviceParamsWrapper& params) -> uint32_t {
                 return params.orig_params.device_count;
@@ -848,7 +872,6 @@ PYBIND11_MODULE(_pyhailort, m) {
             },
             [](VDeviceParamsWrapper& params, hailo_scheduling_algorithm_t scheduling_algorithm) {
                 params.orig_params.scheduling_algorithm = scheduling_algorithm;
-                params.orig_params.multi_process_service = (HAILO_SCHEDULING_ALGORITHM_NONE != scheduling_algorithm);
             }
         )
         .def_property("group_id",
@@ -860,15 +883,18 @@ PYBIND11_MODULE(_pyhailort, m) {
                 params.orig_params.group_id = params.group_id_str.c_str();
             }
         )
-        .def_property_readonly("multi_process_service",
+        .def_property("multi_process_service",
             [](const VDeviceParamsWrapper& params) -> bool {
                 return params.orig_params.multi_process_service;
+            },
+            [](VDeviceParamsWrapper& params, bool multi_process_service) {
+                params.orig_params.multi_process_service = multi_process_service;
             }
         )
         .def_static("default", []() {
             auto orig_params = HailoRTDefaults::get_vdevice_params();
             orig_params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_NONE;
-            VDeviceParamsWrapper params_wrapper{orig_params, ""};
+            VDeviceParamsWrapper params_wrapper{orig_params, "", {}};
             return params_wrapper;
         });
         ;
@@ -926,6 +952,14 @@ PYBIND11_MODULE(_pyhailort, m) {
                 return temperature_info;
             }
         ))
+        ;
+
+    py::class_<hailo_cache_info_t>(m, "CacheInfo")
+        .def(py::init<>())
+        .def(py::init<const uint32_t, const uint32_t, const int32_t>())
+        .def_readwrite("cache_size", &hailo_cache_info_t::cache_size)
+        .def_readwrite("current_read_offset", &hailo_cache_info_t::current_read_offset)
+        .def_readwrite("write_offset_delta", &hailo_cache_info_t::write_offset_delta)
         ;
 
     py::class_<hailo_throttling_level_t>(m, "ThrottlingLevel", py::module_local())
@@ -1143,13 +1177,23 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_static("MAX_ALIGNED_UDP_PAYLOAD_SIZE_RTP", []() { return 1472;} )
         ;
 
-    HefWrapper::initialize_python_module(m);
-    VStream_api_initialize_python_module(m);
-    VDevice_api_initialize_python_module(m);
-    NetworkGroup_api_initialize_python_module(m);
-    DeviceWrapper::add_to_python_module(m);
-
-    NetworkRateLimiter::add_to_python_module(m);
+    ActivatedAppContextManagerWrapper::bind(m);
+    AsyncInferJobWrapper::bind(m);
+    ConfiguredInferModelBindingsInferStreamWrapper::bind(m);
+    ConfiguredInferModelBindingsWrapper::bind(m);
+    ConfiguredInferModelWrapper::bind(m);
+    ConfiguredNetworkGroupWrapper::bind(m);
+    DeviceWrapper::bind(m);
+    HefWrapper::bind(m);
+    InferModelInferStreamWrapper::bind(m);
+    InferModelWrapper::bind(m);
+    InferVStreamsWrapper::bind(m);
+    InputVStreamWrapper::bind(m);
+    InputVStreamsWrapper::bind(m);
+    NetworkRateLimiter::bind(m);
+    OutputVStreamWrapper::bind(m);
+    OutputVStreamsWrapper::bind(m);
+    VDeviceWrapper::bind(m);
 
     std::stringstream version;
     version << HAILORT_MAJOR_VERSION << "." << HAILORT_MINOR_VERSION << "." << HAILORT_REVISION_VERSION;

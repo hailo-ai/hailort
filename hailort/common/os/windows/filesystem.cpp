@@ -63,7 +63,7 @@ Filesystem::FindFile::FindFile(FindFile &&other) :
     m_find_data(other.m_find_data)
 {}
 
-Filesystem::FileInfo Filesystem::FindFile::get_cur_file_info()
+Filesystem::FileInfo Filesystem::FindFile::get_cur_file_info() const
 {
     return {m_find_data.cFileName, m_find_data.dwFileAttributes};
 }
@@ -93,18 +93,17 @@ Expected<std::vector<std::string>> Filesystem::get_files_in_dir_flat(const std::
 {
     const std::string dir_path_with_sep = has_suffix(dir_path, SEPARATOR) ? dir_path : dir_path + SEPARATOR;
     
-    auto dir = FindFile::create(dir_path_with_sep);
-    CHECK_EXPECTED(dir);
+    TRY(auto dir, FindFile::create(dir_path_with_sep));
     
     std::vector<std::string> files;
-    auto file_info = dir->get_cur_file_info();
+    auto file_info = dir.get_cur_file_info();
     if (is_regular_or_readonly_file(file_info.attrs)) {
         files.emplace_back(file_info.path);
     }
     
     hailo_status status = HAILO_UNINITIALIZED;
     while (true) {
-        status = dir->next_file();
+        status = dir.next_file();
         if (HAILO_INVALID_OPERATION == status) {
             // We're done
             break;
@@ -115,7 +114,7 @@ Expected<std::vector<std::string>> Filesystem::get_files_in_dir_flat(const std::
             continue;
         }
 
-        file_info = dir->get_cur_file_info();
+        file_info = dir.get_cur_file_info();
         if (is_regular_or_readonly_file(file_info.attrs)) {
             files.emplace_back(dir_path_with_sep + file_info.path);
         }

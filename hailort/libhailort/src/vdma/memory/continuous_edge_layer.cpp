@@ -50,10 +50,12 @@ uint32_t ContinuousEdgeLayer::descs_count() const
 }
 
 Expected<uint32_t> ContinuousEdgeLayer::program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
-    size_t desc_offset)
+    size_t desc_offset, size_t buffer_offset, bool should_bind)
 {
     (void)last_desc_interrupts_domain;
     (void)desc_offset;
+    (void)buffer_offset;
+    (void)should_bind;
 
     // The descriptors in continuous mode are programmed by the hw, nothing to do here.
     return descriptors_in_buffer(transfer_size);

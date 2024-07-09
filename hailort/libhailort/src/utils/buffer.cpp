@@ -78,6 +78,9 @@ Buffer::Buffer(Buffer&& other) :
 
 Expected<Buffer> Buffer::create(size_t size, const BufferStorageParams &params)
 {
+    if (0 == size) {
+        return Buffer();
+    }
     auto storage = BufferStorage::create(size, params);
     CHECK_EXPECTED(storage);
 

@@ -24,6 +24,7 @@ namespace hailort
 
 #define HAILO_CLASS_PATH ("/sys/class/hailo_chardev")
 #define HAILO_BOARD_LOCATION_FILENAME ("board_location")
+#define HAILO_BOARD_ACCELERATOR_TYPE_FILENAME ("accelerator_type")
 
 Expected<FileDescriptor> open_device_file(const std::string &path)
 {
@@ -62,20 +63,77 @@ Expected<std::vector<std::string>> list_devices()
     return devices;
 }
 
+Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_devices()
+{
+    TRY_V(auto devices, list_devices(), "Failed listing pcie devices");
+
+    std::vector<HailoRTDriver::DeviceInfo> devices_info;
+    for (const auto &device_name : devices) {
+        TRY(auto device_info, query_device_info(device_name), "Failed parsing device info for {}", device_name);
+        devices_info.push_back(device_info);
+    }
+
+    return devices_info;
+}
+
+Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_soc_devices()
+{
+    TRY(auto all_devices_info, scan_devices());
+
+    // TODO- HRT-14078: change to be based on different classes
+    std::vector<HailoRTDriver::DeviceInfo> soc_devices_info;
+    for (const auto &device_info : all_devices_info) {
+        if (HailoRTDriver::AcceleratorType::SOC_ACCELERATOR == device_info.accelerator_type) {
+            soc_devices_info.push_back(device_info);
+        }
+    }
+
+    return soc_devices_info;
+}
+
+Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_nnc_devices()
+{
+    TRY(auto all_devices_info, scan_devices());
+
+    // TODO- HRT-14078: change to be based on different classes
+    std::vector<HailoRTDriver::DeviceInfo> nnc_devices_info;
+    for (const auto &device_info : all_devices_info) {
+        if (HailoRTDriver::AcceleratorType::NNC_ACCELERATOR == device_info.accelerator_type) {
+            nnc_devices_info.push_back(device_info);
+        }
+    }
+
+    return nnc_devices_info;
+}
+
+Expected<std::string> get_line_from_file(const std::string &file_path)
+{
+    std::ifstream file(file_path);
+    CHECK_AS_EXPECTED(file.good(), HAILO_DRIVER_FAIL, "Failed open {}", file_path);
+
+    std::string line;
+    std::getline(file, line);
+    CHECK_AS_EXPECTED(file.eof(), HAILO_DRIVER_FAIL, "Failed read {}", file_path);
+
+    return line;
+}
+
 Expected<HailoRTDriver::DeviceInfo> query_device_info(const std::string &device_name)
 {
     const std::string device_id_path = std::string(HAILO_CLASS_PATH) + "/" +
         device_name + "/" + HAILO_BOARD_LOCATION_FILENAME;
-    std::ifstream device_id_file(device_id_path);
-    CHECK_AS_EXPECTED(device_id_file.good(), HAILO_DRIVER_FAIL, "Failed open {}", device_id_path);
+    TRY(auto device_id , get_line_from_file(device_id_path));
 
-    std::string device_id;
-    std::getline(device_id_file, device_id);
-    CHECK_AS_EXPECTED(device_id_file.eof(), HAILO_DRIVER_FAIL, "Failed read {}", device_id_path);
+    const std::string accelerator_type_path = std::string(HAILO_CLASS_PATH) + "/" +
+        device_name + "/" + HAILO_BOARD_ACCELERATOR_TYPE_FILENAME;
+    TRY(auto accelerator_type_s, get_line_from_file(accelerator_type_path));
+
+    int accelerator_type = std::stoi(accelerator_type_s);
 
     HailoRTDriver::DeviceInfo device_info = {};
     device_info.dev_path = std::string("/dev/") + device_name;
     device_info.device_id = device_id;
+    device_info.accelerator_type = static_cast<HailoRTDriver::AcceleratorType>(accelerator_type);
 
     return device_info;
 }

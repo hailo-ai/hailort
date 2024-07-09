@@ -72,8 +72,21 @@ public:
      * @param[in] network_name                A string of the network name (optional).
      * @return Upon success, returns Expected of a shared pointer of infer model.
      *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note the Hef file must be maintained until the completion of the configuration phase.
      */
     virtual Expected<std::shared_ptr<InferModel>> create_infer_model(const std::string &hef_path,
+        const std::string &network_name = "");
+
+    /**
+     * Creates the infer model from an hef buffer
+     *
+     * @param[in] hef_buffer                  A pointer to a buffer containing the hef file.
+     * @param[in] network_name                A string of the network name (optional).
+     * @return Upon success, returns Expected of a shared pointer of infer model.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note the Hef buffer must be maintained until the completion of the configuration phase.
+     */
+    virtual Expected<std::shared_ptr<InferModel>> create_infer_model(const MemoryView hef_buffer,
         const std::string &network_name = "");
 
     /**
@@ -158,6 +171,42 @@ public:
      */
     virtual hailo_status dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction) = 0;
 
+    /**
+     * Maps the dmabuf represented by the file descriptor @a dmabuf_fd for DMA transfers to/from this vdevice, in the specified
+     * @a data_direction.
+     * DMA mapping of buffers in advance may improve the performance of async API. This improvement will become
+     * apparent when the buffer is reused multiple times across different async operations.
+     *
+     * For high level API (aka InferModel), buffers bound using ConfiguredInferModel::Bindings::InferStream::set_buffer
+     * can be mapped.
+     *
+     * For low level API (aka InputStream/OutputStream), buffers passed to InputStream::write_async and
+     * OutputStream::read_async can be mapped.
+     *
+     * @param[in] dmabuf_fd     The file descriptor of the dmabuf to be mapped.
+     * @param[in] size          The buffer's size in bytes.
+     * @param[in] direction     The direction of the mapping. For input streams, use `HAILO_DMA_BUFFER_DIRECTION_H2D`
+     *                          and for output streams, use `HAILO_DMA_BUFFER_DIRECTION_D2H`.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     *
+     * @note The DMA mapping will be released upon calling dma_unmap_dmabuf() with @a dmabuf_fd, @a size and @a data_direction, or
+     *       when the @a VDevice object is destroyed.
+     */
+    virtual hailo_status dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) = 0;
+
+    /**
+     * Un-maps a dmabuf buffer represented by the file descriptor @a dmabuf_fd for DMA transfers to/from this vdevice, in the direction
+     * @a direction.
+     *
+     * @param[in] dmabuf_fd     The file descriptor of the dmabuf to be un-mapped.
+     * @param[in] size          The buffer's size in bytes.
+     * @param[in] direction     The direction of the mapping.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     */
+    virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) = 0;
+
     virtual hailo_status before_fork();
     virtual hailo_status after_fork_in_parent();
     virtual hailo_status after_fork_in_child();
@@ -169,6 +218,7 @@ public:
     VDevice &operator=(VDevice &&other) = delete;
 
     static bool service_over_ip_mode();
+    static bool force_hrpc_client();
 
 protected:
     VDevice() = default;

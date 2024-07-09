@@ -1,0 +1,207 @@
+syntax = "proto3";
+
+option optimize_for = LITE_RUNTIME;
+
+message RpcRequest {
+    oneof request {
+        VDevice_Create_Request create_vdevice_request = 1;
+        VDevice_Destroy_Request destroy_vdevice_request = 2;
+        VDevice_CreateInferModel_Request create_infer_model_request = 3;
+
+        InferModel_Destroy_Request destroy_infer_model_request = 4;
+        InferModel_CreateConfiguredInferModel_Request create_configured_infer_model_request = 5;
+
+        ConfiguredInferModel_Destroy_Request destroy_configured_infer_model_request = 6;
+        ConfiguredInferModel_SetSchedulerTimeout_Request set_scheduler_timeout_request = 7;
+        ConfiguredInferModel_SetSchedulerThreshold_Request set_scheduler_threshold_request = 8;
+        ConfiguredInferModel_SetSchedulerPriority_Request set_scheduler_priority_request = 9;
+        ConfiguredInferModel_GetHwLatencyMeasurement_Request get_hw_latency_measurement_request = 10;
+        ConfiguredInferModel_Activate_Request activate_request = 11;
+        ConfiguredInferModel_Deactivate_Request deactivate_request = 12;
+        ConfiguredInferModel_Shutdown_Request shutdown_request = 13;
+        ConfiguredInferModel_AsyncInfer_Request async_infer_request = 14;
+    }
+}
+
+message RpcReply {
+    oneof reply {
+        VDevice_Create_Reply create_vdevice_reply = 1;
+        VDevice_Destroy_Reply destroy_vdevice_reply = 2;
+        VDevice_CreateInferModel_Reply create_infer_model_reply = 3;
+
+        InferModel_Destroy_Reply destroy_infer_model_reply = 4;
+        InferModel_CreateConfiguredInferModel_Reply create_configured_infer_model_reply = 5;
+
+        ConfiguredInferModel_Destroy_Reply destroy_configured_infer_model_reply = 6;
+        ConfiguredInferModel_SetSchedulerTimeout_Reply set_scheduler_timeout_reply = 7;
+        ConfiguredInferModel_SetSchedulerThreshold_Reply set_scheduler_threshold_reply = 8;
+        ConfiguredInferModel_SetSchedulerPriority_Reply set_scheduler_priority_reply = 9;
+        ConfiguredInferModel_GetHwLatencyMeasurement_Reply get_hw_latency_measurement_reply = 10;
+        ConfiguredInferModel_Activate_Reply activate_reply = 11;
+        ConfiguredInferModel_Deactivate_Reply deactivate_reply = 12;
+        ConfiguredInferModel_Shutdown_Reply shutdown_reply = 13;
+        ConfiguredInferModel_AsyncInfer_Reply async_infer_reply = 14;
+
+        CallbackCalled_Reply callback_called_reply = 15;
+    }
+}
+
+message HailoObjectHandle {
+    uint32 id = 1;
+}
+
+message HailoCallbackHandle {
+    uint32 id = 1;
+}
+
+message VDeviceParamsProto {
+    uint32 scheduling_algorithm = 1;
+    string group_id = 2;
+}
+
+message VDevice_Create_Request {
+    VDeviceParamsProto params = 1;
+}
+
+message VDevice_Create_Reply {
+    uint32 status = 1;
+    HailoObjectHandle vdevice_handle = 2;
+}
+
+message VDevice_Destroy_Request {
+    HailoObjectHandle vdevice_handle = 1;
+}
+
+message VDevice_Destroy_Reply {
+    uint32 status = 1;
+}
+
+message VDevice_CreateInferModel_Request {
+    HailoObjectHandle vdevice_handle = 1;
+    uint64 hef_size = 2;
+    // Protocol note: After this message, server expects to get HEF data (buffer of size 'hef_size')
+}
+
+message VDevice_CreateInferModel_Reply {
+    uint32 status = 1;
+    HailoObjectHandle infer_model_handle = 2;
+}
+
+message InferModel_Destroy_Request {
+    HailoObjectHandle infer_model_handle = 1;
+}
+
+message InferModel_Destroy_Reply {
+    uint32 status = 1;
+}
+
+message InferStreamParamsProto {
+    string name = 1;
+    uint32 format_order = 2;
+    uint32 format_type = 3;
+    float nms_score_threshold = 4;
+    float nms_iou_threshold = 5;
+    uint32 nms_max_proposals_per_class = 6;
+    uint32 nms_max_accumulated_mask_size = 7;
+};
+
+message InferModel_CreateConfiguredInferModel_Request {
+    HailoObjectHandle infer_model_handle = 1;
+    HailoObjectHandle vdevice_handle = 2;
+    repeated InferStreamParamsProto input_infer_streams  = 3;
+    repeated InferStreamParamsProto output_infer_streams  = 4;
+    uint32 batch_size = 5;
+    uint32 power_mode = 6;
+    uint32 latency_flag = 7;
+}
+
+message InferModel_CreateConfiguredInferModel_Reply {
+    uint32 status = 1;
+    HailoObjectHandle configured_infer_model_handle = 2;
+    uint32 async_queue_size = 3;
+}
+
+message ConfiguredInferModel_Destroy_Request {
+    HailoObjectHandle configured_infer_model_handle = 1;
+}
+
+message ConfiguredInferModel_Destroy_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredInferModel_SetSchedulerTimeout_Request {
+    HailoObjectHandle configured_infer_model_handle = 1;
+    uint32 timeout = 2;
+}
+
+message ConfiguredInferModel_SetSchedulerTimeout_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredInferModel_SetSchedulerThreshold_Request {
+    HailoObjectHandle configured_infer_model_handle = 1;
+    uint32 threshold = 2;
+}
+
+message ConfiguredInferModel_SetSchedulerThreshold_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredInferModel_SetSchedulerPriority_Request {
+    HailoObjectHandle configured_infer_model_handle = 1;
+    uint32 priority = 2;
+}
+
+message ConfiguredInferModel_SetSchedulerPriority_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredInferModel_GetHwLatencyMeasurement_Request {
+    HailoObjectHandle configured_infer_model_handle = 1;
+}
+
+message ConfiguredInferModel_GetHwLatencyMeasurement_Reply {
+    uint32 status = 1;
+    uint32 avg_hw_latency = 2;
+}
+
+message ConfiguredInferModel_Activate_Request {
+    HailoObjectHandle configured_infer_model_handle = 1;
+}
+
+message ConfiguredInferModel_Activate_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredInferModel_Deactivate_Request {
+    HailoObjectHandle configured_infer_model_handle = 1;
+}
+
+message ConfiguredInferModel_Deactivate_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredInferModel_Shutdown_Request {
+    HailoObjectHandle configured_infer_model_handle = 1;
+}
+
+message ConfiguredInferModel_Shutdown_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredInferModel_AsyncInfer_Request {
+    HailoObjectHandle configured_infer_model_handle = 1;
+    HailoObjectHandle infer_model_handle = 2;
+    HailoCallbackHandle callback_handle = 3;
+    // Protocol note: After this messgae, server expects to get the input buffers, one after the other, in order
+}
+
+message ConfiguredInferModel_AsyncInfer_Reply {
+    uint32 status = 1;
+}
+
+message CallbackCalled_Reply {
+    uint32 status = 1;
+    HailoCallbackHandle callback_handle = 2;
+    // Protocol note: After this messgae, and only if status is HAILO_SUCCESS, server expects to get the output buffers, one after the other, in order
+}

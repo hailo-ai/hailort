@@ -63,7 +63,7 @@ uint32_t HailoRTCommon::get_nms_host_frame_size(const hailo_nms_shape_t &nms_sha
     }
 }
 
-Expected<hailo_pix_buffer_t> HailoRTCommon::as_hailo_pix_buffer(MemoryView &memory_view, hailo_format_order_t order)
+Expected<hailo_pix_buffer_t> HailoRTCommon::as_hailo_pix_buffer(MemoryView memory_view, hailo_format_order_t order)
 {
     switch(order){
     case HAILO_FORMAT_ORDER_NV12:
@@ -105,6 +105,32 @@ Expected<hailo_pix_buffer_t> HailoRTCommon::as_hailo_pix_buffer(MemoryView &memo
         hailo_pix_buffer_t buffer{0, {plane}, 1, HAILO_PIX_BUFFER_MEMORY_TYPE_USERPTR};
         return buffer;
     }
+    }
+}
+
+bool HailoRTCommon::is_power_measurement_supported(const hailo_device_architecture_t &hw_arch)
+{
+    switch(hw_arch) {
+    case HAILO_ARCH_HAILO8:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool HailoRTCommon::is_current_measurement_supported(const hailo_device_architecture_t &hw_arch)
+{
+    return is_power_measurement_supported(hw_arch);
+}
+
+bool HailoRTCommon::is_temp_measurement_supported(const hailo_device_architecture_t &hw_arch)
+{
+    switch(hw_arch) {
+    case HAILO_ARCH_HAILO8:
+    case HAILO_ARCH_HAILO8L:
+        return true;
+    default:
+        return false;
     }
 }
 

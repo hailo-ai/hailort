@@ -24,10 +24,8 @@ ParseHefCommand::ParseHefCommand(CLI::App &parent_app) :
 
 hailo_status ParseHefCommand::execute()
 {
-    auto is_dir = Filesystem::is_directory(m_hef_path.c_str());
-    CHECK_EXPECTED_AS_STATUS(is_dir, "Failed checking if path is directory");
-
-    if (is_dir.value()){
+    TRY(const auto is_dir, Filesystem::is_directory(m_hef_path.c_str()), "Failed checking if path is directory");
+    if (is_dir) {
         return ParseHefCommand::parse_hefs_infos_dir(m_hef_path, m_parse_streams, m_parse_vstreams);
     } else {
         return ParseHefCommand::parse_hefs_info(m_hef_path, m_parse_streams, m_parse_vstreams);
@@ -36,13 +34,9 @@ hailo_status ParseHefCommand::execute()
 
 hailo_status ParseHefCommand::parse_hefs_info(const std::string &hef_path, bool stream_infos, bool vstream_infos)
 {
-    auto hef_exp = Hef::create(hef_path);
-    CHECK_EXPECTED_AS_STATUS(hef_exp, "Failed to parse HEF");
-    auto hef = hef_exp.release();
-
-    auto hef_info = hef.get_description(stream_infos, vstream_infos);
-    CHECK_EXPECTED_AS_STATUS(hef_info, "Failed to parse HEF");
-    std::cout << hef_info.release();
+    TRY(const auto hef, Hef::create(hef_path));
+    TRY(const auto hef_info, hef.get_description(stream_infos, vstream_infos));
+    std::cout << hef_info;
     return HAILO_SUCCESS;
 }
 
@@ -50,10 +44,9 @@ hailo_status ParseHefCommand::parse_hefs_infos_dir(const std::string &hef_path, 
 {
     bool contains_hef = false;
     std::string hef_dir = hef_path;
-    const auto files = Filesystem::get_files_in_dir_flat(hef_dir);
-    CHECK_EXPECTED_AS_STATUS(files);
+    TRY(const auto files, Filesystem::get_files_in_dir_flat(hef_dir));
 
-    for (const auto &full_path : files.value()) {
+    for (const auto &full_path : files) {
         if (Filesystem::has_suffix(full_path, ".hef")) {
             contains_hef = true;
             std::cout << std::string(80, '*') << std::endl << "Parsing " << full_path << ":"<< std::endl;

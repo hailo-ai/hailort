@@ -57,14 +57,13 @@ hailo_status EthernetDevice::wait_for_wakeup()
     CONTROL_PROTOCOL__payload_t *payload = NULL;
     
     /* Create udp socket */
-    auto udp = Udp::create(m_device_info.device_address.sin_addr, m_device_info.device_address.sin_port,
-                       m_device_info.host_address.sin_addr, m_device_info.host_address.sin_port);
-    CHECK_EXPECTED_AS_STATUS(udp);
+    TRY(auto udp, Udp::create(m_device_info.device_address.sin_addr, m_device_info.device_address.sin_port,
+            m_device_info.host_address.sin_addr, m_device_info.host_address.sin_port));
 
-    status = udp->set_timeout(std::chrono::milliseconds(WAIT_FOR_DEVICE_WAKEUP_TIMEOUT));
+    status = udp.set_timeout(std::chrono::milliseconds(WAIT_FOR_DEVICE_WAKEUP_TIMEOUT));
     CHECK_SUCCESS(status);
 
-    status = udp->set_max_number_of_attempts(WAIT_FOR_DEVICE_WAKEUP_MAX_ATTEMPTS);
+    status = udp.set_max_number_of_attempts(WAIT_FOR_DEVICE_WAKEUP_MAX_ATTEMPTS);
     CHECK_SUCCESS(status);
 
     /* Create and send identify-control until it runs successfully */
@@ -72,7 +71,7 @@ hailo_status EthernetDevice::wait_for_wakeup()
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
     
-    status = udp->fw_interact((uint8_t*)(&request), request_size, (uint8_t*)&response_buffer, &response_size,
+    status = udp.fw_interact((uint8_t*)(&request), request_size, (uint8_t*)&response_buffer, &response_size,
         m_control_sequence);
 
     // Always increment sequence
@@ -89,17 +88,13 @@ Expected<std::unique_ptr<EthernetDevice>> EthernetDevice::create(const hailo_eth
     hailo_status status = HAILO_UNINITIALIZED;
 
     // Creates control socket
-    auto udp = Udp::create(device_info.device_address.sin_addr, device_info.device_address.sin_port,
-                       device_info.host_address.sin_addr, device_info.host_address.sin_port);
-    CHECK_EXPECTED(udp, "Failed to init control socket.");
+    TRY(auto udp, Udp::create(device_info.device_address.sin_addr, device_info.device_address.sin_port,
+        device_info.host_address.sin_addr, device_info.host_address.sin_port), "Failed to init control socket.");
 
-    auto device = std::unique_ptr<EthernetDevice>(new (std::nothrow) EthernetDevice(device_info, udp.release(), status));
+    auto device = std::unique_ptr<EthernetDevice>(new (std::nothrow) EthernetDevice(device_info, std::move(udp), status));
     CHECK_AS_EXPECTED((nullptr != device), HAILO_OUT_OF_HOST_MEMORY);
 
-    if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("Failed creating EthernetDevice");
-        return make_unexpected(status);
-    }
+    CHECK_SUCCESS_AS_EXPECTED(status, "Failed creating EthernetDevice");
 
     return device;
 }
@@ -107,9 +102,9 @@ Expected<std::unique_ptr<EthernetDevice>> EthernetDevice::create(const hailo_eth
 Expected<std::unique_ptr<EthernetDevice>> EthernetDevice::create(const std::string &ip_addr)
 {
     const bool LOG_ON_FAILURE = true;
-    auto device_info = parse_eth_device_info(ip_addr, LOG_ON_FAILURE);
-    CHECK_EXPECTED(device_info, "Failed to parse ip address {}", ip_addr);
-    return create(device_info.release());
+    TRY(const auto device_info, parse_eth_device_info(ip_addr, LOG_ON_FAILURE),
+        "Failed to parse ip address {}", ip_addr);
+    return create(device_info);
 }
 
 EthernetDevice::EthernetDevice(const hailo_eth_device_info_t &device_info, Udp &&control_udp, hailo_status &status) :
@@ -215,10 +210,8 @@ Expected<std::vector<hailo_eth_device_info_t>> EthernetDevice::scan(const std::s
     std::chrono::milliseconds timeout)
 {
     // Convert interface name to IP address
-    auto interface_ip_address = EthernetUtils::get_ip_from_interface(interface_name);
-    CHECK_EXPECTED(interface_ip_address);
-
-    return scan_by_host_address(*interface_ip_address, timeout);
+    TRY(const auto interface_ip_address, EthernetUtils::get_ip_from_interface(interface_name));
+    return scan_by_host_address(interface_ip_address, timeout);
 }
 
 hailo_status get_udp_broadcast_params(const char *host_address, struct in_addr &interface_ip_address,
@@ -249,9 +242,8 @@ Expected<std::vector<hailo_eth_device_info_t>> EthernetDevice::scan_by_host_addr
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     /* Create broadcast udp object */
-    auto udp_broadcast = Udp::create(broadcast_ip_address, HAILO_DEFAULT_ETH_CONTROL_PORT, interface_ip_address, 0);
-    CHECK_EXPECTED(udp_broadcast);
-    status = udp_broadcast->set_timeout(timeout);
+    TRY(auto udp_broadcast, Udp::create(broadcast_ip_address, HAILO_DEFAULT_ETH_CONTROL_PORT, interface_ip_address, 0));
+    status = udp_broadcast.set_timeout(timeout);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     /* Build identify request */
@@ -260,11 +252,11 @@ Expected<std::vector<hailo_eth_device_info_t>> EthernetDevice::scan_by_host_addr
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     /* Send broadcast identify request */
-    status = udp_broadcast->send((uint8_t *)&request, &request_size, false, MAX_UDP_PAYLOAD_SIZE);
+    status = udp_broadcast.send((uint8_t *)&request, &request_size, false, MAX_UDP_PAYLOAD_SIZE);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     /* Receive all responses */
-    return eth_device__receive_responses(*udp_broadcast);
+    return eth_device__receive_responses(udp_broadcast);
 }
 
 Expected<hailo_eth_device_info_t> EthernetDevice::parse_eth_device_info(const std::string &ip_addr,
@@ -398,17 +390,14 @@ Expected<ConfiguredNetworkGroupVector> EthernetDevice::add_hef(Hef &hef, const N
     auto status = Control::reset_context_switch_state_machine(*this);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
-    auto added_network_groups = create_networks_group_vector(hef, configure_params);
-    CHECK_EXPECTED(added_network_groups);
+    TRY(auto added_network_groups, create_networks_group_vector(hef, configure_params));
 
     return added_network_groups;
 }
 
 Expected<ConfiguredNetworkGroupVector> EthernetDevice::create_networks_group_vector(Hef &hef, const NetworkGroupsParamsMap &configure_params)
 {
-    auto partial_clusters_layout_bitmap_exp = Control::get_partial_clusters_layout_bitmap(*this);
-    CHECK_EXPECTED(partial_clusters_layout_bitmap_exp);
-    auto partial_clusters_layout_bitmap = partial_clusters_layout_bitmap_exp.release();
+    TRY(auto partial_clusters_layout_bitmap, Control::get_partial_clusters_layout_bitmap(*this));
 
     auto &hef_network_groups = hef.pimpl->network_groups();
     auto configure_params_copy = configure_params;
@@ -426,27 +415,22 @@ Expected<ConfiguredNetworkGroupVector> EthernetDevice::create_networks_group_vec
             config_params = configure_params_copy.at(network_group_name);
             configure_params_copy.erase(network_group_name);
         } else if (configure_params.empty()) {
-            auto config_params_exp = create_configure_params(hef, network_group_name);
-            CHECK_EXPECTED(config_params_exp);
-            config_params = config_params_exp.release();
+            TRY(config_params, create_configure_params(hef, network_group_name));
         } else {
             continue;
         }
 
-        auto net_group_config = create_core_op_metadata(hef, network_group_name, partial_clusters_layout_bitmap);
-        CHECK_EXPECTED(net_group_config);
+        TRY(auto net_group_config, create_core_op_metadata(hef, network_group_name, partial_clusters_layout_bitmap));
 
         // TODO: move to func, support multiple core ops
         std::vector<std::shared_ptr<CoreOp>> core_ops_ptrs;
 
-        auto core_op_metadata = hef.pimpl->get_core_op_metadata(network_group_name);
-        CHECK_EXPECTED(core_op_metadata);
-        auto core_op_metadata_ptr = core_op_metadata.release();
+        TRY(auto core_op_metadata_ptr, hef.pimpl->get_core_op_metadata(network_group_name));
 
         auto metadata = hef.pimpl->network_group_metadata(core_op_metadata_ptr->core_op_name());
 
         auto status = HAILO_UNINITIALIZED;
-        auto single_context_app = HcpConfigCoreOp(*this, m_active_core_op_holder, net_group_config.release(),
+        auto single_context_app = HcpConfigCoreOp(*this, m_active_core_op_holder, std::move(net_group_config),
             config_params, core_op_metadata_ptr, status);
         CHECK_SUCCESS_AS_EXPECTED(status);
 
@@ -463,9 +447,8 @@ Expected<ConfiguredNetworkGroupVector> EthernetDevice::create_networks_group_vec
         m_core_ops.push_back(core_op_ptr);
         core_ops_ptrs.push_back(core_op_ptr);
         
-        auto net_group_expected = ConfiguredNetworkGroupBase::create(config_params, std::move(core_ops_ptrs), std::move(metadata));
-        CHECK_EXPECTED(net_group_expected);
-        auto net_group_ptr = net_group_expected.release();
+        TRY(auto net_group_ptr, ConfiguredNetworkGroupBase::create(config_params,
+            std::move(core_ops_ptrs), std::move(metadata)));
 
         added_network_groups.emplace_back(net_group_ptr);
         m_network_groups.push_back(net_group_ptr);
@@ -484,19 +467,15 @@ Expected<ConfiguredNetworkGroupVector> EthernetDevice::create_networks_group_vec
 
 Expected<std::vector<WriteMemoryInfo>> EthernetDevice::create_core_op_metadata(Hef &hef, const std::string &core_op_name, uint32_t partial_clusters_layout_bitmap)
 {
-    auto device_arch_exp = get_architecture();
-    CHECK_EXPECTED(device_arch_exp);
-    auto device_arch = device_arch_exp.release();
+    TRY(const auto device_arch, get_architecture());
     auto hef_arch = hef.pimpl->get_device_arch();
 
     auto &hef_core_ops = hef.pimpl->core_ops(core_op_name);
     assert(1 == hef_core_ops.size());
     const auto &core_op = hef_core_ops[0];
 
-    auto expected_partial_core_op = Hef::Impl::get_core_op_per_arch(core_op, hef_arch, device_arch,
-        partial_clusters_layout_bitmap);
-    CHECK_EXPECTED(expected_partial_core_op);
-    auto partial_core_op = expected_partial_core_op.release();
+    TRY(auto partial_core_op, Hef::Impl::get_core_op_per_arch(core_op, hef_arch, device_arch,
+        partial_clusters_layout_bitmap));
 
     // TODO: decide about core_op names - align with the Compiler
 
@@ -512,8 +491,7 @@ Expected<std::vector<WriteMemoryInfo>> EthernetDevice::create_core_op_metadata(H
 
     /* Update preliminary_config and dynamic_contexts recepies */
     auto &proto_preliminary_config = partial_core_op->preliminary_config;
-    auto core_op_config = Hef::Impl::create_single_context_core_op_config(proto_preliminary_config);
-    CHECK_EXPECTED(core_op_config);
+    TRY(auto core_op_config, Hef::Impl::create_single_context_core_op_config(proto_preliminary_config));
 
     return core_op_config;
 }

@@ -17,13 +17,22 @@ namespace hailort
 TransferBuffer::TransferBuffer() :
     m_base_buffer(MemoryView{}),
     m_size(0),
-    m_offset(0)
+    m_offset(0),
+    m_type(TransferBufferType::MEMORYVIEW)
+{}
+
+TransferBuffer::TransferBuffer(hailo_dma_buffer_t dmabuf) :
+    m_dmabuf(dmabuf),
+    m_size(dmabuf.size),
+    m_offset(0),
+    m_type(TransferBufferType::DMABUF)
 {}
 
 TransferBuffer::TransferBuffer(MemoryView base_buffer, size_t size, size_t offset) :
     m_base_buffer(base_buffer),
     m_size(size),
-    m_offset(offset)
+    m_offset(offset),
+    m_type(TransferBufferType::MEMORYVIEW)
 {
     assert(m_size <= base_buffer.size());
     assert(m_offset < base_buffer.size());
@@ -33,32 +42,50 @@ TransferBuffer::TransferBuffer(MemoryView base_buffer)
     : TransferBuffer(base_buffer, base_buffer.size(), 0)
 {}
 
+Expected<MemoryView> TransferBuffer::base_buffer()
+{
+    CHECK(TransferBufferType::DMABUF != m_type, HAILO_INTERNAL_FAILURE,
+        "base_buffer is not supported for DMABUF type TransferBuffer");
+
+    return Expected<MemoryView>(m_base_buffer);
+}
+
 Expected<vdma::MappedBufferPtr> TransferBuffer::map_buffer(HailoRTDriver &driver, HailoRTDriver::DmaDirection direction)
 {
     CHECK_AS_EXPECTED(!m_mappings, HAILO_INTERNAL_FAILURE, "Buffer is already mapped");
+    if (TransferBufferType::DMABUF == m_type) {
+        auto mapped_buffer = vdma::MappedBuffer::create_shared_from_dmabuf(m_dmabuf.fd, m_dmabuf.size, driver, direction);
+        CHECK_EXPECTED(mapped_buffer);
 
-    vdma::DmaAbleBufferPtr dma_able_buffer;
-    const auto storage_key = std::make_pair(m_base_buffer.data(), m_base_buffer.size());
-    if (auto storage = BufferStorageResourceManager::get_resource(storage_key)) {
-        auto dma_able_buffer_exp = storage->get()->get_dma_able_buffer();
-        CHECK_EXPECTED(dma_able_buffer_exp);
-        dma_able_buffer = dma_able_buffer_exp.release();
+        m_mappings = mapped_buffer.value();
+        return mapped_buffer;
     } else {
-        auto dma_able_buffer_exp = vdma::DmaAbleBuffer::create_from_user_address(m_base_buffer.data(), m_base_buffer.size());
-        CHECK_EXPECTED(dma_able_buffer_exp);
-        dma_able_buffer = dma_able_buffer_exp.release();
+
+        vdma::DmaAbleBufferPtr dma_able_buffer;
+        const auto storage_key = std::make_pair(m_base_buffer.data(), m_base_buffer.size());
+        if (auto storage = BufferStorageResourceManager::get_resource(storage_key)) {
+            auto dma_able_buffer_exp = storage->get()->get_dma_able_buffer();
+            CHECK_EXPECTED(dma_able_buffer_exp);
+            dma_able_buffer = dma_able_buffer_exp.release();
+        } else {
+            auto dma_able_buffer_exp = vdma::DmaAbleBuffer::create_from_user_address(m_base_buffer.data(), m_base_buffer.size());
+            CHECK_EXPECTED(dma_able_buffer_exp);
+            dma_able_buffer = dma_able_buffer_exp.release();
+        }
+
+        auto mapped_buffer = vdma::MappedBuffer::create_shared(std::move(dma_able_buffer), driver, direction);
+        CHECK_EXPECTED(mapped_buffer);
+
+        m_mappings = mapped_buffer.value();
+        return mapped_buffer;
     }
-
-    auto mapped_buffer = vdma::MappedBuffer::create_shared(std::move(dma_able_buffer), driver, direction);
-    CHECK_EXPECTED(mapped_buffer);
-
-    m_mappings = mapped_buffer.value();
-    return mapped_buffer;
 }
 
 hailo_status TransferBuffer::copy_to(MemoryView buffer)
 {
     CHECK(buffer.size() == m_size, HAILO_INTERNAL_FAILURE, "buffer size {} must be {}", buffer.size(), m_size);
+    CHECK(TransferBufferType::MEMORYVIEW == m_type, HAILO_INTERNAL_FAILURE,
+        "copy_to function is only supported in MEMORYVIEW type TransferBuffer");
 
     auto continuous_parts = get_continuous_parts();
     memcpy(buffer.data(), continuous_parts.first.data(), continuous_parts.first.size());
@@ -72,6 +99,8 @@ hailo_status TransferBuffer::copy_to(MemoryView buffer)
 hailo_status TransferBuffer::copy_from(const MemoryView buffer)
 {
     CHECK(buffer.size() == m_size, HAILO_INTERNAL_FAILURE, "buffer size {} must be {}", buffer.size(), m_size);
+    CHECK(TransferBufferType::MEMORYVIEW == m_type, HAILO_INTERNAL_FAILURE,
+        "copy_from function is only supported in MEMORYVIEW type TransferBuffer");
 
     auto continuous_parts = get_continuous_parts();
     memcpy(continuous_parts.first.data(), buffer.data(), continuous_parts.first.size());

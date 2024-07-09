@@ -34,8 +34,21 @@ struct SupportedFeatures {
     bool batch_register_config = false;
 };
 
+struct ConfigBufferInfo {
+    /**
+     * Sizes of all the successive ccw's (ccw burst).
+     * When working with descriptors list, each burst is programed independently to its descriptors.
+     */
+    std::vector<uint32_t> bursts_sizes;
+    /**
+     * Default offset = 0. In case of continuous pre-allocated buffer,
+     * we use this var to get the config buffer offset from the beginning of the hef user address.
+     */
+    uint64_t offset_from_hef_base = 0;
+};
+
 // For each config_stream_index we store vector of all ccw write length. The vector is used to build the config buffer.g
-using ConfigBufferInfoMap = std::unordered_map<uint8_t, std::vector<uint32_t>>;
+using ConfigBufferInfoMap = std::unordered_map<uint8_t, ConfigBufferInfo>;
 
 
 class ContextMetadata final {
@@ -52,6 +65,7 @@ public:
     void add_boundary_layer(const LayerInfo &layer_info);
     void add_inter_context_layer(const LayerInfo &layer_info);
     void add_ddr_layer(const LayerInfo &layer_info);
+    void add_cache_layer(const LayerInfo &layer_info);
 
     const std::vector<LayerInfo> &get_boundary_input_layers() const;
     const std::vector<LayerInfo> &get_boundary_output_layers() const;
@@ -59,6 +73,8 @@ public:
     const std::vector<LayerInfo> &get_inter_context_output_layers() const;
     const std::vector<LayerInfo> &get_ddr_input_layers() const;
     const std::vector<LayerInfo> &get_ddr_output_layers() const;
+    const std::vector<LayerInfo> &get_cache_input_layers() const;
+    const std::vector<LayerInfo> &get_cache_output_layers() const;
 
     Expected<size_t> get_layers_transfer_size(const std::vector<LayerInfo> &layer_infos) const;
     Expected<size_t> get_context_transfer_size() const;
@@ -75,6 +91,8 @@ private:
     std::vector<LayerInfo> m_inter_context_output_layers;
     std::vector<LayerInfo> m_ddr_input_layers;
     std::vector<LayerInfo> m_ddr_output_layers;
+    std::vector<LayerInfo> m_cache_input_layers;
+    std::vector<LayerInfo> m_cache_output_layers;
 };
 
 struct ConfigChannelInfo {
@@ -98,6 +116,7 @@ public:
     Expected<std::vector<LayerInfo>> get_input_layer_infos(const std::string &network_name) const;
     Expected<std::vector<LayerInfo>> get_output_layer_infos(const std::string &network_name) const;
     Expected<std::vector<LayerInfo>> get_all_layer_infos(const std::string &network_name) const;
+    size_t get_cache_layers_count() const;
 
     const ContextMetadata &preliminary_context() const;
     const std::vector<ContextMetadata> &dynamic_contexts() const;

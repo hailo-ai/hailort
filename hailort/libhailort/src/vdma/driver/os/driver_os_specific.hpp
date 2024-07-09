@@ -22,8 +22,9 @@ namespace hailort
 {
 
 Expected<FileDescriptor> open_device_file(const std::string &path);
-Expected<std::vector<std::string>> list_devices();
 Expected<HailoRTDriver::DeviceInfo> query_device_info(const std::string &device_name);
+Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_nnc_devices();
+Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_soc_devices();
 
 #ifndef _WIN32
 

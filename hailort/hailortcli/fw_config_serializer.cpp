@@ -110,18 +110,17 @@ hailo_status FwConfigJsonSerializer::dump_config(const ordered_json &config_json
 hailo_status FwConfigJsonSerializer::deserialize_config(const USER_CONFIG_header_t &user_config_header, size_t config_size, const std::string &file_path)
 {
     try {
-        auto categories = get_deserialize_vector();
-        CHECK_EXPECTED_AS_STATUS(categories); 
+        TRY(const auto categories, get_deserialize_vector());
 
         ordered_json config_json;
         size_t current_deserialized_data_size = 0;
         uintptr_t current_entry_offset = (uintptr_t)(&(user_config_header.entries));
         for (size_t i = 0; i < user_config_header.entry_count; i++) {
             USER_CONFIG_ENTRY_t *config_entry = reinterpret_cast<USER_CONFIG_ENTRY_t*>(current_entry_offset);
-            CHECK(config_entry->category < categories->size(), HAILO_INTERNAL_FAILURE,
-                "Category id is out of bounds. Category id = {}, Max category id = {}", config_entry->category, (categories->size()-1));
+            CHECK(config_entry->category < categories.size(), HAILO_INTERNAL_FAILURE,
+                "Category id is out of bounds. Category id = {}, Max category id = {}", config_entry->category, (categories.size()-1));
             
-            auto category = categories.value()[config_entry->category];
+            auto category = categories[config_entry->category];
             CHECK(config_entry->entry_id < category.size(), HAILO_INTERNAL_FAILURE,
                 "Entry id is out of bounds. Entry id = {}, Max entry id = {}", config_entry->entry_id, (category.size() - 1));
 
@@ -156,74 +155,51 @@ hailo_status FwConfigJsonSerializer::deserialize_entry(ordered_json &config_json
         entry_definition["size"].get<uint32_t>();
 
     if (deserialize_as == "str") {
-        auto str_val = deserialize_str(entry_value, size);
-        CHECK_EXPECTED_AS_STATUS(str_val);
-        config_json[category_name][entry_name] = str_val.value();
+        TRY(config_json[category_name][entry_name], deserialize_str(entry_value, size));
     }
     else if (deserialize_as == "bool") {
-        auto bool_val = deserialize_bool(entry_value, size);
-        CHECK_EXPECTED_AS_STATUS(bool_val);
-        config_json[category_name][entry_name] = bool_val.value();
+        TRY(config_json[category_name][entry_name], deserialize_bool(entry_value, size));
     }
     else if (deserialize_as == "int") {
-        auto int_val = deserialize_int(entry_value, size);
-        CHECK_EXPECTED_AS_STATUS(int_val);
-        config_json[category_name][entry_name] = int_val.value();
+        TRY(config_json[category_name][entry_name], deserialize_int(entry_value, size));
     }
     else if (deserialize_as == "i2c_speed") {
-        auto i2c_speed_val = deserialize_i2c_speed(entry_value, size);
-        CHECK_EXPECTED_AS_STATUS(i2c_speed_val);
-        config_json[category_name][entry_name]["value"] = i2c_speed_val.value();
+        TRY(config_json[category_name][entry_name]["value"], deserialize_i2c_speed(entry_value, size));
     }
     else if (deserialize_as == "supported_aspm_states") {
-        auto supported_aspm_states_val = deserialize_supported_aspm_states(entry_value, size);
-        CHECK_EXPECTED_AS_STATUS(supported_aspm_states_val);
-        config_json[category_name][entry_name]["value"] = supported_aspm_states_val.value();
+        TRY(config_json[category_name][entry_name]["value"], deserialize_supported_aspm_states(entry_value, size));
     }
     else if (deserialize_as == "supported_aspm_l1_substates") {
-        auto supported_aspm_l1_substates_val = deserialize_supported_aspm_l1_substates(entry_value, size);
-        CHECK_EXPECTED_AS_STATUS(supported_aspm_l1_substates_val);
-        config_json[category_name][entry_name]["value"] = supported_aspm_l1_substates_val.value();
+        TRY(config_json[category_name][entry_name]["value"],
+            deserialize_supported_aspm_l1_substates(entry_value, size));
     }
     else if (deserialize_as == "ipv4") {
-        auto ipv4_val = deserialize_ipv4(entry_value, size);
-        CHECK_EXPECTED_AS_STATUS(ipv4_val);
-        config_json[category_name][entry_name]["value"] = ipv4_val.value();
+        TRY(config_json[category_name][entry_name]["value"], deserialize_ipv4(entry_value, size));
     }
     else if (deserialize_as == "mac_address") {
-        auto mac_address_val = deserialize_mac_address(entry_value, size);
-        CHECK_EXPECTED_AS_STATUS(mac_address_val);
-        config_json[category_name][entry_name]["value"] = mac_address_val.value();
+        TRY(config_json[category_name][entry_name]["value"], deserialize_mac_address(entry_value, size));
     }
     else if (deserialize_as == "clock_frequency") {
-        auto clock_frequency_val = deserialize_clock_frequency(entry_value, size);
-        CHECK_EXPECTED_AS_STATUS(clock_frequency_val);
-        config_json[category_name][entry_name]["value"] = clock_frequency_val.value();
+        TRY(config_json[category_name][entry_name]["value"],
+            deserialize_clock_frequency(entry_value, size));
     }
     else if (deserialize_as == "logger_level") {
-        auto logger_level = deserialize_logger_level(entry_value, size);
-        CHECK_EXPECTED_AS_STATUS(logger_level);
-        config_json[category_name][entry_name]["value"] = logger_level.value();
+        TRY(config_json[category_name][entry_name]["value"], deserialize_logger_level(entry_value, size));
     }
     else if (deserialize_as == "watchdog_mode") {
-        auto watchdog_mode_val = deserialize_watchdog_mode(entry_value, size);
-        CHECK_EXPECTED_AS_STATUS(watchdog_mode_val);
-        config_json[category_name][entry_name]["value"] = watchdog_mode_val.value();
+        TRY(config_json[category_name][entry_name]["value"], deserialize_watchdog_mode(entry_value, size));
     }
     else if (deserialize_as == "overcurrent_parameters_source") {
-        auto overcurrent_parameters_source_val = deserialize_overcurrent_parameters_source(entry_value, size);
-        CHECK_EXPECTED_AS_STATUS(overcurrent_parameters_source_val);
-        config_json[category_name][entry_name]["value"] = overcurrent_parameters_source_val.value();
+        TRY(config_json[category_name][entry_name]["value"],
+            deserialize_overcurrent_parameters_source(entry_value, size));
     }
     else if (deserialize_as == "temperature_parameters_source") {
-        auto temperature_parameters_source_val = deserialize_temperature_parameters_source(entry_value, size);
-        CHECK_EXPECTED_AS_STATUS(temperature_parameters_source_val);
-        config_json[category_name][entry_name]["value"] = temperature_parameters_source_val.value();
+        TRY(config_json[category_name][entry_name]["value"],
+            deserialize_temperature_parameters_source(entry_value, size));
     }
     else if (deserialize_as == "conversion_time") {
-        auto conversion_time_val = deserialize_conversion_time(entry_value, size);
-        CHECK_EXPECTED_AS_STATUS(conversion_time_val);
-        config_json[category_name][entry_name]["value"] = conversion_time_val.value();
+        TRY(config_json[category_name][entry_name]["value"],
+            deserialize_conversion_time(entry_value, size));
     }
     else {
         LOGGER__ERROR("Failed deserializing entry. Serialization format {} not found", deserialize_as);
@@ -240,9 +216,8 @@ Expected<json> FwConfigJsonSerializer::deserialize_str(uint8_t *entry_value, uin
 
 Expected<json> FwConfigJsonSerializer::deserialize_bool(uint8_t *entry_value, uint32_t size)
 {
-    auto bool_val = get_int_value<uint8_t>(entry_value, size);
-    CHECK_EXPECTED(bool_val);
-    json bool_str = bool_val.value() ? true : false;
+    TRY(const auto bool_val, get_int_value<uint8_t>(entry_value, size));
+    json bool_str = bool_val ? true : false;
     return bool_str;
 }
 
@@ -273,10 +248,9 @@ Expected<json> FwConfigJsonSerializer::deserialize_mac_address(uint8_t *entry_va
 
 Expected<json> FwConfigJsonSerializer::deserialize_supported_aspm_states(uint8_t *entry_value, uint32_t size)
 {
-    auto aspm_state = get_int_value<uint8_t>(entry_value, size);
-    CHECK_EXPECTED(aspm_state);
+    TRY(const auto aspm_state, get_int_value<uint8_t>(entry_value, size));
 
-    switch (static_cast<PCIE_CONFIG_SUPPOPRTED_ASPM_STATES_t>(aspm_state.value())) {
+    switch (static_cast<PCIE_CONFIG_SUPPOPRTED_ASPM_STATES_t>(aspm_state)) {
     case ASPM_DISABLED:
         return json("ASPM DISABLED");
     case ASPM_L1_ONLY:
@@ -291,10 +265,9 @@ Expected<json> FwConfigJsonSerializer::deserialize_supported_aspm_states(uint8_t
 
 Expected<json> FwConfigJsonSerializer::deserialize_supported_aspm_l1_substates(uint8_t *entry_value, uint32_t size)
 {
-    auto aspm_l1_substate = get_int_value<uint8_t>(entry_value, size);
-    CHECK_EXPECTED(aspm_l1_substate);
+    TRY(const auto aspm_l1_substate, get_int_value<uint8_t>(entry_value, size));
 
-    switch (static_cast<PCIE_CONFIG_SUPPOPRTED_L1_ASPM_SUBSTATES_t>(aspm_l1_substate.value())) {
+    switch (static_cast<PCIE_CONFIG_SUPPOPRTED_L1_ASPM_SUBSTATES_t>(aspm_l1_substate)) {
     case ASPM_L1_SUBSTATES_DISABLED:
         return json("ASPM L1 SUBSTATES DISABLED");
     case ASPM_L1_SUBSTATES_L11_ONLY:
@@ -309,10 +282,9 @@ Expected<json> FwConfigJsonSerializer::deserialize_supported_aspm_l1_substates(u
 
 Expected<json> FwConfigJsonSerializer::deserialize_clock_frequency(uint8_t *entry_value, uint32_t size)
 {
-    auto clock_frequency = get_int_value<uint32_t>(entry_value, size);
-    CHECK_EXPECTED(clock_frequency);
+    TRY(const auto clock_frequency, get_int_value<uint32_t>(entry_value, size));
 
-    switch (clock_frequency.value()) {
+    switch (clock_frequency) {
     case SOC__NN_CLOCK_400MHz:
         return json("400MHZ");
     case SOC__NN_CLOCK_375MHz:
@@ -341,10 +313,9 @@ Expected<json> FwConfigJsonSerializer::deserialize_clock_frequency(uint8_t *entr
 
 Expected<json> FwConfigJsonSerializer::deserialize_watchdog_mode(uint8_t *entry_value, uint32_t size)
 {
-    auto watchdog_mode = get_int_value<uint8_t>(entry_value, size);
-    CHECK_EXPECTED(watchdog_mode);
+    TRY(const auto watchdog_mode, get_int_value<uint8_t>(entry_value, size));
 
-    switch (static_cast<WD_SERVICE_wd_mode_t>(watchdog_mode.value())) {
+    switch (static_cast<WD_SERVICE_wd_mode_t>(watchdog_mode)) {
     case WD_SERVICE_MODE_HW_SW:
         return json("WD MODE HW SW");
     case WD_SERVICE_MODE_HW_ONLY:
@@ -357,10 +328,9 @@ Expected<json> FwConfigJsonSerializer::deserialize_watchdog_mode(uint8_t *entry_
 
 Expected<json> FwConfigJsonSerializer::deserialize_i2c_speed(uint8_t *entry_value, uint32_t size)
 {
-    auto i2c_speed = get_int_value<uint8_t>(entry_value, size);
-    CHECK_EXPECTED(i2c_speed);
+    TRY(const auto i2c_speed, get_int_value<uint8_t>(entry_value, size));
 
-    switch (static_cast<i2c_speed_mode_t>(i2c_speed.value())) {
+    switch (static_cast<i2c_speed_mode_t>(i2c_speed)) {
     case I2C_SPEED_STANDARD:
         return json("I2C SPEED STANDARD");
     case I2C_SPEED_FAST:
@@ -373,10 +343,9 @@ Expected<json> FwConfigJsonSerializer::deserialize_i2c_speed(uint8_t *entry_valu
 
 Expected<json> FwConfigJsonSerializer::deserialize_logger_level(uint8_t *entry_value, uint32_t size)
 {
-    auto logger_level = get_int_value<uint8_t>(entry_value, size);
-    CHECK_EXPECTED(logger_level);
+    TRY(const auto logger_level, get_int_value<uint8_t>(entry_value, size));
 
-    switch (static_cast<FW_LOGGER_LEVEL_t>(logger_level.value())) {
+    switch (static_cast<FW_LOGGER_LEVEL_t>(logger_level)) {
     case FW_LOGGER_LEVEL_TRACE:
         return json("TRACE");
     case FW_LOGGER_LEVEL_DEBUG:
@@ -397,10 +366,9 @@ Expected<json> FwConfigJsonSerializer::deserialize_logger_level(uint8_t *entry_v
 
 Expected<json> FwConfigJsonSerializer::deserialize_overcurrent_parameters_source(uint8_t *entry_value, uint32_t size)
 {
-    auto overcurrent_parameters_source = get_int_value<uint8_t>(entry_value, size);
-    CHECK_EXPECTED(overcurrent_parameters_source);
+    TRY(const auto overcurrent_parameters_source, get_int_value<uint8_t>(entry_value, size));
 
-    switch (static_cast<OVERCURRENT_parameters_source_t>(overcurrent_parameters_source.value())) {
+    switch (static_cast<OVERCURRENT_parameters_source_t>(overcurrent_parameters_source)) {
     case OVERCURRENT_PARAMETERS_SOURCE_FW_VALUES:
         return json("FW VALUES");
     case OVERCURRENT_PARAMETERS_SOURCE_USER_CONFIG_VALUES:
@@ -417,10 +385,9 @@ Expected<json> FwConfigJsonSerializer::deserialize_overcurrent_parameters_source
 
 Expected<json> FwConfigJsonSerializer::deserialize_temperature_parameters_source(uint8_t *entry_value, uint32_t size)
 {
-    auto temperature_parameters_source = get_int_value<uint8_t>(entry_value, size);
-    CHECK_EXPECTED(temperature_parameters_source);
+    TRY(const auto temperature_parameters_source, get_int_value<uint8_t>(entry_value, size));
 
-    switch (static_cast<TEMPERATURE_PROTECTION_parameters_source_t>(temperature_parameters_source.value())) {
+    switch (static_cast<TEMPERATURE_PROTECTION_parameters_source_t>(temperature_parameters_source)) {
     case TEMPERATURE_PROTECTION_PARAMETERS_SOURCE_FW_VALUES:
         return json("FW VALUES");
     case TEMPERATURE_PROTECTION_PARAMETERS_SOURCE_USER_CONFIG_VALUES:
@@ -433,9 +400,8 @@ Expected<json> FwConfigJsonSerializer::deserialize_temperature_parameters_source
 
 Expected<json> FwConfigJsonSerializer::deserialize_conversion_time(uint8_t *entry_value, uint32_t size)
 {
-    auto conversion_time = get_int_value<uint32_t>(entry_value, size);
-    CHECK_EXPECTED(conversion_time);
-    auto conversion_time_value = static_cast<OVERCURRENT_conversion_time_us_t>(conversion_time.value());
+    TRY(const auto conversion_time, get_int_value<uint32_t>(entry_value, size));
+    auto conversion_time_value = static_cast<OVERCURRENT_conversion_time_us_t>(conversion_time);
 
     if (conversion_time_value == OVERCURRENT_CONVERSION_PERIOD_140US ||
         conversion_time_value == OVERCURRENT_CONVERSION_PERIOD_204US ||
@@ -459,21 +425,18 @@ Expected<json> FwConfigJsonSerializer::deserialize_int(uint8_t *entry_value, uin
     switch (size) {
     case sizeof(uint8_t):
     {
-        auto uint8_val = get_int_value<uint8_t>(entry_value, size);
-        CHECK_EXPECTED(uint8_val);
-        return json(uint8_val.value());
+        TRY(const auto uint8_val, get_int_value<uint8_t>(entry_value, size));
+        return json(uint8_val);
     }
     case sizeof(uint16_t):
     {
-        auto uint16_val = get_int_value<uint16_t>(entry_value, size);
-        CHECK_EXPECTED(uint16_val);
-        return json(uint16_val.value());
+        TRY(const auto uint16_val, get_int_value<uint16_t>(entry_value, size));
+        return json(uint16_val);
     }
     case sizeof(uint32_t):
     {
-        auto uint32_val = get_int_value<uint32_t>(entry_value, size);
-        CHECK_EXPECTED(uint32_val);
-        return json(uint32_val.value());
+        TRY(const auto uint32_val, get_int_value<uint32_t>(entry_value, size));
+        return json(uint32_val);
     }
     default:
         LOGGER__ERROR("Failed deserializing int value");
@@ -487,20 +450,17 @@ Expected<uint32_t> FwConfigJsonSerializer::serialize_config(USER_CONFIG_header_t
     size_t data_size = sizeof(USER_CONFIG_header_t);
 
     try {
-        auto config_json = FwConfigJsonSerializer::read_json_file(file_path);
-        CHECK_EXPECTED(config_json);
+        TRY_V(const auto config_json, FwConfigJsonSerializer::read_json_file(file_path));
+        TRY(auto definitions, FwConfigJsonSerializer::get_serialize_map());
 
-        auto definitions = FwConfigJsonSerializer::get_serialize_map();
-        CHECK_EXPECTED(definitions);
-
-        user_config_header.version = definitions.value()["version"]["value"].get<uint32_t>();
+        user_config_header.version = definitions["version"]["value"].get<uint32_t>();
         user_config_header.magic = USER_CONFIG_MAGIC;
         user_config_header.entry_count = 0;
 
         uintptr_t current_entry_offset = (uintptr_t)(&(user_config_header.entries));
-        for (auto &config_category : config_json->items()) {
+        for (auto &config_category : config_json.items()) {
             for (auto &config_entry : config_category.value().items()) {
-                ordered_json entry_definition = definitions.value()[config_category.key()][config_entry.key()];
+                ordered_json entry_definition = definitions[config_category.key()][config_entry.key()];
                 USER_CONFIG_ENTRY_t *curr_entry = (USER_CONFIG_ENTRY_t *)current_entry_offset;
                 curr_entry->entry_size = entry_definition.contains("length") ?
                     (entry_definition["length"].get<uint32_t>() * entry_definition["size"].get<uint32_t>()) :
@@ -603,6 +563,7 @@ hailo_status FwConfigJsonSerializer::serialize_str(USER_CONFIG_ENTRY_t &entry, c
     CHECK(entry.entry_size >= str.length(), HAILO_INVALID_ARGUMENT,
         "Failed serializing string value {}. String length must be equal or shorter than {}", str, entry.entry_size);
     
+    memset(&(entry.value), 0, entry.entry_size);
     memcpy(&(entry.value), str.c_str(), str.length());
 
     return HAILO_SUCCESS;
