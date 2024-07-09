@@ -111,4 +111,3 @@ install(TARGETS _pyhailort
     CONFIGURATIONS Release
 )
 
-add_subdirectory(internal)
