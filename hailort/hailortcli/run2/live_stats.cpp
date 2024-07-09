@@ -132,9 +132,9 @@ Expected<std::vector<double>> LiveStats::get_last_measured_fps_per_network_group
     CHECK_AS_EXPECTED(contains(m_tracks, NETWORK_STATS_LEVEL), HAILO_NOT_AVAILABLE);
 
     for (size_t network_stats_track_index = 0; network_stats_track_index < m_tracks[NETWORK_STATS_LEVEL].size(); network_stats_track_index++) {
-        auto expected_fps = m_tracks[NETWORK_STATS_LEVEL][network_stats_track_index]->get_last_measured_fps();
-        CHECK_EXPECTED(expected_fps);
-        last_measured_fpss.emplace_back(expected_fps.release());
+        TRY(auto fps,
+            m_tracks[NETWORK_STATS_LEVEL][network_stats_track_index]->get_last_measured_fps());
+        last_measured_fpss.emplace_back(fps);
     }
 
     return last_measured_fpss;

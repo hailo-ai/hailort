@@ -35,7 +35,7 @@ struct EdgeLayerInfo {
     bool reuse_buffer;
 };
 
-struct EdgeLayerToBufferMap {
+struct EdgeLayerBuffer {
     std::shared_ptr<vdma::VdmaBuffer> buffer;
     size_t offset;
 };

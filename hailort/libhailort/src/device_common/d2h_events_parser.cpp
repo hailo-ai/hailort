@@ -49,6 +49,7 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_context_switch_breakpoint_reached
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_clock_changed_event_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message);
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_hw_infer_manager_infer_done_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message);
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_context_switch_run_time_error_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message);
+static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_start_update_cache_offset(D2H_EVENT_MESSAGE_t *d2h_notification_message);
 
 /**********************************************************************
  * Globals
@@ -66,7 +67,8 @@ firmware_notifications_parser_t g_firmware_notifications_parser[D2H_EVENT_ID_COU
     D2H_EVENTS__parse_context_switch_breakpoint_reached,
     D2H_EVENTS__parse_health_monitor_clock_changed_event_notification,
     D2H_EVENTS__parse_hw_infer_manager_infer_done_notification,
-    D2H_EVENTS__parse_context_switch_run_time_error_notification
+    D2H_EVENTS__parse_context_switch_run_time_error_notification,
+    D2H_EVENTS__parse_start_update_cache_offset,
 };
 /**********************************************************************
  * Internal Functions
@@ -201,6 +203,24 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_hw_infer_manager_infer_done_notif
 
 l_exit:
     return status;
+}
+
+static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_start_update_cache_offset(D2H_EVENT_MESSAGE_t *d2h_notification_message)
+{
+    if (D2H_EVENT_START_UPDATE_CACHE_OFFSET_PARAMETER_COUNT != d2h_notification_message->header.parameter_count) {
+        LOGGER__ERROR("d2h notification invalid parameter count: {}", d2h_notification_message->header.parameter_count);
+        return HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT;
+    }
+
+    if(d2h_notification_message->header.payload_length != sizeof(d2h_notification_message->message_parameters.start_update_cache_offset_event)) {
+        LOGGER__ERROR("d2h notification invalid payload_length: {}", d2h_notification_message->header.payload_length);
+        return HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_LENGTH;
+    }
+
+    LOGGER__TRACE("Got can update cache offset notification - cache_id_bitmask={}",
+        d2h_notification_message->message_parameters.start_update_cache_offset_event.cache_id_bitmask);
+
+    return HAILO_COMMON_STATUS__SUCCESS;
 }
 
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_closed_streams_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message) 

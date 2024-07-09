@@ -81,7 +81,7 @@ private:
     Expected<InferRequest> dequeue_infer_request(scheduler_core_op_handle_t core_op_handle);
     uint16_t get_frames_ready_to_transfer(scheduler_core_op_handle_t core_op_handle, const device_id_t &device_id) const;
 
-    std::shared_ptr<VdmaConfigCoreOp> get_vdma_core_op(scheduler_core_op_handle_t core_op_handle,
+    Expected<std::shared_ptr<VdmaConfigCoreOp>> get_vdma_core_op(scheduler_core_op_handle_t core_op_handle,
         const device_id_t &device_id);
 
     void shutdown_core_op(scheduler_core_op_handle_t core_op_handle);

@@ -41,7 +41,7 @@ public:
     virtual uint32_t descs_count() const override;
 
     virtual Expected<uint32_t> program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
-        size_t desc_offset) override;
+        size_t desc_offset, size_t buffer_offset = 0, bool should_bind = false) override;
 
 private:
     ContinuousEdgeLayer(std::shared_ptr<ContinuousBuffer> &&buffer, size_t size, size_t offset,

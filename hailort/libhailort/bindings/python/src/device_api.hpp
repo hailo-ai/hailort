@@ -133,8 +133,11 @@ public:
     py::bytes direct_read_memory(uint32_t address, uint32_t size);
     const char *get_dev_id() const;
     void set_sleep_state(hailo_sleep_state_t sleep_state);
+    void _init_cache_info(const hailo_cache_info_t &cache_info);
+    hailo_cache_info_t _get_cache_info();
+    void _update_cache_read_offset(int32_t read_offset_delta);
 
-    static void add_to_python_module(py::module &m);
+    static void bind(py::module &m);
 
 private:
     DeviceWrapper(std::unique_ptr<Device> &&device)

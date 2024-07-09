@@ -114,11 +114,9 @@ std::shared_ptr<CoreOp> ScheduledCoreOp::get_core_op()
     return m_core_op;
 }
 
-std::shared_ptr<VdmaConfigCoreOp> ScheduledCoreOp::get_vdma_core_op(const device_id_t &device_id)
+Expected<std::shared_ptr<VdmaConfigCoreOp>> ScheduledCoreOp::get_vdma_core_op(const device_id_t &device_id)
 {
-    auto vdma_core_op = m_core_op->get_core_op_by_device_id(device_id);
-    assert(vdma_core_op);
-    return vdma_core_op.release();
+    return m_core_op->get_core_op_by_device_id(device_id);
 }
 
 std::chrono::time_point<std::chrono::steady_clock> ScheduledCoreOp::get_last_run_timestamp()

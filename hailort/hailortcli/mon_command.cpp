@@ -230,25 +230,20 @@ hailo_status MonCommand::run_monitor()
     signal(SIGINT, signit_handler);
 
     std::chrono::milliseconds time_interval = DEFAULT_SCHEDULER_MON_INTERVAL + EPSILON_TIME;
-    auto terminal_line_width_expected = get_terminal_line_width();
-    CHECK_EXPECTED_AS_STATUS(terminal_line_width_expected);
-    auto terminal_line_width = terminal_line_width_expected.release();
+    TRY(const auto terminal_line_width, get_terminal_line_width());
 
     AlternativeTerminal alt_terminal;
     while (keep_running) {
         bool print_warning_msg = true; // Will change to false only if mon directory is valid and there are updated files in it.
-
-        auto mon_dir_valid = Filesystem::is_directory(SCHEDULER_MON_TMP_DIR);
-        CHECK_EXPECTED_AS_STATUS(mon_dir_valid);
+        TRY(const auto mon_dir_valid, Filesystem::is_directory(SCHEDULER_MON_TMP_DIR));
 
         std::vector<ProtoMon> mon_messages;
-        if (mon_dir_valid.value()) {
-            auto scheduler_mon_files = Filesystem::get_latest_files_in_dir_flat(SCHEDULER_MON_TMP_DIR, time_interval);
-            CHECK_EXPECTED_AS_STATUS(scheduler_mon_files);
-            print_warning_msg = scheduler_mon_files->empty();
+        if (mon_dir_valid) {
+            TRY(auto scheduler_mon_files, Filesystem::get_latest_files_in_dir_flat(SCHEDULER_MON_TMP_DIR, time_interval));
+            print_warning_msg = scheduler_mon_files.empty();
 
-            mon_messages.reserve(scheduler_mon_files->size());
-            for (const auto &mon_file : scheduler_mon_files.value()) {
+            mon_messages.reserve(scheduler_mon_files.size());
+            for (const auto &mon_file : scheduler_mon_files) {
                 auto file = LockedFile::create(mon_file, "r");
                 if (HAILO_SUCCESS != file.status()) {
                     LOGGER__ERROR("Failed to open and lock file {}, with status: {}", mon_file, file.status());

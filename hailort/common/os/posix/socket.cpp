@@ -34,13 +34,10 @@ hailo_status Socket::SocketModuleWrapper::free_module()
 
 Expected<Socket> Socket::create(int af, int type, int protocol)
 {
-    auto module_wrapper = SocketModuleWrapper::create();
-    CHECK_EXPECTED(module_wrapper);
-    
-    auto socket_fd = create_socket_fd(af, type, protocol);
-    CHECK_EXPECTED(socket_fd);
+    TRY(auto module_wrapper, SocketModuleWrapper::create());
+    TRY(const auto socket_fd, create_socket_fd(af, type, protocol));
 
-    auto obj = Socket(module_wrapper.release(), socket_fd.release());
+    auto obj = Socket(std::move(module_wrapper), socket_fd);
     return obj;
 }
 

@@ -75,13 +75,12 @@ Expected<std::string> EthernetUtils::get_ip_from_interface(const std::string &in
     struct ifreq ifr = {};
 
     /* Create socket */
-    auto socket = Socket::create(AF_INET, SOCK_DGRAM, 0);
-    CHECK_EXPECTED(socket);
+    TRY(const auto socket, Socket::create(AF_INET, SOCK_DGRAM, 0));
 
     /* Convert interface name to ip address */
     ifr.ifr_addr.sa_family = AF_INET;
     (void)strncpy(ifr.ifr_name, interface_name.c_str(), IFNAMSIZ-1);
-    auto posix_rc = ioctl(socket->get_fd(), SIOCGIFADDR, &ifr);
+    auto posix_rc = ioctl(socket.get_fd(), SIOCGIFADDR, &ifr);
     CHECK_AS_EXPECTED(posix_rc >= 0, HAILO_ETH_INTERFACE_NOT_FOUND,
         "Interface was not found. ioctl with SIOCGIFADDR has failed. errno: {:#x}", errno);
 

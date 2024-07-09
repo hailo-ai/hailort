@@ -51,8 +51,7 @@ Expected<ConfiguredNetworkGroupVector> DeviceBase::configure(Hef &hef,
     auto status = check_hef_is_compatible(hef);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
-    auto network_groups = add_hef(hef, configure_params);
-    CHECK_EXPECTED(network_groups);
+    TRY(auto network_groups, add_hef(hef, configure_params));
 
     auto elapsed_time_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time).count();
     LOGGER__INFO("Configuring HEF took {} milliseconds", elapsed_time_ms);
@@ -161,20 +160,19 @@ void DeviceBase::notification_fetch_thread(std::shared_ptr<NotificationThreadSha
 Expected<firmware_type_t> DeviceBase::get_fw_type()
 {
     firmware_type_t firmware_type;
-    const auto architecture = get_architecture();
-    CHECK_EXPECTED(architecture);
+    TRY(const auto architecture, get_architecture());
 
-    if ((architecture.value() == HAILO_ARCH_HAILO8) || (architecture.value() == HAILO_ARCH_HAILO8L)) {
+    if ((architecture == HAILO_ARCH_HAILO8) || (architecture == HAILO_ARCH_HAILO8L)) {
         firmware_type = FIRMWARE_TYPE_HAILO8;
     }
-    else if ((architecture.value() == HAILO_ARCH_HAILO15H ) || (architecture.value() == HAILO_ARCH_HAILO15M)) {
+    else if ((architecture == HAILO_ARCH_HAILO15H ) || (architecture == HAILO_ARCH_HAILO15M)) {
         firmware_type = FIRMWARE_TYPE_HAILO15;
     }
-    else if (architecture.value() == HAILO_ARCH_PLUTO) {
+    else if (architecture == HAILO_ARCH_PLUTO) {
         firmware_type = FIRMWARE_TYPE_PLUTO;
     }
     else {
-        LOGGER__ERROR("Invalid device arcitecture. {}", architecture.value());
+        LOGGER__ERROR("Invalid device arcitecture. {}", architecture);
         return make_unexpected(HAILO_INVALID_DEVICE_ARCHITECTURE);
     }
 
@@ -199,18 +197,16 @@ hailo_status DeviceBase::firmware_update(const MemoryView &firmware_binary, bool
     MD5_Update(&md5_ctx, firmware_binary.data(), firmware_binary.size());
     MD5_Final(md5_sum, &md5_ctx);
 
-    const auto firmware_type = get_fw_type();
-    CHECK_EXPECTED_AS_STATUS(firmware_type);
+    TRY(const auto firmware_type, get_fw_type());
 
-    fw_header_status = FIRMWARE_HEADER_UTILS__validate_fw_headers((uintptr_t) firmware_binary.data(), static_cast<uint32_t>(firmware_binary.size()), false,
-        &new_app_firmware_header, &new_core_firmware_header, NULL, firmware_type.value());
+    fw_header_status = FIRMWARE_HEADER_UTILS__validate_fw_headers((uintptr_t)firmware_binary.data(),
+        static_cast<uint32_t>(firmware_binary.size()), false, &new_app_firmware_header,
+        &new_core_firmware_header, NULL, firmware_type);
     CHECK(HAILO_COMMON_STATUS__SUCCESS == fw_header_status, HAILO_INVALID_FIRMWARE,
         "FW update validation failed with status {}", fw_header_status);
 
     // TODO: Are we ok with doing another identify here?
-    auto board_info_before_update_expected = Control::identify(*this);
-    CHECK_EXPECTED_AS_STATUS(board_info_before_update_expected);
-    hailo_device_identity_t board_info_before_update = board_info_before_update_expected.release();
+    TRY(auto board_info_before_update, Control::identify(*this));
 
     if (board_info_before_update.device_architecture != HAILO_ARCH_HAILO8_A0) {
         if ((new_app_firmware_header->firmware_major != new_core_firmware_header->firmware_major) ||
@@ -294,7 +290,7 @@ hailo_status DeviceBase::firmware_update(const MemoryView &firmware_binary, bool
             return HAILO_SUCCESS;
         }
 
-        CHECK_EXPECTED_AS_STATUS(board_info_after_install_expected);
+        CHECK_EXPECTED_AS_STATUS(board_info_after_install_expected); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
         hailo_device_identity_t board_info_after_install = board_info_after_install_expected.release();
     
         LOGGER__INFO("New App FW version: {}.{}.{}{}", board_info_after_install.fw_version.major, board_info_after_install.fw_version.minor, 
@@ -343,11 +339,10 @@ hailo_status DeviceBase::second_stage_update(uint8_t* second_stage_binary, uint3
     MD5_Update(&md5_ctx, second_stage_binary, second_stage_binary_length);
     MD5_Final(md5_sum, &md5_ctx);
 
-    const auto firmware_type = get_fw_type();
-    CHECK_EXPECTED_AS_STATUS(firmware_type);
+    TRY(const auto firmware_type, get_fw_type());
 
-    second_stage_header_status = FIRMWARE_HEADER_UTILS__validate_second_stage_headers((uintptr_t) second_stage_binary,
-        second_stage_binary_length, &new_second_stage_header, firmware_type.value());
+    second_stage_header_status = FIRMWARE_HEADER_UTILS__validate_second_stage_headers((uintptr_t)second_stage_binary,
+        second_stage_binary_length, &new_second_stage_header, firmware_type);
     CHECK(HAILO_COMMON_STATUS__SUCCESS == second_stage_header_status, HAILO_INVALID_SECOND_STAGE,
             "Second stage update validation failed with status {}", second_stage_header_status);
 
@@ -392,30 +387,26 @@ hailo_status DeviceBase::store_sensor_config(uint32_t section_index, hailo_senso
     CHECK(sensor_type != HAILO_SENSOR_TYPES_HAILO8_ISP, HAILO_INVALID_ARGUMENT,
         "store_sensor_config intended only for sensor config, for ISP config use store_isp");
 
-    auto control_buffers = SensorConfigUtils::read_config_file(config_file_path);
-    CHECK_EXPECTED_AS_STATUS(control_buffers, "Failed reading config file");
-
-    return store_sensor_control_buffers(control_buffers.value(), section_index, sensor_type,
+    TRY(auto control_buffers, SensorConfigUtils::read_config_file(config_file_path), "Failed reading config file");
+    return store_sensor_control_buffers(control_buffers, section_index, sensor_type,
         reset_config_size, config_height, config_width, config_fps, config_name);
 }
 
 hailo_status DeviceBase::store_isp_config(uint32_t reset_config_size, uint16_t config_height, uint16_t config_width, uint16_t config_fps, 
     const std::string &isp_static_config_file_path, const std::string &isp_runtime_config_file_path, const std::string &config_name)
 {    
-    auto control_buffers = SensorConfigUtils::read_isp_config_file(isp_static_config_file_path, isp_runtime_config_file_path);
-    CHECK_EXPECTED_AS_STATUS(control_buffers, "Failed reading ISP config file");
-
-    return store_sensor_control_buffers(control_buffers.value(), SENSOR_CONFIG__ISP_SECTION_INDEX, HAILO_SENSOR_TYPES_HAILO8_ISP,
+    TRY(auto control_buffers, SensorConfigUtils::read_isp_config_file(isp_static_config_file_path, isp_runtime_config_file_path),
+        "Failed reading ISP config file");
+    return store_sensor_control_buffers(control_buffers, SENSOR_CONFIG__ISP_SECTION_INDEX, HAILO_SENSOR_TYPES_HAILO8_ISP,
         reset_config_size, config_height, config_width, config_fps, config_name);
 
 }
 
 Expected<Buffer> DeviceBase::sensor_get_sections_info()
 {
-    auto buffer = Buffer::create(SENSOR_SECTIONS_INFO_SIZE);
-    CHECK_EXPECTED(buffer);
+    TRY(auto buffer, Buffer::create(SENSOR_SECTIONS_INFO_SIZE));
 
-    hailo_status status = Control::sensor_get_sections_info(*this, buffer->data());
+    hailo_status status = Control::sensor_get_sections_info(*this, buffer.data());
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     return buffer;
@@ -424,16 +415,14 @@ Expected<Buffer> DeviceBase::sensor_get_sections_info()
 hailo_status DeviceBase::sensor_dump_config(uint32_t section_index, const std::string &config_file_path)
 {
     CHECK(SENSOR_CONFIG__TOTAL_SECTIONS_BLOCK_COUNT > section_index, HAILO_INVALID_ARGUMENT, "Section {} is invalid. Section index must be in the range [0 - {}]", section_index, (SENSOR_CONFIG__TOTAL_SECTIONS_BLOCK_COUNT - 1));
-    auto sections_info_buffer = sensor_get_sections_info();
-    CHECK_EXPECTED_AS_STATUS(sections_info_buffer);
+    TRY(auto sections_info_buffer, sensor_get_sections_info());
 
-    SENSOR_CONFIG__section_info_t *section_info_ptr = &((SENSOR_CONFIG__section_info_t *)sections_info_buffer->data())[section_index];
+    SENSOR_CONFIG__section_info_t *section_info_ptr = &((SENSOR_CONFIG__section_info_t *)sections_info_buffer.data())[section_index];
     CHECK(section_info_ptr->is_free == 0, HAILO_NOT_FOUND, "Section {} is not active", section_index);
     CHECK(0 == (section_info_ptr->config_size % sizeof(SENSOR_CONFIG__operation_cfg_t)), HAILO_INVALID_OPERATION, "Section config size is invalid.");
 
     /* Read config data from device */
-    auto operation_cfg = Buffer::create(section_info_ptr->config_size);
-    CHECK_EXPECTED_AS_STATUS(operation_cfg);
+    TRY(auto operation_cfg, Buffer::create(section_info_ptr->config_size));
 
     size_t read_full_buffer_count = (section_info_ptr->config_size / MAX_CONFIG_ENTRIES_DATA_SIZE);
     uint32_t residue_to_read = static_cast<uint32_t>(section_info_ptr->config_size - (read_full_buffer_count * MAX_CONFIG_ENTRIES_DATA_SIZE)); 
@@ -442,16 +431,17 @@ hailo_status DeviceBase::sensor_dump_config(uint32_t section_index, const std::s
 
     hailo_status status = HAILO_UNINITIALIZED;
     for (uint32_t i = 0; i < read_full_buffer_count; i++) {
-        status = Control::sensor_get_config(*this, section_index, offset, (uint32_t)MAX_CONFIG_ENTRIES_DATA_SIZE, (operation_cfg->data() + offset));
+        status = Control::sensor_get_config(*this, section_index, offset,
+            (uint32_t)MAX_CONFIG_ENTRIES_DATA_SIZE, (operation_cfg.data() + offset));
         CHECK_SUCCESS(status);
         offset += static_cast<uint32_t>(MAX_CONFIG_ENTRIES_DATA_SIZE);
     }
     if (0 < residue_to_read) {
-        status = Control::sensor_get_config(*this, section_index, offset, residue_to_read, (operation_cfg->data() + offset));
+        status = Control::sensor_get_config(*this, section_index, offset, residue_to_read, (operation_cfg.data() + offset));
         CHECK_SUCCESS(status);
     }
 
-    status = SensorConfigUtils::dump_config_to_csv((SENSOR_CONFIG__operation_cfg_t*)operation_cfg->data(), config_file_path, entries_count);
+    status = SensorConfigUtils::dump_config_to_csv((SENSOR_CONFIG__operation_cfg_t*)operation_cfg.data(), config_file_path, entries_count);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS; 
@@ -486,13 +476,11 @@ hailo_status DeviceBase::sensor_set_generic_i2c_slave(uint16_t slave_address, ui
 
 Expected<Buffer> DeviceBase::read_board_config()
 {
-    auto result = Buffer::create(BOARD_CONFIG_SIZE, 0);
-    CHECK_EXPECTED(result);
-
-    auto status = Control::read_board_config(*this, result->data(), static_cast<uint32_t>(result->size()));
+    TRY(auto result, Buffer::create(BOARD_CONFIG_SIZE, 0));
+    auto status = Control::read_board_config(*this, result.data(), static_cast<uint32_t>(result.size()));
     CHECK_SUCCESS_AS_EXPECTED(status);
 
-    return result.release();
+    return result;
 }
 
 hailo_status DeviceBase::write_board_config(const MemoryView &buffer)
@@ -511,16 +499,13 @@ Expected<hailo_fw_user_config_information_t> DeviceBase::examine_user_config()
 
 Expected<Buffer> DeviceBase::read_user_config()
 {
-    auto user_config_info = examine_user_config();
-    CHECK_EXPECTED(user_config_info, "Failed to examine user config");
+    TRY(auto user_config_info, examine_user_config(), "Failed to examine user config");
+    TRY(auto result, Buffer::create(user_config_info.total_size, 0));
 
-    auto result = Buffer::create(user_config_info->total_size, 0);
-    CHECK_EXPECTED(result);
-
-    auto status = Control::read_user_config(*this, result->data(), static_cast<uint32_t>(result->size()));
+    auto status = Control::read_user_config(*this, result.data(), static_cast<uint32_t>(result.size()));
     CHECK_SUCCESS_AS_EXPECTED(status);
 
-    return result.release();
+    return result;
 }
 
 hailo_status DeviceBase::write_user_config(const MemoryView &buffer)
@@ -607,11 +592,10 @@ void DeviceBase::d2h_notification_thread_main(const std::string &device_id)
 
 hailo_status DeviceBase::check_hef_is_compatible(Hef &hef)
 {    
-    const auto device_arch = get_architecture();
-    CHECK_EXPECTED_AS_STATUS(device_arch, "Can't get device architecture (is the FW loaded?)");
+    TRY(const auto device_arch, get_architecture(), "Can't get device architecture (is the FW loaded?)");
 
-    if (!is_hef_compatible(device_arch.value(), static_cast<HEFHwArch>(hef.pimpl->get_device_arch()))) {
-        auto device_arch_str = HailoRTCommon::get_device_arch_str(device_arch.value());
+    if (!is_hef_compatible(device_arch, static_cast<HEFHwArch>(hef.pimpl->get_device_arch()))) {
+        auto device_arch_str = HailoRTCommon::get_device_arch_str(device_arch);
         auto hef_arch_str =
             HailoRTCommon::get_device_arch_str(hef_arch_to_device_arch(static_cast<HEFHwArch>(hef.pimpl->get_device_arch())));
 
@@ -621,20 +605,18 @@ hailo_status DeviceBase::check_hef_is_compatible(Hef &hef)
     }
 
     // TODO: MSW-227 check clock rate for hailo15 as well.
-    if ((HAILO_ARCH_HAILO8 == device_arch.value()) || (HAILO_ARCH_HAILO8L == device_arch.value())) {
-        auto extended_device_info_expected = Control::get_extended_device_information(*this);
-        CHECK_EXPECTED_AS_STATUS(extended_device_info_expected,  "Can't get device extended info");
-        hailo_extended_device_information_t extended_device_information = extended_device_info_expected.release();
+    if ((HAILO_ARCH_HAILO8 == device_arch) || (HAILO_ARCH_HAILO8L == device_arch)) {
+        TRY(auto extended_device_information, Control::get_extended_device_information(*this), "Can't get device extended info");
         check_clock_rate_for_hailo8(extended_device_information.neural_network_core_clock_rate,
             static_cast<HEFHwArch>(hef.pimpl->get_device_arch()));
     }
 
     if ((static_cast<ProtoHEFHwArch>(HEFHwArch::HW_ARCH__HAILO8L) == hef.pimpl->get_device_arch()) &&
-        (HAILO_ARCH_HAILO8 == device_arch.value())) {
+        (HAILO_ARCH_HAILO8 == device_arch)) {
         LOGGER__WARNING("HEF was compiled for Hailo8L device, while the device itself is Hailo8. " \
         "This will result in lower performance.");
     } else if ((static_cast<ProtoHEFHwArch>(HEFHwArch::HW_ARCH__HAILO15M) == hef.pimpl->get_device_arch()) &&
-        (HAILO_ARCH_HAILO15H == device_arch.value())) {
+        (HAILO_ARCH_HAILO15H == device_arch)) {
         LOGGER__WARNING("HEF was compiled for Hailo15M device, while the device itself is Hailo15H. " \
         "This will result in lower performance.");
     }
@@ -687,6 +669,9 @@ hailo_status DeviceBase::fw_notification_id_to_hailo(D2H_EVENT_ID_t fw_notificat
         case CONTEXT_SWITCH_RUN_TIME_ERROR:
             *hailo_notification_id = HAILO_NOTIFICATION_ID_CONTEXT_SWITCH_RUN_TIME_ERROR_EVENT;
             break;
+        case START_UPDATE_CACHE_OFFSET_ID:
+            *hailo_notification_id = HAILO_NOTIFICATION_ID_START_UPDATE_CACHE_OFFSET;
+            break;
         default:
             status = HAILO_INVALID_ARGUMENT;
             goto l_exit;
@@ -736,9 +721,10 @@ bool DeviceBase::is_hef_compatible(hailo_device_architecture_t device_arch, HEFH
     case HAILO_ARCH_HAILO8L:
         return (hef_arch == HEFHwArch::HW_ARCH__HAILO8L);
     case HAILO_ARCH_HAILO15H:
+    case HAILO_ARCH_HAILO10H:
         // Compare with HW_ARCH__LAVENDER and HW_ARCH__GINGER to support hefs compiled for them
         return (hef_arch == HEFHwArch::HW_ARCH__GINGER) || (hef_arch == HEFHwArch::HW_ARCH__LAVENDER) ||
-            (hef_arch == HEFHwArch::HW_ARCH__HAILO15H) || (hef_arch == HEFHwArch::HW_ARCH__HAILO15M);
+            (hef_arch == HEFHwArch::HW_ARCH__HAILO15H) || (hef_arch == HEFHwArch::HW_ARCH__HAILO15M) || (hef_arch == HEFHwArch::HW_ARCH__HAILO10H);
     case HAILO_ARCH_PLUTO:
         return (hef_arch == HEFHwArch::HW_ARCH__PLUTO);
     case HAILO_ARCH_HAILO15M:
@@ -769,6 +755,8 @@ hailo_device_architecture_t DeviceBase::hef_arch_to_device_arch(HEFHwArch hef_ar
         return HAILO_ARCH_PLUTO;
     case HEFHwArch::HW_ARCH__HAILO15M:
         return HAILO_ARCH_HAILO15M;
+    case HEFHwArch::HW_ARCH__HAILO10H:
+        return HAILO_ARCH_HAILO10H;
 
     default:
         return HAILO_ARCH_MAX_ENUM;

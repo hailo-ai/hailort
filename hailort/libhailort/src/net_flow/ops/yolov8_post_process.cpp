@@ -43,8 +43,6 @@ hailo_status Yolov8OpMetadata::validate_params()
 {
     CHECK_SUCCESS(NmsOpMetadata::validate_params());
 
-    CHECK(!nms_config().bbox_only, HAILO_INVALID_ARGUMENT, "YOLOV8PostProcessOp: bbox_only is not supported for YOLOV8 model");
-
     // We go over the inputs metadata and check that it includes all of the regs and clss
     for (const auto &layer_names : m_yolov8_config.reg_to_cls_inputs) {
         CHECK(contains(m_inputs_metadata, layer_names.reg), HAILO_INVALID_ARGUMENT,

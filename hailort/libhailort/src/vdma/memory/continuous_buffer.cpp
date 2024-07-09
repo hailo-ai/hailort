@@ -51,6 +51,11 @@ uint64_t ContinuousBuffer::dma_address() const
     return m_buffer_info.dma_address;
 }
 
+void* ContinuousBuffer::user_address() const
+{
+    return m_buffer_info.user_address;
+}
+
 hailo_status ContinuousBuffer::read(void *buf_dst, size_t count, size_t offset)
 {
     CHECK((count + offset) <= m_buffer_info.size, HAILO_INSUFFICIENT_BUFFER,

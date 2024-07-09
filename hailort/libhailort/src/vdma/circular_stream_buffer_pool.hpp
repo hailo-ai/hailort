@@ -56,19 +56,19 @@ private:
 
     const size_t m_transfer_size;
 
-    // m_mapped_buffer.size() must be CB_SIZE(m_queue) * m_desc_page_size
+    // m_mapped_buffer.size() must be m_queue.size() * m_desc_page_size
     Buffer m_base_buffer;
     DmaMappedBuffer m_mappings;
 
     // Head/tail based queue that manages the buffer pool.
     // The head and tail are in m_desc_page_size granularity.
     //
-    // If CB_HEAD(m_queue) == CB_TAIL(m_queue) the pool is empty.
+    // If m_queue.head() == m_queue.tail() the pool is empty.
     // Otherwise, the buffers that can be in use starts from
-    //   CB_TAIL(m_queue) * m_desc_page_size (inclusive)
+    //   m_queue.tail() * m_desc_page_size (inclusive)
     // until
-    //   CB_HEAD(m_queue) * m_desc_page_size (exclusive)
-    circbuf_t m_queue;
+    //   m_queue.head() * m_desc_page_size (exclusive)
+    CircularBuffer<IsPow2Tag> m_queue;
 
     // Used to validate that the buffers are enqueued in order.
     size_t m_next_enqueue_desc_offset;

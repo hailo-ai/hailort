@@ -10,6 +10,7 @@
 #include "common/utils.hpp"
 #include "common/runtime_statistics_internal.hpp"
 #include "common/os_utils.hpp"
+#include "utils/dma_buffer_utils.hpp"
 
 #include "hailo/expected.hpp"
 #include "hailo/hailort.h"
@@ -43,62 +44,77 @@ void PipelineBuffer::Metadata::set_start_time(PipelineTimePoint val)
 
 PipelineBuffer::PipelineBuffer(Type type) :
     m_type(type),
-    m_pool(nullptr),
     m_view(),
+    m_exec_done([](hailo_status){}),
     m_metadata(),
     m_is_user_buffer(false),
     m_should_call_exec_done(true),
-    m_action_status(HAILO_SUCCESS)
+    m_action_status(HAILO_SUCCESS),
+    m_buffer_type(BufferType::UNINITIALIZED)
 {
-    m_exec_done = [buffer_pool = m_pool, mem_view = m_view, is_user_buffer = m_is_user_buffer](hailo_status){
-        release_buffer(buffer_pool, mem_view, is_user_buffer);
-    };
 }
 
 PipelineBuffer::PipelineBuffer(hailo_status action_status, const TransferDoneCallbackAsyncInfer &exec_done) :
     m_type(Type::DATA),
-    m_pool(nullptr),
     m_view(),
+    m_exec_done(exec_done),
     m_metadata(),
     m_is_user_buffer(false),
     m_should_call_exec_done(true),
-    m_action_status(action_status)
+    m_action_status(action_status),
+    m_buffer_type(BufferType::UNINITIALIZED)
 {
-    m_exec_done = [buffer_pool = m_pool, mem_view = m_view, is_user_buffer = m_is_user_buffer, exec_done = exec_done](hailo_status status){
-        exec_done(status);
-        release_buffer(buffer_pool, mem_view, is_user_buffer);
-    };
 }
 
-PipelineBuffer::PipelineBuffer(MemoryView view, const TransferDoneCallbackAsyncInfer &exec_done, hailo_status action_status, bool is_user_buffer, BufferPoolPtr pool, 
-    bool should_measure) :
+PipelineBuffer::PipelineBuffer(MemoryView view, const TransferDoneCallbackAsyncInfer &exec_done, hailo_status action_status,
+    bool is_user_buffer, BufferPoolWeakPtr pool, bool should_measure) :
     m_type(Type::DATA),
     m_pool(pool),
     m_view(view),
     m_metadata(Metadata(add_timestamp(should_measure))),
     m_is_user_buffer(is_user_buffer),
     m_should_call_exec_done(true),
-    m_action_status(action_status)
+    m_action_status(action_status),
+    m_buffer_type(BufferType::VIEW)
 {
-    m_exec_done = [buffer_pool = m_pool, mem_view = m_view, is_user_buffer = m_is_user_buffer, exec_done = exec_done](hailo_status status){
+    m_exec_done = [pool = m_pool, mem_view = m_view, is_user_buffer = m_is_user_buffer, exec_done = exec_done](hailo_status status){
         exec_done(status);
-        release_buffer(buffer_pool, mem_view, is_user_buffer);
+        if (auto buffer_pool = pool.lock()) {
+            return_buffer_to_pool(buffer_pool, mem_view, is_user_buffer);
+        }
     };
 }
 
 PipelineBuffer::PipelineBuffer(hailo_pix_buffer_t buffer, const TransferDoneCallbackAsyncInfer &exec_done) :
     m_type(Type::DATA),
-    m_pool(nullptr),
     m_view(),
+    m_exec_done(exec_done),
     m_metadata(),
     m_is_user_buffer(false),
     m_should_call_exec_done(true),
-    m_action_status(HAILO_SUCCESS)
+    m_action_status(HAILO_SUCCESS),
+    m_buffer_type(BufferType::PIX_BUFFER)
 {
     set_additional_data(std::make_shared<PixBufferPipelineData>(buffer));
-    m_exec_done = [buffer_pool = m_pool, mem_view = m_view, is_user_buffer = m_is_user_buffer, exec_done = exec_done](hailo_status status){
+}
+
+PipelineBuffer::PipelineBuffer(hailo_dma_buffer_t dma_buffer, const TransferDoneCallbackAsyncInfer &exec_done, hailo_status action_status,
+    bool is_user_buffer, BufferPoolWeakPtr pool, bool should_measure) :
+    m_type(Type::DATA),
+    m_pool(pool),
+    m_view(),
+    m_metadata(Metadata(add_timestamp(should_measure))),
+    m_is_user_buffer(is_user_buffer),
+    m_should_call_exec_done(true),
+    m_action_status(action_status),
+    m_buffer_type(BufferType::DMA_BUFFER)
+{
+    set_additional_data(std::make_shared<DmaBufferPipelineData>(dma_buffer));
+    m_exec_done = [pool = m_pool, dma_buffer = get_metadata().get_additional_data<DmaBufferPipelineData>(), is_user_buffer = m_is_user_buffer, exec_done = exec_done](hailo_status status){
         exec_done(status);
-        release_buffer(buffer_pool, mem_view, is_user_buffer);
+        if (auto buffer_pool = pool.lock()) {
+            return_buffer_to_pool(buffer_pool, dma_buffer->m_dma_buffer, is_user_buffer);
+        }
     };
 }
 
@@ -110,7 +126,8 @@ PipelineBuffer::PipelineBuffer(PipelineBuffer &&other) :
     m_metadata(std::move(other.m_metadata)),
     m_is_user_buffer(std::move(other.m_is_user_buffer)),
     m_should_call_exec_done(std::exchange(other.m_should_call_exec_done, false)),
-    m_action_status(std::move(other.m_action_status))
+    m_action_status(std::move(other.m_action_status)),
+    m_buffer_type(other.m_buffer_type)
 {}
 
 PipelineBuffer &PipelineBuffer::operator=(PipelineBuffer &&other)
@@ -123,6 +140,7 @@ PipelineBuffer &PipelineBuffer::operator=(PipelineBuffer &&other)
     m_is_user_buffer = std::move(other.m_is_user_buffer);
     m_should_call_exec_done = std::exchange(other.m_should_call_exec_done, false);
     m_action_status = std::move(other.m_action_status);
+    m_buffer_type = std::move(other.m_buffer_type);
     return *this;
 }
 
@@ -145,12 +163,35 @@ uint8_t* PipelineBuffer::data()
 
 size_t PipelineBuffer::size() const
 {
-    return m_view.size();
+    if (BufferType::DMA_BUFFER == m_buffer_type) {
+        auto dma_buffer = get_metadata().get_additional_data<DmaBufferPipelineData>();
+        return dma_buffer->m_dma_buffer.size;
+    } else if (BufferType::PIX_BUFFER == m_buffer_type) {
+        auto pix_buffer = get_metadata().get_additional_data<PixBufferPipelineData>();
+        size_t size = 0;
+        for (uint32_t i = 0; i < pix_buffer->m_pix_buffer.number_of_planes; i++) {
+            size += pix_buffer->m_pix_buffer.planes[i].plane_size;
+        }
+        return size;
+    } else {
+        return m_view.size();
+    }
 }
 
-MemoryView PipelineBuffer::as_view()
+Expected<MemoryView> PipelineBuffer::as_view(BufferProtection dma_buffer_protection)
 {
-    return m_view;
+    if (BufferType::DMA_BUFFER == m_buffer_type) {
+        assert(BufferProtection::NONE != dma_buffer_protection);
+        auto status = set_dma_buf_as_memview(dma_buffer_protection);
+        CHECK_SUCCESS_AS_EXPECTED(status);
+    } else if (BufferType::PIX_BUFFER == m_buffer_type) {
+        LOGGER__ERROR("Can't call as_view for buffer of type pix_buffer.");
+        return make_unexpected(HAILO_INVALID_ARGUMENT);
+    }
+
+    auto mem_view = m_view;
+
+    return mem_view;
 }
 
 PipelineBuffer::Type PipelineBuffer::get_type() const
@@ -163,12 +204,17 @@ PipelineBuffer::Metadata PipelineBuffer::get_metadata() const
     return m_metadata;
 }
 
+BufferType PipelineBuffer::get_buffer_type() const
+{
+    return m_buffer_type;
+}
+
 Expected<hailo_pix_buffer_t> PipelineBuffer::as_hailo_pix_buffer(hailo_format_order_t order)
 {
     auto pix_buffer = get_metadata().get_additional_data<PixBufferPipelineData>();
 
     if (nullptr == pix_buffer) {
-        auto mem_view = as_view();
+        TRY(auto mem_view, as_view(BufferProtection::READ));
         return HailoRTCommon::as_hailo_pix_buffer(mem_view, order);
     } else {
         uint32_t expected_number_of_planes;
@@ -194,9 +240,9 @@ Expected<hailo_pix_buffer_t> PipelineBuffer::as_hailo_pix_buffer(hailo_format_or
     }
 }
 
-void PipelineBuffer::set_metadata(Metadata &&val)
+void PipelineBuffer::set_metadata_start_time(PipelineTimePoint val)
 {
-    m_metadata = std::move(val);
+    m_metadata.set_start_time(val);
 }
 
 PipelineTimePoint PipelineBuffer::add_timestamp(bool should_measure)
@@ -204,10 +250,30 @@ PipelineTimePoint PipelineBuffer::add_timestamp(bool should_measure)
     return should_measure ? std::chrono::steady_clock::now() : PipelineTimePoint{};
 }
 
-void PipelineBuffer::release_buffer(BufferPoolPtr buffer_pool_ptr, MemoryView mem_view, bool is_user_buffer)
+void PipelineBuffer::return_buffer_to_pool(BufferPoolWeakPtr buffer_pool_weak_ptr, MemoryView mem_view, bool is_user_buffer)
 {
-    if ((nullptr != buffer_pool_ptr) && (!is_user_buffer)) {
-        hailo_status status = buffer_pool_ptr->release_buffer(mem_view);
+    if (is_user_buffer) {
+        return;
+    }
+
+    if (auto buffer_pool_ptr = buffer_pool_weak_ptr.lock() ) {
+        auto pipeline_buffer = PipelineBuffer(mem_view, [](hailo_status){}, HAILO_SUCCESS, false, buffer_pool_ptr, buffer_pool_ptr->should_measure_vstream_latency());
+        hailo_status status = buffer_pool_ptr->return_buffer_to_pool(std::move(pipeline_buffer));
+        if (HAILO_SUCCESS != status) {
+            LOGGER__CRITICAL("Releasing buffer in buffer pool failed! status = {}", status);
+        }
+    }
+}
+
+void PipelineBuffer::return_buffer_to_pool(BufferPoolWeakPtr buffer_pool_weak_ptr, hailo_dma_buffer_t dma_buffer, bool is_user_buffer)
+{
+    if (is_user_buffer) {
+        return;
+    }
+
+    if (auto buffer_pool_ptr = buffer_pool_weak_ptr.lock() ) {
+        auto pipeline_buffer = PipelineBuffer(dma_buffer, [](hailo_status){}, HAILO_SUCCESS, false, buffer_pool_ptr, buffer_pool_ptr->should_measure_vstream_latency());
+        hailo_status status = buffer_pool_ptr->return_buffer_to_pool(std::move(pipeline_buffer));
         if (HAILO_SUCCESS != status) {
             LOGGER__CRITICAL("Releasing buffer in buffer pool failed! status = {}", status);
         }
@@ -222,6 +288,25 @@ hailo_status PipelineBuffer::action_status()
 void PipelineBuffer::set_action_status(hailo_status status)
 {
     m_action_status = status;
+}
+
+hailo_status PipelineBuffer::set_dma_buf_as_memview(BufferProtection dma_buffer_protection)
+{
+    auto dma_buffer = get_metadata().get_additional_data<DmaBufferPipelineData>();
+
+    TRY(m_view, DmaBufferUtils::mmap_dma_buffer(dma_buffer->m_dma_buffer, dma_buffer_protection));
+
+    m_exec_done = [mem_view=m_view, exec_done=m_exec_done, dma_buffer, dma_buffer_protection](hailo_status status) {
+        auto mumap_status = DmaBufferUtils::munmap_dma_buffer(dma_buffer->m_dma_buffer, mem_view, dma_buffer_protection);
+        if (HAILO_SUCCESS != mumap_status) {
+            LOGGER__ERROR("Failed to unmap dma buffer");
+            status = HAILO_FILE_OPERATION_FAILURE;
+        }
+        exec_done(status);
+    };
+
+    m_buffer_type = BufferType::VIEW;
+    return HAILO_SUCCESS;
 }
 
 void PipelineBuffer::call_exec_done()
@@ -243,15 +328,16 @@ Expected<BufferPoolPtr> BufferPool::create(size_t buffer_size, size_t buffer_cou
     }
     const bool measure_vstream_latency = (vstream_flags & HAILO_VSTREAM_STATS_MEASURE_LATENCY) != 0;
 
-    auto free_mem_views = SpscQueue<MemoryView>::create(buffer_count, shutdown_event, BUFFER_POOL_DEFAULT_QUEUE_TIMEOUT);
-    CHECK_EXPECTED(free_mem_views);
-
-    auto done_cbs = SpscQueue<TransferDoneCallbackAsyncInfer>::create(buffer_count, shutdown_event, BUFFER_POOL_DEFAULT_QUEUE_TIMEOUT);
-    CHECK_EXPECTED(done_cbs);
+    TRY(auto pipeline_buffers_queue, SpscQueue<PipelineBuffer>::create(buffer_count, shutdown_event, BUFFER_POOL_DEFAULT_QUEUE_TIMEOUT));
 
     std::vector<Buffer> buffers;
+    buffers.reserve(buffer_count);
+
+    auto buffer_pool_ptr = make_shared_nothrow<BufferPool>(buffer_size, is_empty, measure_vstream_latency, std::move(buffers),
+        std::move(pipeline_buffers_queue), std::move(queue_size_accumulator), buffer_count);
+    CHECK_AS_EXPECTED(nullptr != buffer_pool_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
     if (!is_empty) {
-        buffers.reserve(buffer_count);
         for (size_t i = 0; i < buffer_count; i++) {
             BufferStorageParams buffer_storage_params;
             if (is_dma_able) {
@@ -260,30 +346,28 @@ Expected<BufferPoolPtr> BufferPool::create(size_t buffer_size, size_t buffer_cou
             auto buffer = Buffer::create(buffer_size, buffer_storage_params);
             CHECK_EXPECTED(buffer);
 
-            auto status = free_mem_views->enqueue(MemoryView(buffer.value()));
+            auto pipeline_buffer = PipelineBuffer(MemoryView(buffer.value()), [](hailo_status){}, HAILO_SUCCESS, false, buffer_pool_ptr,
+                buffer_pool_ptr->m_measure_vstream_latency);
+
+            auto status = buffer_pool_ptr->enqueue_buffer(std::move(pipeline_buffer));
             CHECK_SUCCESS_AS_EXPECTED(status);
 
-            buffers.emplace_back(buffer.release());
+            buffer_pool_ptr->m_buffers.emplace_back(buffer.release());
         }
     }
-
-    auto buffer_pool_ptr = make_shared_nothrow<BufferPool>(buffer_size, is_empty, measure_vstream_latency, std::move(buffers),
-        free_mem_views.release(), done_cbs.release(), std::move(queue_size_accumulator), buffer_count);
-    CHECK_AS_EXPECTED(nullptr != buffer_pool_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return buffer_pool_ptr;
 }
 
 BufferPool::BufferPool(size_t buffer_size, bool is_holding_user_buffers, bool measure_vstream_latency, std::vector<Buffer> &&buffers,
-        SpscQueue<MemoryView> &&free_mem_views, SpscQueue<TransferDoneCallbackAsyncInfer> &&done_cbs, AccumulatorPtr &&queue_size_accumulator,
+        SpscQueue<PipelineBuffer> &&pipeline_buffers_queue, AccumulatorPtr &&queue_size_accumulator,
         size_t max_buffer_count) :
     m_buffer_size(buffer_size),
     m_is_holding_user_buffers(is_holding_user_buffers),
     m_max_buffer_count(max_buffer_count),
     m_measure_vstream_latency(measure_vstream_latency),
     m_buffers(std::move(buffers)),
-    m_free_mem_views(std::move(free_mem_views)),
-    m_done_cbs(std::move(done_cbs)),
+    m_pipeline_buffers_queue(std::move(pipeline_buffers_queue)),
     m_queue_size_accumulator(std::move(queue_size_accumulator)),
     m_is_already_running(false)
 {
@@ -295,25 +379,26 @@ size_t BufferPool::buffer_size()
     return m_buffer_size.load();
 }
 
-hailo_status BufferPool::enqueue_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done)
+hailo_status BufferPool::enqueue_buffer(PipelineBuffer &&pipeline_buffer)
 {
+    // TODO: add support for pix_buffer here (currently enqueue_buffer is called only to add the output_buffers which are never pix_buffers)
     m_is_already_running = true;
     auto pool_buffer_size = buffer_size();
-    CHECK(mem_view.size() == pool_buffer_size, HAILO_INTERNAL_FAILURE,
-        "Buffer size is not the same as expected for pool! ({} != {})", mem_view.size(), pool_buffer_size);
+    CHECK(pipeline_buffer.size() == pool_buffer_size, HAILO_INTERNAL_FAILURE,
+        "Buffer size is not the same as expected for pool! ({} != {})", pipeline_buffer.size(), pool_buffer_size);
 
     std::unique_lock<std::mutex> lock(m_enqueue_mutex);
-    auto status = m_free_mem_views.enqueue(mem_view);
+    auto status = m_pipeline_buffers_queue.enqueue(std::move(pipeline_buffer));
     if (HAILO_SHUTDOWN_EVENT_SIGNALED == status) {
         return HAILO_SHUTDOWN_EVENT_SIGNALED;
     }
     CHECK_SUCCESS(status);
 
-    // TODO: Stop using 2 queues, hold a queue of pipeline_buffer instead.
-    status = m_done_cbs.enqueue(exec_done, true); // we get here only if acquire_free_mem_view succeeded, so we want to push cb to keep sync between the queues
-    CHECK_SUCCESS(status);
-
     return HAILO_SUCCESS;
+}
+bool BufferPool::should_measure_vstream_latency()
+{
+    return m_measure_vstream_latency;
 }
 
 bool BufferPool::is_full()
@@ -321,9 +406,14 @@ bool BufferPool::is_full()
     return (m_max_buffer_count - num_of_buffers_in_pool() == 0);
 }
 
+size_t BufferPool::max_capacity()
+{
+    return m_max_buffer_count;
+}
+
 size_t BufferPool::num_of_buffers_in_pool()
 {
-    return m_free_mem_views.size_approx();
+    return m_pipeline_buffers_queue.size_approx();
 }
 
 bool BufferPool::is_holding_user_buffers()
@@ -335,74 +425,25 @@ Expected<PipelineBuffer> BufferPool::acquire_buffer(std::chrono::milliseconds ti
     bool ignore_shutdown_event)
 {
     m_is_already_running = true;
-
     std::unique_lock<std::mutex> lock(m_dequeue_mutex);
-    auto mem_view = acquire_free_mem_view(timeout, ignore_shutdown_event);
-    if ((HAILO_SUCCESS != mem_view.status()) && (m_is_holding_user_buffers)) {
-        auto done_cb = acquire_on_done_cb(timeout, ignore_shutdown_event);
-        if (HAILO_SHUTDOWN_EVENT_SIGNALED == done_cb.status()) {
-            return make_unexpected(HAILO_SHUTDOWN_EVENT_SIGNALED);
-        }
-        CHECK_EXPECTED(done_cb);
 
-        done_cb.value()(mem_view.status());
-    }
-    if (HAILO_SHUTDOWN_EVENT_SIGNALED == mem_view.status()) {
-        return make_unexpected(HAILO_SHUTDOWN_EVENT_SIGNALED);
-    }
-    CHECK_EXPECTED(mem_view);
-
-    if (m_is_holding_user_buffers) {
-        auto done_cb = acquire_on_done_cb(timeout, true); // we get here only if acquire_free_mem_view succeeded, so we want to pop cb to keep sync between the queues
-        if (HAILO_SHUTDOWN_EVENT_SIGNALED == done_cb.status()) {
-            return make_unexpected(HAILO_SHUTDOWN_EVENT_SIGNALED);
-        }
-        CHECK_EXPECTED(done_cb);
-
-        return PipelineBuffer(mem_view.release(), done_cb.release(), HAILO_SUCCESS, m_is_holding_user_buffers, shared_from_this(), m_measure_vstream_latency);
-    }
-
-    return PipelineBuffer(mem_view.release(), [](hailo_status){}, HAILO_SUCCESS, m_is_holding_user_buffers, shared_from_this(), m_measure_vstream_latency);
-}
-
-Expected<MemoryView> BufferPool::acquire_free_mem_view(std::chrono::milliseconds timeout,
-    bool ignore_shutdown_event)
-{
     if (nullptr != m_queue_size_accumulator) {
-        m_queue_size_accumulator->add_data_point(static_cast<double>(m_free_mem_views.size_approx()));
+        m_queue_size_accumulator->add_data_point(static_cast<double>(m_pipeline_buffers_queue.size_approx()));
     }
 
-    auto mem_view = m_free_mem_views.dequeue(timeout, ignore_shutdown_event);
-    if (HAILO_SHUTDOWN_EVENT_SIGNALED == mem_view.status()) {
-        return make_unexpected(mem_view.status());
+    auto pipeline_buffer = m_pipeline_buffers_queue.dequeue(timeout, ignore_shutdown_event);
+    if (HAILO_SHUTDOWN_EVENT_SIGNALED == pipeline_buffer.status()) {
+        return make_unexpected(pipeline_buffer.status());
     }
-    else if (HAILO_TIMEOUT == mem_view.status()) {
+    else if (HAILO_TIMEOUT == pipeline_buffer.status()) {
         LOGGER__WARNING(
             "Failed to acquire buffer because the buffer pool is empty. This could be caused by uneven reading and writing speeds, with a short user-defined timeout. (timeout={}ms)",
             timeout.count());
-        return make_unexpected(mem_view.status());
+        return make_unexpected(pipeline_buffer.status());
     }
-    CHECK_EXPECTED(mem_view);
+    CHECK_EXPECTED(pipeline_buffer);
 
-    return mem_view.release();
-}
-
-Expected<TransferDoneCallbackAsyncInfer> BufferPool::acquire_on_done_cb(std::chrono::milliseconds timeout,
-    bool ignore_shutdown_event)
-{
-    auto done_cb = m_done_cbs.dequeue(timeout, ignore_shutdown_event);
-    if (HAILO_SHUTDOWN_EVENT_SIGNALED == done_cb.status()) {
-        return make_unexpected(done_cb.status());
-    }
-    else if (HAILO_TIMEOUT == done_cb.status()) {
-        LOGGER__WARNING(
-            "Failed to acquire buffer because the buffer pool is empty. This could be caused by uneven reading and writing speeds, with a short user-defined timeout. (timeout={}ms)",
-            timeout.count());
-        return make_unexpected(done_cb.status());
-    }
-    CHECK_EXPECTED(done_cb);
-
-    return done_cb.release();
+    return pipeline_buffer.release();
 }
 
 AccumulatorPtr BufferPool::get_queue_size_accumulator()
@@ -430,11 +471,11 @@ Expected<PipelineBuffer> BufferPool::get_available_buffer(PipelineBuffer &&optio
     return acquired_buffer.release();
 }
 
-hailo_status BufferPool::release_buffer(MemoryView mem_view)
+hailo_status BufferPool::return_buffer_to_pool(PipelineBuffer &&pipeline_buffer)
 {
     std::unique_lock<std::mutex> lock(m_enqueue_mutex);
     // This can be called after the shutdown event was signaled so we ignore it here
-    return m_free_mem_views.enqueue(std::move(mem_view), true);
+    return m_pipeline_buffers_queue.enqueue(std::move(pipeline_buffer), true);
 }
 
 hailo_status BufferPool::map_to_vdevice(VDevice &vdevice, hailo_dma_buffer_direction_t direction)
@@ -836,10 +877,9 @@ void PipelineElement::print_deep_description(std::vector<std::string> &visited_e
     }
 }
 
-hailo_status PipelineElement::enqueue_execution_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done)
+hailo_status PipelineElement::enqueue_execution_buffer(PipelineBuffer &&pipeline_buffer)
 {
-    (void)mem_view;
-    (void)exec_done;
+    (void)pipeline_buffer;
     LOGGER__ERROR("enqueue_execution_buffer is not implemented for {}!", name());
     return HAILO_NOT_IMPLEMENTED;
 };
@@ -867,12 +907,12 @@ hailo_status PipelineElement::empty_buffer_pool(BufferPoolPtr pool, hailo_status
     return HAILO_SUCCESS;
 }
 
-Expected<bool> PipelineElement::can_push_buffer_upstream()
+Expected<bool> PipelineElement::can_push_buffer_upstream(uint32_t /*frames_count*/)
 {
     return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
 
-Expected<bool> PipelineElement::can_push_buffer_downstream()
+Expected<bool> PipelineElement::can_push_buffer_downstream(uint32_t /*frames_count*/)
 {
     return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }

@@ -21,6 +21,13 @@
 
 namespace hailort
 {
+#define HAILORT_CONSOLE_LOGGER_LEVEL ("HAILORT_CONSOLE_LOGGER_LEVEL")
+
+#ifdef _WIN32
+#define PATH_SEPARATOR "\\"
+#else
+#define PATH_SEPARATOR "/"
+#endif
 
 class HailoRTLogger {
 public:
@@ -33,6 +40,16 @@ public:
 #endif
     {
         static std::unique_ptr<HailoRTLogger> instance = nullptr;
+        auto user_console_logger_level = std::getenv(HAILORT_CONSOLE_LOGGER_LEVEL);
+        if ((nullptr != user_console_logger_level) && (std::strlen(user_console_logger_level) > 0)){
+            auto expected_console_level = get_console_logger_level_from_string(user_console_logger_level);
+            if (expected_console_level) {
+                console_level = expected_console_level.release();
+            } else {
+                LOGGER__WARNING("Failed to parse console logger level from environment variable: {}, status: {}", 
+                    user_console_logger_level, expected_console_level.status());
+            }
+        }
         if (nullptr == instance) {
             instance = make_unique_nothrow<HailoRTLogger>(console_level, file_level, flush_level);
         }
@@ -52,6 +69,7 @@ public:
 private:
     static std::string parse_log_path(const char *log_path);
     void set_levels(spdlog::level::level_enum console_level, spdlog::level::level_enum file_level, spdlog::level::level_enum flush_level);
+    static Expected<spdlog::level::level_enum> get_console_logger_level_from_string(const std::string &user_console_logger_level);
 
     std::shared_ptr<spdlog::sinks::sink> m_console_sink;
 

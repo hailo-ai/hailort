@@ -730,6 +730,45 @@ public:
      */
     virtual hailo_status dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction);
 
+    /**
+     * Maps the dmabuf represented by the file descriptor @a dmabuf_fd for DMA transfers to/from this device, in the specified
+     * @a data_direction.
+     * DMA mapping of buffers in advance may improve the performance of async API. This improvement will become
+     * apparent when the buffer is reused multiple times across different async operations.
+     *
+     * For high level API (aka InferModel), buffers bound using ConfiguredInferModel::Bindings::InferStream::set_buffer
+     * can be mapped.
+     *
+     * For low level API (aka InputStream/OutputStream), buffers passed to InputStream::write_async and
+     * OutputStream::read_async can be mapped.
+     *
+     * @param[in] dmabuf_fd     The file descriptor of the dmabuf to be mapped.
+     * @param[in] size          The buffer's size in bytes.
+     * @param[in] direction     The direction of the mapping. For input streams, use `HAILO_DMA_BUFFER_DIRECTION_H2D`
+     *                          and for output streams, use `HAILO_DMA_BUFFER_DIRECTION_D2H`.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     *
+     * @note The DMA mapping will be released upon calling dma_unmap() with @a dmabuf_fd, @a size and @a data_direction, or
+     *       when the @a Device object is destroyed.
+     * @note This API is currently experimental.
+     */
+    virtual hailo_status dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction);
+
+    /**
+     * Un-maps a dmabuf buffer represented by the file descriptor @a dmabuf_fd for DMA transfers to/from this device, in the direction
+     * @a direction.
+     *
+     * @param[in] dmabuf_fd     The file descriptor of the dmabuf to be un-mapped.
+     * @param[in] size          The buffer's size in bytes.
+     * @param[in] direction     The direction of the mapping.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This API is currently experimental.
+     */
+    virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction);
+
+
     virtual hailo_status direct_write_memory(uint32_t address, const void *buffer, uint32_t size);
     virtual hailo_status direct_read_memory(uint32_t address, void *buffer, uint32_t size);
     hailo_status set_overcurrent_state(bool should_activate);
@@ -748,6 +787,9 @@ public:
     hailo_status continue_context_switch_breakpoint(uint8_t breakpoint_id);
     hailo_status clear_context_switch_breakpoint(uint8_t breakpoint_id);
     Expected<uint8_t> get_context_switch_breakpoint_status(uint8_t breakpoint_id);
+    hailo_status init_cache_info(const hailo_cache_info_t &cache_info);
+    Expected<hailo_cache_info_t> get_cache_info();
+    hailo_status update_cache_read_offset(int32_t read_offset_delta);
 
     virtual ~Device() = default;
     Device(const Device &) = delete;

@@ -11,6 +11,7 @@
 #define _HAILO_VDMA_BOUNDARY_CHANNEL_HPP_
 
 #include "vdma/channel/channel_id.hpp"
+#include "vdma/channel/transfer_launcher.hpp"
 #include "vdma/memory/descriptor_list.hpp"
 #include "stream_common/transfer_common.hpp"
 
@@ -36,25 +37,28 @@ class BoundaryChannel final
 public:
     using Direction = HailoRTDriver::DmaDirection;
 
-    static Expected<BoundaryChannelPtr> create(vdma::ChannelId channel_id, Direction direction, HailoRTDriver &driver,
-        uint32_t descs_count, uint16_t desc_page_size, const std::string &stream_name = "", LatencyMeterPtr latency_meter = nullptr);
+    static Expected<BoundaryChannelPtr> create(HailoRTDriver &driver, vdma::ChannelId channel_id, Direction direction,
+        vdma::DescriptorList &&desc_list, TransferLauncher &transfer_launcher, size_t ongoing_transfers,
+        size_t pending_transfers = 0, const std::string &stream_name = "", LatencyMeterPtr latency_meter = nullptr);
 
-    BoundaryChannel(vdma::ChannelId channel_id, Direction direction, HailoRTDriver &driver, uint32_t descs_count,
-        uint16_t desc_page_size, const std::string &stream_name, LatencyMeterPtr latency_meter,
-        hailo_status &status);
+    BoundaryChannel(HailoRTDriver &driver, vdma::ChannelId channel_id, Direction direction, DescriptorList &&desc_list,
+        TransferLauncher &transfer_launcher, size_t ongoing_transfers_queue_size, size_t pending_transfers_queue_size,
+        const std::string &stream_name, LatencyMeterPtr latency_meter, hailo_status &status);
     BoundaryChannel(const BoundaryChannel &other) = delete;
     BoundaryChannel &operator=(const BoundaryChannel &other) = delete;
     BoundaryChannel(BoundaryChannel &&other) = delete;
     BoundaryChannel &operator=(BoundaryChannel &&other) = delete;
     virtual ~BoundaryChannel() = default;
 
-    // Called after the FW activated the channel.
+    /**
+     * Activates the channel object, assume the vDMA channel registers are already in activated state.
+     */
     hailo_status activate();
 
-    // Called before the FW deactivated the channel.
-    hailo_status deactivate();
-
-    hailo_status trigger_channel_completion(uint16_t hw_num_processed);
+    /**
+     * Deactivates the channel object, assume the vDMA channel registers are already in deactivated state.
+     */
+    void deactivate();
 
     // Calls all pending transfer callbacks (if they exist), marking them as canceled by passing
     // HAILO_STREAM_ABORT as a status to the callbacks.
@@ -62,13 +66,20 @@ public:
     // unexpected results
     void cancel_pending_transfers();
 
+    /**
+     * Called when some transfer (or transfers) is completed.
+     */
+    hailo_status trigger_channel_completion(const ChannelIrqData &irq_data);
+
     hailo_status launch_transfer(TransferRequest &&transfer_request);
 
     // To avoid buffer bindings, one can call this function to statically bind a full buffer to the channel. The buffer
     // size should be exactly desc_page_size() * descs_count() of current descriptors list.
     hailo_status bind_buffer(MappedBufferPtr buffer);
 
+    // TODO: rename BoundaryChannel::get_max_ongoing_transfers to BoundaryChannel::get_max_parallel_transfers (HRT-13513)
     size_t get_max_ongoing_transfers(size_t transfer_size) const;
+    size_t get_max_aligned_transfers_in_desc_list(size_t transfer_size) const;
 
     CONTROL_PROTOCOL__host_buffer_info_t get_boundary_buffer_info(uint32_t transfer_size) const;
 
@@ -82,33 +93,40 @@ public:
         return m_stream_name;
     }
 
-    std::shared_ptr<DescriptorList> get_desc_list()
+    DescriptorList &get_desc_list()
     {
         return m_desc_list;
     }
 
-private:
+    bool should_measure_timestamp() const { return m_latency_meter != nullptr; }
 
+private:
     hailo_status update_latency_meter();
 
-    bool is_transfer_complete(const OngoingTransfer &transfer, uint16_t previous_num_processed,
-        uint16_t current_num_processed) const;
-    void on_transfer_complete(std::unique_lock<std::mutex> &lock, OngoingTransfer &transfer,
+    void on_request_complete(std::unique_lock<std::mutex> &lock, TransferRequest &request,
         hailo_status complete_status);
+    hailo_status launch_transfer_impl(TransferRequest &&transfer_request);
 
     static bool is_desc_between(uint16_t begin, uint16_t end, uint16_t desc);
-    hailo_status allocate_descriptor_list(uint32_t descs_count, uint16_t desc_page_size);
     hailo_status validate_bound_buffer(TransferRequest &transfer_request);
 
     const vdma::ChannelId m_channel_id;
     const Direction m_direction;
     HailoRTDriver &m_driver;
-    std::shared_ptr<DescriptorList> m_desc_list; // Host side descriptor list
+    TransferLauncher &m_transfer_launcher;
+    DescriptorList m_desc_list; // Host side descriptor list
     const std::string m_stream_name;
-    circbuf_t m_descs;
+    // Since all desc list sizes are a power of 2, we can use IsPow2Tag to optimize the circular buffer
+    CircularBuffer<IsPow2Tag> m_descs;
     bool m_is_channel_activated;
     std::mutex m_channel_mutex;
-    CircularArray<OngoingTransfer> m_ongoing_transfers;
+    // * m_pending_transfers holds transfers that are waiting to be bound to the descriptor list.
+    // * m_ongoing_transfers holds transfers that have been bound to the descriptor list and
+    //   are waiting to be completed.
+    // * Note that the capacity of the pending_transfers and ongoing_transfers circular
+    //   buffers may not be a power of 2, hence the IsNotPow2Tag
+    CircularArray<OngoingTransfer, IsNotPow2Tag> m_ongoing_transfers;
+    CircularArray<TransferRequest, IsNotPow2Tag> m_pending_transfers;
 
     // About HW latency measurements:
     //  - For each ongoing transfer, we push some num-proc value to the pending_latency_measurements array. When this

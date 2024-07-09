@@ -92,6 +92,14 @@ public:
 
     virtual Expected<HwInferResults> run_hw_infer_estimator() override;
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &) override;
+    virtual Expected<Buffer> get_cache_buffer(uint32_t cache_id) override;
+    virtual Expected<std::map<uint32_t, Buffer>> get_cache_buffers() override;
+    virtual bool has_caches() const override;
+    virtual Expected<uint32_t> get_cache_read_size() const override;
+    virtual Expected<uint32_t> get_cache_write_size() const override;
+    virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) override;
+    virtual Expected<hailo_cache_info_t> get_cache_info() const;
+    virtual hailo_status update_cache_offset(int32_t offset_delta_bytes) override;
 
     VDeviceCoreOp(VDevice &vdevice,
         ActiveCoreOpHolder &active_core_op_holder,

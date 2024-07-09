@@ -4,7 +4,7 @@
 **/
 /**
  * @file cng_buffer_pool.hpp
- * @brief This model represents the buffer pools for the output reads for each network group. Used in async API
+ * @brief This model represents the buffer pools for the streams of each network group. Used in async API
  **/
 
 #ifndef _HAILO_CNG_BUFFER_POOL_HPP_
@@ -49,9 +49,9 @@ private:
 };
 
 using BufferPoolPtr = std::shared_ptr<ServiceStreamBufferPool>;
-using output_name_t = std::string;
+using stream_name_t = std::string;
 
-// This object holds a buffer pool for each output streams of the network group.
+// This object holds a buffer pool for each stream of the network group.
 // It is used to pre-allocate all the buffers necessary for the reads from the device.
 // The buffers are reuseable, which also prevents allocation during inference.
 // The buffers are mapped to the device during their creation, which prevent lazy mapping each frame inference.
@@ -61,9 +61,9 @@ class ServiceNetworkGroupBufferPool
 public:
     static Expected<std::shared_ptr<ServiceNetworkGroupBufferPool>> create(uint32_t vdevice_handle);
 
-    hailo_status allocate_pool(const std::string &name, size_t frame_size, size_t pool_size);
+    hailo_status allocate_pool(const std::string &name, hailo_dma_buffer_direction_t direction, size_t frame_size, size_t pool_size);
     // Used in order to reallocate the pool buffers with different frame_size
-    hailo_status reallocate_pool(const std::string &name, size_t frame_size);
+    hailo_status reallocate_pool(const std::string &name, hailo_dma_buffer_direction_t direction, size_t frame_size);
 
     ServiceNetworkGroupBufferPool(ServiceNetworkGroupBufferPool &&) = delete;
     ServiceNetworkGroupBufferPool(const ServiceNetworkGroupBufferPool &) = delete;
@@ -72,12 +72,12 @@ public:
     virtual ~ServiceNetworkGroupBufferPool() = default;
 
     ServiceNetworkGroupBufferPool(EventPtr shutdown_event, uint32_t vdevice_handle);
-    Expected<BufferPtr> acquire_buffer(const std::string &output_name);
-    hailo_status return_to_pool(const std::string &output_name, BufferPtr buffer);
+    Expected<BufferPtr> acquire_buffer(const std::string &stream_name);
+    hailo_status return_to_pool(const std::string &stream_name, BufferPtr buffer);
     hailo_status shutdown();
 
 private:
-    std::unordered_map<output_name_t, BufferPoolPtr> m_output_name_to_buffer_pool;
+    std::unordered_map<stream_name_t, BufferPoolPtr> m_stream_name_to_buffer_pool;
     EventPtr m_shutdown_event;
     uint32_t m_vdevice_handle;
     std::mutex m_mutex;

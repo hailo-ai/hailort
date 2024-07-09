@@ -49,6 +49,7 @@ public:
     virtual hailo_status read(void *buf_dst, size_t count, size_t offset) override;
     virtual hailo_status write(const void *buf_src, size_t count, size_t offset) override;
 
+    void *user_address() const;
     uint64_t dma_address() const;
 private:
     ContinuousBuffer(HailoRTDriver &driver, const ContinousBufferInfo &buffer_info);

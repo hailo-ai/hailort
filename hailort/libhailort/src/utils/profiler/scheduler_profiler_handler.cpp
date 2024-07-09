@@ -25,16 +25,27 @@
 #include <fstream>
 #include <iomanip>
 
-#define PROFILER_DEFAULT_FILE_NAME ("hailo.tracer")
+
 #define SCHEDULER_PROFILER_NAME ("SchedulerProfiler")
-#define PROFILER_FILE_ENV_VAR ("HAILO_TRACE_FILE")
+#define PROFILER_FILE_ENV_VAR ("HAILO_TRACE_PATH")
 #define SCHEDULER_PROFILER_LOGGER_FILENAME ("scheduler_profiler.json")
 #define SCHEDULER_PROFILER_LOGGER_PATTERN ("%v")
 
 #define SCHEDULER_PROFILER_LOGGER_PATH ("SCHEDULER_PROFILER_LOGGER_PATH")
 
+static const std::string PROFILER_DEFAULT_FILE_NAME_PREFIX("hailort");
+static const std::string PROFILER_DEFAULT_FILE_NAME_SUFFIX(".hrtt");
+
 namespace hailort
 {
+
+std::string get_current_datetime() {
+  auto now = std::chrono::system_clock::now();
+  auto tp = std::chrono::system_clock::to_time_t(now);
+  std::stringstream ss;
+  ss << std::put_time(std::localtime(&tp), "%Y-%m-%d_%H-%M-%S");
+  return ss.str();
+}
 
 SchedulerProfilerHandler::SchedulerProfilerHandler(int64_t &start_time)
 #ifndef __ANDROID__
@@ -63,9 +74,9 @@ SchedulerProfilerHandler::~SchedulerProfilerHandler()
 void SchedulerProfilerHandler::serialize_and_dump_proto()
 {
     auto file_env_var = std::getenv(PROFILER_FILE_ENV_VAR);
-    std::string file_name = PROFILER_DEFAULT_FILE_NAME;
+    std::string file_name = PROFILER_DEFAULT_FILE_NAME_PREFIX + "_" + get_current_datetime() + PROFILER_DEFAULT_FILE_NAME_SUFFIX;
     if (nullptr != file_env_var) {
-        file_name = std::string(file_env_var);
+        file_name = std::string(file_env_var) + PATH_SEPARATOR + file_name;
     }
 
     std::ofstream output_file(std::string(file_name), std::ios::out |std::ios::binary);
@@ -331,6 +342,7 @@ void SchedulerProfilerHandler::handle_trace(const ActivateCoreOpTrace &trace)
     added_trace->mutable_activate_core_op()->set_new_core_op_handle(trace.core_op_handle);
     added_trace->mutable_activate_core_op()->set_time_stamp(trace.timestamp);
     added_trace->mutable_activate_core_op()->set_duration(trace.duration);
+    added_trace->mutable_activate_core_op()->set_dynamic_batch_size(trace.dynamic_batch_size);
 }
 
 void SchedulerProfilerHandler::handle_trace(const DeactivateCoreOpTrace &trace)

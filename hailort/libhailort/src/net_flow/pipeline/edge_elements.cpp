@@ -38,18 +38,15 @@ Expected<std::shared_ptr<HwWriteElement>> HwWriteElement::create(std::shared_ptr
     hailo_pipeline_elem_stats_flags_t elem_flags, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
     PipelineDirection pipeline_direction)
 {
-    auto duration_collector = DurationCollector::create(elem_flags);
-    CHECK_EXPECTED(duration_collector);
-
-    auto got_flush_event = Event::create_shared(Event::State::not_signalled);
-    CHECK_EXPECTED(got_flush_event);
+    TRY(auto duration_collector, DurationCollector::create(elem_flags));
+    TRY(auto got_flush_event, Event::create_shared(Event::State::not_signalled));
 
     // On HwWriteElement the stream always owns the buffer, hence, we set the mode explicitly.
     auto status = stream->set_buffer_mode(StreamBufferMode::OWNING);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     auto hw_write_elem_ptr = make_shared_nothrow<HwWriteElement>(stream, name,
-        duration_collector.release(), std::move(pipeline_status), got_flush_event.release(), pipeline_direction);
+        std::move(duration_collector), std::move(pipeline_status), std::move(got_flush_event), pipeline_direction);
     CHECK_AS_EXPECTED(nullptr != hw_write_elem_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     LOGGER__INFO("Created {}", hw_write_elem_ptr->description());
@@ -175,17 +172,16 @@ Expected<std::shared_ptr<LastAsyncElement>> LastAsyncElement::create(const std::
     hailo_vstream_stats_flags_t vstream_stats_flags, std::shared_ptr<std::atomic<hailo_status>> pipeline_status, size_t queue_size,
     size_t frame_size, EventPtr shutdown_event, std::shared_ptr<AsyncPipeline> async_pipeline)
 {
-    auto duration_collector = DurationCollector::create(elem_flags);
-    CHECK_EXPECTED(duration_collector);
+    TRY(auto duration_collector, DurationCollector::create(elem_flags));
 
     auto is_empty = true; // LastAsync always holds user buffers, therefore its created empty
     auto is_dma_able = false;
     queue_size = queue_size * 2; // Multiplying by 2 to ensure dual-buffering when edge-element is the bottleneck
-    auto buffer_pool = BufferPool::create(frame_size, queue_size, shutdown_event, elem_flags, vstream_stats_flags, is_empty, is_dma_able);
-    CHECK_EXPECTED(buffer_pool);
+    TRY(auto buffer_pool,
+        BufferPool::create(frame_size, queue_size, shutdown_event, elem_flags, vstream_stats_flags, is_empty, is_dma_able));
 
     auto last_async_elem_ptr = make_shared_nothrow<LastAsyncElement>(name,
-        duration_collector.release(), std::move(pipeline_status), buffer_pool.release(), async_pipeline);
+        std::move(duration_collector), std::move(pipeline_status), std::move(buffer_pool), async_pipeline);
     CHECK_NOT_NULL_AS_EXPECTED(last_async_elem_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     LOGGER__INFO("Created {}", last_async_elem_ptr->description());
@@ -228,14 +224,14 @@ hailo_status LastAsyncElement::execute_activate()
     return HAILO_SUCCESS;
 }
 
-hailo_status LastAsyncElement::enqueue_execution_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done)
+hailo_status LastAsyncElement::enqueue_execution_buffer(PipelineBuffer &&pipeline_buffer)
 {
-    return m_pool->enqueue_buffer(mem_view, exec_done);
+    return m_pool->enqueue_buffer(std::move(pipeline_buffer));
 }
 
-Expected<bool> LastAsyncElement::can_push_buffer_upstream()
+Expected<bool> LastAsyncElement::can_push_buffer_upstream(uint32_t frames_count)
 {
-    return !m_pool->is_full();
+    return (m_pool->num_of_buffers_in_pool() + frames_count) < m_pool->max_capacity();
 }
 
 SourceElement::SourceElement(const std::string &name, DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
@@ -278,16 +274,14 @@ Expected<std::shared_ptr<HwReadElement>> HwReadElement::create(std::shared_ptr<O
     auto status = stream->set_buffer_mode(StreamBufferMode::OWNING);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
-    auto duration_collector = DurationCollector::create(build_params.elem_stats_flags);
-    CHECK_EXPECTED(duration_collector);
+    TRY(auto duration_collector, DurationCollector::create(build_params.elem_stats_flags));
 
     auto pipeline_status = build_params.pipeline_status;
 
-    auto shutdown_event = Event::create_shared(Event::State::not_signalled);
-    CHECK_EXPECTED(shutdown_event);
+    TRY(auto shutdown_event, Event::create_shared(Event::State::not_signalled));
 
     auto hw_read_elem_ptr = make_shared_nothrow<HwReadElement>(stream, name, build_params.timeout,
-        duration_collector.release(), shutdown_event.release(), std::move(pipeline_status), pipeline_direction);
+        std::move(duration_collector), std::move(shutdown_event), std::move(pipeline_status), pipeline_direction);
     CHECK_AS_EXPECTED(nullptr != hw_read_elem_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     LOGGER__INFO("Created {}", hw_read_elem_ptr->description());
@@ -365,11 +359,9 @@ Expected<PipelineBuffer> HwReadElement::run_pull(PipelineBuffer &&optional, cons
     auto pool = next_pad_downstream().element().get_buffer_pool();
     assert(pool);
 
-    auto buffer = pool->get_available_buffer(std::move(optional), m_timeout);
-    if (HAILO_SHUTDOWN_EVENT_SIGNALED == buffer.status()) {
-        return make_unexpected(buffer.status());
-    }
-    CHECK_EXPECTED(buffer, "{} (D2H) failed with status={}", name(), buffer.status());
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_SHUTDOWN_EVENT_SIGNALED, auto buffer,
+        pool->get_available_buffer(std::move(optional), m_timeout),
+        "{} (D2H) failed.", name());
 
     while (true) {
         if (!m_stream->is_scheduled()) {
@@ -388,7 +380,8 @@ Expected<PipelineBuffer> HwReadElement::run_pull(PipelineBuffer &&optional, cons
             }
         }
 
-        MemoryView buffer_view(buffer.value().as_view());
+        TRY(MemoryView buffer_view, buffer.as_view(BufferProtection::NONE));
+
         m_duration_collector.start_measurement();
         auto status = m_stream->read(buffer_view);
         if (HAILO_INVALID_FRAME == status) {
@@ -406,7 +399,7 @@ Expected<PipelineBuffer> HwReadElement::run_pull(PipelineBuffer &&optional, cons
         CHECK_SUCCESS_AS_EXPECTED(status, "{} (D2H) failed with status={}", name(), status);
         m_duration_collector.complete_measurement();
 
-        return buffer.release();
+        return buffer;
     }
 }
 

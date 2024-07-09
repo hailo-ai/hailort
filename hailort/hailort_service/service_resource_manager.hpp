@@ -19,6 +19,8 @@
 #include <shared_mutex>
 #include <unordered_set>
 
+#define SINGLE_CLIENT_PID (0)
+
 namespace hailort
 {
 
@@ -48,10 +50,7 @@ public:
     K execute(uint32_t handle, Func &lambda, Args... args)
     {
         std::unique_lock<std::mutex> lock(m_mutex);
-        auto resource_expected = resource_lookup(handle);
-        CHECK_EXPECTED(resource_expected);
-        auto resource = resource_expected.release();
-
+        TRY(auto resource, resource_lookup(handle));
         assert(contains(m_resources_mutexes, handle));
         std::shared_lock<std::shared_timed_mutex> resource_lock(m_resources_mutexes[handle]);
         lock.unlock();
@@ -64,10 +63,7 @@ public:
     hailo_status execute(uint32_t handle, Func &lambda, Args... args)
     {
         std::unique_lock<std::mutex> lock(m_mutex);
-        auto resource_expected = resource_lookup(handle);
-        CHECK_EXPECTED_AS_STATUS(resource_expected);
-        auto resource = resource_expected.release();
-
+        TRY(auto resource, resource_lookup(handle));
         assert(contains(m_resources_mutexes, handle));
         std::shared_lock<std::shared_timed_mutex> resource_lock(m_resources_mutexes[handle]);
         lock.unlock();
@@ -90,10 +86,7 @@ public:
     Expected<uint32_t> dup_handle(uint32_t handle, uint32_t pid)
     {
         std::unique_lock<std::mutex> lock(m_mutex);
-        auto resource_expected = resource_lookup(handle);
-        CHECK_EXPECTED(resource_expected);
-        auto resource = resource_expected.release();
-
+        TRY(auto resource, resource_lookup(handle));
         assert(contains(m_resources_mutexes, handle));
         std::unique_lock<std::shared_timed_mutex> resource_lock(m_resources_mutexes[handle]);
         resource->pids.insert(pid);
@@ -118,7 +111,7 @@ public:
         {
             std::unique_lock<std::shared_timed_mutex> resource_lock(m_resources_mutexes[handle]);
             resource->pids.erase(pid);
-            if (all_pids_dead(resource)) {
+            if ((SINGLE_CLIENT_PID == pid) || all_pids_dead(resource)) {
                 release_resource = true;
                 res = resource->resource;
                 m_resources.erase(handle);

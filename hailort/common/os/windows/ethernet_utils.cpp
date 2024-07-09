@@ -54,10 +54,9 @@ Expected<NetworkInterfaces> NetworkInterface::get_all_interfaces()
         return make_unexpected(HAILO_UNEXPECTED_INTERFACE_INFO_FAILURE);
     }
 
-    auto interface_info_buffer = Buffer::create(required_size, 0);
-    CHECK_EXPECTED(interface_info_buffer);
+    TRY(auto interface_info_buffer, Buffer::create(required_size, 0));
     ret_value = GetAdaptersAddresses(IPV4, UNICAST_ONLY, RESERVED,
-        interface_info_buffer->as_pointer<IP_ADAPTER_ADDRESSES>(), &required_size);
+        interface_info_buffer.as_pointer<IP_ADAPTER_ADDRESSES>(), &required_size);
     if (ret_value == ERROR_NO_DATA) {
         LOGGER__ERROR("No IPv4 interfaces found");
         return make_unexpected(HAILO_NO_IPV4_INTERFACES_FOUND);
@@ -67,7 +66,7 @@ Expected<NetworkInterfaces> NetworkInterface::get_all_interfaces()
     }
 
     NetworkInterfaces interfaces;
-    PIP_ADAPTER_ADDRESSES interface_info = interface_info_buffer->as_pointer<IP_ADAPTER_ADDRESSES>();
+    PIP_ADAPTER_ADDRESSES interface_info = interface_info_buffer.as_pointer<IP_ADAPTER_ADDRESSES>();
 
     while (interface_info != nullptr) {
         PIP_ADAPTER_UNICAST_ADDRESS first_unicast_address = interface_info->FirstUnicastAddress;
@@ -83,10 +82,9 @@ Expected<NetworkInterfaces> NetworkInterface::get_all_interfaces()
             continue;
         }
 
-        auto ip = Buffer::create(IPV4_STRING_MAX_LENGTH);
-        CHECK_EXPECTED(ip);
+        TRY(auto ip, Buffer::create(IPV4_STRING_MAX_LENGTH));
         const auto result = Socket::ntop(AF_INET, &(reinterpret_cast<sockaddr_in *>(address_struct)->sin_addr),
-            ip->as_pointer<char>(), EthernetUtils::MAX_INTERFACE_SIZE);
+            ip.as_pointer<char>(), EthernetUtils::MAX_INTERFACE_SIZE);
         if (result != HAILO_SUCCESS) {
             LOGGER__DEBUG("Failed converting unicast address to string (result={}). Skipping.", result);
             continue;
@@ -98,7 +96,7 @@ Expected<NetworkInterfaces> NetworkInterface::get_all_interfaces()
             continue;
         }
         interfaces.emplace_back(interface_info->IfIndex, interface_info->AdapterName,
-            friendly_name_ansi.value(), ip->to_string());
+            friendly_name_ansi.value(), ip.to_string());
         
         interface_info = interface_info->Next;
     }
@@ -130,9 +128,8 @@ Expected<ArpTable> ArpTable::create(uint32_t interface_index)
         return make_unexpected(HAILO_UNEXPECTED_ARP_TABLE_FAILURE);
     }
 
-    auto ip_net_table_buffer = Buffer::create(required_size, 0);
-    CHECK_EXPECTED(ip_net_table_buffer);
-    ret_value = GetIpNetTable(ip_net_table_buffer->as_pointer<MIB_IPNETTABLE>(), &required_size, SORTED);
+    TRY(auto ip_net_table_buffer, Buffer::create(required_size, 0));
+    ret_value = GetIpNetTable(ip_net_table_buffer.as_pointer<MIB_IPNETTABLE>(), &required_size, SORTED);
     if (ret_value == ERROR_NO_DATA) {
         LOGGER__ERROR("No IPv4 interfaces found");
         return make_unexpected(HAILO_NO_IPV4_INTERFACES_FOUND);
@@ -142,7 +139,7 @@ Expected<ArpTable> ArpTable::create(uint32_t interface_index)
     }
 
     std::unordered_map<uint32_t, MacAddress> result;
-    const PMIB_IPNETTABLE ip_net_table = ip_net_table_buffer->as_pointer<MIB_IPNETTABLE>();
+    const PMIB_IPNETTABLE ip_net_table = ip_net_table_buffer.as_pointer<MIB_IPNETTABLE>();
     for (uint32_t i = 0; i < ip_net_table->dwNumEntries; i++) {
         if (ip_net_table->table[i].dwIndex != interface_index) {
             continue;
@@ -162,18 +159,15 @@ Expected<ArpTable> ArpTable::create(uint32_t interface_index)
 
 Expected<std::string> EthernetUtils::get_interface_from_board_ip(const std::string &board_ip)
 {
-    auto network_interfaces = NetworkInterface::get_all_interfaces();
-    CHECK_EXPECTED(network_interfaces);
+    TRY(const auto network_interfaces, NetworkInterface::get_all_interfaces());
 
     struct in_addr board_ip_struct{};
     auto status = Socket::pton(AF_INET, board_ip.c_str(), &board_ip_struct);
     CHECK_SUCCESS_AS_EXPECTED(status, "Invalid board ip address {}", board_ip);
 
-    for (const auto& network_interface : network_interfaces.value()) {
-        auto arp_table = ArpTable::create(network_interface.index());
-        CHECK_EXPECTED(arp_table);
-
-        const auto mac_address = arp_table->get_mac_address(static_cast<uint32_t>(board_ip_struct.S_un.S_addr));
+    for (const auto &network_interface : network_interfaces) {
+        TRY(const auto arp_table, ArpTable::create(network_interface.index()));
+        const auto mac_address = arp_table.get_mac_address(static_cast<uint32_t>(board_ip_struct.S_un.S_addr));
         if (mac_address) {
             return network_interface.friendly_name();
         }
@@ -184,10 +178,9 @@ Expected<std::string> EthernetUtils::get_interface_from_board_ip(const std::stri
 
 Expected<std::string> EthernetUtils::get_ip_from_interface(const std::string &interface_name)
 {
-    auto network_interfaces = NetworkInterface::get_all_interfaces();
-    CHECK_EXPECTED(network_interfaces);
+    TRY(const auto network_interfaces, NetworkInterface::get_all_interfaces());
 
-    for (const auto& network_interface : network_interfaces.value()) {
+    for (const auto &network_interface : network_interfaces) {
         if (network_interface.friendly_name() == interface_name) {
             return network_interface.ip();
         }

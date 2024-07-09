@@ -64,7 +64,7 @@ Expected<std::unique_ptr<PcieDevice>> PcieDevice::create(const hailo_pcie_device
     auto device_info = find_device_info(pcie_device_info);
     CHECK_EXPECTED(device_info);
 
-    auto driver = HailoRTDriver::create(*device_info);
+    auto driver = HailoRTDriver::create(device_info->device_id, device_info->dev_path);
     CHECK_EXPECTED(driver);
 
     hailo_status status = HAILO_UNINITIALIZED;
@@ -137,8 +137,13 @@ bool PcieDevice::pcie_device_infos_equal(const hailo_pcie_device_info_t &first, 
 }
 
 PcieDevice::PcieDevice(std::unique_ptr<HailoRTDriver> &&driver, hailo_status &status) :
-    VdmaDevice(std::move(driver), Device::Type::PCIE)
+    VdmaDevice(std::move(driver), Device::Type::PCIE, status)
 {
+    if (status != HAILO_SUCCESS) {
+        LOGGER__ERROR("Failed to create VdmaDevice");
+        return;
+    }
+
     if (m_driver->is_fw_loaded()) {
         status = update_fw_state();
         if (HAILO_SUCCESS != status) {

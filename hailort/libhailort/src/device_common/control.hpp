@@ -346,6 +346,10 @@ public:
         const std::vector<CONTROL_PROTOCOL__context_switch_context_info_chunk_t> &context_infos);
     static hailo_status context_switch_set_network_group_header(Device &device,
         const CONTROL_PROTOCOL__application_header_t &network_group_header);
+    static hailo_status context_switch_init_cache_info(Device &device, const CONTROL_PROTOCOL__context_switch_cache_info_t &cache_info);
+    static Expected<CONTROL_PROTOCOL__context_switch_cache_info_t> context_switch_get_cache_info(Device &device);
+    static hailo_status context_switch_update_cache_read_offset(Device &device, int32_t read_offset_delta);
+    static hailo_status context_switch_signal_cache_updated(Device &device);
     static hailo_status wd_enable(Device &device, uint8_t cpu_id, bool should_enable);
     static hailo_status wd_config(Device &device, uint8_t cpu_id, uint32_t wd_cycles, CONTROL_PROTOCOL__WATCHDOG_MODE_t wd_mode);
     static hailo_status previous_system_state(Device &device, uint8_t cpu_id, CONTROL_PROTOCOL__system_state_t *system_state);

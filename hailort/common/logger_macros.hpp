@@ -24,8 +24,15 @@
 #endif
 #endif
 
+#if defined(__linux__) && !defined(__ANDROID__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/ostr.h>
+#if defined(__linux__) && !defined(__ANDROID__)
+#pragma GCC diagnostic pop
+#endif
 
 inline std::ostream& operator<<(std::ostream& os, const hailo_status& status)
 {

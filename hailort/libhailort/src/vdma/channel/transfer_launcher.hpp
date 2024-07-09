@@ -26,7 +26,6 @@ namespace vdma {
 class TransferLauncher final
 {
 public:
-    // TODO: fix this to be a proper transfer object (HRT-13110)
     using Transfer = std::function<void()>;
 
     static Expected<std::unique_ptr<TransferLauncher>> create();

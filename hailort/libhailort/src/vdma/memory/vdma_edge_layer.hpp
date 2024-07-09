@@ -44,6 +44,11 @@ public:
         return m_size;
     }
 
+    size_t backing_buffer_size() const
+    {
+        return m_buffer->size();
+    }
+
     uint32_t descriptors_in_buffer(size_t buffer_size) const
     {
         assert(buffer_size < std::numeric_limits<uint32_t>::max());
@@ -55,7 +60,7 @@ public:
     hailo_status write(const void *buf_src, size_t count, size_t offset);
 
     virtual Expected<uint32_t> program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
-        size_t desc_offset) = 0;
+        size_t desc_offset, size_t buffer_offset = 0, bool should_bind = false) = 0;
 
     CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info(uint32_t transfer_size);
     static CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info(Type type, uint64_t dma_address,

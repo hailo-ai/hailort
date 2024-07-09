@@ -54,12 +54,12 @@ protected:
         const uint32_t W_OFFSET, const uint32_t H_OFFSET, hailo_quant_info_t quant_info, uint32_t anchor,
         const std::vector<int> &layer_anchors, uint32_t col, uint32_t row, hailo_3d_image_shape_t shape)
     {
-    auto tx = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + X_OFFSET], quant_info);
-    auto ty = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + Y_OFFSET], quant_info);
-    auto tw = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + W_OFFSET], quant_info);
-    auto th = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + H_OFFSET], quant_info);
-    return decode(tx, ty, tw, th, layer_anchors[anchor * 2], layer_anchors[anchor * 2 + 1], col, row,
-        shape.width, shape.height);
+        auto tx = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + X_OFFSET], quant_info);
+        auto ty = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + Y_OFFSET], quant_info);
+        auto tw = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + W_OFFSET], quant_info);
+        auto th = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + H_OFFSET], quant_info);
+        return decode(tx, ty, tw, th, layer_anchors[anchor * 2], layer_anchors[anchor * 2 + 1], col, row,
+            shape.width, shape.height);
     }
 
     template<typename DstType = float32_t, typename SrcType>

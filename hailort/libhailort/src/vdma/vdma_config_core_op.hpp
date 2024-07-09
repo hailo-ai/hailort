@@ -18,6 +18,7 @@
 
 #include "vdma/channel/boundary_channel.hpp"
 #include "core_op/resource_manager/resource_manager.hpp"
+#include "core_op/resource_manager/cache_manager.hpp"
 #include "core_op/active_core_op_holder.hpp"
 
 #include "control_protocol.h"
@@ -37,6 +38,13 @@ public:
     static Expected<VdmaConfigCoreOp> create(ActiveCoreOpHolder &active_core_op_holder,
         const ConfigureNetworkParams &config_params,
         std::shared_ptr<ResourcesManager> resources_managers,
+        std::shared_ptr<CacheManager> cache_manager,
+        std::shared_ptr<CoreOpMetadata> metadata);
+
+    static Expected<std::shared_ptr<VdmaConfigCoreOp>> create_shared(ActiveCoreOpHolder &active_core_op_holder,
+        const ConfigureNetworkParams &config_params,
+        std::shared_ptr<ResourcesManager> resources_manager,
+        std::shared_ptr<CacheManager> cache_manager,
         std::shared_ptr<CoreOpMetadata> metadata);
 
     std::shared_ptr<ResourcesManager> &get_resources_manager()
@@ -58,6 +66,9 @@ public:
 
     hailo_status cancel_pending_transfers();
 
+    hailo_status register_cache_update_callback();
+    hailo_status unregister_cache_update_callback();
+
     virtual Expected<hailo_stream_interface_t> get_default_streams_interface() override;
 
     virtual Expected<std::shared_ptr<LatencyMetersMap>> get_latency_meters() override;
@@ -70,22 +81,33 @@ public:
     virtual hailo_status set_scheduler_priority(uint8_t priority, const std::string &network_name) override;
     virtual Expected<HwInferResults> run_hw_infer_estimator() override;
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &) override;
+    virtual Expected<Buffer> get_cache_buffer(uint32_t cache_id) override;
+    virtual Expected<std::map<uint32_t, Buffer>> get_cache_buffers() override;
+    virtual bool has_caches() const override;
+    virtual Expected<uint32_t> get_cache_read_size() const override;
+    virtual Expected<uint32_t> get_cache_write_size() const override;
+    virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) override;
+    virtual Expected<hailo_cache_info_t> get_cache_info() const;
+    virtual hailo_status update_cache_offset(int32_t offset_delta_bytes) override;
 
     virtual ~VdmaConfigCoreOp() = default;
     VdmaConfigCoreOp(const VdmaConfigCoreOp &other) = delete;
     VdmaConfigCoreOp &operator=(const VdmaConfigCoreOp &other) = delete;
     VdmaConfigCoreOp &operator=(VdmaConfigCoreOp &&other) = delete;
     VdmaConfigCoreOp(VdmaConfigCoreOp &&other) noexcept : CoreOp(std::move(other)),
-        m_resources_manager(std::move(other.m_resources_manager))
+        m_resources_manager(std::move(other.m_resources_manager)),
+        m_cache_manager(std::move(other.m_cache_manager))
         {}
 
 private:
-VdmaConfigCoreOp(ActiveCoreOpHolder &active_core_op_holder,
+    VdmaConfigCoreOp(ActiveCoreOpHolder &active_core_op_holder,
         const ConfigureNetworkParams &config_params,
         std::shared_ptr<ResourcesManager> &&resources_manager,
+        std::shared_ptr<CacheManager> cache_manager,
         std::shared_ptr<CoreOpMetadata> metadata, hailo_status &status);
 
     std::shared_ptr<ResourcesManager> m_resources_manager;
+    std::shared_ptr<CacheManager> m_cache_manager;
 };
 
 } /* namespace hailort */

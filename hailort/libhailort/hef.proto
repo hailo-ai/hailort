@@ -88,6 +88,7 @@ enum ProtoHEFHwArch {
     PROTO__HW_ARCH__HAILO8L = 3;
     PROTO__HW_ARCH__HAILO15H = 103;
     PROTO__HW_ARCH__HAILO15M = 4;
+    PROTO__HW_ARCH__HAILO10H = 5;
 
     // Reserving low numbers to public hw archs
     PROTO__HW_ARCH__SAGE_A0 = 100;
@@ -580,7 +581,19 @@ message ProtoHEFAction {
         ProtoHEFActionEnableNMS enable_nms = 13;
         ProtoHEFActionWriteDataByType write_data_by_type = 14;
         ProtoHEFActionSwitchLcuBatch switch_lcu_batch = 15;
+        ProtoHEFActionWriteDataCcwPtr write_data_ccw_ptr = 16;
     }
+}
+
+message ProtoHEFActionWriteDataCcwPtr {
+    // The offset which the data is in
+    uint64 offset = 1;
+
+    // The size of the data in bytes
+    uint32 size = 2;
+
+    // cfg_channel_index
+    uint32 cfg_channel_index = 3;
 }
 
 message ProtoHEFActionWriteData {
@@ -869,6 +882,7 @@ enum ProtoHEFEdgeConnectionType {
     PROTO__EDGE_CONNECTION_TYPE__BOUNDARY = 0;
     PROTO__EDGE_CONNECTION_TYPE__INTERMEDIATE = 1;
     PROTO__EDGE_CONNECTION_TYPE__DDR = 2;
+    PROTO__EDGE_CONNECTION_TYPE__CACHE = 3;
 }
 
 message ProtoHEFContextSwitchInformation {
@@ -880,6 +894,7 @@ message ProtoHEFContextSwitchInformation {
     uint32 buffers = 6;
     uint32 connected_sys_index = 7;
     repeated ProtoHEFConnectedContextInfo connected_contexts = 8;
+    int32 cache_id = 9;
 }
 
 message ProtoHEFConnectedContextInfo {

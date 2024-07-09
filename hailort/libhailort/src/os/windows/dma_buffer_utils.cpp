@@ -13,22 +13,13 @@
 namespace hailort
 {
 
-Expected<MemoryView> DmaBufferUtils::mmap_dma_buffer_write(hailo_dma_buffer_t /*dma_buffer*/)
+Expected<MemoryView> DmaBufferUtils::mmap_dma_buffer(hailo_dma_buffer_t /*dma_buffer*/, BufferProtection /*dma_buffer_protection*/)
 {
     return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
 
-hailo_status DmaBufferUtils::munmap_dma_buffer_write(hailo_dma_buffer_t /*dma_buffer*/, MemoryView /*dma_buffer_memview*/)
-{
-    return HAILO_NOT_IMPLEMENTED;
-}
-
-Expected<MemoryView> DmaBufferUtils::mmap_dma_buffer_read(hailo_dma_buffer_t /*dma_buffer*/)
-{
-    return make_unexpected(HAILO_NOT_IMPLEMENTED);
-}
-
-hailo_status DmaBufferUtils::munmap_dma_buffer_read(hailo_dma_buffer_t /*dma_buffer*/, MemoryView /*dma_buffer_memview*/)
+hailo_status DmaBufferUtils::munmap_dma_buffer(hailo_dma_buffer_t /*dma_buffer*/, MemoryView /*dma_buffer_memview*/,
+    BufferProtection /*dma_buffer_protection*/)
 {
     return HAILO_NOT_IMPLEMENTED;
 }

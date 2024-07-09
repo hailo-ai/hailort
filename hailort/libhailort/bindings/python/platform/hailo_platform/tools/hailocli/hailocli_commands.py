@@ -3,7 +3,7 @@ import pathlib
 import subprocess
 import sys
 
-import pkg_resources
+import importlib.util
 
 import hailo_platform
 from hailo_platform.tools.hailocli.base_utils import HailortCliUtil
@@ -103,11 +103,8 @@ class TutorialRunnerCLI():
 
     def _check_requirements(self):
         missing_pkgs = []
-        working_set = pkg_resources.WorkingSet()
         for req in self.TUTORIALS_REQUIREMENTS:
-            try:
-                working_set.require(req)
-            except pkg_resources.DistributionNotFound:
+            if importlib.util.find_spec(req) is None:
                 missing_pkgs.append(req)
 
         if missing_pkgs:

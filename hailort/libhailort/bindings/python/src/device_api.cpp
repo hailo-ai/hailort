@@ -395,7 +395,7 @@ hailo_chip_temperature_info_t DeviceWrapper::get_chip_temperature()
 void DeviceWrapper::set_notification_callback(const std::function<void(uintptr_t, const hailo_notification_t&, py::object)> &callback,
     hailo_notification_id_t notification_id, py::object opaque)
 {
-    // we capture opaque and move it because when opaque goes out of score it will be deleted,
+    // capture the opaque and move it, this is because when opaque goes out of scope it will be automatically deleted,
     // so capturing it ensures that it will not be deleted
     hailo_status status = device().set_notification_callback(
         [callback, op = std::move(opaque)] (Device &device, const hailo_notification_t &notification, void* opaque) {
@@ -459,7 +459,27 @@ void DeviceWrapper::set_sleep_state(hailo_sleep_state_t sleep_state)
     VALIDATE_STATUS(status);
 }
 
-void DeviceWrapper::add_to_python_module(py::module &m)
+void DeviceWrapper::_init_cache_info(const hailo_cache_info_t &cache_info)
+{
+    auto status = device().init_cache_info(cache_info);
+    VALIDATE_STATUS(status);
+}
+
+hailo_cache_info_t DeviceWrapper::_get_cache_info()
+{
+    auto cache_info = device().get_cache_info();
+    VALIDATE_EXPECTED(cache_info);
+
+    return cache_info.release();
+}
+
+void DeviceWrapper::_update_cache_read_offset(int32_t read_offset_delta)
+{
+    auto status = device().update_cache_read_offset(read_offset_delta);
+    VALIDATE_STATUS(status);
+}
+
+void DeviceWrapper::bind(py::module &m)
 {
     py::class_<DeviceWrapper>(m, "Device")
     .def("is_valid", &DeviceWrapper::is_valid)
@@ -526,6 +546,9 @@ void DeviceWrapper::add_to_python_module(py::module &m)
     .def("set_notification_callback", &DeviceWrapper::set_notification_callback)
     .def("remove_notification_callback", &DeviceWrapper::remove_notification_callback)
     .def("set_sleep_state", &DeviceWrapper::set_sleep_state)
+    .def("_init_cache_info", &DeviceWrapper::_init_cache_info)
+    .def("_get_cache_info", &DeviceWrapper::_get_cache_info)
+    .def("_update_cache_read_offset", &DeviceWrapper::_update_cache_read_offset)
     ;
 }
 

@@ -92,13 +92,12 @@ Expected<LayerInfo> PeriphCalculator::calculate_periph_registers_impl(const Laye
     // confgured periph registers will add / removed the extra padding
     if (is_core_hw_padding_config_in_dfc) {
         if (0 != (periph_frame_size % PERIPH_FRAME_ALIGNMENT)) {
-            auto max_periph_padding_payload = HefConfigurator::max_periph_padding_payload_value(
-                    DeviceBase::hef_arch_to_device_arch(hw_arch));
-            CHECK_EXPECTED(max_periph_padding_payload);
+            TRY(const auto max_periph_padding_payload, HefConfigurator::max_periph_padding_payload_value(
+                    DeviceBase::hef_arch_to_device_arch(hw_arch)));
 
             // Currently case of payload larger than max periph padding payload value - not supported
-            CHECK_AS_EXPECTED(max_periph_padding_payload.value() > periph_frame_size, HAILO_INVALID_HEF,
-                "Error, padded frame size larger than {} Currently not supported", max_periph_padding_payload.value());
+            CHECK_AS_EXPECTED(max_periph_padding_payload > periph_frame_size, HAILO_INVALID_HEF,
+                "Error, padded frame size larger than {} Currently not supported", max_periph_padding_payload);
 
             const auto padded_periph_frame_size = HailoRTCommon::align_to(periph_frame_size,
                 static_cast<uint32_t>(PERIPH_FRAME_ALIGNMENT));
@@ -138,9 +137,8 @@ Expected<LayerInfo> PeriphCalculator::calculate_periph_registers(const LayerInfo
     const uint32_t desc_page_size, const bool is_periph_calculated_in_hailort, const HEFHwArch &hw_arch,
     const bool is_core_hw_padding_config_in_dfc)
 {
-    auto max_periph_bytes_from_hef = HefConfigurator::max_periph_bytes_value(DeviceBase::hef_arch_to_device_arch(hw_arch));
-    CHECK_EXPECTED(max_periph_bytes_from_hef);
-    const auto max_periph_bytes = std::min(max_periph_bytes_from_hef.value(), layer_info.max_shmifo_size);
+    TRY(const auto max_periph_bytes_from_hef, HefConfigurator::max_periph_bytes_value(DeviceBase::hef_arch_to_device_arch(hw_arch)));
+    const auto max_periph_bytes = std::min(max_periph_bytes_from_hef, layer_info.max_shmifo_size);
     // If extension for calculating periph values in hailort is false and core hw padding is not supported - copy values from
     // Core registers, otherwise calculate them according to shape and other layer information
     const bool hw_padding_supported = HefConfigurator::is_core_hw_padding_supported(layer_info, max_periph_bytes,

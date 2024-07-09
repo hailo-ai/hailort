@@ -769,7 +769,7 @@ hailo_status InputVStreamImpl::write(const MemoryView &buffer)
     }
 
     assert(1 == m_entry_element->sinks().size());
-    auto status = m_entry_element->sinks()[0].run_push(PipelineBuffer(buffer, [](hailo_status){}, HAILO_SUCCESS, false, nullptr, m_measure_pipeline_latency));
+    auto status = m_entry_element->sinks()[0].run_push(PipelineBuffer(buffer, [](hailo_status){}, HAILO_SUCCESS, false, BufferPoolWeakPtr(), m_measure_pipeline_latency));
     if (HAILO_SHUTDOWN_EVENT_SIGNALED == status) {
         LOGGER__INFO("Sending to VStream was shutdown!");
         status = m_pipeline_status->load();
@@ -1125,7 +1125,7 @@ hailo_status OutputVStreamImpl::read(MemoryView buffer)
     }
 
     assert(1 == m_entry_element->sources().size());
-    auto recv_buffer = m_entry_element->sources()[0].run_pull(PipelineBuffer(buffer, [](hailo_status){},  HAILO_SUCCESS, false, nullptr, m_measure_pipeline_latency));
+    auto recv_buffer = m_entry_element->sources()[0].run_pull(PipelineBuffer(buffer, [](hailo_status){},  HAILO_SUCCESS, false, BufferPoolWeakPtr(), m_measure_pipeline_latency));
     auto status = recv_buffer.status();
     if (HAILO_SHUTDOWN_EVENT_SIGNALED == status) {
         LOGGER__INFO("Receiving to VStream was shutdown!");

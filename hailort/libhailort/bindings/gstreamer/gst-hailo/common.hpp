@@ -33,7 +33,10 @@
 
 using namespace hailort;
 
+#define ERROR(msg, ...) g_print("HailoNet Error: " msg, ##__VA_ARGS__)
 #define PLUGIN_AUTHOR "Hailo Technologies Ltd. (\"Hailo\")"
+
+#define MAX_STRING_SIZE (PATH_MAX)
 
 #define MAX_QUEUED_BUFFERS_IN_INPUT (16)
 #define MAX_QUEUED_BUFFERS_IN_OUTPUT (16)
@@ -156,6 +159,31 @@ using namespace hailort;
     } while(0)
 #define CHECK_EXPECTED(obj, ...) _CHECK_EXPECTED(obj, "" __VA_ARGS__)
 
+#define __HAILO_CONCAT(x, y) x ## y
+#define _HAILO_CONCAT(x, y) __HAILO_CONCAT(x, y)
+
+#define _TRY(expected_var_name, var_decl, expr, ...) \
+    auto expected_var_name = (expr); \
+    CHECK_EXPECTED(expected_var_name, __VA_ARGS__); \
+    var_decl = expected_var_name.release()
+
+/**
+ * The TRY macro is used to allow easier validation and access for variables returned as Expected<T>.
+ * If the expression returns an Expected<T> with status HAILO_SUCCESS, the macro will release the expected and assign
+ * the var_decl.
+ * Otherwise, the macro will cause current function to return the failed status.
+ *
+ * Usage example:
+ *
+ * Expected<int> func() {
+ *     TRY(auto var, return_5());
+ *     // Now var is int with value 5
+ *
+ *     // func will return Unexpected with status HAILO_INTERNAL_FAILURE
+ *     TRY(auto var2, return_error(HAILO_INTERNAL_FAILURE), "Failed doing stuff {}", 5);
+ */
+#define TRY(var_decl, expr, ...) _TRY(_HAILO_CONCAT(__expected, __COUNTER__), var_decl, expr, __VA_ARGS__)
+
 #define RGB_FEATURES_SIZE (3)
 #define RGBA_FEATURES_SIZE (4)
 #define GRAY8_FEATURES_SIZE (1)
@@ -194,7 +222,7 @@ public:
         return *this;
     }
 
-    const T &get()
+    const T &get() const
     {
         return m_value;
     }
@@ -206,6 +234,38 @@ public:
 
 private:
     T m_value;
+    bool m_was_changed;
+};
+
+class HailoElemStringProperty final
+{
+public:
+    HailoElemStringProperty(const std::string &default_val) : m_was_changed(false) {
+        memset(m_string, 0, sizeof(m_string));
+        strncpy(m_string, default_val.c_str(), sizeof(m_string) - 1);
+    }
+
+    ~HailoElemStringProperty() {}
+    
+    HailoElemStringProperty &operator=(const std::string &value)
+    {
+        m_was_changed = true;
+        strncpy(m_string, value.c_str(), sizeof(m_string) - 1);
+        return *this;
+    }
+
+    const std::string get() const
+    {
+        return m_string;
+    }
+
+    bool was_changed()
+    {
+        return m_was_changed;
+    }
+
+private:
+    char m_string[MAX_STRING_SIZE];
     bool m_was_changed;
 };
 

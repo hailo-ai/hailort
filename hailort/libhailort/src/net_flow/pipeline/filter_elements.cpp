@@ -23,13 +23,10 @@ FilterElement::FilterElement(const std::string &name, DurationCollector &&durati
 
 hailo_status FilterElement::run_push(PipelineBuffer &&buffer, const PipelinePad &/*sink*/)
 {
-    auto output = action(std::move(buffer), PipelineBuffer());
-    if (HAILO_SHUTDOWN_EVENT_SIGNALED == output.status()) {
-        return output.status();
-    }
-    CHECK_EXPECTED_AS_STATUS(output);
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_SHUTDOWN_EVENT_SIGNALED, auto output,
+        action(std::move(buffer), PipelineBuffer()));
 
-    hailo_status status = next_pad().run_push(output.release());
+    hailo_status status = next_pad().run_push(std::move(output));
     if (HAILO_SHUTDOWN_EVENT_SIGNALED == status) {
         LOGGER__INFO("run_push of {} was shutdown!", name());
         return status;
@@ -71,13 +68,9 @@ void FilterElement::run_push_async(PipelineBuffer &&buffer, const PipelinePad &/
 
 Expected<PipelineBuffer> FilterElement::run_pull(PipelineBuffer &&optional, const PipelinePad &/*source*/)
 {
-    auto buffer = next_pad().run_pull();
-    if (HAILO_SHUTDOWN_EVENT_SIGNALED == buffer.status()) {
-        LOGGER__INFO("run_pull in FilterElement was shutdown!");
-        return make_unexpected(buffer.status());
-    }
-    CHECK_EXPECTED(buffer);
-    return action(buffer.release(), std::move(optional));
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_SHUTDOWN_EVENT_SIGNALED, auto buffer,
+        next_pad().run_pull());
+    return action(std::move(buffer), std::move(optional));
 }
 
 PipelinePad &FilterElement::next_pad_downstream()
@@ -95,15 +88,13 @@ Expected<std::shared_ptr<PreInferElement>> PreInferElement::create(const hailo_3
     const std::string &name, std::chrono::milliseconds timeout, hailo_pipeline_elem_stats_flags_t elem_flags,
     std::shared_ptr<std::atomic<hailo_status>> pipeline_status, PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline)
 {
-    auto transform_context = InputTransformContext::create(src_image_shape, src_format, dst_image_shape, dst_format,
-        dst_quant_infos);
-    CHECK_EXPECTED(transform_context, "Failed Creating InputTransformContext");
+    TRY(auto transform_context,
+        InputTransformContext::create(src_image_shape, src_format, dst_image_shape, dst_format,
+            dst_quant_infos), "Failed Creating InputTransformContext");
+    TRY(auto duration_collector, DurationCollector::create(elem_flags));
 
-    auto duration_collector = DurationCollector::create(elem_flags);
-    CHECK_EXPECTED(duration_collector);
-
-    auto pre_infer_elem_ptr = make_shared_nothrow<PreInferElement>(transform_context.release(),
-        name, timeout, duration_collector.release(), std::move(pipeline_status), pipeline_direction,
+    auto pre_infer_elem_ptr = make_shared_nothrow<PreInferElement>(std::move(transform_context),
+        name, timeout, std::move(duration_collector), std::move(pipeline_status), pipeline_direction,
         async_pipeline);
     CHECK_AS_EXPECTED(nullptr != pre_infer_elem_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
@@ -176,11 +167,13 @@ Expected<PipelineBuffer> PreInferElement::action(PipelineBuffer &&input, Pipelin
     }
     CHECK_AS_EXPECTED(HAILO_TIMEOUT != transformed_buffer.status(), HAILO_TIMEOUT,
         "{} (H2D) failed with status={} (timeout={}ms)", name(), HAILO_TIMEOUT, m_timeout.count());
-    CHECK_EXPECTED(transformed_buffer);
+    CHECK_EXPECTED(transformed_buffer); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
 
-    auto dst = transformed_buffer->as_view();
+    TRY(auto dst, transformed_buffer->as_view(BufferProtection::WRITE));
+    TRY(auto src, input.as_view(BufferProtection::READ));
+
     m_duration_collector.start_measurement();
-    const auto status = m_transform_context->transform(input.as_view(), dst);
+    const auto status = m_transform_context->transform(src, dst);
     m_duration_collector.complete_measurement();
 
     input.set_action_status(status);
@@ -191,7 +184,7 @@ Expected<PipelineBuffer> PreInferElement::action(PipelineBuffer &&input, Pipelin
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     // Note: The latency to be measured starts as the input buffer is sent to the InputVStream (via write())
-    transformed_buffer->set_metadata(std::move(metadata));
+    transformed_buffer->set_metadata_start_time(metadata.get_start_time());
 
     return transformed_buffer.release();
 }
@@ -201,11 +194,10 @@ Expected<std::shared_ptr<ConvertNmsToDetectionsElement>> ConvertNmsToDetectionsE
     std::shared_ptr<std::atomic<hailo_status>> pipeline_status, std::chrono::milliseconds timeout,
     PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline)
 {
-    auto duration_collector = DurationCollector::create(elem_flags);
-    CHECK_EXPECTED(duration_collector);
+    TRY(auto duration_collector, DurationCollector::create(elem_flags));
 
     auto convert_nms_to_detections_elem_ptr = make_shared_nothrow<ConvertNmsToDetectionsElement>(std::move(nms_info),
-        name, duration_collector.release(), std::move(pipeline_status), timeout, pipeline_direction, async_pipeline);
+        name, std::move(duration_collector), std::move(pipeline_status), timeout, pipeline_direction, async_pipeline);
     CHECK_AS_EXPECTED(nullptr != convert_nms_to_detections_elem_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     LOGGER__INFO("Created {}", convert_nms_to_detections_elem_ptr->description());
@@ -257,9 +249,10 @@ Expected<PipelineBuffer> ConvertNmsToDetectionsElement::action(PipelineBuffer &&
     if (!buffer) {
         input.set_action_status(buffer.status());
     }
-    CHECK_EXPECTED(buffer, "{} (D2H) failed with status={}", name(), buffer.status());
+    CHECK_EXPECTED(buffer, "{} (D2H) failed with status={}", name(), buffer.status()); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
 
-    buffer->set_metadata(input.get_metadata());
+    buffer->set_metadata_start_time(input.get_metadata().get_start_time());
+    buffer->set_additional_data(input.get_metadata().get_additional_data<IouPipelineData>());
 
     m_duration_collector.start_measurement();
 
@@ -277,11 +270,10 @@ Expected<std::shared_ptr<FillNmsFormatElement>> FillNmsFormatElement::create(con
     const std::string &name, hailo_pipeline_elem_stats_flags_t elem_flags, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
     std::chrono::milliseconds timeout, PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline)
 {
-    auto duration_collector = DurationCollector::create(elem_flags);
-    CHECK_EXPECTED(duration_collector);
+    TRY(auto duration_collector, DurationCollector::create(elem_flags));
 
     auto fill_nms_format_element = make_shared_nothrow<FillNmsFormatElement>(std::move(nms_config),
-        name, duration_collector.release(), std::move(pipeline_status), timeout, pipeline_direction, async_pipeline);
+        name, std::move(duration_collector), std::move(pipeline_status), timeout, pipeline_direction, async_pipeline);
     CHECK_AS_EXPECTED(nullptr != fill_nms_format_element, HAILO_OUT_OF_HOST_MEMORY);
 
     LOGGER__INFO("Created {}", fill_nms_format_element->description());
@@ -332,15 +324,17 @@ Expected<PipelineBuffer> FillNmsFormatElement::action(PipelineBuffer &&input, Pi
     if (!buffer_expected) {
         input.set_action_status(buffer_expected.status());
     }
-    CHECK_EXPECTED(buffer_expected, "{} (D2H) failed with status={}", name(), buffer_expected.status());
+    CHECK_EXPECTED(buffer_expected,
+        "{} (D2H) failed with status={}", name(),buffer_expected.status()); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
     auto buffer = buffer_expected.release();
 
-    buffer.set_metadata(input.get_metadata());
+    buffer.set_metadata_start_time(input.get_metadata().get_start_time());
+    buffer.set_additional_data(input.get_metadata().get_additional_data<IouPipelineData>());
 
     m_duration_collector.start_measurement();
 
     auto detections = input.get_metadata().get_additional_data<IouPipelineData>();
-    auto dst = buffer.as_view();
+    TRY(auto dst, buffer.as_view(BufferProtection::WRITE));
     net_flow::NmsPostProcessOp::fill_nms_format_buffer(dst, detections->m_detections, detections->m_detections_classes_count,
         m_nms_config);
 
@@ -355,15 +349,12 @@ Expected<std::shared_ptr<PostInferElement>> PostInferElement::create(const hailo
     hailo_pipeline_elem_stats_flags_t elem_flags, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
     std::chrono::milliseconds timeout, PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline)
 {
-    auto transform_context = OutputTransformContext::create(src_image_shape, src_format, dst_image_shape, dst_format,
-        dst_quant_infos, nms_info);
-    CHECK_EXPECTED(transform_context, "Failed Creating OutputTransformContext");
+    TRY(auto transform_context, OutputTransformContext::create(src_image_shape, src_format, dst_image_shape, dst_format,
+        dst_quant_infos, nms_info), "Failed creating OutputTransformContext");
+    TRY(auto duration_collector, DurationCollector::create(elem_flags));
 
-    auto duration_collector = DurationCollector::create(elem_flags);
-    CHECK_EXPECTED(duration_collector);
-
-    auto post_infer_elem_ptr = make_shared_nothrow<PostInferElement>(transform_context.release(), name,
-        duration_collector.release(), std::move(pipeline_status), timeout, pipeline_direction, async_pipeline);
+    auto post_infer_elem_ptr = make_shared_nothrow<PostInferElement>(std::move(transform_context), name,
+        std::move(duration_collector), std::move(pipeline_status), timeout, pipeline_direction, async_pipeline);
     CHECK_AS_EXPECTED(nullptr != post_infer_elem_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     LOGGER__INFO("Created {}", post_infer_elem_ptr->description());
@@ -443,14 +434,16 @@ Expected<PipelineBuffer> PostInferElement::action(PipelineBuffer &&input, Pipeli
     if (!buffer) {
         input.set_action_status(buffer.status());
     }
-    CHECK_EXPECTED(buffer, "{} (D2H) failed with status={}", name(), buffer.status());
+    CHECK_EXPECTED(buffer, "{} (D2H) failed with status={}", name(), buffer.status()); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
 
     // Note: The latency to be measured starts as the buffer is read from the HW (it's 'input' in this case)
-    buffer->set_metadata(input.get_metadata());
+    buffer->set_metadata_start_time(input.get_metadata().get_start_time());
 
-    auto dst = buffer->as_view();
+    TRY(auto src, input.as_view(BufferProtection::READ));
+    TRY(auto dst, buffer->as_view(BufferProtection::WRITE));
+
     m_duration_collector.start_measurement();
-    const auto status = m_transform_context->transform(input.as_view(), dst);
+    const auto status = m_transform_context->transform(src, dst);
     m_duration_collector.complete_measurement();
 
     input.set_action_status(status);
@@ -466,11 +459,10 @@ Expected<std::shared_ptr<RemoveOverlappingBboxesElement>> RemoveOverlappingBboxe
     std::shared_ptr<std::atomic<hailo_status>> pipeline_status, std::chrono::milliseconds timeout,
     PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline)
 {
-    auto duration_collector = DurationCollector::create(elem_flags);
-    CHECK_EXPECTED(duration_collector);
+    TRY(auto duration_collector, DurationCollector::create(elem_flags));
 
     auto convert_nms_removed_overlapping_elem_ptr = make_shared_nothrow<RemoveOverlappingBboxesElement>(std::move(nms_config),
-        name, duration_collector.release(), std::move(pipeline_status), timeout, pipeline_direction, async_pipeline);
+        name, std::move(duration_collector), std::move(pipeline_status), timeout, pipeline_direction, async_pipeline);
     CHECK_AS_EXPECTED(nullptr != convert_nms_removed_overlapping_elem_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     LOGGER__INFO("Created {}", convert_nms_removed_overlapping_elem_ptr->description());
@@ -530,9 +522,10 @@ Expected<PipelineBuffer> RemoveOverlappingBboxesElement::action(PipelineBuffer &
     if (!buffer) {
         input.set_action_status(buffer.status());
     }
-    CHECK_EXPECTED(buffer, "{} (D2H) failed with status={}", name(), buffer.status());
+    CHECK_EXPECTED(buffer, "{} (D2H) failed with status={}", name(), buffer.status()); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
 
-    buffer->set_metadata(input.get_metadata());
+    buffer->set_metadata_start_time(input.get_metadata().get_start_time());
+    buffer->set_additional_data(input.get_metadata().get_additional_data<IouPipelineData>());
 
     m_duration_collector.start_measurement();
     auto detections_pipeline_data = input.get_metadata().get_additional_data<IouPipelineData>();
@@ -548,10 +541,9 @@ Expected<std::shared_ptr<ArgmaxPostProcessElement>> ArgmaxPostProcessElement::cr
     const std::string &name, hailo_pipeline_elem_stats_flags_t elem_flags, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
     std::chrono::milliseconds timeout, PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline)
 {
-    auto duration_collector = DurationCollector::create(elem_flags);
-    CHECK_EXPECTED(duration_collector);
+    TRY(auto duration_collector, DurationCollector::create(elem_flags));
     auto argmax_elem_ptr = make_shared_nothrow<ArgmaxPostProcessElement>(argmax_op,
-        name, duration_collector.release(), std::move(pipeline_status), timeout, pipeline_direction, async_pipeline);
+        name, std::move(duration_collector), std::move(pipeline_status), timeout, pipeline_direction, async_pipeline);
     CHECK_AS_EXPECTED(nullptr != argmax_elem_ptr, HAILO_OUT_OF_HOST_MEMORY);
     LOGGER__INFO("Created {}", argmax_elem_ptr->description());
     return argmax_elem_ptr;
@@ -617,14 +609,18 @@ Expected<PipelineBuffer> ArgmaxPostProcessElement::action(PipelineBuffer &&input
     if (!buffer) {
         input.set_action_status(buffer.status());
     }
-    CHECK_EXPECTED(buffer, "{} (D2H) failed with status={}", name(), buffer.status());
+    CHECK_EXPECTED(buffer, "{} (D2H) failed with status={}", name(), buffer.status()); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
 
     std::map<std::string, MemoryView> inputs;
     std::map<std::string, MemoryView> outputs;
     auto &input_name = m_argmax_op->inputs_metadata().begin()->first;
     auto &output_name = m_argmax_op->outputs_metadata().begin()->first;
-    inputs.insert({input_name, input.as_view()});
-    outputs.insert({output_name, buffer->as_view()});
+
+    TRY(auto src, input.as_view(BufferProtection::READ));
+    TRY(auto dst, buffer->as_view(BufferProtection::WRITE));
+
+    inputs.insert({input_name, src});
+    outputs.insert({output_name, dst});
     m_duration_collector.start_measurement();
     auto post_process_result = m_argmax_op->execute(inputs, outputs);
     m_duration_collector.complete_measurement();
@@ -642,10 +638,9 @@ Expected<std::shared_ptr<SoftmaxPostProcessElement>> SoftmaxPostProcessElement::
     std::shared_ptr<std::atomic<hailo_status>> pipeline_status, std::chrono::milliseconds timeout,
     PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline)
 {
-    auto duration_collector = DurationCollector::create(elem_flags);
-    CHECK_EXPECTED(duration_collector);
+    TRY(auto duration_collector, DurationCollector::create(elem_flags));
     auto softmax_elem_ptr = make_shared_nothrow<SoftmaxPostProcessElement>(softmax_op,
-        name, duration_collector.release(), std::move(pipeline_status), timeout, pipeline_direction, async_pipeline);
+        name, std::move(duration_collector), std::move(pipeline_status), timeout, pipeline_direction, async_pipeline);
     CHECK_AS_EXPECTED(nullptr != softmax_elem_ptr, HAILO_OUT_OF_HOST_MEMORY);
     LOGGER__INFO("Created {}", softmax_elem_ptr->description());
     return softmax_elem_ptr;
@@ -709,14 +704,18 @@ Expected<PipelineBuffer> SoftmaxPostProcessElement::action(PipelineBuffer &&inpu
     if (!buffer) {
         input.set_action_status(buffer.status());
     }
-    CHECK_EXPECTED(buffer, "{} (D2H) failed with status={}", name(), buffer.status());
+    CHECK_EXPECTED(buffer, "{} (D2H) failed with status={}", name(), buffer.status()); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
 
     std::map<std::string, MemoryView> inputs;
     std::map<std::string, MemoryView> outputs;
     auto &input_name = m_softmax_op->inputs_metadata().begin()->first;
     auto &output_name = m_softmax_op->outputs_metadata().begin()->first;
-    inputs.insert({input_name, input.as_view()});
-    outputs.insert({output_name, buffer->as_view()});
+
+    TRY(auto src, input.as_view(BufferProtection::READ));
+    TRY(auto dst, buffer->as_view(BufferProtection::WRITE));
+
+    inputs.insert({input_name, src});
+    outputs.insert({output_name, dst});
     m_duration_collector.start_measurement();
     auto post_process_result = m_softmax_op->execute(inputs, outputs);
     m_duration_collector.complete_measurement();
@@ -733,9 +732,8 @@ Expected<std::shared_ptr<CopyBufferElement>> CopyBufferElement::create(const std
     std::shared_ptr<std::atomic<hailo_status>> pipeline_status, std::chrono::milliseconds timeout, PipelineDirection pipeline_direction,
     std::shared_ptr<AsyncPipeline> async_pipeline)
 {
-    auto duration_collector = DurationCollector::create(HAILO_PIPELINE_ELEM_STATS_NONE);
-    CHECK_EXPECTED(duration_collector);
-    auto elem_ptr = make_shared_nothrow<CopyBufferElement>(name, duration_collector.release(), std::move(pipeline_status),
+    TRY(auto duration_collector, DurationCollector::create(HAILO_PIPELINE_ELEM_STATS_NONE));
+    auto elem_ptr = make_shared_nothrow<CopyBufferElement>(name, std::move(duration_collector), std::move(pipeline_status),
         timeout, pipeline_direction, async_pipeline);
     CHECK_AS_EXPECTED(nullptr != elem_ptr, HAILO_OUT_OF_HOST_MEMORY);
 

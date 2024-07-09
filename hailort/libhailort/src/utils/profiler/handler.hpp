@@ -157,13 +157,15 @@ struct FrameEnqueueD2HTrace : Trace
 
 struct ActivateCoreOpTrace : Trace
 {
-    ActivateCoreOpTrace(const device_id_t &device_id, vdevice_core_op_handle_t handle, double duration)
-        : Trace("activate_core_op"), device_id(device_id), core_op_handle(handle), duration(duration)
+    ActivateCoreOpTrace(const device_id_t &device_id, vdevice_core_op_handle_t handle, double duration,
+        int dynamic_batch_size)
+        : Trace("activate_core_op"), device_id(device_id), core_op_handle(handle), duration(duration), dynamic_batch_size(dynamic_batch_size)
     {}
 
     device_id_t device_id;
     vdevice_core_op_handle_t core_op_handle;
     double duration;
+    int dynamic_batch_size;
 };
 
 // Currently, activate and switch are the same trace to make scheduler and fast-switch flow similar (although in the

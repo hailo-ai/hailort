@@ -186,9 +186,7 @@ protected:
         // sync_event will be used to send one frame at a time
         EventPtr sync_event = nullptr;
         if (m_params.measure_hw_latency || m_params.measure_overall_latency) {
-            auto sync_event_exp = Event::create_shared(Event::State::not_signalled);
-            CHECK_EXPECTED_AS_STATUS(sync_event_exp);
-            sync_event = sync_event_exp.release();
+            TRY(sync_event, Event::create_shared(Event::State::not_signalled));
         }
 
         while (true) {
@@ -263,9 +261,7 @@ protected:
         // sync_event will be used to send one frame at a time
         EventPtr sync_event = nullptr;
         if (m_params.measure_hw_latency || m_params.measure_overall_latency) {
-            auto sync_event_exp = Event::create_shared(Event::State::not_signalled);
-            CHECK_EXPECTED_AS_STATUS(sync_event_exp);
-            sync_event = sync_event_exp.release();
+            TRY(sync_event, Event::create_shared(Event::State::not_signalled));
         }
 
         while (true) {

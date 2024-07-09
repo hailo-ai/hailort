@@ -287,12 +287,12 @@ l_release_vstreams:
 
     for (hef_index = 0; hef_index < HEF_COUNT; hef_index++) {
         for (size_t i = 0; i < num_input_vstreams[hef_index]; i++) {
-            if (NULL != src_data[hef_index] && NULL != src_data[hef_index][i]) {
+            if (NULL != src_data[hef_index][i]) {
                 FREE(src_data[hef_index][i]);
             }
         }
         for (size_t i = 0; i < num_output_vstreams[hef_index]; i++) {
-            if (NULL != dst_data[hef_index] && NULL != dst_data[hef_index][i]) {
+            if (NULL != dst_data[hef_index][i]) {
                 FREE(dst_data[hef_index][i]);
             }
         }

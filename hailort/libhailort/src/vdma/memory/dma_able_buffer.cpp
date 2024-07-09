@@ -14,6 +14,8 @@
 
 #if defined(_MSC_VER)
 #include "os/windows/virtual_alloc_guard.hpp"
+#else
+#include <sys/mman.h>
 #endif /* defined(_MSC_VER) */
 
 
@@ -271,6 +273,7 @@ Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_by_allocation(size_t size, Hail
 #else
 #error "unsupported platform!"
 #endif
+
 
 } /* namespace vdma */
 } /* namespace hailort */

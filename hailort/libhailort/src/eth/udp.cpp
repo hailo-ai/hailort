@@ -48,9 +48,8 @@ Expected<Udp> Udp::create(struct in_addr device_ip, uint16_t device_port, struct
     uint16_t host_port)
 {
     auto status = HAILO_UNINITIALIZED;
-    auto socket = Socket::create(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    CHECK_EXPECTED(socket);
-    auto object = Udp(device_ip, device_port, host_ip, host_port, socket.release(), status);
+    TRY(auto socket, Socket::create(AF_INET, SOCK_DGRAM, IPPROTO_UDP));
+    auto object = Udp(device_ip, device_port, host_ip, host_port, std::move(socket), status);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     return object;

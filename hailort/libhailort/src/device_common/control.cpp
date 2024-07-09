@@ -109,8 +109,8 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
     return board_info;
 }
 
-Expected<hailo_extended_device_information_t> control__parse_get_extended_device_information_results
-        (CONTROL_PROTOCOL__get_extended_device_information_response_t &get_extended_device_information_response)
+Expected<hailo_extended_device_information_t> control__parse_get_extended_device_information_results(
+    const CONTROL_PROTOCOL__get_extended_device_information_response_t &get_extended_device_information_response)
 {
     uint8_t local_supported_features;
     hailo_extended_device_information_t device_info;
@@ -2432,6 +2432,108 @@ exit:
     return status;
 }
 
+hailo_status Control::context_switch_init_cache_info(Device &device, const CONTROL_PROTOCOL__context_switch_cache_info_t &cache_info)
+{
+    CONTROL_PROTOCOL__request_t request{};
+    size_t request_size = 0;
+    uint8_t response_buffer[RESPONSE_MAX_BUFFER_SIZE] = {};
+    size_t response_size = RESPONSE_MAX_BUFFER_SIZE;
+    CONTROL_PROTOCOL__response_header_t *header = NULL;
+    CONTROL_PROTOCOL__payload_t *payload = NULL;
+
+    const auto common_status = CONTROL_PROTOCOL__pack_context_switch_init_cache_info_request(&request, &request_size,
+        device.get_control_sequence(), cache_info.cache_size, cache_info.current_read_offset, cache_info.write_offset_delta);
+    auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
+    CHECK_SUCCESS(status);
+
+    status = device.fw_interact((uint8_t*)(&request), request_size, (uint8_t*)&response_buffer, &response_size);
+    CHECK_SUCCESS(status);
+
+    /* Parse response */
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
+            &request, device);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+Expected<CONTROL_PROTOCOL__context_switch_cache_info_t> Control::context_switch_get_cache_info(Device &device)
+{
+    CONTROL_PROTOCOL__request_t request{};
+    size_t request_size = 0;
+    uint8_t response_buffer[RESPONSE_MAX_BUFFER_SIZE] = {};
+    size_t response_size = RESPONSE_MAX_BUFFER_SIZE;
+    CONTROL_PROTOCOL__response_header_t *header = NULL;
+    CONTROL_PROTOCOL__payload_t *payload = NULL;
+
+    const auto common_status = CONTROL_PROTOCOL__pack_context_switch_get_cache_info_request(&request, &request_size,
+        device.get_control_sequence());
+    auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    status = device.fw_interact((uint8_t*)(&request), request_size, (uint8_t*)&response_buffer, &response_size);
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    /* Parse response */
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
+        &request, device);
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    CONTROL_PROTOCOL__context_switch_cache_info_t result{};
+    result = *reinterpret_cast<CONTROL_PROTOCOL__context_switch_cache_info_t *>(payload->parameters);
+    return result;
+}
+
+hailo_status Control::context_switch_update_cache_read_offset(Device &device, int32_t read_offset_delta)
+{
+    CONTROL_PROTOCOL__request_t request{};
+    size_t request_size = 0;
+    uint8_t response_buffer[RESPONSE_MAX_BUFFER_SIZE] = {};
+    size_t response_size = RESPONSE_MAX_BUFFER_SIZE;
+    CONTROL_PROTOCOL__response_header_t *header = NULL;
+    CONTROL_PROTOCOL__payload_t *payload = NULL;
+
+    const auto common_status = CONTROL_PROTOCOL__pack_context_switch_update_cache_read_offset_request(&request, &request_size,
+        device.get_control_sequence(), read_offset_delta);
+    auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
+    CHECK_SUCCESS(status);
+
+    status = device.fw_interact((uint8_t*)(&request), request_size, (uint8_t*)&response_buffer, &response_size);
+    CHECK_SUCCESS(status);
+
+    /* Parse response */
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
+            &request, device);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status Control::context_switch_signal_cache_updated(Device &device)
+{
+    CONTROL_PROTOCOL__request_t request{};
+    size_t request_size = 0;
+    uint8_t response_buffer[RESPONSE_MAX_BUFFER_SIZE] = {};
+    size_t response_size = RESPONSE_MAX_BUFFER_SIZE;
+    CONTROL_PROTOCOL__response_header_t *header = NULL;
+    CONTROL_PROTOCOL__payload_t *payload = NULL;
+
+    const auto common_status = CONTROL_PROTOCOL__pack_context_switch_signal_cache_updated_request(&request, &request_size,
+        device.get_control_sequence());
+    auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
+    CHECK_SUCCESS(status);
+
+    status = device.fw_interact((uint8_t*)(&request), request_size, (uint8_t*)&response_buffer, &response_size);
+    CHECK_SUCCESS(status);
+
+    /* Parse response */
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
+            &request, device);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
 hailo_status Control::context_switch_set_context_info(Device &device,
     const std::vector<CONTROL_PROTOCOL__context_switch_context_info_chunk_t> &context_infos)
 {
@@ -3097,17 +3199,15 @@ Expected<uint32_t> Control::get_partial_clusters_layout_bitmap(Device &device)
         // Partial clusters layout is only relevant in HAILO_ARCH_HAILO8L and HAILO_ARCH_HAILO15M arch
         return Expected<uint32_t>(PARTIAL_CLUSTERS_LAYOUT_IGNORE);
     } else {
-        auto extended_device_info_response = get_extended_device_info_response(device);
-        CHECK_EXPECTED(extended_device_info_response);
-        return BYTE_ORDER__ntohl(extended_device_info_response->partial_clusters_layout_bitmap);
+        TRY(const auto extended_device_info_response, get_extended_device_info_response(device));
+        return BYTE_ORDER__ntohl(extended_device_info_response.partial_clusters_layout_bitmap);
     }
 }
 
 Expected<hailo_extended_device_information_t> Control::get_extended_device_information(Device &device)
 {
-    auto extended_device_info_response = get_extended_device_info_response(device);
-    CHECK_EXPECTED(extended_device_info_response);
-    return control__parse_get_extended_device_information_results(extended_device_info_response.value());
+    TRY(const auto extended_device_info_response, get_extended_device_info_response(device));
+    return control__parse_get_extended_device_information_results(extended_device_info_response);
 }
 
 Expected<hailo_health_info_t> Control::get_health_information(Device &device)

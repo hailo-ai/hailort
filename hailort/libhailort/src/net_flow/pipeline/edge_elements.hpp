@@ -72,9 +72,9 @@ public:
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
     virtual hailo_status execute_activate() override;
 
-    virtual hailo_status enqueue_execution_buffer(MemoryView mem_view, const TransferDoneCallbackAsyncInfer &exec_done) override;
+    virtual hailo_status enqueue_execution_buffer(PipelineBuffer &&pipeline_buffer) override;
 
-    virtual Expected<bool> can_push_buffer_upstream() override;
+    virtual Expected<bool> can_push_buffer_upstream(uint32_t frames_count) override;
 
     virtual hailo_status execute_post_deactivate(bool /*should_clear_abort*/) override { return HAILO_SUCCESS; };
     virtual hailo_status execute_deactivate() override { return HAILO_SUCCESS; };

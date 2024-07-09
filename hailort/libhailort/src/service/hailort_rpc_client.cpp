@@ -12,6 +12,7 @@
 #include "hef/hef_internal.hpp"
 #include "hailort_rpc_client.hpp"
 #include "net_flow/ops_metadata/yolov8_op_metadata.hpp"
+#include "net_flow/ops_metadata/yolov8_bbox_only_op_metadata.hpp"
 #include "net_flow/ops_metadata/yolox_op_metadata.hpp"
 #include "net_flow/ops_metadata/ssd_op_metadata.hpp"
 #include "net_flow/ops_metadata/softmax_op_metadata.hpp"
@@ -19,6 +20,7 @@
 #include "net_flow/ops_metadata/nms_op_metadata.hpp"
 #include "net_flow/ops_metadata/yolov5_op_metadata.hpp"
 #include "net_flow/ops_metadata/yolov5_seg_op_metadata.hpp"
+#include "net_flow/ops_metadata/yolov5_bbox_only_op_metadata.hpp"
 
 #include <grpcpp/health_check_service_interface.h>
 
@@ -277,7 +279,7 @@ Expected<ProtoCallbackIdentifier> HailoRtRpcClient::VDevice_get_callback_id(cons
     VDevice_convert_identifier_to_proto(identifier, proto_identifier);
 
     VDevice_get_callback_id_Reply reply;
-    ClientContextWithTimeout context;
+    grpc::ClientContext context;
     grpc::Status status = m_stub->VDevice_get_callback_id(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
@@ -835,31 +837,38 @@ Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> deserialize_ops_metada
                                         nms_config_proto.number_of_classes(),
                                         nms_config_proto.background_removal(),
                                         nms_config_proto.background_removal_index(),
-                                        nms_config_proto.cross_classes()};
+                                        nms_config_proto.cross_classes(),
+                                        nms_config_proto.bbox_only()};
             }
 
         switch (static_cast<net_flow::OperationType>(op_metadata_proto.type())) {
         case net_flow::OperationType::YOLOV8:
         {
-            auto expected_yolov8_post_process_config = create_yolov8_post_process_config(op_metadata_proto);
-            CHECK_EXPECTED(expected_yolov8_post_process_config);
-            auto expteted_yolov8_metadata = hailort::net_flow::Yolov8OpMetadata::create(inputs_metadata, outputs_metadata, nms_post_process_config,
-                                                                                        expected_yolov8_post_process_config.value(), 
-                                                                                        op_metadata_proto.network_name());
-            CHECK_EXPECTED(expteted_yolov8_metadata);
-            ops_metadata_ptr.push_back(expteted_yolov8_metadata.value());
+            TRY(auto yolov8_post_process_config, create_yolov8_post_process_config(op_metadata_proto));
+            if (nms_post_process_config.bbox_only) {
+                TRY(auto yolov8_bbox_only_metadata, hailort::net_flow::Yolov8BboxOnlyOpMetadata::create(inputs_metadata, outputs_metadata, nms_post_process_config,
+                        yolov8_post_process_config, op_metadata_proto.network_name()));
+                ops_metadata_ptr.push_back(yolov8_bbox_only_metadata);
+            } else {
+                TRY(auto yolov8_metadata, hailort::net_flow::Yolov8OpMetadata::create(inputs_metadata, outputs_metadata, nms_post_process_config,
+                        yolov8_post_process_config, op_metadata_proto.network_name()));
+                ops_metadata_ptr.push_back(yolov8_metadata);
+            }
             break;
         }
 
         case net_flow::OperationType::YOLOV5:
         {
-            auto exected_yolov5_post_process_config = create_yolov5_post_process_config(op_metadata_proto);
-            CHECK_EXPECTED(exected_yolov5_post_process_config);
-            auto expteted_yolov5_metadata = hailort::net_flow::Yolov5OpMetadata::create(inputs_metadata, outputs_metadata, nms_post_process_config,
-                                                                                        exected_yolov5_post_process_config.value(),
-                                                                                        op_metadata_proto.network_name());
-            CHECK_EXPECTED(expteted_yolov5_metadata);
-            ops_metadata_ptr.push_back(expteted_yolov5_metadata.value());
+            TRY(auto yolov5_post_process_config, create_yolov5_post_process_config(op_metadata_proto));
+            if (nms_post_process_config.bbox_only) {
+                TRY(auto yolov5_bbox_only_metadata, hailort::net_flow::Yolov5BboxOnlyOpMetadata::create(inputs_metadata, outputs_metadata, nms_post_process_config,
+                        yolov5_post_process_config, op_metadata_proto.network_name()));
+                ops_metadata_ptr.push_back(yolov5_bbox_only_metadata);
+            } else {
+                TRY(auto yolov5_metadata, hailort::net_flow::Yolov5OpMetadata::create(inputs_metadata, outputs_metadata, nms_post_process_config,
+                        yolov5_post_process_config, op_metadata_proto.network_name()));
+                ops_metadata_ptr.push_back(yolov5_metadata);
+            }
             break;
         }
 

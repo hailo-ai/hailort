@@ -8,6 +8,8 @@
  **/
 
 #include "ddr_action_list_buffer_builder.hpp"
+#include "common/os_utils.hpp"
+#include "vdma/integrated/integrated_device.hpp"
 
 namespace hailort
 {
@@ -21,9 +23,10 @@ namespace hailort
 // Like the dsp etc...need to check with them before doing so. For now - this should almost always retirn in the mapped area and we will verify
 // to double check
 
-DDRActionListBufferBuilder::DDRActionListBufferBuilder(vdma::ContinuousBuffer &&buffer) :
+DDRActionListBufferBuilder::DDRActionListBufferBuilder(void* user_address, uint64_t dma_address) :
     ActionListBufferBuilder(ActionListBufferBuilder::Type::DDR),
-    m_action_list_buffer(std::move(buffer)),
+    m_user_address(user_address),
+    m_dma_address(dma_address),
     m_write_offset(0),
     m_current_context_info{}
 {}
@@ -39,18 +42,20 @@ bool DDRActionListBufferBuilder::verify_dma_addr(vdma::ContinuousBuffer &buffer)
 }
 
 Expected<std::shared_ptr<DDRActionListBufferBuilder>> DDRActionListBufferBuilder::create(size_t num_contexts,
-    HailoRTDriver &driver)
+    VdmaDevice &vdma_device)
 {
-    // Try to allocate continous buffer for action list in DDR
-    auto continous_alloc = vdma::ContinuousBuffer::create(num_contexts * 
-        sizeof(CONTROL_PROTOCOL__context_switch_context_info_chunk_t), driver);
+    auto integrated_device = dynamic_cast<IntegratedDevice*>(&vdma_device);
+    
+    size_t size_of_contexts = HailoRTCommon::align_to(num_contexts *
+        sizeof(CONTROL_PROTOCOL__context_switch_context_info_chunk_t), OsUtils::get_page_size());
 
-    // TODO HRT-12512 - Add fallback to Control if continous buffer allocation fails
-    CHECK_EXPECTED(continous_alloc);
-    // Verify that continous buffer is in allocated region
-    CHECK_AS_EXPECTED(verify_dma_addr(continous_alloc.value()), HAILO_INTERNAL_FAILURE,
-        "Failed to allocate continous buffer in M4 mapped memory region");
-    return make_shared_nothrow<DDRActionListBufferBuilder>(continous_alloc.release());
+    TRY(auto addr_pair, integrated_device->allocate_infinite_action_list_buffer(size_of_contexts));
+
+    auto ddr_action_list_buiffer_builder = make_shared_nothrow<DDRActionListBufferBuilder>(
+        addr_pair.first, addr_pair.second);
+    CHECK_NOT_NULL_AS_EXPECTED(ddr_action_list_buiffer_builder, HAILO_OUT_OF_HOST_MEMORY);
+    
+    return ddr_action_list_buiffer_builder;
 }
 
 hailo_status DDRActionListBufferBuilder::write_action(MemoryView action,
@@ -77,8 +82,8 @@ hailo_status DDRActionListBufferBuilder::write_action(MemoryView action,
 
     if (is_last_action_in_context) {
         const auto write_size = sizeof(CONTROL_PROTOCOL__context_switch_context_info_chunk_t);
-        auto status = m_action_list_buffer.write(&m_current_context_info, write_size, m_write_offset);
-        CHECK_SUCCESS(status);
+        memcpy(static_cast<void*>(reinterpret_cast<uint8_t*>(m_user_address) + m_write_offset), &m_current_context_info,
+            write_size);
         m_write_offset += write_size;
     }
 
@@ -87,7 +92,7 @@ hailo_status DDRActionListBufferBuilder::write_action(MemoryView action,
 
 uint64_t DDRActionListBufferBuilder::get_mapped_buffer_dma_address() const
 {
-    return m_action_list_buffer.dma_address();
+    return m_dma_address;
 }
 
 } /* namespace hailort */

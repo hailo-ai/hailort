@@ -570,9 +570,9 @@ hailo_status AsyncPushQueueElement::execute_dequeue_user_buffers(hailo_status er
     return HAILO_SUCCESS;
 }
 
-Expected<bool> AsyncPushQueueElement::can_push_buffer_downstream()
+Expected<bool> AsyncPushQueueElement::can_push_buffer_downstream(uint32_t frames_count)
 {
-    return !m_queue.is_queue_full();
+    return m_queue.size_approx() + frames_count < m_queue.max_capacity();
 }
 
 Expected<std::shared_ptr<PullQueueElement>> PullQueueElement::create(const std::string &name, std::chrono::milliseconds timeout,
@@ -778,7 +778,7 @@ Expected<PipelineBuffer> UserBufferQueueElement::run_pull(PipelineBuffer &&optio
 {
     CHECK_AS_EXPECTED(optional, HAILO_INVALID_ARGUMENT, "Optional buffer must be valid in {}!", name());
 
-    hailo_status status = m_pool->enqueue_buffer(optional.as_view());
+    hailo_status status = m_pool->enqueue_buffer(std::move(optional));
     if (HAILO_SHUTDOWN_EVENT_SIGNALED == status) {
         LOGGER__INFO("Shutdown event was signaled in enqueue of queue element {}!", name());
         return make_unexpected(HAILO_SHUTDOWN_EVENT_SIGNALED);

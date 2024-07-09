@@ -12,7 +12,6 @@
 #include "vdma/circular_stream_buffer_pool.hpp"
 #include "utils/profiler/tracer_macros.hpp"
 #include "utils/buffer_storage.hpp"
-#include "common/os_utils.hpp"
 
 
 namespace hailort
@@ -86,12 +85,7 @@ VdmaInputStream::VdmaInputStream(VdmaDevice &device, vdma::BoundaryChannelPtr ch
 
 VdmaInputStream::~VdmaInputStream()
 {
-    // We want to stop the vdma channel before closing the stream in the firmware
-    // because sending data to a closed stream may terminate the dma engine
-    const auto status = m_channel->deactivate();
-    if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("Failed to deactivate stream with error status {}", status);
-    }
+    m_channel->deactivate();
 }
 
 hailo_stream_interface_t VdmaInputStream::get_interface() const
@@ -106,16 +100,29 @@ void VdmaInputStream::set_vdevice_core_op_handle(vdevice_core_op_handle_t core_o
 
 Expected<std::unique_ptr<StreamBufferPool>> VdmaInputStream::allocate_buffer_pool()
 {
-    TRY(auto circular_pool, CircularStreamBufferPool::create(m_device, HAILO_DMA_BUFFER_DIRECTION_H2D,
-        m_channel->get_desc_list()->desc_page_size(), m_channel->get_desc_list()->count(), get_frame_size()));
+    const auto frame_size = get_frame_size();
+    const auto max_transfers_in_desc_list = m_channel->get_max_aligned_transfers_in_desc_list(frame_size);
+    const auto max_ongoing_transfers = m_channel->get_max_ongoing_transfers(frame_size);
+    if (max_transfers_in_desc_list < max_ongoing_transfers) {
+        // In this case we don't bind, since the descriptor list isn't big enough to hold all the buffers.
+        // (otherwise pending_transfers_queue_in_use would be false)
+        TRY(auto stream_buffer_pool, QueuedStreamBufferPool::create(max_ongoing_transfers, frame_size,
+            BufferStorageParams::create_dma()));
 
-    // Bind the buffer to the channel to avoid the need to do it on every transfer.
-    TRY(auto pool_dma_able_buffer, circular_pool->get_base_buffer().storage().get_dma_able_buffer());
-    TRY(auto mapped_buffer, vdma::MappedBuffer::create_shared(pool_dma_able_buffer, m_device.get_driver(),
-        HailoRTDriver::DmaDirection::H2D));
-    CHECK_SUCCESS(m_channel->bind_buffer(mapped_buffer));
+        return std::unique_ptr<StreamBufferPool>(std::move(stream_buffer_pool));
+    } else {
+        // We can fit all the buffers in the descriptor list, so we can bind them statically.
+        TRY(auto circular_pool, CircularStreamBufferPool::create(m_device, HAILO_DMA_BUFFER_DIRECTION_H2D,
+            m_channel->get_desc_list().desc_page_size(), m_channel->get_desc_list().count(), frame_size));
 
-    return std::unique_ptr<StreamBufferPool>(std::move(circular_pool));
+        // Bind the buffer to the channel to avoid the need to do it on every transfer.
+        TRY(auto pool_dma_able_buffer, circular_pool->get_base_buffer().storage().get_dma_able_buffer());
+        TRY(auto mapped_buffer, vdma::MappedBuffer::create_shared(pool_dma_able_buffer, m_device.get_driver(),
+            HailoRTDriver::DmaDirection::H2D));
+        CHECK_SUCCESS(m_channel->bind_buffer(mapped_buffer));
+
+        return std::unique_ptr<StreamBufferPool>(std::move(circular_pool));
+    }
 }
 
 size_t VdmaInputStream::get_max_ongoing_transfers() const
@@ -127,7 +134,8 @@ Expected<TransferRequest> VdmaInputStream::align_transfer_request(TransferReques
 {
     const auto dma_alignment = OsUtils::get_dma_able_alignment();
     std::vector<TransferBuffer> transfer_buffers;
-    const auto buffer_address = transfer_request.transfer_buffers[0].base_buffer().data();
+    TRY(auto base_buffer, transfer_request.transfer_buffers[0].base_buffer());
+    const auto buffer_address = base_buffer.data();
     const auto buffer_size = transfer_request.transfer_buffers[0].size();
 
     TRY(const auto dma_able_bounce_buffer, m_bounce_buffers_pool->dequeue());
@@ -167,13 +175,17 @@ hailo_status VdmaInputStream::write_async_impl(TransferRequest &&transfer_reques
 {
     TRACE(FrameDequeueH2DTrace, m_device.get_dev_id(), m_core_op_handle, name());
 
-    const auto dma_able_alignment = OsUtils::get_dma_able_alignment();
-    if (reinterpret_cast<size_t>(transfer_request.transfer_buffers[0].base_buffer().data()) % dma_able_alignment == 0) {
+    if (transfer_request.transfer_buffers[0].type() == TransferBufferType::DMABUF) {
         return m_channel->launch_transfer(std::move(transfer_request));
     } else {
-        auto unaligned_transfer_request = align_transfer_request(std::move(transfer_request));
-        CHECK_EXPECTED_AS_STATUS(unaligned_transfer_request);
-        return m_channel->launch_transfer(unaligned_transfer_request.release());
+        TRY(auto is_request_aligned, transfer_request.is_request_aligned());
+        if (is_request_aligned) {
+            return m_channel->launch_transfer(std::move(transfer_request));
+        } else {
+            auto realigned_transfer_request = align_transfer_request(std::move(transfer_request));
+            CHECK_EXPECTED_AS_STATUS(realigned_transfer_request);
+            return m_channel->launch_transfer(realigned_transfer_request.release());
+        }
     }
 }
 
@@ -184,7 +196,8 @@ hailo_status VdmaInputStream::activate_stream_impl()
 
 hailo_status VdmaInputStream::deactivate_stream_impl()
 {
-    return m_channel->deactivate();
+    m_channel->deactivate();
+    return HAILO_SUCCESS;
 }
 
 hailo_status VdmaInputStream::cancel_pending_transfers()
@@ -219,7 +232,8 @@ VdmaOutputStream::VdmaOutputStream(VdmaDevice &device, vdma::BoundaryChannelPtr 
     m_channel(std::move(channel)),
     m_interface(interface),
     m_transfer_size(get_transfer_size(m_stream_info, get_layer_info())),
-    m_core_op_handle(INVALID_CORE_OP_HANDLE)
+    m_core_op_handle(INVALID_CORE_OP_HANDLE),
+    m_d2h_callback(default_d2h_callback)
 {
     // Check status for base class c'tor
     if (HAILO_SUCCESS != status) {
@@ -231,12 +245,7 @@ VdmaOutputStream::VdmaOutputStream(VdmaDevice &device, vdma::BoundaryChannelPtr 
 
 VdmaOutputStream::~VdmaOutputStream()
 {
-    // We want to stop the vdma channel before closing the stream in the firmware
-    // because sending data to a closed stream may terminate the dma engine
-    const auto status = m_channel->deactivate();
-    if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("Failed to deactivate stream with error status {}", status);
-    }
+    m_channel->deactivate();
 }
 
 hailo_stream_interface_t VdmaOutputStream::get_interface() const
@@ -246,16 +255,28 @@ hailo_stream_interface_t VdmaOutputStream::get_interface() const
 
 Expected<std::unique_ptr<StreamBufferPool>> VdmaOutputStream::allocate_buffer_pool()
 {
-    TRY(auto circular_pool, CircularStreamBufferPool::create(m_device, HAILO_DMA_BUFFER_DIRECTION_D2H,
-        m_channel->get_desc_list()->desc_page_size(), m_channel->get_desc_list()->count(), m_transfer_size));
+    const auto max_transfers_in_desc_list = m_channel->get_max_aligned_transfers_in_desc_list(m_transfer_size);
+    const auto max_ongoing_transfers = m_channel->get_max_ongoing_transfers(m_transfer_size);
+    if (max_transfers_in_desc_list < max_ongoing_transfers) {
+        // In this case we don't bind, since the descriptor list isn't big enough to hold all the buffers.
+        // (otherwise pending_transfers_queue_in_use would be false)
+        TRY(auto stream_buffer_pool, QueuedStreamBufferPool::create(max_ongoing_transfers, m_transfer_size,
+            BufferStorageParams::create_dma()));
 
-    // Bind the buffer to the channel to avoid the need to do it on every transfer.
-    TRY(auto pool_dma_able_buffer, circular_pool->get_base_buffer().storage().get_dma_able_buffer());
-    TRY(auto mapped_buffer, vdma::MappedBuffer::create_shared(pool_dma_able_buffer, m_device.get_driver(),
-        HailoRTDriver::DmaDirection::D2H));
-    CHECK_SUCCESS(m_channel->bind_buffer(mapped_buffer));
+        return std::unique_ptr<StreamBufferPool>(std::move(stream_buffer_pool));
+    } else  {
+        // We can fit all the buffers in the descriptor list, so we can bind them statically.
+        TRY(auto circular_pool, CircularStreamBufferPool::create(m_device, HAILO_DMA_BUFFER_DIRECTION_D2H,
+            m_channel->get_desc_list().desc_page_size(), m_channel->get_desc_list().count(), m_transfer_size));
 
-    return std::unique_ptr<StreamBufferPool>(std::move(circular_pool));
+        // Bind the buffer to the channel to avoid the need to do it on every transfer.
+        TRY(auto pool_dma_able_buffer, circular_pool->get_base_buffer().storage().get_dma_able_buffer());
+        TRY(auto mapped_buffer, vdma::MappedBuffer::create_shared(pool_dma_able_buffer, m_device.get_driver(),
+            HailoRTDriver::DmaDirection::D2H));
+        CHECK_SUCCESS(m_channel->bind_buffer(mapped_buffer));
+
+        return std::unique_ptr<StreamBufferPool>(std::move(circular_pool));
+    }
 }
 
 size_t VdmaOutputStream::get_max_ongoing_transfers() const
@@ -270,7 +291,8 @@ Expected<TransferRequest> VdmaOutputStream::align_transfer_request(TransferReque
     CHECK_EXPECTED(bounce_buffer_exp);
     auto bounce_buffer = bounce_buffer_exp.release();
 
-    auto wrapped_callback = [unaligned_user_buffer = transfer_request.transfer_buffers[0].base_buffer(),
+    TRY(auto base_buffer, transfer_request.transfer_buffers[0].base_buffer());
+    auto wrapped_callback = [unaligned_user_buffer = base_buffer,
             bounce_buffer=bounce_buffer, user_callback=transfer_request.callback](hailo_status callback_status) {
         memcpy(const_cast<uint8_t*>(unaligned_user_buffer.data()), bounce_buffer->data(), unaligned_user_buffer.size());
         user_callback(callback_status);
@@ -281,26 +303,32 @@ Expected<TransferRequest> VdmaOutputStream::align_transfer_request(TransferReque
 
 hailo_status VdmaOutputStream::read_async_impl(TransferRequest &&transfer_request)
 {
-    if ((INVALID_CORE_OP_HANDLE != m_core_op_handle) && (HAILO_FORMAT_ORDER_HAILO_NMS != m_stream_info.format.order)) {
+    if (HAILO_FORMAT_ORDER_HAILO_NMS != m_stream_info.format.order) {
         // On NMS stream we trace EnqueueD2H inside nms_stream
-        transfer_request.callback = [original_callback=transfer_request.callback, this](hailo_status status) {
-            if (HAILO_SUCCESS == status) {
+        transfer_request.callback = [original_callback=transfer_request.callback, d2h_callback=m_d2h_callback, this](hailo_status status) {
+            if ((HAILO_SUCCESS == status) && (INVALID_CORE_OP_HANDLE != m_core_op_handle)) {
                 TRACE(FrameEnqueueD2HTrace, m_device.get_dev_id(), m_core_op_handle, name());
             }
+            d2h_callback(status);
             original_callback(status);
         };
     }
-    const auto dma_able_alignment = OsUtils::get_dma_able_alignment();
-    if (reinterpret_cast<size_t>(transfer_request.transfer_buffers[0].base_buffer().data()) % dma_able_alignment == 0) {
+    if (transfer_request.transfer_buffers[0].type() == TransferBufferType::DMABUF) {
         return m_channel->launch_transfer(std::move(transfer_request));
     } else {
-        // In case of read unaligned - currently doesnt support using users buffer - so allocate complete new buffer size of user's buffer
-        LOGGER__WARNING("read_async() was provided an unaligned buffer (address=0x{:x}), which causes performance degradation. Use buffers algined to {} bytes for optimal performance",
-            reinterpret_cast<size_t>(transfer_request.transfer_buffers[0].base_buffer().data()), dma_able_alignment);
+        TRY(auto is_request_aligned, transfer_request.is_request_aligned());
+        if (is_request_aligned) {
+            return m_channel->launch_transfer(std::move(transfer_request));
+        } else {
+            // In case of read unaligned - don't support using users buffer - so well allocate complete new buffer size of user's buffer
+            TRY(auto base_buffer, transfer_request.transfer_buffers[0].base_buffer());
+            LOGGER__WARNING("read_async() was provided an unaligned buffer (address=0x{:x}), which causes performance degradation. Use buffers algined to {} bytes for optimal performance",
+                reinterpret_cast<size_t>(base_buffer.data()), OsUtils::get_dma_able_alignment());
 
-        auto realigned_transfer_request = align_transfer_request(std::move(transfer_request));
-        CHECK_EXPECTED_AS_STATUS(realigned_transfer_request);
-        return m_channel->launch_transfer(realigned_transfer_request.release());
+            auto realigned_transfer_request = align_transfer_request(std::move(transfer_request));
+            CHECK_EXPECTED_AS_STATUS(realigned_transfer_request);
+            return m_channel->launch_transfer(realigned_transfer_request.release());
+        }
     }
 }
 
@@ -311,7 +339,8 @@ hailo_status VdmaOutputStream::activate_stream_impl()
 
 hailo_status VdmaOutputStream::deactivate_stream_impl()
 {
-    return m_channel->deactivate();
+    m_channel->deactivate();
+    return HAILO_SUCCESS;
 }
 
 void VdmaOutputStream::set_vdevice_core_op_handle(vdevice_core_op_handle_t core_op_handle)
@@ -329,6 +358,11 @@ hailo_status VdmaOutputStream::cancel_pending_transfers()
     m_channel->cancel_pending_transfers();
 
     return HAILO_SUCCESS;
+}
+
+void VdmaOutputStream::set_d2h_callback(std::function<void(hailo_status)> callback)
+{
+    m_d2h_callback = callback;
 }
 
 } /* namespace hailort */

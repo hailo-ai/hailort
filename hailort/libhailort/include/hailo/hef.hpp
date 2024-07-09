@@ -469,7 +469,7 @@ private:
     friend class ConfiguredNetworkGroupBase;
     friend class CoreOp;
     friend class VDeviceBase;
-    friend class InferModel;
+    friend class InferModelBase;
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
     friend class HailoRtRpcClient;

@@ -2,7 +2,7 @@
 set -e
 
 readonly BASE_URI="https://hailo-hailort.s3.eu-west-2.amazonaws.com"
-readonly HRT_VERSION=4.17.1
+readonly HRT_VERSION=4.18.0
 readonly FW_AWS_DIR="Hailo8/${HRT_VERSION}/FW"
 readonly FW="hailo8_fw.${HRT_VERSION}_eth.bin"
 

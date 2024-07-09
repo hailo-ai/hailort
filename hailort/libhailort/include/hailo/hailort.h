@@ -147,7 +147,7 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(59, HAILO_THREAD_NOT_ACTIVATED                    /*!< The given thread has not been activated */)\
     HAILO_STATUS__X(60, HAILO_THREAD_NOT_JOINABLE                     /*!< The given thread is not joinable */)\
     HAILO_STATUS__X(61, HAILO_NOT_FOUND                               /*!< Could not find element */)\
-    HAILO_STATUS__X(62, HAILO_RESERVED_STATUS                         /*!< Reserved for future use */)\
+    HAILO_STATUS__X(62, HAILO_COMMUNICATION_CLOSED                    /*!< The communication between endpoints is closed */)\
     HAILO_STATUS__X(63, HAILO_STREAM_ABORT                            /*!< Stream recv/send was aborted */)\
     HAILO_STATUS__X(64, HAILO_PCIE_DRIVER_NOT_INSTALLED               /*!< Pcie driver is not installed */)\
     HAILO_STATUS__X(65, HAILO_NOT_AVAILABLE                           /*!< Component is not available */)\
@@ -420,6 +420,7 @@ typedef enum hailo_device_architecture_e {
     HAILO_ARCH_HAILO15H,
     HAILO_ARCH_PLUTO,
     HAILO_ARCH_HAILO15M,
+    HAILO_ARCH_HAILO10H,
     
     /** Max enum value to maintain ABI Integrity */
     HAILO_ARCH_MAX_ENUM = HAILO_MAX_ENUM
@@ -837,8 +838,9 @@ typedef enum {
 // **************************************************************************************** //
 /** Hailo buffer flags */
 typedef enum {
-    HAILO_BUFFER_FLAGS_NONE         = 0,        /*!< No flags - heap allocated buffer */
-    HAILO_BUFFER_FLAGS_DMA          = 1 << 0,   /*!< Buffer is mapped to DMA (will be page aligned implicitly) */
+    HAILO_BUFFER_FLAGS_NONE         = 0,            /*!< No flags - heap allocated buffer */
+    HAILO_BUFFER_FLAGS_DMA          = 1 << 0,       /*!< Buffer is mapped to DMA (will be page aligned implicitly) */
+    HAILO_BUFFER_FLAGS_CONTINUOUS   = 1 << 1,       /*!< Buffer is physically continuous (will be page aligned implicitly) */
 
     /** Max enum value to maintain ABI Integrity */
     HAILO_BUFFER_FLAGS_MAX_ENUM     = HAILO_MAX_ENUM
@@ -1476,10 +1478,18 @@ typedef enum {
 } hailo_latency_measurement_flags_t;
 
 typedef struct {
-    /** This parameter is only used in multi-context network_groups.
+    /**
+     * Sets the batch size of the InferModel.
+     * This parameter determines the number of frames that be sent for inference in a single batch.
+     * If a scheduler is enabled, this parameter determines the 'burst size' - the max number of frames after which the scheduler will attempt
+     *  to switch to another model.
+     *
      * User is advised to modify this (single network parameter) or @a hailo_configure_network_group_params_t batch size parameter. Not both.
      * In case user wishes to work with the same batch size for all networks inside a network group, user is advised to set batch_size in @a hailo_configure_network_group_params_t.
-     * In case user wished to work with batch size per network, user is advised to use this parameter. Default network batch size is @a HAILO_DEFAULT_BATCH_SIZE */
+     * In case user wished to work with batch size per network, user is advised to use this parameter.
+
+     * note: Default value is @a HAILO_DEFAULT_BATCH_SIZE - means automatic batch determined by hailort.
+     */
     uint16_t batch_size;
 } hailo_network_parameters_t;
 
@@ -1527,6 +1537,9 @@ typedef struct {
     char name[HAILO_MAX_NETWORK_NAME_SIZE];
 } hailo_network_info_t;
 
+/** Notification IDs and structures section start */
+#pragma pack(push, 1)
+
 /** Notification IDs, for each notification, one of the ::hailo_notification_message_parameters_t union will be set. */
 typedef enum {
     /** Matches hailo_notification_message_parameters_t::rx_error_notification. */
@@ -1555,6 +1568,8 @@ typedef enum {
     HAILO_NOTIFICATION_ID_HW_INFER_MANAGER_INFER_DONE,
     /** Matches hailo_notification_message_parameters_t::context_switch_run_time_error */
     HAILO_NOTIFICATION_ID_CONTEXT_SWITCH_RUN_TIME_ERROR_EVENT,
+    /** Matched hailo_notification_message_parameters_t::start_update_cache_offset_notification */
+    HAILO_NOTIFICATION_ID_START_UPDATE_CACHE_OFFSET,
 
     /** Must be last! */
     HAILO_NOTIFICATION_ID_COUNT,
@@ -1645,6 +1660,10 @@ typedef struct {
 } hailo_hw_infer_manager_infer_done_notification_message_t;
 
 typedef struct {
+    uint64_t cache_id_bitmask;
+} hailo_start_update_cache_offset_notification_message_t;
+
+typedef struct {
     uint32_t exit_status;
     uint8_t network_group_index;
     uint16_t batch_index;
@@ -1676,6 +1695,8 @@ typedef union {
     hailo_hw_infer_manager_infer_done_notification_message_t hw_infer_manager_infer_done_notification;
     /** context switch run time error event */
     hailo_context_switch_run_time_error_message_t context_switch_run_time_error;
+    /** Start cache offset update notification */
+    hailo_start_update_cache_offset_notification_message_t start_update_cache_offset_notification;
 } hailo_notification_message_parameters_t;
 
 /** Notification data that will be passed to the callback passed in ::hailo_notification_callback */
@@ -1684,6 +1705,9 @@ typedef struct {
     uint32_t sequence;
     hailo_notification_message_parameters_t body;
 } hailo_notification_t;
+
+#pragma pack(pop)
+/** Notification IDs and structures section end */
 
 /**
  * A notification callback. See ::hailo_set_notification_callback
@@ -1758,6 +1782,12 @@ typedef struct {
     char stream_name[HAILO_MAX_STREAM_NAME_SIZE];
     uint32_t rate;
 } hailo_rate_limit_t;
+
+typedef struct {
+    uint32_t cache_size;
+    uint32_t current_read_offset;
+    int32_t write_offset_delta;
+} hailo_cache_info_t;
 
 typedef enum {
     HAILO_SENSOR_TYPES_GENERIC = 0,
@@ -2828,7 +2858,7 @@ HAILORTAPI hailo_status hailo_network_group_get_output_stream_infos(hailo_config
 HAILORTAPI hailo_status hailo_shutdown_network_group(hailo_configured_network_group network_group);
 
 /**
- * Activates hailo_device inner-resources for context_switch inference.
+ * Activates hailo_device inner-resources for inference.
  *
  * @param[in]  network_group                NetworkGroup to be activated.
  * @param[in]  activation_params            Optional parameters for the activation (may be NULL).
@@ -2840,7 +2870,7 @@ HAILORTAPI hailo_status hailo_activate_network_group(hailo_configured_network_gr
     hailo_activated_network_group *activated_network_group_out);
 
 /**
- * De-activates hailo_device inner-resources for context_switch inference.
+ * De-activates hailo_device inner-resources for inference.
  *
  * @param[in]  activated_network_group        NetworkGroup to deactivate.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
@@ -3025,6 +3055,86 @@ HAILORTAPI hailo_status hailo_vdevice_dma_map_buffer(hailo_vdevice vdevice, void
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  */
 HAILORTAPI hailo_status hailo_vdevice_dma_unmap_buffer(hailo_vdevice vdevice, void *address, size_t size,
+    hailo_dma_buffer_direction_t direction);
+
+/**
+ * Maps the dmabuf represented by file descriptor @a dmabuf_fd for DMA transfers to/from the given @a device, in the specified
+ * @a data_direction.
+ * DMA mapping of buffers in advance may improve the performance of async API. This improvement will become
+ * apparent when the buffer is reused multiple times across different async operations.
+ * For low level API (aka ::hailo_input_stream or ::hailo_output_stream), buffers passed to
+ * ::hailo_stream_write_raw_buffer_async and ::hailo_stream_read_raw_buffer_async can be mapped.
+ *
+ * @param[in] device        A ::hailo_device object.
+ * @param[in] dmabuf_fd     The file decsriptor of the dmabuf to be mapped
+ * @param[in] size          The buffer's size in bytes
+ * @param[in] direction     The direction of the mapping. For input streams, use `HAILO_DMA_BUFFER_DIRECTION_H2D`
+ *                          and for output streams, use `HAILO_DMA_BUFFER_DIRECTION_D2H`.
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ *
+ * @note The DMA mapping will be released upon calling ::hailo_device_dma_unmap_dmabuf with @a dmabuf_fd, @a size and
+ *       @a data_direction, or when the @a device object is destroyed.
+ * @note The dmabuf pointed to by @a dmabuf_fd cannot be released until it is unmapped (via
+ *       ::hailo_device_dma_map_dmabuf or ::hailo_release_device).
+ * @note This API is currently experimental.
+ */
+HAILORTAPI hailo_status hailo_device_dma_map_dmabuf(hailo_device device, int dmabuf_fd, size_t size,
+    hailo_dma_buffer_direction_t direction);
+
+/**
+ * Un-maps a dmabuf represented by file descriptor @a dmabuf_fd for DMA transfers to/from the given @a device, in the direction
+ * @a direction.
+ *
+ * @param[in] device        A ::hailo_device object.
+ * @param[in] dmabuf_fd     The file descriptor of the dmabuf to be un-mapped.
+ * @param[in] size          The buffer's size in bytes.
+ * @param[in] direction     The direction of the mapping.
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ * @note This API is currently experimental.
+ */
+HAILORTAPI hailo_status hailo_device_dma_unmap_dmabuf(hailo_device device, int dmabuf_fd, size_t size,
+    hailo_dma_buffer_direction_t direction);
+
+/**
+ * Maps the dmabuf represented by the file descriptor @a dmabuf_fd for DMA transfers to/from the given @a vdevice, in the specified
+ * @a data_direction.
+ * DMA mapping of buffers in advance may improve the performance of async API. This improvement will become
+ * apparent when the buffer is reused multiple times across different async operations.
+ * For low level API (aka ::hailo_input_stream or ::hailo_output_stream), buffers passed to
+ * ::hailo_stream_write_raw_buffer_async and ::hailo_stream_read_raw_buffer_async can be mapped.
+ *
+ * @param[in] vdevice       A ::hailo_vdevice object.
+ * @param[in] dmabuf_fd     The file descriptor of the dmabuf to be mapped
+ * @param[in] size          The buffer's size in bytes
+ * @param[in] direction     The direction of the mapping. For input streams, use `HAILO_DMA_BUFFER_DIRECTION_H2D`
+ *                          and for output streams, use `HAILO_DMA_BUFFER_DIRECTION_D2H`.
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ *
+ * @note The DMA mapping will be released upon calling ::hailo_vdevice_dma_unmap_dmabuf with @a dmabuf_fd, @a size and
+ *       @a data_direction, or when the @a vdevice object is destroyed.
+ * @note The dmabuf pointed to by @a dmabuf_fd cannot be released until it is unmapped (via
+ *       ::hailo_vdevice_dma_unmap_dmabuf or ::hailo_release_vdevice).
+ * @note This API is currently experimental.
+ */
+HAILORTAPI hailo_status hailo_vdevice_dma_map_dmabuf(hailo_vdevice vdevice, int dmabuf_fd, size_t size,
+    hailo_dma_buffer_direction_t direction);
+
+/**
+ * Un-maps a dmabuf pointed to by @a dmabuf_fd for DMA transfers to/from the given @a vdevice, in the direction
+ * @a direction.
+ *
+ * @param[in] vdevice       A ::hailo_vdevice object.
+ * @param[in] dmabuf_fd     The file descriptor of the dmabuf to be un-mapped.
+ * @param[in] size          The buffer's size in bytes.
+ * @param[in] direction     The direction of the mapping.
+ * @note This API is currently experimental.
+ *
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+ */
+HAILORTAPI hailo_status hailo_vdevice_dma_unmap_dmabuf(hailo_vdevice vdevice, int dmabuf_fd, size_t size,
     hailo_dma_buffer_direction_t direction);
 
 /** @} */ // end of group_buffer_functions

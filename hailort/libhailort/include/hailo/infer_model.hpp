@@ -14,14 +14,12 @@
 #include "hailo/hef.hpp"
 #include "hailo/vdevice.hpp"
 
-#include <condition_variable>
-#include <mutex>
-
 /** hailort namespace */
 namespace hailort
 {
 
-class ConfiguredInferModelImpl;
+class AsyncInferJobBase;
+class ConfiguredInferModelBase;
 class AsyncInferRunnerImpl;
 
 /*! Asynchronous inference job representation is used to manage and control an inference job that is running asynchronously. */
@@ -52,11 +50,10 @@ public:
     void detach();
 
 private:
-    friend class ConfiguredInferModelImpl;
+    friend class AsyncInferJobBase;
 
-    class Impl;
-    AsyncInferJob(std::shared_ptr<Impl> pimpl);
-    std::shared_ptr<Impl> m_pimpl;
+    AsyncInferJob(std::shared_ptr<AsyncInferJobBase> pimpl);
+    std::shared_ptr<AsyncInferJobBase> m_pimpl;
     bool m_should_wait_in_dtor;
 };
 
@@ -83,6 +80,14 @@ public:
             /**
              * Sets the edge's buffer to a new one, of type MemoryView.
              *
+             * For best performance and to avoid memory copies, buffers should be aligned to the system PAGE_SIZE.
+             *
+             * On output streams, the actual buffer allocated size must be aligned to PAGE_SIZE as well - otherwise some
+             * memory corruption might occur at the end of the last page. For example, if the buffer size is 4000
+             * bytes, the actual buffer size should be at least 4096 bytes. To fill all requirements, it is recommended
+             * to allocate the buffer with standard page allocation function provided by the os (mmap on linux,
+             * VirtualAlloc in windows).
+             *
              * @param[in] view      The new buffer to be set.
              * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
              */
@@ -97,6 +102,8 @@ public:
 
             /**
              * Sets the edge's buffer to a new one, of type hailo_pix_buffer_t.
+             *
+             * Each plane in the \ref hailo_pix_buffer_t must feet the requirements listed in \ref set_buffer.
              *
              * @param[in] pix_buffer      The new buffer to be set.
              * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
@@ -130,7 +137,7 @@ public:
             Expected<hailo_dma_buffer_t> get_dma_buffer();
 
         private:
-            friend class ConfiguredInferModelImpl;
+            friend class ConfiguredInferModelBase;
             friend class AsyncInferRunnerImpl;
 
             class Impl;
@@ -173,7 +180,7 @@ public:
         Expected<InferStream> output(const std::string &name);
 
     private:
-        friend class ConfiguredInferModelImpl;
+        friend class ConfiguredInferModelBase;
 
         Bindings(std::unordered_map<std::string, InferStream> &&inputs,
             std::unordered_map<std::string, InferStream> &&outputs);
@@ -194,15 +201,16 @@ public:
      * The readiness of the model is determined by the ability to push buffers to the asynchronous inference pipeline.
      *
      * @param[in] timeout           Amount of time to wait until the model is ready in milliseconds.
+     * @param[in] frames_count      The count of buffers you intent to infer in the next request. Useful for batch inference.
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise:
      *           - If @a timeout has passed and the model is not ready, returns ::HAILO_TIMEOUT.
      *           - In any other error case, returns ::hailo_status error.
      */
-    hailo_status wait_for_async_ready(std::chrono::milliseconds timeout);
+    hailo_status wait_for_async_ready(std::chrono::milliseconds timeout, uint32_t frames_count = 1);
 
     /**
-     * Activates hailo device inner-resources for context_switch inference.
+     * Activates hailo device inner-resources for inference.
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns ::hailo_status error.
      * @note Calling this function is invalid in case scheduler is enabled.
@@ -210,10 +218,11 @@ public:
     hailo_status activate();
 
     /**
-     * Deactivates hailo device inner-resources for context_switch inference.
+     * Deactivates hailo device inner-resources for inference.
+     * @return Returns ::HAILO_SUCCESS.
      * @note Calling this function is invalid in case scheduler is enabled.
      */
-    void deactivate();
+    hailo_status deactivate();
 
     /**
      * Launches a synchronous inference operation with the provided bindings.
@@ -234,10 +243,26 @@ public:
      * @param[in] callback           The function to be called upon completion of the asynchronous inference operation.
      *
      * @return Upon success, returns an instance of Expected<AsyncInferJob> representing the launched job.
-     *  Otherwise, returns Unexpected of ::hailo_status error.
+     *  Otherwise, returns Unexpected of ::hailo_status error, and the interface shuts down completly.
      * @note @a callback should execute as quickly as possible.
+     * @note The bindings' buffers should be kept intact until the async job is completed
      */
     Expected<AsyncInferJob> run_async(Bindings bindings,
+        std::function<void(const AsyncInferCompletionInfo &)> callback = ASYNC_INFER_EMPTY_CALLBACK);
+
+    /**
+     * Launches an asynchronous inference operation with the provided bindings.
+     * The completion of the operation is notified through the provided callback function.
+     * Overload for multiple-bindings inference (useful for batch inference).
+     *
+     * @param[in] bindings           The bindings for the inputs and outputs of the model.
+     * @param[in] callback           The function to be called upon completion of the asynchronous inference operation.
+     *
+     * @return Upon success, returns an instance of Expected<AsyncInferJob> representing the launched job.
+     *  Otherwise, returns Unexpected of ::hailo_status error, and the interface shuts down completly.
+     * @note The bindings' buffers should be kept intact until the async job is completed
+     */
+    Expected<AsyncInferJob> run_async(const std::vector<Bindings> &bindings,
         std::function<void(const AsyncInferCompletionInfo &)> callback = ASYNC_INFER_EMPTY_CALLBACK);
 
     /**
@@ -294,15 +319,17 @@ public:
 
     /**
      * Shuts the inference down. After calling this method, the model is no longer usable.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error
      */
-    void shutdown();
+    hailo_status shutdown();
 
 private:
-    friend class InferModel;
+    friend class InferModelBase;
+    friend class ConfiguredInferModelBase;
 
-    ConfiguredInferModel(std::shared_ptr<ConfiguredInferModelImpl> pimpl);
+    ConfiguredInferModel(std::shared_ptr<ConfiguredInferModelBase> pimpl);
 
-    std::shared_ptr<ConfiguredInferModelImpl> m_pimpl;
+    std::shared_ptr<ConfiguredInferModelBase> m_pimpl;
 };
 
 /**
@@ -332,10 +359,10 @@ struct HAILORTAPI AsyncInferCompletionInfo
  * This class is used to set up the model for inference and includes methods for setting and getting the model's parameters.
  * By calling the configure function, the user can create a ConfiguredInferModel object, which is used to run inference.
  */
-class HAILORTAPI InferModel final
+class HAILORTAPI InferModel
 {
 public:
-    ~InferModel() = default;
+    virtual ~InferModel() = default;
 
     /**
      * Represents the parameters of a stream.
@@ -426,7 +453,7 @@ public:
         /**
          * Set maximum accumulated mask size for all the detections in a frame.
          *
-         * Note: Used in order to change the output buffer frame size,
+         * @note: Used in order to change the output buffer frame size
          * in cases where the output buffer is too small for all the segmentation detections.
          *
          * @param[in] max_accumulated_mask_size NMS max accumulated mask size.
@@ -434,8 +461,13 @@ public:
         void set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size);
 
     private:
-        friend class InferModel;
-        friend class VDevice;
+        friend class InferModelBase;
+        friend class InferModelHrpcClient;
+
+        float32_t nms_score_threshold() const;
+        float32_t nms_iou_threshold() const;
+        uint32_t nms_max_proposals_per_class() const;
+        uint32_t nms_max_accumulated_mask_size() const;
 
         class Impl;
         InferStream(std::shared_ptr<Impl> pimpl);
@@ -446,14 +478,19 @@ public:
     /**
      * @return A constant reference to the Hef object associated with this InferModel.
      */
-    const Hef &hef() const;
+    virtual const Hef &hef() const = 0;
 
     /**
      * Sets the batch size of the InferModel.
+     * This parameter determines the number of frames that be sent for inference in a single batch.
+     * If a scheduler is enabled, this parameter determines the 'burst size' - the max number of frames after which the scheduler will attempt
+     *  to switch to another model.
+     *
+     * note: Default value is HAILO_DEFAULT_BATCH_SIZE - means automatic batch determined by hailort.
      *
      * @param[in] batch_size      The new batch size to be set.
      */
-    void set_batch_size(uint16_t batch_size);
+    virtual void set_batch_size(uint16_t batch_size) = 0;
 
     /**
      * Sets the power mode of the InferModel.
@@ -461,7 +498,7 @@ public:
      *
      * @param[in] power_mode      The new power mode to be set.
      */
-    void set_power_mode(hailo_power_mode_t power_mode);
+    virtual void set_power_mode(hailo_power_mode_t power_mode) = 0;
 
     /**
      * Sets the latency measurement flags of the InferModel.
@@ -469,7 +506,7 @@ public:
      *
      * @param[in] latency      The new latency measurement flags to be set.
      */
-    void set_hw_latency_measurement_flags(hailo_latency_measurement_flags_t latency);
+    virtual void set_hw_latency_measurement_flags(hailo_latency_measurement_flags_t latency) = 0;
 
     /**
      * Configures the InferModel object. Also checks the validity of the configuration's formats.
@@ -478,7 +515,7 @@ public:
      *  Otherwise, returns Unexpected of ::hailo_status error.
      * @note InferModel can be configured once.
      */
-    Expected<ConfiguredInferModel> configure();
+    virtual Expected<ConfiguredInferModel> configure() = 0;
 
     /**
      * Returns the single input's InferStream object.
@@ -487,7 +524,7 @@ public:
      * @note If InferModel has multiple inputs, will return ::HAILO_INVALID_OPERATION.
      *  In that case - use input(const std::string &name) instead.
      */
-    Expected<InferStream> input();
+    virtual Expected<InferStream> input() = 0;
 
     /**
      * Returns the single output's InferStream object.
@@ -496,7 +533,7 @@ public:
      * @note If InferModel has multiple outputs, will return ::HAILO_INVALID_OPERATION.
      *  In that case - use output(const std::string &name) instead.
      */
-    Expected<InferStream> output();
+    virtual Expected<InferStream> output() = 0;
 
     /**
      * Gets an input's InferStream object.
@@ -504,7 +541,7 @@ public:
      * @param[in] name                    The name of the input edge.
      * @return Upon success, returns Expected of the relevant InferStream object. Otherwise, returns a ::hailo_status error.
      */
-    Expected<InferStream> input(const std::string &name);
+    virtual Expected<InferStream> input(const std::string &name) = 0;
 
     /**
      * Gets an output's InferStream object.
@@ -512,49 +549,33 @@ public:
      * @param[in] name                    The name of the output edge.
      * @return Upon success, returns Expected of the relevant InferStream object. Otherwise, returns a ::hailo_status error.
      */
-    Expected<InferStream> output(const std::string &name);
+    virtual Expected<InferStream> output(const std::string &name) = 0;
 
     /**
      * @return A constant reference to the vector of input InferStream objects, each representing an input edge.
      */
-    const std::vector<InferStream> &inputs() const;
+    virtual const std::vector<InferStream> &inputs() const = 0;
 
     /**
      * @return A constant reference to the vector of output InferStream objects, each representing an output edge.
      */
-    const std::vector<InferStream> &outputs() const;
+    virtual const std::vector<InferStream> &outputs() const = 0;
 
     /**
      * @return A constant reference to a vector of strings, each representing the name of an input stream.
      */
-    const std::vector<std::string> &get_input_names() const;
+    virtual const std::vector<std::string> &get_input_names() const = 0;
 
     /**
      * @return A constant reference to a vector of strings, each representing the name of an output stream.
      */
-    const std::vector<std::string> &get_output_names() const;
+    virtual const std::vector<std::string> &get_output_names() const = 0;
 
-    InferModel(InferModel &&);
-
-    Expected<ConfiguredInferModel> configure_for_ut(std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner,
+    virtual Expected<ConfiguredInferModel> configure_for_ut(std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner,
         const std::vector<std::string> &input_names, const std::vector<std::string> &output_names,
-        std::shared_ptr<ConfiguredNetworkGroup> net_group = nullptr);
-
-private:
-    friend class VDevice;
-
-    InferModel(VDevice &vdevice, Hef &&hef, std::unordered_map<std::string, InferStream> &&inputs,
-        std::unordered_map<std::string, InferStream> &&outputs);
-
-    std::reference_wrapper<VDevice> m_vdevice;
-    Hef m_hef;
-    std::unordered_map<std::string, InferStream> m_inputs;
-    std::unordered_map<std::string, InferStream> m_outputs;
-    std::vector<InferStream> m_inputs_vector;
-    std::vector<InferStream> m_outputs_vector;
-    std::vector<std::string> m_input_names;
-    std::vector<std::string> m_output_names;
-    ConfigureNetworkParams m_config_params;
+        const std::unordered_map<std::string, size_t> inputs_frame_sizes = {},
+        const std::unordered_map<std::string, size_t> outputs_frame_sizes = {},
+        std::shared_ptr<ConfiguredNetworkGroup> net_group = nullptr) = 0;
 };
 
 } /* namespace hailort */

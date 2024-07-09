@@ -69,11 +69,11 @@ public:
 
     hailo_status run(ConfiguredInferModel::Bindings &bindings, TransferDoneCallbackAsyncInfer transfer_done);
     hailo_status set_buffers(std::unordered_map<std::string, PipelineBuffer> &inputs,
-        std::unordered_map<std::string, std::pair<MemoryView, TransferDoneCallbackAsyncInfer>> &outputs);
+        std::unordered_map<std::string, PipelineBuffer> &outputs);
 
     void abort();
 
-    Expected<bool> can_push_buffers();
+    Expected<bool> can_push_buffers(uint32_t frames_count);
 
     void add_element_to_pipeline(std::shared_ptr<PipelineElement> pipeline_element);
     void add_entry_element(std::shared_ptr<PipelineElement> pipeline_element, const std::string &input_name);
@@ -91,7 +91,6 @@ protected:
     hailo_status start_pipeline();
     hailo_status stop_pipeline();
 
-    static Expected<hailo_pix_buffer_t> convert_dma_pix_buffer_to_userptr_pix_buffer(const hailo_pix_buffer_t &dma_pix_buffer);
     void set_pix_buffer_inputs(std::unordered_map<std::string, PipelineBuffer> &inputs, hailo_pix_buffer_t userptr_pix_buffer,
         TransferDoneCallbackAsyncInfer input_done, const std::string &input_name);
 

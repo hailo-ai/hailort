@@ -17,6 +17,7 @@
 
 #include "vdevice/vdevice_internal.hpp"
 #include "vdevice/vdevice_core_op.hpp"
+#include "vdevice/vdevice_hrpc_client.hpp"
 
 #include "vdma/pcie/pcie_device.hpp"
 #include "vdma/integrated/integrated_device.hpp"
@@ -30,6 +31,9 @@
 #include "service/rpc_client_utils.hpp"
 #include "rpc/rpc_definitions.hpp"
 #endif // HAILO_SUPPORT_MULTI_PROCESS
+
+#define HAILO_FORCE_HRPC_CLIENT_ENV_VAR "HAILO_FORCE_HRPC"
+#define HAILO_FORCE_HRPC_CLIENT_ON "1"
 
 
 namespace hailort
@@ -212,6 +216,24 @@ hailo_status VDeviceHandle::dma_unmap(void *address, size_t size, hailo_dma_buff
     return vdevice.value()->dma_unmap(address, size, direction);
 }
 
+hailo_status VDeviceHandle::dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
+{
+    auto &manager = SharedResourceManager<std::string, VDeviceBase>::get_instance();
+    auto vdevice = manager.resource_lookup(m_handle);
+    CHECK_EXPECTED_AS_STATUS(vdevice);
+
+    return vdevice.value()->dma_map_dmabuf(dmabuf_fd, size, direction);
+}
+
+hailo_status VDeviceHandle::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
+{
+    auto &manager = SharedResourceManager<std::string, VDeviceBase>::get_instance();
+    auto vdevice = manager.resource_lookup(m_handle);
+    CHECK_EXPECTED_AS_STATUS(vdevice);
+
+    return vdevice.value()->dma_unmap_dmabuf(dmabuf_fd, size, direction);
+}
+
 bool VDevice::service_over_ip_mode()
 {
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
@@ -219,6 +241,13 @@ bool VDevice::service_over_ip_mode()
     return hailort::HAILORT_SERVICE_ADDRESS != HAILORT_SERVICE_DEFAULT_ADDR;
 #endif
     return false; // no service -> no service over ip
+}
+
+bool VDevice::force_hrpc_client()
+{
+    // The env var HAILO_FORCE_HRPC_CLIENT_ENV_VAR is supported for debug purposes
+    char *pcie_service_var = std::getenv(HAILO_FORCE_HRPC_CLIENT_ENV_VAR); // TODO: Remove duplication
+    return (nullptr != pcie_service_var) && (HAILO_FORCE_HRPC_CLIENT_ON == std::string(pcie_service_var));
 }
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
@@ -453,7 +482,7 @@ hailo_status VDeviceClient::dma_map(void *address, size_t size, hailo_dma_buffer
     (void) size;
     (void) direction;
     // It is ok to do nothing on service, because the buffer is copied anyway to the service.
-    LOGGER__TRACE("VDevice `dma_map()` is doing nothing on service");
+    LOGGER__TRACE("VDevice `dma_map()` does nothing in service");
     return HAILO_SUCCESS;
 }
 
@@ -463,7 +492,27 @@ hailo_status VDeviceClient::dma_unmap(void *address, size_t size, hailo_dma_buff
     (void) size;
     (void) direction;
     // It is ok to do nothing on service, because the buffer is copied anyway to the service.
-    LOGGER__TRACE("VDevice `dma_map()` is doing nothing on service");
+    LOGGER__TRACE("VDevice `dma_map()` does nothing in service");
+    return HAILO_SUCCESS;
+}
+
+hailo_status VDeviceClient::dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
+{
+    (void) dmabuf_fd;
+    (void) size;
+    (void) direction;
+    // It is ok to do nothing on service, because the buffer is copied anyway to the service.
+    LOGGER__TRACE("VDevice `dma_map_dmabuf()` does nothing in service");
+    return HAILO_SUCCESS;
+}
+
+hailo_status VDeviceClient::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
+{
+    (void) dmabuf_fd;
+    (void) size;
+    (void) direction;
+    // It is ok to do nothing on service, because the buffer is copied anyway to the service.
+    LOGGER__TRACE("VDevice `dma_unmap_dmabuf()` does nothing in service");
     return HAILO_SUCCESS;
 }
 
@@ -475,7 +524,7 @@ Expected<std::unique_ptr<VDevice>> VDevice::create(const hailo_vdevice_params_t 
     auto status = VDeviceBase::validate_params(params);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
-    std::unique_ptr<VDevice> vdevice;
+    std::unique_ptr<VDevice> vdevice = nullptr;
 
     if (params.multi_process_service) {
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
@@ -489,9 +538,22 @@ Expected<std::unique_ptr<VDevice>> VDevice::create(const hailo_vdevice_params_t 
         return make_unexpected(HAILO_INVALID_OPERATION);
 #endif // HAILO_SUPPORT_MULTI_PROCESS
     } else {
-        auto expected_vdevice = VDeviceHandle::create(params);
-        CHECK_EXPECTED(expected_vdevice);
-        vdevice = expected_vdevice.release();
+        auto acc_type = HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE;
+        if (nullptr != params.device_ids) {
+            TRY(auto device_ids_contains_eth, VDeviceBase::device_ids_contains_eth(params));
+            if (!device_ids_contains_eth) {
+                TRY(acc_type, VDeviceBase::get_accelerator_type(params.device_ids, params.device_count));
+            }
+        } else {
+            TRY(acc_type, VDeviceBase::get_accelerator_type(params.device_ids, params.device_count));
+        }
+        if ((acc_type == HailoRTDriver::AcceleratorType::SOC_ACCELERATOR) || force_hrpc_client()) {
+            // Creating VDeviceClient
+            TRY(vdevice, VDeviceHrpcClient::create(params));
+        } else {
+            // Creating VDeviceHandle
+            TRY(vdevice, VDeviceHandle::create(params));
+        }
     }
     // Upcasting to VDevice unique_ptr
     auto vdevice_ptr = std::unique_ptr<VDevice>(vdevice.release());
@@ -517,21 +579,45 @@ Expected<std::unique_ptr<VDevice>> VDevice::create(const std::vector<std::string
     return create(params);
 }
 
+Expected<HailoRTDriver::AcceleratorType> VDeviceBase::get_accelerator_type(hailo_device_id_t *device_ids, size_t device_count)
+{
+    auto acc_type = HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE;
+    TRY(auto device_infos, HailoRTDriver::scan_devices());
+    if (nullptr != device_ids) {
+        // device_ids are provided - check that all ids are of the same type + that the id exists in the scan from device_infos
+        for (uint32_t i = 0; i < device_count; i++) {
+            const auto &id = device_ids[i].id;
+            auto device_info = std::find_if(device_infos.begin(), device_infos.end(), [&](const auto &device_info) {
+                return Device::device_ids_equal(device_info.device_id, id);
+            });
+            CHECK(device_info != device_infos.end(), HAILO_INVALID_ARGUMENT,
+                "VDevice creation failed. device_id {} not found", id);
+            CHECK(acc_type == HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE || acc_type == device_info->accelerator_type, HAILO_INVALID_ARGUMENT,
+                "VDevice creation failed. device_ids of devices with different types are provided (e.g. Hailo8 and Hailo10). Please provide device_ids of the same device types");
+            acc_type = device_info->accelerator_type;
+        }
+    } else {
+        // No device_id is provided - check that all devices are of the same type
+        for (const auto &device_info : device_infos) {
+            CHECK(acc_type == HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE || acc_type == device_info.accelerator_type, HAILO_INVALID_ARGUMENT,
+                "VDevice creation failed. Devices of different types are found and no device_id is provided. Please provide device_ids");
+            acc_type = device_info.accelerator_type;
+        }
+    }
+    return acc_type;
+}
+
 hailo_status VDeviceBase::validate_params(const hailo_vdevice_params_t &params)
 {
     CHECK(0 != params.device_count, HAILO_INVALID_ARGUMENT,
         "VDevice creation failed. invalid device_count ({}).", params.device_count);
 
-    if (params.device_ids != nullptr) {
-        for (uint32_t i = 0; i < params.device_count; i++) {
-            auto dev_type = Device::get_device_type(params.device_ids[i].id);
-            CHECK_EXPECTED_AS_STATUS(dev_type);
-            CHECK((Device::Type::ETH != dev_type.value() || (1 == params.device_count)), HAILO_INVALID_ARGUMENT,
-                "VDevice over ETH is supported for 1 device. Passed device_count: {}", params.device_count);
-            CHECK((Device::Type::ETH != dev_type.value() || (HAILO_SCHEDULING_ALGORITHM_NONE == params.scheduling_algorithm)), HAILO_INVALID_ARGUMENT,
-                "VDevice over ETH is not supported when scheduler is enabled.");
-        }
-    }
+    TRY(auto device_ids_contains_eth, device_ids_contains_eth(params));
+    CHECK(!(device_ids_contains_eth && (1 != params.device_count)), HAILO_INVALID_ARGUMENT,
+        "VDevice over ETH is supported for 1 device. Passed device_count: {}", params.device_count);
+    CHECK(!(device_ids_contains_eth && (HAILO_SCHEDULING_ALGORITHM_NONE != params.scheduling_algorithm)), HAILO_INVALID_ARGUMENT,
+        "VDevice over ETH is not supported when scheduler is enabled.");
+
     return HAILO_SUCCESS;
 }
 
@@ -670,40 +756,15 @@ Expected<ConfiguredNetworkGroupVector> VDeviceBase::configure(Hef &hef,
 Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(const std::string &hef_path, const std::string &network_name)
 {
     CHECK_AS_EXPECTED(network_name.empty(), HAILO_NOT_IMPLEMENTED, "Passing network name is not supported yet!");
+    TRY(auto infer_model_base, InferModelBase::create(*this, hef_path));
+    return std::shared_ptr<InferModel>(std::move(infer_model_base));
+}
 
-    auto hef_expected = Hef::create(hef_path);
-    CHECK_EXPECTED(hef_expected);
-    auto hef = hef_expected.release();
-
-    std::unordered_map<std::string, InferModel::InferStream> inputs;
-    std::unordered_map<std::string, InferModel::InferStream> outputs;
-
-    auto input_vstream_infos = hef.get_input_vstream_infos();
-    CHECK_EXPECTED(input_vstream_infos);
-
-    for (const auto &vstream_info : input_vstream_infos.value()) {
-        auto pimpl = make_shared_nothrow<InferModel::InferStream::Impl>(vstream_info);
-        CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
-
-        InferModel::InferStream stream(pimpl);
-        inputs.emplace(vstream_info.name, std::move(stream));
-    }
-
-    auto output_vstream_infos = hef.get_output_vstream_infos();
-    CHECK_EXPECTED(output_vstream_infos);
-
-    for (const auto &vstream_info : output_vstream_infos.value()) {
-        auto pimpl = make_shared_nothrow<InferModel::InferStream::Impl>(vstream_info);
-        CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
-
-        InferModel::InferStream stream(pimpl);
-        outputs.emplace(vstream_info.name, std::move(stream));
-    }
-
-    auto res = make_shared_nothrow<InferModel>(InferModel(*this, std::move(hef), std::move(inputs), std::move(outputs)));
-    CHECK_NOT_NULL_AS_EXPECTED(res, HAILO_OUT_OF_HOST_MEMORY);
-
-    return res;
+Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(const MemoryView hef_buffer, const std::string &network_name)
+{
+    CHECK_AS_EXPECTED(network_name.empty(), HAILO_NOT_IMPLEMENTED, "Passing network name is not supported yet!");
+    TRY(auto infer_model_base, InferModelBase::create(*this, hef_buffer));
+    return std::shared_ptr<InferModel>(std::move(infer_model_base));
 }
 
 Expected<hailo_stream_interface_t> VDeviceBase::get_default_streams_interface() const
@@ -744,6 +805,8 @@ Expected<std::map<device_id_t, std::unique_ptr<Device>>> VDeviceBase::create_dev
                 "VDevice with multiple devices is not supported on HAILO_ARCH_HAILO8L. device {} is HAILO_ARCH_HAILO8L", device_id);
             CHECK_AS_EXPECTED(HAILO_ARCH_HAILO15M != device_arch.value(), HAILO_INVALID_OPERATION,
                 "VDevice with multiple devices is not supported on HAILO_ARCH_HAILO15M. device {} is HAILO_ARCH_HAILO15M", device_id);
+            CHECK_AS_EXPECTED(HAILO_ARCH_HAILO10H != device_arch.value(), HAILO_INVALID_OPERATION,
+                "VDevice with multiple devices is not supported on HAILO_ARCH_HAILO10H. device {} is HAILO_ARCH_HAILO10H", device_id);
         }
 
         auto dev_type = Device::get_device_type(device_id);
@@ -888,6 +951,19 @@ bool VDeviceBase::should_use_multiplexer()
         LOGGER__WARNING("Usage of '{}' env variable is deprecated.", DISABLE_MULTIPLEXER_ENV_VAR);
     }
     return (!disabled_by_flag && m_core_ops_scheduler);
+}
+
+Expected<bool> VDeviceBase::device_ids_contains_eth(const hailo_vdevice_params_t &params)
+{
+    if (params.device_ids != nullptr) {
+        for (uint32_t i = 0; i < params.device_count; i++) {
+            TRY(auto dev_type, Device::get_device_type(params.device_ids[i].id));
+            if (Device::Type::ETH == dev_type) {
+                return true;
+            }
+        }
+    }
+    return false; // in case no device_ids were provided, we assume there's no ETH device
 }
 
 } /* namespace hailort */

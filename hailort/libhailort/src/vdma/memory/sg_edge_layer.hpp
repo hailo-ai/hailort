@@ -47,15 +47,19 @@ public:
     virtual uint32_t descs_count() const override;
 
     virtual Expected<uint32_t> program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
-        size_t desc_offset) override;
+        size_t desc_offset, size_t buffer_offset = 0, bool should_bind = false) override;
 
 private:
     SgEdgeLayer(std::shared_ptr<SgBuffer> &&buffer, DescriptorList &&desc_list,
-        size_t size, size_t offset);
+        size_t size, size_t offset, ChannelId channel_id);
 
-    // Initialization Dependency: The descriptor list points into the mapped buffer so it must be freed before it
-    std::shared_ptr<SgBuffer> m_buffer;
+    vdma::MappedBufferPtr get_mapped_buffer()
+    {
+        return std::static_pointer_cast<SgBuffer>(m_buffer)->get_mapped_buffer();
+    }
+
     DescriptorList m_desc_list;
+    const ChannelId m_channel_id;
 };
 
 } /* vdma */

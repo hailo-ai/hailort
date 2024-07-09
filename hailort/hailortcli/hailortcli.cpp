@@ -61,13 +61,10 @@ Expected<std::vector<std::unique_ptr<Device>>> create_devices(const hailo_device
 {
     std::vector<std::unique_ptr<Device>> res;
 
-    auto device_ids = get_device_ids(device_params);
-    CHECK_EXPECTED(device_ids);
-
-    for (auto device_id : device_ids.value()) {
-        auto device = Device::create(device_id);
-        CHECK_EXPECTED(device);
-        res.emplace_back(device.release());
+    TRY(const auto device_ids, get_device_ids(device_params));
+    for (auto device_id : device_ids) {
+        TRY(auto device, Device::create(device_id));
+        res.emplace_back(std::move(device));
     }
 
     return res;

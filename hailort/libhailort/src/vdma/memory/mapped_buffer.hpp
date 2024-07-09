@@ -46,8 +46,12 @@ public:
     static Expected<MappedBufferPtr> create_shared_by_allocation(size_t size, HailoRTDriver &driver,
         HailoRTDriver::DmaDirection data_direction);
 
+    // Receive an fd to a dmabuf object and map it in our driver and create MappedBuffer
+    static Expected<MappedBufferPtr> create_shared_from_dmabuf(int dmabuf_fd, size_t size, HailoRTDriver &driver,
+        HailoRTDriver::DmaDirection data_direction);
+
     MappedBuffer(HailoRTDriver &driver, DmaAbleBufferPtr buffer, HailoRTDriver::DmaDirection data_direction,
-        hailo_status &status);
+        HailoRTDriver::VdmaBufferHandle vdma_buffer_handle);
     MappedBuffer(MappedBuffer &&other) noexcept;
     MappedBuffer(const MappedBuffer &other) = delete;
     MappedBuffer &operator=(const MappedBuffer &other) = delete;

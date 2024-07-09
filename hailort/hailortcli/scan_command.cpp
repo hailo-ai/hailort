@@ -36,23 +36,20 @@ hailo_status ScanSubcommand::execute()
         return scan();
     }
     else {
-        auto res = scan_ethernet(m_interface_ip_addr, m_interface_name);
-        CHECK_EXPECTED_AS_STATUS(res);
+        TRY(const auto res, scan_ethernet(m_interface_ip_addr, m_interface_name));
         return HAILO_SUCCESS;
     }
 }
 
 hailo_status ScanSubcommand::scan()
 {
-    auto device_ids = Device::scan();
-    CHECK_EXPECTED_AS_STATUS(device_ids);
-
-    if (device_ids->size() == 0) {
+    TRY(const auto device_ids, Device::scan());
+    if (device_ids.size() == 0) {
         std::cout << "Hailo devices not found" << std::endl;
     }
     else {
         std::cout << "Hailo Devices:" << std::endl;
-        for (const auto& device_id : device_ids.value()) {
+        for (const auto &device_id : device_ids) {
             std::cout << "[-] Device: " << device_id << std::endl;
         }
     }

@@ -54,13 +54,15 @@ relative_to_absolute_paths(C_OS_SOURCES ${C_OS_SOURCES})
 relative_to_absolute_paths(COMMON_C_SOURCES ${COMMON_C_SOURCES})
 relative_to_absolute_paths(HAILO_OS_DIR ${HAILO_OS_DIR})
 relative_to_absolute_paths(HAILO_FULL_OS_DIR ${HAILO_FULL_OS_DIR})
+relative_to_absolute_paths(DRIVER_OS_DIR ${DRIVER_OS_DIR})
 relative_to_absolute_paths(HAILO_DRIVER_SRC_FILES ${HAILO_DRIVER_SRC_FILES})
 set(HAILO_OS_DIR ${HAILO_OS_DIR} CACHE INTERNAL "Absolute path of os-dir")
 set(HAILO_FULL_OS_DIR ${HAILO_FULL_OS_DIR} CACHE INTERNAL "Absolute Full path of os-dir")
+set(DRIVER_OS_DIR ${DRIVER_OS_DIR} CACHE INTERNAL "Absolute Full path of driver os-dir")
 set(HAILO_DRIVER_SRC_FILES ${HAILO_DRIVER_SRC_FILES} CACHE INTERNAL "Absolute Full path of driver src files")
 set(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES} CACHE INTERNAL "Absolute paths of hailort's cpp source files")
 set(COMMON_C_SOURCES ${COMMON_C_SOURCES} CACHE INTERNAL "Absolute paths of common source files")
-set(HAILORT_SRCS_ABS ${HAILORT_CPP_SOURCES} ${HAILORT_COMMON_CPP_SOURCES} ${COMMON_C_SOURCES} CACHE INTERNAL "All absolute paths of hailort's source files")
+set(HAILORT_SRCS_ABS ${HAILORT_CPP_SOURCES} ${HAILORT_COMMON_CPP_SOURCES} ${COMMON_C_SOURCES} ${HRPC_CPP_SOURCES} ${HRPC_PROTOCOL_CPP_SOURCES} CACHE INTERNAL "All absolute paths of hailort's source files")
 
 SET_SOURCE_FILES_PROPERTIES(${C_SOURCES} PROPERTIES LANGUAGE CXX)
 add_library(libhailort SHARED ${HAILORT_SRCS_ABS})
@@ -91,6 +93,7 @@ target_link_libraries(libhailort PRIVATE scheduler_mon_proto)
 target_link_libraries(libhailort PRIVATE spdlog::spdlog)
 target_link_libraries(libhailort PRIVATE readerwriterqueue)
 target_link_libraries(libhailort PRIVATE Eigen3::Eigen)
+target_link_libraries(libhailort PRIVATE rpc_proto)
 if(HAILO_BUILD_SERVICE)
     target_link_libraries(libhailort PRIVATE grpc++_unsecure)
     target_link_libraries(libhailort PRIVATE hailort_rpc_grpc_proto)
@@ -152,6 +155,7 @@ target_include_directories(libhailort
     $<BUILD_INTERFACE:${COMMON_INC_DIR}>
     $<BUILD_INTERFACE:${DRIVER_INC_DIR}>
     $<BUILD_INTERFACE:${RPC_DIR}>
+    $<BUILD_INTERFACE:${HRPC_DIR}>
 )
 
 target_compile_definitions(libhailort PUBLIC

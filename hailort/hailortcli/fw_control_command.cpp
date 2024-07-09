@@ -73,9 +73,7 @@ static bool extended_device_information_is_array_not_empty(uint8_t *array_for_pr
 
 static hailo_status print_extended_device_information(Device &device)
 {
-    auto extended_info_expected = device.get_extended_device_information();
-    CHECK_EXPECTED_AS_STATUS(extended_info_expected, "Failed identify");
-    auto device_info = extended_info_expected.release();
+    TRY(auto device_info, device.get_extended_device_information());
 
     // Print Board Extended information
     std::cout << "Boot source: " << extended_device_information_boot_string(device_info.boot_source) << std::endl;
@@ -144,6 +142,8 @@ static std::string identity_arch_string(const hailo_device_identity_t &identity)
         return "PLUTO";
     case HAILO_ARCH_HAILO15M:
         return "HAILO15M";
+    case HAILO_ARCH_HAILO10H:
+        return "HAILO10H";
     default:
         return "Unknown";
     }
@@ -167,9 +167,7 @@ FwControlIdentifyCommand::FwControlIdentifyCommand(CLI::App &parent_app) :
 
 hailo_status FwControlIdentifyCommand::execute_on_device(Device &device)
 {
-    auto identity_expected = device.identify();
-    CHECK_EXPECTED_AS_STATUS(identity_expected, "Failed identify");
-    auto identity = identity_expected.release();
+    TRY(const auto identity, device.identify());
 
     // Print board information
     std::cout << "Identifying board" << std::endl;

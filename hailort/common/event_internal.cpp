@@ -46,18 +46,15 @@ WaitOrShutdown::WaitOrShutdown(WaitablePtr waitable, EventPtr shutdown_event) :
 
 hailo_status WaitOrShutdown::wait(std::chrono::milliseconds timeout)
 {
-    auto index = m_waitable_group.wait_any(timeout);
-    if (index.status() == HAILO_TIMEOUT) {
-        return index.status();
-    }
-    CHECK_EXPECTED_AS_STATUS(index);
-
-    assert(index.value() <= WAITABLE_INDEX);
-    return (index.value() == SHUTDOWN_INDEX) ? HAILO_SHUTDOWN_EVENT_SIGNALED : HAILO_SUCCESS;
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_TIMEOUT, const auto index, m_waitable_group.wait_any(timeout));
+    assert(index <= WAITABLE_INDEX);
+    return (index == SHUTDOWN_INDEX) ? HAILO_SHUTDOWN_EVENT_SIGNALED : HAILO_SUCCESS;
 }
 
 hailo_status WaitOrShutdown::signal()
 {
+    // Cannot signal a WaitOrShutdown which has only shutdown event
+    CHECK_NOT_NULL(m_waitable, HAILO_INVALID_OPERATION);
     return m_waitable->signal();
 }
 
@@ -71,7 +68,11 @@ WaitableGroup WaitOrShutdown::create_waitable_group(WaitablePtr waitable, EventP
     // Note the order - consistent with SHUTDOWN_INDEX, WAITABLE_INDEX.
     std::vector<std::reference_wrapper<Waitable>> waitables;
     waitables.emplace_back(std::ref(*shutdown_event));
-    waitables.emplace_back(std::ref(*waitable));
+
+    if (nullptr != waitable) {
+        waitables.emplace_back(std::ref(*waitable));
+    }
+
     return waitables;
 }
 

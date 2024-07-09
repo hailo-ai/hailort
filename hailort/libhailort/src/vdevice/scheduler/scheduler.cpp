@@ -117,11 +117,11 @@ hailo_status CoreOpsScheduler::switch_core_op(const scheduler_core_op_handle_t &
     curr_device_info->current_batch_size = hw_batch_size;
 
     if ((core_op_handle != curr_device_info->current_core_op_handle) || (!has_same_hw_batch_size_as_previous)) {
-        auto next_core_op = get_vdma_core_op(core_op_handle, device_id);
+        TRY(auto next_core_op, get_vdma_core_op(core_op_handle, device_id));
 
         std::shared_ptr<VdmaConfigCoreOp> current_core_op = nullptr;
         if (curr_device_info->current_core_op_handle != INVALID_CORE_OP_HANDLE) {
-            current_core_op = get_vdma_core_op(curr_device_info->current_core_op_handle, device_id);
+            TRY(current_core_op, get_vdma_core_op(curr_device_info->current_core_op_handle, device_id));
         }
 
         auto status = VdmaConfigManager::set_core_op(device_id, current_core_op, next_core_op, hw_batch_size);
@@ -144,7 +144,7 @@ hailo_status CoreOpsScheduler::deactivate_core_op(const device_id_t &device_id)
         return HAILO_SUCCESS;
     }
 
-    auto vdma_core_op = get_vdma_core_op(core_op_handle, device_id);
+    TRY (auto vdma_core_op, get_vdma_core_op(core_op_handle, device_id));
     auto status = VdmaConfigManager::deactivate_core_op(vdma_core_op);
     CHECK_SUCCESS(status, "Scheduler failed deactivate core op on {}", device_id);
 
@@ -180,7 +180,7 @@ hailo_status CoreOpsScheduler::infer_async(const scheduler_core_op_handle_t &cor
     auto current_device_info = m_devices[device_id];
     assert(core_op_handle == current_device_info->current_core_op_handle);
     auto scheduled_core_op = m_scheduled_core_ops.at(core_op_handle);
-    auto vdma_core_op = get_vdma_core_op(core_op_handle, device_id);
+    TRY (auto vdma_core_op, get_vdma_core_op(core_op_handle, device_id));
 
     auto infer_request = dequeue_infer_request(core_op_handle);
     CHECK_EXPECTED_AS_STATUS(infer_request);
@@ -336,7 +336,7 @@ uint16_t CoreOpsScheduler::get_frames_ready_to_transfer(scheduler_core_op_handle
     return static_cast<uint16_t>(std::min(requested_frames, max_ongoing_frames - ongoing_frames));
 }
 
-std::shared_ptr<VdmaConfigCoreOp> CoreOpsScheduler::get_vdma_core_op(scheduler_core_op_handle_t core_op_handle,
+Expected<std::shared_ptr<VdmaConfigCoreOp>> CoreOpsScheduler::get_vdma_core_op(scheduler_core_op_handle_t core_op_handle,
     const device_id_t &device_id)
 {
     return m_scheduled_core_ops.at(core_op_handle)->get_vdma_core_op(device_id);

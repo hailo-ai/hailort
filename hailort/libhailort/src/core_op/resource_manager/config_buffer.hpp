@@ -26,7 +26,7 @@ class ConfigBuffer final
 {
 public:
     static Expected<ConfigBuffer> create(HailoRTDriver &driver, vdma::ChannelId channel_id,
-        const std::vector<uint32_t> &cfg_sizes);
+        const std::vector<uint32_t> &bursts_sizes);
 
     // Write data to config channel
     hailo_status write(const MemoryView &data);
@@ -63,7 +63,7 @@ private:
 
     std::unique_ptr<vdma::VdmaEdgeLayer> m_buffer;
     vdma::ChannelId m_channel_id;
-    const size_t m_total_buffer_size; 
+    const size_t m_total_buffer_size;
     size_t m_acc_buffer_offset;
     uint32_t m_acc_desc_count;
     size_t m_current_buffer_size;

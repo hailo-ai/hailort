@@ -140,11 +140,10 @@ std::map<uint16_t, hailo_status> UdpRateLimiterCommand::reset_commnad(const std:
 
 hailo_status UdpRateLimiterCommand::autoset_commnad(const std::vector<uint16_t> &board_ports)
 {
-    const auto rates_from_hef = calc_rate_from_hef(m_hef_path, m_network_group_name, m_fps);
-    CHECK_EXPECTED_AS_STATUS(rates_from_hef);
+    TRY(const auto rates_from_hef, calc_rate_from_hef(m_hef_path, m_network_group_name, m_fps));
 
     // On auto set, we use min rate for all input ports
-    auto min_rate_pair = *std::min_element(rates_from_hef.value().begin(), rates_from_hef.value().end(),
+    auto min_rate_pair = *std::min_element(rates_from_hef.begin(), rates_from_hef.end(),
         [](const auto& lhs, const auto& rhs) { return lhs.second < rhs.second; });
 
     return set_command(board_ports, static_cast<uint32_t>(min_rate_pair.second));
@@ -197,16 +196,11 @@ uint32_t UdpRateLimiterCommand::bit_rate_kbit_sec_to_bytes_sec(uint32_t rate_kbi
 Expected<std::map<std::string, uint32_t>> UdpRateLimiterCommand::calc_rate_from_hef(const std::string &hef_path,
     const std::string &network_group_name, uint32_t fps)
 {
-    auto hef = Hef::create(hef_path.c_str());
-    CHECK_EXPECTED(hef, "Failed reading hef file {}", hef_path.c_str());
+    TRY(auto hef, Hef::create(hef_path.c_str()), "Failed reading hef file {}", hef_path.c_str());
+    TRY(auto rate_calc, NetworkUdpRateCalculator::create(&(hef), network_group_name));
+    TRY(auto calculated_rates, rate_calc.calculate_inputs_bandwith(fps));
 
-    auto rate_calc = NetworkUdpRateCalculator::create(&(hef.value()), network_group_name);
-    CHECK_EXPECTED(rate_calc);
-
-    auto calculated_rates = rate_calc->calculate_inputs_bandwith(fps);
-    CHECK_EXPECTED(calculated_rates);
-
-    return calculated_rates.release();
+    return calculated_rates;
 }
 
 std::vector<uint16_t> UdpRateLimiterCommand::get_dports()

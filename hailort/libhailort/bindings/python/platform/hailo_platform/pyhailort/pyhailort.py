@@ -1,22 +1,20 @@
 from enum import Enum, IntEnum
 import signal
 import struct
-import pkg_resources
-# hailo_platform package has been renamed to hailort, but the import is still hailo_platform
-__version__ = pkg_resources.get_distribution("hailort").version
 
 import sys
 
+from collections import deque
+from dataclasses import dataclass
 from argparse import ArgumentTypeError
+from datetime import timedelta
 import numpy
 import time
-from hailo_platform.common.logger.logger import default_logger
 import gc
 import os
 
+from hailo_platform.common.logger.logger import default_logger
 import hailo_platform.pyhailort._pyhailort as _pyhailort
-if _pyhailort.__version__ != __version__:
-    raise ImportError("_pyhailort version ({}) does not match pyhailort version ({})".format(_pyhailort.__version__, __version__))
 
 from hailo_platform.pyhailort._pyhailort import (TemperatureInfo, # noqa F401
                                                  DvmTypes, PowerMeasurementTypes,  # noqa F401
@@ -46,6 +44,7 @@ class HailoSocket(object):
     MAX_UDP_PADDED_PAYLOAD_SIZE = HailoSocketDefs.MAX_UDP_PADDED_PAYLOAD_SIZE()
     MIN_UDP_PADDED_PAYLOAD_SIZE = HailoSocketDefs.MIN_UDP_PADDED_PAYLOAD_SIZE()
     MAX_ALIGNED_UDP_PAYLOAD_SIZE_RTP = HailoSocketDefs.MAX_ALIGNED_UDP_PAYLOAD_SIZE_RTP()
+
 
 class HailoSchedulingAlgorithm(_pyhailort.SchedulingAlgorithm):
     pass
@@ -112,43 +111,49 @@ class ExceptionWrapper(object):
             else:
                 raise
 
-    def _raise_indicative_status_exception(self, libhailort_exception):
-        error_code = int(libhailort_exception.args[0])
+    @staticmethod
+    def create_exception_from_status(error_code):
         string_error_code = get_status_message(error_code)
         if string_error_code == "HAILO_ETH_RECV_FAILURE":
-            raise UdpRecvError("Failed to receive data") from libhailort_exception
+            return UdpRecvError("Failed to receive data")
         if string_error_code == "HAILO_UNSUPPORTED_CONTROL_PROTOCOL_VERSION":
-            raise InvalidProtocolVersionException("HailoRT has failed because an invalid protocol version was received from device") from libhailort_exception
+            return InvalidProtocolVersionException("HailoRT has failed because an invalid protocol version was received from device")
         if string_error_code == "HAILO_FW_CONTROL_FAILURE":
-            raise HailoRTFirmwareControlFailedException("libhailort control operation failed") from libhailort_exception
+            return HailoRTFirmwareControlFailedException("libhailort control operation failed")
         if string_error_code == "HAILO_UNSUPPORTED_OPCODE":
-            raise HailoRTUnsupportedOpcodeException("HailoRT has failed because an unsupported opcode was sent to device") from libhailort_exception
+            return HailoRTUnsupportedOpcodeException("HailoRT has failed because an unsupported opcode was sent to device")
         if string_error_code == "HAILO_INVALID_FRAME":
-            raise HailoRTInvalidFrameException("An invalid frame was received") from libhailort_exception
+            return HailoRTInvalidFrameException("An invalid frame was received")
         if string_error_code == "HAILO_TIMEOUT":
-            raise HailoRTTimeout("Received a timeout - hailort has failed because a timeout had occurred") from libhailort_exception
+            return HailoRTTimeout("Received a timeout - hailort has failed because a timeout had occurred")
         if string_error_code == "HAILO_STREAM_ABORT":
-            raise HailoRTStreamAborted("Stream was aborted") from libhailort_exception
+            return HailoRTStreamAborted("Stream was aborted")
 
         if string_error_code == "HAILO_INVALID_OPERATION":
-            raise HailoRTInvalidOperationException("Invalid operation. See hailort.log for more information") from libhailort_exception
+            return HailoRTInvalidOperationException("Invalid operation. See hailort.log for more information")
         if string_error_code == "HAILO_INVALID_ARGUMENT":
-            raise HailoRTInvalidArgumentException("Invalid argument. See hailort.log for more information") from libhailort_exception
+            return HailoRTInvalidArgumentException("Invalid argument. See hailort.log for more information")
         if string_error_code == "HAILO_NOT_FOUND":
-            raise HailoRTNotFoundException("Item not found. See hailort.log for more information") from libhailort_exception
+            return HailoRTNotFoundException("Item not found. See hailort.log for more information")
 
         if string_error_code == "HAILO_INVALID_HEF":
-            raise HailoRTInvalidHEFException("Invalid HEF. See hailort.log for more information") from libhailort_exception
+            return HailoRTInvalidHEFException("Invalid HEF. See hailort.log for more information")
 
         if string_error_code == "HAILO_ETH_FAILURE":
-            raise HailoRTEthException("Ethernet failure. See hailort.log for more information") from libhailort_exception
+            return HailoRTEthException("Ethernet failure. See hailort.log for more information")
         if string_error_code == "HAILO_DRIVER_FAIL":
-            raise HailoRTPCIeDriverException("PCIe driver failure. run 'dmesg | grep hailo' for more information") from libhailort_exception
+            return HailoRTPCIeDriverException("PCIe driver failure. run 'dmesg | grep hailo' for more information")
 
         if string_error_code == "HAILO_NETWORK_GROUP_NOT_ACTIVATED":
-            raise HailoRTNetworkGroupNotActivatedException("Network group is not activated") from libhailort_exception
+            return HailoRTNetworkGroupNotActivatedException("Network group is not activated")
         else:
-            raise HailoRTException("libhailort failed with error: {} ({})".format(error_code, string_error_code)) from libhailort_exception
+            return HailoRTException("libhailort failed with error: {} ({})".format(error_code, string_error_code))
+
+
+    def _raise_indicative_status_exception(self, libhailort_exception):
+        error_code = int(libhailort_exception.args[0])
+        raise self.create_exception_from_status(error_code) from libhailort_exception
+
 
 def get_status_message(status_code):
     status_str = _pyhailort.get_status_message(status_code)
@@ -720,7 +725,7 @@ class ConfiguredNetwork(object):
     def set_scheduler_timeout(self, timeout_ms, network_name=None):
         """Sets the maximum time period that may pass before receiving run time from the scheduler.
             This will occur providing at least one send request has been sent, there is no minimum requirement for send
-            requests, (e.g. threshold - see set_scheduler_threshold()).
+            requests, (e.g. threshold - see :func:`ConfiguredNetwork.set_scheduler_threshold`).
 
         Args:
             timeout_ms (int): Timeout in milliseconds.
@@ -730,7 +735,7 @@ class ConfiguredNetwork(object):
 
     def set_scheduler_threshold(self, threshold):
         """Sets the minimum number of send requests required before the network is considered ready to get run time from the scheduler.
-            If at least one send request has been sent, but the threshold is not reached within a set time period (e.g. timeout - see hailo_set_scheduler_timeout()),
+            If at least one send request has been sent, but the threshold is not reached within a set time period (e.g. timeout - see :func:`ConfiguredNetwork.set_scheduler_timeout`),
             the scheduler will consider the network ready regardless.
 
         Args:
@@ -747,6 +752,15 @@ class ConfiguredNetwork(object):
             priority (int): Priority as a number between HAILO_SCHEDULER_PRIORITY_MIN - HAILO_SCHEDULER_PRIORITY_MAX.
         """
         return self._configured_network.set_scheduler_priority(priority)
+
+    def init_cache(self, read_offset, write_offset_delta):
+        return self._configured_network.init_cache(read_offset, write_offset_delta)
+
+    def get_cache_info(self):
+        return self._configured_network.get_cache_info()
+
+    def update_cache_offset(self, offset_delta_bytes):
+        return self._configured_network.update_cache_offset(offset_delta_bytes)
 
 
 class EmptyContextManager(object):
@@ -914,11 +928,11 @@ class InferVStreams(object):
 
         time_before_infer_calcs = time.perf_counter()
         if not isinstance(input_data, dict):
-            input_stream_infos = self._configured_net_group.get_input_stream_infos()
-            if len(input_stream_infos) != 1:
+            input_vstream_infos = self._configured_net_group.get_input_vstream_infos()
+            if len(input_vstream_infos) != 1:
                 raise Exception("when there is more than one input, the input_data should be of type dict,"
-                                             " mapping between each input_name, and his input_data tensor. number of inputs: {}".format(len(input_stream_infos)))
-            input_data = {input_stream_infos[0].name : input_data}
+                                             " mapping between each input_name, and his input_data tensor. number of inputs: {}".format(len(input_vstream_infos)))
+            input_data = {input_vstream_infos[0].name : input_data}
 
         batch_size = InferVStreams._get_number_of_frames(input_data)
         output_buffers, output_buffers_info = self._make_output_buffers_and_infos(input_data, batch_size)
@@ -939,11 +953,11 @@ class InferVStreams(object):
             if output_buffers_info[name].output_order == FormatOrder.HAILO_NMS_WITH_BYTE_MASK:
                 nms_shape = output_buffers_info[name].vstream_info.nms_shape
                 output_dtype = output_buffers_info[name].output_dtype
-                input_stream_infos = self._configured_net_group.get_input_stream_infos()
-                if len(input_stream_infos) != 1:
-                    raise Exception("Output format HAILO_NMS_WITH_BYTE_MASK should have 1 input. Number of inputs: {}".format(len(input_stream_infos)))
-                input_height = input_stream_infos[0].shape[0]
-                input_width = input_stream_infos[0].shape[1]
+                input_vstream_infos = self._configured_net_group.get_input_vstream_infos()
+                if len(input_vstream_infos) != 1:
+                    raise Exception("Output format HAILO_NMS_WITH_BYTE_MASK should have 1 input. Number of inputs: {}".format(len(input_vstream_infos)))
+                input_height = input_vstream_infos[0].shape[0]
+                input_width = input_vstream_infos[0].shape[1]
                 output_buffers[name] = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_format(result_array,
                     nms_shape.number_of_classes, batch_size, input_height, input_width,
                     nms_shape.max_bboxes_per_class, output_dtype, self._tf_nms_format)
@@ -1499,8 +1513,8 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 4
-SUPPORTED_FW_MINOR = 17
-SUPPORTED_FW_REVISION = 1
+SUPPORTED_FW_MINOR = 18
+SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
 
@@ -1511,6 +1525,8 @@ class DeviceArchitectureTypes(IntEnum):
     HAILO8L = 2
     HAILO15H = 3
     PLUTO = 4
+    HAILO15M = 5
+    HAILO10H = 6
 
     def __str__(self):
         return self.name
@@ -1566,8 +1582,11 @@ class BoardInformation(object):
         if ((device_arch == DeviceArchitectureTypes.HAILO8) or
             (device_arch == DeviceArchitectureTypes.HAILO8L)):
             return 'hailo8'
-        elif device_arch == DeviceArchitectureTypes.HAILO15H:
+        elif ((device_arch == DeviceArchitectureTypes.HAILO15H) or
+              (device_arch == DeviceArchitectureTypes.HAILO15M)):
             return 'hailo15'
+        elif (device_arch == DeviceArchitectureTypes.HAILO10H):
+            return 'hailo10'
         else:
             raise HailoRTException("Unsupported device architecture.")
 
@@ -2442,6 +2461,18 @@ class Control:
         with ExceptionWrapper():
             return self._device.remove_notification_callback(notification_id)
 
+    def _init_cache_info(self, cache_info):
+        with ExceptionWrapper():
+            return self._device._init_cache_info(cache_info)
+
+    def _get_cache_info(self):
+        with ExceptionWrapper():
+            return self._device._get_cache_info()
+
+    def _update_cache_read_offset(self, read_offset_delta):
+        with ExceptionWrapper():
+            return self._device._update_cache_read_offset(read_offset_delta)
+
     def _get_device_handle(self):
         return self._device
 
@@ -2573,6 +2604,835 @@ class Device:
         return self._loaded_network_groups[0]
 
 
+class AsyncInferCompletionInfo:
+    """
+    Holds information about the async infer job
+    """
+
+    def  __init__(self, exception):
+        """
+        Args:
+            exception (:obj:`HailoRTException`): an exception corresponding to the error that happened inside the async infer job.
+        """
+        self._exception = exception
+
+    @property
+    def exception(self):
+        """
+        Returns the exception that was set on this Infer job. if the job finished succesfully, returns None.
+        """
+        return self._exception
+
+
+class InferModel:
+    """
+    Contains all of the necessary information for configuring the network for inference.
+    This class is used to set up the model for inference and includes methods for setting and getting the model's parameters.
+    By calling the configure function, the user can create a :obj:`ConfiguredInferModel` object, which is used to run inference.
+    """
+    class InferStream:
+        """
+        Represents the parameters of a stream.
+        In default, the stream's parameters are set to the default values of the model.
+        The user can change the stream's parameters by calling the setter functions.
+        """
+        def __init__(self, infer_stream):
+            #"""
+            #Args:
+            #    infer_stream (_pyhailort.InferStream): The C++ InferStream object.
+            #"""
+            self._infer_stream = infer_stream
+
+        @property
+        def name(self):
+            """
+            Returns:
+                name (str): the name of the edge.
+            """
+            with ExceptionWrapper():
+                return self._infer_stream.name()
+
+        @property
+        def shape(self):
+            """
+            Returns:
+                shape (list[int]): the shape of the edge.
+            """
+            with ExceptionWrapper():
+                return self._infer_stream.shape()
+
+        @property
+        def format(self):
+            """
+            Returns:
+                format (_pyhailort.hailo_format_t): the format of the edge.
+            """
+            with ExceptionWrapper():
+                return self._infer_stream.format()
+
+        def set_format_type(self, type):
+            """
+            Set the format type of the stream.
+
+            Args:
+                type (_pyhailort.hailo_format_type_t): the format type
+            """
+            with ExceptionWrapper():
+                self._infer_stream.set_format_type(type)
+
+        def set_format_order(self, order):
+            """
+            Set the format order of the stream.
+
+            Args:
+                order (_pyhailort.hailo_format_order_t): the format order
+            """
+            with ExceptionWrapper():
+                self._infer_stream.set_format_order(order)
+
+        @property
+        def quant_infos(self):
+            """
+            Returns:
+                quant_infos (list[_pyhailort.hailo_quant_info_t]): List of the quantization information of the edge.
+            """
+            with ExceptionWrapper():
+                return self._infer_stream.get_quant_infos()
+
+        @property
+        def is_nms(self):
+            """
+            Returns:
+                is_nms (bool): whether the stream is NMS.
+            """
+            with ExceptionWrapper():
+                return self._infer_stream.is_nms()
+
+        def set_nms_score_threshold(self, threshold):
+            """
+            Set NMS score threshold, used for filtering out candidates. Any box with score<TH is suppressed.
+
+            Args:
+                threshold (float): NMS score threshold to set.
+
+            Note:
+                This function is invalid in cases where the edge has no NMS operations on the CPU. It will not fail,
+                but make the :func:`~hailo_platform.pyhailort.pyhailort.pyhailort.InferModel.configure()` function fail.
+            """
+            with ExceptionWrapper():
+                self._infer_stream.set_nms_score_threshold(threshold)
+
+        def set_nms_iou_threshold(self, threshold):
+            """
+            Set NMS intersection over union overlap Threshold,
+            used in the NMS iterative elimination process where potential duplicates of detected items are suppressed.
+
+            Args:
+                threshold (float): NMS IoU threshold to set.
+
+            Note:
+                This function is invalid in cases where the edge has no NMS operations on the CPU. It will not fail,
+                but make the `configure()` function fail.
+            """
+            with ExceptionWrapper():
+                self._infer_stream.set_nms_iou_threshold(threshold)
+
+        def set_nms_max_proposals_per_class(self, max_proposals):
+            """
+            Set a limit for the maximum number of boxes per class.
+
+            Args:
+                max_proposals (int): NMS max proposals per class to set.
+
+            Note:
+                This function is invalid in cases where the edge has no NMS operations on the CPU. It will not fail,
+                but make the `configure()` function fail.
+            """
+            with ExceptionWrapper():
+                self._infer_stream.set_nms_max_proposals_per_class(max_proposals)
+
+        def set_nms_max_accumulated_mask_size(self, max_accumulated_mask_size):
+            """
+            Set maximum accumulated mask size for all the detections in a frame.
+
+            Args:
+                max_accumalated_mask_size (int): NMS max accumulated mask size.
+
+            Note:
+                Used in order to change the output buffer frame size in cases where the
+                output buffer is too small for all the segmentation detections.
+
+            Note:
+                This function is invalid in cases where the edge has no NMS operations on the CPU. It will not fail,
+                but make the `configure()` function fail.
+            """
+            with ExceptionWrapper():
+                self._infer_stream.set_nms_max_accumulated_mask_size(max_accumulated_mask_size)
+
+
+    def __init__(self, infer_model, hef_path):
+        #"""
+        #Args:
+        #    infer_model (_pyhailort.InferModel): The internal InferModel object.
+        #    hef_path (str): The path to the HEF file.
+        #"""
+        self._infer_model = infer_model
+        self._hef_path = hef_path
+        self._hef = None
+
+    @property
+    def hef(self):
+        """
+        Returns:
+            :class:`HEF`: the HEF object of the model
+        """
+        # TODO: https://hailotech.atlassian.net/browse/HRT-13659
+        if not self._hef:
+            with ExceptionWrapper():
+                self._hef = HEF(self._hef_path)
+
+        return self._hef
+
+    def set_batch_size(self, batch_size):
+        """
+        Sets the batch size of the InferModel. This parameter determines the number of frames to be sent for inference
+        in a single batch. If a scheduler is enabled, this parameter determines the 'burst size': the max number of
+        frames after which the scheduler will attempt to switch to another model.
+
+        Note:
+            Default value is `HAILO_DEFAULT_BATCH_SIZE`. It means automatic batch determined by hailort.
+
+        Args:
+            batch_size (int): The new batch size to be set.
+        """
+        with ExceptionWrapper():
+            self._infer_model.set_batch_size(batch_size)
+
+    def set_power_mode(self, power_mode):
+        """
+        Sets the power mode of the InferModel
+
+        Args:
+            power_mode (_pyhailort.hailo_power_mode_t): The power mode to set.
+        """
+        with ExceptionWrapper():
+            self._infer_model.set_power_mode(power_mode)
+
+    def configure(self):
+        """
+        Configures the InferModel object. Also checks the validity of the configuration's formats.
+
+        Returns:
+            configured_infer_model (:class:`ConfiguredInferModel`): The configured :class:`InferModel` object.
+
+        Raises:
+            :class:`HailoRTException`: In case the configuration is invalid (example: see :func:`InferStream.set_nms_iou_threshold`).
+
+        Note:
+            A :obj:`ConfiguredInferModel` should be used inside a context manager, and should not be passed to a different process.
+        """
+        with ExceptionWrapper():
+            configured_infer_model_cpp_obj = self._infer_model.configure()
+            return ConfiguredInferModel(configured_infer_model_cpp_obj, self)
+
+    @property
+    def input_names(self):
+        """
+        Returns:
+            names (list[str]): The input names of the :class:`InferModel`.
+        """
+        with ExceptionWrapper():
+            return self._infer_model.get_input_names()
+
+    @property
+    def output_names(self):
+        """
+        Returns:
+            names (list[str]): The output names of the :class:`InferModel`.
+        """
+        with ExceptionWrapper():
+            return self._infer_model.get_output_names()
+
+    @property
+    def inputs(self):
+        """
+        Returns:
+            inputs (list[`InferStream`]): List of input :class:`InferModel.InferStream`.
+        """
+        with ExceptionWrapper():
+            return [self.InferStream(infer_stream) for infer_stream in self._infer_model.inputs()]
+
+    @property
+    def outputs(self):
+        """
+        Returns:
+            outputs (list[`InferStream`]): List of output :class:`InferModel.InferStream`.
+        """
+        with ExceptionWrapper():
+            return [self.InferStream(infer_stream) for infer_stream in self._infer_model.outputs()]
+
+    def input(self, name=""):
+        """
+        Gets an input's :class:`InferModel.InferStream`.
+
+        Args:
+            name (str, optional): the name of the input stream. Required in case of multiple inputs.
+
+        Returns:
+            :class:`ConfiguredInferModel.Bindings.InferStream` - the input infer stream of the configured infer model.
+
+        Raises:
+            :class:`HailoRTNotFoundException` in case a non-existing input is requested or no name is given
+            but multiple inputs exist.
+        """
+        with ExceptionWrapper():
+            return self.InferStream(self._infer_model.input(name))
+
+    def output(self, name=""):
+        """
+        Gets an output's :class:`InferModel.InferStream`.
+
+        Args:
+            name (str, optional): the name of the output stream. Required in case of multiple outputs.
+
+        Returns:
+            :obj:`ConfiguredInferModel.Bindings.InferStream` - the output infer stream of the configured infer model.
+
+        Raises:
+            :class:`HailoRTNotFoundException` in case a non-existing output is requested or no name is given
+            but multiple outputs exist.
+        """
+        with ExceptionWrapper():
+            return self.InferStream(self._infer_model.output(name))
+
+
+class ConfiguredInferModel:
+    """
+    Configured :class:`InferModel` that can be used to perform an asynchronous inference.
+
+    Note:
+        Passing an instance of :class:`ConfiguredInferModel` to a different process is not supported and would lead to an undefined behavior.
+    """
+
+    @dataclass
+    class NmsTransformationInfo:
+        """
+        class for NMS transformation info.
+        """
+        format_order: FormatOrder
+        input_height: int
+        input_width: int
+        number_of_classes: int
+        max_bboxes_per_class: int
+        quant_info: _pyhailort.QuantInfo
+        output_dtype: numpy.dtype = numpy.dtype('float32')
+        batch_size: int = 1
+
+    @dataclass
+    class NmsHailoTransformationInfo(NmsTransformationInfo):
+        """
+        class for NMS transformation info when using hailo format
+        """
+        use_tf_nms_format: bool = False
+
+    @dataclass
+    class NmsTfTransformationInfo(NmsTransformationInfo):
+        """
+        class for NMS transformation info when using tf format
+        """
+        use_tf_nms_format: bool = True
+
+    class Bindings:
+        """
+        Represents an asynchronous infer request - holds the input and output buffers of the request.
+        A request represents a single frame.
+        """
+
+        class InferStream:
+            """
+            Holds the input and output buffers of the Bindings infer request
+            """
+            def __init__(self, infer_stream, nms_info=None):
+                #"""
+                #Args:
+                #    infer_stream (_pyhailort.InferStream): The internal infer stream object.
+                #    nmw_info (class:`ConfiguredInferModel.NmsTransformationInfo`, optional): The NMS transformation info.
+                #"""
+                self._infer_stream = infer_stream
+                self._buffer = None
+                if nms_info:
+                    self._nms_info = nms_info
+                    self._quantized_empty_bbox = numpy.asarray(
+                        [0] * BBOX_PARAMS,
+                        dtype=nms_info.output_dtype,
+                    )
+
+                    HailoRTTransformUtils.dequantize_output_buffer_in_place(
+                        self._quantized_empty_bbox,
+                        nms_info.output_dtype,
+                        BBOX_PARAMS,
+                        nms_info.quant_info,
+                    )
+                else:
+                    self._nms_info = None
+
+            def set_buffer(self, buffer):
+                """
+                Sets the edge's buffer to a new one.
+
+                Args:
+                    buffer (numpy.array): The new buffer to set. The array's shape should match the edge's shape.
+                """
+                with ExceptionWrapper():
+                    self._infer_stream.set_buffer(buffer)
+
+                self._buffer = buffer
+
+            def get_buffer(self, tf_format=False):
+                """
+                Gets the edge's buffer.
+
+                Args:
+                    tf_format (bool, optional): Whether the output format is tf or hailo. Relevant for NMS outputs. The output
+                        can be re-formatted into two formats (TF, Hailo) and the user through choosing the True/False function
+                        parameter, can decide which format to receive.
+                        For detection outputs:
+                        TF format is an :obj:`numpy.array` with shape [number of classes, bounding box params, max bounding boxes per class]
+                        where the 3rd dimension (bounding box params) is of a fixed length of 5 (y_min, x_min, y_max, x_max, score).
+
+                        Hailo format is a list of detections per class: [[class_0 detections], [class_1 detections], ... [class_n-1 detections]]
+                        where each detection is an :obj:`numpy.array` with shape (y_min, x_min, y_max, x_max, score).
+
+                        For segmentation outputs:
+                        TF format is an :obj:`numpy.array` with shape [1, image_size + number_of_params, max bounding boxes per class]
+                        where the 3rd dimension (image_size + number_of_params) is calculated as: mask (image_width - image_height) + (y_min, x_min, y_max, x_max, score, class_id).
+                        The mask is a binary mask of the segmentation output where the ROI (region of interest) is mapped to 1 and the background is mapped to 0.
+
+                        Hailo format is a list of detections per class: [detecion0, detection1, ... detection_m]
+                        where each detection is an :obj:`HailoDetection`
+
+                Returns:
+                    buffer (numpy.array): the buffer of the edge.
+                """
+                buffer = self._buffer
+
+                if tf_format is None:
+                    # the user wants the raw buffer, with no transformation. Useful when the output is not ready, and
+                    # NMS transformation might fail.
+                    return buffer
+
+                if self._nms_info:
+                    nms_info_class = ConfiguredInferModel.NmsTfTransformationInfo if tf_format else ConfiguredInferModel.NmsHailoTransformationInfo
+                    nms_info = nms_info_class(**self._nms_info.__dict__)
+
+                    if nms_info.format_order == FormatOrder.HAILO_NMS_WITH_BYTE_MASK:
+                        buffer = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_format(
+                            [self._buffer],
+                            nms_info.number_of_classes,
+                            nms_info.batch_size,
+                            nms_info.input_height,
+                            nms_info.input_width,
+                            nms_info.max_bboxes_per_class,
+                            nms_info.output_dtype,
+                            nms_info.use_tf_nms_format,
+                        )
+                    else:
+                        if nms_info.use_tf_nms_format:
+                            nms_shape = [
+                                nms_info.number_of_classes,
+                                BBOX_PARAMS,
+                                nms_info.max_bboxes_per_class,
+                            ]
+
+                            shape = [nms_info.batch_size, *nms_shape]
+                            flat_result = self._buffer.reshape(-1)
+
+                            buffer = HailoRTTransformUtils.output_raw_buffer_to_nms_tf_format(
+                                flat_result,
+                                shape,
+                                nms_info.output_dtype,
+                                self._quantized_empty_bbox,
+                            )
+                        else:
+                            buffer = HailoRTTransformUtils.output_raw_buffer_to_nms_format(
+                                [self._buffer],
+                                nms_info.number_of_classes,
+                            )
+
+                if tf_format:
+                    buffer = buffer[0]
+
+                return buffer
+
+        def __init__(self, bindings, input_names, output_names, nms_infos):
+            #"""
+            #Args:
+            #    bindings (_pyhailort.ConfiguredInferModelBindingsWrapper): The internal bindings object.
+            #    input_names (list[str]): The input names of the model.
+            #    output_names (list[str]): The output names of the model.
+            #    nms_infos (dict[str : class:`ConfiguredInferModel.NmsTransformationInfo`]): The NMS transformation info per output.
+            #"""
+            self._bindings = bindings
+            self._inputs = {}
+            self._outputs = {}
+            self._input_names = input_names
+            self._output_names = output_names
+            self._nms_infos = nms_infos
+
+        def input(self, name=""):
+            """
+            Gets an input's InferStream object.
+
+            Args:
+                name (str, optional): the name of the input stream. Required in case of multiple inputs.
+
+            Returns:
+                :class:`ConfiguredInferModel.Bindings.InferStream` - the input infer stream of the configured infer model.
+
+            Raises:
+                :class:`HailoRTNotFoundException` in case a non-existing input is requested or no name is given
+                but multiple inputs exist.
+            """
+            if name == "" and len(self._input_names) == 1:
+                name = self._input_names[0]
+
+            if name not in self._inputs:
+                with ExceptionWrapper():
+                    self._inputs[name] = self.InferStream(self._bindings.input(name))
+
+            return self._inputs[name]
+
+        def output(self, name=""):
+            """
+            Gets an output's InferStream object.
+
+            Args:
+                name (str, optional): the name of the output stream. Required in cae of multiple outputs.
+
+            Returns:
+                :class:`ConfiguredInferModel.Bindings.InferStream` - the output infer stream of the configured infer model.
+
+            Raises:
+                :class:`HailoRTNotFoundException` in case a non-existing output is requested or no name is given
+                but multiple outputs exist.
+            """
+            if name == "" and len(self._output_names) == 1:
+                name = self._output_names[0]
+
+            if name not in self._outputs:
+                with ExceptionWrapper():
+                    self._outputs[name] = self.InferStream(self._bindings.output(name), self._nms_infos.get(name, None))
+
+            return self._outputs[name]
+
+        def get(self):
+            """
+            Gets the internal bindings object.
+
+            Returns:
+                _bindings (_pyhailort.ConfiguredInferModelBindingsWrapper): the internal bindings object.
+            """
+            return self._bindings
+
+
+    def __init__(self, configured_infer_model, infer_model):
+        #"""
+        #Args:
+        #    configured_infer_model (_pyhailort.ConfiguredInferModelWrapper): The internal configured_infer_model object.
+        #    infer_model (:class:`InferModel`): The InferModel object.
+        #"""
+        self._configured_infer_model = configured_infer_model
+        self._input_names = infer_model.input_names
+        self._output_names = infer_model.output_names
+        self._infer_model = infer_model
+        self._buffer_guards = deque()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self._configured_infer_model = None
+
+    def activate(self):
+        """
+        Activates hailo device inner-resources for inference.
+        Calling this function is invalid in case scheduler is enabled.
+
+        Raises:
+            :class:`HailoRTException` in case of an error.
+        """
+        with ExceptionWrapper():
+            self._configured_infer_model.activate()
+
+    def deactivate(self):
+        """
+        Deactivates hailo device inner-resources for inference.
+        Calling this function is invalid in case scheduler is enabled.
+
+        Raises:
+            :class:`HailoRTException` in case of an error.
+        """
+        with ExceptionWrapper():
+            self._configured_infer_model.deactivate()
+
+    def create_bindings(self, input_buffers=None, output_buffers=None):
+        """
+        Creates a Bindings object.
+
+        Args:
+            input_buffers (dict[str: numpy.array], optional): The input buffers for the Bindings object. Keys are the input names, and values are their corresponding buffers. See :func:`~hailo_platform.pyhailort.pyhailort.ConfiguredInferModel.Bindings.InferStream.get_buffer` for more information.
+            output_buffers (dict[str: numpy.array], optional): The output buffers for the Bindings object. Keys are the output names, and values are their corresponding buffers. See :func:`~hailo_platform.pyhailort.pyhailort.ConfiguredInferModel.Bindings.InferStream.get_buffer` for more information.
+
+        Returns:
+            :obj:`ConfiguredInferModel.Bindings`: Bindings object
+
+        Raises:
+            :class:`HailoRTException` in case of an error.
+        """
+        with ExceptionWrapper():
+            bindings_cpp_obj = self._configured_infer_model.create_bindings()
+
+        bindings = self.Bindings(bindings_cpp_obj, self._input_names, self._output_names, self._get_nms_infos())
+
+        if input_buffers:
+            for input_name, buffer in input_buffers.items():
+                bindings.input(input_name).set_buffer(buffer)
+
+        if output_buffers:
+            for output_name, buffer in output_buffers.items():
+                bindings.output(output_name).set_buffer(buffer)
+
+        return bindings
+
+    def wait_for_async_ready(self, timeout_ms=1000, frames_count=1):
+        """
+        Waits until the model is ready to launch a new asynchronous inference operation.
+        The readiness of the model is determined by the ability to push buffers to the asynchronous inference pipeline.
+
+        args:
+            timeout_ms (int, optional): Amount of time to wait until the model is ready in milliseconds.
+            frames_count (int, optional): The count of buffers you intent to infer in the next request. Useful for batch inference. Default is 1
+
+        Raises:
+            :class:`HailoRTTimeout` in case the model is not ready in the given timeout.
+            :class:`HailoRTException` in case of an error.
+        """
+        with ExceptionWrapper():
+            self._configured_infer_model.wait_for_async_ready(timedelta(milliseconds=timeout_ms), frames_count)
+
+    def run(self, bindings, timeout):
+        """
+        Launches a synchronous inference operation with the provided bindings.
+
+        Args:
+            list of bindings (:obj:`ConfiguredInferModel.Bindings`): The bindings for the inputs and outputs of the model.
+                A list with a single binding is valid. Multiple bindings are useful for batch inference.
+            timeout (int): The timeout in milliseconds.
+
+        Raises:
+            :class:`HailoRTException` in case of an error.
+            :class:`HailoRTTimeout` in case the job did not finish in the given timeout.
+        """
+        with ExceptionWrapper():
+            job = self.run_async(bindings)
+            job.wait(timeout)
+
+    def run_async(self, bindings, callback=None):
+        """
+        Launches an asynchronous inference operation with the provided bindings.
+
+        Args:
+            list of bindings (:obj:`ConfiguredInferModel.Bindings`): The bindings for the inputs and outputs of the model.
+                A list with a single binding is valid. Multiple bindings are useful for batch inference.
+            callback (Callable, optional): A callback that will be called upon completion of the asynchronous
+                inference operation. The function will be called with an info argument
+                (:class:`AsyncInferCompletionInfo`) holding the information about the async job. If the async job was
+                unsuccessful, the info parameter will hold an exception method that will raise an exception. The
+                callback must accept a 'completion_info' keyword argument
+
+        Note:
+            As a standard, callbacks should be executed as quickly as possible.
+            In case of an error, the pipeline will be shut down.
+
+        Returns:
+            AsyncInferJob: The async inference job object.
+
+        Raises:
+            :class:`HailoRTException` in case of an error.
+        """
+        # keep the buffers alive until the job and the callback are completed
+        buffers = []
+        for b in bindings:
+            for name in self._input_names:
+                buffers.append(b.input(name).get_buffer())
+            for name in self._output_names:
+                buffers.append(b.output(name).get_buffer(None))
+        self._buffer_guards.append(buffers)
+
+        def callback_wrapper(error_code):
+            cpp_cb_exception = ExceptionWrapper.create_exception_from_status(error_code) if error_code else None
+            if callback:
+                completion_info = AsyncInferCompletionInfo(cpp_cb_exception)
+                callback(completion_info=completion_info)
+
+            # remove the buffers - they are no longer needed
+            self._buffer_guards.popleft()
+
+        with ExceptionWrapper():
+            cpp_job = self._configured_infer_model.run_async(
+                [b.get() for b in bindings], callback_wrapper
+            )
+
+        job = AsyncInferJob(cpp_job)
+        return job
+
+    def set_scheduler_timeout(self, timeout_ms):
+        """
+        Sets the minimum number of send requests required before the network is considered ready to get run time from the scheduler.
+        Sets the maximum time period that may pass before receiving run time from the scheduler.
+        This will occur providing at least one send request has been sent, there is no minimum requirement for send
+        requests, (e.g. threshold - see :func:`ConfiguredInferModel.set_scheduler_threshold`).
+
+        The new time period will be measured after the previous time the scheduler allocated run time to this network group.
+        Using this function is only allowed when scheduling_algorithm is not `HAILO_SCHEDULING_ALGORITHM_NONE`.
+        The default timeout is 0ms.
+
+        Args:
+            timeout_ms (int): The maximum time to wait for the scheduler to provide run time, in milliseconds.
+
+        Raises:
+            :class:`HailoRTException` in case of an error.
+        """
+        with ExceptionWrapper():
+            self._configured_infer_model.set_scheduler_timeout(timedelta(milliseconds=timeout_ms))
+
+    def set_scheduler_threshold(self, threshold):
+        """
+        Sets the minimum number of send requests required before the network is considered ready to get run time from the scheduler.
+
+        Args:
+            threshold (int): Threshold in number of frames.
+
+        Using this function is only allowed when scheduling_algorithm is not `HAILO_SCHEDULING_ALGORITHM_NONE`.
+        The default threshold is 1.
+        If at least one send request has been sent, but the threshold is not reached within a set time period (e.g. timeout - see
+        :func:`ConfiguredInferModel.set_scheduler_timeout`), the scheduler will consider the network ready regardless.
+
+        Raises:
+            :class:`HailoRTException` in case of an error.
+        """
+        with ExceptionWrapper():
+            self._configured_infer_model.set_scheduler_threshold(threshold)
+
+    def set_scheduler_priority(self, priority):
+        """
+        Sets the priority of the network.
+        When the network group scheduler will choose the next network, networks with higher priority will be prioritized in the selection.
+        bigger number represent higher priority.
+
+        Using this function is only allowed when scheduling_algorithm is not `HAILO_SCHEDULING_ALGORITHM_NONE`.
+        The default priority is HAILO_SCHEDULER_PRIORITY_NORMAL.
+
+        Args:
+            priority (int): Priority as a number between `HAILO_SCHEDULER_PRIORITY_MIN` - `HAILO_SCHEDULER_PRIORITY_MAX`.
+
+        Raises:
+            :class:`HailoRTException` in case of an error.
+        """
+        with ExceptionWrapper():
+            self._configured_infer_model.set_scheduler_priority(priority)
+
+    def get_async_queue_size(self):
+        """
+        Returns Expected of a the number of inferences that can be queued simultaneously for execution.
+
+        Returns:
+            size (int): the number of inferences that can be queued simultaneously for execution
+
+        Raises:
+            :class:`HailoRTException` in case of an error.
+        """
+        with ExceptionWrapper():
+            return self._configured_infer_model.get_async_queue_size()
+
+    def shutdown(self):
+        """
+        Shuts the inference down. After calling this method, the model is no longer usable.
+        """
+        with ExceptionWrapper():
+            return self._configured_infer_model.shutdown()
+
+    def _get_nms_infos(self):
+        nms_infos = {}
+
+        for name in self._output_names:
+            output = self._infer_model.output(name)
+            format_order = output.format.order
+
+            if format_order in (
+                FormatOrder.HAILO_NMS_WITH_BYTE_MASK,
+                FormatOrder.HAILO_NMS,
+            ):
+                output_vstream_info = next(
+                    filter(
+                        lambda item: item.name == name,
+                        self._infer_model.hef.get_output_vstream_infos(),
+                    )
+                )
+
+                if format_order == FormatOrder.HAILO_NMS_WITH_BYTE_MASK:
+                    if (len(self._input_names)) != 1:
+                        raise HailoRTInvalidHEFException(
+                            f"Output format order {format_order} should have 1 input. Number of inputs: {len(self._input_names)}"
+                        )
+
+                    input = self._infer_model.input()
+                    input_height, input_width = input.shape[:2]
+                else:
+                    input_height, input_width = -1, -1 # not accessed
+
+                nms_infos[name] = self.NmsTransformationInfo(
+                    output.format.order,
+                    input_height,
+                    input_width,
+                    output_vstream_info.nms_shape.number_of_classes,
+                    output_vstream_info.nms_shape.max_bboxes_per_class,
+                    output.quant_infos[0],
+                )
+
+        return nms_infos
+
+
+class AsyncInferJob:
+    """
+    Hailo Asynchronous Inference Job Wrapper.
+    It holds the result of the inference job (once ready), and provides an async poll method to check the job status.
+    """
+
+    MILLISECOND = (1 / 1000)
+
+    def __init__(self, job):
+        #"""
+        #Args:
+        #    job (:obj:`_pyhailort.AsyncInferJob`): The internal AsyncInferJob object.
+        #"""
+        self._job = job
+
+    def wait(self, timeout_ms):
+        """
+        Waits for the asynchronous inference job to finish.
+        If the async job and its callback have not completed within the given timeout, a HailoRTTimeout exception will be raised.
+
+        Args:
+            timeout_ms (int): timeout The maximum time to wait.
+
+        Raises:
+            :class:`HailoRTTimeout` in case the job did not finish in the given timeout.
+        """
+        with ExceptionWrapper():
+            self._job.wait(timedelta(milliseconds=timeout_ms))
+
+
 class VDevice(object):
     """Hailo virtual device representation."""
 
@@ -2662,6 +3522,41 @@ class VDevice(object):
         """
         with ExceptionWrapper():
             return self._vdevice.get_physical_devices_ids()
+
+    def create_infer_model(self, hef_source, network_name=""):
+        """
+        Creates the infer model from an hef.
+
+        Args:
+            hef_source (str or bytes): The source from which the HEF object will be created. If the
+                source type is `str`, it is treated as a path to an hef file. If the source type is
+                `bytes`, it is treated as a buffer. Any other type will raise a ValueError.
+            network_name (str, optional): The string of the network name.
+
+        Returns:
+            :obj:`InferModel`: The infer model object.
+
+        Raises:
+            :class:`HailoRTException`: In case the infer model creation failed.
+
+        Note:
+            create_infer_model must be called from the same process the VDevice is created in,
+            otherwise an :class:`HailoRTException` will be raised.
+
+        Note:
+            as long as the InferModel object is alive, the VDevice object is alive as well.
+        """
+        if os.getpid() != self._creation_pid:
+            raise HailoRTException("InferModel can be created only from the process VDevice was created in.")
+
+        with ExceptionWrapper():
+            if type(hef_source) is bytes:
+                infer_model_cpp_obj = self._vdevice.create_infer_model_from_buffer(hef_source, network_name)
+            else:
+                infer_model_cpp_obj = self._vdevice.create_infer_model_from_file(hef_source, network_name)
+
+        infer_model = InferModel(infer_model_cpp_obj, hef_source)
+        return infer_model
 
     @property
     def loaded_network_groups(self):
@@ -3069,7 +3964,9 @@ class OutputVStream(object):
         if self.output_order == FormatOrder.HAILO_NMS_WITH_BYTE_MASK:
             nms_shape = self._vstream_info.nms_shape
             if len(self._input_stream_infos) != 1:
-                raise Exception("Output format HAILO_NMS_WITH_BYTE_MASK should have 1 input. Number of inputs: {}".format(len(self._input_stream_infos)))
+                raise HailoRTInvalidHEFException(
+                    f"Output format HAILO_NMS_WITH_BYTE_MASK should have 1 input. Number of inputs: {len(self._input_stream_infos)}"
+                )
             input_height = self._input_stream_infos[0].shape[0]
             input_width = self._input_stream_infos[0].shape[1]
             res = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_format(result_array,

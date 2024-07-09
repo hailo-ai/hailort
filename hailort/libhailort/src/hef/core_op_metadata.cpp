@@ -111,6 +111,15 @@ void ContextMetadata::add_ddr_layer(const LayerInfo &layer_info)
     }
 }
 
+void ContextMetadata::add_cache_layer(const LayerInfo &layer_info)
+{
+    if (HAILO_H2D_STREAM == layer_info.direction) {
+        m_cache_input_layers.push_back(layer_info);
+    } else {
+        m_cache_output_layers.push_back(layer_info);
+    }
+}
+
 const std::vector<LayerInfo> &ContextMetadata::get_boundary_input_layers() const
 {
     return m_boundary_input_layers;
@@ -141,13 +150,22 @@ const std::vector<LayerInfo> &ContextMetadata::get_ddr_output_layers() const
     return m_ddr_output_layers;
 }
 
+const std::vector<LayerInfo> &ContextMetadata::get_cache_input_layers() const
+{
+    return m_cache_input_layers;
+}
+
+const std::vector<LayerInfo> &ContextMetadata::get_cache_output_layers() const
+{
+    return m_cache_output_layers;
+}
+
 Expected<size_t> ContextMetadata::get_layers_transfer_size(const std::vector<LayerInfo> &layer_infos) const
 {
     size_t total_transfer_size = 0;
     for (const auto &layer_info : layer_infos) {
-        auto transfer_size = LayerInfoUtils::get_transfer_size(layer_info);
-        CHECK_EXPECTED(transfer_size);
-        total_transfer_size += transfer_size.release();
+        TRY(const auto transfer_size, LayerInfoUtils::get_transfer_size(layer_info));
+        total_transfer_size += transfer_size;
     }
     return total_transfer_size;
 }
@@ -158,27 +176,22 @@ Expected<size_t> ContextMetadata::get_context_transfer_size() const
 
     // Calc config buffers 
     for (const auto &config_buffer_sizes : m_config_buffers_info) {
-        total_transfer_size += std::accumulate(config_buffer_sizes.second.begin(), config_buffer_sizes.second.end(), 0);
+        total_transfer_size += std::accumulate(config_buffer_sizes.second.bursts_sizes.begin(),
+            config_buffer_sizes.second.bursts_sizes.end(), 0);
     }
 
     // Calc all edge layers
-    auto boundary_input_transfer_size = get_layers_transfer_size(m_boundary_input_layers);
-    CHECK_EXPECTED(boundary_input_transfer_size);
-    auto boundary_output_transfer_size = get_layers_transfer_size(m_boundary_output_layers);
-    CHECK_EXPECTED(boundary_output_transfer_size);
-    auto ddr_input_transfer_size = get_layers_transfer_size(m_ddr_input_layers);
-    CHECK_EXPECTED(ddr_input_transfer_size);
-    auto ddr_output_transfer_size = get_layers_transfer_size(m_ddr_output_layers);
-    CHECK_EXPECTED(ddr_output_transfer_size);
-    auto inter_context_input_transfer_size = get_layers_transfer_size(m_inter_context_input_layers);
-    CHECK_EXPECTED(inter_context_input_transfer_size);
-    auto inter_context_output_transfer_size = get_layers_transfer_size(m_inter_context_output_layers);
-    CHECK_EXPECTED(inter_context_output_transfer_size);
+    TRY(const auto boundary_input_transfer_size, get_layers_transfer_size(m_boundary_input_layers));
+    TRY(const auto boundary_output_transfer_size, get_layers_transfer_size(m_boundary_output_layers));
+    TRY(const auto ddr_input_transfer_size, get_layers_transfer_size(m_ddr_input_layers));
+    TRY(const auto ddr_output_transfer_size, get_layers_transfer_size(m_ddr_output_layers));
+    TRY(const auto inter_context_input_transfer_size, get_layers_transfer_size(m_inter_context_input_layers));
+    TRY(const auto inter_context_output_transfer_size, get_layers_transfer_size(m_inter_context_output_layers));
 
     total_transfer_size += 
-        boundary_input_transfer_size.release() + boundary_output_transfer_size.release() + 
-        ddr_input_transfer_size.release() + ddr_output_transfer_size.release() + 
-        inter_context_input_transfer_size.release() + inter_context_output_transfer_size.release();
+        boundary_input_transfer_size + boundary_output_transfer_size + 
+        ddr_input_transfer_size + ddr_output_transfer_size + 
+        inter_context_input_transfer_size + inter_context_output_transfer_size;
 
     return total_transfer_size;
 }
@@ -282,26 +295,31 @@ const std::vector<ConfigChannelInfo> &CoreOpMetadata::config_channels_info() con
 
 Expected<std::vector<LayerInfo>> CoreOpMetadata::get_all_layer_infos(const std::string &network_name) const
 {
-    auto input_layer_infos = get_input_layer_infos(network_name);
-    CHECK_EXPECTED(input_layer_infos);
-
-    auto output_layer_infos = get_output_layer_infos(network_name);
-    CHECK_EXPECTED(output_layer_infos);
+    TRY(const auto input_layer_infos, get_input_layer_infos(network_name));
+    TRY(const auto output_layer_infos, get_output_layer_infos(network_name));
 
     std::vector<LayerInfo> res;
-    res.reserve(input_layer_infos->size() + output_layer_infos->size());
-    res.insert(res.end(), input_layer_infos->begin(), input_layer_infos->end());
-    res.insert(res.end(), output_layer_infos->begin(), output_layer_infos->end());
+    res.reserve(input_layer_infos.size() + output_layer_infos.size());
+    res.insert(res.end(), input_layer_infos.begin(), input_layer_infos.end());
+    res.insert(res.end(), output_layer_infos.begin(), output_layer_infos.end());
 
     return res;
+}
+
+size_t CoreOpMetadata::get_cache_layers_count() const
+{
+    size_t cache_layers_count = 0;
+    for (const auto &context : m_dynamic_contexts) {
+        cache_layers_count += context.get_cache_input_layers().size() + context.get_cache_output_layers().size();
+    }
+    return cache_layers_count;
 }
 
 Expected<std::vector<hailo_stream_info_t>> CoreOpMetadata::get_input_stream_infos(const std::string &network_name) const
 {
     std::vector<hailo_stream_info_t> res;
-    auto input_layers = get_input_layer_infos(network_name);
-    CHECK_EXPECTED(input_layers);
-    for (auto &layer_info : input_layers.value()) {
+    TRY(const auto input_layers, get_input_layer_infos(network_name));
+    for (auto &layer_info : input_layers) {
         const auto &stream_infos = LayerInfoUtils::get_stream_infos_from_layer_info(layer_info);
         res.insert(res.end(), stream_infos.begin(), stream_infos.end());
     }
@@ -311,9 +329,8 @@ Expected<std::vector<hailo_stream_info_t>> CoreOpMetadata::get_input_stream_info
 Expected<std::vector<hailo_stream_info_t>> CoreOpMetadata::get_output_stream_infos(const std::string &network_name) const
 {
     std::vector<hailo_stream_info_t> res;
-    auto output_layers = get_output_layer_infos(network_name);
-    CHECK_EXPECTED(output_layers);
-    for (auto &layer_info : output_layers.value()) {
+    TRY(const auto output_layers, get_output_layer_infos(network_name));
+    for (auto &layer_info : output_layers) {
         const auto &stream_infos = LayerInfoUtils::get_stream_infos_from_layer_info(layer_info);
         res.insert(res.end(), stream_infos.begin(), stream_infos.end());
     }
@@ -322,16 +339,13 @@ Expected<std::vector<hailo_stream_info_t>> CoreOpMetadata::get_output_stream_inf
 
 Expected<std::vector<hailo_stream_info_t>> CoreOpMetadata::get_all_stream_infos(const std::string &network_name) const
 {
-    auto input_stream_infos = get_input_stream_infos(network_name);
-    CHECK_EXPECTED(input_stream_infos);
-
-    auto output_stream_infos = get_output_stream_infos(network_name);
-    CHECK_EXPECTED(output_stream_infos);
+    TRY(const auto input_stream_infos, get_input_stream_infos(network_name));
+    TRY(const auto output_stream_infos, get_output_stream_infos(network_name));
 
     std::vector<hailo_stream_info_t> res;
-    res.reserve(input_stream_infos->size() + output_stream_infos->size());
-    res.insert(res.end(), input_stream_infos->begin(), input_stream_infos->end());
-    res.insert(res.end(), output_stream_infos->begin(), output_stream_infos->end());
+    res.reserve(input_stream_infos.size() + output_stream_infos.size());
+    res.insert(res.end(), input_stream_infos.begin(), input_stream_infos.end());
+    res.insert(res.end(), output_stream_infos.begin(), output_stream_infos.end());
 
     return res;
 }
@@ -350,9 +364,8 @@ Expected<size_t> CoreOpMetadata::get_total_transfer_size()
 {
     size_t total_transfer_size = 0;
     for (const auto &dynamic_context : m_dynamic_contexts) {
-        auto context_size = dynamic_context.get_context_transfer_size();
-        CHECK_EXPECTED(context_size);
-        total_transfer_size += context_size.release();
+        TRY(const auto context_size, dynamic_context.get_context_transfer_size());
+        total_transfer_size += context_size;
     }
     return total_transfer_size;
 }
@@ -392,44 +405,38 @@ Expected<CoreOpMetadataPtr> NetworkGroupMetadata::get_core_op_metadata() const
     so should be same across all clusters layouts */
 {
     CHECK_AS_EXPECTED(1 == m_core_ops_metadata_per_arch.size(), HAILO_INTERNAL_FAILURE);
-    auto core_op_metadata_exp = m_core_ops_metadata_per_arch.begin()->second.get_metadata(PARTIAL_CLUSTERS_LAYOUT_IGNORE);
-    CHECK_EXPECTED(core_op_metadata_exp);
+    TRY(auto core_op_metadata, m_core_ops_metadata_per_arch.begin()->second.get_metadata(PARTIAL_CLUSTERS_LAYOUT_IGNORE));
 
-    auto core_op_metadata = core_op_metadata_exp.release();
     return core_op_metadata;
 }
 
 Expected<std::vector<LayerInfo>> NetworkGroupMetadata::get_all_layer_infos() const
 {
-    auto core_op_metadata = get_core_op_metadata();
-    CHECK_EXPECTED(core_op_metadata);
+    TRY(const auto core_op_metadata, get_core_op_metadata());
 
-    return core_op_metadata.value()->get_all_layer_infos();
+    return core_op_metadata->get_all_layer_infos();
 }
 
 Expected<std::vector<LayerInfo>> NetworkGroupMetadata::get_input_layer_infos(const std::string &network_name) const
 {
-    auto core_op_metadata = get_core_op_metadata();
-    CHECK_EXPECTED(core_op_metadata);
+    TRY(const auto core_op_metadata, get_core_op_metadata());
 
-    return core_op_metadata.value()->get_input_layer_infos(network_name);
+    return core_op_metadata->get_input_layer_infos(network_name);
 }
 
 Expected<std::vector<LayerInfo>> NetworkGroupMetadata::get_output_layer_infos(const std::string &network_name) const
 {
-    auto core_op_metadata = get_core_op_metadata();
-    CHECK_EXPECTED(core_op_metadata);
+    TRY(const auto core_op_metadata, get_core_op_metadata());
 
-    return core_op_metadata.value()->get_output_layer_infos(network_name);
+    return core_op_metadata->get_output_layer_infos(network_name);
 }
 
 Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_input_vstream_infos(const std::string &network_name) const
 {
-    auto input_layer_infos = get_input_layer_infos(network_name);
-    CHECK_EXPECTED(input_layer_infos);
+    TRY(const auto input_layer_infos, get_input_layer_infos(network_name));
 
     std::vector<hailo_vstream_info_t> input_vstream_infos;
-    for (auto &layer_info : input_layer_infos.value()) {
+    for (auto &layer_info : input_layer_infos) {
         auto vstreams_info = LayerInfoUtils::get_vstream_infos_from_layer_info(layer_info);
         input_vstream_infos.insert(input_vstream_infos.end(),
             std::make_move_iterator(vstreams_info.begin()), std::make_move_iterator(vstreams_info.end()));
@@ -441,11 +448,10 @@ Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_input_vstr
 
 Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_output_vstream_infos(const std::string &network_name) const
 {
-    auto output_layer_infos = get_output_layer_infos(network_name);
-    CHECK_EXPECTED(output_layer_infos);
+    TRY(const auto output_layer_infos, get_output_layer_infos(network_name));
 
     std::vector<hailo_vstream_info_t> output_vstream_infos;
-    for (auto &layer_info : output_layer_infos.value()) {
+    for (auto &layer_info : output_layer_infos) {
         if (std::any_of(m_ops_metadata.begin(), m_ops_metadata.end(),
             [&layer_info](auto &op_metadata) { return contains(op_metadata->get_input_names(), layer_info.name); })) {
             continue; // all output_vstream_infos that relates to the op are coming from the op itself instead of layer_infos
@@ -460,9 +466,8 @@ Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_output_vst
         }
     }
     for (auto &metadata : m_ops_metadata) {
-        auto vstream_info = metadata->get_output_vstream_info();
-        CHECK_EXPECTED(vstream_info);
-        output_vstream_infos.push_back(vstream_info.release());
+        TRY(const auto vstream_info, metadata->get_output_vstream_info());
+        output_vstream_infos.push_back(std::move(vstream_info));
     }
 
     // Sort vstream infos by sorted_output_names
@@ -496,16 +501,13 @@ Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_output_vst
 
 Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_all_vstream_infos(const std::string &network_name) const
 {
-    auto input_vstream_infos = get_input_vstream_infos(network_name);
-    CHECK_EXPECTED(input_vstream_infos);
-
-    auto output_vstream_infos = get_output_vstream_infos(network_name);
-    CHECK_EXPECTED(output_vstream_infos);
+    TRY(const auto input_vstream_infos, get_input_vstream_infos(network_name));
+    TRY(const auto output_vstream_infos, get_output_vstream_infos(network_name));
 
     std::vector<hailo_vstream_info_t> res;
-    res.reserve(input_vstream_infos->size() + output_vstream_infos->size());
-    res.insert(res.end(), input_vstream_infos->begin(), input_vstream_infos->end());
-    res.insert(res.end(), output_vstream_infos->begin(), output_vstream_infos->end());
+    res.reserve(input_vstream_infos.size() + output_vstream_infos.size());
+    res.insert(res.end(), input_vstream_infos.begin(), input_vstream_infos.end());
+    res.insert(res.end(), output_vstream_infos.begin(), output_vstream_infos.end());
 
     return res;
 }
@@ -522,9 +524,8 @@ Expected<std::vector<std::string>> NetworkGroupMetadata::get_vstream_names_from_
         }
     }
 
-    auto all_layers_infos = get_all_layer_infos();
-    CHECK_EXPECTED(all_layers_infos);
-    for (auto &layer_info : all_layers_infos.release()) {
+    TRY(const auto all_layers_infos, get_all_layer_infos());
+    for (const auto &layer_info : all_layers_infos) {
         if (layer_info.is_multi_planar) {
             for (auto &plane : layer_info.planes) {
                 if (stream_name == plane.name) {
@@ -557,9 +558,8 @@ Expected<std::vector<std::string>> NetworkGroupMetadata::get_stream_names_from_v
         }
     }
 
-    auto all_layers_infos = get_all_layer_infos();
-    CHECK_EXPECTED(all_layers_infos);
-    for (auto &layer_info : all_layers_infos.value()) {
+    TRY(const auto all_layers_infos, get_all_layer_infos());
+    for (const auto &layer_info : all_layers_infos) {
         if (layer_info.is_mux) {
             if (is_edge_under_mux(layer_info, vstream_name)) {
                 // vstream_name is a demux of the layer info

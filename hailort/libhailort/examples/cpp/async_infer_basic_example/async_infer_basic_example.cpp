@@ -41,6 +41,7 @@ int main()
         std::cerr << "Failed create vdevice, status = " << vdevice.status() << std::endl;
         return vdevice.status();
     }
+    std::cout << "VDevice created" << std::endl;
 
     // Create infer model from HEF file.
     auto infer_model_exp = vdevice.value()->create_infer_model(HEF_FILE);
@@ -48,6 +49,7 @@ int main()
         std::cerr << "Failed to create infer model, status = " << infer_model_exp.status() << std::endl;
         return infer_model_exp.status();
     }
+    std::cout << "InferModel created" << std::endl;
     auto infer_model = infer_model_exp.release();
 
     // Configure the infer model
@@ -56,6 +58,7 @@ int main()
         std::cerr << "Failed to create configured infer model, status = " << configured_infer_model.status() << std::endl;
         return configured_infer_model.status();
     }
+    std::cout << "ConfiguredInferModel created" << std::endl;
 
     // The buffers are stored here as a guard for the memory. The buffer will be freed only after
     // configured_infer_model will be released.
@@ -90,7 +93,9 @@ int main()
 
         buffer_guards.push_back(output_buffer);
     }
+    std::cout << "ConfiguredInferModel::Bindings created and configured" << std::endl;
 
+    std::cout << "Running inference..." << std::endl;
     // Run the async infer job.
     auto job = configured_infer_model->run_async(bindings.value());
     if (!job) {

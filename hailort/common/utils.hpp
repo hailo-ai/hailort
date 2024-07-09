@@ -14,6 +14,7 @@
 
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
+#include "hailo/buffer.hpp"
 
 #include "common/logger_macros.hpp"
 #include <spdlog/fmt/bundled/core.h>
@@ -22,6 +23,9 @@
 #include <map>
 #include <set>
 #include <unordered_set>
+#include <cstdint>
+#include <cstddef>
+#include <fstream>
 
 
 namespace hailort
@@ -30,6 +34,10 @@ namespace hailort
 #define IS_FIT_IN_UINT8(number) ((std::numeric_limits<uint8_t>::max() >= ((int32_t)(number))) && (std::numeric_limits<uint8_t>::min() <= ((int32_t)(number))))
 #define IS_FIT_IN_UINT16(number) ((std::numeric_limits<uint16_t>::max() >= ((int32_t)(number))) && (std::numeric_limits<uint16_t>::min() <= ((int32_t)(number))))
 #define IS_FIT_IN_UINT32(number) ((std::numeric_limits<uint32_t>::max() >= ((int64_t)(number))) && (std::numeric_limits<uint32_t>::min() <= ((int64_t)(number))))
+
+static const uint32_t POLYNOMIAL = 0xEDB88320;
+
+static const size_t MB = 1024 * 1024;
 
 template <typename T>
 static inline bool contains(const std::vector<T> &container, const T &value)
@@ -264,6 +272,10 @@ inline hailo_status get_status(const Expected<T> &exp)
 #define CHECK_GRPC_STATUS_AS_EXPECTED(status) _CHECK_GRPC_STATUS(status, make_unexpected(HAILO_RPC_FAILED), SERVICE_WARNING_MSG)
 #endif
 
+// Macros that check status. If status is 'valid_error', return without printing error to the prompt.
+#define CHECK_EXPECTED_WITH_ACCEPTABLE_STATUS(valid_error, exp, ...) if (valid_error == (exp).status()) {return make_unexpected(valid_error);} CHECK_SUCCESS(exp, __VA_ARGS__);
+
+
 #define __HAILO_CONCAT(x, y) x ## y
 #define _HAILO_CONCAT(x, y) __HAILO_CONCAT(x, y)
 
@@ -271,6 +283,11 @@ inline hailo_status get_status(const Expected<T> &exp)
     auto expected_var_name = (expr); \
     CHECK_EXPECTED(expected_var_name, __VA_ARGS__); \
     var_decl = expected_var_name.release()
+
+#define _TRY_V(expected_var_name, var_decl, expr, ...) \
+    auto expected_var_name = (expr); \
+    CHECK_EXPECTED(expected_var_name, __VA_ARGS__); \
+    var_decl = expected_var_name.value()
 
 /**
  * The TRY macro is used to allow easier validation and access for variables returned as Expected<T>.
@@ -288,6 +305,19 @@ inline hailo_status get_status(const Expected<T> &exp)
  *     TRY(auto var2, return_error(HAILO_INTERNAL_FAILURE), "Failed doing stuff {}", 5);
  */
 #define TRY(var_decl, expr, ...) _TRY(_HAILO_CONCAT(__expected, __COUNTER__), var_decl, expr, __VA_ARGS__)
+
+/**
+ * Same us TRY macro but instead of returning released value, it will return the value itself.
+*/
+// TODO: HRT-13624: Remove after 'expected' implementation is fixed
+#define TRY_V(var_decl, expr, ...) _TRY_V(_HAILO_CONCAT(__expected, __COUNTER__), var_decl, expr, __VA_ARGS__)
+
+#define _TRY_WITH_ACCEPTABLE_STATUS(valid_error, expected_var_name, var_decl, expr, ...) \
+    auto expected_var_name = (expr); \
+    CHECK_EXPECTED_WITH_ACCEPTABLE_STATUS(valid_error, expected_var_name, __VA_ARGS__); \
+    var_decl = expected_var_name.release()
+
+#define TRY_WITH_ACCEPTABLE_STATUS(valid_error, var_decl, expr, ...) _TRY_WITH_ACCEPTABLE_STATUS(valid_error, _HAILO_CONCAT(__expected, __COUNTER__), var_decl, expr, __VA_ARGS__)
 
 #ifndef _MSC_VER
 #define IGNORE_DEPRECATION_WARNINGS_BEGIN _Pragma("GCC diagnostic push") \
@@ -342,6 +372,124 @@ static inline bool is_env_variable_on(const char* env_var_name, const std::strin
     auto env_var  = std::getenv(env_var_name);
     return ((nullptr != env_var) && (strncmp(env_var, required_value.c_str(), required_value.size()) == 0));
 }
+
+static inline Expected<std::string> get_env_variable(const std::string &env_var_name)
+{
+    const auto env_var = std::getenv(env_var_name.c_str());
+    // Using ifs instead of CHECKs to avoid printing the error message
+    if (nullptr == env_var) {
+        return make_unexpected(HAILO_NOT_FOUND);
+    }
+
+    const auto result = std::string(env_var);
+    if (result.empty()) {
+        return make_unexpected(HAILO_NOT_FOUND);
+    }
+
+    return Expected<std::string>(result);
+}
+
+class CRC32 {
+public:
+    CRC32() {
+        generate_table();
+    }
+
+    uint32_t calculate(std::ifstream &s, size_t buffer_size) const {
+        auto beg_pos = s.tellg(); // Saves current position
+        uint32_t crc = 0xFFFFFFFF;
+        std::vector<char> buffer(MB);
+
+        size_t total_bytes_read = 0;
+
+        while (total_bytes_read < buffer_size) {
+            size_t bytes_to_read = std::min(buffer_size - total_bytes_read, MB);
+            s.read(buffer.data(), bytes_to_read);
+
+            size_t bytes_read = s.gcount();
+            total_bytes_read += bytes_read;
+            for (size_t i = 0; i < bytes_read; ++i) {
+                crc = (crc >> 8) ^ table[(crc ^ static_cast<uint8_t>(buffer[i])) & 0xFF];
+            }
+        }
+
+        s.seekg(beg_pos, std::ios::beg); // Return to the original position
+        return crc ^ 0xFFFFFFFF;
+    }
+
+    uint32_t calculate(const MemoryView &buffer) const {
+        uint32_t crc = 0xFFFFFFFF;
+        auto data = buffer.data();
+
+        for (size_t i = 0; i < buffer.size(); ++i) {
+            crc = (crc >> 8) ^ table[(crc ^ data[i]) & 0xFF];
+        }
+
+        return crc ^ 0xFFFFFFFF;
+    }
+
+    static Expected<uint32_t> calc_crc_on_buffer(const MemoryView &buffer)
+    {
+        CRC32 crcCalculator;
+        return crcCalculator.calculate(buffer);
+    }
+
+    static Expected<uint32_t> calc_crc_on_stream(std::ifstream &s, size_t size)
+    {
+        CRC32 crcCalculator;
+        return crcCalculator.calculate(s, size);
+    }
+
+private:
+    uint32_t table[256];
+
+    void generate_table() {
+        for (uint32_t i = 0; i < 256; ++i) {
+            uint32_t crc = i;
+            for (uint32_t j = 0; j < 8; ++j) {
+                crc = (crc & 1) ? (crc >> 1) ^ POLYNOMIAL : (crc >> 1);
+            }
+            table[i] = crc;
+        }
+    }
+};
+
+class BufferUtils final
+{
+public:
+    BufferUtils() = delete;
+
+    static void summarize_buffer(const Buffer& buffer, std::ostream& os)
+    {
+        os << "Buffer addr = " << static_cast<const void *>(buffer.data()) << ", size = " << buffer.size() << std::endl;
+
+        if (buffer.size() == 0) {
+            os << "Buffer is empty" << std::endl;
+            return;
+        }
+
+        size_t range_start = 0;
+        uint8_t current_value = buffer[0];
+        for (size_t i = 1; i < buffer.size(); ++i) {
+            if (buffer[i] != current_value) {
+                print_range(range_start, i, current_value, os);
+                current_value = buffer[i];
+                range_start = i;
+            }
+        }
+
+        // Print the last range
+        print_range(range_start, buffer.size(), current_value, os);
+    }
+
+private:
+    static void print_range(size_t range_start, size_t range_end_exclusive, uint8_t value, std::ostream& os)
+    {
+        const auto message = fmt::format("[0x{:08X}:0x{:08X}] - 0x{:02X} ({} bytes)",
+            range_start, range_end_exclusive - 1, static_cast<int>(value), range_end_exclusive - range_start);
+        os << message << std::endl;
+    }
+};
 
 } /* namespace hailort */
 

@@ -48,11 +48,6 @@ namespace hailort
 #define HAILORT_LOGGER_FLUSH_EVERY_PRINT_ENV_VAR ("HAILORT_LOGGER_FLUSH_EVERY_PRINT")
 #define PERIODIC_FLUSH_INTERVAL_IN_SECONDS (5)
 
-#ifdef _WIN32
-#define PATH_SEPARATOR "\\"
-#else
-#define PATH_SEPARATOR "/"
-#endif
 
 std::string HailoRTLogger::parse_log_path(const char *log_path)
 {
@@ -148,8 +143,11 @@ std::shared_ptr<spdlog::sinks::sink> HailoRTLogger::create_file_sink(const std::
         return make_shared_nothrow<spdlog::sinks::null_sink_st>();
     }
     if (!is_dir.value()) {
-        std::cerr << "HailoRT warning: Cannot create log file " << filename << "! Path " << dir_path << " is not a directory." << std::endl;
-        return make_shared_nothrow<spdlog::sinks::null_sink_st>();
+        auto status = Filesystem::create_directory(dir_path);
+        if (status != HAILO_SUCCESS) {
+            std::cerr << "HailoRT warning: Cannot create log file " << filename << "! Path " << dir_path << " is not valid." << std::endl;
+            return make_shared_nothrow<spdlog::sinks::null_sink_st>();
+        }
     }
 
     if (!Filesystem::is_path_accesible(dir_path)) {
@@ -237,5 +235,18 @@ void HailoRTLogger::set_levels(spdlog::level::level_enum console_level, spdlog::
     spdlog::flush_every(std::chrono::seconds(PERIODIC_FLUSH_INTERVAL_IN_SECONDS));
 }
 
+Expected<spdlog::level::level_enum> HailoRTLogger::get_console_logger_level_from_string(const std::string &user_console_logger_level)
+{
+    static const std::unordered_map<std::string, spdlog::level::level_enum> log_level_map = {
+        {"info", spdlog::level::info},
+        {"warning", spdlog::level::warn},
+        {"error", spdlog::level::err},
+        {"critical", spdlog::level::critical}
+    };
+    if(log_level_map.find(user_console_logger_level) != log_level_map.end()) {
+        return Expected<spdlog::level::level_enum>(log_level_map.at(user_console_logger_level));
+    }
+    return make_unexpected(HAILO_INVALID_ARGUMENT);
+}
 
 } /* namespace hailort */

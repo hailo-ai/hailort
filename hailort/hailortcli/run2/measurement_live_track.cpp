@@ -24,23 +24,19 @@ Expected<std::shared_ptr<MeasurementLiveTrack>> MeasurementLiveTrack::create_sha
 {
     std::shared_ptr<PowerMeasurement> power_measurement = nullptr;
     if (measure_power) {
-        auto power_measurement_exp = PowerMeasurement::create_shared(device, HAILO_POWER_MEASUREMENT_TYPES__POWER);
-        CHECK_EXPECTED(power_measurement_exp);
-        power_measurement = power_measurement_exp.release();
+        TRY(power_measurement,
+            PowerMeasurement::create_shared(device, HAILO_POWER_MEASUREMENT_TYPES__POWER));
     }
 
     std::shared_ptr<PowerMeasurement> current_measurement = nullptr;
     if (measure_current) {
-        auto current_measurement_exp = PowerMeasurement::create_shared(device, HAILO_POWER_MEASUREMENT_TYPES__CURRENT);
-        CHECK_EXPECTED(current_measurement_exp);
-        current_measurement = current_measurement_exp.release();
+        TRY(current_measurement,
+            PowerMeasurement::create_shared(device, HAILO_POWER_MEASUREMENT_TYPES__CURRENT));
     }
 
     std::shared_ptr<TemperatureMeasurement> temp_measurement = nullptr;
     if (measure_temp) {
-        auto temp_measurement_exp = TemperatureMeasurement::create_shared(device);
-        CHECK_EXPECTED(temp_measurement_exp);
-        temp_measurement = temp_measurement_exp.release();
+        TRY(temp_measurement, TemperatureMeasurement::create_shared(device));
     }
 
     auto ptr = make_shared_nothrow<MeasurementLiveTrack>(power_measurement, current_measurement, temp_measurement, device.get_dev_id());

@@ -28,7 +28,7 @@ Expected<size_t> get_istream_size(std::ifstream &s)
     s.seekg(beg_pos, s.beg);
     CHECK_AS_EXPECTED(s.good(), HAILO_FILE_OPERATION_FAILURE, "ifstream::seekg() failed");
 
-    auto total_size = static_cast<uint64_t>(size - beg_pos);
+    auto total_size = static_cast<size_t>(size - beg_pos);
     CHECK_AS_EXPECTED(total_size <= std::numeric_limits<size_t>::max(), HAILO_FILE_OPERATION_FAILURE,
         "File size {} is too big", total_size);
     return Expected<size_t>(static_cast<size_t>(total_size));
@@ -39,16 +39,193 @@ Expected<Buffer> read_binary_file(const std::string &file_path, const BufferStor
     std::ifstream file(file_path, std::ios::in | std::ios::binary);
     CHECK_AS_EXPECTED(file.good(), HAILO_OPEN_FILE_FAILURE, "Error opening file {}", file_path);
 
-    auto file_size = get_istream_size(file);
-    CHECK_EXPECTED(file_size, "Failed to get file size");
-
-    auto buffer = Buffer::create(file_size.value(), output_buffer_params);
-    CHECK_EXPECTED(buffer, "Failed to allocate file buffer ({} bytes}", file_size.value());
+    TRY(const auto file_size, get_istream_size(file), "Failed to get file size");
+    TRY(auto buffer, Buffer::create(file_size, output_buffer_params),
+        "Failed to allocate file buffer ({} bytes}", file_size);
 
     // Read the data
-    file.read(reinterpret_cast<char*>(buffer->data()), buffer->size());
+    file.read(reinterpret_cast<char*>(buffer.data()), buffer.size());
     CHECK_AS_EXPECTED(file.good(), HAILO_FILE_OPERATION_FAILURE, "Failed reading file {}", file_path);
-    return buffer.release();
+    return buffer;
+}
+
+Expected<std::shared_ptr<FileReader>> SeekableBytesReader::create_reader(const std::string &file_path)
+{
+    auto ptr = make_shared_nothrow<FileReader>(file_path);
+    CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
+    return ptr;
+}
+
+Expected<std::shared_ptr<BufferReader>> SeekableBytesReader::create_reader(const MemoryView &memview)
+{
+    auto ptr = make_shared_nothrow<BufferReader>(memview);
+    CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
+    return ptr;
+}
+
+FileReader::FileReader(const std::string &file_path) : m_file_path(file_path) {}
+
+hailo_status FileReader::read(uint8_t *buffer, size_t n)
+{
+    assert(nullptr != m_fstream);
+    (void)m_fstream->read(reinterpret_cast<char*>(buffer), n);
+    return m_fstream->good() ? HAILO_SUCCESS : HAILO_FILE_OPERATION_FAILURE;
+}
+
+hailo_status FileReader::read_from_offset(size_t offset, MemoryView &dst, size_t size)
+{
+    assert(nullptr != m_fstream);
+
+    auto beg_pos = m_fstream->tellg();
+    (void)m_fstream->seekg(offset);
+    CHECK(m_fstream->good(), HAILO_FILE_OPERATION_FAILURE, "ifstream::seekg() failed");
+
+    (void)m_fstream->read(reinterpret_cast<char*>(dst.data()), size);
+    CHECK(m_fstream->good(), HAILO_FILE_OPERATION_FAILURE, "ifstream::read() failed");
+
+    (void)m_fstream->seekg(beg_pos);
+    CHECK(m_fstream->good(), HAILO_FILE_OPERATION_FAILURE, "ifstream::seekg() failed");
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status FileReader::open()
+{
+    if (nullptr == m_fstream) { // The first call to open creates the ifstream object
+        m_fstream = std::make_shared<std::ifstream>(m_file_path, std::ios::in | std::ios::binary);
+        return m_fstream->good() ? HAILO_SUCCESS : HAILO_OPEN_FILE_FAILURE;
+    }
+    m_fstream->open(m_file_path, std::ios::in | std::ios::binary);
+    return m_fstream->good() ? HAILO_SUCCESS : HAILO_OPEN_FILE_FAILURE;
+}
+
+bool FileReader::is_open() const
+{
+    return m_fstream->is_open();
+}
+
+hailo_status FileReader::seek(size_t position)
+{
+    assert(nullptr != m_fstream);
+    (void)m_fstream->seekg(position, m_fstream->beg);
+    return m_fstream->good() ? HAILO_SUCCESS : HAILO_FILE_OPERATION_FAILURE;
+}
+
+Expected<size_t> FileReader::tell()
+{
+    assert(nullptr != m_fstream);
+    auto offset = m_fstream->tellg();
+    return m_fstream->good() ? Expected<size_t>(static_cast<size_t>(offset)) : make_unexpected(HAILO_FILE_OPERATION_FAILURE);
+}
+
+hailo_status FileReader::close()
+{
+    assert(nullptr != m_fstream);
+    m_fstream->close();
+    return m_fstream->good() ? HAILO_SUCCESS : HAILO_CLOSE_FAILURE;
+}
+
+Expected<size_t> FileReader::get_size()
+{
+    assert(nullptr != m_fstream);
+
+    auto beg_pos = m_fstream->tellg();
+    CHECK_AS_EXPECTED(-1 != beg_pos, HAILO_FILE_OPERATION_FAILURE, "ifstream::tellg() failed");
+
+    (void)m_fstream->seekg(0, m_fstream->end);
+    CHECK_AS_EXPECTED(m_fstream->good(), HAILO_FILE_OPERATION_FAILURE, "ifstream::seekg() failed");
+
+    auto file_size = m_fstream->tellg();
+    CHECK_AS_EXPECTED(-1 != file_size, HAILO_FILE_OPERATION_FAILURE, "ifstream::tellg() failed");
+
+    (void)m_fstream->seekg(beg_pos, m_fstream->beg);
+    CHECK_AS_EXPECTED(m_fstream->good(), HAILO_FILE_OPERATION_FAILURE, "ifstream::seekg() failed");
+
+    return static_cast<size_t>(file_size);
+}
+
+std::shared_ptr<std::ifstream> FileReader::get_fstream() const
+{
+    return m_fstream;
+}
+
+Expected<size_t> FileReader::calculate_remaining_size()
+{
+    assert(nullptr != m_fstream);
+    auto remaining_size = get_istream_size(*m_fstream);
+    CHECK_AS_EXPECTED(m_fstream->good(), HAILO_FILE_OPERATION_FAILURE, "FileReader::calculate_remaining_size() failed");
+    return remaining_size;
+}
+
+Expected<bool> FileReader::good() const
+{
+    assert(nullptr != m_fstream);
+    return m_fstream->good();
+}
+
+BufferReader::BufferReader(const MemoryView &memview) : m_memview(memview) {}
+
+hailo_status BufferReader::read(uint8_t *buffer, size_t n)
+{
+    assert(m_seek_offset + n <= m_memview.size());
+    memcpy(buffer, m_memview.data() + m_seek_offset, n);
+    m_seek_offset += n;
+    return HAILO_SUCCESS;
+}
+
+hailo_status BufferReader::read_from_offset(size_t offset, MemoryView &dst, size_t size)
+{
+    memcpy(dst.data(), m_memview.data() + offset, size);
+    return HAILO_SUCCESS;
+}
+
+hailo_status BufferReader::open()
+{
+    // In case we use the buffer, we don't need to check if the file is open
+    return HAILO_SUCCESS;
+}
+
+bool BufferReader::is_open() const
+{
+    // In case we use the buffer, we don't need to check if the file is open
+    return true;
+}
+
+hailo_status BufferReader::seek(size_t position)
+{
+    assert(position < m_memview.size());
+    m_seek_offset = position;
+    return HAILO_SUCCESS;
+}
+
+Expected<size_t> BufferReader::tell()
+{
+    return Expected<size_t>(m_seek_offset);
+}
+
+hailo_status BufferReader::close()
+{
+    return HAILO_SUCCESS;
+}
+
+Expected<size_t> BufferReader::get_size()
+{
+    return Expected<size_t>(m_memview.size());
+}
+
+Expected<size_t> BufferReader::calculate_remaining_size()
+{
+    return m_memview.size() - m_seek_offset;
+}
+
+Expected<bool> BufferReader::good() const
+{
+    return true;
+}
+
+const MemoryView BufferReader::get_memview() const
+{
+    return m_memview;
 }
 
 } /* namespace hailort */

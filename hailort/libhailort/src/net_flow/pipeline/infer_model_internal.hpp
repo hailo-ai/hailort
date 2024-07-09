@@ -5,15 +5,19 @@
 /**
  * @file infer_model_internal.hpp
  * @brief Implemention of the infer model
+ *
+ * InferModel                       (Interface)
+ *  |-- InferModelBase              (Base implementation)
+ *      |-- InferModelHrpcClient    (RPC handle communicating with the server)
  **/
 
 #ifndef _HAILO_INFER_MODEL_INTERNAL_HPP_
 #define _HAILO_INFER_MODEL_INTERNAL_HPP_
 
 #include "hailo/infer_model.hpp"
-#include "hailo/vstream.hpp"
 #include "net_flow/pipeline/async_infer_runner.hpp"
 #include "net_flow/ops/nms_post_process.hpp"
+#include "hrpc/client.hpp"
 
 namespace hailort
 {
@@ -43,6 +47,52 @@ private:
     TransferDoneCallbackAsyncInfer m_stream_callback;
 };
 
+class InferModelBase : public InferModel
+{
+public:
+    static Expected<std::shared_ptr<InferModelBase>> create(VDevice &vdevice, const std::string &hef_path);
+    static Expected<std::shared_ptr<InferModelBase>> create(VDevice &vdevice, const MemoryView hef_buffer);
+
+    InferModelBase(VDevice &vdevice, Hef &&hef, std::unordered_map<std::string, InferStream> &&inputs,
+        std::unordered_map<std::string, InferStream> &&outputs);
+    virtual ~InferModelBase() = default;
+    InferModelBase(InferModelBase &&);
+
+    virtual const Hef &hef() const override;
+    virtual void set_batch_size(uint16_t batch_size) override;
+    virtual void set_power_mode(hailo_power_mode_t power_mode) override;
+    virtual void set_hw_latency_measurement_flags(hailo_latency_measurement_flags_t latency) override;
+    virtual Expected<ConfiguredInferModel> configure() override;
+    virtual Expected<InferStream> input() override;
+    virtual Expected<InferStream> output() override;
+    virtual Expected<InferStream> input(const std::string &name) override;
+    virtual Expected<InferStream> output(const std::string &name) override;
+    virtual const std::vector<InferStream> &inputs() const override;
+    virtual const std::vector<InferStream> &outputs() const override;
+    virtual const std::vector<std::string> &get_input_names() const override;
+    virtual const std::vector<std::string> &get_output_names() const override;
+
+    virtual Expected<ConfiguredInferModel> configure_for_ut(std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner,
+        const std::vector<std::string> &input_names, const std::vector<std::string> &output_names,
+        const std::unordered_map<std::string, size_t> inputs_frame_sizes = {},
+        const std::unordered_map<std::string, size_t> outputs_frame_sizes = {},
+        std::shared_ptr<ConfiguredNetworkGroup> net_group = nullptr) override;
+
+protected:
+    static Expected<std::unordered_map<std::string, InferModel::InferStream>> create_infer_stream_inputs(Hef &hef);
+    static Expected<std::unordered_map<std::string, InferModel::InferStream>> create_infer_stream_outputs(Hef &hef);
+
+    std::reference_wrapper<VDevice> m_vdevice;
+    Hef m_hef;
+    std::unordered_map<std::string, InferStream> m_inputs;
+    std::unordered_map<std::string, InferStream> m_outputs;
+    std::vector<InferStream> m_inputs_vector;
+    std::vector<InferStream> m_outputs_vector;
+    std::vector<std::string> m_input_names;
+    std::vector<std::string> m_output_names;
+    ConfigureNetworkParams m_config_params;
+};
+
 class InferModel::InferStream::Impl
 {
 public:
@@ -68,8 +118,15 @@ public:
     void set_nms_max_proposals_per_class(uint32_t max_proposals_per_class);
     void set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size);
 
+    float32_t nms_score_threshold() const;
+    float32_t nms_iou_threshold() const;
+    uint32_t nms_max_proposals_per_class() const;
+    uint32_t nms_max_accumulated_mask_size() const;
+
 private:
     friend class InferModel;
+    friend class InferModelBase;
+    friend class VDevice;
 
     hailo_vstream_info_t m_vstream_info;
     hailo_format_t m_user_buffer_format;
@@ -80,16 +137,27 @@ private:
     uint32_t m_nms_max_accumulated_mask_size;
 };
 
-class AsyncInferJob::Impl
+class AsyncInferJobBase
 {
 public:
-    Impl(uint32_t streams_count);
-    hailo_status wait(std::chrono::milliseconds timeout);
+    static AsyncInferJob create(std::shared_ptr<AsyncInferJobBase> base);
+    virtual ~AsyncInferJobBase() = default;
+    virtual hailo_status wait(std::chrono::milliseconds timeout) = 0;
+};
+
+class AsyncInferJobImpl : public AsyncInferJobBase
+{
+public:
+    AsyncInferJobImpl(uint32_t streams_count);
+    virtual hailo_status wait(std::chrono::milliseconds timeout) override;
+
+private:
+    friend class ConfiguredInferModelBase;
+
     bool stream_done(const hailo_status &status);
     hailo_status completion_status();
     void mark_callback_done();
 
-private:
     std::condition_variable m_cv;
     std::mutex m_mutex;
     std::atomic_uint32_t m_ongoing_transfers;
@@ -97,40 +165,87 @@ private:
     hailo_status m_job_completion_status;
 };
 
-class ConfiguredInferModelImpl
+/*
+ * ConfiguredInferModel                      (interface wrapper - external API)
+ * |-- ConfiguredInferModelBase              (interface)
+ * |--|-- ConfiguredInferModelImpl           (non-RPC implementation)
+ * |--|-- ConfiguredInferModelHrpcClient     (RPC handle communicating with the server)
+ */
+
+class ConfiguredInferModelBase
+{
+public:
+    static ConfiguredInferModel create(std::shared_ptr<ConfiguredInferModelBase> base);
+
+    ConfiguredInferModelBase(const std::unordered_map<std::string, size_t> inputs_frame_sizes,
+        const std::unordered_map<std::string, size_t> outputs_frame_sizes);
+    virtual ~ConfiguredInferModelBase() = default;
+    virtual Expected<ConfiguredInferModel::Bindings> create_bindings() = 0;
+    virtual hailo_status wait_for_async_ready(std::chrono::milliseconds timeout, uint32_t frames_count = 1) = 0;
+    virtual hailo_status activate() = 0;
+    virtual hailo_status deactivate() = 0;
+    virtual hailo_status run(ConfiguredInferModel::Bindings bindings, std::chrono::milliseconds timeout);
+    virtual Expected<AsyncInferJob> run_async(ConfiguredInferModel::Bindings bindings,
+        std::function<void(const AsyncInferCompletionInfo &)> callback = ASYNC_INFER_EMPTY_CALLBACK) = 0;
+    virtual Expected<LatencyMeasurementResult> get_hw_latency_measurement() = 0;
+    virtual hailo_status set_scheduler_timeout(const std::chrono::milliseconds &timeout) = 0;
+    virtual hailo_status set_scheduler_threshold(uint32_t threshold) = 0;
+    virtual hailo_status set_scheduler_priority(uint8_t priority) = 0;
+    virtual Expected<size_t> get_async_queue_size() = 0;
+    virtual hailo_status shutdown() = 0;
+
+    static Expected<ConfiguredInferModel::Bindings> create_bindings(
+        std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&inputs,
+        std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&outputs);
+    static Expected<ConfiguredInferModel::Bindings::InferStream> create_infer_stream(const hailo_vstream_info_t &vstream_info);
+    static BufferType get_infer_stream_buffer_type(ConfiguredInferModel::Bindings::InferStream expected_stream);
+    static bool get_stream_done(hailo_status status, std::shared_ptr<AsyncInferJobImpl> job_pimpl);
+    static hailo_status get_completion_status(std::shared_ptr<AsyncInferJobImpl> job_pimpl);
+    static void mark_callback_done(std::shared_ptr<AsyncInferJobImpl> job_pimpl);
+
+private:
+    virtual hailo_status validate_bindings(ConfiguredInferModel::Bindings bindings) = 0;
+
+protected:
+    std::unordered_map<std::string, size_t> m_inputs_frame_sizes;
+    std::unordered_map<std::string, size_t> m_outputs_frame_sizes;
+
+};
+
+class ConfiguredInferModelImpl : public ConfiguredInferModelBase
 {
 public:
     static Expected<std::shared_ptr<ConfiguredInferModelImpl>> create(std::shared_ptr<ConfiguredNetworkGroup> net_group,
         const std::unordered_map<std::string, hailo_format_t> &inputs_formats, const std::unordered_map<std::string, hailo_format_t> &outputs_formats,
         const std::vector<std::string> &input_names, const std::vector<std::string> &output_names, VDevice &vdevice,
+        const std::unordered_map<std::string, size_t> inputs_frame_sizes, const std::unordered_map<std::string, size_t> outputs_frame_sizes,
         const uint32_t timeout = HAILO_DEFAULT_VSTREAM_TIMEOUT_MS);
 
-    ConfiguredInferModelImpl(std::shared_ptr<ConfiguredNetworkGroup> cng,
-        std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner,
-        const std::vector<std::string> &input_names,
-        const std::vector<std::string> &output_names);
+    ConfiguredInferModelImpl(std::shared_ptr<ConfiguredNetworkGroup> cng, std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner,
+        const std::vector<std::string> &input_names, const std::vector<std::string> &output_names,
+        const std::unordered_map<std::string, size_t> inputs_frame_sizes, const std::unordered_map<std::string, size_t> outputs_frame_sizes);
     ~ConfiguredInferModelImpl();
-    Expected<ConfiguredInferModel::Bindings> create_bindings();
-    hailo_status wait_for_async_ready(std::chrono::milliseconds timeout);
-    void abort();
-    hailo_status activate();
-    void deactivate();
-    hailo_status run(ConfiguredInferModel::Bindings bindings, std::chrono::milliseconds timeout);
-    Expected<AsyncInferJob> run_async(ConfiguredInferModel::Bindings bindings,
-        std::function<void(const AsyncInferCompletionInfo &)> callback);
-    Expected<LatencyMeasurementResult> get_hw_latency_measurement();
-    hailo_status set_scheduler_timeout(const std::chrono::milliseconds &timeout);
-    hailo_status set_scheduler_threshold(uint32_t threshold);
-    hailo_status set_scheduler_priority(uint8_t priority);
-    Expected<size_t> get_async_queue_size();
+    virtual Expected<ConfiguredInferModel::Bindings> create_bindings() override;
+    virtual hailo_status wait_for_async_ready(std::chrono::milliseconds timeout, uint32_t frames_count) override;
+    virtual hailo_status activate() override;
+    virtual hailo_status deactivate() override;
+    virtual Expected<AsyncInferJob> run_async(ConfiguredInferModel::Bindings bindings,
+        std::function<void(const AsyncInferCompletionInfo &)> callback) override;
+    virtual Expected<LatencyMeasurementResult> get_hw_latency_measurement() override;
+    virtual hailo_status set_scheduler_timeout(const std::chrono::milliseconds &timeout) override;
+    virtual hailo_status set_scheduler_threshold(uint32_t threshold) override;
+    virtual hailo_status set_scheduler_priority(uint8_t priority) override;
+    virtual Expected<size_t> get_async_queue_size() override;
+    virtual hailo_status shutdown() override;
 
     static Expected<std::shared_ptr<ConfiguredInferModelImpl>> create_for_ut(std::shared_ptr<ConfiguredNetworkGroup> net_group,
-        std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner, const std::vector<std::string> &input_names, const std::vector<std::string> &output_names);
+        std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner, const std::vector<std::string> &input_names, const std::vector<std::string> &output_names,
+        const std::unordered_map<std::string, size_t> inputs_frame_sizes, const std::unordered_map<std::string, size_t> outputs_frame_sizes);
 
 private:
-    hailo_status validate_bindings(ConfiguredInferModel::Bindings bindings);
+    virtual hailo_status validate_bindings(ConfiguredInferModel::Bindings bindings);
 
-    std::shared_ptr<ConfiguredNetworkGroup> m_cng;
+    std::weak_ptr<ConfiguredNetworkGroup> m_cng;
     std::unique_ptr<ActivatedNetworkGroup> m_ang;
     std::shared_ptr<AsyncInferRunnerImpl> m_async_infer_runner;
     uint32_t m_ongoing_parallel_transfers;

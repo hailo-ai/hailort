@@ -17,8 +17,7 @@
 
 constexpr size_t NAIVE_PLANNING_EDGE_LAYER_OFFSET = 0;
 
-// Macros that check status. If status is HAILO_CANT_MEET_BUFFER_REQUIREMENTS, return without printing error to the prompt.
-#define CHECK_EXPECTED_CANT_MEET_REQUIREMENTS(type) if (HAILO_CANT_MEET_BUFFER_REQUIREMENTS == type.status()) {return make_unexpected(HAILO_CANT_MEET_BUFFER_REQUIREMENTS);} CHECK_SUCCESS(type);
+// Macro that check status. If status is HAILO_CANT_MEET_BUFFER_REQUIREMENTS, return without printing error to the prompt.
 #define CHECK_STATUS_CANT_MEET_REQUIREMENTS(status) if (HAILO_CANT_MEET_BUFFER_REQUIREMENTS == status) {return make_unexpected(status);} CHECK_SUCCESS(status);
 
 namespace hailort
@@ -64,6 +63,9 @@ bool InternalBufferPlanner::should_edge_layer_use_ccb(const LayerType &layer_typ
         else {
             return true;
         }
+    case LayerType::CACHE:
+        // Cache layers are always sg
+        return false;
     default:
         // Shouldn't reach here
         assert(false);
@@ -87,14 +89,14 @@ Expected<InternalBufferPlanning> InternalBufferPlanner::create_naive_buffer_plan
         edge_layer_offsets.emplace_back(edge_layer_info.first, NAIVE_PLANNING_EDGE_LAYER_OFFSET);
         vdma::VdmaBuffer::Type buffer_type = should_edge_layer_use_ccb(edge_layer_info.second.type, dma_type, force_sg_buffer_type) ?
             vdma::VdmaBuffer::Type::CONTINUOUS : vdma::VdmaBuffer::Type::SCATTER_GATHER;
-        const auto buffer_requirements = return_buffer_requirements(edge_layer_info.second, buffer_type, max_page_size);
-        CHECK_EXPECTED_CANT_MEET_REQUIREMENTS(buffer_requirements);
+        TRY_WITH_ACCEPTABLE_STATUS(HAILO_CANT_MEET_BUFFER_REQUIREMENTS, const auto buffer_requirements,
+            return_buffer_requirements(edge_layer_info.second, buffer_type, max_page_size));
 
         buffer_planning.emplace_back(
             BufferPlan{
                 buffer_type,
-                buffer_requirements->buffer_size(),
-                buffer_requirements->buffer_size(),
+                buffer_requirements.buffer_size(),
+                buffer_requirements.buffer_size(),
                 edge_layer_offsets,
                 plan_edge_layer_infos});
     }
@@ -210,16 +212,16 @@ hailo_status InternalBufferPlanner::add_edge_layer_to_planning(
     std::vector<std::vector<BufferUsageSegment>> &context_buffer_usage_vector, BufferPlan &buffer_plan,
     const vdma::VdmaBuffer::Type buffer_type, uint16_t max_page_size)
 {
-    const auto buffer_requirements = return_buffer_requirements(edge_layer.second, buffer_type, max_page_size);
-    CHECK_EXPECTED_CANT_MEET_REQUIREMENTS(buffer_requirements);
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_CANT_MEET_BUFFER_REQUIREMENTS, const auto buffer_requirements,
+        return_buffer_requirements(edge_layer.second, buffer_type, max_page_size));
 
     // Check if there is enough space in the current context buffer.
     const auto start_context = edge_layer.second.start_context;
     const auto end_context = edge_layer.second.end_context;
     const auto buffer_map = build_availibility_map(context_buffer_usage_vector, start_context, end_context);
 
-    const auto edge_layer_size = buffer_requirements->buffer_size();
-    const auto buffer_offset_alignment = buffer_requirements->desc_page_size();
+    const auto edge_layer_size = buffer_requirements.buffer_size();
+    const auto buffer_offset_alignment = buffer_requirements.desc_page_size();
     const auto buffer_offset = find_new_buffer_offset(buffer_map, edge_layer_size, buffer_offset_alignment);
 
     auto end_of_edge_layer_offset = buffer_offset + edge_layer_size;
@@ -288,17 +290,15 @@ Expected<InternalBufferPlanning> InternalBufferPlanner::create_optimized_buffer_
     InternalBufferPlanning buffer_planning;
     // Second - create buffer planning for each buffer type
     if (!ccb_edge_layers.empty()) {
-        auto ccb_buffer_planning =
-            create_single_buffer_planning(ccb_edge_layers, number_of_contexts, vdma::VdmaBuffer::Type::CONTINUOUS, max_page_size);
-        CHECK_EXPECTED_CANT_MEET_REQUIREMENTS(ccb_buffer_planning);
-        buffer_planning.insert(buffer_planning.end(), ccb_buffer_planning->begin(), ccb_buffer_planning->end());
+        TRY_WITH_ACCEPTABLE_STATUS(HAILO_CANT_MEET_BUFFER_REQUIREMENTS, const auto ccb_buffer_planning,
+            create_single_buffer_planning(ccb_edge_layers, number_of_contexts, vdma::VdmaBuffer::Type::CONTINUOUS, max_page_size));
+        buffer_planning.insert(buffer_planning.end(), ccb_buffer_planning.begin(), ccb_buffer_planning.end());
     }
 
     if (!sg_edge_layers.empty()) {
-        auto sg_buffer_planning =
-            create_single_buffer_planning(sg_edge_layers, number_of_contexts, vdma::VdmaBuffer::Type::SCATTER_GATHER, max_page_size);
-        CHECK_EXPECTED_CANT_MEET_REQUIREMENTS(sg_buffer_planning);
-        buffer_planning.insert(buffer_planning.end(), sg_buffer_planning->begin(), sg_buffer_planning->end());
+        TRY_WITH_ACCEPTABLE_STATUS(HAILO_CANT_MEET_BUFFER_REQUIREMENTS, auto sg_buffer_planning,
+            create_single_buffer_planning(sg_edge_layers, number_of_contexts, vdma::VdmaBuffer::Type::SCATTER_GATHER, max_page_size));
+        buffer_planning.insert(buffer_planning.end(), sg_buffer_planning.begin(), sg_buffer_planning.end());
     }
 
     return buffer_planning;
@@ -368,14 +368,14 @@ hailo_status InternalBufferPlanner::change_edge_layer_buffer_offset(InternalBuff
 {
     TRY(auto edge_layer_info, get_edge_info_from_buffer_plan(buffer_planning, edge_layer_key));
     for (auto &buffer_plan : buffer_planning) {
-        const auto buffer_requirements =  return_buffer_requirements(edge_layer_info, buffer_plan.buffer_type, max_page_size);
-        CHECK_EXPECTED_CANT_MEET_REQUIREMENTS(buffer_requirements);
+        TRY_WITH_ACCEPTABLE_STATUS(HAILO_CANT_MEET_BUFFER_REQUIREMENTS, const auto buffer_requirements,
+            return_buffer_requirements(edge_layer_info, buffer_plan.buffer_type, max_page_size));
 
         for (auto &edge_layer_offset : buffer_plan.edge_layer_offsets) {
             if (edge_layer_offset.first == edge_layer_key) {
                 edge_layer_offset.second = new_offset;
-                if (edge_layer_offset.second + buffer_requirements->buffer_size() > buffer_plan.buffer_size) {
-                    buffer_plan.buffer_size = edge_layer_offset.second + buffer_requirements->buffer_size();
+                if (edge_layer_offset.second + buffer_requirements.buffer_size() > buffer_plan.buffer_size) {
+                    buffer_plan.buffer_size = edge_layer_offset.second + buffer_requirements.buffer_size();
                 }
                 return HAILO_SUCCESS;
             }

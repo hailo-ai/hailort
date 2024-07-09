@@ -14,6 +14,7 @@ def join_drivers_path(path):
     return os.path.join(_ROOT, 'hailo_platform', 'drivers', path)
 
 
+import hailo_platform.pyhailort._pyhailort as _pyhailort
 from hailo_platform.tools.udp_rate_limiter import UDPRateLimiter
 from hailo_platform.pyhailort.hw_object import PcieDevice, EthernetDevice
 from hailo_platform.pyhailort.pyhailort import (HEF, ConfigureParams,
@@ -26,7 +27,7 @@ from hailo_platform.pyhailort.pyhailort import (HEF, ConfigureParams,
                                                 InputVStreams, OutputVStreams,
                                                 InferVStreams, HailoStreamDirection, HailoFormatFlags, HailoCpuId, Device, VDevice,
                                                 DvmTypes, PowerMeasurementTypes, SamplingPeriod, AveragingFactor, MeasurementBufferIndex,
-                                                HailoRTException, HailoSchedulingAlgorithm, HailoRTStreamAbortedByUser)
+                                                HailoRTException, HailoSchedulingAlgorithm, HailoRTStreamAbortedByUser, AsyncInferJob)
 
 def _verify_pyhailort_lib_exists():
     python_version = "".join(str(i) for i in sys.version_info[:2])
@@ -41,25 +42,16 @@ def _verify_pyhailort_lib_exists():
 
 _verify_pyhailort_lib_exists()
 
-def get_version(package_name):
-    # See: https://packaging.python.org/guides/single-sourcing-package-version/ (Option 5)
-    # We assume that the installed package is actually the same one we import. This assumption may
-    # break in some edge cases e.g. if the user modifies sys.path manually.
-    
-    # hailo_platform package has been renamed to hailort, but the import is still hailo_platform
-    if package_name == "hailo_platform":
-        package_name = "hailort"
-    try:
-        import pkg_resources
-        return pkg_resources.get_distribution(package_name).version
-    except:
-        return 'unknown'
+__version__ = "4.18.0"
+if _pyhailort.__version__ != __version__:
+    raise ImportError(
+        f"_pyhailort version ({_pyhailort.__version__}) does not match pyhailort version ({__version__})"
+    )
 
-__version__ = get_version('hailo_platform')
 __all__ = ['EthernetDevice', 'DvmTypes', 'PowerMeasurementTypes',
            'SamplingPeriod', 'AveragingFactor', 'MeasurementBufferIndex', 'UDPRateLimiter', 'PcieDevice', 'HEF',
            'ConfigureParams', 'FormatType', 'FormatOrder', 'MipiDataTypeRx', 'MipiPixelsPerClock', 'MipiClockSelection',
            'MipiIspImageInOrder', 'MipiIspImageOutDataType', 'join_drivers_path', 'IspLightFrequency', 'HailoPowerMode',
            'Endianness', 'HailoStreamInterface', 'InputVStreamParams', 'OutputVStreamParams',
            'InputVStreams', 'OutputVStreams', 'InferVStreams', 'HailoStreamDirection', 'HailoFormatFlags', 'HailoCpuId',
-           'Device', 'VDevice', 'HailoRTException', 'HailoSchedulingAlgorithm', 'HailoRTStreamAbortedByUser']
+           'Device', 'VDevice', 'HailoRTException', 'HailoSchedulingAlgorithm', 'HailoRTStreamAbortedByUser', 'AsyncInferJob']

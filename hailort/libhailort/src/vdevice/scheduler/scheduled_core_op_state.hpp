@@ -48,7 +48,7 @@ public:
 
     std::shared_ptr<CoreOp> get_core_op();
 
-    std::shared_ptr<VdmaConfigCoreOp> get_vdma_core_op(const device_id_t &device_id);
+    Expected<std::shared_ptr<VdmaConfigCoreOp>> get_vdma_core_op(const device_id_t &device_id);
 
     uint32_t get_max_ongoing_frames_per_device() const;
 

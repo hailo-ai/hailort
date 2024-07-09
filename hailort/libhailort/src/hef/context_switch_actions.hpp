@@ -13,6 +13,7 @@
 
 #include "hailo/expected.hpp"
 #include "hailo/buffer.hpp"
+#include "common/file_utils.hpp"
 
 #include "vdma/channel/channel_id.hpp"
 #include "hef/layer_info.hpp"
@@ -21,16 +22,22 @@
 #include "context_switch_defs.h"
 #include "core_op/resource_manager/config_buffer.hpp"
 
-
 namespace hailort
 {
 
 
 class ContextResources;
 struct EdgeLayer;
+#pragma pack(push, 1)
+typedef struct {
+    uint64_t offset;
+    uint32_t size;
+} ccw_write_ptr_t;
+#pragma pack(pop)
 
 class ContextSwitchConfigAction;
 using ContextSwitchConfigActionPtr = std::shared_ptr<ContextSwitchConfigAction>;
+
 class ContextSwitchConfigAction
 {
 public:
@@ -68,6 +75,8 @@ public:
         ActivateInterContextOutputChannel,
         ActivateDdrInputChannel,
         ActivateDdrOutputChannel,
+        ActivateCacheInputChannel,
+        ActivateCacheOutputChannel,
         ValidateChannel,
         DeactivateChannel,
         WaitDmaIdle,
@@ -78,6 +87,7 @@ public:
         ChangeBoundaryInputBatchAction,
         PauseVdmaChannel,
         ResumeVdmaChannel,
+        WaitForCacheUpdated,
     };
 
     ContextSwitchConfigAction(ContextSwitchConfigAction &&) = default;
@@ -156,12 +166,11 @@ private:
     const vdma::ChannelId m_channel_id;
 };
 
-class ShefFileHandle;
 class WriteDataCcwAction : public ContextSwitchConfigAction
 {
 public:
-    static Expected<ContextSwitchConfigActionPtr> create(uint32_t offset, size_t size, uint8_t config_stream_index,
-        size_t total_ccw_burst, std::shared_ptr<ShefFileHandle> shef_file_handle);
+    static Expected<ContextSwitchConfigActionPtr> create(std::vector<ccw_write_ptr_t> &&ccw_write_ptrs, uint8_t config_stream_index,
+        uint16_t total_ccw_burst, std::shared_ptr<SeekableBytesReader> hef_reader);
     WriteDataCcwAction(WriteDataCcwAction &&) = default;
     WriteDataCcwAction(const WriteDataCcwAction &) = delete;
     WriteDataCcwAction &operator=(WriteDataCcwAction &&) = delete;
@@ -172,20 +181,20 @@ public:
     virtual bool supports_repeated_block() const override;
     virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
 
-    uint8_t config_stream_index() const { return m_config_stream_index; }
-    uint16_t total_ccw_burst() const { return m_total_ccw_burst; }
     virtual size_t size() const { return m_size; }
+    virtual uint8_t config_stream_index() const { return m_config_stream_index; }
     virtual hailo_status write_to_config_buffer(ConfigBuffer& config_buffer, bool should_support_pre_fetch);
+    uint16_t total_ccw_burst() const { return m_total_ccw_burst; }
 
 protected:
-    WriteDataCcwAction(uint32_t offset, size_t size, uint8_t config_stream_index,
-        uint16_t total_ccw_burst, std::shared_ptr<ShefFileHandle> shef_file_handle);
+    WriteDataCcwAction(std::vector<ccw_write_ptr_t> &&ccw_write_ptrs, uint8_t config_stream_index,
+        uint16_t total_ccw_burst, std::shared_ptr<SeekableBytesReader> hef_reader);
 
-    uint32_t m_offset;
+    const std::vector<ccw_write_ptr_t> m_ccw_write_ptrs;
     size_t m_size;
     const uint8_t m_config_stream_index;
-    const uint16_t m_total_ccw_burst;
-    std::shared_ptr<ShefFileHandle> m_shef_file_handle;
+    uint16_t m_total_ccw_burst;
+    std::shared_ptr<SeekableBytesReader> m_hef_reader;
 };
 
 class WriteDataCcwActionByBuffer : public WriteDataCcwAction
@@ -275,6 +284,23 @@ public:
 
 private:
     ResetBurstCreditsTaskAction();
+};
+
+class WaitForCacheUpdatedAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create();
+
+    WaitForCacheUpdatedAction(WaitForCacheUpdatedAction &&) = default;
+    WaitForCacheUpdatedAction(const WaitForCacheUpdatedAction &) = delete;
+    WaitForCacheUpdatedAction &operator=(WaitForCacheUpdatedAction &&) = delete;
+    WaitForCacheUpdatedAction &operator=(const WaitForCacheUpdatedAction &) = delete;
+    virtual ~WaitForCacheUpdatedAction() = default;
+    virtual bool supports_repeated_block() const override;
+    virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
+
+private:
+    WaitForCacheUpdatedAction();
 };
 
 class WaitForNetworkGroupChangeAction : public ContextSwitchConfigAction
@@ -733,6 +759,51 @@ private:
     const CONTROL_PROTOCOL__nn_stream_config_t m_nn_stream_config;
     const CONTROL_PROTOCOL__host_buffer_info_t m_host_buffer_info;
     const uint32_t m_buffered_rows_count;
+};
+
+class ActivateCacheInputChannelAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create(const vdma::ChannelId &channel_id,
+        uint8_t stream_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
+        const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info, uint32_t initial_credit_size);
+
+    virtual bool supports_repeated_block() const override;
+    virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
+
+private:
+    ActivateCacheInputChannelAction(const vdma::ChannelId &channel_id,
+        uint8_t stream_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
+        const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info,
+        uint32_t initial_credit_size);
+
+    const vdma::ChannelId m_channel_id;
+    const uint8_t m_stream_index;
+    const CONTROL_PROTOCOL__nn_stream_config_t m_nn_stream_config;
+    const CONTROL_PROTOCOL__host_buffer_info_t m_host_buffer_info;
+    const uint32_t m_initial_credit_size;
+};
+
+class ActivateCacheOutputChannelAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create(const vdma::ChannelId &channel_id, uint8_t stream_index,
+        uint8_t network_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
+        const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info);
+
+    virtual bool supports_repeated_block() const override;
+    virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
+
+private:
+    ActivateCacheOutputChannelAction(const vdma::ChannelId &channel_id, uint8_t stream_index,
+        uint8_t network_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
+        const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info);
+
+    const vdma::ChannelId m_channel_id;
+    const uint8_t m_stream_index;
+    const uint8_t m_network_index;
+    const CONTROL_PROTOCOL__nn_stream_config_t m_nn_stream_config;
+    const CONTROL_PROTOCOL__host_buffer_info_t m_host_buffer_info;
 };
 
 class ValidateChannelAction : public ContextSwitchConfigAction

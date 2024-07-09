@@ -420,6 +420,7 @@ message ProtoNmsPostProcessConfig {
     bool background_removal = 5;
     uint32 background_removal_index = 6;
     bool cross_classes = 7;
+    bool bbox_only = 8;
 }
 
 message ProtoYolov8MatchingLayersNames {

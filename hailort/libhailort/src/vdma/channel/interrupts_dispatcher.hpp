@@ -11,6 +11,8 @@
 #define _HAILO_VDMA_INTERRUPTS_DISPATCHER_HPP_
 
 #include "vdma/driver/hailort_driver.hpp"
+#include "vdma/channel/channels_group.hpp"
+
 #include <thread>
 #include <functional>
 #include <condition_variable>
@@ -35,6 +37,7 @@ public:
 
     hailo_status start(const ChannelsBitmap &channels_bitmap, bool enable_timestamp_measure,
         const ProcessIrqCallback &process_irq);
+    hailo_status start(const ChannelsGroup &channels_group);
     hailo_status stop();
 
 private:

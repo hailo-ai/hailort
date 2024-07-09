@@ -110,7 +110,37 @@ public:
         return status;
     }
 
+    virtual hailo_status dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override
+    {
+        for (const auto &pair : m_devices) {
+            auto &device = pair.second;
+            const auto status = device->dma_map_dmabuf(dmabuf_fd, size, direction);
+            CHECK_SUCCESS(status);
+        }
+        return HAILO_SUCCESS;
+    }
+
+    virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override
+    {
+        hailo_status status = HAILO_SUCCESS;
+        for (const auto &pair : m_devices) {
+            auto &device = pair.second;
+            // Best effort, propagate first error
+            const auto unmap_status = device->dma_unmap_dmabuf(dmabuf_fd, size, direction);
+            if (HAILO_SUCCESS != unmap_status) {
+                LOGGER__ERROR("Failed unmapping dmabuf {} with status {}", dmabuf_fd, unmap_status);
+                if (HAILO_SUCCESS == status) {
+                    status = unmap_status;
+                }
+            }
+        }
+
+        return status;
+    }
+
+    static Expected<HailoRTDriver::AcceleratorType> get_accelerator_type(hailo_device_id_t *device_ids, size_t device_count);
     static hailo_status validate_params(const hailo_vdevice_params_t &params);
+    static Expected<bool> device_ids_contains_eth(const hailo_vdevice_params_t &params);
 
 private:
     VDeviceBase(std::map<device_id_t, std::unique_ptr<Device>> &&devices, CoreOpsSchedulerPtr core_ops_scheduler,
@@ -165,6 +195,8 @@ public:
     virtual hailo_status after_fork_in_child() override;
     virtual hailo_status dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
     virtual hailo_status dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
+    virtual hailo_status dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
+    virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
 
 private:
     VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, VDeviceIdentifier &&identifier, std::vector<std::unique_ptr<hailort::Device>> &&devices);
@@ -209,6 +241,8 @@ public:
         const std::string &network_name = "") override;
     virtual hailo_status dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
     virtual hailo_status dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
+    virtual hailo_status dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
+    virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
 
 private:
     VDeviceHandle(uint32_t handle);

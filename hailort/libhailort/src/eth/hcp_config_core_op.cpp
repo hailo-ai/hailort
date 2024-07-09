@@ -69,6 +69,45 @@ Expected<HwInferResults> HcpConfigCoreOp::run_hw_infer_estimator()
     return make_unexpected(HAILO_INVALID_OPERATION);
 }
 
+bool HcpConfigCoreOp::has_caches() const
+{
+    return false;
+}
+
+Expected<uint32_t> HcpConfigCoreOp::get_cache_read_size() const
+{
+    LOGGER__ERROR("get_cache_read_size function is not supported on ETH core-ops");
+    return make_unexpected(HAILO_INVALID_OPERATION);
+}
+
+Expected<uint32_t> HcpConfigCoreOp::get_cache_write_size() const
+{
+    LOGGER__ERROR("get_cache_write_size function is not supported on ETH core-ops");
+    return make_unexpected(HAILO_INVALID_OPERATION);
+}
+
+
+hailo_status HcpConfigCoreOp::init_cache(uint32_t read_offset, int32_t write_offset_delta)
+{
+    (void) read_offset;
+    (void) write_offset_delta;
+    LOGGER__ERROR("init_cache function is not supported on ETH core-ops");
+    return HAILO_INVALID_OPERATION;
+}
+
+Expected<hailo_cache_info_t> HcpConfigCoreOp::get_cache_info() const
+{
+    LOGGER__ERROR("get_cache_info function is not supported on ETH core-ops");
+    return make_unexpected(HAILO_INVALID_OPERATION);
+}
+
+hailo_status HcpConfigCoreOp::update_cache_offset(int32_t offset_delta_bytes)
+{
+    (void) offset_delta_bytes;
+    LOGGER__ERROR("update_cache_offset function is not supported on ETH core-ops");
+    return HAILO_INVALID_OPERATION;
+}
+
 hailo_status HcpConfigCoreOp::activate_impl(uint16_t /* dynamic_batch_size */)
 {
     // Close older dataflows

@@ -9,8 +9,6 @@
 
 #include "mapped_buffer.hpp"
 
-#include "vdma/vdma_device.hpp"
-
 
 namespace hailort {
 namespace vdma {
@@ -18,9 +16,10 @@ namespace vdma {
 Expected<MappedBufferPtr> MappedBuffer::create_shared(DmaAbleBufferPtr buffer, HailoRTDriver &driver,
     HailoRTDriver::DmaDirection data_direction)
 {
-    auto status = HAILO_UNINITIALIZED;
-    auto result = make_shared_nothrow<MappedBuffer>(driver, buffer, data_direction, status);
-    CHECK_SUCCESS_AS_EXPECTED(status);
+    TRY(auto buffer_handle, driver.vdma_buffer_map(reinterpret_cast<uintptr_t>(buffer->user_address()), buffer->size(), data_direction,
+        buffer->buffer_identifier(), HailoRTDriver::DmaBufferType::USER_PTR_BUFFER));
+
+    auto result = make_shared_nothrow<MappedBuffer>(driver, buffer, data_direction, buffer_handle);
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
 
     return result;
@@ -35,24 +34,26 @@ Expected<MappedBufferPtr> MappedBuffer::create_shared_by_allocation(size_t size,
     return create_shared(buffer.release(), driver, data_direction);
 }
 
-MappedBuffer::MappedBuffer(HailoRTDriver &driver, DmaAbleBufferPtr buffer,
-                           HailoRTDriver::DmaDirection data_direction, hailo_status &status) :
+Expected<MappedBufferPtr> MappedBuffer::create_shared_from_dmabuf(int dmabuf_fd, size_t size, HailoRTDriver &driver,
+    HailoRTDriver::DmaDirection data_direction)
+{
+    TRY(auto buffer_handle, driver.vdma_buffer_map_dmabuf(dmabuf_fd, size, data_direction,
+        HailoRTDriver::DmaBufferType::DMABUF_BUFFER));
+
+    // TODO: if need user address for dmabuf use DmaBufDmaAbleBuffer
+    auto result = make_shared_nothrow<MappedBuffer>(driver, nullptr, data_direction, buffer_handle);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+
+    return result;
+}
+
+MappedBuffer::MappedBuffer(HailoRTDriver &driver, DmaAbleBufferPtr buffer, HailoRTDriver::DmaDirection data_direction,
+    HailoRTDriver::VdmaBufferHandle vdma_buffer_handle) :
     m_driver(driver),
     m_buffer(buffer),
-    m_mapping_handle(HailoRTDriver::INVALID_DRIVER_VDMA_MAPPING_HANDLE_VALUE),
+    m_mapping_handle(vdma_buffer_handle),
     m_data_direction(data_direction)
-{
-    auto expected_handle = driver.vdma_buffer_map(m_buffer->user_address(), m_buffer->size(), m_data_direction,
-        m_buffer->buffer_identifier());
-    if (!expected_handle) {
-        LOGGER__ERROR("Mapping address {} to dma failed", m_buffer->user_address());
-        status = expected_handle.status();
-        return;
-    }
-
-    m_mapping_handle = expected_handle.release();
-    status = HAILO_SUCCESS;
-}
+{}
 
 MappedBuffer::~MappedBuffer()
 {

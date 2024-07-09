@@ -12,6 +12,7 @@
 #include "net_flow/ops/yolov5_seg_post_process.hpp"
 #include "net_flow/ops/yolov5_bbox_only_post_process.hpp"
 #include "net_flow/ops/yolov8_post_process.hpp"
+#include "net_flow/ops/yolov8_bbox_only_post_process.hpp"
 #include "net_flow/ops/argmax_post_process.hpp"
 #include "net_flow/ops/softmax_post_process.hpp"
 #include "net_flow/ops/yolox_post_process.hpp"
@@ -27,14 +28,11 @@ Expected<std::unordered_map<std::string, hailo_format_t>> AsyncPipelineBuilder::
 {
     std::unordered_map<std::string, hailo_format_t> expanded_input_format;
     for (auto &input_format : inputs_formats) {
-        auto input_streams_names = net_group->get_stream_names_from_vstream_name(input_format.first);
-        CHECK_EXPECTED(input_streams_names);
+        TRY(const auto input_streams_names, net_group->get_stream_names_from_vstream_name(input_format.first));
 
-        auto is_multi_planar = (input_streams_names.value().size() > 1);
+        auto is_multi_planar = (input_streams_names.size() > 1);
         if(is_multi_planar) {
-            auto vstream_info_exp = net_group->get_input_vstream_infos();
-            CHECK_EXPECTED(vstream_info_exp);
-            auto vstream_infos = vstream_info_exp.release();
+            TRY(const auto vstream_infos, net_group->get_input_vstream_infos());
             auto matching_vstream_info = std::find_if(vstream_infos.begin(), vstream_infos.end(), [&](const auto &item)
                 { return item.name == input_format.first; } );
             CHECK_AS_EXPECTED(vstream_infos.end() != matching_vstream_info, HAILO_NOT_FOUND,
@@ -42,7 +40,7 @@ Expected<std::unordered_map<std::string, hailo_format_t>> AsyncPipelineBuilder::
             expanded_input_format[input_format.first] =
                 VStreamsBuilderUtils::expand_user_buffer_format_autos_multi_planar(*matching_vstream_info, input_format.second);
         } else {
-            const auto &stream_name = input_streams_names.value()[0];
+            const auto &stream_name = input_streams_names[0];
             CHECK_AS_EXPECTED(contains(named_stream_infos, stream_name), HAILO_INTERNAL_FAILURE);
             const auto &stream_info = named_stream_infos.at(stream_name);
 
@@ -58,11 +56,10 @@ Expected<std::unordered_map<std::string, hailo_format_t>> AsyncPipelineBuilder::
 {
     std::unordered_map<std::string, hailo_format_t> expanded_output_format;
     for (auto &output_format : outputs_formats) {
-        auto output_streams_names = net_group->get_stream_names_from_vstream_name(output_format.first);
-        CHECK_EXPECTED(output_streams_names);
+        TRY(const auto output_streams_names, net_group->get_stream_names_from_vstream_name(output_format.first));
 
         // TODO: Taking data from the first ll stream will not work in multi-planar work
-        const auto &stream_name = output_streams_names.value()[0];
+        const auto &stream_name = output_streams_names[0];
         CHECK_AS_EXPECTED(contains(named_stream_infos, stream_name), HAILO_INTERNAL_FAILURE);
         const auto &stream_info = named_stream_infos.at(stream_name);
 
@@ -76,20 +73,18 @@ hailo_status AsyncPipelineBuilder::create_pre_async_hw_elements_per_input(std::s
     const std::vector<std::string> &stream_names, const std::unordered_map<std::string, hailo_format_t> &inputs_formats,
     const std::unordered_map<std::string, hailo_stream_info_t> &named_stream_infos, std::shared_ptr<AsyncPipeline> async_pipeline)
 {
-    auto vstream_names = net_group->get_vstream_names_from_stream_name(*stream_names.begin());
-    CHECK_EXPECTED_AS_STATUS(vstream_names);
-    CHECK(vstream_names.value().size() == 1, HAILO_NOT_SUPPORTED, "low level stream must have exactly 1 user input");
-    const auto &vstream_name = vstream_names.value()[0];
+    TRY(const auto vstream_names, net_group->get_vstream_names_from_stream_name(*stream_names.begin()));
+    CHECK(vstream_names.size() == 1, HAILO_NOT_SUPPORTED, "low level stream must have exactly 1 user input");
+    const auto &vstream_name = vstream_names[0];
     std::shared_ptr<PixBufferElement> multi_plane_splitter = nullptr;
     std::shared_ptr<PipelineElement> last_element_connected_to_pipeline = nullptr;
 
     auto is_empty = true;
     auto interacts_with_hw = true; // We want the entry queue size to be the size of queues interacts with HW
     auto is_entry = true;
-    auto entry_queue_elem_expected = add_push_queue_element(PipelineObject::create_element_name("EntryPushQEl", vstream_name, 0),
-        async_pipeline, 0, is_empty, interacts_with_hw, nullptr, 0, is_entry);
-    CHECK_EXPECTED_AS_STATUS(entry_queue_elem_expected);
-    auto entry_queue_elem = entry_queue_elem_expected.release();
+    TRY(auto entry_queue_elem,
+        add_push_queue_element(PipelineObject::create_element_name("EntryPushQEl", vstream_name, 0),
+            async_pipeline, 0, is_empty, interacts_with_hw, nullptr, 0, is_entry));
     async_pipeline->add_entry_element(entry_queue_elem, vstream_name);
     last_element_connected_to_pipeline = entry_queue_elem;
 
@@ -98,10 +93,8 @@ hailo_status AsyncPipelineBuilder::create_pre_async_hw_elements_per_input(std::s
         async_pipeline->set_as_multi_planar();
         const auto &vstream_order = inputs_formats.at(vstream_name).order;
 
-        auto multi_plane_splitter_expected = create_multi_plane_splitter_element(vstream_name, vstream_order,
-            async_pipeline->get_build_params().pipeline_status, async_pipeline);
-        CHECK_EXPECTED_AS_STATUS(multi_plane_splitter_expected);
-        multi_plane_splitter = multi_plane_splitter_expected.release();
+        TRY(multi_plane_splitter, create_multi_plane_splitter_element(vstream_name, vstream_order,
+            async_pipeline->get_build_params().pipeline_status, async_pipeline));
 
         async_pipeline->add_element_to_pipeline(multi_plane_splitter);
         CHECK_SUCCESS(PipelinePad::link_pads(entry_queue_elem, multi_plane_splitter));
@@ -113,47 +106,41 @@ hailo_status AsyncPipelineBuilder::create_pre_async_hw_elements_per_input(std::s
         const auto &input_stream_info = named_stream_infos.at(stream_name);
 
         auto src_format = inputs_formats.at(vstream_name);
-        auto sink_index_expected = async_pipeline->get_async_hw_element()->get_sink_index_from_input_stream_name(stream_name);
-        CHECK_EXPECTED_AS_STATUS(sink_index_expected);
-        auto sink_index = static_cast<uint8_t>(sink_index_expected.release());
+        TRY(const auto sink_index, async_pipeline->get_async_hw_element()->get_sink_index_from_input_stream_name(stream_name));
 
         if(is_multi_planar) {
             is_empty = true;
             interacts_with_hw = false;
-            auto post_split_push_queue = add_push_queue_element(
+            TRY(auto post_split_push_queue, add_push_queue_element(
                 PipelineObject::create_element_name("PostSplitPushQEl", stream_name, sink_index),
-                async_pipeline, 0, is_empty, interacts_with_hw, nullptr);
-            CHECK_EXPECTED_AS_STATUS(post_split_push_queue);
-            CHECK_SUCCESS(PipelinePad::link_pads(multi_plane_splitter, post_split_push_queue.value(), plane_index++));
+                async_pipeline, 0, is_empty, interacts_with_hw, nullptr));
+            CHECK_SUCCESS(PipelinePad::link_pads(multi_plane_splitter, post_split_push_queue, plane_index++));
 
-            last_element_connected_to_pipeline = post_split_push_queue.value();
+            last_element_connected_to_pipeline = post_split_push_queue;
 
             /* In multi-planar case, the format order of each plane (stream) is determined by the ll-stream's order.
                Type and flags are determined by the vstream params */
             src_format.order = input_stream_info.format.order;
         }
 
-        auto should_transform = InputTransformContext::is_transformation_required(input_stream_info.shape,
+        TRY(const auto should_transform, InputTransformContext::is_transformation_required(input_stream_info.shape,
             src_format, input_stream_info.hw_shape, input_stream_info.format,
-            std::vector<hailo_quant_info_t>(1, input_stream_info.quant_info)); // Inputs always have single quant_info
-        CHECK_EXPECTED_AS_STATUS(should_transform);
+            std::vector<hailo_quant_info_t>(1, input_stream_info.quant_info))); // Inputs always have single quant_info
 
-        if (should_transform.value()) {
-            auto pre_infer_elem = PreInferElement::create(input_stream_info.shape, src_format,
+        if (should_transform) {
+            TRY(auto pre_infer_elem, PreInferElement::create(input_stream_info.shape, src_format,
                 input_stream_info.hw_shape, input_stream_info.format, { input_stream_info.quant_info },
                 PipelineObject::create_element_name("PreInferEl", stream_name, input_stream_info.index),
-                async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline);
-            CHECK_EXPECTED_AS_STATUS(pre_infer_elem);
-            async_pipeline->add_element_to_pipeline(pre_infer_elem.value());
-            CHECK_SUCCESS(PipelinePad::link_pads(last_element_connected_to_pipeline, pre_infer_elem.value()));
+                async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline));
+            async_pipeline->add_element_to_pipeline(pre_infer_elem);
+            CHECK_SUCCESS(PipelinePad::link_pads(last_element_connected_to_pipeline, pre_infer_elem));
 
             is_empty = false;
             interacts_with_hw = true;
-            auto queue_elem = add_push_queue_element(PipelineObject::create_element_name("PushQEl", stream_name, input_stream_info.index),
-                async_pipeline, input_stream_info.hw_frame_size, is_empty, interacts_with_hw, pre_infer_elem.value());
-            CHECK_EXPECTED_AS_STATUS(queue_elem);
-            CHECK_SUCCESS(PipelinePad::link_pads(pre_infer_elem.value(), queue_elem.value()));
-            CHECK_SUCCESS(PipelinePad::link_pads(queue_elem.value(), async_pipeline->get_async_hw_element(), 0, sink_index));
+            TRY(auto queue_elem, add_push_queue_element(PipelineObject::create_element_name("PushQEl", stream_name, input_stream_info.index),
+                async_pipeline, input_stream_info.hw_frame_size, is_empty, interacts_with_hw, pre_infer_elem));
+            CHECK_SUCCESS(PipelinePad::link_pads(pre_infer_elem, queue_elem));
+            CHECK_SUCCESS(PipelinePad::link_pads(queue_elem, async_pipeline->get_async_hw_element(), 0, sink_index));
         } else {
             CHECK_SUCCESS(PipelinePad::link_pads(last_element_connected_to_pipeline, async_pipeline->get_async_hw_element(), 0, sink_index));
         }
@@ -167,10 +154,10 @@ hailo_status AsyncPipelineBuilder::create_pre_async_hw_elements(std::shared_ptr<
     std::shared_ptr<AsyncPipeline> async_pipeline)
 {
     for(const auto &input : inputs_formats) {
-        auto stream_names_under_vstream = net_group->get_stream_names_from_vstream_name(input.first);
-        CHECK_EXPECTED_AS_STATUS(stream_names_under_vstream);
+        TRY(const auto stream_names_under_vstream,
+            net_group->get_stream_names_from_vstream_name(input.first));
 
-        auto status = create_pre_async_hw_elements_per_input(net_group, stream_names_under_vstream.release(), inputs_formats,
+        auto status = create_pre_async_hw_elements_per_input(net_group, stream_names_under_vstream, inputs_formats,
             named_stream_infos, async_pipeline);
         CHECK_SUCCESS(status);
     }
@@ -186,38 +173,35 @@ Expected<std::shared_ptr<PostInferElement>> AsyncPipelineBuilder::add_post_infer
         HailoRTCommon::get_nms_hw_frame_size(nms_info) : HailoRTCommon::get_periph_frame_size(src_image_shape, src_format);
     auto is_empty = false;
     auto interacts_with_hw = true;
-    auto queue_elem = add_push_queue_element(PipelineObject::create_element_name("PushQEl", final_elem->name(),
+    TRY(auto queue_elem, add_push_queue_element(PipelineObject::create_element_name("PushQEl", final_elem->name(),
         static_cast<uint8_t>(final_elem_source_index)), async_pipeline, pre_transform_frame_size, is_empty, interacts_with_hw,
-        final_elem, final_elem_source_index);
-    CHECK_EXPECTED(queue_elem);
+        final_elem, final_elem_source_index));
 
-    auto post_infer_elem = PostInferElement::create(src_image_shape, src_format, dst_image_shape, output_format,
+    TRY(auto post_infer_elem, PostInferElement::create(src_image_shape, src_format, dst_image_shape, output_format,
         dst_quant_infos, nms_info, PipelineObject::create_element_name("PostInferEl",
         final_elem->name(), static_cast<uint8_t>(final_elem_source_index)), async_pipeline->get_build_params(),
-        PipelineDirection::PUSH, async_pipeline);
-    CHECK_EXPECTED(post_infer_elem);
+        PipelineDirection::PUSH, async_pipeline));
 
-    async_pipeline->add_element_to_pipeline(post_infer_elem.value());
+    async_pipeline->add_element_to_pipeline(post_infer_elem);
 
-    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(queue_elem.value(), post_infer_elem.value()));
-    return post_infer_elem.release();
+    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(queue_elem, post_infer_elem));
+    return post_infer_elem;
 }
 
 Expected<std::shared_ptr<AsyncPushQueueElement>> AsyncPipelineBuilder::add_push_queue_element(const std::string &queue_name, std::shared_ptr<AsyncPipeline> async_pipeline,
     size_t frame_size, bool is_empty, bool interacts_with_hw, std::shared_ptr<PipelineElement> final_elem, const uint32_t final_elem_source_index, bool is_entry)
 {
-    auto push_queue_elem = AsyncPushQueueElement::create(queue_name, async_pipeline->get_build_params(), frame_size,
-        is_empty, interacts_with_hw, async_pipeline, is_entry);
-    CHECK_EXPECTED(push_queue_elem);
+    TRY(auto push_queue_elem, AsyncPushQueueElement::create(queue_name, async_pipeline->get_build_params(), frame_size,
+        is_empty, interacts_with_hw, async_pipeline, is_entry));
 
-    async_pipeline->add_element_to_pipeline(push_queue_elem.value());
+    async_pipeline->add_element_to_pipeline(push_queue_elem);
 
     // final elem will be nullptr in case it's the first element in pipeline
     if (final_elem) {
-        CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(final_elem, push_queue_elem.value(), final_elem_source_index, 0));
+        CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(final_elem, push_queue_elem, final_elem_source_index, 0));
     }
 
-    return push_queue_elem.release();
+    return push_queue_elem;
 }
 
 Expected<std::shared_ptr<ConvertNmsToDetectionsElement>> AsyncPipelineBuilder::add_nms_to_detections_convert_element(std::shared_ptr<AsyncPipeline> async_pipeline,
@@ -227,15 +211,14 @@ Expected<std::shared_ptr<ConvertNmsToDetectionsElement>> AsyncPipelineBuilder::a
     auto metadata = std::dynamic_pointer_cast<net_flow::NmsOpMetadata>(op_metadata);
     assert(nullptr != metadata);
 
-    auto nms_to_detections_element = ConvertNmsToDetectionsElement::create(metadata->nms_info(),
+    TRY(auto nms_to_detections_element, ConvertNmsToDetectionsElement::create(metadata->nms_info(),
         PipelineObject::create_element_name(element_name, output_stream_name, stream_index),
-        async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline);
-    CHECK_EXPECTED(nms_to_detections_element);
+        async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline));
 
-    async_pipeline->add_element_to_pipeline(nms_to_detections_element.value());
+    async_pipeline->add_element_to_pipeline(nms_to_detections_element);
 
-    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(final_elem, nms_to_detections_element.value(), final_elem_index, 0));
-    return nms_to_detections_element.release();
+    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(final_elem, nms_to_detections_element, final_elem_index, 0));
+    return nms_to_detections_element;
 }
 
 Expected<std::shared_ptr<RemoveOverlappingBboxesElement>> AsyncPipelineBuilder::add_remove_overlapping_bboxes_element(std::shared_ptr<AsyncPipeline> async_pipeline,
@@ -245,14 +228,13 @@ Expected<std::shared_ptr<RemoveOverlappingBboxesElement>> AsyncPipelineBuilder::
     auto metadata = std::dynamic_pointer_cast<net_flow::NmsOpMetadata>(op_metadata);
     assert(nullptr != metadata);
 
-    auto remove_overlapping_bboxes_element = RemoveOverlappingBboxesElement::create(metadata->nms_config(),
+    TRY(auto remove_overlapping_bboxes_element, RemoveOverlappingBboxesElement::create(metadata->nms_config(),
         PipelineObject::create_element_name(element_name, output_stream_name, stream_index),
-        async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline);
-    CHECK_EXPECTED(remove_overlapping_bboxes_element);
+        async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline));
 
-    async_pipeline->add_element_to_pipeline(remove_overlapping_bboxes_element.value());
+    async_pipeline->add_element_to_pipeline(remove_overlapping_bboxes_element);
 
-    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(final_elem, remove_overlapping_bboxes_element.value(), final_elem_index, 0));
+    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(final_elem, remove_overlapping_bboxes_element, final_elem_index, 0));
     return remove_overlapping_bboxes_element;
 }
 
@@ -263,30 +245,28 @@ Expected<std::shared_ptr<FillNmsFormatElement>> AsyncPipelineBuilder::add_fill_n
     auto metadata = std::dynamic_pointer_cast<net_flow::NmsOpMetadata>(op_metadata);
     assert(nullptr != metadata);
 
-    auto fill_nms_format_element = FillNmsFormatElement::create(metadata->nms_config(),
+    TRY(auto fill_nms_format_element, FillNmsFormatElement::create(metadata->nms_config(),
         PipelineObject::create_element_name(element_name, output_stream_name, stream_index),
-        async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline);
-    CHECK_EXPECTED(fill_nms_format_element);
+        async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline));
 
-    async_pipeline->add_element_to_pipeline(fill_nms_format_element.value());
+    async_pipeline->add_element_to_pipeline(fill_nms_format_element);
 
-    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(final_elem, fill_nms_format_element.value(), final_elem_index, 0));
+    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(final_elem, fill_nms_format_element, final_elem_index, 0));
     return fill_nms_format_element;
 }
 
 Expected<std::shared_ptr<LastAsyncElement>> AsyncPipelineBuilder::add_last_async_element(std::shared_ptr<AsyncPipeline> async_pipeline,
     const std::string &output_format_name, size_t frame_size, std::shared_ptr<PipelineElement> final_elem, const uint32_t final_elem_source_index)
 {
-    auto last_async_element = LastAsyncElement::create(PipelineObject::create_element_name("LastAsyncEl",
-        final_elem->name(), static_cast<uint8_t>(final_elem_source_index)), async_pipeline->get_build_params(), frame_size, async_pipeline);
-    CHECK_EXPECTED(last_async_element);
+    TRY(auto last_async_element, LastAsyncElement::create(PipelineObject::create_element_name("LastAsyncEl",
+        final_elem->name(), static_cast<uint8_t>(final_elem_source_index)), async_pipeline->get_build_params(), frame_size, async_pipeline));
 
-    async_pipeline->add_element_to_pipeline(last_async_element.value());
-    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(final_elem, last_async_element.value(), final_elem_source_index, 0));
+    async_pipeline->add_element_to_pipeline(last_async_element);
+    CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(final_elem, last_async_element, final_elem_source_index, 0));
 
-    async_pipeline->add_last_element(last_async_element.value(), output_format_name);
+    async_pipeline->add_last_element(last_async_element, output_format_name);
 
-    return last_async_element.release();
+    return last_async_element;
 }
 
 Expected<std::pair<std::string, hailo_format_t>> AsyncPipelineBuilder::get_output_format_from_edge_info_name(const std::string &edge_info_name,
@@ -307,63 +287,54 @@ hailo_status AsyncPipelineBuilder::add_output_demux_flow(const std::string &outp
     CHECK(contains(named_stream_infos, output_stream_name), HAILO_INTERNAL_FAILURE);
     const auto &stream_info = named_stream_infos.at(output_stream_name);
 
-    auto source_index = async_pipeline->get_async_hw_element()->get_source_index_from_output_stream_name(output_stream_name);
-    CHECK_EXPECTED_AS_STATUS(source_index);
+    TRY(const auto source_index,
+        async_pipeline->get_async_hw_element()->get_source_index_from_output_stream_name(output_stream_name));
 
     auto is_empty = false;
     auto interacts_with_hw = true;
-    auto hw_queue_elem = add_push_queue_element(PipelineObject::create_element_name("PushQueueElement_post_hw", stream_info.name, stream_info.index),
-        async_pipeline, stream_info.hw_frame_size, is_empty, interacts_with_hw, async_pipeline->get_async_hw_element(), *source_index);
-    CHECK_EXPECTED_AS_STATUS(hw_queue_elem);
+    TRY_V(auto hw_queue_elem,
+            add_push_queue_element(PipelineObject::create_element_name("PushQueueElement_post_hw", stream_info.name, stream_info.index),
+            async_pipeline, stream_info.hw_frame_size, is_empty, interacts_with_hw, async_pipeline->get_async_hw_element(), source_index));
 
-    auto layer_info = net_group->get_layer_info(output_stream_name);
-    CHECK_EXPECTED_AS_STATUS(layer_info);
+    TRY(const auto layer_info, net_group->get_layer_info(output_stream_name));
 
-    auto expected_demuxer = OutputDemuxerBase::create(stream_info.hw_frame_size, *layer_info.value());
-    CHECK_EXPECTED_AS_STATUS(expected_demuxer);
+    TRY(auto demuxer, OutputDemuxerBase::create(stream_info.hw_frame_size, *layer_info));
 
-    auto demuxer_ptr = make_shared_nothrow<OutputDemuxerBase>(expected_demuxer.release());
+    auto demuxer_ptr = make_shared_nothrow<OutputDemuxerBase>(std::move(demuxer));
     CHECK_ARG_NOT_NULL(demuxer_ptr);
 
-    auto demux_elem = TransformDemuxElement::create(demuxer_ptr,
+    TRY(auto demux_elem, TransformDemuxElement::create(demuxer_ptr,
         PipelineObject::create_element_name("TransformDemuxEl", output_stream_name, stream_info.index),
-        async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline);
-    CHECK_EXPECTED_AS_STATUS(demux_elem);
-    async_pipeline->add_element_to_pipeline(demux_elem.value());
+        async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline));
+    async_pipeline->add_element_to_pipeline(demux_elem);
 
-    CHECK_SUCCESS(PipelinePad::link_pads(hw_queue_elem.value(), demux_elem.value()));
+    CHECK_SUCCESS(PipelinePad::link_pads(hw_queue_elem, demux_elem));
 
     uint8_t i = 0;
     for (auto &edge_info : demuxer_ptr->get_edges_stream_info()) {
-        auto output_format_expected = get_output_format_from_edge_info_name(edge_info.name, outputs_formats);
-        CHECK_EXPECTED_AS_STATUS(output_format_expected);
+        TRY(const auto output_format, get_output_format_from_edge_info_name(edge_info.name, outputs_formats));
 
-        is_empty = false;
-        interacts_with_hw = false;
-        auto demux_queue_elem = add_push_queue_element(PipelineObject::create_element_name("PushQEl_demux", edge_info.name, i), async_pipeline,
-            edge_info.hw_frame_size, is_empty, interacts_with_hw, demux_elem.value(), i);
-        CHECK_EXPECTED_AS_STATUS(demux_queue_elem);
+        TRY(const auto should_transform, OutputTransformContext::is_transformation_required(edge_info.hw_shape, 
+            edge_info.format, edge_info.shape, output_format.second, std::vector<hailo_quant_info_t>{edge_info.quant_info})); // TODO: Get quant vector (HRT-11077)
 
-        auto should_transform = OutputTransformContext::is_transformation_required(edge_info.hw_shape, 
-            edge_info.format, edge_info.shape, output_format_expected.value().second, std::vector<hailo_quant_info_t>{edge_info.quant_info}); // TODO: Get quant vector (HRT-11077)
-        CHECK_EXPECTED_AS_STATUS(should_transform);
+        if (should_transform) {
+            is_empty = false;
+            interacts_with_hw = false;
+            TRY(auto demux_queue_elem, add_push_queue_element(PipelineObject::create_element_name("PushQEl_demux", edge_info.name, i), async_pipeline,
+                edge_info.hw_frame_size, is_empty, interacts_with_hw, demux_elem, i));
 
-        if (should_transform.value()) {
-            auto post_infer_elem = add_post_infer_element(output_format_expected.value().second, edge_info.nms_info,
-                async_pipeline, edge_info.hw_shape, edge_info.format, edge_info.shape, {edge_info.quant_info}, demux_queue_elem.value());
-            CHECK_EXPECTED_AS_STATUS(post_infer_elem);
+            TRY(auto post_infer_elem, add_post_infer_element(output_format.second, edge_info.nms_info,
+                async_pipeline, edge_info.hw_shape, edge_info.format, edge_info.shape, {edge_info.quant_info}, demux_queue_elem));
 
             auto post_transform_frame_size = (HailoRTCommon::is_nms(edge_info.format.order)) ?
-                HailoRTCommon::get_nms_host_frame_size(edge_info.nms_info, output_format_expected.value().second) :
-                HailoRTCommon::get_frame_size(edge_info.shape, output_format_expected.value().second);
+                HailoRTCommon::get_nms_host_frame_size(edge_info.nms_info, output_format.second) :
+                HailoRTCommon::get_frame_size(edge_info.shape, output_format.second);
 
-            auto last_async_element = add_last_async_element(async_pipeline, output_format_expected.value().first, post_transform_frame_size,
-                post_infer_elem.value());
-            CHECK_EXPECTED_AS_STATUS(last_async_element);
+            TRY(auto last_async_element, add_last_async_element(async_pipeline, output_format.first, post_transform_frame_size,
+                post_infer_elem));
         } else {
-            auto last_async_element = add_last_async_element(async_pipeline, output_format_expected.value().first, edge_info.hw_frame_size,
-                demux_queue_elem.value());
-            CHECK_EXPECTED_AS_STATUS(last_async_element);
+            TRY(auto last_async_element, add_last_async_element(async_pipeline, output_format.first, edge_info.hw_frame_size,
+                demux_elem));
         }
         i++;
     }
@@ -373,10 +344,8 @@ hailo_status AsyncPipelineBuilder::add_output_demux_flow(const std::string &outp
 Expected<bool> AsyncPipelineBuilder::should_transform(const hailo_stream_info_t &stream_info, const std::vector<hailo_quant_info_t> &stream_quant_infos, 
     const hailo_format_t &output_format)
 {
-    auto should_transform = OutputTransformContext::is_transformation_required(stream_info.hw_shape,
+    return OutputTransformContext::is_transformation_required(stream_info.hw_shape,
         stream_info.format, stream_info.shape, output_format, stream_quant_infos);
-    CHECK_EXPECTED(should_transform);
-    return should_transform.release();
 }
 
 hailo_status AsyncPipelineBuilder::add_nms_fuse_flow(const std::vector<std::string> &output_streams_names,
@@ -399,28 +368,24 @@ hailo_status AsyncPipelineBuilder::add_nms_fuse_flow(const std::vector<std::stri
     // To get the fused layer name and src stream format, we use the stream info of one of the defuses
     auto fused_layer_name = first_defused_stream_info.nms_info.defuse_info.original_name;
 
-    auto nms_elem = NmsMuxElement::create(nms_infos, PipelineObject::create_element_name("NmsMuxEl", fused_layer_name, 0),
-        async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline);
-    CHECK_EXPECTED_AS_STATUS(nms_elem);
-
-    async_pipeline->add_element_to_pipeline(nms_elem.value());
+    TRY(auto nms_elem, NmsMuxElement::create(nms_infos, PipelineObject::create_element_name("NmsMuxEl", fused_layer_name, 0),
+        async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline));
+    async_pipeline->add_element_to_pipeline(nms_elem);
 
     uint32_t i = 0;
     for (const auto &stream_name : output_streams_names) {
         CHECK(contains(named_stream_infos, stream_name), HAILO_INTERNAL_FAILURE);
         const auto &curr_stream_info = named_stream_infos.at(stream_name);
 
-        auto output_index = async_pipeline->get_async_hw_element()->get_source_index_from_output_stream_name(stream_name);
-        CHECK_EXPECTED_AS_STATUS(output_index);
+        TRY(const auto output_index, async_pipeline->get_async_hw_element()->get_source_index_from_output_stream_name(stream_name));
 
         auto is_empty = false;
         auto interacts_with_hw = true;
-        auto queue_elem = add_push_queue_element(PipelineObject::create_element_name("PushQEl_nms", curr_stream_info.name, curr_stream_info.index),
+        TRY(auto queue_elem, add_push_queue_element(PipelineObject::create_element_name("PushQEl_nms", curr_stream_info.name, curr_stream_info.index),
             async_pipeline, curr_stream_info.hw_frame_size, is_empty, interacts_with_hw,
-            async_pipeline->get_async_hw_element(), output_index.value());
-        CHECK_EXPECTED_AS_STATUS(queue_elem);
+            async_pipeline->get_async_hw_element(), output_index));
 
-        CHECK_SUCCESS(PipelinePad::link_pads(queue_elem.value(), nms_elem.value(), 0, i));
+        CHECK_SUCCESS(PipelinePad::link_pads(queue_elem, nms_elem, 0, i));
         i++;
     }
 
@@ -428,17 +393,15 @@ hailo_status AsyncPipelineBuilder::add_nms_fuse_flow(const std::vector<std::stri
     auto stream_quant_infos = std::vector<hailo_quant_info_t>(1, first_defused_stream_info.quant_info);
 
     // On NMS models we always need tp post-infer
-    auto fused_layer_nms_info = nms_elem.value()->get_fused_nms_info();
+    const auto &fused_layer_nms_info = nms_elem->get_fused_nms_info();
 
-    auto post_infer_elem = add_post_infer_element(output_format.second, fused_layer_nms_info, async_pipeline,
-        first_defused_stream_info.hw_shape, first_defused_stream_info.format, first_defused_stream_info.shape, stream_quant_infos, nms_elem.value());
-    CHECK_EXPECTED_AS_STATUS(post_infer_elem);
+    TRY(auto post_infer_elem, add_post_infer_element(output_format.second, fused_layer_nms_info, async_pipeline,
+        first_defused_stream_info.hw_shape, first_defused_stream_info.format, first_defused_stream_info.shape, stream_quant_infos, nms_elem));
 
-    auto post_transform_frame_size = HailoRTCommon::get_nms_host_frame_size(fused_layer_nms_info, output_format.second);
+    const auto post_transform_frame_size = HailoRTCommon::get_nms_host_frame_size(fused_layer_nms_info, output_format.second);
 
-    auto last_async_element = add_last_async_element(async_pipeline, output_format.first, post_transform_frame_size,
-        post_infer_elem.value());
-    CHECK_EXPECTED_AS_STATUS(last_async_element);
+    TRY(auto last_async_element, add_last_async_element(async_pipeline, output_format.first, post_transform_frame_size,
+        post_infer_elem));
 
     return HAILO_SUCCESS;
 }
@@ -455,25 +418,22 @@ hailo_status AsyncPipelineBuilder::add_softmax_flow(std::shared_ptr<AsyncPipelin
 
     auto updated_output_format = output_format;
 
-    auto hw_async_elem_index = async_pipeline->get_async_hw_element()->get_source_index_from_output_stream_name(stream_name);
-    CHECK_EXPECTED_AS_STATUS(hw_async_elem_index);
+    TRY(const auto hw_async_elem_index, async_pipeline->get_async_hw_element()->get_source_index_from_output_stream_name(stream_name));
 
-    auto op_input_format = softmax_op_metadata->inputs_metadata().begin()->second.format;
-    auto output_format_expanded = net_flow::SoftmaxOpMetadata::expand_output_format_autos(updated_output_format.second, op_input_format);
+    const auto op_input_format = softmax_op_metadata->inputs_metadata().begin()->second.format;
+    const auto output_format_expanded = net_flow::SoftmaxOpMetadata::expand_output_format_autos(updated_output_format.second, op_input_format);
 
     // TODO (HRT-11078): Fix multi qp for PP
     auto stream_quant_infos = std::vector<hailo_quant_info_t>(1, stream_info.quant_info);
 
-    auto post_infer_elem = add_post_infer_element(output_format_expanded, {}, async_pipeline, stream_info.hw_shape, stream_info.format,
-        stream_info.shape, stream_quant_infos, async_pipeline->get_async_hw_element(), hw_async_elem_index.value());
-    CHECK_EXPECTED_AS_STATUS(post_infer_elem);
+    TRY(auto post_infer_elem, add_post_infer_element(output_format_expanded, {}, async_pipeline, stream_info.hw_shape, stream_info.format,
+        stream_info.shape, stream_quant_infos, async_pipeline->get_async_hw_element(), hw_async_elem_index));
 
     auto is_empty = false;
     auto interacts_with_hw = false;
     const auto post_transform_frame_size = HailoRTCommon::get_frame_size(stream_info.shape, output_format_expanded);
-    auto queue_elem = add_push_queue_element(PipelineObject::create_element_name("PushQEl_softmax", async_pipeline->get_async_hw_element()->name(),
-        static_cast<uint8_t>(hw_async_elem_index.value())), async_pipeline, post_transform_frame_size, is_empty, interacts_with_hw, post_infer_elem.value());
-    CHECK_EXPECTED_AS_STATUS(queue_elem);
+    TRY(auto queue_elem, add_push_queue_element(PipelineObject::create_element_name("PushQEl_softmax", async_pipeline->get_async_hw_element()->name(),
+        static_cast<uint8_t>(hw_async_elem_index)), async_pipeline, post_transform_frame_size, is_empty, interacts_with_hw, post_infer_elem));
 
     // Updating metadata according to user request
     // Currently softmax only supports inputs to be float32 and order NHWC or NC
@@ -487,21 +447,16 @@ hailo_status AsyncPipelineBuilder::add_softmax_flow(std::shared_ptr<AsyncPipelin
     metadata->set_inputs_metadata(updated_inputs_metadata);
     CHECK_SUCCESS(metadata->validate_format_info());
 
-    auto op_expected = net_flow::SoftmaxPostProcessOp::create(metadata);
-    CHECK_EXPECTED_AS_STATUS(op_expected);
-
-    auto softmax_op = op_expected.release();
-    auto softmax_element = SoftmaxPostProcessElement::create(softmax_op,
+    TRY(auto softmax_op, net_flow::SoftmaxPostProcessOp::create(metadata));
+    TRY(auto softmax_element, SoftmaxPostProcessElement::create(softmax_op,
         PipelineObject::create_element_name("SoftmaxPPEl", stream_name, stream_info.index),
-        async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline);
-    CHECK_EXPECTED_AS_STATUS(softmax_element);
+        async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline));
 
-    async_pipeline->add_element_to_pipeline(softmax_element.value());
-    CHECK_SUCCESS(PipelinePad::link_pads(queue_elem.value(), softmax_element.value()));
+    async_pipeline->add_element_to_pipeline(softmax_element);
+    CHECK_SUCCESS(PipelinePad::link_pads(queue_elem, softmax_element));
 
-    auto last_async_element = add_last_async_element(async_pipeline, updated_output_format.first, post_transform_frame_size,
-        softmax_element.value());
-    CHECK_EXPECTED_AS_STATUS(last_async_element);
+    TRY(auto last_async_element, add_last_async_element(async_pipeline, updated_output_format.first, post_transform_frame_size,
+        softmax_element));
 
     return HAILO_SUCCESS;
 }
@@ -516,18 +471,16 @@ hailo_status AsyncPipelineBuilder::add_argmax_flow(std::shared_ptr<AsyncPipeline
     CHECK(contains(named_stream_infos, stream_name), HAILO_INTERNAL_FAILURE);
     const auto &stream_info = named_stream_infos.at(stream_name);
 
-    auto hw_async_elem_index = async_pipeline->get_async_hw_element()->get_source_index_from_output_stream_name(stream_name);
-    CHECK_EXPECTED_AS_STATUS(hw_async_elem_index);
+    TRY(const auto hw_async_elem_index, async_pipeline->get_async_hw_element()->get_source_index_from_output_stream_name(stream_name));
 
     auto is_empty = false;
     auto interacts_with_hw = true;
-    auto queue_elem = add_push_queue_element(PipelineObject::create_element_name("PushQEl_argmax", async_pipeline->get_async_hw_element()->name(),
-        static_cast<uint8_t>(hw_async_elem_index.value())), async_pipeline, stream_info.hw_frame_size, is_empty, interacts_with_hw,
-        async_pipeline->get_async_hw_element(), hw_async_elem_index.value());
-    CHECK_EXPECTED_AS_STATUS(queue_elem);
+    TRY(auto queue_elem, add_push_queue_element(PipelineObject::create_element_name("PushQEl_argmax", async_pipeline->get_async_hw_element()->name(),
+        static_cast<uint8_t>(hw_async_elem_index)), async_pipeline, stream_info.hw_frame_size, is_empty, interacts_with_hw,
+        async_pipeline->get_async_hw_element(), hw_async_elem_index));
 
     // Updating metadata according to user request
-    auto op_input_format = argmax_op_metadata->inputs_metadata().begin()->second.format;
+    const auto op_input_format = argmax_op_metadata->inputs_metadata().begin()->second.format;
     auto updated_outputs_metadata = argmax_op_metadata.get()->outputs_metadata();
     updated_outputs_metadata.begin()->second.format = net_flow::ArgmaxOpMetadata::expand_output_format_autos(output_format.second, op_input_format);
     auto metadata = std::dynamic_pointer_cast<net_flow::ArgmaxOpMetadata>(argmax_op_metadata);
@@ -535,24 +488,19 @@ hailo_status AsyncPipelineBuilder::add_argmax_flow(std::shared_ptr<AsyncPipeline
     metadata->set_outputs_metadata(updated_outputs_metadata);
     CHECK_SUCCESS(metadata->validate_format_info());
 
-    auto op_expected = net_flow::ArgmaxPostProcessOp::create(metadata);
-    CHECK_EXPECTED_AS_STATUS(op_expected);
-    auto argmax_op = op_expected.release();
-
-    auto argmax_element = ArgmaxPostProcessElement::create(argmax_op,
+    TRY(auto argmax_op, net_flow::ArgmaxPostProcessOp::create(metadata));
+    TRY(auto argmax_element, ArgmaxPostProcessElement::create(argmax_op,
         PipelineObject::create_element_name("ArgmaxPPEl", stream_name, stream_info.index),
-        async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline);
-    CHECK_EXPECTED_AS_STATUS(argmax_element);
+        async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline));
 
-    async_pipeline->add_element_to_pipeline(argmax_element.value());
-    CHECK_SUCCESS(PipelinePad::link_pads(queue_elem.value(), argmax_element.value()));
+    async_pipeline->add_element_to_pipeline(argmax_element);
+    CHECK_SUCCESS(PipelinePad::link_pads(queue_elem, argmax_element));
 
     const auto post_transform_frame_size = HailoRTCommon::get_frame_size(updated_outputs_metadata.begin()->second.shape,
         updated_outputs_metadata.begin()->second.format);
 
-    auto last_async_element = add_last_async_element(async_pipeline, output_format.first, post_transform_frame_size,
-        argmax_element.value());
-    CHECK_EXPECTED_AS_STATUS(last_async_element);
+    TRY(auto last_async_element, add_last_async_element(async_pipeline, output_format.first, post_transform_frame_size,
+        argmax_element));
 
     return HAILO_SUCCESS;
 }
@@ -601,11 +549,11 @@ hailo_status AsyncPipelineBuilder::add_nms_flow(std::shared_ptr<AsyncPipeline> a
     };
     outputs_metadata.insert({nms_op->outputs_metadata().begin()->first, output_metadata});
 
-    auto nms_elem = NmsPostProcessMuxElement::create(nms_op, PipelineObject::create_element_name("NmsPPMuxEl", nms_op->get_name(), 0),
-        async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline);
-    CHECK_EXPECTED_AS_STATUS(nms_elem);
+    TRY(auto nms_elem,
+        NmsPostProcessMuxElement::create(nms_op, PipelineObject::create_element_name("NmsPPMuxEl", nms_op->get_name(), 0),
+            async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline));
 
-    async_pipeline->add_element_to_pipeline(nms_elem.value());
+    async_pipeline->add_element_to_pipeline(nms_elem);
 
     hailo_format_t nms_src_format = {};
     nms_src_format.flags = HAILO_FORMAT_FLAGS_NONE;
@@ -620,24 +568,23 @@ hailo_status AsyncPipelineBuilder::add_nms_flow(std::shared_ptr<AsyncPipeline> a
         // TODO (HRT-11052): Fix multi qp for NMS
         auto stream_quant_infos = std::vector<hailo_quant_info_t>(1, curr_stream_info.quant_info); //output_stream_base->get_quant_infos();
 
-        auto should_transform = OutputTransformContext::is_transformation_required(curr_stream_info.hw_shape, curr_stream_info.format,
-            curr_stream_info.hw_shape, nms_src_format, stream_quant_infos);
-        CHECK_EXPECTED_AS_STATUS(should_transform);
+        TRY(const auto should_transform,
+            OutputTransformContext::is_transformation_required(curr_stream_info.hw_shape, curr_stream_info.format,
+                curr_stream_info.hw_shape, nms_src_format, stream_quant_infos));
 
-        CHECK(!(should_transform.value()), HAILO_INVALID_ARGUMENT, "Unexpected transformation required for {}", curr_stream_name);
+        CHECK(!(should_transform), HAILO_INVALID_ARGUMENT, "Unexpected transformation required for {}", curr_stream_name);
 
-        auto source_id = async_pipeline->get_async_hw_element()->get_source_index_from_output_stream_name(curr_stream_name);
-        CHECK_EXPECTED_AS_STATUS(source_id);
+        TRY(const auto source_id,
+            async_pipeline->get_async_hw_element()->get_source_index_from_output_stream_name(curr_stream_name));
 
         auto is_empty = false;
         auto interacts_with_hw = true;
-        auto nms_source_queue_elem = add_push_queue_element(PipelineObject::create_element_name("PushQEl_nms", curr_stream_info.name,
+        TRY(auto nms_source_queue_elem, add_push_queue_element(PipelineObject::create_element_name("PushQEl_nms", curr_stream_info.name,
             curr_stream_info.index), async_pipeline, curr_stream_info.hw_frame_size, is_empty, interacts_with_hw,
-            async_pipeline->get_async_hw_element(), source_id.value());
-        CHECK_EXPECTED_AS_STATUS(nms_source_queue_elem);
+            async_pipeline->get_async_hw_element(), source_id));
 
-        CHECK_SUCCESS(PipelinePad::link_pads(nms_source_queue_elem.value(), nms_elem.value(), 0, i));
-        nms_elem.value()->add_sink_name(curr_stream_name);
+        CHECK_SUCCESS(PipelinePad::link_pads(nms_source_queue_elem, nms_elem, 0, i));
+        nms_elem->add_sink_name(curr_stream_name);
     }
     uint32_t post_transform_frame_size;
     if(nms_op_metadata->nms_config().bbox_only){
@@ -645,9 +592,8 @@ hailo_status AsyncPipelineBuilder::add_nms_flow(std::shared_ptr<AsyncPipeline> a
     } else {
         post_transform_frame_size = HailoRTCommon::get_nms_host_frame_size(vstream_info.nms_shape, output_format.second);
     }
-    auto last_async_element = add_last_async_element(async_pipeline, output_format.first, post_transform_frame_size,
-        nms_elem.value());
-    CHECK_EXPECTED_AS_STATUS(last_async_element);
+    TRY(auto last_async_element,
+        add_last_async_element(async_pipeline, output_format.first, post_transform_frame_size, nms_elem));
 
     return HAILO_SUCCESS;
 }
@@ -664,44 +610,42 @@ hailo_status AsyncPipelineBuilder::add_iou_flow( std::shared_ptr<AsyncPipeline> 
     // TODO (HRT-11078): Fix multi qp for PP
     auto stream_quant_infos = std::vector<hailo_quant_info_t>(1, output_stream_info.quant_info); //output_stream_base->get_quant_infos();
 
-    auto post_infer_element = add_post_infer_element(output_format.second, output_stream_info.nms_info,
+    TRY(auto post_infer_element, add_post_infer_element(output_format.second, output_stream_info.nms_info,
         async_pipeline, output_stream_info.hw_shape, output_stream_info.format, output_stream_info.shape, stream_quant_infos,
-        async_pipeline->get_async_hw_element());
-    CHECK_EXPECTED_AS_STATUS(post_infer_element);
+        async_pipeline->get_async_hw_element()));
 
     auto is_empty = false;
     auto interacts_with_hw = false;
     const auto post_transform_frame_size = HailoRTCommon::get_nms_host_frame_size(output_stream_info.nms_info, output_format.second);
-    auto pre_nms_convert_queue_element = add_push_queue_element(PipelineObject::create_element_name("PushQEl_pre_nms_convert", output_stream_name,
-        output_stream_info.index), async_pipeline, post_transform_frame_size, is_empty, interacts_with_hw, post_infer_element.value());
-    CHECK_EXPECTED_AS_STATUS(pre_nms_convert_queue_element);
+    TRY(auto pre_nms_convert_queue_element,
+        add_push_queue_element(PipelineObject::create_element_name("PushQEl_pre_nms_convert", output_stream_name,
+            output_stream_info.index), async_pipeline, post_transform_frame_size, is_empty, interacts_with_hw, post_infer_element));
 
-    auto nms_to_detections_element = add_nms_to_detections_convert_element(async_pipeline, output_stream_name, output_stream_info.index,
-        "NmsFormatToDetectionsEl", iou_op_metadata, pre_nms_convert_queue_element.value());
-    CHECK_EXPECTED_AS_STATUS(nms_to_detections_element);
+    TRY(auto nms_to_detections_element,
+        add_nms_to_detections_convert_element(async_pipeline, output_stream_name, output_stream_info.index,
+            "NmsFormatToDetectionsEl", iou_op_metadata, pre_nms_convert_queue_element));
 
-    auto pre_remove_overlapping_bboxes_element_queue_element = add_push_queue_element(PipelineObject::create_element_name("PushQEl_pre_bboxes_removing",
-        output_stream_name, output_stream_info.index), async_pipeline, 0, is_empty, interacts_with_hw, nms_to_detections_element.value());
-    CHECK_EXPECTED_AS_STATUS(pre_remove_overlapping_bboxes_element_queue_element);
+    TRY(auto pre_remove_overlapping_bboxes_element_queue_element,
+        add_push_queue_element(PipelineObject::create_element_name("PushQEl_pre_bboxes_removing",
+            output_stream_name, output_stream_info.index), async_pipeline, 0, is_empty, interacts_with_hw, nms_to_detections_element));
+    
+    TRY(auto remove_overlapping_bboxes_element,
+        add_remove_overlapping_bboxes_element(async_pipeline, output_stream_name, output_stream_info.index,
+            "RemoveOverlappingBboxesEl", iou_op_metadata, pre_remove_overlapping_bboxes_element_queue_element));
 
-    auto remove_overlapping_bboxes_element = add_remove_overlapping_bboxes_element(async_pipeline, output_stream_name, output_stream_info.index,
-        "RemoveOverlappingBboxesEl", iou_op_metadata, pre_remove_overlapping_bboxes_element_queue_element.value());
-    CHECK_EXPECTED_AS_STATUS(remove_overlapping_bboxes_element);
+    TRY(auto pre_fill_nms_format_element_queue_element,
+        add_push_queue_element(PipelineObject::create_element_name("PushQEl_pre_fill_nms_format",
+            output_stream_name, output_stream_info.index), async_pipeline, 0, is_empty, interacts_with_hw, remove_overlapping_bboxes_element));
 
-    auto pre_fill_nms_format_element_queue_element = add_push_queue_element(PipelineObject::create_element_name("PushQEl_pre_fill_nms_format",
-        output_stream_name, output_stream_info.index), async_pipeline, 0, is_empty, interacts_with_hw, remove_overlapping_bboxes_element.value());
-    CHECK_EXPECTED_AS_STATUS(pre_fill_nms_format_element_queue_element);
+    TRY(auto fill_nms_format_element,
+        add_fill_nms_format_element(async_pipeline, output_stream_name, output_stream_info.index,
+            "FillNmsFormatEl", iou_op_metadata, pre_fill_nms_format_element_queue_element));
 
-    auto fill_nms_format_element = add_fill_nms_format_element(async_pipeline, output_stream_name, output_stream_info.index,
-        "FillNmsFormatEl", iou_op_metadata, pre_fill_nms_format_element_queue_element.value());
-    CHECK_EXPECTED_AS_STATUS(fill_nms_format_element);
+    TRY(const auto output_vstream_info, iou_op_metadata->get_output_vstream_info());
+    const auto final_frame_size = HailoRTCommon::get_frame_size(output_vstream_info, output_format.second);
 
-    auto output_vstream_info = iou_op_metadata->get_output_vstream_info();
-    CHECK_EXPECTED_AS_STATUS(output_vstream_info);
-    const auto final_frame_size = HailoRTCommon::get_frame_size(*output_vstream_info, output_format.second);
-
-    auto last_async_element = add_last_async_element(async_pipeline, output_format.first, final_frame_size, fill_nms_format_element.value());
-    CHECK_EXPECTED_AS_STATUS(last_async_element);
+    TRY(auto last_async_element,
+        add_last_async_element(async_pipeline, output_format.first, final_frame_size, fill_nms_format_element));
 
     return HAILO_SUCCESS;
 }
@@ -731,19 +675,22 @@ hailo_status AsyncPipelineBuilder::add_nms_flows(std::shared_ptr<AsyncPipeline> 
     {
         auto metadata = std::dynamic_pointer_cast<net_flow::YoloxOpMetadata>(op_metadata);
         assert(nullptr != metadata);
-        auto op_expected = net_flow::YOLOXPostProcessOp::create(metadata);
-        CHECK_EXPECTED_AS_STATUS(op_expected);
-        op = op_expected.release();
+        TRY(op, net_flow::YOLOXPostProcessOp::create(metadata));
         break;
     }
     case net_flow::OperationType::YOLOV8:
     {
         auto metadata = std::dynamic_pointer_cast<net_flow::Yolov8OpMetadata>(op_metadata);
         assert(nullptr != metadata);
-        auto op_expected = net_flow::YOLOV8PostProcessOp::create(metadata);
-        CHECK_EXPECTED_AS_STATUS(op_expected);
-        op = op_expected.release();
-        break;
+        if (metadata->nms_config().bbox_only) {
+            auto bbox_only_metadata = std::dynamic_pointer_cast<net_flow::Yolov8BboxOnlyOpMetadata>(op_metadata);
+            assert(nullptr != bbox_only_metadata);
+            TRY(op, net_flow::YOLOv8BboxOnlyPostProcessOp::create(bbox_only_metadata));
+            break;
+        } else {
+            TRY(op, net_flow::YOLOV8PostProcessOp::create(metadata));
+            break;
+        }
     }
     case net_flow::OperationType::YOLOV5:
     {
@@ -752,14 +699,10 @@ hailo_status AsyncPipelineBuilder::add_nms_flows(std::shared_ptr<AsyncPipeline> 
         if (metadata->nms_config().bbox_only) {
             auto bbox_only_metadata = std::dynamic_pointer_cast<net_flow::Yolov5BboxOnlyOpMetadata>(op_metadata);
             assert(nullptr != bbox_only_metadata);
-            auto op_expected = net_flow::YOLOv5BboxOnlyPostProcessOp::create(bbox_only_metadata);
-            CHECK_EXPECTED(op_expected);
-            op = op_expected.release();
+            TRY(op, net_flow::YOLOv5BboxOnlyPostProcessOp::create(bbox_only_metadata));
             break;
         } else {
-            auto op_expected = net_flow::YOLOv5PostProcessOp::create(metadata);
-            CHECK_EXPECTED_AS_STATUS(op_expected);
-            op = op_expected.release();
+            TRY(op, net_flow::YOLOv5PostProcessOp::create(metadata));
             break;
         }
     }
@@ -767,18 +710,14 @@ hailo_status AsyncPipelineBuilder::add_nms_flows(std::shared_ptr<AsyncPipeline> 
     {
         auto metadata = std::dynamic_pointer_cast<net_flow::Yolov5SegOpMetadata>(op_metadata);
         assert(nullptr != metadata);
-        auto op_expected = net_flow::Yolov5SegPostProcess::create(metadata);
-        CHECK_EXPECTED_AS_STATUS(op_expected);
-        op = op_expected.release();
+        TRY(op, net_flow::Yolov5SegPostProcess::create(metadata));
         break;
     }
     case net_flow::OperationType::SSD:
     {
         auto metadata = std::dynamic_pointer_cast<net_flow::SSDOpMetadata>(op_metadata);
         assert(nullptr != metadata);
-        auto op_expected = net_flow::SSDPostProcessOp::create(metadata);
-        CHECK_EXPECTED_AS_STATUS(op_expected);
-        op = op_expected.release();
+        TRY(op, net_flow::SSDPostProcessOp::create(metadata));
         break;
     }
     default:
@@ -833,75 +772,71 @@ hailo_status AsyncPipelineBuilder::create_post_async_hw_elements(std::shared_ptr
     std::unordered_map<stream_name_t, op_name_t> op_inputs_to_op_name;
     for (auto &metadata : net_group->get_ops_metadata().release()) {
         post_process_metadata.insert({metadata->get_name(), metadata});
-        for (auto &input_name : metadata->get_input_names()) {
+        for (const auto &input_name : metadata->get_input_names()) {
             op_inputs_to_op_name.insert({input_name, metadata->get_name()});
         }
     }
 
     for (auto &output_format : expanded_outputs_formats) {
-        auto stream_names = net_group->get_stream_names_from_vstream_name(output_format.first);
-        CHECK_EXPECTED_AS_STATUS(stream_names);
+        TRY(const auto stream_names, net_group->get_stream_names_from_vstream_name(output_format.first));
 
-        if (contains(streams_added, *stream_names->begin())) {
+        if (contains(streams_added, *stream_names.begin())) {
             continue;
         }
-        for (auto &output_name : stream_names.value()) {
+        for (auto &output_name : stream_names) {
             streams_added.push_back(output_name);
         }
 
-        CHECK(contains(named_stream_infos, *stream_names->begin()), HAILO_INTERNAL_FAILURE);
-        const auto &first_stream_info = named_stream_infos.at(*stream_names->begin());
+        CHECK(contains(named_stream_infos, *stream_names.begin()), HAILO_INTERNAL_FAILURE);
+        const auto &first_stream_info = named_stream_infos.at(*stream_names.begin());
 
-        if (contains(op_inputs_to_op_name, *stream_names->begin())) {
-            auto &op_name = op_inputs_to_op_name.at(*stream_names->begin());
+        if (contains(op_inputs_to_op_name, *stream_names.begin())) {
+            const auto &op_name = op_inputs_to_op_name.at(*stream_names.begin());
             auto &op_metadata = post_process_metadata.at(op_name);
 
-            auto output_vstreams_infos = net_group->get_output_vstream_infos();
-            CHECK_EXPECTED_AS_STATUS(output_vstreams_infos);
+            TRY(const auto output_vstreams_infos, net_group->get_output_vstream_infos());
 
             std::pair<std::string, hailo_format_t> original_output_format = {output_format.first, original_outputs_formats.at(output_format.first)};
 
             hailo_status status = add_ops_flows(async_pipeline, original_output_format,
-                op_metadata, stream_names.value(), output_vstreams_infos.value(), named_stream_infos);
+                op_metadata, stream_names, output_vstreams_infos, named_stream_infos);
             CHECK_SUCCESS(status);
 
         } else if ((HAILO_FORMAT_ORDER_HAILO_NMS == first_stream_info.format.order) &&
             (first_stream_info.nms_info.is_defused)) {
             // Case defuse NMS
-            hailo_status status = add_nms_fuse_flow(stream_names.value(), output_format, async_pipeline, named_stream_infos);
+            hailo_status status = add_nms_fuse_flow(stream_names, output_format, async_pipeline, named_stream_infos);
             CHECK_SUCCESS(status);
         } else if (first_stream_info.is_mux) {
             // case demux in output from NN core (only one output stream is currently supported)
-            hailo_status status = add_output_demux_flow(*stream_names->begin(), async_pipeline, expanded_outputs_formats, net_group, named_stream_infos);
+            hailo_status status = add_output_demux_flow(*stream_names.begin(), async_pipeline, expanded_outputs_formats, net_group, named_stream_infos);
             CHECK_SUCCESS(status);
         } else {
             // case simple and single output from NN core to user (and transformation at best)
-            auto final_elem_source_index = async_pipeline->get_async_hw_element()->get_source_index_from_output_stream_name(*stream_names->begin());
-            CHECK_EXPECTED_AS_STATUS(final_elem_source_index);
+            TRY(const auto final_elem_source_index,
+                async_pipeline->get_async_hw_element()->get_source_index_from_output_stream_name(*stream_names.begin()));
 
-            auto layer_info = net_group->get_layer_info(first_stream_info.name);
-            CHECK_EXPECTED_AS_STATUS(layer_info);
-            auto stream_quant_infos = layer_info.value()->quant_infos;
+            TRY(const auto layer_info, net_group->get_layer_info(first_stream_info.name));
+            auto stream_quant_infos = layer_info->quant_infos;
 
-            auto should_transform_expected = should_transform(first_stream_info, stream_quant_infos, output_format.second);
-            CHECK_EXPECTED_AS_STATUS(should_transform_expected);
+            TRY(auto should_transform,
+                should_transform(first_stream_info, stream_quant_infos, output_format.second));
 
-            if (should_transform_expected.value()) {
-                auto post_infer_elem = add_post_infer_element(output_format.second, first_stream_info.nms_info, async_pipeline, first_stream_info.hw_shape,
-                    first_stream_info.format, first_stream_info.shape, stream_quant_infos, async_pipeline->get_async_hw_element(), final_elem_source_index.value());
-                CHECK_EXPECTED_AS_STATUS(post_infer_elem);
+            if (should_transform) {
+                TRY(auto post_infer_elem,
+                    add_post_infer_element(output_format.second, first_stream_info.nms_info, async_pipeline, first_stream_info.hw_shape,
+                        first_stream_info.format, first_stream_info.shape, stream_quant_infos, async_pipeline->get_async_hw_element(),
+                        final_elem_source_index));
 
-                auto post_transform_frame_size = (HailoRTCommon::is_nms(first_stream_info.format.order)) ?
+                const auto post_transform_frame_size = (HailoRTCommon::is_nms(first_stream_info.format.order)) ?
                     HailoRTCommon::get_nms_host_frame_size(first_stream_info.nms_info, output_format.second) :
                     HailoRTCommon::get_frame_size(first_stream_info.shape, output_format.second);
 
-                auto last_async_element = add_last_async_element(async_pipeline, output_format.first, post_transform_frame_size,
-                    post_infer_elem.value());
-                CHECK_EXPECTED_AS_STATUS(last_async_element);
+                TRY(auto last_async_element, add_last_async_element(async_pipeline, output_format.first, post_transform_frame_size,
+                    post_infer_elem));
             } else {
-                auto last_async_element = add_last_async_element(async_pipeline, output_format.first, first_stream_info.hw_frame_size,
-                    async_pipeline->get_async_hw_element(), final_elem_source_index.value());
-                CHECK_EXPECTED_AS_STATUS(last_async_element);
+                TRY(auto last_async_element, add_last_async_element(async_pipeline, output_format.first, first_stream_info.hw_frame_size,
+                    async_pipeline->get_async_hw_element(), final_elem_source_index));
             }
         }
     }
@@ -921,54 +856,41 @@ Expected<std::shared_ptr<AsyncPipeline>> AsyncPipelineBuilder::create_pipeline(s
     // Buffer pool sizes for pipeline elements should be:
     // * The minimum of the maximum queue size of all LL streams (input and output) - for edge elements
     // * HAILO_DEFAULT_ASYNC_INFER_QUEUE_SIZE - for internal elements
-    auto buffer_pool_size_expected = net_group->get_min_buffer_pool_size();
-    CHECK_EXPECTED(buffer_pool_size_expected);
-    build_params.buffer_pool_size_edges = buffer_pool_size_expected.release();
-    build_params.buffer_pool_size_internal = std::min(static_cast<uint32_t>(build_params.buffer_pool_size_edges), static_cast<uint32_t>(HAILO_DEFAULT_ASYNC_INFER_QUEUE_SIZE));
+    TRY(build_params.buffer_pool_size_edges, net_group->get_min_buffer_pool_size());
+    build_params.buffer_pool_size_internal = std::min(static_cast<uint32_t>(build_params.buffer_pool_size_edges),
+        static_cast<uint32_t>(HAILO_DEFAULT_ASYNC_INFER_QUEUE_SIZE));
     build_params.elem_stats_flags = HAILO_PIPELINE_ELEM_STATS_NONE;
     build_params.vstream_stats_flags = HAILO_VSTREAM_STATS_NONE;
 
-    auto async_pipeline_expected = AsyncPipeline::create_shared();
-    CHECK_EXPECTED(async_pipeline_expected);
-    auto async_pipeline = async_pipeline_expected.release();
-
-    auto all_stream_infos = net_group->get_all_stream_infos();
-    CHECK_EXPECTED(all_stream_infos);
+    TRY(auto async_pipeline, AsyncPipeline::create_shared());
+    TRY(const auto all_stream_infos, net_group->get_all_stream_infos());
 
     std::unordered_map<std::string, hailo_stream_info_t> named_stream_infos;
-    for (const auto &info : all_stream_infos.value()) {
+    for (const auto &info : all_stream_infos) {
         named_stream_infos.emplace(info.name, info);
     }
 
-    auto input_expanded_format = expand_auto_input_formats(net_group, inputs_formats, named_stream_infos);
-    CHECK_EXPECTED(input_expanded_format);
-
-    auto output_expanded_format = expand_auto_output_formats(net_group, outputs_formats, named_stream_infos);
-    CHECK_EXPECTED(output_expanded_format);
-
+    TRY(const auto input_expanded_format, expand_auto_input_formats(net_group, inputs_formats, named_stream_infos));
+    TRY(const auto output_expanded_format, expand_auto_output_formats(net_group, outputs_formats, named_stream_infos));
     auto outputs_original_formats = outputs_formats;  // The original formats is needed for specific format expanding (required for PP OPs, like argmax)
 
-    auto shutdown_event_expected = Event::create_shared(Event::State::not_signalled);
-    CHECK_EXPECTED(shutdown_event_expected);
-
-    build_params.shutdown_event = shutdown_event_expected.release();
+    TRY(build_params.shutdown_event, Event::create_shared(Event::State::not_signalled));
     build_params.pipeline_status = pipeline_status;
     build_params.timeout = std::chrono::milliseconds(timeout);
 
     async_pipeline->set_build_params(build_params);
 
-    auto async_hw_elem = AsyncHwElement::create(named_stream_infos, build_params.timeout,
+    TRY(auto async_hw_elem, AsyncHwElement::create(named_stream_infos, build_params.timeout,
         build_params.elem_stats_flags, "AsyncHwEl", build_params.pipeline_status, net_group,
-        PipelineDirection::PUSH, async_pipeline);
-    CHECK_EXPECTED(async_hw_elem);
-    async_pipeline->add_element_to_pipeline(async_hw_elem.value());
-    async_pipeline->set_async_hw_element(async_hw_elem.release());
+        PipelineDirection::PUSH, async_pipeline));
+    async_pipeline->add_element_to_pipeline(async_hw_elem);
+    async_pipeline->set_async_hw_element(async_hw_elem);
 
-    hailo_status status = create_pre_async_hw_elements(net_group, input_expanded_format.value(), named_stream_infos,
+    hailo_status status = create_pre_async_hw_elements(net_group, input_expanded_format, named_stream_infos,
         async_pipeline);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
-    status = create_post_async_hw_elements(net_group, output_expanded_format.value(), outputs_original_formats, named_stream_infos,
+    status = create_post_async_hw_elements(net_group, output_expanded_format, outputs_original_formats, named_stream_infos,
         async_pipeline);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
@@ -995,15 +917,13 @@ Expected<std::shared_ptr<PixBufferElement>> AsyncPipelineBuilder::create_multi_p
         HAILO_INVALID_ARGUMENT, "The given order ({}) is not a multi-planar order", HailoRTCommon::get_format_order_str(order));
 
     // TODO: Support fps/latency collection for queue elems (HRT-7711)
-    auto duration_collector_expected = DurationCollector::create(HAILO_PIPELINE_ELEM_STATS_NONE);
-    CHECK_EXPECTED(duration_collector_expected);
+    TRY(auto duration_collector, DurationCollector::create(HAILO_PIPELINE_ELEM_STATS_NONE));
 
-    auto planes_splitter = PixBufferElement::create(PipelineObject::create_element_name("PixBufEl",
-        input_name, 0), std::chrono::milliseconds(HAILO_INFINITE), duration_collector_expected.release(), pipeline_status, order,
-        async_pipeline);
-    CHECK_EXPECTED(planes_splitter);
+    TRY(auto planes_splitter, PixBufferElement::create(PipelineObject::create_element_name("PixBufEl",
+        input_name, 0), std::chrono::milliseconds(HAILO_INFINITE), std::move(duration_collector), pipeline_status, order,
+        async_pipeline));
 
-    return planes_splitter.release();
+    return planes_splitter;
 }
 
 } /* namespace hailort */

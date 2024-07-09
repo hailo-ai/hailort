@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.0.0)
 # set(CMAKE_C_CLANG_TIDY "clang-tidy;-checks=*")
 
 set(HAILORT_MAJOR_VERSION    4)
-set(HAILORT_MINOR_VERSION    17)
-set(HAILORT_REVISION_VERSION 1)
+set(HAILORT_MINOR_VERSION    18)
+set(HAILORT_REVISION_VERSION 0)
 
 # Add the cmake folder so the modules there are found
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
@@ -11,6 +11,7 @@ set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 # Generate hef-proto files using host protobuf
 protobuf_generate_cpp(PROTO_HEF_SRC PROTO_HEF_HEADER hef.proto)
 protobuf_generate_python(PROTO_HEF_PY hef.proto) # TODO (HRT-12504): Copy hef_pb2.py to tools directory
+protobuf_generate_python(PROTO_HEF_PY tracer_profiler.proto)
 
 add_library(hef_proto ${PROTO_HEF_SRC} ${PROTO_HEF_HEADER} ${PROTO_HEF_PY})
 target_link_libraries(hef_proto libprotobuf-lite)
@@ -68,4 +69,6 @@ if(HAILO_BUILD_UT)
     add_subdirectory(tests)
 endif()
 add_subdirectory(bindings)
-add_subdirectory(doc)
+if(HAILO_BUILD_DOC)
+    add_subdirectory(doc)
+endif()

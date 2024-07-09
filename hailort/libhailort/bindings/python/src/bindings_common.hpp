@@ -38,18 +38,17 @@ public:
         }
     }
 
-    static std::vector<size_t> get_pybind_shape(const hailo_vstream_info_t& vstream_info, const hailo_format_t &user_format)
+    static std::vector<size_t> get_pybind_shape(
+        const hailo_3d_image_shape_t &shape,
+        const hailo_nms_shape_t &nms_shape,
+        const hailo_format_t &user_format)
     {
-        // We are using user_format instead of hw format inside the vstream_info
-        const auto shape = vstream_info.shape;
-        // TODO: support no transformations (i.e. use stream_info.hw_shape) (SDK-16811)
         switch (user_format.order)
         {
         case HAILO_FORMAT_ORDER_HAILO_NMS:
-            return { HailoRTCommon::get_nms_host_shape_size(vstream_info.nms_shape) };
-        case HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK: {
-            return {HailoRTCommon::get_nms_host_frame_size(vstream_info.nms_shape, user_format) / HailoRTCommon::get_format_data_bytes(user_format)};
-        }
+            return { HailoRTCommon::get_nms_host_shape_size(nms_shape) };
+        case HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK:
+            return {HailoRTCommon::get_nms_host_frame_size(nms_shape, user_format) / HailoRTCommon::get_format_data_bytes(user_format)};
         case HAILO_FORMAT_ORDER_NC:
             return {shape.features};
         case HAILO_FORMAT_ORDER_NHW:

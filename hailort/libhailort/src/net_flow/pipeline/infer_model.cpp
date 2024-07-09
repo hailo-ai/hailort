@@ -7,13 +7,10 @@
  * @brief Implemention of the async HL infer
  **/
 
-#include <iostream>
-
 #include "common/utils.hpp"
 #include "hailo/hailort_common.hpp"
 #include "hailo/vdevice.hpp"
 #include "hailo/infer_model.hpp"
-#include "vdevice/vdevice_internal.hpp"
 #include "hef/hef_internal.hpp"
 #include "net_flow/pipeline/infer_model_internal.hpp"
 #include "net_flow/pipeline/async_infer_runner.hpp"
@@ -24,27 +21,27 @@
 namespace hailort
 {
 
-std::string InferModel::InferStream::Impl::name() const
+std::string InferModelBase::InferStream::Impl::name() const
 {
     return m_vstream_info.name;
 }
 
-hailo_3d_image_shape_t InferModel::InferStream::Impl::shape() const
+hailo_3d_image_shape_t InferModelBase::InferStream::Impl::shape() const
 {
     return m_vstream_info.shape;
 }
 
-hailo_format_t InferModel::InferStream::Impl::format() const
+hailo_format_t InferModelBase::InferStream::Impl::format() const
 {
     return m_user_buffer_format;
 }
 
-size_t InferModel::InferStream::Impl::get_frame_size() const
+size_t InferModelBase::InferStream::Impl::get_frame_size() const
 {
     return HailoRTCommon::get_frame_size(m_vstream_info, m_user_buffer_format);
 }
 
-Expected<hailo_nms_shape_t> InferModel::InferStream::Impl::get_nms_shape() const
+Expected<hailo_nms_shape_t> InferModelBase::InferStream::Impl::get_nms_shape() const
 {
     CHECK_AS_EXPECTED(HailoRTCommon::is_nms(m_vstream_info.format.order), HAILO_INVALID_OPERATION,
         "Output {} is not NMS", name());
@@ -52,120 +49,184 @@ Expected<hailo_nms_shape_t> InferModel::InferStream::Impl::get_nms_shape() const
     return res;
 }
 
-std::vector<hailo_quant_info_t> InferModel::InferStream::Impl::get_quant_infos() const
+std::vector<hailo_quant_info_t> InferModelBase::InferStream::Impl::get_quant_infos() const
 {
     // TODO: Support quant infos vector
     return {m_vstream_info.quant_info};
 }
 
-void InferModel::InferStream::Impl::set_format_type(hailo_format_type_t type)
+void InferModelBase::InferStream::Impl::set_format_type(hailo_format_type_t type)
 {
     m_user_buffer_format.type = type;
 }
 
-void InferModel::InferStream::Impl::set_format_order(hailo_format_order_t order)
+void InferModelBase::InferStream::Impl::set_format_order(hailo_format_order_t order)
 {
     m_user_buffer_format.order = order;
 }
 
-bool InferModel::InferStream::Impl::is_nms() const
+bool InferModelBase::InferStream::Impl::is_nms() const
 {
     return HailoRTCommon::is_nms(m_vstream_info.format.order);
 }
 
-void InferModel::InferStream::Impl::set_nms_score_threshold(float32_t threshold)
+void InferModelBase::InferStream::Impl::set_nms_score_threshold(float32_t threshold)
 {
     m_nms_score_threshold = threshold;
 }
 
-void InferModel::InferStream::Impl::set_nms_iou_threshold(float32_t threshold)
+void InferModelBase::InferStream::Impl::set_nms_iou_threshold(float32_t threshold)
 {
     m_nms_iou_threshold = threshold;
 }
 
-void InferModel::InferStream::Impl::set_nms_max_proposals_per_class(uint32_t max_proposals_per_class)
+void InferModelBase::InferStream::Impl::set_nms_max_proposals_per_class(uint32_t max_proposals_per_class)
 {
     m_nms_max_proposals_per_class = max_proposals_per_class;
     m_vstream_info.nms_shape.max_bboxes_per_class = max_proposals_per_class;
 }
 
-void InferModel::InferStream::Impl::set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size)
+void InferModelBase::InferStream::Impl::set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size)
 {
     m_nms_max_accumulated_mask_size = max_accumulated_mask_size;
     m_vstream_info.nms_shape.max_accumulated_mask_size = max_accumulated_mask_size;
 }
 
-InferModel::InferStream::InferStream(std::shared_ptr<InferModel::InferStream::Impl> pimpl) : m_pimpl(pimpl)
+float32_t InferModelBase::InferStream::Impl::nms_score_threshold() const
+{
+    return m_nms_score_threshold;
+}
+
+float32_t InferModelBase::InferStream::Impl::nms_iou_threshold() const
+{
+    return m_nms_iou_threshold;
+}
+
+uint32_t InferModelBase::InferStream::Impl::nms_max_proposals_per_class() const
+{
+    return m_nms_max_proposals_per_class;
+}
+
+uint32_t InferModelBase::InferStream::Impl::nms_max_accumulated_mask_size() const
+{
+    return m_nms_max_accumulated_mask_size;
+}
+
+InferModelBase::InferStream::InferStream(std::shared_ptr<InferModelBase::InferStream::Impl> pimpl) : m_pimpl(pimpl)
 {
 }
 
-const std::string InferModel::InferStream::name() const
+const std::string InferModelBase::InferStream::name() const
 {
     return m_pimpl->name();
 }
 
-hailo_3d_image_shape_t InferModel::InferStream::shape() const
+hailo_3d_image_shape_t InferModelBase::InferStream::shape() const
 {
     return m_pimpl->shape();
 }
 
-hailo_format_t InferModel::InferStream::format() const
+hailo_format_t InferModelBase::InferStream::format() const
 {
     return m_pimpl->format();
 }
 
-size_t InferModel::InferStream::get_frame_size() const
+size_t InferModelBase::InferStream::get_frame_size() const
 {
     return m_pimpl->get_frame_size();
 }
 
-Expected<hailo_nms_shape_t> InferModel::InferStream::get_nms_shape() const
+Expected<hailo_nms_shape_t> InferModelBase::InferStream::get_nms_shape() const
 {
     return m_pimpl->get_nms_shape();
 }
 
-std::vector<hailo_quant_info_t> InferModel::InferStream::get_quant_infos() const
+std::vector<hailo_quant_info_t> InferModelBase::InferStream::get_quant_infos() const
 {
     return m_pimpl->get_quant_infos();
 }
 
-void InferModel::InferStream::set_format_type(hailo_format_type_t type)
+void InferModelBase::InferStream::set_format_type(hailo_format_type_t type)
 {
     m_pimpl->set_format_type(type);
 }
 
-void InferModel::InferStream::set_format_order(hailo_format_order_t order)
+void InferModelBase::InferStream::set_format_order(hailo_format_order_t order)
 {
     m_pimpl->set_format_order(order);
 }
 
-bool InferModel::InferStream::is_nms() const
+bool InferModelBase::InferStream::is_nms() const
 {
     return m_pimpl->is_nms();
 }
 
-void InferModel::InferStream::set_nms_score_threshold(float32_t threshold)
+void InferModelBase::InferStream::set_nms_score_threshold(float32_t threshold)
 {
     m_pimpl->set_nms_score_threshold(threshold);
 }
 
-void InferModel::InferStream::set_nms_iou_threshold(float32_t threshold)
+void InferModelBase::InferStream::set_nms_iou_threshold(float32_t threshold)
 {
     m_pimpl->set_nms_iou_threshold(threshold);
 }
 
-void InferModel::InferStream::set_nms_max_proposals_per_class(uint32_t max_proposals_per_class)
+void InferModelBase::InferStream::set_nms_max_proposals_per_class(uint32_t max_proposals_per_class)
 {
     m_pimpl->set_nms_max_proposals_per_class(max_proposals_per_class);
 }
 
-void InferModel::InferStream::set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size)
+void InferModelBase::InferStream::set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size)
 {
     m_pimpl->set_nms_max_accumulated_mask_size(max_accumulated_mask_size);
 }
 
-InferModel::InferModel(VDevice &vdevice, Hef &&hef, std::unordered_map<std::string, InferModel::InferStream> &&inputs,
-        std::unordered_map<std::string, InferModel::InferStream> &&outputs)
+float32_t InferModelBase::InferStream::nms_score_threshold() const
+{
+    return m_pimpl->nms_score_threshold();
+}
+
+float32_t InferModelBase::InferStream::nms_iou_threshold() const
+{
+    return m_pimpl->nms_iou_threshold();
+}
+
+uint32_t InferModelBase::InferStream::nms_max_proposals_per_class() const
+{
+    return m_pimpl->nms_max_proposals_per_class();
+}
+
+uint32_t InferModelBase::InferStream::nms_max_accumulated_mask_size() const
+{
+    return m_pimpl->nms_max_accumulated_mask_size();
+}
+
+Expected<std::shared_ptr<InferModelBase>> InferModelBase::create(VDevice &vdevice, const std::string &hef_path)
+{
+    TRY(auto hef, Hef::create(hef_path));
+    TRY(auto inputs, create_infer_stream_inputs(hef));
+    TRY(auto outputs, create_infer_stream_outputs(hef));
+
+    auto ptr = make_shared_nothrow<InferModelBase>(vdevice, std::move(hef), std::move(inputs), std::move(outputs));
+    CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+    return ptr;
+}
+
+Expected<std::shared_ptr<InferModelBase>> InferModelBase::create(VDevice &vdevice, const MemoryView hef_buffer)
+{
+    TRY(auto hef, Hef::create(hef_buffer));
+    TRY(auto inputs, create_infer_stream_inputs(hef));
+    TRY(auto outputs, create_infer_stream_outputs(hef));
+
+    auto ptr = make_shared_nothrow<InferModelBase>(vdevice, std::move(hef), std::move(inputs), std::move(outputs));
+    CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+    return ptr;
+}
+
+InferModelBase::InferModelBase(VDevice &vdevice, Hef &&hef, std::unordered_map<std::string, InferModelBase::InferStream> &&inputs,
+        std::unordered_map<std::string, InferModelBase::InferStream> &&outputs)
     : m_vdevice(vdevice), m_hef(std::move(hef)), m_inputs(std::move(inputs)), m_outputs(std::move(outputs)),
     m_config_params(HailoRTDefaults::get_configure_params())
 {
@@ -184,7 +245,7 @@ InferModel::InferModel(VDevice &vdevice, Hef &&hef, std::unordered_map<std::stri
     }
 }
 
-InferModel::InferModel(InferModel &&other) :
+InferModelBase::InferModelBase(InferModelBase &&other) :
     m_vdevice(std::move(other.m_vdevice)),
     m_hef(std::move(other.m_hef)),
     m_inputs(std::move(other.m_inputs)),
@@ -197,27 +258,27 @@ InferModel::InferModel(InferModel &&other) :
 {
 }
 
-const Hef &InferModel::hef() const
+const Hef &InferModelBase::hef() const
 {
     return m_hef;
 }
 
-void InferModel::set_batch_size(uint16_t batch_size)
+void InferModelBase::set_batch_size(uint16_t batch_size)
 {
     m_config_params.batch_size = batch_size;
 }
 
-void InferModel::set_power_mode(hailo_power_mode_t power_mode)
+void InferModelBase::set_power_mode(hailo_power_mode_t power_mode)
 {
     m_config_params.power_mode = power_mode;
 }
 
-void InferModel::set_hw_latency_measurement_flags(hailo_latency_measurement_flags_t latency)
+void InferModelBase::set_hw_latency_measurement_flags(hailo_latency_measurement_flags_t latency)
 {
     m_config_params.latency = latency;
 }
 
-Expected<ConfiguredInferModel> InferModel::configure()
+Expected<ConfiguredInferModel> InferModelBase::configure()
 {
     auto configure_params = m_vdevice.get().create_configure_params(m_hef);
     CHECK_EXPECTED(configure_params);
@@ -249,6 +310,8 @@ Expected<ConfiguredInferModel> InferModel::configure()
 
     std::unordered_map<std::string, hailo_format_t> inputs_formats;
     std::unordered_map<std::string, hailo_format_t> outputs_formats;
+    std::unordered_map<std::string, size_t> inputs_frame_sizes;
+    std::unordered_map<std::string, size_t> outputs_frame_sizes;
 
     auto input_vstream_infos = network_groups.value()[0]->get_input_vstream_infos();
     CHECK_EXPECTED(input_vstream_infos);
@@ -256,6 +319,7 @@ Expected<ConfiguredInferModel> InferModel::configure()
     for (const auto &vstream_info : input_vstream_infos.value()) {
         assert(contains(m_inputs, std::string(vstream_info.name)));
         inputs_formats[vstream_info.name] = m_inputs.at(vstream_info.name).format();
+        inputs_frame_sizes[vstream_info.name] = m_inputs.at(vstream_info.name).get_frame_size();
     }
 
     auto output_vstream_infos = network_groups.value()[0]->get_output_vstream_infos();
@@ -264,6 +328,7 @@ Expected<ConfiguredInferModel> InferModel::configure()
     for (const auto &vstream_info : output_vstream_infos.value()) {
         assert(contains(m_outputs, std::string(vstream_info.name)));
         outputs_formats[vstream_info.name] = m_outputs.at(vstream_info.name).format();
+        outputs_frame_sizes[vstream_info.name] = m_outputs.at(vstream_info.name).get_frame_size();
     }
 
     CHECK_AS_EXPECTED(std::all_of(m_inputs.begin(), m_inputs.end(), [](const auto &input_pair) {
@@ -300,7 +365,7 @@ Expected<ConfiguredInferModel> InferModel::configure()
     }
 
     auto configured_infer_model_pimpl = ConfiguredInferModelImpl::create(network_groups.value()[0], inputs_formats, outputs_formats,
-        get_input_names(), get_output_names(), m_vdevice);
+        get_input_names(), get_output_names(), m_vdevice, inputs_frame_sizes, outputs_frame_sizes);
     CHECK_EXPECTED(configured_infer_model_pimpl);
 
     // The hef buffer is being used only when working with the service.
@@ -311,8 +376,9 @@ Expected<ConfiguredInferModel> InferModel::configure()
     return ConfiguredInferModel(configured_infer_model_pimpl.release());
 }
 
-Expected<ConfiguredInferModel> InferModel::configure_for_ut(std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner,
+Expected<ConfiguredInferModel> InferModelBase::configure_for_ut(std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner,
     const std::vector<std::string> &input_names, const std::vector<std::string> &output_names,
+    const std::unordered_map<std::string, size_t> inputs_frame_sizes, const std::unordered_map<std::string, size_t> outputs_frame_sizes,
     std::shared_ptr<ConfiguredNetworkGroup> net_group)
 {
     if (nullptr == net_group) {
@@ -337,62 +403,108 @@ Expected<ConfiguredInferModel> InferModel::configure_for_ut(std::shared_ptr<Asyn
         net_group = network_groups.value()[0];
     }
 
-    auto configured_infer_model_pimpl = ConfiguredInferModelImpl::create_for_ut(net_group, async_infer_runner, input_names, output_names);
+    auto configured_infer_model_pimpl = ConfiguredInferModelImpl::create_for_ut(net_group, async_infer_runner, input_names, output_names,
+        inputs_frame_sizes, outputs_frame_sizes);
     CHECK_EXPECTED(configured_infer_model_pimpl);
 
     return ConfiguredInferModel(configured_infer_model_pimpl.release());
 }
 
-Expected<InferModel::InferStream> InferModel::input()
+Expected<InferModelBase::InferStream> InferModelBase::input()
 {
     CHECK_AS_EXPECTED(1 == m_inputs.size(), HAILO_INVALID_OPERATION, "Model has more than one input!");
     auto copy = m_inputs.begin()->second;
     return copy;
 }
 
-Expected<InferModel::InferStream> InferModel::output()
+Expected<InferModelBase::InferStream> InferModelBase::output()
 {
     CHECK_AS_EXPECTED(1 == m_outputs.size(), HAILO_INVALID_OPERATION, "Model has more than one output!");
     auto copy = m_outputs.begin()->second;
     return copy;
 }
 
-Expected<InferModel::InferStream> InferModel::input(const std::string &name)
+Expected<InferModelBase::InferStream> InferModelBase::input(const std::string &name)
 {
     CHECK_AS_EXPECTED(contains(m_inputs, name), HAILO_NOT_FOUND, "Input {} not found!", name);
     auto copy = m_inputs.at(name);
     return copy;
 }
 
-Expected<InferModel::InferStream> InferModel::output(const std::string &name)
+Expected<InferModelBase::InferStream> InferModelBase::output(const std::string &name)
 {
     CHECK_AS_EXPECTED(contains(m_outputs, name), HAILO_NOT_FOUND, "Output {}, not found!", name);
     auto copy = m_outputs.at(name);
     return copy;
 }
 
-const std::vector<InferModel::InferStream> &InferModel::inputs() const
+const std::vector<InferModelBase::InferStream> &InferModelBase::inputs() const
 {
     return m_inputs_vector;
 }
 
-const std::vector<InferModel::InferStream> &InferModel::outputs() const
+const std::vector<InferModelBase::InferStream> &InferModelBase::outputs() const
 {
     return m_outputs_vector;
 }
 
-const std::vector<std::string> &InferModel::get_input_names() const
+const std::vector<std::string> &InferModelBase::get_input_names() const
 {
     return m_input_names;
 }
 
-const std::vector<std::string> &InferModel::get_output_names() const
+const std::vector<std::string> &InferModelBase::get_output_names() const
 {
     return m_output_names;
 }
 
-ConfiguredInferModel::ConfiguredInferModel(std::shared_ptr<ConfiguredInferModelImpl> pimpl) : m_pimpl(pimpl)
+Expected<std::unordered_map<std::string, InferModel::InferStream>> InferModelBase::create_infer_stream_inputs(Hef &hef)
 {
+    auto input_vstream_infos = hef.get_input_vstream_infos();
+    CHECK_EXPECTED(input_vstream_infos);
+
+    std::unordered_map<std::string, InferModel::InferStream> inputs;
+    for (const auto &vstream_info : input_vstream_infos.value()) {
+        auto pimpl = make_shared_nothrow<InferModel::InferStream::Impl>(vstream_info);
+        CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
+
+        InferModel::InferStream stream(pimpl);
+        inputs.emplace(vstream_info.name, std::move(stream));
+    }
+
+    return inputs;
+}
+
+Expected<std::unordered_map<std::string, InferModel::InferStream>> InferModelBase::create_infer_stream_outputs(Hef &hef)
+{
+    auto output_vstream_infos = hef.get_output_vstream_infos();
+    CHECK_EXPECTED(output_vstream_infos);
+
+    std::unordered_map<std::string, InferModel::InferStream> outputs;
+    for (const auto &vstream_info : output_vstream_infos.value()) {
+        auto pimpl = make_shared_nothrow<InferModel::InferStream::Impl>(vstream_info);
+        CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
+
+        InferModel::InferStream stream(pimpl);
+        outputs.emplace(vstream_info.name, std::move(stream));
+    }
+
+    return outputs;
+}
+
+ConfiguredInferModel::ConfiguredInferModel(std::shared_ptr<ConfiguredInferModelBase> pimpl) : m_pimpl(pimpl)
+{
+}
+
+ConfiguredInferModelBase::ConfiguredInferModelBase(const std::unordered_map<std::string, size_t> inputs_frame_sizes,
+        const std::unordered_map<std::string, size_t> outputs_frame_sizes) :
+        m_inputs_frame_sizes(inputs_frame_sizes), m_outputs_frame_sizes(outputs_frame_sizes)
+{
+}
+
+ConfiguredInferModel ConfiguredInferModelBase::create(std::shared_ptr<ConfiguredInferModelBase> base)
+{
+    return ConfiguredInferModel(base);
 }
 
 Expected<ConfiguredInferModel::Bindings> ConfiguredInferModel::create_bindings()
@@ -400,9 +512,9 @@ Expected<ConfiguredInferModel::Bindings> ConfiguredInferModel::create_bindings()
     return m_pimpl->create_bindings();
 }
 
-hailo_status ConfiguredInferModel::wait_for_async_ready(std::chrono::milliseconds timeout)
+hailo_status ConfiguredInferModel::wait_for_async_ready(std::chrono::milliseconds timeout, uint32_t frames_count)
 {
-    return m_pimpl->wait_for_async_ready(timeout);
+    return m_pimpl->wait_for_async_ready(timeout, frames_count);
 }
 
 hailo_status ConfiguredInferModel::activate()
@@ -410,9 +522,9 @@ hailo_status ConfiguredInferModel::activate()
     return m_pimpl->activate();
 }
 
-void ConfiguredInferModel::deactivate()
+hailo_status ConfiguredInferModel::deactivate()
 {
-    m_pimpl->deactivate();
+    return m_pimpl->deactivate();
 }
 
 hailo_status ConfiguredInferModel::run(ConfiguredInferModel::Bindings bindings, std::chrono::milliseconds timeout)
@@ -423,7 +535,13 @@ hailo_status ConfiguredInferModel::run(ConfiguredInferModel::Bindings bindings, 
 Expected<AsyncInferJob> ConfiguredInferModel::run_async(ConfiguredInferModel::Bindings bindings,
     std::function<void(const AsyncInferCompletionInfo &)> callback)
 {
-    return m_pimpl->run_async(bindings, callback);
+    auto async_infer_job = m_pimpl->run_async(bindings, callback);
+    if (HAILO_SUCCESS != async_infer_job.status()) {
+        shutdown();
+        return make_unexpected(async_infer_job.status());
+    }
+
+    return async_infer_job.release();
 }
 
 Expected<LatencyMeasurementResult> ConfiguredInferModel::get_hw_latency_measurement()
@@ -451,15 +569,91 @@ Expected<size_t> ConfiguredInferModel::get_async_queue_size()
     return m_pimpl->get_async_queue_size();
 }
 
-void ConfiguredInferModel::shutdown()
+hailo_status ConfiguredInferModel::shutdown()
 {
-    m_pimpl->abort();
+    return m_pimpl->shutdown();
+}
+
+Expected<AsyncInferJob> ConfiguredInferModel::run_async(const std::vector<ConfiguredInferModel::Bindings> &bindings,
+    std::function<void(const AsyncInferCompletionInfo &)> callback)
+{
+    auto job_pimpl = make_shared_nothrow<AsyncInferJobImpl>(static_cast<uint32_t>(bindings.size()));
+    if (nullptr == job_pimpl) {
+        shutdown();
+        return make_unexpected(HAILO_OUT_OF_HOST_MEMORY);
+    }
+
+    auto transfer_done = [bindings, job_pimpl, callback](const AsyncInferCompletionInfo &completion_info) {
+        bool should_call_callback = ConfiguredInferModelBase::get_stream_done(completion_info.status, job_pimpl);
+        if (should_call_callback) {
+            AsyncInferCompletionInfo final_completion_info(ConfiguredInferModelBase::get_completion_status(job_pimpl));
+            callback(final_completion_info);
+            ConfiguredInferModelBase::mark_callback_done(job_pimpl);
+        }
+    };
+
+    for (const auto &binding : bindings) {
+        TRY(auto partial_job, run_async(binding, transfer_done));
+        partial_job.detach();
+    }
+
+    return AsyncInferJobImpl::create(job_pimpl);
+}
+
+Expected<ConfiguredInferModel::Bindings> ConfiguredInferModelBase::create_bindings(
+    std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&inputs,
+    std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&outputs)
+{
+    return ConfiguredInferModel::Bindings(std::move(inputs), std::move(outputs));
+}
+
+Expected<ConfiguredInferModel::Bindings::InferStream> ConfiguredInferModelBase::create_infer_stream(
+    const hailo_vstream_info_t &vstream_info)
+{
+    auto pimpl = make_shared_nothrow<ConfiguredInferModel::Bindings::InferStream::Impl>(vstream_info);
+    CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
+
+    ConfiguredInferModel::Bindings::InferStream stream(pimpl);
+    return stream;
+}
+
+BufferType ConfiguredInferModelBase::get_infer_stream_buffer_type(ConfiguredInferModel::Bindings::InferStream stream)
+{
+    return stream.m_pimpl->get_type();
+}
+
+bool ConfiguredInferModelBase::get_stream_done(hailo_status status, std::shared_ptr<AsyncInferJobImpl> job_pimpl)
+{
+    return job_pimpl->stream_done(status);
+}
+
+hailo_status ConfiguredInferModelBase::get_completion_status(std::shared_ptr<AsyncInferJobImpl> job_pimpl)
+{
+    return job_pimpl->completion_status();
+}
+
+void ConfiguredInferModelBase::mark_callback_done(std::shared_ptr<AsyncInferJobImpl> job_pimpl)
+{
+    job_pimpl->mark_callback_done();
+}
+
+hailo_status ConfiguredInferModelBase::run(ConfiguredInferModel::Bindings bindings, std::chrono::milliseconds timeout)
+{
+    auto job = run_async(bindings, [] (const AsyncInferCompletionInfo &) {});
+    CHECK_EXPECTED_AS_STATUS(job);
+
+    auto status = job->wait(timeout);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
 }
 
 Expected<std::shared_ptr<ConfiguredInferModelImpl>> ConfiguredInferModelImpl::create(std::shared_ptr<ConfiguredNetworkGroup> net_group,
     const std::unordered_map<std::string, hailo_format_t> &inputs_formats,
     const std::unordered_map<std::string, hailo_format_t> &outputs_formats,
-    const std::vector<std::string> &input_names, const std::vector<std::string> &output_names, VDevice &vdevice, const uint32_t timeout)
+    const std::vector<std::string> &input_names, const std::vector<std::string> &output_names, VDevice &vdevice,
+    const std::unordered_map<std::string, size_t> inputs_frame_sizes, const std::unordered_map<std::string, size_t> outputs_frame_sizes,
+    const uint32_t timeout)
 {
     auto async_infer_runner = AsyncInferRunnerImpl::create(net_group, inputs_formats, outputs_formats, timeout);
     CHECK_EXPECTED(async_infer_runner);
@@ -477,33 +671,34 @@ Expected<std::shared_ptr<ConfiguredInferModelImpl>> ConfiguredInferModelImpl::cr
     }
 
     auto configured_infer_model_pimpl = make_shared_nothrow<ConfiguredInferModelImpl>(net_group, async_infer_runner.release(),
-        input_names, output_names);
+        input_names, output_names, inputs_frame_sizes, outputs_frame_sizes);
     CHECK_NOT_NULL_AS_EXPECTED(configured_infer_model_pimpl, HAILO_OUT_OF_HOST_MEMORY);
 
     return configured_infer_model_pimpl;
 }
 
 Expected<std::shared_ptr<ConfiguredInferModelImpl>> ConfiguredInferModelImpl::create_for_ut(std::shared_ptr<ConfiguredNetworkGroup> net_group,
-    std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner, const std::vector<std::string> &input_names, const std::vector<std::string> &output_names)
+    std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner, const std::vector<std::string> &input_names, const std::vector<std::string> &output_names,
+    const std::unordered_map<std::string, size_t> inputs_frame_sizes, const std::unordered_map<std::string, size_t> outputs_frame_sizes)
 {
     auto configured_infer_model_pimpl = make_shared_nothrow<ConfiguredInferModelImpl>(net_group, async_infer_runner,
-        input_names, output_names);
+        input_names, output_names, inputs_frame_sizes, outputs_frame_sizes);
     CHECK_NOT_NULL_AS_EXPECTED(configured_infer_model_pimpl, HAILO_OUT_OF_HOST_MEMORY);
 
     return configured_infer_model_pimpl;
 }
 
 ConfiguredInferModelImpl::ConfiguredInferModelImpl(std::shared_ptr<ConfiguredNetworkGroup> cng,
-    std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner,
-    const std::vector<std::string> &input_names,
-    const std::vector<std::string> &output_names) : m_cng(cng), m_async_infer_runner(async_infer_runner),
-    m_ongoing_parallel_transfers(0), m_input_names(input_names), m_output_names(output_names)
+    std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner, const std::vector<std::string> &input_names, const std::vector<std::string> &output_names,
+    const std::unordered_map<std::string, size_t> inputs_frame_sizes, const std::unordered_map<std::string, size_t> outputs_frame_sizes) :
+    ConfiguredInferModelBase(inputs_frame_sizes, outputs_frame_sizes),
+    m_cng(cng), m_async_infer_runner(async_infer_runner), m_ongoing_parallel_transfers(0), m_input_names(input_names), m_output_names(output_names)
 {
 }
 
 ConfiguredInferModelImpl::~ConfiguredInferModelImpl()
 {
-    abort();
+    shutdown();
 }
 
 Expected<ConfiguredInferModel::Bindings> ConfiguredInferModelImpl::create_bindings()
@@ -511,37 +706,35 @@ Expected<ConfiguredInferModel::Bindings> ConfiguredInferModelImpl::create_bindin
     std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> inputs;
     std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> outputs;
 
-    auto input_vstream_infos = m_cng->get_input_vstream_infos();
+    auto cng = m_cng.lock();
+    CHECK_NOT_NULL_AS_EXPECTED(cng, HAILO_INTERNAL_FAILURE);
+
+    auto input_vstream_infos = cng->get_input_vstream_infos();
     CHECK_EXPECTED(input_vstream_infos);
 
     for (const auto &vstream_info : input_vstream_infos.value()) {
-        auto pimpl = make_shared_nothrow<ConfiguredInferModel::Bindings::InferStream::Impl>(vstream_info);
-        CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
-
-        ConfiguredInferModel::Bindings::InferStream stream(pimpl);
+        TRY(auto stream, ConfiguredInferModelBase::create_infer_stream(vstream_info));
         inputs.emplace(vstream_info.name, std::move(stream));
     }
 
-    auto output_vstream_infos = m_cng->get_output_vstream_infos();
+    auto output_vstream_infos = cng->get_output_vstream_infos();
     CHECK_EXPECTED(output_vstream_infos);
 
     for (const auto &vstream_info : output_vstream_infos.value()) {
-        auto pimpl = make_shared_nothrow<ConfiguredInferModel::Bindings::InferStream::Impl>(vstream_info);
-        CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
-
-        ConfiguredInferModel::Bindings::InferStream stream(pimpl);
+        TRY(auto stream, ConfiguredInferModelBase::create_infer_stream(vstream_info));
         outputs.emplace(vstream_info.name, std::move(stream));
     }
 
-    return ConfiguredInferModel::Bindings(std::move(inputs), std::move(outputs));
+    TRY(auto bindings, ConfiguredInferModelBase::create_bindings(std::move(inputs), std::move(outputs)));
+    return bindings;
 }
 
-hailo_status ConfiguredInferModelImpl::wait_for_async_ready(std::chrono::milliseconds timeout)
+hailo_status ConfiguredInferModelImpl::wait_for_async_ready(std::chrono::milliseconds timeout, uint32_t frames_count)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     hailo_status status = HAILO_SUCCESS;
-    bool was_successful = m_cv.wait_for(lock, timeout, [this, &status] () -> bool {
-        auto pools_are_ready = m_async_infer_runner->can_push_buffers();
+    bool was_successful = m_cv.wait_for(lock, timeout, [this, frames_count, &status] () -> bool {
+        auto pools_are_ready = m_async_infer_runner->can_push_buffers(frames_count);
         if (HAILO_SUCCESS != pools_are_ready.status()) {
             status = pools_are_ready.status();
             return true;
@@ -555,36 +748,32 @@ hailo_status ConfiguredInferModelImpl::wait_for_async_ready(std::chrono::millise
     return HAILO_SUCCESS;
 }
 
-void ConfiguredInferModelImpl::abort()
+hailo_status ConfiguredInferModelImpl::shutdown()
 {
     m_async_infer_runner->abort();
     std::unique_lock<std::mutex> lock(m_mutex);
     m_cv.wait_for(lock, WAIT_FOR_ASYNC_IN_DTOR_TIMEOUT, [this] () -> bool {
         return m_ongoing_parallel_transfers == 0;
     });
+
+    return deactivate();
 }
 
 hailo_status ConfiguredInferModelImpl::activate()
 {
-    auto activated_ng = m_cng->activate();
+    auto cng = m_cng.lock();
+    CHECK_NOT_NULL(cng, HAILO_INTERNAL_FAILURE);
+
+    auto activated_ng = cng->activate();
     CHECK_EXPECTED_AS_STATUS(activated_ng);
 
     m_ang = activated_ng.release();
     return HAILO_SUCCESS;
 }
 
-void ConfiguredInferModelImpl::deactivate()
+hailo_status ConfiguredInferModelImpl::deactivate()
 {
     m_ang = nullptr;
-}
-
-hailo_status ConfiguredInferModelImpl::run(ConfiguredInferModel::Bindings bindings, std::chrono::milliseconds timeout)
-{
-    auto job = run_async(bindings, [] (const AsyncInferCompletionInfo &) {});
-    CHECK_EXPECTED_AS_STATUS(job);
-
-    auto status = job->wait(timeout);
-    CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
 }
@@ -592,21 +781,35 @@ hailo_status ConfiguredInferModelImpl::run(ConfiguredInferModel::Bindings bindin
 hailo_status ConfiguredInferModelImpl::validate_bindings(ConfiguredInferModel::Bindings bindings)
 {
     for (const auto &input_name : m_input_names) {
-        auto buffer_type = bindings.input(input_name)->m_pimpl->get_type();
+        TRY(auto input, bindings.input(input_name));
+        auto buffer_type = ConfiguredInferModelBase::get_infer_stream_buffer_type(input);
         switch (buffer_type) {
             case BufferType::VIEW:
             {
-                CHECK_EXPECTED_AS_STATUS(bindings.input(input_name)->get_buffer());
+                auto buffer = input.get_buffer();
+                CHECK_EXPECTED_AS_STATUS(buffer);
+                CHECK(buffer->size() == m_inputs_frame_sizes.at(input_name), HAILO_INVALID_OPERATION,
+                    "Input buffer size {} is different than expected {} for input '{}'", buffer->size(), m_inputs_frame_sizes.at(input_name), input_name);
                 break;
             }
             case BufferType::PIX_BUFFER:
             {
-                CHECK_EXPECTED_AS_STATUS(bindings.input(input_name)->get_pix_buffer());
+                auto buffer = input.get_pix_buffer();
+                CHECK_EXPECTED_AS_STATUS(buffer);
+                size_t buffer_size = 0;
+                for (size_t i = 0 ; i < buffer->number_of_planes ; i++) {
+                    buffer_size += buffer->planes[i].bytes_used;
+                }
+                CHECK(buffer_size == m_inputs_frame_sizes.at(input_name), HAILO_INVALID_OPERATION,
+                    "Input buffer size {} is different than expected {} for input '{}'", buffer_size, m_inputs_frame_sizes.at(input_name), input_name);
                 break;
             }
             case BufferType::DMA_BUFFER:
             {
-                CHECK_EXPECTED_AS_STATUS(bindings.input(input_name)->get_dma_buffer());
+                auto buffer = input.get_dma_buffer();
+                CHECK_EXPECTED_AS_STATUS(buffer);
+                CHECK(buffer->size == m_inputs_frame_sizes.at(input_name), HAILO_INVALID_OPERATION,
+                    "Input buffer size {} is different than expected {} for input '{}'", buffer->size, m_inputs_frame_sizes.at(input_name), input_name);
                 break;
             }
             default:
@@ -614,11 +817,15 @@ hailo_status ConfiguredInferModelImpl::validate_bindings(ConfiguredInferModel::B
         }
     }
     for (const auto &output_name : m_output_names) {
-        auto buffer_type = bindings.output(output_name)->m_pimpl->get_type();
+        TRY(auto output, bindings.output(output_name));
+        auto buffer_type = ConfiguredInferModelBase::get_infer_stream_buffer_type(output);
         switch (buffer_type) {
             case BufferType::VIEW:
             {
-                CHECK_EXPECTED_AS_STATUS(bindings.output(output_name)->get_buffer());
+                auto buffer = output.get_buffer();
+                CHECK_EXPECTED_AS_STATUS(buffer);
+                CHECK(buffer->size() == m_outputs_frame_sizes.at(output_name), HAILO_INVALID_OPERATION,
+                    "Output buffer size {} is different than expected {} for output '{}'", buffer->size(), m_outputs_frame_sizes.at(output_name), output_name);
                 break;
             }
             case BufferType::PIX_BUFFER:
@@ -628,7 +835,10 @@ hailo_status ConfiguredInferModelImpl::validate_bindings(ConfiguredInferModel::B
             }
             case BufferType::DMA_BUFFER:
             {
-                CHECK_EXPECTED_AS_STATUS(bindings.output(output_name)->get_dma_buffer());
+                auto buffer = output.get_dma_buffer();
+                CHECK_EXPECTED_AS_STATUS(buffer);
+                CHECK(buffer->size == m_outputs_frame_sizes.at(output_name), HAILO_INVALID_OPERATION,
+                    "Output buffer size {} is different than expected {} for out '{}'", buffer->size, m_outputs_frame_sizes.at(output_name), output_name);
                 break;
             }
             default:
@@ -644,19 +854,18 @@ Expected<AsyncInferJob> ConfiguredInferModelImpl::run_async(ConfiguredInferModel
 {
     CHECK_SUCCESS_AS_EXPECTED(validate_bindings(bindings));
 
-    auto job_pimpl = make_shared_nothrow<AsyncInferJob::Impl>(static_cast<uint32_t>(m_input_names.size() + m_output_names.size()));
+    auto job_pimpl = make_shared_nothrow<AsyncInferJobImpl>(static_cast<uint32_t>(m_input_names.size() + m_output_names.size()));
     CHECK_NOT_NULL_AS_EXPECTED(job_pimpl, HAILO_OUT_OF_HOST_MEMORY);
 
     TransferDoneCallbackAsyncInfer transfer_done = [this, bindings, job_pimpl, callback](hailo_status status) {
-        bool should_call_callback = job_pimpl->stream_done(status);
+        bool should_call_callback = ConfiguredInferModelBase::get_stream_done(status, job_pimpl);
         if (should_call_callback) {
             auto final_status = (m_async_infer_runner->get_pipeline_status() == HAILO_SUCCESS) ?
-                job_pimpl->completion_status() : m_async_infer_runner->get_pipeline_status();
+                ConfiguredInferModelBase::get_completion_status(job_pimpl) : m_async_infer_runner->get_pipeline_status();
 
             AsyncInferCompletionInfo completion_info(final_status);
             callback(completion_info);
-            job_pimpl->mark_callback_done();
-
+            ConfiguredInferModelBase::mark_callback_done(job_pimpl);
             {
                 std::unique_lock<std::mutex> lock(m_mutex);
                 m_ongoing_parallel_transfers--;
@@ -673,36 +882,50 @@ Expected<AsyncInferJob> ConfiguredInferModelImpl::run_async(ConfiguredInferModel
     }
     m_cv.notify_all();
 
-    AsyncInferJob job(job_pimpl);
-    return job;
+    return AsyncInferJobImpl::create(job_pimpl);
 }
 
 Expected<LatencyMeasurementResult> ConfiguredInferModelImpl::get_hw_latency_measurement()
 {
-    return m_cng->get_latency_measurement();
+    auto cng = m_cng.lock();
+    CHECK_NOT_NULL_AS_EXPECTED(cng, HAILO_INTERNAL_FAILURE);
+
+    return cng->get_latency_measurement();
 }
 
 hailo_status ConfiguredInferModelImpl::set_scheduler_timeout(const std::chrono::milliseconds &timeout)
 {
-    return m_cng->set_scheduler_timeout(timeout);
+    auto cng = m_cng.lock();
+    CHECK_NOT_NULL(cng, HAILO_INTERNAL_FAILURE);
+
+    return cng->set_scheduler_timeout(timeout);
 }
 
 hailo_status ConfiguredInferModelImpl::set_scheduler_threshold(uint32_t threshold)
 {
-    return m_cng->set_scheduler_threshold(threshold);
+    auto cng = m_cng.lock();
+    CHECK_NOT_NULL(cng, HAILO_INTERNAL_FAILURE);
+
+    return cng->set_scheduler_threshold(threshold);
 }
 
 hailo_status ConfiguredInferModelImpl::set_scheduler_priority(uint8_t priority)
 {
-    return m_cng->set_scheduler_priority(priority);
+    auto cng = m_cng.lock();
+    CHECK_NOT_NULL(cng, HAILO_INTERNAL_FAILURE);
+
+    return cng->set_scheduler_priority(priority);
 }
 
 Expected<size_t> ConfiguredInferModelImpl::get_async_queue_size()
 {
-    return m_cng->get_min_buffer_pool_size();
+    auto cng = m_cng.lock();
+    CHECK_NOT_NULL(cng, HAILO_INTERNAL_FAILURE);
+
+    return cng->get_min_buffer_pool_size();
 }
 
-AsyncInferJob::AsyncInferJob(std::shared_ptr<Impl> pimpl) : m_pimpl(pimpl), m_should_wait_in_dtor(true)
+AsyncInferJob::AsyncInferJob(std::shared_ptr<AsyncInferJobBase> pimpl) : m_pimpl(pimpl), m_should_wait_in_dtor(true)
 {
 }
 
@@ -748,13 +971,18 @@ void AsyncInferJob::detach()
     m_should_wait_in_dtor = false;
 }
 
-AsyncInferJob::Impl::Impl(uint32_t streams_count) : m_job_completion_status(HAILO_SUCCESS)
+AsyncInferJob AsyncInferJobBase::create(std::shared_ptr<AsyncInferJobBase> base)
+{
+    return AsyncInferJob(base);
+}
+
+AsyncInferJobImpl::AsyncInferJobImpl(uint32_t streams_count) : m_job_completion_status(HAILO_SUCCESS)
 {
     m_ongoing_transfers = streams_count;
     m_callback_called = false;
 }
 
-hailo_status AsyncInferJob::Impl::wait(std::chrono::milliseconds timeout)
+hailo_status AsyncInferJobImpl::wait(std::chrono::milliseconds timeout)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     bool was_successful = m_cv.wait_for(lock, timeout, [this] () -> bool {
@@ -765,7 +993,7 @@ hailo_status AsyncInferJob::Impl::wait(std::chrono::milliseconds timeout)
     return HAILO_SUCCESS;
 }
 
-bool AsyncInferJob::Impl::stream_done(const hailo_status &status)
+bool AsyncInferJobImpl::stream_done(const hailo_status &status)
 {
     bool should_call_callback = false;
     {
@@ -779,12 +1007,12 @@ bool AsyncInferJob::Impl::stream_done(const hailo_status &status)
     return should_call_callback;
 }
 
-hailo_status AsyncInferJob::Impl::completion_status()
+hailo_status AsyncInferJobImpl::completion_status()
 {
     return m_job_completion_status;
 }
 
-void AsyncInferJob::Impl::mark_callback_done()
+void AsyncInferJobImpl::mark_callback_done()
 {
     {
         std::unique_lock<std::mutex> lock(m_mutex);

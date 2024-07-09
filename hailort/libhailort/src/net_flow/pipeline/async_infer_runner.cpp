@@ -155,10 +155,10 @@ Expected<std::shared_ptr<AsyncInferRunnerImpl>> AsyncInferRunnerImpl::create(std
     auto pipeline_status = make_shared_nothrow<std::atomic<hailo_status>>(HAILO_SUCCESS);
     CHECK_AS_EXPECTED(nullptr != pipeline_status, HAILO_OUT_OF_HOST_MEMORY);
 
-    auto async_pipeline_expected = AsyncPipelineBuilder::create_pipeline(net_group, inputs_formats, outputs_formats, timeout, pipeline_status);
-    CHECK_EXPECTED(async_pipeline_expected);
+    TRY(auto async_pipeline,
+        AsyncPipelineBuilder::create_pipeline(net_group, inputs_formats, outputs_formats, timeout, pipeline_status));
 
-    auto async_infer_runner_ptr = make_shared_nothrow<AsyncInferRunnerImpl>(async_pipeline_expected.release(), pipeline_status);
+    auto async_infer_runner_ptr = make_shared_nothrow<AsyncInferRunnerImpl>(std::move(async_pipeline), pipeline_status);
     CHECK_NOT_NULL_AS_EXPECTED(async_infer_runner_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     auto status = async_infer_runner_ptr->start_pipeline();
@@ -221,20 +221,18 @@ void AsyncInferRunnerImpl::abort()
     return;
 }
 
-Expected<bool> AsyncInferRunnerImpl::can_push_buffers()
+Expected<bool> AsyncInferRunnerImpl::can_push_buffers(uint32_t frames_count)
 {
     for (auto &last_element : m_async_pipeline->get_last_elements()) {
-        auto can_push_buffer = last_element.second->can_push_buffer_upstream();
-        CHECK_EXPECTED(can_push_buffer);
-        if (!can_push_buffer.release()) {
+        TRY(const auto can_push_buffer, last_element.second->can_push_buffer_upstream(frames_count));
+        if (!can_push_buffer) {
             return false;
         }
     }
 
     for (auto &entry_element : m_async_pipeline->get_entry_elements()) {
-        auto can_push_buffer = entry_element.second->can_push_buffer_downstream();
-        CHECK_EXPECTED(can_push_buffer);
-        if (!can_push_buffer.release()) {
+        TRY(const auto can_push_buffer, entry_element.second->can_push_buffer_downstream(frames_count));
+        if (!can_push_buffer) {
             return false;
         }
     }
@@ -243,12 +241,11 @@ Expected<bool> AsyncInferRunnerImpl::can_push_buffers()
 }
 
 hailo_status AsyncInferRunnerImpl::set_buffers(std::unordered_map<std::string, PipelineBuffer> &inputs,
-    std::unordered_map<std::string, std::pair<MemoryView, TransferDoneCallbackAsyncInfer>> &outputs)
+    std::unordered_map<std::string, PipelineBuffer> &outputs)
 {
     for (auto &last_element : m_async_pipeline->get_last_elements()) {
         // TODO: handle the non-recoverable case where one buffer is enqueued successfully and the second isn't (HRT-11783)
-        auto status = last_element.second->enqueue_execution_buffer(outputs.at(last_element.first).first,
-            outputs.at(last_element.first).second);
+        auto status = last_element.second->enqueue_execution_buffer(std::move(outputs.at(last_element.first)));
         CHECK_SUCCESS(status);
     }
 
@@ -259,46 +256,27 @@ hailo_status AsyncInferRunnerImpl::set_buffers(std::unordered_map<std::string, P
     return HAILO_SUCCESS;
 }
 
-void AsyncInferRunnerImpl::set_pix_buffer_inputs(std::unordered_map<std::string, PipelineBuffer> &inputs, hailo_pix_buffer_t userptr_pix_buffer,
+void AsyncInferRunnerImpl::set_pix_buffer_inputs(std::unordered_map<std::string, PipelineBuffer> &inputs, hailo_pix_buffer_t pix_buffer,
     TransferDoneCallbackAsyncInfer input_done, const std::string &input_name)
 {
-    if (1 == userptr_pix_buffer.number_of_planes) {
-        inputs[input_name] = PipelineBuffer(MemoryView(userptr_pix_buffer.planes[0].user_ptr, userptr_pix_buffer.planes[0].bytes_used), input_done);
+    if (1 == pix_buffer.number_of_planes) {
+        if (HAILO_PIX_BUFFER_MEMORY_TYPE_DMABUF == pix_buffer.memory_type) {
+            hailo_dma_buffer_t dma_buffer = {pix_buffer.planes[0].fd, pix_buffer.planes[0].plane_size};
+            inputs[input_name] = PipelineBuffer(dma_buffer, input_done);
+        } else if (HAILO_PIX_BUFFER_MEMORY_TYPE_USERPTR == pix_buffer.memory_type) {
+            inputs[input_name] = PipelineBuffer(MemoryView(pix_buffer.planes[0].user_ptr, pix_buffer.planes[0].bytes_used), input_done);
+        } else {
+            LOGGER__ERROR("Buffer type Pix buffer supports only memory of types USERPTR or DMABUF.");
+            inputs[input_name] = PipelineBuffer(HAILO_INVALID_OPERATION, input_done);
+        }
     } else if (m_async_pipeline->is_multi_planar()) {
         // If model is multi-planar
-        inputs[input_name] = PipelineBuffer(userptr_pix_buffer, input_done);
+        inputs[input_name] = PipelineBuffer(pix_buffer, input_done);
     } else {
         // Other cases - return error, as on async flow we do not support copy to new buffer
         LOGGER__ERROR("HEF was compiled for single input layer, while trying to pass non-contiguous planes buffers.");
         inputs[input_name] = PipelineBuffer(HAILO_INVALID_OPERATION, input_done);
     }
-
-}
-
-Expected<hailo_pix_buffer_t> AsyncInferRunnerImpl::convert_dma_pix_buffer_to_userptr_pix_buffer(const hailo_pix_buffer_t &dma_pix_buffer)
-{
-    hailo_pix_buffer_t userptr_pix_buffer;
-    userptr_pix_buffer.index = dma_pix_buffer.index;
-    userptr_pix_buffer.number_of_planes = dma_pix_buffer.number_of_planes;
-    userptr_pix_buffer.memory_type = HAILO_PIX_BUFFER_MEMORY_TYPE_USERPTR;
-
-    for (uint32_t i = 0; i < dma_pix_buffer.number_of_planes; i++ ) {
-        auto current_plane  = dma_pix_buffer.planes[i];
-        hailo_dma_buffer_t dma_buffer = {current_plane.fd, current_plane.bytes_used};
-
-        auto dma_buffer_memview_expected = DmaBufferUtils::mmap_dma_buffer_read(dma_buffer);
-        CHECK_EXPECTED_AS_STATUS(dma_buffer_memview_expected);
-        auto dma_buffer_memview = dma_buffer_memview_expected.release();
-
-        hailo_pix_buffer_plane_t new_plane;
-        new_plane.bytes_used = current_plane.bytes_used;
-        new_plane.plane_size = current_plane.plane_size;
-        new_plane.user_ptr = dma_buffer_memview.data();
-
-        userptr_pix_buffer.planes[i] = new_plane;
-    }
-
-    return userptr_pix_buffer;
 }
 
 hailo_status AsyncInferRunnerImpl::run(ConfiguredInferModel::Bindings &bindings, TransferDoneCallbackAsyncInfer transfer_done)
@@ -307,33 +285,20 @@ hailo_status AsyncInferRunnerImpl::run(ConfiguredInferModel::Bindings &bindings,
     hailo_status status = m_async_pipeline->get_pipeline_status()->load();
     CHECK_SUCCESS(status, "Can't handle infer request since Pipeline status is {}.", status);
 
-    TRY(auto are_pools_ready, can_push_buffers());
+    TRY(auto are_pools_ready, can_push_buffers(1));
     CHECK(are_pools_ready, HAILO_QUEUE_IS_FULL, "Can't handle infer request since a queue in the pipeline is full.");
 
-    std::unordered_map<std::string, std::pair<MemoryView, TransferDoneCallbackAsyncInfer>> outputs;
+    std::unordered_map<std::string, PipelineBuffer> outputs;
+
     for (auto &last_element : m_async_pipeline->get_last_elements()) {
         auto buff_type = bindings.output(last_element.first)->m_pimpl->get_type();
+        bool is_user_buffer = true;
         if (BufferType::DMA_BUFFER == buff_type) {
             TRY(auto dma_buffer, bindings.output(last_element.first)->get_dma_buffer(), "Couldnt find output buffer for '{}'", last_element.first);
-
-            TRY(auto dma_buffer_memview, DmaBufferUtils::mmap_dma_buffer_write(dma_buffer));
-
-            auto output_done = [dma_buffer_memview, dma_buffer=dma_buffer, transfer_done](hailo_status status) {
-                auto mumap_status = DmaBufferUtils::munmap_dma_buffer_write(dma_buffer, dma_buffer_memview);
-                if (HAILO_SUCCESS != mumap_status) {
-                    LOGGER__ERROR("Failed to unmap dma buffer");
-                    status = HAILO_FILE_OPERATION_FAILURE;
-                }
-                transfer_done(status);
-            };
-            std::pair<MemoryView, TransferDoneCallbackAsyncInfer> buffer_cb_pair (dma_buffer_memview, output_done);
-            outputs[last_element.first] = buffer_cb_pair;
-
+            outputs[last_element.first] = PipelineBuffer(dma_buffer, transfer_done, HAILO_SUCCESS, is_user_buffer);
         } else {
             TRY(auto buffer, bindings.output(last_element.first)->get_buffer(), "Couldnt find output buffer for '{}'", last_element.first);
-
-            std::pair<MemoryView, TransferDoneCallbackAsyncInfer> buffer_cb_pair (buffer, transfer_done);
-            outputs[last_element.first] = buffer_cb_pair;
+            outputs[last_element.first] = PipelineBuffer(buffer, transfer_done, HAILO_SUCCESS, is_user_buffer);
         }
     }
 
@@ -351,50 +316,14 @@ hailo_status AsyncInferRunnerImpl::run(ConfiguredInferModel::Bindings &bindings,
         case BufferType::DMA_BUFFER:
         {
             TRY(auto dma_buffer, bindings.input(entry_element.first)->get_dma_buffer(), "Couldnt find input buffer for '{}'", entry_element.first);
-
-            TRY(auto dma_buffer_memview, DmaBufferUtils::mmap_dma_buffer_read(dma_buffer));
-
-            auto input_done = [dma_buffer_memview, dma_buffer, transfer_done](hailo_status status) {
-                auto mumap_status = DmaBufferUtils::munmap_dma_buffer_read(dma_buffer, dma_buffer_memview);
-                if (HAILO_SUCCESS != mumap_status) {
-                    // Note: we overide the status even if it was not success before (but either way it's set to non-success)
-                    LOGGER__ERROR("Failed to unmap dma buffer");
-                    status = mumap_status;
-                }
-                transfer_done(status);
-            };
-            inputs[entry_element.first] = PipelineBuffer(dma_buffer_memview, input_done);
+            inputs[entry_element.first] = PipelineBuffer(dma_buffer, transfer_done);
             break;
         }
         case BufferType::PIX_BUFFER:
         {
-            // TODO: handle a case in which the pix_buffer is DMA buffers (HRT-12771)
             TRY(auto pix_buffer, bindings.input(entry_element.first)->get_pix_buffer(), "Couldnt find input buffer for '{}'", entry_element.first);
 
-            if (HAILO_PIX_BUFFER_MEMORY_TYPE_DMABUF == pix_buffer.memory_type) {
-                TRY(auto userptr_pix_buffer, convert_dma_pix_buffer_to_userptr_pix_buffer(pix_buffer));
-
-                auto input_done = [userptr_pix_buffer, transfer_done, dma_pix_buffer=pix_buffer](hailo_status status) {
-                    for (uint32_t i = 0; i < dma_pix_buffer.number_of_planes; i++ ) {
-                        auto plane_in_dma_buffer  = dma_pix_buffer.planes[i];
-                        hailo_dma_buffer_t dma_buffer = {plane_in_dma_buffer.fd, plane_in_dma_buffer.bytes_used};
-
-                        auto dma_buffer_memview = MemoryView(userptr_pix_buffer.planes[i].user_ptr, userptr_pix_buffer.planes[i].bytes_used);
-
-                        auto mumap_status = DmaBufferUtils::munmap_dma_buffer_read(dma_buffer, dma_buffer_memview);
-                        if (HAILO_SUCCESS != mumap_status) {
-                            // Note: we overide the status even if it was not success before (but either way it's set to non-success)
-                            LOGGER__ERROR("Failed to unmap dma buffer");
-                            status = mumap_status;
-                        }
-                    }
-                    transfer_done(status);
-                };
-
-                set_pix_buffer_inputs(inputs, userptr_pix_buffer, input_done, entry_element.first);
-            } else {
-                set_pix_buffer_inputs(inputs, pix_buffer, transfer_done, entry_element.first);
-            }
+            set_pix_buffer_inputs(inputs, pix_buffer, transfer_done, entry_element.first);
             break;
         }
 
@@ -404,8 +333,8 @@ hailo_status AsyncInferRunnerImpl::run(ConfiguredInferModel::Bindings &bindings,
     }
 
     status = set_buffers(inputs, outputs);
+    // TODO: (HRT-14283) If set_buffers fails after a buffer is enqueued, the buffer's CB will be called - and might call user's CB
     CHECK_SUCCESS(status);
-
     return HAILO_SUCCESS;
 }
 

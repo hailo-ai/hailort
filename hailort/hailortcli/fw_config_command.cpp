@@ -22,12 +22,11 @@ hailo_status FwConfigReadSubcommand::execute_on_device(Device &device)
     CHECK_SUCCESS(status,
         "'fw-config read' command should get a specific device-id.");
 
-    auto user_config_buffer = device.read_user_config();
-    CHECK_EXPECTED_AS_STATUS(user_config_buffer, "Failed reading user config from device");
+    TRY(auto user_config_buffer, device.read_user_config(), "Failed reading user config from device");
 
     status = FwConfigJsonSerializer::deserialize_config(
-        *reinterpret_cast<USER_CONFIG_header_t*>(user_config_buffer->data()),
-        user_config_buffer->size(), m_output_file);
+        *reinterpret_cast<USER_CONFIG_header_t*>(user_config_buffer.data()),
+        user_config_buffer.size(), m_output_file);
     CHECK_SUCCESS(status);
     
     return HAILO_SUCCESS;   
@@ -43,20 +42,16 @@ FwConfigWriteSubcommand::FwConfigWriteSubcommand(CLI::App &parent_app) :
 
 hailo_status FwConfigWriteSubcommand::execute_on_device(Device &device)
 {
-    auto config_buffer = Buffer::create(FLASH_USER_CONFIG_SECTION_SIZE);
-    CHECK_EXPECTED_AS_STATUS(config_buffer);
-
-    auto config_size = FwConfigJsonSerializer::serialize_config(
-        *reinterpret_cast<USER_CONFIG_header_t*>(config_buffer->data()), config_buffer->size(), m_input_file);
-    CHECK_EXPECTED_AS_STATUS(config_size);
+    TRY(auto config_buffer, Buffer::create(FLASH_USER_CONFIG_SECTION_SIZE));
+    TRY(auto config_size, FwConfigJsonSerializer::serialize_config(
+        *reinterpret_cast<USER_CONFIG_header_t*>(config_buffer.data()), config_buffer.size(), m_input_file));
     
-    // We only need to write config_size.value() bytes from config_buffer, so we "resize" the buffer
-    CHECK(config_buffer->size() >= config_size.value(), HAILO_INTERNAL_FAILURE,
-        "Unexpected config size {} (max_size={})", config_size.value(), config_buffer->size());
-    auto resized_config_buffer = Buffer::create(config_buffer->data(), config_size.value());
-    CHECK_EXPECTED_AS_STATUS(resized_config_buffer);
+    // We only need to write 'config_size' bytes from config_buffer, so we "resize" the buffer
+    CHECK(config_buffer.size() >= config_size, HAILO_INTERNAL_FAILURE,
+        "Unexpected config size {} (max_size={})", config_size, config_buffer.size());
+    TRY(auto resized_config_buffer, Buffer::create(config_buffer.data(), config_size));
 
-    hailo_status status = device.write_user_config(MemoryView(resized_config_buffer.value()));
+    hailo_status status = device.write_user_config(MemoryView(resized_config_buffer));
     CHECK_SUCCESS(status, "Failed writing user firmware configuration to device");
 
     return HAILO_SUCCESS;
@@ -74,17 +69,15 @@ FwConfigSerializeSubcommand::FwConfigSerializeSubcommand(CLI::App &parent_app) :
 
 hailo_status FwConfigSerializeSubcommand::execute()
 {
-    auto config_buffer = Buffer::create(FLASH_USER_CONFIG_SECTION_SIZE);
-    CHECK_EXPECTED_AS_STATUS(config_buffer);
+    TRY(auto config_buffer, Buffer::create(FLASH_USER_CONFIG_SECTION_SIZE));
 
-    USER_CONFIG_header_t *config_header = reinterpret_cast<USER_CONFIG_header_t*>(config_buffer->data());
-    auto config_size = FwConfigJsonSerializer::serialize_config(*config_header, config_buffer->size(), m_input_file);
-    CHECK_EXPECTED_AS_STATUS(config_size);
+    USER_CONFIG_header_t *config_header = reinterpret_cast<USER_CONFIG_header_t*>(config_buffer.data());
+    TRY(auto config_size, FwConfigJsonSerializer::serialize_config(*config_header, config_buffer.size(), m_input_file));
 
     std::ofstream ofs(m_output_file, std::ios::out | std::ios::binary);
     CHECK(ofs.good(), HAILO_OPEN_FILE_FAILURE, "Failed opening file: {}, with errno: {}", m_output_file, errno);
 
-    ofs.write(reinterpret_cast<char*>(config_header), config_size.value());
+    ofs.write(reinterpret_cast<char*>(config_header), config_size);
     CHECK(ofs.good(), HAILO_FILE_OPERATION_FAILURE,
         "Failed writing binary firmware configuration to file: {}, with errno: {}", m_output_file, errno);
 

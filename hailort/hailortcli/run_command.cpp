@@ -44,10 +44,8 @@ std::condition_variable wait_for_exit_cv;
 
 constexpr uint32_t DEFAULT_TIME_TO_RUN_SECONDS = 5;
 #ifndef HAILO_EMULATOR
-constexpr std::chrono::milliseconds TIME_TO_WAIT_FOR_CONFIG(300);
 #define HAILORTCLI_DEFAULT_VSTREAM_TIMEOUT_MS (HAILO_DEFAULT_VSTREAM_TIMEOUT_MS)
 #else /* ifndef HAILO_EMULATOR */
-constexpr std::chrono::milliseconds TIME_TO_WAIT_FOR_CONFIG(30000);
 #define HAILORTCLI_DEFAULT_VSTREAM_TIMEOUT_MS (HAILO_DEFAULT_VSTREAM_TIMEOUT_MS * 100)
 #endif /* ifndef HAILO_EMULATOR */
 static const char *RUNTIME_DATA_OUTPUT_PATH_HEF_PLACE_HOLDER = "<hef>";
@@ -449,21 +447,18 @@ Expected<std::map<std::string, std::vector<InputVStream>>> create_input_vstreams
     const inference_runner_params &params)
 {
     std::map<std::string, std::vector<InputVStream>> res;
-    auto network_infos = configured_net_group.get_network_infos();
-    CHECK_EXPECTED(network_infos);
-    for (auto &network_info : network_infos.value()) {
+    TRY(const auto network_infos, configured_net_group.get_network_infos());
+    for (const auto &network_info : network_infos) {
         auto quantized = (params.transform.format_type != HAILO_FORMAT_TYPE_FLOAT32);
-        auto input_vstreams_params = configured_net_group.make_input_vstream_params(quantized,
-            params.transform.format_type, HAILORTCLI_DEFAULT_VSTREAM_TIMEOUT_MS, HAILO_DEFAULT_VSTREAM_QUEUE_SIZE, network_info.name);
-        CHECK_EXPECTED(input_vstreams_params);
+        TRY(auto input_vstreams_params, configured_net_group.make_input_vstream_params(quantized,
+            params.transform.format_type, HAILORTCLI_DEFAULT_VSTREAM_TIMEOUT_MS, HAILO_DEFAULT_VSTREAM_QUEUE_SIZE, network_info.name));
 
-        for (auto &vstream_params : input_vstreams_params.value()) {
+        for (auto &vstream_params : input_vstreams_params) {
             vstream_params.second.pipeline_elements_stats_flags = inference_runner_params_to_pipeline_elem_stats_flags(params.pipeline_stats);
             vstream_params.second.vstream_stats_flags = inference_runner_params_to_vstream_stats_flags(params.pipeline_stats);
         }
-        auto input_vstreams = VStreamsBuilder::create_input_vstreams(configured_net_group, input_vstreams_params.value());
-        CHECK_EXPECTED(input_vstreams);
-        res.emplace(network_info.name, input_vstreams.release());
+        TRY(auto input_vstreams, VStreamsBuilder::create_input_vstreams(configured_net_group, input_vstreams_params));
+        res.emplace(network_info.name, std::move(input_vstreams));
     }
     return res;
 }
@@ -472,28 +467,24 @@ Expected<std::map<std::string, std::vector<OutputVStream>>> create_output_vstrea
     const inference_runner_params &params)
 {
     std::map<std::string, std::vector<OutputVStream>> res;
-    auto network_infos = configured_net_group.get_network_infos();
-    CHECK_EXPECTED(network_infos);
-    for (auto &network_info : network_infos.value()) {
+    TRY(const auto network_infos, configured_net_group.get_network_infos());
+    for (const auto &network_info : network_infos) {
         // Data is not quantized if format_type is explicitly float32, or if an output is NMS (which also enforces float32 output)
         // We don't cover a case of multiple outputs where only some of them are NMS (no such model currently), and anyway it is handled in run2
-        auto vstream_infos = configured_net_group.get_output_vstream_infos();
-        CHECK_EXPECTED(vstream_infos);
-        auto nms_output = std::any_of(vstream_infos->begin(), vstream_infos->end(), [] (const hailo_vstream_info_t &output_info) {
+        TRY(const auto vstream_infos, configured_net_group.get_output_vstream_infos());
+        auto nms_output = std::any_of(vstream_infos.begin(), vstream_infos.end(), [] (const hailo_vstream_info_t &output_info) {
             return HailoRTCommon::is_nms(output_info);
         });
         auto quantized = ((params.transform.format_type != HAILO_FORMAT_TYPE_FLOAT32) && !nms_output);
-        auto output_vstreams_params = configured_net_group.make_output_vstream_params(quantized,
-            params.transform.format_type, HAILORTCLI_DEFAULT_VSTREAM_TIMEOUT_MS, HAILO_DEFAULT_VSTREAM_QUEUE_SIZE, network_info.name);
-        CHECK_EXPECTED(output_vstreams_params);
+        TRY(auto output_vstreams_params, configured_net_group.make_output_vstream_params(quantized,
+            params.transform.format_type, HAILORTCLI_DEFAULT_VSTREAM_TIMEOUT_MS, HAILO_DEFAULT_VSTREAM_QUEUE_SIZE, network_info.name));
 
-        for (auto &vstream_params : output_vstreams_params.value()) {
+        for (auto &vstream_params : output_vstreams_params) {
             vstream_params.second.pipeline_elements_stats_flags = inference_runner_params_to_pipeline_elem_stats_flags(params.pipeline_stats);
             vstream_params.second.vstream_stats_flags = inference_runner_params_to_vstream_stats_flags(params.pipeline_stats);
         }
-        auto output_vstreams = VStreamsBuilder::create_output_vstreams(configured_net_group, output_vstreams_params.value());
-        CHECK_EXPECTED(output_vstreams);
-        res.emplace(network_info.name, output_vstreams.release());
+        TRY(auto output_vstreams, VStreamsBuilder::create_output_vstreams(configured_net_group, output_vstreams_params));
+        res.emplace(network_info.name, std::move(output_vstreams));
     }
     return res;
 }
@@ -501,12 +492,10 @@ Expected<std::map<std::string, std::vector<OutputVStream>>> create_output_vstrea
 Expected<std::map<std::string, std::vector<std::reference_wrapper<InputStream>>>> create_input_streams(ConfiguredNetworkGroup &configured_net_group)
 {
     std::map<std::string, std::vector<std::reference_wrapper<InputStream>>> res;
-    auto network_infos = configured_net_group.get_network_infos();
-    CHECK_EXPECTED(network_infos);
-    for (auto &network_info : network_infos.value()) {
-        auto input_streams = configured_net_group.get_input_streams_by_network(network_info.name);
-        CHECK_EXPECTED(input_streams);
-        res.emplace(network_info.name, input_streams.release());
+    TRY(const auto network_infos, configured_net_group.get_network_infos());
+    for (const auto &network_info : network_infos) {
+        TRY(auto input_streams, configured_net_group.get_input_streams_by_network(network_info.name));
+        res.emplace(network_info.name, std::move(input_streams));
     }
     return res;
 }
@@ -514,12 +503,10 @@ Expected<std::map<std::string, std::vector<std::reference_wrapper<InputStream>>>
 Expected<std::map<std::string, std::vector<std::reference_wrapper<OutputStream>>>> create_output_streams(ConfiguredNetworkGroup &configured_net_group)
 {
     std::map<std::string, std::vector<std::reference_wrapper<OutputStream>>> res;
-    auto network_infos = configured_net_group.get_network_infos();
-    CHECK_EXPECTED(network_infos);
-    for (auto &network_info : network_infos.value()) {
-        auto output_streams = configured_net_group.get_output_streams_by_network(network_info.name);
-        CHECK_EXPECTED(output_streams);
-        res.emplace(network_info.name, output_streams.release());
+    TRY(const auto network_infos, configured_net_group.get_network_infos());
+    for (const auto &network_info : network_infos) {
+        TRY(auto output_streams, configured_net_group.get_output_streams_by_network(network_info.name));
+        res.emplace(network_info.name, std::move(output_streams));
     }
     return res;
 }
@@ -532,9 +519,8 @@ Expected<std::map<std::string, BufferPtr>> create_output_buffers(
     std::map<std::string, BufferPtr> dst_data;
     for (auto &recv_objects : recv_objects_per_network) {
         for (auto &recv_object : recv_objects.second) {
-            auto buffer = Buffer::create_shared(recv_object.get().get_frame_size());
-            CHECK_EXPECTED(buffer);
-            dst_data[recv_object.get().name()] = buffer.release();
+            TRY(dst_data[recv_object.get().name()],
+                Buffer::create_shared(recv_object.get().get_frame_size()));
         }
     }
 
@@ -643,9 +629,8 @@ static hailo_status run_streaming_impl(std::shared_ptr<ConfiguredNetworkGroup> c
 
     std::vector<AsyncThreadPtr<hailo_status>> results;
 
-    auto network_progress_bar_exp = progress_bar.create_network_progress_bar(configured_net_group, network_name);
-    CHECK_EXPECTED_AS_STATUS(network_progress_bar_exp);
-    auto network_progress_bar = network_progress_bar_exp.release();
+    TRY(auto network_progress_bar,
+        progress_bar.create_network_progress_bar(configured_net_group, network_name));
     const auto start = std::chrono::high_resolution_clock::now();
 
     // Launch async read/writes
@@ -712,12 +697,10 @@ static hailo_status run_streaming_impl(std::shared_ptr<ConfiguredNetworkGroup> c
 
     // TODO: HRT-7798
     if (!params.vdevice_params.multi_process_service) {
-        auto network_input_streams = configured_net_group->get_input_streams_by_network(network_name);
-        CHECK_EXPECTED_AS_STATUS(network_input_streams);
-        inference_result.m_total_send_frame_size = total_send_frame_size(network_input_streams.value());
-        auto network_output_streams = configured_net_group->get_output_streams_by_network(network_name);
-        CHECK_EXPECTED_AS_STATUS(network_output_streams);
-        inference_result.m_total_recv_frame_size = total_recv_frame_size(network_output_streams.value());
+        TRY(auto network_input_streams, configured_net_group->get_input_streams_by_network(network_name));
+        inference_result.m_total_send_frame_size = total_send_frame_size(network_input_streams);
+        TRY(auto network_output_streams, configured_net_group->get_output_streams_by_network(network_name));
+        inference_result.m_total_recv_frame_size = total_recv_frame_size(network_output_streams);
     }
 
     if (params.measure_latency) {
@@ -731,9 +714,8 @@ static hailo_status run_streaming_impl(std::shared_ptr<ConfiguredNetworkGroup> c
     }
 
     if (params.measure_overall_latency) {
-        auto overall_latency = overall_latency_meter.get_latency(true);
-        CHECK_EXPECTED_AS_STATUS(overall_latency);
-        inference_result.m_overall_latency = std::make_unique<std::chrono::nanoseconds>(*overall_latency);
+        TRY(auto overall_latency, overall_latency_meter.get_latency(true));
+        inference_result.m_overall_latency = std::make_unique<std::chrono::nanoseconds>(std::move(overall_latency));
     }
 
     return HAILO_SUCCESS;
@@ -759,10 +741,7 @@ static Expected<InferResult> run_streaming(const std::vector<std::shared_ptr<Con
     std::vector<std::map<std::string, NetworkInferResult>> networks_results; // Map of networks results for each network group
     networks_results.reserve(configured_net_groups.size());
 
-    auto progress_bar_exp = InferProgress::create(params, std::chrono::seconds(1));
-    CHECK_EXPECTED(progress_bar_exp);
-    auto progress_bar = progress_bar_exp.release();
-
+    TRY(auto progress_bar, InferProgress::create(params, std::chrono::seconds(1)));
     for (size_t network_group_index = 0; network_group_index < configured_net_groups.size(); network_group_index++) {
         networks_threads_status.emplace_back();
         networks_results.emplace_back();
@@ -851,15 +830,13 @@ static Expected<InferResult> run_inference(const std::vector<std::shared_ptr<Con
         for (size_t network_group_index = 0; network_group_index < configured_net_groups.size(); network_group_index++) {
             input_vstreams.emplace_back();
             output_vstreams.emplace_back();
-            auto in_vstreams = create_input_vstreams(*configured_net_groups[network_group_index], params);
-            CHECK_EXPECTED(in_vstreams);
-            auto in_vstreams_ptr = make_shared_nothrow<std::map<std::string, std::vector<InputVStream>>>(in_vstreams.release());
+            TRY(auto in_vstreams, create_input_vstreams(*configured_net_groups[network_group_index], params));
+            auto in_vstreams_ptr = make_shared_nothrow<std::map<std::string, std::vector<InputVStream>>>(std::move(in_vstreams));
             CHECK_NOT_NULL_AS_EXPECTED(in_vstreams_ptr, HAILO_OUT_OF_HOST_MEMORY);
             input_vstreams[network_group_index] = in_vstreams_ptr;
 
-            auto out_vstreams = create_output_vstreams(*configured_net_groups[network_group_index], params);
-            CHECK_EXPECTED(out_vstreams);
-            auto out_vstreams_ptr = make_shared_nothrow<std::map<std::string, std::vector<OutputVStream>>>(out_vstreams.release());
+            TRY(auto out_vstreams, create_output_vstreams(*configured_net_groups[network_group_index], params));
+            auto out_vstreams_ptr = make_shared_nothrow<std::map<std::string, std::vector<OutputVStream>>>(std::move(out_vstreams));
             CHECK_NOT_NULL_AS_EXPECTED(out_vstreams_ptr, HAILO_OUT_OF_HOST_MEMORY);
             output_vstreams[network_group_index] = out_vstreams_ptr;
 
@@ -879,9 +856,7 @@ static Expected<InferResult> run_inference(const std::vector<std::shared_ptr<Con
                 output_vstreams_refs[network_group_index].emplace(output_vstreams_per_network.first, output_refs);
             }
 
-            auto network_group_output_buffers = create_output_buffers(output_vstreams_refs[network_group_index]);
-            CHECK_EXPECTED(network_group_output_buffers);
-            output_buffers[network_group_index] = network_group_output_buffers.release();
+            TRY(output_buffers[network_group_index], create_output_buffers(output_vstreams_refs[network_group_index]));
         }
 
         auto res = run_streaming<InputVStream, OutputVStream>(configured_net_groups, input_datasets,
@@ -896,7 +871,7 @@ static Expected<InferResult> run_inference(const std::vector<std::shared_ptr<Con
         input_vstreams.clear();
         output_vstreams.clear();
 
-        CHECK_EXPECTED(res);
+        CHECK_EXPECTED(res); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
         return res;
     }
     case InferMode::HW_ONLY:
@@ -910,15 +885,9 @@ static Expected<InferResult> run_inference(const std::vector<std::shared_ptr<Con
             std::map<std::string, hailort::BufferPtr>());
 
         for (size_t network_group_index = 0; network_group_index < configured_net_groups.size(); network_group_index++) {
-            auto input_streams = create_input_streams(*configured_net_groups[network_group_index]);
-            CHECK_EXPECTED(input_streams);
-            input_streams_refs[network_group_index] = input_streams.release();
-            auto output_streams = create_output_streams(*configured_net_groups[network_group_index]);
-            output_streams_refs[network_group_index] = output_streams.release();
-
-            auto network_group_output_buffers = create_output_buffers(output_streams_refs[network_group_index]);
-            CHECK_EXPECTED(network_group_output_buffers);
-            output_buffers[network_group_index] = network_group_output_buffers.release();
+            TRY(input_streams_refs[network_group_index], create_input_streams(*configured_net_groups[network_group_index]));
+            TRY(output_streams_refs[network_group_index], create_output_streams(*configured_net_groups[network_group_index]));
+            TRY(output_buffers[network_group_index], create_output_buffers(output_streams_refs[network_group_index]));
         }
 
         return run_streaming<InputStream, OutputStream>(configured_net_groups, input_datasets, output_buffers,
@@ -927,19 +896,6 @@ static Expected<InferResult> run_inference(const std::vector<std::shared_ptr<Con
     default:
         return make_unexpected(HAILO_INVALID_OPERATION);
     }
-}
-
-static Expected<std::unique_ptr<ActivatedNetworkGroup>> activate_network_group(ConfiguredNetworkGroup &network_group)
-{
-    hailo_activate_network_group_params_t network_group_params = {};
-    auto activated_network_group = network_group.activate(network_group_params);
-    CHECK_EXPECTED(activated_network_group, "Failed activating network group");
-
-    // Wait for configuration
-    // TODO: HRT-2492 wait for config in a normal way
-    std::this_thread::sleep_for(TIME_TO_WAIT_FOR_CONFIG);
-
-    return activated_network_group;
 }
 
 static Expected<std::map<std::string, BufferPtr>> create_constant_dataset(
@@ -1000,35 +956,31 @@ static Expected<std::map<std::string, BufferPtr>> create_dataset_from_files(
         const auto file_path_it = file_paths.find(stream_name);
         CHECK_AS_EXPECTED(file_paths.end() != file_path_it, HAILO_INVALID_ARGUMENT, "Missing input file for input: {}", stream_name);
         
-        auto host_buffer = read_binary_file(file_path_it->second);
-        CHECK_EXPECTED(host_buffer, "Failed reading file {}", file_path_it->second);
-        CHECK_AS_EXPECTED((host_buffer->size() % host_frame_size) == 0, HAILO_INVALID_ARGUMENT,
-            "Input file ({}) size {} must be a multiple of the frame size {} ({})", file_path_it->second, host_buffer->size(), host_frame_size, stream_name);
+        TRY(auto host_buffer, read_binary_file(file_path_it->second));
+        CHECK_AS_EXPECTED((host_buffer.size() % host_frame_size) == 0, HAILO_INVALID_ARGUMENT,
+            "Input file ({}) size {} must be a multiple of the frame size {} ({})", file_path_it->second, host_buffer.size(), host_frame_size, stream_name);
 
         if (InferMode::HW_ONLY == mode) {
             auto matching_stream_info = std::find_if(input_infos.first.begin(), input_infos.first.end(), [&stream_name] (const auto &stream_info) {
                 return std::string(stream_info.name) == stream_name;
             });
             CHECK_AS_EXPECTED(matching_stream_info != input_infos.first.end(), HAILO_INVALID_OPERATION, "Failed to find raw-stream with name {}.", stream_name);
-            const size_t frames_count = (host_buffer->size() / host_frame_size);
+            const size_t frames_count = (host_buffer.size() / host_frame_size);
             const size_t hw_frame_size = matching_stream_info->hw_frame_size;
             const size_t hw_buffer_size = frames_count * hw_frame_size;
-            auto hw_buffer = Buffer::create_shared(hw_buffer_size);
-            CHECK_EXPECTED(hw_buffer);
-
-            auto transform_context = InputTransformContext::create(*matching_stream_info, trans_params);
-            CHECK_EXPECTED(transform_context);
+            TRY(auto hw_buffer, Buffer::create_shared(hw_buffer_size));
+            TRY(auto transform_context, InputTransformContext::create(*matching_stream_info, trans_params));
             
             for (size_t i = 0; i < frames_count; i++) {
-                MemoryView host_data(static_cast<uint8_t*>(host_buffer->data() + (i*host_frame_size)), host_frame_size);
-                MemoryView hw_data(static_cast<uint8_t*>(hw_buffer.value()->data() + (i*hw_frame_size)), hw_frame_size);
+                MemoryView host_data(static_cast<uint8_t*>(host_buffer.data() + (i*host_frame_size)), host_frame_size);
+                MemoryView hw_data(static_cast<uint8_t*>(hw_buffer->data() + (i*hw_frame_size)), hw_frame_size);
 
-                auto status = transform_context.value()->transform(host_data, hw_data);
+                auto status = transform_context->transform(host_data, hw_data);
                 CHECK_SUCCESS_AS_EXPECTED(status);
             }
-            dataset[stream_name] = hw_buffer.release();
+            dataset[stream_name] = std::move(hw_buffer);
         } else {
-            auto host_buffer_shared = make_shared_nothrow<Buffer>(host_buffer.release());
+            auto host_buffer_shared = make_shared_nothrow<Buffer>(std::move(host_buffer));
             CHECK_NOT_NULL_AS_EXPECTED(host_buffer_shared, HAILO_OUT_OF_HOST_MEMORY);
             dataset[stream_name] = host_buffer_shared;
         }
@@ -1052,30 +1004,25 @@ static Expected<std::vector<std::map<std::string, BufferPtr>>> create_dataset(
     // Vector of len(ng.conut), each element is pair of all input_stream_infos, and all input_vstream_infos
     std::vector<std::pair<std::vector<hailo_stream_info_t>, std::vector<hailo_vstream_info_t>>> input_infos;
     for (auto &network_group : network_groups) {
-        auto expected_all_streams_infos = network_group->get_all_stream_infos();
-        CHECK_EXPECTED(expected_all_streams_infos);
-        auto &all_stream_infos = expected_all_streams_infos.value();
+        TRY(const auto all_streams_infos, network_group->get_all_stream_infos());
         std::vector<hailo_stream_info_t> group_input_stream_infos;
-        std::copy_if(all_stream_infos.begin(), all_stream_infos.end(), std::back_inserter(group_input_stream_infos), [](const auto &info) {
+        std::copy_if(all_streams_infos.begin(), all_streams_infos.end(), std::back_inserter(group_input_stream_infos), [](const auto &info) {
             return info.direction == HAILO_H2D_STREAM;
         });
-        auto expected_input_vstreams_infos = network_group->get_input_vstream_infos();
-        CHECK_EXPECTED(expected_input_vstreams_infos);
-        input_infos.push_back({group_input_stream_infos, expected_input_vstreams_infos.release()});
+        TRY(const auto input_vstreams_infos, network_group->get_input_vstream_infos());
+        input_infos.push_back({group_input_stream_infos, std::move(input_vstreams_infos)});
     }
 
     if (!params.inputs_name_and_file_path.empty()) {
         for (auto &group_input_infos : input_infos) {
-            auto network_group_dataset = create_dataset_from_files(group_input_infos, params.inputs_name_and_file_path,
-                trans_params, params.mode);
-            CHECK_EXPECTED(network_group_dataset);
-            results.emplace_back(network_group_dataset.release());
+            TRY(auto network_group_dataset, create_dataset_from_files(group_input_infos, params.inputs_name_and_file_path,
+                trans_params, params.mode));
+            results.emplace_back(std::move(network_group_dataset));
         }
     } else {
         for (auto &group_input_infos : input_infos) {
-            auto network_group_dataset = create_constant_dataset(group_input_infos, trans_params, params.mode);
-            CHECK_EXPECTED(network_group_dataset);
-            results.emplace_back(network_group_dataset.release());
+            TRY(auto network_group_dataset, create_constant_dataset(group_input_infos, trans_params, params.mode));
+            results.emplace_back(std::move(network_group_dataset));
         }
     }
     return results;
@@ -1087,11 +1034,8 @@ Expected<InferResult> activate_and_run_single_device(
     const inference_runner_params &params)
 {
     CHECK_AS_EXPECTED(1 == network_groups.size(), HAILO_INVALID_OPERATION, "Inference is not supported on HEFs with multiple network groups");
-    auto activated_net_group = activate_network_group(*network_groups[0]);
-    CHECK_EXPECTED(activated_net_group, "Failed activate network_group");
-
-    auto input_dataset = create_dataset(network_groups, params);
-    CHECK_EXPECTED(input_dataset, "Failed creating input dataset");
+    TRY(auto activated_net_group, network_groups[0]->activate(), "Failed activate network_group");
+    TRY(auto input_dataset, create_dataset(network_groups, params));
 
     hailo_power_measurement_types_t measurement_type = HAILO_POWER_MEASUREMENT_TYPES__MAX_ENUM;
     bool should_measure_power = false;
@@ -1103,48 +1047,43 @@ Expected<InferResult> activate_and_run_single_device(
         should_measure_power = true;
     }
 
-    std::shared_ptr<LongPowerMeasurement> long_power_measurement = nullptr;
+    std::shared_ptr<LongPowerMeasurement> long_power_measurement_ptr = nullptr;
     if (should_measure_power) {
-        auto long_power_measurement_exp = PowerMeasurementSubcommand::start_power_measurement(device,
-            HAILO_DVM_OPTIONS_AUTO,
-            measurement_type, params.power_measurement.sampling_period, params.power_measurement.averaging_factor);
-        CHECK_EXPECTED(long_power_measurement_exp);
-        long_power_measurement = make_shared_nothrow<LongPowerMeasurement>(long_power_measurement_exp.release());
-        CHECK_NOT_NULL_AS_EXPECTED(long_power_measurement, HAILO_OUT_OF_HOST_MEMORY);
+        TRY(auto long_power_measurement, PowerMeasurementSubcommand::start_power_measurement(device,
+            HAILO_DVM_OPTIONS_AUTO, measurement_type, params.power_measurement.sampling_period, params.power_measurement.averaging_factor));
+        long_power_measurement_ptr = make_shared_nothrow<LongPowerMeasurement>(std::move(long_power_measurement));
+        CHECK_NOT_NULL_AS_EXPECTED(long_power_measurement_ptr, HAILO_OUT_OF_HOST_MEMORY);
     }
 
     bool should_measure_temp = params.measure_temp;
-    auto temp_measure = TemperatureMeasurement::create_shared(device);
-    CHECK_EXPECTED(temp_measure);
+    TRY(auto temp_measure, TemperatureMeasurement::create_shared(device));
     if (should_measure_temp) {
-        auto status = temp_measure.value()->start_measurement();
+        auto status = temp_measure->start_measurement();
         CHECK_SUCCESS_AS_EXPECTED(status, "Failed to get chip's temperature");
     }
 
-    auto infer_result = run_inference(network_groups, input_dataset.value(), params);
-    CHECK_EXPECTED(infer_result, "Error failed running inference");
+    TRY(auto inference_result, run_inference(network_groups, input_dataset, params), "Error while running inference");
 
-    InferResult inference_result(infer_result.release());
     std::vector<std::reference_wrapper<Device>> device_refs;
     device_refs.push_back(device);
     inference_result.initialize_measurements(device_refs);
 
     if (should_measure_power) {
-        auto status = long_power_measurement->stop();
+        auto status = long_power_measurement_ptr->stop();
         CHECK_SUCCESS_AS_EXPECTED(status);
 
         if (params.power_measurement.measure_current) {
-            status = inference_result.set_current_measurement(device.get_dev_id(), std::move(long_power_measurement));
+            status = inference_result.set_current_measurement(device.get_dev_id(), std::move(long_power_measurement_ptr));
             CHECK_SUCCESS_AS_EXPECTED(status);
         } else {
-            status = inference_result.set_power_measurement(device.get_dev_id(), std::move(long_power_measurement));
+            status = inference_result.set_power_measurement(device.get_dev_id(), std::move(long_power_measurement_ptr));
             CHECK_SUCCESS_AS_EXPECTED(status);
         }
     }
 
     if (should_measure_temp) {
-        temp_measure.value()->stop_measurement();
-        auto temp_measure_p = make_shared_nothrow<AccumulatorResults>(temp_measure.value()->get_data());
+        temp_measure->stop_measurement();
+        auto temp_measure_p = make_shared_nothrow<AccumulatorResults>(temp_measure->get_data());
         CHECK_NOT_NULL_AS_EXPECTED(temp_measure_p, HAILO_OUT_OF_HOST_MEMORY);
         auto status = inference_result.set_temp_measurement(device.get_dev_id(), std::move(temp_measure_p));
         CHECK_SUCCESS_AS_EXPECTED(status);
@@ -1158,9 +1097,8 @@ Expected<size_t> get_min_inferred_frames_count(InferResult &inference_result)
     size_t min_frames_count = UINT32_MAX;
     for (auto &network_group_results : inference_result.network_group_results()) {
         for (const auto &network_results_pair : network_group_results.results_per_network()) {
-            auto frames_count = network_group_results.frames_count(network_results_pair.first);
-            CHECK_EXPECTED(frames_count);
-            min_frames_count = std::min(frames_count.value(), min_frames_count);
+            TRY(const auto frames_count, network_group_results.frames_count(network_results_pair.first));
+            min_frames_count = std::min(frames_count, min_frames_count);
         }
     }
     return min_frames_count;
@@ -1168,38 +1106,29 @@ Expected<size_t> get_min_inferred_frames_count(InferResult &inference_result)
 
 Expected<InferResult> run_command_hef_single_device(const inference_runner_params &params)
 {
-    auto devices = create_devices(params.vdevice_params.device_params);
-    CHECK_EXPECTED(devices, "Failed creating device");
+    TRY(auto devices, create_devices(params.vdevice_params.device_params), "Failed creating device");
     /* This function supports controls for multiple devices.
        We validate there is only 1 device generated as we are on a single device flow */
-    CHECK_AS_EXPECTED(1 == devices->size(), HAILO_INTERNAL_FAILURE);
-    auto &device = devices.value()[0];
+    CHECK_AS_EXPECTED(1 == devices.size(), HAILO_INTERNAL_FAILURE);
+    auto &device = devices[0];
 
-    auto hef = Hef::create(params.hef_path.c_str());
-    CHECK_EXPECTED(hef, "Failed reading hef file {}", params.hef_path);
-
-    auto interface = device->get_default_streams_interface();
-    CHECK_EXPECTED(interface, "Failed to get default streams interface");
-
-    auto configure_params = get_configure_params(params, hef.value(), interface.value());
-    CHECK_EXPECTED(configure_params);
-
-    auto network_group_list = device->configure(hef.value(), configure_params.value());
-    CHECK_EXPECTED(network_group_list, "Failed configure device from hef");
+    TRY(auto hef, Hef::create(params.hef_path.c_str()), "Failed reading hef file {}", params.hef_path);
+    TRY(const auto interface, device->get_default_streams_interface(), "Failed to get default streams interface");
+    TRY(auto configure_params, get_configure_params(params, hef, interface));
+    TRY(auto network_group_list, device->configure(hef, configure_params), "Failed configure device from hef");
 
     if (use_batch_to_measure_opt(params)) {
         auto status = DownloadActionListCommand::set_batch_to_measure(*device, params.runtime_data.batch_to_measure);
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
 
-    auto inference_result = activate_and_run_single_device(*device, network_group_list.value(), params);
+    auto inference_result = activate_and_run_single_device(*device, network_group_list, params);
 
     if (use_batch_to_measure_opt(params) && (0 == params.frames_count) && inference_result) {
-        auto min_frames_count = get_min_inferred_frames_count(inference_result.value());
-        CHECK_EXPECTED(min_frames_count);
-        if (min_frames_count.value()  <  params.runtime_data.batch_to_measure) {
+        TRY(auto min_frames_count, get_min_inferred_frames_count(inference_result.value()));
+        if (min_frames_count < params.runtime_data.batch_to_measure) {
             LOGGER__WARNING("Number of frames sent ({}) is smaller than --batch-to-measure ({}), "
-                "hence timestamps will not be updated in runtime data", min_frames_count.value() ,
+                "hence timestamps will not be updated in runtime data", min_frames_count,
                 params.runtime_data.batch_to_measure);
         }
     }
@@ -1207,11 +1136,11 @@ Expected<InferResult> run_command_hef_single_device(const inference_runner_param
     if (params.runtime_data.collect_runtime_data) {
         const auto runtime_data_output_path = format_runtime_data_output_path(
             params.runtime_data.runtime_data_output_path, params.hef_path);
-        DownloadActionListCommand::execute(*device, runtime_data_output_path, network_group_list.value(),
+        DownloadActionListCommand::execute(*device, runtime_data_output_path, network_group_list,
             params.hef_path);
     }
 
-    CHECK_EXPECTED(inference_result);
+    CHECK_EXPECTED(inference_result); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
     return inference_result;
 }
 
@@ -1224,13 +1153,10 @@ Expected<InferResult> activate_and_run_vdevice(
 {
     std::unique_ptr<ActivatedNetworkGroup> activated_network_group;
     if (!scheduler_is_used) {
-        auto activated_net_group_exp = activate_network_group(*network_groups[0]);
-        CHECK_EXPECTED(activated_net_group_exp, "Failed activate network_group");
-        activated_network_group = activated_net_group_exp.release();
+        TRY(activated_network_group, network_groups[0]->activate());
     }
 
-    auto input_dataset = create_dataset(network_groups, params);
-    CHECK_EXPECTED(input_dataset, "Failed creating input dataset");
+    TRY(const auto input_dataset, create_dataset(network_groups, params), "Failed creating input dataset");
 
     hailo_power_measurement_types_t measurement_type = HAILO_POWER_MEASUREMENT_TYPES__MAX_ENUM;
     bool should_measure_power = false;
@@ -1245,11 +1171,10 @@ Expected<InferResult> activate_and_run_vdevice(
     std::map<std::string, std::shared_ptr<LongPowerMeasurement>> power_measurements;
     if (should_measure_power) {
         for (auto &device : physical_devices) {
-            auto long_power_measurement_exp = PowerMeasurementSubcommand::start_power_measurement(device,
-                HAILO_DVM_OPTIONS_AUTO,
-                measurement_type, params.power_measurement.sampling_period, params.power_measurement.averaging_factor);
-            CHECK_EXPECTED(long_power_measurement_exp, "Failed starting power measurement on device {}", device.get().get_dev_id());
-            auto long_power_measurement_p = make_shared_nothrow<LongPowerMeasurement>(long_power_measurement_exp.release());
+            TRY(auto long_power_measurement, PowerMeasurementSubcommand::start_power_measurement(device,
+                    HAILO_DVM_OPTIONS_AUTO, measurement_type, params.power_measurement.sampling_period, params.power_measurement.averaging_factor),
+                "Failed starting power measurement on device {}", device.get().get_dev_id());
+            auto long_power_measurement_p = make_shared_nothrow<LongPowerMeasurement>(std::move(long_power_measurement));
             CHECK_NOT_NULL_AS_EXPECTED(long_power_measurement_p, HAILO_OUT_OF_HOST_MEMORY);
             power_measurements.emplace(device.get().get_dev_id(), std::move(long_power_measurement_p));
         }
@@ -1258,18 +1183,14 @@ Expected<InferResult> activate_and_run_vdevice(
     std::map<std::string, std::shared_ptr<TemperatureMeasurement>> temp_measurements;
     if (params.measure_temp) {
         for (auto &device : physical_devices) {
-            auto temp_measure = TemperatureMeasurement::create_shared(device);
-            CHECK_EXPECTED(temp_measure);
-            auto status = temp_measure.value()->start_measurement();
+            TRY(auto temp_measure, TemperatureMeasurement::create_shared(device));
+            auto status = temp_measure->start_measurement();
             CHECK_SUCCESS_AS_EXPECTED(status, "Failed starting temperature measurement on device {}", device.get().get_dev_id());
-            temp_measurements.emplace(device.get().get_dev_id(), temp_measure.release());
+            temp_measurements.emplace(device.get().get_dev_id(), temp_measure);
         }
     }
 
-    auto infer_result = run_inference(network_groups, input_dataset.value(), params);
-    CHECK_EXPECTED(infer_result, "Error failed running inference");
-
-    InferResult inference_result(infer_result.release());
+    TRY(auto inference_result, run_inference(network_groups, input_dataset, params), "Error failed running inference");
     inference_result.initialize_measurements(physical_devices);
 
     if (should_measure_power) {
@@ -1311,12 +1232,9 @@ Expected<InferResult> activate_and_run_vdevice(
 
 Expected<InferResult> run_command_hef_vdevice(const inference_runner_params &params)
 {
-    auto hef = Hef::create(params.hef_path.c_str());
-    CHECK_EXPECTED(hef, "Failed reading hef file {}", params.hef_path);
-
-    auto network_groups_infos = hef->get_network_groups_infos();
-    CHECK_EXPECTED(network_groups_infos);
-    bool scheduler_is_used = (1 < network_groups_infos->size()) || params.vdevice_params.multi_process_service;
+    TRY(auto hef, Hef::create(params.hef_path.c_str()), "Failed reading hef file {}", params.hef_path);
+    TRY(auto network_groups_infos, hef.get_network_groups_infos());
+    bool scheduler_is_used = (1 < network_groups_infos.size()) || params.vdevice_params.multi_process_service;
 
     hailo_vdevice_params_t vdevice_params = {};
     auto status = hailo_init_vdevice_params(&vdevice_params);
@@ -1326,12 +1244,8 @@ Expected<InferResult> run_command_hef_vdevice(const inference_runner_params &par
     }
     std::vector<hailo_device_id_t> dev_ids;
     if (!params.vdevice_params.device_params.device_ids.empty()) {
-        auto dev_ids_exp = get_device_ids(params.vdevice_params.device_params);
-        CHECK_EXPECTED(dev_ids_exp);
-
-        auto dev_ids_struct_exp = HailoRTCommon::to_device_ids_vector(dev_ids_exp.value());
-        CHECK_EXPECTED(dev_ids_struct_exp);
-        dev_ids = dev_ids_struct_exp.release();
+        TRY(auto dev_ids_strs, get_device_ids(params.vdevice_params.device_params));
+        TRY(dev_ids, HailoRTCommon::to_device_ids_vector(dev_ids_strs));
 
         vdevice_params.device_ids = dev_ids.data();
         vdevice_params.device_count = static_cast<uint32_t>(dev_ids.size());
@@ -1339,42 +1253,47 @@ Expected<InferResult> run_command_hef_vdevice(const inference_runner_params &par
     vdevice_params.scheduling_algorithm = (scheduler_is_used) ? HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN : HAILO_SCHEDULING_ALGORITHM_NONE;
     vdevice_params.group_id = params.vdevice_params.group_id.c_str();
     vdevice_params.multi_process_service = params.vdevice_params.multi_process_service;
-    auto vdevice = VDevice::create(vdevice_params);
-    CHECK_EXPECTED(vdevice, "Failed creating vdevice");
+    TRY(auto vdevice, VDevice::create(vdevice_params), "Failed creating vdevice");
 
     std::vector<std::reference_wrapper<Device>> physical_devices;
     if (!params.vdevice_params.multi_process_service) {
-        auto expected_physical_devices = vdevice.value()->get_physical_devices();
-        CHECK_EXPECTED(expected_physical_devices);
-        physical_devices = expected_physical_devices.value();
+        TRY(physical_devices, vdevice->get_physical_devices());
     }
 
-    auto interface = vdevice.value()->get_default_streams_interface();
-    CHECK_EXPECTED(interface, "Failed to get default streams interface");
-
-    auto configure_params = get_configure_params(params, hef.value(), *interface);
-    CHECK_EXPECTED(configure_params);
-
-    auto network_group_list = vdevice.value()->configure(hef.value(), configure_params.value());
-    CHECK_EXPECTED(network_group_list, "Failed configure vdevice from hef");
+    TRY(const auto interface, vdevice->get_default_streams_interface(), "Failed to get default streams interface");
+    TRY(auto configure_params, get_configure_params(params, hef, interface));
+    TRY(auto network_group_list, vdevice->configure(hef, configure_params), "Failed configure vdevice from hef");
 
     for (auto &device : physical_devices) {
+        TRY(const auto identity, device.get().identify());
+        CHECK_AS_EXPECTED((HailoRTCommon::is_power_measurement_supported(identity.device_architecture) ||
+            !(params.power_measurement.measure_power)), HAILO_INVALID_OPERATION,
+            "HW arch {} does not support power measurement. Disable the power-measure option",
+            HailoRTCommon::get_device_arch_str(identity.device_architecture));
+        CHECK_AS_EXPECTED((HailoRTCommon::is_current_measurement_supported(identity.device_architecture) ||
+            !(params.power_measurement.measure_current)), HAILO_INVALID_OPERATION,
+            "HW arch {} does not support current measurement. Disable the current-measure option",
+            HailoRTCommon::get_device_arch_str(identity.device_architecture));
+        CHECK_AS_EXPECTED((HailoRTCommon::is_temp_measurement_supported(identity.device_architecture) ||
+            !(params.measure_temp)), HAILO_INVALID_OPERATION,
+            "HW arch {} does not support temperature measurement. Disable the temp-measure option",
+            HailoRTCommon::get_device_arch_str(identity.device_architecture));
+
         if (use_batch_to_measure_opt(params)) {
             status = DownloadActionListCommand::set_batch_to_measure(device.get(), params.runtime_data.batch_to_measure);
             CHECK_SUCCESS_AS_EXPECTED(status);
         }
     }
 
-    auto infer_result = activate_and_run_vdevice(physical_devices, scheduler_is_used, network_group_list.value(), params);
-    CHECK_EXPECTED(infer_result, "Error failed running inference");
+    TRY(auto infer_result, activate_and_run_vdevice(physical_devices, scheduler_is_used, network_group_list, params),
+        "Error while running inference");
 
     for (auto &device : physical_devices) {
-        if (use_batch_to_measure_opt(params) && (0 == params.frames_count) && infer_result) {
-            auto min_frames_count = get_min_inferred_frames_count(infer_result.value());
-            CHECK_EXPECTED(min_frames_count);
-            if (min_frames_count.value()  <  params.runtime_data.batch_to_measure) {
+        if (use_batch_to_measure_opt(params) && (0 == params.frames_count)) {
+            TRY(const auto min_frames_count, get_min_inferred_frames_count(infer_result));
+            if (min_frames_count < params.runtime_data.batch_to_measure) {
                 LOGGER__WARNING("Number of frames sent ({}) is smaller than --batch-to-measure ({}), "
-                    "hence timestamps will not be updated in runtime data", min_frames_count.value() ,
+                    "hence timestamps will not be updated in runtime data", min_frames_count,
                     params.runtime_data.batch_to_measure);
             }
         }
@@ -1383,7 +1302,7 @@ Expected<InferResult> run_command_hef_vdevice(const inference_runner_params &par
             auto output_path = (1 == physical_devices.size()) ? params.runtime_data.runtime_data_output_path :
                 (std::string(device.get().get_dev_id()) + "_" + params.runtime_data.runtime_data_output_path);
             const auto runtime_data_output_path = format_runtime_data_output_path(output_path, params.hef_path);
-            DownloadActionListCommand::execute(device.get(), runtime_data_output_path, network_group_list.value(),
+            DownloadActionListCommand::execute(device.get(), runtime_data_output_path, network_group_list,
                 params.hef_path);
         }
     }
@@ -1402,18 +1321,16 @@ Expected<bool> use_vdevice(const hailo_vdevice_params &params)
         return true;
     }
 
-    auto device_type = Device::get_device_type(params.device_params.device_ids[0]);
-    CHECK_EXPECTED(device_type);
+    TRY(const auto device_type, Device::get_device_type(params.device_params.device_ids[0]));
 
-    return device_type.value() != Device::Type::ETH;
+    return device_type != Device::Type::ETH;
 }
 
 Expected<InferResult> run_command_hef(const inference_runner_params &params)
 {
-    auto use_vdevice_expected = use_vdevice(params.vdevice_params);
-    CHECK_EXPECTED(use_vdevice_expected);
+    TRY(auto use_vdevice, use_vdevice(params.vdevice_params));
 
-    if (use_vdevice_expected.value()) {
+    if (use_vdevice) {
         return run_command_hef_vdevice(params);
     }
     else {
@@ -1428,17 +1345,15 @@ static hailo_status run_command_hefs_dir(const inference_runner_params &params, 
     std::string hef_dir = params.hef_path;
     inference_runner_params curr_params = params;
 
-    const auto files = Filesystem::get_files_in_dir_flat(hef_dir);
-    CHECK_EXPECTED_AS_STATUS(files);
+    TRY(const auto files, Filesystem::get_files_in_dir_flat(hef_dir));
 
-    for (const auto &full_path : files.value()) {
+    for (const auto &full_path : files) {
         if (Filesystem::has_suffix(full_path, ".hef")) {
             contains_hef = true;
             curr_params.hef_path = full_path;
             std::cout << std::string(80, '*') << std::endl << "Inferring " << full_path << ":"<< std::endl;
-            auto hef = Hef::create(full_path);
-            CHECK_EXPECTED_AS_STATUS(hef);
-            auto network_groups_names = hef->get_network_groups_names();
+            TRY(auto hef, Hef::create(full_path));
+            auto network_groups_names = hef.get_network_groups_names();
             auto infer_stats = run_command_hef(curr_params);
             printer.print(network_groups_names , infer_stats);
 
@@ -1458,23 +1373,20 @@ static hailo_status run_command_hefs_dir(const inference_runner_params &params, 
 
 hailo_status run_command(const inference_runner_params &params)
 {
-    auto printer = InferStatsPrinter::create(params);
-    CHECK_EXPECTED_AS_STATUS(printer, "Failed to initialize infer stats printer");
+    TRY(auto printer, InferStatsPrinter::create(params), "Failed to initialize infer stats printer");
     if (!params.csv_output.empty()) {
-        printer->print_csv_header();
+        printer.print_csv_header();
     }
 
-    auto is_dir = Filesystem::is_directory(params.hef_path.c_str());
-    CHECK_EXPECTED_AS_STATUS(is_dir, "Failed checking if path is directory");
+    TRY(const auto is_dir, Filesystem::is_directory(params.hef_path.c_str()), "Failed checking if path is directory");
 
-    if (is_dir.value()){
-        return run_command_hefs_dir(params, printer.value());
+    if (is_dir){
+        return run_command_hefs_dir(params, printer);
     } else {
         auto infer_stats = run_command_hef(params);
-        auto hef = Hef::create(params.hef_path.c_str());
-        CHECK_EXPECTED_AS_STATUS(hef);
-        auto network_groups_names = hef->get_network_groups_names();
-        printer->print(network_groups_names, infer_stats);
+        TRY(auto hef, Hef::create(params.hef_path.c_str()));
+        auto network_groups_names = hef.get_network_groups_names();
+        printer.print(network_groups_names, infer_stats);
         return infer_stats.status();
     }
 }

@@ -23,26 +23,25 @@ Expected<std::shared_ptr<ServiceStreamBufferPool>> ServiceStreamBufferPool::crea
     };
     auto &vdevice_manager = ServiceResourceManager<VDevice>::get_instance();
 
-    auto free_buffers_queue = SpscQueue<BufferPtr>::create(buffer_count, shutdown_event, DEFAULT_TRANSFER_TIMEOUT);
-    CHECK_EXPECTED(free_buffers_queue);
+    TRY(auto free_buffers_queue,
+        SpscQueue<BufferPtr>::create(buffer_count, shutdown_event, DEFAULT_TRANSFER_TIMEOUT));
 
     std::vector<AllocatedMappedBuffer> buffers;
     buffers.reserve(buffer_count);
     for (size_t i = 0; i < buffer_count; i++) {
-        auto buffer = Buffer::create_shared(buffer_size, BufferStorageParams::create_dma());
-        CHECK_EXPECTED(buffer);
+        TRY(auto buffer, Buffer::create_shared(buffer_size, BufferStorageParams::create_dma()));
 
-        auto mapped_buffer = vdevice_manager.execute<Expected<DmaMappedBuffer>>(vdevice_handle, map_buffer_lambda, buffer.value());
-        CHECK_EXPECTED(mapped_buffer);
+        TRY(auto mapped_buffer,
+            vdevice_manager.execute<Expected<DmaMappedBuffer>>(vdevice_handle, map_buffer_lambda, buffer));
 
-        auto status = free_buffers_queue->enqueue(buffer.value());
+        auto status = free_buffers_queue.enqueue(buffer);
         CHECK_SUCCESS(status);
 
-        buffers.emplace_back(AllocatedMappedBuffer{ buffer.release(), mapped_buffer.release()});
+        buffers.emplace_back(AllocatedMappedBuffer{ buffer, std::move(mapped_buffer)});
     }
 
     auto buffer_pool_ptr = make_shared_nothrow<ServiceStreamBufferPool>(buffer_size, std::move(buffers),
-        free_buffers_queue.release(), buffer_count);
+        std::move(free_buffers_queue), buffer_count);
     CHECK_NOT_NULL_AS_EXPECTED(buffer_pool_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return buffer_pool_ptr;
@@ -58,18 +57,9 @@ ServiceStreamBufferPool::ServiceStreamBufferPool(size_t buffer_size, std::vector
 
 Expected<BufferPtr> ServiceStreamBufferPool::acquire_buffer()
 {
-    auto buffer = m_free_buffers_queue.dequeue(DEFAULT_TRANSFER_TIMEOUT);
-    if (HAILO_SHUTDOWN_EVENT_SIGNALED == buffer.status()) {
-        return make_unexpected(buffer.status());
-    }
-    else if (HAILO_TIMEOUT == buffer.status()) {
-        LOGGER__WARNING(
-            "Failed to acquire buffer because the buffer pool is empty. This could be caused by uneven reading and writing speeds");
-        return make_unexpected(buffer.status());
-    }
-    CHECK_EXPECTED(buffer);
-
-    return buffer.release();
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_SHUTDOWN_EVENT_SIGNALED, auto buffer,
+        m_free_buffers_queue.dequeue(DEFAULT_TRANSFER_TIMEOUT));
+    return buffer;
 }
 
 hailo_status ServiceStreamBufferPool::return_to_pool(BufferPtr buffer)
@@ -91,9 +81,7 @@ size_t ServiceStreamBufferPool::buffers_count()
 
 Expected<std::shared_ptr<ServiceNetworkGroupBufferPool>> ServiceNetworkGroupBufferPool::create(uint32_t vdevice_handle)
 {
-    auto shutdown_event_exp = Event::create_shared(Event::State::not_signalled);
-    CHECK_EXPECTED(shutdown_event_exp);
-    auto shutdown_event = shutdown_event_exp.release();
+    TRY(auto shutdown_event, Event::create_shared(Event::State::not_signalled));
 
     auto cng_buffer_pool_ptr = make_shared_nothrow<ServiceNetworkGroupBufferPool>(shutdown_event, vdevice_handle);
     CHECK_NOT_NULL_AS_EXPECTED(cng_buffer_pool_ptr, HAILO_OUT_OF_HOST_MEMORY);
@@ -102,54 +90,53 @@ Expected<std::shared_ptr<ServiceNetworkGroupBufferPool>> ServiceNetworkGroupBuff
 }
 
 ServiceNetworkGroupBufferPool::ServiceNetworkGroupBufferPool(EventPtr shutdown_event, uint32_t vdevice_handle) :
-    m_output_name_to_buffer_pool(), m_shutdown_event(shutdown_event), m_vdevice_handle(vdevice_handle)
+    m_stream_name_to_buffer_pool(), m_shutdown_event(shutdown_event), m_vdevice_handle(vdevice_handle)
 {}
 
-hailo_status ServiceNetworkGroupBufferPool::allocate_pool(const std::string &name, size_t frame_size, size_t pool_size)
+hailo_status ServiceNetworkGroupBufferPool::allocate_pool(const std::string &name,
+    hailo_dma_buffer_direction_t direction, size_t frame_size, size_t pool_size)
 {
-    auto buffer_pool = ServiceStreamBufferPool::create(m_vdevice_handle, frame_size,
-        pool_size, HAILO_DMA_BUFFER_DIRECTION_D2H, m_shutdown_event);
-    CHECK_EXPECTED(buffer_pool);
+    TRY(auto buffer_pool, ServiceStreamBufferPool::create(m_vdevice_handle, frame_size,
+        pool_size, direction, m_shutdown_event));
 
     std::unique_lock<std::mutex> lock(m_mutex);
-    m_output_name_to_buffer_pool[name] = buffer_pool.release();
+    m_stream_name_to_buffer_pool[name] = buffer_pool;
 
     return HAILO_SUCCESS;
 }
 
-hailo_status ServiceNetworkGroupBufferPool::reallocate_pool(const std::string &name, size_t frame_size)
+hailo_status ServiceNetworkGroupBufferPool::reallocate_pool(const std::string &name,
+    hailo_dma_buffer_direction_t direction, size_t frame_size)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
-    auto pool_size = m_output_name_to_buffer_pool[name]->buffers_count();
-    m_output_name_to_buffer_pool[name].reset();
+    auto pool_size = m_stream_name_to_buffer_pool[name]->buffers_count();
+    m_stream_name_to_buffer_pool[name].reset();
 
-    auto buffer_pool = ServiceStreamBufferPool::create(m_vdevice_handle, frame_size,
-        pool_size, HAILO_DMA_BUFFER_DIRECTION_D2H, m_shutdown_event);
-    CHECK_EXPECTED(buffer_pool);
-    m_output_name_to_buffer_pool[name] = buffer_pool.release();
+    TRY(auto buffer_pool, ServiceStreamBufferPool::create(m_vdevice_handle, frame_size,
+        pool_size, direction, m_shutdown_event));
+    m_stream_name_to_buffer_pool[name] = buffer_pool;
 
     return HAILO_SUCCESS;
 }
 
-Expected<BufferPtr> ServiceNetworkGroupBufferPool::acquire_buffer(const std::string &output_name)
+Expected<BufferPtr> ServiceNetworkGroupBufferPool::acquire_buffer(const std::string &stream_name)
 {
-    CHECK_AS_EXPECTED(contains(m_output_name_to_buffer_pool, output_name), HAILO_INTERNAL_FAILURE,
-        "acquire_buffer() for output {} failed, output name does not exist in buffer pool", output_name);
+    CHECK_AS_EXPECTED(contains(m_stream_name_to_buffer_pool, stream_name), HAILO_INTERNAL_FAILURE,
+        "acquire_buffer() for stream {} failed, stream name does not exist in buffer pool", stream_name);
 
     std::unique_lock<std::mutex> lock(m_mutex);
-    auto buffer = m_output_name_to_buffer_pool.at(output_name)->acquire_buffer();
-    CHECK_EXPECTED(buffer);
+    TRY(auto buffer, m_stream_name_to_buffer_pool.at(stream_name)->acquire_buffer());
 
-    return buffer.release();
+    return buffer;
 }
 
-hailo_status ServiceNetworkGroupBufferPool::return_to_pool(const std::string &output_name, BufferPtr buffer)
+hailo_status ServiceNetworkGroupBufferPool::return_to_pool(const std::string &stream_name, BufferPtr buffer)
 {
-    CHECK(contains(m_output_name_to_buffer_pool, output_name), HAILO_INTERNAL_FAILURE,
-        "acquire_buffer() for output {} failed, output name does not exist in buffer pool", output_name);
+    CHECK(contains(m_stream_name_to_buffer_pool, stream_name), HAILO_INTERNAL_FAILURE,
+        "acquire_buffer() for stream {} failed, stream name does not exist in buffer pool", stream_name);
 
     std::unique_lock<std::mutex> lock(m_mutex);
-    auto status = m_output_name_to_buffer_pool.at(output_name)->return_to_pool(buffer);
+    auto status = m_stream_name_to_buffer_pool.at(stream_name)->return_to_pool(buffer);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;

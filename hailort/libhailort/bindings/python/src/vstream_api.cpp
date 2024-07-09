@@ -18,7 +18,7 @@
 namespace hailort
 {
 
-void InputVStreamWrapper::add_to_python_module(py::module &m)
+void InputVStreamWrapper::bind(py::module &m)
 {
     py::class_<InputVStream, std::shared_ptr<InputVStream>>(m, "InputVStream")
     .def("send", [](InputVStream &self, py::array data)
@@ -43,7 +43,10 @@ void InputVStreamWrapper::add_to_python_module(py::module &m)
     })
     .def_property_readonly("shape", [](InputVStream &self)
     {
-        return *py::array::ShapeContainer(HailoRTBindingsCommon::get_pybind_shape(self.get_info(), self.get_user_buffer_format()));
+        auto shape = self.get_info().shape;
+        auto nms_shape = self.get_info().nms_shape;
+        auto format = self.get_user_buffer_format();
+        return *py::array::ShapeContainer(HailoRTBindingsCommon::get_pybind_shape(shape, nms_shape, format));
     })
     ;
 }
@@ -100,7 +103,7 @@ void InputVStreamsWrapper::clear()
     VALIDATE_STATUS(status);
 }
 
-void InputVStreamsWrapper::add_to_python_module(py::module &m)
+void InputVStreamsWrapper::bind(py::module &m)
 {
     py::class_<InputVStreamsWrapper, InputVStreamsWrapperPtr>(m, "InputVStreams")
     .def(py::init(&InputVStreamsWrapper::create))
@@ -138,10 +141,13 @@ hailo_format_t OutputVStreamWrapper::get_user_buffer_format(OutputVStream &self)
 
 auto OutputVStreamWrapper::get_shape(OutputVStream &self)
 {
-    return *py::array::ShapeContainer(HailoRTBindingsCommon::get_pybind_shape(self.get_info(), self.get_user_buffer_format()));
+    auto shape = self.get_info().shape;
+    auto nms_shape = self.get_info().nms_shape;
+    auto format = self.get_user_buffer_format();
+    return *py::array::ShapeContainer(HailoRTBindingsCommon::get_pybind_shape(shape, nms_shape, format));
 }
 
-void OutputVStreamWrapper::add_to_python_module(py::module &m)
+void OutputVStreamWrapper::bind(py::module &m)
 {
     py::class_<OutputVStream, std::shared_ptr<OutputVStream>>(m, "OutputVStream")
     .def("recv", [](OutputVStream &self)
@@ -264,7 +270,7 @@ void OutputVStreamsWrapper::after_fork_in_child()
     }
 }
 
-void OutputVStreamsWrapper::add_to_python_module(py::module &m)
+void OutputVStreamsWrapper::bind(py::module &m)
 {
     py::class_<OutputVStreamsWrapper, OutputVStreamsWrapperPtr>(m, "OutputVStreams")
     .def(py::init(&OutputVStreamsWrapper::create))
@@ -351,12 +357,18 @@ std::vector<size_t> InferVStreamsWrapper::get_shape(const std::string &stream_na
 {
     auto input = m_infer_pipeline->get_input_by_name(stream_name);
     if (HAILO_SUCCESS == input.status()) {
-        return HailoRTBindingsCommon::get_pybind_shape(input->get().get_info(), input->get().get_user_buffer_format());
+        auto shape = input->get().get_info().shape;
+        auto nms_shape = input->get().get_info().nms_shape;
+        auto format = input->get().get_user_buffer_format();
+        return HailoRTBindingsCommon::get_pybind_shape(shape, nms_shape, format);
     }
 
     auto output = m_infer_pipeline->get_output_by_name(stream_name);
     if (HAILO_SUCCESS == output.status()) {
-        return HailoRTBindingsCommon::get_pybind_shape(output->get().get_info(), output->get().get_user_buffer_format());
+        auto shape = output->get().get_info().shape;
+        auto nms_shape = output->get().get_info().nms_shape;
+        auto format = output->get().get_user_buffer_format();
+        return HailoRTBindingsCommon::get_pybind_shape(shape, nms_shape, format);
     }
 
     std::cerr << "Stream " << stream_name << " not found";
@@ -387,7 +399,7 @@ void InputVStreamsWrapper::after_fork_in_child()
     }
 }
 
-void InferVStreamsWrapper::add_to_python_module(py::module &m)
+void InferVStreamsWrapper::bind(py::module &m)
 {
     py::class_<InferVStreamsWrapper>(m, "InferVStreams")
     .def(py::init(&InferVStreamsWrapper::create))
@@ -418,14 +430,5 @@ void InferVStreamsWrapper::add_to_python_module(py::module &m)
 InferVStreamsWrapper::InferVStreamsWrapper(std::shared_ptr<InferVStreams> &infer_pipeline)
     : m_infer_pipeline(std::move(infer_pipeline))
 {}
-
-void VStream_api_initialize_python_module(py::module &m)
-{
-    InputVStreamWrapper::add_to_python_module(m);
-    InputVStreamsWrapper::add_to_python_module(m);
-    OutputVStreamWrapper::add_to_python_module(m);
-    OutputVStreamsWrapper::add_to_python_module(m);
-    InferVStreamsWrapper::add_to_python_module(m);
-}
 
 } /* namespace hailort */

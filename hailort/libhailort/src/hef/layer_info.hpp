@@ -36,7 +36,8 @@ enum class LayerType
     BOUNDARY = 1,
     INTER_CONTEXT = 2,
     DDR = 3,
-    CFG = 4
+    CFG = 4,
+    CACHE = 5
 };
 
 struct BufferIndices {
@@ -55,6 +56,11 @@ struct DdrInfo {
     //(In DDR core buffer per frame is 1). Used to calc total host descriptors_per_frame.
     uint16_t total_buffers_per_frame;
     uint16_t min_buffered_rows;
+};
+
+struct CacheInfo {
+    uint32_t id;
+    uint32_t size;
 };
 
 struct LayerInfo {
@@ -101,6 +107,7 @@ struct LayerInfo {
     // Context switch info TODO: we should use std::optional for this structures (or implement our self).
     ConnectedContextInfo connected_context_info;
     DdrInfo ddr_info;
+    CacheInfo cache_info;
 };
 
 // LayerIdentifier = <LayerType, hailo_stream_direction_t, layer_name, stream_index>

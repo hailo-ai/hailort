@@ -307,26 +307,23 @@ grpc::Status HailoRtRpcService::VDevice_configure(grpc::ServerContext*, const VD
 hailo_status HailoRtRpcService::create_buffer_pools_for_ng(uint32_t vdevice_handle, uint32_t ng_handle, uint32_t request_pid,
     bool allocate_for_raw_streams)
 {
-    auto cng_buffer_pool = ServiceNetworkGroupBufferPool::create(vdevice_handle);
-    CHECK_EXPECTED_AS_STATUS(cng_buffer_pool);
+    TRY(auto cng_buffer_pool, ServiceNetworkGroupBufferPool::create(vdevice_handle));
 
     auto &cng_buffer_pool_manager = ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance();
-    auto cng_buffer_pool_handle = cng_buffer_pool_manager.register_resource(request_pid, cng_buffer_pool.release());
+    auto cng_buffer_pool_handle = cng_buffer_pool_manager.register_resource(request_pid, cng_buffer_pool);
     CHECK(cng_buffer_pool_handle == ng_handle, HAILO_INTERNAL_FAILURE,
         "cng_buffer_pool_handle = {} must be equal to network_group_handle ={}", cng_buffer_pool_handle, ng_handle);
 
     if (allocate_for_raw_streams) {
         // For Async API - The buffer size in the pool will be the stream's hw frame size as used in the infer_model pipeline
-        auto min_buffer_pool_size = get_min_buffer_pool_size(ng_handle);
-        CHECK_EXPECTED_AS_STATUS(min_buffer_pool_size);
+        TRY(const auto min_buffer_pool_size, get_min_buffer_pool_size(ng_handle));
+        TRY(const auto streams_infos, get_all_stream_infos(ng_handle));
 
-        auto streams_infos = get_all_stream_infos(ng_handle);
-        CHECK_EXPECTED_AS_STATUS(streams_infos);
-
-        for (const auto &stream_info : streams_infos.value()) {
+        for (const auto &stream_info : streams_infos) {
             if (stream_info.direction == HAILO_D2H_STREAM) {
                 auto allocate_lambda = [&](std::shared_ptr<ServiceNetworkGroupBufferPool> cng_buffer_pool) {
-                    return cng_buffer_pool->allocate_pool(stream_info.name, stream_info.hw_frame_size, min_buffer_pool_size.value());
+                    return cng_buffer_pool->allocate_pool(stream_info.name, HAILO_DMA_BUFFER_DIRECTION_D2H,
+                        stream_info.hw_frame_size, min_buffer_pool_size);
                 };
                 CHECK_SUCCESS(cng_buffer_pool_manager.execute(ng_handle, allocate_lambda));
             }
@@ -465,10 +462,8 @@ hailo_status HailoRtRpcService::add_input_named_buffer(const ProtoTransferReques
         mem_view = MemoryView::create_const(data, proto_stream_transfer_request.data().size());
     } else {
         // The memory is not aligned to 8, therefore we need to copy the data into a buffer
-        auto buffer_exp = Buffer::create_shared(data, proto_stream_transfer_request.data().size(),
-            BufferStorageParams::create_dma());
-        CHECK_EXPECTED(buffer_exp);
-        buffer = buffer_exp.release();
+        TRY(buffer, Buffer::create_shared(data, proto_stream_transfer_request.data().size(),
+            BufferStorageParams::create_dma()));
         mem_view = MemoryView(*buffer);
     }
 
@@ -487,7 +482,11 @@ hailo_status HailoRtRpcService::add_input_named_buffer(const ProtoTransferReques
         enqueue_cb_identifier(vdevice_handle, std::move(cb_identifier));
     };
 
-    named_buffers_callbacks.emplace(stream_name, std::make_pair(mem_view, transfer_done));
+    BufferRepresentation buffer_representation {};
+    buffer_representation.buffer_type = BufferType::VIEW;
+    buffer_representation.view = mem_view;
+
+    named_buffers_callbacks.emplace(stream_name, std::make_pair(buffer_representation, transfer_done));
     return HAILO_SUCCESS;
 }
 
@@ -496,9 +495,7 @@ hailo_status HailoRtRpcService::add_output_named_buffer(const ProtoTransferReque
 {
     // Prepare output buffer
     auto &stream_name = proto_stream_transfer_request.stream_name();
-    auto buffer_exp = acquire_buffer_from_cng_pool(ng_handle, stream_name);
-    CHECK_EXPECTED(buffer_exp);
-    auto buffer = buffer_exp.release();
+    TRY(auto buffer, acquire_buffer_from_cng_pool(ng_handle, stream_name));
 
     // Prepare callback
     auto cb_idx = proto_stream_transfer_request.cb_idx();
@@ -511,7 +508,11 @@ hailo_status HailoRtRpcService::add_output_named_buffer(const ProtoTransferReque
         enqueue_cb_identifier(vdevice_handle, std::move(cb_identifier));
     };
 
-    named_buffers_callbacks.emplace(stream_name, std::make_pair(MemoryView(*buffer), transfer_done));
+    BufferRepresentation buffer_representation {};
+    buffer_representation.buffer_type = BufferType::VIEW;
+    buffer_representation.view = MemoryView(*buffer);
+
+    named_buffers_callbacks.emplace(stream_name, std::make_pair(buffer_representation, transfer_done));
     return HAILO_SUCCESS;
 }
 
@@ -566,9 +567,12 @@ Expected<BufferPtr> HailoRtRpcService::acquire_buffer_from_cng_pool(uint32_t ng_
     auto lambda_acquire_buffer = [](std::shared_ptr<ServiceNetworkGroupBufferPool> cng_buffer_pool, const std::string &output_name) {
         return cng_buffer_pool->acquire_buffer(output_name);
     };
-    auto buffer = cng_buffer_pool_manager.execute<Expected<BufferPtr>>(ng_handle, lambda_acquire_buffer, output_name);
-    CHECK_EXPECTED(buffer);
-    return buffer.release();
+    TRY(auto buffer,
+        cng_buffer_pool_manager.execute<Expected<BufferPtr>>(
+            ng_handle, lambda_acquire_buffer, output_name)
+    );
+
+    return buffer;
 }
 
 grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_infer_async(grpc::ServerContext*,
@@ -1091,6 +1095,7 @@ void serialize_op_matadata(hailort::net_flow::OpMetadata &op_metadata, ProtoOpMe
         nms_config_proto->set_background_removal(nms_config.background_removal);
         nms_config_proto->set_background_removal_index(nms_config.background_removal_index);
         nms_config_proto->set_cross_classes(nms_config.cross_classes);
+        nms_config_proto->set_bbox_only(nms_config.bbox_only);
     }
 
     switch (op_metadata.type()) {
@@ -1379,7 +1384,8 @@ grpc::Status HailoRtRpcService::OutputVStreams_create(grpc::ServerContext *, con
     auto &vstream_manager = ServiceResourceManager<OutputVStream>::get_instance();
     for (size_t i = 0; i < vstreams.size(); i++) {
         auto allocate_lambda = [&](std::shared_ptr<ServiceNetworkGroupBufferPool> cng_buffer_pool) {
-            return cng_buffer_pool->allocate_pool(vstreams[i].name(), vstreams[i].get_frame_size(), output_params.at(vstreams[i].name()).queue_size);
+            return cng_buffer_pool->allocate_pool(vstreams[i].name(), HAILO_DMA_BUFFER_DIRECTION_D2H,
+                vstreams[i].get_frame_size(), output_params.at(vstreams[i].name()).queue_size);
         };
         CHECK_SUCCESS_AS_RPC_STATUS(cng_buffer_pool_manager.execute(network_group_handle, allocate_lambda), reply);
 
@@ -1513,7 +1519,7 @@ grpc::Status HailoRtRpcService::OutputVStream_read(grpc::ServerContext*, const O
 
     auto buffer_exp = acquire_buffer_from_cng_pool(ng_handle, vstream_name.value());
     CHECK_EXPECTED_AS_RPC_STATUS(buffer_exp, reply);
-    auto buffer = buffer_exp.release();
+    auto buffer = buffer_exp.value();
 
     auto lambda = [](std::shared_ptr<OutputVStream> output_vstream, MemoryView &buffer) {
         return output_vstream->read(std::move(buffer));
@@ -1549,10 +1555,10 @@ Expected<std::vector<hailo_stream_info_t>> HailoRtRpcService::get_all_stream_inf
         return cng->get_all_stream_infos();
     };
     auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
-    auto expected_stream_infos = manager.execute<Expected<std::vector<hailo_stream_info_t>>>(ng_handle, lambda);
-    CHECK_EXPECTED(expected_stream_infos);
+    TRY(auto stream_infos,
+        manager.execute<Expected<std::vector<hailo_stream_info_t>>>(ng_handle, lambda));
 
-    return expected_stream_infos.release();
+    return stream_infos;
 }
 
 Expected<std::vector<hailo_vstream_info_t>> HailoRtRpcService::get_all_vstream_infos(uint32_t ng_handle)
@@ -1561,10 +1567,10 @@ Expected<std::vector<hailo_vstream_info_t>> HailoRtRpcService::get_all_vstream_i
         return cng->get_all_vstream_infos();
     };
     auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
-    auto expected_vstream_infos = manager.execute<Expected<std::vector<hailo_vstream_info_t>>>(ng_handle, lambda);
-    CHECK_EXPECTED(expected_vstream_infos);
+    TRY(auto vstream_infos,
+        manager.execute<Expected<std::vector<hailo_vstream_info_t>>>(ng_handle, lambda));
 
-    return expected_vstream_infos.release();
+    return vstream_infos;
 }
 
 grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_all_stream_infos(grpc::ServerContext*,
@@ -1683,10 +1689,9 @@ Expected<size_t> HailoRtRpcService::get_min_buffer_pool_size(uint32_t ng_handle)
         return cng->get_min_buffer_pool_size();
     };
     auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
-    auto min_buffer_pool_size = manager.execute<Expected<size_t>>(ng_handle, lambda);
-    CHECK_EXPECTED(min_buffer_pool_size);
+    TRY(auto min_buffer_pool_size, manager.execute<Expected<size_t>>(ng_handle, lambda));
 
-    return min_buffer_pool_size.release();
+    return min_buffer_pool_size;
 }
 
 grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_min_buffer_pool_size(grpc::ServerContext*,
@@ -1899,10 +1904,9 @@ Expected<std::string> HailoRtRpcService::output_vstream_name(uint32_t vstream_ha
         return output_vstream->name();
     };
     auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
-    auto name = manager.execute<Expected<std::string>>(vstream_handle, lambda);
-    CHECK_EXPECTED(name);
+    TRY(auto name, manager.execute<Expected<std::string>>(vstream_handle, lambda));
 
-    return name.release();
+    return name;
 }
 
 Expected<size_t> HailoRtRpcService::output_vstream_frame_size(uint32_t vstream_handle)
@@ -1911,10 +1915,9 @@ Expected<size_t> HailoRtRpcService::output_vstream_frame_size(uint32_t vstream_h
         return output_vstream->get_frame_size();
     };
     auto &manager = ServiceResourceManager<OutputVStream>::get_instance();
-    auto frame_size = manager.execute<Expected<size_t>>(vstream_handle, lambda);
-    CHECK_EXPECTED(frame_size);
+    TRY(auto frame_size, manager.execute<Expected<size_t>>(vstream_handle, lambda));
 
-    return frame_size.release();
+    return frame_size;
 }
 
 grpc::Status HailoRtRpcService::OutputVStream_name(grpc::ServerContext*, const VStream_name_Request *request,
@@ -2194,15 +2197,12 @@ grpc::Status HailoRtRpcService::OutputVStream_set_nms_iou_threshold(grpc::Server
 
 hailo_status HailoRtRpcService::update_buffer_size_in_pool(uint32_t vstream_handle, uint32_t network_group_handle)
 {
-    auto vstream_name = output_vstream_name(vstream_handle);
-    CHECK_EXPECTED(vstream_name);
-
-    auto frame_size = output_vstream_frame_size(vstream_handle);
-    CHECK_EXPECTED(frame_size);
+    TRY(const auto vstream_name, output_vstream_name(vstream_handle));
+    TRY(const auto frame_size, output_vstream_frame_size(vstream_handle));
 
     auto &cng_buffer_pool_manager = ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance();
     auto allocate_lambda = [&](std::shared_ptr<ServiceNetworkGroupBufferPool> cng_buffer_pool) {
-        return cng_buffer_pool->reallocate_pool(vstream_name.release(), frame_size.release());
+        return cng_buffer_pool->reallocate_pool(vstream_name, HAILO_DMA_BUFFER_DIRECTION_D2H, frame_size);
     };
     CHECK_SUCCESS(cng_buffer_pool_manager.execute(network_group_handle, allocate_lambda));
 

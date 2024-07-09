@@ -8,7 +8,7 @@ if(NOT CMAKE_HOST_UNIX)
     message(FATAL_ERROR "Only unix hosts are supported, stopping build")
 endif()
 
-find_package(HailoRT 4.17.1 EXACT REQUIRED)
+find_package(HailoRT 4.18.0 EXACT REQUIRED)
 
 # GST_PLUGIN_DEFINE needs PACKAGE to be defined
 set(GST_HAILO_PACKAGE_NAME "hailo")
@@ -27,6 +27,8 @@ add_library(gsthailo SHARED
     gst-hailo/sync_gst_hailosend.cpp
     gst-hailo/sync_gst_hailorecv.cpp
     gst-hailo/gsthailonet.cpp
+    gst-hailo/gsthailo_allocator.cpp
+    gst-hailo/gsthailo_dmabuf_allocator.cpp
     gst-hailo/gsthailodevicestats.cpp
     gst-hailo/common.cpp
     gst-hailo/network_group_handle.cpp

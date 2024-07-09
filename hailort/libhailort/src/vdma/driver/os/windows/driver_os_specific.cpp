@@ -157,10 +157,9 @@ Expected<FileDescriptor> open_device_file(const std::string &dev_path)
     return FileDescriptor(handle);
 }
 
-Expected<std::vector<std::string>> list_devices()
-{
-    GUID guid = GUID_DEVINTERFACE_HailoKM;
 
+Expected<std::vector<std::string>> list_devices(GUID guid)
+{
     ULONG len = 0;
     CONFIGRET cr = CM_Get_Device_Interface_List_SizeA(
         &len,
@@ -187,6 +186,37 @@ Expected<std::vector<std::string>> list_devices()
     }
 
     return names;
+}
+
+Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_devices(GUID guid)
+{
+    TRY (auto names, list_devices(guid), "Failed listing pcie devices");
+
+    std::vector<HailoRTDriver::DeviceInfo> devices_info;
+    for (const auto &name : names) {
+        auto device_info = query_device_info(name);
+        CHECK_EXPECTED(device_info, "Failed parsing device info for {}", name);
+        if (GUID_DEVINTERFACE_HailoKM_NNC == guid) {
+            device_info->accelerator_type = HailoRTDriver::AcceleratorType::NNC_ACCELERATOR;
+        } else if (GUID_DEVINTERFACE_HailoKM_SOC == guid) {
+            device_info->accelerator_type = HailoRTDriver::AcceleratorType::SOC_ACCELERATOR;
+        }
+        devices_info.push_back(device_info.release());
+    }
+
+    return devices_info;
+}
+
+Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_soc_devices()
+{
+    GUID guid = GUID_DEVINTERFACE_HailoKM_SOC;
+    return scan_devices(guid);
+}
+
+Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_nnc_devices()
+{
+    GUID guid = GUID_DEVINTERFACE_HailoKM_NNC;
+    return scan_devices(guid);
 }
 
 static Expected<uint32_t> parse_uint32_property(const std::wstring &dev_interface,
@@ -241,8 +271,8 @@ Expected<HailoRTDriver::DeviceInfo> query_device_info(const std::string &device_
     }
 
 COMPATIBLE_PARAM_CAST(hailo_memory_transfer_params, MemoryTransfer);
-COMPATIBLE_PARAM_CAST(hailo_vdma_interrupts_enable_params, VdmaInterruptsEnable)
-COMPATIBLE_PARAM_CAST(hailo_vdma_interrupts_disable_params, VdmaInterruptsDisable)
+COMPATIBLE_PARAM_CAST(hailo_vdma_enable_channels_params, VdmaEnableChannels)
+COMPATIBLE_PARAM_CAST(hailo_vdma_disable_channels_params, VdmaDisableChannels)
 COMPATIBLE_PARAM_CAST(hailo_vdma_interrupts_read_timestamp_params, VdmaInterruptsReadTimestamps)
 COMPATIBLE_PARAM_CAST(hailo_vdma_interrupts_wait_params, VdmaInterruptsWait)
 COMPATIBLE_PARAM_CAST(hailo_vdma_buffer_sync_params, VdmaBufferSync)
@@ -251,14 +281,17 @@ COMPATIBLE_PARAM_CAST(hailo_vdma_buffer_map_params, VdmaBufferMap)
 COMPATIBLE_PARAM_CAST(hailo_vdma_buffer_unmap_params, VdmaBufferUnmap)
 COMPATIBLE_PARAM_CAST(hailo_desc_list_create_params, DescListCreate)
 COMPATIBLE_PARAM_CAST(hailo_desc_list_release_params, DescListReleaseParam)
-COMPATIBLE_PARAM_CAST(hailo_desc_list_bind_vdma_buffer_params, DescListBind)
+COMPATIBLE_PARAM_CAST(hailo_desc_list_program_params, DescListProgram)
 COMPATIBLE_PARAM_CAST(hailo_d2h_notification, D2HNotification)
 COMPATIBLE_PARAM_CAST(hailo_device_properties, DeviceProperties)
 COMPATIBLE_PARAM_CAST(hailo_driver_info, DriverInfo)
-COMPATIBLE_PARAM_CAST(hailo_non_linux_desc_list_mmap_params, DescListMmap)
 COMPATIBLE_PARAM_CAST(hailo_read_log_params, ReadLog)
 COMPATIBLE_PARAM_CAST(hailo_mark_as_in_use_params, MarkAsInUse)
 COMPATIBLE_PARAM_CAST(hailo_vdma_launch_transfer_params, LaunchTransfer)
+COMPATIBLE_PARAM_CAST(hailo_soc_connect_params, ConnectParams)
+COMPATIBLE_PARAM_CAST(hailo_soc_close_params, SocCloseParams)
+COMPATIBLE_PARAM_CAST(hailo_pci_ep_accept_params, AcceptParams)
+COMPATIBLE_PARAM_CAST(hailo_pci_ep_close_params, PciEpCloseParams)
 
 // Special handle for nullptr_t. This case occurs when there is no parameters passed.
 tCompatibleHailoIoctlData WindowsIoctlParamCast<nullptr_t>::to_compatible(nullptr_t data)

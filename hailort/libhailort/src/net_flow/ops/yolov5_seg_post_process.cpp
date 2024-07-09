@@ -17,6 +17,7 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
 #pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wclass-memaccess"
 #endif
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include "stb_image_resize.h"
@@ -99,11 +100,9 @@ std::string Yolov5SegOpMetadata::get_op_description()
 
 Expected<hailo_vstream_info_t> Yolov5SegOpMetadata::get_output_vstream_info()
 {
-    auto vstream_info = NmsOpMetadata::get_output_vstream_info();
-    CHECK_EXPECTED(vstream_info);
-
-    vstream_info->nms_shape.max_accumulated_mask_size = m_yolo_seg_config.max_accumulated_mask_size;
-    return vstream_info.release();
+    TRY(auto vstream_info, NmsOpMetadata::get_output_vstream_info());
+    vstream_info.nms_shape.max_accumulated_mask_size = m_yolo_seg_config.max_accumulated_mask_size;
+    return vstream_info;
 }
 
 Expected<std::shared_ptr<Op>> Yolov5SegPostProcess::create(std::shared_ptr<Yolov5SegOpMetadata> metadata)
@@ -115,17 +114,16 @@ Expected<std::shared_ptr<Op>> Yolov5SegPostProcess::create(std::shared_ptr<Yolov
     assert(contains(metadata->inputs_metadata(), metadata->yolov5seg_config().proto_layer_name));
     auto proto_layer_metadata = metadata->inputs_metadata().at(metadata->yolov5seg_config().proto_layer_name);
     auto transformed_proto_layer_frame_size = HailoRTCommon::get_shape_size(proto_layer_metadata.shape) * sizeof(float32_t);
-    auto transformed_proto_buffer = Buffer::create(transformed_proto_layer_frame_size);
-    CHECK_EXPECTED(transformed_proto_buffer);
-    auto mask_mult_result_buffer = Buffer::create(proto_layer_metadata.shape.height * proto_layer_metadata.shape.width * sizeof(float32_t));
-    CHECK_EXPECTED(mask_mult_result_buffer);
+    TRY(auto transformed_proto_buffer,
+        Buffer::create(transformed_proto_layer_frame_size));
+    TRY(auto mask_mult_result_buffer,
+        Buffer::create(proto_layer_metadata.shape.height * proto_layer_metadata.shape.width * sizeof(float32_t)));
 
-    auto image_size = static_cast<uint32_t>(metadata->yolov5_config().image_width) * static_cast<uint32_t>(metadata->yolov5_config().image_height);
-    auto resized_buffer = Buffer::create(image_size * sizeof(float32_t));
-    CHECK_EXPECTED(resized_buffer);
+    const auto image_size = static_cast<uint32_t>(metadata->yolov5_config().image_width) * static_cast<uint32_t>(metadata->yolov5_config().image_height);
+    TRY(auto resized_buffer, Buffer::create(image_size * sizeof(float32_t)));
 
     auto op = std::shared_ptr<Yolov5SegPostProcess>(new (std::nothrow) Yolov5SegPostProcess(std::move(metadata),
-        mask_mult_result_buffer.release(), resized_buffer.release(), transformed_proto_buffer.release()));
+        std::move(mask_mult_result_buffer), std::move(resized_buffer), std::move(transformed_proto_buffer)));
     CHECK_NOT_NULL_AS_EXPECTED(op, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::shared_ptr<Op>(std::move(op));
@@ -310,7 +308,7 @@ hailo_status Yolov5SegPostProcess::fill_nms_with_byte_mask_format(MemoryView &bu
             status = copied_bytes_amount.status();
             break;
         }
-        CHECK_EXPECTED_AS_STATUS(copied_bytes_amount);
+        CHECK_EXPECTED_AS_STATUS(copied_bytes_amount); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
         buffer_offset += copied_bytes_amount.release();
         detections_count++;
     }

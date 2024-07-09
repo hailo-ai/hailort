@@ -43,20 +43,15 @@ Expected<std::vector<Buffer>> ContextSwitchConfigAction::serialize(const Context
     CHECK_AS_EXPECTED(m_action_list_type < CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT, HAILO_INTERNAL_FAILURE,
         "Action cannot be serialized");
 
-    auto header = serialize_header();
-    CHECK_EXPECTED(header);
+    TRY(auto header, serialize_header());
+    TRY(auto params, serialize_params(context_resources));
+    TRY(auto serialized_action, Buffer::create(header.size() + params.size()));
 
-    auto params = serialize_params(context_resources);
-    CHECK_EXPECTED(params);
-
-    auto serialized_action = Buffer::create(header->size() + params->size());
-    CHECK_EXPECTED(serialized_action);
-
-    std::copy(header->begin(), header->end(), serialized_action->data());
-    std::copy(params->begin(), params->end(), serialized_action->data() + header->size());
+    std::copy(header.begin(), header.end(), serialized_action.data());
+    std::copy(params.begin(), params.end(), serialized_action.data() + header.size());
 
     std::vector<Buffer> buffers;
-    buffers.emplace_back(serialized_action.release());
+    buffers.emplace_back(std::move(serialized_action));
     return buffers;
 }
 
@@ -195,37 +190,34 @@ hailo_status WriteDataCcwActionByBuffer::write_to_config_buffer(ConfigBuffer& co
     CHECK_SUCCESS(status);
 
     if (should_support_pre_fetch && is_last_write) {
-        auto desc_count = config_buffer.program_descriptors();
-        CHECK_EXPECTED_AS_STATUS(desc_count);
+        TRY(const auto desc_count, config_buffer.program_descriptors());
+        (void)desc_count;
     }
 
     return HAILO_SUCCESS;
 }
 
-Expected<ContextSwitchConfigActionPtr> WriteDataCcwAction::create(uint32_t offset, size_t size, uint8_t config_stream_index,
-    size_t total_ccw_burst, std::shared_ptr<ShefFileHandle> shef_file_handle)
+Expected<ContextSwitchConfigActionPtr> WriteDataCcwAction::create(std::vector<ccw_write_ptr_t> &&ccw_write_ptrs, uint8_t config_stream_index,
+    uint16_t total_ccw_burst, std::shared_ptr<SeekableBytesReader> hef_reader)
 {
-    CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(total_ccw_burst), HAILO_INVALID_HEF,
-        "Too many ccw burst {} (must fit in uint16)", total_ccw_burst);
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) WriteDataCcwAction(
-        offset, size, config_stream_index, static_cast<uint16_t>(total_ccw_burst), shef_file_handle));
+        std::move(ccw_write_ptrs), config_stream_index, total_ccw_burst, hef_reader));
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
 WriteDataCcwActionByBuffer::WriteDataCcwActionByBuffer(Buffer &&data, uint8_t config_stream_index, uint16_t total_ccw_burst) :
-    WriteDataCcwAction(0, 0, config_stream_index, total_ccw_burst, nullptr),
+    WriteDataCcwAction({}, config_stream_index, total_ccw_burst, nullptr),
     m_data(std::move(data))
 {}
 
-WriteDataCcwAction::WriteDataCcwAction(uint32_t offset, size_t size, uint8_t config_stream_index, uint16_t total_ccw_burst,
-        std::shared_ptr<ShefFileHandle> shef_file_handle) :
+WriteDataCcwAction::WriteDataCcwAction(std::vector<ccw_write_ptr_t> &&ccw_write_ptrs, uint8_t config_stream_index,
+        uint16_t total_ccw_burst, std::shared_ptr<SeekableBytesReader> hef_reader) :
     ContextSwitchConfigAction(Type::WriteDataCcw),
-    m_offset(offset),
-    m_size(size),
+    m_ccw_write_ptrs(std::move(ccw_write_ptrs)),
     m_config_stream_index(config_stream_index),
     m_total_ccw_burst(total_ccw_burst),
-    m_shef_file_handle(shef_file_handle)
+    m_hef_reader(hef_reader)
 {}
 
 Expected<std::vector<Buffer>> WriteDataCcwAction::serialize(const ContextResources &) const
@@ -248,17 +240,36 @@ Expected<Buffer> WriteDataCcwAction::serialize_params(const ContextResources &) 
 
 hailo_status WriteDataCcwAction::write_to_config_buffer(ConfigBuffer& config_buffer, bool should_support_pre_fetch)
 {
-    bool is_last_write = config_buffer.size_left() == size();
+    uint64_t total_ccw_size = 0;
+    for (const auto &ccw_write_ptr : m_ccw_write_ptrs) {
+        total_ccw_size += ccw_write_ptr.size;
+    }
 
-    auto buffer = m_shef_file_handle->read(m_offset, m_size);
-    CHECK_EXPECTED_AS_STATUS(buffer);
+    bool is_last_write = config_buffer.size_left() == total_ccw_size;
+    if (should_support_pre_fetch && is_last_write) {
+        auto status = config_buffer.pad_with_nops();
+        CHECK_SUCCESS(status);
+    }
 
-    auto status = config_buffer.write(MemoryView(buffer.value()));
+    auto status = m_hef_reader->open();
+    CHECK_SUCCESS(status);
+
+    for (const auto &ccw_write_ptr : m_ccw_write_ptrs) {
+        TRY(auto buffer, Buffer::create_shared(ccw_write_ptr.size));
+        MemoryView mem_view(buffer->data(), buffer->size());
+        assert(ccw_write_ptr.offset <= SIZE_MAX);
+        status = m_hef_reader->read_from_offset(static_cast<size_t>(ccw_write_ptr.offset), mem_view, ccw_write_ptr.size);
+        CHECK_SUCCESS(status);
+        status = config_buffer.write(mem_view);
+        CHECK_SUCCESS(status);
+    }
+
+    status = m_hef_reader->close();
     CHECK_SUCCESS(status);
 
     if (should_support_pre_fetch && is_last_write) {
-        auto desc_count = config_buffer.program_descriptors();
-        CHECK_EXPECTED_AS_STATUS(desc_count);
+        TRY(const auto desc_count, config_buffer.program_descriptors());
+        (void)desc_count;
     }
 
     return HAILO_SUCCESS;
@@ -366,6 +377,29 @@ Expected<Buffer> ResetBurstCreditsTaskAction::serialize_params(const ContextReso
     return Buffer::create(0);
 }
 
+Expected<ContextSwitchConfigActionPtr> WaitForCacheUpdatedAction::create()
+{
+    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) WaitForCacheUpdatedAction());
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+    return result;
+}
+
+WaitForCacheUpdatedAction::WaitForCacheUpdatedAction() :
+    ContextSwitchConfigAction(Type::WaitForCacheUpdated, CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_CACHE_UPDATED)
+{}
+
+bool WaitForCacheUpdatedAction::supports_repeated_block() const
+{
+    // We don't support repeated blocks for this action, since only one is added per group of consecutive
+    // TriggerNewDataFromDataInput actions.
+    return false;
+}
+
+Expected<Buffer> WaitForCacheUpdatedAction::serialize_params(const ContextResources &) const
+{
+    return Buffer::create(0);
+}
+
 Expected<ContextSwitchConfigActionPtr> WaitForNetworkGroupChangeAction::create()
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) WaitForNetworkGroupChangeAction());
@@ -434,14 +468,14 @@ Expected<std::vector<Buffer>> RepeatedAction::serialize(const ContextResources &
 
     auto repeated_header = ContextSwitchConfigAction::serialize(context_resources);
     CHECK_EXPECTED(repeated_header);
-    CHECK_AS_EXPECTED(repeated_header->size() == 1, HAILO_INTERNAL_FAILURE, "Repeated action header should contain one buffer");
+    CHECK_AS_EXPECTED(repeated_header->size() == 1, HAILO_INTERNAL_FAILURE,
+        "Repeated action header should contain one buffer");
     buffers.emplace_back(std::move(repeated_header->at(0)));
 
     for (const auto &action : m_actions) {
         assert(action->get_action_list_type() == m_sub_action_type);
-        auto action_buffer = action->serialize_params(context_resources);
-        CHECK_EXPECTED(action_buffer);
-        buffers.emplace_back(action_buffer.release());
+        TRY(auto action_buffer, action->serialize_params(context_resources));
+        buffers.emplace_back(std::move(action_buffer));
     }
 
     return buffers;
@@ -651,27 +685,28 @@ bool AllowInputDataflowAction::supports_repeated_block() const
 Expected<Buffer> AllowInputDataflowAction::serialize_params(const ContextResources &context_resources) const
 {
     // H2D direction because it is Input actions
-    const auto edge_layer = context_resources.get_edge_layer_by_stream_index(m_stream_index, HAILO_H2D_STREAM);
-    CHECK_EXPECTED(edge_layer);
+    TRY(const auto edge_layer,
+        context_resources.get_edge_layer_by_stream_index(m_stream_index, HAILO_H2D_STREAM));
 
     CONTEXT_SWITCH_DEFS__fetch_data_action_data_t params{};
-    params.packed_vdma_channel_id = pack_vdma_channel_id(edge_layer->channel_id);
+    params.packed_vdma_channel_id = pack_vdma_channel_id(edge_layer.channel_id);
     params.stream_index = m_stream_index;
-    params.network_index = edge_layer->layer_info.network_index;
-    params.host_buffer_type = static_cast<CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t>(edge_layer->buffer_info.buffer_type);
+    params.network_index = edge_layer.layer_info.network_index;
+    params.host_buffer_type = static_cast<CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t>(edge_layer.buffer_info.buffer_type);
 
-    switch (edge_layer->layer_info.type) {
+    switch (edge_layer.layer_info.type) {
     case LayerType::BOUNDARY:
         params.credit_type = CONTEXT_SWITCH_DEFS__CREDIT_IN_BYTES;
-        params.frame_periph_size = edge_layer->layer_info.nn_stream_config.periph_bytes_per_buffer *
-            edge_layer->layer_info.nn_stream_config.periph_buffers_per_frame;
+        params.frame_periph_size = edge_layer.layer_info.nn_stream_config.periph_bytes_per_buffer *
+            edge_layer.layer_info.nn_stream_config.periph_buffers_per_frame;
         break;
     case LayerType::INTER_CONTEXT:
+    case LayerType::CACHE:
         params.credit_type = CONTEXT_SWITCH_DEFS__CREDIT_IN_DESCRIPTORS;
-        params.frame_periph_size = ((edge_layer->buffer_info.bytes_in_pattern - 1) / (edge_layer->buffer_info.desc_page_size)) + 1;
+        params.frame_periph_size = ((edge_layer.buffer_info.bytes_in_pattern - 1) / (edge_layer.buffer_info.desc_page_size)) + 1;
         break;
     default:
-        LOGGER__ERROR("Invalid layer type {} for stream {}", static_cast<int>(edge_layer->layer_info.type), m_stream_index);
+        LOGGER__ERROR("Invalid layer type {} for stream {}", static_cast<int>(edge_layer.layer_info.type), m_stream_index);
         return make_unexpected(HAILO_INTERNAL_FAILURE);
     }
 
@@ -866,15 +901,15 @@ bool WaitOutputTransferDoneAction::supports_repeated_block() const
 Expected<Buffer> WaitOutputTransferDoneAction::serialize_params(const ContextResources &context_resources) const
 {
     // D2H direction because it is output action
-    const auto edge_layer = context_resources.get_edge_layer_by_stream_index(m_stream_index, HAILO_D2H_STREAM);
-    CHECK_EXPECTED(edge_layer);
+    TRY(const auto edge_layer,
+        context_resources.get_edge_layer_by_stream_index(m_stream_index, HAILO_D2H_STREAM));
 
     CONTEXT_SWITCH_DEFS__vdma_dataflow_interrupt_data_t params{};
-    params.packed_vdma_channel_id = pack_vdma_channel_id(edge_layer->channel_id);
+    params.packed_vdma_channel_id = pack_vdma_channel_id(edge_layer.channel_id);
     params.stream_index = m_stream_index;
-    params.network_index = edge_layer->layer_info.network_index;
-    params.is_inter_context = static_cast<uint8_t>(LayerType::INTER_CONTEXT == edge_layer->layer_info.type);
-    params.host_buffer_type = static_cast<CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t>(edge_layer->buffer_info.buffer_type);
+    params.network_index = edge_layer.layer_info.network_index;
+    params.is_inter_context = static_cast<uint8_t>(LayerType::INTER_CONTEXT == edge_layer.layer_info.type);
+    params.host_buffer_type = static_cast<CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t>(edge_layer.buffer_info.buffer_type);
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 
@@ -906,16 +941,15 @@ Expected<Buffer> OpenBoundaryInputChannelAction::serialize_params(const ContextR
     CONTEXT_SWITCH_DEFS__open_boundary_input_channel_data_t params{};
 
     // H2D direction because it is Input actions
-    const auto edge_layer = context_resources.get_edge_layer_by_channel_id(m_channel_id);
-    CHECK_EXPECTED(edge_layer);
+    TRY(const auto edge_layer, context_resources.get_edge_layer_by_channel_id(m_channel_id));
 
-    params.packed_vdma_channel_id = pack_vdma_channel_id(edge_layer->channel_id);
+    params.packed_vdma_channel_id = pack_vdma_channel_id(edge_layer.channel_id);
     params.host_buffer_info = m_host_buffer_info;
-    params.stream_index = edge_layer->layer_info.stream_index;
-    params.network_index = edge_layer->layer_info.network_index;
-    params.periph_bytes_per_buffer = edge_layer->layer_info.nn_stream_config.periph_bytes_per_buffer;
-    params.frame_periph_size = edge_layer->layer_info.nn_stream_config.periph_bytes_per_buffer *
-        edge_layer->layer_info.nn_stream_config.periph_buffers_per_frame;
+    params.stream_index = edge_layer.layer_info.stream_index;
+    params.network_index = edge_layer.layer_info.network_index;
+    params.periph_bytes_per_buffer = edge_layer.layer_info.nn_stream_config.periph_bytes_per_buffer;
+    params.frame_periph_size = edge_layer.layer_info.nn_stream_config.periph_bytes_per_buffer *
+        edge_layer.layer_info.nn_stream_config.periph_buffers_per_frame;
 
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
@@ -1205,6 +1239,84 @@ Expected<Buffer> ActivateDdrOutputChannelAction::serialize_params(const ContextR
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 
+Expected<ContextSwitchConfigActionPtr> ActivateCacheInputChannelAction::create(const vdma::ChannelId &channel_id,
+    uint8_t stream_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
+    const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info, uint32_t initial_credit_size)
+{
+    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ActivateCacheInputChannelAction(channel_id,
+        stream_index, nn_stream_config, host_buffer_info, initial_credit_size));
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+    return result;
+}
+
+ActivateCacheInputChannelAction::ActivateCacheInputChannelAction(const vdma::ChannelId &channel_id,
+    uint8_t stream_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
+    const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info, uint32_t initial_credit_size) :
+    ContextSwitchConfigAction(ContextSwitchConfigAction::Type::ActivateCacheInputChannel,
+                              CONTEXT_SWITCH_DEFS__ACTION_TYPE_ACTIVATE_CACHE_INPUT),
+    m_channel_id(channel_id),
+    m_stream_index(stream_index),
+    m_nn_stream_config(nn_stream_config),
+    m_host_buffer_info(host_buffer_info),
+    m_initial_credit_size(initial_credit_size)
+{}
+
+bool ActivateCacheInputChannelAction::supports_repeated_block() const
+{
+    // Activate actions shouldn't be repeated (for easier debugging).
+    return false;
+}
+
+Expected<Buffer> ActivateCacheInputChannelAction::serialize_params(const ContextResources &) const
+{
+    CONTEXT_SWITCH_DEFS__activate_cache_input_data_t params{};
+    params.packed_vdma_channel_id = pack_vdma_channel_id(m_channel_id);
+    params.stream_index = m_stream_index;
+    params.stream_reg_info = parse_nn_config(m_nn_stream_config);
+    params.host_buffer_info = m_host_buffer_info;
+    params.initial_credit_size = m_initial_credit_size;
+    return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
+}
+
+Expected<ContextSwitchConfigActionPtr> ActivateCacheOutputChannelAction::create(const vdma::ChannelId &channel_id,
+    uint8_t stream_index, uint8_t network_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
+    const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info)
+{
+    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ActivateCacheOutputChannelAction(channel_id,
+        stream_index, network_index, nn_stream_config, host_buffer_info));
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+    return result;
+}
+
+ActivateCacheOutputChannelAction::ActivateCacheOutputChannelAction(const vdma::ChannelId &channel_id,
+    uint8_t stream_index, uint8_t network_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
+    const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info) :
+    ContextSwitchConfigAction(ContextSwitchConfigAction::Type::ActivateCacheOutputChannel,
+                              CONTEXT_SWITCH_DEFS__ACTION_TYPE_ACTIVATE_CACHE_OUTPUT),
+    m_channel_id(channel_id),
+    m_stream_index(stream_index),
+    m_network_index(network_index),
+    m_nn_stream_config(nn_stream_config),
+    m_host_buffer_info(host_buffer_info)
+{}
+
+bool ActivateCacheOutputChannelAction::supports_repeated_block() const
+{
+    // Activate actions shouldn't be repeated (for easier debugging).
+    return false;
+}
+
+Expected<Buffer> ActivateCacheOutputChannelAction::serialize_params(const ContextResources &) const
+{
+    CONTEXT_SWITCH_DEFS__activate_cache_output_data_t params{};
+    params.packed_vdma_channel_id = pack_vdma_channel_id(m_channel_id);
+    params.stream_index = m_stream_index;
+    params.network_index = m_network_index;
+    params.stream_reg_info = parse_nn_config(m_nn_stream_config);
+    params.host_buffer_info = m_host_buffer_info;
+    return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
+}
+
 Expected<ContextSwitchConfigActionPtr> ValidateChannelAction::create(const EdgeLayer &edge_layer,
     const bool is_batch_switch_context)
 {
@@ -1390,14 +1502,14 @@ bool WaitDmaIdleAction::supports_repeated_block() const
 Expected<Buffer> WaitDmaIdleAction::serialize_params(const ContextResources &context_resources) const
 {
     // D2H direction because it is output action
-    const auto edge_layer = context_resources.get_edge_layer_by_stream_index(m_stream_index, HAILO_D2H_STREAM);
-    CHECK_EXPECTED(edge_layer);
+    TRY(const auto edge_layer,
+        context_resources.get_edge_layer_by_stream_index(m_stream_index, HAILO_D2H_STREAM));
 
     CONTEXT_SWITCH_DEFS__wait_dma_idle_data_t params{};
-    params.packed_vdma_channel_id = pack_vdma_channel_id(edge_layer->channel_id);
-    params.is_inter_context = static_cast<uint8_t>(LayerType::INTER_CONTEXT == edge_layer->layer_info.type);
+    params.packed_vdma_channel_id = pack_vdma_channel_id(edge_layer.channel_id);
+    params.is_inter_context = static_cast<uint8_t>(LayerType::INTER_CONTEXT == edge_layer.layer_info.type);
     params.stream_index = m_stream_index;
-    params.host_buffer_type = static_cast<CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t>(edge_layer->buffer_info.buffer_type);
+    params.host_buffer_type = static_cast<CONTROL_PROTOCOL__HOST_BUFFER_TYPE_t>(edge_layer.buffer_info.buffer_type);
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 
