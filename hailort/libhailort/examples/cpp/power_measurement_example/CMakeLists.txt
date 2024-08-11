@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.0.0)
 
-find_package(HailoRT 4.18.0 EXACT REQUIRED)
+find_package(HailoRT 4.18.1 EXACT REQUIRED)
 
 add_executable(cpp_power_measurement_example power_measurement_example.cpp)
 target_link_libraries(cpp_power_measurement_example PRIVATE HailoRT::libhailort)

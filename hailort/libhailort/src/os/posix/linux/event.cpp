@@ -14,12 +14,31 @@
 #include "common/event_internal.hpp"
 
 #include <sys/eventfd.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <utility>
 
 
 namespace hailort
 {
+
+#define HAILO_USE_HIGH_FD_ENV_VAR ("HAILO_USE_HIGH_FD")
+#define HIGH_FD_OFFSET (1024)
+
+bool should_use_high_fd()
+{
+    return is_env_variable_on(HAILO_USE_HIGH_FD_ENV_VAR);
+}
+
+int move_fd_to_higher(int handle)
+{
+    int new_handle = fcntl(handle, F_DUPFD, HIGH_FD_OFFSET);
+    if (-1 == new_handle) {
+        LOGGER__ERROR("failed to duplicate event FD. errno={}", errno);
+    }
+    close(handle);
+    return new_handle;
+}
 
 Waitable::~Waitable()
 {
@@ -167,7 +186,13 @@ underlying_waitable_handle_t Event::open_event_handle(const State& initial_state
     const auto handle = eventfd(state, NO_FLAGS);
     if (-1 == handle) {
         LOGGER__ERROR("Call to eventfd failed with errno={}", errno);
+        return handle;
     }
+
+    if (should_use_high_fd()) {
+        return move_fd_to_higher(handle);
+    }
+
     return handle;
 }
 
@@ -212,7 +237,13 @@ underlying_waitable_handle_t Semaphore::open_semaphore_handle(uint32_t initial_c
     const auto handle = eventfd(initial_count, SEMAPHORE);
     if (-1 == handle) {
         LOGGER__ERROR("Call to eventfd failed with errno={}", errno);
+        return handle;
     }
+
+    if (should_use_high_fd()) {
+        return move_fd_to_higher(handle);
+    }
+
     return handle;
 }
 

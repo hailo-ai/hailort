@@ -10,6 +10,8 @@ set(HAILO_EXTERNALS_CMAKE_SCRIPTS ${HAILORT_COMMON_DIR}/cmake/external/)
 
 option(LIBHAILORT_PATH "Path to libhailort to link against" "")
 option(HAILORT_INCLUDE_DIR "Path to include dir of libhailort" "")
+option(HAILO_BUILD_PYHAILORT_INTERNAL OFF)
+option(HAILO_BUILD_RAW_CONNECTION OFF)
 
 include(ExternalProject)
 include(GNUInstallDirs)
@@ -77,12 +79,12 @@ if(LIBHAILORT_PATH AND HAILORT_INCLUDE_DIR)
         PUBLIC
         HAILORT_MAJOR_VERSION=4
         HAILORT_MINOR_VERSION=18
-        HAILORT_REVISION_VERSION=0
+        HAILORT_REVISION_VERSION=1
     )
 elseif(LIBHAILORT_PATH OR HAILORT_INCLUDE_DIR)
     message(FATAL_ERROR "Both LIBHAILORT_PATH and HAILORT_INCLUDE_DIR must be defined or none of them")
 else()
-    find_package(HailoRT 4.18.0 EXACT REQUIRED)
+    find_package(HailoRT 4.18.1 EXACT REQUIRED)
     target_link_libraries(_pyhailort PRIVATE HailoRT::libhailort)
 endif()
 
@@ -111,3 +113,6 @@ install(TARGETS _pyhailort
     CONFIGURATIONS Release
 )
 
+if (HAILO_BUILD_PYHAILORT_INTERNAL OR HAILO_BUILD_RAW_CONNECTION)
+    add_subdirectory(internal)
+endif()

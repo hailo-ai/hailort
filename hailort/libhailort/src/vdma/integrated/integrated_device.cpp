@@ -25,7 +25,9 @@ Expected<std::pair<void*, uint64_t>> IntegratedDevice::allocate_infinite_action_
     CHECK_AS_EXPECTED(0 == (size % OsUtils::get_page_size()), HAILO_INVALID_ARGUMENT,
         "Infinte action list buffer size must be a multiple of page size");
     CHECK_AS_EXPECTED(m_device_infinite_action_list_pool_allocation_offset + size <= m_device_infinite_action_list_pool.size(),
-        HAILO_INVALID_ARGUMENT, "Buffer pool size is too small for requested infinte action list buffer");
+        HAILO_INVALID_ARGUMENT, "Buffer pool size is too small for requested infinite action list buffer");
+    CHECK_AS_EXPECTED(DDRActionListBufferBuilder::verify_dma_addr(m_device_infinite_action_list_pool), HAILO_NOT_SUPPORTED,
+        "Infinite action list is not supported on this device (buffer not in M4 mapped memory region)");
 
     auto user_addres = static_cast<void*>(reinterpret_cast<uint8_t*>(m_device_infinite_action_list_pool.user_address()) +
         m_device_infinite_action_list_pool_allocation_offset);
@@ -46,11 +48,6 @@ Expected<std::unique_ptr<IntegratedDevice>> IntegratedDevice::create()
     // TODO: remove this when infinite action list allocates from its own pool of CMA memory
     TRY(auto infinite_action_list_pool, vdma::ContinuousBuffer::create(INTEGRATED_DEVICE_INFINITE_ACTION_LIST_POOL_SIZE,
         *driver));
-    
-    // Verify pool is in mapped range
-    CHECK_AS_EXPECTED(DDRActionListBufferBuilder::verify_dma_addr(infinite_action_list_pool), HAILO_INTERNAL_FAILURE,
-        "Failed to allocate continous buffer pool M4 mapped memory region");
-
 
     auto device = std::unique_ptr<IntegratedDevice>(new (std::nothrow) IntegratedDevice(std::move(driver),
         std::move(infinite_action_list_pool), status));
