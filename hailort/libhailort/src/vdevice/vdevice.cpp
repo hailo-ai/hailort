@@ -234,6 +234,15 @@ hailo_status VDeviceHandle::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_d
     return vdevice.value()->dma_unmap_dmabuf(dmabuf_fd, size, direction);
 }
 
+hailo_status VDeviceHandle::add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> network_group_ptr)
+{
+    auto &manager = SharedResourceManager<std::string, VDeviceBase>::get_instance();
+    auto vdevice = manager.resource_lookup(m_handle);
+    CHECK_EXPECTED_AS_STATUS(vdevice);
+
+    return vdevice.value()->add_network_group_ref_count(network_group_ptr);
+}
+
 bool VDevice::service_over_ip_mode()
 {
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
@@ -744,13 +753,23 @@ Expected<ConfiguredNetworkGroupVector> VDeviceBase::configure(Hef &hef,
         auto network_group_ptr = net_group_expected.release();
 
         added_network_groups.push_back(network_group_ptr);
-        m_network_groups.push_back(network_group_ptr);
     }
 
     auto elapsed_time_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time).count();
     LOGGER__INFO("Configuring HEF on VDevice took {} milliseconds", elapsed_time_ms);
 
     return added_network_groups;
+}
+
+hailo_status VDeviceBase::add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> network_group_ptr)
+{
+    m_network_groups.push_back(network_group_ptr);
+    return HAILO_SUCCESS;
+}
+
+hailo_status VDevice::add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> /*network_group_ptr*/)
+{
+    return HAILO_SUCCESS;
 }
 
 Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(const std::string &hef_path, const std::string &network_name)

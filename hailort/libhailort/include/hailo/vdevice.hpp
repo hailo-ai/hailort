@@ -211,6 +211,8 @@ public:
     virtual hailo_status after_fork_in_parent();
     virtual hailo_status after_fork_in_child();
 
+    virtual hailo_status add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> network_group_ptr);
+
     virtual ~VDevice() = default;
     VDevice(const VDevice &) = delete;
     VDevice &operator=(const VDevice &) = delete;

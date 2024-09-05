@@ -142,6 +142,8 @@ public:
     static hailo_status validate_params(const hailo_vdevice_params_t &params);
     static Expected<bool> device_ids_contains_eth(const hailo_vdevice_params_t &params);
 
+    virtual hailo_status add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> network_group_ptr) override;
+
 private:
     VDeviceBase(std::map<device_id_t, std::unique_ptr<Device>> &&devices, CoreOpsSchedulerPtr core_ops_scheduler,
         const std::string &unique_vdevice_hash="") :
@@ -243,6 +245,8 @@ public:
     virtual hailo_status dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
     virtual hailo_status dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
     virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
+
+    virtual hailo_status add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> network_group_ptr) override;
 
 private:
     VDeviceHandle(uint32_t handle);

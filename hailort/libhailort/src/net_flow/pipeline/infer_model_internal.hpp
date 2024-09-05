@@ -245,7 +245,7 @@ public:
 private:
     virtual hailo_status validate_bindings(ConfiguredInferModel::Bindings bindings);
 
-    std::weak_ptr<ConfiguredNetworkGroup> m_cng;
+    std::shared_ptr<ConfiguredNetworkGroup> m_cng;
     std::unique_ptr<ActivatedNetworkGroup> m_ang;
     std::shared_ptr<AsyncInferRunnerImpl> m_async_infer_runner;
     uint32_t m_ongoing_parallel_transfers;

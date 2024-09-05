@@ -706,10 +706,7 @@ Expected<ConfiguredInferModel::Bindings> ConfiguredInferModelImpl::create_bindin
     std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> inputs;
     std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> outputs;
 
-    auto cng = m_cng.lock();
-    CHECK_NOT_NULL_AS_EXPECTED(cng, HAILO_INTERNAL_FAILURE);
-
-    auto input_vstream_infos = cng->get_input_vstream_infos();
+    auto input_vstream_infos = m_cng->get_input_vstream_infos();
     CHECK_EXPECTED(input_vstream_infos);
 
     for (const auto &vstream_info : input_vstream_infos.value()) {
@@ -717,7 +714,7 @@ Expected<ConfiguredInferModel::Bindings> ConfiguredInferModelImpl::create_bindin
         inputs.emplace(vstream_info.name, std::move(stream));
     }
 
-    auto output_vstream_infos = cng->get_output_vstream_infos();
+    auto output_vstream_infos = m_cng->get_output_vstream_infos();
     CHECK_EXPECTED(output_vstream_infos);
 
     for (const auto &vstream_info : output_vstream_infos.value()) {
@@ -761,10 +758,7 @@ hailo_status ConfiguredInferModelImpl::shutdown()
 
 hailo_status ConfiguredInferModelImpl::activate()
 {
-    auto cng = m_cng.lock();
-    CHECK_NOT_NULL(cng, HAILO_INTERNAL_FAILURE);
-
-    auto activated_ng = cng->activate();
+    auto activated_ng = m_cng->activate();
     CHECK_EXPECTED_AS_STATUS(activated_ng);
 
     m_ang = activated_ng.release();
@@ -887,42 +881,27 @@ Expected<AsyncInferJob> ConfiguredInferModelImpl::run_async(ConfiguredInferModel
 
 Expected<LatencyMeasurementResult> ConfiguredInferModelImpl::get_hw_latency_measurement()
 {
-    auto cng = m_cng.lock();
-    CHECK_NOT_NULL_AS_EXPECTED(cng, HAILO_INTERNAL_FAILURE);
-
-    return cng->get_latency_measurement();
+    return m_cng->get_latency_measurement();
 }
 
 hailo_status ConfiguredInferModelImpl::set_scheduler_timeout(const std::chrono::milliseconds &timeout)
 {
-    auto cng = m_cng.lock();
-    CHECK_NOT_NULL(cng, HAILO_INTERNAL_FAILURE);
-
-    return cng->set_scheduler_timeout(timeout);
+    return m_cng->set_scheduler_timeout(timeout);
 }
 
 hailo_status ConfiguredInferModelImpl::set_scheduler_threshold(uint32_t threshold)
 {
-    auto cng = m_cng.lock();
-    CHECK_NOT_NULL(cng, HAILO_INTERNAL_FAILURE);
-
-    return cng->set_scheduler_threshold(threshold);
+    return m_cng->set_scheduler_threshold(threshold);
 }
 
 hailo_status ConfiguredInferModelImpl::set_scheduler_priority(uint8_t priority)
 {
-    auto cng = m_cng.lock();
-    CHECK_NOT_NULL(cng, HAILO_INTERNAL_FAILURE);
-
-    return cng->set_scheduler_priority(priority);
+    return m_cng->set_scheduler_priority(priority);
 }
 
 Expected<size_t> ConfiguredInferModelImpl::get_async_queue_size()
 {
-    auto cng = m_cng.lock();
-    CHECK_NOT_NULL(cng, HAILO_INTERNAL_FAILURE);
-
-    return cng->get_min_buffer_pool_size();
+    return m_cng->get_min_buffer_pool_size();
 }
 
 AsyncInferJob::AsyncInferJob(std::shared_ptr<AsyncInferJobBase> pimpl) : m_pimpl(pimpl), m_should_wait_in_dtor(true)
