@@ -26,7 +26,7 @@ class AsyncInferRunnerImpl;
 class HAILORTAPI AsyncInferJob
 {
 public:
-    AsyncInferJob() = default;
+    AsyncInferJob() : m_should_wait_in_dtor(false) {};
     virtual ~AsyncInferJob();
 
     AsyncInferJob(const AsyncInferJob &other) = delete;
@@ -72,6 +72,8 @@ public:
     {
     public:
         Bindings() = default;
+        Bindings(const Bindings &other);
+        Bindings &operator=(const Bindings &other);
 
         /** Holds the input and output buffers of the Bindings infer request */
         class HAILORTAPI InferStream
@@ -98,7 +100,7 @@ public:
             * Otherwise, returns Unexpected of ::hailo_status error.
             * @note If buffer type is not MemoryView, will return ::HAILO_INVALID_OPERATION.
             */
-            Expected<MemoryView> get_buffer();
+            Expected<MemoryView> get_buffer() const;
 
             /**
              * Sets the edge's buffer to a new one, of type hailo_pix_buffer_t.
@@ -117,7 +119,7 @@ public:
             * Otherwise, returns Unexpected of ::hailo_status error.
             * @note If buffer type is not ::hailo_pix_buffer_t, will return ::HAILO_INVALID_OPERATION.
             */
-            Expected<hailo_pix_buffer_t> get_pix_buffer();
+            Expected<hailo_pix_buffer_t> get_pix_buffer() const;
 
             /**
              * Sets the edge's buffer from a DMA buffer.
@@ -134,11 +136,14 @@ public:
             * @note If buffer type is not ::hailo_dma_buffer_t, will return ::HAILO_INVALID_OPERATION.
             * @note Supported on Linux only.
             */
-            Expected<hailo_dma_buffer_t> get_dma_buffer();
+            Expected<hailo_dma_buffer_t> get_dma_buffer() const;
 
         private:
             friend class ConfiguredInferModelBase;
             friend class AsyncInferRunnerImpl;
+            friend class Bindings;
+
+            Expected<InferStream> inner_copy() const;
 
             class Impl;
             InferStream(std::shared_ptr<Impl> pimpl);
@@ -179,8 +184,44 @@ public:
          */
         Expected<InferStream> output(const std::string &name);
 
+        /**
+         * Returns the single input's InferStream object, as readonly.
+         *
+         * @return Upon success, returns Expected of the single input's InferStream object. Otherwise, returns Unexpected of ::hailo_status error.
+         * @note If Bindings has multiple inputs, will return ::HAILO_INVALID_OPERATION.
+         *  In that case - use input(const std::string &name) instead.
+         */
+        Expected<InferStream> input() const;
+
+        /**
+         * Returns the single output's InferStream object, as readonly.
+         *
+         * @return Upon success, returns Expected of the single output's InferStream object. Otherwise, returns Unexpected of ::hailo_status error.
+         * @note If Bindings has multiple outputs, will return ::HAILO_INVALID_OPERATION.
+         *  In that case - use output(const std::string &name) instead.
+         */
+        Expected<InferStream> output() const;
+
+        /**
+         * Gets an input's InferStream object, as readonly.
+         *
+         * @param[in] name                    The name of the input edge.
+         * @return Upon success, returns Expected of the relevant InferStream object. Otherwise, returns a ::hailo_status error.
+         */
+        Expected<InferStream> input(const std::string &name) const;
+
+        /**
+         * Gets an output's InferStream object, as readonly.
+         *
+         * @param[in] name                    The name of the output edge.
+         * @return Upon success, returns Expected of the relevant InferStream object. Otherwise, returns a ::hailo_status error.
+         */
+        Expected<InferStream> output(const std::string &name) const;
+
     private:
         friend class ConfiguredInferModelBase;
+
+        void init_bindings_from(const Bindings &other);
 
         Bindings(std::unordered_map<std::string, InferStream> &&inputs,
             std::unordered_map<std::string, InferStream> &&outputs);
@@ -197,8 +238,9 @@ public:
     Expected<Bindings> create_bindings();
 
     /**
-     * Waits until the model is ready to launch a new asynchronous inference operation.
-     * The readiness of the model is determined by the ability to push buffers to the asynchronous inference pipeline.
+     * The readiness of the model to launch is determined by the ability to push buffers to the asynchronous inference pipeline.
+     * If the model is ready, the method will return immediately.
+     * If the model is not ready, the method will wait for the model to be ready.
      *
      * @param[in] timeout           Amount of time to wait until the model is ready in milliseconds.
      * @param[in] frames_count      The count of buffers you intent to infer in the next request. Useful for batch inference.
@@ -206,6 +248,8 @@ public:
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise:
      *           - If @a timeout has passed and the model is not ready, returns ::HAILO_TIMEOUT.
      *           - In any other error case, returns ::hailo_status error.
+     *
+     * @note Calling this function with frames_count greater than get_async_queue_size() will timeout.
      */
     hailo_status wait_for_async_ready(std::chrono::milliseconds timeout, uint32_t frames_count = 1);
 
@@ -233,7 +277,7 @@ public:
      * @return Upon success, returns ::HAILO_SUCCESS.
      *  Otherwise, returns Unexpected of ::hailo_status error.
      */
-    hailo_status run(Bindings bindings, std::chrono::milliseconds timeout);
+    hailo_status run(const Bindings &bindings, std::chrono::milliseconds timeout);
 
     /**
      * Launches an asynchronous inference operation with the provided bindings.
@@ -245,9 +289,10 @@ public:
      * @return Upon success, returns an instance of Expected<AsyncInferJob> representing the launched job.
      *  Otherwise, returns Unexpected of ::hailo_status error, and the interface shuts down completly.
      * @note @a callback should execute as quickly as possible.
-     * @note The bindings' buffers should be kept intact until the async job is completed
+     * @note The bindings' buffers should be kept intact until the async job is completed.
+     * @note To ensure the inference pipeline can handle new buffers, it is recommended to first call \ref wait_for_async_ready
      */
-    Expected<AsyncInferJob> run_async(Bindings bindings,
+    Expected<AsyncInferJob> run_async(const Bindings &bindings,
         std::function<void(const AsyncInferCompletionInfo &)> callback = ASYNC_INFER_EMPTY_CALLBACK);
 
     /**
@@ -260,7 +305,9 @@ public:
      *
      * @return Upon success, returns an instance of Expected<AsyncInferJob> representing the launched job.
      *  Otherwise, returns Unexpected of ::hailo_status error, and the interface shuts down completly.
-     * @note The bindings' buffers should be kept intact until the async job is completed
+     * @note @a callback should execute as quickly as possible.
+     * @note The bindings' buffers should be kept intact until the async job is completed.
+     * @note To ensure the inference pipeline can handle new buffers, it is recommended to first call \ref wait_for_async_ready
      */
     Expected<AsyncInferJob> run_async(const std::vector<Bindings> &bindings,
         std::function<void(const AsyncInferCompletionInfo &)> callback = ASYNC_INFER_EMPTY_CALLBACK);
@@ -332,9 +379,7 @@ private:
     std::shared_ptr<ConfiguredInferModelBase> m_pimpl;
 };
 
-/**
- * Context passed to the callback function after the asynchronous inference operation was completed or has failed.
- */
+/** Context passed to the callback function after the asynchronous inference operation was completed or has failed. */
 struct HAILORTAPI AsyncInferCompletionInfo
 {
     /**

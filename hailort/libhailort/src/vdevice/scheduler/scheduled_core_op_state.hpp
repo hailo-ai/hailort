@@ -67,7 +67,7 @@ public:
     void set_priority(core_op_priority_t priority);
 
     bool is_over_threshold() const;
-    bool is_over_timeout() const;
+    bool is_over_threshold_timeout() const;
 
     std::chrono::time_point<std::chrono::steady_clock> get_last_run_timestamp();
     void set_last_run_timestamp(const std::chrono::time_point<std::chrono::steady_clock> &timestamp);

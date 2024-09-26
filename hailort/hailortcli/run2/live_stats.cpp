@@ -88,7 +88,7 @@ void LiveStats::print()
             }
         }
     }
-    CliCommon::reset_cursor(m_prev_count); 
+    CliCommon::reset_cursor(m_prev_count);
     // On the first print m_prev_count = 0, so no lines will be deleted
     std::cout << ss.str() << std::flush;
     m_prev_count = count;

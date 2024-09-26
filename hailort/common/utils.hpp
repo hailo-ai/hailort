@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <fstream>
+#include <algorithm>
 
 
 namespace hailort
@@ -261,7 +262,7 @@ inline hailo_status get_status(const Expected<T> &exp)
 #define _CHECK_GRPC_STATUS(status, ret_val, warning_msg)                                                                         \
     do {                                                                                                                         \
         if (!status.ok()) {                                                                                                      \
-            LOGGER__ERROR("CHECK_GRPC_STATUS failed with error code: {}.", status.error_code());                                 \
+            LOGGER__ERROR("CHECK_GRPC_STATUS failed with error code: {}.", static_cast<int>(status.error_code()));               \
             LOGGER__WARNING(warning_msg);                                                                                        \
             return ret_val;                                                                                                      \
         }                                                                                                                        \
@@ -367,7 +368,7 @@ static uint32_t get_min_value_of_unordered_map(const std::unordered_map<K, V> &m
     return min_count;
 }
 
-static inline bool is_env_variable_on(const char* env_var_name, const std::string &required_value = "1")
+static inline bool is_env_variable_on(const char *env_var_name, const std::string &required_value = "1")
 {
     auto env_var  = std::getenv(env_var_name);
     return ((nullptr != env_var) && (strncmp(env_var, required_value.c_str(), required_value.size()) == 0));

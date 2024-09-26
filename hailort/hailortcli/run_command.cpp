@@ -107,7 +107,7 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
     // TODO: init values in RunCommand ctor
     params.measure_latency = false;
     params.measure_overall_latency = false;
-    params.power_measurement.measure_power = false;
+    params.power_measurement.measure_power = ShouldMeasurePower::NO;
     params.power_measurement.measure_current = false;
     params.show_progress = true;
     params.time_to_run = 0;
@@ -162,13 +162,13 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
     run_subcommand->add_flag("--measure-overall-latency", params.measure_overall_latency,
         "Include overall latency measurement")
         ->needs("--measure-latency");
-    
+
     static const char *DOT_SUFFIX = ".dot";
     run_subcommand->add_option("--dot", params.dot_output,
         "If set print the pipeline graph as a .dot file at the specified path")
         ->check(FileSuffixValidator(DOT_SUFFIX));
-    CLI::Option *measure_power_opt = run_subcommand->add_flag("--measure-power",
-        params.power_measurement.measure_power, "Measure power consumption");
+    auto measure_power_cb = [&params] (bool measure_power) { params.power_measurement.measure_power = measure_power ? ShouldMeasurePower::YES : ShouldMeasurePower::NO; };
+    CLI::Option *measure_power_opt = run_subcommand->add_flag( "--measure-power", measure_power_cb, "Measure power consumption");
     CLI::Option *measure_current_opt = run_subcommand->add_flag("--measure-current",
         params.power_measurement.measure_current, "Measure current")->excludes(measure_power_opt);
     measure_power_opt->excludes(measure_current_opt);
@@ -271,7 +271,7 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
             "--batch-size should be a divisor of --frames-count if provided");
         // TODO HRT-5363 support multiple devices
         PARSE_CHECK((params.vdevice_params.device_count == 1) || params.csv_output.empty() ||
-            !(params.power_measurement.measure_power || params.power_measurement.measure_current || params.measure_temp),
+            !((ShouldMeasurePower::YES == params.power_measurement.measure_power) || params.power_measurement.measure_current || params.measure_temp),
             "Writing measurements in csv format is not supported for multiple devices");
 
         if ((0 == params.time_to_run) && (0 == params.frames_count)) {
@@ -1036,10 +1036,12 @@ Expected<InferResult> activate_and_run_single_device(
     CHECK_AS_EXPECTED(1 == network_groups.size(), HAILO_INVALID_OPERATION, "Inference is not supported on HEFs with multiple network groups");
     TRY(auto activated_net_group, network_groups[0]->activate(), "Failed activate network_group");
     TRY(auto input_dataset, create_dataset(network_groups, params));
+    TRY(auto caps, device.get_capabilities());
 
     hailo_power_measurement_types_t measurement_type = HAILO_POWER_MEASUREMENT_TYPES__MAX_ENUM;
     bool should_measure_power = false;
-    if (params.power_measurement.measure_power) {
+    if ((ShouldMeasurePower::YES == params.power_measurement.measure_power) ||
+        ((ShouldMeasurePower::AUTO_DETECT == params.power_measurement.measure_power) && caps.power_measurements)) {
         measurement_type = HAILO_POWER_MEASUREMENT_TYPES__POWER;
         should_measure_power = true;
     } else if (params.power_measurement.measure_current) {
@@ -1079,6 +1081,7 @@ Expected<InferResult> activate_and_run_single_device(
             status = inference_result.set_power_measurement(device.get_dev_id(), std::move(long_power_measurement_ptr));
             CHECK_SUCCESS_AS_EXPECTED(status);
         }
+        inference_result.power_measurements_are_valid = true;
     }
 
     if (should_measure_temp) {
@@ -1157,10 +1160,20 @@ Expected<InferResult> activate_and_run_vdevice(
     }
 
     TRY(const auto input_dataset, create_dataset(network_groups, params), "Failed creating input dataset");
+    // we currently support all devices or none for power measurements
+    auto all_phy_devices_support_power_measurements = true;
+    for (const auto &device : physical_devices) {
+        TRY(const auto caps, device.get().get_capabilities(), "Failed getting device capabilities");
+        if (!caps.power_measurements) {
+            all_phy_devices_support_power_measurements = false;
+            break;
+        }
+    }
 
     hailo_power_measurement_types_t measurement_type = HAILO_POWER_MEASUREMENT_TYPES__MAX_ENUM;
     bool should_measure_power = false;
-    if (params.power_measurement.measure_power) {
+    if ((ShouldMeasurePower::YES == params.power_measurement.measure_power) ||
+        ((ShouldMeasurePower::AUTO_DETECT == params.power_measurement.measure_power) && all_phy_devices_support_power_measurements)) {
         measurement_type = HAILO_POWER_MEASUREMENT_TYPES__POWER;
         should_measure_power = true;
     } else if (params.power_measurement.measure_current) {
@@ -1215,6 +1228,7 @@ Expected<InferResult> activate_and_run_vdevice(
             }
         }
         CHECK_SUCCESS_AS_EXPECTED(status);
+        inference_result.power_measurements_are_valid = true;
     }
 
     if (params.measure_temp) {
@@ -1261,23 +1275,18 @@ Expected<InferResult> run_command_hef_vdevice(const inference_runner_params &par
     }
 
     TRY(const auto interface, vdevice->get_default_streams_interface(), "Failed to get default streams interface");
-    TRY(auto configure_params, get_configure_params(params, hef, interface));
+    TRY(auto configure_params, get_configure_params(params, hef, interface), "Failed getting configure params");
     TRY(auto network_group_list, vdevice->configure(hef, configure_params), "Failed configure vdevice from hef");
 
     for (auto &device : physical_devices) {
-        TRY(const auto identity, device.get().identify());
-        CHECK_AS_EXPECTED((HailoRTCommon::is_power_measurement_supported(identity.device_architecture) ||
-            !(params.power_measurement.measure_power)), HAILO_INVALID_OPERATION,
-            "HW arch {} does not support power measurement. Disable the power-measure option",
-            HailoRTCommon::get_device_arch_str(identity.device_architecture));
-        CHECK_AS_EXPECTED((HailoRTCommon::is_current_measurement_supported(identity.device_architecture) ||
-            !(params.power_measurement.measure_current)), HAILO_INVALID_OPERATION,
-            "HW arch {} does not support current measurement. Disable the current-measure option",
-            HailoRTCommon::get_device_arch_str(identity.device_architecture));
-        CHECK_AS_EXPECTED((HailoRTCommon::is_temp_measurement_supported(identity.device_architecture) ||
-            !(params.measure_temp)), HAILO_INVALID_OPERATION,
-            "HW arch {} does not support temperature measurement. Disable the temp-measure option",
-            HailoRTCommon::get_device_arch_str(identity.device_architecture));
+        TRY(auto caps, device.get().get_capabilities(), "Failed getting device capabilities");
+
+        CHECK_AS_EXPECTED((caps.power_measurements || (params.power_measurement.measure_power != ShouldMeasurePower::YES)),
+            HAILO_INVALID_OPERATION, "Power measurement not supported. Disable the power-measure option");
+        CHECK_AS_EXPECTED((caps.current_measurements || !(params.power_measurement.measure_current)),
+            HAILO_INVALID_OPERATION, "Current measurement not supported. Disable the current-measure option");
+        CHECK_AS_EXPECTED((caps.temperature_measurements || !(params.measure_temp)),
+            HAILO_INVALID_OPERATION, "Temperature measurement not supported. Disable the temp-measure option");
 
         if (use_batch_to_measure_opt(params)) {
             status = DownloadActionListCommand::set_batch_to_measure(device.get(), params.runtime_data.batch_to_measure);

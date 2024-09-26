@@ -10,44 +10,59 @@
 #include "hrpc/os/pcie/raw_connection_internal.hpp"
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
+#include "common/internal_env_vars.hpp"
 #include "hailo/hailort.h"
 #include "vdma/driver/hailort_driver.hpp"
 
 // TODO: Remove this after we can choose ports in the driver
-#define PCIE_PORT (1213355091)
+#define DEFAULT_PCIE_PORT (12133)
+
+uint16_t get_pcie_port()
+{
+    auto port_str = get_env_variable(HAILO_CONNECTION_PCIE_PORT_ENV_VAR);
+    if (port_str) {
+        return static_cast<uint16_t>(std::stoi(port_str.value()));
+    }
+    return DEFAULT_PCIE_PORT;
+}
 
 using namespace hrpc;
 
-Expected<std::shared_ptr<ConnectionContext>> PcieConnectionContext::create_shared(bool is_accepting)
+Expected<std::shared_ptr<ConnectionContext>> PcieConnectionContext::create_client_shared(const std::string &device_id)
 {
     const auto max_size = PcieSession::max_transfer_size();
     TRY(auto write_buffer, Buffer::create(static_cast<size_t>(max_size), BufferStorageParams::create_dma()));
     TRY(auto read_buffer, Buffer::create(static_cast<size_t>(max_size), BufferStorageParams::create_dma()));
 
-    std::shared_ptr<PcieConnectionContext> ptr = nullptr;
-    if (is_accepting) {
-        // Server side
-        TRY(auto driver, HailoRTDriver::create_pcie_ep());
-        ptr = make_shared_nothrow<PcieConnectionContext>(std::move(driver), is_accepting,
+    if (device_id.size() > 0) {
+        TRY(auto driver, HailoRTDriver::create_pcie(device_id));
+        auto ptr = make_shared_nothrow<PcieConnectionContext>(std::move(driver), false,
             std::move(write_buffer), std::move(read_buffer));
         CHECK_NOT_NULL(ptr, HAILO_OUT_OF_HOST_MEMORY);
         return std::dynamic_pointer_cast<ConnectionContext>(ptr);
-    } else {
-        // Client side
-        TRY(auto device_infos, HailoRTDriver::scan_devices());
-        CHECK(device_infos.size() > 0, HAILO_NOT_FOUND, "No devices found");
-        for (auto &device_info : device_infos) {
-            if (HailoRTDriver::AcceleratorType::SOC_ACCELERATOR == device_info.accelerator_type) {
-                TRY(auto driver, HailoRTDriver::create(device_info.device_id, device_info.dev_path));
-                ptr = make_shared_nothrow<PcieConnectionContext>(std::move(driver), is_accepting,
-                    std::move(write_buffer), std::move(read_buffer));
-                CHECK_NOT_NULL(ptr, HAILO_OUT_OF_HOST_MEMORY);
-                return std::dynamic_pointer_cast<ConnectionContext>(ptr);
-            }
-        }
     }
-    LOGGER__ERROR("No suitable device found");
-    return make_unexpected(HAILO_NOT_FOUND);
+
+    TRY(auto device_infos, HailoRTDriver::scan_devices(HailoRTDriver::AcceleratorType::SOC_ACCELERATOR));
+    CHECK(device_infos.size() > 0, HAILO_NOT_FOUND, "No devices found");
+
+    TRY(auto driver, HailoRTDriver::create(device_infos[0].device_id, device_infos[0].dev_path));
+    auto ptr = make_shared_nothrow<PcieConnectionContext>(std::move(driver), false,
+        std::move(write_buffer), std::move(read_buffer));
+    CHECK_NOT_NULL(ptr, HAILO_OUT_OF_HOST_MEMORY);
+    return std::dynamic_pointer_cast<ConnectionContext>(ptr);
+}
+
+Expected<std::shared_ptr<ConnectionContext>> PcieConnectionContext::create_server_shared()
+{
+    const auto max_size = PcieSession::max_transfer_size();
+    TRY(auto write_buffer, Buffer::create(static_cast<size_t>(max_size), BufferStorageParams::create_dma()));
+    TRY(auto read_buffer, Buffer::create(static_cast<size_t>(max_size), BufferStorageParams::create_dma()));
+
+    TRY(auto driver, HailoRTDriver::create_pcie_ep());
+    auto ptr = make_shared_nothrow<PcieConnectionContext>(std::move(driver), true,
+        std::move(write_buffer), std::move(read_buffer));
+    CHECK_NOT_NULL(ptr, HAILO_OUT_OF_HOST_MEMORY);
+    return std::dynamic_pointer_cast<ConnectionContext>(ptr);
 }
 
 hailo_status PcieConnectionContext::wait_for_available_connection()
@@ -86,7 +101,7 @@ Expected<std::shared_ptr<RawConnection>> PcieRawConnection::accept()
     auto new_conn = make_shared_nothrow<PcieRawConnection>(m_context);
     CHECK_NOT_NULL_AS_EXPECTED(new_conn, HAILO_OUT_OF_HOST_MEMORY);
 
-    TRY(auto session, PcieSession::accept(m_context->driver(), PCIE_PORT));
+    TRY(auto session, PcieSession::accept(m_context->driver(), get_pcie_port()));
     status = new_conn->set_session(std::move(session));
     CHECK_SUCCESS(status);
 
@@ -103,14 +118,14 @@ hailo_status PcieRawConnection::set_session(PcieSession &&session)
 
 hailo_status PcieRawConnection::connect()
 {
-    TRY(auto session, PcieSession::connect(m_context->driver(), PCIE_PORT));
+    TRY(auto session, PcieSession::connect(m_context->driver(), get_pcie_port()));
     auto status = set_session(std::move(session));
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
 }
 
-hailo_status PcieRawConnection::write(const uint8_t *buffer, size_t size)
+hailo_status PcieRawConnection::write(const uint8_t *buffer, size_t size, std::chrono::milliseconds timeout)
 {
     if (0 == size) {
         return HAILO_SUCCESS;
@@ -126,7 +141,7 @@ hailo_status PcieRawConnection::write(const uint8_t *buffer, size_t size)
         auto size_left = size - bytes_written;
         if (is_aligned) {
             amount_to_write = std::min(static_cast<size_t>(size_left), static_cast<size_t>(max_size));
-            auto status = m_session->write(buffer + bytes_written, amount_to_write, m_timeout);
+            auto status = m_session->write(buffer + bytes_written, amount_to_write, timeout);
             if (HAILO_STREAM_ABORT == status) {
                 return HAILO_COMMUNICATION_CLOSED;
             }
@@ -134,7 +149,7 @@ hailo_status PcieRawConnection::write(const uint8_t *buffer, size_t size)
         } else {
             amount_to_write = std::min(static_cast<size_t>(size_left), m_context->write_buffer().size());
             memcpy(m_context->write_buffer().data(), buffer + bytes_written, amount_to_write);
-            auto status = m_session->write(m_context->write_buffer().data(), amount_to_write, m_timeout);
+            auto status = m_session->write(m_context->write_buffer().data(), amount_to_write, timeout);
             if (HAILO_STREAM_ABORT == status) {
                 return HAILO_COMMUNICATION_CLOSED;
             }
@@ -147,7 +162,7 @@ hailo_status PcieRawConnection::write(const uint8_t *buffer, size_t size)
     return HAILO_SUCCESS;
 }
 
-hailo_status PcieRawConnection::read(uint8_t *buffer, size_t size)
+hailo_status PcieRawConnection::read(uint8_t *buffer, size_t size, std::chrono::milliseconds timeout)
 {
     if (0 == size) {
         return HAILO_SUCCESS;
@@ -163,14 +178,14 @@ hailo_status PcieRawConnection::read(uint8_t *buffer, size_t size)
         auto size_left = size - bytes_read;
         if (is_aligned) {
             amount_to_read = std::min(static_cast<size_t>(size_left), static_cast<size_t>(max_size));
-            auto status = m_session->read(buffer + bytes_read, amount_to_read, m_timeout);
+            auto status = m_session->read(buffer + bytes_read, amount_to_read, timeout);
             if (HAILO_STREAM_ABORT == status) {
                 return HAILO_COMMUNICATION_CLOSED;
             }
             CHECK_SUCCESS(status);
         } else {
             amount_to_read = std::min(static_cast<size_t>(size_left), m_context->read_buffer().size());
-            auto status = m_session->read(m_context->read_buffer().data(), amount_to_read, m_timeout);
+            auto status = m_session->read(m_context->read_buffer().data(), amount_to_read, timeout);
             if (HAILO_STREAM_ABORT == status) {
                 return HAILO_COMMUNICATION_CLOSED;
             }

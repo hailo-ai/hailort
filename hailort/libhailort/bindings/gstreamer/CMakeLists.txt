@@ -1,34 +1,24 @@
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.5.0)
 
 project(gsthailo)
 
 include(GNUInstallDirs)
 
-if(NOT CMAKE_HOST_UNIX)
-    message(FATAL_ERROR "Only unix hosts are supported, stopping build")
-endif()
-
-find_package(HailoRT 4.18.0 EXACT REQUIRED)
+find_package(HailoRT 4.19.0 EXACT REQUIRED)
 
 # GST_PLUGIN_DEFINE needs PACKAGE to be defined
 set(GST_HAILO_PACKAGE_NAME "hailo")
 set(GST_HAILO_VERSION "1.0")
 
-find_package(PkgConfig REQUIRED)
-pkg_search_module(GLIB REQUIRED glib-2.0)
-pkg_search_module(GSTREAMER REQUIRED gstreamer-1.0)
-pkg_search_module(GSTREAMER_BASE REQUIRED gstreamer-base-1.0)
-pkg_search_module(GSTREAMER_VIDEO REQUIRED gstreamer-video-1.0)
-pkg_search_module(GSTREAMER_PLUGINS_BASE REQUIRED gstreamer-plugins-base-1.0)
+include(find_libs_for_gstreamer.cmake)
 
-add_library(gsthailo SHARED
+set(GSTHAILO_SOURCES
     gst-hailo/gsthailoplugin.cpp
     gst-hailo/sync_gsthailonet.cpp
     gst-hailo/sync_gst_hailosend.cpp
     gst-hailo/sync_gst_hailorecv.cpp
     gst-hailo/gsthailonet.cpp
     gst-hailo/gsthailo_allocator.cpp
-    gst-hailo/gsthailo_dmabuf_allocator.cpp
     gst-hailo/gsthailodevicestats.cpp
     gst-hailo/common.cpp
     gst-hailo/network_group_handle.cpp
@@ -36,8 +26,18 @@ add_library(gsthailo SHARED
     gst-hailo/metadata/tensor_meta.cpp
     gst-hailo/hailo_events/hailo_events.cpp)
 
+# dmabuf is supported only on linux
+if (UNIX)
+    list(APPEND GSTHAILO_SOURCES gst-hailo/gsthailo_dmabuf_allocator.cpp gst-hailo/os/linux/dma_buf_allocator_wrapper.cpp)
+elseif (MSVC)
+    list(APPEND GSTHAILO_SOURCES gst-hailo/os/windows/dma_buf_allocator_wrapper.cpp)
+endif ()
+
+add_library(gsthailo SHARED ${GSTHAILO_SOURCES})
+
 set_property(TARGET gsthailo PROPERTY CXX_STANDARD 14)
 
+# TODO HRT-14797: After creating a directory containing all the relevant Hailo GST files (tensor_meta.hpp and hailo_gst.h) - update the PUBLIC_HEADER to be that dir
 set_target_properties(gsthailo PROPERTIES
     PUBLIC_HEADER "gst-hailo/metadata/tensor_meta.hpp"
     CXX_STANDARD              14
@@ -48,17 +48,54 @@ set_target_properties(gsthailo PROPERTIES
     # VISIBILITY_INLINES_HIDDEN YES
 )
 
-target_compile_options(gsthailo PRIVATE
-    -Werror -Wall -Wextra -Wconversion
-    -DVERSION="${GST_HAILO_VERSION}"
-    -DPACKAGE="${GST_HAILO_PACKAGE_NAME}")
+if (UNIX)
+    set(HAILORT_COMPILE_OPTIONS
+        ${HAILORT_COMPILE_OPTIONS}
+        -DVERSION="${GST_HAILO_VERSION}"
+        -DPACKAGE="${GST_HAILO_PACKAGE_NAME}"
+    )
+elseif (WIN32)
+    set(HAILORT_COMPILE_OPTIONS
+        ${HAILORT_COMPILE_OPTIONS}
+        /DWIN32_LEAN_AND_MEAN
+        /DNOMINMAX                  # NOMINMAX is required in order to play nice with std::min/std::max (otherwise Windows.h defines it's own)
+        /D_HAILO_EXPORTING
+        /wd4201                     # Anonymous union/struct
+        /wd4251                     # C++ ABI with STL
+        -DVERSION="${GST_HAILO_VERSION}"
+        -DPACKAGE="${GST_HAILO_PACKAGE_NAME}"
+    )
+else()
+    message(FATAL_ERROR "Unexpeced host, stopping build")
+endif()
 
-target_include_directories(gsthailo PRIVATE ${GSTREAMER_VIDEO_INCLUDE_DIRS})
-target_link_libraries(gsthailo HailoRT::libhailort ${GSTREAMER_VIDEO_LDFLAGS} -lgstallocators-1.0)
+target_compile_options(gsthailo PRIVATE ${HAILORT_COMPILE_OPTIONS})
 
+if (UNIX)
+    target_include_directories(gsthailo PRIVATE ${GSTREAMER_VIDEO_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo/os/linux)
+    target_link_libraries(gsthailo HailoRT::libhailort ${GSTREAMER_VIDEO_LDFLAGS} -lgstallocators-1.0)
+else()
+    target_include_directories(gsthailo PRIVATE ${GSTREAMER_INCLUDE_DIRS} ${GSTREAMER_VIDEO_INCLUDE_DIRS} ${GLIB_INCLUDE_DIRS} ${GLIBCONFIG_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo/os/windows)
+    target_link_libraries(gsthailo HailoRT::libhailort ${GSTREAMER_LIBRARIES} ${GSTREAMER_BASE_LIBRARIES} ${GSTREAMER_VIDEO_LIBRARIES} ${GLIB_LIBRARIES} ${GOBJECT_LIBRARIES} -lgstallocators-1.0)
+endif()
+
+if (UNIX)
+    set(GSTREAMER_LIB_DEST "${CMAKE_INSTALL_LIBDIR}/${CMAKE_SYSTEM_PROCESSOR}-linux-gnu/gstreamer-1.0/")
+    set(PUBLIC_HEADER_DEST "${CMAKE_INSTALL_INCLUDEDIR}/gstreamer-1.0/gst/hailo/")
+elseif (MSVC)
+    if ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64" OR "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x64")
+        set(GSTREAMER_DEST "C:\\gstreamer\\1.0\\msvc_x86_64")
+    else()
+        message(FATAL_ERROR "HailoRT GStreamer elements installation is not supported on this architecture.")
+    endif()
+    set(GSTREAMER_LIB_DEST "${GSTREAMER_DEST}\\lib\\gstreamer-1.0")
+    set(PUBLIC_HEADER_DEST "${CMAKE_INSTALL_INCLUDEDIR}\\gstreamer-1.0\\gst\\hailo")
+endif()
+
+# Install command using the set variables
 install(TARGETS gsthailo
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    # TODO: get gstreamer-1.0 in an automate way
-    PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gstreamer-1.0/gst/hailo/"
+    RUNTIME DESTINATION "${GSTREAMER_LIB_DEST}"
+    LIBRARY DESTINATION "${GSTREAMER_LIB_DEST}"
+    ARCHIVE DESTINATION "${GSTREAMER_LIB_DEST}"
+    PUBLIC_HEADER DESTINATION "${PUBLIC_HEADER_DEST}"
     CONFIGURATIONS Release)

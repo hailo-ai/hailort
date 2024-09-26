@@ -21,7 +21,7 @@ namespace hailort
 
 // A special magic number used to match each accept() with the corresponding connect().
 // By using this magic, multiple servers can be implemented and run simultaneously on the same device.
-using pcie_connection_port_t = uint32_t;
+using pcie_connection_port_t = uint16_t;
 using PcieSessionType = HailoRTDriver::PcieSessionType;
 
 /**
@@ -57,6 +57,8 @@ public:
     static Expected<PcieSession> connect(std::shared_ptr<HailoRTDriver> driver, pcie_connection_port_t port);
     static Expected<PcieSession> accept(std::shared_ptr<HailoRTDriver> driver, pcie_connection_port_t port);
 
+    ~PcieSession() { close(); }
+
     hailo_status write(const void *buffer, size_t size, std::chrono::milliseconds timeout);
     hailo_status read(void *buffer, size_t size, std::chrono::milliseconds timeout);
 
@@ -71,6 +73,16 @@ public:
     }
 
     static uint64_t max_transfer_size();
+
+    PcieSession(PcieSession &&other) :
+        m_should_close(std::exchange(other.m_should_close, false)),
+        m_driver(std::move(other.m_driver)),
+        m_interrupts_dispatcher(std::move(other.m_interrupts_dispatcher)),
+        m_transfer_launcher(std::move(other.m_transfer_launcher)),
+        m_input(std::move(other.m_input)),
+        m_output(std::move(other.m_output)),
+        m_session_type(other.m_session_type)
+    {}
 
 private:
 
@@ -99,6 +111,7 @@ private:
         void *buffer, size_t size, std::function<void(hailo_status)> &&callback);
     static Expected<vdma::DescriptorList> create_desc_list(HailoRTDriver &driver);
 
+    bool m_should_close = true;
     std::shared_ptr<HailoRTDriver> m_driver;
 
     std::unique_ptr<vdma::InterruptsDispatcher> m_interrupts_dispatcher;

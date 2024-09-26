@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <unordered_map>
+#include <vector>
 
 namespace hailort
 {
@@ -40,6 +41,11 @@ enum class HailoRpcActionID {
     CONFIGURED_INFER_MODEL__DEACTIVATE,
     CONFIGURED_INFER_MODEL__SHUTDOWN,
     CONFIGURED_INFER_MODEL__RUN_ASYNC,
+
+    DEVICE__CREATE,
+    DEVICE__DESTROY,
+    DEVICE__IDENTIFY,
+    DEVICE__EXTENDED_INFO,
 
     CALLBACK_CALLED,
 
@@ -97,8 +103,8 @@ class CreateInferModelSerializer
 public:
     CreateInferModelSerializer() = delete;
 
-    static Expected<Buffer> serialize_request(rpc_object_handle_t vdevice_handle, uint64_t hef_size);
-    static Expected<std::tuple<rpc_object_handle_t, uint64_t>> deserialize_request(const MemoryView &serialized_request);
+    static Expected<Buffer> serialize_request(rpc_object_handle_t vdevice_handle, uint64_t hef_size, const std::string &name);
+    static Expected<std::tuple<rpc_object_handle_t, uint64_t, std::string>> deserialize_request(const MemoryView &serialized_request);
 
     static Expected<Buffer> serialize_reply(hailo_status status, rpc_object_handle_t infer_model_handle = INVALID_HANDLE_ID);
     static Expected<std::tuple<hailo_status, rpc_object_handle_t>> deserialize_reply(const MemoryView &serialized_reply);
@@ -230,9 +236,16 @@ class RunAsyncSerializer
 public:
     RunAsyncSerializer() = delete;
 
-    static Expected<Buffer> serialize_request(rpc_object_handle_t configured_infer_model_handle, rpc_object_handle_t infer_model_handle,
-        rpc_object_handle_t callback_handle);
-    static Expected<std::tuple<rpc_object_handle_t, rpc_object_handle_t, rpc_object_handle_t>> deserialize_request(const MemoryView &serialized_request);
+    struct Request
+    {
+        rpc_object_handle_t configured_infer_model_handle;
+        rpc_object_handle_t infer_model_handle;
+        rpc_object_handle_t callback_handle;
+        std::vector<uint32_t> input_buffer_sizes;
+    };
+
+    static Expected<Buffer> serialize_request(const Request &request_struct);
+    static Expected<Request> deserialize_request(const MemoryView &serialized_request);
 
     static Expected<Buffer> serialize_reply(hailo_status status);
     static hailo_status deserialize_reply(const MemoryView &serialized_reply);
@@ -243,8 +256,57 @@ class CallbackCalledSerializer
 public:
     CallbackCalledSerializer() = delete;
 
-    static Expected<Buffer> serialize_reply(hailo_status status, rpc_object_handle_t callback_handle = INVALID_HANDLE_ID);
+    static Expected<Buffer> serialize_reply(hailo_status status, rpc_object_handle_t callback_handle = INVALID_HANDLE_ID,
+        rpc_object_handle_t configured_infer_model_handle = INVALID_HANDLE_ID);
+    static Expected<std::tuple<hailo_status, rpc_object_handle_t, rpc_object_handle_t>> deserialize_reply(const MemoryView &serialized_reply);
+};
+
+class CreateDeviceSerializer
+{
+public:
+    CreateDeviceSerializer() = delete;
+
+    static Expected<Buffer> serialize_request();
+    static hailo_status deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply(hailo_status status, rpc_object_handle_t device_handle = INVALID_HANDLE_ID);
     static Expected<std::tuple<hailo_status, rpc_object_handle_t>> deserialize_reply(const MemoryView &serialized_reply);
+};
+
+class DestroyDeviceSerializer
+{
+public:
+    DestroyDeviceSerializer() = delete;
+
+    static Expected<Buffer> serialize_request(rpc_object_handle_t device_handle);
+    static Expected<rpc_object_handle_t> deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply(hailo_status status);
+    static hailo_status deserialize_reply(const MemoryView &serialized_reply);
+};
+
+class IdentifyDeviceSerializer
+{
+public:
+    IdentifyDeviceSerializer() = delete;
+
+    static Expected<Buffer> serialize_request(rpc_object_handle_t device_handle);
+    static Expected<rpc_object_handle_t> deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply(hailo_status status, const hailo_device_identity_t &identity = {});
+    static Expected<std::tuple<hailo_status, hailo_device_identity_t>> deserialize_reply(const MemoryView &serialized_reply);
+};
+
+class ExtendedDeviceInfoSerializer
+{
+public:
+    ExtendedDeviceInfoSerializer() = delete;
+
+    static Expected<Buffer> serialize_request(rpc_object_handle_t device_handle);
+    static Expected<rpc_object_handle_t> deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply(hailo_status status, const hailo_extended_device_information_t &extended_info = {});
+    static Expected<std::tuple<hailo_status, hailo_extended_device_information_t>> deserialize_reply(const MemoryView &serialized_reply);
 };
 
 

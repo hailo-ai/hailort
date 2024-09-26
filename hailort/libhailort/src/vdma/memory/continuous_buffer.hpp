@@ -11,7 +11,6 @@
 #define _HAILO_VDMA_CONTINUOUS_BUFFER_HPP_
 
 #include "vdma/driver/hailort_driver.hpp"
-#include "os/mmap_buffer.hpp"
 #include "vdma/memory/vdma_buffer.hpp"
 
 #define MAX_CCB_DESCS_COUNT (0x00040000)

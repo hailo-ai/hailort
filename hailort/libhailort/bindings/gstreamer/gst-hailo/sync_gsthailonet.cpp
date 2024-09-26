@@ -69,10 +69,22 @@ enum
 
 G_DEFINE_TYPE(GstSyncHailoNet, gst_sync_hailonet, GST_TYPE_BIN);
 
+static void gst_sync_hailonet_dispose(GObject *object) {
+    GstSyncHailoNet *self = GST_SYNC_HAILONET(object);
+
+    assert(nullptr != self->impl);
+    delete self->impl;
+    self->impl = nullptr;
+
+    G_OBJECT_CLASS(gst_sync_hailonet_parent_class)->dispose(object);
+}
+
 static void gst_sync_hailonet_class_init(GstSyncHailoNetClass *klass)
 {
     GObjectClass *gobject_class = G_OBJECT_CLASS(klass);
     GstElementClass *element_class = GST_ELEMENT_CLASS(klass);
+
+    gobject_class->dispose = gst_sync_hailonet_dispose;
 
     GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE("src", GST_PAD_SRC, GST_PAD_ALWAYS, GST_STATIC_CAPS_ANY);
     gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&src_template));
@@ -898,7 +910,7 @@ static void gst_sync_hailonet_init(GstSyncHailoNet *self)
         return;
     }
 
-    self->impl = sync_hailonet_impl.release();
+    self->impl = sync_hailonet_impl->release();
 }
 
 static void gst_sync_hailonet_set_property(GObject *object, guint property_id, const GValue *value, GParamSpec *pspec)
@@ -961,8 +973,6 @@ static GstStateChangeReturn gst_sync_hailonet_change_state(GstElement *element, 
             GST_CHECK(HAILO_SUCCESS == status, GST_STATE_CHANGE_FAILURE, element, RESOURCE, "Deactivating network group failed, status = %d\n", status);
         }
 
-        // Cleanup all of hailonet memory
-        sync_hailonet.reset();
         break;
     }
     default:

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.5.0)
 
 set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/hailort_common.cpp
@@ -11,8 +11,6 @@ set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/measurement_utils.cpp
 )
 
-if(HAILO_BUILD_PROFILER)
-    add_subdirectory(profiler)
-endif()
+add_subdirectory(profiler)
 
 set(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES} ${SRC_FILES} PARENT_SCOPE)

@@ -17,7 +17,7 @@
 #include "hailo/dma_mapped_buffer.hpp"
 #include "net_flow/ops/nms_post_process.hpp"
 #include "hailo/network_group.hpp"
-#include "utils/thread_safe_queue.hpp"
+#include "common/thread_safe_queue.hpp"
 
 #include <memory>
 #include <thread>

@@ -15,9 +15,10 @@ namespace hrpc
 ServerContext::ServerContext(Server &server, RpcConnection connection) :
     m_server(server), m_connection(connection) {}
 
-hailo_status ServerContext::trigger_callback(uint32_t callback_id, hailo_status callback_status, std::function<hailo_status(RpcConnection)> write_buffers_callback)
+hailo_status ServerContext::trigger_callback(uint32_t callback_id, hailo_status callback_status,
+    rpc_object_handle_t callback_owner_handle, std::function<hailo_status(RpcConnection)> write_buffers_callback)
 {
-    return m_server.trigger_callback(callback_id, m_connection, callback_status, write_buffers_callback);
+    return m_server.trigger_callback(callback_id, callback_status, callback_owner_handle, m_connection, write_buffers_callback);
 }
 
 RpcConnection &ServerContext::connection()
@@ -36,14 +37,15 @@ Expected<Buffer> Dispatcher::call_action(HailoRpcActionID action_id, const Memor
     if (m_actions.find(action_id) != m_actions.end()) {
         return m_actions[action_id](request, server_context);
     }
-    LOGGER__ERROR("Failed to find RPC action {}", action_id);
+    LOGGER__ERROR("Failed to find RPC action {}", static_cast<int>(action_id));
     return make_unexpected(HAILO_RPC_FAILED);
 }
 
 hailo_status Server::serve()
 {
+    TRY(auto server_connection, RawConnection::create_shared(m_connection_context));
     while (true) {
-        TRY(auto client_connection, create_client_connection());
+        TRY(auto client_connection, create_client_connection(server_connection));
         auto th = std::thread([this, client_connection]() { serve_client(client_connection); });
         th.detach();
     }
@@ -55,11 +57,9 @@ void Server::set_dispatcher(Dispatcher dispatcher)
     m_dispatcher = dispatcher;
 }
 
-Expected<RpcConnection> Server::create_client_connection()
+Expected<RpcConnection> Server::create_client_connection(std::shared_ptr<hrpc::RawConnection> server_connection)
 {
-    TRY(auto server_connection, RawConnection::create_shared(m_connection_context));
     TRY(auto conn, server_connection->accept());
-
     return RpcConnection(conn);
 }
 
@@ -95,10 +95,11 @@ hailo_status Server::serve_client(RpcConnection client_connection)
     return HAILO_SUCCESS;
 }
 
-hailo_status Server::trigger_callback(uint32_t callback_id, RpcConnection connection, hailo_status callback_status,
-    std::function<hailo_status(RpcConnection)> write_buffers_callback)
+hailo_status Server::trigger_callback(uint32_t callback_id, hailo_status callback_status, rpc_object_handle_t callback_owner_handle,
+    RpcConnection connection, std::function<hailo_status(RpcConnection)> write_buffers_callback)
 {
-    TRY(auto reply, CallbackCalledSerializer::serialize_reply(callback_status, callback_id));
+    // TODO: callback handling should be outside of HRPC (HRT-14638)
+    TRY(auto reply, CallbackCalledSerializer::serialize_reply(callback_status, callback_id, callback_owner_handle));
 
     std::unique_lock<std::mutex> lock(m_write_mutex);
     rpc_message_header_t header;

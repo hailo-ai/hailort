@@ -44,11 +44,11 @@ public:
 protected:
 
     template<typename CommandType>
-    CommandType &add_subcommand(bool hidden = false)
+    CommandType &add_subcommand(OptionVisibility visibility = OptionVisibility::VISIBLE)
     {
         // Unnamed "option groups" hide subcommands/options from the help message
         // (see https://github.com/CLIUtils/CLI11/blob/main/README.md)
-        auto *parent = hidden ? m_app->add_option_group("") : m_app;
+        auto *parent = (visibility == OptionVisibility::HIDDEN) ? m_app->add_option_group("") : m_app;
         auto command = std::make_shared<CommandType>(*parent);
         m_subcommands.push_back(command);
         return *command;

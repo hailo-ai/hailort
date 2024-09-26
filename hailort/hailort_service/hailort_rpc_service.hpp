@@ -227,6 +227,7 @@ private:
     hailo_status abort_input_vstream(uint32_t handle);
     hailo_status abort_output_vstream(uint32_t handle);
     void abort_vstreams_by_pids(std::set<uint32_t> &pids);
+    void release_configured_network_groups_by_pid(uint32_t client_pid);
     void remove_disconnected_clients();
     void update_client_id_timestamp(uint32_t pid);
     Expected<size_t> get_min_buffer_pool_size(uint32_t ng_handle);
@@ -247,6 +248,12 @@ private:
     Expected<BufferPtr> acquire_buffer_from_cng_pool(uint32_t ng_handle, const std::string &output_name);
     Expected<size_t> output_vstream_frame_size(uint32_t vstream_handle);
     hailo_status update_buffer_size_in_pool(uint32_t vstream_handle, uint32_t network_group_handle);
+    void shutdown_configured_network_groups_by_pids(std::set<uint32_t> &pids);
+    void shutdown_buffer_pool_by_pids(std::set<uint32_t> &pids);
+    void shutdown_vdevice_cb_queue_by_pids(std::set<uint32_t> &pids);
+    hailo_status shutdown_cng_buffer_pool(uint32_t network_group_handle);
+    hailo_status shutdown_vdevice_cb_queue(uint32_t vdevice_handle);
+    hailo_status shutdown_configured_network_group(uint32_t vdevice_handle);
 
     std::mutex m_keep_alive_mutex;
     std::map<uint32_t, std::chrono::time_point<std::chrono::high_resolution_clock>> m_clients_pids;

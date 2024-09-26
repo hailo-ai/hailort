@@ -44,6 +44,7 @@ hailo_status VdmaConfigManager::deactivate_core_op(std::shared_ptr<VdmaConfigCor
     return switch_core_op(current_active_core_op, DEACTIVATE_NEXT_CORE_OP, DEACTIVATE_BATCH_SIZE);
 }
 
+// TODO: fix callback registration and deregistration in the case of switch NG (HRT-14287)
 hailo_status VdmaConfigManager::set_state_machine(std::shared_ptr<VdmaConfigCoreOp> current,
     std::shared_ptr<VdmaConfigCoreOp> next, uint16_t batch_size)
 {
@@ -70,6 +71,7 @@ hailo_status VdmaConfigManager::switch_core_op(std::shared_ptr<VdmaConfigCoreOp>
     assert((nullptr != current) || (nullptr != next));
 
     if (current != nullptr) {
+        CHECK_SUCCESS(current->unregister_cache_update_callback(), "Failed unregistering cache updates from previous core-op");
         CHECK_SUCCESS(current->deactivate_host_resources(), "Failed deactivating host resources for current core-op");
 
         // TODO: In mercury we need to reset after deactivate. This will be fixed in MSW-762 and the "if" will be removed
@@ -88,7 +90,6 @@ hailo_status VdmaConfigManager::switch_core_op(std::shared_ptr<VdmaConfigCoreOp>
 
     if (current != nullptr) {
         CHECK_SUCCESS(current->cancel_pending_transfers(), "Failed canceling pending transfers from previous core-op");
-        CHECK_SUCCESS(current->unregister_cache_update_callback(), "Failed unregistering cache updates from previous core-op");
     }
 
     return HAILO_SUCCESS;

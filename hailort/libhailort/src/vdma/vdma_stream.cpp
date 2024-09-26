@@ -48,7 +48,7 @@ Expected<BounceBufferQueuePtr> VdmaInputStream::init_dma_bounce_buffer_pool(
     CHECK_NOT_NULL(bounce_buffers_pool, HAILO_OUT_OF_HOST_MEMORY);
 
     for (size_t i = 0; i < dma_bounce_buffer_pool_size; i++) {
-        TRY(auto dma_able_buffer, vdma::DmaAbleBuffer::create_by_allocation(bounce_buffer_size, device.get_driver()));
+        TRY(auto dma_able_buffer, vdma::DmaAbleBuffer::create_by_allocation(bounce_buffer_size));
 
         auto dma_storage = make_shared_nothrow<DmaStorage>(std::move(dma_able_buffer));
         CHECK_NOT_NULL(dma_storage, HAILO_OUT_OF_HOST_MEMORY);
@@ -116,10 +116,7 @@ Expected<std::unique_ptr<StreamBufferPool>> VdmaInputStream::allocate_buffer_poo
             m_channel->get_desc_list().desc_page_size(), m_channel->get_desc_list().count(), frame_size));
 
         // Bind the buffer to the channel to avoid the need to do it on every transfer.
-        TRY(auto pool_dma_able_buffer, circular_pool->get_base_buffer().storage().get_dma_able_buffer());
-        TRY(auto mapped_buffer, vdma::MappedBuffer::create_shared(pool_dma_able_buffer, m_device.get_driver(),
-            HailoRTDriver::DmaDirection::H2D));
-        CHECK_SUCCESS(m_channel->bind_buffer(mapped_buffer));
+        CHECK_SUCCESS(m_channel->bind_buffer(circular_pool->get_base_buffer()));
 
         return std::unique_ptr<StreamBufferPool>(std::move(circular_pool));
     }
@@ -169,6 +166,20 @@ Expected<TransferRequest> VdmaInputStream::align_transfer_request(TransferReques
     };
 
     return TransferRequest(std::move(transfer_buffers), wrapped_callback);
+}
+
+hailo_status VdmaInputStream::bind_buffer(TransferRequest &&transfer_request)
+{
+    m_channel->remove_buffer_binding();
+    if (TransferBufferType::MEMORYVIEW == transfer_request.transfer_buffers[0].type()) {
+        TRY(auto is_request_aligned, transfer_request.is_request_aligned());
+        if (!is_request_aligned) {
+            // Best effort, if buffer is not aligned - will program descriptors later
+            return HAILO_SUCCESS;
+        }
+    }
+
+    return m_channel->map_and_bind_buffer(transfer_request.transfer_buffers[0]);
 }
 
 hailo_status VdmaInputStream::write_async_impl(TransferRequest &&transfer_request)
@@ -270,10 +281,7 @@ Expected<std::unique_ptr<StreamBufferPool>> VdmaOutputStream::allocate_buffer_po
             m_channel->get_desc_list().desc_page_size(), m_channel->get_desc_list().count(), m_transfer_size));
 
         // Bind the buffer to the channel to avoid the need to do it on every transfer.
-        TRY(auto pool_dma_able_buffer, circular_pool->get_base_buffer().storage().get_dma_able_buffer());
-        TRY(auto mapped_buffer, vdma::MappedBuffer::create_shared(pool_dma_able_buffer, m_device.get_driver(),
-            HailoRTDriver::DmaDirection::D2H));
-        CHECK_SUCCESS(m_channel->bind_buffer(mapped_buffer));
+        CHECK_SUCCESS(m_channel->bind_buffer(circular_pool->get_base_buffer()));
 
         return std::unique_ptr<StreamBufferPool>(std::move(circular_pool));
     }
@@ -330,6 +338,20 @@ hailo_status VdmaOutputStream::read_async_impl(TransferRequest &&transfer_reques
             return m_channel->launch_transfer(realigned_transfer_request.release());
         }
     }
+}
+
+hailo_status VdmaOutputStream::bind_buffer(TransferRequest &&transfer_request)
+{
+    m_channel->remove_buffer_binding();
+    if (TransferBufferType::MEMORYVIEW == transfer_request.transfer_buffers[0].type()) {
+        TRY(auto is_request_aligned, transfer_request.is_request_aligned());
+        if (!is_request_aligned) {
+            // Best effort, if buffer is not aligned - will program descriptors later
+            return HAILO_SUCCESS;
+        }
+    }
+
+    return m_channel->map_and_bind_buffer(transfer_request.transfer_buffers[0]);
 }
 
 hailo_status VdmaOutputStream::activate_stream_impl()

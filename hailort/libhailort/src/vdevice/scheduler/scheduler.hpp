@@ -17,7 +17,7 @@
 #include "common/filesystem.hpp"
 
 #include "utils/thread_safe_map.hpp"
-#include "utils/thread_safe_queue.hpp"
+#include "common/thread_safe_queue.hpp"
 
 #include "vdevice/scheduler/scheduled_core_op_state.hpp"
 #include "vdevice/scheduler/scheduler_base.hpp"
@@ -81,11 +81,16 @@ private:
     Expected<InferRequest> dequeue_infer_request(scheduler_core_op_handle_t core_op_handle);
     uint16_t get_frames_ready_to_transfer(scheduler_core_op_handle_t core_op_handle, const device_id_t &device_id) const;
 
+    hailo_status bind_buffers();
+
     Expected<std::shared_ptr<VdmaConfigCoreOp>> get_vdma_core_op(scheduler_core_op_handle_t core_op_handle,
         const device_id_t &device_id);
 
     void shutdown_core_op(scheduler_core_op_handle_t core_op_handle);
     void schedule();
+
+    void update_closest_threshold_timeout();
+    std::chrono::milliseconds get_closest_threshold_timeout() const;
 
     class SchedulerThread final {
     public:
@@ -96,7 +101,7 @@ private:
         SchedulerThread(const SchedulerThread &) = delete;
         SchedulerThread &operator=(const SchedulerThread &) = delete;
 
-        void signal();
+        void signal(bool execute_worker_thread);
         void stop();
 
     private:
@@ -114,6 +119,7 @@ private:
 
     using InferRequestQueue = SafeQueue<InferRequest>;
     std::unordered_map<vdevice_core_op_handle_t, InferRequestQueue> m_infer_requests;
+    std::unordered_map<vdevice_core_op_handle_t, InferRequestQueue> m_bounded_infer_requests;
 
     // This shared mutex guards accessing the scheduler data structures including:
     //   - m_scheduled_core_ops
@@ -123,6 +129,8 @@ private:
     // unique_lock. Any function accessing these structures (for example access to
     // m_scheduled_core_ops.at(core_op_handle) can use shared_lock.
     std::shared_timed_mutex m_scheduler_mutex;
+
+    std::chrono::steady_clock::time_point m_closest_threshold_timeout;
 
     SchedulerThread m_scheduler_thread;
 };

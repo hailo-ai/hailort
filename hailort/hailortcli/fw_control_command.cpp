@@ -197,7 +197,7 @@ FwControlResetCommand::FwControlResetCommand(CLI::App &parent_app) :
     m_app->add_option("--reset-type", m_reset_mode, "Reset type")
         ->required()
         ->transform(HailoCheckedTransformer<hailo_reset_device_mode_t>({
-            { "chip", HAILO_RESET_DEVICE_MODE_CHIP },
+            { "chip", HAILO_RESET_DEVICE_MODE_CHIP  },
             { "nn_core", HAILO_RESET_DEVICE_MODE_NN_CORE },
             { "soft", HAILO_RESET_DEVICE_MODE_SOFT },
             { "forced_soft", HAILO_RESET_DEVICE_MODE_FORCED_SOFT },
@@ -226,11 +226,31 @@ hailo_status FwControlTestMemoriesCommand::execute_on_device(Device &device)
     return HAILO_SUCCESS;
 }
 
+FwControlDebugHaltContinueCommand::FwControlDebugHaltContinueCommand(CLI::App &parent_app) :
+    DeviceCommand(parent_app.add_subcommand("continue", "Continue breakpoint action"))
+{}
+
+hailo_status FwControlDebugHaltContinueCommand::execute_on_device(Device &device)
+{
+    auto status = device.continue_context_switch_breakpoint(0);
+    CHECK_SUCCESS(status, "Failed to excute debug operation");
+
+    std::cout << "Control Operation Debug Continue completed successfully" << std::endl;
+    return HAILO_SUCCESS;
+}
+
+FwControlDebugCommand::FwControlDebugCommand(CLI::App &parent_app) :
+    ContainerCommand(parent_app.add_subcommand("debug", "Access to usefull debug operations"))
+{
+    add_subcommand<FwControlDebugHaltContinueCommand>();
+}
+
 FwControlCommand::FwControlCommand(CLI::App &parent_app) :
     ContainerCommand(parent_app.add_subcommand("fw-control", "Useful firmware control operations"))
 {
     add_subcommand<FwControlIdentifyCommand>();
-    add_subcommand<FwControlResetCommand>();
-    add_subcommand<FwControlTestMemoriesCommand>();
-    add_subcommand<DownloadActionListCommand>();
+    add_subcommand<FwControlResetCommand>(OptionVisibility::HIDDEN);
+    add_subcommand<FwControlTestMemoriesCommand>(OptionVisibility::HIDDEN);
+    add_subcommand<DownloadActionListCommand>(OptionVisibility::HIDDEN);
+    add_subcommand<FwControlDebugCommand>(OptionVisibility::HIDDEN);
 }

@@ -9,6 +9,8 @@
 
 #include "common/utils.hpp"
 #include "common/logger_macros.hpp"
+#include "common/internal_env_vars.hpp"
+#include "common/process.hpp"
 
 #include "hailo/hailort_common.hpp"
 #include "hef/core_op_metadata.hpp"
@@ -39,8 +41,6 @@ namespace hailort
         "If only taking one measurement, the protection will resume automatically.\n" \
         "If doing continuous measurement, to enable overcurrent protection again you have to stop the power measurement on this dvm." \
     )
-
-#define FORCE_LAYOUT_INTERNAL_ENV_VAR "FORCE_LAYOUT_INTERNAL"
 
 typedef std::array<std::array<float64_t, CONTROL_PROTOCOL__POWER_MEASUREMENT_TYPES__COUNT>, CONTROL_PROTOCOL__DVM_OPTIONS_COUNT> power_conversion_multiplier_t;
 
@@ -96,6 +96,15 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
         board_info.device_architecture = dev_arch;
     }
 
+    // Check if we're on H10 - relevant only for linux
+#ifdef __linux__
+    TRY(auto host_name_pair, Process::create_and_wait_for_output("hostname", 20));
+    CHECK_AS_EXPECTED(0 == host_name_pair.first, HAILO_INTERNAL_FAILURE, "Failed to run 'hostname'");
+    if (host_name_pair.second.find("hailo10") != std::string::npos) {
+        board_info.device_architecture = HAILO_ARCH_HAILO10H;
+    }
+#endif
+
     /* Write identify results to log */
     LOGGER__INFO("firmware_version is: {}.{}.{}",
             board_info.fw_version.major,
@@ -104,7 +113,7 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
             );
     LOGGER__DEBUG("Protocol version: {}", board_info.protocol_version);
     LOGGER__DEBUG("Logger version: {}", board_info.logger_version);
-    LOGGER__DEBUG("Device architecture code: {}", board_info.device_architecture);
+    LOGGER__DEBUG("Device architecture code: {}", static_cast<int>(board_info.device_architecture));
 
     return board_info;
 }
@@ -118,15 +127,15 @@ Expected<hailo_extended_device_information_t> control__parse_get_extended_device
     local_supported_features = (uint8_t)BYTE_ORDER__ntohl(get_extended_device_information_response.supported_features);
 
     device_info.supported_features.ethernet = (local_supported_features &
-                                               (1 << CONTROL_PROTOCOL__SUPPORTED_FEATURES_ETHERNET_BIT_OFFSET)) != 0;
+                                            (1 << CONTROL_PROTOCOL__SUPPORTED_FEATURES_ETHERNET_BIT_OFFSET)) != 0;
     device_info.supported_features.pcie = (local_supported_features &
-                                           (1 << CONTROL_PROTOCOL__SUPPORTED_FEATURES_PCIE_BIT_OFFSET)) != 0;
+                                        (1 << CONTROL_PROTOCOL__SUPPORTED_FEATURES_PCIE_BIT_OFFSET)) != 0;
     device_info.supported_features.mipi = (local_supported_features &
-                                           (1 << CONTROL_PROTOCOL__SUPPORTED_FEATURES_MIPI_BIT_OFFSET)) != 0;
+                                        (1 << CONTROL_PROTOCOL__SUPPORTED_FEATURES_MIPI_BIT_OFFSET)) != 0;
     device_info.supported_features.current_monitoring = (local_supported_features &
-                                                         (1 << CONTROL_PROTOCOL__SUPPORTED_FEATURES_CURRENT_MONITORING_BIT_OFFSET)) != 0;
+                                                        (1 << CONTROL_PROTOCOL__SUPPORTED_FEATURES_CURRENT_MONITORING_BIT_OFFSET)) != 0;
     device_info.supported_features.mdio = (local_supported_features &
-                                           (1 << CONTROL_PROTOCOL__SUPPORTED_FEATURES_MDIO_BIT_OFFSET)) != 0;
+                                        (1 << CONTROL_PROTOCOL__SUPPORTED_FEATURES_MDIO_BIT_OFFSET)) != 0;
     device_info.neural_network_core_clock_rate = BYTE_ORDER__ntohl(get_extended_device_information_response.neural_network_core_clock_rate);
 
     LOGGER__DEBUG("Max Neural Network Core Clock Rate: {}", device_info.neural_network_core_clock_rate);
@@ -135,8 +144,8 @@ Expected<hailo_extended_device_information_t> control__parse_get_extended_device
         BYTE_ORDER__ntohl(get_extended_device_information_response.boot_source));
 
     (void)memcpy(device_info.soc_id,
-                 get_extended_device_information_response.soc_id,
-                 BYTE_ORDER__ntohl(get_extended_device_information_response.soc_id_length));
+                get_extended_device_information_response.soc_id,
+                BYTE_ORDER__ntohl(get_extended_device_information_response.soc_id_length));
 
     device_info.lcs = get_extended_device_information_response.lcs;
 
@@ -225,14 +234,14 @@ hailo_status log_detailed_fw_error(const Device &device, const CONTROL_PROTOCOL_
         LOGGER__ERROR("Firmware major status: {}", firmware_status_text);
     } else {
         LOGGER__ERROR("Cannot find textual address for firmware status {:#x}, common_status = {}",
-            (FIRMWARE_STATUS_t)fw_status.major_status, common_status);
+            static_cast<int>((FIRMWARE_STATUS_t)fw_status.major_status), static_cast<int>(common_status));
     }
     common_status = FIRMWARE_STATUS__get_textual((FIRMWARE_STATUS_t)fw_status.minor_status, &firmware_status_text);
     if (HAILO_COMMON_STATUS__SUCCESS == common_status) {
         LOGGER__ERROR("Firmware minor status: {}", firmware_status_text);
     } else {
         LOGGER__ERROR("Cannot find textual address for firmware status {:#x}, common_status = {}",
-            (FIRMWARE_STATUS_t)fw_status.minor_status, common_status);
+            static_cast<int>((FIRMWARE_STATUS_t)fw_status.minor_status), static_cast<int>(common_status));
     }
 
     if ((CONTROL_PROTOCOL_STATUS_CONTROL_UNSUPPORTED == fw_status.minor_status) ||
@@ -1181,7 +1190,7 @@ hailo_status Control::set_power_measurement(Device &device, hailo_measurement_bu
     CONTROL_PROTOCOL__set_power_measurement_response_t *response = NULL;
 
     CHECK(CONTROL_PROTOCOL__MAX_NUMBER_OF_POWER_MEASUREMETS > buffer_index,
-        HAILO_INVALID_ARGUMENT, "Invalid power measurement index {}", buffer_index);
+        HAILO_INVALID_ARGUMENT, "Invalid power measurement index {}", static_cast<int>(buffer_index));
 
     common_status = CONTROL_PROTOCOL__pack_set_power_measurement_request(&request, &request_size, device.get_control_sequence(),
             buffer_index, dvm, measurement_type);
@@ -1229,7 +1238,7 @@ hailo_status Control::get_power_measurement(Device &device, hailo_measurement_bu
 
     /* Validate arguments */
     CHECK(CONTROL_PROTOCOL__MAX_NUMBER_OF_POWER_MEASUREMETS > buffer_index,
-        HAILO_INVALID_ARGUMENT, "Invalid power measurement index {}", buffer_index);
+        HAILO_INVALID_ARGUMENT, "Invalid power measurement index {}", static_cast<int>(buffer_index));
     CHECK_ARG_NOT_NULL(measurement_data);
     common_status = CONTROL_PROTOCOL__pack_get_power_measurement_request(&request, &request_size, device.get_control_sequence(),
             buffer_index, should_clear);
@@ -2562,7 +2571,7 @@ hailo_status Control::idle_time_get_measurement(Device &device, uint64_t *measur
     common_status = CONTROL_PROTOCOL__pack_idle_time_get_measuremment_request(&request, &request_size, device.get_control_sequence());
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_idle_time_get_measuremment_request with status {:#X}", common_status);
+        LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_idle_time_get_measuremment_request with status {:#X}", static_cast<int>(common_status));
         goto exit;
     }
 
@@ -2609,7 +2618,7 @@ hailo_status Control::idle_time_set_measurement(Device &device, uint8_t measurem
     common_status = CONTROL_PROTOCOL__pack_idle_time_set_measuremment_request(&request, &request_size, device.get_control_sequence(), measurement_enable);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_idle_time_set_measuremment_request with status {:#X}", common_status);
+        LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_idle_time_set_measuremment_request with status {:#X}", static_cast<int>(common_status));
         goto exit;
     }
 
@@ -2658,7 +2667,7 @@ hailo_status Control::set_pause_frames(Device &device, uint8_t rx_pause_frames_e
 hailo_status Control::download_context_action_list_chunk(Device &device, uint32_t network_group_id,
     CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint16_t context_index,
     uint16_t action_list_offset, size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list,
-    uint16_t *action_list_length, bool *is_action_list_end, uint32_t *batch_counter)
+    uint16_t *action_list_length, bool *is_action_list_end, uint32_t *batch_counter, uint32_t *idle_time )
 {
     hailo_status status = HAILO_UNINITIALIZED;
     HAILO_COMMON_STATUS_t common_status = HAILO_COMMON_STATUS__UNINITIALIZED;
@@ -2720,6 +2729,7 @@ hailo_status Control::download_context_action_list_chunk(Device &device, uint32_
     *base_address = BYTE_ORDER__ntohl(context_action_list_response->base_address);
     *is_action_list_end = context_action_list_response->is_action_list_end;
     *batch_counter = BYTE_ORDER__ntohl(context_action_list_response->batch_counter);
+    *idle_time = BYTE_ORDER__ntohl(context_action_list_response->idle_time);
 
     status = HAILO_SUCCESS;
 exit:
@@ -2728,7 +2738,7 @@ exit:
 
 hailo_status Control::download_context_action_list(Device &device, uint32_t network_group_id,
     CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint16_t context_index, size_t action_list_max_size,
-    uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length, uint32_t *batch_counter)
+    uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length, uint32_t *batch_counter, uint32_t *idle_time)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     bool is_action_list_end = false;
@@ -2738,6 +2748,7 @@ hailo_status Control::download_context_action_list(Device &device, uint32_t netw
     size_t remaining_action_list_max_size = 0;
     uint32_t chunk_base_address = 0;
     uint32_t batch_counter_local = 0;
+    uint32_t idle_time_local = 0;
 
     /* Validate arguments */
     CHECK_ARG_NOT_NULL(base_address);
@@ -2750,7 +2761,7 @@ hailo_status Control::download_context_action_list(Device &device, uint32_t netw
     do {
         status = download_context_action_list_chunk(device, network_group_id, context_type, context_index,
             accumulated_action_list_length, remaining_action_list_max_size, &chunk_base_address,
-            action_list_current_offset, &chunk_action_list_length, &is_action_list_end, &batch_counter_local);
+            action_list_current_offset, &chunk_action_list_length, &is_action_list_end, &batch_counter_local, &idle_time_local);
         CHECK_SUCCESS(status);
 
         accumulated_action_list_length = (uint16_t)(accumulated_action_list_length + chunk_action_list_length);
@@ -2763,6 +2774,7 @@ hailo_status Control::download_context_action_list(Device &device, uint32_t netw
     *base_address =  chunk_base_address;
     *action_list_length = accumulated_action_list_length;
     *batch_counter = batch_counter_local;
+    *idle_time =  idle_time_local;
 
     return HAILO_SUCCESS;
 }
@@ -2834,7 +2846,7 @@ hailo_status Control::wd_enable(Device &device, uint8_t cpu_id, bool should_enab
     common_status = CONTROL_PROTOCOL__pack_wd_enable(&request, &request_size, device.get_control_sequence(), cpu_id, should_enable);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_wd_enable with status {:#X}", common_status);
+        LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_wd_enable with status {:#X}", static_cast<int>(common_status));
         goto exit;
     }
 
@@ -2869,7 +2881,7 @@ hailo_status Control::wd_config(Device &device, uint8_t cpu_id, uint32_t wd_cycl
     common_status = CONTROL_PROTOCOL__pack_wd_config(&request, &request_size, device.get_control_sequence(), cpu_id, wd_cycles, wd_mode);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_wd_config with status {:#X}", common_status);
+        LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_wd_config with status {:#X}", static_cast<int>(common_status));
         goto exit;
     }
 
@@ -2908,7 +2920,7 @@ hailo_status Control::previous_system_state(Device &device, uint8_t cpu_id, CONT
     common_status = CONTROL_PROTOCOL__pack_previous_system_state(&request, &request_size, device.get_control_sequence(), cpu_id);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_previous_system_state with status {:#X}", common_status);
+        LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_previous_system_state with status {:#X}", static_cast<int>(common_status));
         goto exit;
     }
 
@@ -3059,7 +3071,7 @@ hailo_status Control::clear_configured_apps(Device &device)
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_context_switch_clear_configured_apps_request with status {:#X}",
-            common_status);
+            static_cast<int>(common_status));
         goto exit;
     }
 
@@ -3181,9 +3193,9 @@ Expected<CONTROL_PROTOCOL__get_extended_device_information_response_t> Control::
 
 Expected<uint32_t> Control::get_partial_clusters_layout_bitmap(Device &device)
 {
-    auto force_layout_env = std::getenv(FORCE_LAYOUT_INTERNAL_ENV_VAR);
+    auto force_layout_env = get_env_variable(FORCE_LAYOUT_INTERNAL_ENV_VAR);
     if (force_layout_env) {
-        return std::stoi(std::string(force_layout_env));
+        return std::stoi(force_layout_env.value());
     }
 
     TRY(const auto dev_arch, device.get_architecture());

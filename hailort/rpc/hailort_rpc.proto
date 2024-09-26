@@ -111,14 +111,25 @@ message ProtoCallbackIdentifier {
     uint32 cb_idx = 4;
     string stream_name = 5;
     uint32 direction = 6;
-    bytes data = 7;
-    uint32 status = 8;
+    oneof transfer_data {
+        bytes data = 7;
+        ProtoShmBufferIdentifier shared_memory_identifier = 8;
+    }
+    uint32 status = 9;
+}
+
+message ProtoShmBufferIdentifier {
+    string name = 1;
+    uint32 size = 2;
 }
 
 message ProtoTransferRequest {
     string stream_name = 1;
     uint32 direction = 2;
-    bytes data = 3;
+    oneof transfer_data {
+        bytes data = 3;
+        ProtoShmBufferIdentifier shared_memory_identifier = 4;
+    }
     uint32 cb_idx = 5;
 }
 
@@ -194,6 +205,7 @@ message Release_Reply {
 message VStreams_create_Reply {
     uint32 status = 1;
     repeated uint32 handles = 2;
+    repeated string names = 3;
 }
 
 message VStream_create_Request {

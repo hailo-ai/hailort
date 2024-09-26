@@ -147,6 +147,7 @@ public:
     OutputVStreamInternal &operator=(OutputVStreamInternal &&other) noexcept = default;
     virtual ~OutputVStreamInternal() = default;
 
+    hailo_status clear();
 
     virtual hailo_status read(MemoryView buffer) = 0;
     virtual std::string get_pipeline_description() const override;
@@ -224,7 +225,7 @@ private:
 class InputVStreamClient : public InputVStreamInternal
 {
 public:
-    static Expected<std::shared_ptr<InputVStreamClient>> create(VStreamIdentifier &&identifier);
+    static Expected<std::shared_ptr<InputVStreamClient>> create(VStreamIdentifier &&identifier, const std::chrono::milliseconds &timeout);
     InputVStreamClient(InputVStreamClient &&) noexcept = default;
     InputVStreamClient(const InputVStreamClient &) = delete;
     InputVStreamClient &operator=(InputVStreamClient &&) noexcept = default;
@@ -257,19 +258,20 @@ public:
 
 private:
     InputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, VStreamIdentifier &&identifier, hailo_format_t &&user_buffer_format,
-        hailo_vstream_info_t &&info);
+        hailo_vstream_info_t &&info, const std::chrono::milliseconds &timeout);
     hailo_status create_client();
 
     std::unique_ptr<HailoRtRpcClient> m_client;
     VStreamIdentifier m_identifier;
     hailo_format_t m_user_buffer_format;
     hailo_vstream_info_t m_info;
+    const std::chrono::milliseconds m_timeout;
 };
 
 class OutputVStreamClient : public OutputVStreamInternal
 {
 public:
-    static Expected<std::shared_ptr<OutputVStreamClient>> create(const VStreamIdentifier &&identifier);
+    static Expected<std::shared_ptr<OutputVStreamClient>> create(const VStreamIdentifier &&identifier, const std::chrono::milliseconds &timeout);
     OutputVStreamClient(OutputVStreamClient &&) noexcept = default;
     OutputVStreamClient(const OutputVStreamClient &) = delete;
     OutputVStreamClient &operator=(OutputVStreamClient &&) noexcept = default;
@@ -304,7 +306,7 @@ public:
 
 private:
     OutputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, const VStreamIdentifier &&identifier, hailo_format_t &&user_buffer_format,
-        hailo_vstream_info_t &&info);
+        hailo_vstream_info_t &&info, const std::chrono::milliseconds &timeout);
 
     hailo_status create_client();
 
@@ -312,6 +314,7 @@ private:
     VStreamIdentifier m_identifier;
     hailo_format_t m_user_buffer_format;
     hailo_vstream_info_t m_info;
+    const std::chrono::milliseconds m_timeout;
 };
 #endif // HAILO_SUPPORT_MULTI_PROCESS
 

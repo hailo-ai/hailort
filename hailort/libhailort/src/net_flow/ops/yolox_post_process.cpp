@@ -121,7 +121,7 @@ hailo_status YOLOXPostProcessOp::execute(const std::map<std::string, MemoryView>
             status = extract_detections<float32_t, uint16_t>(layers_names_triplet, inputs.at(layers_names_triplet.reg), inputs.at(layers_names_triplet.cls),
                 inputs.at(layers_names_triplet.obj));
         } else {
-            CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "YOLO post-process received invalid input type {}", input_metadata.format.type);
+            CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "YOLO post-process received invalid input type {}", static_cast<int>(input_metadata.format.type));
         }
 
         CHECK_SUCCESS(status);

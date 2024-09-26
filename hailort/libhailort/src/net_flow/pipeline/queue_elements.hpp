@@ -58,6 +58,9 @@ protected:
     virtual hailo_status run_in_thread() = 0;
     virtual std::string thread_name() = 0;
 
+    hailo_status clear_queue();
+
+    std::mutex m_dequeue_mutex;
     SpscQueue<PipelineBuffer> m_queue;
     EventPtr m_shutdown_event;
     std::chrono::milliseconds m_timeout;
@@ -147,6 +150,8 @@ protected:
     virtual hailo_status execute_deactivate() override;
     virtual hailo_status run_in_thread() override;
     virtual std::string thread_name() override { return "PULL_QUEUE"; };
+    virtual hailo_status execute_abort() override;
+
 };
 
 class UserBufferQueueElement : public PullQueueElement

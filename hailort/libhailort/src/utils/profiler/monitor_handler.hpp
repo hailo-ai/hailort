@@ -45,8 +45,6 @@ namespace hailort
 {
 
 #define SCHEDULER_MON_TMP_DIR ("/tmp/hmon_files/")
-#define SCHEDULER_MON_ENV_VAR ("HAILO_MONITOR")
-#define SCHEDULER_MON_ENV_VAR_VALUE ("1")
 #define DEFAULT_SCHEDULER_MON_INTERVAL (std::chrono::seconds(1))
 #define SCHEDULER_MON_NAN_VAL (-1)
 

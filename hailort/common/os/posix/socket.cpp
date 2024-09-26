@@ -35,13 +35,17 @@ hailo_status Socket::SocketModuleWrapper::free_module()
 Expected<Socket> Socket::create(int af, int type, int protocol)
 {
     TRY(auto module_wrapper, SocketModuleWrapper::create());
+
+    auto module_wrapper_ptr = make_shared_nothrow<SocketModuleWrapper>(std::move(module_wrapper));
+    CHECK_NOT_NULL(module_wrapper_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
     TRY(const auto socket_fd, create_socket_fd(af, type, protocol));
 
-    auto obj = Socket(std::move(module_wrapper), socket_fd);
+    auto obj = Socket(module_wrapper_ptr, socket_fd);
     return obj;
 }
 
-Socket::Socket(SocketModuleWrapper &&module_wrapper, const socket_t socket_fd) :
+Socket::Socket(std::shared_ptr<SocketModuleWrapper> module_wrapper, const socket_t socket_fd) :
   m_module_wrapper(std::move(module_wrapper)), m_socket_fd(socket_fd)
 {
 }
@@ -104,6 +108,56 @@ hailo_status Socket::get_sock_name(sockaddr *addr, socklen_t *len)
     socket_rc = getsockname(m_socket_fd, addr, len);
     CHECK(0 == socket_rc, HAILO_ETH_FAILURE, "Failed getsockname. errno={}", errno);
 
+    return HAILO_SUCCESS;
+}
+
+hailo_status Socket::listen(int backlog)
+{
+    auto res = ::listen(m_socket_fd, backlog);
+    CHECK(0 == res, HAILO_ETH_FAILURE, "Failed to listen on socket. errno={}", errno);
+    return HAILO_SUCCESS;
+}
+
+Expected<Socket> Socket::accept()
+{
+    auto client_socket = ::accept(m_socket_fd, nullptr, nullptr);
+    CHECK(client_socket != INVALID_SOCKET, make_unexpected(HAILO_ETH_FAILURE), "Failed to accept connection {}", errno);
+
+    return Socket(m_module_wrapper, client_socket);
+}
+
+hailo_status Socket::connect(const sockaddr *addr, socklen_t len)
+{
+    int ret = ::connect(m_socket_fd, addr, len);
+    CHECK(0 == ret, HAILO_ETH_FAILURE, "Failed to connect to socket {}", errno);
+    return HAILO_SUCCESS;
+}
+
+Expected<size_t> Socket::recv(uint8_t *buffer, size_t size, int flags)
+{
+    auto read_bytes = ::recv(m_socket_fd, buffer, size, flags);
+    CHECK(read_bytes >= 0, make_unexpected(HAILO_ETH_FAILURE), "Failed to read from socket {}", errno);
+    return Expected<size_t>(read_bytes);
+}
+
+Expected<size_t> Socket::send(const uint8_t *buffer, size_t size, int flags)
+{
+    auto bytes_written = ::send(m_socket_fd, buffer, size, flags);
+    CHECK(bytes_written >= 0, make_unexpected(HAILO_ETH_FAILURE), "Failed to write to socket {}", errno);
+    return Expected<size_t>(bytes_written);
+}
+
+hailo_status Socket::sendall(const uint8_t *buffer, size_t size, int flags)
+{
+    size_t offset = 0;
+    while (offset < size) {
+        const auto size_to_write = size - offset;
+        TRY(auto bytes_written, send(buffer + offset, size_to_write, flags));
+        if (bytes_written == 0) {
+            return HAILO_ETH_SEND_FAILURE;
+        }
+        offset += bytes_written;
+    }
     return HAILO_SUCCESS;
 }
 
@@ -200,6 +254,16 @@ hailo_status Socket::enable_broadcast()
     int enable_broadcast = 1;
     
     socket_rc = setsockopt(m_socket_fd, SOL_SOCKET, SO_BROADCAST, &enable_broadcast, sizeof(enable_broadcast));
+    CHECK(0 == socket_rc, HAILO_ETH_FAILURE, "Cannot set socket to be broadcast");
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status Socket::allow_reuse_address()
+{
+    int allow_reuse = 1;
+
+    auto socket_rc = setsockopt(m_socket_fd, SOL_SOCKET, SO_REUSEADDR, &allow_reuse, sizeof(allow_reuse));
     CHECK(0 == socket_rc, HAILO_ETH_FAILURE, "Cannot set socket to be broadcast");
 
     return HAILO_SUCCESS;

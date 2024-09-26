@@ -88,6 +88,8 @@ public:
         PauseVdmaChannel,
         ResumeVdmaChannel,
         WaitForCacheUpdated,
+        Sleep,
+        Halt,
     };
 
     ContextSwitchConfigAction(ContextSwitchConfigAction &&) = default;
@@ -977,6 +979,39 @@ private:
     const uint32_t m_kernel_done_count;
 };
 
+class SleepAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create(uint64_t sleep_time);
+    SleepAction(SleepAction &&) = default;
+    SleepAction(const SleepAction &) = delete;
+    SleepAction &operator=(SleepAction &&) = delete;
+    SleepAction &operator=(const SleepAction &) = delete;
+    virtual ~SleepAction() = default;
+    virtual bool supports_repeated_block() const override;
+    virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
+
+private:
+    SleepAction(uint32_t sleep_time);
+
+    const uint32_t m_sleep_time = 0;
+};
+
+class HaltAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create();
+    HaltAction(HaltAction &&) = default;
+    HaltAction(const HaltAction &) = delete;
+    HaltAction &operator=(HaltAction &&) = delete;
+    HaltAction &operator=(const HaltAction &) = delete;
+    virtual ~HaltAction() = default;
+    virtual bool supports_repeated_block() const override;
+    virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
+
+private:
+    HaltAction();
+};
 
 } /* namespace hailort */
 

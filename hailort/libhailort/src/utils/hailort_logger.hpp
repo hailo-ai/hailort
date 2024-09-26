@@ -18,10 +18,10 @@
 #include "hailo/hailort.h"
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
+#include "common/env_vars.hpp"
 
 namespace hailort
 {
-#define HAILORT_CONSOLE_LOGGER_LEVEL ("HAILORT_CONSOLE_LOGGER_LEVEL")
 
 #ifdef _WIN32
 #define PATH_SEPARATOR "\\"
@@ -40,14 +40,14 @@ public:
 #endif
     {
         static std::unique_ptr<HailoRTLogger> instance = nullptr;
-        auto user_console_logger_level = std::getenv(HAILORT_CONSOLE_LOGGER_LEVEL);
-        if ((nullptr != user_console_logger_level) && (std::strlen(user_console_logger_level) > 0)){
-            auto expected_console_level = get_console_logger_level_from_string(user_console_logger_level);
+        auto user_console_logger_level = get_env_variable(HAILORT_CONSOLE_LOGGER_LEVEL_ENV_VAR);
+        if (user_console_logger_level) {
+            auto expected_console_level = get_console_logger_level_from_string(user_console_logger_level.value());
             if (expected_console_level) {
                 console_level = expected_console_level.release();
             } else {
                 LOGGER__WARNING("Failed to parse console logger level from environment variable: {}, status: {}", 
-                    user_console_logger_level, expected_console_level.status());
+                    user_console_logger_level.value(), expected_console_level.status());
             }
         }
         if (nullptr == instance) {
@@ -62,7 +62,6 @@ public:
     void operator=(HailoRTLogger const&) = delete;
 
     static std::string get_log_path(const std::string &path_env_var);
-    static bool should_flush_every_print(const std::string &flush_every_print_env_var);
     static std::string get_main_log_path();
     static std::shared_ptr<spdlog::sinks::sink> create_file_sink(const std::string &dir_path, const std::string &filename, bool rotate);
 

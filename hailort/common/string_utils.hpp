@@ -12,6 +12,7 @@
 
 #include "hailo/expected.hpp"
 #include <string>
+#include <algorithm>
 
 namespace hailort
 {
@@ -21,6 +22,14 @@ public:
     static Expected<int32_t> to_int32(const std::string &str, int base);
     static Expected<uint8_t> to_uint8(const std::string &str, int base);
     static Expected<uint32_t> to_uint32(const std::string &str, int base);
+
+    static std::string to_lower(const std::string &str)
+    {
+        std::string lower_str = str;
+        std::transform(lower_str.begin(), lower_str.end(), lower_str.begin(),
+            [](auto ch) { return static_cast<char>(::tolower(ch)); });
+        return lower_str;
+    }
 
     static std::string to_hex_string(const uint8_t *array, size_t size, bool uppercase, const std::string &delimiter="");
 };

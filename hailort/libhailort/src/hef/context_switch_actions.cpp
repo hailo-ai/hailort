@@ -258,7 +258,7 @@ hailo_status WriteDataCcwAction::write_to_config_buffer(ConfigBuffer& config_buf
         TRY(auto buffer, Buffer::create_shared(ccw_write_ptr.size));
         MemoryView mem_view(buffer->data(), buffer->size());
         assert(ccw_write_ptr.offset <= SIZE_MAX);
-        status = m_hef_reader->read_from_offset(static_cast<size_t>(ccw_write_ptr.offset), mem_view, ccw_write_ptr.size);
+        status = m_hef_reader->read_from_offset(ccw_write_ptr.offset, mem_view, ccw_write_ptr.size);
         CHECK_SUCCESS(status);
         status = config_buffer.write(mem_view);
         CHECK_SUCCESS(status);
@@ -1652,6 +1652,62 @@ Expected<Buffer> SwitchLcuBatchAction::serialize_params(const ContextResources &
     params.network_index = m_network_index;
     params.kernel_done_count = m_kernel_done_count;
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
+}
+
+Expected<ContextSwitchConfigActionPtr> SleepAction::create(uint64_t sleep_time)
+{
+    // truncating to uint32_t
+    uint32_t sleep_u32 = 0; 
+    
+    if (sleep_time > UINT32_MAX) {
+        LOGGER__WARNING("Sleep time is too large, truncating to UINT32_MAX");
+        sleep_u32 = UINT32_MAX;
+    }
+    else {
+        sleep_u32 = static_cast<uint32_t>(sleep_time);
+    }
+
+    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) SleepAction(sleep_u32));
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+    return result;
+}
+
+SleepAction::SleepAction(uint32_t sleep_time) :	
+    ContextSwitchConfigAction(Type::Sleep, CONTEXT_SWITCH_DEFS__ACTION_TYPE_SLEEP),
+    m_sleep_time(sleep_time)
+{}
+
+bool SleepAction::supports_repeated_block() const
+{
+    return false;
+}
+
+Expected<Buffer> SleepAction::serialize_params(const ContextResources &) const
+{
+    CONTEXT_SWITCH_DEFS__sleep_action_data_t params{};
+    params.sleep_time = m_sleep_time;
+    return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
+}
+
+Expected<ContextSwitchConfigActionPtr> HaltAction::create()
+{
+    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) HaltAction());
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+    return result;
+}
+
+HaltAction::HaltAction() :	
+    ContextSwitchConfigAction(Type::Halt, CONTEXT_SWITCH_DEFS__ACTION_TYPE_HALT)
+{}
+
+bool HaltAction::supports_repeated_block() const
+{
+    return false;
+}
+
+Expected<Buffer> HaltAction::serialize_params(const ContextResources &) const
+{
+    return Buffer::create(0);
 }
 
 } /* namespace hailort */

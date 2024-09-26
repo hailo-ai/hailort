@@ -20,6 +20,11 @@ message RpcRequest {
         ConfiguredInferModel_Deactivate_Request deactivate_request = 12;
         ConfiguredInferModel_Shutdown_Request shutdown_request = 13;
         ConfiguredInferModel_AsyncInfer_Request async_infer_request = 14;
+
+        Device_Create_Request create_device_request = 15;
+        Device_Destroy_Request destroy_device_request = 16;
+        Device_Identify_Request identify_device_request = 17;
+        Device_ExtendedInfo_Request extended_device_info_request = 18;
     }
 }
 
@@ -42,7 +47,13 @@ message RpcReply {
         ConfiguredInferModel_Shutdown_Reply shutdown_reply = 13;
         ConfiguredInferModel_AsyncInfer_Reply async_infer_reply = 14;
 
-        CallbackCalled_Reply callback_called_reply = 15;
+        Device_Create_Reply create_device_reply = 15;
+        Device_Destroy_Reply destroy_device_reply = 16;
+        Device_Identify_Reply identify_device_reply = 17;
+        Device_ExtendedInfo_Reply extended_device_info_reply = 18;
+
+        // Here comes replies that have no matching requests
+        CallbackCalled_Reply callback_called_reply = 19;
     }
 }
 
@@ -79,6 +90,7 @@ message VDevice_Destroy_Reply {
 message VDevice_CreateInferModel_Request {
     HailoObjectHandle vdevice_handle = 1;
     uint64 hef_size = 2;
+    string name = 3;
     // Protocol note: After this message, server expects to get HEF data (buffer of size 'hef_size')
 }
 
@@ -193,6 +205,7 @@ message ConfiguredInferModel_AsyncInfer_Request {
     HailoObjectHandle configured_infer_model_handle = 1;
     HailoObjectHandle infer_model_handle = 2;
     HailoCallbackHandle callback_handle = 3;
+    repeated uint32 input_buffer_sizes = 4;
     // Protocol note: After this messgae, server expects to get the input buffers, one after the other, in order
 }
 
@@ -203,5 +216,92 @@ message ConfiguredInferModel_AsyncInfer_Reply {
 message CallbackCalled_Reply {
     uint32 status = 1;
     HailoCallbackHandle callback_handle = 2;
+    HailoObjectHandle configured_infer_model_handle = 3;
     // Protocol note: After this messgae, and only if status is HAILO_SUCCESS, server expects to get the output buffers, one after the other, in order
+}
+
+message Device_Create_Request {
+}
+
+message Device_Create_Reply {
+    uint32 status = 1;
+    HailoObjectHandle device_handle = 2;
+}
+
+message Device_Destroy_Request {
+    HailoObjectHandle device_handle = 1;
+}
+
+message Device_Destroy_Reply {
+    uint32 status = 1;
+}
+
+message Device_Identify_Request {
+    HailoObjectHandle device_handle = 1;
+}
+
+// Added "_value" to the names so that the symbols will not clash with the macros defined in <sys/types.h>
+message FirmwareVersionProto {
+    uint32 major_value = 1;
+    uint32 minor_value = 2;
+    uint32 revision_value = 3;
+}
+
+enum DeviceArchitectureProto {
+    HAILO8_A0 = 0;
+    HAILO8 = 1;
+    HAILO8L = 2;
+    HAILO15H = 3;
+    PLUTO = 4;
+    HAILO15M = 5;
+    HAILO10H = 6;
+}
+
+message DeviceIdentityProto {
+    uint32 protocol_version = 1;
+    FirmwareVersionProto fw_version = 2;
+    uint32 logger_version = 3;
+    string board_name = 4;
+    bool is_release = 5;
+    bool extended_context_switch_buffer = 6;
+    DeviceArchitectureProto device_architecture = 7;
+    repeated uint32 serial_number = 8;
+    repeated uint32 part_number = 9;
+    string product_name = 10;
+}
+
+message Device_Identify_Reply {
+    uint32 status = 1;
+    DeviceIdentityProto identity = 2;
+}
+
+message Device_ExtendedInfo_Request {
+    HailoObjectHandle device_handle = 1;
+}
+
+message DeviceSupportedFeaturesProto {
+    bool ethernet = 1;
+    bool mipi = 2;
+    bool pcie = 3;
+    bool current_monitoring = 4;
+    bool mdio = 5;
+}
+
+enum DeviceBootSourceProto {
+    BOOT_SOURCE_INVALID = 0;
+    BOOT_SOURCE_PCIE = 1;
+    BOOT_SOURCE_FLASH = 2;
+    BOOT_SOURCE_MAX = 3;
+}
+
+message Device_ExtendedInfo_Reply {
+    uint32 status = 1;
+    uint32 neural_network_core_clock_rate = 2;
+    DeviceSupportedFeaturesProto supported_features = 3;
+    DeviceBootSourceProto boot_source = 4;
+    repeated uint32 soc_id = 5;
+    uint32 lcs = 6;
+    repeated uint32 eth_mac_address = 7;
+    repeated uint32 unit_level_tracking_id = 8;
+    repeated uint32 soc_pm_values = 9;
 }

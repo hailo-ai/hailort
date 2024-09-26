@@ -172,7 +172,7 @@ Expected<firmware_type_t> DeviceBase::get_fw_type()
         firmware_type = FIRMWARE_TYPE_PLUTO;
     }
     else {
-        LOGGER__ERROR("Invalid device arcitecture. {}", architecture);
+        LOGGER__ERROR("Invalid device arcitecture. {}", static_cast<int>(architecture));
         return make_unexpected(HAILO_INVALID_DEVICE_ARCHITECTURE);
     }
 
@@ -203,7 +203,7 @@ hailo_status DeviceBase::firmware_update(const MemoryView &firmware_binary, bool
         static_cast<uint32_t>(firmware_binary.size()), false, &new_app_firmware_header,
         &new_core_firmware_header, NULL, firmware_type);
     CHECK(HAILO_COMMON_STATUS__SUCCESS == fw_header_status, HAILO_INVALID_FIRMWARE,
-        "FW update validation failed with status {}", fw_header_status);
+        "FW update validation failed with status {}", static_cast<int>(fw_header_status));
 
     // TODO: Are we ok with doing another identify here?
     TRY(auto board_info_before_update, Control::identify(*this));
@@ -281,7 +281,7 @@ hailo_status DeviceBase::firmware_update(const MemoryView &firmware_binary, bool
         LOGGER__INFO("Resetting...");
         status = reset(get_default_reset_mode());
         CHECK(HAILO_COMMON_STATUS__SUCCESS == fw_header_status, HAILO_INVALID_FIRMWARE,
-            "FW update validation failed with status {}", fw_header_status);
+            "FW update validation failed with status {}", static_cast<int>(fw_header_status));
         CHECK((status == HAILO_SUCCESS) || (status == HAILO_UNSUPPORTED_CONTROL_PROTOCOL_VERSION), status);
 
         auto board_info_after_install_expected = Control::identify(*this);
@@ -344,7 +344,7 @@ hailo_status DeviceBase::second_stage_update(uint8_t* second_stage_binary, uint3
     second_stage_header_status = FIRMWARE_HEADER_UTILS__validate_second_stage_headers((uintptr_t)second_stage_binary,
         second_stage_binary_length, &new_second_stage_header, firmware_type);
     CHECK(HAILO_COMMON_STATUS__SUCCESS == second_stage_header_status, HAILO_INVALID_SECOND_STAGE,
-            "Second stage update validation failed with status {}", second_stage_header_status);
+            "Second stage update validation failed with status {}", static_cast<int>(second_stage_header_status));
 
     new_second_stage_version.firmware_major = new_second_stage_header->firmware_major;
     new_second_stage_version.firmware_minor = new_second_stage_header->firmware_minor;
@@ -547,7 +547,7 @@ void DeviceBase::d2h_notification_thread_main(const std::string &device_id)
         /* Parse and print the Event info */
         auto d2h_status = D2H_EVENTS__parse_event(&notification);
         if (HAILO_COMMON_STATUS__SUCCESS != d2h_status) {
-            LOGGER__ERROR("[{}] Fail to Parse firmware notification {} status is {}", device_id, notification.header.event_id, d2h_status);
+            LOGGER__ERROR("[{}] Fail to Parse firmware notification {} status is {}", device_id, notification.header.event_id, static_cast<int>(d2h_status));
             continue;
         }
 
@@ -688,7 +688,7 @@ hailo_status DeviceBase::validate_binary_version_for_platform(firmware_version_t
     HAILO_COMMON_STATUS_t binary_status = FIRMWARE_HEADER_UTILS__validate_binary_version(new_binary_version, min_supported_binary_version,
                                                                                          fw_binary_type);
     CHECK(HAILO_COMMON_STATUS__SUCCESS == binary_status, HAILO_INVALID_FIRMWARE,
-                    "FW binary version validation failed with status {}", binary_status);
+                    "FW binary version validation failed with status {}", static_cast<int>(binary_status));
     return HAILO_SUCCESS;
 }
 

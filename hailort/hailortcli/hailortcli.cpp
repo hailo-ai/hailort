@@ -190,7 +190,7 @@ public:
         add_subcommand<BenchmarkCommand>();
         add_subcommand<PowerMeasurementSubcommand>();
         add_subcommand<SensorConfigCommand>();
-        add_subcommand<BoardConfigCommand>();
+        add_subcommand<BoardConfigCommand>(OptionVisibility::HIDDEN);
         add_subcommand<FwConfigCommand>();
         add_subcommand<FwLoggerCommand>();
         add_subcommand<FwUpdateCommand>();
@@ -198,7 +198,7 @@ public:
         add_subcommand<MonCommand>();
 #if defined(__GNUC__)
         add_subcommand<UdpRateLimiterCommand>();
-        add_subcommand<HwInferEstimatorCommand>();
+        add_subcommand<HwInferEstimatorCommand>(OptionVisibility::HIDDEN);
 #endif
         add_subcommand<ParseHefCommand>();
         add_subcommand<FwControlCommand>();

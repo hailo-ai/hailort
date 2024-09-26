@@ -27,7 +27,7 @@ class ServerContext
 public:
     ServerContext(Server &server, RpcConnection connection);
     hailo_status trigger_callback(uint32_t callback_id, hailo_status callback_status,
-        std::function<hailo_status(RpcConnection)> write_buffers_callback = nullptr);
+        rpc_object_handle_t callback_owner_handle, std::function<hailo_status(RpcConnection)> write_buffers_callback = nullptr);
     RpcConnection &connection();
 
 private:
@@ -63,10 +63,10 @@ public:
 protected:
     std::shared_ptr<ConnectionContext> m_connection_context;
 private:
-    Expected<RpcConnection> create_client_connection();
+    Expected<RpcConnection> create_client_connection(std::shared_ptr<hrpc::RawConnection> server_connection);
     hailo_status serve_client(RpcConnection client_connection);
-    hailo_status trigger_callback(uint32_t callback_id, RpcConnection connection, hailo_status callback_status,
-        std::function<hailo_status(RpcConnection)> write_buffers_callback = nullptr);
+    hailo_status trigger_callback(uint32_t callback_id, hailo_status callback_status, rpc_object_handle_t callback_owner_handle,
+        RpcConnection connection, std::function<hailo_status(RpcConnection)> write_buffers_callback = nullptr);
     virtual hailo_status cleanup_client_resources(RpcConnection client_connection) = 0;
 
     Dispatcher m_dispatcher;

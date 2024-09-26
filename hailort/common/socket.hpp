@@ -50,9 +50,18 @@ public:
     hailo_status socket_bind(const sockaddr *addr, socklen_t len);
     hailo_status get_sock_name(sockaddr *addr, socklen_t *len);
 
+    hailo_status listen(int backlog);
+    Expected<Socket> accept();
+    hailo_status connect(const sockaddr *addr, socklen_t len);
+
+    Expected<size_t> recv(uint8_t *buffer, size_t size, int flags = 0);
+    Expected<size_t> send(const uint8_t *buffer, size_t size, int flags = 0);
+    hailo_status sendall(const uint8_t *buffer, size_t size, int flags = 0);
+
     hailo_status set_recv_buffer_size_max();
     hailo_status set_timeout(const std::chrono::milliseconds timeout_ms, timeval_t *timeout);
     hailo_status enable_broadcast();
+    hailo_status allow_reuse_address();
     hailo_status abort();
 
     // TODO: Should these be in udp.cpp?
@@ -96,12 +105,12 @@ private:
         static hailo_status free_module();
     };
 
-    Socket(SocketModuleWrapper &&module_wrapper, const socket_t socket_fd);
+    Socket(std::shared_ptr<SocketModuleWrapper> module_wrapper, const socket_t socket_fd);
     static Expected<socket_t> create_socket_fd(int af, int type, int protocol);
     hailo_status close_socket_fd();
 
     // Itialization dependency
-    SocketModuleWrapper m_module_wrapper;
+    std::shared_ptr<SocketModuleWrapper> m_module_wrapper;
     socket_t m_socket_fd;
 };
 

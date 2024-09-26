@@ -51,7 +51,8 @@ public:
     {
         if ((params_pair.first == name()) && (hef.hash() == m_hef_hash)) {
             if ((params_pair.second.batch_size == m_config_params.batch_size) &&
-                (params_pair.second.power_mode == m_config_params.power_mode)) {
+                (params_pair.second.power_mode == m_config_params.power_mode) &&
+                (equal_batch(params_pair.second.network_params_by_name, m_config_params.network_params_by_name))) {
                     return true;
             }
             LOGGER__INFO("The network group: {} was already configured to the device with different params."
@@ -92,14 +93,15 @@ public:
 
     virtual Expected<HwInferResults> run_hw_infer_estimator() override;
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &) override;
-    virtual Expected<Buffer> get_cache_buffer(uint32_t cache_id) override;
-    virtual Expected<std::map<uint32_t, Buffer>> get_cache_buffers() override;
     virtual bool has_caches() const override;
     virtual Expected<uint32_t> get_cache_read_size() const override;
     virtual Expected<uint32_t> get_cache_write_size() const override;
     virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) override;
     virtual Expected<hailo_cache_info_t> get_cache_info() const;
     virtual hailo_status update_cache_offset(int32_t offset_delta_bytes) override;
+    virtual Expected<std::vector<uint32_t>> get_cache_ids() const override;
+    virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) override;
+    virtual hailo_status write_cache_buffer(uint32_t cache_id, MemoryView buffer) override;
 
     VDeviceCoreOp(VDevice &vdevice,
         ActiveCoreOpHolder &active_core_op_holder,
@@ -120,6 +122,8 @@ private:
     hailo_status create_vdevice_streams_from_duplicate(std::shared_ptr<VDeviceCoreOp> other);
 
     hailo_status add_to_trace();
+
+    bool equal_batch(const std::map<std::string, hailo_network_parameters_t> &lhs, const std::map<std::string, hailo_network_parameters_t> &rhs);
 
     VDevice &m_vdevice;
     std::map<device_id_t, std::shared_ptr<CoreOp>> m_core_ops;

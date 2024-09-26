@@ -739,18 +739,15 @@ Expected<std::vector<std::shared_ptr<NetworkRunner>>> Run2::init_and_run_net_run
 
     if (get_measure_power() || get_measure_current() || get_measure_temp()) {
         TRY(auto physical_devices, vdevice->get_physical_devices());
-
         for (auto &device : physical_devices) {
-            TRY(const auto identity, device.get().identify());
-            CHECK_AS_EXPECTED(HailoRTCommon::is_power_measurement_supported(identity.device_architecture) || !(get_measure_power()),
-                HAILO_INVALID_OPERATION, "HW arch {} does not support power measurement. Disable the power-measure option", 
-                HailoRTCommon::get_device_arch_str(identity.device_architecture));
-            CHECK_AS_EXPECTED(HailoRTCommon::is_current_measurement_supported(identity.device_architecture) || !(get_measure_current()),
-                HAILO_INVALID_OPERATION, "HW arch {} does not support current measurement. Disable the current-measure option",
-                HailoRTCommon::get_device_arch_str(identity.device_architecture));
-            CHECK_AS_EXPECTED(HailoRTCommon::is_temp_measurement_supported(identity.device_architecture) || !(get_measure_temp()),
-                HAILO_INVALID_OPERATION, "HW arch {} does not support temperature measurement. Disable the temp-measure option",
-                HailoRTCommon::get_device_arch_str(identity.device_architecture));
+            TRY(auto caps, device.get().get_capabilities(), "Failed getting device capabilities");
+
+            CHECK_AS_EXPECTED((caps.power_measurements || (get_measure_power())),
+                HAILO_INVALID_OPERATION, "Power measurement not supported. Disable the power-measure option");
+            CHECK_AS_EXPECTED((caps.current_measurements || !(get_measure_current())),
+                HAILO_INVALID_OPERATION, "Current measurement not supported. Disable the current-measure option");
+            CHECK_AS_EXPECTED((caps.temperature_measurements || !(get_measure_temp())),
+                HAILO_INVALID_OPERATION, "Temperature measurement not supported. Disable the temp-measure option");
 
             TRY(auto measurement_live_track, MeasurementLiveTrack::create_shared(device.get(),
                 get_measure_power(), get_measure_current(), get_measure_temp()));

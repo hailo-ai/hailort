@@ -6,7 +6,7 @@
  * @file hailort_driver.hpp
  * @brief Low level interface to PCI driver
  *
- * 
+ *
  **/
 #ifndef _HAILORT_DRIVER_HPP_
 #define _HAILORT_DRIVER_HPP_
@@ -16,7 +16,7 @@
 
 #include "common/utils.hpp"
 
-#include "os/file_descriptor.hpp"
+#include "common/file_descriptor.hpp"
 #include "vdma/channel/channel_id.hpp"
 
 #include <mutex>
@@ -165,6 +165,16 @@ public:
         PCIE_EP
     };
 
+    // Should match enum hailo_board_type
+    enum class DeviceBoardType {
+        DEVICE_BOARD_TYPE_HAILO8 = 0,
+        DEVICE_BOARD_TYPE_HAILO15,
+        DEVICE_BOARD_TYPE_PLUTO,
+        DEVICE_BOARD_TYPE_HAILO10H,
+        DEVICE_BOARD_TYPE_HAILO10H_LEGACY,
+        DEVICE_BOARD_TYPE_COUNT,
+    };
+
     enum class MemoryType {
         DIRECT_MEMORY,
 
@@ -238,6 +248,8 @@ public:
 
     hailo_status reset_nn_core();
 
+    Expected<uint64_t> write_action_list(uint8_t *data, size_t size);
+
     /**
      * Maps a dmabuf to physical memory.
      *
@@ -245,7 +257,7 @@ public:
      * @param[in] required_size - size of dmabug we are mapping.
      * @param[in] data_direction - direction is used for optimization.
      * @param[in] buffer_type - buffer type must be DMABUF
-     */ 
+     */
     Expected<VdmaBufferHandle> vdma_buffer_map_dmabuf(int dmabuf_fd, size_t required_size, DmaDirection data_direction,
         DmaBufferType buffer_type);
 
@@ -326,11 +338,11 @@ public:
      */
     hailo_status mark_as_used();
 
-    Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> soc_connect(uintptr_t input_buffer_desc_handle,
-        uintptr_t output_buffer_desc_handle);
+    Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> soc_connect(uint16_t port_number,
+        uintptr_t input_buffer_desc_handle, uintptr_t output_buffer_desc_handle);
 
-    Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> pci_ep_accept(uintptr_t input_buffer_desc_handle,
-        uintptr_t output_buffer_desc_handle);
+    Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> pci_ep_accept(uint16_t port_number,
+        uintptr_t input_buffer_desc_handle, uintptr_t output_buffer_desc_handle);
 
     hailo_status close_connection(vdma::ChannelId input_channel, vdma::ChannelId output_channel,
         PcieSessionType session_type);
@@ -343,6 +355,11 @@ public:
     inline DmaType dma_type() const
     {
         return m_dma_type;
+    }
+
+    inline DeviceBoardType board_type() const
+    {
+        return m_board_type;
     }
 
     FileDescriptor& fd() {return m_fd;}
@@ -419,6 +436,7 @@ private:
     DmaType m_dma_type;
     bool m_allocate_driver_buffer;
     size_t m_dma_engines_count;
+    DeviceBoardType m_board_type;
     bool m_is_fw_loaded;
 #ifdef __QNX__
     pid_t m_resource_manager_pid;

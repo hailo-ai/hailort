@@ -94,6 +94,53 @@ void HailoRtRpcService::abort_vstreams_by_pids(std::set<uint32_t> &pids)
     }
 }
 
+hailo_status HailoRtRpcService::shutdown_configured_network_group(uint32_t vdevice_handle)
+{
+    auto lambda = [](std::shared_ptr<ConfiguredNetworkGroup> cng) {
+        return cng->shutdown();
+    };
+
+    auto &cng_manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
+    auto status = cng_manager.execute(vdevice_handle, lambda);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+
+void HailoRtRpcService::shutdown_configured_network_groups_by_pids(std::set<uint32_t> &pids)
+{
+    auto cng_handles = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance().resources_handles_by_pids(pids);
+    for (auto &handle : cng_handles) {
+        auto status = shutdown_configured_network_group(handle);
+        if (status != HAILO_SUCCESS) {
+            LOGGER__ERROR("Failed to shutdown configured network group queue with handle={}, status={}", handle, status);
+        }
+    }
+}
+
+void HailoRtRpcService::shutdown_buffer_pool_by_pids(std::set<uint32_t> &pids)
+{
+    auto buffer_pools_handles = ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance().resources_handles_by_pids(pids);
+    for (auto &handle : buffer_pools_handles) {
+        auto status = shutdown_cng_buffer_pool(handle);
+        if (status != HAILO_SUCCESS) {
+            LOGGER__ERROR("Failed to shutdown cng buffer pool with handle={}, status={}", handle, status);
+        }
+    }
+}
+
+void HailoRtRpcService::shutdown_vdevice_cb_queue_by_pids(std::set<uint32_t> &pids)
+{
+    auto vdevice_cb_queue_handles = ServiceResourceManager<VDeviceCallbacksQueue>::get_instance().resources_handles_by_pids(pids);
+    for (auto &handle : vdevice_cb_queue_handles) {
+        auto status = shutdown_vdevice_cb_queue(handle);
+        if (status != HAILO_SUCCESS) {
+            LOGGER__ERROR("Failed to shutdown vdevice callbacks queue with handle={}, status={}", handle, status);
+        }
+    }
+}
+
 void HailoRtRpcService::remove_disconnected_clients()
 {
     std::this_thread::sleep_for(hailort::HAILO_KEEPALIVE_INTERVAL / 2);
@@ -113,10 +160,17 @@ void HailoRtRpcService::remove_disconnected_clients()
         // blocking operation (which will be finished with timeout).
         // To release the vstream the ServiceResourceManager is waiting for the resource_mutex which is also locked in execute.
         abort_vstreams_by_pids(pids_to_remove);
+
+        // It is important to shutdown the cb Queue before the NG shutdown, as ongoing callbacks might continue to try to enqueue
+        shutdown_vdevice_cb_queue_by_pids(pids_to_remove);
+        shutdown_configured_network_groups_by_pids(pids_to_remove);
+        shutdown_buffer_pool_by_pids(pids_to_remove);
         for (auto &client_pid : pids_to_remove) {
             ServiceResourceManager<OutputVStream>::get_instance().release_by_pid(client_pid);
             ServiceResourceManager<InputVStream>::get_instance().release_by_pid(client_pid);
             ServiceResourceManager<ConfiguredNetworkGroup>::get_instance().release_by_pid(client_pid);
+            ServiceResourceManager<VDeviceCallbacksQueue>::get_instance().release_by_pid(client_pid);
+            ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance().release_by_pid(client_pid);
             ServiceResourceManager<VDevice>::get_instance().release_by_pid(client_pid);
 
             LOGGER__INFO("Client disconnected, pid: {}", client_pid);
@@ -125,7 +179,6 @@ void HailoRtRpcService::remove_disconnected_clients()
         }
     }
 }
-
 
 void HailoRtRpcService::keep_alive()
 {
@@ -191,12 +244,17 @@ grpc::Status HailoRtRpcService::VDevice_create(grpc::ServerContext *, const VDev
     update_client_id_timestamp(request->pid());
     std::unique_lock<std::mutex> lock(m_vdevice_mutex);
     auto &vdevice_manager = ServiceResourceManager<VDevice>::get_instance();
+    auto &cb_queue_manager = ServiceResourceManager<VDeviceCallbacksQueue>::get_instance();
+
     auto vdevice_handle = vdevice_manager.register_resource(request->pid(), std::move(vdevice.release()));
 
     auto cb_queue = VDeviceCallbacksQueue::create(MAX_QUEUE_SIZE);
+    if (HAILO_SUCCESS != cb_queue.status()) {
+        // cb_queue_handle and vdevice_handle indexes must be the same
+        cb_queue_manager.advance_current_handle_index();
+    }
     CHECK_EXPECTED_AS_RPC_STATUS(cb_queue, reply);
 
-    auto &cb_queue_manager = ServiceResourceManager<VDeviceCallbacksQueue>::get_instance();
     auto cb_queue_handle = cb_queue_manager.register_resource(request->pid(), std::move(cb_queue.release()));
     if (cb_queue_handle != vdevice_handle) {
         LOGGER__ERROR("cb_queue_handle = {} must be equal to vdevice_handle ={}", cb_queue_handle, vdevice_handle);
@@ -209,17 +267,26 @@ grpc::Status HailoRtRpcService::VDevice_create(grpc::ServerContext *, const VDev
     return grpc::Status::OK;
 }
 
-grpc::Status HailoRtRpcService::VDevice_release(grpc::ServerContext*, const Release_Request *request,
-    Release_Reply *reply)
+hailo_status HailoRtRpcService::shutdown_vdevice_cb_queue(uint32_t vdevice_handle)
 {
     auto lambda = [](std::shared_ptr<VDeviceCallbacksQueue> cb_queue) {
         return cb_queue->shutdown();
     };
 
     auto &cb_queue_manager = ServiceResourceManager<VDeviceCallbacksQueue>::get_instance();
-    auto status = cb_queue_manager.execute(request->vdevice_identifier().vdevice_handle(), lambda);
+    auto status = cb_queue_manager.execute(vdevice_handle, lambda);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+grpc::Status HailoRtRpcService::VDevice_release(grpc::ServerContext*, const Release_Request *request,
+    Release_Reply *reply)
+{
+    auto status = shutdown_vdevice_cb_queue(request->vdevice_identifier().vdevice_handle());
     CHECK_SUCCESS_AS_RPC_STATUS(status, reply);
 
+    auto &cb_queue_manager = ServiceResourceManager<VDeviceCallbacksQueue>::get_instance();
     cb_queue_manager.release_resource(request->vdevice_identifier().vdevice_handle(), request->pid());
 
     auto &manager = ServiceResourceManager<VDevice>::get_instance();
@@ -307,9 +374,16 @@ grpc::Status HailoRtRpcService::VDevice_configure(grpc::ServerContext*, const VD
 hailo_status HailoRtRpcService::create_buffer_pools_for_ng(uint32_t vdevice_handle, uint32_t ng_handle, uint32_t request_pid,
     bool allocate_for_raw_streams)
 {
-    TRY(auto cng_buffer_pool, ServiceNetworkGroupBufferPool::create(vdevice_handle));
-
     auto &cng_buffer_pool_manager = ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance();
+
+    auto cng_buffer_pool_exp = ServiceNetworkGroupBufferPool::create(vdevice_handle);
+    if (HAILO_SUCCESS != cng_buffer_pool_exp.status()) {
+        // cng_buffer_pool_handle and network_group_handle indexes must be the same
+        cng_buffer_pool_manager.advance_current_handle_index();
+        return cng_buffer_pool_exp.status();
+    }
+    auto cng_buffer_pool = cng_buffer_pool_exp.release();
+
     auto cng_buffer_pool_handle = cng_buffer_pool_manager.register_resource(request_pid, cng_buffer_pool);
     CHECK(cng_buffer_pool_handle == ng_handle, HAILO_INTERNAL_FAILURE,
         "cng_buffer_pool_handle = {} must be equal to network_group_handle ={}", cng_buffer_pool_handle, ng_handle);
@@ -431,16 +505,44 @@ ProtoCallbackIdentifier serialize_callback_identifier(uint32_t vdevice_handle, u
     return cb_identifier;
 }
 
-grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_release(grpc::ServerContext*, const Release_Request *request,
-    Release_Reply *reply)
+ProtoCallbackIdentifier serialize_callback_identifier_shm(uint32_t vdevice_handle, uint32_t ng_handle, callback_type_t cb_type,
+    const std::string &stream_name, uint32_t cb_idx,  hailo_status status, const ProtoShmBufferIdentifier &shm_buffer_identifier)
+{
+    ProtoCallbackIdentifier cb_identifier;
+    cb_identifier.set_vdevice_handle(vdevice_handle);
+    cb_identifier.set_network_group_handle(ng_handle);
+    cb_identifier.set_cb_type(cb_type);
+    cb_identifier.set_stream_name(stream_name);
+    cb_identifier.set_cb_idx(cb_idx);
+    cb_identifier.set_status(status);
+
+    auto proto_shm_identifier = cb_identifier.mutable_shared_memory_identifier();
+    proto_shm_identifier->set_name(shm_buffer_identifier.name());
+    proto_shm_identifier->set_size(shm_buffer_identifier.size());
+
+    return cb_identifier;
+}
+
+hailo_status HailoRtRpcService::shutdown_cng_buffer_pool(uint32_t network_group_handle)
 {
     auto buffer_shutdown_lambda = [](std::shared_ptr<ServiceNetworkGroupBufferPool> cng_buffer_pool) {
         return cng_buffer_pool->shutdown();
     };
 
     auto &buffer_pool_manager = ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance();
-    auto status = buffer_pool_manager.execute(request->network_group_identifier().network_group_handle(), buffer_shutdown_lambda);
+    auto status = buffer_pool_manager.execute(network_group_handle, buffer_shutdown_lambda);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_release(grpc::ServerContext*, const Release_Request *request,
+    Release_Reply *reply)
+{
+    auto status = shutdown_cng_buffer_pool(request->network_group_identifier().network_group_handle());
     CHECK_SUCCESS_AS_RPC_STATUS(status, reply);
+
+    auto &buffer_pool_manager = ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance();
     buffer_pool_manager.release_resource(request->network_group_identifier().network_group_handle(), request->pid());
 
     auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
@@ -456,20 +558,30 @@ hailo_status HailoRtRpcService::add_input_named_buffer(const ProtoTransferReques
     // Prepare input buffer
     BufferPtr buffer;
     MemoryView mem_view;
-    auto *data = reinterpret_cast<const uint8_t*>(proto_stream_transfer_request.data().c_str());
-    if (reinterpret_cast<size_t>(data) % HailoRTCommon::HW_DATA_ALIGNMENT == 0) {
-        // Input buffers is aligned to 8
-        mem_view = MemoryView::create_const(data, proto_stream_transfer_request.data().size());
-    } else {
-        // The memory is not aligned to 8, therefore we need to copy the data into a buffer
-        TRY(buffer, Buffer::create_shared(data, proto_stream_transfer_request.data().size(),
-            BufferStorageParams::create_dma()));
+    if (proto_stream_transfer_request.has_shared_memory_identifier()) {
+        TRY(buffer, Buffer::create_shared(proto_stream_transfer_request.shared_memory_identifier().size(),
+            BufferStorageParams::open_shared_memory(proto_stream_transfer_request.shared_memory_identifier().name())));
         mem_view = MemoryView(*buffer);
+    } else {
+        auto *data = reinterpret_cast<const uint8_t*>(proto_stream_transfer_request.data().c_str());
+        if (reinterpret_cast<size_t>(data) % HailoRTCommon::HW_DATA_ALIGNMENT == 0) {
+            // Input buffers is aligned to 8
+            mem_view = MemoryView::create_const(data, proto_stream_transfer_request.data().size());
+        } else {
+            // The memory is not aligned to 8, therefore we need to copy the data into a buffer
+            TRY(buffer, Buffer::create_shared(data, proto_stream_transfer_request.data().size(),
+                BufferStorageParams::create_dma()));
+            mem_view = MemoryView(*buffer);
+        }
     }
 
     // Preparing callback
     auto &stream_name = proto_stream_transfer_request.stream_name();
+    CHECK(stream_name != INVALID_STREAM_NAME, HAILO_INTERNAL_FAILURE, "Got invalid stream name");
+    
     auto cb_idx = proto_stream_transfer_request.cb_idx();
+    CHECK(cb_idx != INVALID_CB_INDEX, HAILO_INTERNAL_FAILURE, "Got invalid callback index");
+
     std::function<void(hailo_status)> transfer_done = [this, vdevice_handle, ng_handle, cb_idx, stream_name, buffer, infer_async_request]
         (hailo_status status)
     {
@@ -493,18 +605,38 @@ hailo_status HailoRtRpcService::add_input_named_buffer(const ProtoTransferReques
 hailo_status HailoRtRpcService::add_output_named_buffer(const ProtoTransferRequest &proto_stream_transfer_request, uint32_t vdevice_handle,
     uint32_t ng_handle, NamedBuffersCallbacks &named_buffers_callbacks)
 {
-    // Prepare output buffer
     auto &stream_name = proto_stream_transfer_request.stream_name();
-    TRY(auto buffer, acquire_buffer_from_cng_pool(ng_handle, stream_name));
+    CHECK(stream_name != INVALID_STREAM_NAME, HAILO_INTERNAL_FAILURE, "Got invalid stream name");
+
+    // Prepare output buffer
+    BufferPtr buffer;
+    bool is_shared_mem = proto_stream_transfer_request.has_shared_memory_identifier();
+    auto shm_identifier = proto_stream_transfer_request.shared_memory_identifier();
+    
+    if (is_shared_mem) {
+        TRY(buffer, Buffer::create_shared(shm_identifier.size(),
+            BufferStorageParams::open_shared_memory(shm_identifier.name())));
+    } else {
+        TRY(buffer, acquire_buffer_from_cng_pool(ng_handle, stream_name));
+    }
 
     // Prepare callback
     auto cb_idx = proto_stream_transfer_request.cb_idx();
-    std::function<void(hailo_status)> transfer_done = [this, vdevice_handle, ng_handle, cb_idx, stream_name, buffer]
+    CHECK(cb_idx != INVALID_CB_INDEX, HAILO_INTERNAL_FAILURE, "Got invalid callback index");
+    
+    std::function<void(hailo_status)> transfer_done = [this, vdevice_handle, ng_handle, cb_idx, stream_name, buffer,
+        is_shared_mem, shm_identifier]
         (hailo_status status)
     {
-        auto cb_identifier = serialize_callback_identifier(vdevice_handle, ng_handle, CALLBACK_TYPE_TRANSFER,
-            stream_name, cb_idx, status, buffer);
-        return_buffer_to_cng_pool(ng_handle, stream_name, buffer);
+        ProtoCallbackIdentifier cb_identifier;
+        if (is_shared_mem) {
+            cb_identifier = serialize_callback_identifier_shm(vdevice_handle, ng_handle, CALLBACK_TYPE_TRANSFER,
+                stream_name, cb_idx, status, shm_identifier);
+        } else {
+            cb_identifier = serialize_callback_identifier(vdevice_handle, ng_handle, CALLBACK_TYPE_TRANSFER,
+                stream_name, cb_idx, status, buffer);
+            return_buffer_to_cng_pool(ng_handle, stream_name, buffer);
+        }
         enqueue_cb_identifier(vdevice_handle, std::move(cb_identifier));
     };
 
@@ -542,6 +674,9 @@ void HailoRtRpcService::enqueue_cb_identifier(uint32_t vdevice_handle, ProtoCall
 
     auto &cb_queue_manager = ServiceResourceManager<VDeviceCallbacksQueue>::get_instance();
     auto status = cb_queue_manager.execute(vdevice_handle, lambda, std::move(cb_identifier));
+    if (HAILO_SHUTDOWN_EVENT_SIGNALED != status) {
+        LOGGER__TRACE("Failed to enqueue callback to VDeviceCallbacksQueue '{}' because it is shutdown", vdevice_handle);
+    }
     if (status != HAILO_SUCCESS) {
         LOGGER__ERROR("Failed to enqueue callback to VDeviceCallbacksQueue with status={}", status);
     }
@@ -1323,6 +1458,7 @@ grpc::Status HailoRtRpcService::InputVStreams_create(grpc::ServerContext *, cons
 
     auto &vstreams_manager = ServiceResourceManager<InputVStream>::get_instance();
     for (size_t i = 0; i < vstreams.size(); i++) {
+        reply->add_names(vstreams[i].name());
         auto handle = vstreams_manager.register_resource(client_pid, make_shared_nothrow<InputVStream>(std::move(vstreams[i])));
         reply->add_handles(handle);
     }
@@ -1388,7 +1524,7 @@ grpc::Status HailoRtRpcService::OutputVStreams_create(grpc::ServerContext *, con
                 vstreams[i].get_frame_size(), output_params.at(vstreams[i].name()).queue_size);
         };
         CHECK_SUCCESS_AS_RPC_STATUS(cng_buffer_pool_manager.execute(network_group_handle, allocate_lambda), reply);
-
+        reply->add_names(vstreams[i].name());
         auto handle = vstream_manager.register_resource(client_pid, make_shared_nothrow<OutputVStream>(std::move(vstreams[i])));
         reply->add_handles(handle);
     }

@@ -458,6 +458,10 @@ public:
     virtual Expected<hailo_cache_info_t> get_cache_info() const = 0;
     virtual hailo_status update_cache_offset(int32_t offset_delta_bytes) = 0;
 
+    virtual Expected<std::vector<uint32_t>> get_cache_ids() const = 0;
+    virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) = 0;
+    virtual hailo_status write_cache_buffer(uint32_t cache_id, MemoryView buffer) = 0;
+
 protected:
     ConfiguredNetworkGroup();
 

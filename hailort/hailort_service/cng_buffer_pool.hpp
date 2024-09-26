@@ -15,40 +15,12 @@
 #include "hailo/buffer.hpp"
 #include "hailo/vdevice.hpp"
 #include "hailo/dma_mapped_buffer.hpp"
-#include "utils/thread_safe_queue.hpp"
+#include "common/thread_safe_queue.hpp"
+#include "common/buffer_pool.hpp"
 
 namespace hailort
 {
 
-class ServiceStreamBufferPool
-{
-public:
-    static Expected<std::shared_ptr<ServiceStreamBufferPool>> create(uint32_t vdevice_handle, size_t buffer_size,
-        size_t buffer_count, hailo_dma_buffer_direction_t direction, EventPtr shutdown_event);
-
-    struct AllocatedMappedBuffer {
-        BufferPtr buffer;
-        DmaMappedBuffer mapped_buffer;
-    };
-
-    ServiceStreamBufferPool(size_t buffer_size, std::vector<AllocatedMappedBuffer> &&buffers,
-        SpscQueue<BufferPtr> &&m_free_buffers_queue, size_t buffers_count);
-    virtual ~ServiceStreamBufferPool() = default;
-
-    Expected<BufferPtr> acquire_buffer();
-    hailo_status return_to_pool(BufferPtr buffer);
-    size_t buffers_count();
-
-private:
-
-    size_t m_buffer_size;
-    size_t m_buffers_count;
-    std::vector<AllocatedMappedBuffer> m_buffers;
-    SpscQueue<BufferPtr> m_free_buffers_queue;
-    std::mutex m_mutex;
-};
-
-using BufferPoolPtr = std::shared_ptr<ServiceStreamBufferPool>;
 using stream_name_t = std::string;
 
 // This object holds a buffer pool for each stream of the network group.
@@ -77,10 +49,17 @@ public:
     hailo_status shutdown();
 
 private:
-    std::unordered_map<stream_name_t, BufferPoolPtr> m_stream_name_to_buffer_pool;
+    Expected<BasicBufferPoolPtr> create_stream_buffer_pool(size_t buffer_size,
+        size_t buffer_count, hailo_dma_buffer_direction_t direction, EventPtr shutdown_event);
+
+    std::unordered_map<stream_name_t, BasicBufferPoolPtr> m_stream_name_to_buffer_pool;
+    // This is in order to keep the DmaMappedBuffer buffers alive while using the buffers pool.
+    std::vector<DmaMappedBuffer> m_mapped_buffers;
     EventPtr m_shutdown_event;
     uint32_t m_vdevice_handle;
     std::mutex m_mutex;
+    std::condition_variable m_cv;
+    bool m_is_shutdown;
 };
 
 } /* namespace hailort */

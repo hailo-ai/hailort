@@ -39,7 +39,7 @@ static GstMemory *gst_hailo_dmabuf_allocator_alloc(GstAllocator* allocator, gsiz
     if (!GstHailoDmaHeapControl::dma_heap_fd_open) {
         GstHailoDmaHeapControl::dma_heap_fd = open(DEVPATH, O_RDWR | O_CLOEXEC);
         if (GstHailoDmaHeapControl::dma_heap_fd < 0) {
-            ERROR("open fd failed!\n");
+            HAILONET_ERROR("open fd failed!\n");
             return nullptr;
         }
         GstHailoDmaHeapControl::dma_heap_fd_open = true;
@@ -55,37 +55,52 @@ static GstMemory *gst_hailo_dmabuf_allocator_alloc(GstAllocator* allocator, gsiz
 
     int ret = ioctl(GstHailoDmaHeapControl::dma_heap_fd, DMA_HEAP_IOCTL_ALLOC, &heap_data);
     if (ret < 0) {
-        ERROR("ioctl DMA_HEAP_IOCTL_ALLOC failed! ret = %d\n", ret);
+        HAILONET_ERROR("ioctl DMA_HEAP_IOCTL_ALLOC failed! ret = %d\n", ret);
         return nullptr;
     }
 
     if (GST_IS_DMABUF_ALLOCATOR(hailo_allocator) == false) {
-        ERROR("hailo_allocator is not dmabuf!\n");
+        HAILONET_ERROR("hailo_allocator is not dmabuf!\n");
         return nullptr;
     }
 
     GstMemory *memory = gst_dmabuf_allocator_alloc(allocator, heap_data.fd, size);
     if (nullptr == memory) {
-        ERROR("Creating new GstMemory for allocator has failed!\n");
+        HAILONET_ERROR("Creating new GstMemory for allocator has failed!\n");
         return nullptr;
     }
 
-    hailo_allocator->dma_buffers[memory] = heap_data;
+    assert(nullptr != hailo_allocator->dma_buffers);
+    (*hailo_allocator->dma_buffers)[memory] = heap_data;
     return memory;
 }
 
 static void gst_hailo_dmabuf_allocator_free(GstAllocator* allocator, GstMemory *mem) {
     GstHailoDmabufAllocator *hailo_allocator = GST_HAILO_DMABUF_ALLOCATOR(allocator);
-    close(hailo_allocator->dma_buffers[mem].fd);
-    hailo_allocator->dma_buffers.erase(mem);
+    assert(nullptr != hailo_allocator->dma_buffers);
+    close((*hailo_allocator->dma_buffers)[mem].fd);
+    hailo_allocator->dma_buffers->erase(mem);
 }
 
+static void gst_hailo_dmabuf_allocator_dispose(GObject *object) {
+    GstHailoDmabufAllocator *allocator = GST_HAILO_DMABUF_ALLOCATOR(object);
+    if (nullptr != allocator->dma_buffers) {
+        delete allocator->dma_buffers;
+        allocator->dma_buffers = nullptr;
+    }
+    G_OBJECT_CLASS(gst_hailo_dmabuf_allocator_parent_class)->dispose(object);
+}
+
+
 static void gst_hailo_dmabuf_allocator_class_init(GstHailoDmabufAllocatorClass* klass) {
+    GObjectClass *gobject_class = G_OBJECT_CLASS(klass);
+    gobject_class->dispose = gst_hailo_dmabuf_allocator_dispose;
+
     GstAllocatorClass* allocator_class = GST_ALLOCATOR_CLASS(klass);
     allocator_class->alloc = gst_hailo_dmabuf_allocator_alloc;
     allocator_class->free = gst_hailo_dmabuf_allocator_free;
 }
 
 static void gst_hailo_dmabuf_allocator_init(GstHailoDmabufAllocator* allocator) {
-    allocator->dma_buffers = std::unordered_map<GstMemory*, dma_heap_allocation_data>();
+    allocator->dma_buffers = new std::unordered_map<GstMemory*, dma_heap_allocation_data>();
 }

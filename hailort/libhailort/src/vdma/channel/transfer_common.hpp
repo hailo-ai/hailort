@@ -36,6 +36,8 @@ public:
     TransferBuffer(MemoryView base_buffer, size_t size, size_t offset);
 
     Expected<MemoryView> base_buffer();
+    Expected<int> dmabuf_fd();
+
     size_t offset() const { return m_offset; }
     size_t size() const { return m_size; }
 
@@ -44,7 +46,7 @@ public:
     hailo_status copy_to(MemoryView buffer);
     hailo_status copy_from(const MemoryView buffer);
 
-    TransferBufferType type () const {return m_type;}
+    TransferBufferType type () const { return m_type; }
 
 private:
 

@@ -12,7 +12,6 @@
 #include "common/os_utils.hpp"
 
 #include "vdma/channel/boundary_channel.hpp"
-#include "vdma/memory/vdma_edge_layer.hpp"
 
 #include <list>
 #include <chrono>
@@ -109,33 +108,52 @@ hailo_status BoundaryChannel::trigger_channel_completion(const ChannelIrqData &i
 
     CHECK(irq_data.transfers_completed <= m_ongoing_transfers.size(), HAILO_INTERNAL_FAILURE,
         "Invalid amount of completed transfers {} max {}", irq_data.transfers_completed, m_ongoing_transfers.size());
-    
+
     auto callback_status = get_callback_status(m_channel_id, irq_data);
+
     // If channel is no longer active - all transfers should be completed
     const size_t num_transfers_to_trigger = (HAILO_SUCCESS == callback_status) ? irq_data.transfers_completed :
         m_ongoing_transfers.size();
-    for (size_t i = 0; i < num_transfers_to_trigger; i++) {
+    size_t i = 0;
+    while (i < num_transfers_to_trigger) {
         auto transfer = std::move(m_ongoing_transfers.front());
         m_ongoing_transfers.pop_front();
+        if (HAILO_SUCCESS != transfer.launch_status) {
+            // The transfer failed to launch to begin with. We need to call the callback with the failure status.
+            on_request_complete(lock, transfer.request, transfer.launch_status);
+
+            // Continue to the next transfer, without counting it, since num_transfers_to_trigger is the number of
+            // completed transfers that were launched to begin with.
+            continue;
+        }
 
         // We increase desc num_proc (can happen only in this flow). After it is increased -
         //  1. On D2H channels - the output can be read by the user.
         //  2. On H2D channels - new input can be written to the buffer.
         m_descs.set_tail((transfer.last_desc + 1) & m_descs.size_mask());
 
-        // We've freed up room in the descriptor list, so we can launch another transfer
         if (!m_pending_transfers.empty()) {
             m_transfer_launcher.enqueue_transfer([this]() {
                 std::unique_lock<std::mutex> lock(m_channel_mutex);
+                // There can be more transfers deferred to the m_transfer_launcher than need to be launched.
+                // E.g. If num_transfers_to_trigger is 2, but only one transfer is pending in m_pending_transfers.
+                //      (we still need to handle the transfers via the m_transfer_launcher to keep their order).
                 if (m_pending_transfers.empty()) {
+                    return;
+                }
+                // If at a given moment there's no room for new m_ongoing_transfers, we'll leave the pending transfers
+                // in the m_pending_transfers queue, and they will be launched when there's room.
+                if (m_ongoing_transfers.full()) {
                     return;
                 }
                 auto transfer_request = std::move(m_pending_transfers.front());
                 m_pending_transfers.pop_front();
-                const auto status = launch_transfer_impl(std::move(transfer_request));
-                if (status != HAILO_SUCCESS) {
-                    on_request_complete(lock, transfer_request, status);
-                }
+
+                // Note: We don't check the return value of launch_and_enqueue_transfer, since failed transfers will be queued
+                //       to m_ongoing_transfers (due to QUEUE_FAILED_TRANSFER being true). This is needed to keep the
+                //       callback order consistent.
+                static const auto QUEUE_FAILED_TRANSFER = true;
+                (void) launch_and_enqueue_transfer(std::move(transfer_request), QUEUE_FAILED_TRANSFER);
             });
         }
 
@@ -145,16 +163,10 @@ hailo_status BoundaryChannel::trigger_channel_completion(const ChannelIrqData &i
         // Also, we want to make sure that the callbacks are called after the descriptors can be reused (so the user
         // will be able to start new transfer).
         on_request_complete(lock, transfer.request, callback_status);
+        i++;
     }
 
     return HAILO_SUCCESS;
-}
-
-CONTROL_PROTOCOL__host_buffer_info_t BoundaryChannel::get_boundary_buffer_info(uint32_t transfer_size) const
-{
-    // Boundary channels always have scatter gather buffers
-    return VdmaEdgeLayer::get_host_buffer_info(VdmaEdgeLayer::Type::SCATTER_GATHER, m_desc_list.dma_address(),
-        m_desc_list.desc_page_size(), m_desc_list.count(), transfer_size);
 }
 
 hailo_status BoundaryChannel::activate()
@@ -185,10 +197,10 @@ hailo_status BoundaryChannel::launch_transfer(TransferRequest &&transfer_request
     }
 
     if ((m_ongoing_transfers.size() < m_ongoing_transfers.capacity()) && (m_pending_transfers.size() == 0)) {
-        // There's room in the desc list and there are no pending transfers => execute on user's thread
+        // There's room in the desc list and there are no pending transfers or callbacks => execute on user's thread
         // We can't use the user thread to launch the transfer if there are pending transfers, because we need to
         // preserve the order of the transfers.
-        return launch_transfer_impl(std::move(transfer_request));
+        return launch_and_enqueue_transfer(std::move(transfer_request));
     }
 
     if (m_pending_transfers.size() >= m_pending_transfers.capacity()) {
@@ -200,15 +212,31 @@ hailo_status BoundaryChannel::launch_transfer(TransferRequest &&transfer_request
     return HAILO_SUCCESS;
 }
 
-// Assumes that the m_channel_mutex is locked!
-hailo_status BoundaryChannel::launch_transfer_impl(TransferRequest &&transfer_request)
+// Assumes:
+// * m_channel_mutex is locked
+// * m_ongoing_transfers.size() < m_ongoing_transfers.capacity()
+hailo_status BoundaryChannel::launch_and_enqueue_transfer(TransferRequest &&transfer_request, bool queue_failed_transfer)
 {
-    if (!m_is_channel_activated) {
-        return HAILO_STREAM_NOT_ACTIVATED;
+    auto last_desc = launch_transfer_impl(transfer_request);
+    if (!last_desc) {
+        if (queue_failed_transfer) {
+            m_ongoing_transfers.push_back(OngoingTransfer{std::move(transfer_request), 0, last_desc.status()});
+        }
+        return last_desc.status();
     }
+    m_ongoing_transfers.push_back(OngoingTransfer{std::move(transfer_request), last_desc.value()});
 
-    if (m_ongoing_transfers.size() >= m_ongoing_transfers.capacity()) {
-        return HAILO_QUEUE_IS_FULL;
+    return HAILO_SUCCESS;
+}
+
+// Assumes:
+// * m_channel_mutex is locked
+// * m_ongoing_transfers.size() < m_ongoing_transfers.capacity()
+Expected<uint16_t> BoundaryChannel::launch_transfer_impl(TransferRequest &transfer_request)
+{
+    assert(m_ongoing_transfers.size() < m_ongoing_transfers.capacity());
+    if (!m_is_channel_activated) {
+        return make_unexpected(HAILO_STREAM_NOT_ACTIVATED);
     }
 
     auto num_available = static_cast<uint16_t>(m_descs.head());
@@ -216,8 +244,10 @@ hailo_status BoundaryChannel::launch_transfer_impl(TransferRequest &&transfer_re
     uint16_t last_desc = std::numeric_limits<uint16_t>::max();
     uint16_t total_descs_count = 0;
 
-    const bool should_bind = !m_bounded_buffer;
-    if (!should_bind) {
+    TRY(const bool should_bind, should_bind_buffer(transfer_request));
+    if (should_bind) {
+        m_bounded_buffer = nullptr;
+    } else {
         CHECK_SUCCESS(validate_bound_buffer(transfer_request));
     }
 
@@ -252,7 +282,7 @@ hailo_status BoundaryChannel::launch_transfer_impl(TransferRequest &&transfer_re
     int num_processed = m_descs.tail();
     int num_free = m_descs.avail(num_available, num_processed);
     if (total_descs_count > num_free) {
-        return HAILO_OUT_OF_DESCRIPTORS;
+        return make_unexpected(HAILO_OUT_OF_DESCRIPTORS);
     }
 
     if (m_latency_meter) {
@@ -272,17 +302,17 @@ hailo_status BoundaryChannel::launch_transfer_impl(TransferRequest &&transfer_re
         ));
     CHECK(total_descs_count == desc_programmed, HAILO_INTERNAL_FAILURE,
         "Inconsistent desc programed expecting {} got {}", total_descs_count, desc_programmed);
-    m_ongoing_transfers.push_back(OngoingTransfer{std::move(transfer_request), last_desc});
 
-    return HAILO_SUCCESS;
+    return last_desc;
 }
 
 hailo_status BoundaryChannel::bind_buffer(MappedBufferPtr buffer)
 {
+    std::lock_guard<std::mutex> lock(m_channel_mutex);
     CHECK(m_bounded_buffer == nullptr, HAILO_INTERNAL_FAILURE,
         "Buffer is already bound to channel {}", m_channel_id);
     const auto expected_size = static_cast<size_t>(m_desc_list.desc_page_size()) * m_desc_list.count();
-    CHECK(buffer->size() == expected_size, HAILO_INVALID_ARGUMENT,
+    CHECK(buffer->size() <= expected_size, HAILO_INVALID_ARGUMENT,
         "Buffer size {} does not fit in desc list - descs count {} desc page size {}", buffer->size(),
         m_desc_list.count(), m_desc_list.desc_page_size());
     static const size_t DEFAULT_BUFFER_OFFSET = 0;
@@ -291,9 +321,22 @@ hailo_status BoundaryChannel::bind_buffer(MappedBufferPtr buffer)
     return HAILO_SUCCESS;
 }
 
+hailo_status BoundaryChannel::map_and_bind_buffer(hailort::TransferBuffer &transfer_request)
+{
+    TRY(auto mapped_buffer, transfer_request.map_buffer(m_driver, m_direction));
+    return(bind_buffer(mapped_buffer));
+}
+
+void BoundaryChannel::remove_buffer_binding()
+{
+    std::lock_guard<std::mutex> lock(m_channel_mutex);
+    m_bounded_buffer = nullptr;
+}
+
 void BoundaryChannel::cancel_pending_transfers()
 {
     std::unique_lock<std::mutex> lock(m_channel_mutex);
+
     // Cancel all ongoing transfers
     while (!m_ongoing_transfers.empty()) {
         auto transfer = std::move(m_ongoing_transfers.front());
@@ -401,12 +444,44 @@ hailo_status BoundaryChannel::validate_bound_buffer(TransferRequest &transfer_re
     const auto expected_offset = static_cast<size_t>(m_desc_list.desc_page_size()) * num_available;
     CHECK(transfer_buffer.offset() == expected_offset, HAILO_INTERNAL_FAILURE,
         "Unexpected buffer offset, expected {} actual {}", expected_offset, transfer_buffer.offset());
-    TRY(auto base_buffer, transfer_buffer.base_buffer());
-    CHECK(base_buffer.data() == reinterpret_cast<const uint8_t*>(m_bounded_buffer->user_address()), HAILO_INTERNAL_FAILURE,
-        "Got the wrong buffer");
-    CHECK(base_buffer.size() == m_bounded_buffer->size(), HAILO_INTERNAL_FAILURE,
-        "Got invalid buffer size {}, expected {}", base_buffer.size(), m_bounded_buffer->size());
+    TRY(auto is_same_buffer, is_same_buffer(m_bounded_buffer, transfer_buffer));
+    if (!is_same_buffer) {
+        LOGGER__ERROR("Got diff in buffers");
+        return HAILO_INTERNAL_FAILURE;
+    }
+
     return HAILO_SUCCESS;
+}
+
+Expected<bool> BoundaryChannel::is_same_buffer(MappedBufferPtr mapped_buff, TransferBuffer &transfer_buffer)
+{
+    if (transfer_buffer.type() == TransferBufferType::DMABUF) {
+        TRY(auto buf_fd, transfer_buffer.dmabuf_fd());
+        TRY(auto mapped_buf_fd, mapped_buff->fd());
+        return ((buf_fd == mapped_buf_fd) && (transfer_buffer.size() == mapped_buff->size()));
+    } else {
+        auto base_buffer = transfer_buffer.base_buffer();
+        return ((base_buffer.value().data() == mapped_buff->user_address()) &&
+            (base_buffer.value().size() == mapped_buff->size()));
+    }
+}
+
+Expected<bool> BoundaryChannel::should_bind_buffer(TransferRequest &transfer_request)
+{
+    if ((nullptr == m_bounded_buffer) || (1 < transfer_request.transfer_buffers.size())) {
+        return true;
+    }
+
+    bool is_cyclic_buffer = (static_cast<size_t>(m_descs.size() * m_desc_list.desc_page_size()) == m_bounded_buffer->size());
+    /* If the buffer is cyclic, sync api is used, means no bind needed.
+        Checking if the bounded buffer points correctly to the received buffer
+        and the descriptors are pointing to the beginning of the buffer. */
+    if (!is_cyclic_buffer) {
+        TRY(auto is_same_buffer, is_same_buffer(m_bounded_buffer, transfer_request.transfer_buffers[0]));
+        return !(is_same_buffer && (0 == m_descs.head()));
+    }
+
+    return false;
 }
 
 } /* namespace vdma */

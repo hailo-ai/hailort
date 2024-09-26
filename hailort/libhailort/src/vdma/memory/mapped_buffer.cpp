@@ -19,7 +19,7 @@ Expected<MappedBufferPtr> MappedBuffer::create_shared(DmaAbleBufferPtr buffer, H
     TRY(auto buffer_handle, driver.vdma_buffer_map(reinterpret_cast<uintptr_t>(buffer->user_address()), buffer->size(), data_direction,
         buffer->buffer_identifier(), HailoRTDriver::DmaBufferType::USER_PTR_BUFFER));
 
-    auto result = make_shared_nothrow<MappedBuffer>(driver, buffer, data_direction, buffer_handle);
+    auto result = make_shared_nothrow<MappedBuffer>(driver, buffer, data_direction, buffer_handle, buffer->size());
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
 
     return result;
@@ -41,18 +41,20 @@ Expected<MappedBufferPtr> MappedBuffer::create_shared_from_dmabuf(int dmabuf_fd,
         HailoRTDriver::DmaBufferType::DMABUF_BUFFER));
 
     // TODO: if need user address for dmabuf use DmaBufDmaAbleBuffer
-    auto result = make_shared_nothrow<MappedBuffer>(driver, nullptr, data_direction, buffer_handle);
+    auto result = make_shared_nothrow<MappedBuffer>(driver, nullptr, data_direction, buffer_handle, size, dmabuf_fd);
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
 
     return result;
 }
 
 MappedBuffer::MappedBuffer(HailoRTDriver &driver, DmaAbleBufferPtr buffer, HailoRTDriver::DmaDirection data_direction,
-    HailoRTDriver::VdmaBufferHandle vdma_buffer_handle) :
+    HailoRTDriver::VdmaBufferHandle vdma_buffer_handle, size_t size, int fd) :
     m_driver(driver),
     m_buffer(buffer),
     m_mapping_handle(vdma_buffer_handle),
-    m_data_direction(data_direction)
+    m_data_direction(data_direction),
+    m_size(size),
+    m_fd(fd)
 {}
 
 MappedBuffer::~MappedBuffer()
@@ -67,7 +69,8 @@ MappedBuffer::MappedBuffer(MappedBuffer &&other) noexcept :
     m_driver(other.m_driver),
     m_buffer(std::move(other.m_buffer)),
     m_mapping_handle(std::exchange(other.m_mapping_handle, HailoRTDriver::INVALID_DRIVER_VDMA_MAPPING_HANDLE_VALUE)),
-    m_data_direction(other.m_data_direction)
+    m_data_direction(other.m_data_direction),
+    m_size(other.m_size)
 {}
 
 void* MappedBuffer::user_address()
@@ -77,7 +80,14 @@ void* MappedBuffer::user_address()
 
 size_t MappedBuffer::size() const
 {
-    return m_buffer->size();
+    return m_size;
+}
+
+Expected<int> MappedBuffer::fd()
+{
+    CHECK(INVALID_FD != m_fd, HAILO_INTERNAL_FAILURE, "fd is only supported for DMABUF type MappedBuffer");
+
+    return Expected<int>(m_fd);
 }
 
 HailoRTDriver::VdmaBufferHandle MappedBuffer::handle()

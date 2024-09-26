@@ -125,6 +125,8 @@ typedef enum __attribute__((packed)) {
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_ACTIVATE_CACHE_INPUT,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_ACTIVATE_CACHE_OUTPUT,
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_WAIT_FOR_CACHE_UPDATED,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_SLEEP,
+    CONTEXT_SWITCH_DEFS__ACTION_TYPE_HALT,
 
     /* Must be last */
     CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT
@@ -446,6 +448,10 @@ typedef struct {
 typedef struct {
     uint8_t packed_vdma_channel_id;
 } CONTEXT_SWITCH_DEFS__change_boundary_input_batch_t;
+
+typedef struct {
+    uint32_t sleep_time;
+} CONTEXT_SWITCH_DEFS__sleep_action_data_t;
 
 #pragma pack(pop)
 

@@ -111,7 +111,7 @@ hailo_status YOLOV8PostProcessOp::execute(const std::map<std::string, MemoryView
             status = extract_detections<float32_t, uint16_t>(reg_to_cls_name, inputs.at(reg_to_cls_name.reg),
                 inputs.at(reg_to_cls_name.cls), reg_to_cls_name.stride);
         } else {
-            CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "YOLO post-process received invalid input type {}", input_metadata.format.type);
+            CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "YOLO post-process received invalid input type {}", static_cast<int>(input_metadata.format.type));
         }
 
         CHECK_SUCCESS(status);

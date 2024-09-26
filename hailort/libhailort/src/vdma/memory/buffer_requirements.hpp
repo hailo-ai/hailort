@@ -36,6 +36,9 @@ public:
     uint16_t desc_page_size() const { return m_desc_page_size; }
     uint32_t buffer_size() const { return m_descs_count * m_desc_page_size; }
 
+    static Expected<BufferSizesRequirements> get_buffer_requirements_for_boundary_channels(HailoRTDriver &driver,
+        uint32_t max_shmifo_size, uint16_t min_active_trans, uint16_t max_active_trans, uint32_t transfer_size);
+
     static Expected<BufferSizesRequirements> get_buffer_requirements_multiple_transfers(
         vdma::VdmaBuffer::Type buffer_type, uint16_t max_desc_page_size,
         uint16_t batch_size, const std::vector<uint32_t> &transfer_sizes, bool is_circular,

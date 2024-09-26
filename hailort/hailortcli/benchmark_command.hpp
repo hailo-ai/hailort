@@ -24,7 +24,7 @@ private:
     Expected<InferResult> hw_only_mode();
     Expected<InferResult> fps_streaming_mode();
     Expected<InferResult> latency();
-    
+
     inference_runner_params m_params;
     bool m_not_measure_power;
     std::string m_csv_file_path;

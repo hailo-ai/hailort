@@ -36,10 +36,16 @@ struct HAILORTAPI BufferStorageParams
 public:
 
     static BufferStorageParams create_dma();
+    static BufferStorageParams create_shared_memory(const std::string &shm_name, bool memory_owner = true);
+    static BufferStorageParams open_shared_memory(const std::string &shm_name);
     // Defaults to heap params
     BufferStorageParams();
 
     hailo_buffer_flags_t flags;
+
+    // params for shared_memory_buffer
+    std::string shared_memory_name;
+    bool memory_owner;
 };
 
 class HAILORTAPI Buffer final

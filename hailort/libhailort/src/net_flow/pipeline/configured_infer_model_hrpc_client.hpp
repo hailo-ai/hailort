@@ -13,74 +13,10 @@
 #include "hailo/infer_model.hpp"
 #include "infer_model_internal.hpp"
 #include "hrpc/client.hpp"
+#include "rpc_callbacks/rpc_callbacks_dispatcher.hpp"
 
 namespace hailort
 {
-
-using callback_id_t = uint32_t;
-
-class InferStreamOnStack final
-{
-public:
-    InferStreamOnStack(MemoryView buffer) : m_buffer(buffer) {}
-    Expected<MemoryView> get_buffer();
-
-private:
-    MemoryView m_buffer;
-};
-
-class OutputBindingsOnStack final
-{
-public:
-    static Expected<OutputBindingsOnStack> create(ConfiguredInferModel::Bindings bindings,
-        const std::vector<std::string> &outputs_names);
-    Expected<InferStreamOnStack> output();
-    Expected<InferStreamOnStack> output(const std::string &name);
-
-private:
-    OutputBindingsOnStack(std::unordered_map<std::string, InferStreamOnStack> &&output_streams) :
-        m_output_streams(std::move(output_streams)) {}
-
-    std::unordered_map<std::string, InferStreamOnStack> m_output_streams;
-};
-
-class AsyncInferJobHrpcClient : public AsyncInferJobBase
-{
-public:
-    AsyncInferJobHrpcClient(EventPtr event);
-
-    virtual hailo_status wait(std::chrono::milliseconds timeout) override;
-
-private:
-    EventPtr m_event;
-};
-
-class CallbacksQueue
-{
-public:
-    CallbacksQueue(std::shared_ptr<hrpc::Client> client, const std::vector<std::string> &outputs_names);
-    ~CallbacksQueue();
-
-    CallbacksQueue(const CallbacksQueue &other) = delete;
-    CallbacksQueue& operator=(const CallbacksQueue &other) = delete;
-    CallbacksQueue(CallbacksQueue &&other) = delete;
-    CallbacksQueue& operator=(CallbacksQueue &&other) = delete;
-
-    Expected<std::shared_ptr<AsyncInferJobHrpcClient>> register_callback(callback_id_t id,
-        ConfiguredInferModel::Bindings bindings,
-        std::function<void(const AsyncInferCompletionInfo&)> callback);
-
-private:
-    const std::vector<std::string> m_outputs_names;
-    std::mutex m_mutex;
-    std::condition_variable m_cv;
-    std::queue<callback_id_t> m_callbacks_queue;
-    std::unordered_map<callback_id_t, std::function<void(const AsyncInferCompletionInfo&)>> m_callbacks;
-    std::atomic_bool m_is_running;
-    std::thread m_callback_thread;
-    std::unordered_map<callback_id_t, OutputBindingsOnStack> m_bindings;
-    std::unordered_map<callback_id_t, hailo_status> m_callbacks_status;
-};
 
 class ConfiguredInferModelHrpcClient : public ConfiguredInferModelBase
 {
@@ -88,12 +24,12 @@ public:
     static Expected<std::shared_ptr<ConfiguredInferModelHrpcClient>> create(std::shared_ptr<hrpc::Client> client,
         rpc_object_handle_t handle_id, std::vector<hailo_vstream_info_t> &&input_vstream_infos,
         std::vector<hailo_vstream_info_t> &&output_vstream_infos, uint32_t max_ongoing_transfers,
-        std::unique_ptr<CallbacksQueue> &&callbacks_queue, rpc_object_handle_t infer_model_handle_id,
+        std::shared_ptr<CallbacksQueue> callbacks_queue, rpc_object_handle_t infer_model_handle_id,
         const std::unordered_map<std::string, size_t> inputs_frame_sizes,
         const std::unordered_map<std::string, size_t> outputs_frame_sizes);
     ConfiguredInferModelHrpcClient(std::shared_ptr<hrpc::Client> client, rpc_object_handle_t handle_id,
         std::vector<hailo_vstream_info_t> &&input_vstream_infos, std::vector<hailo_vstream_info_t> &&output_vstream_infos,
-        uint32_t max_ongoing_transfers, std::unique_ptr<CallbacksQueue> &&callbacks_queue, rpc_object_handle_t infer_model_handle_id,
+        uint32_t max_ongoing_transfers, std::shared_ptr<CallbacksQueue> callbacks_queue, rpc_object_handle_t infer_model_handle_id,
         const std::unordered_map<std::string, size_t> inputs_frame_sizes,
         const std::unordered_map<std::string, size_t> outputs_frame_sizes) :
             ConfiguredInferModelBase(inputs_frame_sizes, outputs_frame_sizes),
@@ -114,7 +50,7 @@ public:
     virtual hailo_status activate() override;
     virtual hailo_status deactivate() override;
 
-    virtual Expected<AsyncInferJob> run_async(ConfiguredInferModel::Bindings bindings,
+    virtual Expected<AsyncInferJob> run_async(const ConfiguredInferModel::Bindings &bindings,
         std::function<void(const AsyncInferCompletionInfo &)> callback) override;
 
     virtual Expected<LatencyMeasurementResult> get_hw_latency_measurement() override;
@@ -128,9 +64,12 @@ public:
     virtual hailo_status shutdown() override;
 
 private:
-    virtual hailo_status validate_bindings(ConfiguredInferModel::Bindings bindings);
-    Expected<AsyncInferJob> run_async_impl(ConfiguredInferModel::Bindings bindings,
+    virtual hailo_status validate_bindings(const ConfiguredInferModel::Bindings &bindings) override;
+    Expected<AsyncInferJob> run_async_impl(const ConfiguredInferModel::Bindings &bindings,
         std::function<void(const AsyncInferCompletionInfo &)> callback);
+    Expected<std::vector<uint32_t>> get_input_buffer_sizes(const ConfiguredInferModel::Bindings &bindings);
+    hailo_status write_async_inputs(const ConfiguredInferModel::Bindings &bindings,
+        hrpc::RpcConnection connection);
 
     std::weak_ptr<hrpc::Client> m_client;
     rpc_object_handle_t m_handle_id;
@@ -140,7 +79,7 @@ private:
     std::mutex m_ongoing_transfers_mutex;
     std::condition_variable m_cv;
     std::atomic_uint32_t m_ongoing_transfers;
-    std::unique_ptr<CallbacksQueue> m_callbacks_queue;
+    std::shared_ptr<CallbacksQueue> m_callbacks_queue;
     rpc_object_handle_t m_infer_model_handle_id;
     std::atomic_uint32_t m_callbacks_counter;
     std::mutex m_infer_mutex;

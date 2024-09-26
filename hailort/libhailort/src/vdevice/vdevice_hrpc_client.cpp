@@ -19,11 +19,44 @@ Expected<std::unique_ptr<VDevice>> VDeviceHrpcClient::create(const hailo_vdevice
 {
     CHECK_AS_EXPECTED(params.device_count == 1, HAILO_OUT_OF_PHYSICAL_DEVICES, "Only single device is supported!");
 
-    auto client = make_shared_nothrow<hrpc::Client>();
+    std::string device_id;
+    if (nullptr != params.device_ids) {
+        device_id = params.device_ids[0].id;
+    } else {
+        auto acc_type = HailoRTDriver::AcceleratorType::SOC_ACCELERATOR;
+
+        // If forcing hrpc service, its because we work without EP driver -> use sockets
+        if (VDevice::should_force_hrpc_client()) {
+            acc_type = HailoRTDriver::AcceleratorType::NNC_ACCELERATOR;
+        }
+
+        TRY(auto scan_results, HailoRTDriver::scan_devices(acc_type));
+        CHECK_AS_EXPECTED(scan_results.size() > 0, HAILO_OUT_OF_PHYSICAL_DEVICES, "No devices found");
+
+        device_id = scan_results[0].device_id;
+    }
+
+    auto client = make_shared_nothrow<hrpc::Client>(device_id);
     CHECK_NOT_NULL(client, HAILO_INTERNAL_FAILURE);
 
     auto status = client->connect();
     CHECK_SUCCESS_AS_EXPECTED(status, "Failed to connect to server");
+
+    auto callbacks_dispatcher = make_shared_nothrow<CallbacksDispatcher>();
+    CHECK_NOT_NULL_AS_EXPECTED(callbacks_dispatcher, HAILO_OUT_OF_HOST_MEMORY);
+
+    client->register_custom_reply(HailoRpcActionID::CALLBACK_CALLED,
+    [callbacks_dispatcher] (const MemoryView &serialized_reply, hrpc::RpcConnection connection) -> hailo_status {
+        TRY(auto tuple, CallbackCalledSerializer::deserialize_reply(serialized_reply));
+        auto callback_status = std::get<0>(tuple);
+        auto callback_handle_id = std::get<1>(tuple);
+        auto cim_handle = std::get<2>(tuple);
+
+        auto status = callbacks_dispatcher->at(cim_handle)->push_callback(callback_status, callback_handle_id, connection);
+        CHECK_SUCCESS(status);
+
+        return HAILO_SUCCESS;
+    });
 
     TRY(auto request, CreateVDeviceSerializer::serialize_request(params));
     TRY(auto result, client->execute_request(HailoRpcActionID::VDEVICE__CREATE, MemoryView(request)));
@@ -31,8 +64,11 @@ Expected<std::unique_ptr<VDevice>> VDeviceHrpcClient::create(const hailo_vdevice
     status = std::get<0>(tuple);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
+    TRY(auto device, PcieDeviceHrpcClient::create(device_id, client));
+
     auto vdevice_handle = std::get<1>(tuple);
-    auto vdevice_client = make_unique_nothrow<VDeviceHrpcClient>(std::move(client), vdevice_handle);
+    auto vdevice_client = make_unique_nothrow<VDeviceHrpcClient>(std::move(client), vdevice_handle, callbacks_dispatcher,
+        std::move(device), device_id);
     CHECK_NOT_NULL(vdevice_client, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::unique_ptr<VDevice>(std::move(vdevice_client));
@@ -53,6 +89,7 @@ VDeviceHrpcClient::~VDeviceHrpcClient()
     auto result = m_client->execute_request(HailoRpcActionID::VDEVICE__DESTROY, MemoryView(*request));
     if (!result) {
         LOGGER__CRITICAL("Failed to destroy VDevice! status = {}", result.status());
+        return;
     }
 
     if (HAILO_SUCCESS != DestroyVDeviceSerializer::deserialize_reply(MemoryView(*result))) {
@@ -60,10 +97,31 @@ VDeviceHrpcClient::~VDeviceHrpcClient()
     }
 }
 
-Expected<std::shared_ptr<InferModel>> VDeviceHrpcClient::create_infer_model(const std::string &hef_path, const std::string &network_name)
+Expected<std::shared_ptr<InferModel>> VDeviceHrpcClient::create_infer_model(const MemoryView hef_buffer, const std::string &name)
 {
-    CHECK_AS_EXPECTED(network_name.empty(), HAILO_NOT_IMPLEMENTED, "Passing network name is not supported yet!");
+    TRY(auto request, CreateInferModelSerializer::serialize_request(m_handle, hef_buffer.size(), name));
+    TRY(auto result, m_client->execute_request(HailoRpcActionID::VDEVICE__CREATE_INFER_MODEL,
+        MemoryView(request), [&hef_buffer] (hrpc::RpcConnection connection) -> hailo_status {
+        // TODO: change write to accept uint64_t, or accept file stream instead or write in chunks
+        auto status = connection.write_buffer(hef_buffer);
+        CHECK_SUCCESS(status);
 
+        return HAILO_SUCCESS;
+    }));
+    TRY(auto tuple, CreateInferModelSerializer::deserialize_reply(MemoryView(result)));
+
+    CHECK_SUCCESS_AS_EXPECTED(std::get<0>(tuple));
+    auto infer_model_handle = std::get<1>(tuple);
+
+    TRY(auto hef, Hef::create(hef_buffer));
+    TRY(auto infer_model, InferModelHrpcClient::create(std::move(hef), name, m_client, infer_model_handle, m_handle,
+        *this, m_callbacks_dispatcher));
+
+    return std::shared_ptr<InferModel>(std::move(infer_model));
+}
+
+Expected<std::shared_ptr<InferModel>> VDeviceHrpcClient::create_infer_model(const std::string &hef_path, const std::string &name)
+{
     FileReader hef_reader(hef_path);
     auto status = hef_reader.open();
     CHECK_SUCCESS(status);
@@ -76,24 +134,7 @@ Expected<std::shared_ptr<InferModel>> VDeviceHrpcClient::create_infer_model(cons
     status = hef_reader.close();
     CHECK_SUCCESS(status);
 
-    TRY(auto request, CreateInferModelSerializer::serialize_request(m_handle, hef_size));
-    TRY(auto result, m_client->execute_request(HailoRpcActionID::VDEVICE__CREATE_INFER_MODEL,
-        MemoryView(request), [&hef_buffer] (hrpc::RpcConnection connection) -> hailo_status {
-        // TODO: change write to accept uint64_t, or accept file stream instead or write in chunks
-        auto status = connection.write_buffer(MemoryView(hef_buffer));
-        CHECK_SUCCESS(status);
-
-        return HAILO_SUCCESS;
-    }));
-    TRY(auto tuple, CreateInferModelSerializer::deserialize_reply(MemoryView(result)));
-
-    CHECK_SUCCESS_AS_EXPECTED(std::get<0>(tuple));
-    auto infer_model_handle = std::get<1>(tuple);
-
-    TRY(auto hef, Hef::create(MemoryView(hef_buffer)));
-    TRY(auto infer_model, InferModelHrpcClient::create(std::move(hef), m_client, infer_model_handle, m_handle, *this));
-
-    return std::shared_ptr<InferModel>(std::move(infer_model));
+    return create_infer_model(MemoryView(hef_buffer), name);
 }
 
 Expected<ConfiguredNetworkGroupVector> VDeviceHrpcClient::configure(Hef &hef, const NetworkGroupsParamsMap &configure_params)
@@ -106,12 +147,18 @@ Expected<ConfiguredNetworkGroupVector> VDeviceHrpcClient::configure(Hef &hef, co
 
 Expected<std::vector<std::reference_wrapper<Device>>> VDeviceHrpcClient::get_physical_devices() const
 {
-    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+    std::vector<std::reference_wrapper<Device>> result;
+    result.reserve(1);
+    result.push_back(*m_device);
+    return result;
 }
 
 Expected<std::vector<std::string>> VDeviceHrpcClient::get_physical_devices_ids() const
 {
-    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+    std::vector<std::string> result;
+    result.reserve(1);
+    result.push_back(m_device_id);
+    return result;
 }
 
 // Currently only homogeneous vDevice is allow (= all devices are from the same type)

@@ -8,7 +8,6 @@
 
 #include "transfer_common.hpp"
 #include "vdma/memory/mapped_buffer.hpp"
-#include "utils/buffer_storage.hpp"
 
 namespace hailort
 {
@@ -50,35 +49,27 @@ Expected<MemoryView> TransferBuffer::base_buffer()
     return Expected<MemoryView>(m_base_buffer);
 }
 
+Expected<int> TransferBuffer::dmabuf_fd()
+{
+    CHECK(TransferBufferType::DMABUF == m_type, HAILO_INTERNAL_FAILURE,
+        "dmabuf_fd is only supported for DMABUF type TransferBuffer");
+
+    return Expected<int>(m_dmabuf.fd);
+}
+
 Expected<vdma::MappedBufferPtr> TransferBuffer::map_buffer(HailoRTDriver &driver, HailoRTDriver::DmaDirection direction)
 {
-    CHECK_AS_EXPECTED(!m_mappings, HAILO_INTERNAL_FAILURE, "Buffer is already mapped");
-    if (TransferBufferType::DMABUF == m_type) {
-        auto mapped_buffer = vdma::MappedBuffer::create_shared_from_dmabuf(m_dmabuf.fd, m_dmabuf.size, driver, direction);
-        CHECK_EXPECTED(mapped_buffer);
-
-        m_mappings = mapped_buffer.value();
-        return mapped_buffer;
-    } else {
-
-        vdma::DmaAbleBufferPtr dma_able_buffer;
-        const auto storage_key = std::make_pair(m_base_buffer.data(), m_base_buffer.size());
-        if (auto storage = BufferStorageResourceManager::get_resource(storage_key)) {
-            auto dma_able_buffer_exp = storage->get()->get_dma_able_buffer();
-            CHECK_EXPECTED(dma_able_buffer_exp);
-            dma_able_buffer = dma_able_buffer_exp.release();
-        } else {
-            auto dma_able_buffer_exp = vdma::DmaAbleBuffer::create_from_user_address(m_base_buffer.data(), m_base_buffer.size());
-            CHECK_EXPECTED(dma_able_buffer_exp);
-            dma_able_buffer = dma_able_buffer_exp.release();
-        }
-
-        auto mapped_buffer = vdma::MappedBuffer::create_shared(std::move(dma_able_buffer), driver, direction);
-        CHECK_EXPECTED(mapped_buffer);
-
-        m_mappings = mapped_buffer.value();
-        return mapped_buffer;
+    if (m_mappings) {
+        return Expected<vdma::MappedBufferPtr>{m_mappings};
     }
+    if (TransferBufferType::DMABUF == m_type) {
+        TRY(m_mappings, vdma::MappedBuffer::create_shared_from_dmabuf(m_dmabuf.fd, m_dmabuf.size, driver, direction));
+    } else {
+        TRY(auto dma_able_buffer, vdma::DmaAbleBuffer::create_from_user_address(m_base_buffer.data(), m_base_buffer.size()));
+        TRY(m_mappings, vdma::MappedBuffer::create_shared(std::move(dma_able_buffer), driver, direction));
+    }
+
+    return Expected<vdma::MappedBufferPtr>{m_mappings};
 }
 
 hailo_status TransferBuffer::copy_to(MemoryView buffer)

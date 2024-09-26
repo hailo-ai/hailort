@@ -20,7 +20,6 @@
 
 #include "hailo/expected.hpp"
 #include "vdma/driver/hailort_driver.hpp"
-#include "os/mmap_buffer.hpp"
 
 namespace hailort {
 namespace vdma {

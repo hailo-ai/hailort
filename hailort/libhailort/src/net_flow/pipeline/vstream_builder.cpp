@@ -120,11 +120,6 @@ Expected<std::vector<OutputVStream>> VStreamsBuilderUtils::create_outputs(std::s
     std::vector<std::shared_ptr<PipelineElement>> elements;
     std::vector<OutputVStream> vstreams;
 
-    if (0 != (HAILO_FORMAT_FLAGS_HOST_ARGMAX & output_stream->get_info().format.flags))
-    {
-        LOGGER__WARNING("Using legacy implementation of Argmax in host. Please re-compile your model with latest DFC version");
-    }
-
     EventPtr core_op_activated_event = nullptr;
     if (!output_stream->is_scheduled()) {
         core_op_activated_event = output_stream->get_core_op_activated_event();

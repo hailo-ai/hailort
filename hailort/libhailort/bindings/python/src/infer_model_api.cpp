@@ -21,6 +21,7 @@
 #include <pybind11/functional.h>    // handle std::function
 #include <pybind11/chrono.h>        // handle std::chrono::milliseconds
 
+
 using namespace hailort;
 
 void InferModelWrapper::set_batch_size(uint16_t batch_size)
@@ -203,7 +204,7 @@ void ConfiguredInferModelWrapper::run(
     ConfiguredInferModelBindingsWrapper bindings,
     std::chrono::milliseconds timeout)
 {
-    auto status = m_configured_infer_model.run(bindings.get(), timeout);
+    auto status = m_configured_infer_model.run(bindings.release(), timeout);
     VALIDATE_STATUS(status);
 }
 
@@ -259,7 +260,7 @@ AsyncInferJobWrapper ConfiguredInferModelWrapper::run_async(
 
     std::vector<ConfiguredInferModel::Bindings> bindings;
     std::transform(user_bindings.begin(), user_bindings.end(), std::back_inserter(bindings),
-        [](ConfiguredInferModelBindingsWrapper &wrapper) { return wrapper.get(); });
+        [](ConfiguredInferModelBindingsWrapper &wrapper) { return wrapper.release(); });
 
     std::vector<void*> user_output_buffers;
     std::vector<BufferPtr> aligned_output_buffers;
@@ -341,10 +342,9 @@ void ConfiguredInferModelWrapper::execute_callbacks()
     while (true)
     {
         std::unique_lock<std::mutex> lock(m_queue_mutex);
-        m_cv.wait_for(lock, std::chrono::minutes(1), [this](){ return !m_callbacks_queue->empty() || !m_is_alive.load(); });
+        auto ret = m_cv.wait_for(lock, std::chrono::minutes(1), [this](){ return !m_callbacks_queue->empty() || !m_is_alive.load(); });
 
-        if (!m_is_alive.load())
-        {
+        if (!m_is_alive.load()) {
             while (!m_callbacks_queue->empty()) {
                 auto cb_status_pair = m_callbacks_queue->front();
                 auto &cb = cb_status_pair.first;
@@ -353,6 +353,10 @@ void ConfiguredInferModelWrapper::execute_callbacks()
                 m_callbacks_queue->pop();
             }
             return;
+        }
+
+        if (!ret) {
+            continue;
         }
 
         auto cb_status_pair = m_callbacks_queue->front();

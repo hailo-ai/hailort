@@ -136,7 +136,7 @@ private:
                 cls_index);
         } else {
             CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "SSD post-process received invalid cls input type: {}",
-                cls_metadata.format.type);
+                static_cast<int>(cls_metadata.format.type));
         }
         return HAILO_SUCCESS;
     }

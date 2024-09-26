@@ -156,6 +156,28 @@ public:
         VALIDATE_STATUS(status);
     }
 
+    auto get_cache_ids()
+    {
+        auto ids = get().get_cache_ids();
+        VALIDATE_EXPECTED(ids);
+        return ids;
+    }
+
+    py::bytes read_cache_buffer(uint32_t cache_id)
+    {
+        auto buffer = get().read_cache_buffer(cache_id);
+        VALIDATE_EXPECTED(buffer);
+        return py::bytes(buffer->as_pointer<char>(), buffer->size());
+    }
+
+    void write_cache_buffer(uint32_t cache_id, py::bytes buffer)
+    {
+        auto buffer_str = std::string(buffer);
+        auto buffer_view = MemoryView::create_const(buffer_str.data(), buffer_str.size());
+        auto status = get().write_cache_buffer(cache_id, buffer_view);
+        VALIDATE_STATUS(status);
+    }
+
     auto get_networks_names()
     {
         auto network_infos = get().get_network_infos();

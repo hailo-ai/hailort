@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.5.0)
 
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/spdlog.cmake)
 
@@ -30,6 +30,8 @@ target_link_libraries(hailort_service
 if(WIN32)
     # Needed in order to compile eth utils (we compile here ${HAILORT_COMMON_CPP_SOURCES}, consider removing)
     target_link_libraries(hailort_service Iphlpapi Shlwapi Kernel32 Advapi32)
+elseif(NOT CMAKE_SYSTEM_NAME STREQUAL Android)
+    target_link_libraries(hailort_service rt)
 endif()
 
 target_include_directories(hailort_service

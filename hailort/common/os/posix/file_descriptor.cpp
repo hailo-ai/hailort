@@ -9,7 +9,7 @@
 
 
 #include "common/logger_macros.hpp"
-#include "os/file_descriptor.hpp"
+#include "common/file_descriptor.hpp"
 #include <errno.h>
 
 namespace hailort

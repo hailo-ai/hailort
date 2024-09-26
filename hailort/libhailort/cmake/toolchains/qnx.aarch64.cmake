@@ -46,8 +46,6 @@ SET(CMAKE_CXX_FLAGS "-Vgcc_nto${QNX_PROCESSOR} -lang-c++ -Y_cxx" CACHE STRING "q
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--build-id=md5 -lang-c++ -lsocket ${EXTRA_CMAKE_LINKER_FLAGS}" CACHE STRING "exe_linker_flags")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--build-id=md5 -lang-c++ -lsocket ${EXTRA_CMAKE_LINKER_FLAGS}" CACHE STRING "so_linker_flags")
 
-# pybind is not supported in this platform
-set(HAILO_BUILD_PYBIND "OFF" CACHE STRING "hailo_build_pybind" FORCE)
 # GStreamer does not work on QNX currently
 set(HAILO_BUILD_GSTREAMER "OFF" CACHE STRING "hailo_build_gstreamer" FORCE)
 # Hailort service does not work on QNX currently

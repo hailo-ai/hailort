@@ -108,6 +108,27 @@ hailo_status HcpConfigCoreOp::update_cache_offset(int32_t offset_delta_bytes)
     return HAILO_INVALID_OPERATION;
 }
 
+Expected<std::vector<uint32_t>> HcpConfigCoreOp::get_cache_ids() const
+{
+    LOGGER__ERROR("get_cache_ids function is not supported on ETH core-ops");
+    return make_unexpected(HAILO_INVALID_OPERATION);
+}
+
+Expected<Buffer> HcpConfigCoreOp::read_cache_buffer(uint32_t cache_id)
+{
+    (void) cache_id;
+    LOGGER__ERROR("read_cache_buffer function is not supported on ETH core-ops");
+    return make_unexpected(HAILO_INVALID_OPERATION);
+}
+
+hailo_status HcpConfigCoreOp::write_cache_buffer(uint32_t cache_id, MemoryView buffer)
+{
+    (void) cache_id;
+    (void) buffer;
+    LOGGER__ERROR("write_cache_buffer function is not supported on ETH core-ops");
+    return HAILO_INVALID_OPERATION;
+}
+
 hailo_status HcpConfigCoreOp::activate_impl(uint16_t /* dynamic_batch_size */)
 {
     // Close older dataflows

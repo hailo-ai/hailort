@@ -31,6 +31,7 @@
 namespace hailort {
 namespace vdma {
 
+#define INVALID_FD (-1)
 
 class MappedBuffer;
 using MappedBufferPtr = std::shared_ptr<MappedBuffer>;
@@ -51,7 +52,7 @@ public:
         HailoRTDriver::DmaDirection data_direction);
 
     MappedBuffer(HailoRTDriver &driver, DmaAbleBufferPtr buffer, HailoRTDriver::DmaDirection data_direction,
-        HailoRTDriver::VdmaBufferHandle vdma_buffer_handle);
+        HailoRTDriver::VdmaBufferHandle vdma_buffer_handle, size_t size, int fd = INVALID_FD);
     MappedBuffer(MappedBuffer &&other) noexcept;
     MappedBuffer(const MappedBuffer &other) = delete;
     MappedBuffer &operator=(const MappedBuffer &other) = delete;
@@ -64,6 +65,7 @@ public:
     hailo_status synchronize(HailoRTDriver::DmaSyncDirection sync_direction);
     // TODO: validate that offset is cache aligned (HRT-9811)
     hailo_status synchronize(size_t offset, size_t count, HailoRTDriver::DmaSyncDirection sync_direction);
+    Expected<int> fd();
 
     /**
      * Copy data from buf_src parameter to this buffer.
@@ -97,6 +99,8 @@ private:
     DmaAbleBufferPtr m_buffer;
     HailoRTDriver::VdmaBufferHandle m_mapping_handle;
     const HailoRTDriver::DmaDirection m_data_direction;
+    size_t m_size;
+    int m_fd;
 };
 
 } /* namespace vdma */

@@ -898,7 +898,7 @@ hailo_status PipelineElement::empty_buffer_pool(BufferPoolPtr pool, hailo_status
         auto acquired_buffer = pool->acquire_buffer(timeout, true);
 
         if (HAILO_SUCCESS != acquired_buffer.status()) {
-            LOGGER__CRITICAL("Failed to aquire from pool in {} element!", name());
+            LOGGER__CRITICAL("Failed to acquire from pool in {} element!", name());
             return acquired_buffer.status();
         }
 

@@ -8,6 +8,7 @@
  **/
 
 #include "benchmark_command.hpp"
+#include "CLI/App.hpp"
 #include "hailortcli.hpp"
 #include "infer_stats_printer.hpp"
 
@@ -30,8 +31,8 @@ BenchmarkCommand::BenchmarkCommand(CLI::App &parent_app) :
      m_app->add_option("-t, --time-to-run", m_params.time_to_run, "Measurement time in seconds per hw_only/streaming/latency measurement mode")
         ->check(CLI::PositiveNumber)
         ->default_val(15);
-    m_app->add_option("--no-power", m_not_measure_power, "Skip power measurement, even if the platform supports it. The default value is False")
-        ->default_val("false");
+    auto no_power_opt = m_app->add_option("--no-power", m_not_measure_power, "Skip power measurement, even if the platform supports it. The default value is False");
+    hailo_deprecate_options(m_app, { std::make_shared<OptionDeprecation>(no_power_opt) }, false);
     m_app->add_option("--batch-size", m_params.batch_size, "Inference batch size (default is 1)")
         ->default_val(1);
     m_app->add_option("--power-mode", m_params.power_mode,
@@ -44,7 +45,7 @@ BenchmarkCommand::BenchmarkCommand(CLI::App &parent_app) :
     m_app->add_option("--input-files", m_params.inputs_name_and_file_path, "  The input files need to be in UINT8 before transformations.")
         ->check(InputNameToFileMap);
     m_app->add_option("--csv", m_csv_file_path, "If set print the output as csv to the specified path");
-    
+
     auto measure_power_group = m_app->add_option_group("Measure Power");
     CLI::Option *power_sampling_period = measure_power_group->add_option("--sampling-period",
         m_params.power_measurement.sampling_period, "Sampling Period");
@@ -61,18 +62,18 @@ BenchmarkCommand::BenchmarkCommand(CLI::App &parent_app) :
 }
 
 hailo_status BenchmarkCommand::execute()
-{   
+{
     std::cout << "Starting Measurements..." << std::endl;
-    
-    std::cout << "Measuring FPS in hw_only mode" << std::endl;
-    TRY(auto hw_only_mode_info, hw_only_mode(), "hw_only measuring failed");
-    
-    std::cout << "Measuring FPS " << (!m_not_measure_power ? "and Power " : "") << "in streaming mode" << std::endl; 
-    TRY(auto streaming_mode_info, fps_streaming_mode(), "FPS in streaming mode failed");
 
-    // TODO - HRT-6931 - measure latency only in the case of single device. 
+    std::cout << "Measuring FPS in HW-only mode" << std::endl;
+    TRY(auto hw_only_mode_info, hw_only_mode(), "Measuring FPS in HW-only mode failed");
+
+    std::cout << "Measuring FPS (and Power on supported platforms) in streaming mode" << std::endl; 
+    TRY(auto streaming_mode_info, fps_streaming_mode(), "Measuring FPS (and Power on supported platforms) in streaming mode failed");
+
+    // TODO - HRT-6931 - measure latency only in the case of single device.
     std::cout << "Measuring HW Latency" << std::endl;
-    TRY(auto latency_info, latency(), "Latency measuring failed");
+    TRY(auto latency_info, latency(), "Measuring Latency failed");
 
     assert(hw_only_mode_info.network_group_results().size() == streaming_mode_info.network_group_results().size());
     assert(latency_info.network_group_results().size() == streaming_mode_info.network_group_results().size());
@@ -101,7 +102,7 @@ hailo_status BenchmarkCommand::execute()
             std::cout << "        (overall)                 = " << InferStatsPrinter::latency_result_to_ms(overall_latency.value()) << " ms" << std::endl;
         }
     }
-    if (!m_not_measure_power) {
+    if (streaming_mode_info.power_measurements_are_valid) {
         for (const auto &pair : streaming_mode_info.m_power_measurements) {
             std::cout << "Device " << pair.first << ":" << std::endl;
             const auto &data = pair.second->data();
@@ -123,7 +124,7 @@ hailo_status BenchmarkCommand::execute()
 Expected<InferResult> BenchmarkCommand::hw_only_mode()
 {
     m_params.transform.transform = (m_params.inputs_name_and_file_path.size() > 0);
-    m_params.power_measurement.measure_power = false;
+    m_params.power_measurement.measure_power = ShouldMeasurePower::NO;
     m_params.measure_latency = false;
     m_params.mode = InferMode::HW_ONLY;
     return run_command_hef(m_params);
@@ -131,7 +132,7 @@ Expected<InferResult> BenchmarkCommand::hw_only_mode()
 
 Expected<InferResult> BenchmarkCommand::fps_streaming_mode()
 {
-    m_params.power_measurement.measure_power = !m_not_measure_power;
+    m_params.power_measurement.measure_power = ShouldMeasurePower::AUTO_DETECT;
     m_params.mode = InferMode::STREAMING;
     m_params.measure_latency = false;
     m_params.transform.transform = true;
@@ -141,7 +142,7 @@ Expected<InferResult> BenchmarkCommand::fps_streaming_mode()
 
 Expected<InferResult> BenchmarkCommand::latency()
 {
-    m_params.power_measurement.measure_power = false;
+    m_params.power_measurement.measure_power = ShouldMeasurePower::NO;
     m_params.measure_latency = true;
     m_params.mode = InferMode::STREAMING;
     m_params.transform.transform = true;

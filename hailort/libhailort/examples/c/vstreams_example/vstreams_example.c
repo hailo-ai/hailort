@@ -5,7 +5,7 @@
 /**
  * @file vstreams_example.c
  * This example demonstrates the basic data-path on HailoRT using the high level API - Virtual Stream Pipeline.
- * The program scans for Hailo-8 devices connected to a provided PCIe interface, generates random dataset,
+ * The program scans for Hailo devices connected to a provided PCIe interface, generates random dataset,
  * and runs it through the VDevice with virtual streams.
  **/
 
@@ -152,7 +152,6 @@ int main()
     REQUIRE_SUCCESS(status, l_release_hef, "Failed configure vdevice from hef");
     REQUIRE_ACTION(network_group_size == 1, status = HAILO_INVALID_ARGUMENT, l_release_hef, 
         "Invalid network group size");
-
 
     // Set input format type to auto - libhailort will not scale the data before writing to the HW
     status = hailo_make_input_vstream_params(network_group, unused, HAILO_FORMAT_TYPE_AUTO,

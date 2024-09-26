@@ -33,7 +33,7 @@ enum ProtoHEFExtensionType {
     TEST_ONE = 7;
     MULTI_NETWORK_VARIABLE_BATCH_SIZE = 8;
     IS_NMS_MULTI_CONTEXT = 9;
-    OFFLOAD_ARGMAX = 10;
+    OFFLOAD_ARGMAX = 10;    // Deprecated
     HW_PADDING = 11;
     KO_RUN_ASAP = 12;
     HAILO_NET_FLOW = 13;
@@ -577,7 +577,7 @@ message ProtoHEFAction {
         ProtoHEFActionNone none = 9;
         ProtoHEFActionAllowInputDataflow allow_input_dataflow = 10;
         ProtoHEFActionWaitForModuleConfigDone wait_for_module_config_done = 11;
-        ProtoHEFActionDebugSleep debug_sleep = 12;
+        ProtoHEFActionDebug debug = 12;
         ProtoHEFActionEnableNMS enable_nms = 13;
         ProtoHEFActionWriteDataByType write_data_by_type = 14;
         ProtoHEFActionSwitchLcuBatch switch_lcu_batch = 15;
@@ -610,6 +610,15 @@ message ProtoHEFActionWriteDataCcw {
     uint32 cfg_channel_index = 2;
 }
 
+enum ProtoHEFDebugType {
+    SLEEP = 0;
+    HALT = 1;
+};
+
+//halt actions, to stop the system
+message ProtoHEFActionDebugHalt {
+}
+
 message ProtoHEFActionWriteCompressedData {
     // The address to write the data to
     uint64 address = 1;
@@ -622,6 +631,16 @@ message ProtoHEFActionDebugSleep {
     // Debug action that asks FW to sleep for some duration
     uint64 duration_in_usec = 1;
 }
+
+
+message ProtoHEFActionDebug {
+    ProtoHEFDebugType type = 1;
+    oneof action {
+        ProtoHEFActionDebugSleep sleep = 2;
+        ProtoHEFActionDebugHalt halt = 3;
+    }
+}
+
 
 enum ProtoHEFWriteDataType {
     DATA_FROM_ACTION = 0;
@@ -925,7 +944,7 @@ message ProtoHEFEdgeLayerBase {
     uint32 data_bytes = 12;
 
     repeated ProtoHEFResourceIndices buffer_indices = 13;
-    bool host_argmax = 14;
+    bool host_argmax = 14;  // Deprecated
     uint32 max_shmifo_size = 15;
     uint32 engine_id = 16;
 }

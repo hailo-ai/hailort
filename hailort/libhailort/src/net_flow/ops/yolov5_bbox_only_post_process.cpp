@@ -45,8 +45,6 @@ hailo_status Yolov5BboxOnlyOpMetadata::validate_format_info()
 
         CHECK(!(HAILO_FORMAT_FLAGS_TRANSPOSED & output_metadata.second.format.flags), HAILO_INVALID_ARGUMENT, "Output {} is marked as transposed, which is not supported for this model.",
             output_metadata.first);
-        CHECK(!(HAILO_FORMAT_FLAGS_HOST_ARGMAX & output_metadata.second.format.flags), HAILO_INVALID_ARGUMENT, "Output {} is marked as argmax, which is not supported for this model.",
-            output_metadata.first);
     }
 
     assert(1 <= m_inputs_metadata.size());
@@ -117,7 +115,7 @@ hailo_status YOLOv5BboxOnlyPostProcessOp::execute(const std::map<std::string, Me
             status = add_bboxes<float32_t, uint16_t>(dst_ptr, next_bbox_output_offset, name_to_input.second,
                 input_metadata.quant_info, input_metadata.shape, input_metadata.padded_shape, yolo_config.anchors.at(name));
         } else {
-            CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "YOLO post-process received invalid input type {}", input_metadata.format.type);
+            CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "YOLO post-process received invalid input type {}", static_cast<int>(input_metadata.format.type));
         }
         CHECK_SUCCESS(status);
     }

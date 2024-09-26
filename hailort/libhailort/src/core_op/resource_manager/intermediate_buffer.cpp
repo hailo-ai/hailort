@@ -19,26 +19,30 @@ namespace hailort
 {
 Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> IntermediateBuffer::create_edge_layer(
     std::shared_ptr<vdma::VdmaBuffer> buffer, size_t buffer_offset, HailoRTDriver &driver, uint32_t transfer_size,
-    uint16_t max_batch_size, vdma::ChannelId d2h_channel_id, StreamingType streaming_type)
+    uint16_t max_batch_size, vdma::ChannelId d2h_channel_id, StreamingType streaming_type, uint16_t max_desc_size)
 {
     const bool is_circular = (streaming_type == StreamingType::CIRCULAR_CONTINUOS);
     auto buffer_exp = (vdma::VdmaBuffer::Type::CONTINUOUS == buffer->type()) ?
         create_ccb_edge_layer(buffer, buffer_offset, driver, transfer_size, max_batch_size, is_circular) :
-        create_sg_edge_layer(buffer, buffer_offset, driver, transfer_size, max_batch_size, d2h_channel_id, is_circular);
+        create_sg_edge_layer(buffer, buffer_offset, driver, transfer_size, max_batch_size, d2h_channel_id, is_circular,
+            max_desc_size);
 
     return buffer_exp;
 }
 
 Expected<IntermediateBuffer> IntermediateBuffer::create(HailoRTDriver &driver, uint32_t transfer_size,
     uint16_t max_batch_size, vdma::ChannelId d2h_channel_id, StreamingType streaming_type,
-    std::shared_ptr<vdma::VdmaBuffer> buffer, size_t buffer_offset)
+    std::shared_ptr<vdma::VdmaBuffer> buffer, size_t buffer_offset, uint16_t max_desc_size)
 {
+    max_desc_size = std::min(max_desc_size, driver.desc_max_page_size());
+
     LOGGER__TRACE("Creating IntermediateBuffer: transfer_size = {}, max_batch_size = {}, d2h_channel_id = {}, "
-        "streaming_type = {}, buffer = 0x{:X}, buffer_offset = {}",
-        transfer_size, max_batch_size, d2h_channel_id, streaming_type, (uintptr_t)buffer.get(), buffer_offset);
+        "streaming_type = {}, buffer = 0x{:X}, buffer_offset = {}, max_desc_size = {}",
+        transfer_size, max_batch_size, d2h_channel_id, streaming_type, (uintptr_t)buffer.get(), buffer_offset,
+        max_desc_size);
 
     TRY(auto edge_layer_ptr, create_edge_layer(buffer, buffer_offset, driver, transfer_size, max_batch_size,
-        d2h_channel_id, streaming_type));
+        d2h_channel_id, streaming_type, max_desc_size));
 
     if (streaming_type == StreamingType::BURST) {
         // We have max_batch_size transfers, so we program them one by one. The last transfer should report interrupt
@@ -67,10 +71,10 @@ Expected<IntermediateBuffer> IntermediateBuffer::create(HailoRTDriver &driver, u
 
 Expected<std::shared_ptr<IntermediateBuffer>> IntermediateBuffer::create_shared(HailoRTDriver &driver,
     uint32_t transfer_size, uint16_t max_batch_size, vdma::ChannelId d2h_channel_id, StreamingType streaming_type,
-    std::shared_ptr<vdma::VdmaBuffer> buffer, size_t buffer_offset)
+    std::shared_ptr<vdma::VdmaBuffer> buffer, size_t buffer_offset, uint16_t max_desc_size)
 {
     TRY(auto intermediate_buffer, create(driver, transfer_size, max_batch_size, d2h_channel_id, streaming_type,
-        buffer, buffer_offset));
+        buffer, buffer_offset, max_desc_size));
 
     auto intermediate_buffer_ptr = make_shared_nothrow<IntermediateBuffer>(std::move(intermediate_buffer));
     CHECK_NOT_NULL_AS_EXPECTED(intermediate_buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
@@ -147,13 +151,13 @@ IntermediateBuffer::IntermediateBuffer(std::unique_ptr<vdma::VdmaEdgeLayer> &&ed
 
 Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> IntermediateBuffer::create_sg_edge_layer(
     std::shared_ptr<vdma::VdmaBuffer> buffer, size_t buffer_offset, HailoRTDriver &driver, uint32_t transfer_size,
-    uint16_t batch_size, vdma::ChannelId d2h_channel_id, bool is_circular)
+    uint16_t batch_size, vdma::ChannelId d2h_channel_id, bool is_circular, uint16_t max_desc_size)
 {
     static const auto DONT_FORCE_DEFAULT_PAGE_SIZE = false;
     static const auto FORCE_BATCH_SIZE = true;
     static const auto IS_VDMA_ALIGNED_BUFFER = true;
     TRY(const auto buffer_requirements, vdma::BufferSizesRequirements::get_buffer_requirements_single_transfer(
-        vdma::VdmaBuffer::Type::SCATTER_GATHER, driver.desc_max_page_size(), batch_size, batch_size, transfer_size,
+        vdma::VdmaBuffer::Type::SCATTER_GATHER, max_desc_size, batch_size, batch_size, transfer_size,
         is_circular, DONT_FORCE_DEFAULT_PAGE_SIZE, FORCE_BATCH_SIZE, IS_VDMA_ALIGNED_BUFFER));
     const auto desc_page_size = buffer_requirements.desc_page_size();
     const auto descs_count = buffer_requirements.descs_count();

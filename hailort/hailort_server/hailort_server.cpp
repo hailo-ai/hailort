@@ -41,6 +41,16 @@ using namespace hailort;
             return make_unexpected(HAILO_INTERNAL_FAILURE); \
         } \
     } while (0)
+#define CHECK_AS_HRPC_STATUS(_cond, _status, T) \
+    do { \
+        if (!(_cond)) { \
+            LOGGER__ERROR("CHECK_AS_HRPC_STATUS failed, status: {}", _status); \
+            auto reply = T::serialize_reply(_status); \
+            if (reply) return reply; \
+            LOGGER__CRITICAL("Failed to create reply with status: {}", reply.status()); \
+            return make_unexpected(HAILO_INTERNAL_FAILURE); \
+        } \
+    } while (0)
 
 #define __HAILO_CONCAT(x, y) x ## y
 #define _HAILO_CONCAT(x, y) __HAILO_CONCAT(x, y)
@@ -115,7 +125,7 @@ hailo_status hrpc::HailoRTServer::cleanup_client_resources(RpcConnection client_
 
 Expected<std::unique_ptr<hrpc::HailoRTServer>> hrpc::HailoRTServer::create_unique()
 {
-    TRY(auto connection_context, ConnectionContext::create_shared(true));
+    TRY(auto connection_context, ConnectionContext::create_server_shared());
     auto res = make_unique_nothrow<HailoRTServer>(connection_context);
     CHECK_NOT_NULL(res, HAILO_OUT_OF_HOST_MEMORY);
     return res;
@@ -158,6 +168,7 @@ int main()
         TRY_AS_HRPC_STATUS(auto tuple, CreateInferModelSerializer::deserialize_request(request), CreateInferModelSerializer);
         auto vdevice_handle = std::get<0>(tuple);
         uint64_t hef_size = std::get<1>(tuple);
+        auto name = std::get<2>(tuple);
 
         assert(hef_size <= SIZE_MAX);
         TRY_AS_HRPC_STATUS(auto hef_buffer, Buffer::create(static_cast<size_t>(hef_size), BufferStorageParams::create_dma()), CreateInferModelSerializer);
@@ -166,8 +177,8 @@ int main()
         CHECK_SUCCESS_AS_HRPC_STATUS(status, CreateInferModelSerializer);
 
         auto &vdevice_manager = ServiceResourceManager<VDevice>::get_instance();
-        auto lambda = [view = MemoryView(hef_buffer)] (std::shared_ptr<VDevice> vdevice) {
-            return vdevice->create_infer_model(view);
+        auto lambda = [view = MemoryView(hef_buffer), &name] (std::shared_ptr<VDevice> vdevice) {
+            return vdevice->create_infer_model(view, name);
         };
         auto infer_model = vdevice_manager.execute<Expected<std::shared_ptr<InferModel>>>(vdevice_handle, lambda);
         CHECK_EXPECTED_AS_HRPC_STATUS(infer_model, CreateInferModelSerializer);
@@ -434,10 +445,10 @@ int main()
         auto bindings_lambda = [] (std::shared_ptr<ConfiguredInferModel> configured_infer_model) {
             return configured_infer_model->create_bindings();
         };
-        TRY_AS_HRPC_STATUS(auto request_tuple, RunAsyncSerializer::deserialize_request(request), RunAsyncSerializer);
-        auto configured_infer_model_handle = std::get<0>(request_tuple);
-        auto infer_model_handle = std::get<1>(request_tuple);
-        auto callback_id = std::get<2>(request_tuple);
+        TRY_AS_HRPC_STATUS(auto request_struct, RunAsyncSerializer::deserialize_request(request), RunAsyncSerializer);
+        auto configured_infer_model_handle = request_struct.configured_infer_model_handle;
+        auto infer_model_handle = request_struct.infer_model_handle;
+        auto callback_id = request_struct.callback_handle;
 
         auto bindings = cim_manager.execute<Expected<ConfiguredInferModel::Bindings>>(configured_infer_model_handle, bindings_lambda);
         CHECK_EXPECTED_AS_HRPC_STATUS(bindings, RunAsyncSerializer);
@@ -452,17 +463,28 @@ int main()
 
         std::vector<BufferPtr> inputs; // TODO: add infer vector pool
         inputs.reserve(infer_model_info->inputs_names.size());
+        uint32_t buffer_size_index = 0;
+
         for (const auto &input_name : infer_model_info->inputs_names) {
             TRY_AS_HRPC_STATUS(auto input, bindings->input(input_name), RunAsyncSerializer);
 
             TRY_AS_HRPC_STATUS(auto buffer_ptr, buffer_pool_per_cim[configured_infer_model_handle]->acquire_buffer(input_name),
                 RunAsyncSerializer);
 
-            auto status = server_context->connection().read_buffer(MemoryView(*buffer_ptr));
-            CHECK_SUCCESS_AS_HRPC_STATUS(status, RunAsyncSerializer);
+            uint32_t read_size = 0;
+            while (read_size < buffer_ptr->size()) {
+                uint32_t current_size = request_struct.input_buffer_sizes[buffer_size_index++];
+                CHECK_AS_HRPC_STATUS(read_size + current_size <= buffer_ptr->size(), HAILO_INTERNAL_FAILURE,
+                    RunAsyncSerializer);
+
+                auto status = server_context->connection().read_buffer(MemoryView(buffer_ptr->data() + read_size, current_size));
+                CHECK_SUCCESS_AS_HRPC_STATUS(status, RunAsyncSerializer);
+
+                read_size += current_size;
+            }
 
             inputs.emplace_back(buffer_ptr);
-            status = input.set_buffer(MemoryView(*buffer_ptr));
+            auto status = input.set_buffer(MemoryView(*buffer_ptr));
             CHECK_SUCCESS_AS_HRPC_STATUS(status, RunAsyncSerializer);
         }
 
@@ -488,7 +510,16 @@ int main()
                 return configured_infer_model->run_async(bindings,
                     [callback_id, server_context, inputs, outputs, &buffer_pool_per_cim, configured_infer_model_handle, infer_model_info]
                         (const AsyncInferCompletionInfo &completion_info) {
-                    auto status = server_context->trigger_callback(callback_id, completion_info.status, [outputs, completion_info] (hrpc::RpcConnection connection) -> hailo_status {
+                    for (uint32_t i = 0; i < inputs.size(); i++) {
+                        auto status = buffer_pool_per_cim[configured_infer_model_handle]->return_to_pool(infer_model_info->inputs_names[i], inputs[i]);
+                        if (status != HAILO_SUCCESS) {
+                            LOGGER__CRITICAL("return_to_pool failed for input {}, status = {}. Server should restart!", infer_model_info->inputs_names[i], status);
+                            return;
+                        }
+                    }
+
+                    auto status = server_context->trigger_callback(callback_id, completion_info.status, configured_infer_model_handle,
+                    [outputs, completion_info] (hrpc::RpcConnection connection) -> hailo_status {
                         if (HAILO_SUCCESS == completion_info.status) {
                             for (auto output : outputs) {
                                 auto status = connection.write_buffer(MemoryView(*output));
@@ -503,13 +534,6 @@ int main()
                         LOGGER__CRITICAL("Error {} returned from connection.write(). Server Should restart!", status);
                     }
 
-                    for (uint32_t i = 0; i < inputs.size(); i++) {
-                        status = buffer_pool_per_cim[configured_infer_model_handle]->return_to_pool(infer_model_info->inputs_names[i], inputs[i]);
-                        if (status != HAILO_SUCCESS) {
-                            LOGGER__CRITICAL("return_to_pool failed for input {}, status = {}. Server should restart!", infer_model_info->inputs_names[i], status);
-                            return;
-                        }
-                    }
                     for (uint32_t i = 0; i < outputs.size(); i++) {
                         status = buffer_pool_per_cim[configured_infer_model_handle]->return_to_pool(infer_model_info->outputs_names[i], outputs[i]);
                         if (status != HAILO_SUCCESS) {
@@ -525,6 +549,52 @@ int main()
         job->detach();
 
         TRY_AS_HRPC_STATUS(auto reply, RunAsyncSerializer::serialize_reply(HAILO_SUCCESS), RunAsyncSerializer);
+        return reply;
+    });
+    dispatcher.register_action(HailoRpcActionID::DEVICE__CREATE,
+    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+        auto status = CreateDeviceSerializer::deserialize_request(request);
+        CHECK_SUCCESS_AS_HRPC_STATUS(status, CreateDeviceSerializer);
+
+        TRY_AS_HRPC_STATUS(auto device, Device::create(), CreateDeviceSerializer);
+
+        auto &manager = ServiceResourceManager<Device>::get_instance();
+        auto id = manager.register_resource(SINGLE_CLIENT_PID, std::move(device));
+        auto reply = CreateDeviceSerializer::serialize_reply(HAILO_SUCCESS, id);
+        return reply;
+    });
+    dispatcher.register_action(HailoRpcActionID::DEVICE__DESTROY,
+    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+        auto &manager = ServiceResourceManager<Device>::get_instance();
+        TRY_AS_HRPC_STATUS(auto device_handle, DestroyDeviceSerializer::deserialize_request(request), DestroyDeviceSerializer);
+        (void)manager.release_resource(device_handle, SINGLE_CLIENT_PID);
+        TRY_AS_HRPC_STATUS(auto reply, DestroyDeviceSerializer::serialize_reply(HAILO_SUCCESS), DestroyDeviceSerializer);
+        return reply;
+    });
+    dispatcher.register_action(HailoRpcActionID::DEVICE__IDENTIFY,
+    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+        TRY_AS_HRPC_STATUS(auto device_handle, IdentifyDeviceSerializer::deserialize_request(request), IdentifyDeviceSerializer);
+
+        auto &manager = ServiceResourceManager<Device>::get_instance();
+        auto device_lambda = [] (std::shared_ptr<Device> device) {
+            return device->identify();
+        };
+        TRY_AS_HRPC_STATUS(auto identity,
+            manager.execute<Expected<hailo_device_identity_t>>(device_handle, device_lambda), IdentifyDeviceSerializer);
+        TRY_AS_HRPC_STATUS(auto reply, IdentifyDeviceSerializer::serialize_reply(HAILO_SUCCESS, identity), IdentifyDeviceSerializer);
+        return reply;
+    });
+    dispatcher.register_action(HailoRpcActionID::DEVICE__EXTENDED_INFO,
+    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+        TRY_AS_HRPC_STATUS(auto device_handle, ExtendedDeviceInfoSerializer::deserialize_request(request), ExtendedDeviceInfoSerializer);
+
+        auto &manager = ServiceResourceManager<Device>::get_instance();
+        auto device_lambda = [] (std::shared_ptr<Device> device) {
+            return device->get_extended_device_information();
+        };
+        TRY_AS_HRPC_STATUS(auto extended_info,
+            manager.execute<Expected<hailo_extended_device_information_t>>(device_handle, device_lambda), ExtendedDeviceInfoSerializer);
+        TRY_AS_HRPC_STATUS(auto reply, ExtendedDeviceInfoSerializer::serialize_reply(HAILO_SUCCESS, extended_info), ExtendedDeviceInfoSerializer);
         return reply;
     });
 

@@ -59,6 +59,9 @@ public:
     virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) override;
     virtual Expected<hailo_cache_info_t> get_cache_info() const override;
     virtual hailo_status update_cache_offset(int32_t offset_delta_bytes) override;
+    virtual Expected<std::vector<uint32_t>> get_cache_ids() const override;
+    virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) override;
+    virtual hailo_status write_cache_buffer(uint32_t cache_id, MemoryView buffer) override;
 
     virtual ~HcpConfigCoreOp() = default;
     HcpConfigCoreOp(const HcpConfigCoreOp &other) = delete;

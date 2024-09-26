@@ -36,79 +36,60 @@ static std::shared_ptr<uint8_t> page_aligned_alloc(size_t size)
 
 int main()
 {
-    auto vdevice = VDevice::create();
-    if (!vdevice) {
-        std::cerr << "Failed create vdevice, status = " << vdevice.status() << std::endl;
-        return vdevice.status();
-    }
-    std::cout << "VDevice created" << std::endl;
+    try {
+        auto vdevice = VDevice::create().expect("Failed create vdevice");
+        std::cout << "VDevice created" << std::endl;
 
-    // Create infer model from HEF file.
-    auto infer_model_exp = vdevice.value()->create_infer_model(HEF_FILE);
-    if (!infer_model_exp) {
-        std::cerr << "Failed to create infer model, status = " << infer_model_exp.status() << std::endl;
-        return infer_model_exp.status();
-    }
-    std::cout << "InferModel created" << std::endl;
-    auto infer_model = infer_model_exp.release();
+        // Create infer model from HEF file.
+        auto infer_model = vdevice->create_infer_model(HEF_FILE).expect("Failed to create infer model");
+        std::cout << "InferModel created" << std::endl;
 
-    // Configure the infer model
-    auto configured_infer_model = infer_model->configure();
-    if (!configured_infer_model) {
-        std::cerr << "Failed to create configured infer model, status = " << configured_infer_model.status() << std::endl;
-        return configured_infer_model.status();
-    }
-    std::cout << "ConfiguredInferModel created" << std::endl;
+        /* The buffers are stored here to ensure memory safety. They will only be freed once
+           the configured_infer_model is released, guaranteeing that the buffers remain intact 
+           until the configured_infer_model is done using them */
+        std::vector<std::shared_ptr<uint8_t>> buffer_guards;
 
-    // The buffers are stored here as a guard for the memory. The buffer will be freed only after
-    // configured_infer_model will be released.
-    std::vector<std::shared_ptr<uint8_t>> buffer_guards;
+        // Configure the infer model
+        auto configured_infer_model = infer_model->configure().expect("Failed to create configured infer model");
+        std::cout << "ConfiguredInferModel created" << std::endl;
 
-    auto bindings = configured_infer_model->create_bindings();
-    if (!bindings) {
-        std::cerr << "Failed to create infer bindings, status = " << bindings.status() << std::endl;
-        return bindings.status();
-    }
+        auto bindings = configured_infer_model.create_bindings().expect("Failed to create infer bindings");
+        for (const auto &input_name : infer_model->get_input_names()) {
+            size_t input_frame_size = infer_model->input(input_name)->get_frame_size();
+            auto input_buffer = page_aligned_alloc(input_frame_size);
+            auto status = bindings.input(input_name)->set_buffer(MemoryView(input_buffer.get(), input_frame_size));
+            if (HAILO_SUCCESS != status) {
+                throw hailort_error(status, "Failed to set infer input buffer");
+            }
 
-    for (const auto &input_name : infer_model->get_input_names()) {
-        size_t input_frame_size = infer_model->input(input_name)->get_frame_size();
-        auto input_buffer = page_aligned_alloc(input_frame_size);
-        auto status = bindings->input(input_name)->set_buffer(MemoryView(input_buffer.get(), input_frame_size));
-        if (HAILO_SUCCESS != status) {
-            std::cerr << "Failed to set infer input buffer, status = " << status << std::endl;
-            return status;
+            buffer_guards.push_back(input_buffer);
         }
 
-        buffer_guards.push_back(input_buffer);
-    }
+        for (const auto &output_name : infer_model->get_output_names()) {
+            size_t output_frame_size = infer_model->output(output_name)->get_frame_size();
+            auto output_buffer = page_aligned_alloc(output_frame_size);
+            auto status = bindings.output(output_name)->set_buffer(MemoryView(output_buffer.get(), output_frame_size));
+            if (HAILO_SUCCESS != status) {
+                throw hailort_error(status, "Failed to set infer output buffer");
+            }
 
-    for (const auto &output_name : infer_model->get_output_names()) {
-        size_t output_frame_size = infer_model->output(output_name)->get_frame_size();
-        auto output_buffer = page_aligned_alloc(output_frame_size);
-        auto status = bindings->output(output_name)->set_buffer(MemoryView(output_buffer.get(), output_frame_size));
+            buffer_guards.push_back(output_buffer);
+        }
+        std::cout << "ConfiguredInferModel::Bindings created and configured" << std::endl;
+
+        std::cout << "Running inference..." << std::endl;
+        // Run the async infer job
+        auto job = configured_infer_model.run_async(bindings).expect("Failed to start async infer job");
+        auto status = job.wait(std::chrono::milliseconds(1000));
         if (HAILO_SUCCESS != status) {
-            std::cerr << "Failed to set infer output buffer, status = " << status << std::endl;
-            return status;
+            throw hailort_error(status, "Failed to wait for infer to finish");
         }
 
-        buffer_guards.push_back(output_buffer);
-    }
-    std::cout << "ConfiguredInferModel::Bindings created and configured" << std::endl;
+        std::cout << "Inference finished successfully" << std::endl;
+    } catch (const hailort_error &exception) {
+        std::cout << "Failed to run inference. status=" << exception.status() << ", error message: " << exception.what() << std::endl;
+        return exception.status();
+    };
 
-    std::cout << "Running inference..." << std::endl;
-    // Run the async infer job.
-    auto job = configured_infer_model->run_async(bindings.value());
-    if (!job) {
-        std::cerr << "Failed to start async infer job, status = " << job.status() << std::endl;
-        return job.status();
-    }
-
-    auto status = job->wait(std::chrono::milliseconds(1000));
-    if (HAILO_SUCCESS != status) {
-        std::cerr << "Failed to wait for infer to finish, status = " << status << std::endl;
-        return status;
-    }
-
-    std::cout << "Inference finished successfully" << std::endl;
     return HAILO_SUCCESS;
 }

@@ -43,6 +43,8 @@ inline std::ostream& operator<<(std::ostream& os, const hailo_status& status)
     return os << status_str << "(" << static_cast<int>(status) << ")";
 }
 
+template <> struct fmt::formatter<hailo_status> : fmt::ostream_formatter {};
+
 namespace hailort
 {
 

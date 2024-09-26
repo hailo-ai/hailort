@@ -219,8 +219,8 @@ void HailoDeviceStatsImpl::join_thread()
 hailo_status HailoDeviceStatsImpl::run_measure_loop()
 {
     // Checking temperature sensor before starting thread
-    auto temp_info = m_device->get_chip_temperature();
-    GST_CHECK_EXPECTED_AS_STATUS(temp_info, m_element, RESOURCE, "Getting chip temperature failed, status = %d", temp_info.status());
+    auto initial_temp_info = m_device->get_chip_temperature();
+    GST_CHECK_EXPECTED_AS_STATUS(initial_temp_info, m_element, RESOURCE, "Getting chip temperature failed, status = %d", initial_temp_info.status());
 
     hailo_status status = m_device->stop_power_measurement();
     GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Stopping power measurement failed, status = %d", status);

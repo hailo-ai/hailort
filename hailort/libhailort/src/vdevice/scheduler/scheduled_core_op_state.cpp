@@ -65,7 +65,7 @@ bool ScheduledCoreOp::use_dynamic_batch_flow() const
 hailo_status ScheduledCoreOp::set_timeout(const std::chrono::milliseconds &timeout)
 {
     m_timeout = timeout;
-    LOGGER__INFO("Setting scheduler timeout of {} to {}ms", m_core_op->name(), timeout.count());
+    LOGGER__INFO("Setting scheduler threshold timeout of {} to {}ms", m_core_op->name(), timeout.count());
     return HAILO_SUCCESS;
 }
 
@@ -94,7 +94,7 @@ bool ScheduledCoreOp::is_over_threshold() const
     return m_requested_infer_requests.load() >= m_min_threshold;
 }
 
-bool ScheduledCoreOp::is_over_timeout() const
+bool ScheduledCoreOp::is_over_threshold_timeout() const
 {
     return m_timeout <= (std::chrono::steady_clock::now() - m_last_run_time_stamp);
 }

@@ -362,6 +362,14 @@ Expected<ordered_json> DownloadActionListCommand::parse_action_data(uint32_t bas
             data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__resume_vdma_channel_action_data_t *>(action);
             action_length_local = sizeof(CONTEXT_SWITCH_DEFS__resume_vdma_channel_action_data_t);
             break;
+        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_SLEEP:
+            data_json = *reinterpret_cast<CONTEXT_SWITCH_DEFS__sleep_action_data_t *>(action);
+            action_length_local = sizeof(CONTEXT_SWITCH_DEFS__sleep_action_data_t);
+            break;
+        case CONTEXT_SWITCH_DEFS__ACTION_TYPE_HALT:
+            data_json = json({});
+            action_length_local = 0;
+            break;
         case CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT:
             // Fallthrough
             // Handling CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT is needed because we compile this file with -Wswitch-enum
@@ -413,9 +421,10 @@ Expected<ordered_json> DownloadActionListCommand::parse_context(Device &device, 
     uint8_t converted_context_type = static_cast<uint8_t>(context_type);
     uint32_t action_list_base_address = 0;
     uint32_t batch_counter = 0;
+    uint32_t idle_time = 0;
 
     TRY(auto action_list, device.download_context_action_list(network_group_id, converted_context_type, context_index,
-        &action_list_base_address, &batch_counter));
+        &action_list_base_address, &batch_counter, &idle_time));
     // Needs to fit in 2 bytes due to firmware limitation of action list size
     CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(action_list.size()), HAILO_INTERNAL_FAILURE,
         "Action list size is expected to fit in 2B. actual size is {}", action_list.size());
@@ -424,6 +433,7 @@ Expected<ordered_json> DownloadActionListCommand::parse_context(Device &device, 
         {"action_list_base_address", action_list_base_address},
         {"action_list_size", action_list.size() },
         {"batch_counter", batch_counter},
+        {"idle_time", idle_time},
         {"context_name", context_name},
     };
 

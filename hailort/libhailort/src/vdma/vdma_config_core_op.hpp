@@ -69,6 +69,8 @@ public:
     hailo_status register_cache_update_callback();
     hailo_status unregister_cache_update_callback();
 
+    hailo_status bind_buffers(std::unordered_map<std::string, TransferRequest> &transfers);
+
     virtual Expected<hailo_stream_interface_t> get_default_streams_interface() override;
 
     virtual Expected<std::shared_ptr<LatencyMetersMap>> get_latency_meters() override;
@@ -81,14 +83,15 @@ public:
     virtual hailo_status set_scheduler_priority(uint8_t priority, const std::string &network_name) override;
     virtual Expected<HwInferResults> run_hw_infer_estimator() override;
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &) override;
-    virtual Expected<Buffer> get_cache_buffer(uint32_t cache_id) override;
-    virtual Expected<std::map<uint32_t, Buffer>> get_cache_buffers() override;
     virtual bool has_caches() const override;
     virtual Expected<uint32_t> get_cache_read_size() const override;
     virtual Expected<uint32_t> get_cache_write_size() const override;
     virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) override;
     virtual Expected<hailo_cache_info_t> get_cache_info() const;
     virtual hailo_status update_cache_offset(int32_t offset_delta_bytes) override;
+    virtual Expected<std::vector<uint32_t>> get_cache_ids() const override;
+    virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) override;
+    virtual hailo_status write_cache_buffer(uint32_t cache_id, MemoryView buffer) override;
 
     virtual ~VdmaConfigCoreOp() = default;
     VdmaConfigCoreOp(const VdmaConfigCoreOp &other) = delete;

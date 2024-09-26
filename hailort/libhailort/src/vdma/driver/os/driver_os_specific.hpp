@@ -11,7 +11,7 @@
 #define _HAILO_DRIVER_OS_SPECIFIC_HPP_
 
 #include "hailo/expected.hpp"
-#include "os/file_descriptor.hpp"
+#include "common/file_descriptor.hpp"
 #include "vdma/driver/hailort_driver.hpp"
 
 #ifdef _WIN32

@@ -11,6 +11,7 @@
 #include "vdevice/scheduler/scheduled_stream.hpp"
 #include "vdevice/vdevice_native_stream.hpp"
 #include "net_flow/pipeline/vstream_internal.hpp"
+#include "common/utils.hpp"
 
 #define INVALID_BATCH_SIZE (-1)
 
@@ -458,20 +459,6 @@ Expected<Buffer> VDeviceCoreOp::get_intermediate_buffer(const IntermediateBuffer
     return m_core_ops.begin()->second->get_intermediate_buffer(key);
 }
 
-Expected<Buffer> VDeviceCoreOp::get_cache_buffer(uint32_t cache_id)
-{
-    CHECK_AS_EXPECTED(1 == m_core_ops.size(), HAILO_INVALID_OPERATION,
-        "get_cache_buffer function is not supported on more than 1 physical device.");
-    return m_core_ops.begin()->second->get_cache_buffer(cache_id);
-}
-
-Expected<std::map<uint32_t, Buffer>> VDeviceCoreOp::get_cache_buffers()
-{
-    CHECK_AS_EXPECTED(1 == m_core_ops.size(), HAILO_INVALID_OPERATION,
-        "get_cache_buffers function is not supported on more than 1 physical device.");
-    return m_core_ops.begin()->second->get_cache_buffers();
-}
-
 Expected<uint32_t> VDeviceCoreOp::get_cache_read_size() const
 {
     CHECK(1 == m_core_ops.size(), HAILO_INVALID_OPERATION,
@@ -518,6 +505,27 @@ hailo_status VDeviceCoreOp::update_cache_offset(int32_t offset_delta_bytes)
     return m_core_ops.begin()->second->update_cache_offset(offset_delta_bytes);
 }
 
+Expected<std::vector<uint32_t>> VDeviceCoreOp::get_cache_ids() const
+{
+    CHECK(1 == m_core_ops.size(), HAILO_INVALID_OPERATION,
+        "get_cache_ids function is not supported on more than 1 physical device.");
+    return m_core_ops.begin()->second->get_cache_ids();
+}
+
+Expected<Buffer> VDeviceCoreOp::read_cache_buffer(uint32_t cache_id)
+{
+    CHECK(1 == m_core_ops.size(), HAILO_INVALID_OPERATION,
+        "read_cache_buffer function is not supported on more than 1 physical device.");
+    return m_core_ops.begin()->second->read_cache_buffer(cache_id);
+}
+
+hailo_status VDeviceCoreOp::write_cache_buffer(uint32_t cache_id, MemoryView buffer)
+{
+    CHECK(1 == m_core_ops.size(), HAILO_INVALID_OPERATION,
+        "write_cache_buffer function is not supported on more than 1 physical device.");
+    return m_core_ops.begin()->second->write_cache_buffer(cache_id, buffer);
+}
+
 hailo_status VDeviceCoreOp::add_to_trace()
 {
     const auto batch_size = get_stream_batch_size(m_config_params.stream_params_by_name.begin()->first);
@@ -544,6 +552,21 @@ hailo_status VDeviceCoreOp::add_to_trace()
     }
 
     return HAILO_SUCCESS;
+}
+
+bool VDeviceCoreOp::equal_batch(const std::map<std::string, hailo_network_parameters_t> &lhs, const std::map<std::string, hailo_network_parameters_t> &rhs)
+{
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+
+    for (const auto &lhs_pair : lhs) {
+        if ((!contains(rhs, lhs_pair.first)) || (rhs.at(lhs_pair.first).batch_size != lhs_pair.second.batch_size)) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 } /* namespace hailort */

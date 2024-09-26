@@ -30,7 +30,7 @@ struct transformation_params {
 };
 
 struct measure_power_params {
-    bool measure_power;
+    ShouldMeasurePower measure_power;
     bool measure_current;
     uint32_t sampling_period;
     uint32_t averaging_factor;

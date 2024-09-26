@@ -21,11 +21,18 @@
 #define __TENSOR_META_HPP__
 
 #include "hailo/hailort.h"
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#include <gst/gst.h>
-#pragma GCC diagnostic pop
+// TODO HRT-14797: Remove these ifdefs + return the hailo_gst.h include - after fixing deb_packaging.py + gstreamer/cmakelists.txt
+#ifdef _MSC_VER
+    #pragma warning(push)
+    #pragma warning(disable : 4244)  // Disable conversion warnings
+    #include <gst/gst.h>
+    #pragma warning(pop)
+#else
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wconversion"
+    #include <gst/gst.h>
+    #pragma GCC diagnostic pop
+#endif
 
 #define TENSOR_META_API_NAME "GstHailoTensorMetaAPI"
 #define TENSOR_META_IMPL_NAME "GstHailoTensorMeta"

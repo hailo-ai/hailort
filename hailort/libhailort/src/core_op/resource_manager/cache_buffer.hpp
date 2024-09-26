@@ -19,8 +19,8 @@ namespace hailort
 class CacheBuffer final
 {
 public:
-    static Expected<CacheBuffer> create(HailoRTDriver &driver, uint32_t cache_size,
-        uint32_t input_size, uint32_t output_size);
+    static Expected<CacheBuffer> create(std::shared_ptr<vdma::VdmaBuffer> backing_buffer, uint32_t cache_size,
+        uint32_t input_size, uint32_t output_size, uint32_t entry_size);
 
     CacheBuffer(CacheBuffer &&) = default;
     CacheBuffer(const CacheBuffer &) = delete;
@@ -34,7 +34,9 @@ public:
     ExpectedRef<IntermediateBuffer> set_output_channel(HailoRTDriver &driver, vdma::ChannelId channel_id);
     ExpectedRef<IntermediateBuffer> get_input();
     ExpectedRef<IntermediateBuffer> get_output();
-    Expected<Buffer> read_entire_cache();
+    Expected<Buffer> read_cache();
+    hailo_status write_cache(MemoryView buffer);
+
     uint32_t cache_size() const;
     uint32_t input_size() const;
     uint32_t output_size() const;
@@ -42,12 +44,13 @@ public:
     bool is_configured() const;
 
 private:
-    CacheBuffer(uint32_t cache_size, uint32_t input_size, uint32_t output_size,
+    CacheBuffer(uint32_t cache_size, uint32_t input_size, uint32_t output_size, uint16_t entry_size,
         std::shared_ptr<vdma::VdmaBuffer> backing_buffer);
 
     const uint32_t m_cache_size;
     const uint32_t m_input_size;
     const uint32_t m_output_size;
+    const uint16_t m_entry_size;
     const std::shared_ptr<vdma::VdmaBuffer> m_backing_buffer;
     // Each cache buffer has an input and output IntermediateBuffer -
     // * They both share the same backing buffer.

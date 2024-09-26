@@ -27,33 +27,47 @@ static GstMemory *gst_hailo_allocator_alloc(GstAllocator* allocator, gsize size,
     GstHailoAllocator *hailo_allocator = GST_HAILO_ALLOCATOR(allocator);
     auto buffer = Buffer::create(size, BufferStorageParams::create_dma());
     if (!buffer) {
-        ERROR("Creating buffer for allocator has failed, status = %d\n", buffer.status());
+        HAILONET_ERROR("Creating buffer for allocator has failed, status = %d\n", buffer.status());
         return nullptr;
     }
 
     GstMemory *memory = gst_memory_new_wrapped(static_cast<GstMemoryFlags>(0), buffer->data(),
         buffer->size(), 0, buffer->size(), nullptr, nullptr);
     if (nullptr == memory) {
-        ERROR("Creating new GstMemory for allocator has failed!\n");
+        HAILONET_ERROR("Creating new GstMemory for allocator has failed!\n");
         return nullptr;
     }
 
-    hailo_allocator->buffers[memory] = std::move(buffer.release());
+    assert(nullptr != hailo_allocator->buffers);
+    (*hailo_allocator->buffers)[memory] = std::move(buffer.release());
     return memory;
 }
 
 static void gst_hailo_allocator_free(GstAllocator* allocator, GstMemory *mem) {
     GstHailoAllocator *hailo_allocator = GST_HAILO_ALLOCATOR(allocator);
-    hailo_allocator->buffers.erase(mem);
+    hailo_allocator->buffers->erase(mem);
+}
+
+static void gst_hailo_allocator_dispose(GObject *object) {
+    GstHailoAllocator *allocator = GST_HAILO_ALLOCATOR(object);
+
+    if (allocator->buffers != nullptr) {
+        delete allocator->buffers;
+        allocator->buffers = nullptr;
+    }
+
+    G_OBJECT_CLASS(gst_hailo_allocator_parent_class)->dispose(object);
 }
 
 static void gst_hailo_allocator_class_init(GstHailoAllocatorClass* klass) {
-    GstAllocatorClass* allocator_class = GST_ALLOCATOR_CLASS(klass);
+    GObjectClass *gobject_class = G_OBJECT_CLASS(klass);
+    gobject_class->dispose = gst_hailo_allocator_dispose;
 
+    GstAllocatorClass* allocator_class = GST_ALLOCATOR_CLASS(klass);
     allocator_class->alloc = gst_hailo_allocator_alloc;
     allocator_class->free = gst_hailo_allocator_free;
 }
 
 static void gst_hailo_allocator_init(GstHailoAllocator* allocator) {
-    allocator->buffers = std::unordered_map<GstMemory*, Buffer>();    
+    allocator->buffers = new std::unordered_map<GstMemory*, Buffer>();
 }

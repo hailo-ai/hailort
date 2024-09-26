@@ -9,8 +9,7 @@
 
 
 #include "common/logger_macros.hpp"
-#include "os/file_descriptor.hpp"
-#include "os/windows/osdep.hpp"
+#include "common/file_descriptor.hpp"
 
 namespace hailort
 {

@@ -35,8 +35,6 @@ G_BEGIN_DECLS
 #define GST_IS_HAILO_DMABUF_ALLOCATOR(obj) (G_TYPE_CHECK_INSTANCE_TYPE ((obj), GST_TYPE_HAILO_DMABUF_ALLOCATOR))
 #define GST_IS_HAILO_DMABUF_ALLOCATOR_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass), GST_TYPE_HAILO_DMABUF_ALLOCATOR))
 
-#define GST_HAILO_USE_DMA_BUFFER_ENV_VAR "GST_HAILO_USE_DMA_BUFFER"
-
 class GstHailoDmaHeapControl {
 public:
     static bool dma_heap_fd_open;
@@ -46,7 +44,7 @@ public:
 struct GstHailoDmabufAllocator
 {
     GstDmaBufAllocator parent;
-    std::unordered_map<GstMemory*, dma_heap_allocation_data> dma_buffers;
+    std::unordered_map<GstMemory*, dma_heap_allocation_data> *dma_buffers;
 };
 
 struct GstHailoDmabufAllocatorClass

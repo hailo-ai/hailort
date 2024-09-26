@@ -90,5 +90,4 @@ private:
     NetworkParams m_params;
 };
 
-
 #endif /* _HAILO_HAILORTCLI_RUN2_RUN2_COMMAND_HPP_ */

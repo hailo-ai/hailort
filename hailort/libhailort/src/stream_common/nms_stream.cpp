@@ -77,7 +77,7 @@ hailo_status NMSStreamReader::advance_state_machine(NMSBurstState *burst_state, 
             if (HAILO_BURST_TYPE_H8_PER_CLASS == burst_type) {
                 CHECK_IN_DEBUG((NMSBurstState::NMS_BURST_STATE_WAITING_FOR_DELIMETER == (*burst_state)) ||
                     (NMSBurstState::NMS_BURST_STATE_WAITING_FOR_PADDING == (*burst_state)), HAILO_NMS_BURST_INVALID_DATA,
-                    "Invalid state, H8 NMS burst cannot receive delimeter while in state {}", (*burst_state));
+                    "Invalid state, H8 NMS burst cannot receive delimeter while in state {}", static_cast<int>(*burst_state));
                 // To differentiate from H8 padding - where we should not increment amount of delimeters found
                 if ((*burst_state) == NMSBurstState::NMS_BURST_STATE_WAITING_FOR_DELIMETER) {
                     (*num_delimeters_received)++;
@@ -99,12 +99,12 @@ hailo_status NMSStreamReader::advance_state_machine(NMSBurstState *burst_state, 
 
             } else if (HAILO_BURST_TYPE_H15_PER_CLASS == burst_type) {
                 CHECK_IN_DEBUG(NMSBurstState::NMS_BURST_STATE_WAITING_FOR_DELIMETER == (*burst_state), HAILO_NMS_BURST_INVALID_DATA,
-                    "Invalid state, H15 Per class NMS burst cannot receive delimeter while in state {}", (*burst_state));
+                    "Invalid state, H15 Per class NMS burst cannot receive delimeter while in state {}", static_cast<int>(*burst_state));
                 (*num_delimeters_received)++;
                 *burst_state = NMSBurstState::NMS_BURST_STATE_WAITING_FOR_IMAGE_DELIMETER;
             } else {
                 CHECK_IN_DEBUG(NMSBurstState::NMS_BURST_STATE_WAITING_FOR_DELIMETER == (*burst_state), HAILO_NMS_BURST_INVALID_DATA,
-                    "Invalid state, H15 Per Frame NMS burst cannot receive delimeter while in state {}", (*burst_state));
+                    "Invalid state, H15 Per Frame NMS burst cannot receive delimeter while in state {}", static_cast<int>(*burst_state));
                 // in hailo15 per frame - if number of delimeter is same as num classes - we expect image delimeter next 
                 // otherwise expect another delimeter
                 (*num_delimeters_received)++;
@@ -121,7 +121,7 @@ hailo_status NMSStreamReader::advance_state_machine(NMSBurstState *burst_state, 
                 "Invalid state, H8 NMS burst cannot receive image delimeter");
 
             CHECK_IN_DEBUG(NMSBurstState::NMS_BURST_STATE_WAITING_FOR_IMAGE_DELIMETER == (*burst_state), HAILO_NMS_BURST_INVALID_DATA,
-                "Invalid state, H15 NMS burst cannot receive image delimeter in state {}", (*burst_state));
+                "Invalid state, H15 NMS burst cannot receive image delimeter in state {}", static_cast<int>(*burst_state));
 
             // in both hailo15 per class and per frame - when receiving image delimeter we move to expecting padding
             *burst_state = NMSBurstState::NMS_BURST_STATE_WAITING_FOR_PADDING;
@@ -143,7 +143,7 @@ hailo_status NMSStreamReader::advance_state_machine(NMSBurstState *burst_state, 
         {
             if ((HAILO_BURST_TYPE_H15_PER_CLASS == burst_type) || (HAILO_BURST_TYPE_H15_PER_FRAME == burst_type)) {
                 CHECK_IN_DEBUG(NMSBurstState::NMS_BURST_STATE_WAITING_FOR_PADDING == (*burst_state), HAILO_NMS_BURST_INVALID_DATA,
-                    "Invalid state, H15 NMS burst cannot receive padding in state {}", (*burst_state));
+                    "Invalid state, H15 NMS burst cannot receive padding in state {}", static_cast<int>(*burst_state));
             }
             // In case of padding next state is wait for padding unless it is last padding of burst - then next state will be
             // Wait for delimeter - will only get to this stage in debug - in release once image delimeter is read we ignore rest of
@@ -393,6 +393,11 @@ hailo_status NmsOutputStream::cancel_pending_transfers()
 {
     m_reader_thread.cancel_pending_transfers();
     return m_base_stream->cancel_pending_transfers();
+}
+
+// Binding buffer not supported on nms stream, returning success so it won't fail the scheduler
+hailo_status NmsOutputStream::bind_buffer(TransferRequest &&) {
+    return HAILO_SUCCESS;
 }
 
 NmsReaderThread::NmsReaderThread(std::shared_ptr<OutputStreamBase> base_stream, size_t max_queue_size,

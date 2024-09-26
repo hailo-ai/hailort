@@ -9,6 +9,7 @@
 
 #include "vdevice/scheduler/scheduler_oracle.hpp"
 #include "utils/profiler/tracer_macros.hpp"
+#include "common/internal_env_vars.hpp"
 
 
 namespace hailort
@@ -99,7 +100,7 @@ std::vector<RunParams> CoreOpsSchedulerOracle::get_oracle_decisions(SchedulerBas
 
             // If there is no suitable model when checking with threshold, and the idle optimization is disabled,
             // try again without threshold.
-            if (!is_env_variable_on("HAILO_DISABLE_IDLE_OPT") && (core_op_handle == INVALID_CORE_OP_HANDLE)) {
+            if (!is_env_variable_on(HAILO_DISABLE_IDLE_OPT_ENV_VAR) && (core_op_handle == INVALID_CORE_OP_HANDLE)) {
                 core_op_handle = choose_next_model(scheduler, active_device_info->device_id, !CHECK_THRESHOLD);
             }
 

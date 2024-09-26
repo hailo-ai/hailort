@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.5.0)
 
 # TODO: remove execute_cmake. support script mode?
 execute_process(COMMAND

@@ -44,6 +44,19 @@ protected:
     virtual hailo_status execute_on_device(Device &device) override;
 };
 
+class FwControlDebugHaltContinueCommand : public DeviceCommand {
+public:
+    explicit FwControlDebugHaltContinueCommand(CLI::App &parent_app);
+
+protected:
+    virtual hailo_status execute_on_device(Device &device) override;
+};
+
+class FwControlDebugCommand : public ContainerCommand {
+public:
+    explicit FwControlDebugCommand(CLI::App &parent_app);
+};
+
 class FwControlCommand : public ContainerCommand {
 public:
     explicit FwControlCommand(CLI::App &parent_app);

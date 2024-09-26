@@ -271,6 +271,9 @@ public:
     virtual void handle_trace(const DumpProfilerStateTrace&) {};
     virtual void handle_trace(const InitProfilerProtoTrace&) {};
     virtual void handle_trace(const HefLoadedTrace&) {};
+    virtual bool should_dump_trace_file() { return false; }
+    virtual bool should_stop () { return false; }
+    virtual hailo_status dump_trace_file() { return HAILO_SUCCESS; }
 
 };
 

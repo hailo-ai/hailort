@@ -138,67 +138,78 @@ Expected<std::string> NetworkRunner::get_network_group_name(const NetworkParams 
 Expected<std::shared_ptr<FullAsyncNetworkRunner>> FullAsyncNetworkRunner::create_shared(VDevice &vdevice,
     NetworkParams params)
 {
-        TRY(auto infer_model_ptr, vdevice.create_infer_model(params.hef_path));
-        TRY(auto net_group_name, get_network_group_name(params, infer_model_ptr->hef()));
+    std::string net_group_name = params.net_group_name;
+    if (net_group_name.empty()) {
+        TRY(auto hef, Hef::create(params.hef_path));
+        TRY(net_group_name, get_network_group_name(params, hef));
+    }
+    TRY(auto infer_model_ptr, vdevice.create_infer_model(params.hef_path, net_group_name));
 
-        /* Configure Params */
-        infer_model_ptr->set_batch_size(params.batch_size);
-        if (params.batch_size == HAILO_DEFAULT_BATCH_SIZE) {
-            // Changing batch_size to 1 (after configuring the vdevice) - as we iterate over 'params.batch_size' in latency measurements scenarios
-            params.batch_size = 1;
+    /* Validate params */
+    for (const auto &vstream_params : params.vstream_params) {
+        CHECK_AS_EXPECTED((contains(infer_model_ptr->get_input_names(), vstream_params.name)) ||
+            (contains(infer_model_ptr->get_output_names(), vstream_params.name)),
+            HAILO_INVALID_ARGUMENT, "The model doesnt have an edge with the given name '{}'", vstream_params.name);
+    }
+
+    /* Configure Params */
+    infer_model_ptr->set_batch_size(params.batch_size);
+    if (params.batch_size == HAILO_DEFAULT_BATCH_SIZE) {
+        // Changing batch_size to 1 (after configuring the vdevice) - as we iterate over 'params.batch_size' in latency measurements scenarios
+        params.batch_size = 1;
+    }
+    if (params.measure_hw_latency) {
+        infer_model_ptr->set_hw_latency_measurement_flags(HAILO_LATENCY_MEASURE);
+    }
+
+    /* Pipeline Params */
+    for (const auto &input_name : infer_model_ptr->get_input_names()) {
+        auto input_params_it = std::find_if(params.vstream_params.begin(), params.vstream_params.end(),
+            [&input_name](const VStreamParams &params) -> bool {
+                return params.name == input_name;
+            });
+        auto input_params = (input_params_it == params.vstream_params.end()) ? VStreamParams() : *input_params_it;
+
+        TRY(auto input_config, infer_model_ptr->input(input_name));
+        input_config.set_format_order(input_params.params.user_buffer_format.order);
+        input_config.set_format_type(input_params.params.user_buffer_format.type);
+    }
+    for (const auto &output_name : infer_model_ptr->get_output_names()) {
+        auto output_params_it = std::find_if(params.vstream_params.begin(), params.vstream_params.end(),
+            [&output_name](const VStreamParams &params) -> bool {
+                return params.name == output_name;
+            });
+        auto output_params = (output_params_it == params.vstream_params.end()) ? VStreamParams() : *output_params_it;
+
+        TRY(auto output_config, infer_model_ptr->output(output_name));
+        output_config.set_format_order(output_params.params.user_buffer_format.order);
+        output_config.set_format_type(output_params.params.user_buffer_format.type);
+    }
+
+    TRY(auto configured_model, infer_model_ptr->configure());
+    auto configured_infer_model_ptr = make_shared_nothrow<ConfiguredInferModel>(std::move(configured_model));
+    CHECK_NOT_NULL_AS_EXPECTED(configured_infer_model_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+    auto res = make_shared_nothrow<FullAsyncNetworkRunner>(params, net_group_name, vdevice,
+        infer_model_ptr, configured_infer_model_ptr);
+    CHECK_NOT_NULL_AS_EXPECTED(res, HAILO_OUT_OF_HOST_MEMORY);
+
+    if (params.measure_overall_latency || params.measure_hw_latency) {
+        CHECK_AS_EXPECTED((1 == res->get_input_names().size()), HAILO_INVALID_OPERATION,
+            "Latency measurement over multiple inputs network is not supported");
+
+        if (params.measure_overall_latency) {
+            auto overall_latency_meter = make_shared_nothrow<LatencyMeter>(std::set<std::string>{ "INFERENCE" }, // Since we check 'infer()' with single callback, we only address 1 output
+                OVERALL_LATENCY_TIMESTAMPS_LIST_LENGTH);
+            CHECK_NOT_NULL_AS_EXPECTED(overall_latency_meter, HAILO_OUT_OF_HOST_MEMORY);
+            res->set_overall_latency_meter(overall_latency_meter);
         }
-        if (params.measure_hw_latency) {
-            infer_model_ptr->set_hw_latency_measurement_flags(HAILO_LATENCY_MEASURE);
-        }
 
-        /* Pipeline Params */
-        for (const auto &input_name : infer_model_ptr->get_input_names()) {
-            auto input_params_it = std::find_if(params.vstream_params.begin(), params.vstream_params.end(),
-                [&input_name](const VStreamParams &params) -> bool {
-                    return params.name == input_name;
-                });
-            auto input_params = (input_params_it == params.vstream_params.end()) ? VStreamParams() : *input_params_it;
-
-            TRY(auto input_config, infer_model_ptr->input(input_name));
-            input_config.set_format_order(input_params.params.user_buffer_format.order);
-            input_config.set_format_type(input_params.params.user_buffer_format.type);
-        }
-        for (const auto &output_name : infer_model_ptr->get_output_names()) {
-            auto output_params_it = std::find_if(params.vstream_params.begin(), params.vstream_params.end(),
-                [&output_name](const VStreamParams &params) -> bool {
-                    return params.name == output_name;
-                });
-            auto output_params = (output_params_it == params.vstream_params.end()) ? VStreamParams() : *output_params_it;
-
-            TRY(auto output_config, infer_model_ptr->output(output_name));
-            output_config.set_format_order(output_params.params.user_buffer_format.order);
-            output_config.set_format_type(output_params.params.user_buffer_format.type);
-        }
-
-        TRY(auto configured_model, infer_model_ptr->configure());
-        auto configured_infer_model_ptr = make_shared_nothrow<ConfiguredInferModel>(std::move(configured_model));
-        CHECK_NOT_NULL_AS_EXPECTED(configured_infer_model_ptr, HAILO_OUT_OF_HOST_MEMORY);
-
-        auto res = make_shared_nothrow<FullAsyncNetworkRunner>(params, net_group_name, vdevice,
-            infer_model_ptr, configured_infer_model_ptr);
-        CHECK_NOT_NULL_AS_EXPECTED(res, HAILO_OUT_OF_HOST_MEMORY);
-
-        if (params.measure_overall_latency || params.measure_hw_latency) {
-            CHECK_AS_EXPECTED((1 == res->get_input_names().size()), HAILO_INVALID_OPERATION,
-                "Latency measurement over multiple inputs network is not supported");
-
-            if (params.measure_overall_latency) {
-                auto overall_latency_meter = make_shared_nothrow<LatencyMeter>(std::set<std::string>{ "INFERENCE" }, // Since we check 'infer()' with single callback, we only address 1 output
-                    OVERALL_LATENCY_TIMESTAMPS_LIST_LENGTH);
-                CHECK_NOT_NULL_AS_EXPECTED(overall_latency_meter, HAILO_OUT_OF_HOST_MEMORY);
-                res->set_overall_latency_meter(overall_latency_meter);
-            }
-
-            // We use a barrier for both hw and overall latency
-            auto latency_barrier = make_shared_nothrow<Barrier>(1); // Only 1 frame at a time
-            CHECK_NOT_NULL_AS_EXPECTED(latency_barrier, HAILO_OUT_OF_HOST_MEMORY);
-            res->set_latency_barrier(latency_barrier);
-        }
+        // We use a barrier for both hw and overall latency
+        auto latency_barrier = make_shared_nothrow<Barrier>(1); // Only 1 frame at a time
+        CHECK_NOT_NULL_AS_EXPECTED(latency_barrier, HAILO_OUT_OF_HOST_MEMORY);
+        res->set_latency_barrier(latency_barrier);
+    }
     return res;
 }
 
@@ -262,6 +273,14 @@ Expected<std::shared_ptr<NetworkRunner>> NetworkRunner::create_shared(VDevice &v
 
             auto output_streams = cfgr_net_group->get_output_streams();
             CHECK_AS_EXPECTED(output_streams.size() > 0, HAILO_INTERNAL_FAILURE);
+
+            /* Validate params */
+            for (const auto &stream_param : final_net_params.stream_params) {
+                CHECK_AS_EXPECTED(
+                    (std::any_of(input_streams.begin(), input_streams.end(), [name = stream_param.name] (const auto &stream) { return name == stream.get().name(); })) ||
+                        (std::any_of(output_streams.begin(), output_streams.end(), [name = stream_param.name] (const auto &stream) { return name == stream.get().name(); })),
+                    HAILO_INVALID_ARGUMENT, "The model doesnt have an edge with the given name '{}'", stream_param.name);
+            }
 
             auto net_runner = make_shared_nothrow<RawNetworkRunner>(final_net_params, net_group_name, vdevice,
                 std::move(input_streams), std::move(output_streams), cfgr_net_group);
@@ -370,13 +389,20 @@ double NetworkRunner::get_last_measured_fps()
 Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> NetworkRunner::create_vstreams(
     ConfiguredNetworkGroup &net_group, const std::map<std::string, hailo_vstream_params_t> &params)
 {//TODO: support network name
-    size_t match_count = 0;
+
+    /* Validate params */
+    TRY(auto input_vstreams_info, net_group.get_input_vstream_infos());
+    TRY(auto output_vstreams_info, net_group.get_output_vstream_infos());
+    for (const auto &pair : params) {
+        CHECK_AS_EXPECTED(
+            (std::any_of(input_vstreams_info.begin(), input_vstreams_info.end(), [name = pair.first] (const auto &info) { return name == std::string(info.name); })) ||
+                (std::any_of(output_vstreams_info.begin(), output_vstreams_info.end(), [name = pair.first] (const auto &info) { return name == std::string(info.name); })),
+            HAILO_INVALID_ARGUMENT, "The model doesnt have an edge with the given name '{}'", pair.first);
+    }
 
     std::map<std::string, hailo_vstream_params_t> input_vstreams_params;
-    TRY(auto input_vstreams_info, net_group.get_input_vstream_infos());
     for (auto &input_vstream_info : input_vstreams_info) {
         if (params.end() != params.find(input_vstream_info.name)) {
-            match_count++;
             input_vstreams_params.emplace(input_vstream_info.name, params.at(input_vstream_info.name));
         } else {
             input_vstreams_params.emplace(input_vstream_info.name, HailoRTDefaults::get_vstreams_params());
@@ -384,17 +410,13 @@ Expected<std::pair<std::vector<InputVStream>, std::vector<OutputVStream>>> Netwo
     }
 
     std::map<std::string, hailo_vstream_params_t> output_vstreams_params;
-    TRY(auto output_vstreams_info, net_group.get_output_vstream_infos());
     for (auto &output_vstream_info : output_vstreams_info) {
         if (params.end() != params.find(output_vstream_info.name)) {
-            match_count++;
             output_vstreams_params.emplace(output_vstream_info.name, params.at(output_vstream_info.name));
         } else {
             output_vstreams_params.emplace(output_vstream_info.name, HailoRTDefaults::get_vstreams_params());
         }
     }
-
-    CHECK(match_count == params.size(), make_unexpected(HAILO_INVALID_ARGUMENT), "One of the params has an invalid vStream name");
 
     TRY(auto input_vstreams, VStreamsBuilder::create_input_vstreams(net_group, input_vstreams_params));
     TRY(auto output_vstreams, VStreamsBuilder::create_output_vstreams(net_group, output_vstreams_params));

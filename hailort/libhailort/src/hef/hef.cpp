@@ -62,6 +62,7 @@ namespace hailort
 #define DEFAULT_BATCH_SIZE (1)
 #define SKIP_SPACE_COMMA_CHARACTERS (2)
 #define ALIGNED_TO_4_BYTES (4)
+#define MIN_SLEEP_TIME_USEC (1000)
 constexpr uint8_t DEFAULT_DIVISION_FACTOR = 1;
 
 static const uint8_t ENABLE_LCU_CONTROL_WORD[4] = {1, 0, 0, 0};
@@ -515,6 +516,7 @@ hailo_status Hef::Impl::parse_hef_file(const std::string &hef_path)
         CHECK_SUCCESS(status);
 
         ccws_offset = HEF_HEADER_SIZE_V1 + hef_header.hef_proto_size;
+        m_ccws_offset = ccws_offset;
 
         TRY(auto calculated_residue_size, calc_hef_residue_size(hef_reader, hef_header.version));
         TRY(auto calculated_crc, CRC32::calc_crc_on_stream(*hef_reader->get_fstream(), calculated_residue_size));
@@ -603,6 +605,7 @@ hailo_status Hef::Impl::parse_hef_memview(const MemoryView &hef_memview)
         auto proto_size = hef_memview.size() - HEF_HEADER_SIZE_V1 - hef_header.distinct.v1.ccws_size;
 
         ccws_offset = HEF_HEADER_SIZE_V1 + hef_header.hef_proto_size;
+        m_ccws_offset = ccws_offset;
 
         TRY(auto proto_and_ccws_size, calc_hef_residue_size(hef_reader, hef_header.version));
         auto proto_and_ccws_buffer = MemoryView::create_const(hef_memview.data() + HEF_HEADER_SIZE_V1, proto_and_ccws_size);
@@ -1669,7 +1672,7 @@ bool HefConfigurator::is_core_hw_padding_supported(const LayerInfo &layer_info, 
     case HAILO_FORMAT_ORDER_NHCW:
         break;
     default:
-        LOGGER__DEBUG("HW padding is not supported for format {} ", layer_info.format.order);
+        LOGGER__DEBUG("HW padding is not supported for format {} ", static_cast<int>(layer_info.format.order));
         return false;
     }
 
@@ -1873,7 +1876,7 @@ Expected<std::pair<std::string, std::string>> Hef::Impl::get_network_group_and_n
         }
     }
 
-    LOGGER__ERROR("Failed to find network or network_group with the name {}",
+    LOGGER__ERROR("Failed to find network or network_group with the name '{}'",
         name);
     return make_unexpected(HAILO_NOT_FOUND);
 }
@@ -1884,7 +1887,7 @@ Expected<std::shared_ptr<ProtoHEFCoreOpMock>> Hef::Impl::get_core_op_by_net_grou
     if ("" == net_group_name) {
         auto network_group_ptr = m_groups[0];
         auto network_group_name = HefUtils::get_network_group_name(*network_group_ptr, m_supported_features);
-        LOGGER__INFO("No network_group name was given. Addressing default network_group: {}", network_group_name);
+        LOGGER__TRACE("No network_group name was given. Addressing default network_group: {}", network_group_name);
         const auto &core_op = m_core_ops_per_group[network_group_name][0];
         if (is_multi_layout(get_device_arch())) {
             auto partial_core_op = core_op.partial_core_ops[0];
@@ -1926,7 +1929,7 @@ static Expected<LayerType> get_layer_type(const ProtoHEFEdgeConnectionType &edge
     case PROTO__EDGE_CONNECTION_TYPE__DDR:
         return LayerType::DDR;
     default:
-        LOGGER__ERROR("Not supported edge connection type {}", edge_connection_type);
+        LOGGER__ERROR("Not supported edge connection type {}", static_cast<int>(edge_connection_type));
         return make_unexpected(HAILO_INVALID_HEF);
     }
 }
@@ -1973,8 +1976,8 @@ hailo_status HefUtils::fill_layer_info_with_base_info(const ProtoHEFEdgeLayerBas
     }
 
     if (base_info.host_argmax()) {
-        layer_info.format.flags |= HAILO_FORMAT_FLAGS_HOST_ARGMAX;
-        layer_info.shape.features = 1;
+        LOGGER__ERROR("Using legacy implementation of Argmax in host. Please re-compile your model with latest DFC version");
+        return HAILO_INVALID_HEF;
     }
 
     TRY(layer_info.format.type, HailoRTCommon::get_format_type(layer_info.hw_data_bytes));
@@ -2429,7 +2432,7 @@ static Expected<ContextSwitchConfigActionPtr> parse_trigger_action(const ProtoHE
         return NoneAction::create();
     }
     default:
-        LOGGER__ERROR("Unsupported trigger given {}", trigger_proto.trigger_case());
+        LOGGER__ERROR("Unsupported trigger given {}", static_cast<int>(trigger_proto.trigger_case()));
         return make_unexpected(HAILO_INVALID_HEF);
     }
 }
@@ -2609,7 +2612,7 @@ static Expected<ContextSwitchConfigActionPtr> parse_action(const ProtoHEFAction 
                 proto_action.write_data_by_type().address());
             CHECK_AS_EXPECTED(proto_action.write_data_by_type().data_type() == ProtoHEFWriteDataType::DATA_FROM_ACTION ||
                 proto_action.write_data_by_type().data_type() == ProtoHEFWriteDataType::BATCH_SIZE, HAILO_INVALID_HEF,
-                "Failed to parse HEF. Invalid write_data_by_type data_type: {} ", proto_action.write_data_by_type().data_type());
+                "Failed to parse HEF. Invalid write_data_by_type data_type: {} ", static_cast<int>(proto_action.write_data_by_type().data_type()));
             CHECK_AS_EXPECTED(proto_action.write_data_by_type().data().length() <= CONTEXT_SWITCH_DEFS__WRITE_ACTION_BY_TYPE_MAX_SIZE, HAILO_INVALID_HEF,
                 "Failed to parse HEF. Invalid write_data_by_type data size: {} ", proto_action.write_data_by_type().data().length());
             CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(proto_action.write_data_by_type().shift()), HAILO_INVALID_HEF,
@@ -2635,8 +2638,22 @@ static Expected<ContextSwitchConfigActionPtr> parse_action(const ProtoHEFAction 
 
             return WriteDataByTypeAction::create(address, data_type, data, shift, mask, network_index);
         }
+
+        case ProtoHEFAction::kDebug:
+        {
+            if (proto_action.debug().has_sleep()) {
+                CHECK(proto_action.debug().sleep().duration_in_usec() >= MIN_SLEEP_TIME_USEC, HAILO_INVALID_HEF, "Sleep time must be at least {} & must be in microseconds", MIN_SLEEP_TIME_USEC);
+                return SleepAction::create(proto_action.debug().sleep().duration_in_usec());
+            } else if (proto_action.debug().has_halt()) {
+                return HaltAction::create();
+            } else {
+                LOGGER__ERROR("Debug action must have sleep or halt field - action case: {}, action type: {}", static_cast<int>(proto_action.debug().action_case()),
+                    static_cast<int>(proto_action.debug().type()));
+                return make_unexpected(HAILO_INVALID_HEF);
+            }
+        }
         default:
-            LOGGER__ERROR("Action {} not implemented", proto_action.action_case());
+            LOGGER__ERROR("Action {} not implemented", static_cast<int>(proto_action.action_case()));
             break;
     }
 
@@ -2880,7 +2897,7 @@ Expected<ContextMetadata> HefUtils::parse_single_dynamic_context(const ProtoHEFC
                 supported_features, context_metadata);
             CHECK_SUCCESS_AS_EXPECTED(status);
         } else {
-            LOGGER__ERROR("Unsupported edge connection type given {}", edge_layer.context_switch_info().edge_connection_type());
+            LOGGER__ERROR("Unsupported edge connection type given {}", static_cast<int>(edge_layer.context_switch_info().edge_connection_type()));
             return make_unexpected(HAILO_INVALID_HEF);
         }
     }
@@ -2942,7 +2959,7 @@ static Expected<hailo_nms_burst_type_t> get_nms_burst_mode(const ProtoHEFNmsInfo
         case PROTO__NMS_BURST_TYPE__H8_PER_CLASS:
             return HAILO_BURST_TYPE_H8_PER_CLASS;
         default:
-            LOGGER__ERROR("Unsupported burst type was given {} for arch {}", nms_info.burst_type(), hef_arch);
+            LOGGER__ERROR("Unsupported burst type was given {} for arch {}", static_cast<int>(nms_info.burst_type()), static_cast<int>(hef_arch));
             return make_unexpected(HAILO_INVALID_HEF);
         }
     case PROTO__HW_ARCH__HAILO15H:
@@ -2958,11 +2975,11 @@ static Expected<hailo_nms_burst_type_t> get_nms_burst_mode(const ProtoHEFNmsInfo
         case PROTO__NMS_BURST_TYPE__H15_PER_FRAME:
             return HAILO_BURST_TYPE_H15_PER_FRAME;
         default:
-            LOGGER__ERROR("Unsupported burst type was given {} for arch {}", nms_info.burst_type(), hef_arch);
+            LOGGER__ERROR("Unsupported burst type was given {} for arch {}", static_cast<int>(nms_info.burst_type()), static_cast<int>(hef_arch));
             return make_unexpected(HAILO_INVALID_HEF);
         }
     default:
-        LOGGER__ERROR("Not supported hef arch {}", hef_arch);
+        LOGGER__ERROR("Not supported hef arch {}", static_cast<int>(hef_arch));
         return make_unexpected(HAILO_INTERNAL_FAILURE);
     }
 }
@@ -2972,7 +2989,7 @@ static Expected<hailo_nms_burst_type_t> get_nms_bbox_mode(const ProtoHEFNmsInfo 
 {
     CHECK_AS_EXPECTED(0 == nms_info.burst_type(),
         HAILO_INVALID_HEF, "Invalid HEF, nms burst extension is disabled yet burst type {} is not zero",
-        nms_info.burst_type());
+        static_cast<int>(nms_info.burst_type()));
 
     switch (hef_arch) {
     case PROTO__HW_ARCH__HAILO8:
@@ -2990,7 +3007,7 @@ static Expected<hailo_nms_burst_type_t> get_nms_bbox_mode(const ProtoHEFNmsInfo 
         return HAILO_BURST_TYPE_H15_BBOX;
 
     default:
-        LOGGER__ERROR("Not supported hef arch {}", hef_arch);
+        LOGGER__ERROR("Not supported hef arch {}", static_cast<int>(hef_arch));
         return make_unexpected(HAILO_INTERNAL_FAILURE);
     }
 }
@@ -3337,9 +3354,27 @@ static Expected<WriteMemoryInfo> parse_ccw_buffer(const std::string &ccw_buffer)
     return write_memory_info;
 }
 
+static Expected<WriteMemoryInfo> parse_ccw_buffer_from_ptr(const size_t size, const uint64_t offset, std::shared_ptr<SeekableBytesReader> hef_reader)
+{
+    TRY(auto buffer, Buffer::create_shared(size));
+
+    auto status = hef_reader->open();
+    CHECK_SUCCESS(status);
+
+    status = hef_reader->read_from_offset(offset, MemoryView(*buffer), size);
+    CHECK_SUCCESS(status);
+
+    status = hef_reader->close();
+    CHECK_SUCCESS(status);
+
+    auto raw_str = reinterpret_cast<const char*>(MemoryView(*buffer).data());
+    TRY(auto write_memory_info, parse_ccw_buffer(raw_str));
+    return write_memory_info;
+}
+
 /* HcpConfigCoreOp funcs */
 
-Expected<std::vector<WriteMemoryInfo>> Hef::Impl::create_single_context_core_op_config(const ProtoHEFPreliminaryConfig& proto_config)
+Expected<std::vector<WriteMemoryInfo>> Hef::Impl::create_single_context_core_op_config(const ProtoHEFPreliminaryConfig& proto_config, const Hef &hef)
 {
     std::vector<WriteMemoryInfo> config_buffers;
 
@@ -3369,7 +3404,17 @@ Expected<std::vector<WriteMemoryInfo>> Hef::Impl::create_single_context_core_op_
                     break;
                 }
                 case ProtoHEFAction::kWriteDataCcw: {
-                    TRY(auto config_buffer, parse_ccw_buffer(action.write_data_ccw().data())); // TODO: make this not supported in sHEF
+                    CHECK(HEADER_VERSION_1 != hef.pimpl->m_hef_version, HAILO_INVALID_HEF, "WriteDataCcw is not supported on V1 HEF");
+                    TRY(auto config_buffer, parse_ccw_buffer(action.write_data_ccw().data()));
+                    config_buffers.emplace_back(std::move(config_buffer));
+                    break;
+                }
+                case ProtoHEFAction::kWriteDataCcwPtr :{
+                    CHECK(HEADER_VERSION_0 != hef.pimpl->m_hef_version, HAILO_INVALID_HEF, "WriteDataCcwPtr is not supported on V0 HEF");
+                    const auto size = action.write_data_ccw_ptr().size();
+                    const auto offset = action.write_data_ccw_ptr().offset() + hef.pimpl->get_ccws_offset();
+                    auto hef_reader = hef.pimpl->get_hef_reader();
+                    TRY(auto config_buffer, parse_ccw_buffer_from_ptr(size, offset, hef_reader));
                     config_buffers.emplace_back(std::move(config_buffer));
                     break;
                 }
@@ -3423,6 +3468,11 @@ ProtoHEFHwArch Hef::Impl::get_device_arch()
 std::shared_ptr<SeekableBytesReader> Hef::Impl::get_hef_reader()
 {
     return m_hef_reader;
+}
+
+size_t Hef::Impl::get_ccws_offset()
+{
+    return m_ccws_offset;
 }
 
 Expected<float64_t> Hef::Impl::get_bottleneck_fps(const std::string &net_group_name)

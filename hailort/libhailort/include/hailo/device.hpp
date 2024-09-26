@@ -48,6 +48,13 @@ public:
         INTEGRATED
     };
 
+    /** The device supported capabilities */
+    struct Capabilities {
+        bool power_measurements;
+        bool current_measurements;
+        bool temperature_measurements;
+    };
+
     /**
      * Returns the device_id string on all available devices in the system.
      * The device id is a unique identitier for the device on the system.
@@ -239,7 +246,7 @@ public:
      * @return Upon success, returns Expected of ::hailo_device_identity_t.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
-    Expected<hailo_device_identity_t> identify();
+    virtual Expected<hailo_device_identity_t> identify();
 
     /**
      * Receive information about the core cpu.
@@ -255,7 +262,7 @@ public:
      * @return Upon success, returns Expected of ::hailo_extended_device_information_t containing the extended information about the device.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
-    Expected<hailo_extended_device_information_t> get_extended_device_information();
+    virtual Expected<hailo_extended_device_information_t> get_extended_device_information();
 
     /**
      * Configure fw logger level and interface of sending.
@@ -768,6 +775,13 @@ public:
      */
     virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction);
 
+    /**
+     * Gets a struct specifying the device's capabilities.
+     *
+     * @return Upon success, returns Expected of Capabilities.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    Expected<Capabilities> get_capabilities();
 
     virtual hailo_status direct_write_memory(uint32_t address, const void *buffer, uint32_t size);
     virtual hailo_status direct_read_memory(uint32_t address, void *buffer, uint32_t size);
@@ -778,7 +792,7 @@ public:
     // The sum of the number of contexts will fit in uint8_t
     Expected<std::vector<uint8_t>> get_number_of_dynamic_contexts_per_network_group();
     Expected<Buffer> download_context_action_list(uint32_t network_group_id, uint8_t context_type,
-        uint16_t context_index, uint32_t *base_address, uint32_t *batch_counter, uint16_t max_size = 10000);
+        uint16_t context_index, uint32_t *base_address, uint32_t *batch_counter, uint32_t *idle_time_local, uint16_t max_size = 10000);
     // The batch configured is reset between network groups
     hailo_status set_context_action_list_timestamp_batch(uint16_t batch_index);
     hailo_status set_context_switch_breakpoint(uint8_t breakpoint_id, bool break_at_any_network_group_index,
@@ -819,6 +833,8 @@ protected:
 private:
     uint32_t get_control_sequence();
     bool is_control_version_supported();
+    Expected<bool> has_INA231_H8();
+    Expected<bool> has_INA231_H15();
 
     friend class Control;
 };

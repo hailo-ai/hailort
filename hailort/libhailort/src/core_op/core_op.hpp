@@ -101,8 +101,6 @@ public:
     bool is_default_batch_size() const;
 
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &key);
-    virtual Expected<Buffer> get_cache_buffer(uint32_t cache_id);
-    virtual Expected<std::map<uint32_t, Buffer>> get_cache_buffers();
 
     hailo_status wrap_streams_for_remote_process();
 
@@ -127,6 +125,9 @@ public:
     virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) = 0;
     virtual Expected<hailo_cache_info_t> get_cache_info() const = 0;
     virtual hailo_status update_cache_offset(int32_t offset_delta_bytes) = 0;
+    virtual Expected<std::vector<uint32_t>> get_cache_ids() const = 0;
+    virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) = 0;
+    virtual hailo_status write_cache_buffer(uint32_t cache_id, MemoryView buffer) = 0;
 
     std::map<std::string, std::shared_ptr<InputStreamBase>> m_input_streams;
     std::map<std::string, std::shared_ptr<OutputStreamBase>> m_output_streams;

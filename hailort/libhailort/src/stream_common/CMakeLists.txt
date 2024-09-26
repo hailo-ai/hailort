@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.5.0)
 
 set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/stream.cpp
@@ -6,7 +6,6 @@ set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/async_stream_base.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/nms_stream.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/remote_process_stream.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/transfer_common.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/queued_stream_buffer_pool.cpp
 )
 

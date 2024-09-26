@@ -104,28 +104,28 @@ hailo_status AsyncPipelineBuilder::create_pre_async_hw_elements_per_input(std::s
     for (const auto &stream_name : stream_names) {
         CHECK(contains(named_stream_infos, stream_name), HAILO_INTERNAL_FAILURE);
         const auto &input_stream_info = named_stream_infos.at(stream_name);
-
         auto src_format = inputs_formats.at(vstream_name);
+        if (is_multi_planar) {
+            /* In multi-planar case, the format order of each plane (stream) is determined by the ll-stream's order.
+               Type and flags are determined by the vstream params */
+            src_format.order = input_stream_info.format.order;
+        }
+
         TRY(const auto sink_index, async_pipeline->get_async_hw_element()->get_sink_index_from_input_stream_name(stream_name));
+        TRY(const auto should_transform, InputTransformContext::is_transformation_required(input_stream_info.shape,
+            src_format, input_stream_info.hw_shape, input_stream_info.format,
+            std::vector<hailo_quant_info_t>(1, input_stream_info.quant_info))); // Inputs always have single quant_info
 
         if(is_multi_planar) {
-            is_empty = true;
-            interacts_with_hw = false;
+            is_empty = true; // pix buffer splitter doesnt do any copy, so no need to allocate buffers for its following queues
+            interacts_with_hw = !should_transform; // If not doing transformations, this queue interacts with HW elem
             TRY(auto post_split_push_queue, add_push_queue_element(
                 PipelineObject::create_element_name("PostSplitPushQEl", stream_name, sink_index),
                 async_pipeline, 0, is_empty, interacts_with_hw, nullptr));
             CHECK_SUCCESS(PipelinePad::link_pads(multi_plane_splitter, post_split_push_queue, plane_index++));
 
             last_element_connected_to_pipeline = post_split_push_queue;
-
-            /* In multi-planar case, the format order of each plane (stream) is determined by the ll-stream's order.
-               Type and flags are determined by the vstream params */
-            src_format.order = input_stream_info.format.order;
         }
-
-        TRY(const auto should_transform, InputTransformContext::is_transformation_required(input_stream_info.shape,
-            src_format, input_stream_info.hw_shape, input_stream_info.format,
-            std::vector<hailo_quant_info_t>(1, input_stream_info.quant_info))); // Inputs always have single quant_info
 
         if (should_transform) {
             TRY(auto pre_infer_elem, PreInferElement::create(input_stream_info.shape, src_format,
@@ -334,7 +334,7 @@ hailo_status AsyncPipelineBuilder::add_output_demux_flow(const std::string &outp
                 post_infer_elem));
         } else {
             TRY(auto last_async_element, add_last_async_element(async_pipeline, output_format.first, edge_info.hw_frame_size,
-                demux_elem));
+                demux_elem, i));
         }
         i++;
     }

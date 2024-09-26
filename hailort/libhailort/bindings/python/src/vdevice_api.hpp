@@ -118,6 +118,10 @@ public:
         py::list results;
         m_net_groups.reserve(m_net_groups.size() + network_groups->size());
         for (const auto &network_group : network_groups.value()) {
+
+            // Since the pybind's ConfiguredNetworkGroupWrapper doesnt hold the cng (weak ptr), we need to keep it alive in the vdevice scope
+            VALIDATE_STATUS(m_vdevice->add_network_group_ref_count(network_group));
+
             auto wrapper = ConfiguredNetworkGroupWrapper::create(network_group);
             results.append(wrapper);
             m_net_groups.emplace_back(wrapper);

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.5.0)
 
 if(WIN32)
     set(HAILO_OS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/windows")

@@ -36,7 +36,7 @@ private:
     std::shared_ptr<PowerMeasurement> m_power_measurement;
     std::shared_ptr<PowerMeasurement> m_current_measurement;
     std::shared_ptr<TemperatureMeasurement> m_temp_measurement;
-    
+
     std::string m_device_id;
 };
 

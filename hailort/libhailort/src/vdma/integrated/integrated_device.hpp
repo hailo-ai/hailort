@@ -49,16 +49,11 @@ public:
 
     static constexpr const char *DEVICE_ID = HailoRTDriver::INTEGRATED_NNC_DEVICE_ID;
 
-    Expected<std::pair<void*, uint64_t>> allocate_infinite_action_list_buffer(size_t size);
-
 protected:
     virtual hailo_status reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type) override;
 
 private:
-    IntegratedDevice(std::unique_ptr<HailoRTDriver> &&driver, vdma::ContinuousBuffer &&pool, hailo_status &status);
-
-    vdma::ContinuousBuffer m_device_infinite_action_list_pool;
-    size_t m_device_infinite_action_list_pool_allocation_offset;
+    IntegratedDevice(std::unique_ptr<HailoRTDriver> &&driver, hailo_status &status);
 };
 
 

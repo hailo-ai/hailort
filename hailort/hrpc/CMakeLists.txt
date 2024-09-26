@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.5.0)
 
 set(HRPC_IMPL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/os")
 if(WIN32)

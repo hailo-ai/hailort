@@ -13,7 +13,7 @@
 
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
-
+#include "common/internal_env_vars.hpp"
 
 namespace hailort
 {
@@ -32,30 +32,6 @@ static const hailo_format_order_t DEFAULT_FORMAT_ORDER_MAP[] = {
     HAILO_FORMAT_ORDER_HAILO_NMS,           // HAILO_FORMAT_ORDER_HAILO_NMS,
     HAILO_FORMAT_ORDER_NHWC,                // HAILO_FORMAT_ORDER_RGB888,
     HAILO_FORMAT_ORDER_NCHW,                // HAILO_FORMAT_ORDER_NCHW,
-    HAILO_FORMAT_ORDER_YUY2,                // HAILO_FORMAT_ORDER_YUY2,
-    HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_NV12,
-    HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_NV21,
-    HAILO_FORMAT_ORDER_NV12,                // HAILO_FORMAT_ORDER_HAILO_YYUV,
-    HAILO_FORMAT_ORDER_NV21,                // HAILO_FORMAT_ORDER_HAILO_YYVU,
-    HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_RGB4,
-    HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_I420,
-    HAILO_FORMAT_ORDER_I420                 // HAILO_FORMAT_ORDER_HAILO_YYYYUV,
-};
-
-static const hailo_format_order_t DEFAULT_FORMAT_ARGMAX_ORDER_MAP[] = {
-    // Key is device_format_order, value is default user_format_order
-    HAILO_FORMAT_ORDER_AUTO,                // HAILO_FORMAT_ORDER_AUTO, - Should not be used!
-    HAILO_FORMAT_ORDER_NHW,                 // HAILO_FORMAT_ORDER_NHWC,
-    HAILO_FORMAT_ORDER_NHW,                 // HAILO_FORMAT_ORDER_NHCW,
-    HAILO_FORMAT_ORDER_NHW,                 // HAILO_FORMAT_ORDER_FCR,
-    HAILO_FORMAT_ORDER_NHW,                 // HAILO_FORMAT_ORDER_F8CR,
-    HAILO_FORMAT_ORDER_NHW,                 // HAILO_FORMAT_ORDER_NHW,
-    HAILO_FORMAT_ORDER_NC,                  // HAILO_FORMAT_ORDER_NC,
-    HAILO_FORMAT_ORDER_NHW,                 // HAILO_FORMAT_ORDER_BAYER_RGB,
-    HAILO_FORMAT_ORDER_NHW,                 // HAILO_FORMAT_ORDER_12_BIT_BAYER_RGB,
-    HAILO_FORMAT_ORDER_HAILO_NMS,           // HAILO_FORMAT_ORDER_HAILO_NMS,
-    HAILO_FORMAT_ORDER_NHW,                 // HAILO_FORMAT_ORDER_RGB888,
-    HAILO_FORMAT_ORDER_NHW,                 // HAILO_FORMAT_ORDER_NCHW,
     HAILO_FORMAT_ORDER_YUY2,                // HAILO_FORMAT_ORDER_YUY2,
     HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_NV12,
     HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_NV21,
@@ -120,12 +96,7 @@ Expected<hailo_format_order_t> HailoRTDefaults::get_device_format_order(uint32_t
 
 hailo_format_order_t HailoRTDefaults::get_default_host_format_order(const hailo_format_t &device_format)
 {
-    const bool is_argmax = (0 != (device_format.flags & HAILO_FORMAT_FLAGS_HOST_ARGMAX));
-    if (!is_argmax) {
-        return DEFAULT_FORMAT_ORDER_MAP[device_format.order];
-    } else {
-        return DEFAULT_FORMAT_ARGMAX_ORDER_MAP[device_format.order];
-    }
+    return DEFAULT_FORMAT_ORDER_MAP[device_format.order];
 }
 
 struct sockaddr_in HailoRTDefaults::get_sockaddr()
@@ -327,7 +298,7 @@ ConfigureNetworkParams HailoRTDefaults::get_configure_params(uint16_t batch_size
 {
     ConfigureNetworkParams params = {};
     params.batch_size = batch_size;
-    if (std::getenv("FORCE_POWER_MODE_ULTRA_PERFORMANCE") != nullptr) {
+    if (is_env_variable_on(FORCE_POWER_MODE_ULTRA_PERFORMANCE_ENV_VAR)) {
         power_mode = HAILO_POWER_MODE_ULTRA_PERFORMANCE;
     }
     params.power_mode = power_mode;
