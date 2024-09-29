@@ -9,6 +9,7 @@
 
 #include "hailo/hailort.h"
 #include "measurement_utils.hpp"
+#include <algorithm>
 
 
 namespace hailort {

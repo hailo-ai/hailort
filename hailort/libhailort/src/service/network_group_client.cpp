@@ -7,47 +7,73 @@
  * @brief: Network group client object
  **/
 
+#include "network_group_client.hpp"
+
 #include "hailo/vstream.hpp"
 #include "hailo/hailort_defaults.hpp"
 
 #include "common/utils.hpp"
 #include "common/os_utils.hpp"
+#include "common/shared_memory_buffer.hpp"
+#include "common/internal_env_vars.hpp"
+#include "utils/buffer_storage.hpp"
 
-#include "network_group/network_group_internal.hpp"
 #include "net_flow/pipeline/vstream_builder.hpp"
 #include "net_flow/ops/nms_post_process.hpp"
 #include "rpc_client_utils.hpp"
 
-
 namespace hailort
 {
 
-ConfiguredNetworkGroupClient::ConfiguredNetworkGroupClient(std::unique_ptr<HailoRtRpcClient> client, NetworkGroupIdentifier &&identifier) :
+static bool should_use_shared_memory()
+{
+    return ((!is_env_variable_on(HAILO_SERVICE_SHARED_MEMORY_ENV_VAR)) &&
+        (!get_env_variable(HAILORT_SERVICE_ADDRESS_ENV_VAR)));
+}
+
+Expected<std::shared_ptr<ConfiguredNetworkGroupClient>> ConfiguredNetworkGroupClient::create(
+    std::unique_ptr<HailoRtRpcClient> client, NetworkGroupIdentifier &&identifier)
+{
+    TRY(auto ng_name, client->ConfiguredNetworkGroup_name(identifier));
+    TRY(auto streams_infos, client->ConfiguredNetworkGroup_get_all_stream_infos(identifier, ng_name));
+    TRY(auto min_buffer_pool_size, client->ConfiguredNetworkGroup_get_min_buffer_pool_size(identifier));
+
+    std::unordered_set<stream_name_t> input_streams_names;
+    std::unordered_set<stream_name_t> output_streams_names;
+    TRY(auto cng_buffer_pool, BufferPoolPerStream::create());
+    for (auto &stream_info : streams_infos) {
+        if (should_use_shared_memory()) {
+            cng_buffer_pool->allocate_pool(stream_info.name, identifier, stream_info.hw_frame_size, min_buffer_pool_size);
+        }
+
+        if (stream_info.direction == HAILO_H2D_STREAM) {
+            input_streams_names.insert(stream_info.name);
+        } else {
+            output_streams_names.insert(stream_info.name);
+        }
+    }
+
+    auto network_group_ptr = make_shared_nothrow<ConfiguredNetworkGroupClient>(std::move(client),
+        std::move(identifier), ng_name, std::move(input_streams_names), std::move(output_streams_names),
+        cng_buffer_pool);
+    CHECK_NOT_NULL_AS_EXPECTED(network_group_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+    return network_group_ptr;
+}
+
+ConfiguredNetworkGroupClient::ConfiguredNetworkGroupClient(std::unique_ptr<HailoRtRpcClient> client,
+    NetworkGroupIdentifier &&identifier, const std::string &network_group_name,
+        std::unordered_set<std::string> &&input_streams_names, std::unordered_set<std::string> &&output_streams_names,
+        std::shared_ptr<BufferPoolPerStream> buffer_pool_per_stream) :
     ConfiguredNetworkGroup(),
     m_client(std::move(client)),
     m_identifier(identifier),
-    m_current_cb_index(0)
-{
-    auto reply = m_client->ConfiguredNetworkGroup_name(m_identifier);
-    if (!reply) {
-        LOGGER__ERROR("get_network_group_name failed with status {}", reply.status());
-        return;
-    }
-    m_network_group_name = reply.value();
-
-    auto streams_infos = get_all_stream_infos();
-    if (!streams_infos) {
-        LOGGER__ERROR("get_all_stream_infos failed with status {}", reply.status());
-        return;
-    }
-    for (auto &stream_info : streams_infos.value()) {
-        if (stream_info.direction == HAILO_H2D_STREAM) {
-            m_input_streams_names.insert(stream_info.name);
-        } else {
-            m_output_streams_names.insert(stream_info.name);
-        }
-    }
-}
+    m_network_group_name(network_group_name),
+    m_current_cb_index(0),
+    m_input_streams_names(std::move(input_streams_names)),
+    m_output_streams_names(std::move(output_streams_names)),
+    m_buffer_pool_per_stream(std::move(buffer_pool_per_stream))
+{}
 
 ConfiguredNetworkGroupClient::ConfiguredNetworkGroupClient(NetworkGroupIdentifier &&identifier, const std::string &network_group_name) :
     ConfiguredNetworkGroup(),
@@ -79,9 +105,15 @@ ConfiguredNetworkGroupClient::~ConfiguredNetworkGroupClient()
         LOGGER__CRITICAL("ConfiguredNetworkGroup_release failed with status: {}", reply);
     }
     execute_callbacks_on_error(HAILO_INTERNAL_FAILURE); // At this point there should'nt be any callbacks left. if there are any, raise HAILO_INTERNAL_FAILURE
+
     auto status = wait_for_ongoing_callbacks_count_under(1);
     if (HAILO_SUCCESS != status) {
         LOGGER__CRITICAL("Failed to wait for callbacks to finish");
+    }
+
+    status = m_buffer_pool_per_stream->shutdown();
+    if (HAILO_SUCCESS != status) {
+        LOGGER__CRITICAL("Failed to shutdown for network group buffers pool");
     }
 }
 
@@ -219,6 +251,7 @@ hailo_status ConfiguredNetworkGroupClient::shutdown()
 {
     auto status = m_client->ConfiguredNetworkGroup_shutdown(m_identifier);
     CHECK_SUCCESS(status, "Failed to shutdown");
+
     status = wait_for_ongoing_callbacks_count_under(1);
     CHECK_SUCCESS(status, "Failed to wait for callbacks to finish");
 
@@ -363,12 +396,13 @@ Expected<std::vector<InputVStream>> ConfiguredNetworkGroupClient::create_input_v
 {
     auto reply = m_client->InputVStreams_create(m_identifier, inputs_params, OsUtils::get_curr_pid());
     CHECK_EXPECTED(reply);
-    auto input_vstreams_handles = reply.release();
+    auto input_vstreams_names_to_handles = reply.release();
     std::vector<InputVStream> vstreams;
-    vstreams.reserve(input_vstreams_handles.size());
+    vstreams.reserve(input_vstreams_names_to_handles.size());
 
-    for (uint32_t handle : input_vstreams_handles) {
-        auto vstream_client = InputVStreamClient::create(VStreamIdentifier(m_identifier, handle));
+    for(const auto &name_handle_pair : input_vstreams_names_to_handles) {
+        auto timeout = std::chrono::milliseconds(inputs_params.at(name_handle_pair.first).timeout_ms);
+        auto vstream_client = InputVStreamClient::create(VStreamIdentifier(m_identifier, name_handle_pair.second), timeout);
         CHECK_EXPECTED(vstream_client);
         auto vstream = VStreamsBuilderUtils::create_input(vstream_client.release());
         vstreams.push_back(std::move(vstream));
@@ -380,12 +414,13 @@ Expected<std::vector<OutputVStream>> ConfiguredNetworkGroupClient::create_output
 {
     auto reply = m_client->OutputVStreams_create(m_identifier, outputs_params, OsUtils::get_curr_pid());
     CHECK_EXPECTED(reply);
-    auto output_vstreams_handles = reply.release();
+    auto output_vstreams_names_to_handles = reply.release();
     std::vector<OutputVStream> vstreams;
-    vstreams.reserve(output_vstreams_handles.size());
+    vstreams.reserve(output_vstreams_names_to_handles.size());
 
-    for(uint32_t handle : output_vstreams_handles) {
-        auto vstream_client = OutputVStreamClient::create(VStreamIdentifier(m_identifier, handle));
+    for(const auto &name_handle_pair : output_vstreams_names_to_handles) {
+        auto timeout = std::chrono::milliseconds(outputs_params.at(name_handle_pair.first).timeout_ms);
+        auto vstream_client = OutputVStreamClient::create(VStreamIdentifier(m_identifier, name_handle_pair.second), timeout);
         CHECK_EXPECTED(vstream_client);
         auto vstream = VStreamsBuilderUtils::create_output(vstream_client.release());
         vstreams.push_back(std::move(vstream));
@@ -444,25 +479,38 @@ hailo_status ConfiguredNetworkGroupClient::update_cache_offset(int32_t /* offset
     return HAILO_NOT_IMPLEMENTED;
 }
 
+Expected<std::vector<uint32_t>> ConfiguredNetworkGroupClient::get_cache_ids() const
+{
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
+Expected<Buffer> ConfiguredNetworkGroupClient::read_cache_buffer(uint32_t)
+{
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
+hailo_status ConfiguredNetworkGroupClient::write_cache_buffer(uint32_t, MemoryView)
+{
+    return HAILO_NOT_IMPLEMENTED;
+}
+
 hailo_status ConfiguredNetworkGroupClient::execute_callback(const ProtoCallbackIdentifier &cb_id)
 {
     if (cb_id.cb_type() == CALLBACK_TYPE_TRANSFER) {
-        execute_transfer_callback(cb_id);
+        return execute_transfer_callback(cb_id);
     } else if (cb_id.cb_type() == CALLBACK_TYPE_INFER_REQUEST) {
-        execute_infer_request_callback(cb_id);
+        return execute_infer_request_callback(cb_id);
     } else {
         LOGGER__ERROR("Got invalid callback type = {}", cb_id.cb_type());
         return HAILO_INTERNAL_FAILURE;
     }
-
-    return HAILO_SUCCESS;
 }
 
 void ConfiguredNetworkGroupClient::execute_callbacks_on_error(hailo_status error_status)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     for (auto cb_pair : m_idx_to_callbacks) {
-        std::get<2>(*cb_pair.second)(error_status);
+        cb_pair.second->m_callback(error_status);
     }
     m_idx_to_callbacks.clear();
     for (auto cb_pair : m_infer_request_idx_to_callbacks) {
@@ -476,7 +524,7 @@ hailo_status ConfiguredNetworkGroupClient::execute_infer_request_callback(const 
     std::function<void(hailo_status)> cb;
     {
         std::unique_lock<std::mutex> lock(m_mutex);
-        CHECK(contains(m_infer_request_idx_to_callbacks, cb_id.cb_idx()), HAILO_NOT_FOUND);
+        CHECK(contains(m_infer_request_idx_to_callbacks, cb_id.cb_idx()), HAILO_NOT_FOUND, "Failed to find cb with index {}", cb_id.cb_idx());
         cb = m_infer_request_idx_to_callbacks.at(cb_id.cb_idx());
         m_infer_request_idx_to_callbacks.erase(cb_id.cb_idx());
     }
@@ -485,22 +533,41 @@ hailo_status ConfiguredNetworkGroupClient::execute_infer_request_callback(const 
     return HAILO_SUCCESS;
 }
 
+hailo_status ConfiguredNetworkGroupClient::copy_data_from_shm_buffer(StreamCbParamsPtr stream_callback, const ProtoCallbackIdentifier &cb_id)
+{
+    CHECK(cb_id.has_shared_memory_identifier(), HAILO_INVALID_OPERATION,
+        "Shared memory env var '{}' is on but callback does not contain shared memory identifier",
+        HAILO_SERVICE_SHARED_MEMORY_ENV_VAR);
+    memcpy(stream_callback->m_user_mem_view.data(),
+        stream_callback->m_acquired_shm_buffer->data(), stream_callback->m_acquired_shm_buffer->size());
+
+    return HAILO_SUCCESS;
+}
+
 hailo_status ConfiguredNetworkGroupClient::execute_transfer_callback(const ProtoCallbackIdentifier &cb_id)
 {
-    NamedBufferCallbackTuplePtr name_buffer_callback_ptr;
+    StreamCbParamsPtr stream_callback;
     {
         std::unique_lock<std::mutex> lock(m_mutex);
-        CHECK(contains(m_idx_to_callbacks, cb_id.cb_idx()), HAILO_NOT_FOUND);
-        name_buffer_callback_ptr = m_idx_to_callbacks.at(cb_id.cb_idx());
+        CHECK(contains(m_idx_to_callbacks, cb_id.cb_idx()), HAILO_NOT_FOUND, "Failed to find cb with index {}", cb_id.cb_idx());
+        stream_callback = m_idx_to_callbacks.at(cb_id.cb_idx());
         m_idx_to_callbacks.erase(cb_id.cb_idx());
     }
+
     const auto &stream_name = cb_id.stream_name();
-    CHECK((std::get<0>(*name_buffer_callback_ptr.get()) == stream_name), HAILO_INTERNAL_FAILURE,
+    CHECK((stream_callback->m_stream_name == stream_name), HAILO_INTERNAL_FAILURE,
         "Callback identifier does not match stream name {}", stream_name);
-    if (contains(m_output_streams_names, stream_name)) {
-        memcpy(std::get<1>(*name_buffer_callback_ptr.get()).data(), cb_id.data().data(), cb_id.data().size());
+
+    if (contains(m_output_streams_names, stream_callback->m_stream_name)) {
+        if (should_use_shared_memory()) {
+            auto status = copy_data_from_shm_buffer(stream_callback, cb_id);
+            CHECK_SUCCESS(status);
+        } else {
+            memcpy(stream_callback->m_user_mem_view.data(), cb_id.data().data(), cb_id.data().size());
+        }
     }
-    std::get<2>(*name_buffer_callback_ptr.get())(static_cast<hailo_status>(cb_id.status()));
+
+    stream_callback->m_callback(static_cast<hailo_status>(cb_id.status()));
 
     return HAILO_SUCCESS;
 }
@@ -510,24 +577,59 @@ callback_idx_t ConfiguredNetworkGroupClient::get_unique_callback_idx()
     return m_current_cb_index.fetch_add(1);
 }
 
-hailo_status ConfiguredNetworkGroupClient::infer_async(const NamedBuffersCallbacks &named_buffers_callbacks,
-    const std::function<void(hailo_status)> &infer_request_done_cb)
+Expected<std::vector<StreamCbParamsPtr>> ConfiguredNetworkGroupClient::create_streams_callbacks_params(const NamedBuffersCallbacks &named_buffers_callbacks)
 {
-    std::vector<std::tuple<callback_idx_t, std::string, MemoryView>> cb_idx_to_stream_buffer;
-    cb_idx_to_stream_buffer.reserve(named_buffers_callbacks.size());
+    std::vector<StreamCbParamsPtr> streams_cb_params;
+    streams_cb_params.reserve(named_buffers_callbacks.size());
     {
         std::unique_lock<std::mutex> lock(m_mutex);
         for (const auto &name_buffer_cb : named_buffers_callbacks) {
+            StreamCbParams stream_cb_params;
             auto cb_idx = get_unique_callback_idx();
-            CHECK(BufferType::VIEW == name_buffer_cb.second.first.buffer_type, HAILO_INVALID_OPERATION,
+            auto &stream_name = name_buffer_cb.first;
+            CHECK_AS_EXPECTED(BufferType::VIEW == name_buffer_cb.second.first.buffer_type, HAILO_INVALID_OPERATION,
                 "Using dmabuf is not supported when working with hailort_service");
 
-            auto name_buffer_cb_tuple = std::make_tuple(name_buffer_cb.first, name_buffer_cb.second.first.view, name_buffer_cb.second.second);
-            auto tuple_ptr = make_shared_nothrow<NamedBufferCallbackTuple>(name_buffer_cb_tuple);
-            CHECK_NOT_NULL(tuple_ptr, HAILO_OUT_OF_HOST_MEMORY);
+            if (should_use_shared_memory()) {
+                // Copy to shared memory buffer
+                TRY(auto stream_pool, m_buffer_pool_per_stream->get_pool(stream_name));
+                TRY(auto acquired_buffer, AcquiredBuffer::acquire_from_pool(stream_pool));
+                CHECK_AS_EXPECTED(name_buffer_cb.second.first.view.size() == acquired_buffer->size(), HAILO_INVALID_ARGUMENT,
+                    "For stream '{}', passed buffer size is {} (expected {})", stream_name, name_buffer_cb.second.first.view.size(),
+                    acquired_buffer->size());
 
-            m_idx_to_callbacks.emplace(cb_idx, tuple_ptr);
-            cb_idx_to_stream_buffer.emplace_back(std::make_tuple(cb_idx, name_buffer_cb.first, name_buffer_cb.second.first.view));
+                if (contains(m_input_streams_names, stream_name)) {
+                    memcpy(acquired_buffer->data(), name_buffer_cb.second.first.view.data(), name_buffer_cb.second.first.view.size());
+                }
+
+                TRY(auto shm_name, acquired_buffer->buffer()->storage().shm_name());
+                stream_cb_params = StreamCbParams(cb_idx, stream_name, name_buffer_cb.second.second,
+                    name_buffer_cb.second.first.view, shm_name, acquired_buffer);
+            } else {
+                stream_cb_params = StreamCbParams(cb_idx, stream_name, name_buffer_cb.second.second,
+                    name_buffer_cb.second.first.view);
+            }
+
+            auto cb_params_ptr = make_shared_nothrow<StreamCbParams>(std::move(stream_cb_params));
+            CHECK_NOT_NULL_AS_EXPECTED(cb_params_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+            streams_cb_params.emplace_back(cb_params_ptr);
+        }
+    }
+
+    return streams_cb_params;
+}
+
+hailo_status ConfiguredNetworkGroupClient::infer_async(const NamedBuffersCallbacks &named_buffers_callbacks,
+    const std::function<void(hailo_status)> &infer_request_done_cb)
+{
+    auto streams_cb_params = create_streams_callbacks_params(named_buffers_callbacks);
+    if (!streams_cb_params) {
+        return make_unexpected(streams_cb_params.status());
+    } else {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        for (auto &stream_cb_params : streams_cb_params.value()) {
+            m_idx_to_callbacks.emplace(stream_cb_params->m_cb_idx, stream_cb_params);
         }
     }
 
@@ -551,15 +653,15 @@ hailo_status ConfiguredNetworkGroupClient::infer_async(const NamedBuffersCallbac
     }
 
     increase_ongoing_callbacks(); // Increase before lunch, as the cb may be called before we got the chance to increase the counter
-    auto status = m_client->ConfiguredNetworkGroup_infer_async(m_identifier, cb_idx_to_stream_buffer,
+    auto status = m_client->ConfiguredNetworkGroup_infer_async(m_identifier, streams_cb_params.value(),
         infer_request_cb_idx, m_input_streams_names);
 
     if (HAILO_SUCCESS != status) {
         // If we got error in `infer_async()`, then the callbacks will not be called in the service domain.
         // remove them from the cb lists so they wont be called in the client domain as well.
         std::unique_lock<std::mutex> lock(m_mutex);
-        for (auto &pair : cb_idx_to_stream_buffer) {
-            m_idx_to_callbacks.erase(std::get<0>(pair));
+        for (auto &stream_cb_params : streams_cb_params.value()) {
+            m_idx_to_callbacks.erase(stream_cb_params->m_cb_idx);
         }
         m_infer_request_idx_to_callbacks.erase(infer_request_cb_idx);
         decrease_ongoing_callbacks();

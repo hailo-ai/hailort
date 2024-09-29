@@ -221,23 +221,23 @@ void AsyncInferRunnerImpl::abort()
     return;
 }
 
-Expected<bool> AsyncInferRunnerImpl::can_push_buffers(uint32_t frames_count)
+Expected<std::pair<bool, std::string>> AsyncInferRunnerImpl::can_push_buffers(uint32_t frames_count)
 {
     for (auto &last_element : m_async_pipeline->get_last_elements()) {
         TRY(const auto can_push_buffer, last_element.second->can_push_buffer_upstream(frames_count));
         if (!can_push_buffer) {
-            return false;
+            return std::make_pair(false, last_element.first);
         }
     }
 
     for (auto &entry_element : m_async_pipeline->get_entry_elements()) {
         TRY(const auto can_push_buffer, entry_element.second->can_push_buffer_downstream(frames_count));
         if (!can_push_buffer) {
-            return false;
+            return std::make_pair(false, entry_element.first);
         }
     }
 
-    return true;
+    return std::make_pair(true, std::string(""));
 }
 
 hailo_status AsyncInferRunnerImpl::set_buffers(std::unordered_map<std::string, PipelineBuffer> &inputs,
@@ -279,14 +279,14 @@ void AsyncInferRunnerImpl::set_pix_buffer_inputs(std::unordered_map<std::string,
     }
 }
 
-hailo_status AsyncInferRunnerImpl::run(ConfiguredInferModel::Bindings &bindings, TransferDoneCallbackAsyncInfer transfer_done)
+hailo_status AsyncInferRunnerImpl::run(const ConfiguredInferModel::Bindings &bindings, TransferDoneCallbackAsyncInfer transfer_done)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     hailo_status status = m_async_pipeline->get_pipeline_status()->load();
     CHECK_SUCCESS(status, "Can't handle infer request since Pipeline status is {}.", status);
 
-    TRY(auto are_pools_ready, can_push_buffers(1));
-    CHECK(are_pools_ready, HAILO_QUEUE_IS_FULL, "Can't handle infer request since a queue in the pipeline is full.");
+    TRY(auto are_pools_ready_pair, can_push_buffers(1));
+    CHECK(are_pools_ready_pair.first, HAILO_QUEUE_IS_FULL, "Can't handle infer request since a queue in the pipeline is full.");
 
     std::unordered_map<std::string, PipelineBuffer> outputs;
 
@@ -333,7 +333,6 @@ hailo_status AsyncInferRunnerImpl::run(ConfiguredInferModel::Bindings &bindings,
     }
 
     status = set_buffers(inputs, outputs);
-    // TODO: (HRT-14283) If set_buffers fails after a buffer is enqueued, the buffer's CB will be called - and might call user's CB
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }

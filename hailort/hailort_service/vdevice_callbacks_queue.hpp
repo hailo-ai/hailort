@@ -17,7 +17,7 @@
 #include "hailo/hailort.h"
 #include "hailo/network_group.hpp"
 #include "hailo/hailort_common.hpp"
-#include "utils/thread_safe_queue.hpp"
+#include "common/thread_safe_queue.hpp"
 
 namespace hailort
 {
@@ -27,6 +27,11 @@ namespace hailort
 class VDeviceCallbacksQueue final
 {
 public:
+    ~VDeviceCallbacksQueue()
+    {
+        shutdown();
+    };
+
     static Expected<std::unique_ptr<VDeviceCallbacksQueue>> create(uint32_t max_queue_size)
     {
         TRY(auto shutdown_event, Event::create_shared(Event::State::not_signalled));
@@ -48,6 +53,9 @@ public:
     {
         std::unique_lock<std::mutex> lock(m_mutex);
         auto status = m_callbacks_ids_queue.enqueue(std::move(callback_id));
+        if (HAILO_SHUTDOWN_EVENT_SIGNALED == status) {
+            return status;
+        }
         CHECK_SUCCESS(status);
 
         return HAILO_SUCCESS;

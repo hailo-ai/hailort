@@ -12,28 +12,9 @@
 namespace hailort
 {
 
-// 16 MB 
-#define INTEGRATED_DEVICE_INFINITE_ACTION_LIST_POOL_SIZE (16777216)
-
 bool IntegratedDevice::is_loaded()
 {
     return HailoRTDriver::is_integrated_nnc_loaded();
-}
-
-Expected<std::pair<void*, uint64_t>> IntegratedDevice::allocate_infinite_action_list_buffer(size_t size)
-{
-    CHECK_AS_EXPECTED(0 == (size % OsUtils::get_page_size()), HAILO_INVALID_ARGUMENT,
-        "Infinte action list buffer size must be a multiple of page size");
-    CHECK_AS_EXPECTED(m_device_infinite_action_list_pool_allocation_offset + size <= m_device_infinite_action_list_pool.size(),
-        HAILO_INVALID_ARGUMENT, "Buffer pool size is too small for requested infinte action list buffer");
-
-    auto user_addres = static_cast<void*>(reinterpret_cast<uint8_t*>(m_device_infinite_action_list_pool.user_address()) +
-        m_device_infinite_action_list_pool_allocation_offset);
-    auto dma_address = m_device_infinite_action_list_pool.dma_address() + m_device_infinite_action_list_pool_allocation_offset;
-
-    m_device_infinite_action_list_pool_allocation_offset += size;
-
-    return std::make_pair(user_addres, dma_address);
 }
 
 Expected<std::unique_ptr<IntegratedDevice>> IntegratedDevice::create()
@@ -42,29 +23,15 @@ Expected<std::unique_ptr<IntegratedDevice>> IntegratedDevice::create()
 
     TRY(auto driver, HailoRTDriver::create_integrated_nnc());
 
-    // Create pool of memory for infinite action list so can all be in the LUT memory area
-    // TODO: remove this when infinite action list allocates from its own pool of CMA memory
-    TRY(auto infinite_action_list_pool, vdma::ContinuousBuffer::create(INTEGRATED_DEVICE_INFINITE_ACTION_LIST_POOL_SIZE,
-        *driver));
-    
-    // Verify pool is in mapped range
-    CHECK_AS_EXPECTED(DDRActionListBufferBuilder::verify_dma_addr(infinite_action_list_pool), HAILO_INTERNAL_FAILURE,
-        "Failed to allocate continous buffer pool M4 mapped memory region");
-
-
-    auto device = std::unique_ptr<IntegratedDevice>(new (std::nothrow) IntegratedDevice(std::move(driver),
-        std::move(infinite_action_list_pool), status));
+    auto device = std::unique_ptr<IntegratedDevice>(new (std::nothrow) IntegratedDevice(std::move(driver), status));
     CHECK_AS_EXPECTED((nullptr != device), HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status, "Failed creating IntegratedDevice");
 
     return device;
 }
 
-IntegratedDevice::IntegratedDevice(std::unique_ptr<HailoRTDriver> &&driver, vdma::ContinuousBuffer &&pool,
-                                   hailo_status &status) :
-    VdmaDevice::VdmaDevice(std::move(driver), Device::Type::INTEGRATED, status),
-    m_device_infinite_action_list_pool(std::move(pool)),
-    m_device_infinite_action_list_pool_allocation_offset(0)
+IntegratedDevice::IntegratedDevice(std::unique_ptr<HailoRTDriver> &&driver, hailo_status &status) :
+    VdmaDevice::VdmaDevice(std::move(driver), Device::Type::INTEGRATED, status)
 {
     if (status != HAILO_SUCCESS) {
         LOGGER__ERROR("Failed to create VdmaDevice");

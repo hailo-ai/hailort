@@ -27,6 +27,10 @@
 #include "utils/buffer_storage.hpp"
 #include "hef/hef_internal.hpp"
 
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+#include "service/network_group_client.hpp"
+#endif // HAILO_SUPPORT_MULTI_PROCESS
+
 namespace hailort
 {
 
@@ -819,7 +823,7 @@ hailo_status ConfiguredNetworkGroupBase::infer_async(const NamedBuffersCallbacks
             const auto &dma_buffer = named_buffer_callback.second.first.dma_buffer;
             infer_request.transfers.emplace(name, TransferRequest{dma_buffer, callback});
         } else {
-            LOGGER__ERROR("infer_async does not support buffers with type {}", named_buffer_callback.second.first.buffer_type);
+            LOGGER__ERROR("infer_async does not support buffers with type {}", static_cast<int>(named_buffer_callback.second.first.buffer_type));
             return HAILO_INVALID_ARGUMENT;
         }
     }
@@ -887,6 +891,30 @@ hailo_status ConfiguredNetworkGroupBase::update_cache_offset(int32_t offset_delt
         "update_cache_offset() is not supported for multi core-op network groups");
 
     return m_core_ops[0]->update_cache_offset(offset_delta_bytes);
+}
+
+Expected<std::vector<uint32_t>> ConfiguredNetworkGroupBase::get_cache_ids() const
+{
+    CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
+        "get_cache_ids() is not supported for multi core-op network groups");
+
+    return m_core_ops[0]->get_cache_ids();
+}
+
+Expected<Buffer> ConfiguredNetworkGroupBase::read_cache_buffer(uint32_t cache_id)
+{
+    CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
+        "read_cache_buffer() is not supported for multi core-op network groups");
+
+    return m_core_ops[0]->read_cache_buffer(cache_id);
+}
+
+hailo_status ConfiguredNetworkGroupBase::write_cache_buffer(uint32_t cache_id, MemoryView buffer)
+{
+    CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
+        "write_cache_buffer() is not supported for multi core-op network groups");
+
+    return m_core_ops[0]->write_cache_buffer(cache_id, buffer);
 }
 
 } /* namespace hailort */

@@ -11,7 +11,6 @@
 #define _HAILO_VDMA_CONTINUOUS_EDGE_LAYER_HPP_
 
 #include "vdma/driver/hailort_driver.hpp"
-#include "os/mmap_buffer.hpp"
 #include "vdma/memory/vdma_edge_layer.hpp"
 #include "vdma/memory/continuous_buffer.hpp"
 

@@ -167,10 +167,51 @@
 #include <utility>
 #include <type_traits>
 
-
+#ifdef __cpp_exceptions
+#include <stdexcept>
+#include <sstream>
 /** hailort namespace */
 namespace hailort
 {
+
+/*! hailort_error is an Exception object that inherits from std::runtime_error.
+    Using this class requires compilation with exceptions */
+class hailort_error : public std::runtime_error
+{
+public:
+    template<typename... Args>
+    hailort_error(hailo_status status, Args&&... args) :
+        std::runtime_error(std::forward<Args>(args)...), m_status(status)
+    {}
+
+    /**
+     * Returns the error status that caused this exception.
+     */
+    hailo_status status() const {
+        return m_status;
+    }
+
+private:
+    hailo_status m_status;
+};
+#else
+/** hailort namespace */
+namespace hailort
+{
+
+/*! hailort_error is an Exception object that inherits from std::runtime_error.
+    Using this class requires compilation with exceptions */
+class hailort_error {
+public:
+
+    /**
+     * Returns the error status that caused this exception.
+     */
+    hailo_status status() const {
+        return HAILO_INVALID_OPERATION;
+    }
+};
+#endif
 
 // TODO(oro): constexpr
 // TODO(oro): noexcept
@@ -428,6 +469,41 @@ public:
         make_unexpected(HAILO_UNINITIALIZED);
         return tmp;
     }
+
+#ifdef __cpp_exceptions
+
+    /**
+     * If the object contains a value, releases ownership of the stored value by returning its value and making this object Unexpected.
+     * If the object is Unexpected, throws an exception of type hailort_error.
+     * @note Using this method requires compilation with exceptions.
+     */
+    T expect(const std::string &msg) &&
+    {
+        if (!has_value()) {
+            std::stringstream ss;
+            ss << "Expected::expect() failed with status=";
+            ss << status();
+            ss << ". ";
+            ss << msg;
+            throw hailort_error(status(), ss.str());
+        }
+        return release();
+    }
+#else
+    template <typename...>
+    struct always_false { static constexpr bool value = false; };
+    template <typename... Args>
+    /**
+     * If the object contains a value, releases ownership of the stored value by returning its value and making this object Unexpected.
+     * If the object is Unexpected, throws an exception of type hailort_error.
+     * @note Using this method requires compilation with exceptions.
+     */
+    T expect(Args &&...)
+    {
+        static_assert(always_false<Args...>::value, "Expected::expect() can't be used since exceptions are disabled.");
+    }
+#endif
+
 
     /**
      * Pointer of the contained value

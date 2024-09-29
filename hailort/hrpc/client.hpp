@@ -42,7 +42,7 @@ private:
 class Client
 {
 public:
-    Client() = default;
+    Client(const std::string &device_id) : m_device_id(device_id), m_is_running(true) {}
     ~Client();
 
     hailo_status connect();
@@ -53,14 +53,17 @@ public:
 protected:
     hailo_status message_loop();
 
-    bool is_running = true;
+    std::string m_device_id;
+    bool m_is_running;
     std::shared_ptr<ConnectionContext> m_conn_context;
     RpcConnection m_connection;
     std::thread m_thread;
     std::unordered_map<uint32_t, std::shared_ptr<ResultEvent>> m_events;
     std::unordered_map<HailoRpcActionID, std::function<hailo_status(const MemoryView&, RpcConnection)>> m_custom_callbacks;
     uint32_t m_messages_sent = 0;
-    std::mutex m_message_mutex;
+    std::mutex m_write_mutex;
+    std::condition_variable m_events_cv;
+    std::mutex m_events_mutex;
 };
 
 } // namespace hrpc

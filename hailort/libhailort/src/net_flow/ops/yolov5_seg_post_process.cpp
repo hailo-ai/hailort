@@ -10,23 +10,17 @@
 #include "yolov5_seg_post_process.hpp"
 #include "hailo/hailort.h"
 
-#if defined(_MSC_VER)
-#pragma warning(push)
-#pragma warning(disable: 4244 4267 4127)
-#else
+#include "transform/eigen.hpp"
+
+#ifndef _MSC_VER
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-#pragma GCC diagnostic ignored "-Wclass-memaccess"
-#endif
+#endif // Not MSC
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include "stb_image_resize.h"
-#include <Eigen/Dense>
-#if defined(_MSC_VER)
-#pragma warning(pop)
-#else
+#ifndef _MSC_VER
 #pragma GCC diagnostic pop
-#endif
+#endif // Not MSC
 
 namespace hailort
 {
@@ -71,8 +65,6 @@ hailo_status Yolov5SegOpMetadata::validate_format_info()
 
         CHECK(!(HAILO_FORMAT_FLAGS_TRANSPOSED & output_metadata.second.format.flags), HAILO_INVALID_ARGUMENT,
             "Output {} is marked as transposed, which is not supported for this model.", output_metadata.first);
-        CHECK(!(HAILO_FORMAT_FLAGS_HOST_ARGMAX & output_metadata.second.format.flags), HAILO_INVALID_ARGUMENT,
-            "Output {} is marked as argmax, which is not supported for this model.", output_metadata.first);
     }
 
     assert(1 <= m_inputs_metadata.size());
@@ -151,7 +143,7 @@ hailo_status Yolov5SegPostProcess::execute(const std::map<std::string, MemoryVie
         auto &input_metadata = inputs_metadata.at(name);
 
         CHECK(((input_metadata.format.type == HAILO_FORMAT_TYPE_UINT16) || (input_metadata.format.type == HAILO_FORMAT_TYPE_UINT8)),
-            HAILO_INVALID_ARGUMENT, "YOLO post-process received invalid input type {}", input_metadata.format.type);
+            HAILO_INVALID_ARGUMENT, "YOLO post-process received invalid input type {}", static_cast<int>(input_metadata.format.type));
 
         // Prepare proto layer
         if (name == yolov5seg_config.proto_layer_name) {

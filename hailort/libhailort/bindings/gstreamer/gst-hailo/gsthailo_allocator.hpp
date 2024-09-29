@@ -35,7 +35,7 @@ G_BEGIN_DECLS
 struct GstHailoAllocator
 {
     GstAllocator parent;
-    std::unordered_map<GstMemory*, Buffer> buffers;
+    std::unordered_map<GstMemory*, Buffer> *buffers;
 };
 
 struct GstHailoAllocatorClass

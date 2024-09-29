@@ -25,6 +25,7 @@
 #include "hailo/vdevice.hpp"
 
 #include "common/async_thread.hpp"
+#include "common/internal_env_vars.hpp"
 #include "vdma/vdma_device.hpp"
 #include "vdma/vdma_config_manager.hpp"
 #include "vdevice/vdevice_core_op.hpp"
@@ -32,13 +33,13 @@
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
 #include "service/hailort_rpc_client.hpp"
+#include "service/network_group_client.hpp"
 #endif // HAILO_SUPPORT_MULTI_PROCESS
 
 
 namespace hailort
 {
 
-#define DISABLE_MULTIPLEXER_ENV_VAR "HAILO_DISABLE_MULTIPLEXER_INTERNAL"
 class VDeviceBase : public VDevice
 {
 public:
@@ -142,6 +143,8 @@ public:
     static hailo_status validate_params(const hailo_vdevice_params_t &params);
     static Expected<bool> device_ids_contains_eth(const hailo_vdevice_params_t &params);
 
+    virtual hailo_status add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> network_group_ptr) override;
+
 private:
     VDeviceBase(std::map<device_id_t, std::unique_ptr<Device>> &&devices, CoreOpsSchedulerPtr core_ops_scheduler,
         const std::string &unique_vdevice_hash="") :
@@ -238,11 +241,13 @@ public:
     Expected<std::vector<std::string>> get_physical_devices_ids() const override;
     Expected<hailo_stream_interface_t> get_default_streams_interface() const override;
     Expected<std::shared_ptr<InferModel>> create_infer_model(const std::string &hef_path,
-        const std::string &network_name = "") override;
+        const std::string &name = "") override;
     virtual hailo_status dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
     virtual hailo_status dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
     virtual hailo_status dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
     virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
+
+    virtual hailo_status add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> network_group_ptr) override;
 
 private:
     VDeviceHandle(uint32_t handle);

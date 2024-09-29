@@ -12,6 +12,7 @@
 
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
+#include "common/string_utils.hpp"
 #include "hailo_ioctl_common.h"
 
 #if defined(__linux__)
@@ -128,6 +129,28 @@ static hailo_dma_data_direction direction_to_dma_data_direction(HailoRTDriver::D
     return HAILO_DMA_NONE;
 }
 
+static HailoRTDriver::DeviceBoardType board_type_to_device_board_type(enum hailo_board_type board_type) {
+    switch (board_type) {
+    case HAILO_BOARD_TYPE_HAILO8:
+        return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO8;
+    case HAILO_BOARD_TYPE_HAILO15:
+        return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO15;
+    case HAILO_BOARD_TYPE_PLUTO:
+        return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_PLUTO;
+    case HAILO_BOARD_TYPE_HAILO10H:
+        return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO10H;
+    case HAILO_BOARD_TYPE_HAILO10H_LEGACY:
+        return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO10H_LEGACY;
+    default:
+        LOGGER__ERROR("Invalid board type from ioctl {}", static_cast<int>(board_type));
+        break;
+    }
+
+    assert(false);
+    // On release build Return value that will make ioctls to fail.
+    return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_COUNT;
+}
+
 // TODO: validate wraparounds for buffer/mapping handles in the driver (HRT-9509)
 const uintptr_t HailoRTDriver::INVALID_DRIVER_BUFFER_HANDLE_VALUE = INVALID_DRIVER_HANDLE_VALUE;
 const size_t HailoRTDriver::INVALID_DRIVER_VDMA_MAPPING_HANDLE_VALUE = INVALID_DRIVER_HANDLE_VALUE;
@@ -145,8 +168,10 @@ Expected<std::unique_ptr<HailoRTDriver>> HailoRTDriver::create(const std::string
 {
     TRY(auto fd, open_device_file(dev_path));
 
+    auto device_id_lower = StringUtils::to_lower(device_id);
+
     hailo_status status = HAILO_UNINITIALIZED;
-    std::unique_ptr<HailoRTDriver> driver(new (std::nothrow) HailoRTDriver(device_id, std::move(fd), status));
+    std::unique_ptr<HailoRTDriver> driver(new (std::nothrow) HailoRTDriver(device_id_lower, std::move(fd), status));
     CHECK_NOT_NULL_AS_EXPECTED(driver, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
@@ -158,7 +183,7 @@ Expected<std::unique_ptr<HailoRTDriver>> HailoRTDriver::create_pcie(const std::s
     TRY(const auto scan_results, scan_devices());
 
     auto device_found = std::find_if(scan_results.cbegin(), scan_results.cend(),
-        [&device_id](const auto &compared_scan_result) {
+        [device_id=StringUtils::to_lower(device_id)](const auto &compared_scan_result) {
             return (device_id == compared_scan_result.device_id);
         });
     CHECK(device_found != scan_results.cend(), HAILO_INVALID_ARGUMENT, "Requested device not found");
@@ -239,6 +264,11 @@ HailoRTDriver::HailoRTDriver(const std::string &device_id, FileDescriptor &&fd, 
     m_desc_max_page_size = device_properties.desc_max_page_size;
     m_allocate_driver_buffer = (HAILO_ALLOCATION_MODE_DRIVER == device_properties.allocation_mode);
     m_dma_engines_count = device_properties.dma_engines_count;
+    m_board_type = board_type_to_device_board_type(device_properties.board_type);
+    if (DeviceBoardType::DEVICE_BOARD_TYPE_COUNT == m_board_type) {
+        status = HAILO_DRIVER_FAIL;
+        return;
+    }
 
     switch (device_properties.dma_type) {
     case HAILO_DMA_TYPE_PCIE:
@@ -251,7 +281,7 @@ HailoRTDriver::HailoRTDriver(const std::string &device_id, FileDescriptor &&fd, 
         m_dma_type = DmaType::PCIE_EP;
         break;
     default:
-        LOGGER__ERROR("Invalid dma type returned from ioctl {}", device_properties.dma_type);
+        LOGGER__ERROR("Invalid dma type returned from ioctl {}", static_cast<int>(device_properties.dma_type));
         status = HAILO_DRIVER_FAIL;
         return;
     }
@@ -530,12 +560,24 @@ hailo_status HailoRTDriver::reset_nn_core()
     return HAILO_SUCCESS;
 }
 
+Expected<uint64_t> HailoRTDriver::write_action_list(uint8_t *data, size_t size)
+{
+    hailo_write_action_list_params params{};
+    params.size = size;
+    params.data = data;
+
+    CHECK_IOCTL_RESULT(run_ioctl(HAILO_WRITE_ACTION_LIST, &params), "Failed write action list");
+
+    uint64_t dma_address = params.dma_address;
+    return dma_address;
+}
+
 Expected<HailoRTDriver::VdmaBufferHandle> HailoRTDriver::vdma_buffer_map_dmabuf(int dmabuf_fd, size_t required_size, DmaDirection data_direction,
     DmaBufferType buffer_type)
 {
     CHECK_AS_EXPECTED (DmaBufferType::DMABUF_BUFFER == buffer_type, HAILO_INVALID_ARGUMENT,
-        "Error, Invalid buffer type given, buffer type {}", buffer_type);
-    
+        "Error, Invalid buffer type given, buffer type {}", static_cast<int>(buffer_type));
+
     return vdma_buffer_map(dmabuf_fd, required_size, data_direction, INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER,
         buffer_type);
 }
@@ -554,8 +596,10 @@ Expected<HailoRTDriver::VdmaBufferHandle> HailoRTDriver::vdma_buffer_map(uintptr
     if (mapped_buffer != m_mapped_buffer.end()) {
         // Buffer already mapped, increase ref count and use it.
         assert(mapped_buffer->mapped_count > 0);
-        CHECK_AS_EXPECTED(mapped_buffer->driver_buff_handle == driver_buff_handle, HAILO_INVALID_ARGUMENT,
-            "Mapped buffer driver handle {} is different than required handle {}", mapped_buffer->driver_buff_handle,
+        const bool mismatched_driver_handle = (driver_buff_handle != INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER) &&
+            (mapped_buffer->driver_buff_handle != driver_buff_handle);
+        CHECK(!mismatched_driver_handle, HAILO_INVALID_ARGUMENT,
+            "Mapped buffer driver handle 0x{:x} is different than required handle 0x{:x}", mapped_buffer->driver_buff_handle,
             driver_buff_handle);
 
         mapped_buffer->mapped_count++;
@@ -803,10 +847,11 @@ hailo_status HailoRTDriver::mark_as_used()
     return params.in_use ? HAILO_DEVICE_IN_USE : HAILO_SUCCESS;
 }
 
-Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> HailoRTDriver::soc_connect(uintptr_t input_buffer_desc_handle,
-    uintptr_t output_buffer_desc_handle)
+Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> HailoRTDriver::soc_connect(uint16_t port_number,
+    uintptr_t input_buffer_desc_handle, uintptr_t output_buffer_desc_handle)
 {
     hailo_soc_connect_params params{};
+    params.port_number = port_number;
     params.input_desc_handle = input_buffer_desc_handle;
     params.output_desc_handle = output_buffer_desc_handle;
     CHECK_IOCTL_RESULT(run_ioctl(HAILO_SOC_CONNECT, &params), "Failed soc_connect");
@@ -815,9 +860,11 @@ Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> HailoRTDriver::soc_connect
     return std::make_pair(input_channel, output_channel);
 }
 
-Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> HailoRTDriver::pci_ep_accept(uintptr_t input_buffer_desc_handle, uintptr_t output_buffer_desc_handle)
+Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> HailoRTDriver::pci_ep_accept(uint16_t port_number,
+    uintptr_t input_buffer_desc_handle, uintptr_t output_buffer_desc_handle)
 {
     hailo_pci_ep_accept_params params{};
+    params.port_number = port_number;
     params.input_desc_handle = input_buffer_desc_handle;
     params.output_desc_handle = output_buffer_desc_handle;
     CHECK_IOCTL_RESULT(run_ioctl(HAILO_PCI_EP_ACCEPT, &params), "Failed pci_ep accept");
@@ -842,7 +889,7 @@ hailo_status HailoRTDriver::close_connection(vdma::ChannelId input_channel, vdma
         CHECK_IOCTL_RESULT(run_ioctl(HAILO_SOC_CLOSE, &params), "Failed soc_close");
         return HAILO_SUCCESS;
     } else {
-        LOGGER__ERROR("close_connection not supported with session type {}", session_type);
+        LOGGER__ERROR("close_connection not supported with session type {}", static_cast<int>(session_type));
         return HAILO_NOT_SUPPORTED;
     }
 }
@@ -854,6 +901,7 @@ static bool is_blocking_ioctl(unsigned long request)
     case HAILO_VDMA_INTERRUPTS_WAIT:
     case HAILO_FW_CONTROL:
     case HAILO_READ_NOTIFICATION:
+    case HAILO_PCI_EP_ACCEPT:
         return true;
     default:
         return false;
@@ -1012,7 +1060,17 @@ Expected<DescriptorsListInfo> HailoRTDriver::descriptors_list_create(size_t desc
     create_desc_info.desc_page_size = desc_page_size;
     create_desc_info.is_circular = is_circular;
 
-    CHECK_IOCTL_RESULT(run_ioctl(HAILO_DESC_LIST_CREATE, &create_desc_info), "Failed create desc list");
+    int err = run_ioctl(HAILO_DESC_LIST_CREATE, &create_desc_info);
+    if (err != 0) {
+    #if defined(__linux__)
+        if (ENOMEM == err) {
+            LOGGER__ERROR("Failed to create desc list due to due to insufficient amount of CMA memory");
+            return make_unexpected(HAILO_OUT_OF_HOST_CMA_MEMORY);
+        }
+    #endif
+        LOGGER__ERROR("Failed create desc list with errno:{}", err);
+        return make_unexpected(HAILO_DRIVER_FAIL);
+    }
 
     return DescriptorsListInfo{create_desc_info.desc_handle, create_desc_info.dma_address};
 }

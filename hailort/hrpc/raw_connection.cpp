@@ -10,6 +10,7 @@
 #include "hailo/vdevice.hpp"
 #include "hrpc/raw_connection.hpp"
 #include "hrpc/os/pcie/raw_connection_internal.hpp"
+#include "common/internal_env_vars.hpp"
 
 #ifdef _WIN32
 #include "hrpc/os/windows/raw_connection_internal.hpp"
@@ -17,21 +18,31 @@
 #include "hrpc/os/posix/raw_connection_internal.hpp"
 #endif
 
-#define HAILO_FORCE_SOCKET_COM_ENV_VAR "HAILO_FORCE_SOCKET_COM"
 
 using namespace hrpc;
 
 
-Expected<std::shared_ptr<ConnectionContext>> ConnectionContext::create_shared(bool is_accepting)
+Expected<std::shared_ptr<ConnectionContext>> ConnectionContext::create_client_shared(const std::string &device_id)
 {
-    // The env var HAILO_FORCE_HRPC_CLIENT_ENV_VAR is supported for debug purposes
-    char *socket_com = std::getenv(HAILO_FORCE_SOCKET_COM_ENV_VAR); // TODO: Remove duplication
-    auto force_socket_com = (nullptr != socket_com) && ("1" == std::string(socket_com));
+    auto should_force_socket_com = get_env_variable(HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR);
 
-    if (force_socket_com || VDevice::force_hrpc_client()) {// If forcing hrpc service, its because we work without EP driver -> use sockets
-        return OsConnectionContext::create_shared(is_accepting);
+    // If forcing hrpc service, its because we work without EP driver -> use sockets
+    if (should_force_socket_com.has_value() || VDevice::should_force_hrpc_client()) {
+        return OsConnectionContext::create_shared(false);
     } else {
-        return PcieConnectionContext::create_shared(is_accepting);
+        return PcieConnectionContext::create_client_shared(device_id);
+    }
+}
+
+Expected<std::shared_ptr<ConnectionContext>> ConnectionContext::create_server_shared()
+{
+    auto should_force_socket_com = get_env_variable(HAILO_SOCKET_COM_ADDR_SERVER_ENV_VAR);
+
+    // If forcing hrpc service, its because we work without EP driver -> use sockets
+    if (should_force_socket_com.has_value() || VDevice::should_force_hrpc_client()) {
+        return OsConnectionContext::create_shared(true);
+    } else {
+        return PcieConnectionContext::create_server_shared();
     }
 }
 

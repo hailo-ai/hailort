@@ -20,10 +20,7 @@
 #ifndef _GST_HAILONET_HPP_
 #define _GST_HAILONET_HPP_
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#include <gst/gst.h>
-#pragma GCC diagnostic pop
+#include "hailo_gst.h"
 
 #include <gst/base/gstqueuearray.h>
 #include <gst/video/gstvideofilter.h>
@@ -31,7 +28,11 @@
 #include "hailo/infer_model.hpp"
 #include "common.hpp"
 #include "gsthailo_allocator.hpp"
-#include "gsthailo_dmabuf_allocator.hpp"
+#include "dma_buf_allocator_wrapper.hpp"
+
+#if defined(__linux__)
+  #include "gsthailo_dmabuf_allocator.hpp"
+#endif /* __linux__ */
 
 #include <queue>
 #include <condition_variable>
@@ -86,10 +87,20 @@ public:
     HailoElemProperty<guint32> m_vdevice_key;
 };
 
+class HailoNetImpl;
 typedef struct _GstHailoNet {
     GstElement element;
     GstPad *sinkpad;
     GstPad *srcpad;
+
+    HailoNetImpl *impl;
+} GstHailoNet;
+
+class HailoNetImpl final
+{
+public:
+    static Expected<std::unique_ptr<HailoNetImpl>> create();
+    HailoNetImpl();
 
     std::unordered_map<GstBuffer*, std::queue<GstEvent*>> events_queue_per_buffer;
     std::queue<GstEvent*> curr_event_queue;
@@ -121,14 +132,14 @@ typedef struct _GstHailoNet {
     GstVideoInfo input_frame_info;
 
     GstHailoAllocator *allocator;
-    GstHailoDmabufAllocator *dmabuf_allocator;
+    std::shared_ptr<HailoDmaBuffAllocator> dmabuf_allocator;
     std::unordered_map<std::string, GstBufferPool*> output_buffer_pools;
     std::unordered_map<std::string, hailo_vstream_info_t> output_vstream_infos;
 
     std::mutex input_queue_mutex;
     std::mutex thread_queue_mutex;
     std::condition_variable thread_cv;
-} GstHailoNet;
+};
 
 typedef struct _GstHailoNetClass {
   GstElementClass parent_class;

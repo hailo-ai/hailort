@@ -12,6 +12,7 @@
 #include "periph_calculator.hpp"
 #include "hef/hef_internal.hpp"
 #include "common/file_utils.hpp"
+#include "vdma/memory/vdma_edge_layer.hpp"
 
 namespace hailort
 {
@@ -101,6 +102,13 @@ static Expected<LayerInfo> update_layer_info(const LayerInfo &original_layer_inf
     return updated_local_layer_info;
 }
 
+static CONTROL_PROTOCOL__host_buffer_info_t get_boundary_buffer_info(vdma::BoundaryChannel &channel, uint32_t transfer_size)
+{
+    auto &desc_list = channel.get_desc_list();
+    return vdma::VdmaEdgeLayer::get_host_buffer_info(vdma::VdmaEdgeLayer::Type::SCATTER_GATHER, desc_list.dma_address(),
+        desc_list.desc_page_size(), desc_list.count(), transfer_size);
+}
+
 static hailo_status fill_boundary_input_layer_impl(ContextResources &context_resources,
     ResourcesManager &resources_manager, const LayerInfo layer_info, const CONTROL_PROTOCOL__hw_consts_t &hw_consts,
     const HEFHwArch &hw_arch, bool should_optimize_credits)
@@ -109,7 +117,7 @@ static hailo_status fill_boundary_input_layer_impl(ContextResources &context_res
 
     TRY(const auto vdma_channel, resources_manager.get_boundary_vdma_channel_by_stream_name(layer_info.name));
 
-    const auto buffer_info = vdma_channel->get_boundary_buffer_info(transfer_size);
+    const auto buffer_info = get_boundary_buffer_info(*vdma_channel, transfer_size);
     const bool is_periph_calculated_in_hailort = resources_manager.get_supported_features().periph_calculation_in_hailort;
     const bool is_core_hw_padding_config_in_dfc = resources_manager.get_supported_features().core_hw_padding_config_in_dfc;
     TRY(auto local_layer_info, update_layer_info(layer_info, buffer_info, hw_consts, hw_arch, should_optimize_credits,
@@ -177,7 +185,7 @@ static hailo_status fill_boundary_output_layer(ContextResources &context_resourc
 
     TRY(const auto vdma_channel, resources_manager.get_boundary_vdma_channel_by_stream_name(layer_info.name));
 
-    const auto buffer_info = vdma_channel->get_boundary_buffer_info(transfer_size);
+    const auto buffer_info = get_boundary_buffer_info(*vdma_channel, transfer_size);
     const bool is_periph_calculated_in_hailort = resources_manager.get_supported_features().periph_calculation_in_hailort;
     const bool is_core_hw_padding_config_in_dfc = resources_manager.get_supported_features().core_hw_padding_config_in_dfc;
     TRY(auto local_layer_info, update_layer_info(layer_info, buffer_info, hw_consts, hw_arch, should_optimize_credits,
@@ -948,10 +956,7 @@ static hailo_status write_action_list(const ContextResources & context_resources
         TRY(auto action_buffers, action->serialize(context_resources));
 
         for (auto &action_buffer : action_buffers) {
-            const bool last_action_buffer_in_context = (action_buffer == *(action_buffers.end() - 1)) &&
-                (action == *(actions.end() - 1));
-            builder->write_action(MemoryView(action_buffer), context_resources.get_context_type(),
-                is_first_action_buffer_of_context, last_action_buffer_in_context);
+            builder->build_context(MemoryView(action_buffer), context_resources.get_context_type(), is_first_action_buffer_of_context);
             is_first_action_buffer_of_context = false;
         }
     }
@@ -963,12 +968,15 @@ static hailo_status add_edge_layer_end_of_context_actions(const ContextResources
     std::vector<ContextSwitchConfigActionPtr> &actions, const bool is_batch_switch_context)
 {
     for (const auto &edge_layer : context_resources.get_edge_layers()) {
-        const bool should_validate = (edge_layer.layer_info.type == LayerType::BOUNDARY);
-        auto action = should_validate ?
-            ValidateChannelAction::create(edge_layer, is_batch_switch_context) :
-            DeactivateChannelAction::create(edge_layer, is_batch_switch_context);
-        CHECK_EXPECTED_AS_STATUS(action); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
-        actions.emplace_back(action.release());
+#ifndef NDEBUG
+        TRY(auto validate_action, ValidateChannelAction::create(edge_layer, is_batch_switch_context));
+        actions.emplace_back(validate_action);
+#endif
+        const bool should_deactivate = (edge_layer.layer_info.type != LayerType::BOUNDARY);
+        if (should_deactivate) {
+            TRY(auto deactive_action, DeactivateChannelAction::create(edge_layer, is_batch_switch_context));
+            actions.emplace_back(deactive_action);
+        }
     }
 
     /* Pause the boundary input channel */
@@ -1096,7 +1104,7 @@ static Expected<ContextSwitchConfigActionPtr> create_switch_lcu_batch_action(con
     CHECK_AS_EXPECTED((ContextSwitchConfigAction::Type::EnableLcuDefault == action->get_type()) ||
         (ContextSwitchConfigAction::Type::SwitchLcuBatch == action->get_type()) ||
         (ContextSwitchConfigAction::Type::EnableLcuNonDefault == action->get_type()), HAILO_INVALID_ARGUMENT,
-        "Invalid action type - must be enable lcu (default or non default) or switch lcu batch, Received type {}", action->get_type());
+        "Invalid action type - must be enable lcu (default or non default) or switch lcu batch, Received type {}", static_cast<int>(action->get_type()));
 
     TRY(const auto params_buffer, action->serialize_params(context_resources));
 

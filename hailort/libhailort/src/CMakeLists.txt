@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.5.0)
 
 find_package(Threads REQUIRED)
 
@@ -36,6 +36,7 @@ add_subdirectory(hef)
 add_subdirectory(network_group)
 add_subdirectory(core_op)
 add_subdirectory(net_flow)
+add_subdirectory(rpc_callbacks)
 
 if(HAILO_BUILD_SERVICE)
     add_subdirectory(service)
@@ -81,6 +82,13 @@ else()
         m # libmath
         atomic
     )
+
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL Android)
+        # TODO: HRT-14770 fix android build
+         # for common dir, TODO: Make common directory a library
+        target_link_libraries(libhailort PRIVATE rt)
+    endif()
+
     set(THREADS_PREFER_PTHREAD_FLAG ON)
     # Hack to support cross-compilation - https://stackoverflow.com/a/49086560
     set(THREADS_PTHREAD_ARG "0" CACHE STRING "Result from TRY_RUN" FORCE)

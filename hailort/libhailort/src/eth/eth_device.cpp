@@ -491,7 +491,7 @@ Expected<std::vector<WriteMemoryInfo>> EthernetDevice::create_core_op_metadata(H
 
     /* Update preliminary_config and dynamic_contexts recepies */
     auto &proto_preliminary_config = partial_core_op->preliminary_config;
-    TRY(auto core_op_config, Hef::Impl::create_single_context_core_op_config(proto_preliminary_config));
+    TRY(auto core_op_config, Hef::Impl::create_single_context_core_op_config(proto_preliminary_config, hef));
 
     return core_op_config;
 }

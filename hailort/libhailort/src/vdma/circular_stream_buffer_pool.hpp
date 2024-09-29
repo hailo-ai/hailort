@@ -14,7 +14,6 @@
 #include "common/circular_buffer.hpp"
 #include "stream_common/stream_buffer_pool.hpp"
 #include "vdma/vdma_device.hpp"
-#include "hailo/dma_mapped_buffer.hpp"
 
 #include <condition_variable>
 
@@ -33,7 +32,7 @@ public:
         hailo_dma_buffer_direction_t direction, size_t desc_page_size, size_t descs_count, size_t transfer_size);
 
     CircularStreamBufferPool(size_t desc_page_size, size_t descs_count, size_t transfer_size,
-        Buffer &&base_buffer, DmaMappedBuffer &&mappings);
+        vdma::MappedBufferPtr &&base_buffer);
 
     virtual size_t max_queue_size() const override;
     size_t buffers_ready_to_dequeue() const;
@@ -42,7 +41,7 @@ public:
 
     virtual hailo_status enqueue(TransferBuffer &&buffer_info) override;
 
-    Buffer &get_base_buffer() { return m_base_buffer; }
+    vdma::MappedBufferPtr get_base_buffer() { return m_mapped_buffer; }
 
     virtual void reset_pointers() override;
 
@@ -57,8 +56,7 @@ private:
     const size_t m_transfer_size;
 
     // m_mapped_buffer.size() must be m_queue.size() * m_desc_page_size
-    Buffer m_base_buffer;
-    DmaMappedBuffer m_mappings;
+    vdma::MappedBufferPtr m_mapped_buffer;
 
     // Head/tail based queue that manages the buffer pool.
     // The head and tail are in m_desc_page_size granularity.

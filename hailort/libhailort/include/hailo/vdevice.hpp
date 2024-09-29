@@ -69,25 +69,25 @@ public:
      * Creates the infer model from an hef
      *
      * @param[in] hef_path                    A string of an hef file.
-     * @param[in] network_name                A string of the network name (optional).
+     * @param[in] name                        A string of the model name (optional).
      * @return Upon success, returns Expected of a shared pointer of infer model.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      * @note the Hef file must be maintained until the completion of the configuration phase.
      */
     virtual Expected<std::shared_ptr<InferModel>> create_infer_model(const std::string &hef_path,
-        const std::string &network_name = "");
+        const std::string &name = "");
 
     /**
      * Creates the infer model from an hef buffer
      *
      * @param[in] hef_buffer                  A pointer to a buffer containing the hef file.
-     * @param[in] network_name                A string of the network name (optional).
+     * @param[in] name                        A string of the model name (optional).
      * @return Upon success, returns Expected of a shared pointer of infer model.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      * @note the Hef buffer must be maintained until the completion of the configuration phase.
      */
     virtual Expected<std::shared_ptr<InferModel>> create_infer_model(const MemoryView hef_buffer,
-        const std::string &network_name = "");
+        const std::string &name = "");
 
     /**
      * Gets the underlying physical devices.
@@ -128,7 +128,7 @@ public:
      *
      * @param[in] hef                         A reference to an Hef object to create configure params by
      * @param[in] network_group_name          Name of network_group to make configure params for.
-     * @return Upon success, returns Expected of a NetworkGroupsParamsMap (map of string and ConfiguredNetworkParams).
+     * @return Upon success, returns Expected of a ConfigureNetworkParams.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     Expected<ConfigureNetworkParams> create_configure_params(Hef &hef, const std::string &network_group_name) const;
@@ -211,6 +211,8 @@ public:
     virtual hailo_status after_fork_in_parent();
     virtual hailo_status after_fork_in_child();
 
+    virtual hailo_status add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> network_group_ptr);
+
     virtual ~VDevice() = default;
     VDevice(const VDevice &) = delete;
     VDevice &operator=(const VDevice &) = delete;
@@ -218,7 +220,7 @@ public:
     VDevice &operator=(VDevice &&other) = delete;
 
     static bool service_over_ip_mode();
-    static bool force_hrpc_client();
+    static bool should_force_hrpc_client();
 
 protected:
     VDevice() = default;

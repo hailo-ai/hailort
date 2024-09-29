@@ -14,6 +14,7 @@
 #include "hailo/expected.hpp"
 #include "hailo/device.hpp"
 #include "rpc/rpc_definitions.hpp"
+#include "service/buffer_pool_per_stream.hpp"
 
 #if defined(_MSC_VER)
 #pragma warning(push)
@@ -37,6 +38,35 @@ namespace hailort
 // Higher then default-hrt-timeout so we can differentiate errors
 static const std::chrono::milliseconds CONTEXT_TIMEOUT(HAILO_DEFAULT_VSTREAM_TIMEOUT_MS + 500);
 using callback_idx_t = uint32_t;
+using StreamCallback = std::function<void(hailo_status)>;
+
+class StreamCbParams
+{
+public:
+    StreamCbParams() :
+        m_is_shm(false), m_cb_idx(INVALID_CB_INDEX), m_stream_name(INVALID_STREAM_NAME) {}
+
+    StreamCbParams(callback_idx_t cb_idx, std::string stream_name, StreamCallback callback, MemoryView user_mem_view) :
+        m_is_shm(false), m_cb_idx(cb_idx), m_stream_name(stream_name), m_size(user_mem_view.size()),
+            m_callback(callback), m_user_mem_view(user_mem_view) {}
+
+    StreamCbParams(callback_idx_t cb_idx, std::string stream_name, StreamCallback callback, MemoryView user_mem_view,
+        const std::string &shm_name, AcquiredBufferPtr acquired_shm_buffer) :
+        m_is_shm(true), m_cb_idx(cb_idx), m_stream_name(stream_name), m_size(user_mem_view.size()), m_callback(callback),
+        m_user_mem_view(user_mem_view), m_shm_name(shm_name), m_acquired_shm_buffer(acquired_shm_buffer) {}
+
+    bool m_is_shm;
+    callback_idx_t m_cb_idx;
+    std::string m_stream_name;
+    size_t m_size;
+    StreamCallback m_callback;
+
+    // TODO: HRT-14821 - Try make it a uinion
+    MemoryView m_user_mem_view;
+    std::string m_shm_name;
+    AcquiredBufferPtr m_acquired_shm_buffer;
+};
+using StreamCbParamsPtr = std::shared_ptr<StreamCbParams>;
 
 class ClientContextWithTimeout : public grpc::ClientContext {
 public:
@@ -104,10 +134,13 @@ public:
     hailo_status ConfiguredNetworkGroup_infer_async(const NetworkGroupIdentifier &identifier,
         const std::vector<std::tuple<callback_idx_t, std::string, MemoryView>> &cb_idx_to_stream_buffer,
         const callback_idx_t infer_request_done_cb, const std::unordered_set<std::string> &input_streams_names);
+    hailo_status ConfiguredNetworkGroup_infer_async(const NetworkGroupIdentifier &identifier,
+        const std::vector<StreamCbParamsPtr> &strems_cb_params, const callback_idx_t infer_request_done_cb,
+        const std::unordered_set<std::string> &input_streams_names);
 
-    Expected<std::vector<uint32_t>> InputVStreams_create(const NetworkGroupIdentifier &identifier,
+    Expected<std::unordered_map<std::string, uint32_t>> InputVStreams_create(const NetworkGroupIdentifier &identifier,
         const std::map<std::string, hailo_vstream_params_t> &inputs_params, uint32_t pid);
-    Expected<std::vector<uint32_t>> OutputVStreams_create(const NetworkGroupIdentifier &identifier,
+    Expected<std::unordered_map<std::string, uint32_t>> OutputVStreams_create(const NetworkGroupIdentifier &identifier,
         const std::map<std::string, hailo_vstream_params_t> &output_params, uint32_t pid);
 
     Expected<uint32_t> InputVStream_dup_handle(const VStreamIdentifier &identifier, uint32_t pid);
@@ -116,9 +149,9 @@ public:
 
     hailo_status OutputVStream_release(const VStreamIdentifier &identifier, uint32_t pid);
     Expected<bool> InputVStream_is_multi_planar(const VStreamIdentifier &identifier);
-    hailo_status InputVStream_write(const VStreamIdentifier &identifier, const MemoryView &buffer);
-    hailo_status InputVStream_write(const VStreamIdentifier &identifier, const hailo_pix_buffer_t &buffer);
-    hailo_status OutputVStream_read(const VStreamIdentifier &identifier, MemoryView buffer);
+    hailo_status InputVStream_write(const VStreamIdentifier &identifier, const MemoryView &buffer, const std::chrono::milliseconds &timeout);
+    hailo_status InputVStream_write(const VStreamIdentifier &identifier, const hailo_pix_buffer_t &buffer, const std::chrono::milliseconds &timeout);
+    hailo_status OutputVStream_read(const VStreamIdentifier &identifier, MemoryView buffer, const std::chrono::milliseconds &timeout);
     Expected<size_t> InputVStream_get_frame_size(const VStreamIdentifier &identifier);
     Expected<size_t> OutputVStream_get_frame_size(const VStreamIdentifier &identifier);
 

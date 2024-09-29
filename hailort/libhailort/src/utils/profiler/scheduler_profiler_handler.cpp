@@ -9,29 +9,16 @@
 
 #include "scheduler_profiler_handler.hpp"
 #include "profiler_utils.hpp"
-
 #include "common/logger_macros.hpp"
-
 #include "utils/hailort_logger.hpp"
-
-#include <spdlog/sinks/rotating_file_sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/sinks/android_sink.h>
-#include <spdlog/sinks/null_sink.h>
 
 #include <google/protobuf/io/zero_copy_stream.h>
 #include <google/protobuf/io/zero_copy_stream_impl.h>
 
 #include <fstream>
 #include <iomanip>
+#include <mutex>
 
-
-#define SCHEDULER_PROFILER_NAME ("SchedulerProfiler")
-#define PROFILER_FILE_ENV_VAR ("HAILO_TRACE_PATH")
-#define SCHEDULER_PROFILER_LOGGER_FILENAME ("scheduler_profiler.json")
-#define SCHEDULER_PROFILER_LOGGER_PATTERN ("%v")
-
-#define SCHEDULER_PROFILER_LOGGER_PATH ("SCHEDULER_PROFILER_LOGGER_PATH")
 
 static const std::string PROFILER_DEFAULT_FILE_NAME_PREFIX("hailort");
 static const std::string PROFILER_DEFAULT_FILE_NAME_SUFFIX(".hrtt");
@@ -47,36 +34,45 @@ std::string get_current_datetime() {
   return ss.str();
 }
 
-SchedulerProfilerHandler::SchedulerProfilerHandler(int64_t &start_time)
-#ifndef __ANDROID__
-    : m_file_sink(HailoRTLogger::create_file_sink(HailoRTLogger::get_log_path(SCHEDULER_PROFILER_LOGGER_PATH), SCHEDULER_PROFILER_LOGGER_FILENAME, false)),
-      m_first_write(true)
-#endif
+SchedulerProfilerHandler::SchedulerProfilerHandler(size_t dump_after_n_seconds, size_t dump_after_n_kb) :
+      m_time_in_seconds_bounded_dump(dump_after_n_seconds),
+      m_size_in_kb_bounded_dump(dump_after_n_kb)
 {
-#ifndef __ANDROID__
-    spdlog::sinks_init_list sink_list = { m_file_sink };
-    m_profiler_logger = make_shared_nothrow<spdlog::logger>(SCHEDULER_PROFILER_NAME, sink_list.begin(), sink_list.end());
-    m_file_sink->set_level(spdlog::level::level_enum::info);
-    m_file_sink->set_pattern(SCHEDULER_PROFILER_LOGGER_PATTERN);
-    std::stringstream ss;
-    ss << "{\"ns_since_epoch_zero_time\": \"" << start_time << "\",\n\"scheduler_actions\": [\n";
-    m_profiler_logger->info(ss.str());
-#else
-    (void)start_time;
-#endif
+    if (m_time_in_seconds_bounded_dump) {
+        m_timer_thread = std::thread([this](){
+            std::unique_lock<std::mutex> lock(m_cv_mutex);
+            m_cv.wait_for(lock,
+                std::chrono::seconds(m_time_in_seconds_bounded_dump),
+                [this] { return m_shutting_down; });
+            dump_trace_file();
+        });
+    }
 }
 
 SchedulerProfilerHandler::~SchedulerProfilerHandler()
 {
-    m_profiler_logger->info("]\n}");
+    {
+        std::lock_guard<std::mutex> lock(m_cv_mutex);
+        m_shutting_down = true;
+    }
+    m_cv.notify_all();
+    if (m_timer_thread.joinable()) {
+        m_timer_thread.join();
+    }
 }
 
-void SchedulerProfilerHandler::serialize_and_dump_proto()
+hailo_status SchedulerProfilerHandler::serialize_and_dump_proto()
 {
-    auto file_env_var = std::getenv(PROFILER_FILE_ENV_VAR);
+    std::lock_guard<std::mutex> lock(m_dump_file_mutex);
+
+    if(m_file_already_dumped) {
+        return HAILO_SUCCESS;
+    }
+
     std::string file_name = PROFILER_DEFAULT_FILE_NAME_PREFIX + "_" + get_current_datetime() + PROFILER_DEFAULT_FILE_NAME_SUFFIX;
-    if (nullptr != file_env_var) {
-        file_name = std::string(file_env_var) + PATH_SEPARATOR + file_name;
+    auto file_env_var = get_env_variable(PROFILER_FILE_ENV_VAR);
+    if (file_env_var) {
+        file_name = file_env_var.value() + PATH_SEPARATOR + file_name;
     }
 
     std::ofstream output_file(std::string(file_name), std::ios::out |std::ios::binary);
@@ -84,64 +80,11 @@ void SchedulerProfilerHandler::serialize_and_dump_proto()
 
     if(!m_profiler_trace_proto.SerializeToZeroCopyStream(&stream)) {
         LOGGER__ERROR("Failed writing profiling data to file {}.", file_name);
+        return HAILO_FILE_OPERATION_FAILURE;
+    } else {
+        m_file_already_dumped = true;
+        return HAILO_SUCCESS;
     }
-}
-
-struct JSON
-{
-    std::unordered_map<std::string, std::string> members;
-    JSON(const std::initializer_list<std::pair<const std::string, std::string>> &dict) : members{dict} {}
-    JSON(const std::unordered_map<std::string, uint32_t> &dict) {
-        for (auto &pair : dict) {
-            members.insert({pair.first, std::to_string(pair.second)});
-        }
-    }
-};
-
-template<class T>
-std::string json_to_string(const T &val) {
-    return std::to_string(val);
-}
-
-template<>
-std::string json_to_string(const std::string &val) {
-    std::ostringstream os;
-    os << std::quoted(val);
-    return os.str();
-}
-
-template<>
-std::string json_to_string(const bool &bool_val) {
-    return bool_val ? "true" : "false";
-}
-
-template<>
-std::string json_to_string(const JSON &json_val) {
-    std::ostringstream os;
-    os << "{\n";
-    size_t i = 0;
-    for (const auto &kv : json_val.members) {
-        ++i;
-        os << std::quoted(kv.first) << " : ";
-        os << kv.second;
-        if (i != json_val.members.size()) {
-            os << ",\n";
-        }
-    }
-    os << "\n}";
-    return os.str();
-}
-
-bool SchedulerProfilerHandler::comma()
-{
-    auto result = !m_first_write;
-    m_first_write = false;
-    return result;
-}
-
-void SchedulerProfilerHandler::log(JSON json)
-{
-    m_profiler_logger->info("{}{}", comma() ? ",\n" : "", json_to_string(json));
 }
 
 void SchedulerProfilerHandler::handle_trace(const InitProfilerProtoTrace &trace)
@@ -186,16 +129,6 @@ void SchedulerProfilerHandler::handle_trace(const HefLoadedTrace &trace)
 
 void SchedulerProfilerHandler::handle_trace(const AddCoreOpTrace &trace)
 {
-    log(JSON({
-        {"action", json_to_string(trace.name)},
-        {"timestamp", json_to_string(trace.timestamp)},
-        {"core_op_name", json_to_string(trace.core_op_name)},
-        {"core_op_handle", json_to_string(trace.core_op_handle)},
-        {"timeout", json_to_string((uint64_t)trace.timeout)},
-        {"threshold", json_to_string((uint64_t)trace.threshold)},
-        {"max_batch_size", json_to_string((uint64_t)trace.batch_size)}
-    }));
-
     std::lock_guard<std::mutex> lock(m_proto_lock);
     auto added_trace = m_profiler_trace_proto.add_added_trace();
     added_trace->mutable_added_core_op()->set_time_stamp(trace.timestamp);
@@ -215,15 +148,6 @@ void SchedulerProfilerHandler::handle_trace(const AddDeviceTrace &trace)
 
 void SchedulerProfilerHandler::handle_trace(const AddStreamH2DTrace &trace)
 {
-    log(JSON({
-        {"action", json_to_string(trace.name)},
-        {"timestamp", json_to_string(trace.timestamp)},
-        {"device_id", json_to_string(trace.device_id)},
-        {"core_op_name", json_to_string(trace.core_op_name)},
-        {"stream_name", json_to_string(trace.stream_name)},
-        {"queue_size", json_to_string(trace.queue_size)}
-    }));
-
     std::lock_guard<std::mutex> lock(m_proto_lock);
     auto added_trace = m_profiler_trace_proto.add_added_trace();
     added_trace->mutable_added_stream()->set_device_id(trace.device_id);
@@ -236,15 +160,6 @@ void SchedulerProfilerHandler::handle_trace(const AddStreamH2DTrace &trace)
 
 void SchedulerProfilerHandler::handle_trace(const AddStreamD2HTrace &trace)
 {
-    log(JSON({
-        {"action", json_to_string(trace.name)},
-        {"timestamp", json_to_string(trace.timestamp)},
-        {"device_id", json_to_string(trace.device_id)},
-        {"core_op_name", json_to_string(trace.core_op_name)},
-        {"stream_name", json_to_string(trace.stream_name)},
-        {"queue_size", json_to_string(trace.queue_size)}
-    }));
-
     std::lock_guard<std::mutex> lock(m_proto_lock);
     auto added_trace = m_profiler_trace_proto.add_added_trace();
     added_trace->mutable_added_stream()->set_device_id(trace.device_id);
@@ -257,13 +172,6 @@ void SchedulerProfilerHandler::handle_trace(const AddStreamD2HTrace &trace)
 
 void SchedulerProfilerHandler::handle_trace(const FrameEnqueueH2DTrace &trace)
 {
-    log(JSON({
-        {"action", json_to_string(trace.name)},
-        {"timestamp", json_to_string(trace.timestamp)},
-        {"core_op_handle", json_to_string(trace.core_op_handle)},
-        {"queue_name", json_to_string(trace.queue_name)}
-    }));
-
     std::lock_guard<std::mutex> lock(m_proto_lock);
     auto added_trace = m_profiler_trace_proto.add_added_trace();
     added_trace->mutable_frame_enqueue()->set_direction(ProtoProfilerStreamDirection::PROTO__STREAM_DIRECTION__H2D);
@@ -274,14 +182,6 @@ void SchedulerProfilerHandler::handle_trace(const FrameEnqueueH2DTrace &trace)
 
 void SchedulerProfilerHandler::handle_trace(const FrameDequeueH2DTrace &trace)
 {
-    log(JSON({
-        {"action", json_to_string(trace.name)},
-        {"timestamp", json_to_string(trace.timestamp)},
-        {"device_id", json_to_string(trace.device_id)},
-        {"core_op_handle", json_to_string(trace.core_op_handle)},
-        {"queue_name", json_to_string(trace.queue_name)}
-    }));
-
     std::lock_guard<std::mutex> lock(m_proto_lock);
     auto added_trace = m_profiler_trace_proto.add_added_trace();
     added_trace->mutable_frame_dequeue()->set_direction(ProtoProfilerStreamDirection::PROTO__STREAM_DIRECTION__H2D);
@@ -293,13 +193,6 @@ void SchedulerProfilerHandler::handle_trace(const FrameDequeueH2DTrace &trace)
 
 void SchedulerProfilerHandler::handle_trace(const FrameDequeueD2HTrace &trace)
 {
-    log(JSON({
-        {"action", json_to_string(trace.name)},
-        {"timestamp", json_to_string(trace.timestamp)},
-        {"core_op_handle", json_to_string(trace.core_op_handle)},
-        {"queue_name", json_to_string(trace.queue_name)}
-    }));
-
     std::lock_guard<std::mutex> lock(m_proto_lock);
     auto added_trace = m_profiler_trace_proto.add_added_trace();
     added_trace->mutable_frame_dequeue()->set_direction(ProtoProfilerStreamDirection::PROTO__STREAM_DIRECTION__D2H);
@@ -310,14 +203,6 @@ void SchedulerProfilerHandler::handle_trace(const FrameDequeueD2HTrace &trace)
 
 void SchedulerProfilerHandler::handle_trace(const FrameEnqueueD2HTrace &trace)
 {
-    log(JSON({
-        {"action", json_to_string(trace.name)},
-        {"timestamp", json_to_string(trace.timestamp)},
-        {"device_id", json_to_string(trace.device_id)},
-        {"core_op_handle", json_to_string(trace.core_op_handle)},
-        {"queue_name", json_to_string(trace.queue_name)}
-    }));
-
     std::lock_guard<std::mutex> lock(m_proto_lock);
     auto added_trace = m_profiler_trace_proto.add_added_trace();
     added_trace->mutable_frame_enqueue()->set_direction(ProtoProfilerStreamDirection::PROTO__STREAM_DIRECTION__D2H);
@@ -329,13 +214,6 @@ void SchedulerProfilerHandler::handle_trace(const FrameEnqueueD2HTrace &trace)
 
 void SchedulerProfilerHandler::handle_trace(const ActivateCoreOpTrace &trace)
 {
-    log(JSON({
-        {"action", json_to_string(trace.name)},
-        {"timestamp", json_to_string(trace.timestamp)},
-        {"device_id", json_to_string(trace.device_id)},
-        {"core_op_handle", json_to_string(trace.core_op_handle)}
-    }));
-
     std::lock_guard<std::mutex> lock(m_proto_lock);
     auto added_trace = m_profiler_trace_proto.add_added_trace();
     added_trace->mutable_activate_core_op()->set_device_id(trace.device_id);
@@ -357,11 +235,6 @@ void SchedulerProfilerHandler::handle_trace(const DeactivateCoreOpTrace &trace)
 
 void SchedulerProfilerHandler::handle_trace(const SetCoreOpTimeoutTrace &trace)
 {
-    log(JSON({
-        {"action", json_to_string(trace.name)},
-        {"core_op_handle", json_to_string(trace.core_op_handle)}
-    }));
-
     std::lock_guard<std::mutex> lock(m_proto_lock);
     auto added_trace = m_profiler_trace_proto.add_added_trace();
     added_trace->mutable_core_op_set_value()->set_timeout((trace.timeout).count());
@@ -371,11 +244,6 @@ void SchedulerProfilerHandler::handle_trace(const SetCoreOpTimeoutTrace &trace)
 
 void SchedulerProfilerHandler::handle_trace(const SetCoreOpThresholdTrace &trace)
 {
-    log(JSON({
-        {"action", json_to_string(trace.name)},
-        {"core_op_handle", json_to_string(trace.core_op_handle)}
-    }));
-
     std::lock_guard<std::mutex> lock(m_proto_lock);
     auto added_trace = m_profiler_trace_proto.add_added_trace();
     added_trace->mutable_core_op_set_value()->set_threshold(trace.threshold);
@@ -385,11 +253,6 @@ void SchedulerProfilerHandler::handle_trace(const SetCoreOpThresholdTrace &trace
 
 void SchedulerProfilerHandler::handle_trace(const SetCoreOpPriorityTrace &trace)
 {
-    log(JSON({
-        {"action", json_to_string(trace.name)},
-        {"core_op_handle", json_to_string(trace.core_op_handle)}
-    }));
-
     std::lock_guard<std::mutex> lock(m_proto_lock);
     auto added_trace = m_profiler_trace_proto.add_added_trace();
     added_trace->mutable_core_op_set_value()->set_priority(trace.priority);
@@ -399,12 +262,6 @@ void SchedulerProfilerHandler::handle_trace(const SetCoreOpPriorityTrace &trace)
 
 void SchedulerProfilerHandler::handle_trace(const OracleDecisionTrace &trace)
 {
-    log(JSON({
-        {"action", json_to_string(trace.name)},
-        {"reason", json_to_string(trace.reason_idle)},
-        {"core_op_handle", json_to_string(trace.core_op_handle)}
-    }));
-
     std::lock_guard<std::mutex> lock(m_proto_lock);
     auto added_trace = m_profiler_trace_proto.add_added_trace();
     added_trace->mutable_switch_core_op_decision()->set_core_op_handle(trace.core_op_handle);
@@ -419,6 +276,16 @@ void SchedulerProfilerHandler::handle_trace(const DumpProfilerStateTrace &trace)
     (void)trace;
     serialize_and_dump_proto();
     m_profiler_trace_proto.Clear();
+}
+
+bool SchedulerProfilerHandler::should_dump_trace_file()
+{
+    // Should dump only when the profiler is size bounded or time bounded.
+    // If size bounded, the trace proto file size should be big enough.
+    // If time bounded, there is a separate thread that will dump the file, so no need to dump here.
+    auto is_size_bounded = m_size_in_kb_bounded_dump != 0;
+    auto proto_file_size_in_kb = (m_profiler_trace_proto.ByteSizeLong() / 1024);
+    return is_size_bounded && (proto_file_size_in_kb >= m_size_in_kb_bounded_dump);
 }
 
 }

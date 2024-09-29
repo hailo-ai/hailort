@@ -436,7 +436,7 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_context_switch_run_time_error_not
     
     status = FIRMWARE_STATUS__get_textual((FIRMWARE_STATUS_t)run_time_error_status, &run_time_error_status_text);
     CHECK_COMMON_STATUS((HAILO_COMMON_STATUS__SUCCESS == status), status, 
-        "Cannot find textual address for run time status {:#x}, status = {}", (FIRMWARE_STATUS_t)run_time_error_status, status);
+        "Cannot find textual address for run time status {:#x}, status = {}", static_cast<int>((FIRMWARE_STATUS_t)run_time_error_status), static_cast<int>(status));
 
     LOGGER__ERROR("Got Context switch run time error on net_group index {}, batch index {}, context index {}, action index {} with status {}",
         d2h_notification_message->message_parameters.context_switch_run_time_error_event.application_index,

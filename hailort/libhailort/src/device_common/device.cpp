@@ -8,6 +8,10 @@
  *
  * TODO: doc
  **/
+#ifdef __unix__
+#include <glob.h>
+#include <fstream>
+#endif
 
 #include "hailo/hailort.h"
 #include "hailo/device.hpp"
@@ -33,8 +37,9 @@ namespace hailort
 
 #define WRITE_CHUNK_SIZE (1024)
 #define DEVICE_WORD_SIZE (4)
+#define SENSOR_NAME_FILE_PATHS "/sys/class/hwmon/hwmon*/name"
 
-Device::Device(Type type) : 
+Device::Device(Type type) :
     m_type(type),
     m_control_sequence(0),
     m_is_control_version_supported(false),
@@ -104,14 +109,11 @@ Expected<std::unique_ptr<Device>> Device::create(const std::string &device_id)
     const bool DONT_LOG_ON_FAILURE = false;
     if (IntegratedDevice::DEVICE_ID == device_id) {
         return create_core();
-    }
-    else if (auto pcie_info = PcieDevice::parse_pcie_device_info(device_id, DONT_LOG_ON_FAILURE)) {
+    } else if (auto pcie_info = PcieDevice::parse_pcie_device_info(device_id, DONT_LOG_ON_FAILURE)) {
         return create_pcie(pcie_info.release());
-    }
-    else if (auto eth_info = EthernetDevice::parse_eth_device_info(device_id, DONT_LOG_ON_FAILURE)) {
+    } else if (auto eth_info = EthernetDevice::parse_eth_device_info(device_id, DONT_LOG_ON_FAILURE)) {
         return create_eth(eth_info.release());
-    }
-    else {
+    } else {
         LOGGER__ERROR("Invalid device id {}", device_id);
         return make_unexpected(HAILO_INVALID_ARGUMENT);
     }
@@ -119,17 +121,13 @@ Expected<std::unique_ptr<Device>> Device::create(const std::string &device_id)
 
 Expected<std::unique_ptr<Device>> Device::create_pcie()
 {
-    TRY(auto pcie_device, PcieDevice::create());
-    // Upcasting to Device unique_ptr (from PcieDevice unique_ptr)
-    auto device = std::unique_ptr<Device>(std::move(pcie_device));
+    TRY(auto device, PcieDevice::create());
     return device;
 }
 
 Expected<std::unique_ptr<Device>> Device::create_pcie(const hailo_pcie_device_info_t &device_info)
 {
-    TRY(auto pcie_device, PcieDevice::create(device_info));
-    // Upcasting to Device unique_ptr (from PcieDevice unique_ptr)
-    auto device = std::unique_ptr<Device>(std::move(pcie_device));
+    TRY(auto device, PcieDevice::create(device_info));
     return device;
 }
 
@@ -539,7 +537,7 @@ Expected<std::vector<uint8_t>> Device::get_number_of_dynamic_contexts_per_networ
 }
 
 Expected<Buffer> Device::download_context_action_list(uint32_t network_group_id, uint8_t context_type,
-    uint16_t context_index, uint32_t *base_address, uint32_t *batch_counter, uint16_t max_size)
+    uint16_t context_index, uint32_t *base_address, uint32_t *batch_counter, uint32_t *idle_time, uint16_t max_size)
 {
     CHECK_ARG_NOT_NULL_AS_EXPECTED(base_address);
     CHECK_ARG_NOT_NULL_AS_EXPECTED(batch_counter);
@@ -549,10 +547,11 @@ Expected<Buffer> Device::download_context_action_list(uint32_t network_group_id,
 
     uint32_t base_address_local = 0;
     uint32_t batch_counter_local = 0;
+    uint32_t idle_time_local = 0;
     uint16_t actual_size = 0;
     const auto status = Control::download_context_action_list(*this, network_group_id,
         (CONTROL_PROTOCOL__context_switch_context_type_t)context_type, context_index, action_list.size(),
-        &base_address_local, action_list.data(), &actual_size, &batch_counter_local);
+        &base_address_local, action_list.data(), &actual_size, &batch_counter_local, &idle_time_local);
     CHECK_SUCCESS_AS_EXPECTED(status);
     CHECK_AS_EXPECTED(actual_size <= max_size, HAILO_INTERNAL_FAILURE);
 
@@ -562,6 +561,7 @@ Expected<Buffer> Device::download_context_action_list(uint32_t network_group_id,
     // Transfer ownership of out params
     *base_address = base_address_local;
     *batch_counter = batch_counter_local;
+    *idle_time = idle_time_local;
 
     return final_action_list;
 }
@@ -667,6 +667,71 @@ Expected<ConfigureNetworkParams> Device::create_configure_params(Hef &hef, const
 {
     TRY(const auto stream_interface, get_default_streams_interface(), "Failed to get default streams interface");
     return hef.create_configure_params(stream_interface, network_group_name);
+}
+
+Expected<bool> Device::has_INA231_H8()
+{
+    TRY(auto info, get_extended_device_information(), "Failed to get extended device information");
+    TRY(auto id, identify(), "Failed to identify device");
+    auto is_evb = std::string(id.product_name).find("EVB") != std::string::npos;
+    auto has_INA231 = info.supported_features.current_monitoring || is_evb;
+    return has_INA231;
+}
+
+// checks if the H15 board has INA231. Even if true, libhailort can't read power
+// / current / temperature values. User can read them via "sensors" CLI command
+Expected<bool> Device::has_INA231_H15()
+{
+    bool has_INA231 = false;
+#ifdef __unix__
+    glob_t glob_result;
+    glob(SENSOR_NAME_FILE_PATHS, GLOB_TILDE, NULL, &glob_result);
+
+    for(unsigned int i = 0; i < glob_result.gl_pathc; ++i) {
+        std::ifstream file(glob_result.gl_pathv[i]);
+        if (!file.is_open()) {
+            return make_unexpected(HAILO_FILE_OPERATION_FAILURE);
+        }
+
+        std::string line;
+        std::getline(file, line);
+        if (line == "ina231_precise") {
+            has_INA231 = true;
+            break;
+        }
+    }
+    globfree(&glob_result);
+#endif
+    return has_INA231;
+}
+
+Expected<Device::Capabilities> Device::get_capabilities()
+{
+    Device::Capabilities result = {};
+    switch (m_device_architecture) {
+    case HAILO_ARCH_HAILO8:
+    case HAILO_ARCH_HAILO8L:
+    {
+        TRY(result.current_measurements, has_INA231_H8(), "Failed to check INA231_H8");
+        TRY(result.power_measurements, has_INA231_H8(), "Failed to check INA231_H8");
+        result.temperature_measurements = true;
+        break;
+    }
+    case HAILO_ARCH_HAILO15H:
+    case HAILO_ARCH_HAILO15M:
+    case HAILO_ARCH_PLUTO:
+    {
+        result.current_measurements = false;
+        result.power_measurements = false;
+        result.temperature_measurements = false;
+        break;
+    }
+    case HAILO_ARCH_HAILO10H:
+        return make_unexpected(HAILO_INVALID_DEVICE_ARCHITECTURE);
+    default:
+        return make_unexpected(HAILO_INVALID_DEVICE_ARCHITECTURE);
+    }
+    return result;
 }
 
 } /* namespace hailort */

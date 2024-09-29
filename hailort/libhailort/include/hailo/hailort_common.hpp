@@ -425,10 +425,6 @@ public:
     static Expected<hailo_device_id_t> to_device_id(const std::string &device_id);
     static Expected<std::vector<hailo_device_id_t>> to_device_ids_vector(const std::vector<std::string> &device_ids_str);
     static Expected<hailo_pix_buffer_t> as_hailo_pix_buffer(MemoryView memory_view, hailo_format_order_t order);
-
-    static bool is_power_measurement_supported(const hailo_device_architecture_t &hw_arch);
-    static bool is_current_measurement_supported(const hailo_device_architecture_t &hw_arch);
-    static bool is_temp_measurement_supported(const hailo_device_architecture_t &hw_arch);
 };
 
 #ifndef HAILO_EMULATOR

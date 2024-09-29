@@ -12,12 +12,10 @@
 
 #include "vdma/channel/channel_id.hpp"
 #include "vdma/channel/transfer_launcher.hpp"
+#include "vdma/channel/transfer_common.hpp"
 #include "vdma/memory/descriptor_list.hpp"
-#include "stream_common/transfer_common.hpp"
 
 #include "common/latency_meter.hpp"
-
-#include "context_switch_defs.h"
 
 #include <memory>
 
@@ -28,6 +26,8 @@ namespace vdma {
 struct OngoingTransfer {
     TransferRequest request;
     uint16_t last_desc;
+    // Will be set to != HAILO_SUCCESS if the transfer failed to be launched in BoundaryChannel::launch_transfer_impl
+    hailo_status launch_status = HAILO_SUCCESS;
 };
 
 class BoundaryChannel;
@@ -77,11 +77,11 @@ public:
     // size should be exactly desc_page_size() * descs_count() of current descriptors list.
     hailo_status bind_buffer(MappedBufferPtr buffer);
 
+    hailo_status map_and_bind_buffer(hailort::TransferBuffer &buffer);
+
     // TODO: rename BoundaryChannel::get_max_ongoing_transfers to BoundaryChannel::get_max_parallel_transfers (HRT-13513)
     size_t get_max_ongoing_transfers(size_t transfer_size) const;
     size_t get_max_aligned_transfers_in_desc_list(size_t transfer_size) const;
-
-    CONTROL_PROTOCOL__host_buffer_info_t get_boundary_buffer_info(uint32_t transfer_size) const;
 
     vdma::ChannelId get_channel_id() const
     {
@@ -100,15 +100,21 @@ public:
 
     bool should_measure_timestamp() const { return m_latency_meter != nullptr; }
 
+    void remove_buffer_binding();
+
 private:
     hailo_status update_latency_meter();
 
     void on_request_complete(std::unique_lock<std::mutex> &lock, TransferRequest &request,
         hailo_status complete_status);
-    hailo_status launch_transfer_impl(TransferRequest &&transfer_request);
+    hailo_status launch_and_enqueue_transfer(TransferRequest &&transfer_request, bool queue_failed_transfer = false);
+    Expected<uint16_t> launch_transfer_impl(TransferRequest &transfer_request);
 
     static bool is_desc_between(uint16_t begin, uint16_t end, uint16_t desc);
     hailo_status validate_bound_buffer(TransferRequest &transfer_request);
+
+    Expected<bool> should_bind_buffer(TransferRequest &transfer_request);
+    static Expected<bool> is_same_buffer(MappedBufferPtr mapped_buff, TransferBuffer &transfer_buffer);
 
     const vdma::ChannelId m_channel_id;
     const Direction m_direction;

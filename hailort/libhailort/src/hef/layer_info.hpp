@@ -257,6 +257,33 @@ public:
         }
     }
 
+    static constexpr size_t get_nms_layer_max_transfers_per_frame(const LayerInfo &layer_info)
+    {
+        const auto &nms_info = layer_info.nms_info;
+        switch (nms_info.burst_type) {
+            // If No Burst mode - size of transfer is size of bbox
+            case HAILO_BURST_TYPE_H8_BBOX:
+            case HAILO_BURST_TYPE_H15_BBOX:
+                return nms_info.number_of_classes * nms_info.max_bboxes_per_class * nms_info.chunks_per_frame;
+            // In hailo8 per class and hailo15 per class mode - check if can support interrupt per frame and if not do interrupt per burst
+            case HAILO_BURST_TYPE_H8_PER_CLASS:
+            case HAILO_BURST_TYPE_H15_PER_CLASS:
+            {
+                // In case of hailo8 - nn-core adds one delimeter per burst - in case of hailo15 nn-core adds delimeter and image delimeter per class
+                const size_t bboxes_needed_for_delimeter = (HAILO_BURST_TYPE_H8_PER_CLASS == nms_info.burst_type) ?
+                    1 : 2;
+                const size_t max_bboxes_per_class = nms_info.max_bboxes_per_class + bboxes_needed_for_delimeter;
+                const size_t bursts_per_class = (max_bboxes_per_class + nms_info.burst_size - 1) / nms_info.burst_size;
+                return bursts_per_class * nms_info.number_of_classes * nms_info.chunks_per_frame;
+            }
+            // Currently HAILO_BURST_TYPE_H15_PER_FRAME mode isnt supported - Shouldn't reach here
+            case HAILO_BURST_TYPE_H15_PER_FRAME:
+            default:
+                assert(false);
+                return 0;
+        }
+    }
+
     /**
      * Return if layer is NMS Burst layers.
      *

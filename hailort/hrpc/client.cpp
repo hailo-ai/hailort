@@ -42,7 +42,7 @@ hailo_status ResultEvent::wait(std::chrono::milliseconds timeout)
 
 Client::~Client()
 {
-    is_running = false;
+    m_is_running = false;
     (void)m_connection.close();
     if (m_thread.joinable()) {
         m_thread.join();
@@ -51,7 +51,7 @@ Client::~Client()
 
 hailo_status Client::connect()
 {
-    TRY(m_conn_context, ConnectionContext::create_shared(false));
+    TRY(m_conn_context, ConnectionContext::create_client_shared(m_device_id));
     TRY(auto conn, RawConnection::create_shared(m_conn_context));
     auto status = conn->connect();
     CHECK_SUCCESS(status);
@@ -68,7 +68,7 @@ hailo_status Client::connect()
 
 hailo_status Client::message_loop()
 {
-    while (is_running) {
+    while (m_is_running) {
         rpc_message_header_t header;
         TRY_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED, auto message, m_connection.read_message(header));
 
@@ -80,9 +80,16 @@ hailo_status Client::message_loop()
             continue;
         }
 
-        std::unique_lock<std::mutex> lock(m_message_mutex);
-        auto event = m_events[header.message_id];
-        lock.unlock();
+        std::shared_ptr<ResultEvent> event = nullptr;
+        {
+            std::unique_lock<std::mutex> lock(m_events_mutex);
+            m_events_cv.wait(lock, [this, &header] () {
+                return contains(m_events, header.message_id);
+            });
+            event = m_events[header.message_id];
+            m_events.erase(header.message_id);
+        }
+
         auto status = event->signal(std::move(message));
         CHECK_SUCCESS(status);
     }
@@ -93,27 +100,32 @@ hailo_status Client::message_loop()
 Expected<Buffer> Client::execute_request(HailoRpcActionID action_id, const MemoryView &request,
     std::function<hailo_status(RpcConnection)> write_buffers_callback)
 {
-    std::unique_lock<std::mutex> lock(m_message_mutex);
     rpc_message_header_t header;
-    header.size = static_cast<uint32_t>(request.size());
-    header.message_id = m_messages_sent++;
-    header.action_id = static_cast<uint32_t>(action_id);
+    {
+        std::unique_lock<std::mutex> lock(m_write_mutex);
+        header.size = static_cast<uint32_t>(request.size());
+        header.message_id = m_messages_sent++;
+        header.action_id = static_cast<uint32_t>(action_id);
 
-    auto status = m_connection.write_message(header, request);
-    CHECK_SUCCESS_AS_EXPECTED(status);
-    if (write_buffers_callback) {
-        status = write_buffers_callback(m_connection);
+        auto status = m_connection.write_message(header, request);
         CHECK_SUCCESS_AS_EXPECTED(status);
+        if (write_buffers_callback) {
+            status = write_buffers_callback(m_connection);
+            CHECK_SUCCESS_AS_EXPECTED(status);
+        }
     }
 
-    TRY(auto event, ResultEvent::create_shared());
-    m_events[header.message_id] = event;
+    std::shared_ptr<ResultEvent> event = nullptr;
+    {
+        std::unique_lock<std::mutex> events_lock(m_events_mutex);
+        TRY(event, ResultEvent::create_shared());
+        m_events[header.message_id] = event;
+    }
+    m_events_cv.notify_all();
 
-    lock.unlock();
-    status = event->wait(REQUEST_TIMEOUT);
+    auto status = event->wait(REQUEST_TIMEOUT);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
-    m_events.erase(header.message_id);
     return event->release();
 }
 

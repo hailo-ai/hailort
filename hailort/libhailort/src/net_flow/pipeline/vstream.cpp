@@ -163,14 +163,7 @@ hailo_status BaseVStream::stop_vstream()
 
 hailo_status BaseVStream::stop_and_clear()
 {
-    auto status = HAILO_SUCCESS;
-    if (nullptr != m_core_op_activated_event) {
-        status = m_core_op_activated_event->wait(std::chrono::milliseconds(0));
-        CHECK(HAILO_TIMEOUT == status, HAILO_INVALID_OPERATION,
-            "Trying to clear {} vstream before its network group is deactivated", name());
-    }
-
-    status = stop_vstream();
+    auto status = stop_vstream();
     CHECK_SUCCESS(status);
 
     status = m_entry_element->clear();
@@ -490,7 +483,14 @@ Expected<OutputVStream> OutputVStream::create(
 
 hailo_status OutputVStream::read(MemoryView buffer)
 {
-    return m_vstream->read(std::move(buffer));
+    auto status = m_vstream->read(std::move(buffer));
+    if (HAILO_TIMEOUT == status) {
+        auto clear_status = m_vstream->clear();
+        if (HAILO_SUCCESS != clear_status) {
+            LOGGER__ERROR("Failed to clear output pipeline '{}' after a timeout. This pipeline is not usable and should be re-created.", name());
+        }
+    }
+    return status;
 }
 
 hailo_status OutputVStream::clear(std::vector<OutputVStream> &vstreams)
@@ -827,7 +827,7 @@ bool InputVStreamImpl::is_multi_planar() const
 }
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
-Expected<std::shared_ptr<InputVStreamClient>> InputVStreamClient::create(VStreamIdentifier &&identifier)
+Expected<std::shared_ptr<InputVStreamClient>> InputVStreamClient::create(VStreamIdentifier &&identifier, const std::chrono::milliseconds &timeout)
 {
     grpc::ChannelArguments ch_args;
     ch_args.SetMaxReceiveMessageSize(-1);
@@ -844,12 +844,12 @@ Expected<std::shared_ptr<InputVStreamClient>> InputVStreamClient::create(VStream
     CHECK_EXPECTED(vstream_info);
 
     return std::shared_ptr<InputVStreamClient>(new InputVStreamClient(std::move(client), std::move(identifier),
-        user_buffer_format.release(), vstream_info.release()));
+        user_buffer_format.release(), vstream_info.release(), timeout));
 }
 
 InputVStreamClient::InputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, VStreamIdentifier &&identifier, hailo_format_t &&user_buffer_format,
-    hailo_vstream_info_t &&info) :
-        m_client(std::move(client)), m_identifier(std::move(identifier)), m_user_buffer_format(user_buffer_format), m_info(info) {}
+    hailo_vstream_info_t &&info, const std::chrono::milliseconds &timeout) :
+        m_client(std::move(client)), m_identifier(std::move(identifier)), m_user_buffer_format(user_buffer_format), m_info(info), m_timeout(timeout) {}
 
 InputVStreamClient::~InputVStreamClient()
 {
@@ -861,12 +861,12 @@ InputVStreamClient::~InputVStreamClient()
 
 hailo_status InputVStreamClient::write(const MemoryView &buffer)
 {
-    return m_client->InputVStream_write(m_identifier, buffer);
+    return m_client->InputVStream_write(m_identifier, buffer, m_timeout);
 }
 
 hailo_status InputVStreamClient::write(const hailo_pix_buffer_t &buffer)
 {
-    return m_client->InputVStream_write(m_identifier, buffer);
+    return m_client->InputVStream_write(m_identifier, buffer, m_timeout);
 }
 
 hailo_status InputVStreamClient::flush()
@@ -1053,6 +1053,13 @@ OutputVStreamInternal::OutputVStreamInternal(const hailo_vstream_info_t &vstream
     std::reverse(m_pipeline.begin(), m_pipeline.end());
 }
 
+hailo_status OutputVStreamInternal::clear()
+{
+    CHECK_SUCCESS(stop_and_clear());
+    CHECK_SUCCESS(start_vstream());
+    return HAILO_SUCCESS;
+}
+
 Expected<std::shared_ptr<OutputVStreamImpl>> OutputVStreamImpl::create(const hailo_vstream_info_t &vstream_info,
     const std::vector<hailo_quant_info_t> &quant_infos, const hailo_vstream_params_t &vstream_params,
     std::shared_ptr<PipelineElement> pipeline_entry, std::vector<std::shared_ptr<PipelineElement>> &&pipeline,
@@ -1215,7 +1222,7 @@ hailo_status OutputVStreamImpl::set_nms_max_accumulated_mask_size(uint32_t max_a
 }
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
-Expected<std::shared_ptr<OutputVStreamClient>> OutputVStreamClient::create(const VStreamIdentifier &&identifier)
+Expected<std::shared_ptr<OutputVStreamClient>> OutputVStreamClient::create(const VStreamIdentifier &&identifier, const std::chrono::milliseconds &timeout)
 {
     grpc::ChannelArguments ch_args;
     ch_args.SetMaxReceiveMessageSize(-1);
@@ -1232,12 +1239,12 @@ Expected<std::shared_ptr<OutputVStreamClient>> OutputVStreamClient::create(const
     CHECK_EXPECTED(info);
 
     return std::shared_ptr<OutputVStreamClient>(new OutputVStreamClient(std::move(client), std::move(identifier),
-        user_buffer_format.release(), info.release()));
+        user_buffer_format.release(), info.release(), timeout));
 }
 
 OutputVStreamClient::OutputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, const VStreamIdentifier &&identifier, hailo_format_t &&user_buffer_format,
-    hailo_vstream_info_t &&info) :
-        m_client(std::move(client)), m_identifier(std::move(identifier)), m_user_buffer_format(user_buffer_format), m_info(info) {}
+    hailo_vstream_info_t &&info, const std::chrono::milliseconds &timeout) :
+        m_client(std::move(client)), m_identifier(std::move(identifier)), m_user_buffer_format(user_buffer_format), m_info(info), m_timeout(timeout) {}
 
 OutputVStreamClient::~OutputVStreamClient()
 {
@@ -1249,7 +1256,7 @@ OutputVStreamClient::~OutputVStreamClient()
 
 hailo_status OutputVStreamClient::read(MemoryView buffer)
 {
-    return m_client->OutputVStream_read(m_identifier, buffer);
+    return m_client->OutputVStream_read(m_identifier, buffer, m_timeout);
 }
 
 hailo_status OutputVStreamClient::abort()

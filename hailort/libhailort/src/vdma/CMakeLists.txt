@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.5.0)
 
 if(WIN32)
     set(DRIVER_OS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/driver/os/windows")
@@ -31,11 +31,13 @@ set(SRC_FILES
 
     ${CMAKE_CURRENT_SOURCE_DIR}/pcie/pcie_device.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/integrated/integrated_device.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pcie/pcie_device_hrpc_client.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/boundary_channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/channels_group.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/interrupts_dispatcher.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/transfer_launcher.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/channel/transfer_common.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/descriptor_list.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/vdma_edge_layer.cpp

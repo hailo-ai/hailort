@@ -74,6 +74,12 @@ hailo_status InputStreamBase::write_async(TransferRequest &&)
     return HAILO_NOT_IMPLEMENTED;
 }
 
+hailo_status InputStreamBase::bind_buffer(TransferRequest &&)
+{
+    LOGGER__ERROR("bind_buffer not implemented for sync API");
+    return HAILO_NOT_IMPLEMENTED;
+}
+
 hailo_status InputStreamBase::abort()
 {
     LOGGER__ERROR("InputStream::abort is deprecated. One should use ConfiguredNetworkGroup::shutdown()");
@@ -157,6 +163,12 @@ hailo_status OutputStreamBase::read_async(int dmabuf_fd, size_t size, const Tran
         user_callback(CompletionInfo(status, dmabuf_fd, size));
     };
     return read_async(TransferRequest(hailo_dma_buffer_t{dmabuf_fd, size}, wrapped_callback));
+}
+
+hailo_status OutputStreamBase::bind_buffer(TransferRequest &&)
+{
+    LOGGER__ERROR("bind_buffer not implemented for sync API");
+    return HAILO_NOT_IMPLEMENTED;
 }
 
 hailo_status OutputStreamBase::read_unaligned_address_async(const MemoryView &, const TransferDoneCallback &)

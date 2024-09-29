@@ -7,9 +7,8 @@
  * @brief Wrapper around unix memory mapping (mmap)
  **/
 
-#include "os/mmap_buffer.hpp"
+#include "common/mmap_buffer.hpp"
 #include "vdma/driver/hailort_driver.hpp"
-#include "hailo_ioctl_common.h"
 #include <sys/ioctl.h>
 
 #include <sys/mman.h>

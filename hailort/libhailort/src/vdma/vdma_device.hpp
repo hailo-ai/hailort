@@ -26,8 +26,6 @@ namespace hailort
 
 class VdmaDevice : public DeviceBase {
 public:
-    static Expected<std::unique_ptr<VdmaDevice>> create(const std::string &device_id);
-
     virtual ~VdmaDevice();
 
     virtual hailo_status wait_for_wakeup() override;

@@ -67,13 +67,14 @@ public:
     virtual ~AsyncInferRunnerImpl();
     AsyncInferRunnerImpl(std::shared_ptr<AsyncPipeline> async_pipeline, std::shared_ptr<std::atomic<hailo_status>> pipeline_status);
 
-    hailo_status run(ConfiguredInferModel::Bindings &bindings, TransferDoneCallbackAsyncInfer transfer_done);
+    hailo_status run(const ConfiguredInferModel::Bindings &bindings, TransferDoneCallbackAsyncInfer transfer_done);
     hailo_status set_buffers(std::unordered_map<std::string, PipelineBuffer> &inputs,
         std::unordered_map<std::string, PipelineBuffer> &outputs);
 
     void abort();
 
-    Expected<bool> can_push_buffers(uint32_t frames_count);
+    // string - if can't push buffer - element name on which we cant push. if can push buffer - empty
+    Expected<std::pair<bool, std::string>> can_push_buffers(uint32_t frames_count);
 
     void add_element_to_pipeline(std::shared_ptr<PipelineElement> pipeline_element);
     void add_entry_element(std::shared_ptr<PipelineElement> pipeline_element, const std::string &input_name);

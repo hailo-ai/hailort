@@ -12,23 +12,9 @@
 #include "hailo/hailort_common.hpp"
 #include "hailo/hailort_defaults.hpp"
 
-#if defined(_MSC_VER)
-#pragma warning(push)
-#pragma warning(disable: 4244 4267 4127)
-#else
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-#pragma GCC diagnostic ignored "-Wclass-memaccess"
-#endif
-#include <Eigen/Dense>
-#if defined(_MSC_VER)
-#pragma warning(pop)
-#else
-#pragma GCC diagnostic pop
-#endif
-
 #include "common/utils.hpp"
+
+#include "transform/eigen.hpp"
 
 #include <limits>
 
@@ -225,8 +211,6 @@ hailo_status SoftmaxOpMetadata::validate_format_info()
         HAILO_INVALID_OPERATION, "The given output format type {} is not valid, should be {}",
         HailoRTCommon::get_format_type_str(output_metadata.format.type),
         HailoRTCommon::get_format_type_str(HAILO_FORMAT_TYPE_FLOAT32));
-    CHECK(!(HAILO_FORMAT_FLAGS_HOST_ARGMAX & output_metadata.format.flags), HAILO_INVALID_ARGUMENT, "Output {} is marked as argmax, which is not supported for this model.",
-        m_outputs_metadata.begin()->first);
 
     return HAILO_SUCCESS;
 }

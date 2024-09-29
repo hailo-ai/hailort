@@ -14,6 +14,7 @@
 #include "hailo/infer_model.hpp"
 #include "hrpc/client.hpp"
 #include "net_flow/pipeline/infer_model_internal.hpp"
+#include "rpc_callbacks/rpc_callbacks_dispatcher.hpp"
 
 namespace hailort
 {
@@ -21,13 +22,13 @@ namespace hailort
 class InferModelHrpcClient : public InferModelBase
 {
 public:
-    static Expected<std::shared_ptr<InferModelHrpcClient>> create(Hef &&hef,
-        std::shared_ptr<hrpc::Client> client, uint32_t infer_model_handle_id,
-            uint32_t vdevice_handle, VDevice &vdevice);
+    static Expected<std::shared_ptr<InferModelHrpcClient>> create(Hef &&hef, const std::string &network_name,
+        std::shared_ptr<hrpc::Client> client, uint32_t infer_model_handle_id, uint32_t vdevice_handle, VDevice &vdevice,
+        std::shared_ptr<CallbacksDispatcher> callbacks_dispatcher);
 
     InferModelHrpcClient(std::shared_ptr<hrpc::Client> client, uint32_t id,
-        uint32_t vdevice_handle, VDevice &vdevice, Hef &&hef, std::unordered_map<std::string, InferStream> &&inputs,
-        std::unordered_map<std::string, InferStream> &&outputs);
+        uint32_t vdevice_handle, VDevice &vdevice, std::shared_ptr<CallbacksDispatcher> callbacks_dispatcher,
+        Hef &&hef, const std::string &network_name, std::vector<InferStream> &&inputs, std::vector<InferStream> &&outputs);
     virtual ~InferModelHrpcClient();
 
     InferModelHrpcClient(const InferModelHrpcClient &) = delete;
@@ -47,6 +48,7 @@ private:
     std::weak_ptr<hrpc::Client> m_client;
     uint32_t m_handle;
     uint32_t m_vdevice_handle;
+    std::shared_ptr<CallbacksDispatcher> m_callbacks_dispatcher;
 };
 
 } /* namespace hailort */

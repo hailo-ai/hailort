@@ -246,7 +246,7 @@ Expected<HailoRTDriver::DeviceInfo> query_device_info(const std::string &device_
     CHECK_EXPECTED(device_func);
 
     HailoRTDriver::DeviceInfo device_info{};
-    device_info.device_id = fmt::format("{:04X}:{:02X}:{:02X}.{}", 0, *bus, DEVICE_ADDRESS_GET_DEV(*device_func),
+    device_info.device_id = fmt::format("{:04x}:{:02x}:{:02x}.{}", 0, *bus, DEVICE_ADDRESS_GET_DEV(*device_func),
         DEVICE_ADDRESS_GET_FUNC(*device_func));
     device_info.dev_path = device_name;
     return device_info;
@@ -292,6 +292,7 @@ COMPATIBLE_PARAM_CAST(hailo_soc_connect_params, ConnectParams)
 COMPATIBLE_PARAM_CAST(hailo_soc_close_params, SocCloseParams)
 COMPATIBLE_PARAM_CAST(hailo_pci_ep_accept_params, AcceptParams)
 COMPATIBLE_PARAM_CAST(hailo_pci_ep_close_params, PciEpCloseParams)
+COMPATIBLE_PARAM_CAST(hailo_write_action_list_params, WriteActionListParams)
 
 // Special handle for nullptr_t. This case occurs when there is no parameters passed.
 tCompatibleHailoIoctlData WindowsIoctlParamCast<nullptr_t>::to_compatible(nullptr_t data)

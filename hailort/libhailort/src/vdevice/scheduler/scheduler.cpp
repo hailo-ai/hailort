@@ -26,6 +26,7 @@ namespace hailort
 CoreOpsScheduler::CoreOpsScheduler(hailo_scheduling_algorithm_t algorithm, std::vector<std::string> &devices_ids,
     std::vector<std::string> &devices_arch) :
     SchedulerBase(algorithm, devices_ids, devices_arch),
+    m_closest_threshold_timeout(std::chrono::steady_clock::now() + std::chrono::milliseconds(UINT32_MAX)),
     m_scheduler_thread(*this)
 {}
 
@@ -63,6 +64,7 @@ hailo_status CoreOpsScheduler::add_core_op(scheduler_core_op_handle_t core_op_ha
         // scheduled should limit themself. Since the ctor accept no argument, we init it using operator[].
         // TODO HRT-12136: limit the queue size (based on instances count)
         m_infer_requests[core_op_handle];
+        m_bounded_infer_requests[core_op_handle];
 
         const core_op_priority_t normal_priority = HAILO_SCHEDULER_PRIORITY_NORMAL;
         m_core_op_priority[normal_priority].add(core_op_handle);
@@ -75,7 +77,7 @@ void CoreOpsScheduler::remove_core_op(scheduler_core_op_handle_t core_op_handle)
 {
     std::unique_lock<std::shared_timed_mutex> lock(m_scheduler_mutex);
     m_scheduled_core_ops.at(core_op_handle)->remove_instance();
-    m_scheduler_thread.signal();
+    m_scheduler_thread.signal(true);
 }
 
 void CoreOpsScheduler::shutdown()
@@ -190,7 +192,7 @@ hailo_status CoreOpsScheduler::infer_async(const scheduler_core_op_handle_t &cor
     auto original_callback = infer_request->callback;
     infer_request->callback = [current_device_info, this, original_callback](hailo_status status) {
         current_device_info->ongoing_infer_requests.fetch_sub(1);
-        m_scheduler_thread.signal();
+        m_scheduler_thread.signal(true);
         original_callback(status);
     };
     auto status = vdma_core_op->infer_async(infer_request.release());
@@ -215,7 +217,7 @@ CoreOpsScheduler::ReadyInfo CoreOpsScheduler::is_core_op_ready(const scheduler_c
 
     if (check_threshold) {
         result.over_threshold = scheduled_core_op->is_over_threshold();
-        result.over_timeout = scheduled_core_op->is_over_timeout();
+        result.over_timeout = scheduled_core_op->is_over_threshold_timeout();
 
         if (!result.over_threshold && !result.over_timeout){
             result.is_ready = false;
@@ -236,11 +238,13 @@ hailo_status CoreOpsScheduler::enqueue_infer_request(const scheduler_core_op_han
     auto status = m_infer_requests.at(core_op_handle).enqueue(std::move(infer_request));
     if (HAILO_SUCCESS == status) {
         m_scheduled_core_ops.at(core_op_handle)->requested_infer_requests().fetch_add(1);
-        m_scheduler_thread.signal();
+        m_scheduler_thread.signal(true);
     }
     return status;
 }
 
+// Note: set_timeout is defined to be that if timeout passes and not threshold amount of frames has been sent since the
+// last time frames were sent on this core op - send all the frames that are ready to be sent.
 hailo_status CoreOpsScheduler::set_timeout(const scheduler_core_op_handle_t &core_op_handle, const std::chrono::milliseconds &timeout, const std::string &/*network_name*/)
 {
     std::shared_lock<std::shared_timed_mutex> lock(m_scheduler_mutex);
@@ -249,6 +253,12 @@ hailo_status CoreOpsScheduler::set_timeout(const scheduler_core_op_handle_t &cor
     if (HAILO_SUCCESS == status) {
         TRACE(SetCoreOpTimeoutTrace, core_op_handle, timeout);
     }
+
+    // this will have to trigger event to recalculate timeouts and check if any have timed out - but dont execute 
+    // worker thread unless threshold timeout on core op has actually expired
+    update_closest_threshold_timeout();
+    m_scheduler_thread.signal(false);
+
     return status;
 }
 
@@ -284,6 +294,31 @@ hailo_status CoreOpsScheduler::set_priority(const scheduler_core_op_handle_t &co
     return HAILO_SUCCESS;
 }
 
+hailo_status CoreOpsScheduler::bind_buffers()
+{
+    // For now, binding buffers will take place only on one device
+    if (m_devices.size() > 1) {
+        return HAILO_SUCCESS;
+    }
+
+    auto active_core_op_handle = m_devices.begin()->second->current_core_op_handle;
+    for (auto &core_op_pair : m_scheduled_core_ops) {
+        // Checking if that the core op is deactivated, has no bounded buffer and has unbounded buffer pending
+        if ((m_bounded_infer_requests.at(core_op_pair.first).size() > 0) || 
+            (core_op_pair.second->requested_infer_requests().load() <= 0) ||
+            (core_op_pair.first == active_core_op_handle)) {
+            continue;
+        }
+
+        TRY(auto infer_request, m_infer_requests.at(core_op_pair.first).dequeue());
+        TRY(auto vdma_core_op, get_vdma_core_op(core_op_pair.first, m_devices.begin()->second->device_id));
+        CHECK_SUCCESS(vdma_core_op->bind_buffers(infer_request.transfers));
+        m_bounded_infer_requests[core_op_pair.first].enqueue(std::move(infer_request));
+    }
+
+    return HAILO_SUCCESS;
+}
+
 hailo_status CoreOpsScheduler::optimize_streaming_if_enabled(const scheduler_core_op_handle_t &core_op_handle)
 {
     auto scheduled_core_op = m_scheduled_core_ops.at(core_op_handle);
@@ -305,11 +340,15 @@ hailo_status CoreOpsScheduler::optimize_streaming_if_enabled(const scheduler_cor
 
 Expected<InferRequest> CoreOpsScheduler::dequeue_infer_request(scheduler_core_op_handle_t core_op_handle)
 {
-    auto infer_request = m_infer_requests.at(core_op_handle).dequeue();
-    CHECK_EXPECTED(infer_request);
+    hailort::InferRequest infer_request;
+    if (m_bounded_infer_requests.at(core_op_handle).size() > 0) {
+        TRY(infer_request, m_bounded_infer_requests.at(core_op_handle).dequeue());
+    } else {
+        TRY(infer_request, m_infer_requests.at(core_op_handle).dequeue());
+    }
 
     m_scheduled_core_ops.at(core_op_handle)->requested_infer_requests().fetch_sub(1);
-    return infer_request.release();
+    return infer_request;
 }
 
 uint16_t CoreOpsScheduler::get_frames_ready_to_transfer(scheduler_core_op_handle_t core_op_handle,
@@ -399,6 +438,38 @@ void CoreOpsScheduler::schedule()
             shutdown_core_op(core_op_pair.first);
         }
     }
+
+    // If possible, bind buffer for all non activated core ops
+    auto status = bind_buffers();
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Scheduler thread failed with status={}", status);
+    }
+
+    update_closest_threshold_timeout();
+}
+
+void CoreOpsScheduler::update_closest_threshold_timeout()
+{
+    m_closest_threshold_timeout = std::chrono::steady_clock::now() + std::chrono::milliseconds(UINT32_MAX);
+    for (const auto &core_op_pair : m_scheduled_core_ops) {
+        auto scheduled_core_op = core_op_pair.second;
+        // Only update the closest threshold timeout if the core op has instances and timeout set to non default
+        if ((0 < scheduled_core_op->instances_count()) && (std::chrono::milliseconds(0) != scheduled_core_op->get_timeout())) {
+            m_closest_threshold_timeout = std::min(m_closest_threshold_timeout,
+                scheduled_core_op->get_last_run_timestamp() + scheduled_core_op->get_timeout());
+        }
+    }
+}
+
+std::chrono::milliseconds CoreOpsScheduler::get_closest_threshold_timeout() const
+{
+    // Get closest timeout and wait for it or for signal
+    const auto time_now = std::chrono::steady_clock::now();
+    return (m_closest_threshold_timeout > time_now) ?
+        std::chrono::duration_cast<std::chrono::milliseconds>(m_closest_threshold_timeout - time_now) :
+        // In case time_now is bigger than m_closest_threshold_timeout - timeout has already occured and we should
+        // signal the worker thread
+        std::chrono::milliseconds(0);
 }
 
 CoreOpsScheduler::SchedulerThread::SchedulerThread(CoreOpsScheduler &scheduler) :
@@ -413,11 +484,11 @@ CoreOpsScheduler::SchedulerThread::~SchedulerThread()
     stop();
 }
 
-void CoreOpsScheduler::SchedulerThread::signal()
+void CoreOpsScheduler::SchedulerThread::signal(bool execute_worker_thread)
 {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_execute_worker_thread = true;
+        m_execute_worker_thread = execute_worker_thread;
     }
     m_cv.notify_one();
 }
@@ -426,7 +497,7 @@ void CoreOpsScheduler::SchedulerThread::stop()
 {
     if (m_thread.joinable()) {
         m_is_running = false;
-        signal();
+        signal(true);
         m_thread.join();
     }
 }
@@ -438,7 +509,8 @@ void CoreOpsScheduler::SchedulerThread::worker_thread_main()
     while (m_is_running) {
         {
             std::unique_lock<std::mutex> lock(m_mutex);
-            m_cv.wait(lock, [this]() {
+            const auto next_timeout_in_ms = m_scheduler.get_closest_threshold_timeout();
+            m_cv.wait_for(lock, next_timeout_in_ms, [this]() {
                 return m_execute_worker_thread.load();
             });
             m_execute_worker_thread = false;

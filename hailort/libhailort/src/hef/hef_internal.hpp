@@ -284,6 +284,7 @@ public:
     Expected<size_t> get_number_of_output_streams(const std::string &net_group_name="");
     ProtoHEFHwArch get_device_arch();
     std::shared_ptr<SeekableBytesReader> get_hef_reader();
+    size_t get_ccws_offset();
     Expected<float64_t> get_bottleneck_fps(const std::string &net_group_name="");
     static bool contains_ddr_layers(const ProtoHEFCoreOpMock &core_op);
     static hailo_status validate_core_op_unique_layer_names(const ProtoHEFCoreOpMock &core_op);
@@ -308,7 +309,7 @@ public:
         const hailo_mipi_input_stream_params_t &mipi_params, const std::string &network_group_name);
 
     static Expected<std::vector<WriteMemoryInfo>> create_single_context_core_op_config(
-        const ProtoHEFPreliminaryConfig& proto_config);
+        const ProtoHEFPreliminaryConfig& proto_config, const Hef &hef);
 
     static Expected<std::shared_ptr<ProtoHEFCoreOpMock>> get_core_op_per_arch(const ProtoHEFCoreOpMock &core_op,
         ProtoHEFHwArch hef_arch, hailo_device_architecture_t device_arch, uint32_t partial_clusters_layout_bitmap);
@@ -456,6 +457,7 @@ private:
     MD5_SUM_t m_md5;
     uint32_t m_crc;
     std::shared_ptr<SeekableBytesReader> m_hef_reader;
+    size_t m_ccws_offset;
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
     Buffer m_hef_buffer;

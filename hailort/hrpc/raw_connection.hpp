@@ -15,6 +15,9 @@
 
 #include <memory>
 
+#define DEFAULT_WRITE_TIMEOUT (std::chrono::milliseconds(10000))
+#define DEFAULT_READ_TIMEOUT (std::chrono::milliseconds(HAILO_INFINITE))
+
 using namespace hailort;
 
 namespace hrpc
@@ -23,7 +26,8 @@ namespace hrpc
 class ConnectionContext
 {
 public:
-    static Expected<std::shared_ptr<ConnectionContext>> create_shared(bool is_accepting);
+    static Expected<std::shared_ptr<ConnectionContext>> create_client_shared(const std::string &device_id = "");
+    static Expected<std::shared_ptr<ConnectionContext>> create_server_shared();
 
     bool is_accepting() const { return m_is_accepting; }
 
@@ -45,12 +49,11 @@ public:
 
     virtual Expected<std::shared_ptr<RawConnection>> accept() = 0;
     virtual hailo_status connect() = 0;
-    virtual hailo_status write(const uint8_t *buffer, size_t size) = 0;
-    virtual hailo_status read(uint8_t *buffer, size_t size) = 0;
+    virtual hailo_status write(const uint8_t *buffer, size_t size,
+        std::chrono::milliseconds timeout = DEFAULT_WRITE_TIMEOUT) = 0;
+    virtual hailo_status read(uint8_t *buffer, size_t size,
+        std::chrono::milliseconds timeout = DEFAULT_READ_TIMEOUT) = 0;
     virtual hailo_status close() = 0;
-
-protected:
-    std::chrono::milliseconds m_timeout = std::chrono::milliseconds(HAILO_INFINITE);
 };
 
 } // namespace hrpc

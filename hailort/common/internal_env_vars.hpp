@@ -1,0 +1,106 @@
+/**
+ * Copyright (c) 2020-2024 Hailo Technologies Ltd. All rights reserved.
+ * Distributed under the MIT license (https://opensource.org/licenses/MIT)
+ **/
+/**
+ * @file internal_env_Vars.hpp
+ * @brief: defines a set of internal environment variables used for development
+ * **/
+
+#ifndef HAILO_INTERNAL_ENV_VARS_HPP_
+#define HAILO_INTERNAL_ENV_VARS_HPP_
+
+
+namespace hailort
+{
+
+/* Service, hrpc-server, comunication */
+
+/* Changes the default address for grpc communication. used for the service-over-ip feature */
+#define HAILORT_SERVICE_ADDRESS_ENV_VAR ("HAILORT_SERVICE_ADDRESS")
+
+/* Indicates to the HailoRT gRPC Service whether to use shared memory for the tesnors data.
+    Note: Cannot be used for service-over-ip */
+#define HAILO_SERVICE_SHARED_MEMORY_ENV_VAR ("HAILO_SERVICE_SHARED_MEMORY_OFF")
+#define HAILO_SERVICE_SHARED_MEMORY_OFF "1"
+
+/* Defines a costum pcie port for raw-connection */
+#define HAILO_CONNECTION_PCIE_PORT_ENV_VAR ("HAILO_CONNECTION_PCIE_PORT")
+
+/* Forces the client to use socket-based communication on a specific address. if not set, socket communicaiton wont be used. */
+#define HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR ("HAILO_SOCKET_COM_ADDR_CLIENT")
+
+/* Forces the hrpc-server to use socket-based communication on a specific address. if not set, socket communicaiton wont be used. */
+#define HAILO_SOCKET_COM_ADDR_SERVER_ENV_VAR ("HAILO_SOCKET_COM_ADDR_SERVER")
+
+/* HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR and HAILO_SOCKET_COM_ADDR_SERVER_ENV_VAR can be set to either ip:port ("X.X.X.X:P"),
+    or to HAILO_SOCKET_COM_ADDR_UNIX_SOCKET which forces working with unix-socket*/
+#define HAILO_SOCKET_COM_ADDR_UNIX_SOCKET ("localhost")
+
+
+/* General */
+
+/* Defines whether the offset of the kv cache will be updated automatically or not.
+    can be set to either HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR_DEFAULT or
+     HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR_DISABLED, or to a numeric value defining the offset update value in bytes`*/
+#define HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR ("HAILORT_AUTO_UPDATE_CACHE_OFFSET")
+#define HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR_DEFAULT ("default")
+#define HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR_DISABLED ("disabled")
+
+/* Used for the internal CLI mode `measure-nnc-performance` */
+#define HAILO_CONFIGURE_FOR_HW_INFER_ENV_VAR ("HAILO_CONFIGURE_FOR_HW_INFER")
+
+/* Disable context switch intermediate buffer reuse (naive plan) */
+#define HAILO_FORCE_NAIVE_PER_BUFFER_TYPE_ALOCATION_ENV_VAR ("HAILO_FORCE_NAIVE_PER_BUFFER_TYPE_ALOCATION")
+
+/* forces the minimum FD used events to be above `HIGH_FD_OFFSET`.
+    useful for systems with limitations on the FD count and values */
+#define HAILO_USE_HIGH_FD_ENV_VAR ("HAILO_USE_HIGH_FD")
+
+/* Force hailo15m partial cluster layout bitmap (which clusters are activated) */
+#define FORCE_LAYOUT_INTERNAL_ENV_VAR ("FORCE_LAYOUT_INTERNAL")
+
+
+/* Logger */
+
+/* Forces flush of the logger to file on every trace, instead of the default (warnings and above) */
+#define HAILORT_LOGGER_FLUSH_EVERY_PRINT_ENV_VAR ("HAILORT_LOGGER_FLUSH_EVERY_PRINT")
+
+/* Force QNX Driver logs to be flushed to specific file - or if left undefined - to stderr */
+#define HAILO_QNX_DRIVER_LOG_STDERR_ENV_VAR ("HAILO_QNX_DRIVER_LOG_STDERR")
+
+
+/* Inference */
+
+/* Disables the hrt-multiplexer */
+#define DISABLE_MULTIPLEXER_ENV_VAR ("HAILO_DISABLE_MULTIPLEXER_INTERNAL")
+
+/* Disable scheduler Idle optimization */
+#define HAILO_DISABLE_IDLE_OPT_ENV_VAR ("HAILO_DISABLE_IDLE_OPT")
+
+
+/* Model configuration */
+
+/* If not set, hailort will try to use default desc-size, and only then fallback to larger desc-sizes */
+#define HAILO_LEGACY_BOUNDARY_CHANNEL_PAGE_SIZE_ENV_VAR ("HAILO_LEGACY_BOUNDARY_CHANNEL_PAGE_SIZE")
+
+/* If set - Action list will be sent to Firmware SRAM over DDR unrelated to the size of the action list
+    (Otherwise - DDR will only be used if infinite action list is needed) */
+#define DDR_ACTION_LIST_ENV_VAR ("HAILO_DDR_ACTION_LIST")
+#define DDR_ACTION_LIST_ENV_VAR_VALUE ("1")
+
+/* Forces using descriptor-lists instead of CCB for config-channels on h1x devices */
+#define HAILO_FORCE_CONF_CHANNEL_OVER_DESC_ENV_VAR ("HAILO_FORCE_CONF_CHANNEL_OVER_DESC")
+
+/* Forces using descriptor-lists instead of CCB for inter-context-channels on h1x devices */
+#define HAILO_FORCE_INFER_CONTEXT_CHANNEL_OVER_DESC_ENV_VAR ("HAILO_FORCE_INFER_CONTEXT_CHANNEL_OVER_DESC")
+
+/* Forces using descriptor-lists instead of CCB for ddr-channels on h1x devices */
+#define HAILO_FORCE_DDR_CHANNEL_OVER_CCB_ENV_VAR ("HAILO_FORCE_DDR_CHANNEL_OVER_CCB")
+
+/* Sets the default power-mode of the ConfiguredNetworkGroups to `HAILO_POWER_MODE_ULTRA_PERFORMANCE` */
+#define FORCE_POWER_MODE_ULTRA_PERFORMANCE_ENV_VAR ("FORCE_POWER_MODE_ULTRA_PERFORMANCE")
+
+} /* namespace hailort */
+
+#endif /* HAILO_INTERNAL_ENV_VARS_HPP_ */

@@ -388,18 +388,6 @@ Expected<Buffer> CoreOp::get_intermediate_buffer(const IntermediateBufferKey &)
     return make_unexpected(HAILO_NOT_SUPPORTED);
 }
 
-Expected<Buffer> CoreOp::get_cache_buffer(uint32_t)
-{
-    LOGGER__ERROR("Getting cache buffer is not supported for this core op");
-    return make_unexpected(HAILO_NOT_SUPPORTED);
-}
-
-Expected<std::map<uint32_t, Buffer>> CoreOp::get_cache_buffers()
-{
-    LOGGER__ERROR("Getting cache buffers is not supported for this core op");
-    return make_unexpected(HAILO_NOT_SUPPORTED);
-}
-
 hailo_status CoreOp::wrap_streams_for_remote_process()
 {
     for (auto &input_stream_pair : m_input_streams) {
@@ -500,7 +488,7 @@ Expected<std::shared_ptr<InputStreamBase>> CoreOp::create_input_stream_from_conf
             }
 
         default:
-            LOGGER__ERROR("{} interface is not supported.", stream_params.stream_interface);
+            LOGGER__ERROR("{} interface is not supported.", static_cast<int>(stream_params.stream_interface));
             return make_unexpected(HAILO_NOT_IMPLEMENTED);
     }
 
@@ -612,7 +600,7 @@ Expected<std::shared_ptr<OutputStreamBase>> CoreOp::create_output_stream_from_co
             }
 
         default:
-            LOGGER__ERROR("{} interface is not supported.", stream_params.stream_interface);
+            LOGGER__ERROR("{} interface is not supported.", static_cast<int>(stream_params.stream_interface));
             return make_unexpected(HAILO_NOT_IMPLEMENTED);
     }
 

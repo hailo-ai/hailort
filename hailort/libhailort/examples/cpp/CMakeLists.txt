@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.5.0)
 
 add_subdirectory(vstreams_example)
 add_subdirectory(infer_pipeline_example)

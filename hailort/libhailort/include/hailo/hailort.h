@@ -421,7 +421,7 @@ typedef enum hailo_device_architecture_e {
     HAILO_ARCH_PLUTO,
     HAILO_ARCH_HAILO15M,
     HAILO_ARCH_HAILO10H,
-    
+
     /** Max enum value to maintain ABI Integrity */
     HAILO_ARCH_MAX_ENUM = HAILO_MAX_ENUM
 } hailo_device_architecture_t;
@@ -771,12 +771,6 @@ typedef enum {
      */
     HAILO_FORMAT_FLAGS_TRANSPOSED          = 1 << 1,
 
-    /**
-     * If set, argmax will be called on the feature dimension.
-     * Only set on device side.
-     */
-    HAILO_FORMAT_FLAGS_HOST_ARGMAX         = 1 << 2,
-
     /** Max enum value to maintain ABI Integrity */
     HAILO_FORMAT_FLAGS_MAX_ENUM             = HAILO_MAX_ENUM
 } hailo_format_flags_t;
@@ -838,9 +832,10 @@ typedef enum {
 // **************************************************************************************** //
 /** Hailo buffer flags */
 typedef enum {
-    HAILO_BUFFER_FLAGS_NONE         = 0,            /*!< No flags - heap allocated buffer */
-    HAILO_BUFFER_FLAGS_DMA          = 1 << 0,       /*!< Buffer is mapped to DMA (will be page aligned implicitly) */
-    HAILO_BUFFER_FLAGS_CONTINUOUS   = 1 << 1,       /*!< Buffer is physically continuous (will be page aligned implicitly) */
+    HAILO_BUFFER_FLAGS_NONE             = 0,        /*!< No flags - heap allocated buffer */
+    HAILO_BUFFER_FLAGS_DMA              = 1 << 0,   /*!< Buffer is mapped to DMA (will be page aligned implicitly) */
+    HAILO_BUFFER_FLAGS_CONTINUOUS       = 1 << 1,   /*!< Buffer is physically continuous (will be page aligned implicitly) */
+    HAILO_BUFFER_FLAGS_SHARED_MEMORY    = 1 << 2,   /*!< Buffer is shared memory (will be page aligned implicitly) */
 
     /** Max enum value to maintain ABI Integrity */
     HAILO_BUFFER_FLAGS_MAX_ENUM     = HAILO_MAX_ENUM

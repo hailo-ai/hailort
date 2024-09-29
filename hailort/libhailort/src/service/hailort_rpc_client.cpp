@@ -97,7 +97,7 @@ hailo_status HailoRtRpcClient::VDevice_release(const VDeviceIdentifier &identifi
     return HAILO_SUCCESS;
 }
 
-Expected<std::vector<uint32_t>> HailoRtRpcClient::InputVStreams_create(const NetworkGroupIdentifier &identifier,
+Expected<std::unordered_map<std::string, uint32_t>> HailoRtRpcClient::InputVStreams_create(const NetworkGroupIdentifier &identifier,
     const std::map<std::string, hailo_vstream_params_t> &inputs_params, uint32_t pid)
 {
     VStream_create_Request request;
@@ -133,12 +133,13 @@ Expected<std::vector<uint32_t>> HailoRtRpcClient::InputVStreams_create(const Net
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
-    std::vector<uint32_t> input_vstreams_handles;
-    input_vstreams_handles.reserve(reply.handles_size());
-    for (auto &handle : *reply.mutable_handles()) {
-        input_vstreams_handles.push_back(handle);
+    std::unordered_map<std::string, uint32_t> input_vstreams_names_to_handles;
+    assert(reply.handles_size() == reply.names_size());
+    for (int i = 0; i < reply.handles_size(); i++) {
+        input_vstreams_names_to_handles.emplace(reply.names(i), reply.handles(i));
     }
-    return input_vstreams_handles;
+
+    return input_vstreams_names_to_handles;
 }
 
 hailo_status HailoRtRpcClient::InputVStream_release(const VStreamIdentifier &identifier, uint32_t pid)
@@ -157,7 +158,7 @@ hailo_status HailoRtRpcClient::InputVStream_release(const VStreamIdentifier &ide
     return HAILO_SUCCESS;
 }
 
-Expected<std::vector<uint32_t>> HailoRtRpcClient::OutputVStreams_create(const NetworkGroupIdentifier &identifier,
+Expected<std::unordered_map<std::string, uint32_t>> HailoRtRpcClient::OutputVStreams_create(const NetworkGroupIdentifier &identifier,
         const std::map<std::string, hailo_vstream_params_t> &output_params, uint32_t pid)
 {
     VStream_create_Request request;
@@ -193,12 +194,13 @@ Expected<std::vector<uint32_t>> HailoRtRpcClient::OutputVStreams_create(const Ne
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
-    std::vector<uint32_t> output_vstreams_handles;
-    output_vstreams_handles.reserve(reply.handles_size());
-    for (auto &handle : *reply.mutable_handles()) {
-        output_vstreams_handles.push_back(handle);
+    std::unordered_map<std::string, uint32_t> output_vstreams_names_to_handles;
+    assert(reply.handles_size() == reply.names_size());
+    for (int i = 0; i < reply.handles_size(); i++) {
+        output_vstreams_names_to_handles.emplace(reply.names(i), reply.handles(i));
     }
-    return output_vstreams_handles;
+
+    return output_vstreams_names_to_handles;
 }
 
 hailo_status HailoRtRpcClient::OutputVStream_release(const VStreamIdentifier &identifier, uint32_t pid)
@@ -1466,7 +1468,7 @@ Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_
 }
 
 hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_infer_async(const NetworkGroupIdentifier &identifier,
-   const std::vector<std::tuple<callback_idx_t, std::string, MemoryView>> &cb_idx_to_stream_buffer,
+   const std::vector<StreamCbParamsPtr> &streams_cb_params,
    const callback_idx_t infer_request_done_cb, const std::unordered_set<std::string> &input_streams_names)
 {
     ConfiguredNetworkGroup_infer_async_Request request;
@@ -1474,16 +1476,21 @@ hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_infer_async(const NetworkG
     auto proto_identifier = request.mutable_identifier();
     ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     auto proto_transfer_buffers = request.mutable_transfer_requests();
-    for (const auto &idx_named_buffer : cb_idx_to_stream_buffer) {
+    for (const auto &stream_cb_params : streams_cb_params) {
         ProtoTransferRequest proto_transfer_request;
-        proto_transfer_request.set_cb_idx(std::get<0>(idx_named_buffer));
-        const auto &stream_name = std::get<1>(idx_named_buffer);
-        proto_transfer_request.set_stream_name(stream_name);
-        if (contains(input_streams_names, stream_name)) {
-            proto_transfer_request.set_direction(HAILO_H2D_STREAM);
-            proto_transfer_request.set_data(std::get<2>(idx_named_buffer).data(), std::get<2>(idx_named_buffer).size());
+        proto_transfer_request.set_cb_idx(stream_cb_params->m_cb_idx);
+        proto_transfer_request.set_stream_name(stream_cb_params->m_stream_name);
+        auto direction = contains(input_streams_names, stream_cb_params->m_stream_name) ? HAILO_H2D_STREAM : HAILO_D2H_STREAM;
+        proto_transfer_request.set_direction(direction);
+
+        if (stream_cb_params->m_is_shm) {
+            // Use share memory
+            auto shared_memory_identifier = proto_transfer_request.mutable_shared_memory_identifier();
+            shared_memory_identifier->set_name(stream_cb_params->m_shm_name);
+            shared_memory_identifier->set_size(static_cast<uint32_t>(stream_cb_params->m_size));
         } else {
-            proto_transfer_request.set_direction(HAILO_D2H_STREAM);
+            // copy data
+            proto_transfer_request.set_data(stream_cb_params->m_user_mem_view.data(), stream_cb_params->m_user_mem_view.size());
         }
         proto_transfer_buffers->Add(std::move(proto_transfer_request));
     }
@@ -1516,7 +1523,7 @@ Expected<bool> HailoRtRpcClient::InputVStream_is_multi_planar(const VStreamIdent
     return is_multi_planar;
 }
 
-hailo_status HailoRtRpcClient::InputVStream_write(const VStreamIdentifier &identifier, const hailo_pix_buffer_t &buffer)
+hailo_status HailoRtRpcClient::InputVStream_write(const VStreamIdentifier &identifier, const hailo_pix_buffer_t &buffer, const std::chrono::milliseconds &timeout)
 {
     CHECK(HAILO_PIX_BUFFER_MEMORY_TYPE_USERPTR == buffer.memory_type, HAILO_NOT_SUPPORTED, "Memory type of pix buffer must be of type USERPTR!");
 
@@ -1529,9 +1536,11 @@ hailo_status HailoRtRpcClient::InputVStream_write(const VStreamIdentifier &ident
         request.add_planes_data(buffer.planes[i].user_ptr, buffer.planes[i].bytes_used);
     }
 
-    ClientContextWithTimeout context;
+    ClientContextWithTimeout context(timeout);
     InputVStream_write_pix_Reply reply;
     grpc::Status status = m_stub->InputVStream_write_pix(&context, request, &reply);
+    CHECK(grpc::StatusCode::DEADLINE_EXCEEDED != status.error_code(), HAILO_TIMEOUT,
+        "Interaction between client and service received a timeout ({}ms)", timeout.count());
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     if (reply.status() == HAILO_STREAM_ABORT) {
@@ -1541,16 +1550,18 @@ hailo_status HailoRtRpcClient::InputVStream_write(const VStreamIdentifier &ident
     return HAILO_SUCCESS;
 }
 
-hailo_status HailoRtRpcClient::InputVStream_write(const VStreamIdentifier &identifier, const MemoryView &buffer)
+hailo_status HailoRtRpcClient::InputVStream_write(const VStreamIdentifier &identifier, const MemoryView &buffer, const std::chrono::milliseconds &timeout)
 {
     InputVStream_write_Request request;
     auto proto_identifier = request.mutable_identifier();
     VStream_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_data(buffer.data(), buffer.size());
 
-    ClientContextWithTimeout context;
+    ClientContextWithTimeout context(timeout);
     InputVStream_write_Reply reply;
     grpc::Status status = m_stub->InputVStream_write(&context, request, &reply);
+    CHECK(grpc::StatusCode::DEADLINE_EXCEEDED != status.error_code(), HAILO_TIMEOUT,
+        "Interaction between client and service received a timeout ({}ms)", timeout.count());
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     if (reply.status() == HAILO_STREAM_ABORT) {
@@ -1560,16 +1571,20 @@ hailo_status HailoRtRpcClient::InputVStream_write(const VStreamIdentifier &ident
     return HAILO_SUCCESS;
 }
 
-hailo_status HailoRtRpcClient::OutputVStream_read(const VStreamIdentifier &identifier, MemoryView buffer)
+hailo_status HailoRtRpcClient::OutputVStream_read(const VStreamIdentifier &identifier, MemoryView buffer, const std::chrono::milliseconds &timeout)
 {
     OutputVStream_read_Request request;
     auto proto_identifier = request.mutable_identifier();
     VStream_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_size(static_cast<uint32_t>(buffer.size()));
 
-    ClientContextWithTimeout context;
+    ClientContextWithTimeout context(timeout);
     OutputVStream_read_Reply reply;
     grpc::Status status = m_stub->OutputVStream_read(&context, request, &reply);
+    if (grpc::StatusCode::DEADLINE_EXCEEDED == status.error_code()) {
+        LOGGER__ERROR("Interaction between client and service received a timeout ({}ms)", timeout.count());
+        return HAILO_TIMEOUT;
+    }
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     if (reply.status() == HAILO_STREAM_ABORT) {

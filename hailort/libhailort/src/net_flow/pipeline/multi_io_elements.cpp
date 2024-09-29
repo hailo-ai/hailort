@@ -113,6 +113,9 @@ void BaseMuxElement::run_push_async(PipelineBuffer &&buffer, const PipelinePad &
 
             m_input_buffers.clear();
         }
+    } else {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_input_buffers.clear();
     }
 }
 
@@ -975,12 +978,14 @@ void AsyncHwElement::run_push_async(PipelineBuffer &&buffer, const PipelinePad &
     assert(contains(m_sink_name_to_index, sink.name()));
 
     m_barrier->arrive_and_wait();
+    std::unique_lock<std::mutex> lock(m_mutex);
     if (HAILO_SUCCESS == m_pipeline_status->load()) {
-        std::unique_lock<std::mutex> lock(m_mutex);
         m_input_buffers[sink.name()] = std::move(buffer);
         if (m_input_buffers.size() == m_sink_name_to_index.size()) { // Last sink to set its buffer
             action();
         }
+    } else {
+        m_input_buffers.clear();
     }
 }
 

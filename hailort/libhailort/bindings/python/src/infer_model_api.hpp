@@ -124,13 +124,13 @@ private:
 class ConfiguredInferModelBindingsWrapper final
 {
 public:
-    ConfiguredInferModelBindingsWrapper(ConfiguredInferModel::Bindings&& bindings, std::vector<std::string> output_names) :
+    ConfiguredInferModelBindingsWrapper(ConfiguredInferModel::Bindings &&bindings, std::vector<std::string> output_names) :
         m_bindings(std::move(bindings)),
         m_output_names(output_names)
     {}
     ConfiguredInferModelBindingsInferStreamWrapper input(const std::string &name);
     ConfiguredInferModelBindingsInferStreamWrapper output(const std::string &name);
-    ConfiguredInferModel::Bindings get() { return m_bindings; }
+    ConfiguredInferModel::Bindings &&release() { return std::move(m_bindings); }
 
     static void bind(py::module &m);
 

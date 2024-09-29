@@ -1,4 +1,5 @@
 from enum import Enum, IntEnum
+from typing import List
 import signal
 import struct
 
@@ -762,6 +763,14 @@ class ConfiguredNetwork(object):
     def update_cache_offset(self, offset_delta_bytes):
         return self._configured_network.update_cache_offset(offset_delta_bytes)
 
+    def get_cache_ids(self) -> List[int]:
+        return self._configured_network.get_cache_ids()
+
+    def read_cache_buffer(self, cache_id: int) -> bytes:
+        return self._configured_network.read_cache_buffer(cache_id)
+
+    def write_cache_buffer(self, cache_id: int, buffer: bytes):
+        return self._configured_network.write_cache_buffer(cache_id, buffer)
 
 class EmptyContextManager(object):
     """An empty context manager that returns instead of activated network group when scheduler is enabled`."""
@@ -1513,7 +1522,7 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 4
-SUPPORTED_FW_MINOR = 18
+SUPPORTED_FW_MINOR = 19
 SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
@@ -2832,6 +2841,9 @@ class InferModel:
             A :obj:`ConfiguredInferModel` should be used inside a context manager, and should not be passed to a different process.
         """
         with ExceptionWrapper():
+            if len(self.output_names) == 1 and self.output().format.order == FormatOrder.HAILO_NMS_WITH_BYTE_MASK:
+                raise HailoRTException("this model is not supported on async infer model API")
+
             configured_infer_model_cpp_obj = self._infer_model.configure()
             return ConfiguredInferModel(configured_infer_model_cpp_obj, self)
 
@@ -2926,7 +2938,6 @@ class ConfiguredInferModel:
         max_bboxes_per_class: int
         quant_info: _pyhailort.QuantInfo
         output_dtype: numpy.dtype = numpy.dtype('float32')
-        batch_size: int = 1
 
     @dataclass
     class NmsHailoTransformationInfo(NmsTransformationInfo):
@@ -2976,6 +2987,11 @@ class ConfiguredInferModel:
                 else:
                     self._nms_info = None
 
+            @staticmethod
+            def _validate_c_contiguous(buffer):
+                if not buffer.flags.c_contiguous:
+                    raise HailoRTException("Buffer must be C_CONTIGUOUS")
+
             def set_buffer(self, buffer):
                 """
                 Sets the edge's buffer to a new one.
@@ -2984,6 +3000,7 @@ class ConfiguredInferModel:
                     buffer (numpy.array): The new buffer to set. The array's shape should match the edge's shape.
                 """
                 with ExceptionWrapper():
+                    self._validate_c_contiguous(buffer)
                     self._infer_stream.set_buffer(buffer)
 
                 self._buffer = buffer
@@ -2996,20 +3013,23 @@ class ConfiguredInferModel:
                     tf_format (bool, optional): Whether the output format is tf or hailo. Relevant for NMS outputs. The output
                         can be re-formatted into two formats (TF, Hailo) and the user through choosing the True/False function
                         parameter, can decide which format to receive.
+
                         For detection outputs:
                         TF format is an :obj:`numpy.array` with shape [number of classes, bounding box params, max bounding boxes per class]
-                        where the 3rd dimension (bounding box params) is of a fixed length of 5 (y_min, x_min, y_max, x_max, score).
+                        where the 2nd dimension (bounding box params) is of a fixed length of 5 (y_min, x_min, y_max, x_max, score).
 
-                        Hailo format is a list of detections per class: [[class_0 detections], [class_1 detections], ... [class_n-1 detections]]
-                        where each detection is an :obj:`numpy.array` with shape (y_min, x_min, y_max, x_max, score).
+                        Hailo format is a list of :obj:`numpy.array` where each array represents the detections for a specific class:
+                        [cls0_detections, cls1_detections, ...]. The length of the list is the number of classes.
+                        Each :obj:`numpy.array` shape is (number of detections, bounding box params) where the 2nd dimension
+                        (bounding box params) is of a fixed length of 5 (y_min, x_min, y_max, x_max, score).
 
                         For segmentation outputs:
                         TF format is an :obj:`numpy.array` with shape [1, image_size + number_of_params, max bounding boxes per class]
-                        where the 3rd dimension (image_size + number_of_params) is calculated as: mask (image_width - image_height) + (y_min, x_min, y_max, x_max, score, class_id).
+                        where the 2nd dimension (image_size + number_of_params) is calculated as: mask (image_width * image_height) + (y_min, x_min, y_max, x_max, score, class_id).
                         The mask is a binary mask of the segmentation output where the ROI (region of interest) is mapped to 1 and the background is mapped to 0.
 
                         Hailo format is a list of detections per class: [detecion0, detection1, ... detection_m]
-                        where each detection is an :obj:`HailoDetection`
+                        where each detection is an :obj:`HailoDetection`. The detections are sorted decreasingly by score.
 
                 Returns:
                     buffer (numpy.array): the buffer of the edge.
@@ -3029,14 +3049,14 @@ class ConfiguredInferModel:
                         buffer = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_format(
                             [self._buffer],
                             nms_info.number_of_classes,
-                            nms_info.batch_size,
+                            1,
                             nms_info.input_height,
                             nms_info.input_width,
                             nms_info.max_bboxes_per_class,
                             nms_info.output_dtype,
                             nms_info.use_tf_nms_format,
-                        )
-                    else:
+                        )[0]
+                    elif nms_info.format_order == FormatOrder.HAILO_NMS:
                         if nms_info.use_tf_nms_format:
                             nms_shape = [
                                 nms_info.number_of_classes,
@@ -3044,7 +3064,7 @@ class ConfiguredInferModel:
                                 nms_info.max_bboxes_per_class,
                             ]
 
-                            shape = [nms_info.batch_size, *nms_shape]
+                            shape = [1, *nms_shape]
                             flat_result = self._buffer.reshape(-1)
 
                             buffer = HailoRTTransformUtils.output_raw_buffer_to_nms_tf_format(
@@ -3052,15 +3072,14 @@ class ConfiguredInferModel:
                                 shape,
                                 nms_info.output_dtype,
                                 self._quantized_empty_bbox,
-                            )
+                            )[0]
                         else:
-                            buffer = HailoRTTransformUtils.output_raw_buffer_to_nms_format(
-                                [self._buffer],
+                            buffer = HailoRTTransformUtils.output_raw_buffer_to_nms_format_single_frame(
+                                self._buffer,
                                 nms_info.number_of_classes,
                             )
-
-                if tf_format:
-                    buffer = buffer[0]
+                    else:
+                        raise HailoRTException(f"Unsupported NMS format order: {nms_info.format_order}.")
 
                 return buffer
 
@@ -3206,12 +3225,17 @@ class ConfiguredInferModel:
 
     def wait_for_async_ready(self, timeout_ms=1000, frames_count=1):
         """
-        Waits until the model is ready to launch a new asynchronous inference operation.
-        The readiness of the model is determined by the ability to push buffers to the asynchronous inference pipeline.
+        The readiness of the model to launch is determined by the ability to push buffers to the asynchronous inference pipeline.
+        If the model is ready, the method will return immediately.
+        If the model is not ready, the method will wait for the model to be ready.
 
-        args:
-            timeout_ms (int, optional): Amount of time to wait until the model is ready in milliseconds.
-            frames_count (int, optional): The count of buffers you intent to infer in the next request. Useful for batch inference. Default is 1
+        Args:
+            timeout_ms (int, optional): Max amount of time to wait until the model is ready in milliseconds.
+                Defaults to 1000
+            frames_count (int, optional): The number of buffers you intend to infer in the next request.
+                Useful for batch inference. Defaults to 1
+
+        Note: Calling this function with frames_count greater than :func:`ConfiguredInferModel.get_async_queue_size` will timeout.
 
         Raises:
             :class:`HailoRTTimeout` in case the model is not ready in the given timeout.
@@ -3253,6 +3277,10 @@ class ConfiguredInferModel:
         Note:
             As a standard, callbacks should be executed as quickly as possible.
             In case of an error, the pipeline will be shut down.
+
+        Note:
+            To ensure the inference pipeline can handle new buffers, it is recommended to first call
+                 :func:`ConfiguredInferModel.wait_for_async_ready`.
 
         Returns:
             AsyncInferJob: The async inference job object.
@@ -3523,7 +3551,7 @@ class VDevice(object):
         with ExceptionWrapper():
             return self._vdevice.get_physical_devices_ids()
 
-    def create_infer_model(self, hef_source, network_name=""):
+    def create_infer_model(self, hef_source, name=""):
         """
         Creates the infer model from an hef.
 
@@ -3531,7 +3559,7 @@ class VDevice(object):
             hef_source (str or bytes): The source from which the HEF object will be created. If the
                 source type is `str`, it is treated as a path to an hef file. If the source type is
                 `bytes`, it is treated as a buffer. Any other type will raise a ValueError.
-            network_name (str, optional): The string of the network name.
+            name (str, optional): The string of the model name.
 
         Returns:
             :obj:`InferModel`: The infer model object.
@@ -3551,9 +3579,9 @@ class VDevice(object):
 
         with ExceptionWrapper():
             if type(hef_source) is bytes:
-                infer_model_cpp_obj = self._vdevice.create_infer_model_from_buffer(hef_source, network_name)
+                infer_model_cpp_obj = self._vdevice.create_infer_model_from_buffer(hef_source, name)
             else:
-                infer_model_cpp_obj = self._vdevice.create_infer_model_from_file(hef_source, network_name)
+                infer_model_cpp_obj = self._vdevice.create_infer_model_from_file(hef_source, name)
 
         infer_model = InferModel(infer_model_cpp_obj, hef_source)
         return infer_model

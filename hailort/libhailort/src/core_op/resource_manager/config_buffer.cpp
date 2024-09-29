@@ -12,6 +12,7 @@
 #include "vdma/memory/sg_edge_layer.hpp"
 #include "vdma/memory/continuous_edge_layer.hpp"
 #include "vdma/memory/buffer_requirements.hpp"
+#include "common/internal_env_vars.hpp"
 
 #include <numeric>
 
@@ -200,7 +201,7 @@ bool ConfigBuffer::should_use_ccb(HailoRTDriver &driver)
         return false; // not supported
     }
 
-    if (nullptr != std::getenv("HAILO_FORCE_CONF_CHANNEL_OVER_DESC")) {
+    if (is_env_variable_on(HAILO_FORCE_CONF_CHANNEL_OVER_DESC_ENV_VAR)) {
         LOGGER__WARNING("Using desc instead of CCB for config channel is not optimal for performance.\n");
         return false;
     }

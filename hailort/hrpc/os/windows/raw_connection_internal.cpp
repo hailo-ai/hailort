@@ -37,17 +37,19 @@ hailo_status OsRawConnection::connect()
     return HAILO_NOT_IMPLEMENTED;
 }
 
-hailo_status OsRawConnection::write(const uint8_t *buffer, size_t size)
+hailo_status OsRawConnection::write(const uint8_t *buffer, size_t size, std::chrono::milliseconds timeout)
 {
     (void)buffer;
     (void)size;
+    (void)timeout;
     return HAILO_NOT_IMPLEMENTED;
 }
 
-hailo_status OsRawConnection::read(uint8_t *buffer, size_t size)
+hailo_status OsRawConnection::read(uint8_t *buffer, size_t size, std::chrono::milliseconds timeout)
 {
     (void)buffer;
     (void)size;
+    (void)timeout;
     return HAILO_NOT_IMPLEMENTED;
 }
 

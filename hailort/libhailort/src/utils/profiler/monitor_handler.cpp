@@ -22,8 +22,9 @@ MonitorHandler::~MonitorHandler()
     clear_monitor();
 }
 
-void MonitorHandler::clear_monitor() {
-
+void MonitorHandler::clear_monitor()
+{
+    m_unique_vdevice_hash = {};
     if (m_is_monitor_currently_working) {
         m_is_monitor_currently_working = false;
         m_mon_shutdown_event->signal();
@@ -43,7 +44,7 @@ void MonitorHandler::handle_trace(const MonitorStartTrace &trace)
 void MonitorHandler::handle_trace(const MonitorEndTrace &trace)
 {
     if (m_unique_vdevice_hash == trace.unique_vdevice_hash) {
-        m_unique_vdevice_hash = {};
+        clear_monitor();
     }
 }
 

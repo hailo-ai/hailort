@@ -9,6 +9,8 @@
 
 #include "common/utils.hpp"
 #include "common/filesystem.hpp"
+#include "common/internal_env_vars.hpp"
+#include "common/env_vars.hpp"
 
 #include "utils/hailort_logger.hpp"
 
@@ -30,6 +32,7 @@
 namespace hailort
 {
 
+
 #define MAX_LOG_FILE_SIZE (1024 * 1024) // 1MB
 
 #define HAILORT_NAME ("HailoRT")
@@ -44,8 +47,6 @@ namespace hailort
 #define HAILORT_LOCAL_FILE_LOGGER_PATTERN ("[%Y-%m-%d %X.%e] [%t] [%n] [%l] [%s:%#] [%!] %v") // File logger will print: [timestamp] [TID] [hailort] [log level] [source file:line number] [function name] msg
 #define HAILORT_ANDROID_LOGGER_PATTERN ("%v")               // Android logger will print only message (additional info are built-in)
 
-#define HAILORT_LOGGER_PATH_ENV_VAR ("HAILORT_LOGGER_PATH")
-#define HAILORT_LOGGER_FLUSH_EVERY_PRINT_ENV_VAR ("HAILORT_LOGGER_FLUSH_EVERY_PRINT")
 #define PERIODIC_FLUSH_INTERVAL_IN_SECONDS (5)
 
 
@@ -65,8 +66,9 @@ std::string HailoRTLogger::parse_log_path(const char *log_path)
 
 std::string HailoRTLogger::get_log_path(const std::string &path_env_var)
 {
-    auto log_path_c_str = std::getenv(path_env_var.c_str());
-    return parse_log_path(log_path_c_str);
+    auto log_path_c_str_exp = get_env_variable(path_env_var.c_str());
+    std::string log_path_c_str = (log_path_c_str_exp) ? log_path_c_str_exp.value() : "";
+    return parse_log_path(log_path_c_str.c_str());
 }
 
 std::string HailoRTLogger::get_main_log_path()
@@ -202,22 +204,6 @@ HailoRTLogger::HailoRTLogger(spdlog::level::level_enum console_level, spdlog::le
     spdlog::set_default_logger(m_hailort_logger);
 }
 
-bool HailoRTLogger::should_flush_every_print(const std::string &flush_every_print_env_var)
-{
-    auto flush_every_print_c_str = std::getenv(flush_every_print_env_var.c_str());
-    if ((nullptr == flush_every_print_c_str) || (std::strlen(flush_every_print_c_str) == 0)) {
-        return false;
-    }
-    std::string flush_every_print_c_str_lower_case(flush_every_print_c_str);
-    for (char& ch : flush_every_print_c_str_lower_case) {
-        ch = static_cast<char>(std::tolower(ch));
-    }
-    if (strcmp(flush_every_print_c_str_lower_case.c_str(), "1") == 0) {
-        return true;
-    }
-    return false;
-}
-
 void HailoRTLogger::set_levels(spdlog::level::level_enum console_level, spdlog::level::level_enum file_level,
     spdlog::level::level_enum flush_level)
 {
@@ -225,8 +211,7 @@ void HailoRTLogger::set_levels(spdlog::level::level_enum console_level, spdlog::
     m_main_log_file_sink->set_level(file_level);
     m_local_log_file_sink->set_level(file_level);
 
-    bool flush_every_print = should_flush_every_print(HAILORT_LOGGER_FLUSH_EVERY_PRINT_ENV_VAR);
-    if (flush_every_print){
+    if (is_env_variable_on(HAILORT_LOGGER_FLUSH_EVERY_PRINT_ENV_VAR)) {
         m_hailort_logger->flush_on(spdlog::level::trace);
         std::cerr << "HailoRT warning: Flushing log file on every print. May reduce HailoRT performance!" << std::endl;
     } else {

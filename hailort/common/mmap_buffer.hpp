@@ -16,7 +16,7 @@
 #include "hailo/expected.hpp"
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
-#include "os/file_descriptor.hpp"
+#include "common/file_descriptor.hpp"
 
 namespace hailort
 {
@@ -85,14 +85,14 @@ public:
     {
         auto mmap = MmapBufferImpl::create_shared_memory(length);
         CHECK_EXPECTED(mmap);
-        return MmapBuffer<T>(std::move(mmap.release()));
+        return MmapBuffer<T>(mmap.release());
     }
 
     static Expected<MmapBuffer<T>> create_file_map(size_t length, FileDescriptor &file, uintptr_t offset)
     {
         auto mmap = MmapBufferImpl::create_file_map(length, file, offset);
         CHECK_EXPECTED(mmap);
-        return MmapBuffer<T>(std::move(mmap.release()));
+        return MmapBuffer<T>(mmap.release());
     }
 
 #if defined(__QNX__)

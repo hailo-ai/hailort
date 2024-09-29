@@ -108,30 +108,4 @@ Expected<hailo_pix_buffer_t> HailoRTCommon::as_hailo_pix_buffer(MemoryView memor
     }
 }
 
-bool HailoRTCommon::is_power_measurement_supported(const hailo_device_architecture_t &hw_arch)
-{
-    switch(hw_arch) {
-    case HAILO_ARCH_HAILO8:
-        return true;
-    default:
-        return false;
-    }
-}
-
-bool HailoRTCommon::is_current_measurement_supported(const hailo_device_architecture_t &hw_arch)
-{
-    return is_power_measurement_supported(hw_arch);
-}
-
-bool HailoRTCommon::is_temp_measurement_supported(const hailo_device_architecture_t &hw_arch)
-{
-    switch(hw_arch) {
-    case HAILO_ARCH_HAILO8:
-    case HAILO_ARCH_HAILO8L:
-        return true;
-    default:
-        return false;
-    }
-}
-
 } /* namespace hailort */

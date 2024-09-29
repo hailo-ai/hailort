@@ -24,8 +24,8 @@ namespace hailort
 class PcieDevice : public VdmaDevice {
 public:
     static Expected<std::vector<hailo_pcie_device_info_t>> scan();
-    static Expected<std::unique_ptr<PcieDevice>> create();
-    static Expected<std::unique_ptr<PcieDevice>> create(const hailo_pcie_device_info_t &device_info);
+    static Expected<std::unique_ptr<Device>> create();
+    static Expected<std::unique_ptr<Device>> create(const hailo_pcie_device_info_t &device_info);
     static Expected<hailo_pcie_device_info_t> parse_pcie_device_info(const std::string &device_info_str,
         bool log_on_failure);
     static Expected<std::string> pcie_device_info_to_string(const hailo_pcie_device_info_t &device_info);
@@ -56,6 +56,8 @@ public:
     virtual Expected<hailo_device_architecture_t> get_architecture() const override;
 
 private:
+    static Expected<std::vector<hailo_pcie_device_info_t>> get_pcie_devices_infos(const std::vector<HailoRTDriver::DeviceInfo> &scan_results);
+
     PcieDevice(std::unique_ptr<HailoRTDriver> &&driver, hailo_status &status);
 
     static Expected<HailoRTDriver::DeviceInfo> find_device_info(const hailo_pcie_device_info_t &pcie_device_info);

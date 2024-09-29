@@ -98,6 +98,7 @@ public:
     void set_vdevice_core_op_handle(vdevice_core_op_handle_t core_op_handle) override;
 
     virtual hailo_status cancel_pending_transfers() override;
+    virtual hailo_status bind_buffer(TransferRequest &&transfer_request) override;
 
 protected:
     virtual Expected<std::unique_ptr<StreamBufferPool>> allocate_buffer_pool() override;

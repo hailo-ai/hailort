@@ -25,7 +25,8 @@ namespace hrpc
 class PcieConnectionContext : public ConnectionContext
 {
 public:
-    static Expected<std::shared_ptr<ConnectionContext>> create_shared(bool is_accepting);
+    static Expected<std::shared_ptr<ConnectionContext>> create_client_shared(const std::string &device_id);
+    static Expected<std::shared_ptr<ConnectionContext>> create_server_shared();
 
     PcieConnectionContext(std::shared_ptr<HailoRTDriver> &&driver, bool is_accepting,
         Buffer &&write_buffer, Buffer &&read_buffer)
@@ -61,8 +62,10 @@ public:
 
     virtual Expected<std::shared_ptr<RawConnection>> accept() override;
     virtual hailo_status connect() override;
-    virtual hailo_status write(const uint8_t *buffer, size_t size) override;
-    virtual hailo_status read(uint8_t *buffer, size_t size) override;
+    virtual hailo_status write(const uint8_t *buffer, size_t size,
+        std::chrono::milliseconds timeout = DEFAULT_WRITE_TIMEOUT) override;
+    virtual hailo_status read(uint8_t *buffer, size_t size,
+        std::chrono::milliseconds timeout = DEFAULT_READ_TIMEOUT) override;
     virtual hailo_status close() override;
 
     explicit PcieRawConnection(std::shared_ptr<PcieConnectionContext> context) : m_context(context) {}

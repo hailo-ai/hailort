@@ -89,7 +89,7 @@ hailo_status YOLOv5PostProcessOp::execute(const std::map<std::string, MemoryView
             status = extract_detections<float32_t, uint16_t>(name_to_input.second, input_metadata.quant_info, input_metadata.shape,
                 input_metadata.padded_shape, yolo_config.anchors.at(name));
         } else {
-            CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "YOLO post-process received invalid input type {}", input_metadata.format.type);
+            CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "YOLO post-process received invalid input type {}", static_cast<int>(input_metadata.format.type));
         }
         CHECK_SUCCESS(status);
     }

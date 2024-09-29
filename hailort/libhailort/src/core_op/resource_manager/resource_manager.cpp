@@ -5,11 +5,15 @@
 #include "vdma/memory/buffer_requirements.hpp"
 #include "device_common/control.hpp"
 #include "core_op/resource_manager/internal_buffer_manager.hpp"
+#include "common/internal_env_vars.hpp"
 
 #include <numeric>
 
 #define HAILO15H_NMS_MAX_CLASSES (1024)
 #define MAX_NUM_CONTEXTS_FOR_CONTROL_BUILDER (64)
+/* The context data buffers are save to a buffer in fw which is limited to 80kb,
+    After taking into consideration the headers and pointers in it, we limit the max to 75kb (instead of 80kb) */
+#define CONTEXT_SWITCH_CONFIG__MAX_BUFFER_SIZE_WITHOUT_HEADERS (1024 * 75)
 
 namespace hailort
 {
@@ -238,8 +242,7 @@ Expected<ResourcesManager> ResourcesManager::create(VdmaDevice &vdma_device, Hai
     }
 
     TRY(auto internal_buffer_manager, InternalBufferManager::create(driver, config_params));
-    TRY_V(auto action_list_buffer_builder, create_action_list_buffer_builder(core_op_metadata->dynamic_contexts().size(),
-        vdma_device));
+    TRY(auto action_list_buffer_builder, ActionListBufferBuilder::create());
     TRY(auto latency_meters, create_latency_meters_from_config_params(config_params, core_op_metadata));
     auto network_index_map = core_op_metadata->get_network_names();
 
@@ -372,7 +375,7 @@ Expected<uint16_t> ResourcesManager::get_batch_size() const
 }
 
 std::pair<size_t, size_t> ResourcesManager::calculate_transfer_queue_sizes(const vdma::DescriptorList &desc_list,
-    uint32_t transfer_size, uint32_t max_active_trans, bool use_latency_meter)
+    uint32_t transfer_size, size_t max_active_trans, bool use_latency_meter)
 {
     // Calculate m_ongoing_transfers capacity - transfers that are already bound to the descriptor list
     // Add desc for boundary channel because might need extra for non aligned async API
@@ -393,11 +396,7 @@ std::pair<size_t, size_t> ResourcesManager::calculate_transfer_queue_sizes(const
     // * Otherwise, we set it to max_active_trans. In this case, we will use m_pending_transfers to queue up
     //   transfers that can't fit in m_ongoing_transfers. We will then launch them as soon as there is room in
     //   m_ongoing_transfers, via the transfer launcher.
-    // TODO: Bring back commented out impl bellow (HRT-13644)
-    //       Setting pending_transfers to zero, s.t. the pending transfer queue won't be used.
-    (void)max_active_trans;
-    const auto pending_transfers = 0;
-    // const auto pending_transfers = (max_active_trans > ongoing_transfers) ? max_active_trans : 0;
+    const auto pending_transfers = (max_active_trans > ongoing_transfers) ? max_active_trans : 0;
 
     return std::make_pair(ongoing_transfers, pending_transfers);
 }
@@ -411,11 +410,10 @@ hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &lay
         channel_direction, layer_info.dma_engine_index));
     TRY(const auto network_batch_size, get_network_batch_size(layer_info.network_name));
 
-    const auto nms_max_detections_per_frame =
-        layer_info.nms_info.number_of_classes * layer_info.nms_info.max_bboxes_per_class * layer_info.nms_info.chunks_per_frame;
+    const auto transfers_per_frame = (layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS) ?
+        LayerInfoUtils::get_nms_layer_max_transfers_per_frame(layer_info) : 1;
 
-    const auto max_active_transfers_scale = (layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS) ?
-        (nms_max_detections_per_frame * MAX_ACTIVE_TRANSFERS_SCALE) : MAX_ACTIVE_TRANSFERS_SCALE;
+    const auto max_active_transfers_scale = (transfers_per_frame * MAX_ACTIVE_TRANSFERS_SCALE);
 
     TRY(const auto device_arch, m_vdma_device.get_architecture());
     /* Add error in configure phase for invalid NMS parameters */
@@ -428,7 +426,7 @@ hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &lay
     const auto min_active_trans = MIN_ACTIVE_TRANSFERS_SCALE * network_batch_size;
     const auto max_active_trans = (layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS) ?
         /* NMS Case - Value be be higher than UINT16_MAX. in this case we only limit to UART16_MAX with no error */
-        std::min(static_cast<uint32_t>(UINT16_MAX), max_active_transfers_scale * network_batch_size) :
+        std::min(static_cast<size_t>(UINT16_MAX), max_active_transfers_scale * network_batch_size) :
         max_active_transfers_scale * network_batch_size;
 
     CHECK(IS_FIT_IN_UINT16(min_active_trans), HAILO_INVALID_ARGUMENT,
@@ -436,37 +434,16 @@ hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &lay
     CHECK(IS_FIT_IN_UINT16(max_active_trans), HAILO_INVALID_ARGUMENT,
         "calculated min_active_trans for vdma descriptor list is out of UINT16 range");
 
-    auto latency_meter = (contains(m_latency_meters, layer_info.network_name)) ? m_latency_meters.at(layer_info.network_name) : nullptr;
-
-    /* TODO - HRT-6829- page_size should be calculated inside the vDMA channel class create function */
-    static const bool IS_CIRCULAR = true;
-    static const bool IS_VDMA_ALIGNED_BUFFER = false;
     const auto transfer_size = LayerInfoUtils::get_layer_transfer_size(layer_info);
-
-    const auto DONT_FORCE_DEFAULT_PAGE_SIZE = false;
-    const auto DONT_FORCE_BATCH_SIZE = false;
-    // Hack to reduce max page size if the driver page size is equal to stream size. 
-    // In this case page size == stream size is invalid solution. 
-    // TODO - remove this WA after HRT-11747
-    const uint16_t max_page_size = (m_driver.desc_max_page_size() == layer_info.max_shmifo_size) ?
-        (m_driver.desc_max_page_size() / 2) : m_driver.desc_max_page_size();
-    auto buffer_sizes_requirements = vdma::BufferSizesRequirements::get_buffer_requirements_single_transfer(
-        vdma::VdmaBuffer::Type::SCATTER_GATHER, max_page_size, static_cast<uint16_t>(min_active_trans),
-        static_cast<uint16_t>(max_active_trans), transfer_size, IS_CIRCULAR, DONT_FORCE_DEFAULT_PAGE_SIZE,
-        DONT_FORCE_BATCH_SIZE, IS_VDMA_ALIGNED_BUFFER);
-    if (HAILO_CANT_MEET_BUFFER_REQUIREMENTS == buffer_sizes_requirements.status()) {
-        LOGGER__ERROR("Network shapes and batch size exceeds driver descriptors capabilities. "
-                "(A common cause for this error could be the batch size - which is {}).", network_batch_size);
-    }
-    CHECK_EXPECTED_AS_STATUS(buffer_sizes_requirements); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
-
-    const auto page_size = buffer_sizes_requirements->desc_page_size();
-    const auto descs_count = (nullptr != std::getenv("HAILO_CONFIGURE_FOR_HW_INFER")) ?
-        MAX_SG_DESCS_COUNT : buffer_sizes_requirements->descs_count();
+    TRY(auto buffer_requirements, vdma::BufferSizesRequirements::get_buffer_requirements_for_boundary_channels(m_driver,
+        layer_info.max_shmifo_size, static_cast<uint16_t>(min_active_trans), static_cast<uint16_t>(max_active_trans),
+        transfer_size));
 
     const bool CIRCULAR = true;
-    TRY(auto desc_list, vdma::DescriptorList::create(descs_count, page_size, CIRCULAR, m_driver));
+    TRY(auto desc_list, vdma::DescriptorList::create(buffer_requirements.descs_count(), buffer_requirements.desc_page_size(),
+        CIRCULAR, m_driver));
 
+    auto latency_meter = (contains(m_latency_meters, layer_info.network_name)) ? m_latency_meters.at(layer_info.network_name) : nullptr;
     size_t pending_transfers = 0, ongoing_transfers = 0;
     std::tie(ongoing_transfers, pending_transfers) = calculate_transfer_queue_sizes(desc_list, transfer_size,
         max_active_trans, (latency_meter != nullptr));
@@ -522,18 +499,18 @@ ExpectedRef<IntermediateBuffer> ResourcesManager::get_intermediate_buffer(const 
 ExpectedRef<IntermediateBuffer> ResourcesManager::set_cache_input_channel(uint32_t cache_id, uint16_t batch_size,
     vdma::ChannelId channel_id)
 {
-    return m_cache_manager->set_cache_input_channel(cache_id, batch_size, channel_id);
+    return m_cache_manager->set_cache_input_channel(m_core_op_metadata->core_op_name(), cache_id, batch_size, channel_id);
 }
 
 ExpectedRef<IntermediateBuffer> ResourcesManager::set_cache_output_channel(uint32_t cache_id, uint16_t batch_size,
     vdma::ChannelId channel_id)
 {
-    return m_cache_manager->set_cache_output_channel(cache_id, batch_size, channel_id);
+    return m_cache_manager->set_cache_output_channel(m_core_op_metadata->core_op_name(), cache_id, batch_size, channel_id);
 }
 
-std::unordered_map<uint32_t, CacheBuffer> &ResourcesManager::get_cache_buffers()
+ExpectedRef<std::unordered_map<uint32_t, CacheBuffer>> ResourcesManager::get_cache_buffers()
 {
-    return m_cache_manager->get_cache_buffers();
+    return m_cache_manager->get_cache_buffers(m_core_op_metadata->core_op_name());
 }
 
 Expected<CONTROL_PROTOCOL__application_header_t> ResourcesManager::get_control_core_op_header()
@@ -550,10 +527,7 @@ Expected<CONTROL_PROTOCOL__application_header_t> ResourcesManager::get_control_c
     status = fill_csm_buffer_size(app_header);
     CHECK_SUCCESS_AS_EXPECTED(status, "Invalid csm buffer size");
 
-    const auto mapped_addr = get_action_list_buffer_builder()->get_mapped_buffer_dma_address();
-    CHECK(IS_FIT_IN_UINT32(mapped_addr), HAILO_INVALID_ARGUMENT, "Invalid Mapped Address {} must fit in uint32",
-        mapped_addr);
-    app_header.external_action_list_address = static_cast<uint32_t>(mapped_addr);
+    app_header.external_action_list_address = CONTEXT_SWITCH_DEFS__INVALID_DDR_CONTEXTS_BUFFER_ADDRESS;
 
     return app_header;
 }
@@ -625,18 +599,19 @@ Expected<Buffer> ResourcesManager::read_intermediate_buffer(const IntermediateBu
 
 Expected<Buffer> ResourcesManager::read_cache_buffer(uint32_t cache_id)
 {
-    auto &cache_buffers_map = m_cache_manager->get_cache_buffers();
-    auto cache_buffer_it = cache_buffers_map.find(cache_id);
-    CHECK_AS_EXPECTED(std::end(cache_buffers_map) != cache_buffer_it, HAILO_NOT_FOUND,
+    TRY(auto cache_buffers, get_cache_buffers());
+    auto cache_buffer_it = cache_buffers.get().find(cache_id);
+    CHECK_AS_EXPECTED(std::end(cache_buffers.get()) != cache_buffer_it, HAILO_NOT_FOUND,
         "Failed to find cache buffer for cache_id {}", cache_id);
-    return cache_buffer_it->second.read_entire_cache();
+    return cache_buffer_it->second.read_cache();
 }
 
 Expected<std::map<uint32_t, Buffer>> ResourcesManager::read_cache_buffers()
 {
     std::map<uint32_t, Buffer> result;
-    for (auto &cache_buffer : m_cache_manager->get_cache_buffers()) {
-        TRY(auto buffer, cache_buffer.second.read_entire_cache());
+    TRY(auto cache_buffers, get_cache_buffers());
+    for (auto &cache_buffer : cache_buffers.get()) {
+        TRY(auto buffer, cache_buffer.second.read_cache());
         result.emplace(cache_buffer.first, std::move(buffer));
     }
 
@@ -645,18 +620,23 @@ Expected<std::map<uint32_t, Buffer>> ResourcesManager::read_cache_buffers()
 
 hailo_status ResourcesManager::configure()
 {
-    CHECK(!m_is_configured, HAILO_INTERNAL_FAILURE, "Can't configure the same core-op twice");
     m_is_configured = true;
 
-    TRY(const auto core_op_header, get_control_core_op_header());
-    auto status = Control::context_switch_set_network_group_header(m_vdma_device, core_op_header);
-    CHECK_SUCCESS(status);
+    TRY(auto core_op_header, get_control_core_op_header());
+    if ((Device::Type::INTEGRATED == m_vdma_device.get_type())
+        && ((CONTEXT_SWITCH_CONFIG__MAX_BUFFER_SIZE_WITHOUT_HEADERS < get_action_list_buffer_builder()->get_action_list_buffer_size())
+        || (is_env_variable_on(DDR_ACTION_LIST_ENV_VAR, DDR_ACTION_LIST_ENV_VAR_VALUE)))) {
+        TRY(auto dma_address ,get_action_list_buffer_builder()->write_controls_to_ddr(m_driver));
+        CHECK(IS_FIT_IN_UINT32(dma_address), HAILO_INVALID_ARGUMENT, "Invalid Mapped Address {} must fit in uint32",
+            dma_address);
+        core_op_header.external_action_list_address = static_cast<uint32_t>(dma_address);
 
-    // Only send controls to FW in case of control action list builder
-    if (ActionListBufferBuilder::Type::CONTROL == get_action_list_buffer_builder()->get_builder_type()) {
-        const auto control_action_list = std::static_pointer_cast<ControlActionListBufferBuilder>(
-            get_action_list_buffer_builder());
-        status = Control::context_switch_set_context_info(m_vdma_device, control_action_list->get_controls());
+        auto status = Control::context_switch_set_network_group_header(m_vdma_device, core_op_header);
+        CHECK_SUCCESS(status);
+    } else {
+        auto status = Control::context_switch_set_network_group_header(m_vdma_device, core_op_header);
+        CHECK_SUCCESS(status);
+        status = Control::context_switch_set_context_info(m_vdma_device, get_action_list_buffer_builder()->get_controls());
         CHECK_SUCCESS(status);
     }
 
@@ -923,32 +903,6 @@ hailo_status ResourcesManager::fill_internal_buffers_info()
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
-}
-
-bool ResourcesManager::should_use_ddr_action_list(size_t num_contexts, HailoRTDriver::DmaType dma_type)
-{
-    // Only allow env variable to affect in case of DmaType DRAM
-    if ((HailoRTDriver::DmaType::DRAM == dma_type) && ((MAX_NUM_CONTEXTS_FOR_CONTROL_BUILDER < num_contexts)
-        || (is_env_variable_on(DDR_ACTION_LIST_ENV_VAR, DDR_ACTION_LIST_ENV_VAR_VALUE)))) {
-        return true;
-    }
-    return false;
-}
-
-Expected<std::shared_ptr<ActionListBufferBuilder>> ResourcesManager::create_action_list_buffer_builder(
-    size_t num_dynamic_contexts, VdmaDevice &vdma_device)
-{
-    static const auto total_num_contexts = CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS +
-        num_dynamic_contexts;
-
-    if (should_use_ddr_action_list(total_num_contexts, vdma_device.get_driver().dma_type())) {
-        TRY(auto ddr_action_list_buffer_builder, DDRActionListBufferBuilder::create(total_num_contexts, vdma_device));
-        return std::static_pointer_cast<ActionListBufferBuilder>(std::move(ddr_action_list_buffer_builder));
-    } else {
-        TRY(auto control_action_list_buffer_builder, ControlActionListBufferBuilder::create());
-        return std::static_pointer_cast<ActionListBufferBuilder>(std::move(control_action_list_buffer_builder));
-    }
-
 }
 
 } /* namespace hailort */

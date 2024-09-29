@@ -11,7 +11,7 @@
 #define _HAILO_STREAM_BUFFER_POOL_HPP_
 
 #include "hailo/expected.hpp"
-#include "stream_common/transfer_common.hpp"
+#include "vdma/channel/transfer_common.hpp"
 
 namespace hailort
 {

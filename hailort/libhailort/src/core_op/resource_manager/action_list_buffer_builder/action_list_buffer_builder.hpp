@@ -4,11 +4,7 @@
 **/
 /**
  * @file action_list_buffer_builder.hpp
- * @brief Pure virtual class that represents the basic functions and members for building the action list for the FW.
- * Implemented and derived by two different classes:
- * ControlActionListBufferBuilder - uses control messages to send Action list to FW
- * DDRActionListBufferBuilder (only relevant in hailo1x) - Action list is written to M4 mapped memory in DDR - and read
- * from there directly by FW
+ * @brief Class used to build action list and context buffers to be sent via controls or being written to ddr.
  **/
 #ifndef _HAILO_ACTION_LIST_BUFFER_BUILDER_HPP_
 #define _HAILO_ACTION_LIST_BUFFER_BUILDER_HPP_
@@ -16,36 +12,36 @@
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
 #include "hailo/buffer.hpp"
+#include "vdma/driver/hailort_driver.hpp"
+#include "control_protocol.h"
+#include "common/internal_env_vars.hpp"
 
 #include <vector>
 
-#include "control_protocol.h"
 
 namespace hailort
 {
 
 class ActionListBufferBuilder {
 public:
-    enum class Type {
-        CONTROL,
-        DDR
-    };
+    static Expected<std::shared_ptr<ActionListBufferBuilder>> create();
 
-    virtual hailo_status write_action(MemoryView action, CONTROL_PROTOCOL__context_switch_context_type_t context_type,
-        bool is_new_context, bool last_action_buffer_in_context) = 0;
+    ActionListBufferBuilder() = default;
+    ~ActionListBufferBuilder() = default;
 
-    virtual uint64_t get_mapped_buffer_dma_address() const = 0;
+    hailo_status build_context(MemoryView action,
+        CONTROL_PROTOCOL__context_switch_context_type_t context_type, bool is_new_context);
+    size_t get_action_list_buffer_size() const;
+    Expected<uint64_t> write_controls_to_ddr(HailoRTDriver &driver);
 
-    ActionListBufferBuilder::Type get_builder_type() const {
-         return m_builder_type;
+    const std::vector<CONTROL_PROTOCOL__context_switch_context_info_chunk_t> &get_controls() const {
+        return m_controls;
     }
-protected:
-    ActionListBufferBuilder(ActionListBufferBuilder::Type builder_type) :
-        m_builder_type(builder_type)
-    {}
-    virtual ~ActionListBufferBuilder() = default;
 private:
-    const ActionListBufferBuilder::Type m_builder_type;
+    void start_new_control(CONTROL_PROTOCOL__context_switch_context_type_t context_type, bool is_new_context);
+    bool has_space_for_action(uint32_t action_size);
+    CONTROL_PROTOCOL__context_switch_context_info_chunk_t &current_control();
+    std::vector<CONTROL_PROTOCOL__context_switch_context_info_chunk_t> m_controls;
 };
 
 } /* namespace hailort */

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.5.0)
 
 include(GNUInstallDirs)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/cli11.cmake)
@@ -65,7 +65,11 @@ add_executable(hailortcli
 
 target_compile_options(hailortcli PRIVATE ${HAILORT_COMPILE_OPTIONS})
 set_property(TARGET hailortcli PROPERTY CXX_STANDARD 14)
-set_property(TARGET hailortcli PROPERTY INSTALL_RPATH "$ORIGIN" "../lib/") # Link with a relative libhailort
+
+# Link with a relative libhailort
+set_property(TARGET hailortcli PROPERTY INSTALL_RPATH "$ORIGIN")
+set_property(TARGET hailortcli APPEND PROPERTY INSTALL_RPATH "\$ORIGIN/../lib/")
+
 target_link_libraries(hailortcli
     libhailort
     CLI11::CLI11
@@ -82,7 +86,10 @@ if(WIN32)
 elseif(CMAKE_SYSTEM_NAME STREQUAL QNX)
     include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/pevents.cmake)
     target_link_libraries(hailortcli pevents)
+elseif(NOT CMAKE_SYSTEM_NAME STREQUAL Android)
+    target_link_libraries(hailortcli rt)
 endif()
+
 target_include_directories(hailortcli
     PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR} # CMAKE_CURRENT_BINARY_DIR is necessary for config_definitions_header

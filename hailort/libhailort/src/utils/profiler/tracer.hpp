@@ -49,8 +49,23 @@ private:
         TraceType trace_struct(trace_args...);
         auto curr_time = std::chrono::high_resolution_clock::now();
         trace_struct.timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(curr_time - this->m_start_time).count();
-        for (auto &handler : this->m_handlers) {
-            handler->handle_trace(trace_struct);
+
+        // m_handlers might be modified by other threads so the loop is protected by a mutex
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            for (auto it = m_handlers.begin(); it != m_handlers.end();) {
+                (*it)->handle_trace(trace_struct);
+
+                if ((*it)->should_dump_trace_file()) {
+                    (*it)->dump_trace_file();
+                }
+
+                if ((*it)->should_stop()) {
+                    it = m_handlers.erase(it);
+                } else {
+                    it++;
+                }
+            }
         }
     }
 
@@ -58,6 +73,7 @@ private:
     bool m_should_monitor = false;
     std::chrono::high_resolution_clock::time_point m_start_time;
     std::vector<std::unique_ptr<Handler>> m_handlers;
+    std::mutex m_mutex;
 };
 
 }

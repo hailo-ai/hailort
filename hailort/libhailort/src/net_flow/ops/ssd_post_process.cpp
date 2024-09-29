@@ -225,7 +225,7 @@ hailo_status SSDPostProcessOp::extract_detections(const std::string &reg_input_n
                     CHECK_SUCCESS(status);
                 } else {
                     CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "SSD post-process received invalid reg input type: {}",
-                        inputs_metadata.at(reg_input_name).format.type);
+                        static_cast<int>(inputs_metadata.at(reg_input_name).format.type));
                 }
             }
         }

@@ -22,11 +22,7 @@
 
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#include <gst/gst.h>
-#pragma GCC diagnostic pop
+#include "hailo_gst.h"
 
 #include <vector>
 

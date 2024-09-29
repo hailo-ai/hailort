@@ -14,6 +14,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <shared_mutex>
+#include <algorithm>
 
 namespace hailort
 {

@@ -140,6 +140,12 @@ hailo_status BaseQueueElement::execute_post_deactivate(bool should_clear_abort)
     return PipelineElementInternal::execute_post_deactivate(should_clear_abort);
 }
 
+hailo_status BaseQueueElement::clear_queue()
+{
+    std::unique_lock<std::mutex> lock(m_dequeue_mutex);
+    return m_queue.clear();
+}
+
 hailo_status BaseQueueElement::execute_clear()
 {
     auto status = PipelineElementInternal::execute_clear();
@@ -147,7 +153,7 @@ hailo_status BaseQueueElement::execute_clear()
         LOGGER__ERROR("Failed to clear() in {} with status {}", name(), status);
     }
 
-    auto queue_clear_status = m_queue.clear();
+    auto queue_clear_status = clear_queue();
     if (HAILO_SUCCESS != queue_clear_status) {
         LOGGER__ERROR("Failed to clear() in {} with status {}", name(), queue_clear_status);
         status = queue_clear_status;
@@ -295,6 +301,7 @@ hailo_status PushQueueElement::run_push(PipelineBuffer &&buffer, const PipelineP
     if (nullptr != m_queue_size_accumulator) {
         m_queue_size_accumulator->add_data_point(static_cast<double>(m_queue.size_approx()));
     }
+
     status = m_queue.enqueue(std::move(buffer), m_timeout);
     if (HAILO_SHUTDOWN_EVENT_SIGNALED == status) {
         auto queue_thread_status = pipeline_status();
@@ -485,15 +492,24 @@ hailo_status AsyncPushQueueElement::run_push(PipelineBuffer &&/*buffer*/, const 
 
 hailo_status AsyncPushQueueElement::run_in_thread()
 {
-    auto buffer = m_queue.dequeue(INIFINITE_TIMEOUT());
-    auto buffer_status = buffer.status();
+    PipelineBuffer buffer;
+    hailo_status buffer_status = HAILO_UNINITIALIZED;
+    {
+        std::unique_lock<std::mutex> lock(m_dequeue_mutex);
+        auto buffer_exp = m_queue.dequeue(INIFINITE_TIMEOUT());
+        buffer_status = buffer_exp.status();
+        if (HAILO_SUCCESS == buffer_status) {
+            buffer = buffer_exp.release();
+        }
+    }
+
     switch (buffer_status) {
     case HAILO_SHUTDOWN_EVENT_SIGNALED:
         break;
 
     case HAILO_SUCCESS:
         // Return if deactivated
-        if (PipelineBuffer::Type::DEACTIVATE == buffer->get_type()) {
+        if (PipelineBuffer::Type::DEACTIVATE == buffer.get_type()) {
             hailo_status status = m_shutdown_event->signal();
             CHECK_SUCCESS(status);
 
@@ -505,7 +521,7 @@ hailo_status AsyncPushQueueElement::run_in_thread()
             return HAILO_SHUTDOWN_EVENT_SIGNALED;
         }
 
-        next_pad().run_push_async(buffer.release());
+        next_pad().run_push_async(std::move(buffer));
         break;
 
     default:
@@ -561,7 +577,8 @@ hailo_status AsyncPushQueueElement::execute_terminate(hailo_status error_status)
 hailo_status AsyncPushQueueElement::execute_dequeue_user_buffers(hailo_status error_status)
 {
     auto dequeue_status = PipelineElement::execute_dequeue_user_buffers(error_status);
-    auto clear_queues_status = m_queue.clear();
+
+    auto clear_queues_status = clear_queue();
     auto empty_pool_status = empty_buffer_pool(m_pool, error_status, m_timeout);
 
     CHECK_SUCCESS(dequeue_status);
@@ -816,10 +833,12 @@ hailo_status UserBufferQueueElement::run_in_thread()
     auto buffer = next_pad().run_pull(optional.release());
     if (HAILO_SHUTDOWN_EVENT_SIGNALED == buffer.status()) {
         LOGGER__INFO("Shutdown event was signaled in run_pull of {}!", name());
+
         return HAILO_SHUTDOWN_EVENT_SIGNALED;
     }
     if (HAILO_STREAM_ABORT == buffer.status()) {
         LOGGER__INFO("run_pull of {} was aborted!", name());
+
         return HAILO_STREAM_ABORT;
     }
     CHECK_EXPECTED_AS_STATUS(buffer);
@@ -837,6 +856,24 @@ hailo_status UserBufferQueueElement::run_in_thread()
 std::vector<AccumulatorPtr> UserBufferQueueElement::get_queue_size_accumulators()
 {
     return std::vector<AccumulatorPtr>(); // Since this element is sync, queue state will always be 0
+}
+
+hailo_status PullQueueElement::execute_abort()
+{
+    m_pipeline_status->store(HAILO_STREAM_ABORT);
+
+    // Signal shutdown-event to make run_in_thread finish execution
+    auto status = m_shutdown_event->signal();
+    CHECK_SUCCESS(status);
+
+    status = PipelineElementInternal::execute_abort();
+    CHECK_SUCCESS(status);
+
+    // Wait to confirm the thread running 'run_in_thread' finished execution and the abort flow finished
+    status = m_deactivation_event.wait(std::chrono::milliseconds(HAILO_DEFAULT_VSTREAM_TIMEOUT_MS));
+    CHECK_SUCCESS(status, "Failed to confirm abortion of {}", name());
+
+    return HAILO_SUCCESS;
 }
 
 } /* namespace hailort */

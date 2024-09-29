@@ -2405,6 +2405,11 @@ hailo_status hailo_configure_vdevice(hailo_vdevice vdevice, hailo_hef hef,
         network_groups[i] = reinterpret_cast<hailo_configured_network_group>(added_net_groups.value()[i].get());
     }
 
+    // Since the C API doesnt let the user to hold the cng, we need to keep it alive in the vdevice scope
+    for (auto &cng : added_net_groups.value()) {
+        CHECK_SUCCESS(reinterpret_cast<VDevice*>(vdevice)->add_network_group_ref_count(cng));
+    }
+
     *number_of_network_groups = added_net_groups.value().size();
     return HAILO_SUCCESS;
 }

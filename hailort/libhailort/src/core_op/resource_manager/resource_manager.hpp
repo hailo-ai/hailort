@@ -33,8 +33,7 @@
 #include "core_op/resource_manager/cache_manager.hpp"
 #include "core_op/resource_manager/config_buffer.hpp"
 #include "core_op/resource_manager/channel_allocator.hpp"
-#include "core_op/resource_manager/action_list_buffer_builder/control_action_list_buffer_builder.hpp"
-#include "core_op/resource_manager/action_list_buffer_builder/ddr_action_list_buffer_builder.hpp"
+#include "core_op/resource_manager/action_list_buffer_builder/action_list_buffer_builder.hpp"
 #include "device_common/control_protocol.hpp"
 #include "vdma/channel/boundary_channel.hpp"
 #include "vdma/pcie/pcie_device.hpp"
@@ -152,10 +151,12 @@ public:
     ExpectedRef<IntermediateBuffer> get_intermediate_buffer(const IntermediateBufferKey &key);
     ExpectedRef<IntermediateBuffer> set_cache_input_channel(uint32_t cache_id, uint16_t batch_size, vdma::ChannelId channel_id);
     ExpectedRef<IntermediateBuffer> set_cache_output_channel(uint32_t cache_id, uint16_t batch_size, vdma::ChannelId channel_id);
-    std::unordered_map<uint32_t, CacheBuffer> &get_cache_buffers();
+    ExpectedRef<std::unordered_map<uint32_t, CacheBuffer>> get_cache_buffers();
     hailo_status create_boundary_vdma_channel(const LayerInfo &layer_info);
 
     Expected<CONTROL_PROTOCOL__application_header_t> get_control_core_op_header();
+
+    HailoRTDriver &get_driver() { return m_driver; }
 
     Expected<std::reference_wrapper<ContextResources>> add_new_context(
         CONTROL_PROTOCOL__context_switch_context_type_t context_type,
@@ -223,8 +224,6 @@ public:
     Expected<HwInferResults> run_hw_only_infer();
     hailo_status fill_internal_buffers_info();
     static bool should_use_ddr_action_list(size_t num_contexts, HailoRTDriver::DmaType dma_type);
-    static Expected<std::shared_ptr<ActionListBufferBuilder>> create_action_list_buffer_builder(
-        size_t num_dynamic_contexts, VdmaDevice &vdma_device);
     bool get_can_fast_batch_switch()
     {
         return m_core_op_metadata->get_can_fast_batch_switch();
@@ -249,7 +248,7 @@ private:
 
     // <ongoing_transfers, pending_transfers>
     static std::pair<size_t, size_t> calculate_transfer_queue_sizes(const vdma::DescriptorList &desc_list,
-        uint32_t transfer_size, uint32_t max_active_trans, bool use_latency_meter);
+        uint32_t transfer_size, size_t max_active_trans, bool use_latency_meter);
 
     std::vector<ContextResources> m_contexts_resources;
     ChannelAllocator m_channel_allocator;

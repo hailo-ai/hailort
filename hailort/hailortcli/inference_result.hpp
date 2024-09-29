@@ -342,6 +342,7 @@ public:
     std::map<std::string, std::shared_ptr<LongPowerMeasurement>> m_power_measurements;
     std::map<std::string, std::shared_ptr<LongPowerMeasurement>> m_current_measurements;
     std::map<std::string, std::shared_ptr<AccumulatorResults>> m_temp_measurements;
+    bool power_measurements_are_valid = false;
 
 private:
     std::vector<NetworkGroupInferResult> m_network_group_results;

@@ -1033,6 +1033,8 @@ typedef struct {
     uint8_t is_action_list_end;
     uint32_t batch_counter_length;
     uint32_t batch_counter;
+    uint32_t idle_time_length;
+    uint32_t idle_time;
     uint32_t action_list_length;
     uint8_t action_list[0];
 } CONTROL_PROTOCOL__download_context_action_list_response_t;

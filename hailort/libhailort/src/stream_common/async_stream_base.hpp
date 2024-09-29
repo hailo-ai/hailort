@@ -16,7 +16,7 @@
 #include "stream_common/stream_buffer_pool.hpp"
 #include "queued_stream_buffer_pool.hpp"
 
-#include "utils/thread_safe_queue.hpp"
+#include "common/thread_safe_queue.hpp"
 
 namespace hailort
 {

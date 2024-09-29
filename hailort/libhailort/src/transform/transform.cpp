@@ -81,8 +81,8 @@ bool TransformContextUtils::should_reorder(const hailo_3d_image_shape_t &src_ima
            (src_image_shape.features        == 1)                        &&
            (src_image_shape.height          == dst_image_shape.height)   &&
            (src_image_shape.width           == dst_image_shape.width)    &&
-           (((src_format.order == HAILO_FORMAT_ORDER_NHCW) && (dst_format.order == HAILO_FORMAT_ORDER_NHWC)) ||
-           ((src_format.order == HAILO_FORMAT_ORDER_NHWC) && (dst_format.order == HAILO_FORMAT_ORDER_NHCW)))) {
+           (((src_format.order == HAILO_FORMAT_ORDER_NHCW) && ((dst_format.order == HAILO_FORMAT_ORDER_NHWC) || (dst_format.order == HAILO_FORMAT_ORDER_FCR))) ||
+           (((src_format.order == HAILO_FORMAT_ORDER_NHWC) || src_format.order == HAILO_FORMAT_ORDER_FCR) && (dst_format.order == HAILO_FORMAT_ORDER_NHCW)))) {
         return false;
     }
 
@@ -250,7 +250,7 @@ hailo_status transform__transpose_buffer(const void *src_ptr, const hailo_3d_ima
     case HAILO_FORMAT_ORDER_F8CR:
         return transform__transpose_NHWC(src_ptr, shape, HailoRTCommon::get_format_data_bytes(format), dst_ptr);
     default:
-        LOGGER__ERROR("Transpose is not supported for order {}", format.order);
+        LOGGER__ERROR("Transpose is not supported for order {}", static_cast<int>(format.order));
         return HAILO_INVALID_OPERATION;
     }
 }
@@ -770,55 +770,6 @@ hailo_status transform__h2d_NCHW_to_NHCW(
 }
 
 template<typename T>
-hailo_status transform__d2h_argmax_NHCW_to_NHW(const T *src_ptr, const hailo_3d_image_shape_t &src_image_shape,
-    T *dst_ptr, const hailo_3d_image_shape_t &dst_image_shape)
-{
-    assert(nullptr != src_ptr);
-    assert(nullptr != dst_ptr);
-
-    CHECK(src_image_shape.height == dst_image_shape.height, HAILO_INVALID_OPERATION,
-        "NHCW_to_NHW argmax Transform is supported only when src height ({}) is equal to dst height ({})",
-        src_image_shape.height, dst_image_shape.height);
-    CHECK(src_image_shape.width >= dst_image_shape.width, HAILO_INVALID_OPERATION,
-        "NHCW_to_NHW argmax Transform is supported only when src width ({}) is equal/larger than dst width ({})",
-        src_image_shape.width, dst_image_shape.width);
-    CHECK(dst_image_shape.features == 1, HAILO_INVALID_OPERATION,
-        "NHCW_to_NHW argmax Transform is supported only when dst features ({}) is 1",
-        dst_image_shape.features);
-    CHECK(src_image_shape.features <= std::numeric_limits<T>::max(), HAILO_INVALID_OPERATION,
-        "NHCW_to_NHW argmax Transform is supported only when src features ({}) is equal/smaller than {}",
-        src_image_shape.features, std::numeric_limits<T>::max());
-
-    const auto src_row_size = src_image_shape.width * src_image_shape.features;
-    const auto dst_row_size = dst_image_shape.width;
-    for (uint32_t r = 0; r < src_image_shape.height; r++) {
-        // For each row, we iterate on all columns, and find the max feature. It can be implemented better by iteratre
-        // over all features, and on each iteration save the max value for each column.
-        const T *src_row = src_ptr + (r * src_row_size);
-        T *dst_row = dst_ptr + (r * dst_row_size);
-        for (uint32_t w = 0; w < dst_image_shape.width; w++) {
-            const T *offset_in_row = src_row + w;
-            T max_index = 0;
-            T max_value = *offset_in_row;
-
-            for (uint32_t c = 1; c < src_image_shape.features; c++) {
-                offset_in_row += src_image_shape.width;
-                const auto &current_value = *offset_in_row;
-                if (current_value > max_value) {
-                    max_index = static_cast<T>(c);
-                    max_value = current_value;
-                }
-            }
-
-            dst_row[w] = max_index;
-        }
-    }
-
-    return HAILO_SUCCESS;
-}
-
-
-template<typename T>
 hailo_status transform__h2d_YUY2_to_YUY2(const T *src_ptr, T *dst_ptr, uint32_t shape_size)
 {
     /* Validate arguments */
@@ -944,7 +895,6 @@ hailo_status FrameOutputTransformContext::quantize_stream(const void *dst_ptr)
             }
             break;
         case HAILO_FORMAT_TYPE_FLOAT32:
-            /* if output layer is argmax - do not rescale */
             if (HAILO_FORMAT_ORDER_NHW != m_dst_format.order) {
                 if (HAILO_FORMAT_TYPE_UINT8 == m_src_format.type) {
                     if (m_are_all_qps_the_same) {
@@ -1174,7 +1124,7 @@ hailo_status reorder_input_stream(const void *src_ptr, hailo_3d_image_shape_t sr
                 transform__h2d_NV12_to_NV12<uint16_t>((uint16_t*)src_ptr, &src_image_shape, (uint16_t*)dst_ptr, &dst_image_shape);
                 break;
             default:
-                LOGGER__ERROR("Invalid src-buffer's type format {}", src_format.type);
+                LOGGER__ERROR("Invalid src-buffer's type format {}", static_cast<int>(src_format.type));
                 return HAILO_INVALID_ARGUMENT;
         }
         return HAILO_SUCCESS;
@@ -1190,7 +1140,7 @@ hailo_status reorder_input_stream(const void *src_ptr, hailo_3d_image_shape_t sr
                 transform__h2d_I420_to_YYYYUV<uint16_t>((uint16_t*)src_ptr, &src_image_shape, (uint16_t*)dst_ptr, &dst_image_shape);
                 break;
             default:
-                LOGGER__ERROR("Invalid src-buffer's type format {}", src_format.type);
+                LOGGER__ERROR("Invalid src-buffer's type format {}", static_cast<int>(src_format.type));
                 return HAILO_INVALID_ARGUMENT;
         }
         return HAILO_SUCCESS;
@@ -1352,18 +1302,6 @@ hailo_status reorder_output_stream(const void *src_ptr, hailo_3d_image_shape_t s
                     LOGGER__ERROR("Invalid src-buffer's type format");
                     return HAILO_INVALID_ARGUMENT;
             }
-    } else if ((HAILO_FORMAT_ORDER_NHCW == src_format.order) &&
-               (HAILO_FORMAT_ORDER_NHW == dst_format.order)  &&
-               (0 != (HAILO_FORMAT_FLAGS_HOST_ARGMAX & src_format.flags)))  {
-            switch (src_format.type) {
-            case HAILO_FORMAT_TYPE_UINT8:
-                return transform__d2h_argmax_NHCW_to_NHW<uint8_t>((uint8_t*)src_ptr, src_image_shape, (uint8_t*)dst_ptr, dst_image_shape);
-            case HAILO_FORMAT_TYPE_UINT16:
-                return transform__d2h_argmax_NHCW_to_NHW<uint16_t>((uint16_t*)src_ptr, src_image_shape, (uint16_t*)dst_ptr, dst_image_shape);
-            default:
-                LOGGER__ERROR("Invalid src-buffer's type format");
-                return HAILO_INVALID_ARGUMENT;
-            }
     } else if ((HAILO_FORMAT_ORDER_NHWC == src_format.order) &&
                (HAILO_FORMAT_ORDER_NHWC) == dst_format.order) {
             switch (src_format.type) {
@@ -1374,7 +1312,7 @@ hailo_status reorder_output_stream(const void *src_ptr, hailo_3d_image_shape_t s
                     transform__d2h_NHWC_to_NHWC<uint16_t>((uint16_t*)src_ptr, &src_image_shape, (uint16_t*)dst_ptr, &dst_image_shape);
                     break;
                 default:
-                    LOGGER__ERROR("Invalid src-buffer's type format {}", src_format.type);
+                    LOGGER__ERROR("Invalid src-buffer's type format {}", static_cast<int>(src_format.type));
                     return HAILO_INVALID_ARGUMENT;
             }
     } else {

@@ -27,13 +27,12 @@
 #include "core_op/core_op.hpp"
 #include "hef/hef_internal.hpp"
 
+#include "common/string_utils.hpp"
+
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
 #include "service/rpc_client_utils.hpp"
 #include "rpc/rpc_definitions.hpp"
 #endif // HAILO_SUPPORT_MULTI_PROCESS
-
-#define HAILO_FORCE_HRPC_CLIENT_ENV_VAR "HAILO_FORCE_HRPC"
-#define HAILO_FORCE_HRPC_CLIENT_ON "1"
 
 
 namespace hailort
@@ -189,13 +188,13 @@ Expected<hailo_stream_interface_t> VDeviceHandle::get_default_streams_interface(
 }
 
 Expected<std::shared_ptr<InferModel>> VDeviceHandle::create_infer_model(const std::string &hef_path,
-    const std::string &network_name)
+    const std::string &name)
 {
     auto &manager = SharedResourceManager<std::string, VDeviceBase>::get_instance();
     auto vdevice = manager.resource_lookup(m_handle);
     CHECK_EXPECTED(vdevice);
 
-    return vdevice.value()->create_infer_model(hef_path, network_name);
+    return vdevice.value()->create_infer_model(hef_path, name);
 }
 
 hailo_status VDeviceHandle::dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction)
@@ -234,6 +233,15 @@ hailo_status VDeviceHandle::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_d
     return vdevice.value()->dma_unmap_dmabuf(dmabuf_fd, size, direction);
 }
 
+hailo_status VDeviceHandle::add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> network_group_ptr)
+{
+    auto &manager = SharedResourceManager<std::string, VDeviceBase>::get_instance();
+    auto vdevice = manager.resource_lookup(m_handle);
+    CHECK_EXPECTED_AS_STATUS(vdevice);
+
+    return vdevice.value()->add_network_group_ref_count(network_group_ptr);
+}
+
 bool VDevice::service_over_ip_mode()
 {
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
@@ -243,11 +251,9 @@ bool VDevice::service_over_ip_mode()
     return false; // no service -> no service over ip
 }
 
-bool VDevice::force_hrpc_client()
+bool VDevice::should_force_hrpc_client()
 {
-    // The env var HAILO_FORCE_HRPC_CLIENT_ENV_VAR is supported for debug purposes
-    char *pcie_service_var = std::getenv(HAILO_FORCE_HRPC_CLIENT_ENV_VAR); // TODO: Remove duplication
-    return (nullptr != pcie_service_var) && (HAILO_FORCE_HRPC_CLIENT_ON == std::string(pcie_service_var));
+    return get_env_variable(HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR).has_value();
 }
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
@@ -370,9 +376,8 @@ Expected<ConfiguredNetworkGroupVector> VDeviceClient::configure(Hef &hef,
         CHECK_EXPECTED(expected_client);
 
         auto client = expected_client.release();
-        auto network_group = make_shared_nothrow<ConfiguredNetworkGroupClient>(std::move(client), NetworkGroupIdentifier(m_identifier, ng_handle));
-        CHECK_NOT_NULL_AS_EXPECTED(network_group, HAILO_OUT_OF_HOST_MEMORY);
-
+        TRY(auto network_group, ConfiguredNetworkGroupClient::create(std::move(client),
+            NetworkGroupIdentifier(m_identifier, ng_handle)));
         networks.emplace_back(network_group);
         {
             std::unique_lock<std::mutex> lock(m_mutex);
@@ -547,11 +552,9 @@ Expected<std::unique_ptr<VDevice>> VDevice::create(const hailo_vdevice_params_t 
         } else {
             TRY(acc_type, VDeviceBase::get_accelerator_type(params.device_ids, params.device_count));
         }
-        if ((acc_type == HailoRTDriver::AcceleratorType::SOC_ACCELERATOR) || force_hrpc_client()) {
-            // Creating VDeviceClient
+        if ((acc_type == HailoRTDriver::AcceleratorType::SOC_ACCELERATOR) || should_force_hrpc_client()) {
             TRY(vdevice, VDeviceHrpcClient::create(params));
         } else {
-            // Creating VDeviceHandle
             TRY(vdevice, VDeviceHandle::create(params));
         }
     }
@@ -744,7 +747,6 @@ Expected<ConfiguredNetworkGroupVector> VDeviceBase::configure(Hef &hef,
         auto network_group_ptr = net_group_expected.release();
 
         added_network_groups.push_back(network_group_ptr);
-        m_network_groups.push_back(network_group_ptr);
     }
 
     auto elapsed_time_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time).count();
@@ -753,17 +755,26 @@ Expected<ConfiguredNetworkGroupVector> VDeviceBase::configure(Hef &hef,
     return added_network_groups;
 }
 
-Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(const std::string &hef_path, const std::string &network_name)
+hailo_status VDeviceBase::add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> network_group_ptr)
 {
-    CHECK_AS_EXPECTED(network_name.empty(), HAILO_NOT_IMPLEMENTED, "Passing network name is not supported yet!");
-    TRY(auto infer_model_base, InferModelBase::create(*this, hef_path));
+    m_network_groups.push_back(network_group_ptr);
+    return HAILO_SUCCESS;
+}
+
+hailo_status VDevice::add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> /*network_group_ptr*/)
+{
+    return HAILO_SUCCESS;
+}
+
+Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(const std::string &hef_path, const std::string &name)
+{
+    TRY(auto infer_model_base, InferModelBase::create(*this, hef_path, name));
     return std::shared_ptr<InferModel>(std::move(infer_model_base));
 }
 
-Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(const MemoryView hef_buffer, const std::string &network_name)
+Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(const MemoryView hef_buffer, const std::string &name)
 {
-    CHECK_AS_EXPECTED(network_name.empty(), HAILO_NOT_IMPLEMENTED, "Passing network name is not supported yet!");
-    TRY(auto infer_model_base, InferModelBase::create(*this, hef_buffer));
+    TRY(auto infer_model_base, InferModelBase::create(*this, hef_buffer, name));
     return std::shared_ptr<InferModel>(std::move(infer_model_base));
 }
 
@@ -839,7 +850,7 @@ Expected<std::vector<std::string>> VDeviceBase::get_device_ids(const hailo_vdevi
         device_ids.reserve(params.device_count);
 
         for (size_t i = 0; i < params.device_count; i++) {
-            device_ids.emplace_back(params.device_ids[i].id);
+            device_ids.emplace_back(StringUtils::to_lower(params.device_ids[i].id));
         }
 
         return device_ids;
@@ -943,14 +954,15 @@ vdevice_core_op_handle_t VDeviceBase::allocate_core_op_handle()
 
 bool VDeviceBase::should_use_multiplexer()
 {
-    auto disable_multiplexer_env = std::getenv(DISABLE_MULTIPLEXER_ENV_VAR);
-    bool disabled_by_flag = (nullptr != disable_multiplexer_env) &&
-        (strnlen(disable_multiplexer_env, 2) == 1) &&
-        (strncmp(disable_multiplexer_env, "1", 1) == 0);
-    if (disabled_by_flag) {
+    if (!m_core_ops_scheduler) {
+        return false;
+    }
+
+    auto is_disabled_by_user = is_env_variable_on(DISABLE_MULTIPLEXER_ENV_VAR);
+    if (is_disabled_by_user) {
         LOGGER__WARNING("Usage of '{}' env variable is deprecated.", DISABLE_MULTIPLEXER_ENV_VAR);
     }
-    return (!disabled_by_flag && m_core_ops_scheduler);
+    return !is_disabled_by_user;
 }
 
 Expected<bool> VDeviceBase::device_ids_contains_eth(const hailo_vdevice_params_t &params)

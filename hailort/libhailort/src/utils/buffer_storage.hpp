@@ -14,6 +14,8 @@
 #include "hailo/expected.hpp"
 #include "hailo/buffer.hpp"
 
+#include "common/shared_memory_buffer.hpp"
+
 #include "utils/exported_resource_manager.hpp"
 #include "vdma/memory/continuous_buffer.hpp"
 
@@ -37,6 +39,7 @@ class BufferStorage;
 class HeapStorage;
 class DmaStorage;
 class ContinuousStorage;
+class SharedMemoryStorage;
 class HailoRTDriver;
 class Buffer;
 
@@ -88,6 +91,7 @@ public:
     // Internal functions
     virtual Expected<vdma::DmaAbleBufferPtr> get_dma_able_buffer();
     virtual Expected<uint64_t> dma_address();
+    virtual Expected<std::string> shm_name();
 
     BufferStorage() = default;
 };
@@ -171,6 +175,31 @@ public:
 private:
     std::unique_ptr<HailoRTDriver> m_driver;
     vdma::ContinuousBuffer m_continuous_buffer;
+};
+
+using SharedMemoryStoragePtr = std::shared_ptr<SharedMemoryStorage>;
+
+/**
+ * Shared memory buffer
+ */
+class SharedMemoryStorage : public BufferStorage
+{
+public:
+    static Expected<SharedMemoryStoragePtr> create(size_t size, const std::string &shm_name, bool memory_owner);
+    SharedMemoryStorage(SharedMemoryBufferPtr shm_buffer);
+    SharedMemoryStorage(SharedMemoryStorage&& other) noexcept;
+    SharedMemoryStorage(const SharedMemoryStorage &) = delete;
+    SharedMemoryStorage &operator=(SharedMemoryStorage &&) = delete;
+    SharedMemoryStorage &operator=(const SharedMemoryStorage &) = delete;
+    virtual ~SharedMemoryStorage() = default;
+
+    virtual size_t size() const override;
+    virtual void *user_address() override;
+    virtual Expected<void *> release() noexcept override;
+    virtual Expected<std::string> shm_name() override;
+
+private:
+    SharedMemoryBufferPtr m_shm_buffer;
 };
 
 } /* namespace hailort */

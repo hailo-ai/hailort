@@ -20,10 +20,7 @@
 #ifndef __HAILO_BUFFER_FLAG_META_HPP__
 #define __HAILO_BUFFER_FLAG_META_HPP__
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#include <gst/gst.h>
-#pragma GCC diagnostic pop
+#include "hailo_gst.h"
 
 #define HAILO_BUFFER_FLAG_META_API_NAME "GstHailoBufferFlagMetaAPI"
 #define HAILO_BUFFER_FLAG_META_IMPL_NAME "GstHailoBufferFlagMeta"

@@ -34,6 +34,24 @@ BufferStorageParams BufferStorageParams::create_dma()
     return result;
 }
 
+BufferStorageParams BufferStorageParams::create_shared_memory(const std::string &shm_name, bool memory_owner)
+{
+    BufferStorageParams result{};
+    result.flags = HAILO_BUFFER_FLAGS_SHARED_MEMORY;
+    result.shared_memory_name = shm_name;
+    result.memory_owner = memory_owner;
+    return result;
+}
+
+BufferStorageParams BufferStorageParams::open_shared_memory(const std::string &shm_name)
+{
+    BufferStorageParams result{};
+    result.flags = HAILO_BUFFER_FLAGS_SHARED_MEMORY;
+    result.shared_memory_name = shm_name;
+    result.memory_owner = false;
+    return result;
+}
+
 BufferStorageParams::BufferStorageParams() :
     flags(HAILO_BUFFER_FLAGS_NONE)
 {}
@@ -52,10 +70,14 @@ Expected<BufferStoragePtr> BufferStorage::create(size_t size, const BufferStorag
         auto result = ContinuousStorage::create(size);
         CHECK_EXPECTED(result);
         return std::static_pointer_cast<BufferStorage>(result.release());
+    } else if (0 != (params.flags & HAILO_BUFFER_FLAGS_SHARED_MEMORY)) {
+        auto result = SharedMemoryStorage::create(size, params.shared_memory_name, params.memory_owner);
+        CHECK_EXPECTED(result);
+        return std::static_pointer_cast<BufferStorage>(result.release());
     }
 
     // TODO: HRT-10903
-    LOGGER__ERROR("Buffer storage flags not currently supported {}", params.flags);
+    LOGGER__ERROR("Buffer storage flags not currently supported {}", static_cast<int>(params.flags));
     return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
 
@@ -67,6 +89,11 @@ Expected<vdma::DmaAbleBufferPtr> BufferStorage::get_dma_able_buffer()
 Expected<uint64_t> BufferStorage::dma_address()
 {
     return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
+Expected<std::string> BufferStorage::shm_name()
+{
+    return make_unexpected(HAILO_INVALID_OPERATION);
 }
 
 Expected<HeapStoragePtr> HeapStorage::create(size_t size)
@@ -182,6 +209,50 @@ Expected<uint64_t> ContinuousStorage::dma_address()
 Expected<void *> ContinuousStorage::release() noexcept
 {
     return make_unexpected(HAILO_INVALID_OPERATION);
+}
+
+Expected<SharedMemoryStoragePtr> SharedMemoryStorage::create(size_t size, const std::string &shm_name, bool memory_owner)
+{
+    SharedMemoryBufferPtr shm_buffer;
+    if (memory_owner) {
+        TRY(shm_buffer, SharedMemoryBuffer::create(size, shm_name));
+    } else {
+        TRY(shm_buffer, SharedMemoryBuffer::open(size, shm_name));
+    }
+
+    auto result = make_shared_nothrow<SharedMemoryStorage>(shm_buffer);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+
+    return result;
+}
+
+SharedMemoryStorage::SharedMemoryStorage(SharedMemoryBufferPtr shm_buffer) :
+    m_shm_buffer(shm_buffer)
+{}
+
+SharedMemoryStorage::SharedMemoryStorage(SharedMemoryStorage&& other) noexcept :
+    BufferStorage(std::move(other)),
+    m_shm_buffer(other.m_shm_buffer)
+{}
+
+size_t SharedMemoryStorage::size() const
+{
+    return m_shm_buffer->size();
+}
+
+void *SharedMemoryStorage::user_address()
+{
+    return m_shm_buffer->user_address();
+}
+
+Expected<void *> SharedMemoryStorage::release() noexcept
+{
+    return make_unexpected(HAILO_INVALID_OPERATION);
+}
+
+Expected<std::string> SharedMemoryStorage::shm_name()
+{
+    return m_shm_buffer->shm_name();
 }
 
 } /* namespace hailort */

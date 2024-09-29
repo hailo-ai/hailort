@@ -30,28 +30,30 @@
 #include <syslog.h>
 #include <sys/stat.h>
 
-void RunService() {
-    const std::string server_address = hailort::HAILORT_SERVICE_ADDRESS;
-    hailort::HailoRtRpcService service;
+using namespace hailort;
 
+void RunService()
+{
+    const std::string server_address = HAILORT_SERVICE_ADDRESS;
+    HailoRtRpcService service;
     grpc::ServerBuilder builder;
     builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
     builder.SetMaxReceiveMessageSize(-1);
     builder.RegisterService(&service);
     std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
-    chmod(hailort::HAILO_DEFAULT_SERVICE_ADDR.c_str(), S_IROTH | S_IWOTH | S_IRUSR | S_IWUSR);
+    chmod(HAILO_DEFAULT_SERVICE_ADDR.c_str(), S_IROTH | S_IWOTH | S_IRUSR | S_IWUSR);
     server->Wait();
 }
 
 void write_pid_to_lock_file()
 {
-    auto status = hailort::Filesystem::create_directory(HAILO_DAEMON_PID_DIR);
+    auto status = Filesystem::create_directory(HAILO_DAEMON_PID_DIR);
     if (status != HAILO_SUCCESS) {
         HAILORT_OS_LOG_ERROR("Cannot create directory at path, status={}", status);
         return;
     }
 
-    auto locked_file = hailort::LockedFile::create(HAILO_DAEMON_PID_FILE, "wx");
+    auto locked_file = LockedFile::create(HAILO_DAEMON_PID_FILE, "wx");
     if (HAILO_SUCCESS != locked_file.status()) {
         HAILORT_OS_LOG_ERROR("Failed to lock pid file for hailort service, status={}", locked_file.status());
         return;

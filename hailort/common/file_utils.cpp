@@ -72,7 +72,7 @@ hailo_status FileReader::read(uint8_t *buffer, size_t n)
     return m_fstream->good() ? HAILO_SUCCESS : HAILO_FILE_OPERATION_FAILURE;
 }
 
-hailo_status FileReader::read_from_offset(size_t offset, MemoryView &dst, size_t size)
+hailo_status FileReader::read_from_offset(uint64_t offset, MemoryView dst, size_t size)
 {
     assert(nullptr != m_fstream);
 
@@ -93,10 +93,12 @@ hailo_status FileReader::open()
 {
     if (nullptr == m_fstream) { // The first call to open creates the ifstream object
         m_fstream = std::make_shared<std::ifstream>(m_file_path, std::ios::in | std::ios::binary);
-        return m_fstream->good() ? HAILO_SUCCESS : HAILO_OPEN_FILE_FAILURE;
+    } else {
+        m_fstream->open(m_file_path, std::ios::in | std::ios::binary);
     }
-    m_fstream->open(m_file_path, std::ios::in | std::ios::binary);
-    return m_fstream->good() ? HAILO_SUCCESS : HAILO_OPEN_FILE_FAILURE;
+
+    CHECK(m_fstream->good(), HAILO_OPEN_FILE_FAILURE, "Failed opening file, path: {}", m_file_path);
+    return HAILO_SUCCESS;
 }
 
 bool FileReader::is_open() const
@@ -173,7 +175,7 @@ hailo_status BufferReader::read(uint8_t *buffer, size_t n)
     return HAILO_SUCCESS;
 }
 
-hailo_status BufferReader::read_from_offset(size_t offset, MemoryView &dst, size_t size)
+hailo_status BufferReader::read_from_offset(uint64_t offset, MemoryView dst, size_t size)
 {
     memcpy(dst.data(), m_memview.data() + offset, size);
     return HAILO_SUCCESS;

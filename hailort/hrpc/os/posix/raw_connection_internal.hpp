@@ -39,12 +39,26 @@ public:
 
     virtual Expected<std::shared_ptr<RawConnection>> accept() override;
     virtual hailo_status connect() override;
-    virtual hailo_status write(const uint8_t *buffer, size_t size) override;
-    virtual hailo_status read(uint8_t *buffer, size_t size) override;
+    virtual hailo_status write(const uint8_t *buffer, size_t size,
+        std::chrono::milliseconds timeout = DEFAULT_WRITE_TIMEOUT) override;
+    virtual hailo_status read(uint8_t *buffer, size_t size,
+        std::chrono::milliseconds timeout = DEFAULT_READ_TIMEOUT) override;
     virtual hailo_status close() override;
 
     OsRawConnection(int fd, std::shared_ptr<OsConnectionContext> context) : m_fd(fd), m_context(context) {}
 private:
+    static Expected<std::shared_ptr<OsRawConnection>> create_by_addr_server(std::shared_ptr<OsConnectionContext> context,
+        const std::string &ip, uint16_t port);
+    static Expected<std::shared_ptr<OsRawConnection>> create_by_addr_client(std::shared_ptr<OsConnectionContext> context,
+        const std::string &ip, uint16_t port);
+    static Expected<std::shared_ptr<OsRawConnection>> create_localhost_server(std::shared_ptr<OsConnectionContext> context);
+    static Expected<std::shared_ptr<OsRawConnection>> create_localhost_client(std::shared_ptr<OsConnectionContext> context);
+
+    hailo_status connect_by_addr(const std::string &ip, uint16_t port);
+    hailo_status connect_localhost();
+
+    static Expected<std::pair<std::string, uint16_t>> parse_ip_port(const std::string &ip_port);
+
     int m_fd;
     std::shared_ptr<OsConnectionContext> m_context;
 };

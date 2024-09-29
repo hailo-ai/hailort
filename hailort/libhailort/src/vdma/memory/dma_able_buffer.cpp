@@ -11,9 +11,10 @@
 #include "hailo/hailort_common.hpp"
 #include "dma_able_buffer.hpp"
 #include "common/os_utils.hpp"
+#include "common/mmap_buffer.hpp"
 
 #if defined(_MSC_VER)
-#include "os/windows/virtual_alloc_guard.hpp"
+#include "common/os/windows/virtual_alloc_guard.hpp"
 #else
 #include <sys/mman.h>
 #endif /* defined(_MSC_VER) */

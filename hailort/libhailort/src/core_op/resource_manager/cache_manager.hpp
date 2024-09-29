@@ -40,9 +40,11 @@ public:
     ~CacheManager() = default;
 
     hailo_status create_caches_from_core_op(std::shared_ptr<CoreOpMetadata> core_op_metadata);
-    ExpectedRef<IntermediateBuffer> set_cache_input_channel(uint32_t cache_id, uint16_t batch_size, vdma::ChannelId channel_id);
-    ExpectedRef<IntermediateBuffer> set_cache_output_channel(uint32_t cache_id, uint16_t batch_size, vdma::ChannelId channel_id);
-    std::unordered_map<uint32_t, CacheBuffer> &get_cache_buffers();
+    ExpectedRef<IntermediateBuffer> set_cache_input_channel(const std::string &core_op_name, uint32_t cache_id,
+        uint16_t batch_size, vdma::ChannelId channel_id);
+    ExpectedRef<IntermediateBuffer> set_cache_output_channel(const std::string &core_op_name, uint32_t cache_id,
+        uint16_t batch_size, vdma::ChannelId channel_id);
+    ExpectedRef<std::unordered_map<uint32_t, CacheBuffer>> get_cache_buffers(const std::string &core_op_name);
 
     // Note: These functions are not thread-safe!
     // Programs the CacheManager instance with the given offsets, overriding the current offsets.
@@ -51,36 +53,91 @@ public:
     hailo_status update_cache_offset(int32_t offset_delta_bytes);
 
     uint32_t get_cache_size() const;
-    uint32_t get_read_offset_bytes() const;
-    int32_t get_write_offset_bytes_delta() const;
 
 private:
+    class StorageManager final
+    {
+    public:
+        StorageManager(HailoRTDriver &driver);
+        StorageManager(StorageManager &&) = default;
+        StorageManager(const StorageManager &) = delete;
+        StorageManager &operator=(StorageManager &&) = delete;
+        StorageManager &operator=(const StorageManager &) = delete;
+        ~StorageManager() = default;
+
+        // Creates a new backing buffer of the given size and stores it in the manager, or returns an existing one.
+        Expected<std::shared_ptr<vdma::VdmaBuffer>> get_backing_buffer(uint32_t cache_id, uint32_t cache_size);
+
+    private:
+        HailoRTDriver &m_driver;
+        std::unordered_map<uint32_t, std::shared_ptr<vdma::VdmaBuffer>> m_backing_buffers;
+    };
+
+    class CoreOpManager final
+    {
+    public:
+        static Expected<CoreOpManager> create(HailoRTDriver &driver, StorageManager &storage_manager,
+            std::shared_ptr<CoreOpMetadata> core_op_metadata);
+        CoreOpManager(CoreOpManager &&) = default;
+        CoreOpManager(const CoreOpManager &) = delete;
+        CoreOpManager &operator=(CoreOpManager &&) = delete;
+        CoreOpManager &operator=(const CoreOpManager &) = delete;
+        ~CoreOpManager() = default;
+
+        std::unordered_map<uint32_t, CacheBuffer> &get_cache_buffers();
+        const std::unordered_map<uint32_t, CacheBuffer> &get_cache_buffers() const;
+        ExpectedRef<CacheBuffer> get_cache_buffer(uint32_t cache_id);
+        ExpectedRef<IntermediateBuffer> set_cache_input_channel(uint32_t cache_id, uint16_t batch_size,
+            vdma::ChannelId channel_id);
+        ExpectedRef<IntermediateBuffer> set_cache_output_channel(uint32_t cache_id, uint16_t batch_size,
+            vdma::ChannelId channel_id);
+        // Note: read_offset is absolute, not relative to the current read offset
+        hailo_status update_cache_offset(uint32_t read_offset);
+        uint32_t get_cache_size() const;
+        uint32_t get_input_size() const;
+        uint32_t get_output_size() const;
+
+    private:
+        CoreOpManager(HailoRTDriver &driver, StorageManager &storage_manager,
+            std::shared_ptr<CoreOpMetadata> core_op_metadata, hailo_status &status);
+
+        hailo_status allocate_cache_buffers(StorageManager &storage_manager,
+            std::shared_ptr<CoreOpMetadata> core_op_metadata);
+        hailo_status try_complete_cache_initialization();
+        hailo_status program_cache_buffers();
+
+        HailoRTDriver &m_driver;
+        // This class is initialized (and the member is set to true) when all caches are allocated and configured with
+        // input/output channels. This is done in two steps: (1) cache allocation; (2) channel configuration
+        // Two steps are necessary because this class allocates the buffers, however the input/output channels are assigned
+        // by the resource manager
+        bool m_initialized;
+        const uint32_t m_cache_input_size;
+        const uint32_t m_cache_output_size;
+        const uint32_t m_cache_size;
+        const uint32_t m_cache_entry_size;
+        int32_t m_write_offset_bytes_delta;
+        std::unordered_map<uint32_t, CacheBuffer> m_cache_buffers;
+        std::unordered_set<uint32_t> m_uninitialized_caches;
+    };
+
     static bool core_op_has_caches(std::shared_ptr<CoreOpMetadata> core_op_metadata);
     static bool validate_cache_edge_layers(std::shared_ptr<CoreOpMetadata> core_op_metadata,
         uint32_t cache_input_size, uint32_t cache_output_size);
-    static uint32_t get_cache_input_size(std::shared_ptr<CoreOpMetadata> core_op_metadata);
-    static uint32_t get_cache_output_size(std::shared_ptr<CoreOpMetadata> core_op_metadata);
+    static uint32_t core_op_cache_entry_size(std::shared_ptr<CoreOpMetadata> core_op_metadata);
+    static uint32_t core_op_cache_input_size(std::shared_ptr<CoreOpMetadata> core_op_metadata);
+    static uint32_t core_op_cache_output_size(std::shared_ptr<CoreOpMetadata> core_op_metadata);
     static bool validate_cache_ids(std::shared_ptr<CoreOpMetadata> core_op_metadata,
-        const std::unordered_map<uint32_t, CacheBuffer> &current_cache_buffers);
-    ExpectedRef<CacheBuffer> get_cache_buffer(uint32_t cache_id);
-    hailo_status allocate_cache_buffers(std::shared_ptr<CoreOpMetadata> core_op_metadata);
+        const std::unordered_map<std::string, CoreOpManager> &current_core_op_managers);
     hailo_status program_cache_buffers();
-    hailo_status try_complete_cache_initialization();
 
     HailoRTDriver &m_driver;
+    StorageManager m_storage_manager;
+    std::unordered_map<std::string, CoreOpManager> m_core_op_managers;
     bool m_caches_created;
-    // This class is initialized (and the member is set to true) when all caches are allocated and configured with
-    // input/output channels. This is done in two steps: (1) cache allocation; (2) channel configuration
-    // Two steps are necessary because this class allocates the buffers, however the input/output channels are assigned
-    // by the resource manager
-    bool m_initialized;
-    uint32_t m_cache_input_size;
-    uint32_t m_cache_output_size;
     uint32_t m_cache_size;
+    uint32_t m_cache_entry_size;
     uint32_t m_read_offset_bytes;
-    int32_t m_write_offset_bytes_delta;
-    std::unordered_map<uint32_t, CacheBuffer> m_cache_buffers;
-    std::unordered_set<uint32_t> m_uninitialized_caches;
 };
 
 } /* namespace hailort */

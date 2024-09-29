@@ -20,6 +20,12 @@
 #include <atomic>
 
 
+enum class ShouldMeasurePower {
+    AUTO_DETECT, // auto detect if should measure power, based on device.get_capabilities()
+    NO,
+    YES
+};
+
 class BaseMeasurement
 {
 public:

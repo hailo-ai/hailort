@@ -230,6 +230,29 @@ hailo_status VdmaConfigCoreOp::set_scheduler_priority(uint8_t /*priority*/, cons
     return HAILO_INVALID_OPERATION;
 }
 
+hailo_status VdmaConfigCoreOp::bind_buffers(std::unordered_map<std::string, TransferRequest> &transfers)
+{
+    for (auto &input : m_input_streams) {
+        auto transfer = transfers.find(input.second->name());
+        CHECK(transfer != transfers.end(), HAILO_INTERNAL_FAILURE, "Invalid stream {}", input.second->name());
+        if (transfer->second.transfer_buffers.size() > 1) {
+            break;
+        }
+        CHECK_SUCCESS(input.second->bind_buffer(TransferRequest{transfer->second}));
+    }
+
+    for (auto &output : m_output_streams) {
+        auto transfer = transfers.find(output.second->name());
+        CHECK(transfer != transfers.end(), HAILO_INTERNAL_FAILURE, "Invalid stream {}", output.second->name());
+        if (transfer->second.transfer_buffers.size() > 1) {
+            break;
+        }
+        CHECK_SUCCESS(output.second->bind_buffer(TransferRequest{transfer->second}));
+    }
+
+    return HAILO_SUCCESS;
+}
+
 Expected<std::shared_ptr<LatencyMetersMap>> VdmaConfigCoreOp::get_latency_meters()
 {
     auto latency_meters = m_resources_manager->get_latency_meters();
@@ -254,26 +277,18 @@ Expected<Buffer> VdmaConfigCoreOp::get_intermediate_buffer(const IntermediateBuf
     return m_resources_manager->read_intermediate_buffer(key);
 }
 
-Expected<Buffer> VdmaConfigCoreOp::get_cache_buffer(uint32_t cache_id)
-{
-    return m_resources_manager->read_cache_buffer(cache_id);
-}
-
-Expected<std::map<uint32_t, Buffer>> VdmaConfigCoreOp::get_cache_buffers()
-{
-    return m_resources_manager->read_cache_buffers();
-}
-
 bool VdmaConfigCoreOp::has_caches() const
 {
-    return m_resources_manager->get_cache_buffers().size() > 0;
+    const auto cache_buffers = m_cache_manager->get_cache_buffers(name());
+    return cache_buffers && !(cache_buffers->get()).empty();
 }
 
 Expected<uint32_t> VdmaConfigCoreOp::get_cache_read_size() const
 {
     // Input to the core == cache read
     size_t input_size = 0;
-    for (auto &cache_buffer : m_resources_manager->get_cache_buffers()) {
+    TRY(const auto cache_buffers, m_cache_manager->get_cache_buffers(name()));
+    for (auto &cache_buffer : cache_buffers.get()) {
         const auto curr_input_size = cache_buffer.second.input_size();
         if (input_size == 0) {
             input_size = curr_input_size;
@@ -289,7 +304,8 @@ Expected<uint32_t> VdmaConfigCoreOp::get_cache_write_size() const
 {
     // Output from the core == cache write
     size_t output_size = 0;
-    for (auto &cache_buffer : m_resources_manager->get_cache_buffers()) {
+    TRY(const auto cache_buffers, m_cache_manager->get_cache_buffers(name()));
+    for (auto &cache_buffer : cache_buffers.get()) {
         const auto curr_output_size = cache_buffer.second.output_size();
         if (output_size == 0) {
             output_size = curr_output_size;
@@ -308,15 +324,10 @@ hailo_status VdmaConfigCoreOp::init_cache(uint32_t read_offset, int32_t write_of
     return m_cache_manager->init_caches(read_offset, write_offset_delta);
 }
 
+// TODO: remove get_cache_info (HRT-14396)
 Expected<hailo_cache_info_t> VdmaConfigCoreOp::get_cache_info() const
 {
-    CHECK(has_caches(), HAILO_INVALID_OPERATION, "No caches in core-op");
-
-    return hailo_cache_info_t{
-        m_cache_manager->get_cache_size(),
-        m_cache_manager->get_read_offset_bytes(),
-        m_cache_manager->get_write_offset_bytes_delta()
-    };
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
 
 hailo_status VdmaConfigCoreOp::update_cache_offset(int32_t offset_delta_bytes)
@@ -336,6 +347,35 @@ hailo_status VdmaConfigCoreOp::update_cache_offset(int32_t offset_delta_bytes)
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
+}
+
+Expected<std::vector<uint32_t>> VdmaConfigCoreOp::get_cache_ids() const
+{
+    TRY(const auto cache_buffers, m_cache_manager->get_cache_buffers(name()));
+
+    std::vector<uint32_t> result;
+    result.reserve(cache_buffers.get().size());
+    for (const auto &id_buffer_pair : cache_buffers.get()) {
+        result.emplace_back(id_buffer_pair.first);
+    }
+
+    return result;
+}
+
+Expected<Buffer> VdmaConfigCoreOp::read_cache_buffer(uint32_t cache_id)
+{
+    TRY(const auto cache_buffers, m_cache_manager->get_cache_buffers(name()));
+    auto cache_buffer_it = cache_buffers.get().find(cache_id);
+    CHECK(cache_buffer_it != cache_buffers.get().end(), HAILO_INVALID_ARGUMENT, "Cache buffer with id {} not found", cache_id);
+    return cache_buffer_it->second.read_cache();
+}
+
+hailo_status VdmaConfigCoreOp::write_cache_buffer(uint32_t cache_id, MemoryView buffer)
+{
+    TRY(const auto cache_buffers, m_cache_manager->get_cache_buffers(name()));
+    auto cache_buffer_it = cache_buffers.get().find(cache_id);
+    CHECK(cache_buffer_it != cache_buffers.get().end(), HAILO_INVALID_ARGUMENT, "Cache buffer with id {} not found", cache_id);
+    return cache_buffer_it->second.write_cache(buffer);
 }
 
 } /* namespace hailort */

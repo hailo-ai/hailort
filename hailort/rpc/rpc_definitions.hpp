@@ -10,11 +10,14 @@
 #ifndef _HAILO_RPC_DEFINITIONS_HPP_
 #define _HAILO_RPC_DEFINITIONS_HPP_
 
+#include "common/internal_env_vars.hpp"
+
 namespace hailort
 {
 
 #ifdef _WIN32
 static const std::string HAILORT_SERVICE_DEFAULT_ADDR = "127.0.0.1:50051";
+static const std::string HAILORT_SERVICE_NAMED_MUTEX = "Global\\HailoRTServiceMutex";
 #else
 static const std::string HAILO_UDS_PREFIX = "unix://";
 static const std::string HAILO_DEFAULT_SERVICE_ADDR = "/tmp/hailort_uds.sock";
@@ -22,11 +25,13 @@ static const std::string HAILORT_SERVICE_DEFAULT_ADDR = HAILO_UDS_PREFIX + HAILO
 #endif
 static const std::chrono::seconds HAILO_KEEPALIVE_INTERVAL(2);
 
-#define HAILORT_SERVICE_ADDRESS_ENV_VAR ("HAILORT_SERVICE_ADDRESS")
+#define INVALID_CB_INDEX (UINT32_MAX)
+#define INVALID_STREAM_NAME ("INVALID_STREAM_NAME")
+
 static const std::string HAILORT_SERVICE_ADDRESS = []() {
-    const char* env_var = std::getenv(HAILORT_SERVICE_ADDRESS_ENV_VAR);
-    if (env_var) {
-        return std::string(env_var);
+    auto addr = get_env_variable(HAILORT_SERVICE_ADDRESS_ENV_VAR);
+    if (addr) {
+        return addr.value();
     } else {
         return HAILORT_SERVICE_DEFAULT_ADDR; // Default value if environment variable is not set
     }

@@ -27,27 +27,26 @@ Expected<std::unique_ptr<CircularStreamBufferPool>> CircularStreamBufferPool::cr
     CHECK(transfer_size < buffer_size, HAILO_INTERNAL_FAILURE, "Transfer size {} must be smaller than buffer size {}",
         transfer_size, buffer_size);
 
-    TRY(auto base_buffer, allocate_buffer(device, buffer_size));
-    TRY(auto mapping, DmaMappedBuffer::create(device, base_buffer.data(), base_buffer.size(), direction));
+    TRY(auto mapped_buffer, vdma::MappedBuffer::create_shared_by_allocation(buffer_size, device.get_driver(),
+        to_hailo_driver_direction(direction)));
 
     auto circular_buffer_pool = make_unique_nothrow<CircularStreamBufferPool>(desc_page_size, descs_count,
-        transfer_size, std::move(base_buffer), std::move(mapping));
+        transfer_size, std::move(mapped_buffer));
     CHECK_NOT_NULL(circular_buffer_pool, HAILO_OUT_OF_HOST_MEMORY);
 
     return circular_buffer_pool;
 }
 
 CircularStreamBufferPool::CircularStreamBufferPool(size_t desc_page_size, size_t descs_count, size_t transfer_size,
-    Buffer &&base_buffer, DmaMappedBuffer &&mappings) :
+    vdma::MappedBufferPtr &&mapped_buffer) :
         m_desc_page_size(desc_page_size),
         m_transfer_size(transfer_size),
-        m_base_buffer(std::move(base_buffer)),
-        m_mappings(std::move(mappings)),
+        m_mapped_buffer(std::move(mapped_buffer)),
         m_queue(static_cast<int>(descs_count)),
         m_next_enqueue_desc_offset(0)
 {
     assert(is_powerof2(descs_count) && (descs_count > 0));
-    assert(m_base_buffer.size() == (m_desc_page_size * descs_count));
+    assert(m_mapped_buffer->size() == (m_desc_page_size * descs_count));
     m_queue.set_head(static_cast<int>(descs_count) - 1);
 }
 
@@ -69,7 +68,7 @@ Expected<TransferBuffer> CircularStreamBufferPool::dequeue()
     const size_t offset_in_buffer = m_queue.tail() * m_desc_page_size;
     m_queue.dequeue(static_cast<int>(descs_in_transfer()));
     return TransferBuffer {
-        MemoryView(m_base_buffer),
+        MemoryView(m_mapped_buffer->user_address(), m_mapped_buffer->size()),
         m_transfer_size,
         offset_in_buffer
     };
@@ -81,7 +80,7 @@ hailo_status CircularStreamBufferPool::enqueue(TransferBuffer &&buffer_info)
     const size_t descs_available = m_queue.avail(m_queue.head(), m_queue.tail());
     CHECK(descs_available >= descs_required, HAILO_INTERNAL_FAILURE, "Can enqueue without previous dequeue");
     TRY(auto base_buffer, buffer_info.base_buffer());
-    CHECK(base_buffer.data() == m_base_buffer.data(), HAILO_INTERNAL_FAILURE, "Got the wrong buffer");
+    CHECK(base_buffer.data() == m_mapped_buffer->user_address(), HAILO_INTERNAL_FAILURE, "Got the wrong buffer");
     CHECK(buffer_info.size() == m_transfer_size, HAILO_INTERNAL_FAILURE, "Got invalid buffer size {}, expected {}",
         buffer_info.size(), m_transfer_size);
 

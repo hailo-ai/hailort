@@ -12,6 +12,7 @@
 
 #include "vdma/memory/buffer_requirements.hpp"
 #include "internal_buffer_planner.hpp"
+#include "common/internal_env_vars.hpp"
 
 #include <numeric>
 
@@ -39,7 +40,7 @@ bool InternalBufferPlanner::should_edge_layer_use_ccb(const LayerType &layer_typ
     case LayerType::INTER_CONTEXT:
         // On burst (aka inter-context), because the buffers are big (And depends on the max_batch_size), we currently
         // don't want to use CCB by default.
-        if (nullptr != std::getenv("HAILO_FORCE_INFER_CONTEXT_CHANNEL_OVER_DESC")) {
+        if (is_env_variable_on(HAILO_FORCE_INFER_CONTEXT_CHANNEL_OVER_DESC_ENV_VAR)) {
             LOGGER__WARNING("Using desc instead of CCB for inter context channels is not optimal for performance.");
             return false;
         } else {
@@ -49,14 +50,14 @@ bool InternalBufferPlanner::should_edge_layer_use_ccb(const LayerType &layer_typ
         // On circular_continuous (aka ddr), the buffers are relatively small and we want to verify the C2C mechanism,
         // therefore the CCB is the default behaviour.
         // Due to request from the DFC group (Memory issues) - DDR buffers would run over DESC and not CCB buffers.
-        if (nullptr != std::getenv("HAILO_FORCE_DDR_CHANNEL_OVER_CCB")) {
+        if (is_env_variable_on(HAILO_FORCE_DDR_CHANNEL_OVER_CCB_ENV_VAR)) {
             LOGGER__WARNING("Using Non default buffer type (CCB instead of DESC) for ddr channel.");
             return true;
         } else {
             return false;
         }
     case LayerType::CFG:
-        if (nullptr != std::getenv("HAILO_FORCE_CONF_CHANNEL_OVER_DESC")) {
+        if (is_env_variable_on(HAILO_FORCE_CONF_CHANNEL_OVER_DESC_ENV_VAR)) {
             LOGGER__WARNING("Using desc instead of CCB for config channel is not optimal for performance.");
             return false;
         }
@@ -310,7 +311,7 @@ Expected<InternalBufferPlanning> InternalBufferPlanner::create_buffer_planning(
 {
     static const bool FORCE_SG_BUFFER_TYPE = true;
     // Force plan by user flag
-    if (nullptr != std::getenv("HAILO_FORCE_NAIVE_PER_BUFFER_TYPE_ALOCATION")) {
+    if (is_env_variable_on(HAILO_FORCE_NAIVE_PER_BUFFER_TYPE_ALOCATION_ENV_VAR)) {
         LOGGER__INFO("Forced buffer planning of type 'NAIVE_PER_BUFFER_TYPE.");
         plan_type = Type::NAIVE_PER_BUFFER_TYPE;
     }

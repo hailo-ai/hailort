@@ -7,7 +7,7 @@
  * @brief Guard object for VirtualAlloc and VirtualFree
  **/
 
-#include "os/windows/virtual_alloc_guard.hpp"
+#include "virtual_alloc_guard.hpp"
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
 

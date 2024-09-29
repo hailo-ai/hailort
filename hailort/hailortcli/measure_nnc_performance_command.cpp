@@ -16,6 +16,8 @@
 #include "hailo/vstream.hpp"
 #include "hailo/vdevice.hpp"
 
+#include "common/internal_env_vars.hpp"
+
 #include <iostream>
 
 #define BYTES_TO_KILOBYTES (1024)
@@ -25,9 +27,6 @@ HwInferEstimatorCommand::HwInferEstimatorCommand(CLI::App &parent_app) :
         "measure nerual network performance for given network using only the HW components without host SW")),
     m_params({})
 {
-    // This will make the command to be hidden in the --help print in the command line.
-    m_app->group("");
-
     add_vdevice_options(m_app, m_params.vdevice_params);
     m_app->add_option("hef", m_params.hef_path, "Path of the HEF to load")
         ->check(CLI::ExistingFile)
@@ -81,10 +80,10 @@ hailo_status HwInferEstimatorCommand::execute()
     TRY(auto configure_params, get_configure_params(m_params, hef, interface));
 
     /* Use Env var to configure all desc list with max depth */
-    setenv("HAILO_CONFIGURE_FOR_HW_INFER","Y",1);
+    setenv(HAILO_CONFIGURE_FOR_HW_INFER_ENV_VAR,"Y",1);
     TRY(auto network_group_list,
         device->configure(hef, configure_params), "Failed configure device from hef");
-    unsetenv("HAILO_CONFIGURE_FOR_HW_INFER");
+    unsetenv(HAILO_CONFIGURE_FOR_HW_INFER_ENV_VAR);
 
     CHECK(1 == network_group_list.size(), HAILO_INVALID_OPERATION,
         "HW Inference is not supported on HEFs with multiple network groups");

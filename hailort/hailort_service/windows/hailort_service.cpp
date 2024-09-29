@@ -29,11 +29,14 @@
 #include "hailort_rpc_service.hpp"
 #include "rpc/rpc_definitions.hpp"
 #include "common/os_utils.hpp"
+#include "common/os/windows/named_mutex_guard.hpp"
 
 #include <winsvc.h>
 #include <windows.h>
 #include <tchar.h>
 #include <strsafe.h>
+
+using namespace hailort;
 
 #define SERVICE_NAME ("hailort_service")
 static const DWORD HRT_SERVICE_INIT_WAIT_TIME_MS(3000);
@@ -46,9 +49,16 @@ std::unique_ptr<grpc::Server> g_hailort_rpc_server = nullptr;
 
 void RunService()
 {
-    const std::string server_address = hailort::HAILORT_SERVICE_ADDRESS;
-    hailort::HailoRtRpcService service;
+    // Create a named mutex
+    auto service_named_mutex = NamedMutexGuard::create(HAILORT_SERVICE_NAMED_MUTEX);
+    if (HAILO_SUCCESS != service_named_mutex.status()) {
+        LOGGER__ERROR("Failed to create service named mutex with status={}. Please check if another instance is already running.",
+            service_named_mutex.status());
+        return;
+    }
 
+    const std::string server_address = HAILORT_SERVICE_ADDRESS;
+    HailoRtRpcService service;
     grpc::ServerBuilder builder;
     builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
     builder.SetMaxReceiveMessageSize(-1);

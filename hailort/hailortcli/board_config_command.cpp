@@ -15,9 +15,6 @@
 BoardConfigCommand::BoardConfigCommand(CLI::App &parent_app) :
     ContainerCommand(parent_app.add_subcommand("board-config", "Board configuration tool"))
 {
-    // This will make the board-config command to be hidden in the --help print in the command line.
-    m_app->group("");
-
     add_subcommand<BoardConfigReadSubcommand>();
     add_subcommand<BoardConfigWriteSubcommand>();
 }

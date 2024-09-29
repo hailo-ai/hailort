@@ -10,11 +10,59 @@
 #include "vdma/memory/descriptor_list.hpp"
 #include "vdma/memory/continuous_edge_layer.hpp"
 #include "utils.h"
+#include "common/internal_env_vars.hpp"
 
 #include <numeric>
 
 namespace hailort {
 namespace vdma {
+
+Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requirements_for_boundary_channels(
+    HailoRTDriver &driver, uint32_t max_shmifo_size, uint16_t min_active_trans, uint16_t max_active_trans,
+    uint32_t transfer_size)
+{
+    // TODO: Simplify this code + get rid of the for loop (?) (HRT-14822)
+    // We'll first try to use the default page size. Next we'll try to increase the page size until we find a valid
+    // page size that fits the requirements.
+    // uint32_t to avoid overflow
+    uint32_t max_page_size = is_env_variable_on(HAILO_LEGACY_BOUNDARY_CHANNEL_PAGE_SIZE_ENV_VAR) ?
+        driver.desc_max_page_size() : std::min(DEFAULT_SG_PAGE_SIZE, driver.desc_max_page_size());
+    while (true) {
+        if (max_page_size > driver.desc_max_page_size()) {
+            // We exceeded the driver's max page size
+            return make_unexpected(HAILO_CANT_MEET_BUFFER_REQUIREMENTS);
+        }
+
+        if (max_page_size == max_shmifo_size) {
+            // Hack to reduce max page size if the driver page size is equal to stream size.
+            // In this case page size == stream size is invalid solution.
+            // TODO - remove this WA after HRT-11747
+            max_page_size /= 2;
+        }
+
+        const auto DONT_FORCE_DEFAULT_PAGE_SIZE = false;
+        const auto DONT_FORCE_BATCH_SIZE = false;
+        static const bool IS_CIRCULAR = true;
+        static const bool IS_VDMA_ALIGNED_BUFFER = false;
+        auto buffer_sizes_requirements_exp = vdma::BufferSizesRequirements::get_buffer_requirements_single_transfer(
+            vdma::VdmaBuffer::Type::SCATTER_GATHER, static_cast<uint16_t>(max_page_size), min_active_trans,
+            max_active_trans, transfer_size, IS_CIRCULAR, DONT_FORCE_DEFAULT_PAGE_SIZE, DONT_FORCE_BATCH_SIZE,
+            IS_VDMA_ALIGNED_BUFFER);
+        if (HAILO_SUCCESS == buffer_sizes_requirements_exp.status()) {
+            // We found a valid page size
+            const auto desc_page_size = buffer_sizes_requirements_exp->desc_page_size();
+            const auto descs_count = (is_env_variable_on(HAILO_CONFIGURE_FOR_HW_INFER_ENV_VAR)) ?
+                MAX_SG_DESCS_COUNT : buffer_sizes_requirements_exp->descs_count();
+            return BufferSizesRequirements(descs_count, desc_page_size);
+        } else if (HAILO_CANT_MEET_BUFFER_REQUIREMENTS == buffer_sizes_requirements_exp.status()) {
+            // If we can't meet the requirements, try to double the page size and try again
+            max_page_size <<= static_cast<uint32_t>(1);
+        } else {
+            // Unexpected error
+            return buffer_sizes_requirements_exp;
+        }
+    }
+}
 
 Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requirements_multiple_transfers(
     vdma::VdmaBuffer::Type buffer_type, uint16_t max_desc_page_size, uint16_t batch_size,
@@ -46,8 +94,9 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
     CHECK_AS_EXPECTED(initial_desc_page_size >= MIN_PAGE_SIZE, HAILO_INTERNAL_FAILURE,
         "Initial descriptor page size ({}) is smaller than minimum descriptor page size ({})",
         initial_desc_page_size, MIN_PAGE_SIZE);
-    CHECK_AS_EXPECTED(MAX_DESCS_COUNT >= get_required_descriptor_count(transfer_sizes, max_desc_page_size),
-        HAILO_CANT_MEET_BUFFER_REQUIREMENTS);
+    if (get_required_descriptor_count(transfer_sizes, max_desc_page_size) > MAX_DESCS_COUNT) {
+        return make_unexpected(HAILO_CANT_MEET_BUFFER_REQUIREMENTS);
+    }
 
     // Defined as uint32_t to prevent overflow (as we multiply it by two in each iteration of the while loop bellow)
     auto local_desc_page_size = static_cast<uint32_t>(initial_desc_page_size);

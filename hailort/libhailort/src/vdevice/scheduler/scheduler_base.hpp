@@ -19,6 +19,7 @@
 #include "stream_common/stream_internal.hpp"
 
 #include <condition_variable>
+#include <algorithm>
 
 
 namespace hailort

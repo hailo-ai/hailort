@@ -21,6 +21,7 @@
 #include "vdma/driver/hailort_driver.hpp"
 #include "core_op/resource_manager/resource_manager.hpp"
 #include "vdma/vdma_config_manager.hpp"
+#include "vdma/pcie/pcie_device_hrpc_client.hpp"
 
 #include <new>
 #include <algorithm>
@@ -34,9 +35,14 @@ Expected<std::vector<hailo_pcie_device_info_t>> PcieDevice::scan()
     auto scan_results = HailoRTDriver::scan_devices();
     CHECK_EXPECTED(scan_results);
 
+    return get_pcie_devices_infos(scan_results.value());
+}
+
+Expected<std::vector<hailo_pcie_device_info_t>> PcieDevice::get_pcie_devices_infos(const std::vector<HailoRTDriver::DeviceInfo> &scan_results)
+{
     std::vector<hailo_pcie_device_info_t> out_results;
-    out_results.reserve(scan_results->size());
-    for (const auto &scan_result : scan_results.value()) {
+    out_results.reserve(scan_results.size());
+    for (const auto &scan_result : scan_results) {
         const bool DONT_LOG_ON_FAILURE = true;
         auto device_info = parse_pcie_device_info(scan_result.device_id, DONT_LOG_ON_FAILURE);
         if (device_info) {
@@ -47,30 +53,50 @@ Expected<std::vector<hailo_pcie_device_info_t>> PcieDevice::scan()
     return out_results;
 }
 
-Expected<std::unique_ptr<PcieDevice>> PcieDevice::create()
+Expected<std::unique_ptr<Device>> PcieDevice::create()
 {
-    // Take the first device
-    auto scan_result = scan();
-    CHECK_EXPECTED(scan_result, "Failed scanning pcie devices");
-    CHECK_AS_EXPECTED(scan_result->size() >= 1, HAILO_INVALID_OPERATION,
+    auto scan_results = HailoRTDriver::scan_devices();
+    CHECK_EXPECTED(scan_results);
+    
+    CHECK_AS_EXPECTED(scan_results->size() >= 1, HAILO_INVALID_OPERATION,
         "There are no PCIe devices on the system");
+    if (scan_results->size() > 1) {
+        auto first_acc_type = scan_results->at(0).accelerator_type;
+        for (const auto &scan_result : scan_results.value()) {
+            CHECK_AS_EXPECTED(first_acc_type == scan_result.accelerator_type, HAILO_INVALID_OPERATION,
+                "Multiple accelerator types detected (Hailo8, Hailo10). Please specify the device to use.");
+        }
+    }
+
+    auto pcie_infos = get_pcie_devices_infos(scan_results.value());
+    CHECK_EXPECTED(pcie_infos, "Failed getting pcie devices infos");
 
     // choose first device
-    return create(scan_result->at(0));
+    return create(pcie_infos->at(0));
 }
 
-Expected<std::unique_ptr<PcieDevice>> PcieDevice::create(const hailo_pcie_device_info_t &pcie_device_info)
+Expected<std::unique_ptr<Device>> PcieDevice::create(const hailo_pcie_device_info_t &pcie_device_info)
 {
     auto device_info = find_device_info(pcie_device_info);
     CHECK_EXPECTED(device_info);
+
+    if ((get_env_variable(HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR).has_value()) || (HailoRTDriver::AcceleratorType::SOC_ACCELERATOR == device_info->accelerator_type)) {
+        TRY(auto pcie_device, PcieDeviceHrpcClient::create(device_info->device_id));
+        // Upcasting to Device unique_ptr (from PcieDeviceHrpcClient unique_ptr)
+        auto device = std::unique_ptr<Device>(std::move(pcie_device));
+        return device;
+    }
 
     auto driver = HailoRTDriver::create(device_info->device_id, device_info->dev_path);
     CHECK_EXPECTED(driver);
 
     hailo_status status = HAILO_UNINITIALIZED;
-    auto device = std::unique_ptr<PcieDevice>(new (std::nothrow) PcieDevice(driver.release(), status));
-    CHECK_AS_EXPECTED((nullptr != device), HAILO_OUT_OF_HOST_MEMORY);
+    auto pcie_device = std::unique_ptr<PcieDevice>(new (std::nothrow) PcieDevice(driver.release(), status));
+    CHECK_NOT_NULL_AS_EXPECTED(pcie_device, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status, "Failed creating PcieDevice");
+
+    // Upcasting to Device unique_ptr (from PcieDevice unique_ptr)
+    auto device = std::unique_ptr<Device>(std::move(pcie_device));
     return device;
 }
 

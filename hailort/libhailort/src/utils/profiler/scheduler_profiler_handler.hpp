@@ -11,6 +11,7 @@
 #define _HAILO_SCHEDULER_PROFILER_HANDLER_HPP_
 
 #include "hailo/hailort.h"
+#include <condition_variable>
 #if defined(_MSC_VER)
 #pragma warning(push)
 #pragma warning(disable: 4244 4267 4127)
@@ -36,7 +37,7 @@ public:
     SchedulerProfilerHandler(SchedulerProfilerHandler const&) = delete;
     void operator=(SchedulerProfilerHandler const&) = delete;
 
-    SchedulerProfilerHandler(int64_t &start_time);
+    SchedulerProfilerHandler(size_t dump_after_n_seconds=0, size_t dump_after_n_kb=0);
     ~SchedulerProfilerHandler();
 
     virtual void handle_trace(const AddCoreOpTrace&) override;
@@ -56,17 +57,23 @@ public:
     virtual void handle_trace(const DumpProfilerStateTrace&) override;
     virtual void handle_trace(const InitProfilerProtoTrace&) override;
     virtual void handle_trace(const HefLoadedTrace&) override;
+    virtual bool should_dump_trace_file() override;
+    virtual bool should_stop () override { return m_file_already_dumped; }
+    virtual hailo_status dump_trace_file() override { return serialize_and_dump_proto(); };
 
 private:
-    void log(JSON json);
-    bool comma();
-    void serialize_and_dump_proto();
+    hailo_status serialize_and_dump_proto();
 
-    std::shared_ptr<spdlog::sinks::sink> m_file_sink;
-    std::shared_ptr<spdlog::logger> m_profiler_logger;
-    std::atomic<bool> m_first_write;
     ProtoProfiler m_profiler_trace_proto;
     std::mutex m_proto_lock;
+    std::mutex m_dump_file_mutex;
+    std::mutex m_cv_mutex;
+    std::thread m_timer_thread;
+    std::condition_variable m_cv;
+    size_t m_time_in_seconds_bounded_dump; // if != 0, generate trace file after N seconds
+    size_t m_size_in_kb_bounded_dump; // if != 0, generate trace file after N KB
+    bool m_file_already_dumped = false;
+    bool m_shutting_down = false;
 };
 
 }

@@ -46,8 +46,6 @@ hailo_status NmsOpMetadata::validate_format_info()
 
         CHECK(!(HAILO_FORMAT_FLAGS_TRANSPOSED & output_metadata.second.format.flags), HAILO_INVALID_ARGUMENT, "Output {} is marked as transposed, which is not supported for this model.",
             output_metadata.first);
-        CHECK(!(HAILO_FORMAT_FLAGS_HOST_ARGMAX & output_metadata.second.format.flags), HAILO_INVALID_ARGUMENT, "Output {} is marked as argmax, which is not supported for this model.",
-            output_metadata.first);
     }
     if (m_type == OperationType::IOU) {
         assert(1 == m_inputs_metadata.size());

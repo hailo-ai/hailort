@@ -10,6 +10,7 @@
 #include "hailo/hailort.h"
 
 #include "common/filesystem.hpp"
+#include "common/env_vars.hpp"
 
 #include "mon_command.hpp"
 #include "common.hpp"

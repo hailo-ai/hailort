@@ -282,7 +282,7 @@ public:
     static hailo_status download_context_action_list(Device &device, uint32_t network_group_id,
         CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint16_t context_index,
         size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length,
-        uint32_t *batch_counter);
+        uint32_t *batch_counter, uint32_t *idle_time_local);
             
     /**
      *  Enable core-op
@@ -404,7 +404,7 @@ private:
     static hailo_status download_context_action_list_chunk(Device &device, uint32_t network_group_id,
         CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint16_t context_index, uint16_t action_list_offset,
         size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length,
-        bool *is_action_list_end, uint32_t *batch_counter);
+        bool *is_action_list_end, uint32_t *batch_counter, uint32_t *idle_time_local);
     static hailo_status context_switch_set_context_info_chunk(Device &device,
         const CONTROL_PROTOCOL__context_switch_context_info_chunk_t &context_info);
     static hailo_status change_context_switch_status(Device &device,

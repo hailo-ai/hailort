@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.5.0)
 
 function(execute_process_in_clean_env)
     cmake_parse_arguments(execute_process_in_clean_env "" "RESULT_VARIABLE" "" ${ARGN})

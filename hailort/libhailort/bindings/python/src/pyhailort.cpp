@@ -563,7 +563,6 @@ PYBIND11_MODULE(_pyhailort, m) {
     py::enum_<hailo_format_flags_t>(m, "FormatFlags", py::arithmetic())
         .value("NONE", HAILO_FORMAT_FLAGS_NONE)
         .value("TRANSPOSED", HAILO_FORMAT_FLAGS_TRANSPOSED)
-        .value("HOST_ARGMAX", HAILO_FORMAT_FLAGS_HOST_ARGMAX)
         ;
 
     py::enum_<hailo_stream_transform_mode_t>(m, "TransformMode")

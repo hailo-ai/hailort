@@ -45,25 +45,6 @@ VdmaDevice::VdmaDevice(std::unique_ptr<HailoRTDriver> &&driver, Device::Type typ
     status = HAILO_SUCCESS;
 }
 
-Expected<std::unique_ptr<VdmaDevice>> VdmaDevice::create(const std::string &device_id)
-{
-    const bool DONT_LOG_ON_FAILURE = false;
-    if (IntegratedDevice::DEVICE_ID == device_id) {
-        auto device = IntegratedDevice::create();
-        CHECK_EXPECTED(device);;
-        return std::unique_ptr<VdmaDevice>(device.release());
-    }
-    else if (auto pcie_info = PcieDevice::parse_pcie_device_info(device_id, DONT_LOG_ON_FAILURE)) {
-        auto device = PcieDevice::create(pcie_info.release());
-        CHECK_EXPECTED(device);
-        return std::unique_ptr<VdmaDevice>(device.release());
-    }
-    else {
-        LOGGER__ERROR("Invalid device id {}", device_id);
-        return make_unexpected(HAILO_INVALID_ARGUMENT);
-    }
-}
-
 hailo_status VdmaDevice::wait_for_wakeup()
 {
     return HAILO_SUCCESS;

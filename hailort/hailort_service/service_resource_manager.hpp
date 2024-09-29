@@ -83,6 +83,13 @@ public:
         return index;
     }
 
+    // For cases where other resources are already registered and we want to align the indexes
+    void advance_current_handle_index()
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_current_handle_index++;
+    }
+
     Expected<uint32_t> dup_handle(uint32_t handle, uint32_t pid)
     {
         std::unique_lock<std::mutex> lock(m_mutex);

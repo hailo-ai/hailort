@@ -40,7 +40,7 @@ class HailoSyncNetImpl;
 struct GstSyncHailoNet
 {
     GstBin parent;
-    std::unique_ptr<HailoSyncNetImpl> impl;
+    HailoSyncNetImpl *impl;
 };
 
 struct GstSyncHailoNetClass

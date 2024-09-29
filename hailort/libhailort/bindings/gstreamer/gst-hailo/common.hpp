@@ -23,20 +23,22 @@
 #include "hailo/device.hpp"
 #include "hailo/network_group.hpp"
 #include "hailo/vstream.hpp"
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#include <gst/gst.h>
-#pragma GCC diagnostic pop
+#include "hailo_gst.h"
 
 #include <vector>
 
 using namespace hailort;
 
-#define ERROR(msg, ...) g_print("HailoNet Error: " msg, ##__VA_ARGS__)
+#define GST_HAILO_USE_DMA_BUFFER_ENV_VAR "GST_HAILO_USE_DMA_BUFFER"
+
+#define HAILONET_ERROR(msg, ...) g_print("HailoNet Error: " msg, ##__VA_ARGS__)
 #define PLUGIN_AUTHOR "Hailo Technologies Ltd. (\"Hailo\")"
 
-#define MAX_STRING_SIZE (PATH_MAX)
+#ifdef _MSC_VER
+    #define MAX_STRING_SIZE (MAX_PATH)
+#else
+    #define MAX_STRING_SIZE (PATH_MAX)
+#endif
 
 #define MAX_QUEUED_BUFFERS_IN_INPUT (16)
 #define MAX_QUEUED_BUFFERS_IN_OUTPUT (16)
@@ -114,6 +116,9 @@ using namespace hailort;
     _CHECK((cond), (make_unexpected(ret_val)),  ##__VA_ARGS__)
 
 #define CHECK_NOT_NULL(arg, status) _CHECK(nullptr != (arg), status, "CHECK_NOT_NULL for %s failed", #arg)
+
+#define CHECK_NOT_NULL_AS_EXPECTED(arg, status) \
+    _CHECK(nullptr != (arg), make_unexpected(status), "CHECK_NOT_NULL_AS_EXPECTED for %s failed", #arg)
 
 #define _CHECK_SUCCESS(status, ...)                                                                            \
     do {                                                                                                                        \
@@ -214,7 +219,7 @@ public:
     HailoElemProperty(T default_val) : m_value(default_val), m_was_changed(false) {}
 
     ~HailoElemProperty() {}
-    
+
     HailoElemProperty<T> &operator=(const T &value)
     {
         m_was_changed = true;
@@ -268,9 +273,6 @@ private:
     char m_string[MAX_STRING_SIZE];
     bool m_was_changed;
 };
-
-template<>
-HailoElemProperty<gchar*>::~HailoElemProperty();
 
 #define GST_TYPE_SCHEDULING_ALGORITHM (gst_scheduling_algorithm_get_type ())
 GType gst_scheduling_algorithm_get_type (void);

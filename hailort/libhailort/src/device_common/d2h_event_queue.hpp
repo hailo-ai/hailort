@@ -10,7 +10,7 @@
 #ifndef HAILO_D2H_EVENT_QUEUE_HPP_
 #define HAILO_D2H_EVENT_QUEUE_HPP_
 
-#include "utils/thread_safe_queue.hpp"
+#include "common/thread_safe_queue.hpp"
 
 #include "d2h_events.h"
 

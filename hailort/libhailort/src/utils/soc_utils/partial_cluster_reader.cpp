@@ -127,14 +127,14 @@ Expected<uint32_t> PartialClusterReader::get_partial_clusters_layout_bitmap(hail
     switch (dev_arch) {
         case HAILO_ARCH_HAILO15H:
             CHECK_AS_EXPECTED((HAILO15H_SKU_VALUE == sku_value), HAILO_INTERNAL_FAILURE,
-                "Device arch is of type {} but sku is {}", dev_arch, sku_value);
+                "Device arch is of type {} but sku is {}", static_cast<int>(dev_arch), sku_value);
             break;
         case HAILO_ARCH_HAILO15M:
             CHECK_AS_EXPECTED((HAILO15M_SKU_VALUE == sku_value), HAILO_INTERNAL_FAILURE,
-                "Device arch is of type {} but sku is {}", dev_arch, sku_value);
+                "Device arch is of type {} but sku is {}", static_cast<int>(dev_arch), sku_value);
             break;
         default:
-            LOGGER__ERROR("Error, Device architecture {} doesnt support partial cluster layout", dev_arch);
+            LOGGER__ERROR("Error, Device architecture {} doesnt support partial cluster layout", static_cast<int>(dev_arch));
             return make_unexpected(HAILO_INTERNAL_FAILURE);
     }
 

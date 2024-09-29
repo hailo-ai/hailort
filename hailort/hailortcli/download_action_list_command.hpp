@@ -25,6 +25,7 @@ using ordered_json = nlohmann::ordered_json;
 class DownloadActionListCommand : public DeviceCommand
 {
 public:
+    using DeviceCommand::execute;
     explicit DownloadActionListCommand(CLI::App &parent_app);
     // To be used from external commands
     static hailo_status execute(Device &device, const std::string &output_file_path,
@@ -115,6 +116,8 @@ static std::pair<CONTEXT_SWITCH_DEFS__ACTION_TYPE_t, std::string> mapping[] = {
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_CHANGE_BOUNDARY_INPUT_BATCH, "change boundary input batch"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_PAUSE_VDMA_CHANNEL, "pause vdma channel"},
     {CONTEXT_SWITCH_DEFS__ACTION_TYPE_RESUME_VDMA_CHANNEL, "resume vdma channel"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_SLEEP, "sleep"},
+    {CONTEXT_SWITCH_DEFS__ACTION_TYPE_HALT, "halt"},
 };
 static_assert(ARRAY_ENTRIES(mapping) == CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT,
     "Missing a mapping from a CONTEXT_SWITCH_DEFS__ACTION_TYPE_t to it's string value");
@@ -130,6 +133,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__module_config_done_inter
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__fetch_ccw_bursts_action_data_t, config_stream_index, ccw_bursts);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__enable_nms_action_t, nms_unit_index, network_index, number_of_classes, burst_size);
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__write_data_by_type_action_t, address, data_type, data, shift, mask, network_index);
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CONTEXT_SWITCH_DEFS__sleep_action_data_t, sleep_time);
 
 // Non-default implementations
 void to_json(json &j, const CONTEXT_SWITCH_DEFS__deactivate_vdma_channel_action_data_t &data);

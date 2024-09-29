@@ -13,26 +13,28 @@
 namespace hailort
 {
 
-Expected<std::shared_ptr<InferModelHrpcClient>> InferModelHrpcClient::create(Hef &&hef,
-    std::shared_ptr<hrpc::Client> client, uint32_t infer_model_handle_id, uint32_t vdevice_handle, VDevice &vdevice)
+Expected<std::shared_ptr<InferModelHrpcClient>> InferModelHrpcClient::create(Hef &&hef, const std::string &network_name,
+    std::shared_ptr<hrpc::Client> client, uint32_t infer_model_handle_id, uint32_t vdevice_handle, VDevice &vdevice,
+    std::shared_ptr<CallbacksDispatcher> callbacks_dispatcher)
 {
-    TRY(auto inputs, create_infer_stream_inputs(hef));
-    TRY(auto outputs, create_infer_stream_outputs(hef));
+    TRY(auto inputs, create_infer_stream_inputs(hef, network_name));
+    TRY(auto outputs, create_infer_stream_outputs(hef, network_name));
 
     auto ptr = make_shared_nothrow<InferModelHrpcClient>(client, infer_model_handle_id,
-        vdevice_handle, vdevice, std::move(hef), std::move(inputs), std::move(outputs));
+        vdevice_handle, vdevice, callbacks_dispatcher, std::move(hef), network_name, std::move(inputs), std::move(outputs));
     CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return ptr;
 }
 
 InferModelHrpcClient::InferModelHrpcClient(std::shared_ptr<hrpc::Client> client, uint32_t handle,
-    uint32_t vdevice_handle, VDevice &vdevice, Hef &&hef,
-    std::unordered_map<std::string, InferStream> &&inputs, std::unordered_map<std::string, InferStream> &&outputs) :
-        InferModelBase(vdevice, std::move(hef), std::move(inputs), std::move(outputs)),
+    uint32_t vdevice_handle, VDevice &vdevice, std::shared_ptr<CallbacksDispatcher> callbacks_dispatcher,
+    Hef &&hef, const std::string &network_name, std::vector<InferStream> &&inputs, std::vector<InferStream> &&outputs) :
+        InferModelBase(vdevice, std::move(hef), network_name, std::move(inputs), std::move(outputs)),
         m_client(client),
         m_handle(handle),
-        m_vdevice_handle(vdevice_handle)
+        m_vdevice_handle(vdevice_handle),
+        m_callbacks_dispatcher(callbacks_dispatcher)
 {
 }
 
@@ -105,7 +107,7 @@ Expected<ConfiguredInferModel> InferModelHrpcClient::configure()
         MemoryView(request)));
     TRY(auto tuple, CreateConfiguredInferModelSerializer::deserialize_reply(MemoryView(result)));
     CHECK_SUCCESS_AS_EXPECTED(std::get<0>(tuple));
-    auto configured_infer_handle = std::get<1>(tuple);
+    auto configured_infer_model_handle = std::get<1>(tuple);
     auto async_queue_size = std::get<2>(tuple);
 
     std::unordered_map<std::string, size_t> inputs_frame_sizes;
@@ -117,15 +119,17 @@ Expected<ConfiguredInferModel> InferModelHrpcClient::configure()
         outputs_frame_sizes.emplace(output.second.name(), output.second.get_frame_size());
     }
 
-    auto callbacks_queue = make_unique_nothrow<CallbacksQueue>(client, m_output_names);
+    auto callbacks_queue = make_shared_nothrow<CallbacksQueue>(m_output_names);
     CHECK_NOT_NULL_AS_EXPECTED(callbacks_queue, HAILO_OUT_OF_HOST_MEMORY);
+
+    m_callbacks_dispatcher->add(configured_infer_model_handle, callbacks_queue);
 
     TRY(auto input_vstream_infos, m_hef.get_input_vstream_infos());
     TRY(auto output_vstream_infos, m_hef.get_output_vstream_infos());
     TRY(auto cim_client_ptr, ConfiguredInferModelHrpcClient::create(client,
-        configured_infer_handle,
+        configured_infer_model_handle,
         std::move(input_vstream_infos), std::move(output_vstream_infos),
-        async_queue_size, std::move(callbacks_queue), m_handle,
+        async_queue_size, callbacks_queue, m_handle,
         inputs_frame_sizes, outputs_frame_sizes));
 
     return ConfiguredInferModelBase::create(cim_client_ptr);

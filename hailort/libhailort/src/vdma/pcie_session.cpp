@@ -19,9 +19,7 @@ Expected<PcieSession> PcieSession::connect(std::shared_ptr<HailoRTDriver> driver
     TRY(auto input_desc_list, create_desc_list(*driver));
     TRY(auto output_desc_list, create_desc_list(*driver));
 
-    TRY(auto channel_pair, driver->soc_connect(input_desc_list.handle(), output_desc_list.handle()));
-
-    (void)port;
+    TRY(auto channel_pair, driver->soc_connect(port, input_desc_list.handle(), output_desc_list.handle()));
 
     return PcieSession::create(driver, channel_pair.first, channel_pair.second, std::move(input_desc_list),
         std::move(output_desc_list), PcieSessionType::CLIENT);
@@ -32,9 +30,7 @@ Expected<PcieSession> PcieSession::accept(std::shared_ptr<HailoRTDriver> driver,
     TRY(auto input_desc_list, create_desc_list(*driver));
     TRY(auto output_desc_list, create_desc_list(*driver));
 
-    TRY(auto channel_pair, driver->pci_ep_accept(input_desc_list.handle(), output_desc_list.handle()));
-
-    (void)port;
+    TRY(auto channel_pair, driver->pci_ep_accept(port, input_desc_list.handle(), output_desc_list.handle()));
 
     return PcieSession::create(driver, channel_pair.first, channel_pair.second, std::move(input_desc_list),
         std::move(output_desc_list), PcieSessionType::SERVER);
@@ -44,9 +40,6 @@ Expected<PcieSession> PcieSession::create(std::shared_ptr<HailoRTDriver> driver,
     vdma::ChannelId output_channel_id, vdma::DescriptorList &&input_desc_list, vdma::DescriptorList &&output_desc_list,
     PcieSessionType session_type)
 {
-    // TODO: HRT-14038 - remove this to support multiple connections. Until then, mark as used to allow ctrl+c handle
-    CHECK_SUCCESS(driver->mark_as_used());
-
     TRY(auto interrupts_dispatcher, vdma::InterruptsDispatcher::create(*driver));
     TRY(auto transfer_launcher, vdma::TransferLauncher::create());
 
@@ -91,6 +84,9 @@ hailo_status PcieSession::read_async(void *buffer, size_t size, std::function<vo
 hailo_status PcieSession::close()
 {
     hailo_status status = HAILO_SUCCESS; // Success orietnted
+    if (!m_should_close) {
+        return status;
+    }
 
     // First, close all host resources, disallow new transfers
     m_input->deactivate();
@@ -119,6 +115,7 @@ hailo_status PcieSession::close()
         status = stop_status;
     }
 
+    m_should_close = false;
     return status;
 }
 
@@ -136,6 +133,7 @@ hailo_status PcieSession::launch_transfer_sync(vdma::BoundaryChannel &channel,
     std::condition_variable cv;
     hailo_status transfer_status = HAILO_UNINITIALIZED;
     auto callback = [&](hailo_status status) mutable {
+        // TODO: HRT-14965 - when the wait_for returns on timeout, this reference capture will be invalid and cause a SEGFAULT
         {
             std::unique_lock<std::mutex> lock(mutex);
             assert(status != HAILO_UNINITIALIZED);

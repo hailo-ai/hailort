@@ -35,7 +35,7 @@ class SeekableBytesReader
 public:
     virtual ~SeekableBytesReader() = default;
     virtual hailo_status read(uint8_t *buffer, size_t n) = 0;
-    virtual hailo_status read_from_offset(size_t offset, MemoryView &dst, size_t n) = 0;
+    virtual hailo_status read_from_offset(uint64_t offset, MemoryView dst, size_t n) = 0;
     virtual hailo_status open() = 0;
     virtual bool is_open() const = 0;
     virtual hailo_status seek(size_t position) = 0;
@@ -54,7 +54,7 @@ public:
     FileReader(const std::string &file_path);
 
     virtual hailo_status read(uint8_t *buffer, size_t n);
-    virtual hailo_status read_from_offset(size_t offset, MemoryView &dst, size_t n);
+    virtual hailo_status read_from_offset(uint64_t offset, MemoryView dst, size_t n);
     virtual hailo_status open();
     virtual bool is_open() const;
     virtual hailo_status seek(size_t position);
@@ -78,7 +78,7 @@ public:
     BufferReader(const MemoryView &memview);
 
     virtual hailo_status read(uint8_t *buffer, size_t n);
-    virtual hailo_status read_from_offset(size_t offset, MemoryView &dst, size_t n);
+    virtual hailo_status read_from_offset(uint64_t offset, MemoryView dst, size_t n);
     virtual hailo_status open();
     virtual bool is_open() const;
     virtual hailo_status seek(size_t position);
