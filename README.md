@@ -34,11 +34,13 @@ See [**hailo.ai developer zone - HailoRT changelog**](https://hailo.ai/developer
 
 HailoRT uses 2 licenses:
 - libhailort, pyhailort & hailortcli - distributed under the [**MIT license**](https://opensource.org/licenses/MIT)
-- hailonet (GStreamer plugin)  -  distributed under the [**LGPL 2.1 license**](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
+- hailonet (GStreamer plugin) - distributed under the [**LGPL 2.1 license**](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
 
-## Contact
+## Support
 
-Contact information and support is available at [**hailo.ai**](https://hailo.ai/contact-us/).
+If you need support, please post your question on our [**Hailo community Forum**](https://community.hailo.ai/) for assistance.
+
+Contact information is available at [**hailo.ai**](https://hailo.ai/contact-us/).
 
 ## About Hailo
 
