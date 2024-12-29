@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -42,9 +42,11 @@ public:
     AsyncInferJobHrpcClient(EventPtr event);
 
     virtual hailo_status wait(std::chrono::milliseconds timeout) override;
+    hailo_status set_status(hailo_status status);
 
 private:
     EventPtr m_event;
+    std::atomic<hailo_status> m_job_status;
 };
 
 class CallbacksQueue
@@ -62,7 +64,8 @@ public:
         const ConfiguredInferModel::Bindings &bindings,
         std::function<void(const AsyncInferCompletionInfo&)> callback);
     hailo_status push_callback(hailo_status callback_status, rpc_object_handle_t callback_handle_id,
-        hrpc::RpcConnection connection);
+        RpcConnection connection);
+    hailo_status shutdown(hailo_status status);
 
 private:
     const std::vector<std::string> m_outputs_names;

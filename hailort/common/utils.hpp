@@ -16,8 +16,12 @@
 #include "hailo/expected.hpp"
 #include "hailo/buffer.hpp"
 
+#include "common/file_utils.hpp"
 #include "common/logger_macros.hpp"
 #include <spdlog/fmt/bundled/core.h>
+
+#define XXH_INLINE_ALL 1
+#include "xxhash.h"
 
 #include <assert.h>
 #include <map>
@@ -39,6 +43,7 @@ namespace hailort
 static const uint32_t POLYNOMIAL = 0xEDB88320;
 
 static const size_t MB = 1024 * 1024;
+static const size_t XXH3_CHUNK_SIZE = 1024 * 1024 / 4; // We got best performance with this chunk_size for xxh3 algorithm
 
 template <typename T>
 static inline bool contains(const std::vector<T> &container, const T &value)
@@ -68,6 +73,24 @@ template <typename T>
 static inline bool contains(const std::unordered_set<T> &container, T value)
 {
     return (container.find(value) != container.end());
+}
+
+template <typename T, typename Q>
+static inline std::set<Q> get_key_set(const std::map<Q, T> &map)
+{
+    std::set<Q> keys;
+    std::transform(map.begin(), map.end(), std::inserter(keys, keys.end()),
+        [](const auto &pair) { return pair.first; });
+    return keys;
+}
+
+template <typename T, typename Q>
+static inline std::unordered_set<Q> get_key_set(const std::unordered_map<Q, T> &map)
+{
+    std::unordered_set<Q> keys;
+    std::transform(map.begin(), map.end(), std::inserter(keys, keys.end()),
+        [](const auto &pair) { return pair.first; });
+    return keys;
 }
 
 // From https://stackoverflow.com/questions/57092289/do-stdmake-shared-and-stdmake-unique-have-a-nothrow-version
@@ -396,8 +419,10 @@ public:
         generate_table();
     }
 
-    uint32_t calculate(std::ifstream &s, size_t buffer_size) const {
-        auto beg_pos = s.tellg(); // Saves current position
+    Expected<uint32_t> calculate(std::shared_ptr<std::ifstream> stream, size_t buffer_size) const
+    {
+        TRY(auto stream_guard, StreamPositionGuard::create(stream));
+
         uint32_t crc = 0xFFFFFFFF;
         std::vector<char> buffer(MB);
 
@@ -405,16 +430,15 @@ public:
 
         while (total_bytes_read < buffer_size) {
             size_t bytes_to_read = std::min(buffer_size - total_bytes_read, MB);
-            s.read(buffer.data(), bytes_to_read);
+            stream->read(buffer.data(), bytes_to_read);
 
-            size_t bytes_read = s.gcount();
+            size_t bytes_read = stream->gcount();
             total_bytes_read += bytes_read;
             for (size_t i = 0; i < bytes_read; ++i) {
                 crc = (crc >> 8) ^ table[(crc ^ static_cast<uint8_t>(buffer[i])) & 0xFF];
             }
         }
 
-        s.seekg(beg_pos, std::ios::beg); // Return to the original position
         return crc ^ 0xFFFFFFFF;
     }
 
@@ -435,10 +459,10 @@ public:
         return crcCalculator.calculate(buffer);
     }
 
-    static Expected<uint32_t> calc_crc_on_stream(std::ifstream &s, size_t size)
+    static Expected<uint32_t> calc_crc_on_stream(std::shared_ptr<std::ifstream> stream, size_t size)
     {
         CRC32 crcCalculator;
-        return crcCalculator.calculate(s, size);
+        return crcCalculator.calculate(stream, size);
     }
 
 private:
@@ -453,6 +477,65 @@ private:
             table[i] = crc;
         }
     }
+};
+
+class Xxhash final
+{
+public:
+    Xxhash() = delete;
+
+    static Expected<uint64_t> calc_xxh3_on_buffer(const MemoryView &buffer)
+    {
+        return XXH3_64bits(buffer.data(), buffer.size());
+    }
+
+    static Expected<uint64_t> calc_xxh3_on_stream(std::shared_ptr<std::ifstream> stream, size_t size)
+    {
+        TRY(auto stream_guard, StreamPositionGuard::create(stream));
+
+        // TODO: HRT-15783 - Try improve performance with multiple buffers and threads
+        auto state = std::unique_ptr<XXH3_state_t, decltype(&XXH3_freeState)>(
+            XXH3_createState(),
+            &XXH3_freeState
+        );
+        // XXH3_64bits_reset resets a state to begin a new hash, must be called before XXH3_64bits_update
+        CHECK_AS_EXPECTED(XXH3_64bits_reset(state.get()) != XXH_ERROR, HAILO_INTERNAL_FAILURE, "Failed to reset XXH3 state");
+
+        char buffer[XXH3_CHUNK_SIZE];
+        size_t total_bytes_read = 0;
+        while (total_bytes_read < size) {
+            size_t bytes_to_read = std::min(size - total_bytes_read, XXH3_CHUNK_SIZE);
+            stream->read(buffer, bytes_to_read);
+            CHECK_AS_EXPECTED(stream->good(), HAILO_FILE_OPERATION_FAILURE, "ifstream::read() failed");
+
+            size_t bytes_read = stream->gcount();
+            auto res = XXH3_64bits_update(state.get(), buffer, bytes_read);
+            CHECK_AS_EXPECTED(res != XXH_ERROR, HAILO_INTERNAL_FAILURE, "Failed to update XXH3 state");
+            total_bytes_read += bytes_read;
+        }
+
+        return XXH3_64bits_digest(state.get());
+    }
+};
+
+class StringUtils final
+{
+public:
+    StringUtils() = delete;
+
+    static Expected<int32_t> to_int32(const std::string &str, int base);
+    static Expected<uint8_t> to_uint8(const std::string &str, int base);
+    static Expected<uint32_t> to_uint32(const std::string &str, int base);
+
+    static std::string to_lower(const std::string &str)
+    {
+        std::string lower_str = str;
+        std::transform(lower_str.begin(), lower_str.end(), lower_str.begin(),
+            [](auto ch) { return static_cast<char>(::tolower(ch)); });
+        return lower_str;
+    }
+
+    static std::string to_hex_string(const uint8_t *array, size_t size, bool uppercase, const std::string &delimiter="");
 };
 
 class BufferUtils final
@@ -483,12 +566,38 @@ public:
         print_range(range_start, buffer.size(), current_value, os);
     }
 
+    static void format_buffer(const Buffer &buffer, std::ostream& os)
+    {
+        format_buffer(buffer.data(), buffer.size(), os);
+    }
+
+    static void format_buffer(const MemoryView &mem_view, std::ostream& os)
+    {
+        format_buffer(mem_view.data(), mem_view.size(), os);
+    }
+
 private:
     static void print_range(size_t range_start, size_t range_end_exclusive, uint8_t value, std::ostream& os)
     {
         const auto message = fmt::format("[0x{:08X}:0x{:08X}] - 0x{:02X} ({} bytes)",
             range_start, range_end_exclusive - 1, static_cast<int>(value), range_end_exclusive - range_start);
         os << message << std::endl;
+    }
+
+    static void format_buffer(const uint8_t *buffer, size_t size, std::ostream& os)
+    {
+        assert(nullptr != buffer);
+
+        os << "[addr = " << static_cast<const void *>(buffer) << ", size = " << size << "]" << std::endl;
+
+        static const bool UPPERCASE = true;
+        static const size_t BYTES_PER_LINE = 32;
+        static const char *BYTE_DELIM = "  ";
+        for (size_t offset = 0; offset < size; offset += BYTES_PER_LINE) {
+            const size_t line_size = std::min(BYTES_PER_LINE, size - offset);
+            os << fmt::format("0x{:08X}", offset) << BYTE_DELIM; // 32 bit offset into a buffer should be enough
+            os << StringUtils::to_hex_string(buffer + offset, line_size, UPPERCASE, BYTE_DELIM) << std::endl;
+        }
     }
 };
 

@@ -32,6 +32,11 @@ uint32_t OsUtils::get_curr_pid()
     return static_cast<uint32_t>(GetCurrentProcessId());
 }
 
+uint32_t OsUtils::get_curr_tid()
+{
+    return static_cast<uint32_t>(GetCurrentThreadId());
+}
+
 bool OsUtils::is_pid_alive(uint32_t pid)
 {
     HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);

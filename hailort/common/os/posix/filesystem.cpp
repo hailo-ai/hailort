@@ -217,6 +217,11 @@ bool Filesystem::does_file_exists(const std::string &path)
     return (0 == stat(path.c_str(), &buffer));
 }
 
+Expected<std::string> Filesystem::get_temp_path()
+{
+    return std::string("/tmp/");
+}
+
 Expected<TempFile> TempFile::create(const std::string &file_name, const std::string &file_directory)
 {
     if (!file_directory.empty()) {

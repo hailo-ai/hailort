@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Distributed under the MIT license (https://opensource.org/licenses/MIT)
+ **/
+
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <pybind11/detail/common.h>
@@ -248,7 +253,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("HAILO8", HAILO_ARCH_HAILO8)
         .value("HAILO8L", HAILO_ARCH_HAILO8L)
         .value("HAILO15H", HAILO_ARCH_HAILO15H)
-        .value("PLUTO", HAILO_ARCH_PLUTO)
+        .value("HAILO15L", HAILO_ARCH_HAILO15L)
         .value("HAILO15M", HAILO_ARCH_HAILO15M)
         .value("HAILO10H", HAILO_ARCH_HAILO10H)
     ;
@@ -558,6 +563,9 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("I420", HAILO_FORMAT_ORDER_I420)
         .value("YYYYUV", HAILO_FORMAT_ORDER_HAILO_YYYYUV)
         .value("HAILO_NMS_WITH_BYTE_MASK", HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK)
+        .value("HAILO_NMS_ON_CHIP", HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP)
+        .value("HAILO_NMS_BY_CLASS", HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS)
+        .value("HAILO_NMS_BY_SCORE", HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE)
         ;
 
     py::enum_<hailo_format_flags_t>(m, "FormatFlags", py::arithmetic())
@@ -953,14 +961,6 @@ PYBIND11_MODULE(_pyhailort, m) {
         ))
         ;
 
-    py::class_<hailo_cache_info_t>(m, "CacheInfo")
-        .def(py::init<>())
-        .def(py::init<const uint32_t, const uint32_t, const int32_t>())
-        .def_readwrite("cache_size", &hailo_cache_info_t::cache_size)
-        .def_readwrite("current_read_offset", &hailo_cache_info_t::current_read_offset)
-        .def_readwrite("write_offset_delta", &hailo_cache_info_t::write_offset_delta)
-        ;
-
     py::class_<hailo_throttling_level_t>(m, "ThrottlingLevel", py::module_local())
         .def_readonly("temperature_threshold", &hailo_throttling_level_t::temperature_threshold)
         .def_readonly("hysteresis_temperature_threshold", &hailo_throttling_level_t::hysteresis_temperature_threshold)
@@ -1079,7 +1079,10 @@ PYBIND11_MODULE(_pyhailort, m) {
                 case HAILO_FORMAT_ORDER_NHW:
                     return py::make_tuple(self.shape.height, self.shape.width);
                 case HAILO_FORMAT_ORDER_HAILO_NMS:
+                case HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS:
                     return py::make_tuple(self.nms_shape.number_of_classes, HailoRTCommon::BBOX_PARAMS, self.nms_shape.max_bboxes_per_class);
+                case HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE:
+                    throw HailoRTCustomException("HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE format order is not supported");
                 default:
                     return py::make_tuple(self.shape.height, self.shape.width, self.shape.features);
             }
@@ -1144,14 +1147,14 @@ PYBIND11_MODULE(_pyhailort, m) {
                     return py::make_tuple(self.hw_shape.features);
                 case HAILO_FORMAT_ORDER_NHW:
                     return py::make_tuple(self.hw_shape.height, self.hw_shape.width);
-                case HAILO_FORMAT_ORDER_HAILO_NMS:
+                case HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP:
                     return py::make_tuple(HailoRTCommon::get_nms_hw_frame_size(self.nms_info));
                 default:
                     return py::make_tuple(self.hw_shape.height, self.hw_shape.width, self.hw_shape.features);
             }
         })
         .def_property_readonly("nms_shape", [](const hailo_stream_info_t &self) {
-            if (HAILO_FORMAT_ORDER_HAILO_NMS != self.format.order) {
+            if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP != self.format.order) {
                 throw HailoRTCustomException("nms_shape is availale only on nms order streams");
             }
             return py::make_tuple(HailoRTCommon::get_nms_hw_frame_size(self.nms_info));

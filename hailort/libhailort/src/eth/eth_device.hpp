@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -74,8 +74,7 @@ private:
     std::string m_device_id;
     Udp m_control_udp;
     // TODO - HRT-13234, move to DeviceBase
-    std::vector<std::shared_ptr<CoreOp>> m_core_ops;
-    std::vector<std::shared_ptr<ConfiguredNetworkGroup>> m_network_groups; // TODO: HRT-9547 - Remove when ConfiguredNetworkGroup will be kept in global context
+    std::vector<std::weak_ptr<CoreOp>> m_core_ops;
     ActiveCoreOpHolder m_active_core_op_holder;
 };
 

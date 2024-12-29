@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -53,6 +53,30 @@ using namespace hailort;
 // TODO HRT-12726: remove the export manager
 using ExportedBufferManager = ExportedResourceManager<BufferPtr, void *>;
 
+
+// Stores state needed for c api for device.
+struct _hailo_device {
+    // Device can be either owned by this class (when created by hailo_created_vdevice), or not (when returned
+    // from hailo_get_physical_devices, then it is owned by the vdevice).
+    Device *device;
+
+    // Store all the ConfiguredNetworkGroups created by the user. Need to store here since there is no way to release
+    // them by api.
+    std::vector<std::shared_ptr<ConfiguredNetworkGroup>> cngs;
+};
+
+// Stores state needed for c api for vdevice.
+struct _hailo_vdevice {
+    std::unique_ptr<VDevice> vdevice;
+
+    // Store all physical devices to allow hailo_get_physical_devices to return pointer to them.
+    std::vector<_hailo_device> physical_devices;
+
+    // Store all the ConfiguredNetworkGroups created by the user. Need to store here since there is no way to release
+    // them by api.
+    std::vector<std::shared_ptr<ConfiguredNetworkGroup>> cngs;
+};
+
 COMPAT__INITIALIZER(hailort__initialize_logger)
 {
     // Init logger singleton if compiling only HailoRT
@@ -100,9 +124,13 @@ hailo_status hailo_create_ethernet_device(hailo_eth_device_info_t *device_info, 
     CHECK_ARG_NOT_NULL(device_info);
     CHECK_ARG_NOT_NULL(device_out);
 
-    auto device = EthernetDevice::create(*device_info);
-    CHECK_EXPECTED_AS_STATUS(device);
-    *device_out = reinterpret_cast<hailo_device>(device.release().release());
+    auto device = make_unique_nothrow<_hailo_device>();
+    CHECK_NOT_NULL(device, HAILO_OUT_OF_HOST_MEMORY);
+
+    TRY(auto device_obj, EthernetDevice::create(*device_info));
+    device->device = device_obj.release();
+    *device_out = device.release();
+
     return HAILO_SUCCESS;
 }
 
@@ -111,7 +139,7 @@ hailo_status hailo_identify(hailo_device device, hailo_device_identity_t *device
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(device_identity);
 
-    auto identity = (reinterpret_cast<Device*>(device))->identify();
+    auto identity = device->device->identify();
     CHECK_EXPECTED_AS_STATUS(identity);
     *device_identity = identity.release();
 
@@ -123,7 +151,7 @@ hailo_status hailo_core_identify(hailo_device device, hailo_core_information_t *
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(core_information);
 
-    auto identity = (reinterpret_cast<Device*>(device))->core_identify();
+    auto identity = device->device->core_identify();
     CHECK_EXPECTED_AS_STATUS(identity);
     *core_information = identity.release();
 
@@ -135,7 +163,7 @@ hailo_status hailo_get_extended_device_information(hailo_device device, hailo_ex
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(extended_device_information);
 
-    auto extended_device_info_expected = (reinterpret_cast<Device*>(device))->get_extended_device_information();
+    auto extended_device_info_expected = device->device->get_extended_device_information();
     CHECK_EXPECTED_AS_STATUS(extended_device_info_expected);
     *extended_device_information = extended_device_info_expected.release();
 
@@ -173,9 +201,12 @@ hailo_status hailo_create_device_by_id(const hailo_device_id_t *device_id, hailo
 {
     CHECK_ARG_NOT_NULL(device_out);
 
-    auto device = (device_id == nullptr) ? Device::create() : Device::create(device_id->id);
-    CHECK_EXPECTED_AS_STATUS(device, "Failed creating pcie device");
-    *device_out = reinterpret_cast<hailo_device>(device.release().release());
+    auto device = make_unique_nothrow<_hailo_device>();
+    CHECK_NOT_NULL(device, HAILO_OUT_OF_HOST_MEMORY);
+
+    TRY(auto device_obj, (device_id == nullptr) ? Device::create() : Device::create(device_id->id));
+    device->device = device_obj.release();
+    *device_out = device.release();
 
     return HAILO_SUCCESS;
 }
@@ -216,9 +247,12 @@ hailo_status hailo_create_pcie_device(hailo_pcie_device_info_t *device_info, hai
 {
     CHECK_ARG_NOT_NULL(device_out);
 
-    auto device = (device_info == nullptr) ? Device::create_pcie() : Device::create_pcie(*device_info);
-    CHECK_EXPECTED_AS_STATUS(device, "Failed creating pcie device");
-    *device_out = reinterpret_cast<hailo_device>(device.release().release());
+    auto device = make_unique_nothrow<_hailo_device>();
+    CHECK_NOT_NULL(device, HAILO_OUT_OF_HOST_MEMORY);
+
+    TRY(auto device_obj, (device_info == nullptr) ? Device::create_pcie() : Device::create_pcie(*device_info));
+    device->device = device_obj.release();
+    *device_out = device.release();
 
     return HAILO_SUCCESS;
 }
@@ -226,7 +260,11 @@ hailo_status hailo_create_pcie_device(hailo_pcie_device_info_t *device_info, hai
 hailo_status hailo_release_device(hailo_device device_ptr)
 {
     CHECK_ARG_NOT_NULL(device_ptr);
-    delete reinterpret_cast<Device*>(device_ptr);
+    Device *device = device_ptr->device;
+
+    delete device_ptr;
+    delete device;
+
     return HAILO_SUCCESS;
 }
 
@@ -258,7 +296,7 @@ hailo_status hailo_device_get_type_by_device_id(const hailo_device_id_t *device_
 hailo_status hailo_set_fw_logger(hailo_device device, hailo_fw_logger_level_t level, uint32_t interface_mask)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = (reinterpret_cast<Device*>(device))->set_fw_logger(level, interface_mask);
+    auto status = device->device->set_fw_logger(level, interface_mask);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -266,7 +304,7 @@ hailo_status hailo_set_fw_logger(hailo_device device, hailo_fw_logger_level_t le
 hailo_status hailo_set_throttling_state(hailo_device device, bool should_activate)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = (reinterpret_cast<Device*>(device))->set_throttling_state(should_activate);
+    auto status = device->device->set_throttling_state(should_activate);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -276,7 +314,7 @@ hailo_status hailo_get_throttling_state(hailo_device device, bool *is_active)
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(is_active);
 
-    auto is_throttling_enabled_expected = (reinterpret_cast<Device*>(device))->get_throttling_state();
+    auto is_throttling_enabled_expected = device->device->get_throttling_state();
     CHECK_EXPECTED_AS_STATUS(is_throttling_enabled_expected);
     *is_active = is_throttling_enabled_expected.release();
     return HAILO_SUCCESS;
@@ -285,7 +323,7 @@ hailo_status hailo_get_throttling_state(hailo_device device, bool *is_active)
 hailo_status hailo_wd_enable(hailo_device device, hailo_cpu_id_t cpu_id)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = (reinterpret_cast<Device*>(device))->wd_enable(cpu_id);
+    auto status = device->device->wd_enable(cpu_id);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -293,7 +331,7 @@ hailo_status hailo_wd_enable(hailo_device device, hailo_cpu_id_t cpu_id)
 hailo_status hailo_wd_disable(hailo_device device, hailo_cpu_id_t cpu_id)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = (reinterpret_cast<Device*>(device))->wd_disable(cpu_id);
+    auto status = device->device->wd_disable(cpu_id);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -301,7 +339,7 @@ hailo_status hailo_wd_disable(hailo_device device, hailo_cpu_id_t cpu_id)
 hailo_status hailo_wd_config(hailo_device device, hailo_cpu_id_t cpu_id, uint32_t wd_cycles, hailo_watchdog_mode_t wd_mode)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = (reinterpret_cast<Device*>(device))->wd_config(cpu_id, wd_cycles, wd_mode);
+    auto status = device->device->wd_config(cpu_id, wd_cycles, wd_mode);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -310,7 +348,7 @@ hailo_status hailo_get_previous_system_state(hailo_device device, hailo_cpu_id_t
 {
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(previous_system_state);
-    auto res = (reinterpret_cast<Device*>(device))->previous_system_state(cpu_id);
+    auto res = device->device->previous_system_state(cpu_id);
     CHECK_EXPECTED_AS_STATUS(res);
     *previous_system_state = res.release();
     return HAILO_SUCCESS;
@@ -319,7 +357,7 @@ hailo_status hailo_get_previous_system_state(hailo_device device, hailo_cpu_id_t
 hailo_status hailo_set_pause_frames(hailo_device device, bool rx_pause_frames_enable)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = (reinterpret_cast<Device*>(device))->set_pause_frames(rx_pause_frames_enable);
+    auto status = device->device->set_pause_frames(rx_pause_frames_enable);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -329,7 +367,7 @@ hailo_status hailo_get_device_id(hailo_device device, hailo_device_id_t *id)
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(id);
 
-    auto id_expected = HailoRTCommon::to_device_id(reinterpret_cast<Device*>(device)->get_dev_id());
+    auto id_expected = HailoRTCommon::to_device_id(device->device->get_dev_id());
     CHECK_EXPECTED_AS_STATUS(id_expected);
     *id = id_expected.release();
 
@@ -340,7 +378,7 @@ hailo_status hailo_get_chip_temperature(hailo_device device, hailo_chip_temperat
 {
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(temp_info);
-    auto res = (reinterpret_cast<Device*>(device))->get_chip_temperature();
+    auto res = device->device->get_chip_temperature();
     CHECK_EXPECTED_AS_STATUS(res);
     *temp_info = res.release();
     return HAILO_SUCCESS;
@@ -349,7 +387,7 @@ hailo_status hailo_get_chip_temperature(hailo_device device, hailo_chip_temperat
 hailo_status hailo_reset_device(hailo_device device, hailo_reset_device_mode_t mode)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = (reinterpret_cast<Device*>(device))->reset(mode);
+    auto status = device->device->reset(mode);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -358,7 +396,7 @@ hailo_status hailo_update_firmware(hailo_device device, void *firmware_buffer, u
 {
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(firmware_buffer);
-    auto status = reinterpret_cast<Device*>(device)->firmware_update(MemoryView(firmware_buffer, firmware_buffer_size), true);
+    auto status = device->device->firmware_update(MemoryView(firmware_buffer, firmware_buffer_size), true);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -367,7 +405,7 @@ hailo_status hailo_update_second_stage(hailo_device device, void *second_stage_b
 {
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(second_stage_buffer);
-    auto status = reinterpret_cast<Device*>(device)->second_stage_update(reinterpret_cast<uint8_t*>(second_stage_buffer), second_stage_buffer_size);
+    auto status = device->device->second_stage_update(reinterpret_cast<uint8_t*>(second_stage_buffer), second_stage_buffer_size);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -377,7 +415,7 @@ hailo_status hailo_power_measurement(hailo_device device, hailo_dvm_options_t dv
 {
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(measurement);
-    auto status = Control::power_measurement(*reinterpret_cast<Device*>(device), static_cast<CONTROL_PROTOCOL__dvm_options_t>(dvm), static_cast<CONTROL_PROTOCOL__power_measurement_types_t>(measurement_type), measurement);
+    auto status = Control::power_measurement(*device->device, static_cast<CONTROL_PROTOCOL__dvm_options_t>(dvm), static_cast<CONTROL_PROTOCOL__power_measurement_types_t>(measurement_type), measurement);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -386,7 +424,7 @@ hailo_status hailo_start_power_measurement(hailo_device device,
     hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = Control::start_power_measurement(*reinterpret_cast<Device*>(device), static_cast<CONTROL_PROTOCOL__averaging_factor_t>(averaging_factor), static_cast<CONTROL_PROTOCOL__sampling_period_t>(sampling_period));
+    auto status = Control::start_power_measurement(*device->device, static_cast<CONTROL_PROTOCOL__averaging_factor_t>(averaging_factor), static_cast<CONTROL_PROTOCOL__sampling_period_t>(sampling_period));
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -395,7 +433,7 @@ hailo_status hailo_set_power_measurement(hailo_device device, hailo_measurement_
     hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = Control::set_power_measurement(*reinterpret_cast<Device*>(device), buffer_index, static_cast<CONTROL_PROTOCOL__dvm_options_t>(dvm), static_cast<CONTROL_PROTOCOL__power_measurement_types_t>(measurement_type));
+    auto status = Control::set_power_measurement(*device->device, buffer_index, static_cast<CONTROL_PROTOCOL__dvm_options_t>(dvm), static_cast<CONTROL_PROTOCOL__power_measurement_types_t>(measurement_type));
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -405,7 +443,7 @@ hailo_status hailo_get_power_measurement(hailo_device device, hailo_measurement_
 {
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(measurement_data);
-    auto status = Control::get_power_measurement(*reinterpret_cast<Device*>(device), buffer_index, should_clear, measurement_data);
+    auto status = Control::get_power_measurement(*device->device, buffer_index, should_clear, measurement_data);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -413,7 +451,7 @@ hailo_status hailo_get_power_measurement(hailo_device device, hailo_measurement_
 hailo_status hailo_stop_power_measurement(hailo_device device)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = Control::stop_power_measurement(*reinterpret_cast<Device*>(device));
+    auto status = Control::stop_power_measurement(*device->device);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -421,7 +459,7 @@ hailo_status hailo_stop_power_measurement(hailo_device device)
 hailo_status hailo_reset_sensor(hailo_device device, uint8_t section_index)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = (reinterpret_cast<Device*>(device))->sensor_reset(section_index);
+    auto status = device->device->sensor_reset(section_index);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -429,7 +467,7 @@ hailo_status hailo_reset_sensor(hailo_device device, uint8_t section_index)
 hailo_status hailo_set_sensor_i2c_bus_index(hailo_device device, hailo_sensor_types_t sensor_type, uint8_t bus_index)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = Control::sensor_set_i2c_bus_index(*reinterpret_cast<Device*>(device), sensor_type, bus_index);
+    auto status = Control::sensor_set_i2c_bus_index(*device->device, sensor_type, bus_index);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -437,7 +475,7 @@ hailo_status hailo_set_sensor_i2c_bus_index(hailo_device device, hailo_sensor_ty
 hailo_status hailo_load_and_start_sensor(hailo_device device, uint8_t section_index)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = (reinterpret_cast<Device*>(device))->sensor_load_and_start_config(section_index);
+    auto status = device->device->sensor_load_and_start_config(section_index);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -447,7 +485,7 @@ hailo_status hailo_i2c_read(hailo_device device, const hailo_i2c_slave_config_t 
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(slave_config);
     CHECK_ARG_NOT_NULL(data);
-    auto status = Control::i2c_read(*reinterpret_cast<Device*>(device), slave_config, register_address, data, length);
+    auto status = Control::i2c_read(*device->device, slave_config, register_address, data, length);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -457,7 +495,7 @@ hailo_status hailo_i2c_write(hailo_device device, const hailo_i2c_slave_config_t
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(slave_config);
     CHECK_ARG_NOT_NULL(data);
-    auto status = Control::i2c_write(*reinterpret_cast<Device*>(device), slave_config, register_address, data, length);
+    auto status = Control::i2c_write(*device->device, slave_config, register_address, data, length);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -467,7 +505,7 @@ hailo_status hailo_dump_sensor_config(hailo_device device, uint8_t section_index
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(config_file_path);
 
-    auto status = (reinterpret_cast<Device*>(device))->sensor_dump_config(section_index, config_file_path);
+    auto status = device->device->sensor_dump_config(section_index, config_file_path);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -480,7 +518,7 @@ hailo_status hailo_store_sensor_config(hailo_device device, uint32_t section_ind
     CHECK_ARG_NOT_NULL(config_file_path);
     CHECK_ARG_NOT_NULL(config_name);
     
-    auto status = (reinterpret_cast<Device*>(device))->store_sensor_config(section_index, sensor_type, reset_config_size, config_height, config_width,
+    auto status = device->device->store_sensor_config(section_index, sensor_type, reset_config_size, config_height, config_width,
         config_fps, config_file_path, config_name);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
@@ -494,7 +532,7 @@ hailo_status hailo_store_isp_config(hailo_device device, uint32_t reset_config_s
     CHECK_ARG_NOT_NULL(isp_runtime_config_file_path);
     CHECK_ARG_NOT_NULL(config_name);
     
-    auto status = (reinterpret_cast<Device*>(device))->store_isp_config(reset_config_size, config_height, config_width,
+    auto status = device->device->store_isp_config(reset_config_size, config_height, config_width,
         config_fps, isp_static_config_file_path, isp_runtime_config_file_path, config_name);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
@@ -618,7 +656,7 @@ hailo_status hailo_init_configure_params_by_vdevice(hailo_hef hef, hailo_vdevice
     CHECK_ARG_NOT_NULL(vdevice);
     CHECK_ARG_NOT_NULL(params);
 
-    auto configure_params = (reinterpret_cast<VDevice*>(vdevice))->create_configure_params(*reinterpret_cast<Hef*>(hef));
+    auto configure_params = vdevice->vdevice->create_configure_params(*reinterpret_cast<Hef*>(hef));
     CHECK_EXPECTED_AS_STATUS(configure_params);
 
     params->network_group_params_count = configure_params->size();
@@ -638,7 +676,7 @@ hailo_status hailo_init_configure_params_by_device(hailo_hef hef, hailo_device d
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(params);
 
-    auto configure_params = (reinterpret_cast<Device*>(device))->create_configure_params(*reinterpret_cast<Hef*>(hef));
+    auto configure_params = device->device->create_configure_params(*reinterpret_cast<Hef*>(hef));
     CHECK_EXPECTED_AS_STATUS(configure_params);
 
     params->network_group_params_count = configure_params->size();
@@ -797,18 +835,20 @@ hailo_status hailo_configure_device(hailo_device device, hailo_hef hef, hailo_co
 
     auto configure_params = get_configure_params_map(params);
 
-    auto added_net_groups = (reinterpret_cast<Device*>(device))->configure(*reinterpret_cast<Hef*>(hef), configure_params);
-    CHECK_EXPECTED_AS_STATUS(added_net_groups);
+    TRY(auto added_net_groups, device->device->configure(*reinterpret_cast<Hef*>(hef), configure_params));
 
-    CHECK(added_net_groups->size() <= (*number_of_network_groups), HAILO_INSUFFICIENT_BUFFER,
+    CHECK(added_net_groups.size() <= (*number_of_network_groups), HAILO_INSUFFICIENT_BUFFER,
         "Can't return all network_groups. HEF file contained {} network_groups, but output array is of size {}",
-        added_net_groups->size(), (*number_of_network_groups));
+        added_net_groups.size(), (*number_of_network_groups));
 
-    for (size_t i = 0; i < added_net_groups->size(); ++i) {
-        network_groups[i] = reinterpret_cast<hailo_configured_network_group>(added_net_groups.value()[i].get());
+    for (size_t i = 0; i < added_net_groups.size(); ++i) {
+        network_groups[i] = reinterpret_cast<hailo_configured_network_group>(added_net_groups[i].get());
     }
 
-    *number_of_network_groups = added_net_groups.value().size();
+    // Since the C API doesn't let the user to hold the cng, we need to keep it alive in the vdevice scope
+    device->cngs.insert(device->cngs.end(), added_net_groups.begin(), added_net_groups.end());
+
+    *number_of_network_groups = added_net_groups.size();
     return HAILO_SUCCESS;
 }
 
@@ -1120,52 +1160,52 @@ hailo_status hailo_device_dma_map_buffer(hailo_device device, void *address, siz
 {
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(address);
-    return reinterpret_cast<Device*>(device)->dma_map(address, size, direction);
+    return device->device->dma_map(address, size, direction);
 }
 
 hailo_status hailo_device_dma_unmap_buffer(hailo_device device, void *address, size_t size, hailo_dma_buffer_direction_t direction)
 {
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(address);
-    return reinterpret_cast<Device*>(device)->dma_unmap(address, size, direction);
+    return device->device->dma_unmap(address, size, direction);
 }
 
 hailo_status hailo_vdevice_dma_map_buffer(hailo_vdevice vdevice, void *address, size_t size, hailo_dma_buffer_direction_t direction)
 {
     CHECK_ARG_NOT_NULL(vdevice);
     CHECK_ARG_NOT_NULL(address);
-    return reinterpret_cast<VDevice*>(vdevice)->dma_map(address, size, direction);
+    return vdevice->vdevice->dma_map(address, size, direction);
 }
 
 hailo_status hailo_vdevice_dma_unmap_buffer(hailo_vdevice vdevice, void *address, size_t size, hailo_dma_buffer_direction_t direction)
 {
     CHECK_ARG_NOT_NULL(vdevice);
     CHECK_ARG_NOT_NULL(address);
-    return reinterpret_cast<VDevice*>(vdevice)->dma_unmap(address, size, direction);
+    return vdevice->vdevice->dma_unmap(address, size, direction);
 }
 
 hailo_status hailo_device_dma_map_dmabuf(hailo_device device, int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
 {
     CHECK_ARG_NOT_NULL(device);
-    return reinterpret_cast<Device*>(device)->dma_map_dmabuf(dmabuf_fd, size, direction);
+    return device->device->dma_map_dmabuf(dmabuf_fd, size, direction);
 }
 
 hailo_status hailo_device_dma_unmap_dmabuf(hailo_device device, int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
 {
     CHECK_ARG_NOT_NULL(device);
-    return reinterpret_cast<Device*>(device)->dma_unmap_dmabuf(dmabuf_fd, size, direction);
+    return device->device->dma_unmap_dmabuf(dmabuf_fd, size, direction);
 }
 
 hailo_status hailo_vdevice_dma_map_dmabuf(hailo_vdevice vdevice, int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
 {
     CHECK_ARG_NOT_NULL(vdevice);
-    return reinterpret_cast<VDevice*>(vdevice)->dma_map_dmabuf(dmabuf_fd, size, direction);
+    return vdevice->vdevice->dma_map_dmabuf(dmabuf_fd, size, direction);
 }
 
 hailo_status hailo_vdevice_dma_unmap_dmabuf(hailo_vdevice vdevice, int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
 {
     CHECK_ARG_NOT_NULL(vdevice);
-    return reinterpret_cast<VDevice*>(vdevice)->dma_unmap_dmabuf(dmabuf_fd, size, direction);
+    return vdevice->vdevice->dma_unmap_dmabuf(dmabuf_fd, size, direction);
 }
 
 hailo_status hailo_calculate_eth_input_rate_limits(hailo_hef hef, const char *network_group_name, uint32_t fps,
@@ -1405,9 +1445,9 @@ hailo_status hailo_set_notification_callback(hailo_device device, hailo_notifica
     CHECK_ARG_NOT_NULL(device);
     CHECK_ARG_NOT_NULL(callback);
 
-    auto status = (reinterpret_cast<Device*>(device))->set_notification_callback(
-        [callback] (Device &device, const hailo_notification_t &notification, void* opaque) {
-            callback(reinterpret_cast<hailo_device>(&device), &notification, opaque);
+    auto status = device->device->set_notification_callback(
+        [callback, device] (Device &, const hailo_notification_t &notification, void* opaque) {
+            callback(device, &notification, opaque);
         },
         notification_id, opaque);
     CHECK_SUCCESS(status);
@@ -1418,7 +1458,7 @@ hailo_status hailo_remove_notification_callback(hailo_device device, hailo_notif
 {
     CHECK_ARG_NOT_NULL(device);
 
-    auto status = (reinterpret_cast<Device*>(device))->remove_notification_callback(notification_id);
+    auto status = device->device->remove_notification_callback(notification_id);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -1426,7 +1466,7 @@ hailo_status hailo_remove_notification_callback(hailo_device device, hailo_notif
 hailo_status hailo_test_chip_memories(hailo_device device)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = Control::test_chip_memories(*reinterpret_cast<Device*>(device));
+    auto status = Control::test_chip_memories(*device->device);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -1434,7 +1474,7 @@ hailo_status hailo_test_chip_memories(hailo_device device)
 hailo_status hailo_set_sleep_state(hailo_device device, hailo_sleep_state_t sleep_state)
 {
     CHECK_ARG_NOT_NULL(device);
-    auto status = (reinterpret_cast<Device*>(device))->set_sleep_state(sleep_state);
+    auto status = device->device->set_sleep_state(sleep_state);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
@@ -2377,10 +2417,18 @@ hailo_status hailo_create_vdevice(hailo_vdevice_params_t *params, hailo_vdevice 
 {
     CHECK_ARG_NOT_NULL(vdevice);
 
-    auto vdevice_exp = (params == nullptr) ? VDevice::create() : VDevice::create(*params);
-    CHECK_EXPECTED_AS_STATUS(vdevice_exp, "Failed creating vdevice");
-    *vdevice = reinterpret_cast<hailo_vdevice>(vdevice_exp.release().release());
+    auto vdevice_obj = make_unique_nothrow<_hailo_vdevice>();
+    CHECK_NOT_NULL(vdevice_obj, HAILO_OUT_OF_HOST_MEMORY);
 
+    TRY(vdevice_obj->vdevice, (params == nullptr) ? VDevice::create() : VDevice::create(*params));
+
+    TRY(auto phys_devices, vdevice_obj->vdevice->get_physical_devices());
+    vdevice_obj->physical_devices.reserve(phys_devices.size());
+    for (auto phys_device : phys_devices) {
+        vdevice_obj->physical_devices.emplace_back(_hailo_device{&phys_device.get(), {}});
+    }
+
+    *vdevice = reinterpret_cast<hailo_vdevice>(vdevice_obj.release());
     return HAILO_SUCCESS;
 }
 
@@ -2394,23 +2442,20 @@ hailo_status hailo_configure_vdevice(hailo_vdevice vdevice, hailo_hef hef,
 
     auto configure_params = get_configure_params_map(params);
 
-    auto added_net_groups = (reinterpret_cast<VDevice*>(vdevice))->configure(*reinterpret_cast<Hef*>(hef), configure_params);
-    CHECK_EXPECTED_AS_STATUS(added_net_groups);
+    TRY(auto added_net_groups, vdevice->vdevice->configure(*reinterpret_cast<Hef*>(hef), configure_params));
 
-    CHECK(added_net_groups->size() <= (*number_of_network_groups), HAILO_INSUFFICIENT_BUFFER,
+    CHECK(added_net_groups.size() <= (*number_of_network_groups), HAILO_INSUFFICIENT_BUFFER,
         "Can't return all network_groups. HEF file contained {} network_groups, but output array is of size {}",
-        added_net_groups->size(), (*number_of_network_groups));
+        added_net_groups.size(), (*number_of_network_groups));
 
-    for (size_t i = 0; i < added_net_groups->size(); ++i) {
-        network_groups[i] = reinterpret_cast<hailo_configured_network_group>(added_net_groups.value()[i].get());
+    for (size_t i = 0; i < added_net_groups.size(); ++i) {
+        network_groups[i] = reinterpret_cast<hailo_configured_network_group>(added_net_groups[i].get());
     }
 
-    // Since the C API doesnt let the user to hold the cng, we need to keep it alive in the vdevice scope
-    for (auto &cng : added_net_groups.value()) {
-        CHECK_SUCCESS(reinterpret_cast<VDevice*>(vdevice)->add_network_group_ref_count(cng));
-    }
+    // Since the C API doesn't let the user to hold the cng, we need to keep it alive in the vdevice scope
+    vdevice->cngs.insert(vdevice->cngs.end(), added_net_groups.begin(), added_net_groups.end());
 
-    *number_of_network_groups = added_net_groups.value().size();
+    *number_of_network_groups = added_net_groups.size();
     return HAILO_SUCCESS;
 }
 
@@ -2420,19 +2465,16 @@ hailo_status hailo_get_physical_devices(hailo_vdevice vdevice, hailo_device *dev
     CHECK_ARG_NOT_NULL(devices);
     CHECK_ARG_NOT_NULL(number_of_devices);
 
-    auto phys_devices_exp = (reinterpret_cast<VDevice *>(vdevice))->get_physical_devices();
-    CHECK_EXPECTED_AS_STATUS(phys_devices_exp);
-
-    if (*number_of_devices < phys_devices_exp->size()) {
+    if (*number_of_devices < vdevice->physical_devices.size()) {
         LOGGER__ERROR("Can't return all physical devices. there are {} physical devices under the vdevice, but output array is of size {}",
-            phys_devices_exp->size(), *number_of_devices);
-        *number_of_devices = phys_devices_exp->size();
+            vdevice->physical_devices.size(), *number_of_devices);
+        *number_of_devices = vdevice->physical_devices.size();
         return HAILO_INSUFFICIENT_BUFFER;
     }
-    *number_of_devices = phys_devices_exp->size();
+    *number_of_devices = vdevice->physical_devices.size();
 
-    for (size_t i = 0; i < phys_devices_exp->size(); i++) {
-        devices[i] = reinterpret_cast<hailo_device>(&(phys_devices_exp.value()[i].get()));
+    for (size_t i = 0; i < vdevice->physical_devices.size(); i++) {
+        devices[i] = &vdevice->physical_devices[i];
     }
 
     return HAILO_SUCCESS;
@@ -2445,7 +2487,7 @@ hailo_status hailo_vdevice_get_physical_devices_ids(hailo_vdevice vdevice, hailo
     CHECK_ARG_NOT_NULL(devices_ids);
     CHECK_ARG_NOT_NULL(number_of_devices);
 
-    const auto phys_devices_ids = (reinterpret_cast<VDevice *>(vdevice))->get_physical_devices_ids();
+    const auto phys_devices_ids = vdevice->vdevice->get_physical_devices_ids();
     CHECK_EXPECTED_AS_STATUS(phys_devices_ids);
 
     if (*number_of_devices < phys_devices_ids->size()) {
@@ -2468,7 +2510,7 @@ hailo_status hailo_vdevice_get_physical_devices_ids(hailo_vdevice vdevice, hailo
 hailo_status hailo_release_vdevice(hailo_vdevice vdevice_ptr)
 {
     CHECK_ARG_NOT_NULL(vdevice_ptr);
-    delete reinterpret_cast<VDevice*>(vdevice_ptr);
+    delete vdevice_ptr;
     return HAILO_SUCCESS;
 }
 

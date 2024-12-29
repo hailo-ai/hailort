@@ -1,5 +1,5 @@
-/*
- * Copyright (c) 2021-2022 Hailo Technologies Ltd. All rights reserved.
+/**
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the LGPL 2.1 license (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
  *
  * This library is free software; you can redistribute it and/or
@@ -22,7 +22,7 @@
 #include "common.hpp"
 #include "network_group_handle.hpp"
 #include "metadata/hailo_buffer_flag_meta.hpp"
-#include "metadata/tensor_meta.hpp"
+#include "tensor_meta.hpp"
 #include "hailo_events/hailo_events.hpp"
 
 #include <iostream>

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -17,26 +17,34 @@
 #include <chrono>
 #include <thread>
 #include <iostream>
+#include "utils.h"
 
 
 namespace hailort {
 namespace vdma {
+
 Expected<BoundaryChannelPtr> BoundaryChannel::create(HailoRTDriver &driver, vdma::ChannelId channel_id,
     Direction direction, vdma::DescriptorList &&desc_list, TransferLauncher &transfer_launcher,
-    size_t ongoing_transfers, size_t pending_transfers, const std::string &stream_name, LatencyMeterPtr latency_meter)
+    size_t ongoing_transfers, size_t pending_transfers, bool split_transfer, const std::string &stream_name, LatencyMeterPtr latency_meter)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     auto channel_ptr = make_shared_nothrow<BoundaryChannel>(driver, channel_id, direction, std::move(desc_list),
-        transfer_launcher, ongoing_transfers, pending_transfers, stream_name, latency_meter, status);
+        transfer_launcher, ongoing_transfers, pending_transfers, split_transfer, stream_name, latency_meter, status);
     CHECK_NOT_NULL_AS_EXPECTED(channel_ptr, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status, "Failed creating BoundaryChannel");
     return channel_ptr;
 }
 
+size_t BoundaryChannel::get_chunk_size() const
+{
+    return static_cast<size_t>(MAX_SG_DESCS_COUNT * m_desc_list.desc_page_size() / OPTIMAL_CHUNKS_DIVISION_FACTOR);
+}
+
 BoundaryChannel::BoundaryChannel(HailoRTDriver &driver, vdma::ChannelId channel_id, Direction direction,
                                  DescriptorList &&desc_list, TransferLauncher &transfer_launcher,
                                  size_t ongoing_transfers_queue_size, size_t pending_transfers_queue_size,
-                                 const std::string &stream_name, LatencyMeterPtr latency_meter, hailo_status &status) :
+                                 bool split_transfer, const std::string &stream_name,
+                                 LatencyMeterPtr latency_meter, hailo_status &status) :
     m_channel_id(channel_id),
     m_direction(direction),
     m_driver(driver),
@@ -52,7 +60,8 @@ BoundaryChannel::BoundaryChannel(HailoRTDriver &driver, vdma::ChannelId channel_
     m_latency_meter(latency_meter),
     m_pending_latency_measurements(ONGOING_TRANSFERS_SIZE), // Make sure there will always be place for latency measure
     m_last_timestamp_num_processed(0),
-    m_bounded_buffer(nullptr)
+    m_bounded_buffer(nullptr),
+    m_split_transfer(split_transfer)
 {
     if (Direction::BOTH == direction) {
         LOGGER__ERROR("Boundary channels must be unidirectional");
@@ -146,14 +155,18 @@ hailo_status BoundaryChannel::trigger_channel_completion(const ChannelIrqData &i
                 if (m_ongoing_transfers.full()) {
                     return;
                 }
-                auto transfer_request = std::move(m_pending_transfers.front());
-                m_pending_transfers.pop_front();
-
                 // Note: We don't check the return value of launch_and_enqueue_transfer, since failed transfers will be queued
                 //       to m_ongoing_transfers (due to QUEUE_FAILED_TRANSFER being true). This is needed to keep the
                 //       callback order consistent.
                 static const auto QUEUE_FAILED_TRANSFER = true;
-                (void) launch_and_enqueue_transfer(std::move(transfer_request), QUEUE_FAILED_TRANSFER);
+                const auto desired_desc_num = m_desc_list.descriptors_in_buffer(m_pending_transfers.front().get_total_transfer_size());
+                if (desired_desc_num < free_descs()) {
+                    auto transfer_request = std::move(m_pending_transfers.front());
+                    m_pending_transfers.pop_front();
+                    (void) launch_and_enqueue_transfer(std::move(transfer_request), QUEUE_FAILED_TRANSFER);
+                } else {
+                    assert(m_ongoing_transfers.size() > 0);
+                }
             });
         }
 
@@ -189,6 +202,49 @@ void BoundaryChannel::deactivate()
     m_is_channel_activated = false;
 }
 
+uint16_t BoundaryChannel::free_descs()
+{
+    const auto num_available = m_descs.head();
+    const auto num_processed = m_descs.tail();
+    const auto num_free = m_descs.avail(num_available, num_processed);
+
+    return static_cast<uint16_t>(num_free);
+}
+
+std::vector<TransferRequest> BoundaryChannel::split_messages(TransferRequest &&transfer_request)
+{
+    const auto chunk_size = get_chunk_size();
+
+    if ((transfer_request.get_total_transfer_size() <= chunk_size) || (!m_split_transfer) ||
+        (transfer_request.transfer_buffers.at(0).type() != TransferBufferType::MEMORYVIEW)) {
+        return std::vector<TransferRequest>{transfer_request};
+    }
+    
+    auto total_transfers_count = DIV_ROUND_UP(transfer_request.get_total_transfer_size(), chunk_size);
+    std::vector<TransferRequest> transfer_request_split(total_transfers_count);
+
+    uint32_t split_transfer_idx = 0;
+    for (auto &buffer : transfer_request.transfer_buffers) {
+        size_t bytes_processed = 0;
+        auto size = buffer.size();
+        auto transfers_count = DIV_ROUND_UP(size, chunk_size);
+        for (; split_transfer_idx < transfers_count; split_transfer_idx++) {
+            size_t amount_to_read = std::min(size - bytes_processed, chunk_size);
+            void *buffer_w_offset = static_cast<void*>(const_cast<uint8_t*>(buffer.base_buffer().value().data())
+                 + bytes_processed);
+            transfer_request_split.at(split_transfer_idx).transfer_buffers.push_back(MemoryView(buffer_w_offset, amount_to_read));
+            transfer_request_split.at(split_transfer_idx).callback = [](hailo_status) {};
+            bytes_processed += amount_to_read;
+        }
+    }
+    // Setting the original callback for the last transfer
+    transfer_request_split.back().callback = std::move(transfer_request.callback);
+    // Removing previous bounded buffers since transfer now is split
+    m_bounded_buffer = nullptr;
+
+    return transfer_request_split;
+}
+
 hailo_status BoundaryChannel::launch_transfer(TransferRequest &&transfer_request)
 {
     std::unique_lock<std::mutex> lock(m_channel_mutex);
@@ -196,19 +252,23 @@ hailo_status BoundaryChannel::launch_transfer(TransferRequest &&transfer_request
         return HAILO_STREAM_NOT_ACTIVATED;
     }
 
-    if ((m_ongoing_transfers.size() < m_ongoing_transfers.capacity()) && (m_pending_transfers.size() == 0)) {
-        // There's room in the desc list and there are no pending transfers or callbacks => execute on user's thread
-        // We can't use the user thread to launch the transfer if there are pending transfers, because we need to
-        // preserve the order of the transfers.
-        return launch_and_enqueue_transfer(std::move(transfer_request));
+    auto transfer_request_split = split_messages(std::move(transfer_request));
+    for (auto &transfer : transfer_request_split) {
+        const auto desired_desc_num = m_desc_list.descriptors_in_buffer(transfer.get_total_transfer_size());
+        if ((m_ongoing_transfers.size() < m_ongoing_transfers.capacity()) &&
+            (m_pending_transfers.size() == 0) && (desired_desc_num < static_cast<uint32_t>(free_descs()))) {
+            // There's room in the desc list and there are no pending transfers or callbacks => execute on user's thread
+            // We can't use the user thread to launch the transfer if there are pending transfers, because we need to
+            // preserve the order of the transfers.
+            auto status = launch_and_enqueue_transfer(std::move(transfer));
+            CHECK_SUCCESS(status);
+        } else if (m_pending_transfers.size() >= m_pending_transfers.capacity()) {
+            return HAILO_QUEUE_IS_FULL;
+        } else {
+            // Defer to the transfer launcher
+            m_pending_transfers.push_back(std::move(transfer));
+        }
     }
-
-    if (m_pending_transfers.size() >= m_pending_transfers.capacity()) {
-        return HAILO_QUEUE_IS_FULL;
-    }
-
-    // Defer to the transfer launcher
-    m_pending_transfers.push_back(std::move(transfer_request));
     return HAILO_SUCCESS;
 }
 
@@ -279,9 +339,7 @@ Expected<uint16_t> BoundaryChannel::launch_transfer_impl(TransferRequest &transf
     }
     const auto last_desc_interrupts = InterruptsDomain::HOST;
 
-    int num_processed = m_descs.tail();
-    int num_free = m_descs.avail(num_available, num_processed);
-    if (total_descs_count > num_free) {
+    if (total_descs_count > static_cast<uint16_t>(free_descs())) {
         return make_unexpected(HAILO_OUT_OF_DESCRIPTORS);
     }
 
@@ -354,10 +412,15 @@ void BoundaryChannel::cancel_pending_transfers()
     }
 }
 
-size_t BoundaryChannel::get_max_ongoing_transfers(size_t /* transfer_size */) const
+size_t BoundaryChannel::get_max_ongoing_transfers(size_t transfer_size) const
 {
-    // TODO: Remove transfer_size from get_max_ongoing_transfers (HRT-13419)
-    return std::max(m_pending_transfers.capacity(), m_ongoing_transfers.capacity());
+    size_t divide_factor = m_split_transfer ? DIV_ROUND_UP(transfer_size, get_chunk_size()) : 1;
+    return std::max(m_pending_transfers.capacity() / divide_factor, m_ongoing_transfers.capacity() / divide_factor);
+}
+
+bool BoundaryChannel::is_ready(size_t transfer_size) const
+{
+    return DIV_ROUND_UP(transfer_size, get_chunk_size()) < (m_pending_transfers.capacity() - m_pending_transfers.size());
 }
 
 // TODO: try and get rid of this func and merge with get_max_ongoing_transfers (HRT-13557)
@@ -412,6 +475,19 @@ hailo_status BoundaryChannel::update_latency_meter()
 void BoundaryChannel::on_request_complete(std::unique_lock<std::mutex> &lock, TransferRequest &request,
     hailo_status complete_status)
 {
+    if (m_bounded_buffer) {
+        bool is_cyclic_buffer = (static_cast<size_t>(m_descs.size() * m_desc_list.desc_page_size()) == m_bounded_buffer->size());
+        if (!is_cyclic_buffer) {
+            // For not cyclic buffer, we need to unmap the buffer (on cyclic the buffer is owned by the stream)
+            m_bounded_buffer.reset();
+        }
+    }
+
+    // On the callback the user can free the buffer so need to verify the buffer is unmapped before calling the callback
+    for (auto &transfer_buffer : request.transfer_buffers) {
+        transfer_buffer.unmap_buffer();
+    }
+
     lock.unlock();
     request.callback(complete_status);
     lock.lock();

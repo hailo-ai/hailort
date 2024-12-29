@@ -56,13 +56,14 @@ public:
 
     Expected<size_t> recv(uint8_t *buffer, size_t size, int flags = 0);
     Expected<size_t> send(const uint8_t *buffer, size_t size, int flags = 0);
-    hailo_status sendall(const uint8_t *buffer, size_t size, int flags = 0);
 
     hailo_status set_recv_buffer_size_max();
     hailo_status set_timeout(const std::chrono::milliseconds timeout_ms, timeval_t *timeout);
     hailo_status enable_broadcast();
     hailo_status allow_reuse_address();
+    hailo_status bind_to_device(const std::string &device_name);
     hailo_status abort();
+    hailo_status close_socket_fd();
 
     // TODO: Should these be in udp.cpp?
     // TODO: Work with const Buffer& instead of uint8_t*
@@ -71,6 +72,32 @@ public:
     hailo_status recv_from(uint8_t *dest_buffer, size_t dest_buffer_size, int flags,
         sockaddr *src_addr, socklen_t src_addr_size, size_t *bytes_received, bool log_timeouts_in_debug = false);
     hailo_status has_data(sockaddr *src_addr, socklen_t src_addr_size, bool log_timeouts_in_debug = false);
+
+    hailo_status sendall(const uint8_t *buffer, size_t size, int flags = 0)
+    {
+        size_t offset = 0;
+        while (offset < size) {
+            TRY(auto bytes_written, send(buffer + offset, size - offset, flags));
+            if (bytes_written == 0) {
+                return HAILO_ETH_SEND_FAILURE;
+            }
+            offset += bytes_written;
+        }
+        return HAILO_SUCCESS;
+    }
+
+    hailo_status recvall(uint8_t* buffer, size_t size, int flags = 0)
+    {
+        size_t offset = 0;
+        while (offset < size) {
+            TRY(auto bytes_read, recv(buffer + offset, size - offset, flags));
+            if (bytes_read == 0) {
+                return HAILO_COMMUNICATION_CLOSED;
+            }
+            offset += bytes_read;
+        }
+        return HAILO_SUCCESS;
+    }
 
 private:
     class SocketModuleWrapper final {
@@ -81,6 +108,15 @@ private:
             auto obj = SocketModuleWrapper(status);
             CHECK_SUCCESS_AS_EXPECTED(status);
             return obj;
+        }
+
+        static Expected<std::shared_ptr<SocketModuleWrapper>> create_shared()
+        {
+            auto status = HAILO_UNINITIALIZED;
+            auto ptr = make_shared_nothrow<SocketModuleWrapper>(status);
+            CHECK_SUCCESS_AS_EXPECTED(status);
+            CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
+            return ptr;
         }
 
         SocketModuleWrapper(hailo_status &status)
@@ -107,7 +143,6 @@ private:
 
     Socket(std::shared_ptr<SocketModuleWrapper> module_wrapper, const socket_t socket_fd);
     static Expected<socket_t> create_socket_fd(int af, int type, int protocol);
-    hailo_status close_socket_fd();
 
     // Itialization dependency
     std::shared_ptr<SocketModuleWrapper> m_module_wrapper;

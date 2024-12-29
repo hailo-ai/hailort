@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -29,7 +29,7 @@ namespace hailort
 Expected<FileDescriptor> open_device_file(const std::string &path)
 {
     int fd = open(path.c_str(), O_RDWR);
-    CHECK(fd >= 0, HAILO_DRIVER_FAIL,
+    CHECK(fd >= 0, HAILO_DRIVER_OPERATION_FAILED,
         "Failed to open device file {} with error {}", path, errno);
     return FileDescriptor(fd);
 }
@@ -39,13 +39,12 @@ Expected<std::vector<std::string>> list_devices()
     DIR *dir_iter = opendir(HAILO_PCIE_CLASS_PATH);
     if (!dir_iter) {
         if (ENOENT == errno) {
-            LOGGER__ERROR("Can't find hailo pcie class, this may happen if the driver is not installed (this may happen"
-            " if the kernel was updated), or if there is no connected Hailo board");
-            return make_unexpected(HAILO_PCIE_DRIVER_NOT_INSTALLED);
+            LOGGER__ERROR("Can't find hailo device.");
+            return make_unexpected(HAILO_DRIVER_NOT_INSTALLED);
         }
         else {
             LOGGER__ERROR("Failed to open hailo pcie class ({}), errno {}", HAILO_PCIE_CLASS_PATH, errno);
-            return make_unexpected(HAILO_DRIVER_FAIL);
+            return make_unexpected(HAILO_DRIVER_OPERATION_FAILED);
         }
     }
 

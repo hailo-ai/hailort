@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -192,13 +192,14 @@ public:
     virtual hailo_status set_nms_score_threshold(const std::string &edge_name, float32_t nms_score_threshold) override;
     virtual hailo_status set_nms_iou_threshold(const std::string &edge_name, float32_t iou_threshold) override;
     virtual hailo_status set_nms_max_bboxes_per_class(const std::string &edge_name, uint32_t max_bboxes_per_class) override;
+    virtual hailo_status set_nms_max_bboxes_total(const std::string &edge_name, uint32_t max_bboxes_total) override;
+    virtual hailo_status set_nms_result_order_type(const std::string &edge_name, hailo_nms_result_order_type_t order_type) override;
     virtual hailo_status set_nms_max_accumulated_mask_size(const std::string &edge_name, uint32_t max_accumulated_mask_size) override;
 
     Expected<std::shared_ptr<net_flow::NmsOpMetadata>> get_nms_meta_data(const std::string &edge_name);
 
     virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) override;
-    virtual Expected<hailo_cache_info_t> get_cache_info() const override;
-    virtual hailo_status update_cache_offset(int32_t offset_delta_bytes) override;
+    virtual hailo_status update_cache_offset(int32_t offset_delta_entries) override;
     virtual Expected<std::vector<uint32_t>> get_cache_ids() const override;
     virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) override;
     virtual hailo_status write_cache_buffer(uint32_t cache_id, MemoryView buffer) override;
@@ -213,8 +214,10 @@ private:
 
     hailo_status activate_low_level_streams();
     hailo_status deactivate_low_level_streams();
-    Expected<uint32_t> get_cache_read_size() const;
-    Expected<uint32_t> get_cache_write_size() const;
+    Expected<uint32_t> get_cache_length() const;
+    Expected<uint32_t> get_cache_read_length() const;
+    Expected<uint32_t> get_cache_write_length() const;
+    Expected<uint32_t> get_cache_entry_size(uint32_t cache_id) const;
 
     const ConfigureNetworkParams m_config_params;
     std::vector<std::shared_ptr<CoreOp>> m_core_ops;

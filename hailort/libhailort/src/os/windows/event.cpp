@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -19,6 +19,31 @@
 
 namespace hailort
 {
+
+
+Waitable::Waitable(underlying_waitable_handle_t handle) :
+    m_handle(handle)
+{}
+
+hailo_status Waitable::wait(std::chrono::milliseconds timeout)
+{
+    auto status = wait_for_single_object(m_handle, timeout);
+    if (HAILO_TIMEOUT == status) {
+        LOGGER__TRACE("wait_for_single_object failed with timeout (timeout={}ms)", timeout.count());
+        return status;
+    }
+    CHECK_SUCCESS(status);
+
+    status = post_wait();
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+underlying_waitable_handle_t Waitable::get_underlying_handle()
+{
+    return m_handle;
+}
 
 Waitable::~Waitable()
 {
@@ -174,26 +199,6 @@ underlying_waitable_handle_t Semaphore::open_semaphore_handle(uint32_t initial_c
         LOGGER__ERROR("Call to CreateSemaphoreA failed with last_error={}", GetLastError());
     }
     return handle;
-}
-
-Expected<size_t> WaitableGroup::wait_any(std::chrono::milliseconds timeout)
-{
-    DWORD wait_millies = timeout_millies(timeout.count());
-
-    const auto WAIT_OBJECT_N = WAIT_OBJECT_0 + m_waitable_handles.size();
-    const bool WAIT_FOR_ANY = false;
-    const auto wait_result = WaitForMultipleObjects(static_cast<DWORD>(m_waitable_handles.size()),
-        m_waitable_handles.data(), WAIT_FOR_ANY, wait_millies);
-    if (wait_result == WAIT_TIMEOUT) {
-        return make_unexpected(HAILO_TIMEOUT);
-    } else if ((wait_result >= WAIT_OBJECT_0) && (wait_result < WAIT_OBJECT_N)) {
-        // Object is signaled.
-        // Note! On windows there is no need to call post_wait() because it is done automatically.
-        return wait_result - WAIT_OBJECT_0;
-    } else {
-        LOGGER__ERROR("WaitForMultipleObjects returned {}, last_error={}", wait_result, GetLastError());
-        return make_unexpected(HAILO_INTERNAL_FAILURE);
-    }
 }
 
 } /* namespace hailort */

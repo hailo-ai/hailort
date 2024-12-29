@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -10,6 +10,7 @@
 #include "bindings_common.hpp"
 #include "hailo/infer_model.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -60,8 +61,24 @@ ConfiguredInferModelWrapper InferModelWrapper::configure()
 {
     auto configured_infer_model = m_infer_model->configure();
     VALIDATE_EXPECTED(configured_infer_model);
+
+    // HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK does not require reallocation
+    // of output buffers because the output buffers are not passed directly to
+    // the HW. To know if the model's format is
+    // HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK, it is sufficient to check
+    // the first output's format since NMS with byte mask only supports a single
+    // output. There might be more cases where the output buffers don't need to
+    // be reallocated, but for now this is the only case where the output
+    // buffers must not be reallocated
+    // TODO: HRT-15167
+    auto output_names = m_infer_model->get_output_names();
+    auto should_reallocate_output_buffers =
+        !((output_names.size() == 1) &&
+          (m_infer_model->output()->format().order ==
+           HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK));
+
     return ConfiguredInferModelWrapper(configured_infer_model.release(), m_is_using_service,
-        m_infer_model->get_output_names());
+        output_names, should_reallocate_output_buffers);
 }
 
 std::vector<std::string> InferModelWrapper::get_input_names()
@@ -182,6 +199,11 @@ void InferModelInferStreamWrapper::set_nms_max_proposals_per_class(uint32_t max_
     m_infer_stream.set_nms_max_proposals_per_class(max_proposals_per_class);
 }
 
+void InferModelInferStreamWrapper::set_nms_max_proposals_total(uint32_t max_proposals_total)
+{
+    m_infer_stream.set_nms_max_proposals_total(max_proposals_total);
+}
+
 void InferModelInferStreamWrapper::set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size)
 {
     m_infer_stream.set_nms_max_accumulated_mask_size(max_accumulated_mask_size);
@@ -262,48 +284,64 @@ AsyncInferJobWrapper ConfiguredInferModelWrapper::run_async(
     std::transform(user_bindings.begin(), user_bindings.end(), std::back_inserter(bindings),
         [](ConfiguredInferModelBindingsWrapper &wrapper) { return wrapper.release(); });
 
-    std::vector<void*> user_output_buffers;
-    std::vector<BufferPtr> aligned_output_buffers;
-    for (auto &binding : bindings)
+    // HW requires output buffers to be mmap-ed. Since the user buffers
+    // are not mmap-ed, we need to allocate new (mmap-ed) buffers, pass them to
+    // libhailort, and once the inference is done, copy the data from them
+    // back to the user buffers. This is only necessary when the output buffer
+    // is passed directly to the HW. If a post-processing is done in the SW, the
+    // buffer will be copied to a valid buffer buffer during the
+    // post-processing, making the copy in the callback unnecessary.
+    // TODO: HRT-15167
+    AsyncInferJob job;
+    if(m_should_reallocate_output_buffers)
     {
-        for (const auto &name : m_output_names)
+        std::vector<void*> user_output_buffers;
+        std::vector<BufferPtr> aligned_output_buffers;
+        for (auto &binding : bindings)
         {
-            auto stream = binding.output(name);
-            VALIDATE_EXPECTED(stream);
+            for (const auto &name : m_output_names)
+            {
+                auto stream = binding.output(name);
+                VALIDATE_EXPECTED(stream);
 
-            auto buffer = stream->get_buffer();
-            VALIDATE_EXPECTED(buffer);
+                auto buffer = stream->get_buffer();
+                VALIDATE_EXPECTED(buffer);
 
-            user_output_buffers.push_back(buffer->data());
+                user_output_buffers.push_back(buffer->data());
 
-            auto aligned_buffer = Buffer::create_shared(buffer->size(), BufferStorageParams::create_dma());
-            VALIDATE_EXPECTED(aligned_buffer);
+                auto aligned_buffer = Buffer::create_shared(buffer->size(), BufferStorageParams::create_dma());
+                VALIDATE_EXPECTED(aligned_buffer);
 
-            auto buf = aligned_buffer.release();
-            aligned_output_buffers.push_back(buf);
+                auto buf = aligned_buffer.release();
+                aligned_output_buffers.push_back(buf);
 
-            auto status = stream->set_buffer(MemoryView(buf->data(), buf->size()));
-            VALIDATE_STATUS(status);
+                auto status = stream->set_buffer(MemoryView(buf->data(), buf->size()));
+                VALIDATE_STATUS(status);
+            }
         }
+
+        auto cb_wrapper_with_output_copy = [cb, user_output_buffers, aligned_output_buffers](const AsyncInferCompletionInfo &info)
+        {
+            for (size_t i = 0; i < user_output_buffers.size(); i++)
+            {
+                std::memcpy(user_output_buffers[i], aligned_output_buffers[i]->data(), aligned_output_buffers[i]->size());
+            }
+
+            cb(info);
+        };
+
+        auto job_expected = m_configured_infer_model.run_async(bindings, cb_wrapper_with_output_copy);
+        VALIDATE_EXPECTED(job_expected);
+        job = job_expected.release();
+    } else {
+        auto job_expected = m_configured_infer_model.run_async(bindings, cb);
+        VALIDATE_EXPECTED(job_expected);
+        job = job_expected.release();
     }
 
-    auto cb_wrapper_with_output_copy = [cb, user_output_buffers, aligned_output_buffers](const AsyncInferCompletionInfo &info)
-    {
-        for (size_t i = 0; i < user_output_buffers.size(); i++)
-        {
-            std::memcpy(user_output_buffers[i], aligned_output_buffers[i]->data(), aligned_output_buffers[i]->size());
-        }
-
-        cb(info);
-    };
-
-    auto job = m_configured_infer_model.run_async(bindings, cb_wrapper_with_output_copy);
-    VALIDATE_EXPECTED(job);
-
     // don't wait for the job at this location. The user should call job.wait() from the python side
-    job->detach();
-
-    return AsyncInferJobWrapper(job.release(), is_callback_done);
+    job.detach();
+    return AsyncInferJobWrapper(std::move(job), is_callback_done);
 }
 
 void ConfiguredInferModelWrapper::set_scheduler_timeout(const std::chrono::milliseconds &timeout)
@@ -463,6 +501,7 @@ void InferModelInferStreamWrapper::bind(py::module &m)
         .def("set_nms_score_threshold", &InferModelInferStreamWrapper::set_nms_score_threshold)
         .def("set_nms_iou_threshold", &InferModelInferStreamWrapper::set_nms_iou_threshold)
         .def("set_nms_max_proposals_per_class", &InferModelInferStreamWrapper::set_nms_max_proposals_per_class)
+        .def("set_nms_max_proposals_total", &InferModelInferStreamWrapper::set_nms_max_proposals_total)
         .def("set_nms_max_accumulated_mask_size", &InferModelInferStreamWrapper::set_nms_max_accumulated_mask_size)
         ;
 }

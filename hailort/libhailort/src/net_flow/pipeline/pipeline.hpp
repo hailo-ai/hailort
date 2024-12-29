@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -153,6 +153,7 @@ private:
     Type m_type;
     BufferPoolWeakPtr m_pool;
     MemoryView m_view;
+    std::mutex m_exec_done_mutex;
     TransferDoneCallbackAsyncInfer m_exec_done;
     Metadata m_metadata;
     bool m_is_user_buffer;
@@ -315,11 +316,13 @@ public:
     hailo_status clear_abort();
     virtual hailo_status run_push(PipelineBuffer &&buffer);
     void run_push_async(PipelineBuffer &&buffer);
+    virtual void run_push_async_multi(std::vector<PipelineBuffer> &&buffers);
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional = PipelineBuffer());
     void set_push_complete_callback(PushCompleteCallback push_complete_callback);
     void set_pull_complete_callback(PullCompleteCallback pull_complete_callback);
     void set_next(PipelinePad *next);
     void set_prev(PipelinePad *prev);
+    const BufferPoolPtr get_buffer_pool() const;
     PipelinePad *next();
     PipelinePad *prev();
     PipelineElement &element();
@@ -373,6 +376,7 @@ public:
     const std::vector<PipelinePad> &sinks() const;
     const std::vector<PipelinePad> &sources() const;
     virtual std::string description() const;
+    virtual void add_element_to_stringstream(std::stringstream &stream, const PipelinePad &source) const;
     std::string links_description() const;
     void print_deep_description(std::vector<std::string> &visited_elements);
 
@@ -398,11 +402,15 @@ public:
         return HAILO_INVALID_OPERATION;
     }
 
+    virtual hailo_status set_nms_max_proposals_total(uint32_t /*max_proposals_total*/) {
+        return HAILO_INVALID_OPERATION;
+    }
+
     virtual hailo_status set_nms_max_accumulated_mask_size(uint32_t /*max_accumulated_mask_size*/) {
         return HAILO_INVALID_OPERATION;
     }
 
-    virtual BufferPoolPtr get_buffer_pool() const
+    virtual BufferPoolPtr get_buffer_pool(const std::string &/*pad_name*/) const
     {
         // This method should be overriden by element with local pools
         return nullptr;
@@ -419,6 +427,11 @@ protected:
 
     virtual hailo_status run_push(PipelineBuffer &&buffer, const PipelinePad &sink) = 0;
     virtual void run_push_async(PipelineBuffer &&buffer, const PipelinePad &sink) = 0;
+    virtual void run_push_async_multi(std::vector<PipelineBuffer> &&/*buffers*/) {
+        // This method should be overriden by element which supports multiple buffers (e.g. mux element)
+        LOGGER__CRITICAL("run_push_async_multi is not implemented for element {}", name());
+        assert(false);
+    };
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) = 0;
     virtual std::vector<PipelinePad*> execution_pads() = 0;
     virtual hailo_status execute_activate();

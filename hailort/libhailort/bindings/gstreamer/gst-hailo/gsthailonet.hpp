@@ -1,5 +1,5 @@
-/*
- * Copyright (c) 2021-2023 Hailo Technologies Ltd. All rights reserved.
+/**
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the LGPL 2.1 license (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
  *
  * This library is free software; you can redistribute it and/or
@@ -20,7 +20,7 @@
 #ifndef _GST_HAILONET_HPP_
 #define _GST_HAILONET_HPP_
 
-#include "hailo_gst.h"
+#include "include/hailo_gst.h"
 
 #include <gst/base/gstqueuearray.h>
 #include <gst/video/gstvideofilter.h>
@@ -55,9 +55,9 @@ public:
         m_scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN), m_scheduler_timeout_ms(HAILO_DEFAULT_SCHEDULER_TIMEOUT_MS),
         m_scheduler_threshold(HAILO_DEFAULT_SCHEDULER_THRESHOLD), m_scheduler_priority(HAILO_SCHEDULER_PRIORITY_NORMAL),
         m_input_format_type(HAILO_FORMAT_TYPE_AUTO), m_output_format_type(HAILO_FORMAT_TYPE_AUTO),
-        m_nms_score_threshold(0), m_nms_iou_threshold(0), m_nms_max_proposals_per_class(0), m_input_from_meta(false),
-        m_no_transform(false), m_multi_process_service(HAILO_DEFAULT_MULTI_PROCESS_SERVICE), m_should_force_writable(false),
-        m_vdevice_key(DEFAULT_VDEVICE_KEY)
+        m_nms_score_threshold(0), m_nms_iou_threshold(0), m_nms_max_proposals_per_class(0), m_nms_max_proposals_total(0),
+        m_input_from_meta(false), m_no_transform(false), m_multi_process_service(HAILO_DEFAULT_MULTI_PROCESS_SERVICE),
+        m_should_force_writable(false)
     {}
 
     HailoElemStringProperty m_hef_path;
@@ -78,13 +78,11 @@ public:
     HailoElemProperty<gfloat> m_nms_score_threshold;
     HailoElemProperty<gfloat> m_nms_iou_threshold;
     HailoElemProperty<guint32> m_nms_max_proposals_per_class;
+    HailoElemProperty<guint32> m_nms_max_proposals_total;
     HailoElemProperty<gboolean> m_input_from_meta;
     HailoElemProperty<gboolean> m_no_transform;
     HailoElemProperty<gboolean> m_multi_process_service;
     HailoElemProperty<gboolean> m_should_force_writable;
-
-    // Deprecated
-    HailoElemProperty<guint32> m_vdevice_key;
 };
 
 class HailoNetImpl;

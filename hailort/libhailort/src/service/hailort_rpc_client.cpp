@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -586,6 +586,7 @@ Expected<std::vector<hailo_stream_info_t>> HailoRtRpcClient::ConfiguredNetworkGr
             nms_defuse_info,
             proto_stream_info.nms_info().burst_size(),
             static_cast<hailo_nms_burst_type_t>(proto_stream_info.nms_info().burst_type()),
+            HAILO_NMS_RESULT_ORDER_HW
         };
         hailo_format_t format{
             static_cast<hailo_format_type_t>(proto_stream_info.format().type()),
@@ -599,7 +600,7 @@ Expected<std::vector<hailo_stream_info_t>> HailoRtRpcClient::ConfiguredNetworkGr
             proto_stream_info.quant_info().limvals_max()
         };
         hailo_stream_info_t stream_info;
-        if (format.order == HAILO_FORMAT_ORDER_HAILO_NMS) {
+        if (format.order == HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP) {
             stream_info.nms_info = nms_info;
         } else {
             stream_info.shape = shape;
@@ -833,14 +834,17 @@ Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> deserialize_ops_metada
             (op_metadata_proto.type() == static_cast<uint32_t>(net_flow::OperationType::YOLOV5SEG))) {
             // In case this is an NMS PP - initilize the values for the nms post process config
             auto &nms_config_proto = op_metadata_proto.nms_post_process_config();
+            auto max_proposals = (HAILO_NMS_RESULT_ORDER_BY_SCORE == static_cast<hailo_nms_result_order_type_t>(nms_config_proto.order_type())) ?
+                nms_config_proto.max_proposals_total() :nms_config_proto.max_proposals_per_class();
             nms_post_process_config = {nms_config_proto.nms_score_th(),
                                         nms_config_proto.nms_iou_th(),
-                                        nms_config_proto.max_proposals_per_class(),
+                                        max_proposals,
                                         nms_config_proto.number_of_classes(),
                                         nms_config_proto.background_removal(),
                                         nms_config_proto.background_removal_index(),
                                         nms_config_proto.cross_classes(),
-                                        nms_config_proto.bbox_only()};
+                                        nms_config_proto.bbox_only(),
+                                        static_cast<hailo_nms_result_order_type_t>(nms_config_proto.order_type())};
             }
 
         switch (static_cast<net_flow::OperationType>(op_metadata_proto.type())) {
@@ -1018,6 +1022,7 @@ LayerInfo deserialize_layer_info(const ProtoLayerInfo &info_proto)
         nms_defuse_info,
         info_proto.nms_info().burst_size(),
         static_cast<hailo_nms_burst_type_t>(info_proto.nms_info().burst_type()),
+        HAILO_NMS_RESULT_ORDER_HW
     };
     info.nms_info = nms_info;
 
@@ -1063,11 +1068,21 @@ hailo_vstream_info_t deserialize_vstream_info(const ProtoVStreamInfo &info_proto
         static_cast<hailo_format_flags_t>(info_proto.format().flags())
     };
     info.format = format;
-    if (format.order == HAILO_FORMAT_ORDER_HAILO_NMS) {
+    if (HailoRTCommon::is_nms(format.order)) {
+        uint32_t max_bboxes;
+        hailo_nms_result_order_type_t order_type;
+        if (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE == format.order) {
+            max_bboxes = info_proto.nms_shape().max_bboxes_total();
+            order_type = HAILO_NMS_RESULT_ORDER_BY_SCORE;
+        } else {
+            max_bboxes = info_proto.nms_shape().max_bboxes_per_class();
+            order_type = HAILO_NMS_RESULT_ORDER_BY_CLASS;
+        }
         hailo_nms_shape_t nms_shape = {
             info_proto.nms_shape().number_of_classes(),
-            info_proto.nms_shape().max_bbox_per_class(),
-            info_proto.nms_shape().max_accumulated_mask_size()
+            max_bboxes,
+            info_proto.nms_shape().max_accumulated_mask_size(),
+            order_type
         };
         info.nms_shape = nms_shape;
     } else {
@@ -1395,7 +1410,7 @@ hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_nms_iou_threshold(cons
 }
 
 hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_nms_max_bboxes_per_class(const NetworkGroupIdentifier &identifier,
-                                                                                    const std::string &edge_name, uint32_t max_bboxes)
+    const std::string &edge_name, uint32_t max_bboxes)
 {
     ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Request request;
     auto proto_identifier = request.mutable_identifier();
@@ -1406,6 +1421,38 @@ hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_nms_max_bboxes_per_cla
     ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Reply reply;
     ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_set_nms_max_bboxes_per_class(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    return static_cast<hailo_status>(reply.status());
+}
+
+hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_nms_max_bboxes_total(const NetworkGroupIdentifier &identifier,
+    const std::string &edge_name, uint32_t max_bboxes)
+{
+    ConfiguredNetworkGroup_set_nms_max_bboxes_total_Request request;
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
+    request.set_edge_name(edge_name);
+    request.set_nms_max_bboxes_total(max_bboxes);
+    ConfiguredNetworkGroup_set_nms_max_bboxes_total_Reply reply;
+    ClientContextWithTimeout context;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_set_nms_max_bboxes_total(&context, request, &reply);
+    CHECK_GRPC_STATUS(status);
+    assert(reply.status() < HAILO_STATUS_COUNT);
+    return static_cast<hailo_status>(reply.status());
+}
+
+hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_nms_result_order_type(const NetworkGroupIdentifier &identifier,
+    const std::string &edge_name, hailo_nms_result_order_type_t order_type)
+{
+    ConfiguredNetworkGroup_set_nms_result_order_type_Request request;
+    auto proto_identifier = request.mutable_identifier();
+    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
+    request.set_edge_name(edge_name);
+    request.set_nms_result_order_type(static_cast<uint32_t>(order_type));
+    ConfiguredNetworkGroup_set_nms_result_order_type_Reply reply;
+    ClientContextWithTimeout context;
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_set_nms_result_order_type(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     return static_cast<hailo_status>(reply.status());

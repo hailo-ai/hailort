@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file async_pipeline_builder.cpp
  * @brief Async pipeline builder impl
@@ -169,7 +169,7 @@ Expected<std::shared_ptr<PostInferElement>> AsyncPipelineBuilder::add_post_infer
     const hailo_format_t &src_format, const hailo_3d_image_shape_t &dst_image_shape, const std::vector<hailo_quant_info_t> &dst_quant_infos,
     std::shared_ptr<PipelineElement> final_elem, const uint32_t final_elem_source_index)
 {
-    auto pre_transform_frame_size = (HailoRTCommon::is_nms(src_format.order)) ?
+    auto pre_transform_frame_size = (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == src_format.order) ?
         HailoRTCommon::get_nms_hw_frame_size(nms_info) : HailoRTCommon::get_periph_frame_size(src_image_shape, src_format);
     auto is_empty = false;
     auto interacts_with_hw = true;
@@ -372,21 +372,26 @@ hailo_status AsyncPipelineBuilder::add_nms_fuse_flow(const std::vector<std::stri
         async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline));
     async_pipeline->add_element_to_pipeline(nms_elem);
 
-    uint32_t i = 0;
+    auto is_empty = false;
+    auto interacts_with_hw = true;
+    std::vector<size_t> frame_sizes(output_streams_names.size());
     for (const auto &stream_name : output_streams_names) {
         CHECK(contains(named_stream_infos, stream_name), HAILO_INTERNAL_FAILURE);
         const auto &curr_stream_info = named_stream_infos.at(stream_name);
 
         TRY(const auto output_index, async_pipeline->get_async_hw_element()->get_source_index_from_output_stream_name(stream_name));
+        frame_sizes[output_index] = curr_stream_info.hw_frame_size;
+    }
 
-        auto is_empty = false;
-        auto interacts_with_hw = true;
-        TRY(auto queue_elem, add_push_queue_element(PipelineObject::create_element_name("PushQEl_nms", curr_stream_info.name, curr_stream_info.index),
-            async_pipeline, curr_stream_info.hw_frame_size, is_empty, interacts_with_hw,
-            async_pipeline->get_async_hw_element(), output_index));
+    TRY(auto multi_queue_elem, MultiPushQueue::create(PipelineObject::create_element_name("MultiPushQEl", fused_layer_name, 0),
+        async_pipeline->get_build_params(), frame_sizes, is_empty, interacts_with_hw, async_pipeline));
+    async_pipeline->add_element_to_pipeline(multi_queue_elem);
 
-        CHECK_SUCCESS(PipelinePad::link_pads(queue_elem, nms_elem, 0, i));
-        i++;
+    CHECK_SUCCESS(PipelinePad::link_pads(multi_queue_elem, nms_elem));
+
+    for (uint32_t i = 0; i < output_streams_names.size(); i++) {
+        TRY(const auto output_index, async_pipeline->get_async_hw_element()->get_source_index_from_output_stream_name(output_streams_names[i]));
+        CHECK_SUCCESS(PipelinePad::link_pads(async_pipeline->get_async_hw_element(), multi_queue_elem, i, output_index));
     }
 
     // TODO(HRT-11078): Fix multi qp for fused NMS
@@ -520,7 +525,7 @@ hailo_status AsyncPipelineBuilder::add_nms_flow(std::shared_ptr<AsyncPipeline> a
         "NMS output format type must be HAILO_FORMAT_TYPE_FLOAT32");
     if(!nms_op_metadata->nms_config().bbox_only){
         CHECK(HailoRTCommon::is_nms(output_format.second.order), HAILO_INVALID_ARGUMENT,
-            "NMS output format order must be HAILO_FORMAT_ORDER_HAILO_NMS or HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK");
+            "NMS output format order must be an NMS format order");
     }
 
     std::unordered_map<std::string, net_flow::BufferMetaData> inputs_metadata;
@@ -559,7 +564,7 @@ hailo_status AsyncPipelineBuilder::add_nms_flow(std::shared_ptr<AsyncPipeline> a
     nms_src_format.flags = HAILO_FORMAT_FLAGS_NONE;
     nms_src_format.order = HAILO_FORMAT_ORDER_NHCW;
     nms_src_format.type = first_stream_info.format.type;
-
+    std::vector<size_t> frame_sizes(output_streams_names.size());
     for (uint32_t i = 0; i < output_streams_names.size(); ++i) {
         const auto &curr_stream_name = output_streams_names[i];
         CHECK(contains(named_stream_infos, curr_stream_name), HAILO_INTERNAL_FAILURE);
@@ -574,18 +579,24 @@ hailo_status AsyncPipelineBuilder::add_nms_flow(std::shared_ptr<AsyncPipeline> a
 
         CHECK(!(should_transform), HAILO_INVALID_ARGUMENT, "Unexpected transformation required for {}", curr_stream_name);
 
-        TRY(const auto source_id,
-            async_pipeline->get_async_hw_element()->get_source_index_from_output_stream_name(curr_stream_name));
+        TRY(const auto output_index, async_pipeline->get_async_hw_element()->get_source_index_from_output_stream_name(curr_stream_name));
+        frame_sizes[output_index] = curr_stream_info.hw_frame_size;
 
-        auto is_empty = false;
-        auto interacts_with_hw = true;
-        TRY(auto nms_source_queue_elem, add_push_queue_element(PipelineObject::create_element_name("PushQEl_nms", curr_stream_info.name,
-            curr_stream_info.index), async_pipeline, curr_stream_info.hw_frame_size, is_empty, interacts_with_hw,
-            async_pipeline->get_async_hw_element(), source_id));
-
-        CHECK_SUCCESS(PipelinePad::link_pads(nms_source_queue_elem, nms_elem, 0, i));
-        nms_elem->add_sink_name(curr_stream_name);
+        nms_elem->add_sink_name(curr_stream_name, output_index);
     }
+
+    auto is_empty = false;
+    auto interacts_with_hw = true;
+    TRY(auto multi_queue_elem, MultiPushQueue::create(PipelineObject::create_element_name("MultiPushQEl", nms_op->get_name(), 0),
+        async_pipeline->get_build_params(), frame_sizes, is_empty, interacts_with_hw, async_pipeline));
+    async_pipeline->add_element_to_pipeline(multi_queue_elem);
+
+    CHECK_SUCCESS(PipelinePad::link_pads(multi_queue_elem, nms_elem));
+
+    for (uint32_t i = 0; i < output_streams_names.size(); i++) {
+        CHECK_SUCCESS(PipelinePad::link_pads(async_pipeline->get_async_hw_element(), multi_queue_elem, i, i));
+    }
+
     uint32_t post_transform_frame_size;
     if(nms_op_metadata->nms_config().bbox_only){
         post_transform_frame_size = HailoRTCommon::get_frame_size(vstream_info, output_format.second);
@@ -802,7 +813,7 @@ hailo_status AsyncPipelineBuilder::create_post_async_hw_elements(std::shared_ptr
                 op_metadata, stream_names, output_vstreams_infos, named_stream_infos);
             CHECK_SUCCESS(status);
 
-        } else if ((HAILO_FORMAT_ORDER_HAILO_NMS == first_stream_info.format.order) &&
+        } else if ((HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == first_stream_info.format.order) &&
             (first_stream_info.nms_info.is_defused)) {
             // Case defuse NMS
             hailo_status status = add_nms_fuse_flow(stream_names, output_format, async_pipeline, named_stream_infos);
@@ -828,7 +839,7 @@ hailo_status AsyncPipelineBuilder::create_post_async_hw_elements(std::shared_ptr
                         first_stream_info.format, first_stream_info.shape, stream_quant_infos, async_pipeline->get_async_hw_element(),
                         final_elem_source_index));
 
-                const auto post_transform_frame_size = (HailoRTCommon::is_nms(first_stream_info.format.order)) ?
+                const auto post_transform_frame_size = (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == first_stream_info.format.order) ?
                     HailoRTCommon::get_nms_host_frame_size(first_stream_info.nms_info, output_format.second) :
                     HailoRTCommon::get_frame_size(first_stream_info.shape, output_format.second);
 

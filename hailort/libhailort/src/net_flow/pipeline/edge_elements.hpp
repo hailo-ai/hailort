@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -80,7 +80,7 @@ public:
     virtual hailo_status execute_deactivate() override { return HAILO_SUCCESS; };
     virtual hailo_status execute_dequeue_user_buffers(hailo_status error_status) override;
 
-    virtual BufferPoolPtr get_buffer_pool() const override
+    virtual BufferPoolPtr get_buffer_pool(const std::string &/*pad_name*/) const override
     {
         return m_pool;
     }

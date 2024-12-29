@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -58,11 +58,6 @@ struct DdrInfo {
     uint16_t min_buffered_rows;
 };
 
-struct CacheInfo {
-    uint32_t id;
-    uint32_t size;
-};
-
 struct LayerInfo {
     LayerType type = LayerType::NOT_SET;
     hailo_stream_direction_t direction;
@@ -107,7 +102,7 @@ struct LayerInfo {
     // Context switch info TODO: we should use std::optional for this structures (or implement our self).
     ConnectedContextInfo connected_context_info;
     DdrInfo ddr_info;
-    CacheInfo cache_info;
+    uint32_t cache_id;
 };
 
 // LayerIdentifier = <LayerType, hailo_stream_direction_t, layer_name, stream_index>
@@ -130,8 +125,9 @@ public:
             hailo_stream_info_t stream_info = {};
             stream_info.hw_data_bytes = layer.hw_data_bytes;
             stream_info.format = layer.format;
-            if (HailoRTCommon::is_nms(stream_info)) {
+            if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == stream_info.format.order) {
                 stream_info.nms_info = layer.nms_info;
+                stream_info.nms_info.order_type = HAILO_NMS_RESULT_ORDER_HW;
                 stream_info.hw_frame_size =
                     HailoRTCommon::get_nms_hw_frame_size(stream_info.nms_info);
             } else {
@@ -213,7 +209,7 @@ public:
      */
     static constexpr uint32_t get_stream_transfer_size(const hailo_stream_info_t &stream_info, const LayerInfo &layer_info)
     {
-        if (HAILO_FORMAT_ORDER_HAILO_NMS == layer_info.format.order) {
+        if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == layer_info.format.order) {
             return get_nms_layer_transfer_size(layer_info);
         }
         return stream_info.hw_frame_size;
@@ -303,7 +299,7 @@ public:
      */
     static constexpr uint32_t get_layer_transfer_size(const LayerInfo &layer_info)
     {
-        if (HAILO_FORMAT_ORDER_HAILO_NMS == layer_info.format.order) {
+        if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == layer_info.format.order) {
             return get_nms_layer_transfer_size(layer_info);
         }
         return HailoRTCommon::get_periph_frame_size(layer_info.hw_shape, layer_info.format);
@@ -318,6 +314,7 @@ private:
         // If a layer is multi-planar, its format_order is already the host-side format order
         res.format.order = (layer_info.is_multi_planar) ? layer_info.format.order : HailoRTDefaults::get_default_host_format_order(layer_info.format);
         if (HailoRTCommon::is_nms(res)) {
+            // TODO: HRT-15612 - consider changes here in case of order nms by score, or byte_mask
             res.nms_shape.max_bboxes_per_class = layer_info.nms_info.max_bboxes_per_class * layer_info.nms_info.chunks_per_frame;
             res.nms_shape.number_of_classes = layer_info.nms_info.number_of_classes;
             res.format.type = HAILO_FORMAT_TYPE_FLOAT32; // NMS on vstream is always float32s

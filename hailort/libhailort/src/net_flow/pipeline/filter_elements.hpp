@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -182,6 +182,13 @@ public:
     virtual hailo_status set_nms_max_proposals_per_class(uint32_t max_proposals_per_class) override
     {
         m_nms_config.max_proposals_per_class = max_proposals_per_class;
+        return HAILO_SUCCESS;
+    }
+
+    virtual hailo_status set_nms_max_proposals_total(uint32_t max_proposals_total) override
+    {
+        m_nms_config.max_proposals_total = max_proposals_total;
+        m_nms_config.order_type = HAILO_NMS_RESULT_ORDER_BY_SCORE;
         return HAILO_SUCCESS;
     }
 

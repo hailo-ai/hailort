@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -14,7 +14,7 @@
 #include "utils/exported_resource_manager.hpp"
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
-#include "common/string_utils.hpp"
+#include "common/utils.hpp"
 
 #include <algorithm>
 #include <string>
@@ -24,22 +24,6 @@
 
 namespace hailort
 {
-
-static void format_buffer(std::ostream& stream, const uint8_t *buffer, size_t size)
-{
-    assert(nullptr != buffer);
-
-    stream << "[addr = " << static_cast<const void *>(buffer) << ", size = " << size << "]" << std::endl;
-
-    static const bool UPPERCASE = true;
-    static const size_t BYTES_PER_LINE = 32;
-    static const char *BYTE_DELIM = "  ";
-    for (size_t offset = 0; offset < size; offset += BYTES_PER_LINE) {
-        const size_t line_size = std::min(BYTES_PER_LINE, size - offset);
-        stream << fmt::format("0x{:08X}", offset) << BYTE_DELIM; // 32 bit offset into a buffer should be enough
-        stream << StringUtils::to_hex_string(buffer + offset, line_size, UPPERCASE, BYTE_DELIM) << std::endl;
-    }
-}
 
 class Buffer::StorageImpl final {
 public:
@@ -248,7 +232,7 @@ std::string Buffer::to_string() const
 // Note: This is a friend function
 std::ostream& operator<<(std::ostream& stream, const Buffer& buffer)
 {
-    format_buffer(stream, buffer.data(), buffer.size());
+    BufferUtils::format_buffer(buffer, stream);
     return stream;
 }
 
@@ -282,27 +266,73 @@ uint64_t& Buffer::as_uint64()
     return as_type<uint64_t>();
 }
 
+MemoryView Buffer::from(size_t offset)
+{
+    if (offset >= m_size) {
+        return MemoryView();
+    }
+
+    return MemoryView(m_data + offset, m_size - offset);
+}
+
+const MemoryView Buffer::from(size_t offset) const
+{
+    return const_cast<Buffer*>(this)->from(offset);
+}
+
+MemoryView Buffer::to(size_t offset)
+{
+    if (offset >= m_size) {
+        return MemoryView(m_data, m_size);
+    }
+
+    return MemoryView(m_data, offset);
+}
+
+const MemoryView Buffer::to(size_t offset) const
+{
+    return const_cast<Buffer*>(this)->to(offset);
+}
+
+MemoryView Buffer::slice(size_t from, size_t to)
+{
+    if (from >= m_size || from >= to) {
+        return MemoryView();
+    }
+
+    if (to > m_size) {
+        to = m_size;
+    }
+
+    return MemoryView(m_data + from, to - from);
+}
+
+const MemoryView Buffer::slice(size_t from, size_t to) const
+{
+    return const_cast<Buffer*>(this)->slice(from, to);
+}
+
 Expected<void *> Buffer::release() noexcept
 {
     return m_storage_impl->m_storage->release();
 }
 
-MemoryView::MemoryView() :
+MemoryView::MemoryView() noexcept :
     m_data(nullptr),
     m_size(0)
 {}
 
-MemoryView::MemoryView(Buffer &buffer) :
+MemoryView::MemoryView(Buffer &buffer) noexcept :
     m_data(buffer.data()),
     m_size(buffer.size())
 {}
 
-MemoryView::MemoryView(void *data, size_t size) :
+MemoryView::MemoryView(void *data, size_t size) noexcept :
     m_data(data),
     m_size(size)
 {}
 
-const MemoryView MemoryView::create_const(const void *data, size_t size)
+const MemoryView MemoryView::create_const(const void *data, size_t size) noexcept
 {
     return MemoryView(const_cast<void *>(data), size);
 }
@@ -330,7 +360,7 @@ bool MemoryView::empty() const noexcept
 // Note: This is a friend function
 std::ostream& operator<<(std::ostream& stream, const MemoryView& buffer)
 {
-    format_buffer(stream, buffer.data(), buffer.size());
+    BufferUtils::format_buffer(buffer, stream);
     return stream;
 }
 

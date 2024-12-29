@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -143,8 +143,6 @@ public:
     static hailo_status validate_params(const hailo_vdevice_params_t &params);
     static Expected<bool> device_ids_contains_eth(const hailo_vdevice_params_t &params);
 
-    virtual hailo_status add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> network_group_ptr) override;
-
 private:
     VDeviceBase(std::map<device_id_t, std::unique_ptr<Device>> &&devices, CoreOpsSchedulerPtr core_ops_scheduler,
         const std::string &unique_vdevice_hash="") :
@@ -164,7 +162,6 @@ private:
     std::map<device_id_t, std::unique_ptr<Device>> m_devices;
     CoreOpsSchedulerPtr m_core_ops_scheduler;
     std::vector<std::shared_ptr<VDeviceCoreOp>> m_vdevice_core_ops;
-    std::vector<std::shared_ptr<ConfiguredNetworkGroup>> m_network_groups; // TODO: HRT-9547 - Remove when ConfiguredNetworkGroup will be kept in global context
     ActiveCoreOpHolder m_active_core_op_holder;
     vdevice_core_op_handle_t m_next_core_op_handle;
     const std::string m_unique_vdevice_hash; // Used to identify this vdevice in the monitor. consider removing - TODO (HRT-8835)
@@ -202,7 +199,7 @@ public:
     virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
 
 private:
-    VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, VDeviceIdentifier &&identifier, std::vector<std::unique_ptr<hailort::Device>> &&devices);
+    VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t client_handle, VDeviceIdentifier &&identifier, std::vector<std::unique_ptr<hailort::Device>> &&devices);
 
     hailo_status create_client();
     hailo_status start_listener_thread(VDeviceIdentifier identifier);
@@ -210,6 +207,7 @@ private:
     hailo_status finish_listener_thread();
 
     std::unique_ptr<HailoRtRpcClient> m_client;
+    uint32_t m_client_utils_handle;
     VDeviceIdentifier m_identifier;
     std::vector<std::unique_ptr<Device>> m_devices;
 
@@ -246,8 +244,6 @@ public:
     virtual hailo_status dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
     virtual hailo_status dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
     virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
-
-    virtual hailo_status add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> network_group_ptr) override;
 
 private:
     VDeviceHandle(uint32_t handle);

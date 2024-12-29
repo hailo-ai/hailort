@@ -1,5 +1,5 @@
-/*
- * Copyright (c) 2021-2023 Hailo Technologies Ltd. All rights reserved.
+/**
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the LGPL 2.1 license (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
  *
  * This library is free software; you can redistribute it and/or
@@ -18,7 +18,7 @@
  * Boston, MA 02110-1301, USA.
  */
 #include "gsthailonet.hpp"
-#include "metadata/tensor_meta.hpp"
+#include "tensor_meta.hpp"
 #include "hailo/buffer.hpp"
 #include "hailo/hailort_common.hpp"
 #include "hailo/hailort_defaults.hpp"
@@ -48,14 +48,12 @@ enum
     PROP_NMS_SCORE_THRESHOLD,
     PROP_NMS_IOU_THRESHOLD,
     PROP_NMS_MAX_PROPOSALS_PER_CLASS,
+    PROP_NMS_MAX_PROPOSALS_TOTAL,
     PROP_INPUT_FROM_META,
     PROP_NO_TRANSFORM,
     PROP_MULTI_PROCESS_SERVICE,
     PROP_PASS_THROUGH,
     PROP_FORCE_WRITABLE,
-
-    // Deprecated
-    PROP_VDEVICE_KEY,
 };
 
 static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE("sink", GST_PAD_SINK, GST_PAD_ALWAYS, GST_STATIC_CAPS_ANY);
@@ -212,8 +210,14 @@ static hailo_status gst_hailonet_set_nms_params(GstHailoNet *self, std::shared_p
         }
         if (self->impl->props.m_nms_max_proposals_per_class.was_changed()) {
             CHECK(has_nms_output, HAILO_INVALID_OPERATION, "NMS max proposals per class is set, but there is no NMS output in this model.");
-            if (output.is_nms()) {
+            if ((output.is_nms()) && (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE != output.format().order)) {
                 output.set_nms_max_proposals_per_class(self->impl->props.m_nms_max_proposals_per_class.get());
+            }
+        }
+        if (self->impl->props.m_nms_max_proposals_total.was_changed()) {
+            CHECK(has_nms_output, HAILO_INVALID_OPERATION, "NMS max proposals total is set, but there is no NMS output in this model.");
+            if (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE == output.format().order) {
+                output.set_nms_max_proposals_total(self->impl->props.m_nms_max_proposals_total.get());
             }
         }
     }
@@ -675,6 +679,13 @@ static void gst_hailonet_set_property(GObject *object, guint property_id, const 
         }
         self->impl->props.m_nms_max_proposals_per_class = static_cast<guint32>(g_value_get_uint(value));
         break;
+    case PROP_NMS_MAX_PROPOSALS_TOTAL:
+        if (self->impl->is_configured) {
+            g_warning("The network was already configured so changing the max proposals total will not take place!");
+            break;
+        }
+        self->impl->props.m_nms_max_proposals_total = static_cast<guint32>(g_value_get_uint(value));
+        break;
     case PROP_INPUT_FROM_META:
         if (self->impl->is_configured) {
             g_warning("The network was already configured so changing the input method will not take place!");
@@ -694,15 +705,6 @@ static void gst_hailonet_set_property(GObject *object, guint property_id, const 
             break;
         }
         self->impl->props.m_multi_process_service = g_value_get_boolean(value);
-        break;
-    
-    // Deprecated
-    case PROP_VDEVICE_KEY:
-        if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the vdevice key will not take place!");
-            break;
-        }
-        self->impl->props.m_vdevice_key = static_cast<guint32>(g_value_get_uint(value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
@@ -770,7 +772,10 @@ static void gst_hailonet_get_property(GObject *object, guint property_id, GValue
         break;
     case PROP_NMS_MAX_PROPOSALS_PER_CLASS:
         g_value_set_uint(value, self->impl->props.m_nms_max_proposals_per_class.get());
-        break; 
+        break;
+    case PROP_NMS_MAX_PROPOSALS_TOTAL:
+        g_value_set_uint(value, self->impl->props.m_nms_max_proposals_total.get());
+        break;
     case PROP_INPUT_FROM_META:
         g_value_set_boolean(value, self->impl->props.m_input_from_meta.get());
         break;
@@ -779,11 +784,6 @@ static void gst_hailonet_get_property(GObject *object, guint property_id, GValue
         break;
     case PROP_MULTI_PROCESS_SERVICE:
         g_value_set_boolean(value, self->impl->props.m_multi_process_service.get());
-        break;
-    
-    // Deprecated
-    case PROP_VDEVICE_KEY:
-        g_value_set_uint(value, self->impl->props.m_vdevice_key.get());
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
@@ -902,19 +902,14 @@ static void gst_hailonet_class_init(GstHailoNetClass *klass)
     g_object_class_install_property(gobject_class, PROP_NMS_MAX_PROPOSALS_PER_CLASS,
         g_param_spec_uint("nms-max-proposals-per-class", "NMS max proposals per class", "Set a limit for the maximum number of boxes per class.",
             0, std::numeric_limits<uint32_t>::max(), 0, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+    g_object_class_install_property(gobject_class, PROP_NMS_MAX_PROPOSALS_TOTAL,
+        g_param_spec_uint("nms-max-proposals-total", "NMS max proposals total", "Set a limit for the maximum number of boxes total.",
+        0, std::numeric_limits<uint32_t>::max(), 0, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
     g_object_class_install_property(gobject_class, PROP_MULTI_PROCESS_SERVICE,
         g_param_spec_boolean("multi-process-service", "Should run over HailoRT service", "Controls wether to run HailoRT over its service. "
             "To use this property, the service should be active and scheduling-algorithm should be set. Defaults to false.",
             HAILO_DEFAULT_MULTI_PROCESS_SERVICE, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
-
-    // Deprecated
-    g_object_class_install_property(gobject_class, PROP_VDEVICE_KEY,
-        g_param_spec_uint("vdevice-key",
-            "Deprecated: Indicate whether to re-use or re-create vdevice",
-            "Deprecated: Use vdevice-group-id instead. Relevant only when 'device-count' is passed. If not passed, the created vdevice will be unique to this hailonet." \
-            "if multiple hailonets share 'vdevice-key' and 'device-count', the created vdevice will be shared between those hailonets",
-            MIN_VALID_VDEVICE_KEY, std::numeric_limits<uint32_t>::max(), MIN_VALID_VDEVICE_KEY, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
     // See information about the "flush" signal in the element description
     g_signal_new(
@@ -1294,9 +1289,6 @@ static hailo_status gst_hailonet_init_infer_model(GstHailoNet * self)
     }
     if (self->impl->props.m_vdevice_group_id.was_changed()) {
         vdevice_params.group_id = self->impl->props.m_vdevice_group_id.get().c_str();
-    } else if (self->impl->props.m_vdevice_key.was_changed()) {
-        auto key_str = std::to_string(self->impl->props.m_vdevice_key.get());
-        vdevice_params.group_id = key_str.c_str();
     }
     if (self->impl->props.m_scheduling_algorithm.was_changed()) {
         vdevice_params.scheduling_algorithm = self->impl->props.m_scheduling_algorithm.get();

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -25,10 +25,12 @@ public:
 
     static constexpr auto INIFINITE_TIMEOUT() { return std::chrono::milliseconds(HAILO_INFINITE); }
 
-    virtual BufferPoolPtr get_buffer_pool() const override
+    virtual BufferPoolPtr get_buffer_pool(const std::string &/*pad_name*/) const override
     {
         return m_pool;
     }
+
+    virtual void add_element_to_stringstream(std::stringstream &stream, const PipelinePad &source) const override;
 
 protected:
     static Expected<SpscQueue<PipelineBuffer>> create_queue(size_t queue_size, EventPtr shutdown_event);
@@ -52,6 +54,7 @@ protected:
     /// This functions don't return status because they are meant to be called on ctor and dtor 
     virtual void start_thread();
     virtual void stop_thread();
+    void register_thread();
 
     virtual std::vector<AccumulatorPtr> get_queue_size_accumulators() override;
 
@@ -65,6 +68,10 @@ protected:
     EventPtr m_shutdown_event;
     std::chrono::milliseconds m_timeout;
     std::thread m_thread;
+    uint32_t m_thread_id;
+    std::condition_variable m_thread_ready_cv;
+    std::mutex m_thread_ready_mutex;
+    bool m_thread_ready;
     std::atomic_bool m_is_thread_running;
     Event m_activation_event;
     Event m_deactivation_event;
@@ -176,8 +183,68 @@ protected:
     virtual hailo_status run_in_thread() override;
 };
 
+class MultiPushQueue : public PipelineElementInternal
+{
+public:
+    static Expected<std::shared_ptr<MultiPushQueue>> create(const std::string &name,
+        const ElementBuildParams &build_params, std::vector<size_t> frame_sizes, bool is_empty,
+        bool interacts_with_hw, std::shared_ptr<AsyncPipeline> async_pipeline, bool is_entry = false);
+    MultiPushQueue(std::vector<SpscQueue<PipelineBuffer>> &&queues, size_t sink_count, const std::string &name,
+        std::chrono::milliseconds timeout, DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
+        PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline, EventPtr shutdown_event,
+        std::vector<BufferPoolPtr> &&buffer_pools);
 
+    virtual ~MultiPushQueue();
 
+    virtual hailo_status run_push(PipelineBuffer &&buffer, const PipelinePad &sink) override;
+    virtual void run_push_async(PipelineBuffer &&buffer, const PipelinePad &sink) override;
+    virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
+
+    static constexpr auto INIFINITE_TIMEOUT() { return std::chrono::milliseconds(HAILO_INFINITE); }
+    PipelinePad &next_pad();
+
+    virtual BufferPoolPtr get_buffer_pool(const std::string &pad_name) const override
+    {
+        return m_buffer_pools.at(pad_name);
+    }
+    virtual std::string description() const override;
+    virtual void add_element_to_stringstream(std::stringstream &stream, const PipelinePad &source) const override;
+
+protected:
+    static Expected<SpscQueue<PipelineBuffer>> create_queue(size_t queue_size, EventPtr shutdown_event);
+    virtual hailo_status execute_deactivate() override;
+    virtual hailo_status execute_terminate(hailo_status error_status) override;
+    virtual hailo_status execute_post_deactivate(bool should_clear_abort) override;
+    virtual hailo_status execute_dequeue_user_buffers(hailo_status error_status) override;
+    virtual std::vector<PipelinePad*> execution_pads() override;
+    hailo_status clear_queues();
+    PipelinePad &next_pad_downstream()
+    {
+        return *m_sources[0].next();
+    }
+
+private:
+    std::string thread_name() { return "MULT_PUSH_QUEUE"; };
+    void register_thread();
+    void start_thread();
+    void stop_thread();
+    hailo_status run_in_thread();
+
+    std::unordered_map<std::string, uint32_t> m_sink_name_to_index;
+    std::unordered_map<std::string, SpscQueue<PipelineBuffer>> m_queues;
+    std::chrono::milliseconds m_timeout;
+    uint32_t m_thread_id;
+    bool m_thread_ready;
+    std::atomic_bool m_is_thread_running;
+    std::thread m_thread;
+    std::mutex m_thread_ready_mutex;
+    std::mutex m_queues_operations_mutex;
+    std::condition_variable m_thread_ready_cv;
+    std::condition_variable m_all_queues_have_buffer_cv;
+
+    EventPtr m_shutdown_event;
+    std::unordered_map<std::string, BufferPoolPtr> m_buffer_pools;
+};
 
 } /* namespace hailort */
 

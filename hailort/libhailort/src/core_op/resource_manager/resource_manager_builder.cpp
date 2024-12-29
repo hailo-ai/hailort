@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file resource_manager_builder.cpp
  * @brief Builds a ResourcesManager object for the given CoreOp.
@@ -325,7 +325,7 @@ static hailo_status fill_cache_output_layer(ContextResources &context_resources,
         HailoRTDriver::DmaDirection::D2H, layer_info.dma_engine_index));
 
     TRY(const auto network_batch_size, resources_manager.get_network_batch_size(layer_info.network_name));
-    TRY(auto cache_buffer, resources_manager.set_cache_output_channel(layer_info.cache_info.id,
+    TRY(auto cache_buffer, resources_manager.set_cache_output_channel(layer_info.cache_id,
         network_batch_size, channel_id));
 
     const bool is_periph_calculated_in_hailort = resources_manager.get_supported_features().periph_calculation_in_hailort;
@@ -338,7 +338,7 @@ static hailo_status fill_cache_output_layer(ContextResources &context_resources,
     CHECK_SUCCESS(status);
 
     LOGGER__DEBUG("Cache id {}: output stream {}, d2h_channel {}, context {}",
-        layer_info.cache_info.id, layer_info.stream_index, channel_id, layer_info.context_index);
+        layer_info.cache_id, layer_info.stream_index, channel_id, layer_info.context_index);
     return HAILO_SUCCESS;
 }
 
@@ -349,7 +349,7 @@ static hailo_status fill_cache_input_layer(ContextResources &context_resources, 
         HailoRTDriver::DmaDirection::H2D, layer_info.dma_engine_index));
 
     TRY(const auto network_batch_size, resources_manager.get_network_batch_size(layer_info.network_name));
-    TRY(auto cache_buffer, resources_manager.set_cache_input_channel(layer_info.cache_info.id, network_batch_size, channel_id));
+    TRY(auto cache_buffer, resources_manager.set_cache_input_channel(layer_info.cache_id, network_batch_size, channel_id));
 
     const bool is_periph_calculated_in_hailort = resources_manager.get_supported_features().periph_calculation_in_hailort;
     const bool is_core_hw_padding_config_in_dfc = resources_manager.get_supported_features().core_hw_padding_config_in_dfc;
@@ -361,7 +361,7 @@ static hailo_status fill_cache_input_layer(ContextResources &context_resources, 
     CHECK_SUCCESS(status);
 
     LOGGER__DEBUG("Cache id {}: input stream {}, h2d_channel {}, context {}",
-        layer_info.cache_info.id, layer_info.stream_index, channel_id, layer_info.context_index);
+        layer_info.cache_id, layer_info.stream_index, channel_id, layer_info.context_index);
 
     return HAILO_SUCCESS;
 }
@@ -1193,10 +1193,10 @@ static hailo_status add_lcu_actions_to_batch_switch_context(ContextResources &co
     return HAILO_SUCCESS;
 }
 
-static hailo_status create_change_boundary_input_batch_actions(const ContextResources &context_resources,
+static hailo_status create_change_boundary_input_batch_actions(const std::vector<EdgeLayer> &boundary_input_layers,
     std::vector<ContextSwitchConfigActionPtr> &batch_switch_context_actions)
 {
-    for (const auto &edge_layer : context_resources.get_edge_layers(LayerType::BOUNDARY, HAILO_H2D_STREAM)) {
+    for (const auto &edge_layer : boundary_input_layers) {
         TRY(const auto change_boundary_input_batch_action, ChangeBoundaryInputBatchAction::create(edge_layer.channel_id));
         batch_switch_context_actions.emplace_back(std::move(change_boundary_input_batch_action));
     }
@@ -1208,8 +1208,9 @@ static hailo_status create_change_boundary_input_batch_actions(const ContextReso
     return HAILO_SUCCESS;
 }
 
-static hailo_status add_edge_layers_actions_to_batch_switch_context(ContextResources &context_resources, const CoreOpMetadata &core_op_metadata,
-    ResourcesManager &resources_manager, const HEFHwArch &hw_arch, std::vector<ContextSwitchConfigActionPtr> &actions)
+static hailo_status add_edge_layers_actions_to_batch_switch_context(ContextResources &context_resources,
+    const CoreOpMetadata &core_op_metadata, ResourcesManager &resources_manager, const HEFHwArch &hw_arch,
+    std::vector<ContextSwitchConfigActionPtr> &actions, const std::vector<EdgeLayer> &activation_boundary_input_layers)
 {
     auto status = fill_batch_switching_context_edge_layers(context_resources, core_op_metadata, resources_manager, hw_arch);
     CHECK_SUCCESS(status);
@@ -1235,7 +1236,7 @@ static hailo_status add_edge_layers_actions_to_batch_switch_context(ContextResou
     status = add_ddr_buffers_info(actions, context_resources);
     CHECK_SUCCESS(status);
 
-    status = create_change_boundary_input_batch_actions(context_resources, actions);
+    status = create_change_boundary_input_batch_actions(activation_boundary_input_layers, actions);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -1243,14 +1244,15 @@ static hailo_status add_edge_layers_actions_to_batch_switch_context(ContextResou
 
 static hailo_status fill_batch_switching_context_config_recepies_for_multi_context(
     ContextResources &context_resources, const CoreOpMetadata &core_op_metadata, ResourcesManager &resources_manager,
-    const HEFHwArch &hw_arch)
+    const HEFHwArch &hw_arch, const std::vector<EdgeLayer> &activation_boundary_input_layers)
 {
     std::vector<ContextSwitchConfigActionPtr> actions;
 
     auto status = add_lcu_actions_to_batch_switch_context(context_resources, core_op_metadata, actions);
     CHECK_SUCCESS(status);
 
-    status = add_edge_layers_actions_to_batch_switch_context(context_resources, core_op_metadata, resources_manager, hw_arch, actions);
+    status = add_edge_layers_actions_to_batch_switch_context(context_resources, core_op_metadata, resources_manager,
+        hw_arch, actions, activation_boundary_input_layers);
     CHECK_SUCCESS(status);
 
     status = handle_repeated_actions(actions);
@@ -1334,12 +1336,16 @@ Expected<std::shared_ptr<ResourcesManager>> ResourcesManagerBuilder::build(uint8
         resources_manager, core_op_metadata, hw_arch);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
+    // Get all boundary input layers in activation context for batch switch
+    const auto activation_context_boundary_input_layers =
+        activation_context.get().get_edge_layers(LayerType::BOUNDARY, HAILO_H2D_STREAM);
+
     // No allocation of edge layers in the batch switching context. No need for context index here
     auto BATCH_SWITCH_CONTEXT_INDEX = INVLID_CONTEXT_INDEX;
     TRY(auto batch_switching_context, resources_manager.add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_BATCH_SWITCHING,
         BATCH_SWITCH_CONTEXT_INDEX));
     status = fill_batch_switching_context_config_recepies_for_multi_context(batch_switching_context.get(),
-        *core_op_metadata, resources_manager, hw_arch);
+        *core_op_metadata, resources_manager, hw_arch, activation_context_boundary_input_layers);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     static const uint16_t PRELIMINARY_CONTEXT_INDEX = 0;

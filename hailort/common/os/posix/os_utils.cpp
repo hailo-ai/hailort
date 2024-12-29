@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sched.h>
+#include <sys/syscall.h>
 
 #if defined(__QNX__)
 #define OS_UTILS__QNX_PAGE_SIZE (4096)
@@ -34,6 +35,11 @@ HailoRTOSLogger::HailoRTOSLogger()
 uint32_t OsUtils::get_curr_pid()
 {
     return getpid();
+}
+
+uint32_t OsUtils::get_curr_tid()
+{
+    return static_cast<uint32_t>(syscall(SYS_gettid));
 }
 
 bool OsUtils::is_pid_alive(uint32_t pid)

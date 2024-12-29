@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -125,11 +125,16 @@ private:
         return HAILO_MAX_SHARED_RESOURCES;
     }
 
+    // This method can be "overriden" with template specialization
+    // to set another UNIQUE for specific managers.
     static Key unique_key()
     {
-        // This method can be "overriden" with template specialization
-        // to set another UNIQUE for specific managers.
-        return HAILO_UNIQUE_RESOURCE_KEY;
+        if (std::is_same<Key, std::string>::value) {
+            // Special case for when Key is std::string to prevent calling std::string(0)
+            return HAILO_UNIQUE_VDEVICE_GROUP_ID;
+        } else {
+            return HAILO_UNIQUE_RESOURCE_KEY;
+        }
     }
 
     std::mutex m_mutex;

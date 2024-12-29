@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.5.0)
 
 if (UNIX)
     include(find_libs_for_gstreamer_linux.cmake)

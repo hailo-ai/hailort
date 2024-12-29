@@ -14,8 +14,9 @@
 #include "graph_printer.hpp"
 #include "download_action_list_command.hpp"
 #include "common.hpp"
+#include "buffer_utils.hpp"
 
-#include "common/string_utils.hpp"
+#include "common/utils.hpp"
 #include "common/file_utils.hpp"
 #include "common/async_thread.hpp"
 #include "common/barrier.hpp"
@@ -898,32 +899,31 @@ static Expected<InferResult> run_inference(const std::vector<std::shared_ptr<Con
     }
 }
 
-static Expected<std::map<std::string, BufferPtr>> create_constant_dataset(
+static Expected<std::map<std::string, BufferPtr>> create_uniformed_dataset(
     const std::pair<std::vector<hailo_stream_info_t>, std::vector<hailo_vstream_info_t>> &input_infos, const hailo_transform_params_t &trans_params,
     InferMode mode)
 {
-    const uint8_t const_byte = 0xAB;
     std::map<std::string, BufferPtr> dataset;
 
     if (InferMode::HW_ONLY == mode) {
         for (const auto &input_stream_info : input_infos.first) {
             const auto frame_size = input_stream_info.hw_frame_size;
-            auto constant_buffer = Buffer::create_shared(frame_size, const_byte);
-            if (!constant_buffer) {
+            auto buffer = create_uniformed_buffer_shared(frame_size);
+            if (!buffer) {
                 std::cerr << "Out of memory, tried to allocate " << frame_size << std::endl;
-                return make_unexpected(constant_buffer.status());
+                return make_unexpected(buffer.status());
             }
-            dataset.emplace(std::string(input_stream_info.name), constant_buffer.release());
+            dataset.emplace(std::string(input_stream_info.name), buffer.release());
         }
     } else {
         for (const auto &input_vstream_info : input_infos.second) {
             const auto frame_size = HailoRTCommon::get_frame_size(input_vstream_info, trans_params.user_buffer_format);
-            auto constant_buffer = Buffer::create_shared(frame_size, const_byte);
-            if (!constant_buffer) {
+            auto buffer = create_uniformed_buffer_shared(frame_size);
+            if (!buffer) {
                 std::cerr << "Out of memory, tried to allocate " << frame_size << std::endl;
-                return make_unexpected(constant_buffer.status());
+                return make_unexpected(buffer.status());
             }
-            dataset.emplace(std::string(input_vstream_info.name), constant_buffer.release());
+            dataset.emplace(std::string(input_vstream_info.name), buffer.release());
         }
     }
 
@@ -1021,7 +1021,7 @@ static Expected<std::vector<std::map<std::string, BufferPtr>>> create_dataset(
         }
     } else {
         for (auto &group_input_infos : input_infos) {
-            TRY(auto network_group_dataset, create_constant_dataset(group_input_infos, trans_params, params.mode));
+            TRY(auto network_group_dataset, create_uniformed_dataset(group_input_infos, trans_params, params.mode));
             results.emplace_back(std::move(network_group_dataset));
         }
     }

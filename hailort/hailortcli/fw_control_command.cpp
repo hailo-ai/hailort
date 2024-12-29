@@ -9,7 +9,7 @@
 
 #include "fw_control_command.hpp"
 #include "firmware_header_utils.h"
-#include "common/string_utils.hpp"
+#include "common/utils.hpp"
 
 
 static const char *NOT_CONFIGURED_ATTR = "<N/A>";
@@ -138,8 +138,8 @@ static std::string identity_arch_string(const hailo_device_identity_t &identity)
         return "HAILO8L";
     case HAILO_ARCH_HAILO15H:
         return "HAILO15H";
-    case HAILO_ARCH_PLUTO:
-        return "PLUTO";
+    case HAILO_ARCH_HAILO15L:
+        return "HAILO15L";
     case HAILO_ARCH_HAILO15M:
         return "HAILO15M";
     case HAILO_ARCH_HAILO10H:

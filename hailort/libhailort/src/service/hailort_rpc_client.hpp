@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -128,6 +128,8 @@ public:
     hailo_status ConfiguredNetworkGroup_set_nms_score_threshold(const NetworkGroupIdentifier &identifier, const std::string &edge_name, float32_t nms_score_th);
     hailo_status ConfiguredNetworkGroup_set_nms_iou_threshold(const NetworkGroupIdentifier &identifier, const std::string &edge_name, float32_t iou_th);
     hailo_status ConfiguredNetworkGroup_set_nms_max_bboxes_per_class(const NetworkGroupIdentifier &identifier, const std::string &edge_name, uint32_t max_bboxes);
+    hailo_status ConfiguredNetworkGroup_set_nms_max_bboxes_total(const NetworkGroupIdentifier &identifier, const std::string &edge_name, uint32_t max_bboxes);
+    hailo_status ConfiguredNetworkGroup_set_nms_result_order_type(const NetworkGroupIdentifier &identifier, const std::string &edge_name, hailo_nms_result_order_type_t order_type);
     hailo_status ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size(const NetworkGroupIdentifier &identifier, const std::string &edge_name, uint32_t max_accumulated_mask_size);
     Expected<std::vector<std::string>> ConfiguredNetworkGroup_get_stream_names_from_vstream_name(const NetworkGroupIdentifier &identifier, const std::string &vstream_name);
     Expected<std::vector<std::string>> ConfiguredNetworkGroup_get_vstream_names_from_stream_name(const NetworkGroupIdentifier &identifier, const std::string &stream_name);

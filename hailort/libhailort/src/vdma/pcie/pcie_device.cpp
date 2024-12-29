@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -241,7 +241,7 @@ hailo_status PcieDevice::reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type)
             &payload, &request, *this);
         CHECK_SUCCESS(status);
         CHECK(is_expecting_response, HAILO_INTERNAL_FAILURE, "Recived valid response from FW for control who is not expecting one.");
-    } else if ((HAILO_FW_CONTROL_FAILURE == status) && (!is_expecting_response)){
+    } else if ((HAILO_DRIVER_TIMEOUT == status) && (!is_expecting_response)){
         status = HAILO_SUCCESS;
     } else {
         return status;

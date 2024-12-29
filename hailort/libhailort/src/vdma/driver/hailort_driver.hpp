@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -169,7 +169,7 @@ public:
     enum class DeviceBoardType {
         DEVICE_BOARD_TYPE_HAILO8 = 0,
         DEVICE_BOARD_TYPE_HAILO15,
-        DEVICE_BOARD_TYPE_PLUTO,
+        DEVICE_BOARD_TYPE_HAILO15L,
         DEVICE_BOARD_TYPE_HAILO10H,
         DEVICE_BOARD_TYPE_HAILO10H_LEGACY,
         DEVICE_BOARD_TYPE_COUNT,

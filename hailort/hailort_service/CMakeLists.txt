@@ -1,7 +1,5 @@
 cmake_minimum_required(VERSION 3.5.0)
 
-include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/spdlog.cmake)
-
 if(WIN32)
     set(HAILORT_SERVICE_OS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/windows")
 elseif(UNIX)
@@ -15,30 +13,20 @@ add_executable(hailort_service
     cng_buffer_pool.cpp
     service_resource_manager.hpp
     ${HAILORT_SERVICE_OS_DIR}/hailort_service.cpp
-    ${HAILORT_COMMON_CPP_SOURCES}
-    ${HAILO_FULL_OS_DIR}/event.cpp # TODO HRT-10681: move event.cpp to common
 )
 target_compile_options(hailort_service PRIVATE ${HAILORT_COMPILE_OPTIONS})
 set_property(TARGET hailort_service PROPERTY CXX_STANDARD 14)
 target_link_libraries(hailort_service
     libhailort
-    spdlog::spdlog
+    hailort_common
     grpc++_unsecure
     hailort_rpc_grpc_proto
-    readerwriterqueue
 )
-if(WIN32)
-    # Needed in order to compile eth utils (we compile here ${HAILORT_COMMON_CPP_SOURCES}, consider removing)
-    target_link_libraries(hailort_service Iphlpapi Shlwapi Kernel32 Advapi32)
-elseif(NOT CMAKE_SYSTEM_NAME STREQUAL Android)
-    target_link_libraries(hailort_service rt)
-endif()
 
 target_include_directories(hailort_service
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HAILORT_INC_DIR}
-    ${HAILORT_COMMON_DIR}
     ${HAILORT_SRC_DIR}
     ${COMMON_INC_DIR}
     ${RPC_DIR}

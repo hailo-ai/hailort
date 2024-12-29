@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -98,6 +98,7 @@ private:
     static void default_d2h_callback(hailo_status) {};
     static uint32_t get_transfer_size(const hailo_stream_info_t &stream_info, const LayerInfo &layer_info);
     Expected<TransferRequest> align_transfer_request(TransferRequest &&transfer_request);
+    Expected<TransferRequest> align_transfer_request_only_end(TransferRequest &&transfer_request);
 
     VdmaDevice &m_device;
     vdma::BoundaryChannelPtr m_channel;

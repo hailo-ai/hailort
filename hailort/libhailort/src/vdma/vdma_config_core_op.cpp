@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Distributed under the MIT license (https://opensource.org/licenses/MIT)
+ **/
+
 #include "utils/profiler/tracer_macros.hpp"
 #include "vdma/vdma_config_core_op.hpp"
 #include "network_group/network_group_internal.hpp"
@@ -7,20 +12,6 @@
 namespace hailort
 {
 
-Expected<VdmaConfigCoreOp> VdmaConfigCoreOp::create(ActiveCoreOpHolder &active_core_op_holder,
-        const ConfigureNetworkParams &config_params,
-        std::shared_ptr<ResourcesManager> resources_manager,
-        std::shared_ptr<CacheManager> cache_manager,
-        std::shared_ptr<CoreOpMetadata> metadata)
-{
-    auto status = HAILO_UNINITIALIZED;
-
-    VdmaConfigCoreOp core_op(active_core_op_holder, config_params, std::move(resources_manager), cache_manager,
-        metadata, status);
-    CHECK_SUCCESS_AS_EXPECTED(status);
-
-    return core_op;
-}
 
 Expected<std::shared_ptr<VdmaConfigCoreOp>> VdmaConfigCoreOp::create_shared(ActiveCoreOpHolder &active_core_op_holder,
         const ConfigureNetworkParams &config_params,
@@ -28,11 +19,19 @@ Expected<std::shared_ptr<VdmaConfigCoreOp>> VdmaConfigCoreOp::create_shared(Acti
         std::shared_ptr<CacheManager> cache_manager,
         std::shared_ptr<CoreOpMetadata> metadata)
 {
-    TRY(auto core_op, create(active_core_op_holder, config_params, resources_manager, cache_manager, metadata));
-    auto core_op_ptr = make_shared_nothrow<VdmaConfigCoreOp>(std::move(core_op));
-    CHECK_NOT_NULL_AS_EXPECTED(core_op_ptr, HAILO_OUT_OF_HOST_MEMORY);
+    auto status = HAILO_UNINITIALIZED;
 
-    return core_op_ptr;
+    auto core_op = make_shared_nothrow<VdmaConfigCoreOp>(active_core_op_holder, config_params, std::move(resources_manager), cache_manager,
+        metadata, status);
+    CHECK_NOT_NULL(core_op, HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_SUCCESS(status);
+
+    return core_op;
+}
+
+VdmaConfigCoreOp::~VdmaConfigCoreOp()
+{
+    (void)shutdown();
 }
 
 VdmaConfigCoreOp::VdmaConfigCoreOp(ActiveCoreOpHolder &active_core_op_holder, const ConfigureNetworkParams &config_params,
@@ -124,9 +123,9 @@ hailo_status VdmaConfigCoreOp::register_cache_update_callback()
     if (cache_offset_env_var.has_value() && has_caches()) {
         std::string policy;
         int32_t offset_delta = 0;
-        TRY(const auto cache_write_size, get_cache_write_size());
+        TRY(const auto cache_write_length, get_cache_write_length());
         if (cache_offset_env_var.value() == HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR_DEFAULT) {
-            offset_delta = cache_write_size;
+            offset_delta = cache_write_length;
             policy = "cache write size (default)";
         } else if (cache_offset_env_var.value() == HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR_DISABLED) {
             LOGGER__INFO("Skipping cache offset updates");
@@ -134,7 +133,7 @@ hailo_status VdmaConfigCoreOp::register_cache_update_callback()
         } else {
             offset_delta = std::stoi(cache_offset_env_var.value());
             policy = "environment variable";
-            CHECK(offset_delta <= static_cast<int32_t>(cache_write_size), HAILO_INVALID_ARGUMENT, "Invalid cache offset delta");
+            CHECK(offset_delta <= static_cast<int32_t>(cache_write_length), HAILO_INVALID_ARGUMENT, "Invalid cache offset delta");
         }
 
         auto &vdma_device = m_resources_manager->get_device();
@@ -167,6 +166,10 @@ hailo_status VdmaConfigCoreOp::unregister_cache_update_callback()
 hailo_status VdmaConfigCoreOp::shutdown()
 {
     hailo_status status = HAILO_SUCCESS; // Success oriented
+
+    if (m_is_shutdown.exchange(true)) {
+        return HAILO_SUCCESS;
+    }
 
     auto abort_status = abort_low_level_streams();
     if (HAILO_SUCCESS != abort_status) {
@@ -283,40 +286,47 @@ bool VdmaConfigCoreOp::has_caches() const
     return cache_buffers && !(cache_buffers->get()).empty();
 }
 
-Expected<uint32_t> VdmaConfigCoreOp::get_cache_read_size() const
+Expected<uint32_t> VdmaConfigCoreOp::get_cache_length_impl(std::function<size_t(const CacheBuffer&)> length_getter,
+    const std::string &length_type) const
 {
-    // Input to the core == cache read
-    size_t input_size = 0;
+    size_t length = 0;
     TRY(const auto cache_buffers, m_cache_manager->get_cache_buffers(name()));
     for (auto &cache_buffer : cache_buffers.get()) {
-        const auto curr_input_size = cache_buffer.second.input_size();
-        if (input_size == 0) {
-            input_size = curr_input_size;
+        const auto curr_length = length_getter(cache_buffer.second);
+        if (length == 0) {
+            length = curr_length;
         } else {
-            CHECK(input_size == curr_input_size, HAILO_INVALID_ARGUMENT, "Cache buffers have different input sizes");
+            CHECK(length == curr_length, HAILO_INTERNAL_FAILURE,
+                "Cache buffer {} has {} length {}. Expected: {}",
+                cache_buffer.first, length_type, curr_length, length);
         }
     }
 
-    return static_cast<uint32_t>(input_size);
+    return static_cast<uint32_t>(length);
 }
 
-Expected<uint32_t> VdmaConfigCoreOp::get_cache_write_size() const
+Expected<uint32_t> VdmaConfigCoreOp::get_cache_length() const
 {
-    // Output from the core == cache write
-    size_t output_size = 0;
-    TRY(const auto cache_buffers, m_cache_manager->get_cache_buffers(name()));
-    for (auto &cache_buffer : cache_buffers.get()) {
-        const auto curr_output_size = cache_buffer.second.output_size();
-        if (output_size == 0) {
-            output_size = curr_output_size;
-        } else {
-            CHECK(output_size == curr_output_size, HAILO_INVALID_ARGUMENT, "Cache buffers have different output sizes");
-        }
-    }
-
-    return static_cast<uint32_t>(output_size);
+    return get_cache_length_impl([](const CacheBuffer &buffer) { return buffer.cache_length(); }, "cache");
 }
 
+Expected<uint32_t> VdmaConfigCoreOp::get_cache_read_length() const
+{
+    return get_cache_length_impl([](const CacheBuffer &buffer) { return buffer.input_length(); }, "input");
+}
+
+Expected<uint32_t> VdmaConfigCoreOp::get_cache_write_length() const
+{
+    return get_cache_length_impl([](const CacheBuffer &buffer) { return buffer.output_length(); }, "output");
+}
+
+Expected<uint32_t> VdmaConfigCoreOp::get_cache_entry_size(uint32_t cache_id) const
+{
+    TRY(const auto cache_buffers, m_cache_manager->get_cache_buffers(name()));
+    auto cache_buffer_it = cache_buffers.get().find(cache_id);
+    CHECK(cache_buffer_it != cache_buffers.get().end(), HAILO_INVALID_ARGUMENT, "Cache buffer with id {} not found", cache_id);
+    return cache_buffer_it->second.entry_size();
+}
 
 hailo_status VdmaConfigCoreOp::init_cache(uint32_t read_offset, int32_t write_offset_delta)
 {
@@ -324,13 +334,7 @@ hailo_status VdmaConfigCoreOp::init_cache(uint32_t read_offset, int32_t write_of
     return m_cache_manager->init_caches(read_offset, write_offset_delta);
 }
 
-// TODO: remove get_cache_info (HRT-14396)
-Expected<hailo_cache_info_t> VdmaConfigCoreOp::get_cache_info() const
-{
-    return make_unexpected(HAILO_NOT_IMPLEMENTED);
-}
-
-hailo_status VdmaConfigCoreOp::update_cache_offset(int32_t offset_delta_bytes)
+hailo_status VdmaConfigCoreOp::update_cache_offset(int32_t offset_delta_entries)
 {
     CHECK(has_caches(), HAILO_INVALID_OPERATION, "No caches in core-op");
 
@@ -339,7 +343,9 @@ hailo_status VdmaConfigCoreOp::update_cache_offset(int32_t offset_delta_bytes)
     // CHECK_SUCCESS(status, "Core op must be activated before updating cache offset");
 
     // Update the offsets in the cache manager
-    auto status = m_cache_manager->update_cache_offset(offset_delta_bytes);
+    const auto check_cache_snapshots = is_env_variable_on(HAILORT_CHECK_CACHE_UPDATE_ENV_VAR);
+    const auto require_cache_changes_env = is_env_variable_on(HAILORT_REQUIRE_CACHE_CHANGES_ENV_VAR);
+    auto status = m_cache_manager->update_cache_offset(offset_delta_entries, check_cache_snapshots, require_cache_changes_env);
     CHECK_SUCCESS(status);
 
     // Signal to the fw that the cache offset has been updated

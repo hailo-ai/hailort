@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Distributed under the MIT license (https://opensource.org/licenses/MIT)
+ **/
+
 #pragma once
 
 #include <initguid.h>

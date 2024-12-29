@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -15,7 +15,6 @@
 #include "hailo/hailort_common.hpp"
 #include "hef/core_op_metadata.hpp"
 #include "device_common/control.hpp"
-#include "hw_consts.hpp"
 #include "utils/soc_utils/partial_cluster_reader.hpp"
 
 #include "control_protocol.h"
@@ -2430,9 +2429,8 @@ hailo_status Control::context_switch_set_context_info_chunk(Device &device,
             &request, device);
     if (HAILO_SUCCESS != status) {
         /* In case of max memory error, add LOGGER ERROR, and set indicative error to the user */
-        CHECK((CONTEXT_SWITCH_TASK_STATUS_ADD_TRIGGER_FUNCTION_REACHED_FORBIDDEN_MEMORY_SPACE != header->status.major_status),
-            HAILO_OUT_OF_FW_MEMORY,
-            "Configfured network groups Reached maximum device internal memory. please consider using less network groups.");
+        CHECK(CONTEXT_SWITCH_STATUS_SRAM_MEMORY_FULL != BYTE_ORDER__htonl(header->status.major_status),
+            HAILO_OUT_OF_FW_MEMORY, "Configured network groups reached maximum device internal memory (SRAM Full).");
         goto exit;
     }
 
@@ -2440,84 +2438,6 @@ hailo_status Control::context_switch_set_context_info_chunk(Device &device,
 exit:
     return status;
 }
-
-hailo_status Control::context_switch_init_cache_info(Device &device, const CONTROL_PROTOCOL__context_switch_cache_info_t &cache_info)
-{
-    CONTROL_PROTOCOL__request_t request{};
-    size_t request_size = 0;
-    uint8_t response_buffer[RESPONSE_MAX_BUFFER_SIZE] = {};
-    size_t response_size = RESPONSE_MAX_BUFFER_SIZE;
-    CONTROL_PROTOCOL__response_header_t *header = NULL;
-    CONTROL_PROTOCOL__payload_t *payload = NULL;
-
-    const auto common_status = CONTROL_PROTOCOL__pack_context_switch_init_cache_info_request(&request, &request_size,
-        device.get_control_sequence(), cache_info.cache_size, cache_info.current_read_offset, cache_info.write_offset_delta);
-    auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
-    CHECK_SUCCESS(status);
-
-    status = device.fw_interact((uint8_t*)(&request), request_size, (uint8_t*)&response_buffer, &response_size);
-    CHECK_SUCCESS(status);
-
-    /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
-    CHECK_SUCCESS(status);
-
-    return HAILO_SUCCESS;
-}
-
-Expected<CONTROL_PROTOCOL__context_switch_cache_info_t> Control::context_switch_get_cache_info(Device &device)
-{
-    CONTROL_PROTOCOL__request_t request{};
-    size_t request_size = 0;
-    uint8_t response_buffer[RESPONSE_MAX_BUFFER_SIZE] = {};
-    size_t response_size = RESPONSE_MAX_BUFFER_SIZE;
-    CONTROL_PROTOCOL__response_header_t *header = NULL;
-    CONTROL_PROTOCOL__payload_t *payload = NULL;
-
-    const auto common_status = CONTROL_PROTOCOL__pack_context_switch_get_cache_info_request(&request, &request_size,
-        device.get_control_sequence());
-    auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
-    CHECK_SUCCESS_AS_EXPECTED(status);
-
-    status = device.fw_interact((uint8_t*)(&request), request_size, (uint8_t*)&response_buffer, &response_size);
-    CHECK_SUCCESS_AS_EXPECTED(status);
-
-    /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-        &request, device);
-    CHECK_SUCCESS_AS_EXPECTED(status);
-
-    CONTROL_PROTOCOL__context_switch_cache_info_t result{};
-    result = *reinterpret_cast<CONTROL_PROTOCOL__context_switch_cache_info_t *>(payload->parameters);
-    return result;
-}
-
-hailo_status Control::context_switch_update_cache_read_offset(Device &device, int32_t read_offset_delta)
-{
-    CONTROL_PROTOCOL__request_t request{};
-    size_t request_size = 0;
-    uint8_t response_buffer[RESPONSE_MAX_BUFFER_SIZE] = {};
-    size_t response_size = RESPONSE_MAX_BUFFER_SIZE;
-    CONTROL_PROTOCOL__response_header_t *header = NULL;
-    CONTROL_PROTOCOL__payload_t *payload = NULL;
-
-    const auto common_status = CONTROL_PROTOCOL__pack_context_switch_update_cache_read_offset_request(&request, &request_size,
-        device.get_control_sequence(), read_offset_delta);
-    auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
-    CHECK_SUCCESS(status);
-
-    status = device.fw_interact((uint8_t*)(&request), request_size, (uint8_t*)&response_buffer, &response_size);
-    CHECK_SUCCESS(status);
-
-    /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
-    CHECK_SUCCESS(status);
-
-    return HAILO_SUCCESS;
-}
-
 hailo_status Control::context_switch_signal_cache_updated(Device &device)
 {
     CONTROL_PROTOCOL__request_t request{};

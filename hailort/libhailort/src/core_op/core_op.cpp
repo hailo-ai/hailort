@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file core_op.cpp
  * @brief Core-Op module implementation
@@ -212,7 +212,7 @@ Expected<LayerInfo> CoreOp::get_layer_info(const std::string &stream_name)
 bool CoreOp::is_nms()
 {
     for (auto layer_info : m_metadata->get_output_layer_infos()) {
-        if (HAILO_FORMAT_ORDER_HAILO_NMS == layer_info.format.order) {
+        if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == layer_info.format.order) {
             return true;
         }
     }
@@ -604,7 +604,7 @@ Expected<std::shared_ptr<OutputStreamBase>> CoreOp::create_output_stream_from_co
             return make_unexpected(HAILO_NOT_IMPLEMENTED);
     }
 
-    if (HAILO_FORMAT_ORDER_HAILO_NMS == layer_info.format.order) {
+    if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == layer_info.format.order) {
         // In NMS we create some new stream object that wraps the original stream (and converts
         // bbox/burst reads into frame reads).
         // After HRT-10553 is implemented, we won't need this wrapper anymore.

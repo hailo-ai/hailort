@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -242,7 +242,7 @@ hailo_status InternalBufferManager::plan_and_execute(InternalBufferPlanner::Type
             planner_type = static_cast<InternalBufferPlanner::Type>((static_cast<uint8_t>(planner_type)) + 1);
             continue;
         }
-        auto buffer_planning = buffer_planning_exp.release();
+        TRY(auto buffer_planning, buffer_planning_exp);
 
         if (planner_type == default_planner_type) {
             default_planner_meet_requirements = true;

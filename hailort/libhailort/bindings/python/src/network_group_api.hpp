@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file network_group_api.hpp
  * @brief Defines binding to network group
@@ -142,17 +142,9 @@ public:
         VALIDATE_STATUS(status);
     }
 
-    hailo_cache_info_t get_cache_info()
+    void update_cache_offset(int32_t offset_delta_entries)
     {
-        auto cache_info = get().get_cache_info();
-        VALIDATE_EXPECTED(cache_info);
-
-        return cache_info.release();
-    }
-
-    void update_cache_offset(int32_t offset_delta_bytes)
-    {
-        auto status = get().update_cache_offset(offset_delta_bytes);
+        auto status = get().update_cache_offset(offset_delta_entries);
         VALIDATE_STATUS(status);
     }
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -292,6 +292,39 @@ size_t VdmaOutputStream::get_max_ongoing_transfers() const
     return m_channel->get_max_ongoing_transfers(m_transfer_size);
 }
 
+Expected<TransferRequest> VdmaOutputStream::align_transfer_request_only_end(TransferRequest &&transfer_request)
+{
+    // Create 2 buffers - one for the aligned part and one for the unaligned part.
+    // The unaligned part will be copied to the bounce buffer and the aligned part will be transferred directly.
+    // The bounce buffer will be kept alive and copied back to the user buffer in the callback.
+    std::vector<TransferBuffer> transfer_buffers;
+    TRY(auto base_buffer, transfer_request.transfer_buffers[0].base_buffer());
+    auto user_buffer_size = transfer_request.transfer_buffers[0].size();
+    auto bounce_buffer_size = user_buffer_size % OsUtils::get_dma_able_alignment();
+    CHECK(bounce_buffer_size > 0, HAILO_INVALID_ARGUMENT, "Buffer size is already aligned");
+    auto aligned_buffer_size = user_buffer_size - bounce_buffer_size;
+
+    if (0 != aligned_buffer_size) {
+        transfer_buffers.emplace_back(MemoryView(base_buffer.data(), aligned_buffer_size));
+    }
+
+    TRY(auto bounce_buffer, Buffer::create_shared(bounce_buffer_size, BufferStorageParams::create_dma())); // TODO: HRT-15660
+    transfer_buffers.emplace_back(MemoryView(bounce_buffer->data(), bounce_buffer_size));
+
+    auto callback = [
+        dst = base_buffer,
+        src = bounce_buffer,
+        user_callback = transfer_request.callback,
+        offset = user_buffer_size - bounce_buffer_size](hailo_status callback_status) mutable {
+            if (HAILO_SUCCESS == callback_status) {
+                memcpy(dst.data() + offset, src->data(), src->size());
+            }
+            user_callback(callback_status);
+    };
+
+    return TransferRequest(std::move(transfer_buffers), callback);
+}
+
 Expected<TransferRequest> VdmaOutputStream::align_transfer_request(TransferRequest &&transfer_request)
 {
     // Allocate a bounce buffer and store it inside the lambda to keep it alive until not needed.
@@ -299,7 +332,7 @@ Expected<TransferRequest> VdmaOutputStream::align_transfer_request(TransferReque
     CHECK_EXPECTED(bounce_buffer_exp);
     auto bounce_buffer = bounce_buffer_exp.release();
 
-    TRY(auto base_buffer, transfer_request.transfer_buffers[0].base_buffer());
+    TRY(auto base_buffer, transfer_request.transfer_buffers[0].base_buffer()); // TODO: HRT-15660
     auto wrapped_callback = [unaligned_user_buffer = base_buffer,
             bounce_buffer=bounce_buffer, user_callback=transfer_request.callback](hailo_status callback_status) {
         memcpy(const_cast<uint8_t*>(unaligned_user_buffer.data()), bounce_buffer->data(), unaligned_user_buffer.size());
@@ -311,7 +344,7 @@ Expected<TransferRequest> VdmaOutputStream::align_transfer_request(TransferReque
 
 hailo_status VdmaOutputStream::read_async_impl(TransferRequest &&transfer_request)
 {
-    if (HAILO_FORMAT_ORDER_HAILO_NMS != m_stream_info.format.order) {
+    if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP != m_stream_info.format.order) {
         // On NMS stream we trace EnqueueD2H inside nms_stream
         transfer_request.callback = [original_callback=transfer_request.callback, d2h_callback=m_d2h_callback, this](hailo_status status) {
             if ((HAILO_SUCCESS == status) && (INVALID_CORE_OP_HANDLE != m_core_op_handle)) {
@@ -326,6 +359,12 @@ hailo_status VdmaOutputStream::read_async_impl(TransferRequest &&transfer_reques
     } else {
         TRY(auto is_request_aligned, transfer_request.is_request_aligned());
         if (is_request_aligned) {
+            bool can_skip_alignment = true; // TODO :change back to false when HRT-15741 is resolved, then implement HRT-15731
+            bool owned_by_user = (StreamBufferMode::OWNING != buffer_mode()); // Buffers owned by HRT are always aligned
+            TRY(auto is_request_end_aligned, transfer_request.is_request_end_aligned());
+            if (owned_by_user && !can_skip_alignment && !is_request_end_aligned) {
+                TRY(transfer_request, align_transfer_request_only_end(std::move(transfer_request)));
+            }
             return m_channel->launch_transfer(std::move(transfer_request));
         } else {
             // In case of read unaligned - don't support using users buffer - so well allocate complete new buffer size of user's buffer
@@ -345,7 +384,8 @@ hailo_status VdmaOutputStream::bind_buffer(TransferRequest &&transfer_request)
     m_channel->remove_buffer_binding();
     if (TransferBufferType::MEMORYVIEW == transfer_request.transfer_buffers[0].type()) {
         TRY(auto is_request_aligned, transfer_request.is_request_aligned());
-        if (!is_request_aligned) {
+        TRY(auto is_request_end_aligned, transfer_request.is_request_end_aligned());
+        if (!is_request_aligned || !is_request_end_aligned) {
             // Best effort, if buffer is not aligned - will program descriptors later
             return HAILO_SUCCESS;
         }

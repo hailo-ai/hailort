@@ -33,11 +33,9 @@ class install_lib(orig_install_lib):
         dst = os.path.join(self.install_dir, "hailo_platform", "pyhailort")
         already_copied = len(glob.glob(f"{dst}/{lib_regex}")) > 0
         if not already_copied:
-            # Windows (nt) adds a <build_type> dir after the build dir, so if DCMAKE_LIBRARY_OUTPUT_DIRECTORY=build,
-            # Windows will put the library in build/<build_type> (e.g. build/Release) while Linux will put it where it was asked
-            build_dir = f"build/{_build_type}" if os.name == "nt" else "build"
-            lib = glob.glob(os.path.join(build_dir, lib_regex))[0]
-            shutil.copy2(lib, dst)
+            current_dir = Path(__file__).parent.absolute()
+            lib = current_dir.rglob(f"*_pyhailort.*{extension}")
+            shutil.copy2(str(next(lib)), dst)
 
         return outfiles
 
@@ -133,7 +131,6 @@ if __name__ == "__main__":
             "future",
             "netaddr",
             "netifaces",
-            "verboselogs",
             "numpy<2",
         ],
         name="hailort",
@@ -149,6 +146,6 @@ if __name__ == "__main__":
             "linux_aarch64",
         ],
         url="https://hailo.ai/",
-        version="4.19.0",
+        version="4.20.0",
         zip_safe=False,
     )

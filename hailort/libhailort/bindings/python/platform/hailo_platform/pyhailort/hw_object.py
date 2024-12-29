@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from hailo_platform.pyhailort.control_object import UdpHcpControl, PcieHcpControl
 from hailo_platform.common.logger.logger import default_logger
 
-from hailo_platform.pyhailort.pyhailort import (ConfiguredNetwork, InternalEthernetDevice, InternalPcieDevice,
+from hailo_platform.pyhailort.pyhailort import (InternalEthernetDevice, InternalPcieDevice,
                                                 HailoRTTransformUtils, HailoUdpScan, HailoRTException, BoardInformation)
 
 
@@ -141,7 +141,6 @@ class HailoHWObject(object):
     def _clear_shapes(self):
         # TODO: SDK should implement in Target
         self._logger.warning("HailoHWObject _clear_shapes function is deprecated! Please use ConfiguredNetwork object.")
-        self._hw_consts = None
 
     @property
     def model_name(self):
@@ -305,20 +304,6 @@ class HailoChipObject(HailoHWObject):
         if len(self._loaded_network_groups) != 1:
             raise HailoHWObjectException("Access to network layer info is only allowed when there is a single loaded network group")
         return self._loaded_network_groups[0]
-
-    def configure(self, hef, configure_params_by_name={}):
-        """Configures target device from HEF object.
-        Args:
-            hef (:class:`~hailo_platform.pyhailort.pyhailort.HEF`): HEF to configure the device from
-            configure_params_by_name (dict, optional): Maps between each net_group_name to configure_params. If not provided, default params will be applied
-        """
-        if self._creation_pid != os.getpid():
-            raise HailoRTException("Device can only be configured from the process it was created in.")
-        configured_apps = self.control.configure(hef, configure_params_by_name)
-        self._hef_loaded = True
-        configured_networks = [ConfiguredNetwork(configured_app) for configured_app in configured_apps]
-        self._loaded_network_groups.extend(configured_networks)
-        return configured_networks
 
     def get_input_shape(self, name=None):
         """Get the input shape (not padded) of a network (deprecated).

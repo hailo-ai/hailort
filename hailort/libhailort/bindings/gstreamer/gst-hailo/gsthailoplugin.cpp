@@ -1,5 +1,5 @@
-/*
- * Copyright (c) 2021-2022 Hailo Technologies Ltd. All rights reserved.
+/**
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the LGPL 2.1 license (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
  *
  * This library is free software; you can redistribute it and/or
@@ -22,7 +22,7 @@
 #include "sync_gst_hailorecv.hpp"
 #include "gsthailonet.hpp"
 #include "gsthailodevicestats.hpp"
-#include "metadata/tensor_meta.hpp"
+#include "tensor_meta.hpp"
 
 static gboolean plugin_init(GstPlugin *plugin)
 {

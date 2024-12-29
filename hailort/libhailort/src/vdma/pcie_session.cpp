@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file pcie_session.cpp
  **/
@@ -11,8 +11,6 @@
 
 namespace hailort
 {
-
-static constexpr uint64_t MAX_ONGOING_TRANSFERS = 128;
 
 Expected<PcieSession> PcieSession::connect(std::shared_ptr<HailoRTDriver> driver, pcie_connection_port_t port)
 {
@@ -44,8 +42,9 @@ Expected<PcieSession> PcieSession::create(std::shared_ptr<HailoRTDriver> driver,
     TRY(auto transfer_launcher, vdma::TransferLauncher::create());
 
     auto create_channel = [&](vdma::ChannelId id, vdma::BoundaryChannel::Direction dir, vdma::DescriptorList &&desc_list) {
+        // TODO: HRT-15701 : remove 4
         return vdma::BoundaryChannel::create(*driver, id, dir, std::move(desc_list), *transfer_launcher,
-            MAX_ONGOING_TRANSFERS);
+            MAX_ONGOING_TRANSFERS - 1, 4 * MAX_ONGOING_TRANSFERS, true);
     };
 
     TRY(auto input_channel, create_channel(input_channel_id, vdma::BoundaryChannel::Direction::H2D, std::move(input_desc_list)));
@@ -61,14 +60,24 @@ Expected<PcieSession> PcieSession::create(std::shared_ptr<HailoRTDriver> driver,
         std::move(input_channel), std::move(output_channel), session_type);
 }
 
+bool PcieSession::is_write_ready(size_t transfer_size) const
+{
+    return m_input->is_ready(transfer_size);
+}
+
 hailo_status PcieSession::write(const void *buffer, size_t size, std::chrono::milliseconds timeout)
 {
-    return launch_transfer_sync(*m_input, const_cast<void *>(buffer), size, timeout);
+    return launch_transfer_sync(*m_input, const_cast<void *>(buffer), size, timeout, m_write_cb_params);
+}
+
+bool PcieSession::is_read_ready(size_t transfer_size) const
+{
+    return m_output->is_ready(transfer_size);
 }
 
 hailo_status PcieSession::read(void *buffer, size_t size, std::chrono::milliseconds timeout)
 {
-    return launch_transfer_sync(*m_output, buffer, size, timeout);
+    return launch_transfer_sync(*m_output, buffer, size, timeout, m_read_cb_params);
 }
 
 hailo_status PcieSession::write_async(const void *buffer, size_t size, std::function<void(hailo_status)> &&callback)
@@ -84,7 +93,9 @@ hailo_status PcieSession::read_async(void *buffer, size_t size, std::function<vo
 hailo_status PcieSession::close()
 {
     hailo_status status = HAILO_SUCCESS; // Success orietnted
-    if (!m_should_close) {
+    if (m_should_close.exchange(false)) {
+        LOGGER__TRACE("Closing session now");
+    } else {
         return status;
     }
 
@@ -115,31 +126,20 @@ hailo_status PcieSession::close()
         status = stop_status;
     }
 
-    m_should_close = false;
     return status;
 }
 
-uint64_t PcieSession::max_transfer_size()
-{
-    // The max transfer size, is the size feet in MAX_SG_DESCS_COUNT -1.
-    // We don't use the last 8 descritpors to max sure max_transfer_size is aligened to 4K
-    return vdma::DEFAULT_SG_PAGE_SIZE * (MAX_SG_DESCS_COUNT - 8);
-}
-
 hailo_status PcieSession::launch_transfer_sync(vdma::BoundaryChannel &channel,
-    void *buffer, size_t size, std::chrono::milliseconds timeout)
+    void *buffer, size_t size, std::chrono::milliseconds timeout, CbParams &cb_params)
 {
-    std::mutex mutex;
-    std::condition_variable cv;
-    hailo_status transfer_status = HAILO_UNINITIALIZED;
-    auto callback = [&](hailo_status status) mutable {
-        // TODO: HRT-14965 - when the wait_for returns on timeout, this reference capture will be invalid and cause a SEGFAULT
+    cb_params.status = HAILO_UNINITIALIZED;
+    auto callback = [&cb_params](hailo_status status) mutable {
         {
-            std::unique_lock<std::mutex> lock(mutex);
+            std::unique_lock<std::mutex> lock(cb_params.mutex);
             assert(status != HAILO_UNINITIALIZED);
-            transfer_status = status;
+            cb_params.status = status;
         }
-        cv.notify_one();
+        cb_params.cv.notify_one();
     };
 
     auto status = launch_transfer_async(channel, buffer, size, std::move(callback));
@@ -148,10 +148,10 @@ hailo_status PcieSession::launch_transfer_sync(vdma::BoundaryChannel &channel,
     }
     CHECK_SUCCESS(status);
 
-    std::unique_lock<std::mutex> lock(mutex);
-    CHECK(cv.wait_for(lock, timeout, [&] { return transfer_status != HAILO_UNINITIALIZED; }),
+    std::unique_lock<std::mutex> lock(cb_params.mutex);
+    CHECK(cb_params.cv.wait_for(lock, timeout, [&] { return cb_params.status != HAILO_UNINITIALIZED; }),
         HAILO_TIMEOUT, "Timeout waiting for transfer completion");
-    return transfer_status;
+    return cb_params.status;
 }
 
 hailo_status PcieSession::launch_transfer_async(vdma::BoundaryChannel &channel,

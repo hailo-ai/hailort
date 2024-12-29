@@ -3,8 +3,6 @@ cmake_minimum_required(VERSION 3.5.0)
 include(GNUInstallDirs)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/cli11.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/json.cmake)
-include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/spdlog.cmake)
-include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/readerwriterqueue.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/dotwriter.cmake)
 
 set(HAILORTCLI_CPP_FILES
@@ -56,11 +54,9 @@ configure_file(${CONFIG_DEFENITIONS_IN} ${config_definitions_header})
 add_executable(hailortcli
     ${config_definitions_header}
     ${HAILORTCLI_CPP_FILES}
-    ${HAILORT_COMMON_CPP_SOURCES}
     ${PROJECT_SOURCE_DIR}/common/src/firmware_header_utils.c
     ${PROJECT_SOURCE_DIR}/common/src/md5.c
     ${HAILORT_SRC_DIR}/net_flow/pipeline/pipeline.cpp # TODO: link dynamically with libhailort
-    ${HAILO_FULL_OS_DIR}/event.cpp # TODO: link dynamically with libhailort
 )
 
 target_compile_options(hailortcli PRIVATE ${HAILORT_COMPILE_OPTIONS})
@@ -74,20 +70,14 @@ target_link_libraries(hailortcli
     libhailort
     CLI11::CLI11
     nlohmann_json
-    spdlog::spdlog
-    readerwriterqueue
+    hailort_common
     eigen
     DotWriter
     scheduler_mon_proto
     profiler_proto)
 
 if(WIN32)
-    target_link_libraries(hailortcli Ws2_32 Iphlpapi Shlwapi winmm.lib)
-elseif(CMAKE_SYSTEM_NAME STREQUAL QNX)
-    include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/pevents.cmake)
-    target_link_libraries(hailortcli pevents)
-elseif(NOT CMAKE_SYSTEM_NAME STREQUAL Android)
-    target_link_libraries(hailortcli rt)
+    target_link_libraries(hailortcli winmm.lib) # Used for timeBeginPeriod, timeEndPeriod
 endif()
 
 target_include_directories(hailortcli

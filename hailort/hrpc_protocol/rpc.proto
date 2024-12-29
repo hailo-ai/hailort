@@ -25,6 +25,12 @@ message RpcRequest {
         Device_Destroy_Request destroy_device_request = 16;
         Device_Identify_Request identify_device_request = 17;
         Device_ExtendedInfo_Request extended_device_info_request = 18;
+        Device_GetChipTemperature_Request get_chip_temperature_request = 19;
+        Device_PowerMeasurement_Request power_measurement_request = 20;
+        Device_SetPowerMeasurement_Request set_power_measurement_request = 21;
+        Device_StartPowerMeasurement_Request start_power_measurement_request = 22;
+        Device_GetPowerMeasurement_Request get_power_measurement_request = 23;
+        Device_StopPowerMeasurement_Request stop_power_measurement_request = 24;
     }
 }
 
@@ -51,9 +57,15 @@ message RpcReply {
         Device_Destroy_Reply destroy_device_reply = 16;
         Device_Identify_Reply identify_device_reply = 17;
         Device_ExtendedInfo_Reply extended_device_info_reply = 18;
+        Device_GetChipTemperature_Reply get_chip_temperature_reply = 19;
+        Device_PowerMeasurement_Reply power_measurement_reply = 20;
+        Device_SetPowerMeasurement_Reply set_power_measurement_reply = 21;
+        Device_StartPowerMeasurement_Reply start_power_measurement_reply = 22;
+        Device_GetPowerMeasurement_Reply get_power_measurement_reply = 23;
+        Device_StopPowerMeasurement_Reply stop_power_measurement_reply = 24;
 
         // Here comes replies that have no matching requests
-        CallbackCalled_Reply callback_called_reply = 19;
+        CallbackCalled_Reply callback_called_reply = 100;
     }
 }
 
@@ -115,6 +127,7 @@ message InferStreamParamsProto {
     float nms_iou_threshold = 5;
     uint32 nms_max_proposals_per_class = 6;
     uint32 nms_max_accumulated_mask_size = 7;
+    uint32 nms_max_proposals_total = 8;
 };
 
 message InferModel_CreateConfiguredInferModel_Request {
@@ -252,7 +265,7 @@ enum DeviceArchitectureProto {
     HAILO8 = 1;
     HAILO8L = 2;
     HAILO15H = 3;
-    PLUTO = 4;
+    HAILO15L = 4;
     HAILO15M = 5;
     HAILO10H = 6;
 }
@@ -304,4 +317,72 @@ message Device_ExtendedInfo_Reply {
     repeated uint32 eth_mac_address = 7;
     repeated uint32 unit_level_tracking_id = 8;
     repeated uint32 soc_pm_values = 9;
+}
+
+message Device_GetChipTemperature_Request {
+    HailoObjectHandle device_handle = 1;
+}
+
+message Device_GetChipTemperature_Reply {
+    uint32 status = 1;
+    float ts0_temperature = 2;
+    float ts1_temperature = 3;
+    uint32 sample_count = 4;
+}
+
+message Device_PowerMeasurement_Request {
+    HailoObjectHandle device_handle = 1;
+    uint32 hailo_dvm_options = 2; /* corresponds to hailo_dvm_options_t */
+    uint32 hailo_power_measurement_type = 3; /* corresponds to hailo_power_measurement_type_t */
+}
+
+message Device_PowerMeasurement_Reply {
+    uint32 status = 1;
+    float power = 2;
+}
+
+message Device_SetPowerMeasurement_Request {
+    HailoObjectHandle device_handle = 1;
+    uint32 hailo_dvm_options = 2; /* corresponds to hailo_dvm_options_t */
+    uint32 hailo_power_measurement_type = 3; /* corresponds to hailo_power_measurement_type_t */
+}
+
+message Device_SetPowerMeasurement_Reply {
+    uint32 status = 1;
+}
+
+message Device_StartPowerMeasurement_Request {
+    HailoObjectHandle device_handle = 1;
+    uint32 averaging_factor = 2; /* corresponds to hailo_averaging_factor_t */
+    uint32 sampling_period = 3; /* corresponds to hailo_sampling_period_t */
+}
+
+message Device_StartPowerMeasurement_Reply {
+    uint32 status = 1;
+}
+
+message Device_GetPowerMeasurement_Request {
+    HailoObjectHandle device_handle = 1;
+    bool should_clear = 2;
+}
+
+message HailoPowerMeasurementData {
+    float average_value = 1;
+    float average_time_value_milliseconds = 2;
+    float min_value = 3;
+    float max_value = 4;
+    uint32 total_number_of_samples = 5;
+}
+
+message Device_GetPowerMeasurement_Reply {
+    uint32 status = 1;
+    HailoPowerMeasurementData data = 2;
+}
+
+message Device_StopPowerMeasurement_Request {
+    HailoObjectHandle device_handle = 1;
+}
+
+message Device_StopPowerMeasurement_Reply {
+    uint32 status = 1;
 }

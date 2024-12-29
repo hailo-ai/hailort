@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -22,13 +22,13 @@ public:
 
     virtual hailo_status run_push(PipelineBuffer &&buffer, const PipelinePad &sink) override;
     virtual void run_push_async(PipelineBuffer &&buffer, const PipelinePad &sink) override;
+    virtual void run_push_async_multi(std::vector<PipelineBuffer> &&buffers) override;
     virtual Expected<PipelineBuffer> run_pull(PipelineBuffer &&optional, const PipelinePad &source) override;
 
 protected:
     BaseMuxElement(size_t sink_count, const std::string &name, std::chrono::milliseconds timeout,
         DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
-        PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline,
-        hailo_status &status);
+        PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline);
     virtual hailo_status execute_terminate(hailo_status error_status) override;
     virtual Expected<PipelineBuffer> action(std::vector<PipelineBuffer> &&inputs, PipelineBuffer &&optional) = 0;
     virtual std::vector<PipelinePad*> execution_pads() override;
@@ -41,11 +41,8 @@ protected:
     std::chrono::milliseconds m_timeout;
 
 private:
-    std::mutex m_mutex;
     std::unordered_map<std::string, uint32_t> m_sink_name_to_index;
-    std::unordered_map<std::string, PipelineBuffer> m_input_buffers;
     std::vector<PipelinePad*> m_next_pads;
-    BarrierPtr m_barrier;
 };
 
 class NmsPostProcessMuxElement : public BaseMuxElement
@@ -67,12 +64,12 @@ public:
     NmsPostProcessMuxElement(std::shared_ptr<net_flow::Op> nms_op, const std::string &name,
         std::chrono::milliseconds timeout, DurationCollector &&duration_collector,
         std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, PipelineDirection pipeline_direction,
-        std::shared_ptr<AsyncPipeline> async_pipeline,  hailo_status &status);
+        std::shared_ptr<AsyncPipeline> async_pipeline);
     virtual std::string description() const override;
 
-    void add_sink_name(const std::string &name) // TODO: remove this (HRT-8875)
+    void add_sink_name(const std::string &name, uint32_t index)
     {
-        m_sinks_names.push_back(name);
+        m_sinks_names[index] = name;
     }
 
     std::shared_ptr<net_flow::Op> get_op() { return m_nms_op; }
@@ -100,6 +97,17 @@ public:
         auto nms_metadata = std::dynamic_pointer_cast<net_flow::NmsOpMetadata>(get_op()->metadata());
         assert(nullptr != nms_metadata);
         nms_metadata->nms_config().max_proposals_per_class = max_proposals_per_class;
+        nms_metadata->nms_config().order_type = HAILO_NMS_RESULT_ORDER_BY_CLASS;
+
+        return HAILO_SUCCESS;
+    }
+
+    virtual hailo_status set_nms_max_proposals_total(uint32_t max_proposals_total)
+    {
+        auto nms_metadata = std::dynamic_pointer_cast<net_flow::NmsOpMetadata>(get_op()->metadata());
+        assert(nullptr != nms_metadata);
+        nms_metadata->nms_config().max_proposals_total = max_proposals_total;
+        nms_metadata->nms_config().order_type = HAILO_NMS_RESULT_ORDER_BY_SCORE;
 
         return HAILO_SUCCESS;
     }
@@ -118,7 +126,7 @@ protected:
 
 private:
     std::shared_ptr<net_flow::Op> m_nms_op;
-    std::vector<std::string> m_sinks_names; // TODO: remove this (HRT-8875)
+    std::vector<std::string> m_sinks_names;
 };
 
 class NmsMuxElement : public BaseMuxElement
@@ -137,7 +145,7 @@ public:
         std::shared_ptr<AsyncPipeline> async_pipeline = nullptr);
     NmsMuxElement(const std::vector<hailo_nms_info_t> &nms_infos, const hailo_nms_info_t &fused_nms_info, const std::string &name,
         std::chrono::milliseconds timeout, DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
-        PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline, hailo_status &status);
+        PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline);
     const hailo_nms_info_t &get_fused_nms_info() const;
 
 protected:

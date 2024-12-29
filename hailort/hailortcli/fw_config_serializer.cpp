@@ -12,7 +12,7 @@
 #include "hailo/hailort.h"
 #include "user_config_common.h"
 #include "common/file_utils.hpp"
-#include "common/string_utils.hpp"
+#include "common/utils.hpp"
 
 #include <fstream>
 #include <sstream>

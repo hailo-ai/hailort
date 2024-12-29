@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -116,15 +116,9 @@ public:
         VALIDATE_EXPECTED(network_groups);
 
         py::list results;
-        m_net_groups.reserve(m_net_groups.size() + network_groups->size());
         for (const auto &network_group : network_groups.value()) {
-
-            // Since the pybind's ConfiguredNetworkGroupWrapper doesnt hold the cng (weak ptr), we need to keep it alive in the vdevice scope
-            VALIDATE_STATUS(m_vdevice->add_network_group_ref_count(network_group));
-
-            auto wrapper = ConfiguredNetworkGroupWrapper::create(network_group);
-            results.append(wrapper);
-            m_net_groups.emplace_back(wrapper);
+            m_net_groups.emplace_back(network_group);
+            results.append(ConfiguredNetworkGroupWrapper::create(network_group));
         }
 
         return results;
@@ -156,7 +150,13 @@ public:
 
 private:
     std::unique_ptr<VDevice> m_vdevice;
-    std::vector<ConfiguredNetworkGroupWrapperPtr> m_net_groups;
+
+    // Keeping the network groups object alive.
+    // The ConfiguredNetworkGroupWrapper holds a weak_ptr to the ConfiguredNetworkGroup since it is released by the
+    // garbage collector (can be after the VDevice is released).
+    // (When working with pickle on multi-process, The ConfiguredNetworkGroupWrapper may also hold a shared_ptr to the
+    // ConfiguredNetworkGroup. Read more on ConfiguredNetworkGroupWrapper).
+    std::vector<std::shared_ptr<ConfiguredNetworkGroup>> m_net_groups;
     bool m_is_using_service;
 
 #ifdef HAILO_IS_FORK_SUPPORTED

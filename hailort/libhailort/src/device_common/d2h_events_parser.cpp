@@ -1,21 +1,7 @@
-/* 
- * =============================================================================
- *
- *                               HAILO
- *
- *  Property of HAILO Tech
- *  For Unrestricted Internal Use Only
- *  Unauthorized reproduction and/or distribution is strictly prohibited.
- *  This product is protected under copyright law and trade secret law
- *  Created 2018, (C) Copyright 2018 Hailo Tech .  All rights reserved.
- *  as an unpublished work.
- */
 /**
-*   Filename:      d2h_events_parser.c
-*
-*   Description:   Implements parsing device to host notifications.
-*
-*=============================================================================*/
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Distributed under the MIT license (https://opensource.org/licenses/MIT)
+ **/
 
 #include <stdint.h>
 #include <string.h>

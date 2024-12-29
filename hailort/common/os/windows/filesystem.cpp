@@ -243,4 +243,13 @@ bool Filesystem::does_file_exists(const std::string &path)
     return ((GetFileAttributes(path.c_str()) != INVALID_FILE_ATTRIBUTES) && (GetLastError() == ERROR_FILE_NOT_FOUND));
 }
 
+Expected<std::string> Filesystem::get_temp_path()
+{
+    char temp_path[MAX_PATH + 1];
+    DWORD path_len = GetTempPathA(MAX_PATH + 1, temp_path);
+    CHECK_AS_EXPECTED(path_len > 0 && path_len <= (MAX_PATH + 1), HAILO_FILE_OPERATION_FAILURE,
+        "Failed to get temporary directory path");
+    return std::string(temp_path);
+}
+
 } /* namespace hailort */

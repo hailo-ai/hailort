@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -7,7 +7,7 @@
  * @brief Utilities for sensor_config operations
  **/
 
-#include "common/string_utils.hpp"
+#include "common/utils.hpp"
 #include "common/utils.hpp"
 
 #include "utils/sensor_config_utils.hpp"

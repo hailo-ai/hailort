@@ -208,6 +208,12 @@ public:
     virtual grpc::Status ConfiguredNetworkGroup_set_nms_max_bboxes_per_class(grpc::ServerContext*,
         const ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Request *request,
         ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_set_nms_max_bboxes_total(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_set_nms_max_bboxes_total_Request *request,
+        ConfiguredNetworkGroup_set_nms_max_bboxes_total_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_set_nms_result_order_type(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_set_nms_result_order_type_Request *request,
+        ConfiguredNetworkGroup_set_nms_result_order_type_Reply *reply) override;
     virtual grpc::Status ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size(grpc::ServerContext*,
         const ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Request *request,
         ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Reply *reply) override;
@@ -234,8 +240,9 @@ private:
     Expected<std::vector<hailo_stream_info_t>> get_all_stream_infos(uint32_t ng_handle);
     Expected<std::vector<hailo_vstream_info_t>> get_all_vstream_infos(uint32_t ng_handle);
     Expected<std::string> output_vstream_name(uint32_t vstream_handle);
-    hailo_status create_buffer_pools_for_ng(uint32_t vdevice_handle, uint32_t ng_handle, uint32_t request_pid,
-        bool allocate_for_raw_streams);
+    Expected<uint32_t> create_buffer_pool_for_ng(uint32_t vdevice_handle, uint32_t request_pid);
+    hailo_status allocate_pool_for_raw_streams(uint32_t ng_handle);
+    void release_resources_on_error(std::vector<uint32_t> ng_handles, std::vector<uint32_t> buffer_pool_handles, uint32_t pid);
     Expected<NamedBuffersCallbacks> prepare_named_buffers_callbacks(uint32_t vdevice_handle,
         uint32_t ng_handle, std::shared_ptr<ConfiguredNetworkGroup_infer_async_Request> infer_async_request);
     hailo_status add_input_named_buffer(const ProtoTransferRequest &proto_stream_transfer_request, uint32_t vdevice_handle,

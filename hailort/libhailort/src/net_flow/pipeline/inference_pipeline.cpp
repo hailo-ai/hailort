@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -374,11 +374,11 @@ hailo_status InferVStreams::set_nms_iou_threshold(float32_t threshold)
 hailo_status InferVStreams::set_nms_max_proposals_per_class(uint32_t max_proposals_per_class)
 {
     // Check that we have NMS outputs in the model
-    auto has_nms_output = std::any_of(m_outputs.begin(), m_outputs.end(), [](const auto &vs)
+    auto has_nms_by_class_output = std::any_of(m_outputs.begin(), m_outputs.end(), [](const auto &vs)
     {
-        return HailoRTCommon::is_nms(vs.get_info());
+        return ((HailoRTCommon::is_nms(vs.get_info())) && (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE != vs.get_info().format.order));
     });
-    CHECK(has_nms_output, HAILO_INVALID_OPERATION, "'set_nms_max_proposals_per_class()' is called, but there is no NMS output in this model.");
+    CHECK(has_nms_by_class_output, HAILO_INVALID_OPERATION, "'set_nms_max_proposals_per_class()' is called, but there is no NMS ordered by class output in this model.");
 
     for (auto &ouput_vstream : m_outputs) {
         if (HailoRTCommon::is_nms(ouput_vstream.get_info())) {

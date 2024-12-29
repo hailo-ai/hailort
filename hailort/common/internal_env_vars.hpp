@@ -33,19 +33,28 @@ namespace hailort
 /* Forces the hrpc-server to use socket-based communication on a specific address. if not set, socket communicaiton wont be used. */
 #define HAILO_SOCKET_COM_ADDR_SERVER_ENV_VAR ("HAILO_SOCKET_COM_ADDR_SERVER")
 
+/* Forces Hailo session based on socket to use a specific device. This env var should be set to the iface name (i.e eth0)  */
+#define HAILO_SOCKET_BIND_TO_INTERFACE_ENV_VAR ("HAILO_SOCKET_BIND_TO_INTERFACE")
+
 /* HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR and HAILO_SOCKET_COM_ADDR_SERVER_ENV_VAR can be set to either ip:port ("X.X.X.X:P"),
     or to HAILO_SOCKET_COM_ADDR_UNIX_SOCKET which forces working with unix-socket*/
 #define HAILO_SOCKET_COM_ADDR_UNIX_SOCKET ("localhost")
 
+/* Overrides hRPC requests timeout. value in seconds */
+#define HAILO_REQUEST_TIMEOUT_SECONDS ("HAILO_REQUEST_TIMEOUT_SECONDS")
 
 /* General */
 
 /* Defines whether the offset of the kv cache will be updated automatically or not.
     can be set to either HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR_DEFAULT or
-     HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR_DISABLED, or to a numeric value defining the offset update value in bytes`*/
+    HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR_DISABLED, or to a numeric value defining the offset update value in entries`*/
 #define HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR ("HAILORT_AUTO_UPDATE_CACHE_OFFSET")
 #define HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR_DEFAULT ("default")
 #define HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR_DISABLED ("disabled")
+
+/* Corresponds to CacheManager::update_cache_offset(check_snapshots, require_changes) */
+#define HAILORT_CHECK_CACHE_UPDATE_ENV_VAR ("HAILORT_CHECK_CACHE_UPDATE")
+#define HAILORT_REQUIRE_CACHE_CHANGES_ENV_VAR ("HAILORT_REQUIRE_CACHE_CHANGES")
 
 /* Used for the internal CLI mode `measure-nnc-performance` */
 #define HAILO_CONFIGURE_FOR_HW_INFER_ENV_VAR ("HAILO_CONFIGURE_FOR_HW_INFER")

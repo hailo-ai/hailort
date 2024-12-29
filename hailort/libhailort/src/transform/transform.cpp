@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -108,6 +108,8 @@ bool TransformContextUtils::should_reorder(const hailo_3d_image_shape_t &src_ima
                 return true;
             }
         case HAILO_FORMAT_ORDER_HAILO_NMS:
+        case HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS:
+        case HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE:
             return true;
         default:
             return false;
@@ -1770,7 +1772,7 @@ Expected<std::unique_ptr<OutputTransformContext>> OutputTransformContext::create
             "quant_info is invalid as the model was compiled with multiple quant_infos. Please compile again or provide a vector of quant_infos.");
     }
 
-    if (HAILO_FORMAT_ORDER_HAILO_NMS == src_format.order) {
+    if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == src_format.order) {
         return NMSOutputTransformContext::create(src_format, dst_format, dst_quant_infos, nms_info);
     }
 
@@ -1921,16 +1923,16 @@ Expected<std::unique_ptr<OutputTransformContext>> NMSOutputTransformContext::cre
     const hailo_format_t &dst_format, const std::vector<hailo_quant_info_t> &dst_quant_infos, const hailo_nms_info_t &nms_info)
 {
     // Validate params
-    CHECK_AS_EXPECTED(HAILO_FORMAT_ORDER_HAILO_NMS == src_format.order, HAILO_INVALID_ARGUMENT,
-        "Format order should be HAILO_FORMAT_ORDER_HAILO_NMS");
+    CHECK_AS_EXPECTED(HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == src_format.order, HAILO_INVALID_ARGUMENT,
+        "Format order should be HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP");
 
     const auto internal_dst_format = HailoRTDefaults::expand_auto_format(dst_format, src_format);
 
-    CHECK_AS_EXPECTED(HAILO_FORMAT_ORDER_HAILO_NMS == internal_dst_format.order, HAILO_INVALID_ARGUMENT,
-        "Format order should be HAILO_FORMAT_ORDER_HAILO_NMS");
+    CHECK_AS_EXPECTED((HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS == internal_dst_format.order) || (HAILO_FORMAT_ORDER_HAILO_NMS == internal_dst_format.order),
+        HAILO_INVALID_ARGUMENT, "Format order should be HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS");
 
     CHECK_AS_EXPECTED(HAILO_FORMAT_TYPE_FLOAT32 == internal_dst_format.type, HAILO_INVALID_ARGUMENT,
-        "Format order HAILO_FORMAT_ORDER_HAILO_NMS only supports format type of HAILO_FORMAT_TYPE_FLOAT32");
+        "Format type of HAILO_FORMAT_TYPE_FLOAT32");
 
     const auto src_frame_size = HailoRTCommon::get_nms_hw_frame_size(nms_info);
     auto dst_frame_size = HailoRTCommon::get_nms_host_frame_size(nms_info, internal_dst_format);
@@ -1977,7 +1979,10 @@ hailo_status NMSOutputTransformContext::transform(const MemoryView src, MemoryVi
     CHECK(dst.size() == m_dst_frame_size, HAILO_INVALID_ARGUMENT,
         "dst_size must be {}. passed size - {}", m_dst_frame_size, dst.size());
 
-    assert((HAILO_FORMAT_ORDER_HAILO_NMS == m_src_format.order) && (HAILO_FORMAT_ORDER_HAILO_NMS == m_dst_format.order));
+    CHECK(((HAILO_FORMAT_ORDER_HAILO_NMS == m_dst_format.order)|| (HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS == m_dst_format.order)),
+        HAILO_INVALID_ARGUMENT, "Wrong format order {}", HailoRTCommon::get_format_order_str(m_dst_format.order));
+
+    assert(HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == m_src_format.order);
 
     auto shape_size = HailoRTCommon::get_nms_host_shape_size(m_nms_info);
 
@@ -2082,7 +2087,7 @@ Expected<std::unique_ptr<OutputDemuxer>> OutputDemuxer::create(OutputStream &out
 Expected<OutputDemuxerBase> OutputDemuxerBase::create(size_t src_frame_size, const LayerInfo &layer_info)
 {
     // Validate params
-    CHECK_AS_EXPECTED((HAILO_FORMAT_ORDER_HAILO_NMS != layer_info.format.order), HAILO_INVALID_OPERATION,
+    CHECK_AS_EXPECTED((HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP != layer_info.format.order), HAILO_INVALID_OPERATION,
         "NMS layer does not support mux.");
 
     auto mux_infos = get_mux_infos_from_layer_info(layer_info);

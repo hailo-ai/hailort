@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -39,10 +39,10 @@ public:
 
     static Expected<BoundaryChannelPtr> create(HailoRTDriver &driver, vdma::ChannelId channel_id, Direction direction,
         vdma::DescriptorList &&desc_list, TransferLauncher &transfer_launcher, size_t ongoing_transfers,
-        size_t pending_transfers = 0, const std::string &stream_name = "", LatencyMeterPtr latency_meter = nullptr);
+        size_t pending_transfers = 0, bool split_transfer = false, const std::string &stream_name = "", LatencyMeterPtr latency_meter = nullptr);
 
     BoundaryChannel(HailoRTDriver &driver, vdma::ChannelId channel_id, Direction direction, DescriptorList &&desc_list,
-        TransferLauncher &transfer_launcher, size_t ongoing_transfers_queue_size, size_t pending_transfers_queue_size,
+        TransferLauncher &transfer_launcher, size_t ongoing_transfers_queue_size, size_t pending_transfers_queue_size, bool split_transfer,
         const std::string &stream_name, LatencyMeterPtr latency_meter, hailo_status &status);
     BoundaryChannel(const BoundaryChannel &other) = delete;
     BoundaryChannel &operator=(const BoundaryChannel &other) = delete;
@@ -102,6 +102,11 @@ public:
 
     void remove_buffer_binding();
 
+    /**
+     * Checks if the channel is ready to accept a new transfer of the given size.
+     */
+    bool is_ready(size_t transfer_size) const;
+
 private:
     hailo_status update_latency_meter();
 
@@ -115,6 +120,11 @@ private:
 
     Expected<bool> should_bind_buffer(TransferRequest &transfer_request);
     static Expected<bool> is_same_buffer(MappedBufferPtr mapped_buff, TransferBuffer &transfer_buffer);
+    std::vector<TransferRequest> split_messages(TransferRequest &&transfer_request);
+
+    size_t get_chunk_size() const;
+
+    uint16_t free_descs();
 
     const vdma::ChannelId m_channel_id;
     const Direction m_direction;
@@ -155,6 +165,9 @@ private:
 
     // When bind_buffer is called, we keep a reference to the buffer here. This is used to avoid buffer bindings.
     std::shared_ptr<MappedBuffer> m_bounded_buffer;
+    bool m_split_transfer;
+
+    static constexpr uint32_t OPTIMAL_CHUNKS_DIVISION_FACTOR = 4;
 };
 
 } /* namespace vdma */

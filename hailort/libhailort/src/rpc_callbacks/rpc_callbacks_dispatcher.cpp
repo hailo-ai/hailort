@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file rpc_callbacks_dispatcher.cpp
  * @brief Implementation of the dispatcher and the callbacks queue
@@ -12,13 +12,25 @@
 namespace hailort
 {
 
-AsyncInferJobHrpcClient::AsyncInferJobHrpcClient(EventPtr event) : m_event(event)
+AsyncInferJobHrpcClient::AsyncInferJobHrpcClient(EventPtr event) : m_event(event), m_job_status(HAILO_UNINITIALIZED)
 {
 }
 
 hailo_status AsyncInferJobHrpcClient::wait(std::chrono::milliseconds timeout)
 {
-    return m_event->wait(timeout);
+    auto status = m_event->wait(timeout);
+    if (HAILO_UNINITIALIZED != m_job_status) {
+        return m_job_status;
+    }
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status AsyncInferJobHrpcClient::set_status(hailo_status status)
+{
+    m_job_status = status;
+    return m_event->signal();
 }
 
 CallbacksQueue::CallbacksQueue(const std::vector<std::string> &outputs_names) : m_outputs_names(outputs_names)
@@ -56,14 +68,39 @@ CallbacksQueue::CallbacksQueue(const std::vector<std::string> &outputs_names) : 
     });
 }
 
-CallbacksQueue::~CallbacksQueue()
+hailo_status CallbacksQueue::shutdown(hailo_status status)
 {
+    if (!m_is_running) {
+        return HAILO_SUCCESS;
+    }
+
     {
         std::unique_lock<std::mutex> lock(m_mutex);
         m_is_running = false;
+
+        for (const auto &callback : m_callbacks) {
+            m_callbacks_status.erase(callback.first);
+            m_bindings.erase(callback.first);
+            AsyncInferCompletionInfo info(status);
+            callback.second(info);
+        }
+        m_callbacks.clear();
     }
     m_cv.notify_one();
-    m_callback_thread.join();
+
+    return HAILO_SUCCESS;
+}
+
+CallbacksQueue::~CallbacksQueue()
+{
+    auto status = shutdown(HAILO_COMMUNICATION_CLOSED);
+    if (HAILO_SUCCESS != status) {
+        LOGGER__CRITICAL("Failed to shutdown callbacks dispatcher, status = {}", status);
+    }
+
+    if (m_callback_thread.joinable()) {
+        m_callback_thread.join();
+    }
 }
 
 Expected<std::shared_ptr<AsyncInferJobHrpcClient>> CallbacksQueue::register_callback(callback_id_t id,
@@ -77,11 +114,11 @@ Expected<std::shared_ptr<AsyncInferJobHrpcClient>> CallbacksQueue::register_call
         m_bindings[id] = bindings;
         m_callbacks_status[id] = HAILO_SUCCESS;
         m_callbacks[id] = [callback, event_ptr] (const AsyncInferCompletionInfo &info) {
+            callback(info);
             auto status = event_ptr->signal();
             if (HAILO_SUCCESS != status) {
                 LOGGER__CRITICAL("Could not signal event! status = {}", status);
             }
-            callback(info);
         };
     }
     m_cv.notify_one();
@@ -93,7 +130,7 @@ Expected<std::shared_ptr<AsyncInferJobHrpcClient>> CallbacksQueue::register_call
 }
 
 hailo_status CallbacksQueue::push_callback(hailo_status callback_status, rpc_object_handle_t callback_handle_id,
-    hrpc::RpcConnection connection)
+    RpcConnection connection)
 {
     {
         std::unique_lock<std::mutex> lock(m_mutex);

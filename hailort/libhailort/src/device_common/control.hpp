@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -346,8 +346,6 @@ public:
         const std::vector<CONTROL_PROTOCOL__context_switch_context_info_chunk_t> &context_infos);
     static hailo_status context_switch_set_network_group_header(Device &device,
         const CONTROL_PROTOCOL__application_header_t &network_group_header);
-    static hailo_status context_switch_init_cache_info(Device &device, const CONTROL_PROTOCOL__context_switch_cache_info_t &cache_info);
-    static Expected<CONTROL_PROTOCOL__context_switch_cache_info_t> context_switch_get_cache_info(Device &device);
     static hailo_status context_switch_update_cache_read_offset(Device &device, int32_t read_offset_delta);
     static hailo_status context_switch_signal_cache_updated(Device &device);
     static hailo_status wd_enable(Device &device, uint8_t cpu_id, bool should_enable);
@@ -356,7 +354,7 @@ public:
     static hailo_status clear_configured_apps(Device &device);
     static hailo_status get_chip_temperature(Device &device, hailo_chip_temperature_info_t *temp_info);
     static hailo_status enable_debugging(Device &device, bool is_rma);
-    
+
     static hailo_status config_context_switch_breakpoint(Device &device, uint8_t breakpoint_id,
             CONTROL_PROTOCOL__context_switch_breakpoint_control_t breakpoint_control,
             CONTROL_PROTOCOL__context_switch_breakpoint_data_t *breakpoint_data);

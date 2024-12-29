@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -13,6 +13,8 @@
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
 #include "hailo/hailort_defaults.hpp"
+
+#include "utils/shared_resource_manager.hpp"
 
 #include "common/async_thread.hpp"
 #include "common/os_utils.hpp"
@@ -28,9 +30,19 @@ namespace hailort
 class HailoRtRpcClientUtils final
 {
 public:
-    static HailoRtRpcClientUtils& get_instance()
+    static Expected<std::shared_ptr<HailoRtRpcClientUtils>> create_shared()
     {
-        static HailoRtRpcClientUtils instance;
+        auto ptr = make_shared_nothrow<HailoRtRpcClientUtils>();
+        CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+        return ptr;
+    }
+
+    static Expected<std::shared_ptr<HailoRtRpcClientUtils>> get_instance(uint32_t handle)
+    {
+        auto &manager = SharedResourceManager<std::string, HailoRtRpcClientUtils>::get_instance();
+        TRY(auto instance, manager.resource_lookup(handle));
+
         return instance;
     }
 
@@ -43,6 +55,16 @@ public:
         }
     }
 
+    static void decrease_ref_count(uint32_t handle)
+    {
+        SharedResourceManager<std::string, HailoRtRpcClientUtils>::get_instance().release_resource(handle);
+    }
+
+    ~HailoRtRpcClientUtils()
+    {
+        stop_keep_alive_thread();
+    }
+
     static Expected<std::unique_ptr<HailoRtRpcClient>> create_client()
     {
         auto channel = grpc::CreateChannel(hailort::HAILORT_SERVICE_ADDRESS, grpc::InsecureChannelCredentials());
@@ -52,7 +74,57 @@ public:
         return client;
     }
 
-    hailo_status init_client_service_communication()
+    static Expected<uint32_t> init_client_service_communication()
+    {
+        TRY(auto handle, get_handle());
+        TRY(auto instance, get_instance(handle));
+        CHECK_EXPECTED(instance->init_client_service_communication_impl());
+
+        return handle;
+    }
+
+    void before_fork()
+    {
+        stop_keep_alive_thread();
+    }
+
+    hailo_status after_fork_in_parent()
+    {
+        m_keep_alive_shutdown_event->reset();
+        std::unique_lock<std::mutex> lock(*m_mutex);
+        if (m_initialized) {
+            return start_keep_alive_thread();
+        }
+        return HAILO_SUCCESS;
+    }
+
+    hailo_status after_fork_in_child()
+    {
+        m_mutex = std::make_shared<std::mutex>();
+        auto status = init_keep_alive_shutdown_event();
+        CHECK_SUCCESS(status);
+
+        std::unique_lock<std::mutex> lock(*m_mutex);
+        if (m_initialized) {
+            m_pid = OsUtils::get_curr_pid();
+            return start_keep_alive_thread();
+        }
+        return HAILO_SUCCESS;
+    }
+
+private:
+    static Expected<uint32_t> get_handle()
+    {
+        auto &manager = SharedResourceManager<std::string, HailoRtRpcClientUtils>::get_instance();
+        auto create = []() {
+            return create_shared();
+        };
+        TRY(auto expected_handle, manager.register_resource("SHARED_SERVICE_UTILS", create));
+
+        return expected_handle;
+    }
+
+    hailo_status init_client_service_communication_impl()
     {
         std::unique_lock<std::mutex> lock(*m_mutex);
         if (!m_initialized) {
@@ -88,41 +160,6 @@ public:
             m_initialized = true;
         }
         return HAILO_SUCCESS;
-    }
-
-    void before_fork()
-    {
-        stop_keep_alive_thread();
-    }
-
-    hailo_status after_fork_in_parent()
-    {
-        m_keep_alive_shutdown_event->reset();
-        std::unique_lock<std::mutex> lock(*m_mutex);
-        if (m_initialized) {
-            return start_keep_alive_thread();
-        }
-        return HAILO_SUCCESS;
-    }
-
-    hailo_status after_fork_in_child()
-    {
-        m_mutex = std::make_shared<std::mutex>();
-        auto status = init_keep_alive_shutdown_event();
-        CHECK_SUCCESS(status);
-
-        std::unique_lock<std::mutex> lock(*m_mutex);
-        if (m_initialized) {
-            m_pid = OsUtils::get_curr_pid();
-            return start_keep_alive_thread();
-        }
-        return HAILO_SUCCESS;
-    }
-
-private:
-    ~HailoRtRpcClientUtils()
-    {
-        stop_keep_alive_thread();
     }
 
     void stop_keep_alive_thread()

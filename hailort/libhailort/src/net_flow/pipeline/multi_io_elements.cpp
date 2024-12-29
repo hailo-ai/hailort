@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -15,7 +15,7 @@ namespace hailort
 
 BaseMuxElement::BaseMuxElement(size_t sink_count, const std::string &name, std::chrono::milliseconds timeout,
     DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
-    PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline, hailo_status &status) :
+    PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline) :
     PipelineElementInternal(name, std::move(duration_collector), std::move(pipeline_status), pipeline_direction, async_pipeline),
     m_timeout(timeout)
 {
@@ -25,12 +25,6 @@ BaseMuxElement::BaseMuxElement(size_t sink_count, const std::string &name, std::
         m_sinks.emplace_back(*this, name, PipelinePad::Type::SINK);
         m_sink_name_to_index[m_sinks[i].name()] = i;
     }
-    m_barrier = make_shared_nothrow<Barrier>(sink_count);
-    if (nullptr == m_barrier) {
-        status = HAILO_OUT_OF_HOST_MEMORY;
-        return;
-    }
-    status = HAILO_SUCCESS;
 }
 
 std::vector<PipelinePad*> BaseMuxElement::execution_pads()
@@ -58,13 +52,6 @@ hailo_status BaseMuxElement::execute_terminate(hailo_status error_status)
     }
 
     auto terminate_status = PipelineElement::execute_terminate(error_status);
-
-    {
-        // Ensuring nothing currently runs
-        std::unique_lock<std::mutex> lock(m_mutex);
-    }
-    m_barrier->terminate();
-
     CHECK_SUCCESS(terminate_status);
 
     return HAILO_SUCCESS;
@@ -76,46 +63,34 @@ hailo_status BaseMuxElement::run_push(PipelineBuffer &&/*buffer*/, const Pipelin
     return HAILO_INVALID_OPERATION;
 }
 
-void BaseMuxElement::run_push_async(PipelineBuffer &&buffer, const PipelinePad &sink)
+void BaseMuxElement::run_push_async(PipelineBuffer &&/*buffer*/, const PipelinePad &/*sink*/)
 {
+    // Should use run_push_async_multi for mux elements
+    LOGGER__CRITICAL("run_push_async is not supported for {}", name());
+    assert(false);
+}
+
+void BaseMuxElement::run_push_async_multi(std::vector<PipelineBuffer> &&buffers)
+{
+    auto next_pads = execution_pads();
     assert(PipelineDirection::PUSH == m_pipeline_direction);
-    assert(m_next_pads.size() == 1);
+    assert(next_pads.size() == 1);
 
-    m_barrier->arrive_and_wait();
     if (HAILO_SUCCESS == m_pipeline_status->load()) {
-        size_t input_buffers_size = 0;
-        {
-            std::unique_lock<std::mutex> lock(m_mutex);
-            m_input_buffers[sink.name()] = std::move(buffer);
-            input_buffers_size = m_input_buffers.size();
+
+        for (auto &input_buffer : buffers) {
+            if (HAILO_SUCCESS != input_buffer.action_status()) {
+                handle_non_recoverable_async_error(input_buffer.action_status());
+                return;
+            }
         }
-        if (input_buffers_size == m_sink_name_to_index.size()) { // Last sink to set its buffer
-            for (auto &input_buffer : m_input_buffers) {
-                if (HAILO_SUCCESS != input_buffer.second.action_status()) {
-                    handle_non_recoverable_async_error(input_buffer.second.action_status());
-                    m_input_buffers.clear();
-                    m_barrier->terminate();
-                    return;
-                }
-            }
 
-            std::vector<PipelineBuffer> input_buffers(m_input_buffers.size());
-            for (auto &input_buffer : m_input_buffers) {
-                input_buffers[m_sink_name_to_index[input_buffer.first]] = std::move(input_buffer.second);
-            }
-
-            auto output = action(std::move(input_buffers), PipelineBuffer());
-            if (HAILO_SUCCESS == output.status()) {
-                m_next_pads[0]->run_push_async(output.release());
-            } else {
-                m_next_pads[0]->run_push_async(PipelineBuffer(output.status()));
-            }
-
-            m_input_buffers.clear();
+        auto output = action(std::move(buffers), PipelineBuffer());
+        if (HAILO_SUCCESS == output.status()) {
+            next_pads[0]->run_push_async(output.release());
+        } else {
+            next_pads[0]->run_push_async(PipelineBuffer(output.status()));
         }
-    } else {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_input_buffers.clear();
     }
 }
 
@@ -153,10 +128,8 @@ Expected<std::shared_ptr<NmsPostProcessMuxElement>> NmsPostProcessMuxElement::cr
     auto duration_collector = DurationCollector::create(elem_flags);
     CHECK_EXPECTED(duration_collector);
 
-    hailo_status status = HAILO_UNINITIALIZED;
     auto nms_elem_ptr = make_shared_nothrow<NmsPostProcessMuxElement>(nms_op, name, timeout,
-        duration_collector.release(), std::move(pipeline_status), pipeline_direction, async_pipeline, status);
-    CHECK_SUCCESS_AS_EXPECTED(status);
+        duration_collector.release(), std::move(pipeline_status), pipeline_direction, async_pipeline);
     CHECK_AS_EXPECTED(nullptr != nms_elem_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     LOGGER__INFO("Created {}", nms_elem_ptr->description());
@@ -185,10 +158,11 @@ Expected<std::shared_ptr<NmsPostProcessMuxElement>> NmsPostProcessMuxElement::cr
 NmsPostProcessMuxElement::NmsPostProcessMuxElement(std::shared_ptr<net_flow::Op> nms_op,
     const std::string &name, std::chrono::milliseconds timeout, DurationCollector &&duration_collector,
     std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, PipelineDirection pipeline_direction,
-    std::shared_ptr<AsyncPipeline> async_pipeline, hailo_status &status) :
+    std::shared_ptr<AsyncPipeline> async_pipeline) :
     BaseMuxElement(nms_op->inputs_metadata().size(), name, timeout, std::move(duration_collector), std::move(pipeline_status),
-        pipeline_direction, async_pipeline, status),
-    m_nms_op(nms_op)
+        pipeline_direction, async_pipeline),
+    m_nms_op(nms_op),
+    m_sinks_names(nms_op->inputs_metadata().size())
 {}
 
 Expected<PipelineBuffer> NmsPostProcessMuxElement::action(std::vector<PipelineBuffer> &&input_buffers, PipelineBuffer &&optional)
@@ -199,7 +173,7 @@ Expected<PipelineBuffer> NmsPostProcessMuxElement::action(std::vector<PipelineBu
         TRY(auto src, input_buffers[i].as_view(BufferProtection::READ));
         inputs.insert({m_sinks_names[i], src});
     }
-    auto pool = next_pad_downstream().element().get_buffer_pool();
+    auto pool = next_pad_downstream().get_buffer_pool();
     assert(pool);
 
     auto acquired_buffer = pool->get_available_buffer(std::move(optional), m_timeout);
@@ -247,6 +221,7 @@ static hailo_nms_info_t fuse_nms_info(const std::vector<hailo_nms_info_t> &nms_i
     hailo_nms_info_t fused_info = nms_infos[0];
     fused_info.is_defused = false;
     fused_info.number_of_classes = 0;
+    fused_info.order_type = HAILO_NMS_RESULT_ORDER_HW;
     for (const auto &nms_info : nms_infos) {
         fused_info.number_of_classes += nms_info.number_of_classes;
         assert(nms_infos[0].max_bboxes_per_class == nms_info.max_bboxes_per_class);
@@ -269,10 +244,8 @@ Expected<std::shared_ptr<NmsMuxElement>> NmsMuxElement::create(const std::vector
     auto duration_collector = DurationCollector::create(elem_flags);
     CHECK_EXPECTED(duration_collector);
 
-    auto status = HAILO_UNINITIALIZED;
     auto nms_elem_ptr = make_shared_nothrow<NmsMuxElement>(nms_infos, fused_info, name, timeout,
-        duration_collector.release(), std::move(pipeline_status), pipeline_direction, async_pipeline, status);
-    CHECK_SUCCESS_AS_EXPECTED(status);
+        duration_collector.release(), std::move(pipeline_status), pipeline_direction, async_pipeline);
     CHECK_AS_EXPECTED(nullptr != nms_elem_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     LOGGER__INFO("Created {}", nms_elem_ptr->description());
@@ -300,9 +273,9 @@ Expected<std::shared_ptr<NmsMuxElement>> NmsMuxElement::create(const std::vector
 NmsMuxElement::NmsMuxElement(const std::vector<hailo_nms_info_t> &nms_infos, const hailo_nms_info_t &fused_nms_info,
     const std::string &name, std::chrono::milliseconds timeout, DurationCollector &&duration_collector,
     std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, PipelineDirection pipeline_direction,
-    std::shared_ptr<AsyncPipeline> async_pipeline, hailo_status &status) :
+    std::shared_ptr<AsyncPipeline> async_pipeline) :
     BaseMuxElement(nms_infos.size(), name, timeout, std::move(duration_collector), std::move(pipeline_status), pipeline_direction,
-        async_pipeline, status),
+        async_pipeline),
     m_nms_infos(nms_infos),
     m_fused_nms_info(fused_nms_info)
 {}
@@ -321,7 +294,7 @@ Expected<PipelineBuffer> NmsMuxElement::action(std::vector<PipelineBuffer> &&inp
         TRY(auto src, input_buf.as_view(BufferProtection::READ));
         input_views.push_back(src);
     }
-    auto pool = next_pad_downstream().element().get_buffer_pool();
+    auto pool = next_pad_downstream().get_buffer_pool();
     assert(pool);
 
     auto acquired_buffer = pool->get_available_buffer(std::move(optional), m_timeout);
@@ -408,7 +381,7 @@ void BaseDemuxElement::run_push_async(PipelineBuffer &&buffer, const PipelinePad
     if (HAILO_SUCCESS != buffer.action_status()) {
         for (const auto &pad : execution_pads()) {
             auto source_index = m_source_name_to_index[pad->prev()->name()];
-            auto pool = m_sources[source_index].next()->element().get_buffer_pool();
+            auto pool = m_sources[source_index].next()->get_buffer_pool();
             assert(pool);
 
             auto acquired_buffer = pool->acquire_buffer(m_timeout);
@@ -655,7 +628,7 @@ Expected<std::vector<PipelineBuffer>> TransformDemuxElement::action(PipelineBuff
 
     for (uint32_t i = 0; i < mux_edges.size(); i++) {
 
-        auto pool = m_sources[i].next()->element().get_buffer_pool();
+        auto pool = m_sources[i].next()->get_buffer_pool();
         assert(pool);
 
         auto acquired_buffer = pool->acquire_buffer(m_timeout);
@@ -750,7 +723,7 @@ Expected<std::vector<PipelineBuffer>> PixBufferElement::action(PipelineBuffer &&
                         input_ptr->set_action_status(status);
                     }};
                 hailo_status action_status = HAILO_SUCCESS;
-                BufferPoolPtr pool = m_sources[i].next()->element().get_buffer_pool();
+                BufferPoolPtr pool = m_sources[i].next()->get_buffer_pool();
                 outputs.emplace_back(PipelineBuffer(dma_buffer, exec_done, action_status, pool->is_holding_user_buffers(), pool));
             } else {
                 return make_unexpected(HAILO_INVALID_ARGUMENT);
@@ -827,7 +800,7 @@ void AsyncHwElement::handle_error_in_hw_async_elem(hailo_status error_status)
         auto source_index = name_output_stream_pair.second;
         assert(source_index < m_sources.size());
 
-        auto pool = m_sources[source_index].next()->element().get_buffer_pool();
+        auto pool = m_sources[source_index].next()->get_buffer_pool();
         assert(pool);
 
         auto expected_buffer = pool->acquire_buffer(m_timeout);
@@ -856,7 +829,7 @@ void AsyncHwElement::action()
     // TODO: HRT-13324 Change to be map of <std::string, PipelineBuffer>
     std::unordered_map<std::string, std::shared_ptr<PipelineBuffer>> source_name_to_output_buffer;
     for (auto &name_to_index_pair : m_source_name_to_index) {
-        auto pool = m_sources[name_to_index_pair.second].next()->element().get_buffer_pool();
+        auto pool = m_sources[name_to_index_pair.second].next()->get_buffer_pool();
         assert(pool);
 
         auto expected_buffer = pool->acquire_buffer(m_timeout);
@@ -1066,7 +1039,7 @@ std::vector<std::shared_ptr<BufferPool>> AsyncHwElement::get_hw_interacted_buffe
 {
     std::vector<std::shared_ptr<BufferPool>> res;
     for (auto &sink : m_sinks) {
-        res.push_back(sink.prev()->element().get_buffer_pool());
+        res.push_back(sink.prev()->get_buffer_pool());
     }
     return res;
 }
@@ -1075,8 +1048,8 @@ std::vector<std::shared_ptr<BufferPool>> AsyncHwElement::get_hw_interacted_buffe
 {
     std::vector<std::shared_ptr<BufferPool>> res;
     for (auto &source : m_sources) {
-        auto pools = source.element().get_buffer_pool();
-        res.push_back(source.next()->element().get_buffer_pool());
+        auto pools = source.get_buffer_pool();
+        res.push_back(source.next()->get_buffer_pool());
     }
     return res;
 }

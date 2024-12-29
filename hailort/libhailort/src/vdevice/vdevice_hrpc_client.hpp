@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file vdevice_hrpc_client.hpp
  * @brief VDevice HRPC client, represents the user's handle to the VDevice object (held in the hailort server)
@@ -24,7 +24,9 @@ class VDeviceHrpcClient : public VDevice
 public:
     static Expected<std::unique_ptr<VDevice>> create(const hailo_vdevice_params_t &params);
 
-    VDeviceHrpcClient(std::shared_ptr<hrpc::Client> client, uint32_t handle, std::shared_ptr<CallbacksDispatcher> callbacks_dispatcher,
+    static Expected<std::string> get_device_id(const hailo_vdevice_params_t &params);
+
+    VDeviceHrpcClient(std::shared_ptr<Client> client, uint32_t handle, std::shared_ptr<CallbacksDispatcher> callbacks_dispatcher,
         std::unique_ptr<PcieDeviceHrpcClient> &&device, std::string device_id)
         : m_client(client), m_handle(handle), m_callbacks_dispatcher(callbacks_dispatcher), m_device(std::move(device)),
         m_device_id(device_id) {}
@@ -49,7 +51,7 @@ public:
     virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
 
 private:
-    std::shared_ptr<hrpc::Client> m_client;
+    std::shared_ptr<Client> m_client;
     uint32_t m_handle;
     std::shared_ptr<CallbacksDispatcher> m_callbacks_dispatcher;
     std::unique_ptr<PcieDeviceHrpcClient> m_device;

@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file vdma_config_manager.cpp
  * @brief Vdma config manager implementation
@@ -74,7 +74,7 @@ hailo_status VdmaConfigManager::switch_core_op(std::shared_ptr<VdmaConfigCoreOp>
         CHECK_SUCCESS(current->unregister_cache_update_callback(), "Failed unregistering cache updates from previous core-op");
         CHECK_SUCCESS(current->deactivate_host_resources(), "Failed deactivating host resources for current core-op");
 
-        // TODO: In mercury we need to reset after deactivate. This will be fixed in MSW-762 and the "if" will be removed
+        // TODO: In integrated device we need to reset after deactivate. This will be fixed in MSW-762 and the "if" will be removed
         //       when we make the nn_manager responsible to reset the nn-core.
         if (Device::Type::INTEGRATED == current->get_resources_manager()->get_device().get_type()) {
             CHECK_SUCCESS(current->get_resources_manager()->reset_state_machine(), "Failed to reset state machine in switch core-op");

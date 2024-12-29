@@ -6,7 +6,7 @@ include(FetchContent)
 FetchContent_Declare(
     grpc
     GIT_REPOSITORY  https://github.com/grpc/grpc
-    GIT_TAG         53d69cc581c5b7305708587f4f1939278477c28a # v1.46.3
+    GIT_TAG         6847e05dbb8088a918f06e2231a405942b5c002d # v1.54.0
     GIT_SHALLOW     TRUE
     SOURCE_DIR      ${HAILO_EXTERNAL_DIR}/grpc-src
     SUBBUILD_DIR    ${HAILO_EXTERNAL_DIR}/grpc-subbuild

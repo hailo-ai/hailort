@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -19,8 +19,8 @@
 #include "core_op/resource_manager/resource_manager_builder.hpp"
 #include "core_op/core_op.hpp"
 #include "common/os_utils.hpp"
-#include "utils/buffer_storage.hpp"
 #include "hef/hef_internal.hpp"
+#include "utils/buffer_storage.hpp"
 
 #include <new>
 #include <algorithm>
@@ -102,7 +102,7 @@ hailo_status VdmaDevice::clear_configured_apps()
     auto status = Control::reset_context_switch_state_machine(*this);
     CHECK_SUCCESS(status);
 
-    // In case of mercury need to reset nn core before activating network group to clear prior nn core state
+    // In case of integrated device need to reset nn core before activating network group to clear prior nn core state
     if (Device::Type::INTEGRATED == get_type()) {
         // On core device, the nn_manager is not responsible to reset the nn-core so
         // we use the SCU control for that.
@@ -156,7 +156,6 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> VdmaDevice::create_configured_
     core_ops.reserve(core_ops_metadata.size());
 
     // TODO: keep metadata per core_op (HRT-9551)
-    // TODO: HRT-8875 support multiple core ops
     assert(core_ops_metadata.size() == 1);
     auto core_op_metadata = core_ops_metadata[0];
 
@@ -214,10 +213,12 @@ hailo_reset_device_mode_t VdmaDevice::get_default_reset_mode()
 // TODO - HRT-13234, move to DeviceBase
 void VdmaDevice::shutdown_core_ops()
 {
-    for (auto core_op : m_core_ops) {
-        auto status = core_op->shutdown();
-        if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed to shutdown core op with status {}", status);
+    for (auto core_op_weak : m_core_ops) {
+        if (auto core_op = core_op_weak.lock()) {
+            auto status = core_op->shutdown();
+            if (HAILO_SUCCESS != status) {
+                LOGGER__ERROR("Failed to shutdown core op with status {}", status);
+            }
         }
     }
 }
@@ -253,6 +254,26 @@ VdmaDevice::~VdmaDevice()
     }
 }
 
+hailo_status VdmaDevice::dma_map(void *address, size_t size, hailo_dma_buffer_direction_t data_direction)
+{
+    return dma_map_impl(*m_driver.get(), address, size, data_direction);
+}
+
+hailo_status VdmaDevice::dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t data_direction)
+{
+    return dma_unmap_impl(*m_driver.get(), address, size, data_direction);
+}
+
+hailo_status VdmaDevice::dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t data_direction)
+{
+    return dma_map_dmabuf_impl(*m_driver.get(), dmabuf_fd, size, data_direction);
+}
+
+hailo_status VdmaDevice::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t data_direction)
+{
+    return dma_unmap_dmabuf_impl(*m_driver.get(), dmabuf_fd, size, data_direction);
+}
+
 static std::pair<void *, size_t> aligned_part_to_map(void *original, size_t size)
 {
     const auto dma_alignment = OsUtils::get_dma_able_alignment();
@@ -262,7 +283,8 @@ static std::pair<void *, size_t> aligned_part_to_map(void *original, size_t size
     return std::make_pair(aligned_address, aligned_size);
 }
 
-hailo_status VdmaDevice::dma_map(void *address, size_t size, hailo_dma_buffer_direction_t data_direction)
+hailo_status VdmaDevice::dma_map_impl(HailoRTDriver &driver, void *address,
+    size_t size, hailo_dma_buffer_direction_t data_direction)
 {
     // Since we can't map unaligned addresses (to dma alignment), we map only the aligned part of the buffer. The other
     // unaligned part will be copied into some bounce buffer (which is already mapped).
@@ -281,12 +303,13 @@ hailo_status VdmaDevice::dma_map(void *address, size_t size, hailo_dma_buffer_di
         buffer_identifier = buffer->buffer_identifier();
     }
 
-    CHECK_EXPECTED(m_driver->vdma_buffer_map(reinterpret_cast<uintptr_t>(address), size, to_hailo_driver_direction(data_direction), buffer_identifier,
+    CHECK_EXPECTED(driver.vdma_buffer_map(reinterpret_cast<uintptr_t>(address), size, to_hailo_driver_direction(data_direction), buffer_identifier,
         HailoRTDriver::DmaBufferType::USER_PTR_BUFFER));
     return HAILO_SUCCESS;
 }
 
-hailo_status VdmaDevice::dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t data_direction)
+hailo_status VdmaDevice::dma_unmap_impl(HailoRTDriver &driver, void *address,
+    size_t size, hailo_dma_buffer_direction_t data_direction)
 {
     // Since we can't map unaligned addresses (to dma alignment), we map only the aligned part of the buffer. The other
     // unaligned part will be copied into some bounce buffer (which is already mapped).
@@ -296,22 +319,23 @@ hailo_status VdmaDevice::dma_unmap(void *address, size_t size, hailo_dma_buffer_
         // map.
         return HAILO_SUCCESS;
     }
-
-    return m_driver->vdma_buffer_unmap(reinterpret_cast<uintptr_t>(address), size, to_hailo_driver_direction(data_direction));
+    return driver.vdma_buffer_unmap(reinterpret_cast<uintptr_t>(address), size, to_hailo_driver_direction(data_direction));
 }
 
-hailo_status VdmaDevice::dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t data_direction)
+hailo_status VdmaDevice::dma_map_dmabuf_impl(HailoRTDriver &driver, int dmabuf_fd,
+    size_t size, hailo_dma_buffer_direction_t data_direction)
 {
     // Dont use BufferStorageResourceManager for dmabuf seeing as dmabufs are not allocated from hailoRT
     auto buffer_identifier = HailoRTDriver::INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER;
-    CHECK_EXPECTED(m_driver->vdma_buffer_map(dmabuf_fd, size, to_hailo_driver_direction(data_direction), buffer_identifier,
+    CHECK_EXPECTED(driver.vdma_buffer_map(dmabuf_fd, size, to_hailo_driver_direction(data_direction), buffer_identifier,
         HailoRTDriver::DmaBufferType::DMABUF_BUFFER));
     return HAILO_SUCCESS;
 }
 
-hailo_status VdmaDevice::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t data_direction)
+hailo_status VdmaDevice::dma_unmap_dmabuf_impl(HailoRTDriver &driver, int dmabuf_fd,
+    size_t size, hailo_dma_buffer_direction_t data_direction)
 {
-    return m_driver->vdma_buffer_unmap(dmabuf_fd, size, to_hailo_driver_direction(data_direction));
+    return driver.vdma_buffer_unmap(dmabuf_fd, size, to_hailo_driver_direction(data_direction));
 }
 
 Expected<ConfiguredNetworkGroupVector> VdmaDevice::create_networks_group_vector(Hef &hef, const NetworkGroupsParamsMap &configure_params)
@@ -359,7 +383,6 @@ Expected<ConfiguredNetworkGroupVector> VdmaDevice::create_networks_group_vector(
         auto network_group_ptr = network_group_expected.release();
 
         added_network_groups.emplace_back(network_group_ptr);
-        m_network_groups.push_back(network_group_ptr);
     }
 
     std::string unmatched_keys = "";

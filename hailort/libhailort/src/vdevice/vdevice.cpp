@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -27,7 +27,7 @@
 #include "core_op/core_op.hpp"
 #include "hef/hef_internal.hpp"
 
-#include "common/string_utils.hpp"
+#include "common/utils.hpp"
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
 #include "service/rpc_client_utils.hpp"
@@ -37,12 +37,6 @@
 
 namespace hailort
 {
-
-template<>
-std::string SharedResourceManager<std::string, VDeviceBase>::unique_key()
-{
-    return HAILO_UNIQUE_VDEVICE_GROUP_ID;
-}
 
 static hailo_status validate_device_ids_match(const hailo_vdevice_params_t &params,
     const std::set<std::string> &old_ids)
@@ -233,22 +227,14 @@ hailo_status VDeviceHandle::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_d
     return vdevice.value()->dma_unmap_dmabuf(dmabuf_fd, size, direction);
 }
 
-hailo_status VDeviceHandle::add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> network_group_ptr)
-{
-    auto &manager = SharedResourceManager<std::string, VDeviceBase>::get_instance();
-    auto vdevice = manager.resource_lookup(m_handle);
-    CHECK_EXPECTED_AS_STATUS(vdevice);
-
-    return vdevice.value()->add_network_group_ref_count(network_group_ptr);
-}
-
 bool VDevice::service_over_ip_mode()
 {
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
     // If service address is different than the default - we work at service over IP mode
     return hailort::HAILORT_SERVICE_ADDRESS != HAILORT_SERVICE_DEFAULT_ADDR;
-#endif
+#else
     return false; // no service -> no service over ip
+#endif
 }
 
 bool VDevice::should_force_hrpc_client()
@@ -258,9 +244,10 @@ bool VDevice::should_force_hrpc_client()
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
 
-VDeviceClient::VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, VDeviceIdentifier &&identifier,
+VDeviceClient::VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t client_utils_handle, VDeviceIdentifier &&identifier,
     std::vector<std::unique_ptr<Device>> &&devices) :
         m_client(std::move(client)),
+        m_client_utils_handle(client_utils_handle),
         m_identifier(std::move(identifier)),
         m_devices(std::move(devices)),
         m_is_listener_thread_running(false),
@@ -289,13 +276,16 @@ VDeviceClient::~VDeviceClient()
     if (reply != HAILO_SUCCESS) {
         LOGGER__CRITICAL("VDevice_release failed!");
     }
+
+    HailoRtRpcClientUtils::decrease_ref_count(m_client_utils_handle);
 }
 
 hailo_status VDeviceClient::before_fork()
 {
     m_is_listener_thread_running = false;
 
-    HailoRtRpcClientUtils::get_instance().before_fork();
+    TRY(auto instance, HailoRtRpcClientUtils::get_instance(m_client_utils_handle));
+    instance->before_fork();
     m_client.reset();
     m_cb_listener_thread.reset();
 
@@ -316,7 +306,8 @@ hailo_status VDeviceClient::create_client()
 
 hailo_status VDeviceClient::after_fork_in_parent()
 {
-    HailoRtRpcClientUtils::get_instance().after_fork_in_parent();
+    TRY(auto instance, HailoRtRpcClientUtils::get_instance(m_client_utils_handle));
+    instance->after_fork_in_parent();
     auto status = create_client();
     CHECK_SUCCESS(status);
 
@@ -328,7 +319,8 @@ hailo_status VDeviceClient::after_fork_in_parent()
 
 hailo_status VDeviceClient::after_fork_in_child()
 {
-    HailoRtRpcClientUtils::get_instance().after_fork_in_child();
+    TRY(auto instance, HailoRtRpcClientUtils::get_instance(m_client_utils_handle));
+    instance->after_fork_in_child();
 
     auto listener_status = start_listener_thread(m_identifier);
     CHECK_SUCCESS(listener_status);
@@ -345,19 +337,21 @@ Expected<std::unique_ptr<VDevice>> VDeviceClient::create(const hailo_vdevice_par
 
     auto client = make_unique_nothrow<HailoRtRpcClient>(channel);
     CHECK_AS_EXPECTED(client != nullptr, HAILO_OUT_OF_HOST_MEMORY);
-    auto init_status = HailoRtRpcClientUtils::get_instance().init_client_service_communication();
-    CHECK_SUCCESS_AS_EXPECTED(init_status);
+    TRY(auto client_utils_handle, HailoRtRpcClientUtils::init_client_service_communication());
+
+    // TODO: In case of failure after HailoRtRpcClientUtils::init_client_service_communication(),
+    //       we need to reduce ref-count of HailoRtRpcClientUtils (or its thread can 'hang')
 
     auto pid = OsUtils::get_curr_pid();
     auto reply = client->VDevice_create(params, pid);
     CHECK_EXPECTED(reply);
 
-    auto handle = reply.value();
+    auto vdevice_handle = reply.value();
     // When working with service over IP - no access to physical devices (returning empty vector)
-    auto devices = (VDevice::service_over_ip_mode()) ? std::vector<std::unique_ptr<Device>>() : client->VDevice_get_physical_devices(handle);
+    auto devices = (VDevice::service_over_ip_mode()) ? std::vector<std::unique_ptr<Device>>() : client->VDevice_get_physical_devices(vdevice_handle);
     CHECK_EXPECTED(devices);
 
-    auto client_vdevice = std::unique_ptr<VDeviceClient>(new VDeviceClient(std::move(client), VDeviceIdentifier(handle), devices.release()));
+    auto client_vdevice = std::unique_ptr<VDeviceClient>(new VDeviceClient(std::move(client), client_utils_handle, VDeviceIdentifier(vdevice_handle), devices.release()));
     CHECK_AS_EXPECTED(client_vdevice != nullptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::unique_ptr<VDevice>(std::move(client_vdevice));
@@ -526,6 +520,8 @@ hailo_status VDeviceClient::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_d
 
 Expected<std::unique_ptr<VDevice>> VDevice::create(const hailo_vdevice_params_t &params)
 {
+    LOGGER__INFO("Creating vdevice with params: device_count: {}, scheduling_algorithm: {}, multi_process_service: {}",
+        params.device_count, HailoRTCommon::get_scheduling_algorithm_str(params.scheduling_algorithm), params.multi_process_service);
     auto status = VDeviceBase::validate_params(params);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
@@ -753,17 +749,6 @@ Expected<ConfiguredNetworkGroupVector> VDeviceBase::configure(Hef &hef,
     LOGGER__INFO("Configuring HEF on VDevice took {} milliseconds", elapsed_time_ms);
 
     return added_network_groups;
-}
-
-hailo_status VDeviceBase::add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> network_group_ptr)
-{
-    m_network_groups.push_back(network_group_ptr);
-    return HAILO_SUCCESS;
-}
-
-hailo_status VDevice::add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> /*network_group_ptr*/)
-{
-    return HAILO_SUCCESS;
 }
 
 Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(const std::string &hef_path, const std::string &name)

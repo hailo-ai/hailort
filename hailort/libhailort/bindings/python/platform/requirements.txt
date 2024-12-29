@@ -8,7 +8,6 @@ importlib-metadata==5.1.0
 importlib-resources==5.1.2
 netaddr==0.8.0
 netifaces==0.10.9
-numpy==1.23.3
+numpy<2
 typing_extensions==4.1.1
-verboselogs==1.7
 virtualenv==20.17.0

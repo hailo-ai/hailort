@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -58,12 +58,13 @@ class ConfiguredInferModelWrapper final
 {
 public:
     ConfiguredInferModelWrapper(ConfiguredInferModel &&configured_infer_model, bool is_using_service,
-        const std::vector<std::string> &output_names) :
+        const std::vector<std::string> &output_names, bool should_reallocate_output_buffers=true) :
         m_configured_infer_model(std::move(configured_infer_model)),
         m_callbacks_queue(std::make_shared<std::queue<AsyncInferCallBackAndStatus>>()),
         m_is_alive(true),
         m_is_using_service(is_using_service),
-        m_output_names(output_names)
+        m_output_names(output_names),
+        m_should_reallocate_output_buffers(should_reallocate_output_buffers)
     {
     }
 
@@ -73,7 +74,8 @@ public:
         m_callbacks_thread(std::move(other.m_callbacks_thread)),
 		m_is_alive(true),
 		m_is_using_service(other.m_is_using_service),
-        m_output_names(other.m_output_names)
+        m_output_names(other.m_output_names),
+        m_should_reallocate_output_buffers(other.m_should_reallocate_output_buffers)
     {
         other.m_is_alive = false;
     }
@@ -119,6 +121,7 @@ private:
     std::atomic_bool m_is_alive; // allow main thread to write, while worker thread is reading
     bool m_is_using_service;
     std::vector<std::string> m_output_names;
+    bool m_should_reallocate_output_buffers;
 };
 
 class ConfiguredInferModelBindingsWrapper final
@@ -167,6 +170,7 @@ public:
     void set_nms_score_threshold(float32_t threshold);
     void set_nms_iou_threshold(float32_t threshold);
     void set_nms_max_proposals_per_class(uint32_t max_proposals_per_class);
+    void set_nms_max_proposals_total(uint32_t max_proposals_total);
     void set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size);
 
     static void bind(py::module &m);

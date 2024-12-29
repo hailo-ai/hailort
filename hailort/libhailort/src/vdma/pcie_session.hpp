@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file pcie_session.hpp
  * @brief Wrapper for 2 BoundaryChannels, one for input and one for output, used as a the transport layer of a
@@ -23,6 +23,12 @@ namespace hailort
 // By using this magic, multiple servers can be implemented and run simultaneously on the same device.
 using pcie_connection_port_t = uint16_t;
 using PcieSessionType = HailoRTDriver::PcieSessionType;
+
+struct CbParams {
+    std::condition_variable cv;
+    std::mutex mutex;
+    hailo_status status;
+};
 
 /**
  * a PcieSession object need to be constructed both at the device side (via accept) or the host side (via connect).
@@ -53,6 +59,7 @@ using PcieSessionType = HailoRTDriver::PcieSessionType;
  */
 class PcieSession final {
 public:
+    static constexpr uint64_t MAX_ONGOING_TRANSFERS = 128;
 
     static Expected<PcieSession> connect(std::shared_ptr<HailoRTDriver> driver, pcie_connection_port_t port);
     static Expected<PcieSession> accept(std::shared_ptr<HailoRTDriver> driver, pcie_connection_port_t port);
@@ -61,6 +68,9 @@ public:
 
     hailo_status write(const void *buffer, size_t size, std::chrono::milliseconds timeout);
     hailo_status read(void *buffer, size_t size, std::chrono::milliseconds timeout);
+
+    bool is_read_ready(size_t transfer_size) const;
+    bool is_write_ready(size_t transfer_size) const;
 
     hailo_status write_async(const void *buffer, size_t size, std::function<void(hailo_status)> &&callback);
     hailo_status read_async(void *buffer, size_t size, std::function<void(hailo_status)> &&callback);
@@ -72,10 +82,8 @@ public:
         return m_session_type;
     }
 
-    static uint64_t max_transfer_size();
-
     PcieSession(PcieSession &&other) :
-        m_should_close(std::exchange(other.m_should_close, false)),
+        m_should_close(other.m_should_close.exchange(false)),
         m_driver(std::move(other.m_driver)),
         m_interrupts_dispatcher(std::move(other.m_interrupts_dispatcher)),
         m_transfer_launcher(std::move(other.m_transfer_launcher)),
@@ -105,13 +113,13 @@ private:
         m_session_type(session_type)
     {}
 
-    static hailo_status launch_transfer_sync(vdma::BoundaryChannel &channel,
-        void *buffer, size_t size, std::chrono::milliseconds timeout);
+    hailo_status launch_transfer_sync(vdma::BoundaryChannel &channel,
+        void *buffer, size_t size, std::chrono::milliseconds timeout, CbParams &cb_params);
     static hailo_status launch_transfer_async(vdma::BoundaryChannel &channel,
         void *buffer, size_t size, std::function<void(hailo_status)> &&callback);
     static Expected<vdma::DescriptorList> create_desc_list(HailoRTDriver &driver);
 
-    bool m_should_close = true;
+    std::atomic<bool> m_should_close {true};
     std::shared_ptr<HailoRTDriver> m_driver;
 
     std::unique_ptr<vdma::InterruptsDispatcher> m_interrupts_dispatcher;
@@ -121,6 +129,10 @@ private:
     vdma::BoundaryChannelPtr m_output;
 
     PcieSessionType m_session_type;
+
+    // Following members are used only for sync transfers 
+    CbParams m_read_cb_params;
+    CbParams m_write_cb_params;
 };
 
 } /* namespace hailort */

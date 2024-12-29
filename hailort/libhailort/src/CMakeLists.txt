@@ -5,8 +5,6 @@ find_package(Threads REQUIRED)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/common_compiler_options.cmake)
-include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/spdlog.cmake)
-include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/readerwriterqueue.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/eigen.cmake)
 
 FUNCTION(relative_to_absolute_paths output)
@@ -37,6 +35,7 @@ add_subdirectory(network_group)
 add_subdirectory(core_op)
 add_subdirectory(net_flow)
 add_subdirectory(rpc_callbacks)
+add_subdirectory(genai)
 
 if(HAILO_BUILD_SERVICE)
     add_subdirectory(service)
@@ -63,18 +62,13 @@ set(DRIVER_OS_DIR ${DRIVER_OS_DIR} CACHE INTERNAL "Absolute Full path of driver 
 set(HAILO_DRIVER_SRC_FILES ${HAILO_DRIVER_SRC_FILES} CACHE INTERNAL "Absolute Full path of driver src files")
 set(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES} CACHE INTERNAL "Absolute paths of hailort's cpp source files")
 set(COMMON_C_SOURCES ${COMMON_C_SOURCES} CACHE INTERNAL "Absolute paths of common source files")
-set(HAILORT_SRCS_ABS ${HAILORT_CPP_SOURCES} ${HAILORT_COMMON_CPP_SOURCES} ${COMMON_C_SOURCES} ${HRPC_CPP_SOURCES} ${HRPC_PROTOCOL_CPP_SOURCES} CACHE INTERNAL "All absolute paths of hailort's source files")
+set(HAILORT_SRCS_ABS ${HAILORT_CPP_SOURCES} ${COMMON_C_SOURCES} ${HRPC_CPP_SOURCES} ${HRPC_PROTOCOL_CPP_SOURCES} CACHE INTERNAL "All absolute paths of hailort's source files")
 
 SET_SOURCE_FILES_PROPERTIES(${C_SOURCES} PROPERTIES LANGUAGE CXX)
 add_library(libhailort SHARED ${HAILORT_SRCS_ABS})
 
 # Include libraries
 if(WIN32)
-    target_link_libraries(libhailort PRIVATE
-        Ws2_32
-        Iphlpapi
-        Shlwapi
-    )
     set_property(TARGET libhailort PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 else()
@@ -82,12 +76,6 @@ else()
         m # libmath
         atomic
     )
-
-    if(NOT CMAKE_SYSTEM_NAME STREQUAL Android)
-        # TODO: HRT-14770 fix android build
-         # for common dir, TODO: Make common directory a library
-        target_link_libraries(libhailort PRIVATE rt)
-    endif()
 
     set(THREADS_PREFER_PTHREAD_FLAG ON)
     # Hack to support cross-compilation - https://stackoverflow.com/a/49086560
@@ -98,17 +86,22 @@ target_link_libraries(libhailort PRIVATE Threads::Threads)
 target_link_libraries(libhailort PRIVATE hef_proto)
 target_link_libraries(libhailort PRIVATE profiler_proto)
 target_link_libraries(libhailort PRIVATE scheduler_mon_proto)
-target_link_libraries(libhailort PRIVATE spdlog::spdlog)
-target_link_libraries(libhailort PRIVATE readerwriterqueue)
+target_link_libraries(libhailort PRIVATE hailort_common)
 target_link_libraries(libhailort PRIVATE Eigen3::Eigen)
 target_link_libraries(libhailort PRIVATE rpc_proto)
+
 if(HAILO_BUILD_SERVICE)
     target_link_libraries(libhailort PRIVATE grpc++_unsecure)
     target_link_libraries(libhailort PRIVATE hailort_rpc_grpc_proto)
 endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL QNX)
-    include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/pevents.cmake)
-    target_link_libraries(libhailort PRIVATE pevents pci)
+    target_link_libraries(libhailort PRIVATE pci)
+endif()
+
+if (HAILO_INTERNAL_BUILD)
+    include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/libusb.cmake)
+    target_link_libraries(libhailort PRIVATE usb-1.0)
 endif()
 
 set(HAILORT_PUBLIC_HEADERS
@@ -134,6 +127,13 @@ set(HAILORT_PUBLIC_HEADERS
     ${HAILORT_INC_DIR}/hailo/quantization.hpp
     ${HAILORT_INC_DIR}/hailo/hailort_defaults.hpp
     ${HAILORT_INC_DIR}/hailo/dma_mapped_buffer.hpp
+    ${HAILORT_INC_DIR}/hailo/hailo_session.hpp
+
+    # GenAI
+    ${HAILORT_INC_DIR}/hailo/genai/vdevice_genai.hpp
+    ${HAILORT_INC_DIR}/hailo/genai/common.hpp
+    ${HAILORT_INC_DIR}/hailo/genai/llm/llm.hpp
+    ${HAILORT_INC_DIR}/hailo/genai/text2image/text2image.hpp
 )
 
 set_target_properties(libhailort PROPERTIES
@@ -172,13 +172,15 @@ target_compile_definitions(libhailort PUBLIC
     -DHAILORT_REVISION_VERSION=${HAILORT_REVISION_VERSION}
 )
 
+# TODO: HRT-15676
+install(DIRECTORY ${HAILORT_INC_DIR}/hailo/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/hailo")
 install(TARGETS libhailort
     EXPORT HailoRTTargets
     CONFIGURATIONS Release
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/hailo"
+    # PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/hailo"
     INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
 )
 

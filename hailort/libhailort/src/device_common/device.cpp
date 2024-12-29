@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -10,7 +10,6 @@
  **/
 #ifdef __unix__
 #include <glob.h>
-#include <fstream>
 #endif
 
 #include "hailo/hailort.h"
@@ -37,7 +36,6 @@ namespace hailort
 
 #define WRITE_CHUNK_SIZE (1024)
 #define DEVICE_WORD_SIZE (4)
-#define SENSOR_NAME_FILE_PATHS "/sys/class/hwmon/hwmon*/name"
 
 Device::Device(Type type) :
     m_type(type),
@@ -331,15 +329,19 @@ hailo_status Device::i2c_write(const hailo_i2c_slave_config_t &slave_config, uin
 Expected<float32_t> Device::power_measurement(hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type)
 {
     float32_t res = 0;
-    auto status = Control::power_measurement(*this, static_cast<CONTROL_PROTOCOL__dvm_options_t>(dvm),
-        static_cast<CONTROL_PROTOCOL__power_measurement_types_t>(measurement_type), &res);
-    CHECK_SUCCESS_AS_EXPECTED(status);
+    CHECK_SUCCESS_AS_EXPECTED(Control::power_measurement(
+        *this, static_cast<CONTROL_PROTOCOL__dvm_options_t>(dvm),
+        static_cast<CONTROL_PROTOCOL__power_measurement_types_t>(measurement_type),
+        &res));
+
     return res;
 }
 
 hailo_status Device::start_power_measurement(hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period)
 {
-    return Control::start_power_measurement(*this, static_cast<CONTROL_PROTOCOL__averaging_factor_t>(averaging_factor),
+    return Control::start_power_measurement(
+        *this,
+        static_cast<CONTROL_PROTOCOL__averaging_factor_t>(averaging_factor),
         static_cast<CONTROL_PROTOCOL__sampling_period_t>(sampling_period));
 }
 
@@ -364,8 +366,7 @@ hailo_status Device::stop_power_measurement()
 Expected<hailo_chip_temperature_info_t> Device::get_chip_temperature()
 {
     hailo_chip_temperature_info_t res = {};
-    auto status = Control::get_chip_temperature(*this, &res);
-    CHECK_SUCCESS_AS_EXPECTED(status);
+    CHECK_SUCCESS_AS_EXPECTED(Control::get_chip_temperature(*this, &res));
     return res;
 }
 
@@ -627,28 +628,6 @@ Expected<uint8_t> Device::get_context_switch_breakpoint_status(uint8_t breakpoin
     return static_cast<uint8_t>(breakpoint_status);
 }
 
-// TODO: remove init_cache_info, get_cache_info and update_cache_read_offset (HRT-13896)
-hailo_status Device::init_cache_info(const hailo_cache_info_t &cache_info)
-{
-    CONTROL_PROTOCOL__context_switch_cache_info_t control_cache_info = {
-        cache_info.cache_size,
-        cache_info.current_read_offset,
-        cache_info.write_offset_delta
-    };
-    return Control::context_switch_init_cache_info(*this, control_cache_info);
-}
-
-Expected<hailo_cache_info_t> Device::get_cache_info()
-{
-    TRY(const auto cache_info, Control::context_switch_get_cache_info(*this));
-    return hailo_cache_info_t{cache_info.cache_size, cache_info.current_read_offset, cache_info.write_offset_delta};
-}
-
-hailo_status Device::update_cache_read_offset(int32_t read_offset_delta)
-{
-    return Control::context_switch_update_cache_read_offset(*this, read_offset_delta);
-}
-
 Expected<std::unique_ptr<Device>> Device::create_core()
 {
     TRY(auto integrated_device, IntegratedDevice::create());
@@ -669,7 +648,7 @@ Expected<ConfigureNetworkParams> Device::create_configure_params(Hef &hef, const
     return hef.create_configure_params(stream_interface, network_group_name);
 }
 
-Expected<bool> Device::has_INA231_H8()
+Expected<bool> Device::has_INA231()
 {
     TRY(auto info, get_extended_device_information(), "Failed to get extended device information");
     TRY(auto id, identify(), "Failed to identify device");
@@ -678,60 +657,12 @@ Expected<bool> Device::has_INA231_H8()
     return has_INA231;
 }
 
-// checks if the H15 board has INA231. Even if true, libhailort can't read power
-// / current / temperature values. User can read them via "sensors" CLI command
-Expected<bool> Device::has_INA231_H15()
-{
-    bool has_INA231 = false;
-#ifdef __unix__
-    glob_t glob_result;
-    glob(SENSOR_NAME_FILE_PATHS, GLOB_TILDE, NULL, &glob_result);
-
-    for(unsigned int i = 0; i < glob_result.gl_pathc; ++i) {
-        std::ifstream file(glob_result.gl_pathv[i]);
-        if (!file.is_open()) {
-            return make_unexpected(HAILO_FILE_OPERATION_FAILURE);
-        }
-
-        std::string line;
-        std::getline(file, line);
-        if (line == "ina231_precise") {
-            has_INA231 = true;
-            break;
-        }
-    }
-    globfree(&glob_result);
-#endif
-    return has_INA231;
-}
-
 Expected<Device::Capabilities> Device::get_capabilities()
 {
-    Device::Capabilities result = {};
-    switch (m_device_architecture) {
-    case HAILO_ARCH_HAILO8:
-    case HAILO_ARCH_HAILO8L:
-    {
-        TRY(result.current_measurements, has_INA231_H8(), "Failed to check INA231_H8");
-        TRY(result.power_measurements, has_INA231_H8(), "Failed to check INA231_H8");
-        result.temperature_measurements = true;
-        break;
-    }
-    case HAILO_ARCH_HAILO15H:
-    case HAILO_ARCH_HAILO15M:
-    case HAILO_ARCH_PLUTO:
-    {
-        result.current_measurements = false;
-        result.power_measurements = false;
-        result.temperature_measurements = false;
-        break;
-    }
-    case HAILO_ARCH_HAILO10H:
-        return make_unexpected(HAILO_INVALID_DEVICE_ARCHITECTURE);
-    default:
-        return make_unexpected(HAILO_INVALID_DEVICE_ARCHITECTURE);
-    }
-    return result;
+    Device::Capabilities caps {false, false, true};
+    TRY(caps.current_measurements, has_INA231(), "Failed to check if INA231 is installed");
+    TRY(caps.power_measurements, has_INA231(), "Failed to check if INA231 is installed");
+    return caps;
 }
 
 } /* namespace hailort */

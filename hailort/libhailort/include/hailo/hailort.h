@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -121,7 +121,7 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(33, HAILO_ATR_TABLES_CONF_VALIDATION_FAIL         /*!< Validating address translation tables failure, for FW control use */)\
     HAILO_STATUS__X(34, HAILO_EVENT_CREATE_FAIL                       /*!< Creating event failure */)\
     HAILO_STATUS__X(35, HAILO_READ_EVENT_FAIL                         /*!< Reading event failure */)\
-    HAILO_STATUS__X(36, HAILO_DRIVER_FAIL                             /*!< Driver failure */)\
+    HAILO_STATUS__X(36, HAILO_DRIVER_OPERATION_FAILED                 /*!< Driver operation (i.e ioctl) returned failure. Read driver log for more info (dmesg for linux) */)\
     HAILO_STATUS__X(37, HAILO_INVALID_FIRMWARE_MAGIC                  /*!< Invalid FW magic */)\
     HAILO_STATUS__X(38, HAILO_INVALID_FIRMWARE_CODE_SIZE              /*!< Invalid FW code size */)\
     HAILO_STATUS__X(39, HAILO_INVALID_KEY_CERTIFICATE_SIZE            /*!< Invalid key certificate size */)\
@@ -149,7 +149,7 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(61, HAILO_NOT_FOUND                               /*!< Could not find element */)\
     HAILO_STATUS__X(62, HAILO_COMMUNICATION_CLOSED                    /*!< The communication between endpoints is closed */)\
     HAILO_STATUS__X(63, HAILO_STREAM_ABORT                            /*!< Stream recv/send was aborted */)\
-    HAILO_STATUS__X(64, HAILO_PCIE_DRIVER_NOT_INSTALLED               /*!< Pcie driver is not installed */)\
+    HAILO_STATUS__X(64, HAILO_DRIVER_NOT_INSTALLED                    /*!< Driver is not installed/running on the system. */)\
     HAILO_STATUS__X(65, HAILO_NOT_AVAILABLE                           /*!< Component is not available */)\
     HAILO_STATUS__X(66, HAILO_TRAFFIC_CONTROL_FAILURE                 /*!< Traffic control failure */)\
     HAILO_STATUS__X(67, HAILO_INVALID_SECOND_STAGE                    /*!< Second stage bin is invalid */)\
@@ -170,6 +170,13 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(82, HAILO_QUEUE_IS_FULL                           /*!< Cannot push more items into the queue */)\
     HAILO_STATUS__X(83, HAILO_DMA_MAPPING_ALREADY_EXISTS              /*!< DMA mapping already exists */)\
     HAILO_STATUS__X(84, HAILO_CANT_MEET_BUFFER_REQUIREMENTS           /*!< can't meet buffer requirements */)\
+    HAILO_STATUS__X(85, HAILO_DRIVER_INVALID_RESPONSE                 /*!< Driver returned invalid response. Make sure the driver version is the same as libhailort  */)\
+    HAILO_STATUS__X(86, HAILO_DRIVER_INVALID_IOCTL                    /*!< Driver cannot handle ioctl. Can happen on libhailort vs driver version mismatch or when ioctl function is not supported */)\
+    HAILO_STATUS__X(87, HAILO_DRIVER_TIMEOUT                          /*!< Driver operation returned a timeout. Device reset may be required. */)\
+    HAILO_STATUS__X(88, HAILO_DRIVER_INTERRUPTED                      /*!< Driver operation interrupted by system request (i.e can happen on application exit) */)\
+    HAILO_STATUS__X(89, HAILO_CONNECTION_REFUSED                      /*!< Connection was refused by other side. */)\
+    HAILO_STATUS__X(90, HAILO_DRIVER_WAIT_CANCELED                    /*!< Driver operation was canceled. */)\
+
 
 typedef enum {
 #define HAILO_STATUS__X(value, name) name = value,
@@ -183,7 +190,9 @@ typedef enum {
     HAILO_STATUS_MAX_ENUM                       = HAILO_MAX_ENUM
 } hailo_status;
 
-#define HAILO_STREAM_ABORTED_BY_USER HAILO_STREAM_ABORT /* 'HAILO_STREAM_ABORTED_BY_USER' is deprecated. One should use 'HAILO_STREAM_ABORT' */
+#define HAILO_STREAM_ABORTED_BY_USER HAILO_STREAM_ABORT /* 'HAILO_STREAM_ABORTED_BY_USER' is deprecated. Use 'HAILO_STREAM_ABORT' instead */
+#define HAILO_DRIVER_FAIL HAILO_DRIVER_OPERATION_FAILED /* 'HAILO_DRIVER_FAIL' is deprecated. Use 'HAILO_DRIVER_OPERATION_FAILED' instead */
+#define HAILO_PCIE_DRIVER_NOT_INSTALLED HAILO_DRIVER_NOT_INSTALLED /* 'HAILO_PCIE_DRIVER_NOT_INSTALLED' is deprecated. Use 'HAILO_DRIVER_NOT_INSTALLED' instead */
 
 /** HailoRT library version */
 typedef struct {
@@ -262,7 +271,7 @@ typedef enum hailo_dvm_options_e {
 
     /** Must be last! */
     HAILO_DVM_OPTIONS_COUNT,
-    
+
     /** Select the default DVM option according to the supported features */
     HAILO_DVM_OPTIONS_AUTO = INT_MAX,
 
@@ -418,7 +427,7 @@ typedef enum hailo_device_architecture_e {
     HAILO_ARCH_HAILO8,
     HAILO_ARCH_HAILO8L,
     HAILO_ARCH_HAILO15H,
-    HAILO_ARCH_PLUTO,
+    HAILO_ARCH_HAILO15L,
     HAILO_ARCH_HAILO15M,
     HAILO_ARCH_HAILO10H,
 
@@ -629,25 +638,10 @@ typedef enum {
     HAILO_FORMAT_ORDER_12_BIT_BAYER_RGB                 = 8,
 
     /**
-     * NMS bbox
-     * - Host side
-     *
-     *      For each class (::hailo_nms_shape_t.number_of_classes), the layout is
-     *          \code
-     *          struct (packed) {
-     *              float32_t bbox_count;
-     *              hailo_bbox_float32_t bbox[bbox_count];
-     *          };
-     *          \endcode
-     *
-     *      The host format type can be either ::HAILO_FORMAT_TYPE_FLOAT32 or ::HAILO_FORMAT_TYPE_UINT16.
-     *
-     *      Maximum amount of bboxes per class is ::hailo_nms_shape_t.max_bboxes_per_class.
-     *
-     * - Device side output (result of NMS layer):
-     *      Internal implementation
+     * Deprecated. Should use HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS, HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE (user formats)
+     * or HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP (device format) instead.
      */
-    HAILO_FORMAT_ORDER_HAILO_NMS                        = 9,
+    HAILO_FORMAT_ORDER_HAILO_NMS                        = 9,    // TODO: HRT-15612
 
     /**
      * - Not used for host side
@@ -737,6 +731,54 @@ typedef enum {
      * - Not used for device side
      */
     HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK         = 20,
+
+    /**
+     * NMS bbox
+     * - Device side
+     *
+     *      Result of NMS layer on chip (Internal implementation)
+     *
+     * - Not used for host side
+     */
+    HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP                = 21,
+
+    /**
+     * NMS bbox
+     * - Host side
+     *
+     *      For each class (::hailo_nms_shape_t.number_of_classes), the layout is
+     *          \code
+     *          struct (packed) {
+     *              float32_t bbox_count;
+     *              hailo_bbox_float32_t bbox[bbox_count];
+     *          };
+     *          \endcode
+     *
+     *
+     *      Maximum amount of bboxes per class is ::hailo_nms_shape_t.max_bboxes_per_class.
+     *
+     * - Not used for device side
+     */
+    HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS               = 22,
+
+    /**
+     * NMS bbox
+     * - Host side
+     *
+     *      For all classes the layout is
+     *          \code
+     *          struct (packed) {
+     *              uint16_t bbox_count;
+     *              hailo_detection_t bbox[bbox_count];
+     *          };
+     *          \endcode
+     *
+     *
+     *      Maximum amount of bboxes is ::hailo_nms_shape_t.max_bboxes_total.
+     *
+     * - Not used for device side
+     */
+    HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE               = 23,
 
     /** Max enum value to maintain ABI Integrity */
     HAILO_FORMAT_ORDER_MAX_ENUM             = HAILO_MAX_ENUM
@@ -1258,12 +1300,28 @@ typedef enum {
     HAILO_BURST_TYPE_COUNT
 } hailo_nms_burst_type_t;
 
+/** NMS result order */
+typedef enum {
+    HAILO_NMS_RESULT_ORDER_HW = 0,
+    HAILO_NMS_RESULT_ORDER_BY_CLASS,
+    HAILO_NMS_RESULT_ORDER_BY_SCORE,
+} hailo_nms_result_order_type_t;
+
 /** NMS Internal HW Info */
 typedef struct {
     /** Amount of NMS classes */
     uint32_t number_of_classes;
-    /** Maximum amount of bboxes per nms class */
-    uint32_t max_bboxes_per_class;
+    union
+    {
+        /** Maximum amount of bboxes per nms class
+        * Valid when order_type is 'HAILO_NMS_RESULT_ORDER_BY_CLASS', 'HAILO_NMS_RESULT_ORDER_HW'
+        */
+        uint32_t max_bboxes_per_class;
+        /** Maximum amount of total bboxes
+        * Valid when order_type is 'HAILO_NMS_RESULT_ORDER_BY_SCORE'
+        */
+        uint32_t max_bboxes_total;
+    };
     /** Internal usage */
     uint32_t bbox_size;
     /** Internal usage */
@@ -1274,6 +1332,8 @@ typedef struct {
     uint32_t burst_size;
     /** NMS burst type */
     hailo_nms_burst_type_t burst_type;
+    /** Order of NMS results **/
+    hailo_nms_result_order_type_t order_type;
 } hailo_nms_info_t;
 
 /** NMS Fuse Input */
@@ -1287,13 +1347,24 @@ typedef struct {
 typedef struct {
     /** Amount of NMS classes */
     uint32_t number_of_classes;
-    /** Maximum amount of bboxes per nms class */
-    uint32_t max_bboxes_per_class;
+    union
+    {
+        /** Maximum amount of bboxes per nms class
+        * Valid when order_type is 'HAILO_NMS_RESULT_ORDER_BY_CLASS', 'HAILO_NMS_RESULT_ORDER_HW'
+        */
+        uint32_t max_bboxes_per_class;
+        /** Maximum amount of total bboxes
+        * Valid when order_type is 'HAILO_NMS_RESULT_ORDER_BY_SCORE'
+        */
+        uint32_t max_bboxes_total;
+    };
     /** Maximum accumulated mask size for all of the detections in a frame.
      *  Used only with 'HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK' format order.
      *  The default value is (`input_image_size` * 2)
      */
     uint32_t max_accumulated_mask_size;
+    /** Order of NMS results **/
+    hailo_nms_result_order_type_t order_type;
 } hailo_nms_shape_t;
 
 #pragma pack(push, 1)
@@ -1319,6 +1390,15 @@ typedef struct {
     float32_t y_max;
     float32_t x_max;
 } hailo_rectangle_t;
+
+typedef struct {
+    float32_t y_min;
+    float32_t x_min;
+    float32_t y_max;
+    float32_t x_max;
+    float32_t score;
+    uint16_t class_id;
+} hailo_detection_t;
 
 typedef struct {
     /** Detection's box coordinates */
@@ -1446,7 +1526,7 @@ typedef struct {
     {
         /* Frame shape */
         hailo_3d_image_shape_t shape;
-        /* NMS shape, only valid if format.order is ::HAILO_FORMAT_ORDER_HAILO_NMS */
+        /* NMS shape, only valid if format.order is one of the NMS orders */
         hailo_nms_shape_t nms_shape;
     };
 
@@ -1730,6 +1810,9 @@ typedef enum {
     HAILO_WATCHDOG_MODE_MAX_ENUM        = HAILO_MAX_ENUM
 } hailo_watchdog_mode_t;
 
+/**
+ * Hailo chip temperature info. The temperature is in Celsius.
+ */
 typedef struct {
     float32_t ts0_temperature;
     float32_t ts1_temperature;
@@ -1777,12 +1860,6 @@ typedef struct {
     char stream_name[HAILO_MAX_STREAM_NAME_SIZE];
     uint32_t rate;
 } hailo_rate_limit_t;
-
-typedef struct {
-    uint32_t cache_size;
-    uint32_t current_read_offset;
-    int32_t write_offset_delta;
-} hailo_cache_info_t;
 
 typedef enum {
     HAILO_SENSOR_TYPES_GENERIC = 0,
@@ -1937,7 +2014,7 @@ HAILORTAPI hailo_status hailo_scan_devices(hailo_scan_devices_params_t *params, 
  * Creates a device by the given device id.
  *
  * @param[in] device_id      Device id, can represent several device types:
- *                              [-] for pcie devices - pcie bdf (XXXX:XX:XX.X or XX:XX.X)
+ *                              [-] for pcie devices - pcie bdf (XXXX:XX:XX.X)
  *                              [-] for ethernet devices - ip address (xxx.xxx.xxx.xxx)
  *                           If NULL is given, uses an arbitrary device found on the system.
  * @param[out] device        A pointer to a ::hailo_device that receives the allocated PCIe device.
@@ -1966,7 +2043,7 @@ HAILORTAPI hailo_status hailo_scan_pcie_devices(
 /**
  * Parse PCIe device BDF string into hailo device info structure.
  *
- * @param[in] device_info_str   BDF device info, format [\<domain\>].\<bus\>.\<device\>.\<func\>, same format as in lspci.
+ * @param[in] device_info_str   BDF device info, format \<domain\>.\<bus\>.\<device\>.\<func\>.
  * @param[out] device_info      A pointer to a ::hailo_pcie_device_info_t that receives the parsed device info.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
  * @note Call ::hailo_scan_pcie_devices to get all available hailo pcie devices.
@@ -3072,7 +3149,6 @@ HAILORTAPI hailo_status hailo_vdevice_dma_unmap_buffer(hailo_vdevice vdevice, vo
  *       @a data_direction, or when the @a device object is destroyed.
  * @note The dmabuf pointed to by @a dmabuf_fd cannot be released until it is unmapped (via
  *       ::hailo_device_dma_map_dmabuf or ::hailo_release_device).
- * @note This API is currently experimental.
  */
 HAILORTAPI hailo_status hailo_device_dma_map_dmabuf(hailo_device device, int dmabuf_fd, size_t size,
     hailo_dma_buffer_direction_t direction);
@@ -3087,7 +3163,6 @@ HAILORTAPI hailo_status hailo_device_dma_map_dmabuf(hailo_device device, int dma
  * @param[in] direction     The direction of the mapping.
  *
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- * @note This API is currently experimental.
  */
 HAILORTAPI hailo_status hailo_device_dma_unmap_dmabuf(hailo_device device, int dmabuf_fd, size_t size,
     hailo_dma_buffer_direction_t direction);
@@ -3112,7 +3187,6 @@ HAILORTAPI hailo_status hailo_device_dma_unmap_dmabuf(hailo_device device, int d
  *       @a data_direction, or when the @a vdevice object is destroyed.
  * @note The dmabuf pointed to by @a dmabuf_fd cannot be released until it is unmapped (via
  *       ::hailo_vdevice_dma_unmap_dmabuf or ::hailo_release_vdevice).
- * @note This API is currently experimental.
  */
 HAILORTAPI hailo_status hailo_vdevice_dma_map_dmabuf(hailo_vdevice vdevice, int dmabuf_fd, size_t size,
     hailo_dma_buffer_direction_t direction);
@@ -3125,7 +3199,6 @@ HAILORTAPI hailo_status hailo_vdevice_dma_map_dmabuf(hailo_vdevice vdevice, int 
  * @param[in] dmabuf_fd     The file descriptor of the dmabuf to be un-mapped.
  * @param[in] size          The buffer's size in bytes.
  * @param[in] direction     The direction of the mapping.
- * @note This API is currently experimental.
  *
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  */
@@ -3260,7 +3333,6 @@ HAILORTAPI hailo_status hailo_stream_write_raw_buffer(hailo_input_stream stream,
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise:
  *           - If @a timeout_ms has passed and the stream is not ready, returns ::HAILO_TIMEOUT.
  *           - In any other error case, returns ::hailo_status error.
- * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
  */
 HAILORTAPI hailo_status hailo_stream_wait_for_async_output_ready(hailo_output_stream stream, size_t transfer_size,
     uint32_t timeout_ms);

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -29,6 +29,31 @@
 
 namespace hailort
 {
+
+
+Waitable::Waitable(underlying_waitable_handle_t handle) :
+    m_handle(handle)
+{}
+
+hailo_status Waitable::wait(std::chrono::milliseconds timeout)
+{
+    auto status = wait_for_single_object(m_handle, timeout);
+    if (HAILO_TIMEOUT == status) {
+        LOGGER__TRACE("wait_for_single_object failed with timeout (timeout={}ms)", timeout.count());
+        return status;
+    }
+    CHECK_SUCCESS(status);
+
+    status = post_wait();
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+underlying_waitable_handle_t Waitable::get_underlying_handle()
+{
+    return m_handle;
+}
 
 Waitable::~Waitable()
 {
@@ -189,26 +214,5 @@ hailo_status Semaphore::post_wait()
     return HAILO_SUCCESS;
 }
 
-Expected<size_t> WaitableGroup::wait_any(std::chrono::milliseconds timeout)
-{
-    int wait_index = -1;
-    const uint64_t timeout_ms = (timeout.count() > INT_MAX) ? INT_MAX : static_cast<uint64_t>(timeout.count());
-    const bool WAIT_FOR_ANY = false;
-    const auto wait_result = neosmart::WaitForMultipleEvents(m_waitable_handles.data(),
-        static_cast<int>(m_waitable_handles.size()), WAIT_FOR_ANY, timeout_ms, wait_index);
-    if (0 != wait_result) {
-        if (ETIMEDOUT == wait_result) {
-            return make_unexpected(HAILO_TIMEOUT);
-        } else {
-            LOGGER__ERROR("WaitForMultipleEvents Failed, error: {}", wait_result);
-            return make_unexpected(HAILO_INTERNAL_FAILURE);
-        }
-    }
-
-    auto status = m_waitables[wait_index].get().post_wait();
-    CHECK_SUCCESS_AS_EXPECTED(status);
-
-    return wait_index;
-}
 
 } /* namespace hailort */

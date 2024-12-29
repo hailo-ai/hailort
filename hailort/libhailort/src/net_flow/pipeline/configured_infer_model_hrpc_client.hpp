@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -21,13 +21,13 @@ namespace hailort
 class ConfiguredInferModelHrpcClient : public ConfiguredInferModelBase
 {
 public:
-    static Expected<std::shared_ptr<ConfiguredInferModelHrpcClient>> create(std::shared_ptr<hrpc::Client> client,
+    static Expected<std::shared_ptr<ConfiguredInferModelHrpcClient>> create(std::shared_ptr<Client> client,
         rpc_object_handle_t handle_id, std::vector<hailo_vstream_info_t> &&input_vstream_infos,
         std::vector<hailo_vstream_info_t> &&output_vstream_infos, uint32_t max_ongoing_transfers,
         std::shared_ptr<CallbacksQueue> callbacks_queue, rpc_object_handle_t infer_model_handle_id,
         const std::unordered_map<std::string, size_t> inputs_frame_sizes,
         const std::unordered_map<std::string, size_t> outputs_frame_sizes);
-    ConfiguredInferModelHrpcClient(std::shared_ptr<hrpc::Client> client, rpc_object_handle_t handle_id,
+    ConfiguredInferModelHrpcClient(std::shared_ptr<Client> client, rpc_object_handle_t handle_id,
         std::vector<hailo_vstream_info_t> &&input_vstream_infos, std::vector<hailo_vstream_info_t> &&output_vstream_infos,
         uint32_t max_ongoing_transfers, std::shared_ptr<CallbacksQueue> callbacks_queue, rpc_object_handle_t infer_model_handle_id,
         const std::unordered_map<std::string, size_t> inputs_frame_sizes,
@@ -69,9 +69,10 @@ private:
         std::function<void(const AsyncInferCompletionInfo &)> callback);
     Expected<std::vector<uint32_t>> get_input_buffer_sizes(const ConfiguredInferModel::Bindings &bindings);
     hailo_status write_async_inputs(const ConfiguredInferModel::Bindings &bindings,
-        hrpc::RpcConnection connection);
+        RpcConnection connection);
+    hailo_status shutdown_impl();
 
-    std::weak_ptr<hrpc::Client> m_client;
+    std::weak_ptr<Client> m_client;
     rpc_object_handle_t m_handle_id;
     std::vector<hailo_vstream_info_t> m_input_vstream_infos;
     std::vector<hailo_vstream_info_t> m_output_vstream_infos;

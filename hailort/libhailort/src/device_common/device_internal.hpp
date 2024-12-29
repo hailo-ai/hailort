@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -51,6 +51,7 @@ enum class HEFHwArch // Must be aligned to ProtoHEFHwArch
     HW_ARCH__HAILO15H = 103,
     HW_ARCH__HAILO15M = 4,
     HW_ARCH__HAILO10H = 5,
+    HW_ARCH__HAILO15L = 6,
 
     HW_ARCH__SAGE_A0 = 100,
     HW_ARCH__SAGE_B0 = 101,
@@ -106,7 +107,6 @@ public:
         // Hence, just return it
         return Expected<hailo_device_architecture_t>(m_device_architecture);
     }
-
 
 protected:
     struct NotificationThreadSharedParams {

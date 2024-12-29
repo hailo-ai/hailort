@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file argmax_post_process.hpp
  * @brief: Argmax op perform argmax op as described: https://www.tensorflow.org/api_docs/python/tf/math/argmax

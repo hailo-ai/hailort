@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -28,8 +28,10 @@ namespace hailort
 
 Expected<FileDescriptor> open_device_file(const std::string &path)
 {
-    int fd = open(path.c_str(), O_RDWR);
-    CHECK(fd >= 0, HAILO_DRIVER_FAIL,
+    // Setting O_CLOEXEC to avoid leaking the driver in subprocesses that have exec'd
+    // (since they load a new binary that doesn't necessarily know about the driver)
+    int fd = open(path.c_str(), O_RDWR | O_CLOEXEC);
+    CHECK(fd >= 0, HAILO_DRIVER_OPERATION_FAILED,
         "Failed to open device file {} with error {}", path, errno);
     return FileDescriptor(fd);
 }
@@ -39,13 +41,12 @@ Expected<std::vector<std::string>> list_devices()
     DIR *dir_iter = opendir(HAILO_CLASS_PATH);
     if (!dir_iter) {
         if (ENOENT == errno) {
-            LOGGER__ERROR("Can't find hailo pcie class, this may happen if the driver is not installed (this may happen"
-            " if the kernel was updated), or if there is no connected Hailo board");
-            return make_unexpected(HAILO_PCIE_DRIVER_NOT_INSTALLED);
+            LOGGER__ERROR("Can't find hailort driver class. Can happen if the driver is not installed, if the kernel was updated or on some driver failure (then read driver dmesg log)");
+            return make_unexpected(HAILO_DRIVER_NOT_INSTALLED);
         }
         else {
             LOGGER__ERROR("Failed to open hailo pcie class ({}), errno {}", HAILO_CLASS_PATH, errno);
-            return make_unexpected(HAILO_DRIVER_FAIL);
+            return make_unexpected(HAILO_DRIVER_INVALID_RESPONSE);
         }
     }
 
@@ -65,7 +66,7 @@ Expected<std::vector<std::string>> list_devices()
 
 Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_devices()
 {
-    TRY_V(auto devices, list_devices(), "Failed listing pcie devices");
+    TRY_V(auto devices, list_devices(), "Failed listing hailo devices");
 
     std::vector<HailoRTDriver::DeviceInfo> devices_info;
     for (const auto &device_name : devices) {
@@ -109,11 +110,11 @@ Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_nnc_devices()
 Expected<std::string> get_line_from_file(const std::string &file_path)
 {
     std::ifstream file(file_path);
-    CHECK_AS_EXPECTED(file.good(), HAILO_DRIVER_FAIL, "Failed open {}", file_path);
+    CHECK_AS_EXPECTED(file.good(), HAILO_DRIVER_INVALID_RESPONSE, "Failed open {}", file_path);
 
     std::string line;
     std::getline(file, line);
-    CHECK_AS_EXPECTED(file.eof(), HAILO_DRIVER_FAIL, "Failed read {}", file_path);
+    CHECK_AS_EXPECTED(file.eof(), HAILO_DRIVER_INVALID_RESPONSE, "Failed read {}", file_path);
 
     return line;
 }
@@ -136,6 +137,45 @@ Expected<HailoRTDriver::DeviceInfo> query_device_info(const std::string &device_
     device_info.accelerator_type = static_cast<HailoRTDriver::AcceleratorType>(accelerator_type);
 
     return device_info;
+}
+
+hailo_status convert_errno_to_hailo_status(int err, const char* ioctl_name)
+{
+    switch (err) {
+    case ENOBUFS:
+        // Expected error (when happens, can try resolve by allocating memory in different way)
+        LOGGER__DEBUG("Ioctl {} failed due to insufficient amount of CMA memory", ioctl_name);
+        return HAILO_OUT_OF_HOST_CMA_MEMORY;
+    case ENOMEM:
+        LOGGER__ERROR("Ioctl {} failed due to insufficient amount of memory", ioctl_name);
+        return HAILO_OUT_OF_HOST_MEMORY;
+    case EFAULT:
+        LOGGER__ERROR("Ioctl {} failed due to invalid address", ioctl_name);
+        return HAILO_INVALID_OPERATION;
+    case ECONNRESET:
+        // Expected error (if the other side of the connection is closed)
+        LOGGER__DEBUG("Ioctl {} failed due to stream abort", ioctl_name);
+        return HAILO_STREAM_ABORT;
+    case ENOTTY:
+        LOGGER__ERROR("Ioctl {} failed due to inappropriate ioctl for device (can happen due to version mismatch or unsupported feature)", ioctl_name);
+        return HAILO_DRIVER_INVALID_IOCTL;
+    case ETIMEDOUT:
+        LOGGER__ERROR("Ioctl {} failed due to timeout", ioctl_name);
+        return HAILO_DRIVER_TIMEOUT;
+    case EINTR:
+        LOGGER__ERROR("Ioctl {} failed due to interrupted system call", ioctl_name);
+        return HAILO_DRIVER_INTERRUPTED;
+    case ECONNREFUSED:
+        LOGGER__ERROR("Ioctl {} failed due to connection refused", ioctl_name);
+        return HAILO_CONNECTION_REFUSED;
+    case ECANCELED:
+        // Expected error (stopping wait, i.e notification wait)
+        LOGGER__DEBUG("Ioctl {} failed due to operation aborted", ioctl_name);
+        return HAILO_DRIVER_WAIT_CANCELED;
+    default:
+        LOGGER__ERROR("Ioctl {} failed with {}. Read dmesg log for more info", ioctl_name, err);
+        return HAILO_DRIVER_OPERATION_FAILED;
+    }
 }
 
 int run_hailo_ioctl(underlying_handle_t file, uint32_t ioctl_code, void *param) {

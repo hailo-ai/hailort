@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -168,8 +168,8 @@ Expected<firmware_type_t> DeviceBase::get_fw_type()
     else if ((architecture == HAILO_ARCH_HAILO15H ) || (architecture == HAILO_ARCH_HAILO15M)) {
         firmware_type = FIRMWARE_TYPE_HAILO15;
     }
-    else if (architecture == HAILO_ARCH_PLUTO) {
-        firmware_type = FIRMWARE_TYPE_PLUTO;
+    else if (architecture == HAILO_ARCH_HAILO15L) {
+        firmware_type = FIRMWARE_TYPE_HAILO15L;
     }
     else {
         LOGGER__ERROR("Invalid device arcitecture. {}", static_cast<int>(architecture));
@@ -725,8 +725,8 @@ bool DeviceBase::is_hef_compatible(hailo_device_architecture_t device_arch, HEFH
         // Compare with HW_ARCH__LAVENDER and HW_ARCH__GINGER to support hefs compiled for them
         return (hef_arch == HEFHwArch::HW_ARCH__GINGER) || (hef_arch == HEFHwArch::HW_ARCH__LAVENDER) ||
             (hef_arch == HEFHwArch::HW_ARCH__HAILO15H) || (hef_arch == HEFHwArch::HW_ARCH__HAILO15M) || (hef_arch == HEFHwArch::HW_ARCH__HAILO10H);
-    case HAILO_ARCH_PLUTO:
-        return (hef_arch == HEFHwArch::HW_ARCH__PLUTO);
+    case HAILO_ARCH_HAILO15L:
+        return (hef_arch == HEFHwArch::HW_ARCH__HAILO15L) || (hef_arch == HEFHwArch::HW_ARCH__PLUTO);
     case HAILO_ARCH_HAILO15M:
         return (hef_arch == HEFHwArch::HW_ARCH__HAILO15M);
     default:
@@ -752,7 +752,8 @@ hailo_device_architecture_t DeviceBase::hef_arch_to_device_arch(HEFHwArch hef_ar
     case HEFHwArch::HW_ARCH__LAVENDER:
         return HAILO_ARCH_HAILO15H;
     case HEFHwArch::HW_ARCH__PLUTO:
-        return HAILO_ARCH_PLUTO;
+    case HEFHwArch::HW_ARCH__HAILO15L:
+        return HAILO_ARCH_HAILO15L;
     case HEFHwArch::HW_ARCH__HAILO15M:
         return HAILO_ARCH_HAILO15M;
     case HEFHwArch::HW_ARCH__HAILO10H:
