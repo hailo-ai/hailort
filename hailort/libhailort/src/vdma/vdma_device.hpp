@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -54,6 +54,15 @@ public:
     virtual hailo_status dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
     virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
 
+    static hailo_status dma_map_impl(HailoRTDriver &driver, void *address,
+        size_t size, hailo_dma_buffer_direction_t direction);
+    static hailo_status dma_unmap_impl(HailoRTDriver &driver, void *address,
+        size_t size, hailo_dma_buffer_direction_t direction);
+    static hailo_status dma_map_dmabuf_impl(HailoRTDriver &driver, int dmabuf_fd,
+        size_t size, hailo_dma_buffer_direction_t direction);
+    static hailo_status dma_unmap_dmabuf_impl(HailoRTDriver &driver, int dmabuf_fd,
+        size_t size, hailo_dma_buffer_direction_t direction);
+
 protected:
     VdmaDevice(std::unique_ptr<HailoRTDriver> &&driver, Type type, hailo_status &status);
 
@@ -66,8 +75,7 @@ protected:
     std::unique_ptr<HailoRTDriver> m_driver;
     CacheManagerPtr m_cache_manager;
     // TODO - HRT-13234, move to DeviceBase
-    std::vector<std::shared_ptr<CoreOp>> m_core_ops;
-    std::vector<std::shared_ptr<ConfiguredNetworkGroup>> m_network_groups; // TODO: HRT-9547 - Remove when ConfiguredNetworkGroup will be kept in global context
+    std::vector<std::weak_ptr<CoreOp>> m_core_ops;
 
     // The vdma interrupts dispatcher contains a callback with a reference to the current activated network group
     // (reference to the ResourcesManager). Hence, it must be destroyed before the networks groups are destroyed.

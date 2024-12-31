@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file network_group_client.hpp
  * @brief Network Group client for HailoRT gRPC Service
@@ -121,11 +121,12 @@ public:
     virtual hailo_status set_nms_score_threshold(const std::string &edge_name, float32_t nms_score_threshold) override;
     virtual hailo_status set_nms_iou_threshold(const std::string &edge_name, float32_t iou_threshold) override;
     virtual hailo_status set_nms_max_bboxes_per_class(const std::string &edge_name, uint32_t max_bboxes_per_class) override;
+    virtual hailo_status set_nms_max_bboxes_total(const std::string &edge_name, uint32_t max_bboxes_total) override;
+    virtual hailo_status set_nms_result_order_type(const std::string &edge_name, hailo_nms_result_order_type_t order_type) override;
     virtual hailo_status set_nms_max_accumulated_mask_size(const std::string &edge_name, uint32_t max_accumulated_mask_size) override;
 
     virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) override;
-    virtual Expected<hailo_cache_info_t> get_cache_info() const override;
-    virtual hailo_status update_cache_offset(int32_t offset_delta_bytes) override;
+    virtual hailo_status update_cache_offset(int32_t offset_delta_entries) override;
     virtual Expected<std::vector<uint32_t>> get_cache_ids() const override;
     virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) override;
     virtual hailo_status write_cache_buffer(uint32_t cache_id, MemoryView buffer) override;
@@ -150,6 +151,8 @@ private:
     std::mutex m_mutex;
     std::unordered_map<callback_idx_t, StreamCbParamsPtr> m_idx_to_callbacks;
     std::unordered_map<callback_idx_t, std::function<void(hailo_status)>> m_infer_request_idx_to_callbacks;
+    std::mutex m_shutdown_mutex;
+    std::atomic<bool> m_is_shutdown;
 };
 
 } /* namespace hailort */

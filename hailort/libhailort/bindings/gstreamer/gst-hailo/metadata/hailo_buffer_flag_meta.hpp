@@ -1,5 +1,5 @@
-/*
- * Copyright (c) 2021-2022 Hailo Technologies Ltd. All rights reserved.
+/**
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the LGPL 2.1 license (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
  *
  * This library is free software; you can redistribute it and/or
@@ -20,7 +20,7 @@
 #ifndef __HAILO_BUFFER_FLAG_META_HPP__
 #define __HAILO_BUFFER_FLAG_META_HPP__
 
-#include "hailo_gst.h"
+#include "include/hailo_gst.h"
 
 #define HAILO_BUFFER_FLAG_META_API_NAME "GstHailoBufferFlagMetaAPI"
 #define HAILO_BUFFER_FLAG_META_IMPL_NAME "GstHailoBufferFlagMeta"

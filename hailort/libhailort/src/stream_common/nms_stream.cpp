@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -370,12 +370,6 @@ size_t NmsOutputStream::get_max_ongoing_transfers() const
 
 hailo_status NmsOutputStream::read_async_impl(TransferRequest &&transfer_request)
 {
-    CHECK(1 == transfer_request.transfer_buffers.size(), HAILO_INVALID_OPERATION,
-        "NMS Reader stream supports only 1 transfer buffer");
-    CHECK(TransferBufferType::MEMORYVIEW == transfer_request.transfer_buffers[0].type(), HAILO_INVALID_OPERATION,
-        "NMS stream doesn't support DMABUF buffer type");
-    // Currently leave as transfer request - because nms reader uses transfer request queue
-    // TODO HRT-12239: Chagge when support async read with any aligned void ptr
     return m_reader_thread.launch_transfer(std::move(transfer_request));
 }
 
@@ -426,6 +420,10 @@ NmsReaderThread::~NmsReaderThread()
 
 hailo_status NmsReaderThread::launch_transfer(TransferRequest &&transfer_request)
 {
+    CHECK(1 == transfer_request.transfer_buffers.size(), HAILO_INVALID_OPERATION,
+        "NMS Reader stream supports only 1 transfer buffer");
+    CHECK(TransferBufferType::MEMORYVIEW == transfer_request.transfer_buffers[0].type(), HAILO_INVALID_OPERATION,
+        "NMS stream doesn't support DMABUF buffer type");
     CHECK(1 == transfer_request.transfer_buffers.size(), HAILO_INVALID_OPERATION,
         "NMS Reader stream supports only 1 transfer buffer");
     CHECK(0 == transfer_request.transfer_buffers[0].offset(), HAILO_INVALID_OPERATION,
@@ -486,7 +484,6 @@ void NmsReaderThread::process_transfer_requests()
 
         assert(1 == transfer_request.transfer_buffers.size());
         assert(0 == transfer_request.transfer_buffers[0].offset());
-        // TODO HRT-13827: Add support for nms stream read with dmabuf
         auto buffer = transfer_request.transfer_buffers[0].base_buffer();
         assert(buffer.has_value());
         auto status = NMSStreamReader::read_nms(*m_base_stream, buffer.value().data(), 0, buffer.value().size(), m_stream_interface);

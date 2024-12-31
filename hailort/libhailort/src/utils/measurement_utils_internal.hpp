@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file measurement_utils_internal.hpp
  * @brief Internal class definitions for the measurement_utils module
@@ -28,6 +28,24 @@ enum class MeasurementType
     TIME,
     FPS,
     VALUE
+};
+
+// Interface used for dependency injection
+class ITimeProvider
+{
+public:
+    using time_point = decltype(std::chrono::high_resolution_clock::now());
+    virtual time_point now() const = 0;
+    virtual ~ITimeProvider() = default;
+};
+
+// Note: This class is a singleton, to avoid the overhead of creating multiple instances
+//       (it's got no state so there's no reason to have multiple instances)
+class HighResTimeProvider : public ITimeProvider
+{
+public:
+    static const ITimeProvider& get_instance();
+    virtual time_point now() const override;
 };
 
 class MeasurementStorage final
@@ -110,25 +128,25 @@ public:
     virtual ~MeasureTimeBase()
     {
         // Set the measurement to the time delta
-        m_measurement = convert_to_double(std::chrono::steady_clock::now() - m_start_time);
+        m_measurement = convert_to_double(m_time_provider.now() - m_start_time);
     }
 
 protected:
-    MeasureTimeBase(MeasurementType type, const std::string &accumulator_name) :
+    MeasureTimeBase(MeasurementType type, const std::string &accumulator_name, const ITimeProvider& time_provider) :
         Measure::Measure(type, accumulator_name),
-        m_start_time(std::chrono::steady_clock::now())
+        m_time_provider(time_provider),
+        m_start_time(m_time_provider.now())
     {}
 
 private:
-    using time_point = decltype(std::chrono::steady_clock::now());
-
     static double convert_to_double(std::chrono::nanoseconds time_in_ns)
     {
         return std::chrono::duration<double, RatioType>(time_in_ns).count();
     }
 
+    const ITimeProvider &m_time_provider;
     // Must be the last member declared, so that the time will be measured correctly
-    const time_point m_start_time;
+    const ITimeProvider::time_point m_start_time;
 };
 
 } /* namespace utils */

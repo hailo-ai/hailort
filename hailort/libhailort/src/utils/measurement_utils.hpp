@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file measurement_utils.hpp
  * @brief This module provides utility classes for measuring and storing runtime statistics of designated code
@@ -96,13 +96,22 @@ namespace utils {
 class MeasureTime : public MeasureTimeBase<std::milli>
 {
 public:
+    MeasureTime(const ITimeProvider& time_provider, const std::string &accumulator_name) :
+        MeasureTimeBase::MeasureTimeBase(MeasurementType::TIME, accumulator_name, time_provider)
+    {}
+
+    template <typename... Args>
+    MeasureTime(const ITimeProvider& time_provider, const std::string &accumulator_name_format, Args&&... args) :
+        MeasureTime(time_provider, fmt::format(accumulator_name_format, std::forward<Args>(args)...))
+    {}
+
     MeasureTime(const std::string &accumulator_name) :
-        MeasureTimeBase::MeasureTimeBase(MeasurementType::TIME, accumulator_name)
+        MeasureTime(HighResTimeProvider::get_instance(), accumulator_name)
     {}
 
     template <typename... Args>
     MeasureTime(const std::string &accumulator_name_format, Args&&... args) :
-        MeasureTime(fmt::format(accumulator_name_format, std::forward<Args>(args)...))
+        MeasureTime(HighResTimeProvider::get_instance(), fmt::format(accumulator_name_format, std::forward<Args>(args)...))
     {}
 };
 
@@ -111,13 +120,22 @@ public:
 class MeasureFps : public MeasureTimeBase<std::ratio<1,1>>
 {
 public:
+    MeasureFps(const ITimeProvider& time_provider, const std::string &accumulator_name) :
+        MeasureTimeBase::MeasureTimeBase(MeasurementType::FPS, accumulator_name, time_provider)
+    {}
+
+    template <typename... Args>
+    MeasureFps(const ITimeProvider& time_provider, const std::string &accumulator_name_format, Args&&... args) :
+        MeasureFps(time_provider, fmt::format(accumulator_name_format, std::forward<Args>(args)...))
+    {}
+
     MeasureFps(const std::string &accumulator_name) :
-        MeasureTimeBase::MeasureTimeBase(MeasurementType::FPS, accumulator_name)
+        MeasureFps(HighResTimeProvider::get_instance(), accumulator_name)
     {}
 
     template <typename... Args>
     MeasureFps(const std::string &accumulator_name_format, Args&&... args) :
-        MeasureFps(fmt::format(accumulator_name_format, std::forward<Args>(args)...))
+        MeasureFps(HighResTimeProvider::get_instance(), fmt::format(accumulator_name_format, std::forward<Args>(args)...))
     {}
 };
 
@@ -147,15 +165,23 @@ public:
 // Note: An instance with a unique name will be created (__time_<lineno>), so that:
 //       a) the measurements will be completed at the end of the scope
 //       b) name shadowing will be avoided
+//       c) If time_provider is passed, it will be used for the measurements
 #define MEASURE_TIME(accumulator_name_format, ...) \
     hailort::utils::MeasureTime _CONCAT(__time_, __LINE__)(accumulator_name_format, ##__VA_ARGS__)
+
+#define MEASURE_TIME_WITH_PROVIDER(time_provider, accumulator_name_format, ...) \
+    hailort::utils::MeasureTime _CONCAT(__time_, __LINE__)(time_provider, accumulator_name_format, ##__VA_ARGS__)
 
 // Helper macro for measuring fps of a block/function
 // Note: An instance with a unique name will be created (__time_<lineno>), so that:
 //       a) the measurements will be completed at the end of the scope
 //       b) name shadowing will be avoided
+//       c) If time_provider is passed, it will be used for the measurements
 #define MEASURE_FPS(accumulator_name_format, ...) \
     hailort::utils::MeasureFps _CONCAT(__time_, __LINE__)(accumulator_name_format, ##__VA_ARGS__)
+
+#define MEASURE_FPS_WITH_PROVIDER(time_provider, accumulator_name_format, ...) \
+    hailort::utils::MeasureFps _CONCAT(__time_, __LINE__)(time_provider, accumulator_name_format, ##__VA_ARGS__)
 
 // Helper macro for measuring a numeric value
 // Note: The accumulator's format is the stringified variable name together with accumulator_name_format.

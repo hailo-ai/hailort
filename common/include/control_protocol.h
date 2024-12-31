@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file control_protocol.h
  * @brief Defines control protocol.
@@ -160,9 +160,9 @@ extern "C" {
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_SET_SLEEP_STATE,                           false, CPU_ID_APP_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CHANGE_HW_INFER_STATUS,                    false, CPU_ID_CORE_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_SIGNAL_DRIVER_DOWN,                        false, CPU_ID_CORE_CPU)\
-    CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_INIT_CACHE_INFO,            false, CPU_ID_CORE_CPU)\
-    CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_GET_CACHE_INFO,             false, CPU_ID_CORE_CPU)\
-    CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_UPDATE_CACHE_READ_OFFSET,   false, CPU_ID_CORE_CPU)\
+    CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_INIT_CACHE_INFO /* obsolete */,            false, CPU_ID_CORE_CPU)\
+    CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_GET_CACHE_INFO /* obsolete */,             false, CPU_ID_CORE_CPU)\
+    CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_UPDATE_CACHE_READ_OFFSET /* obsolete */,   false, CPU_ID_CORE_CPU)\
     CONTROL_PROTOCOL__OPCODE_X(HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_SIGNAL_CACHE_UPDATED,       false, CPU_ID_CORE_CPU)\
 
 typedef enum {
@@ -352,6 +352,7 @@ typedef enum {
     CONTROL_PROTOCOL__HAILO8L,
     CONTROL_PROTOCOL__HAILO15H,
     CONTROL_PROTOCOL__PLUTO,
+    CONTROL_PROTOCOL__MARS,
     /* Must be last!! */
     CONTROL_PROTOCOL__DEVICE_ARCHITECTURE_COUNT
 } CONTROL_PROTOCOL__device_architecture_t;
@@ -975,27 +976,6 @@ typedef struct {
 #pragma warning(pop)
 #endif
 
-typedef struct {
-    uint32_t cache_size;
-    uint32_t current_read_offset;
-    int32_t write_offset_delta;
-} CONTROL_PROTOCOL__context_switch_cache_info_t;
-
-typedef struct {
-    uint32_t cache_info_length;
-    CONTROL_PROTOCOL__context_switch_cache_info_t cache_info;
-} CONTROL_PROTOCOL__context_switch_init_cache_info_request_t;
-
-typedef struct {
-    uint32_t cache_info_length;
-    CONTROL_PROTOCOL__context_switch_cache_info_t cache_info;
-} CONTROL_PROTOCOL__context_switch_get_cache_info_response_t;
-
-typedef struct {
-    uint32_t read_offset_delta_length;
-    int32_t read_offset_delta;
-} CONTROL_PROTOCOL__context_switch_update_cache_read_offset_request_t;
-
 typedef CONTROL_PROTOCOL__read_memory_request_t CONTROL_PROTOCOL__read_user_config_request_t;
 typedef CONTROL_PROTOCOL__read_memory_response_t CONTROL_PROTOCOL__read_user_config_response_t;
 typedef CONTROL_PROTOCOL__write_memory_request_t CONTROL_PROTOCOL__write_user_config_request_t;
@@ -1383,7 +1363,6 @@ typedef union {
     CONTROL_PROTOCOL__get_overcurrent_state_response_t get_overcurrent_state_response;
     CONTROL_PROTOCOL__get_hw_consts_response_t get_hw_consts_response;
     CONTROL_PROTOCOL__change_hw_infer_status_response_t change_hw_infer_status_response;
-    CONTROL_PROTOCOL__context_switch_get_cache_info_response_t context_switch_get_cache_info_response;
 
    // Note: This array is larger than any legal request:
    // * Functions in this module won't write more than CONTROL_PROTOCOL__MAX_CONTROL_LENGTH bytes
@@ -1419,8 +1398,6 @@ typedef union {
    CONTROL_PROTOCOL__sensor_set_generic_i2c_slave_request_t sensor_set_generic_i2c_slave_request;
    CONTROL_PROTOCOL__context_switch_set_network_group_header_request_t context_switch_set_network_group_header_request;
    CONTROL_PROTOCOL__context_switch_set_context_info_request_t context_switch_set_context_info_request;
-   CONTROL_PROTOCOL__context_switch_init_cache_info_request_t context_switch_init_cache_info_request;
-   CONTROL_PROTOCOL__context_switch_update_cache_read_offset_request_t context_switch_update_cache_read_offset_request;
    CONTROL_PROTOCOL__idle_time_set_measurement_request_t idle_time_set_measurement_request;
    CONTROL_PROTOCOL__download_context_action_list_request_t download_context_action_list_request;
    CONTROL_PROTOCOL__change_context_switch_status_request_t change_context_switch_status_request;

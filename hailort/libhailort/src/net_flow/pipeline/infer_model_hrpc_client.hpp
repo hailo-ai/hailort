@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file infer_model_hrpc_client.hpp
  * @brief Infer model HRPC client, represents the user's handle to the InferModel object
@@ -23,10 +23,10 @@ class InferModelHrpcClient : public InferModelBase
 {
 public:
     static Expected<std::shared_ptr<InferModelHrpcClient>> create(Hef &&hef, const std::string &network_name,
-        std::shared_ptr<hrpc::Client> client, uint32_t infer_model_handle_id, uint32_t vdevice_handle, VDevice &vdevice,
+        std::shared_ptr<Client> client, uint32_t infer_model_handle_id, uint32_t vdevice_handle, VDevice &vdevice,
         std::shared_ptr<CallbacksDispatcher> callbacks_dispatcher);
 
-    InferModelHrpcClient(std::shared_ptr<hrpc::Client> client, uint32_t id,
+    InferModelHrpcClient(std::shared_ptr<Client> client, uint32_t id,
         uint32_t vdevice_handle, VDevice &vdevice, std::shared_ptr<CallbacksDispatcher> callbacks_dispatcher,
         Hef &&hef, const std::string &network_name, std::vector<InferStream> &&inputs, std::vector<InferStream> &&outputs);
     virtual ~InferModelHrpcClient();
@@ -45,7 +45,7 @@ public:
         std::shared_ptr<ConfiguredNetworkGroup> net_group = nullptr) override;
 
 private:
-    std::weak_ptr<hrpc::Client> m_client;
+    std::weak_ptr<Client> m_client;
     uint32_t m_handle;
     uint32_t m_vdevice_handle;
     std::shared_ptr<CallbacksDispatcher> m_callbacks_dispatcher;

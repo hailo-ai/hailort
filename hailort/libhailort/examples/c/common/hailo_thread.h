@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -35,9 +35,12 @@ hailo_status hailo_create_thread(thread_return_type(*func_ptr)(void*), void* arg
 
 hailo_status hailo_join_thread(hailo_thread *thread)
 {
-    void *results = NULL;
-    pthread_join(*thread, &results);
-    return (hailo_status)results;
+    uintptr_t join_results = 0;
+    int err = pthread_join(*thread, (void*)&join_results);
+    if (0 != err) {
+        return HAILO_INTERNAL_FAILURE;
+    }
+    return (hailo_status)join_results;
 }
 
 void hailo_atomic_init(hailo_atomic_int *atomic, int value)

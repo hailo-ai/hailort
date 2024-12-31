@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file firmware_header_utils.c
  * @brief Utilities for working with the firmware header.
@@ -50,8 +50,8 @@ static HAILO_COMMON_STATUS_t firmware_header_utils__validate_fw_header(uintptr_t
     case FIRMWARE_TYPE_HAILO15:
         firmware_magic = FIRMWARE_HEADER_MAGIC_HAILO15;
         break;
-    case FIRMWARE_TYPE_PLUTO:
-        firmware_magic = FIRMWARE_HEADER_MAGIC_PLUTO;
+    case FIRMWARE_TYPE_HAILO15L:
+        firmware_magic = FIRMWARE_HEADER_MAGIC_HAILO15L;
         break;
     default:
         status = HAILO_STATUS__FIRMWARE_HEADER_UTILS__INVALID_FIRMWARE_TYPE;

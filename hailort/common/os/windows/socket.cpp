@@ -40,11 +40,7 @@ hailo_status Socket::SocketModuleWrapper::free_module()
 
 Expected<Socket> Socket::create(int af, int type, int protocol)
 {
-    TRY(auto module_wrapper, SocketModuleWrapper::create());
-
-    auto module_wrapper_ptr = make_shared_nothrow<SocketModuleWrapper>(std::move(module_wrapper));
-    CHECK_NOT_NULL(module_wrapper_ptr, HAILO_OUT_OF_HOST_MEMORY);
-
+    TRY(auto module_wrapper_ptr, SocketModuleWrapper::create_shared());
     TRY(const auto socket_fd, create_socket_fd(af, type, protocol));
 
     auto obj = Socket(std::move(module_wrapper_ptr), socket_fd);
@@ -76,7 +72,11 @@ Expected<socket_t> Socket::create_socket_fd(int af, int type, int protocol)
 
 hailo_status Socket::abort()
 {
-    return HAILO_NOT_IMPLEMENTED;
+    int socket_rc = shutdown(m_socket_fd, SD_BOTH);
+    CHECK((0 == socket_rc) || ((-1 == socket_rc) && (WSAENOTCONN == WSAGetLastError())), HAILO_ETH_FAILURE,
+        "Failed to shutdown (abort) socket. WSALE={}", WSAGetLastError());
+
+    return HAILO_SUCCESS;
 }
 
 hailo_status Socket::close_socket_fd()
@@ -84,6 +84,7 @@ hailo_status Socket::close_socket_fd()
     if (INVALID_SOCKET != m_socket_fd) {
         int socket_rc = closesocket(m_socket_fd);
         CHECK(0 == socket_rc, HAILO_ETH_FAILURE, "Failed to close socket. WSALE={}", WSAGetLastError());
+        m_socket_fd = INVALID_SOCKET;
     }
 
     return HAILO_SUCCESS;
@@ -150,26 +151,12 @@ Expected<size_t> Socket::send(const uint8_t *buffer, size_t size, int flags)
     return Expected<size_t>(bytes_written);
 }
 
-hailo_status Socket::sendall(const uint8_t *buffer, size_t size, int flags)
-{
-    size_t offset = 0;
-    while (offset < size) {
-        const auto size_to_write = size - offset;
-        TRY(auto bytes_written, send(buffer + offset, size_to_write, flags));
-        if (bytes_written == 0) {
-            return HAILO_ETH_SEND_FAILURE;
-        }
-        offset += bytes_written;
-    }
-    return HAILO_SUCCESS;
-}
-
 hailo_status Socket::ntop(int af, const void *src, char *dst, socklen_t size)
 {
     CHECK_ARG_NOT_NULL(src);
     CHECK_ARG_NOT_NULL(dst);
 
-    TRY(const auto module_wrapper, SocketModuleWrapper::create());
+    TRY(const auto module_wrapper_ptr, SocketModuleWrapper::create_shared());
 
     const char *inet_result = inet_ntop(af, src, dst, size);
     CHECK(nullptr != inet_result, HAILO_ETH_FAILURE, "Failed inet_ntop. WSALE={}", WSAGetLastError());
@@ -184,12 +171,12 @@ hailo_status Socket::pton(int af, const char *src, void *dst)
     CHECK_ARG_NOT_NULL(src);
     CHECK_ARG_NOT_NULL(dst);
 
-    TRY(const auto module_wrapper, SocketModuleWrapper::create());
+    TRY(const auto module_wrapper_ptr, SocketModuleWrapper::create_shared());
 
     inet_result = inet_pton(af, src, dst);
-    if (1 != inet_result) {
-        return HAILO_ETH_FAILURE;
-    }
+    CHECK(0 != inet_result, HAILO_ETH_FAILURE,
+        "Failed to run 'inet_pton'. src is not a valid network address in the specified address family");
+    CHECK(1 == inet_result, HAILO_ETH_FAILURE, "Failed to run 'inet_pton', WSALE = {}.", WSAGetLastError());
 
     return HAILO_SUCCESS;
 }
@@ -253,6 +240,13 @@ hailo_status Socket::allow_reuse_address()
     CHECK(0 == socket_rc, HAILO_ETH_FAILURE, "Cannot set socket to be broadcast");
 
     return HAILO_SUCCESS;
+}
+
+hailo_status Socket::bind_to_device(const std::string &device_name)
+{
+    (void)device_name;
+    LOGGER__ERROR("bind_to_device is not implemented for Windows");
+    return HAILO_NOT_IMPLEMENTED;
 }
 
 hailo_status Socket::send_to(const uint8_t *src_buffer, size_t src_buffer_size, int flags,

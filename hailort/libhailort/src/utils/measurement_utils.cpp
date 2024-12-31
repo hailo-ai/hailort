@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file measurement_utils.cpp
  * @brief Measurement utils module implementation
@@ -14,6 +14,17 @@
 
 namespace hailort {
 namespace utils {
+
+const ITimeProvider& HighResTimeProvider::get_instance()
+{
+    static HighResTimeProvider instance;
+    return instance;
+}
+
+HighResTimeProvider::time_point HighResTimeProvider::now() const
+{
+    return std::chrono::high_resolution_clock::now();
+}
 
 hailo_status MeasurementStorage::add_measurement(const std::string &accumulator_name, MeasurementType type,
     double measurement)

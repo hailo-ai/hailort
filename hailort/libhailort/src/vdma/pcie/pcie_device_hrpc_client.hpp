@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -11,6 +11,7 @@
 #define HAILO_PCIE_DEVICE_HRPC_CLIENT_HPP_
 
 #include "hailo/device.hpp"
+#include "hailo/hailort.h"
 #include "hrpc/client.hpp"
 
 
@@ -21,9 +22,9 @@ class PcieDeviceHrpcClient : public Device {
 public:
     static Expected<std::unique_ptr<PcieDeviceHrpcClient>> create(const std::string &device_id);
     static Expected<std::unique_ptr<PcieDeviceHrpcClient>> create(const std::string &device_id,
-        std::shared_ptr<hrpc::Client> client);
+        std::shared_ptr<Client> client);
 
-    PcieDeviceHrpcClient(const std::string &device_id, std::shared_ptr<hrpc::Client> client, uint32_t handle) :
+    PcieDeviceHrpcClient(const std::string &device_id, std::shared_ptr<Client> client, uint32_t handle) :
         Device(Device::Type::PCIE), m_device_id(device_id), m_client(client), m_handle(handle) {}
     virtual ~PcieDeviceHrpcClient();
 
@@ -65,10 +66,21 @@ public:
 
     virtual Expected<hailo_device_identity_t> identify() override;
     virtual Expected<hailo_extended_device_information_t> get_extended_device_information() override;
+    virtual Expected<hailo_chip_temperature_info_t> get_chip_temperature() override;
+    virtual Expected<float32_t> power_measurement(hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type) override;
+    virtual hailo_status start_power_measurement(hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period) override;
+    virtual Expected<hailo_power_measurement_data_t> get_power_measurement(hailo_measurement_buffer_index_t buffer_index, bool should_clear) override;
+    virtual hailo_status set_power_measurement(hailo_measurement_buffer_index_t buffer_index, hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type) override;
+    virtual hailo_status stop_power_measurement() override;
+
+    virtual hailo_status dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
+    virtual hailo_status dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
+    virtual hailo_status dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
+    virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
 
 private:
     std::string m_device_id;
-    std::shared_ptr<hrpc::Client> m_client;
+    std::shared_ptr<Client> m_client;
     uint32_t m_handle;
 };
 

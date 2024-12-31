@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -51,6 +51,8 @@ uint32_t HailoRTCommon::get_nms_host_frame_size(const hailo_nms_shape_t &nms_sha
     double frame_size = 0;
     if (HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK == format.order) {
         frame_size = get_nms_with_byte_mask_host_frame_size(nms_shape);
+    } else if (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE == format.order) {
+        frame_size = get_nms_by_score_host_frame_size(nms_shape);
     } else {
         auto shape_size = get_nms_host_shape_size(nms_shape);
         frame_size =  shape_size * get_format_data_bytes(format);

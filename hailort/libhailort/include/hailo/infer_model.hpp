@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -496,6 +496,13 @@ public:
         void set_nms_max_proposals_per_class(uint32_t max_proposals_per_class);
 
         /**
+         * Set a limit for the maximum number of boxes total (all classes).
+         *
+         * @param[in] max_proposals_total NMS max proposals total to set.
+         */
+        void set_nms_max_proposals_total(uint32_t max_proposals_total);
+
+        /**
          * Set maximum accumulated mask size for all the detections in a frame.
          *
          * @note: Used in order to change the output buffer frame size
@@ -512,6 +519,7 @@ public:
         float32_t nms_score_threshold() const;
         float32_t nms_iou_threshold() const;
         uint32_t nms_max_proposals_per_class() const;
+        uint32_t nms_max_proposals_total() const;
         uint32_t nms_max_accumulated_mask_size() const;
 
         class Impl;

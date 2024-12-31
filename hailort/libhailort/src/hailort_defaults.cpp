@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -29,7 +29,7 @@ static const hailo_format_order_t DEFAULT_FORMAT_ORDER_MAP[] = {
     HAILO_FORMAT_ORDER_NC,                  // HAILO_FORMAT_ORDER_NC,
     HAILO_FORMAT_ORDER_BAYER_RGB,           // HAILO_FORMAT_ORDER_BAYER_RGB,
     HAILO_FORMAT_ORDER_12_BIT_BAYER_RGB,    // HAILO_FORMAT_ORDER_12_BIT_BAYER_RGB
-    HAILO_FORMAT_ORDER_HAILO_NMS,           // HAILO_FORMAT_ORDER_HAILO_NMS,
+    HAILO_FORMAT_ORDER_MAX_ENUM,            // HAILO_FORMAT_ORDER_HAILO_NMS - deprecated,
     HAILO_FORMAT_ORDER_NHWC,                // HAILO_FORMAT_ORDER_RGB888,
     HAILO_FORMAT_ORDER_NCHW,                // HAILO_FORMAT_ORDER_NCHW,
     HAILO_FORMAT_ORDER_YUY2,                // HAILO_FORMAT_ORDER_YUY2,
@@ -39,7 +39,11 @@ static const hailo_format_order_t DEFAULT_FORMAT_ORDER_MAP[] = {
     HAILO_FORMAT_ORDER_NV21,                // HAILO_FORMAT_ORDER_HAILO_YYVU,
     HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_RGB4,
     HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_I420,
-    HAILO_FORMAT_ORDER_I420                 // HAILO_FORMAT_ORDER_HAILO_YYYYUV,
+    HAILO_FORMAT_ORDER_I420,                // HAILO_FORMAT_ORDER_HAILO_YYYYUV,
+    HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK,
+    HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS,  // HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP,
+    HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS,
+    HAILO_FORMAT_ORDER_MAX_ENUM,            // Not used in device side - HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE,
 };
 
 // This func must be aligned to SDK!
@@ -65,7 +69,7 @@ Expected<hailo_format_order_t> HailoRTDefaults::get_device_format_order(uint32_t
         return std::move(HAILO_FORMAT_ORDER_NHW);
         break;
     case 6:
-        return std::move(HAILO_FORMAT_ORDER_HAILO_NMS);
+        return std::move(HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP);
         break;
     case 7:
         return std::move(HAILO_FORMAT_ORDER_F8CR);
@@ -327,7 +331,7 @@ hailo_format_t HailoRTDefaults::expand_auto_format(const hailo_format_t &host_fo
 {
     auto host_format_copy = host_format;
     if (HAILO_FORMAT_TYPE_AUTO == host_format_copy.type) {
-        host_format_copy.type = (HAILO_FORMAT_ORDER_HAILO_NMS == hw_format.order) ? HAILO_FORMAT_TYPE_FLOAT32 : hw_format.type;
+        host_format_copy.type = (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == hw_format.order) ? HAILO_FORMAT_TYPE_FLOAT32 : hw_format.type;
     }
     if (HAILO_FORMAT_ORDER_AUTO == host_format_copy.order) {
         host_format_copy.order = get_default_host_format_order(hw_format);

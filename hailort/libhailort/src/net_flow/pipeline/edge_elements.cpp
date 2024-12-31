@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -356,7 +356,7 @@ hailo_status HwReadElement::run_push(PipelineBuffer &&/*buffer*/, const Pipeline
 
 Expected<PipelineBuffer> HwReadElement::run_pull(PipelineBuffer &&optional, const PipelinePad &/*source*/)
 {
-    auto pool = next_pad_downstream().element().get_buffer_pool();
+    auto pool = next_pad_downstream().get_buffer_pool();
     assert(pool);
 
     TRY_WITH_ACCEPTABLE_STATUS(HAILO_SHUTDOWN_EVENT_SIGNALED, auto buffer,

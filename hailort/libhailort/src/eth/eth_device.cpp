@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -300,10 +300,12 @@ hailo_reset_device_mode_t EthernetDevice::get_default_reset_mode()
 // TODO - HRT-13234, move to DeviceBase
 void EthernetDevice::shutdown_core_ops()
 {
-    for (auto core_op : m_core_ops) {
-        auto status = core_op->shutdown();
-        if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed to shutdown core op with status {}", status);
+    for (auto core_op_weak : m_core_ops) {
+        if (auto core_op = core_op_weak.lock()) {
+            auto status = core_op->shutdown();
+            if (HAILO_SUCCESS != status) {
+                LOGGER__ERROR("Failed to shutdown core op with status {}", status);
+            }
         }
     }
 }
@@ -446,12 +448,11 @@ Expected<ConfiguredNetworkGroupVector> EthernetDevice::create_networks_group_vec
 
         m_core_ops.push_back(core_op_ptr);
         core_ops_ptrs.push_back(core_op_ptr);
-        
+
         TRY(auto net_group_ptr, ConfiguredNetworkGroupBase::create(config_params,
             std::move(core_ops_ptrs), std::move(metadata)));
 
         added_network_groups.emplace_back(net_group_ptr);
-        m_network_groups.push_back(net_group_ptr);
     }
 
     std::string unmatched_keys = "";

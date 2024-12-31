@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -15,9 +15,7 @@
 #include "hailo/hef.hpp"
 #include "hailo/network_group.hpp"
 
-#include <functional>
 #include <vector>
-#include <map>
 #include <memory>
 #include <chrono>
 
@@ -167,7 +165,7 @@ public:
     /**
      * Parse PCIe device BDF string into hailo device info structure.
      *
-     * @param[in] device_info_str   BDF device info, format [\<domain\>].\<bus\>.\<device\>.\<func\>, same format as in lspci.
+     * @param[in] device_info_str   BDF device info, format \<domain\>.\<bus\>.\<device\>.\<func\>.
      * @return Upon success, returns Expected of ::hailo_pcie_device_info_t containing the information.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
@@ -392,7 +390,7 @@ public:
      * @return Upon success, returns @a uint32_t mesuremenet. Measured units are determined due to ::hailo_power_measurement_types_t.
      *         Otherwise, returns a ::hailo_status error.
      */
-    Expected<float32_t> power_measurement(hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type);
+    virtual Expected<float32_t> power_measurement(hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type);
 
     /**
      * Start performing a long power measurement.
@@ -407,7 +405,7 @@ public:
      *                                   because it averages values that have already been averaged by the sensor.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
-    hailo_status start_power_measurement(hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period);
+    virtual hailo_status start_power_measurement(hailo_averaging_factor_t averaging_factor, hailo_sampling_period_t sampling_period);
 
 
     /**
@@ -424,7 +422,7 @@ public:
      *                                 will select the default value according to the supported features.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
-    hailo_status set_power_measurement(hailo_measurement_buffer_index_t buffer_index, hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type);
+    virtual hailo_status set_power_measurement(hailo_measurement_buffer_index_t buffer_index, hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type);
 
     /**
      * Read measured power from a long power measurement
@@ -435,14 +433,14 @@ public:
      * @return Upon success, returns @a hailo_power_measurement_data_t. Measured units are determined due to ::hailo_power_measurement_types_t
      *         passed to 'Device::set_power_measurement'. Otherwise, returns a ::hailo_status error.
      */
-    Expected<hailo_power_measurement_data_t> get_power_measurement(hailo_measurement_buffer_index_t buffer_index, bool should_clear);
+    virtual Expected<hailo_power_measurement_data_t> get_power_measurement(hailo_measurement_buffer_index_t buffer_index, bool should_clear);
 
     /**
      * Stop performing a long power measurement.
      * 
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
-    hailo_status stop_power_measurement();
+    virtual hailo_status stop_power_measurement();
 
     /**
      * Get temperature information on the device
@@ -451,7 +449,7 @@ public:
      *         Otherwise, returns a ::hailo_status error.
      * @note Temperature in Celsius of the 2 internal temperature sensors (TS).
      */
-    Expected<hailo_chip_temperature_info_t> get_chip_temperature();
+    virtual Expected<hailo_chip_temperature_info_t> get_chip_temperature();
 
     /**
      * Reset device.
@@ -758,7 +756,6 @@ public:
      *
      * @note The DMA mapping will be released upon calling dma_unmap() with @a dmabuf_fd, @a size and @a data_direction, or
      *       when the @a Device object is destroyed.
-     * @note This API is currently experimental.
      */
     virtual hailo_status dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction);
 
@@ -771,7 +768,6 @@ public:
      * @param[in] direction     The direction of the mapping.
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note This API is currently experimental.
      */
     virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction);
 
@@ -801,9 +797,6 @@ public:
     hailo_status continue_context_switch_breakpoint(uint8_t breakpoint_id);
     hailo_status clear_context_switch_breakpoint(uint8_t breakpoint_id);
     Expected<uint8_t> get_context_switch_breakpoint_status(uint8_t breakpoint_id);
-    hailo_status init_cache_info(const hailo_cache_info_t &cache_info);
-    Expected<hailo_cache_info_t> get_cache_info();
-    hailo_status update_cache_read_offset(int32_t read_offset_delta);
 
     virtual ~Device() = default;
     Device(const Device &) = delete;
@@ -821,7 +814,6 @@ protected:
     hailo_status fw_interact(uint8_t *request_buffer, size_t request_size, uint8_t *response_buffer, size_t *response_size);
     virtual hailo_status fw_interact_impl(uint8_t *request_buffer, size_t request_size, uint8_t *response_buffer, 
                                           size_t *response_size, hailo_cpu_id_t cpu_id) = 0;
-    
     // Update the state of the fw, as seen by this device
     hailo_status update_fw_state();
 
@@ -831,10 +823,9 @@ protected:
     hailo_device_architecture_t m_device_architecture;
 
 private:
-    uint32_t get_control_sequence();
+    virtual Expected<bool> has_INA231();
     bool is_control_version_supported();
-    Expected<bool> has_INA231_H8();
-    Expected<bool> has_INA231_H15();
+    uint32_t get_control_sequence();
 
     friend class Control;
 };

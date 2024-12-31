@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -35,6 +35,7 @@
 #include <winsock2.h>
 #include <Ws2tcpip.h>
 #include <ws2ipdef.h>
+#include <afunix.h>
 #else
 // UNIX headers
 #include <unistd.h>
@@ -42,6 +43,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/un.h>
 #endif
 
 
@@ -87,6 +89,10 @@ typedef struct timeval timeval_t;
 // TODO: Fix this hack
 #ifndef MSG_CONFIRM
 #define MSG_CONFIRM (0)
+#endif
+
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
 #endif
 
 #if !defined(_MSC_VER) && !defined(INVALID_SOCKET)

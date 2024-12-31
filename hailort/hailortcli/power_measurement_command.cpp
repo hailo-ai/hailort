@@ -111,20 +111,19 @@ Expected<LongPowerMeasurement> PowerMeasurementSubcommand::start_power_measureme
         return make_unexpected(HAILO_NOT_FOUND);
     }
 
-    hailo_status status = hailo_stop_power_measurement(reinterpret_cast<hailo_device>(&device));
+    hailo_status status = device.stop_power_measurement();
     if (HAILO_SUCCESS != status) {
         std::cerr << "Failed initial power measurement stop, status " << status << std::endl;
         return make_unexpected(status);
     }
 
-    status = hailo_set_power_measurement(reinterpret_cast<hailo_device>(&device), HAILO_MEASUREMENT_BUFFER_INDEX_0, dvm, measurement_type);
+    status = device.set_power_measurement(HAILO_MEASUREMENT_BUFFER_INDEX_0, dvm, measurement_type);
     if (HAILO_SUCCESS != status) {
         std::cerr << "Failed to set power measurement parameters, status " << status << std::endl;
         return make_unexpected(status);
     }
 
-    status = hailo_start_power_measurement(reinterpret_cast<hailo_device>(&device),
-        averaging_factor_enum, sampling_period_enum);
+    status = device.start_power_measurement(averaging_factor_enum, sampling_period_enum);
     if (HAILO_SUCCESS != status) {
         std::cerr << "Failed to start power measurement, status " << status << std::endl;
         return make_unexpected(status);
@@ -140,17 +139,13 @@ LongPowerMeasurement::LongPowerMeasurement(Device &device,
 
 hailo_status LongPowerMeasurement::stop()
 {
-    hailo_status status = hailo_stop_power_measurement(reinterpret_cast<hailo_device>(&m_device));
+    hailo_status status = m_device.stop_power_measurement();
     if (HAILO_SUCCESS != status) {
         std::cerr << "Failed to stop power measurement, status " << status << std::endl;
         return status;
     }
 
-    status = hailo_get_power_measurement(reinterpret_cast<hailo_device>(&m_device), HAILO_MEASUREMENT_BUFFER_INDEX_0, true, &m_data);
-    if (HAILO_SUCCESS != status) {
-        std::cerr << "Failed to get power measurement results, status " << status << std::endl;
-        return status;
-    }
+    TRY(m_data, m_device.get_power_measurement(HAILO_MEASUREMENT_BUFFER_INDEX_0, true));
 
     const char *power_units = PowerMeasurementSubcommand::get_power_units(m_measurement_type);
     if (nullptr == power_units) {
@@ -255,13 +250,7 @@ const char *PowerMeasurementSubcommand::get_power_units(hailo_power_measurement_
 
 hailo_status PowerMeasurementSubcommand::run_single_power_measurement(Device &device)
 {
-    float32_t measurement = 0.0f;
-    hailo_status status = hailo_power_measurement(reinterpret_cast<hailo_device>(&device), m_params.dvm_option, m_params.measurement_type,
-        &measurement);
-    if (HAILO_SUCCESS != status) {
-        std::cerr << "Failed to get power measurement results, status " << status << std::endl;
-        return status;
-    }
+    TRY(auto measurement, device.power_measurement(m_params.dvm_option, m_params.measurement_type));
 
     const char *power_units = get_power_units(m_params.measurement_type);
     if (nullptr == power_units) {

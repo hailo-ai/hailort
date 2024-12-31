@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -106,7 +106,7 @@ public:
 
 private:
     ConfiguredNetworkGroupBase &m_cng;
-    bool m_is_activated;
+    bool m_is_activated = false;
 };
 
 ConfiguredNetworkGroup::ConfiguredNetworkGroup() :
@@ -366,6 +366,24 @@ hailo_status ConfiguredNetworkGroupBase::set_nms_max_bboxes_per_class(const std:
     auto expected_nms_op_metadata = get_nms_meta_data(edge_name);
     CHECK_EXPECTED_AS_STATUS(expected_nms_op_metadata);
     expected_nms_op_metadata.value()->nms_config().max_proposals_per_class = max_bboxes_per_class;
+    expected_nms_op_metadata.value()->nms_config().order_type = HAILO_NMS_RESULT_ORDER_BY_CLASS;
+    return HAILO_SUCCESS;
+}
+
+hailo_status ConfiguredNetworkGroupBase::set_nms_max_bboxes_total(const std::string &edge_name, uint32_t max_bboxes_total)
+{
+    auto expected_nms_op_metadata = get_nms_meta_data(edge_name);
+    CHECK_EXPECTED_AS_STATUS(expected_nms_op_metadata);
+    expected_nms_op_metadata.value()->nms_config().max_proposals_total = max_bboxes_total;
+    expected_nms_op_metadata.value()->nms_config().order_type = HAILO_NMS_RESULT_ORDER_BY_SCORE;
+    return HAILO_SUCCESS;
+}
+
+hailo_status ConfiguredNetworkGroupBase::set_nms_result_order_type(const std::string &edge_name, hailo_nms_result_order_type_t order_type)
+{
+    auto expected_nms_op_metadata = get_nms_meta_data(edge_name);
+    CHECK_EXPECTED_AS_STATUS(expected_nms_op_metadata);
+    expected_nms_op_metadata.value()->nms_config().order_type = order_type;
     return HAILO_SUCCESS;
 }
 
@@ -724,6 +742,13 @@ Expected<std::vector<OutputVStream>> ConfiguredNetworkGroupBase::create_output_v
     std::vector<OutputVStream> vstreams;
     vstreams.reserve(vstreams_params.size());
 
+    for (const auto &vstream_param : vstreams_params) {
+        if (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE == vstream_param.second.user_buffer_format.order) {
+            LOGGER__ERROR("Output format order HAILO_NMS_BY_SCORE is not supported for vstreams.");
+            return make_unexpected(HAILO_NOT_SUPPORTED);
+        }
+    }
+
     auto all_output_streams_expected = get_output_streams_from_vstream_names(vstreams_params);
     CHECK_EXPECTED(all_output_streams_expected);
     auto all_output_streams = all_output_streams_expected.release();
@@ -851,23 +876,39 @@ hailo_status ConfiguredNetworkGroupBase::infer_async(const NamedBuffersCallbacks
     return HAILO_SUCCESS;
 }
 
-Expected<uint32_t> ConfiguredNetworkGroupBase::get_cache_read_size() const
+Expected<uint32_t> ConfiguredNetworkGroupBase::get_cache_length() const
 {
     CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
-        "get_cache_read_size() is not supported for multi core-op network groups");
+        "get_cache_length() is not supported for multi core-op network groups");
 
-    return m_core_ops[0]->get_cache_read_size();
+    return m_core_ops[0]->get_cache_length();
 
 }
 
-Expected<uint32_t> ConfiguredNetworkGroupBase::get_cache_write_size() const
+Expected<uint32_t> ConfiguredNetworkGroupBase::get_cache_read_length() const
 {
     CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
-        "get_cache_write_size() is not supported for multi core-op network groups");
+        "get_cache_read_length() is not supported for multi core-op network groups");
 
-    return m_core_ops[0]->get_cache_write_size();
+    return m_core_ops[0]->get_cache_read_length();
+
 }
 
+Expected<uint32_t> ConfiguredNetworkGroupBase::get_cache_write_length() const
+{
+    CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
+        "get_cache_write_length() is not supported for multi core-op network groups");
+
+    return m_core_ops[0]->get_cache_write_length();
+}
+
+Expected<uint32_t> ConfiguredNetworkGroupBase::get_cache_entry_size(uint32_t cache_id) const
+{
+    CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
+        "get_cache_entry_size() is not supported for multi core-op network groups");
+
+    return m_core_ops[0]->get_cache_entry_size(cache_id);
+}
 
 hailo_status ConfiguredNetworkGroupBase::init_cache(uint32_t read_offset, int32_t write_offset_delta)
 {
@@ -877,20 +918,12 @@ hailo_status ConfiguredNetworkGroupBase::init_cache(uint32_t read_offset, int32_
     return m_core_ops[0]->init_cache(read_offset, write_offset_delta);
 }
 
-Expected<hailo_cache_info_t> ConfiguredNetworkGroupBase::get_cache_info() const
-{
-    CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
-        "get_cache_info() is not supported for multi core-op network groups");
-
-    return m_core_ops[0]->get_cache_info();
-}
-
-hailo_status ConfiguredNetworkGroupBase::update_cache_offset(int32_t offset_delta_bytes)
+hailo_status ConfiguredNetworkGroupBase::update_cache_offset(int32_t offset_delta_entries)
 {
     CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
         "update_cache_offset() is not supported for multi core-op network groups");
 
-    return m_core_ops[0]->update_cache_offset(offset_delta_bytes);
+    return m_core_ops[0]->update_cache_offset(offset_delta_entries);
 }
 
 Expected<std::vector<uint32_t>> ConfiguredNetworkGroupBase::get_cache_ids() const

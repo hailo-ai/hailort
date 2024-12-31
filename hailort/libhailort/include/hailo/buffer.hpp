@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <type_traits>
 #include <string>
+#include <cstring>
 #include <cassert>
 
 
@@ -24,10 +25,11 @@ namespace hailort
 {
 
 class BufferStorage;
-using BufferStoragePtr = std::shared_ptr<BufferStorage>;
-
 class Buffer;
+class MemoryView;
+
 using BufferPtr = std::shared_ptr<Buffer>;
+using BufferStoragePtr = std::shared_ptr<BufferStorage>;
 
 
 /*! Buffer storage parameters. Analogical to hailo_buffer_parameters_t */
@@ -175,6 +177,23 @@ public:
     uint32_t& as_uint32();
     uint64_t& as_uint64();
 
+    // Returns a view of the current buffer starting at offset, till the end of the buffer
+    // If offset is greater than the buffer size, an empty view is returned
+    MemoryView from(size_t offset);
+    const MemoryView from(size_t offset) const;
+
+    // Returns a view of the current buffer starting at the beginning, till offset exclusive
+    // If offset is greater than the buffer size, a view of the entire buffer is returned
+    MemoryView to(size_t offset);
+    const MemoryView to(size_t offset) const;
+
+    // Returns a view of the current buffer starting at from, till to exclusive
+    // If from is greater than the buffer size, an empty view is returned
+    // If to is greater than the buffer size, a view from from to the end of the buffer is returned
+    // If from is greater than to, an empty view is returned
+    MemoryView slice(size_t from, size_t to);
+    const MemoryView slice(size_t from, size_t to) const;
+
     // Returns the pointer managed by this object and releases ownership
     Expected<void *> release() noexcept;
 
@@ -200,22 +219,39 @@ private:
 class HAILORTAPI MemoryView final
 {
 public:
-    MemoryView();
-    explicit MemoryView(Buffer &buffer);
-    MemoryView(void *data, size_t size);
+    MemoryView() noexcept;
+    explicit MemoryView(Buffer &buffer) noexcept;
+    MemoryView(void *data, size_t size) noexcept;
     ~MemoryView() = default;
 
-    MemoryView& operator=(MemoryView&& other) = default;
-    MemoryView(const MemoryView &) = default;
-    MemoryView& operator=(const MemoryView &) = default;
-    MemoryView(MemoryView &&) = default;
+    MemoryView& operator=(MemoryView&& other) noexcept = default;
+    MemoryView(const MemoryView &) noexcept = default;
+    MemoryView& operator=(const MemoryView &) noexcept = default;
+    MemoryView(MemoryView &&) noexcept = default;
 
-    static const MemoryView create_const(const void *data, size_t size);
+    static const MemoryView create_const(const void *data, size_t size) noexcept;
 
     uint8_t* data() noexcept;
     const uint8_t* data() const noexcept;
     size_t size() const noexcept;
     bool empty() const noexcept;
+
+    // Byte-wise comparison
+    inline bool operator==(const MemoryView& rhs) const noexcept
+    {
+        if (m_size != rhs.m_size) {
+            return false;
+        }
+        return (0 == std::memcmp(m_data, rhs.m_data, m_size));
+    }
+
+    inline bool operator!=(const MemoryView& rhs) const noexcept
+    {
+        if (m_size != rhs.m_size) {
+            return true;
+        }
+        return (0 != std::memcmp(m_data, rhs.m_data, m_size));
+    }
 
     // Stream operator overload
     friend std::ostream& operator<<(std::ostream&, const MemoryView&);

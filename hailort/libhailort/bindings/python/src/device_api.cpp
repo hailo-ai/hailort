@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -335,23 +335,6 @@ void DeviceWrapper::second_stage_update(py::bytes second_stage_bin, uint32_t sec
     VALIDATE_STATUS(status);
 }
 
-py::list DeviceWrapper::configure(const HefWrapper &hef,
-    const NetworkGroupsParamsMap &configure_params)
-{
-    auto network_groups = device().configure(*hef.hef_ptr(), configure_params);
-    VALIDATE_EXPECTED(network_groups);
-
-    py::list results;
-    m_net_groups.reserve(m_net_groups.size() + network_groups->size());
-    for (const auto &network_group : network_groups.value()) {
-        auto wrapper = ConfiguredNetworkGroupWrapper::create(network_group);
-        results.append(wrapper);
-        m_net_groups.emplace_back(wrapper);
-    }
-
-    return results;
-}
-
 void DeviceWrapper::set_pause_frames(bool rx_pause_frames_enable)
 {
     auto status = device().set_pause_frames(rx_pause_frames_enable);
@@ -459,26 +442,6 @@ void DeviceWrapper::set_sleep_state(hailo_sleep_state_t sleep_state)
     VALIDATE_STATUS(status);
 }
 
-void DeviceWrapper::_init_cache_info(const hailo_cache_info_t &cache_info)
-{
-    auto status = device().init_cache_info(cache_info);
-    VALIDATE_STATUS(status);
-}
-
-hailo_cache_info_t DeviceWrapper::_get_cache_info()
-{
-    auto cache_info = device().get_cache_info();
-    VALIDATE_EXPECTED(cache_info);
-
-    return cache_info.release();
-}
-
-void DeviceWrapper::_update_cache_read_offset(int32_t read_offset_delta)
-{
-    auto status = device().update_cache_read_offset(read_offset_delta);
-    VALIDATE_STATUS(status);
-}
-
 void DeviceWrapper::bind(py::module &m)
 {
     py::class_<DeviceWrapper>(m, "Device")
@@ -492,9 +455,6 @@ void DeviceWrapper::bind(py::module &m)
     .def("create_pcie", &DeviceWrapper::create_pcie)
     .def("create_eth", &DeviceWrapper::create_eth)
     .def("release", &DeviceWrapper::release)
-
-    //HEF
-    .def("configure", &DeviceWrapper::configure)
 
     // Controls
     .def("identify", &DeviceWrapper::identify)
@@ -546,9 +506,6 @@ void DeviceWrapper::bind(py::module &m)
     .def("set_notification_callback", &DeviceWrapper::set_notification_callback)
     .def("remove_notification_callback", &DeviceWrapper::remove_notification_callback)
     .def("set_sleep_state", &DeviceWrapper::set_sleep_state)
-    .def("_init_cache_info", &DeviceWrapper::_init_cache_info)
-    .def("_get_cache_info", &DeviceWrapper::_get_cache_info)
-    .def("_update_cache_read_offset", &DeviceWrapper::_update_cache_read_offset)
     ;
 }
 

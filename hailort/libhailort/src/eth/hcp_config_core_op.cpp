@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Distributed under the MIT license (https://opensource.org/licenses/MIT)
+ **/
+
 #include "eth/hcp_config_core_op.hpp"
 #include "device_common/control.hpp"
 
@@ -74,18 +79,30 @@ bool HcpConfigCoreOp::has_caches() const
     return false;
 }
 
-Expected<uint32_t> HcpConfigCoreOp::get_cache_read_size() const
+Expected<uint32_t> HcpConfigCoreOp::get_cache_length() const
 {
-    LOGGER__ERROR("get_cache_read_size function is not supported on ETH core-ops");
+    LOGGER__ERROR("get_cache_length function is not supported on ETH core-ops");
     return make_unexpected(HAILO_INVALID_OPERATION);
 }
 
-Expected<uint32_t> HcpConfigCoreOp::get_cache_write_size() const
+Expected<uint32_t> HcpConfigCoreOp::get_cache_read_length() const
 {
-    LOGGER__ERROR("get_cache_write_size function is not supported on ETH core-ops");
+    LOGGER__ERROR("get_cache_read_length function is not supported on ETH core-ops");
     return make_unexpected(HAILO_INVALID_OPERATION);
 }
 
+Expected<uint32_t> HcpConfigCoreOp::get_cache_write_length() const
+{
+    LOGGER__ERROR("get_cache_write_length function is not supported on ETH core-ops");
+    return make_unexpected(HAILO_INVALID_OPERATION);
+}
+
+Expected<uint32_t> HcpConfigCoreOp::get_cache_entry_size(uint32_t cache_id) const
+{
+    (void) cache_id;
+    LOGGER__ERROR("get_cache_entry_size function is not supported on ETH core-ops");
+    return make_unexpected(HAILO_INVALID_OPERATION);
+}
 
 hailo_status HcpConfigCoreOp::init_cache(uint32_t read_offset, int32_t write_offset_delta)
 {
@@ -95,15 +112,9 @@ hailo_status HcpConfigCoreOp::init_cache(uint32_t read_offset, int32_t write_off
     return HAILO_INVALID_OPERATION;
 }
 
-Expected<hailo_cache_info_t> HcpConfigCoreOp::get_cache_info() const
+hailo_status HcpConfigCoreOp::update_cache_offset(int32_t offset_delta_entries)
 {
-    LOGGER__ERROR("get_cache_info function is not supported on ETH core-ops");
-    return make_unexpected(HAILO_INVALID_OPERATION);
-}
-
-hailo_status HcpConfigCoreOp::update_cache_offset(int32_t offset_delta_bytes)
-{
-    (void) offset_delta_bytes;
+    (void) offset_delta_entries;
     LOGGER__ERROR("update_cache_offset function is not supported on ETH core-ops");
     return HAILO_INVALID_OPERATION;
 }

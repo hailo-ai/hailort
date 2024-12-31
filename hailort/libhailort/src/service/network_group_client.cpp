@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -72,14 +72,16 @@ ConfiguredNetworkGroupClient::ConfiguredNetworkGroupClient(std::unique_ptr<Hailo
     m_current_cb_index(0),
     m_input_streams_names(std::move(input_streams_names)),
     m_output_streams_names(std::move(output_streams_names)),
-    m_buffer_pool_per_stream(std::move(buffer_pool_per_stream))
+    m_buffer_pool_per_stream(std::move(buffer_pool_per_stream)),
+    m_is_shutdown(false)
 {}
 
 ConfiguredNetworkGroupClient::ConfiguredNetworkGroupClient(NetworkGroupIdentifier &&identifier, const std::string &network_group_name) :
     ConfiguredNetworkGroup(),
     m_identifier(identifier),
     m_network_group_name(network_group_name),
-    m_current_cb_index(0)
+    m_current_cb_index(0),
+    m_is_shutdown(false)
 {}
 
 Expected<std::shared_ptr<ConfiguredNetworkGroupClient>> ConfiguredNetworkGroupClient::duplicate_network_group_client(uint32_t ng_handle, uint32_t vdevice_handle,
@@ -249,11 +251,19 @@ hailo_status ConfiguredNetworkGroupClient::wait_for_activation(const std::chrono
 
 hailo_status ConfiguredNetworkGroupClient::shutdown()
 {
+    std::unique_lock<std::mutex> lock_shutdown(m_shutdown_mutex);
+    m_is_shutdown = true;
+
     auto status = m_client->ConfiguredNetworkGroup_shutdown(m_identifier);
     CHECK_SUCCESS(status, "Failed to shutdown");
 
     status = wait_for_ongoing_callbacks_count_under(1);
     CHECK_SUCCESS(status, "Failed to wait for callbacks to finish");
+
+    status = m_buffer_pool_per_stream->shutdown();
+    if (HAILO_SUCCESS != status) {
+        LOGGER__CRITICAL("Failed to shutdown for network group buffers pool");
+    }
 
     return status;
 }
@@ -458,6 +468,16 @@ hailo_status ConfiguredNetworkGroupClient::set_nms_max_bboxes_per_class(const st
     return m_client->ConfiguredNetworkGroup_set_nms_max_bboxes_per_class(m_identifier, edge_name, max_bboxes_per_class);
 }
 
+hailo_status ConfiguredNetworkGroupClient::set_nms_max_bboxes_total(const std::string &edge_name, uint32_t max_bboxes_total)
+{
+    return m_client->ConfiguredNetworkGroup_set_nms_max_bboxes_total(m_identifier, edge_name, max_bboxes_total);
+}
+
+hailo_status ConfiguredNetworkGroupClient::set_nms_result_order_type(const std::string &edge_name, hailo_nms_result_order_type_t order_type)
+{
+    return m_client->ConfiguredNetworkGroup_set_nms_result_order_type(m_identifier, edge_name, order_type);
+}
+
 hailo_status ConfiguredNetworkGroupClient::set_nms_max_accumulated_mask_size(const std::string &edge_name, uint32_t max_accumulated_mask_size)
 {
     return m_client->ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size(m_identifier, edge_name, max_accumulated_mask_size);
@@ -469,12 +489,7 @@ hailo_status ConfiguredNetworkGroupClient::init_cache(uint32_t /* read_offset */
     return HAILO_NOT_IMPLEMENTED;
 }
 
-Expected<hailo_cache_info_t> ConfiguredNetworkGroupClient::get_cache_info() const
-{
-    return make_unexpected(HAILO_NOT_IMPLEMENTED);
-}
-
-hailo_status ConfiguredNetworkGroupClient::update_cache_offset(int32_t /* offset_delta_bytes */)
+hailo_status ConfiguredNetworkGroupClient::update_cache_offset(int32_t /* offset_delta_entries */)
 {
     return HAILO_NOT_IMPLEMENTED;
 }
@@ -594,6 +609,7 @@ Expected<std::vector<StreamCbParamsPtr>> ConfiguredNetworkGroupClient::create_st
                 // Copy to shared memory buffer
                 TRY(auto stream_pool, m_buffer_pool_per_stream->get_pool(stream_name));
                 TRY(auto acquired_buffer, AcquiredBuffer::acquire_from_pool(stream_pool));
+
                 CHECK_AS_EXPECTED(name_buffer_cb.second.first.view.size() == acquired_buffer->size(), HAILO_INVALID_ARGUMENT,
                     "For stream '{}', passed buffer size is {} (expected {})", stream_name, name_buffer_cb.second.first.view.size(),
                     acquired_buffer->size());
@@ -623,8 +639,15 @@ Expected<std::vector<StreamCbParamsPtr>> ConfiguredNetworkGroupClient::create_st
 hailo_status ConfiguredNetworkGroupClient::infer_async(const NamedBuffersCallbacks &named_buffers_callbacks,
     const std::function<void(hailo_status)> &infer_request_done_cb)
 {
+    std::unique_lock<std::mutex> lock_shutdown(m_shutdown_mutex);
+    if (m_is_shutdown) {
+        LOGGER__INFO("Trying to infer on a shutdown network group");
+        infer_request_done_cb(HAILO_STREAM_ABORT);
+        return HAILO_STREAM_ABORT;
+    }
     auto streams_cb_params = create_streams_callbacks_params(named_buffers_callbacks);
     if (!streams_cb_params) {
+        infer_request_done_cb(streams_cb_params.status());
         return make_unexpected(streams_cb_params.status());
     } else {
         std::unique_lock<std::mutex> lock(m_mutex);

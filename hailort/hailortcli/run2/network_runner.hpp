@@ -315,7 +315,7 @@ protected:
 private:
     static const std::vector<hailo_status> ALLOWED_INFERENCE_RETURN_VALUES;
     static hailo_status wait_for_threads(std::vector<AsyncThreadPtr<hailo_status>> &threads);
-    static Expected<BufferPtr> create_constant_dataset(size_t size);
+    static Expected<BufferPtr> create_random_dataset(size_t size);
     static Expected<BufferPtr> create_dataset_from_input_file(const std::string &file_path, size_t size);
 };
 

@@ -24,7 +24,7 @@ namespace hailort
 #define INVALID_SHARED_MEMORY_CHAR '/'
 
 #if defined(_MSC_VER)
-#define SHARED_MEMORY_NAME_PREFIX "Global\\"
+#define SHARED_MEMORY_NAME_PREFIX "Local\\"
 #else
 #define SHARED_MEMORY_NAME_PREFIX '/'
 #endif

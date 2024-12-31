@@ -31,6 +31,7 @@ from hailo_platform.pyhailort._pyhailort import (TemperatureInfo, # noqa F401
                                                  MipiInputStreamParams, SensorConfigTypes)
 
 BBOX_PARAMS = _pyhailort.HailoRTDefaults.BBOX_PARAMS()
+BBOX_WITH_MASK_PARAMS = 6  # 4 coordinates + score + class_idx
 HAILO_DEFAULT_ETH_CONTROL_PORT = _pyhailort.HailoRTDefaults.HAILO_DEFAULT_ETH_CONTROL_PORT()
 INPUT_DATAFLOW_BASE_PORT = _pyhailort.HailoRTDefaults.DEVICE_BASE_INPUT_STREAM_PORT()
 OUTPUT_DATAFLOW_BASE_PORT = _pyhailort.HailoRTDefaults.DEVICE_BASE_OUTPUT_STREAM_PORT()
@@ -92,10 +93,16 @@ class HailoRTInvalidHEFException(HailoRTException):
 class HailoRTEthException(HailoRTException):
     pass
 
-class HailoRTPCIeDriverException(HailoRTException):
+class HailoRTDriverOperationFailedException(HailoRTException):
     pass
 
+# HailoRTPCIeDriverException is deprecated, use HailoRTDriverOperationFailedException instead
+HailoRTPCIeDriverException = HailoRTDriverOperationFailedException
+
 class HailoRTNetworkGroupNotActivatedException(HailoRTException):
+    pass
+
+class HailoCommunicationClosedException(HailoRTException):
     pass
 
 class HailoStatusInvalidValueException(Exception):
@@ -142,8 +149,11 @@ class ExceptionWrapper(object):
 
         if string_error_code == "HAILO_ETH_FAILURE":
             return HailoRTEthException("Ethernet failure. See hailort.log for more information")
-        if string_error_code == "HAILO_DRIVER_FAIL":
-            return HailoRTPCIeDriverException("PCIe driver failure. run 'dmesg | grep hailo' for more information")
+        if string_error_code == "HAILO_DRIVER_OPERATION_FAILED":
+            return HailoRTDriverOperationFailedException("Failure in hailort driver ioctl. run 'dmesg | grep hailo' for more information")
+
+        if string_error_code == "HAILO_COMMUNICATION_CLOSED":
+            return HailoCommunicationClosedException("Communication closed failure. Check server-client connection")
 
         if string_error_code == "HAILO_NETWORK_GROUP_NOT_ACTIVATED":
             return HailoRTNetworkGroupNotActivatedException("Network group is not activated")
@@ -757,11 +767,8 @@ class ConfiguredNetwork(object):
     def init_cache(self, read_offset, write_offset_delta):
         return self._configured_network.init_cache(read_offset, write_offset_delta)
 
-    def get_cache_info(self):
-        return self._configured_network.get_cache_info()
-
-    def update_cache_offset(self, offset_delta_bytes):
-        return self._configured_network.update_cache_offset(offset_delta_bytes)
+    def update_cache_offset(self, offset_delta_entries):
+        return self._configured_network.update_cache_offset(offset_delta_entries)
 
     def get_cache_ids(self) -> List[int]:
         return self._configured_network.get_cache_ids()
@@ -873,6 +880,7 @@ class InferVStreams(object):
         self._input_vstreams_params = input_vstreams_params
         self._output_vstreams_params = output_vstreams_params
         self._tf_nms_format = tf_nms_format
+        self._validate_output_vstreams_params()
         self._total_time = None
         self._hw_time = None
         self._network_name_to_outputs = InferVStreams._get_network_to_outputs_mapping(configured_net_group)
@@ -1028,6 +1036,11 @@ class InferVStreams(object):
         if input_item_size != input_expected_item_size:
             raise HailoRTException("{} numpy array item size is {}, not {}".format(input_layer_name,
                 input_item_size, input_expected_item_size))
+
+    def _validate_output_vstreams_params(self):
+        for output_vstream in self._output_vstreams_params.values():
+            if output_vstream.user_buffer_format.order == FormatOrder.HAILO_NMS_BY_SCORE:
+                raise HailoRTException("HAILO_NMS_BY_SCORE format is not supported")
 
     @staticmethod
     def _get_number_of_frames(input_data):
@@ -1302,7 +1315,6 @@ class HailoRTTransformUtils(object):
     def _output_raw_buffer_to_nms_with_byte_mask_tf_format(raw_output_buffer, number_of_classes, batch_size, image_height, image_width,
             max_bboxes_per_class, output_dtype):
 
-        BBOX_WITH_MASK_PARAMS = 6 # 4 coordinates + score + class_idx
         BBOX_WITH_MASK_AXIS = 2
         CLASSES_AXIS = 1
 
@@ -1522,7 +1534,7 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 4
-SUPPORTED_FW_MINOR = 19
+SUPPORTED_FW_MINOR = 20
 SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
@@ -1533,7 +1545,7 @@ class DeviceArchitectureTypes(IntEnum):
     HAILO8 = 1
     HAILO8L = 2
     HAILO15H = 3
-    PLUTO = 4
+    HAILO15L = 4
     HAILO15M = 5
     HAILO10H = 6
 
@@ -1925,20 +1937,6 @@ class Control:
         """
         with ExceptionWrapper():
             return self._device.write_memory(address, data_buffer, len(data_buffer))
-
-    def configure(self, hef, configure_params_by_name={}):
-        """
-        Configures device from HEF object.
-
-        Args:
-            hef (:class:`~hailo_platform.pyhailort.pyhailort.HEF`): HEF to configure the
-                device from.
-            configure_params_by_name (dict, optional): Maps between each net_group_name to
-                configure_params. In case of a mismatch with net_groups_names, default params will
-                be used.
-        """
-        with ExceptionWrapper():
-            return self._device.configure(hef._hef, configure_params_by_name)
 
     def power_measurement(self, dvm=DvmTypes.AUTO, measurement_type=PowerMeasurementTypes.AUTO):
         """Perform a single power measurement on an Hailo chip. It works with the default settings
@@ -2470,18 +2468,6 @@ class Control:
         with ExceptionWrapper():
             return self._device.remove_notification_callback(notification_id)
 
-    def _init_cache_info(self, cache_info):
-        with ExceptionWrapper():
-            return self._device._init_cache_info(cache_info)
-
-    def _get_cache_info(self):
-        with ExceptionWrapper():
-            return self._device._get_cache_info()
-
-    def _update_cache_read_offset(self, read_offset_delta):
-        with ExceptionWrapper():
-            return self._device._update_cache_read_offset(read_offset_delta)
-
     def _get_device_handle(self):
         return self._device
 
@@ -2554,25 +2540,6 @@ class Device:
             str: A string ID of the device. BDF for PCIe devices, IP address for Ethernet devices, "Integrated" for integrated nnc devices.
         """
         return self._device_id
-
-    def configure(self, hef, configure_params_by_name={}):
-        """Configures target device from HEF object.
-
-        Args:
-            hef (:class:`~hailo_platform.pyhailort.pyhailort.HEF`): HEF to configure the vdevice from
-            configure_params_by_name (dict, optional): Maps between each net_group_name to configure_params. If not provided, default params will be applied
-
-        Note:
-            This function is deprecated. Support will be removed in future versions.
-        """
-        default_logger().warning("Usage of Device.configure is deprecated! One should use VDevice for inference")
-        if self._creation_pid != os.getpid():
-            raise HailoRTException("Device can only be configured from the process it was created in.")
-        with ExceptionWrapper():
-            configured_ngs_handles = self._device.configure(hef._hef, configure_params_by_name)
-        configured_networks = [ConfiguredNetwork(configured_ng_handle) for configured_ng_handle in configured_ngs_handles]
-        self._loaded_network_groups.extend(configured_networks)
-        return configured_networks
 
     @property
     def control(self):
@@ -2696,6 +2663,9 @@ class InferModel:
             Args:
                 order (_pyhailort.hailo_format_order_t): the format order
             """
+            # TODO: HRT-15612 support HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE in pyhailort
+            if FormatOrder.HAILO_NMS_BY_SCORE == order:
+                raise HailoRTException("Format order HAILO_NMS_BY_SCORE is not supported")
             with ExceptionWrapper():
                 self._infer_stream.set_format_order(order)
 
@@ -2841,9 +2811,6 @@ class InferModel:
             A :obj:`ConfiguredInferModel` should be used inside a context manager, and should not be passed to a different process.
         """
         with ExceptionWrapper():
-            if len(self.output_names) == 1 and self.output().format.order == FormatOrder.HAILO_NMS_WITH_BYTE_MASK:
-                raise HailoRTException("this model is not supported on async infer model API")
-
             configured_infer_model_cpp_obj = self._infer_model.configure()
             return ConfiguredInferModel(configured_infer_model_cpp_obj, self)
 
@@ -3037,8 +3004,8 @@ class ConfiguredInferModel:
                 buffer = self._buffer
 
                 if tf_format is None:
-                    # the user wants the raw buffer, with no transformation. Useful when the output is not ready, and
-                    # NMS transformation might fail.
+                    # A user would prefer the plain buffer, with no transformation.
+                    # This is especially useful when the output is not ready, which would potentially cause the NMS transformation to fail.
                     return buffer
 
                 if self._nms_info:
@@ -3046,17 +3013,26 @@ class ConfiguredInferModel:
                     nms_info = nms_info_class(**self._nms_info.__dict__)
 
                     if nms_info.format_order == FormatOrder.HAILO_NMS_WITH_BYTE_MASK:
-                        buffer = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_format(
-                            [self._buffer],
-                            nms_info.number_of_classes,
-                            1,
-                            nms_info.input_height,
-                            nms_info.input_width,
-                            nms_info.max_bboxes_per_class,
-                            nms_info.output_dtype,
-                            nms_info.use_tf_nms_format,
-                        )[0]
-                    elif nms_info.format_order == FormatOrder.HAILO_NMS:
+                        if nms_info.use_tf_nms_format:
+                            converted_output_buffer = numpy.empty(
+                                [
+                                    nms_info.max_bboxes_per_class,
+                                    (nms_info.input_height * nms_info.input_width + BBOX_WITH_MASK_PARAMS),
+                                ],
+                                dtype=nms_info.output_dtype,
+                            )
+
+                            buffer = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_tf_format_single_frame(
+                                self._buffer,
+                                converted_output_buffer,
+                                nms_info.number_of_classes,
+                                nms_info.max_bboxes_per_class,
+                                nms_info.input_height,
+                                nms_info.input_width,
+                            )
+                        else:
+                            buffer = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_hailo_format_single_frame(self._buffer)
+                    elif nms_info.format_order in [FormatOrder.HAILO_NMS, FormatOrder.HAILO_NMS_BY_CLASS]:
                         if nms_info.use_tf_nms_format:
                             nms_shape = [
                                 nms_info.number_of_classes,
@@ -3400,6 +3376,8 @@ class ConfiguredInferModel:
             if format_order in (
                 FormatOrder.HAILO_NMS_WITH_BYTE_MASK,
                 FormatOrder.HAILO_NMS,
+                FormatOrder.HAILO_NMS_BY_CLASS,
+                FormatOrder.HAILO_NMS_BY_SCORE
             ):
                 output_vstream_info = next(
                     filter(
@@ -3888,7 +3866,7 @@ class OutputLayerUtils(object):
             self._user_buffer_format = pipeline.get_user_buffer_format()
             self._output_shape = pipeline.shape
 
-        self._is_nms = (self._user_buffer_format.order == FormatOrder.HAILO_NMS)
+        self._is_nms = (self._user_buffer_format.order in [FormatOrder.HAILO_NMS, FormatOrder.HAILO_NMS_BY_CLASS, FormatOrder.HAILO_NMS_BY_SCORE])
 
         if self._is_nms:
             self._quantized_empty_bbox = numpy.asarray([0] * BBOX_PARAMS, dtype=self.output_dtype)
@@ -3990,16 +3968,33 @@ class OutputVStream(object):
             result_array = self._recv_object.recv()
 
         if self.output_order == FormatOrder.HAILO_NMS_WITH_BYTE_MASK:
-            nms_shape = self._vstream_info.nms_shape
             if len(self._input_stream_infos) != 1:
                 raise HailoRTInvalidHEFException(
                     f"Output format HAILO_NMS_WITH_BYTE_MASK should have 1 input. Number of inputs: {len(self._input_stream_infos)}"
                 )
-            input_height = self._input_stream_infos[0].shape[0]
-            input_width = self._input_stream_infos[0].shape[1]
-            res = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_format(result_array,
-                nms_shape.number_of_classes, 1, input_height, input_width, nms_shape.max_bboxes_per_class,
-                self._output_dtype, self._tf_nms_format)
+            if self._tf_nms_format:
+                nms_shape = self._vstream_info.nms_shape
+                input_height = self._input_stream_infos[0].shape[0]
+                input_width = self._input_stream_infos[0].shape[1]
+
+                converted_output_buffer = numpy.empty(
+                    [
+                        nms_shape.max_bboxes_per_class,
+                        (input_height * input_width + BBOX_WITH_MASK_PARAMS),
+                    ],
+                    dtype=self._output_dtype,
+                )
+
+                res = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_tf_format_single_frame(
+                    result_array,
+                    converted_output_buffer,
+                    nms_shape.number_of_classes,
+                    nms_shape.max_bboxes_per_class,
+                    input_height,
+                    input_width,
+                )
+            else:
+                res = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_hailo_format_single_frame(result_array)
             return res
 
         if self._is_nms:

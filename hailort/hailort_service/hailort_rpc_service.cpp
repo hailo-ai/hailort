@@ -156,6 +156,11 @@ void HailoRtRpcService::remove_disconnected_clients()
             }
         }
 
+        // Only for performance optimization (notice code is inside a locked mutex here)
+        if (pids_to_remove.empty()) {
+            return;
+        }
+
         // We abort vstreams before releasing them to avoid cases where the vstream is stuck in execute of a
         // blocking operation (which will be finished with timeout).
         // To release the vstream the ServiceResourceManager is waiting for the resource_mutex which is also locked in execute.
@@ -295,6 +300,21 @@ grpc::Status HailoRtRpcService::VDevice_release(grpc::ServerContext*, const Rele
     return grpc::Status::OK;
 }
 
+void HailoRtRpcService::release_resources_on_error(std::vector<uint32_t> ng_handles, std::vector<uint32_t> buffer_pool_handles, uint32_t pid)
+{
+    auto &networks_manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
+    for (auto &current_ng_handle : ng_handles) {
+        networks_manager.release_resource(current_ng_handle, pid);
+    }
+    for (auto &buffer_pool_handle : buffer_pool_handles) {
+        auto status = shutdown_cng_buffer_pool(buffer_pool_handle);
+        if (status != HAILO_SUCCESS) {
+            LOGGER__ERROR("Failed to shutdown cng buffer pool with handle={}, status={}", buffer_pool_handle, status);
+        }
+        networks_manager.release_resource(buffer_pool_handle, pid);
+    }
+}
+
 grpc::Status HailoRtRpcService::VDevice_configure(grpc::ServerContext*, const VDevice_configure_Request *request,
     VDevice_configure_Reply *reply)
 {
@@ -351,9 +371,12 @@ grpc::Status HailoRtRpcService::VDevice_configure(grpc::ServerContext*, const VD
     CHECK_EXPECTED_AS_RPC_STATUS(networks, reply);
 
     auto &networks_manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
+    std::vector<uint32_t> ng_handles;
+    std::vector<uint32_t> buffer_pool_handles;
+
     for (auto network : networks.value()) {
         auto ng_handle = networks_manager.register_resource(request->pid(), network);
-        reply->add_networks_handles(ng_handle);
+        ng_handles.push_back(ng_handle);
 
         bool allocate_for_raw_streams = false;
         // The network_group's buffer pool is used for the read's buffers,
@@ -363,16 +386,36 @@ grpc::Status HailoRtRpcService::VDevice_configure(grpc::ServerContext*, const VD
             // We assume that if 1 stream is marked as ASYNC, they all are
             allocate_for_raw_streams = true;
         }
-        auto status = create_buffer_pools_for_ng(request->identifier().vdevice_handle(), ng_handle, request->pid(), allocate_for_raw_streams);
-        CHECK_SUCCESS_AS_RPC_STATUS(status, reply);
+        auto cng_buffer_pool_handle_exp = create_buffer_pool_for_ng(request->identifier().vdevice_handle(), request->pid());
+        // We check status like this, since need to release all the resources if one of the buffer pools failed to create
+        if (cng_buffer_pool_handle_exp.status() != HAILO_SUCCESS) {
+            release_resources_on_error(ng_handles, buffer_pool_handles, request->pid());
+        }
+        CHECK_EXPECTED_AS_RPC_STATUS(cng_buffer_pool_handle_exp, reply);
+        buffer_pool_handles.push_back(cng_buffer_pool_handle_exp.value());
+        if (cng_buffer_pool_handle_exp.value() != ng_handle) {
+            LOGGER__ERROR("cng_buffer_pool_handle = {} must be different from network_group_handle = {}", cng_buffer_pool_handle_exp.value(), ng_handle);
+            release_resources_on_error(ng_handles, buffer_pool_handles, request->pid());
+            CHECK_SUCCESS_AS_RPC_STATUS(HAILO_INTERNAL_FAILURE, reply);
+        }
+
+        if (allocate_for_raw_streams) {
+            auto status = allocate_pool_for_raw_streams(ng_handle);
+            // We check status like this, since need to release all the resources if one of the buffer pools failed to create
+            if (status != HAILO_SUCCESS) {
+                release_resources_on_error(ng_handles, buffer_pool_handles, request->pid());
+            }
+            CHECK_SUCCESS_AS_RPC_STATUS(status, reply);
+        }
+
+        reply->add_networks_handles(ng_handle);
     }
 
     reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;
 }
 
-hailo_status HailoRtRpcService::create_buffer_pools_for_ng(uint32_t vdevice_handle, uint32_t ng_handle, uint32_t request_pid,
-    bool allocate_for_raw_streams)
+Expected<uint32_t> HailoRtRpcService::create_buffer_pool_for_ng(uint32_t vdevice_handle, uint32_t request_pid)
 {
     auto &cng_buffer_pool_manager = ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance();
 
@@ -380,27 +423,28 @@ hailo_status HailoRtRpcService::create_buffer_pools_for_ng(uint32_t vdevice_hand
     if (HAILO_SUCCESS != cng_buffer_pool_exp.status()) {
         // cng_buffer_pool_handle and network_group_handle indexes must be the same
         cng_buffer_pool_manager.advance_current_handle_index();
-        return cng_buffer_pool_exp.status();
+        return make_unexpected(cng_buffer_pool_exp.status());
     }
     auto cng_buffer_pool = cng_buffer_pool_exp.release();
 
     auto cng_buffer_pool_handle = cng_buffer_pool_manager.register_resource(request_pid, cng_buffer_pool);
-    CHECK(cng_buffer_pool_handle == ng_handle, HAILO_INTERNAL_FAILURE,
-        "cng_buffer_pool_handle = {} must be equal to network_group_handle ={}", cng_buffer_pool_handle, ng_handle);
+    return cng_buffer_pool_handle;
+}
 
-    if (allocate_for_raw_streams) {
-        // For Async API - The buffer size in the pool will be the stream's hw frame size as used in the infer_model pipeline
-        TRY(const auto min_buffer_pool_size, get_min_buffer_pool_size(ng_handle));
-        TRY(const auto streams_infos, get_all_stream_infos(ng_handle));
+hailo_status HailoRtRpcService::allocate_pool_for_raw_streams(uint32_t ng_handle)
+{
+    auto &cng_buffer_pool_manager = ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance();
+    // For Async API - The buffer size in the pool will be the stream's hw frame size as used in the infer_model pipeline
+    TRY(const auto min_buffer_pool_size, get_min_buffer_pool_size(ng_handle));
+    TRY(const auto streams_infos, get_all_stream_infos(ng_handle));
 
-        for (const auto &stream_info : streams_infos) {
-            if (stream_info.direction == HAILO_D2H_STREAM) {
-                auto allocate_lambda = [&](std::shared_ptr<ServiceNetworkGroupBufferPool> cng_buffer_pool) {
-                    return cng_buffer_pool->allocate_pool(stream_info.name, HAILO_DMA_BUFFER_DIRECTION_D2H,
-                        stream_info.hw_frame_size, min_buffer_pool_size);
-                };
-                CHECK_SUCCESS(cng_buffer_pool_manager.execute(ng_handle, allocate_lambda));
-            }
+    for (const auto &stream_info : streams_infos) {
+        if (stream_info.direction == HAILO_D2H_STREAM) {
+            auto allocate_lambda = [&](std::shared_ptr<ServiceNetworkGroupBufferPool> cng_buffer_pool) {
+                return cng_buffer_pool->allocate_pool(stream_info.name, HAILO_DMA_BUFFER_DIRECTION_D2H,
+                    stream_info.hw_frame_size, min_buffer_pool_size);
+            };
+            CHECK_SUCCESS(cng_buffer_pool_manager.execute(ng_handle, allocate_lambda));
         }
     }
 
@@ -523,14 +567,14 @@ ProtoCallbackIdentifier serialize_callback_identifier_shm(uint32_t vdevice_handl
     return cb_identifier;
 }
 
-hailo_status HailoRtRpcService::shutdown_cng_buffer_pool(uint32_t network_group_handle)
+hailo_status HailoRtRpcService::shutdown_cng_buffer_pool(uint32_t buffer_pool_handle)
 {
     auto buffer_shutdown_lambda = [](std::shared_ptr<ServiceNetworkGroupBufferPool> cng_buffer_pool) {
         return cng_buffer_pool->shutdown();
     };
 
     auto &buffer_pool_manager = ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance();
-    auto status = buffer_pool_manager.execute(network_group_handle, buffer_shutdown_lambda);
+    auto status = buffer_pool_manager.execute(buffer_pool_handle, buffer_shutdown_lambda);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -674,11 +718,10 @@ void HailoRtRpcService::enqueue_cb_identifier(uint32_t vdevice_handle, ProtoCall
 
     auto &cb_queue_manager = ServiceResourceManager<VDeviceCallbacksQueue>::get_instance();
     auto status = cb_queue_manager.execute(vdevice_handle, lambda, std::move(cb_identifier));
-    if (HAILO_SHUTDOWN_EVENT_SIGNALED != status) {
+    if (HAILO_SHUTDOWN_EVENT_SIGNALED == status) {
         LOGGER__TRACE("Failed to enqueue callback to VDeviceCallbacksQueue '{}' because it is shutdown", vdevice_handle);
-    }
-    if (status != HAILO_SUCCESS) {
-        LOGGER__ERROR("Failed to enqueue callback to VDeviceCallbacksQueue with status={}", status);
+    } else if (status != HAILO_SUCCESS) {
+        LOGGER__ERROR("Failed to enqueue callback to VDeviceCallbacksQueue '{}' with status={}", vdevice_handle, status);
     }
 }
 
@@ -907,10 +950,15 @@ void serialize_vstream_info(const hailo_vstream_info_t &info, ProtoVStreamInfo *
     format_proto->set_flags(info.format.flags);
     format_proto->set_order(info.format.order);
     format_proto->set_type(info.format.type);
-    if (info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS) {
+    if (HailoRTCommon::is_nms(info.format.order)) {
         auto nms_shape_proto = info_proto->mutable_nms_shape();
         nms_shape_proto->set_number_of_classes(info.nms_shape.number_of_classes);
-        nms_shape_proto->set_max_bbox_per_class(info.nms_shape.max_bboxes_per_class);
+        if (info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE) {
+            nms_shape_proto->set_max_bboxes_total(info.nms_shape.max_bboxes_total);
+        } else {
+            nms_shape_proto->set_max_bboxes_per_class(info.nms_shape.max_bboxes_per_class);
+        }
+
         nms_shape_proto->set_max_accumulated_mask_size(info.nms_shape.max_accumulated_mask_size);
     } else {
         auto shape_proto = info_proto->mutable_shape();
@@ -1225,7 +1273,11 @@ void serialize_op_matadata(hailort::net_flow::OpMetadata &op_metadata, ProtoOpMe
         auto nms_config_proto = op_metadata_proto->mutable_nms_post_process_config();
         nms_config_proto->set_nms_score_th(nms_config.nms_score_th);
         nms_config_proto->set_nms_iou_th(nms_config.nms_iou_th);
-        nms_config_proto->set_max_proposals_per_class(nms_config.max_proposals_per_class);
+        if (HAILO_NMS_RESULT_ORDER_BY_SCORE == nms_config.order_type) {
+            nms_config_proto->set_max_proposals_total(nms_config.max_proposals_total);
+        } else {
+            nms_config_proto->set_max_proposals_per_class(nms_config.max_proposals_per_class);
+        }
         nms_config_proto->set_number_of_classes(nms_config.number_of_classes);
         nms_config_proto->set_background_removal(nms_config.background_removal);
         nms_config_proto->set_background_removal_index(nms_config.background_removal_index);
@@ -1719,10 +1771,11 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_all_stream_infos(grpc
     auto proto_stream_infos = reply->mutable_stream_infos();
     for (const auto &stream_info : expected_stream_infos.value()) {
         ProtoStreamInfo proto_stream_info;
-        if (stream_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS) {
+        if (stream_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP) {
             auto proto_nms_info = proto_stream_info.mutable_nms_info();
             proto_nms_info->set_number_of_classes(stream_info.nms_info.number_of_classes);
             proto_nms_info->set_max_bboxes_per_class(stream_info.nms_info.max_bboxes_per_class);
+            proto_nms_info->set_order_type(HAILO_NMS_RESULT_ORDER_HW);
             proto_nms_info->set_bbox_size(stream_info.nms_info.bbox_size);
             proto_nms_info->set_chunks_per_frame(stream_info.nms_info.chunks_per_frame);
             proto_nms_info->set_is_defused(stream_info.nms_info.is_defused);
@@ -1924,6 +1977,36 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_set_nms_max_bboxes_per_cl
                                     request->edge_name(), request->nms_max_bboxes_per_class());
     CHECK_SUCCESS_AS_RPC_STATUS(status, reply);
 
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_set_nms_max_bboxes_total(grpc::ServerContext*,
+    const ConfiguredNetworkGroup_set_nms_max_bboxes_total_Request *request,
+    ConfiguredNetworkGroup_set_nms_max_bboxes_total_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<ConfiguredNetworkGroup> cng, const std::string &edge_name, uint32_t max_bboxes) {
+        return cng->set_nms_max_bboxes_total(edge_name, max_bboxes);
+    };
+    auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
+    auto status = manager.execute(request->identifier().network_group_handle(), lambda,
+                                    request->edge_name(), request->nms_max_bboxes_total());
+    CHECK_SUCCESS_AS_RPC_STATUS(status, reply);
+    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
+    return grpc::Status::OK;
+}
+
+grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_set_nms_result_order_type(grpc::ServerContext*,
+    const ConfiguredNetworkGroup_set_nms_result_order_type_Request *request,
+    ConfiguredNetworkGroup_set_nms_result_order_type_Reply *reply)
+{
+    auto lambda = [](std::shared_ptr<ConfiguredNetworkGroup> cng, const std::string &edge_name, hailo_nms_result_order_type_t order_type) {
+        return cng->set_nms_result_order_type(edge_name, order_type);
+    };
+    auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
+    auto status = manager.execute(request->identifier().network_group_handle(), lambda,
+                                    request->edge_name(), static_cast<hailo_nms_result_order_type_t>(request->nms_result_order_type()));
+    CHECK_SUCCESS_AS_RPC_STATUS(status, reply);
     reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;
 }

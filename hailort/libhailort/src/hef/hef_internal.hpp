@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -125,6 +125,12 @@ typedef union {
         uint64_t ccws_size;
         uint32_t reserved;
     } v1;
+    struct {
+        uint64_t xxh3_64bits;
+        uint64_t ccws_size;
+        uint64_t reserved1;
+        uint64_t reserved2;
+    } v2;
 } hef__header_distinct_t;
 
 typedef struct {
@@ -138,6 +144,7 @@ typedef struct {
 static const size_t HEF_COMMON_SIZE = sizeof(hef__header_t) - sizeof(hef__header_distinct_t);
 static const size_t HEF_HEADER_SIZE_V0 = HEF_COMMON_SIZE + sizeof(hef__header_distinct_t::v0);
 static const size_t HEF_HEADER_SIZE_V1 = HEF_COMMON_SIZE + sizeof(hef__header_distinct_t::v1);
+static const size_t HEF_HEADER_SIZE_V2 = HEF_COMMON_SIZE + sizeof(hef__header_distinct_t::v2);
 
 typedef enum {
     HEF__FORMAT__TF_RGB = 0,
@@ -162,6 +169,7 @@ typedef enum {
 #define HEADER_MAGIC (0x01484546)
 #define HEADER_VERSION_0 (0)
 #define HEADER_VERSION_1 (1)
+#define HEADER_VERSION_2 (2)
 
 const static uint32_t SUPPORTED_EXTENSIONS_BITSET_SIZE = 1000;
 static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
@@ -351,9 +359,13 @@ public:
 
     const MemoryView get_hash_as_memview() const
     {
-        if (HEADER_VERSION_0 == m_hef_version){
+        switch (m_hef_version) {
+        case HEADER_VERSION_0:
             return MemoryView::create_const(m_md5, sizeof(m_md5));
-        } else { // HEADER_VERSION_1
+        case HEADER_VERSION_2:
+            return MemoryView::create_const(&m_xxh3_64bits, sizeof(m_xxh3_64bits));
+        case HEADER_VERSION_1:
+        default:
             return MemoryView::create_const(&m_crc, sizeof(m_crc));
         }
     }
@@ -389,7 +401,6 @@ public:
         return HAILO_SUCCESS;
     }
 
-    // TODO: HRT-8875 -  Change to validate all core ops under same ng or use this func in the new configure API and use this to validate each op when configured.
     hailo_status validate_boundary_streams_were_created(const std::string &network_group_name, std::shared_ptr<CoreOp> core_op);
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
@@ -406,6 +417,7 @@ private:
         std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset);
     Expected<hef__header_t> parse_hef_header_before_distinct(std::shared_ptr<SeekableBytesReader> hef_reader);
     hailo_status fill_v1_hef_header(hef__header_t &hef_header, std::shared_ptr<SeekableBytesReader> hef_reader);
+    hailo_status fill_v2_hef_header(hef__header_t &hef_header, std::shared_ptr<SeekableBytesReader> hef_reader);
     hailo_status fill_core_ops_and_networks_metadata(uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset);
     hailo_status transfer_protobuf_field_ownership(ProtoHEFHef &hef_message);
     void fill_core_ops();
@@ -427,7 +439,7 @@ private:
     hailo_status validate_hef_extensions();
     static hailo_status validate_hef_header(const hef__header_t &header, MD5_SUM_t &calculated_md5, size_t proto_size);
     static hailo_status validate_hef_header(const hef__header_t &header, const uint32_t &crc_32, size_t hef_file_residue_size);
-
+    static hailo_status validate_hef_header(const hef__header_t &header, const uint64_t &xxh3_64bits, size_t hef_file_residue_size);
 
     Expected<std::map<std::string, hailo_format_t>> get_inputs_vstream_names_and_format_info(
         const std::string &net_group_name, const std::string &network_name);
@@ -456,6 +468,7 @@ private:
     uint32_t m_hef_version;
     MD5_SUM_t m_md5;
     uint32_t m_crc;
+    uint64_t m_xxh3_64bits;
     std::shared_ptr<SeekableBytesReader> m_hef_reader;
     size_t m_ccws_offset;
 

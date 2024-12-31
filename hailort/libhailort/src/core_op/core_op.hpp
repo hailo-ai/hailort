@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -120,11 +120,12 @@ public:
     hailo_status infer_async(InferRequest &&request);
 
     virtual bool has_caches() const = 0;
-    virtual Expected<uint32_t> get_cache_read_size() const = 0;
-    virtual Expected<uint32_t> get_cache_write_size() const = 0;
+    virtual Expected<uint32_t> get_cache_length() const = 0;
+    virtual Expected<uint32_t> get_cache_read_length() const = 0;
+    virtual Expected<uint32_t> get_cache_write_length() const = 0;
+    virtual Expected<uint32_t> get_cache_entry_size(uint32_t cache_id) const = 0;
     virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) = 0;
-    virtual Expected<hailo_cache_info_t> get_cache_info() const = 0;
-    virtual hailo_status update_cache_offset(int32_t offset_delta_bytes) = 0;
+    virtual hailo_status update_cache_offset(int32_t offset_delta_entries) = 0;
     virtual Expected<std::vector<uint32_t>> get_cache_ids() const = 0;
     virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) = 0;
     virtual hailo_status write_cache_buffer(uint32_t cache_id, MemoryView buffer) = 0;

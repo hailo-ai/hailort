@@ -17,12 +17,16 @@
 
 #include "rpc_connection.hpp"
 #include "hrpc_protocol/serializer.hpp"
+#include "hrpc/connection_context.hpp"
 
-
-namespace hrpc
+namespace hailort
 {
 
-#define REQUEST_TIMEOUT std::chrono::milliseconds(10000)
+#ifndef HAILO_EMULATOR
+constexpr std::chrono::milliseconds REQUEST_TIMEOUT(std::chrono::seconds(10));
+#else /* ifndef HAILO_EMULATOR */
+constexpr std::chrono::milliseconds REQUEST_TIMEOUT(std::chrono::seconds(5000));
+#endif /* ifndef HAILO_EMULATOR */
 
 class ResultEvent
 {
@@ -42,13 +46,19 @@ private:
 class Client
 {
 public:
-    Client(const std::string &device_id) : m_device_id(device_id), m_is_running(true) {}
+    Client(const std::string &device_id) : m_device_id(device_id), m_is_running(true), m_messages_sent(0) {}
     ~Client();
 
     hailo_status connect();
     Expected<Buffer> execute_request(HailoRpcActionID action_id, const MemoryView &request,
-        std::function<hailo_status(RpcConnection)> write_buffers_callback = nullptr);
+        std::function<hailo_status(RpcConnection)> additional_writes_lambda = nullptr);
+    hailo_status wait_for_execute_request_ready(const MemoryView &request, std::chrono::milliseconds timeout);
+    hailo_status execute_request_async(HailoRpcActionID action_id, const MemoryView &request,
+        std::function<void(hailo_status)> request_sent_callback,
+        std::function<void(hailo_status, Buffer&&)> reply_received_callback,
+        std::function<hailo_status(RpcConnection)> additional_writes_lambda = nullptr);
     void register_custom_reply(HailoRpcActionID action_id, std::function<hailo_status(const MemoryView&, RpcConnection connection)> callback);
+    std::shared_ptr<HailoRTDriver> get_driver() { return m_conn_context->get_driver(); };
 
 protected:
     hailo_status message_loop();
@@ -58,14 +68,16 @@ protected:
     std::shared_ptr<ConnectionContext> m_conn_context;
     RpcConnection m_connection;
     std::thread m_thread;
-    std::unordered_map<uint32_t, std::shared_ptr<ResultEvent>> m_events;
+    std::unordered_map<uint32_t, std::function<void(hailo_status, Buffer&&)>> m_replies_callbacks;
     std::unordered_map<HailoRpcActionID, std::function<hailo_status(const MemoryView&, RpcConnection)>> m_custom_callbacks;
-    uint32_t m_messages_sent = 0;
+    uint32_t m_messages_sent;
     std::mutex m_write_mutex;
-    std::condition_variable m_events_cv;
-    std::mutex m_events_mutex;
+    std::condition_variable m_replies_cv;
+    std::mutex m_replies_mutex;
+    std::mutex m_sync_mutex;
+    std::condition_variable m_sync_cv;
 };
 
-} // namespace hrpc
+} // namespace hailort
 
 #endif // _CLIENT_HPP_

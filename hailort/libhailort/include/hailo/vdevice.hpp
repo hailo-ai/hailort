@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -210,8 +210,6 @@ public:
     virtual hailo_status before_fork();
     virtual hailo_status after_fork_in_parent();
     virtual hailo_status after_fork_in_child();
-
-    virtual hailo_status add_network_group_ref_count(std::shared_ptr<ConfiguredNetworkGroup> network_group_ptr);
 
     virtual ~VDevice() = default;
     VDevice(const VDevice &) = delete;

@@ -1,6 +1,25 @@
 cmake_minimum_required(VERSION 3.5.0)
 project(pyhailort)
 
+find_program(CCACHE_PROGRAM ccache)
+find_program(CLACHE_PROGRAM clcache)
+
+if(CCACHE_PROGRAM)
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
+elseif(CLCACHE_PROGRAM)
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CLCACHE_PROGRAM}")
+endif()
+
+if(WIN32)
+    find_program(SCCACHE sccache)
+    if(SCCACHE)
+        set(CMAKE_C_COMPILER_LAUNCHER ${SCCACHE})
+        set(CMAKE_CXX_COMPILER_LAUNCHER ${SCCACHE})
+        set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
+        cmake_policy(SET CMP0141 NEW)
+    endif()
+endif()
+
 if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.9")
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
@@ -57,13 +76,19 @@ if(LIBHAILORT_PATH AND HAILORT_INCLUDE_DIR)
         _pyhailort
         PUBLIC
         HAILORT_MAJOR_VERSION=4
-        HAILORT_MINOR_VERSION=19
+        HAILORT_MINOR_VERSION=20
         HAILORT_REVISION_VERSION=0
     )
+    set_target_properties(
+        _pyhailort
+        PROPERTIES
+        INSTALL_RPATH "${LIBHAILORT_PATH}"
+        INSTALL_RPATH_USE_LINK_PATH TRUE
+    )
 elseif(LIBHAILORT_PATH OR HAILORT_INCLUDE_DIR)
-  message(FATAL_ERROR "Both LIBHAILORT_PATH and HAILORT_INCLUDE_DIR must be defined or none of them. LIBHAILORT_PATH: '${LIBHAILORT_PATH}', HAILORT_INCLUDE_DIR: '${HAILORT_INCLUDE_DIR}'")
+    message(FATAL_ERROR "Both LIBHAILORT_PATH and HAILORT_INCLUDE_DIR must be defined or none of them. LIBHAILORT_PATH: '${LIBHAILORT_PATH}', HAILORT_INCLUDE_DIR: '${HAILORT_INCLUDE_DIR}'")
 else()
-    find_package(HailoRT 4.19.0 EXACT REQUIRED)
+    find_package(HailoRT 4.20.0 EXACT REQUIRED)
     target_link_libraries(_pyhailort PRIVATE HailoRT::libhailort)
 endif()
 

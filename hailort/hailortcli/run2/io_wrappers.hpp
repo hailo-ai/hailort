@@ -13,6 +13,8 @@
 
 #include "network_live_track.hpp"
 
+#include "../buffer_utils.hpp"
+
 #include "common/file_utils.hpp"
 #include "common/latency_meter.hpp"
 
@@ -143,20 +145,18 @@ private:
     static Expected<std::vector<BufferPtr>> create_dataset(Writer &writer, const WriterParams &params)
     {
         if (params.input_file_path.empty()) {
-            return create_constant_dataset(writer.get_frame_size());
+            return create_random_dataset(writer.get_frame_size());
         } else {
             return create_dataset_from_input_file(params.input_file_path, writer.get_frame_size());
         }
     }
 
-    static Expected<std::vector<BufferPtr>> create_constant_dataset(size_t frame_size)
+    static Expected<std::vector<BufferPtr>> create_random_dataset(size_t frame_size)
     {
-        const uint8_t const_byte = 0xAB;
+        TRY(auto buffer,
+            create_uniformed_buffer_shared(frame_size, BufferStorageParams::create_dma()));
 
-        TRY(auto constant_buffer,
-            Buffer::create_shared(frame_size, const_byte, BufferStorageParams::create_dma()));
-
-        return std::vector<BufferPtr>{ constant_buffer };
+        return std::vector<BufferPtr>{ buffer };
     }
 
     static Expected<std::vector<BufferPtr>> create_dataset_from_input_file(const std::string &file_path, size_t frame_size)

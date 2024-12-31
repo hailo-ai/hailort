@@ -27,7 +27,8 @@ from hailo_platform.pyhailort.pyhailort import (HEF, ConfigureParams,
                                                 InputVStreams, OutputVStreams,
                                                 InferVStreams, HailoStreamDirection, HailoFormatFlags, HailoCpuId, Device, VDevice,
                                                 DvmTypes, PowerMeasurementTypes, SamplingPeriod, AveragingFactor, MeasurementBufferIndex,
-                                                HailoRTException, HailoSchedulingAlgorithm, HailoRTStreamAbortedByUser, AsyncInferJob)
+                                                HailoRTException, HailoSchedulingAlgorithm, HailoRTStreamAbortedByUser, AsyncInferJob,
+                                                HailoCommunicationClosedException)
 
 def _verify_pyhailort_lib_exists():
     python_version = "".join(str(i) for i in sys.version_info[:2])
@@ -42,7 +43,7 @@ def _verify_pyhailort_lib_exists():
 
 _verify_pyhailort_lib_exists()
 
-__version__ = "4.19.0"
+__version__ = "4.20.0"
 if _pyhailort.__version__ != __version__:
     raise ImportError(
         f"_pyhailort version ({_pyhailort.__version__}) does not match pyhailort version ({__version__})"
@@ -54,4 +55,5 @@ __all__ = ['EthernetDevice', 'DvmTypes', 'PowerMeasurementTypes',
            'MipiIspImageInOrder', 'MipiIspImageOutDataType', 'join_drivers_path', 'IspLightFrequency', 'HailoPowerMode',
            'Endianness', 'HailoStreamInterface', 'InputVStreamParams', 'OutputVStreamParams',
            'InputVStreams', 'OutputVStreams', 'InferVStreams', 'HailoStreamDirection', 'HailoFormatFlags', 'HailoCpuId',
-           'Device', 'VDevice', 'HailoRTException', 'HailoSchedulingAlgorithm', 'HailoRTStreamAbortedByUser', 'AsyncInferJob']
+           'Device', 'VDevice', 'HailoRTException', 'HailoSchedulingAlgorithm', 'HailoRTStreamAbortedByUser', 'AsyncInferJob',
+           'HailoCommunicationClosedException']

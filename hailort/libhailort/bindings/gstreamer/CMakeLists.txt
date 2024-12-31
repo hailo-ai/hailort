@@ -4,7 +4,7 @@ project(gsthailo)
 
 include(GNUInstallDirs)
 
-find_package(HailoRT 4.19.0 EXACT REQUIRED)
+find_package(HailoRT 4.20.0 EXACT REQUIRED)
 
 # GST_PLUGIN_DEFINE needs PACKAGE to be defined
 set(GST_HAILO_PACKAGE_NAME "hailo")
@@ -37,9 +37,7 @@ add_library(gsthailo SHARED ${GSTHAILO_SOURCES})
 
 set_property(TARGET gsthailo PROPERTY CXX_STANDARD 14)
 
-# TODO HRT-14797: After creating a directory containing all the relevant Hailo GST files (tensor_meta.hpp and hailo_gst.h) - update the PUBLIC_HEADER to be that dir
 set_target_properties(gsthailo PROPERTIES
-    PUBLIC_HEADER "gst-hailo/metadata/tensor_meta.hpp"
     CXX_STANDARD              14
     CXX_STANDARD_REQUIRED     YES
     CXX_EXTENSIONS            NO
@@ -71,17 +69,19 @@ endif()
 
 target_compile_options(gsthailo PRIVATE ${HAILORT_COMPILE_OPTIONS})
 
+set(GST_METADATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo/metadata/")
+
 if (UNIX)
-    target_include_directories(gsthailo PRIVATE ${GSTREAMER_VIDEO_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo/os/linux)
+    target_include_directories(gsthailo PRIVATE ${GSTREAMER_VIDEO_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo/os/linux ${GST_METADATA_DIR})
     target_link_libraries(gsthailo HailoRT::libhailort ${GSTREAMER_VIDEO_LDFLAGS} -lgstallocators-1.0)
 else()
-    target_include_directories(gsthailo PRIVATE ${GSTREAMER_INCLUDE_DIRS} ${GSTREAMER_VIDEO_INCLUDE_DIRS} ${GLIB_INCLUDE_DIRS} ${GLIBCONFIG_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo/os/windows)
+    target_include_directories(gsthailo PRIVATE ${GSTREAMER_INCLUDE_DIRS} ${GSTREAMER_VIDEO_INCLUDE_DIRS} ${GLIB_INCLUDE_DIRS} ${GLIBCONFIG_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo/os/windows ${GST_METADATA_DIR})
     target_link_libraries(gsthailo HailoRT::libhailort ${GSTREAMER_LIBRARIES} ${GSTREAMER_BASE_LIBRARIES} ${GSTREAMER_VIDEO_LIBRARIES} ${GLIB_LIBRARIES} ${GOBJECT_LIBRARIES} -lgstallocators-1.0)
 endif()
 
 if (UNIX)
     set(GSTREAMER_LIB_DEST "${CMAKE_INSTALL_LIBDIR}/${CMAKE_SYSTEM_PROCESSOR}-linux-gnu/gstreamer-1.0/")
-    set(PUBLIC_HEADER_DEST "${CMAKE_INSTALL_INCLUDEDIR}/gstreamer-1.0/gst/hailo/")
+    set(PUBLIC_HEADER_DEST "${CMAKE_INSTALL_INCLUDEDIR}/gstreamer-1.0/gst/hailo")
 elseif (MSVC)
     if ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64" OR "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x64")
         set(GSTREAMER_DEST "C:\\gstreamer\\1.0\\msvc_x86_64")
@@ -97,5 +97,14 @@ install(TARGETS gsthailo
     RUNTIME DESTINATION "${GSTREAMER_LIB_DEST}"
     LIBRARY DESTINATION "${GSTREAMER_LIB_DEST}"
     ARCHIVE DESTINATION "${GSTREAMER_LIB_DEST}"
-    PUBLIC_HEADER DESTINATION "${PUBLIC_HEADER_DEST}"
     CONFIGURATIONS Release)
+
+# Install the entire gst-hailo/include directory and its contents
+install(DIRECTORY gst-hailo/include
+    DESTINATION ${PUBLIC_HEADER_DEST}
+)
+
+install(FILES
+    gst-hailo/metadata/tensor_meta.hpp
+    DESTINATION ${PUBLIC_HEADER_DEST}
+)

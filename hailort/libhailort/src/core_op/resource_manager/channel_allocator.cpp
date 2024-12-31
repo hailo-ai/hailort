@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file channel_allocator.cpp
  * @brief Allocates vdma channel indexes, allows reusing non-boundary channels between contextes.

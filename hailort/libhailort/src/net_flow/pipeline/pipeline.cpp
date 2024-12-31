@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -77,6 +77,7 @@ PipelineBuffer::PipelineBuffer(MemoryView view, const TransferDoneCallbackAsyncI
     m_action_status(action_status),
     m_buffer_type(BufferType::VIEW)
 {
+    std::unique_lock<std::mutex> lock(m_exec_done_mutex);
     m_exec_done = [pool = m_pool, mem_view = m_view, is_user_buffer = m_is_user_buffer, exec_done = exec_done](hailo_status status){
         exec_done(status);
         if (auto buffer_pool = pool.lock()) {
@@ -109,6 +110,7 @@ PipelineBuffer::PipelineBuffer(hailo_dma_buffer_t dma_buffer, const TransferDone
     m_action_status(action_status),
     m_buffer_type(BufferType::DMA_BUFFER)
 {
+    std::unique_lock<std::mutex> lock(m_exec_done_mutex);
     set_additional_data(std::make_shared<DmaBufferPipelineData>(dma_buffer));
     m_exec_done = [pool = m_pool, dma_buffer = get_metadata().get_additional_data<DmaBufferPipelineData>(), is_user_buffer = m_is_user_buffer, exec_done = exec_done](hailo_status status){
         exec_done(status);
@@ -146,9 +148,7 @@ PipelineBuffer &PipelineBuffer::operator=(PipelineBuffer &&other)
 
 PipelineBuffer::~PipelineBuffer()
 {
-    if (m_should_call_exec_done) {
-        m_exec_done(action_status());
-    }
+    call_exec_done();
 }
 
 PipelineBuffer::operator bool() const
@@ -294,6 +294,7 @@ hailo_status PipelineBuffer::set_dma_buf_as_memview(BufferProtection dma_buffer_
 {
     auto dma_buffer = get_metadata().get_additional_data<DmaBufferPipelineData>();
 
+    std::unique_lock<std::mutex> lock(m_exec_done_mutex);
     TRY(m_view, DmaBufferUtils::mmap_dma_buffer(dma_buffer->m_dma_buffer, dma_buffer_protection));
 
     m_exec_done = [mem_view=m_view, exec_done=m_exec_done, dma_buffer, dma_buffer_protection](hailo_status status) {
@@ -312,6 +313,7 @@ hailo_status PipelineBuffer::set_dma_buf_as_memview(BufferProtection dma_buffer_
 void PipelineBuffer::call_exec_done()
 {
     if (m_should_call_exec_done) {
+        std::unique_lock<std::mutex> lock(m_exec_done_mutex);
         m_exec_done(action_status());
         m_should_call_exec_done = false;
     }
@@ -713,6 +715,11 @@ void PipelinePad::run_push_async(PipelineBuffer &&buffer)
     return m_element.run_push_async(std::move(buffer), *this);
 }
 
+void PipelinePad::run_push_async_multi(std::vector<PipelineBuffer> &&buffers)
+{
+    m_element.run_push_async_multi(std::move(buffers));
+}
+
 Expected<PipelineBuffer> PipelinePad::run_pull(PipelineBuffer &&optional)
 {
     auto result = m_element.run_pull(std::move(optional), *this);
@@ -771,6 +778,11 @@ const PipelinePad *PipelinePad::prev() const
 const PipelineElement &PipelinePad::element() const
 {
     return m_element;
+}
+
+const BufferPoolPtr PipelinePad::get_buffer_pool() const
+{
+    return m_element.get_buffer_pool(name());
 }
 
 PipelineElement::PipelineElement(const std::string &name, DurationCollector &&duration_collector,
@@ -833,16 +845,23 @@ std::string PipelineElement::description() const
     return element_description.str();
 }
 
+void PipelineElement::add_element_to_stringstream(std::stringstream &stream, const PipelinePad &source) const
+{
+    stream << " " << source.next()->element().name();
+}
+
 std::string PipelineElement::links_description() const
 {
     std::stringstream element_base_description;
 
     element_base_description << "| inputs:";
     if ((!sinks().empty()) && (nullptr != sinks()[0].prev())) {
+        size_t i = 0;
         for(const auto &sink : sinks()) {
             if (sink.prev()) {
-                element_base_description << " " << sink.prev()->element().name();
+                element_base_description << " " << sink.prev()->element().name() << "[" << i << "]";
             }
+            i++;
         }
     } else {
         element_base_description << " user";
@@ -852,7 +871,7 @@ std::string PipelineElement::links_description() const
     if ((!sources().empty()) && (nullptr != sources()[0].next())) {
         for(const auto &source : sources()) {
             if (source.next()) {
-                element_base_description << " " << source.next()->element().name();
+                add_element_to_stringstream(element_base_description, source);
             }
         }
     } else {

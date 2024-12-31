@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file cache_manager.cpp
  * @brief Manges creation and configuration of cache buffers
@@ -19,7 +19,7 @@ Expected<CacheManagerPtr> CacheManager::create_shared(HailoRTDriver &driver)
 {
     auto cache_manager = make_shared_nothrow<CacheManager>(driver);
     CHECK_NOT_NULL(cache_manager, HAILO_OUT_OF_HOST_MEMORY);
- 
+
     return cache_manager;
 }
 
@@ -28,9 +28,8 @@ CacheManager::CacheManager(HailoRTDriver &driver) :
     m_storage_manager(driver),
     m_core_op_managers(),
     m_caches_created(false),
-    m_cache_size(0),
-    m_cache_entry_size(0),
-    m_read_offset_bytes(0)
+    m_cache_length(CACHE_LENGTH_NOT_SET),
+    m_read_offset_entries(0)
 {}
 
 hailo_status CacheManager::create_caches_from_core_op(std::shared_ptr<CoreOpMetadata> core_op_metadata)
@@ -40,23 +39,15 @@ hailo_status CacheManager::create_caches_from_core_op(std::shared_ptr<CoreOpMeta
         return HAILO_SUCCESS;
     }
 
-    const auto input_size = core_op_cache_input_size(core_op_metadata);
-    const auto output_size = core_op_cache_output_size(core_op_metadata);
-    const auto entry_size = core_op_cache_entry_size(core_op_metadata);
-    const auto cache_size = input_size + output_size;
-    if (m_caches_created) {
-        CHECK(m_cache_size == cache_size, HAILO_INVALID_OPERATION,
-            "Cache size mismatch: expected {}, got {}", m_cache_size, cache_size);
-        assert(validate_cache_ids(core_op_metadata, m_core_op_managers));
-    }
-
     const auto core_op_name = core_op_metadata->core_op_name();
-    TRY(auto core_op_manager, CoreOpManager::create(m_driver, m_storage_manager, core_op_metadata));
-    m_caches_created = true;
-    m_cache_size = cache_size;
-    m_cache_entry_size = entry_size;
-
+    TRY(auto core_op_manager, CoreOpManager::create(m_driver, m_storage_manager, core_op_metadata, m_cache_length));
+    if (m_cache_length == CACHE_LENGTH_NOT_SET) {
+        m_cache_length = core_op_manager.cache_length();
+    }
     m_core_op_managers.emplace(core_op_name, std::move(core_op_manager));
+    m_caches_created = true;
+
+    assert(validate_cache_ids(core_op_metadata, m_core_op_managers));
 
     return HAILO_SUCCESS;
 }
@@ -72,95 +63,17 @@ bool CacheManager::core_op_has_caches(std::shared_ptr<CoreOpMetadata> core_op_me
     return false;
 }
 
-bool CacheManager::validate_cache_edge_layers(std::shared_ptr<CoreOpMetadata> core_op_metadata,
-    uint32_t cache_input_size, uint32_t cache_output_size)
-{
-    std::unordered_map<uint32_t, uint32_t> cache_id_count;
-    for (const auto &context_metadata : core_op_metadata->dynamic_contexts()) {
-        for (const auto &layer_info : context_metadata.get_cache_input_layers()) {
-            cache_id_count[layer_info.cache_info.id]++;
-            if (cache_input_size != LayerInfoUtils::get_layer_transfer_size(layer_info)) {
-                return false;
-            }
-        }
-
-        for (const auto &layer_info : context_metadata.get_cache_output_layers()) {
-            cache_id_count[layer_info.cache_info.id]++;
-            if (cache_output_size != LayerInfoUtils::get_layer_transfer_size(layer_info)) {
-                return false;
-            }
-        }
-    }
-
-    static const uint32_t EXPECTED_CACHE_ID_COUNT = 2; // Each cache has 2 layers (input and output)
-    for (const auto &cache_id : cache_id_count) {
-        if (cache_id.second != EXPECTED_CACHE_ID_COUNT) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-uint32_t CacheManager::core_op_cache_entry_size(std::shared_ptr<CoreOpMetadata> core_op_metadata)
-{
-    // All cache layers have the same entry size (this will be asserted in debug)
-    const auto &dynamic_contexts = core_op_metadata->dynamic_contexts();
-    if (dynamic_contexts.size() == 0) {
-        return 0;
-    }
-
-    const auto &cache_input_layers = dynamic_contexts[0].get_cache_input_layers();
-    if (cache_input_layers.size() == 0) {
-        return 0;
-    }
-
-    return cache_input_layers[0].hw_shape.features;
-}
-
-uint32_t CacheManager::core_op_cache_input_size(std::shared_ptr<CoreOpMetadata> core_op_metadata)
-{
-    // All cache layers have the same input size (this will be asserted in debug)
-    const auto &dynamic_contexts = core_op_metadata->dynamic_contexts();
-    if (dynamic_contexts.size() == 0) {
-        return 0;
-    }
-
-    const auto &cache_input_layers = dynamic_contexts[0].get_cache_input_layers();
-    if (cache_input_layers.size() == 0) {
-        return 0;
-    }
-
-    return LayerInfoUtils::get_layer_transfer_size(cache_input_layers[0]);
-}
-
-uint32_t CacheManager::core_op_cache_output_size(std::shared_ptr<CoreOpMetadata> core_op_metadata)
-{
-    // All cache layers have the same output size (this will be asserted in debug)
-    const auto &dynamic_contexts = core_op_metadata->dynamic_contexts();
-    if (dynamic_contexts.size() == 0) {
-        return 0;
-    }
-
-    const auto &cache_output_layers = dynamic_contexts[0].get_cache_output_layers();
-    if (cache_output_layers.size() == 0) {
-        return 0;
-    }
-
-    return LayerInfoUtils::get_layer_transfer_size(cache_output_layers[0]);
-}
-
 bool CacheManager::validate_cache_ids(std::shared_ptr<CoreOpMetadata> core_op_metadata,
     const std::unordered_map<std::string, CoreOpManager> &current_core_op_managers)
 {
     std::unordered_set<uint32_t> cache_ids;
     for (const auto &context_metadata : core_op_metadata->dynamic_contexts()) {
         for (const auto &layer_info : context_metadata.get_cache_input_layers()) {
-            cache_ids.insert(layer_info.cache_info.id);
+            cache_ids.insert(layer_info.cache_id);
         }
 
         for (const auto &layer_info : context_metadata.get_cache_output_layers()) {
-            cache_ids.insert(layer_info.cache_info.id);
+            cache_ids.insert(layer_info.cache_id);
         }
     }
 
@@ -212,8 +125,8 @@ ExpectedRef<IntermediateBuffer> CacheManager::set_cache_output_channel(const std
     return core_op_manager_it->second.set_cache_output_channel(cache_id, batch_size, channel_id);
 }
 
-// TODO: Support write_offset_bytes_delta in CacheManager::init_caches (HRT-14397)
-hailo_status CacheManager::init_caches(uint32_t initial_read_offset_bytes, int32_t write_offset_bytes_delta)
+// TODO: Support write_offset_delta_entries in CacheManager::init_caches (HRT-14397)
+hailo_status CacheManager::init_caches(uint32_t initial_read_offset_entries, int32_t write_offset_delta_entries)
 {
     if (!m_caches_created) {
         // No cache layers found, nothing to do
@@ -221,19 +134,20 @@ hailo_status CacheManager::init_caches(uint32_t initial_read_offset_bytes, int32
         return HAILO_SUCCESS;
     }
 
-    CHECK(initial_read_offset_bytes < m_cache_size, HAILO_INVALID_ARGUMENT);
-    CHECK(write_offset_bytes_delta != 0, HAILO_INVALID_ARGUMENT);
+    CHECK(initial_read_offset_entries < m_cache_length, HAILO_INVALID_ARGUMENT);
+    CHECK(write_offset_delta_entries != 0, HAILO_INVALID_ARGUMENT);
 
-    m_read_offset_bytes = initial_read_offset_bytes;
+    m_read_offset_entries = initial_read_offset_entries;
 
     LOGGER__INFO("Initializing caches [read_offset={}, write_offset_delta={}]",
-        initial_read_offset_bytes, write_offset_bytes_delta);
+        initial_read_offset_entries, write_offset_delta_entries);
 
     static const auto INITIAL_CONFIGURATION_OFFSET = 0;
     return update_cache_offset(INITIAL_CONFIGURATION_OFFSET);
 }
 
-hailo_status CacheManager::update_cache_offset(int32_t offset_delta_bytes)
+hailo_status CacheManager::update_cache_offset(int32_t offset_delta_entries, bool update_cache_offset,
+    bool require_changes)
 {
     if (!m_caches_created) {
         // No cache layers found, nothing to do
@@ -241,21 +155,22 @@ hailo_status CacheManager::update_cache_offset(int32_t offset_delta_bytes)
         return HAILO_SUCCESS;
     }
 
-    auto new_read_offset = (m_read_offset_bytes + offset_delta_bytes) % m_cache_size;
+    const auto new_read_offset_entries = (m_read_offset_entries + offset_delta_entries) % m_cache_length;
 
     for (auto &core : m_core_op_managers) {
-        auto status = core.second.update_cache_offset(new_read_offset);
+        auto status = core.second.update_cache_offset(new_read_offset_entries, m_read_offset_entries,
+            update_cache_offset, require_changes);
         CHECK_SUCCESS(status, "Failed to update cache offset for core_op {}", core.first);
     }
 
-    m_read_offset_bytes = new_read_offset;
+    m_read_offset_entries = new_read_offset_entries;
 
     return HAILO_SUCCESS;
 }
 
-uint32_t CacheManager::get_cache_size() const
+uint32_t CacheManager::get_cache_length() const
 {
-    return m_cache_size;
+    return m_cache_length;
 }
 
 CacheManager::StorageManager::StorageManager(HailoRTDriver &driver) :
@@ -287,34 +202,93 @@ Expected<std::shared_ptr<vdma::VdmaBuffer>> CacheManager::StorageManager::get_ba
 }
 
 Expected<CacheManager::CoreOpManager> CacheManager::CoreOpManager::create(HailoRTDriver &driver,
-    StorageManager &storage_manager, std::shared_ptr<CoreOpMetadata> core_op_metadata)
+    StorageManager &storage_manager, std::shared_ptr<CoreOpMetadata> core_op_metadata, uint32_t expected_cache_length)
 {
-    hailo_status status = HAILO_SUCCESS;
-    CoreOpManager result(driver, storage_manager, core_op_metadata, status);
-    CHECK_SUCCESS(status);
-
-    return result;
+    TRY(auto cache_buffers, allocate_cache_buffers(storage_manager, core_op_metadata, expected_cache_length));
+    const auto &cache_buffer = cache_buffers.begin()->second;
+    const auto cache_length = cache_buffer.cache_length();
+    return CoreOpManager(driver, cache_length, std::move(cache_buffers));
 }
 
-CacheManager::CoreOpManager::CoreOpManager(HailoRTDriver &driver, StorageManager &storage_manager,
-                                           std::shared_ptr<CoreOpMetadata> core_op_metadata, hailo_status &status) :
-    m_driver(driver),
-    m_initialized(false),
-    m_cache_input_size(core_op_cache_input_size(core_op_metadata)),
-    m_cache_output_size(core_op_cache_output_size(core_op_metadata)),
-    m_cache_size(m_cache_input_size + m_cache_output_size),
-    m_cache_entry_size(core_op_cache_entry_size(core_op_metadata)),
-    m_write_offset_bytes_delta(m_cache_input_size),
-    m_cache_buffers(),
-    m_uninitialized_caches()
+Expected<CoreOpCacheIoInfos> CacheManager::CoreOpManager::get_cache_ios_infos(
+    std::shared_ptr<CoreOpMetadata> core_op_metadata, bool input)
 {
-    status = allocate_cache_buffers(storage_manager, core_op_metadata);
-    if (HAILO_SUCCESS != status) {
-        return;
+    CoreOpCacheIoInfos cache_inputs_info;
+    for (const auto &context_metadata : core_op_metadata->dynamic_contexts()) {
+        for (const auto &layer_info : (input ? context_metadata.get_cache_input_layers() : context_metadata.get_cache_output_layers())) {
+            const auto cache_id = layer_info.cache_id;
+            CHECK(!contains(cache_inputs_info, cache_id), HAILO_INTERNAL_FAILURE,
+                "Duplicate cache_id found in cache input layers (cache_id {})", cache_id);
+            cache_inputs_info[cache_id].io_size = LayerInfoUtils::get_layer_transfer_size(layer_info);
+            cache_inputs_info[cache_id].entry_size = layer_info.hw_shape.features;
+        }
     }
 
-    status = HAILO_SUCCESS;
+    return cache_inputs_info;
 }
+
+Expected<CoreOpCacheInfos> CacheManager::CoreOpManager::get_cache_infos(std::shared_ptr<CoreOpMetadata> core_op_metadata,
+    uint32_t expected_cache_length)
+{
+    static const auto INPUT = true;
+    TRY(auto cache_inputs, get_cache_ios_infos(core_op_metadata, INPUT));
+
+    static const auto OUTPUT = false;
+    TRY(auto cache_outputs, get_cache_ios_infos(core_op_metadata, OUTPUT));
+
+    CHECK(get_key_set(cache_inputs) == get_key_set(cache_outputs), HAILO_INTERNAL_FAILURE,
+        "Mismatch between cache input and output cache_ids");
+
+    CoreOpCacheInfos final_cache_infos;
+    for (const auto &cache_input_info : cache_inputs) {
+        const auto cache_id = cache_input_info.first;
+        TRY(const auto cache_info, CacheInfo::create(cache_input_info.second, cache_outputs[cache_id]));
+        final_cache_infos[cache_id] = cache_info;
+        if (expected_cache_length == CACHE_LENGTH_NOT_SET) {
+            // If expected_cache_length is not set, set it to the first cache length
+            // This happens the first time get_cache_infos is called.
+            // In subsequent calls, expected_cache_length will be set to the cache length of the first cache processed
+            expected_cache_length = cache_info.cache_length();
+        } else {
+            // Compare the cache length with the first cache length (all caches should have the same length)
+            CHECK(expected_cache_length == cache_info.cache_length(), HAILO_INVALID_ARGUMENT,
+                "Cache length mismatch for cache_id {} (expected {}, got {})",
+                cache_id, expected_cache_length, cache_info.cache_length());
+        }
+    }
+
+    return final_cache_infos;
+}
+
+Expected<std::unordered_map<uint32_t, CacheBuffer>> CacheManager::CoreOpManager::allocate_cache_buffers(
+    StorageManager &storage_manager, std::shared_ptr<CoreOpMetadata> core_op_metadata, uint32_t expected_cache_length)
+{
+    TRY(auto cache_infos, get_cache_infos(core_op_metadata, expected_cache_length));
+
+    std::unordered_map<uint32_t, CacheBuffer> cache_buffers;
+    for (const auto &cache_info_id_pair : cache_infos) {
+        const auto cache_id = cache_info_id_pair.first;
+        const auto &cache_info = cache_info_id_pair.second;
+
+        TRY(auto backing_buffer, storage_manager.get_backing_buffer(cache_id, cache_info.size));
+        TRY(auto cache_buffer, CacheBuffer::create(backing_buffer, cache_info.size, cache_info.input_size,
+            cache_info.output_size, cache_info.entry_size));
+        auto emplace_res = cache_buffers.emplace(cache_id, std::move(cache_buffer));
+        CHECK(emplace_res.second, HAILO_INTERNAL_FAILURE);
+    }
+
+    return cache_buffers;
+}
+
+CacheManager::CoreOpManager::CoreOpManager(HailoRTDriver &driver, uint32_t cache_length,
+                                           std::unordered_map<uint32_t, CacheBuffer> &&cache_buffers) :
+    m_driver(driver),
+    m_initialized(false),
+    m_cache_length(cache_length),
+    m_cache_buffers(std::move(cache_buffers)),
+    m_cache_snapshots(),
+    m_uninitialized_caches(get_key_set(m_cache_buffers))
+{}
 
 std::unordered_map<uint32_t, CacheBuffer> &CacheManager::CoreOpManager::get_cache_buffers()
 {
@@ -338,7 +312,6 @@ ExpectedRef<CacheBuffer> CacheManager::CoreOpManager::get_cache_buffer(uint32_t 
 ExpectedRef<IntermediateBuffer> CacheManager::CoreOpManager::set_cache_input_channel(uint32_t cache_id,
     uint16_t batch_size, vdma::ChannelId channel_id)
 {
-    // TODO: Support non-1 batches? (HRT-13628)
     CHECK(1 == batch_size, HAILO_INVALID_ARGUMENT, "Cache input batch size must be 1");
     TRY(auto cache_buffer, get_cache_buffer(cache_id));
     if (m_initialized) {
@@ -360,7 +333,6 @@ ExpectedRef<IntermediateBuffer> CacheManager::CoreOpManager::set_cache_input_cha
 ExpectedRef<IntermediateBuffer> CacheManager::CoreOpManager::set_cache_output_channel(uint32_t cache_id,
     uint16_t batch_size, vdma::ChannelId channel_id)
 {
-    // TODO: Support non-1 batches? (HRT-13628)
     CHECK(1 == batch_size, HAILO_INVALID_ARGUMENT, "Cache output batch size must be 1");
     TRY(auto cache_buffer, get_cache_buffer(cache_id));
     if (m_initialized) {
@@ -379,60 +351,106 @@ ExpectedRef<IntermediateBuffer> CacheManager::CoreOpManager::set_cache_output_ch
     return result;
 }
 
-hailo_status CacheManager::CoreOpManager::update_cache_offset(uint32_t read_offset)
+uint32_t CacheManager::CoreOpManager::cache_length() const
 {
-    CHECK(m_initialized, HAILO_INVALID_OPERATION, "CacheManager not initialized");
+    return m_cache_length;
+}
 
-    auto status = HAILO_UNINITIALIZED;
-    auto new_read_offset = read_offset % m_cache_size;
-    auto new_write_offset = (read_offset + m_write_offset_bytes_delta) % m_cache_size;
+hailo_status CacheManager::CoreOpManager::validate_cache_update(const CacheBuffer &cache_buffer, uint32_t cache_id,
+    const CacheBuffer::Snapshot &curr_snapshot, const CacheBuffer::Snapshot &prev_snapshot, bool require_changes)
+{
+    const auto curr_write_offset_start = (curr_snapshot.read_offset() + cache_buffer.input_length()) % cache_buffer.cache_length();
+    const auto curr_write_offset_start_bytes = curr_write_offset_start * cache_buffer.entry_size();
+    const auto curr_write_offset_end = (curr_write_offset_start + cache_buffer.output_length()) % cache_buffer.cache_length();
+    const auto curr_write_offset_end_bytes = curr_write_offset_end * cache_buffer.entry_size();
 
-    for (auto &cache_buffer : m_cache_buffers) {
-        TRY(auto cache_input, cache_buffer.second.get_input());
-        status = cache_input.get().reprogram_descriptors(new_read_offset);
-        CHECK_SUCCESS(status, "Failed to reprogram read cache descriptors to offset 0x{:x} (cache_id {})",
-            new_read_offset, cache_buffer.first);
+    if (curr_write_offset_end > curr_write_offset_start) {
+        return validate_non_wrapping_update(cache_id, curr_snapshot, prev_snapshot,
+            curr_write_offset_start_bytes, curr_write_offset_end_bytes, require_changes);
+    } else {
+        return validate_wrapping_update(cache_id, curr_snapshot, prev_snapshot,
+            curr_write_offset_start_bytes, curr_write_offset_end_bytes, require_changes);
+    }
+}
 
-        TRY(auto cache_output, cache_buffer.second.get_output());
-        status = cache_output.get().reprogram_descriptors(new_write_offset);
-        CHECK_SUCCESS(status, "Failed to reprogram write cache descriptors to offset 0x{:x} (cache_id {})",
-            new_write_offset, cache_buffer.first);
+hailo_status CacheManager::CoreOpManager::validate_non_wrapping_update(uint32_t cache_id,
+    const CacheBuffer::Snapshot &curr_snapshot, const CacheBuffer::Snapshot &prev_snapshot,
+    size_t curr_write_offset_start_bytes, size_t curr_write_offset_end_bytes, bool require_changes)
+{
+    // Check for equality between the snapshots at [0, curr_write_offset_start) and [curr_write_offset_end, end)
+    CHECK(curr_snapshot.buffer().to(curr_write_offset_start_bytes) ==
+        prev_snapshot.buffer().to(curr_write_offset_start_bytes), HAILO_INTERNAL_FAILURE);
+    CHECK(curr_snapshot.buffer().from(curr_write_offset_end_bytes) ==
+        prev_snapshot.buffer().from(curr_write_offset_end_bytes), HAILO_INTERNAL_FAILURE);
+
+    // Check if the cache did not change in the write section - [curr_write_offset_start, curr_write_offset_end)
+    if (curr_snapshot.buffer().slice(curr_write_offset_start_bytes, curr_write_offset_end_bytes) ==
+            prev_snapshot.buffer().slice(curr_write_offset_start_bytes, curr_write_offset_end_bytes)) {
+        LOGGER__WARNING("Cache buffer did not change in write section [0x{:x}, 0x{:x}) (cache_id {})",
+            curr_write_offset_start_bytes, curr_write_offset_end_bytes, cache_id);
+
+        if (require_changes) {
+            return make_unexpected(HAILO_INTERNAL_FAILURE);
+        }
     }
 
     return HAILO_SUCCESS;
 }
 
-uint32_t CacheManager::CoreOpManager::get_cache_size() const
+hailo_status CacheManager::CoreOpManager::validate_wrapping_update(uint32_t cache_id,
+    const CacheBuffer::Snapshot &curr_snapshot, const CacheBuffer::Snapshot &prev_snapshot,
+    size_t curr_write_offset_start_bytes, size_t curr_write_offset_end_bytes, bool require_changes)
 {
-    return m_cache_size;
-}
+    // Check for equality between the snapshots at [curr_write_offset_end_bytes, curr_write_offset_start_bytes)
+    CHECK(curr_snapshot.buffer().slice(curr_write_offset_end_bytes, curr_write_offset_start_bytes) ==
+        prev_snapshot.buffer().slice(curr_write_offset_end_bytes, curr_write_offset_start_bytes),
+        HAILO_INTERNAL_FAILURE);
 
-uint32_t CacheManager::CoreOpManager::get_input_size() const
-{
-    return m_cache_input_size;
-}
-
-uint32_t CacheManager::CoreOpManager::get_output_size() const
-{
-    return m_cache_output_size;
-}
-
-hailo_status CacheManager::CoreOpManager::allocate_cache_buffers(StorageManager &storage_manager,
-    std::shared_ptr<CoreOpMetadata> core_op_metadata)
-{
-    // It's enough to go over cache_output_layers, as each cache has both input and output layers (that share the same buffer)
-    for (const auto &context_metadata : core_op_metadata->dynamic_contexts()) {
-        for (const auto &layer_info : context_metadata.get_cache_output_layers()) {
-            const auto cache_id = layer_info.cache_info.id;
-            TRY(auto backing_buffer, storage_manager.get_backing_buffer(cache_id, m_cache_size));
-            TRY(auto cache_buffer, CacheBuffer::create(backing_buffer, m_cache_size, m_cache_input_size,
-                m_cache_output_size, m_cache_entry_size));
-            auto emplace_res = m_cache_buffers.emplace(cache_id, std::move(cache_buffer));
-            CHECK(emplace_res.second, HAILO_INTERNAL_FAILURE);
-
-            // The cache buffer is yet to be initialized (will be initalized when it is configured with input/output channels)
-            m_uninitialized_caches.insert(cache_id);
+    // Check if the cache did not change in the write section - [0, curr_write_offset_end) and [curr_write_offset_start, end)
+    const auto first_chunk_equal = (curr_snapshot.buffer().to(curr_write_offset_end_bytes) ==
+        prev_snapshot.buffer().to(curr_write_offset_end_bytes));
+    const auto second_chunk_equal = (curr_snapshot.buffer().from(curr_write_offset_start_bytes) ==
+        prev_snapshot.buffer().from(curr_write_offset_start_bytes));
+    if (first_chunk_equal && second_chunk_equal) {
+        LOGGER__WARNING("Cache buffer did not change in write section [0, 0x{:x}) or [0x{:x}, 0x{:x}) (cache_id {})",
+            curr_write_offset_end_bytes, curr_write_offset_start_bytes, curr_snapshot.buffer().size(), cache_id);
+        if (require_changes) {
+            return make_unexpected(HAILO_INTERNAL_FAILURE);
         }
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status CacheManager::CoreOpManager::update_cache_offset(uint32_t read_offset_entries,
+    uint32_t prev_read_offset_entries, bool check_snapshots, bool require_changes)
+{
+    auto status = HAILO_UNINITIALIZED;
+    CHECK(m_initialized, HAILO_INVALID_OPERATION, "CacheManager not initialized");
+
+    const auto new_read_offset_entries = read_offset_entries % m_cache_length;
+    for (auto &cache_buffer_id_pair : m_cache_buffers) {
+        const auto cache_id = cache_buffer_id_pair.first;
+        auto &cache_buffer = cache_buffer_id_pair.second;
+
+        if (check_snapshots) {
+            // Create a snapshot of the cache buffer
+            // Assumes that the cache buffer is not modified while the snapshot is being created
+            TRY(auto snapshot, cache_buffer.create_snapshot(prev_read_offset_entries));
+
+            // Validate the snapshot compared to the previous one
+            if (contains(m_cache_snapshots, cache_id)) {
+                auto prev_snapshot = std::move(m_cache_snapshots[cache_id]);
+                status = validate_cache_update(cache_buffer, cache_id, snapshot, prev_snapshot, require_changes);
+                CHECK_SUCCESS(status, "Failed to validate cache update for cache_id {}", cache_id);
+            }
+
+            // Store the current snapshot (overwriting the previous one)
+            m_cache_snapshots[cache_id] = std::move(snapshot);
+        }
+
+        status = cache_buffer.reprogram_descriptors(new_read_offset_entries);
+        CHECK_SUCCESS(status, "Failed to reprogram cache descriptors for cache_id {}", cache_id);
     }
 
     return HAILO_SUCCESS;
@@ -455,7 +473,10 @@ hailo_status CacheManager::CoreOpManager::program_cache_buffers()
 {
     // Set the cache to the initial configuration (program the descriptors to the initial offset)
     static const auto INITIAL_CONFIGURATION_OFFSET = 0;
-    return update_cache_offset(INITIAL_CONFIGURATION_OFFSET);
+    static const auto NO_CACHE_CHECK = false;
+    static const auto IGNORED = false;
+    return update_cache_offset(INITIAL_CONFIGURATION_OFFSET, INITIAL_CONFIGURATION_OFFSET,
+        NO_CACHE_CHECK, IGNORED);
 }
 
 } /* namespace hailort */

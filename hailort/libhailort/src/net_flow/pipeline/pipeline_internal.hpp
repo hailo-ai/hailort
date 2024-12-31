@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -40,7 +40,6 @@ public:
 
 protected:
     void handle_non_recoverable_async_error(hailo_status error_status);
-
     std::weak_ptr<AsyncPipeline> m_async_pipeline;
 
     friend class PipelinePad;

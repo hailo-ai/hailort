@@ -8,6 +8,7 @@
  **/
 
 #include "run2_command.hpp"
+#include "common/utils.hpp"
 #include "live_stats.hpp"
 #include "timer_live_track.hpp"
 #include "measurement_live_track.hpp"
@@ -200,6 +201,8 @@ VStreamApp::VStreamApp(const std::string &description, const std::string &name, 
             { "bayer_rgb", HAILO_FORMAT_ORDER_BAYER_RGB },
             { "12_bit_bayer_rgb", HAILO_FORMAT_ORDER_12_BIT_BAYER_RGB },
             { "hailo_nms", HAILO_FORMAT_ORDER_HAILO_NMS },
+            { "hailo_nms_by_class", HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS },
+            { "hailo_nms_by_score", HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE },
             { "nchw", HAILO_FORMAT_ORDER_NCHW },
             { "yuy2", HAILO_FORMAT_ORDER_YUY2 },
             { "nv12", HAILO_FORMAT_ORDER_NV12 },
@@ -303,9 +306,9 @@ public:
     std::chrono::seconds get_time_to_run();
     std::vector<hailo_device_id_t> get_dev_ids();
     uint32_t get_device_count();
-    bool get_measure_power();
-    bool get_measure_current();
-    bool get_measure_temp();
+    bool user_requested_power_measurement();
+    bool user_requested_current_measurement();
+    bool user_requested_temperature_measurement();
     bool get_measure_hw_latency();
     bool get_measure_overall_latency();
     bool get_multi_process_service();
@@ -478,17 +481,17 @@ std::chrono::seconds Run2::get_time_to_run()
     return std::chrono::seconds(m_time_to_run);
 }
 
-bool Run2::get_measure_power()
+bool Run2::user_requested_power_measurement()
 {
     return m_measure_power;
 }
 
-bool Run2::get_measure_current()
+bool Run2::user_requested_current_measurement()
 {
     return m_measure_current;
 }
 
-bool Run2::get_measure_temp()
+bool Run2::user_requested_temperature_measurement()
 {
     return m_measure_temp;
 }
@@ -737,20 +740,20 @@ Expected<std::vector<std::shared_ptr<NetworkRunner>>> Run2::init_and_run_net_run
 
     activation_barrier.arrive_and_wait();
 
-    if (get_measure_power() || get_measure_current() || get_measure_temp()) {
+    if (user_requested_power_measurement() || user_requested_current_measurement() || user_requested_temperature_measurement()) {
         TRY(auto physical_devices, vdevice->get_physical_devices());
         for (auto &device : physical_devices) {
-            TRY(auto caps, device.get().get_capabilities(), "Failed getting device capabilities");
-
-            CHECK_AS_EXPECTED((caps.power_measurements || (get_measure_power())),
-                HAILO_INVALID_OPERATION, "Power measurement not supported. Disable the power-measure option");
-            CHECK_AS_EXPECTED((caps.current_measurements || !(get_measure_current())),
-                HAILO_INVALID_OPERATION, "Current measurement not supported. Disable the current-measure option");
-            CHECK_AS_EXPECTED((caps.temperature_measurements || !(get_measure_temp())),
-                HAILO_INVALID_OPERATION, "Temperature measurement not supported. Disable the temp-measure option");
+            TRY(auto supported_features, device.get().get_capabilities(), "Failed getting device capabilities");
+            CHECK_AS_EXPECTED(!user_requested_power_measurement() || supported_features.power_measurements,
+                HAILO_INVALID_OPERATION, "Power measurement not supported. Disable the measure-power option");
+            CHECK_AS_EXPECTED(!user_requested_current_measurement() || supported_features.current_measurements,
+                HAILO_INVALID_OPERATION, "Current measurement not supported. Disable the measure-current option");
+            CHECK_AS_EXPECTED(!user_requested_temperature_measurement() || supported_features.temperature_measurements,
+                HAILO_INVALID_OPERATION, "Temperature measurement not supported. Disable the measure-temp option");
 
             TRY(auto measurement_live_track, MeasurementLiveTrack::create_shared(device.get(),
-                get_measure_power(), get_measure_current(), get_measure_temp()));
+                user_requested_power_measurement(), user_requested_current_measurement(),
+                user_requested_temperature_measurement()));
 
             live_stats->add(measurement_live_track, 2);
         }

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -38,6 +38,31 @@ int move_fd_to_higher(int handle)
     }
     close(handle);
     return new_handle;
+}
+
+
+Waitable::Waitable(underlying_waitable_handle_t handle) :
+    m_handle(handle)
+{}
+
+hailo_status Waitable::wait(std::chrono::milliseconds timeout)
+{
+    auto status = wait_for_single_object(m_handle, timeout);
+    if (HAILO_TIMEOUT == status) {
+        LOGGER__TRACE("wait_for_single_object failed with timeout (timeout={}ms)", timeout.count());
+        return status;
+    }
+    CHECK_SUCCESS(status);
+
+    status = post_wait();
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+underlying_waitable_handle_t Waitable::get_underlying_handle()
+{
+    return m_handle;
 }
 
 Waitable::~Waitable()
@@ -245,32 +270,6 @@ underlying_waitable_handle_t Semaphore::open_semaphore_handle(uint32_t initial_c
     }
 
     return handle;
-}
-
-Expected<size_t> WaitableGroup::wait_any(std::chrono::milliseconds timeout)
-{
-    int poll_ret = -1;
-    do {
-        poll_ret = poll(m_waitable_handles.data(), m_waitable_handles.size(), static_cast<int>(timeout.count()));
-    } while ((0 > poll_ret) && (EINTR == poll_ret));
-
-    if (0 == poll_ret) {
-        LOGGER__TRACE("Timeout");
-        return make_unexpected(HAILO_TIMEOUT);
-    }
-    CHECK_AS_EXPECTED(poll_ret > 0, HAILO_INTERNAL_FAILURE, "poll failed with errno={}", errno);
-
-    for (size_t index = 0; index < m_waitable_handles.size(); index++) {
-        if (m_waitable_handles[index].revents & POLLIN) {
-            auto status = m_waitables[index].get().post_wait();
-            CHECK_SUCCESS_AS_EXPECTED(status);
-
-            return index;
-        }
-    }
-
-    LOGGER__ERROR("None of the pollfd are in read state");
-    return make_unexpected(HAILO_INTERNAL_FAILURE);
 }
 
 } /* namespace hailort */

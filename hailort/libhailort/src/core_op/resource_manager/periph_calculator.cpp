@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -125,7 +125,12 @@ Expected<LayerInfo> PeriphCalculator::calculate_periph_registers_impl(const Laye
     // Get the exact size in periph buffers per frame - we must multiply core registers and divide by periph bytes per buffer
     uint32_t periph_buffers_per_frame = is_ddr ? calculate_ddr_periph_buffers_per_frame(layer_info, periph_bytes_per_buffer):
         (periph_frame_size / periph_bytes_per_buffer);
-    CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(periph_buffers_per_frame), HAILO_INVALID_ARGUMENT);
+    // if we get a periph bytes per buffer so small that the periph buffers per frame cant fit in uint16
+    // put uint16_t max and add warning - seeing as this value doesn't really affect anything and we should not fail in that case.
+    if (!IS_FIT_IN_UINT16(periph_buffers_per_frame)) {
+        LOGGER__WARNING("periph buffers per frame too large - putting uint16_t max (This may affect HW infer estimator results");
+        periph_buffers_per_frame = UINT16_MAX;
+    }
 
     updated_layer_info.nn_stream_config.periph_bytes_per_buffer = static_cast<uint16_t>(periph_bytes_per_buffer);
     updated_layer_info.nn_stream_config.periph_buffers_per_frame = static_cast<uint16_t>(periph_buffers_per_frame);
@@ -150,7 +155,7 @@ Expected<LayerInfo> PeriphCalculator::calculate_periph_registers(const LayerInfo
         return updated_layer_info;
     }
 
-    if (HAILO_FORMAT_ORDER_HAILO_NMS == layer_info.format.order) {
+    if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == layer_info.format.order) {
         return calculate_nms_periph_registers(layer_info);
     }
 

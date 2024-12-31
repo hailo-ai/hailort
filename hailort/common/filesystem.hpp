@@ -40,6 +40,15 @@ public:
     static std::string get_home_directory();
     static bool is_path_accesible(const std::string &path);
     static bool does_file_exists(const std::string &path);
+
+    /**
+     * Gets the path to the temporary directory.
+     *
+     * @return Upon success, returns Expected of the temporary directory path string, ending with / on posix systems
+     * or with \ on windows systems. Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    static Expected<std::string> get_temp_path();
+
     static bool has_suffix(const std::string &file_name, const std::string &suffix)
     {
         return (file_name.size() >= suffix.size()) && equal(suffix.rbegin(), suffix.rend(), file_name.rbegin());    

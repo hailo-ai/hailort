@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -46,7 +46,10 @@ public:
         switch (user_format.order)
         {
         case HAILO_FORMAT_ORDER_HAILO_NMS:
+        case HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS:
             return { HailoRTCommon::get_nms_host_shape_size(nms_shape) };
+        case HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE:
+            throw HailoRTStatusException("Format order HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE is not supported in python API.");
         case HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK:
             return {HailoRTCommon::get_nms_host_frame_size(nms_shape, user_format) / HailoRTCommon::get_format_data_bytes(user_format)};
         case HAILO_FORMAT_ORDER_NC:

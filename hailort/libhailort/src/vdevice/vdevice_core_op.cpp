@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -87,6 +87,11 @@ Expected<std::shared_ptr<VDeviceCoreOp>> VDeviceCoreOp::duplicate(std::shared_pt
     return vdevice_core_op;
 }
 
+VDeviceCoreOp::~VDeviceCoreOp()
+{
+    (void)shutdown();
+}
+
 VDeviceCoreOp::VDeviceCoreOp(VDevice &vdevice,
     ActiveCoreOpHolder &active_core_op_holder,
     const ConfigureNetworkParams &configure_params,
@@ -132,14 +137,6 @@ VDeviceCoreOp::VDeviceCoreOp(VDevice &vdevice,
     }
 
     if (has_caches() && is_scheduled()) {
-        // TODO: caches only work with a batch size of one currently (HRT-13628)
-        if (is_default_batch_size()) {
-            // Default batch size with the sched leads to dynamic batches with the max size supported by the streams
-            LOGGER__ERROR("Caches are not supported with the scheduler when using the default batch size");
-            status = HAILO_INVALID_OPERATION;
-            return;
-        }
-
         const auto configured_batch_size = get_smallest_configured_batch_size(configure_params);
         if (configured_batch_size > 1) {
             LOGGER__ERROR("Caches are not supported with the scheduler when using a batch size greater than 1 (received {})",
@@ -388,6 +385,10 @@ hailo_status VDeviceCoreOp::shutdown()
 {
     hailo_status status = HAILO_SUCCESS; // Success oriented
 
+    if (m_is_shutdown.exchange(true)) {
+        return HAILO_SUCCESS;
+    }
+
     auto abort_status = abort_low_level_streams();
     if (HAILO_SUCCESS != abort_status) {
         LOGGER__ERROR("Failed abort low level streams {}", abort_status);
@@ -459,18 +460,32 @@ Expected<Buffer> VDeviceCoreOp::get_intermediate_buffer(const IntermediateBuffer
     return m_core_ops.begin()->second->get_intermediate_buffer(key);
 }
 
-Expected<uint32_t> VDeviceCoreOp::get_cache_read_size() const
+Expected<uint32_t> VDeviceCoreOp::get_cache_length() const
 {
     CHECK(1 == m_core_ops.size(), HAILO_INVALID_OPERATION,
-        "get_cache_read_size function is not supported on more than 1 physical device.");
-    return m_core_ops.begin()->second->get_cache_read_size();
+        "get_cache_length function is not supported on more than 1 physical device.");
+    return m_core_ops.begin()->second->get_cache_length();
 }
 
-Expected<uint32_t> VDeviceCoreOp::get_cache_write_size() const
+Expected<uint32_t> VDeviceCoreOp::get_cache_read_length() const
 {
     CHECK(1 == m_core_ops.size(), HAILO_INVALID_OPERATION,
-        "get_cache_write_size function is not supported on more than 1 physical device.");
-    return m_core_ops.begin()->second->get_cache_write_size();
+        "get_cache_read_length function is not supported on more than 1 physical device.");
+    return m_core_ops.begin()->second->get_cache_read_length();
+}
+
+Expected<uint32_t> VDeviceCoreOp::get_cache_write_length() const
+{
+    CHECK(1 == m_core_ops.size(), HAILO_INVALID_OPERATION,
+        "get_cache_write_length function is not supported on more than 1 physical device.");
+    return m_core_ops.begin()->second->get_cache_write_length();
+}
+
+Expected<uint32_t> VDeviceCoreOp::get_cache_entry_size(uint32_t cache_id) const
+{
+    CHECK(1 == m_core_ops.size(), HAILO_INVALID_OPERATION,
+        "get_cache_entry_size function is not supported on more than 1 physical device.");
+    return m_core_ops.begin()->second->get_cache_entry_size(cache_id);
 }
 
 bool VDeviceCoreOp::has_caches() const
@@ -491,18 +506,11 @@ hailo_status VDeviceCoreOp::init_cache(uint32_t read_offset, int32_t write_offse
     return m_core_ops.begin()->second->init_cache(read_offset, write_offset_delta);
 }
 
-Expected<hailo_cache_info_t> VDeviceCoreOp::get_cache_info() const
-{
-    CHECK(1 == m_core_ops.size(), HAILO_INVALID_OPERATION,
-        "get_cache_info function is not supported on more than 1 physical device.");
-    return m_core_ops.begin()->second->get_cache_info();
-}
-
-hailo_status VDeviceCoreOp::update_cache_offset(int32_t offset_delta_bytes)
+hailo_status VDeviceCoreOp::update_cache_offset(int32_t offset_delta_entries)
 {
     CHECK(1 == m_core_ops.size(), HAILO_INVALID_OPERATION,
         "update_cache_offset function is not supported on more than 1 physical device.");
-    return m_core_ops.begin()->second->update_cache_offset(offset_delta_bytes);
+    return m_core_ops.begin()->second->update_cache_offset(offset_delta_entries);
 }
 
 Expected<std::vector<uint32_t>> VDeviceCoreOp::get_cache_ids() const

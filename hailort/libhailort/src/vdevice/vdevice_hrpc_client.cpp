@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file vdevice_hrpc_client.cpp
  * @brief VDevice HRPC client implementation
@@ -11,21 +11,21 @@
 #include "hailo/hailort.h"
 #include "hrpc_protocol/serializer.hpp"
 #include "net_flow/pipeline/infer_model_hrpc_client.hpp"
+#include "utils/buffer_storage.hpp"
 
 namespace hailort
 {
 
-Expected<std::unique_ptr<VDevice>> VDeviceHrpcClient::create(const hailo_vdevice_params_t &params)
+Expected<std::string> VDeviceHrpcClient::get_device_id(const hailo_vdevice_params_t &params)
 {
-    CHECK_AS_EXPECTED(params.device_count == 1, HAILO_OUT_OF_PHYSICAL_DEVICES, "Only single device is supported!");
-
+    // TODO: Validate the chosen device-id is of the requested type (eiter soc-acc or nnc-acc)?
     std::string device_id;
     if (nullptr != params.device_ids) {
-        device_id = params.device_ids[0].id;
+        return std::string(params.device_ids[0].id);
     } else {
         auto acc_type = HailoRTDriver::AcceleratorType::SOC_ACCELERATOR;
 
-        // If forcing hrpc service, its because we work without EP driver -> use sockets
+        // If forcing hrpc service, we assume here that there is a NNC-acc connected as we use sockets
         if (VDevice::should_force_hrpc_client()) {
             acc_type = HailoRTDriver::AcceleratorType::NNC_ACCELERATOR;
         }
@@ -33,10 +33,16 @@ Expected<std::unique_ptr<VDevice>> VDeviceHrpcClient::create(const hailo_vdevice
         TRY(auto scan_results, HailoRTDriver::scan_devices(acc_type));
         CHECK_AS_EXPECTED(scan_results.size() > 0, HAILO_OUT_OF_PHYSICAL_DEVICES, "No devices found");
 
-        device_id = scan_results[0].device_id;
+        return std::string(scan_results[0].device_id);
     }
+}
 
-    auto client = make_shared_nothrow<hrpc::Client>(device_id);
+Expected<std::unique_ptr<VDevice>> VDeviceHrpcClient::create(const hailo_vdevice_params_t &params)
+{
+    CHECK_AS_EXPECTED(params.device_count == 1, HAILO_OUT_OF_PHYSICAL_DEVICES, "Only single device is supported!");
+
+    TRY(auto device_id, get_device_id(params));
+    auto client = make_shared_nothrow<Client>(device_id);
     CHECK_NOT_NULL(client, HAILO_INTERNAL_FAILURE);
 
     auto status = client->connect();
@@ -46,7 +52,7 @@ Expected<std::unique_ptr<VDevice>> VDeviceHrpcClient::create(const hailo_vdevice
     CHECK_NOT_NULL_AS_EXPECTED(callbacks_dispatcher, HAILO_OUT_OF_HOST_MEMORY);
 
     client->register_custom_reply(HailoRpcActionID::CALLBACK_CALLED,
-    [callbacks_dispatcher] (const MemoryView &serialized_reply, hrpc::RpcConnection connection) -> hailo_status {
+    [callbacks_dispatcher] (const MemoryView &serialized_reply, RpcConnection connection) -> hailo_status {
         TRY(auto tuple, CallbackCalledSerializer::deserialize_reply(serialized_reply));
         auto callback_status = std::get<0>(tuple);
         auto callback_handle_id = std::get<1>(tuple);
@@ -101,7 +107,7 @@ Expected<std::shared_ptr<InferModel>> VDeviceHrpcClient::create_infer_model(cons
 {
     TRY(auto request, CreateInferModelSerializer::serialize_request(m_handle, hef_buffer.size(), name));
     TRY(auto result, m_client->execute_request(HailoRpcActionID::VDEVICE__CREATE_INFER_MODEL,
-        MemoryView(request), [&hef_buffer] (hrpc::RpcConnection connection) -> hailo_status {
+        MemoryView(request), [&hef_buffer] (RpcConnection connection) -> hailo_status {
         // TODO: change write to accept uint64_t, or accept file stream instead or write in chunks
         auto status = connection.write_buffer(hef_buffer);
         CHECK_SUCCESS(status);
@@ -127,7 +133,7 @@ Expected<std::shared_ptr<InferModel>> VDeviceHrpcClient::create_infer_model(cons
     CHECK_SUCCESS(status);
 
     TRY(auto hef_size, hef_reader.get_size());
-    TRY(auto hef_buffer, Buffer::create(hef_size));
+    TRY(auto hef_buffer, Buffer::create(hef_size, BufferStorageParams::create_dma()));
     status = hef_reader.read(hef_buffer.data(), hef_size);
     CHECK_SUCCESS(status);
 
@@ -167,36 +173,24 @@ Expected<hailo_stream_interface_t> VDeviceHrpcClient::get_default_streams_interf
     return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
 
-hailo_status VDeviceHrpcClient::dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction)
+hailo_status VDeviceHrpcClient::dma_map(void *address, size_t size, hailo_dma_buffer_direction_t data_direction)
 {
-    (void)address;
-    (void)size;
-    (void)direction;
-    return HAILO_SUCCESS; // TODO: implement this (HRT-13689)
+    return m_device->dma_map(address, size, data_direction);
 }
 
-hailo_status VDeviceHrpcClient::dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction)
+hailo_status VDeviceHrpcClient::dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t data_direction)
 {
-    (void)address;
-    (void)size;
-    (void)direction;
-    return HAILO_SUCCESS; // TODO: implement this (HRT-13689)
+    return m_device->dma_unmap(address, size, data_direction);
 }
 
-hailo_status VDeviceHrpcClient::dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
+hailo_status VDeviceHrpcClient::dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t data_direction)
 {
-    (void)dmabuf_fd;
-    (void)size;
-    (void)direction;
-    return HAILO_SUCCESS; // TODO: implement this (HRT-13689)
+    return m_device->dma_map_dmabuf(dmabuf_fd, size, data_direction);
 }
 
-hailo_status VDeviceHrpcClient::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
+hailo_status VDeviceHrpcClient::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t data_direction)
 {
-    (void)dmabuf_fd;
-    (void)size;
-    (void)direction;
-    return HAILO_SUCCESS; // TODO: implement this (HRT-13689)
+    return m_device->dma_unmap_dmabuf(dmabuf_fd, size, data_direction);
 }
 
 } /* namespace hailort */

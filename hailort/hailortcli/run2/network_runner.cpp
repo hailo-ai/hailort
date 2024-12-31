@@ -596,14 +596,13 @@ hailo_status FullAsyncNetworkRunner::run_single_thread_async_infer(EventPtr shut
     std::vector<Buffer> output_buffers;
     std::vector<DmaMappedBuffer> dma_mapped_buffers;
 
-    const uint8_t const_byte = 0xAB;
     for (const auto &name : get_input_names()) {
         TRY(auto input_config, m_infer_model->input(name));
 
         auto params = get_params(name);
         Buffer buffer {};
         if (params.input_file_path.empty()) {
-            TRY(buffer, Buffer::create(input_config.get_frame_size(), const_byte, BufferStorageParams::create_dma()));
+            TRY(buffer, create_uniformed_buffer(input_config.get_frame_size(), BufferStorageParams::create_dma()));
         } else {
             TRY(buffer, read_binary_file(params.input_file_path, BufferStorageParams::create_dma()));
         }

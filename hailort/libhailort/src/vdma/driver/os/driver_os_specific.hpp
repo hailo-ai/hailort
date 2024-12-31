@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file driver_os_specific.hpp
  * @brief Contains some functions for hailort driver which have OS specific implementation.
@@ -25,6 +25,8 @@ Expected<FileDescriptor> open_device_file(const std::string &path);
 Expected<HailoRTDriver::DeviceInfo> query_device_info(const std::string &device_name);
 Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_nnc_devices();
 Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_soc_devices();
+
+hailo_status convert_errno_to_hailo_status(int err, const char* ioctl_name);
 
 #ifndef _WIN32
 

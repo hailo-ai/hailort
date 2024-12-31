@@ -14,29 +14,6 @@
 namespace hailort
 {
 
-Waitable::Waitable(underlying_waitable_handle_t handle) :
-    m_handle(handle)
-{}
-
-hailo_status Waitable::wait(std::chrono::milliseconds timeout)
-{
-    auto status = wait_for_single_object(m_handle, timeout);
-    if (HAILO_TIMEOUT == status) {
-        LOGGER__TRACE("wait_for_single_object failed with timeout (timeout={}ms)", timeout.count());
-        return status;
-    }
-    CHECK_SUCCESS(status);
-
-    status = post_wait();
-    CHECK_SUCCESS(status);
-
-    return HAILO_SUCCESS;
-}
-
-underlying_waitable_handle_t Waitable::get_underlying_handle()
-{
-    return m_handle;
-}
 
 WaitOrShutdown::WaitOrShutdown(WaitablePtr waitable, EventPtr shutdown_event) :
     m_waitable(waitable),

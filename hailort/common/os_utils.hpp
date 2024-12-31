@@ -61,6 +61,7 @@ public:
     OsUtils() = delete;
 
     static uint32_t get_curr_pid();
+    static uint32_t get_curr_tid();
     static bool is_pid_alive(uint32_t pid);
     static void set_current_thread_name(const std::string &name);
     static hailo_status set_current_thread_affinity(uint8_t cpu_index);

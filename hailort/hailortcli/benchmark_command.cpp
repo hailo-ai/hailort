@@ -31,8 +31,6 @@ BenchmarkCommand::BenchmarkCommand(CLI::App &parent_app) :
      m_app->add_option("-t, --time-to-run", m_params.time_to_run, "Measurement time in seconds per hw_only/streaming/latency measurement mode")
         ->check(CLI::PositiveNumber)
         ->default_val(15);
-    auto no_power_opt = m_app->add_option("--no-power", m_not_measure_power, "Skip power measurement, even if the platform supports it. The default value is False");
-    hailo_deprecate_options(m_app, { std::make_shared<OptionDeprecation>(no_power_opt) }, false);
     m_app->add_option("--batch-size", m_params.batch_size, "Inference batch size (default is 1)")
         ->default_val(1);
     m_app->add_option("--power-mode", m_params.power_mode,

@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file transfer_common.cpp
  **/
@@ -70,6 +70,11 @@ Expected<vdma::MappedBufferPtr> TransferBuffer::map_buffer(HailoRTDriver &driver
     }
 
     return Expected<vdma::MappedBufferPtr>{m_mappings};
+}
+
+void TransferBuffer::unmap_buffer()
+{
+    m_mappings.reset();
 }
 
 hailo_status TransferBuffer::copy_to(MemoryView buffer)

@@ -50,6 +50,23 @@ private:
 };
 using BasicBufferPoolPtr = std::shared_ptr<BasicBufferPool>;
 
+// TODO: HRT-12690 - DMA buffer pool is also used in the service - code duplication
+class DmaAbleBufferPool : public BasicBufferPool
+{
+public:
+    static Expected<std::shared_ptr<DmaAbleBufferPool>> create_shared(size_t buffer_size, size_t buffer_count,
+        EventPtr shutdown_event);
+
+    DmaAbleBufferPool(size_t buffer_size, std::vector<BufferPtr> &&buffers,
+        SpscQueue<BufferPtr> &&m_free_buffers_queue, size_t buffers_count);
+    DmaAbleBufferPool(DmaAbleBufferPool &&) = delete;
+    DmaAbleBufferPool(const DmaAbleBufferPool &) = delete;
+    DmaAbleBufferPool &operator=(DmaAbleBufferPool &&) = delete;
+    DmaAbleBufferPool &operator=(const DmaAbleBufferPool &) = delete;
+    virtual ~DmaAbleBufferPool() = default;
+};
+using DmaAbleBufferPoolPtr = std::shared_ptr<DmaAbleBufferPool>;
+
 } /* namespace hailort */
 
 #endif /* _HAILO_BUFFER_POOL_HPP_ */

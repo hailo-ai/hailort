@@ -49,6 +49,30 @@ Expected<Buffer> read_binary_file(const std::string &file_path, const BufferStor
     return buffer;
 }
 
+Expected<StreamPositionGuard> StreamPositionGuard::create(std::shared_ptr<std::ifstream> stream)
+{
+    CHECK_AS_EXPECTED((nullptr != stream), HAILO_INVALID_ARGUMENT);
+
+    const auto beg_pos = stream->tellg();
+    CHECK_AS_EXPECTED((-1 != beg_pos), HAILO_INTERNAL_FAILURE, "ifstream::tellg() failed");
+
+    return StreamPositionGuard(stream, beg_pos);
+}
+
+StreamPositionGuard::StreamPositionGuard(std::shared_ptr<std::ifstream> stream, std::streampos beg_pos) :
+    m_stream(stream),
+    m_beg_pos(beg_pos)
+{}
+
+StreamPositionGuard::~StreamPositionGuard()
+{
+    m_stream->seekg(m_beg_pos, std::ios::beg);
+    if (!m_stream->good()) {
+        LOGGER__ERROR("ifstream::seekg() failed");
+        return;
+    }
+}
+
 Expected<std::shared_ptr<FileReader>> SeekableBytesReader::create_reader(const std::string &file_path)
 {
     auto ptr = make_shared_nothrow<FileReader>(file_path);

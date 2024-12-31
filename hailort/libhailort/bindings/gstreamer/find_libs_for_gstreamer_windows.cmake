@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.5.0)
 
 # CMake variable GSTREAMER_ROOT_DIR defines the location of the gstreamer files.
 # It's default value is C:/gstreamer/1.0/msvc_x86_64.

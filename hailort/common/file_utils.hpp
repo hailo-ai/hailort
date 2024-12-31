@@ -27,6 +27,20 @@ Expected<size_t> get_istream_size(std::ifstream &s);
 Expected<Buffer> read_binary_file(const std::string &file_path,
     const BufferStorageParams &output_buffer_params = {});
 
+// This class is an RAII to return to the original stream position
+class StreamPositionGuard
+{
+public:
+    static Expected<StreamPositionGuard> create(std::shared_ptr<std::ifstream> stream);
+    ~StreamPositionGuard();
+
+private:
+    StreamPositionGuard(std::shared_ptr<std::ifstream> stream, std::streampos beg_pos);
+
+    std::shared_ptr<std::ifstream> m_stream;
+    const std::streampos m_beg_pos;
+};
+
 class FileReader;
 class BufferReader;
 

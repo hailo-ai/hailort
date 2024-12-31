@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -117,8 +117,6 @@ public:
         uint8_t register_address_size, uint8_t bus_index, uint8_t should_hold_bus, uint8_t endianness);
     void firmware_update(py::bytes fw_bin, uint32_t fw_bin_length, bool should_reset);
     void second_stage_update(py::bytes second_stage_bin, uint32_t second_stage_bin_length);
-    py::list configure(const HefWrapper &hef,
-        const NetworkGroupsParamsMap &configure_params={});
     void set_pause_frames(bool rx_pause_frames_enable);
     void wd_enable(hailo_cpu_id_t cpu_id);
     void wd_disable(hailo_cpu_id_t cpu_id);
@@ -133,9 +131,6 @@ public:
     py::bytes direct_read_memory(uint32_t address, uint32_t size);
     const char *get_dev_id() const;
     void set_sleep_state(hailo_sleep_state_t sleep_state);
-    void _init_cache_info(const hailo_cache_info_t &cache_info);
-    hailo_cache_info_t _get_cache_info();
-    void _update_cache_read_offset(int32_t read_offset_delta);
 
     static void bind(py::module &m);
 
@@ -144,7 +139,6 @@ private:
         : m_device(std::move(device)) {}
 
     std::unique_ptr<Device> m_device;
-    std::vector<ConfiguredNetworkGroupWrapperPtr> m_net_groups;
 };
 
 } /* namespace hailort */

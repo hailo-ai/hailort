@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file vstream_builder.cpp
  * @brief Vstream builder impl
@@ -429,7 +429,7 @@ Expected<std::vector<OutputVStream>> VStreamsBuilderUtils::create_output_vstream
     const std::unordered_map<stream_name_t, op_name_t> &op_inputs_to_op_name, const std::map<std::string, hailo_vstream_info_t> &output_vstream_infos_map)
 {
     auto first_stream_info = output_streams[0]->get_info();
-    if ((HailoRTCommon::is_nms(first_stream_info)) && (first_stream_info.nms_info.is_defused)) {
+    if ((first_stream_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP) && (first_stream_info.nms_info.is_defused)) {
         // Case defuse NMS
         return create_output_nms(output_streams, vstream_params, output_vstream_infos_map);
     } else if (contains(op_inputs_to_op_name, static_cast<stream_name_t>(first_stream_info.name))) {
@@ -1171,7 +1171,7 @@ hailo_status VStreamsBuilderUtils::add_nms_post_process(OutputStreamPtrVector &o
 
     if (!op_metadata->nms_config().bbox_only) {
         CHECK(HailoRTCommon::is_nms(vstreams_params.user_buffer_format.order), HAILO_INVALID_ARGUMENT,
-            "NMS output format order must be HAILO_FORMAT_ORDER_HAILO_NMS or HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK");
+            "NMS output format order must be one of NMS format orders");
     }
 
     std::unordered_map<std::string, net_flow::BufferMetaData> inputs_metadata;
@@ -1243,7 +1243,7 @@ hailo_status VStreamsBuilderUtils::add_nms_post_process(OutputStreamPtrVector &o
         elements.push_back(nms_source_queue_elem.value());
         CHECK_SUCCESS(PipelinePad::link_pads(hw_read_elem.value(), nms_source_queue_elem.value()));
         CHECK_SUCCESS(PipelinePad::link_pads(nms_source_queue_elem.value(), nms_elem.value(), 0, i));
-        nms_elem.value()->add_sink_name(curr_stream_info.name);
+        nms_elem.value()->add_sink_name(curr_stream_info.name, i);
     }
     elements.push_back(nms_elem.value());
 

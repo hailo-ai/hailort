@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file infer_model_hrpc_client.cpp
  * @brief InferModel HRPC client implementation
@@ -14,7 +14,7 @@ namespace hailort
 {
 
 Expected<std::shared_ptr<InferModelHrpcClient>> InferModelHrpcClient::create(Hef &&hef, const std::string &network_name,
-    std::shared_ptr<hrpc::Client> client, uint32_t infer_model_handle_id, uint32_t vdevice_handle, VDevice &vdevice,
+    std::shared_ptr<Client> client, uint32_t infer_model_handle_id, uint32_t vdevice_handle, VDevice &vdevice,
     std::shared_ptr<CallbacksDispatcher> callbacks_dispatcher)
 {
     TRY(auto inputs, create_infer_stream_inputs(hef, network_name));
@@ -27,7 +27,7 @@ Expected<std::shared_ptr<InferModelHrpcClient>> InferModelHrpcClient::create(Hef
     return ptr;
 }
 
-InferModelHrpcClient::InferModelHrpcClient(std::shared_ptr<hrpc::Client> client, uint32_t handle,
+InferModelHrpcClient::InferModelHrpcClient(std::shared_ptr<Client> client, uint32_t handle,
     uint32_t vdevice_handle, VDevice &vdevice, std::shared_ptr<CallbacksDispatcher> callbacks_dispatcher,
     Hef &&hef, const std::string &network_name, std::vector<InferStream> &&inputs, std::vector<InferStream> &&outputs) :
         InferModelBase(vdevice, std::move(hef), network_name, std::move(inputs), std::move(outputs)),
@@ -76,6 +76,7 @@ Expected<ConfiguredInferModel> InferModelHrpcClient::configure()
         current_stream_params.nms_iou_threshold = input.second.nms_iou_threshold();
         current_stream_params.nms_score_threshold = input.second.nms_score_threshold();
         current_stream_params.nms_max_proposals_per_class = input.second.nms_max_proposals_per_class();
+        current_stream_params.nms_max_proposals_total = input.second.nms_max_proposals_total();
         current_stream_params.nms_max_accumulated_mask_size = input.second.nms_max_accumulated_mask_size();
 
         request_params.input_streams_params[input.second.name()] = current_stream_params;
@@ -88,6 +89,7 @@ Expected<ConfiguredInferModel> InferModelHrpcClient::configure()
         current_stream_params.nms_iou_threshold = output.second.nms_iou_threshold();
         current_stream_params.nms_score_threshold = output.second.nms_score_threshold();
         current_stream_params.nms_max_proposals_per_class = output.second.nms_max_proposals_per_class();
+        current_stream_params.nms_max_proposals_total = output.second.nms_max_proposals_total();
         current_stream_params.nms_max_accumulated_mask_size = output.second.nms_max_accumulated_mask_size();
 
         request_params.output_streams_params[output.second.name()] = current_stream_params;

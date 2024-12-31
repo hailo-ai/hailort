@@ -1,11 +1,12 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
  * @file queue_elements.cpp
  * @brief Implementation of the queue elements
  **/
+
 
 #include "net_flow/pipeline/vstream_internal.hpp"
 #include "net_flow/pipeline/queue_elements.hpp"
@@ -31,7 +32,9 @@ BaseQueueElement::BaseQueueElement(SpscQueue<PipelineBuffer> &&queue, BufferPool
     m_queue(std::move(queue)),
     m_shutdown_event(shutdown_event),
     m_timeout(timeout),
-    m_is_thread_running(true),
+    m_thread_id(0),
+    m_thread_ready(false),
+    m_is_thread_running(false),
     m_activation_event(std::move(activation_event)),
     m_deactivation_event(std::move(deactivation_event)),
     m_queue_size_accumulator(std::move(queue_size_accumulator)),
@@ -43,14 +46,25 @@ BaseQueueElement::~BaseQueueElement()
     LOGGER__INFO("Queue element {} has {} frames in his Queue on destruction", name(), m_queue.size_approx());
 }
 
+void BaseQueueElement::register_thread()
+{
+    std::unique_lock<std::mutex> lock(m_thread_ready_mutex);
+    OsUtils::set_current_thread_name(thread_name());
+    m_thread_id = OsUtils::get_curr_tid();
+    m_thread_ready = true;
+    m_is_thread_running.store(true);
+    m_thread_ready_cv.notify_all();
+}
+
 void BaseQueueElement::start_thread()
 {
     m_thread = std::thread([this] () {
-        OsUtils::set_current_thread_name(thread_name());
+        register_thread();
+
         while (m_is_thread_running.load()) {
             auto status = m_activation_event.wait(INIFINITE_TIMEOUT());
 
-            if (!m_is_thread_running) {
+            if (!m_is_thread_running.load()) {
                 LOGGER__INFO("Thread in element {} is not running anymore, exiting..", this->name());
                 break;
             }
@@ -88,6 +102,9 @@ void BaseQueueElement::start_thread()
             }
         }
     });
+
+    std::unique_lock<std::mutex> lock(m_thread_ready_mutex);
+    m_thread_ready_cv.wait(lock, [&]() { return m_thread_ready; });
 }
 
 void BaseQueueElement::stop_thread()
@@ -95,7 +112,7 @@ void BaseQueueElement::stop_thread()
     m_shutdown_event->signal();
 
     // Mark thread as not running, then wake it in case it is waiting on m_activation_event
-    m_is_thread_running = false;
+    m_is_thread_running.store(false);
     m_activation_event.signal();
 
     if (m_thread.joinable()) {
@@ -207,9 +224,15 @@ std::string BaseQueueElement::description() const
     if (HAILO_INFINITE != this->m_timeout.count()) {
         element_description << " | timeout: "  << std::chrono::duration_cast<std::chrono::seconds>(this->m_timeout).count() << "s";
     }
+
     element_description << ")";
 
     return element_description.str();
+}
+
+void BaseQueueElement::add_element_to_stringstream(std::stringstream &stream, const PipelinePad &source) const
+{
+    stream << " " << source.next()->element().name() << "(running in thread_id: " << m_thread_id << ")";
 }
 
 hailo_status BaseQueueElement::pipeline_status()
@@ -466,23 +489,27 @@ void AsyncPushQueueElement::run_push_async(PipelineBuffer &&buffer, const Pipeli
 void AsyncPushQueueElement::start_thread()
 {
     m_thread = std::thread([this] () {
-        OsUtils::set_current_thread_name(thread_name());
+        register_thread();
+
         while (m_is_thread_running.load()) {
             auto status = m_pipeline_status->load();
             if (HAILO_SUCCESS != status) {
                 LOGGER__INFO("Thread in element {} is not running anymore, exiting..", name());
-                m_is_thread_running = false;
+                m_is_thread_running.store(false);
                 break;
             }
 
             status = run_in_thread();
             if (HAILO_SUCCESS != status) {
                 handle_non_recoverable_async_error(status);
-                m_is_thread_running = false;
+                m_is_thread_running.store(false);
                 break;
             }
         }
     });
+
+    std::unique_lock<std::mutex> lock(m_thread_ready_mutex);
+    m_thread_ready_cv.wait(lock, [&]() { return m_thread_ready; });
 }
 
 hailo_status AsyncPushQueueElement::run_push(PipelineBuffer &&/*buffer*/, const PipelinePad &/*sink*/)
@@ -862,11 +889,11 @@ hailo_status PullQueueElement::execute_abort()
 {
     m_pipeline_status->store(HAILO_STREAM_ABORT);
 
-    // Signal shutdown-event to make run_in_thread finish execution
-    auto status = m_shutdown_event->signal();
+    auto status = PipelineElementInternal::execute_abort();
     CHECK_SUCCESS(status);
 
-    status = PipelineElementInternal::execute_abort();
+    // Signal shutdown-event to make run_in_thread finish execution
+    status = m_shutdown_event->signal();
     CHECK_SUCCESS(status);
 
     // Wait to confirm the thread running 'run_in_thread' finished execution and the abort flow finished
@@ -875,5 +902,327 @@ hailo_status PullQueueElement::execute_abort()
 
     return HAILO_SUCCESS;
 }
+
+Expected<std::shared_ptr<MultiPushQueue>> MultiPushQueue::create(const std::string &name,
+    const ElementBuildParams &build_params, std::vector<size_t> frame_sizes, bool is_empty, bool interacts_with_hw,
+    std::shared_ptr<AsyncPipeline> async_pipeline, bool is_entry)
+{
+    size_t num_of_queues = frame_sizes.size();
+    auto queue_size = (interacts_with_hw) ? build_params.buffer_pool_size_edges : build_params.buffer_pool_size_internal;
+
+    if (is_entry) {
+        // Multiplying by 2 to ensure dual-buffering when edge-element is the bottleneck
+        queue_size = queue_size * 2;
+    }
+
+    std::vector<SpscQueue<PipelineBuffer>> queues;
+    std::vector<BufferPoolPtr> buffer_pools;
+    queues.reserve(num_of_queues);
+    buffer_pools.reserve(num_of_queues);
+
+    for (auto &frame_size : frame_sizes) {
+        auto queue = MultiPushQueue::create_queue(queue_size, build_params.shutdown_event);
+        CHECK_EXPECTED(queue);
+        queues.emplace_back(queue.release());
+
+        auto buffer_pool = BufferPool::create(frame_size, queue_size, build_params.shutdown_event, build_params.elem_stats_flags,
+            build_params.vstream_stats_flags, is_empty, interacts_with_hw);
+        CHECK_EXPECTED(buffer_pool);
+        buffer_pools.emplace_back(buffer_pool.release());
+    }
+
+    // We do not measure duration for queue elements
+    auto duration_collector = DurationCollector::create(HAILO_PIPELINE_ELEM_STATS_NONE);
+    CHECK_EXPECTED(duration_collector);
+
+    auto queue_ptr = make_shared_nothrow<MultiPushQueue>(std::move(queues), num_of_queues, name, build_params.timeout, duration_collector.release(),
+        build_params.pipeline_status, PipelineDirection::PUSH, async_pipeline, build_params.shutdown_event, std::move(buffer_pools));
+    CHECK_AS_EXPECTED(nullptr != queue_ptr, HAILO_OUT_OF_HOST_MEMORY, "Creating MultiPushQueue {} failed!", name);
+
+    LOGGER__INFO("Created {}", queue_ptr->description());
+
+    return queue_ptr;
+}
+
+MultiPushQueue::MultiPushQueue(std::vector<SpscQueue<PipelineBuffer>> &&queues, size_t sink_count, const std::string &name,
+    std::chrono::milliseconds timeout, DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
+    PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline, EventPtr shutdown_event,
+    std::vector<BufferPoolPtr> &&buffer_pools) :
+    PipelineElementInternal(name, std::move(duration_collector), std::move(pipeline_status), pipeline_direction, async_pipeline),
+    m_timeout(timeout),
+    m_thread_id(0),
+    m_thread_ready(false),
+    m_is_thread_running(false),
+    m_shutdown_event(shutdown_event)
+{
+    m_sources.emplace_back(*this, name, PipelinePad::Type::SOURCE);
+    m_sinks.reserve(sink_count);
+    m_buffer_pools.reserve(sink_count);
+    m_queues.reserve(sink_count);
+    for (uint32_t i = 0; i < sink_count; ++i) {
+        m_sinks.emplace_back(*this, name, PipelinePad::Type::SINK);
+        m_sink_name_to_index[m_sinks[i].name()] = i;
+        m_queues.emplace(m_sinks[i].name(), std::move(queues[i]));
+        m_buffer_pools.emplace(m_sinks[i].name(), std::move(buffer_pools[i]));
+    }
+    start_thread();
+}
+
+MultiPushQueue::~MultiPushQueue()
+{
+    stop_thread();
+}
+
+Expected<SpscQueue<PipelineBuffer>> MultiPushQueue::create_queue(size_t queue_size, EventPtr shutdown_event)
+{
+    TRY(auto queue, SpscQueue<PipelineBuffer>::create(queue_size, shutdown_event));
+    return queue;
+}
+
+Expected<PipelineBuffer> MultiPushQueue::run_pull(PipelineBuffer &&/*optional*/, const PipelinePad &/*source*/)
+{
+    return make_unexpected(HAILO_INVALID_OPERATION);
+}
+
+hailo_status MultiPushQueue::run_push(PipelineBuffer &&/*buffer*/, const PipelinePad &/*sink*/)
+{
+    return HAILO_INVALID_OPERATION;
+}
+
+void MultiPushQueue::run_push_async(PipelineBuffer &&buffer, const PipelinePad &sink)
+{
+    assert(contains(m_queues, sink.name()));
+    auto status = m_queues.at(sink.name()).enqueue(std::move(buffer), m_timeout);
+    if ((HAILO_SUCCESS != status) && (HAILO_SHUTDOWN_EVENT_SIGNALED != status)) {
+        handle_non_recoverable_async_error(status);
+        stop_thread();
+    }
+
+    std::unique_lock<std::mutex> lock(m_queues_operations_mutex);
+    m_all_queues_have_buffer_cv.notify_all();
+}
+
+void MultiPushQueue::register_thread()
+{
+    std::unique_lock<std::mutex> lock(m_thread_ready_mutex);
+    OsUtils::set_current_thread_name(thread_name());
+    m_thread_id = OsUtils::get_curr_tid();
+    m_thread_ready = true;
+    m_is_thread_running.store(true);
+    m_thread_ready_cv.notify_all();
+}
+
+void MultiPushQueue::start_thread()
+{
+    m_thread = std::thread([this] () {
+        register_thread();
+
+        while (m_is_thread_running.load()) {
+            auto status = m_pipeline_status->load();
+            if (HAILO_SUCCESS != status) {
+                LOGGER__INFO("Thread in element {} is not running anymore, exiting..", name());
+                m_is_thread_running.store(false);
+                break;
+            }
+
+            status = run_in_thread();
+            if (HAILO_SUCCESS != status) {
+                handle_non_recoverable_async_error(status);
+                m_is_thread_running.store(false);
+                break;
+            }
+        }
+    });
+
+    std::unique_lock<std::mutex> lock(m_thread_ready_mutex);
+    m_thread_ready_cv.wait(lock, [&]() { return m_thread_ready; });
+}
+
+void MultiPushQueue::stop_thread()
+{
+    (void)m_shutdown_event->signal();
+
+    m_is_thread_running.store(false);
+    m_all_queues_have_buffer_cv.notify_all();
+
+    if (m_thread.joinable()) {
+        m_thread.join();
+    }
+}
+
+hailo_status MultiPushQueue::run_in_thread()
+{
+    std::vector<PipelineBuffer> buffers(m_queues.size());
+    hailo_status buffers_status = HAILO_SUCCESS;
+    bool shutdown_event_signaled = false;
+    {
+        std::unique_lock<std::mutex> lock(m_queues_operations_mutex);
+        m_all_queues_have_buffer_cv.wait(lock, [&]() {
+            if (!m_is_thread_running.load()) {
+                return true;
+            }
+            for (auto &queue : m_queues) {
+                if (queue.second.size_approx() == 0) {
+                    return false;
+                }
+            }
+            return true;
+        });
+
+        if (!m_is_thread_running.load()) {
+            return HAILO_SHUTDOWN_EVENT_SIGNALED;
+        }
+
+        for (auto &queue : m_queues) {
+            auto buffer_exp = queue.second.dequeue(INIFINITE_TIMEOUT());
+
+            switch (buffer_exp.status()) {
+            case HAILO_SHUTDOWN_EVENT_SIGNALED:
+                buffers_status = HAILO_SHUTDOWN_EVENT_SIGNALED;
+                shutdown_event_signaled = true;
+                break;
+
+            case HAILO_SUCCESS:
+                buffers[m_sink_name_to_index[queue.first]] = buffer_exp.release();
+
+                // Return if deactivated
+                if (PipelineBuffer::Type::DEACTIVATE == buffers[m_sink_name_to_index[queue.first]].get_type()) {
+                    hailo_status status = m_shutdown_event->signal();
+                    if (HAILO_SUCCESS != status) {
+                        LOGGER__ERROR("Shutdown event of source in {} has failed with status {}", name(), status);
+                    }
+
+                    status = next_pad().deactivate();
+                    if (HAILO_SUCCESS != status) {
+                        LOGGER__ERROR("Deactivate of source in {} has failed with status {}", name(), status);
+                    }
+                    shutdown_event_signaled = true;
+                }
+                break;
+
+            default:
+                buffers_status = buffer_exp.status();
+                buffers[m_sink_name_to_index[queue.first]] = PipelineBuffer(buffer_exp.status());
+            }
+        }
+    }
+
+    if (!shutdown_event_signaled) {
+        next_pad().run_push_async_multi(std::move(buffers));
+    }
+    return buffers_status;
+}
+
+hailo_status MultiPushQueue::execute_deactivate()
+{
+    // Mark to the threads that deactivate() was called.
+    hailo_status queues_status = HAILO_SUCCESS;
+    for (auto &queue : m_queues) {
+        auto status = queue.second.enqueue(PipelineBuffer(PipelineBuffer::Type::DEACTIVATE));
+        if (HAILO_SUCCESS != status) {
+            queues_status = status;
+        }
+    }
+
+    // We want to deactivate source even if enqueue failed
+    auto deactivation_status = PipelineElementInternal::execute_deactivate();
+    CHECK_SUCCESS(deactivation_status);
+    if ((HAILO_STREAM_ABORT == queues_status) || (HAILO_SHUTDOWN_EVENT_SIGNALED == queues_status)) {
+        LOGGER__INFO("enqueue() in element {} was aborted, got status = {}", name(), queues_status);
+    } else {
+        LOGGER__ERROR("enqueue() in element {} failed, got status = {}", name(), queues_status);
+        return queues_status;
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status MultiPushQueue::execute_post_deactivate(bool should_clear_abort)
+{
+    // We marked thread to stop with PipelineBuffer::Type::DEACTIVATE, now we wait for it to finish
+    stop_thread();
+    return PipelineElementInternal::execute_post_deactivate(should_clear_abort);
+}
+
+hailo_status MultiPushQueue::execute_terminate(hailo_status error_status)
+{
+    if (m_is_terminated) {
+        return HAILO_SUCCESS;
+    }
+
+    auto terminate_status = PipelineElement::execute_terminate(error_status);
+
+    if ((!next_pad().element().is_terminating_element())) {
+        stop_thread();
+    }
+
+    CHECK_SUCCESS(terminate_status);
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status MultiPushQueue::clear_queues()
+{
+    std::unique_lock<std::mutex> lock(m_queues_operations_mutex);
+    hailo_status queues_status = HAILO_SUCCESS;
+    for (auto &queue : m_queues) {
+        hailo_status status = queue.second.clear();
+        if (HAILO_SUCCESS != status) {
+            queues_status = status;
+        }
+    }
+
+    return queues_status;
+}
+
+hailo_status MultiPushQueue::execute_dequeue_user_buffers(hailo_status error_status)
+{
+    auto dequeue_status = PipelineElement::execute_dequeue_user_buffers(error_status);
+    auto clear_queues_status = clear_queues();
+
+    std::unordered_map<std::string, hailo_status> empty_pool_statuses;
+    for (auto &pool : m_buffer_pools) {
+        empty_pool_statuses[pool.first] = empty_buffer_pool(pool.second, error_status, m_timeout);
+    }
+
+    CHECK_SUCCESS(dequeue_status);
+    CHECK_SUCCESS(clear_queues_status);
+    for (auto &empty_pool_status : empty_pool_statuses) {
+        CHECK_SUCCESS(empty_pool_status.second);
+    }
+    return HAILO_SUCCESS;
+}
+
+PipelinePad &MultiPushQueue::next_pad()
+{
+    // Note: The next elem to be run is downstream from this elem (i.e. buffers are pushed)
+    return *m_sources[0].next();
+}
+
+std::vector<PipelinePad*> MultiPushQueue::execution_pads()
+{
+    std::vector<PipelinePad*> result{&next_pad()};
+    return result;
+}
+
+std::string MultiPushQueue::description() const
+{
+    std::stringstream element_description;
+
+    element_description << "(" << this->name();
+    if (HAILO_INFINITE != this->m_timeout.count()) {
+        element_description << " | timeout: "  << std::chrono::duration_cast<std::chrono::seconds>(this->m_timeout).count() << "s";
+    }
+
+    element_description << ")";
+
+    return element_description.str();
+}
+
+void MultiPushQueue::add_element_to_stringstream(std::stringstream &stream, const PipelinePad &source) const
+{
+    stream << " " << source.next()->element().name() << "(running in thread_id: " << m_thread_id << ")";
+}
+
 
 } /* namespace hailort */

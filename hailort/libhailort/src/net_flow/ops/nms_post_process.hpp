@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file nms_post_process.hpp
  * @brief NMS op
@@ -34,6 +34,7 @@ namespace net_flow
 #define INVALID_NMS_DETECTION (std::numeric_limits<uint32_t>::max())
 #define INVALID_NMS_SCORE (std::numeric_limits<float32_t>::max())
 #define INVALID_NMS_CONFIG (-1)
+#define MAX_NMS_CLASSES (std::numeric_limits<uint16_t>::max())
 
 inline bool operator==(const hailo_bbox_float32_t &first, const hailo_bbox_float32_t &second) {
     return first.y_min == second.y_min && first.x_min == second.x_min && first.y_max == second.y_max && first.x_max == second.x_max && first.score == second.score;
@@ -160,6 +161,10 @@ public:
 
         std::vector<net_flow::DetectionBbox> detections;
         std::vector<uint32_t> classes_detection_count(nms_info.number_of_classes, 0);
+
+        // TODO: HRT-15612 support BY_SCORE order_type in this function
+        assert(HAILO_NMS_RESULT_ORDER_BY_SCORE != nms_info.order_type);
+
         detections.reserve(nms_info.max_bboxes_per_class * nms_info.number_of_classes);
 
         const uint32_t bbox_size = sizeof(hailo_bbox_float32_t);
@@ -188,13 +193,25 @@ public:
     * For each class the layout is
     *       \code
     *       struct (packed) {
-    *           uint16_t/float32_t bbox_count;
-    *           hailo_bbox_t/hailo_bbox_float32_t bbox[bbox_count];
+    *           float32_t bbox_count;
+    *           hailo_bbox_float32_t bbox[bbox_count];
     *       };
     *       \endcode
     */
-    static void fill_nms_format_buffer(MemoryView &buffer, const std::vector<DetectionBbox> &detections,
+    static void fill_nms_by_class_format_buffer(MemoryView &buffer, const std::vector<DetectionBbox> &detections,
         std::vector<uint32_t> &classes_detections_count, const NmsPostProcessConfig &nms_config);
+
+    /*
+    *      For all classes the layout is
+    *          \code
+    *          struct (packed) {
+    *              uint16_t bbox_count;
+    *              hailo_detection_t bbox[bbox_count];
+    *          };
+    *          \endcode
+    */
+    static void fill_nms_by_score_format_buffer(MemoryView &buffer, std::vector<DetectionBbox> &detections,
+        const NmsPostProcessConfig &nms_config);
 
 protected:
     NmsPostProcessOp(std::shared_ptr<NmsOpMetadata> metadata)
@@ -202,14 +219,28 @@ protected:
         , m_classes_detections_count(metadata->nms_config().number_of_classes, 0)
         , m_nms_metadata(metadata)
     {
-        m_detections.reserve(metadata->nms_config().max_proposals_per_class * metadata->nms_config().number_of_classes);
+        reserve_detections();
     }
 
-    void clear_before_frame()  
+    void reserve_detections()
+    {
+        switch (m_nms_metadata->nms_config().order_type) {
+            case HAILO_NMS_RESULT_ORDER_BY_CLASS:
+                m_detections.reserve(m_nms_metadata->nms_config().max_proposals_per_class * m_nms_metadata->nms_config().number_of_classes);
+                break;
+            case HAILO_NMS_RESULT_ORDER_BY_SCORE:
+                m_detections.reserve(m_nms_metadata->nms_config().max_proposals_total);
+                break;
+            default:
+                LOGGER__ERROR("Unsupported NMS format order type for NmsPostProcessOp: {}",
+                    HailoRTCommon::get_nms_result_order_type_str(m_nms_metadata->nms_config().order_type));
+        }
+    }
+
+    void clear_before_frame()
     {
         m_detections.clear();
-        m_detections.reserve(m_nms_metadata->nms_config().max_proposals_per_class * m_nms_metadata->nms_config().number_of_classes);
-
+        reserve_detections();
         m_classes_detections_count.assign(m_nms_metadata->nms_config().number_of_classes, 0);
     }
 

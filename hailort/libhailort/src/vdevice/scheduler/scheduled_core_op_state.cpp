@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -86,6 +86,7 @@ core_op_priority_t ScheduledCoreOp::get_priority()
 
 void ScheduledCoreOp::set_priority(core_op_priority_t priority)
 {
+    LOGGER__INFO("Setting scheduler priority of {} to {}", m_core_op->name(), static_cast<uint8_t>(priority));
     m_priority = priority;
 }
 

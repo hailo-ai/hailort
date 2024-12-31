@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -35,7 +35,9 @@ public:
     static_assert(sizeof(hailo_bbox_t) / sizeof(uint16_t) == sizeof(hailo_bbox_float32_t) / sizeof(float32_t),
         "Mismatch bbox params size");
     static const uint32_t BBOX_PARAMS = sizeof(hailo_bbox_t) / sizeof(uint16_t);
+    static const uint32_t DETECTION_BY_SCORE_SIZE = sizeof(hailo_detection_t);
     static const uint32_t DETECTION_WITH_BYTE_MASK_SIZE = sizeof(hailo_detection_with_byte_mask_t);
+    static const uint32_t DETECTION_COUNT_SIZE = sizeof(uint16_t);
     static const uint32_t MAX_DEFUSED_LAYER_COUNT = 9;
     static const size_t HW_DATA_ALIGNMENT = 8;
     static const uint32_t MUX_INFO_COUNT = 32;
@@ -172,6 +174,65 @@ public:
     }
 
     /**
+     * Gets a string reprenestation of the given power mode.
+     *
+     * @param[in] mode             A ::hailo_power_mode_t object.
+     * @return The string representation of the power mode.
+     */
+    static std::string get_power_mode_str(const hailo_power_mode_t &mode)
+    {
+        switch (mode)
+        {
+        case HAILO_POWER_MODE_PERFORMANCE:
+            return "PERFORMANCE";
+        case HAILO_POWER_MODE_ULTRA_PERFORMANCE:
+            return "ULTRA_PERFORMANCE";
+        default:
+            return "Nan";
+        }
+    }
+
+    /**
+     * Gets a string reprenestation of the given latency measurement flags.
+     *
+     * @param[in] flags            A ::hailo_latency_measurement_flags_t object.
+     * @return The string representation of the latency measurement flags.
+     */
+    static std::string get_latency_measurement_str(const hailo_latency_measurement_flags_t &flags)
+    {
+        switch (flags)
+        {
+        case HAILO_LATENCY_NONE:
+            return "NONE";
+        case HAILO_LATENCY_MEASURE:
+            return "MEASURE";
+        case HAILO_LATENCY_CLEAR_AFTER_GET:
+            return "CLEAR_AFTER_GET";
+        default:
+            return "Nan";
+        }
+    }
+
+    /**
+     * Gets a string reprenestation of the given scheduling algorithm.
+     *
+     * @param[in] scheduling_algo  A ::hailo_scheduling_algorithm_t object.
+     * @return The string representation of the scheduling algorithm.
+     */
+    static std::string get_scheduling_algorithm_str(const hailo_scheduling_algorithm_t &scheduling_algo)
+    {
+        switch (scheduling_algo)
+        {
+        case HAILO_SCHEDULING_ALGORITHM_NONE:
+            return "NONE";
+        case HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN:
+            return "ROUND_ROBIN";
+        default:
+            return "Nan";
+        }
+    }
+
+    /**
      * Gets a string reprenestation of the given device architecture.
      *
      * @param[in] arch    A ::hailo_device_architecture_t object.
@@ -189,8 +250,8 @@ public:
             return "HAILO8L";
         case HAILO_ARCH_HAILO15H:
             return "HAILO15H";
-        case HAILO_ARCH_PLUTO:
-            return "PLUTO";
+        case HAILO_ARCH_HAILO15L:
+            return "HAILO15L";
         case HAILO_ARCH_HAILO15M:
             return "HAILO15M";
         case HAILO_ARCH_HAILO10H:
@@ -250,6 +311,33 @@ public:
             return "YYYYUV";
         case HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK:
             return "HAILO NMS WITH BYTE MASK";
+        case HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP:
+            return "HAILO NMS ON CHIP";
+        case HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS:
+            return "HAILO NMS BY CLASS";
+        case HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE:
+            return "HAILO NMS BY SCORE";
+        default:
+            return "Nan";
+        }
+    }
+
+    /**
+     * Gets a string reprenestation of the given NMS result order type.
+     *
+     * @param[in] nms_result_order_type             A ::hailo_nms_result_order_type_t object.
+     * @return The string representation of the NMS result order type.
+     */
+    static std::string get_nms_result_order_type_str(const hailo_nms_result_order_type_t &nms_result_order_type)
+    {
+        switch (nms_result_order_type)
+        {
+        case HAILO_NMS_RESULT_ORDER_HW:
+            return "HW";
+        case HAILO_NMS_RESULT_ORDER_BY_CLASS:
+            return "BY_CLASS";
+        case HAILO_NMS_RESULT_ORDER_BY_SCORE:
+            return "BY_SCORE";
         default:
             return "Nan";
         }
@@ -273,6 +361,7 @@ public:
      * @param[in] format             A ::hailo_format_t object.
      * @return The NMS host frame size in bytes.
      */
+    // TODO HRT-15612: Consider changing the name to get_nms_by_class_host_frame_size
     static constexpr uint32_t get_nms_host_frame_size(const hailo_nms_info_t &nms_info, const hailo_format_t &format)
     {
         return get_nms_host_shape_size(nms_info) * get_format_data_bytes(format);
@@ -285,6 +374,7 @@ public:
      * @param[in] format            A ::hailo_format_t object.
      * @return The NMS host frame size in bytes.
      */
+    // TODO HRT-15612: Consider changing the name to get_nms_by_class_host_frame_size
     static uint32_t get_nms_host_frame_size(const hailo_nms_shape_t &nms_shape, const hailo_format_t &format);
 
     /**
@@ -298,8 +388,19 @@ public:
         // TODO: HRT-12035 - Change `max_bboxes_per_class` to `max_boxes`
         auto max_detections = nms_shape.number_of_classes * nms_shape.max_bboxes_per_class;
         auto max_detections_size = max_detections * DETECTION_WITH_BYTE_MASK_SIZE;
-        auto frame_size = max_detections_size + nms_shape.max_accumulated_mask_size;
+        auto frame_size = DETECTION_COUNT_SIZE + max_detections_size + nms_shape.max_accumulated_mask_size;
         return frame_size;
+    }
+
+    /**
+     * Gets `HAILO_NMS_BY_SCORE` host frame size in bytes by nms_shape.
+     *
+     * @param[in] nms_shape             The NMS shape to get size from.
+     * @return The HAILO_NMS_BY_SCORE host frame size.
+     */
+    static constexpr uint32_t get_nms_by_score_host_frame_size(const hailo_nms_shape_t &nms_shape)
+    {
+        return (DETECTION_COUNT_SIZE + nms_shape.max_bboxes_total * DETECTION_BY_SCORE_SIZE);
     }
 
     /**
@@ -348,7 +449,7 @@ public:
             trans_params.user_buffer_format.type = stream_info.format.type;
         }
 
-        if (HailoRTCommon::is_nms(stream_info)) {
+        if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == stream_info.format.order) {
             return get_nms_host_frame_size(stream_info.nms_info, trans_params.user_buffer_format);
         } else {
             auto shape = (HAILO_STREAM_NO_TRANSFORM == trans_params.transform_mode) ? stream_info.hw_shape :
@@ -411,14 +512,15 @@ public:
 
     static constexpr bool is_nms(const hailo_format_order_t &order)
     {
-        return ((HAILO_FORMAT_ORDER_HAILO_NMS == order) || (HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK == order));
+        return ((HAILO_FORMAT_ORDER_HAILO_NMS == order) || (HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK == order) ||
+            (HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS == order) || (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE == order));
     }
 
     // TODO HRT-10073: change to supported features list
     static bool is_hailo1x_device_type(const hailo_device_architecture_t dev_arch)
     {
         // Compare with HAILO1X device archs
-        return (HAILO_ARCH_HAILO15H == dev_arch) || (HAILO_ARCH_HAILO15M == dev_arch) || (HAILO_ARCH_PLUTO == dev_arch) ||
+        return (HAILO_ARCH_HAILO15H == dev_arch) || (HAILO_ARCH_HAILO15M == dev_arch) || (HAILO_ARCH_HAILO15L == dev_arch) ||
             (HAILO_ARCH_HAILO10H == dev_arch);
     }
 

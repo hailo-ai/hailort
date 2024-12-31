@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -63,6 +63,19 @@ void InferModelBase::InferStream::Impl::set_format_type(hailo_format_type_t type
 void InferModelBase::InferStream::Impl::set_format_order(hailo_format_order_t order)
 {
     m_user_buffer_format.order = order;
+    switch (order)
+    {
+        case HAILO_FORMAT_ORDER_HAILO_NMS:
+        case HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS:
+        case HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK:
+            m_vstream_info.nms_shape.order_type = HAILO_NMS_RESULT_ORDER_BY_CLASS;
+            break;
+        case HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE:
+            m_vstream_info.nms_shape.order_type = HAILO_NMS_RESULT_ORDER_BY_SCORE;
+            break;
+        default:
+            break;
+    }
 }
 
 bool InferModelBase::InferStream::Impl::is_nms() const
@@ -84,6 +97,14 @@ void InferModelBase::InferStream::Impl::set_nms_max_proposals_per_class(uint32_t
 {
     m_nms_max_proposals_per_class = max_proposals_per_class;
     m_vstream_info.nms_shape.max_bboxes_per_class = max_proposals_per_class;
+    m_vstream_info.nms_shape.order_type = HAILO_NMS_RESULT_ORDER_BY_CLASS;
+}
+
+void InferModelBase::InferStream::Impl::set_nms_max_proposals_total(uint32_t max_proposals_total)
+{
+    m_nms_max_proposals_total = max_proposals_total;
+    m_vstream_info.nms_shape.max_bboxes_total = max_proposals_total;
+    m_vstream_info.nms_shape.order_type = HAILO_NMS_RESULT_ORDER_BY_SCORE;
 }
 
 void InferModelBase::InferStream::Impl::set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size)
@@ -105,6 +126,11 @@ float32_t InferModelBase::InferStream::Impl::nms_iou_threshold() const
 uint32_t InferModelBase::InferStream::Impl::nms_max_proposals_per_class() const
 {
     return m_nms_max_proposals_per_class;
+}
+
+uint32_t InferModelBase::InferStream::Impl::nms_max_proposals_total() const
+{
+    return m_nms_max_proposals_total;
 }
 
 uint32_t InferModelBase::InferStream::Impl::nms_max_accumulated_mask_size() const
@@ -176,6 +202,11 @@ void InferModelBase::InferStream::set_nms_max_proposals_per_class(uint32_t max_p
     m_pimpl->set_nms_max_proposals_per_class(max_proposals_per_class);
 }
 
+void InferModelBase::InferStream::set_nms_max_proposals_total(uint32_t max_proposals_total)
+{
+    m_pimpl->set_nms_max_proposals_total(max_proposals_total);
+}
+
 void InferModelBase::InferStream::set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size)
 {
     m_pimpl->set_nms_max_accumulated_mask_size(max_accumulated_mask_size);
@@ -194,6 +225,11 @@ float32_t InferModelBase::InferStream::nms_iou_threshold() const
 uint32_t InferModelBase::InferStream::nms_max_proposals_per_class() const
 {
     return m_pimpl->nms_max_proposals_per_class();
+}
+
+uint32_t InferModelBase::InferStream::nms_max_proposals_total() const
+{
+    return m_pimpl->nms_max_proposals_total();
 }
 
 uint32_t InferModelBase::InferStream::nms_max_accumulated_mask_size() const
@@ -355,15 +391,24 @@ Expected<ConfiguredInferModel> InferModelBase::configure()
         return ((input_pair.second.m_pimpl->m_nms_score_threshold == INVALID_NMS_CONFIG) &&
                 (input_pair.second.m_pimpl->m_nms_iou_threshold == INVALID_NMS_CONFIG) &&
                 (input_pair.second.m_pimpl->m_nms_max_accumulated_mask_size == static_cast<uint32_t>(INVALID_NMS_CONFIG)) &&
-                (input_pair.second.m_pimpl->m_nms_max_proposals_per_class == static_cast<uint32_t>(INVALID_NMS_CONFIG)));
+                (input_pair.second.m_pimpl->m_nms_max_proposals_per_class == static_cast<uint32_t>(INVALID_NMS_CONFIG)) &&
+                (input_pair.second.m_pimpl->m_nms_max_proposals_total == static_cast<uint32_t>(INVALID_NMS_CONFIG)));
     }), HAILO_INVALID_OPERATION, "NMS config was changed for input");
 
     for (const auto &output_pair : m_outputs) {
         auto &edge_name = output_pair.first;
+
+        if ((HailoRTCommon::is_nms(output_pair.second.m_pimpl->format().order)) &&
+            (HAILO_NMS_RESULT_ORDER_HW != output_pair.second.m_pimpl->get_nms_shape()->order_type)) {
+            auto status = network_groups.value()[0]->set_nms_result_order_type(edge_name, output_pair.second.m_pimpl->get_nms_shape()->order_type);
+            CHECK_SUCCESS_AS_EXPECTED(status);
+        }
+
         if ((output_pair.second.m_pimpl->m_nms_score_threshold == INVALID_NMS_CONFIG) &&
             (output_pair.second.m_pimpl->m_nms_iou_threshold == INVALID_NMS_CONFIG) &&
             (output_pair.second.m_pimpl->m_nms_max_accumulated_mask_size == static_cast<uint32_t>(INVALID_NMS_CONFIG)) &&
-            (output_pair.second.m_pimpl->m_nms_max_proposals_per_class == static_cast<uint32_t>(INVALID_NMS_CONFIG))) {
+            (output_pair.second.m_pimpl->m_nms_max_proposals_per_class == static_cast<uint32_t>(INVALID_NMS_CONFIG)) &&
+            (output_pair.second.m_pimpl->m_nms_max_proposals_total == static_cast<uint32_t>(INVALID_NMS_CONFIG))) {
                 continue;
             }
         if (output_pair.second.m_pimpl->m_nms_score_threshold != INVALID_NMS_CONFIG) {
@@ -378,11 +423,19 @@ Expected<ConfiguredInferModel> InferModelBase::configure()
             auto status = network_groups.value()[0]->set_nms_max_bboxes_per_class(edge_name, output_pair.second.m_pimpl->m_nms_max_proposals_per_class);
             CHECK_SUCCESS_AS_EXPECTED(status);
         }
+        if (output_pair.second.m_pimpl->m_nms_max_proposals_total != static_cast<uint32_t>(INVALID_NMS_CONFIG)) {
+            auto status = network_groups.value()[0]->set_nms_max_bboxes_total(edge_name, output_pair.second.m_pimpl->m_nms_max_proposals_total);
+            CHECK_SUCCESS_AS_EXPECTED(status);
+        }
         if (output_pair.second.m_pimpl->m_nms_max_accumulated_mask_size != static_cast<uint32_t>(INVALID_NMS_CONFIG)) {
             auto status = network_groups.value()[0]->set_nms_max_accumulated_mask_size(edge_name, output_pair.second.m_pimpl->m_nms_max_accumulated_mask_size);
             CHECK_SUCCESS_AS_EXPECTED(status);
         }
     }
+
+    LOGGER__INFO("Configuring network group '{}' with params: batch size: {}, power mode: {}, latency: {}",
+        network_groups.value()[0]->name(), m_config_params.batch_size, HailoRTCommon::get_power_mode_str(m_config_params.power_mode),
+        HailoRTCommon::get_latency_measurement_str(m_config_params.latency));
 
     auto configured_infer_model_pimpl = ConfiguredInferModelImpl::create(network_groups.value()[0], inputs_formats, outputs_formats,
         get_input_names(), get_output_names(), m_vdevice, inputs_frame_sizes, outputs_frame_sizes);

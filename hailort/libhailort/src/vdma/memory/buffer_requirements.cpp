@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file buffer_requirements.cpp
  **/
@@ -125,7 +125,7 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
 
     // Found desc_page_size and descs_count
     const auto desc_page_size = static_cast<uint16_t>(local_desc_page_size);
-    if (initial_desc_page_size != desc_page_size) {
+    if ((buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) && (initial_desc_page_size != desc_page_size)) {
         LOGGER__WARNING("Desc page size value ({}) is not optimal for performance.", desc_page_size);
     }
 

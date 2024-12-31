@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.5.0)
 # set(CMAKE_C_CLANG_TIDY "clang-tidy;-checks=*")
 
 set(HAILORT_MAJOR_VERSION    4)
-set(HAILORT_MINOR_VERSION    19)
+set(HAILORT_MINOR_VERSION    20)
 set(HAILORT_REVISION_VERSION 0)
 
 # Add the cmake folder so the modules there are found
@@ -68,3 +68,6 @@ add_subdirectory(bindings)
 if(HAILO_BUILD_DOC)
     add_subdirectory(doc)
 endif()
+
+# Support builds without installation
+set(HailoRT_DIR "${HailoRT_DIR}" PARENT_SCOPE)

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -42,7 +42,7 @@ public:
     static Expected<std::shared_ptr<VDeviceCoreOp>> duplicate(std::shared_ptr<VDeviceCoreOp> other,
         const ConfigureNetworkParams &configure_params);
 
-    virtual ~VDeviceCoreOp() = default;
+    virtual ~VDeviceCoreOp();
     VDeviceCoreOp(const VDeviceCoreOp &other) = delete;
     VDeviceCoreOp &operator=(const VDeviceCoreOp &other) = delete;
     VDeviceCoreOp &operator=(VDeviceCoreOp &&other) = delete;
@@ -94,11 +94,12 @@ public:
     virtual Expected<HwInferResults> run_hw_infer_estimator() override;
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &) override;
     virtual bool has_caches() const override;
-    virtual Expected<uint32_t> get_cache_read_size() const override;
-    virtual Expected<uint32_t> get_cache_write_size() const override;
+    virtual Expected<uint32_t> get_cache_length() const override;
+    virtual Expected<uint32_t> get_cache_read_length() const override;
+    virtual Expected<uint32_t> get_cache_write_length() const override;
+    virtual Expected<uint32_t> get_cache_entry_size(uint32_t cache_id) const override;
     virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) override;
-    virtual Expected<hailo_cache_info_t> get_cache_info() const;
-    virtual hailo_status update_cache_offset(int32_t offset_delta_bytes) override;
+    virtual hailo_status update_cache_offset(int32_t offset_delta_entries) override;
     virtual Expected<std::vector<uint32_t>> get_cache_ids() const override;
     virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) override;
     virtual hailo_status write_cache_buffer(uint32_t cache_id, MemoryView buffer) override;
@@ -130,6 +131,7 @@ private:
     CoreOpsSchedulerWeakPtr m_core_ops_scheduler;
     const vdevice_core_op_handle_t m_core_op_handle;
     std::string m_hef_hash;
+    std::atomic_bool m_is_shutdown{false};
 
     std::shared_ptr<InferRequestAccumulator> m_infer_requests_accumulator;
 };

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -283,7 +283,7 @@ hailo_status AsyncInferRunnerImpl::run(const ConfiguredInferModel::Bindings &bin
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     hailo_status status = m_async_pipeline->get_pipeline_status()->load();
-    CHECK_SUCCESS(status, "Can't handle infer request since Pipeline status is {}.", status);
+    CHECK_SUCCESS(status, "Can't handle inference request since pipeline status is {}.", status);
 
     TRY(auto are_pools_ready_pair, can_push_buffers(1));
     CHECK(are_pools_ready_pair.first, HAILO_QUEUE_IS_FULL, "Can't handle infer request since a queue in the pipeline is full.");

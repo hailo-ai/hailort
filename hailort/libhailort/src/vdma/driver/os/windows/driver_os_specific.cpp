@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -151,7 +151,7 @@ Expected<FileDescriptor> open_device_file(const std::string &dev_path)
         OPEN_EXISTING,
         FILE_FLAG_OVERLAPPED,
         NULL);
-    CHECK(handle != INVALID_HANDLE_VALUE, HAILO_DRIVER_FAIL, "Failed creating hailo driver file {}, error  {}",
+    CHECK(handle != INVALID_HANDLE_VALUE, HAILO_DRIVER_OPERATION_FAILED, "Failed creating hailo driver file {}, error  {}",
         dev_path, GetLastError());
 
     return FileDescriptor(handle);
@@ -166,7 +166,7 @@ Expected<std::vector<std::string>> list_devices(GUID guid)
         &guid,
         NULL,
         CM_GET_DEVICE_INTERFACE_LIST_PRESENT);
-    CHECK_AS_EXPECTED((cr == CR_SUCCESS) && (len > 0), HAILO_PCIE_DRIVER_NOT_INSTALLED,
+    CHECK_AS_EXPECTED((cr == CR_SUCCESS) && (len > 0), HAILO_DRIVER_NOT_INSTALLED,
         "Driver interface not found error {}", cr);
 
     std::string names_str;
@@ -178,7 +178,7 @@ Expected<std::vector<std::string>> list_devices(GUID guid)
         const_cast<char*>(names_str.c_str()),
         len,
         CM_GET_DEVICE_INTERFACE_LIST_PRESENT);
-    CHECK_AS_EXPECTED(cr == CR_SUCCESS, HAILO_PCIE_DRIVER_NOT_INSTALLED, "Can't retrieve driver interface error {}", cr);
+    CHECK_AS_EXPECTED(cr == CR_SUCCESS, HAILO_DRIVER_NOT_INSTALLED, "Can't retrieve driver interface error {}", cr);
 
     std::vector<std::string> names;
     for (const char *current_name = names_str.c_str(); *current_name; current_name += strlen(current_name) + 1) {
@@ -190,7 +190,7 @@ Expected<std::vector<std::string>> list_devices(GUID guid)
 
 Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_devices(GUID guid)
 {
-    TRY (auto names, list_devices(guid), "Failed listing pcie devices");
+    TRY (auto names, list_devices(guid), "Failed listing hailo devices");
 
     std::vector<HailoRTDriver::DeviceInfo> devices_info;
     for (const auto &name : names) {
@@ -226,9 +226,30 @@ static Expected<uint32_t> parse_uint32_property(const std::wstring &dev_interfac
     uint32_t number = 0;
     if (!prop.Number(number)) {
         LOGGER__ERROR("Failed parsing prop");
-        return make_unexpected(HAILO_DRIVER_FAIL);
+        return make_unexpected(HAILO_DRIVER_INVALID_RESPONSE);
     }
     return number;
+}
+
+hailo_status convert_errno_to_hailo_status(int err, const char *ioctl_name)
+{
+    switch (err) {
+    case ERROR_NO_SYSTEM_RESOURCES: /* Driver STATUS_INSUFFICIENT_RESOURCES */
+        LOGGER__ERROR("Ioctl {} failed due to insufficient amount of memory", ioctl_name);
+        return HAILO_OUT_OF_HOST_MEMORY;
+    case ERROR_NOT_SUPPORTED: /* Driver STATUS_NOT_IMPLEMENTED */
+        LOGGER__ERROR("Ioctl {} failed due to inappropriate ioctl for device (can happen due to version mismatch or unsupported feature)", ioctl_name);
+        return HAILO_DRIVER_INVALID_IOCTL;
+    case ERROR_SEM_TIMEOUT: /* Driver STATUS_IO_TIMEOUT */
+        LOGGER__ERROR("Ioctl {} failed due to timeout", ioctl_name);
+        return HAILO_DRIVER_TIMEOUT;
+    case ERROR_OPERATION_ABORTED /* Driver STATUS_CANCELLED */:
+        LOGGER__DEBUG("Ioctl {} failed due to operation aborted", ioctl_name);
+        return HAILO_DRIVER_WAIT_CANCELED;
+    default:
+        LOGGER__ERROR("Ioctl {} failed with {}. Get log for more info", ioctl_name, err);
+        return HAILO_DRIVER_OPERATION_FAILED;
+    }
 }
 
 #define DEVICE_ADDRESS_GET_FUNC(device_func) ((device_func) & 0xff)

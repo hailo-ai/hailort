@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -39,12 +39,29 @@ public:
         return m_map.at(key);
     }
 
+    size_t erase(const Key &key)
+    {
+        std::shared_lock<std::shared_timed_mutex> lock(m_mutex);
+        auto iter = m_map.find(key);
+        if (m_map.end() != iter) {
+            return m_map.erase(key);
+        }
+        return 0;
+    }
+
     template<typename Func>
     void for_each(Func &&func) const
     {
         std::shared_lock<std::shared_timed_mutex> lock(m_mutex);
         std::for_each(m_map.begin(), m_map.end(), func);
     }
+
+    bool contains(const Key &key)
+    {
+        std::shared_lock<std::shared_timed_mutex> lock(m_mutex);
+        auto iter = m_map.find(key);
+        return (m_map.end() != iter);
+}
 
 private:
     // Const operation on the map can be executed on parallel, hence we can use shared_lock, while non-const operations

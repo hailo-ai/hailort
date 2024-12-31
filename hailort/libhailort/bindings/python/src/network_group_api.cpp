@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file network_group_api.cpp
  **/
@@ -27,7 +27,6 @@ void ConfiguredNetworkGroupWrapper::bind(py::module &m)
         .def("set_scheduler_threshold", &ConfiguredNetworkGroupWrapper::set_scheduler_threshold)
         .def("set_scheduler_priority", &ConfiguredNetworkGroupWrapper::set_scheduler_priority)
         .def("init_cache", &ConfiguredNetworkGroupWrapper::init_cache)
-        .def("get_cache_info", &ConfiguredNetworkGroupWrapper::get_cache_info)
         .def("update_cache_offset", &ConfiguredNetworkGroupWrapper::update_cache_offset)
         .def("get_cache_ids", &ConfiguredNetworkGroupWrapper::get_cache_ids)
         .def("read_cache_buffer", &ConfiguredNetworkGroupWrapper::read_cache_buffer)

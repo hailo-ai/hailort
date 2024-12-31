@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Distributed under the MIT license (https://opensource.org/licenses/MIT)
+ **/
+
 #include "hailo/hailort_defaults.hpp"
 
 #include "core_op/resource_manager/resource_manager.hpp"
@@ -177,7 +182,7 @@ static Expected<LatencyMeterPtr> create_hw_latency_meter(const std::vector<Layer
     size_t h2d_streams_count = 0;
     for (const auto &layer : layers) {
         if (layer.direction == HAILO_D2H_STREAM) {
-            if (HAILO_FORMAT_ORDER_HAILO_NMS == layer.format.order) {
+            if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == layer.format.order) {
                 LOGGER__WARNING("HW Latency measurement is not supported on NMS networks");
                 return make_unexpected(HAILO_INVALID_OPERATION);
             }
@@ -410,21 +415,21 @@ hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &lay
         channel_direction, layer_info.dma_engine_index));
     TRY(const auto network_batch_size, get_network_batch_size(layer_info.network_name));
 
-    const auto transfers_per_frame = (layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS) ?
+    const auto transfers_per_frame = (layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP) ?
         LayerInfoUtils::get_nms_layer_max_transfers_per_frame(layer_info) : 1;
 
     const auto max_active_transfers_scale = (transfers_per_frame * MAX_ACTIVE_TRANSFERS_SCALE);
 
     TRY(const auto device_arch, m_vdma_device.get_architecture());
     /* Add error in configure phase for invalid NMS parameters */
-    if ((layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS) && (HailoRTCommon::is_hailo1x_device_type(device_arch))) {
+    if ((layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP) && (HailoRTCommon::is_hailo1x_device_type(device_arch))) {
         CHECK(layer_info.nms_info.number_of_classes * layer_info.nms_info.chunks_per_frame * network_batch_size < HAILO15H_NMS_MAX_CLASSES, 
             HAILO_INVALID_ARGUMENT, "Invalid NMS parameters. Number of classes ({}) * division factor ({}) * batch size ({}) must be under {}",
             layer_info.nms_info.number_of_classes, layer_info.nms_info.chunks_per_frame, network_batch_size, HAILO15H_NMS_MAX_CLASSES);
     }
 
     const auto min_active_trans = MIN_ACTIVE_TRANSFERS_SCALE * network_batch_size;
-    const auto max_active_trans = (layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS) ?
+    const auto max_active_trans = (layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP) ?
         /* NMS Case - Value be be higher than UINT16_MAX. in this case we only limit to UART16_MAX with no error */
         std::min(static_cast<size_t>(UINT16_MAX), max_active_transfers_scale * network_batch_size) :
         max_active_transfers_scale * network_batch_size;
@@ -450,7 +455,7 @@ hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &lay
 
     TRY(auto vdma_transfer_launcher, m_vdma_device.get_vdma_transfer_launcher());
     TRY(auto channel, vdma::BoundaryChannel::create(m_driver, channel_id, channel_direction, std::move(desc_list),
-        vdma_transfer_launcher.get(), ongoing_transfers, pending_transfers, layer_info.name, latency_meter));
+        vdma_transfer_launcher.get(), ongoing_transfers, pending_transfers, false, layer_info.name, latency_meter));
 
     m_boundary_channels.add_channel(std::move(channel));
     return HAILO_SUCCESS;
@@ -851,7 +856,7 @@ Expected<HwInferResults> ResourcesManager::run_hw_only_infer()
         TRY(auto boundary_channel_ptr, get_boundary_vdma_channel_by_stream_name(layer_info.name));
         const auto &stream_infos = LayerInfoUtils::get_stream_infos_from_layer_info(layer_info);
         for (auto &stream_info : stream_infos) {
-            auto single_transfer_size = (HAILO_FORMAT_ORDER_HAILO_NMS == stream_info.format.order) ?
+            auto single_transfer_size = (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == stream_info.format.order) ?
                 stream_info.nms_info.bbox_size : stream_info.hw_frame_size;
             const auto direction = (layer_info.direction == HAILO_H2D_STREAM) ?
                 HailoRTDriver::DmaDirection::H2D : HailoRTDriver::DmaDirection::D2H;

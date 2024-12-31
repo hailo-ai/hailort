@@ -17,8 +17,9 @@
 #include "hailort_service/service_resource_manager.hpp"
 #include "hrpc_protocol/serializer.hpp"
 
+constexpr auto SERVER_TIMEOUT = std::chrono::seconds(10);
 
-namespace hrpc
+namespace hailort
 {
 
 class Server;
@@ -27,7 +28,7 @@ class ServerContext
 public:
     ServerContext(Server &server, RpcConnection connection);
     hailo_status trigger_callback(uint32_t callback_id, hailo_status callback_status,
-        rpc_object_handle_t callback_owner_handle, std::function<hailo_status(RpcConnection)> write_buffers_callback = nullptr);
+        rpc_object_handle_t callback_owner_handle, std::function<hailo_status(RpcConnection)> additional_writes_lambda = nullptr);
     RpcConnection &connection();
 
 private:
@@ -56,23 +57,25 @@ public:
     virtual ~Server() = default;
 
     hailo_status serve();
-
     void set_dispatcher(Dispatcher dispatcher);
 
     friend class ServerContext;
+
 protected:
-    std::shared_ptr<ConnectionContext> m_connection_context;
-private:
-    Expected<RpcConnection> create_client_connection(std::shared_ptr<hrpc::RawConnection> server_connection);
-    hailo_status serve_client(RpcConnection client_connection);
     hailo_status trigger_callback(uint32_t callback_id, hailo_status callback_status, rpc_object_handle_t callback_owner_handle,
-        RpcConnection connection, std::function<hailo_status(RpcConnection)> write_buffers_callback = nullptr);
+        RpcConnection connection, std::function<hailo_status(RpcConnection)> additional_writes_lambda = nullptr);
+
+    std::shared_ptr<ConnectionContext> m_connection_context;
+
+private:
+    Expected<RpcConnection> create_client_connection(std::shared_ptr<SessionListener> server_connection);
+    hailo_status serve_client(RpcConnection client_connection);
     virtual hailo_status cleanup_client_resources(RpcConnection client_connection) = 0;
 
     Dispatcher m_dispatcher;
     std::mutex m_write_mutex;
 };
 
-} // namespace hrpc
+} // namespace hailort
 
 #endif // _SERVER_HPP_

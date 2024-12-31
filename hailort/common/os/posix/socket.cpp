@@ -34,11 +34,7 @@ hailo_status Socket::SocketModuleWrapper::free_module()
 
 Expected<Socket> Socket::create(int af, int type, int protocol)
 {
-    TRY(auto module_wrapper, SocketModuleWrapper::create());
-
-    auto module_wrapper_ptr = make_shared_nothrow<SocketModuleWrapper>(std::move(module_wrapper));
-    CHECK_NOT_NULL(module_wrapper_ptr, HAILO_OUT_OF_HOST_MEMORY);
-
+    TRY(auto module_wrapper_ptr, SocketModuleWrapper::create_shared());
     TRY(const auto socket_fd, create_socket_fd(af, type, protocol));
 
     auto obj = Socket(module_wrapper_ptr, socket_fd);
@@ -64,7 +60,7 @@ Expected<socket_t> Socket::create_socket_fd(int af, int type, int protocol)
 
     local_socket = socket(af, type, protocol);
     CHECK_VALID_SOCKET_AS_EXPECTED(local_socket);
-    
+
     return local_socket;
 }
 
@@ -73,6 +69,7 @@ hailo_status Socket::close_socket_fd()
     if (INVALID_SOCKET != m_socket_fd) {
         int socket_rc = close(m_socket_fd);
         CHECK(0 == socket_rc, HAILO_ETH_FAILURE, "Failed to close socket. errno={}", errno);
+        m_socket_fd = INVALID_SOCKET;
     }
 
     return HAILO_SUCCESS;
@@ -147,22 +144,8 @@ Expected<size_t> Socket::send(const uint8_t *buffer, size_t size, int flags)
     return Expected<size_t>(bytes_written);
 }
 
-hailo_status Socket::sendall(const uint8_t *buffer, size_t size, int flags)
-{
-    size_t offset = 0;
-    while (offset < size) {
-        const auto size_to_write = size - offset;
-        TRY(auto bytes_written, send(buffer + offset, size_to_write, flags));
-        if (bytes_written == 0) {
-            return HAILO_ETH_SEND_FAILURE;
-        }
-        offset += bytes_written;
-    }
-    return HAILO_SUCCESS;
-}
-
 hailo_status Socket::ntop(int af, const void *src, char *dst, socklen_t size)
-{ 
+{
     CHECK_ARG_NOT_NULL(src);
     CHECK_ARG_NOT_NULL(dst);
 
@@ -180,9 +163,9 @@ hailo_status Socket::pton(int af, const char *src, void *dst)
     CHECK_ARG_NOT_NULL(dst);
 
     inet_rc = inet_pton(af, reinterpret_cast<const char*>(src), dst);
-    if (1 != inet_rc) {
-        return HAILO_ETH_FAILURE;
-    }
+    CHECK(0 != inet_rc, HAILO_ETH_FAILURE,
+        "Failed to run 'inet_pton'. src is not a valid network address in the specified address family");
+    CHECK(1 == inet_rc, HAILO_ETH_FAILURE, "Failed to run 'inet_pton', errno = {}.", errno);
 
     return HAILO_SUCCESS;
 }
@@ -195,7 +178,7 @@ hailo_status Socket::set_recv_buffer_size_max()
     uint64_t rmem_max = 0;
     int file_status = 0;
     size_t bytes_read = 0;
-   
+
     rmem_max_file = fopen(LINUX_RMEM_MAX_PATH, "r");
     if (NULL != rmem_max_file) {
         bytes_read = fread(rmem_max_buffer, sizeof(rmem_max_buffer), sizeof(*rmem_max_buffer), rmem_max_file);
@@ -252,7 +235,7 @@ hailo_status Socket::enable_broadcast()
 {
     int socket_rc = SOCKET_ERROR;
     int enable_broadcast = 1;
-    
+
     socket_rc = setsockopt(m_socket_fd, SOL_SOCKET, SO_BROADCAST, &enable_broadcast, sizeof(enable_broadcast));
     CHECK(0 == socket_rc, HAILO_ETH_FAILURE, "Cannot set socket to be broadcast");
 
@@ -269,6 +252,13 @@ hailo_status Socket::allow_reuse_address()
     return HAILO_SUCCESS;
 }
 
+hailo_status Socket::bind_to_device(const std::string &device_name)
+{
+    int socket_rc = setsockopt(m_socket_fd, SOL_SOCKET, SO_BINDTODEVICE, device_name.c_str(), static_cast<socklen_t>(device_name.size()));
+    CHECK(0 == socket_rc, HAILO_ETH_FAILURE, "Cannot bind socket to device {}", device_name);
+    return HAILO_SUCCESS;
+}
+
 hailo_status Socket::send_to(const uint8_t *src_buffer, size_t src_buffer_size, int flags,
     const sockaddr *dest_addr, socklen_t dest_addr_size, size_t *bytes_sent)
 {
@@ -278,7 +268,7 @@ hailo_status Socket::send_to(const uint8_t *src_buffer, size_t src_buffer_size, 
     CHECK_ARG_NOT_NULL(src_buffer);
     CHECK_ARG_NOT_NULL(dest_addr);
     CHECK_ARG_NOT_NULL(bytes_sent);
-    
+
     number_of_sent_bytes = sendto(m_socket_fd, src_buffer, src_buffer_size, flags,
         dest_addr,  dest_addr_size);
     if (-1 == number_of_sent_bytes) {
@@ -360,7 +350,7 @@ hailo_status Socket::has_data(sockaddr *src_addr, socklen_t src_addr_size, bool 
         CHECK_SUCCESS(status);
         assert(number_of_received_bytes > 0);
     }
-    
+
     return HAILO_SUCCESS;
 }
 

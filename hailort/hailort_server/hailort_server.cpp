@@ -8,12 +8,15 @@
  **/
 
 #include "hailort_server.hpp"
+#include "hailo/hailort.h"
 #include "hrpc/server.hpp"
 #include "hailo/vdevice.hpp"
-#include "hailo/infer_model.hpp"
 #include "hrpc_protocol/serializer.hpp"
 #include "net_flow/ops/nms_post_process.hpp"
 #include "hailort_service/service_resource_manager.hpp"
+#include "common/thread_safe_queue.hpp"
+#include "hrpc/connection_context.hpp"
+#include "vdma/pcie_session.hpp"
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -67,7 +70,9 @@ using namespace hailort;
 #else
 #define LOGGER_PATTERN ("[%Y-%m-%d %X.%e] [%P] [%t] [%n] [%^%l%$] [%s:%#] [%!] %v")
 #endif
-#define BUFFER_POOL_SIZE (10) // TODO: this may hurt performance, should be configurable
+
+// TODO: Benchmark this factor (HRT-15727)
+#define ASYNC_QUEUE_SIZE_FACTOR (2) // double buffer
 
 struct InferModelInfo
 {
@@ -85,7 +90,7 @@ void init_logger(const std::string &name)
     spdlog::set_default_logger(make_shared_nothrow<spdlog::logger>(name, console_sink));
 }
 
-void hrpc::HailoRTServer::cleanup_infer_model_hef_buffers(const std::vector<uint32_t> &infer_model_handles)
+void HailoRTServer::cleanup_infer_model_hef_buffers(const std::vector<uint32_t> &infer_model_handles)
 {
     for (const auto &infer_model_handle : infer_model_handles) {
         auto hef_buffers_iter = m_hef_buffers_per_infer_model.find(infer_model_handle);
@@ -95,17 +100,15 @@ void hrpc::HailoRTServer::cleanup_infer_model_hef_buffers(const std::vector<uint
     }
 }
 
-void hrpc::HailoRTServer::cleanup_cim_buffer_pools(const std::vector<uint32_t> &cim_handles)
+void HailoRTServer::cleanup_cim_buffer_pools(const std::vector<uint32_t> &cim_handles)
 {
+    std::lock_guard<std::mutex> lock(m_buffer_pool_mutex);
     for (const auto &cim_handle : cim_handles) {
-        auto buffer_pool_iter = m_buffer_pool_per_cim.find(cim_handle);
-        if (m_buffer_pool_per_cim.end() != buffer_pool_iter) {
-            m_buffer_pool_per_cim.erase(cim_handle);
-        }
+        m_buffer_pool_per_cim.erase(cim_handle);
     }
 }
 
-hailo_status hrpc::HailoRTServer::cleanup_client_resources(RpcConnection client_connection)
+hailo_status HailoRTServer::cleanup_client_resources(RpcConnection client_connection)
 {
     std::set<uint32_t> pids = {SINGLE_CLIENT_PID};
     auto cim_handles = ServiceResourceManager<ConfiguredInferModel>::get_instance().resources_handles_by_pids(pids);
@@ -123,32 +126,104 @@ hailo_status hrpc::HailoRTServer::cleanup_client_resources(RpcConnection client_
     return HAILO_SUCCESS;
 }
 
-Expected<std::unique_ptr<hrpc::HailoRTServer>> hrpc::HailoRTServer::create_unique()
+Expected<std::unique_ptr<HailoRTServer>> HailoRTServer::create_unique()
 {
     TRY(auto connection_context, ConnectionContext::create_server_shared());
-    auto res = make_unique_nothrow<HailoRTServer>(connection_context);
+    TRY(auto callbacks_queue_shutdown_event, Event::create_shared(Event::State::not_signalled));
+    auto callbacks_done_queue = SpscQueue<FinishedInferRequest>::create_shared(PcieSession::MAX_ONGOING_TRANSFERS, callbacks_queue_shutdown_event);
+    CHECK_NOT_NULL_AS_EXPECTED(callbacks_done_queue, HAILO_OUT_OF_HOST_MEMORY);
+
+    auto res = make_unique_nothrow<HailoRTServer>(connection_context, callbacks_done_queue, callbacks_queue_shutdown_event);
     CHECK_NOT_NULL(res, HAILO_OUT_OF_HOST_MEMORY);
     return res;
+}
+
+HailoRTServer::HailoRTServer(std::shared_ptr<ConnectionContext> connection_context,
+    std::shared_ptr<SpscQueue<FinishedInferRequest>> callbacks_done_queue,
+    EventPtr callbacks_queue_shutdown_event) : Server(connection_context), m_callbacks_done_queue(callbacks_done_queue),
+    m_callbacks_queue_shutdown_event(callbacks_queue_shutdown_event)
+{
+    m_callbacks_thread = std::thread([this] {
+        auto status = callbacks_thread_loop();
+        if (HAILO_SUCCESS != status) {
+            LOGGER__CRITICAL("Callback thread has failed with status {}. Server should restart!", status);
+        }
+    });
+}
+
+hailo_status HailoRTServer::callbacks_thread_loop()
+{
+    while (true) {
+        auto request = m_callbacks_done_queue->dequeue(std::chrono::milliseconds(HAILO_INFINITE));
+        if (HAILO_SHUTDOWN_EVENT_SIGNALED == request.status()) {
+            break;
+        }
+        CHECK_EXPECTED_AS_STATUS(request);
+
+        auto status = trigger_callback(request->callback_id, request->completion_info.status, request->configured_infer_model_handle,
+            request->connection, [this, &request] (RpcConnection connection) -> hailo_status {
+            if (HAILO_SUCCESS == request->completion_info.status) {
+                for (auto output : request->outputs) {
+                    auto status = connection.wait_for_write_buffer_async_ready(output->size(), SERVER_TIMEOUT);
+                    CHECK_SUCCESS(status);
+
+                    status = connection.write_buffer_async(MemoryView(*output), [output] (hailo_status status) {
+                        (void)output; // capturing output so it won't be freed before the callback is called
+                        if (HAILO_SUCCESS != status) {
+                            LOGGER__ERROR("Failed to write buffer, status = {}", status);
+                        }
+                    });
+                    CHECK_SUCCESS(status);
+                }
+
+                std::lock_guard<std::mutex> lock(m_buffer_pool_mutex);
+                for (uint32_t i = 0; i < request->outputs.size(); i++) {
+                    if (m_buffer_pool_per_cim.contains(request->configured_infer_model_handle)) {
+                        auto status = m_buffer_pool_per_cim.at(request->configured_infer_model_handle)->return_to_pool(request->outputs_names[i], request->outputs[i]);
+                        CHECK_SUCCESS(status);
+                    }
+                }
+            }
+            return HAILO_SUCCESS;
+        });
+        // HAILO_COMMUNICATION_CLOSED means the client disconnected. Server doesn't need to restart in this case.
+        if (status != HAILO_COMMUNICATION_CLOSED) {
+            CHECK_SUCCESS(status);
+        }
+    }
+    return HAILO_SUCCESS;
+}
+
+HailoRTServer::~HailoRTServer()
+{
+    auto status = m_callbacks_queue_shutdown_event->signal();
+    if (HAILO_SUCCESS != status) {
+        LOGGER__CRITICAL("Failed to signal shutdown event, status = {}", status);
+    }
+
+    if (m_callbacks_thread.joinable()) {
+        m_callbacks_thread.join();
+    }
 }
 
 int main()
 {
     init_logger("HailoRT-Server");
-    TRY(auto server, hrpc::HailoRTServer::create_unique());
-    hrpc::Dispatcher dispatcher;
+    TRY(auto server, HailoRTServer::create_unique());
+    Dispatcher dispatcher;
 
     // TODO: add a server implementation class, with resources heiracrhy and more
-    auto &infer_model_to_info_id = server->get_infer_model_to_info_id();
-    auto &buffer_pool_per_cim = server->get_buffer_pool_per_cim();
+    auto &infer_model_to_info_id = server->infer_model_to_info_id();
+    auto &buffer_pool_per_cim = server->buffer_pool_per_cim();
 
     // Because the infer model is created with a hef buffer, we need to keep the buffer until the configure stage.
     // Here I keep it until the infer model is destroyed
-    auto &hef_buffers = server->get_hef_buffers();
+    auto &hef_buffers = server->hef_buffers();
 
     dispatcher.register_action(HailoRpcActionID::VDEVICE__CREATE,
-    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+    [] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
         TRY_AS_HRPC_STATUS(auto vdevice_params, CreateVDeviceSerializer::deserialize_request(request), CreateVDeviceSerializer);
-        TRY_AS_HRPC_STATUS(auto vdevice, VDevice::create(vdevice_params), CreateVDeviceSerializer);
+        TRY_AS_HRPC_STATUS(auto vdevice, VDevice::create(vdevice_params.get()), CreateVDeviceSerializer);
 
         auto &manager = ServiceResourceManager<VDevice>::get_instance();
         auto id = manager.register_resource(SINGLE_CLIENT_PID, std::move(vdevice));
@@ -156,7 +231,7 @@ int main()
         return reply;
     });
     dispatcher.register_action(HailoRpcActionID::VDEVICE__DESTROY,
-    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+    [] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
         auto &manager = ServiceResourceManager<VDevice>::get_instance();
         TRY_AS_HRPC_STATUS(auto vdevice_handle, DestroyVDeviceSerializer::deserialize_request(request), DestroyVDeviceSerializer);
         (void)manager.release_resource(vdevice_handle, SINGLE_CLIENT_PID);
@@ -164,14 +239,15 @@ int main()
         return reply;
     });
     dispatcher.register_action(HailoRpcActionID::VDEVICE__CREATE_INFER_MODEL,
-    [&hef_buffers] (const MemoryView &request, hrpc::ServerContextPtr server_context) -> Expected<Buffer> {
+    [&hef_buffers] (const MemoryView &request, ServerContextPtr server_context) -> Expected<Buffer> {
         TRY_AS_HRPC_STATUS(auto tuple, CreateInferModelSerializer::deserialize_request(request), CreateInferModelSerializer);
         auto vdevice_handle = std::get<0>(tuple);
         uint64_t hef_size = std::get<1>(tuple);
         auto name = std::get<2>(tuple);
 
         assert(hef_size <= SIZE_MAX);
-        TRY_AS_HRPC_STATUS(auto hef_buffer, Buffer::create(static_cast<size_t>(hef_size), BufferStorageParams::create_dma()), CreateInferModelSerializer);
+        TRY_AS_HRPC_STATUS(auto hef_buffer, Buffer::create(static_cast<size_t>(hef_size), BufferStorageParams::create_dma()),
+            CreateInferModelSerializer);
 
         auto status = server_context->connection().read_buffer(MemoryView(hef_buffer));
         CHECK_SUCCESS_AS_HRPC_STATUS(status, CreateInferModelSerializer);
@@ -191,7 +267,7 @@ int main()
         return reply;
     });
     dispatcher.register_action(HailoRpcActionID::INFER_MODEL__DESTROY,
-    [&hef_buffers] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+    [&hef_buffers] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
         auto &manager = ServiceResourceManager<InferModel>::get_instance();
         TRY_AS_HRPC_STATUS(auto infer_model_handle, DestroyInferModelSerializer::deserialize_request(request), DestroyInferModelSerializer);
         hef_buffers.erase(infer_model_handle);
@@ -201,7 +277,7 @@ int main()
     });
     dispatcher.register_action(HailoRpcActionID::INFER_MODEL__CREATE_CONFIGURED_INFER_MODEL,
     [&buffer_pool_per_cim, &infer_model_to_info_id]
-    (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+    (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
         auto &infer_model_manager = ServiceResourceManager<InferModel>::get_instance();
 
         TRY_AS_HRPC_STATUS(auto request_params, CreateConfiguredInferModelSerializer::deserialize_request(request), CreateConfiguredInferModelSerializer);
@@ -225,6 +301,9 @@ int main()
                 if (static_cast<uint32_t>(INVALID_NMS_CONFIG) != input_stream_format.second.nms_max_proposals_per_class) {
                     input.set_nms_max_proposals_per_class(input_stream_format.second.nms_max_proposals_per_class);
                 }
+                if (static_cast<uint32_t>(INVALID_NMS_CONFIG) != input_stream_format.second.nms_max_proposals_total) {
+                    input.set_nms_max_proposals_total(input_stream_format.second.nms_max_proposals_total);
+                }
                 if (static_cast<uint32_t>(INVALID_NMS_CONFIG) != input_stream_format.second.nms_max_accumulated_mask_size) {
                     input.set_nms_max_accumulated_mask_size(input_stream_format.second.nms_max_accumulated_mask_size);
                 }
@@ -242,6 +321,9 @@ int main()
                 }
                 if (static_cast<uint32_t>(INVALID_NMS_CONFIG) != output_stream_format.second.nms_max_proposals_per_class) {
                     output.set_nms_max_proposals_per_class(output_stream_format.second.nms_max_proposals_per_class);
+                }
+                if (static_cast<uint32_t>(INVALID_NMS_CONFIG) != output_stream_format.second.nms_max_proposals_total) {
+                    output.set_nms_max_proposals_total(output_stream_format.second.nms_max_proposals_total);
                 }
                 if (static_cast<uint32_t>(INVALID_NMS_CONFIG) != output_stream_format.second.nms_max_accumulated_mask_size) {
                     output.set_nms_max_accumulated_mask_size(output_stream_format.second.nms_max_accumulated_mask_size);
@@ -295,12 +377,12 @@ int main()
 
         for (const auto &input_name : infer_model_info->inputs_names) {
             auto status = buffer_pool_ptr->allocate_pool(input_name, HAILO_DMA_BUFFER_DIRECTION_D2H,
-                infer_model_info->input_streams_sizes[input_name], BUFFER_POOL_SIZE);
+                infer_model_info->input_streams_sizes[input_name], async_queue_size * ASYNC_QUEUE_SIZE_FACTOR);
             CHECK_SUCCESS_AS_HRPC_STATUS(status, CreateConfiguredInferModelSerializer);
         }
         for (const auto &output_name : infer_model_info->outputs_names) {
             auto status = buffer_pool_ptr->allocate_pool(output_name, HAILO_DMA_BUFFER_DIRECTION_H2D,
-                infer_model_info->output_streams_sizes[output_name], BUFFER_POOL_SIZE);
+                infer_model_info->output_streams_sizes[output_name], async_queue_size * ASYNC_QUEUE_SIZE_FACTOR);
             CHECK_SUCCESS_AS_HRPC_STATUS(status, CreateConfiguredInferModelSerializer);
         }
         buffer_pool_per_cim.emplace(cim_id, buffer_pool_ptr);
@@ -312,7 +394,7 @@ int main()
         return reply;
     });
     dispatcher.register_action(HailoRpcActionID::CONFIGURED_INFER_MODEL__DESTROY,
-    [&buffer_pool_per_cim] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+    [&server] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
         auto &manager = ServiceResourceManager<ConfiguredInferModel>::get_instance();
         TRY_AS_HRPC_STATUS(auto configured_infer_model_handle, DestroyConfiguredInferModelSerializer::deserialize_request(request), DestroyInferModelSerializer);
 
@@ -321,13 +403,13 @@ int main()
             return HAILO_SUCCESS;
         };
         manager.execute<hailo_status>(configured_infer_model_handle, shutdown_lambda);
-        buffer_pool_per_cim.erase(configured_infer_model_handle);
+        server->cleanup_cim_buffer_pools({ configured_infer_model_handle });
         (void)manager.release_resource(configured_infer_model_handle, SINGLE_CLIENT_PID);
         TRY_AS_HRPC_STATUS(auto reply, DestroyConfiguredInferModelSerializer::serialize_reply(HAILO_SUCCESS), DestroyInferModelSerializer);
         return reply;
     });
     dispatcher.register_action(HailoRpcActionID::CONFIGURED_INFER_MODEL__SET_SCHEDULER_TIMEOUT,
-    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+    [] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
         auto &cim_manager = ServiceResourceManager<ConfiguredInferModel>::get_instance();
         TRY_AS_HRPC_STATUS(auto tuple, SetSchedulerTimeoutSerializer::deserialize_request(request), SetSchedulerTimeoutSerializer);
         const auto &configured_infer_model_handle = std::get<0>(tuple);
@@ -341,7 +423,7 @@ int main()
         return reply;
     });
     dispatcher.register_action(HailoRpcActionID::CONFIGURED_INFER_MODEL__SET_SCHEDULER_THRESHOLD,
-    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+    [] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
         auto &cim_manager = ServiceResourceManager<ConfiguredInferModel>::get_instance();
         TRY_AS_HRPC_STATUS(auto tuple, SetSchedulerThresholdSerializer::deserialize_request(request), SetSchedulerThresholdSerializer);
         const auto &configured_infer_model_handle = std::get<0>(tuple);
@@ -355,7 +437,7 @@ int main()
         return reply;
     });
     dispatcher.register_action(HailoRpcActionID::CONFIGURED_INFER_MODEL__SET_SCHEDULER_PRIORITY,
-    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+    [] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
         auto &cim_manager = ServiceResourceManager<ConfiguredInferModel>::get_instance();
         TRY_AS_HRPC_STATUS(auto tuple, SetSchedulerPrioritySerializer::deserialize_request(request), SetSchedulerPrioritySerializer);
         const auto &configured_infer_model_handle = std::get<0>(tuple);
@@ -369,7 +451,7 @@ int main()
         return reply;
     });
     dispatcher.register_action(HailoRpcActionID::CONFIGURED_INFER_MODEL__GET_HW_LATENCY_MEASUREMENT,
-    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+    [] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
         auto &cim_manager = ServiceResourceManager<ConfiguredInferModel>::get_instance();
 
         auto configured_infer_model_handle = GetHwLatencyMeasurementSerializer::deserialize_request(request);
@@ -391,7 +473,7 @@ int main()
         return reply;
     });
     dispatcher.register_action(HailoRpcActionID::CONFIGURED_INFER_MODEL__ACTIVATE,
-    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+    [] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
         auto &cim_manager = ServiceResourceManager<ConfiguredInferModel>::get_instance();
 
         auto configured_infer_model_handle = ActivateSerializer::deserialize_request(request);
@@ -407,7 +489,7 @@ int main()
         return reply;
     });
     dispatcher.register_action(HailoRpcActionID::CONFIGURED_INFER_MODEL__DEACTIVATE,
-    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+    [] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
         auto &cim_manager = ServiceResourceManager<ConfiguredInferModel>::get_instance();
 
         auto configured_infer_model_handle = DeactivateSerializer::deserialize_request(request);
@@ -423,7 +505,7 @@ int main()
         return reply;
     });
     dispatcher.register_action(HailoRpcActionID::CONFIGURED_INFER_MODEL__SHUTDOWN,
-    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+    [] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
         auto &cim_manager = ServiceResourceManager<ConfiguredInferModel>::get_instance();
 
         auto configured_infer_model_handle = ShutdownSerializer::deserialize_request(request);
@@ -439,8 +521,8 @@ int main()
         return reply;
     });
     dispatcher.register_action(HailoRpcActionID::CONFIGURED_INFER_MODEL__RUN_ASYNC,
-    [&infer_model_to_info_id, &buffer_pool_per_cim]
-    (const MemoryView &request, hrpc::ServerContextPtr server_context) -> Expected<Buffer> {
+    [&infer_model_to_info_id, &buffer_pool_per_cim, callbacks_done_queue = server->callbacks_done_queue()]
+    (const MemoryView &request, ServerContextPtr server_context) -> Expected<Buffer> {
         auto &cim_manager = ServiceResourceManager<ConfiguredInferModel>::get_instance();
         auto bindings_lambda = [] (std::shared_ptr<ConfiguredInferModel> configured_infer_model) {
             return configured_infer_model->create_bindings();
@@ -468,7 +550,7 @@ int main()
         for (const auto &input_name : infer_model_info->inputs_names) {
             TRY_AS_HRPC_STATUS(auto input, bindings->input(input_name), RunAsyncSerializer);
 
-            TRY_AS_HRPC_STATUS(auto buffer_ptr, buffer_pool_per_cim[configured_infer_model_handle]->acquire_buffer(input_name),
+            TRY_AS_HRPC_STATUS(auto buffer_ptr, buffer_pool_per_cim.at(configured_infer_model_handle)->acquire_buffer(input_name),
                 RunAsyncSerializer);
 
             uint32_t read_size = 0;
@@ -491,7 +573,7 @@ int main()
         std::vector<BufferPtr> outputs; // TODO: add infer vector pool
         outputs.reserve(infer_model_info->outputs_names.size());
         for (const auto &output_name : infer_model_info->outputs_names) {
-            TRY_AS_HRPC_STATUS(auto buffer_ptr, buffer_pool_per_cim[configured_infer_model_handle]->acquire_buffer(output_name),
+            TRY_AS_HRPC_STATUS(auto buffer_ptr, buffer_pool_per_cim.at(configured_infer_model_handle)->acquire_buffer(output_name),
                 RunAsyncSerializer);
 
             auto output = bindings->output(output_name);
@@ -505,41 +587,29 @@ int main()
 
         auto infer_lambda =
             [bindings = bindings.release(), callback_id, server_context, inputs, outputs, &buffer_pool_per_cim, configured_infer_model_handle,
-                infer_model_info]
+                infer_model_info, callbacks_done_queue]
             (std::shared_ptr<ConfiguredInferModel> configured_infer_model) {
                 return configured_infer_model->run_async(bindings,
-                    [callback_id, server_context, inputs, outputs, &buffer_pool_per_cim, configured_infer_model_handle, infer_model_info]
+                    [callback_id, server_context, inputs, outputs, &buffer_pool_per_cim, configured_infer_model_handle, infer_model_info,
+                    callbacks_done_queue]
                         (const AsyncInferCompletionInfo &completion_info) {
                     for (uint32_t i = 0; i < inputs.size(); i++) {
-                        auto status = buffer_pool_per_cim[configured_infer_model_handle]->return_to_pool(infer_model_info->inputs_names[i], inputs[i]);
-                        if (status != HAILO_SUCCESS) {
-                            LOGGER__CRITICAL("return_to_pool failed for input {}, status = {}. Server should restart!", infer_model_info->inputs_names[i], status);
-                            return;
+                        auto status = buffer_pool_per_cim.at(configured_infer_model_handle)->return_to_pool(infer_model_info->inputs_names[i], inputs[i]);
+                        if (HAILO_SUCCESS != status) {
+                            LOGGER__ERROR("Failed to return buffer to pool, status = {}", status);
                         }
                     }
 
-                    auto status = server_context->trigger_callback(callback_id, completion_info.status, configured_infer_model_handle,
-                    [outputs, completion_info] (hrpc::RpcConnection connection) -> hailo_status {
-                        if (HAILO_SUCCESS == completion_info.status) {
-                            for (auto output : outputs) {
-                                auto status = connection.write_buffer(MemoryView(*output));
-                                CHECK_SUCCESS(status);
-                            }
-                        }
-                        return HAILO_SUCCESS;
-                    });
-
-                    // HAILO_COMMUNICATION_CLOSED means the client disconnected. Server doesn't need to restart in this case.
-                    if ((status != HAILO_SUCCESS) && (status != HAILO_COMMUNICATION_CLOSED)) {
-                        LOGGER__CRITICAL("Error {} returned from connection.write(). Server Should restart!", status);
-                    }
-
-                    for (uint32_t i = 0; i < outputs.size(); i++) {
-                        status = buffer_pool_per_cim[configured_infer_model_handle]->return_to_pool(infer_model_info->outputs_names[i], outputs[i]);
-                        if (status != HAILO_SUCCESS) {
-                            LOGGER__CRITICAL("return_to_pool failed for output {}, status = {}. Server should restart!", infer_model_info->outputs_names[i], status);
-                            return;
-                        }
+                    FinishedInferRequest request;
+                    request.connection = server_context->connection();
+                    request.completion_info = completion_info;
+                    request.callback_id = callback_id;
+                    request.configured_infer_model_handle = configured_infer_model_handle;
+                    request.outputs = std::move(outputs);
+                    request.outputs_names = infer_model_info->outputs_names;
+                    auto status = callbacks_done_queue->enqueue(std::move(request));
+                    if (HAILO_SUCCESS != status) {
+                        LOGGER__ERROR("Failed to enqueue to infer requests queue, status = {}", status);
                     }
                 });
             };
@@ -552,7 +622,7 @@ int main()
         return reply;
     });
     dispatcher.register_action(HailoRpcActionID::DEVICE__CREATE,
-    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+    [] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
         auto status = CreateDeviceSerializer::deserialize_request(request);
         CHECK_SUCCESS_AS_HRPC_STATUS(status, CreateDeviceSerializer);
 
@@ -564,7 +634,7 @@ int main()
         return reply;
     });
     dispatcher.register_action(HailoRpcActionID::DEVICE__DESTROY,
-    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+    [] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
         auto &manager = ServiceResourceManager<Device>::get_instance();
         TRY_AS_HRPC_STATUS(auto device_handle, DestroyDeviceSerializer::deserialize_request(request), DestroyDeviceSerializer);
         (void)manager.release_resource(device_handle, SINGLE_CLIENT_PID);
@@ -572,7 +642,7 @@ int main()
         return reply;
     });
     dispatcher.register_action(HailoRpcActionID::DEVICE__IDENTIFY,
-    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+    [] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
         TRY_AS_HRPC_STATUS(auto device_handle, IdentifyDeviceSerializer::deserialize_request(request), IdentifyDeviceSerializer);
 
         auto &manager = ServiceResourceManager<Device>::get_instance();
@@ -585,16 +655,145 @@ int main()
         return reply;
     });
     dispatcher.register_action(HailoRpcActionID::DEVICE__EXTENDED_INFO,
-    [] (const MemoryView &request, hrpc::ServerContextPtr /*server_context*/) -> Expected<Buffer> {
-        TRY_AS_HRPC_STATUS(auto device_handle, ExtendedDeviceInfoSerializer::deserialize_request(request), ExtendedDeviceInfoSerializer);
+    [] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+        using Serializer = ExtendedDeviceInfoSerializer;
+        using ActionReturnType = hailo_extended_device_information_t;
+
+        TRY_AS_HRPC_STATUS(auto device_handle, Serializer::deserialize_request(request), Serializer);
 
         auto &manager = ServiceResourceManager<Device>::get_instance();
         auto device_lambda = [] (std::shared_ptr<Device> device) {
             return device->get_extended_device_information();
         };
         TRY_AS_HRPC_STATUS(auto extended_info,
-            manager.execute<Expected<hailo_extended_device_information_t>>(device_handle, device_lambda), ExtendedDeviceInfoSerializer);
-        TRY_AS_HRPC_STATUS(auto reply, ExtendedDeviceInfoSerializer::serialize_reply(HAILO_SUCCESS, extended_info), ExtendedDeviceInfoSerializer);
+            manager.execute<Expected<ActionReturnType>>(device_handle, device_lambda), Serializer);
+        TRY_AS_HRPC_STATUS(auto reply, Serializer::serialize_reply(HAILO_SUCCESS, extended_info), Serializer);
+        return reply;
+    });
+    dispatcher.register_action(HailoRpcActionID::DEVICE__GET_CHIP_TEMPERATURE,
+    [] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+        using Serializer = GetChipTemperatureSerializer;
+        using ActionReturnType = hailo_chip_temperature_info_t;
+
+        TRY_AS_HRPC_STATUS(auto device_handle, Serializer::deserialize_request(request), Serializer);
+
+        auto &manager = ServiceResourceManager<Device>::get_instance();
+        auto device_lambda = [] (std::shared_ptr<Device> device) {
+            return device->get_chip_temperature();
+        };
+
+        TRY_AS_HRPC_STATUS(auto info, manager.execute<Expected<ActionReturnType>>(device_handle, device_lambda), Serializer);
+        TRY_AS_HRPC_STATUS(auto reply, Serializer::serialize_reply(HAILO_SUCCESS, info), Serializer);
+
+        return reply;
+    });
+    dispatcher.register_action(HailoRpcActionID::DEVICE__POWER_MEASUREMENT,
+    [] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+        using Serializer = PowerMeasurementSerializer;
+        using ActionReturnType = float32_t;
+
+        TRY_AS_HRPC_STATUS(auto tuple, Serializer::deserialize_request(request), Serializer);
+
+        auto device_handle = std::get<0>(tuple);
+        auto dvm = std::get<1>(tuple);
+        auto power_measurement_type = std::get<2>(tuple);
+
+        auto &manager = ServiceResourceManager<Device>::get_instance();
+        auto device_lambda = [dvm, power_measurement_type] (std::shared_ptr<Device> device) {
+            return device->power_measurement(
+                static_cast<hailo_dvm_options_t>(dvm),
+                static_cast<hailo_power_measurement_types_t>(power_measurement_type));
+        };
+
+        TRY_AS_HRPC_STATUS(auto info, manager.execute<Expected<ActionReturnType>>(device_handle, device_lambda), Serializer);
+        TRY_AS_HRPC_STATUS(auto reply, Serializer::serialize_reply(HAILO_SUCCESS, info), Serializer);
+
+        return reply;
+    });
+    dispatcher.register_action(HailoRpcActionID::DEVICE__SET_POWER_MEASUREMENT,
+    [] (const MemoryView &request, ServerContextPtr /*server_context*/) -> Expected<Buffer> {
+        using Serializer = SetPowerMeasurementSerializer;
+        using ActionReturnType = hailo_status;
+
+        TRY_AS_HRPC_STATUS(auto tuple, Serializer::deserialize_request(request), Serializer);
+
+        auto device_handle = std::get<0>(tuple);
+        auto dvm = std::get<1>(tuple);
+        auto power_measurement_type = std::get<2>(tuple);
+
+        auto &manager = ServiceResourceManager<Device>::get_instance();
+        auto device_lambda = [dvm, power_measurement_type] (std::shared_ptr<Device> device) {
+            constexpr hailo_measurement_buffer_index_t not_used_buffer_index = HAILO_MEASUREMENT_BUFFER_INDEX_MAX_ENUM;
+            return device->set_power_measurement(
+                not_used_buffer_index, /* Relevant only for H8. Not used in H10 */
+                static_cast<hailo_dvm_options_t>(dvm),
+                static_cast<hailo_power_measurement_types_t>(power_measurement_type));
+        };
+
+        CHECK_SUCCESS_AS_HRPC_STATUS(manager.execute<ActionReturnType>(device_handle, device_lambda), Serializer);
+        TRY_AS_HRPC_STATUS(auto reply, Serializer::serialize_reply(HAILO_SUCCESS), Serializer);
+
+        return reply;
+    });
+    dispatcher.register_action(HailoRpcActionID::DEVICE__START_POWER_MEASUREMENT,
+    [] (const MemoryView &request, ServerContextPtr) -> Expected<Buffer> {
+        using Serializer = SetPowerMeasurementSerializer;
+        using ActionReturnType = hailo_status;
+
+        TRY_AS_HRPC_STATUS(auto tuple, Serializer::deserialize_request(request), Serializer);
+
+        auto device_handle = std::get<0>(tuple);
+        auto averaging_factor = std::get<1>(tuple);
+        auto sampling_period = std::get<2>(tuple);
+
+        auto &manager = ServiceResourceManager<Device>::get_instance();
+        auto device_lambda = [sampling_period, averaging_factor] (std::shared_ptr<Device> device) {
+            return device->start_power_measurement(
+                static_cast<hailo_averaging_factor_t>(averaging_factor),
+                static_cast<hailo_sampling_period_t>(sampling_period));
+        };
+
+        CHECK_SUCCESS_AS_HRPC_STATUS(manager.execute<ActionReturnType>(device_handle, device_lambda), Serializer);
+        TRY_AS_HRPC_STATUS(auto reply, Serializer::serialize_reply(HAILO_SUCCESS), Serializer);
+
+        return reply;
+    });
+    dispatcher.register_action(HailoRpcActionID::DEVICE__GET_POWER_MEASUREMENT,
+    [] (const MemoryView &request, ServerContextPtr) -> Expected<Buffer> {
+        using Serializer = GetPowerMeasurementSerializer;
+        using ActionReturnType = hailo_power_measurement_data_t;
+
+        TRY_AS_HRPC_STATUS(auto tuple, Serializer::deserialize_request(request), Serializer);
+
+        auto device_handle = std::get<0>(tuple);
+        auto should_clear = std::get<1>(tuple);
+
+        auto &manager = ServiceResourceManager<Device>::get_instance();
+        auto device_lambda = [should_clear] (std::shared_ptr<Device> device) {
+			constexpr hailo_measurement_buffer_index_t unused_buffer_index = HAILO_MEASUREMENT_BUFFER_INDEX_MAX_ENUM;
+            return device->get_power_measurement(unused_buffer_index, should_clear);
+        };
+
+        TRY_AS_HRPC_STATUS(auto info, manager.execute<Expected<ActionReturnType>>(device_handle, device_lambda), Serializer);
+        TRY_AS_HRPC_STATUS(auto reply, Serializer::serialize_reply(HAILO_SUCCESS, info), Serializer);
+
+        return reply;
+    });
+    dispatcher.register_action(HailoRpcActionID::DEVICE__STOP_POWER_MEASUREMENT,
+    [] (const MemoryView &request, ServerContextPtr) -> Expected<Buffer> {
+        using Serializer = StopPowerMeasurementSerializer;
+        using ActionReturnType = hailo_status;
+
+        TRY_AS_HRPC_STATUS(auto device_handle, Serializer::deserialize_request(request), Serializer);
+        auto &manager = ServiceResourceManager<Device>::get_instance();
+
+        auto device_lambda = [] (std::shared_ptr<Device> device) {
+            return device->stop_power_measurement();
+        };
+
+        CHECK_SUCCESS_AS_HRPC_STATUS(manager.execute<ActionReturnType>(device_handle, device_lambda), Serializer);
+        TRY_AS_HRPC_STATUS(auto reply, Serializer::serialize_reply(HAILO_SUCCESS), Serializer);
+
         return reply;
     });
 

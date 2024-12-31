@@ -1,5 +1,5 @@
-/*
- * Copyright (c) 2021-2022 Hailo Technologies Ltd. All rights reserved.
+/**
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the LGPL 2.1 license (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
  *
  * This library is free software; you can redistribute it and/or
@@ -65,6 +65,7 @@ enum
     PROP_NMS_SCORE_THRESHOLD,
     PROP_NMS_IOU_THRESHOLD,
     PROP_NMS_MAX_PROPOSALS_PER_CLASS,
+    PROP_NMS_MAX_PROPOSALS_TOTAL
 };
 
 G_DEFINE_TYPE(GstSyncHailoNet, gst_sync_hailonet, GST_TYPE_BIN);
@@ -184,6 +185,11 @@ static void gst_sync_hailonet_class_init(GstSyncHailoNetClass *klass)
     g_object_class_install_property(gobject_class, PROP_NMS_MAX_PROPOSALS_PER_CLASS,
         g_param_spec_uint("nms-max-proposals-per-class", "NMS max proposals per class", "Set a limit for the maximum number of boxes per class.",
             0, std::numeric_limits<uint32_t>::max(), 0, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+    // TODO: HRT-15612 - Add support for BY_SCORE in sync hailonet
+    g_object_class_install_property(gobject_class, PROP_NMS_MAX_PROPOSALS_TOTAL,
+        g_param_spec_uint("nms-max-proposals-total", "NMS max proposals total", "Set a limit for the maximum number of boxes total.",
+            0, std::numeric_limits<uint32_t>::max(), 0, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
 
     // See information about the "flush" signal in the element description
     g_signal_new(

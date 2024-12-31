@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -44,7 +44,7 @@ void FilterElement::run_push_async(PipelineBuffer &&buffer, const PipelinePad &/
 {
     assert(m_pipeline_direction == PipelineDirection::PUSH);
     if (HAILO_SUCCESS != buffer.action_status()) {
-        auto pool = next_pad().element().get_buffer_pool();
+        auto pool = next_pad().get_buffer_pool();
         assert(pool);
 
         auto buffer_from_pool = pool->get_available_buffer(PipelineBuffer(), m_timeout);
@@ -154,7 +154,7 @@ Expected<PipelineBuffer> PreInferElement::action(PipelineBuffer &&input, Pipelin
     }
 
     // Buffers are always taken from the next-pad-downstream
-    auto pool = next_pad_downstream().element().get_buffer_pool();
+    auto pool = next_pad_downstream().get_buffer_pool();
     assert(pool);
 
     auto transformed_buffer = pool->get_available_buffer(std::move(optional), m_timeout);
@@ -238,7 +238,7 @@ PipelinePad &ConvertNmsToDetectionsElement::next_pad()
 Expected<PipelineBuffer> ConvertNmsToDetectionsElement::action(PipelineBuffer &&input, PipelineBuffer &&optional)
 {
     // Buffers are always taken from the next-pad-downstream
-    auto pool = next_pad_downstream().element().get_buffer_pool();
+    auto pool = next_pad_downstream().get_buffer_pool();
     assert(pool);
 
     auto buffer = pool->get_available_buffer(std::move(optional), m_timeout);
@@ -255,6 +255,10 @@ Expected<PipelineBuffer> ConvertNmsToDetectionsElement::action(PipelineBuffer &&
     buffer->set_additional_data(input.get_metadata().get_additional_data<IouPipelineData>());
 
     m_duration_collector.start_measurement();
+
+    // TODO: HRT-15612 support BY_SCORE order_type in this function
+    CHECK_AS_EXPECTED(HAILO_NMS_RESULT_ORDER_BY_SCORE != m_nms_info.order_type, HAILO_INVALID_ARGUMENT,
+        "HAILO_NMS_RESULT_ORDER_BY_SCORE is not supported NMS result order type for ConvertNmsToDetectionsElement");
 
     auto detections_pair = net_flow::NmsPostProcessOp::transform__d2h_NMS_DETECTIONS(input.data(), m_nms_info);
     auto detections_pipeline_data = make_shared_nothrow<IouPipelineData>
@@ -314,7 +318,7 @@ PipelinePad &FillNmsFormatElement::next_pad()
 Expected<PipelineBuffer> FillNmsFormatElement::action(PipelineBuffer &&input, PipelineBuffer &&optional)
 {
     // Buffers are always taken from the next-pad-downstream
-    auto pool = next_pad_downstream().element().get_buffer_pool();
+    auto pool = next_pad_downstream().get_buffer_pool();
     assert(pool);
 
     auto buffer_expected = pool->get_available_buffer(std::move(optional), m_timeout);
@@ -335,8 +339,19 @@ Expected<PipelineBuffer> FillNmsFormatElement::action(PipelineBuffer &&input, Pi
 
     auto detections = input.get_metadata().get_additional_data<IouPipelineData>();
     TRY(auto dst, buffer.as_view(BufferProtection::WRITE));
-    net_flow::NmsPostProcessOp::fill_nms_format_buffer(dst, detections->m_detections, detections->m_detections_classes_count,
-        m_nms_config);
+
+    switch (m_nms_config.order_type) {
+    case HAILO_NMS_RESULT_ORDER_BY_CLASS:
+        net_flow::NmsPostProcessOp::fill_nms_by_class_format_buffer(dst, detections->m_detections, detections->m_detections_classes_count,
+            m_nms_config);
+        break;
+    case HAILO_NMS_RESULT_ORDER_BY_SCORE:
+        net_flow::NmsPostProcessOp::fill_nms_by_score_format_buffer(dst, detections->m_detections, m_nms_config);
+        break;
+    default:
+        LOGGER__ERROR("NMS result order type not supported: {}", HailoRTCommon::get_nms_result_order_type_str(m_nms_config.order_type));
+        return make_unexpected(HAILO_INVALID_ARGUMENT);
+    }
 
     m_duration_collector.complete_measurement();
 
@@ -423,7 +438,7 @@ std::string PostInferElement::description() const
 Expected<PipelineBuffer> PostInferElement::action(PipelineBuffer &&input, PipelineBuffer &&optional)
 {
     // Buffers are always taken from the next-pad-downstream
-    auto pool = next_pad_downstream().element().get_buffer_pool();
+    auto pool = next_pad_downstream().get_buffer_pool();
     assert(pool);
 
     auto buffer = pool->get_available_buffer(std::move(optional), m_timeout);
@@ -511,7 +526,7 @@ std::string RemoveOverlappingBboxesElement::description() const
 Expected<PipelineBuffer> RemoveOverlappingBboxesElement::action(PipelineBuffer &&input, PipelineBuffer &&optional)
 {
     // Buffers are always taken from the next-pad-downstream
-    auto pool = next_pad_downstream().element().get_buffer_pool();
+    auto pool = next_pad_downstream().get_buffer_pool();
     assert(pool);
 
     auto buffer = pool->get_available_buffer(std::move(optional), m_timeout);
@@ -598,7 +613,7 @@ std::string ArgmaxPostProcessElement::description() const
 Expected<PipelineBuffer> ArgmaxPostProcessElement::action(PipelineBuffer &&input, PipelineBuffer &&optional)
 {
     // Buffers are always taken from the next-pad-downstream
-    auto pool = next_pad_downstream().element().get_buffer_pool();
+    auto pool = next_pad_downstream().get_buffer_pool();
     assert(pool);
 
     auto buffer = pool->get_available_buffer(std::move(optional), m_timeout);
@@ -693,7 +708,7 @@ std::string SoftmaxPostProcessElement::description() const
 Expected<PipelineBuffer> SoftmaxPostProcessElement::action(PipelineBuffer &&input, PipelineBuffer &&optional)
 {
     // Buffers are always taken from the next-pad-downstream
-    auto pool = next_pad_downstream().element().get_buffer_pool();
+    auto pool = next_pad_downstream().get_buffer_pool();
     assert(pool);
 
     auto buffer = pool->get_available_buffer(std::move(optional), m_timeout);

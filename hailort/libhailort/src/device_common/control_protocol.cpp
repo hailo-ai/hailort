@@ -1,21 +1,7 @@
-/* 
- * =============================================================================
- *
- *                               HAILO
- *
- *  Property of HAILO Tech
- *  For Unrestricted Internal Use Only
- *  Unauthorized reproduction and/or distribution is strictly prohibited.
- *  This product is protected under copyright law and trade secret law
- *  Created 2018, (C) Copyright 2018 Hailo Tech .  All rights reserved.
- *  as an unpublished work.
- */
 /**
-*   Filename:      control_protocol.c
-*
-*   Description:   Implements control protocol packing/unpacking.
-*
-*=============================================================================*/
+ * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Distributed under the MIT license (https://opensource.org/licenses/MIT)
+ **/
 
 #include "common/utils.hpp"
 
@@ -1709,67 +1695,6 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_context_info_req
         BYTE_ORDER__htonl(context_info->context_network_data_length);
     memcpy(&(request->parameters.context_switch_set_context_info_request.context_network_data), 
             &(context_info->context_network_data), context_info->context_network_data_length);
-
-    *request_size = local_request_size;
-    status = HAILO_COMMON_STATUS__SUCCESS;
-exit:
-    return status;
-}
-
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_init_cache_info_request(
-    CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
-    uint32_t cache_size, uint32_t current_read_offset, int32_t write_offset_delta)
-{
-    HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
-    size_t local_request_size = 0;
-
-    if ((NULL == request) || (NULL == request_size)) {
-        status = HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED;
-        goto exit;
-    }
-
-    /* Header */
-    local_request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE + sizeof(CONTROL_PROTOCOL__context_switch_init_cache_info_request_t);
-    control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_INIT_CACHE_INFO, 1);
-
-    /* Body */
-    request->parameters.context_switch_init_cache_info_request.cache_info_length =
-        BYTE_ORDER__htonl(sizeof(request->parameters.context_switch_init_cache_info_request.cache_info));
-    request->parameters.context_switch_init_cache_info_request.cache_info.cache_size = cache_size;
-    request->parameters.context_switch_init_cache_info_request.cache_info.current_read_offset = current_read_offset;
-    request->parameters.context_switch_init_cache_info_request.cache_info.write_offset_delta = write_offset_delta;
-
-    *request_size = local_request_size;
-    status = HAILO_COMMON_STATUS__SUCCESS;
-exit:
-    return status;
-}
-
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_get_cache_info_request(
-    CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence)
-{
-    return control_protocol__pack_empty_request(request, request_size, sequence, HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_GET_CACHE_INFO);
-}
-
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_update_cache_read_offset_request(
-    CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, int32_t read_offset_delta)
-{
-    HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
-    size_t local_request_size = 0;
-
-    if ((NULL == request) || (NULL == request_size)) {
-        status = HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED;
-        goto exit;
-    }
-
-    /* Header */
-    local_request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE + sizeof(CONTROL_PROTOCOL__context_switch_update_cache_read_offset_request_t);
-    control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_CONTEXT_SWITCH_UPDATE_CACHE_READ_OFFSET, 1);
-
-    /* read_offset_delta */
-    request->parameters.context_switch_update_cache_read_offset_request.read_offset_delta_length =
-        BYTE_ORDER__htonl(sizeof(read_offset_delta));
-    request->parameters.context_switch_update_cache_read_offset_request.read_offset_delta = read_offset_delta;
 
     *request_size = local_request_size;
     status = HAILO_COMMON_STATUS__SUCCESS;
