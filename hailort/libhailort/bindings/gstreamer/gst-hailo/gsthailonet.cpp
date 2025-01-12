@@ -1239,6 +1239,8 @@ static GstFlowReturn gst_hailonet_chain(GstPad * /*pad*/, GstObject * parent, Gs
     }
 
     if (self->impl->props.m_pass_through.get() || !self->impl->props.m_is_active.get() || !self->impl->is_configured) {
+        store_buffer_events(self, buffer);
+        gst_hailonet_handle_buffer_events(self, buffer);
         gst_hailonet_push_buffer_to_thread(self, buffer);
         return GST_FLOW_OK;
     }
