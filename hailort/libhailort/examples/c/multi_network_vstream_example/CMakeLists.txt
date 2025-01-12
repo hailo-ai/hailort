@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.5.0)
 find_package(Threads REQUIRED)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 
-find_package(HailoRT 4.20.0 EXACT REQUIRED)
+find_package(HailoRT 4.20.1 EXACT REQUIRED)
 
 SET_SOURCE_FILES_PROPERTIES(multi_network_vstream_example.c PROPERTIES LANGUAGE C)
 
