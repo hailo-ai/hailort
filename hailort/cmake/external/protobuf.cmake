@@ -41,7 +41,7 @@ if(NOT protobuf_POPULATED)
         if(WIN32)
             set(PROTOBUF_CONFIG_DIR ${PROTOBUF_INSTALL_DIR}/cmake)
         else()
-            set(PROTOBUF_CONFIG_DIR ${PROTOBUF_INSTALL_DIR}/lib/cmake/protobuf)
+            set(PROTOBUF_CONFIG_DIR ${PROTOBUF_INSTALL_DIR}/${CMAKE_INSTALL_LIBDIR}/cmake/protobuf)
         endif()
 
         # Include host protobuf for protoc (https://stackoverflow.com/questions/53651181/cmake-find-protobuf-package-in-custom-directory)
@@ -60,8 +60,3 @@ if(NOT protobuf_POPULATED)
         endif()
     endif()
 endif()
-
-
-
-
-
