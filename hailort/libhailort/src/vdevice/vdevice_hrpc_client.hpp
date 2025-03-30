@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -23,13 +23,13 @@ class VDeviceHrpcClient : public VDevice
 {
 public:
     static Expected<std::unique_ptr<VDevice>> create(const hailo_vdevice_params_t &params);
+    static Expected<std::vector<std::string>> get_device_ids(const hailo_vdevice_params_t &params);
 
-    static Expected<std::string> get_device_id(const hailo_vdevice_params_t &params);
-
-    VDeviceHrpcClient(std::shared_ptr<Client> client, uint32_t handle, std::shared_ptr<CallbacksDispatcher> callbacks_dispatcher,
+    VDeviceHrpcClient(const hailo_vdevice_params_t &params, std::shared_ptr<Client> client, uint32_t handle,
+        std::shared_ptr<ClientCallbackDispatcherManager> callback_dispatcher_manager,
         std::unique_ptr<PcieDeviceHrpcClient> &&device, std::string device_id)
-        : m_client(client), m_handle(handle), m_callbacks_dispatcher(callbacks_dispatcher), m_device(std::move(device)),
-        m_device_id(device_id) {}
+        : VDevice(params), m_client(client), m_handle(handle), m_callback_dispatcher_manager(callback_dispatcher_manager),
+            m_device(std::move(device)), m_device_id(device_id) {}
 
     VDeviceHrpcClient(VDeviceHrpcClient &&) = delete;
     VDeviceHrpcClient(const VDeviceHrpcClient &) = delete;
@@ -51,9 +51,12 @@ public:
     virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
 
 private:
+    static Expected<std::tuple<std::shared_ptr<Client>, rpc_object_handle_t>>
+        create_available_vdevice(const std::vector<std::string> &device_ids, const hailo_vdevice_params_t &params);
+
     std::shared_ptr<Client> m_client;
     uint32_t m_handle;
-    std::shared_ptr<CallbacksDispatcher> m_callbacks_dispatcher;
+    std::shared_ptr<ClientCallbackDispatcherManager> m_callback_dispatcher_manager;
     std::unique_ptr<PcieDeviceHrpcClient> m_device;
     std::string m_device_id;
 };

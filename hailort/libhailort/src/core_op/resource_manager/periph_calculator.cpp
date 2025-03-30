@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -139,21 +139,10 @@ Expected<LayerInfo> PeriphCalculator::calculate_periph_registers_impl(const Laye
 }
 
 Expected<LayerInfo> PeriphCalculator::calculate_periph_registers(const LayerInfo &layer_info,
-    const uint32_t desc_page_size, const bool is_periph_calculated_in_hailort, const HEFHwArch &hw_arch,
-    const bool is_core_hw_padding_config_in_dfc)
+    const uint32_t desc_page_size, const HEFHwArch &hw_arch, const bool is_core_hw_padding_config_in_dfc)
 {
     TRY(const auto max_periph_bytes_from_hef, HefConfigurator::max_periph_bytes_value(DeviceBase::hef_arch_to_device_arch(hw_arch)));
     const auto max_periph_bytes = std::min(max_periph_bytes_from_hef, layer_info.max_shmifo_size);
-    // If extension for calculating periph values in hailort is false and core hw padding is not supported - copy values from
-    // Core registers, otherwise calculate them according to shape and other layer information
-    const bool hw_padding_supported = HefConfigurator::is_core_hw_padding_supported(layer_info, max_periph_bytes,
-        is_core_hw_padding_config_in_dfc);
-    if (!is_periph_calculated_in_hailort && !hw_padding_supported) {
-        LayerInfo updated_layer_info = layer_info;
-        updated_layer_info.nn_stream_config.periph_bytes_per_buffer = layer_info.nn_stream_config.core_bytes_per_buffer;
-        updated_layer_info.nn_stream_config.periph_buffers_per_frame = layer_info.nn_stream_config.core_buffers_per_frame;
-        return updated_layer_info;
-    }
 
     if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == layer_info.format.order) {
         return calculate_nms_periph_registers(layer_info);
@@ -163,5 +152,5 @@ Expected<LayerInfo> PeriphCalculator::calculate_periph_registers(const LayerInfo
     return calculate_periph_registers_impl(layer_info, desc_page_size, max_periph_bytes,
         is_core_hw_padding_config_in_dfc, hw_arch);
 }
-    
+
 } /* namespace hailort */

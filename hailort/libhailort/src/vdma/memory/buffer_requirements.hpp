@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -42,20 +42,21 @@ public:
     static Expected<BufferSizesRequirements> get_buffer_requirements_multiple_transfers(
         vdma::VdmaBuffer::Type buffer_type, uint16_t max_desc_page_size,
         uint16_t batch_size, const std::vector<uint32_t> &transfer_sizes, bool is_circular,
-        bool force_default_page_size, bool force_batch_size);
+        bool force_default_page_size, bool force_batch_size, bool is_ddr);
 
     static Expected<BufferSizesRequirements> get_buffer_requirements_single_transfer(
         vdma::VdmaBuffer::Type buffer_type, uint16_t max_desc_page_size,
         uint16_t min_batch_size, uint16_t max_batch_size, uint32_t transfer_size, bool is_circular,
-        bool force_default_page_size, bool force_batch_size, bool is_vdma_aligned_buffer);
+        bool force_default_page_size, bool force_batch_size, bool is_vdma_aligned_buffer, bool is_ddr);
 
 private:
     static uint16_t find_initial_desc_page_size(vdma::VdmaBuffer::Type buffer_type, const std::vector<uint32_t> &transfer_sizes,
         uint16_t max_desc_page_size, bool force_default_page_size, uint16_t min_page_size);
-    static uint32_t get_required_descriptor_count(const std::vector<uint32_t> &transfer_sizes, uint16_t desc_page_size);
+    static uint32_t get_required_descriptor_count(const std::vector<uint32_t> &transfer_sizes, uint16_t desc_page_size,
+        bool is_ddr_layer);
 
-    const uint32_t m_descs_count;
-    const uint16_t m_desc_page_size;
+    uint32_t m_descs_count;
+    uint16_t m_desc_page_size;
 };
 
 } /* namespace vdma */

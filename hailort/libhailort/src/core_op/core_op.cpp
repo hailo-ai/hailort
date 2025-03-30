@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -276,7 +276,7 @@ uint16_t CoreOp::get_smallest_configured_batch_size(const ConfigureNetworkParams
     return (UINT16_MAX == min_batch_size) ? DEFAULT_ACTUAL_BATCH_SIZE : min_batch_size;
 }
 
-const std::string &CoreOp::name() const
+const std::string& CoreOp::name() const
 {
     return m_metadata->core_op_name();
 }
@@ -403,7 +403,7 @@ hailo_status CoreOp::wrap_streams_for_remote_process()
     return HAILO_SUCCESS;
 }
 
-Expected<size_t> CoreOp::get_async_max_queue_size() const
+Expected<size_t> CoreOp::infer_queue_size() const
 {
     size_t queue_size = std::numeric_limits<size_t>::max();
 

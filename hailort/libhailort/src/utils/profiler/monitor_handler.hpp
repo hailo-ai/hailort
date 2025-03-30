@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -44,7 +44,10 @@
 namespace hailort
 {
 
-#define SCHEDULER_MON_TMP_DIR ("/tmp/hmon_files/")
+#define SCHEDULER_MON_TMP_DIR "/tmp/hmon_files/"
+#define NNC_UTILIZATION_TMP_DIR "/tmp/nnc_utilization/"
+#define NNC_UTILIZATION_FILE_NAME "nnc_utilization"
+#define NNC_UTILIZATION_FILE_PATH (NNC_UTILIZATION_TMP_DIR NNC_UTILIZATION_FILE_NAME)
 #define DEFAULT_SCHEDULER_MON_INTERVAL (std::chrono::seconds(1))
 #define SCHEDULER_MON_NAN_VAL (-1)
 
@@ -179,6 +182,8 @@ private:
     hailo_status start_mon(const std::string &unique_vdevice_hash);
 #if defined(__GNUC__)
     Expected<std::shared_ptr<TempFile>> open_temp_mon_file();
+    Expected<std::shared_ptr<TempFile>> open_temp_nnc_utilization_file();
+    void write_utilization_to_file(const double utilization_percentage);
     void dump_state();
 #endif
     void time_dependent_events_cycle_calc();
@@ -198,6 +203,7 @@ private:
     EventPtr m_mon_shutdown_event;
 #if defined(__GNUC__)
     std::shared_ptr<TempFile> m_mon_tmp_output;
+    std::shared_ptr<TempFile> m_nnc_utilization_tmp_output;
 #endif
     std::chrono::time_point<std::chrono::steady_clock> m_last_measured_timestamp;
     double m_last_measured_time_duration;
@@ -205,6 +211,7 @@ private:
     std::unordered_map<scheduler_core_op_handle_t, CoreOpInfo> m_core_ops_info;
     std::unordered_map<device_id_t, DeviceInfo> m_devices_info;
     std::string m_unique_vdevice_hash; // only one vdevice is allowed at a time. vdevice will be unregistered in its destruction.
+    std::chrono::milliseconds m_mon_interval;
 };
 }
 

@@ -1,7 +1,8 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
- *
+ **/
+/**
  * @file hailort_service.cpp
  * @brief main for hailort service 
  * The service code is based on Microsoft's documenataion: https://learn.microsoft.com/en-us/windows/win32/services/the-complete-service-sample
@@ -24,7 +25,7 @@
  *
  *       5) Delete service:
  *           `sc delete hailort_service`
-*/
+ */
 
 #include "hailort_rpc_service.hpp"
 #include "rpc/rpc_definitions.hpp"

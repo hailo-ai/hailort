@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -44,43 +44,31 @@ private:
     void extract_bbox_classes(const hailo_bbox_float32_t &dims_bbox, SrcType *cls_data, const BufferMetaData &cls_metadata, uint32_t cls_index)
     {
         const auto &nms_config = m_metadata->nms_config();
-        if (nms_config.cross_classes) {
-            // Pre-NMS optimization. If NMS checks IoU over different classes, only the maximum class is relevant
-            auto max_id_score_pair = get_max_class<DstType, SrcType>(cls_data, cls_index, 0, 1,
-                cls_metadata.quant_info, cls_metadata.padded_shape.width);
-            auto bbox = dims_bbox;
-            bbox.score = max_id_score_pair.second;
-            if (max_id_score_pair.second >= nms_config.nms_score_th) {
-                m_detections.emplace_back(DetectionBbox(bbox, max_id_score_pair.first));
-                m_classes_detections_count[max_id_score_pair.first]++;
-            }
-        } else {
-            for (uint32_t class_index = 0; class_index < nms_config.number_of_classes; class_index++) {
-                auto class_id = class_index;
-                if (nms_config.background_removal) {
-                    if (nms_config.background_removal_index == class_index) {
-                        // Ignore if class_index is background_removal_index
-                        continue;
-                    }
-                    else if (0 == nms_config.background_removal_index) {
-                        // background_removal_index will always be the first or last index.
-                        // If it is the first one we need to reduce all classes id's in 1.
-                        // If it is the last one we just ignore it in the previous if case.
-                        class_id--;
-                    }
-                }
-
-                auto class_entry_idx = cls_index + (class_index * cls_metadata.padded_shape.width);
-                auto class_score = Quantization::dequantize_output<DstType, SrcType>(cls_data[class_entry_idx],
-                    cls_metadata.quant_info);
-                if (class_score < nms_config.nms_score_th) {
+        for (uint32_t class_index = 0; class_index < nms_config.number_of_classes; class_index++) {
+            auto class_id = class_index;
+            if (nms_config.background_removal) {
+                if (nms_config.background_removal_index == class_index) {
+                    // Ignore if class_index is background_removal_index
                     continue;
                 }
-                auto bbox = dims_bbox;
-                bbox.score = class_score;
-                m_detections.emplace_back(bbox, class_id);
-                m_classes_detections_count[class_id]++;
+                else if (0 == nms_config.background_removal_index) {
+                    // background_removal_index will always be the first or last index.
+                    // If it is the first one we need to reduce all classes id's in 1.
+                    // If it is the last one we just ignore it in the previous if case.
+                    class_id--;
+                }
             }
+
+            auto class_entry_idx = cls_index + (class_index * cls_metadata.padded_shape.width);
+            auto class_score = Quantization::dequantize_output<DstType, SrcType>(cls_data[class_entry_idx],
+                cls_metadata.quant_info);
+            if (class_score < nms_config.nms_score_th) {
+                continue;
+            }
+            auto bbox = dims_bbox;
+            bbox.score = class_score;
+            m_detections.emplace_back(bbox, class_id);
+            m_classes_detections_count[class_id]++;
         }
     }
 

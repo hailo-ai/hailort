@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -39,9 +39,7 @@ Expected<std::shared_ptr<ScheduledCoreOp>> ScheduledCoreOp::create(std::shared_p
     CHECK_EXPECTED(batch_size_expected);
     const auto max_batch_size = batch_size_expected.release();
 
-    auto max_queue_size_per_device_expected = added_core_op->get_async_max_queue_size_per_device();
-    CHECK_EXPECTED(max_queue_size_per_device_expected);
-    const auto max_queue_size_per_device = max_queue_size_per_device_expected.release();
+    TRY(auto max_queue_size_per_device, added_core_op->get_infer_queue_size_per_device());
 
     // DEFAULT_BATCH_SIZE and SINGLE_CONTEXT_BATCH_SIZE support streaming and therfore we are not using dynamic batch flow
     auto use_dynamic_batch_flow = added_core_op->get_supported_features().multi_context && (max_batch_size > SINGLE_CONTEXT_BATCH_SIZE);
@@ -97,6 +95,9 @@ bool ScheduledCoreOp::is_over_threshold() const
 
 bool ScheduledCoreOp::is_over_threshold_timeout() const
 {
+    if (HAILO_INFINITE_TIMEOUT == m_timeout) {
+        return false;
+    }
     return m_timeout <= (std::chrono::steady_clock::now() - m_last_run_time_stamp);
 }
 

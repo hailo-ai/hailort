@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -10,6 +10,8 @@
 
 #include "common/device_measurements.hpp"
 #include "common/utils.hpp"
+
+#include <algorithm>
 
 using namespace hailort;
 
@@ -82,10 +84,10 @@ hailo_status TemperatureMeasurement::start_measurement()
                 break;
             }
 
-            float32_t ts_avg = ((temp_info->ts0_temperature + temp_info->ts1_temperature) / 2);
+            float32_t ts_max = std::max(temp_info->ts0_temperature, temp_info->ts1_temperature);
             {
                 std::unique_lock<std::mutex> lock(m_mutex);
-                m_acc->add_data_point(ts_avg, temp_info->sample_count);
+                m_acc->add_data_point(ts_max, temp_info->sample_count);
             }
             
             std::this_thread::sleep_for(DEFAULT_MEASUREMENTS_INTERVAL); 

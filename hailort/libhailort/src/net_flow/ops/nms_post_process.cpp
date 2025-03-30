@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -39,7 +39,7 @@ std::string NmsOpMetadata::get_op_description()
 hailo_status NmsOpMetadata::validate_format_info()
 {
     for (const auto& output_metadata : m_outputs_metadata) {
-        CHECK(((HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS == output_metadata.second.format.order) || (HAILO_FORMAT_ORDER_HAILO_NMS == output_metadata.second.format.order)
+        CHECK(((HailoRTCommon::is_nms_by_class(output_metadata.second.format.order))
             || (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE == output_metadata.second.format.order)),
             HAILO_INVALID_ARGUMENT, "The given output format order {} is not supported, "
             "should be HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS or HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE",
@@ -50,10 +50,6 @@ hailo_status NmsOpMetadata::validate_format_info()
 
         CHECK(!(HAILO_FORMAT_FLAGS_TRANSPOSED & output_metadata.second.format.flags), HAILO_INVALID_ARGUMENT, "Output {} is marked as transposed, which is not supported for this model.",
             output_metadata.first);
-
-        if (HAILO_FORMAT_ORDER_HAILO_NMS == output_metadata.second.format.order) {
-            LOGGER__WARNING("Using a deprecated format order HAILO_FORMAT_ORDER_HAILO_NMS. Use HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS instead");
-        }
     }
     if (m_type == OperationType::IOU) {
         assert(1 == m_inputs_metadata.size());
@@ -85,12 +81,13 @@ hailo_status NmsOpMetadata::validate_params()
 
 std::string NmsOpMetadata::get_nms_config_description()
 {
-    auto config_info = fmt::format("Score threshold: {:.3f}, IoU threshold: {:.2f}, Classes: {}, Cross classes: {}, NMS results order: {}",
-                        m_nms_config.nms_score_th, m_nms_config.nms_iou_th, m_nms_config.number_of_classes, m_nms_config.cross_classes,
-                        HailoRTCommon::get_nms_result_order_type_str(m_nms_config.order_type));
-    if (m_nms_config.order_type != HAILO_NMS_RESULT_ORDER_BY_SCORE) {
+    auto config_info = fmt::format("Score threshold: {:.3f}, IoU threshold: {:.2f}, Classes: {}",
+                        m_nms_config.nms_score_th, m_nms_config.nms_iou_th, m_nms_config.number_of_classes);
+    if ((HailoRTCommon::is_nms_by_class(m_outputs_metadata.begin()->second.format.order)) ||
+        (HAILO_FORMAT_ORDER_NHWC == m_outputs_metadata.begin()->second.format.order)){
         config_info += fmt::format(", Max bboxes per class: {}", m_nms_config.max_proposals_per_class);
-    } else {
+    }
+    if (HailoRTCommon::is_nms_by_score(m_outputs_metadata.begin()->second.format.order)){
         config_info += fmt::format(", Max bboxes total: {}", m_nms_config.max_proposals_total);
     }
     if (m_nms_config.background_removal) {
@@ -197,11 +194,13 @@ void NmsPostProcessOp::fill_nms_by_class_format_buffer(MemoryView &buffer, const
 }
 
 void NmsPostProcessOp::fill_nms_by_score_format_buffer(MemoryView &buffer, std::vector<DetectionBbox> &detections,
-    const NmsPostProcessConfig &nms_config)
+    const NmsPostProcessConfig &nms_config, const bool should_sort)
 {
-    std::sort(detections.begin(), detections.end(),
+    if (should_sort) {
+        std::sort(detections.begin(), detections.end(),
             [](DetectionBbox a, DetectionBbox b)
             { return a.m_bbox.score > b.m_bbox.score; });
+    }
 
     uint16_t total_detections_count = 0;
     for (auto detection_bbox : detections) {
@@ -211,7 +210,7 @@ void NmsPostProcessOp::fill_nms_by_score_format_buffer(MemoryView &buffer, std::
         }
 
         if (total_detections_count > nms_config.max_proposals_total) {
-            LOGGER__INFO("{} Detections were ignored, due to `max_bboxes_total` defined as {}.",
+            LOGGER__INFO("{} detections were ignored, due to `max_bboxes_total` defined as {}.",
                 detections.size() - nms_config.max_proposals_total, nms_config.max_proposals_total);
             break;
         }
@@ -228,7 +227,6 @@ void NmsPostProcessOp::fill_nms_by_score_format_buffer(MemoryView &buffer, std::
         detection.y_max = detection_bbox.m_bbox.y_max;
 
         *(hailo_detection_t*)(buffer.data() + buffer_offset) = detection;
-
         total_detections_count++;
     }
     *(uint16_t*)(buffer.data()) = total_detections_count;
@@ -237,15 +235,14 @@ void NmsPostProcessOp::fill_nms_by_score_format_buffer(MemoryView &buffer, std::
 hailo_status NmsPostProcessOp::hailo_nms_format(MemoryView dst_view)
 {
     remove_overlapping_boxes(m_detections, m_classes_detections_count, m_nms_metadata->nms_config().nms_iou_th);
-    switch (m_nms_metadata->nms_config().order_type) {
-    case HAILO_NMS_RESULT_ORDER_BY_CLASS:
+    if ((HailoRTCommon::is_nms_by_class(m_nms_metadata->outputs_metadata().begin()->second.format.order)) ||
+        (HAILO_FORMAT_ORDER_NHWC == m_nms_metadata->outputs_metadata().begin()->second.format.order)) {
         fill_nms_by_class_format_buffer(dst_view, m_detections, m_classes_detections_count, m_nms_metadata->nms_config());
-        break;
-    case HAILO_NMS_RESULT_ORDER_BY_SCORE:
+    } else if (HailoRTCommon::is_nms_by_score(m_nms_metadata->outputs_metadata().begin()->second.format.order)) {
         fill_nms_by_score_format_buffer(dst_view, m_detections, m_nms_metadata->nms_config());
-        break;
-    default:
-        LOGGER__ERROR("NMS result order type not supported: {}", HailoRTCommon::get_nms_result_order_type_str(m_nms_metadata->nms_config().order_type));
+    } else {
+        LOGGER__ERROR("Unsupported output format order for NmsPostProcessOp: {}",
+            HailoRTCommon::get_format_order_str(m_nms_metadata->outputs_metadata().begin()->second.format.order));
         return HAILO_INVALID_ARGUMENT;
     }
     return HAILO_SUCCESS;
@@ -283,19 +280,8 @@ Expected<hailo_vstream_info_t> NmsOpMetadata::get_output_vstream_info()
     vstream_info.format.order = m_outputs_metadata.begin()->second.format.order;
     vstream_info.format.type = m_outputs_metadata.begin()->second.format.type;
     vstream_info.format.flags = HAILO_FORMAT_FLAGS_NONE;
-
-    if (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE == vstream_info.format.order) {
-        nms_config().order_type = HAILO_NMS_RESULT_ORDER_BY_SCORE;
-    } else {
-        nms_config().order_type = HAILO_NMS_RESULT_ORDER_BY_CLASS;
-    }
-
-    vstream_info.nms_shape.order_type = nms_config().order_type;
-    if (HAILO_NMS_RESULT_ORDER_BY_SCORE == nms_config().order_type) {
-        vstream_info.nms_shape.max_bboxes_total = nms_config().max_proposals_total;
-    } else {
-        vstream_info.nms_shape.max_bboxes_per_class = nms_config().max_proposals_per_class;
-    }
+    vstream_info.nms_shape.max_bboxes_total = nms_config().max_proposals_total;
+    vstream_info.nms_shape.max_bboxes_per_class = nms_config().max_proposals_per_class;
     vstream_info.nms_shape.number_of_classes = nms_config().number_of_classes;
     if (nms_config().background_removal) {
         vstream_info.nms_shape.number_of_classes--;
@@ -309,17 +295,16 @@ Expected<hailo_vstream_info_t> NmsOpMetadata::get_output_vstream_info()
 
 hailo_nms_info_t NmsOpMetadata::nms_info()
 {
-    uint32_t max_proposals = (HAILO_NMS_RESULT_ORDER_BY_SCORE == m_nms_config.order_type) ? nms_config().max_proposals_total : nms_config().max_proposals_per_class;
     hailo_nms_info_t nms_info = {
         nms_config().number_of_classes,
-        {max_proposals},
+        nms_config().max_proposals_per_class,
+        nms_config().max_proposals_total,
         sizeof(hailo_bbox_float32_t),
         1, // input_division_factor
         false,
         hailo_nms_defuse_info_t(),
         DEFAULT_NMS_NO_BURST_SIZE,
-        HAILO_BURST_TYPE_H8_BBOX,
-        m_nms_config.order_type
+        HAILO_BURST_TYPE_H8_BBOX
     };
     if (nms_config().background_removal) {
         nms_info.number_of_classes--;

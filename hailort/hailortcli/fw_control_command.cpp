@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -13,6 +13,7 @@
 
 
 static const char *NOT_CONFIGURED_ATTR = "<N/A>";
+static const uint8_t INVALID_LCS = 0;
 #define MHz (1000 * 1000)
 
 
@@ -54,13 +55,13 @@ static std::string extended_device_information_supported_features(hailo_device_s
     return supported_features_str;
 }
 
-static void extended_device_information_print_array(uint8_t *array_for_print, size_t array_length, std::string splitter)
+static void extended_device_information_print_array(const uint8_t *array_for_print, size_t array_length, std::string splitter)
 {
     const bool UPPERCASE = true;
     std::cout << StringUtils::to_hex_string(array_for_print, array_length, UPPERCASE, splitter) << std::endl;
 }
 
-static bool extended_device_information_is_array_not_empty(uint8_t *array_for_print, size_t array_length)
+static bool extended_device_information_is_array_not_empty(const uint8_t *array_for_print, size_t array_length)
 {
     uint32_t i = 0;
     for(i = 0; i < array_length; i++) {
@@ -71,11 +72,16 @@ static bool extended_device_information_is_array_not_empty(uint8_t *array_for_pr
     return false;
 }
 
-static hailo_status print_extended_device_information(Device &device)
+static std::string lcs_string(uint8_t lcs)
 {
-    TRY(auto device_info, device.get_extended_device_information());
+    if (INVALID_LCS == lcs) {
+        return NOT_CONFIGURED_ATTR;
+    }
+    return std::to_string(lcs);
+}
 
-    // Print Board Extended information
+static void print_extended_device_information(const hailo_extended_device_information_t &device_info)
+{
     std::cout << "Boot source: " << extended_device_information_boot_string(device_info.boot_source) << std::endl;
     std::cout << "Neural Network Core Clock Rate: " << (device_info.neural_network_core_clock_rate/MHz) <<"MHz" <<std::endl;
 
@@ -83,7 +89,7 @@ static hailo_status print_extended_device_information(Device &device)
     if(supported_features_str.length() > 0) {
         std::cout << "Device supported features: " << supported_features_str << std::endl;
     }
-    std::cout << "LCS: " << static_cast<int>(device_info.lcs) << std::endl;
+    std::cout << "LCS: " << lcs_string(device_info.lcs) << std::endl;
 
     if(extended_device_information_is_array_not_empty(device_info.soc_id, sizeof(device_info.soc_id))){
         std::cout << "SoC ID: ";
@@ -105,7 +111,9 @@ static hailo_status print_extended_device_information(Device &device)
         extended_device_information_print_array(device_info.soc_pm_values, sizeof(device_info.soc_pm_values), "");
     }
 
-    return HAILO_SUCCESS;
+    if (device_info.gpio_mask != 0) {
+        std::cout << "GPIO Mask: " << std::setfill('0') << std::setw(4) << std::hex << device_info.gpio_mask << std::dec << std::endl;
+    }
 }
 
 static std::string fw_version_string(const hailo_device_identity_t &identity)
@@ -184,7 +192,8 @@ hailo_status FwControlIdentifyCommand::execute_on_device(Device &device)
         identity_attr_string(identity.product_name, identity.product_name_length) << std::endl;
 
     if (m_is_extended) {
-        print_extended_device_information(device);
+        TRY(auto device_info, device.get_extended_device_information());
+        print_extended_device_information(device_info);
     }
 
     std::cout << std::endl;

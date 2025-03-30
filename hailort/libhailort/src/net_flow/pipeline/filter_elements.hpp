@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -167,14 +167,14 @@ class FillNmsFormatElement : public FilterElement
 public:
     static Expected<std::shared_ptr<FillNmsFormatElement>> create(const net_flow::NmsPostProcessConfig nms_config, const std::string &name,
         hailo_pipeline_elem_stats_flags_t elem_flags, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
-        std::chrono::milliseconds timeout, PipelineDirection pipeline_direction = PipelineDirection::PULL,
+        std::chrono::milliseconds timeout, const hailo_format_order_t format_order, PipelineDirection pipeline_direction = PipelineDirection::PULL,
         std::shared_ptr<AsyncPipeline> async_pipeline = nullptr);
     static Expected<std::shared_ptr<FillNmsFormatElement>> create(const net_flow::NmsPostProcessConfig nms_config, const std::string &name,
-        const ElementBuildParams &build_params, PipelineDirection pipeline_direction = PipelineDirection::PULL,
+        const ElementBuildParams &build_params, const hailo_format_order_t format_order, PipelineDirection pipeline_direction = PipelineDirection::PULL,
         std::shared_ptr<AsyncPipeline> async_pipeline = nullptr);
     FillNmsFormatElement(const net_flow::NmsPostProcessConfig &&nms_config, const std::string &name, DurationCollector &&duration_collector,
         std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, std::chrono::milliseconds timeout,
-        PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline);
+        PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline, const hailo_format_order_t format_order);
     virtual ~FillNmsFormatElement() = default;
     virtual hailo_status run_push(PipelineBuffer &&buffer, const PipelinePad &sink) override;
     virtual PipelinePad &next_pad() override;
@@ -188,7 +188,6 @@ public:
     virtual hailo_status set_nms_max_proposals_total(uint32_t max_proposals_total) override
     {
         m_nms_config.max_proposals_total = max_proposals_total;
-        m_nms_config.order_type = HAILO_NMS_RESULT_ORDER_BY_SCORE;
         return HAILO_SUCCESS;
     }
 
@@ -197,6 +196,7 @@ protected:
 
 private:
     net_flow::NmsPostProcessConfig m_nms_config;
+    hailo_format_order_t m_format_order;
 };
 
 class ArgmaxPostProcessElement : public FilterElement

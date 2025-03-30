@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -97,7 +97,6 @@ public:
         auto nms_metadata = std::dynamic_pointer_cast<net_flow::NmsOpMetadata>(get_op()->metadata());
         assert(nullptr != nms_metadata);
         nms_metadata->nms_config().max_proposals_per_class = max_proposals_per_class;
-        nms_metadata->nms_config().order_type = HAILO_NMS_RESULT_ORDER_BY_CLASS;
 
         return HAILO_SUCCESS;
     }
@@ -107,7 +106,6 @@ public:
         auto nms_metadata = std::dynamic_pointer_cast<net_flow::NmsOpMetadata>(get_op()->metadata());
         assert(nullptr != nms_metadata);
         nms_metadata->nms_config().max_proposals_total = max_proposals_total;
-        nms_metadata->nms_config().order_type = HAILO_NMS_RESULT_ORDER_BY_SCORE;
 
         return HAILO_SUCCESS;
     }

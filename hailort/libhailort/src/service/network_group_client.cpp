@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -36,7 +36,7 @@ Expected<std::shared_ptr<ConfiguredNetworkGroupClient>> ConfiguredNetworkGroupCl
 {
     TRY(auto ng_name, client->ConfiguredNetworkGroup_name(identifier));
     TRY(auto streams_infos, client->ConfiguredNetworkGroup_get_all_stream_infos(identifier, ng_name));
-    TRY(auto min_buffer_pool_size, client->ConfiguredNetworkGroup_get_min_buffer_pool_size(identifier));
+    TRY(auto min_buffer_pool_size, client->ConfiguredNetworkGroup_infer_queue_size(identifier));
 
     std::unordered_set<stream_name_t> input_streams_names;
     std::unordered_set<stream_name_t> output_streams_names;
@@ -170,12 +170,12 @@ Expected<LatencyMeasurementResult> ConfiguredNetworkGroupClient::get_latency_mea
     return m_client->ConfiguredNetworkGroup_get_latency_measurement(m_identifier, network_name);
 }
 
-const std::string &ConfiguredNetworkGroupClient::get_network_group_name() const
+const std::string& ConfiguredNetworkGroupClient::get_network_group_name() const
 {
     return m_network_group_name;
 }
 
-const std::string &ConfiguredNetworkGroupClient::name() const
+const std::string& ConfiguredNetworkGroupClient::name() const
 {
     return m_network_group_name;
 }
@@ -438,9 +438,9 @@ Expected<std::vector<OutputVStream>> ConfiguredNetworkGroupClient::create_output
     return vstreams;
 }
 
-Expected<size_t> ConfiguredNetworkGroupClient::get_min_buffer_pool_size()
+Expected<size_t> ConfiguredNetworkGroupClient::infer_queue_size() const
 {
-    return m_client->ConfiguredNetworkGroup_get_min_buffer_pool_size(m_identifier);
+    return m_client->ConfiguredNetworkGroup_infer_queue_size(m_identifier);
 }
 
 Expected<std::unique_ptr<LayerInfo>> ConfiguredNetworkGroupClient::get_layer_info(const std::string &stream_name)
@@ -473,18 +473,13 @@ hailo_status ConfiguredNetworkGroupClient::set_nms_max_bboxes_total(const std::s
     return m_client->ConfiguredNetworkGroup_set_nms_max_bboxes_total(m_identifier, edge_name, max_bboxes_total);
 }
 
-hailo_status ConfiguredNetworkGroupClient::set_nms_result_order_type(const std::string &edge_name, hailo_nms_result_order_type_t order_type)
-{
-    return m_client->ConfiguredNetworkGroup_set_nms_result_order_type(m_identifier, edge_name, order_type);
-}
-
 hailo_status ConfiguredNetworkGroupClient::set_nms_max_accumulated_mask_size(const std::string &edge_name, uint32_t max_accumulated_mask_size)
 {
     return m_client->ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size(m_identifier, edge_name, max_accumulated_mask_size);
 }
 
 // TODO: support kv-cache over service (HRT-13968)
-hailo_status ConfiguredNetworkGroupClient::init_cache(uint32_t /* read_offset */, int32_t /* write_offset_delta */)
+hailo_status ConfiguredNetworkGroupClient::init_cache(uint32_t /* read_offset */)
 {
     return HAILO_NOT_IMPLEMENTED;
 }

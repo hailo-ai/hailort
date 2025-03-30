@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -238,6 +238,15 @@ public:
     Expected<Bindings> create_bindings();
 
     /**
+     * Creates a Bindings object.
+     *
+     * @param[in] buffers           map of input and output names and buffers.
+     *
+     * @return Upon success, returns Expected of Bindings. Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    Expected<Bindings> create_bindings(const std::map<std::string, MemoryView> &buffers);
+
+    /**
      * The readiness of the model to launch is determined by the ability to push buffers to the asynchronous inference pipeline.
      * If the model is ready, the method will return immediately.
      * If the model is not ready, the method will wait for the model to be ready.
@@ -362,13 +371,16 @@ public:
      * @return Upon success, returns Expected of a the number of inferences that can be queued simultaneously for execution.
      *  Otherwise, returns Unexpected of ::hailo_status error.
      */
-    Expected<size_t> get_async_queue_size();
+    Expected<size_t> get_async_queue_size() const;
 
     /**
      * Shuts the inference down. After calling this method, the model is no longer usable.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error
      */
     hailo_status shutdown();
+
+
+    hailo_status update_cache_offset(int32_t offset_delta_entries);
 
 private:
     friend class InferModelBase;
@@ -538,8 +550,9 @@ public:
      * This parameter determines the number of frames that be sent for inference in a single batch.
      * If a scheduler is enabled, this parameter determines the 'burst size' - the max number of frames after which the scheduler will attempt
      *  to switch to another model.
+     * If scheduler is disabled, the number of frames for inference should be a multiplication of batch_size (unless model is in single context).
      *
-     * note: Default value is HAILO_DEFAULT_BATCH_SIZE - means automatic batch determined by hailort.
+     * @note The default value is @a HAILO_DEFAULT_BATCH_SIZE - which means the batch is determined by HailoRT automatically.
      *
      * @param[in] batch_size      The new batch size to be set.
      */
@@ -566,7 +579,6 @@ public:
      *
      * @return Upon success, returns Expected of ConfiguredInferModel, which can be used to perform an asynchronous inference.
      *  Otherwise, returns Unexpected of ::hailo_status error.
-     * @note InferModel can be configured once.
      */
     virtual Expected<ConfiguredInferModel> configure() = 0;
 

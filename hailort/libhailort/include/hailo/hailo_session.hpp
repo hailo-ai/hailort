@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -11,6 +11,7 @@
 #define _HAILO_RAW_CONNECTION_HPP_
 
 #include "hailo/expected.hpp"
+#include "hailo/buffer.hpp"
 
 #include <memory>
 #include <chrono>
@@ -22,6 +23,7 @@ namespace hailort
 
 class ConnectionContext;
 class Session;
+struct TransferRequest;
 
 /**
  * The Listener class is used to accept new connections.
@@ -36,7 +38,7 @@ public:
      * Creates a new SessionListener.
      * This function should be used from the server.
      * The returned SessionListener object should be used to accept new clients.
-     * 
+     *
      * @param[in] port       The port to listen on.
      * @param[in] device_id  The device id to listen on.
      * @return Upon success, returns Expected of a shared pointer of listener, representing the listener object.
@@ -46,8 +48,8 @@ public:
     /**
      * This function should be called by the server side (device) in order to accept a new connection.
      * This call is blocking and will wait until a new client connection is established.
-     * 
-     * @return Upon success, returns Expected of a shared pointer of a Session, representing the connection with 
+     *
+     * @return Upon success, returns Expected of a shared pointer of a Session, representing the connection with
      * the new client.
      */
     virtual hailort::Expected<std::shared_ptr<Session>> accept() = 0;
@@ -76,11 +78,11 @@ public:
     /**
      * Creates a new Session and connects to the server.
      * This function should be used from the client side.
-     * 
+     *
      * @param[in] port  The port to connect to.
      * @param[in] device_id  The device id to connect to.
      * @return Upon success, returns Expected of a shared pointer of session, representing the session object.
-    */
+     */
     static Expected<std::shared_ptr<Session>> connect(uint16_t port, const std::string &device_id = "");
 
     /**
@@ -96,7 +98,7 @@ public:
      */
     virtual hailo_status write(const uint8_t *buffer, size_t size,
         std::chrono::milliseconds timeout = DEFAULT_WRITE_TIMEOUT) = 0;
-    
+
     /**
      * Reads the entire buffer over the connection, synchronously.
      *
@@ -110,12 +112,12 @@ public:
      */
     virtual hailo_status read(uint8_t *buffer, size_t size,
         std::chrono::milliseconds timeout = DEFAULT_READ_TIMEOUT) = 0;
-    
+
     /**
      * Closes the connection.
-     * 
+     *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
-    */
+     */
     virtual hailo_status close() = 0;
 
     /**
@@ -149,7 +151,10 @@ public:
      *       by 8 bytes, they should be read in the same order: 10 bytes first, then 8 bytes.
      */
     virtual hailo_status write_async(const uint8_t *buffer, size_t size,
-        std::function<void(hailo_status)> &&callback) = 0;
+        std::function<void(hailo_status)> &&callback);
+
+    // Internal
+    virtual hailo_status write_async(TransferRequest &&request) = 0;
 
     /**
      * Waits until the session is ready to launch a new call to `Session::read_async()`. Each session has a
@@ -182,7 +187,12 @@ public:
      *       by 8 bytes, they should be read in the same order: 10 bytes first, then 8 bytes.
      */
     virtual hailo_status read_async(uint8_t *buffer, size_t size,
-        std::function<void(hailo_status)> &&callback) = 0;
+        std::function<void(hailo_status)> &&callback);
+
+    // Internal
+    virtual hailo_status read_async(TransferRequest &&request) = 0;
+
+    virtual Expected<Buffer> allocate_buffer(size_t size, hailo_dma_buffer_direction_t direction) = 0;
 
     static constexpr std::chrono::milliseconds DEFAULT_WRITE_TIMEOUT = std::chrono::milliseconds(10000);
     static constexpr std::chrono::milliseconds DEFAULT_READ_TIMEOUT = std::chrono::milliseconds(HAILO_INFINITE);

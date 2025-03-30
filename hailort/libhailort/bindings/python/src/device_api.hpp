@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -42,16 +42,29 @@ public:
 };
 
 
+class DeviceWrapper;
+using DeviceWrapperPtr = std::shared_ptr<DeviceWrapper>;
+
 class DeviceWrapper final
 {
 public:
 
     static std::vector<std::string> scan();
-    static DeviceWrapper create(const std::string &device_id);
-    static DeviceWrapper create_pcie(hailo_pcie_device_info_t &device_info);
-    static DeviceWrapper create_eth(const std::string &device_address, uint16_t port,
+    static DeviceWrapperPtr create(const std::string &device_id);
+    static DeviceWrapperPtr create_pcie(hailo_pcie_device_info_t &device_info);
+    static DeviceWrapperPtr create_eth(const std::string &device_address, uint16_t port,
         uint32_t timeout_milliseconds, uint8_t max_number_of_attempts);
     void release();
+
+    DeviceWrapper(std::unique_ptr<Device> &&device) : m_device(std::move(device))
+#ifdef HAILO_IS_FORK_SUPPORTED
+    , m_atfork_guard(this, {
+        .before_fork = [this]() { if (m_device) m_device->before_fork(); },
+        .after_fork_in_parent = [this]() { if (m_device) m_device->after_fork_in_parent(); },
+        .after_fork_in_child = [this]() { if (m_device) m_device->after_fork_in_child(); },
+    })
+#endif
+    {}
 
     Device& device()
     {
@@ -135,10 +148,10 @@ public:
     static void bind(py::module &m);
 
 private:
-    DeviceWrapper(std::unique_ptr<Device> &&device)
-        : m_device(std::move(device)) {}
-
     std::unique_ptr<Device> m_device;
+#ifdef HAILO_IS_FORK_SUPPORTED
+    AtForkRegistry::AtForkGuard m_atfork_guard;
+#endif
 };
 
 } /* namespace hailort */

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -99,7 +99,7 @@ public:
     /**
      * @return The network group name.
      */
-    virtual const std::string &get_network_group_name() const = 0;
+    virtual const std::string& get_network_group_name() const = 0;
 
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &key) = 0;
 
@@ -125,13 +125,13 @@ public:
     /**
      * @return The network group name.
      */
-    virtual const std::string &get_network_group_name() const
+    virtual const std::string& get_network_group_name() const
         DEPRECATED("'get_network_group_name' is deprecated. One should use 'name()'.") = 0;
 
     /**
      * @return The network group name.
      */
-    virtual const std::string &name() const = 0;
+    virtual const std::string& name() const = 0;
 
     /**
      * Gets the stream's default interface.
@@ -424,7 +424,7 @@ public:
 
     virtual Expected<std::vector<InputVStream>> create_input_vstreams(const std::map<std::string, hailo_vstream_params_t> &inputs_params) = 0;
     virtual Expected<std::vector<OutputVStream>> create_output_vstreams(const std::map<std::string, hailo_vstream_params_t> &outputs_params) = 0;
-    virtual Expected<size_t> get_min_buffer_pool_size() = 0;
+    virtual Expected<size_t> infer_queue_size() const = 0;
 
     virtual Expected<HwInferResults> run_hw_infer_estimator() = 0;
 
@@ -453,10 +453,9 @@ public:
     virtual hailo_status set_nms_iou_threshold(const std::string &edge_name, float32_t iou_threshold) = 0;
     virtual hailo_status set_nms_max_bboxes_per_class(const std::string &edge_name, uint32_t max_bboxes_per_class) = 0;
     virtual hailo_status set_nms_max_bboxes_total(const std::string &edge_name, uint32_t max_bboxes_total) = 0;
-    virtual hailo_status set_nms_result_order_type(const std::string &edge_name, hailo_nms_result_order_type_t order_type) = 0;
     virtual hailo_status set_nms_max_accumulated_mask_size(const std::string &edge_name, uint32_t max_accumulated_mask_size) = 0;
 
-    virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) = 0;
+    virtual hailo_status init_cache(uint32_t read_offset) = 0;
     virtual hailo_status update_cache_offset(int32_t offset_delta_entries) = 0;
 
     virtual Expected<std::vector<uint32_t>> get_cache_ids() const = 0;

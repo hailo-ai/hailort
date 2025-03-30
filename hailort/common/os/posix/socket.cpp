@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -126,7 +126,15 @@ Expected<Socket> Socket::accept()
 hailo_status Socket::connect(const sockaddr *addr, socklen_t len)
 {
     int ret = ::connect(m_socket_fd, addr, len);
-    CHECK(0 == ret, HAILO_ETH_FAILURE, "Failed to connect to socket {}", errno);
+    if (0 != ret) {
+        switch (errno) {
+        case ECONNREFUSED:
+            return HAILO_CONNECTION_REFUSED;
+        default:
+            LOGGER__ERROR("Failed to connect to socket {}", errno);
+            return HAILO_ETH_FAILURE;
+        }
+    }
     return HAILO_SUCCESS;
 }
 

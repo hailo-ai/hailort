@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -184,6 +184,9 @@ hailo_status AsyncInputStreamBase::activate_stream()
 {
     std::unique_lock<std::mutex> lock(m_stream_mutex);
 
+    // Clear old abort state
+    m_is_aborted = false;
+
     auto status = activate_stream_impl();
     CHECK_SUCCESS(status);
 
@@ -230,6 +233,13 @@ hailo_status AsyncInputStreamBase::call_write_async_impl(TransferRequest &&trans
         {
             std::lock_guard<std::mutex> lock(m_stream_mutex);
             m_ongoing_transfers--;
+
+            if (HAILO_SUCCESS != callback_status) {
+                if (m_is_stream_activated) {
+                    // Need to abort only if we are active!
+                    m_is_aborted = true;
+                }
+            }
         }
 
         m_has_ready_buffer.notify_all();
@@ -329,6 +339,13 @@ hailo_status AsyncOutputStreamBase::call_read_async_impl(TransferRequest &&trans
         {
             std::lock_guard<std::mutex> lock(m_stream_mutex);
             m_ongoing_transfers--;
+
+            if (HAILO_SUCCESS != callback_status) {
+                if (m_is_stream_activated) {
+                    // Need to abort only if we are active!
+                    m_is_aborted = true;
+                }
+            }
         }
 
         m_has_ready_buffer.notify_all();
@@ -348,6 +365,9 @@ hailo_status AsyncOutputStreamBase::call_read_async_impl(TransferRequest &&trans
 hailo_status AsyncOutputStreamBase::activate_stream()
 {
     std::unique_lock<std::mutex> lock(m_stream_mutex);
+
+    // Clear old abort state
+    m_is_aborted = false;
 
     auto status = activate_stream_impl();
     CHECK_SUCCESS(status);

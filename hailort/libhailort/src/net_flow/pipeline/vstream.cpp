@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -1185,7 +1185,6 @@ hailo_status OutputVStreamImpl::set_nms_max_proposals_per_class(uint32_t max_pro
 
             // Update vstream info and frame size
             m_vstream_info.nms_shape.max_bboxes_per_class = max_proposals_per_class;
-            m_vstream_info.nms_shape.order_type = HAILO_NMS_RESULT_ORDER_BY_CLASS;
             auto set_buffer_size_status = user_buffer_queue_element->set_buffer_pool_buffer_size(HailoRTCommon::get_frame_size(m_vstream_info,
                 m_vstream_params.user_buffer_format));
             CHECK_SUCCESS(set_buffer_size_status, "Failed to update buffer size in {}", name());

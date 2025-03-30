@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -105,7 +105,7 @@ public:
     void set_scheduler_timeout(const std::chrono::milliseconds &timeout);
     void set_scheduler_threshold(uint32_t threshold);
     void set_scheduler_priority(uint8_t priority);
-    size_t get_async_queue_size();
+    size_t get_async_queue_size() const;
     void shutdown();
 
     static void bind(py::module &m);

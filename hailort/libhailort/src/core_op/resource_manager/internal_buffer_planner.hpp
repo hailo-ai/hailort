@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -17,6 +17,7 @@
 
 #include "hailo/hef.hpp"
 #include "common/utils.hpp"
+#include "hef/core_op_metadata.hpp"
 #include "hef/layer_info.hpp"
 #include "vdma/memory/vdma_buffer.hpp"
 #include "vdma/memory/buffer_requirements.hpp"
@@ -32,26 +33,34 @@ struct EdgeLayerInfo {
     uint16_t max_transfers_in_batch;
     uint16_t start_context;
     uint16_t end_context;
-    bool reuse_buffer;
 };
 
-struct EdgeLayerBuffer {
-    std::shared_ptr<vdma::VdmaBuffer> buffer;
+struct EdgeLayerPlan {
+    EdgeLayerKey key;
     size_t offset;
+    vdma::BufferSizesRequirements buffer_requirements;
 };
 
 struct BufferPlan {
     vdma::VdmaBuffer::Type buffer_type;
     size_t buffer_size;
-    size_t total_edge_layer_size;
-    std::vector<std::pair<EdgeLayerKey, size_t>> edge_layer_offsets;
-    std::map<EdgeLayerKey, EdgeLayerInfo> edge_layer_infos;
+    std::vector<EdgeLayerPlan> edge_layer_plans;
 };
 
 struct BufferPlanReport {
+    // Amount of CMA memory (Physically continous) in bytes needed for execution
     size_t cma_memory;
-    size_t user_memory;
+
+    // Amount of CMA memory (Physically continous) in bytes needed for creating descriptors list.
+    size_t cma_memory_for_descriptors;
+
+    // Amount of pinned memory (Memory pinned to physical memory) in bytes needed for execution
+    size_t pinned_memory;
+
+    // Total size of all edge layers in bytes
     size_t edge_layer_size;
+
+    // How much memory is used compared to the edge layer size
     float memory_utilization_factor;
 };
 
@@ -81,7 +90,13 @@ public:
         INVALID,
     };
 
+    static Expected<std::map<EdgeLayerKey, EdgeLayerInfo>> get_edge_layer_infos(const CoreOpMetadata& core_op,
+        const ConfigureNetworkParams& config_params);
+
     // Planning functions
+    static Expected<InternalBufferPlanning> create_buffer_planning(
+        const CoreOpMetadata& core_op, uint16_t batch_size, Type plan_type, HailoRTDriver::DmaType dma_type,
+        uint16_t max_page_size);
     static Expected<InternalBufferPlanning> create_buffer_planning(
         const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos, Type plan_type,
         HailoRTDriver::DmaType dma_type, uint16_t max_page_size, size_t number_of_contexts);
@@ -94,12 +109,6 @@ public:
     // Reporting functions
     static BufferPlanReport report_planning_info(const InternalBufferPlanning &buffer_planning);
 
-    // Debug API
-    static hailo_status change_edge_layer_buffer_offset(InternalBufferPlanning &buffer_planning, const EdgeLayerKey &edge_layer_key,
-        size_t new_offset, uint16_t max_page_size);
-    static Expected<size_t> get_edge_layer_buffer_offset(const InternalBufferPlanning &buffer_planning,
-        const EdgeLayerKey &edge_layer_key);
-
 private:
 
     // Helper functions
@@ -110,8 +119,6 @@ private:
     static Expected<vdma::BufferSizesRequirements> return_buffer_requirements(
         const EdgeLayerInfo &edge_layer, const vdma::VdmaBuffer::Type buffer_type,
         uint16_t max_page_size);
-    static Expected<EdgeLayerInfo> get_edge_info_from_buffer_plan(const InternalBufferPlanning &buffer_planning,
-        const EdgeLayerKey &edge_layer_key);
 
     // Planning phase functions
     static ContextBufferUsageSegments merge_context_buffer_events(

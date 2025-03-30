@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 
@@ -143,6 +143,22 @@ public:
     }
 };
 
+std::vector<hailo_detection_t> convert_nms_by_score_buffer_to_detections(py::array src_buffer)
+{
+    std::vector<hailo_detection_t> detections;
+    uint8_t *src_ptr = static_cast<uint8_t*>(src_buffer.mutable_data());
+    uint16_t detections_count = *(uint16_t*)src_ptr;
+    detections.reserve(detections_count);
+
+    size_t buffer_offset = sizeof(uint16_t);
+    for (size_t i = 0; i < detections_count; i++) {
+        hailo_detection_t detection = *(hailo_detection_t*)(src_ptr + buffer_offset);
+        buffer_offset += sizeof(hailo_detection_t);
+        detections.emplace_back(std::move(detection));
+    }
+    return detections;
+}
+
 std::vector<hailo_detection_with_byte_mask_t> convert_nms_with_byte_mask_buffer_to_detections(py::array src_buffer)
 {
     std::vector<hailo_detection_with_byte_mask_t> detections;
@@ -184,6 +200,7 @@ PYBIND11_MODULE(_pyhailort, m) {
     validate_versions_match();
 
     m.def("get_status_message", &get_status_message);
+    m.def("convert_nms_by_score_buffer_to_detections", &convert_nms_by_score_buffer_to_detections);
     m.def("convert_nms_with_byte_mask_buffer_to_detections", &convert_nms_with_byte_mask_buffer_to_detections);
     m.def("dequantize_output_buffer_in_place", &QuantizationBindings::dequantize_output_buffer_in_place);
     m.def("dequantize_output_buffer", &QuantizationBindings::dequantize_output_buffer);
@@ -237,7 +254,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_readonly("x_max", &hailo_rectangle_t::x_max)
         ;
 
-    py::class_<hailo_detection_with_byte_mask_t>(m, "HailoDetectionWithByteMask")
+    py::class_<hailo_detection_with_byte_mask_t>(m, "DetectionWithByteMask")
         .def_readonly("box", &hailo_detection_with_byte_mask_t::box)
         .def_readonly("mask_size", &hailo_detection_with_byte_mask_t::mask_size)
         .def_readonly("score", &hailo_detection_with_byte_mask_t::score)
@@ -246,6 +263,15 @@ PYBIND11_MODULE(_pyhailort, m) {
             auto shape = *py::array::ShapeContainer({detection.mask_size});
             return py::array(py::dtype("uint8"), shape, detection.mask);
         })
+        ;
+
+    py::class_<hailo_detection_t>(m, "Detection")
+        .def_readonly("y_min", &hailo_detection_t::y_min)
+        .def_readonly("x_min", &hailo_detection_t::x_min)
+        .def_readonly("y_max", &hailo_detection_t::y_max)
+        .def_readonly("x_max", &hailo_detection_t::x_max)
+        .def_readonly("score", &hailo_detection_t::score)
+        .def_readonly("class_id", &hailo_detection_t::class_id)
         ;
 
     py::enum_<hailo_device_architecture_t>(m, "DeviceArchitecture")
@@ -353,8 +379,6 @@ PYBIND11_MODULE(_pyhailort, m) {
         ;
 
     py::class_<hailo_health_monitor_dataflow_shutdown_notification_message_t>(m, "HealthMonitorDataflowShutdownNotificationMessage")
-        .def_readonly("closed_input_streams", &hailo_health_monitor_dataflow_shutdown_notification_message_t::closed_input_streams)
-        .def_readonly("closed_output_streams", &hailo_health_monitor_dataflow_shutdown_notification_message_t::closed_output_streams)
         .def_readonly("ts0_temperature", &hailo_health_monitor_dataflow_shutdown_notification_message_t::ts0_temperature)
         .def_readonly("ts1_temperature", &hailo_health_monitor_dataflow_shutdown_notification_message_t::ts1_temperature)
         ;
@@ -551,7 +575,6 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("NC", HAILO_FORMAT_ORDER_NC)
         .value("BAYER_RGB", HAILO_FORMAT_ORDER_BAYER_RGB)
         .value("12_BIT_BAYER_RGB", HAILO_FORMAT_ORDER_12_BIT_BAYER_RGB)
-        .value("HAILO_NMS", HAILO_FORMAT_ORDER_HAILO_NMS)
         .value("RGB888", HAILO_FORMAT_ORDER_RGB888)
         .value("NCHW", HAILO_FORMAT_ORDER_NCHW)
         .value("YUY2", HAILO_FORMAT_ORDER_YUY2)
@@ -1008,6 +1031,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_property_readonly("soc_pm_values", [](const hailo_extended_device_information_t& info) -> py::bytes {
             return std::string((const char*) info.soc_pm_values, sizeof(info.soc_pm_values));
         })
+        .def_readonly("gpio_mask", &hailo_extended_device_information_t::gpio_mask)
         ;
 
     py::enum_<hailo_device_boot_source_t>(m, "BootSource")
@@ -1078,11 +1102,11 @@ PYBIND11_MODULE(_pyhailort, m) {
                     return py::make_tuple(self.shape.features);
                 case HAILO_FORMAT_ORDER_NHW:
                     return py::make_tuple(self.shape.height, self.shape.width);
-                case HAILO_FORMAT_ORDER_HAILO_NMS:
                 case HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS:
                     return py::make_tuple(self.nms_shape.number_of_classes, HailoRTCommon::BBOX_PARAMS, self.nms_shape.max_bboxes_per_class);
                 case HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE:
-                    throw HailoRTCustomException("HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE format order is not supported");
+                case HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK:
+                    throw HailoRTCustomException("Format order has no shape");
                 default:
                     return py::make_tuple(self.shape.height, self.shape.width, self.shape.features);
             }

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -101,7 +101,11 @@ void VdmaInputStream::set_vdevice_core_op_handle(vdevice_core_op_handle_t core_o
 Expected<std::unique_ptr<StreamBufferPool>> VdmaInputStream::allocate_buffer_pool()
 {
     const auto frame_size = get_frame_size();
-    const auto max_transfers_in_desc_list = m_channel->get_max_aligned_transfers_in_desc_list(frame_size);
+
+    // Since this calc if for aligned transfers, we don't need to factor in the bounce buffer
+    constexpr auto NO_BOUNCE_BUFFER = false;
+    const auto max_transfers_in_desc_list = m_channel->get_desc_list().max_transfers(static_cast<uint32_t>(frame_size), NO_BOUNCE_BUFFER);
+
     const auto max_ongoing_transfers = m_channel->get_max_ongoing_transfers(frame_size);
     if (max_transfers_in_desc_list < max_ongoing_transfers) {
         // In this case we don't bind, since the descriptor list isn't big enough to hold all the buffers.
@@ -172,7 +176,7 @@ hailo_status VdmaInputStream::bind_buffer(TransferRequest &&transfer_request)
 {
     m_channel->remove_buffer_binding();
     if (TransferBufferType::MEMORYVIEW == transfer_request.transfer_buffers[0].type()) {
-        TRY(auto is_request_aligned, transfer_request.is_request_aligned());
+        const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
         if (!is_request_aligned) {
             // Best effort, if buffer is not aligned - will program descriptors later
             return HAILO_SUCCESS;
@@ -189,7 +193,7 @@ hailo_status VdmaInputStream::write_async_impl(TransferRequest &&transfer_reques
     if (transfer_request.transfer_buffers[0].type() == TransferBufferType::DMABUF) {
         return m_channel->launch_transfer(std::move(transfer_request));
     } else {
-        TRY(auto is_request_aligned, transfer_request.is_request_aligned());
+        const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
         if (is_request_aligned) {
             return m_channel->launch_transfer(std::move(transfer_request));
         } else {
@@ -266,7 +270,10 @@ hailo_stream_interface_t VdmaOutputStream::get_interface() const
 
 Expected<std::unique_ptr<StreamBufferPool>> VdmaOutputStream::allocate_buffer_pool()
 {
-    const auto max_transfers_in_desc_list = m_channel->get_max_aligned_transfers_in_desc_list(m_transfer_size);
+    // Since this calc if for aligned transfers, we don't need to factor in the bounce buffer
+    constexpr auto NO_BOUNCE_BUFFER = false;
+    const auto max_transfers_in_desc_list = m_channel->get_desc_list().max_transfers(m_transfer_size, NO_BOUNCE_BUFFER);
+
     const auto max_ongoing_transfers = m_channel->get_max_ongoing_transfers(m_transfer_size);
     if (max_transfers_in_desc_list < max_ongoing_transfers) {
         // In this case we don't bind, since the descriptor list isn't big enough to hold all the buffers.
@@ -357,7 +364,7 @@ hailo_status VdmaOutputStream::read_async_impl(TransferRequest &&transfer_reques
     if (transfer_request.transfer_buffers[0].type() == TransferBufferType::DMABUF) {
         return m_channel->launch_transfer(std::move(transfer_request));
     } else {
-        TRY(auto is_request_aligned, transfer_request.is_request_aligned());
+        const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
         if (is_request_aligned) {
             bool can_skip_alignment = true; // TODO :change back to false when HRT-15741 is resolved, then implement HRT-15731
             bool owned_by_user = (StreamBufferMode::OWNING != buffer_mode()); // Buffers owned by HRT are always aligned
@@ -383,7 +390,7 @@ hailo_status VdmaOutputStream::bind_buffer(TransferRequest &&transfer_request)
 {
     m_channel->remove_buffer_binding();
     if (TransferBufferType::MEMORYVIEW == transfer_request.transfer_buffers[0].type()) {
-        TRY(auto is_request_aligned, transfer_request.is_request_aligned());
+        const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
         TRY(auto is_request_end_aligned, transfer_request.is_request_end_aligned());
         if (!is_request_aligned || !is_request_end_aligned) {
             // Best effort, if buffer is not aligned - will program descriptors later

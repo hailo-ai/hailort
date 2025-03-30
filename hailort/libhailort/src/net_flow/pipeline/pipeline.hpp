@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -269,7 +269,7 @@ public:
     PipelineObject(PipelineObject &&) noexcept = default;
     PipelineObject& operator=(PipelineObject &&) noexcept = default;
 
-    const std::string &name() const;
+    const std::string& name() const;
 
     static std::string create_element_name(const std::string &element_name, const std::string &stream_name, uint8_t stream_index);
 

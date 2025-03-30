@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -21,11 +21,13 @@
 #include "vdma/pcie/pcie_device.hpp"
 #include "vdma/integrated/integrated_device.hpp"
 #include "eth/eth_device.hpp"
+#include "utils/query_stats_utils.hpp"
 
 #include "byte_order.h"
 #include "firmware_header_utils.h"
 #include "control_protocol.h"
 #include <memory>
+#include <algorithm>
 #ifndef _MSC_VER
 #include <sys/utsname.h>
 #endif
@@ -368,6 +370,75 @@ Expected<hailo_chip_temperature_info_t> Device::get_chip_temperature()
     hailo_chip_temperature_info_t res = {};
     CHECK_SUCCESS_AS_EXPECTED(Control::get_chip_temperature(*this, &res));
     return res;
+}
+
+Expected<hailo_health_stats_t> Device::query_health_stats()
+{
+#ifndef __linux__
+    LOGGER__ERROR("Query health stats is supported only on Linux systems");
+    return make_unexpected(HAILO_NOT_SUPPORTED);
+#endif
+
+    TRY(auto device_arch, get_architecture());
+    if ((device_arch != HAILO_ARCH_HAILO15H) && (device_arch != HAILO_ARCH_HAILO15L) && (device_arch != HAILO_ARCH_HAILO15M) && (device_arch != HAILO_ARCH_HAILO10H)) {
+        LOGGER__ERROR("Query health stats is not supported for device arch {}", HailoRTCommon::get_device_arch_str(device_arch));
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
+
+    hailo_health_stats_t health_stats = {-1, -1, -1};
+    TRY(auto temp, get_chip_temperature());
+
+    health_stats.on_die_temperature = std::max(temp.ts0_temperature, temp.ts1_temperature);
+
+    // TODO (HRT-16224): add on_die_voltage and startup_bist_mask (currently APIs does not exist)
+
+    return health_stats;
+}
+
+Expected<hailo_performance_stats_t> Device::query_performance_stats()
+{
+#ifndef __linux__
+    LOGGER__ERROR("Query performance stats is supported only on Linux systems");
+    return make_unexpected(HAILO_NOT_SUPPORTED);
+#endif
+
+    TRY(auto device_arch, get_architecture());
+    if ((device_arch != HAILO_ARCH_HAILO15H) && (device_arch != HAILO_ARCH_HAILO15L) && (device_arch != HAILO_ARCH_HAILO15M) && (device_arch != HAILO_ARCH_HAILO10H)) {
+        LOGGER__ERROR("Query performance stats is not supported for device arch {}", HailoRTCommon::get_device_arch_str(device_arch));
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
+
+    hailo_performance_stats_t performance_stats = {-1, -1, -1, -1, -1, -1};
+
+    auto cpu_utilization = QueryStatsUtils::calculate_cpu_utilization();
+    if (HAILO_SUCCESS == cpu_utilization.status()) {
+        performance_stats.cpu_utilization = cpu_utilization.release();
+    }
+
+    auto ram_sizes =  QueryStatsUtils::calculate_ram_sizes();
+    if (HAILO_SUCCESS == ram_sizes.status()) {
+        performance_stats.ram_size_total = std::get<0>(ram_sizes.value());
+        performance_stats.ram_size_used = std::get<1>(ram_sizes.value());
+    }
+
+    auto dsp_utilization = QueryStatsUtils::get_dsp_utilization();
+    if (HAILO_SUCCESS == dsp_utilization.status()) {
+        performance_stats.dsp_utilization = dsp_utilization.release();
+    }
+
+    auto ddr_noc_utilization = QueryStatsUtils::get_ddr_noc_utilization();
+    if (HAILO_SUCCESS == ddr_noc_utilization.status()) {
+        performance_stats.ddr_noc_total_transactions = ddr_noc_utilization.release();
+    }
+
+    auto id_info_str = get_dev_id();
+    auto device_arch_str = HailoRTCommon::get_device_arch_str(device_arch);
+    auto nnc_utilization = QueryStatsUtils::get_nnc_utilization(id_info_str, device_arch_str);
+    if (HAILO_SUCCESS == nnc_utilization.status()) {
+        performance_stats.nnc_utilization = nnc_utilization.release();
+    }
+
+    return performance_stats;
 }
 
 hailo_status Device::test_chip_memories()

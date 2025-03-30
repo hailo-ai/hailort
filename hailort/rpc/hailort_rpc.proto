@@ -36,7 +36,7 @@ service ProtoHailoRtRpc {
     rpc ConfiguredNetworkGroup_is_multi_context (ConfiguredNetworkGroup_is_multi_context_Request) returns (ConfiguredNetworkGroup_is_multi_context_Reply) {}
     rpc ConfiguredNetworkGroup_get_config_params(ConfiguredNetworkGroup_get_config_params_Request) returns (ConfiguredNetworkGroup_get_config_params_Reply) {}
     rpc ConfiguredNetworkGroup_get_sorted_output_names(ConfiguredNetworkGroup_get_sorted_output_names_Request) returns (ConfiguredNetworkGroup_get_sorted_output_names_Reply) {}
-    rpc ConfiguredNetworkGroup_get_min_buffer_pool_size(ConfiguredNetworkGroup_get_min_buffer_pool_size_Request) returns (ConfiguredNetworkGroup_get_min_buffer_pool_size_Reply) {}
+    rpc ConfiguredNetworkGroup_infer_queue_size(ConfiguredNetworkGroup_infer_queue_size_Request) returns (ConfiguredNetworkGroup_infer_queue_size_Reply) {}
     rpc ConfiguredNetworkGroup_get_stream_names_from_vstream_name(ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Request) returns (ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Reply) {}
     rpc ConfiguredNetworkGroup_get_vstream_names_from_stream_name(ConfiguredNetworkGroup_get_vstream_names_from_stream_name_Request) returns (ConfiguredNetworkGroup_get_vstream_names_from_stream_name_Reply) {}
     rpc ConfiguredNetworkGroup_infer_async(ConfiguredNetworkGroup_infer_async_Request) returns (ConfiguredNetworkGroup_infer_async_Reply) {}
@@ -46,7 +46,6 @@ service ProtoHailoRtRpc {
     rpc ConfiguredNetworkGroup_set_nms_iou_threshold(ConfiguredNetworkGroup_set_nms_iou_threshold_Request) returns (ConfiguredNetworkGroup_set_nms_iou_threshold_Reply) {}
     rpc ConfiguredNetworkGroup_set_nms_max_bboxes_per_class(ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Request) returns (ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Reply) {}
     rpc ConfiguredNetworkGroup_set_nms_max_bboxes_total(ConfiguredNetworkGroup_set_nms_max_bboxes_total_Request) returns (ConfiguredNetworkGroup_set_nms_max_bboxes_total_Reply) {}
-    rpc ConfiguredNetworkGroup_set_nms_result_order_type(ConfiguredNetworkGroup_set_nms_result_order_type_Request) returns (ConfiguredNetworkGroup_set_nms_result_order_type_Reply) {}
     rpc ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size(ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Request) returns (ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Reply) {}
 
 
@@ -272,7 +271,6 @@ message ProtoNmsInfo {
     uint32 burst_size = 7;
     ProtoNmsBurstType burst_type = 8;
     uint32 max_bboxes_total = 9;
-    uint32 order_type = 10;
 }
 
 message ProtoQuantInfo {
@@ -436,10 +434,8 @@ message ProtoNmsPostProcessConfig {
     uint32 number_of_classes = 4;
     bool background_removal = 5;
     uint32 background_removal_index = 6;
-    bool cross_classes = 7;
-    bool bbox_only = 8;
-    uint32 max_proposals_total = 9;
-    uint32 order_type = 10;
+    bool bbox_only = 7;
+    uint32 max_proposals_total = 8;
 }
 
 message ProtoYolov8MatchingLayersNames {
@@ -737,13 +733,13 @@ message ConfiguredNetworkGroup_get_sorted_output_names_Reply {
     repeated string sorted_output_names = 2;
 }
 
-message ConfiguredNetworkGroup_get_min_buffer_pool_size_Request {
+message ConfiguredNetworkGroup_infer_queue_size_Request {
     ProtoConfiguredNetworkGroupIdentifier identifier = 1;
 }
 
-message ConfiguredNetworkGroup_get_min_buffer_pool_size_Reply {
+message ConfiguredNetworkGroup_infer_queue_size_Reply {
     uint32 status = 1;
-    uint32 min_buffer_pool_size = 2;
+    uint32 infer_queue_size = 2;
 }
 
 message ConfiguredNetworkGroup_get_layer_info_Request {
@@ -802,16 +798,6 @@ message ConfiguredNetworkGroup_set_nms_max_bboxes_total_Request {
 }
 
 message ConfiguredNetworkGroup_set_nms_max_bboxes_total_Reply {
-    uint32 status = 1;
-}
-
-message ConfiguredNetworkGroup_set_nms_result_order_type_Request {
-    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
-    string edge_name = 2;
-    uint32 nms_result_order_type = 3;
-}
-
-message ConfiguredNetworkGroup_set_nms_result_order_type_Reply {
     uint32 status = 1;
 }
 

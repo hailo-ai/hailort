@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -25,6 +25,7 @@
 #include "udp_rate_limiter_command.hpp"
 #endif
 #include "parse_hef_command.hpp"
+#include "memory_requirements_command.hpp"
 #include "fw_control_command.hpp"
 #include "measure_nnc_performance_command.hpp"
 
@@ -201,6 +202,7 @@ public:
         add_subcommand<HwInferEstimatorCommand>(OptionVisibility::HIDDEN);
 #endif
         add_subcommand<ParseHefCommand>();
+        add_subcommand<MemoryRequirementsCommand>(OptionVisibility::HIDDEN);
         add_subcommand<FwControlCommand>();
     }
 

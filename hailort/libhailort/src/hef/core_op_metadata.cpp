@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -51,9 +51,10 @@ static bool is_edge_under_mux(const LayerInfo &info, const std::string &edge_nam
 }
 
 ContextMetadata::ContextMetadata(std::vector<ContextSwitchConfigActionPtr> &&actions,
-    ConfigBufferInfoMap&& config_buffers_info, bool const_input_layer_found) :
+    ConfigBufferInfoMap&& config_buffers_info, bool const_input_layer_found, CcwDmaTransfersInfoMap&& ccws_dma_transfers_info) :
     m_actions(std::move(actions)),
     m_config_buffers_info(std::move(config_buffers_info)),
+    m_ccws_dma_transfers_info(std::move(ccws_dma_transfers_info)),
     m_const_input_layer_found(const_input_layer_found)
 {}
 
@@ -606,6 +607,24 @@ Expected<std::vector<hailo_network_info_t>> NetworkGroupMetadata::get_network_in
     }
 
     return network_infos;
+}
+
+
+Expected<uint16_t> get_network_batch_size(const ConfigureNetworkParams& params, const std::string &network_name)
+{
+    for (auto const &network_map : params.network_params_by_name) {
+        auto const network_name_from_params = network_map.first;
+        if (network_name_from_params == network_name) {
+            auto actual_batch_size = network_map.second.batch_size;
+            if (HAILO_DEFAULT_BATCH_SIZE == actual_batch_size) {
+                actual_batch_size = DEFAULT_ACTUAL_BATCH_SIZE;
+            }
+            return actual_batch_size;
+        }
+    }
+
+    LOGGER__ERROR("Failed to find network with network name {}", network_name);
+    return make_unexpected(HAILO_NOT_FOUND);
 }
 
 } /* namespace hailort */

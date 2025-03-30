@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -56,6 +56,8 @@ public:
     {
         return hef;
     }
+
+    py::dict get_external_resources();
 
     py::dict create_configure_params_mipi_input(hailo_stream_interface_t output_interface,
         const hailo_mipi_input_stream_params_t &mipi_params);

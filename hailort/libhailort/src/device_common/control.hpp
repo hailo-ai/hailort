@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -376,9 +376,11 @@ public:
     static hailo_status set_sleep_state(Device &device, hailo_sleep_state_t sleep_state);
     static hailo_status change_hw_infer_status(Device &device, CONTROL_PROTOCOL__hw_infer_state_t state,
         uint8_t network_group_index, uint16_t dynamic_batch_size, uint16_t batch_count,
-        CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info, CONTROL_PROTOCOL__hw_only_infer_results_t *results);
+        CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info, CONTROL_PROTOCOL__hw_only_infer_results_t *results,
+        CONTROL_PROTOCOL__boundary_channel_mode_t boundary_channel_mode);
     static hailo_status start_hw_only_infer(Device &device, uint8_t network_group_index, uint16_t dynamic_batch_size,
-        uint16_t batch_count, CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info);
+        uint16_t batch_count, CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info,
+        CONTROL_PROTOCOL__boundary_channel_mode_t boundary_channel_mode);
     static hailo_status stop_hw_only_infer(Device &device, CONTROL_PROTOCOL__hw_only_infer_results_t *results);
     // TODO: needed?
     static hailo_status power_measurement(Device &device, CONTROL_PROTOCOL__dvm_options_t dvm,

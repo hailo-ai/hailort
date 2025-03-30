@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -20,6 +20,20 @@ const size_t HailoRTCommon::HW_DATA_ALIGNMENT;
 const uint32_t HailoRTCommon::MAX_NMS_BURST_SIZE;
 const size_t HailoRTCommon::DMA_ABLE_ALIGNMENT_WRITE_HW_LIMITATION;
 const size_t HailoRTCommon::DMA_ABLE_ALIGNMENT_READ_HW_LIMITATION;
+
+// TODO: HRT-15885 - remove this function
+uint32_t HailoRTCommon::get_nms_host_shape_size(const hailo_nms_info_t &nms_info)
+{
+    LOGGER__WARNING("get_nms_host_shape_size is deprecated, use get_nms_by_class_host_shape_size instead");
+    return get_nms_by_class_host_shape_size(nms_info);
+}
+
+// TODO: HRT-15885 - remove this function
+uint32_t HailoRTCommon::get_nms_host_shape_size(const hailo_nms_shape_t &nms_shape)
+{
+    LOGGER__WARNING("get_nms_host_shape_size is deprecated, use get_nms_by_class_host_shape_size instead");
+    return get_nms_by_class_host_shape_size(nms_shape);
+}
 
 Expected<hailo_device_id_t> HailoRTCommon::to_device_id(const std::string &device_id)
 {
@@ -54,7 +68,7 @@ uint32_t HailoRTCommon::get_nms_host_frame_size(const hailo_nms_shape_t &nms_sha
     } else if (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE == format.order) {
         frame_size = get_nms_by_score_host_frame_size(nms_shape);
     } else {
-        auto shape_size = get_nms_host_shape_size(nms_shape);
+        auto shape_size = get_nms_by_class_host_shape_size(nms_shape);
         frame_size =  shape_size * get_format_data_bytes(format);
     }
     if (frame_size < UINT32_MAX) {

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -14,10 +14,12 @@
 #include "hailo/expected.hpp"
 #include "hailo/buffer.hpp"
 
+#include "common/buffer_pool.hpp"
 #include "common/shared_memory_buffer.hpp"
 
 #include "utils/exported_resource_manager.hpp"
 #include "vdma/memory/continuous_buffer.hpp"
+#include "vdma/memory/mapped_buffer.hpp"
 
 #include <memory>
 #include <cstdint>
@@ -200,6 +202,46 @@ public:
 
 private:
     SharedMemoryBufferPtr m_shm_buffer;
+};
+
+class PooledBufferStorage : public BufferStorage
+{
+public:
+    ~PooledBufferStorage();
+
+    PooledBufferStorage(BufferPtr buffer, BasicBufferPoolPtr buffer_pool);
+    PooledBufferStorage(PooledBufferStorage&& other) noexcept;
+    PooledBufferStorage(const PooledBufferStorage &) = delete;
+    PooledBufferStorage &operator=(PooledBufferStorage &&) = delete;
+    PooledBufferStorage &operator=(const PooledBufferStorage &) = delete;
+
+    virtual size_t size() const override;
+    virtual void *user_address() override;
+    virtual Expected<void*> release() noexcept override;
+
+private:
+    BasicBufferPoolPtr m_buffer_pool;
+    BufferPtr m_buffer;
+};
+
+class DmaMappedBufferStorage : public BufferStorage
+{
+public:
+    virtual ~DmaMappedBufferStorage() = default;
+
+    DmaMappedBufferStorage(Buffer buffer, vdma::MappedBufferPtr mapped_buffer);
+    DmaMappedBufferStorage(DmaMappedBufferStorage&& other) noexcept;
+    DmaMappedBufferStorage(const DmaMappedBufferStorage &) = delete;
+    DmaMappedBufferStorage &operator=(DmaMappedBufferStorage &&) = delete;
+    DmaMappedBufferStorage &operator=(const DmaMappedBufferStorage &) = delete;
+
+    virtual size_t size() const override;
+    virtual void *user_address() override;
+    virtual Expected<void*> release() noexcept override;
+
+private:
+    Buffer m_buffer;
+    vdma::MappedBufferPtr m_mapped_buffer;
 };
 
 } /* namespace hailort */

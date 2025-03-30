@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file client.hpp
  * @brief RPC Client Header
@@ -18,6 +18,9 @@
 #include "rpc_connection.hpp"
 #include "hrpc_protocol/serializer.hpp"
 #include "hrpc/connection_context.hpp"
+#include "utils/pool_allocator.hpp"
+#include "vdma/channel/transfer_common.hpp"
+#include "rpc_callbacks/rpc_callbacks_dispatcher.hpp"
 
 namespace hailort
 {
@@ -28,19 +31,20 @@ constexpr std::chrono::milliseconds REQUEST_TIMEOUT(std::chrono::seconds(10));
 constexpr std::chrono::milliseconds REQUEST_TIMEOUT(std::chrono::seconds(5000));
 #endif /* ifndef HAILO_EMULATOR */
 
-class ResultEvent
+class Client;
+class SyncRequest
 {
 public:
-    static Expected<std::shared_ptr<ResultEvent>> create_shared();
-    ResultEvent(EventPtr event);
-
-    Buffer &&release();
-    hailo_status signal(Buffer &&value);
-    hailo_status wait(std::chrono::milliseconds timeout);
+    SyncRequest(Client &client, std::mutex &sync_mutex, std::condition_variable &sync_cv);
+    Expected<rpc_message_t> execute(HailoRpcActionID action_id, const MemoryView &request,
+        std::vector<TransferBuffer> &&additional_buffers = {});
 
 private:
-    Buffer m_value;
-    EventPtr m_event;
+    Client &m_client;
+    std::mutex &m_sync_mutex;
+    std::condition_variable &m_sync_cv;
+    hailo_status m_transfer_status;
+    rpc_message_t m_out_reply;
 };
 
 class Client
@@ -50,15 +54,18 @@ public:
     ~Client();
 
     hailo_status connect();
-    Expected<Buffer> execute_request(HailoRpcActionID action_id, const MemoryView &request,
-        std::function<hailo_status(RpcConnection)> additional_writes_lambda = nullptr);
+    Expected<rpc_message_t> execute_request(HailoRpcActionID action_id, const MemoryView &request,
+        std::vector<TransferBuffer> &&additional_buffers = {});
     hailo_status wait_for_execute_request_ready(const MemoryView &request, std::chrono::milliseconds timeout);
     hailo_status execute_request_async(HailoRpcActionID action_id, const MemoryView &request,
         std::function<void(hailo_status)> request_sent_callback,
-        std::function<void(hailo_status, Buffer&&)> reply_received_callback,
-        std::function<hailo_status(RpcConnection)> additional_writes_lambda = nullptr);
+        std::function<void(hailo_status, rpc_message_t)> reply_received_callback,
+        std::vector<TransferBuffer> &&additional_buffers = {});
     void register_custom_reply(HailoRpcActionID action_id, std::function<hailo_status(const MemoryView&, RpcConnection connection)> callback);
     std::shared_ptr<HailoRTDriver> get_driver() { return m_conn_context->get_driver(); };
+    const std::string &device_id() const { return m_device_id; }
+    Expected<BufferPtr> allocate_request_buffer();
+    std::shared_ptr<ClientCallbackDispatcherManager> callback_dispatcher_manager();
 
 protected:
     hailo_status message_loop();
@@ -68,7 +75,7 @@ protected:
     std::shared_ptr<ConnectionContext> m_conn_context;
     RpcConnection m_connection;
     std::thread m_thread;
-    std::unordered_map<uint32_t, std::function<void(hailo_status, Buffer&&)>> m_replies_callbacks;
+    std::unordered_map<uint32_t, std::function<void(hailo_status, rpc_message_t)>> m_replies_callbacks;
     std::unordered_map<HailoRpcActionID, std::function<hailo_status(const MemoryView&, RpcConnection)>> m_custom_callbacks;
     uint32_t m_messages_sent;
     std::mutex m_write_mutex;
@@ -76,6 +83,9 @@ protected:
     std::mutex m_replies_mutex;
     std::mutex m_sync_mutex;
     std::condition_variable m_sync_cv;
+    std::shared_ptr<PoolAllocator> m_pool_allocator;
+    std::shared_ptr<ClientCallbackDispatcherManager> m_callback_dispatcher_manager;
+    std::shared_ptr<ObjectPool<SyncRequest>> m_sync_requests_pool;
 };
 
 } // namespace hailort

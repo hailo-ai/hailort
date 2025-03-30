@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -144,9 +144,9 @@ public:
     static Expected<bool> device_ids_contains_eth(const hailo_vdevice_params_t &params);
 
 private:
-    VDeviceBase(std::map<device_id_t, std::unique_ptr<Device>> &&devices, CoreOpsSchedulerPtr core_ops_scheduler,
-        const std::string &unique_vdevice_hash="") :
-        m_devices(std::move(devices)), m_core_ops_scheduler(core_ops_scheduler), m_next_core_op_handle(0), m_unique_vdevice_hash(unique_vdevice_hash)
+    VDeviceBase(const hailo_vdevice_params_t &params, std::map<device_id_t, std::unique_ptr<Device>> &&devices, CoreOpsSchedulerPtr core_ops_scheduler,
+        const std::string &unique_vdevice_hash="") : VDevice(params),
+            m_devices(std::move(devices)), m_core_ops_scheduler(core_ops_scheduler), m_next_core_op_handle(0), m_unique_vdevice_hash(unique_vdevice_hash)
         {}
 
     static Expected<std::map<device_id_t, std::unique_ptr<Device>>> create_devices(const hailo_vdevice_params_t &params);
@@ -199,7 +199,8 @@ public:
     virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
 
 private:
-    VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t client_handle, VDeviceIdentifier &&identifier, std::vector<std::unique_ptr<hailort::Device>> &&devices);
+    VDeviceClient(const hailo_vdevice_params_t &params, std::unique_ptr<HailoRtRpcClient> client,
+        uint32_t client_handle, VDeviceIdentifier &&identifier, std::vector<std::unique_ptr<hailort::Device>> &&devices);
 
     hailo_status create_client();
     hailo_status start_listener_thread(VDeviceIdentifier identifier);
@@ -246,7 +247,7 @@ public:
     virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
 
 private:
-    VDeviceHandle(uint32_t handle);
+    VDeviceHandle(const hailo_vdevice_params_t &params, uint32_t handle);
     uint32_t m_handle;
 };
 

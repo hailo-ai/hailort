@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -190,9 +190,9 @@ public:
     virtual grpc::Status ConfiguredNetworkGroup_get_sorted_output_names(grpc::ServerContext*,
         const ConfiguredNetworkGroup_get_sorted_output_names_Request *request,
         ConfiguredNetworkGroup_get_sorted_output_names_Reply *reply) override;
-    virtual grpc::Status ConfiguredNetworkGroup_get_min_buffer_pool_size(grpc::ServerContext*,
-        const ConfiguredNetworkGroup_get_min_buffer_pool_size_Request *request,
-        ConfiguredNetworkGroup_get_min_buffer_pool_size_Reply *reply) override;
+    virtual grpc::Status ConfiguredNetworkGroup_infer_queue_size(grpc::ServerContext*,
+        const ConfiguredNetworkGroup_infer_queue_size_Request *request,
+        ConfiguredNetworkGroup_infer_queue_size_Reply *reply) override;
     virtual grpc::Status ConfiguredNetworkGroup_get_layer_info(grpc::ServerContext*,
         const ConfiguredNetworkGroup_get_layer_info_Request *request,
         ConfiguredNetworkGroup_get_layer_info_Reply *reply) override;
@@ -211,9 +211,6 @@ public:
     virtual grpc::Status ConfiguredNetworkGroup_set_nms_max_bboxes_total(grpc::ServerContext*,
         const ConfiguredNetworkGroup_set_nms_max_bboxes_total_Request *request,
         ConfiguredNetworkGroup_set_nms_max_bboxes_total_Reply *reply) override;
-    virtual grpc::Status ConfiguredNetworkGroup_set_nms_result_order_type(grpc::ServerContext*,
-        const ConfiguredNetworkGroup_set_nms_result_order_type_Request *request,
-        ConfiguredNetworkGroup_set_nms_result_order_type_Reply *reply) override;
     virtual grpc::Status ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size(grpc::ServerContext*,
         const ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Request *request,
         ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Reply *reply) override;
@@ -232,11 +229,11 @@ private:
     hailo_status flush_input_vstream(uint32_t handle);
     hailo_status abort_input_vstream(uint32_t handle);
     hailo_status abort_output_vstream(uint32_t handle);
-    void abort_vstreams_by_pids(std::set<uint32_t> &pids);
-    void release_configured_network_groups_by_pid(uint32_t client_pid);
+    void abort_vstreams_by_ids(std::set<uint32_t> &pids);
+    void release_configured_network_groups_by_id(uint32_t client_pid);
     void remove_disconnected_clients();
     void update_client_id_timestamp(uint32_t pid);
-    Expected<size_t> get_min_buffer_pool_size(uint32_t ng_handle);
+    Expected<size_t> infer_queue_size(uint32_t ng_handle);
     Expected<std::vector<hailo_stream_info_t>> get_all_stream_infos(uint32_t ng_handle);
     Expected<std::vector<hailo_vstream_info_t>> get_all_vstream_infos(uint32_t ng_handle);
     Expected<std::string> output_vstream_name(uint32_t vstream_handle);
@@ -255,9 +252,9 @@ private:
     Expected<BufferPtr> acquire_buffer_from_cng_pool(uint32_t ng_handle, const std::string &output_name);
     Expected<size_t> output_vstream_frame_size(uint32_t vstream_handle);
     hailo_status update_buffer_size_in_pool(uint32_t vstream_handle, uint32_t network_group_handle);
-    void shutdown_configured_network_groups_by_pids(std::set<uint32_t> &pids);
-    void shutdown_buffer_pool_by_pids(std::set<uint32_t> &pids);
-    void shutdown_vdevice_cb_queue_by_pids(std::set<uint32_t> &pids);
+    void shutdown_configured_network_groups_by_ids(std::set<uint32_t> &pids);
+    void shutdown_buffer_pool_by_ids(std::set<uint32_t> &pids);
+    void shutdown_vdevice_cb_queue_by_ids(std::set<uint32_t> &pids);
     hailo_status shutdown_cng_buffer_pool(uint32_t network_group_handle);
     hailo_status shutdown_vdevice_cb_queue(uint32_t vdevice_handle);
     hailo_status shutdown_configured_network_group(uint32_t vdevice_handle);

@@ -1,7 +1,8 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
- *
+ **/
+/**
  * @file hailort_service.cpp
  * @brief main for hailort service 
  * To run without daemonization run the hailort_service executable with `standalone`.
@@ -32,9 +33,29 @@
 
 using namespace hailort;
 
+bool is_default_service_address(const std::string server_address)
+{
+    return HAILORT_SERVICE_DEFAULT_ADDR == server_address;
+}
+
+bool socket_file_exists_and_unremovable()
+{
+    // Will return false in case we failed to remove the file for a reason other than "file doesn't exist"
+    return ((unlink(HAILO_DEFAULT_SERVICE_ADDR.c_str()) != 0) && (errno != ENOENT));
+}
+
 void RunService()
 {
     const std::string server_address = HAILORT_SERVICE_ADDRESS;
+
+    // If the socket file already exists and cannot be removed due to insufficient permissions,
+    // we should fail early to prevent grpc::BuildAndStart() from causing a segmentation fault.
+    if (is_default_service_address(server_address) && socket_file_exists_and_unremovable()) {
+        LOGGER__CRITICAL("Failed to remove existing socket file {}. This might indicate insufficient permissions for this operation.",
+            HAILO_DEFAULT_SERVICE_ADDR);
+        return;
+    }
+
     HailoRtRpcService service;
     grpc::ServerBuilder builder;
     builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());

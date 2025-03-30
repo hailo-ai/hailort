@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: (GPL-2.0 WITH Linux-syscall-note) AND MIT
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  **/
 
 #ifndef _HAILO_IOCTL_COMMON_H_
 #define _HAILO_IOCTL_COMMON_H_
 
 #define HAILO_DRV_VER_MAJOR 4
-#define HAILO_DRV_VER_MINOR 20
-#define HAILO_DRV_VER_REVISION 1
+#define HAILO_DRV_VER_MINOR 21
+#define HAILO_DRV_VER_REVISION 0
 
 #define _STRINGIFY_EXPANDED( x ) #x
 #define _STRINGIFY_NUMBER( x ) _STRINGIFY_EXPANDED(x)
@@ -33,21 +33,20 @@
 #define INVALID_DRIVER_HANDLE_VALUE     ((uintptr_t)-1)
 
 // Used by windows and unix driver to raise the right CPU control handle to the FW. The same as in pcie_service FW
-#define FW_ACCESS_CORE_CPU_CONTROL_SHIFT    (1)
-#define FW_ACCESS_CORE_CPU_CONTROL_MASK     (1 << FW_ACCESS_CORE_CPU_CONTROL_SHIFT)
-#define FW_ACCESS_CONTROL_INTERRUPT_SHIFT   (0)
-#define FW_ACCESS_APP_CPU_CONTROL_MASK      (1 << FW_ACCESS_CONTROL_INTERRUPT_SHIFT)
-#define FW_ACCESS_DRIVER_SHUTDOWN_SHIFT     (2)
-#define FW_ACCESS_DRIVER_SHUTDOWN_MASK      (1 << FW_ACCESS_DRIVER_SHUTDOWN_SHIFT)
-// HRT-15790 TODO: separate nnc interrupts and soc interrupts
-#define FW_ACCESS_SOFT_RESET_SHIFT          (3)
-#define FW_ACCESS_SOFT_RESET_MASK           (1 << FW_ACCESS_SOFT_RESET_SHIFT)
+enum hailo_pcie_nnc_interrupt_masks {
+    FW_ACCESS_APP_CPU_CONTROL_MASK    =  (1 << 0),
+    FW_ACCESS_CORE_CPU_CONTROL_MASK   =  (1 << 1),
+    FW_ACCESS_DRIVER_SHUTDOWN_MASK    =  (1 << 2),
+    FW_ACCESS_SOFT_RESET_MASK         =  (1 << 3),
+};
 
-#define FW_ACCESS_SOC_CONTROL_SHIFT         (3)
-#define FW_ACCESS_SOC_CONTROL_MASK          (1 << FW_ACCESS_SOC_CONTROL_SHIFT)
+enum hailo_pcie_soc_interrupt_masks {
+    FW_ACCESS_SOC_CONTROL_MASK       =   (1 << 3),
+};
 
 #define INVALID_VDMA_CHANNEL                (0xff)
 
+#define HAILO_DMA_DIRECTION_EQUALS(a, b) (a == HAILO_DMA_BIDIRECTIONAL || b == HAILO_DMA_BIDIRECTIONAL || a == b)
 
 #if !defined(__cplusplus) && defined(NTDDI_VERSION)
 #include <wdm.h>
@@ -257,16 +256,40 @@ struct hailo_write_action_list_params {
 };
 
 /* structure used in ioctl HAILO_DESC_LIST_BIND_VDMA_BUFFER */
+/**
+ * Programs the descriptions list (desc_handle), starting from starting_desc, with the given buffer.
+ * The buffer is referenced by buffer_handle (the base buffer), size, offset and batch_size.
+ * The ioctl will start at offset, and will program `size` bytes in chunks of `batch_size` bytes.
+ *
+ * For example, if buffer_offset is 0x1000, buffer_size=0x300, batch_size=2, and desc_page_size is 0x200 (desc
+ * page size is taken from the descriptors list), we program the following pattern:
+ *   desc[starting_desc] =   { .address = base_buffer+0x1000, .size= 0x200 }
+ *   desc[starting_desc+1] = { .address = base_buffer+0x1200, .size= 0x100 }
+ *   desc[starting_desc+2] = { .address = base_buffer+0x1400, .size= 0x200 }
+ *   desc[starting_desc+3] = { .address = base_buffer+0x1600, .size= 0x100 }
+ *
+ * The stride is the amount of bytes to really program.
+ * If the stride is 0, the stride is calculated as the desc_page_size.
+ * Else, the stride is the given stride.
+ * The stride must be <= desc_page_size.
+ *
+ * For example, if stride=108, buffer_size=0x600 and desc_page_size is 0x200 the pattern will be:
+ *   desc[starting_desc] =   { .address = base_buffer, .size= 0x108 }
+ *   desc[starting_desc+1] = { .address = base_buffer+0x200, .size= 0x108 }
+ *   desc[starting_desc+2] = { .address = base_buffer+0x400, .size= 0x108 }
+ */
 struct hailo_desc_list_program_params {
     size_t buffer_handle;       // in
     size_t buffer_size;         // in
     size_t buffer_offset;       // in
+    uint32_t batch_size;        // in
     uintptr_t desc_handle;      // in
     uint8_t channel_index;      // in
     uint32_t starting_desc;     // in
     bool should_bind;           // in
     enum hailo_vdma_interrupts_domain last_interrupts_domain;  // in
     bool is_debug;              // in
+    uint32_t stride;            // in
 };
 
 /* structure used in ioctl HAILO_VDMA_ENABLE_CHANNELS */
@@ -284,11 +307,12 @@ struct hailo_vdma_disable_channels_params {
 struct hailo_vdma_interrupts_channel_data {
     uint8_t engine_index;
     uint8_t channel_index;
-    bool is_active;                 // If not activate, num_processed is ignored.
-    uint8_t transfers_completed;    // Number of transfers completed.
-    uint8_t host_error;             // Channel errors bits on source side
-    uint8_t device_error;           // Channel errors bits on dest side
-    bool validation_success;        // If the validation of the channel was successful
+
+#define HAILO_VDMA_TRANSFER_DATA_CHANNEL_NOT_ACTIVE  (0xff)
+#define HAILO_VDMA_TRANSFER_DATA_CHANNEL_WITH_ERROR  (0xfe)
+
+    // Either amount of transfers done or one of the above defines
+    uint8_t data;
 };
 
 struct hailo_vdma_interrupts_wait_params {
@@ -406,6 +430,7 @@ enum hailo_board_type {
     HAILO_BOARD_TYPE_HAILO15L,
     HAILO_BOARD_TYPE_HAILO10H,
     HAILO_BOARD_TYPE_HAILO10H_LEGACY,
+    HAILO_BOARD_TYPE_MARS,
     HAILO_BOARD_TYPE_COUNT,
 
     /** Max enum value to maintain ABI Integrity */
@@ -486,14 +511,15 @@ struct hailo_free_continuous_buffer_params {
 
 /* structures used in ioctl HAILO_VDMA_LAUNCH_TRANSFER */
 struct hailo_vdma_transfer_buffer {
-    size_t mapped_buffer_handle;       // in
-    uint32_t offset;                   // in
-    uint32_t size;                     // in
+    enum hailo_dma_buffer_type buffer_type; // in
+    uintptr_t addr_or_fd;                   // in
+    uint32_t size;                          // in
 };
 
-// We allow maximum 2 buffers per transfer since we may have an extra buffer 
-// to make sure each buffer is aligned to page size.
-#define HAILO_MAX_BUFFERS_PER_SINGLE_TRANSFER (2)
+// The size is a tradeoff between ioctl/stack buffers size and the amount of buffers we
+// want to transfer. (If user mode wants to transfer more buffers, it should call the
+// ioctl multiple times).
+#define HAILO_MAX_BUFFERS_PER_SINGLE_TRANSFER (8)
 
 struct hailo_vdma_launch_transfer_params {
     uint8_t engine_index;                                               // in
@@ -512,9 +538,6 @@ struct hailo_vdma_launch_transfer_params {
 
     bool is_debug;                                                      // in, if set program hw to send
                                                                         // more info (e.g desc complete status)
-
-    uint32_t descs_programed;                                           // out, amount of descriptors programed.
-    int launch_transfer_status;                                         // out, status of the launch transfer call. (only used in case of error)
 };
 
 /* structure used in ioctl HAILO_SOC_CONNECT */
@@ -638,7 +661,7 @@ enum hailo_vdma_ioctl_code {
 #define HAILO_VDMA_CONTINUOUS_BUFFER_ALLOC    _IOWR_(HAILO_VDMA_IOCTL_MAGIC, HAILO_VDMA_CONTINUOUS_BUFFER_ALLOC_CODE,      struct hailo_allocate_continuous_buffer_params)
 #define HAILO_VDMA_CONTINUOUS_BUFFER_FREE     _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_CONTINUOUS_BUFFER_FREE_CODE,       struct hailo_free_continuous_buffer_params)
 
-#define HAILO_VDMA_LAUNCH_TRANSFER           _IOWR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_LAUNCH_TRANSFER_CODE,              struct hailo_vdma_launch_transfer_params)
+#define HAILO_VDMA_LAUNCH_TRANSFER            _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_LAUNCH_TRANSFER_CODE,              struct hailo_vdma_launch_transfer_params)
 
 enum hailo_nnc_ioctl_code {
     HAILO_FW_CONTROL_CODE,
@@ -662,14 +685,14 @@ enum hailo_nnc_ioctl_code {
 enum hailo_soc_ioctl_code {
     HAILO_SOC_IOCTL_CONNECT_CODE,
     HAILO_SOC_IOCTL_CLOSE_CODE,
-
+    HAILO_SOC_IOCTL_POWER_OFF_CODE,
     // Must be last
     HAILO_SOC_IOCTL_MAX_NR,
 };
 
 #define HAILO_SOC_CONNECT       _IOWR_(HAILO_SOC_IOCTL_MAGIC, HAILO_SOC_IOCTL_CONNECT_CODE, struct hailo_soc_connect_params)
 #define HAILO_SOC_CLOSE         _IOR_(HAILO_SOC_IOCTL_MAGIC,  HAILO_SOC_IOCTL_CLOSE_CODE,   struct hailo_soc_close_params)
-
+#define HAILO_SOC_POWER_OFF     _IO_(HAILO_SOC_IOCTL_MAGIC,   HAILO_SOC_IOCTL_POWER_OFF_CODE)
 
 enum hailo_pci_ep_ioctl_code {
     HAILO_PCI_EP_ACCEPT_CODE,

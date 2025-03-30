@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -268,7 +268,7 @@ Expected<std::vector<OutputVStream>> VStreamsBuilderUtils::create_output_post_pr
     CHECK_EXPECTED(post_infer_element);
     CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(hw_read_queue_element.value(), post_infer_element.value()));
 
-    auto post_transform_frame_size = HailoRTCommon::get_nms_host_frame_size(output_stream->get_info().nms_info, vstream_params.user_buffer_format);
+    auto post_transform_frame_size = HailoRTCommon::get_nms_by_class_host_frame_size(output_stream->get_info().nms_info, vstream_params.user_buffer_format);
     auto pre_nms_convert_queue_element = add_pull_queue_element(output_stream, pipeline_status, elements, "PullQEl_pre_nms_convert",
         vstream_params, post_transform_frame_size);
     CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(post_infer_element.value(), pre_nms_convert_queue_element.value()));
@@ -292,7 +292,7 @@ Expected<std::vector<OutputVStream>> VStreamsBuilderUtils::create_output_post_pr
     CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(remove_overlapping_bboxes_element.value(), pre_fill_nms_format_element_queue_element.value()));
 
     auto fill_nms_format_element = add_fill_nms_format_element(output_stream, elements, "FillNmsFormatEl",
-        iou_op_metadata, build_params);
+        iou_op_metadata, build_params, vstream_params.user_buffer_format.order);
     CHECK_EXPECTED(fill_nms_format_element);
     CHECK_SUCCESS_AS_EXPECTED(PipelinePad::link_pads(pre_fill_nms_format_element_queue_element.value(), fill_nms_format_element.value()));
 
@@ -733,14 +733,14 @@ Expected<std::shared_ptr<RemoveOverlappingBboxesElement>> VStreamsBuilderUtils::
 
 Expected<std::shared_ptr<FillNmsFormatElement>> VStreamsBuilderUtils::add_fill_nms_format_element(std::shared_ptr<OutputStreamBase> &output_stream,
         std::vector<std::shared_ptr<PipelineElement>> &elements, const std::string &element_name, const net_flow::PostProcessOpMetadataPtr &op_metadata,
-        const ElementBuildParams &build_params)
+        const ElementBuildParams &build_params, const hailo_format_order_t &dst_format_order)
 {
     auto metadata = std::dynamic_pointer_cast<net_flow::NmsOpMetadata>(op_metadata);
     assert(nullptr != metadata);
 
     auto fill_nms_format_element = FillNmsFormatElement::create(metadata->nms_config(),
         PipelineObject::create_element_name(element_name, output_stream->name(), output_stream->get_info().index),
-        build_params);
+        build_params, dst_format_order);
     CHECK_EXPECTED(fill_nms_format_element);
     elements.push_back(fill_nms_format_element.value());
     return fill_nms_format_element;
@@ -1139,7 +1139,7 @@ hailo_status VStreamsBuilderUtils::add_nms_fuse(OutputStreamPtrVector &output_st
     elements.push_back(post_infer_elem.value());
     CHECK_SUCCESS(PipelinePad::link_pads(nms_queue_elem.value(), post_infer_elem.value()));
 
-    auto post_transform_frame_size = HailoRTCommon::get_nms_host_frame_size(fused_layer_nms_info, vstreams_params.user_buffer_format);
+    auto post_transform_frame_size = HailoRTCommon::get_nms_by_class_host_frame_size(fused_layer_nms_info, vstreams_params.user_buffer_format);
     auto post_infer_queue_elem = UserBufferQueueElement::create(
         PipelineObject::create_element_name("UserBufQEl_post_infer", fused_layer_name, 0),
         vstreams_params, post_transform_frame_size, pipeline_status);

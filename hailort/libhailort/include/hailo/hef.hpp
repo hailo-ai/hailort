@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -70,7 +70,6 @@ public:
      *
      * @param[in] hef_path            The path of the Hef file.
      * @return Upon success, returns Expected of Hef. Otherwise, returns Unexpected of ::hailo_status error.
-     *         
      */
     static Expected<Hef> create(const std::string &hef_path);
 
@@ -79,8 +78,17 @@ public:
      *
      * @param[in] hef_buffer          A buffer that contains the Hef content.
      * @return Upon success, returns Expected of Hef. Otherwise, returns Unexpected of ::hailo_status error.
+     * @note During Hef creation, the buffer's content is copied to an internal buffer.
      */
     static Expected<Hef> create(const MemoryView &hef_buffer);
+
+    /**
+     * Creates an Hef from a buffer.
+     *
+     * @param[in] hef_buffer          A buffer that contains the Hef content.
+     * @return Upon success, returns Expected of Hef. Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    static Expected<Hef> create(std::shared_ptr<Buffer> hef_buffer);
 
     /**
      * Gets input streams informations.
@@ -453,10 +461,12 @@ public:
 
     Expected<std::string> get_description(bool stream_infos, bool vstream_infos) const;
 
+    Expected<std::map<std::string, std::string>> get_external_resources() const;
+
     ~Hef();
     Hef(Hef &&);
     Hef &operator=(Hef &&);
-    Hef(const Hef &) = delete;
+    Hef(const Hef &) = default;
     Hef &operator=(const Hef &) = delete;
 
 private:
@@ -470,14 +480,17 @@ private:
     friend class CoreOp;
     friend class VDeviceBase;
     friend class InferModelBase;
+    friend class MemoryRequirementsCalculator;
+    friend class ContextResources;
+    friend class ResourcesManagerBuilder;
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
     friend class HailoRtRpcClient;
 #endif // HAILO_SUPPORT_MULTI_PROCESS
 
     class Impl;
-    Hef(std::unique_ptr<Impl> pimpl);
-    std::unique_ptr<Impl> pimpl;
+    Hef(std::shared_ptr<Impl> pimpl);
+    std::shared_ptr<Impl> pimpl;
 };
 
 } /* namespace hailort */

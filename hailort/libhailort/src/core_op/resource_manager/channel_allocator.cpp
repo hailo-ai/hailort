@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -8,7 +8,7 @@
  **/
 
 #include "core_op/resource_manager/channel_allocator.hpp"
-
+#include "common/internal_env_vars.hpp"
 
 namespace hailort
 {
@@ -18,10 +18,12 @@ ChannelAllocator::ChannelAllocator(size_t max_engines_count) :
 {}
 
 Expected<vdma::ChannelId> ChannelAllocator::get_available_channel_id(const LayerIdentifier &layer_identifier,
-    HailoRTDriver::DmaDirection direction, uint8_t engine_index)
+    HailoRTDriver::DmaDirection direction, uint8_t engine_index, bool use_enhanced_channel)
 {
     CHECK_AS_EXPECTED(engine_index < m_max_engines_count, HAILO_INVALID_ARGUMENT,
         "Invalid engine index {}, max is {}", engine_index, m_max_engines_count);
+    CHECK_AS_EXPECTED(!use_enhanced_channel || (HailoRTDriver::DmaDirection::D2H == direction), HAILO_INVALID_ARGUMENT,
+        "Error, cannot use enhanced channel when direction is not D2H");
 
     const auto found_channel = m_allocated_channels.find(layer_identifier);
     if (found_channel != m_allocated_channels.end()) {
@@ -40,6 +42,11 @@ Expected<vdma::ChannelId> ChannelAllocator::get_available_channel_id(const Layer
         (direction == HailoRTDriver::DmaDirection::H2D) ? MIN_H2D_CHANNEL_INDEX : MIN_D2H_CHANNEL_INDEX;
     uint8_t max_channel_index =
         (direction == HailoRTDriver::DmaDirection::H2D) ? MAX_H2D_CHANNEL_INDEX : MAX_D2H_CHANNEL_INDEX;
+
+    // In case that enhance CCB channel is needed for hw infer
+    if ((LayerType::BOUNDARY == std::get<0>(layer_identifier)) && use_enhanced_channel) {
+        min_channel_index = MIN_ENHANCED_D2H_CHANNEL_INDEX;
+    }
 
     for (uint8_t index = min_channel_index; index <= max_channel_index; ++index) {
         const vdma::ChannelId channel_id = {engine_index, index};

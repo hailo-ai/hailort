@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -49,7 +49,7 @@ public:
     virtual hailo_status activate_impl(uint16_t dynamic_batch_size) override;
     // Will first deactivate host resources (via deactivate_host_resources) and then reset the core-op on the fw
     virtual hailo_status deactivate_impl() override;
-    virtual hailo_status shutdown() override final; // Final since called from destructor
+    virtual hailo_status shutdown() override;
 
     // Activate all resources related to the core-op on the host.
     hailo_status activate_host_resources();
@@ -81,7 +81,7 @@ public:
     virtual Expected<uint32_t> get_cache_read_length() const override;
     virtual Expected<uint32_t> get_cache_write_length() const override;
     virtual Expected<uint32_t> get_cache_entry_size(uint32_t cache_id) const override;
-    virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) override;
+    virtual hailo_status init_cache(uint32_t read_offset) override;
     virtual hailo_status update_cache_offset(int32_t offset_delta_entries) override;
     virtual Expected<std::vector<uint32_t>> get_cache_ids() const override;
     virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) override;
@@ -101,6 +101,7 @@ public:
 private:
     Expected<uint32_t> get_cache_length_impl(std::function<size_t(const CacheBuffer&)> length_getter,
         const std::string &length_type) const;
+    hailo_status shutdown_impl();
 
     std::shared_ptr<ResourcesManager> m_resources_manager;
     std::shared_ptr<CacheManager> m_cache_manager;

@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file connection_context.cpp
  * @brief Connection Context
@@ -16,22 +16,6 @@
 
 namespace hailort
 {
-
-Expected<std::shared_ptr<ConnectionContext>> ConnectionContext::create_shared(const std::string &device_id)
-{
-    auto should_force_socket_com = get_env_variable(HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR);
-
-    // If forcing hrpc service, its because we work without EP driver -> use sockets
-    if (should_force_socket_com.has_value()) {
-        return OsConnectionContext::create_shared(false);
-    } else {
-        if (HailoRTDriver::is_pcie_ep_loaded()) {
-            return PcieConnectionContext::create_server_shared();
-        } else {
-            return PcieConnectionContext::create_client_shared(device_id);
-        }
-    }
-}
 
 Expected<std::shared_ptr<ConnectionContext>> ConnectionContext::create_client_shared(const std::string &device_id)
 {

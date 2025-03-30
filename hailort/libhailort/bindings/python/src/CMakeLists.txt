@@ -76,8 +76,8 @@ if(LIBHAILORT_PATH AND HAILORT_INCLUDE_DIR)
         _pyhailort
         PUBLIC
         HAILORT_MAJOR_VERSION=4
-        HAILORT_MINOR_VERSION=20
-        HAILORT_REVISION_VERSION=1
+        HAILORT_MINOR_VERSION=21
+        HAILORT_REVISION_VERSION=0
     )
     set_target_properties(
         _pyhailort
@@ -88,7 +88,7 @@ if(LIBHAILORT_PATH AND HAILORT_INCLUDE_DIR)
 elseif(LIBHAILORT_PATH OR HAILORT_INCLUDE_DIR)
     message(FATAL_ERROR "Both LIBHAILORT_PATH and HAILORT_INCLUDE_DIR must be defined or none of them. LIBHAILORT_PATH: '${LIBHAILORT_PATH}', HAILORT_INCLUDE_DIR: '${HAILORT_INCLUDE_DIR}'")
 else()
-    find_package(HailoRT 4.20.1 EXACT REQUIRED)
+    find_package(HailoRT 4.21.0 EXACT REQUIRED)
     target_link_libraries(_pyhailort PRIVATE HailoRT::libhailort)
 endif()
 

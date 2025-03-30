@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -23,6 +23,7 @@ using namespace hailort;
 #define FORMAT_CLEAR_LINE "\033[2K\r"
 #define FORMAT_CURSOR_UP_LINE "\033[F"
 #define FORMAT_CLEAR_TERMINAL_CURSOR_FIRST_LINE "\033[2J\033[1;1H"
+#define FORMAT_RESET_TERMINAL_CURSOR_FIRST_LINE "\033[H\033[J"
 #define FORMAT_ENTER_ALTERNATIVE_SCREEN "\033[?1049h"
 #define FORMAT_EXIT_ALTERNATIVE_SCREEN "\033[?1049l"
 #define FORMAT_GREEN_PRINT "\x1B[1;32m"

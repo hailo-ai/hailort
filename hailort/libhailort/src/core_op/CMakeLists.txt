@@ -6,7 +6,6 @@ set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/resource_manager/resource_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/resource_manager/resource_manager_builder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/resource_manager/config_buffer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/resource_manager/intermediate_buffer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/resource_manager/cache_buffer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/resource_manager/channel_allocator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/resource_manager/action_list_buffer_builder/action_list_buffer_builder.cpp

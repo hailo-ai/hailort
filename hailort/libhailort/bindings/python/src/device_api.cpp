@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -23,28 +23,28 @@ std::vector<std::string> DeviceWrapper::scan()
     return device_ids.release();
 }
 
-DeviceWrapper DeviceWrapper::create(const std::string &device_id)
+DeviceWrapperPtr DeviceWrapper::create(const std::string &device_id)
 {
     auto device = Device::create(device_id);
     VALIDATE_EXPECTED(device);
-    return DeviceWrapper(device.release());
+    return std::make_shared<DeviceWrapper>(device.release());
 }
 
-DeviceWrapper DeviceWrapper::create_pcie(hailo_pcie_device_info_t &device_info)
+DeviceWrapperPtr DeviceWrapper::create_pcie(hailo_pcie_device_info_t &device_info)
 {
     auto device = Device::create_pcie(device_info);
     VALIDATE_EXPECTED(device);
 
-    return DeviceWrapper(device.release());
+    return std::make_shared<DeviceWrapper>(device.release());
 }
 
-DeviceWrapper DeviceWrapper::create_eth(const std::string &device_address, uint16_t port,
+DeviceWrapperPtr DeviceWrapper::create_eth(const std::string &device_address, uint16_t port,
     uint32_t timeout_milliseconds, uint8_t max_number_of_attempts)
 {
     auto device = Device::create_eth(device_address, port, timeout_milliseconds, max_number_of_attempts);
     VALIDATE_EXPECTED(device);
 
-    return DeviceWrapper(device.release());
+    return std::make_shared<DeviceWrapper>(device.release());
 }
 
 void DeviceWrapper::release()
@@ -444,7 +444,7 @@ void DeviceWrapper::set_sleep_state(hailo_sleep_state_t sleep_state)
 
 void DeviceWrapper::bind(py::module &m)
 {
-    py::class_<DeviceWrapper>(m, "Device")
+    py::class_<DeviceWrapper, DeviceWrapperPtr>(m, "Device")
     .def("is_valid", &DeviceWrapper::is_valid)
 
     // Scan

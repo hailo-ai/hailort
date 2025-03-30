@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file hailo_session_internal.hpp
  * @brief Hailo Session Header for sockets based comunication
@@ -100,12 +100,14 @@ public:
     virtual hailo_status close() override;
 
     virtual hailo_status wait_for_write_async_ready(size_t transfer_size, std::chrono::milliseconds timeout) override;
-    virtual hailo_status write_async(const uint8_t *buffer, size_t size,
-        std::function<void(hailo_status)> &&callback) override;
+    using Session::write_async;
+    virtual hailo_status write_async(TransferRequest &&request) override;
 
     virtual hailo_status wait_for_read_async_ready(size_t transfer_size, std::chrono::milliseconds timeout) override;
-    virtual hailo_status read_async(uint8_t *buffer, size_t size,
-        std::function<void(hailo_status)> &&callback) override;
+    using Session::read_async;
+    virtual hailo_status read_async(TransferRequest &&request) override;
+
+    virtual Expected<Buffer> allocate_buffer(size_t size, hailo_dma_buffer_direction_t direction) override;
 
     OsSession(Socket &&socket, std::shared_ptr<OsConnectionContext> context,
         std::shared_ptr<AsyncActionsThread> write_actions_thread,
@@ -115,7 +117,6 @@ public:
             m_read_actions_thread(read_actions_thread) {}
 
     static Expected<sockaddr_un> get_localhost_server_addr();
-    static Expected<std::pair<std::string, uint16_t>> parse_ip_port(const std::string &ip_port);
     hailo_status connect();
 
 private:

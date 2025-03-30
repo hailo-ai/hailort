@@ -24,6 +24,7 @@ set(HAILORTCLI_CPP_FILES
     common.cpp
     benchmark_command.cpp
     parse_hef_command.cpp
+    memory_requirements_command.cpp
     graph_printer.cpp
     mon_command.cpp
 

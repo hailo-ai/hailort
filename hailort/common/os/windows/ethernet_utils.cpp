@@ -1,3 +1,7 @@
+/**
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Distributed under the MIT license (https://opensource.org/licenses/MIT)
+ **/
 
 #include "common/ethernet_utils.hpp"
 

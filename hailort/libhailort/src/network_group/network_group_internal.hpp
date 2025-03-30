@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -65,8 +65,8 @@ public:
 
     virtual hailo_status shutdown() override;
 
-    virtual const std::string &get_network_group_name() const override;
-    virtual const std::string &name() const override;
+    virtual const std::string& get_network_group_name() const override;
+    virtual const std::string& name() const override;
 
     virtual Expected<InputStreamRefVector> get_input_streams_by_network(const std::string &network_name="") override;
     virtual Expected<OutputStreamRefVector> get_output_streams_by_network(const std::string &network_name="") override;
@@ -120,7 +120,7 @@ public:
 
     virtual Expected<std::vector<InputVStream>> create_input_vstreams(const std::map<std::string, hailo_vstream_params_t> &inputs_params) override;
     virtual Expected<std::vector<OutputVStream>> create_output_vstreams(const std::map<std::string, hailo_vstream_params_t> &outputs_params) override;
-    virtual Expected<size_t> get_min_buffer_pool_size() override;
+    virtual Expected<size_t> infer_queue_size() const override;
 
     Expected<std::shared_ptr<InputStreamBase>> get_shared_input_stream_by_name(const std::string &stream_name)
     {
@@ -193,12 +193,11 @@ public:
     virtual hailo_status set_nms_iou_threshold(const std::string &edge_name, float32_t iou_threshold) override;
     virtual hailo_status set_nms_max_bboxes_per_class(const std::string &edge_name, uint32_t max_bboxes_per_class) override;
     virtual hailo_status set_nms_max_bboxes_total(const std::string &edge_name, uint32_t max_bboxes_total) override;
-    virtual hailo_status set_nms_result_order_type(const std::string &edge_name, hailo_nms_result_order_type_t order_type) override;
     virtual hailo_status set_nms_max_accumulated_mask_size(const std::string &edge_name, uint32_t max_accumulated_mask_size) override;
 
     Expected<std::shared_ptr<net_flow::NmsOpMetadata>> get_nms_meta_data(const std::string &edge_name);
 
-    virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) override;
+    virtual hailo_status init_cache(uint32_t read_offset) override;
     virtual hailo_status update_cache_offset(int32_t offset_delta_entries) override;
     virtual Expected<std::vector<uint32_t>> get_cache_ids() const override;
     virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) override;
@@ -208,7 +207,6 @@ private:
     ConfiguredNetworkGroupBase(const ConfigureNetworkParams &config_params,
         std::vector<std::shared_ptr<CoreOp>> &&core_ops, NetworkGroupMetadata &&metadata);
 
-    static uint16_t get_smallest_configured_batch_size(const ConfigureNetworkParams &config_params);
     hailo_status add_mux_streams_by_edges_names(OutputStreamWithParamsVector &result,
         const std::unordered_map<std::string, hailo_vstream_params_t> &outputs_edges_params);
 

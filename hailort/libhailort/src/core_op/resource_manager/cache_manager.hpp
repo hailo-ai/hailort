@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -25,6 +25,7 @@ struct CacheIoInfo
 {
     uint32_t io_size;
     uint32_t entry_size;
+    uint32_t padded_entry_size;
 };
 
 struct CacheInfo
@@ -35,19 +36,20 @@ struct CacheInfo
             "Input and output entry sizes must match: input={}, output={}",
             input_info.entry_size, output_info.entry_size);
         // Asserting is good enough here, as it'll be validated down the line
-        assert(input_info.io_size % input_info.entry_size == 0);
-        assert(output_info.io_size % output_info.entry_size == 0);
+        assert(input_info.io_size % input_info.padded_entry_size == 0);
+        assert(output_info.io_size % output_info.padded_entry_size == 0);
 
         return CacheInfo{input_info.io_size + output_info.io_size, input_info.entry_size, input_info.io_size,
-            output_info.io_size};
+            output_info.io_size, input_info.padded_entry_size};
     }
 
     uint32_t size;
     uint32_t entry_size;
     uint32_t input_size;
     uint32_t output_size;
+    uint32_t padded_entry_size;
 
-    uint32_t cache_length() const { return size / entry_size; }
+    uint32_t cache_length() const { return size / padded_entry_size; }
 };
 
 // Cache ID -> CacheIoInfo
@@ -61,10 +63,6 @@ class CacheManager final
 public:
     static constexpr uint32_t CACHE_LENGTH_NOT_SET = 0;
 
-    // TODO: Support getting initial_read_offset_entries + write_offset_delta_entries from configured_network_params
-    //       s.t. the CacheManager can be created with the correct offsets, and init_caches won't be needed at the start.
-    //       Currently, the CacheManager is created with the m_read_offset_entries=0 and
-    //       m_write_offset_delta_entries=m_cache_input_size (i.e. right after where data was read from) (HRT-14288)
     static Expected<CacheManagerPtr> create_shared(HailoRTDriver &driver);
 
     CacheManager(HailoRTDriver &driver);
@@ -75,15 +73,15 @@ public:
     ~CacheManager() = default;
 
     hailo_status create_caches_from_core_op(std::shared_ptr<CoreOpMetadata> core_op_metadata);
-    ExpectedRef<IntermediateBuffer> set_cache_input_channel(const std::string &core_op_name, uint32_t cache_id,
+    ExpectedRef<CacheBuffer> set_cache_input_channel(const std::string &core_op_name, uint32_t cache_id,
         uint16_t batch_size, vdma::ChannelId channel_id);
-    ExpectedRef<IntermediateBuffer> set_cache_output_channel(const std::string &core_op_name, uint32_t cache_id,
+    ExpectedRef<CacheBuffer> set_cache_output_channel(const std::string &core_op_name, uint32_t cache_id,
         uint16_t batch_size, vdma::ChannelId channel_id);
     ExpectedRef<std::unordered_map<uint32_t, CacheBuffer>> get_cache_buffers(const std::string &core_op_name);
 
     // Note: These functions are not thread-safe!
-    // Programs the CacheManager instance with the given offsets, overriding the current offsets.
-    hailo_status init_caches(uint32_t initial_read_offset_entries, int32_t write_offset_delta_entries);
+    // Programs the CacheManager instance with the given offset read overriding the current offset.
+    hailo_status init_caches(uint32_t initial_read_offset_entries);
     // Updates the read offset by the given delta
     // * If check_snapshots is true, the function will validate that the caches have only been updated at the
     //   correct offsets
@@ -129,9 +127,9 @@ private:
         std::unordered_map<uint32_t, CacheBuffer> &get_cache_buffers();
         const std::unordered_map<uint32_t, CacheBuffer> &get_cache_buffers() const;
         ExpectedRef<CacheBuffer> get_cache_buffer(uint32_t cache_id);
-        ExpectedRef<IntermediateBuffer> set_cache_input_channel(uint32_t cache_id, uint16_t batch_size,
+        ExpectedRef<CacheBuffer> set_cache_input_channel(uint32_t cache_id, uint16_t batch_size,
             vdma::ChannelId channel_id);
-        ExpectedRef<IntermediateBuffer> set_cache_output_channel(uint32_t cache_id, uint16_t batch_size,
+        ExpectedRef<CacheBuffer> set_cache_output_channel(uint32_t cache_id, uint16_t batch_size,
             vdma::ChannelId channel_id);
         uint32_t cache_length() const;
         // Note: read_offset is absolute, not relative to the current read offset

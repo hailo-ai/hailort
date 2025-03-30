@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -75,6 +75,9 @@ public:
     hailo_status write_async(const void *buffer, size_t size, std::function<void(hailo_status)> &&callback);
     hailo_status read_async(void *buffer, size_t size, std::function<void(hailo_status)> &&callback);
 
+    hailo_status write_async(TransferRequest &&request);
+    hailo_status read_async(TransferRequest &&request);
+
     hailo_status close();
 
     inline PcieSessionType session_type() const
@@ -115,8 +118,6 @@ private:
 
     hailo_status launch_transfer_sync(vdma::BoundaryChannel &channel,
         void *buffer, size_t size, std::chrono::milliseconds timeout, CbParams &cb_params);
-    static hailo_status launch_transfer_async(vdma::BoundaryChannel &channel,
-        void *buffer, size_t size, std::function<void(hailo_status)> &&callback);
     static Expected<vdma::DescriptorList> create_desc_list(HailoRTDriver &driver);
 
     std::atomic<bool> m_should_close {true};

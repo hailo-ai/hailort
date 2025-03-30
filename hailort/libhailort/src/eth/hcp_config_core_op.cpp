@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 
@@ -104,10 +104,9 @@ Expected<uint32_t> HcpConfigCoreOp::get_cache_entry_size(uint32_t cache_id) cons
     return make_unexpected(HAILO_INVALID_OPERATION);
 }
 
-hailo_status HcpConfigCoreOp::init_cache(uint32_t read_offset, int32_t write_offset_delta)
+hailo_status HcpConfigCoreOp::init_cache(uint32_t read_offset)
 {
     (void) read_offset;
-    (void) write_offset_delta;
     LOGGER__ERROR("init_cache function is not supported on ETH core-ops");
     return HAILO_INVALID_OPERATION;
 }

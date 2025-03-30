@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -44,7 +44,8 @@ namespace hailort
 typedef std::array<std::array<float64_t, CONTROL_PROTOCOL__POWER_MEASUREMENT_TYPES__COUNT>, CONTROL_PROTOCOL__DVM_OPTIONS_COUNT> power_conversion_multiplier_t;
 
 
-Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOCOL_identify_response_t *identify_response)
+Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOCOL_identify_response_t *identify_response,
+    Device &device)
 {
     hailo_device_identity_t board_info;
 
@@ -97,11 +98,15 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
 
     // Check if we're on H10 - relevant only for linux
 #ifdef __linux__
-    TRY(auto host_name_pair, Process::create_and_wait_for_output("hostname", 20));
-    CHECK_AS_EXPECTED(0 == host_name_pair.first, HAILO_INTERNAL_FAILURE, "Failed to run 'hostname'");
-    if (host_name_pair.second.find("hailo10") != std::string::npos) {
-        board_info.device_architecture = HAILO_ARCH_HAILO10H;
+    if (Device::Type::INTEGRATED == device.get_type()) {
+        char hostname[HOST_NAME_MAX+1];
+        CHECK_AS_EXPECTED(0 == gethostname(hostname, HOST_NAME_MAX+1), HAILO_INTERNAL_FAILURE, "Failed to get hostname");
+        if (std::string(hostname).find("hailo10") != std::string::npos) {
+            board_info.device_architecture = HAILO_ARCH_HAILO10H;
+        }
     }
+#else
+    (void)device;
 #endif
 
     /* Write identify results to log */
@@ -339,7 +344,7 @@ Expected<hailo_device_identity_t> Control::identify(Device &device)
     CHECK_SUCCESS_AS_EXPECTED(status);
     identify_response = (CONTROL_PROTOCOL_identify_response_t *)(payload->parameters);
 
-    return control__parse_identify_results(identify_response);
+    return control__parse_identify_results(identify_response, device);
 }
 
 hailo_status Control::core_identify(Device &device, hailo_core_information_t *core_info)
@@ -3408,7 +3413,8 @@ hailo_status Control::set_sleep_state(Device &device, hailo_sleep_state_t sleep_
 
 hailo_status Control::change_hw_infer_status(Device &device, CONTROL_PROTOCOL__hw_infer_state_t state,
     uint8_t network_group_index, uint16_t dynamic_batch_size, uint16_t batch_count,
-    CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info, CONTROL_PROTOCOL__hw_only_infer_results_t *results)
+    CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info, CONTROL_PROTOCOL__hw_only_infer_results_t *results,
+    CONTROL_PROTOCOL__boundary_channel_mode_t boundary_channel_mode)
 {
     CONTROL_PROTOCOL__request_t request = {};
     size_t request_size = 0;
@@ -3421,8 +3427,8 @@ hailo_status Control::change_hw_infer_status(Device &device, CONTROL_PROTOCOL__h
     RETURN_IF_ARG_NULL(results);
 
     auto common_status = CONTROL_PROTOCOL__pack_change_hw_infer_status_request(
-        &request, &request_size, device.get_control_sequence(), static_cast<uint8_t>(state), 
-        network_group_index, dynamic_batch_size, batch_count, channels_info);
+        &request, &request_size, device.get_control_sequence(), static_cast<uint8_t>(state),
+        network_group_index, dynamic_batch_size, batch_count, channels_info, boundary_channel_mode);
     auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
 
@@ -3442,11 +3448,12 @@ hailo_status Control::change_hw_infer_status(Device &device, CONTROL_PROTOCOL__h
 }
 
 hailo_status Control::start_hw_only_infer(Device &device, uint8_t network_group_index, uint16_t dynamic_batch_size,
-    uint16_t batch_count, CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info)
+    uint16_t batch_count, CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info,
+    CONTROL_PROTOCOL__boundary_channel_mode_t boundary_channel_mode)
 {
     CONTROL_PROTOCOL__hw_only_infer_results_t results = {};
     return Control::change_hw_infer_status(device, CONTROL_PROTOCOL__HW_INFER_STATE_START,
-        network_group_index, dynamic_batch_size, batch_count, channels_info ,&results);
+        network_group_index, dynamic_batch_size, batch_count, channels_info ,&results, boundary_channel_mode);
 }
 
 hailo_status Control::stop_hw_only_infer(Device &device, CONTROL_PROTOCOL__hw_only_infer_results_t *results)
@@ -3454,9 +3461,11 @@ hailo_status Control::stop_hw_only_infer(Device &device, CONTROL_PROTOCOL__hw_on
     const uint8_t DEFAULT_NETWORK_GROUP = 0;
     const uint16_t DEFAULT_DYNAMIC_BATCH_SIZE = 1;
     const uint16_t DEFAULT_BATCH_COUNT = 1;
+    const CONTROL_PROTOCOL__boundary_channel_mode_t DEFAULT_BOUNDARY_TYPE = CONTROL_PROTOCOL__DESC_BOUNDARY_CHANNEL;
     CONTROL_PROTOCOL__hw_infer_channels_info_t channels_info_default = {};
     return Control::change_hw_infer_status(device, CONTROL_PROTOCOL__HW_INFER_STATE_STOP,
-        DEFAULT_NETWORK_GROUP, DEFAULT_DYNAMIC_BATCH_SIZE, DEFAULT_BATCH_COUNT, &channels_info_default, results);
+        DEFAULT_NETWORK_GROUP, DEFAULT_DYNAMIC_BATCH_SIZE, DEFAULT_BATCH_COUNT, &channels_info_default, results,
+        DEFAULT_BOUNDARY_TYPE);
 }
 
 } /* namespace hailort */

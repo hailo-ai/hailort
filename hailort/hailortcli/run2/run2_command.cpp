@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -200,7 +200,6 @@ VStreamApp::VStreamApp(const std::string &description, const std::string &name, 
             { "nc", HAILO_FORMAT_ORDER_NC },
             { "bayer_rgb", HAILO_FORMAT_ORDER_BAYER_RGB },
             { "12_bit_bayer_rgb", HAILO_FORMAT_ORDER_12_BIT_BAYER_RGB },
-            { "hailo_nms", HAILO_FORMAT_ORDER_HAILO_NMS },
             { "hailo_nms_by_class", HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS },
             { "hailo_nms_by_score", HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE },
             { "nchw", HAILO_FORMAT_ORDER_NCHW },
@@ -273,7 +272,10 @@ NetworkApp::NetworkApp(const std::string &description, const std::string &name) 
         ->check(NetworkGroupNameValidator(hef_path_option));
     // NOTE: callbacks/params aren't called/updated before auto-completion (even after changing the order in App.hpp - at least for 2 jumps)
     auto net_params = add_option_group("Network Group Parameters");
-    net_params->add_option("--batch-size", m_params.batch_size, "Batch size")->default_val(HAILO_DEFAULT_BATCH_SIZE);
+    net_params->add_option("--batch-size", m_params.batch_size,
+        "Batch size\n"
+        "The default value is HAILO_DEFAULT_BATCH_SIZE - which means the batch is determined by HailoRT automatically")
+        ->default_val(HAILO_DEFAULT_BATCH_SIZE);
     net_params->add_option("--scheduler-threshold", m_params.scheduler_threshold, "Scheduler threshold")->default_val(0);
     net_params->add_option("--scheduler-timeout", m_params.scheduler_timeout_ms, "Scheduler timeout in milliseconds")->default_val(0);
     net_params->add_option("--scheduler-priority", m_params.scheduler_priority, "Scheduler priority")->default_val(HAILO_SCHEDULER_PRIORITY_NORMAL);
@@ -773,6 +775,9 @@ Expected<std::vector<std::shared_ptr<NetworkRunner>>> Run2::init_and_run_net_run
         net_runners[network_runner_index]->set_last_measured_fps(fps_per_network[network_runner_index]);
     }
     live_stats.reset(); // Ensures that the final print will include real values and not with values of when streams are already aborted.
+    for (auto net_runner : net_runners) {
+        net_runner->stop();
+    }
     shutdown_event->signal();
     wait_for_threads(threads);
     return net_runners;

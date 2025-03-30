@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -39,6 +39,15 @@ public:
     /**
      * Creates a vdevice.
      * 
+     * @param[in]  params        A @a hailo_vdevice_params_t.
+     * @return Upon success, returns Expected of a shared_ptr to VDevice object.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    static Expected<std::shared_ptr<VDevice>> create_shared(const hailo_vdevice_params_t &params);
+
+    /**
+     * Creates a vdevice.
+     * 
      * @return Upon success, returns Expected of a unique_ptr to VDevice object.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      * @note calling this create method will apply default vdevice params.
@@ -46,13 +55,33 @@ public:
     static Expected<std::unique_ptr<VDevice>> create();
 
     /**
+     * Creates a vdevice.
+     * 
+     * @return Upon success, returns Expected of a shared_ptr to VDevice object.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note calling this create method will apply default vdevice params.
+     */
+    static Expected<std::shared_ptr<VDevice>> create_shared();
+
+    /**
      * Creates a vdevice from the given phyiscal device ids.
      * 
+     * @param[in]  device_ids        A vector of std::string, represents the device-ids from which to create the VDevice.
      * @return Upon success, returns Expected of a unique_ptr to VDevice object.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      * @note calling this create method will apply default vdevice params.
      */
     static Expected<std::unique_ptr<VDevice>> create(const std::vector<std::string> &device_ids);
+
+    /**
+     * Creates a vdevice from the given phyiscal device ids.
+     * 
+     * @param[in]  device_ids        A vector of std::string, represents the device-ids from which to create the VDevice.
+     * @return Upon success, returns Expected of a shared_ptr to VDevice object.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note calling this create method will apply default vdevice params.
+     */
+    static Expected<std::shared_ptr<VDevice>> create_shared(const std::vector<std::string> &device_ids);
 
     /**
      * Configures the vdevice from an hef.
@@ -72,7 +101,6 @@ public:
      * @param[in] name                        A string of the model name (optional).
      * @return Upon success, returns Expected of a shared pointer of infer model.
      *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note the Hef file must be maintained until the completion of the configuration phase.
      */
     virtual Expected<std::shared_ptr<InferModel>> create_infer_model(const std::string &hef_path,
         const std::string &name = "");
@@ -84,9 +112,31 @@ public:
      * @param[in] name                        A string of the model name (optional).
      * @return Upon success, returns Expected of a shared pointer of infer model.
      *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note the Hef buffer must be maintained until the completion of the configuration phase.
+     * @note During Hef creation, the hef_buffer's content is copied to an internal buffer.
      */
     virtual Expected<std::shared_ptr<InferModel>> create_infer_model(const MemoryView hef_buffer,
+        const std::string &name = "");
+
+    /**
+     * Creates the infer model from an hef buffer
+     *
+     * @param[in] hef_buffer                  A pointer to a buffer containing the hef file.
+     * @param[in] name                        A string of the model name (optional).
+     * @return Upon success, returns Expected of a shared pointer of infer model.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    virtual Expected<std::shared_ptr<InferModel>> create_infer_model(std::shared_ptr<Buffer> hef_buffer,
+        const std::string &name = "");
+
+    /**
+     * Creates the infer model from an hef
+     *
+     * @param[in] hef                         A Hef object
+     * @param[in] name                        A string of the model name (optional).
+     * @return Upon success, returns Expected of a shared pointer of infer model.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    virtual Expected<std::shared_ptr<InferModel>> create_infer_model(Hef hef,
         const std::string &name = "");
 
     /**
@@ -207,6 +257,10 @@ public:
      */
     virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) = 0;
 
+    const hailo_vdevice_params_t get_params() const {
+        return m_params;
+    }
+
     virtual hailo_status before_fork();
     virtual hailo_status after_fork_in_parent();
     virtual hailo_status after_fork_in_child();
@@ -221,7 +275,10 @@ public:
     static bool should_force_hrpc_client();
 
 protected:
-    VDevice() = default;
+    VDevice(const hailo_vdevice_params_t &params) : m_params(params)
+        {};
+
+    hailo_vdevice_params_t m_params;
 };
 
 } /* namespace hailort */

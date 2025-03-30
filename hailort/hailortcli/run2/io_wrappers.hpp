@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file io_wrappers.hpp
  * @brief Wrappers for Input/Output Stream/VStream. Manages buffer allocation, framerate throttle, latency meter and
@@ -95,14 +95,15 @@ public:
         return get().wait_for_async_ready(m_dataset[0]->size(), HAILORTCLI_DEFAULT_TIMEOUT);
     }
 
-    hailo_status write_async(typename Writer::TransferDoneCallback callback)
+    template<typename CB>
+    hailo_status write_async(CB &&callback)
     {
         before_write_start();
         auto self = std::enable_shared_from_this<WriterWrapper<Writer>>::shared_from_this();
         auto status = get().write_async(MemoryView(*next_buffer()),
             [self, original=callback](const typename Writer::CompletionInfo &completion_info) {
                 (void)self; // Keeping self here so the buffer won't be deleted until the callback is called.
-                original(completion_info);
+                original(completion_info.status);
             });
         if (HAILO_SUCCESS != status) {
             return status;
@@ -272,16 +273,22 @@ public:
         return get().wait_for_async_ready(m_buffer[0]->size(), HAILORTCLI_DEFAULT_TIMEOUT);
     }
 
-    hailo_status read_async(typename Reader::TransferDoneCallback callback)
+    template<typename CB>
+    hailo_status read_async(CB &&callback)
     {
         auto self = std::enable_shared_from_this<ReaderWrapper<Reader>>::shared_from_this();
         return get().read_async(MemoryView(*next_buffer()),
             [self, original=callback](const typename Reader::CompletionInfo &completion_info) {
-                original(completion_info);
+                original(completion_info.status);
                 if (completion_info.status == HAILO_SUCCESS) {
                     self->on_read_done();
                 }
             });
+    }
+
+    void set_net_live_track(std::shared_ptr<NetworkLiveTrack> net_live_track)
+    {
+        m_net_live_track = net_live_track;
     }
 
 private:

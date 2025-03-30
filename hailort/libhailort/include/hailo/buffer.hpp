@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -199,6 +199,7 @@ public:
 
     // Internal functions
     static Expected<Buffer> create(BufferStoragePtr storage, bool register_storage = true);
+    static Expected<BufferPtr> create_shared(BufferStoragePtr storage, bool register_storage = true);
 
 private:
     class StorageImpl;
@@ -222,6 +223,7 @@ public:
     MemoryView() noexcept;
     explicit MemoryView(Buffer &buffer) noexcept;
     MemoryView(void *data, size_t size) noexcept;
+    MemoryView(const std::string &data) noexcept;
     ~MemoryView() = default;
 
     MemoryView& operator=(MemoryView&& other) noexcept = default;
@@ -255,6 +257,16 @@ public:
 
     // Stream operator overload
     friend std::ostream& operator<<(std::ostream&, const MemoryView&);
+
+    // Returns a pointer to the start of the buffer, cast to T*
+    // Note: If this->size() is less than sizeof(T), then part of the data pointed to by the returned pointer
+    //       will be outside of the buffer's bounds.
+    template<typename T, std::enable_if_t<std::is_pod<T>::value, int> = 0>
+    T* as_pointer() const
+    {
+        assert(m_size >= sizeof(T));
+        return reinterpret_cast<T*>(m_data);
+    }
 
 private:
     void *m_data;

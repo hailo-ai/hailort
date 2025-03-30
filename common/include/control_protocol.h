@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -447,7 +447,6 @@ typedef struct {
     uint16_t feature_padding_payload;
     uint32_t buffer_padding_payload;
     uint16_t buffer_padding;
-    bool is_periph_calculated_in_hailort;
     bool is_core_hw_padding_config_in_dfc;
 } CONTROL_PROTOCOL__nn_stream_config_t;
 
@@ -879,14 +878,20 @@ typedef struct {
 } CONTROL_PROTOCOL__INFER_FEATURE_LIST_t;
 
 typedef struct {
+    uint8_t packed_vdma_channel_id;
+} CONTROL_PROTOCOL__config_channel_info_t;
+
+typedef struct {
     uint16_t dynamic_contexts_count;
     CONTROL_PROTOCOL__INFER_FEATURE_LIST_t infer_features;
     CONTROL_PROTOCOL__VALIDATION_FEATURE_LIST_t validation_features;
     uint8_t networks_count;
     uint16_t csm_buffer_size;
-    uint16_t batch_size[CONTROL_PROTOCOL__MAX_NETWORKS_PER_NETWORK_GROUP];
+    uint16_t batch_size;
     uint32_t external_action_list_address;
     uint32_t boundary_channels_bitmap[CONTROL_PROTOCOL__MAX_VDMA_ENGINES_COUNT];
+    uint8_t config_channels_count;
+    CONTROL_PROTOCOL__config_channel_info_t config_channel_info[CONTROL_PROTOCOL__MAX_CFG_CHANNELS];
 } CONTROL_PROTOCOL__application_header_t;
 
 typedef struct {
@@ -1316,12 +1321,22 @@ typedef struct {
 } CONTROL_PROTOCOL__hw_infer_channels_info_t;
 
 typedef enum {
-    CONTROL_PROTOCOL__HW_INFER_STATE_START, 
+    CONTROL_PROTOCOL__HW_INFER_STATE_START,
     CONTROL_PROTOCOL__HW_INFER_STATE_STOP,
 
     /* must be last*/
     CONTROL_PROTOCOL__HW_INFER_STATE_COUNT
 } CONTROL_PROTOCOL__hw_infer_state_t;
+
+typedef enum {
+    CONTROL_PROTOCOL__DESC_BOUNDARY_CHANNEL,
+    CONTROL_PROTOCOL__CCB_BOUNDARY_CHANNEL,
+
+    /* must be last*/
+    CONTROL_PROTOCOL__BOUNDARY_CHANNEL_MODE_COUNT
+} CONTROL_PROTOCOL__boundary_channel_mode_t;
+
+#define CHANGE_HW_INFER_REQUEST_PARAMETER_COUNT (6)
 
 typedef struct {
     uint32_t hw_infer_state_length;
@@ -1334,6 +1349,8 @@ typedef struct {
     uint16_t batch_count;
     uint32_t channels_info_length;
     CONTROL_PROTOCOL__hw_infer_channels_info_t channels_info;
+    uint32_t boundary_channel_mode_length;
+    uint8_t boundary_channel_mode;
 } CONTROL_PROTOCOL__change_hw_infer_status_request_t;
 
 typedef union {

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -13,13 +13,18 @@
 
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
+#include "hailo/buffer.hpp"
 #include "hailo/genai/vdevice_genai.hpp"
 #include "hailo/genai/common.hpp"
+
+#include <vector>
 
 namespace hailort
 {
 namespace genai
 {
+
+class Text2Image;
 
 /*! Scheduler type for the diffusion process */
 enum class HailoDiffuserSchedulerType
@@ -32,7 +37,7 @@ enum class HailoDiffuserSchedulerType
 class HAILORTAPI Text2ImageParams
 {
 public:
-    Text2ImageParams() = default;
+    Text2ImageParams();
 
     /**
      * Sets the denoise model.
@@ -79,15 +84,60 @@ public:
      */
     hailo_status set_scheduler(HailoDiffuserSchedulerType scheduler_type);
 
+    /**
+     * @return The Hef path of the denoising model.
+     */
+    const std::string& denoise_hef() const;
+
+    /**
+     * @return The LoRA of the denoising model.
+     */
+    const std::string& denoise_lora() const;
+
+    /**
+     * @return The Hef path of the text encoder model.
+     */
+    const std::string& text_encoder_hef() const;
+
+    /**
+     * @return The LoRA of the text encoder model.
+     */
+    const std::string& text_encoder_lora() const;
+
+    /**
+     * @return The Hef path of the image decoder model.
+     */
+    const std::string& image_decoder_hef() const;
+
+    /**
+     * @return The LoRA of the image decoder model.
+     */
+    const std::string& image_decoder_lora() const;
+
+    /**
+     * @return The Hef path of the ip adapter model.
+     */
+    const std::string& ip_adapter_hef() const;
+
+    /**
+     * @return The LoRA of the ip adapter model.
+     */
+    const std::string& ip_adapter_lora() const;
+
+    /**
+     * @return The scheduler type for the diffusion process.
+     */
+    HailoDiffuserSchedulerType scheduler() const;
+
 private:
     std::string m_denoise_hef;
     std::string m_denoise_lora;
 
-    std::string m_encoder_hef;
-    std::string m_encoder_lora;
+    std::string m_text_encoder_hef;
+    std::string m_text_encoder_lora;
 
-    std::string m_decoder_hef;
-    std::string m_decoder_lora;
+    std::string m_image_decoder_hef;
+    std::string m_image_decoder_lora;
 
     std::string m_ip_adapter_hef;
     std::string m_ip_adapter_lora;
@@ -99,8 +149,6 @@ private:
 class HAILORTAPI Text2ImageGeneratorParams
 {
 public:
-    Text2ImageGeneratorParams() = default;
-
     /**
      * Sets the numer of images to generate.
      *
@@ -158,6 +206,10 @@ public:
     uint32_t seed() const;
 
 private:
+    Text2ImageGeneratorParams() = default;
+    friend class Text2Image;
+    friend class Text2ImageServer;
+
     uint32_t m_samples_count;
     uint32_t m_steps_count;
     float32_t m_guidance_scale;
@@ -168,12 +220,11 @@ private:
 class HAILORTAPI Text2ImageGenerator
 {
 public:
-    Text2ImageGenerator(std::shared_ptr<VDevice> vdevice);
-    Text2ImageGenerator(Text2ImageGenerator &&) = default;
-    Text2ImageGenerator &operator=(Text2ImageGenerator &&) = default;
+    Text2ImageGenerator(Text2ImageGenerator &&);
+    Text2ImageGenerator &operator=(Text2ImageGenerator &&) = delete;
     Text2ImageGenerator(const Text2ImageGenerator &) = delete;
     Text2ImageGenerator &operator=(const Text2ImageGenerator &) = delete;
-    virtual ~Text2ImageGenerator() = default;
+    virtual ~Text2ImageGenerator();
 
    /**
      * Generates the output samples images.
@@ -186,7 +237,7 @@ public:
      *         Otherwise, returns Unexpected of ::hailo_status error.
      * @note: If the pipeline is configured with IP Adapter this function will fail and return error.
      */
-    Expected<std::vector<Buffers>> generate(const std::string &positive_prompt, const std::string &negative_prompt,
+    Expected<std::vector<Buffer>> generate(const std::string &positive_prompt, const std::string &negative_prompt,
         std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
 
    /**
@@ -202,7 +253,7 @@ public:
      *         Otherwise, returns Unexpected of ::hailo_status error.
      * @note: If the pipeline is configured without IP Adapter the function will fail and return error.
      */
-    Expected<std::vector<Buffers>> generate(const std::string &positive_prompt, const std::string &negative_prompt,
+    Expected<std::vector<Buffer>> generate(const std::string &positive_prompt, const std::string &negative_prompt,
         const MemoryView &ip_adapter, std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
 
     /**
@@ -249,21 +300,23 @@ public:
 
     static constexpr std::chrono::milliseconds DEFAULT_OPERATION_TIMEOUT = std::chrono::seconds(30);
 
+    class Impl;
+    Text2ImageGenerator(std::unique_ptr<Impl> pimpl);
 private:
-    std::shared_ptr<VDevice> m_vdevice_connection;
+    std::unique_ptr<Impl> m_pimpl;
 };
 
 /*! Represents the Text2Image Model pipeline.
  *  Manages the lifecycle and configuration of a Text2Image model instance.
  */
-class Text2Image
+class HAILORTAPI Text2Image
 {
 public:
-    Text2Image(Text2Image &&) = default;
-    Text2Image(const Text2Image &) = default;
+    Text2Image(Text2Image &&);
+    Text2Image(const Text2Image &) = delete;
     Text2Image &operator=(Text2Image &&) = delete;
     Text2Image &operator=(const Text2Image &) = delete;
-    virtual ~Text2Image() = default;
+    virtual ~Text2Image();
 
     /**
      * Creates Text2Image model pipeline instance configured with the specified parameters.
@@ -275,13 +328,27 @@ public:
     static Expected<Text2Image> create(std::shared_ptr<VDevice> vdevice, const Text2ImageParams &params);
 
     /**
-     * Creates a Generator object from the provided generation parameters or defaults if none are specified.
+     * Creates an Text2ImageGeneratorParams object with the model's default values.
+     *
+     * @return Upon success, returns Expected of Text2ImageGeneratorParams. Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    Expected<Text2ImageGeneratorParams> create_generator_params();
+
+    /**
+     * Creates a Generator object from the provided generator parameters.
      *
      * @param[in] params            The Text2ImageGeneratorParams used to set the generator parameters.
-     *                              If not provided, the model will use it's default params.
+     *
      * @return Upon success, returns Expected of Text2ImageGenerator. Otherwise, returns Unexpected of ::hailo_status error.
      */
-    Expected<Text2ImageGenerator> create_generator(const Text2ImageGeneratorParams &params = Text2ImageGeneratorParams());
+    Expected<Text2ImageGenerator> create_generator(const Text2ImageGeneratorParams &params);
+
+    /**
+     * Creates a Generator object using the model's default generator parameters.
+     *
+     * @return Upon success, returns Expected of Text2ImageGenerator. Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    Expected<Text2ImageGenerator> create_generator();
 
     /**
      * @return The frame size of a single output sample.
@@ -327,11 +394,10 @@ public:
      */
     Expected<hailo_format_order_t> ip_adapter_format_order() const;
 
+    class Impl;
+    Text2Image(std::unique_ptr<Impl> pimpl);
 private:
-    Text2Image(std::shared_ptr<VDevice> vdevice, const Text2ImageParams &params);
-
-    std::shared_ptr<VDevice> m_vdevice;
-    Text2ImageParams m_params;
+    std::unique_ptr<Impl> m_pimpl;
 };
 
 } /* namespace genai */

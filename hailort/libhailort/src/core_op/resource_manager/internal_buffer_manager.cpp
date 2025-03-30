@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -24,144 +24,17 @@
 namespace hailort
 {
 
-Expected<std::shared_ptr<InternalBufferManager>> InternalBufferManager::create(HailoRTDriver &driver,
-    const ConfigureNetworkParams &config_params)
+Expected<std::shared_ptr<InternalBufferManager>> InternalBufferManager::create(HailoRTDriver &driver)
 {
-
-    auto buffer_manager_ptr = make_shared_nothrow<InternalBufferManager>(InternalBufferManager(driver, config_params));
+    auto buffer_manager_ptr = make_shared_nothrow<InternalBufferManager>(InternalBufferManager(driver));
     CHECK_NOT_NULL_AS_EXPECTED(buffer_manager_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return buffer_manager_ptr;
 }
 
-InternalBufferManager::InternalBufferManager(HailoRTDriver &driver, const ConfigureNetworkParams &config_params)
-    : m_driver(driver),
-      m_config_params(config_params),
-      m_edge_layer_infos(),
-      m_edge_layer_to_buffer_map()
+InternalBufferManager::InternalBufferManager(HailoRTDriver &driver)
+    : m_driver(driver)
     {}
-
-
-void InternalBufferManager::add_buffer_info(const EdgeLayerKey &edge_layer_key, const EdgeLayerInfo &buffer_info)
-{
-    m_edge_layer_infos.emplace(edge_layer_key, buffer_info);
-}
-
-Expected<uint16_t> InternalBufferManager::get_network_batch_size(const std::string &network_name) const
-{
-    for (auto const &network_map : m_config_params.network_params_by_name) {
-        auto const network_name_from_params = network_map.first;
-        if (network_name_from_params == network_name) {
-            auto actual_batch_size = network_map.second.batch_size;
-            if (HAILO_DEFAULT_BATCH_SIZE == actual_batch_size) {
-                actual_batch_size = DEFAULT_ACTUAL_BATCH_SIZE;
-            }
-            return actual_batch_size;
-        }
-    }
-
-    LOGGER__ERROR("Failed to find network with network name {}", network_name);
-
-    return make_unexpected(HAILO_NOT_FOUND);
-}
-
-hailo_status InternalBufferManager::add_inter_context_buffer(const LayerInfo &layer_info)
-{
-    // This API gets the inter context input Layer, but the key is the output layer.
-    // The reason is that there is one output edge layer and multiple input edge layers.
-    // We must get the info of all the inputs in order to set the right start and end contexts,
-    // but the key must the the output (from the connected context info).
-
-    // layer_info.connected_context_info.context_index == start context
-    // layer_info.context_index == end context
-    const auto transfer_size = LayerInfoUtils::get_layer_transfer_size(layer_info);
-    TRY(auto batch_size, get_network_batch_size(layer_info.network_name));
-    static const bool BUFFER_REUSE = true;
-
-    auto edge_layer_key =
-        std::make_pair(layer_info.connected_context_info.context_index, layer_info.connected_context_info.stream_index);
-    // First check if there is a key (for the case of one output multiple inputs).
-
-    const auto it = m_edge_layer_infos.find(edge_layer_key);
-    if (it != m_edge_layer_infos.end()) {
-        CHECK(it->second.transfer_size == transfer_size, HAILO_INTERNAL_FAILURE,
-            "Found two edge layers with the same key but different transfer size");
-        CHECK(it->second.max_transfers_in_batch == batch_size, HAILO_INTERNAL_FAILURE,
-            "Found two edge layers with the same key but different batch size");
-        // Now if the new end context is bigger than the old one, update it.
-        if (it->second.end_context < layer_info.context_index) {
-            it->second.end_context = layer_info.context_index;
-        }
-    } else {
-        LOGGER__DEBUG("Adding edge layer with key ({}, {}) to the internal buffer manager", edge_layer_key.first, edge_layer_key.second);
-        add_buffer_info(edge_layer_key,
-            EdgeLayerInfo{
-                layer_info.type,
-                transfer_size,
-                batch_size,
-                layer_info.connected_context_info.context_index,
-                layer_info.context_index,
-                BUFFER_REUSE});
-    }
-    return HAILO_SUCCESS;
-}
-
-hailo_status InternalBufferManager::add_ddr_buffer(const LayerInfo &layer_info)
-{
-    // In DDR - always use core bytes per buffer as row size
-    const auto row_size = static_cast<uint16_t>(layer_info.nn_stream_config.core_bytes_per_buffer);
-    const auto min_buffered_rows = layer_info.ddr_info.min_buffered_rows;
-    static auto const BUFFER_REUSE = true;
-    auto edge_layer_key = std::make_pair(layer_info.context_index, layer_info.stream_index);
-
-    auto it = m_edge_layer_infos.find(edge_layer_key);
-    CHECK(it == m_edge_layer_infos.end(), HAILO_INTERNAL_FAILURE,
-        "Found two edge layers with the same key for DDR layer. This is not supported.");
-
-    add_buffer_info(edge_layer_key,
-        EdgeLayerInfo{
-            layer_info.type,
-            row_size,
-            min_buffered_rows,
-            layer_info.context_index,
-            layer_info.connected_context_info.context_index,
-            BUFFER_REUSE});
-
-    return HAILO_SUCCESS;
-}
-
-// For edge layers
-hailo_status InternalBufferManager::add_layer_buffer_info(const LayerInfo &layer_info)
-{
-    switch (layer_info.type) {
-        case LayerType::INTER_CONTEXT:
-            return add_inter_context_buffer(layer_info);
-        case LayerType::DDR:
-            return add_ddr_buffer(layer_info);
-        default:
-            LOGGER__ERROR("Unsupported layer type for InternalBufferManager");
-            return HAILO_INTERNAL_FAILURE;
-    }
-}
-
-hailo_status InternalBufferManager::add_config_buffer_info(const uint16_t context_index, const size_t config_stream_index,
-    const std::vector<uint32_t> &cfg_sizes)
-{
-    static const bool NO_REUSE = false;
-    static const auto SINGLE_TRANSFER_PER_BATCH = 1;
-    auto edge_layer_key = std::make_pair(static_cast<uint16_t>(context_index), static_cast<uint8_t>(MAX_EDGE_LAYERS_PER_CONTEXT + config_stream_index));
-    const auto buffer_size = static_cast<uint32_t>(std::accumulate(cfg_sizes.begin(), cfg_sizes.end(), 0));
-    add_buffer_info(edge_layer_key,
-        EdgeLayerInfo{
-            LayerType::CFG,
-            buffer_size,
-            SINGLE_TRANSFER_PER_BATCH,
-            context_index,
-            context_index,
-            NO_REUSE});
-
-    return HAILO_SUCCESS;
-}
 
 Expected<std::shared_ptr<vdma::VdmaBuffer>> InternalBufferManager::create_intermediate_sg_buffer(
     const size_t buffer_size)
@@ -201,28 +74,31 @@ void InternalBufferManager::print_execution_results(const BufferPlanReport &defa
     if (!default_planner_meet_requirements) {
         LOGGER__INFO("Default Internal buffer planner failed to meet requirements");
     } else {
-        LOGGER__INFO("Planned internal buffer memory: CMA memory {}, user memory {}. memory to edge layer usage factor is {}",
-            default_planner_report.cma_memory, default_planner_report.user_memory, default_planner_report.memory_utilization_factor);
+        LOGGER__INFO("Planned internal buffer memory: CMA={} CMA-Desc={} Pinned={}. memory to edge layer usage factor is {}",
+            default_planner_report.cma_memory, default_planner_report.cma_memory_for_descriptors,
+            default_planner_report.pinned_memory, default_planner_report.memory_utilization_factor);
     }
 
     auto default_plan_executed = (default_planner_report.cma_memory == executed_buffers_report.cma_memory) &&
-        (default_planner_report.user_memory == executed_buffers_report.user_memory);
+        (default_planner_report.pinned_memory == executed_buffers_report.pinned_memory);
 
     if (default_plan_executed) {
         LOGGER__INFO("Default Internal buffer planner executed successfully");
     } else {
-        LOGGER__INFO("executed internal buffer memory: CMA memory {}, user memory {}. memory to edge layer usage factor is {}",
-            executed_buffers_report.cma_memory, executed_buffers_report.user_memory, executed_buffers_report.memory_utilization_factor);
+        LOGGER__INFO("executed internal buffer memory: CMA={} CMA-Desc={} Pinned={}. memory to edge layer usage factor is {}",
+            executed_buffers_report.cma_memory, default_planner_report.cma_memory_for_descriptors,
+            executed_buffers_report.pinned_memory, executed_buffers_report.memory_utilization_factor);
     }
 }
 
-hailo_status InternalBufferManager::plan_and_execute(InternalBufferPlanner::Type default_planner_type,
+hailo_status InternalBufferManager::plan_and_execute(const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos,
+    InternalBufferPlanner::Type default_planner_type,
     const size_t number_of_contexts)
 {
     // Create buffer planning
     auto planner_type = default_planner_type;
     // copy of initial edge layers
-    auto edge_layers = m_edge_layer_infos;
+    auto edge_layers = edge_layer_infos;
     // Vector of executed buffers from the planning
     InternalBufferPlanning buffers_executed;
     // Default planner report
@@ -293,14 +169,13 @@ hailo_status InternalBufferManager::execute_plan(InternalBufferPlanning &buffer_
             // If one of the buffer failed due to lack to memory, try to move to next buffer.
             continue;
         }
-        for (const auto &edge_layer_offset : buffer_plan.edge_layer_offsets) {
+        for (const auto &edge_layer_plan : buffer_plan.edge_layer_plans) {
             m_edge_layer_to_buffer_map.emplace(
-                edge_layer_offset.first,
-                EdgeLayerBuffer{buffer_ptr.value(), edge_layer_offset.second});
-        }
-        // Add edge layers to executed list
-        for (const auto &edge_layer_info : buffer_plan.edge_layer_infos) {
-            edge_layers_executed.emplace_back(edge_layer_info.first);
+                edge_layer_plan.key,
+                EdgeLayerBuffer{buffer_ptr.value(), edge_layer_plan});
+
+            // Add edge layers to executed list
+            edge_layers_executed.emplace_back(edge_layer_plan.key);
         }
 
         // Add buffer to executed list
@@ -308,16 +183,6 @@ hailo_status InternalBufferManager::execute_plan(InternalBufferPlanning &buffer_
     }
 
     return execution_status;
-}
-
-ExpectedRef<EdgeLayerInfo> InternalBufferManager::get_layer_buffer_info(const EdgeLayerKey &key)
-{
-    const auto buffer_it = m_edge_layer_infos.find(key);
-    if (std::end(m_edge_layer_infos) == buffer_it) {
-        return make_unexpected(HAILO_NOT_FOUND);
-    }
-
-    return ExpectedRef<EdgeLayerInfo>(buffer_it->second);
 }
 
 Expected<EdgeLayerBuffer> InternalBufferManager::get_intermediate_buffer(const EdgeLayerKey &key)

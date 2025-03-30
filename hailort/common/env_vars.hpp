@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -20,6 +20,7 @@ namespace hailort
 
 #define SCHEDULER_MON_ENV_VAR ("HAILO_MONITOR")
 #define SCHEDULER_MON_ENV_VAR_VALUE ("1")
+#define SCHEDULER_MON_TIME_INTERVAL_IN_MILLISECONDS_ENV_VAR ("HAILO_MONITOR_TIME_INTERVAL")
 
 #define TRACE_ENV_VAR ("HAILO_TRACE")
 #define TRACE_ENV_VAR_VALUE ("scheduler")

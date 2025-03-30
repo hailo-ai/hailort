@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -63,19 +63,6 @@ void InferModelBase::InferStream::Impl::set_format_type(hailo_format_type_t type
 void InferModelBase::InferStream::Impl::set_format_order(hailo_format_order_t order)
 {
     m_user_buffer_format.order = order;
-    switch (order)
-    {
-        case HAILO_FORMAT_ORDER_HAILO_NMS:
-        case HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS:
-        case HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK:
-            m_vstream_info.nms_shape.order_type = HAILO_NMS_RESULT_ORDER_BY_CLASS;
-            break;
-        case HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE:
-            m_vstream_info.nms_shape.order_type = HAILO_NMS_RESULT_ORDER_BY_SCORE;
-            break;
-        default:
-            break;
-    }
 }
 
 bool InferModelBase::InferStream::Impl::is_nms() const
@@ -97,14 +84,12 @@ void InferModelBase::InferStream::Impl::set_nms_max_proposals_per_class(uint32_t
 {
     m_nms_max_proposals_per_class = max_proposals_per_class;
     m_vstream_info.nms_shape.max_bboxes_per_class = max_proposals_per_class;
-    m_vstream_info.nms_shape.order_type = HAILO_NMS_RESULT_ORDER_BY_CLASS;
 }
 
 void InferModelBase::InferStream::Impl::set_nms_max_proposals_total(uint32_t max_proposals_total)
 {
     m_nms_max_proposals_total = max_proposals_total;
     m_vstream_info.nms_shape.max_bboxes_total = max_proposals_total;
-    m_vstream_info.nms_shape.order_type = HAILO_NMS_RESULT_ORDER_BY_SCORE;
 }
 
 void InferModelBase::InferStream::Impl::set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size)
@@ -237,9 +222,8 @@ uint32_t InferModelBase::InferStream::nms_max_accumulated_mask_size() const
     return m_pimpl->nms_max_accumulated_mask_size();
 }
 
-Expected<std::shared_ptr<InferModelBase>> InferModelBase::create(VDevice &vdevice, const std::string &hef_path, const std::string &network_name)
+Expected<std::shared_ptr<InferModelBase>> InferModelBase::create(VDevice &vdevice, Hef hef, const std::string &network_name)
 {
-    TRY(auto hef, Hef::create(hef_path));
     TRY(auto inputs, create_infer_stream_inputs(hef, network_name));
     TRY(auto outputs, create_infer_stream_outputs(hef, network_name));
 
@@ -251,18 +235,6 @@ Expected<std::shared_ptr<InferModelBase>> InferModelBase::create(VDevice &vdevic
             [&network_name] (const auto &name) { return name == network_name; }), HAILO_NOT_IMPLEMENTED,
             "Passing network name is not supported yet!");
     }
-
-    auto ptr = make_shared_nothrow<InferModelBase>(vdevice, std::move(hef), network_name, std::move(inputs), std::move(outputs));
-    CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
-
-    return ptr;
-}
-
-Expected<std::shared_ptr<InferModelBase>> InferModelBase::create(VDevice &vdevice, const MemoryView hef_buffer, const std::string &network_name)
-{
-    TRY(auto hef, Hef::create(hef_buffer));
-    TRY(auto inputs, create_infer_stream_inputs(hef, network_name));
-    TRY(auto outputs, create_infer_stream_outputs(hef, network_name));
 
     auto ptr = make_shared_nothrow<InferModelBase>(vdevice, std::move(hef), network_name, std::move(inputs), std::move(outputs));
     CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
@@ -359,7 +331,7 @@ Expected<ConfiguredInferModel> InferModelBase::configure()
     }
 
     // internal_queue_size should be derived from batch_size, keeping this validation to make sure the logic doesnt change
-    TRY(auto internal_queue_size, network_groups.value()[0]->get_min_buffer_pool_size());
+    TRY(auto internal_queue_size, network_groups.value()[0]->infer_queue_size());
     CHECK_AS_EXPECTED(internal_queue_size >= m_config_params.batch_size, HAILO_INVALID_OPERATION,
         "Trying to configure a model with a batch={} bigger than internal_queue_size={}, which is not supported. Try using a smaller batch.",
             m_config_params.batch_size, internal_queue_size);
@@ -398,11 +370,8 @@ Expected<ConfiguredInferModel> InferModelBase::configure()
     for (const auto &output_pair : m_outputs) {
         auto &edge_name = output_pair.first;
 
-        if ((HailoRTCommon::is_nms(output_pair.second.m_pimpl->format().order)) &&
-            (HAILO_NMS_RESULT_ORDER_HW != output_pair.second.m_pimpl->get_nms_shape()->order_type)) {
-            auto status = network_groups.value()[0]->set_nms_result_order_type(edge_name, output_pair.second.m_pimpl->get_nms_shape()->order_type);
-            CHECK_SUCCESS_AS_EXPECTED(status);
-        }
+        auto stream_names = network_groups.value()[0]->get_stream_names_from_vstream_name(edge_name);
+        CHECK_EXPECTED(stream_names);
 
         if ((output_pair.second.m_pimpl->m_nms_score_threshold == INVALID_NMS_CONFIG) &&
             (output_pair.second.m_pimpl->m_nms_iou_threshold == INVALID_NMS_CONFIG) &&
@@ -420,10 +389,22 @@ Expected<ConfiguredInferModel> InferModelBase::configure()
             CHECK_SUCCESS_AS_EXPECTED(status);
         }
         if (output_pair.second.m_pimpl->m_nms_max_proposals_per_class != static_cast<uint32_t>(INVALID_NMS_CONFIG)) {
+            // TODO: HRT-15885 remove support for max_proposals_per_class in BYTE_MASK_NMS (warning below should be error)
+            if (HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK == output_pair.second.m_pimpl->format().order) {
+                LOGGER__WARNING("Setting NMS max proposals per class is deprecated for format order HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK. "
+                    "Please set max proposals total instead.");
+            }
+
+            CHECK_AS_EXPECTED((HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE != output_pair.second.m_pimpl->format().order),
+                HAILO_INVALID_ARGUMENT, "NMS Format order is HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE while setting max proposals per class");
+
             auto status = network_groups.value()[0]->set_nms_max_bboxes_per_class(edge_name, output_pair.second.m_pimpl->m_nms_max_proposals_per_class);
             CHECK_SUCCESS_AS_EXPECTED(status);
         }
         if (output_pair.second.m_pimpl->m_nms_max_proposals_total != static_cast<uint32_t>(INVALID_NMS_CONFIG)) {
+            CHECK_AS_EXPECTED((!HailoRTCommon::is_nms_by_class(output_pair.second.m_pimpl->format().order)),
+                HAILO_INVALID_ARGUMENT, "NMS Format order is not HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE or HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK while setting "
+                    "max proposals total");
             auto status = network_groups.value()[0]->set_nms_max_bboxes_total(edge_name, output_pair.second.m_pimpl->m_nms_max_proposals_total);
             CHECK_SUCCESS_AS_EXPECTED(status);
         }
@@ -440,11 +421,6 @@ Expected<ConfiguredInferModel> InferModelBase::configure()
     auto configured_infer_model_pimpl = ConfiguredInferModelImpl::create(network_groups.value()[0], inputs_formats, outputs_formats,
         get_input_names(), get_output_names(), m_vdevice, inputs_frame_sizes, outputs_frame_sizes);
     CHECK_EXPECTED(configured_infer_model_pimpl);
-
-    // The hef buffer is being used only when working with the service.
-    // TODO HRT-12636 - Besides clearing the hef buffer, clear also unnecessary members of Hef object.
-    // After HRT-12636 is done - The user can configure an infer model only once, with or without the service.
-    m_hef.pimpl->clear_hef_buffer();
 
     return ConfiguredInferModel(configured_infer_model_pimpl.release());
 }
@@ -582,7 +558,13 @@ ConfiguredInferModel ConfiguredInferModelBase::create(std::shared_ptr<Configured
 
 Expected<ConfiguredInferModel::Bindings> ConfiguredInferModel::create_bindings()
 {
-    return m_pimpl->create_bindings();
+    std::map<std::string, MemoryView> buffers;
+    return m_pimpl->create_bindings(buffers);
+}
+
+Expected<ConfiguredInferModel::Bindings> ConfiguredInferModel::create_bindings(const std::map<std::string, MemoryView> &buffers)
+{
+    return m_pimpl->create_bindings(buffers);
 }
 
 hailo_status ConfiguredInferModel::wait_for_async_ready(std::chrono::milliseconds timeout, uint32_t frames_count)
@@ -637,7 +619,7 @@ hailo_status ConfiguredInferModel::set_scheduler_priority(uint8_t priority)
     return m_pimpl->set_scheduler_priority(priority);
 }
 
-Expected<size_t> ConfiguredInferModel::get_async_queue_size()
+Expected<size_t> ConfiguredInferModel::get_async_queue_size() const
 {
     return m_pimpl->get_async_queue_size();
 }
@@ -671,6 +653,11 @@ Expected<AsyncInferJob> ConfiguredInferModel::run_async(const std::vector<Config
     }
 
     return AsyncInferJobImpl::create(job_pimpl);
+}
+
+hailo_status ConfiguredInferModel::update_cache_offset(int32_t offset_delta_entries)
+{
+    return m_pimpl->update_cache_offset(offset_delta_entries);
 }
 
 Expected<ConfiguredInferModel::Bindings> ConfiguredInferModelBase::create_bindings(
@@ -774,17 +761,24 @@ ConfiguredInferModelImpl::~ConfiguredInferModelImpl()
     shutdown();
 }
 
-Expected<ConfiguredInferModel::Bindings> ConfiguredInferModelImpl::create_bindings()
+Expected<ConfiguredInferModel::Bindings> ConfiguredInferModelImpl::create_bindings(const std::map<std::string, MemoryView> &buffers)
 {
     std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> inputs;
     std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> outputs;
+
+    uint32_t used_buffers = 0;
 
     auto input_vstream_infos = m_cng->get_input_vstream_infos();
     CHECK_EXPECTED(input_vstream_infos);
 
     for (const auto &vstream_info : input_vstream_infos.value()) {
         TRY(auto stream, ConfiguredInferModelBase::create_infer_stream(vstream_info));
-        inputs.emplace(vstream_info.name, std::move(stream));
+        auto name = std::string(vstream_info.name);
+        inputs.emplace(name, std::move(stream));
+        if (contains(buffers, name)) {
+            inputs.at(name).set_buffer(buffers.at(name));
+            used_buffers++;
+        }
     }
 
     auto output_vstream_infos = m_cng->get_output_vstream_infos();
@@ -792,10 +786,16 @@ Expected<ConfiguredInferModel::Bindings> ConfiguredInferModelImpl::create_bindin
 
     for (const auto &vstream_info : output_vstream_infos.value()) {
         TRY(auto stream, ConfiguredInferModelBase::create_infer_stream(vstream_info));
+        auto name = std::string(vstream_info.name);
         outputs.emplace(vstream_info.name, std::move(stream));
+        if (contains(buffers, name)) {
+            outputs.at(name).set_buffer(buffers.at(name));
+            used_buffers++;
+        }
     }
 
     TRY(auto bindings, ConfiguredInferModelBase::create_bindings(std::move(inputs), std::move(outputs)));
+    CHECK_AS_EXPECTED(used_buffers == buffers.size(), HAILO_INVALID_ARGUMENT, "Given 'buffers' contains names which arent model edges.");
     return bindings;
 }
 
@@ -832,6 +832,12 @@ hailo_status ConfiguredInferModelImpl::shutdown()
 
     return deactivate();
 }
+
+hailo_status ConfiguredInferModelImpl::update_cache_offset(int32_t offset_delta_entries)
+{
+    return m_cng->update_cache_offset(offset_delta_entries);
+}
+
 
 hailo_status ConfiguredInferModelImpl::activate()
 {
@@ -976,9 +982,9 @@ hailo_status ConfiguredInferModelImpl::set_scheduler_priority(uint8_t priority)
     return m_cng->set_scheduler_priority(priority);
 }
 
-Expected<size_t> ConfiguredInferModelImpl::get_async_queue_size()
+Expected<size_t> ConfiguredInferModelImpl::get_async_queue_size() const
 {
-    return m_cng->get_min_buffer_pool_size();
+    return m_cng->infer_queue_size();
 }
 
 AsyncInferJob::AsyncInferJob(std::shared_ptr<AsyncInferJobBase> pimpl) : m_pimpl(pimpl), m_should_wait_in_dtor(true)

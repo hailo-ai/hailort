@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -62,8 +62,6 @@ private:
         const uint32_t W_OFFSET = W_INDEX * reg_padded_shape.width;
         const uint32_t H_OFFSET = H_INDEX * reg_padded_shape.width;
 
-        static const uint32_t CLASSES_START_INDEX = 0;
-
         // Validate regression buffer size
         static const uint32_t reg_entry_size = 4;
         auto number_of_entries = reg_padded_shape.height * reg_padded_shape.width;
@@ -112,26 +110,15 @@ private:
                 auto th = Quantization::dequantize_output<DstType, SrcType>(reg_data[reg_idx + H_OFFSET], reg_quant_info);
                 auto bbox = decode(tx, ty, tw, th, col, row, static_cast<float32_t>(reg_shape.width), static_cast<float32_t>(reg_shape.height));
 
-                if (nms_config.cross_classes) {
-                    // Pre-NMS optimization. If NMS checks IoU over different classes, only the maximum class is relevant
-                    auto max_id_score_pair = get_max_class<DstType, SrcType>(cls_data, cls_idx, CLASSES_START_INDEX, objectness, cls_quant_info, cls_padded_shape.width);
-                    bbox.score = max_id_score_pair.second;
-                    if (max_id_score_pair.second >= nms_config.nms_score_th) {
-                        m_detections.emplace_back(DetectionBbox(bbox, max_id_score_pair.first));
-                        m_classes_detections_count[max_id_score_pair.first]++;
-                    }
-                }
-                else {
-                    for (uint32_t curr_class_idx = 0; curr_class_idx < nms_config.number_of_classes; curr_class_idx++) {
-                        auto class_entry_idx = cls_idx + (curr_class_idx * cls_padded_shape.width);
-                        auto class_confidence = Quantization::dequantize_output<DstType, SrcType>(
-                            cls_data[class_entry_idx], cls_quant_info);
-                        auto class_score = class_confidence * objectness;
-                        if (class_score >= nms_config.nms_score_th) {
-                            bbox.score = class_score;
-                            m_detections.emplace_back(DetectionBbox(bbox, curr_class_idx));
-                            m_classes_detections_count[curr_class_idx]++;
-                        }
+                for (uint32_t curr_class_idx = 0; curr_class_idx < nms_config.number_of_classes; curr_class_idx++) {
+                    auto class_entry_idx = cls_idx + (curr_class_idx * cls_padded_shape.width);
+                    auto class_confidence = Quantization::dequantize_output<DstType, SrcType>(
+                        cls_data[class_entry_idx], cls_quant_info);
+                    auto class_score = class_confidence * objectness;
+                    if (class_score >= nms_config.nms_score_th) {
+                        bbox.score = class_score;
+                        m_detections.emplace_back(DetectionBbox(bbox, curr_class_idx));
+                        m_classes_detections_count[curr_class_idx]++;
                     }
                 }
             }

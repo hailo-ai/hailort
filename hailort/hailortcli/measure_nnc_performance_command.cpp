@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -80,10 +80,9 @@ hailo_status HwInferEstimatorCommand::execute()
     TRY(auto configure_params, get_configure_params(m_params, hef, interface));
 
     /* Use Env var to configure all desc list with max depth */
-    setenv(HAILO_CONFIGURE_FOR_HW_INFER_ENV_VAR,"Y",1);
+    setenv(HAILO_CONFIGURE_FOR_HW_INFER_ENV_VAR,"1",1);
     TRY(auto network_group_list,
         device->configure(hef, configure_params), "Failed configure device from hef");
-    unsetenv(HAILO_CONFIGURE_FOR_HW_INFER_ENV_VAR);
 
     CHECK(1 == network_group_list.size(), HAILO_INVALID_OPERATION,
         "HW Inference is not supported on HEFs with multiple network groups");
@@ -108,5 +107,7 @@ hailo_status HwInferEstimatorCommand::execute()
     std::cout << "======================" << std::endl;
     std::cout << "    End of report" << std::endl;
     std::cout << "======================" << std::endl;
+
+    unsetenv(HAILO_CONFIGURE_FOR_HW_INFER_ENV_VAR);
     return HAILO_SUCCESS;
 }

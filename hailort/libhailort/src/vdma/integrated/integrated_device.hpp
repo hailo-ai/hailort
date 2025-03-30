@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -17,6 +17,10 @@
 #include "device_common/control_soc.hpp"
 
 #include <memory>
+
+#ifdef __linux__
+#include <linux/gpio.h>
+#endif
 
 
 namespace hailort
@@ -57,6 +61,18 @@ protected:
 private:
     IntegratedDevice(std::unique_ptr<HailoRTDriver> &&driver, hailo_status &status);
     std::shared_ptr<SocPowerMeasurement> m_power_measurement_data;
+
+#if defined(__linux__) && defined(GPIO_V2_GET_LINE_IOCTL)
+    class GpioReader final {
+    public:
+        GpioReader() : m_fd(-1), m_request_fd(-1) {}
+        Expected<uint16_t> read();
+        ~GpioReader();
+    private:
+        int m_fd;
+        int m_request_fd;
+    };
+#endif
 };
 
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -256,10 +256,6 @@ Expected<PipelineBuffer> ConvertNmsToDetectionsElement::action(PipelineBuffer &&
 
     m_duration_collector.start_measurement();
 
-    // TODO: HRT-15612 support BY_SCORE order_type in this function
-    CHECK_AS_EXPECTED(HAILO_NMS_RESULT_ORDER_BY_SCORE != m_nms_info.order_type, HAILO_INVALID_ARGUMENT,
-        "HAILO_NMS_RESULT_ORDER_BY_SCORE is not supported NMS result order type for ConvertNmsToDetectionsElement");
-
     auto detections_pair = net_flow::NmsPostProcessOp::transform__d2h_NMS_DETECTIONS(input.data(), m_nms_info);
     auto detections_pipeline_data = make_shared_nothrow<IouPipelineData>
         (std::move(detections_pair.first),std::move(detections_pair.second));
@@ -272,12 +268,13 @@ Expected<PipelineBuffer> ConvertNmsToDetectionsElement::action(PipelineBuffer &&
 
 Expected<std::shared_ptr<FillNmsFormatElement>> FillNmsFormatElement::create(const net_flow::NmsPostProcessConfig nms_config,
     const std::string &name, hailo_pipeline_elem_stats_flags_t elem_flags, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
-    std::chrono::milliseconds timeout, PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline)
+    std::chrono::milliseconds timeout, const hailo_format_order_t format_order, PipelineDirection pipeline_direction,
+    std::shared_ptr<AsyncPipeline> async_pipeline)
 {
     TRY(auto duration_collector, DurationCollector::create(elem_flags));
 
     auto fill_nms_format_element = make_shared_nothrow<FillNmsFormatElement>(std::move(nms_config),
-        name, std::move(duration_collector), std::move(pipeline_status), timeout, pipeline_direction, async_pipeline);
+        name, std::move(duration_collector), std::move(pipeline_status), timeout, pipeline_direction, async_pipeline, format_order);
     CHECK_AS_EXPECTED(nullptr != fill_nms_format_element, HAILO_OUT_OF_HOST_MEMORY);
 
     LOGGER__INFO("Created {}", fill_nms_format_element->description());
@@ -286,18 +283,20 @@ Expected<std::shared_ptr<FillNmsFormatElement>> FillNmsFormatElement::create(con
 }
 
 Expected<std::shared_ptr<FillNmsFormatElement>> FillNmsFormatElement::create(const net_flow::NmsPostProcessConfig nms_config,
-    const std::string &name, const ElementBuildParams &build_params, PipelineDirection pipeline_direction,
-    std::shared_ptr<AsyncPipeline> async_pipeline)
+    const std::string &name, const ElementBuildParams &build_params, const hailo_format_order_t format_order,
+    PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline)
 {
     return FillNmsFormatElement::create(nms_config, name, build_params.elem_stats_flags,
-        build_params.pipeline_status, build_params.timeout, pipeline_direction, async_pipeline);
+        build_params.pipeline_status, build_params.timeout, format_order, pipeline_direction, async_pipeline);
 }
 
 FillNmsFormatElement::FillNmsFormatElement(const net_flow::NmsPostProcessConfig &&nms_config, const std::string &name,
     DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
-    std::chrono::milliseconds timeout, PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline) :
+    std::chrono::milliseconds timeout, PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline,
+    const hailo_format_order_t format_order) :
     FilterElement(name, std::move(duration_collector), std::move(pipeline_status), pipeline_direction, timeout, async_pipeline),
-    m_nms_config(std::move(nms_config))
+    m_nms_config(std::move(nms_config)),
+    m_format_order(format_order)
 {}
 
 hailo_status FillNmsFormatElement::run_push(PipelineBuffer &&buffer, const PipelinePad &sink)
@@ -340,16 +339,14 @@ Expected<PipelineBuffer> FillNmsFormatElement::action(PipelineBuffer &&input, Pi
     auto detections = input.get_metadata().get_additional_data<IouPipelineData>();
     TRY(auto dst, buffer.as_view(BufferProtection::WRITE));
 
-    switch (m_nms_config.order_type) {
-    case HAILO_NMS_RESULT_ORDER_BY_CLASS:
+    if (HailoRTCommon::is_nms_by_class(m_format_order)) {
         net_flow::NmsPostProcessOp::fill_nms_by_class_format_buffer(dst, detections->m_detections, detections->m_detections_classes_count,
             m_nms_config);
-        break;
-    case HAILO_NMS_RESULT_ORDER_BY_SCORE:
-        net_flow::NmsPostProcessOp::fill_nms_by_score_format_buffer(dst, detections->m_detections, m_nms_config);
-        break;
-    default:
-        LOGGER__ERROR("NMS result order type not supported: {}", HailoRTCommon::get_nms_result_order_type_str(m_nms_config.order_type));
+    } else if (HailoRTCommon::is_nms_by_score(m_format_order)) {
+        net_flow::NmsPostProcessOp::fill_nms_by_score_format_buffer(dst, detections->m_detections, m_nms_config, true);
+    } else {
+        LOGGER__ERROR("Unsupported output format order for NmsPostProcessOp: {}",
+                HailoRTCommon::get_format_order_str(m_format_order));
         return make_unexpected(HAILO_INVALID_ARGUMENT);
     }
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -107,7 +107,6 @@ bool TransformContextUtils::should_reorder(const hailo_3d_image_shape_t &src_ima
             } else {
                 return true;
             }
-        case HAILO_FORMAT_ORDER_HAILO_NMS:
         case HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS:
         case HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE:
             return true;
@@ -1928,20 +1927,20 @@ Expected<std::unique_ptr<OutputTransformContext>> NMSOutputTransformContext::cre
 
     const auto internal_dst_format = HailoRTDefaults::expand_auto_format(dst_format, src_format);
 
-    CHECK_AS_EXPECTED((HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS == internal_dst_format.order) || (HAILO_FORMAT_ORDER_HAILO_NMS == internal_dst_format.order),
+    CHECK_AS_EXPECTED(HailoRTCommon::is_nms_by_class(internal_dst_format.order),
         HAILO_INVALID_ARGUMENT, "Format order should be HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS");
 
     CHECK_AS_EXPECTED(HAILO_FORMAT_TYPE_FLOAT32 == internal_dst_format.type, HAILO_INVALID_ARGUMENT,
         "Format type of HAILO_FORMAT_TYPE_FLOAT32");
 
     const auto src_frame_size = HailoRTCommon::get_nms_hw_frame_size(nms_info);
-    auto dst_frame_size = HailoRTCommon::get_nms_host_frame_size(nms_info, internal_dst_format);
+    auto dst_frame_size = HailoRTCommon::get_nms_by_class_host_frame_size(nms_info, internal_dst_format);
 
     Buffer quant_buffer;
     auto should_quantize = TransformContextUtils::should_quantize(HAILO_D2H_STREAM, src_format, internal_dst_format);
     CHECK_EXPECTED(should_quantize);
     if (*should_quantize) {
-        dst_frame_size = HailoRTCommon::get_nms_host_frame_size(nms_info, internal_dst_format);
+        dst_frame_size = HailoRTCommon::get_nms_by_class_host_frame_size(nms_info, internal_dst_format);
         auto expected_nms_quant_buffer = Buffer::create(dst_frame_size, 0);
         CHECK_EXPECTED(expected_nms_quant_buffer);
         quant_buffer = expected_nms_quant_buffer.release();
@@ -1979,12 +1978,12 @@ hailo_status NMSOutputTransformContext::transform(const MemoryView src, MemoryVi
     CHECK(dst.size() == m_dst_frame_size, HAILO_INVALID_ARGUMENT,
         "dst_size must be {}. passed size - {}", m_dst_frame_size, dst.size());
 
-    CHECK(((HAILO_FORMAT_ORDER_HAILO_NMS == m_dst_format.order)|| (HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS == m_dst_format.order)),
+    CHECK(HailoRTCommon::is_nms_by_class(m_dst_format.order),
         HAILO_INVALID_ARGUMENT, "Wrong format order {}", HailoRTCommon::get_format_order_str(m_dst_format.order));
 
     assert(HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == m_src_format.order);
 
-    auto shape_size = HailoRTCommon::get_nms_host_shape_size(m_nms_info);
+    auto shape_size = HailoRTCommon::get_nms_by_class_host_shape_size(m_nms_info);
 
     if ((HAILO_FORMAT_FLAGS_TRANSPOSED & m_src_format.flags) || (HAILO_FORMAT_FLAGS_TRANSPOSED & m_dst_format.flags)) {
         LOGGER__ERROR("NMS doesn't support transposed format");

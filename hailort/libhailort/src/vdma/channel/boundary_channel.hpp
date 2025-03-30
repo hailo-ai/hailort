@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -38,11 +38,11 @@ public:
     using Direction = HailoRTDriver::DmaDirection;
 
     static Expected<BoundaryChannelPtr> create(HailoRTDriver &driver, vdma::ChannelId channel_id, Direction direction,
-        vdma::DescriptorList &&desc_list, TransferLauncher &transfer_launcher, size_t ongoing_transfers,
-        size_t pending_transfers = 0, bool split_transfer = false, const std::string &stream_name = "", LatencyMeterPtr latency_meter = nullptr);
+        vdma::DescriptorList &&desc_list, TransferLauncher &transfer_launcher, size_t queue_size,
+        bool split_transfer = false, const std::string &stream_name = "", LatencyMeterPtr latency_meter = nullptr);
 
     BoundaryChannel(HailoRTDriver &driver, vdma::ChannelId channel_id, Direction direction, DescriptorList &&desc_list,
-        TransferLauncher &transfer_launcher, size_t ongoing_transfers_queue_size, size_t pending_transfers_queue_size, bool split_transfer,
+        TransferLauncher &transfer_launcher, size_t queue_size, bool split_transfer,
         const std::string &stream_name, LatencyMeterPtr latency_meter, hailo_status &status);
     BoundaryChannel(const BoundaryChannel &other) = delete;
     BoundaryChannel &operator=(const BoundaryChannel &other) = delete;
@@ -81,7 +81,6 @@ public:
 
     // TODO: rename BoundaryChannel::get_max_ongoing_transfers to BoundaryChannel::get_max_parallel_transfers (HRT-13513)
     size_t get_max_ongoing_transfers(size_t transfer_size) const;
-    size_t get_max_aligned_transfers_in_desc_list(size_t transfer_size) const;
 
     vdma::ChannelId get_channel_id() const
     {
@@ -120,7 +119,7 @@ private:
 
     Expected<bool> should_bind_buffer(TransferRequest &transfer_request);
     static Expected<bool> is_same_buffer(MappedBufferPtr mapped_buff, TransferBuffer &transfer_buffer);
-    std::vector<TransferRequest> split_messages(TransferRequest &&transfer_request);
+    Expected<std::vector<TransferRequest>> split_messages(TransferRequest &&transfer_request);
 
     size_t get_chunk_size() const;
 

@@ -61,14 +61,7 @@ class PlatformCommands:
 
     def run(self):
         argv = sys.argv[1:]
-        ret_val = self._run(argv)
-        if isinstance(ret_val, (int, str)):
-            return ret_val
-        if isinstance(ret_val, bool):
-            return int(not ret_val)
-
-        # possible returned value can be an object of client runner which represents successful run
-        return 0
+        return self._run(argv)
 
     # Dependency injection for testing
     def _run(self, argv):

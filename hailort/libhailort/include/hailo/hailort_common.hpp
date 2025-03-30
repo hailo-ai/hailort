@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -49,14 +49,24 @@ public:
     static const size_t DMA_ABLE_ALIGNMENT_READ_HW_LIMITATION = 4096;
 
     /**
+     * Deprecated: use get_nms_by_class_host_shape_size instead
+     */
+    static uint32_t get_nms_host_shape_size(const hailo_nms_info_t &nms_info);
+
+    /**
+     * Deprecated: use get_nms_by_class_host_shape_size instead
+     */
+    static uint32_t get_nms_host_shape_size(const hailo_nms_shape_t &nms_shape);
+
+    /**
      * Gets the NMS host shape size (number of elements) from NMS info.
      *
      * @param[in] nms_info             The NMS info to get shape size from.
      * @return The host shape size (number of elements).
      * @note The size in bytes can be calculated using 
-     *  get_nms_host_frame_size(const hailo_nms_info_t &nms_info, const hailo_format_t &format).
+     *  get_nms_by_class_host_frame_size(const hailo_nms_info_t &nms_info, const hailo_format_t &format).
      */
-    static constexpr uint32_t get_nms_host_shape_size(const hailo_nms_info_t &nms_info)
+    static constexpr uint32_t get_nms_by_class_host_shape_size(const hailo_nms_info_t &nms_info)
     {
         const uint32_t max_bboxes_per_class = nms_info.chunks_per_frame * nms_info.max_bboxes_per_class;
         // Counter + bboxes
@@ -72,7 +82,7 @@ public:
      * @note The size in bytes can be calculated using 
      *  get_nms_host_frame_size(const hailo_nms_shape_t &nms_shape, const hailo_format_t &format).
      */
-    static constexpr uint32_t get_nms_host_shape_size(const hailo_nms_shape_t &nms_shape)
+    static constexpr uint32_t get_nms_by_class_host_shape_size(const hailo_nms_shape_t &nms_shape)
     {
         const uint32_t max_bboxes_per_class = nms_shape.max_bboxes_per_class;
         // Counter + bboxes
@@ -256,6 +266,8 @@ public:
             return "HAILO15M";
         case HAILO_ARCH_HAILO10H:
             return "HAILO10H";
+        case HAILO_ARCH_MARS:
+            return "MARS";
         default:
             return "UNKNOWN ARCHITECTURE";
         }
@@ -287,8 +299,6 @@ public:
             return "BAYER RGB";
         case HAILO_FORMAT_ORDER_12_BIT_BAYER_RGB:
             return "12 BIT BAYER RGB";
-        case HAILO_FORMAT_ORDER_HAILO_NMS:
-            return "HAILO NMS";
         case HAILO_FORMAT_ORDER_RGB888:
             return "RGB 888";
         case HAILO_FORMAT_ORDER_NCHW:
@@ -323,27 +333,6 @@ public:
     }
 
     /**
-     * Gets a string reprenestation of the given NMS result order type.
-     *
-     * @param[in] nms_result_order_type             A ::hailo_nms_result_order_type_t object.
-     * @return The string representation of the NMS result order type.
-     */
-    static std::string get_nms_result_order_type_str(const hailo_nms_result_order_type_t &nms_result_order_type)
-    {
-        switch (nms_result_order_type)
-        {
-        case HAILO_NMS_RESULT_ORDER_HW:
-            return "HW";
-        case HAILO_NMS_RESULT_ORDER_BY_CLASS:
-            return "BY_CLASS";
-        case HAILO_NMS_RESULT_ORDER_BY_SCORE:
-            return "BY_SCORE";
-        default:
-            return "Nan";
-        }
-    }
-
-    /**
      * Gets the size of each element in bytes from buffer's format.
      *
      * @param[in] format             A ::hailo_format_t object.
@@ -361,10 +350,9 @@ public:
      * @param[in] format             A ::hailo_format_t object.
      * @return The NMS host frame size in bytes.
      */
-    // TODO HRT-15612: Consider changing the name to get_nms_by_class_host_frame_size
-    static constexpr uint32_t get_nms_host_frame_size(const hailo_nms_info_t &nms_info, const hailo_format_t &format)
+    static constexpr uint32_t get_nms_by_class_host_frame_size(const hailo_nms_info_t &nms_info, const hailo_format_t &format)
     {
-        return get_nms_host_shape_size(nms_info) * get_format_data_bytes(format);
+        return get_nms_by_class_host_shape_size(nms_info) * get_format_data_bytes(format);
     }
 
     /**
@@ -374,7 +362,6 @@ public:
      * @param[in] format            A ::hailo_format_t object.
      * @return The NMS host frame size in bytes.
      */
-    // TODO HRT-15612: Consider changing the name to get_nms_by_class_host_frame_size
     static uint32_t get_nms_host_frame_size(const hailo_nms_shape_t &nms_shape, const hailo_format_t &format);
 
     /**
@@ -385,11 +372,8 @@ public:
      */
     static constexpr uint32_t get_nms_with_byte_mask_host_frame_size(const hailo_nms_shape_t &nms_shape)
     {
-        // TODO: HRT-12035 - Change `max_bboxes_per_class` to `max_boxes`
-        auto max_detections = nms_shape.number_of_classes * nms_shape.max_bboxes_per_class;
-        auto max_detections_size = max_detections * DETECTION_WITH_BYTE_MASK_SIZE;
-        auto frame_size = DETECTION_COUNT_SIZE + max_detections_size + nms_shape.max_accumulated_mask_size;
-        return frame_size;
+        auto max_detections_size = nms_shape.max_bboxes_total * DETECTION_WITH_BYTE_MASK_SIZE;
+        return (DETECTION_COUNT_SIZE + max_detections_size + nms_shape.max_accumulated_mask_size);
     }
 
     /**
@@ -450,7 +434,7 @@ public:
         }
 
         if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == stream_info.format.order) {
-            return get_nms_host_frame_size(stream_info.nms_info, trans_params.user_buffer_format);
+            return get_nms_by_class_host_frame_size(stream_info.nms_info, trans_params.user_buffer_format);
         } else {
             auto shape = (HAILO_STREAM_NO_TRANSFORM == trans_params.transform_mode) ? stream_info.hw_shape :
                 stream_info.shape;
@@ -512,8 +496,17 @@ public:
 
     static constexpr bool is_nms(const hailo_format_order_t &order)
     {
-        return ((HAILO_FORMAT_ORDER_HAILO_NMS == order) || (HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK == order) ||
-            (HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS == order) || (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE == order));
+        return (is_nms_by_class(order) || is_nms_by_score(order));
+    }
+
+    static constexpr bool is_nms_by_class(const hailo_format_order_t &order)
+    {
+        return (HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS == order);
+    }
+
+    static constexpr bool is_nms_by_score(const hailo_format_order_t &order)
+    {
+        return ((HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK == order) || (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE == order));
     }
 
     // TODO HRT-10073: change to supported features list

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -45,7 +45,7 @@ extern "C" {
 #define CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__ENGINE_INDEX_SHIFT (5)
 
 #define CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__SET(dst, engine_index, vdma_channel_index) do { \
-        (dst) = (vdma_channel_index) | ((engine_index) << CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__ENGINE_INDEX_SHIFT);\
+        (dst) = (uint8_t)((vdma_channel_index) | ((engine_index) << CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__ENGINE_INDEX_SHIFT));\
     } while (0)
 
 #define CONTEXT_SWITCH_DEFS__PACKED_VDMA_CHANNEL_ID__READ(src, engine_index, vdma_channel_index) do {\
@@ -73,7 +73,6 @@ typedef struct {
     uint16_t feature_padding_payload;
     uint32_t buffer_padding_payload;
     uint16_t buffer_padding;
-    bool is_periph_calculated_in_hailort;
     bool is_core_hw_padding_config_in_dfc;
 } CONTEXT_SWITCH_DEFS__stream_reg_info_t;
 
@@ -382,11 +381,12 @@ typedef struct {
 } CONTEXT_SWITCH_DEFS__activate_ddr_buffer_output_data_t;
 
 typedef struct {
+    CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
+    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
+    uint16_t batch_size;
     uint8_t packed_vdma_channel_id;
     uint8_t stream_index;
     uint8_t network_index;
-    CONTEXT_SWITCH_DEFS__stream_reg_info_t stream_reg_info;
-    CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info;
 } CONTEXT_SWITCH_DEFS__activate_cache_output_data_t;
 
 typedef struct {

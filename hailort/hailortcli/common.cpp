@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -76,7 +76,7 @@ void CliCommon::reset_cursor(size_t lines_count)
 
 void CliCommon::clear_terminal()
 {
-    std::cout << FORMAT_CLEAR_TERMINAL_CURSOR_FIRST_LINE;
+    std::cout << FORMAT_CLEAR_TERMINAL_CURSOR_FIRST_LINE << std::flush;
 }
 
 bool CliCommon::is_positive_number(const std::string &s)

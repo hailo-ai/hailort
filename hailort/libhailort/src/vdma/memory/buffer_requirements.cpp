@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -44,15 +44,15 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
         const auto DONT_FORCE_BATCH_SIZE = false;
         static const bool IS_CIRCULAR = true;
         static const bool IS_VDMA_ALIGNED_BUFFER = false;
+        static const bool IS_NOT_DDR = false;
         auto buffer_sizes_requirements_exp = vdma::BufferSizesRequirements::get_buffer_requirements_single_transfer(
             vdma::VdmaBuffer::Type::SCATTER_GATHER, static_cast<uint16_t>(max_page_size), min_active_trans,
             max_active_trans, transfer_size, IS_CIRCULAR, DONT_FORCE_DEFAULT_PAGE_SIZE, DONT_FORCE_BATCH_SIZE,
-            IS_VDMA_ALIGNED_BUFFER);
+            IS_VDMA_ALIGNED_BUFFER, IS_NOT_DDR);
         if (HAILO_SUCCESS == buffer_sizes_requirements_exp.status()) {
             // We found a valid page size
             const auto desc_page_size = buffer_sizes_requirements_exp->desc_page_size();
-            const auto descs_count = (is_env_variable_on(HAILO_CONFIGURE_FOR_HW_INFER_ENV_VAR)) ?
-                MAX_SG_DESCS_COUNT : buffer_sizes_requirements_exp->descs_count();
+            const auto descs_count = buffer_sizes_requirements_exp->descs_count();
             return BufferSizesRequirements(descs_count, desc_page_size);
         } else if (HAILO_CANT_MEET_BUFFER_REQUIREMENTS == buffer_sizes_requirements_exp.status()) {
             // If we can't meet the requirements, try to double the page size and try again
@@ -67,7 +67,7 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
 Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requirements_multiple_transfers(
     vdma::VdmaBuffer::Type buffer_type, uint16_t max_desc_page_size, uint16_t batch_size,
     const std::vector<uint32_t> &transfer_sizes, bool is_circular, bool force_default_page_size,
-    bool force_batch_size)
+    bool force_batch_size, bool is_ddr)
 {
     const uint32_t MAX_DESCS_COUNT = (buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) ?
         MAX_SG_DESCS_COUNT : MAX_CCB_DESCS_COUNT;
@@ -94,14 +94,14 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
     CHECK_AS_EXPECTED(initial_desc_page_size >= MIN_PAGE_SIZE, HAILO_INTERNAL_FAILURE,
         "Initial descriptor page size ({}) is smaller than minimum descriptor page size ({})",
         initial_desc_page_size, MIN_PAGE_SIZE);
-    if (get_required_descriptor_count(transfer_sizes, max_desc_page_size) > MAX_DESCS_COUNT) {
+    if (get_required_descriptor_count(transfer_sizes, max_desc_page_size, is_ddr) > MAX_DESCS_COUNT) {
         return make_unexpected(HAILO_CANT_MEET_BUFFER_REQUIREMENTS);
     }
 
     // Defined as uint32_t to prevent overflow (as we multiply it by two in each iteration of the while loop bellow)
     auto local_desc_page_size = static_cast<uint32_t>(initial_desc_page_size);
 
-    auto descs_count = get_required_descriptor_count(transfer_sizes, initial_desc_page_size);
+    auto descs_count = get_required_descriptor_count(transfer_sizes, initial_desc_page_size, is_ddr);
     // Too many descriptors; try a larger desc_page_size which will lead to less descriptors used
     while ((descs_count * batch_size) > (MAX_DESCS_COUNT - 1)) {
         CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(local_desc_page_size << 1), HAILO_INTERNAL_FAILURE,
@@ -115,12 +115,14 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
                 // If not forcing minimum batch (It's acceptable to run infer on lower batch instead of returning error)
                 // once reached over the max page size, stop
                 local_desc_page_size = max_desc_page_size;
-                descs_count = get_required_descriptor_count(transfer_sizes, static_cast<uint16_t>(local_desc_page_size));
+                descs_count = get_required_descriptor_count(transfer_sizes, static_cast<uint16_t>(local_desc_page_size),
+                    is_ddr);
                 break;
             }
         }
 
-        descs_count = get_required_descriptor_count(transfer_sizes, static_cast<uint16_t>(local_desc_page_size));
+        descs_count = get_required_descriptor_count(transfer_sizes, static_cast<uint16_t>(local_desc_page_size),
+            is_ddr);
     }
 
     // Found desc_page_size and descs_count
@@ -141,7 +143,8 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
 
 Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requirements_single_transfer(
     vdma::VdmaBuffer::Type buffer_type, uint16_t max_desc_page_size, uint16_t min_batch_size, uint16_t max_batch_size,
-    uint32_t transfer_size, bool is_circular, bool force_default_page_size, bool force_batch_size, bool is_vdma_aligned_buffer)
+    uint32_t transfer_size, bool is_circular, bool force_default_page_size, bool force_batch_size, bool is_vdma_aligned_buffer,
+    bool is_ddr)
 {
     const uint32_t MAX_DESCS_COUNT = (buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) ?
         MAX_SG_DESCS_COUNT : MAX_CCB_DESCS_COUNT;
@@ -150,7 +153,7 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
 
     // First, get the result for the min size
     auto results = get_buffer_requirements_multiple_transfers(buffer_type, max_desc_page_size,
-        min_batch_size, {transfer_size}, is_circular, force_default_page_size, force_batch_size);
+        min_batch_size, {transfer_size}, is_circular, force_default_page_size, force_batch_size, is_ddr);
     if (HAILO_CANT_MEET_BUFFER_REQUIREMENTS == results.status()) {
         // In case of failure to meet requirements, return without error printed to the prompt.
         return make_unexpected(HAILO_CANT_MEET_BUFFER_REQUIREMENTS);
@@ -199,14 +202,17 @@ uint16_t BufferSizesRequirements::find_initial_desc_page_size(
 }
 
 uint32_t BufferSizesRequirements::get_required_descriptor_count(const std::vector<uint32_t> &transfer_sizes,
-    uint16_t desc_page_size)
+    uint16_t desc_page_size, bool is_ddr_layer)
 {
     uint32_t desc_count = 0;
     for (auto &transfer_size : transfer_sizes) {
         desc_count += DIV_ROUND_UP(transfer_size, desc_page_size);
     }
-    // One extra descriptor is needed, because the amount of available descriptors is (desc_count - 1)
-    return desc_count + 1;
+    // In case of is_circular don't add extra descriptor - because amount of descs needs to be power of 2 and then
+    // will round up to next power of 2 (and we anyways make sure we are smaller than MAX_DESCS which is 64K - 1)
+    // Otherwise - one extra descriptor is "required", because the amount of available descriptors is (desc_count - 1)
+    // TODO HRT-15875: check if we need this other descriptor in non circular cases
+    return is_ddr_layer ? desc_count : (desc_count + 1);
 }
 
 } /* namespace vdma */

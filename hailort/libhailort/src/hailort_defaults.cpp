@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -316,7 +316,7 @@ hailo_network_parameters_t HailoRTDefaults::get_network_parameters(uint16_t batc
     params.batch_size = batch_size;
 
     return params;
-}    
+}
 
 std::string HailoRTDefaults::get_network_name(const std::string &net_group_name)
 {

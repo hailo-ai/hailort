@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -58,7 +58,7 @@ public:
     virtual Expected<uint32_t> get_cache_read_length() const override;
     virtual Expected<uint32_t> get_cache_write_length() const override;
     virtual Expected<uint32_t> get_cache_entry_size(uint32_t cache_id) const override;
-    virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) override;
+    virtual hailo_status init_cache(uint32_t read_offset) override;
     virtual hailo_status update_cache_offset(int32_t offset_delta_entries) override;
     virtual Expected<std::vector<uint32_t>> get_cache_ids() const override;
     virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) override;

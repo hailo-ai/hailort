@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file hailo_session_internal.cpp
  * @brief Linux Sockets Hailo Session
@@ -12,7 +12,7 @@
 #include "common/utils.hpp"
 #include "common/internal_env_vars.hpp"
 #include "common/filesystem.hpp"
-#include "hailo/hailort.h"
+#include "vdma/channel/transfer_common.hpp"
 
 #include <string>
 
@@ -149,8 +149,8 @@ Expected<std::shared_ptr<SessionListener>> OsListener::create_shared(std::shared
     if (HAILO_SOCKET_COM_ADDR_UNIX_SOCKET == force_socket_com_value.value()) {
         TRY(ptr, create_localhost_server(context, port));
     } else {
-        TRY(auto ip_port_pair, OsSession::parse_ip_port(force_socket_com_value.value()));
-        TRY(ptr, create_by_addr_server(context, std::get<0>(ip_port_pair), std::get<1>(ip_port_pair)));
+        auto ip = force_socket_com_value.value();
+        TRY(ptr, create_by_addr_server(context, ip, port));
     }
 
     return ptr;
@@ -169,7 +169,7 @@ Expected<std::shared_ptr<OsListener>> OsListener::create_by_addr_server(std::sha
     server_addr.sin_port = htons(port);
     auto status = socket.pton(AF_INET, ip.c_str(), &server_addr.sin_addr);
     CHECK_SUCCESS_AS_EXPECTED(status,
-        "Failed to run 'inet_pton'. make sure 'HAILO_SOCKET_COM_ADDR_SERVER' is set correctly (ip:port)");
+        "Failed to run 'inet_pton'. make sure 'HAILO_SOCKET_COM_ADDR_SERVER' is set correctly <ip>)");
 
     status = socket.socket_bind((struct sockaddr*)&server_addr, addr_len);
     CHECK_SUCCESS_AS_EXPECTED(status);
@@ -211,18 +211,6 @@ OsSession::~OsSession()
     close();
 }
 
-Expected<std::pair<std::string, uint16_t>> OsSession::parse_ip_port(const std::string &ip_port)
-{
-    std::istringstream ss(ip_port);
-    std::string ip;
-    uint16_t port;
-
-    if (std::getline(ss, ip, ':') && (ss >> port)) {
-        return std::make_pair(ip, port);
-    }
-    CHECK_AS_EXPECTED(false, HAILO_INVALID_ARGUMENT ,"Failed to parse ip and port. Format should be as follows: 'X.X.X.X:PP' (e.g. 127.0.0.1:2000)");
-}
-
 Expected<std::shared_ptr<OsSession>> OsSession::connect(std::shared_ptr<OsConnectionContext> context, uint16_t port)
 {
     (void)port;
@@ -235,8 +223,8 @@ Expected<std::shared_ptr<OsSession>> OsSession::connect(std::shared_ptr<OsConnec
     if (HAILO_SOCKET_COM_ADDR_UNIX_SOCKET == force_socket_com_value.value()) {
         TRY(ptr, create_localhost_client(context, port));
     } else {
-        TRY(auto ip_port_pair, parse_ip_port(force_socket_com_value.value()));
-        TRY(ptr, create_by_addr_client(context, std::get<0>(ip_port_pair), std::get<1>(ip_port_pair)));
+        auto ip = force_socket_com_value.value();
+        TRY(ptr, create_by_addr_client(context, ip, port));
     }
     auto status = ptr->connect();
     CHECK_SUCCESS(status);
@@ -266,7 +254,7 @@ Expected<std::shared_ptr<OsSession>> OsSession::create_by_addr_client(std::share
     server_addr.sin_port = htons(port);
     auto status = socket.pton(AF_INET, ip.c_str(), &server_addr.sin_addr);
     CHECK_SUCCESS_AS_EXPECTED(status,
-        "Failed to run 'inet_pton'. make sure 'HAILO_SOCKET_COM_ADDR_CLIENT' is set correctly (ip:port)");
+        "Failed to run 'inet_pton'. make sure 'HAILO_SOCKET_COM_ADDR_CLIENT' is set correctly <ip>");
 
     TRY(auto write_actions_thread, AsyncActionsThread::create(MAX_ONGOING_TRANSFERS));
     TRY(auto read_actions_thread, AsyncActionsThread::create(MAX_ONGOING_TRANSFERS));
@@ -284,8 +272,8 @@ hailo_status OsSession::connect()
         if (HAILO_SOCKET_COM_ADDR_UNIX_SOCKET == force_socket_com_value.value()) {
             return connect_localhost();
         } else {
-            TRY(auto ip_port_pair, parse_ip_port(force_socket_com_value.value()));
-            return connect_by_addr(std::get<0>(ip_port_pair), std::get<1>(ip_port_pair));
+            auto ip = force_socket_com_value.value();
+            return connect_by_addr(ip, m_port);
         }
     } else {
         auto force_socket_com_value = get_env_variable(HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR);
@@ -293,8 +281,8 @@ hailo_status OsSession::connect()
         if (HAILO_SOCKET_COM_ADDR_UNIX_SOCKET == force_socket_com_value.value()) {
             return connect_localhost();
         } else {
-            TRY(auto ip_port_pair, parse_ip_port(force_socket_com_value.value()));
-            return connect_by_addr(std::get<0>(ip_port_pair), std::get<1>(ip_port_pair));
+            auto ip = force_socket_com_value.value();
+            return connect_by_addr(ip, m_port);
         }
     }
 }
@@ -332,7 +320,7 @@ hailo_status OsSession::connect_by_addr(const std::string &ip, uint16_t port)
     server_addr.sin_port = htons(port);
     auto status = m_socket.pton(AF_INET, ip.c_str(), &server_addr.sin_addr);
     CHECK_SUCCESS_AS_EXPECTED(status,
-        "Failed to run 'inet_pton'. make sure 'HAILO_SOCKET_COM_ADDR_XX' is set correctly (ip:port)");
+        "Failed to run 'inet_pton'. make sure 'HAILO_SOCKET_COM_ADDR_XX' is set correctly <ip>");
     status = m_socket.connect((struct sockaddr*)&server_addr, addr_len);
     CHECK_SUCCESS(status);
 
@@ -413,20 +401,21 @@ hailo_status OsSession::wait_for_write_async_ready(size_t /*transfer_size*/, std
     return m_write_actions_thread->wait_for_enqueue_ready(timeout);
 }
 
-hailo_status OsSession::write_async(const uint8_t *buffer, size_t size, std::function<void(hailo_status)> &&callback)
+hailo_status OsSession::write_async(TransferRequest &&request)
 {
-    auto status = m_write_actions_thread->enqueue_nonblocking({[this, buffer, size] (bool is_aborted) -> hailo_status {
+    return m_write_actions_thread->enqueue_nonblocking({[this, buffers=std::move(request.transfer_buffers)] (bool is_aborted) -> hailo_status {
         if (is_aborted) {
-            return HAILO_STREAM_ABORTED_BY_USER;
+            return HAILO_STREAM_ABORT;
         }
 
-        auto status = m_socket.sendall(buffer, size, MSG_NOSIGNAL);
-        CHECK(status == HAILO_SUCCESS || status == HAILO_COMMUNICATION_CLOSED, status);
-        return status;
-    }, callback});
-    CHECK_SUCCESS(status);
+        for (auto transfer_buffer : buffers) {
+            TRY(auto buffer, transfer_buffer.base_buffer());
+            auto status = m_socket.sendall(buffer.data(), buffer.size(), MSG_NOSIGNAL);
+            CHECK_SUCCESS(status);
+        }
 
-    return HAILO_SUCCESS;
+        return HAILO_SUCCESS;
+    }, request.callback});
 }
 
 hailo_status OsSession::wait_for_read_async_ready(size_t /*transfer_size*/, std::chrono::milliseconds timeout)
@@ -434,21 +423,29 @@ hailo_status OsSession::wait_for_read_async_ready(size_t /*transfer_size*/, std:
     return m_read_actions_thread->wait_for_enqueue_ready(timeout);
 }
 
-hailo_status OsSession::read_async(uint8_t *buffer, size_t size, std::function<void(hailo_status)> &&callback)
+hailo_status OsSession::read_async(TransferRequest &&request)
 {
-    auto status = m_read_actions_thread->enqueue_nonblocking({[this, buffer, size] (bool is_aborted) -> hailo_status {
+    return m_read_actions_thread->enqueue_nonblocking({[this, buffers=std::move(request.transfer_buffers)] (bool is_aborted) -> hailo_status {
         if (is_aborted) {
-            return HAILO_STREAM_ABORTED_BY_USER;
+            return HAILO_STREAM_ABORT;
         }
 
-        auto status = m_socket.recvall(buffer, size);
-        CHECK(status == HAILO_SUCCESS || status == HAILO_COMMUNICATION_CLOSED, status);
-        return status;
-    }, callback});
+        for (auto transfer_buffer : buffers) {
+            TRY(auto buffer, transfer_buffer.base_buffer());
+            auto status = m_socket.recvall(buffer.data(), buffer.size());
+            if (HAILO_COMMUNICATION_CLOSED == status) {
+                return status;
+            }
+            CHECK_SUCCESS(status);
+        }
 
-    CHECK_SUCCESS(status);
+        return HAILO_SUCCESS;
+    }, request.callback});
+}
 
-    return HAILO_SUCCESS;   
+Expected<Buffer> OsSession::allocate_buffer(size_t size, hailo_dma_buffer_direction_t)
+{
+    return Buffer::create(size);
 }
 
 } // namespace hailort

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -61,7 +61,7 @@ public:
 
     static Expected<std::shared_ptr<FillNmsFormatElement>> add_fill_nms_format_element(std::shared_ptr<OutputStreamBase> &output_stream,
         std::vector<std::shared_ptr<PipelineElement>> &elements, const std::string &element_name, const net_flow::PostProcessOpMetadataPtr &iou_op_metadata,
-        const ElementBuildParams &build_params);
+        const ElementBuildParams &build_params, const hailo_format_order_t &dst_format_order);
 
     static Expected<std::shared_ptr<UserBufferQueueElement>> add_user_buffer_queue_element(std::shared_ptr<OutputStreamBase> &output_stream,
         std::shared_ptr<std::atomic<hailo_status>> &pipeline_status, std::vector<std::shared_ptr<PipelineElement>> &elements,
