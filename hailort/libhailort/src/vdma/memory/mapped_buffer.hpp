@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -61,6 +61,7 @@ public:
 
     size_t size() const;
     void *user_address();
+    HailoRTDriver::DmaDirection direction() const;
     HailoRTDriver::VdmaBufferHandle handle();
     hailo_status synchronize(HailoRTDriver::DmaSyncDirection sync_direction);
     // TODO: validate that offset is cache aligned (HRT-9811)

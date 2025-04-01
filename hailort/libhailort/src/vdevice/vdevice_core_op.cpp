@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -39,12 +39,12 @@ Expected<std::shared_ptr<VDeviceCoreOp>> VDeviceCoreOp::create(VDevice &vdevice,
         }
     }
 
-    // On HcpConfigCoreOp, we don't support get_async_max_queue_size (and the core op doesn't use the queue).
+    // On HcpConfigCoreOp, we don't support infer_queue_size (and the core op doesn't use the queue).
     size_t queue_size = 0;
     auto iface = core_ops.begin()->second->get_default_streams_interface();
     CHECK_EXPECTED(iface);
     if ((iface.value() != HAILO_STREAM_INTERFACE_ETH) && (iface.value() != HAILO_STREAM_INTERFACE_MIPI)) {
-        auto per_device_queue_size = core_ops.begin()->second->get_async_max_queue_size();
+        auto per_device_queue_size = core_ops.begin()->second->infer_queue_size();
         CHECK_EXPECTED(per_device_queue_size);
         queue_size = *per_device_queue_size * core_ops.size();
     }
@@ -89,7 +89,7 @@ Expected<std::shared_ptr<VDeviceCoreOp>> VDeviceCoreOp::duplicate(std::shared_pt
 
 VDeviceCoreOp::~VDeviceCoreOp()
 {
-    (void)shutdown();
+    (void)shutdown_impl();
 }
 
 VDeviceCoreOp::VDeviceCoreOp(VDevice &vdevice,
@@ -383,6 +383,11 @@ hailo_status VDeviceCoreOp::deactivate_impl()
 
 hailo_status VDeviceCoreOp::shutdown()
 {
+    return shutdown_impl();
+}
+
+hailo_status VDeviceCoreOp::shutdown_impl()
+{
     hailo_status status = HAILO_SUCCESS; // Success oriented
 
     if (m_is_shutdown.exchange(true)) {
@@ -406,10 +411,9 @@ hailo_status VDeviceCoreOp::shutdown()
         m_core_ops_scheduler.lock()->remove_core_op(m_core_op_handle);
 
         assert(m_infer_requests_accumulator);
-        auto queue_size = get_async_max_queue_size();
-        assert(queue_size);
+        TRY(auto queue_size, infer_queue_size());
 
-        const auto timeout = DEFAULT_TRANSFER_TIMEOUT * (*queue_size);
+        const auto timeout = DEFAULT_TRANSFER_TIMEOUT * queue_size;
         auto accumulator_shutdown_status = m_infer_requests_accumulator->shutdown(timeout);
         if (HAILO_SUCCESS != accumulator_shutdown_status) {
             status = accumulator_shutdown_status;
@@ -441,9 +445,9 @@ Expected<std::shared_ptr<VdmaConfigCoreOp>> VDeviceCoreOp::get_core_op_by_device
     return core_op;
 }
 
-Expected<size_t> VDeviceCoreOp::get_async_max_queue_size_per_device() const
+Expected<size_t> VDeviceCoreOp::get_infer_queue_size_per_device() const
 {
-    return m_core_ops.begin()->second->get_async_max_queue_size();
+    return m_core_ops.begin()->second->infer_queue_size();
 }
 
 Expected<HwInferResults> VDeviceCoreOp::run_hw_infer_estimator()
@@ -499,11 +503,11 @@ bool VDeviceCoreOp::has_caches() const
     return false;
 }
 
-hailo_status VDeviceCoreOp::init_cache(uint32_t read_offset, int32_t write_offset_delta)
+hailo_status VDeviceCoreOp::init_cache(uint32_t read_offset)
 {
     CHECK(1 == m_core_ops.size(), HAILO_INVALID_OPERATION,
         "init_cache function is not supported on more than 1 physical device.");
-    return m_core_ops.begin()->second->init_cache(read_offset, write_offset_delta);
+    return m_core_ops.begin()->second->init_cache(read_offset);
 }
 
 hailo_status VDeviceCoreOp::update_cache_offset(int32_t offset_delta_entries)
@@ -547,7 +551,7 @@ hailo_status VDeviceCoreOp::add_to_trace()
 
     if (*stream_interface != HAILO_STREAM_INTERFACE_ETH) {
         for (const auto &core_op : m_core_ops) {
-            auto queue_size_exp = core_op.second->get_async_max_queue_size();
+            auto queue_size_exp = core_op.second->infer_queue_size();
             CHECK_EXPECTED_AS_STATUS(queue_size_exp);
             const uint32_t queue_size = static_cast<uint32_t>(*queue_size_exp);
 

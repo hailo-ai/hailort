@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -131,6 +131,15 @@ typedef union {
         uint64_t reserved1;
         uint64_t reserved2;
     } v2;
+    struct {
+        uint64_t xxh3_64bits;
+        // ccws_size_with_padding includes the padding for 4k alignment - the real ccws size is (ccws_size_with_padding - hef_padding_size)
+        uint64_t ccws_size_with_padding;
+        uint32_t hef_padding_size;
+        uint64_t additional_info_size;
+        uint64_t reserved1;
+        uint64_t reserved2;
+    } v3;
 } hef__header_distinct_t;
 
 typedef struct {
@@ -145,6 +154,7 @@ static const size_t HEF_COMMON_SIZE = sizeof(hef__header_t) - sizeof(hef__header
 static const size_t HEF_HEADER_SIZE_V0 = HEF_COMMON_SIZE + sizeof(hef__header_distinct_t::v0);
 static const size_t HEF_HEADER_SIZE_V1 = HEF_COMMON_SIZE + sizeof(hef__header_distinct_t::v1);
 static const size_t HEF_HEADER_SIZE_V2 = HEF_COMMON_SIZE + sizeof(hef__header_distinct_t::v2);
+static const size_t HEF_HEADER_SIZE_V3 = HEF_COMMON_SIZE + sizeof(hef__header_distinct_t::v3);
 
 typedef enum {
     HEF__FORMAT__TF_RGB = 0,
@@ -170,6 +180,7 @@ typedef enum {
 #define HEADER_VERSION_0 (0)
 #define HEADER_VERSION_1 (1)
 #define HEADER_VERSION_2 (2)
+#define HEADER_VERSION_3 (3)
 
 const static uint32_t SUPPORTED_EXTENSIONS_BITSET_SIZE = 1000;
 static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
@@ -184,23 +195,27 @@ static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
     OFFLOAD_ARGMAX,
     KO_RUN_ASAP,
     HAILO_NET_FLOW,
-    HAILO_NET_FLOW_YOLOV5_NMS, // Extension added in platform 4.12 release
-    HAILO_NET_FLOW_SSD_NMS, // Extension added in platform 4.14 release
-    WRITE_DATA_BY_TYPE, // Extension added in platform 4.14 release
-    NMS_OUTPUT_BURST, // Extension added in platform 4.14 release
-    DUAL_DIRECTION_STREAM_INDEX, // Extension added in platform 4.14 release
-    HAILO_NET_FLOW_ARGMAX, // Extension added in platform 4.14 release
-    HAILO_NET_FLOW_SOFTMAX, // Extension added in platform 4.14 release
-    ALIGNED_FORMAT_TYPE, // Extension added in platform 4.14 release
-    HAILO_NET_FLOW_YOLOX_NMS, // Extension added in platform 4.14 release
-    OUTPUT_SCALE_PER_FEATURE, // Extension added in platform 4.14 release
-    PERIPH_CALCULATION_IN_HAILORT, // Extension added in platform 4.14 release
-    HAILO_NET_FLOW_YOLOV5_SEG_NMS, // Extension added in platform 4.15 release
-    HAILO_NET_FLOW_IOU_NMS, // Extension added in platform 4.15 release
-    HW_PADDING, // Extension added in platform 4.16 release
-    HAILO_NET_FLOW_YOLOV8_NMS, // Extension added in platform 4.16 release
-    BATCH_REGISTER_CONFIG, // Extension added in platform 4.17 release
-    HAILO_NET_FLOW_BBOX_DECODING // Extension added in platform 4.18 release
+    HAILO_NET_FLOW_YOLOV5_NMS,      // Extension added in platform 4.12 release
+    HAILO_NET_FLOW_SSD_NMS,         // Extension added in platform 4.14 release
+    WRITE_DATA_BY_TYPE,             // Extension added in platform 4.14 release
+    NMS_OUTPUT_BURST,               // Extension added in platform 4.14 release
+    DUAL_DIRECTION_STREAM_INDEX,    // Extension added in platform 4.14 release
+    HAILO_NET_FLOW_ARGMAX,          // Extension added in platform 4.14 release
+    HAILO_NET_FLOW_SOFTMAX,         // Extension added in platform 4.14 release
+    ALIGNED_FORMAT_TYPE,            // Extension added in platform 4.14 release
+    HAILO_NET_FLOW_YOLOX_NMS,       // Extension added in platform 4.14 release
+    OUTPUT_SCALE_PER_FEATURE,       // Extension added in platform 4.14 release
+    PERIPH_CALCULATION_IN_HAILORT,  // Extension added in platform 4.14 release
+    HAILO_NET_FLOW_YOLOV5_SEG_NMS,  // Extension added in platform 4.15 release
+    HAILO_NET_FLOW_IOU_NMS,         // Extension added in platform 4.15 release
+    HW_PADDING,                     // Extension added in platform 4.16 release
+    HAILO_NET_FLOW_YOLOV8_NMS,      // Extension added in platform 4.16 release
+    BATCH_REGISTER_CONFIG,          // Extension added in platform 4.17 release
+    HAILO_NET_FLOW_BBOX_DECODING,   // Extension added in platform 4.18 release
+    CCW_PTR_SQUEEZE,                // Currently this extension is always off, will be renamed and re-purposed under HRT-13205
+    EXTERNAL_RESOURCES,             // Extension added in platform 4.21 release
+    SHARED_CONFIG                   // Extension added in platform 4.21 release
+
 };
 
 static inline bool is_h2d_boundary_info_layer(const ProtoHEFEdgeLayer& layer)
@@ -254,20 +269,25 @@ class VdmaConfigCoreOp;
 class VdmaDevice;
 class HailoRTDriver;
 
+struct ExternalResourceInfo
+{
+    std::string name;
+    uint64_t size;
+    uint64_t offset;
+};
+
 class Hef::Impl final
 {
 public:
 
     static Expected<Impl> create(const std::string &hef_path);
-    static Expected<Impl> create(const MemoryView &hef_buffer);
+    static Expected<Impl> create(std::shared_ptr<Buffer> hef_buffer);
 
     const std::vector<ProtoHEFNetworkGroupPtr>& network_groups() const;
     const std::vector<ProtoHEFCoreOpMock>& core_ops(const std::string &net_group_name) const;
     const NetworkGroupMetadata network_group_metadata(const std::string &net_group_name) const;
 
     Expected<std::pair<std::string, std::string>> get_network_group_and_network_name(const std::string &name);
-
-    void clear_hef_buffer();
 
     Expected<std::shared_ptr<ProtoHEFCoreOpMock>> get_core_op_by_net_group_name(const std::string &net_group_name="");
     Expected<std::vector<hailo_network_info_t>> get_network_infos(const std::string &net_group_name="");
@@ -291,8 +311,9 @@ public:
     Expected<size_t> get_number_of_input_streams(const std::string &net_group_name="");
     Expected<size_t> get_number_of_output_streams(const std::string &net_group_name="");
     ProtoHEFHwArch get_device_arch();
-    std::shared_ptr<SeekableBytesReader> get_hef_reader();
-    size_t get_ccws_offset();
+    uint64_t get_ccws_section_size() const;
+    std::shared_ptr<SeekableBytesReader> get_hef_reader() const;
+    size_t get_offset_zero_point() const;
     Expected<float64_t> get_bottleneck_fps(const std::string &net_group_name="");
     static bool contains_ddr_layers(const ProtoHEFCoreOpMock &core_op);
     static hailo_status validate_core_op_unique_layer_names(const ProtoHEFCoreOpMock &core_op);
@@ -356,6 +377,8 @@ public:
     Expected<CoreOpMetadataPtr> get_core_op_metadata(const std::string &network_group_name, uint32_t partial_clusters_layout_bitmap = PARTIAL_CLUSTERS_LAYOUT_IGNORE);
 
     Expected<std::string> get_description(bool stream_infos, bool vstream_infos, hailo_device_architecture_t device_arch);
+    Expected<std::map<std::string, std::string>> get_external_resources() const; // Key is reosucre name, value is resource data in bytes
+
 
     const MemoryView get_hash_as_memview() const
     {
@@ -363,6 +386,7 @@ public:
         case HEADER_VERSION_0:
             return MemoryView::create_const(m_md5, sizeof(m_md5));
         case HEADER_VERSION_2:
+        case HEADER_VERSION_3:
             return MemoryView::create_const(&m_xxh3_64bits, sizeof(m_xxh3_64bits));
         case HEADER_VERSION_1:
         default:
@@ -403,13 +427,13 @@ public:
 
     hailo_status validate_boundary_streams_were_created(const std::string &network_group_name, std::shared_ptr<CoreOp> core_op);
 
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-    const MemoryView get_hef_memview();
-#endif // HAILO_SUPPORT_MULTI_PROCESS
+    Expected<std::shared_ptr<Buffer>> get_hef_as_buffer();
+
+    bool is_aligned_ccws_on() const;
 
 private:
     Impl(const std::string &hef_path, hailo_status &status);
-    Impl(const MemoryView &hef_memview, hailo_status &status);
+    Impl(std::shared_ptr<Buffer> hef_buffer, hailo_status &status);
 
     hailo_status parse_hef_file(const std::string &hef_path);
     hailo_status parse_hef_memview(const MemoryView &hef_memview);
@@ -418,6 +442,7 @@ private:
     Expected<hef__header_t> parse_hef_header_before_distinct(std::shared_ptr<SeekableBytesReader> hef_reader);
     hailo_status fill_v1_hef_header(hef__header_t &hef_header, std::shared_ptr<SeekableBytesReader> hef_reader);
     hailo_status fill_v2_hef_header(hef__header_t &hef_header, std::shared_ptr<SeekableBytesReader> hef_reader);
+    hailo_status fill_v3_hef_header(hef__header_t &hef_header, std::shared_ptr<SeekableBytesReader> hef_reader);
     hailo_status fill_core_ops_and_networks_metadata(uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset);
     hailo_status transfer_protobuf_field_ownership(ProtoHEFHef &hef_message);
     void fill_core_ops();
@@ -459,6 +484,7 @@ private:
     ProtoHEFHeader m_header;
     ProtoHEFIncludedFeatures m_included_features;
     SupportedFeatures m_supported_features;
+    std::vector<ExternalResourceInfo> m_hef_external_resources;
     std::vector<ProtoHEFNetworkGroupPtr> m_groups;
     std::map<std::string, std::vector<ProtoHEFCoreOpMock>> m_core_ops_per_group;
     std::map<std::string, std::vector<net_flow::PostProcessOpMetadataPtr>> m_post_process_ops_metadata_per_group;
@@ -470,11 +496,10 @@ private:
     uint32_t m_crc;
     uint64_t m_xxh3_64bits;
     std::shared_ptr<SeekableBytesReader> m_hef_reader;
-    size_t m_ccws_offset;
+    uint64_t m_ccws_section_size;
+    size_t m_offset_zero_point;
 
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-    Buffer m_hef_buffer;
-#endif // HAILO_SUPPORT_MULTI_PROCESS
+    std::shared_ptr<Buffer> m_hef_buffer; // Only used if Hef is created from memory
 
     std::map<std::string, NetworkGroupMetadata> m_network_group_metadata; // Key is NG name
 };
@@ -492,7 +517,6 @@ public:
 
     static Expected<uint32_t> max_periph_bytes_value(const hailo_device_architecture_t hw_arch);
     static Expected<uint32_t> max_periph_padding_payload_value(const hailo_device_architecture_t hw_arch);
-
 
     static bool is_core_hw_padding_supported(const LayerInfo &layer_info, const uint32_t max_periph_bytes_value,
         const bool is_core_hw_padding_config_in_dfc);
@@ -542,13 +566,15 @@ public:
         const ProtoHEFCoreOpMock &core_op, const uint16_t context_index,
         const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features);
     static Expected<ContextMetadata> parse_preliminary_context(const ProtoHEFPreliminaryConfig &preliminary_proto,
-        const SupportedFeatures &supported_features, const uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset);
+        const SupportedFeatures &supported_features, const uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader,
+        size_t ccws_offset, bool is_aligned_ccws_on);
     static Expected<ContextMetadata> parse_single_dynamic_context(const ProtoHEFCoreOpMock &core_op,
         const ProtoHEFContext &context_proto, uint16_t context_index, const SupportedFeatures &supported_features,
-        const ProtoHEFHwArch &hef_arch, const uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset);
+        const ProtoHEFHwArch &hef_arch, const uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader,
+        size_t ccws_offset, bool is_aligned_ccws_on);
     static Expected<std::vector<ContextMetadata>> parse_dynamic_contexts(const ProtoHEFCoreOpMock &core_op,
         const SupportedFeatures &supported_features, const ProtoHEFHwArch &hef_arch, const uint32_t hef_version,
-        std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset);
+        std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset, bool is_aligned_ccws_on);
     static Expected<hailo_nms_info_t> parse_proto_nms_info(const ProtoHEFNmsInfo &proto_nms_info,
         const bool burst_mode_enabled, const ProtoHEFHwArch &hef_arch);
     static Expected<LayerInfo> get_boundary_layer_info(const ProtoHEFCoreOpMock &core_op,

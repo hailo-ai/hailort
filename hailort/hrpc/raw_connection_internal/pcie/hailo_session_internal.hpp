@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file hailo_session_internal.hpp
  * @brief Hailo Session Header for pcie based comunication
@@ -28,20 +28,14 @@ public:
     static Expected<std::shared_ptr<ConnectionContext>> create_server_shared();
 
     PcieConnectionContext(std::shared_ptr<HailoRTDriver> &&driver, bool is_accepting)
-        : ConnectionContext(is_accepting), m_driver(std::move(driver)), m_conn_count(0) {}
+        : ConnectionContext(is_accepting), m_driver(std::move(driver)) {}
 
     virtual ~PcieConnectionContext() = default;
 
     virtual std::shared_ptr<HailoRTDriver> get_driver() override { return m_driver; }
 
-    hailo_status wait_for_available_connection();
-    void mark_connection_closed();
-
 private:
     std::shared_ptr<HailoRTDriver> m_driver;
-    uint32_t m_conn_count;
-    std::mutex m_mutex;
-    std::condition_variable m_cv;
 };
 
 class RawPcieSession : public Session
@@ -59,12 +53,14 @@ public:
     virtual hailo_status close() override;
 
     virtual hailo_status wait_for_write_async_ready(size_t transfer_size, std::chrono::milliseconds timeout) override;
-    virtual hailo_status write_async(const uint8_t *buffer, size_t size,
-        std::function<void(hailo_status)> &&callback) override;
+    using Session::write_async;
+    virtual hailo_status write_async(TransferRequest &&request) override;
 
     virtual hailo_status wait_for_read_async_ready(size_t transfer_size, std::chrono::milliseconds timeout) override;
-    virtual hailo_status read_async(uint8_t *buffer, size_t size,
-        std::function<void(hailo_status)> &&callback) override;
+    using Session::read_async;
+    virtual hailo_status read_async(TransferRequest &&request) override;
+
+    virtual Expected<Buffer> allocate_buffer(size_t size, hailo_dma_buffer_direction_t direction) override;
 
     explicit RawPcieSession(std::shared_ptr<PcieConnectionContext> context) : m_context(context), m_ongoing_writes(0),
         m_ongoing_reads(0) {}
@@ -73,10 +69,6 @@ public:
     hailo_status connect(uint16_t port);
 
 private:
-    hailo_status write_async_aligned(const uint8_t *buffer, size_t size, std::function<void(hailo_status)> &&callback);
-    hailo_status write_async_unaligned(const uint8_t *buffer, size_t size, std::function<void(hailo_status)> &&callback);
-    hailo_status read_async_aligned(uint8_t *buffer, size_t size, std::function<void(hailo_status)> &&callback);
-    hailo_status read_async_unaligned(uint8_t *buffer, size_t size, std::function<void(hailo_status)> &&callback);
 
     std::mutex m_read_mutex;
     std::condition_variable m_read_cv;

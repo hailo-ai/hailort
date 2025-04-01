@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -34,6 +34,8 @@ static_assert(MAX_VDMA_ENGINES == MAX_VDMA_ENGINES_COUNT, "Driver and libhailort
 static_assert(MIN_D2H_CHANNEL_INDEX == VDMA_DEST_CHANNELS_START, "Driver and libhailort parameters mismatch");
 static_assert(ONGOING_TRANSFERS_SIZE == HAILO_VDMA_MAX_ONGOING_TRANSFERS, "Driver and libhailort parameters mismatch");
 static_assert(MAX_IRQ_TIMESTAMPS_SIZE == CHANNEL_IRQ_TIMESTAMPS_SIZE, "Driver and libhailort parameters mismatch");
+
+static_assert(MAX_TRANSFER_BUFFERS_IN_REQUEST == HAILO_MAX_BUFFERS_PER_SINGLE_TRANSFER, "Driver and libhailort parameters mismatch");
 
 static_assert(static_cast<int>(InterruptsDomain::NONE) == HAILO_VDMA_INTERRUPTS_DOMAIN_NONE, "Driver and libhailort parameters mismatch");
 static_assert(static_cast<int>(InterruptsDomain::HOST) == HAILO_VDMA_INTERRUPTS_DOMAIN_HOST, "Driver and libhailort parameters mismatch");
@@ -148,6 +150,8 @@ static HailoRTDriver::DeviceBoardType board_type_to_device_board_type(enum hailo
         return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO10H;
     case HAILO_BOARD_TYPE_HAILO10H_LEGACY:
         return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO10H_LEGACY;
+    case HAILO_BOARD_TYPE_MARS:
+        return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_MARS;
     default:
         LOGGER__ERROR("Invalid board type from ioctl {}", static_cast<int>(board_type));
         break;
@@ -304,9 +308,9 @@ HailoRTDriver::HailoRTDriver(const std::string &device_id, FileDescriptor &&fd, 
 HailoRTDriver::~HailoRTDriver()
 {
     for (const auto &buffer_info : m_mapped_buffer) {
-        auto status = vdma_buffer_unmap_ioctl(buffer_info.handle);
+        auto status = vdma_buffer_unmap_ioctl(buffer_info.second.handle);
         if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed to unmap buffer handle {} status {}", buffer_info.handle, status);
+            LOGGER__ERROR("Failed to unmap buffer handle {} status {}", buffer_info.second.handle, status);
         }
     }
 }
@@ -451,11 +455,16 @@ static Expected<IrqData> to_irq_data(const hailo_vdma_interrupts_wait_params& pa
 
         irq.channels_irq_data[i].channel_id.engine_index = engine_index;
         irq.channels_irq_data[i].channel_id.channel_index = channel_index;
-        irq.channels_irq_data[i].is_active = params.irq_data[i].is_active;
-        irq.channels_irq_data[i].transfers_completed = params.irq_data[i].transfers_completed;
-        irq.channels_irq_data[i].host_error = params.irq_data[i].host_error;
-        irq.channels_irq_data[i].device_error = params.irq_data[i].device_error;
-        irq.channels_irq_data[i].validation_success = params.irq_data[i].validation_success;
+        irq.channels_irq_data[i].validation_success = true;
+        irq.channels_irq_data[i].is_active = true;
+
+        if (params.irq_data[i].data == HAILO_VDMA_TRANSFER_DATA_CHANNEL_WITH_ERROR) {
+            irq.channels_irq_data[i].validation_success = false;
+        } else if (params.irq_data[i].data == HAILO_VDMA_TRANSFER_DATA_CHANNEL_NOT_ACTIVE) {
+            irq.channels_irq_data[i].is_active = false;
+        } else {
+            irq.channels_irq_data[i].transfers_completed = params.irq_data[i].data;
+        }
     }
     return irq;
 }
@@ -577,14 +586,14 @@ Expected<uint64_t> HailoRTDriver::write_action_list(uint8_t *data, size_t size)
     return dma_address;
 }
 
-Expected<HailoRTDriver::VdmaBufferHandle> HailoRTDriver::vdma_buffer_map_dmabuf(int dmabuf_fd, size_t required_size, DmaDirection data_direction,
-    DmaBufferType buffer_type)
+Expected<HailoRTDriver::VdmaBufferHandle> HailoRTDriver::vdma_buffer_map_dmabuf(int dmabuf_fd, size_t required_size,
+    DmaDirection data_direction, DmaBufferType buffer_type)
 {
     CHECK_AS_EXPECTED (DmaBufferType::DMABUF_BUFFER == buffer_type, HAILO_INVALID_ARGUMENT,
         "Error, Invalid buffer type given, buffer type {}", static_cast<int>(buffer_type));
 
-    return vdma_buffer_map(dmabuf_fd, required_size, data_direction, INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER,
-        buffer_type);
+    return vdma_buffer_map(static_cast<uintptr_t>(dmabuf_fd), required_size, data_direction,
+        INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER, buffer_type);
 }
 
 Expected<HailoRTDriver::VdmaBufferHandle> HailoRTDriver::vdma_buffer_map(uintptr_t user_address, size_t required_size,
@@ -592,23 +601,20 @@ Expected<HailoRTDriver::VdmaBufferHandle> HailoRTDriver::vdma_buffer_map(uintptr
     DmaBufferType buffer_type) {
 
     std::unique_lock<std::mutex> mapping_lock(m_mapped_buffer_lock);
-    auto mapped_buffer = std::find_if(m_mapped_buffer.begin(), m_mapped_buffer.end(),
-        [user_address, required_size, data_direction](const auto& mapped_buffer_info) {
-            return (mapped_buffer_info.address == user_address) &&
-                   (mapped_buffer_info.size == required_size) &&
-                   (mapped_buffer_info.direction == data_direction);
-    });
+    auto mapped_buffer_key = MappedBufferKey{user_address, data_direction, required_size};
+    auto mapped_buffer = m_mapped_buffer.find(mapped_buffer_key);
+
     if (mapped_buffer != m_mapped_buffer.end()) {
         // Buffer already mapped, increase ref count and use it.
-        assert(mapped_buffer->mapped_count > 0);
+        assert(mapped_buffer->second.mapped_count > 0);
         const bool mismatched_driver_handle = (driver_buff_handle != INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER) &&
-            (mapped_buffer->driver_buff_handle != driver_buff_handle);
+            (mapped_buffer->second.driver_buff_handle != driver_buff_handle);
         CHECK(!mismatched_driver_handle, HAILO_INVALID_ARGUMENT,
-            "Mapped buffer driver handle 0x{:x} is different than required handle 0x{:x}", mapped_buffer->driver_buff_handle,
+            "Mapped buffer driver handle 0x{:x} is different than required handle 0x{:x}", mapped_buffer->second.driver_buff_handle,
             driver_buff_handle);
 
-        mapped_buffer->mapped_count++;
-        return Expected<VdmaBufferHandle>(mapped_buffer->handle);
+        mapped_buffer->second.mapped_count++;
+        return Expected<VdmaBufferHandle>(mapped_buffer->second.handle);
     } else {
         // Buffer not mapped, map it now
         auto handle = vdma_buffer_map_ioctl(user_address, required_size, data_direction,
@@ -616,53 +622,29 @@ Expected<HailoRTDriver::VdmaBufferHandle> HailoRTDriver::vdma_buffer_map(uintptr
         CHECK_EXPECTED(handle);
 
         const auto mapping_count = 1;
-        m_mapped_buffer.emplace_back(MappedBufferInfo {
+        m_mapped_buffer[mapped_buffer_key] = MappedBufferInfo {
             handle.value(),
-            user_address,
-            data_direction,
-            required_size,
             driver_buff_handle,
             mapping_count
-        });
+        };
 
         return handle.release();
     }
 }
 
-hailo_status HailoRTDriver::vdma_buffer_unmap(VdmaBufferHandle handle) {
-    std::unique_lock<std::mutex> mapping_lock(m_mapped_buffer_lock);
-    auto mapped_buffer = std::find_if(m_mapped_buffer.begin(), m_mapped_buffer.end(),
-        [handle](const auto& mapped_buffer_info) {
-            return mapped_buffer_info.handle == handle;
-    });
-    CHECK(mapped_buffer != m_mapped_buffer.end(), HAILO_NOT_FOUND, "Mapped buffer handle {} not found", handle);
-
-    assert(mapped_buffer->mapped_count > 0);
-    mapped_buffer->mapped_count--;
-    if (mapped_buffer->mapped_count == 0) {
-        m_mapped_buffer.erase(mapped_buffer);
-        return vdma_buffer_unmap_ioctl(handle);
-    }
-    return HAILO_SUCCESS;
-}
-
 hailo_status HailoRTDriver::vdma_buffer_unmap(uintptr_t user_address, size_t size, DmaDirection data_direction)
 {
     std::unique_lock<std::mutex> mapping_lock(m_mapped_buffer_lock);
-    auto mapped_buffer = std::find_if(m_mapped_buffer.begin(), m_mapped_buffer.end(),
-        [user_address, size, data_direction](const auto& mapped_buffer_info) {
-            return (mapped_buffer_info.address == user_address) &&
-                   (mapped_buffer_info.size == size) &&
-                   (mapped_buffer_info.direction == data_direction);
-    });
+    auto mapped_buffer_key = MappedBufferKey{user_address, data_direction, size};
+    auto mapped_buffer = m_mapped_buffer.find(mapped_buffer_key);
     CHECK(mapped_buffer != m_mapped_buffer.end(), HAILO_NOT_FOUND, "Mapped buffer {} {} not found",
         user_address, size);
 
-    assert(mapped_buffer->mapped_count > 0);
-    mapped_buffer->mapped_count--;
-    if (mapped_buffer->mapped_count == 0) {
-        const auto handle = mapped_buffer->handle;
-        m_mapped_buffer.erase(mapped_buffer);
+    assert(mapped_buffer->second.mapped_count > 0);
+    mapped_buffer->second.mapped_count--;
+    if (mapped_buffer->second.mapped_count == 0) {
+        const auto handle = mapped_buffer->second.handle;
+        m_mapped_buffer.erase(mapped_buffer_key);
         return vdma_buffer_unmap_ioctl(handle);
     }
     return HAILO_SUCCESS;
@@ -690,19 +672,21 @@ hailo_status HailoRTDriver::vdma_buffer_sync(VdmaBufferHandle handle, DmaSyncDir
 }
 
 hailo_status HailoRTDriver::descriptors_list_program(uintptr_t desc_handle, VdmaBufferHandle buffer_handle,
-    size_t buffer_size, size_t buffer_offset, uint8_t channel_index, uint32_t starting_desc, bool should_bind,
-    InterruptsDomain last_desc_interrupts)
+    size_t buffer_size, size_t buffer_offset, uint8_t channel_index, uint32_t starting_desc, uint32_t batch_size,
+    bool should_bind, InterruptsDomain last_desc_interrupts, uint32_t stride)
 {
     hailo_desc_list_program_params params{};
     params.buffer_handle = buffer_handle;
     params.buffer_size = buffer_size;
     params.buffer_offset = buffer_offset;
+    params.batch_size = batch_size;
     params.desc_handle = desc_handle;
     params.channel_index = channel_index;
     params.starting_desc = starting_desc;
 
     params.should_bind = should_bind;
     params.last_interrupts_domain = (hailo_vdma_interrupts_domain)last_desc_interrupts;
+    params.stride = stride;
 
 #ifdef NDEBUG
     params.is_debug = false;
@@ -714,7 +698,7 @@ hailo_status HailoRTDriver::descriptors_list_program(uintptr_t desc_handle, Vdma
     return HAILO_SUCCESS;
 }
 
-Expected<uint32_t> HailoRTDriver::launch_transfer(vdma::ChannelId channel_id, uintptr_t desc_handle,
+hailo_status HailoRTDriver::launch_transfer(vdma::ChannelId channel_id, uintptr_t desc_handle,
     uint32_t starting_desc, const std::vector<TransferBuffer> &transfer_buffers,
     bool should_bind, InterruptsDomain first_desc_interrupts, InterruptsDomain last_desc_interrupts)
 {
@@ -729,8 +713,9 @@ Expected<uint32_t> HailoRTDriver::launch_transfer(vdma::ChannelId channel_id, ui
     params.starting_desc = starting_desc;
     params.buffers_count = static_cast<uint8_t>(transfer_buffers.size());
     for (size_t i = 0; i < transfer_buffers.size(); i++) {
-        params.buffers[i].mapped_buffer_handle = transfer_buffers[i].buffer_handle;
-        params.buffers[i].offset = static_cast<uint32_t>(transfer_buffers[i].offset);
+        params.buffers[i].buffer_type = transfer_buffers[i].is_dma_buf ? 
+            HAILO_DMA_DMABUF_BUFFER : HAILO_DMA_USER_PTR_BUFFER;
+        params.buffers[i].addr_or_fd = transfer_buffers[i].addr_or_fd;
         params.buffers[i].size = static_cast<uint32_t>(transfer_buffers[i].size);
     }
     params.should_bind = should_bind;
@@ -745,7 +730,7 @@ Expected<uint32_t> HailoRTDriver::launch_transfer(vdma::ChannelId channel_id, ui
 
     RUN_AND_CHECK_IOCTL_RESULT(HAILO_VDMA_LAUNCH_TRANSFER, &params, "Failed launch transfer");
 
-    return Expected<uint32_t>(params.descs_programed);
+    return HAILO_SUCCESS;
 }
 
 #if defined(__linux__)
@@ -1131,4 +1116,9 @@ bool HailoRTDriver::is_valid_channel_id(const vdma::ChannelId &channel_id)
     return (channel_id.engine_index < m_dma_engines_count) && (channel_id.channel_index < MAX_VDMA_CHANNELS_PER_ENGINE);
 }
 
+hailo_status HailoRTDriver::reset_chip()
+{
+    RUN_AND_CHECK_IOCTL_RESULT(HAILO_SOC_POWER_OFF, nullptr, "Failed poweroff");
+    return HAILO_SUCCESS;
+}
 } /* namespace hailort */

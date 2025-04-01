@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 
@@ -13,7 +13,11 @@
 #include <fstream>
 #ifdef __linux__
 #include <glob.h>
-#endif
+#ifdef GPIO_V2_GET_LINE_IOCTL
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#endif // GPIO_V2_GET_LINE_IOCTL
+#endif // __linux__
 #include <memory>
 
 namespace hailort
@@ -147,7 +151,13 @@ Expected<hailo_extended_device_information_t> IntegratedDevice::get_extended_dev
     constexpr auto STATUS_ENABLED = "okay";
     constexpr auto ETH_STATUS_FILE = "/proc/device-tree/ethernet@1b5000/status";
     constexpr auto PCI_STATUS_FILE = "/proc/device-tree/hailo_pci_ep_driver/status";
+    constexpr auto FUSE_FILE = "/sys/devices/soc0/fuse";
+    constexpr auto ULT_OFFSET_IN_FUSE = sizeof(uint32_t); // crypto_dummy field before the ULT
+    constexpr auto LOT_ID_SIZE = 8;
     constexpr auto NOT_AVAILABLE = 0;
+
+    // LOT_ID_SIZE + sizeof(wafer_info) = HAILO_UNIT_LEVEL_TRACKING_BYTES_LENGTH
+    static_assert(LOT_ID_SIZE == HAILO_UNIT_LEVEL_TRACKING_BYTES_LENGTH - sizeof(uint32_t), "LOT_ID_SIZE is not as expected!");
 
     hailo_extended_device_information_t info = {};
 
@@ -166,7 +176,7 @@ Expected<hailo_extended_device_information_t> IntegratedDevice::get_extended_dev
     TRY(auto is_eth_supported, compare_file_content(ETH_STATUS_FILE, STATUS_ENABLED));
     TRY(auto is_pci_supported, compare_file_content(PCI_STATUS_FILE, STATUS_ENABLED));
 
-    info.boot_source = HAILO_DEVICE_BOOT_SOURCE_PCIE; // TODO: HRT-15562
+    info.boot_source = HAILO_DEVICE_BOOT_SOURCE_INVALID; // TODO: HRT-15562
     info.eth_mac_address[0] = NOT_AVAILABLE; // TODO: HRT-15562
     info.lcs = NOT_AVAILABLE; // TODO: HRT-15562
     info.neural_network_core_clock_rate = NOT_AVAILABLE; // TODO: HRT-15562
@@ -177,7 +187,30 @@ Expected<hailo_extended_device_information_t> IntegratedDevice::get_extended_dev
     info.supported_features.mdio = NOT_AVAILABLE; // TODO: HRT-15562
     info.supported_features.mipi = NOT_AVAILABLE; // TODO: HRT-15562
     info.supported_features.pcie = is_pci_supported;
-    info.unit_level_tracking_id[0] = NOT_AVAILABLE; // TODO: HRT-15562
+
+    {
+        FileReader reader(FUSE_FILE);
+        auto status = reader.open();
+        CHECK_SUCCESS(status, "Failed to open file {}", FUSE_FILE);
+
+        status = reader.seek(ULT_OFFSET_IN_FUSE);
+        CHECK_SUCCESS(status, "Failed to seek to offset {} in file {}", ULT_OFFSET_IN_FUSE, FUSE_FILE);
+
+        status = reader.read(info.unit_level_tracking_id, LOT_ID_SIZE);
+        CHECK_SUCCESS(status, "Failed to read {} bytes from file {}", LOT_ID_SIZE, FUSE_FILE);
+
+        // Reverse the bytes to get the correct order - same is done in hailo8
+        std::reverse(info.unit_level_tracking_id, info.unit_level_tracking_id + LOT_ID_SIZE);
+
+        status = reader.read(info.unit_level_tracking_id + LOT_ID_SIZE, sizeof(info.unit_level_tracking_id) - LOT_ID_SIZE);
+        CHECK_SUCCESS(status, "Failed to read {} bytes from file {}", sizeof(info.unit_level_tracking_id) - LOT_ID_SIZE, FUSE_FILE);
+    }
+
+#if defined(__linux__) && defined(GPIO_V2_GET_LINE_IOCTL)
+    if (m_device_architecture == HAILO_ARCH_HAILO10H) {
+        TRY(info.gpio_mask, GpioReader().read());
+    }
+#endif
 
     return info;
 }
@@ -207,5 +240,44 @@ Expected<bool> IntegratedDevice::has_INA231()
     #endif // __linux__
     return has_INA231;
 }
+
+#if defined(__linux__) && defined(GPIO_V2_GET_LINE_IOCTL)
+IntegratedDevice::GpioReader::~GpioReader()
+{
+    if (m_request_fd >= 0) {
+        (void)close(m_request_fd);
+    }
+
+    if (m_fd >= 0) {
+        (void)close(m_fd);
+    }
+}
+
+Expected<uint16_t> IntegratedDevice::GpioReader::read()
+{
+    constexpr auto GPIO_MASK_FILE = "/dev/gpiochip1";
+    m_fd = open(GPIO_MASK_FILE, O_RDONLY);
+    CHECK(m_fd >= 0, HAILO_FILE_OPERATION_FAILURE, "Failed to open {}", GPIO_MASK_FILE);
+
+    struct gpio_v2_line_request req = {};
+    req.num_lines = HAILO_GPIO_MASK_VALUES_LENGTH;
+    req.config.flags = GPIO_V2_LINE_FLAG_INPUT;
+    for (uint32_t i = 0; i < HAILO_GPIO_MASK_VALUES_LENGTH; i++) {
+        req.offsets[i] = i;
+    }
+
+    int ret = ioctl(m_fd, GPIO_V2_GET_LINE_IOCTL, &req);
+    CHECK(ret >= 0, HAILO_FILE_OPERATION_FAILURE, "Failed to get line from ioctl, errno = {}", errno);
+    m_request_fd = req.fd;
+
+    struct gpio_v2_line_values values = {};
+    values.mask = UINT16_MAX;
+
+    ret = ioctl(m_request_fd, GPIO_V2_LINE_GET_VALUES_IOCTL, &values);
+    CHECK(ret >= 0, HAILO_FILE_OPERATION_FAILURE, "Failed to get line values from ioctl");
+
+    return static_cast<uint16_t>(values.bits);
+}
+#endif // __linux__
 
 } /* namespace hailort */

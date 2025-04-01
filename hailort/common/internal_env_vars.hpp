@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -24,9 +24,6 @@ namespace hailort
 #define HAILO_SERVICE_SHARED_MEMORY_ENV_VAR ("HAILO_SERVICE_SHARED_MEMORY_OFF")
 #define HAILO_SERVICE_SHARED_MEMORY_OFF "1"
 
-/* Defines a costum pcie port for raw-connection */
-#define HAILO_CONNECTION_PCIE_PORT_ENV_VAR ("HAILO_CONNECTION_PCIE_PORT")
-
 /* Forces the client to use socket-based communication on a specific address. if not set, socket communicaiton wont be used. */
 #define HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR ("HAILO_SOCKET_COM_ADDR_CLIENT")
 
@@ -36,11 +33,11 @@ namespace hailort
 /* Forces Hailo session based on socket to use a specific device. This env var should be set to the iface name (i.e eth0)  */
 #define HAILO_SOCKET_BIND_TO_INTERFACE_ENV_VAR ("HAILO_SOCKET_BIND_TO_INTERFACE")
 
-/* HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR and HAILO_SOCKET_COM_ADDR_SERVER_ENV_VAR can be set to either ip:port ("X.X.X.X:P"),
+/* HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR and HAILO_SOCKET_COM_ADDR_SERVER_ENV_VAR can be set to either <ip> ("X.X.X.X"),
     or to HAILO_SOCKET_COM_ADDR_UNIX_SOCKET which forces working with unix-socket*/
 #define HAILO_SOCKET_COM_ADDR_UNIX_SOCKET ("localhost")
 
-/* Overrides hRPC requests timeout. value in seconds */
+/* Overrides hRPC/gRPC requests timeout. value in seconds */
 #define HAILO_REQUEST_TIMEOUT_SECONDS ("HAILO_REQUEST_TIMEOUT_SECONDS")
 
 /* General */
@@ -104,11 +101,27 @@ namespace hailort
 /* Forces using descriptor-lists instead of CCB for inter-context-channels on h1x devices */
 #define HAILO_FORCE_INFER_CONTEXT_CHANNEL_OVER_DESC_ENV_VAR ("HAILO_FORCE_INFER_CONTEXT_CHANNEL_OVER_DESC")
 
+/* Determines the size of each mapped buffer into which the ccws section will be splitted to.
+    Relevant only when the aligned_ccws feature is enbabled */
+#define HAILO_ALIGNED_CCWS_MAPPED_BUFFER_SIZE_ENV_VAR ("HAILO_ALIGNED_CCWS_MAPPED_BUFFER_SIZE")
+#define HAILO_ALIGNED_CCWS_MAPPED_BUFFER_SIZE (2 * 1024 * 1024)
+
+/* Forces copying the hef file content to a mapped buffer before configuring it's network groups.
+    When working with Hef as a file, we need this copy in order to work with the aligned ccws feature */
+#define HAILO_COPY_HEF_CONTENT_TO_A_MAPPED_BUFFER_PRE_CONFIGURE_ENV_VAR ("HAILO_COPY_HEF_CONTENT_TO_A_MAPPED_BUFFER_PRE_CONFIGURE")
+
+/* Disables the aligned ccws feature - in case this env var is set, the aligned_ccws feature won't be used.
+    Instead - we will alocate aligned config buffers and will copy the CCWs to them */
+#define HAILO_DISABLE_ALIGNED_CCWS_ENV_VAR ("HAILO_DISABLE_ALIGNED_CCWS")
+
 /* Forces using descriptor-lists instead of CCB for ddr-channels on h1x devices */
 #define HAILO_FORCE_DDR_CHANNEL_OVER_CCB_ENV_VAR ("HAILO_FORCE_DDR_CHANNEL_OVER_CCB")
 
 /* Sets the default power-mode of the ConfiguredNetworkGroups to `HAILO_POWER_MODE_ULTRA_PERFORMANCE` */
 #define FORCE_POWER_MODE_ULTRA_PERFORMANCE_ENV_VAR ("FORCE_POWER_MODE_ULTRA_PERFORMANCE")
+
+/* Set HW infer Tool to use CCB for Boundary Channels*/
+#define HAILO_HW_INFER_BOUNDARY_CHANNELS_OVER_CCB_ENV_VAR ("HAILO_HW_INFER_BOUNDARY_CHANNELS_OVER_CCB")
 
 } /* namespace hailort */
 

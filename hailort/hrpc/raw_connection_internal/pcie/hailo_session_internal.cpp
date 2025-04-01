@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file hailo_session_internal.cpp
  * @brief PCIE Hailo Session
@@ -13,6 +13,7 @@
 #include "common/internal_env_vars.hpp"
 #include "hailo/hailort.h"
 #include "vdma/driver/hailort_driver.hpp"
+#include "utils/buffer_storage.hpp"
 
 #define TRANSFER_TIMEOUT (std::chrono::seconds(10))
 
@@ -45,28 +46,6 @@ Expected<std::shared_ptr<ConnectionContext>> PcieConnectionContext::create_serve
     return std::dynamic_pointer_cast<ConnectionContext>(ptr);
 }
 
-hailo_status PcieConnectionContext::wait_for_available_connection()
-{
-    std::unique_lock<std::mutex> lock(m_mutex);
-    bool was_successful = m_cv.wait_for(lock, std::chrono::milliseconds(HAILO_INFINITE), [this] () -> bool {
-        return (m_conn_count == 0);
-    });
-    CHECK(was_successful, HAILO_TIMEOUT, "Got timeout in accept");
-
-    m_conn_count++;
-    return HAILO_SUCCESS;
-}
-
-void PcieConnectionContext::mark_connection_closed()
-{
-    if (0 == m_conn_count) return; // In case number of connections is 0 - no need to mark as closed
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_conn_count--;
-    }
-    m_cv.notify_one();
-}
-
 Expected<std::shared_ptr<RawPcieListener>> RawPcieListener::create_shared(std::shared_ptr<PcieConnectionContext> context, uint16_t port)
 {
     auto ptr = make_shared_nothrow<RawPcieListener>(context, port);
@@ -77,14 +56,11 @@ Expected<std::shared_ptr<RawPcieListener>> RawPcieListener::create_shared(std::s
 
 Expected<std::shared_ptr<Session>> RawPcieListener::accept()
 {
-    auto status = m_context->wait_for_available_connection();
-    CHECK_SUCCESS(status);
-
     auto new_conn = make_shared_nothrow<RawPcieSession>(m_context);
     CHECK_NOT_NULL_AS_EXPECTED(new_conn, HAILO_OUT_OF_HOST_MEMORY);
 
     TRY(auto session, PcieSession::accept(m_context->get_driver(), m_port));
-    status = new_conn->set_session(std::move(session));
+    auto status = new_conn->set_session(std::move(session));
     CHECK_SUCCESS(status);
 
     return std::dynamic_pointer_cast<Session>(new_conn);
@@ -166,8 +142,6 @@ hailo_status RawPcieSession::close()
         CHECK_SUCCESS(status);
     }
 
-    m_context->mark_connection_closed();
-
     {
         std::unique_lock<std::mutex> lock(m_ongoing_writes_mutex);
         m_ongoing_writes = 0;
@@ -192,61 +166,28 @@ hailo_status RawPcieSession::wait_for_write_async_ready(size_t transfer_size, st
     return HAILO_SUCCESS;
 }
 
-hailo_status RawPcieSession::write_async(const uint8_t *buffer, size_t size, std::function<void(hailo_status)> &&callback)
+hailo_status RawPcieSession::write_async(TransferRequest &&request)
 {
-    if (0 == size) {
-        callback(HAILO_SUCCESS);
-        return HAILO_SUCCESS;
-    }
-
-    bool is_aligned = ((reinterpret_cast<uintptr_t>(buffer) % OsUtils::get_dma_able_alignment()) == 0);
-    if (is_aligned) {
-        auto status = write_async_aligned(buffer, size, std::move(callback));
-        CHECK_SUCCESS(status);
-    } else {
-        auto status = write_async_unaligned(buffer, size, std::move(callback));
-        CHECK_SUCCESS(status);
-    }
-
-    return HAILO_SUCCESS;
-}
-
-hailo_status RawPcieSession::write_async_aligned(const uint8_t *buffer, size_t size, std::function<void(hailo_status)> &&callback)
-{
-    std::unique_lock<std::mutex> lock(m_ongoing_writes_mutex);
-    auto status = m_session->write_async(buffer, size, [this, callback] (hailo_status status) {
+    request.callback = [this, original_callback=request.callback] (hailo_status status) {
         if (HAILO_STREAM_ABORT == status) {
-            callback(HAILO_COMMUNICATION_CLOSED);
+            original_callback(HAILO_COMMUNICATION_CLOSED);
             return;
         }
-        callback(status);
+        original_callback(status);
 
         std::unique_lock<std::mutex> lock(m_ongoing_writes_mutex);
         m_ongoing_writes--;
         m_ongoing_writes_cv.notify_all();
-    });
+    };
+
+    std::unique_lock<std::mutex> lock(m_ongoing_writes_mutex);
+    auto status = m_session->write_async(std::move(request));
     if (HAILO_STREAM_ABORT == status) {
         return HAILO_COMMUNICATION_CLOSED;
     }
     CHECK_SUCCESS(status);
 
     m_ongoing_writes++;
-    return HAILO_SUCCESS;
-}
-
-hailo_status RawPcieSession::write_async_unaligned(const uint8_t *buffer, size_t size, std::function<void(hailo_status)> &&callback)
-{
-    TRY(auto aligned_buffer, Buffer::create_shared(buffer, size, BufferStorageParams::create_dma()));
-    auto status = write_async_aligned(aligned_buffer->data(), aligned_buffer->size(),
-    [callback, aligned_buffer] (hailo_status status) {
-        (void)aligned_buffer; // Avoid compiler optimization
-        callback(status);
-    });
-    if (HAILO_COMMUNICATION_CLOSED == status) {
-        return HAILO_COMMUNICATION_CLOSED;
-    }
-    CHECK_SUCCESS(status);
-
     return HAILO_SUCCESS;
 }
 
@@ -259,69 +200,28 @@ hailo_status RawPcieSession::wait_for_read_async_ready(size_t transfer_size, std
     return HAILO_SUCCESS;
 }
 
-hailo_status RawPcieSession::read_async(uint8_t *buffer, size_t size, std::function<void(hailo_status)> &&callback)
+hailo_status RawPcieSession::read_async(TransferRequest &&request)
 {
-    if (0 == size) {
-        callback(HAILO_SUCCESS);
-        return HAILO_SUCCESS;
-    }
-
-    bool is_aligned = ((reinterpret_cast<uintptr_t>(buffer) % OsUtils::get_dma_able_alignment()) == 0);
-    if (is_aligned) {
-        auto status = read_async_aligned(buffer, size, std::move(callback));
-        if (HAILO_COMMUNICATION_CLOSED == status) {
-            return HAILO_COMMUNICATION_CLOSED;
-        }
-        CHECK_SUCCESS(status);
-    } else {
-        auto status = read_async_unaligned(buffer, size, std::move(callback));
-        if (HAILO_COMMUNICATION_CLOSED == status) {
-            return HAILO_COMMUNICATION_CLOSED;
-        }
-        CHECK_SUCCESS(status);
-    }
-
-    return HAILO_SUCCESS;
-}
-
-hailo_status RawPcieSession::read_async_aligned(uint8_t *buffer, size_t size, std::function<void(hailo_status)> &&callback)
-{
-    std::unique_lock<std::mutex> lock(m_ongoing_reads_mutex);
-    auto status = m_session->read_async(buffer, size, [this, callback] (hailo_status status) {
+    request.callback = [this, original_callback=request.callback] (hailo_status status) {
         if (HAILO_STREAM_ABORT == status) {
-            callback(HAILO_COMMUNICATION_CLOSED);
+            original_callback(HAILO_COMMUNICATION_CLOSED);
             return;
         }
-        callback(status);
+        original_callback(status);
 
         std::unique_lock<std::mutex> lock(m_ongoing_reads_mutex);
         m_ongoing_reads--;
         m_ongoing_reads_cv.notify_all();
-    });
-    if ((HAILO_STREAM_ABORT == status) || (HAILO_STREAM_NOT_ACTIVATED == status)) {
+    };
+
+    std::unique_lock<std::mutex> lock(m_ongoing_reads_mutex);
+    auto status = m_session->read_async(std::move(request));
+    if (HAILO_STREAM_ABORT == status) {
         return HAILO_COMMUNICATION_CLOSED;
     }
     CHECK_SUCCESS(status);
 
     m_ongoing_reads++;
-    return HAILO_SUCCESS;
-}
-
-hailo_status RawPcieSession::read_async_unaligned(uint8_t *buffer, size_t size, std::function<void(hailo_status)> &&callback)
-{
-    TRY(auto aligned_buffer, Buffer::create_shared(size, BufferStorageParams::create_dma()));
-    auto status = read_async_aligned(aligned_buffer->data(), aligned_buffer->size(),
-    [buffer, aligned_buffer, callback] (hailo_status status) {
-        if (HAILO_SUCCESS == status) {
-            memcpy(buffer, aligned_buffer->data(), aligned_buffer->size());
-        }
-        callback(status);
-    });
-    if (HAILO_COMMUNICATION_CLOSED == status) {
-        return HAILO_COMMUNICATION_CLOSED;
-    }
-    CHECK_SUCCESS(status);
-
     return HAILO_SUCCESS;
 }
 
@@ -331,6 +231,20 @@ hailo_status RawPcieSession::set_session(PcieSession &&session)
     CHECK_NOT_NULL(m_session, HAILO_OUT_OF_HOST_MEMORY);
 
     return HAILO_SUCCESS;
+}
+
+Expected<Buffer> RawPcieSession::allocate_buffer(size_t size, hailo_dma_buffer_direction_t direction)
+{
+    TRY(auto buffer, Buffer::create(size, BufferStorageParams::create_dma()));
+
+    TRY(auto dmaable, vdma::DmaAbleBuffer::create_from_user_address(buffer.data(), buffer.size()));
+    TRY(auto mapped_buffer, vdma::MappedBuffer::create_shared(dmaable, *m_context->get_driver(),
+        to_hailo_driver_direction(direction)));
+
+    auto dma_mapped_buffer_storage = make_shared_nothrow<DmaMappedBufferStorage>(std::move(buffer), mapped_buffer);
+    CHECK_NOT_NULL(dma_mapped_buffer_storage, HAILO_OUT_OF_HOST_MEMORY);
+
+    return Buffer::create(dma_mapped_buffer_storage, false);
 }
 
 } // namespace hailort

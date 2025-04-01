@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -19,7 +19,8 @@ extern "C" {
 
 #define FIRMWARE_HEADER_MAGIC_HAILO8    (0x1DD89DE0)
 #define FIRMWARE_HEADER_MAGIC_HAILO15   (0xE905DAAB)
-#define FIRMWARE_HEADER_MAGIC_HAILO15L     (0xF94739AB)
+#define FIRMWARE_HEADER_MAGIC_HAILO15L  (0xF94739AB)
+#define FIRMWARE_HEADER_MAGIC_MARS      (0xF94739AB)
 
 typedef enum {
     FIRMWARE_HEADER_VERSION_INITIAL = 0,
@@ -31,7 +32,8 @@ typedef enum {
 typedef enum {
     FIRMWARE_TYPE_HAILO8 = 0,
     FIRMWARE_TYPE_HAILO15,
-    FIRMWARE_TYPE_HAILO15L
+    FIRMWARE_TYPE_HAILO15L,
+    FIRMWARE_TYPE_MARS
 } firmware_type_t;
 
 
@@ -41,6 +43,8 @@ typedef enum {
 #define COMPILED_FIRMWARE_TYPE (FIRMWARE_TYPE_HAILO8)
 #elif defined(PLUTO)
 #define COMPILED_FIRMWARE_TYPE (FIRMWARE_TYPE_HAILO15L)
+#elif defined(MARS)
+#define COMPILED_FIRMWARE_TYPE (FIRMWARE_TYPE_MARS)
 #endif /* MERCURY */
 
 typedef struct {

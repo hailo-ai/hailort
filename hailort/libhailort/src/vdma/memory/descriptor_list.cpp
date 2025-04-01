@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -81,8 +81,8 @@ DescriptorList::DescriptorList(DescriptorList &&other) noexcept :
 }
 
 hailo_status DescriptorList::program(MappedBuffer& buffer, size_t buffer_size,
-    size_t buffer_offset, ChannelId channel_id, uint32_t starting_desc, bool should_bind /* = true */,
-    InterruptsDomain last_desc_interrupts /* = InterruptsDomain::NONE */)
+    size_t buffer_offset, ChannelId channel_id, uint32_t starting_desc, uint32_t batch_size /* = 1 */,
+    bool should_bind /* = true */, InterruptsDomain last_desc_interrupts /* = InterruptsDomain::NONE */, uint32_t stride /* = 0 */)
 {
     const auto desc_list_capacity = m_desc_page_size * count();
     CHECK(buffer_size <= desc_list_capacity, HAILO_INVALID_ARGUMENT,
@@ -90,7 +90,7 @@ hailo_status DescriptorList::program(MappedBuffer& buffer, size_t buffer_size,
         buffer_size, desc_list_capacity);
 
     return m_driver.descriptors_list_program(m_desc_list_info.handle, buffer.handle(), buffer_size,
-        buffer_offset, channel_id.channel_index, starting_desc, should_bind, last_desc_interrupts);
+        buffer_offset, channel_id.channel_index, starting_desc, batch_size, should_bind, last_desc_interrupts, stride);
 }
 
 uint32_t DescriptorList::descriptors_in_buffer(size_t buffer_size) const
@@ -113,6 +113,18 @@ uint32_t DescriptorList::calculate_descriptors_count(uint32_t buffer_size, uint1
         MAX_SG_DESCS_COUNT);
 
     return get_nearest_powerof_2(descs_count, MIN_SG_DESCS_COUNT);
+}
+
+size_t DescriptorList::descriptors_buffer_allocation_size(uint32_t desc_count)
+{
+    // based on hailo_desc_list_create from linux driver
+    auto ALIGN = [](size_t size, size_t alignment) {
+        const auto mask = alignment - 1;
+        return (size + mask) & ~mask;
+    };
+
+    const auto total_size = vdma::SINGLE_DESCRIPTOR_SIZE * desc_count;
+    return ALIGN(total_size, vdma::DESCRIPTOR_LIST_ALIGN);
 }
 
 } /* namespace vdma */

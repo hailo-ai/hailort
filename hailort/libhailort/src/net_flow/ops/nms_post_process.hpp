@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -162,9 +162,6 @@ public:
         std::vector<net_flow::DetectionBbox> detections;
         std::vector<uint32_t> classes_detection_count(nms_info.number_of_classes, 0);
 
-        // TODO: HRT-15612 support BY_SCORE order_type in this function
-        assert(HAILO_NMS_RESULT_ORDER_BY_SCORE != nms_info.order_type);
-
         detections.reserve(nms_info.max_bboxes_per_class * nms_info.number_of_classes);
 
         const uint32_t bbox_size = sizeof(hailo_bbox_float32_t);
@@ -211,7 +208,7 @@ public:
     *          \endcode
     */
     static void fill_nms_by_score_format_buffer(MemoryView &buffer, std::vector<DetectionBbox> &detections,
-        const NmsPostProcessConfig &nms_config);
+        const NmsPostProcessConfig &nms_config, const bool should_sort = false);
 
 protected:
     NmsPostProcessOp(std::shared_ptr<NmsOpMetadata> metadata)
@@ -224,16 +221,14 @@ protected:
 
     void reserve_detections()
     {
-        switch (m_nms_metadata->nms_config().order_type) {
-            case HAILO_NMS_RESULT_ORDER_BY_CLASS:
-                m_detections.reserve(m_nms_metadata->nms_config().max_proposals_per_class * m_nms_metadata->nms_config().number_of_classes);
-                break;
-            case HAILO_NMS_RESULT_ORDER_BY_SCORE:
-                m_detections.reserve(m_nms_metadata->nms_config().max_proposals_total);
-                break;
-            default:
-                LOGGER__ERROR("Unsupported NMS format order type for NmsPostProcessOp: {}",
-                    HailoRTCommon::get_nms_result_order_type_str(m_nms_metadata->nms_config().order_type));
+        if ((HailoRTCommon::is_nms_by_class(m_nms_metadata->outputs_metadata().begin()->second.format.order)) ||
+            (HAILO_FORMAT_ORDER_NHWC == m_nms_metadata->outputs_metadata().begin()->second.format.order)) {
+            m_detections.reserve(m_nms_metadata->nms_config().max_proposals_per_class * m_nms_metadata->nms_config().number_of_classes);
+        } else if (HailoRTCommon::is_nms_by_score(m_nms_metadata->outputs_metadata().begin()->second.format.order)) {
+            m_detections.reserve(m_nms_metadata->nms_config().max_proposals_total);
+        } else {
+            LOGGER__WARNING("Unsupported output format order for NmsPostProcessOp: {}",
+                HailoRTCommon::get_format_order_str(m_nms_metadata->outputs_metadata().begin()->second.format.order));
         }
     }
 

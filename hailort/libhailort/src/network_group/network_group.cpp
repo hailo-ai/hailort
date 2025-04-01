@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -366,7 +366,6 @@ hailo_status ConfiguredNetworkGroupBase::set_nms_max_bboxes_per_class(const std:
     auto expected_nms_op_metadata = get_nms_meta_data(edge_name);
     CHECK_EXPECTED_AS_STATUS(expected_nms_op_metadata);
     expected_nms_op_metadata.value()->nms_config().max_proposals_per_class = max_bboxes_per_class;
-    expected_nms_op_metadata.value()->nms_config().order_type = HAILO_NMS_RESULT_ORDER_BY_CLASS;
     return HAILO_SUCCESS;
 }
 
@@ -375,15 +374,6 @@ hailo_status ConfiguredNetworkGroupBase::set_nms_max_bboxes_total(const std::str
     auto expected_nms_op_metadata = get_nms_meta_data(edge_name);
     CHECK_EXPECTED_AS_STATUS(expected_nms_op_metadata);
     expected_nms_op_metadata.value()->nms_config().max_proposals_total = max_bboxes_total;
-    expected_nms_op_metadata.value()->nms_config().order_type = HAILO_NMS_RESULT_ORDER_BY_SCORE;
-    return HAILO_SUCCESS;
-}
-
-hailo_status ConfiguredNetworkGroupBase::set_nms_result_order_type(const std::string &edge_name, hailo_nms_result_order_type_t order_type)
-{
-    auto expected_nms_op_metadata = get_nms_meta_data(edge_name);
-    CHECK_EXPECTED_AS_STATUS(expected_nms_op_metadata);
-    expected_nms_op_metadata.value()->nms_config().order_type = order_type;
     return HAILO_SUCCESS;
 }
 
@@ -409,30 +399,6 @@ ConfiguredNetworkGroupBase::ConfiguredNetworkGroupBase(
         m_network_group_metadata(std::move(metadata)),
         m_is_forked(false)
 {}
-
-// static func
-uint16_t ConfiguredNetworkGroupBase::get_smallest_configured_batch_size(const ConfigureNetworkParams &config_params)
-{
-    // There are two possible situations:
-    // 1) All networks in the network group have the same configured (and hence smallest) batch_size =>
-    //    We return that batch size.
-    // 2) Not all of the networks have the same configured (and hence smallest) batch_size. Currently, when
-    //    using dynamic_batch_sizes, all networks will use the same dynamic_batch_size (until HRT-6535 is done).
-    //    Hence, we must not set a dynamic_batch_size to a value greater than the smallest configured network
-    //    batch_size (e.g. all the resources allocated are for at most the configured network batch_size).
-
-    /* We iterate over all network's batch_sizes to get the non-default min.
-       Ignoring HAILO_DEFAULT_BATCH_SIZE as it is not a real batch-value,
-       but indicating the scheduler should optimize batches by himself */
-    uint16_t min_batch_size = UINT16_MAX;
-    for (const auto &network_params_pair : config_params.network_params_by_name) {
-        if ((HAILO_DEFAULT_BATCH_SIZE != network_params_pair.second.batch_size) &&
-            (network_params_pair.second.batch_size < min_batch_size)) {
-            min_batch_size = network_params_pair.second.batch_size;
-        }
-    }
-    return (UINT16_MAX == min_batch_size) ? DEFAULT_ACTUAL_BATCH_SIZE : min_batch_size;
-}
 
 const std::string &ConfiguredNetworkGroupBase::get_network_group_name() const
 {
@@ -809,29 +775,9 @@ Expected<Buffer> ConfiguredNetworkGroupBase::get_intermediate_buffer(const Inter
     return get_core_op()->get_intermediate_buffer(key);
 }
 
-Expected<size_t> ConfiguredNetworkGroupBase::get_min_buffer_pool_size()
+Expected<size_t> ConfiguredNetworkGroupBase::infer_queue_size() const
 {
-    uint32_t buffer_pool_size = UINT32_MAX;
-
-    auto input_streams = get_input_streams();
-    for (const auto &input_stream : input_streams) {
-        auto async_max_queue_size = input_stream.get().get_async_max_queue_size();
-        CHECK_EXPECTED(async_max_queue_size);
-        if (buffer_pool_size > async_max_queue_size.value()) {
-            buffer_pool_size = static_cast<uint32_t>(async_max_queue_size.value());
-        }
-    }
-
-    auto output_streams = get_output_streams();
-    for (const auto &output_stream : output_streams) {
-        auto async_max_queue_size = output_stream.get().get_async_max_queue_size();
-        CHECK_EXPECTED(async_max_queue_size);
-        if (buffer_pool_size > async_max_queue_size.value()) {
-            buffer_pool_size = static_cast<uint32_t>(async_max_queue_size.value());
-        }
-    }
-
-    return buffer_pool_size;
+    return get_core_op()->infer_queue_size();
 }
 
 hailo_status ConfiguredNetworkGroupBase::infer_async(const NamedBuffersCallbacks &named_buffers_callbacks,
@@ -910,12 +856,12 @@ Expected<uint32_t> ConfiguredNetworkGroupBase::get_cache_entry_size(uint32_t cac
     return m_core_ops[0]->get_cache_entry_size(cache_id);
 }
 
-hailo_status ConfiguredNetworkGroupBase::init_cache(uint32_t read_offset, int32_t write_offset_delta)
+hailo_status ConfiguredNetworkGroupBase::init_cache(uint32_t read_offset)
 {
     CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
         "init_cache() is not supported for multi core-op network groups");
 
-    return m_core_ops[0]->init_cache(read_offset, write_offset_delta);
+    return m_core_ops[0]->init_cache(read_offset);
 }
 
 hailo_status ConfiguredNetworkGroupBase::update_cache_offset(int32_t offset_delta_entries)

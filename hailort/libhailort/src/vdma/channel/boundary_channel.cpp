@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -25,11 +25,11 @@ namespace vdma {
 
 Expected<BoundaryChannelPtr> BoundaryChannel::create(HailoRTDriver &driver, vdma::ChannelId channel_id,
     Direction direction, vdma::DescriptorList &&desc_list, TransferLauncher &transfer_launcher,
-    size_t ongoing_transfers, size_t pending_transfers, bool split_transfer, const std::string &stream_name, LatencyMeterPtr latency_meter)
+    size_t queue_size, bool split_transfer, const std::string &stream_name, LatencyMeterPtr latency_meter)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     auto channel_ptr = make_shared_nothrow<BoundaryChannel>(driver, channel_id, direction, std::move(desc_list),
-        transfer_launcher, ongoing_transfers, pending_transfers, split_transfer, stream_name, latency_meter, status);
+        transfer_launcher, queue_size, split_transfer, stream_name, latency_meter, status);
     CHECK_NOT_NULL_AS_EXPECTED(channel_ptr, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status, "Failed creating BoundaryChannel");
     return channel_ptr;
@@ -42,7 +42,7 @@ size_t BoundaryChannel::get_chunk_size() const
 
 BoundaryChannel::BoundaryChannel(HailoRTDriver &driver, vdma::ChannelId channel_id, Direction direction,
                                  DescriptorList &&desc_list, TransferLauncher &transfer_launcher,
-                                 size_t ongoing_transfers_queue_size, size_t pending_transfers_queue_size,
+                                 size_t queue_size,
                                  bool split_transfer, const std::string &stream_name,
                                  LatencyMeterPtr latency_meter, hailo_status &status) :
     m_channel_id(channel_id),
@@ -54,9 +54,10 @@ BoundaryChannel::BoundaryChannel(HailoRTDriver &driver, vdma::ChannelId channel_
     m_descs(m_desc_list.count()),
     m_is_channel_activated(false),
     m_channel_mutex(),
+    // When measuring latency, we use 2 interrupts per transfer, so we have half the space for ongoing transfers
+    m_ongoing_transfers((latency_meter == nullptr ) ? ONGOING_TRANSFERS_SIZE : ONGOING_TRANSFERS_SIZE / 2),
     // CircularArrays with storage_size x can store x-1 elements, hence the +1
-    m_ongoing_transfers(ongoing_transfers_queue_size + 1),
-    m_pending_transfers(pending_transfers_queue_size + 1),
+    m_pending_transfers(queue_size + 1),
     m_latency_meter(latency_meter),
     m_pending_latency_measurements(ONGOING_TRANSFERS_SIZE), // Make sure there will always be place for latency measure
     m_last_timestamp_num_processed(0),
@@ -92,10 +93,6 @@ static hailo_status get_callback_status(vdma::ChannelId channel_id, const Channe
         status = HAILO_STREAM_ABORT;
     } else if (!irq_data.validation_success) {
         LOGGER__WARNING("Channel {} validation failed", channel_id);
-        status = HAILO_INTERNAL_FAILURE;
-    } else if ((0 != irq_data.host_error) || (0 != irq_data.device_error)) {
-        LOGGER__WARNING("Channel {} completed with errors: host_error {} device_error {}",
-            channel_id, irq_data.host_error, irq_data.device_error);
         status = HAILO_INTERNAL_FAILURE;
     } else {
         status = HAILO_SUCCESS;
@@ -211,34 +208,57 @@ uint16_t BoundaryChannel::free_descs()
     return static_cast<uint16_t>(num_free);
 }
 
-std::vector<TransferRequest> BoundaryChannel::split_messages(TransferRequest &&transfer_request)
+Expected<std::vector<TransferRequest>> BoundaryChannel::split_messages(TransferRequest &&original_request)
 {
     const auto chunk_size = get_chunk_size();
 
-    if ((transfer_request.get_total_transfer_size() <= chunk_size) || (!m_split_transfer) ||
-        (transfer_request.transfer_buffers.at(0).type() != TransferBufferType::MEMORYVIEW)) {
-        return std::vector<TransferRequest>{transfer_request};
+    if (!m_split_transfer || (original_request.transfer_buffers.at(0).type() != TransferBufferType::MEMORYVIEW)) {
+        // Split not supported
+        return std::vector<TransferRequest>{original_request};
     }
-    
-    auto total_transfers_count = DIV_ROUND_UP(transfer_request.get_total_transfer_size(), chunk_size);
-    std::vector<TransferRequest> transfer_request_split(total_transfers_count);
 
-    uint32_t split_transfer_idx = 0;
-    for (auto &buffer : transfer_request.transfer_buffers) {
+    // From original_request, create a vector of several TransferRequests.
+    // Each TransferRequest may be splitted into serveral buffers, but the total size of the buffers in each
+    // TransferRequest will not exceed chunk_size (which is the optimal amount of bytes for single transfer).
+    // In addition, each TransferRequest should hold no more than MAX_TRANSFER_BUFFERS_IN_REQUEST buffers.
+    // Notice that each new transfer will consume a full descriptor in bytes (even if the size is smaller than
+    // descriptors size).
+    std::vector<TransferRequest> transfer_request_split;
+    TransferRequest current_transfer{};
+    size_t current_transfer_consumed_bytes = 0;
+
+    for (auto &buffer : original_request.transfer_buffers) {
         size_t bytes_processed = 0;
-        auto size = buffer.size();
-        auto transfers_count = DIV_ROUND_UP(size, chunk_size);
-        for (; split_transfer_idx < transfers_count; split_transfer_idx++) {
-            size_t amount_to_read = std::min(size - bytes_processed, chunk_size);
-            void *buffer_w_offset = static_cast<void*>(const_cast<uint8_t*>(buffer.base_buffer().value().data())
-                 + bytes_processed);
-            transfer_request_split.at(split_transfer_idx).transfer_buffers.push_back(MemoryView(buffer_w_offset, amount_to_read));
-            transfer_request_split.at(split_transfer_idx).callback = [](hailo_status) {};
-            bytes_processed += amount_to_read;
+        while (bytes_processed < buffer.size()) {
+            assert(chunk_size > current_transfer_consumed_bytes);
+            const auto size_left_in_transfer = chunk_size - current_transfer_consumed_bytes;
+            size_t amount_to_transfer = std::min(buffer.size() - bytes_processed, size_left_in_transfer);
+            assert(amount_to_transfer > 0);
+
+            TRY(auto base_buffer, buffer.base_buffer());
+            auto sub_buffer = MemoryView(base_buffer.data() + bytes_processed, amount_to_transfer);
+            bytes_processed += amount_to_transfer;
+            current_transfer.transfer_buffers.push_back(TransferBuffer{sub_buffer});
+            const auto desc_consumed = m_desc_list.descriptors_in_buffer(amount_to_transfer);
+            current_transfer_consumed_bytes += desc_consumed * m_desc_list.desc_page_size();
+
+            // Start a new trasnfer if reach the limit.
+            if ((current_transfer_consumed_bytes >= chunk_size) ||
+                current_transfer.transfer_buffers.size() >= MAX_TRANSFER_BUFFERS_IN_REQUEST) {
+                transfer_request_split.emplace_back(std::move(current_transfer));
+                current_transfer = TransferRequest{};
+                current_transfer_consumed_bytes = 0;
+            }
         }
     }
+
+    if (current_transfer.get_total_transfer_size() > 0) {
+        transfer_request_split.emplace_back(std::move(current_transfer));
+    }
+
     // Setting the original callback for the last transfer
-    transfer_request_split.back().callback = std::move(transfer_request.callback);
+    transfer_request_split.back().callback = original_request.callback;
+
     // Removing previous bounded buffers since transfer now is split
     m_bounded_buffer = nullptr;
 
@@ -252,7 +272,7 @@ hailo_status BoundaryChannel::launch_transfer(TransferRequest &&transfer_request
         return HAILO_STREAM_NOT_ACTIVATED;
     }
 
-    auto transfer_request_split = split_messages(std::move(transfer_request));
+    TRY(auto transfer_request_split, split_messages(std::move(transfer_request)));
     for (auto &transfer : transfer_request_split) {
         const auto desired_desc_num = m_desc_list.descriptors_in_buffer(transfer.get_total_transfer_size());
         if ((m_ongoing_transfers.size() < m_ongoing_transfers.capacity()) &&
@@ -316,11 +336,8 @@ Expected<uint16_t> BoundaryChannel::launch_transfer_impl(TransferRequest &transf
     auto current_num_available = num_available;
     for (auto &transfer_buffer : transfer_request.transfer_buffers) {
         TRY(auto mapped_buffer, transfer_buffer.map_buffer(m_driver, m_direction));
-        driver_transfer_buffers.emplace_back(HailoRTDriver::TransferBuffer{
-            mapped_buffer->handle(),
-            transfer_buffer.offset(),
-            transfer_buffer.size()
-        });
+        TRY(auto driver_buffers, transfer_buffer.to_driver_buffers());
+        driver_transfer_buffers.insert(driver_transfer_buffers.end(), driver_buffers.begin(), driver_buffers.end());
 
         const auto desired_desc_num = m_desc_list.descriptors_in_buffer(transfer_buffer.size());
         CHECK(desired_desc_num <= MAX_SG_DESCS_COUNT, HAILO_INTERNAL_FAILURE);
@@ -349,17 +366,15 @@ Expected<uint16_t> BoundaryChannel::launch_transfer_impl(TransferRequest &transf
     }
     m_descs.enqueue(total_descs_count);
 
-    TRY_WITH_ACCEPTABLE_STATUS(HAILO_STREAM_ABORT, const auto desc_programmed, m_driver.launch_transfer(
+    auto status = m_driver.launch_transfer(
         m_channel_id,
         m_desc_list.handle(),
         num_available,
         driver_transfer_buffers,
         should_bind,
         first_desc_interrupts,
-        last_desc_interrupts
-        ));
-    CHECK(total_descs_count == desc_programmed, HAILO_INTERNAL_FAILURE,
-        "Inconsistent desc programed expecting {} got {}", total_descs_count, desc_programmed);
+        last_desc_interrupts);
+    CHECK_SUCCESS_WITH_ACCEPTABLE_STATUS(HAILO_STREAM_ABORT, status);
 
     return last_desc;
 }
@@ -415,20 +430,12 @@ void BoundaryChannel::cancel_pending_transfers()
 size_t BoundaryChannel::get_max_ongoing_transfers(size_t transfer_size) const
 {
     size_t divide_factor = m_split_transfer ? DIV_ROUND_UP(transfer_size, get_chunk_size()) : 1;
-    return std::max(m_pending_transfers.capacity() / divide_factor, m_ongoing_transfers.capacity() / divide_factor);
+    return m_pending_transfers.capacity() / divide_factor;
 }
 
 bool BoundaryChannel::is_ready(size_t transfer_size) const
 {
     return DIV_ROUND_UP(transfer_size, get_chunk_size()) < (m_pending_transfers.capacity() - m_pending_transfers.size());
-}
-
-// TODO: try and get rid of this func and merge with get_max_ongoing_transfers (HRT-13557)
-size_t BoundaryChannel::get_max_aligned_transfers_in_desc_list(size_t transfer_size) const
-{
-    // Since this calc if for aligned transfers, we don't need to factor in the bounce buffer
-    static const auto NO_BOUNCE_BUFFER = false;
-    return m_desc_list.max_transfers(static_cast<uint32_t>(transfer_size), NO_BOUNCE_BUFFER);
 }
 
 hailo_status BoundaryChannel::update_latency_meter()

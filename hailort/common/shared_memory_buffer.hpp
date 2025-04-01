@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file shared_memory_buffer.hpp
  * @brief Shared memory buffer
@@ -43,16 +43,14 @@ public:
     SharedMemoryBuffer &operator=(const SharedMemoryBuffer &) = delete;
     virtual ~SharedMemoryBuffer();
 
-    SharedMemoryBuffer(const std::string &shm_name, FileDescriptor &&shm_fd, MmapBuffer<void> &&shm_mmap_buffer, bool memory_owner) :
+    SharedMemoryBuffer(const std::string &shm_name, MmapBuffer<void> &&shm_mmap_buffer, bool memory_owner) :
         m_shm_name(shm_name),
-        m_shm_fd(std::move(shm_fd)),
         m_shm_mmap_buffer(std::move(shm_mmap_buffer)),
         m_memory_owner(memory_owner)
     {}
 
     SharedMemoryBuffer(SharedMemoryBuffer&& other) noexcept :
         m_shm_name(std::exchange(other.m_shm_name, "")),
-        m_shm_fd(std::move(other.m_shm_fd)),
         m_shm_mmap_buffer(std::move(other.m_shm_mmap_buffer)),
         m_memory_owner(std::exchange(other.m_memory_owner, false))
     {}
@@ -71,7 +69,6 @@ public:
 
 private:
     std::string m_shm_name;
-    FileDescriptor m_shm_fd;
     MmapBuffer<void> m_shm_mmap_buffer;
     bool m_memory_owner;
 };

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -60,7 +60,8 @@ MappedBuffer::MappedBuffer(HailoRTDriver &driver, DmaAbleBufferPtr buffer, Hailo
 MappedBuffer::~MappedBuffer()
 {
     if (HailoRTDriver::INVALID_DRIVER_VDMA_MAPPING_HANDLE_VALUE != m_mapping_handle) {
-        m_driver.vdma_buffer_unmap(m_mapping_handle);
+        auto address = INVALID_FD != m_fd ? static_cast<uintptr_t>(m_fd) : reinterpret_cast<uintptr_t>(user_address());
+        m_driver.vdma_buffer_unmap(address, size(), m_data_direction);
         m_mapping_handle = HailoRTDriver::INVALID_DRIVER_VDMA_MAPPING_HANDLE_VALUE;
     }
 }
@@ -75,12 +76,18 @@ MappedBuffer::MappedBuffer(MappedBuffer &&other) noexcept :
 
 void* MappedBuffer::user_address()
 {
+    assert (m_buffer); // On dmabuf, m_buffer does not exist
     return m_buffer->user_address();
 }
 
 size_t MappedBuffer::size() const
 {
     return m_size;
+}
+
+HailoRTDriver::DmaDirection MappedBuffer::direction() const
+{
+    return m_data_direction;
 }
 
 Expected<int> MappedBuffer::fd()

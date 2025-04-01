@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -253,6 +253,58 @@ Expected<void *> SharedMemoryStorage::release() noexcept
 Expected<std::string> SharedMemoryStorage::shm_name()
 {
     return m_shm_buffer->shm_name();
+}
+
+PooledBufferStorage::PooledBufferStorage(BufferPtr buffer, BasicBufferPoolPtr buffer_pool) :
+    m_buffer_pool(buffer_pool),
+    m_buffer(buffer)
+{}
+
+PooledBufferStorage::~PooledBufferStorage()
+{
+    auto status = m_buffer_pool->return_to_pool(m_buffer);
+    if (HAILO_SUCCESS != status) {
+        LOGGER__CRITICAL("Failed to return buffer to pool: {}", status);
+    }
+}
+
+size_t PooledBufferStorage::size() const
+{
+    return m_buffer->size();
+}
+
+void *PooledBufferStorage::user_address()
+{
+    return m_buffer->data();
+}
+
+Expected<void*> PooledBufferStorage::release() noexcept
+{
+    return make_unexpected(HAILO_INVALID_OPERATION);
+}
+
+DmaMappedBufferStorage::DmaMappedBufferStorage(Buffer buffer, vdma::MappedBufferPtr mapped_buffer) :
+    m_buffer(std::move(buffer)), m_mapped_buffer(mapped_buffer)
+{}
+
+DmaMappedBufferStorage::DmaMappedBufferStorage(DmaMappedBufferStorage&& other) noexcept :
+    BufferStorage(std::move(other)), m_buffer(std::move(other.m_buffer)),
+    m_mapped_buffer(std::move(other.m_mapped_buffer))
+{}
+
+size_t DmaMappedBufferStorage::size() const
+{
+    return m_buffer.size();
+}
+
+void *DmaMappedBufferStorage::user_address()
+{
+    return m_buffer.data();
+}
+
+Expected<void*> DmaMappedBufferStorage::release() noexcept
+{
+    return make_unexpected(HAILO_INVALID_OPERATION);
 }
 
 } /* namespace hailort */

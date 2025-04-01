@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -362,7 +362,7 @@ void ConfiguredInferModelWrapper::set_scheduler_priority(uint8_t priority)
     VALIDATE_STATUS(status);
 }
 
-size_t ConfiguredInferModelWrapper::get_async_queue_size()
+size_t ConfiguredInferModelWrapper::get_async_queue_size() const
 {
     auto size = m_configured_infer_model.get_async_queue_size();
     VALIDATE_EXPECTED(size);

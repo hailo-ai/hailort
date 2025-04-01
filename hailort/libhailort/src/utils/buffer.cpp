@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -143,6 +143,14 @@ Expected<Buffer> Buffer::create(BufferStoragePtr storage, bool register_storage 
     CHECK_NOT_NULL(storage_impl, HAILO_OUT_OF_HOST_MEMORY);
 
     return Buffer(std::move(storage_impl));
+}
+
+Expected<BufferPtr> Buffer::create_shared(BufferStoragePtr storage, bool register_storage)
+{
+    TRY(auto buffer, create(storage, register_storage));
+    auto buffer_ptr = make_shared_nothrow<Buffer>(std::move(buffer));
+    CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
+    return buffer_ptr;
 }
 
 Expected<Buffer> Buffer::copy() const
@@ -330,6 +338,11 @@ MemoryView::MemoryView(Buffer &buffer) noexcept :
 MemoryView::MemoryView(void *data, size_t size) noexcept :
     m_data(data),
     m_size(size)
+{}
+
+MemoryView::MemoryView(const std::string &data) noexcept :
+    m_data(const_cast<char *>(data.data())),
+    m_size(data.size())
 {}
 
 const MemoryView MemoryView::create_const(const void *data, size_t size) noexcept

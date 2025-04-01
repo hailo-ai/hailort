@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -45,13 +45,16 @@ static HAILO_COMMON_STATUS_t firmware_header_utils__validate_fw_header(uintptr_t
 
     switch (firmware_type) {
     case FIRMWARE_TYPE_HAILO8:
-        firmware_magic = FIRMWARE_HEADER_MAGIC_HAILO8; 
+        firmware_magic = FIRMWARE_HEADER_MAGIC_HAILO8;
         break;
     case FIRMWARE_TYPE_HAILO15:
         firmware_magic = FIRMWARE_HEADER_MAGIC_HAILO15;
         break;
     case FIRMWARE_TYPE_HAILO15L:
         firmware_magic = FIRMWARE_HEADER_MAGIC_HAILO15L;
+        break;
+    case FIRMWARE_TYPE_MARS:
+        firmware_magic = FIRMWARE_HEADER_MAGIC_MARS;
         break;
     default:
         status = HAILO_STATUS__FIRMWARE_HEADER_UTILS__INVALID_FIRMWARE_TYPE;

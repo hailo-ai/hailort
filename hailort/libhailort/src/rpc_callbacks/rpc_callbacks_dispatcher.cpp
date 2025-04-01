@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -12,63 +12,47 @@
 namespace hailort
 {
 
-AsyncInferJobHrpcClient::AsyncInferJobHrpcClient(EventPtr event) : m_event(event), m_job_status(HAILO_UNINITIALIZED)
-{
-}
-
-hailo_status AsyncInferJobHrpcClient::wait(std::chrono::milliseconds timeout)
-{
-    auto status = m_event->wait(timeout);
-    if (HAILO_UNINITIALIZED != m_job_status) {
-        return m_job_status;
-    }
-    CHECK_SUCCESS(status);
-
-    return HAILO_SUCCESS;
-}
-
-hailo_status AsyncInferJobHrpcClient::set_status(hailo_status status)
-{
-    m_job_status = status;
-    return m_event->signal();
-}
-
-CallbacksQueue::CallbacksQueue(const std::vector<std::string> &outputs_names) : m_outputs_names(outputs_names)
+ClientCallbackDispatcher::ClientCallbackDispatcher(uint32_t dispatcher_id, RpcCallbackType callback_type,
+    bool should_remove_callback_after_trigger) : m_dispatcher_id(dispatcher_id), m_callback_type(callback_type)
 {
     m_is_running = true;
-    m_callback_thread = std::thread([this] {
+    m_callback_thread = std::thread([this, should_remove_callback_after_trigger] {
         while (true) {
-            callback_id_t callback_id;
-            hailo_status info_status = HAILO_UNINITIALIZED;
-            std::function<void(const AsyncInferCompletionInfo&)> cb;
+            RpcCallback rpc_callback = {};
+            ClientCallbackDispatcher::CallbackFunc cb;
             {
                 std::unique_lock<std::mutex> lock(m_mutex);
-                m_cv.wait(lock, [this] { return !m_is_running || !m_callbacks_queue.empty(); });
+                m_cv.wait(lock, [this] {
+                    if (!m_is_running) {
+                        return true;
+                    }
+
+                    if (m_triggered_callbacks.empty()) {
+                        return false;
+                    }
+
+                    auto rpc_callback = m_triggered_callbacks.front();
+                    return contains(m_registered_callbacks, rpc_callback.callback_id);
+                });
                 if (!m_is_running) {
                     break;
                 }
 
-                callback_id = m_callbacks_queue.front();
-                m_callbacks_queue.pop();
+                rpc_callback = m_triggered_callbacks.front();
+                m_triggered_callbacks.pop();
 
-                m_cv.wait(lock, [this, callback_id] { return !m_is_running || (m_callbacks.find(callback_id) != m_callbacks.end()); });
-                if (!m_is_running) {
-                    break;
+                auto callback_id = rpc_callback.callback_id;
+                cb = m_registered_callbacks[callback_id];
+                if (should_remove_callback_after_trigger) {
+                    m_registered_callbacks.erase(callback_id);
                 }
-
-                info_status = m_callbacks_status[callback_id];
-                cb = m_callbacks[callback_id];
-                m_callbacks.erase(callback_id);
-                m_callbacks_status.erase(callback_id);
-                m_bindings.erase(callback_id);
             }
-            AsyncInferCompletionInfo info(info_status);
-            cb(info);
+            cb(rpc_callback, HAILO_UNINITIALIZED);
         }
     });
 }
 
-hailo_status CallbacksQueue::shutdown(hailo_status status)
+hailo_status ClientCallbackDispatcher::shutdown(hailo_status status)
 {
     if (!m_is_running) {
         return HAILO_SUCCESS;
@@ -78,20 +62,20 @@ hailo_status CallbacksQueue::shutdown(hailo_status status)
         std::unique_lock<std::mutex> lock(m_mutex);
         m_is_running = false;
 
-        for (const auto &callback : m_callbacks) {
-            m_callbacks_status.erase(callback.first);
-            m_bindings.erase(callback.first);
-            AsyncInferCompletionInfo info(status);
-            callback.second(info);
+        m_additional_reads_funcs.clear();
+        for (const auto &callback : m_registered_callbacks) {
+            RpcCallback rpc_callback = {};
+            rpc_callback.type = RpcCallbackType::INVALID;
+            callback.second(rpc_callback, status);
         }
-        m_callbacks.clear();
+        m_registered_callbacks.clear();
     }
     m_cv.notify_one();
 
     return HAILO_SUCCESS;
 }
 
-CallbacksQueue::~CallbacksQueue()
+ClientCallbackDispatcher::~ClientCallbackDispatcher()
 {
     auto status = shutdown(HAILO_COMMUNICATION_CLOSED);
     if (HAILO_SUCCESS != status) {
@@ -103,55 +87,81 @@ CallbacksQueue::~CallbacksQueue()
     }
 }
 
-Expected<std::shared_ptr<AsyncInferJobHrpcClient>> CallbacksQueue::register_callback(callback_id_t id,
-    const ConfiguredInferModel::Bindings &bindings,
-    std::function<void(const AsyncInferCompletionInfo&)> callback)
+void ClientCallbackDispatcher::add_additional_reads(uint32_t callback_id, AdditionalReadsFunc additional_reads_func)
 {
-    TRY(auto event_ptr, Event::create_shared(Event::State::not_signalled));
-
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_bindings[id] = bindings;
-        m_callbacks_status[id] = HAILO_SUCCESS;
-        m_callbacks[id] = [callback, event_ptr] (const AsyncInferCompletionInfo &info) {
-            callback(info);
-            auto status = event_ptr->signal();
-            if (HAILO_SUCCESS != status) {
-                LOGGER__CRITICAL("Could not signal event! status = {}", status);
-            }
-        };
-    }
-    m_cv.notify_one();
-
-    auto ptr = make_shared_nothrow<AsyncInferJobHrpcClient>(event_ptr);
-    CHECK_NOT_NULL(ptr, HAILO_OUT_OF_HOST_MEMORY);
-
-    return ptr;
+    std::unique_lock<std::mutex> lock(m_mutex);
+    m_additional_reads_funcs[callback_id] = additional_reads_func;
 }
 
-hailo_status CallbacksQueue::push_callback(hailo_status callback_status, rpc_object_handle_t callback_handle_id,
-    RpcConnection connection)
+void ClientCallbackDispatcher::register_callback(uint32_t callback_id, ClientCallbackDispatcher::CallbackFunc callback_func)
 {
     {
         std::unique_lock<std::mutex> lock(m_mutex);
-        CHECK(contains(m_callbacks, callback_handle_id), HAILO_NOT_FOUND, "Callback handle (id={}) not found!", callback_handle_id);
-        m_callbacks_status[callback_handle_id] = callback_status;
+        m_registered_callbacks[callback_id] = callback_func;
+    }
+    m_cv.notify_one();
+}
 
-        if (HAILO_SUCCESS == callback_status) {
-            CHECK(contains(m_bindings, callback_handle_id), HAILO_NOT_FOUND, "Callback handle not found!");
-            for (const auto &output_name : m_outputs_names) {
-                TRY(auto buffer, m_bindings[callback_handle_id].output(output_name)->get_buffer());
-                auto status = connection.read_buffer(buffer);
+hailo_status ClientCallbackDispatcher::remove_callback(uint32_t callback_id)
+{
+    std::unique_lock<std::mutex> lock(m_mutex);
+    CHECK(contains(m_registered_callbacks, callback_id), HAILO_NOT_FOUND, "Did not find callback with id {}", callback_id);
+    m_registered_callbacks.erase(callback_id);
+    if (contains(m_additional_reads_funcs, callback_id)) {
+        m_additional_reads_funcs.erase(callback_id);
+    }
+    return HAILO_SUCCESS;
+}
+
+hailo_status ClientCallbackDispatcher::trigger_callback(const RpcCallback &callback, RpcConnection connection)
+{
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        CHECK(callback.type == m_callback_type, HAILO_INTERNAL_FAILURE, "Callback type mismatch!, expected = {}, got = {}",
+            static_cast<uint32_t>(m_callback_type), static_cast<uint32_t>(callback.type));
+
+        if (contains(m_additional_reads_funcs, callback.callback_id)) {
+            auto additional_reads_func = m_additional_reads_funcs[callback.callback_id];
+            m_additional_reads_funcs.erase(callback.callback_id);
+            TRY(auto transfers, additional_reads_func(callback));
+            if (!transfers.empty()) {
+                auto status = connection.read_buffers(std::move(transfers));
                 // TODO: Errors here should be unrecoverable (HRT-14275)
                 CHECK_SUCCESS(status);
             }
         }
-        m_callbacks_queue.push(callback_handle_id);
+
+        m_triggered_callbacks.push(callback);
     }
 
     m_cv.notify_one();
     return HAILO_SUCCESS;
 }
 
+Expected<std::shared_ptr<ClientCallbackDispatcher>> ClientCallbackDispatcherManager::new_dispatcher(RpcCallbackType callback_type,
+    bool should_remove_callback_after_trigger)
+{
+    std::unique_lock<std::mutex> lock(m_mutex);
+    auto dispatcher_id = m_dispatcher_count++;
+    auto ptr = make_shared_nothrow<ClientCallbackDispatcher>(dispatcher_id, callback_type, should_remove_callback_after_trigger);
+    CHECK_NOT_NULL(ptr, HAILO_OUT_OF_HOST_MEMORY);
+    m_dispatchers[dispatcher_id] = ptr;
+    return ptr;
+}
+
+hailo_status ClientCallbackDispatcherManager::remove_dispatcher(uint32_t dispatcher_id)
+{
+    std::unique_lock<std::mutex> lock(m_mutex);
+    auto dispatcher = m_dispatchers.find(dispatcher_id);
+    CHECK(dispatcher != m_dispatchers.end(), HAILO_NOT_FOUND, "Did not find dispatcher with id {}", dispatcher_id);
+    m_dispatchers.erase(dispatcher);
+    return HAILO_SUCCESS;
+}
+
+std::shared_ptr<ClientCallbackDispatcher> ClientCallbackDispatcherManager::at(uint32_t dispatcher_id)
+{
+    std::unique_lock<std::mutex> lock(m_mutex);
+    return m_dispatchers.at(dispatcher_id);
+}
 
 } // namespace hailort

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -50,8 +50,7 @@ private:
 class InferModelBase : public InferModel
 {
 public:
-    static Expected<std::shared_ptr<InferModelBase>> create(VDevice &vdevice, const std::string &hef_path, const std::string &network_name);
-    static Expected<std::shared_ptr<InferModelBase>> create(VDevice &vdevice, const MemoryView hef_buffer, const std::string &network_name);
+    static Expected<std::shared_ptr<InferModelBase>> create(VDevice &vdevice, Hef hef, const std::string &network_name);
 
     InferModelBase(VDevice &vdevice, Hef &&hef, const std::string &network_name, std::vector<InferStream> &&inputs,
         std::vector<InferStream> &&outputs);
@@ -185,7 +184,7 @@ public:
     ConfiguredInferModelBase(const std::unordered_map<std::string, size_t> inputs_frame_sizes,
         const std::unordered_map<std::string, size_t> outputs_frame_sizes);
     virtual ~ConfiguredInferModelBase() = default;
-    virtual Expected<ConfiguredInferModel::Bindings> create_bindings() = 0;
+    virtual Expected<ConfiguredInferModel::Bindings> create_bindings(const std::map<std::string, MemoryView> &buffers) = 0;
     virtual hailo_status wait_for_async_ready(std::chrono::milliseconds timeout, uint32_t frames_count = 1) = 0;
     virtual hailo_status activate() = 0;
     virtual hailo_status deactivate() = 0;
@@ -196,8 +195,9 @@ public:
     virtual hailo_status set_scheduler_timeout(const std::chrono::milliseconds &timeout) = 0;
     virtual hailo_status set_scheduler_threshold(uint32_t threshold) = 0;
     virtual hailo_status set_scheduler_priority(uint8_t priority) = 0;
-    virtual Expected<size_t> get_async_queue_size() = 0;
+    virtual Expected<size_t> get_async_queue_size() const = 0;
     virtual hailo_status shutdown() = 0;
+    virtual hailo_status update_cache_offset(int32_t offset_delta_entries) = 0;
 
     static Expected<ConfiguredInferModel::Bindings> create_bindings(
         std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&inputs,
@@ -230,7 +230,7 @@ public:
         const std::vector<std::string> &input_names, const std::vector<std::string> &output_names,
         const std::unordered_map<std::string, size_t> inputs_frame_sizes, const std::unordered_map<std::string, size_t> outputs_frame_sizes);
     ~ConfiguredInferModelImpl();
-    virtual Expected<ConfiguredInferModel::Bindings> create_bindings() override;
+    virtual Expected<ConfiguredInferModel::Bindings> create_bindings(const std::map<std::string, MemoryView> &buffers) override;
     virtual hailo_status wait_for_async_ready(std::chrono::milliseconds timeout, uint32_t frames_count) override;
     virtual hailo_status activate() override;
     virtual hailo_status deactivate() override;
@@ -240,8 +240,9 @@ public:
     virtual hailo_status set_scheduler_timeout(const std::chrono::milliseconds &timeout) override;
     virtual hailo_status set_scheduler_threshold(uint32_t threshold) override;
     virtual hailo_status set_scheduler_priority(uint8_t priority) override;
-    virtual Expected<size_t> get_async_queue_size() override;
+    virtual Expected<size_t> get_async_queue_size() const override;
     virtual hailo_status shutdown() override;
+    virtual hailo_status update_cache_offset(int32_t offset_delta_entries) override;
 
     static Expected<std::shared_ptr<ConfiguredInferModelImpl>> create_for_ut(std::shared_ptr<ConfiguredNetworkGroup> net_group,
         std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner, const std::vector<std::string> &input_names, const std::vector<std::string> &output_names,

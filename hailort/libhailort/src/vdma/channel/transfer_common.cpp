@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -7,7 +7,6 @@
  **/
 
 #include "transfer_common.hpp"
-#include "vdma/memory/mapped_buffer.hpp"
 
 namespace hailort
 {
@@ -65,8 +64,18 @@ Expected<vdma::MappedBufferPtr> TransferBuffer::map_buffer(HailoRTDriver &driver
     if (TransferBufferType::DMABUF == m_type) {
         TRY(m_mappings, vdma::MappedBuffer::create_shared_from_dmabuf(m_dmabuf.fd, m_dmabuf.size, driver, direction));
     } else {
-        TRY(auto dma_able_buffer, vdma::DmaAbleBuffer::create_from_user_address(m_base_buffer.data(), m_base_buffer.size()));
-        TRY(m_mappings, vdma::MappedBuffer::create_shared(std::move(dma_able_buffer), driver, direction));
+        if (is_aligned_for_dma()) {
+            TRY(auto dma_able_buffer, vdma::DmaAbleBuffer::create_from_user_address(m_base_buffer.data(), m_base_buffer.size()));
+            TRY(m_mappings, vdma::MappedBuffer::create_shared(std::move(dma_able_buffer), driver, direction));
+        } else {
+            // Allocate a new bounce buffer for the mapping.
+            // On H2D dir, copy the data on the map
+            // On D2H dir, copy the data on the unmap
+            TRY(m_mappings, vdma::MappedBuffer::create_shared_by_allocation(m_base_buffer.size(), driver, direction));
+            if (HailoRTDriver::DmaDirection::H2D == direction) {
+                (void)copy_to(MemoryView(m_mappings->user_address(), m_mappings->size()));
+            }
+        }
     }
 
     return Expected<vdma::MappedBufferPtr>{m_mappings};
@@ -74,7 +83,45 @@ Expected<vdma::MappedBufferPtr> TransferBuffer::map_buffer(HailoRTDriver &driver
 
 void TransferBuffer::unmap_buffer()
 {
+    const bool is_bounce_buffer = !is_aligned_for_dma();
+    if (is_bounce_buffer && m_mappings && (HailoRTDriver::DmaDirection::D2H == m_mappings->direction())) {
+        (void)copy_from(MemoryView(m_mappings->user_address(), m_mappings->size()));
+    }
     m_mappings.reset();
+}
+
+Expected<std::vector<HailoRTDriver::TransferBuffer>> TransferBuffer::to_driver_buffers()
+{
+    CHECK(m_mappings, HAILO_INTERNAL_FAILURE, "transfer-buffer must be mapped before launch-transfer");
+
+    std::vector<HailoRTDriver::TransferBuffer> res;
+    HailoRTDriver::TransferBuffer buf;
+
+    if (TransferBufferType::DMABUF == m_type) {
+        CHECK(0 == m_offset, HAILO_INTERNAL_FAILURE, "no support for non-zero offset for dmabuf");
+        buf.is_dma_buf = true;
+        buf.size = m_size;
+        buf.addr_or_fd = static_cast<uintptr_t>(m_dmabuf.fd);
+        res.emplace_back(buf);
+
+        return Expected<std::vector<HailoRTDriver::TransferBuffer>>{res};
+    } else {
+        auto parts = get_continuous_parts();
+
+        buf.is_dma_buf = false;
+        buf.size = parts.first.size();
+        buf.addr_or_fd = reinterpret_cast<uintptr_t>(m_mappings->user_address()) + static_cast<uintptr_t>(m_offset);
+        res.emplace_back(buf);
+
+        if (!parts.second.empty()) {
+            buf.size = parts.second.size();
+            buf.addr_or_fd = reinterpret_cast<uintptr_t>(m_mappings->user_address());
+            res.emplace_back(buf);
+        }
+
+        return Expected<std::vector<HailoRTDriver::TransferBuffer>>{res};
+    }
+
 }
 
 hailo_status TransferBuffer::copy_to(MemoryView buffer)
@@ -106,6 +153,16 @@ hailo_status TransferBuffer::copy_from(const MemoryView buffer)
     }
 
     return HAILO_SUCCESS;
+}
+
+bool TransferBuffer::is_aligned_for_dma() const
+{
+    if (TransferBufferType::DMABUF == m_type) {
+        return true;
+    }
+
+    const auto dma_able_alignment = OsUtils::get_dma_able_alignment();
+    return (0 == reinterpret_cast<uintptr_t>(m_base_buffer.data()) % dma_able_alignment);
 }
 
 bool TransferBuffer::is_wrap_around() const

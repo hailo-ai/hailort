@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -17,10 +17,13 @@
 namespace hailort
 {
 
+//TODO: HRT-16652 - support more architecture's SKU
 // SKU is three bit value in fuse file in order to differentiate the different kind of boards
-#define SKU_VALUE_BITMAP (0x7)
-#define HAILO15H_SKU_VALUE (0x0)
-#define HAILO15M_SKU_VALUE (0x3)
+#define SKU_VALUE_BITMAP    (0x7)
+#define HAILO15H_SKU_VALUE  (0x0)
+#define HAILO10H_SKU_VALUE  (0x1)
+#define HAILO15M_SKU_VALUE  (0x3)
+
 
 // SKU and partial cluster layout bitmap are located at specific locations in the fuse file according to the spec
 // Located in issue HRT-12971
@@ -34,6 +37,7 @@ Expected<uint32_t> PartialClusterReader::get_arch_default_bitmap(hailo_device_ar
         // Currently only supported architectures for this function are HAILO15H and HAILO15M - but in future can add
         case HAILO_ARCH_HAILO15H:
         case HAILO_ARCH_HAILO15M:
+        case HAILO_ARCH_HAILO10H:
             return static_cast<uint32_t>(PARTIAL_CLUSTERS_LAYOUT_BITMAP__HAILO15_DEFAULT);
         default:
             LOGGER__ERROR("Error, Given architecture {} doesnt support partial cluster layout",
@@ -44,9 +48,9 @@ Expected<uint32_t> PartialClusterReader::get_arch_default_bitmap(hailo_device_ar
 
 bool PartialClusterReader::validate_arch_partial_clusters_bitmap(uint32_t bitmap, uint8_t sku_value)
 {
-        // Currently only supported architectures for this function are HAILO15H and HAILO15M - but in future can add
     switch (sku_value) {
         case HAILO15H_SKU_VALUE:
+        case HAILO10H_SKU_VALUE:
             return (PARTIAL_CLUSTERS_LAYOUT_BITMAP__HAILO15_DEFAULT == bitmap);
         case HAILO15M_SKU_VALUE:
             return (std::find(HAILO15M__PARTIAL_CLUSTERS_LAYOUT_BITMAP_ARRAY.begin(),
@@ -97,11 +101,12 @@ Expected<std::pair<uint32_t, uint8_t>> PartialClusterReader::read_fuse_file()
 Expected<uint8_t> PartialClusterReader::get_sku_value_from_arch(hailo_device_architecture_t dev_arch)
 {
     switch(dev_arch) {
-        // Currently only supported architectures for this function are HAILO15H and HAILO15M - but in future can add
         case HAILO_ARCH_HAILO15H:
             return HAILO15H_SKU_VALUE;
         case HAILO_ARCH_HAILO15M:
             return HAILO15M_SKU_VALUE;
+        case HAILO_ARCH_HAILO10H:
+            return HAILO10H_SKU_VALUE;
         default:
             LOGGER__ERROR("Error, Unknown sku value for Given architecture {}",
                 HailoRTCommon::get_device_arch_str(dev_arch));
@@ -126,11 +131,15 @@ Expected<uint32_t> PartialClusterReader::get_partial_clusters_layout_bitmap(hail
     const auto sku_value = fuse_file_data.second;
     switch (dev_arch) {
         case HAILO_ARCH_HAILO15H:
-            CHECK_AS_EXPECTED((HAILO15H_SKU_VALUE == sku_value), HAILO_INTERNAL_FAILURE,
+            CHECK(HAILO15H_SKU_VALUE == sku_value, HAILO_INTERNAL_FAILURE,
                 "Device arch is of type {} but sku is {}", static_cast<int>(dev_arch), sku_value);
             break;
         case HAILO_ARCH_HAILO15M:
-            CHECK_AS_EXPECTED((HAILO15M_SKU_VALUE == sku_value), HAILO_INTERNAL_FAILURE,
+            CHECK(HAILO15M_SKU_VALUE == sku_value, HAILO_INTERNAL_FAILURE,
+                "Device arch is of type {} but sku is {}", static_cast<int>(dev_arch), sku_value);
+            break;
+        case HAILO_ARCH_HAILO10H:
+            CHECK(HAILO10H_SKU_VALUE == sku_value, HAILO_INTERNAL_FAILURE,
                 "Device arch is of type {} but sku is {}", static_cast<int>(dev_arch), sku_value);
             break;
         default:
@@ -154,6 +163,8 @@ Expected<hailo_device_architecture_t> PartialClusterReader::get_actual_dev_arch_
             return HAILO_ARCH_HAILO15M;
         } else if (HAILO15H_SKU_VALUE == sku_value) {
             return HAILO_ARCH_HAILO15H;
+        } else if (HAILO10H_SKU_VALUE == sku_value) {
+            return HAILO_ARCH_HAILO10H;
         } else {
             LOGGER__ERROR("Error, Invalid sku received {}", sku_value);
             return make_unexpected(HAILO_INVALID_ARGUMENT);

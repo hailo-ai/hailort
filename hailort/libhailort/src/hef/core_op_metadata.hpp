@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -32,8 +32,10 @@ struct SupportedFeatures {
     bool periph_calculation_in_hailort = false;
     bool core_hw_padding_config_in_dfc = false;
     bool batch_register_config = false;
+    bool aligned_ccws = false;
 };
 
+// TODO: HRT-16585 - Remove duplication in struct ConfigBufferInfo - we don't need both bursts_sizes and ccw_dma_transfers
 struct ConfigBufferInfo {
     /**
      * Sizes of all the successive ccw's (ccw burst).
@@ -45,16 +47,24 @@ struct ConfigBufferInfo {
      * we use this var to get the config buffer offset from the beginning of the hef user address.
      */
     uint64_t offset_from_hef_base = 0;
+    /**
+     * In case of shared_weights (alligned ccws) - we use this vector to perform the dma transfers.
+     */
+    std::vector<std::pair<uint64_t, uint64_t>> ccw_dma_transfers;
 };
 
 // For each config_stream_index we store vector of all ccw write length. The vector is used to build the config buffer.g
 using ConfigBufferInfoMap = std::unordered_map<uint8_t, ConfigBufferInfo>;
 
+// List of dma transfers for each config channel index
+using CcwDmaTransfersInfoMap = std::unordered_map<uint8_t, std::vector<std::pair<uint64_t, uint64_t>>>;
+
 
 class ContextMetadata final {
 public:
     ContextMetadata(std::vector<ContextSwitchConfigActionPtr> &&actions,
-        ConfigBufferInfoMap&& config_buffers_info, bool const_input_layer_found);
+        ConfigBufferInfoMap&& config_buffers_info, bool const_input_layer_found, CcwDmaTransfersInfoMap&& ccws_dma_transfers_info = {});
+    ContextMetadata() = default;
 
     const std::vector<ContextSwitchConfigActionPtr> &get_actions() const;
     std::vector<ContextSwitchConfigActionPtr> get_actions_of_type(
@@ -83,6 +93,7 @@ public:
 private:
     std::vector<ContextSwitchConfigActionPtr> m_actions;
     ConfigBufferInfoMap m_config_buffers_info;
+    CcwDmaTransfersInfoMap m_ccws_dma_transfers_info;
     bool m_const_input_layer_found;
 
     std::vector<LayerInfo> m_boundary_input_layers;
@@ -131,12 +142,12 @@ public:
     size_t get_contexts_count();
     size_t get_dynamic_contexts_count();
 
-    const std::string &core_op_name() const
+    const std::string& core_op_name() const
     {
         return m_core_op_name;
     }
 
-    const SupportedFeatures &supported_features() const
+    const SupportedFeatures& supported_features() const
     {
         return m_supported_features;
     }
@@ -144,7 +155,7 @@ public:
     Expected<size_t> get_total_transfer_size();
 
     // TODO: Remove
-    const std::vector<std::string> &get_network_names() const
+    const std::vector<std::string>& get_network_names() const
     {
         return m_sorted_network_names;
     }
@@ -216,7 +227,7 @@ public:
 
     Expected<std::vector<hailo_network_info_t>> get_network_infos() const;
 
-    const std::string &name() const
+    const std::string& name() const
     {
         return m_network_group_name;
     }
@@ -258,6 +269,9 @@ private:
     friend class Hef;
     friend class ConfiguredNetworkGroupBase;
 };
+
+Expected<uint16_t> get_network_batch_size(const ConfigureNetworkParams& params, const std::string &network_name);
+
 
 } /* namespace hailort */
 

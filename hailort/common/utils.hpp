@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -298,6 +298,7 @@ inline hailo_status get_status(const Expected<T> &exp)
 
 // Macros that check status. If status is 'valid_error', return without printing error to the prompt.
 #define CHECK_EXPECTED_WITH_ACCEPTABLE_STATUS(valid_error, exp, ...) if (valid_error == (exp).status()) {return make_unexpected(valid_error);} CHECK_SUCCESS(exp, __VA_ARGS__);
+#define CHECK_SUCCESS_WITH_ACCEPTABLE_STATUS(valid_error, status, ...) if ((valid_error) == (status)) {return make_unexpected(valid_error);} CHECK_SUCCESS(status, __VA_ARGS__);
 
 
 #define __HAILO_CONCAT(x, y) x ## y
@@ -397,6 +398,37 @@ static inline bool is_env_variable_on(const char *env_var_name, const std::strin
     return ((nullptr != env_var) && (strncmp(env_var, required_value.c_str(), required_value.size()) == 0));
 }
 
+static inline Expected<size_t> get_env_variable_as_size(const char *env_var_name) {
+    const char *env_val = std::getenv(env_var_name);
+    if (!env_val) {
+        return make_unexpected(HAILO_NOT_FOUND);
+    }
+
+    static const int DECIMAL_BASE = 10;
+    errno = 0;
+    char *end = nullptr;
+    size_t result = std::strtoull(env_val, &end, DECIMAL_BASE);
+
+    /*
+    * Check if the conversion succeeded completely:
+    * If an error occurs during conversion (for example, due to overflow), std::strtoull will set errno to a non-zero value.
+    * For a successful conversion, std::strtoull should consume the entire string, meaning that the character pointed
+    * to by 'end' must be the null terminator ('\0').
+    * Thus, a successful conversion requires both errno == 0 and *end == '\0'.
+    */
+    if (errno != 0 || (*end != '\0')) {
+        LOGGER__ERROR("Failed to parse environment variable HAILO_ALIGNED_CCWS_MAPPED_BUFFER_SIZE");
+        return make_unexpected(HAILO_INVALID_ARGUMENT);
+    }
+
+    return Expected<size_t>(result);
+}
+
+// When moving to C++17, use std::clamp
+constexpr size_t clamp(size_t v, size_t lo, size_t hi) {
+    return (v < lo) ? lo : (v > hi) ? hi : v;
+}
+
 static inline Expected<std::string> get_env_variable(const std::string &env_var_name)
 {
     const auto env_var = std::getenv(env_var_name.c_str());
@@ -411,6 +443,23 @@ static inline Expected<std::string> get_env_variable(const std::string &env_var_
     }
 
     return Expected<std::string>(result);
+}
+
+template <typename T>
+Expected<hailo_format_type_t> get_hailo_format_type()
+{
+    static const std::unordered_map<size_t, hailo_format_type_t> type_map = {
+        {typeid(uint8_t).hash_code(), HAILO_FORMAT_TYPE_UINT8},
+        {typeid(uint16_t).hash_code(), HAILO_FORMAT_TYPE_UINT16},
+        {typeid(float32_t).hash_code(), HAILO_FORMAT_TYPE_FLOAT32}
+    };
+
+    auto it = type_map.find(typeid(T).hash_code());
+    if (it != type_map.end()) {
+        auto result = it->second;
+        return result;
+    }
+    return make_unexpected(HAILO_NOT_FOUND);
 }
 
 class CRC32 {
@@ -599,6 +648,25 @@ private:
             os << StringUtils::to_hex_string(buffer + offset, line_size, UPPERCASE, BYTE_DELIM) << std::endl;
         }
     }
+};
+
+class TimeoutGuard final
+{
+public:
+    explicit TimeoutGuard(std::chrono::milliseconds total_timeout)
+        : m_start_time(std::chrono::steady_clock::now()), m_total_timeout(total_timeout) {}
+
+    std::chrono::milliseconds get_remaining_timeout() const {
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_start_time);
+        if (elapsed >= m_total_timeout) {
+            return std::chrono::milliseconds(0); // Timeout exceeded
+        }
+        return m_total_timeout - elapsed;
+    }
+
+private:
+    std::chrono::steady_clock::time_point m_start_time;
+    std::chrono::milliseconds m_total_timeout;
 };
 
 } /* namespace hailort */

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -59,6 +59,7 @@ enum class HEFHwArch // Must be aligned to ProtoHEFHwArch
     HW_ARCH__GINGER = 104,
     HW_ARCH__LAVENDER = 105,
     HW_ARCH__PLUTO = 106,
+    HW_ARCH__MARS = 108,
 };
 
 class DeviceBase : public Device
@@ -106,6 +107,21 @@ public:
         // FW is always up if we got here (device implementations's ctor would fail otherwise)
         // Hence, just return it
         return Expected<hailo_device_architecture_t>(m_device_architecture);
+    }
+
+    virtual hailo_status before_fork() override
+    {
+        return HAILO_SUCCESS;
+    }
+
+    virtual hailo_status after_fork_in_parent() override
+    {
+        return HAILO_SUCCESS;
+    }
+
+    virtual hailo_status after_fork_in_child() override
+    {
+        return HAILO_SUCCESS;
     }
 
 protected:

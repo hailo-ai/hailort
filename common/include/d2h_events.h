@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -86,13 +86,11 @@ typedef struct {
 
 /* D2H_EVENT_health_monitor_closed_streams_event_message_t should be the same as hailo_health_monitor_dataflow_shutdown_notification_message_t */
 typedef struct {
-    uint32_t closed_input_streams;
-    uint32_t closed_output_streams;
     float32_t ts0_temperature;
     float32_t ts1_temperature;
 } D2H_EVENT_health_monitor_closed_streams_event_message_t;
 
-#define D2H_EVENT_HEALTH_MONITOR_CLOSED_STREAMS_EVENT_PARAMETER_COUNT  (4)
+#define D2H_EVENT_HEALTH_MONITOR_CLOSED_STREAMS_EVENT_PARAMETER_COUNT  (2)
 
 /* D2H_EVENT_health_monitor_temperature_alarm_event_message_t should be the same as hailo_health_monitor_temperature_alarm_notification_message_t */
 typedef struct {

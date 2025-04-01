@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file virtual_alloc_guard.cpp
  * @brief Guard object for VirtualAlloc and VirtualFree

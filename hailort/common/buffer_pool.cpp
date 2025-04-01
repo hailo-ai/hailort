@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file buffer_pool.cpp
  * @brief Buffer pool implementation
@@ -20,6 +20,33 @@ BasicBufferPool::BasicBufferPool(size_t buffer_size, std::vector<BufferPtr> &&bu
     m_buffers(std::move(buffers)),
     m_free_buffers_queue(std::move(free_buffers_queue))
 {}
+
+Expected<BasicBufferPoolPtr> BasicBufferPool::create_shared(size_t buffer_size, size_t buffer_count,
+    std::function<Expected<Buffer>(size_t)> allocate_func)
+{
+    TRY(auto shutdown_event, Event::create_shared(Event::State::not_signalled));
+    TRY(auto free_buffers_queue, SpscQueue<BufferPtr>::create(buffer_count, shutdown_event, DEFAULT_TRANSFER_TIMEOUT));
+
+    std::vector<BufferPtr> buffers;
+    buffers.reserve(buffer_count);
+
+    for (size_t i = 0; i < buffer_count; i++) {
+        TRY(auto buffer, allocate_func(buffer_size));
+        
+        auto buffer_ptr = make_shared_nothrow<Buffer>(std::move(buffer));
+        CHECK_NOT_NULL(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+        auto status = free_buffers_queue.enqueue(buffer_ptr);
+        CHECK_SUCCESS(status);
+
+        buffers.emplace_back(buffer_ptr);
+    }
+
+    auto buffer_pool = make_shared_nothrow<BasicBufferPool>(buffer_size, std::move(buffers), std::move(free_buffers_queue), buffer_count);
+    CHECK_NOT_NULL(buffer_pool, HAILO_OUT_OF_HOST_MEMORY);
+
+    return buffer_pool;
+}
 
 Expected<BufferPtr> BasicBufferPool::acquire_buffer()
 {

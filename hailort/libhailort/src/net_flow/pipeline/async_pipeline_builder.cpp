@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -240,14 +240,14 @@ Expected<std::shared_ptr<RemoveOverlappingBboxesElement>> AsyncPipelineBuilder::
 
 Expected<std::shared_ptr<FillNmsFormatElement>> AsyncPipelineBuilder::add_fill_nms_format_element(std::shared_ptr<AsyncPipeline> async_pipeline,
     const std::string &output_stream_name, uint8_t stream_index, const std::string &element_name, const net_flow::PostProcessOpMetadataPtr &op_metadata,
-    std::shared_ptr<PipelineElement> final_elem, const uint32_t final_elem_index)
+    std::shared_ptr<PipelineElement> final_elem, const hailo_format_order_t &dst_format_order, const uint32_t final_elem_index)
 {
     auto metadata = std::dynamic_pointer_cast<net_flow::NmsOpMetadata>(op_metadata);
     assert(nullptr != metadata);
 
     TRY(auto fill_nms_format_element, FillNmsFormatElement::create(metadata->nms_config(),
         PipelineObject::create_element_name(element_name, output_stream_name, stream_index),
-        async_pipeline->get_build_params(), PipelineDirection::PUSH, async_pipeline));
+        async_pipeline->get_build_params(), dst_format_order, PipelineDirection::PUSH, async_pipeline));
 
     async_pipeline->add_element_to_pipeline(fill_nms_format_element);
 
@@ -327,7 +327,7 @@ hailo_status AsyncPipelineBuilder::add_output_demux_flow(const std::string &outp
                 async_pipeline, edge_info.hw_shape, edge_info.format, edge_info.shape, {edge_info.quant_info}, demux_queue_elem));
 
             auto post_transform_frame_size = (HailoRTCommon::is_nms(edge_info.format.order)) ?
-                HailoRTCommon::get_nms_host_frame_size(edge_info.nms_info, output_format.second) :
+                HailoRTCommon::get_nms_by_class_host_frame_size(edge_info.nms_info, output_format.second) :
                 HailoRTCommon::get_frame_size(edge_info.shape, output_format.second);
 
             TRY(auto last_async_element, add_last_async_element(async_pipeline, output_format.first, post_transform_frame_size,
@@ -403,7 +403,7 @@ hailo_status AsyncPipelineBuilder::add_nms_fuse_flow(const std::vector<std::stri
     TRY(auto post_infer_elem, add_post_infer_element(output_format.second, fused_layer_nms_info, async_pipeline,
         first_defused_stream_info.hw_shape, first_defused_stream_info.format, first_defused_stream_info.shape, stream_quant_infos, nms_elem));
 
-    const auto post_transform_frame_size = HailoRTCommon::get_nms_host_frame_size(fused_layer_nms_info, output_format.second);
+    const auto post_transform_frame_size = HailoRTCommon::get_nms_by_class_host_frame_size(fused_layer_nms_info, output_format.second);
 
     TRY(auto last_async_element, add_last_async_element(async_pipeline, output_format.first, post_transform_frame_size,
         post_infer_elem));
@@ -627,7 +627,7 @@ hailo_status AsyncPipelineBuilder::add_iou_flow( std::shared_ptr<AsyncPipeline> 
 
     auto is_empty = false;
     auto interacts_with_hw = false;
-    const auto post_transform_frame_size = HailoRTCommon::get_nms_host_frame_size(output_stream_info.nms_info, output_format.second);
+    const auto post_transform_frame_size = HailoRTCommon::get_nms_by_class_host_frame_size(output_stream_info.nms_info, output_format.second);
     TRY(auto pre_nms_convert_queue_element,
         add_push_queue_element(PipelineObject::create_element_name("PushQEl_pre_nms_convert", output_stream_name,
             output_stream_info.index), async_pipeline, post_transform_frame_size, is_empty, interacts_with_hw, post_infer_element));
@@ -650,7 +650,7 @@ hailo_status AsyncPipelineBuilder::add_iou_flow( std::shared_ptr<AsyncPipeline> 
 
     TRY(auto fill_nms_format_element,
         add_fill_nms_format_element(async_pipeline, output_stream_name, output_stream_info.index,
-            "FillNmsFormatEl", iou_op_metadata, pre_fill_nms_format_element_queue_element));
+            "FillNmsFormatEl", iou_op_metadata, pre_fill_nms_format_element_queue_element, output_format.second.order));
 
     TRY(const auto output_vstream_info, iou_op_metadata->get_output_vstream_info());
     const auto final_frame_size = HailoRTCommon::get_frame_size(output_vstream_info, output_format.second);
@@ -840,7 +840,7 @@ hailo_status AsyncPipelineBuilder::create_post_async_hw_elements(std::shared_ptr
                         final_elem_source_index));
 
                 const auto post_transform_frame_size = (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == first_stream_info.format.order) ?
-                    HailoRTCommon::get_nms_host_frame_size(first_stream_info.nms_info, output_format.second) :
+                    HailoRTCommon::get_nms_by_class_host_frame_size(first_stream_info.nms_info, output_format.second) :
                     HailoRTCommon::get_frame_size(first_stream_info.shape, output_format.second);
 
                 TRY(auto last_async_element, add_last_async_element(async_pipeline, output_format.first, post_transform_frame_size,
@@ -867,7 +867,7 @@ Expected<std::shared_ptr<AsyncPipeline>> AsyncPipelineBuilder::create_pipeline(s
     // Buffer pool sizes for pipeline elements should be:
     // * The minimum of the maximum queue size of all LL streams (input and output) - for edge elements
     // * HAILO_DEFAULT_ASYNC_INFER_QUEUE_SIZE - for internal elements
-    TRY(build_params.buffer_pool_size_edges, net_group->get_min_buffer_pool_size());
+    TRY(build_params.buffer_pool_size_edges, net_group->infer_queue_size());
     build_params.buffer_pool_size_internal = std::min(static_cast<uint32_t>(build_params.buffer_pool_size_edges),
         static_cast<uint32_t>(HAILO_DEFAULT_ASYNC_INFER_QUEUE_SIZE));
     build_params.elem_stats_flags = HAILO_PIPELINE_ELEM_STATS_NONE;

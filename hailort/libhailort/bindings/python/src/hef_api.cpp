@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -173,6 +173,17 @@ py::dict HefWrapper::create_configure_params_mipi_input(hailo_stream_interface_t
     return py::cast(configure_params.release());
 }
 
+py::dict HefWrapper::get_external_resources()
+{
+    auto external_resource = hef->get_external_resources();
+    VALIDATE_EXPECTED(external_resource);
+    std::map<std::string, py::bytes> external_resources;
+    for (const auto &resource : external_resource.value()) {
+        external_resources[resource.first] = py::bytes(resource.second);
+    }
+    return py::cast(external_resources);
+}
+
 py::list HefWrapper::get_networks_names(const std::string &net_group_name)
 {
     auto network_infos = hef->get_network_infos(net_group_name);
@@ -209,6 +220,7 @@ void HefWrapper::bind(py::module &m)
         .def("get_output_stream_infos", &HefWrapper::get_output_stream_infos)
         .def("get_all_stream_infos", &HefWrapper::get_all_stream_infos)
         .def("get_networks_names", &HefWrapper::get_networks_names)
+        .def("get_external_resources", &HefWrapper::get_external_resources)
         ;
 }
 

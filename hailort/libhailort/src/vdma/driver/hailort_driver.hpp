@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -41,7 +41,12 @@ constexpr size_t ONGOING_TRANSFERS_SIZE = 128;
 static_assert((0 == ((ONGOING_TRANSFERS_SIZE - 1) & ONGOING_TRANSFERS_SIZE)), "ONGOING_TRANSFERS_SIZE must be a power of 2");
 
 #define MIN_ACTIVE_TRANSFERS_SCALE (2)
-#define MAX_ACTIVE_TRANSFERS_SCALE (4)
+
+#if defined(HAILO_SUPPORT_MULTI_PROCESS) || defined(_WIN32)
+#define MAX_ACTIVE_TRANSFERS_SCALE (8)
+#else
+#define MAX_ACTIVE_TRANSFERS_SCALE (32)
+#endif
 
 #define HAILO_MAX_BATCH_SIZE ((ONGOING_TRANSFERS_SIZE / MIN_ACTIVE_TRANSFERS_SCALE) - 1)
 
@@ -50,13 +55,16 @@ static_assert((0 == ((ONGOING_TRANSFERS_SIZE - 1) & ONGOING_TRANSFERS_SIZE)), "O
 
 #define PCIE_EXPECTED_MD5_LENGTH (16)
 
-constexpr size_t VDMA_CHANNELS_PER_ENGINE = 32;
-constexpr size_t MAX_VDMA_ENGINES_COUNT = 3;
-constexpr size_t MAX_VDMA_CHANNELS_COUNT = MAX_VDMA_ENGINES_COUNT * VDMA_CHANNELS_PER_ENGINE;
-constexpr uint8_t MIN_H2D_CHANNEL_INDEX = 0;
-constexpr uint8_t MAX_H2D_CHANNEL_INDEX = 15;
-constexpr uint8_t MIN_D2H_CHANNEL_INDEX = MAX_H2D_CHANNEL_INDEX + 1;
-constexpr uint8_t MAX_D2H_CHANNEL_INDEX = 31;
+constexpr size_t VDMA_CHANNELS_PER_ENGINE           = 32;
+constexpr size_t MAX_VDMA_ENGINES_COUNT             = 3;
+constexpr size_t MAX_VDMA_CHANNELS_COUNT            = MAX_VDMA_ENGINES_COUNT * VDMA_CHANNELS_PER_ENGINE;
+constexpr uint8_t MIN_H2D_CHANNEL_INDEX             = 0;
+constexpr uint8_t MAX_H2D_CHANNEL_INDEX             = 15;
+constexpr uint8_t MIN_D2H_CHANNEL_INDEX             = MAX_H2D_CHANNEL_INDEX + 1;
+constexpr uint8_t MAX_D2H_CHANNEL_INDEX             = 31;
+constexpr uint8_t MIN_ENHANCED_D2H_CHANNEL_INDEX    = 28;
+
+constexpr size_t MAX_TRANSFER_BUFFERS_IN_REQUEST = 8;
 
 // NOTE: don't change members from this struct without updating all code using it (platform specific)
 struct ChannelInterruptTimestamp {
@@ -73,8 +81,6 @@ struct ChannelIrqData {
     vdma::ChannelId channel_id;
     bool is_active;
     uint8_t transfers_completed;
-    uint8_t host_error;
-    uint8_t device_error;
     bool validation_success;
 };
 
@@ -172,6 +178,7 @@ public:
         DEVICE_BOARD_TYPE_HAILO15L,
         DEVICE_BOARD_TYPE_HAILO10H,
         DEVICE_BOARD_TYPE_HAILO10H_LEGACY,
+        DEVICE_BOARD_TYPE_MARS,
         DEVICE_BOARD_TYPE_COUNT,
     };
 
@@ -248,6 +255,8 @@ public:
 
     hailo_status reset_nn_core();
 
+    hailo_status reset_chip();
+
     Expected<uint64_t> write_action_list(uint8_t *data, size_t size);
 
     /**
@@ -275,7 +284,6 @@ public:
     /**
     * Unmaps user buffer mapped using HailoRTDriver::map_buffer.
     */
-    hailo_status vdma_buffer_unmap(VdmaBufferHandle handle);
     hailo_status vdma_buffer_unmap(uintptr_t user_address, size_t size, DmaDirection data_direction);
 
     hailo_status vdma_buffer_sync(VdmaBufferHandle buffer, DmaSyncDirection sync_direction, size_t offset, size_t count);
@@ -301,18 +309,20 @@ public:
      */
     hailo_status descriptors_list_program(uintptr_t desc_handle, VdmaBufferHandle buffer_handle,
         size_t buffer_size, size_t buffer_offset, uint8_t channel_index,
-        uint32_t starting_desc, bool should_bind, InterruptsDomain last_desc_interrupts);
+        uint32_t starting_desc, uint32_t batch_size, bool should_bind, InterruptsDomain last_desc_interrupts,
+        uint32_t stride);
 
     struct TransferBuffer {
-        VdmaBufferHandle buffer_handle;
-        size_t offset;
+        bool is_dma_buf;
+        uintptr_t addr_or_fd;
         size_t size;
     };
 
     /**
      * Launches some transfer on the given channel.
+     * The maximum number of transfer buffers is MAX_TRANSFER_BUFFERS_IN_REQUEST.
      */
-    Expected<uint32_t> launch_transfer(vdma::ChannelId channel_id, uintptr_t desc_handle,
+    hailo_status launch_transfer(vdma::ChannelId channel_id, uintptr_t desc_handle,
         uint32_t starting_desc, const std::vector<TransferBuffer> &transfer_buffer, bool should_bind,
         InterruptsDomain first_desc_interrupts, InterruptsDomain last_desc_interrupts);
 
@@ -347,7 +357,7 @@ public:
     hailo_status close_connection(vdma::ChannelId input_channel, vdma::ChannelId output_channel,
         PcieSessionType session_type);
 
-    const std::string &device_id() const
+    const std::string& device_id() const
     {
         return m_device_id;
     }
@@ -454,15 +464,31 @@ private:
     // TODO HRT-11937: when ioctl is combined, move caching to driver
     struct MappedBufferInfo {
         VdmaBufferHandle handle;
-        uintptr_t address;
-        DmaDirection direction;
-        size_t size;
         vdma_mapped_buffer_driver_identifier driver_buff_handle;
         size_t mapped_count;
     };
 
+    struct MappedBufferKey {
+        uintptr_t address;
+        DmaDirection direction;
+        size_t size;
+
+        bool operator==(const MappedBufferKey &other) const
+        {
+            return address == other.address && direction == other.direction && size >= other.size;
+        }
+    };
+
+    struct MappedBufferKeyHash {
+        std::size_t operator()(const MappedBufferKey &key) const {
+            return std::hash<uintptr_t>()(key.address) ^
+                   std::hash<size_t>()(key.size) ^
+                   std::hash<int>()(static_cast<int>(key.direction));
+        }
+    };
+
     std::mutex m_mapped_buffer_lock;
-    std::list<MappedBufferInfo> m_mapped_buffer;
+    std::unordered_map<MappedBufferKey, MappedBufferInfo, MappedBufferKeyHash> m_mapped_buffer;
 
 };
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -164,7 +164,7 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> VdmaDevice::create_configured_
 
     TRY(auto resource_manager, ResourcesManagerBuilder::build(current_core_op_index,
         *this, get_driver(), m_cache_manager, config_params, core_op_metadata,
-        static_cast<HEFHwArch>(hef.pimpl->get_device_arch())));
+        static_cast<HEFHwArch>(hef.pimpl->get_device_arch()), hef));
 
     TRY(auto core_op_ptr, VdmaConfigCoreOp::create_shared(m_active_core_op_holder, config_params,
         resource_manager, m_cache_manager, core_op_metadata));

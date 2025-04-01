@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -66,6 +66,7 @@ extern "C" {
 #define HAILO_ETH_MAC_LENGTH (6)
 #define HAILO_UNIT_LEVEL_TRACKING_BYTES_LENGTH (12)
 #define HAILO_SOC_PM_VALUES_BYTES_LENGTH (24)
+#define HAILO_GPIO_MASK_VALUES_LENGTH (16)
 #define HAILO_MAX_TEMPERATURE_THROTTLING_LEVELS_NUMBER (4)
 
 #define HAILO_UNIQUE_VDEVICE_GROUP_ID ("UNIQUE")
@@ -174,9 +175,11 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(86, HAILO_DRIVER_INVALID_IOCTL                    /*!< Driver cannot handle ioctl. Can happen on libhailort vs driver version mismatch or when ioctl function is not supported */)\
     HAILO_STATUS__X(87, HAILO_DRIVER_TIMEOUT                          /*!< Driver operation returned a timeout. Device reset may be required. */)\
     HAILO_STATUS__X(88, HAILO_DRIVER_INTERRUPTED                      /*!< Driver operation interrupted by system request (i.e can happen on application exit) */)\
-    HAILO_STATUS__X(89, HAILO_CONNECTION_REFUSED                      /*!< Connection was refused by other side. */)\
-    HAILO_STATUS__X(90, HAILO_DRIVER_WAIT_CANCELED                    /*!< Driver operation was canceled. */)\
-
+    HAILO_STATUS__X(89, HAILO_CONNECTION_REFUSED                      /*!< Connection was refused by other side */)\
+    HAILO_STATUS__X(90, HAILO_DRIVER_WAIT_CANCELED                    /*!< Driver operation was canceled */)\
+    HAILO_STATUS__X(91, HAILO_HEF_FILE_CORRUPTED                      /*!< HEF file is corrupted */)\
+    HAILO_STATUS__X(92, HAILO_HEF_NOT_SUPPORTED                       /*!< HEF file is not supported. Make sure the DFC version is compatible. */)\
+    HAILO_STATUS__X(93, HAILO_HEF_NOT_COMPATIBLE_WITH_DEVICE          /*!< HEF file is not compatible with device. */)\
 
 typedef enum {
 #define HAILO_STATUS__X(value, name) name = value,
@@ -430,6 +433,7 @@ typedef enum hailo_device_architecture_e {
     HAILO_ARCH_HAILO15L,
     HAILO_ARCH_HAILO15M,
     HAILO_ARCH_HAILO10H,
+    HAILO_ARCH_MARS,
 
     /** Max enum value to maintain ABI Integrity */
     HAILO_ARCH_MAX_ENUM = HAILO_MAX_ENUM
@@ -516,6 +520,8 @@ typedef struct {
     uint8_t unit_level_tracking_id[HAILO_UNIT_LEVEL_TRACKING_BYTES_LENGTH];
     /** Hailo device pm values */
     uint8_t soc_pm_values[HAILO_SOC_PM_VALUES_BYTES_LENGTH]; 
+    /** Hailo device GPIO mask values */
+    uint16_t gpio_mask;
 } hailo_extended_device_information_t;
 
 /** Endianness (byte order) */
@@ -641,7 +647,7 @@ typedef enum {
      * Deprecated. Should use HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS, HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE (user formats)
      * or HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP (device format) instead.
      */
-    HAILO_FORMAT_ORDER_HAILO_NMS                        = 9,    // TODO: HRT-15612
+    HAILO_FORMAT_ORDER_HAILO_NMS                        = 9,
 
     /**
      * - Not used for host side
@@ -775,6 +781,7 @@ typedef enum {
      *
      *
      *      Maximum amount of bboxes is ::hailo_nms_shape_t.max_bboxes_total.
+     *      It is possible to use ::hailo_detections_t to parse the data.
      *
      * - Not used for device side
      */
@@ -1300,28 +1307,14 @@ typedef enum {
     HAILO_BURST_TYPE_COUNT
 } hailo_nms_burst_type_t;
 
-/** NMS result order */
-typedef enum {
-    HAILO_NMS_RESULT_ORDER_HW = 0,
-    HAILO_NMS_RESULT_ORDER_BY_CLASS,
-    HAILO_NMS_RESULT_ORDER_BY_SCORE,
-} hailo_nms_result_order_type_t;
-
 /** NMS Internal HW Info */
 typedef struct {
     /** Amount of NMS classes */
     uint32_t number_of_classes;
-    union
-    {
-        /** Maximum amount of bboxes per nms class
-        * Valid when order_type is 'HAILO_NMS_RESULT_ORDER_BY_CLASS', 'HAILO_NMS_RESULT_ORDER_HW'
-        */
-        uint32_t max_bboxes_per_class;
-        /** Maximum amount of total bboxes
-        * Valid when order_type is 'HAILO_NMS_RESULT_ORDER_BY_SCORE'
-        */
-        uint32_t max_bboxes_total;
-    };
+    /** Maximum amount of bboxes per nms class */
+    uint32_t max_bboxes_per_class;
+    /** Maximum amount of total bboxes */
+    uint32_t max_bboxes_total;
     /** Internal usage */
     uint32_t bbox_size;
     /** Internal usage */
@@ -1332,8 +1325,6 @@ typedef struct {
     uint32_t burst_size;
     /** NMS burst type */
     hailo_nms_burst_type_t burst_type;
-    /** Order of NMS results **/
-    hailo_nms_result_order_type_t order_type;
 } hailo_nms_info_t;
 
 /** NMS Fuse Input */
@@ -1347,24 +1338,15 @@ typedef struct {
 typedef struct {
     /** Amount of NMS classes */
     uint32_t number_of_classes;
-    union
-    {
-        /** Maximum amount of bboxes per nms class
-        * Valid when order_type is 'HAILO_NMS_RESULT_ORDER_BY_CLASS', 'HAILO_NMS_RESULT_ORDER_HW'
-        */
-        uint32_t max_bboxes_per_class;
-        /** Maximum amount of total bboxes
-        * Valid when order_type is 'HAILO_NMS_RESULT_ORDER_BY_SCORE'
-        */
-        uint32_t max_bboxes_total;
-    };
+    /** Maximum amount of bboxes per nms class */
+    uint32_t max_bboxes_per_class;
+    /** Maximum amount of total bboxes */
+    uint32_t max_bboxes_total;
     /** Maximum accumulated mask size for all of the detections in a frame.
      *  Used only with 'HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK' format order.
      *  The default value is (`input_image_size` * 2)
      */
     uint32_t max_accumulated_mask_size;
-    /** Order of NMS results **/
-    hailo_nms_result_order_type_t order_type;
 } hailo_nms_shape_t;
 
 #pragma pack(push, 1)
@@ -1399,6 +1381,22 @@ typedef struct {
     float32_t score;
     uint16_t class_id;
 } hailo_detection_t;
+
+#if defined(_MSC_VER)
+// TODO: warning C4200
+#pragma warning(push)
+#pragma warning(disable: 4200)
+#endif
+typedef struct {
+    /** Number of detections */
+    uint16_t count;
+
+    /** Array of detections (it's size is determined by count field) */
+    hailo_detection_t detections[0];
+} hailo_detections_t;
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 typedef struct {
     /** Detection's box coordinates */
@@ -1554,16 +1552,16 @@ typedef enum {
 
 typedef struct {
     /**
-     * Sets the batch size of the InferModel.
-     * This parameter determines the number of frames that be sent for inference in a single batch.
+     * This parameter determines the number of frames that will be sent for inference in a single batch.
      * If a scheduler is enabled, this parameter determines the 'burst size' - the max number of frames after which the scheduler will attempt
      *  to switch to another model.
+     * If scheduler is disabled, the number of frames for inference should be a multiplication of batch_size (unless model is in single context).
      *
      * User is advised to modify this (single network parameter) or @a hailo_configure_network_group_params_t batch size parameter. Not both.
      * In case user wishes to work with the same batch size for all networks inside a network group, user is advised to set batch_size in @a hailo_configure_network_group_params_t.
      * In case user wished to work with batch size per network, user is advised to use this parameter.
 
-     * note: Default value is @a HAILO_DEFAULT_BATCH_SIZE - means automatic batch determined by hailort.
+     * @note The default value is @a HAILO_DEFAULT_BATCH_SIZE - which means the batch is determined by HailoRT automatically.
      */
     uint16_t batch_size;
 } hailo_network_parameters_t;
@@ -1671,10 +1669,6 @@ typedef struct {
 
 /** Health monitor - Dataflow shutdown notification message */
 typedef struct {
-    /** Bit mask of closed input streams indices */
-    uint32_t closed_input_streams;
-    /** Bit mask of closed output streams indices */
-    uint32_t closed_output_streams;
     float32_t ts0_temperature;
     float32_t ts1_temperature;
 } hailo_health_monitor_dataflow_shutdown_notification_message_t;
@@ -1715,6 +1709,27 @@ typedef struct {
 typedef struct {
     uint32_t memory_bitmap;
 } hailo_health_monitor_cpu_ecc_notification_message_t;
+
+typedef struct {
+    // In percentage
+    float32_t cpu_utilization;
+    // In bytes
+    int64_t ram_size_total;
+    // In bytes
+    int64_t ram_size_used;
+    // In percentage
+    float32_t nnc_utilization;
+    // Per second
+    int32_t ddr_noc_total_transactions;
+    // In percentage
+    int32_t dsp_utilization;
+} hailo_performance_stats_t;
+
+typedef struct {
+    float32_t on_die_temperature;
+    float32_t on_die_voltage;
+    int32_t startup_bist_mask;
+} hailo_health_stats_t;
 
 /** Context switch - breakpoint reached notification message */
 typedef struct {

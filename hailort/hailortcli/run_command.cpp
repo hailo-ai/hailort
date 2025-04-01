@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -131,7 +131,8 @@ static void add_run_command_params(CLI::App *run_subcommand, inference_runner_pa
         ->excludes(frames_count);
     auto total_batch_size = run_subcommand->add_option("--batch-size", params.batch_size,
         "Inference batch (should be a divisor of --frames-count if provided).\n"
-        "This batch applies to the whole network_group. for differential batch per network, see --net-batch-size")
+        "This batch applies to the whole network_group. for differential batch per network, see --net-batch-size.\n"
+        "The default value is HAILO_DEFAULT_BATCH_SIZE - which means the batch is determined by HailoRT automatically")
         ->check(CLI::NonNegativeNumber)
         ->default_val(HAILO_DEFAULT_BATCH_SIZE);
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -452,6 +452,24 @@ public:
     virtual Expected<hailo_chip_temperature_info_t> get_chip_temperature();
 
     /**
+     * Gets health stats of the Hailo device.
+     *
+     * @return Upon success, returns @a hailo_health_stats_t, containing health information.
+     *         Otherwise, returns a ::hailo_status error.
+     * @note Supported only on Hailo-10/Hailo-15 devices running on Linux.
+     */
+    virtual Expected<hailo_health_stats_t> query_health_stats();
+
+    /**
+     * Gets performance stats of the Hailo device, and of the system it is connected to.
+     *
+     * @return Upon success, returns @a hailo_performance_stats_t, containing performance information.
+     *         Otherwise, returns a ::hailo_status error.
+     * @note Supported only on Hailo-10/Hailo-15 devices running on Linux.
+     */
+    virtual Expected<hailo_performance_stats_t> query_performance_stats();
+
+    /**
      * Reset device.
      * 
      * @param[in] mode      The mode of the reset.
@@ -797,6 +815,10 @@ public:
     hailo_status continue_context_switch_breakpoint(uint8_t breakpoint_id);
     hailo_status clear_context_switch_breakpoint(uint8_t breakpoint_id);
     Expected<uint8_t> get_context_switch_breakpoint_status(uint8_t breakpoint_id);
+
+    virtual hailo_status before_fork() = 0;
+    virtual hailo_status after_fork_in_parent() = 0;
+    virtual hailo_status after_fork_in_child() = 0;
 
     virtual ~Device() = default;
     Device(const Device &) = delete;

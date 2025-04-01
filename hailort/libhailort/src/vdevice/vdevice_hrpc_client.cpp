@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -16,65 +16,85 @@
 namespace hailort
 {
 
-Expected<std::string> VDeviceHrpcClient::get_device_id(const hailo_vdevice_params_t &params)
+Expected<std::vector<std::string>> VDeviceHrpcClient::get_device_ids(const hailo_vdevice_params_t &params)
 {
     // TODO: Validate the chosen device-id is of the requested type (eiter soc-acc or nnc-acc)?
-    std::string device_id;
-    if (nullptr != params.device_ids) {
-        return std::string(params.device_ids[0].id);
-    } else {
+    if (nullptr == params.device_ids) {
         auto acc_type = HailoRTDriver::AcceleratorType::SOC_ACCELERATOR;
 
         // If forcing hrpc service, we assume here that there is a NNC-acc connected as we use sockets
         if (VDevice::should_force_hrpc_client()) {
             acc_type = HailoRTDriver::AcceleratorType::NNC_ACCELERATOR;
         }
-
-        TRY(auto scan_results, HailoRTDriver::scan_devices(acc_type));
-        CHECK_AS_EXPECTED(scan_results.size() > 0, HAILO_OUT_OF_PHYSICAL_DEVICES, "No devices found");
-
-        return std::string(scan_results[0].device_id);
+        TRY(auto device_infos, HailoRTDriver::scan_devices(acc_type));
+        std::vector<std::string> device_ids;
+        device_ids.reserve(device_infos.size());
+        for (const auto &device_info : device_infos) {
+            device_ids.push_back(device_info.device_id);
+        }
+        return device_ids;
+    } else {
+        std::vector<std::string> device_ids;
+        device_ids.reserve(params.device_count);
+        for (uint32_t i = 0; i < params.device_count; i++) {
+            device_ids.push_back(std::string(params.device_ids[i].id));
+        }
+        return device_ids;
     }
+}
+
+Expected<std::tuple<std::shared_ptr<Client>, rpc_object_handle_t>>
+VDeviceHrpcClient::create_available_vdevice(const std::vector<std::string> &device_ids, const hailo_vdevice_params_t &params)
+{
+    const bool is_user_specific_devices = (params.device_ids != nullptr);
+
+    for (const auto &device_id : device_ids) {
+        auto client = make_shared_nothrow<Client>(device_id);
+        CHECK_NOT_NULL(client, HAILO_INTERNAL_FAILURE);
+
+        auto status = client->connect();
+        CHECK_SUCCESS(status, "Failed to connect to server");
+
+        TRY(auto request_buffer, client->allocate_request_buffer(), "Failed to allocate request buffer");
+        TRY(auto request_size, CreateVDeviceSerializer::serialize_request(params, MemoryView(*request_buffer)));
+        TRY(auto result, client->execute_request(HailoRpcActionID::VDEVICE__CREATE, MemoryView(request_buffer->data(), request_size)));
+        TRY(auto tuple, CreateVDeviceSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size)));
+        status = std::get<0>(tuple);
+        if (!is_user_specific_devices && (HAILO_DEVICE_IN_USE == status)) {
+            continue;
+        }
+        CHECK_SUCCESS(status);
+        
+        return std::make_tuple(client, std::get<1>(tuple)); // Only single device is supported
+    }
+
+    LOGGER__ERROR("Failed to create vdevice. there are not enough free devices. requested: 1, found: 0");
+    return make_unexpected(HAILO_OUT_OF_PHYSICAL_DEVICES);
 }
 
 Expected<std::unique_ptr<VDevice>> VDeviceHrpcClient::create(const hailo_vdevice_params_t &params)
 {
-    CHECK_AS_EXPECTED(params.device_count == 1, HAILO_OUT_OF_PHYSICAL_DEVICES, "Only single device is supported!");
+    CHECK(params.device_count == 1, HAILO_OUT_OF_PHYSICAL_DEVICES, "Only single device is supported!");
 
-    TRY(auto device_id, get_device_id(params));
-    auto client = make_shared_nothrow<Client>(device_id);
-    CHECK_NOT_NULL(client, HAILO_INTERNAL_FAILURE);
-
-    auto status = client->connect();
-    CHECK_SUCCESS_AS_EXPECTED(status, "Failed to connect to server");
-
-    auto callbacks_dispatcher = make_shared_nothrow<CallbacksDispatcher>();
-    CHECK_NOT_NULL_AS_EXPECTED(callbacks_dispatcher, HAILO_OUT_OF_HOST_MEMORY);
+    TRY(auto device_ids, get_device_ids(params));
+    TRY(auto tuple, create_available_vdevice(device_ids, params));
+    auto client = std::get<0>(tuple);
 
     client->register_custom_reply(HailoRpcActionID::CALLBACK_CALLED,
-    [callbacks_dispatcher] (const MemoryView &serialized_reply, RpcConnection connection) -> hailo_status {
-        TRY(auto tuple, CallbackCalledSerializer::deserialize_reply(serialized_reply));
-        auto callback_status = std::get<0>(tuple);
-        auto callback_handle_id = std::get<1>(tuple);
-        auto cim_handle = std::get<2>(tuple);
-
-        auto status = callbacks_dispatcher->at(cim_handle)->push_callback(callback_status, callback_handle_id, connection);
+    [callback_dispatcher_manager = client->callback_dispatcher_manager()] (const MemoryView &serialized_reply, RpcConnection connection) -> hailo_status {
+        TRY(auto rpc_callback, CallbackCalledSerializer::deserialize_reply(serialized_reply));
+        auto status = callback_dispatcher_manager->at(rpc_callback.dispatcher_id)->trigger_callback(rpc_callback, connection);
         CHECK_SUCCESS(status);
 
         return HAILO_SUCCESS;
     });
 
-    TRY(auto request, CreateVDeviceSerializer::serialize_request(params));
-    TRY(auto result, client->execute_request(HailoRpcActionID::VDEVICE__CREATE, MemoryView(request)));
-    TRY(auto tuple, CreateVDeviceSerializer::deserialize_reply(MemoryView(result)));
-    status = std::get<0>(tuple);
-    CHECK_SUCCESS_AS_EXPECTED(status);
-
+    auto device_id = client->device_id();
     TRY(auto device, PcieDeviceHrpcClient::create(device_id, client));
 
     auto vdevice_handle = std::get<1>(tuple);
-    auto vdevice_client = make_unique_nothrow<VDeviceHrpcClient>(std::move(client), vdevice_handle, callbacks_dispatcher,
-        std::move(device), device_id);
+    auto vdevice_client = make_unique_nothrow<VDeviceHrpcClient>(params, std::move(client), vdevice_handle,
+        client->callback_dispatcher_manager(), std::move(device), device_id);
     CHECK_NOT_NULL(vdevice_client, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::unique_ptr<VDevice>(std::move(vdevice_client));
@@ -86,42 +106,46 @@ VDeviceHrpcClient::~VDeviceHrpcClient()
         return;
     }
 
-    auto request = DestroyVDeviceSerializer::serialize_request(m_handle);
-    if (!request) {
+    auto request_buffer = m_client->allocate_request_buffer();
+    if (!request_buffer) {
+        LOGGER__CRITICAL("Failed to create buffer for VDevice_release request");
+        return;
+    }
+
+    auto request_size = DestroyVDeviceSerializer::serialize_request(m_handle, MemoryView(**request_buffer));
+    if (!request_size) {
         LOGGER__CRITICAL("Failed to serialize VDevice_release request");
         return;
     }
 
-    auto result = m_client->execute_request(HailoRpcActionID::VDEVICE__DESTROY, MemoryView(*request));
-    if (!result) {
-        LOGGER__CRITICAL("Failed to destroy VDevice! status = {}", result.status());
+    auto result_expected = m_client->execute_request(HailoRpcActionID::VDEVICE__DESTROY, MemoryView(request_buffer.value()->data(), *request_size));
+    if (!result_expected) {
+        LOGGER__CRITICAL("Failed to destroy VDevice! status = {}", result_expected.status());
         return;
     }
+    auto result = result_expected.release();
 
-    if (HAILO_SUCCESS != DestroyVDeviceSerializer::deserialize_reply(MemoryView(*result))) {
-        LOGGER__CRITICAL("Failed to destroy VDevice! status = {}", result.status());
+    auto status = DestroyVDeviceSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
+    if (HAILO_SUCCESS != status) {
+        LOGGER__CRITICAL("Failed to destroy VDevice! status = {}", status);
     }
 }
 
 Expected<std::shared_ptr<InferModel>> VDeviceHrpcClient::create_infer_model(const MemoryView hef_buffer, const std::string &name)
 {
-    TRY(auto request, CreateInferModelSerializer::serialize_request(m_handle, hef_buffer.size(), name));
-    TRY(auto result, m_client->execute_request(HailoRpcActionID::VDEVICE__CREATE_INFER_MODEL,
-        MemoryView(request), [&hef_buffer] (RpcConnection connection) -> hailo_status {
-        // TODO: change write to accept uint64_t, or accept file stream instead or write in chunks
-        auto status = connection.write_buffer(hef_buffer);
-        CHECK_SUCCESS(status);
+    TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
 
-        return HAILO_SUCCESS;
-    }));
-    TRY(auto tuple, CreateInferModelSerializer::deserialize_reply(MemoryView(result)));
+    TRY(auto request_size, CreateInferModelSerializer::serialize_request(m_handle, hef_buffer.size(), name, MemoryView(*request_buffer)));
+    TRY(auto result, m_client->execute_request(HailoRpcActionID::VDEVICE__CREATE_INFER_MODEL,
+        MemoryView(request_buffer->data(), request_size), std::vector<TransferBuffer>{hef_buffer}));
+    TRY(auto tuple, CreateInferModelSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size)));
 
     CHECK_SUCCESS_AS_EXPECTED(std::get<0>(tuple));
     auto infer_model_handle = std::get<1>(tuple);
 
     TRY(auto hef, Hef::create(hef_buffer));
     TRY(auto infer_model, InferModelHrpcClient::create(std::move(hef), name, m_client, infer_model_handle, m_handle,
-        *this, m_callbacks_dispatcher));
+        *this, m_callback_dispatcher_manager));
 
     return std::shared_ptr<InferModel>(std::move(infer_model));
 }

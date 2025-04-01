@@ -9,6 +9,13 @@ message ProtoHEFHef {
     ProtoHEFIncludedFeatures included_features = 4;
     repeated ProtoHEFExtension extensions = 5;
     repeated ProtoHEFOptionalExtension optional_extensions = 6;
+    repeated ProtoHEFExternalResource external_resources = 7;
+}
+
+message ProtoHEFExternalResource {
+    uint64 offset = 1;
+    uint64 size = 2;
+    string name = 3;
 }
 
 message ProtoHEFIncludedFeatures {
@@ -53,6 +60,9 @@ enum ProtoHEFExtensionType {
     HAILO_NET_FLOW_YOLOV8_NMS = 27;
     BATCH_REGISTER_CONFIG = 28;
     HAILO_NET_FLOW_BBOX_DECODING = 29;
+    CCW_PTR_SQUEEZE = 30;
+    EXTERNAL_RESOURCES = 31;
+    SHARED_CONFIG = 32;
     UNUSED = 0XFFFF;
 }
 

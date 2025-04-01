@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -221,7 +221,6 @@ static hailo_nms_info_t fuse_nms_info(const std::vector<hailo_nms_info_t> &nms_i
     hailo_nms_info_t fused_info = nms_infos[0];
     fused_info.is_defused = false;
     fused_info.number_of_classes = 0;
-    fused_info.order_type = HAILO_NMS_RESULT_ORDER_HW;
     for (const auto &nms_info : nms_infos) {
         fused_info.number_of_classes += nms_info.number_of_classes;
         assert(nms_infos[0].max_bboxes_per_class == nms_info.max_bboxes_per_class);
@@ -743,13 +742,12 @@ Expected<std::shared_ptr<AsyncHwElement>> AsyncHwElement::create(const std::unor
     auto duration_collector = DurationCollector::create(elem_flags);
     CHECK_EXPECTED(duration_collector);
 
-    auto min_buffer_pool_size = net_group->get_min_buffer_pool_size();
-    CHECK_EXPECTED(min_buffer_pool_size);
+    TRY(auto queue_size, net_group->infer_queue_size());
 
     auto status = HAILO_UNINITIALIZED;
     auto elem_ptr = make_shared_nothrow<AsyncHwElement>(named_stream_infos, timeout, name,
         duration_collector.release(), std::move(pipeline_status), pipeline_direction, async_pipeline, net_group,
-        min_buffer_pool_size.release(), status);
+        queue_size, status);
     CHECK_AS_EXPECTED(nullptr != elem_ptr, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status);
 

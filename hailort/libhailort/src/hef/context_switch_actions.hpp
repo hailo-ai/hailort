@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -20,12 +20,12 @@
 
 #include "device_common/control_protocol.hpp"
 #include "context_switch_defs.h"
-#include "core_op/resource_manager/config_buffer.hpp"
 
 namespace hailort
 {
 
 
+class ResourcesManager;
 class ContextResources;
 struct EdgeLayer;
 #pragma pack(push, 1)
@@ -167,6 +167,8 @@ private:
     const uint8_t m_config_stream_index;
     const vdma::ChannelId m_channel_id;
 };
+
+class ConfigBuffer;
 
 class WriteDataCcwAction : public ContextSwitchConfigAction
 {
@@ -791,7 +793,7 @@ class ActivateCacheOutputChannelAction : public ContextSwitchConfigAction
 public:
     static Expected<ContextSwitchConfigActionPtr> create(const vdma::ChannelId &channel_id, uint8_t stream_index,
         uint8_t network_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
-        const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info);
+        const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info, uint16_t batch_size);
 
     virtual bool supports_repeated_block() const override;
     virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
@@ -799,13 +801,14 @@ public:
 private:
     ActivateCacheOutputChannelAction(const vdma::ChannelId &channel_id, uint8_t stream_index,
         uint8_t network_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
-        const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info);
+        const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info, uint16_t batch_size);
 
     const vdma::ChannelId m_channel_id;
     const uint8_t m_stream_index;
     const uint8_t m_network_index;
     const CONTROL_PROTOCOL__nn_stream_config_t m_nn_stream_config;
     const CONTROL_PROTOCOL__host_buffer_info_t m_host_buffer_info;
+    uint16_t m_batch_size;
 };
 
 class ValidateChannelAction : public ContextSwitchConfigAction

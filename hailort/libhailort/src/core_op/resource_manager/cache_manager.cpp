@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -69,11 +69,11 @@ bool CacheManager::validate_cache_ids(std::shared_ptr<CoreOpMetadata> core_op_me
     std::unordered_set<uint32_t> cache_ids;
     for (const auto &context_metadata : core_op_metadata->dynamic_contexts()) {
         for (const auto &layer_info : context_metadata.get_cache_input_layers()) {
-            cache_ids.insert(layer_info.cache_id);
+            cache_ids.insert(layer_info.cache_info.cache_id);
         }
 
         for (const auto &layer_info : context_metadata.get_cache_output_layers()) {
-            cache_ids.insert(layer_info.cache_id);
+            cache_ids.insert(layer_info.cache_info.cache_id);
         }
     }
 
@@ -103,7 +103,7 @@ ExpectedRef<std::unordered_map<uint32_t, CacheBuffer>> CacheManager::get_cache_b
     return std::ref(core_op_manager_it->second.get_cache_buffers());
 }
 
-ExpectedRef<IntermediateBuffer> CacheManager::set_cache_input_channel(const std::string &core_op_name,
+ExpectedRef<CacheBuffer> CacheManager::set_cache_input_channel(const std::string &core_op_name,
     uint32_t cache_id, uint16_t batch_size, vdma::ChannelId channel_id)
 {
     const auto core_op_manager_it = m_core_op_managers.find(core_op_name);
@@ -114,7 +114,7 @@ ExpectedRef<IntermediateBuffer> CacheManager::set_cache_input_channel(const std:
     return core_op_manager_it->second.set_cache_input_channel(cache_id, batch_size, channel_id);
 }
 
-ExpectedRef<IntermediateBuffer> CacheManager::set_cache_output_channel(const std::string &core_op_name,
+ExpectedRef<CacheBuffer> CacheManager::set_cache_output_channel(const std::string &core_op_name,
     uint32_t cache_id, uint16_t batch_size, vdma::ChannelId channel_id)
 {
     const auto core_op_manager_it = m_core_op_managers.find(core_op_name);
@@ -125,8 +125,7 @@ ExpectedRef<IntermediateBuffer> CacheManager::set_cache_output_channel(const std
     return core_op_manager_it->second.set_cache_output_channel(cache_id, batch_size, channel_id);
 }
 
-// TODO: Support write_offset_delta_entries in CacheManager::init_caches (HRT-14397)
-hailo_status CacheManager::init_caches(uint32_t initial_read_offset_entries, int32_t write_offset_delta_entries)
+hailo_status CacheManager::init_caches(uint32_t initial_read_offset_entries)
 {
     if (!m_caches_created) {
         // No cache layers found, nothing to do
@@ -135,12 +134,9 @@ hailo_status CacheManager::init_caches(uint32_t initial_read_offset_entries, int
     }
 
     CHECK(initial_read_offset_entries < m_cache_length, HAILO_INVALID_ARGUMENT);
-    CHECK(write_offset_delta_entries != 0, HAILO_INVALID_ARGUMENT);
-
     m_read_offset_entries = initial_read_offset_entries;
 
-    LOGGER__INFO("Initializing caches [read_offset={}, write_offset_delta={}]",
-        initial_read_offset_entries, write_offset_delta_entries);
+    LOGGER__INFO("Initializing caches @ read_offset={}", initial_read_offset_entries);
 
     static const auto INITIAL_CONFIGURATION_OFFSET = 0;
     return update_cache_offset(INITIAL_CONFIGURATION_OFFSET);
@@ -216,11 +212,17 @@ Expected<CoreOpCacheIoInfos> CacheManager::CoreOpManager::get_cache_ios_infos(
     CoreOpCacheIoInfos cache_inputs_info;
     for (const auto &context_metadata : core_op_metadata->dynamic_contexts()) {
         for (const auto &layer_info : (input ? context_metadata.get_cache_input_layers() : context_metadata.get_cache_output_layers())) {
-            const auto cache_id = layer_info.cache_id;
+            const auto cache_id = layer_info.cache_info.cache_id;
             CHECK(!contains(cache_inputs_info, cache_id), HAILO_INTERNAL_FAILURE,
                 "Duplicate cache_id found in cache input layers (cache_id {})", cache_id);
-            cache_inputs_info[cache_id].io_size = LayerInfoUtils::get_layer_transfer_size(layer_info);
             cache_inputs_info[cache_id].entry_size = layer_info.hw_shape.features;
+            if (!IS_POWEROF2(cache_inputs_info[cache_id].entry_size)) {
+                cache_inputs_info[cache_id].padded_entry_size = get_nearest_powerof_2(layer_info.hw_shape.features, vdma::MIN_SG_PAGE_SIZE);
+            } else {
+                cache_inputs_info[cache_id].padded_entry_size = cache_inputs_info[cache_id].entry_size;
+            }
+            cache_inputs_info[cache_id].io_size = (cache_inputs_info[cache_id].padded_entry_size *
+                layer_info.hw_shape.height * layer_info.hw_shape.width);
         }
     }
 
@@ -272,7 +274,7 @@ Expected<std::unordered_map<uint32_t, CacheBuffer>> CacheManager::CoreOpManager:
 
         TRY(auto backing_buffer, storage_manager.get_backing_buffer(cache_id, cache_info.size));
         TRY(auto cache_buffer, CacheBuffer::create(backing_buffer, cache_info.size, cache_info.input_size,
-            cache_info.output_size, cache_info.entry_size));
+            cache_info.output_size, cache_info.entry_size, cache_info.padded_entry_size));
         auto emplace_res = cache_buffers.emplace(cache_id, std::move(cache_buffer));
         CHECK(emplace_res.second, HAILO_INTERNAL_FAILURE);
     }
@@ -309,7 +311,7 @@ ExpectedRef<CacheBuffer> CacheManager::CoreOpManager::get_cache_buffer(uint32_t 
     return make_unexpected(HAILO_NOT_FOUND);
 }
 
-ExpectedRef<IntermediateBuffer> CacheManager::CoreOpManager::set_cache_input_channel(uint32_t cache_id,
+ExpectedRef<CacheBuffer> CacheManager::CoreOpManager::set_cache_input_channel(uint32_t cache_id,
     uint16_t batch_size, vdma::ChannelId channel_id)
 {
     CHECK(1 == batch_size, HAILO_INVALID_ARGUMENT, "Cache input batch size must be 1");
@@ -330,7 +332,7 @@ ExpectedRef<IntermediateBuffer> CacheManager::CoreOpManager::set_cache_input_cha
     return result;
 }
 
-ExpectedRef<IntermediateBuffer> CacheManager::CoreOpManager::set_cache_output_channel(uint32_t cache_id,
+ExpectedRef<CacheBuffer> CacheManager::CoreOpManager::set_cache_output_channel(uint32_t cache_id,
     uint16_t batch_size, vdma::ChannelId channel_id)
 {
     CHECK(1 == batch_size, HAILO_INVALID_ARGUMENT, "Cache output batch size must be 1");
@@ -360,9 +362,9 @@ hailo_status CacheManager::CoreOpManager::validate_cache_update(const CacheBuffe
     const CacheBuffer::Snapshot &curr_snapshot, const CacheBuffer::Snapshot &prev_snapshot, bool require_changes)
 {
     const auto curr_write_offset_start = (curr_snapshot.read_offset() + cache_buffer.input_length()) % cache_buffer.cache_length();
-    const auto curr_write_offset_start_bytes = curr_write_offset_start * cache_buffer.entry_size();
+    const auto curr_write_offset_start_bytes = curr_write_offset_start * cache_buffer.padded_entry_size();
     const auto curr_write_offset_end = (curr_write_offset_start + cache_buffer.output_length()) % cache_buffer.cache_length();
-    const auto curr_write_offset_end_bytes = curr_write_offset_end * cache_buffer.entry_size();
+    const auto curr_write_offset_end_bytes = curr_write_offset_end * cache_buffer.padded_entry_size();
 
     if (curr_write_offset_end > curr_write_offset_start) {
         return validate_non_wrapping_update(cache_id, curr_snapshot, prev_snapshot,

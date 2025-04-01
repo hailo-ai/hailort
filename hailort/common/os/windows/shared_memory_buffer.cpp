@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file shared_memory_buffer.cpp
  * @brief Shared memory implementaion in Windows. 
@@ -22,11 +22,11 @@ Expected<SharedMemoryBufferPtr> SharedMemoryBuffer::create(size_t size, const st
     HANDLE handle_map_file = CreateFileMapping(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
             static_cast<DWORD>(size), static_cast<LPCSTR>(shm_name.c_str()));
     CHECK_AS_EXPECTED((handle_map_file != nullptr), HAILO_INTERNAL_FAILURE, "Failed to create shared memory object, error = {}", GetLastError());
-    
+
     auto shm_fd = FileDescriptor(handle_map_file);
     TRY(auto mmapped_buffer, MmapBuffer<void>::create_file_map(size, shm_fd, 0));
 
-    auto result = make_shared_nothrow<SharedMemoryBuffer>(shm_name, std::move(shm_fd), std::move(mmapped_buffer), true);
+    auto result = make_shared_nothrow<SharedMemoryBuffer>(shm_name, std::move(mmapped_buffer), true);
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
 
     return result;
@@ -40,7 +40,7 @@ Expected<SharedMemoryBufferPtr> SharedMemoryBuffer::open(size_t size, const std:
     auto shm_fd = FileDescriptor(handle_map_file);
     TRY(auto mmapped_buffer, MmapBuffer<void>::create_file_map(size, shm_fd, 0));
 
-    auto result = make_shared_nothrow<SharedMemoryBuffer>(shm_name, std::move(shm_fd), std::move(mmapped_buffer), false);
+    auto result = make_shared_nothrow<SharedMemoryBuffer>(shm_name, std::move(mmapped_buffer), false);
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
 
     return result;

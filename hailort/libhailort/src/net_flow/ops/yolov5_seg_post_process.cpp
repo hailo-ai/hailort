@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -273,26 +273,26 @@ hailo_status Yolov5SegPostProcess::fill_nms_with_byte_mask_format(MemoryView &bu
 {
     auto status = HAILO_SUCCESS;
     const auto &nms_config = m_metadata->nms_config();
-    uint32_t ignored_detections_count = 0;
     uint16_t detections_count = 0;
     // The beginning of the output buffer will contain the detections_count first, here we save space for it.
     uint32_t buffer_offset = sizeof(detections_count);
+    // Note: Assuming the m_detections is sorted by score (it's done in remove_overlapping_boxes())
     for (auto &detection : m_detections) {
         if (REMOVED_CLASS_SCORE == detection.m_bbox.score) {
-            // Detection was removed in remove_overlapping_boxes()
-            continue;
-        }
-        if (0 == m_classes_detections_count[detection.m_class_id]) {
-            // This class' detections count is higher then m_nms_config.max_proposals_per_class.
-            // This detection is ignored due to having lower score (detections vector is sorted by score).
+            // Detection overlapped with a higher score detection and removed in remove_overlapping_boxes()
             continue;
         }
 
-        // If class's detections count is higher then max_proposals_per_class we set the detection count of that class to the max
-        // and ignore the rest by reducing the m_classes_detections_count[detection.m_class_id] after copying the bbox to result buffer.
-        if (nms_config.max_proposals_per_class < m_classes_detections_count[detection.m_class_id]) {
-            ignored_detections_count += (m_classes_detections_count[detection.m_class_id] - nms_config.max_proposals_per_class);
-            m_classes_detections_count[detection.m_class_id] = nms_config.max_proposals_per_class;
+        detections_count++;
+        uint32_t max_proposals_total = nms_config.max_proposals_total;
+        // TODO: HRT-15885 remove support for max_proposals_per_class in YOLOv5Seg
+        if (HailoRTCommon::is_nms_by_class(m_metadata->outputs_metadata().begin()->second.format.order)) {
+            max_proposals_total = nms_config.max_proposals_per_class * nms_config.number_of_classes;
+        }
+        if (detections_count > max_proposals_total) {
+            LOGGER__INFO("{} detections were ignored, due to `max_bboxes_total` defined as {}.",
+                detections_count - max_proposals_total, max_proposals_total);
+            break;
         }
 
         auto copied_bytes_amount = copy_detection_to_result_buffer(buffer, detection, buffer_offset);
@@ -302,16 +302,10 @@ hailo_status Yolov5SegPostProcess::fill_nms_with_byte_mask_format(MemoryView &bu
         }
         CHECK_EXPECTED_AS_STATUS(copied_bytes_amount); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
         buffer_offset += copied_bytes_amount.release();
-        detections_count++;
     }
 
     // Copy detections count to the beginning of the buffer
     *(uint16_t*)buffer.data() = detections_count;
-
-    if (0 != ignored_detections_count) {
-        LOGGER__INFO("{} Detections were ignored, due to `max_bboxes_per_class` defined as {}.",
-            ignored_detections_count, nms_config.max_proposals_per_class);
-    }
 
     return status;
 }

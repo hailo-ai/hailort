@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2023 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file vdevice_callbacks_queue.hpp
  * @brief Queue used for the callbacks in infer async over service.

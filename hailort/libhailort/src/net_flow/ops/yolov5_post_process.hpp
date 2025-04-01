@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -94,23 +94,13 @@ protected:
         DstType objectness, uint32_t padded_width)
     {
         const auto &nms_config = m_metadata->nms_config();
-
-        if (nms_config.cross_classes) {
-            // Pre-NMS optimization. If NMS checks IoU over different classes, only the maximum class is relevant
-            auto max_id_score_pair = get_max_class<DstType, SrcType>(data, entry_idx, class_start_idx, objectness, quant_info, padded_width);
-            bbox.score = max_id_score_pair.second;
-            check_threshold_and_add_detection(bbox, quant_info, max_id_score_pair.first,
+        for (uint32_t class_index = 0; class_index < nms_config.number_of_classes; class_index++) {
+            auto class_entry_idx = entry_idx + ((class_start_idx + class_index) * padded_width);
+            auto class_confidence = dequantize_and_sigmoid<DstType, SrcType>(
+                data[class_entry_idx], quant_info);
+            bbox.score = class_confidence * objectness;
+            check_threshold_and_add_detection(bbox, quant_info, class_index,
                 data, entry_idx, padded_width, objectness);
-        }
-        else {
-            for (uint32_t class_index = 0; class_index < nms_config.number_of_classes; class_index++) {
-                auto class_entry_idx = entry_idx + ((class_start_idx + class_index) * padded_width);
-                auto class_confidence = dequantize_and_sigmoid<DstType, SrcType>(
-                    data[class_entry_idx], quant_info);
-                bbox.score = class_confidence * objectness;
-                check_threshold_and_add_detection(bbox, quant_info, class_index,
-                    data, entry_idx, padded_width, objectness);
-            }
         }
     }
 

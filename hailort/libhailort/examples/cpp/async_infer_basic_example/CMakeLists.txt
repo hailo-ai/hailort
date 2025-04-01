@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5.0)
 
-find_package(HailoRT 4.20.1 EXACT REQUIRED)
+find_package(HailoRT 4.21.0 EXACT REQUIRED)
 
 add_executable(cpp_async_infer_basic_example async_infer_basic_example.cpp)
 target_link_libraries(cpp_async_infer_basic_example PRIVATE HailoRT::libhailort)

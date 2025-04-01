@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -62,11 +62,12 @@ uint32_t SgEdgeLayer::descs_count() const
 }
 
 Expected<uint32_t> SgEdgeLayer::program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
-    size_t desc_offset, size_t buffer_offset, bool should_bind)
+    size_t desc_offset, size_t buffer_offset, uint32_t batch_size, bool should_bind, uint32_t stride)
 {
     CHECK_SUCCESS(m_desc_list.program(*get_mapped_buffer(), transfer_size, buffer_offset, m_channel_id,
-        static_cast<uint32_t>(desc_offset), should_bind, last_desc_interrupts_domain));
-    return descriptors_in_buffer(transfer_size);
+        static_cast<uint32_t>(desc_offset), batch_size, should_bind,
+        last_desc_interrupts_domain, stride));
+    return descriptors_in_buffer(transfer_size) * batch_size;
 }
 
 }

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -44,7 +44,7 @@ Expected<PcieSession> PcieSession::create(std::shared_ptr<HailoRTDriver> driver,
     auto create_channel = [&](vdma::ChannelId id, vdma::BoundaryChannel::Direction dir, vdma::DescriptorList &&desc_list) {
         // TODO: HRT-15701 : remove 4
         return vdma::BoundaryChannel::create(*driver, id, dir, std::move(desc_list), *transfer_launcher,
-            MAX_ONGOING_TRANSFERS - 1, 4 * MAX_ONGOING_TRANSFERS, true);
+            4 * MAX_ONGOING_TRANSFERS, true);
     };
 
     TRY(auto input_channel, create_channel(input_channel_id, vdma::BoundaryChannel::Direction::H2D, std::move(input_desc_list)));
@@ -82,12 +82,22 @@ hailo_status PcieSession::read(void *buffer, size_t size, std::chrono::milliseco
 
 hailo_status PcieSession::write_async(const void *buffer, size_t size, std::function<void(hailo_status)> &&callback)
 {
-    return launch_transfer_async(*m_input, const_cast<void *>(buffer), size, std::move(callback));
+    return m_input->launch_transfer(to_request(const_cast<void *>(buffer), size, std::move(callback)));
+}
+
+hailo_status PcieSession::write_async(TransferRequest &&request)
+{
+    return m_input->launch_transfer(std::move(request));
 }
 
 hailo_status PcieSession::read_async(void *buffer, size_t size, std::function<void(hailo_status)> &&callback)
 {
-    return launch_transfer_async(*m_output, buffer, size, std::move(callback));
+    return m_output->launch_transfer(to_request(buffer, size, std::move(callback)));
+}
+
+hailo_status PcieSession::read_async(TransferRequest &&request)
+{
+    return m_output->launch_transfer(std::move(request));
 }
 
 hailo_status PcieSession::close()
@@ -142,7 +152,7 @@ hailo_status PcieSession::launch_transfer_sync(vdma::BoundaryChannel &channel,
         cb_params.cv.notify_one();
     };
 
-    auto status = launch_transfer_async(channel, buffer, size, std::move(callback));
+    auto status = channel.launch_transfer(to_request(buffer, size, callback));
     if (HAILO_STREAM_ABORT == status) {
         return status;
     }
@@ -152,17 +162,6 @@ hailo_status PcieSession::launch_transfer_sync(vdma::BoundaryChannel &channel,
     CHECK(cb_params.cv.wait_for(lock, timeout, [&] { return cb_params.status != HAILO_UNINITIALIZED; }),
         HAILO_TIMEOUT, "Timeout waiting for transfer completion");
     return cb_params.status;
-}
-
-hailo_status PcieSession::launch_transfer_async(vdma::BoundaryChannel &channel,
-    void *buffer, size_t size, std::function<void(hailo_status)> &&callback)
-{
-    TransferRequest request{
-        {TransferBuffer(MemoryView(buffer, size))},
-        std::move(callback)
-    };
-
-    return channel.launch_transfer(std::move(request));
 }
 
 Expected<vdma::DescriptorList> PcieSession::create_desc_list(HailoRTDriver &driver)

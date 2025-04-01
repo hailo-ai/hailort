@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -22,10 +22,11 @@ namespace vdma {
 class VdmaEdgeLayer {
 public:
 
-    enum class Type {
-        SCATTER_GATHER,
-        CONTINUOUS
-    };
+    using Type = VdmaBuffer::Type;
+
+    static Expected<std::unique_ptr<VdmaEdgeLayer>> create(HailoRTDriver &driver,
+        std::shared_ptr<vdma::VdmaBuffer> backing_buffer, size_t buffer_offset, size_t size,
+        uint16_t desc_page_size, uint32_t total_desc_count, bool is_circular, ChannelId channel_id);
 
     virtual ~VdmaEdgeLayer() = default;
 
@@ -60,7 +61,7 @@ public:
     hailo_status write(const void *buf_src, size_t count, size_t offset);
 
     virtual Expected<uint32_t> program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
-        size_t desc_offset, size_t buffer_offset = 0, bool should_bind = false) = 0;
+        size_t desc_offset, size_t buffer_offset = 0, uint32_t batch_size = 1, bool should_bind = false, uint32_t stride = 0) = 0;
 
     CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info(uint32_t transfer_size);
     static CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info(Type type, uint64_t dma_address,

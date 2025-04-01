@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -89,7 +89,7 @@ public:
         std::shared_ptr<PipelineElement> final_elem, const uint32_t final_elem_source_index = 0);
     static Expected<std::shared_ptr<FillNmsFormatElement>> add_fill_nms_format_element(std::shared_ptr<AsyncPipeline> async_pipeline,
         const std::string &output_stream_name, uint8_t stream_index, const std::string &element_name, const net_flow::PostProcessOpMetadataPtr &op_metadata,
-        std::shared_ptr<PipelineElement> final_elem, const uint32_t final_elem_source_index = 0);
+        std::shared_ptr<PipelineElement> final_elem, const hailo_format_order_t &dst_format_order, const uint32_t final_elem_source_index = 0);
     static Expected<std::shared_ptr<PixBufferElement>> create_multi_plane_splitter_element(const std::string &input_name,
         hailo_format_order_t order, std::shared_ptr<std::atomic<hailo_status>> pipeline_status, std::shared_ptr<AsyncPipeline> async_pipeline);
 

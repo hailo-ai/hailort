@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -296,6 +296,7 @@ hailo_status CoreOpsScheduler::set_priority(const scheduler_core_op_handle_t &co
 
 hailo_status CoreOpsScheduler::bind_buffers()
 {
+    hailo_status status = HAILO_SUCCESS;
     // For now, binding buffers will take place only on one device
     if (m_devices.size() > 1) {
         return HAILO_SUCCESS;
@@ -312,11 +313,15 @@ hailo_status CoreOpsScheduler::bind_buffers()
 
         TRY(auto infer_request, m_infer_requests.at(core_op_pair.first).dequeue());
         TRY(auto vdma_core_op, get_vdma_core_op(core_op_pair.first, m_devices.begin()->second->device_id));
-        CHECK_SUCCESS(vdma_core_op->bind_buffers(infer_request.transfers));
+        status = (vdma_core_op->bind_buffers(infer_request.transfers));
         m_bounded_infer_requests[core_op_pair.first].enqueue(std::move(infer_request));
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to bind buffers for core op {}", core_op_pair.first);
+            return status;
+        }
     }
 
-    return HAILO_SUCCESS;
+    return status;
 }
 
 hailo_status CoreOpsScheduler::optimize_streaming_if_enabled(const scheduler_core_op_handle_t &core_op_handle)
@@ -328,10 +333,12 @@ hailo_status CoreOpsScheduler::optimize_streaming_if_enabled(const scheduler_cor
             next_pair = m_devices.begin();
         }
         auto &device_info = next_pair->second;
+        // if HAILO_DISABLE_IDLE_OPT_ENV_VAR then we want the burst size to be the threshold
+        auto burst_size = is_env_variable_on(HAILO_DISABLE_IDLE_OPT_ENV_VAR)? scheduled_core_op->get_threshold() : DEFAULT_BURST_SIZE;
         if (device_info->current_core_op_handle == core_op_handle && !device_info->is_switching_core_op &&
             !CoreOpsSchedulerOracle::should_stop_streaming(*this, scheduled_core_op->get_priority(), device_info->device_id) &&
-            (get_frames_ready_to_transfer(core_op_handle, device_info->device_id) >= DEFAULT_BURST_SIZE)) {
-            auto status = send_all_pending_buffers(core_op_handle, device_info->device_id, DEFAULT_BURST_SIZE);
+            (get_frames_ready_to_transfer(core_op_handle, device_info->device_id) >= burst_size)) {
+            auto status = send_all_pending_buffers(core_op_handle, device_info->device_id, burst_size);
             CHECK_SUCCESS(status);
         }
     }

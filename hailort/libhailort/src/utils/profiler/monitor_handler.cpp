@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -11,11 +11,30 @@
 
 #include "common/logger_macros.hpp"
 #include "common/os_utils.hpp"
+#include "common/env_vars.hpp"
 
 namespace hailort
 {
 MonitorHandler::MonitorHandler()
-{}
+{
+    auto env_val = get_env_variable(SCHEDULER_MON_TIME_INTERVAL_IN_MILLISECONDS_ENV_VAR);
+    if (HAILO_SUCCESS == env_val.status()) {
+
+        std::stringstream ss(env_val.value());
+        int env_val_int = 0;
+        ss >> env_val_int;
+
+        // Check if the entire string was consumed and there were no errors
+        if (ss.fail() || !ss.eof()) {
+            LOGGER__WARNING("Failed to convert HAILO_MONITOR_TIME_INTERVAL env var to int, using default value {} sec", DEFAULT_SCHEDULER_MON_INTERVAL.count());
+            m_mon_interval = DEFAULT_SCHEDULER_MON_INTERVAL;
+            return;
+        }
+        m_mon_interval = std::chrono::milliseconds(static_cast<int>(env_val_int));
+    } else {
+        m_mon_interval = DEFAULT_SCHEDULER_MON_INTERVAL;
+    }
+}
 
 MonitorHandler::~MonitorHandler()
 {
@@ -188,10 +207,14 @@ hailo_status MonitorHandler::start_mon(const std::string &unique_vdevice_hash)
     CHECK_EXPECTED_AS_STATUS(tmp_file);
     m_mon_tmp_output = tmp_file.release();
 
+    auto tmp_nnc_utilization_file_exp = open_temp_nnc_utilization_file();
+    CHECK_EXPECTED_AS_STATUS(tmp_nnc_utilization_file_exp);
+    m_nnc_utilization_tmp_output = tmp_nnc_utilization_file_exp.release();
+
     m_mon_thread = std::thread([this] ()
     {
         while (true) {
-            auto status = m_mon_shutdown_event->wait(DEFAULT_SCHEDULER_MON_INTERVAL);
+            auto status = m_mon_shutdown_event->wait(m_mon_interval);
             if (HAILO_TIMEOUT == status) {
                 dump_state();
             } else if (HAILO_SUCCESS == status) {
@@ -227,6 +250,33 @@ Expected<std::shared_ptr<TempFile>> MonitorHandler::open_temp_mon_file()
     CHECK_AS_EXPECTED(nullptr != tmp_file_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return tmp_file_ptr;
+}
+
+Expected<std::shared_ptr<TempFile>> MonitorHandler::open_temp_nnc_utilization_file()
+{
+    auto tmp_file = TempFile::create(NNC_UTILIZATION_FILE_NAME, NNC_UTILIZATION_TMP_DIR);
+    CHECK_EXPECTED(tmp_file);
+
+    auto tmp_file_ptr = make_shared_nothrow<TempFile>(tmp_file.release());
+    CHECK_AS_EXPECTED(nullptr != tmp_file_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+    return tmp_file_ptr;
+}
+
+void MonitorHandler::write_utilization_to_file(const double utilization_percentage)
+{
+    auto locked_file = LockedFile::create(m_nnc_utilization_tmp_output->name(), "w");
+    if (locked_file.status() != HAILO_SUCCESS) {
+        LOGGER__ERROR("Failed to open and lock file {}, with status: {}", m_nnc_utilization_tmp_output->name(), locked_file.status());
+        return;
+    }
+
+    std::string utilization_percentage_str = std::to_string(utilization_percentage) + "\n";
+    auto ret = write(locked_file->get_fd(), utilization_percentage_str.c_str(), utilization_percentage_str.size());
+    if (-1 == ret) {
+        LOGGER__ERROR("Failed to write nnc utilization file, errno={}", errno);
+        return;
+    }
 }
 
 void MonitorHandler::dump_state()
@@ -270,6 +320,9 @@ void MonitorHandler::log_monitor_device_infos(ProtoMon &mon)
     for (auto const &device_info_pair : m_devices_info) {
         auto curr_device_utilization = device_info_pair.second.device_utilization_duration;
         auto utilization_percentage = ((curr_device_utilization * 100) /  m_last_measured_time_duration);
+#if defined(__GNUC__)
+        write_utilization_to_file(utilization_percentage);
+#endif
 
         auto device_infos = mon.add_device_infos();
         device_infos->set_device_id(device_info_pair.second.device_id);

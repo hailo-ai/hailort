@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -137,36 +137,18 @@ private:
         for (uint32_t row = 0; row < cls_shape.height; row++) {
             for (uint32_t col = 0; col < cls_shape.width; col++) {
                 auto cls_idx = (cls_row_size * row) + col;
-
-                if (nms_config.cross_classes) {
-                    // Pre-NMS optimization. If NMS checks IoU over different classes, only the maximum class is relevant
-                    auto max_id_score_pair = get_max_class<DstType, SrcType>(cls_data, cls_idx, CLASSES_START_INDEX,
-                        NO_OBJECTNESS, cls_quant_info, cls_padded_shape.width);
-                    if (max_id_score_pair.second >= nms_config.nms_score_th) {
+                for (uint32_t curr_class_idx = 0; curr_class_idx < nms_config.number_of_classes; curr_class_idx++) {
+                    auto class_entry_idx = cls_idx + (curr_class_idx * cls_padded_shape.width);
+                    auto class_confidence = Quantization::dequantize_output<DstType, SrcType>(
+                        cls_data[class_entry_idx], cls_quant_info);
+                    if (class_confidence >= nms_config.nms_score_th) {
                         // If passes threshold - get the relevant bbox and add this detection
                         assert(contains(m_d_matrix, layers_names.reg));
                         auto &d_matrix = m_d_matrix.at(layers_names.reg);
                         auto bbox = get_bbox<DstType, SrcType>(row, col, stride, reg_padded_shape, reg_shape, reg_quant_info,
-                                                                (SrcType*)reg_data, d_matrix, max_id_score_pair.second);
-                        m_detections.emplace_back(DetectionBbox(bbox, max_id_score_pair.first));
-                        m_classes_detections_count[max_id_score_pair.first]++;
-                    }
-                }
-                else {
-                    // No optimization - it's possible that a specific bbox will hold more then 1 class
-                    for (uint32_t curr_class_idx = 0; curr_class_idx < nms_config.number_of_classes; curr_class_idx++) {
-                        auto class_entry_idx = cls_idx + (curr_class_idx * cls_padded_shape.width);
-                        auto class_confidence = Quantization::dequantize_output<DstType, SrcType>(
-                            cls_data[class_entry_idx], cls_quant_info);
-                        if (class_confidence >= nms_config.nms_score_th) {
-                            // If passes threshold - get the relevant bbox and add this detection
-                            assert(contains(m_d_matrix, layers_names.reg));
-                            auto &d_matrix = m_d_matrix.at(layers_names.reg);
-                            auto bbox = get_bbox<DstType, SrcType>(row, col, stride, reg_padded_shape, reg_shape, reg_quant_info,
-                                                                    (SrcType*)reg_data, d_matrix, class_confidence);
-                            m_detections.emplace_back(DetectionBbox(bbox, curr_class_idx));
-                            m_classes_detections_count[curr_class_idx]++;
-                        }
+                                                                (SrcType*)reg_data, d_matrix, class_confidence);
+                        m_detections.emplace_back(DetectionBbox(bbox, curr_class_idx));
+                        m_classes_detections_count[curr_class_idx]++;
                     }
                 }
             }

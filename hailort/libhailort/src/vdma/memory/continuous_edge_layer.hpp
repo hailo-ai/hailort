@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -40,7 +40,7 @@ public:
     virtual uint32_t descs_count() const override;
 
     virtual Expected<uint32_t> program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
-        size_t desc_offset, size_t buffer_offset = 0, bool should_bind = false) override;
+        size_t desc_offset, size_t buffer_offset = 0, uint32_t batch_size = 1, bool should_bind = false, uint32_t stride = 0) override;
 
 private:
     ContinuousEdgeLayer(std::shared_ptr<ContinuousBuffer> &&buffer, size_t size, size_t offset,

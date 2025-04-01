@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file mon_command.hpp
  * @brief Monitor of networks - Presents information about the running networks
@@ -32,12 +32,12 @@ public:
 private:
     hailo_status run_monitor();
     hailo_status print_tables(const std::vector<ProtoMon> &mon_messages, uint32_t terminal_line_width);
-    void print_devices_info_header();
-    void print_networks_info_header();
-    void print_frames_header();
-    void print_devices_info_table(const ProtoMon &mon_message);
-    void print_networks_info_table(const ProtoMon &mon_message);
-    hailo_status print_frames_table(const ProtoMon &mon_message);
+    void add_devices_info_header(std::ostream &buffer);
+    void add_networks_info_header(std::ostream &buffer);
+    void add_frames_header(std::ostream &buffer);
+    void add_devices_info_table(const ProtoMon &mon_message, std::ostream &buffer);
+    void add_networks_info_table(const ProtoMon &mon_message, std::ostream &buffer);
+    hailo_status print_frames_table(const ProtoMon &mon_message, std::ostream &buffer);
     hailo_status run_in_alternative_terminal();
 };
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -14,6 +14,7 @@
 
 #include "scheduler_profiler_handler.hpp"
 #include "monitor_handler.hpp"
+#include "utils/query_stats_utils.hpp"
 namespace hailort
 {
 class Tracer

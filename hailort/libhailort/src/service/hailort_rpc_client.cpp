@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -226,8 +226,8 @@ Expected<std::vector<uint32_t>> HailoRtRpcClient::VDevice_configure(const VDevic
     auto proto_identifier = request.mutable_identifier();
     VDevice_convert_identifier_to_proto(identifier, proto_identifier);
     request.set_pid(pid);
-    auto hef_memview = hef.pimpl->get_hef_memview();
-    request.set_hef(hef_memview.data(), hef_memview.size());
+    TRY(auto hef_buffer, hef.pimpl->get_hef_as_buffer());
+    request.set_hef(hef_buffer->data(), hef_buffer->size());
 
     // Serialize NetworkGroupsParamsMap
     for (const auto &name_params_pair : configure_params) {
@@ -580,13 +580,13 @@ Expected<std::vector<hailo_stream_info_t>> HailoRtRpcClient::ConfiguredNetworkGr
         hailo_nms_info_t nms_info{
             proto_stream_info.nms_info().number_of_classes(),
             proto_stream_info.nms_info().max_bboxes_per_class(),
+            proto_stream_info.nms_info().max_bboxes_total(),
             proto_stream_info.nms_info().bbox_size(),
             proto_stream_info.nms_info().chunks_per_frame(),
             proto_stream_info.nms_info().is_defused(),
             nms_defuse_info,
             proto_stream_info.nms_info().burst_size(),
-            static_cast<hailo_nms_burst_type_t>(proto_stream_info.nms_info().burst_type()),
-            HAILO_NMS_RESULT_ORDER_HW
+            static_cast<hailo_nms_burst_type_t>(proto_stream_info.nms_info().burst_type())
         };
         hailo_format_t format{
             static_cast<hailo_format_type_t>(proto_stream_info.format().type()),
@@ -834,17 +834,14 @@ Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> deserialize_ops_metada
             (op_metadata_proto.type() == static_cast<uint32_t>(net_flow::OperationType::YOLOV5SEG))) {
             // In case this is an NMS PP - initilize the values for the nms post process config
             auto &nms_config_proto = op_metadata_proto.nms_post_process_config();
-            auto max_proposals = (HAILO_NMS_RESULT_ORDER_BY_SCORE == static_cast<hailo_nms_result_order_type_t>(nms_config_proto.order_type())) ?
-                nms_config_proto.max_proposals_total() :nms_config_proto.max_proposals_per_class();
             nms_post_process_config = {nms_config_proto.nms_score_th(),
                                         nms_config_proto.nms_iou_th(),
-                                        max_proposals,
+                                        nms_config_proto.max_proposals_per_class(),
+                                        nms_config_proto.max_proposals_total(),
                                         nms_config_proto.number_of_classes(),
                                         nms_config_proto.background_removal(),
                                         nms_config_proto.background_removal_index(),
-                                        nms_config_proto.cross_classes(),
-                                        nms_config_proto.bbox_only(),
-                                        static_cast<hailo_nms_result_order_type_t>(nms_config_proto.order_type())};
+                                        nms_config_proto.bbox_only()};
             }
 
         switch (static_cast<net_flow::OperationType>(op_metadata_proto.type())) {
@@ -1016,13 +1013,13 @@ LayerInfo deserialize_layer_info(const ProtoLayerInfo &info_proto)
     hailo_nms_info_t nms_info{
         info_proto.nms_info().number_of_classes(),
         info_proto.nms_info().max_bboxes_per_class(),
+        info_proto.nms_info().max_bboxes_total(),
         info_proto.nms_info().bbox_size(),
         info_proto.nms_info().chunks_per_frame(),
         info_proto.nms_info().is_defused(),
         nms_defuse_info,
         info_proto.nms_info().burst_size(),
-        static_cast<hailo_nms_burst_type_t>(info_proto.nms_info().burst_type()),
-        HAILO_NMS_RESULT_ORDER_HW
+        static_cast<hailo_nms_burst_type_t>(info_proto.nms_info().burst_type())
     };
     info.nms_info = nms_info;
 
@@ -1069,20 +1066,11 @@ hailo_vstream_info_t deserialize_vstream_info(const ProtoVStreamInfo &info_proto
     };
     info.format = format;
     if (HailoRTCommon::is_nms(format.order)) {
-        uint32_t max_bboxes;
-        hailo_nms_result_order_type_t order_type;
-        if (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE == format.order) {
-            max_bboxes = info_proto.nms_shape().max_bboxes_total();
-            order_type = HAILO_NMS_RESULT_ORDER_BY_SCORE;
-        } else {
-            max_bboxes = info_proto.nms_shape().max_bboxes_per_class();
-            order_type = HAILO_NMS_RESULT_ORDER_BY_CLASS;
-        }
         hailo_nms_shape_t nms_shape = {
             info_proto.nms_shape().number_of_classes(),
-            max_bboxes,
-            info_proto.nms_shape().max_accumulated_mask_size(),
-            order_type
+            info_proto.nms_shape().max_bboxes_per_class(),
+            info_proto.nms_shape().max_bboxes_total(),
+            info_proto.nms_shape().max_accumulated_mask_size()
         };
         info.nms_shape = nms_shape;
     } else {
@@ -1325,19 +1313,19 @@ Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_
     return result;
 }
 
-Expected<size_t> HailoRtRpcClient::ConfiguredNetworkGroup_get_min_buffer_pool_size(const NetworkGroupIdentifier &identifier)
+Expected<size_t> HailoRtRpcClient::ConfiguredNetworkGroup_infer_queue_size(const NetworkGroupIdentifier &identifier)
 {
-    ConfiguredNetworkGroup_get_min_buffer_pool_size_Request request;
-    ConfiguredNetworkGroup_get_min_buffer_pool_size_Reply reply;
+    ConfiguredNetworkGroup_infer_queue_size_Request request;
+    ConfiguredNetworkGroup_infer_queue_size_Reply reply;
     auto proto_identifier = request.mutable_identifier();
     ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
     ClientContextWithTimeout context;
-    grpc::Status status = m_stub->ConfiguredNetworkGroup_get_min_buffer_pool_size(&context, request, &reply);
+    grpc::Status status = m_stub->ConfiguredNetworkGroup_infer_queue_size(&context, request, &reply);
     CHECK_GRPC_STATUS_AS_EXPECTED(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(reply.status()));
-    auto min_buffer_pool_size = reply.min_buffer_pool_size();
-    return min_buffer_pool_size;
+    auto queue_size = reply.infer_queue_size();
+    return queue_size;
 }
 
 Expected<std::unique_ptr<LayerInfo>> HailoRtRpcClient::ConfiguredNetworkGroup_get_layer_info(const NetworkGroupIdentifier &identifier, const std::string &stream_name)
@@ -1437,22 +1425,6 @@ hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_nms_max_bboxes_total(c
     ConfiguredNetworkGroup_set_nms_max_bboxes_total_Reply reply;
     ClientContextWithTimeout context;
     grpc::Status status = m_stub->ConfiguredNetworkGroup_set_nms_max_bboxes_total(&context, request, &reply);
-    CHECK_GRPC_STATUS(status);
-    assert(reply.status() < HAILO_STATUS_COUNT);
-    return static_cast<hailo_status>(reply.status());
-}
-
-hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_set_nms_result_order_type(const NetworkGroupIdentifier &identifier,
-    const std::string &edge_name, hailo_nms_result_order_type_t order_type)
-{
-    ConfiguredNetworkGroup_set_nms_result_order_type_Request request;
-    auto proto_identifier = request.mutable_identifier();
-    ConfiguredNetworkGroup_convert_identifier_to_proto(identifier, proto_identifier);
-    request.set_edge_name(edge_name);
-    request.set_nms_result_order_type(static_cast<uint32_t>(order_type));
-    ConfiguredNetworkGroup_set_nms_result_order_type_Reply reply;
-    ClientContextWithTimeout context;
-    grpc::Status status = m_stub->ConfiguredNetworkGroup_set_nms_result_order_type(&context, request, &reply);
     CHECK_GRPC_STATUS(status);
     assert(reply.status() < HAILO_STATUS_COUNT);
     return static_cast<hailo_status>(reply.status());

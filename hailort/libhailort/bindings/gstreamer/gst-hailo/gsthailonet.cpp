@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the LGPL 2.1 license (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
  *
  * This library is free software; you can redistribute it and/or
@@ -407,7 +407,7 @@ static hailo_status gst_hailonet_allocate_infer_resources(GstHailoNet *self)
             self->impl->thread_cv.notify_all();
             if (GST_IS_PAD(self->srcpad)) { // Checking because we fail here when exiting the application
                 GstFlowReturn ret = gst_pad_push(self->srcpad, buffer);
-                if ((GST_FLOW_OK != ret) && (GST_FLOW_FLUSHING != ret) && ((GST_FLOW_EOS != ret)) && (!self->impl->has_got_eos)) {
+                if ((GST_FLOW_OK != ret) && (GST_FLOW_FLUSHING != ret) && ((GST_FLOW_EOS != ret)) && (!self->impl->has_sent_eos)) {
                     HAILONET_ERROR("gst_pad_push failed with status = %d\n", ret);
                     break;
                 }
@@ -1143,6 +1143,22 @@ static hailo_status gst_hailonet_call_run_async(GstHailoNet *self, const std::un
         self->impl->flush_cv.notify_all();
 
         gst_hailonet_push_buffer_to_thread(self, buffer);
+
+        if (self->impl->has_pending_eos) {
+            bool is_last_frame = false;
+            {
+                std::unique_lock<std::mutex> lock(self->impl->flush_mutex);
+                if (0 == self->impl->ongoing_frames) {
+                    is_last_frame = true;
+                }
+            }
+
+            if (is_last_frame) {
+                self->impl->has_sent_eos = true;
+                auto event = gst_event_new_eos();
+                (void)gst_pad_push_event(self->srcpad, event);
+            }
+        }
     }));
     job.detach();
 
@@ -1456,8 +1472,9 @@ static gboolean gst_hailonet_sink_event(GstPad *pad, GstObject *parent, GstEvent
 {
     GstHailoNet *self = GST_HAILONET(parent);
     if (GST_EVENT_TYPE(event) == GST_EVENT_EOS) {
-        self->impl->has_got_eos = true;
-        return gst_pad_push_event(self->srcpad, event);
+        // We want to forward EOS event only after all the frames have been processed (see callback of run_async)
+        self->impl->has_pending_eos = true;
+        return TRUE;
     }
     if (GST_EVENT_IS_STICKY(event)) {
         gst_hailonet_push_event_to_queue(self, event);
@@ -1477,7 +1494,7 @@ static void gst_hailonet_flush_callback(GstHailoNet *self, gpointer /*data*/)
 
 HailoNetImpl::HailoNetImpl() :
     events_queue_per_buffer(), curr_event_queue(), input_queue(nullptr), thread_queue(nullptr), buffers_in_thread_queue(0),
-    props(), input_caps(nullptr), is_thread_running(false), has_got_eos(false),
+    props(), input_caps(nullptr), is_thread_running(false), has_pending_eos(false), has_sent_eos(false),
     did_critical_failure_happen(false), vdevice(nullptr), is_configured(false), has_called_activate(false), ongoing_frames(0)
 {}
 

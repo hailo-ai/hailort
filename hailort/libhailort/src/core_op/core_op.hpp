@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -59,7 +59,7 @@ public:
 
     virtual hailo_status wait_for_activation(const std::chrono::milliseconds &timeout);
 
-    virtual const std::string &name() const;
+    virtual const std::string& name() const;
 
     virtual bool is_scheduled() const = 0;
     virtual hailo_status set_scheduler_timeout(const std::chrono::milliseconds &timeout, const std::string &network_name) = 0;
@@ -107,7 +107,8 @@ public:
     void set_vdevice_core_op_handle(vdevice_core_op_handle_t handle) { m_vdevice_core_op_handle = handle;}
     vdevice_core_op_handle_t vdevice_core_op_handle() { return m_vdevice_core_op_handle;}
 
-    Expected<size_t> get_async_max_queue_size() const;
+    // Amount of parallel ongoing infer requests for the core op.
+    Expected<size_t> infer_queue_size() const;
 
     /**
      * The function returns `HAILO_SUCCESS` if at least one of the writes or reads happened.
@@ -124,7 +125,7 @@ public:
     virtual Expected<uint32_t> get_cache_read_length() const = 0;
     virtual Expected<uint32_t> get_cache_write_length() const = 0;
     virtual Expected<uint32_t> get_cache_entry_size(uint32_t cache_id) const = 0;
-    virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) = 0;
+    virtual hailo_status init_cache(uint32_t read_offset) = 0;
     virtual hailo_status update_cache_offset(int32_t offset_delta_entries) = 0;
     virtual Expected<std::vector<uint32_t>> get_cache_ids() const = 0;
     virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) = 0;

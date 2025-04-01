@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file serializer.cpp
  * @brief HRPC Serialization implementation
@@ -34,15 +34,16 @@
 namespace hailort
 {
 
-Expected<Buffer> CreateVDeviceSerializer::serialize_request(const hailo_vdevice_params_t &params)
+Expected<size_t> CreateVDeviceSerializer::serialize_request(const hailo_vdevice_params_t &params, MemoryView buffer)
 {
     VDevice_Create_Request request;
 
     auto proto_params = request.mutable_params();
     proto_params->set_scheduling_algorithm(params.scheduling_algorithm);
     proto_params->set_group_id(params.group_id == nullptr ? "" : std::string(params.group_id));
+    proto_params->set_is_device_id_user_specific(params.device_ids != nullptr);
 
-    return get_serialized_request<VDevice_Create_Request>(request, "CreateVDevice");
+    return get_serialized_request<VDevice_Create_Request>(request, "CreateVDevice", buffer);
 }
 
 Expected<SerializerVDeviceParamsWrapper> CreateVDeviceSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -52,13 +53,10 @@ Expected<SerializerVDeviceParamsWrapper> CreateVDeviceSerializer::deserialize_re
     CHECK_AS_EXPECTED(request.ParseFromArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
         HAILO_RPC_FAILED, "Failed to de-serialize 'CreateVDevice'");
 
-    bool multi_process_service_flag = false;
-    SerializerVDeviceParamsWrapper params( 
-        1,
-        nullptr,
+    SerializerVDeviceParamsWrapper params(
         static_cast<hailo_scheduling_algorithm_e>(request.params().scheduling_algorithm()),
         request.params().group_id(),
-        multi_process_service_flag);
+        request.params().is_device_id_user_specific());
 
     return params;
 }
@@ -72,7 +70,6 @@ Expected<Buffer> CreateVDeviceSerializer::serialize_reply(hailo_status status, r
     proto_vdevice_handle->set_id(vdevice_handle);
 
     return get_serialized_reply<VDevice_Create_Reply>(reply, "CreateVDevice");
-
 }
 
 Expected<std::tuple<hailo_status, rpc_object_handle_t>> CreateVDeviceSerializer::deserialize_reply(const MemoryView &serialized_reply)
@@ -85,19 +82,14 @@ Expected<std::tuple<hailo_status, rpc_object_handle_t>> CreateVDeviceSerializer:
     return std::make_tuple(static_cast<hailo_status>(reply.status()), reply.vdevice_handle().id());
 }
 
-Expected<Buffer> DestroyVDeviceSerializer::serialize_request(rpc_object_handle_t vdevice_handle)
+Expected<size_t> DestroyVDeviceSerializer::serialize_request(rpc_object_handle_t vdevice_handle, MemoryView buffer)
 {
     VDevice_Destroy_Request request;
 
     auto proto_vdevice_handle= request.mutable_vdevice_handle();
     proto_vdevice_handle->set_id(vdevice_handle);
 
-    // TODO (HRT-14732) - check if we can use GetCachedSize
-    TRY(auto serialized_request, Buffer::create(request.ByteSizeLong(), BufferStorageParams::create_dma()));
-    CHECK_AS_EXPECTED(request.SerializeToArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
-        HAILO_RPC_FAILED, "Failed to serialize 'DestroyVDevice'");
-
-    return serialized_request;
+    return get_serialized_request<VDevice_Destroy_Request>(request, "DestroyVDevice", buffer);
 }
 
 Expected<rpc_object_handle_t> DestroyVDeviceSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -129,7 +121,7 @@ hailo_status DestroyVDeviceSerializer::deserialize_reply(const MemoryView &seria
         serialized_reply, "DestroyVDevice");
 }
 
-Expected<Buffer> CreateInferModelSerializer::serialize_request(rpc_object_handle_t vdevice_handle, uint64_t hef_size, const std::string &name)
+Expected<size_t> CreateInferModelSerializer::serialize_request(rpc_object_handle_t vdevice_handle, uint64_t hef_size, const std::string &name, MemoryView buffer)
 {
     VDevice_CreateInferModel_Request request;
 
@@ -138,12 +130,7 @@ Expected<Buffer> CreateInferModelSerializer::serialize_request(rpc_object_handle
     request.set_hef_size(hef_size);
     request.set_name(name);
 
-    // TODO (HRT-14732) - check if we can use GetCachedSize
-    TRY(auto serialized_request, Buffer::create(request.ByteSizeLong(), BufferStorageParams::create_dma()));
-    CHECK_AS_EXPECTED(request.SerializeToArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
-        HAILO_RPC_FAILED, "Failed to serialize 'CreateVInferModel'");
-
-    return serialized_request;
+    return get_serialized_request<VDevice_CreateInferModel_Request>(request, "CreateVInferModel", buffer);
 }
 
 Expected<std::tuple<rpc_object_handle_t, uint64_t, std::string>> CreateInferModelSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -182,19 +169,14 @@ Expected<std::tuple<hailo_status, rpc_object_handle_t>> CreateInferModelSerializ
     return std::make_tuple(static_cast<hailo_status>(reply.status()), reply.infer_model_handle().id());
 }
 
-Expected<Buffer> DestroyInferModelSerializer::serialize_request(rpc_object_handle_t infer_model_handle)
+Expected<size_t> DestroyInferModelSerializer::serialize_request(rpc_object_handle_t infer_model_handle, MemoryView buffer)
 {
     InferModel_Destroy_Request request;
 
     auto proto_infer_model_handle = request.mutable_infer_model_handle();
     proto_infer_model_handle->set_id(infer_model_handle);
 
-    // TODO (HRT-14732) - check if we can use GetCachedSize
-    TRY(auto serialized_request, Buffer::create(request.ByteSizeLong(), BufferStorageParams::create_dma()));
-    CHECK_AS_EXPECTED(request.SerializeToArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
-        HAILO_RPC_FAILED, "Failed to serialize 'DestroyInferModel'");
-
-    return serialized_request;
+    return get_serialized_request<InferModel_Destroy_Request>(request, "DestroyInferModel", buffer);
 }
 
 Expected<rpc_object_handle_t> DestroyInferModelSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -226,7 +208,7 @@ hailo_status DestroyInferModelSerializer::deserialize_reply(const MemoryView &se
         serialized_reply, "DestroyInferModel");
 }
 
-Expected<Buffer> CreateConfiguredInferModelSerializer::serialize_request(rpc_create_configured_infer_model_request_params_t params)
+Expected<size_t> CreateConfiguredInferModelSerializer::serialize_request(rpc_create_configured_infer_model_request_params_t params, MemoryView buffer)
 {
     InferModel_CreateConfiguredInferModel_Request request;
 
@@ -264,12 +246,7 @@ Expected<Buffer> CreateConfiguredInferModelSerializer::serialize_request(rpc_cre
     request.set_power_mode(static_cast<uint32_t>(params.power_mode));
     request.set_latency_flag(static_cast<uint32_t>(params.latency_flag));
 
-    // TODO (HRT-14732) - check if we can use GetCachedSize
-    TRY(auto serialized_request, Buffer::create(request.ByteSizeLong(), BufferStorageParams::create_dma()));
-    CHECK_AS_EXPECTED(request.SerializeToArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
-        HAILO_RPC_FAILED, "Failed to serialize 'CreateConfiguredInferModel'");
-
-    return serialized_request;
+    return get_serialized_request<InferModel_CreateConfiguredInferModel_Request>(request, "CreateConfiguredInferModel", buffer);
 }
 
 Expected<rpc_create_configured_infer_model_request_params_t> CreateConfiguredInferModelSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -343,19 +320,14 @@ Expected<std::tuple<hailo_status, rpc_object_handle_t, uint32_t>> CreateConfigur
     return std::make_tuple(static_cast<hailo_status>(reply.status()), reply.configured_infer_model_handle().id(), reply.async_queue_size());
 }
 
-Expected<Buffer> DestroyConfiguredInferModelSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle)
+Expected<size_t> DestroyConfiguredInferModelSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle, MemoryView buffer)
 {
     ConfiguredInferModel_Destroy_Request request;
 
     auto proto_infer_model_handle = request.mutable_configured_infer_model_handle();
     proto_infer_model_handle->set_id(configured_infer_model_handle);
 
-    // TODO (HRT-14732) - check if we can use GetCachedSize
-    TRY(auto serialized_request, Buffer::create(request.ByteSizeLong(), BufferStorageParams::create_dma()));
-    CHECK_AS_EXPECTED(request.SerializeToArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
-        HAILO_RPC_FAILED, "Failed to serialize 'DestroyConfiguredInferModel'");
-
-    return serialized_request;
+    return get_serialized_request<ConfiguredInferModel_Destroy_Request>(request, "DestroyConfiguredInferModel", buffer);
 }
 
 Expected<rpc_object_handle_t> DestroyConfiguredInferModelSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -387,7 +359,7 @@ hailo_status DestroyConfiguredInferModelSerializer::deserialize_reply(const Memo
         serialized_reply, "DestroyConfiguredInferModel");
 }
 
-Expected<Buffer> SetSchedulerTimeoutSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle, const std::chrono::milliseconds &timeout)
+Expected<size_t> SetSchedulerTimeoutSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle, const std::chrono::milliseconds &timeout, MemoryView buffer)
 {
     ConfiguredInferModel_SetSchedulerTimeout_Request request;
 
@@ -395,12 +367,7 @@ Expected<Buffer> SetSchedulerTimeoutSerializer::serialize_request(rpc_object_han
     proto_configured_infer_model_handle->set_id(configured_infer_model_handle);
     request.set_timeout(static_cast<uint32_t>(timeout.count()));
 
-    // TODO (HRT-14732) - check if we can use GetCachedSize
-    TRY(auto serialized_request, Buffer::create(request.ByteSizeLong(), BufferStorageParams::create_dma()));
-    CHECK_AS_EXPECTED(request.SerializeToArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
-        HAILO_RPC_FAILED, "Failed to serialize 'SetSchedulerTimeout'");
-
-    return serialized_request;
+    return get_serialized_request<ConfiguredInferModel_SetSchedulerTimeout_Request>(request, "SetSchedulerTimeout", buffer);
 }
 
 Expected<std::tuple<rpc_object_handle_t, std::chrono::milliseconds>> SetSchedulerTimeoutSerializer::deserialize_request(
@@ -433,7 +400,7 @@ hailo_status SetSchedulerTimeoutSerializer::deserialize_reply(const MemoryView &
         serialized_reply, "SetSchedulerTimeout");
 }
 
-Expected<Buffer> SetSchedulerThresholdSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle, uint32_t threshold)
+Expected<size_t> SetSchedulerThresholdSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle, uint32_t threshold, MemoryView buffer)
 {
     ConfiguredInferModel_SetSchedulerThreshold_Request request;
 
@@ -441,12 +408,7 @@ Expected<Buffer> SetSchedulerThresholdSerializer::serialize_request(rpc_object_h
     proto_configured_infer_model_handle->set_id(configured_infer_model_handle);
     request.set_threshold(threshold);
 
-    // TODO (HRT-14732) - check if we can use GetCachedSize
-    TRY(auto serialized_request, Buffer::create(request.ByteSizeLong(), BufferStorageParams::create_dma()));
-    CHECK_AS_EXPECTED(request.SerializeToArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
-        HAILO_RPC_FAILED, "Failed to serialize 'SetSchedulerThreshold'");
-
-    return serialized_request;
+    return get_serialized_request<ConfiguredInferModel_SetSchedulerThreshold_Request>(request, "SetSchedulerThreshold", buffer);
 }
 
 Expected<std::tuple<rpc_object_handle_t, uint32_t>> SetSchedulerThresholdSerializer::deserialize_request(
@@ -479,7 +441,7 @@ hailo_status SetSchedulerThresholdSerializer::deserialize_reply(const MemoryView
         serialized_reply, "SetSchedulerThreshold");
 }
 
-Expected<Buffer> SetSchedulerPrioritySerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle, uint32_t priority)
+Expected<size_t> SetSchedulerPrioritySerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle, uint32_t priority, MemoryView buffer)
 {
     ConfiguredInferModel_SetSchedulerPriority_Request request;
 
@@ -487,12 +449,7 @@ Expected<Buffer> SetSchedulerPrioritySerializer::serialize_request(rpc_object_ha
     proto_configured_infer_model_handle->set_id(configured_infer_model_handle);
     request.set_priority(priority);
 
-    // TODO (HRT-14732) - check if we can use GetCachedSize
-    TRY(auto serialized_request, Buffer::create(request.ByteSizeLong(), BufferStorageParams::create_dma()));
-    CHECK_AS_EXPECTED(request.SerializeToArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
-        HAILO_RPC_FAILED, "Failed to serialize 'SetSchedulerPriority'");
-
-    return serialized_request;
+    return get_serialized_request<ConfiguredInferModel_SetSchedulerPriority_Request>(request, "SetSchedulerPriority", buffer);
 }
 
 Expected<std::tuple<rpc_object_handle_t, uint32_t>> SetSchedulerPrioritySerializer::deserialize_request(
@@ -525,19 +482,14 @@ hailo_status SetSchedulerPrioritySerializer::deserialize_reply(const MemoryView 
         serialized_reply, "SetSchedulerPriority");
 }
 
-Expected<Buffer> GetHwLatencyMeasurementSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle)
+Expected<size_t> GetHwLatencyMeasurementSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle, MemoryView buffer)
 {
     ConfiguredInferModel_GetHwLatencyMeasurement_Request request;
 
     auto proto_configured_infer_model_handle = request.mutable_configured_infer_model_handle();
     proto_configured_infer_model_handle->set_id(configured_infer_model_handle);
 
-    // TODO (HRT-14732) - check if we can use GetCachedSize
-    TRY(auto serialized_request, Buffer::create(request.ByteSizeLong(), BufferStorageParams::create_dma()));
-    CHECK_AS_EXPECTED(request.SerializeToArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
-        HAILO_RPC_FAILED, "Failed to serialize 'GetHwLatencyMeasurement'");
-
-    return serialized_request;
+    return get_serialized_request<ConfiguredInferModel_GetHwLatencyMeasurement_Request>(request, "GetHwLatencyMeasurement", buffer);
 }
 
 Expected<rpc_object_handle_t> GetHwLatencyMeasurementSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -574,19 +526,14 @@ Expected<std::tuple<hailo_status, std::chrono::nanoseconds>> GetHwLatencyMeasure
     return std::make_tuple(static_cast<hailo_status>(reply.status()), std::chrono::nanoseconds(reply.avg_hw_latency()));
 }
 
-Expected<Buffer> ActivateSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle)
+Expected<size_t> ActivateSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle, MemoryView buffer)
 {
     ConfiguredInferModel_Activate_Request request;
 
     auto proto_configured_infer_model_handle = request.mutable_configured_infer_model_handle();
     proto_configured_infer_model_handle->set_id(configured_infer_model_handle);
 
-    // TODO (HRT-14732) - check if we can use GetCachedSize
-    TRY(auto serialized_request, Buffer::create(request.ByteSizeLong(), BufferStorageParams::create_dma()));
-    CHECK_AS_EXPECTED(request.SerializeToArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
-        HAILO_RPC_FAILED, "Failed to serialize 'Activate'");
-
-    return serialized_request;
+    return get_serialized_request<ConfiguredInferModel_Activate_Request>(request, "Activate", buffer);
 }
 
 Expected<rpc_object_handle_t> ActivateSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -618,19 +565,14 @@ hailo_status ActivateSerializer::deserialize_reply(const MemoryView &serialized_
         serialized_reply, "Activate");
 }
 
-Expected<Buffer> DeactivateSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle)
+Expected<size_t> DeactivateSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle, MemoryView buffer)
 {
     ConfiguredInferModel_Deactivate_Request request;
 
     auto proto_configured_infer_model_handle = request.mutable_configured_infer_model_handle();
     proto_configured_infer_model_handle->set_id(configured_infer_model_handle);
 
-    // TODO (HRT-14732) - check if we can use GetCachedSize
-    TRY(auto serialized_request, Buffer::create(request.ByteSizeLong(), BufferStorageParams::create_dma()));
-    CHECK_AS_EXPECTED(request.SerializeToArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
-        HAILO_RPC_FAILED, "Failed to serialize 'Deactivate'");
-
-    return serialized_request;
+    return get_serialized_request<ConfiguredInferModel_Deactivate_Request>(request, "Deactivate", buffer);
 }
 
 Expected<rpc_object_handle_t> DeactivateSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -662,19 +604,14 @@ hailo_status DeactivateSerializer::deserialize_reply(const MemoryView &serialize
         serialized_reply, "Deactivate");
 }
 
-Expected<Buffer> ShutdownSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle)
+Expected<size_t> ShutdownSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle, MemoryView buffer)
 {
     ConfiguredInferModel_Shutdown_Request request;
 
     auto proto_configured_infer_model_handle = request.mutable_configured_infer_model_handle();
     proto_configured_infer_model_handle->set_id(configured_infer_model_handle);
 
-    // TODO (HRT-14732) - check if we can use GetCachedSize
-    TRY(auto serialized_request, Buffer::create(request.ByteSizeLong(), BufferStorageParams::create_dma()));
-    CHECK_AS_EXPECTED(request.SerializeToArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
-        HAILO_RPC_FAILED, "Failed to serialize 'Shutdown'");
-
-    return serialized_request;
+    return get_serialized_request<ConfiguredInferModel_Shutdown_Request>(request, "Shutdown", buffer);
 }
 
 Expected<rpc_object_handle_t> ShutdownSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -706,7 +643,7 @@ hailo_status ShutdownSerializer::deserialize_reply(const MemoryView &serialized_
         serialized_reply, "Shutdown");
 }
 
-Expected<Buffer> RunAsyncSerializer::serialize_request(const RunAsyncSerializer::Request &request_struct)
+Expected<size_t> RunAsyncSerializer::serialize_request(const RunAsyncSerializer::Request &request_struct, MemoryView buffer)
 {
     ConfiguredInferModel_AsyncInfer_Request request;
 
@@ -718,15 +655,11 @@ Expected<Buffer> RunAsyncSerializer::serialize_request(const RunAsyncSerializer:
 
     auto proto_cb_handle = request.mutable_callback_handle();
     proto_cb_handle->set_id(request_struct.callback_handle);
+    proto_cb_handle->set_dispatcher_id(request_struct.dispatcher_id);
 
     *request.mutable_input_buffer_sizes() = {request_struct.input_buffer_sizes.begin(), request_struct.input_buffer_sizes.end()};
 
-    // TODO (HRT-14732) - check if we can use GetCachedSize
-    TRY(auto serialized_request, Buffer::create(request.ByteSizeLong(), BufferStorageParams::create_dma()));
-    CHECK_AS_EXPECTED(request.SerializeToArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
-        HAILO_RPC_FAILED, "Failed to serialize 'RunAsync'");
-
-    return serialized_request;
+    return get_serialized_request<ConfiguredInferModel_AsyncInfer_Request>(request, "RunAsync", buffer);
 }
 
 Expected<RunAsyncSerializer::Request> RunAsyncSerializer::deserialize_request(
@@ -743,6 +676,7 @@ Expected<RunAsyncSerializer::Request> RunAsyncSerializer::deserialize_request(
     request_struct.configured_infer_model_handle = request.configured_infer_model_handle().id();
     request_struct.infer_model_handle = request.infer_model_handle().id();
     request_struct.callback_handle = request.callback_handle().id();
+    request_struct.dispatcher_id = request.callback_handle().dispatcher_id();
     request_struct.input_buffer_sizes = input_buffer_sizes;
     return request_struct;
 }
@@ -766,49 +700,125 @@ hailo_status RunAsyncSerializer::deserialize_reply(const MemoryView &serialized_
         serialized_reply, "RunAsync");
 }
 
-Expected<Buffer> CallbackCalledSerializer::serialize_reply(hailo_status status, rpc_object_handle_t callback_handle,
-    rpc_object_handle_t configured_infer_model_handle)
+Expected<Buffer> CallbackCalledSerializer::serialize_reply(const RpcCallback &callback)
 {
     CallbackCalled_Reply reply;
 
-    reply.set_status(status);
-    auto proto_callback_handle = reply.mutable_callback_handle();
-    proto_callback_handle->set_id(callback_handle);
+    switch (callback.type) {
+    case RpcCallbackType::RUN_ASYNC:
+    {
+        auto run_async = reply.mutable_run_async();  
+        run_async->set_status(callback.data.run_async.status);
+        break;
+    }
+    case RpcCallbackType::DEVICE_NOTIFICATION:
+    {
+        auto device_notif = reply.mutable_device_notification();  
+        device_notif->set_notification_id(callback.data.device_notification.notification.id);
+        device_notif->set_sequence(callback.data.device_notification.notification.sequence);
+        switch (callback.data.device_notification.notification.id) {
+        case HAILO_NOTIFICATION_ID_HEALTH_MONITOR_TEMPERATURE_ALARM:
+        {
+            auto temp_alarm = device_notif->mutable_temperature_alarm();
+            auto &msg = callback.data.device_notification.notification.body.health_monitor_temperature_alarm_notification;
+            temp_alarm->set_temperature_zone(msg.temperature_zone);
+            temp_alarm->set_alarm_ts_id(msg.alarm_ts_id);
+            temp_alarm->set_ts0_temperature(msg.ts0_temperature);
+            temp_alarm->set_ts1_temperature(msg.ts1_temperature);
+            break;
+        }
+        case HAILO_NOTIFICATION_ID_HEALTH_MONITOR_OVERCURRENT_ALARM:
+        {
+            auto overcurrent_alert = device_notif->mutable_overcurrent_alert();
+            auto &msg = callback.data.device_notification.notification.body.health_monitor_overcurrent_alert_notification;
+            overcurrent_alert->set_overcurrent_zone(msg.overcurrent_zone);
+            overcurrent_alert->set_exceeded_alert_threshold(msg.exceeded_alert_threshold);
+            overcurrent_alert->set_is_last_overcurrent_violation_reached(msg.is_last_overcurrent_violation_reached);
+            break;
+        }
+        default:
+            LOGGER__ERROR("Got unexpected notification id = {}", static_cast<uint32_t>(callback.data.device_notification.notification.id));
+            return make_unexpected(HAILO_INTERNAL_FAILURE);
+        }
+        break;
+    }
+    default:
+        LOGGER__ERROR("Got unexpected callback type = {}", static_cast<uint32_t>(callback.type));
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
+    }
 
-    auto proto_cim_handle = reply.mutable_configured_infer_model_handle();
-    proto_cim_handle->set_id(configured_infer_model_handle);
+    auto proto_callback_handle = reply.mutable_callback_handle();
+    proto_callback_handle->set_id(callback.callback_id);
+    proto_callback_handle->set_dispatcher_id(callback.dispatcher_id);
 
     TRY(auto serialized_reply, Buffer::create(reply.ByteSizeLong(), BufferStorageParams::create_dma()));
-
     CHECK_AS_EXPECTED(reply.SerializeToArray(serialized_reply.data(), static_cast<int>(serialized_reply.size())),
         HAILO_RPC_FAILED, "Failed to serialize 'CallbackCalled'");
 
     return serialized_reply;
 }
 
-Expected<std::tuple<hailo_status, rpc_object_handle_t, rpc_object_handle_t>>
-CallbackCalledSerializer::deserialize_reply(const MemoryView &serialized_reply)
+Expected<RpcCallback> CallbackCalledSerializer::deserialize_reply(const MemoryView &serialized_reply)
 {
     CallbackCalled_Reply reply;
 
     CHECK_AS_EXPECTED(reply.ParseFromArray(serialized_reply.data(), static_cast<int>(serialized_reply.size())),
         HAILO_RPC_FAILED, "Failed to de-serialize 'CallbackCalled'");
 
-    return std::make_tuple(static_cast<hailo_status>(reply.status()), reply.callback_handle().id(),
-        reply.configured_infer_model_handle().id());
+    RpcCallback rpc_callback = {};
+    rpc_callback.callback_id = reply.callback_handle().id();
+    rpc_callback.dispatcher_id = reply.callback_handle().dispatcher_id();
+
+    switch (reply.callback_type_case()) {
+    case CallbackCalled_Reply::kRunAsync:
+    {
+        rpc_callback.type = RpcCallbackType::RUN_ASYNC;
+        rpc_callback.data.run_async.status = static_cast<hailo_status>(reply.run_async().status());
+        break;
+    }
+    case CallbackCalled_Reply::kDeviceNotification:
+    {
+        rpc_callback.type = RpcCallbackType::DEVICE_NOTIFICATION;
+        rpc_callback.data.device_notification.notification.id = static_cast<hailo_notification_id_t>(reply.device_notification().notification_id());
+        rpc_callback.data.device_notification.notification.sequence = static_cast<hailo_notification_id_t>(reply.device_notification().sequence());
+        switch (rpc_callback.data.device_notification.notification.id) {
+        case HAILO_NOTIFICATION_ID_HEALTH_MONITOR_TEMPERATURE_ALARM:
+        {
+            auto &temp_alarm = reply.device_notification().temperature_alarm();
+            auto &msg = rpc_callback.data.device_notification.notification.body.health_monitor_temperature_alarm_notification;
+            msg.temperature_zone = static_cast<hailo_temperature_protection_temperature_zone_t>(temp_alarm.temperature_zone());
+            msg.alarm_ts_id = temp_alarm.alarm_ts_id();
+            msg.ts0_temperature = temp_alarm.ts0_temperature();
+            msg.ts1_temperature = temp_alarm.ts1_temperature();
+            break;
+        }
+        case HAILO_NOTIFICATION_ID_HEALTH_MONITOR_OVERCURRENT_ALARM:
+        {
+            auto &overcurrent_alert = reply.device_notification().overcurrent_alert();
+            auto &msg = rpc_callback.data.device_notification.notification.body.health_monitor_overcurrent_alert_notification;
+            msg.overcurrent_zone = static_cast<hailo_overcurrent_protection_overcurrent_zone_t>(overcurrent_alert.overcurrent_zone());
+            msg.exceeded_alert_threshold = overcurrent_alert.exceeded_alert_threshold();
+            msg.is_last_overcurrent_violation_reached = overcurrent_alert.is_last_overcurrent_violation_reached();
+            break;
+        }
+        default:
+            LOGGER__ERROR("Got unexpected notification id = {}", static_cast<uint32_t>(rpc_callback.data.device_notification.notification.id));
+            return make_unexpected(HAILO_INTERNAL_FAILURE);
+        }
+        break;
+    }
+    default:
+        LOGGER__ERROR("Got unexpected callback type = {}", static_cast<uint32_t>(reply.callback_type_case()));
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
+    }
+    return rpc_callback;
 }
 
-Expected<Buffer> CreateDeviceSerializer::serialize_request()
+Expected<size_t> CreateDeviceSerializer::serialize_request(MemoryView buffer)
 {
     Device_Create_Request request;
 
-    // TODO (HRT-14732) - check if we can use GetCachedSize
-    TRY(auto serialized_request, Buffer::create(request.ByteSizeLong(), BufferStorageParams::create_dma()));
-
-    CHECK_AS_EXPECTED(request.SerializeToArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
-        HAILO_RPC_FAILED, "Failed to serialize 'CreateDevice'");
-
-    return serialized_request;
+    return get_serialized_request<Device_Create_Request>(request, "CreateDevice", buffer);
 }
 
 hailo_status CreateDeviceSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -847,19 +857,14 @@ Expected<std::tuple<hailo_status, rpc_object_handle_t>> CreateDeviceSerializer::
     return std::make_tuple(static_cast<hailo_status>(reply.status()), reply.device_handle().id());
 }
 
-Expected<Buffer> DestroyDeviceSerializer::serialize_request(rpc_object_handle_t device_handle)
+Expected<size_t> DestroyDeviceSerializer::serialize_request(rpc_object_handle_t device_handle, MemoryView buffer)
 {
     Device_Destroy_Request request;
 
     auto proto_device_handle= request.mutable_device_handle();
     proto_device_handle->set_id(device_handle);
 
-    // TODO (HRT-14732) - check if we can use GetCachedSize
-    TRY(auto serialized_request, Buffer::create(request.ByteSizeLong(), BufferStorageParams::create_dma()));
-    CHECK_AS_EXPECTED(request.SerializeToArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
-        HAILO_RPC_FAILED, "Failed to serialize 'DestroyDevice'");
-
-    return serialized_request;
+    return get_serialized_request<Device_Destroy_Request>(request, "DestroyDevice", buffer);
 }
 
 Expected<rpc_object_handle_t> DestroyDeviceSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -891,19 +896,14 @@ hailo_status DestroyDeviceSerializer::deserialize_reply(const MemoryView &serial
         serialized_reply, "DestroyDevice");
 }
 
-Expected<Buffer> IdentifyDeviceSerializer::serialize_request(rpc_object_handle_t device_handle)
+Expected<size_t> IdentifyDeviceSerializer::serialize_request(rpc_object_handle_t device_handle, MemoryView buffer)
 {
     Device_Identify_Request request;
 
     auto proto_device_handle = request.mutable_device_handle();
     proto_device_handle->set_id(device_handle);
 
-    // TODO (HRT-14732) - check if we can use GetCachedSize
-    TRY(auto serialized_request, Buffer::create(request.ByteSizeLong(), BufferStorageParams::create_dma()));
-    CHECK_AS_EXPECTED(request.SerializeToArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
-        HAILO_RPC_FAILED, "Failed to serialize 'IdentifyDevice'");
-
-    return serialized_request;
+    return get_serialized_request<Device_Identify_Request>(request, "IdentifyDevice", buffer);
 }
 
 Expected<rpc_object_handle_t> IdentifyDeviceSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -989,14 +989,14 @@ Expected<std::tuple<hailo_status, hailo_device_identity_t>> IdentifyDeviceSerial
     return std::make_tuple(static_cast<hailo_status>(reply.status()), identity);
 }
 
-Expected<Buffer> ExtendedDeviceInfoSerializer::serialize_request(rpc_object_handle_t device_handle)
+Expected<size_t> ExtendedDeviceInfoSerializer::serialize_request(rpc_object_handle_t device_handle, MemoryView buffer)
 {
     Device_ExtendedInfo_Request request;
 
     auto proto_device_handle = request.mutable_device_handle();
     proto_device_handle->set_id(device_handle);
 
-    return get_serialized_request<Device_ExtendedInfo_Request>(request, "ExtendedDeviceInfo");
+    return get_serialized_request<Device_ExtendedInfo_Request>(request, "ExtendedDeviceInfo", buffer);
 }
 
 Expected<rpc_object_handle_t> ExtendedDeviceInfoSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -1042,6 +1042,8 @@ Expected<Buffer> ExtendedDeviceInfoSerializer::serialize_reply(hailo_status stat
         soc_pm_values->Add(extended_info.soc_pm_values[i]);
     }
 
+    reply.set_gpio_mask(extended_info.gpio_mask);
+
     return get_serialized_reply<Device_ExtendedInfo_Reply>(reply, "ExtendedDeviceInfo");
 }
 
@@ -1066,6 +1068,9 @@ Expected<std::tuple<hailo_status, hailo_extended_device_information_t>> Extended
     });
     extended_info.lcs = static_cast<uint8_t>(reply.lcs());
 
+    assert(reply.gpio_mask() <= std::numeric_limits<uint16_t>::max());
+    extended_info.gpio_mask = static_cast<uint16_t>(reply.gpio_mask());
+
     // Ensure that the sizes of the input and output arrays match before transformation
     assert(reply.eth_mac_address().size() == HAILO_ETH_MAC_LENGTH);
     std::transform(reply.eth_mac_address().begin(), reply.eth_mac_address().begin() + HAILO_ETH_MAC_LENGTH,
@@ -1082,15 +1087,14 @@ Expected<std::tuple<hailo_status, hailo_extended_device_information_t>> Extended
     return std::make_tuple(static_cast<hailo_status>(reply.status()), extended_info);
 }
 
-
-Expected<Buffer> GetChipTemperatureSerializer::serialize_request(rpc_object_handle_t device_handle)
+Expected<size_t> GetChipTemperatureSerializer::serialize_request(rpc_object_handle_t device_handle, MemoryView buffer)
 {
     Device_GetChipTemperature_Request request;
 
     auto proto_device_handle = request.mutable_device_handle();
     proto_device_handle->set_id(device_handle);
 
-    return get_serialized_request<Device_GetChipTemperature_Request>(request, "GetChipTemperature");
+    return get_serialized_request<Device_GetChipTemperature_Request>(request, "GetChipTemperature", buffer);
 }
 
 Expected<rpc_object_handle_t> GetChipTemperatureSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -1122,7 +1126,93 @@ Expected<std::tuple<hailo_status, hailo_chip_temperature_info_t>> GetChipTempera
     return std::make_tuple(static_cast<hailo_status>(reply.status()), info);
 }
 
-Expected<Buffer> PowerMeasurementSerializer::serialize_request(rpc_object_handle_t device_handle, uint32_t hailo_dvm_options, uint32_t hailo_power_measurement_type)
+Expected<size_t> QueryHealthStatsSerializer::serialize_request(rpc_object_handle_t device_handle, MemoryView buffer)
+{
+    Device_QueryHealthStats_Request request;
+
+    auto proto_device_handle = request.mutable_device_handle();
+    proto_device_handle->set_id(device_handle);
+
+    return get_serialized_request<Device_QueryHealthStats_Request>(request, "QueryHealthStats", buffer);
+}
+
+Expected<rpc_object_handle_t> QueryHealthStatsSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    return get_deserialized_request<Device_QueryHealthStats_Request>(serialized_request, "QueryHealthStats");
+}
+
+Expected<Buffer> QueryHealthStatsSerializer::serialize_reply(hailo_status status, const hailo_health_stats_t &info)
+{
+    Device_QueryHealthStats_Reply reply;
+
+    reply.set_status(status);
+    reply.set_on_die_temperature(info.on_die_temperature);
+    reply.set_on_die_voltage(info.on_die_voltage);
+    reply.set_startup_bist_mask(info.startup_bist_mask);
+
+    return get_serialized_reply<Device_QueryHealthStats_Reply>(reply, "QueryHealthStats");
+}
+
+Expected<std::tuple<hailo_status, hailo_health_stats_t>> QueryHealthStatsSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    Device_QueryHealthStats_Reply reply;
+    CHECK_AS_EXPECTED(reply.ParseFromArray(serialized_reply.data(), static_cast<int>(serialized_reply.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize 'QueryHealthStats'");
+    hailo_health_stats_t info = {};
+    info.on_die_temperature = reply.on_die_temperature();
+    info.on_die_voltage = reply.on_die_voltage();
+    info.startup_bist_mask = reply.startup_bist_mask();
+
+    return std::make_tuple(static_cast<hailo_status>(reply.status()), info);
+}
+
+Expected<size_t> QueryPerformanceStatsSerializer::serialize_request(rpc_object_handle_t device_handle, MemoryView buffer)
+{
+    Device_QueryPerformanceStats_Request request;
+
+    auto proto_device_handle = request.mutable_device_handle();
+    proto_device_handle->set_id(device_handle);
+
+    return get_serialized_request<Device_QueryPerformanceStats_Request>(request, "QueryPerformanceStats", buffer);
+}
+
+Expected<rpc_object_handle_t> QueryPerformanceStatsSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    return get_deserialized_request<Device_QueryPerformanceStats_Request>(serialized_request, "QueryPerformanceStats");
+}
+
+Expected<Buffer> QueryPerformanceStatsSerializer::serialize_reply(hailo_status status, const hailo_performance_stats_t &info)
+{
+    Device_QueryPerformanceStats_Reply reply;
+
+    reply.set_status(status);
+    reply.set_cpu_utilization(info.cpu_utilization);
+    reply.set_ram_size_total(info.ram_size_total);
+    reply.set_ram_size_used(info.ram_size_used);
+    reply.set_nnc_utilization(info.nnc_utilization);
+    reply.set_ddr_noc_total_transactions(info.ddr_noc_total_transactions);
+    reply.set_dsp_utilization(info.dsp_utilization);
+
+    return get_serialized_reply<Device_QueryPerformanceStats_Reply>(reply, "QueryPerformanceStats");
+}
+
+Expected<std::tuple<hailo_status, hailo_performance_stats_t>> QueryPerformanceStatsSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    Device_QueryPerformanceStats_Reply reply;
+    CHECK_AS_EXPECTED(reply.ParseFromArray(serialized_reply.data(), static_cast<int>(serialized_reply.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize 'QueryPerformanceStats'");
+    hailo_performance_stats_t info = {};
+    info.cpu_utilization = reply.cpu_utilization();
+    info.ram_size_total = reply.ram_size_total();
+    info.ram_size_used = reply.ram_size_used();
+    info.nnc_utilization = reply.nnc_utilization();
+    info.ddr_noc_total_transactions = reply.ddr_noc_total_transactions();
+    info.dsp_utilization = reply.dsp_utilization();
+
+    return std::make_tuple(static_cast<hailo_status>(reply.status()), info);
+}
+
+Expected<size_t> PowerMeasurementSerializer::serialize_request(rpc_object_handle_t device_handle, uint32_t hailo_dvm_options, uint32_t hailo_power_measurement_type, MemoryView buffer)
 {
     Device_PowerMeasurement_Request request;
 
@@ -1131,7 +1221,7 @@ Expected<Buffer> PowerMeasurementSerializer::serialize_request(rpc_object_handle
     request.set_hailo_dvm_options(hailo_dvm_options);
     request.set_hailo_power_measurement_type(hailo_power_measurement_type);
 
-    return get_serialized_request<Device_PowerMeasurement_Request>(request, "PowerMeasurement");
+    return get_serialized_request<Device_PowerMeasurement_Request>(request, "PowerMeasurement", buffer);
 }
 
 Expected<std::tuple<rpc_object_handle_t, uint32_t, uint32_t>> PowerMeasurementSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -1165,7 +1255,7 @@ Expected<std::tuple<hailo_status, float32_t>> PowerMeasurementSerializer::deseri
     return std::make_tuple(static_cast<hailo_status>(reply.status()), power);
 }
 
-Expected<Buffer> SetPowerMeasurementSerializer::serialize_request(rpc_object_handle_t device_handle, uint32_t hailo_dvm_options, uint32_t hailo_power_measurement_type)
+Expected<size_t> SetPowerMeasurementSerializer::serialize_request(rpc_object_handle_t device_handle, uint32_t hailo_dvm_options, uint32_t hailo_power_measurement_type, MemoryView buffer)
 {
     Device_SetPowerMeasurement_Request request;
 
@@ -1174,7 +1264,7 @@ Expected<Buffer> SetPowerMeasurementSerializer::serialize_request(rpc_object_han
     request.set_hailo_dvm_options(hailo_dvm_options);
     request.set_hailo_power_measurement_type(hailo_power_measurement_type);
 
-    return get_serialized_request<Device_SetPowerMeasurement_Request>(request, "SetPowerMeasurement");
+    return get_serialized_request<Device_SetPowerMeasurement_Request>(request, "SetPowerMeasurement", buffer);
 }
 
 Expected<std::tuple<rpc_object_handle_t, uint32_t, uint32_t>> SetPowerMeasurementSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -1201,9 +1291,9 @@ hailo_status SetPowerMeasurementSerializer::deserialize_reply(const MemoryView &
     return get_deserialized_status_only_reply<Device_SetPowerMeasurement_Reply>(serialized_reply, "SetPowerMeasurement");
 }
 
-Expected<Buffer> StartPowerMeasurementSerializer::serialize_request(
+Expected<size_t> StartPowerMeasurementSerializer::serialize_request(
     rpc_object_handle_t device_handle, uint32_t averaging_factor,
-    uint32_t sampling_period)
+    uint32_t sampling_period, MemoryView buffer)
 {
     Device_StartPowerMeasurement_Request request;
 
@@ -1213,7 +1303,7 @@ Expected<Buffer> StartPowerMeasurementSerializer::serialize_request(
     request.set_sampling_period(sampling_period);
 
     return get_serialized_request<Device_StartPowerMeasurement_Request>(
-        request, "StartPowerMeasurement");
+        request, "StartPowerMeasurement", buffer);
 }
 
 Expected<std::tuple<rpc_object_handle_t, uint32_t, uint32_t>>
@@ -1246,8 +1336,8 @@ hailo_status StartPowerMeasurementSerializer::deserialize_reply(
         serialized_reply, "StartPowerMeasurement");
 }
 
-Expected<Buffer> GetPowerMeasurementSerializer::serialize_request(
-    rpc_object_handle_t device_handle, bool should_clear)
+Expected<size_t> GetPowerMeasurementSerializer::serialize_request(
+    rpc_object_handle_t device_handle, bool should_clear, MemoryView buffer)
 {
     Device_GetPowerMeasurement_Request request;
 
@@ -1255,7 +1345,7 @@ Expected<Buffer> GetPowerMeasurementSerializer::serialize_request(
     proto_device_handle->set_id(device_handle);
     request.set_should_clear(should_clear);
 
-    return get_serialized_request<Device_GetPowerMeasurement_Request>(request, "GetPowerMeasurement");
+    return get_serialized_request<Device_GetPowerMeasurement_Request>(request, "GetPowerMeasurement", buffer);
 }
 
 Expected<std::tuple<rpc_object_handle_t, bool>> GetPowerMeasurementSerializer::deserialize_request(const MemoryView &serialized_request)
@@ -1310,8 +1400,8 @@ GetPowerMeasurementSerializer::deserialize_reply(
         static_cast<hailo_status>(reply.status()), (data));
 }
 
-Expected<Buffer> StopPowerMeasurementSerializer::serialize_request(
-    rpc_object_handle_t device_handle)
+Expected<size_t> StopPowerMeasurementSerializer::serialize_request(
+    rpc_object_handle_t device_handle, MemoryView buffer)
 {
     Device_StopPowerMeasurement_Request request;
 
@@ -1319,7 +1409,7 @@ Expected<Buffer> StopPowerMeasurementSerializer::serialize_request(
     proto_device_handle->set_id(device_handle);
 
     return get_serialized_request<Device_StopPowerMeasurement_Request>(
-        request, "StopPowerMeasurement");
+        request, "StopPowerMeasurement", buffer);
 }
 
 Expected<rpc_object_handle_t> StopPowerMeasurementSerializer::deserialize_request(
@@ -1343,6 +1433,119 @@ hailo_status StopPowerMeasurementSerializer::deserialize_reply(
 {
     return get_deserialized_status_only_reply<Device_StopPowerMeasurement_Reply>(
         serialized_reply, "StopPowerMeasurement");
+}
+
+Expected<size_t> GetArchitectureSerializer::serialize_request(rpc_object_handle_t device_handle, MemoryView buffer)
+{
+    Device_GetArchitecture_Request request;
+
+    auto proto_device_handle = request.mutable_device_handle();
+    proto_device_handle->set_id(device_handle);
+
+    return get_serialized_request<Device_GetArchitecture_Request>(request, "GetArchitecture", buffer);
+}
+
+Expected<rpc_object_handle_t> GetArchitectureSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    return get_deserialized_request<Device_GetArchitecture_Request>(serialized_request, "GetArchitecture");
+}
+
+Expected<Buffer> GetArchitectureSerializer::serialize_reply(hailo_status status, const hailo_device_architecture_t &device_architecture)
+{
+    Device_GetArchitecture_Reply reply;
+
+    reply.set_status(status);
+    reply.set_device_architecture(device_architecture);
+
+    return get_serialized_reply<Device_GetArchitecture_Reply>(reply, "GetArchitecture");
+}
+
+Expected<std::tuple<hailo_status, hailo_device_architecture_t>> GetArchitectureSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    Device_GetArchitecture_Reply reply;
+
+    CHECK_AS_EXPECTED(reply.ParseFromArray(serialized_reply.data(), static_cast<int>(serialized_reply.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize 'GetArchitecture'");
+
+    hailo_device_architecture_t device_architecture = static_cast<hailo_device_architecture_t>(reply.device_architecture());
+
+    return std::make_tuple(static_cast<hailo_status>(reply.status()), device_architecture);
+}
+
+Expected<size_t> SetNotificationCallbackSerializer::serialize_request(const Request &request, MemoryView buffer)
+{
+    Device_SetNotificationCallback_Request proto_request;
+    proto_request.set_notification_id(request.notification_id);
+
+    auto proto_device_handle = proto_request.mutable_device_handle();
+    proto_device_handle->set_id(request.device_handle);
+
+    auto proto_callback = proto_request.mutable_callback();
+    proto_callback->set_id(request.callback);
+    proto_callback->set_dispatcher_id(request.dispatcher_id);
+
+    return get_serialized_request<Device_SetNotificationCallback_Request>(proto_request, "SetNotificationCallback", buffer);
+}
+
+Expected<SetNotificationCallbackSerializer::Request> SetNotificationCallbackSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    Device_SetNotificationCallback_Request proto_request;
+    CHECK_AS_EXPECTED(proto_request.ParseFromArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize 'SetNotificationCallback'");
+
+    Request request;
+    request.device_handle = proto_request.device_handle().id();
+    request.notification_id = static_cast<hailo_notification_id_t>(proto_request.notification_id());
+    request.callback = proto_request.callback().id();
+    request.dispatcher_id = proto_request.callback().dispatcher_id();
+    return request;
+}
+
+Expected<Buffer> SetNotificationCallbackSerializer::serialize_reply(hailo_status status)
+{
+    Device_SetNotificationCallback_Reply proto_reply;
+    proto_reply.set_status(status);
+    return get_serialized_reply<Device_SetNotificationCallback_Reply>(proto_reply, "SetNotificationCallback");
+}
+
+hailo_status SetNotificationCallbackSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    return get_deserialized_status_only_reply<Device_SetNotificationCallback_Reply>(serialized_reply, "SetNotificationCallback");
+}
+
+Expected<size_t> RemoveNotificationCallbackSerializer::serialize_request(rpc_object_handle_t device_handle,
+    hailo_notification_id_t notification_id, MemoryView buffer)
+{
+    Device_RemoveNotificationCallback_Request proto_request;
+
+    auto proto_device_handle = proto_request.mutable_device_handle();
+    proto_device_handle->set_id(device_handle);
+    proto_request.set_notification_id(notification_id);
+    return get_serialized_request<Device_RemoveNotificationCallback_Request>(proto_request, "RemoveNotificationCallback", buffer);
+}
+
+Expected<std::tuple<rpc_object_handle_t, hailo_notification_id_t>> RemoveNotificationCallbackSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    Device_RemoveNotificationCallback_Request proto_request;
+
+    CHECK_AS_EXPECTED(proto_request.ParseFromArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize 'RemoveNotificationCallback'");
+
+    return std::make_tuple(proto_request.device_handle().id(), static_cast<hailo_notification_id_t>(proto_request.notification_id()));
+}
+
+Expected<Buffer> RemoveNotificationCallbackSerializer::serialize_reply(hailo_status status)
+{
+    Device_RemoveNotificationCallback_Reply proto_reply;
+
+    proto_reply.set_status(status);
+
+    return get_serialized_reply<Device_RemoveNotificationCallback_Reply>(proto_reply, "RemoveNotificationCallback");
+}
+
+hailo_status RemoveNotificationCallbackSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    return get_deserialized_status_only_reply<Device_RemoveNotificationCallback_Reply>(serialized_reply, "RemoveNotificationCallback");
 }
 
 } /* namespace hailort */

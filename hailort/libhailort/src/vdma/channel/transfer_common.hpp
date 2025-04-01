@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -44,8 +44,16 @@ public:
     Expected<vdma::MappedBufferPtr> map_buffer(HailoRTDriver &driver, HailoRTDriver::DmaDirection direction);
     void unmap_buffer();
 
+    // Assumes map_buffer() has already been called.
+    // Returns the transfer-buffer as the driver expects to receive it.
+    // If the buffer is circular with wrap-around, will return two buffers
+    // similar to get_continuos_parts(). Otherwise, we return only one.
+    Expected<std::vector<HailoRTDriver::TransferBuffer>> to_driver_buffers();
+
     hailo_status copy_to(MemoryView buffer);
     hailo_status copy_from(const MemoryView buffer);
+
+    bool is_aligned_for_dma() const;
 
     TransferBufferType type () const { return m_type; }
 
@@ -79,7 +87,7 @@ using TransferDoneCallback = std::function<void(hailo_status)>;
 
 struct TransferRequest {
     // Initialization dependency - callback must be before transfer_buffers to avoid race condition
-    TransferDoneCallback callback;
+    TransferDoneCallback callback = [](hailo_status) {};
     std::vector<TransferBuffer> transfer_buffers;
     TransferRequest() = default;
     TransferRequest(TransferBuffer &&transfer_buffers_arg, const TransferDoneCallback &callback_arg):
@@ -104,16 +112,6 @@ struct TransferRequest {
         return total_transfer_size;
     }
 
-    Expected<bool> is_request_aligned() {
-        CHECK(!transfer_buffers.empty(), HAILO_INVALID_ARGUMENT, "TransferRequest is empty");
-        CHECK(TransferBufferType::MEMORYVIEW == transfer_buffers[0].type(), HAILO_INVALID_ARGUMENT,
-            "get_aligned_request is only supported in MEMORYVIEW type TransferBuffer");
-
-        const auto dma_able_alignment = OsUtils::get_dma_able_alignment();
-        TRY(auto base_buffer, transfer_buffers[0].base_buffer());
-        return (0 == reinterpret_cast<uintptr_t>(base_buffer.data()) % dma_able_alignment);
-    }
-
     Expected<bool> is_request_end_aligned() {
         const auto dma_able_alignment = OsUtils::get_dma_able_alignment();
         TRY(auto base_buffer, transfer_buffers[0].base_buffer());
@@ -121,6 +119,11 @@ struct TransferRequest {
         return !((reinterpret_cast<uintptr_t>(base_buffer.data()) + buffer_size) % dma_able_alignment);
     }
 };
+
+// Helper function to create TransferRequest from buffer and callback
+inline TransferRequest to_request(void *buffer, size_t size, const TransferDoneCallback &callback) {
+    return TransferRequest(TransferBuffer(MemoryView(buffer, size)), callback);
+}
 
 struct InferRequest {
     // Transfer for each stream

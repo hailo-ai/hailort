@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -30,12 +30,12 @@ public:
 
     Expected<size_t> read(char *output, size_t output_size, std::chrono::milliseconds timeout);
     Expected<std::string> read(std::chrono::milliseconds timeout);
-    bool end_of_generation() const;
+    Status generation_status() const;
 
 private:
     std::shared_ptr<GenAISession> m_session;
     std::mutex m_mutex;
-    bool m_end_of_generation;
+    Status m_generation_status;
 };
 
 
@@ -46,8 +46,6 @@ public:
 
     hailo_status write(const std::string &prompt);
     Expected<LLMGeneratorCompletion> generate();
-
-    static hailo_status validate_params(const LLMGeneratorParams &params);
 
 private:
     std::shared_ptr<GenAISession> m_session;
@@ -64,14 +62,16 @@ public:
     static Expected<std::unique_ptr<Impl>> create_unique(std::shared_ptr<VDevice> vdevice, const LLMParams &llm_params);
 
     Expected<LLMGenerator> create_generator(const LLMGeneratorParams &params);
+    Expected<LLMGeneratorParams> create_generator_params();
 
 private:
-    Impl(std::shared_ptr<GenAISession> session, const LLMParams &llm_params);
-
-    static hailo_status send_data_file(std::shared_ptr<GenAISession> session, const std::string &path);
+    Impl(std::shared_ptr<GenAISession> session, const LLMParams &llm_params,
+        const LLMGeneratorParams &default_generator_params);
+    hailo_status validate_generator_params(const LLMGeneratorParams &params);
 
     std::shared_ptr<GenAISession> m_session;
     LLMParams m_llm_params;
+    LLMGeneratorParams m_default_generator_params;
 };
 
 } /* namespace genai */

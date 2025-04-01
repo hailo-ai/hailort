@@ -99,11 +99,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL QNX)
     target_link_libraries(libhailort PRIVATE pci)
 endif()
 
-if (HAILO_INTERNAL_BUILD)
-    include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/libusb.cmake)
-    target_link_libraries(libhailort PRIVATE usb-1.0)
-endif()
-
 set(HAILORT_PUBLIC_HEADERS
     ${HAILORT_INC_DIR}/hailo/hailort.h
     ${HAILORT_INC_DIR}/hailo/platform.h

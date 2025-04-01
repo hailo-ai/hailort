@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -28,7 +28,6 @@
 
 #include "hailo/hailort.h"
 
-#include "core_op/resource_manager/intermediate_buffer.hpp"
 #include "core_op/resource_manager/cache_buffer.hpp"
 #include "core_op/resource_manager/cache_manager.hpp"
 #include "core_op/resource_manager/config_buffer.hpp"
@@ -38,6 +37,7 @@
 #include "vdma/channel/boundary_channel.hpp"
 #include "vdma/pcie/pcie_device.hpp"
 #include "internal_buffer_manager.hpp"
+#include "vdma/memory/continuous_buffer.hpp"
 
 namespace hailort
 {
@@ -85,9 +85,12 @@ struct DdrChannelsInfo
 class ContextResources final {
 public:
     static Expected<ContextResources> create(HailoRTDriver &driver,
-        CONTROL_PROTOCOL__context_switch_context_type_t context_type, const uint16_t context_index,
+        CONTROL_PROTOCOL__context_switch_context_type_t context_type,
         const std::vector<vdma::ChannelId> &config_channels_ids, const ConfigBufferInfoMap &config_buffer_infos,
-        std::shared_ptr<InternalBufferManager> internal_buffer_manager);
+        std::shared_ptr<InternalBufferManager> internal_buffer_manager,
+        bool aligned_ccws,
+        std::vector<std::shared_ptr<vdma::MappedBuffer>> mapped_buffers = {},
+        std::shared_ptr<vdma::MappedBuffer> nops_buffer = nullptr);
 
     hailo_status add_edge_layer(const LayerInfo &layer_info, vdma::ChannelId channel_id,
         const CONTROL_PROTOCOL__host_buffer_info_t &buffer_info, const SupportedFeatures &supported_features);
@@ -145,14 +148,16 @@ public:
     ResourcesManager &operator=(ResourcesManager &&other) = delete;
     ResourcesManager(ResourcesManager &&other) noexcept;
 
-    ExpectedRef<IntermediateBuffer> create_intermediate_buffer(
+    ExpectedRef<vdma::VdmaEdgeLayer> create_intermediate_edge_layer(
         uint32_t transfer_size, uint16_t batch_size, uint8_t src_stream_index, uint16_t src_context_index,
-        vdma::ChannelId d2h_channel_id, IntermediateBuffer::StreamingType streaming_type);
-    ExpectedRef<IntermediateBuffer> get_intermediate_buffer(const IntermediateBufferKey &key);
-    ExpectedRef<IntermediateBuffer> set_cache_input_channel(uint32_t cache_id, uint16_t batch_size, vdma::ChannelId channel_id);
-    ExpectedRef<IntermediateBuffer> set_cache_output_channel(uint32_t cache_id, uint16_t batch_size, vdma::ChannelId channel_id);
+        vdma::ChannelId d2h_channel_id, LayerType layer_type);
+    ExpectedRef<vdma::VdmaEdgeLayer> get_intermediate_edge_layer(const IntermediateBufferKey &key);
+    ExpectedRef<CacheBuffer> set_cache_input_channel(uint32_t cache_id, uint16_t batch_size, vdma::ChannelId channel_id);
+    ExpectedRef<CacheBuffer> set_cache_output_channel(uint32_t cache_id, uint16_t batch_size, vdma::ChannelId channel_id);
     ExpectedRef<std::unordered_map<uint32_t, CacheBuffer>> get_cache_buffers();
-    hailo_status create_boundary_vdma_channel(const LayerInfo &layer_info);
+
+    Expected<size_t> calc_default_queue_size(const LayerInfo &layer_info, uint16_t batch_size);
+    hailo_status create_boundary_vdma_channel(const LayerInfo &layer_info, bool use_enhanced_channel = false);
 
     Expected<CONTROL_PROTOCOL__application_header_t> get_control_core_op_header();
 
@@ -160,7 +165,7 @@ public:
 
     Expected<std::reference_wrapper<ContextResources>> add_new_context(
         CONTROL_PROTOCOL__context_switch_context_type_t context_type,
-        const uint16_t context_index, const ConfigBufferInfoMap &config_info={});
+        bool is_aligned_ccws_on, const ConfigBufferInfoMap &config_info={});
 
     const SupportedFeatures &get_supported_features() const
     {
@@ -173,7 +178,7 @@ public:
     }
 
     Expected<vdma::ChannelId> get_available_channel_id(const LayerIdentifier &layer_identifier,
-        HailoRTDriver::DmaDirection direction, uint8_t engine_index);
+        HailoRTDriver::DmaDirection direction, uint8_t engine_index, bool use_enhanced_channel = false);
     hailo_status free_channel_index(const LayerIdentifier &layer_identifier);
 
     const char* get_dev_id() const
@@ -207,23 +212,33 @@ public:
     hailo_status stop_vdma_transfer_launcher();
     Expected<uint16_t> get_network_batch_size(const std::string &network_name) const;
     Expected<vdma::BoundaryChannelPtr> get_boundary_vdma_channel_by_stream_name(const std::string &stream_name);
-    Expected<std::shared_ptr<const vdma::BoundaryChannel>> get_boundary_vdma_channel_by_stream_name(const std::string &stream_name) const;
+    Expected<std::shared_ptr<const vdma::BoundaryChannel>> get_boundary_vdma_channel_by_stream_name(
+        const std::string &stream_name) const;
     hailo_power_mode_t get_power_mode() const;
+    Expected<CONTROL_PROTOCOL__host_buffer_info_t> get_boundary_buffer_info(vdma::BoundaryChannel &channel,
+        uint32_t transfer_size);
     Expected<uint16_t> program_desc_for_hw_only_flow(vdma::DescriptorList &desc_list,
         vdma::MappedBuffer &mapped_buffer, vdma::ChannelId channel_id,
         const uint32_t single_transfer_size, const uint16_t dynamic_batch_size, const uint16_t batch_count);
-    Expected<std::pair<vdma::ChannelId, uint16_t>> create_mapped_buffer_for_hw_only_infer(
-        vdma::BoundaryChannelPtr boundary_channel_ptr, const HailoRTDriver::DmaDirection direction,
-        const uint32_t single_transfer_size, const uint16_t dynamic_batch_size, const uint16_t batch_count);
+    hailo_status allocate_mapped_buffer_for_hw_only_infer(vdma::BoundaryChannelPtr boundary_channel_ptr,
+        const HailoRTDriver::DmaDirection direction, const uint32_t single_transfer_size, uint16_t batch_size, uint16_t batch_count);
+    hailo_status configure_mapped_buffer_for_hw_only_infer(vdma::BoundaryChannelPtr boundary_channel_ptr,
+        const uint32_t single_transfer_size, uint16_t batch_size, uint16_t batch_count,
+        CONTROL_PROTOCOL__hw_infer_channels_info_t &channels_info);
     void add_channel_to_hw_infer_channel_info(std::pair<vdma::ChannelId, uint16_t> channel_info,
         CONTROL_PROTOCOL__hw_infer_channels_info_t &channels_info);
     Expected<uint16_t> calc_hw_infer_batch_count(uint16_t dynamic_batch_size);
     HwInferResults hw_infer_calc_stats(uint16_t batch_count, uint16_t dynamic_batch_size,
         size_t single_frame_transfer_size, uint32_t infer_cycles);
     hailo_status set_hw_infer_done_notification(std::condition_variable &infer_done_cond);
+    hailo_status configure_boundary_channels_for_hw_infer(uint16_t batch_size, uint16_t batch_count);
+    hailo_status allocate_boundary_channels_buffers_hw_infer();
     Expected<HwInferResults> run_hw_only_infer();
     hailo_status fill_internal_buffers_info();
     static bool should_use_ddr_action_list(size_t num_contexts, HailoRTDriver::DmaType dma_type);
+    Expected<uint16_t> get_batch_size() const;
+    hailo_status map_and_set_ccws_section_buffer(BufferPtr hef_as_buffer, size_t offset_to_ccws_section, uint64_t ccws_section_size, HailoRTDriver &driver);
+
     bool get_can_fast_batch_switch()
     {
         return m_core_op_metadata->get_can_fast_batch_switch();
@@ -239,16 +254,24 @@ public:
         return m_is_activated;
     }
 
+    CONTROL_PROTOCOL__boundary_channel_mode_t get_hw_infer_boundary_channel_mode() const
+    {
+        return (is_env_variable_on(HAILO_HW_INFER_BOUNDARY_CHANNELS_OVER_CCB_ENV_VAR) ?
+            CONTROL_PROTOCOL__CCB_BOUNDARY_CHANNEL : CONTROL_PROTOCOL__DESC_BOUNDARY_CHANNEL);
+    }
+
+    void set_nops_mapped_buffer(vdma::MappedBufferPtr nops_buffer)
+    {
+        m_nops_mapped_buffer = nops_buffer;
+    }
+
+    uint16_t get_csm_buffer_size();
+
 private:
     hailo_status fill_infer_features(CONTROL_PROTOCOL__application_header_t &app_header);
     hailo_status fill_validation_features(CONTROL_PROTOCOL__application_header_t &app_header);
     hailo_status fill_network_batch_size(CONTROL_PROTOCOL__application_header_t &app_header);
-    hailo_status fill_csm_buffer_size(CONTROL_PROTOCOL__application_header_t &app_header);
-    Expected<uint16_t> get_batch_size() const;
-
-    // <ongoing_transfers, pending_transfers>
-    static std::pair<size_t, size_t> calculate_transfer_queue_sizes(const vdma::DescriptorList &desc_list,
-        uint32_t transfer_size, size_t max_active_trans, bool use_latency_meter);
+    void fill_config_channel_info(CONTROL_PROTOCOL__application_header_t &app_header);
 
     std::vector<ContextResources> m_contexts_resources;
     ChannelAllocator m_channel_allocator;
@@ -256,7 +279,7 @@ private:
     HailoRTDriver &m_driver;
     const ConfigureNetworkParams m_config_params;
     CacheManagerPtr m_cache_manager;
-    std::map<IntermediateBufferKey, IntermediateBuffer> m_intermediate_buffers;
+    std::map<IntermediateBufferKey, std::unique_ptr<vdma::VdmaEdgeLayer>> m_intermediate_buffers;
     std::shared_ptr<CoreOpMetadata> m_core_op_metadata;
     uint8_t m_core_op_index;
     uint16_t m_dynamic_context_count;
@@ -266,13 +289,19 @@ private:
     vdma::ChannelsGroup m_boundary_channels;
     bool m_is_configured;
     bool m_is_activated;
+    std::vector<vdma::MappedBufferPtr> m_ccws_section_mapped_buffers;
+    vdma::MappedBufferPtr m_nops_mapped_buffer;
+    std::shared_ptr<Buffer> m_hef_as_buffer;
     // Config channels ids are shared between all context. The following vector contains the channel id for each
     // config_stream_index.
     std::vector<vdma::ChannelId> m_config_channels_ids;
     // Mapped buffers would be used only in hw only flow
-    std::vector<std::shared_ptr<vdma::MappedBuffer>> m_hw_only_boundary_buffers;
+    std::map<vdma::ChannelId, std::shared_ptr<vdma::MappedBuffer>> m_hw_only_desc_boundary_buffers;
+    // Use ccb buffer for hw only flow
+    std::map<vdma::ChannelId, std::shared_ptr<vdma::ContinuousBuffer>> m_hw_only_ccb_boundary_buffers;
     std::shared_ptr<InternalBufferManager> m_internal_buffer_manager;
     std::shared_ptr<ActionListBufferBuilder> m_action_list_buffer_builder;
+    CONTROL_PROTOCOL__hw_infer_channels_info_t m_hw_infer_channels_info;
 
     ResourcesManager(VdmaDevice &vdma_device, HailoRTDriver &driver,
         ChannelAllocator &&channel_allocator, const ConfigureNetworkParams config_params,

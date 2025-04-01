@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -114,7 +114,8 @@ hailo_status VDevice::after_fork_in_child()
     return HAILO_SUCCESS;
 }
 
-VDeviceHandle::VDeviceHandle(uint32_t handle) : m_handle(handle)
+VDeviceHandle::VDeviceHandle(const hailo_vdevice_params_t &params, uint32_t handle) :
+    VDevice(params), m_handle(handle)
 {}
 
 VDeviceHandle::~VDeviceHandle()
@@ -138,7 +139,7 @@ Expected<std::unique_ptr<VDevice>> VDeviceHandle::create(const hailo_vdevice_par
     release_resource_if(same_vdevice_status != HAILO_SUCCESS, expected_handle.value());
     CHECK_SUCCESS_AS_EXPECTED(same_vdevice_status);
 
-    auto handle_vdevice = std::unique_ptr<VDeviceHandle>(new VDeviceHandle(expected_handle.value()));
+    auto handle_vdevice = std::unique_ptr<VDeviceHandle>(new VDeviceHandle(params, expected_handle.value()));
     CHECK_AS_EXPECTED(handle_vdevice != nullptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::unique_ptr<VDevice>(std::move(handle_vdevice));
@@ -244,8 +245,9 @@ bool VDevice::should_force_hrpc_client()
 
 #ifdef HAILO_SUPPORT_MULTI_PROCESS
 
-VDeviceClient::VDeviceClient(std::unique_ptr<HailoRtRpcClient> client, uint32_t client_utils_handle, VDeviceIdentifier &&identifier,
-    std::vector<std::unique_ptr<Device>> &&devices) :
+VDeviceClient::VDeviceClient(const hailo_vdevice_params_t &params, std::unique_ptr<HailoRtRpcClient> client, uint32_t client_utils_handle,
+    VDeviceIdentifier &&identifier, std::vector<std::unique_ptr<Device>> &&devices) :
+        VDevice(params),
         m_client(std::move(client)),
         m_client_utils_handle(client_utils_handle),
         m_identifier(std::move(identifier)),
@@ -283,6 +285,16 @@ VDeviceClient::~VDeviceClient()
 hailo_status VDeviceClient::before_fork()
 {
     m_is_listener_thread_running = false;
+
+    const char* grpc_fork_support = std::getenv("GRPC_ENABLE_FORK_SUPPORT");
+    const char* grpc_poll_strategy = std::getenv("GRPC_POLL_STRATEGY");
+
+    bool is_fork_supported = (grpc_fork_support && std::string(grpc_fork_support) == "1") &&
+                             (grpc_poll_strategy && std::string(grpc_poll_strategy) == "poll");
+
+    if (!is_fork_supported) {
+        LOGGER__WARNING("Using the same VDeviceClient instance after fork is supported only when setting the env vars GRPC_ENABLE_FORK_SUPPORT=1 and GRPC_POLL_STRATEGY=poll.");
+    }
 
     TRY(auto instance, HailoRtRpcClientUtils::get_instance(m_client_utils_handle));
     instance->before_fork();
@@ -351,7 +363,7 @@ Expected<std::unique_ptr<VDevice>> VDeviceClient::create(const hailo_vdevice_par
     auto devices = (VDevice::service_over_ip_mode()) ? std::vector<std::unique_ptr<Device>>() : client->VDevice_get_physical_devices(vdevice_handle);
     CHECK_EXPECTED(devices);
 
-    auto client_vdevice = std::unique_ptr<VDeviceClient>(new VDeviceClient(std::move(client), client_utils_handle, VDeviceIdentifier(vdevice_handle), devices.release()));
+    auto client_vdevice = std::unique_ptr<VDeviceClient>(new VDeviceClient(params, std::move(client), client_utils_handle, VDeviceIdentifier(vdevice_handle), devices.release()));
     CHECK_AS_EXPECTED(client_vdevice != nullptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::unique_ptr<VDevice>(std::move(client_vdevice));
@@ -559,10 +571,22 @@ Expected<std::unique_ptr<VDevice>> VDevice::create(const hailo_vdevice_params_t 
     return vdevice_ptr;
 }
 
+Expected<std::shared_ptr<VDevice>> VDevice::create_shared(const hailo_vdevice_params_t &params)
+{
+    TRY(std::shared_ptr<VDevice> vdevice, VDevice::create(params));
+    return vdevice;
+}
+
 Expected<std::unique_ptr<VDevice>> VDevice::create()
 {
     auto params = HailoRTDefaults::get_vdevice_params();
     return create(params);
+}
+
+Expected<std::shared_ptr<VDevice>> VDevice::create_shared()
+{
+    TRY(std::shared_ptr<VDevice> vdevice, VDevice::create());
+    return vdevice;
 }
 
 Expected<std::unique_ptr<VDevice>> VDevice::create(const std::vector<std::string> &device_ids)
@@ -576,6 +600,12 @@ Expected<std::unique_ptr<VDevice>> VDevice::create(const std::vector<std::string
     params.device_count = static_cast<uint32_t>(device_ids_vector->size());
 
     return create(params);
+}
+
+Expected<std::shared_ptr<VDevice>> VDevice::create_shared(const std::vector<std::string> &device_ids)
+{
+    TRY(std::shared_ptr<VDevice> vdevice, VDevice::create(device_ids));
+    return vdevice;
 }
 
 Expected<HailoRTDriver::AcceleratorType> VDeviceBase::get_accelerator_type(hailo_device_id_t *device_ids, size_t device_count)
@@ -662,7 +692,7 @@ Expected<std::unique_ptr<VDeviceBase>> VDeviceBase::create(const hailo_vdevice_p
         }
     }
 
-    auto vdevice = std::unique_ptr<VDeviceBase>(new (std::nothrow) VDeviceBase(std::move(devices), scheduler_ptr, unique_vdevice_hash));
+    auto vdevice = std::unique_ptr<VDeviceBase>(new (std::nothrow) VDeviceBase(params, std::move(devices), scheduler_ptr, unique_vdevice_hash));
     CHECK_AS_EXPECTED(nullptr != vdevice, HAILO_OUT_OF_HOST_MEMORY);
 
     return vdevice;
@@ -753,13 +783,25 @@ Expected<ConfiguredNetworkGroupVector> VDeviceBase::configure(Hef &hef,
 
 Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(const std::string &hef_path, const std::string &name)
 {
-    TRY(auto infer_model_base, InferModelBase::create(*this, hef_path, name));
-    return std::shared_ptr<InferModel>(std::move(infer_model_base));
+    TRY(auto hef, Hef::create(hef_path));
+    return create_infer_model(hef, name);
 }
 
 Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(const MemoryView hef_buffer, const std::string &name)
 {
-    TRY(auto infer_model_base, InferModelBase::create(*this, hef_buffer, name));
+    TRY(auto hef, Hef::create(hef_buffer));
+    return create_infer_model(hef, name);
+}
+
+Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(std::shared_ptr<Buffer> hef_buffer, const std::string &name)
+{
+    TRY(auto hef, Hef::create(hef_buffer));
+    return create_infer_model(hef, name);
+}
+
+Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(Hef hef, const std::string &name)
+{
+    TRY(auto infer_model_base, InferModelBase::create(*this, hef, name));
     return std::shared_ptr<InferModel>(std::move(infer_model_base));
 }
 
@@ -829,8 +871,7 @@ Expected<std::vector<std::string>> VDeviceBase::get_device_ids(const hailo_vdevi
     if (params.device_ids == nullptr) {
         // Use device scan pool
         return Device::scan();
-    }
-    else {
+    } else {
         std::vector<std::string> device_ids;
         device_ids.reserve(params.device_count);
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -16,6 +16,8 @@
 #include "net_flow/pipeline/infer_model_internal.hpp"
 #include "rpc_callbacks/rpc_callbacks_dispatcher.hpp"
 
+#define CREATE_CONFIGURED_INFER_MODEL_PROTO_MAX_SIZE (2048)
+
 namespace hailort
 {
 
@@ -24,10 +26,10 @@ class InferModelHrpcClient : public InferModelBase
 public:
     static Expected<std::shared_ptr<InferModelHrpcClient>> create(Hef &&hef, const std::string &network_name,
         std::shared_ptr<Client> client, uint32_t infer_model_handle_id, uint32_t vdevice_handle, VDevice &vdevice,
-        std::shared_ptr<CallbacksDispatcher> callbacks_dispatcher);
+        std::shared_ptr<ClientCallbackDispatcherManager> callback_dispatcher_manager);
 
     InferModelHrpcClient(std::shared_ptr<Client> client, uint32_t id,
-        uint32_t vdevice_handle, VDevice &vdevice, std::shared_ptr<CallbacksDispatcher> callbacks_dispatcher,
+        uint32_t vdevice_handle, VDevice &vdevice, std::shared_ptr<ClientCallbackDispatcherManager> callback_dispatcher_manager,
         Hef &&hef, const std::string &network_name, std::vector<InferStream> &&inputs, std::vector<InferStream> &&outputs);
     virtual ~InferModelHrpcClient();
 
@@ -48,7 +50,7 @@ private:
     std::weak_ptr<Client> m_client;
     uint32_t m_handle;
     uint32_t m_vdevice_handle;
-    std::shared_ptr<CallbacksDispatcher> m_callbacks_dispatcher;
+    std::shared_ptr<ClientCallbackDispatcherManager> m_callback_dispatcher_manager;
 };
 
 } /* namespace hailort */

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -136,9 +136,9 @@ public:
         VALIDATE_STATUS(status);
     }
 
-    void init_cache(uint32_t read_offset, int32_t write_offset_delta)
+    void init_cache(uint32_t read_offset)
     {
-        auto status = get().init_cache(read_offset, write_offset_delta);
+        auto status = get().init_cache(read_offset);
         VALIDATE_STATUS(status);
     }
 

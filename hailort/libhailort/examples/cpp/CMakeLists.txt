@@ -13,7 +13,6 @@ add_subdirectory(power_measurement_example)
 add_subdirectory(multi_process_example)
 add_subdirectory(notification_callback_example)
 
-
 set(CPP_EXAMPLE_TARGETS
     cpp_vstreams_example
     cpp_infer_pipeline_example

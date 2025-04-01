@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -29,7 +29,7 @@ public:
     ChannelAllocator(ChannelAllocator &&other) = default;
 
     Expected<vdma::ChannelId> get_available_channel_id(const LayerIdentifier &layer_identifier,
-        HailoRTDriver::DmaDirection direction, uint8_t engine_index);
+        HailoRTDriver::DmaDirection direction, uint8_t engine_index, bool use_enhanced_channel = false);
     hailo_status free_channel_index(const LayerIdentifier &layer_identifier);
 
 private:

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the LGPL 2.1 license (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
  *
  * This library is free software; you can redistribute it and/or
@@ -110,7 +110,8 @@ public:
     HailoNetProperties props;
     GstCaps *input_caps;
     std::atomic_bool is_thread_running;
-    std::atomic_bool has_got_eos;
+    std::atomic_bool has_pending_eos;
+    std::atomic_bool has_sent_eos;
     std::mutex sink_probe_change_state_mutex;
     bool did_critical_failure_happen;
 

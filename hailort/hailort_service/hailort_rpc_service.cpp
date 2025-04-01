@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -82,10 +82,10 @@ hailo_status HailoRtRpcService::abort_output_vstream(uint32_t handle)
 }
 
 // TODO: Add a named templated release functions for InputVStream and OutputVStream to call abort before release.
-void HailoRtRpcService::abort_vstreams_by_pids(std::set<uint32_t> &pids)
+void HailoRtRpcService::abort_vstreams_by_ids(std::set<uint32_t> &pids)
 {
-    auto inputs_handles = ServiceResourceManager<InputVStream>::get_instance().resources_handles_by_pids(pids);
-    auto outputs_handles = ServiceResourceManager<OutputVStream>::get_instance().resources_handles_by_pids(pids);
+    auto inputs_handles = ServiceResourceManager<InputVStream>::get_instance().resources_handles_by_ids(pids);
+    auto outputs_handles = ServiceResourceManager<OutputVStream>::get_instance().resources_handles_by_ids(pids);
     for (auto &input_handle : inputs_handles) {
         abort_input_vstream(input_handle);
     }
@@ -108,9 +108,9 @@ hailo_status HailoRtRpcService::shutdown_configured_network_group(uint32_t vdevi
 }
 
 
-void HailoRtRpcService::shutdown_configured_network_groups_by_pids(std::set<uint32_t> &pids)
+void HailoRtRpcService::shutdown_configured_network_groups_by_ids(std::set<uint32_t> &pids)
 {
-    auto cng_handles = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance().resources_handles_by_pids(pids);
+    auto cng_handles = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance().resources_handles_by_ids(pids);
     for (auto &handle : cng_handles) {
         auto status = shutdown_configured_network_group(handle);
         if (status != HAILO_SUCCESS) {
@@ -119,9 +119,9 @@ void HailoRtRpcService::shutdown_configured_network_groups_by_pids(std::set<uint
     }
 }
 
-void HailoRtRpcService::shutdown_buffer_pool_by_pids(std::set<uint32_t> &pids)
+void HailoRtRpcService::shutdown_buffer_pool_by_ids(std::set<uint32_t> &pids)
 {
-    auto buffer_pools_handles = ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance().resources_handles_by_pids(pids);
+    auto buffer_pools_handles = ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance().resources_handles_by_ids(pids);
     for (auto &handle : buffer_pools_handles) {
         auto status = shutdown_cng_buffer_pool(handle);
         if (status != HAILO_SUCCESS) {
@@ -130,9 +130,9 @@ void HailoRtRpcService::shutdown_buffer_pool_by_pids(std::set<uint32_t> &pids)
     }
 }
 
-void HailoRtRpcService::shutdown_vdevice_cb_queue_by_pids(std::set<uint32_t> &pids)
+void HailoRtRpcService::shutdown_vdevice_cb_queue_by_ids(std::set<uint32_t> &pids)
 {
-    auto vdevice_cb_queue_handles = ServiceResourceManager<VDeviceCallbacksQueue>::get_instance().resources_handles_by_pids(pids);
+    auto vdevice_cb_queue_handles = ServiceResourceManager<VDeviceCallbacksQueue>::get_instance().resources_handles_by_ids(pids);
     for (auto &handle : vdevice_cb_queue_handles) {
         auto status = shutdown_vdevice_cb_queue(handle);
         if (status != HAILO_SUCCESS) {
@@ -143,7 +143,6 @@ void HailoRtRpcService::shutdown_vdevice_cb_queue_by_pids(std::set<uint32_t> &pi
 
 void HailoRtRpcService::remove_disconnected_clients()
 {
-    std::this_thread::sleep_for(hailort::HAILO_KEEPALIVE_INTERVAL / 2);
     auto now = std::chrono::high_resolution_clock::now();
     std::set<uint32_t> pids_to_remove;
     {
@@ -164,19 +163,19 @@ void HailoRtRpcService::remove_disconnected_clients()
         // We abort vstreams before releasing them to avoid cases where the vstream is stuck in execute of a
         // blocking operation (which will be finished with timeout).
         // To release the vstream the ServiceResourceManager is waiting for the resource_mutex which is also locked in execute.
-        abort_vstreams_by_pids(pids_to_remove);
+        abort_vstreams_by_ids(pids_to_remove);
 
         // It is important to shutdown the cb Queue before the NG shutdown, as ongoing callbacks might continue to try to enqueue
-        shutdown_vdevice_cb_queue_by_pids(pids_to_remove);
-        shutdown_configured_network_groups_by_pids(pids_to_remove);
-        shutdown_buffer_pool_by_pids(pids_to_remove);
+        shutdown_vdevice_cb_queue_by_ids(pids_to_remove);
+        shutdown_configured_network_groups_by_ids(pids_to_remove);
+        shutdown_buffer_pool_by_ids(pids_to_remove);
         for (auto &client_pid : pids_to_remove) {
-            ServiceResourceManager<OutputVStream>::get_instance().release_by_pid(client_pid);
-            ServiceResourceManager<InputVStream>::get_instance().release_by_pid(client_pid);
-            ServiceResourceManager<ConfiguredNetworkGroup>::get_instance().release_by_pid(client_pid);
-            ServiceResourceManager<VDeviceCallbacksQueue>::get_instance().release_by_pid(client_pid);
-            ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance().release_by_pid(client_pid);
-            ServiceResourceManager<VDevice>::get_instance().release_by_pid(client_pid);
+            ServiceResourceManager<OutputVStream>::get_instance().release_by_id(client_pid);
+            ServiceResourceManager<InputVStream>::get_instance().release_by_id(client_pid);
+            ServiceResourceManager<ConfiguredNetworkGroup>::get_instance().release_by_id(client_pid);
+            ServiceResourceManager<VDeviceCallbacksQueue>::get_instance().release_by_id(client_pid);
+            ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance().release_by_id(client_pid);
+            ServiceResourceManager<VDevice>::get_instance().release_by_id(client_pid);
 
             LOGGER__INFO("Client disconnected, pid: {}", client_pid);
             HAILORT_OS_LOG_INFO("Client disconnected, pid: {}", client_pid);
@@ -188,6 +187,7 @@ void HailoRtRpcService::remove_disconnected_clients()
 void HailoRtRpcService::keep_alive()
 {
     while (true) {
+        std::this_thread::sleep_for(hailort::HAILO_KEEPALIVE_INTERVAL / 2);
         remove_disconnected_clients();
     }
 }
@@ -435,7 +435,7 @@ hailo_status HailoRtRpcService::allocate_pool_for_raw_streams(uint32_t ng_handle
 {
     auto &cng_buffer_pool_manager = ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance();
     // For Async API - The buffer size in the pool will be the stream's hw frame size as used in the infer_model pipeline
-    TRY(const auto min_buffer_pool_size, get_min_buffer_pool_size(ng_handle));
+    TRY(const auto min_buffer_pool_size, infer_queue_size(ng_handle));
     TRY(const auto streams_infos, get_all_stream_infos(ng_handle));
 
     for (const auto &stream_info : streams_infos) {
@@ -953,12 +953,8 @@ void serialize_vstream_info(const hailo_vstream_info_t &info, ProtoVStreamInfo *
     if (HailoRTCommon::is_nms(info.format.order)) {
         auto nms_shape_proto = info_proto->mutable_nms_shape();
         nms_shape_proto->set_number_of_classes(info.nms_shape.number_of_classes);
-        if (info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE) {
-            nms_shape_proto->set_max_bboxes_total(info.nms_shape.max_bboxes_total);
-        } else {
-            nms_shape_proto->set_max_bboxes_per_class(info.nms_shape.max_bboxes_per_class);
-        }
-
+        nms_shape_proto->set_max_bboxes_total(info.nms_shape.max_bboxes_total);
+        nms_shape_proto->set_max_bboxes_per_class(info.nms_shape.max_bboxes_per_class);
         nms_shape_proto->set_max_accumulated_mask_size(info.nms_shape.max_accumulated_mask_size);
     } else {
         auto shape_proto = info_proto->mutable_shape();
@@ -1273,15 +1269,11 @@ void serialize_op_matadata(hailort::net_flow::OpMetadata &op_metadata, ProtoOpMe
         auto nms_config_proto = op_metadata_proto->mutable_nms_post_process_config();
         nms_config_proto->set_nms_score_th(nms_config.nms_score_th);
         nms_config_proto->set_nms_iou_th(nms_config.nms_iou_th);
-        if (HAILO_NMS_RESULT_ORDER_BY_SCORE == nms_config.order_type) {
-            nms_config_proto->set_max_proposals_total(nms_config.max_proposals_total);
-        } else {
-            nms_config_proto->set_max_proposals_per_class(nms_config.max_proposals_per_class);
-        }
+        nms_config_proto->set_max_proposals_total(nms_config.max_proposals_total);
+        nms_config_proto->set_max_proposals_per_class(nms_config.max_proposals_per_class);
         nms_config_proto->set_number_of_classes(nms_config.number_of_classes);
         nms_config_proto->set_background_removal(nms_config.background_removal);
         nms_config_proto->set_background_removal_index(nms_config.background_removal_index);
-        nms_config_proto->set_cross_classes(nms_config.cross_classes);
         nms_config_proto->set_bbox_only(nms_config.bbox_only);
     }
 
@@ -1775,7 +1767,6 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_all_stream_infos(grpc
             auto proto_nms_info = proto_stream_info.mutable_nms_info();
             proto_nms_info->set_number_of_classes(stream_info.nms_info.number_of_classes);
             proto_nms_info->set_max_bboxes_per_class(stream_info.nms_info.max_bboxes_per_class);
-            proto_nms_info->set_order_type(HAILO_NMS_RESULT_ORDER_HW);
             proto_nms_info->set_bbox_size(stream_info.nms_info.bbox_size);
             proto_nms_info->set_chunks_per_frame(stream_info.nms_info.chunks_per_frame);
             proto_nms_info->set_is_defused(stream_info.nms_info.is_defused);
@@ -1872,25 +1863,25 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_sorted_output_names(g
     return grpc::Status::OK;
 }
 
-Expected<size_t> HailoRtRpcService::get_min_buffer_pool_size(uint32_t ng_handle)
+Expected<size_t> HailoRtRpcService::infer_queue_size(uint32_t ng_handle)
 {
     auto lambda = [](std::shared_ptr<ConfiguredNetworkGroup> cng) {
-        return cng->get_min_buffer_pool_size();
+        return cng->infer_queue_size();
     };
     auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
-    TRY(auto min_buffer_pool_size, manager.execute<Expected<size_t>>(ng_handle, lambda));
+    TRY(auto queue_size, manager.execute<Expected<size_t>>(ng_handle, lambda));
 
-    return min_buffer_pool_size;
+    return queue_size;
 }
 
-grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_get_min_buffer_pool_size(grpc::ServerContext*,
-    const ConfiguredNetworkGroup_get_min_buffer_pool_size_Request *request,
-    ConfiguredNetworkGroup_get_min_buffer_pool_size_Reply *reply)
+grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_infer_queue_size(grpc::ServerContext*,
+    const ConfiguredNetworkGroup_infer_queue_size_Request *request,
+    ConfiguredNetworkGroup_infer_queue_size_Reply *reply)
 {
-    auto min_buffer_pool_size_expected = get_min_buffer_pool_size(request->identifier().network_group_handle());
-    CHECK_EXPECTED_AS_RPC_STATUS(min_buffer_pool_size_expected, reply);
+    auto queue_size_expected = infer_queue_size(request->identifier().network_group_handle());
+    CHECK_EXPECTED_AS_RPC_STATUS(queue_size_expected, reply);
 
-    reply->set_min_buffer_pool_size(static_cast<uint32_t>(min_buffer_pool_size_expected.release()));
+    reply->set_infer_queue_size(static_cast<uint32_t>(queue_size_expected.release()));
     reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;
 }
@@ -1991,21 +1982,6 @@ grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_set_nms_max_bboxes_total(
     auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
     auto status = manager.execute(request->identifier().network_group_handle(), lambda,
                                     request->edge_name(), request->nms_max_bboxes_total());
-    CHECK_SUCCESS_AS_RPC_STATUS(status, reply);
-    reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
-    return grpc::Status::OK;
-}
-
-grpc::Status HailoRtRpcService::ConfiguredNetworkGroup_set_nms_result_order_type(grpc::ServerContext*,
-    const ConfiguredNetworkGroup_set_nms_result_order_type_Request *request,
-    ConfiguredNetworkGroup_set_nms_result_order_type_Reply *reply)
-{
-    auto lambda = [](std::shared_ptr<ConfiguredNetworkGroup> cng, const std::string &edge_name, hailo_nms_result_order_type_t order_type) {
-        return cng->set_nms_result_order_type(edge_name, order_type);
-    };
-    auto &manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
-    auto status = manager.execute(request->identifier().network_group_handle(), lambda,
-                                    request->edge_name(), static_cast<hailo_nms_result_order_type_t>(request->nms_result_order_type()));
     CHECK_SUCCESS_AS_RPC_STATUS(status, reply);
     reply->set_status(static_cast<uint32_t>(HAILO_SUCCESS));
     return grpc::Status::OK;

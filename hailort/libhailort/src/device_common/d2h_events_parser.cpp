@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 
@@ -220,16 +220,15 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_closed_streams_not
     }
 
     if(d2h_notification_message->header.payload_length != sizeof(d2h_notification_message->message_parameters.health_monitor_closed_streams_event)) {
-        LOGGER__ERROR("d2h notification invalid payload_length: {}", d2h_notification_message->header.payload_length);
+        LOGGER__ERROR("d2h notification invalid payload_length: {} vs {}", d2h_notification_message->header.payload_length,
+			 sizeof(d2h_notification_message->message_parameters.health_monitor_closed_streams_event));
         status = HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_LENGTH;
         goto l_exit;
     }
 
-    LOGGER__CRITICAL("Got health monitor closed streams notification. temperature: TS00={} c, TS01={} c, inputs bitfield:{:x}, outputs bitfield:{:x}", 
+    LOGGER__CRITICAL("Got health monitor closed streams notification. temperature: TS00={} c, TS01={} c",
         d2h_notification_message->message_parameters.health_monitor_closed_streams_event.ts0_temperature,
-        d2h_notification_message->message_parameters.health_monitor_closed_streams_event.ts1_temperature,
-        d2h_notification_message->message_parameters.health_monitor_closed_streams_event.closed_input_streams,
-        d2h_notification_message->message_parameters.health_monitor_closed_streams_event.closed_output_streams);
+        d2h_notification_message->message_parameters.health_monitor_closed_streams_event.ts1_temperature);
 
     status = HAILO_COMMON_STATUS__SUCCESS;
 

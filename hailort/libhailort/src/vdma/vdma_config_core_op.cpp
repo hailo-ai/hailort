@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 
@@ -31,7 +31,7 @@ Expected<std::shared_ptr<VdmaConfigCoreOp>> VdmaConfigCoreOp::create_shared(Acti
 
 VdmaConfigCoreOp::~VdmaConfigCoreOp()
 {
-    (void)shutdown();
+    (void)shutdown_impl();
 }
 
 VdmaConfigCoreOp::VdmaConfigCoreOp(ActiveCoreOpHolder &active_core_op_holder, const ConfigureNetworkParams &config_params,
@@ -164,6 +164,11 @@ hailo_status VdmaConfigCoreOp::unregister_cache_update_callback()
 }
 
 hailo_status VdmaConfigCoreOp::shutdown()
+{
+    return shutdown_impl();
+}
+
+hailo_status VdmaConfigCoreOp::shutdown_impl()
 {
     hailo_status status = HAILO_SUCCESS; // Success oriented
 
@@ -328,10 +333,10 @@ Expected<uint32_t> VdmaConfigCoreOp::get_cache_entry_size(uint32_t cache_id) con
     return cache_buffer_it->second.entry_size();
 }
 
-hailo_status VdmaConfigCoreOp::init_cache(uint32_t read_offset, int32_t write_offset_delta)
+hailo_status VdmaConfigCoreOp::init_cache(uint32_t read_offset)
 {
     CHECK(has_caches(), HAILO_INVALID_OPERATION, "No caches in core-op");
-    return m_cache_manager->init_caches(read_offset, write_offset_delta);
+    return m_cache_manager->init_caches(read_offset);
 }
 
 hailo_status VdmaConfigCoreOp::update_cache_offset(int32_t offset_delta_entries)

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -51,6 +51,9 @@ static_assert(MAX_SG_PAGE_SIZE > 0, "MAX_SG_PAGE_SIZE must be larger then 0");
 static_assert(is_powerof2(DEFAULT_SG_PAGE_SIZE), "DEFAULT_SG_PAGE_SIZE must be a power of 2");
 static_assert(DEFAULT_SG_PAGE_SIZE > 0, "DEFAULT_SG_PAGE_SIZE must be larger then 0");
 
+static constexpr size_t SINGLE_DESCRIPTOR_SIZE = 0x10;
+static constexpr size_t DESCRIPTOR_LIST_ALIGN = 1 << 16;
+
 
 class DescriptorList
 {
@@ -95,12 +98,20 @@ public:
     // Map descriptors starting at offset to the start of buffer, wrapping around the descriptor list as needed
     // On hailo8, we allow configuring buffer without specific channel index (default is INVALID_VDMA_CHANNEL_INDEX).
     hailo_status program(MappedBuffer& buffer, size_t buffer_size, size_t buffer_offset,
-        ChannelId channel_id, uint32_t starting_desc = 0, bool should_bind = true,
-        InterruptsDomain last_desc_interrupts = InterruptsDomain::NONE);
+        ChannelId channel_id, uint32_t starting_desc = 0,
+        uint32_t batch_size = 1,
+        bool should_bind = true,
+        InterruptsDomain last_desc_interrupts = InterruptsDomain::NONE,
+        uint32_t stride = 0);
 
     uint32_t descriptors_in_buffer(size_t buffer_size) const;
     static uint32_t descriptors_in_buffer(size_t buffer_size, uint16_t desc_page_size);
     static uint32_t calculate_descriptors_count(uint32_t buffer_size, uint16_t batch_size, uint16_t desc_page_size);
+
+    /**
+     * Returns the size of the buffer needed to allocate the descriptors list.
+     */
+    static size_t descriptors_buffer_allocation_size(uint32_t desc_count);
 
 private:
     DescriptorList(uint32_t desc_count, uint16_t desc_page_size, bool is_circular, HailoRTDriver &driver,

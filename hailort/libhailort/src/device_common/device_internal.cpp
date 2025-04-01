@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -601,7 +601,7 @@ hailo_status DeviceBase::check_hef_is_compatible(Hef &hef)
 
         LOGGER__ERROR("HEF format is not compatible with device. Device arch: {}, HEF arch: {}",
             device_arch_str.c_str(), hef_arch_str.c_str());
-        return HAILO_INVALID_HEF;
+        return HAILO_HEF_NOT_COMPATIBLE_WITH_DEVICE;
     }
 
     // TODO: MSW-227 check clock rate for hailo15 as well.
@@ -758,6 +758,8 @@ hailo_device_architecture_t DeviceBase::hef_arch_to_device_arch(HEFHwArch hef_ar
         return HAILO_ARCH_HAILO15M;
     case HEFHwArch::HW_ARCH__HAILO10H:
         return HAILO_ARCH_HAILO10H;
+    case HEFHwArch::HW_ARCH__MARS:
+        return HAILO_ARCH_MARS;
 
     default:
         return HAILO_ARCH_MAX_ENUM;

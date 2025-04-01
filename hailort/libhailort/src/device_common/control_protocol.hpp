@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -172,8 +172,9 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_overcurrent_state_request(CONTR
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_overcurrent_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_hw_consts_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_sleep_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint8_t sleep_state);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_hw_infer_status_request(CONTROL_PROTOCOL__request_t *request, 
-    size_t *request_size, uint32_t sequence, uint8_t hw_infer_state, uint8_t network_group_index, 
-    uint16_t dynamic_batch_size, uint16_t batch_count, CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_hw_infer_status_request(CONTROL_PROTOCOL__request_t *request,
+    size_t *request_size, uint32_t sequence, uint8_t hw_infer_state, uint8_t network_group_index,
+    uint16_t dynamic_batch_size, uint16_t batch_count, CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info,
+    CONTROL_PROTOCOL__boundary_channel_mode_t boundary_channel_mode);
 
 #endif /* _CONTROL_PROTOCOL_HPP_ */

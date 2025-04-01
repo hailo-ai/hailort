@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
-**/
+ **/
 /**
  * @file mon_command.cpp
  * @brief Monitor of networks - Presents information about the running networks
@@ -57,16 +57,16 @@ hailo_status MonCommand::execute()
 #endif
 }
 
-void MonCommand::print_devices_info_header()
+void MonCommand::add_devices_info_header(std::ostream &buffer)
 {
-    std::cout << 
+    buffer <<
         std::setw(DEVICE_ID_WIDTH) << std::left << "Device ID" <<
         std::setw(UTILIZATION_WIDTH) << std::left << "Utilization (%)" <<
         std::setw(STRING_WIDTH) << std::left << "Architecture" <<
         "\n" << std::left << std::string(LINE_LENGTH, '-') << "\n";
 }
 
-void MonCommand::print_devices_info_table(const ProtoMon &mon_message)
+void MonCommand::add_devices_info_table(const ProtoMon &mon_message, std::ostream &buffer)
 {
     auto data_line_len = NUMBER_WIDTH + NETWORK_GROUP_NAME_WIDTH + DEVICE_ID_WIDTH;
     auto rest_line_len = LINE_LENGTH - data_line_len;
@@ -76,7 +76,7 @@ void MonCommand::print_devices_info_table(const ProtoMon &mon_message)
         auto utilization = device_info.utilization();
         auto device_arch = device_info.device_arch();
 
-        std::cout << std::setprecision(1) << std::fixed <<
+        buffer << std::setprecision(1) << std::fixed <<
             std::setw(DEVICE_ID_WIDTH) << std::left << device_id <<
             std::setw(UTILIZATION_WIDTH) << std::left << utilization <<
             std::setw(STRING_WIDTH) << std::left << device_arch <<
@@ -84,9 +84,9 @@ void MonCommand::print_devices_info_table(const ProtoMon &mon_message)
     }
 }
 
-void MonCommand::print_networks_info_header()
+void MonCommand::add_networks_info_header(std::ostream &buffer)
 {
-    std::cout << 
+    buffer <<
         std::setw(NETWORK_GROUP_NAME_WIDTH) << std::left << "Model" <<
         std::setw(UTILIZATION_WIDTH) << std::left << "Utilization (%) " <<
         std::setw(NUMBER_WIDTH) << std::left << "FPS" <<
@@ -94,7 +94,7 @@ void MonCommand::print_networks_info_header()
         "\n" << std::left << std::string(LINE_LENGTH, '-') << "\n";
 }
 
-void MonCommand::print_networks_info_table(const ProtoMon &mon_message)
+void MonCommand::add_networks_info_table(const ProtoMon &mon_message, std::ostream &buffer)
 {
     const uint32_t NUMBER_OBJECTS_COUNT = 3;
     auto data_line_len = (NUMBER_WIDTH * NUMBER_OBJECTS_COUNT) + NETWORK_GROUP_NAME_WIDTH;
@@ -107,7 +107,7 @@ void MonCommand::print_networks_info_table(const ProtoMon &mon_message)
         auto fps = net_info.fps();
         auto utilization = net_info.utilization();
 
-        std::cout << std::setprecision(1) << std::fixed <<
+        buffer << std::setprecision(1) << std::fixed <<
             std::setw(STRING_WIDTH) << std::left << net_name <<
             std::setw(UTILIZATION_WIDTH) << std::left << utilization <<
             std::setw(NUMBER_WIDTH) << std::left << fps <<
@@ -115,9 +115,9 @@ void MonCommand::print_networks_info_table(const ProtoMon &mon_message)
     }
 }
 
-void MonCommand::print_frames_header()
+void MonCommand::add_frames_header(std::ostream &buffer)
 {
-    std::cout <<
+    buffer <<
         std::setw(STRING_WIDTH) << std::left << "Model" <<
         std::setw(STRING_WIDTH) << std::left << "Stream" <<
         std::setw(NUMBER_WIDTH) << std::left << "Direction" <<
@@ -133,7 +133,7 @@ void MonCommand::print_frames_header()
         "\n" << std::left << std::string(LINE_LENGTH + NUMBER_WIDTH, '-') << "\n";
 }
 
-hailo_status MonCommand::print_frames_table(const ProtoMon &mon_message)
+hailo_status MonCommand::print_frames_table(const ProtoMon &mon_message, std::ostream &buffer)
 {
     for (const auto &net_info : mon_message.net_frames_infos()) {
         auto &original_net_name = net_info.network_name();
@@ -166,7 +166,7 @@ hailo_status MonCommand::print_frames_table(const ProtoMon &mon_message)
                 avg_frames_str = ss.str();
             }
 
-            std::cout <<
+            buffer <<
                 std::setw(STRING_WIDTH) << std::left << net_name <<
                 std::setw(STRING_WIDTH) << std::left << stream_name <<
                 std::setw(NUMBER_WIDTH) << std::left << stream_direction <<
@@ -195,27 +195,35 @@ Expected<uint16_t> get_terminal_line_width()
 
 hailo_status MonCommand::print_tables(const std::vector<ProtoMon> &mon_messages, uint32_t terminal_line_width)
 {
-    print_devices_info_header();
+    std::ostringstream buffer;
+    buffer.str("");  // Clear previous content
+    buffer.clear();  // Reset any error state
+
+    buffer << FORMAT_RESET_TERMINAL_CURSOR_FIRST_LINE;
+
+    add_devices_info_header(buffer);
     for (const auto &mon_message : mon_messages) {
-        print_devices_info_table(mon_message);
+        add_devices_info_table(mon_message, buffer);
     }
 
-    std::cout << std::string(terminal_line_width, ' ') << "\n";
-    std::cout << std::string(terminal_line_width, ' ') << "\n";   
-    
-    print_networks_info_header();
+    buffer << std::string(terminal_line_width, ' ') << "\n";
+    buffer << std::string(terminal_line_width, ' ') << "\n";
+
+    add_networks_info_header(buffer);
 
     for (const auto &mon_message : mon_messages) {
-        print_networks_info_table(mon_message);
+        add_networks_info_table(mon_message, buffer);
     }
 
-    std::cout << std::string(terminal_line_width, ' ') << "\n";
-    std::cout << std::string(terminal_line_width, ' ') << "\n";
+    buffer << std::string(terminal_line_width, ' ') << "\n";
+    buffer << std::string(terminal_line_width, ' ') << "\n";
 
-    print_frames_header();
+    add_frames_header(buffer);
     for (const auto &mon_message : mon_messages) {
-        CHECK_SUCCESS(print_frames_table(mon_message));
+        CHECK_SUCCESS(print_frames_table(mon_message, buffer));
     }
+
+    std::cout << buffer.str() << std::flush;
     return HAILO_SUCCESS;
 }
 
@@ -267,7 +275,6 @@ hailo_status MonCommand::run_monitor()
             << "If this is not the case, verify that environment variable '" << SCHEDULER_MON_ENV_VAR << "' is set to 1.\n" << FORMAT_NORMAL_PRINT;
         }
 
-        CliCommon::clear_terminal();
         std::this_thread::sleep_for(DEFAULT_SCHEDULER_MON_INTERVAL);
     }
 

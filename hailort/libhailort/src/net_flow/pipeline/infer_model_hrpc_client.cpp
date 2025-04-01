@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -15,26 +15,26 @@ namespace hailort
 
 Expected<std::shared_ptr<InferModelHrpcClient>> InferModelHrpcClient::create(Hef &&hef, const std::string &network_name,
     std::shared_ptr<Client> client, uint32_t infer_model_handle_id, uint32_t vdevice_handle, VDevice &vdevice,
-    std::shared_ptr<CallbacksDispatcher> callbacks_dispatcher)
+    std::shared_ptr<ClientCallbackDispatcherManager> callback_dispatcher_manager)
 {
     TRY(auto inputs, create_infer_stream_inputs(hef, network_name));
     TRY(auto outputs, create_infer_stream_outputs(hef, network_name));
 
     auto ptr = make_shared_nothrow<InferModelHrpcClient>(client, infer_model_handle_id,
-        vdevice_handle, vdevice, callbacks_dispatcher, std::move(hef), network_name, std::move(inputs), std::move(outputs));
+        vdevice_handle, vdevice, callback_dispatcher_manager, std::move(hef), network_name, std::move(inputs), std::move(outputs));
     CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return ptr;
 }
 
 InferModelHrpcClient::InferModelHrpcClient(std::shared_ptr<Client> client, uint32_t handle,
-    uint32_t vdevice_handle, VDevice &vdevice, std::shared_ptr<CallbacksDispatcher> callbacks_dispatcher,
+    uint32_t vdevice_handle, VDevice &vdevice, std::shared_ptr<ClientCallbackDispatcherManager> callback_dispatcher_manager,
     Hef &&hef, const std::string &network_name, std::vector<InferStream> &&inputs, std::vector<InferStream> &&outputs) :
         InferModelBase(vdevice, std::move(hef), network_name, std::move(inputs), std::move(outputs)),
         m_client(client),
         m_handle(handle),
         m_vdevice_handle(vdevice_handle),
-        m_callbacks_dispatcher(callbacks_dispatcher)
+        m_callback_dispatcher_manager(callback_dispatcher_manager)
 {
 }
 
@@ -44,21 +44,27 @@ InferModelHrpcClient::~InferModelHrpcClient()
         return;
     }
 
-    auto request = DestroyInferModelSerializer::serialize_request(m_handle);
-    if (!request) {
-        LOGGER__CRITICAL("Failed to serialize InferModel_release request");
-        return;
-    }
-
     auto client = m_client.lock();
     if (client) {
-        auto execute_request_result = client->execute_request(HailoRpcActionID::INFER_MODEL__DESTROY, MemoryView(*request));
+        auto request_buffer = client->allocate_request_buffer();
+        if (!request_buffer) {
+            LOGGER__CRITICAL("Failed to create buffer for InferModel_release request");
+            return;
+        }
+
+        auto request_size = DestroyInferModelSerializer::serialize_request(m_handle, MemoryView(**request_buffer));
+        if (!request_size) {
+            LOGGER__CRITICAL("Failed to serialize InferModel_release request");
+            return;
+        }
+
+        auto execute_request_result = client->execute_request(HailoRpcActionID::INFER_MODEL__DESTROY, MemoryView(request_buffer.value()->data(), *request_size));
         if (!execute_request_result) {
             LOGGER__CRITICAL("Failed to destroy infer model! status = {}", execute_request_result.status());
             return;
         }
 
-        auto deserialize_reply_result = DestroyInferModelSerializer::deserialize_reply(MemoryView(*execute_request_result));
+        auto deserialize_reply_result = DestroyInferModelSerializer::deserialize_reply(MemoryView(execute_request_result->buffer->data(), execute_request_result->header.size));
         if (HAILO_SUCCESS != deserialize_reply_result) {
             LOGGER__CRITICAL("Failed to destroy infer model! status = {}", deserialize_reply_result);
             return;
@@ -101,13 +107,15 @@ Expected<ConfiguredInferModel> InferModelHrpcClient::configure()
     request_params.infer_model_handle = m_handle;
     request_params.vdevice_handle = m_vdevice_handle;
 
-    TRY(auto request, CreateConfiguredInferModelSerializer::serialize_request(request_params));
+    // Not using allocator because CREATE_CONFIGURED_INFER_MODEL protobuf size is a lot bigger than the other requests and happens only once.
+    TRY(auto request_buffer, Buffer::create_shared(CREATE_CONFIGURED_INFER_MODEL_PROTO_MAX_SIZE, BufferStorageParams::create_dma()));
+    TRY(auto request_size, CreateConfiguredInferModelSerializer::serialize_request(request_params, MemoryView(*request_buffer)));
     auto client = m_client.lock();
     CHECK_AS_EXPECTED(nullptr != client, HAILO_INTERNAL_FAILURE,
         "Lost comunication with the server. This may happen if VDevice is released while the InferModel is in use.");
     TRY(auto result, client->execute_request(HailoRpcActionID::INFER_MODEL__CREATE_CONFIGURED_INFER_MODEL,
-        MemoryView(request)));
-    TRY(auto tuple, CreateConfiguredInferModelSerializer::deserialize_reply(MemoryView(result)));
+        MemoryView(request_buffer->data(), request_size)));
+    TRY(auto tuple, CreateConfiguredInferModelSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size)));
     CHECK_SUCCESS_AS_EXPECTED(std::get<0>(tuple));
     auto configured_infer_model_handle = std::get<1>(tuple);
     auto async_queue_size = std::get<2>(tuple);
@@ -121,18 +129,12 @@ Expected<ConfiguredInferModel> InferModelHrpcClient::configure()
         outputs_frame_sizes.emplace(output.second.name(), output.second.get_frame_size());
     }
 
-    auto callbacks_queue = make_shared_nothrow<CallbacksQueue>(m_output_names);
-    CHECK_NOT_NULL_AS_EXPECTED(callbacks_queue, HAILO_OUT_OF_HOST_MEMORY);
-
-    m_callbacks_dispatcher->add(configured_infer_model_handle, callbacks_queue);
-
-    TRY(auto input_vstream_infos, m_hef.get_input_vstream_infos());
-    TRY(auto output_vstream_infos, m_hef.get_output_vstream_infos());
+    TRY(auto input_vstream_infos, m_hef.get_input_vstream_infos(m_network_name));
+    TRY(auto output_vstream_infos, m_hef.get_output_vstream_infos(m_network_name));
     TRY(auto cim_client_ptr, ConfiguredInferModelHrpcClient::create(client,
         configured_infer_model_handle,
         std::move(input_vstream_infos), std::move(output_vstream_infos),
-        async_queue_size, callbacks_queue, m_handle,
-        inputs_frame_sizes, outputs_frame_sizes));
+        async_queue_size, m_handle, inputs_frame_sizes, outputs_frame_sizes));
 
     return ConfiguredInferModelBase::create(cim_client_ptr);
 }

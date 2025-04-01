@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -72,7 +72,19 @@ class ClientContextWithTimeout : public grpc::ClientContext {
 public:
     ClientContextWithTimeout(const std::chrono::milliseconds context_timeout = CONTEXT_TIMEOUT)
     {
-        set_deadline(std::chrono::system_clock::now() + context_timeout);
+        auto timeout = get_request_timeout(context_timeout);
+
+        set_deadline(std::chrono::system_clock::now() + timeout);
+    }
+    
+    // TODO: HRT-16034: make common function with hrpc client.
+    std::chrono::milliseconds get_request_timeout(const std::chrono::milliseconds default_timeout)
+    {
+    auto timeout_seconds = get_env_variable(HAILO_REQUEST_TIMEOUT_SECONDS);
+    if (timeout_seconds) {
+        return std::chrono::seconds(std::stoi(timeout_seconds.value()));
+    }
+    return default_timeout;
     }
 };
 
@@ -122,14 +134,13 @@ public:
     Expected<bool> ConfiguredNetworkGroup_is_multi_context(const NetworkGroupIdentifier &identifier);
     Expected<ConfigureNetworkParams> ConfiguredNetworkGroup_get_config_params(const NetworkGroupIdentifier &identifier);
     Expected<std::vector<std::string>> ConfiguredNetworkGroup_get_sorted_output_names(const NetworkGroupIdentifier &identifier);
-    Expected<size_t> ConfiguredNetworkGroup_get_min_buffer_pool_size(const NetworkGroupIdentifier &identifier);
+    Expected<size_t> ConfiguredNetworkGroup_infer_queue_size(const NetworkGroupIdentifier &identifier);
     Expected<std::unique_ptr<LayerInfo>> ConfiguredNetworkGroup_get_layer_info(const NetworkGroupIdentifier &identifier, const std::string &stream_name);
     Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> ConfiguredNetworkGroup_get_ops_metadata(const NetworkGroupIdentifier &identifier);
     hailo_status ConfiguredNetworkGroup_set_nms_score_threshold(const NetworkGroupIdentifier &identifier, const std::string &edge_name, float32_t nms_score_th);
     hailo_status ConfiguredNetworkGroup_set_nms_iou_threshold(const NetworkGroupIdentifier &identifier, const std::string &edge_name, float32_t iou_th);
     hailo_status ConfiguredNetworkGroup_set_nms_max_bboxes_per_class(const NetworkGroupIdentifier &identifier, const std::string &edge_name, uint32_t max_bboxes);
     hailo_status ConfiguredNetworkGroup_set_nms_max_bboxes_total(const NetworkGroupIdentifier &identifier, const std::string &edge_name, uint32_t max_bboxes);
-    hailo_status ConfiguredNetworkGroup_set_nms_result_order_type(const NetworkGroupIdentifier &identifier, const std::string &edge_name, hailo_nms_result_order_type_t order_type);
     hailo_status ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size(const NetworkGroupIdentifier &identifier, const std::string &edge_name, uint32_t max_accumulated_mask_size);
     Expected<std::vector<std::string>> ConfiguredNetworkGroup_get_stream_names_from_vstream_name(const NetworkGroupIdentifier &identifier, const std::string &vstream_name);
     Expected<std::vector<std::string>> ConfiguredNetworkGroup_get_vstream_names_from_stream_name(const NetworkGroupIdentifier &identifier, const std::string &stream_name);

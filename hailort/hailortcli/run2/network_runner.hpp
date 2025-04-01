@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -130,6 +130,8 @@ public:
 
     hailo_status run(EventPtr shutdown_event, LiveStats &live_stats, Barrier &activation_barrier);
     virtual void stop() = 0;
+    virtual hailo_status prepare_buffers() = 0;
+
     // Must be called prior to run
     void set_overall_latency_meter(LatencyMeterPtr latency_meter);
     void set_latency_barrier(BarrierPtr latency_barrier);
@@ -202,7 +204,7 @@ protected:
                 CHECK_SUCCESS(status);
 
                 status = writer->write_async(
-                    [sync_event](const typename Writer::CompletionInfo &) {
+                    [sync_event](const auto &) {
                         if (sync_event) {
                             (void)sync_event->signal();
                         }
@@ -277,7 +279,7 @@ protected:
                 CHECK_SUCCESS(status);
 
                 status = reader->read_async(
-                    [sync_event](const typename Reader::CompletionInfo &) {
+                    [sync_event](const auto &) {
                         if (sync_event) {
                             (void)sync_event->signal();
                         }
@@ -337,10 +339,13 @@ public:
     virtual std::set<std::string> get_input_names() override;
     virtual std::set<std::string> get_output_names() override;
     VStreamParams get_params(const std::string &name);
+    virtual hailo_status prepare_buffers() override;
 
 private:
     std::vector<InputVStream> m_input_vstreams;
     std::vector<OutputVStream> m_output_vstreams;
+    std::vector<ReaderWrapperPtr<OutputVStream>> m_reader_wrappers;
+    std::vector<WriterWrapperPtr<InputVStream>> m_writer_wrappers;
 };
 
 class FullAsyncNetworkRunner : public NetworkRunner
@@ -404,7 +409,14 @@ public:
     virtual void stop() override;
     virtual std::set<std::string> get_input_names() override;
     virtual std::set<std::string> get_output_names() override;
+    virtual hailo_status prepare_buffers() override;
     VStreamParams get_params(const std::string &name);
+
+private:
+    std::unordered_map<std::string, Buffer> m_input_buffers; // Keys are inputs names
+    std::vector<Buffer> m_output_buffers;
+    std::vector<DmaMappedBuffer> m_dma_mapped_buffers;
+    ConfiguredInferModel::Bindings m_bindings;
 };
 
 class RawNetworkRunner : public NetworkRunner
@@ -424,10 +436,13 @@ public:
     virtual std::set<std::string> get_input_names() override;
     virtual std::set<std::string> get_output_names() override;
     StreamParams get_params(const std::string &name);
+    virtual hailo_status prepare_buffers() override;
 
 private:
     InputStreamRefVector m_input_streams;
     OutputStreamRefVector m_output_streams;
+    std::vector<ReaderWrapperPtr<OutputStream>> m_reader_wrappers;
+    std::vector<WriterWrapperPtr<InputStream>> m_writer_wrappers;
 };
 
 #endif /* _HAILO_HAILORTCLI_RUN2_NETWORK_RUNNER_HPP_ */

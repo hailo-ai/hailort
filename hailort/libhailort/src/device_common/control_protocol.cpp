@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 
@@ -42,8 +42,6 @@ const char *CONTROL_PROTOCOL__get_textual_opcode(CONTROL_PROTOCOL__OPCODE_t opco
 {
     return CONTROL_PROTOCOL__textual_format[opcode];
 }
-
-#define CHANGE_HW_INFER_REQUEST_PARAMETER_COUNT (5)
 
 #define CHECK_NOT_NULL_COMMON_STATUS(arg, status) _CHECK(nullptr != (arg), (status), "CHECK_NOT_NULL for {} failed", #arg)
 #define CHECK_COMMON_STATUS(cond, ret_val, ...) \
@@ -2388,55 +2386,55 @@ exit:
 }
 
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_hw_infer_status_request(
-    CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
+    CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
     uint8_t hw_infer_state, uint8_t network_group_index, uint16_t dynamic_batch_size,
-    uint16_t batch_count, CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info)
+    uint16_t batch_count, CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info,
+    CONTROL_PROTOCOL__boundary_channel_mode_t boundary_channel_mode)
 {
-    HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
     size_t local_request_size = 0;
 
-    if ((NULL == request) || (NULL == request_size)) {
-        status = HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED;
-        goto exit;
-    }
+    CHECK_COMMON_STATUS((NULL != request) && (NULL != request_size), HAILO_STATUS__CONTROL_PROTOCOL__NULL_ARGUMENT_PASSED);
 
     /* Header */
-    local_request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE + 
+    local_request_size = CONTROL_PROTOCOL__REQUEST_BASE_SIZE +
         sizeof(CONTROL_PROTOCOL__change_hw_infer_status_request_t);
-    control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_CHANGE_HW_INFER_STATUS, 
+    control_protocol__pack_request_header(request, sequence, HAILO_CONTROL_OPCODE_CHANGE_HW_INFER_STATUS,
         CHANGE_HW_INFER_REQUEST_PARAMETER_COUNT);
 
     /* hw_infer_state */
-    request->parameters.change_hw_infer_status_request.hw_infer_state_length = 
+    request->parameters.change_hw_infer_status_request.hw_infer_state_length =
         BYTE_ORDER__htonl(sizeof(request->parameters.change_hw_infer_status_request.hw_infer_state));
     request->parameters.change_hw_infer_status_request.hw_infer_state = hw_infer_state;
 
     /* network_group_index */
-    request->parameters.change_hw_infer_status_request.application_index_length = 
+    request->parameters.change_hw_infer_status_request.application_index_length =
         BYTE_ORDER__htonl(sizeof(request->parameters.change_hw_infer_status_request.application_index));
     request->parameters.change_hw_infer_status_request.application_index = network_group_index;
 
     /* dynamic_batch_size */
-    request->parameters.change_hw_infer_status_request.dynamic_batch_size_length = 
+    request->parameters.change_hw_infer_status_request.dynamic_batch_size_length =
         BYTE_ORDER__htonl(sizeof(request->parameters.change_hw_infer_status_request.dynamic_batch_size));
     request->parameters.change_hw_infer_status_request.dynamic_batch_size = dynamic_batch_size;
 
     /* batch_count */
-    request->parameters.change_hw_infer_status_request.batch_count_length = 
+    request->parameters.change_hw_infer_status_request.batch_count_length =
         BYTE_ORDER__htonl(sizeof(request->parameters.change_hw_infer_status_request.batch_count));
     request->parameters.change_hw_infer_status_request.batch_count = batch_count;
 
     /* channels_info */
-    request->parameters.change_hw_infer_status_request.channels_info_length = 
+    request->parameters.change_hw_infer_status_request.channels_info_length =
         BYTE_ORDER__htonl(sizeof(request->parameters.change_hw_infer_status_request.channels_info));
-    memcpy(&(request->parameters.change_hw_infer_status_request.channels_info), 
-        channels_info, 
-        sizeof(request->parameters.change_hw_infer_status_request.channels_info));
+    memcpy(&(request->parameters.change_hw_infer_status_request.channels_info),
+        channels_info, sizeof(request->parameters.change_hw_infer_status_request.channels_info));
+
+    /* boundary channels mode */
+    request->parameters.change_hw_infer_status_request.boundary_channel_mode_length =
+        BYTE_ORDER__htonl(sizeof(request->parameters.change_hw_infer_status_request.boundary_channel_mode));
+    request->parameters.change_hw_infer_status_request.boundary_channel_mode =
+        static_cast<uint8_t>(boundary_channel_mode);
 
     *request_size = local_request_size;
-    status = HAILO_COMMON_STATUS__SUCCESS;
-exit:
-    return status;
+    return HAILO_COMMON_STATUS__SUCCESS;
 }
 
 #endif /* FIRMWARE_ARCH */

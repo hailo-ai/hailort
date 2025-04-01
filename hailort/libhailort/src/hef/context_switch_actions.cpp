@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -11,6 +11,7 @@
 #include "context_switch_actions.hpp"
 #include "core_op/resource_manager/resource_manager.hpp"
 #include "hef/hef_internal.hpp"
+#include "vdma/memory/descriptor_list.hpp"
 
 #include "context_switch_defs.h"
 
@@ -701,9 +702,12 @@ Expected<Buffer> AllowInputDataflowAction::serialize_params(const ContextResourc
             edge_layer.layer_info.nn_stream_config.periph_buffers_per_frame;
         break;
     case LayerType::INTER_CONTEXT:
-    case LayerType::CACHE:
         params.credit_type = CONTEXT_SWITCH_DEFS__CREDIT_IN_DESCRIPTORS;
         params.frame_periph_size = ((edge_layer.buffer_info.bytes_in_pattern - 1) / (edge_layer.buffer_info.desc_page_size)) + 1;
+        break;
+    case LayerType::CACHE:
+        params.credit_type = CONTEXT_SWITCH_DEFS__CREDIT_IN_DESCRIPTORS;
+        params.frame_periph_size = edge_layer.buffer_info.total_desc_count - 1;
         break;
     default:
         LOGGER__ERROR("Invalid layer type {} for stream {}", static_cast<int>(edge_layer.layer_info.type), m_stream_index);
@@ -996,7 +1000,6 @@ static CONTEXT_SWITCH_DEFS__stream_reg_info_t parse_nn_config(const CONTROL_PROT
     reg_info.buffer_padding = nn_config.buffer_padding;
     reg_info.periph_bytes_per_buffer = nn_config.periph_bytes_per_buffer;
     reg_info.periph_buffers_per_frame = nn_config.periph_buffers_per_frame;
-    reg_info.is_periph_calculated_in_hailort = nn_config.is_periph_calculated_in_hailort;
     reg_info.is_core_hw_padding_config_in_dfc = nn_config.is_core_hw_padding_config_in_dfc;
     return reg_info;
 }
@@ -1280,24 +1283,25 @@ Expected<Buffer> ActivateCacheInputChannelAction::serialize_params(const Context
 
 Expected<ContextSwitchConfigActionPtr> ActivateCacheOutputChannelAction::create(const vdma::ChannelId &channel_id,
     uint8_t stream_index, uint8_t network_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
-    const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info)
+    const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info, uint16_t batch_size)
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ActivateCacheOutputChannelAction(channel_id,
-        stream_index, network_index, nn_stream_config, host_buffer_info));
+        stream_index, network_index, nn_stream_config, host_buffer_info, batch_size));
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
 ActivateCacheOutputChannelAction::ActivateCacheOutputChannelAction(const vdma::ChannelId &channel_id,
     uint8_t stream_index, uint8_t network_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
-    const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info) :
+    const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info, uint16_t batch_size) :
     ContextSwitchConfigAction(ContextSwitchConfigAction::Type::ActivateCacheOutputChannel,
                               CONTEXT_SWITCH_DEFS__ACTION_TYPE_ACTIVATE_CACHE_OUTPUT),
     m_channel_id(channel_id),
     m_stream_index(stream_index),
     m_network_index(network_index),
     m_nn_stream_config(nn_stream_config),
-    m_host_buffer_info(host_buffer_info)
+    m_host_buffer_info(host_buffer_info),
+    m_batch_size(batch_size)
 {}
 
 bool ActivateCacheOutputChannelAction::supports_repeated_block() const
@@ -1314,6 +1318,7 @@ Expected<Buffer> ActivateCacheOutputChannelAction::serialize_params(const Contex
     params.network_index = m_network_index;
     params.stream_reg_info = parse_nn_config(m_nn_stream_config);
     params.host_buffer_info = m_host_buffer_info;
+    params.batch_size = m_batch_size;
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2024 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -89,7 +89,7 @@ public:
     size_t devices_count() const { return m_core_ops.size(); }
     Expected<std::shared_ptr<VdmaConfigCoreOp>> get_core_op_by_device_id(const device_id_t &device_bdf_id);
 
-    Expected<size_t> get_async_max_queue_size_per_device() const;
+    Expected<size_t> get_infer_queue_size_per_device() const;
 
     virtual Expected<HwInferResults> run_hw_infer_estimator() override;
     virtual Expected<Buffer> get_intermediate_buffer(const IntermediateBufferKey &) override;
@@ -98,7 +98,7 @@ public:
     virtual Expected<uint32_t> get_cache_read_length() const override;
     virtual Expected<uint32_t> get_cache_write_length() const override;
     virtual Expected<uint32_t> get_cache_entry_size(uint32_t cache_id) const override;
-    virtual hailo_status init_cache(uint32_t read_offset, int32_t write_offset_delta) override;
+    virtual hailo_status init_cache(uint32_t read_offset) override;
     virtual hailo_status update_cache_offset(int32_t offset_delta_entries) override;
     virtual Expected<std::vector<uint32_t>> get_cache_ids() const override;
     virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) override;
@@ -114,6 +114,7 @@ public:
         hailo_status &status);
 
 private:
+    hailo_status shutdown_impl();
     hailo_status create_vdevice_streams_from_config_params();
     hailo_status create_input_vdevice_stream_from_config_params(
         const hailo_stream_parameters_t &stream_params, const std::string &stream_name);
