@@ -4,7 +4,7 @@ project(gsthailo)
 
 include(GNUInstallDirs)
 
-find_package(HailoRT 4.21.0 EXACT REQUIRED)
+find_package(HailoRT 4.21.1 EXACT REQUIRED)
 
 # GST_PLUGIN_DEFINE needs PACKAGE to be defined
 set(GST_HAILO_PACKAGE_NAME "hailo")
