@@ -377,7 +377,7 @@ Expected<hailo_health_stats_t> Device::query_health_stats()
 #ifndef __linux__
     LOGGER__ERROR("Query health stats is supported only on Linux systems");
     return make_unexpected(HAILO_NOT_SUPPORTED);
-#endif
+#else
 
     TRY(auto device_arch, get_architecture());
     if ((device_arch != HAILO_ARCH_HAILO15H) && (device_arch != HAILO_ARCH_HAILO15L) && (device_arch != HAILO_ARCH_HAILO15M) && (device_arch != HAILO_ARCH_HAILO10H)) {
@@ -393,6 +393,7 @@ Expected<hailo_health_stats_t> Device::query_health_stats()
     // TODO (HRT-16224): add on_die_voltage and startup_bist_mask (currently APIs does not exist)
 
     return health_stats;
+#endif
 }
 
 Expected<hailo_performance_stats_t> Device::query_performance_stats()
@@ -400,7 +401,7 @@ Expected<hailo_performance_stats_t> Device::query_performance_stats()
 #ifndef __linux__
     LOGGER__ERROR("Query performance stats is supported only on Linux systems");
     return make_unexpected(HAILO_NOT_SUPPORTED);
-#endif
+#else
 
     TRY(auto device_arch, get_architecture());
     if ((device_arch != HAILO_ARCH_HAILO15H) && (device_arch != HAILO_ARCH_HAILO15L) && (device_arch != HAILO_ARCH_HAILO15M) && (device_arch != HAILO_ARCH_HAILO10H)) {
@@ -439,6 +440,7 @@ Expected<hailo_performance_stats_t> Device::query_performance_stats()
     }
 
     return performance_stats;
+#endif
 }
 
 hailo_status Device::test_chip_memories()

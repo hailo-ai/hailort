@@ -214,6 +214,7 @@ private:
 protected:
     std::unordered_map<std::string, size_t> m_inputs_frame_sizes;
     std::unordered_map<std::string, size_t> m_outputs_frame_sizes;
+    std::timed_mutex m_run_mutex;
 
 };
 

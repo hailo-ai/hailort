@@ -248,7 +248,15 @@ hailo_status MonCommand::run_monitor()
 
         std::vector<ProtoMon> mon_messages;
         if (mon_dir_valid) {
-            TRY(auto scheduler_mon_files, Filesystem::get_latest_files_in_dir_flat(SCHEDULER_MON_TMP_DIR, time_interval));
+            TRY(auto scheduler_mon_files_with_tmp, Filesystem::get_latest_files_in_dir_flat(SCHEDULER_MON_TMP_DIR, time_interval));
+
+            // Filter out .tmp files - these files are created for temporary use and should not be considered
+            std::vector<std::string> scheduler_mon_files;
+            std::copy_if(scheduler_mon_files_with_tmp.begin(), scheduler_mon_files_with_tmp.end(), std::back_inserter(scheduler_mon_files),
+                [](const std::string &file) {
+                    return !Filesystem::has_suffix(file, ".tmp");
+                });
+
             print_warning_msg = scheduler_mon_files.empty();
 
             mon_messages.reserve(scheduler_mon_files.size());

@@ -281,9 +281,15 @@ void MonitorHandler::write_utilization_to_file(const double utilization_percenta
 
 void MonitorHandler::dump_state()
 {
-    auto file = LockedFile::create(m_mon_tmp_output->name(), "w");
-    if (HAILO_SUCCESS != file.status()) {
-        LOGGER__ERROR("Failed to open and lock file {}, with status: {}", m_mon_tmp_output->name(), file.status());
+    /**
+     * Write to a temporary file first, then rename it to the target path.
+     * This ensures the monitor file is never seen in an empty or partially written state.
+     */
+    std::string tmp_path = m_mon_tmp_output->name() + ".tmp";
+
+    auto tmp_file = LockedFile::create(tmp_path, "w");
+    if (HAILO_SUCCESS != tmp_file.status()) {
+        LOGGER__ERROR("Failed to open and lock tmp file {}, status: {}", tmp_path, tmp_file.status());
         return;
     }
 
@@ -296,8 +302,13 @@ void MonitorHandler::dump_state()
 
     clear_accumulators();
 
-    if (!mon.SerializeToFileDescriptor(file->get_fd())) {
-        LOGGER__ERROR("Failed to SerializeToFileDescriptor(), with errno: {}", errno);
+    if (!mon.SerializeToFileDescriptor(tmp_file->get_fd())) {
+        LOGGER__ERROR("Failed to SerializeToFileDescriptor() to tmp file, errno: {}", errno);
+        return;
+    }
+
+    if (std::rename(tmp_path.c_str(), m_mon_tmp_output->name().c_str()) != 0) {
+        LOGGER__ERROR("Failed to rename tmp file to monitor file: errno = {}", errno);
     }
 }
 #endif

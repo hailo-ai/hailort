@@ -11,11 +11,28 @@
 #include "firmware_header_utils.h"
 #include "common/utils.hpp"
 
-
-static const char *NOT_CONFIGURED_ATTR = "<N/A>";
 static const uint8_t INVALID_LCS = 0;
 #define MHz (1000 * 1000)
 
+
+
+// returns a valid string if the attribute is not empty, otherwise returns an empty string
+static std::string valid_attr_str(const std::string& key, const char *attr, size_t attr_max_len)
+{
+    size_t actual_len = strnlen(attr, attr_max_len);
+    if (0 == actual_len) {
+        return "";
+    }
+    return key + ": " + std::string(attr, actual_len) + "\n";
+}
+
+static std::string valid_attr_str(const std::string& key, uint8_t attr, uint8_t invalid_value)
+{
+    if (attr == invalid_value) {
+        return "";
+    }
+    return key + ": " + std::to_string(attr);
+}
 
 static std::string extended_device_information_boot_string(hailo_device_boot_source_t boot_source)
 {
@@ -72,14 +89,6 @@ static bool extended_device_information_is_array_not_empty(const uint8_t *array_
     return false;
 }
 
-static std::string lcs_string(uint8_t lcs)
-{
-    if (INVALID_LCS == lcs) {
-        return NOT_CONFIGURED_ATTR;
-    }
-    return std::to_string(lcs);
-}
-
 static void print_extended_device_information(const hailo_extended_device_information_t &device_info)
 {
     std::cout << "Boot source: " << extended_device_information_boot_string(device_info.boot_source) << std::endl;
@@ -89,7 +98,8 @@ static void print_extended_device_information(const hailo_extended_device_inform
     if(supported_features_str.length() > 0) {
         std::cout << "Device supported features: " << supported_features_str << std::endl;
     }
-    std::cout << "LCS: " << lcs_string(device_info.lcs) << std::endl;
+
+    std::cout << valid_attr_str("LCS", device_info.lcs, INVALID_LCS);
 
     if(extended_device_information_is_array_not_empty(device_info.soc_id, sizeof(device_info.soc_id))){
         std::cout << "SoC ID: ";
@@ -157,15 +167,6 @@ static std::string identity_arch_string(const hailo_device_identity_t &identity)
     }
 }
 
-static std::string identity_attr_string(const char *attr, size_t attr_max_len)
-{
-    size_t actual_len = strnlen(attr, attr_max_len);
-    if (actual_len == 0) {
-        return  NOT_CONFIGURED_ATTR;
-    }
-    return std::string(attr, actual_len);
-}
-
 FwControlIdentifyCommand::FwControlIdentifyCommand(CLI::App &parent_app) :
     DeviceCommand(parent_app.add_subcommand("identify", "Displays general information about the device")),
     m_is_extended(false)
@@ -184,12 +185,9 @@ hailo_status FwControlIdentifyCommand::execute_on_device(Device &device)
     std::cout << "Logger Version: " << identity.logger_version << std::endl;
     std::cout << "Board Name: " << std::string(identity.board_name, identity.board_name_length) << std::endl;
     std::cout << "Device Architecture: " << identity_arch_string(identity) << std::endl;
-    std::cout << "Serial Number: " <<
-        identity_attr_string(identity.serial_number, identity.serial_number_length) << std::endl;
-    std::cout << "Part Number: " <<
-        identity_attr_string(identity.part_number, identity.part_number_length) << std::endl;
-    std::cout << "Product Name: " <<
-        identity_attr_string(identity.product_name, identity.product_name_length) << std::endl;
+    std::cout << valid_attr_str("Serial Number", identity.serial_number, identity.serial_number_length);
+    std::cout << valid_attr_str("Part Number", identity.part_number, identity.part_number_length);
+    std::cout << valid_attr_str("Product Name", identity.product_name, identity.product_name_length);
 
     if (m_is_extended) {
         TRY(auto device_info, device.get_extended_device_information());

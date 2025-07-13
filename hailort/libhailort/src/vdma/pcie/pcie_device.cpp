@@ -80,12 +80,8 @@ Expected<std::unique_ptr<Device>> PcieDevice::create(const hailo_pcie_device_inf
     auto device_info = find_device_info(pcie_device_info);
     CHECK_EXPECTED(device_info);
 
-    if ((get_env_variable(HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR).has_value()) || (HailoRTDriver::AcceleratorType::SOC_ACCELERATOR == device_info->accelerator_type)) {
-        TRY(auto pcie_device, PcieDeviceHrpcClient::create(device_info->device_id));
-        // Upcasting to Device unique_ptr (from PcieDeviceHrpcClient unique_ptr)
-        auto device = std::unique_ptr<Device>(std::move(pcie_device));
-        return device;
-    }
+    CHECK(HailoRTDriver::AcceleratorType::NNC_ACCELERATOR == device_info->accelerator_type,
+        HAILO_NOT_SUPPORTED, "Hailo1X Devices are only supported in versions 5.0.0 and above. ");
 
     auto driver = HailoRTDriver::create(device_info->device_id, device_info->dev_path);
     CHECK_EXPECTED(driver);
