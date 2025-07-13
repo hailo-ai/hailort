@@ -320,6 +320,16 @@ const MemoryView Buffer::slice(size_t from, size_t to) const
     return const_cast<Buffer*>(this)->slice(from, to);
 }
 
+MemoryView Buffer::as_view()
+{
+    return MemoryView(m_data, m_size);
+}
+
+const MemoryView Buffer::as_view() const
+{
+    return MemoryView(m_data, m_size);
+}
+
 Expected<void *> Buffer::release() noexcept
 {
     return m_storage_impl->m_storage->release();
@@ -333,6 +343,11 @@ MemoryView::MemoryView() noexcept :
 MemoryView::MemoryView(Buffer &buffer) noexcept :
     m_data(buffer.data()),
     m_size(buffer.size())
+{}
+
+MemoryView::MemoryView(BufferPtr buffer) noexcept :
+    m_data(buffer->data()),
+    m_size(buffer->size())
 {}
 
 MemoryView::MemoryView(void *data, size_t size) noexcept :

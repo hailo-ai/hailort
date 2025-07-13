@@ -53,7 +53,7 @@ public:
     virtual Expected<hailo_extended_device_information_t> get_extended_device_information() override;
 
     static constexpr const char *DEVICE_ID = HailoRTDriver::INTEGRATED_NNC_DEVICE_ID;
-    virtual Expected<bool> has_INA231() override;
+    virtual Expected<bool> has_power_sensor() override;
 
 protected:
     virtual hailo_status reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type) override;

@@ -13,6 +13,7 @@
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
 #include "hailo/device.hpp"
+#include "common/socket.hpp"
 #include "rpc/rpc_definitions.hpp"
 #include "service/buffer_pool_per_stream.hpp"
 
@@ -40,22 +41,32 @@ static const std::chrono::milliseconds CONTEXT_TIMEOUT(HAILO_DEFAULT_VSTREAM_TIM
 using callback_idx_t = uint32_t;
 using StreamCallback = std::function<void(hailo_status)>;
 
+enum class StreamBufferType {
+    USER_BUFFER,
+    SHARED_MEMORY,
+    DMA_BUFFER
+};
+
 class StreamCbParams
 {
 public:
     StreamCbParams() :
-        m_is_shm(false), m_cb_idx(INVALID_CB_INDEX), m_stream_name(INVALID_STREAM_NAME) {}
+        m_buffer_type(StreamBufferType::USER_BUFFER), m_cb_idx(INVALID_CB_INDEX), m_stream_name(INVALID_STREAM_NAME) {}
 
     StreamCbParams(callback_idx_t cb_idx, std::string stream_name, StreamCallback callback, MemoryView user_mem_view) :
-        m_is_shm(false), m_cb_idx(cb_idx), m_stream_name(stream_name), m_size(user_mem_view.size()),
+        m_buffer_type(StreamBufferType::USER_BUFFER), m_cb_idx(cb_idx), m_stream_name(stream_name), m_size(user_mem_view.size()),
             m_callback(callback), m_user_mem_view(user_mem_view) {}
 
     StreamCbParams(callback_idx_t cb_idx, std::string stream_name, StreamCallback callback, MemoryView user_mem_view,
         const std::string &shm_name, AcquiredBufferPtr acquired_shm_buffer) :
-        m_is_shm(true), m_cb_idx(cb_idx), m_stream_name(stream_name), m_size(user_mem_view.size()), m_callback(callback),
+        m_buffer_type(StreamBufferType::SHARED_MEMORY), m_cb_idx(cb_idx), m_stream_name(stream_name), m_size(user_mem_view.size()), m_callback(callback),
         m_user_mem_view(user_mem_view), m_shm_name(shm_name), m_acquired_shm_buffer(acquired_shm_buffer) {}
+    
+    StreamCbParams(callback_idx_t cb_idx, std::string stream_name, StreamCallback callback, hailo_dma_buffer_t dma_buffer) :
+        m_buffer_type(StreamBufferType::DMA_BUFFER), m_cb_idx(cb_idx), m_stream_name(stream_name), m_size(dma_buffer.size), m_callback(callback),
+        m_dma_buffer(dma_buffer) {}
 
-    bool m_is_shm;
+    StreamBufferType m_buffer_type;
     callback_idx_t m_cb_idx;
     std::string m_stream_name;
     size_t m_size;
@@ -65,6 +76,7 @@ public:
     MemoryView m_user_mem_view;
     std::string m_shm_name;
     AcquiredBufferPtr m_acquired_shm_buffer;
+    hailo_dma_buffer_t m_dma_buffer;
 };
 using StreamCbParamsPtr = std::shared_ptr<StreamCbParams>;
 
@@ -203,8 +215,10 @@ private:
     void VDevice_convert_identifier_to_proto(const VDeviceIdentifier &identifier, ProtoVDeviceIdentifier *proto_identifier);
     void ConfiguredNetworkGroup_convert_identifier_to_proto(const NetworkGroupIdentifier &identifier, ProtoConfiguredNetworkGroupIdentifier *proto_identifier);
     void VStream_convert_identifier_to_proto(const VStreamIdentifier &identifier, ProtoVStreamIdentifier *proto_identifier);
+    hailo_status send_dmabuf_fd(uint32_t network_group_handle, const std::string &stream_name, int fd);
 
     std::unique_ptr<ProtoHailoRtRpc::Stub> m_stub;
+    std::unique_ptr<Socket> m_dmabuf_socket;
 };
 
 }

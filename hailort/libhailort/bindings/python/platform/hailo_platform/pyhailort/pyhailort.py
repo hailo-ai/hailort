@@ -254,9 +254,9 @@ class ConfigureParams(object):
             output_interface (:class:`HailoStreamInterface`): The stream_interface to create output stream_params for.
             mipi_rx_id (int): Selection of which MIPI Rx device to use.
             data_type (:class:`~hailo_platform.pyhailort.pyhailort.MipiDataTypeRx`): The data type which will be passed over the MIPI.
-            img_width_pixels (int): The width in pixels of the image that enter to the mipi CSI. The sensor output.
+            img_width_pixels (int): The width in pixels of the image that enter to the MIPI CSI. The sensor output.
                                         When isp_enable and isp_crop_enable is false, is also the stream input.
-            img_height_pixels (int): The height in pixels of the image that enter to the mipi CSI. The sensor output.
+            img_height_pixels (int): The height in pixels of the image that enter to the MIPI CSI. The sensor output.
                                         When isp_enable and isp_crop_enable is false, is also the stream input.
             pixels_per_clock (:class:`~hailo_platform.pyhailort.pyhailort.MipiPixelsPerClock`): Number of pixels transmitted at each
                 clock.
@@ -270,7 +270,7 @@ class ConfigureParams(object):
             isp_img_in_order (:class:`~hailo_platform.pyhailort.pyhailort.MipiIspImageInOrder`):
                 The ISP Rx bayer pixel order. Only relevant when the ISP is enabled.
             isp_img_out_data_type (:class:`~hailo_platform.pyhailort.pyhailort.MipiIspImageOutDataType`):
-                The data type that the mipi will take out. Only relevant when the ISP is enabled.
+                The data type that the MIPI will take out. Only relevant when the ISP is enabled.
             isp_crop_enable (bool): Enable the crop feature in the ISP. Only relevant when the ISP is enabled.
             isp_crop_output_width_pixels (int): The width in pixels of the output window that the ISP take out. The stream input.
                                         Useful when isp_crop_enable is True. Only relevant when the ISP is enabled.
@@ -756,7 +756,8 @@ class ConfiguredNetwork(object):
         return self._configured_network.set_scheduler_timeout(timeout_ms, name)
 
     def set_scheduler_threshold(self, threshold):
-        """Sets the minimum number of send requests required before the network is considered ready to get run time from the scheduler.
+        """Sets the scheduler threshold.
+            This threshold sets the minimum number of send requests required before the network is considered ready to get run time from the scheduler.
             If at least one send request has been sent, but the threshold is not reached within a set time period (e.g. timeout - see :func:`ConfiguredNetwork.set_scheduler_timeout`),
             the scheduler will consider the network ready regardless.
 
@@ -768,7 +769,7 @@ class ConfiguredNetwork(object):
     def set_scheduler_priority(self, priority):
         """Sets the priority of the network.
             When the model scheduler will choose the next network, networks with higher priority will be prioritized in the selection.
-            bigger number represent higher priority.
+            Larger number represents higher priority.
 
         Args:
             priority (int): Priority as a number between HAILO_SCHEDULER_PRIORITY_MIN - HAILO_SCHEDULER_PRIORITY_MAX.
@@ -1587,8 +1588,8 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
     pass
 
 SUPPORTED_PROTOCOL_VERSION = 2
-SUPPORTED_FW_MAJOR = 4
-SUPPORTED_FW_MINOR = 21
+SUPPORTED_FW_MAJOR = 5
+SUPPORTED_FW_MINOR = 0
 SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
@@ -2049,7 +2050,7 @@ class Control:
             return self._device.start_power_measurement(averaging_factor, sampling_period)
 
     def stop_power_measurement(self):
-        """Stop performing a long power measurement. Deletes all saved results from the firmware.
+        """Stop performing a long power measurement.
         Calling the function eliminates the start function settings for the averaging the samples,
         and returns to the default values, so the sensor will return a new value every 2.2 ms
         without averaging values.
@@ -2085,8 +2086,7 @@ class Control:
         """Read measured power from a long power measurement
 
         Args:
-            buffer_index (:class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex`): Index of the buffer on the firmware the data would be saved at.
-                Default is :class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex.MEASUREMENT_BUFFER_INDEX_0`
+            buffer_index (:class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex`): deprecated.
             should_clear (bool): Flag indicating if the results saved at the firmware will be deleted after reading.
 
         Returns:
@@ -2451,11 +2451,11 @@ class Control:
             return self._device.previous_system_state(cpu_id)
 
     def get_chip_temperature(self):
-        """Returns the latest temperature measurements from the 2 internal temperature sensors of the Hailo chip.
+        """Returns the latest temperature measurements from the two internal temperature sensors of the Hailo chip.
 
         Returns:
             :class:`~hailo_platform.pyhailort.pyhailort.TemperatureInfo`:
-             Temperature in celsius of the 2 internal temperature sensors (TS), and a sample
+             Temperature in celsius of the two internal temperature sensors (TS), and a sample
              count (a running 16-bit counter)
         """
         with ExceptionWrapper():
@@ -3268,7 +3268,7 @@ class ConfiguredInferModel:
         """
         The readiness of the model to launch is determined by the ability to push buffers to the asynchronous inference pipeline.
         If the model is ready, the method will return immediately.
-        If the model is not ready, the method will wait for the model to be ready.
+        If it's not ready initially, the method will wait for the model to become ready.
 
         Args:
             timeout_ms (int, optional): Max amount of time to wait until the model is ready in milliseconds.
@@ -3397,7 +3397,7 @@ class ConfiguredInferModel:
         """
         Sets the priority of the network.
         When the network group scheduler will choose the next network, networks with higher priority will be prioritized in the selection.
-        bigger number represent higher priority.
+        Larger number represents higher priority
 
         Using this function is only allowed when scheduling_algorithm is not `HAILO_SCHEDULING_ALGORITHM_NONE`.
         The default priority is HAILO_SCHEDULER_PRIORITY_NORMAL.
@@ -3614,7 +3614,7 @@ class VDevice(object):
             otherwise an :class:`HailoRTException` will be raised.
 
         Note:
-            as long as the InferModel object is alive, the VDevice object is alive as well.
+            So long as the InferModel object is alive, the VDevice object is alive as well.
         """
         if os.getpid() != self._creation_pid:
             raise HailoRTException("InferModel can be created only from the process VDevice was created in.")

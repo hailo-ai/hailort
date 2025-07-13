@@ -15,7 +15,11 @@
 #include "device_common/device_internal.hpp"
 #include "network_group/network_group_internal.hpp"
 #include "utils/sensor_config_utils.hpp"
+#include "utils/logger_fetcher.hpp"
 #include "hef/hef_internal.hpp"
+
+#include <sys/stat.h>
+#include <thread>
 
 namespace hailort
 {
@@ -729,6 +733,8 @@ bool DeviceBase::is_hef_compatible(hailo_device_architecture_t device_arch, HEFH
         return (hef_arch == HEFHwArch::HW_ARCH__HAILO15L) || (hef_arch == HEFHwArch::HW_ARCH__PLUTO);
     case HAILO_ARCH_HAILO15M:
         return (hef_arch == HEFHwArch::HW_ARCH__HAILO15M);
+    case HAILO_ARCH_MARS:
+        return (hef_arch == HEFHwArch::HW_ARCH__MARS);
     default:
         return false;
     }
@@ -764,6 +770,32 @@ hailo_device_architecture_t DeviceBase::hef_arch_to_device_arch(HEFHwArch hef_ar
     default:
         return HAILO_ARCH_MAX_ENUM;
     }
+}
+
+Expected<size_t> DeviceBase::fetch_logs(MemoryView buffer, hailo_log_type_t log_type)
+{
+#ifndef __linux__
+    (void)(buffer);
+    (void)(log_type);
+    LOGGER__ERROR("fetch_logs is supported only on Linux systems");
+    return make_unexpected(HAILO_NOT_SUPPORTED);
+#else
+
+    TRY(auto device_arch, get_architecture());
+    CHECK((device_arch == HAILO_ARCH_HAILO15H) || (device_arch == HAILO_ARCH_HAILO15L) || (device_arch == HAILO_ARCH_HAILO15M) ||
+        (device_arch == HAILO_ARCH_HAILO10H), HAILO_INVALID_DEVICE_ARCHITECTURE,
+        "fetch_logs is not supported for device arch {}", HailoRTCommon::get_device_arch_str(device_arch));
+
+    TRY(auto max_logs_size, get_max_logs_size(log_type));
+
+    CHECK(buffer.size() == max_logs_size,
+        HAILO_INSUFFICIENT_BUFFER, "Buffer size must be equal to the maximum log size: {} bytes, got: {} bytes",
+        max_logs_size, buffer.size());
+
+    TRY(auto logger_fetcher, LoggerFetcherFactory::create(log_type));
+
+    return logger_fetcher->fetch_log(buffer, *this);
+#endif
 }
 
 void DeviceBase::check_clock_rate_for_hailo8(uint32_t clock_rate, HEFHwArch hef_hw_arch)

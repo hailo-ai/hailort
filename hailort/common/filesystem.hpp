@@ -33,6 +33,7 @@ public:
     static Expected<std::vector<std::string>> get_files_in_dir_flat(const std::string &dir_path);
     static Expected<std::vector<std::string>> get_latest_files_in_dir_flat(const std::string &dir_path, std::chrono::milliseconds time_interval);
     static Expected<time_t> get_file_modified_time(const std::string &file_path);
+    static Expected<size_t> get_file_size(const std::string &file_path);
     static Expected<bool> is_directory(const std::string &path);
     static hailo_status create_directory(const std::string &dir_path);
     static hailo_status remove_directory(const std::string &dir_path);
@@ -139,11 +140,13 @@ public:
     ~TempFile();
 
     std::string name() const;
+    std::string dir() const;
 
 private:
-    TempFile(const char *path);
+    TempFile(const char *file_path, const char *dir_path);
 
-    std::string m_path;
+    std::string m_file_path;
+    std::string m_dir_path;
 };
 
 class LockedFile {

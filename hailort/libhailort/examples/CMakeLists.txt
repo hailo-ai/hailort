@@ -27,7 +27,8 @@ endif()
 
 add_subdirectory(cpp)
 add_subdirectory(c)
+add_subdirectory(genai)
 
 # We add a costum target in order to compile all of the hailort examples
 add_custom_target(hailort_examples)
-add_dependencies(hailort_examples c_hailort_examples cpp_hailort_examples)
+add_dependencies(hailort_examples c_hailort_examples cpp_hailort_examples genai_hailort_examples)

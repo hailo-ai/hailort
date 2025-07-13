@@ -43,7 +43,7 @@ def _verify_pyhailort_lib_exists():
 
 _verify_pyhailort_lib_exists()
 
-__version__ = "4.21.0"
+__version__ = "5.0.0"
 if _pyhailort.__version__ != __version__:
     raise ImportError(
         f"_pyhailort version ({_pyhailort.__version__}) does not match pyhailort version ({__version__})"

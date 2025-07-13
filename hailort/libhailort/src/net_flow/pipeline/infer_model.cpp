@@ -660,6 +660,11 @@ hailo_status ConfiguredInferModel::update_cache_offset(int32_t offset_delta_entr
     return m_pimpl->update_cache_offset(offset_delta_entries);
 }
 
+hailo_status ConfiguredInferModel::init_cache(uint32_t read_offset)
+{
+    return m_pimpl->init_cache(read_offset);
+}
+
 Expected<ConfiguredInferModel::Bindings> ConfiguredInferModelBase::create_bindings(
     std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&inputs,
     std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&outputs)
@@ -699,10 +704,23 @@ void ConfiguredInferModelBase::mark_callback_done(std::shared_ptr<AsyncInferJobI
 
 hailo_status ConfiguredInferModelBase::run(const ConfiguredInferModel::Bindings &bindings, std::chrono::milliseconds timeout)
 {
-    auto job = run_async(bindings, [] (const AsyncInferCompletionInfo &) {});
-    CHECK_EXPECTED_AS_STATUS(job);
+    TimeoutGuard timeout_guard(timeout);
+    AsyncInferJob job;
 
-    auto status = job->wait(timeout);
+    std::unique_lock<std::timed_mutex> lock(m_run_mutex, std::defer_lock);
+
+    if (lock.try_lock_for(timeout_guard.get_remaining_timeout())) {
+        auto status = wait_for_async_ready(timeout_guard.get_remaining_timeout(), 1);
+        CHECK_SUCCESS(status);
+
+        TRY(job, run_async(bindings, [] (const AsyncInferCompletionInfo &) {}));
+
+    } else {
+        LOGGER__ERROR("Failed to acquire lock for run(), timeout: {}ms", timeout.count());
+        return HAILO_TIMEOUT;
+    }
+
+    auto status = job.wait(timeout_guard.get_remaining_timeout());
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -838,6 +856,10 @@ hailo_status ConfiguredInferModelImpl::update_cache_offset(int32_t offset_delta_
     return m_cng->update_cache_offset(offset_delta_entries);
 }
 
+hailo_status ConfiguredInferModelImpl::init_cache(uint32_t read_offset)
+{
+    return m_cng->init_cache(read_offset);
+}
 
 hailo_status ConfiguredInferModelImpl::activate()
 {
@@ -1023,10 +1045,7 @@ hailo_status AsyncInferJob::wait(std::chrono::milliseconds timeout)
         return HAILO_SUCCESS;
     }
 
-    auto status = m_pimpl->wait(timeout);
-    CHECK_SUCCESS(status);
-
-    return HAILO_SUCCESS;
+    return m_pimpl->wait(timeout);
 }
 
 void AsyncInferJob::detach()

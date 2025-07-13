@@ -35,17 +35,26 @@ extern "C" {
 #define CONTROL_PROTOCOL__MAX_SERIAL_NUMBER_LENGTH (16)
 #define CONTROL_PROTOCOL__MAX_PART_NUMBER_LENGTH (16)
 #define CONTROL_PROTOCOL__MAX_PRODUCT_NAME_LENGTH (42)
-#define CONTROL_PROTOCOL__MAX_CONTEXT_SWITCH_APPLICATIONS (32)
+
+#if defined(MINIMIZED_CONTEXT_SWITCH_BUFFER)
+#define CONTROL_PROTOCOL__MAX_CONTEXT_SWITCH_APPLICATIONS (8)
+#else
+// TODO: HRT-17462 : Fix max CONTEXT_SWITCH_APPLICATIONS
+#define CONTROL_PROTOCOL__MAX_CONTEXT_SWITCH_APPLICATIONS (26)
+#endif // MINIMIZED_CONTEXT_SWITCH_BUFFER
+
+
+#define CONTROL_PROTOCOL__MAX_CFG_CHANNELS (24)
+
 #define CONTROL_PROTOCOL__MAX_NUMBER_OF_CLUSTERS (8)
 #define CONTROL_PROTOCOL__MAX_CONTROL_LENGTH (1500)
 #define CONTROL_PROTOCOL__SOC_ID_LENGTH (32)
-#define CONTROL_PROTOCOL__MAX_CFG_CHANNELS (4)
 #define CONTROL_PROTOCOL__MAX_NETWORKS_PER_NETWORK_GROUP (8)
-#define CONTROL_PROTOCOL__MAX_VDMA_CHANNELS_PER_ENGINE (32)
+#define CONTROL_PROTOCOL__MAX_VDMA_CHANNELS_PER_ENGINE (40)
 #define CONTROL_PROTOCOL__MAX_VDMA_ENGINES_COUNT (3)
 #define CONTROL_PROTOCOL__MAX_TOTAL_CHANNEL_COUNT \
     (CONTROL_PROTOCOL__MAX_VDMA_CHANNELS_PER_ENGINE * CONTROL_PROTOCOL__MAX_VDMA_ENGINES_COUNT)
-/* Tightly coupled with the sizeof PROCESS_MONITOR__detection_results_t 
+/* Tightly coupled with the sizeof PROCESS_MONITOR__detection_results_t
     and HAILO_SOC_PM_VALUES_BYTES_LENGTH */
 #define PM_RESULTS_LENGTH (24)
 /* Tightly coupled to ETHERNET_SERVICE_MAC_ADDRESS_LENGTH */
@@ -64,7 +73,7 @@ extern "C" {
 #define CONTROL_PROTOCOL__REQUEST_BASE_SIZE (sizeof(CONTROL_PROTOCOL__request_header_t) + sizeof(uint32_t))
 #define CONTROL_PROTOCOL__OPCODE_INVALID  0xFFFFFFFF
 
-/* If a control accepts a dynamic_batch_size and this value is passed, the 
+/* If a control accepts a dynamic_batch_size and this value is passed, the
  * dynamic_batch_size will be ignored. The pre-configured batch_size will be used.
  */
 #define CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE (0)
@@ -1030,7 +1039,6 @@ typedef struct {
 typedef enum {
     CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_RESET = 0,
     CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_ENABLED,
-    CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_PAUSED,
 
     /* must be last*/
     CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_COUNT,
@@ -1173,7 +1181,7 @@ typedef struct {
     bool break_at_any_application_index;
     uint8_t application_index;
     bool break_at_any_batch_index;
-    uint16_t batch_index;
+    uint32_t batch_index;
     bool break_at_any_context_index;
     uint16_t context_index;
     bool break_at_any_action_index;
@@ -1211,7 +1219,7 @@ typedef struct {
 
 typedef struct {
     uint32_t batch_index_length;
-    uint16_t batch_index;
+    uint32_t batch_index;
     uint32_t enable_user_configuration_length;
     uint8_t enable_user_configuration;
 } CONTROL_PROTOCOL__config_context_switch_timestamp_request_t;

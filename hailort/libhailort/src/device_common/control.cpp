@@ -96,13 +96,17 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
         board_info.device_architecture = dev_arch;
     }
 
-    // Check if we're on H10 - relevant only for linux
+    // Check if we're on H10H or H10H2 - relevant only for linux
 #ifdef __linux__
     if (Device::Type::INTEGRATED == device.get_type()) {
         char hostname[HOST_NAME_MAX+1];
-        CHECK_AS_EXPECTED(0 == gethostname(hostname, HOST_NAME_MAX+1), HAILO_INTERNAL_FAILURE, "Failed to get hostname");
+        CHECK_AS_EXPECTED(0 == gethostname(hostname, sizeof(hostname)), HAILO_INTERNAL_FAILURE, "Failed to get hostname");
         if (std::string(hostname).find("hailo10") != std::string::npos) {
-            board_info.device_architecture = HAILO_ARCH_HAILO10H;
+            if (std::string(hostname).find("hailo10h2") != std::string::npos) {
+                board_info.device_architecture = HAILO_ARCH_MARS;
+            } else {
+                board_info.device_architecture = HAILO_ARCH_HAILO10H;
+            }
         }
     }
 #else
@@ -3291,7 +3295,7 @@ exit:
     return status;
 }
 
-hailo_status Control::config_context_switch_timestamp(Device &device, uint16_t batch_index, bool enable_user_configuration)
+hailo_status Control::config_context_switch_timestamp(Device &device, uint32_t batch_index, bool enable_user_configuration)
 {
     CONTROL_PROTOCOL__request_t request = {};
     size_t request_size = 0;

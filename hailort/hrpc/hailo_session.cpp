@@ -29,6 +29,7 @@ Expected<std::shared_ptr<SessionListener>> SessionListener::create_shared(std::s
 {
     // Create according to ConnectionContext type
     auto os_connection_context = std::dynamic_pointer_cast<OsConnectionContext>(context);
+    // using BACKLOG_SIZE
     if (os_connection_context != nullptr) {
         return OsListener::create_shared(os_connection_context, port);
     } else {

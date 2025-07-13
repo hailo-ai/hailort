@@ -34,6 +34,13 @@ Expected<PcieSession> PcieSession::accept(std::shared_ptr<HailoRTDriver> driver,
         std::move(output_desc_list), PcieSessionType::SERVER);
 }
 
+hailo_status PcieSession::listen(std::shared_ptr<HailoRTDriver> driver, pcie_connection_port_t port, uint8_t backlog_size)
+{
+    CHECK_SUCCESS(driver->pci_ep_listen(port, backlog_size),
+        "Failed to listen on port 0x{:X}", port);
+    return HAILO_SUCCESS;
+}
+
 Expected<PcieSession> PcieSession::create(std::shared_ptr<HailoRTDriver> driver, vdma::ChannelId input_channel_id,
     vdma::ChannelId output_channel_id, vdma::DescriptorList &&input_desc_list, vdma::DescriptorList &&output_desc_list,
     PcieSessionType session_type)
@@ -80,29 +87,72 @@ hailo_status PcieSession::read(void *buffer, size_t size, std::chrono::milliseco
     return launch_transfer_sync(*m_output, buffer, size, timeout, m_read_cb_params);
 }
 
-hailo_status PcieSession::write_async(const void *buffer, size_t size, std::function<void(hailo_status)> &&callback)
+hailo_status PcieSession::write_async(const void *buffer, size_t size, TransferDoneCallback &&callback)
 {
-    return m_input->launch_transfer(to_request(const_cast<void *>(buffer), size, std::move(callback)));
+    return write_async(to_request(const_cast<void *>(buffer), size, std::move(callback)));
 }
 
 hailo_status PcieSession::write_async(TransferRequest &&request)
 {
-    return m_input->launch_transfer(std::move(request));
+    TransferDoneCallback callback = request.callback;
+    std::vector<TransferBuffer> aligned_buffers{};
+    aligned_buffers.reserve(request.transfer_buffers.size());
+
+    for (auto &transfer_buf : request.transfer_buffers) {
+        CHECK(TransferBufferType::DMABUF != transfer_buf.type(),
+            HAILO_NOT_SUPPORTED, "DMABUF buffer type is not supported with pcie session");
+        if (transfer_buf.is_aligned_for_dma()) {
+            aligned_buffers.emplace_back(std::move(transfer_buf));
+            continue;
+        }
+
+        TRY(auto bounce_buf, Buffer::create_shared(transfer_buf.size(), BufferStorageParams::create_dma()));
+        transfer_buf.copy_to(MemoryView(*bounce_buf));
+        aligned_buffers.emplace_back(MemoryView(*bounce_buf));
+        callback = [bounce_buf=std::move(bounce_buf), callback=callback](hailo_status status)
+        {
+            // Note: We need this callback wrapper to keep the bounce-buffer alive.
+            callback(status);
+        };
+    }
+
+    return m_input->launch_transfer(TransferRequest(std::move(aligned_buffers), callback));
 }
 
-hailo_status PcieSession::read_async(void *buffer, size_t size, std::function<void(hailo_status)> &&callback)
+hailo_status PcieSession::read_async(void *buffer, size_t size, TransferDoneCallback &&callback)
 {
-    return m_output->launch_transfer(to_request(buffer, size, std::move(callback)));
+    return read_async(to_request(buffer, size, std::move(callback)));
 }
 
 hailo_status PcieSession::read_async(TransferRequest &&request)
 {
-    return m_output->launch_transfer(std::move(request));
+    TransferDoneCallback callback = request.callback;
+    std::vector<TransferBuffer> aligned_buffers{};
+    aligned_buffers.reserve(request.transfer_buffers.size());
+
+    for (auto &transfer_buf : request.transfer_buffers) {
+        if (transfer_buf.is_aligned_for_dma()) {
+            aligned_buffers.emplace_back(std::move(transfer_buf));
+            continue;
+        }
+
+        TRY(auto bounce_buf, Buffer::create_shared(transfer_buf.size(), BufferStorageParams::create_dma()));
+        aligned_buffers.emplace_back(MemoryView(*bounce_buf));
+        callback = [transfer_buf=transfer_buf,
+                    bounce_buf=std::move(bounce_buf),
+                    callback=callback](hailo_status status) mutable
+        {
+            transfer_buf.copy_from(MemoryView(*bounce_buf));
+            callback(status);
+        };
+    }
+
+    return m_output->launch_transfer(TransferRequest(std::move(aligned_buffers), callback));
 }
 
 hailo_status PcieSession::close()
 {
-    hailo_status status = HAILO_SUCCESS; // Success orietnted
+    hailo_status status = HAILO_SUCCESS; // Success oriented
     if (m_should_close.exchange(false)) {
         LOGGER__TRACE("Closing session now");
     } else {

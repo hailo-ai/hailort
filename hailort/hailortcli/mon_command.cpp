@@ -196,8 +196,6 @@ Expected<uint16_t> get_terminal_line_width()
 hailo_status MonCommand::print_tables(const std::vector<ProtoMon> &mon_messages, uint32_t terminal_line_width)
 {
     std::ostringstream buffer;
-    buffer.str("");  // Clear previous content
-    buffer.clear();  // Reset any error state
 
     buffer << FORMAT_RESET_TERMINAL_CURSOR_FIRST_LINE;
 
@@ -248,7 +246,15 @@ hailo_status MonCommand::run_monitor()
 
         std::vector<ProtoMon> mon_messages;
         if (mon_dir_valid) {
-            TRY(auto scheduler_mon_files, Filesystem::get_latest_files_in_dir_flat(SCHEDULER_MON_TMP_DIR, time_interval));
+            TRY(auto scheduler_mon_files_with_tmp, Filesystem::get_latest_files_in_dir_flat(SCHEDULER_MON_TMP_DIR, time_interval));
+
+            // Filter out .tmp files - these files are created for temporary use and should not be considered
+            std::vector<std::string> scheduler_mon_files;
+            std::copy_if(scheduler_mon_files_with_tmp.begin(), scheduler_mon_files_with_tmp.end(), std::back_inserter(scheduler_mon_files),
+                [](const std::string &file) {
+                    return !Filesystem::has_suffix(file, ".tmp");
+                });
+
             print_warning_msg = scheduler_mon_files.empty();
 
             mon_messages.reserve(scheduler_mon_files.size());

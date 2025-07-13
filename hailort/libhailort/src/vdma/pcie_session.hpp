@@ -63,6 +63,7 @@ public:
 
     static Expected<PcieSession> connect(std::shared_ptr<HailoRTDriver> driver, pcie_connection_port_t port);
     static Expected<PcieSession> accept(std::shared_ptr<HailoRTDriver> driver, pcie_connection_port_t port);
+    static hailo_status listen(std::shared_ptr<HailoRTDriver> driver, pcie_connection_port_t port, uint8_t backlog_size);
 
     ~PcieSession() { close(); }
 
@@ -118,6 +119,7 @@ private:
 
     hailo_status launch_transfer_sync(vdma::BoundaryChannel &channel,
         void *buffer, size_t size, std::chrono::milliseconds timeout, CbParams &cb_params);
+    // Static method to create descriptor lists for input and output channels
     static Expected<vdma::DescriptorList> create_desc_list(HailoRTDriver &driver);
 
     std::atomic<bool> m_should_close {true};
@@ -131,7 +133,7 @@ private:
 
     PcieSessionType m_session_type;
 
-    // Following members are used only for sync transfers 
+    // Following members are used only for sync transfers
     CbParams m_read_cb_params;
     CbParams m_write_cb_params;
 };

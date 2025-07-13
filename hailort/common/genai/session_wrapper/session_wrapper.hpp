@@ -13,14 +13,16 @@
 #include "hailo/hailort.h"
 #include "hailo/buffer.hpp"
 #include "hailo/hailo_session.hpp"
+#include "hailo/genai/common.hpp"
 #include "common/utils.hpp"
 
-#include "common/genai/serializer/serializer.hpp"
 
 namespace hailort
 {
 namespace genai
 {
+
+constexpr static const std::chrono::seconds LONG_TIMEOUT = std::chrono::seconds(45);
 
 class SessionWrapper final
 {

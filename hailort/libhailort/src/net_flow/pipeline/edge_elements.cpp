@@ -178,7 +178,7 @@ Expected<std::shared_ptr<LastAsyncElement>> LastAsyncElement::create(const std::
     auto is_dma_able = false;
     queue_size = queue_size * 2; // Multiplying by 2 to ensure dual-buffering when edge-element is the bottleneck
     TRY(auto buffer_pool,
-        BufferPool::create(frame_size, queue_size, shutdown_event, elem_flags, vstream_stats_flags, is_empty, is_dma_able));
+        PipelineBufferPool::create(frame_size, queue_size, shutdown_event, elem_flags, vstream_stats_flags, is_empty, is_dma_able));
 
     auto last_async_elem_ptr = make_shared_nothrow<LastAsyncElement>(name,
         std::move(duration_collector), std::move(pipeline_status), std::move(buffer_pool), async_pipeline);
@@ -197,7 +197,7 @@ Expected<std::shared_ptr<LastAsyncElement>> LastAsyncElement::create(const std::
 }
 
 LastAsyncElement::LastAsyncElement(const std::string &name, DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
-    BufferPoolPtr buffer_pool, std::shared_ptr<AsyncPipeline> async_pipeline):
+    PipelineBufferPoolPtr buffer_pool, std::shared_ptr<AsyncPipeline> async_pipeline):
     SinkElement(name, std::move(duration_collector), std::move(pipeline_status), PipelineDirection::PUSH, async_pipeline),
     m_pool(buffer_pool)
 {}

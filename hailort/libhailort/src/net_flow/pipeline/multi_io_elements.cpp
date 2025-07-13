@@ -722,7 +722,7 @@ Expected<std::vector<PipelineBuffer>> PixBufferElement::action(PipelineBuffer &&
                         input_ptr->set_action_status(status);
                     }};
                 hailo_status action_status = HAILO_SUCCESS;
-                BufferPoolPtr pool = m_sources[i].next()->get_buffer_pool();
+                PipelineBufferPoolPtr pool = m_sources[i].next()->get_buffer_pool();
                 outputs.emplace_back(PipelineBuffer(dma_buffer, exec_done, action_status, pool->is_holding_user_buffers(), pool));
             } else {
                 return make_unexpected(HAILO_INVALID_ARGUMENT);
@@ -1033,18 +1033,18 @@ hailo_status AsyncHwElement::execute_terminate(hailo_status error_status)
     return HAILO_SUCCESS;
 }
 
-std::vector<std::shared_ptr<BufferPool>> AsyncHwElement::get_hw_interacted_buffer_pools_h2d()
+std::vector<std::shared_ptr<PipelineBufferPool>> AsyncHwElement::get_hw_interacted_buffer_pools_h2d()
 {
-    std::vector<std::shared_ptr<BufferPool>> res;
+    std::vector<std::shared_ptr<PipelineBufferPool>> res;
     for (auto &sink : m_sinks) {
         res.push_back(sink.prev()->get_buffer_pool());
     }
     return res;
 }
 
-std::vector<std::shared_ptr<BufferPool>> AsyncHwElement::get_hw_interacted_buffer_pools_d2h()
+std::vector<std::shared_ptr<PipelineBufferPool>> AsyncHwElement::get_hw_interacted_buffer_pools_d2h()
 {
-    std::vector<std::shared_ptr<BufferPool>> res;
+    std::vector<std::shared_ptr<PipelineBufferPool>> res;
     for (auto &source : m_sources) {
         auto pools = source.get_buffer_pool();
         res.push_back(source.next()->get_buffer_pool());

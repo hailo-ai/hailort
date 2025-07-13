@@ -62,7 +62,7 @@ set(DRIVER_OS_DIR ${DRIVER_OS_DIR} CACHE INTERNAL "Absolute Full path of driver 
 set(HAILO_DRIVER_SRC_FILES ${HAILO_DRIVER_SRC_FILES} CACHE INTERNAL "Absolute Full path of driver src files")
 set(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES} CACHE INTERNAL "Absolute paths of hailort's cpp source files")
 set(COMMON_C_SOURCES ${COMMON_C_SOURCES} CACHE INTERNAL "Absolute paths of common source files")
-set(HAILORT_SRCS_ABS ${HAILORT_CPP_SOURCES} ${COMMON_C_SOURCES} ${HRPC_CPP_SOURCES} ${HRPC_PROTOCOL_CPP_SOURCES} CACHE INTERNAL "All absolute paths of hailort's source files")
+set(HAILORT_SRCS_ABS ${HAILORT_CPP_SOURCES} ${COMMON_C_SOURCES} ${HRPC_CPP_SOURCES} ${HRPC_PROTOCOL_CPP_SOURCES} ${GENAI_SCHEME_CPP_SOURCES} CACHE INTERNAL "All absolute paths of hailort's source files")
 
 SET_SOURCE_FILES_PROPERTIES(${C_SOURCES} PROPERTIES LANGUAGE CXX)
 add_library(libhailort SHARED ${HAILORT_SRCS_ABS})
@@ -89,6 +89,7 @@ target_link_libraries(libhailort PRIVATE scheduler_mon_proto)
 target_link_libraries(libhailort PRIVATE hailort_common)
 target_link_libraries(libhailort PRIVATE Eigen3::Eigen)
 target_link_libraries(libhailort PRIVATE rpc_proto)
+target_link_libraries(libhailort PRIVATE genai_scheme_proto)
 
 if(HAILO_BUILD_SERVICE)
     target_link_libraries(libhailort PRIVATE grpc++_unsecure)
@@ -123,12 +124,13 @@ set(HAILORT_PUBLIC_HEADERS
     ${HAILORT_INC_DIR}/hailo/hailort_defaults.hpp
     ${HAILORT_INC_DIR}/hailo/dma_mapped_buffer.hpp
     ${HAILORT_INC_DIR}/hailo/hailo_session.hpp
+    ${HAILORT_INC_DIR}/hailo/hailo_gst_tensor_metadata.hpp
 
     # GenAI
-    ${HAILORT_INC_DIR}/hailo/genai/vdevice_genai.hpp
     ${HAILORT_INC_DIR}/hailo/genai/common.hpp
     ${HAILORT_INC_DIR}/hailo/genai/llm/llm.hpp
     ${HAILORT_INC_DIR}/hailo/genai/text2image/text2image.hpp
+    ${HAILORT_INC_DIR}/hailo/genai/vlm/vlm.hpp
 )
 
 set_target_properties(libhailort PROPERTIES
@@ -159,6 +161,7 @@ target_include_directories(libhailort
     $<BUILD_INTERFACE:${DRIVER_INC_DIR}>
     $<BUILD_INTERFACE:${RPC_DIR}>
     $<BUILD_INTERFACE:${HRPC_DIR}>
+    $<BUILD_INTERFACE:${HAILORT_GENAI_DIR}>
 )
 
 target_compile_definitions(libhailort PUBLIC

@@ -19,8 +19,6 @@
 namespace hailort
 {
 
-static const uint64_t PERIPH_FRAME_ALIGNMENT = 8;
-
 class PeriphCalculator {
 public:
     static Expected<LayerInfo> calculate_periph_registers(const LayerInfo &layer_info,

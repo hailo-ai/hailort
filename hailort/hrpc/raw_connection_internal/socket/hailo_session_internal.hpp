@@ -106,6 +106,7 @@ public:
     virtual hailo_status wait_for_read_async_ready(size_t transfer_size, std::chrono::milliseconds timeout) override;
     using Session::read_async;
     virtual hailo_status read_async(TransferRequest &&request) override;
+    virtual Expected<int> read_fd() override;
 
     virtual Expected<Buffer> allocate_buffer(size_t size, hailo_dma_buffer_direction_t direction) override;
 

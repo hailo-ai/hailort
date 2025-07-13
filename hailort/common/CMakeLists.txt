@@ -4,6 +4,7 @@ include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/spdlog.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/readerwriterqueue.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/xxhash.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/common_compiler_options.cmake)
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/protobuf.cmake) # Required for genai serializer
 
 
 set(HAILORT_COMMON_CPP_SOURCES
@@ -16,6 +17,9 @@ set(HAILORT_COMMON_CPP_SOURCES
 
     ${CMAKE_CURRENT_SOURCE_DIR}/device_measurements.cpp
 )
+
+add_subdirectory(genai/serializer)
+set(GENAI_SCHEME_CPP_SOURCES ${GENAI_SCHEME_CPP_SOURCES} PARENT_SCOPE)
 
 if(WIN32)
     add_subdirectory(os/windows)

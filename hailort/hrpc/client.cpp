@@ -8,15 +8,14 @@
  **/
 
 #include "client.hpp"
-#include "connection_context.hpp"
 #include "vdma/pcie_session.hpp" // TODO: Remove include: (HRT-16534)
 
 namespace hailort
 {
-constexpr size_t REQUEST_PROTO_MAX_SIZE (128); // TODO: HRT-16644 - make it dynamic
+constexpr size_t REQUEST_PROTO_MAX_SIZE (256); // TODO: HRT-16644 - make it dynamic
 
 // TODO: HRT-16034: make common function with grpc client.
-std::chrono::milliseconds get_request_timeout(const std::chrono::milliseconds default_timeout)
+inline static std::chrono::milliseconds get_request_timeout(const std::chrono::milliseconds default_timeout)
 {
     auto timeout_seconds = get_env_variable(HAILO_REQUEST_TIMEOUT_SECONDS);
     if (timeout_seconds) {
@@ -25,17 +24,20 @@ std::chrono::milliseconds get_request_timeout(const std::chrono::milliseconds de
     return default_timeout;
 }
 
+inline static void request_sent_callback(hailo_status status) {
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to send request, status = {}", status);
+    }
+}
+
 Client::~Client()
 {
     m_is_running = false;
-    (void)m_connection.close();
-    if (m_thread.joinable()) {
-        m_thread.join();
+    if (m_connection) {
+        (void)m_connection->close();
     }
-
-    for (const auto &callback : m_replies_callbacks) {
-        rpc_message_t message {};
-        callback.second(HAILO_COMMUNICATION_CLOSED, std::move(message));
+    if (m_message_loop.joinable()) {
+        m_message_loop.join();
     }
 }
 
@@ -53,17 +55,24 @@ hailo_status Client::connect()
         [conn] (size_t size) { return conn->allocate_buffer(size, HAILO_DMA_BUFFER_DIRECTION_H2D); }
     ));
 
-    TRY(m_sync_requests_pool, ObjectPool<SyncRequest>::create_shared(PcieSession::MAX_ONGOING_TRANSFERS, [this] () {
-        return SyncRequest(*this, m_sync_mutex, m_sync_cv);
-    }));
-
     TRY(auto connection_params, RpcConnection::Params::create(conn));
-    m_connection = RpcConnection(std::move(connection_params));
-    m_thread = std::thread([this] {
+    m_connection = make_shared_nothrow<RpcConnection>(std::move(connection_params));
+    CHECK_NOT_NULL(m_connection, HAILO_OUT_OF_HOST_MEMORY);
+
+    m_message_loop = std::thread([this] {
         auto status = message_loop();
-        if ((status != HAILO_SUCCESS) && (status != HAILO_COMMUNICATION_CLOSED)) { // TODO: Use this to prevent future requests
-            LOGGER__ERROR("Error in message loop - {}", status);
+        if ((HAILO_SUCCESS != status) && (HAILO_COMMUNICATION_CLOSED != status)) {
+            LOGGER__ERROR("Error in message loop: {}", status);
         }
+
+        m_is_running = false;
+
+        // Notify all waiting threads when the message loop closes.
+        rpc_message_header_t status_header {};
+        status_header.status = HAILO_COMMUNICATION_CLOSED;
+        m_reply_data.for_each([status_header] (reply_data_t reply_data) {
+            reply_data.callback({status_header, {}});
+        });
     });
     return HAILO_SUCCESS;
 }
@@ -71,130 +80,110 @@ hailo_status Client::connect()
 hailo_status Client::message_loop()
 {
     while (m_is_running) {
-        TRY_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED, auto message, m_connection.read_message());
+        TRY_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED, auto message, m_connection->read_message());
 
-        assert(message.header.action_id < static_cast<uint32_t>(HailoRpcActionID::MAX_VALUE));
-        auto action_id_enum = static_cast<HailoRpcActionID>(message.header.action_id);
-        if (m_custom_callbacks.find(action_id_enum) != m_custom_callbacks.end()) {
-            auto status = m_custom_callbacks[action_id_enum](MemoryView(message.buffer->data(), message.header.size), m_connection);
+        if (HailoRpcActionID::NOTIFICATION == static_cast<HailoRpcActionID>(message.header.action_id)) {
+            auto status = m_notification_callback(MemoryView(message.buffer->data(), message.header.size));
             CHECK_SUCCESS(status);
+        }
+
+        auto pop_result = m_reply_data.pop(message.header.message_id);
+        if (!pop_result.first) {
             continue;
         }
+        auto reply_data = pop_result.second;
 
-        std::function<void(hailo_status, rpc_message_t)> reply_received_callback = nullptr;
-        {
-            std::unique_lock<std::mutex> lock(m_replies_mutex);
-            m_replies_cv.wait(lock, [this, &message] () {
-                return contains(m_replies_callbacks, message.header.message_id);
-            });
-            reply_received_callback = m_replies_callbacks[message.header.message_id];
-            m_replies_callbacks.erase(message.header.message_id);
+        // Read additional buffers only if message returned success status.
+        if ((HAILO_SUCCESS == message.header.status) && (reply_data.read_buffers.size() > 0)) {
+            auto status = m_connection->read_buffers(std::move(reply_data.read_buffers));
+            CHECK_SUCCESS_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED, status);
         }
 
-        reply_received_callback(HAILO_SUCCESS, std::move(message));
+        reply_data.callback(std::move(message));
     }
 
     return HAILO_SUCCESS;
 }
 
-SyncRequest::SyncRequest(Client &client, std::mutex &sync_mutex, std::condition_variable &sync_cv)
-    : m_client(client), m_sync_mutex(sync_mutex), m_sync_cv(sync_cv), m_transfer_status(HAILO_UNINITIALIZED), m_out_reply({}) {}
-
-Expected<rpc_message_t> SyncRequest::execute(HailoRpcActionID action_id, const MemoryView &request,
-    std::vector<TransferBuffer> &&additional_buffers)
-{
-    auto status = m_client.wait_for_execute_request_ready(request, get_request_timeout(REQUEST_TIMEOUT));
-    CHECK_SUCCESS(status);
-
-    auto request_sent_callback = [] (hailo_status status) {
-        if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed to send request, status = {}", status);
-        }
-    };
-    auto reply_received_callback = [this] (hailo_status status, rpc_message_t reply) {
-        {
-            std::unique_lock<std::mutex> lock(m_sync_mutex);
-            assert(status != HAILO_UNINITIALIZED);
-            m_transfer_status = status;
-
-            if (HAILO_SUCCESS == status) {
-                m_out_reply = std::move(reply);
-            }
-        }
-        m_sync_cv.notify_one();
-    };
-    status = m_client.execute_request_async(action_id, request, request_sent_callback,
-        reply_received_callback, std::move(additional_buffers));
-    if (HAILO_COMMUNICATION_CLOSED == status) {
-        return make_unexpected(status);
-    }
-    CHECK_SUCCESS_AS_EXPECTED(status);
-
-    std::unique_lock<std::mutex> lock(m_sync_mutex);
-    CHECK_AS_EXPECTED(m_sync_cv.wait_for(lock, get_request_timeout(REQUEST_TIMEOUT), [this] { return m_transfer_status != HAILO_UNINITIALIZED; }),
-        HAILO_TIMEOUT, "Timeout waiting for transfer completion");
-    CHECK_SUCCESS(m_transfer_status);
-
-    auto copy = m_out_reply;
-    m_transfer_status = HAILO_UNINITIALIZED;
-    m_out_reply = {};
-    return copy;
-}
-
 Expected<rpc_message_t> Client::execute_request(HailoRpcActionID action_id, const MemoryView &request,
-    std::vector<TransferBuffer> &&additional_buffers)
+    std::vector<TransferBuffer> &&write_buffers, std::vector<TransferBuffer> &&read_buffers)
 {
-    TRY(auto sync_request, m_sync_requests_pool->acquire());
-    TRY(auto reply, sync_request->execute(action_id, request, std::move(additional_buffers)));
-
-    auto status = m_sync_requests_pool->return_to_pool(sync_request);
+    auto status = wait_for_execute_request_ready(request, get_request_timeout(REQUEST_TIMEOUT));
     CHECK_SUCCESS(status);
 
-    return reply;
+    std::mutex mutex;
+    std::condition_variable cv;
+    rpc_message_t out_reply {};
+    auto reply_received_callback = [&mutex, &cv, &out_reply] (rpc_message_t reply) {
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            out_reply = reply;
+        }
+        cv.notify_one();
+    };
+
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED, auto message_id,
+        execute_request_async(action_id, request, reply_received_callback, std::move(write_buffers),
+        std::move(read_buffers)));
+
+    std::unique_lock<std::mutex> lock(mutex);
+    auto wait_status = cv.wait_for(lock, get_request_timeout(REQUEST_TIMEOUT));
+    if (std::cv_status::timeout == wait_status) {
+        // Erase to avoid callback being called with uninitialized memory.
+        (void)m_reply_data.pop(message_id);
+        return make_unexpected(HAILO_TIMEOUT);
+    }
+
+    if (HAILO_SUCCESS != out_reply.header.status) {
+        return make_unexpected(static_cast<hailo_status>(out_reply.header.status));
+    }
+    return out_reply;
 }
 
 hailo_status Client::wait_for_execute_request_ready(const MemoryView &request, std::chrono::milliseconds timeout)
 {
-    return m_connection.wait_for_write_message_async_ready(request.size(), timeout);
+    return m_connection->wait_for_write_message_async_ready(request.size(), timeout);
 }
 
-hailo_status Client::execute_request_async(HailoRpcActionID action_id, const MemoryView &request,
-    std::function<void(hailo_status)> request_sent_callback,
-    std::function<void(hailo_status, rpc_message_t)> reply_received_callback,
-    std::vector<TransferBuffer> &&additional_buffers)
+Expected<message_id_t> Client::execute_request_async(HailoRpcActionID action_id, const MemoryView &request,
+    HrpcCallback callback, std::vector<TransferBuffer> &&write_buffers, std::vector<TransferBuffer> &&read_buffers)
 {
     rpc_message_header_t header;
-    {
-        std::unique_lock<std::mutex> lock(m_write_mutex);
-        header.size = static_cast<uint32_t>(request.size());
-        header.message_id = m_messages_sent++;
-        header.action_id = static_cast<uint32_t>(action_id);
 
-        TransferRequest transfer_request;
-        transfer_request.callback = std::move(request_sent_callback);
-        if (request.size() > 0) {
-            transfer_request.transfer_buffers.emplace_back(request);
-        }
-        transfer_request.transfer_buffers.insert(transfer_request.transfer_buffers.end(),
-            additional_buffers.begin(), additional_buffers.end());
-
-        auto status = m_connection.write_message_async(header, std::move(transfer_request));
-        CHECK_SUCCESS(status);
+    if (!m_is_running) {
+        return make_unexpected(HAILO_COMMUNICATION_CLOSED);
     }
 
-    {
-        std::unique_lock<std::mutex> lock(m_replies_mutex);
-        m_replies_callbacks[header.message_id] = reply_received_callback;
-    }
-    m_replies_cv.notify_all();
+    std::unique_lock<std::mutex> lock(m_write_mutex);
 
-    return HAILO_SUCCESS;
+    auto message_id = m_messages_sent++;
+    header.size = static_cast<uint32_t>(request.size());
+    header.message_id = message_id;
+    header.action_id = static_cast<uint32_t>(action_id);
+
+    TransferRequest transfer_request;
+    transfer_request.callback = request_sent_callback;
+    transfer_request.transfer_buffers.reserve(write_buffers.size() + 1); // Request buffer + additional writes.
+    if (request.size() > 0) {
+        transfer_request.transfer_buffers.emplace_back(request);
+    }
+    transfer_request.transfer_buffers.insert(transfer_request.transfer_buffers.end(),
+        write_buffers.begin(), write_buffers.end());
+
+    m_reply_data.emplace(message_id, reply_data_t{callback, std::move(read_buffers)});
+
+    auto status = m_connection->write_message_async(header, std::move(transfer_request));
+    if ((HAILO_SUCCESS != status) || (!m_is_running)) {
+        (void)m_reply_data.pop(message_id);
+    }
+    CHECK_SUCCESS(status);
+
+    return message_id;
 }
 
-void Client::register_custom_reply(HailoRpcActionID action_id,
-    std::function<hailo_status(const MemoryView&, RpcConnection connection)> callback)
+void Client::set_notification_callback(std::function<hailo_status(const MemoryView&)> callback)
 {
-    m_custom_callbacks[action_id] = callback;
+    m_notification_callback = callback;
 }
 
 Expected<BufferPtr> Client::allocate_request_buffer()

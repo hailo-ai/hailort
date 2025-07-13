@@ -29,7 +29,7 @@
 namespace hailort
 {
 
-static_assert(VDMA_CHANNELS_PER_ENGINE == MAX_VDMA_CHANNELS_PER_ENGINE, "Driver and libhailort parameters mismatch");
+static_assert(VDMA_CHANNELS_PER_ENGINE <= MAX_VDMA_CHANNELS_PER_ENGINE, "Driver and libhailort parameters mismatch");
 static_assert(MAX_VDMA_ENGINES == MAX_VDMA_ENGINES_COUNT, "Driver and libhailort parameters mismatch");
 static_assert(MIN_D2H_CHANNEL_INDEX == VDMA_DEST_CHANNELS_START, "Driver and libhailort parameters mismatch");
 static_assert(ONGOING_TRANSFERS_SIZE == HAILO_VDMA_MAX_ONGOING_TRANSFERS, "Driver and libhailort parameters mismatch");
@@ -148,10 +148,14 @@ static HailoRTDriver::DeviceBoardType board_type_to_device_board_type(enum hailo
         return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO15L;
     case HAILO_BOARD_TYPE_HAILO10H:
         return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO10H;
-    case HAILO_BOARD_TYPE_HAILO10H_LEGACY:
-        return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO10H_LEGACY;
+    case HAILO_BOARD_TYPE_HAILO10H_LEGACY_BOOT:
+        return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO10H_LEGACY_BOOT;
+    case HAILO_BOARD_TYPE_HAILO15H_ACCELERATOR_MODE:
+        return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO15H_ACCELERATOR_MODE;
     case HAILO_BOARD_TYPE_MARS:
         return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_MARS;
+    case HAILO_BOARD_TYPE_MARS_LEGACY_BOOT:
+        return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_MARS_LEGACY_BOOT;
     default:
         LOGGER__ERROR("Invalid board type from ioctl {}", static_cast<int>(board_type));
         break;
@@ -700,7 +704,7 @@ hailo_status HailoRTDriver::descriptors_list_program(uintptr_t desc_handle, Vdma
 
 hailo_status HailoRTDriver::launch_transfer(vdma::ChannelId channel_id, uintptr_t desc_handle,
     uint32_t starting_desc, const std::vector<TransferBuffer> &transfer_buffers,
-    bool should_bind, InterruptsDomain first_desc_interrupts, InterruptsDomain last_desc_interrupts)
+    bool should_bind, bool should_sync, InterruptsDomain first_desc_interrupts, InterruptsDomain last_desc_interrupts)
 {
     CHECK(is_valid_channel_id(channel_id), HAILO_INVALID_ARGUMENT, "Invalid channel id {} given", channel_id);
     CHECK(transfer_buffers.size() <= ARRAY_ENTRIES(hailo_vdma_launch_transfer_params::buffers), HAILO_INVALID_ARGUMENT,
@@ -713,12 +717,13 @@ hailo_status HailoRTDriver::launch_transfer(vdma::ChannelId channel_id, uintptr_
     params.starting_desc = starting_desc;
     params.buffers_count = static_cast<uint8_t>(transfer_buffers.size());
     for (size_t i = 0; i < transfer_buffers.size(); i++) {
-        params.buffers[i].buffer_type = transfer_buffers[i].is_dma_buf ? 
+        params.buffers[i].buffer_type = transfer_buffers[i].is_dma_buf ?
             HAILO_DMA_DMABUF_BUFFER : HAILO_DMA_USER_PTR_BUFFER;
         params.buffers[i].addr_or_fd = transfer_buffers[i].addr_or_fd;
         params.buffers[i].size = static_cast<uint32_t>(transfer_buffers[i].size);
     }
     params.should_bind = should_bind;
+    params.should_sync = should_sync;
     params.first_interrupts_domain = (hailo_vdma_interrupts_domain)first_desc_interrupts;
     params.last_interrupts_domain = (hailo_vdma_interrupts_domain)last_desc_interrupts;
 
@@ -844,6 +849,15 @@ Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> HailoRTDriver::soc_connect
     vdma::ChannelId input_channel{0, params.input_channel_index};
     vdma::ChannelId output_channel{0, params.output_channel_index};
     return std::make_pair(input_channel, output_channel);
+}
+
+hailo_status HailoRTDriver::pci_ep_listen(uint16_t port_number, uint8_t backlog_size)
+{
+    hailo_pci_ep_listen_params params{};
+    params.port_number = port_number;
+    params.backlog_size = backlog_size;
+    RUN_AND_CHECK_IOCTL_RESULT(HAILO_PCI_EP_LISTEN, &params, "Failed pci_ep listen");
+    return HAILO_SUCCESS;
 }
 
 Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> HailoRTDriver::pci_ep_accept(uint16_t port_number,

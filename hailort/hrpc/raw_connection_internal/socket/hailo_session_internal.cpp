@@ -16,7 +16,6 @@
 
 #include <string>
 
-#define BACKLOG_SIZE (5)
 #define USE_DEFAULT_PROTOCOL (0)
 #define HRT_UNIX_SOCKET_FILE_NAME ("hailort_unix_socket")
 
@@ -409,11 +408,18 @@ hailo_status OsSession::write_async(TransferRequest &&request)
         }
 
         for (auto transfer_buffer : buffers) {
-            TRY(auto buffer, transfer_buffer.base_buffer());
-            auto status = m_socket.sendall(buffer.data(), buffer.size(), MSG_NOSIGNAL);
-            CHECK_SUCCESS(status);
+            if (transfer_buffer.type() == TransferBufferType::DMABUF) {
+                TRY(auto fd, transfer_buffer.dmabuf_fd());
+                CHECK_SUCCESS(m_socket.write_fd(fd, transfer_buffer.size()));
+            } else {
+                TRY(auto buffer, transfer_buffer.base_buffer());
+                auto status = m_socket.sendall(buffer.data(), buffer.size(), MSG_NOSIGNAL);
+                if (HAILO_ETH_FAILURE == status) {
+                    return HAILO_COMMUNICATION_CLOSED;
+                }
+                CHECK_SUCCESS(status);
+            }
         }
-
         return HAILO_SUCCESS;
     }, request.callback});
 }
@@ -436,11 +442,19 @@ hailo_status OsSession::read_async(TransferRequest &&request)
             if (HAILO_COMMUNICATION_CLOSED == status) {
                 return status;
             }
+            if (HAILO_ETH_FAILURE == status) {
+                return HAILO_COMMUNICATION_CLOSED;
+            }
             CHECK_SUCCESS(status);
         }
 
         return HAILO_SUCCESS;
     }, request.callback});
+}
+
+Expected<int> OsSession::read_fd()
+{
+    return m_socket.read_fd();
 }
 
 Expected<Buffer> OsSession::allocate_buffer(size_t size, hailo_dma_buffer_direction_t)

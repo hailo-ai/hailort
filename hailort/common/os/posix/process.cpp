@@ -63,23 +63,24 @@ Expected<std::string> Process::PopenWrapper::read_stdout(uint32_t max_output_siz
     TRY(auto output, Buffer::create(max_output_size, 0));
     
     const auto num_read = fread(reinterpret_cast<char*>(output.data()), sizeof(uint8_t), output.size(), m_pipe);
-    if (num_read != output.size()) {
-        if (feof(m_pipe)) {
-            // We remove the trailing newline we get from fread
-            const auto output_as_str = output.to_string();
-            if (output_as_str[output_as_str.length() - 1] == '\n') {
-                return output_as_str.substr(0, num_read - 1);
-            }
-            return output_as_str.substr(0, num_read);
+    if (!feof(m_pipe)) {
+        if (output.size() == num_read) {
+            // Truncate output
+            LOGGER__WARNING("Truncating output of command \"{}\" to {} chars long! "
+                "The max_output_size needs to be bigger!", m_command_line, max_output_size);
+            return output.to_string();
         } else {
             LOGGER__ERROR("fread failed with ferror={}", ferror(m_pipe));
-            return make_unexpected(HAILO_INTERNAL_FAILURE);
+            return make_unexpected(HAILO_FILE_OPERATION_FAILURE);
         }
-    } else {
-        // Truncate output
-        LOGGER__TRACE("Truncating output to {} chars long", max_output_size);
-        return output.to_string();
     }
+
+    // We remove the trailing newline we get from fread
+    const auto output_as_str = output.to_string();
+    if (output_as_str[output_as_str.length() - 1] == '\n') {
+        return output_as_str.substr(0, num_read - 1);
+    }
+    return output_as_str.substr(0, num_read);
 }
 
 int32_t Process::PopenWrapper::close()

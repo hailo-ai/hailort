@@ -16,8 +16,6 @@
 #include <math.h>
 #include <fenv.h>
 
-static const float32_t INVALID_QP_VALUE = 0;
-
 #ifdef _MSC_VER
 #include <immintrin.h>
 #endif
@@ -254,8 +252,8 @@ public:
      */
     static inline bool is_qp_valid(const hailo_quant_info_t &quant_info)
     {
-        return !((quant_info.qp_zp == INVALID_QP_VALUE) && (quant_info.qp_scale == INVALID_QP_VALUE) 
-            && (quant_info.limvals_min == INVALID_QP_VALUE) && (quant_info.limvals_max == INVALID_QP_VALUE));
+        hailo_quant_info_t invalid_qi(INVALID_QUANT_INFO);
+        return (0 != std::memcmp(&quant_info, &invalid_qi, sizeof(quant_info)));
     }
 
 private:

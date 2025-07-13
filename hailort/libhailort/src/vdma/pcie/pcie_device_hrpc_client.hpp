@@ -86,6 +86,9 @@ public:
     virtual hailo_status after_fork_in_parent() override;
     virtual hailo_status after_fork_in_child() override;
 
+    virtual Expected<bool> has_power_sensor() override;
+    virtual Expected<size_t> fetch_logs(MemoryView buffer, hailo_log_type_t log_type) override;
+
 private:
     static Expected<std::shared_ptr<Client>> get_connected_client(const std::string &device_id);
     static Expected<rpc_object_handle_t> create_remote_device(std::shared_ptr<Client> client);

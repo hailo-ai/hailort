@@ -10,6 +10,7 @@
 #ifndef HAILO_THREAD_SAFE_MAP_HPP_
 #define HAILO_THREAD_SAFE_MAP_HPP_
 
+#include <functional>
 #include <map>
 #include <mutex>
 #include <unordered_map>
@@ -39,9 +40,22 @@ public:
         return m_map.at(key);
     }
 
+    // Atomically get and erase a value.
+    std::pair<bool, Value> pop(const Key &key)
+    {
+        std::unique_lock<std::shared_timed_mutex> lock(m_mutex);
+        if (!m_map.count(key)) {
+            return {false, {}};
+        }
+        auto res = m_map[key];
+        m_map.erase(key);
+
+        return std::pair<bool, Value>(true, std::move(res));
+    }
+
     size_t erase(const Key &key)
     {
-        std::shared_lock<std::shared_timed_mutex> lock(m_mutex);
+        std::unique_lock<std::shared_timed_mutex> lock(m_mutex);
         auto iter = m_map.find(key);
         if (m_map.end() != iter) {
             return m_map.erase(key);
@@ -49,14 +63,15 @@ public:
         return 0;
     }
 
-    template<typename Func>
-    void for_each(Func &&func) const
+    void for_each(std::function<void(Value)> &&func) const
     {
         std::shared_lock<std::shared_timed_mutex> lock(m_mutex);
-        std::for_each(m_map.begin(), m_map.end(), func);
+        for (auto key_val : m_map) {
+            func(key_val.second);
+        }
     }
 
-    bool contains(const Key &key)
+    bool contains(const Key &key) const
     {
         std::shared_lock<std::shared_timed_mutex> lock(m_mutex);
         auto iter = m_map.find(key);
@@ -67,7 +82,7 @@ private:
     // Const operation on the map can be executed on parallel, hence we can use shared_lock, while non-const operations
     // (such as emplace) must have unique access.
     mutable std::shared_timed_mutex m_mutex;
-    MapType m_map;
+    std::unordered_map<Key, Value> m_map;
 };
 
 } /* namespace hailort */

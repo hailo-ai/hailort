@@ -14,6 +14,7 @@
  *     |   |-- PcieDevice
  *     |   |-- IntegratedDevice
  *     |-- EthernetDevice
+ * |-- PcieDeviceHrpcClient     (RPC handle communicating with the server)
  **/
 
 #ifndef _HAILO_DEVICE_INTERNAL_HPP_
@@ -101,6 +102,8 @@ public:
     virtual hailo_status write_user_config(const MemoryView &buffer) override;
     virtual hailo_status erase_user_config() override;
     static hailo_device_architecture_t hef_arch_to_device_arch(HEFHwArch hef_arch);
+
+    virtual Expected<size_t> fetch_logs(MemoryView buffer, hailo_log_type_t log_type) override;
 
     virtual Expected<hailo_device_architecture_t> get_architecture() const override
     {

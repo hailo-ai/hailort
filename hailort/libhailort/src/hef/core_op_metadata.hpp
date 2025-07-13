@@ -32,25 +32,31 @@ struct SupportedFeatures {
     bool periph_calculation_in_hailort = false;
     bool core_hw_padding_config_in_dfc = false;
     bool batch_register_config = false;
-    bool aligned_ccws = false;
+    bool shared_config = false;
+    bool strict_versioning = false;
 };
 
-// TODO: HRT-16585 - Remove duplication in struct ConfigBufferInfo - we don't need both bursts_sizes and ccw_dma_transfers
+// TODO: HRT-17546 - Remove duplication in struct ConfigBufferInfo - we don't need both bursts_sizes and ccw_dma_transfers
 struct ConfigBufferInfo {
     /**
-     * Sizes of all the successive ccw's (ccw burst).
-     * When working with descriptors list, each burst is programed independently to its descriptors.
+     * Offsets and sizes of all CCW bursts under zero-copy-over-descs config flow.
+     * - `ccw_bursts_offsets[i]` is the offset (in bytes) of the i-th burst from the start of the ccw section in the Hef.
+     * - `ccw_bursts_sizes[i]` is the size (in bytes) of the i-th burst.
+     *
+     * These two vectors must always be the same size and aligned by index.
+     * That is, for each i: (ccw_bursts_offsets[i], ccw_bursts_sizes[i]) describes one CCW burst.
      */
-    std::vector<uint32_t> bursts_sizes;
+    std::vector<uint64_t> ccw_bursts_offsets;
+    std::vector<uint32_t> ccw_bursts_sizes;
+
+    // ccw bursts sizes for CCB (or descs with copy) transfers.
+    std::vector<uint32_t> ccw_dma_transfers;
+
     /**
      * Default offset = 0. In case of continuous pre-allocated buffer,
      * we use this var to get the config buffer offset from the beginning of the hef user address.
      */
     uint64_t offset_from_hef_base = 0;
-    /**
-     * In case of shared_weights (alligned ccws) - we use this vector to perform the dma transfers.
-     */
-    std::vector<std::pair<uint64_t, uint64_t>> ccw_dma_transfers;
 };
 
 // For each config_stream_index we store vector of all ccw write length. The vector is used to build the config buffer.g
@@ -63,7 +69,7 @@ using CcwDmaTransfersInfoMap = std::unordered_map<uint8_t, std::vector<std::pair
 class ContextMetadata final {
 public:
     ContextMetadata(std::vector<ContextSwitchConfigActionPtr> &&actions,
-        ConfigBufferInfoMap&& config_buffers_info, bool const_input_layer_found, CcwDmaTransfersInfoMap&& ccws_dma_transfers_info = {});
+        ConfigBufferInfoMap&& config_buffers_info, bool const_input_layer_found);
     ContextMetadata() = default;
 
     const std::vector<ContextSwitchConfigActionPtr> &get_actions() const;
@@ -93,7 +99,6 @@ public:
 private:
     std::vector<ContextSwitchConfigActionPtr> m_actions;
     ConfigBufferInfoMap m_config_buffers_info;
-    CcwDmaTransfersInfoMap m_ccws_dma_transfers_info;
     bool m_const_input_layer_found;
 
     std::vector<LayerInfo> m_boundary_input_layers;

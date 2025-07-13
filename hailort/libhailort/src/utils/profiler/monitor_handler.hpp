@@ -181,8 +181,7 @@ public:
 private:
     hailo_status start_mon(const std::string &unique_vdevice_hash);
 #if defined(__GNUC__)
-    Expected<std::shared_ptr<TempFile>> open_temp_mon_file();
-    Expected<std::shared_ptr<TempFile>> open_temp_nnc_utilization_file();
+    Expected<std::shared_ptr<TempFile>> open_temp_mon_file(const std::string &file_name, const std::string &file_dir);
     void write_utilization_to_file(const double utilization_percentage);
     void dump_state();
 #endif

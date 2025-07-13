@@ -71,7 +71,7 @@ Expected<ordered_json> DownloadActionListCommand::init_json_object(Device &devic
 
     unsigned int clock_cycle = 0;
     // TODO - HRT-8046 Implement extended device info for hailo15
-    if ((HAILO_ARCH_HAILO15H == chip_arch) || (HAILO_ARCH_HAILO15L == chip_arch)) {
+    if ((HAILO_ARCH_HAILO15H == chip_arch) || (HAILO_ARCH_HAILO15L == chip_arch) || (HAILO_ARCH_MARS == chip_arch)) {
         clock_cycle = HAILO15_VPU_CORE_CPU_DEFAULT_FREQ_MHZ;
     } else {
         TRY(auto extended_info, device.get_extended_device_information());

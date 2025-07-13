@@ -238,7 +238,7 @@ bool VDevice::service_over_ip_mode()
 #endif
 }
 
-bool VDevice::should_force_hrpc_client()
+bool VDevice::should_force_socket_based_client()
 {
     return get_env_variable(HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR).has_value();
 }
@@ -311,7 +311,7 @@ hailo_status VDeviceClient::create_client()
     auto channel = grpc::CreateCustomChannel(hailort::HAILORT_SERVICE_ADDRESS, grpc::InsecureChannelCredentials(), ch_args);
     CHECK_NOT_NULL(channel, HAILO_INTERNAL_FAILURE);
     auto client = make_unique_nothrow<HailoRtRpcClient>(channel);
-    CHECK_NOT_NULL(client, HAILO_INTERNAL_FAILURE);
+    CHECK_NOT_NULL(client, HAILO_OUT_OF_HOST_MEMORY);
     m_client = std::move(client);
     return HAILO_SUCCESS;
 }
@@ -551,19 +551,28 @@ Expected<std::unique_ptr<VDevice>> VDevice::create(const hailo_vdevice_params_t 
         return make_unexpected(HAILO_INVALID_OPERATION);
 #endif // HAILO_SUPPORT_MULTI_PROCESS
     } else {
-        auto acc_type = HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE;
-        if (nullptr != params.device_ids) {
-            TRY(auto device_ids_contains_eth, VDeviceBase::device_ids_contains_eth(params));
-            if (!device_ids_contains_eth) {
+        // If forcing socket-based client-iface, we cannot scan for connected devices, hence we create it beforehand
+        // TODO: Revert HRT-17057 when unix socket bug introduced in HRT-16827 is fixed
+        auto force_socket_com_value = get_env_variable(HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR);
+        if (force_socket_com_value.has_value() && (force_socket_com_value.value() != HAILO_SOCKET_COM_ADDR_UNIX_SOCKET)) {
+                TRY(vdevice, VDeviceSocketBasedClient::create(params));
+        } else {
+            auto acc_type = HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE;
+            if (nullptr != params.device_ids) {
+                TRY(auto device_ids_contains_eth, VDeviceBase::device_ids_contains_eth(params));
+                if (!device_ids_contains_eth) {
+                    TRY(acc_type, VDeviceBase::get_accelerator_type(params.device_ids, params.device_count));
+                }
+            } else {
                 TRY(acc_type, VDeviceBase::get_accelerator_type(params.device_ids, params.device_count));
             }
-        } else {
-            TRY(acc_type, VDeviceBase::get_accelerator_type(params.device_ids, params.device_count));
-        }
-        if ((acc_type == HailoRTDriver::AcceleratorType::SOC_ACCELERATOR) || should_force_hrpc_client()) {
-            TRY(vdevice, VDeviceHrpcClient::create(params));
-        } else {
-            TRY(vdevice, VDeviceHandle::create(params));
+
+            // TODO: Revert HRT-17057 when unix socket bug introduced in HRT-16827 is fixed
+            if ((acc_type == HailoRTDriver::AcceleratorType::SOC_ACCELERATOR) || should_force_socket_based_client()) {
+                TRY(vdevice, VDeviceHrpcClient::create(params));
+            } else {
+                TRY(vdevice, VDeviceHandle::create(params));
+            }
         }
     }
     // Upcasting to VDevice unique_ptr

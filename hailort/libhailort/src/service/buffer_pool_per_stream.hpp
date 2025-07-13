@@ -42,15 +42,15 @@ public:
     hailo_status return_to_pool(const std::string &stream_name, BufferPtr buffer);
     hailo_status shutdown();
     Expected<size_t> get_buffer_size(const std::string &stream_name);
-    Expected<BasicBufferPoolPtr> get_pool(const std::string &stream_name);
+    Expected<BufferPoolPtr> get_pool(const std::string &stream_name);
 
     BufferPoolPerStream(EventPtr shutdown_event);
 private:
-    Expected<BasicBufferPoolPtr> create_stream_buffer_pool(const std::string &stream_name,
+    Expected<BufferPoolPtr> create_stream_buffer_pool(const std::string &stream_name,
         NetworkGroupIdentifier &identifier, size_t buffer_size, size_t buffer_count,
         EventPtr shutdown_event);
 
-    std::unordered_map<stream_name_t, BasicBufferPoolPtr> m_stream_name_to_buffer_pool;
+    std::unordered_map<stream_name_t, BufferPoolPtr> m_stream_name_to_buffer_pool;
     std::unordered_map<stream_name_t, std::string> m_stream_name_to_shm_name;
     EventPtr m_shutdown_event;
     std::mutex m_mutex;
@@ -62,15 +62,15 @@ private:
 class AcquiredBuffer 
 {
 public:
-    static Expected<std::shared_ptr<AcquiredBuffer>> acquire_from_pool(BasicBufferPoolPtr pool);
-    AcquiredBuffer(BasicBufferPoolPtr pool, BufferPtr buffer);
+    static Expected<std::shared_ptr<AcquiredBuffer>> acquire_from_pool(BufferPoolPtr pool);
+    AcquiredBuffer(BufferPoolPtr pool, BufferPtr buffer);
     virtual ~AcquiredBuffer();
 
     uint8_t *data();
     size_t size() const;
     BufferPtr buffer();
 private:
-    BasicBufferPoolPtr m_pool;
+    BufferPoolPtr m_pool;
     BufferPtr m_buffer;
 };
 using AcquiredBufferPtr = std::shared_ptr<AcquiredBuffer>;

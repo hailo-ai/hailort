@@ -168,9 +168,8 @@ std::vector<hailo_detection_with_byte_mask_t> convert_nms_with_byte_mask_buffer_
 
     size_t buffer_offset = sizeof(uint16_t);
     for (size_t i = 0; i < detections_count; i++) {
-        hailo_detection_with_byte_mask_t detection = *(hailo_detection_with_byte_mask_t*)(src_ptr + buffer_offset);
-        buffer_offset += sizeof(hailo_detection_with_byte_mask_t) + detection.mask_size;
-        detections.emplace_back(std::move(detection));
+        detections.emplace_back(*(hailo_detection_with_byte_mask_t*)(src_ptr + buffer_offset));
+        buffer_offset += sizeof(hailo_detection_with_byte_mask_t) + detections.back().mask_size;
     }
     return detections;
 }
@@ -923,7 +922,6 @@ PYBIND11_MODULE(_pyhailort, m) {
         )
         .def_static("default", []() {
             auto orig_params = HailoRTDefaults::get_vdevice_params();
-            orig_params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_NONE;
             VDeviceParamsWrapper params_wrapper{orig_params, "", {}};
             return params_wrapper;
         });

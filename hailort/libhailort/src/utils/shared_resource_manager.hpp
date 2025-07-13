@@ -65,7 +65,7 @@ public:
             if (m_resources.at(i) == nullptr) {
                 available_index = i;
             } else {
-                if (m_resources.at(i)->user_key == user_key) {
+                if ((FORCE_GET_FIRST_AVAILABLE == user_key) || (m_resources.at(i)->user_key == user_key)) {
                     // Resource already registered
                     match_index = i;
                     break;

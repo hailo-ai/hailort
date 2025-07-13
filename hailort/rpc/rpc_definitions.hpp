@@ -11,6 +11,8 @@
 #define _HAILO_RPC_DEFINITIONS_HPP_
 
 #include "common/internal_env_vars.hpp"
+#include "common/utils.hpp"
+#include "common/filesystem.hpp"
 
 namespace hailort
 {
@@ -24,6 +26,11 @@ static const std::string HAILO_DEFAULT_SERVICE_ADDR = "/tmp/hailort_uds.sock";
 static const std::string HAILORT_SERVICE_DEFAULT_ADDR = HAILO_UDS_PREFIX + HAILO_DEFAULT_SERVICE_ADDR;
 #endif
 static const std::chrono::seconds HAILO_KEEPALIVE_INTERVAL(2);
+static const std::string DMABUF_UNIX_SOCKET = "hailort_dmabuf_uds.sock";
+
+constexpr size_t DMABUF_MSG_IOVEC_SIZE = 2;
+constexpr size_t NETGROUP_HANDLE_IOVEC_IDX = 0;
+constexpr size_t STREAM_NAME_IOVEC_IDX = 1;
 
 #define INVALID_CB_INDEX (UINT32_MAX)
 #define INVALID_STREAM_NAME ("INVALID_STREAM_NAME")
@@ -35,6 +42,18 @@ static const std::string HAILORT_SERVICE_ADDRESS = []() {
     } else {
         return HAILORT_SERVICE_DEFAULT_ADDR; // Default value if environment variable is not set
     }
+}();
+
+static const sockaddr_un DMABUF_SERVER_SOCKET_ADDR = []() {
+    std::string addr = "/tmp/" + DMABUF_UNIX_SOCKET;
+
+    struct sockaddr_un server_addr;
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sun_family = AF_UNIX;
+    strncpy(server_addr.sun_path, addr.c_str(), addr.size());
+
+    return server_addr;
 }();
 
 typedef enum {

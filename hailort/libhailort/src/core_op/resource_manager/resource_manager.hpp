@@ -88,7 +88,7 @@ public:
         CONTROL_PROTOCOL__context_switch_context_type_t context_type,
         const std::vector<vdma::ChannelId> &config_channels_ids, const ConfigBufferInfoMap &config_buffer_infos,
         std::shared_ptr<InternalBufferManager> internal_buffer_manager,
-        bool aligned_ccws,
+        bool zero_copy_config_over_descs,
         std::vector<std::shared_ptr<vdma::MappedBuffer>> mapped_buffers = {},
         std::shared_ptr<vdma::MappedBuffer> nops_buffer = nullptr);
 
@@ -111,14 +111,14 @@ public:
     hailo_status validate_edge_layer(const LayerInfo &layer_info, vdma::ChannelId channel_id,
         const SupportedFeatures &supported_features);
 
-    std::vector<ConfigBuffer> &get_config_buffers();
+    std::vector<std::shared_ptr<ConfigBuffer>> &get_config_buffers();
     CONTROL_PROTOCOL__context_switch_context_type_t get_context_type() const {
         return m_context_type;
     }
 
 private:
     ContextResources(HailoRTDriver &driver, CONTROL_PROTOCOL__context_switch_context_type_t context_type,
-        std::vector<ConfigBuffer> &&config_buffers, std::shared_ptr<InternalBufferManager> internal_buffer_manager) :
+        std::vector<std::shared_ptr<ConfigBuffer>> &&config_buffers, std::shared_ptr<InternalBufferManager> internal_buffer_manager) :
         m_driver(std::ref(driver)),
         m_context_type(context_type),
         m_config_buffers(std::move(config_buffers)),
@@ -127,7 +127,7 @@ private:
 
     std::reference_wrapper<HailoRTDriver> m_driver;
     CONTROL_PROTOCOL__context_switch_context_type_t m_context_type;
-    std::vector<ConfigBuffer> m_config_buffers;
+    std::vector<std::shared_ptr<ConfigBuffer>> m_config_buffers;
 
     std::vector<EdgeLayer> m_edge_layers;
     std::vector<DdrChannelsInfo> m_ddr_channels_infos;
@@ -156,7 +156,7 @@ public:
     ExpectedRef<CacheBuffer> set_cache_output_channel(uint32_t cache_id, uint16_t batch_size, vdma::ChannelId channel_id);
     ExpectedRef<std::unordered_map<uint32_t, CacheBuffer>> get_cache_buffers();
 
-    Expected<size_t> calc_default_queue_size(const LayerInfo &layer_info, uint16_t batch_size);
+    Expected<uint16_t> calc_default_queue_size(const LayerInfo &layer_info, uint16_t batch_size);
     hailo_status create_boundary_vdma_channel(const LayerInfo &layer_info, bool use_enhanced_channel = false);
 
     Expected<CONTROL_PROTOCOL__application_header_t> get_control_core_op_header();
@@ -165,7 +165,7 @@ public:
 
     Expected<std::reference_wrapper<ContextResources>> add_new_context(
         CONTROL_PROTOCOL__context_switch_context_type_t context_type,
-        bool is_aligned_ccws_on, const ConfigBufferInfoMap &config_info={});
+        bool zero_copy_config_over_descs, const ConfigBufferInfoMap &config_info={});
 
     const SupportedFeatures &get_supported_features() const
     {
@@ -219,7 +219,7 @@ public:
         uint32_t transfer_size);
     Expected<uint16_t> program_desc_for_hw_only_flow(vdma::DescriptorList &desc_list,
         vdma::MappedBuffer &mapped_buffer, vdma::ChannelId channel_id,
-        const uint32_t single_transfer_size, const uint16_t dynamic_batch_size, const uint16_t batch_count);
+        const uint32_t single_transfer_size, const uint16_t dynamic_batch_size, const uint32_t batch_count);
     hailo_status allocate_mapped_buffer_for_hw_only_infer(vdma::BoundaryChannelPtr boundary_channel_ptr,
         const HailoRTDriver::DmaDirection direction, const uint32_t single_transfer_size, uint16_t batch_size, uint16_t batch_count);
     hailo_status configure_mapped_buffer_for_hw_only_infer(vdma::BoundaryChannelPtr boundary_channel_ptr,

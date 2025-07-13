@@ -209,7 +209,7 @@ class PooledBufferStorage : public BufferStorage
 public:
     ~PooledBufferStorage();
 
-    PooledBufferStorage(BufferPtr buffer, BasicBufferPoolPtr buffer_pool);
+    PooledBufferStorage(BufferPtr buffer, FastBufferPoolPtr buffer_pool);
     PooledBufferStorage(PooledBufferStorage&& other) noexcept;
     PooledBufferStorage(const PooledBufferStorage &) = delete;
     PooledBufferStorage &operator=(PooledBufferStorage &&) = delete;
@@ -220,7 +220,7 @@ public:
     virtual Expected<void*> release() noexcept override;
 
 private:
-    BasicBufferPoolPtr m_buffer_pool;
+    FastBufferPoolPtr m_buffer_pool;
     BufferPtr m_buffer;
 };
 

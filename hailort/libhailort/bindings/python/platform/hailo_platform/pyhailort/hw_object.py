@@ -399,7 +399,7 @@ class EthernetDevice(HailoChipObject):
 
         Args:
             interface_name (str): Interface to scan.
-            timeout_seconds (int, optional): timeout for scan operation. Defaults to 3.
+            timeout_seconds (int, optional): timeout for the scan operation. Defaults to 3 seconds.
         Returns:
             list of str: IPs of scanned devices.
         """

@@ -2,83 +2,6 @@ syntax = "proto3";
 
 option optimize_for = LITE_RUNTIME;
 
-message RpcRequest {
-    oneof request {
-        VDevice_Create_Request create_vdevice_request = 1;
-        VDevice_Destroy_Request destroy_vdevice_request = 2;
-        VDevice_CreateInferModel_Request create_infer_model_request = 3;
-
-        InferModel_Destroy_Request destroy_infer_model_request = 4;
-        InferModel_CreateConfiguredInferModel_Request create_configured_infer_model_request = 5;
-
-        ConfiguredInferModel_Destroy_Request destroy_configured_infer_model_request = 6;
-        ConfiguredInferModel_SetSchedulerTimeout_Request set_scheduler_timeout_request = 7;
-        ConfiguredInferModel_SetSchedulerThreshold_Request set_scheduler_threshold_request = 8;
-        ConfiguredInferModel_SetSchedulerPriority_Request set_scheduler_priority_request = 9;
-        ConfiguredInferModel_GetHwLatencyMeasurement_Request get_hw_latency_measurement_request = 10;
-        ConfiguredInferModel_Activate_Request activate_request = 11;
-        ConfiguredInferModel_Deactivate_Request deactivate_request = 12;
-        ConfiguredInferModel_Shutdown_Request shutdown_request = 13;
-        ConfiguredInferModel_AsyncInfer_Request async_infer_request = 14;
-
-        Device_Create_Request create_device_request = 15;
-        Device_Destroy_Request destroy_device_request = 16;
-        Device_Identify_Request identify_device_request = 17;
-        Device_ExtendedInfo_Request extended_device_info_request = 18;
-        Device_GetChipTemperature_Request get_chip_temperature_request = 19;
-        Device_PowerMeasurement_Request power_measurement_request = 20;
-        Device_SetPowerMeasurement_Request set_power_measurement_request = 21;
-        Device_StartPowerMeasurement_Request start_power_measurement_request = 22;
-        Device_GetPowerMeasurement_Request get_power_measurement_request = 23;
-        Device_StopPowerMeasurement_Request stop_power_measurement_request = 24;
-        Device_QueryHealthStats_Request query_health_stats_request = 25;
-        Device_QueryPerformanceStats_Request query_performance_stats_request = 26;
-        Device_GetArchitecture_Request get_architecture_request = 27;
-        Device_SetNotificationCallback_Request set_notification_callback_request = 28;
-        Device_RemoveNotificationCallback_Request remove_notification_callback_request = 29;
-    }
-}
-
-message RpcReply {
-    oneof reply {
-        VDevice_Create_Reply create_vdevice_reply = 1;
-        VDevice_Destroy_Reply destroy_vdevice_reply = 2;
-        VDevice_CreateInferModel_Reply create_infer_model_reply = 3;
-
-        InferModel_Destroy_Reply destroy_infer_model_reply = 4;
-        InferModel_CreateConfiguredInferModel_Reply create_configured_infer_model_reply = 5;
-
-        ConfiguredInferModel_Destroy_Reply destroy_configured_infer_model_reply = 6;
-        ConfiguredInferModel_SetSchedulerTimeout_Reply set_scheduler_timeout_reply = 7;
-        ConfiguredInferModel_SetSchedulerThreshold_Reply set_scheduler_threshold_reply = 8;
-        ConfiguredInferModel_SetSchedulerPriority_Reply set_scheduler_priority_reply = 9;
-        ConfiguredInferModel_GetHwLatencyMeasurement_Reply get_hw_latency_measurement_reply = 10;
-        ConfiguredInferModel_Activate_Reply activate_reply = 11;
-        ConfiguredInferModel_Deactivate_Reply deactivate_reply = 12;
-        ConfiguredInferModel_Shutdown_Reply shutdown_reply = 13;
-        ConfiguredInferModel_AsyncInfer_Reply async_infer_reply = 14;
-
-        Device_Create_Reply create_device_reply = 15;
-        Device_Destroy_Reply destroy_device_reply = 16;
-        Device_Identify_Reply identify_device_reply = 17;
-        Device_ExtendedInfo_Reply extended_device_info_reply = 18;
-        Device_GetChipTemperature_Reply get_chip_temperature_reply = 19;
-        Device_PowerMeasurement_Reply power_measurement_reply = 20;
-        Device_SetPowerMeasurement_Reply set_power_measurement_reply = 21;
-        Device_StartPowerMeasurement_Reply start_power_measurement_reply = 22;
-        Device_GetPowerMeasurement_Reply get_power_measurement_reply = 23;
-        Device_StopPowerMeasurement_Reply stop_power_measurement_reply = 24;
-        Device_QueryHealthStats_Reply query_health_stats_reply = 25;
-        Device_QueryPerformanceStats_Reply query_performance_stats_reply = 26;
-        Device_GetArchitecture_Reply get_architecture_reply = 27;
-        Device_SetNotificationCallback_Reply set_notification_callback_reply = 28;
-        Device_RemoveNotificationCallback_Reply remove_notification_callback_reply = 29;
-
-        // Here comes replies that have no matching requests
-        CallbackCalled_Reply callback_called_reply = 100;
-    }
-}
-
 message HailoObjectHandle {
     uint32 id = 1;
 }
@@ -91,25 +14,23 @@ message HailoCallbackHandle {
 message VDeviceParamsProto {
     uint32 scheduling_algorithm = 1;
     string group_id = 2;
-    bool is_device_id_user_specific = 3;
+    bool has_user_selected_device_or_group_id = 3;
 }
 
 message VDevice_Create_Request {
     VDeviceParamsProto params = 1;
+    bool should_disable_pp_ops = 2;
 }
 
 message VDevice_Create_Reply {
-    uint32 status = 1;
-    HailoObjectHandle vdevice_handle = 2;
+    HailoObjectHandle vdevice_handle = 1;
 }
 
 message VDevice_Destroy_Request {
     HailoObjectHandle vdevice_handle = 1;
 }
 
-message VDevice_Destroy_Reply {
-    uint32 status = 1;
-}
+message VDevice_Destroy_Reply {}
 
 message VDevice_CreateInferModel_Request {
     HailoObjectHandle vdevice_handle = 1;
@@ -119,17 +40,14 @@ message VDevice_CreateInferModel_Request {
 }
 
 message VDevice_CreateInferModel_Reply {
-    uint32 status = 1;
-    HailoObjectHandle infer_model_handle = 2;
+    HailoObjectHandle infer_model_handle = 1;
 }
 
 message InferModel_Destroy_Request {
     HailoObjectHandle infer_model_handle = 1;
 }
 
-message InferModel_Destroy_Reply {
-    uint32 status = 1;
-}
+message InferModel_Destroy_Reply {}
 
 message InferStreamParamsProto {
     string name = 1;
@@ -153,90 +71,76 @@ message InferModel_CreateConfiguredInferModel_Request {
 }
 
 message InferModel_CreateConfiguredInferModel_Reply {
-    uint32 status = 1;
-    HailoObjectHandle configured_infer_model_handle = 2;
-    uint32 async_queue_size = 3;
+    HailoObjectHandle configured_infer_model_handle = 1;
+    uint32 async_queue_size = 2;
 }
 
 message ConfiguredInferModel_Destroy_Request {
     HailoObjectHandle configured_infer_model_handle = 1;
 }
 
-message ConfiguredInferModel_Destroy_Reply {
-    uint32 status = 1;
-}
+message ConfiguredInferModel_Destroy_Reply {}
 
 message ConfiguredInferModel_SetSchedulerTimeout_Request {
     HailoObjectHandle configured_infer_model_handle = 1;
     uint32 timeout = 2;
 }
 
-message ConfiguredInferModel_SetSchedulerTimeout_Reply {
-    uint32 status = 1;
-}
+message ConfiguredInferModel_SetSchedulerTimeout_Reply {}
 
 message ConfiguredInferModel_SetSchedulerThreshold_Request {
     HailoObjectHandle configured_infer_model_handle = 1;
     uint32 threshold = 2;
 }
 
-message ConfiguredInferModel_SetSchedulerThreshold_Reply {
-    uint32 status = 1;
-}
+message ConfiguredInferModel_SetSchedulerThreshold_Reply {}
 
 message ConfiguredInferModel_SetSchedulerPriority_Request {
     HailoObjectHandle configured_infer_model_handle = 1;
     uint32 priority = 2;
 }
 
-message ConfiguredInferModel_SetSchedulerPriority_Reply {
-    uint32 status = 1;
-}
+message ConfiguredInferModel_SetSchedulerPriority_Reply {}
 
 message ConfiguredInferModel_GetHwLatencyMeasurement_Request {
     HailoObjectHandle configured_infer_model_handle = 1;
 }
 
 message ConfiguredInferModel_GetHwLatencyMeasurement_Reply {
-    uint32 status = 1;
-    uint32 avg_hw_latency = 2;
+    uint32 avg_hw_latency = 1;
 }
 
 message ConfiguredInferModel_Activate_Request {
     HailoObjectHandle configured_infer_model_handle = 1;
 }
 
-message ConfiguredInferModel_Activate_Reply {
-    uint32 status = 1;
-}
+message ConfiguredInferModel_Activate_Reply {}
 
 message ConfiguredInferModel_Deactivate_Request {
     HailoObjectHandle configured_infer_model_handle = 1;
 }
 
-message ConfiguredInferModel_Deactivate_Reply {
-    uint32 status = 1;
-}
+message ConfiguredInferModel_Deactivate_Reply {}
 
 message ConfiguredInferModel_Shutdown_Request {
     HailoObjectHandle configured_infer_model_handle = 1;
 }
 
-message ConfiguredInferModel_Shutdown_Reply {
-    uint32 status = 1;
+message ConfiguredInferModel_Shutdown_Reply {}
+
+message BufferInfo {
+    uint32 size = 1;
+    uint32 type = 2;
 }
 
 message ConfiguredInferModel_AsyncInfer_Request {
     HailoObjectHandle configured_infer_model_handle = 1;
     HailoObjectHandle infer_model_handle = 2;
-    HailoCallbackHandle callback_handle = 3;
-    repeated uint32 input_buffer_sizes = 4;
+    repeated BufferInfo buffer_infos = 3; // Represents both inputs and outputs
     // Protocol note: After this message, server expects to get the input buffers, one after the other, in order
 }
 
-message ConfiguredInferModel_AsyncInfer_Reply {
-    uint32 status = 1;
-}
+message ConfiguredInferModel_AsyncInfer_Reply {}
 
 message CallbackCalled_Reply {
     HailoCallbackHandle callback_handle = 1;
@@ -251,14 +155,14 @@ message RunAsyncCallback {
     // Protocol note: After this message, and only if status is HAILO_SUCCESS, client expects to get the output buffers, one after the other, in order
 }
 
-message TemperatureAlarmNotification {
+message HealthMonitorTemperatureAlarmNotification {
     uint32 temperature_zone = 1;
     uint32 alarm_ts_id = 2;
     float ts0_temperature = 3;
     float ts1_temperature = 4;
 }
 
-message OverCurrentAlertNotification {
+message HealthMonitorOverCurrentAlertNotification {
     uint32 overcurrent_zone = 1;
     float exceeded_alert_threshold = 2;
     bool is_last_overcurrent_violation_reached = 3;
@@ -268,8 +172,8 @@ message DeviceNotificationCallback {
     uint32 notification_id = 1;
     uint32 sequence = 2;
     oneof message {
-        TemperatureAlarmNotification temperature_alarm = 3;
-        OverCurrentAlertNotification overcurrent_alert = 4;
+        HealthMonitorTemperatureAlarmNotification health_monitor_temperature_alarm = 3;
+        HealthMonitorOverCurrentAlertNotification health_monitor_overcurrent_alert = 4;
     }
 }
 
@@ -277,17 +181,14 @@ message Device_Create_Request {
 }
 
 message Device_Create_Reply {
-    uint32 status = 1;
-    HailoObjectHandle device_handle = 2;
+    HailoObjectHandle device_handle = 1;
 }
 
 message Device_Destroy_Request {
     HailoObjectHandle device_handle = 1;
 }
 
-message Device_Destroy_Reply {
-    uint32 status = 1;
-}
+message Device_Destroy_Reply {}
 
 message Device_Identify_Request {
     HailoObjectHandle device_handle = 1;
@@ -324,8 +225,7 @@ message DeviceIdentityProto {
 }
 
 message Device_Identify_Reply {
-    uint32 status = 1;
-    DeviceIdentityProto identity = 2;
+    DeviceIdentityProto identity = 1;
 }
 
 message Device_ExtendedInfo_Request {
@@ -348,16 +248,15 @@ enum DeviceBootSourceProto {
 }
 
 message Device_ExtendedInfo_Reply {
-    uint32 status = 1;
-    uint32 neural_network_core_clock_rate = 2;
-    DeviceSupportedFeaturesProto supported_features = 3;
-    DeviceBootSourceProto boot_source = 4;
-    repeated uint32 soc_id = 5;
-    uint32 lcs = 6;
-    repeated uint32 eth_mac_address = 7;
-    repeated uint32 unit_level_tracking_id = 8;
-    repeated uint32 soc_pm_values = 9;
-    uint32 gpio_mask = 10;
+    uint32 neural_network_core_clock_rate = 1;
+    DeviceSupportedFeaturesProto supported_features = 2;
+    DeviceBootSourceProto boot_source = 3;
+    repeated uint32 soc_id = 4;
+    uint32 lcs = 5;
+    repeated uint32 eth_mac_address = 6;
+    repeated uint32 unit_level_tracking_id = 7;
+    repeated uint32 soc_pm_values = 8;
+    uint32 gpio_mask = 9;
 }
 
 message Device_GetChipTemperature_Request {
@@ -365,10 +264,9 @@ message Device_GetChipTemperature_Request {
 }
 
 message Device_GetChipTemperature_Reply {
-    uint32 status = 1;
-    float ts0_temperature = 2;
-    float ts1_temperature = 3;
-    uint32 sample_count = 4;
+    float ts0_temperature = 1;
+    float ts1_temperature = 2;
+    uint32 sample_count = 3;
 }
 
 message Device_QueryHealthStats_Request {
@@ -376,10 +274,9 @@ message Device_QueryHealthStats_Request {
 }
 
 message Device_QueryHealthStats_Reply {
-    uint32 status = 1;
-    float on_die_temperature = 2;
-    float on_die_voltage = 3;
-    int32 startup_bist_mask = 4;
+    float on_die_temperature = 1;
+    float on_die_voltage = 2;
+    int32 startup_bist_mask = 3;
 }
 
 message Device_QueryPerformanceStats_Request {
@@ -387,13 +284,12 @@ message Device_QueryPerformanceStats_Request {
 }
 
 message Device_QueryPerformanceStats_Reply {
-    uint32 status = 1;
-    float cpu_utilization = 2;
-    int64 ram_size_total = 3;
-    int64 ram_size_used = 4;
-    float nnc_utilization = 5;
-    int32 ddr_noc_total_transactions = 6;
-    int32 dsp_utilization = 7;
+    float cpu_utilization = 1;
+    int64 ram_size_total = 2;
+    int64 ram_size_used = 3;
+    float nnc_utilization = 4;
+    int32 ddr_noc_total_transactions = 5;
+    int32 dsp_utilization = 6;
 }
 
 message Device_PowerMeasurement_Request {
@@ -403,8 +299,7 @@ message Device_PowerMeasurement_Request {
 }
 
 message Device_PowerMeasurement_Reply {
-    uint32 status = 1;
-    float power = 2;
+    float power = 1;
 }
 
 message Device_SetPowerMeasurement_Request {
@@ -413,9 +308,7 @@ message Device_SetPowerMeasurement_Request {
     uint32 hailo_power_measurement_type = 3; /* corresponds to hailo_power_measurement_type_t */
 }
 
-message Device_SetPowerMeasurement_Reply {
-    uint32 status = 1;
-}
+message Device_SetPowerMeasurement_Reply {}
 
 message Device_StartPowerMeasurement_Request {
     HailoObjectHandle device_handle = 1;
@@ -423,9 +316,7 @@ message Device_StartPowerMeasurement_Request {
     uint32 sampling_period = 3; /* corresponds to hailo_sampling_period_t */
 }
 
-message Device_StartPowerMeasurement_Reply {
-    uint32 status = 1;
-}
+message Device_StartPowerMeasurement_Reply {}
 
 message Device_GetPowerMeasurement_Request {
     HailoObjectHandle device_handle = 1;
@@ -441,25 +332,21 @@ message HailoPowerMeasurementData {
 }
 
 message Device_GetPowerMeasurement_Reply {
-    uint32 status = 1;
-    HailoPowerMeasurementData data = 2;
+    HailoPowerMeasurementData data = 1;
 }
 
 message Device_StopPowerMeasurement_Request {
     HailoObjectHandle device_handle = 1;
 }
 
-message Device_StopPowerMeasurement_Reply {
-    uint32 status = 1;
-}
+message Device_StopPowerMeasurement_Reply {}
 
 message Device_GetArchitecture_Request {
     HailoObjectHandle device_handle = 1;
 }
 
 message Device_GetArchitecture_Reply {
-    uint32 status = 1;
-    uint32 device_architecture = 2;
+    uint32 device_architecture = 1;
 }
 
 message Device_SetNotificationCallback_Request {
@@ -468,15 +355,21 @@ message Device_SetNotificationCallback_Request {
     HailoCallbackHandle callback = 3;
 }
 
-message Device_SetNotificationCallback_Reply {
-    uint32 status = 1;
-}
+message Device_SetNotificationCallback_Reply {}
 
 message Device_RemoveNotificationCallback_Request {
     HailoObjectHandle device_handle = 1;
     uint32 notification_id = 2;
 }
 
-message Device_RemoveNotificationCallback_Reply {
-    uint32 status = 1;
+message Device_RemoveNotificationCallback_Reply {}
+
+message Device_FetchLogs_Request {
+    HailoObjectHandle device_handle = 1;
+    uint32 buffer_size = 2;
+    uint32 log_type = 3;
+}
+
+message Device_FetchLogs_Reply {
+    uint32 log_size = 1;
 }

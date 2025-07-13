@@ -31,7 +31,7 @@ ChannelsBitmap ChannelsGroup::bitmap() const
     for (size_t i = 0; i < m_channels.size(); i++) {
         for (size_t j = 0; j < m_channels[i].size(); j++) {
             if (m_channels[i][j]) {
-                bitmap[i] |= (1 << j);
+                bitmap[i] |= (1ULL << j);
             }
         }
     }

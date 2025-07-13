@@ -68,6 +68,7 @@ public:
 
     bool is_over_threshold() const;
     bool is_over_threshold_timeout() const;
+    bool is_first_frame() const;
 
     std::chrono::time_point<std::chrono::steady_clock> get_last_run_timestamp();
     void set_last_run_timestamp(const std::chrono::time_point<std::chrono::steady_clock> &timestamp);

@@ -255,8 +255,8 @@ public:
     Expected<uint8_t> get_sink_index_from_input_stream_name(const std::string &input_stream_name);
     virtual Expected<uint32_t> get_source_index_from_source_name(const std::string &source_name) override;
 
-    std::vector<BufferPoolPtr> get_hw_interacted_buffer_pools_h2d();
-    std::vector<BufferPoolPtr> get_hw_interacted_buffer_pools_d2h();
+    std::vector<PipelineBufferPoolPtr> get_hw_interacted_buffer_pools_h2d();
+    std::vector<PipelineBufferPoolPtr> get_hw_interacted_buffer_pools_d2h();
 
 protected:
     virtual std::vector<PipelinePad*> execution_pads() override;

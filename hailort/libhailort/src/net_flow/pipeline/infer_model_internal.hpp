@@ -198,6 +198,7 @@ public:
     virtual Expected<size_t> get_async_queue_size() const = 0;
     virtual hailo_status shutdown() = 0;
     virtual hailo_status update_cache_offset(int32_t offset_delta_entries) = 0;
+    virtual hailo_status init_cache(uint32_t read_offset) = 0;
 
     static Expected<ConfiguredInferModel::Bindings> create_bindings(
         std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&inputs,
@@ -214,6 +215,7 @@ private:
 protected:
     std::unordered_map<std::string, size_t> m_inputs_frame_sizes;
     std::unordered_map<std::string, size_t> m_outputs_frame_sizes;
+    std::timed_mutex m_run_mutex;
 
 };
 
@@ -243,6 +245,7 @@ public:
     virtual Expected<size_t> get_async_queue_size() const override;
     virtual hailo_status shutdown() override;
     virtual hailo_status update_cache_offset(int32_t offset_delta_entries) override;
+    virtual hailo_status init_cache(uint32_t read_offset) override;
 
     static Expected<std::shared_ptr<ConfiguredInferModelImpl>> create_for_ut(std::shared_ptr<ConfiguredNetworkGroup> net_group,
         std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner, const std::vector<std::string> &input_names, const std::vector<std::string> &output_names,

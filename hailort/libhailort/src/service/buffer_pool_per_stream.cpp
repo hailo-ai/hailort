@@ -42,7 +42,7 @@ BufferPoolPerStream::BufferPoolPerStream(EventPtr shutdown_event) :
     m_stream_name_to_buffer_pool(), m_shutdown_event(shutdown_event), m_mutex(), m_cv(), m_is_shutdown(false)
 {}
 
-Expected<BasicBufferPoolPtr> BufferPoolPerStream::create_stream_buffer_pool(const std::string &stream_name,
+Expected<BufferPoolPtr> BufferPoolPerStream::create_stream_buffer_pool(const std::string &stream_name,
     NetworkGroupIdentifier &identifier, size_t buffer_size, size_t buffer_count,
     EventPtr shutdown_event)
 {
@@ -62,7 +62,7 @@ Expected<BasicBufferPoolPtr> BufferPoolPerStream::create_stream_buffer_pool(cons
         buffers.emplace_back(buffer);
     }
 
-    auto buffer_pool_ptr = make_shared_nothrow<BasicBufferPool>(buffer_size, std::move(buffers),
+    auto buffer_pool_ptr = make_shared_nothrow<BufferPool>(buffer_size, std::move(buffers),
         std::move(free_buffers_queue), buffer_count);
     CHECK_NOT_NULL_AS_EXPECTED(buffer_pool_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
@@ -141,7 +141,7 @@ hailo_status BufferPoolPerStream::shutdown()
     return m_shutdown_event->signal();
 }
 
-Expected<BasicBufferPoolPtr> BufferPoolPerStream::get_pool(const std::string &stream_name)
+Expected<BufferPoolPtr> BufferPoolPerStream::get_pool(const std::string &stream_name)
 {
     CHECK_AS_EXPECTED(contains(m_stream_name_to_buffer_pool, stream_name), HAILO_INTERNAL_FAILURE,
         "get_buffer_size() for stream {} failed, stream name does not exist in buffer pool", stream_name);
@@ -158,7 +158,7 @@ Expected<size_t> BufferPoolPerStream::get_buffer_size(const std::string &stream_
     return m_stream_name_to_buffer_pool[stream_name]->buffer_size();
 }
 
-Expected<std::shared_ptr<AcquiredBuffer>> AcquiredBuffer::acquire_from_pool(BasicBufferPoolPtr pool)
+Expected<std::shared_ptr<AcquiredBuffer>> AcquiredBuffer::acquire_from_pool(BufferPoolPtr pool)
 {
     TRY(auto buffer, pool->acquire_buffer());
 
@@ -168,7 +168,7 @@ Expected<std::shared_ptr<AcquiredBuffer>> AcquiredBuffer::acquire_from_pool(Basi
     return acquired_buffer_ptr;
 }
 
-AcquiredBuffer::AcquiredBuffer(BasicBufferPoolPtr pool, BufferPtr buffer) :
+AcquiredBuffer::AcquiredBuffer(BufferPoolPtr pool, BufferPtr buffer) :
     m_pool(pool), m_buffer(buffer)
 {}
 

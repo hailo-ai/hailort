@@ -96,16 +96,18 @@ public:
     // Planning functions
     static Expected<InternalBufferPlanning> create_buffer_planning(
         const CoreOpMetadata& core_op, uint16_t batch_size, Type plan_type, HailoRTDriver::DmaType dma_type,
-        uint16_t max_page_size);
+        uint16_t max_page_size, HailoRTDriver::DeviceBoardType board_type);
     static Expected<InternalBufferPlanning> create_buffer_planning(
         const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos, Type plan_type,
-        HailoRTDriver::DmaType dma_type, uint16_t max_page_size, size_t number_of_contexts);
+        HailoRTDriver::DmaType dma_type, uint16_t max_page_size, size_t number_of_contexts,
+        HailoRTDriver::DeviceBoardType board_type);
     static Expected<InternalBufferPlanning> create_naive_buffer_planning(
         const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos, HailoRTDriver::DmaType dma_type,
-        uint16_t max_page_size, bool force_sg_type_buffer = false);
+        uint16_t max_page_size, HailoRTDriver::DeviceBoardType board_type, bool force_sg_type_buffer = false);
     static Expected<InternalBufferPlanning> create_optimized_buffer_planning(
         const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos, HailoRTDriver::DmaType dma_type,
-        uint16_t max_page_size, size_t number_of_contexts, bool force_sg_type_buffer = false);
+        uint16_t max_page_size, size_t number_of_contexts, HailoRTDriver::DeviceBoardType board_type,
+        bool force_sg_type_buffer = false);
     // Reporting functions
     static BufferPlanReport report_planning_info(const InternalBufferPlanning &buffer_planning);
 
@@ -118,7 +120,7 @@ private:
         const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layers);
     static Expected<vdma::BufferSizesRequirements> return_buffer_requirements(
         const EdgeLayerInfo &edge_layer, const vdma::VdmaBuffer::Type buffer_type,
-        uint16_t max_page_size);
+        uint16_t max_page_size, HailoRTDriver::DeviceBoardType board_type);
 
     // Planning phase functions
     static ContextBufferUsageSegments merge_context_buffer_events(
@@ -129,12 +131,12 @@ private:
         const std::vector<ContextBufferUsageSegments> &context_buffer_usage_vector, uint16_t start_context, uint16_t end_context);
     static hailo_status add_edge_layer_to_planning(const std::pair<EdgeLayerKey, EdgeLayerInfo> &edge_layer,
         std::vector<std::vector<BufferUsageSegment>> &context_buffer_usage_vector, BufferPlan &buffer_plan,
-        const vdma::VdmaBuffer::Type buffer_type, uint16_t max_page_size);
+        const vdma::VdmaBuffer::Type buffer_type, uint16_t max_page_size, HailoRTDriver::DeviceBoardType board_type);
 
 
     static Expected<InternalBufferPlanning> create_single_buffer_planning(
         const std::map<EdgeLayerKey, EdgeLayerInfo> &sg_edge_layers, size_t number_of_contexts,
-        const vdma::VdmaBuffer::Type buffer_type, uint16_t max_page_size);
+        const vdma::VdmaBuffer::Type buffer_type, uint16_t max_page_size, HailoRTDriver::DeviceBoardType board_type);
 };
 
 } /* namespace hailort */

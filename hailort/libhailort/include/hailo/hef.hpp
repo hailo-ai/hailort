@@ -151,7 +151,7 @@ public:
     /**
      * Gets input virtual streams infos.
      *
-     * @param[in] name                    The name of the network or network_group which contains the input virtaul stream_infos.
+     * @param[in] name                    The name of the network or network_group which contains the input virtual stream_infos.
      *                                    In case network group name is given, the function returns the input virtual stream infos 
      *                                    of all the networks of the given network group.
      *                                    In case network name is given (provided by @a get_network_infos), 
@@ -340,7 +340,7 @@ public:
      * The user can modify the given params before configuring the network.
      * 
      * @param[in] output_interface  Stream interface to use on the output streams.
-     * @param[in] mipi_params       Specific mipi params.
+     * @param[in] mipi_params       Specific MIPI params.
      * @return Upon success, returns Expected of NetworkGroupsParamsMap, which maps network group name to configured network group params.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
@@ -352,7 +352,7 @@ public:
      * The user can modify the given params before configuring the network.
      * 
      * @param[in] output_interface    Stream interface to use on the output streams.
-     * @param[in] mipi_params         Specific mipi params
+     * @param[in] mipi_params         Specific MIPI params
      * @param[in] network_group_name  Name of network_group to make configure params for.
      * @return Upon success, returns Expected of ConfigureNetworkParams.
      *         Otherwise, returns Unexpected of ::hailo_status error.
@@ -460,8 +460,8 @@ public:
     std::string hash() const;
 
     Expected<std::string> get_description(bool stream_infos, bool vstream_infos) const;
-
-    Expected<std::map<std::string, std::string>> get_external_resources() const;
+    Expected<std::map<std::string, MemoryView>> get_external_resources() const;
+    void set_memory_footprint_optimization(bool should_optimize); // Best effort optimization to reduce memcpy
 
     ~Hef();
     Hef(Hef &&);

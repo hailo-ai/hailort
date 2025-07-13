@@ -22,6 +22,8 @@
 #include "hailo/buffer.hpp"
 #include "hailo/hailort_common.hpp"
 #include "hailo/hailort_defaults.hpp"
+#include "hailo/hailo_gst_tensor_metadata.hpp"
+#include "common.hpp"
 
 #include <algorithm>
 #include <unordered_map>
@@ -853,7 +855,7 @@ static void gst_hailonet_class_init(GstHailoNetClass *klass)
     g_object_class_install_property(gobject_class, PROP_FORCE_WRITABLE,
         g_param_spec_boolean("force-writable", "Force writable", "Controls whether the element will force the input buffer to be writable. "
             "We force the input to be writable with the function gst_buffer_make_writable, which in most cases will do a shallow copy of the buffer. "
-            "But in some cases (when the buffer is marked as not shared - see gst_buffer_copy documentation), it will do a deep copy."
+            "But in some cases (when the buffer is marked as not shared - see gst_buffer_copy documentation), it will do a deep copy. "
             "By default, the hailonet element will not force the input buffer to be writable and will raise an error when the buffer is read-only.", false,
         (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
@@ -873,11 +875,11 @@ static void gst_hailonet_class_init(GstHailoNetClass *klass)
             HAILO_DEFAULT_SCHEDULER_THRESHOLD, std::numeric_limits<uint32_t>::max(), HAILO_DEFAULT_SCHEDULER_THRESHOLD, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
     g_object_class_install_property(gobject_class, PROP_SCHEDULER_PRIORITY,
         g_param_spec_uint("scheduler-priority", "Priority index for scheduler", "When the scheduler will choose the next hailonet to run, higher priority will be prioritized in the selection. "
-            "Bigger number represent higher priority",
+            "Larger number represents higher priority",
             HAILO_SCHEDULER_PRIORITY_MIN, HAILO_SCHEDULER_PRIORITY_MAX, HAILO_SCHEDULER_PRIORITY_NORMAL, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
     g_object_class_install_property(gobject_class, PROP_INPUT_FORMAT_TYPE,
-        g_param_spec_enum("input-format-type", "Input format type", "Input format type(auto, float32, uint16, uint8). Default value is auto."
+        g_param_spec_enum("input-format-type", "Input format type", "Input format type(auto, float32, uint16, uint8). Default value is auto. "
             "Gets values from the enum GstHailoFormatType. ",
             GST_TYPE_HAILO_FORMAT_TYPE, HAILO_FORMAT_TYPE_AUTO,
         (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
@@ -937,7 +939,7 @@ static void gst_hailonet_push_buffer_to_thread(GstHailoNet *self, GstBuffer *buf
 
 // TODO: This function should be refactored. It does many unrelated things and the user need to know that he should unmap the buffer
 // in case of an error. AND it does not print errors nor return an indicative status (also the comments are confusing - "continue"?)
-static bool set_infos(GstParentBufferMeta *parent_buffer_meta, hailo_vstream_info_t &vstream_info, GstMapInfo &info)
+static bool set_infos(GstParentBufferMeta *parent_buffer_meta, hailo_tensor_metadata_t &tensor_meta_info, GstMapInfo &info)
 {
     gboolean map_succeeded = gst_buffer_map(parent_buffer_meta->buffer, &info, GST_MAP_READ);
     if (!map_succeeded) {
@@ -950,7 +952,7 @@ static bool set_infos(GstParentBufferMeta *parent_buffer_meta, hailo_vstream_inf
         gst_buffer_unmap(parent_buffer_meta->buffer, &info);
         return false;
     }
-    vstream_info = tensor_meta->info;
+    tensor_meta_info = tensor_meta->info;
     return true;
 }
 
@@ -967,8 +969,8 @@ static Expected<std::unordered_map<std::string, hailo_dma_buffer_t>> gst_hailone
         }
         GstParentBufferMeta *parent_buffer_meta = reinterpret_cast<GstParentBufferMeta*>(meta);
         GstMapInfo info;
-        hailo_vstream_info_t vstream_info;
-        bool result = set_infos(parent_buffer_meta, vstream_info, info);
+        hailo_tensor_metadata_t tensor_meta_info;
+        bool result = set_infos(parent_buffer_meta, tensor_meta_info, info);
         if (result) {
             TRY(auto is_dma_buf_memory, HailoDmaBuffAllocator::is_dma_buf_memory(info));
             CHECK_AS_EXPECTED(is_dma_buf_memory, HAILO_INTERNAL_FAILURE, "GstMemory is not a DMA buf as expected!");
@@ -977,7 +979,7 @@ static Expected<std::unordered_map<std::string, hailo_dma_buffer_t>> gst_hailone
             CHECK_AS_EXPECTED(fd != -1, HAILO_INTERNAL_FAILURE, "Failed to get FD from GstMemory!");
 
             hailo_dma_buffer_t dma_buffer = {fd, info.size};
-            input_buffer_metas[vstream_info.name] = dma_buffer;
+            input_buffer_metas[tensor_meta_info.name] = dma_buffer;
             gst_buffer_unmap(parent_buffer_meta->buffer, &info);
         }
     }
@@ -1015,10 +1017,10 @@ static Expected<std::unordered_map<std::string, uint8_t*>> gst_hailonet_read_inp
         }
         GstParentBufferMeta *parent_buffer_meta = reinterpret_cast<GstParentBufferMeta*>(meta);
         GstMapInfo info;
-        hailo_vstream_info_t vstream_info;
-        bool result = set_infos(parent_buffer_meta, vstream_info, info);
+        hailo_tensor_metadata_t tensor_meta_info;
+        bool result = set_infos(parent_buffer_meta, tensor_meta_info, info);
         if (result) {
-            input_buffer_metas[vstream_info.name] = static_cast<uint8_t*>(info.data);
+            input_buffer_metas[tensor_meta_info.name] = static_cast<uint8_t*>(info.data);
             gst_buffer_unmap(parent_buffer_meta->buffer, &info);
         }
     }
@@ -1113,11 +1115,11 @@ static hailo_status gst_hailonet_call_run_async(GstHailoNet *self, const std::un
     CHECK_SUCCESS(status);
 
     {
-        std::unique_lock<std::mutex> lock(self->impl->flush_mutex);
+        std::unique_lock<std::mutex> lock(self->impl->frame_count_mutex);
         self->impl->ongoing_frames++;
     }
 
-    TRY(auto job, self->impl->configured_infer_model->run_async(self->impl->infer_bindings, [self, tensors] (const AsyncInferCompletionInfo &/*completion_info*/) {
+    TRY(auto job, self->impl->configured_infer_model->run_async(self->impl->infer_bindings, [self, tensors] (const AsyncInferCompletionInfo &completion_info) {
         GstBuffer *buffer = nullptr;
         {
             std::unique_lock<std::mutex> lock(self->impl->input_queue_mutex);
@@ -1129,15 +1131,19 @@ static hailo_status gst_hailonet_call_run_async(GstHailoNet *self, const std::un
             auto info = tensors.at(output.name());
             gst_buffer_unmap(info.buffer, &info.buffer_info);
 
-            GstHailoTensorMeta *buffer_meta = GST_TENSOR_META_ADD(info.buffer);
-            buffer_meta->info = self->impl->output_vstream_infos[output.name()];
+            if (HAILO_SUCCESS == completion_info.status) {
+                GstHailoTensorMeta *buffer_meta = GST_TENSOR_META_ADD(info.buffer);
+                buffer_meta->info = tensor_metadata_from_vstream_info(self->impl->output_vstream_infos[output.name()]);
 
-            (void)gst_buffer_add_parent_buffer_meta(buffer, info.buffer);
-            gst_buffer_unref(info.buffer);
+                (void)gst_buffer_add_parent_buffer_meta(buffer, info.buffer);
+                gst_buffer_unref(info.buffer);
+            } else if (HAILO_STREAM_ABORT != completion_info.status) {
+                g_error("Failed to run async inference, status = %d", completion_info.status);
+            }
         }
 
         {
-            std::unique_lock<std::mutex> lock(self->impl->flush_mutex);
+            std::unique_lock<std::mutex> lock(self->impl->frame_count_mutex);
             self->impl->ongoing_frames--;
         }
         self->impl->flush_cv.notify_all();
@@ -1147,7 +1153,7 @@ static hailo_status gst_hailonet_call_run_async(GstHailoNet *self, const std::un
         if (self->impl->has_pending_eos) {
             bool is_last_frame = false;
             {
-                std::unique_lock<std::mutex> lock(self->impl->flush_mutex);
+                std::unique_lock<std::mutex> lock(self->impl->frame_count_mutex);
                 if (0 == self->impl->ongoing_frames) {
                     is_last_frame = true;
                 }
@@ -1486,7 +1492,7 @@ static gboolean gst_hailonet_sink_event(GstPad *pad, GstObject *parent, GstEvent
 
 static void gst_hailonet_flush_callback(GstHailoNet *self, gpointer /*data*/)
 {
-    std::unique_lock<std::mutex> lock(self->impl->flush_mutex);
+    std::unique_lock<std::mutex> lock(self->impl->frame_count_mutex);
     self->impl->flush_cv.wait(lock, [self] () {
         return 0 == self->impl->ongoing_frames;
     });

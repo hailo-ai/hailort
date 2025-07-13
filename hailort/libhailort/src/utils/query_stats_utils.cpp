@@ -36,9 +36,9 @@ namespace hailort {
 #define MEM_INFO_PATH ("/proc/meminfo")
 #define CPU_INFO_PATH ("/proc/stat")
 #define PERFORMANCE_QUERY_SAMPLING_TIME_WINDOW (std::chrono::milliseconds(100))
-#define MAX_COMMAND_OUTPUT_LENGTH (UINT32_MAX)
+#define MAX_COMMAND_OUTPUT_LENGTH (4096)
 #define HAILO_NOC_PERF_FILE_PATH "/etc/hailo_noc_perf.sh"
-#define HAILO_NOC_MEASURE_OUTPUT_FILE_PATH "/etc/hailo_noc_perf.sh"
+#define HAILO_NOC_MEASURE_OUTPUT_FILE_PATH "/tmp/noc_measure_output.txt"
 
 
 Expected<float32_t> QueryStatsUtils::calculate_cpu_utilization()
@@ -63,7 +63,7 @@ Expected<float32_t> QueryStatsUtils::calculate_cpu_utilization()
     uint64_t idleDelta = (idle2 + iowait2) - (idle1 + iowait1);
 
     // Calculate utilization percentage
-    float32_t utilization = 10 * (static_cast<float32_t>(totalDelta - idleDelta) / static_cast<float32_t>(totalDelta)) * static_cast<float32_t>(100.0);
+    float32_t utilization = (static_cast<float32_t>(totalDelta - idleDelta) / static_cast<float32_t>(totalDelta)) * static_cast<float32_t>(100.0);
     return utilization;
 }
 
@@ -100,7 +100,7 @@ Expected<std::tuple<int64_t, int64_t>> QueryStatsUtils::calculate_ram_sizes()
     // function is based on Linux 'free' command
     int64_t total_ram = -1;
     int64_t used_ram = -1;
-    const auto output = run_command("free");
+    const auto output = Process::create_and_wait_for_output("free", MAX_COMMAND_OUTPUT_LENGTH);
     CHECK_EXPECTED(output);
 
     std::istringstream stream(output.value().second);
@@ -140,7 +140,7 @@ Expected<int32_t> QueryStatsUtils::get_dsp_utilization()
 
     const std::string dsp_utilization_command = "dsp-utilization -i 1 -b --delay " + delay_str;
 
-    const auto output = run_command(dsp_utilization_command);
+    const auto output = Process::create_and_wait_for_output(dsp_utilization_command, MAX_COMMAND_OUTPUT_LENGTH);
     CHECK_EXPECTED(output);
 
     // Use regex to extract the percentage value (e.g., %15)
@@ -216,25 +216,6 @@ hailo_status QueryStatsUtils::execute_noc_command(const std::string &command)
     return HAILO_SUCCESS;
 }
 
-Expected<std::pair<int32_t, std::string>> QueryStatsUtils::run_command(const std::string &cmd)
-{
-    static const std::string COMMAND_OUTPUT_FILE = "/tmp/command_output";
-    const std::string command_with_stdout = "sh -c \"" + cmd + "\" > " + COMMAND_OUTPUT_FILE;
-    auto ret_val = system(command_with_stdout.c_str());
-    if (0 != ret_val) {
-        return std::make_pair(ret_val, std::string());
-    }
-
-    FileReader file_reader(COMMAND_OUTPUT_FILE);
-    CHECK_SUCCESS(file_reader.open());
-    TRY(auto file_size, file_reader.get_size());
-    TRY(auto buffer, Buffer::create(file_size));
-    CHECK_SUCCESS(file_reader.read(buffer.data(), file_size));
-
-    std::string output(buffer.to_string());
-    return std::make_pair(ret_val, output);
-}
-
 Expected<int32_t> QueryStatsUtils::get_ddr_noc_utilization()
 {
     std::string delay_str = get_sampling_time_window_as_string();
@@ -267,7 +248,7 @@ Expected<std::istringstream> QueryStatsUtils::read_nnc_utilization_file()
     const std::string get_nnc_utilization_command = std::string("cat ") + NNC_UTILIZATION_FILE_PATH +
         std::string("* && rm -f ") + NNC_UTILIZATION_FILE_PATH + std::string("*");
 
-    const auto output = run_command(get_nnc_utilization_command);
+    const auto output = Process::create_and_wait_for_output(get_nnc_utilization_command, MAX_COMMAND_OUTPUT_LENGTH);
     CHECK_EXPECTED(output);
 
     std::istringstream stream(output.value().second);

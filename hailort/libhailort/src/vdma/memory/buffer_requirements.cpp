@@ -40,15 +40,17 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
             max_page_size /= 2;
         }
 
-        const auto DONT_FORCE_DEFAULT_PAGE_SIZE = false;
-        const auto DONT_FORCE_BATCH_SIZE = false;
-        static const bool IS_CIRCULAR = true;
-        static const bool IS_VDMA_ALIGNED_BUFFER = false;
-        static const bool IS_NOT_DDR = false;
+        const bool DONT_FORCE_DEFAULT_PAGE_SIZE = false;
+        const bool DONT_FORCE_BATCH_SIZE = false;
+        const bool IS_CIRCULAR = true;
+        const bool IS_VDMA_ALIGNED_BUFFER = false;
+        const bool IS_NOT_DDR = false;
+        // The extended CCB is not supported on SG which is boundary channels default
+        const bool IS_EXTENDED_CCB_DESCS_COUNT = false;
         auto buffer_sizes_requirements_exp = vdma::BufferSizesRequirements::get_buffer_requirements_single_transfer(
             vdma::VdmaBuffer::Type::SCATTER_GATHER, static_cast<uint16_t>(max_page_size), min_active_trans,
             max_active_trans, transfer_size, IS_CIRCULAR, DONT_FORCE_DEFAULT_PAGE_SIZE, DONT_FORCE_BATCH_SIZE,
-            IS_VDMA_ALIGNED_BUFFER, IS_NOT_DDR);
+            IS_VDMA_ALIGNED_BUFFER, IS_NOT_DDR, IS_EXTENDED_CCB_DESCS_COUNT);
         if (HAILO_SUCCESS == buffer_sizes_requirements_exp.status()) {
             // We found a valid page size
             const auto desc_page_size = buffer_sizes_requirements_exp->desc_page_size();
@@ -67,12 +69,14 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
 Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requirements_multiple_transfers(
     vdma::VdmaBuffer::Type buffer_type, uint16_t max_desc_page_size, uint16_t batch_size,
     const std::vector<uint32_t> &transfer_sizes, bool is_circular, bool force_default_page_size,
-    bool force_batch_size, bool is_ddr)
+    bool force_batch_size, bool is_ddr, bool is_extended_ccb_desc_count)
 {
+    uint32_t min_ccb_descs_count = (is_extended_ccb_desc_count) ?
+        MIN_EXTENDED_CCB_DESCS_COUNT : MIN_CCB_DESCS_COUNT;
     const uint32_t MAX_DESCS_COUNT = (buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) ?
         MAX_SG_DESCS_COUNT : MAX_CCB_DESCS_COUNT;
     const uint32_t MIN_DESCS_COUNT = (buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) ?
-        MIN_SG_DESCS_COUNT : MIN_CCB_DESCS_COUNT;
+        MIN_SG_DESCS_COUNT : min_ccb_descs_count;
     const uint16_t MAX_PAGE_SIZE = (buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) ?
         MAX_SG_PAGE_SIZE : MAX_CCB_PAGE_SIZE;
     const uint16_t MIN_PAGE_SIZE = (buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) ?
@@ -144,16 +148,18 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
 Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requirements_single_transfer(
     vdma::VdmaBuffer::Type buffer_type, uint16_t max_desc_page_size, uint16_t min_batch_size, uint16_t max_batch_size,
     uint32_t transfer_size, bool is_circular, bool force_default_page_size, bool force_batch_size, bool is_vdma_aligned_buffer,
-    bool is_ddr)
+    bool is_ddr, bool is_extended_ccb_desc_count)
 {
+    auto min_ccb_descs_count = (is_extended_ccb_desc_count) ?
+        MIN_EXTENDED_CCB_DESCS_COUNT : MIN_CCB_DESCS_COUNT;
     const uint32_t MAX_DESCS_COUNT = (buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) ?
         MAX_SG_DESCS_COUNT : MAX_CCB_DESCS_COUNT;
     const uint32_t MIN_DESCS_COUNT = (buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) ?
-        MIN_SG_DESCS_COUNT : MIN_CCB_DESCS_COUNT;
+        MIN_SG_DESCS_COUNT : min_ccb_descs_count;
 
     // First, get the result for the min size
     auto results = get_buffer_requirements_multiple_transfers(buffer_type, max_desc_page_size,
-        min_batch_size, {transfer_size}, is_circular, force_default_page_size, force_batch_size, is_ddr);
+        min_batch_size, {transfer_size}, is_circular, force_default_page_size, force_batch_size, is_ddr, is_extended_ccb_desc_count);
     if (HAILO_CANT_MEET_BUFFER_REQUIREMENTS == results.status()) {
         // In case of failure to meet requirements, return without error printed to the prompt.
         return make_unexpected(HAILO_CANT_MEET_BUFFER_REQUIREMENTS);

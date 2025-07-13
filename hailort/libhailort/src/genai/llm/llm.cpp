@@ -10,6 +10,7 @@
 #include "llm_internal.hpp"
 
 #include "hailo/genai/llm/llm.hpp"
+#include "genai/genai_common.hpp"
 
 #include "hailo/hailort.h"
 #include "common/filesystem.hpp"
@@ -17,6 +18,7 @@
 #include "common/file_utils.hpp"
 
 #include "common/genai/serializer/serializer.hpp"
+#include "common/genai/connection_ports.hpp"
 
 #include <numeric>
 
@@ -26,12 +28,6 @@ namespace genai
 {
 
 constexpr std::chrono::milliseconds LLMGeneratorCompletion::DEFAULT_READ_TIMEOUT;
-const uint16_t DEFAULT_LLM_CONNECTION_PORT = 12145;
-
-static const auto LONG_TIMEOUT = std::chrono::seconds(45);
-
-// TODO (HRT-15334): Move the logic to server side
-const std::string EOF_TOEKN = "<|endoftext|>";
 
 hailo_status LLMParams::set_model(const std::string &hef_path, const std::string &lora_name)
 {
@@ -39,10 +35,8 @@ hailo_status LLMParams::set_model(const std::string &hef_path, const std::string
     m_lora = lora_name;
 
     if (BUILTIN != hef_path) {
-        CHECK((Filesystem::does_file_exists(hef_path)), HAILO_OPEN_FILE_FAILURE,
-            "Hef file '{}' does not exist", hef_path);
-        // LoRA is supported only when working with BUILTIN HEF
-        CHECK(lora_name.empty(), HAILO_NOT_IMPLEMENTED, "Setting LoRA is not implemented.");
+        CHECK(Filesystem::does_file_exists(hef_path), HAILO_OPEN_FILE_FAILURE,
+            "HEF file '{}' does not exist.", hef_path);
     } else {
         // When using BUILTIN HEF, LoRA must be set
         CHECK(!(lora_name.empty()), HAILO_INVALID_OPERATION,
@@ -146,57 +140,112 @@ uint32_t LLMGeneratorParams::seed() const
     return m_seed;
 }
 
-Expected<LLM> LLM::create(std::shared_ptr<VDeviceGenAI> vdevice, const LLMParams &llm_params)
+Expected<LLM> LLM::create(std::shared_ptr<VDevice> vdevice, const LLMParams &llm_params)
 {
     TRY(auto pimpl, Impl::create_unique(vdevice, llm_params));
     return LLM(std::move(pimpl));
 }
 
-Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VDeviceGenAI> vdevice, const LLMParams &llm_params)
+Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VDevice> vdevice, const LLMParams &llm_params)
 {
     CHECK(!llm_params.hef().empty(), HAILO_INVALID_OPERATION, "Failed to create LLM. HEF was not set.");
 
     // LoRA is supported only when working with BUILTIN HEF
-    if (BUILTIN != llm_params.hef()) {
-        CHECK(llm_params.lora().empty(), HAILO_NOT_IMPLEMENTED, "Failed to create LLM. Setting LoRA is not Implemented.");
-    } else {
+    if (BUILTIN == llm_params.hef()) {
         // When using BUILTIN HEF, LoRA must be set
         CHECK(!llm_params.lora().empty(), HAILO_INVALID_OPERATION,
             "Failed to create LLM. When using '{}' model, LoRA name must be set.", BUILTIN);
     }
 
-    TRY(auto session, vdevice->create_session(DEFAULT_LLM_CONNECTION_PORT));
-
     auto vdevice_params = vdevice->get_params();
+    CHECK_SUCCESS(GenAICommon::validate_genai_vdevice_params(vdevice_params));
+
+    std::string device_id = (nullptr != vdevice_params.device_ids) ? vdevice_params.device_ids[0].id : "";
+    TRY(auto hailo_session, Session::connect(DEFAULT_LLM_CONNECTION_PORT, device_id));
+    auto session_wrapper = make_shared_nothrow<SessionWrapper>(hailo_session);
+    CHECK_NOT_NULL_AS_EXPECTED(session_wrapper, HAILO_OUT_OF_HOST_MEMORY);
+
     TRY(auto create_llm_request, LLMCreateSerializer::serialize_request(vdevice_params, llm_params));
-    CHECK_SUCCESS(session->write(MemoryView(create_llm_request)), "Failed to load LLM hef");
+    CHECK_SUCCESS(session_wrapper->write(MemoryView(create_llm_request)), "Failed to load LLM hef");
     // If HEF is not builtin, write it to the server
     if (BUILTIN != llm_params.hef()) {
         TRY(auto file_data, read_binary_file(llm_params.hef(), BufferStorageParams::create_dma()));
-        CHECK_SUCCESS(session->write(MemoryView(file_data)));
+        CHECK_SUCCESS(session_wrapper->write(MemoryView(file_data), LONG_TIMEOUT));
     }
-    TRY(auto create_llm_reply, session->read(LONG_TIMEOUT)); // TODO (HRT-16302): Reduce timeout once configure is faster
+    TRY(auto create_llm_reply, session_wrapper->read(LONG_TIMEOUT));
     CHECK_SUCCESS(LLMCreateSerializer::deserialize_reply(MemoryView(*create_llm_reply)), "Failed to create LLM");
 
-    TRY(auto get_generator_default_params_request, LLMGetDefaultGeneratorParamsSerializer::serialize_request());
-    CHECK_SUCCESS(session->write(MemoryView(get_generator_default_params_request)), "Failed to get default generator params");
-    TRY(auto get_generator_default_params, session->read(LONG_TIMEOUT)); // TODO (HRT-16302): Reduce timeout once configure is faster
-    TRY(auto default_generator_params, LLMGetDefaultGeneratorParamsSerializer::deserialize_reply(MemoryView(*get_generator_default_params)));
+    TRY(auto get_generator_default_params_request, LLMGetGeneratorParamsSerializer::serialize_request());
+    CHECK_SUCCESS(session_wrapper->write(MemoryView(get_generator_default_params_request)), "Failed to get default generator params");
+    TRY_V(auto get_generator_default_params, session_wrapper->read());
+    TRY(auto default_generator_params, LLMGetGeneratorParamsSerializer::deserialize_reply(MemoryView(*get_generator_default_params)));
 
-    auto llm = Impl(session, llm_params, default_generator_params);
-    auto llm_ptr = std::make_unique<Impl>(std::move(llm));
+    auto llm_ptr = make_unique_nothrow<Impl>(session_wrapper, llm_params, default_generator_params);
     CHECK_NOT_NULL_AS_EXPECTED(llm_ptr, HAILO_OUT_OF_HOST_MEMORY);
     return llm_ptr;
 }
 
-LLM::Impl::Impl(std::shared_ptr<GenAISession> session, const LLMParams &llm_params,
+LLM::Impl::Impl(std::shared_ptr<SessionWrapper> session, const LLMParams &llm_params,
     const LLMGeneratorParams &default_generator_params) :
         m_session(session), m_llm_params(llm_params), m_default_generator_params(default_generator_params)
 {}
 
+LLM::Impl::~Impl()
+{
+    auto release_request = LLMReleaseSerializer::serialize_request();
+    if (!release_request) {
+        LOGGER__CRITICAL("Failed to serialize LLM release request with status {}", release_request.status());
+        return;
+    }
+    auto status = m_session->write(MemoryView(*release_request));
+    if (HAILO_SUCCESS != status) {
+        LOGGER__CRITICAL("Failed to write LLM release request with status {}", status);
+        return;
+    }
+    auto release_reply = m_session->read();
+    if (!release_reply) {
+        LOGGER__CRITICAL("Failed to read LLM release reply with status {}", release_reply.status());
+        return;
+    }
+    status = LLMReleaseSerializer::deserialize_reply(MemoryView(*release_reply));
+    if (HAILO_SUCCESS != status) {
+        LOGGER__CRITICAL("Failed to deserialize LLM release reply with status {}", status);
+        return;
+    }
+}
+
 LLM::LLM(std::unique_ptr<Impl> pimpl) :
     m_pimpl(std::move(pimpl))
 {}
+
+Expected<std::vector<int>> LLM::tokenize(const std::string &prompt)
+{
+    return m_pimpl->tokenize(prompt);
+}
+
+Expected<std::vector<int>> LLM::Impl::tokenize(const std::string &prompt)
+{
+    TRY(auto request, LLMTokenizeSerializer::serialize_request(prompt));
+    CHECK_SUCCESS(m_session->write(MemoryView(request)), "Failed to tokenize prompt");
+    TRY(auto reply, m_session->read());
+    TRY(auto tokens, LLMTokenizeSerializer::deserialize_reply(MemoryView(*reply)));
+    return tokens;
+}
+
+hailo_status LLM::clear_context()
+{
+    return m_pimpl->clear_context();
+}
+
+hailo_status LLM::Impl::clear_context()
+{
+    TRY(auto request, LLMClearContextSerializer::serialize_request());
+    CHECK_SUCCESS(m_session->write(MemoryView(request)), "Failed to clear context");
+    TRY(auto reply, m_session->read());
+    CHECK_SUCCESS(LLMClearContextSerializer::deserialize_reply(MemoryView(*reply)),
+        "Failed to clear context. Make sure there is no other generation in progress");
+    return HAILO_SUCCESS;
+}
 
 Expected<LLMGenerator> LLM::create_generator(const LLMGeneratorParams &params)
 {
@@ -241,11 +290,11 @@ hailo_status LLM::Impl::validate_generator_params(const LLMGeneratorParams &para
         "Temperature should be higher than '0'. received: '{}'", params.temperature());
     CHECK_AS_EXPECTED((0 <= params.top_p()) && (params.top_p() <= 1), HAILO_INVALID_ARGUMENT,
         "top_p should be in range [0, 1]. received: '{}'", params.top_p());
-    CHECK_AS_EXPECTED(0 < params.top_k(), HAILO_INVALID_ARGUMENT,
+    CHECK_AS_EXPECTED(1 <= params.top_k(), HAILO_INVALID_ARGUMENT,
         "top_k should be greater than or equal to '1'. received: '{}'", params.top_k());
     CHECK_AS_EXPECTED(0 != params.frequency_penalty(), HAILO_INVALID_ARGUMENT,
         "frequency_penalty must be a nonzero value. received: '{}'", params.frequency_penalty());
-    CHECK_AS_EXPECTED(2 <= params.max_generated_tokens(), HAILO_INVALID_ARGUMENT,
+    CHECK_AS_EXPECTED(1 < params.max_generated_tokens(), HAILO_INVALID_ARGUMENT,
         "max_generated_tokens should be greater than '1'. received: '{}'", params.max_generated_tokens());
     return HAILO_SUCCESS;
 }
@@ -254,10 +303,8 @@ LLMGenerator::LLMGenerator(std::unique_ptr<Impl> pimpl) :
     m_pimpl(std::move(pimpl))
 {}
 
-LLMGenerator::Impl::Impl(std::shared_ptr<GenAISession> session) :
-    m_session(session),
-    m_mutex(),
-    m_should_stop_write(false)
+LLMGenerator::Impl::Impl(std::shared_ptr<SessionWrapper> session) :
+    m_session(session)
 {}
 
 hailo_status LLMGenerator::write(const char *prompt, size_t prompt_size)
@@ -272,17 +319,13 @@ hailo_status LLMGenerator::write(const std::string &prompt)
 
 hailo_status LLMGenerator::Impl::write(const std::string &prompt)
 {
-    // TODO (HRT-15334): - When implementing cpp server side, write the prompt directly to server
-    std::unique_lock<std::mutex> lock(m_mutex);
-    CHECK(!m_should_stop_write, HAILO_INVALID_OPERATION, "write() cannot be called once the generation started!");
-    m_prompts.emplace_back(prompt);
+    TRY(auto generator_write_request, LLMGeneratorWriteSerializer::serialize_request());
+    CHECK_SUCCESS(m_session->write(MemoryView(generator_write_request)), "Failed to write prompt");
+    CHECK_SUCCESS(m_session->write(MemoryView(prompt)), "Failed to write prompt");
+    TRY(auto generator_write_reply, m_session->read());
+    CHECK_SUCCESS(LLMGeneratorWriteSerializer::deserialize_reply(MemoryView(*generator_write_reply)), "Failed to write prompt");
 
     return HAILO_SUCCESS;
-}
-
-std::string concat_prompts(const std::vector<std::string> &prompts)
-{
-    return std::accumulate(prompts.begin(), prompts.end(), std::string());
 }
 
 Expected<LLMGeneratorCompletion> LLMGenerator::generate()
@@ -292,26 +335,13 @@ Expected<LLMGeneratorCompletion> LLMGenerator::generate()
 
 Expected<LLMGeneratorCompletion> LLMGenerator::Impl::generate()
 {
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_should_stop_write = true;
-    }
-
-    auto prompt = concat_prompts(m_prompts);
-    CHECK_AS_EXPECTED(!prompt.empty(), HAILO_INVALID_OPERATION, "Generate on empty prompt is invalid");
-
-    TRY(auto generator_write_request, LLMGeneratorWriteSerializer::serialize_request());
-    CHECK_SUCCESS(m_session->write(MemoryView(generator_write_request)), "Failed to write prompt");
-    CHECK_SUCCESS(m_session->write(MemoryView(prompt)), "Failed to write prompt");
-    TRY(auto generator_write_reply, m_session->read());
-    CHECK_SUCCESS(LLMGeneratorWriteSerializer::deserialize_reply(MemoryView(*generator_write_reply)), "Failed to write prompt");
-
     TRY(auto generator_generate_request, LLMGeneratorGenerateSerializer::serialize_request());
     CHECK_SUCCESS(m_session->write(MemoryView(generator_generate_request)), "Failed to generate");
     TRY(auto generator_generate_reply, m_session->read());
-    CHECK_SUCCESS(LLMGeneratorGenerateSerializer::deserialize_reply(MemoryView(*generator_generate_reply)), "Failed to generate");
+    CHECK_SUCCESS(LLMGeneratorGenerateSerializer::deserialize_reply(MemoryView(*generator_generate_reply)),
+        "Failed to generate. Make sure there is no other generation in progress");
 
-    auto pimpl = std::make_unique<LLMGeneratorCompletion::Impl>(m_session);
+    auto pimpl = make_unique_nothrow<LLMGeneratorCompletion::Impl>(m_session);
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
     return LLMGeneratorCompletion(std::move(pimpl));
 }
@@ -320,9 +350,8 @@ LLMGeneratorCompletion::LLMGeneratorCompletion(std::unique_ptr<Impl> pimpl) :
     m_pimpl(std::move(pimpl))
 {}
 
-LLMGeneratorCompletion::Impl::Impl(std::shared_ptr<GenAISession> session) :
+LLMGeneratorCompletion::Impl::Impl(std::shared_ptr<SessionWrapper> session) :
     m_session(session),
-    m_mutex(),
     m_generation_status(Status::GENERATING)
 {}
 
@@ -351,7 +380,8 @@ Expected<std::string> LLMGeneratorCompletion::Impl::read(std::chrono::millisecon
     CHECK((m_generation_status == Status::GENERATING), HAILO_INVALID_OPERATION,
         "read() cannot be called after generation completed!");
 
-    TRY(auto read_request, LLMGeneratorReadSerializer::serialize_request());
+    // Consider setting shorter timeout in the request, to leave space for comunication overhead
+    TRY(auto read_request, LLMGeneratorReadSerializer::serialize_request(timeout_guard.get_remaining_timeout()));
     CHECK_SUCCESS(m_session->write(MemoryView(read_request)), "Failed to read");
     TRY(auto read_reply, m_session->read());
     TRY(auto pair, LLMGeneratorReadSerializer::deserialize_reply(MemoryView(*read_reply)));

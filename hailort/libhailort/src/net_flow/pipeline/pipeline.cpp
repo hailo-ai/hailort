@@ -67,7 +67,7 @@ PipelineBuffer::PipelineBuffer(hailo_status action_status, const TransferDoneCal
 }
 
 PipelineBuffer::PipelineBuffer(MemoryView view, const TransferDoneCallbackAsyncInfer &exec_done, hailo_status action_status,
-    bool is_user_buffer, BufferPoolWeakPtr pool, bool should_measure) :
+    bool is_user_buffer, PipelineBufferPoolWeakPtr pool, bool should_measure) :
     m_type(Type::DATA),
     m_pool(pool),
     m_view(view),
@@ -100,7 +100,7 @@ PipelineBuffer::PipelineBuffer(hailo_pix_buffer_t buffer, const TransferDoneCall
 }
 
 PipelineBuffer::PipelineBuffer(hailo_dma_buffer_t dma_buffer, const TransferDoneCallbackAsyncInfer &exec_done, hailo_status action_status,
-    bool is_user_buffer, BufferPoolWeakPtr pool, bool should_measure) :
+    bool is_user_buffer, PipelineBufferPoolWeakPtr pool, bool should_measure) :
     m_type(Type::DATA),
     m_pool(pool),
     m_view(),
@@ -250,7 +250,7 @@ PipelineTimePoint PipelineBuffer::add_timestamp(bool should_measure)
     return should_measure ? std::chrono::steady_clock::now() : PipelineTimePoint{};
 }
 
-void PipelineBuffer::return_buffer_to_pool(BufferPoolWeakPtr buffer_pool_weak_ptr, MemoryView mem_view, bool is_user_buffer)
+void PipelineBuffer::return_buffer_to_pool(PipelineBufferPoolWeakPtr buffer_pool_weak_ptr, MemoryView mem_view, bool is_user_buffer)
 {
     if (is_user_buffer) {
         return;
@@ -265,7 +265,7 @@ void PipelineBuffer::return_buffer_to_pool(BufferPoolWeakPtr buffer_pool_weak_pt
     }
 }
 
-void PipelineBuffer::return_buffer_to_pool(BufferPoolWeakPtr buffer_pool_weak_ptr, hailo_dma_buffer_t dma_buffer, bool is_user_buffer)
+void PipelineBuffer::return_buffer_to_pool(PipelineBufferPoolWeakPtr buffer_pool_weak_ptr, hailo_dma_buffer_t dma_buffer, bool is_user_buffer)
 {
     if (is_user_buffer) {
         return;
@@ -319,7 +319,7 @@ void PipelineBuffer::call_exec_done()
     }
 }
 
-Expected<BufferPoolPtr> BufferPool::create(size_t buffer_size, size_t buffer_count, EventPtr shutdown_event,
+Expected<PipelineBufferPoolPtr> PipelineBufferPool::create(size_t buffer_size, size_t buffer_count, EventPtr shutdown_event,
                                            hailo_pipeline_elem_stats_flags_t elem_flags, hailo_vstream_stats_flags_t vstream_flags,
                                            bool is_empty, bool is_dma_able)
 {
@@ -335,7 +335,7 @@ Expected<BufferPoolPtr> BufferPool::create(size_t buffer_size, size_t buffer_cou
     std::vector<Buffer> buffers;
     buffers.reserve(buffer_count);
 
-    auto buffer_pool_ptr = make_shared_nothrow<BufferPool>(buffer_size, is_empty, measure_vstream_latency, std::move(buffers),
+    auto buffer_pool_ptr = make_shared_nothrow<PipelineBufferPool>(buffer_size, is_empty, measure_vstream_latency, std::move(buffers),
         std::move(pipeline_buffers_queue), std::move(queue_size_accumulator), buffer_count);
     CHECK_AS_EXPECTED(nullptr != buffer_pool_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
@@ -361,7 +361,7 @@ Expected<BufferPoolPtr> BufferPool::create(size_t buffer_size, size_t buffer_cou
     return buffer_pool_ptr;
 }
 
-BufferPool::BufferPool(size_t buffer_size, bool is_holding_user_buffers, bool measure_vstream_latency, std::vector<Buffer> &&buffers,
+PipelineBufferPool::PipelineBufferPool(size_t buffer_size, bool is_holding_user_buffers, bool measure_vstream_latency, std::vector<Buffer> &&buffers,
         SpscQueue<PipelineBuffer> &&pipeline_buffers_queue, AccumulatorPtr &&queue_size_accumulator,
         size_t max_buffer_count) :
     m_buffer_size(buffer_size),
@@ -375,13 +375,13 @@ BufferPool::BufferPool(size_t buffer_size, bool is_holding_user_buffers, bool me
 {
 }
 
-size_t BufferPool::buffer_size()
+size_t PipelineBufferPool::buffer_size()
 {
     std::unique_lock<std::mutex> lock(m_buffer_size_mutex);
     return m_buffer_size.load();
 }
 
-hailo_status BufferPool::enqueue_buffer(PipelineBuffer &&pipeline_buffer)
+hailo_status PipelineBufferPool::enqueue_buffer(PipelineBuffer &&pipeline_buffer)
 {
     // TODO: add support for pix_buffer here (currently enqueue_buffer is called only to add the output_buffers which are never pix_buffers)
     m_is_already_running = true;
@@ -398,32 +398,32 @@ hailo_status BufferPool::enqueue_buffer(PipelineBuffer &&pipeline_buffer)
 
     return HAILO_SUCCESS;
 }
-bool BufferPool::should_measure_vstream_latency()
+bool PipelineBufferPool::should_measure_vstream_latency()
 {
     return m_measure_vstream_latency;
 }
 
-bool BufferPool::is_full()
+bool PipelineBufferPool::is_full()
 {
     return (m_max_buffer_count - num_of_buffers_in_pool() == 0);
 }
 
-size_t BufferPool::max_capacity()
+size_t PipelineBufferPool::max_capacity()
 {
     return m_max_buffer_count;
 }
 
-size_t BufferPool::num_of_buffers_in_pool()
+size_t PipelineBufferPool::num_of_buffers_in_pool()
 {
     return m_pipeline_buffers_queue.size_approx();
 }
 
-bool BufferPool::is_holding_user_buffers()
+bool PipelineBufferPool::is_holding_user_buffers()
 {
     return m_is_holding_user_buffers;
 }
 
-Expected<PipelineBuffer> BufferPool::acquire_buffer(std::chrono::milliseconds timeout,
+Expected<PipelineBuffer> PipelineBufferPool::acquire_buffer(std::chrono::milliseconds timeout,
     bool ignore_shutdown_event)
 {
     m_is_already_running = true;
@@ -448,12 +448,12 @@ Expected<PipelineBuffer> BufferPool::acquire_buffer(std::chrono::milliseconds ti
     return pipeline_buffer.release();
 }
 
-AccumulatorPtr BufferPool::get_queue_size_accumulator()
+AccumulatorPtr PipelineBufferPool::get_queue_size_accumulator()
 {
     return m_queue_size_accumulator;
 }
 
-Expected<PipelineBuffer> BufferPool::get_available_buffer(PipelineBuffer &&optional, std::chrono::milliseconds timeout)
+Expected<PipelineBuffer> PipelineBufferPool::get_available_buffer(PipelineBuffer &&optional, std::chrono::milliseconds timeout)
 {
     m_is_already_running = true;
 
@@ -473,14 +473,14 @@ Expected<PipelineBuffer> BufferPool::get_available_buffer(PipelineBuffer &&optio
     return acquired_buffer.release();
 }
 
-hailo_status BufferPool::return_buffer_to_pool(PipelineBuffer &&pipeline_buffer)
+hailo_status PipelineBufferPool::return_buffer_to_pool(PipelineBuffer &&pipeline_buffer)
 {
     std::unique_lock<std::mutex> lock(m_enqueue_mutex);
     // This can be called after the shutdown event was signaled so we ignore it here
     return m_pipeline_buffers_queue.enqueue(std::move(pipeline_buffer), true);
 }
 
-hailo_status BufferPool::map_to_vdevice(VDevice &vdevice, hailo_dma_buffer_direction_t direction)
+hailo_status PipelineBufferPool::map_to_vdevice(VDevice &vdevice, hailo_dma_buffer_direction_t direction)
 {
     for (auto &buff : m_buffers) {
         auto dma_mapped_buffer = DmaMappedBuffer::create(vdevice, buff.data(), buff.size(), direction);
@@ -490,7 +490,7 @@ hailo_status BufferPool::map_to_vdevice(VDevice &vdevice, hailo_dma_buffer_direc
     return HAILO_SUCCESS;
 }
 
-hailo_status BufferPool::set_buffer_size(uint32_t buffer_size)
+hailo_status PipelineBufferPool::set_buffer_size(uint32_t buffer_size)
 {
     std::unique_lock<std::mutex> lock(m_buffer_size_mutex);
     CHECK(!m_is_already_running, HAILO_INVALID_OPERATION,
@@ -780,7 +780,7 @@ const PipelineElement &PipelinePad::element() const
     return m_element;
 }
 
-const BufferPoolPtr PipelinePad::get_buffer_pool() const
+const PipelineBufferPoolPtr PipelinePad::get_buffer_pool() const
 {
     return m_element.get_buffer_pool(name());
 }
@@ -903,7 +903,7 @@ hailo_status PipelineElement::enqueue_execution_buffer(PipelineBuffer &&pipeline
     return HAILO_NOT_IMPLEMENTED;
 };
 
-hailo_status PipelineElement::empty_buffer_pool(BufferPoolPtr pool, hailo_status error_status, std::chrono::milliseconds timeout)
+hailo_status PipelineElement::empty_buffer_pool(PipelineBufferPoolPtr pool, hailo_status error_status, std::chrono::milliseconds timeout)
 {
     if (!pool) {
         return HAILO_SUCCESS;

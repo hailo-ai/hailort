@@ -95,6 +95,11 @@ Expected<std::unique_ptr<Device>> PcieDevice::create(const hailo_pcie_device_inf
     CHECK_NOT_NULL_AS_EXPECTED(pcie_device, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status, "Failed creating PcieDevice");
 
+    // Check if the device is supported
+    TRY(auto device_arch, pcie_device->get_architecture());
+    CHECK((device_arch != HAILO_ARCH_HAILO8_A0) && (device_arch != HAILO_ARCH_HAILO8) && (device_arch != HAILO_ARCH_HAILO8L), 
+        HAILO_NOT_SUPPORTED, "Hailo8 devices are only supported in versions 4.x.x and earlier");
+
     // Upcasting to Device unique_ptr (from PcieDevice unique_ptr)
     auto device = std::unique_ptr<Device>(std::move(pcie_device));
     return device;

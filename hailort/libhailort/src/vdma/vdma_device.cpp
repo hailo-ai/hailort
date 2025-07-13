@@ -38,7 +38,8 @@ static constexpr std::chrono::milliseconds DEFAULT_TIMEOUT(50000);
 VdmaDevice::VdmaDevice(std::unique_ptr<HailoRTDriver> &&driver, Device::Type type, hailo_status &status) :
     DeviceBase::DeviceBase(type),
     m_driver(std::move(driver)),
-    m_is_configured(false)
+    m_is_configured(false),
+    m_amount_of_sram_used(0)
 {
     activate_notifications(get_dev_id());
 
@@ -112,6 +113,8 @@ hailo_status VdmaDevice::clear_configured_apps()
 
     status = Control::clear_configured_apps(*this);
     CHECK_SUCCESS(status, "Failed to clear configured network groups with status {}", status);
+
+    m_amount_of_sram_used = 0;
 
     return HAILO_SUCCESS;
 }

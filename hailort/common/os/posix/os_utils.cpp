@@ -78,36 +78,17 @@ hailo_status OsUtils::set_current_thread_affinity(uint8_t cpu_index)
 
 size_t OsUtils::get_page_size()
 {
-    static const auto page_size = sysconf(_SC_PAGESIZE);
-    return page_size;
-}
-
-size_t OsUtils::get_dma_able_alignment()
-{
 #if defined(__linux__)
-    // TODO: HRT-12494 after supporting in linux, restore this code
-    // Return value if was saved already
-    // if (0 != DMA_ABLE_ALIGNMENT) {
-    //     return Expected<size_t>(DMA_ABLE_ALIGNMENT);
-    // }
-    // static const auto cacheline_size = sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
-    // if (-1 == cacheline_size) {
-    //     return make_unexpected(HAILO_INTERNAL_FAILURE);
-    // }
-
-    // // Set static variable to value - so dont need to fetch actual value every function call
-    // // TODO HRT-12459: Currently use DMA_ABLE_ALIGNMENT_WRITE_HW_LIMITATION as minimum until after debug - seeing as all
-    // // Funtions currently calling this function are for write
-    // DMA_ABLE_ALIGNMENT = std::max(HailoRTCommon::DMA_ABLE_ALIGNMENT_WRITE_HW_LIMITATION, static_cast<size_t>(cacheline_size));
-    // return Expected<size_t>(DMA_ABLE_ALIGNMENT);
-
-    return get_page_size();
-
-// TODO: implement on qnx (HRT-12356) - only needed when async api is implemented on qnx
-// TODO - URT-13534 - use sys call for QNX OS to get page size
+    static const auto page_size = sysconf(_SC_PAGESIZE);
+    return static_cast<size_t>(page_size);
 #elif defined(__QNX__)
     return OS_UTILS__QNX_PAGE_SIZE;
 #endif
+}
+
+int OsUtils::set_environment_variable(const std::string &name, const std::string &value)
+{
+    return setenv(name.c_str(), value.c_str(), true);
 }
 
 CursorAdjustment::CursorAdjustment(){}

@@ -53,20 +53,23 @@ public:
 class HAILORTAPI Buffer final
 {
 public:
-    // Based on https://en.cppreference.com/w/cpp/iterator/iterator
-    class iterator: public std::iterator<std::input_iterator_tag,   // iterator_category
-                                         uint8_t,                   // value_type
-                                         uint8_t,                   // difference_type
-                                         uint8_t*,                  // pointer
-                                         uint8_t&>                  // reference
-    {
+// Based on https://en.cppreference.com/w/cpp/iterator/iterator
+class iterator {
     public:
-        explicit iterator(pointer index = 0) : m_index(index) {}
+        // Iterator traits - manually defined instead of inheriting from std::iterator
+        using iterator_category = std::input_iterator_tag;
+        using value_type = uint8_t;
+        using difference_type = std::ptrdiff_t;
+        using pointer = uint8_t*;
+        using reference = uint8_t&;
+
+        explicit iterator(pointer index = nullptr) : m_index(index) {}
         iterator& operator++() { m_index++; return *this; }
         iterator operator++(int) { iterator retval = *this; ++(*this); return retval; }
-        bool operator==(iterator other) const { return m_index == other.m_index; }
-        bool operator!=(iterator other) const { return !(*this == other); }
+        bool operator==(const iterator &other) const { return m_index == other.m_index; }
+        bool operator!=(const iterator &other) const { return !(*this == other); }
         reference operator*() const { return *m_index; }
+
     private:
         pointer m_index;
     };
@@ -194,6 +197,10 @@ public:
     MemoryView slice(size_t from, size_t to);
     const MemoryView slice(size_t from, size_t to) const;
 
+    // Returns a view of the entire buffer
+    MemoryView as_view();
+    const MemoryView as_view() const;
+
     // Returns the pointer managed by this object and releases ownership
     Expected<void *> release() noexcept;
 
@@ -222,6 +229,7 @@ class HAILORTAPI MemoryView final
 public:
     MemoryView() noexcept;
     explicit MemoryView(Buffer &buffer) noexcept;
+    explicit MemoryView(BufferPtr buffer) noexcept;
     MemoryView(void *data, size_t size) noexcept;
     MemoryView(const std::string &data) noexcept;
     ~MemoryView() = default;

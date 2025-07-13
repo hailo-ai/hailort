@@ -20,7 +20,7 @@
 #ifndef __TENSOR_META_HPP__
 #define __TENSOR_META_HPP__
 
-#include "hailo/hailort.h"
+#include "hailo/hailo_gst_tensor_metadata.hpp"
 #include "include/hailo_gst.h"
 
 #define TENSOR_META_API_NAME "GstHailoTensorMetaAPI"
@@ -50,8 +50,8 @@ inline const void *get_tensor_data(GstStructure *s) {
  * inference result tensor. This metadata instances is attached to buffer by gvainference elements
  */
 struct HAILORTAPI GstHailoTensorMeta {
-    GstMeta meta;              /**< parent meta object */
-    hailo_vstream_info_t info; /**< struct that holds vstream info, e.g. shape, quant_info, layer_name etc... */
+    GstMeta meta;                 /**< parent meta object */
+    hailo_tensor_metadata_t info; /**< struct that holds tensor metadata, e.g. shape, quant_info, layer_name etc... */
 };
 
 /**

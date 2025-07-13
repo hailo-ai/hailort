@@ -51,10 +51,9 @@ static bool is_edge_under_mux(const LayerInfo &info, const std::string &edge_nam
 }
 
 ContextMetadata::ContextMetadata(std::vector<ContextSwitchConfigActionPtr> &&actions,
-    ConfigBufferInfoMap&& config_buffers_info, bool const_input_layer_found, CcwDmaTransfersInfoMap&& ccws_dma_transfers_info) :
+    ConfigBufferInfoMap&& config_buffers_info, bool const_input_layer_found) :
     m_actions(std::move(actions)),
     m_config_buffers_info(std::move(config_buffers_info)),
-    m_ccws_dma_transfers_info(std::move(ccws_dma_transfers_info)),
     m_const_input_layer_found(const_input_layer_found)
 {}
 
@@ -177,8 +176,8 @@ Expected<size_t> ContextMetadata::get_context_transfer_size() const
 
     // Calc config buffers 
     for (const auto &config_buffer_sizes : m_config_buffers_info) {
-        total_transfer_size += std::accumulate(config_buffer_sizes.second.bursts_sizes.begin(),
-            config_buffer_sizes.second.bursts_sizes.end(), 0);
+        total_transfer_size += std::accumulate(config_buffer_sizes.second.ccw_bursts_sizes.begin(),
+            config_buffer_sizes.second.ccw_bursts_sizes.end(), 0);
     }
 
     // Calc all edge layers

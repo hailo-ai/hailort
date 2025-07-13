@@ -149,7 +149,7 @@ public:
         return res;
     }
 
-    std::vector<uint32_t> resources_handles_by_ids(std::set<uint32_t> &ids)
+    std::vector<uint32_t> resources_handles_by_ids(const std::set<uint32_t> &ids)
     {
         std::unique_lock<std::mutex> lock(m_mutex);
         std::vector<uint32_t> resources_handles;

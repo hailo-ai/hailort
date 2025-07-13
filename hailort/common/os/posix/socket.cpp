@@ -152,6 +152,92 @@ Expected<size_t> Socket::send(const uint8_t *buffer, size_t size, int flags)
     return Expected<size_t>(bytes_written);
 }
 
+Expected<size_t> Socket::recvmsg(struct msghdr *msg, int flags) const
+{
+    auto read_bytes = ::recvmsg(m_socket_fd, msg, flags);
+    // TODO: Use a new error status for HAILO_SOCKET_FAILURE. Change in all Socket functions (HRT-16753)
+    CHECK(read_bytes >= 0, make_unexpected(HAILO_ETH_FAILURE), "Failed to read from socket {}", errno);
+    return Expected<size_t>(read_bytes);
+}
+
+Expected<size_t> Socket::sendmsg(const struct msghdr *msg, int flags) const
+{
+    auto bytes_written = ::sendmsg(m_socket_fd, msg, flags);
+    CHECK(bytes_written >= 0, make_unexpected(HAILO_ETH_FAILURE), "Failed to write to socket {}", errno);
+    return Expected<size_t>(bytes_written);
+}
+
+Expected<int> Socket::read_fd()
+{
+    struct msghdr msg = {};
+
+    // Prepare the iovec array to contain the buffer size
+    size_t buffer_size;
+    struct iovec iov = {};
+    iov.iov_base = &buffer_size;
+    iov.iov_len = sizeof(buffer_size);
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+
+    // CMSG_SPACE returns the number of bytes required for the control message
+    char buf[CMSG_SPACE(sizeof(int))] = {};
+    msg.msg_control = buf;
+    msg.msg_controllen = sizeof(buf);
+
+    TRY(auto read_bytes, recvmsg(&msg));
+    if (0 == read_bytes) {
+        return make_unexpected(HAILO_COMMUNICATION_CLOSED);
+    }
+
+    if (msg.msg_flags & MSG_CTRUNC) {
+        LOGGER__CRITICAL("recvmsg control data truncated. Might happen when the file descriptor limit is reached");
+        return make_unexpected(HAILO_OPEN_FILE_FAILURE);
+    }
+    // TODO: Use a new error status for HAILO_SOCKET_FAILURE (HRT-16753)
+    CHECK(0 == msg.msg_flags, HAILO_ETH_FAILURE, "recvmsg returned with error flags: {}", msg.msg_flags);
+
+    struct cmsghdr *cmsg;
+    cmsg = CMSG_FIRSTHDR(&msg); // Get the first control message (We expect only one)
+
+    CHECK(cmsg && (SOL_SOCKET == cmsg->cmsg_level) && (SCM_RIGHTS == cmsg->cmsg_type), HAILO_INTERNAL_FAILURE,
+        "Invalid fd message");
+
+    // CMSG_DATA returns a pointer to the control data that has the file descriptor
+    auto fd = *reinterpret_cast<int*>(CMSG_DATA(cmsg));
+    return fd;
+}
+
+hailo_status Socket::write_fd(int fd, size_t buffer_size)
+{
+    struct msghdr msg = {};
+
+    // Prepare the iovec array to contain the buffer size
+    struct iovec iov = {};
+    iov.iov_base = &buffer_size;
+    iov.iov_len = sizeof(buffer_size);
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+
+    // CMSG_SPACE returns the number of bytes required for a control message containing a file descriptor
+    char buf[CMSG_SPACE(sizeof(fd))] = {};
+    msg.msg_control = buf;
+    msg.msg_controllen = sizeof(buf);
+
+    /*
+    * Prepare the control message header:
+    * SOL_SOCKET is the socket level when dealing with control messages
+    * SCM_RIGHTS is a control message type that tells the kernel we are sending or receiving file descriptors
+    */
+    struct cmsghdr *cmsg;
+    cmsg = CMSG_FIRSTHDR(&msg); // Get the first control message header (there is only one)
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(fd));
+    *reinterpret_cast<int*>(CMSG_DATA(cmsg)) = fd;
+
+    return sendmsg(&msg).status();
+}
+
 hailo_status Socket::ntop(int af, const void *src, char *dst, socklen_t size)
 {
     CHECK_ARG_NOT_NULL(src);

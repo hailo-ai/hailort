@@ -63,6 +63,7 @@ enum ProtoHEFExtensionType {
     CCW_PTR_SQUEEZE = 30;
     EXTERNAL_RESOURCES = 31;
     SHARED_CONFIG = 32;
+    STRICT_RUNTIME_VERSIONING = 35;
     UNUSED = 0XFFFF;
 }
 
@@ -76,6 +77,12 @@ message ProtoHEFOptionalExtension {
     string name = 2;
 }
 
+message ProtoHEFSdkVersion {
+    uint32 sdk_version_major = 1;
+    uint32 sdk_version_minor = 2;
+    uint32 sdk_version_revision = 3;
+}
+
 message ProtoHEFHeader {
     // The target hw_arch the HEF is compiled to
     ProtoHEFHwArch hw_arch = 1;
@@ -84,7 +91,8 @@ message ProtoHEFHeader {
     uint64 timestamp = 2;
 
     // The version of the SDK the HEF has been created with
-    string sdk_version = 3;
+    string sdk_version_str = 3;
+    ProtoHEFSdkVersion sdk_version = 5;
 
     // The format version of the hef file
     uint64 version = 4;

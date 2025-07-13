@@ -441,7 +441,7 @@ void ConfiguredInferModelWrapper::bind(py::module &m)
 {
     py::class_<
         ConfiguredInferModelWrapper,
-        std::shared_ptr<ConfiguredInferModelWrapper>
+        nogil_shared_ptr<ConfiguredInferModelWrapper>
     >(m, "ConfiguredInferModel")
         .def("create_bindings", &ConfiguredInferModelWrapper::create_bindings)
         .def("activate", &ConfiguredInferModelWrapper::activate)

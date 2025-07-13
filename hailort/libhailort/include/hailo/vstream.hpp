@@ -93,7 +93,7 @@ public:
 
     /**
      * @return the size of a virtual stream's frame on the host side in bytes.
-     * @note The size could be affected by the format type - using UINT16, or by the data not being quantized yet.
+     * @note The size could be affected by the format type - using UINT16, or by the data having not yet been quantized
      */
     size_t get_frame_size() const;
 
@@ -168,7 +168,7 @@ public:
     AccumulatorPtr get_pipeline_latency_accumulator() const;
     
     /**
-     * @return A const reference to the @a PipelineElement%s that this vstream is comprised of.
+     * @return A const reference to the @a PipelineElement%s of which this vstream is comprised of.
      */
     const std::vector<std::shared_ptr<PipelineElement>> &get_pipeline() const;
 
@@ -250,7 +250,7 @@ public:
 
     /**
      * @return the size of a virtual stream's frame on the host side in bytes.
-     * @note The size could be affected by the format type - using UINT16, or by the data not being quantized yet.
+     * @note The size could be affected by the format type - using UINT16, or by the data having not yet been quantized
      */
     size_t get_frame_size() const;
 
@@ -325,7 +325,7 @@ public:
     AccumulatorPtr get_pipeline_latency_accumulator() const;
     
     /**
-     * @return A const reference to the @a PipelineElement%s that this vstream is comprised of.
+     * @return A const reference to the @a PipelineElement%s of which this vstream is comprised of.
      */
     const std::vector<std::shared_ptr<PipelineElement>> &get_pipeline() const;
 

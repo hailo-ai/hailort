@@ -38,6 +38,7 @@
 #include "hef/context_switch_actions.hpp"
 #include "net_flow/ops/op.hpp"
 #include "device_common/control_protocol.hpp"
+#include "common/internal_env_vars.hpp"
 
 #include "common/file_utils.hpp"
 
@@ -87,7 +88,7 @@ struct ProtoHEFCoreOpMock {
     : network_group_metadata(network_group_metadata),
       preliminary_config(preliminary_config),
       contexts(contexts),
-      sorted_outputs_order(sorted_outputs_order),
+      sorted_outputs_order(IS_PP_DISABLED() ? fused_layers_metadata.updated_sorted_output_names() : sorted_outputs_order),
       fused_layers_metadata(fused_layers_metadata),
       networks_names(networks_names),
       partial_core_ops(partial_core_ops)
@@ -214,7 +215,8 @@ static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
     HAILO_NET_FLOW_BBOX_DECODING,   // Extension added in platform 4.18 release
     CCW_PTR_SQUEEZE,                // Currently this extension is always off, will be renamed and re-purposed under HRT-13205
     EXTERNAL_RESOURCES,             // Extension added in platform 4.21 release
-    SHARED_CONFIG                   // Extension added in platform 4.21 release
+    SHARED_CONFIG,                  // Extension added in platform 4.21 release
+    STRICT_RUNTIME_VERSIONING,      // Extension added in platform 5.0  release
 
 };
 
@@ -377,8 +379,7 @@ public:
     Expected<CoreOpMetadataPtr> get_core_op_metadata(const std::string &network_group_name, uint32_t partial_clusters_layout_bitmap = PARTIAL_CLUSTERS_LAYOUT_IGNORE);
 
     Expected<std::string> get_description(bool stream_infos, bool vstream_infos, hailo_device_architecture_t device_arch);
-    Expected<std::map<std::string, std::string>> get_external_resources() const; // Key is reosucre name, value is resource data in bytes
-
+    Expected<std::map<std::string, MemoryView>> get_external_resources() const; // Key is reosucre name, value is resource data in bytes
 
     const MemoryView get_hash_as_memview() const
     {
@@ -429,7 +430,11 @@ public:
 
     Expected<std::shared_ptr<Buffer>> get_hef_as_buffer();
 
-    bool is_aligned_ccws_on() const;
+    bool zero_copy_config_over_descs() const;
+
+    hailo_status validate_hef_version() const;
+
+    void set_memory_footprint_optimization(bool should_optimize);
 
 private:
     Impl(const std::string &hef_path, hailo_status &status);
@@ -484,7 +489,7 @@ private:
     ProtoHEFHeader m_header;
     ProtoHEFIncludedFeatures m_included_features;
     SupportedFeatures m_supported_features;
-    std::vector<ExternalResourceInfo> m_hef_external_resources;
+    std::unordered_map<std::string, ExternalResourceInfo> m_hef_external_resources;
     std::vector<ProtoHEFNetworkGroupPtr> m_groups;
     std::map<std::string, std::vector<ProtoHEFCoreOpMock>> m_core_ops_per_group;
     std::map<std::string, std::vector<net_flow::PostProcessOpMetadataPtr>> m_post_process_ops_metadata_per_group;
@@ -502,6 +507,7 @@ private:
     std::shared_ptr<Buffer> m_hef_buffer; // Only used if Hef is created from memory
 
     std::map<std::string, NetworkGroupMetadata> m_network_group_metadata; // Key is NG name
+    bool m_zero_copy_config_over_descs; // If true, the config is forced to be over descs instead of CCB, as best effort (e.g. if HEF doesnt support it or disabling env var is on)
 };
 
 // TODO: Make this part of a namespace? (HRT-2881)
@@ -567,14 +573,14 @@ public:
         const ProtoHEFEdgeLayer &layer, const SupportedFeatures &supported_features);
     static Expected<ContextMetadata> parse_preliminary_context(const ProtoHEFPreliminaryConfig &preliminary_proto,
         const SupportedFeatures &supported_features, const uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader,
-        size_t ccws_offset, bool is_aligned_ccws_on);
+        size_t ccws_offset);
     static Expected<ContextMetadata> parse_single_dynamic_context(const ProtoHEFCoreOpMock &core_op,
         const ProtoHEFContext &context_proto, uint16_t context_index, const SupportedFeatures &supported_features,
         const ProtoHEFHwArch &hef_arch, const uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader,
-        size_t ccws_offset, bool is_aligned_ccws_on);
+        size_t ccws_offset);
     static Expected<std::vector<ContextMetadata>> parse_dynamic_contexts(const ProtoHEFCoreOpMock &core_op,
         const SupportedFeatures &supported_features, const ProtoHEFHwArch &hef_arch, const uint32_t hef_version,
-        std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset, bool is_aligned_ccws_on);
+        std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset);
     static Expected<hailo_nms_info_t> parse_proto_nms_info(const ProtoHEFNmsInfo &proto_nms_info,
         const bool burst_mode_enabled, const ProtoHEFHwArch &hef_arch);
     static Expected<LayerInfo> get_boundary_layer_info(const ProtoHEFCoreOpMock &core_op,

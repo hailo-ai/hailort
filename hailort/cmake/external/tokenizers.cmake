@@ -48,6 +48,7 @@ if (TOKENIZERS_LIB_PATH AND TOKENIZERS_RUST_LIB_PATH AND TOKENIZERS_INCLUDE_DIR)
       INTERFACE_INCLUDE_DIRECTORIES ${TOKENIZERS_INCLUDE_DIR}
   )
 
+  # Linking with dl is required for the rust impl of tokenizers - https://github.com/mlc-ai/tokenizers-cpp/issues/1#issuecomment-1556206254
   target_link_libraries(tokenizers_cpp INTERFACE ${TOKENIZERS_RUST_LIB_PATH} dl)
 else()
   # https://stackoverflow.com/questions/65527126/disable-install-for-fetchcontent
