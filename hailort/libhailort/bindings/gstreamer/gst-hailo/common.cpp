@@ -88,3 +88,49 @@ bool do_versions_match(GstElement *self)
     }
     return true;
 }
+
+hailo_tensor_metadata_t tensor_metadata_from_vstream_info(const hailo_vstream_info_t &vstream_info)
+{
+    hailo_tensor_metadata_t tensor_metadata;
+    
+    auto name_length = strnlen(vstream_info.name, HAILO_MAX_STREAM_NAME_SIZE);
+    memcpy(tensor_metadata.name, vstream_info.name, name_length);
+    tensor_metadata.name[name_length] = '\0';
+    tensor_metadata.format.type = tensor_format_type_from_vstream_format_type(vstream_info.format.type);
+    tensor_metadata.format.is_nms = (HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS == vstream_info.format.order) ||
+        (HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK == vstream_info.format.order) ||
+        (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE == vstream_info.format.order);
+    
+    if (tensor_metadata.format.is_nms) {
+        tensor_metadata.nms_shape.number_of_classes = vstream_info.nms_shape.number_of_classes;
+        tensor_metadata.nms_shape.max_bboxes_per_class = vstream_info.nms_shape.max_bboxes_per_class;
+        tensor_metadata.nms_shape.max_bboxes_total = vstream_info.nms_shape.max_bboxes_total;
+        tensor_metadata.nms_shape.max_accumulated_mask_size = vstream_info.nms_shape.max_accumulated_mask_size;
+    } else {
+        tensor_metadata.shape.height = vstream_info.shape.height;
+        tensor_metadata.shape.width = vstream_info.shape.width;
+        tensor_metadata.shape.features = vstream_info.shape.features;
+    }
+    tensor_metadata.quant_info.qp_zp = vstream_info.quant_info.qp_zp;
+    tensor_metadata.quant_info.qp_scale = vstream_info.quant_info.qp_scale;
+    tensor_metadata.quant_info.limvals_min = vstream_info.quant_info.limvals_min;
+    tensor_metadata.quant_info.limvals_max = vstream_info.quant_info.limvals_max;
+    
+    return tensor_metadata;
+}
+
+HailoTensorFormatType tensor_format_type_from_vstream_format_type(hailo_format_type_t format_type)
+{
+    switch (format_type) {
+        case HAILO_FORMAT_TYPE_AUTO:
+            return HailoTensorFormatType::HAILO_FORMAT_TYPE_AUTO;
+        case HAILO_FORMAT_TYPE_UINT8:
+            return HailoTensorFormatType::HAILO_FORMAT_TYPE_UINT8;
+        case HAILO_FORMAT_TYPE_UINT16:
+            return HailoTensorFormatType::HAILO_FORMAT_TYPE_UINT16;
+        case HAILO_FORMAT_TYPE_FLOAT32:
+            return HailoTensorFormatType::HAILO_FORMAT_TYPE_FLOAT32;
+        default:
+            return HailoTensorFormatType::HAILO_FORMAT_TYPE_MAX_ENUM;
+    }
+}

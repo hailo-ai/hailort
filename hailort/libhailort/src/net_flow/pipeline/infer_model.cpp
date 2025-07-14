@@ -699,10 +699,23 @@ void ConfiguredInferModelBase::mark_callback_done(std::shared_ptr<AsyncInferJobI
 
 hailo_status ConfiguredInferModelBase::run(const ConfiguredInferModel::Bindings &bindings, std::chrono::milliseconds timeout)
 {
-    auto job = run_async(bindings, [] (const AsyncInferCompletionInfo &) {});
-    CHECK_EXPECTED_AS_STATUS(job);
+    TimeoutGuard timeout_guard(timeout);
+    AsyncInferJob job;
 
-    auto status = job->wait(timeout);
+    std::unique_lock<std::timed_mutex> lock(m_run_mutex, std::defer_lock);
+
+    if (lock.try_lock_for(timeout_guard.get_remaining_timeout())) {
+        auto status = wait_for_async_ready(timeout_guard.get_remaining_timeout(), 1);
+        CHECK_SUCCESS(status);
+
+        TRY(job, run_async(bindings, [] (const AsyncInferCompletionInfo &) {}));
+
+    } else {
+        LOGGER__ERROR("Failed to acquire lock for run(), timeout: {}ms", timeout.count());
+        return HAILO_TIMEOUT;
+    }
+
+    auto status = job.wait(timeout_guard.get_remaining_timeout());
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;

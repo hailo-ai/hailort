@@ -620,6 +620,13 @@ hailo_status DeviceBase::check_hef_is_compatible(Hef &hef)
         LOGGER__WARNING("HEF was compiled for Hailo15M device, while the device itself is Hailo15H. " \
         "This will result in lower performance.");
     }
+    if (!verify_legacy_hef_only(static_cast<HEFHwArch>(hef.pimpl->get_device_arch()))) {
+        auto hef_arch_str =
+            HailoRTCommon::get_device_arch_str(hef_arch_to_device_arch(static_cast<HEFHwArch>(hef.pimpl->get_device_arch())));
+        LOGGER__ERROR("HEF arch {} is not valid. Please use HailoRT v5.x instead.",
+            hef_arch_str.c_str());
+        return HAILO_HEF_NOT_COMPATIBLE_WITH_DEVICE;
+    }
 
     return HAILO_SUCCESS;
 }
@@ -711,6 +718,22 @@ hailo_status DeviceBase::validate_fw_version_for_platform(const hailo_device_ide
     }
 
     return validate_binary_version_for_platform(&fw_version, &min_supported_fw_version, fw_binary_type);
+}
+
+bool DeviceBase::verify_legacy_hef_only(HEFHwArch hef_arch)
+{
+    switch (hef_arch) {
+    case HEFHwArch::HW_ARCH__SAGE_A0:
+    case HEFHwArch::HW_ARCH__HAILO8:
+    case HEFHwArch::HW_ARCH__HAILO8P:
+    case HEFHwArch::HW_ARCH__HAILO8R:
+    case HEFHwArch::HW_ARCH__SAGE_B0:
+    case HEFHwArch::HW_ARCH__PAPRIKA_B0:
+    case HEFHwArch::HW_ARCH__HAILO8L:
+        return true;
+    default:
+        return false;
+    }
 }
 
 bool DeviceBase::is_hef_compatible(hailo_device_architecture_t device_arch, HEFHwArch hef_arch)

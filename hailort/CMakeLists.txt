@@ -29,7 +29,7 @@ endif()
 
 # Set firmware version
 add_definitions( -DFIRMWARE_VERSION_MAJOR=4 )
-add_definitions( -DFIRMWARE_VERSION_MINOR=21 )
+add_definitions( -DFIRMWARE_VERSION_MINOR=22 )
 add_definitions( -DFIRMWARE_VERSION_REVISION=0 )
 if(HAILO_BUILD_SERVICE)
     add_definitions( -DHAILO_SUPPORT_MULTI_PROCESS )

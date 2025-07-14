@@ -254,7 +254,7 @@ hailo_status HailoRecvImpl::write_tensors_to_metadata(GstVideoFrame *frame, bool
     std::chrono::time_point<std::chrono::system_clock> start_time = std::chrono::system_clock::now();
     for (auto &output_info : m_output_infos) {
         GstHailoTensorMeta *buffer_meta = GST_TENSOR_META_ADD(output_info.last_acquired_buffer());
-        buffer_meta->info = output_info.vstream_info();
+        buffer_meta->info = tensor_metadata_from_vstream_info(output_info.vstream_info());
 
         (void)gst_buffer_add_parent_buffer_meta(frame->buffer, output_info.last_acquired_buffer());
         output_info.unref_last_acquired_buffer();

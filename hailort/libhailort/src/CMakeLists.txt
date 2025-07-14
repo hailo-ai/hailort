@@ -123,6 +123,7 @@ set(HAILORT_PUBLIC_HEADERS
     ${HAILORT_INC_DIR}/hailo/hailort_defaults.hpp
     ${HAILORT_INC_DIR}/hailo/dma_mapped_buffer.hpp
     ${HAILORT_INC_DIR}/hailo/hailo_session.hpp
+    ${HAILORT_INC_DIR}/hailo/hailo_gst_tensor_metadata.hpp
 
     # GenAI
     ${HAILORT_INC_DIR}/hailo/genai/vdevice_genai.hpp

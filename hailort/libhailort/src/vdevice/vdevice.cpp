@@ -561,7 +561,8 @@ Expected<std::unique_ptr<VDevice>> VDevice::create(const hailo_vdevice_params_t 
             TRY(acc_type, VDeviceBase::get_accelerator_type(params.device_ids, params.device_count));
         }
         if ((acc_type == HailoRTDriver::AcceleratorType::SOC_ACCELERATOR) || should_force_hrpc_client()) {
-            TRY(vdevice, VDeviceHrpcClient::create(params));
+            LOGGER__ERROR("Hailo1X Devices are only supported in versions 5.0.0 and above. ");
+            return make_unexpected(HAILO_NOT_SUPPORTED);
         } else {
             TRY(vdevice, VDeviceHandle::create(params));
         }

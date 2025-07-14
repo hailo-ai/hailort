@@ -22,6 +22,8 @@
 #include "hailo/buffer.hpp"
 #include "hailo/hailort_common.hpp"
 #include "hailo/hailort_defaults.hpp"
+#include "hailo/hailo_gst_tensor_metadata.hpp"
+#include "common.hpp"
 
 #include <algorithm>
 #include <unordered_map>
@@ -937,7 +939,7 @@ static void gst_hailonet_push_buffer_to_thread(GstHailoNet *self, GstBuffer *buf
 
 // TODO: This function should be refactored. It does many unrelated things and the user need to know that he should unmap the buffer
 // in case of an error. AND it does not print errors nor return an indicative status (also the comments are confusing - "continue"?)
-static bool set_infos(GstParentBufferMeta *parent_buffer_meta, hailo_vstream_info_t &vstream_info, GstMapInfo &info)
+static bool set_infos(GstParentBufferMeta *parent_buffer_meta, hailo_tensor_metadata_t &tensor_meta_info, GstMapInfo &info)
 {
     gboolean map_succeeded = gst_buffer_map(parent_buffer_meta->buffer, &info, GST_MAP_READ);
     if (!map_succeeded) {
@@ -950,7 +952,7 @@ static bool set_infos(GstParentBufferMeta *parent_buffer_meta, hailo_vstream_inf
         gst_buffer_unmap(parent_buffer_meta->buffer, &info);
         return false;
     }
-    vstream_info = tensor_meta->info;
+    tensor_meta_info = tensor_meta->info;
     return true;
 }
 
@@ -967,8 +969,8 @@ static Expected<std::unordered_map<std::string, hailo_dma_buffer_t>> gst_hailone
         }
         GstParentBufferMeta *parent_buffer_meta = reinterpret_cast<GstParentBufferMeta*>(meta);
         GstMapInfo info;
-        hailo_vstream_info_t vstream_info;
-        bool result = set_infos(parent_buffer_meta, vstream_info, info);
+        hailo_tensor_metadata_t tensor_meta_info;
+        bool result = set_infos(parent_buffer_meta, tensor_meta_info, info);
         if (result) {
             TRY(auto is_dma_buf_memory, HailoDmaBuffAllocator::is_dma_buf_memory(info));
             CHECK_AS_EXPECTED(is_dma_buf_memory, HAILO_INTERNAL_FAILURE, "GstMemory is not a DMA buf as expected!");
@@ -977,7 +979,7 @@ static Expected<std::unordered_map<std::string, hailo_dma_buffer_t>> gst_hailone
             CHECK_AS_EXPECTED(fd != -1, HAILO_INTERNAL_FAILURE, "Failed to get FD from GstMemory!");
 
             hailo_dma_buffer_t dma_buffer = {fd, info.size};
-            input_buffer_metas[vstream_info.name] = dma_buffer;
+            input_buffer_metas[tensor_meta_info.name] = dma_buffer;
             gst_buffer_unmap(parent_buffer_meta->buffer, &info);
         }
     }
@@ -1015,10 +1017,10 @@ static Expected<std::unordered_map<std::string, uint8_t*>> gst_hailonet_read_inp
         }
         GstParentBufferMeta *parent_buffer_meta = reinterpret_cast<GstParentBufferMeta*>(meta);
         GstMapInfo info;
-        hailo_vstream_info_t vstream_info;
-        bool result = set_infos(parent_buffer_meta, vstream_info, info);
+        hailo_tensor_metadata_t tensor_meta_info;
+        bool result = set_infos(parent_buffer_meta, tensor_meta_info, info);
         if (result) {
-            input_buffer_metas[vstream_info.name] = static_cast<uint8_t*>(info.data);
+            input_buffer_metas[tensor_meta_info.name] = static_cast<uint8_t*>(info.data);
             gst_buffer_unmap(parent_buffer_meta->buffer, &info);
         }
     }
@@ -1130,7 +1132,7 @@ static hailo_status gst_hailonet_call_run_async(GstHailoNet *self, const std::un
             gst_buffer_unmap(info.buffer, &info.buffer_info);
 
             GstHailoTensorMeta *buffer_meta = GST_TENSOR_META_ADD(info.buffer);
-            buffer_meta->info = self->impl->output_vstream_infos[output.name()];
+            buffer_meta->info = tensor_metadata_from_vstream_info(self->impl->output_vstream_infos[output.name()]);
 
             (void)gst_buffer_add_parent_buffer_meta(buffer, info.buffer);
             gst_buffer_unref(info.buffer);

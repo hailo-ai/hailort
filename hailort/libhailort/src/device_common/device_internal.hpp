@@ -161,6 +161,7 @@ private:
     static hailo_status validate_fw_version_for_platform(const hailo_device_identity_t &board_info,
         firmware_version_t fw_version, FW_BINARY_TYPE_t fw_binary_type);
     static bool is_hef_compatible(hailo_device_architecture_t device_arch, HEFHwArch hw_arch);
+    static bool verify_legacy_hef_only(HEFHwArch hef_arch);
     static void check_clock_rate_for_hailo8(uint32_t clock_rate, HEFHwArch hef_hw_arch);
     hailo_status store_sensor_control_buffers(const std::vector<SENSOR_CONFIG__operation_cfg_t> &control_buffers, uint32_t section_index, hailo_sensor_types_t sensor_type,
         uint32_t reset_config_size, uint16_t config_height, uint16_t config_width, uint16_t config_fps, const std::string &config_name);

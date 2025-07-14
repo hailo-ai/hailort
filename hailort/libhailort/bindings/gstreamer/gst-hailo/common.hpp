@@ -23,6 +23,7 @@
 #include "hailo/device.hpp"
 #include "hailo/network_group.hpp"
 #include "hailo/vstream.hpp"
+#include "hailo/hailo_gst_tensor_metadata.hpp"
 #include "include/hailo_gst.h"
 
 #include <vector>
@@ -281,5 +282,8 @@ GType gst_scheduling_algorithm_get_type (void);
 GType gst_hailo_format_type_get_type (void);
 
 bool do_versions_match(GstElement *self);
+
+hailo_tensor_metadata_t tensor_metadata_from_vstream_info(const hailo_vstream_info_t &vstream_info);
+HailoTensorFormatType tensor_format_type_from_vstream_format_type(hailo_format_type_t format_type);
 
 #endif /* _GST_HAILO_COMMON_HPP_ */

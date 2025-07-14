@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5.0)
 
-find_package(HailoRT 4.21.0 EXACT REQUIRED)
+find_package(HailoRT 4.22.0 EXACT REQUIRED)
 
 add_executable(cpp_infer_pipeline_example infer_pipeline_example.cpp)
 target_link_libraries(cpp_infer_pipeline_example PRIVATE HailoRT::libhailort)
