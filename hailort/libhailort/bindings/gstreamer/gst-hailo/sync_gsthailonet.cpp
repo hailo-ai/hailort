@@ -160,7 +160,7 @@ static void gst_sync_hailonet_class_init(GstSyncHailoNetClass *klass)
             HAILO_DEFAULT_SCHEDULER_THRESHOLD, std::numeric_limits<uint32_t>::max(), HAILO_DEFAULT_SCHEDULER_THRESHOLD, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
     g_object_class_install_property(gobject_class, PROP_SCHEDULER_PRIORITY,
         g_param_spec_uint("scheduler-priority", "Priority index for scheduler", "When the scheduler will choose the next hailonet to run, higher priority will be prioritized in the selection. "
-            "Bigger number represent higher priority",
+            "Larger number represents higher priority",
             HAILO_SCHEDULER_PRIORITY_MIN, HAILO_SCHEDULER_PRIORITY_MAX, HAILO_SCHEDULER_PRIORITY_NORMAL, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
     g_object_class_install_property(gobject_class, PROP_MULTI_PROCESS_SERVICE,
         g_param_spec_boolean("multi-process-service", "Should run over HailoRT service", "Controls wether to run HailoRT over its service. "

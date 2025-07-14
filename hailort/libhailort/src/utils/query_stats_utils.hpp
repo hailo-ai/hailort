@@ -3,7 +3,7 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @file query_stats_utils.cpp
+ * @file query_stats_utils.hpp
  * @brief QueryStatsUtils is a class for querying the system for performance and health information.
  **/
 
@@ -41,7 +41,6 @@ private:
     static  int32_t calculate_ddr_noc_data_per_second(const std::vector<ddr_noc_row_data_t> &data, int ddr_noc_row_data_t::*member,
         const float32_t duration);
     static hailo_status execute_noc_command(const std::string &command);
-    static Expected<std::pair<int32_t, std::string>> run_command(const std::string &cmd);
     static Expected<std::istringstream> read_nnc_utilization_file();
     static std::string get_sampling_time_window_as_string();
 };

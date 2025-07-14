@@ -29,7 +29,7 @@
 const std::string POWER_ARG = "power";
 const std::string CURRENT_ARG = "current";
 
-const std::chrono::seconds MEASUREMENTS_DURATION_SECS(5);
+const std::chrono::seconds MEASUREMENTS_DURATION_SECS(1);
 
 using namespace hailort;
 
@@ -57,7 +57,7 @@ void print_measurements_results(Device &device, const hailo_power_measurement_da
     auto type_str = (type == HAILO_POWER_MEASUREMENT_TYPES__POWER) ? "Power measurement" :
         "Current measurement";
 
-    std::cout << "Device" << std::string(id) << ":" << std::endl;
+    std::cout << "Device " << std::string(id) << ":" << std::endl;
     std::cout << "  " << type_str << std::endl;
     std::cout << "    Minimum value: " << result.min_value << MEASUREMENT_UNITS(type) << std::endl;
     std::cout << "    Average value: " << result.average_value << MEASUREMENT_UNITS(type) << std::endl;

@@ -62,7 +62,6 @@ hailo_status ClientCallbackDispatcher::shutdown(hailo_status status)
         std::unique_lock<std::mutex> lock(m_mutex);
         m_is_running = false;
 
-        m_additional_reads_funcs.clear();
         for (const auto &callback : m_registered_callbacks) {
             RpcCallback rpc_callback = {};
             rpc_callback.type = RpcCallbackType::INVALID;
@@ -87,12 +86,6 @@ ClientCallbackDispatcher::~ClientCallbackDispatcher()
     }
 }
 
-void ClientCallbackDispatcher::add_additional_reads(uint32_t callback_id, AdditionalReadsFunc additional_reads_func)
-{
-    std::unique_lock<std::mutex> lock(m_mutex);
-    m_additional_reads_funcs[callback_id] = additional_reads_func;
-}
-
 void ClientCallbackDispatcher::register_callback(uint32_t callback_id, ClientCallbackDispatcher::CallbackFunc callback_func)
 {
     {
@@ -107,30 +100,15 @@ hailo_status ClientCallbackDispatcher::remove_callback(uint32_t callback_id)
     std::unique_lock<std::mutex> lock(m_mutex);
     CHECK(contains(m_registered_callbacks, callback_id), HAILO_NOT_FOUND, "Did not find callback with id {}", callback_id);
     m_registered_callbacks.erase(callback_id);
-    if (contains(m_additional_reads_funcs, callback_id)) {
-        m_additional_reads_funcs.erase(callback_id);
-    }
     return HAILO_SUCCESS;
 }
 
-hailo_status ClientCallbackDispatcher::trigger_callback(const RpcCallback &callback, RpcConnection connection)
+hailo_status ClientCallbackDispatcher::trigger_callback(const RpcCallback &callback)
 {
     {
         std::unique_lock<std::mutex> lock(m_mutex);
         CHECK(callback.type == m_callback_type, HAILO_INTERNAL_FAILURE, "Callback type mismatch!, expected = {}, got = {}",
             static_cast<uint32_t>(m_callback_type), static_cast<uint32_t>(callback.type));
-
-        if (contains(m_additional_reads_funcs, callback.callback_id)) {
-            auto additional_reads_func = m_additional_reads_funcs[callback.callback_id];
-            m_additional_reads_funcs.erase(callback.callback_id);
-            TRY(auto transfers, additional_reads_func(callback));
-            if (!transfers.empty()) {
-                auto status = connection.read_buffers(std::move(transfers));
-                // TODO: Errors here should be unrecoverable (HRT-14275)
-                CHECK_SUCCESS(status);
-            }
-        }
-
         m_triggered_callbacks.push(callback);
     }
 

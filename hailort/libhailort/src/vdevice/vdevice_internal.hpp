@@ -8,11 +8,10 @@
  *        Hence, the hiearchy is as follows:
  *
  * VDevice                  (External "interface")
- * |
- * |-- VDeviceHandle            (VDevice handle for a possibly shared VDeviceBase
- * |                         when hailort is running as single process)
- * |-- VDeviceClient            (VDevice client for a possibly shared VDeviceBase
- * |                         when hailort is running as a service)
+ * |-- VDeviceHandle                   (VDevice handle for a possibly shared VDeviceBase when hailort is running as single process)
+ * |-- VDeviceClient                   (VDevice client for a possibly shared VDeviceBase when hailort is running as a service)
+ * |-- VDeviceHrpcClient               (RPC handle communicating with the server)
+ * |-- VDeviceSocketBasedClient        (Empty implementation for forced-socket in the client side)
  * |-- VDeviceBase          (Actual implementations)
  *     |
  *     |-- std::vector<VdmaDevice>

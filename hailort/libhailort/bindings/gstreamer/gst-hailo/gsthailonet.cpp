@@ -855,7 +855,7 @@ static void gst_hailonet_class_init(GstHailoNetClass *klass)
     g_object_class_install_property(gobject_class, PROP_FORCE_WRITABLE,
         g_param_spec_boolean("force-writable", "Force writable", "Controls whether the element will force the input buffer to be writable. "
             "We force the input to be writable with the function gst_buffer_make_writable, which in most cases will do a shallow copy of the buffer. "
-            "But in some cases (when the buffer is marked as not shared - see gst_buffer_copy documentation), it will do a deep copy."
+            "But in some cases (when the buffer is marked as not shared - see gst_buffer_copy documentation), it will do a deep copy. "
             "By default, the hailonet element will not force the input buffer to be writable and will raise an error when the buffer is read-only.", false,
         (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
@@ -875,11 +875,11 @@ static void gst_hailonet_class_init(GstHailoNetClass *klass)
             HAILO_DEFAULT_SCHEDULER_THRESHOLD, std::numeric_limits<uint32_t>::max(), HAILO_DEFAULT_SCHEDULER_THRESHOLD, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
     g_object_class_install_property(gobject_class, PROP_SCHEDULER_PRIORITY,
         g_param_spec_uint("scheduler-priority", "Priority index for scheduler", "When the scheduler will choose the next hailonet to run, higher priority will be prioritized in the selection. "
-            "Bigger number represent higher priority",
+            "Larger number represents higher priority",
             HAILO_SCHEDULER_PRIORITY_MIN, HAILO_SCHEDULER_PRIORITY_MAX, HAILO_SCHEDULER_PRIORITY_NORMAL, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
     g_object_class_install_property(gobject_class, PROP_INPUT_FORMAT_TYPE,
-        g_param_spec_enum("input-format-type", "Input format type", "Input format type(auto, float32, uint16, uint8). Default value is auto."
+        g_param_spec_enum("input-format-type", "Input format type", "Input format type(auto, float32, uint16, uint8). Default value is auto. "
             "Gets values from the enum GstHailoFormatType. ",
             GST_TYPE_HAILO_FORMAT_TYPE, HAILO_FORMAT_TYPE_AUTO,
         (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
@@ -1115,11 +1115,11 @@ static hailo_status gst_hailonet_call_run_async(GstHailoNet *self, const std::un
     CHECK_SUCCESS(status);
 
     {
-        std::unique_lock<std::mutex> lock(self->impl->flush_mutex);
+        std::unique_lock<std::mutex> lock(self->impl->frame_count_mutex);
         self->impl->ongoing_frames++;
     }
 
-    TRY(auto job, self->impl->configured_infer_model->run_async(self->impl->infer_bindings, [self, tensors] (const AsyncInferCompletionInfo &/*completion_info*/) {
+    TRY(auto job, self->impl->configured_infer_model->run_async(self->impl->infer_bindings, [self, tensors] (const AsyncInferCompletionInfo &completion_info) {
         GstBuffer *buffer = nullptr;
         {
             std::unique_lock<std::mutex> lock(self->impl->input_queue_mutex);
@@ -1131,15 +1131,19 @@ static hailo_status gst_hailonet_call_run_async(GstHailoNet *self, const std::un
             auto info = tensors.at(output.name());
             gst_buffer_unmap(info.buffer, &info.buffer_info);
 
-            GstHailoTensorMeta *buffer_meta = GST_TENSOR_META_ADD(info.buffer);
-            buffer_meta->info = tensor_metadata_from_vstream_info(self->impl->output_vstream_infos[output.name()]);
+            if (HAILO_SUCCESS == completion_info.status) {
+                GstHailoTensorMeta *buffer_meta = GST_TENSOR_META_ADD(info.buffer);
+                buffer_meta->info = tensor_metadata_from_vstream_info(self->impl->output_vstream_infos[output.name()]);
 
-            (void)gst_buffer_add_parent_buffer_meta(buffer, info.buffer);
-            gst_buffer_unref(info.buffer);
+                (void)gst_buffer_add_parent_buffer_meta(buffer, info.buffer);
+                gst_buffer_unref(info.buffer);
+            } else if (HAILO_STREAM_ABORT != completion_info.status) {
+                g_error("Failed to run async inference, status = %d", completion_info.status);
+            }
         }
 
         {
-            std::unique_lock<std::mutex> lock(self->impl->flush_mutex);
+            std::unique_lock<std::mutex> lock(self->impl->frame_count_mutex);
             self->impl->ongoing_frames--;
         }
         self->impl->flush_cv.notify_all();
@@ -1149,7 +1153,7 @@ static hailo_status gst_hailonet_call_run_async(GstHailoNet *self, const std::un
         if (self->impl->has_pending_eos) {
             bool is_last_frame = false;
             {
-                std::unique_lock<std::mutex> lock(self->impl->flush_mutex);
+                std::unique_lock<std::mutex> lock(self->impl->frame_count_mutex);
                 if (0 == self->impl->ongoing_frames) {
                     is_last_frame = true;
                 }
@@ -1488,7 +1492,7 @@ static gboolean gst_hailonet_sink_event(GstPad *pad, GstObject *parent, GstEvent
 
 static void gst_hailonet_flush_callback(GstHailoNet *self, gpointer /*data*/)
 {
-    std::unique_lock<std::mutex> lock(self->impl->flush_mutex);
+    std::unique_lock<std::mutex> lock(self->impl->frame_count_mutex);
     self->impl->flush_cv.wait(lock, [self] () {
         return 0 == self->impl->ongoing_frames;
     });

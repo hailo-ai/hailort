@@ -18,6 +18,8 @@
 #include <functional>
 #include <string>
 
+#define BACKLOG_SIZE (16)
+
 namespace hailort
 {
 
@@ -39,8 +41,8 @@ public:
      * This function should be used from the server.
      * The returned SessionListener object should be used to accept new clients.
      *
-     * @param[in] port       The port to listen on.
-     * @param[in] device_id  The device id to listen on.
+     * @param[in] port                  The port to listen on.
+     * @param[in] device_id             The device id to listen on.
      * @return Upon success, returns Expected of a shared pointer of listener, representing the listener object.
     */
     static Expected<std::shared_ptr<SessionListener>> create_shared(uint16_t port, const std::string &device_id = "");
@@ -191,6 +193,7 @@ public:
 
     // Internal
     virtual hailo_status read_async(TransferRequest &&request) = 0;
+    virtual Expected<int> read_fd() = 0;
 
     virtual Expected<Buffer> allocate_buffer(size_t size, hailo_dma_buffer_direction_t direction) = 0;
 

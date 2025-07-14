@@ -29,6 +29,8 @@ namespace hailort
 #define PATH_SEPARATOR "/"
 #endif
 
+#define HAILORT_SYSLOG_LOGGER_PATTERN ("[%s:%#] [%!] %v") // File logger will print: [source file:line number] [function name] msg (log level and timestamp are built-in the syslog file)
+
 class HailoRTLogger {
 public:
 #ifdef NDEBUG
@@ -76,7 +78,9 @@ private:
     // The local log will be written to the local directory or to the path the user has chosen (via $HAILORT_LOGGER_PATH)
     std::shared_ptr<spdlog::sinks::sink> m_main_log_file_sink;
     std::shared_ptr<spdlog::sinks::sink> m_local_log_file_sink;
+    std::shared_ptr<spdlog::sinks::sink> m_syslog_sink;
     std::shared_ptr<spdlog::logger> m_hailort_logger;
+    bool m_should_print_to_syslog = false;
 };
 
 

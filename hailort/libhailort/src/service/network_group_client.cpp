@@ -568,7 +568,8 @@ hailo_status ConfiguredNetworkGroupClient::execute_transfer_callback(const Proto
     CHECK((stream_callback->m_stream_name == stream_name), HAILO_INTERNAL_FAILURE,
         "Callback identifier does not match stream name {}", stream_name);
 
-    if (contains(m_output_streams_names, stream_callback->m_stream_name)) {
+    if (contains(m_output_streams_names, stream_callback->m_stream_name) &&
+        (stream_callback->m_buffer_type != StreamBufferType::DMA_BUFFER)) {
         if (should_use_shared_memory()) {
             auto status = copy_data_from_shm_buffer(stream_callback, cb_id);
             CHECK_SUCCESS(status);
@@ -597,10 +598,11 @@ Expected<std::vector<StreamCbParamsPtr>> ConfiguredNetworkGroupClient::create_st
             StreamCbParams stream_cb_params;
             auto cb_idx = get_unique_callback_idx();
             auto &stream_name = name_buffer_cb.first;
-            CHECK_AS_EXPECTED(BufferType::VIEW == name_buffer_cb.second.first.buffer_type, HAILO_INVALID_OPERATION,
-                "Using dmabuf is not supported when working with hailort_service");
 
-            if (should_use_shared_memory()) {
+            if (name_buffer_cb.second.first.buffer_type == BufferType::DMA_BUFFER) {
+                stream_cb_params = StreamCbParams(cb_idx, stream_name, name_buffer_cb.second.second,
+                    name_buffer_cb.second.first.dma_buffer);
+            } else if (should_use_shared_memory()) {
                 // Copy to shared memory buffer
                 TRY(auto stream_pool, m_buffer_pool_per_stream->get_pool(stream_name));
                 TRY(auto acquired_buffer, AcquiredBuffer::acquire_from_pool(stream_pool));

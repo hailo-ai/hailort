@@ -34,19 +34,54 @@ Expected<size_t> get_istream_size(std::ifstream &s)
     return Expected<size_t>(static_cast<size_t>(total_size));
 }
 
+Expected<size_t> read_binary_file(const std::string &file_path, MemoryView mem_view)
+{
+    std::ifstream file(file_path, std::ios::in | std::ios::binary);
+    CHECK(file.good(), HAILO_OPEN_FILE_FAILURE, "Error opening file {}", file_path);
+
+    TRY(auto file_size, get_istream_size(file), "Failed to get file size");
+
+    CHECK(mem_view.size() >= file_size, HAILO_INSUFFICIENT_BUFFER, "Provided mem_view size {} is too small for file size {}",
+        mem_view.size(), file_size);
+
+    // Read the data
+    file.read(reinterpret_cast<char*>(mem_view.data()), file_size);
+    CHECK(file.good(), HAILO_FILE_OPERATION_FAILURE, "Failed reading file {}", file_path);
+    return file_size;
+}
+
 Expected<Buffer> read_binary_file(const std::string &file_path, const BufferStorageParams &output_buffer_params)
 {
     std::ifstream file(file_path, std::ios::in | std::ios::binary);
-    CHECK_AS_EXPECTED(file.good(), HAILO_OPEN_FILE_FAILURE, "Error opening file {}", file_path);
+    CHECK(file.good(), HAILO_OPEN_FILE_FAILURE, "Error opening file {}", file_path);
 
     TRY(const auto file_size, get_istream_size(file), "Failed to get file size");
     TRY(auto buffer, Buffer::create(file_size, output_buffer_params),
         "Failed to allocate file buffer ({} bytes}", file_size);
 
-    // Read the data
-    file.read(reinterpret_cast<char*>(buffer.data()), buffer.size());
-    CHECK_AS_EXPECTED(file.good(), HAILO_FILE_OPERATION_FAILURE, "Failed reading file {}", file_path);
+    TRY(auto ret_file_size, read_binary_file(file_path, buffer.as_view()));
+    (void) ret_file_size;
+
     return buffer;
+}
+
+Expected<size_t> read_device_file(const std::string &file_path, MemoryView buffer)
+{
+    std::ifstream file(file_path);
+    if (!file) {
+        return make_unexpected(HAILO_OPEN_FILE_FAILURE);
+    }
+
+    size_t bytes_read = 0;
+    while (bytes_read < buffer.size()) {
+        file.read(reinterpret_cast<char*>(buffer.data() + bytes_read), buffer.size() - bytes_read);
+        if (!file || (file.gcount() == 0)) {
+            break;
+        }
+        bytes_read += file.gcount();
+    }
+
+    return bytes_read;
 }
 
 Expected<StreamPositionGuard> StreamPositionGuard::create(std::shared_ptr<std::ifstream> stream)
@@ -111,6 +146,14 @@ hailo_status FileReader::read_from_offset(uint64_t offset, MemoryView dst, size_
     CHECK(m_fstream->good(), HAILO_FILE_OPERATION_FAILURE, "ifstream::seekg() failed");
 
     return HAILO_SUCCESS;
+}
+
+Expected<MemoryView> FileReader::read_from_offset_as_memview(uint64_t offset, size_t size)
+{
+    (void)offset;
+    (void)size;
+    LOGGER__ERROR("Reading from offset as memview is not supported when reading from file");
+    return make_unexpected(HAILO_NOT_SUPPORTED);
 }
 
 hailo_status FileReader::open()
@@ -203,6 +246,12 @@ hailo_status BufferReader::read_from_offset(uint64_t offset, MemoryView dst, siz
 {
     memcpy(dst.data(), m_memview.data() + offset, size);
     return HAILO_SUCCESS;
+}
+
+Expected<MemoryView> BufferReader::read_from_offset_as_memview(uint64_t offset, size_t size)
+{
+    assert(m_memview.data() + offset + size <= m_memview.data() + m_memview.size());
+    return MemoryView((m_memview.data() + offset), size);
 }
 
 hailo_status BufferReader::open()

@@ -120,7 +120,8 @@ Expected<std::unique_ptr<StreamBufferPool>> VdmaInputStream::allocate_buffer_poo
             m_channel->get_desc_list().desc_page_size(), m_channel->get_desc_list().count(), frame_size));
 
         // Bind the buffer to the channel to avoid the need to do it on every transfer.
-        CHECK_SUCCESS(m_channel->bind_buffer(circular_pool->get_base_buffer()));
+        CHECK_SUCCESS(m_channel->bind_and_sync_buffer(circular_pool->get_base_buffer(), false,
+            HailoRTDriver::DmaSyncDirection::TO_DEVICE));
 
         return std::unique_ptr<StreamBufferPool>(std::move(circular_pool));
     }
@@ -172,7 +173,7 @@ Expected<TransferRequest> VdmaInputStream::align_transfer_request(TransferReques
     return TransferRequest(std::move(transfer_buffers), wrapped_callback);
 }
 
-hailo_status VdmaInputStream::bind_buffer(TransferRequest &&transfer_request)
+hailo_status VdmaInputStream::bind_and_sync_buffer(TransferRequest &&transfer_request)
 {
     m_channel->remove_buffer_binding();
     if (TransferBufferType::MEMORYVIEW == transfer_request.transfer_buffers[0].type()) {
@@ -183,7 +184,7 @@ hailo_status VdmaInputStream::bind_buffer(TransferRequest &&transfer_request)
         }
     }
 
-    return m_channel->map_and_bind_buffer(transfer_request.transfer_buffers[0]);
+    return m_channel->map_and_bind_sync_buffer(transfer_request.transfer_buffers[0], HailoRTDriver::DmaSyncDirection::TO_DEVICE);
 }
 
 hailo_status VdmaInputStream::write_async_impl(TransferRequest &&transfer_request)
@@ -288,7 +289,8 @@ Expected<std::unique_ptr<StreamBufferPool>> VdmaOutputStream::allocate_buffer_po
             m_channel->get_desc_list().desc_page_size(), m_channel->get_desc_list().count(), m_transfer_size));
 
         // Bind the buffer to the channel to avoid the need to do it on every transfer.
-        CHECK_SUCCESS(m_channel->bind_buffer(circular_pool->get_base_buffer()));
+        CHECK_SUCCESS(m_channel->bind_and_sync_buffer(circular_pool->get_base_buffer(), false,
+            HailoRTDriver::DmaSyncDirection::TO_HOST));
 
         return std::unique_ptr<StreamBufferPool>(std::move(circular_pool));
     }
@@ -386,7 +388,7 @@ hailo_status VdmaOutputStream::read_async_impl(TransferRequest &&transfer_reques
     }
 }
 
-hailo_status VdmaOutputStream::bind_buffer(TransferRequest &&transfer_request)
+hailo_status VdmaOutputStream::bind_and_sync_buffer(TransferRequest &&transfer_request)
 {
     m_channel->remove_buffer_binding();
     if (TransferBufferType::MEMORYVIEW == transfer_request.transfer_buffers[0].type()) {
@@ -398,7 +400,7 @@ hailo_status VdmaOutputStream::bind_buffer(TransferRequest &&transfer_request)
         }
     }
 
-    return m_channel->map_and_bind_buffer(transfer_request.transfer_buffers[0]);
+    return m_channel->map_and_bind_sync_buffer(transfer_request.transfer_buffers[0], HailoRTDriver::DmaSyncDirection::TO_HOST);
 }
 
 hailo_status VdmaOutputStream::activate_stream_impl()

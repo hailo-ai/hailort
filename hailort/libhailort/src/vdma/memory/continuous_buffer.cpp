@@ -14,8 +14,9 @@ namespace vdma {
 
 Expected<ContinuousBuffer> ContinuousBuffer::create(size_t size, HailoRTDriver &driver)
 {
-    if (size < MIN_CCB_PAGE_SIZE * MIN_CCB_DESCS_COUNT) {
-        LOGGER__ERROR("continuous memory size ({}) must be larger/equal to {}.", size, (MIN_CCB_PAGE_SIZE * MIN_CCB_DESCS_COUNT));
+    auto min_ccb_descs_count = driver.board_type() == (HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_MARS) ? MIN_EXTENDED_CCB_DESCS_COUNT : MIN_CCB_DESCS_COUNT;
+    if (size < MIN_CCB_PAGE_SIZE * min_ccb_descs_count) {
+        LOGGER__ERROR("continuous memory size ({}) must be larger/equal to {}.", size, (MIN_CCB_PAGE_SIZE * min_ccb_descs_count));
         return make_unexpected(HAILO_INTERNAL_FAILURE);
     }
 

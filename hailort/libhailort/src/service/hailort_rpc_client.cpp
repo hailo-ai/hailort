@@ -1486,6 +1486,57 @@ Expected<std::vector<std::string>> HailoRtRpcClient::ConfiguredNetworkGroup_get_
     return result;
 }
 
+hailo_status HailoRtRpcClient::send_dmabuf_fd(uint32_t network_group_handle, const std::string &stream_name, int fd)
+{
+#ifndef __linux__
+    (void)network_group_handle;
+    (void)stream_name;
+    (void)fd;
+    LOGGER__ERROR("DMA Buffers are supported only on Linux systems");
+    return make_unexpected(HAILO_NOT_SUPPORTED);
+#else
+    if (nullptr == m_dmabuf_socket) {
+        TRY(auto socket, Socket::create(AF_UNIX, SOCK_STREAM, 0));
+        m_dmabuf_socket = make_unique_nothrow<Socket>(std::move(socket));
+        CHECK_NOT_NULL(m_dmabuf_socket, HAILO_OUT_OF_HOST_MEMORY);
+
+        auto server_addr = DMABUF_SERVER_SOCKET_ADDR;
+        CHECK_SUCCESS(m_dmabuf_socket->connect(reinterpret_cast<struct sockaddr*>(&server_addr), sizeof(server_addr)));
+    }
+
+    struct msghdr msg = {};
+
+    // Prepare the iovec array to contain the network group handle and the stream name
+    struct iovec iov[DMABUF_MSG_IOVEC_SIZE] = {};
+    iov[NETGROUP_HANDLE_IOVEC_IDX].iov_base = &network_group_handle;
+    iov[NETGROUP_HANDLE_IOVEC_IDX].iov_len = sizeof(network_group_handle);
+    iov[STREAM_NAME_IOVEC_IDX].iov_base = const_cast<char*>(stream_name.c_str());
+    iov[STREAM_NAME_IOVEC_IDX].iov_len = stream_name.size();
+    msg.msg_iov = iov;
+    msg.msg_iovlen = DMABUF_MSG_IOVEC_SIZE;
+
+    // CMSG_SPACE returns the number of bytes required for a control message containing a file descriptor
+    char buf[CMSG_SPACE(sizeof(fd))] = {};
+    msg.msg_control = buf;
+    msg.msg_controllen = sizeof(buf);
+
+    /*
+    * Prepare the control message header:
+    * SOL_SOCKET is the socket level when dealing with control messages
+    * SCM_RIGHTS is a control message type that tells the kernel we are sending or receiving file descriptors
+    */
+    struct cmsghdr* cmsg;
+    cmsg = CMSG_FIRSTHDR(&msg); // Get the first control message header (there is only one)
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(fd));
+    *(int*)CMSG_DATA(cmsg) = fd;
+
+    auto result = m_dmabuf_socket->sendmsg(&msg);
+    return result.status();
+#endif
+}
+
 hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_infer_async(const NetworkGroupIdentifier &identifier,
    const std::vector<StreamCbParamsPtr> &streams_cb_params,
    const callback_idx_t infer_request_done_cb, const std::unordered_set<std::string> &input_streams_names)
@@ -1502,11 +1553,15 @@ hailo_status HailoRtRpcClient::ConfiguredNetworkGroup_infer_async(const NetworkG
         auto direction = contains(input_streams_names, stream_cb_params->m_stream_name) ? HAILO_H2D_STREAM : HAILO_D2H_STREAM;
         proto_transfer_request.set_direction(direction);
 
-        if (stream_cb_params->m_is_shm) {
+        if (StreamBufferType::SHARED_MEMORY == stream_cb_params->m_buffer_type) {
             // Use share memory
             auto shared_memory_identifier = proto_transfer_request.mutable_shared_memory_identifier();
             shared_memory_identifier->set_name(stream_cb_params->m_shm_name);
             shared_memory_identifier->set_size(static_cast<uint32_t>(stream_cb_params->m_size));
+        } else if (StreamBufferType::DMA_BUFFER == stream_cb_params->m_buffer_type) {
+            auto dma_buffer_identifier = proto_transfer_request.mutable_dma_buffer_identifier();
+            dma_buffer_identifier->set_size(static_cast<uint32_t>(stream_cb_params->m_size));
+            CHECK_SUCCESS(send_dmabuf_fd(identifier.m_network_group_handle, stream_cb_params->m_stream_name, stream_cb_params->m_dma_buffer.fd));
         } else {
             // copy data
             proto_transfer_request.set_data(stream_cb_params->m_user_mem_view.data(), stream_cb_params->m_user_mem_view.size());

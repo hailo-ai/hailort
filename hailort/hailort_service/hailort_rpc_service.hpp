@@ -28,16 +28,26 @@
 
 #include "hailo/hailort.h"
 #include "hailo/network_group.hpp"
-#include "vdevice_callbacks_queue.hpp"
+#include "service_resource_queue.hpp"
+#include "common/socket.hpp"
+#include "cng_buffer_pool.hpp"
 
 #include <thread>
 
 namespace hailort
 {
 
+struct StreamDmaBuffer
+{
+    uint32_t network_group_handle;
+    std::string stream_name;
+    int fd;
+};
+
 class HailoRtRpcService final : public ProtoHailoRtRpc::Service {
 public:
     HailoRtRpcService();
+    void start_dmabuf_server();
 
     virtual grpc::Status client_keep_alive(grpc::ServerContext *ctx, const keepalive_Request *request,
         empty*) override;
@@ -229,7 +239,7 @@ private:
     hailo_status flush_input_vstream(uint32_t handle);
     hailo_status abort_input_vstream(uint32_t handle);
     hailo_status abort_output_vstream(uint32_t handle);
-    void abort_vstreams_by_ids(std::set<uint32_t> &pids);
+    void abort_vstreams_by_ids(const std::set<uint32_t> &pids);
     void release_configured_network_groups_by_id(uint32_t client_pid);
     void remove_disconnected_clients();
     void update_client_id_timestamp(uint32_t pid);
@@ -239,7 +249,9 @@ private:
     Expected<std::string> output_vstream_name(uint32_t vstream_handle);
     Expected<uint32_t> create_buffer_pool_for_ng(uint32_t vdevice_handle, uint32_t request_pid);
     hailo_status allocate_pool_for_raw_streams(uint32_t ng_handle);
-    void release_resources_on_error(std::vector<uint32_t> ng_handles, std::vector<uint32_t> buffer_pool_handles, uint32_t pid);
+    Expected<uint32_t> create_network_fd_queues(uint32_t ng_handle, uint32_t request_pid);
+    void release_resources_on_error(const std::vector<uint32_t> &ng_handles, const std::vector<uint32_t> &buffer_pool_handles,
+        const std::vector<uint32_t> &network_fd_queues_handles, uint32_t pid);
     Expected<NamedBuffersCallbacks> prepare_named_buffers_callbacks(uint32_t vdevice_handle,
         uint32_t ng_handle, std::shared_ptr<ConfiguredNetworkGroup_infer_async_Request> infer_async_request);
     hailo_status add_input_named_buffer(const ProtoTransferRequest &proto_stream_transfer_request, uint32_t vdevice_handle,
@@ -248,21 +260,27 @@ private:
     hailo_status add_output_named_buffer(const ProtoTransferRequest &proto_stream_transfer_request, uint32_t vdevice_handle,
         uint32_t ng_handle, NamedBuffersCallbacks &named_buffers_callbacks);
     void enqueue_cb_identifier(uint32_t vdevice_handle, ProtoCallbackIdentifier &&cb_identifier);
+    hailo_status enqueue_dmabuf_fd(uint32_t ng_handle, const std::string &stream_name, std::shared_ptr<FileDescriptor> fd);
+    Expected<std::shared_ptr<FileDescriptor>> dequeue_dmabuf_fd(uint32_t ng_handle, const std::string &stream_name);
     hailo_status return_buffer_to_cng_pool(uint32_t ng_handle, const std::string &output_name, BufferPtr buffer);
-    Expected<BufferPtr> acquire_buffer_from_cng_pool(uint32_t ng_handle, const std::string &output_name);
+    Expected<Pooled<Buffer>> acquire_buffer_from_cng_pool(uint32_t ng_handle, const std::string &output_name);
     Expected<size_t> output_vstream_frame_size(uint32_t vstream_handle);
     hailo_status update_buffer_size_in_pool(uint32_t vstream_handle, uint32_t network_group_handle);
-    void shutdown_configured_network_groups_by_ids(std::set<uint32_t> &pids);
-    void shutdown_buffer_pool_by_ids(std::set<uint32_t> &pids);
-    void shutdown_vdevice_cb_queue_by_ids(std::set<uint32_t> &pids);
+    void shutdown_configured_network_groups_by_ids(const std::set<uint32_t> &pids);
+    void shutdown_buffer_pool_by_ids(const std::set<uint32_t> &pids);
+    void shutdown_network_fd_queues_by_ids(const std::set<uint32_t> &pids);
+    void shutdown_vdevice_cb_queue_by_ids(const std::set<uint32_t> &pids);
     hailo_status shutdown_cng_buffer_pool(uint32_t network_group_handle);
+    hailo_status shutdown_network_fd_queues(uint32_t network_fd_queues_handle);
     hailo_status shutdown_vdevice_cb_queue(uint32_t vdevice_handle);
     hailo_status shutdown_configured_network_group(uint32_t vdevice_handle);
+    hailo_status serve_dmabuf_client(const Socket &&conn);
+    Expected<StreamDmaBuffer> recv_dmabuf_fd(const Socket &conn);
 
     std::mutex m_keep_alive_mutex;
     std::map<uint32_t, std::chrono::time_point<std::chrono::high_resolution_clock>> m_clients_pids;
     std::unique_ptr<std::thread> m_keep_alive;
-
+    std::thread m_dmabuf_server_thread;
     std::mutex m_vdevice_mutex;
 };
 

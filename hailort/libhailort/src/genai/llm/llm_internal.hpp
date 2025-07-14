@@ -15,7 +15,8 @@
 
 #include "hailo/expected.hpp"
 #include "hailo/vdevice.hpp"
-#include "hailo/genai/vdevice_genai.hpp"
+
+#include "common/genai/session_wrapper/session_wrapper.hpp"
 
 namespace hailort
 {
@@ -26,15 +27,14 @@ namespace genai
 class LLMGeneratorCompletion::Impl final
 {
 public:
-    Impl(std::shared_ptr<GenAISession> session);
+    Impl(std::shared_ptr<SessionWrapper> session);
 
     Expected<size_t> read(char *output, size_t output_size, std::chrono::milliseconds timeout);
     Expected<std::string> read(std::chrono::milliseconds timeout);
     Status generation_status() const;
 
 private:
-    std::shared_ptr<GenAISession> m_session;
-    std::mutex m_mutex;
+    std::shared_ptr<SessionWrapper> m_session;
     Status m_generation_status;
 };
 
@@ -42,16 +42,13 @@ private:
 class LLMGenerator::Impl final
 {
 public:
-    Impl(std::shared_ptr<GenAISession> session);
+    Impl(std::shared_ptr<SessionWrapper> session);
 
     hailo_status write(const std::string &prompt);
     Expected<LLMGeneratorCompletion> generate();
 
 private:
-    std::shared_ptr<GenAISession> m_session;
-    std::vector<std::string> m_prompts;
-    std::mutex m_mutex;
-    bool m_should_stop_write;
+    std::shared_ptr<SessionWrapper> m_session;
 };
 
 
@@ -63,13 +60,18 @@ public:
 
     Expected<LLMGenerator> create_generator(const LLMGeneratorParams &params);
     Expected<LLMGeneratorParams> create_generator_params();
+    Expected<std::vector<int>> tokenize(const std::string &prompt);
+    hailo_status clear_context();
+
+    ~Impl();
+
+    Impl(std::shared_ptr<SessionWrapper> session, const LLMParams &llm_params,
+        const LLMGeneratorParams &default_generator_params);
 
 private:
-    Impl(std::shared_ptr<GenAISession> session, const LLMParams &llm_params,
-        const LLMGeneratorParams &default_generator_params);
     hailo_status validate_generator_params(const LLMGeneratorParams &params);
 
-    std::shared_ptr<GenAISession> m_session;
+    std::shared_ptr<SessionWrapper> m_session;
     LLMParams m_llm_params;
     LLMGeneratorParams m_default_generator_params;
 };

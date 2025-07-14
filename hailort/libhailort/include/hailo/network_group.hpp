@@ -298,7 +298,7 @@ public:
         const std::string &network_name="") = 0;
 
     /**
-     * Creates output virtual stream params. The groups are splitted with respect to their low-level streams.
+     * Creates output virtual stream params. The groups are split with respect to their low-level streams.
      *
      * @param[in]  unused                   Unused.
      * @param[in]  format_type              The default format type for all output virtual streams.
@@ -311,7 +311,7 @@ public:
         bool unused, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size) = 0;
 
     /**
-     * Gets output virtual stream groups for given network_group. The groups are splitted with respect to their low-level streams.
+     * Gets output virtual stream groups for given network_group. The groups are split with respect to their low-level streams.
      *
      * @return Upon success, returns Expected of a map of vstream name to group index.
      *         Otherwise, returns Unexpected of ::hailo_status error.
@@ -397,7 +397,7 @@ public:
     /**
      * Sets the priority of the network.
      * When the network group scheduler will choose the next network, networks with higher priority will be prioritized in the selection.
-     * bigger number represent higher priority.
+     * Larger number represents higher priority
      *
      * @param[in]  priority             Priority as a number between HAILO_SCHEDULER_PRIORITY_MIN - HAILO_SCHEDULER_PRIORITY_MAX.
      * @param[in]  network_name         Network name for which to set the Priority.

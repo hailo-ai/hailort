@@ -42,12 +42,13 @@ public:
     static Expected<BufferSizesRequirements> get_buffer_requirements_multiple_transfers(
         vdma::VdmaBuffer::Type buffer_type, uint16_t max_desc_page_size,
         uint16_t batch_size, const std::vector<uint32_t> &transfer_sizes, bool is_circular,
-        bool force_default_page_size, bool force_batch_size, bool is_ddr);
+        bool force_default_page_size, bool force_batch_size, bool is_ddr, bool is_extended_ccb_desc_count);
 
     static Expected<BufferSizesRequirements> get_buffer_requirements_single_transfer(
         vdma::VdmaBuffer::Type buffer_type, uint16_t max_desc_page_size,
         uint16_t min_batch_size, uint16_t max_batch_size, uint32_t transfer_size, bool is_circular,
-        bool force_default_page_size, bool force_batch_size, bool is_vdma_aligned_buffer, bool is_ddr);
+        bool force_default_page_size, bool force_batch_size, bool is_vdma_aligned_buffer, bool is_ddr,
+        bool is_extended_ccb_desc_count);
 
 private:
     static uint16_t find_initial_desc_page_size(vdma::VdmaBuffer::Type buffer_type, const std::vector<uint32_t> &transfer_sizes,

@@ -19,6 +19,9 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/android_sink.h>
 #include <spdlog/sinks/null_sink.h>
+#ifdef __unix__
+#include <spdlog/sinks/syslog_sink.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <iostream>
@@ -193,8 +196,18 @@ HailoRTLogger::HailoRTLogger(spdlog::level::level_enum console_level, spdlog::le
 #endif
 
     m_console_sink->set_pattern(HAILORT_CONSOLE_LOGGER_PATTERN);
-    spdlog::sinks_init_list sink_list = { m_console_sink, m_main_log_file_sink, m_local_log_file_sink };
-    m_hailort_logger = make_shared_nothrow<spdlog::logger>(HAILORT_NAME, sink_list.begin(), sink_list.end());
+    std::vector<std::shared_ptr<spdlog::sinks::sink>> sink_vector = { m_console_sink, m_main_log_file_sink, m_local_log_file_sink };
+
+#ifdef __unix__
+    m_should_print_to_syslog = is_env_variable_on(HAILORT_LOGGER_PRINT_TO_SYSLOG_ENV_VAR, HAILORT_LOGGER_PRINT_TO_SYSLOG_ENV_VAR_VALUE);
+    if (m_should_print_to_syslog) {
+        m_syslog_sink = make_shared_nothrow<spdlog::sinks::syslog_sink_mt>("HailoRT", 0, LOG_USER, true);
+        m_syslog_sink->set_pattern(HAILORT_SYSLOG_LOGGER_PATTERN);
+        sink_vector.push_back(m_syslog_sink);
+    }
+#endif
+
+    m_hailort_logger = make_shared_nothrow<spdlog::logger>(HAILORT_NAME, sink_vector.begin(), sink_vector.end());
     if (nullptr == m_hailort_logger) {
         std::cerr << "Allocating memory on heap for HailoRT logger has failed! Please check if this host has enough memory. Writing to log will result in a SEGFAULT!" << std::endl;
         return;
@@ -210,6 +223,9 @@ void HailoRTLogger::set_levels(spdlog::level::level_enum console_level, spdlog::
     m_console_sink->set_level(console_level);
     m_main_log_file_sink->set_level(file_level);
     m_local_log_file_sink->set_level(file_level);
+    if (m_should_print_to_syslog) {
+        m_syslog_sink->set_level(file_level);
+    }
 
     if (is_env_variable_on(HAILORT_LOGGER_FLUSH_EVERY_PRINT_ENV_VAR)) {
         m_hailort_logger->flush_on(spdlog::level::trace);

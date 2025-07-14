@@ -79,7 +79,6 @@ public:
 
         params.device_ids = device_ids_vector->data();
         params.device_count = static_cast<uint32_t>(device_ids_vector->size());
-        params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_NONE;
 
         return std::make_shared<VDeviceWrapper>(params);
     }

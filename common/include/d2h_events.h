@@ -128,7 +128,7 @@ typedef struct {
  * CONTROL_PROTOCOL__context_switch_breakpoint_data_t and hailo_context_switch_breakpoint_reached_notification_message_t */
 typedef struct {
     uint8_t application_index;
-    uint16_t batch_index;
+    uint32_t batch_index;
     uint16_t context_index;
     uint16_t action_index;
 } D2H_EVENT_context_switch_breakpoint_reached_event_message_t;
@@ -150,10 +150,10 @@ typedef struct {
 
 typedef struct {
     uint32_t exit_status;
-    uint8_t application_index;
-    uint16_t batch_index;
+    uint32_t batch_index;
     uint16_t context_index;
     uint16_t action_index;
+    uint8_t application_index;
 } D2H_EVENT_context_switch_run_time_error_event_message_t;
 
 #define D2H_EVENT_CONTEXT_SWITCH_RUN_TIME_ERROR_EVENT_PARAMETER_COUNT  (5)

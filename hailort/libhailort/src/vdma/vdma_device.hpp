@@ -46,6 +46,16 @@ public:
         return m_driver->device_id().c_str();
     };
 
+    size_t get_amount_of_sram_used() const
+    {
+        return m_amount_of_sram_used;
+    }
+
+    void set_amount_of_sram_used(size_t new_amount_of_sram_used)
+    {
+        m_amount_of_sram_used = new_amount_of_sram_used;
+    }
+
     ExpectedRef<vdma::InterruptsDispatcher> get_vdma_interrupts_dispatcher();
     ExpectedRef<vdma::TransferLauncher> get_vdma_transfer_launcher();
 
@@ -84,6 +94,8 @@ protected:
 
     ActiveCoreOpHolder m_active_core_op_holder;
     bool m_is_configured;
+
+    size_t m_amount_of_sram_used;
 
 private:
     Expected<std::shared_ptr<ConfiguredNetworkGroup>> create_configured_network_group(

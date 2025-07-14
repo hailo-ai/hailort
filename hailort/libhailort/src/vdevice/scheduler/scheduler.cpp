@@ -119,6 +119,12 @@ hailo_status CoreOpsScheduler::switch_core_op(const scheduler_core_op_handle_t &
     curr_device_info->current_batch_size = hw_batch_size;
 
     if ((core_op_handle != curr_device_info->current_core_op_handle) || (!has_same_hw_batch_size_as_previous)) {
+        if (curr_device_info->current_core_op_handle != INVALID_CORE_OP_HANDLE &&
+            m_scheduled_core_ops.at(curr_device_info->current_core_op_handle)->requested_infer_requests().load() > 0) {
+            LOGGER__DEBUG("Switching core op while there are pending infer requests so we set timeout to current time");
+            m_scheduled_core_ops.at(curr_device_info->current_core_op_handle)->set_last_run_timestamp(std::chrono::steady_clock::now());
+        }
+
         TRY(auto next_core_op, get_vdma_core_op(core_op_handle, device_id));
 
         std::shared_ptr<VdmaConfigCoreOp> current_core_op = nullptr;
@@ -130,7 +136,6 @@ hailo_status CoreOpsScheduler::switch_core_op(const scheduler_core_op_handle_t &
         CHECK_SUCCESS(status, "Failed switching core-op");
     }
 
-    scheduled_core_op->set_last_run_timestamp(std::chrono::steady_clock::now()); // Mark timestamp on activation
     curr_device_info->current_core_op_handle = core_op_handle;
 
     auto status = send_all_pending_buffers(core_op_handle, device_id, frames_count);
@@ -234,7 +239,10 @@ hailo_status CoreOpsScheduler::enqueue_infer_request(const scheduler_core_op_han
 
     CHECK(m_scheduled_core_ops.at(core_op_handle)->instances_count() > 0, HAILO_INTERNAL_FAILURE,
         "Trying to enqueue infer request on a core-op with instances_count==0");
-
+    if (m_scheduled_core_ops.at(core_op_handle)->is_first_frame()) {
+        // Mark timestamp on activation
+        m_scheduled_core_ops.at(core_op_handle)->set_last_run_timestamp(std::chrono::steady_clock::now());
+    }
     auto status = m_infer_requests.at(core_op_handle).enqueue(std::move(infer_request));
     if (HAILO_SUCCESS == status) {
         m_scheduled_core_ops.at(core_op_handle)->requested_infer_requests().fetch_add(1);
@@ -294,7 +302,7 @@ hailo_status CoreOpsScheduler::set_priority(const scheduler_core_op_handle_t &co
     return HAILO_SUCCESS;
 }
 
-hailo_status CoreOpsScheduler::bind_buffers()
+hailo_status CoreOpsScheduler::bind_and_sync_buffers()
 {
     hailo_status status = HAILO_SUCCESS;
     // For now, binding buffers will take place only on one device
@@ -313,7 +321,7 @@ hailo_status CoreOpsScheduler::bind_buffers()
 
         TRY(auto infer_request, m_infer_requests.at(core_op_pair.first).dequeue());
         TRY(auto vdma_core_op, get_vdma_core_op(core_op_pair.first, m_devices.begin()->second->device_id));
-        status = (vdma_core_op->bind_buffers(infer_request.transfers));
+        status = (vdma_core_op->bind_and_sync_buffers(infer_request.transfers));
         m_bounded_infer_requests[core_op_pair.first].enqueue(std::move(infer_request));
         if (HAILO_SUCCESS != status) {
             LOGGER__ERROR("Failed to bind buffers for core op {}", core_op_pair.first);
@@ -333,8 +341,8 @@ hailo_status CoreOpsScheduler::optimize_streaming_if_enabled(const scheduler_cor
             next_pair = m_devices.begin();
         }
         auto &device_info = next_pair->second;
-        // if HAILO_DISABLE_IDLE_OPT_ENV_VAR then we want the burst size to be the threshold
-        auto burst_size = is_env_variable_on(HAILO_DISABLE_IDLE_OPT_ENV_VAR)? scheduled_core_op->get_threshold() : DEFAULT_BURST_SIZE;
+        // if HAILO_ENABLE_IDLE_OPT_ENV_VAR then we want the burst size to be the threshold
+        auto burst_size = is_env_variable_on(HAILO_ENABLE_IDLE_OPT_ENV_VAR)? DEFAULT_BURST_SIZE: scheduled_core_op->get_threshold();
         if (device_info->current_core_op_handle == core_op_handle && !device_info->is_switching_core_op &&
             !CoreOpsSchedulerOracle::should_stop_streaming(*this, scheduled_core_op->get_priority(), device_info->device_id) &&
             (get_frames_ready_to_transfer(core_op_handle, device_info->device_id) >= burst_size)) {
@@ -353,7 +361,6 @@ Expected<InferRequest> CoreOpsScheduler::dequeue_infer_request(scheduler_core_op
     } else {
         TRY(infer_request, m_infer_requests.at(core_op_handle).dequeue());
     }
-
     m_scheduled_core_ops.at(core_op_handle)->requested_infer_requests().fetch_sub(1);
     return infer_request;
 }
@@ -447,7 +454,7 @@ void CoreOpsScheduler::schedule()
     }
 
     // If possible, bind buffer for all non activated core ops
-    auto status = bind_buffers();
+    auto status = bind_and_sync_buffers();
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("Scheduler thread failed with status={}", status);
     }

@@ -238,7 +238,7 @@ hailo_status VdmaConfigCoreOp::set_scheduler_priority(uint8_t /*priority*/, cons
     return HAILO_INVALID_OPERATION;
 }
 
-hailo_status VdmaConfigCoreOp::bind_buffers(std::unordered_map<std::string, TransferRequest> &transfers)
+hailo_status VdmaConfigCoreOp::bind_and_sync_buffers(std::unordered_map<std::string, TransferRequest> &transfers)
 {
     for (auto &input : m_input_streams) {
         auto transfer = transfers.find(input.second->name());
@@ -246,7 +246,7 @@ hailo_status VdmaConfigCoreOp::bind_buffers(std::unordered_map<std::string, Tran
         if (transfer->second.transfer_buffers.size() > 1) {
             break;
         }
-        CHECK_SUCCESS(input.second->bind_buffer(TransferRequest{transfer->second}));
+        CHECK_SUCCESS(input.second->bind_and_sync_buffer(TransferRequest{transfer->second}));
     }
 
     for (auto &output : m_output_streams) {
@@ -255,7 +255,7 @@ hailo_status VdmaConfigCoreOp::bind_buffers(std::unordered_map<std::string, Tran
         if (transfer->second.transfer_buffers.size() > 1) {
             break;
         }
-        CHECK_SUCCESS(output.second->bind_buffer(TransferRequest{transfer->second}));
+        CHECK_SUCCESS(output.second->bind_and_sync_buffer(TransferRequest{transfer->second}));
     }
 
     return HAILO_SUCCESS;

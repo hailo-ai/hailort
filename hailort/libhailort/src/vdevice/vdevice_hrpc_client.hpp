@@ -61,6 +61,64 @@ private:
     std::string m_device_id;
 };
 
+// Empty implementation for forced-socket in the client side
+class VDeviceSocketBasedClient : public VDevice
+{
+public:
+    static Expected<std::unique_ptr<VDevice>> create(const hailo_vdevice_params_t &params);
+
+    VDeviceSocketBasedClient(const hailo_vdevice_params_t &params)
+        : VDevice(params) {}
+
+    VDeviceSocketBasedClient(VDeviceSocketBasedClient &&) = delete;
+    VDeviceSocketBasedClient(const VDeviceSocketBasedClient &) = delete;
+    VDeviceSocketBasedClient &operator=(VDeviceSocketBasedClient &&) = delete;
+    VDeviceSocketBasedClient &operator=(const VDeviceSocketBasedClient &) = delete;
+    virtual ~VDeviceSocketBasedClient() = default;
+
+    virtual Expected<std::shared_ptr<InferModel>> create_infer_model(const std::string&, const std::string&) override
+    {
+        return make_unexpected(HAILO_NOT_IMPLEMENTED);
+    }
+    virtual Expected<std::shared_ptr<InferModel>> create_infer_model(const MemoryView, const std::string &) override
+    {
+        return make_unexpected(HAILO_NOT_IMPLEMENTED);
+    }
+    virtual Expected<ConfiguredNetworkGroupVector> configure(Hef&, const NetworkGroupsParamsMap&) override
+    {
+        return make_unexpected(HAILO_NOT_IMPLEMENTED);
+    }
+    virtual Expected<std::vector<std::reference_wrapper<Device>>> get_physical_devices() const override
+    {
+        return make_unexpected(HAILO_NOT_IMPLEMENTED);
+    }
+    virtual Expected<std::vector<std::string>> get_physical_devices_ids() const override
+    {
+        return make_unexpected(HAILO_NOT_IMPLEMENTED);
+    }
+    virtual Expected<hailo_stream_interface_t> get_default_streams_interface() const override
+    {
+        return make_unexpected(HAILO_NOT_IMPLEMENTED);
+    }
+    virtual hailo_status dma_map(void*, size_t, hailo_dma_buffer_direction_t) override
+    {
+        return HAILO_NOT_IMPLEMENTED;
+    }
+    virtual hailo_status dma_unmap(void*, size_t, hailo_dma_buffer_direction_t) override
+    {
+        return HAILO_NOT_IMPLEMENTED;
+    }
+    virtual hailo_status dma_map_dmabuf(int, size_t, hailo_dma_buffer_direction_t) override
+    {
+        return HAILO_NOT_IMPLEMENTED;
+    }
+    virtual hailo_status dma_unmap_dmabuf(int, size_t, hailo_dma_buffer_direction_t) override
+    {
+        return HAILO_NOT_IMPLEMENTED;
+    }
+};
+
+
 } /* namespace hailort */
 
 #endif /* _HAILO_VDEVICE_HRPC_CLIENT_HPP_ */

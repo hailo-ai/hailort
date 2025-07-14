@@ -138,6 +138,12 @@ Expected<time_t> Filesystem::get_file_modified_time(const std::string &file_path
     return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
 
+Expected<size_t> Filesystem::get_file_size(const std::string &file_path)
+{
+    (void)file_path;
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
 Expected<bool> Filesystem::is_directory(const std::string &path)
 {
     if (path.length() > MAX_PATH) {

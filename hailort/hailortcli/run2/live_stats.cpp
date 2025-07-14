@@ -149,7 +149,7 @@ hailo_status LiveStats::start()
             CHECK_SUCCESS(track->start());
         }
     }
-    
+
     m_thread = std::thread([this] () {
         OsUtils::set_current_thread_name("LIVE_PRINTER");
         while (true) {

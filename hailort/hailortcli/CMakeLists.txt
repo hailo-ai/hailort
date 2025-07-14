@@ -27,6 +27,7 @@ set(HAILORTCLI_CPP_FILES
     memory_requirements_command.cpp
     graph_printer.cpp
     mon_command.cpp
+    logs_command.cpp
 
     run2/run2_command.cpp
     run2/network_runner.cpp

@@ -14,7 +14,7 @@
 namespace hailort
 {
 
-/* Service, hrpc-server, comunication */
+/* Service, hrpc-server, communication */
 
 /* Changes the default address for grpc communication. used for the service-over-ip feature */
 #define HAILORT_SERVICE_ADDRESS_ENV_VAR ("HAILORT_SERVICE_ADDRESS")
@@ -30,11 +30,11 @@ namespace hailort
 /* Forces the hrpc-server to use socket-based communication on a specific address. if not set, socket communicaiton wont be used. */
 #define HAILO_SOCKET_COM_ADDR_SERVER_ENV_VAR ("HAILO_SOCKET_COM_ADDR_SERVER")
 
-/* Forces Hailo session based on socket to use a specific device. This env var should be set to the iface name (i.e eth0)  */
+/* Forces Hailo session based on socket to use a specific device. This env var should be set to the iface name (i.e eth0) */
 #define HAILO_SOCKET_BIND_TO_INTERFACE_ENV_VAR ("HAILO_SOCKET_BIND_TO_INTERFACE")
 
 /* HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR and HAILO_SOCKET_COM_ADDR_SERVER_ENV_VAR can be set to either <ip> ("X.X.X.X"),
-    or to HAILO_SOCKET_COM_ADDR_UNIX_SOCKET which forces working with unix-socket*/
+    or to HAILO_SOCKET_COM_ADDR_UNIX_SOCKET which forces working with unix-socket */
 #define HAILO_SOCKET_COM_ADDR_UNIX_SOCKET ("localhost")
 
 /* Overrides hRPC/gRPC requests timeout. value in seconds */
@@ -66,6 +66,14 @@ namespace hailort
 /* Force hailo15m partial cluster layout bitmap (which clusters are activated) */
 #define FORCE_LAYOUT_INTERNAL_ENV_VAR ("FORCE_LAYOUT_INTERNAL")
 
+/* Set a custom value for dma-alignment. Default is PAGE_SIZE. */
+#define HAILO_CUSTOM_DMA_ALIGNMENT_ENV_VAR ("HAILO_CUSTOM_DMA_ALIGNMENT")
+
+/* HRTPP runtime optimizations for performance.
+   HAILORT_YOLOV5_SEG_PP_CROP_OPT does an early crop of masks.
+   HAILORT_YOLOV5_SEG_NN_RESIZE uses resize nearest neighbor and cancels sigmoid calc */
+#define HAILORT_YOLOV5_SEG_PP_CROP_OPT_ENV_VAR ("HAILORT_YOLOV5_SEG_PP_CROP_OPT")
+#define HAILORT_YOLOV5_SEG_NN_RESIZE_ENV_VAR ("HAILORT_YOLOV5_SEG_NN_RESIZE")
 
 /* Logger */
 
@@ -75,6 +83,11 @@ namespace hailort
 /* Force QNX Driver logs to be flushed to specific file - or if left undefined - to stderr */
 #define HAILO_QNX_DRIVER_LOG_STDERR_ENV_VAR ("HAILO_QNX_DRIVER_LOG_STDERR")
 
+/* If set, HailoRTLogger would add a sink to syslog.
+    Required for getting all relevant H10 logs in one place, including logs from other sub-systems */
+#define HAILORT_LOGGER_PRINT_TO_SYSLOG_ENV_VAR ("HAILORT_PRINT_TO_SYSLOG")
+#define HAILORT_LOGGER_PRINT_TO_SYSLOG_ENV_VAR_VALUE ("1")
+
 
 /* Inference */
 
@@ -82,7 +95,7 @@ namespace hailort
 #define DISABLE_MULTIPLEXER_ENV_VAR ("HAILO_DISABLE_MULTIPLEXER_INTERNAL")
 
 /* Disable scheduler Idle optimization */
-#define HAILO_DISABLE_IDLE_OPT_ENV_VAR ("HAILO_DISABLE_IDLE_OPT")
+#define HAILO_ENABLE_IDLE_OPT_ENV_VAR ("HAILO_ENABLE_IDLE_OPT")
 
 
 /* Model configuration */
@@ -106,10 +119,6 @@ namespace hailort
 #define HAILO_ALIGNED_CCWS_MAPPED_BUFFER_SIZE_ENV_VAR ("HAILO_ALIGNED_CCWS_MAPPED_BUFFER_SIZE")
 #define HAILO_ALIGNED_CCWS_MAPPED_BUFFER_SIZE (2 * 1024 * 1024)
 
-/* Forces copying the hef file content to a mapped buffer before configuring it's network groups.
-    When working with Hef as a file, we need this copy in order to work with the aligned ccws feature */
-#define HAILO_COPY_HEF_CONTENT_TO_A_MAPPED_BUFFER_PRE_CONFIGURE_ENV_VAR ("HAILO_COPY_HEF_CONTENT_TO_A_MAPPED_BUFFER_PRE_CONFIGURE")
-
 /* Disables the aligned ccws feature - in case this env var is set, the aligned_ccws feature won't be used.
     Instead - we will alocate aligned config buffers and will copy the CCWs to them */
 #define HAILO_DISABLE_ALIGNED_CCWS_ENV_VAR ("HAILO_DISABLE_ALIGNED_CCWS")
@@ -122,6 +131,9 @@ namespace hailort
 
 /* Set HW infer Tool to use CCB for Boundary Channels*/
 #define HAILO_HW_INFER_BOUNDARY_CHANNELS_OVER_CCB_ENV_VAR ("HAILO_HW_INFER_BOUNDARY_CHANNELS_OVER_CCB")
+
+/* Disables the post process operations on HEFs that have it - Hailo10 only! */
+#define HAILO_DISABLE_PP_ENV_VAR ("HAILO_DISABLE_PP")
 
 } /* namespace hailort */
 

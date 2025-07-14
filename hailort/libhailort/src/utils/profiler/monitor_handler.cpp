@@ -15,6 +15,12 @@
 
 namespace hailort
 {
+
+std::string get_curr_pid_as_str()
+{
+    return std::to_string(OsUtils::get_curr_pid());
+}
+
 MonitorHandler::MonitorHandler()
 {
     auto env_val = get_env_variable(SCHEDULER_MON_TIME_INTERVAL_IN_MILLISECONDS_ENV_VAR);
@@ -203,13 +209,9 @@ hailo_status MonitorHandler::start_mon(const std::string &unique_vdevice_hash)
     m_mon_shutdown_event = event_exp.release();
     m_last_measured_timestamp = std::chrono::steady_clock::now();
 
-    auto tmp_file = open_temp_mon_file();
-    CHECK_EXPECTED_AS_STATUS(tmp_file);
-    m_mon_tmp_output = tmp_file.release();
+    TRY(m_mon_tmp_output, open_temp_mon_file(get_curr_pid_as_str(), SCHEDULER_MON_TMP_DIR));
 
-    auto tmp_nnc_utilization_file_exp = open_temp_nnc_utilization_file();
-    CHECK_EXPECTED_AS_STATUS(tmp_nnc_utilization_file_exp);
-    m_nnc_utilization_tmp_output = tmp_nnc_utilization_file_exp.release();
+    TRY(m_nnc_utilization_tmp_output, open_temp_mon_file(NNC_UTILIZATION_FILE_NAME, NNC_UTILIZATION_TMP_DIR));
 
     m_mon_thread = std::thread([this] ()
     {
@@ -234,37 +236,34 @@ hailo_status MonitorHandler::start_mon(const std::string &unique_vdevice_hash)
 #endif
 }
 
-std::string get_curr_pid_as_str()
-{
-    return std::to_string(OsUtils::get_curr_pid());
-}
-
 #if defined(__GNUC__)
-Expected<std::shared_ptr<TempFile>> MonitorHandler::open_temp_mon_file()
+
+Expected<std::shared_ptr<TempFile>> MonitorHandler::open_temp_mon_file(const std::string &file_name, const std::string &file_dir)
 {
-    std::string file_name = get_curr_pid_as_str();
-    auto tmp_file = TempFile::create(file_name, SCHEDULER_MON_TMP_DIR);
-    CHECK_EXPECTED(tmp_file);
+    TRY(auto tmp_file, TempFile::create(file_name, file_dir));
 
-    auto tmp_file_ptr = make_shared_nothrow<TempFile>(tmp_file.release());
-    CHECK_AS_EXPECTED(nullptr != tmp_file_ptr, HAILO_OUT_OF_HOST_MEMORY);
-
-    return tmp_file_ptr;
-}
-
-Expected<std::shared_ptr<TempFile>> MonitorHandler::open_temp_nnc_utilization_file()
-{
-    auto tmp_file = TempFile::create(NNC_UTILIZATION_FILE_NAME, NNC_UTILIZATION_TMP_DIR);
-    CHECK_EXPECTED(tmp_file);
-
-    auto tmp_file_ptr = make_shared_nothrow<TempFile>(tmp_file.release());
-    CHECK_AS_EXPECTED(nullptr != tmp_file_ptr, HAILO_OUT_OF_HOST_MEMORY);
+    auto tmp_file_ptr = make_shared_nothrow<TempFile>(tmp_file);
+    CHECK_NOT_NULL(tmp_file_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return tmp_file_ptr;
 }
 
 void MonitorHandler::write_utilization_to_file(const double utilization_percentage)
 {
+    auto dir_exists = Filesystem::is_directory(m_nnc_utilization_tmp_output->dir());
+    if (HAILO_SUCCESS != dir_exists.status()) {
+        LOGGER__ERROR("Failed to check if nnc utilization directory {} exists, status: {}", m_nnc_utilization_tmp_output->dir(), dir_exists.status());
+        return;
+    }
+
+    if (false == dir_exists.value()) {
+        auto status = Filesystem::create_directory(m_nnc_utilization_tmp_output->dir());
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to nnc utilization directory {}, status: {}", m_nnc_utilization_tmp_output->dir(), status);
+            return;
+        }
+    }
+
     auto locked_file = LockedFile::create(m_nnc_utilization_tmp_output->name(), "w");
     if (locked_file.status() != HAILO_SUCCESS) {
         LOGGER__ERROR("Failed to open and lock file {}, with status: {}", m_nnc_utilization_tmp_output->name(), locked_file.status());
@@ -285,8 +284,21 @@ void MonitorHandler::dump_state()
      * Write to a temporary file first, then rename it to the target path.
      * This ensures the monitor file is never seen in an empty or partially written state.
      */
-    std::string tmp_path = m_mon_tmp_output->name() + ".tmp";
+    auto dir_exists = Filesystem::is_directory(m_mon_tmp_output->dir());
+    if (HAILO_SUCCESS != dir_exists.status()) {
+        LOGGER__ERROR("Failed to check if tmp mon directory {} exists, status: {}", m_mon_tmp_output->dir(), dir_exists.status());
+        return;
+    }
 
+    if (false == dir_exists.value()) {
+        auto status = Filesystem::create_directory(m_mon_tmp_output->dir());
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to tmp mon directory {}, status: {}", m_mon_tmp_output->dir(), status);
+            return;
+        }
+    }
+
+    std::string tmp_path = m_mon_tmp_output->name() + ".tmp";
     auto tmp_file = LockedFile::create(tmp_path, "w");
     if (HAILO_SUCCESS != tmp_file.status()) {
         LOGGER__ERROR("Failed to open and lock tmp file {}, status: {}", tmp_path, tmp_file.status());

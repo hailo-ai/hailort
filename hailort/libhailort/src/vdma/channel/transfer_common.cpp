@@ -64,18 +64,8 @@ Expected<vdma::MappedBufferPtr> TransferBuffer::map_buffer(HailoRTDriver &driver
     if (TransferBufferType::DMABUF == m_type) {
         TRY(m_mappings, vdma::MappedBuffer::create_shared_from_dmabuf(m_dmabuf.fd, m_dmabuf.size, driver, direction));
     } else {
-        if (is_aligned_for_dma()) {
-            TRY(auto dma_able_buffer, vdma::DmaAbleBuffer::create_from_user_address(m_base_buffer.data(), m_base_buffer.size()));
-            TRY(m_mappings, vdma::MappedBuffer::create_shared(std::move(dma_able_buffer), driver, direction));
-        } else {
-            // Allocate a new bounce buffer for the mapping.
-            // On H2D dir, copy the data on the map
-            // On D2H dir, copy the data on the unmap
-            TRY(m_mappings, vdma::MappedBuffer::create_shared_by_allocation(m_base_buffer.size(), driver, direction));
-            if (HailoRTDriver::DmaDirection::H2D == direction) {
-                (void)copy_to(MemoryView(m_mappings->user_address(), m_mappings->size()));
-            }
-        }
+        TRY(auto dma_able_buffer, vdma::DmaAbleBuffer::create_from_user_address(m_base_buffer.data(), m_base_buffer.size()));
+        TRY(m_mappings, vdma::MappedBuffer::create_shared(std::move(dma_able_buffer), driver, direction));
     }
 
     return Expected<vdma::MappedBufferPtr>{m_mappings};
@@ -83,16 +73,12 @@ Expected<vdma::MappedBufferPtr> TransferBuffer::map_buffer(HailoRTDriver &driver
 
 void TransferBuffer::unmap_buffer()
 {
-    const bool is_bounce_buffer = !is_aligned_for_dma();
-    if (is_bounce_buffer && m_mappings && (HailoRTDriver::DmaDirection::D2H == m_mappings->direction())) {
-        (void)copy_from(MemoryView(m_mappings->user_address(), m_mappings->size()));
-    }
     m_mappings.reset();
 }
 
 Expected<std::vector<HailoRTDriver::TransferBuffer>> TransferBuffer::to_driver_buffers()
 {
-    CHECK(m_mappings, HAILO_INTERNAL_FAILURE, "transfer-buffer must be mapped before launch-transfer");
+    CHECK(is_aligned_for_dma(), HAILO_INTERNAL_FAILURE, "transfer-buffer must be page-aligned");
 
     std::vector<HailoRTDriver::TransferBuffer> res;
     HailoRTDriver::TransferBuffer buf;
@@ -110,12 +96,12 @@ Expected<std::vector<HailoRTDriver::TransferBuffer>> TransferBuffer::to_driver_b
 
         buf.is_dma_buf = false;
         buf.size = parts.first.size();
-        buf.addr_or_fd = reinterpret_cast<uintptr_t>(m_mappings->user_address()) + static_cast<uintptr_t>(m_offset);
+        buf.addr_or_fd = reinterpret_cast<uintptr_t>(m_base_buffer.data()) + static_cast<uintptr_t>(m_offset);
         res.emplace_back(buf);
 
         if (!parts.second.empty()) {
             buf.size = parts.second.size();
-            buf.addr_or_fd = reinterpret_cast<uintptr_t>(m_mappings->user_address());
+            buf.addr_or_fd = reinterpret_cast<uintptr_t>(m_base_buffer.data());
             res.emplace_back(buf);
         }
 

@@ -55,14 +55,21 @@ static_assert((0 == ((ONGOING_TRANSFERS_SIZE - 1) & ONGOING_TRANSFERS_SIZE)), "O
 
 #define PCIE_EXPECTED_MD5_LENGTH (16)
 
-constexpr size_t VDMA_CHANNELS_PER_ENGINE           = 32;
 constexpr size_t MAX_VDMA_ENGINES_COUNT             = 3;
+// For all archs except for Hailo10H2
+constexpr size_t VDMA_CHANNELS_PER_ENGINE           = 40;
 constexpr size_t MAX_VDMA_CHANNELS_COUNT            = MAX_VDMA_ENGINES_COUNT * VDMA_CHANNELS_PER_ENGINE;
 constexpr uint8_t MIN_H2D_CHANNEL_INDEX             = 0;
 constexpr uint8_t MAX_H2D_CHANNEL_INDEX             = 15;
 constexpr uint8_t MIN_D2H_CHANNEL_INDEX             = MAX_H2D_CHANNEL_INDEX + 1;
 constexpr uint8_t MAX_D2H_CHANNEL_INDEX             = 31;
 constexpr uint8_t MIN_ENHANCED_D2H_CHANNEL_INDEX    = 28;
+
+// For Hailo10H2
+constexpr uint8_t MAX_H2D_CHANNEL_INDEX_H10H2             = 23;
+constexpr uint8_t MIN_D2H_CHANNEL_INDEX_H10H2             = MAX_H2D_CHANNEL_INDEX_H10H2 + 1;
+constexpr uint8_t MAX_D2H_CHANNEL_INDEX_H10H2             = 39;
+constexpr uint8_t MIN_ENHANCED_D2H_CHANNEL_INDEX_H10H2    = MIN_D2H_CHANNEL_INDEX_H10H2;
 
 constexpr size_t MAX_TRANSFER_BUFFERS_IN_REQUEST = 8;
 
@@ -90,7 +97,7 @@ struct IrqData {
 };
 
 // Bitmap per engine
-using ChannelsBitmap = std::array<uint32_t, MAX_VDMA_ENGINES_COUNT>;
+using ChannelsBitmap = std::array<uint64_t, MAX_VDMA_ENGINES_COUNT>;
 
 #if defined(__linux__) || defined(_WIN32)
 // Unique handle returned from the driver.
@@ -177,8 +184,10 @@ public:
         DEVICE_BOARD_TYPE_HAILO15,
         DEVICE_BOARD_TYPE_HAILO15L,
         DEVICE_BOARD_TYPE_HAILO10H,
-        DEVICE_BOARD_TYPE_HAILO10H_LEGACY,
+        DEVICE_BOARD_TYPE_HAILO10H_LEGACY_BOOT,
+        DEVICE_BOARD_TYPE_HAILO15H_ACCELERATOR_MODE,
         DEVICE_BOARD_TYPE_MARS,
+        DEVICE_BOARD_TYPE_MARS_LEGACY_BOOT,
         DEVICE_BOARD_TYPE_COUNT,
     };
 
@@ -277,7 +286,7 @@ public:
      * @param[in] data_direction - direction is used for optimization.
      * @param[in] driver_buff_handle - handle to driver allocated buffer - INVALID_DRIVER_BUFFER_HANDLE_VALUE in case
      *  of user allocated buffer
-     */ 
+     */
     Expected<VdmaBufferHandle> vdma_buffer_map(uintptr_t user_address, size_t required_size, DmaDirection data_direction,
         const vdma_mapped_buffer_driver_identifier &driver_buff_handle, DmaBufferType buffer_type);
 
@@ -324,7 +333,7 @@ public:
      */
     hailo_status launch_transfer(vdma::ChannelId channel_id, uintptr_t desc_handle,
         uint32_t starting_desc, const std::vector<TransferBuffer> &transfer_buffer, bool should_bind,
-        InterruptsDomain first_desc_interrupts, InterruptsDomain last_desc_interrupts);
+        bool should_sync, InterruptsDomain first_desc_interrupts, InterruptsDomain last_desc_interrupts);
 
     Expected<uintptr_t> vdma_low_memory_buffer_alloc(size_t size);
     hailo_status vdma_low_memory_buffer_free(uintptr_t buffer_handle);
@@ -353,6 +362,8 @@ public:
 
     Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> pci_ep_accept(uint16_t port_number,
         uintptr_t input_buffer_desc_handle, uintptr_t output_buffer_desc_handle);
+
+    hailo_status pci_ep_listen(uint16_t port_number, uint8_t backlog_size);
 
     hailo_status close_connection(vdma::ChannelId input_channel, vdma::ChannelId output_channel,
         PcieSessionType session_type);

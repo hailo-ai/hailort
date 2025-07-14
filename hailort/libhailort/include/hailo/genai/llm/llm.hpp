@@ -13,7 +13,6 @@
 
 #include "hailo/expected.hpp"
 #include "hailo/vdevice.hpp"
-#include "hailo/genai/vdevice_genai.hpp"
 #include "hailo/genai/common.hpp"
 
 namespace hailort
@@ -33,7 +32,7 @@ public:
      * Sets LLM model.
      *
      * @param[in] hef_path        The path of the Hef file.
-     * @param[in] lora_name       The name of the chosen LoRA. Currently not implemented.
+     * @param[in] lora_name       The name of the chosen LoRA.
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
@@ -143,8 +142,7 @@ public:
      *
      * @param[in] seed          The seed for the random number generator for statistical sampling.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note If the seed remains unchanged between calls, the generator will continue producing values from its
-     *       current state. If a new seed is provided, the generator is reinitialized.
+     * @note If seed is not set, or is set to its default value HAILO_RANDOM_SEED - a random seed will be used.
      */
     hailo_status set_seed(uint32_t seed);
 
@@ -186,6 +184,8 @@ public:
         MAX_TOKENS_REACHED,
         LOGICAL_END_OF_GENERATION,
 
+        COUNT,
+
         MAX_VALUE = HAILO_MAX_ENUM,
     };
 
@@ -197,6 +197,7 @@ public:
      * @param[in]  timeout         The timeout for the read operation.
      * @return Upon success, returns Expected to size_t, representing the number of bytes read. Otherwise, returns Unexpected of ::hailo_status error.
      * @note The returned output is a UTF-8 encoded string.
+     * @note In case the next token completion is the replacement character (U+FFFD), this token will be buffered until the next printable character is received.
      */
     Expected<size_t> read(char *output, size_t output_size, std::chrono::milliseconds timeout = DEFAULT_READ_TIMEOUT);
 
@@ -206,6 +207,7 @@ public:
      * @param[in] timeout          The timeout for the read operation.
      * @return Upon success, returns Expected of std::string, representing the next token completion. Otherwise, returns Unexpected of ::hailo_status error.
      * @note The returned output is a UTF-8 encoded string.
+     * @note In case the next token completion is the replacement character (U+FFFD), this token will be buffered until the next printable character is received.
      */
     Expected<std::string> read(std::chrono::milliseconds timeout = DEFAULT_READ_TIMEOUT);
 
@@ -246,6 +248,7 @@ public:
      * @param[in] prompt        The prompt to be sent to the LLM model
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      * @note Multiple sequential writes are supported. Prompts are aggregated as-is without separators.
+     * @note Calling this function while the model is already generating may lead to undefined behavior.
      */
     hailo_status write(const std::string &prompt);
 
@@ -256,6 +259,7 @@ public:
      * @param[in] prompt_size   The prompt size.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      * @note Multiple sequential writes are supported. Prompts are aggregated as-is without separators.
+     * @note Calling this function while the model is already generating may lead to undefined behavior.
      */
     hailo_status write(const char *prompt, size_t prompt_size);
 
@@ -264,7 +268,6 @@ public:
      * Returns an LLMGeneratorCompletion, which allows fetching generated tokens incrementally.
      *
      * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
-     * @note Once this function is called, the LLMGenerator is no longer functional.
      */
     Expected<LLMGeneratorCompletion> generate();
 
@@ -276,6 +279,8 @@ private:
 
 /*! Represents the LLM Model.
  *  Manages the lifecycle and configuration of a large language model instance.
+ *  Provides methods to generate text, and manage the conversation context that is stored on the Hailo device.
+ *  The entire LLM pipeline is offloaded to the Hailo device (tokenization, pre and post-process, etc), allowing for efficient processing of large language models.
  */
 class HAILORTAPI LLM
 {
@@ -303,6 +308,9 @@ public:
      *
      * @param[in] params            The LLMGeneratorParams used to set the generator parameters.
      * @return Upon success, returns Expected of LLMGenerator. Otherwise, returns Unexpected of ::hailo_status error.
+     * @note Only one generator shall be active at any time to ensure precision in parameter handling.
+     *       A subsequent generator must only be created once the previous one has been fully destructed.
+     *       Creating two generators at the same time may lead to invalid usage and undefined behavior.
      */
     Expected<LLMGenerator> create_generator(const LLMGeneratorParams &params);
 
@@ -310,8 +318,27 @@ public:
      * Creates an LLMGenerator object using the model's default generator parameters.
      *
      * @return Upon success, returns Expected of LLMGenerator. Otherwise, returns Unexpected of ::hailo_status error.
+     * @note Only one generator shall be active at any time to ensure precision in parameter handling.
+     *       A subsequent generator must only be created once the previous one has been fully destructed.
+     *       Creating two generators at the same time may lead to invalid usage and undefined behavior.
      */
     Expected<LLMGenerator> create_generator();
+
+    /**
+     * Tokenizes a given string into a vector of integers representing the tokens.
+     *
+     * @param[in] prompt     The input string to tokenize.
+     * @return Upon success, returns Expected of vector of integers. Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    Expected<std::vector<int>> tokenize(const std::string &prompt);
+
+    /**
+     * Clears the conversation context of the LLM.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This function must not be called while a generation is in progress
+     */
+    hailo_status clear_context();
 
     LLM(LLM &&);
     LLM &operator=(LLM &&) = delete;

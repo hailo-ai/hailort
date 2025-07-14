@@ -6,8 +6,8 @@
 #ifndef _HAILO_IOCTL_COMMON_H_
 #define _HAILO_IOCTL_COMMON_H_
 
-#define HAILO_DRV_VER_MAJOR 4
-#define HAILO_DRV_VER_MINOR 22
+#define HAILO_DRV_VER_MAJOR 5
+#define HAILO_DRV_VER_MINOR 0
 #define HAILO_DRV_VER_REVISION 0
 
 #define _STRINGIFY_EXPANDED( x ) #x
@@ -16,8 +16,8 @@
 
 
 // This value is not easily changeable.
-// For example: the channel interrupts ioctls assume we have up to 32 channels
-#define MAX_VDMA_CHANNELS_PER_ENGINE            (32)
+// For example: the channel interrupts ioctls assume we have up to 40 channels
+#define MAX_VDMA_CHANNELS_PER_ENGINE            (40)
 #define VDMA_CHANNELS_PER_ENGINE_PER_DIRECTION  (16)
 #define MAX_VDMA_ENGINES                        (3)
 #define SIZE_OF_VDMA_DESCRIPTOR                 (16)
@@ -46,7 +46,7 @@ enum hailo_pcie_soc_interrupt_masks {
 
 #define INVALID_VDMA_CHANNEL                (0xff)
 
-#define HAILO_DMA_DIRECTION_EQUALS(a, b) (a == HAILO_DMA_BIDIRECTIONAL || b == HAILO_DMA_BIDIRECTIONAL || a == b)
+#define HAILO_DMA_DIRECTION_EQUALS(curr, other) (curr == HAILO_DMA_BIDIRECTIONAL || curr == other)
 
 #if !defined(__cplusplus) && defined(NTDDI_VERSION)
 #include <wdm.h>
@@ -68,10 +68,6 @@ typedef uint8_t bool;
 #if !defined(INT_MAX)
 #define INT_MAX 0x7FFFFFFF
 #endif // !defined(INT_MAX)
-
-#if !defined(ECONNRESET)
-#define	ECONNRESET	104	/* Connection reset by peer */
-#endif // !defined(ECONNRESET)
 
 // {d88d31f1-fede-4e71-ac2a-6ce0018c1501}
 DEFINE_GUID (GUID_DEVINTERFACE_HailoKM_NNC,
@@ -294,13 +290,13 @@ struct hailo_desc_list_program_params {
 
 /* structure used in ioctl HAILO_VDMA_ENABLE_CHANNELS */
 struct hailo_vdma_enable_channels_params {
-    uint32_t channels_bitmap_per_engine[MAX_VDMA_ENGINES];  // in
+    uint64_t channels_bitmap_per_engine[MAX_VDMA_ENGINES];  // in
     bool enable_timestamps_measure;                         // in
 };
 
 /* structure used in ioctl HAILO_VDMA_DISABLE_CHANNELS */
 struct hailo_vdma_disable_channels_params {
-    uint32_t channels_bitmap_per_engine[MAX_VDMA_ENGINES];  // in
+    uint64_t channels_bitmap_per_engine[MAX_VDMA_ENGINES];  // in
 };
 
 /* structure used in ioctl HAILO_VDMA_INTERRUPTS_WAIT */
@@ -316,7 +312,7 @@ struct hailo_vdma_interrupts_channel_data {
 };
 
 struct hailo_vdma_interrupts_wait_params {
-    uint32_t channels_bitmap_per_engine[MAX_VDMA_ENGINES];          // in
+    uint64_t channels_bitmap_per_engine[MAX_VDMA_ENGINES];          // in
     uint8_t channels_count;                                         // out
     struct hailo_vdma_interrupts_channel_data
         irq_data[MAX_VDMA_CHANNELS_PER_ENGINE * MAX_VDMA_ENGINES];  // out
@@ -424,13 +420,18 @@ struct hailo_d2h_notification {
     uint8_t buffer[MAX_NOTIFICATION_LENGTH]; // out
 };
 
+#define LEGACY_BOOT(board_type) (HAILO_BOARD_TYPE_HAILO10H_LEGACY_BOOT == board_type || \
+                                 HAILO_BOARD_TYPE_MARS_LEGACY_BOOT == board_type)
+
 enum hailo_board_type {
     HAILO_BOARD_TYPE_HAILO8 = 0,
     HAILO_BOARD_TYPE_HAILO15,
     HAILO_BOARD_TYPE_HAILO15L,
     HAILO_BOARD_TYPE_HAILO10H,
-    HAILO_BOARD_TYPE_HAILO10H_LEGACY,
+    HAILO_BOARD_TYPE_HAILO10H_LEGACY_BOOT,
+    HAILO_BOARD_TYPE_HAILO15H_ACCELERATOR_MODE,
     HAILO_BOARD_TYPE_MARS,
+    HAILO_BOARD_TYPE_MARS_LEGACY_BOOT,
     HAILO_BOARD_TYPE_COUNT,
 
     /** Max enum value to maintain ABI Integrity */
@@ -529,6 +530,7 @@ struct hailo_vdma_launch_transfer_params {
     uint32_t starting_desc;                                             // in
 
     bool should_bind;                                                   // in, if false, assumes buffer already bound.
+    bool should_sync;                                                   // in, if false, assumes buffer already synced.
     uint8_t buffers_count;                                              // in
     struct hailo_vdma_transfer_buffer
         buffers[HAILO_MAX_BUFFERS_PER_SINGLE_TRANSFER];                 // in
@@ -570,6 +572,12 @@ struct hailo_pci_ep_close_params {
     uint8_t output_channel_index;   // in
 };
 
+/* structure used in ioctl HAILO_PCI_EP_LISTEN */
+struct hailo_pci_ep_listen_params {
+    uint16_t port_number;           // in
+    uint8_t  backlog_size;          // in
+};
+
 #ifdef _MSC_VER
 struct tCompatibleHailoIoctlData
 {
@@ -596,6 +604,7 @@ struct tCompatibleHailoIoctlData
         struct hailo_vdma_launch_transfer_params LaunchTransfer;
         struct hailo_soc_connect_params ConnectParams;
         struct hailo_soc_close_params SocCloseParams;
+        struct hailo_pci_ep_listen_params ListenParams;
         struct hailo_pci_ep_accept_params AcceptParams;
         struct hailo_pci_ep_close_params PciEpCloseParams;
         struct hailo_write_action_list_params WriteActionListParams;
@@ -683,20 +692,21 @@ enum hailo_nnc_ioctl_code {
 #define HAILO_WRITE_ACTION_LIST         _IOW_(HAILO_NNC_IOCTL_MAGIC,    HAILO_WRITE_ACTION_LIST_CODE,     struct hailo_write_action_list_params)
 
 enum hailo_soc_ioctl_code {
-    HAILO_SOC_IOCTL_CONNECT_CODE,
-    HAILO_SOC_IOCTL_CLOSE_CODE,
-    HAILO_SOC_IOCTL_POWER_OFF_CODE,
+    HAILO_SOC_CONNECT_CODE,
+    HAILO_SOC_CLOSE_CODE,
+    HAILO_SOC_POWER_OFF_CODE,
     // Must be last
     HAILO_SOC_IOCTL_MAX_NR,
 };
 
-#define HAILO_SOC_CONNECT       _IOWR_(HAILO_SOC_IOCTL_MAGIC, HAILO_SOC_IOCTL_CONNECT_CODE, struct hailo_soc_connect_params)
-#define HAILO_SOC_CLOSE         _IOR_(HAILO_SOC_IOCTL_MAGIC,  HAILO_SOC_IOCTL_CLOSE_CODE,   struct hailo_soc_close_params)
-#define HAILO_SOC_POWER_OFF     _IO_(HAILO_SOC_IOCTL_MAGIC,   HAILO_SOC_IOCTL_POWER_OFF_CODE)
+#define HAILO_SOC_CONNECT       _IOWR_(HAILO_SOC_IOCTL_MAGIC, HAILO_SOC_CONNECT_CODE, struct hailo_soc_connect_params)
+#define HAILO_SOC_CLOSE         _IOR_(HAILO_SOC_IOCTL_MAGIC,  HAILO_SOC_CLOSE_CODE,   struct hailo_soc_close_params)
+#define HAILO_SOC_POWER_OFF     _IO_(HAILO_SOC_IOCTL_MAGIC,   HAILO_SOC_POWER_OFF_CODE)
 
 enum hailo_pci_ep_ioctl_code {
     HAILO_PCI_EP_ACCEPT_CODE,
     HAILO_PCI_EP_CLOSE_CODE,
+    HAILO_PCI_EP_LISTEN_CODE,
 
     // Must be last
     HAILO_PCI_EP_IOCTL_MAX_NR,
@@ -704,5 +714,6 @@ enum hailo_pci_ep_ioctl_code {
 
 #define HAILO_PCI_EP_ACCEPT         _IOWR_(HAILO_PCI_EP_IOCTL_MAGIC,  HAILO_PCI_EP_ACCEPT_CODE,  struct hailo_pci_ep_accept_params)
 #define HAILO_PCI_EP_CLOSE          _IOR_(HAILO_PCI_EP_IOCTL_MAGIC,   HAILO_PCI_EP_CLOSE_CODE,   struct hailo_pci_ep_close_params)
+#define HAILO_PCI_EP_LISTEN         _IOR_(HAILO_PCI_EP_IOCTL_MAGIC,   HAILO_PCI_EP_LISTEN_CODE,  struct hailo_pci_ep_listen_params)
 
 #endif /* _HAILO_IOCTL_COMMON_H_ */

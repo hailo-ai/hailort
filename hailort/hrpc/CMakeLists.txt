@@ -13,3 +13,19 @@ set(SRC_FILES
 )
 
 set(HRPC_CPP_SOURCES ${SRC_FILES} PARENT_SCOPE)
+
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+add_library(hailo_rpc STATIC EXCLUDE_FROM_ALL ${SRC_FILES})
+target_include_directories(hailo_rpc PRIVATE
+    ${HAILORT_SRC_DIR}
+    ${COMMON_INC_DIR}
+    ${DRIVER_INC_DIR}
+)
+target_compile_options(hailo_rpc PRIVATE ${HAILORT_COMPILE_OPTIONS})
+set_target_properties(hailo_rpc PROPERTIES CXX_STANDARD 14 POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(hailo_rpc PRIVATE
+    Threads::Threads
+    rpc_proto
+    hailort_common
+)

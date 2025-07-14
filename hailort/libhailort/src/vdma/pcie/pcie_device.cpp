@@ -80,8 +80,12 @@ Expected<std::unique_ptr<Device>> PcieDevice::create(const hailo_pcie_device_inf
     auto device_info = find_device_info(pcie_device_info);
     CHECK_EXPECTED(device_info);
 
-    CHECK(HailoRTDriver::AcceleratorType::NNC_ACCELERATOR == device_info->accelerator_type,
-        HAILO_NOT_SUPPORTED, "Hailo1X Devices are only supported in versions 5.0.0 and above. ");
+    if ((get_env_variable(HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR).has_value()) || (HailoRTDriver::AcceleratorType::SOC_ACCELERATOR == device_info->accelerator_type)) {
+        TRY(auto pcie_device, PcieDeviceHrpcClient::create(device_info->device_id));
+        // Upcasting to Device unique_ptr (from PcieDeviceHrpcClient unique_ptr)
+        auto device = std::unique_ptr<Device>(std::move(pcie_device));
+        return device;
+    }
 
     auto driver = HailoRTDriver::create(device_info->device_id, device_info->dev_path);
     CHECK_EXPECTED(driver);
@@ -90,6 +94,11 @@ Expected<std::unique_ptr<Device>> PcieDevice::create(const hailo_pcie_device_inf
     auto pcie_device = std::unique_ptr<PcieDevice>(new (std::nothrow) PcieDevice(driver.release(), status));
     CHECK_NOT_NULL_AS_EXPECTED(pcie_device, HAILO_OUT_OF_HOST_MEMORY);
     CHECK_SUCCESS_AS_EXPECTED(status, "Failed creating PcieDevice");
+
+    // Check if the device is supported
+    TRY(auto device_arch, pcie_device->get_architecture());
+    CHECK((device_arch != HAILO_ARCH_HAILO8_A0) && (device_arch != HAILO_ARCH_HAILO8) && (device_arch != HAILO_ARCH_HAILO8L), 
+        HAILO_NOT_SUPPORTED, "Hailo8 devices are only supported in versions 4.x.x and earlier");
 
     // Upcasting to Device unique_ptr (from PcieDevice unique_ptr)
     auto device = std::unique_ptr<Device>(std::move(pcie_device));

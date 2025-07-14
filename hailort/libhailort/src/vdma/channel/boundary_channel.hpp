@@ -75,9 +75,9 @@ public:
 
     // To avoid buffer bindings, one can call this function to statically bind a full buffer to the channel. The buffer
     // size should be exactly desc_page_size() * descs_count() of current descriptors list.
-    hailo_status bind_buffer(MappedBufferPtr buffer);
+    hailo_status bind_and_sync_buffer(MappedBufferPtr buffer, bool should_sync, HailoRTDriver::DmaSyncDirection sync_direction);
 
-    hailo_status map_and_bind_buffer(hailort::TransferBuffer &buffer);
+    hailo_status map_and_bind_sync_buffer(hailort::TransferBuffer &buffer, HailoRTDriver::DmaSyncDirection sync_direction);
 
     // TODO: rename BoundaryChannel::get_max_ongoing_transfers to BoundaryChannel::get_max_parallel_transfers (HRT-13513)
     size_t get_max_ongoing_transfers(size_t transfer_size) const;
@@ -117,7 +117,8 @@ private:
     static bool is_desc_between(uint16_t begin, uint16_t end, uint16_t desc);
     hailo_status validate_bound_buffer(TransferRequest &transfer_request);
 
-    Expected<bool> should_bind_buffer(TransferRequest &transfer_request);
+    Expected<bool> should_bind_and_sync_buffer(TransferRequest &transfer_request);
+    bool is_cyclic_buffer();
     static Expected<bool> is_same_buffer(MappedBufferPtr mapped_buff, TransferBuffer &transfer_buffer);
     Expected<std::vector<TransferRequest>> split_messages(TransferRequest &&transfer_request);
 

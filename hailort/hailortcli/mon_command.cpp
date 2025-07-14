@@ -196,8 +196,6 @@ Expected<uint16_t> get_terminal_line_width()
 hailo_status MonCommand::print_tables(const std::vector<ProtoMon> &mon_messages, uint32_t terminal_line_width)
 {
     std::ostringstream buffer;
-    buffer.str("");  // Clear previous content
-    buffer.clear();  // Reset any error state
 
     buffer << FORMAT_RESET_TERMINAL_CURSOR_FIRST_LINE;
 

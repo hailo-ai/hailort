@@ -56,6 +56,10 @@ public:
 
     Expected<size_t> recv(uint8_t *buffer, size_t size, int flags = 0);
     Expected<size_t> send(const uint8_t *buffer, size_t size, int flags = 0);
+    Expected<size_t> recvmsg(struct msghdr *msg, int flags = 0) const;
+    Expected<size_t> sendmsg(const struct msghdr *msg, int flags = 0) const;
+    Expected<int> read_fd();
+    hailo_status write_fd(int fd, size_t buffer_size);
 
     hailo_status set_recv_buffer_size_max();
     hailo_status set_timeout(const std::chrono::milliseconds timeout_ms, timeval_t *timeout);

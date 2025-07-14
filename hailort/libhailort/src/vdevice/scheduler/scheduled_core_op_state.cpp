@@ -101,6 +101,11 @@ bool ScheduledCoreOp::is_over_threshold_timeout() const
     return m_timeout <= (std::chrono::steady_clock::now() - m_last_run_time_stamp);
 }
 
+bool ScheduledCoreOp::is_first_frame() const
+{
+    return (m_requested_infer_requests.load() == 0);
+}
+
 device_id_t ScheduledCoreOp::get_last_device()
 {
     return m_last_device_id;

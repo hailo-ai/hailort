@@ -179,7 +179,7 @@ py::dict HefWrapper::get_external_resources()
     VALIDATE_EXPECTED(external_resource);
     std::map<std::string, py::bytes> external_resources;
     for (const auto &resource : external_resource.value()) {
-        external_resources[resource.first] = py::bytes(resource.second);
+        external_resources[resource.first] = py::bytes(py::bytes(resource.second.as_pointer<char>(), resource.second.size()));
     }
     return py::cast(external_resources);
 }

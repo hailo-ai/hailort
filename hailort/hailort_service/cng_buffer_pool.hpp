@@ -16,14 +16,14 @@
 #include "hailo/vdevice.hpp"
 #include "hailo/dma_mapped_buffer.hpp"
 #include "common/thread_safe_queue.hpp"
-#include "common/buffer_pool.hpp"
+#include "common/object_pool.hpp"
 
 namespace hailort
 {
 
 using stream_name_t = std::string;
-using execute_map_on_vdevice_func_t = std::function<Expected<DmaMappedBuffer>(std::shared_ptr<VDevice>, BufferPtr)>;
-using map_buffer_on_handle_func_t = std::function<Expected<DmaMappedBuffer>(uint32_t, execute_map_on_vdevice_func_t, BufferPtr)>;
+using execute_map_on_vdevice_func_t = std::function<Expected<DmaMappedBuffer>(std::shared_ptr<VDevice>, MemoryView)>;
+using map_buffer_on_handle_func_t = std::function<Expected<DmaMappedBuffer>(uint32_t, execute_map_on_vdevice_func_t, MemoryView)>;
 
 // This object holds a buffer pool for each stream of the network group.
 // It is used to pre-allocate all the buffers necessary for the reads from the device.
@@ -44,23 +44,20 @@ public:
     virtual ~BaseNetworkGroupBufferPool() = default;
 
     BaseNetworkGroupBufferPool(EventPtr shutdown_event, uint32_t vdevice_handle, map_buffer_on_handle_func_t map_buffer_func);
-    Expected<BufferPtr> acquire_buffer(const std::string &stream_name);
-    hailo_status return_to_pool(const std::string &stream_name, BufferPtr buffer);
+    Expected<Pooled<Buffer>> acquire_buffer(const std::string &stream_name);
     hailo_status shutdown();
 
 private:
-    Expected<BasicBufferPoolPtr> create_stream_buffer_pool(size_t buffer_size,
+    Expected<ObjectPoolPtr<Buffer>> create_stream_buffer_pool(size_t buffer_size,
         size_t buffer_count, hailo_dma_buffer_direction_t direction, EventPtr shutdown_event);
 
-    std::unordered_map<stream_name_t, BasicBufferPoolPtr> m_stream_name_to_buffer_pool;
+    std::unordered_map<stream_name_t, ObjectPoolPtr<Buffer>> m_stream_name_to_buffer_pool;
     // This is in order to keep the DmaMappedBuffer buffers alive while using the buffers pool.
     std::vector<DmaMappedBuffer> m_mapped_buffers;
     EventPtr m_shutdown_event;
     uint32_t m_vdevice_handle;
     map_buffer_on_handle_func_t m_map_buffer_func;
     std::mutex m_mutex;
-    std::condition_variable m_cv;
-    bool m_is_shutdown;
 };
 
 class ServiceNetworkGroupBufferPool : public BaseNetworkGroupBufferPool

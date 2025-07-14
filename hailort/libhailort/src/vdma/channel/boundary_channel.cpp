@@ -210,54 +210,67 @@ uint16_t BoundaryChannel::free_descs()
 
 Expected<std::vector<TransferRequest>> BoundaryChannel::split_messages(TransferRequest &&original_request)
 {
-    const auto chunk_size = get_chunk_size();
-
     if (!m_split_transfer || (original_request.transfer_buffers.at(0).type() != TransferBufferType::MEMORYVIEW)) {
         // Split not supported
+        CHECK(original_request.transfer_buffers.size() <= MAX_TRANSFER_BUFFERS_IN_REQUEST, HAILO_INVALID_ARGUMENT,
+            "too many buffers in transfer request: {}, max is: {}",
+            original_request.transfer_buffers.size(), MAX_TRANSFER_BUFFERS_IN_REQUEST);
         return std::vector<TransferRequest>{original_request};
     }
 
-    // From original_request, create a vector of several TransferRequests.
-    // Each TransferRequest may be splitted into serveral buffers, but the total size of the buffers in each
-    // TransferRequest will not exceed chunk_size (which is the optimal amount of bytes for single transfer).
-    // In addition, each TransferRequest should hold no more than MAX_TRANSFER_BUFFERS_IN_REQUEST buffers.
-    // Notice that each new transfer will consume a full descriptor in bytes (even if the size is smaller than
-    // descriptors size).
+    // Will split a single request into a vector of requests. The size of each request will be as large as possible, but
+    // no greater than `chunk_size`. Buffers within the original request may be split but they will remain dma-aligned.
+    // Assumes TransferBuffers are pointers (not dmabufs), that they are dma-aligned and that they have zero offset.
+    const auto alignment = OsUtils::get_dma_able_alignment();
+    const auto chunk_size = get_chunk_size();
     std::vector<TransferRequest> transfer_request_split;
-    TransferRequest current_transfer{};
-    size_t current_transfer_consumed_bytes = 0;
+    std::vector<TransferBuffer> current_request_buffers;
+    size_t bytes_used = 0;
+    size_t idx = 0;
+    // We reserve two extra transfer requests: one because of floor-division and the second because
+    // DMA-alignment may force us to add an additional request.
+    transfer_request_split.reserve((original_request.get_total_transfer_size() / chunk_size) + 2);
+    current_request_buffers.reserve(original_request.transfer_buffers.size());
 
-    for (auto &buffer : original_request.transfer_buffers) {
-        size_t bytes_processed = 0;
-        while (bytes_processed < buffer.size()) {
-            assert(chunk_size > current_transfer_consumed_bytes);
-            const auto size_left_in_transfer = chunk_size - current_transfer_consumed_bytes;
-            size_t amount_to_transfer = std::min(buffer.size() - bytes_processed, size_left_in_transfer);
-            assert(amount_to_transfer > 0);
+    while (idx < original_request.transfer_buffers.size()) {
 
-            TRY(auto base_buffer, buffer.base_buffer());
-            auto sub_buffer = MemoryView(base_buffer.data() + bytes_processed, amount_to_transfer);
-            bytes_processed += amount_to_transfer;
-            current_transfer.transfer_buffers.push_back(TransferBuffer{sub_buffer});
-            const auto desc_consumed = m_desc_list.descriptors_in_buffer(amount_to_transfer);
-            current_transfer_consumed_bytes += desc_consumed * m_desc_list.desc_page_size();
+        // Add buffer to request only if we have space.
+        if (current_request_buffers.size() < MAX_TRANSFER_BUFFERS_IN_REQUEST) {
+            auto &buffer = original_request.transfer_buffers[idx];
 
-            // Start a new trasnfer if reach the limit.
-            if ((current_transfer_consumed_bytes >= chunk_size) ||
-                current_transfer.transfer_buffers.size() >= MAX_TRANSFER_BUFFERS_IN_REQUEST) {
-                transfer_request_split.emplace_back(std::move(current_transfer));
-                current_transfer = TransferRequest{};
-                current_transfer_consumed_bytes = 0;
+            // Take next buffer so long as we use less than chunk_size bytes.
+            if (bytes_used + buffer.size() <= chunk_size) {
+                idx++;
+                bytes_used += buffer.size();
+                current_request_buffers.push_back(std::move(buffer));
+                continue;
+            }
+
+            // If we got here we have a buffer that needs to be split.
+            const size_t aligned_offset = chunk_size - HailoRTCommon::align_to(bytes_used, alignment);
+            if (aligned_offset > 0) {
+                CHECK(TransferBufferType::MEMORYVIEW == buffer.type(), HAILO_INVALID_OPERATION, "cannot split dmabuf");
+                CHECK(0 == buffer.offset(), HAILO_INVALID_OPERATION, "cannot split buffer with non-zero offset");
+
+                TRY(auto base_buffer, buffer.base_buffer());
+
+                // The first part of the buffer is used in the new request.
+                current_request_buffers.emplace_back(MemoryView(base_buffer.data(), aligned_offset));
+
+                // The tail of the buffer is added back to the original vector to be used next time.
+                original_request.transfer_buffers[idx] =
+                    MemoryView(base_buffer.data() + aligned_offset, buffer.size() - aligned_offset);
             }
         }
-    }
 
-    if (current_transfer.get_total_transfer_size() > 0) {
-        transfer_request_split.emplace_back(std::move(current_transfer));
+        // Add new TransferRequest to split, reset and start again.
+        transfer_request_split.emplace_back(std::move(current_request_buffers), [](hailo_status){});
+        current_request_buffers.clear();
+        bytes_used = 0;
     }
 
     // Setting the original callback for the last transfer
-    transfer_request_split.back().callback = original_request.callback;
+    transfer_request_split.emplace_back(std::move(current_request_buffers), original_request.callback);
 
     // Removing previous bounded buffers since transfer now is split
     m_bounded_buffer = nullptr;
@@ -324,7 +337,7 @@ Expected<uint16_t> BoundaryChannel::launch_transfer_impl(TransferRequest &transf
     uint16_t last_desc = std::numeric_limits<uint16_t>::max();
     uint16_t total_descs_count = 0;
 
-    TRY(const bool should_bind, should_bind_buffer(transfer_request));
+    TRY(const bool should_bind, should_bind_and_sync_buffer(transfer_request));
     if (should_bind) {
         m_bounded_buffer = nullptr;
     } else {
@@ -335,7 +348,6 @@ Expected<uint16_t> BoundaryChannel::launch_transfer_impl(TransferRequest &transf
 
     auto current_num_available = num_available;
     for (auto &transfer_buffer : transfer_request.transfer_buffers) {
-        TRY(auto mapped_buffer, transfer_buffer.map_buffer(m_driver, m_direction));
         TRY(auto driver_buffers, transfer_buffer.to_driver_buffers());
         driver_transfer_buffers.insert(driver_transfer_buffers.end(), driver_buffers.begin(), driver_buffers.end());
 
@@ -366,12 +378,14 @@ Expected<uint16_t> BoundaryChannel::launch_transfer_impl(TransferRequest &transf
     }
     m_descs.enqueue(total_descs_count);
 
+    const bool should_sync = (should_bind || is_cyclic_buffer());
     auto status = m_driver.launch_transfer(
         m_channel_id,
         m_desc_list.handle(),
         num_available,
         driver_transfer_buffers,
         should_bind,
+        should_sync,
         first_desc_interrupts,
         last_desc_interrupts);
     CHECK_SUCCESS_WITH_ACCEPTABLE_STATUS(HAILO_STREAM_ABORT, status);
@@ -379,7 +393,7 @@ Expected<uint16_t> BoundaryChannel::launch_transfer_impl(TransferRequest &transf
     return last_desc;
 }
 
-hailo_status BoundaryChannel::bind_buffer(MappedBufferPtr buffer)
+hailo_status BoundaryChannel::bind_and_sync_buffer(MappedBufferPtr buffer, bool should_sync, HailoRTDriver::DmaSyncDirection sync_direction)
 {
     std::lock_guard<std::mutex> lock(m_channel_mutex);
     CHECK(m_bounded_buffer == nullptr, HAILO_INTERNAL_FAILURE,
@@ -390,14 +404,20 @@ hailo_status BoundaryChannel::bind_buffer(MappedBufferPtr buffer)
         m_desc_list.count(), m_desc_list.desc_page_size());
     static const size_t DEFAULT_BUFFER_OFFSET = 0;
     CHECK_SUCCESS(m_desc_list.program(*buffer, buffer->size(), DEFAULT_BUFFER_OFFSET, m_channel_id));
+    if (should_sync) {
+        CHECK_SUCCESS(buffer->synchronize(DEFAULT_BUFFER_OFFSET, buffer->size(), sync_direction));
+    }
+
     m_bounded_buffer = buffer;
     return HAILO_SUCCESS;
 }
 
-hailo_status BoundaryChannel::map_and_bind_buffer(hailort::TransferBuffer &transfer_request)
+hailo_status BoundaryChannel::map_and_bind_sync_buffer(hailort::TransferBuffer &transfer_request, HailoRTDriver::DmaSyncDirection sync_direction)
 {
     TRY(auto mapped_buffer, transfer_request.map_buffer(m_driver, m_direction));
-    return(bind_buffer(mapped_buffer));
+    const bool should_sync = (transfer_request.type() != TransferBufferType::DMABUF);
+    CHECK_SUCCESS(bind_and_sync_buffer(mapped_buffer, should_sync, sync_direction));
+    return HAILO_SUCCESS;
 }
 
 void BoundaryChannel::remove_buffer_binding()
@@ -483,8 +503,7 @@ void BoundaryChannel::on_request_complete(std::unique_lock<std::mutex> &lock, Tr
     hailo_status complete_status)
 {
     if (m_bounded_buffer) {
-        bool is_cyclic_buffer = (static_cast<size_t>(m_descs.size() * m_desc_list.desc_page_size()) == m_bounded_buffer->size());
-        if (!is_cyclic_buffer) {
+        if (!is_cyclic_buffer()) {
             // For not cyclic buffer, we need to unmap the buffer (on cyclic the buffer is owned by the stream)
             m_bounded_buffer.reset();
         }
@@ -549,17 +568,24 @@ Expected<bool> BoundaryChannel::is_same_buffer(MappedBufferPtr mapped_buff, Tran
     }
 }
 
-Expected<bool> BoundaryChannel::should_bind_buffer(TransferRequest &transfer_request)
+bool BoundaryChannel::is_cyclic_buffer() {
+    if (nullptr == m_bounded_buffer) {
+        return false;
+    }
+
+    return (static_cast<size_t>(m_descs.size() * m_desc_list.desc_page_size()) == m_bounded_buffer->size());
+}
+
+Expected<bool> BoundaryChannel::should_bind_and_sync_buffer(TransferRequest &transfer_request)
 {
     if ((nullptr == m_bounded_buffer) || (1 < transfer_request.transfer_buffers.size())) {
         return true;
     }
 
-    bool is_cyclic_buffer = (static_cast<size_t>(m_descs.size() * m_desc_list.desc_page_size()) == m_bounded_buffer->size());
     /* If the buffer is cyclic, sync api is used, means no bind needed.
         Checking if the bounded buffer points correctly to the received buffer
         and the descriptors are pointing to the beginning of the buffer. */
-    if (!is_cyclic_buffer) {
+    if (!is_cyclic_buffer()) {
         TRY(auto is_same_buffer, is_same_buffer(m_bounded_buffer, transfer_request.transfer_buffers[0]));
         return !(is_same_buffer && (0 == m_descs.head()));
     }

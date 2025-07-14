@@ -255,14 +255,14 @@ Expected<std::string> SharedMemoryStorage::shm_name()
     return m_shm_buffer->shm_name();
 }
 
-PooledBufferStorage::PooledBufferStorage(BufferPtr buffer, BasicBufferPoolPtr buffer_pool) :
+PooledBufferStorage::PooledBufferStorage(BufferPtr buffer, FastBufferPoolPtr buffer_pool) :
     m_buffer_pool(buffer_pool),
     m_buffer(buffer)
 {}
 
 PooledBufferStorage::~PooledBufferStorage()
 {
-    auto status = m_buffer_pool->return_to_pool(m_buffer);
+    auto status = m_buffer_pool->release(std::move(m_buffer));
     if (HAILO_SUCCESS != status) {
         LOGGER__CRITICAL("Failed to return buffer to pool: {}", status);
     }

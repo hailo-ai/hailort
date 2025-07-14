@@ -179,7 +179,7 @@ Expected<ContextSwitchConfigActionPtr> WriteDataCcwActionByBuffer::create(
     return result;
 }
 
-hailo_status WriteDataCcwActionByBuffer::write_to_config_buffer(ConfigBuffer& config_buffer, bool should_support_pre_fetch)
+hailo_status WriteDataCcwActionByBuffer::write_to_config_buffer(CopiedConfigBuffer& config_buffer, bool should_support_pre_fetch)
 {
     bool is_last_write = config_buffer.size_left() == size();
     if (should_support_pre_fetch && is_last_write) {
@@ -239,7 +239,7 @@ Expected<Buffer> WriteDataCcwAction::serialize_params(const ContextResources &) 
     return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
 
-hailo_status WriteDataCcwAction::write_to_config_buffer(ConfigBuffer& config_buffer, bool should_support_pre_fetch)
+hailo_status WriteDataCcwAction::write_to_config_buffer(CopiedConfigBuffer& config_buffer, bool should_support_pre_fetch)
 {
     uint64_t total_ccw_size = 0;
     for (const auto &ccw_write_ptr : m_ccw_write_ptrs) {

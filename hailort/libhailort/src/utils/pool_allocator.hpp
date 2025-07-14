@@ -21,13 +21,13 @@ namespace hailort
 class PoolAllocator final
 {
 public:
-    static Expected<std::shared_ptr<PoolAllocator>> create_shared(size_t pool_size, size_t buffer_size, std::function<Expected<Buffer>(size_t)> allocate_func);
+    static Expected<std::shared_ptr<PoolAllocator>> create_shared(size_t pool_size, size_t buffer_size, AllocateFunc allocate_func);
 
-    PoolAllocator(BasicBufferPoolPtr buffer_pool);
+    PoolAllocator(FastBufferPoolPtr buffer_pool);
     Expected<BufferPtr> allocate();
 
 private:
-    BasicBufferPoolPtr m_buffer_pool;
+    FastBufferPoolPtr m_buffer_pool;
     std::mutex m_mutex;
 };
 

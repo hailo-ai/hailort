@@ -169,6 +169,7 @@ private:
 };
 
 class ConfigBuffer;
+class CopiedConfigBuffer;
 
 class WriteDataCcwAction : public ContextSwitchConfigAction
 {
@@ -187,7 +188,7 @@ public:
 
     virtual size_t size() const { return m_size; }
     virtual uint8_t config_stream_index() const { return m_config_stream_index; }
-    virtual hailo_status write_to_config_buffer(ConfigBuffer& config_buffer, bool should_support_pre_fetch);
+    virtual hailo_status write_to_config_buffer(CopiedConfigBuffer& config_buffer, bool should_support_pre_fetch);
     uint16_t total_ccw_burst() const { return m_total_ccw_burst; }
 
 protected:
@@ -213,7 +214,7 @@ public:
     virtual ~WriteDataCcwActionByBuffer() = default;
 
     virtual size_t size() const override { return m_data.size(); }
-    virtual hailo_status write_to_config_buffer(ConfigBuffer& config_buffer, bool should_support_pre_fetch) override;
+    virtual hailo_status write_to_config_buffer(CopiedConfigBuffer& config_buffer, bool should_support_pre_fetch) override;
 
 private:
     WriteDataCcwActionByBuffer(Buffer &&data, uint8_t config_stream_index,

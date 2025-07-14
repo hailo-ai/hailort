@@ -27,6 +27,9 @@ endif()
 set(HAILORT_COMMON_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../../../hailort/")
 set(HAILO_EXTERNALS_CMAKE_SCRIPTS ${HAILORT_COMMON_DIR}/cmake/external/)
 set(HAILO_EXTERNAL_DIR ${HAILORT_COMMON_DIR}/external) # used in pybind11.cmake
+set(HAILORT_VERSION_MAJOR 5)
+set(HAILORT_VERSION_MINOR 0)
+set(HAILORT_VERSION_REVISION 0)
 
 if(UNIX)
     # PYTHON_MODULE_EXTENSION does not take the CMAKE_SYSTEM_PROCESSOR into account so it needs to be added manually
@@ -75,9 +78,9 @@ if(LIBHAILORT_PATH AND HAILORT_INCLUDE_DIR)
     target_compile_definitions(
         _pyhailort
         PUBLIC
-        HAILORT_MAJOR_VERSION=4
-        HAILORT_MINOR_VERSION=22
-        HAILORT_REVISION_VERSION=0
+        HAILORT_MAJOR_VERSION=${HAILORT_VERSION_MAJOR}
+        HAILORT_MINOR_VERSION=${HAILORT_VERSION_MINOR}
+        HAILORT_REVISION_VERSION=${HAILORT_VERSION_REVISION}
     )
     set_target_properties(
         _pyhailort
@@ -88,7 +91,7 @@ if(LIBHAILORT_PATH AND HAILORT_INCLUDE_DIR)
 elseif(LIBHAILORT_PATH OR HAILORT_INCLUDE_DIR)
     message(FATAL_ERROR "Both LIBHAILORT_PATH and HAILORT_INCLUDE_DIR must be defined or none of them. LIBHAILORT_PATH: '${LIBHAILORT_PATH}', HAILORT_INCLUDE_DIR: '${HAILORT_INCLUDE_DIR}'")
 else()
-    find_package(HailoRT 4.22.0 EXACT REQUIRED)
+    find_package(HailoRT ${HAILORT_VERSION_MAJOR}.${HAILORT_VERSION_MINOR}.${HAILORT_VERSION_REVISION} EXACT REQUIRED)
     target_link_libraries(_pyhailort PRIVATE HailoRT::libhailort)
 endif()
 

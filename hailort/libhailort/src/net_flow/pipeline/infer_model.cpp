@@ -660,6 +660,11 @@ hailo_status ConfiguredInferModel::update_cache_offset(int32_t offset_delta_entr
     return m_pimpl->update_cache_offset(offset_delta_entries);
 }
 
+hailo_status ConfiguredInferModel::init_cache(uint32_t read_offset)
+{
+    return m_pimpl->init_cache(read_offset);
+}
+
 Expected<ConfiguredInferModel::Bindings> ConfiguredInferModelBase::create_bindings(
     std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&inputs,
     std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&outputs)
@@ -851,6 +856,10 @@ hailo_status ConfiguredInferModelImpl::update_cache_offset(int32_t offset_delta_
     return m_cng->update_cache_offset(offset_delta_entries);
 }
 
+hailo_status ConfiguredInferModelImpl::init_cache(uint32_t read_offset)
+{
+    return m_cng->init_cache(read_offset);
+}
 
 hailo_status ConfiguredInferModelImpl::activate()
 {
@@ -1036,10 +1045,7 @@ hailo_status AsyncInferJob::wait(std::chrono::milliseconds timeout)
         return HAILO_SUCCESS;
     }
 
-    auto status = m_pimpl->wait(timeout);
-    CHECK_SUCCESS(status);
-
-    return HAILO_SUCCESS;
+    return m_pimpl->wait(timeout);
 }
 
 void AsyncInferJob::detach()

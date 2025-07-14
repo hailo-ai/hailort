@@ -66,7 +66,6 @@ namespace hailort
 constexpr uint8_t DEFAULT_DIVISION_FACTOR = 1;
 
 static const uint8_t ENABLE_LCU_CONTROL_WORD[4] = {1, 0, 0, 0};
-static const hailo_quant_info_t INVALID_QP = {INVALID_QP_VALUE, INVALID_QP_VALUE, INVALID_QP_VALUE, INVALID_QP_VALUE};
 
 #define TAB ("    ")
 
@@ -319,22 +318,14 @@ Expected<std::vector<std::string>> Hef::get_vstream_names_from_stream_name(const
 
 Expected<Hef::Impl> Hef::Impl::create(const std::string &hef_path)
 {
-    if (is_env_variable_on(HAILO_COPY_HEF_CONTENT_TO_A_MAPPED_BUFFER_PRE_CONFIGURE_ENV_VAR)) {
-        TRY(auto buffer, read_binary_file(hef_path, BufferStorageParams::create_dma()));
-        auto hef_buffer_ptr = make_shared_nothrow<Buffer>(std::move(buffer));
-        CHECK_NOT_NULL_AS_EXPECTED(hef_buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
+    hailo_status status = HAILO_UNINITIALIZED;
 
-        return create(hef_buffer_ptr);
-    } else {
-        hailo_status status = HAILO_UNINITIALIZED;
-
-        Impl hef(hef_path, status);
-        if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed creating HEF");
-            return make_unexpected(status);
-        }
-    return hef;
+    Impl hef(hef_path, status);
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed creating HEF");
+        return make_unexpected(status);
     }
+    return hef;
 }
 
 Expected<Hef::Impl> Hef::Impl::create(std::shared_ptr<Buffer> hef_buffer)
@@ -600,6 +591,7 @@ hailo_status Hef::Impl::parse_hef_file(const std::string &hef_path)
     case HEADER_VERSION_3: {
         status = fill_v3_hef_header(hef_header, hef_reader);
         CHECK_SUCCESS(status);
+        m_ccws_section_size = hef_header.distinct.v3.ccws_size_with_padding - hef_header.distinct.v3.hef_padding_size;
         m_offset_zero_point = HEF_HEADER_SIZE_V3 + hef_header.hef_proto_size + hef_header.distinct.v3.hef_padding_size;
         TRY(auto calculated_residue_size, calc_hef_residue_size(hef_reader, hef_header.version));
         TRY(auto calculated_xxh3_64bits, Xxhash::calc_xxh3_on_stream(hef_reader->get_fstream(), calculated_residue_size));
@@ -622,9 +614,10 @@ hailo_status Hef::Impl::parse_hef_file(const std::string &hef_path)
     CHECK_SUCCESS(status);
     status = fill_core_ops_and_networks_metadata(hef_header.version, hef_reader, m_offset_zero_point);
     CHECK_SUCCESS(status);
+
     status = hef_reader->close();
     CHECK_SUCCESS(status);
-    TRACE(HefLoadedTrace, hef_path, m_header.sdk_version(), m_md5);
+    TRACE(HefLoadedTrace, hef_path, m_header.sdk_version_str(), m_md5);
     return HAILO_SUCCESS;
 }
 
@@ -732,7 +725,7 @@ hailo_status Hef::Impl::parse_hef_memview(const MemoryView &hef_memview)
         status = validate_hef_header(hef_header, calculated_xxh3_64bits, proto_and_ccws_size);
         CHECK_SUCCESS(status);
         m_xxh3_64bits = calculated_xxh3_64bits;
-    
+
         return parse_hef_memview_internal(static_cast<size_t>(proto_size), proto_and_ccw_buffer, hef_header.version, hef_reader, m_offset_zero_point);
     }
     default:
@@ -846,7 +839,9 @@ hailo_status Hef::Impl::fill_networks_metadata(uint32_t hef_version, std::shared
             }
         } else if (0 != network_group->sorted_outputs_order_size()) {
             // Most cases should fall here - either net_flow is supported, or network_group->sorted_outputs_order() has values
-            for (auto &name : network_group->sorted_outputs_order()) {
+            const auto &names = IS_PP_DISABLED() ? network_group->fused_layers_metadata().updated_sorted_output_names() :
+                network_group->sorted_outputs_order();
+            for (const auto &name : names) {
                 sorted_output_names.push_back(name);
             }
         } else {
@@ -859,8 +854,11 @@ hailo_status Hef::Impl::fill_networks_metadata(uint32_t hef_version, std::shared
                 sorted_output_names.push_back(name);
             }
         }
+
+        std::vector<net_flow::PostProcessOpMetadataPtr> empty_ops_metadata;
+        auto &ops_metadata = IS_PP_DISABLED() ? empty_ops_metadata : m_post_process_ops_metadata_per_group.at(network_group_name);
         TRY(auto network_group_metadata, NetworkGroupMetadata::create(network_group_name, std::move(core_op_metadata_map),
-            sorted_output_names, m_supported_features, sorted_network_names, m_post_process_ops_metadata_per_group.at(network_group_name)));
+            sorted_output_names, m_supported_features, sorted_network_names, ops_metadata));
         m_network_group_metadata.emplace(network_group_name, std::move(network_group_metadata));
     }
     return HAILO_SUCCESS;
@@ -904,10 +902,8 @@ Expected<CoreOpMetadataPtr> Hef::Impl::create_metadata_per_arch(const ProtoHEFCo
 {
     // TODO: validate that there's a read+write layer for each cache + no cache_id is only read or written without the
     //       other. They can be across different contexts (HRT-13655)
-    TRY(auto preliminary_context, HefUtils::parse_preliminary_context(core_op.preliminary_config, m_supported_features, hef_version, hef_reader, ccws_offset,
-                                                                        is_aligned_ccws_on()));
-    TRY_V(auto dynamic_contexts, HefUtils::parse_dynamic_contexts(core_op, m_supported_features, get_device_arch(), hef_version, hef_reader, ccws_offset,
-                                                                    is_aligned_ccws_on()));
+    TRY(auto preliminary_context, HefUtils::parse_preliminary_context(core_op.preliminary_config, m_supported_features, hef_version, hef_reader, ccws_offset));
+    TRY_V(auto dynamic_contexts, HefUtils::parse_dynamic_contexts(core_op, m_supported_features, get_device_arch(), hef_version, hef_reader, ccws_offset));
     TRY(auto config_channels_info,  parse_config_channels_info(core_op));
 
     // If const input layer is found in the preliminary context, or first dynamic context we can't use fast batch switch
@@ -1024,10 +1020,9 @@ hailo_status Hef::Impl::transfer_protobuf_field_ownership(ProtoHEFHef &hef_messa
     m_supported_features = get_supported_features(m_header, m_hef_extensions, m_included_features,
         m_hef_optional_extensions);
 
-    m_hef_external_resources.reserve(hef_message.external_resources().size());
     for (const auto &external_resouce : hef_message.external_resources()) {
         ExternalResourceInfo external_resource_info{external_resouce.name(), external_resouce.size(), external_resouce.offset()};
-        m_hef_external_resources.emplace_back(external_resource_info);
+        m_hef_external_resources.emplace(external_resouce.name(), external_resource_info);
     }
 
     return HAILO_SUCCESS;
@@ -1050,7 +1045,7 @@ Expected<std::shared_ptr<Buffer>> Hef::Impl::get_hef_as_buffer()
     return buffer_ptr;
 }
 
-Hef::Impl::Impl(const std::string &hef_path, hailo_status &status)
+Hef::Impl::Impl(const std::string &hef_path, hailo_status &status) : m_zero_copy_config_over_descs(false)
 {
     status = HAILO_UNINITIALIZED;
     GOOGLE_PROTOBUF_VERIFY_VERSION;
@@ -1064,7 +1059,7 @@ Hef::Impl::Impl(const std::string &hef_path, hailo_status &status)
     status = HAILO_SUCCESS;
 }
 
-Hef::Impl::Impl(std::shared_ptr<Buffer> hef_buffer, hailo_status &status)
+Hef::Impl::Impl(std::shared_ptr<Buffer> hef_buffer, hailo_status &status) : m_zero_copy_config_over_descs(false)
 {
     status = HAILO_UNINITIALIZED;
     GOOGLE_PROTOBUF_VERIFY_VERSION;
@@ -1114,7 +1109,9 @@ SupportedFeatures Hef::Impl::get_supported_features(const ProtoHEFHeader &header
         header, hef_optional_extensions);
     supported_features.batch_register_config = check_hef_extension(ProtoHEFExtensionType::BATCH_REGISTER_CONFIG,
         header, hef_extensions, included_features);
-    supported_features.aligned_ccws = check_hef_extension(ProtoHEFExtensionType::SHARED_CONFIG,
+    supported_features.shared_config = check_hef_extension(ProtoHEFExtensionType::SHARED_CONFIG,
+        header, hef_extensions, included_features);
+    supported_features.strict_versioning = check_hef_extension(ProtoHEFExtensionType::STRICT_RUNTIME_VERSIONING,
         header, hef_extensions, included_features);
 
     return supported_features;
@@ -1779,7 +1776,6 @@ Expected<uint32_t> HefConfigurator::max_periph_bytes_value(const hailo_device_ar
         case HAILO_ARCH_HAILO15M:
         case HAILO_ARCH_HAILO15L:
         case HAILO_ARCH_HAILO10H:
-        // TODO: HRT-15000: Fix according to MARS hw consts
         case HAILO_ARCH_MARS:
             return HAILO1X_PERIPH_BYTES_PER_BUFFER_MAX_SIZE;
         default:
@@ -1799,6 +1795,7 @@ Expected<uint32_t> HefConfigurator::max_periph_padding_payload_value(const hailo
         case HAILO_ARCH_HAILO15M:
         case HAILO_ARCH_HAILO15L:
         case HAILO_ARCH_HAILO10H:
+        case HAILO_ARCH_MARS:
             return HAILO1X_PERIPH_PAYLOAD_MAX_VALUE;
         default:
             LOGGER__ERROR("Unknown device architecture!");
@@ -2165,6 +2162,10 @@ hailo_status HefUtils::fill_layer_info_with_base_info(const ProtoHEFEdgeLayerBas
 
     layer_info.max_shmifo_size = base_info.max_shmifo_size();
 
+    if (IS_PP_DISABLED()) {
+        layer_info.shape = layer_info.hw_shape;
+    }
+
     return HAILO_SUCCESS;
 }
 
@@ -2184,6 +2185,19 @@ hailo_status HefUtils::fill_layer_info(const ProtoHEFEdgeLayerInfo &info,
     }
     layer_info.name = info.name();
 
+    if (IS_PP_DISABLED() && (HAILO_D2H_STREAM == direction)) {
+        // The output names in the layer info can have an added index at the end: "<name>_<index>"
+        // In case we want to disable post processing, we need to remove this index from the name
+        auto it = std::find_if(core_op.sorted_outputs_order.begin(), core_op.sorted_outputs_order.end(),
+            [target = layer_info.name](const std::string& output_name) {
+                return target.find(output_name) == 0;
+            });
+
+        if (it != core_op.sorted_outputs_order.end()) {
+            layer_info.name = *it;
+        }
+    }
+
     layer_info.network_name = HefUtils::get_network_name(core_op, partial_network_name);
     layer_info.is_mux = false;
     layer_info.direction = direction;
@@ -2197,20 +2211,24 @@ hailo_status HefUtils::fill_layer_info(const ProtoHEFEdgeLayerInfo &info,
     CHECK_SUCCESS(status);
 
     int number_of_qps = (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == layer_info.format.order) ? NMS_NUMBER_OF_QPS : layer_info.shape.features;
-    if ((supported_features.output_scale_by_feature) && (direction == HAILO_D2H_STREAM)) {
-        CHECK((info.numeric_info().qp_zps().size() == number_of_qps) && (info.numeric_info().qp_scales().size() == number_of_qps),
-            HAILO_INVALID_HEF, "Invalid quantization infos vector in HEF!");
-        // We set those values to 0 to idicate that we work with scale by feature
-        layer_info.quant_info = INVALID_QP;
-    }
+    bool is_qp_zps_empty = info.numeric_info().qp_zps().empty();
+    bool is_qp_scales_empty = info.numeric_info().qp_scales().empty();
 
+    if ((supported_features.output_scale_by_feature) && (direction == HAILO_D2H_STREAM)) {
+        CHECK((info.numeric_info().qp_zps().size() == number_of_qps || is_qp_zps_empty) && (info.numeric_info().qp_scales().size() == number_of_qps || is_qp_scales_empty),
+            HAILO_INVALID_HEF, "Invalid quantization infos vector in HEF!");
+        // We set quant_info to INVALID_QUANT_INFO to indicate that we work with scale by feature
+        layer_info.quant_info = INVALID_QUANT_INFO;
+    }
     for (int i = 0; i < number_of_qps; i++) {
         hailo_quant_info_t quant_info = {};
         quant_info.limvals_min = info.numeric_info().limvals_min();
         quant_info.limvals_max = info.numeric_info().limvals_max();
         if (supported_features.output_scale_by_feature) {
-            quant_info.qp_zp = static_cast<float32_t>(info.numeric_info().qp_zps()[i]);
-            quant_info.qp_scale = static_cast<float32_t>(info.numeric_info().qp_scales()[i]);
+            quant_info.qp_zp = is_qp_zps_empty ? info.numeric_info().qp_zp()
+                                                : static_cast<float32_t>(info.numeric_info().qp_zps()[i]);
+            quant_info.qp_scale = is_qp_scales_empty ? info.numeric_info().qp_scale()
+                                                  : static_cast<float32_t>(info.numeric_info().qp_scales()[i]);
         } else {
             quant_info.qp_zp =  info.numeric_info().qp_zp();
             quant_info.qp_scale =  info.numeric_info().qp_scale();
@@ -2843,7 +2861,7 @@ static hailo_status merge_write_ccw_actions(
         TRY(auto config_buffer, build_config_buffer(ccw_buffers));
 
         assert(config_buffer.size() < std::numeric_limits<uint32_t>::max());
-        config_buffer_infos[config_stream_index].bursts_sizes.emplace_back(static_cast<uint32_t>(config_buffer.size()));
+        config_buffer_infos[config_stream_index].ccw_dma_transfers.emplace_back(static_cast<uint32_t>(config_buffer.size()));
 
         const size_t total_ccw_burst = ccw_buffers.size();
         TRY(auto action,
@@ -2868,7 +2886,7 @@ static hailo_status build_write_ccw_actions(
         const auto config_stream_index = static_cast<uint8_t>(write_ccw_action->cfg_channel_index());
         ccw_write_ptr_t ccw_write_ptr = {ccws_offset + write_ccw_action->offset(), write_ccw_action->size()}; // offset is relative to the start of the ccws
         ccw_write_ptrs_per_config_streams[config_stream_index].emplace_back(ccw_write_ptr);
-        config_buffer_infos[config_stream_index].bursts_sizes.emplace_back(ccw_write_ptr.size);
+        config_buffer_infos[config_stream_index].ccw_dma_transfers.emplace_back(ccw_write_ptr.size);
     }
 
     for (auto &ccw_write_ptrs_per_config_stream : ccw_write_ptrs_per_config_streams) {
@@ -2925,7 +2943,6 @@ static hailo_status parse_hef_actions(const ProtoHEFOperation &operation_proto, 
 
 static hailo_status prepare_aligned_ccws_transfers(const ProtoHEFOperation &operation_proto,
     ConfigBufferInfoMap &config_buffer_infos,
-    CcwDmaTransfersInfoMap& ccw_dma_transfers_infos,
     std::unordered_map<uint8_t, uint64_t> &next_offset_per_config_channel)
 {
     for (int action_index = 0; action_index < operation_proto.actions_size(); action_index++) {
@@ -2935,18 +2952,17 @@ static hailo_status prepare_aligned_ccws_transfers(const ProtoHEFOperation &oper
             auto const &current_config_channel = static_cast<uint8_t>(ccw_ptr_action_proto.cfg_channel_index());
             if (0 == next_offset_per_config_channel[current_config_channel]) {
                 // Meaning it's the first write_ccw in a burst
-                ccw_dma_transfers_infos[current_config_channel].emplace_back(ccw_ptr_action_proto.offset(), ccw_ptr_action_proto.size());
-                config_buffer_infos[current_config_channel].ccw_dma_transfers.emplace_back(ccw_ptr_action_proto.offset(), ccw_ptr_action_proto.size());
+                config_buffer_infos[current_config_channel].ccw_bursts_offsets.emplace_back(ccw_ptr_action_proto.offset());
+                config_buffer_infos[current_config_channel].ccw_bursts_sizes.emplace_back(ccw_ptr_action_proto.size());
                 next_offset_per_config_channel[current_config_channel] = ccw_ptr_action_proto.offset() + ccw_ptr_action_proto.size();
             } else if (next_offset_per_config_channel[current_config_channel] == ccw_ptr_action_proto.offset()) {
                 // consecutive in memory => concating
                 next_offset_per_config_channel[current_config_channel] += ccw_ptr_action_proto.size();
-                ccw_dma_transfers_infos[current_config_channel].back().second += ccw_ptr_action_proto.size();
-                config_buffer_infos[current_config_channel].ccw_dma_transfers.back().second += ccw_ptr_action_proto.size();
+                config_buffer_infos[current_config_channel].ccw_bursts_sizes.back() += ccw_ptr_action_proto.size();
             } else {
-                // Next write is not consecutive in memory => saving burst + starting a new burst
-                ccw_dma_transfers_infos[current_config_channel].emplace_back(ccw_ptr_action_proto.offset(), ccw_ptr_action_proto.size());
-                config_buffer_infos[current_config_channel].ccw_dma_transfers.emplace_back(ccw_ptr_action_proto.offset(), ccw_ptr_action_proto.size());
+                // This write is not consecutive in memory => saving burst + starting a new burst
+                config_buffer_infos[current_config_channel].ccw_bursts_offsets.emplace_back(ccw_ptr_action_proto.offset());
+                config_buffer_infos[current_config_channel].ccw_bursts_sizes.emplace_back(ccw_ptr_action_proto.size());
                 next_offset_per_config_channel[current_config_channel] = ccw_ptr_action_proto.offset() + ccw_ptr_action_proto.size();
             }
         }
@@ -2990,12 +3006,11 @@ static hailo_status parse_hef_actions(const ProtoHEFOperation &operation_proto,
 
 static hailo_status parse_operation(std::vector<ContextSwitchConfigActionPtr> &actions,
     ConfigBufferInfoMap &config_buffer_infos,
-    CcwDmaTransfersInfoMap& ccw_dma_transfers_infos,
     const ProtoHEFOperation &operation_proto,
     const SupportedFeatures &supported_features,
     bool &const_input_layer_found, uint32_t hef_version,
     std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset,
-    std::unordered_map<uint8_t, uint64_t> &next_offset_per_config_channel, bool is_aligned_ccws_on)
+    std::unordered_map<uint8_t, uint64_t> &next_offset_per_config_channel)
 {
     TRY(auto trigger_action, parse_trigger_action(operation_proto.trigger()));
     actions.emplace_back(std::move(trigger_action));
@@ -3012,10 +3027,9 @@ static hailo_status parse_operation(std::vector<ContextSwitchConfigActionPtr> &a
     case HEADER_VERSION_3:
         status = parse_hef_actions(operation_proto, actions, config_buffer_infos, supported_features, const_input_layer_found, hef_reader, ccws_offset);
         CHECK_SUCCESS(status);
-        if (is_aligned_ccws_on) {
-            CHECK(hef_version == HEADER_VERSION_3, HAILO_HEF_NOT_SUPPORTED, "Aligned_ccws is not supported on hef version {}", hef_version);
-            status = prepare_aligned_ccws_transfers(operation_proto, config_buffer_infos, ccw_dma_transfers_infos,
-                next_offset_per_config_channel);
+        if (HEADER_VERSION_3 == hef_version) {
+            // On V3 HEFs we support CCWs alignment, so we need to prepare the aligned transfers option
+            status = prepare_aligned_ccws_transfers(operation_proto, config_buffer_infos, next_offset_per_config_channel);
             CHECK_SUCCESS(status);
         }
         break;
@@ -3030,11 +3044,10 @@ static hailo_status parse_operation(std::vector<ContextSwitchConfigActionPtr> &a
 static Expected<ContextMetadata> parse_operations(
     const google::protobuf::RepeatedPtrField<ProtoHEFOperation> &operations_proto,
     const SupportedFeatures &supported_features,
-    uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset, bool is_aligned_ccws_on)
+    uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset)
 {
     std::vector<ContextSwitchConfigActionPtr> actions;
     ConfigBufferInfoMap config_buffer_infos;
-    CcwDmaTransfersInfoMap ccw_dma_transfers_infos;
     bool const_input_layer_found = false;
 
     std::unordered_map<uint8_t, uint64_t> next_offset_per_config_channel;
@@ -3043,28 +3056,28 @@ static Expected<ContextMetadata> parse_operations(
     }
 
     for (const auto &operation_proto : operations_proto) {
-        auto status = parse_operation(actions, config_buffer_infos, ccw_dma_transfers_infos, operation_proto, supported_features,
-            const_input_layer_found, hef_version, hef_reader, ccws_offset, next_offset_per_config_channel, is_aligned_ccws_on);
+        auto status = parse_operation(actions, config_buffer_infos, operation_proto, supported_features,
+            const_input_layer_found, hef_version, hef_reader, ccws_offset, next_offset_per_config_channel);
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
 
-    return ContextMetadata(std::move(actions), std::move(config_buffer_infos), const_input_layer_found, std::move(ccw_dma_transfers_infos));
+    return ContextMetadata(std::move(actions), std::move(config_buffer_infos), const_input_layer_found);
 }
 
 Expected<ContextMetadata> HefUtils::parse_preliminary_context(const ProtoHEFPreliminaryConfig &preliminary_proto,
     const SupportedFeatures &supported_features, uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader, 
-    size_t ccws_offset, bool is_aligned_ccws_on)
+    size_t ccws_offset)
 {
-    return parse_operations(preliminary_proto.operation(), supported_features, hef_version, hef_reader, ccws_offset, is_aligned_ccws_on);
+    return parse_operations(preliminary_proto.operation(), supported_features, hef_version, hef_reader, ccws_offset);
 }
 
 Expected<ContextMetadata> HefUtils::parse_single_dynamic_context(const ProtoHEFCoreOpMock &core_op,
     const ProtoHEFContext &context_proto, uint16_t context_index, const SupportedFeatures &supported_features,
     const ProtoHEFHwArch &hef_arch, uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader,
-    size_t ccws_offset, bool is_aligned_ccws_on)
+    size_t ccws_offset)
 {
     ContextMetadata context_metadata;
-    TRY(context_metadata, parse_operations(context_proto.operations(), supported_features, hef_version, hef_reader, ccws_offset, is_aligned_ccws_on));
+    TRY(context_metadata, parse_operations(context_proto.operations(), supported_features, hef_version, hef_reader, ccws_offset));
 
     for (const auto &edge_layer : context_proto.metadata().edge_layers()) {
         if (ProtoHEFEdgeConnectionType::PROTO__EDGE_CONNECTION_TYPE__BOUNDARY ==
@@ -3120,13 +3133,13 @@ static hailo_status validate_unique_boundary_names(const std::vector<ContextMeta
 }
 
 Expected<std::vector<ContextMetadata>> HefUtils::parse_dynamic_contexts(const ProtoHEFCoreOpMock &core_op, const SupportedFeatures &supported_features,
-    const ProtoHEFHwArch &hef_arch, uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset, bool is_aligned_ccws_on)
+    const ProtoHEFHwArch &hef_arch, uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset)
 {
     std::vector<ContextMetadata> contexts_metadata;
     for (uint16_t context_index = 0; context_index < core_op.contexts.size(); context_index++) {
         auto &context_proto = core_op.contexts[context_index];
         TRY(auto context_metadata, parse_single_dynamic_context(core_op, context_proto, context_index, supported_features,
-            hef_arch, hef_version, hef_reader, ccws_offset, is_aligned_ccws_on));
+            hef_arch, hef_version, hef_reader, ccws_offset));
         contexts_metadata.emplace_back(std::move(context_metadata));
     }
 
@@ -3674,9 +3687,39 @@ uint64_t Hef::Impl::get_ccws_section_size() const
     return m_ccws_section_size;
 }
 
-bool Hef::Impl::is_aligned_ccws_on() const
+bool Hef::Impl::zero_copy_config_over_descs() const
 {
-    return (m_supported_features.aligned_ccws) && (!is_env_variable_on(HAILO_DISABLE_ALIGNED_CCWS_ENV_VAR));
+    // TODO: HRT-17833 - Remove the zero copy by fixing cma issues
+    static constexpr uint64_t CCW_SECTION_SIZE_TO_FORCE_ZERO_COPY = 512 * 1024 * 1024; // 512 MB
+
+    // Zero copy config over descs if:
+    // 1. supported only on aligned CCWs (V3)
+    // 2. not disabled by env variable
+    // 3. One of:
+    //    - shared config is supported (weights-sharing)
+    //    - HEF is marked for memory_footprint_optimization (indicated by 'm_zero_copy_config_over_descs')
+    //    - CCW section size is bigger than CCW_SECTION_SIZE_TO_FORCE_ZERO_COPY
+    return (HEADER_VERSION_3 == m_hef_version) && (!is_env_variable_on(HAILO_DISABLE_ALIGNED_CCWS_ENV_VAR) &&
+           (m_supported_features.shared_config || m_zero_copy_config_over_descs ||
+            (m_ccws_section_size > CCW_SECTION_SIZE_TO_FORCE_ZERO_COPY)));
+}
+
+hailo_status Hef::Impl::validate_hef_version() const
+{
+    if (!m_supported_features.strict_versioning) {
+        return HAILO_SUCCESS;
+    }
+
+    hailo_version_t library_version{};
+    CHECK_SUCCESS(hailo_get_library_version(&library_version));
+
+    CHECK((m_header.sdk_version().sdk_version_major() == library_version.major) &&
+        (m_header.sdk_version().sdk_version_minor() == library_version.minor), HAILO_INVALID_HEF,
+        "DFC version from which this HEF was created ({}.{}.{}) is different from library version ({}.{}.{}), which is not allowed for this model.",
+            m_header.sdk_version().sdk_version_major(), m_header.sdk_version().sdk_version_minor(), m_header.sdk_version().sdk_version_revision(),
+            library_version.major, library_version.minor, library_version.revision);
+
+    return HAILO_SUCCESS;
 }
 
 Expected<float64_t> Hef::Impl::get_bottleneck_fps(const std::string &net_group_name)
@@ -4078,23 +4121,23 @@ Expected<std::string> Hef::Impl::get_description(bool stream_infos, bool vstream
     return hef_infos;
 }
 
-Expected<std::map<std::string, std::string>> Hef::get_external_resources() const
+Expected<std::map<std::string, MemoryView>> Hef::get_external_resources() const
 {
     return pimpl->get_external_resources();
 }
 
-Expected<std::map<std::string, std::string>> Hef::Impl::get_external_resources() const
+Expected<std::map<std::string, MemoryView>> Hef::Impl::get_external_resources() const
 {
-    std::map<std::string, std::string> external_resources;
+    std::map<std::string, MemoryView> external_resources;
     auto hef_reader = get_hef_reader();
     CHECK_SUCCESS(hef_reader->open());
-    for (auto &external_resource_info : m_hef_external_resources) {
+    for (auto &name_to_external_resource_info : m_hef_external_resources) {
+        auto &external_resource_info = name_to_external_resource_info.second;
         const auto offset = external_resource_info.offset + get_offset_zero_point();
         const auto size = external_resource_info.size;
-        std::string resource_data(size, '\0');
 
-        CHECK_SUCCESS(hef_reader->read_from_offset(offset, resource_data, size));
-        external_resources[external_resource_info.name] = std::move(resource_data);
+        TRY(auto resource_memview, hef_reader->read_from_offset_as_memview(offset, size));
+        external_resources[external_resource_info.name] = std::move(resource_memview);
     }
     CHECK_SUCCESS(hef_reader->close());
     return external_resources;
@@ -4335,6 +4378,16 @@ Expected<std::map<std::string, hailo_stream_parameters_t>> Hef::Impl::create_str
     }
 
     return results;
+}
+
+void Hef::set_memory_footprint_optimization(bool should_optimize)
+{
+    return pimpl->set_memory_footprint_optimization(should_optimize);
+}
+
+void Hef::Impl::set_memory_footprint_optimization(bool should_optimize)
+{
+    m_zero_copy_config_over_descs = should_optimize;
 }
 
 } /* namespace hailort */

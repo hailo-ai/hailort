@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.5.0)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
-find_package(HailoRT 4.22.0 EXACT REQUIRED)
+find_package(HailoRT 5.0.0 EXACT REQUIRED)
 
 SET_SOURCE_FILES_PROPERTIES(notification_callback_example.c PROPERTIES LANGUAGE C)
 

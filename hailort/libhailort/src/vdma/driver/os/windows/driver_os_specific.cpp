@@ -231,24 +231,35 @@ static Expected<uint32_t> parse_uint32_property(const std::wstring &dev_interfac
     return number;
 }
 
-hailo_status convert_errno_to_hailo_status(int err, const char *ioctl_name)
-{
+hailo_status convert_errno_to_hailo_status(int err, const char *ioctl_name) {
     switch (err) {
-    case ERROR_NO_SYSTEM_RESOURCES: /* Driver STATUS_INSUFFICIENT_RESOURCES */
-        LOGGER__ERROR("Ioctl {} failed due to insufficient amount of memory", ioctl_name);
-        return HAILO_OUT_OF_HOST_MEMORY;
-    case ERROR_NOT_SUPPORTED: /* Driver STATUS_NOT_IMPLEMENTED */
-        LOGGER__ERROR("Ioctl {} failed due to inappropriate ioctl for device (can happen due to version mismatch or unsupported feature)", ioctl_name);
-        return HAILO_DRIVER_INVALID_IOCTL;
-    case ERROR_SEM_TIMEOUT: /* Driver STATUS_IO_TIMEOUT */
-        LOGGER__ERROR("Ioctl {} failed due to timeout", ioctl_name);
-        return HAILO_DRIVER_TIMEOUT;
-    case ERROR_OPERATION_ABORTED /* Driver STATUS_CANCELLED */:
-        LOGGER__DEBUG("Ioctl {} failed due to operation aborted", ioctl_name);
-        return HAILO_DRIVER_WAIT_CANCELED;
-    default:
-        LOGGER__ERROR("Ioctl {} failed with {}. Get log for more info", ioctl_name, err);
-        return HAILO_DRIVER_OPERATION_FAILED;
+        case ERROR_NO_SYSTEM_RESOURCES: /* Driver STATUS_INSUFFICIENT_RESOURCES */
+            LOGGER__ERROR("Ioctl {} failed due to insufficient amount of memory", ioctl_name);
+            return HAILO_OUT_OF_HOST_MEMORY;
+        case ERROR_INVALID_ADDRESS: /* Driver STATUS_INVALID_ADDRESS */
+            LOGGER__ERROR("Ioctl {} failed due to invalid address", ioctl_name);
+            return HAILO_INVALID_OPERATION;
+        case ERROR_NETNAME_DELETED: /* Driver STATUS_CONNECTION_RESET */
+            LOGGER__DEBUG("Ioctl {} failed due to stream abort", ioctl_name);
+            return HAILO_STREAM_ABORT;
+        case ERROR_NOT_SUPPORTED: /* Driver STATUS_NOT_IMPLEMENTED */
+            LOGGER__ERROR("Ioctl {} failed due to inappropriate ioctl for device (can happen due to version mismatch or unsupported feature)", ioctl_name);
+            return HAILO_DRIVER_INVALID_IOCTL;
+        case ERROR_SEM_TIMEOUT: /* Driver STATUS_IO_TIMEOUT */
+            LOGGER__ERROR("Ioctl {} failed due to timeout", ioctl_name);
+            return HAILO_DRIVER_TIMEOUT;
+        case ERROR_OPERATION_ABORTED: /* Driver STATUS_INTERRUPTED */
+            LOGGER__ERROR("Ioctl {} failed due to interrupted system call", ioctl_name);
+            return HAILO_DRIVER_INTERRUPTED;
+        case ERROR_CANCELLED: /* Driver STATUS_CANCELLED */
+            LOGGER__DEBUG("Ioctl {} failed due to operation aborted", ioctl_name);
+            return HAILO_DRIVER_WAIT_CANCELED;
+        case ERROR_CONNECTION_REFUSED: /* Driver STATUS_CONNECTION_REFUSED */
+            LOGGER__ERROR("Ioctl {} failed due to connection refused", ioctl_name);
+            return HAILO_CONNECTION_REFUSED;
+        default:
+            LOGGER__ERROR("Ioctl {} failed with {}. Get log for more info", ioctl_name, err);
+            return HAILO_DRIVER_OPERATION_FAILED;
     }
 }
 
@@ -311,6 +322,7 @@ COMPATIBLE_PARAM_CAST(hailo_mark_as_in_use_params, MarkAsInUse)
 COMPATIBLE_PARAM_CAST(hailo_vdma_launch_transfer_params, LaunchTransfer)
 COMPATIBLE_PARAM_CAST(hailo_soc_connect_params, ConnectParams)
 COMPATIBLE_PARAM_CAST(hailo_soc_close_params, SocCloseParams)
+COMPATIBLE_PARAM_CAST(hailo_pci_ep_listen_params, ListenParams)
 COMPATIBLE_PARAM_CAST(hailo_pci_ep_accept_params, AcceptParams)
 COMPATIBLE_PARAM_CAST(hailo_pci_ep_close_params, PciEpCloseParams)
 COMPATIBLE_PARAM_CAST(hailo_write_action_list_params, WriteActionListParams)

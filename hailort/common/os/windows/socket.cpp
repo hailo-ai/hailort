@@ -151,6 +151,30 @@ Expected<size_t> Socket::send(const uint8_t *buffer, size_t size, int flags)
     return Expected<size_t>(bytes_written);
 }
 
+Expected<size_t> Socket::recvmsg(struct msghdr *msg, int flags) const
+{
+    (void)msg;
+    (void)flags;
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
+Expected<size_t> Socket::sendmsg(const struct msghdr *msg, int flags) const
+{
+    (void)msg;
+    (void)flags;
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
+Expected<int> Socket::read_fd()
+{
+    return make_unexpected(HAILO_NOT_IMPLEMENTED);
+}
+
+hailo_status Socket::write_fd(int /*fd*/, size_t /*buffer_size*/)
+{
+    return HAILO_NOT_IMPLEMENTED;
+}
+
 hailo_status Socket::ntop(int af, const void *src, char *dst, socklen_t size)
 {
     CHECK_ARG_NOT_NULL(src);

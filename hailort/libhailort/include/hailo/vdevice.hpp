@@ -50,7 +50,7 @@ public:
      * 
      * @return Upon success, returns Expected of a unique_ptr to VDevice object.
      *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note calling this create method will apply default vdevice params.
+     * @note Calling this create method will apply default vdevice params.
      */
     static Expected<std::unique_ptr<VDevice>> create();
 
@@ -59,7 +59,7 @@ public:
      * 
      * @return Upon success, returns Expected of a shared_ptr to VDevice object.
      *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note calling this create method will apply default vdevice params.
+     * @note Calling this create method will apply default vdevice params.
      */
     static Expected<std::shared_ptr<VDevice>> create_shared();
 
@@ -69,7 +69,7 @@ public:
      * @param[in]  device_ids        A vector of std::string, represents the device-ids from which to create the VDevice.
      * @return Upon success, returns Expected of a unique_ptr to VDevice object.
      *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note calling this create method will apply default vdevice params.
+     * @note Calling this create method will apply default vdevice params.
      */
     static Expected<std::unique_ptr<VDevice>> create(const std::vector<std::string> &device_ids);
 
@@ -79,7 +79,7 @@ public:
      * @param[in]  device_ids        A vector of std::string, represents the device-ids from which to create the VDevice.
      * @return Upon success, returns Expected of a shared_ptr to VDevice object.
      *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note calling this create method will apply default vdevice params.
+     * @note Calling this create method will apply default vdevice params.
      */
     static Expected<std::shared_ptr<VDevice>> create_shared(const std::vector<std::string> &device_ids);
 
@@ -257,7 +257,7 @@ public:
      */
     virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) = 0;
 
-    const hailo_vdevice_params_t get_params() const {
+    const hailo_vdevice_params_t& get_params() const {
         return m_params;
     }
 
@@ -272,7 +272,7 @@ public:
     VDevice &operator=(VDevice &&other) = delete;
 
     static bool service_over_ip_mode();
-    static bool should_force_hrpc_client();
+    static bool should_force_socket_based_client();
 
 protected:
     VDevice(const hailo_vdevice_params_t &params) : m_params(params)

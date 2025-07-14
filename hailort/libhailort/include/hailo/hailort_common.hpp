@@ -161,7 +161,7 @@ public:
     }
 
     /**
-     * Gets a string reprenestation of the given format type.
+     * Gets a string representation of the given format type.
      *
      * @param[in] type             A ::hailo_format_type_t object.
      * @return The string representation of the format type.
@@ -179,12 +179,12 @@ public:
         case HAILO_FORMAT_TYPE_AUTO:
             return "AUTO";
         default:
-            return "Nan";
+            return "INVALID_FORMAT_TYPE";
         }
     }
 
     /**
-     * Gets a string reprenestation of the given power mode.
+     * Gets a string representation of the given power mode.
      *
      * @param[in] mode             A ::hailo_power_mode_t object.
      * @return The string representation of the power mode.
@@ -198,12 +198,12 @@ public:
         case HAILO_POWER_MODE_ULTRA_PERFORMANCE:
             return "ULTRA_PERFORMANCE";
         default:
-            return "Nan";
+            return "INVALID_POWER_MODE";
         }
     }
 
     /**
-     * Gets a string reprenestation of the given latency measurement flags.
+     * Gets a string representation of the given latency measurement flags.
      *
      * @param[in] flags            A ::hailo_latency_measurement_flags_t object.
      * @return The string representation of the latency measurement flags.
@@ -219,12 +219,12 @@ public:
         case HAILO_LATENCY_CLEAR_AFTER_GET:
             return "CLEAR_AFTER_GET";
         default:
-            return "Nan";
+            return "INVALID_LATENCY_MEASUREMENT_FLAGS";
         }
     }
 
     /**
-     * Gets a string reprenestation of the given scheduling algorithm.
+     * Gets a string representation of the given scheduling algorithm.
      *
      * @param[in] scheduling_algo  A ::hailo_scheduling_algorithm_t object.
      * @return The string representation of the scheduling algorithm.
@@ -238,12 +238,12 @@ public:
         case HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN:
             return "ROUND_ROBIN";
         default:
-            return "Nan";
+            return "INVALID_SCHEDULING_ALGORITHM";
         }
     }
 
     /**
-     * Gets a string reprenestation of the given device architecture.
+     * Gets a string representation of the given device architecture.
      *
      * @param[in] arch    A ::hailo_device_architecture_t object.
      * @return The string representation of the device architecture.
@@ -328,7 +328,28 @@ public:
         case HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE:
             return "HAILO NMS BY SCORE";
         default:
-            return "Nan";
+            return "INVALID_FORMAT_ORDER";
+        }
+    }
+
+    /**
+     * Gets a string representation of the given log type.
+     *
+     * @param[in] type             A ::hailo_log_type_t object.
+     * @return The string representation of the log type.
+     */
+    static std::string get_log_type_str(const hailo_log_type_t &type)
+    {
+        switch (type)
+        {
+        case HAILO_LOG_TYPE__RUNTIME:
+            return "RUNTIME";
+        case HAILO_LOG_TYPE__SYSTEM_CONTROL:
+            return "SCU";
+        case HAILO_LOG_TYPE__NNC:
+            return "NNC";
+        default:
+            return "INVALID_LOG_TYPE";
         }
     }
 
@@ -514,7 +535,7 @@ public:
     {
         // Compare with HAILO1X device archs
         return (HAILO_ARCH_HAILO15H == dev_arch) || (HAILO_ARCH_HAILO15M == dev_arch) || (HAILO_ARCH_HAILO15L == dev_arch) ||
-            (HAILO_ARCH_HAILO10H == dev_arch);
+            (HAILO_ARCH_HAILO10H == dev_arch) || (HAILO_ARCH_MARS == dev_arch);
     }
 
     static Expected<hailo_device_id_t> to_device_id(const std::string &device_id);

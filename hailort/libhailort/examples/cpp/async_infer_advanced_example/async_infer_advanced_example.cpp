@@ -161,8 +161,8 @@ int main()
         std::cout << "Inference finished successfully on " << BATCH_COUNT * BATCH_SIZE << " frames" << std::endl;
     } catch (const hailort_error &exception) {
         std::cout << "Failed to run inference. status=" << exception.status() << ", error message: " << exception.what() << std::endl;
-        return exception.status();
+        return -1;
     };
 
-    return HAILO_SUCCESS;
+    return 0;
 }

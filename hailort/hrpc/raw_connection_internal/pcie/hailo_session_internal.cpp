@@ -51,11 +51,18 @@ Expected<std::shared_ptr<RawPcieListener>> RawPcieListener::create_shared(std::s
     auto ptr = make_shared_nothrow<RawPcieListener>(context, port);
     CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
 
+    // Call listen on the driver
+    auto status = context->get_driver()->pci_ep_listen(port, BACKLOG_SIZE);
+
+    CHECK_SUCCESS(status, "Failed to listen on port 0x{:X}, status {}", port, status);
+
     return ptr;
 }
 
+// Implement accept to accept an incoming connection after listen
 Expected<std::shared_ptr<Session>> RawPcieListener::accept()
 {
+    // Set up session to accept connections
     auto new_conn = make_shared_nothrow<RawPcieSession>(m_context);
     CHECK_NOT_NULL_AS_EXPECTED(new_conn, HAILO_OUT_OF_HOST_MEMORY);
 
@@ -223,6 +230,11 @@ hailo_status RawPcieSession::read_async(TransferRequest &&request)
 
     m_ongoing_reads++;
     return HAILO_SUCCESS;
+}
+
+Expected<int> RawPcieSession::read_fd()
+{
+    return make_unexpected(HAILO_NOT_SUPPORTED);
 }
 
 hailo_status RawPcieSession::set_session(PcieSession &&session)

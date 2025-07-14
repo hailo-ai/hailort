@@ -57,6 +57,7 @@ void RunService()
     }
 
     HailoRtRpcService service;
+    service.start_dmabuf_server();
     grpc::ServerBuilder builder;
     builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
     builder.SetMaxReceiveMessageSize(-1);

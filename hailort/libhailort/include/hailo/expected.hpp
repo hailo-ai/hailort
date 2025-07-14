@@ -432,7 +432,7 @@ public:
 
     /**
      * Returns the contained value.
-     * @note You must call this method with a valid value inside! otherwise it can lead to undefined behavior.
+     * @note This method must be called with a valid value inside! otherwise it can lead to undefined behavior.
      */
     T& value() &
     {
@@ -442,7 +442,7 @@ public:
 
     /**
      * Returns the contained value.
-     * @note You must call this method with a valid value inside! otherwise it can lead to undefined behavior.
+     * @note This method must be called with a valid value inside! otherwise it can lead to undefined behavior.
      */
     const T& value() const&
     {
@@ -460,7 +460,7 @@ public:
 
     /**
      * Releases ownership of its stored value, by returning its value and making this object Unexpected.
-     * @note You must call this method with a valid value inside! otherwise it can lead to undefined behavior. 
+     * @note This method must be called with a valid value inside! otherwise it can lead to undefined behavior. 
      */
     T release()
     {

@@ -17,6 +17,7 @@
 #include "common/barrier.hpp"
 #include "common/async_thread.hpp"
 #include "../common.hpp"
+#include "hailo/device.hpp"
 #include "hailo/vdevice.hpp"
 #include "hailo/hef.hpp"
 #include "../download_action_list_command.hpp"
@@ -32,7 +33,7 @@ constexpr uint32_t DEFAULT_TIME_TO_RUN_SECONDS = 5;
 static const char *JSON_SUFFIX = ".json";
 static const char *RUNTIME_DATA_OUTPUT_PATH_HEF_PLACE_HOLDER = "<hef>";
 static const std::vector<uint16_t> DEFAULT_BATCH_SIZES = {1, 2, 4, 8, 16};
-static const uint16_t RUNTIME_DATA_BATCH_INDEX_TO_MEASURE_DEFAULT = 2;
+static const uint32_t RUNTIME_DATA_BATCH_INDEX_TO_MEASURE_DEFAULT = 2;
 
 using json = nlohmann::json;
 using ordered_json = nlohmann::ordered_json;
@@ -359,16 +360,14 @@ Run2::Run2() : CLI::App("Run networks", "run2")
     add_option("-t,--time-to-run", m_time_to_run, "Time to run (seconds)")
         ->default_val(DEFAULT_TIME_TO_RUN_SECONDS)
         ->check(CLI::PositiveNumber);
-    auto mode = add_option("-m,--mode", m_mode, "Inference mode")
+    add_option("-m,--mode", m_mode, "Inference mode")
         ->transform(HailoCheckedTransformer<InferenceMode>({
             { "full_sync", InferenceMode::FULL_SYNC },
-            { "full", InferenceMode::FULL_SYNC, OptionVisibility::HIDDEN }, // TODO: Remove option
             { "full_async", InferenceMode::FULL_ASYNC },
             { "raw_sync", InferenceMode::RAW_SYNC },
-            { "raw", InferenceMode::RAW_SYNC, OptionVisibility::HIDDEN }, // TODO: Remove option
             { "raw_async", InferenceMode::RAW_ASYNC },
             { "raw_async_single_thread", InferenceMode::RAW_ASYNC_SINGLE_THREAD, OptionVisibility::HIDDEN }
-        }))->default_val("full_sync");
+        }))->default_val("full_async");
 
     add_option("-j,--json", m_stats_json_path, "If set save statistics as json to the specified path")
         ->default_val("")
@@ -419,9 +418,6 @@ Run2::Run2() : CLI::App("Run networks", "run2")
         ->excludes(measure_temp_opt);
         // When working with service over ip - client doesn't have access to physical devices
     }
-
-    hailo_deprecate_options(this, { std::make_shared<ValueDeprecation>(mode, "full", "full_sync"),
-        std::make_shared<ValueDeprecation>(mode, "raw", "raw_sync") }, false);
 
     parse_complete_callback([this]() {
         validate_and_set_scheduling_algorithm();
@@ -796,11 +792,15 @@ hailo_status Run2Command::execute()
         LOGGER__WARNING("Measuring latency; frames are sent one at a time and FPS will not be measured");
     }
 
-    if (1 == app->get_network_params().size() && (HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN == app->get_network_params().begin()->scheduling_algorithm)) {
+    TRY(auto vdevice, app->create_vdevice());
+    TRY(auto devices, vdevice->get_physical_devices());
+    
+    if ((1 == app->get_network_params().size()) && 
+    (HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN == app->get_network_params().begin()->scheduling_algorithm) && 
+    (devices[0].get().get_type() == Device::Type::INTEGRATED)) {
         LOGGER__WARNING("\"hailortcli run2\" is not optimized for single model usage. It is recommended to use \"hailortcli run\" command for a single model");
     }
 
-    TRY(auto vdevice, app->create_vdevice());
     std::vector<uint16_t> batch_sizes_to_run = { app->get_network_params()[0].batch_size };
     if(app->get_measure_fw_actions() && app->get_network_params()[0].batch_size == HAILO_DEFAULT_BATCH_SIZE) {
         // In case measure-fw-actions is enabled and no batch size was provided - we want to run with batch sizes 1,2,4,8,16

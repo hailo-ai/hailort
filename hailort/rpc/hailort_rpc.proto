@@ -124,14 +124,19 @@ message ProtoShmBufferIdentifier {
     uint32 size = 2;
 }
 
+message ProtoDmaBufferIdentifier {
+    uint32 size = 1;
+}
+
 message ProtoTransferRequest {
     string stream_name = 1;
     uint32 direction = 2;
     oneof transfer_data {
         bytes data = 3;
         ProtoShmBufferIdentifier shared_memory_identifier = 4;
+        ProtoDmaBufferIdentifier dma_buffer_identifier = 5;
     }
-    uint32 cb_idx = 5;
+    uint32 cb_idx = 6;
 }
 
 message ConfiguredNetworkGroup_infer_async_Request {

@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.5.0)
 # set(CMAKE_C_CLANG_TIDY "clang-tidy;-checks=*")
 
-set(HAILORT_MAJOR_VERSION    4)
-set(HAILORT_MINOR_VERSION    22)
+set(HAILORT_MAJOR_VERSION    5)
+set(HAILORT_MINOR_VERSION    0)
 set(HAILORT_REVISION_VERSION 0)
 
 # Add the cmake folder so the modules there are found
