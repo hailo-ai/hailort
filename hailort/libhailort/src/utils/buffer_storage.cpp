@@ -137,11 +137,10 @@ Expected<void *> HeapStorage::release() noexcept
 
 Expected<DmaStoragePtr> DmaStorage::create(size_t size)
 {
-    // TODO: HRT-10283 support sharing low memory buffers for DART and similar systems.
     TRY(auto dma_able_buffer, vdma::DmaAbleBuffer::create_by_allocation(size));
 
     auto result = make_shared_nothrow<DmaStorage>(std::move(dma_able_buffer));
-    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 

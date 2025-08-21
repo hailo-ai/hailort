@@ -205,19 +205,6 @@ hailo_status Socket::pton(int af, const char *src, void *dst)
     return HAILO_SUCCESS;
 }
 
-hailo_status Socket::set_recv_buffer_size_max()
-{
-    int socket_rc = SOCKET_ERROR;
- 
-    // TOOD: MAX_SIZE?? https://docs.microsoft.com/en-us/windows/win32/winsock/sol-socket-socket-options
-    const int MAX_RECV_BUFFER_SIZE = 52428800;
-    socket_rc = setsockopt(m_socket_fd, SOL_SOCKET, SO_RCVBUF,
-        reinterpret_cast<const char*>(&MAX_RECV_BUFFER_SIZE), sizeof(MAX_RECV_BUFFER_SIZE));
-    CHECK(0 == socket_rc, HAILO_ETH_FAILURE, "Failed setsockopt(SOL_SOCKET, SO_RCVBUF). WSALE={}", WSAGetLastError());
-
-    return HAILO_SUCCESS;
-}
-
 hailo_status Socket::set_timeout(const std::chrono::milliseconds timeout_ms, timeval_t *timeout)
 {
     int socket_rc = SOCKET_ERROR;

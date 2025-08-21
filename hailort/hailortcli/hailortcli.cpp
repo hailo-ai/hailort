@@ -18,13 +18,9 @@
 #include "sensor_config_command.hpp"
 #include "board_config_command.hpp"
 #include "fw_config_command.hpp"
-#include "fw_logger_command.hpp"
 #include "benchmark_command.hpp"
 #include "mon_command.hpp"
 #include "logs_command.hpp"
-#if defined(__GNUC__)
-#include "udp_rate_limiter_command.hpp"
-#endif
 #include "parse_hef_command.hpp"
 #include "memory_requirements_command.hpp"
 #include "fw_control_command.hpp"
@@ -185,12 +181,10 @@ public:
         add_subcommand<SensorConfigCommand>();
         add_subcommand<BoardConfigCommand>(OptionVisibility::HIDDEN);
         add_subcommand<FwConfigCommand>();
-        add_subcommand<FwLoggerCommand>();
         add_subcommand<FwUpdateCommand>();
         add_subcommand<SSBUpdateCommand>();
         add_subcommand<MonCommand>();
 #if defined(__GNUC__)
-        add_subcommand<UdpRateLimiterCommand>();
         add_subcommand<HwInferEstimatorCommand>(OptionVisibility::HIDDEN);
 #endif
         add_subcommand<ParseHefCommand>();

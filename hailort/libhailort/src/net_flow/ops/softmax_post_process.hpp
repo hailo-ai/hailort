@@ -50,14 +50,19 @@ private:
         const auto src_width_size = input_metadata.shape.features;
         const auto dst_width_size = output_metadata.shape.features;
 
+        // Optimized: incrementing pointers instead of calculating offsets with multiplication
+        dst_type *src_row = src_ptr;
+        src_type *dst_row = dst_ptr;
         for (uint32_t r = 0; r < input_metadata.shape.height; r++) { // H axis - rows
-            dst_type *src_row = src_ptr + (r * src_row_size);
-            src_type *dst_row = dst_ptr + (r * dst_row_size);
+            dst_type *src_col = src_row;
+            src_type *dst_col = dst_row;
             for (uint32_t w = 0; w < input_metadata.shape.width; w++) { // W axis - coloums
-                dst_type *src_col = src_row + (w * src_width_size);
-                src_type *dst_col = dst_row + (w * dst_width_size);
                 softmax(src_col, dst_col, input_metadata.shape.features);
+                src_col += src_width_size;
+                dst_col += dst_width_size;
             }
+            src_row += src_row_size;
+            dst_row += dst_row_size;
         }
         return HAILO_SUCCESS;
     }

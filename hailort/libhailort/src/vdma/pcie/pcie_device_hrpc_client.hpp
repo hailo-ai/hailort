@@ -21,8 +21,8 @@ namespace hailort
 
 class PcieDeviceHrpcClient : public Device {
 public:
-    static Expected<std::unique_ptr<PcieDeviceHrpcClient>> create(const std::string &device_id);
-    static Expected<std::unique_ptr<PcieDeviceHrpcClient>> create(const std::string &device_id,
+    static Expected<std::unique_ptr<Device>> create(const std::string &device_id);
+    static Expected<std::unique_ptr<Device>> create(const std::string &device_id,
         std::shared_ptr<Client> client);
 
     PcieDeviceHrpcClient(const std::string &device_id, std::shared_ptr<Client> client, uint32_t handle,

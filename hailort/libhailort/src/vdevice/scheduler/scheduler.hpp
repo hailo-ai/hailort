@@ -66,8 +66,10 @@ public:
     hailo_status set_threshold(const scheduler_core_op_handle_t &core_op_handle, uint32_t threshold, const std::string &network_name);
     hailo_status set_priority(const scheduler_core_op_handle_t &core_op_handle, core_op_priority_t priority, const std::string &network_name);
 
-    virtual ReadyInfo is_core_op_ready(const scheduler_core_op_handle_t &core_op_handle, bool check_threshold,
+    virtual ReadyInfo is_core_op_ready_for_run(const scheduler_core_op_handle_t &core_op_handle, bool check_threshold,
         const device_id_t &device_id) override;
+    virtual bool is_core_op_ready_for_prepare(const scheduler_core_op_handle_t &core_op_handle, const device_id_t &device_id) override;
+    virtual scheduler_core_op_handle_t get_current_core_op_preparing() const override { return m_current_core_op_preparing; }
 
 private:
     hailo_status switch_core_op(const scheduler_core_op_handle_t &core_op_handle, const device_id_t &device_id);
@@ -81,7 +83,7 @@ private:
     Expected<InferRequest> dequeue_infer_request(scheduler_core_op_handle_t core_op_handle);
     uint16_t get_frames_ready_to_transfer(scheduler_core_op_handle_t core_op_handle, const device_id_t &device_id) const;
 
-    hailo_status bind_and_sync_buffers();
+    hailo_status prepare_transfers();
 
     Expected<std::shared_ptr<VdmaConfigCoreOp>> get_vdma_core_op(scheduler_core_op_handle_t core_op_handle,
         const device_id_t &device_id);
@@ -115,16 +117,39 @@ private:
         std::thread m_thread;
     };
 
+    class PreparingThread final {
+    public:
+        PreparingThread(CoreOpsScheduler &scheduler);
+
+        ~PreparingThread();
+
+        PreparingThread(const PreparingThread &) = delete;
+        PreparingThread &operator=(const PreparingThread &) = delete;
+
+        void signal();
+        void stop();
+
+    private:
+        void prepare_worker_thread_main();
+
+        CoreOpsScheduler &m_scheduler;
+        std::mutex m_mutex;
+        std::condition_variable m_cv;
+        std::atomic_bool m_is_running;
+        std::atomic_bool m_execute_worker_thread;
+        std::thread m_thread;
+    };
+    
     std::unordered_map<vdevice_core_op_handle_t, ScheduledCoreOpPtr> m_scheduled_core_ops;
 
     using InferRequestQueue = SafeQueue<InferRequest>;
-    std::unordered_map<vdevice_core_op_handle_t, InferRequestQueue> m_infer_requests;
-    std::unordered_map<vdevice_core_op_handle_t, InferRequestQueue> m_bounded_infer_requests;
+    std::unordered_map<vdevice_core_op_handle_t, InferRequestQueue> m_pending_requests;
+    std::unordered_map<vdevice_core_op_handle_t, InferRequestQueue> m_ready_requests;
 
     // This shared mutex guards accessing the scheduler data structures including:
     //   - m_scheduled_core_ops
-    //   - m_infer_requests
-    //   - m_core_op_priority
+    //   - m_pending_requests
+    //   - m_core_op_to_run_priority
     // Any function that is modifing these structures (for example by adding/removing items) must lock this mutex using
     // unique_lock. Any function accessing these structures (for example access to
     // m_scheduled_core_ops.at(core_op_handle) can use shared_lock.
@@ -133,6 +158,9 @@ private:
     std::chrono::steady_clock::time_point m_closest_threshold_timeout;
 
     SchedulerThread m_scheduler_thread;
+    PreparingThread m_preparing_thread;
+
+    std::atomic<scheduler_core_op_handle_t> m_current_core_op_preparing{INVALID_CORE_OP_HANDLE};
 };
 } /* namespace hailort */
 

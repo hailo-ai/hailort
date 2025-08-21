@@ -432,11 +432,6 @@ public:
     virtual Expected<std::vector<std::string>> get_stream_names_from_vstream_name(const std::string &vstream_name) = 0;
     virtual Expected<std::vector<std::string>> get_vstream_names_from_stream_name(const std::string &stream_name) = 0;
 
-    static Expected<std::shared_ptr<ConfiguredNetworkGroup>> duplicate_network_group_client(uint32_t ng_handle, uint32_t vdevice_handle,
-        const std::string &network_group_name);
-    virtual Expected<uint32_t> get_client_handle() const;
-    virtual Expected<uint32_t> get_vdevice_client_handle() const;
-
     virtual hailo_status before_fork();
     virtual hailo_status after_fork_in_parent();
     virtual hailo_status after_fork_in_child();

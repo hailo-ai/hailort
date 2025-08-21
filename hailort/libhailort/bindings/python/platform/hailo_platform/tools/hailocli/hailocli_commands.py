@@ -41,12 +41,6 @@ class ControlCommandCLI(HailortCliUtil):
     def __init__(self, parser):
         super().__init__(parser, 'fw-control')
 
-
-class LoggerCommandCLI(HailortCliUtil):
-    def __init__(self, parser):
-        super().__init__(parser, 'fw-logger')
-
-
 class MeasurePowerCommandCLI(HailortCliUtil):
     def __init__(self, parser):
         super().__init__(parser, 'measure-power')
@@ -74,13 +68,6 @@ class SSBUpdaterCLI(HailortCliUtil):
 
     def __init__(self, parser):
         super().__init__(parser, 'ssb-update')
-
-
-class UDPRateLimiterCLI(HailortCliUtil):
-    """CLI tool for UDP rate limitation."""
-
-    def __init__(self, parser):
-        super().__init__(parser, 'udp-rate-limiter')
 
 
 class TutorialRequired(Exception):

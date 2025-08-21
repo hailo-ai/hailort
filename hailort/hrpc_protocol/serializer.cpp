@@ -775,6 +775,7 @@ Expected<Buffer> IdentifyDeviceSerializer::serialize_reply(const hailo_device_id
     proto_identity->set_board_name(identity.board_name);
     proto_identity->set_is_release(identity.is_release);
     proto_identity->set_extended_context_switch_buffer(identity.extended_context_switch_buffer);
+    proto_identity->set_extended_fw_check(identity.extended_fw_check);
     proto_identity->set_device_architecture(static_cast<DeviceArchitectureProto>(identity.device_architecture));
 
     auto mut_serial_number = proto_identity->mutable_serial_number();
@@ -813,6 +814,7 @@ Expected<hailo_device_identity_t> IdentifyDeviceSerializer::deserialize_reply(co
     identity.logger_version = reply.identity().logger_version();
     identity.is_release = reply.identity().is_release();
     identity.extended_context_switch_buffer = reply.identity().extended_context_switch_buffer();
+    identity.extended_fw_check = reply.identity().extended_fw_check();
     identity.device_architecture = static_cast<hailo_device_architecture_t>(reply.identity().device_architecture());
 
     std::memcpy(identity.board_name, reply.identity().board_name().c_str(), reply.identity().board_name().size());
@@ -993,7 +995,7 @@ Expected<Buffer> QueryHealthStatsSerializer::serialize_reply(const hailo_health_
 
     reply.set_on_die_temperature(info.on_die_temperature);
     reply.set_on_die_voltage(info.on_die_voltage);
-    reply.set_startup_bist_mask(info.startup_bist_mask);
+    reply.set_bist_failure_mask(info.bist_failure_mask);
 
     return get_serialized_reply<Device_QueryHealthStats_Reply>(reply, "QueryHealthStats");
 }
@@ -1006,7 +1008,7 @@ Expected<hailo_health_stats_t> QueryHealthStatsSerializer::deserialize_reply(con
     hailo_health_stats_t info = {};
     info.on_die_temperature = reply.on_die_temperature();
     info.on_die_voltage = reply.on_die_voltage();
-    info.startup_bist_mask = reply.startup_bist_mask();
+    info.bist_failure_mask = reply.bist_failure_mask();
 
     return info;
 }

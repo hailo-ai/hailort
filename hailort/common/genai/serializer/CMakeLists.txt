@@ -7,7 +7,7 @@ get_filename_component(PROTO_HEADER_DIRECTORY ${PROTO_GENAI_HEADER} DIRECTORY)
 
 add_library(genai_scheme_proto STATIC EXCLUDE_FROM_ALL ${PROTO_GENAI_SRC} ${PROTO_GENAI_HEADER})
 target_link_libraries(genai_scheme_proto libprotobuf-lite)
-set_target_properties(genai_scheme_proto PROPERTIES CXX_STANDARD 14 GENERATED TRUE POSITION_INDEPENDENT_CODE ON)
+set_target_properties(genai_scheme_proto PROPERTIES CXX_STANDARD 17 GENERATED TRUE POSITION_INDEPENDENT_CODE ON)
 if(CMAKE_HOST_WIN32)
     # https://github.com/protocolbuffers/protobuf/tree/master/cmake#notes-on-compiler-warnings
     target_compile_options(genai_scheme_proto PRIVATE /wd4244)

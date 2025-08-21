@@ -103,7 +103,8 @@ void CircularStreamBufferPool::reset_pointers()
 
 Expected<Buffer> CircularStreamBufferPool::allocate_buffer(VdmaDevice &device, size_t size)
 {
-    TRY(auto dma_able_buffer, vdma::DmaAbleBuffer::create_by_allocation(size, device.get_driver()));
+    (void)device; // TODO: remove
+    TRY(auto dma_able_buffer, vdma::DmaAbleBuffer::create_by_allocation(size));
 
     auto dma_storage = make_shared_nothrow<DmaStorage>(std::move(dma_able_buffer));
     CHECK_NOT_NULL_AS_EXPECTED(dma_storage, HAILO_OUT_OF_HOST_MEMORY);

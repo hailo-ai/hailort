@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.5.0)
 
+project(hailort-examples-cpp)
+
 set(
     CPP_EXAMPLES
     async_infer_advanced
@@ -14,6 +16,7 @@ if(UNIX)
         APPEND
         CPP_EXAMPLES
         query_performance_and_health_stats
+        async_infer_dma_buffer
     )
 endif()
 

@@ -22,8 +22,8 @@
 namespace hailort
 {
 
-#define HAILO_CLASS_PATH ("/sys/class/hailo_chardev")
-#define HAILO_BOARD_LOCATION_FILENAME ("board_location")
+#define HAILO_CLASS_PATH                      ("/sys/class/hailo_chardev")
+#define HAILO_BOARD_LOCATION_FILENAME         ("board_location")
 #define HAILO_BOARD_ACCELERATOR_TYPE_FILENAME ("accelerator_type")
 
 Expected<FileDescriptor> open_device_file(const std::string &path)
@@ -38,19 +38,18 @@ Expected<FileDescriptor> open_device_file(const std::string &path)
 
 Expected<std::vector<std::string>> list_devices()
 {
+    std::vector<std::string> devices;
     DIR *dir_iter = opendir(HAILO_CLASS_PATH);
     if (!dir_iter) {
         if (ENOENT == errno) {
-            LOGGER__ERROR("Can't find hailort driver class. Can happen if the driver is not installed, if the kernel was updated or on some driver failure (then read driver dmesg log)");
-            return make_unexpected(HAILO_DRIVER_NOT_INSTALLED);
-        }
-        else {
+            // Hailo chrdev-class does not exist; meaning no devices have been detected by driver.
+            return devices;
+        } else {
             LOGGER__ERROR("Failed to open hailo pcie class ({}), errno {}", HAILO_CLASS_PATH, errno);
             return make_unexpected(HAILO_DRIVER_INVALID_RESPONSE);
         }
     }
 
-    std::vector<std::string> devices;
     struct dirent *dir = nullptr;
     while ((dir = readdir(dir_iter)) != nullptr) {
         std::string device_name(dir->d_name);
@@ -172,6 +171,9 @@ hailo_status convert_errno_to_hailo_status(int err, const char* ioctl_name)
         // Expected error (stopping wait, i.e notification wait)
         LOGGER__DEBUG("Ioctl {} failed due to operation aborted", ioctl_name);
         return HAILO_DRIVER_WAIT_CANCELED;
+    case ENXIO:
+        LOGGER__ERROR("Ioctl {} failed due to device not connected", ioctl_name);
+        return HAILO_DEVICE_NOT_CONNECTED;
     default:
         LOGGER__ERROR("Ioctl {} failed with {}. Read dmesg log for more info", ioctl_name, err);
         return HAILO_DRIVER_OPERATION_FAILED;

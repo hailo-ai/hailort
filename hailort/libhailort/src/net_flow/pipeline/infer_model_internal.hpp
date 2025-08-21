@@ -61,6 +61,7 @@ public:
     virtual void set_batch_size(uint16_t batch_size) override;
     virtual void set_power_mode(hailo_power_mode_t power_mode) override;
     virtual void set_hw_latency_measurement_flags(hailo_latency_measurement_flags_t latency) override;
+    virtual void set_enable_kv_cache(bool enable_kv_cache) override;
     virtual Expected<ConfiguredInferModel> configure() override;
     virtual Expected<InferStream> input() override;
     virtual Expected<InferStream> output() override;

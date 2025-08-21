@@ -13,12 +13,6 @@
 #include "vdma/driver/hailort_driver.hpp"
 #include "vdma/memory/vdma_buffer.hpp"
 
-#define MAX_CCB_DESCS_COUNT (0x00040000)
-#define MIN_CCB_DESCS_COUNT (16u)
-#define MIN_EXTENDED_CCB_DESCS_COUNT (32u)
-#define MAX_CCB_PAGE_SIZE (4096)
-#define MIN_CCB_PAGE_SIZE (512)
-#define DEFAULT_CCB_PAGE_SIZE (512)
 
 namespace hailort {
 namespace vdma {

@@ -51,10 +51,23 @@ using PipelineTimePoint = std::chrono::steady_clock::time_point;
 
 class VDevice;
 
-struct AdditionalData {};
+struct AdditionalData {
+    virtual ~AdditionalData() = default;
+    enum class Type {
+        Base,
+        IouPipelineData,
+        PixBufferPipelineData,
+        DmaBufferPipelineData
+    };
+
+    // Runtime type tag (avoids dynamic_cast). Derived types must override and return their static TYPE.
+    virtual Type type() const noexcept { return Type::Base; }
+};
 
 struct IouPipelineData : AdditionalData
 {
+    static constexpr Type TYPE = Type::IouPipelineData;
+    Type type() const noexcept override { return TYPE; }
     IouPipelineData(std::vector<net_flow::DetectionBbox> &&detections, std::vector<uint32_t> &&detections_classes_count)
         : m_detections(std::move(detections)),
           m_detections_classes_count(std::move(detections_classes_count)) {}
@@ -68,12 +81,16 @@ struct IouPipelineData : AdditionalData
 
 struct PixBufferPipelineData : AdditionalData
 {
+    static constexpr Type TYPE = Type::PixBufferPipelineData;
+    Type type() const noexcept override { return TYPE; }
     PixBufferPipelineData(const hailo_pix_buffer_t &buffer) : m_pix_buffer(buffer) {};
     hailo_pix_buffer_t m_pix_buffer;
 };
 
 struct DmaBufferPipelineData : AdditionalData
 {
+    static constexpr Type TYPE = Type::DmaBufferPipelineData;
+    Type type() const noexcept override { return TYPE; }
     DmaBufferPipelineData(const hailo_dma_buffer_t &buffer) : m_dma_buffer(buffer) {};
     hailo_dma_buffer_t m_dma_buffer;
 };
@@ -104,7 +121,18 @@ public:
         void set_additional_data(std::shared_ptr<AdditionalData> data) { m_additional_data = data;}
         template <typename T>
         std::shared_ptr<T> get_additional_data() {
-            return std::static_pointer_cast<T>(m_additional_data);
+            static_assert(std::is_base_of<AdditionalData, T>::value, "T must derive from AdditionalData");
+            if (!m_additional_data) {
+                return nullptr;
+            }
+            if constexpr (std::is_same<T, AdditionalData>::value) {
+                return std::static_pointer_cast<T>(m_additional_data);
+            } else {
+                if (m_additional_data->type() != T::TYPE) {
+                    return nullptr;
+                }
+                return std::static_pointer_cast<T>(m_additional_data);
+            }
         }
 
     private:

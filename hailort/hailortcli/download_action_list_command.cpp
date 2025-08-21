@@ -20,7 +20,7 @@
 // TODO - HRT-7364 - add CPU subsystem frequency into the device extended info control
 // and use it for get the timer's frequency
 #define NN_CORE_TO_TIMER_FREQ_FACTOR (2)
-#define HAILO15_VPU_CORE_CPU_DEFAULT_FREQ_MHZ (200)
+#define VPU_CORE_CPU_DEFAULT_FREQ_MHZ (200)
 
 constexpr int DownloadActionListCommand::INVALID_NUMERIC_VALUE;
 
@@ -72,7 +72,7 @@ Expected<ordered_json> DownloadActionListCommand::init_json_object(Device &devic
     unsigned int clock_cycle = 0;
     // TODO - HRT-8046 Implement extended device info for hailo15
     if ((HAILO_ARCH_HAILO15H == chip_arch) || (HAILO_ARCH_HAILO15L == chip_arch) || (HAILO_ARCH_MARS == chip_arch)) {
-        clock_cycle = HAILO15_VPU_CORE_CPU_DEFAULT_FREQ_MHZ;
+        clock_cycle = VPU_CORE_CPU_DEFAULT_FREQ_MHZ;
     } else {
         TRY(auto extended_info, device.get_extended_device_information());
         clock_cycle = (extended_info.neural_network_core_clock_rate / NN_CORE_TO_TIMER_FREQ_FACTOR) / MHz;

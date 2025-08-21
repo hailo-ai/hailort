@@ -27,7 +27,6 @@
 #include "hailo/buffer.hpp"
 #include "hailo/event.hpp"
 #include "hailo/runtime_statistics.hpp"
-#include "hailo/network_rate_calculator.hpp"
 #include "hailo/quantization.hpp"
 #include "hailo/hailort_defaults.hpp"
 #include "hailo/dma_mapped_buffer.hpp"

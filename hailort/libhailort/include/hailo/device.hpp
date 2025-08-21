@@ -73,28 +73,6 @@ public:
     static Expected<std::vector<hailo_pcie_device_info_t>> scan_pcie();
 
     /**
-     * Returns information on all available ethernet devices in the system.
-     * 
-     * @param[in] interface_name            The name of the network interface to scan.
-     * @param[in] timeout                   The time in milliseconds to scan devices.
-     * @return Upon success, returns Expected of a vector of ::hailo_eth_device_info_t containing the information.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     */
-    static Expected<std::vector<hailo_eth_device_info_t>> scan_eth(const std::string &interface_name,
-        std::chrono::milliseconds timeout);
-
-    /**
-     * Scans ethernet device by host address.
-     * 
-     * @param[in] host_address              The IP address of the network interface to scan.
-     * @param[in] timeout                   The time in milliseconds to scan devices.
-     * @return Upon success, returns Expected of a vector of ::hailo_eth_device_info_t containing the information.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     */
-    static Expected<std::vector<hailo_eth_device_info_t>> scan_eth_by_host_address(const std::string &host_address,
-        std::chrono::milliseconds timeout);
-
-    /**
      * Creates a device. If there are more than one device detected in the system, an arbitrary device is returned.
      *
      * @return Upon success, returns Expected of a unique_ptr to Device object.
@@ -131,36 +109,6 @@ public:
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     static Expected<std::unique_ptr<Device>> create_pcie(const hailo_pcie_device_info_t &device_info);
-
-    /**
-     * Creates an ethernet device by the given info.
-     *
-     * @param[in] device_info   Information about the device to open.
-     * @return Upon success, returns Expected of a unique_ptr to Device object.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     */
-    static Expected<std::unique_ptr<Device>> create_eth(const hailo_eth_device_info_t &device_info);
-
-    /**
-     * Creates an ethernet device by IP address.
-     *
-     * @param[in] ip_addr      The device IP address.
-     * @return Upon success, returns Expected of a unique_ptr to Device object.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     */
-    static Expected<std::unique_ptr<Device>> create_eth(const std::string &ip_addr);
-
-    /**
-     * Creates an ethernet device by IP address, port number, timeout duration and max number of attempts
-     *
-     * @param[in] device_address The device IP address.
-     * @param[in] port The port number that the device will use for the Ethernet communication.
-     * @param[in] timeout_milliseconds  The time in milliseconds to scan devices.
-     * @param[in] max_number_of_attempts  The number of attempts to find a device.
-     * @return Upon success, returns Expected of a unique_ptr to Device object.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     */
-    static Expected<std::unique_ptr<Device>> create_eth(const std::string &device_address, uint16_t port, uint32_t timeout_milliseconds, uint8_t max_number_of_attempts);
 
     /**
      * Parse PCIe device BDF string into hailo device info structure.

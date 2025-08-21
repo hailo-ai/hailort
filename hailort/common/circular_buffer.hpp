@@ -152,14 +152,15 @@ class CircularArray final
 public:
     static_assert(std::is_default_constructible<T>::value, "CircularArray object must be default constructible");
 
-    // Based on https://en.cppreference.com/w/cpp/iterator/iterator
-    class iterator: public std::iterator<std::input_iterator_tag,   // iterator_category
-                                         T,                         // value_type
-                                         int,                       // difference_type
-                                         int,                       // pointer
-                                         T&>                        // reference
+    class iterator
     {
     public:
+        using iterator_category = std::input_iterator_tag;
+        using value_type = T;
+        using difference_type = int;
+        using pointer = int;
+        using reference = T&;
+
         explicit iterator(int index, CircularArray &array) : m_array(array), m_index(index) {}
         iterator& operator++() { increment(Pow2Tag()); return *this; }
         iterator operator++(int) { iterator retval = *this; ++(*this); return retval; }

@@ -294,6 +294,11 @@ void InferModelBase::set_hw_latency_measurement_flags(hailo_latency_measurement_
     m_config_params.latency = latency;
 }
 
+void InferModelBase::set_enable_kv_cache(bool enable_kv_cache)
+{
+    m_config_params.enable_kv_cache = enable_kv_cache;
+}
+
 Expected<ConfiguredInferModel> InferModelBase::configure()
 {
     NetworkGroupsParamsMap configure_params = {};
@@ -315,6 +320,7 @@ Expected<ConfiguredInferModel> InferModelBase::configure()
 
         network_group_name_params_pair.second.power_mode = m_config_params.power_mode;
         network_group_name_params_pair.second.latency = m_config_params.latency;
+        network_group_name_params_pair.second.enable_kv_cache = m_config_params.enable_kv_cache;
     }
 
     auto network_groups = m_vdevice.get().configure(m_hef, configure_params);

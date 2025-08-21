@@ -61,7 +61,6 @@ public:
     Expected<int> read_fd();
     hailo_status write_fd(int fd, size_t buffer_size);
 
-    hailo_status set_recv_buffer_size_max();
     hailo_status set_timeout(const std::chrono::milliseconds timeout_ms, timeval_t *timeout);
     hailo_status enable_broadcast();
     hailo_status allow_reuse_address();

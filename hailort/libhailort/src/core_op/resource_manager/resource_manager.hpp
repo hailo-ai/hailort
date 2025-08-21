@@ -47,6 +47,9 @@ struct EdgeLayer {
     LayerInfo layer_info;
     vdma::ChannelId channel_id;
     CONTROL_PROTOCOL__host_buffer_info_t buffer_info;
+
+    EdgeLayer(LayerInfo &&layer_info, vdma::ChannelId channel_id, CONTROL_PROTOCOL__host_buffer_info_t buffer_info):
+        layer_info(layer_info), channel_id(channel_id), buffer_info(buffer_info) {}
 };
 
 struct DdrChannelsInfo
@@ -62,6 +65,14 @@ struct DdrChannelsInfo
     // total_buffers_per_frame not same as core_buffer_per frame. 
     //(In DDR core buffer per frame is 1). Used to calc total host descriptors_per_frame. 
     uint16_t total_buffers_per_frame;
+
+    DdrChannelsInfo(vdma::ChannelId d2h_channel_id, uint8_t d2h_stream_index, vdma::ChannelId h2d_channel_id,
+        uint8_t h2d_stream_index, CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info, uint8_t network_index,
+        uint16_t row_size, uint16_t min_buffered_rows, uint16_t total_buffers_per_frame) :
+        d2h_channel_id(d2h_channel_id), d2h_stream_index(d2h_stream_index), h2d_channel_id(h2d_channel_id),
+        h2d_stream_index(h2d_stream_index), host_buffer_info(host_buffer_info), network_index(network_index),
+        row_size(row_size), min_buffered_rows(min_buffered_rows), total_buffers_per_frame(total_buffers_per_frame)
+    {}
 
     // Checks if the credits are automaticaly going from d2h channel to its h2d channel, or it needs to be done manually
     // (Using a fw task).
@@ -92,18 +103,18 @@ public:
         std::vector<std::shared_ptr<vdma::MappedBuffer>> mapped_buffers = {},
         std::shared_ptr<vdma::MappedBuffer> nops_buffer = nullptr);
 
-    hailo_status add_edge_layer(const LayerInfo &layer_info, vdma::ChannelId channel_id,
+    hailo_status add_edge_layer(LayerInfo &&layer_info, vdma::ChannelId channel_id,
         const CONTROL_PROTOCOL__host_buffer_info_t &buffer_info, const SupportedFeatures &supported_features);
-    void add_ddr_channels_info(const DdrChannelsInfo &ddr_info);
+    void add_ddr_channels_info(vdma::ChannelId d2h_channel_id, uint8_t d2h_stream_index, vdma::ChannelId h2d_channel_id,
+        uint8_t h2d_stream_index, CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info, uint8_t network_index,
+        uint16_t row_size, uint16_t min_buffered_rows, uint16_t total_buffers_per_frame);
 
-    std::vector<EdgeLayer> get_edge_layers() const;
-    std::vector<EdgeLayer> get_edge_layers(LayerType layer_type) const;
-    std::vector<EdgeLayer> get_edge_layers(hailo_stream_direction_t direction) const;
-    std::vector<EdgeLayer> get_edge_layers(LayerType layer_type, hailo_stream_direction_t direction) const;
+    const std::vector<EdgeLayer>& get_edge_layers() const;
+    std::vector<std::reference_wrapper<const EdgeLayer>> get_edge_layers(LayerType layer_type, hailo_stream_direction_t direction) const;
 
-    Expected<EdgeLayer> get_edge_layer_by_stream_index(const uint8_t stream_index,
+    Expected<std::reference_wrapper<const EdgeLayer>> get_edge_layer_by_stream_index(const uint8_t stream_index,
         const hailo_stream_direction_t direction) const;
-    Expected<EdgeLayer> get_edge_layer_by_channel_id(const vdma::ChannelId channel_id) const;
+    Expected<std::reference_wrapper<const EdgeLayer>> get_edge_layer_by_channel_id(const vdma::ChannelId channel_id) const;
 
     Expected<DdrChannelsInfo> get_ddr_channels_info(uint8_t d2h_stream_index) const;
     const std::vector<DdrChannelsInfo> &get_ddr_channels_infos() const;
@@ -111,14 +122,14 @@ public:
     hailo_status validate_edge_layer(const LayerInfo &layer_info, vdma::ChannelId channel_id,
         const SupportedFeatures &supported_features);
 
-    std::vector<std::shared_ptr<ConfigBuffer>> &get_config_buffers();
+    std::map<uint8_t, std::shared_ptr<ConfigBuffer>> &get_config_buffers();
     CONTROL_PROTOCOL__context_switch_context_type_t get_context_type() const {
         return m_context_type;
     }
 
 private:
     ContextResources(HailoRTDriver &driver, CONTROL_PROTOCOL__context_switch_context_type_t context_type,
-        std::vector<std::shared_ptr<ConfigBuffer>> &&config_buffers, std::shared_ptr<InternalBufferManager> internal_buffer_manager) :
+        std::map<uint8_t, std::shared_ptr<ConfigBuffer>> &&config_buffers, std::shared_ptr<InternalBufferManager> internal_buffer_manager) :
         m_driver(std::ref(driver)),
         m_context_type(context_type),
         m_config_buffers(std::move(config_buffers)),
@@ -127,7 +138,7 @@ private:
 
     std::reference_wrapper<HailoRTDriver> m_driver;
     CONTROL_PROTOCOL__context_switch_context_type_t m_context_type;
-    std::vector<std::shared_ptr<ConfigBuffer>> m_config_buffers;
+    std::map<uint8_t, std::shared_ptr<ConfigBuffer>> m_config_buffers;
 
     std::vector<EdgeLayer> m_edge_layers;
     std::vector<DdrChannelsInfo> m_ddr_channels_infos;

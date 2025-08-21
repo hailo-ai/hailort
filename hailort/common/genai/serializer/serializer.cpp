@@ -83,11 +83,14 @@ Expected<uint32_t> GenAISerializerUtils::get_action_id(const MemoryView &raw_req
     return res;
 }
 
-Expected<Buffer> LLMCreateSerializer::serialize_request(const hailo_vdevice_params_t &vdevice_params, const LLMParams &llm_params)
+Expected<Buffer> LLMCreateSerializer::serialize_request(const hailo_vdevice_params_t &vdevice_params, const LLMParams &llm_params, const std::string &hef_path)
 {
     LLM_Create_Request llm_create;
+
     llm_create.set_lora_name(llm_params.lora());
-    llm_create.set_is_builtin(llm_params.hef() == BUILTIN);
+    if (!hef_path.empty()) {
+        llm_create.set_hef_path(hef_path);
+    }
 
     std::string group_id = get_group_id_as_string(vdevice_params);
     llm_create.set_group_id(group_id);
@@ -95,30 +98,33 @@ Expected<Buffer> LLMCreateSerializer::serialize_request(const hailo_vdevice_para
     return get_serialized_message<LLM_Create_Request>(llm_create, static_cast<uint32_t>(HailoGenAIActionID::LLM__CREATE), "LLM_Create_Request");
 }
 
-Expected<std::tuple<std::string, bool, std::string>> LLMCreateSerializer::deserialize_request(const MemoryView &serialized_request)
+Expected<std::tuple<std::string, std::string, std::string>> LLMCreateSerializer::deserialize_request(const MemoryView &serialized_request)
 {
     TRY(auto llm_create, get_deserialized_message<LLM_Create_Request>(serialized_request,
         static_cast<uint32_t>(HailoGenAIActionID::LLM__CREATE), "LLM_Create_Request"));
 
-    return std::tuple<std::string, bool, std::string>(llm_create.lora_name(), llm_create.is_builtin(), llm_create.group_id());
+    return std::tuple<std::string, std::string, std::string>(llm_create.lora_name(), llm_create.hef_path(), llm_create.group_id());
 }
 
-Expected<Buffer> LLMCreateSerializer::serialize_reply(hailo_status status)
+Expected<Buffer> LLMCreateSerializer::serialize_reply(hailo_status status, const std::string &prompt_template)
 {
     LLM_Create_Reply llm_create;
     llm_create.set_status(status);
+    llm_create.set_prompt_template(prompt_template);
 
     return get_serialized_message<LLM_Create_Reply>(llm_create, static_cast<uint32_t>(HailoGenAIActionID::LLM__CREATE), "LLM_Create_Reply");
 }
 
-hailo_status LLMCreateSerializer::deserialize_reply(const MemoryView &serialized_reply)
+Expected<std::string> LLMCreateSerializer::deserialize_reply(const MemoryView &serialized_reply)
 {
     TRY(auto llm_create, get_deserialized_message<LLM_Create_Reply>(serialized_reply,
         static_cast<uint32_t>(HailoGenAIActionID::LLM__CREATE), "LLM_Create_Reply"));
 
     CHECK(llm_create.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'LLM_Create_Reply'");
     CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(llm_create.status()), "Failed to create LLM");
-    return HAILO_SUCCESS;
+
+    auto prompt_template = llm_create.prompt_template();
+    return prompt_template;
 }
 
 Expected<Buffer> LLMGetGeneratorParamsSerializer::serialize_request()
@@ -217,8 +223,7 @@ hailo_status LLMGeneratorCreateSerializer::deserialize_reply(const MemoryView &s
         static_cast<uint32_t>(HailoGenAIActionID::LLM__GENERATOR_CREATE), "LLM_Generator_Create_Reply"));
 
     CHECK(llm_generator_create.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'LLM_Generator_Create_Reply'");
-    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(llm_generator_create.status()), "Failed to create generator");
-    return HAILO_SUCCESS;
+    return static_cast<hailo_status>(llm_generator_create.status());
 }
 
 Expected<Buffer> LLMGeneratorWriteSerializer::serialize_request()
@@ -251,8 +256,7 @@ hailo_status LLMGeneratorWriteSerializer::deserialize_reply(const MemoryView &se
         static_cast<uint32_t>(HailoGenAIActionID::LLM__GENERATOR_WRITE), "LLM_Generator_Write_Reply"));
 
     CHECK(llm_generator_write.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'LLM_Generator_Write_Reply'");
-    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(llm_generator_write.status()), "Failed to write generator");
-    return HAILO_SUCCESS;
+    return static_cast<hailo_status>(llm_generator_write.status());
 }
 
 Expected<Buffer> LLMGeneratorGenerateSerializer::serialize_request()
@@ -285,8 +289,7 @@ hailo_status LLMGeneratorGenerateSerializer::deserialize_reply(const MemoryView 
         static_cast<uint32_t>(HailoGenAIActionID::LLM__GENERATOR_GENERATE), "LLM_Generator_Generate_Reply"));
 
     CHECK(llm_generator_generate.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'LLM_Generator_Generate_Reply'");
-    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(llm_generator_generate.status()), "Failed to generate");
-    return HAILO_SUCCESS;
+    return static_cast<hailo_status>(llm_generator_generate.status());
 }
 
 Expected<Buffer> LLMGeneratorReadSerializer::serialize_request(const std::chrono::milliseconds &timeout)
@@ -407,9 +410,195 @@ hailo_status LLMClearContextSerializer::deserialize_reply(const MemoryView &seri
         static_cast<uint32_t>(HailoGenAIActionID::LLM_CLEAR_CONTEXT), "LLM_Clear_Context_Reply"));
 
     CHECK(llm_clear_context.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'LLM_Clear_Context_Reply'");
-    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(llm_clear_context.status()), "Failed to clear context");
+    return static_cast<hailo_status>(llm_clear_context.status());
+}
+
+Expected<Buffer> LLMSetEndOfGenerationSequenceSerializer::serialize_request(const std::string &end_of_generation_sequence)
+{
+    LLM_Set_End_Of_Generation_Sequence_Request llm_set_end_of_generation_sequence;
+    llm_set_end_of_generation_sequence.set_end_of_generation_sequence(end_of_generation_sequence);
+
+    return get_serialized_message<LLM_Set_End_Of_Generation_Sequence_Request>(llm_set_end_of_generation_sequence,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__SET_END_OF_GENERATION_SEQUENCE), "LLM_Set_End_Of_Generation_Sequence_Request");
+}
+
+Expected<std::string> LLMSetEndOfGenerationSequenceSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    TRY(auto llm_set_end_of_generation_sequence, get_deserialized_message<LLM_Set_End_Of_Generation_Sequence_Request>(serialized_request,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__SET_END_OF_GENERATION_SEQUENCE), "LLM_Set_End_Of_Generation_Sequence_Request"));
+
+
+        auto end_of_generation_sequence = llm_set_end_of_generation_sequence.end_of_generation_sequence();
+    return end_of_generation_sequence;
+}
+
+Expected<Buffer> LLMSetEndOfGenerationSequenceSerializer::serialize_reply(hailo_status status)
+{
+    LLM_Set_End_Of_Generation_Sequence_Reply llm_set_end_of_generation_sequence;
+    llm_set_end_of_generation_sequence.set_status(status);
+
+    return get_serialized_message<LLM_Set_End_Of_Generation_Sequence_Reply>(llm_set_end_of_generation_sequence,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__SET_END_OF_GENERATION_SEQUENCE), "LLM_Set_End_Of_Generation_Sequence_Reply");
+}
+
+hailo_status LLMSetEndOfGenerationSequenceSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    TRY(auto llm_set_end_of_generation_sequence, get_deserialized_message<LLM_Set_End_Of_Generation_Sequence_Reply>(serialized_reply,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__SET_END_OF_GENERATION_SEQUENCE), "LLM_Set_End_Of_Generation_Sequence_Reply"));
+
+    CHECK(llm_set_end_of_generation_sequence.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'LLM_Set_End_Of_Generation_Sequence_Reply'");
+
+    return static_cast<hailo_status>(llm_set_end_of_generation_sequence.status());
+}
+
+Expected<Buffer> LLMGetEndOfGenerationSequenceSerializer::serialize_request()
+{
+    LLM_Get_End_Of_Generation_Sequence_Request llm_get_end_of_generation_sequence;
+    return get_serialized_message<LLM_Get_End_Of_Generation_Sequence_Request>(llm_get_end_of_generation_sequence,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_END_OF_GENERATION_SEQUENCE), "LLM_Get_End_Of_Generation_Sequence_Request");
+}
+
+hailo_status LLMGetEndOfGenerationSequenceSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    TRY(auto llm_get_end_of_generation_sequence, get_deserialized_message<LLM_Get_End_Of_Generation_Sequence_Request>(serialized_request,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_END_OF_GENERATION_SEQUENCE), "LLM_Get_End_Of_Generation_Sequence_Request"));
 
     return HAILO_SUCCESS;
+}
+
+Expected<Buffer> LLMGetEndOfGenerationSequenceSerializer::serialize_reply(hailo_status status, const std::string &end_of_generation_sequence)
+{
+    LLM_Get_End_Of_Generation_Sequence_Reply llm_get_end_of_generation_sequence;
+    llm_get_end_of_generation_sequence.set_status(status);
+    llm_get_end_of_generation_sequence.set_end_of_generation_sequence(end_of_generation_sequence);
+
+    return get_serialized_message<LLM_Get_End_Of_Generation_Sequence_Reply>(llm_get_end_of_generation_sequence,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_END_OF_GENERATION_SEQUENCE), "LLM_Get_End_Of_Generation_Sequence_Reply");
+}
+
+Expected<std::string> LLMGetEndOfGenerationSequenceSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    TRY(auto llm_get_end_of_generation_sequence, get_deserialized_message<LLM_Get_End_Of_Generation_Sequence_Reply>(serialized_reply,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_END_OF_GENERATION_SEQUENCE), "LLM_Get_End_Of_Generation_Sequence_Reply"));
+
+    auto end_of_generation_sequence = llm_get_end_of_generation_sequence.end_of_generation_sequence();
+    return end_of_generation_sequence;
+}
+
+Expected<Buffer> LLMSetStopTokensSerializer::serialize_request(const std::vector<std::string> &stop_tokens)
+{
+    LLM_Set_Stop_Tokens_Request llm_set_stop_tokens;
+    for (const auto &token : stop_tokens) {
+        llm_set_stop_tokens.add_stop_tokens(token);
+    }
+
+    return get_serialized_message<LLM_Set_Stop_Tokens_Request>(llm_set_stop_tokens,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__SET_STOP_TOKENS), "LLM_Set_Stop_Tokens_Request");
+}
+
+Expected<std::vector<std::string>> LLMSetStopTokensSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    TRY(auto llm_set_stop_tokens, get_deserialized_message<LLM_Set_Stop_Tokens_Request>(serialized_request,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__SET_STOP_TOKENS), "LLM_Set_Stop_Tokens_Request"));
+
+    std::vector<std::string> stop_tokens;
+    for (const auto &token : llm_set_stop_tokens.stop_tokens()) {
+        stop_tokens.push_back(token);
+    }
+    return stop_tokens;
+}
+
+Expected<Buffer> LLMSetStopTokensSerializer::serialize_reply(hailo_status status)
+{
+    LLM_Set_Stop_Tokens_Reply llm_set_stop_tokens;
+    llm_set_stop_tokens.set_status(status);
+
+    return get_serialized_message<LLM_Set_Stop_Tokens_Reply>(llm_set_stop_tokens,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__SET_STOP_TOKENS), "LLM_Set_Stop_Tokens_Reply");
+}
+
+hailo_status LLMSetStopTokensSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    TRY(auto llm_set_stop_tokens, get_deserialized_message<LLM_Set_Stop_Tokens_Reply>(serialized_reply,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__SET_STOP_TOKENS), "LLM_Set_Stop_Tokens_Reply"));
+
+    CHECK(llm_set_stop_tokens.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'LLM_Set_Stop_Tokens_Reply'");
+    return static_cast<hailo_status>(llm_set_stop_tokens.status());
+}
+
+Expected<Buffer> LLMGetStopTokensSerializer::serialize_request()
+{
+    LLM_Get_Stop_Tokens_Request llm_get_stop_tokens;
+    return get_serialized_message<LLM_Get_Stop_Tokens_Request>(llm_get_stop_tokens,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_STOP_TOKENS), "LLM_Get_Stop_Tokens_Request");
+}
+
+hailo_status LLMGetStopTokensSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    TRY(auto llm_get_stop_tokens, get_deserialized_message<LLM_Get_Stop_Tokens_Request>(serialized_request,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_STOP_TOKENS), "LLM_Get_Stop_Tokens_Request"));
+
+    return HAILO_SUCCESS;
+}
+
+Expected<Buffer> LLMGetStopTokensSerializer::serialize_reply(hailo_status status, const std::vector<std::string> &stop_tokens)
+{
+    LLM_Get_Stop_Tokens_Reply llm_get_stop_tokens;
+    llm_get_stop_tokens.set_status(status);
+    for (const auto &token : stop_tokens) {
+        llm_get_stop_tokens.add_stop_tokens(token);
+    }
+
+    return get_serialized_message<LLM_Get_Stop_Tokens_Reply>(llm_get_stop_tokens,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_STOP_TOKENS), "LLM_Get_Stop_Tokens_Reply");
+}
+
+Expected<std::vector<std::string>> LLMGetStopTokensSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    TRY(auto llm_get_stop_tokens, get_deserialized_message<LLM_Get_Stop_Tokens_Reply>(serialized_reply,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_STOP_TOKENS), "LLM_Get_Stop_Tokens_Reply"));
+
+    CHECK(llm_get_stop_tokens.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'LLM_Get_Stop_Tokens_Reply'");
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(llm_get_stop_tokens.status()), "Failed to get stop tokens");
+
+    std::vector<std::string> stop_tokens;
+    for (const auto &token : llm_get_stop_tokens.stop_tokens()) {
+        stop_tokens.push_back(token);
+    }
+    return stop_tokens;
+}
+
+Expected<Buffer> LLMGeneratorReleaseSerializer::serialize_request()
+{
+    LLM_Generator_Release_Request llm_generator_release;
+    return get_serialized_message<LLM_Generator_Release_Request>(llm_generator_release,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GENERATOR_RELEASE), "LLM_Generator_Release_Request");
+}
+
+hailo_status LLMGeneratorReleaseSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    TRY(auto llm_generator_release, get_deserialized_message<LLM_Generator_Release_Request>(serialized_request,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GENERATOR_RELEASE), "LLM_Generator_Release_Request"));
+
+    return HAILO_SUCCESS;
+}
+
+Expected<Buffer> LLMGeneratorReleaseSerializer::serialize_reply(hailo_status status)
+{
+    LLM_Generator_Release_Reply llm_generator_release;
+    llm_generator_release.set_status(status);
+
+    return get_serialized_message<LLM_Generator_Release_Reply>(llm_generator_release,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GENERATOR_RELEASE), "LLM_Generator_Release_Reply");
+}
+
+hailo_status LLMGeneratorReleaseSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    TRY(auto llm_generator_release, get_deserialized_message<LLM_Generator_Release_Reply>(serialized_reply,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GENERATOR_RELEASE), "LLM_Generator_Release_Reply"));
+
+    CHECK(llm_generator_release.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'LLM_Generator_Release_Reply'");
+    return static_cast<hailo_status>(llm_generator_release.status());
 }
 
 Expected<Buffer> LLMReleaseSerializer::serialize_request()
@@ -442,34 +631,66 @@ hailo_status LLMReleaseSerializer::deserialize_reply(const MemoryView &serialize
         static_cast<uint32_t>(HailoGenAIActionID::LLM_RELEASE), "LLM_Release_Reply"));
 
     CHECK(llm_release.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'LLM_Release_Reply'");
-    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(llm_release.status()), "Failed to release LLM");
+    return static_cast<hailo_status>(llm_release.status());
+}
+
+Expected<Buffer> LLMGeneratorAbortSerializer::serialize_request()
+{
+    LLM_Generator_Abort_Request llm_generator_abort;
+    return get_serialized_message<LLM_Generator_Abort_Request>(llm_generator_abort,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GENERATOR_ABORT), "LLM_Generator_Abort_Request");
+}
+
+hailo_status LLMGeneratorAbortSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    TRY(auto llm_generator_abort, get_deserialized_message<LLM_Generator_Abort_Request>(serialized_request,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GENERATOR_ABORT), "LLM_Generator_Abort_Request"));
 
     return HAILO_SUCCESS;
 }
 
+Expected<Buffer> LLMGeneratorAbortSerializer::serialize_reply(hailo_status status)
+{
+    LLM_Generator_Abort_Reply llm_generator_abort;
+    llm_generator_abort.set_status(status);
 
-Expected<Buffer> VLMCreateSerializer::serialize_request(const hailo_vdevice_params_t &vdevice_params)
+    return get_serialized_message<LLM_Generator_Abort_Reply>(llm_generator_abort,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GENERATOR_ABORT), "LLM_Generator_Abort_Reply");  
+}
+
+hailo_status LLMGeneratorAbortSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    TRY(auto llm_generator_abort, get_deserialized_message<LLM_Generator_Abort_Reply>(serialized_reply,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GENERATOR_ABORT), "LLM_Generator_Abort_Reply")); 
+
+    CHECK(llm_generator_abort.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'LLM_Generator_Abort_Reply'");
+    return static_cast<hailo_status>(llm_generator_abort.status());
+}
+
+Expected<Buffer> VLMCreateSerializer::serialize_request(const hailo_vdevice_params_t &vdevice_params, const std::string &hef_path)
 {
     VLM_Create_Request vlm_create;
 
     std::string group_id = get_group_id_as_string(vdevice_params);
     vlm_create.set_group_id(group_id);
+    if (!hef_path.empty()) {
+        vlm_create.set_hef_path(hef_path);
+    }
 
     return get_serialized_message<VLM_Create_Request>(vlm_create,
         static_cast<uint32_t>(HailoGenAIActionID::VLM__CREATE), "VLM_Create_Request");
 }
 
-Expected<std::string> VLMCreateSerializer::deserialize_request(const MemoryView &serialized_request)
+Expected<std::pair<std::string, std::string>> VLMCreateSerializer::deserialize_request(const MemoryView &serialized_request)
 {
     TRY(auto vlm_create, get_deserialized_message<VLM_Create_Request>(serialized_request,
         static_cast<uint32_t>(HailoGenAIActionID::VLM__CREATE), "VLM_Create_Request"));
 
-    auto cpy = vlm_create.group_id();
-    return cpy;
+    return std::make_pair(vlm_create.group_id(), vlm_create.hef_path());
 }
 
 Expected<Buffer> VLMCreateSerializer::serialize_reply(hailo_status status,
-    hailo_3d_image_shape_t input_frame_shape, hailo_format_t input_frame_format)
+    hailo_3d_image_shape_t input_frame_shape, hailo_format_t input_frame_format, const std::string &prompt_template)
 {
     VLM_Create_Reply vlm_create;
     vlm_create.set_status(status);
@@ -482,12 +703,14 @@ Expected<Buffer> VLMCreateSerializer::serialize_reply(hailo_status status,
     auto input_frame_format_proto = vlm_create.mutable_frame_format();
     input_frame_format_proto->set_format_order(static_cast<uint32_t>(input_frame_format.order));
     input_frame_format_proto->set_format_type(static_cast<uint32_t>(input_frame_format.type));
-    
+
+    vlm_create.set_prompt_template(prompt_template);
+
     return get_serialized_message<VLM_Create_Reply>(vlm_create,
         static_cast<uint32_t>(HailoGenAIActionID::VLM__CREATE), "VLM_Create_Reply");
 }
 
-Expected<std::pair<hailo_3d_image_shape_t, hailo_format_t>> VLMCreateSerializer::deserialize_reply(const MemoryView &serialized_reply)
+Expected<std::tuple<hailo_3d_image_shape_t, hailo_format_t, std::string>> VLMCreateSerializer::deserialize_reply(const MemoryView &serialized_reply)
 {
     TRY(auto vlm_create, get_deserialized_message<VLM_Create_Reply>(serialized_reply,
         static_cast<uint32_t>(HailoGenAIActionID::VLM__CREATE), "VLM_Create_Reply"));
@@ -504,7 +727,7 @@ Expected<std::pair<hailo_3d_image_shape_t, hailo_format_t>> VLMCreateSerializer:
     input_frame_format.order = static_cast<hailo_format_order_t>(vlm_create.frame_format().format_order());
     input_frame_format.type = static_cast<hailo_format_type_t>(vlm_create.frame_format().format_type());
 
-    return std::make_pair(input_frame_shape, input_frame_format);
+    return std::make_tuple(input_frame_shape, input_frame_format, vlm_create.prompt_template());
 }
 
 Expected<Buffer> VLMGeneratorGenerateSerializer::serialize_request(uint32_t number_of_frames)
@@ -539,9 +762,7 @@ hailo_status VLMGeneratorGenerateSerializer::deserialize_reply(const MemoryView 
         static_cast<uint32_t>(HailoGenAIActionID::VLM__GENERATOR_GENERATE), "VLM_Generator_Generate_Reply"));
 
     CHECK(vlm_generator_generate.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'VLM_Generator_Generate_Reply'");
-    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(vlm_generator_generate.status()), "Failed to generate");
-
-    return HAILO_SUCCESS;
+    return static_cast<hailo_status>(vlm_generator_generate.status());
 }
 
 Expected<Buffer> Text2ImageCreateSerializer::serialize_request(const hailo_vdevice_params_t &vdevice_params, bool is_builtin, bool is_ip_adapter,
@@ -675,8 +896,7 @@ hailo_status Text2ImageGeneratorCreateSerializer::deserialize_reply(const Memory
         static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_CREATE), "Text2Image_Generator_Create_Reply"));
 
     CHECK(text2image_generator_create.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to deserialize 'Text2Image_Generator_Create_Reply'");
-    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(text2image_generator_create.status()), "Failed to create Text2Image generator");
-    return HAILO_SUCCESS;
+    return static_cast<hailo_status>(text2image_generator_create.status());
 }
 
 Expected<Buffer> Text2ImageGeneratorGenerateSerializer::serialize_request(bool has_negative_prompt)
@@ -711,8 +931,7 @@ hailo_status Text2ImageGeneratorGenerateSerializer::deserialize_reply(const Memo
         static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_GENERATE), "Text2Image_Generator_Generate_Reply"));
 
     CHECK(text2image_generator_generate.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to deserialize 'Text2Image_Generator_Generate_Reply'");
-    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(text2image_generator_generate.status()), "Failed to generate Text2Image");
-    return HAILO_SUCCESS;
+    return static_cast<hailo_status>(text2image_generator_generate.status());
 }
 
 Expected<Buffer> Text2ImageGetGeneratorParamsSerializer::serialize_request()
@@ -879,6 +1098,41 @@ Expected<std::vector<int>> Text2ImageTokenizeSerializer::deserialize_reply(const
     return tokens;
 }
 
+Expected<Buffer> Text2ImageGeneratorAbortSerializer::serialize_request()
+{
+    Text2Image_Generator_Abort_Request text2image_generator_abort;
+    return get_serialized_message<Text2Image_Generator_Abort_Request>(text2image_generator_abort,
+        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_ABORT), "Text2Image_Generator_Abort_Request");
+}
+
+hailo_status Text2ImageGeneratorAbortSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    TRY(auto text2image_generator_abort, get_deserialized_message<Text2Image_Generator_Abort_Request>(serialized_request,
+        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_ABORT), "Text2Image_Generator_Abort_Request"));
+
+    return HAILO_SUCCESS;
+}
+
+Expected<Buffer> Text2ImageGeneratorAbortSerializer::serialize_reply(hailo_status status)
+{
+    Text2Image_Generator_Abort_Reply text2image_generator_abort;
+    text2image_generator_abort.set_status(status);
+
+    return get_serialized_message<Text2Image_Generator_Abort_Reply>(text2image_generator_abort,
+        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_ABORT), "Text2Image_Generator_Abort_Reply");
+}
+
+hailo_status Text2ImageGeneratorAbortSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    TRY(auto text2image_generator_abort, get_deserialized_message<Text2Image_Generator_Abort_Reply>(serialized_reply,
+        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_ABORT), "Text2Image_Generator_Abort_Reply"));
+
+    CHECK(text2image_generator_abort.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'Text2Image_Generator_Abort_Reply'");
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(text2image_generator_abort.status()), "Failed to abort Text2Image generation");
+
+    return HAILO_SUCCESS;
+}
+
 Expected<Buffer> Text2ImageReleaseSerializer::serialize_request()
 {
     Text2Image_Release_Request text2image_release;
@@ -909,9 +1163,7 @@ hailo_status Text2ImageReleaseSerializer::deserialize_reply(const MemoryView &se
         static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__RELEASE), "Text2Image_Release_Reply"));
 
     CHECK(text2image_release.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'Text2Image_Release_Reply'");
-    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(text2image_release.status()), "Failed to release Text2Image");
-
-    return HAILO_SUCCESS;
+    return static_cast<hailo_status>(text2image_release.status());
 }
 
 Expected<Buffer> Text2ImageGeneratorSetInitialNoiseSerializer::serialize_request()
@@ -944,9 +1196,46 @@ hailo_status Text2ImageGeneratorSetInitialNoiseSerializer::deserialize_reply(con
         static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_SET_INITIAL_NOISE), "Text2Image_Generator_Set_Initial_Noise_Reply"));
 
     CHECK(text2image_generator_set_initial_noise.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'Text2Image_Generator_Set_Initial_Noise_Reply'");
-    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(text2image_generator_set_initial_noise.status()), "Failed to set initial noise");
+    return static_cast<hailo_status>(text2image_generator_set_initial_noise.status());
+}
 
-    return HAILO_SUCCESS;
+Expected<Buffer> GenAICheckHefExistsSerializer::serialize_request(const std::string &hef_path, const std::string &hash)
+{
+    GenAI_Check_Hef_Exists_Request genai_check_hef_exists;
+    genai_check_hef_exists.set_hef_path(hef_path);
+    genai_check_hef_exists.set_hash(hash);
+
+    return get_serialized_message<GenAI_Check_Hef_Exists_Request>(genai_check_hef_exists,
+        static_cast<uint32_t>(HailoGenAIActionID::GENAI__CHECK_HEF_EXISTS), "GenAI_Check_Hef_Exists_Request");
+}
+
+Expected<std::pair<std::string, std::string>> GenAICheckHefExistsSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    TRY(auto genai_check_hef_exists, get_deserialized_message<GenAI_Check_Hef_Exists_Request>(serialized_request,
+        static_cast<uint32_t>(HailoGenAIActionID::GENAI__CHECK_HEF_EXISTS), "GenAI_Check_Hef_Exists_Request"));
+
+    return std::make_pair(genai_check_hef_exists.hef_path(), genai_check_hef_exists.hash());
+}
+
+Expected<Buffer> GenAICheckHefExistsSerializer::serialize_reply(hailo_status status, bool hef_exists)
+{
+    GenAI_Check_Hef_Exists_Reply genai_check_hef_exists;
+    genai_check_hef_exists.set_status(status);
+    genai_check_hef_exists.set_hef_exists(hef_exists);
+
+    return get_serialized_message<GenAI_Check_Hef_Exists_Reply>(genai_check_hef_exists,
+        static_cast<uint32_t>(HailoGenAIActionID::GENAI__CHECK_HEF_EXISTS), "GenAI_Check_Hef_Exists_Reply");
+}
+
+Expected<bool> GenAICheckHefExistsSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    TRY(auto genai_check_hef_exists, get_deserialized_message<GenAI_Check_Hef_Exists_Reply>(serialized_reply,
+        static_cast<uint32_t>(HailoGenAIActionID::GENAI__CHECK_HEF_EXISTS), "GenAI_Check_Hef_Exists_Reply"));
+
+    CHECK(genai_check_hef_exists.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'GenAI_Check_Hef_Exists_Reply'");
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(genai_check_hef_exists.status()), "Failed to check HEF existence");
+
+    return genai_check_hef_exists.hef_exists();
 }
 
 } /* namespace genai */

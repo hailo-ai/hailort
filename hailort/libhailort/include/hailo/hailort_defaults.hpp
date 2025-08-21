@@ -53,8 +53,6 @@ public:
 
 private:
     static struct sockaddr_in get_sockaddr();
-    static hailo_eth_input_stream_params_t get_eth_input_stream_params();
-    static hailo_eth_output_stream_params_t get_eth_output_stream_params();
     static hailo_pcie_input_stream_params_t get_pcie_input_stream_params();
     static hailo_pcie_output_stream_params_t get_pcie_output_stream_params();
     static hailo_integrated_input_stream_params_t get_integrated_input_stream_params();

@@ -68,9 +68,6 @@ hailo_status VdmaConfigCoreOp::cancel_pending_transfers()
 
 hailo_status VdmaConfigCoreOp::activate_impl(uint16_t dynamic_batch_size)
 {
-    auto status = register_cache_update_callback();
-    CHECK_SUCCESS(status, "Failed to register cache update callback");
-
     auto start_time = std::chrono::steady_clock::now();
     if (CONTROL_PROTOCOL__IGNORE_DYNAMIC_BATCH_SIZE != dynamic_batch_size) {
         CHECK(dynamic_batch_size <= get_smallest_configured_batch_size(get_config_params()),
@@ -78,7 +75,7 @@ hailo_status VdmaConfigCoreOp::activate_impl(uint16_t dynamic_batch_size)
             get_smallest_configured_batch_size(get_config_params()));
     }
 
-    status = m_resources_manager->enable_state_machine(dynamic_batch_size);
+    auto status = m_resources_manager->enable_state_machine(dynamic_batch_size);
     CHECK_SUCCESS(status, "Failed to activate state-machine");
 
     CHECK_SUCCESS(activate_host_resources(), "Failed to activate host resources");
@@ -111,55 +108,6 @@ hailo_status VdmaConfigCoreOp::deactivate_impl()
         std::chrono::steady_clock::now() - start_time).count();
     TRACE(DeactivateCoreOpTrace, std::string(m_resources_manager->get_dev_id()), vdevice_core_op_handle(), elapsed_time_ms);
 
-    status = unregister_cache_update_callback();
-    CHECK_SUCCESS(status, "Failed to unregister cache update callback");
-
-    return HAILO_SUCCESS;
-}
-
-hailo_status VdmaConfigCoreOp::register_cache_update_callback()
-{
-    const auto cache_offset_env_var = get_env_variable(HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR);
-    if (cache_offset_env_var.has_value() && has_caches()) {
-        std::string policy;
-        int32_t offset_delta = 0;
-        TRY(const auto cache_write_length, get_cache_write_length());
-        if (cache_offset_env_var.value() == HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR_DEFAULT) {
-            offset_delta = cache_write_length;
-            policy = "cache write size (default)";
-        } else if (cache_offset_env_var.value() == HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR_DISABLED) {
-            LOGGER__INFO("Skipping cache offset updates");
-            return HAILO_SUCCESS;
-        } else {
-            offset_delta = std::stoi(cache_offset_env_var.value());
-            policy = "environment variable";
-            CHECK(offset_delta <= static_cast<int32_t>(cache_write_length), HAILO_INVALID_ARGUMENT, "Invalid cache offset delta");
-        }
-
-        auto &vdma_device = m_resources_manager->get_device();
-        vdma_device.set_notification_callback([this, offset_delta](Device &, const hailo_notification_t &notification, void *) {
-            if (HAILO_NOTIFICATION_ID_START_UPDATE_CACHE_OFFSET != notification.id) {
-                LOGGER__ERROR("Notification id passed to callback is invalid");
-                return;
-            }
-
-            const auto status = this->update_cache_offset(static_cast<int32_t>(offset_delta));
-            if (HAILO_SUCCESS != status) {
-                LOGGER__ERROR("Failed to update cache offset");
-            }
-        }, HAILO_NOTIFICATION_ID_START_UPDATE_CACHE_OFFSET, nullptr);
-
-        LOGGER__INFO("Cache offsets will automatically be updated by {} [{}]", offset_delta, policy);
-    }
-
-    return HAILO_SUCCESS;
-}
-
-hailo_status VdmaConfigCoreOp::unregister_cache_update_callback()
-{
-    auto &vdma_device = m_resources_manager->get_device();
-    auto status = vdma_device.remove_notification_callback(HAILO_NOTIFICATION_ID_START_UPDATE_CACHE_OFFSET);
-    CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }
 
@@ -238,7 +186,7 @@ hailo_status VdmaConfigCoreOp::set_scheduler_priority(uint8_t /*priority*/, cons
     return HAILO_INVALID_OPERATION;
 }
 
-hailo_status VdmaConfigCoreOp::bind_and_sync_buffers(std::unordered_map<std::string, TransferRequest> &transfers)
+hailo_status VdmaConfigCoreOp::prepare_transfers(std::unordered_map<std::string, TransferRequest> &transfers)
 {
     for (auto &input : m_input_streams) {
         auto transfer = transfers.find(input.second->name());
@@ -246,7 +194,7 @@ hailo_status VdmaConfigCoreOp::bind_and_sync_buffers(std::unordered_map<std::str
         if (transfer->second.transfer_buffers.size() > 1) {
             break;
         }
-        CHECK_SUCCESS(input.second->bind_and_sync_buffer(TransferRequest{transfer->second}));
+        CHECK_SUCCESS(input.second->prepare_transfer(TransferRequest{transfer->second}));
     }
 
     for (auto &output : m_output_streams) {
@@ -255,7 +203,7 @@ hailo_status VdmaConfigCoreOp::bind_and_sync_buffers(std::unordered_map<std::str
         if (transfer->second.transfer_buffers.size() > 1) {
             break;
         }
-        CHECK_SUCCESS(output.second->bind_and_sync_buffer(TransferRequest{transfer->second}));
+        CHECK_SUCCESS(output.second->prepare_transfer(TransferRequest{transfer->second}));
     }
 
     return HAILO_SUCCESS;

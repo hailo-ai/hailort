@@ -41,10 +41,6 @@
 #include "net_flow/ops/yolov5_post_process.hpp"
 #include "network_group/network_group_internal.hpp"
 
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-#include "service/hailort_rpc_client.hpp"
-#endif // HAILO_SUPPORT_MULTI_PROCESS
-
 
 namespace hailort
 {
@@ -220,103 +216,6 @@ private:
         std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, AccumulatorPtr pipeline_latency_accumulator,
         EventPtr core_op_activated_event, hailo_status &output_status);
 };
-
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-class InputVStreamClient : public InputVStreamInternal
-{
-public:
-    static Expected<std::shared_ptr<InputVStreamClient>> create(VStreamIdentifier &&identifier, const std::chrono::milliseconds &timeout);
-    InputVStreamClient(InputVStreamClient &&) noexcept = default;
-    InputVStreamClient(const InputVStreamClient &) = delete;
-    InputVStreamClient &operator=(InputVStreamClient &&) noexcept = default;
-    InputVStreamClient &operator=(const InputVStreamClient &) = delete;
-    virtual ~InputVStreamClient();
-
-    virtual hailo_status write(const MemoryView &buffer) override;
-    virtual hailo_status write(const hailo_pix_buffer_t &buffer) override;
-    virtual hailo_status flush() override;
-    virtual bool is_multi_planar() const override;
-
-    virtual hailo_status abort() override;
-    virtual hailo_status resume() override;
-    virtual size_t get_frame_size() const override;
-    virtual const hailo_vstream_info_t &get_info() const override;
-    virtual const hailo_format_t &get_user_buffer_format() const override;
-    virtual std::string name() const override;
-    virtual std::string network_name() const override;
-    virtual const std::map<std::string, AccumulatorPtr> &get_fps_accumulators() const override;
-    virtual const std::map<std::string, AccumulatorPtr> &get_latency_accumulators() const override;
-    virtual const std::map<std::string, std::vector<AccumulatorPtr>> &get_queue_size_accumulators() const override;
-    virtual AccumulatorPtr get_pipeline_latency_accumulator() const override;
-    virtual const std::vector<std::shared_ptr<PipelineElement>> &get_pipeline() const override;
-    virtual hailo_status before_fork() override;
-    virtual hailo_status after_fork_in_parent() override;
-    virtual hailo_status after_fork_in_child() override;
-    virtual hailo_status stop_and_clear() override;
-    virtual hailo_status start_vstream() override;
-    virtual bool is_aborted() override;
-
-private:
-    InputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, VStreamIdentifier &&identifier, hailo_format_t &&user_buffer_format,
-        hailo_vstream_info_t &&info, const std::chrono::milliseconds &timeout);
-    hailo_status create_client();
-
-    std::unique_ptr<HailoRtRpcClient> m_client;
-    VStreamIdentifier m_identifier;
-    hailo_format_t m_user_buffer_format;
-    hailo_vstream_info_t m_info;
-    const std::chrono::milliseconds m_timeout;
-};
-
-class OutputVStreamClient : public OutputVStreamInternal
-{
-public:
-    static Expected<std::shared_ptr<OutputVStreamClient>> create(const VStreamIdentifier &&identifier, const std::chrono::milliseconds &timeout);
-    OutputVStreamClient(OutputVStreamClient &&) noexcept = default;
-    OutputVStreamClient(const OutputVStreamClient &) = delete;
-    OutputVStreamClient &operator=(OutputVStreamClient &&) noexcept = default;
-    OutputVStreamClient &operator=(const OutputVStreamClient &) = delete;
-    virtual ~OutputVStreamClient();
-
-    virtual hailo_status read(MemoryView buffer);
-
-    virtual hailo_status abort() override;
-    virtual hailo_status resume() override;
-    virtual size_t get_frame_size() const override;
-    virtual const hailo_vstream_info_t &get_info() const override;
-    virtual const hailo_format_t &get_user_buffer_format() const override;
-    virtual std::string name() const override;
-    virtual std::string network_name() const override;
-    virtual const std::map<std::string, AccumulatorPtr> &get_fps_accumulators() const override;
-    virtual const std::map<std::string, AccumulatorPtr> &get_latency_accumulators() const override;
-    virtual const std::map<std::string, std::vector<AccumulatorPtr>> &get_queue_size_accumulators() const override;
-    virtual AccumulatorPtr get_pipeline_latency_accumulator() const override;
-    virtual const std::vector<std::shared_ptr<PipelineElement>> &get_pipeline() const override;
-    virtual hailo_status before_fork() override;
-    virtual hailo_status after_fork_in_parent() override;
-    virtual hailo_status after_fork_in_child() override;
-    virtual hailo_status stop_and_clear() override;
-    virtual hailo_status start_vstream() override;
-    virtual bool is_aborted() override;
-
-    virtual hailo_status set_nms_score_threshold(float32_t threshold) override;
-    virtual hailo_status set_nms_iou_threshold(float32_t threshold) override;
-    virtual hailo_status set_nms_max_proposals_per_class(uint32_t max_proposals_per_class) override;
-    virtual hailo_status set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size) override;
-
-private:
-    OutputVStreamClient(std::unique_ptr<HailoRtRpcClient> client, const VStreamIdentifier &&identifier, hailo_format_t &&user_buffer_format,
-        hailo_vstream_info_t &&info, const std::chrono::milliseconds &timeout);
-
-    hailo_status create_client();
-
-    std::unique_ptr<HailoRtRpcClient> m_client;
-    VStreamIdentifier m_identifier;
-    hailo_format_t m_user_buffer_format;
-    hailo_vstream_info_t m_info;
-    const std::chrono::milliseconds m_timeout;
-};
-#endif // HAILO_SUPPORT_MULTI_PROCESS
 
 } /* namespace hailort */
 

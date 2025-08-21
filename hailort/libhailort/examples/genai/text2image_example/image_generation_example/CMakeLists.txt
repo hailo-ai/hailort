@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.5.0)
 
-find_package(HailoRT 5.0.0 EXACT REQUIRED)
+project(hailort-examples-genai-text2image-image-generation)
+
+find_package(HailoRT 5 REQUIRED)
 
 add_executable(image_generation_example image_generation_example.cpp)
 target_link_libraries(image_generation_example PRIVATE HailoRT::libhailort)
@@ -13,4 +15,4 @@ if(WIN32)
     )
 endif()
 
-set_target_properties(image_generation_example PROPERTIES CXX_STANDARD 14)
+set_target_properties(image_generation_example PROPERTIES CXX_STANDARD 17)

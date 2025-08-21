@@ -205,8 +205,8 @@ class iterator {
     Expected<void *> release() noexcept;
 
     // Internal functions
-    static Expected<Buffer> create(BufferStoragePtr storage, bool register_storage = true);
-    static Expected<BufferPtr> create_shared(BufferStoragePtr storage, bool register_storage = true);
+    static Expected<Buffer> create(BufferStoragePtr storage);
+    static Expected<BufferPtr> create_shared(BufferStoragePtr storage);
 
 private:
     class StorageImpl;

@@ -32,6 +32,8 @@ struct SupportedFeatures {
     bool periph_calculation_in_hailort = false;
     bool core_hw_padding_config_in_dfc = false;
     bool batch_register_config = false;
+    bool aligned_ccws = false;
+    bool split_allow_input_action = false;
     bool shared_config = false;
     bool strict_versioning = false;
 };
@@ -125,13 +127,13 @@ public:
         std::vector<std::string> sorted_network_names,
         bool can_fast_batch_switch);
 
-    std::vector<LayerInfo> get_input_layer_infos() const;
-    std::vector<LayerInfo> get_output_layer_infos() const;
-    std::vector<LayerInfo> get_all_layer_infos() const;
+    std::vector<std::reference_wrapper<const LayerInfo>> get_input_layer_infos() const;
+    std::vector<std::reference_wrapper<const LayerInfo>> get_output_layer_infos() const;
+    std::vector<std::reference_wrapper<const LayerInfo>> get_all_layer_infos() const;
 
-    Expected<std::vector<LayerInfo>> get_input_layer_infos(const std::string &network_name) const;
-    Expected<std::vector<LayerInfo>> get_output_layer_infos(const std::string &network_name) const;
-    Expected<std::vector<LayerInfo>> get_all_layer_infos(const std::string &network_name) const;
+    Expected<std::vector<std::reference_wrapper<const LayerInfo>>> get_input_layer_infos(const std::string &network_name) const;
+    Expected<std::vector<std::reference_wrapper<const LayerInfo>>> get_output_layer_infos(const std::string &network_name) const;
+    Expected<std::vector<std::reference_wrapper<const LayerInfo>>> get_all_layer_infos(const std::string &network_name) const;
     size_t get_cache_layers_count() const;
 
     const ContextMetadata &preliminary_context() const;
@@ -259,9 +261,6 @@ public:
 
 private:
     Expected<CoreOpMetadataPtr> get_core_op_metadata() const;
-    Expected<std::vector<LayerInfo>> get_all_layer_infos() const;
-    Expected<std::vector<LayerInfo>> get_input_layer_infos(const std::string &network_name) const;
-    Expected<std::vector<LayerInfo>> get_output_layer_infos(const std::string &network_name) const;
 
     std::string m_network_group_name;
     std::vector<std::string> m_sorted_output_names;

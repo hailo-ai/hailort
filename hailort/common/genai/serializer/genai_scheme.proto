@@ -10,21 +10,30 @@ message GenAIRpcRequest {
         LLM_Generator_Write_Request llm_generator_write = 4;
         LLM_Generator_Generate_Request llm_generator_generate = 5;
         LLM_Generator_Read_Request llm_generator_read = 6;
-        LLM_Tokenize_Request llm_tokenize = 7;
-        LLM_Clear_Context_Request llm_clear_context = 8;
-        LLM_Release_Request llm_release = 9;
+        LLM_Generator_Abort_Request llm_generator_abort = 7;
+        LLM_Generator_Release_Request llm_generator_release = 8;
+        LLM_Tokenize_Request llm_tokenize = 9;
+        LLM_Clear_Context_Request llm_clear_context = 10;
+        LLM_Set_End_Of_Generation_Sequence_Request llm_set_end_of_generation_sequence = 11;
+        LLM_Get_End_Of_Generation_Sequence_Request llm_get_end_of_generation_sequence = 12;
+        LLM_Release_Request llm_release = 13;
+        LLM_Set_Stop_Tokens_Request llm_set_stop_tokens = 14;
+        LLM_Get_Stop_Tokens_Request llm_get_stop_tokens = 15;
 
-        VLM_Create_Request vlm_create = 10;
-        VLM_Generator_Generate_Request vlm_generator_generate = 11;
+        VLM_Create_Request vlm_create = 16;
+        VLM_Generator_Generate_Request vlm_generator_generate = 17;
 
-        Text2Image_Create_Request text2image_create = 12;
-        Text2Image_Get_Generator_Params_Request text2image_get_generator_params = 13;
-        Text2Image_Generator_Create_Request text2image_generator_create = 14;
-        Text2Image_Generator_Generate_Request text2image_generator_generate = 15;
-        Text2Image_Get_IP_Adapter_Frame_Info_Request text2image_get_ip_adapter_frame_info = 16;
-        Text2Image_Tokenize_Request text2image_tokenize = 17;
-        Text2Image_Generator_Set_Initial_Noise_Request text2image_generator_set_initial_noise = 18;
-        Text2Image_Release_Request text2image_release = 19;
+        Text2Image_Create_Request text2image_create = 18;
+        Text2Image_Get_Generator_Params_Request text2image_get_generator_params = 19;
+        Text2Image_Generator_Create_Request text2image_generator_create = 20;
+        Text2Image_Generator_Generate_Request text2image_generator_generate = 21;
+        Text2Image_Get_IP_Adapter_Frame_Info_Request text2image_get_ip_adapter_frame_info = 22;
+        Text2Image_Tokenize_Request text2image_tokenize = 23;
+        Text2Image_Generator_Set_Initial_Noise_Request text2image_generator_set_initial_noise = 24;
+        Text2Image_Generator_Abort_Request text2image_generator_abort = 25;
+        Text2Image_Release_Request text2image_release = 26;
+
+        GenAI_Check_Hef_Exists_Request genai_check_hef_exists = 27;
     }
 }
 
@@ -36,32 +45,42 @@ message GenAIRpcReply {
         LLM_Generator_Write_Reply llm_generator_write = 4;
         LLM_Generator_Generate_Reply llm_generator_generate = 5;
         LLM_Generator_Read_Reply llm_generator_read = 6;
-        LLM_Tokenize_Reply llm_tokenize = 7;
-        LLM_Clear_Context_Reply llm_clear_context = 8;
-        LLM_Release_Reply llm_release = 9;
+        LLM_Generator_Abort_Reply llm_generator_abort = 7;
+        LLM_Generator_Release_Reply llm_generator_release = 8;
+        LLM_Tokenize_Reply llm_tokenize = 9;
+        LLM_Clear_Context_Reply llm_clear_context = 10;
+        LLM_Set_End_Of_Generation_Sequence_Reply llm_set_end_of_generation_sequence = 11;
+        LLM_Get_End_Of_Generation_Sequence_Reply llm_get_end_of_generation_sequence = 12;
+        LLM_Release_Reply llm_release = 13;
+        LLM_Set_Stop_Tokens_Reply llm_set_stop_tokens = 14;
+        LLM_Get_Stop_Tokens_Reply llm_get_stop_tokens = 15;
+        
+        VLM_Create_Reply vlm_create = 16;
+        VLM_Generator_Generate_Reply vlm_generator_generate = 17;
 
-        VLM_Create_Reply vlm_create = 10;
-        VLM_Generator_Generate_Reply vlm_generator_generate = 11;
+        Text2Image_Create_Reply text2image_create = 18;
+        Text2Image_Get_Generator_Params_Reply text2image_get_generator_params = 19;
+        Text2Image_Generator_Create_Reply text2image_generator_create = 20;
+        Text2Image_Generator_Generate_Reply text2image_generator_generate = 21;
+        Text2Image_Get_IP_Adapter_Frame_Info_Reply text2image_get_ip_adapter_frame_info = 22;
+        Text2Image_Tokenize_Reply text2image_tokenize = 23;
+        Text2Image_Generator_Set_Initial_Noise_Reply text2image_generator_set_initial_noise = 24;
+        Text2Image_Generator_Abort_Reply text2image_generator_abort = 25;
+        Text2Image_Release_Reply text2image_release = 26;
 
-        Text2Image_Create_Reply text2image_create = 12;
-        Text2Image_Get_Generator_Params_Reply text2image_get_generator_params = 13;
-        Text2Image_Generator_Create_Reply text2image_generator_create = 14;
-        Text2Image_Generator_Generate_Reply text2image_generator_generate = 15;
-        Text2Image_Get_IP_Adapter_Frame_Info_Reply text2image_get_ip_adapter_frame_info = 16;
-        Text2Image_Tokenize_Reply text2image_tokenize = 17;
-        Text2Image_Generator_Set_Initial_Noise_Reply text2image_generator_set_initial_noise = 18;
-        Text2Image_Release_Reply text2image_release = 19;
+        GenAI_Check_Hef_Exists_Reply genai_check_hef_exists = 27;
     }
 }
 
 message LLM_Create_Request {
     string lora_name = 1;
-    bool is_builtin = 2; // If builtin, the next message is the HEF raw buffers
+    string hef_path = 2;
     string group_id = 3;
 }
 
 message LLM_Create_Reply {
     uint32 status = 1;
+    string prompt_template = 2;
 }
 
 message LLM_Get_Generator_Params_Request {
@@ -139,8 +158,55 @@ message LLM_Release_Reply {
     uint32 status = 1;
 }
 
+message LLM_Generator_Abort_Request {
+}
+
+message LLM_Generator_Abort_Reply {
+    uint32 status = 1;
+}
+
+message LLM_Set_End_Of_Generation_Sequence_Request {
+    string end_of_generation_sequence = 1;
+}
+
+message LLM_Generator_Release_Request {
+}
+
+message LLM_Generator_Release_Reply {
+    uint32 status = 1;
+}
+
+message LLM_Set_End_Of_Generation_Sequence_Reply {
+    uint32 status = 1;
+}
+
+message LLM_Get_End_Of_Generation_Sequence_Request {
+}
+
+message LLM_Get_End_Of_Generation_Sequence_Reply {
+    string end_of_generation_sequence = 1;
+    uint32 status = 2;
+}
+
+message LLM_Set_Stop_Tokens_Request {
+    repeated string stop_tokens = 1;
+}
+
+message LLM_Set_Stop_Tokens_Reply {
+    uint32 status = 1;
+}
+
+message LLM_Get_Stop_Tokens_Request {
+}
+
+message LLM_Get_Stop_Tokens_Reply {
+    repeated string stop_tokens = 1;
+    uint32 status = 2;
+}
+
 message VLM_Create_Request {
     string group_id = 1;
+    string hef_path = 2; // non-empty means hef exists on server side
 }
 
 message FrameFormat {
@@ -155,9 +221,10 @@ message FrameShape {
 }
 
 message VLM_Create_Reply {
-    FrameFormat frame_format = 1;
-    FrameShape frame_shape = 2;
-    uint32 status = 3;
+    uint32 status = 1;
+    FrameFormat frame_format = 2;
+    FrameShape frame_shape = 3;
+    string prompt_template = 4;
 }
 
 message VLM_Generator_Generate_Request {
@@ -251,4 +318,21 @@ message Text2Image_Generator_Set_Initial_Noise_Request {
 
 message Text2Image_Generator_Set_Initial_Noise_Reply {
     uint32 status = 1;
+}
+
+message Text2Image_Generator_Abort_Request {
+}
+
+message Text2Image_Generator_Abort_Reply {
+    uint32 status = 1;
+}
+
+message GenAI_Check_Hef_Exists_Request {
+    string hef_path = 1;
+    string hash = 2;
+}
+
+message GenAI_Check_Hef_Exists_Reply {
+    uint32 status = 1;
+    bool hef_exists = 2;
 }

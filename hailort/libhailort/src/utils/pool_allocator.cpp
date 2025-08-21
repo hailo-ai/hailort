@@ -31,7 +31,7 @@ Expected<BufferPtr> PoolAllocator::allocate()
     auto pooled_buffer_storage = make_shared_nothrow<PooledBufferStorage>(buffer, m_buffer_pool);
     CHECK_NOT_NULL(pooled_buffer_storage, HAILO_OUT_OF_HOST_MEMORY);
 
-    return Buffer::create_shared(pooled_buffer_storage, false);
+    return Buffer::create_shared(pooled_buffer_storage);
 }
 
 } /* namespace hailort */

@@ -35,6 +35,7 @@ namespace net_flow
 #define INVALID_NMS_SCORE (std::numeric_limits<float32_t>::max())
 #define INVALID_NMS_CONFIG (-1)
 #define MAX_NMS_CLASSES (std::numeric_limits<uint16_t>::max())
+#define LOGIT_CLIP_MIN (1e-7f)
 
 inline bool operator==(const hailo_bbox_float32_t &first, const hailo_bbox_float32_t &second) {
     return first.y_min == second.y_min && first.x_min == second.x_min && first.y_max == second.y_max && first.x_max == second.x_max && first.score == second.score;
@@ -151,6 +152,22 @@ public:
     {
         return (1.0f / (1.0f + std::exp(-number)));
     }
+
+    /**
+     * Compute the logit function (inverse of sigmoid) of @a number.
+     * This is used for threshold optimization when sigmoid is applied after dequantization.
+     *
+     * @param[in] number               The value to compute logit for (should be in range [0,1]).
+     *
+     * @return Returns the logit of @a number.
+     */
+     static inline float32_t logit(float32_t number)
+     {
+         // Prevent numerical overflow: log(<number too close to 0>) = -infinity and log(1 / <number too close to 0>) will get us to infinity
+         // Clip number to [LOGIT_CLIP_MIN, 1-LOGIT_CLIP_MIN] to ensure log(number/(1-number)) is finite
+         number = Quantization::clip(number, LOGIT_CLIP_MIN, 1.0f - LOGIT_CLIP_MIN);
+         return std::log(number / (1.0f - number));
+     }
 
     /**
      * Removes overlapping boxes in @a detections by setting the class confidence to zero.

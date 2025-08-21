@@ -12,6 +12,7 @@
 #include "hrpc_protocol/serializer.hpp"
 #include "net_flow/pipeline/infer_model_hrpc_client.hpp"
 #include "utils/buffer_storage.hpp"
+#include "vdma/driver/hailort_driver.hpp"
 
 namespace hailort
 {
@@ -19,21 +20,10 @@ namespace hailort
 Expected<std::vector<std::string>> VDeviceHrpcClient::get_device_ids(const hailo_vdevice_params_t &params)
 {
     std::vector<std::string> device_ids;
-    // TODO: Validate the chosen device-id is of the requested type (eiter soc-acc or nnc-acc)?
-    if (nullptr == params.device_ids) {
-        auto acc_type = HailoRTDriver::AcceleratorType::SOC_ACCELERATOR;
 
-        // When using socket-based hrpc-iface, there is no need to get device-id (as the socket-ip will point to the device)
-        if (hailort::VDevice::should_force_socket_based_client()) {
-            // TODO: Revert HRT-17057 when unix socket bug introduced in HRT-16827 is fixed
-            auto force_socket_com_value = get_env_variable(HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR);
-            CHECK_EXPECTED(force_socket_com_value);
-            if (HAILO_SOCKET_COM_ADDR_UNIX_SOCKET == force_socket_com_value.value()) {
-                acc_type = HailoRTDriver::AcceleratorType::NNC_ACCELERATOR;
-            } else {
-                return device_ids;
-            }
-        }
+    if (nullptr == params.device_ids) {
+        auto acc_type = HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE;
+        TRY(acc_type, VDeviceBase::get_accelerator_type(params.device_ids, params.device_count));
 
         TRY(auto device_infos, HailoRTDriver::scan_devices(acc_type));
         device_ids.reserve(device_infos.size());
@@ -54,12 +44,13 @@ Expected<std::tuple<std::shared_ptr<Client>, rpc_object_handle_t>>
 VDeviceHrpcClient::create_available_vdevice(const std::vector<std::string> &device_ids, const hailo_vdevice_params_t &params)
 {
     const bool is_user_specific_devices = (params.device_ids != nullptr);
+    const auto is_localhost = params.multi_process_service;
 
     for (const auto &device_id : device_ids) {
         auto client = make_shared_nothrow<Client>(device_id);
         CHECK_NOT_NULL(client, HAILO_OUT_OF_HOST_MEMORY);
 
-        auto status = client->connect();
+        auto status = client->connect(is_localhost);
         CHECK_SUCCESS(status, "Failed to connect to server");
 
         TRY(auto request_buffer, client->allocate_request_buffer(), "Failed to allocate request buffer");
@@ -71,7 +62,7 @@ VDeviceHrpcClient::create_available_vdevice(const std::vector<std::string> &devi
         CHECK_SUCCESS(expected_result);
         auto result = expected_result.release();
         TRY(auto handle, CreateVDeviceSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size)));
-        
+
         return std::make_tuple(client, handle); // Only single device is supported
     }
 

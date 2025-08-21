@@ -1,5 +1,8 @@
 # Examples
+For a thorough explanation on the examples strcture and usage, refer to HailoRT user-guide in the developer zone - ``https://hailo.ai/developer-zone/documentation/hailort/latest/``.
+
 The following examples are provided, demonstrating the HailoRT API:
+
 - C examples:
   - `vstreams_example` - Basic inference of a shortcut network (inputs are sent through the device and right back out, without any changes made to the data):
     - Configure and activate network group and virtual streams.
@@ -36,14 +39,21 @@ The following examples are provided, demonstrating the HailoRT API:
 - C++ examples:
   - `async_infer_advanced_example` - More advanced asynchronous inference of a multi planar model, uses HailoRT C++ API.
   - `async_infer_basic_example` - Basic asynchronous inference of a multiple input and output model, uses HailoRT C++ API.
+  - `async_infer_dma_buffer_example` - asynchronous inference of a model using DMA buffers, uses HailoRT C++ API.
   - `notification_callback_example` - Demonstrates how to work with notification callbacks, same as `notification_callback_example` C example.
   - `power_measurement_example` - Demonstrates how to perform a continuous power measurement on the device.
   - `query_performance_and_health_stats_example` - Demonstrates how to get performance and health queries from the device.
   - `multi_model_inference_example` - Demonstrates how to run multiple models using the HailoRT C++ API.
+
+- GenAI examples:
+  - `chat_example` - Demonstrates LLM-based chat application using HailoRT C++ API.
+  - `vlm_example` - Demonstrates VLM usage in a chat application using HailoRT C++ API.
+  - `image_generation_example` - Demonstrates Text2Image usage for image generation using HailoRT C++ API.
+
 ## Compiling with CMake
 Examples are configured and compiled using the following commands:
 ```sh
-cmake -H. -Bbuild -DCMAKE_BUILD_TYPE=Release
+cmake -S. -Bbuild -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config release
 ```
 > **_NOTE:_** Write permissions are required to compile the examples from their current directory.
@@ -51,7 +61,7 @@ If this is not the case, copy the examples directory to another location with th
 
 In order to compile a specific example, add the example name as target with a c/cpp prefix:
 ```sh
-cmake -H. -Bbuild -DCMAKE_BUILD_TYPE=Release
+cmake -S. -Bbuild -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config release --target cpp_async_infer_basic_example
 ```
 
@@ -62,6 +72,7 @@ Before running an example, download the HEFs using the [download script](../../s
   cd ../../scripts
   ./download_hefs.sh
   ```
+> **_NOTE:_** GenAI HEFs are available in Hailo Model Zoo GenAI repository: ``https://github.com/hailo-ai/hailo_model_zoo_genai.git``.
 
 To run an example, use (from this examples directory):
 

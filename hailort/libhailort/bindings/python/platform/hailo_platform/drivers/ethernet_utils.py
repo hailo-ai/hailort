@@ -1,1 +1,0 @@
-from hailo_platform.pyhailort.ethernet_utils import * # noqa F401

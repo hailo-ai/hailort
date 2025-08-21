@@ -38,10 +38,10 @@ Expected<std::shared_ptr<Client>> PcieDeviceHrpcClient::get_connected_client(con
     return client;
 }
 
-Expected<std::unique_ptr<PcieDeviceHrpcClient>> PcieDeviceHrpcClient::create(const std::string &device_id)
+Expected<std::unique_ptr<Device>> PcieDeviceHrpcClient::create(const std::string &device_id)
 {
-    auto client = get_connected_client(device_id);
-    return PcieDeviceHrpcClient::create(device_id, client ? client.release() : nullptr);
+    TRY(auto client, get_connected_client(device_id));
+    return PcieDeviceHrpcClient::create(device_id, client);
 }
 
 Expected<rpc_object_handle_t> PcieDeviceHrpcClient::create_remote_device(std::shared_ptr<Client> client)
@@ -53,7 +53,7 @@ Expected<rpc_object_handle_t> PcieDeviceHrpcClient::create_remote_device(std::sh
     return CreateDeviceSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
 
-Expected<std::unique_ptr<PcieDeviceHrpcClient>> PcieDeviceHrpcClient::create(const std::string &device_id,
+Expected<std::unique_ptr<Device>> PcieDeviceHrpcClient::create(const std::string &device_id,
     std::shared_ptr<Client> client)
 {
     auto device_handle = INVALID_HANDLE_ID;
@@ -66,7 +66,7 @@ Expected<std::unique_ptr<PcieDeviceHrpcClient>> PcieDeviceHrpcClient::create(con
     auto device = make_unique_nothrow<PcieDeviceHrpcClient>(device_id, client, device_handle, callback_dispatcher);
     CHECK_NOT_NULL(device, HAILO_OUT_OF_HOST_MEMORY);
 
-    return std::unique_ptr<PcieDeviceHrpcClient>(std::move(device));
+    return std::unique_ptr<Device>(std::move(device));
 }
 
 PcieDeviceHrpcClient::~PcieDeviceHrpcClient()

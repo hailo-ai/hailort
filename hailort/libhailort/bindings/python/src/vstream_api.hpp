@@ -124,7 +124,6 @@ private:
     std::shared_ptr<InferVStreams> m_infer_pipeline;
 };
 
-void VStream_api_initialize_python_module(py::module &m);
 } /* namespace hailort */
 
 #endif // _VSTREAM_API_HPP_

@@ -75,11 +75,10 @@ static GstMemory *gst_hailo_dmabuf_allocator_alloc(GstAllocator* allocator, gsiz
     return memory;
 }
 
-static void gst_hailo_dmabuf_allocator_free(GstAllocator* allocator, GstMemory *mem) {
+static void gst_hailo_dmabuf_allocator_free(GstAllocator* allocator, GstMemory *memory) {
     GstHailoDmabufAllocator *hailo_allocator = GST_HAILO_DMABUF_ALLOCATOR(allocator);
     assert(nullptr != hailo_allocator->dma_buffers);
-    close((*hailo_allocator->dma_buffers)[mem].fd);
-    hailo_allocator->dma_buffers->erase(mem);
+    hailo_allocator->dma_buffers->erase(memory);
 }
 
 static void gst_hailo_dmabuf_allocator_dispose(GObject *object) {

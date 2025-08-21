@@ -111,7 +111,7 @@ hailo_status InternalBufferManager::plan_and_execute(const std::map<EdgeLayerKey
 
         LOGGER__DEBUG("Trying to plan with planner type {}", static_cast<uint8_t>(planner_type));
         auto buffer_planning_exp = InternalBufferPlanner::create_buffer_planning(edge_layers, planner_type,
-            m_driver.dma_type(), m_driver.desc_max_page_size(), number_of_contexts, m_driver.board_type());
+            m_driver.dma_type(), number_of_contexts, m_driver.get_sg_desc_params(), m_driver.get_ccb_desc_params());
         if (HAILO_CANT_MEET_BUFFER_REQUIREMENTS == buffer_planning_exp.status()) {
             // If planner failed, Try to go to next planner
             LOGGER__DEBUG("Can't plan with planner type {}", static_cast<uint8_t>(planner_type));

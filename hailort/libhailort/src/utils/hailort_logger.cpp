@@ -92,30 +92,6 @@ std::string HailoRTLogger::get_main_log_path()
     
     const auto hailo_dir_path = std::string(local_app_data_path) + PATH_SEPARATOR + "Hailo";
     const auto full_path = hailo_dir_path + PATH_SEPARATOR + "HailoRT";
-
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-    TCHAR program_data_path[MAX_PATH];
-    auto ret_val = SHGetFolderPath(NULL, CSIDL_COMMON_APPDATA, NULL, 0, program_data_path);
-    if (!SUCCEEDED(ret_val)) {
-        std::cerr << "Cannot resolve ProgramData directory path" << std::endl;
-        return "";
-    }
-
-    const auto hailort_service_dir_path = std::string(program_data_path) + PATH_SEPARATOR + "HailoRT_Service";
-    auto create_status = Filesystem::create_directory(hailort_service_dir_path);
-    if (HAILO_SUCCESS != create_status) {
-        std::cerr << "Cannot create directory at path " << hailort_service_dir_path << std::endl;
-        return "";
-    }
-
-    const auto hailort_service_full_path = std::string(program_data_path) + PATH_SEPARATOR + "HailoRT_Service" + PATH_SEPARATOR + "logs";
-    create_status = Filesystem::create_directory(hailort_service_full_path);
-    if (HAILO_SUCCESS != create_status) {
-        std::cerr << "Cannot create directory at path " << hailort_service_full_path << std::endl;
-        return "";
-    }
-#endif
-
 #else
     const auto hailo_dir_path = Filesystem::get_home_directory() + PATH_SEPARATOR + ".hailo";
     const auto full_path = hailo_dir_path + PATH_SEPARATOR + "hailort";
@@ -224,7 +200,15 @@ void HailoRTLogger::set_levels(spdlog::level::level_enum console_level, spdlog::
     m_main_log_file_sink->set_level(file_level);
     m_local_log_file_sink->set_level(file_level);
     if (m_should_print_to_syslog) {
-        m_syslog_sink->set_level(file_level);
+        auto is_env_var_set = get_env_variable(HAILORT_SYSLOG_LOGGER_LEVEL_ENV_VAR);
+        if (is_env_var_set) {
+            auto syslog_level = HailoRTLogger::get_console_logger_level_from_string(is_env_var_set.value());
+            if (syslog_level) {
+                m_syslog_sink->set_level(syslog_level.value());
+            }
+        } else {
+            m_syslog_sink->set_level(file_level);
+        }
     }
 
     if (is_env_variable_on(HAILORT_LOGGER_FLUSH_EVERY_PRINT_ENV_VAR)) {
@@ -233,21 +217,10 @@ void HailoRTLogger::set_levels(spdlog::level::level_enum console_level, spdlog::
     } else {
         m_hailort_logger->flush_on(flush_level);
     }
-    spdlog::flush_every(std::chrono::seconds(PERIODIC_FLUSH_INTERVAL_IN_SECONDS));
-}
 
-Expected<spdlog::level::level_enum> HailoRTLogger::get_console_logger_level_from_string(const std::string &user_console_logger_level)
-{
-    static const std::unordered_map<std::string, spdlog::level::level_enum> log_level_map = {
-        {"info", spdlog::level::info},
-        {"warning", spdlog::level::warn},
-        {"error", spdlog::level::err},
-        {"critical", spdlog::level::critical}
-    };
-    if(log_level_map.find(user_console_logger_level) != log_level_map.end()) {
-        return Expected<spdlog::level::level_enum>(log_level_map.at(user_console_logger_level));
-    }
-    return make_unexpected(HAILO_INVALID_ARGUMENT);
+    // Setting loggr level to min active level, as traces will only show if the sink level is set to their level
+    m_hailort_logger->set_level(static_cast<spdlog::level::level_enum>(SPDLOG_ACTIVE_LEVEL));
+    spdlog::flush_every(std::chrono::seconds(PERIODIC_FLUSH_INTERVAL_IN_SECONDS));
 }
 
 } /* namespace hailort */

@@ -221,6 +221,7 @@ public:
      * @return Upon success, returns Expected of std::vector<Buffers> containing the output samples images.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      * @note: If the pipeline is configured with IP Adapter this function will fail and return error.
+     * @note: If abort() is called during a generation, the generation call will return ::HAILO_OPERATION_ABORTED.
      */
     Expected<std::vector<Buffer>> generate(const std::string &positive_prompt, const std::string &negative_prompt,
         std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
@@ -237,6 +238,7 @@ public:
      * @return Upon success, returns Expected of std::vector<Buffers> containing the output samples images.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      * @note: If the pipeline is configured without IP Adapter the function will fail and return error.
+     * @note: If abort() is called during a generation, the generation call will return ::HAILO_OPERATION_ABORTED.
      */
     Expected<std::vector<Buffer>> generate(const std::string &positive_prompt, const std::string &negative_prompt,
         const MemoryView &ip_adapter, std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
@@ -253,6 +255,7 @@ public:
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      * @note: If the pipeline is configured with IP Adapter this function will fail and return error.
+     * @note: If abort() is called during a generation, the generation call will return ::HAILO_OPERATION_ABORTED.
      */
     hailo_status generate(std::vector<MemoryView> &output_images, const std::string &positive_prompt,
         const std::string &negative_prompt, std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
@@ -271,10 +274,23 @@ public:
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      * @note: If the pipeline is configured without IP Adapter the function will fail and return error.
+     * @note: If abort() is called during a generation, the generation call will return ::HAILO_OPERATION_ABORTED.
      */
     hailo_status generate(std::vector<MemoryView> &output_images, const std::string &positive_prompt,
         const std::string &negative_prompt, const MemoryView &ip_adapter,
         std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
+
+    /**
+     * Aborts the current generation.
+     *
+     * If a generation is in progress, it will be aborted, and the corresponding generate call will return ::HAILO_OPERATION_ABORTED.
+     * If no generation is in progress, this function has no effect and returns ::HAILO_SUCCESS.
+     * Once this function returns, a new generation can be initiated.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This function blocks until the ongoing generation is fully aborted.
+     */
+    hailo_status abort();
 
     static constexpr std::chrono::milliseconds DEFAULT_OPERATION_TIMEOUT = std::chrono::seconds(30);
 
@@ -328,6 +344,39 @@ public:
      * @return Upon success, returns Expected of Text2ImageGenerator. Otherwise, returns Unexpected of ::hailo_status error.
      */
     Expected<Text2ImageGenerator> create_generator();
+
+    /**
+     * Generates text directly using default generation parameters without explicitly creating a generator.
+     * This is a convenience method that creates a generator with default parameters, and initiates generation.
+     *
+     * @param[in] positive_prompt       A non-empty positive prompt to be sent to the model.
+     * @param[in] negative_prompt       The negative prompt to be sent to the model. Can be an empty string.
+     * @param[in] timeout               The timeout for the generate operation.
+     *
+     * @return Upon success, returns Expected of std::vector<Buffers> containing the output samples images.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note This method is equivalent to: create_generator() -> generate(positive_prompt, negative_prompt, timeout).
+     * @note: If the pipeline is configured with IP Adapter this function will fail and return error.
+     */
+     Expected<std::vector<Buffer>> generate(const std::string &positive_prompt, const std::string &negative_prompt,
+        std::chrono::milliseconds timeout = Text2ImageGenerator::DEFAULT_OPERATION_TIMEOUT);
+
+    /**
+     * Generates text directly without explicitly creating a generator.
+     * This is a convenience method that creates a generator, and initiates generation.
+     *
+     * @param[in] params                The Text2ImageGeneratorParams used to set the generator parameters.
+     * @param[in] positive_prompt       A non-empty positive prompt to be sent to the model.
+     * @param[in] negative_prompt       The negative prompt to be sent to the model. Can be an empty string.
+     * @param[in] timeout               The timeout for the generate operation.
+     *
+     * @return Upon success, returns Expected of std::vector<Buffers> containing the output samples images.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note This method is equivalent to: create_generator(params) -> generate(positive_prompt, negative_prompt, timeout).
+     * @note: If the pipeline is configured with IP Adapter this function will fail and return error.
+     */
+     Expected<std::vector<Buffer>> generate(const Text2ImageGeneratorParams &params, const std::string &positive_prompt,
+        const std::string &negative_prompt, std::chrono::milliseconds timeout = Text2ImageGenerator::DEFAULT_OPERATION_TIMEOUT);
 
     /**
      * @return The frame size of a single output sample.

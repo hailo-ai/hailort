@@ -39,14 +39,15 @@ public:
     static const uint32_t DETECTION_WITH_BYTE_MASK_SIZE = sizeof(hailo_detection_with_byte_mask_t);
     static const uint32_t DETECTION_COUNT_SIZE = sizeof(uint16_t);
     static const uint32_t MAX_DEFUSED_LAYER_COUNT = 9;
-    static const size_t HW_DATA_ALIGNMENT = 8;
+    // TODO: HRT-18046 - Fix alignment for Mars
+    static const size_t   HW_DATA_ALIGNMENT = 8;
     static const uint32_t MUX_INFO_COUNT = 32;
     static const uint32_t MAX_MUX_PREDECESSORS = 4;
     static const uint16_t ETH_INPUT_BASE_PORT = 32401;
     static const uint16_t ETH_OUTPUT_BASE_PORT = 32501;
     static const uint32_t MAX_NMS_BURST_SIZE = 65536;
-    static const size_t DMA_ABLE_ALIGNMENT_WRITE_HW_LIMITATION = 64;
-    static const size_t DMA_ABLE_ALIGNMENT_READ_HW_LIMITATION = 4096;
+    static const size_t   DMA_ABLE_ALIGNMENT_WRITE_HW_LIMITATION = 64;
+    static const size_t   DMA_ABLE_ALIGNMENT_READ_HW_LIMITATION = 4096;
 
     /**
      * Deprecated: use get_nms_by_class_host_shape_size instead

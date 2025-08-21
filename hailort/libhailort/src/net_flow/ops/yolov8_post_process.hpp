@@ -134,24 +134,35 @@ private:
         SrcType *reg_data = (SrcType*)reg_buffer.data();
         SrcType *cls_data = (SrcType*)cls_buffer.data();
 
+        // Quantize the threshold once instead of dequantizing each data point
+        SrcType quantized_threshold = Quantization::quantize_input<float32_t, SrcType>(static_cast<float32_t>(nms_config.nms_score_th), cls_quant_info);
+
+        // Optimized: incrementing pointers and offsets instead of calculating offsets with multiplication
+        uint32_t row_offset = 0;
         for (uint32_t row = 0; row < cls_shape.height; row++) {
-            for (uint32_t col = 0; col < cls_shape.width; col++) {
-                auto cls_idx = (cls_row_size * row) + col;
-                for (uint32_t curr_class_idx = 0; curr_class_idx < nms_config.number_of_classes; curr_class_idx++) {
-                    auto class_entry_idx = cls_idx + (curr_class_idx * cls_padded_shape.width);
-                    auto class_confidence = Quantization::dequantize_output<DstType, SrcType>(
-                        cls_data[class_entry_idx], cls_quant_info);
-                    if (class_confidence >= nms_config.nms_score_th) {
-                        // If passes threshold - get the relevant bbox and add this detection
-                        assert(contains(m_d_matrix, layers_names.reg));
-                        auto &d_matrix = m_d_matrix.at(layers_names.reg);
-                        auto bbox = get_bbox<DstType, SrcType>(row, col, stride, reg_padded_shape, reg_shape, reg_quant_info,
-                                                                (SrcType*)reg_data, d_matrix, class_confidence);
-                        m_detections.emplace_back(DetectionBbox(bbox, curr_class_idx));
-                        m_classes_detections_count[curr_class_idx]++;
+            uint32_t offset = row_offset;
+            for (uint32_t curr_class_idx = 0; curr_class_idx < nms_config.number_of_classes; curr_class_idx++) {
+                uint32_t end_of_feature = offset + cls_shape.width; // We want to iterate over the entire feature, without the padding
+                for (; offset < end_of_feature; offset++) {
+                    if (cls_data[offset] >= quantized_threshold) { // First - compare quantized values
+                        // Only dequantize when we know the quantized value passes the quantized threshold
+                        auto class_confidence = Quantization::dequantize_output<DstType, SrcType>(
+                            cls_data[offset], cls_quant_info);
+                        if (class_confidence >= nms_config.nms_score_th) {
+                            // If passes threshold - get the relevant bbox and add this detection
+                            assert(contains(m_d_matrix, layers_names.reg));
+                            auto &d_matrix = m_d_matrix.at(layers_names.reg);
+                            auto col = offset % cls_padded_shape.width;
+                            auto bbox = get_bbox<DstType, SrcType>(row, col, stride, reg_padded_shape, reg_shape, reg_quant_info,
+                                                                    (SrcType*)reg_data, d_matrix, class_confidence);
+                            m_detections.emplace_back(DetectionBbox(bbox, curr_class_idx));
+                            m_classes_detections_count[curr_class_idx]++;
+                        }
                     }
                 }
+                offset += cls_padded_shape.width - cls_shape.width; // When finish with the current feature - go to the next one by skipping the padding
             }
+            row_offset += cls_row_size;
         }
         return HAILO_SUCCESS;
     }

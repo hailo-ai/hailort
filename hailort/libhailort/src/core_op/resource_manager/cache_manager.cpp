@@ -200,14 +200,16 @@ Expected<std::shared_ptr<vdma::VdmaBuffer>> CacheManager::StorageManager::get_ba
 Expected<CacheManager::CoreOpManager> CacheManager::CoreOpManager::create(HailoRTDriver &driver,
     StorageManager &storage_manager, std::shared_ptr<CoreOpMetadata> core_op_metadata, uint32_t expected_cache_length)
 {
-    TRY(auto cache_buffers, allocate_cache_buffers(storage_manager, core_op_metadata, expected_cache_length));
+    const auto desc_sizes_params = driver.get_sg_desc_params();
+    TRY(auto cache_buffers, allocate_cache_buffers(storage_manager, core_op_metadata, expected_cache_length,
+        desc_sizes_params));
     const auto &cache_buffer = cache_buffers.begin()->second;
     const auto cache_length = cache_buffer.cache_length();
     return CoreOpManager(driver, cache_length, std::move(cache_buffers));
 }
 
 Expected<CoreOpCacheIoInfos> CacheManager::CoreOpManager::get_cache_ios_infos(
-    std::shared_ptr<CoreOpMetadata> core_op_metadata, bool input)
+    std::shared_ptr<CoreOpMetadata> core_op_metadata, bool input, const DescSizesParams &desc_sizes_params)
 {
     CoreOpCacheIoInfos cache_inputs_info;
     for (const auto &context_metadata : core_op_metadata->dynamic_contexts()) {
@@ -217,7 +219,8 @@ Expected<CoreOpCacheIoInfos> CacheManager::CoreOpManager::get_cache_ios_infos(
                 "Duplicate cache_id found in cache input layers (cache_id {})", cache_id);
             cache_inputs_info[cache_id].entry_size = layer_info.hw_shape.features;
             if (!IS_POWEROF2(cache_inputs_info[cache_id].entry_size)) {
-                cache_inputs_info[cache_id].padded_entry_size = get_nearest_powerof_2(layer_info.hw_shape.features, vdma::MIN_SG_PAGE_SIZE);
+                cache_inputs_info[cache_id].padded_entry_size = get_nearest_powerof_2(layer_info.hw_shape.features,
+                    desc_sizes_params.min_page_size);
             } else {
                 cache_inputs_info[cache_id].padded_entry_size = cache_inputs_info[cache_id].entry_size;
             }
@@ -230,13 +233,13 @@ Expected<CoreOpCacheIoInfos> CacheManager::CoreOpManager::get_cache_ios_infos(
 }
 
 Expected<CoreOpCacheInfos> CacheManager::CoreOpManager::get_cache_infos(std::shared_ptr<CoreOpMetadata> core_op_metadata,
-    uint32_t expected_cache_length)
+    uint32_t expected_cache_length, const DescSizesParams &desc_sizes_params)
 {
     static const auto INPUT = true;
-    TRY(auto cache_inputs, get_cache_ios_infos(core_op_metadata, INPUT));
+    TRY(auto cache_inputs, get_cache_ios_infos(core_op_metadata, INPUT, desc_sizes_params));
 
     static const auto OUTPUT = false;
-    TRY(auto cache_outputs, get_cache_ios_infos(core_op_metadata, OUTPUT));
+    TRY(auto cache_outputs, get_cache_ios_infos(core_op_metadata, OUTPUT, desc_sizes_params));
 
     CHECK(get_key_set(cache_inputs) == get_key_set(cache_outputs), HAILO_INTERNAL_FAILURE,
         "Mismatch between cache input and output cache_ids");
@@ -263,9 +266,10 @@ Expected<CoreOpCacheInfos> CacheManager::CoreOpManager::get_cache_infos(std::sha
 }
 
 Expected<std::unordered_map<uint32_t, CacheBuffer>> CacheManager::CoreOpManager::allocate_cache_buffers(
-    StorageManager &storage_manager, std::shared_ptr<CoreOpMetadata> core_op_metadata, uint32_t expected_cache_length)
+    StorageManager &storage_manager, std::shared_ptr<CoreOpMetadata> core_op_metadata, uint32_t expected_cache_length,
+    const DescSizesParams &desc_sizes_params)
 {
-    TRY(auto cache_infos, get_cache_infos(core_op_metadata, expected_cache_length));
+    TRY(auto cache_infos, get_cache_infos(core_op_metadata, expected_cache_length, desc_sizes_params));
 
     std::unordered_map<uint32_t, CacheBuffer> cache_buffers;
     for (const auto &cache_info_id_pair : cache_infos) {

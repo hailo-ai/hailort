@@ -211,51 +211,54 @@ CoreOpMetadata::CoreOpMetadata(const std::string &core_op_name,
         m_can_fast_batch_switch(can_fast_batch_switch)
         {}
 
-std::vector<LayerInfo> CoreOpMetadata::get_input_layer_infos() const
+std::vector<std::reference_wrapper<const LayerInfo>> CoreOpMetadata::get_input_layer_infos() const
 {
-    std::vector<LayerInfo> res;
+    std::vector<std::reference_wrapper<const LayerInfo>> res;
     // Edge layers exists only in the dynamic context.
     for (const auto &context : m_dynamic_contexts) {
-        for (const auto &layer_info : context.get_boundary_input_layers()) {
-            res.emplace_back(layer_info);
+        for (const LayerInfo &layer_info : context.get_boundary_input_layers()) {
+            res.push_back(std::cref(layer_info));
         }
     }
     return res;
 }
 
-std::vector<LayerInfo> CoreOpMetadata::get_output_layer_infos() const
+std::vector<std::reference_wrapper<const LayerInfo>> CoreOpMetadata::get_output_layer_infos() const
 {
-    std::vector<LayerInfo> res;
+    std::vector<std::reference_wrapper<const LayerInfo>> res;
     // Edge layers exists only in the dynamic context.
     for (const auto &context : m_dynamic_contexts) {
-        for (const auto &layer_info : context.get_boundary_output_layers()) {
-            res.emplace_back(layer_info);
+        for (const LayerInfo &layer_info : context.get_boundary_output_layers()) {
+            res.push_back(std::cref(layer_info));
         }
     }
     return res;
 }
 
-std::vector<LayerInfo> CoreOpMetadata::get_all_layer_infos() const
+std::vector<std::reference_wrapper<const LayerInfo>> CoreOpMetadata::get_all_layer_infos() const
 {
-    const auto input_layer_infos = get_input_layer_infos();
-    const auto output_layer_infos = get_output_layer_infos();
+    std::vector<std::reference_wrapper<const LayerInfo>> res;
+    // Edge layers exists only in the dynamic context.
+    for (const auto &context : m_dynamic_contexts) {
+        for (const LayerInfo &layer_info : context.get_boundary_input_layers()) {
+            res.push_back(std::cref(layer_info));
+        }
 
-    std::vector<LayerInfo> res;
-    res.reserve(input_layer_infos.size() + output_layer_infos.size());
-    res.insert(res.end(), input_layer_infos.begin(), input_layer_infos.end());
-    res.insert(res.end(), output_layer_infos.begin(), output_layer_infos.end());
-
+        for (const LayerInfo &layer_info : context.get_boundary_output_layers()) {
+            res.push_back(std::cref(layer_info));
+        }
+    }
     return res;
 }
 
-Expected<std::vector<LayerInfo>> CoreOpMetadata::get_input_layer_infos(const std::string &network_name) const
+Expected<std::vector<std::reference_wrapper<const LayerInfo>>> CoreOpMetadata::get_input_layer_infos(const std::string &network_name) const
 {
-    std::vector<LayerInfo> res;
+    std::vector<std::reference_wrapper<const LayerInfo>> res;
     // Edge layers exists only in the dynamic context.
     for (const auto &context : m_dynamic_contexts) {
         for (const auto &layer_info : context.get_boundary_input_layers()) {
             if ((layer_info.network_name == network_name) || (network_name.empty()) || (network_name == default_network_name())) {
-                res.emplace_back(layer_info);
+                res.push_back(std::cref(layer_info));
             }
         }
     }
@@ -263,14 +266,35 @@ Expected<std::vector<LayerInfo>> CoreOpMetadata::get_input_layer_infos(const std
     return res;
 }
 
-Expected<std::vector<LayerInfo>> CoreOpMetadata::get_output_layer_infos(const std::string &network_name) const
+Expected<std::vector<std::reference_wrapper<const LayerInfo>>> CoreOpMetadata::get_output_layer_infos(const std::string &network_name) const
 {
-    std::vector<LayerInfo> res;
+    std::vector<std::reference_wrapper<const LayerInfo>> res;
     // Edge layers exists only in the dynamic context.
     for (const auto &context : m_dynamic_contexts) {
         for (auto &layer_info : context.get_boundary_output_layers()) {
             if ((layer_info.network_name == network_name) || (network_name.empty()) || (network_name == default_network_name())) {
-                res.emplace_back(layer_info);
+                res.push_back(std::cref(layer_info));
+            }
+        }
+    }
+    CHECK_AS_EXPECTED(res.size() > 0, HAILO_NOT_FOUND, "Network name {} is not found in networks metadata", network_name);
+    return res;
+}
+
+Expected<std::vector<std::reference_wrapper<const LayerInfo>>> CoreOpMetadata::get_all_layer_infos(const std::string &network_name) const
+{
+    std::vector<std::reference_wrapper<const LayerInfo>> res;
+    // Edge layers exists only in the dynamic context.
+    // Edge layers exists only in the dynamic context.
+    for (const auto &context : m_dynamic_contexts) {
+        for (const auto &layer_info : context.get_boundary_input_layers()) {
+            if ((layer_info.network_name == network_name) || (network_name.empty()) || (network_name == default_network_name())) {
+                res.push_back(std::cref(layer_info));
+            }
+        }
+        for (const auto &layer_info : context.get_boundary_output_layers()) {
+            if ((layer_info.network_name == network_name) || (network_name.empty()) || (network_name == default_network_name())) {
+                res.push_back(std::cref(layer_info));
             }
         }
     }
@@ -293,19 +317,6 @@ const std::vector<ConfigChannelInfo> &CoreOpMetadata::config_channels_info() con
     return m_config_channels_info;
 }
 
-Expected<std::vector<LayerInfo>> CoreOpMetadata::get_all_layer_infos(const std::string &network_name) const
-{
-    TRY(const auto input_layer_infos, get_input_layer_infos(network_name));
-    TRY(const auto output_layer_infos, get_output_layer_infos(network_name));
-
-    std::vector<LayerInfo> res;
-    res.reserve(input_layer_infos.size() + output_layer_infos.size());
-    res.insert(res.end(), input_layer_infos.begin(), input_layer_infos.end());
-    res.insert(res.end(), output_layer_infos.begin(), output_layer_infos.end());
-
-    return res;
-}
-
 size_t CoreOpMetadata::get_cache_layers_count() const
 {
     size_t cache_layers_count = 0;
@@ -319,7 +330,7 @@ Expected<std::vector<hailo_stream_info_t>> CoreOpMetadata::get_input_stream_info
 {
     std::vector<hailo_stream_info_t> res;
     TRY(const auto input_layers, get_input_layer_infos(network_name));
-    for (auto &layer_info : input_layers) {
+    for (const LayerInfo &layer_info : input_layers) {
         const auto &stream_infos = LayerInfoUtils::get_stream_infos_from_layer_info(layer_info);
         res.insert(res.end(), stream_infos.begin(), stream_infos.end());
     }
@@ -410,33 +421,13 @@ Expected<CoreOpMetadataPtr> NetworkGroupMetadata::get_core_op_metadata() const
     return core_op_metadata;
 }
 
-Expected<std::vector<LayerInfo>> NetworkGroupMetadata::get_all_layer_infos() const
-{
-    TRY(const auto core_op_metadata, get_core_op_metadata());
-
-    return core_op_metadata->get_all_layer_infos();
-}
-
-Expected<std::vector<LayerInfo>> NetworkGroupMetadata::get_input_layer_infos(const std::string &network_name) const
-{
-    TRY(const auto core_op_metadata, get_core_op_metadata());
-
-    return core_op_metadata->get_input_layer_infos(network_name);
-}
-
-Expected<std::vector<LayerInfo>> NetworkGroupMetadata::get_output_layer_infos(const std::string &network_name) const
-{
-    TRY(const auto core_op_metadata, get_core_op_metadata());
-
-    return core_op_metadata->get_output_layer_infos(network_name);
-}
-
 Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_input_vstream_infos(const std::string &network_name) const
 {
-    TRY(const auto input_layer_infos, get_input_layer_infos(network_name));
+    TRY(const auto core_op_metadata, get_core_op_metadata());
+    TRY(const auto input_layer_infos, core_op_metadata->get_input_layer_infos(network_name));
 
     std::vector<hailo_vstream_info_t> input_vstream_infos;
-    for (auto &layer_info : input_layer_infos) {
+    for (const LayerInfo &layer_info : input_layer_infos) {
         auto vstreams_info = LayerInfoUtils::get_vstream_infos_from_layer_info(layer_info);
         input_vstream_infos.insert(input_vstream_infos.end(),
             std::make_move_iterator(vstreams_info.begin()), std::make_move_iterator(vstreams_info.end()));
@@ -448,10 +439,11 @@ Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_input_vstr
 
 Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_output_vstream_infos(const std::string &network_name) const
 {
-    TRY(const auto output_layer_infos, get_output_layer_infos(network_name));
+    TRY(const auto core_op_metadata, get_core_op_metadata());
+    TRY(const auto output_layer_infos, core_op_metadata->get_output_layer_infos(network_name));
 
     std::vector<hailo_vstream_info_t> output_vstream_infos;
-    for (auto &layer_info : output_layer_infos) {
+    for (const LayerInfo &layer_info : output_layer_infos) {
         if (std::any_of(m_ops_metadata.begin(), m_ops_metadata.end(),
             [&layer_info](auto &op_metadata) { return contains(op_metadata->get_input_names(), layer_info.name); })) {
             continue; // all output_vstream_infos that relates to the op are coming from the op itself instead of layer_infos
@@ -524,8 +516,8 @@ Expected<std::vector<std::string>> NetworkGroupMetadata::get_vstream_names_from_
         }
     }
 
-    TRY(const auto all_layers_infos, get_all_layer_infos());
-    for (const auto &layer_info : all_layers_infos) {
+    TRY(const auto core_op_metadata, get_core_op_metadata());
+    for (const LayerInfo &layer_info : core_op_metadata->get_all_layer_infos()) {
         if (layer_info.is_multi_planar) {
             for (auto &plane : layer_info.planes) {
                 if (stream_name == plane.name) {
@@ -558,8 +550,8 @@ Expected<std::vector<std::string>> NetworkGroupMetadata::get_stream_names_from_v
         }
     }
 
-    TRY(const auto all_layers_infos, get_all_layer_infos());
-    for (const auto &layer_info : all_layers_infos) {
+    TRY(const auto core_op_metadata, get_core_op_metadata());
+    for (const LayerInfo &layer_info : core_op_metadata->get_all_layer_infos()) {
         if (layer_info.is_mux) {
             if (is_edge_under_mux(layer_info, vstream_name)) {
                 // vstream_name is a demux of the layer info
@@ -587,8 +579,8 @@ Expected<std::vector<std::string>> NetworkGroupMetadata::get_stream_names_from_v
             }
         }
     }
-    CHECK_AS_EXPECTED(0 < results.size(), HAILO_NOT_FOUND, "Did not found vstream {}", vstream_name);
 
+    CHECK_AS_EXPECTED(0 < results.size(), HAILO_NOT_FOUND, "Did not found vstream {}", vstream_name);
     return results;
 }
 

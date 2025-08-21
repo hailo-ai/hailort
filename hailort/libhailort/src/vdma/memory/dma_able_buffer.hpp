@@ -8,10 +8,7 @@
  *        There are several options for that buffer:
  *          1. No allocation - The user gives its own buffer pointer and address. The buffer must be page aligned.
  *          2. Normal allocation - page aligned allocation. This is the default option for linux and windows.
- *          3. Driver allocation - On some platforms, default user mode memory allocation is not DMAAble. To overcome
- *             this, we allocate the buffer in a low memory using hailort driver. We check it querying
- *             HailoRTDriver::allocate_driver_buffer().
- *          4. QNX shared memory allocation - for qnx, in order to pass the driver to the resources manager, we need to
+ *          3. QNX shared memory allocation - for qnx, in order to pass the driver to the resources manager, we need to
  *             create a shared memory object, and pass an handle to it in the mapping. TODO: HRT-10298 implement this.
  **/
 
@@ -36,10 +33,6 @@ public:
     // Create a DmaAbleBuffer by allocating memory.
     static Expected<DmaAbleBufferPtr> create_by_allocation(size_t size);
 
-    // Create a DmaAbleBuffer by allocating memory, using the driver if needed (i.e.
-    // if driver.allocate_driver_buffer is true)
-    static Expected<DmaAbleBufferPtr> create_by_allocation(size_t size, HailoRTDriver &driver);
-
     DmaAbleBuffer() = default;
     DmaAbleBuffer(DmaAbleBuffer &&other) = delete;
     DmaAbleBuffer(const DmaAbleBuffer &other) = delete;
@@ -49,7 +42,6 @@ public:
 
     virtual void* user_address() = 0;
     virtual size_t size() const = 0;
-    virtual vdma_mapped_buffer_driver_identifier buffer_identifier() = 0;
 };
 
 } /* namespace vdma */

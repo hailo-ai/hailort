@@ -28,10 +28,6 @@ public:
 private:
     // Scans any system device
     hailo_status scan();
-
-    // Ethernet scan options
-    std::string m_interface_ip_addr;
-    std::string m_interface_name;
 };
 
 #endif /* _HAILO_SCAN_COMMAND_HPP_ */

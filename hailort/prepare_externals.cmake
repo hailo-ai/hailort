@@ -7,5 +7,4 @@ execute_process(COMMAND
     -B ${CMAKE_CURRENT_LIST_DIR}/prepare_externals/build
     -G "${CMAKE_GENERATOR}"
     -DHAILO_EXTERNAL_DIR=${CMAKE_CURRENT_LIST_DIR}/external
-    -DHAILO_BUILD_SERVICE=${HAILO_BUILD_SERVICE}
 )

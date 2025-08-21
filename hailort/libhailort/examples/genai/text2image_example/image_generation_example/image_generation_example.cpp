@@ -47,12 +47,11 @@ int main(int argc, char **argv)
         while (true) {
             auto generator_params = text2image.create_generator_params().expect("Failed to create generator params");
             (void)generator_params.set_seed(TEXT2IMAGE_SEED_VALUE);
-            auto generator = text2image.create_generator(generator_params).expect("Failed to create generator");
 
             auto positive_prompt = get_positive_prompt();
 
             std::cout << "Generating image... This may take a moment" << std::endl;
-            auto images = generator.generate(positive_prompt, NEGATIVE_PROMPT).expect("Failed to generate");
+            auto images = text2image.generate(generator_params, positive_prompt, NEGATIVE_PROMPT).expect("Failed to generate");
 
             const std::string output_path = "generated_image.bin";
             // Save the generated image to a file
@@ -66,7 +65,6 @@ int main(int argc, char **argv)
             std::cout << "Image generation completed successfully! RGB Image is saved to " << output_path
                 << " at resolution 512x512x3" << std::endl;
         }
-
     } catch (const hailort::hailort_error &exception) {
         std::cout << "Failed to run text to image generation. status=" << exception.status() << ", error message: " << exception.what() << std::endl;
         return -1;

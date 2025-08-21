@@ -115,7 +115,8 @@ public:
         m_items_enqueued_sema(items_enqueued_sema),
         m_items_dequeued_sema_or_shutdown(items_dequeued_sema, shutdown_event),
         m_items_dequeued_sema(items_dequeued_sema),
-        m_default_timeout(default_timeout)
+        m_default_timeout(default_timeout),
+        m_max_capacity(max_size)
     {}
 
     virtual ~SpscQueue() = default;
@@ -289,12 +290,8 @@ public:
 
     size_t max_capacity()
     {
-        return m_inner.max_capacity();
-    }
-
-    bool is_queue_full()
-    {
-        return (m_inner.size_approx() == m_inner.max_capacity());
+        // m_inner.max_capacity() can return size that is bigger than the max_size we passed to the constructor, so we don't use it
+        return m_max_capacity;
     }
 
     hailo_status clear() AE_NO_TSAN
@@ -318,6 +315,7 @@ private:
     WaitOrShutdown m_items_dequeued_sema_or_shutdown;
     SemaphorePtr m_items_dequeued_sema;
     std::chrono::milliseconds m_default_timeout;
+    size_t m_max_capacity;
 };
 
 } /* namespace hailort */

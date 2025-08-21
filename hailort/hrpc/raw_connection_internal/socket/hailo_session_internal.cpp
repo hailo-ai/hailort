@@ -36,8 +36,8 @@ Expected<std::shared_ptr<AsyncActionsThread>> AsyncActionsThread::create(size_t 
     return ptr;
 }
 
-AsyncActionsThread::AsyncActionsThread(SpscQueue<AsyncAction> &&queue,
-    EventPtr shutdown_event) : m_queue(std::move(queue)), m_shutdown_event(shutdown_event)
+AsyncActionsThread::AsyncActionsThread(SpscQueue<AsyncAction> &&queue, EventPtr shutdown_event) :
+    m_queue(std::move(queue)), m_shutdown_event(shutdown_event), m_current_queue_size(0)
 {
     m_thread = std::thread([this] () { thread_loop(); });
 }
@@ -64,10 +64,15 @@ hailo_status AsyncActionsThread::abort()
             LOGGER__ERROR("Failed to dequeue action, status = {}", status);
             continue;
         }
+
+        {
+            std::unique_lock<std::mutex> lock(m_mutex);
+            m_current_queue_size--;
+        }
+        m_cv.notify_one();
+
         action->on_finish_callback(action->action(true));
     }
-
-    m_cv.notify_all();
     return status;
 }
 
@@ -81,6 +86,10 @@ hailo_status AsyncActionsThread::thread_loop()
     while (true) {
         TRY_WITH_ACCEPTABLE_STATUS(HAILO_SHUTDOWN_EVENT_SIGNALED, auto action,
             m_queue.dequeue(std::chrono::milliseconds(HAILO_INFINITE)));
+        {
+            std::unique_lock<std::mutex> lock(m_mutex);
+            m_current_queue_size--;
+        }
         m_cv.notify_one();
         action.on_finish_callback(action.action(false));
     }
@@ -91,7 +100,7 @@ hailo_status AsyncActionsThread::wait_for_enqueue_ready(std::chrono::millisecond
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     CHECK(m_cv.wait_for(lock, timeout, [this] () {
-        return !m_queue.is_queue_full();
+        return m_current_queue_size < m_queue.max_capacity();
     }), HAILO_TIMEOUT, "Timeout waiting for enqueue ready");
     return HAILO_SUCCESS;
 }
@@ -99,14 +108,30 @@ hailo_status AsyncActionsThread::wait_for_enqueue_ready(std::chrono::millisecond
 hailo_status AsyncActionsThread::enqueue_nonblocking(AsyncAction action)
 {
     auto status = m_queue.enqueue(action, std::chrono::milliseconds(0));
-    CHECK(status != HAILO_TIMEOUT, HAILO_QUEUE_IS_FULL); // Should call wait_for_enqueue_ready() before enqueue_nonblocking()
+    CHECK(status != HAILO_TIMEOUT, HAILO_QUEUE_IS_FULL, "Queue is full, queue size = {}",
+        m_queue.size_approx());// Should call wait_for_enqueue_ready() before enqueue_nonblocking()
     CHECK_SUCCESS(status);
+
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_current_queue_size++;
+    }
+    m_cv.notify_one();
+
     return HAILO_SUCCESS;
 }
 
-Expected<std::shared_ptr<ConnectionContext>> OsConnectionContext::create_shared(bool is_accepting)
+Expected<std::shared_ptr<ConnectionContext>> OsConnectionContext::create_client_shared(const std::string &ip)
 {
-    auto ptr = make_shared_nothrow<OsConnectionContext>(is_accepting);
+    auto ptr = make_shared_nothrow<OsConnectionContext>(false, ip);
+    CHECK_NOT_NULL(ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+    return std::dynamic_pointer_cast<ConnectionContext>(ptr);
+}
+
+Expected<std::shared_ptr<ConnectionContext>> OsConnectionContext::create_server_shared(const std::string &ip)
+{
+    auto ptr = make_shared_nothrow<OsConnectionContext>(true, ip);
     CHECK_NOT_NULL(ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::dynamic_pointer_cast<ConnectionContext>(ptr);
@@ -143,13 +168,11 @@ Expected<std::shared_ptr<Session>> OsListener::accept()
 Expected<std::shared_ptr<SessionListener>> OsListener::create_shared(std::shared_ptr<OsConnectionContext> context, uint16_t port)
 {
     std::shared_ptr<SessionListener> ptr;
-    auto force_socket_com_value = get_env_variable(HAILO_SOCKET_COM_ADDR_SERVER_ENV_VAR);
-    CHECK_EXPECTED(force_socket_com_value); // We know its set, otherwise we'll be working with PCIeRawCon
-    if (HAILO_SOCKET_COM_ADDR_UNIX_SOCKET == force_socket_com_value.value()) {
+    auto ip_addr = context->get_ip();
+    if (SERVER_ADDR_USE_UNIX_SOCKET == ip_addr) {
         TRY(ptr, create_localhost_server(context, port));
     } else {
-        auto ip = force_socket_com_value.value();
-        TRY(ptr, create_by_addr_server(context, ip, port));
+        TRY(ptr, create_by_addr_server(context, ip_addr, port));
     }
 
     return ptr;
@@ -168,7 +191,7 @@ Expected<std::shared_ptr<OsListener>> OsListener::create_by_addr_server(std::sha
     server_addr.sin_port = htons(port);
     auto status = socket.pton(AF_INET, ip.c_str(), &server_addr.sin_addr);
     CHECK_SUCCESS_AS_EXPECTED(status,
-        "Failed to run 'inet_pton'. make sure 'HAILO_SOCKET_COM_ADDR_SERVER' is set correctly <ip>)");
+        "Failed to run 'inet_pton'. make sure the provided IP address is valid");
 
     status = socket.socket_bind((struct sockaddr*)&server_addr, addr_len);
     CHECK_SUCCESS_AS_EXPECTED(status);
@@ -188,7 +211,7 @@ Expected<std::shared_ptr<OsListener>> OsListener::create_localhost_server(std::s
 {
     TRY(auto socket, Socket::create(AF_UNIX, SOCK_STREAM, USE_DEFAULT_PROTOCOL));
 
-    TRY(sockaddr_un server_addr, OsSession::get_localhost_server_addr());
+    TRY(sockaddr_un server_addr, OsSession::get_localhost_server_addr(port));
     std::remove(server_addr.sun_path);
 
     auto status = socket.socket_bind((struct sockaddr*)&server_addr, sizeof(server_addr));
@@ -217,13 +240,11 @@ Expected<std::shared_ptr<OsSession>> OsSession::connect(std::shared_ptr<OsConnec
     // Unix Socket client - for local communication
     // TCP client - for remote communication - using ip and port
     std::shared_ptr<OsSession> ptr;
-    auto force_socket_com_value = get_env_variable(HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR);
-    CHECK_EXPECTED(force_socket_com_value); // We know its set, otherwise we'll be working with PCIeRawCon
-    if (HAILO_SOCKET_COM_ADDR_UNIX_SOCKET == force_socket_com_value.value()) {
+    auto ip_addr = context->get_ip();
+    if (SERVER_ADDR_USE_UNIX_SOCKET == ip_addr) {
         TRY(ptr, create_localhost_client(context, port));
     } else {
-        auto ip = force_socket_com_value.value();
-        TRY(ptr, create_by_addr_client(context, ip, port));
+        TRY(ptr, create_by_addr_client(context, ip_addr, port));
     }
     auto status = ptr->connect();
     CHECK_SUCCESS(status);
@@ -253,7 +274,7 @@ Expected<std::shared_ptr<OsSession>> OsSession::create_by_addr_client(std::share
     server_addr.sin_port = htons(port);
     auto status = socket.pton(AF_INET, ip.c_str(), &server_addr.sin_addr);
     CHECK_SUCCESS_AS_EXPECTED(status,
-        "Failed to run 'inet_pton'. make sure 'HAILO_SOCKET_COM_ADDR_CLIENT' is set correctly <ip>");
+        "Failed to run 'inet_pton'. make sure the ip address is set correctly <ip>");
 
     TRY(auto write_actions_thread, AsyncActionsThread::create(MAX_ONGOING_TRANSFERS));
     TRY(auto read_actions_thread, AsyncActionsThread::create(MAX_ONGOING_TRANSFERS));
@@ -265,40 +286,27 @@ Expected<std::shared_ptr<OsSession>> OsSession::create_by_addr_client(std::share
 
 hailo_status OsSession::connect()
 {
-    if (m_context->is_accepting()) {
-        auto force_socket_com_value = get_env_variable(HAILO_SOCKET_COM_ADDR_SERVER_ENV_VAR);
-        CHECK_EXPECTED(force_socket_com_value); // We know its set, otherwise we'll be working with PCIeRawCon
-        if (HAILO_SOCKET_COM_ADDR_UNIX_SOCKET == force_socket_com_value.value()) {
-            return connect_localhost();
-        } else {
-            auto ip = force_socket_com_value.value();
-            return connect_by_addr(ip, m_port);
-        }
+    auto ip_addr = m_context->get_ip();
+    if (SERVER_ADDR_USE_UNIX_SOCKET == ip_addr) {
+        return connect_localhost(m_port);
     } else {
-        auto force_socket_com_value = get_env_variable(HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR);
-        CHECK_EXPECTED(force_socket_com_value); // We know its set, otherwise we'll be working with PCIeRawCon
-        if (HAILO_SOCKET_COM_ADDR_UNIX_SOCKET == force_socket_com_value.value()) {
-            return connect_localhost();
-        } else {
-            auto ip = force_socket_com_value.value();
-            return connect_by_addr(ip, m_port);
-        }
+        return connect_by_addr(ip_addr, m_port);
     }
 }
 
-hailo_status OsSession::connect_localhost()
+hailo_status OsSession::connect_localhost(uint16_t port)
 {
-    TRY(sockaddr_un server_addr, get_localhost_server_addr());
+    TRY(sockaddr_un server_addr, get_localhost_server_addr(port));
     auto status = m_socket.connect((struct sockaddr*)&server_addr, sizeof(server_addr));
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
 }
 
-Expected<sockaddr_un> OsSession::get_localhost_server_addr()
+Expected<sockaddr_un> OsSession::get_localhost_server_addr(uint16_t port)
 {
     TRY(auto tmp_path, Filesystem::get_temp_path());
-    std::string addr = tmp_path + HRT_UNIX_SOCKET_FILE_NAME;
+    std::string addr = tmp_path + HRT_UNIX_SOCKET_FILE_NAME + "_" + std::to_string(port);
 
     struct sockaddr_un server_addr;
 
@@ -337,7 +345,11 @@ hailo_status OsSession::write(const uint8_t *buffer, size_t size, std::chrono::m
         {
             std::unique_lock<std::mutex> lock(m_write_mutex);
             assert(status != HAILO_UNINITIALIZED);
-            transfer_status = status;
+            if (HAILO_STREAM_ABORT == status) {
+                transfer_status = HAILO_COMMUNICATION_CLOSED;
+            } else {
+                transfer_status = status;
+            }
         }
         m_write_cv.notify_one();
     });
@@ -361,7 +373,11 @@ hailo_status OsSession::read(uint8_t *buffer, size_t size, std::chrono::millisec
         {
             std::unique_lock<std::mutex> lock(m_read_mutex);
             assert(status != HAILO_UNINITIALIZED);
-            transfer_status = status;
+            if (HAILO_STREAM_ABORT == status) {
+                transfer_status = HAILO_COMMUNICATION_CLOSED;
+            } else {
+                transfer_status = status;
+            }
         }
         m_read_cv.notify_one();
     });

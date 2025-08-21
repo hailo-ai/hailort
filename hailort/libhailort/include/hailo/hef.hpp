@@ -30,7 +30,7 @@ struct ConfigureNetworkParams
 {
     ConfigureNetworkParams() = default;
     ConfigureNetworkParams(const hailo_configure_network_group_params_t &params) : batch_size(params.batch_size),
-        power_mode(params.power_mode), latency(params.latency)
+        power_mode(params.power_mode), latency(params.latency), enable_kv_cache(params.enable_kv_cache)
     {
         for (size_t i = 0; i < params.stream_params_by_name_count; i++) {
             stream_params_by_name.insert(std::make_pair(std::string(params.stream_params_by_name[i].name),
@@ -48,6 +48,7 @@ struct ConfigureNetworkParams
     uint16_t batch_size;
     hailo_power_mode_t power_mode;
     hailo_latency_measurement_flags_t latency;
+    bool enable_kv_cache;
     std::map<std::string, hailo_stream_parameters_t> stream_params_by_name;
     std::map<std::string, hailo_network_parameters_t> network_params_by_name;
 };
@@ -459,6 +460,15 @@ public:
      */
     std::string hash() const;
 
+    /**
+     * Returns a unique hash for the specific Hef file.
+     *
+     * @param[in] hef_path    The path of the Hef file.
+     * @return A unique string hash for the Hef file. Hefs created based on identical files will return identical hashes.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    static Expected<std::string> hash(const std::string &hef_path);
+
     Expected<std::string> get_description(bool stream_infos, bool vstream_infos) const;
     Expected<std::map<std::string, MemoryView>> get_external_resources() const;
     void set_memory_footprint_optimization(bool should_optimize); // Best effort optimization to reduce memcpy
@@ -472,7 +482,6 @@ public:
 private:
     friend class DeviceBase;
     friend class VdmaDevice;
-    friend class EthernetDevice;
     friend class InputStream;
     friend class OutputStream;
     friend class PyhailortInternal;
@@ -483,10 +492,6 @@ private:
     friend class MemoryRequirementsCalculator;
     friend class ContextResources;
     friend class ResourcesManagerBuilder;
-
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-    friend class HailoRtRpcClient;
-#endif // HAILO_SUPPORT_MULTI_PROCESS
 
     class Impl;
     Hef(std::shared_ptr<Impl> pimpl);

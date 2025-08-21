@@ -42,7 +42,7 @@ static_assert((0 == ((ONGOING_TRANSFERS_SIZE - 1) & ONGOING_TRANSFERS_SIZE)), "O
 
 #define MIN_ACTIVE_TRANSFERS_SCALE (2)
 
-#if defined(HAILO_SUPPORT_MULTI_PROCESS) || defined(_WIN32)
+#if defined(_WIN32)
 #define MAX_ACTIVE_TRANSFERS_SCALE (8)
 #else
 #define MAX_ACTIVE_TRANSFERS_SCALE (32)
@@ -96,18 +96,20 @@ struct IrqData {
     std::array<ChannelIrqData, MAX_VDMA_CHANNELS_COUNT> channels_irq_data;
 };
 
+// Contstant parameters for descriptors page size and count.
+// May be different between descriptors type (CCB vs SG), between devices
+// and even between different hosts (some hosts may use smaller page size).
+struct DescSizesParams {
+    uint16_t default_page_size;
+    uint16_t min_page_size;
+    uint16_t max_page_size;
+
+    uint32_t min_descs_count;
+    uint32_t max_descs_count;
+};
+
 // Bitmap per engine
 using ChannelsBitmap = std::array<uint64_t, MAX_VDMA_ENGINES_COUNT>;
-
-#if defined(__linux__) || defined(_WIN32)
-// Unique handle returned from the driver.
-using vdma_mapped_buffer_driver_identifier = uintptr_t;
-#elif defined(__QNX__)
-// Identifier is the shared memory file descriptor.
-using vdma_mapped_buffer_driver_identifier = int;
-#else
-#error "unsupported platform!"
-#endif
 
 struct DescriptorsListInfo {
     uintptr_t handle; // Unique identifier for the driver.
@@ -184,10 +186,8 @@ public:
         DEVICE_BOARD_TYPE_HAILO15,
         DEVICE_BOARD_TYPE_HAILO15L,
         DEVICE_BOARD_TYPE_HAILO10H,
-        DEVICE_BOARD_TYPE_HAILO10H_LEGACY_BOOT,
         DEVICE_BOARD_TYPE_HAILO15H_ACCELERATOR_MODE,
         DEVICE_BOARD_TYPE_MARS,
-        DEVICE_BOARD_TYPE_MARS_LEGACY_BOOT,
         DEVICE_BOARD_TYPE_COUNT,
     };
 
@@ -283,12 +283,10 @@ public:
      * Pins a page aligned user buffer to physical memory, creates an IOMMU mapping (pci_mag_sg).
      * The buffer is used for streaming D2H or H2D using DMA.
      *
-     * @param[in] data_direction - direction is used for optimization.
-     * @param[in] driver_buff_handle - handle to driver allocated buffer - INVALID_DRIVER_BUFFER_HANDLE_VALUE in case
-     *  of user allocated buffer
+     * @param[in] user_address - User address of the buffer to map.
      */
     Expected<VdmaBufferHandle> vdma_buffer_map(uintptr_t user_address, size_t required_size, DmaDirection data_direction,
-        const vdma_mapped_buffer_driver_identifier &driver_buff_handle, DmaBufferType buffer_type);
+        DmaBufferType buffer_type);
 
     /**
     * Unmaps user buffer mapped using HailoRTDriver::map_buffer.
@@ -328,15 +326,22 @@ public:
     };
 
     /**
+     * Prepares a transfer for launch.
+     * Mapping the transfer buffers
+     * Binding the transfer buffers to the descriptor list
+     * Synchronizing the transfer buffers
+     */
+    hailo_status hailo_vdma_prepare_transfer(vdma::ChannelId channel_id, uintptr_t desc_handle,
+        const std::vector<TransferBuffer> &transfer_buffers, InterruptsDomain first_interrupts_domain,
+        InterruptsDomain last_desc_interrupts);
+
+    /**
      * Launches some transfer on the given channel.
      * The maximum number of transfer buffers is MAX_TRANSFER_BUFFERS_IN_REQUEST.
      */
     hailo_status launch_transfer(vdma::ChannelId channel_id, uintptr_t desc_handle,
-        uint32_t starting_desc, const std::vector<TransferBuffer> &transfer_buffer, bool should_bind,
-        bool should_sync, InterruptsDomain first_desc_interrupts, InterruptsDomain last_desc_interrupts);
-
-    Expected<uintptr_t> vdma_low_memory_buffer_alloc(size_t size);
-    hailo_status vdma_low_memory_buffer_free(uintptr_t buffer_handle);
+        const std::vector<TransferBuffer> &transfer_buffer, bool is_cyclic,
+        InterruptsDomain first_desc_interrupts, InterruptsDomain last_desc_interrupts);
 
     /**
      * Allocate continuous vdma buffer.
@@ -385,11 +390,6 @@ public:
 
     FileDescriptor& fd() {return m_fd;}
 
-    inline bool allocate_driver_buffer() const
-    {
-        return m_allocate_driver_buffer;
-    }
-
     inline uint16_t desc_max_page_size() const
     {
         return m_desc_max_page_size;
@@ -405,6 +405,9 @@ public:
         return m_is_fw_loaded;
     }
 
+    DescSizesParams get_sg_desc_params() const;
+    DescSizesParams get_ccb_desc_params() const;
+
     HailoRTDriver(const HailoRTDriver &other) = delete;
     HailoRTDriver &operator=(const HailoRTDriver &other) = delete;
     HailoRTDriver(HailoRTDriver &&other) noexcept = delete;
@@ -413,7 +416,6 @@ public:
     static const uintptr_t INVALID_DRIVER_BUFFER_HANDLE_VALUE;
     static const size_t INVALID_DRIVER_VDMA_MAPPING_HANDLE_VALUE;
     static const uint8_t INVALID_VDMA_CHANNEL_INDEX;
-    static const vdma_mapped_buffer_driver_identifier INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER;
 
     static constexpr const char *INTEGRATED_NNC_DEVICE_ID = "[integrated]";
     static constexpr const char *PCIE_EP_DEVICE_ID = "[pci_ep]";
@@ -426,8 +428,7 @@ private:
     hailo_status write_memory_ioctl(MemoryType memory_type, uint64_t address, const void *buf, size_t size);
 
     Expected<VdmaBufferHandle> vdma_buffer_map_ioctl(uintptr_t user_address, size_t required_size,
-        DmaDirection data_direction, const vdma_mapped_buffer_driver_identifier &driver_buff_handle,
-        DmaBufferType buffer_type);
+        DmaDirection data_direction, DmaBufferType buffer_type);
     hailo_status vdma_buffer_unmap_ioctl(VdmaBufferHandle handle);
 
     Expected<std::pair<uintptr_t, uint64_t>> continous_buffer_alloc_ioctl(size_t size);
@@ -455,7 +456,6 @@ private:
     std::string m_device_id;
     uint16_t m_desc_max_page_size;
     DmaType m_dma_type;
-    bool m_allocate_driver_buffer;
     size_t m_dma_engines_count;
     DeviceBoardType m_board_type;
     bool m_is_fw_loaded;
@@ -475,7 +475,6 @@ private:
     // TODO HRT-11937: when ioctl is combined, move caching to driver
     struct MappedBufferInfo {
         VdmaBufferHandle handle;
-        vdma_mapped_buffer_driver_identifier driver_buff_handle;
         size_t mapped_count;
     };
 

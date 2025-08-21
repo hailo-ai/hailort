@@ -152,6 +152,9 @@ static std::string fw_version_string(const hailo_device_identity_t &identity)
     if (identity.extended_context_switch_buffer) {
         os << ",extended context switch buffer";
     }
+    if (identity.extended_fw_check) {
+        os << ",extended fw check";
+    }
     os << ")";
     return os.str();
 }

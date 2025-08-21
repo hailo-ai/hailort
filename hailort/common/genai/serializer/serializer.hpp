@@ -31,10 +31,18 @@ enum class HailoGenAIActionID {
     LLM__GENERATOR_WRITE,
     LLM__GENERATOR_GENERATE,
     LLM__GENERATOR_READ,
+    LLM__GENERATOR_ABORT,
+    LLM__GENERATOR_RELEASE,
 
     LLM__TOKENIZE,
 
     LLM_CLEAR_CONTEXT,
+
+    LLM__SET_END_OF_GENERATION_SEQUENCE,
+    LLM__GET_END_OF_GENERATION_SEQUENCE,
+
+    LLM__SET_STOP_TOKENS,
+    LLM__GET_STOP_TOKENS,
 
     LLM_RELEASE,
 
@@ -48,7 +56,11 @@ enum class HailoGenAIActionID {
     TEXT2IMAGE__GET_IP_ADAPTER_FRAME_INFO,
     TEXT2IMAGE__TOKENIZE,
     TEXT2IMAGE__GENERATOR_SET_INITIAL_NOISE,
+    TEXT2IMAGE__GENERATOR_ABORT,
     TEXT2IMAGE__RELEASE,
+
+
+    GENAI__CHECK_HEF_EXISTS,
 
     GENAI_ACTIONS_COUNT,
     MAX_VALUE = HAILO_MAX_ENUM,
@@ -79,11 +91,11 @@ struct LLMCreateSerializer
 {
     LLMCreateSerializer() = delete;
 
-    static Expected<Buffer> serialize_request(const hailo_vdevice_params_t &vdevice_params, const LLMParams &llm_params);
-    static Expected<std::tuple<std::string, bool, std::string>> deserialize_request(const MemoryView &serialized_request); // string - lora_name, bool - model_is_builtin
+    static Expected<Buffer> serialize_request(const hailo_vdevice_params_t &vdevice_params, const LLMParams &llm_params, const std::string &hef_path = "");
+    static Expected<std::tuple<std::string, std::string, std::string>> deserialize_request(const MemoryView &serialized_request); // lora_name, hef_path, group_id
 
-    static Expected<Buffer> serialize_reply(hailo_status status);
-    static hailo_status deserialize_reply(const MemoryView &serialized_reply);
+    static Expected<Buffer> serialize_reply(hailo_status status, const std::string &prompt_template = "");
+    static Expected<std::string> deserialize_reply(const MemoryView &serialized_reply);
 };
 
 struct LLMGetGeneratorParamsSerializer
@@ -165,6 +177,61 @@ struct LLMClearContextSerializer
     static hailo_status deserialize_reply(const MemoryView &serialized_reply);
 };
 
+struct LLMSetEndOfGenerationSequenceSerializer
+{
+    LLMSetEndOfGenerationSequenceSerializer() = delete;
+
+    static Expected<Buffer> serialize_request(const std::string &end_of_generation_sequence);
+    static Expected<std::string> deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply(hailo_status status);
+    static hailo_status deserialize_reply(const MemoryView &serialized_reply);
+};
+
+struct LLMGetEndOfGenerationSequenceSerializer
+{
+    LLMGetEndOfGenerationSequenceSerializer() = delete;
+
+    static Expected<Buffer> serialize_request();
+    static hailo_status deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply(hailo_status status, const std::string &end_of_generation_sequence = "");
+    static Expected<std::string> deserialize_reply(const MemoryView &serialized_reply);
+};
+
+struct LLMSetStopTokensSerializer
+{
+    LLMSetStopTokensSerializer() = delete;
+
+    static Expected<Buffer> serialize_request(const std::vector<std::string> &stop_tokens);
+    static Expected<std::vector<std::string>> deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply(hailo_status status);
+    static hailo_status deserialize_reply(const MemoryView &serialized_reply);
+};
+
+struct LLMGetStopTokensSerializer
+{
+    LLMGetStopTokensSerializer() = delete;
+
+    static Expected<Buffer> serialize_request();
+    static hailo_status deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply(hailo_status status, const std::vector<std::string> &stop_tokens = {});
+    static Expected<std::vector<std::string>> deserialize_reply(const MemoryView &serialized_reply);
+};
+
+struct LLMGeneratorReleaseSerializer
+{
+    LLMGeneratorReleaseSerializer() = delete;
+
+    static Expected<Buffer> serialize_request();
+    static hailo_status deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply(hailo_status status);
+    static hailo_status deserialize_reply(const MemoryView &serialized_reply);
+};
+
 struct LLMReleaseSerializer
 {
     LLMReleaseSerializer() = delete;
@@ -176,17 +243,27 @@ struct LLMReleaseSerializer
     static hailo_status deserialize_reply(const MemoryView &serialized_reply);
 };
 
+struct LLMGeneratorAbortSerializer
+{
+    LLMGeneratorAbortSerializer() = delete;
+
+    static Expected<Buffer> serialize_request();
+    static hailo_status deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply(hailo_status status);
+    static hailo_status deserialize_reply(const MemoryView &serialized_reply);
+};
 
 struct VLMCreateSerializer
 {
     VLMCreateSerializer() = delete;
 
-    static Expected<Buffer> serialize_request(const hailo_vdevice_params_t &vdevice_params);
-    static Expected<std::string> deserialize_request(const MemoryView &serialized_request);
+    static Expected<Buffer> serialize_request(const hailo_vdevice_params_t &vdevice_params, const std::string &hef_path = "");
+    static Expected<std::pair<std::string, std::string>> deserialize_request(const MemoryView &serialized_request);
 
     static Expected<Buffer> serialize_reply(hailo_status status,
-        hailo_3d_image_shape_t input_frame_shape = {}, hailo_format_t input_frame_format = {});
-    static Expected<std::pair<hailo_3d_image_shape_t, hailo_format_t>> deserialize_reply(const MemoryView &serialized_reply);
+        hailo_3d_image_shape_t input_frame_shape = {}, hailo_format_t input_frame_format = {}, const std::string &prompt_template = "");
+    static Expected<std::tuple<hailo_3d_image_shape_t, hailo_format_t, std::string>> deserialize_reply(const MemoryView &serialized_reply);
 };
 
 struct VLMGeneratorGenerateSerializer
@@ -284,6 +361,17 @@ struct Text2ImageTokenizeSerializer
     static Expected<std::vector<int>> deserialize_reply(const MemoryView &serialized_reply);
 };
 
+struct Text2ImageGeneratorAbortSerializer
+{
+    Text2ImageGeneratorAbortSerializer() = delete;
+
+    static Expected<Buffer> serialize_request();
+    static hailo_status deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply(hailo_status status);
+    static hailo_status deserialize_reply(const MemoryView &serialized_reply);
+};
+
 struct Text2ImageReleaseSerializer
 {
     Text2ImageReleaseSerializer() = delete;
@@ -304,6 +392,17 @@ struct Text2ImageGeneratorSetInitialNoiseSerializer
 
     static Expected<Buffer> serialize_reply(hailo_status status);
     static hailo_status deserialize_reply(const MemoryView &serialized_reply);
+};
+
+struct GenAICheckHefExistsSerializer
+{
+    GenAICheckHefExistsSerializer() = delete;
+
+    static Expected<Buffer> serialize_request(const std::string &hef_path, const std::string &hash);
+    static Expected<std::pair<std::string, std::string>> deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply(hailo_status status, bool hef_exists = false);
+    static Expected<bool> deserialize_reply(const MemoryView &serialized_reply);
 };
 
 } /* namespace genai */

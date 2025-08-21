@@ -23,7 +23,7 @@ namespace genai
 class Text2ImageGenerator::Impl final
 {
 public:
-    Impl(std::shared_ptr<SessionWrapper> session, const Text2ImageGeneratorParams &params, uint32_t output_sample_frame_size,
+    Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<SessionWrapper> generation_session, const Text2ImageGeneratorParams &params, uint32_t output_sample_frame_size,
         bool is_ip_adapter_supported, uint32_t ip_adapter_frame_size);
 
     hailo_status set_initial_noise(const MemoryView &noise);
@@ -41,7 +41,7 @@ public:
         const std::string &negative_prompt, const MemoryView &ip_adapter,
         std::chrono::milliseconds timeout);
 
-    hailo_status stop();
+    hailo_status abort();
 
 private:
     // RPC functions
@@ -49,6 +49,7 @@ private:
         const std::string &negative_prompt, std::chrono::milliseconds timeout, const MemoryView &ip_adapter = MemoryView());
 
     std::shared_ptr<SessionWrapper> m_session;
+    std::shared_ptr<SessionWrapper> m_generation_session;
     Text2ImageGeneratorParams m_params;
     uint32_t m_output_sample_frame_size;
     bool m_has_ip_adapter;
@@ -85,11 +86,11 @@ public:
     hailo_format_order_t input_noise_format_order() const;
     Expected<std::vector<int>> tokenize(const std::string &prompt);
 
-    Impl(std::shared_ptr<SessionWrapper> session, const Text2ImageParams &params, const Text2ImageGeneratorParams &generator_params, const frame_info_t &output_sample_frame_info,
+    Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<SessionWrapper> generation_session, const Text2ImageParams &params, const Text2ImageGeneratorParams &generator_params, const frame_info_t &output_sample_frame_info,
         const bool is_ip_adapter_supported, const frame_info_t &input_noise_frame_info, const frame_info_t &ip_adapter_frame_info = {});
 
 private:
-    static hailo_status validate_params(const Text2ImageParams &params);
+    static hailo_status validate_params(const Text2ImageParams &params, bool is_builtin);
     static bool all_builtin_hefs(const Text2ImageParams &params);
     static bool has_builtin_hef(const Text2ImageParams &params);
 
@@ -106,6 +107,7 @@ private:
     hailo_status text2image_release();
 
     std::shared_ptr<SessionWrapper> m_session;
+    std::shared_ptr<SessionWrapper> m_generation_session;
     Text2ImageParams m_params;
     Text2ImageGeneratorParams m_default_generator_params;
 

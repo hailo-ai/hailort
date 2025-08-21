@@ -19,7 +19,6 @@
 #include "hailo/transform.hpp"
 #include "hailo/vstream.hpp"
 #include "hailo/event.hpp"
-#include "hailo/network_rate_calculator.hpp"
 #include "hailo/inference_pipeline.hpp"
 #include "hailo/quantization.hpp"
 
@@ -27,8 +26,6 @@
 #include "common/os_utils.hpp"
 
 #include "device_common/control.hpp"
-#include "eth/eth_device.hpp"
-#include "eth/eth_stream.hpp"
 #include "vdma/pcie/pcie_device.hpp"
 #include "utils/sensor_config_utils.hpp"
 #include "utils/hailort_logger.hpp"
@@ -81,9 +78,6 @@ COMPAT__INITIALIZER(hailort__initialize_logger)
 {
     // Init logger singleton if compiling only HailoRT
     (void) HailoRTLogger::get_instance();
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-    (void) HailoRTOSLogger::get_instance();
-#endif
     (void) SharedResourceManager<std::string, VDeviceBase>::get_instance();
     TRACE(InitTrace);
 }
@@ -94,43 +88,6 @@ hailo_status hailo_get_library_version(hailo_version_t *version)
     version->major = HAILORT_MAJOR_VERSION;
     version->minor = HAILORT_MINOR_VERSION;
     version->revision = HAILORT_REVISION_VERSION;
-    return HAILO_SUCCESS;
-}
-
-// TODO(oro): wrap with try/catch over C++
-// TODO: Fill eth_device_infos_length items into pcie_device_infos,
-//       even if 'scan_results->size() > eth_device_infos_length' (HRT-3163)
-hailo_status hailo_scan_ethernet_devices(const char *interface_name, hailo_eth_device_info_t *eth_device_infos,
-    size_t eth_device_infos_length, size_t *number_of_devices, uint32_t timeout_ms)
-{
-    CHECK_ARG_NOT_NULL(interface_name);
-    CHECK_ARG_NOT_NULL(eth_device_infos);
-    CHECK_ARG_NOT_NULL(number_of_devices);
-
-    auto scan_results = EthernetDevice::scan(interface_name, std::chrono::milliseconds(timeout_ms));
-    CHECK_EXPECTED_AS_STATUS(scan_results);
-
-    CHECK(scan_results->size() <= eth_device_infos_length, HAILO_INSUFFICIENT_BUFFER,
-        "eth_device_infos buffer not large enough (required: {}, buffer_length: {}))",
-            scan_results->size(), eth_device_infos_length);
-
-    memcpy(eth_device_infos, scan_results->data(), sizeof(*eth_device_infos)*scan_results->size());
-    *number_of_devices = scan_results->size();
-    return HAILO_SUCCESS;
-}
-
-hailo_status hailo_create_ethernet_device(hailo_eth_device_info_t *device_info, hailo_device *device_out)
-{
-    CHECK_ARG_NOT_NULL(device_info);
-    CHECK_ARG_NOT_NULL(device_out);
-
-    auto device = make_unique_nothrow<_hailo_device>();
-    CHECK_NOT_NULL(device, HAILO_OUT_OF_HOST_MEMORY);
-
-    TRY(auto device_obj, EthernetDevice::create(*device_info));
-    device->device = device_obj.release();
-    *device_out = device.release();
-
     return HAILO_SUCCESS;
 }
 
@@ -1206,39 +1163,6 @@ hailo_status hailo_vdevice_dma_unmap_dmabuf(hailo_vdevice vdevice, int dmabuf_fd
 {
     CHECK_ARG_NOT_NULL(vdevice);
     return vdevice->vdevice->dma_unmap_dmabuf(dmabuf_fd, size, direction);
-}
-
-hailo_status hailo_calculate_eth_input_rate_limits(hailo_hef hef, const char *network_group_name, uint32_t fps,
-    hailo_rate_limit_t *rates, size_t *rates_length)
-{
-    CHECK_ARG_NOT_NULL(hef);
-    CHECK_ARG_NOT_NULL(rates);
-    CHECK_ARG_NOT_NULL(rates_length);
-
-    const auto name_str = get_name_as_str(network_group_name);
-
-    auto rate_calc = NetworkUdpRateCalculator::create(reinterpret_cast<Hef*>(hef), name_str);
-    CHECK_EXPECTED_AS_STATUS(rate_calc);
-    auto calculated_rates = rate_calc->calculate_inputs_bandwith(fps);
-    CHECK_EXPECTED_AS_STATUS(calculated_rates);
-
-    if (*rates_length < calculated_rates->size()) {
-        LOGGER__ERROR("Too many input layers detected. input layers detected: {}, rate_per_name array size: {}",
-            calculated_rates->size(), *rates_length);
-        *rates_length = calculated_rates->size();
-        return HAILO_INSUFFICIENT_BUFFER;
-    }
-    *rates_length = calculated_rates->size();
-
-    int i = 0;
-    for (auto &rate_pair : calculated_rates.release()) {
-        rates[i].rate = rate_pair.second;
-        // + 1 for NULL terminator
-        strncpy(rates[i].stream_name, rate_pair.first.c_str(), rate_pair.first.length() + 1);
-        i++;
-    }
-
-    return HAILO_SUCCESS;
 }
 
 hailo_status hailo_set_input_stream_timeout(hailo_input_stream stream, uint32_t timeout_ms)

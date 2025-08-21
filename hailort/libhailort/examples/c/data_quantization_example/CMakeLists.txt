@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.5.0)
 
+project(hailort-examples-c-data-quantization)
+
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
-find_package(HailoRT 5.0.0 EXACT REQUIRED)
+find_package(HailoRT 5 REQUIRED)
 
 SET_SOURCE_FILES_PROPERTIES(data_quantization_example.c PROPERTIES LANGUAGE C)
 

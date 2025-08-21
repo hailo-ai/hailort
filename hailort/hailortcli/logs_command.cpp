@@ -22,14 +22,8 @@ LogsCommand::LogsCommand(CLI::App &parent_app) :
         ->required()
         ->default_val("runtime");
 
-    m_app->add_flag("-f,--follow", m_should_follow, "Follow log output (like tail -f). Not supported for 'nnc' log type")
+    m_app->add_flag("-f,--follow", m_should_follow, "Follow log output (like tail -f).")
             ->default_val(false);
-
-    
-    m_app->parse_complete_callback([this]() {
-        PARSE_CHECK(!m_should_follow || (m_log_type != HAILO_LOG_TYPE__NNC),
-            "'follow' option is not supported for 'nnc' log type");
-    });
 }
 
 hailo_status LogsCommand::read_log(Device &device)

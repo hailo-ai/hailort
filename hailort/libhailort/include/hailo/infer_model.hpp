@@ -642,6 +642,8 @@ public:
         const std::unordered_map<std::string, size_t> inputs_frame_sizes = {},
         const std::unordered_map<std::string, size_t> outputs_frame_sizes = {},
         std::shared_ptr<ConfiguredNetworkGroup> net_group = nullptr) = 0;
+
+     virtual void set_enable_kv_cache(bool enable_kv_cache) = 0;
 };
 
 } /* namespace hailort */

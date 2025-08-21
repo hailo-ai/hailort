@@ -47,7 +47,6 @@ namespace hailort
 #define SCHEDULER_MON_TMP_DIR "/tmp/hmon_files/"
 #define NNC_UTILIZATION_TMP_DIR "/tmp/nnc_utilization/"
 #define NNC_UTILIZATION_FILE_NAME "nnc_utilization"
-#define NNC_UTILIZATION_FILE_PATH (NNC_UTILIZATION_TMP_DIR NNC_UTILIZATION_FILE_NAME)
 #define DEFAULT_SCHEDULER_MON_INTERVAL (std::chrono::seconds(1))
 #define SCHEDULER_MON_NAN_VAL (-1)
 

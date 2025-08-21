@@ -29,11 +29,6 @@
 
 #include "common/utils.hpp"
 
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-#include "service/rpc_client_utils.hpp"
-#include "rpc/rpc_definitions.hpp"
-#endif // HAILO_SUPPORT_MULTI_PROCESS
-
 
 namespace hailort
 {
@@ -228,308 +223,6 @@ hailo_status VDeviceHandle::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_d
     return vdevice.value()->dma_unmap_dmabuf(dmabuf_fd, size, direction);
 }
 
-bool VDevice::service_over_ip_mode()
-{
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-    // If service address is different than the default - we work at service over IP mode
-    return hailort::HAILORT_SERVICE_ADDRESS != HAILORT_SERVICE_DEFAULT_ADDR;
-#else
-    return false; // no service -> no service over ip
-#endif
-}
-
-bool VDevice::should_force_socket_based_client()
-{
-    return get_env_variable(HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR).has_value();
-}
-
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-
-VDeviceClient::VDeviceClient(const hailo_vdevice_params_t &params, std::unique_ptr<HailoRtRpcClient> client, uint32_t client_utils_handle,
-    VDeviceIdentifier &&identifier, std::vector<std::unique_ptr<Device>> &&devices) :
-        VDevice(params),
-        m_client(std::move(client)),
-        m_client_utils_handle(client_utils_handle),
-        m_identifier(std::move(identifier)),
-        m_devices(std::move(devices)),
-        m_is_listener_thread_running(false),
-        m_should_use_listener_thread(false)
-{}
-
-VDeviceClient::~VDeviceClient()
-{
-    auto status = finish_listener_thread();
-    if (status != HAILO_SUCCESS) {
-        LOGGER__CRITICAL("Failed to finish_listener_thread in VDevice");
-    }
-
-    // Note: We clear m_network_groups to prevent double destruction on ConfiguredNetworkGroupBase.
-    // Explanation: When the VDeviceClient is destructed, it's members are destructed last.
-    // That would cause the m_network_groups (vector of ConfiguredNetworkGroupClient) to be destructed after the vdevice in the service.
-    // The vdevice in the service will destruct the ConfiguredNetworkGroupBase,
-    // and then the ConfiguredNetworkGroupClient destructor will be called - causing double destruction on ConfiguredNetworkGroupBase.
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_network_groups.clear();
-    }
-
-    auto pid = OsUtils::get_curr_pid();
-    auto reply = m_client->VDevice_release(m_identifier, pid);
-    if (reply != HAILO_SUCCESS) {
-        LOGGER__CRITICAL("VDevice_release failed!");
-    }
-
-    HailoRtRpcClientUtils::decrease_ref_count(m_client_utils_handle);
-}
-
-hailo_status VDeviceClient::before_fork()
-{
-    m_is_listener_thread_running = false;
-
-    const char* grpc_fork_support = std::getenv("GRPC_ENABLE_FORK_SUPPORT");
-    const char* grpc_poll_strategy = std::getenv("GRPC_POLL_STRATEGY");
-
-    bool is_fork_supported = (grpc_fork_support && std::string(grpc_fork_support) == "1") &&
-                             (grpc_poll_strategy && std::string(grpc_poll_strategy) == "poll");
-
-    if (!is_fork_supported) {
-        LOGGER__WARNING("Using the same VDeviceClient instance after fork is supported only when setting the env vars GRPC_ENABLE_FORK_SUPPORT=1 and GRPC_POLL_STRATEGY=poll.");
-    }
-
-    TRY(auto instance, HailoRtRpcClientUtils::get_instance(m_client_utils_handle));
-    instance->before_fork();
-    m_client.reset();
-    m_cb_listener_thread.reset();
-
-    return HAILO_SUCCESS;
-}
-
-hailo_status VDeviceClient::create_client()
-{
-    grpc::ChannelArguments ch_args;
-    ch_args.SetMaxReceiveMessageSize(-1);
-    auto channel = grpc::CreateCustomChannel(hailort::HAILORT_SERVICE_ADDRESS, grpc::InsecureChannelCredentials(), ch_args);
-    CHECK_NOT_NULL(channel, HAILO_INTERNAL_FAILURE);
-    auto client = make_unique_nothrow<HailoRtRpcClient>(channel);
-    CHECK_NOT_NULL(client, HAILO_OUT_OF_HOST_MEMORY);
-    m_client = std::move(client);
-    return HAILO_SUCCESS;
-}
-
-hailo_status VDeviceClient::after_fork_in_parent()
-{
-    TRY(auto instance, HailoRtRpcClientUtils::get_instance(m_client_utils_handle));
-    instance->after_fork_in_parent();
-    auto status = create_client();
-    CHECK_SUCCESS(status);
-
-    auto listener_status = start_listener_thread(m_identifier);
-    CHECK_SUCCESS(listener_status);
-
-    return HAILO_SUCCESS;
-}
-
-hailo_status VDeviceClient::after_fork_in_child()
-{
-    TRY(auto instance, HailoRtRpcClientUtils::get_instance(m_client_utils_handle));
-    instance->after_fork_in_child();
-
-    auto listener_status = start_listener_thread(m_identifier);
-    CHECK_SUCCESS(listener_status);
-
-    return HAILO_SUCCESS;
-}
-
-Expected<std::unique_ptr<VDevice>> VDeviceClient::create(const hailo_vdevice_params_t &params)
-{
-    grpc::ChannelArguments ch_args;
-    ch_args.SetMaxReceiveMessageSize(-1);
-    auto channel = grpc::CreateCustomChannel(hailort::HAILORT_SERVICE_ADDRESS, grpc::InsecureChannelCredentials(), ch_args);
-    CHECK_AS_EXPECTED(channel != nullptr, HAILO_INTERNAL_FAILURE);
-
-    auto client = make_unique_nothrow<HailoRtRpcClient>(channel);
-    CHECK_AS_EXPECTED(client != nullptr, HAILO_OUT_OF_HOST_MEMORY);
-    TRY(auto client_utils_handle, HailoRtRpcClientUtils::init_client_service_communication());
-
-    // TODO: In case of failure after HailoRtRpcClientUtils::init_client_service_communication(),
-    //       we need to reduce ref-count of HailoRtRpcClientUtils (or its thread can 'hang')
-
-    auto pid = OsUtils::get_curr_pid();
-    auto reply = client->VDevice_create(params, pid);
-    CHECK_EXPECTED(reply);
-
-    auto vdevice_handle = reply.value();
-    // When working with service over IP - no access to physical devices (returning empty vector)
-    auto devices = (VDevice::service_over_ip_mode()) ? std::vector<std::unique_ptr<Device>>() : client->VDevice_get_physical_devices(vdevice_handle);
-    CHECK_EXPECTED(devices);
-
-    auto client_vdevice = std::unique_ptr<VDeviceClient>(new VDeviceClient(params, std::move(client), client_utils_handle, VDeviceIdentifier(vdevice_handle), devices.release()));
-    CHECK_AS_EXPECTED(client_vdevice != nullptr, HAILO_OUT_OF_HOST_MEMORY);
-
-    return std::unique_ptr<VDevice>(std::move(client_vdevice));
-}
-
-Expected<ConfiguredNetworkGroupVector> VDeviceClient::configure(Hef &hef,
-    const NetworkGroupsParamsMap &configure_params)
-{
-    auto networks_handles = m_client->VDevice_configure(m_identifier, hef, OsUtils::get_curr_pid(), configure_params);
-    CHECK_EXPECTED(networks_handles);
-
-    ConfiguredNetworkGroupVector networks;
-    networks.reserve(networks_handles->size());
-    for (auto &ng_handle : networks_handles.value()) {
-        auto expected_client = HailoRtRpcClientUtils::create_client();
-        CHECK_EXPECTED(expected_client);
-
-        auto client = expected_client.release();
-        TRY(auto network_group, ConfiguredNetworkGroupClient::create(std::move(client),
-            NetworkGroupIdentifier(m_identifier, ng_handle)));
-        networks.emplace_back(network_group);
-        {
-            std::unique_lock<std::mutex> lock(m_mutex);
-            m_network_groups.emplace(ng_handle, network_group);
-        }
-    }
-
-    // Init listener thread only in case configure happens with async api
-    if ((configure_params.size() > 0) &&
-            configure_params.begin()->second.stream_params_by_name.begin()->second.flags == HAILO_STREAM_FLAGS_ASYNC) {
-        m_should_use_listener_thread = true;
-        auto init_status = start_listener_thread(m_identifier);
-        CHECK_SUCCESS_AS_EXPECTED(init_status);
-    }
-
-    return networks;
-}
-
-hailo_status VDeviceClient::start_listener_thread(VDeviceIdentifier identifier)
-{
-    if (!m_should_use_listener_thread || m_is_listener_thread_running) {
-        return HAILO_SUCCESS;
-    }
-
-    m_cb_listener_thread = make_unique_nothrow<AsyncThread<hailo_status>>("SVC_LISTENER", [this, identifier] () {
-        return this->listener_run_in_thread(identifier);
-    });
-    CHECK_NOT_NULL(m_cb_listener_thread, HAILO_OUT_OF_HOST_MEMORY);
-    m_is_listener_thread_running = true;
-
-    return HAILO_SUCCESS;
-}
-
-hailo_status VDeviceClient::listener_run_in_thread(VDeviceIdentifier identifier)
-{
-    grpc::ChannelArguments ch_args;
-    ch_args.SetMaxReceiveMessageSize(-1);
-    auto channel = grpc::CreateCustomChannel(hailort::HAILORT_SERVICE_ADDRESS, grpc::InsecureChannelCredentials(), ch_args);
-    auto client = make_unique_nothrow<HailoRtRpcClient>(channel);
-    CHECK_NOT_NULL(client, HAILO_OUT_OF_HOST_MEMORY);
-
-    while (m_is_listener_thread_running) {
-        auto callback_id = client->VDevice_get_callback_id(identifier);
-        if (HAILO_SUCCESS != callback_id.status()) {
-            std::unique_lock<std::mutex> lock(m_mutex);
-            for (auto &ng_ptr_pair : m_network_groups) {
-                ng_ptr_pair.second->execute_callbacks_on_error(callback_id.status());
-            }
-            if (callback_id.status() == HAILO_SHUTDOWN_EVENT_SIGNALED) {
-                LOGGER__INFO("Shutdown event was signaled in listener_run_in_thread");
-            } else if (callback_id.status() == HAILO_RPC_FAILED) {
-                LOGGER__ERROR("Lost communication with the service..");
-            } else {
-                LOGGER__ERROR("Failed to get callback_id from listener thread with {}", callback_id.status());
-            }
-            break;
-        }
-        CHECK_EXPECTED_AS_STATUS(callback_id);
-
-        std::shared_ptr<ConfiguredNetworkGroupClient> ng_ptr;
-        {
-            std::unique_lock<std::mutex> lock(m_mutex);
-            assert(contains(m_network_groups, callback_id->network_group_handle()));
-            ng_ptr = m_network_groups.at(callback_id->network_group_handle());
-        }
-        auto status = ng_ptr->execute_callback(callback_id.value());
-        CHECK_SUCCESS(status);
-    }
-
-    return HAILO_SUCCESS;
-}
-
-hailo_status VDeviceClient::finish_listener_thread()
-{
-    m_is_listener_thread_running = false;
-    auto status = m_client->VDevice_finish_callback_listener(m_identifier);
-    CHECK_SUCCESS(status);
-
-    m_cb_listener_thread.reset();
-    return HAILO_SUCCESS;
-}
-
-Expected<std::vector<std::reference_wrapper<Device>>> VDeviceClient::get_physical_devices() const
-{
-    // In case of service-over-ip, the returned list will be empty
-    std::vector<std::reference_wrapper<Device>> devices_refs;
-    for (auto &device : m_devices) {
-        devices_refs.push_back(*device);
-    }
-
-    return devices_refs;
-}
-
-Expected<std::vector<std::string>> VDeviceClient::get_physical_devices_ids() const
-{
-    return m_client->VDevice_get_physical_devices_ids(m_identifier);
-}
-
-Expected<hailo_stream_interface_t> VDeviceClient::get_default_streams_interface() const
-{
-    return m_client->VDevice_get_default_streams_interface(m_identifier);
-}
-
-hailo_status VDeviceClient::dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction)
-{
-    (void) address;
-    (void) size;
-    (void) direction;
-    // It is ok to do nothing on service, because the buffer is copied anyway to the service.
-    LOGGER__TRACE("VDevice `dma_map()` does nothing in service");
-    return HAILO_SUCCESS;
-}
-
-hailo_status VDeviceClient::dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction)
-{
-    (void) address;
-    (void) size;
-    (void) direction;
-    // It is ok to do nothing on service, because the buffer is copied anyway to the service.
-    LOGGER__TRACE("VDevice `dma_map()` does nothing in service");
-    return HAILO_SUCCESS;
-}
-
-hailo_status VDeviceClient::dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
-{
-    (void) dmabuf_fd;
-    (void) size;
-    (void) direction;
-    // It is ok to do nothing on service, because the buffer is copied anyway to the service.
-    LOGGER__TRACE("VDevice `dma_map_dmabuf()` does nothing in service");
-    return HAILO_SUCCESS;
-}
-
-hailo_status VDeviceClient::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction)
-{
-    (void) dmabuf_fd;
-    (void) size;
-    (void) direction;
-    // It is ok to do nothing on service, because the buffer is copied anyway to the service.
-    LOGGER__TRACE("VDevice `dma_unmap_dmabuf()` does nothing in service");
-    return HAILO_SUCCESS;
-}
-
-#endif // HAILO_SUPPORT_MULTI_PROCESS
-
-
 Expected<std::unique_ptr<VDevice>> VDevice::create(const hailo_vdevice_params_t &params)
 {
     LOGGER__INFO("Creating vdevice with params: device_count: {}, scheduling_algorithm: {}, multi_process_service: {}",
@@ -539,40 +232,18 @@ Expected<std::unique_ptr<VDevice>> VDevice::create(const hailo_vdevice_params_t 
 
     std::unique_ptr<VDevice> vdevice = nullptr;
 
-    if (params.multi_process_service) {
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-        CHECK_AS_EXPECTED(params.scheduling_algorithm != HAILO_SCHEDULING_ALGORITHM_NONE, HAILO_INVALID_ARGUMENT,
-            "Multi-process service is supported only with HailoRT scheduler, please choose scheduling algorithm");
-        auto expected_vdevice = VDeviceClient::create(params);
-        CHECK_EXPECTED(expected_vdevice);
-        vdevice = expected_vdevice.release();
-#else
-        LOGGER__ERROR("multi_process_service requires service compilation with HAILO_BUILD_SERVICE");
-        return make_unexpected(HAILO_INVALID_OPERATION);
-#endif // HAILO_SUPPORT_MULTI_PROCESS
-    } else {
-        // If forcing socket-based client-iface, we cannot scan for connected devices, hence we create it beforehand
-        // TODO: Revert HRT-17057 when unix socket bug introduced in HRT-16827 is fixed
-        auto force_socket_com_value = get_env_variable(HAILO_SOCKET_COM_ADDR_CLIENT_ENV_VAR);
-        if (force_socket_com_value.has_value() && (force_socket_com_value.value() != HAILO_SOCKET_COM_ADDR_UNIX_SOCKET)) {
-                TRY(vdevice, VDeviceSocketBasedClient::create(params));
-        } else {
-            auto acc_type = HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE;
-            if (nullptr != params.device_ids) {
-                TRY(auto device_ids_contains_eth, VDeviceBase::device_ids_contains_eth(params));
-                if (!device_ids_contains_eth) {
-                    TRY(acc_type, VDeviceBase::get_accelerator_type(params.device_ids, params.device_count));
-                }
-            } else {
-                TRY(acc_type, VDeviceBase::get_accelerator_type(params.device_ids, params.device_count));
-            }
+    TRY(auto do_device_ids_contain_eth, VDeviceBase::do_device_ids_contain_eth(params));
 
-            // TODO: Revert HRT-17057 when unix socket bug introduced in HRT-16827 is fixed
-            if ((acc_type == HailoRTDriver::AcceleratorType::SOC_ACCELERATOR) || should_force_socket_based_client()) {
-                TRY(vdevice, VDeviceHrpcClient::create(params));
-            } else {
-                TRY(vdevice, VDeviceHandle::create(params));
-            }
+    if (params.multi_process_service || do_device_ids_contain_eth) {
+        TRY(vdevice, VDeviceHrpcClient::create(params));
+    } else {
+        auto acc_type = HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE;
+        TRY(acc_type, VDeviceBase::get_accelerator_type(params.device_ids, params.device_count));
+
+        if (acc_type == HailoRTDriver::AcceleratorType::SOC_ACCELERATOR) {
+            TRY(vdevice, VDeviceHrpcClient::create(params));
+        } else {
+            TRY(vdevice, VDeviceHandle::create(params));
         }
     }
     // Upcasting to VDevice unique_ptr
@@ -650,11 +321,18 @@ hailo_status VDeviceBase::validate_params(const hailo_vdevice_params_t &params)
     CHECK(0 != params.device_count, HAILO_INVALID_ARGUMENT,
         "VDevice creation failed. invalid device_count ({}).", params.device_count);
 
-    TRY(auto device_ids_contains_eth, device_ids_contains_eth(params));
-    CHECK(!(device_ids_contains_eth && (1 != params.device_count)), HAILO_INVALID_ARGUMENT,
+    TRY(auto do_device_ids_contain_eth, do_device_ids_contain_eth(params));
+    CHECK(!(do_device_ids_contain_eth && (1 != params.device_count)), HAILO_INVALID_ARGUMENT,
         "VDevice over ETH is supported for 1 device. Passed device_count: {}", params.device_count);
-    CHECK(!(device_ids_contains_eth && (HAILO_SCHEDULING_ALGORITHM_NONE != params.scheduling_algorithm)), HAILO_INVALID_ARGUMENT,
-        "VDevice over ETH is not supported when scheduler is enabled.");
+    CHECK(!(do_device_ids_contain_eth && params.multi_process_service), HAILO_INVALID_ARGUMENT,
+        "Multi process service is only supported with local devices");
+
+    if (params.multi_process_service) {
+        auto acc_type = HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE;
+        TRY(acc_type, get_accelerator_type(params.device_ids, params.device_count));
+        CHECK(acc_type != HailoRTDriver::AcceleratorType::SOC_ACCELERATOR, HAILO_INVALID_OPERATION,
+            "Multi process service is only supported for Hailo15 devices");
+    }
 
     return HAILO_SUCCESS;
 }
@@ -1000,7 +678,7 @@ bool VDeviceBase::should_use_multiplexer()
     return !is_disabled_by_user;
 }
 
-Expected<bool> VDeviceBase::device_ids_contains_eth(const hailo_vdevice_params_t &params)
+Expected<bool> VDeviceBase::do_device_ids_contain_eth(const hailo_vdevice_params_t &params)
 {
     if (params.device_ids != nullptr) {
         for (uint32_t i = 0; i < params.device_count; i++) {
