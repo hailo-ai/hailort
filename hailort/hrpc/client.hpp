@@ -41,7 +41,7 @@ public:
     Client(const std::string &device_id) : m_device_id(device_id), m_is_running(true), m_messages_sent(0) {}
     ~Client();
 
-    hailo_status connect();
+    hailo_status connect(bool is_localhost = false);
     Expected<rpc_message_t> execute_request(HailoRpcActionID action_id, const MemoryView &request,
         std::vector<TransferBuffer> &&write_buffers = {}, std::vector<TransferBuffer> &&read_buffers = {});
     hailo_status wait_for_execute_request_ready(const MemoryView &request, std::chrono::milliseconds timeout);

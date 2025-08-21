@@ -21,7 +21,9 @@
 #include "hailo/vdevice.hpp"
 #include "hailo/hef.hpp"
 #include "../download_action_list_command.hpp"
+#include "common/filesystem.hpp"
 
+#include <functional>
 #include <memory>
 #include <vector>
 #include <regex>
@@ -37,6 +39,11 @@ static const uint32_t RUNTIME_DATA_BATCH_INDEX_TO_MEASURE_DEFAULT = 2;
 
 using json = nlohmann::json;
 using ordered_json = nlohmann::ordered_json;
+
+
+static std::string get_default_buffer_type() {
+    return Filesystem::does_file_exists(std::string(DMA_HEAP_PATH))? "dmabuf":"ptr";
+}
 
 /** VStreamNameValidator */
 class VStreamNameValidator : public CLI::Validator {
@@ -301,9 +308,19 @@ class Run2 : public CLI::App
 {
 public:
     Run2();
+    Run2(const NetworkParams &network_params, uint32_t time_to_run) :
+        m_time_to_run(time_to_run), m_scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN), m_device_count(1),
+        m_multi_process_service(false), m_measure_power(true), m_measure_current(true), m_measure_temp(true),
+        m_measure_fw_actions(false)
+    {
+        m_network_params.push_back(network_params);
+    }
 
     Expected<std::unique_ptr<VDevice>> create_vdevice();
-    Expected<std::vector<std::shared_ptr<NetworkRunner>>> init_and_run_net_runners(VDevice *vdevice);
+    Expected<std::vector<std::shared_ptr<NetworkRunner>>> init_and_run_net_runners(VDevice &vdevice);
+    Expected<std::vector<std::shared_ptr<NetworkRunner>>> init_and_run_net_runners_impl(VDevice &vdevice,
+        bool should_print, const std::function<void(std::shared_ptr<MeasurementLiveTrack>)> &measurement_track_handler);
+
 
     const std::vector<NetworkParams>& get_network_params();
     std::chrono::seconds get_time_to_run();
@@ -322,6 +339,7 @@ public:
     const std::string &get_output_json_path();
 
     void update_network_params();
+    void set_measure_by_capabilities(const Device::Capabilities &capabilities);
     void set_batch_size(uint16_t batch_size);
 
 private:
@@ -331,10 +349,12 @@ private:
     bool is_ethernet_device() const;
     void validate_and_set_scheduling_algorithm();
     void validate_mode_supports_service();
+    void validate_measurements_supported();
 
     std::vector<NetworkParams> m_network_params;
     uint32_t m_time_to_run;
     InferenceMode m_mode;
+    BufferType m_buffer_type;
     hailo_scheduling_algorithm_t m_scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_MAX_ENUM;
     std::string m_stats_json_path;
     std::vector<std::string> m_device_ids;
@@ -342,14 +362,14 @@ private:
     bool m_multi_process_service;
     std::string m_group_id;
 
-    bool m_measure_hw_latency;
-    bool m_measure_overall_latency;
+    bool m_measure_hw_latency{false};
+    bool m_measure_overall_latency{false};
 
-    bool m_measure_power;
-    bool m_measure_current;
-    bool m_measure_temp;
+    bool m_measure_power{false};
+    bool m_measure_current{false};
+    bool m_measure_temp{false};
 
-    bool m_measure_fw_actions;
+    bool m_measure_fw_actions{false};
     std::string m_measure_fw_actions_output_path;
 };
 
@@ -368,6 +388,19 @@ Run2::Run2() : CLI::App("Run networks", "run2")
             { "raw_async", InferenceMode::RAW_ASYNC },
             { "raw_async_single_thread", InferenceMode::RAW_ASYNC_SINGLE_THREAD, OptionVisibility::HIDDEN }
         }))->default_val("full_async");
+
+    add_option("--buffer-type", m_buffer_type, "Buffer type to use for all networks")
+        ->transform(HailoCheckedTransformer<BufferType>({
+            { "ptr", BufferType::VIEW },
+            { "dmabuf", BufferType::DMA_BUFFER }
+        }))
+        ->default_val(get_default_buffer_type())
+        ->check([this](const std::string&) -> std::string {
+            if (m_mode != InferenceMode::FULL_ASYNC) {
+                return "Buffer type option is only valid in full_async mode";
+            }
+            return std::string();
+        });
 
     add_option("-j,--json", m_stats_json_path, "If set save statistics as json to the specified path")
         ->default_val("")
@@ -390,7 +423,7 @@ Run2::Run2() : CLI::App("Run networks", "run2")
         ->excludes(dev_id_opt);
     vdevice_options_group->add_option("--group-id", m_group_id, "VDevice group id")
         ->default_val(HAILO_DEFAULT_VDEVICE_GROUP_ID);
-    auto multi_process_flag = vdevice_options_group
+    vdevice_options_group
         ->add_flag("--multi-process-service", m_multi_process_service,"VDevice multi process service")
         ->default_val(false);
 
@@ -399,7 +432,7 @@ Run2::Run2() : CLI::App("Run networks", "run2")
     auto measure_power_opt = measurement_options_group->add_flag("--measure-power", m_measure_power, "Measure power consumption")
         ->default_val(false);
 
-    auto measure_current_opt = measurement_options_group->add_flag("--measure-current", m_measure_current, "Measure current")->excludes(measure_power_opt)
+    measurement_options_group->add_flag("--measure-current", m_measure_current, "Measure current")->excludes(measure_power_opt)
         ->default_val(false);
 
     measurement_options_group->add_flag("--measure-latency", m_measure_hw_latency, "Measure network latency on the NN core")
@@ -408,20 +441,13 @@ Run2::Run2() : CLI::App("Run networks", "run2")
     measurement_options_group->add_flag("--measure-overall-latency", m_measure_overall_latency, "Measure overall latency measurement")
         ->default_val(false);
 
-    auto measure_temp_opt = measurement_options_group->add_flag("--measure-temp", m_measure_temp, "Measure chip temperature")
+    measurement_options_group->add_flag("--measure-temp", m_measure_temp, "Measure chip temperature")
         ->default_val(false);
-
-    if (VDevice::service_over_ip_mode()) {
-        multi_process_flag
-        ->excludes(measure_power_opt)
-        ->excludes(measure_current_opt)
-        ->excludes(measure_temp_opt);
-        // When working with service over ip - client doesn't have access to physical devices
-    }
 
     parse_complete_callback([this]() {
         validate_and_set_scheduling_algorithm();
         validate_mode_supports_service();
+        validate_measurements_supported();
     });
 }
 
@@ -526,11 +552,19 @@ void Run2::update_network_params()
 {
     for (auto &params : m_network_params) {
         params.mode = m_mode;
+        params.buffer_type = m_buffer_type;
         params.multi_process_service = m_multi_process_service;
         params.measure_hw_latency = m_measure_hw_latency;
         params.measure_overall_latency = m_measure_overall_latency;
         params.scheduling_algorithm = m_scheduling_algorithm;
     }
+}
+
+void Run2::set_measure_by_capabilities(const Device::Capabilities &capabilities)
+{
+    m_measure_power = capabilities.power_measurements;
+    m_measure_current = capabilities.current_measurements;
+    m_measure_temp = capabilities.temperature_measurements;
 }
 
 void Run2::set_batch_size(uint16_t batch_size)
@@ -594,18 +628,19 @@ void Run2::validate_mode_supports_service()
     }
 }
 
+void Run2::validate_measurements_supported()
+{
+    if (is_ethernet_device()) {
+        PARSE_CHECK(!m_measure_power, "Power measurement is not supported on Ethernet devices");
+        PARSE_CHECK(!m_measure_current, "Current measurement is not supported on Ethernet devices");
+        PARSE_CHECK(!m_measure_temp, "Temperature measurement is not supported on Ethernet devices");
+    }
+}
+
 void Run2::validate_and_set_scheduling_algorithm()
 {
     if (m_scheduling_algorithm == HAILO_SCHEDULING_ALGORITHM_NONE) {
         PARSE_CHECK(1 == get_network_params().size(), "When setting --scheduling-algorithm=none only one model is allowed");
-    }
-
-    if (is_ethernet_device()) {
-        PARSE_CHECK((m_scheduling_algorithm == HAILO_SCHEDULING_ALGORITHM_MAX_ENUM) ||
-                    (m_scheduling_algorithm == HAILO_SCHEDULING_ALGORITHM_NONE),
-                    "On ethernet devices, only --scheduling-algorithm=none is supported");
-        PARSE_CHECK(1 == get_network_params().size(), "On Ethernet device only one model is allowed");
-        m_scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_NONE;
     }
 
     if (get_measure_fw_actions()) {
@@ -710,18 +745,24 @@ Expected<std::unique_ptr<VDevice>> Run2::create_vdevice()
     return VDevice::create(vdevice_params);
 }
 
-Expected<std::vector<std::shared_ptr<NetworkRunner>>> Run2::init_and_run_net_runners(VDevice *vdevice)
+Expected<std::vector<std::shared_ptr<NetworkRunner>>> Run2::init_and_run_net_runners(VDevice &vdevice)
+{
+    return init_and_run_net_runners_impl(vdevice, true, [](std::shared_ptr<MeasurementLiveTrack>) {});
+}
+
+Expected<std::vector<std::shared_ptr<NetworkRunner>>> Run2::init_and_run_net_runners_impl(VDevice &vdevice,
+    bool should_print, const std::function<void(std::shared_ptr<MeasurementLiveTrack>)> &measurement_track_handler)
 {
     std::vector<std::shared_ptr<NetworkRunner>> net_runners;
     TRY(auto shutdown_event, Event::create_shared(Event::State::not_signalled));
 
     // create network runners
     for (auto &net_params : get_network_params()) {
-        TRY(auto net_runner, NetworkRunner::create_shared(*vdevice, net_params));
+        TRY(auto net_runner, NetworkRunner::create_shared(vdevice, net_params));
         net_runners.emplace_back(net_runner);
     }
 
-    auto live_stats = std::make_unique<LiveStats>(std::chrono::seconds(1));
+    auto live_stats = std::make_unique<LiveStats>(std::chrono::seconds(1), should_print);
 
     live_stats->add(std::make_shared<TimerLiveTrack>(get_time_to_run()), 0);
 
@@ -729,7 +770,7 @@ Expected<std::vector<std::shared_ptr<NetworkRunner>>> Run2::init_and_run_net_run
     Barrier activation_barrier(net_runners.size() + 1); // We wait for all nets to finish activation + this thread to start sampling
     for (auto &net_runner : net_runners) {
         threads.emplace_back(std::make_unique<AsyncThread<hailo_status>>("NG_INFER", [&net_runner, &shutdown_event,
-            &live_stats, &activation_barrier](){
+            &live_stats, &activation_barrier]() {
             return net_runner->run(shutdown_event, *live_stats, activation_barrier);
         }));
     }
@@ -739,7 +780,7 @@ Expected<std::vector<std::shared_ptr<NetworkRunner>>> Run2::init_and_run_net_run
     activation_barrier.arrive_and_wait();
 
     if (user_requested_power_measurement() || user_requested_current_measurement() || user_requested_temperature_measurement()) {
-        TRY(auto physical_devices, vdevice->get_physical_devices());
+        TRY(auto physical_devices, vdevice.get_physical_devices());
         for (auto &device : physical_devices) {
             TRY(auto supported_features, device.get().get_capabilities(), "Failed getting device capabilities");
             CHECK_AS_EXPECTED(!user_requested_power_measurement() || supported_features.power_measurements,
@@ -754,6 +795,7 @@ Expected<std::vector<std::shared_ptr<NetworkRunner>>> Run2::init_and_run_net_run
                 user_requested_temperature_measurement()));
 
             live_stats->add(measurement_live_track, 2);
+            measurement_track_handler(measurement_live_track);
         }
     }
 
@@ -794,9 +836,9 @@ hailo_status Run2Command::execute()
 
     TRY(auto vdevice, app->create_vdevice());
     TRY(auto devices, vdevice->get_physical_devices());
-    
-    if ((1 == app->get_network_params().size()) && 
-    (HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN == app->get_network_params().begin()->scheduling_algorithm) && 
+
+    if ((1 == app->get_network_params().size()) &&
+    (HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN == app->get_network_params().begin()->scheduling_algorithm) &&
     (devices[0].get().get_type() == Device::Type::INTEGRATED)) {
         LOGGER__WARNING("\"hailortcli run2\" is not optimized for single model usage. It is recommended to use \"hailortcli run\" command for a single model");
     }
@@ -827,7 +869,7 @@ hailo_status Run2Command::execute()
             CHECK_SUCCESS(status);
         }
 
-        TRY(auto net_runners, app->init_and_run_net_runners(vdevice.get()));
+        TRY(auto net_runners, app->init_and_run_net_runners(*vdevice));
         if(app->get_measure_fw_actions()) { // Collecting runtime data
             TRY(auto device, get_single_physical_device(*vdevice));
             auto status = DownloadActionListCommand::execute(device, net_runners[0]->get_configured_network_group(),
@@ -839,6 +881,72 @@ hailo_status Run2Command::execute()
     }
     if(app->get_measure_fw_actions()) { // In case measure-fw-actions is enabled - write data to JSON file
         CHECK_SUCCESS(DownloadActionListCommand::write_to_json(action_list_json, runtime_data_output_path));
+    }
+    return HAILO_SUCCESS;
+}
+
+hailo_status run2_benchmark(const std::string &hef_path, uint32_t time_to_run)
+{
+    NetworkApp network_app("Set network", "set-net");
+    auto network_params = network_app.get_params();
+    network_params.hef_path = hef_path;
+    network_params.mode = InferenceMode::FULL_ASYNC;
+    Run2 app(network_params, time_to_run);
+    TRY(auto vdevice, app.create_vdevice());
+    TRY(auto devices, vdevice->get_physical_devices());
+
+    // Measure all supported measurements capabilities of all devices
+    Device::Capabilities all_devices_caps{true, true, true};
+    auto update_capability = [](bool &is_capable, bool is_supported, const std::string &measurement_name) -> void {
+        if (is_capable && !is_supported) {
+            is_capable = false;
+            std::cerr << fmt::format("Measurement {} is not supported\n", measurement_name);
+        }
+    };
+    for (auto const &device : devices) {
+        TRY(auto current_device_caps, device.get().get_capabilities(), "Failed getting device capabilities");
+        update_capability(all_devices_caps.power_measurements, current_device_caps.power_measurements, "power");
+        update_capability(all_devices_caps.current_measurements, current_device_caps.current_measurements, "current");
+        update_capability(all_devices_caps.temperature_measurements, current_device_caps.temperature_measurements,
+                          "temperature");
+    }
+    app.set_measure_by_capabilities(all_devices_caps);
+
+    std::vector<std::shared_ptr<MeasurementLiveTrack>> measurement_tracks;
+    TRY(auto net_runners, app.init_and_run_net_runners_impl(*vdevice, false,
+        [&measurement_tracks](std::shared_ptr<MeasurementLiveTrack> track) -> void {
+            measurement_tracks.push_back(track);
+        }));
+    std::cout << R"(
+=======
+Summary
+=======
+)";
+    for (const auto &net_runner : net_runners) {
+        std::cout << fmt::format("{}: FPS: {:.2f}\n", net_runner->get_name(), net_runner->get_last_measured_fps());
+    }
+    for (auto measurement_track : measurement_tracks) {
+        auto power_ptr = (all_devices_caps.power_measurements
+            ? measurement_track->get_power_measurement() : nullptr);
+        auto current_ptr = (all_devices_caps.current_measurements
+            ? measurement_track->get_current_measurement() : nullptr);
+        auto temp_ptr = (all_devices_caps.temperature_measurements
+            ? measurement_track->get_temp_measurement() : nullptr);
+        if (power_ptr || current_ptr || temp_ptr) {
+            std::cout << fmt::format("{}:\n", measurement_track->get_device_id());
+        }
+        auto measure_ptrs_names = std::vector<std::pair<std::shared_ptr<BaseMeasurement>, const std::string>>{
+            {power_ptr, "power"}, {current_ptr, "current"}, {temp_ptr, "temperature"}};
+        for (auto &measure_ptr_name : measure_ptrs_names) {
+            if (measure_ptr_name.first) {
+                const auto acc = measure_ptr_name.first->get_data();
+                TRY(auto acc_mean, acc.mean());
+                TRY(auto acc_min, acc.min());
+                TRY(auto acc_max, acc.max());
+                std::cout << fmt::format("  {}: mean={:.2f} min={:.2f} max={:.2f}\n",
+                    measure_ptr_name.second, acc_mean, acc_min, acc_max);
+            }
+        }
     }
     return HAILO_SUCCESS;
 }

@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.5.0)
 
+project(hailort-examples-c-raw-streams)
+
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
-find_package(HailoRT 5.0.0 EXACT REQUIRED)
+find_package(HailoRT 5 REQUIRED)
 
 SET_SOURCE_FILES_PROPERTIES(raw_streams_example.c PROPERTIES LANGUAGE C)
 

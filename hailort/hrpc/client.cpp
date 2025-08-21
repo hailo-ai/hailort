@@ -8,13 +8,13 @@
  **/
 
 #include "client.hpp"
+#include "common/internal_env_vars.hpp"
 #include "vdma/pcie_session.hpp" // TODO: Remove include: (HRT-16534)
 
 namespace hailort
 {
 constexpr size_t REQUEST_PROTO_MAX_SIZE (256); // TODO: HRT-16644 - make it dynamic
 
-// TODO: HRT-16034: make common function with grpc client.
 inline static std::chrono::milliseconds get_request_timeout(const std::chrono::milliseconds default_timeout)
 {
     auto timeout_seconds = get_env_variable(HAILO_REQUEST_TIMEOUT_SECONDS);
@@ -42,12 +42,13 @@ Client::~Client()
 }
 
 // TODO: Connect should be a static method that returns a client
-hailo_status Client::connect()
+hailo_status Client::connect(bool is_localhost)
 {
     m_callback_dispatcher_manager = make_shared_nothrow<ClientCallbackDispatcherManager>();
     CHECK_NOT_NULL(m_callback_dispatcher_manager, HAILO_OUT_OF_HOST_MEMORY);
 
-    TRY(m_conn_context, ConnectionContext::create_client_shared(m_device_id));
+    std::string device_id = is_localhost ? SERVER_ADDR_USE_UNIX_SOCKET : m_device_id;
+    TRY(m_conn_context, ConnectionContext::create_client_shared(device_id));
     TRY(auto conn, Session::connect(m_conn_context, HAILORT_SERVER_PORT));
 
     // TODO: Use conn.max_ongoing_transfers() function (HRT-16534)
@@ -160,6 +161,7 @@ Expected<message_id_t> Client::execute_request_async(HailoRpcActionID action_id,
     header.size = static_cast<uint32_t>(request.size());
     header.message_id = message_id;
     header.action_id = static_cast<uint32_t>(action_id);
+    header.status = HAILO_UNINITIALIZED;
 
     TransferRequest transfer_request;
     transfer_request.callback = request_sent_callback;

@@ -23,7 +23,7 @@ target_include_directories(hailo_rpc PRIVATE
     ${DRIVER_INC_DIR}
 )
 target_compile_options(hailo_rpc PRIVATE ${HAILORT_COMPILE_OPTIONS})
-set_target_properties(hailo_rpc PROPERTIES CXX_STANDARD 14 POSITION_INDEPENDENT_CODE ON)
+set_target_properties(hailo_rpc PROPERTIES CXX_STANDARD 17 POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(hailo_rpc PRIVATE
     Threads::Threads
     rpc_proto

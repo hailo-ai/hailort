@@ -66,7 +66,7 @@ bool InternalBufferPlanner::should_edge_layer_use_ccb(const LayerType &layer_typ
 
 Expected<InternalBufferPlanning> InternalBufferPlanner::create_naive_buffer_planning(
     const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos, HailoRTDriver::DmaType dma_type,
-    uint16_t max_page_size, HailoRTDriver::DeviceBoardType board_type, bool force_sg_buffer_type)
+    const DescSizesParams &sg_desc_params, const DescSizesParams &ccb_desc_params, bool force_sg_buffer_type)
 {
     InternalBufferPlanning buffer_planning;
 
@@ -74,10 +74,12 @@ Expected<InternalBufferPlanning> InternalBufferPlanner::create_naive_buffer_plan
     auto sorted_edge_layer_vector = sort_edge_layers_by_size(edge_layer_infos);
     for (const auto &edge_layer_info : sorted_edge_layer_vector) {
         // Naive planning - Buffer holds only one transfer pattern and one edge layer
-        vdma::VdmaBuffer::Type buffer_type = should_edge_layer_use_ccb(edge_layer_info.second.type, dma_type, force_sg_buffer_type) ?
+        const bool is_ccb = should_edge_layer_use_ccb(edge_layer_info.second.type, dma_type, force_sg_buffer_type);
+        vdma::VdmaBuffer::Type buffer_type = is_ccb ?
             vdma::VdmaBuffer::Type::CONTINUOUS : vdma::VdmaBuffer::Type::SCATTER_GATHER;
+        const auto desc_params = is_ccb ? ccb_desc_params : sg_desc_params;
         TRY_WITH_ACCEPTABLE_STATUS(HAILO_CANT_MEET_BUFFER_REQUIREMENTS, const auto buffer_requirements,
-            return_buffer_requirements(edge_layer_info.second, buffer_type, max_page_size, board_type));
+            return_buffer_requirements(edge_layer_info.second, buffer_type, desc_params));
 
         const std::vector<EdgeLayerPlan> edge_layer_plan{
             EdgeLayerPlan{edge_layer_info.first, NAIVE_PLANNING_EDGE_LAYER_OFFSET, buffer_requirements}
@@ -105,7 +107,7 @@ std::vector<std::pair<EdgeLayerKey, EdgeLayerInfo>> InternalBufferPlanner::sort_
 }
 
 Expected<vdma::BufferSizesRequirements> InternalBufferPlanner::return_buffer_requirements(const EdgeLayerInfo &edge_layer,
-    const vdma::VdmaBuffer::Type buffer_type, uint16_t max_page_size, HailoRTDriver::DeviceBoardType board_type)
+    const vdma::VdmaBuffer::Type buffer_type, const DescSizesParams &desc_sizes_params)
 {
     // Calc actual size
     static const auto DONT_FORCE_DEFAULT_PAGE_SIZE = false;
@@ -113,11 +115,10 @@ Expected<vdma::BufferSizesRequirements> InternalBufferPlanner::return_buffer_req
     static const auto IS_VDMA_ALIGNED_BUFFER = true;
     const auto is_circular = (LayerType::DDR == edge_layer.type);
     const auto is_ddr = (LayerType::DDR == edge_layer.type);
-    const bool is_extended_ccb_descs_count = (HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_MARS == board_type);
     auto buffer_requirements = vdma::BufferSizesRequirements::get_buffer_requirements_single_transfer(
-        buffer_type, max_page_size, edge_layer.max_transfers_in_batch,
+        buffer_type, desc_sizes_params, desc_sizes_params.max_page_size, edge_layer.max_transfers_in_batch,
         edge_layer.max_transfers_in_batch, edge_layer.transfer_size, is_circular, DONT_FORCE_DEFAULT_PAGE_SIZE,
-        FORCE_BATCH_SIZE, IS_VDMA_ALIGNED_BUFFER, is_ddr, is_extended_ccb_descs_count);
+        FORCE_BATCH_SIZE, IS_VDMA_ALIGNED_BUFFER, is_ddr);
     return buffer_requirements;
 }
 
@@ -201,10 +202,10 @@ void update_buffer_to_context_map(std::vector<std::vector<BufferUsageSegment>> &
 hailo_status InternalBufferPlanner::add_edge_layer_to_planning(
     const std::pair<EdgeLayerKey, EdgeLayerInfo> &edge_layer,
     std::vector<std::vector<BufferUsageSegment>> &context_buffer_usage_vector, BufferPlan &buffer_plan,
-    const vdma::VdmaBuffer::Type buffer_type, uint16_t max_page_size, HailoRTDriver::DeviceBoardType board_type)
+    const vdma::VdmaBuffer::Type buffer_type, const DescSizesParams &desc_size_params)
 {
     TRY_WITH_ACCEPTABLE_STATUS(HAILO_CANT_MEET_BUFFER_REQUIREMENTS, const auto buffer_requirements,
-        return_buffer_requirements(edge_layer.second, buffer_type, max_page_size, board_type));
+        return_buffer_requirements(edge_layer.second, buffer_type, desc_size_params));
 
     // Check if there is enough space in the current context buffer.
     const auto start_context = edge_layer.second.start_context;
@@ -224,7 +225,7 @@ hailo_status InternalBufferPlanner::add_edge_layer_to_planning(
 
     update_buffer_to_context_map(context_buffer_usage_vector, start_context, end_context, buffer_offset, edge_layer_size);
 
-    LOGGER__DEBUG("Added edge layer key {}:{} with size {} from context {} to context {} to offset {}",
+    LOGGER__TRACE("Added edge layer key {}:{} with size {} from context {} to context {} to offset {}",
         edge_layer.first.first, edge_layer.first.second, edge_layer_size, start_context, end_context, buffer_offset);
 
     return HAILO_SUCCESS;
@@ -232,7 +233,7 @@ hailo_status InternalBufferPlanner::add_edge_layer_to_planning(
 
 Expected<InternalBufferPlanning> InternalBufferPlanner::create_single_buffer_planning(
     const std::map<EdgeLayerKey, EdgeLayerInfo> &sg_edge_layers, size_t number_of_contexts,
-    const vdma::VdmaBuffer::Type buffer_type, uint16_t max_page_size, HailoRTDriver::DeviceBoardType board_type)
+    const vdma::VdmaBuffer::Type buffer_type, const DescSizesParams &desc_sizes_params)
 {
     InternalBufferPlanning buffer_planning;
     // Trying to reserve one buffer only.
@@ -248,8 +249,8 @@ Expected<InternalBufferPlanning> InternalBufferPlanner::create_single_buffer_pla
     std::vector<std::vector<BufferUsageSegment>> context_buffer_usage_vector(number_of_contexts);
 
     for (auto &edge_layer : sorted_edge_layer_vector) {
-        auto status = add_edge_layer_to_planning(edge_layer, context_buffer_usage_vector, buffer_plan, buffer_type, max_page_size,
-            board_type);
+        auto status = add_edge_layer_to_planning(edge_layer, context_buffer_usage_vector, buffer_plan, buffer_type,
+            desc_sizes_params);
         CHECK_STATUS_CANT_MEET_REQUIREMENTS(status);
     }
 
@@ -261,7 +262,8 @@ Expected<InternalBufferPlanning> InternalBufferPlanner::create_single_buffer_pla
 
 Expected<InternalBufferPlanning> InternalBufferPlanner::create_optimized_buffer_planning(
     const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos, HailoRTDriver::DmaType dma_type,
-    uint16_t max_page_size, size_t number_of_contexts, HailoRTDriver::DeviceBoardType board_type, bool force_sg_buffer_type)
+    size_t number_of_contexts, const DescSizesParams &sg_desc_params, const DescSizesParams &ccb_desc_params,
+    bool force_sg_buffer_type)
 {
     std::map<EdgeLayerKey, EdgeLayerInfo> ccb_edge_layers;
     std::map<EdgeLayerKey, EdgeLayerInfo> sg_edge_layers;
@@ -279,15 +281,15 @@ Expected<InternalBufferPlanning> InternalBufferPlanner::create_optimized_buffer_
     // Second - create buffer planning for each buffer type
     if (!ccb_edge_layers.empty()) {
         TRY_WITH_ACCEPTABLE_STATUS(HAILO_CANT_MEET_BUFFER_REQUIREMENTS, const auto ccb_buffer_planning,
-            create_single_buffer_planning(ccb_edge_layers, number_of_contexts, vdma::VdmaBuffer::Type::CONTINUOUS, max_page_size,
-            board_type));
+            create_single_buffer_planning(ccb_edge_layers, number_of_contexts, vdma::VdmaBuffer::Type::CONTINUOUS,
+                ccb_desc_params));
         buffer_planning.insert(buffer_planning.end(), ccb_buffer_planning.begin(), ccb_buffer_planning.end());
     }
 
     if (!sg_edge_layers.empty()) {
         TRY_WITH_ACCEPTABLE_STATUS(HAILO_CANT_MEET_BUFFER_REQUIREMENTS, auto sg_buffer_planning,
-            create_single_buffer_planning(sg_edge_layers, number_of_contexts, vdma::VdmaBuffer::Type::SCATTER_GATHER, max_page_size,
-            board_type));
+            create_single_buffer_planning(sg_edge_layers, number_of_contexts, vdma::VdmaBuffer::Type::SCATTER_GATHER,
+                sg_desc_params));
         buffer_planning.insert(buffer_planning.end(), sg_buffer_planning.begin(), sg_buffer_planning.end());
     }
 
@@ -340,7 +342,7 @@ static hailo_status add_inter_context_buffer(std::map<EdgeLayerKey, EdgeLayerInf
             it->second.end_context = layer_info.context_index;
         }
     } else {
-        LOGGER__DEBUG("Adding edge layer with key ({}, {}) to the internal buffer manager", edge_layer_key.first, edge_layer_key.second);
+        LOGGER__TRACE("Adding edge layer with key ({}, {}) to the internal buffer manager", edge_layer_key.first, edge_layer_key.second);
         edge_layer_infos.emplace(edge_layer_key,
             EdgeLayerInfo{
                 layer_info.type,
@@ -378,7 +380,7 @@ Expected<std::map<EdgeLayerKey, EdgeLayerInfo>> InternalBufferPlanner::get_edge_
 
 Expected<InternalBufferPlanning> InternalBufferPlanner::create_buffer_planning(
     const CoreOpMetadata& core_op, uint16_t batch_size, Type plan_type, HailoRTDriver::DmaType dma_type,
-    uint16_t max_page_size, HailoRTDriver::DeviceBoardType board_type)
+    const DescSizesParams &sg_desc_params, const DescSizesParams &ccb_desc_params)
 {
     ConfigureNetworkParams config_params{};
     config_params.batch_size = batch_size;
@@ -386,13 +388,14 @@ Expected<InternalBufferPlanning> InternalBufferPlanner::create_buffer_planning(
         config_params.network_params_by_name[network_name].batch_size = batch_size;
     }
     TRY(auto edge_layer_infos, get_edge_layer_infos(core_op, config_params));
-    return create_buffer_planning(edge_layer_infos, plan_type, dma_type, max_page_size, core_op.dynamic_contexts().size(),
-        board_type);
+    return create_buffer_planning(edge_layer_infos, plan_type, dma_type, core_op.dynamic_contexts().size(),
+        sg_desc_params, ccb_desc_params);
 }
 
 Expected<InternalBufferPlanning> InternalBufferPlanner::create_buffer_planning(
     const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos, Type plan_type,
-    HailoRTDriver::DmaType dma_type, uint16_t max_page_size, size_t number_of_contexts, HailoRTDriver::DeviceBoardType board_type)
+    HailoRTDriver::DmaType dma_type, size_t number_of_contexts, const DescSizesParams &sg_desc_params,
+    const DescSizesParams &ccb_desc_params)
 {
     static const bool FORCE_SG_BUFFER_TYPE = true;
     // Force plan by user flag
@@ -403,14 +406,16 @@ Expected<InternalBufferPlanning> InternalBufferPlanner::create_buffer_planning(
 
     switch (plan_type) {
     case Type::SINGLE_BUFFER_PER_BUFFER_TYPE:
-        return create_optimized_buffer_planning(edge_layer_infos, dma_type, max_page_size, number_of_contexts, board_type);
+        return create_optimized_buffer_planning(edge_layer_infos, dma_type, number_of_contexts, sg_desc_params,
+            ccb_desc_params);
     case Type::SINGLE_SG_BUFFER:
-        return create_optimized_buffer_planning(edge_layer_infos, dma_type, max_page_size, number_of_contexts,
-            board_type, FORCE_SG_BUFFER_TYPE);
+        return create_optimized_buffer_planning(edge_layer_infos, dma_type, number_of_contexts, sg_desc_params,
+            ccb_desc_params, FORCE_SG_BUFFER_TYPE);
     case Type::NAIVE_PER_BUFFER_TYPE:
-        return create_naive_buffer_planning(edge_layer_infos, dma_type, max_page_size, board_type);
+        return create_naive_buffer_planning(edge_layer_infos, dma_type, sg_desc_params, ccb_desc_params);
     case Type::NAIVE_SG_BUFFER:
-        return create_naive_buffer_planning(edge_layer_infos, dma_type, max_page_size, board_type, FORCE_SG_BUFFER_TYPE);
+        return create_naive_buffer_planning(edge_layer_infos, dma_type, sg_desc_params, ccb_desc_params,
+            FORCE_SG_BUFFER_TYPE);
     default:
         return make_unexpected(HAILO_INVALID_ARGUMENT);
     }

@@ -15,17 +15,17 @@
 namespace hailort
 {
 
-scheduler_core_op_handle_t CoreOpsSchedulerOracle::choose_next_model(SchedulerBase &scheduler, const device_id_t &device_id, bool check_threshold)
+scheduler_core_op_handle_t CoreOpsSchedulerOracle::choose_next_model_to_run(SchedulerBase &scheduler, const device_id_t &device_id, bool check_threshold)
 {
     auto device_info = scheduler.get_device_info(device_id);
-    auto &priority_map = scheduler.get_core_op_priority_map();
+    auto &priority_map = scheduler.get_core_op_to_run_priority_map();
     for (auto iter = priority_map.rbegin(); iter != priority_map.rend(); ++iter) {
         auto &priority_group = iter->second;
 
         // Iterate all core ops inside the priority group starting from priority_group next core op
         for (uint32_t i = 0; i < priority_group.size(); i++) {
-            auto core_op_handle = priority_group.get(i);
-            auto ready_info = scheduler.is_core_op_ready(core_op_handle, check_threshold, device_id);
+            const auto core_op_handle = priority_group.get(i);
+            const auto ready_info = scheduler.is_core_op_ready_for_run(core_op_handle, check_threshold, device_id);
             if (ready_info.is_ready) {
                 // In cases device is idle the check_threshold is not needed, therefore is false.
                 bool switch_because_idle = !(check_threshold);
@@ -34,6 +34,33 @@ scheduler_core_op_handle_t CoreOpsSchedulerOracle::choose_next_model(SchedulerBa
                 device_info->next_core_op_handle = core_op_handle;
                  // Set next to run as next in round-robin
                 priority_group.set_next(i + 1);
+                return core_op_handle;
+            }
+        }
+    }
+
+    return INVALID_CORE_OP_HANDLE;
+}
+
+scheduler_core_op_handle_t CoreOpsSchedulerOracle::choose_next_model_to_prepare(SchedulerBase &scheduler, const device_id_t &device_id)
+{
+    auto device_info = scheduler.get_device_info(device_id);
+    auto &priority_map = scheduler.get_core_op_to_prepare_priority_map();
+    
+    // Get the currently active core op to avoid choosing it for preparation
+    if (scheduler.get_current_core_op_preparing() != INVALID_CORE_OP_HANDLE) {
+        return INVALID_CORE_OP_HANDLE;
+    }
+    
+    for (auto iter = priority_map.rbegin(); iter != priority_map.rend(); ++iter) {
+        auto &priority_group = iter->second;
+
+        for (uint32_t i = 0; i < priority_group.size(); i++) {
+            const auto core_op_handle = priority_group.get(i);
+            
+            const auto is_ready = scheduler.is_core_op_ready_for_prepare(core_op_handle, device_id); 
+            if (is_ready) {
+                priority_group.set_next(i);
                 return core_op_handle;
             }
         }
@@ -51,14 +78,14 @@ bool CoreOpsSchedulerOracle::should_stop_streaming(SchedulerBase &scheduler, cor
     }
 
     // Now check if there is another qualified core op.
-    const auto &priority_map = scheduler.get_core_op_priority_map();
+    const auto &priority_map = scheduler.get_core_op_to_run_priority_map();
     for (auto iter = priority_map.rbegin(); (iter != priority_map.rend()) && (iter->first >= core_op_priority); ++iter) {
         auto &priority_group = iter->second;
 
         // Iterate all core ops inside the priority group starting from next_core_op_index
         for (uint32_t i = 0; i < priority_group.size(); i++) {
             auto core_op_handle = priority_group.get(i);
-            if (!is_core_op_active(scheduler, core_op_handle) && scheduler.is_core_op_ready(core_op_handle, true, device_id).is_ready) {
+            if (!is_core_op_active(scheduler, core_op_handle) && scheduler.is_core_op_ready_for_run(core_op_handle, true, device_id).is_ready) {
                 return true;
             }
         }
@@ -80,7 +107,7 @@ bool CoreOpsSchedulerOracle::is_core_op_active(SchedulerBase &scheduler, schedul
     return false;
 }
 
-std::vector<RunParams> CoreOpsSchedulerOracle::get_oracle_decisions(SchedulerBase &scheduler)
+std::vector<RunParams> CoreOpsSchedulerOracle::get_oracle_run_decisions(SchedulerBase &scheduler)
 {
     auto &devices = scheduler.get_device_infos();
     std::vector<RunParams> oracle_decision;
@@ -96,12 +123,12 @@ std::vector<RunParams> CoreOpsSchedulerOracle::get_oracle_decisions(SchedulerBas
         // Check if device is idle
         if (!active_device_info->is_switching_core_op && active_device_info->is_idle()) {
             const bool CHECK_THRESHOLD = true;
-            auto core_op_handle = choose_next_model(scheduler, active_device_info->device_id, CHECK_THRESHOLD);
+            auto core_op_handle = choose_next_model_to_run(scheduler, active_device_info->device_id, CHECK_THRESHOLD);
 
             // If there is no suitable model when checking with threshold, and the idle optimization is enabled,
             // try again without threshold.
             if (is_env_variable_on(HAILO_ENABLE_IDLE_OPT_ENV_VAR) && (core_op_handle == INVALID_CORE_OP_HANDLE)) {
-                core_op_handle = choose_next_model(scheduler, active_device_info->device_id, !CHECK_THRESHOLD);
+                core_op_handle = choose_next_model_to_run(scheduler, active_device_info->device_id, !CHECK_THRESHOLD);
             }
 
             if (core_op_handle != INVALID_CORE_OP_HANDLE) {

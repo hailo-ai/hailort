@@ -24,7 +24,7 @@ ConfigBuffer::ConfigBuffer(vdma::ChannelId channel_id)
 {}
 
 Expected<vdma::BufferSizesRequirements> ConfigBuffer::get_sg_buffer_requirements(const std::vector<uint32_t> &cfg_sizes,
-    uint16_t max_desc_page_size)
+    const DescSizesParams &desc_sizes_params)
 {
     const bool NOT_CIRCULAR = false;
     // For config channels (In Hailo15), the page size must be a multiplication of host default page size.
@@ -32,11 +32,10 @@ Expected<vdma::BufferSizesRequirements> ConfigBuffer::get_sg_buffer_requirements
     const bool FORCE_DEFAULT_PAGE_SIZE = true;
     const bool FORCE_BATCH_SIZE = true;
     const bool NOT_DDR = false;
-    const bool IS_EXTENDED_CCB_DESCS_COUNT = false;
 
     return vdma::BufferSizesRequirements::get_buffer_requirements_multiple_transfers(
-        vdma::VdmaBuffer::Type::SCATTER_GATHER, max_desc_page_size, 1, cfg_sizes, NOT_CIRCULAR,
-        FORCE_DEFAULT_PAGE_SIZE, FORCE_BATCH_SIZE, NOT_DDR, IS_EXTENDED_CCB_DESCS_COUNT);
+        vdma::VdmaBuffer::Type::SCATTER_GATHER, desc_sizes_params, desc_sizes_params.max_page_size, 1, cfg_sizes, NOT_CIRCULAR,
+        FORCE_DEFAULT_PAGE_SIZE, FORCE_BATCH_SIZE, NOT_DDR);
 }
 
 CopiedConfigBuffer::CopiedConfigBuffer(std::unique_ptr<vdma::VdmaEdgeLayer> &&buffer,
@@ -70,15 +69,14 @@ Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> CopiedConfigBuffer::create_buffer
 }
 
 Expected<vdma::BufferSizesRequirements> CopiedConfigBuffer::get_buffer_requirements(const ConfigBufferInfo &config_buffer_info,
-    HailoRTDriver::DmaType dma_type, uint16_t max_desc_page_size, HailoRTDriver::DeviceBoardType board_type)
+    HailoRTDriver::DmaType dma_type, const DescSizesParams &desc_sizes_params)
 {
     const auto &bursts_sizes = config_buffer_info.ccw_dma_transfers;
     const auto buffer_size = std::accumulate(bursts_sizes.begin(), bursts_sizes.end(), uint32_t{0});
-    const bool is_extended_ccb_desc_count = (HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_MARS == board_type);
 
     return should_use_ccb(dma_type) ?
-        get_ccb_buffer_requirements(buffer_size, max_desc_page_size, is_extended_ccb_desc_count) :
-        get_sg_buffer_requirements(bursts_sizes, max_desc_page_size);
+        get_ccb_buffer_requirements(buffer_size, desc_sizes_params) :
+        get_sg_buffer_requirements(bursts_sizes, desc_sizes_params);
 }
 
 Expected<uint32_t> CopiedConfigBuffer::program_descriptors()
@@ -164,7 +162,7 @@ Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> CopiedConfigBuffer::create_sg_buf
 {
     static const auto NOT_CIRCULAR = false;
 
-    TRY(const auto requirements,  get_sg_buffer_requirements(bursts_sizes, driver.desc_max_page_size()));
+    TRY(const auto requirements, get_sg_buffer_requirements(bursts_sizes, driver.get_sg_desc_params()));
 
     TRY(auto buffer, vdma::SgBuffer::create(driver, requirements.buffer_size(), HailoRTDriver::DmaDirection::H2D));
 
@@ -184,10 +182,7 @@ Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> CopiedConfigBuffer::create_sg_buf
 Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> CopiedConfigBuffer::create_ccb_buffer(HailoRTDriver &driver,
     uint32_t buffer_size)
 {
-    const bool is_extended_ccb_descs_count = (driver.board_type() ==
-        hailort::HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_MARS);
-    TRY(const auto requirements, get_ccb_buffer_requirements(buffer_size, driver.desc_max_page_size(),
-        is_extended_ccb_descs_count));
+    TRY(const auto requirements, get_ccb_buffer_requirements(buffer_size, driver.get_ccb_desc_params()));
 
     TRY_WITH_ACCEPTABLE_STATUS(HAILO_OUT_OF_HOST_CMA_MEMORY, auto buffer,
         vdma::ContinuousBuffer::create(requirements.buffer_size(), driver));
@@ -206,7 +201,7 @@ Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> CopiedConfigBuffer::create_ccb_bu
 }
 
 Expected<vdma::BufferSizesRequirements> CopiedConfigBuffer::get_ccb_buffer_requirements(uint32_t buffer_size,
-    uint16_t max_desc_page_size, bool is_extended_desc_count)
+    const DescSizesParams &desc_sizes_params)
 {
     const auto NOT_CIRCULAR = false;
     // For config channels (In Hailo15), the page size must be a multiplication of host default page size.
@@ -218,9 +213,9 @@ Expected<vdma::BufferSizesRequirements> CopiedConfigBuffer::get_ccb_buffer_requi
     static const bool IS_NOT_DDR = false;
 
     return vdma::BufferSizesRequirements::get_buffer_requirements_single_transfer(
-        vdma::VdmaBuffer::Type::CONTINUOUS, max_desc_page_size, DEFAULT_BATCH_SIZE, DEFAULT_BATCH_SIZE,
-        buffer_size, NOT_CIRCULAR, FORCE_DEFAULT_PAGE_SIZE, FORCE_BATCH_SIZE, IS_VDMA_ALIGNED_BUFFER, IS_NOT_DDR,
-        is_extended_desc_count);
+        vdma::VdmaBuffer::Type::CONTINUOUS, desc_sizes_params, desc_sizes_params.max_page_size, DEFAULT_BATCH_SIZE,
+        DEFAULT_BATCH_SIZE, buffer_size, NOT_CIRCULAR, FORCE_DEFAULT_PAGE_SIZE, FORCE_BATCH_SIZE, IS_VDMA_ALIGNED_BUFFER,
+        IS_NOT_DDR);
 }
 
 bool CopiedConfigBuffer::should_use_ccb(HailoRTDriver::DmaType dma_type)
@@ -263,7 +258,7 @@ Expected<std::unique_ptr<vdma::DescriptorList>> ZeroCopyConfigBuffer::build_desc
     for (const auto& ccw_bursts_size : ccw_bursts_sizes) {
         burst_sizes.push_back(static_cast<uint32_t>(ccw_bursts_size));
     }
-    TRY(auto requirements, get_sg_buffer_requirements(burst_sizes, driver.desc_max_page_size()));
+    TRY(auto requirements, get_sg_buffer_requirements(burst_sizes, driver.get_sg_desc_params()));
     TRY(auto desc_list, vdma::DescriptorList::create(requirements.descs_count(), requirements.desc_page_size(), false, driver));
     return make_unique_nothrow<vdma::DescriptorList>(std::move(desc_list));
 }

@@ -5,15 +5,9 @@
 /**
  * @file core_op.hpp
  * @brief Hence, the hierarchy is as follows:
- *        --------------------------------------------------------------------------------------------------------------
- *        |                                                 CoreOp                                                     |  (Base classes)
- *        |                   ________________________________|________________________________                        |
- *        |                  /                                |                                \                       |
- *        |         VdmaConfigCoreOp                     VDeviceCoreOp                   HcpConfigCoreOp               |  (Actual implementations)
- *        |                                                   |                                                        |
- *        |                                                   |                                                        |
- *        |                                        vector of VdmaConfigCoreOp                                          |
- *        --------------------------------------------------------------------------------------------------------------
+ *  CoreOp
+ *  | -- VdmaConfigCoreOp
+ *  | -- VDeviceCoreOp (contains vector of VdmaConfigCoreOp, one per physical device)
  **/
 
 #ifndef _HAILO_CORE_OP_HPP_

@@ -183,6 +183,12 @@ typedef enum {
 #define HEADER_VERSION_2 (2)
 #define HEADER_VERSION_3 (3)
 
+// Max periph bytes per buffer for hailo1x because (we use its value shifted right by 3 - according to the spec) to
+// configure shmifo credit size - which in hailo15 only has a width of 10 bits
+// TODO: HRT-12051: move these to periph calculator when core hw padding is removed
+static constexpr uint32_t HAILO1X_PERIPH_BYTES_PER_BUFFER_MAX_SIZE  (0x00002000L);
+static constexpr uint32_t HAILO1X_PERIPH_PAYLOAD_MAX_VALUE          (0x01FFFFFFL);
+
 const static uint32_t SUPPORTED_EXTENSIONS_BITSET_SIZE = 1000;
 static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
     ABBALE,
@@ -216,8 +222,9 @@ static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
     CCW_PTR_SQUEEZE,                // Currently this extension is always off, will be renamed and re-purposed under HRT-13205
     EXTERNAL_RESOURCES,             // Extension added in platform 4.21 release
     SHARED_CONFIG,                  // Extension added in platform 4.21 release
-    STRICT_RUNTIME_VERSIONING,      // Extension added in platform 5.0  release
-
+    CSM_CRC,                        // Extension added in platform 5.1.0 release
+    ENABLE_CONFIG_CHANNELS,         // Extension added in platform 5.1.0 release
+    STRICT_RUNTIME_VERSIONING,      // Extension added in platform 5.1.0 release
 };
 
 static inline bool is_h2d_boundary_info_layer(const ProtoHEFEdgeLayer& layer)
@@ -265,7 +272,6 @@ class InputStreamBase;
 class OutputStreamBase;
 
 // Forward declerations
-struct WriteMemoryInfo;
 class Device;
 class VdmaConfigCoreOp;
 class VdmaDevice;
@@ -339,8 +345,6 @@ public:
     Expected<ConfigureNetworkParams> create_configure_params_mipi_input(hailo_stream_interface_t output_interface,
         const hailo_mipi_input_stream_params_t &mipi_params, const std::string &network_group_name);
 
-    static Expected<std::vector<WriteMemoryInfo>> create_single_context_core_op_config(
-        const ProtoHEFPreliminaryConfig& proto_config, const Hef &hef);
 
     static Expected<std::shared_ptr<ProtoHEFCoreOpMock>> get_core_op_per_arch(const ProtoHEFCoreOpMock &core_op,
         ProtoHEFHwArch hef_arch, hailo_device_architecture_t device_arch, uint32_t partial_clusters_layout_bitmap);
@@ -373,7 +377,7 @@ public:
     // Also adds information to CoreOpMetadata
     // TODO: When supporting multiple core ops in same netflow - Change metadata param to a map of core_ops_metadata.
     Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> create_ops_metadata(const ProtoHEFNetworkGroup &network_group_proto,
-        CoreOpMetadata &core_op_metadata, const ProtoHEFHwArch &hef_arch) const;
+        CoreOpMetadata &core_op_metadata) const;
 
     // TODO: Should return map of NG's core_ops metadata?
     Expected<CoreOpMetadataPtr> get_core_op_metadata(const std::string &network_group_name, uint32_t partial_clusters_layout_bitmap = PARTIAL_CLUSTERS_LAYOUT_IGNORE);
@@ -520,9 +524,6 @@ public:
 
     static Expected<CONTROL_PROTOCOL__nn_stream_config_t> parse_nn_stream_config(const ProtoHEFEdgeLayerBase &edge_layer,
         bool hw_padding_supported, const ProtoHEFEdgeConnectionType &edge_connection_type);
-
-    static Expected<uint32_t> max_periph_bytes_value(const hailo_device_architecture_t hw_arch);
-    static Expected<uint32_t> max_periph_padding_payload_value(const hailo_device_architecture_t hw_arch);
 
     static bool is_core_hw_padding_supported(const LayerInfo &layer_info, const uint32_t max_periph_bytes_value,
         const bool is_core_hw_padding_config_in_dfc);

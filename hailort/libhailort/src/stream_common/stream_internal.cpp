@@ -74,9 +74,9 @@ hailo_status InputStreamBase::write_async(TransferRequest &&)
     return HAILO_NOT_IMPLEMENTED;
 }
 
-hailo_status InputStreamBase::bind_and_sync_buffer(TransferRequest &&)
+hailo_status InputStreamBase::prepare_transfer(TransferRequest &&)
 {
-    LOGGER__ERROR("bind_and_sync_buffer not implemented for sync API");
+    LOGGER__ERROR("prepare_transfer  not implemented for sync API");
     return HAILO_NOT_IMPLEMENTED;
 }
 
@@ -165,9 +165,9 @@ hailo_status OutputStreamBase::read_async(int dmabuf_fd, size_t size, const Tran
     return read_async(TransferRequest(hailo_dma_buffer_t{dmabuf_fd, size}, wrapped_callback));
 }
 
-hailo_status OutputStreamBase::bind_and_sync_buffer(TransferRequest &&)
+hailo_status OutputStreamBase::prepare_transfer(TransferRequest &&)
 {
-    LOGGER__ERROR("bind_and_sync_buffer not implemented for sync API");
+    LOGGER__ERROR("prepare_transfer not implemented for sync API");
     return HAILO_NOT_IMPLEMENTED;
 }
 

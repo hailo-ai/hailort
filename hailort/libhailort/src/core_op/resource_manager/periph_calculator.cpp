@@ -94,12 +94,9 @@ Expected<LayerInfo> PeriphCalculator::calculate_periph_registers_impl(const Laye
     // confgured periph registers will add / removed the extra padding
     if (is_core_hw_padding_config_in_dfc) {
         if (0 != (periph_frame_size % periph_bytes_per_buffer_alignment_size)) {
-            TRY(const auto max_periph_padding_payload, HefConfigurator::max_periph_padding_payload_value(
-                    DeviceBase::hef_arch_to_device_arch(hw_arch)));
-
             // Currently case of payload larger than max periph padding payload value - not supported
-            CHECK_AS_EXPECTED(max_periph_padding_payload > periph_frame_size, HAILO_INVALID_HEF,
-                "Error, padded frame size larger than {} Currently not supported", max_periph_padding_payload);
+            CHECK_AS_EXPECTED(HAILO1X_PERIPH_PAYLOAD_MAX_VALUE > periph_frame_size, HAILO_INVALID_HEF,
+                "Error, padded frame size larger than {} Currently not supported", HAILO1X_PERIPH_PAYLOAD_MAX_VALUE);
 
             const auto padded_periph_frame_size = HailoRTCommon::align_to(periph_frame_size,
                 static_cast<uint32_t>(periph_bytes_per_buffer_alignment_size));
@@ -143,8 +140,7 @@ Expected<LayerInfo> PeriphCalculator::calculate_periph_registers_impl(const Laye
 Expected<LayerInfo> PeriphCalculator::calculate_periph_registers(const LayerInfo &layer_info,
     const uint32_t desc_page_size, const HEFHwArch &hw_arch, const bool is_core_hw_padding_config_in_dfc)
 {
-    TRY(const auto max_periph_bytes_from_hef, HefConfigurator::max_periph_bytes_value(DeviceBase::hef_arch_to_device_arch(hw_arch)));
-    const auto max_periph_bytes = std::min(max_periph_bytes_from_hef, layer_info.max_shmifo_size);
+    const auto max_periph_bytes = std::min(HAILO1X_PERIPH_BYTES_PER_BUFFER_MAX_SIZE, layer_info.max_shmifo_size);
 
     if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == layer_info.format.order) {
         return calculate_nms_periph_registers(layer_info);

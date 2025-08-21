@@ -44,7 +44,7 @@ public:
     virtual hailo_stream_interface_t get_interface() const override;
     virtual void set_vdevice_core_op_handle(vdevice_core_op_handle_t core_op_handle) override;
     virtual hailo_status cancel_pending_transfers() override;
-    virtual hailo_status bind_and_sync_buffer(TransferRequest &&transfer_request) override final;
+    virtual hailo_status prepare_transfer(TransferRequest &&transfer_request) override final;
 
 private:
     Expected<std::unique_ptr<StreamBufferPool>> allocate_buffer_pool() override;
@@ -92,7 +92,7 @@ public:
     virtual inline vdevice_core_op_handle_t get_vdevice_core_op_handle() override { return m_core_op_handle; };
     virtual hailo_status cancel_pending_transfers() override;
     void set_d2h_callback(std::function<void(hailo_status)> callback);
-    virtual hailo_status bind_and_sync_buffer(TransferRequest &&transfer_request) override final;
+    virtual hailo_status prepare_transfer(TransferRequest &&transfer_request) override final;
 
 private:
     static void default_d2h_callback(hailo_status) {};

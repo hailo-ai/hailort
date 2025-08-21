@@ -99,8 +99,6 @@ hailo_status PcieSession::write_async(TransferRequest &&request)
     aligned_buffers.reserve(request.transfer_buffers.size());
 
     for (auto &transfer_buf : request.transfer_buffers) {
-        CHECK(TransferBufferType::DMABUF != transfer_buf.type(),
-            HAILO_NOT_SUPPORTED, "DMABUF buffer type is not supported with pcie session");
         if (transfer_buf.is_aligned_for_dma()) {
             aligned_buffers.emplace_back(std::move(transfer_buf));
             continue;
@@ -217,7 +215,9 @@ hailo_status PcieSession::launch_transfer_sync(vdma::BoundaryChannel &channel,
 Expected<vdma::DescriptorList> PcieSession::create_desc_list(HailoRTDriver &driver)
 {
     const bool circular = true;
-    TRY(auto desc_list, vdma::DescriptorList::create(MAX_SG_DESCS_COUNT, vdma::DEFAULT_SG_PAGE_SIZE, circular, driver));
+    const auto desc_params = driver.get_sg_desc_params();
+    TRY(auto desc_list, vdma::DescriptorList::create(desc_params.max_descs_count, desc_params.default_page_size,
+        circular, driver));
     return desc_list;
 }
 

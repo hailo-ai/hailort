@@ -174,6 +174,8 @@ Expected<firmware_type_t> DeviceBase::get_fw_type()
     }
     else if (architecture == HAILO_ARCH_HAILO15L) {
         firmware_type = FIRMWARE_TYPE_HAILO15L;
+    } else if (architecture == HAILO_ARCH_MARS) {
+        firmware_type = FIRMWARE_TYPE_MARS;
     }
     else {
         LOGGER__ERROR("Invalid device arcitecture. {}", static_cast<int>(architecture));
@@ -673,9 +675,6 @@ hailo_status DeviceBase::fw_notification_id_to_hailo(D2H_EVENT_ID_t fw_notificat
         case CONTEXT_SWITCH_RUN_TIME_ERROR:
             *hailo_notification_id = HAILO_NOTIFICATION_ID_CONTEXT_SWITCH_RUN_TIME_ERROR_EVENT;
             break;
-        case START_UPDATE_CACHE_OFFSET_ID:
-            *hailo_notification_id = HAILO_NOTIFICATION_ID_START_UPDATE_CACHE_OFFSET;
-            break;
         default:
             status = HAILO_INVALID_ARGUMENT;
             goto l_exit;
@@ -783,7 +782,7 @@ Expected<size_t> DeviceBase::fetch_logs(MemoryView buffer, hailo_log_type_t log_
 
     TRY(auto device_arch, get_architecture());
     CHECK((device_arch == HAILO_ARCH_HAILO15H) || (device_arch == HAILO_ARCH_HAILO15L) || (device_arch == HAILO_ARCH_HAILO15M) ||
-        (device_arch == HAILO_ARCH_HAILO10H), HAILO_INVALID_DEVICE_ARCHITECTURE,
+        (device_arch == HAILO_ARCH_HAILO10H) || (device_arch == HAILO_ARCH_MARS), HAILO_INVALID_DEVICE_ARCHITECTURE,
         "fetch_logs is not supported for device arch {}", HailoRTCommon::get_device_arch_str(device_arch));
 
     TRY(auto max_logs_size, get_max_logs_size(log_type));

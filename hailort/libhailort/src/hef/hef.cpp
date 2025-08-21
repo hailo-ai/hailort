@@ -34,10 +34,8 @@
 #include "hef/hef_internal.hpp"
 #include "vdma/pcie/pcie_device.hpp"
 #include "vdma/vdma_config_manager.hpp"
-#include "eth/hcp_config_core_op.hpp"
 #include "hef/layer_info.hpp"
 #include "device_common/control.hpp"
-#include "hw_consts.hpp"
 #include "utils/profiler/tracer_macros.hpp"
 
 #include "byte_order.h"
@@ -64,8 +62,6 @@ namespace hailort
 #define ALIGNED_TO_4_BYTES (4)
 #define MIN_SLEEP_TIME_USEC (1000)
 constexpr uint8_t DEFAULT_DIVISION_FACTOR = 1;
-
-static const uint8_t ENABLE_LCU_CONTROL_WORD[4] = {1, 0, 0, 0};
 
 #define TAB ("    ")
 
@@ -127,13 +123,6 @@ static std::string get_shape_str(const hailo_vstream_info_t &vstream_info)
             std::to_string(vstream_info.shape.features) + ")";
     }
 }
-
-#pragma pack(push, 1)
-typedef struct {
-    uint32_t words_count;
-    uint32_t address;
-} CcwHeader;
-#pragma pack(pop)
 
 bool ConfigureNetworkParams::operator==(const ConfigureNetworkParams &other) const
 {
@@ -782,7 +771,7 @@ hailo_status Hef::Impl::fill_networks_metadata(uint32_t hef_version, std::shared
                     TRY(const auto metadata_per_arch,
                         create_metadata_per_arch(*(partial_core_op->core_op), sorted_network_names, hef_version, hef_reader, ccws_offset));
 
-                    TRY(const auto ops_metadata, create_ops_metadata(*network_group, *metadata_per_arch, get_device_arch()));
+                    TRY(const auto ops_metadata, create_ops_metadata(*network_group, *metadata_per_arch));
                     m_post_process_ops_metadata_per_group.insert({metadata_per_arch->core_op_name(), ops_metadata});
                     core_op_metadata.add_metadata(metadata_per_arch, partial_clusters_layout_bitmap);
                 }
@@ -810,7 +799,7 @@ hailo_status Hef::Impl::fill_networks_metadata(uint32_t hef_version, std::shared
             partial_clusters_layout_bitmap = PARTIAL_CLUSTERS_LAYOUT_IGNORE;
             TRY(const auto metadata_per_arch, create_metadata_per_arch(core_op, sorted_network_names, hef_version, hef_reader, ccws_offset));
 
-            TRY(auto ops_metadata, create_ops_metadata(*network_group, *metadata_per_arch, get_device_arch()));
+            TRY(auto ops_metadata, create_ops_metadata(*network_group, *metadata_per_arch));
             m_post_process_ops_metadata_per_group.insert({metadata_per_arch->core_op_name(), ops_metadata});
             core_op_metadata.add_metadata(metadata_per_arch, partial_clusters_layout_bitmap);
         }
@@ -1112,6 +1101,8 @@ SupportedFeatures Hef::Impl::get_supported_features(const ProtoHEFHeader &header
     supported_features.shared_config = check_hef_extension(ProtoHEFExtensionType::SHARED_CONFIG,
         header, hef_extensions, included_features);
     supported_features.strict_versioning = check_hef_extension(ProtoHEFExtensionType::STRICT_RUNTIME_VERSIONING,
+        header, hef_extensions, included_features);
+    supported_features.split_allow_input_action = check_hef_extension(ProtoHEFExtensionType::ENABLE_CONFIG_CHANNELS,
         header, hef_extensions, included_features);
 
     return supported_features;
@@ -1548,7 +1539,7 @@ Expected<std::shared_ptr<net_flow::OpMetadata>> create_softmax_op_metadata(const
 
 Expected<std::shared_ptr<net_flow::OpMetadata>> create_logits_op_metadata(const ProtoHEFOp &op_proto,
     const std::map<size_t, LayerInfo> &pad_index_to_streams_info, const std::map<size_t, size_t> &input_to_output_pads,
-    const ProtoHEFHwArch &hef_arch, const std::string &network_name, const bool is_core_hw_padding_config_in_dfc)
+    const std::string &network_name, const bool is_core_hw_padding_config_in_dfc)
 {
     // connect input_streams to net_flow element
     CHECK_AS_EXPECTED(op_proto.input_pads().size() == 1, HAILO_INVALID_HEF, "Logits op must have 1 input only");
@@ -1565,12 +1556,10 @@ Expected<std::shared_ptr<net_flow::OpMetadata>> create_logits_op_metadata(const 
 
     // TODO: HRT-10603
     const auto &op_input_layer_info = pad_index_to_streams_info.at(output_pad_index);
-    TRY(const auto max_periph_bytes_from_hef, HefConfigurator::max_periph_bytes_value(
-        DeviceBase::hef_arch_to_device_arch(static_cast<HEFHwArch>(hef_arch))));
 
     // TODO HRT-12099 - return invalid hef error when remove support for hefs with no max_shmifo size
-    const auto max_periph_bytes = (0 == op_input_layer_info.max_shmifo_size) ? max_periph_bytes_from_hef :
-        std::min(max_periph_bytes_from_hef, op_input_layer_info.max_shmifo_size);
+    const auto max_periph_bytes = (0 == op_input_layer_info.max_shmifo_size) ? HAILO1X_PERIPH_BYTES_PER_BUFFER_MAX_SIZE :
+        std::min(HAILO1X_PERIPH_BYTES_PER_BUFFER_MAX_SIZE, op_input_layer_info.max_shmifo_size);
     const auto is_core_hw_padding_supported = HefConfigurator::is_core_hw_padding_supported(op_input_layer_info,
         max_periph_bytes, is_core_hw_padding_config_in_dfc);
 
@@ -1590,7 +1579,7 @@ Expected<std::shared_ptr<net_flow::OpMetadata>> create_logits_op_metadata(const 
 }
 
 Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> Hef::Impl::create_ops_metadata(const ProtoHEFNetworkGroup &network_group_proto,
-    CoreOpMetadata &core_op_metadata, const ProtoHEFHwArch &hef_arch) const
+    CoreOpMetadata &core_op_metadata) const
 {
     std::vector<net_flow::PostProcessOpMetadataPtr> result;
     if (!m_supported_features.hailo_net_flow) {
@@ -1598,7 +1587,7 @@ Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> Hef::Impl::create_ops_
     }
     auto output_layer_infos = core_op_metadata.get_output_layer_infos();
     std::map<size_t, LayerInfo> pad_index_to_streams_info;
-    for (auto &output_layer_info : output_layer_infos) {
+    for (const LayerInfo &output_layer_info : output_layer_infos) {
         if (output_layer_info.pad_index != INVALID_PAD_INDEX) {
             pad_index_to_streams_info.insert({output_layer_info.pad_index, output_layer_info});
         }
@@ -1681,7 +1670,7 @@ Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> Hef::Impl::create_ops_
             }
             case ProtoHEFOp::kLogitsOp: {
                 TRY(auto post_process_op_metadata, create_logits_op_metadata(op_proto, pad_index_to_streams_info,
-                    input_to_output_pads, hef_arch, network_name, m_supported_features.core_hw_padding_config_in_dfc));
+                    input_to_output_pads, network_name, m_supported_features.core_hw_padding_config_in_dfc));
                 result.push_back(post_process_op_metadata);
                 break;
             }
@@ -1762,45 +1751,6 @@ Expected<CONTROL_PROTOCOL__nn_stream_config_t> HefConfigurator::parse_nn_stream_
     }
 
     return stream_config;
-}
-
-// TODO HRT-11452: change to use hw consts
-Expected<uint32_t> HefConfigurator::max_periph_bytes_value(const hailo_device_architecture_t hw_arch)
-{
-    switch (hw_arch) {
-        case HAILO_ARCH_HAILO8_A0:
-        case HAILO_ARCH_HAILO8:
-        case HAILO_ARCH_HAILO8L:
-            return HAILO8_INBOUND_DATA_STREAM_SIZE;
-        case HAILO_ARCH_HAILO15H:
-        case HAILO_ARCH_HAILO15M:
-        case HAILO_ARCH_HAILO15L:
-        case HAILO_ARCH_HAILO10H:
-        case HAILO_ARCH_MARS:
-            return HAILO1X_PERIPH_BYTES_PER_BUFFER_MAX_SIZE;
-        default:
-            LOGGER__ERROR("Unknown device architecture!");
-            return make_unexpected(HAILO_INVALID_ARGUMENT);
-    }
-}
-
-Expected<uint32_t> HefConfigurator::max_periph_padding_payload_value(const hailo_device_architecture_t hw_arch)
-{
-    switch (hw_arch) {
-        case HAILO_ARCH_HAILO8_A0:
-        case HAILO_ARCH_HAILO8:
-        case HAILO_ARCH_HAILO8L:
-            return HAILO8_PERIPH_PAYLOAD_MAX_VALUE;
-        case HAILO_ARCH_HAILO15H:
-        case HAILO_ARCH_HAILO15M:
-        case HAILO_ARCH_HAILO15L:
-        case HAILO_ARCH_HAILO10H:
-        case HAILO_ARCH_MARS:
-            return HAILO1X_PERIPH_PAYLOAD_MAX_VALUE;
-        default:
-            LOGGER__ERROR("Unknown device architecture!");
-            return make_unexpected(HAILO_INVALID_ARGUMENT);
-    }
 }
 
 bool HefConfigurator::is_core_hw_padding_supported(const LayerInfo &layer_info, const uint32_t max_periph_bytes_value,
@@ -2126,11 +2076,9 @@ hailo_status HefUtils::fill_layer_info_with_base_info(const ProtoHEFEdgeLayerBas
 
     TRY(layer_info.format.type, HailoRTCommon::get_format_type(layer_info.hw_data_bytes));
 
-    TRY(const auto max_periph_bytes_from_hef,
-        HefConfigurator::max_periph_bytes_value(DeviceBase::hef_arch_to_device_arch(static_cast<HEFHwArch>(hef_arch))));
     // TODO HRT-12099 - return invalid hef error when remove support for hefs with no max_shmifo size
-    const auto max_periph_bytes = (0 == base_info.max_shmifo_size()) ? max_periph_bytes_from_hef :
-        std::min(max_periph_bytes_from_hef, base_info.max_shmifo_size());
+    const auto max_periph_bytes = (0 == base_info.max_shmifo_size()) ? HAILO1X_PERIPH_BYTES_PER_BUFFER_MAX_SIZE :
+        std::min(HAILO1X_PERIPH_BYTES_PER_BUFFER_MAX_SIZE, base_info.max_shmifo_size());
 
     // TODO HRT-12051: remove when is_core_hw_padding_supported function is removed
     // Need to set layer_info.nn_stream_config.core_buffers_per_frame for condition in is_core_hw_padding_supported
@@ -2726,6 +2674,14 @@ static Expected<ContextSwitchConfigActionPtr> parse_action(const ProtoHEFAction 
                 "Failed to parse HEF. Invalid sys_index: {}.", proto_action.allow_input_dataflow().sys_index());
             return AllowInputDataflowAction::create(
                 static_cast<uint8_t>(proto_action.allow_input_dataflow().sys_index()));
+
+        case ProtoHEFAction::kAllowConfigChannels:
+            CHECK(IS_FIT_IN_UINT8(proto_action.allow_config_channels().config_index()), HAILO_INVALID_HEF,
+                "Failed to parse HEF. Invalid config_index: {}.", proto_action.allow_config_channels().config_index());
+            return ConfigChannelPreAllowInputDataflowAction::create();
+
+        case ProtoHEFAction::kDisableDataChannels:
+            return DisableDataChannelsAction::create();
 
         case ProtoHEFAction::kWaitForModuleConfigDone:
             CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(proto_action.wait_for_module_config_done().index()), HAILO_INVALID_HEF,
@@ -3537,136 +3493,6 @@ Expected<std::vector<std::string>> Hef::Impl::get_sorted_output_names(const std:
     return res;
 }
 
-static Expected<WriteMemoryInfo> parse_ccw_buffer(const std::string &ccw_buffer)
-{
-    WriteMemoryInfo write_memory_info = {};
-    CHECK_AS_EXPECTED(ccw_buffer.size() > CCW_DATA_OFFSET, HAILO_INVALID_HEF, "ccw buffer is too small");
-    CcwHeader *header = (CcwHeader*)(ccw_buffer.data());
-
-    uint32_t words_count = header->words_count + 1;
-    auto data_length = words_count * CCW_BYTES_IN_WORD;
-    write_memory_info.address = header->address;
-
-    // Validation for ccw size
-    size_t expected_ccw_data_length = (ccw_buffer.length() - CCW_DATA_OFFSET);
-    if (0 != (words_count % 2)) {
-        expected_ccw_data_length -= CCW_BYTES_IN_WORD;
-    }
-    CHECK_AS_EXPECTED(data_length == expected_ccw_data_length, HAILO_INVALID_HEF,
-        "Invalid ccw buffer was parsed from HEF");
-
-    TRY(write_memory_info.data,
-        Buffer::create(reinterpret_cast<const uint8_t*>(ccw_buffer.data() + CCW_DATA_OFFSET), data_length));
-
-    return write_memory_info;
-}
-
-static Expected<WriteMemoryInfo> parse_ccw_buffer_from_ptr(const size_t size, const uint64_t offset, std::shared_ptr<SeekableBytesReader> hef_reader)
-{
-    TRY(auto buffer, Buffer::create_shared(size));
-
-    auto status = hef_reader->open();
-    CHECK_SUCCESS(status);
-
-    status = hef_reader->read_from_offset(offset, MemoryView(*buffer), size);
-    CHECK_SUCCESS(status);
-
-    status = hef_reader->close();
-    CHECK_SUCCESS(status);
-
-    auto raw_str = reinterpret_cast<const char*>(MemoryView(*buffer).data());
-    TRY(auto write_memory_info, parse_ccw_buffer(raw_str));
-    return write_memory_info;
-}
-
-/* HcpConfigCoreOp funcs */
-
-Expected<std::vector<WriteMemoryInfo>> Hef::Impl::create_single_context_core_op_config(const ProtoHEFPreliminaryConfig& proto_config, const Hef &hef)
-{
-    std::vector<WriteMemoryInfo> config_buffers;
-
-    for (const auto &operation : proto_config.operation()) {
-        switch (operation.trigger().trigger_case()) {
-            case ProtoHEFTrigger::kTriggerNone: {
-                break;
-            }
-            default: {
-                LOGGER__ERROR("Triggers different from 'ProtoHEFTriggerNone' are not supported");
-                return make_unexpected(HAILO_INTERNAL_FAILURE);
-            }
-        }
-
-        for (const auto &action : operation.actions()) {
-            switch (action.action_case()) {
-                case ProtoHEFAction::kNone: {
-                    break;
-                }
-                case ProtoHEFAction::kWriteData: {
-                    WriteMemoryInfo write_memory_info = {};
-                    write_memory_info.address = static_cast<uint32_t>(action.write_data().address());
-                    TRY(write_memory_info.data,
-                        Buffer::create(reinterpret_cast<const uint8_t*>(action.write_data().data().data()),
-                            action.write_data().data().length()));
-                    config_buffers.emplace_back(std::move(write_memory_info));
-                    break;
-                }
-                case ProtoHEFAction::kWriteDataCcw: {
-                    CHECK(HEADER_VERSION_0 == hef.pimpl->m_hef_version, HAILO_INVALID_HEF, "WriteDataCcw is supported only on V0 HEF");
-                    TRY(auto config_buffer, parse_ccw_buffer(action.write_data_ccw().data()));
-                    config_buffers.emplace_back(std::move(config_buffer));
-                    break;
-                }
-                case ProtoHEFAction::kWriteDataCcwPtr :{
-                    CHECK(HEADER_VERSION_0 != hef.pimpl->m_hef_version, HAILO_INVALID_HEF, "WriteDataCcwPtr is not supported on V0 HEF");
-                    const auto size = action.write_data_ccw_ptr().size();
-                    const auto offset = action.write_data_ccw_ptr().offset() + hef.pimpl->get_offset_zero_point();
-                    auto hef_reader = hef.pimpl->get_hef_reader();
-                    TRY(auto config_buffer, parse_ccw_buffer_from_ptr(size, offset, hef_reader));
-                    config_buffers.emplace_back(std::move(config_buffer));
-                    break;
-                }
-                case ProtoHEFAction::kDisableLcu: {
-                    // We ignore this action. the lcu_disable will happen in the nn_core reset before configuring specific network_group
-                    break;
-                }
-                case ProtoHEFAction::kEnableLcu: {
-                    WriteMemoryInfo write_memory_info = {};
-                    write_memory_info.address = action.enable_lcu().lcu_enable_address();
-                    TRY(write_memory_info.data,
-                        Buffer::create(ENABLE_LCU_CONTROL_WORD, sizeof(ENABLE_LCU_CONTROL_WORD)));
-                    config_buffers.emplace_back(std::move(write_memory_info));
-                    break;
-                }
-                case ProtoHEFAction::kSwitchLcuBatch: {
-                    LOGGER__ERROR("Parsing error. Context-switch optimization related actions are not supported over Ethernet. "
-                        "If you use the Ethernet interface, please disable context-switch optimizations in the Dataflow Compiler (SDK) and then re-create the HEF. "
-                        "See the Dataflow Compiler user guide for more information.");
-                    return make_unexpected(HAILO_INVALID_HEF);
-                }
-                case ProtoHEFAction::kAllowInputDataflow: {
-                case ProtoHEFAction::kWaitForModuleConfigDone:
-                    // We ignore the 'wait_for_interrupt' actions. After writing the configurations we can be sure everything is configured and dont need to wait for interrupts
-                    break;
-                }
-                case ProtoHEFAction::kWaitForSeqeuncer: {
-                case ProtoHEFAction::kEnableSequencer:
-                    LOGGER__ERROR("Parsing error. Sequencer related actions are not supported over Ethernet. "
-                        "If you use the Ethernet interface, please disable the Sequencer in the Dataflow Compiler (SDK) and then re-create the HEF. "
-                        "Disabling the Sequencer is done using the hef_param command in the model script (ALLS file). "
-                        "See the Dataflow Compiler user guide for more information.");
-                    return make_unexpected(HAILO_INVALID_HEF);
-                }
-                default: {
-                    LOGGER__ERROR("Invalid action");
-                    return make_unexpected(HAILO_INTERNAL_FAILURE);
-                }
-            }
-        }
-    }
-
-    return config_buffers;
-}
-
 ProtoHEFHwArch Hef::Impl::get_device_arch()
 {
     return m_header.hw_arch();
@@ -3706,7 +3532,7 @@ bool Hef::Impl::zero_copy_config_over_descs() const
 
 hailo_status Hef::Impl::validate_hef_version() const
 {
-    if (!m_supported_features.strict_versioning) {
+    if (!m_supported_features.strict_versioning || is_env_variable_on(HAILO_IGNORE_STRICT_VERSION_ENV_VAR)) {
         return HAILO_SUCCESS;
     }
 
@@ -4388,6 +4214,27 @@ void Hef::set_memory_footprint_optimization(bool should_optimize)
 void Hef::Impl::set_memory_footprint_optimization(bool should_optimize)
 {
     m_zero_copy_config_over_descs = should_optimize;
+}
+
+Expected<std::string> Hef::hash(const std::string &hef_path)
+{
+    TRY(auto hef_reader, SeekableBytesReader::create_reader(hef_path));
+    CHECK_SUCCESS(hef_reader->open());
+
+    hef__header_t hef_header = {};
+    CHECK_SUCCESS(hef_reader->read(reinterpret_cast<uint8_t*>(&hef_header), HEF_COMMON_SIZE));
+
+    auto hef_version = BYTE_ORDER__htonl(hef_header.version);
+    // Starting DFC version 5.0.0, all HEFs are version 3
+    CHECK(hef_version == HEADER_VERSION_3, HAILO_HEF_NOT_SUPPORTED,
+        "Only HEF version 3 is supported for hashing. Current version: {}", hef_version);
+
+    CHECK_SUCCESS(hef_reader->read(reinterpret_cast<uint8_t*>(&hef_header.distinct), sizeof(hef__header_distinct_t::v3)));
+    auto xxh3_64bits = BYTE_ORDER__htonll(hef_header.distinct.v3.xxh3_64bits);
+    const bool LOWERCASE = false;
+    CHECK_SUCCESS(hef_reader->close());
+
+    return StringUtils::to_hex_string(reinterpret_cast<uint8_t*>(&xxh3_64bits), sizeof(xxh3_64bits), LOWERCASE);
 }
 
 } /* namespace hailort */

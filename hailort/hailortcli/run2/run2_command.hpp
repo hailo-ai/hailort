@@ -90,4 +90,6 @@ private:
     NetworkParams m_params;
 };
 
+hailo_status run2_benchmark(const std::string &hef_path, uint32_t time_to_run);
+
 #endif /* _HAILO_HAILORTCLI_RUN2_RUN2_COMMAND_HPP_ */

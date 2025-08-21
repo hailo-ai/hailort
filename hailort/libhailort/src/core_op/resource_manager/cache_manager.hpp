@@ -139,12 +139,12 @@ private:
 
     private:
         static Expected<CoreOpCacheIoInfos> get_cache_ios_infos(std::shared_ptr<CoreOpMetadata> core_op_metadata,
-            bool input);
+            bool input, const DescSizesParams &desc_sizes_params);
         static Expected<CoreOpCacheInfos> get_cache_infos(std::shared_ptr<CoreOpMetadata> core_op_metadata,
-            uint32_t expected_cache_length);
+            uint32_t expected_cache_length, const DescSizesParams &desc_sizes_params);
         static Expected<std::unordered_map<uint32_t, CacheBuffer>> allocate_cache_buffers(
             StorageManager &storage_manager, std::shared_ptr<CoreOpMetadata> core_op_metadata,
-            uint32_t expected_cache_length);
+            uint32_t expected_cache_length, const DescSizesParams &desc_sizes_params);
         static hailo_status validate_cache_update(const CacheBuffer &cache_buffer, uint32_t cache_id,
             const CacheBuffer::Snapshot &curr_snapshot, const CacheBuffer::Snapshot &prev_snapshot,
             bool require_changes);

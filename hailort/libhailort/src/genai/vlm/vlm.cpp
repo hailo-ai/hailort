@@ -19,6 +19,8 @@
 #include "common/utils.hpp"
 #include "common/file_utils.hpp"
 
+#include <filesystem>
+
 #include "common/genai/serializer/serializer.hpp"
 #include "common/genai/connection_ports.hpp"
 
@@ -54,40 +56,58 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
 {
     CHECK(!vlm_params.hef().empty(), HAILO_INVALID_OPERATION, "Failed to create VLM. HEF was not set.");
 
+    TRY(auto hef_hash, Hef::hash(vlm_params.hef()));
+
     auto vdevice_params = vdevice->get_params();
-    CHECK_SUCCESS(GenAICommon::validate_genai_vdevice_params(vdevice_params));
+    TRY(auto session_wrapper, GenAICommon::create_session_wrapper(vdevice_params, DEFAULT_VLM_CONNECTION_PORT));
 
-    std::string device_id = (nullptr != vdevice_params.device_ids) ? vdevice_params.device_ids[0].id : "";
-    TRY(auto hailo_session, Session::connect(DEFAULT_VLM_CONNECTION_PORT, device_id));
-    auto session_wrapper = make_shared_nothrow<SessionWrapper>(hailo_session);
-    CHECK_NOT_NULL_AS_EXPECTED(session_wrapper, HAILO_OUT_OF_HOST_MEMORY);
+    // Translate vlm_params.hef() to an absolute path if it is not already
+    std::string hef_path = vlm_params.hef();
+    if (!std::filesystem::path(hef_path).is_absolute()) {
+        hef_path = std::filesystem::absolute(hef_path).string();
+    }
 
-    TRY(auto create_vlm_request, VLMCreateSerializer::serialize_request(vdevice_params));
-    CHECK_SUCCESS(session_wrapper->write(MemoryView(create_vlm_request)), "Failed to load VLM hef");
-    // Write HEF to the server
-    TRY(auto file_data, read_binary_file(vlm_params.hef(), BufferStorageParams::create_dma()));
-    CHECK_SUCCESS(session_wrapper->write(MemoryView(file_data), LONG_TIMEOUT));
+    // Check if HEF exists on the server
+    TRY(auto check_hef_exists_on_server_request, GenAICheckHefExistsSerializer::serialize_request(hef_path, hef_hash));
+    TRY(auto check_hef_exists_on_server_reply, session_wrapper->execute(MemoryView(check_hef_exists_on_server_request)));
+    TRY(auto hef_exists, GenAICheckHefExistsSerializer::deserialize_reply(MemoryView(*check_hef_exists_on_server_reply)));
 
-    TRY(auto create_vlm_reply, session_wrapper->read(LONG_TIMEOUT));
-    TRY(auto input_frame_info_pair, VLMCreateSerializer::deserialize_reply(MemoryView(*create_vlm_reply)), "Failed to create VLM");
-    auto input_frame_shape = input_frame_info_pair.first;
-    auto input_frame_format = input_frame_info_pair.second;
+    std::string hef_path_to_send = hef_exists ? hef_path : ""; // Empty string indicates that the HEF does not exist on the server
+    TRY(auto create_vlm_request, VLMCreateSerializer::serialize_request(vdevice_params, hef_path_to_send));
+    std::vector<MemoryView> write_buffers = { MemoryView(create_vlm_request) };
+
+    Buffer hef_data;
+    if (!hef_exists) {
+        TRY(hef_data, read_binary_file(hef_path, BufferStorageParams::create_dma()));
+        write_buffers.push_back(MemoryView(hef_data));
+    }
+
+    TRY(auto create_vlm_reply, session_wrapper->execute(write_buffers));
+    TRY(auto vlm_info_tuple, VLMCreateSerializer::deserialize_reply(MemoryView(*create_vlm_reply)), "Failed to create VLM");
+
+    auto input_frame_shape = std::get<0>(vlm_info_tuple);
+    auto input_frame_format = std::get<1>(vlm_info_tuple);
+
+    auto chat_template = std::get<2>(vlm_info_tuple);
+    TRY(auto prompt_template_handler, PromptTemplateHandler::create(chat_template));
+    auto prompt_template_handler_ptr = make_shared_nothrow<PromptTemplateHandler>(std::move(prompt_template_handler));
+    CHECK_NOT_NULL_AS_EXPECTED(prompt_template_handler_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     TRY(auto get_generator_default_params_request, LLMGetGeneratorParamsSerializer::serialize_request());
-    CHECK_SUCCESS(session_wrapper->write(MemoryView(get_generator_default_params_request)), "Failed to get default generator params");
-    TRY(auto get_generator_default_params, session_wrapper->read());
-    TRY(auto default_generator_params, LLMGetGeneratorParamsSerializer::deserialize_reply(MemoryView(*get_generator_default_params)));
+    TRY(auto get_generator_default_params_reply, session_wrapper->execute(MemoryView(get_generator_default_params_request)));
+    TRY(auto default_generator_params, LLMGetGeneratorParamsSerializer::deserialize_reply(MemoryView(*get_generator_default_params_reply)));
 
-    auto vlm_ptr = make_unique_nothrow<Impl>(session_wrapper, vlm_params, default_generator_params, input_frame_shape, input_frame_format);
+    auto vlm_ptr = make_unique_nothrow<Impl>(session_wrapper, vlm_params, default_generator_params, input_frame_shape, input_frame_format, prompt_template_handler_ptr);
     CHECK_NOT_NULL_AS_EXPECTED(vlm_ptr, HAILO_OUT_OF_HOST_MEMORY);
     return vlm_ptr;
 }
 
 VLM::Impl::Impl(std::shared_ptr<SessionWrapper> session, const VLMParams &vlm_params,
     const LLMGeneratorParams &default_generator_params, hailo_3d_image_shape_t input_frame_shape,
-    hailo_format_t input_frame_format) :
+    hailo_format_t input_frame_format, std::shared_ptr<PromptTemplateHandler> prompt_template_handler) :
         m_session(session), m_vlm_params(vlm_params), m_default_generator_params(default_generator_params),
-        m_input_frame_shape(input_frame_shape), m_input_frame_format(input_frame_format)
+        m_input_frame_shape(input_frame_shape), m_input_frame_format(input_frame_format),
+        m_prompt_template_handler(prompt_template_handler)
 {}
 
 VLM::Impl::~Impl()
@@ -97,17 +117,13 @@ VLM::Impl::~Impl()
         LOGGER__CRITICAL("Failed to serialize VLM release request with status {}", release_request.status());
         return;
     }
-    auto status = m_session->write(MemoryView(*release_request));
-    if (HAILO_SUCCESS != status) {
-        LOGGER__CRITICAL("Failed to write VLM release request with status {}", status);
-        return;
-    }
-    auto release_reply = m_session->read();
+    auto release_reply = m_session->execute(MemoryView(release_request.value()));
     if (!release_reply) {
-        LOGGER__CRITICAL("Failed to read VLM release reply with status {}", release_reply.status());
+        LOGGER__CRITICAL("Failed to execute VLM release request with status {}", release_reply.status());
         return;
     }
-    status = LLMReleaseSerializer::deserialize_reply(MemoryView(*release_reply));
+
+    auto status = LLMReleaseSerializer::deserialize_reply(MemoryView(release_reply.value()));
     if (HAILO_SUCCESS != status) {
         LOGGER__CRITICAL("Failed to deserialize VLM release reply with status {}", status);
         return;
@@ -166,8 +182,7 @@ Expected<std::vector<int>> VLM::tokenize(const std::string &prompt)
 Expected<std::vector<int>> VLM::Impl::tokenize(const std::string &prompt)
 {
     TRY(auto request, LLMTokenizeSerializer::serialize_request(prompt));
-    CHECK_SUCCESS(m_session->write(MemoryView(request)), "Failed to tokenize prompt");
-    TRY(auto reply, m_session->read());
+    TRY(auto reply, m_session->execute(MemoryView(request)));
     TRY(auto tokens, LLMTokenizeSerializer::deserialize_reply(MemoryView(*reply)));
     return tokens;
 }
@@ -180,11 +195,76 @@ hailo_status VLM::clear_context()
 hailo_status VLM::Impl::clear_context()
 {
     TRY(auto request, LLMClearContextSerializer::serialize_request());
-    CHECK_SUCCESS(m_session->write(MemoryView(request)), "Failed to clear context");
-    TRY(auto reply, m_session->read());
+    TRY(auto reply, m_session->execute(MemoryView(request)));
     CHECK_SUCCESS(LLMClearContextSerializer::deserialize_reply(MemoryView(*reply)),
         "Failed to clear context. Make sure there is no other generation in progress");
+    m_prompt_template_handler->reset_state();
     return HAILO_SUCCESS;
+}
+
+Expected<std::string> VLM::prompt_template()
+{
+    return m_pimpl->prompt_template();
+}
+
+Expected<std::string> VLM::Impl::prompt_template()
+{
+    TRY(auto prompt_template, m_prompt_template_handler->prompt_template());
+    CHECK(!prompt_template.empty(), HAILO_NOT_AVAILABLE,
+        "Prompt template is not set for this VLM");
+    return prompt_template;
+}
+
+hailo_status VLM::set_generation_recovery_sequence(const std::string &abort_sequence)
+{
+    return m_pimpl->set_generation_recovery_sequence(abort_sequence);
+}
+
+hailo_status VLM::Impl::set_generation_recovery_sequence(const std::string &abort_sequence)
+{
+    TRY(auto set_end_of_generation_sequence_request, LLMSetEndOfGenerationSequenceSerializer::serialize_request(abort_sequence));
+    TRY(auto set_end_of_generation_sequence_reply, m_session->execute(MemoryView(set_end_of_generation_sequence_request)));
+    CHECK_SUCCESS(LLMSetEndOfGenerationSequenceSerializer::deserialize_reply(MemoryView(*set_end_of_generation_sequence_reply)), "Failed to set generation recovery sequence");
+    return HAILO_SUCCESS;
+}
+
+Expected<std::string> VLM::get_generation_recovery_sequence()
+{
+    return m_pimpl->get_generation_recovery_sequence();
+}
+
+Expected<std::string> VLM::Impl::get_generation_recovery_sequence()
+{
+    TRY(auto get_end_of_generation_sequence_request, LLMGetEndOfGenerationSequenceSerializer::serialize_request());
+    TRY(auto get_end_of_generation_sequence_reply, m_session->execute(MemoryView(get_end_of_generation_sequence_request)));
+    TRY(auto abort_sequence, LLMGetEndOfGenerationSequenceSerializer::deserialize_reply(MemoryView(*get_end_of_generation_sequence_reply)));
+    return abort_sequence;
+}
+
+hailo_status VLM::set_stop_tokens(const std::vector<std::string> &stop_tokens)
+{
+    return m_pimpl->set_stop_tokens(stop_tokens);
+}
+
+hailo_status VLM::Impl::set_stop_tokens(const std::vector<std::string> &stop_tokens)
+{
+    TRY(auto set_stop_tokens_request, LLMSetStopTokensSerializer::serialize_request(stop_tokens));
+    TRY(auto set_stop_tokens_reply, m_session->execute(MemoryView(set_stop_tokens_request)));
+    CHECK_SUCCESS(LLMSetStopTokensSerializer::deserialize_reply(MemoryView(*set_stop_tokens_reply)), "Failed to set stop tokens");
+    return HAILO_SUCCESS;
+}
+
+Expected<std::vector<std::string>> VLM::get_stop_tokens()
+{
+    return m_pimpl->get_stop_tokens();
+}
+
+Expected<std::vector<std::string>> VLM::Impl::get_stop_tokens()
+{
+    TRY(auto get_stop_tokens_request, LLMGetStopTokensSerializer::serialize_request());
+    TRY(auto get_stop_tokens_reply, m_session->execute(MemoryView(get_stop_tokens_request)));
+    TRY(auto stop_tokens, LLMGetStopTokensSerializer::deserialize_reply(MemoryView(*get_stop_tokens_reply)));
+    return stop_tokens;
 }
 
 Expected<VLMGenerator> VLM::create_generator(const LLMGeneratorParams &params)
@@ -210,16 +290,36 @@ Expected<LLMGeneratorParams> VLM::Impl::create_generator_params()
     return generator_params;
 }
 
+Expected<LLMGeneratorCompletion> VLM::generate(const LLMGeneratorParams &params,
+    const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames)
+{
+    return m_pimpl->generate(params, messages_json_strings, input_frames);
+}
+
+Expected<LLMGeneratorCompletion> VLM::generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames)
+{
+    TRY(auto generator_params, create_generator_params());
+    return m_pimpl->generate(generator_params, messages_json_strings, input_frames);
+}
+
+Expected<LLMGeneratorCompletion> VLM::Impl::generate(const LLMGeneratorParams &params,
+    const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames)
+{
+    TRY(auto generator, create_generator(params));
+    TRY(auto completion, generator.generate(messages_json_strings, input_frames));
+    // Generator is kept alive via shared_from_this() in VLMGenerator::Impl::generate()
+    return completion;
+}
+
 Expected<VLMGenerator> VLM::Impl::create_generator(const LLMGeneratorParams &params)
 {
     CHECK_SUCCESS(validate_generator_params(params));
 
     TRY(auto create_generator_request, LLMGeneratorCreateSerializer::serialize_request(params));
-    CHECK_SUCCESS(m_session->write(MemoryView(create_generator_request)), "Failed to create LLM generator");
-    TRY(auto create_generator_reply, m_session->read());
+    TRY(auto create_generator_reply, m_session->execute(MemoryView(create_generator_request)));
     CHECK_SUCCESS(LLMGeneratorCreateSerializer::deserialize_reply(MemoryView(*create_generator_reply)), "Failed to create LLM generator");
 
-    auto pimpl = std::make_unique<VLMGenerator::Impl>(m_session);
+    auto pimpl = make_unique_nothrow<VLMGenerator::Impl>(m_session, m_prompt_template_handler);
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
     return VLMGenerator(std::move(pimpl));
 }
@@ -239,46 +339,58 @@ hailo_status VLM::Impl::validate_generator_params(const LLMGeneratorParams &para
     return HAILO_SUCCESS;
 }
 
-VLMGenerator::VLMGenerator(std::unique_ptr<Impl> pimpl) :
-    m_pimpl(std::move(pimpl))
+VLMGenerator::VLMGenerator(std::shared_ptr<Impl> pimpl) :
+    m_pimpl(pimpl)
 {}
 
-VLMGenerator::Impl::Impl(std::shared_ptr<SessionWrapper> session) :
-    m_session(session)
+VLMGenerator::Impl::Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<PromptTemplateHandler> prompt_template_handler) :
+    m_session(session), m_prompt_template_handler(prompt_template_handler)
 {}
-
-Expected<LLMGeneratorCompletion> VLMGenerator::generate(const char *prompt, size_t prompt_size, const std::vector<MemoryView> &input_frames)
-{
-    return generate(std::string(prompt, prompt_size), input_frames);
-}
 
 Expected<LLMGeneratorCompletion> VLMGenerator::generate(const std::string &prompt, const std::vector<MemoryView> &input_frames)
 {
     return m_pimpl->generate(prompt, input_frames);
 }
 
+Expected<LLMGeneratorCompletion> VLMGenerator::generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames)
+{
+    return m_pimpl->generate(messages_json_strings, input_frames);
+}
+
 Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate(const std::string &prompt, const std::vector<MemoryView> &input_frames)
 {
-    CHECK(!(prompt.empty() && input_frames.empty()), HAILO_INVALID_ARGUMENT, "Prompt and input_frames are empty");
+    CHECK_AS_EXPECTED(!prompt.empty(), HAILO_INVALID_ARGUMENT, "Prompt cannot be empty");
 
     TRY(auto generator_generate_request, VLMGeneratorGenerateSerializer::serialize_request(static_cast<uint32_t>(input_frames.size())));
-    CHECK_SUCCESS(m_session->write(MemoryView(generator_generate_request)), "Failed to generate");
-    CHECK_SUCCESS(m_session->write(MemoryView(prompt)), "Failed to write prompt");
+    std::vector<MemoryView> write_buffers;
+    write_buffers.reserve(input_frames.size() + 2);
+    write_buffers.push_back(MemoryView(generator_generate_request));
+    write_buffers.push_back(MemoryView(prompt));
+    write_buffers.insert(write_buffers.end(), input_frames.begin(), input_frames.end());
 
-    // Write input frames to the server
-    for (const auto &input_frame : input_frames) {
-        CHECK_SUCCESS(m_session->write(input_frame), "Failed to write input frame");
-    }
-
-    TRY(auto generator_generate_reply, m_session->read());
+    TRY(auto generator_generate_reply, m_session->execute(write_buffers));
     CHECK_SUCCESS(VLMGeneratorGenerateSerializer::deserialize_reply(MemoryView(*generator_generate_reply)),
         "Failed to generate. Make sure the number of passed frames ('{}') matches the number of frames in the prompt," \
          " each passed frame size matches the expected input frame size (see 'VLM::input_frame_size'), and there is no other generation in progress",
             input_frames.size());
 
-    auto pimpl = make_unique_nothrow<LLMGeneratorCompletion::Impl>(m_session);
+    auto pimpl = make_unique_nothrow<LLMGeneratorCompletion::Impl>(m_session, shared_from_this());
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
     return LLMGeneratorCompletion(std::move(pimpl));
+}
+
+Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames)
+{
+    CHECK_AS_EXPECTED(!messages_json_strings.empty(), HAILO_INVALID_ARGUMENT, "Messages cannot be empty");
+
+    TRY(auto processed_prompt, apply_vlm_template_from_json(messages_json_strings));
+
+    return generate(processed_prompt, input_frames);
+}
+
+Expected<std::string> VLMGenerator::Impl::apply_vlm_template_from_json(const std::vector<std::string> &messages_json_strings)
+{
+    return m_prompt_template_handler->render(messages_json_strings);
 }
 
 // https://stackoverflow.com/questions/71104545/constructor-and-destructor-in-c-when-using-the-pimpl-idiom

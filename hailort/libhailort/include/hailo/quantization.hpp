@@ -20,9 +20,18 @@
 #include <immintrin.h>
 #endif
 
-/** hailort namespace */
 namespace hailort
 {
+
+// Forward declarations for friend classes
+namespace net_flow
+{
+    class SSDPostProcessOp;
+    class YOLOV8PostProcessOp;
+    class YOLOXPostProcessOp;
+    class YOLOv5PostProcessOp;
+    class Yolov5SegPostProcess;
+}
 
 inline float bankers_round(float x)
 {
@@ -263,6 +272,12 @@ private:
         float32_t clipped_number = clip((float32_t)number, quant_info.limvals_min, quant_info.limvals_max);
         return (Q)bankers_round((clipped_number / quant_info.qp_scale) + quant_info.qp_zp);
     }
+
+    friend class net_flow::SSDPostProcessOp;
+    friend class net_flow::YOLOV8PostProcessOp;
+    friend class net_flow::YOLOXPostProcessOp;
+    friend class net_flow::YOLOv5PostProcessOp;
+    friend class net_flow::Yolov5SegPostProcess;
 };
 
 } /* namespace hailort */

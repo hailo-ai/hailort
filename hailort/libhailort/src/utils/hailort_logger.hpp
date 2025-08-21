@@ -66,11 +66,24 @@ public:
     static std::string get_log_path(const std::string &path_env_var);
     static std::string get_main_log_path();
     static std::shared_ptr<spdlog::sinks::sink> create_file_sink(const std::string &dir_path, const std::string &filename, bool rotate);
+    static Expected<spdlog::level::level_enum> get_console_logger_level_from_string(const std::string &user_console_logger_level)
+    {
+        static const std::unordered_map<std::string, spdlog::level::level_enum> log_level_map = {
+            {"debug", spdlog::level::debug},
+            {"info", spdlog::level::info},
+            {"warning", spdlog::level::warn},
+            {"error", spdlog::level::err},
+            {"critical", spdlog::level::critical}
+        };
+        if(log_level_map.find(user_console_logger_level) != log_level_map.end()) {
+            return Expected<spdlog::level::level_enum>(log_level_map.at(user_console_logger_level));
+        }
+        return make_unexpected(HAILO_INVALID_ARGUMENT);
+    }
 
 private:
     static std::string parse_log_path(const char *log_path);
     void set_levels(spdlog::level::level_enum console_level, spdlog::level::level_enum file_level, spdlog::level::level_enum flush_level);
-    static Expected<spdlog::level::level_enum> get_console_logger_level_from_string(const std::string &user_console_logger_level);
 
     std::shared_ptr<spdlog::sinks::sink> m_console_sink;
 

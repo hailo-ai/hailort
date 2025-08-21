@@ -32,7 +32,7 @@ bool should_use_high_fd()
 
 int move_fd_to_higher(int handle)
 {
-    int new_handle = fcntl(handle, F_DUPFD, HIGH_FD_OFFSET);
+    int new_handle = fcntl(handle, F_DUPFD_CLOEXEC, HIGH_FD_OFFSET);
     if (-1 == new_handle) {
         LOGGER__ERROR("failed to duplicate event FD. errno={}", errno);
     }

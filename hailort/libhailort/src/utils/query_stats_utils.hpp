@@ -33,6 +33,8 @@ public:
     static Expected<int32_t> get_dsp_utilization();
     static Expected<float32_t> get_nnc_utilization(const std::string &id_info_str, const std::string &device_arch_str);
     static Expected<int32_t> get_ddr_noc_utilization();
+    static Expected<uint32_t> get_on_die_voltage();
+    static Expected<uint32_t> get_bist_failure_mask();
 
 private:
     static hailo_status parse_cpu_stats(uint64_t &user, uint64_t &nice, uint64_t &system, uint64_t &idle,
@@ -41,8 +43,24 @@ private:
     static  int32_t calculate_ddr_noc_data_per_second(const std::vector<ddr_noc_row_data_t> &data, int ddr_noc_row_data_t::*member,
         const float32_t duration);
     static hailo_status execute_noc_command(const std::string &command);
-    static Expected<std::istringstream> read_nnc_utilization_file();
     static std::string get_sampling_time_window_as_string();
+
+    template<typename T>
+    static Expected<T> read_single_data_from_file(const std::string &file_path, bool read_as_text)
+    {
+        std::ifstream file(file_path, std::ios::in | std::ios::binary);
+        CHECK(file.good(), HAILO_OPEN_FILE_FAILURE, "Error opening file {}", file_path);
+
+        T value;
+        if (read_as_text) {
+            file >> value;
+        } else {
+            file.read(reinterpret_cast<char*>(&value), sizeof(T));
+        }
+        CHECK(file.good(), HAILO_FILE_OPERATION_FAILURE, "Failed reading file {}, errno: {}", file_path, errno);
+
+        return value;
+    }
 };
 
 } /* namespace hailort */

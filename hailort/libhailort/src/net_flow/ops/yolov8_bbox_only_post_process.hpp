@@ -60,10 +60,11 @@ private:
         SrcType *reg_data = (SrcType*)reg_buffer.data();
         SrcType *cls_data = (SrcType*)cls_buffer.data();
 
+        // Optimized: incrementing pointers and offsets instead of calculating offsets with multiplication
+        auto row_offset = 0;
         for (uint32_t row = 0; row < cls_shape.height; row++) {
             for (uint32_t col = 0; col < cls_shape.width; col++) {
-                auto cls_idx = (cls_row_size * row) + col;
-
+                auto class_entry_idx = row_offset + col;
                 assert(contains(m_d_matrix, layers_names.reg));
                 auto &d_matrix = m_d_matrix.at(layers_names.reg);
                 auto bbox = get_bbox<DstType, SrcType>(row, col, stride, reg_padded_shape, reg_shape, reg_quant_info,
@@ -73,12 +74,14 @@ private:
 
                 // copy class confidence for each of the classes
                 for (uint32_t curr_class_idx = 0; curr_class_idx < nms_config.number_of_classes; curr_class_idx++) {
-                    auto class_entry_idx = cls_idx + (curr_class_idx * cls_padded_shape.width);
                     auto class_confidence = Quantization::dequantize_output<DstType, SrcType>(
                         cls_data[class_entry_idx], cls_quant_info);
                     dst_ptr[next_bbox_output_offset++] = class_confidence;
+
+                    class_entry_idx += cls_padded_shape.width;
                 }
             }
+            row_offset += cls_row_size;
         }
         return HAILO_SUCCESS;
     }

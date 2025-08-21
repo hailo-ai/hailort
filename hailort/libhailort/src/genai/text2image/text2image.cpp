@@ -182,6 +182,20 @@ Expected<Text2ImageGenerator> Text2Image::create_generator()
     return m_pimpl->create_generator(generator_params);
 }
 
+Expected<std::vector<Buffer>> Text2Image::generate(const std::string &positive_prompt, const std::string &negative_prompt,
+    std::chrono::milliseconds timeout)
+{
+    TRY(auto generator, create_generator());
+    return generator.generate(positive_prompt, negative_prompt, timeout);
+}
+
+Expected<std::vector<Buffer>> Text2Image::generate(const Text2ImageGeneratorParams &params, const std::string &positive_prompt,
+    const std::string &negative_prompt, std::chrono::milliseconds timeout)
+{
+    TRY(auto generator, create_generator(params));
+    return generator.generate(positive_prompt, negative_prompt, timeout);
+}
+
 Expected<Text2ImageGeneratorParams> Text2Image::create_generator_params()
 {
     return m_pimpl->create_generator_params();
@@ -281,9 +295,10 @@ hailo_status Text2ImageGenerator::generate(std::vector<MemoryView> &output_image
     return m_pimpl->generate(output_images, positive_prompt, negative_prompt, ip_adapter, timeout);
 }
 
-Text2Image::Impl::Impl(std::shared_ptr<SessionWrapper> session, const Text2ImageParams &params, const Text2ImageGeneratorParams &default_generator_params,
+Text2Image::Impl::Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<SessionWrapper> generation_session, const Text2ImageParams &params, const Text2ImageGeneratorParams &default_generator_params,
     const frame_info_t &output_sample_frame_info, const bool is_ip_adapter_supported, const frame_info_t &input_noise_frame_info, const frame_info_t &ip_adapter_frame_info) :
     m_session(session),
+    m_generation_session(generation_session),
     m_params(params),
     m_default_generator_params(default_generator_params),
     m_output_sample_frame_info(output_sample_frame_info),
@@ -319,30 +334,34 @@ bool Text2Image::Impl::has_builtin_hef(const Text2ImageParams &params)
         (params.ip_adapter_hef() == BUILTIN);
 }
 
-hailo_status Text2Image::Impl::validate_params(const Text2ImageParams &params)
+hailo_status Text2Image::Impl::validate_params(const Text2ImageParams &params, bool is_builtin)
 {
+    CHECK(is_builtin || !has_builtin_hef(params), HAILO_INVALID_OPERATION,
+        "Failed to create Text2Image model. If one of the hefs is set to `BUILTIN`, all the hefs must be set to `BUILTIN`.");
+
     CHECK(!params.denoise_hef().empty(), HAILO_INVALID_OPERATION, "Failed to create Text2Image model. `denoise_hef` was not set.");
     CHECK(!params.text_encoder_hef().empty(), HAILO_INVALID_OPERATION, "Failed to create Text2Image model. `text_encoder_hef` was not set.");
     CHECK(!params.image_decoder_hef().empty(), HAILO_INVALID_OPERATION, "Failed to create Text2Image model. `image_decoder_hef` was not set.");
+
+    if (!is_builtin) {
+        CHECK_SUCCESS(validate_hef_path(params.denoise_hef()));
+        CHECK_SUCCESS(validate_hef_path(params.text_encoder_hef()));
+        CHECK_SUCCESS(validate_hef_path(params.image_decoder_hef()));
+        if (!params.ip_adapter_hef().empty()) {
+            CHECK_SUCCESS(validate_hef_path(params.ip_adapter_hef()));
+        }
+    }
 
     return HAILO_SUCCESS;
 }
 
 Expected<std::unique_ptr<Text2Image::Impl>> Text2Image::Impl::create_unique(std::shared_ptr<VDevice> vdevice, const Text2ImageParams &text2image_params)
 {
-    CHECK_SUCCESS(validate_params(text2image_params));
-
     bool is_builtin = all_builtin_hefs(text2image_params);
-    CHECK(is_builtin || !has_builtin_hef(text2image_params), HAILO_INVALID_OPERATION,
-        "Failed to create Text2Image model. If one of the hefs is set to `BUILTIN`, all the hefs must be set to `BUILTIN`.");
+    CHECK_SUCCESS(validate_params(text2image_params, is_builtin));
 
     auto vdevice_params = vdevice->get_params();
-    CHECK_SUCCESS(GenAICommon::validate_genai_vdevice_params(vdevice_params));
-    std::string device_id = (nullptr != vdevice_params.device_ids) ? vdevice_params.device_ids[0].id : "";
-    TRY(auto hailo_session, Session::connect(DEFAULT_TEXT2IMAGE_CONNECTION_PORT, device_id));
-
-    auto session = make_shared_nothrow<SessionWrapper>(hailo_session);
-    CHECK_NOT_NULL_AS_EXPECTED(session, HAILO_OUT_OF_HOST_MEMORY);
+    TRY(auto session, GenAICommon::create_session_wrapper(vdevice_params, DEFAULT_TEXT2IMAGE_CONNECTION_PORT));
 
     TRY(auto reply, text2image_create(session, vdevice_params, is_builtin, text2image_params));
     TRY(auto default_generator_params, text2image_get_generator_params(session));
@@ -363,7 +382,9 @@ Expected<std::unique_ptr<Text2Image::Impl>> Text2Image::Impl::create_unique(std:
         ip_adapter_frame_info.format = ip_adapter_info.second;
     }
 
-    auto text2image_ptr = make_unique_nothrow<Impl>(session, text2image_params, default_generator_params,
+    TRY(auto generation_session, GenAICommon::create_session_wrapper(vdevice_params, DEFAULT_TEXT2IMAGE_GENERATION_CONNECTION_PORT));
+
+    auto text2image_ptr = make_unique_nothrow<Impl>(session, generation_session, text2image_params, default_generator_params,
         output_sample_frame_info, has_ip_adapter, input_noise_frame_info, ip_adapter_frame_info);
     CHECK_NOT_NULL_AS_EXPECTED(text2image_ptr, HAILO_OUT_OF_HOST_MEMORY);
     return text2image_ptr;
@@ -467,15 +488,16 @@ Expected<Text2ImageGenerator> Text2Image::Impl::create_generator(const Text2Imag
     if (m_has_ip_adapter) {
         TRY(ip_adapter_size, ip_adapter_frame_size());
     }
-    auto pimpl = std::make_unique<Text2ImageGenerator::Impl>(m_session, params, output_sample_frame_size(),
+    auto pimpl = std::make_unique<Text2ImageGenerator::Impl>(m_session, m_generation_session, params, output_sample_frame_size(),
         m_has_ip_adapter, ip_adapter_size);
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
     return Text2ImageGenerator(std::move(pimpl));
 }
 
-Text2ImageGenerator::Impl::Impl(std::shared_ptr<SessionWrapper> session, const Text2ImageGeneratorParams &params,
+Text2ImageGenerator::Impl::Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<SessionWrapper> generation_session, const Text2ImageGeneratorParams &params,
     uint32_t output_sample_frame_size, bool is_ip_adapter_supported, uint32_t ip_adapter_frame_size) :
         m_session(session),
+        m_generation_session(generation_session),
         m_params(params),
         m_output_sample_frame_size(output_sample_frame_size),
         m_has_ip_adapter(is_ip_adapter_supported),
@@ -495,6 +517,20 @@ hailo_status Text2ImageGenerator::Impl::set_initial_noise(const MemoryView &nois
     TRY(auto reply, m_session->read());
     CHECK_SUCCESS(Text2ImageGeneratorSetInitialNoiseSerializer::deserialize_reply(MemoryView(*reply)),
         "Failed to set initial noise. Make sure the shape and type of the noise buffer are as expected");
+    return HAILO_SUCCESS;
+}
+
+hailo_status Text2ImageGenerator::abort()
+{
+    return m_pimpl->abort();
+}
+
+hailo_status Text2ImageGenerator::Impl::abort()
+{
+    TRY(auto request, Text2ImageGeneratorAbortSerializer::serialize_request());
+    CHECK_SUCCESS(m_session->write(MemoryView(request)), "Failed to transfer Text2Image abort request");
+    TRY(auto reply, m_session->read());
+    CHECK_SUCCESS(Text2ImageGeneratorAbortSerializer::deserialize_reply(MemoryView(*reply)), "Failed aborting Text2Image generation");
     return HAILO_SUCCESS;
 }
 
@@ -588,30 +624,30 @@ hailo_status Text2ImageGenerator::Impl::text2image_generate(std::vector<MemoryVi
     }
 
     TRY(auto generate_request, Text2ImageGeneratorGenerateSerializer::serialize_request(!negative_prompt.empty()));
-    CHECK_SUCCESS(m_session->write(MemoryView(generate_request)), "Failed to transfer Text2Image generate request");
+    CHECK_SUCCESS(m_generation_session->write(MemoryView(generate_request)), "Failed to transfer Text2Image generate request");
     
-    CHECK_SUCCESS(m_session->write(MemoryView(positive_prompt), timeout_guard.get_remaining_timeout()), "Failed to write positive prompt");
+    CHECK_SUCCESS(m_generation_session->write(MemoryView(positive_prompt), timeout_guard.get_remaining_timeout()), "Failed to write positive prompt");
     if (!negative_prompt.empty()) {
-        CHECK_SUCCESS(m_session->write(MemoryView(negative_prompt), timeout_guard.get_remaining_timeout()), "Failed to write negative prompt");
+        CHECK_SUCCESS(m_generation_session->write(MemoryView(negative_prompt), timeout_guard.get_remaining_timeout()), "Failed to write negative prompt");
     }
 
     if (m_has_ip_adapter) {
-        CHECK_SUCCESS(m_session->write(ip_adapter, timeout_guard.get_remaining_timeout()), "Failed to write IP Adapter input frame");
+        CHECK_SUCCESS(m_generation_session->write(ip_adapter, timeout_guard.get_remaining_timeout()), "Failed to write IP Adapter input frame");
     }
 
     int i = 0;
     for (auto &out_img : output_images) {
-        TRY(auto sample_status_reply, m_session->read());
+        TRY(auto sample_status_reply, m_generation_session->read());
         CHECK_SUCCESS(Text2ImageGeneratorGenerateSerializer::deserialize_reply(MemoryView(sample_status_reply)), "Generation of sample {} failed", i);
 
         LOGGER__INFO("Reading output sample number {}", i);
-        TRY(auto bytes_read, m_session->read(out_img, timeout_guard.get_remaining_timeout()));
+        TRY(auto bytes_read, m_generation_session->read(out_img, timeout_guard.get_remaining_timeout()));
         CHECK(bytes_read == out_img.size(), HAILO_INTERNAL_FAILURE,
             "Failed to read output sample frame {}. Expected frame size {}, got {}", i, out_img.size(), bytes_read);
         i++;
     }
 
-    TRY(auto generate_reply, m_session->read());
+    TRY(auto generate_reply, m_generation_session->read());
     CHECK_SUCCESS(Text2ImageGeneratorGenerateSerializer::deserialize_reply(MemoryView(generate_reply)), "Text2Image generate failed");
 
     return HAILO_SUCCESS;

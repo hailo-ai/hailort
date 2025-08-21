@@ -54,6 +54,28 @@ protected:
     static const uint32_t OBJECTNESS_INDEX = 4;
     static const uint32_t CLASSES_START_INDEX = 5;
 
+    /**
+     * Quantize threshold for comparison optimization.
+     * If sigmoid is applied after dequantization, we need to compare sigmoid(dequantize(x)) >= threshold
+     * This is equivalent to: x >= quantize(logit(threshold)) - logit is the inverse of sigmoid
+     * Otherwise: x >= quantize(threshold)
+     *
+     * @param[in] threshold             The threshold value to quantize.
+     * @param[in] quant_info            Quantization info.
+     *
+     * @return Returns the quantized threshold for comparison.
+     */
+    template<typename SrcType>
+    SrcType quantize_threshold_for_comparison(float32_t threshold, hailo_quant_info_t quant_info)
+    {
+        if (should_sigmoid()) {
+            auto logit_threshold = logit(threshold);
+            return Quantization::quantize_input<float32_t, SrcType>(logit_threshold, quant_info);
+        } else {
+            return Quantization::quantize_input<float32_t, SrcType>(threshold, quant_info);
+        }
+    }
+
     template<typename DstType = float32_t, typename SrcType>
     hailo_bbox_float32_t decode_bbox(SrcType* data, uint32_t entry_idx, const uint32_t X_OFFSET, const uint32_t Y_OFFSET,
         const uint32_t W_OFFSET, const uint32_t H_OFFSET, hailo_quant_info_t quant_info, uint32_t anchor,
@@ -99,13 +121,24 @@ protected:
         DstType objectness, uint32_t padded_width)
     {
         const auto &nms_config = m_metadata->nms_config();
+
+        // Quantize the class confidence threshold once instead of dequantizing each data point
+        SrcType quantized_class_threshold = quantize_threshold_for_comparison<SrcType>(static_cast<float32_t>(nms_config.nms_score_th), quant_info);
+
+        // Optimized: incrementing pointers instead of calculating offsets with multiplication
+        auto class_entry_idx = entry_idx + (class_start_idx * padded_width);
         for (uint32_t class_index = 0; class_index < nms_config.number_of_classes; class_index++) {
-            auto class_entry_idx = entry_idx + ((class_start_idx + class_index) * padded_width);
+            if (data[class_entry_idx] < quantized_class_threshold) { // First - compare quantized values
+                class_entry_idx += padded_width;
+                continue;
+            }
+            // Only dequantize and apply sigmoid when we know the quantized value passes the quantized threshold
             auto class_confidence = dequantize_and_sigmoid<DstType, SrcType>(
                 data[class_entry_idx], quant_info);
             bbox.score = class_confidence * objectness;
             check_threshold_and_add_detection(bbox, quant_info, class_index,
                 data, entry_idx, padded_width, objectness);
+            class_entry_idx += padded_width;
         }
     }
 
@@ -142,14 +175,27 @@ protected:
         CHECK(buffer_size == buffer.size(), HAILO_INVALID_ARGUMENT,
             "Failed to extract_detections, buffer_size should be {}, but is {}", buffer_size, buffer.size());
 
-        auto row_size = padded_shape.width * padded_shape.features;
+        const auto row_size = padded_shape.width * padded_shape.features;
+        const auto anchor_size = entry_size * padded_shape.width;
+
+        // Quantize the objectness threshold once instead of dequantizing each data point
+        SrcType quantized_objectness_threshold = quantize_threshold_for_comparison<SrcType>(static_cast<float32_t>(nms_config.nms_score_th), quant_info);
+
+        // Optimized: incrementing pointers and offsets instead of calculating offsets with multiplication
+        // Loop order optimized for NHCW layout: row, anchor, col
         SrcType *data = (SrcType*)buffer.data();
+        uint32_t row_offset = 0;
         for (uint32_t row = 0; row < shape.height; row++) {
-            for (uint32_t col = 0; col < shape.width; col++) {
-                for (uint32_t anchor = 0; anchor < num_of_anchors; anchor++) {
-                    auto entry_idx = (row_size * row) + col + ((anchor * entry_size) * padded_shape.width);
+            uint32_t anchor_offset = row_offset;
+            for (uint32_t anchor = 0; anchor < num_of_anchors; anchor++) {
+                for (uint32_t col = 0; col < shape.width; col++) {
+                    uint32_t entry_idx = anchor_offset + col;
+                    if (data[entry_idx + OBJECTNESS_OFFSET] < quantized_objectness_threshold) { // First - compare quantized values
+                        continue;
+                    }
+                    // Only dequantize and apply sigmoid when we know the quantized value passes the quantized threshold
                     auto objectness = dequantize_and_sigmoid<DstType, SrcType>(data[entry_idx + OBJECTNESS_OFFSET], quant_info);
-                    if (objectness < nms_config.nms_score_th) {
+                    if (objectness < nms_config.nms_score_th) { // Double check: compare dequantized value to real threshold
                         continue;
                     }
 
@@ -159,7 +205,9 @@ protected:
                     decode_classes_scores(bbox, quant_info, data, entry_idx,
                         CLASSES_START_INDEX, objectness, padded_shape.width);
                 }
+                anchor_offset += anchor_size;
             }
+            row_offset += row_size;
         }
 
         return HAILO_SUCCESS;

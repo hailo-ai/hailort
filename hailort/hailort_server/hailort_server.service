@@ -1,0 +1,38 @@
+[Unit]
+# HailoRT Server with automatic restart capability
+Description=HailoRT Server
+# Start after network is available for socket communication
+After=network.target
+# Soft dependency on network (prefer but don't fail without it)
+Wants=network.target
+
+[Service]
+# Start hailort_server with server address argument if provided
+ExecStart=/bin/sh -c 'if [ -z "$HAILO_SERVER_ADDRESS" ]; then /usr/bin/hailort_server; else /usr/bin/hailort_server $HAILO_SERVER_ADDRESS; fi'
+# Set up environment variables for server configuration
+Environment="HAILO_MONITOR=1"
+Environment="HAILO_MONITOR_TIME_INTERVAL=100"
+Environment="HAILO_DDR_ACTION_LIST=1"
+Environment="HAILO_PRINT_TO_SYSLOG=1"
+# Log startup configuration
+ExecStartPre=/bin/sh -c 'echo "Sourcing environment variables from /etc/default/hailort_server"'
+ExecStartPre=/bin/sh -c 'echo "Starting hailort_server"'
+EnvironmentFile=-/etc/default/hailort_server
+# Let systemd handle restarts instead of shell loop
+Restart=always
+RestartSec=0
+# Kill the main process and all child processes to ensure clean shutdown
+KillMode=control-group
+# No graceful shutdown timeout - kill immediately for test scenarios
+TimeoutStopSec=0
+# Send SIGKILL directly to simulate crash scenarios
+KillSignal=SIGKILL
+# Send output to console for test collection
+StandardOutput=journal+console
+StandardError=journal+console
+# Service type: simple foreground process
+Type=simple
+
+[Install]
+# Enable when multi-user target is reached (standard system state)
+WantedBy=multi-user.target

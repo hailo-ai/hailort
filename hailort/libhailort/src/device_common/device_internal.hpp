@@ -13,7 +13,6 @@
  *     |-- VdmaDevice
  *     |   |-- PcieDevice
  *     |   |-- IntegratedDevice
- *     |-- EthernetDevice
  * |-- PcieDeviceHrpcClient     (RPC handle communicating with the server)
  **/
 

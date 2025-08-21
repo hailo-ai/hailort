@@ -18,7 +18,6 @@
 
 namespace hailort
 {
-
 class VDeviceHrpcClient : public VDevice
 {
 public:
@@ -27,7 +26,7 @@ public:
 
     VDeviceHrpcClient(const hailo_vdevice_params_t &params, std::shared_ptr<Client> client, uint32_t handle,
         std::shared_ptr<ClientCallbackDispatcherManager> callback_dispatcher_manager,
-        std::unique_ptr<PcieDeviceHrpcClient> &&device, std::string device_id)
+        std::unique_ptr<Device> &&device, std::string device_id)
         : VDevice(params), m_client(client), m_handle(handle), m_callback_dispatcher_manager(callback_dispatcher_manager),
             m_device(std::move(device)), m_device_id(device_id) {}
 
@@ -57,7 +56,7 @@ private:
     std::shared_ptr<Client> m_client;
     uint32_t m_handle;
     std::shared_ptr<ClientCallbackDispatcherManager> m_callback_dispatcher_manager;
-    std::unique_ptr<PcieDeviceHrpcClient> m_device;
+    std::unique_ptr<Device> m_device;
     std::string m_device_id;
 };
 

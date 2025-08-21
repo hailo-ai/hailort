@@ -17,7 +17,6 @@
 #include "common/os_utils.hpp"
 
 #include "network_group/network_group_internal.hpp"
-#include "eth/eth_stream.hpp"
 #include "vdma/vdma_stream.hpp"
 #include "mipi/mipi_stream.hpp"
 #include "device_common/control.hpp"
@@ -26,10 +25,6 @@
 #include "core_op/resource_manager/resource_manager.hpp"
 #include "utils/buffer_storage.hpp"
 #include "hef/hef_internal.hpp"
-
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-#include "service/network_group_client.hpp"
-#endif // HAILO_SUPPORT_MULTI_PROCESS
 
 namespace hailort
 {
@@ -114,35 +109,6 @@ ConfiguredNetworkGroup::ConfiguredNetworkGroup() :
     m_ongoing_transfers(0),
     m_cv()
 {}
-
-Expected<std::shared_ptr<ConfiguredNetworkGroup>> ConfiguredNetworkGroup::duplicate_network_group_client(uint32_t ng_handle, uint32_t vdevice_handle,
-    const std::string &network_group_name)
-{
-#ifdef HAILO_SUPPORT_MULTI_PROCESS
-    auto net_group_client = ConfiguredNetworkGroupClient::duplicate_network_group_client(ng_handle, vdevice_handle, network_group_name);
-    CHECK_EXPECTED(net_group_client);
-
-    return std::shared_ptr<ConfiguredNetworkGroup>(net_group_client.release());
-#else
-    (void)ng_handle;
-    (void)vdevice_handle;
-    (void)network_group_name;
-    LOGGER__ERROR("`duplicate_network_group_client()` requires service compilation with HAILO_BUILD_SERVICE");
-    return make_unexpected(HAILO_INVALID_OPERATION);
-#endif // HAILO_SUPPORT_MULTI_PROCESS
-}
-
-Expected<uint32_t> ConfiguredNetworkGroup::get_client_handle() const
-{
-    LOGGER__ERROR("`get_client_handle()` is valid only when working with HailoRT Service!");
-    return make_unexpected(HAILO_INVALID_OPERATION);
-}
-
-Expected<uint32_t> ConfiguredNetworkGroup::get_vdevice_client_handle() const
-{
-    LOGGER__ERROR("`get_vdevice_client_handle()` is valid only when working with HailoRT Service!");
-    return make_unexpected(HAILO_INVALID_OPERATION);
-}
 
 hailo_status ConfiguredNetworkGroup::before_fork()
 {

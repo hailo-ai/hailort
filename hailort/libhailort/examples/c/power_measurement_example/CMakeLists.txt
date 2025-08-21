@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.5.0)
 
-find_package(HailoRT 5.0.0 EXACT REQUIRED)
+project(hailort-examples-c-power-measurement)
+
+find_package(HailoRT 5 REQUIRED)
 
 SET_SOURCE_FILES_PROPERTIES(power_measurement_example.c PROPERTIES LANGUAGE C)
 

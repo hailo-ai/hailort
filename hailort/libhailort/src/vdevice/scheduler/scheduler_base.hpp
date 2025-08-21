@@ -126,8 +126,9 @@ public:
         bool is_ready = false;
     };
 
-    virtual ReadyInfo is_core_op_ready(const scheduler_core_op_handle_t &core_op_handle, bool check_threshold,
+    virtual ReadyInfo is_core_op_ready_for_run(const scheduler_core_op_handle_t &core_op_handle, bool check_threshold,
         const device_id_t &device_id) = 0;
+    virtual bool is_core_op_ready_for_prepare(const scheduler_core_op_handle_t &core_op_handle, const device_id_t &device_id) = 0;
 
     virtual uint32_t get_device_count() const
     {
@@ -144,10 +145,17 @@ public:
         return m_devices;
     }
 
-    virtual std::map<core_op_priority_t, PriorityGroup> &get_core_op_priority_map()
+    virtual std::map<core_op_priority_t, PriorityGroup> &get_core_op_to_run_priority_map()
     {
-        return m_core_op_priority;
+        return m_core_op_to_run_priority;
     }
+
+    virtual std::map<core_op_priority_t, PriorityGroup> &get_core_op_to_prepare_priority_map()
+    {
+        return m_core_op_to_prepare_priority;
+    }
+
+    virtual scheduler_core_op_handle_t get_current_core_op_preparing() const = 0;
 
 protected:
     SchedulerBase(hailo_scheduling_algorithm_t algorithm, std::vector<std::string> &devices_ids,
@@ -166,7 +174,8 @@ protected:
 
     std::map<device_id_t, std::shared_ptr<ActiveDeviceInfo>> m_devices;
 
-    std::map<core_op_priority_t, PriorityGroup> m_core_op_priority;
+    std::map<core_op_priority_t, PriorityGroup> m_core_op_to_run_priority;
+    std::map<core_op_priority_t, PriorityGroup> m_core_op_to_prepare_priority;
 
     hailo_scheduling_algorithm_t m_algorithm;
 };

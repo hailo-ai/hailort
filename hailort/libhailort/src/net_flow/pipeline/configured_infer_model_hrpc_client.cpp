@@ -8,6 +8,8 @@
  **/
 
 #include "configured_infer_model_hrpc_client.hpp"
+#include "common/logger_macros.hpp"
+#include "hrpc/connection_context.hpp"
 
 namespace hailort
 {
@@ -297,13 +299,14 @@ Expected<std::vector<TransferBuffer>> ConfiguredInferModelHrpcClient::get_write_
             return make_unexpected(HAILO_INTERNAL_FAILURE);
         }
     }
-
-    for (const auto &output_vstream_name : m_output_names) {
-        TRY(auto output, bindings.output(output_vstream_name));
-        auto buffer_type = ConfiguredInferModelBase::get_infer_stream_buffer_type(output);
-        if (BufferType::DMA_BUFFER == buffer_type) {
-            TRY(const auto &dma_buffer, output.get_dma_buffer());
-            buffers.push_back(dma_buffer);
+    if (m_client.lock()->device_id() == SERVER_ADDR_USE_UNIX_SOCKET) {
+        for (const auto &output_vstream_name : m_output_names) {
+            TRY(auto output, bindings.output(output_vstream_name));
+            auto buffer_type = ConfiguredInferModelBase::get_infer_stream_buffer_type(output);
+            if (BufferType::DMA_BUFFER == buffer_type) {
+                TRY(const auto &dma_buffer, output.get_dma_buffer());
+                buffers.push_back(dma_buffer);
+            }
         }
     }
 
@@ -318,9 +321,13 @@ Expected<std::vector<TransferBuffer>> ConfiguredInferModelHrpcClient::get_read_b
     for (const auto &output_vstream_name : m_output_names) {
         TRY(auto output, bindings.output(output_vstream_name));
         auto buffer_type = ConfiguredInferModelBase::get_infer_stream_buffer_type(output);
+
         if (BufferType::DMA_BUFFER != buffer_type) {
             TRY(auto buffer, output.get_buffer());
             buffers.emplace_back(MemoryView(buffer));
+        } else if (m_client.lock()->device_id() != SERVER_ADDR_USE_UNIX_SOCKET) {
+            TRY(auto buffer, output.get_dma_buffer());
+            buffers.emplace_back(buffer);
         }
     }
 

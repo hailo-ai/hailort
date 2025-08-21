@@ -44,10 +44,10 @@ public:
         bool m_started;
     };
 
-    LiveStats(std::chrono::milliseconds interval);
+    LiveStats(std::chrono::milliseconds interval, bool should_print);
     ~LiveStats();
     void add(std::shared_ptr<Track> track, uint8_t level); // prints tracks in consecutive order from low-to-high levels
-    void print();
+    void measure_and_print();
     hailo_status dump_stats(const std::string &json_path, const std::string &inference_mode);
     hailo_status start();
     void stop();
@@ -56,6 +56,7 @@ public:
 private:
     bool m_running;
     std::chrono::milliseconds m_interval;
+    bool m_should_print;
     hailort::EventPtr m_stop_event;
     std::map<uint8_t, std::vector<std::shared_ptr<Track>>> m_tracks;
     std::thread m_thread;

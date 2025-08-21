@@ -51,7 +51,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL QNX)
 endif()
 
 set_target_properties(hailort_common PROPERTIES
-    CXX_STANDARD              14
+    CXX_STANDARD              17
     CXX_STANDARD_REQUIRED     YES
     CXX_EXTENSIONS            NO
     POSITION_INDEPENDENT_CODE ON

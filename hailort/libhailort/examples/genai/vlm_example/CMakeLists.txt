@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.5.0)
 
-find_package(HailoRT 5.0.0 EXACT REQUIRED)
+project(hailort-examples-genai-vlm)
+
+find_package(HailoRT 5 REQUIRED)
 
 add_executable(vlm_example vlm_example.cpp)
 
@@ -14,4 +16,4 @@ if(WIN32)
     )
 endif()
 
-set_target_properties(vlm_example PROPERTIES CXX_STANDARD 14)
+set_target_properties(vlm_example PROPERTIES CXX_STANDARD 17)

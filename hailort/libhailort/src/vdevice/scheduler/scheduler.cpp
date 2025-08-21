@@ -27,7 +27,8 @@ CoreOpsScheduler::CoreOpsScheduler(hailo_scheduling_algorithm_t algorithm, std::
     std::vector<std::string> &devices_arch) :
     SchedulerBase(algorithm, devices_ids, devices_arch),
     m_closest_threshold_timeout(std::chrono::steady_clock::now() + std::chrono::milliseconds(UINT32_MAX)),
-    m_scheduler_thread(*this)
+    m_scheduler_thread(*this),
+    m_preparing_thread(*this)
 {}
 
 CoreOpsScheduler::~CoreOpsScheduler()
@@ -63,11 +64,12 @@ hailo_status CoreOpsScheduler::add_core_op(scheduler_core_op_handle_t core_op_ha
         // To allow multiple instances of the same phyiscal core op, we don't limit the queue here. Each core-op and
         // scheduled should limit themself. Since the ctor accept no argument, we init it using operator[].
         // TODO HRT-12136: limit the queue size (based on instances count)
-        m_infer_requests[core_op_handle];
-        m_bounded_infer_requests[core_op_handle];
+        m_pending_requests[core_op_handle];
+        m_ready_requests[core_op_handle];
 
         const core_op_priority_t normal_priority = HAILO_SCHEDULER_PRIORITY_NORMAL;
-        m_core_op_priority[normal_priority].add(core_op_handle);
+        m_core_op_to_run_priority[normal_priority].add(core_op_handle);
+        m_core_op_to_prepare_priority[normal_priority].add(core_op_handle);
     }
 
     return HAILO_SUCCESS;
@@ -85,6 +87,7 @@ void CoreOpsScheduler::shutdown()
     // Locking shared_lock since we don't touch the internal scheduler structures.
     std::shared_lock<std::shared_timed_mutex> lock(m_scheduler_mutex);
     m_scheduler_thread.stop();
+    m_preparing_thread.stop();
 
     // After the scheduler thread have stopped, we can safely deactivate all core ops
     for (const auto &pair : m_devices) {
@@ -120,7 +123,7 @@ hailo_status CoreOpsScheduler::switch_core_op(const scheduler_core_op_handle_t &
 
     if ((core_op_handle != curr_device_info->current_core_op_handle) || (!has_same_hw_batch_size_as_previous)) {
         if (curr_device_info->current_core_op_handle != INVALID_CORE_OP_HANDLE &&
-            m_scheduled_core_ops.at(curr_device_info->current_core_op_handle)->requested_infer_requests().load() > 0) {
+            m_scheduled_core_ops.at(curr_device_info->current_core_op_handle)->get_num_pending_requests().load() > 0) {
             LOGGER__DEBUG("Switching core op while there are pending infer requests so we set timeout to current time");
             m_scheduled_core_ops.at(curr_device_info->current_core_op_handle)->set_last_run_timestamp(std::chrono::steady_clock::now());
         }
@@ -210,18 +213,19 @@ hailo_status CoreOpsScheduler::infer_async(const scheduler_core_op_handle_t &cor
     return HAILO_SUCCESS;
 }
 
-CoreOpsScheduler::ReadyInfo CoreOpsScheduler::is_core_op_ready(const scheduler_core_op_handle_t &core_op_handle,
+CoreOpsScheduler::ReadyInfo CoreOpsScheduler::is_core_op_ready_for_run(const scheduler_core_op_handle_t &core_op_handle,
     bool check_threshold, const device_id_t &device_id)
 {
     ReadyInfo result;
     result.is_ready = false;
 
     auto scheduled_core_op = m_scheduled_core_ops.at(core_op_handle);
-
-    result.is_ready = (get_frames_ready_to_transfer(core_op_handle, device_id) > 0);
+    auto frames_ready_to_transfer = get_frames_ready_to_transfer(core_op_handle, device_id);
+    result.is_ready = (frames_ready_to_transfer > 0) && 
+        (m_current_core_op_preparing != core_op_handle);
 
     if (check_threshold) {
-        result.over_threshold = scheduled_core_op->is_over_threshold();
+        result.over_threshold = scheduled_core_op->is_over_threshold(frames_ready_to_transfer);
         result.over_timeout = scheduled_core_op->is_over_threshold_timeout();
 
         if (!result.over_threshold && !result.over_timeout){
@@ -230,6 +234,21 @@ CoreOpsScheduler::ReadyInfo CoreOpsScheduler::is_core_op_ready(const scheduler_c
     }
 
     return result;
+}
+
+bool CoreOpsScheduler::is_core_op_ready_for_prepare(const scheduler_core_op_handle_t &core_op_handle, const device_id_t &device_id)
+{
+    auto scheduled_core_op = m_scheduled_core_ops.at(core_op_handle);
+    auto device_info = m_devices.at(device_id);
+
+    if ((scheduled_core_op->instances_count() != 0) && (device_info->current_core_op_handle != core_op_handle) 
+        && (scheduled_core_op->get_num_ready_requests().load() < 1)
+        && (scheduled_core_op->get_num_pending_requests().load() > 0)) {
+        return true;
+    }
+    else {
+        return false;
+    }
 }
 
 hailo_status CoreOpsScheduler::enqueue_infer_request(const scheduler_core_op_handle_t &core_op_handle,
@@ -243,9 +262,9 @@ hailo_status CoreOpsScheduler::enqueue_infer_request(const scheduler_core_op_han
         // Mark timestamp on activation
         m_scheduled_core_ops.at(core_op_handle)->set_last_run_timestamp(std::chrono::steady_clock::now());
     }
-    auto status = m_infer_requests.at(core_op_handle).enqueue(std::move(infer_request));
+    auto status = m_pending_requests.at(core_op_handle).enqueue(std::move(infer_request));
     if (HAILO_SUCCESS == status) {
-        m_scheduled_core_ops.at(core_op_handle)->requested_infer_requests().fetch_add(1);
+        m_scheduled_core_ops.at(core_op_handle)->get_num_pending_requests().fetch_add(1);
         m_scheduler_thread.signal(true);
     }
     return status;
@@ -289,46 +308,51 @@ hailo_status CoreOpsScheduler::set_priority(const scheduler_core_op_handle_t &co
     auto scheduled_core_op = m_scheduled_core_ops.at(core_op_handle);
 
     // Remove core op from previous priority map
-    auto &priority_group = m_core_op_priority[scheduled_core_op->get_priority()];
+    auto &priority_group = m_core_op_to_run_priority[scheduled_core_op->get_priority()];
     assert(priority_group.contains(core_op_handle));
     priority_group.erase(core_op_handle);
 
+    auto &priority_group_prepare = m_core_op_to_prepare_priority[scheduled_core_op->get_priority()];
+    assert(priority_group_prepare.contains(core_op_handle));
+    priority_group_prepare.erase(core_op_handle);
+    
     // Add it to the new priority map.
     m_scheduled_core_ops.at(core_op_handle)->set_priority(priority);
-    m_core_op_priority[priority].add(core_op_handle);
-
+    m_core_op_to_run_priority[priority].add(core_op_handle);
+    m_core_op_to_prepare_priority[priority].add(core_op_handle);
 
     TRACE(SetCoreOpPriorityTrace, core_op_handle, priority);
     return HAILO_SUCCESS;
 }
 
-hailo_status CoreOpsScheduler::bind_and_sync_buffers()
+hailo_status CoreOpsScheduler::prepare_transfers()
 {
+    std::shared_lock<std::shared_timed_mutex> lock(m_scheduler_mutex);
+
     hailo_status status = HAILO_SUCCESS;
-    // For now, binding buffers will take place only on one device
-    if (m_devices.size() > 1) {
+    auto active_core_op_handle = m_devices.begin()->second->current_core_op_handle;
+    auto current_core_op_to_prepare = m_current_core_op_preparing.load();
+    if((m_current_core_op_preparing == INVALID_CORE_OP_HANDLE) || 
+        (m_scheduled_core_ops.at(current_core_op_to_prepare)->instances_count() == 0)) {
         return HAILO_SUCCESS;
     }
 
-    auto active_core_op_handle = m_devices.begin()->second->current_core_op_handle;
-    for (auto &core_op_pair : m_scheduled_core_ops) {
-        // Checking if that the core op is deactivated, has no bounded buffer and has unbounded buffer pending
-        if ((m_bounded_infer_requests.at(core_op_pair.first).size() > 0) || 
-            (core_op_pair.second->requested_infer_requests().load() <= 0) ||
-            (core_op_pair.first == active_core_op_handle)) {
-            continue;
-        }
+    CHECK(((m_scheduled_core_ops.at(current_core_op_to_prepare)->get_num_ready_requests().load() == 0) && 
+        (m_scheduled_core_ops.at(current_core_op_to_prepare)->get_num_pending_requests().load() > 0) &&
+        (current_core_op_to_prepare != active_core_op_handle)), HAILO_INTERNAL_FAILURE);
 
-        TRY(auto infer_request, m_infer_requests.at(core_op_pair.first).dequeue());
-        TRY(auto vdma_core_op, get_vdma_core_op(core_op_pair.first, m_devices.begin()->second->device_id));
-        status = (vdma_core_op->bind_and_sync_buffers(infer_request.transfers));
-        m_bounded_infer_requests[core_op_pair.first].enqueue(std::move(infer_request));
-        if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed to bind buffers for core op {}", core_op_pair.first);
-            return status;
-        }
+    TRY(auto infer_request, m_pending_requests.at(current_core_op_to_prepare).dequeue());
+    m_scheduled_core_ops.at(current_core_op_to_prepare)->get_num_pending_requests().fetch_sub(1);
+    TRY(auto vdma_core_op, get_vdma_core_op(current_core_op_to_prepare, m_devices.begin()->second->device_id));
+    status = (vdma_core_op->prepare_transfers(infer_request.transfers));
+    m_ready_requests[current_core_op_to_prepare].enqueue(std::move(infer_request));
+    m_scheduled_core_ops.at(current_core_op_to_prepare)->get_num_ready_requests().fetch_add(1);
+    m_current_core_op_preparing = INVALID_CORE_OP_HANDLE;
+    m_scheduler_thread.signal(true);
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to bind buffers for core op {}", current_core_op_to_prepare);
+        return status;
     }
-
     return status;
 }
 
@@ -356,12 +380,13 @@ hailo_status CoreOpsScheduler::optimize_streaming_if_enabled(const scheduler_cor
 Expected<InferRequest> CoreOpsScheduler::dequeue_infer_request(scheduler_core_op_handle_t core_op_handle)
 {
     hailort::InferRequest infer_request;
-    if (m_bounded_infer_requests.at(core_op_handle).size() > 0) {
-        TRY(infer_request, m_bounded_infer_requests.at(core_op_handle).dequeue());
+    if (m_ready_requests.at(core_op_handle).size() > 0) {
+        TRY(infer_request, m_ready_requests.at(core_op_handle).dequeue());
+        m_scheduled_core_ops.at(core_op_handle)->get_num_ready_requests().fetch_sub(1);
     } else {
-        TRY(infer_request, m_infer_requests.at(core_op_handle).dequeue());
+        TRY(infer_request, m_pending_requests.at(core_op_handle).dequeue());
+        m_scheduled_core_ops.at(core_op_handle)->get_num_pending_requests().fetch_sub(1);
     }
-    m_scheduled_core_ops.at(core_op_handle)->requested_infer_requests().fetch_sub(1);
     return infer_request;
 }
 
@@ -373,9 +398,9 @@ uint16_t CoreOpsScheduler::get_frames_ready_to_transfer(scheduler_core_op_handle
 
     if (scheduled_core_op->instances_count() == 0) {
         // We don't want to schedule/execute core ops with instances_count() == 0. There may still be
-        // requested_infer_requests until shutdown_core_op is called.
+        // get_num_pending_requests until shutdown_core_op is called.
         // TODO: HRT-12218 after dequeue all infer requests for the instance in remove_core_op, this flow can be
-        // removed any simplified (since on this case requested_infer_requests == 0).
+        // removed any simplified (since on this case get_num_pending_requests == 0).
         return 0;
     }
 
@@ -384,7 +409,7 @@ uint16_t CoreOpsScheduler::get_frames_ready_to_transfer(scheduler_core_op_handle
         device_info->ongoing_infer_requests.load() : 0;
     assert(ongoing_frames <= max_ongoing_frames);
 
-    const uint32_t requested_frames = scheduled_core_op->requested_infer_requests();
+    const uint32_t requested_frames = (scheduled_core_op->get_num_pending_requests() + scheduled_core_op->get_num_ready_requests());
 
     return static_cast<uint16_t>(std::min(requested_frames, max_ongoing_frames - ongoing_frames));
 }
@@ -410,7 +435,7 @@ void CoreOpsScheduler::shutdown_core_op(scheduler_core_op_handle_t core_op_handl
 
     // Cancel all requests on the queue
     auto core_op = m_scheduled_core_ops.at(core_op_handle);
-    while (core_op->requested_infer_requests() > 0) {
+    while (core_op->get_num_pending_requests() > 0 || core_op->get_num_ready_requests() > 0) {
         auto request = dequeue_infer_request(core_op_handle);
         assert(request);
         for (auto &transfer : request->transfers) {
@@ -437,7 +462,7 @@ void CoreOpsScheduler::schedule()
     };
 
     // Now, get decisions which requires core op switch
-    auto oracle_decisions = CoreOpsSchedulerOracle::get_oracle_decisions(*this);
+    auto oracle_decisions = CoreOpsSchedulerOracle::get_oracle_run_decisions(*this);
     for (const auto &run_params : oracle_decisions) {
         auto status = switch_core_op(run_params.core_op_handle, run_params.device_id);
         if (HAILO_SUCCESS != status) {
@@ -453,10 +478,10 @@ void CoreOpsScheduler::schedule()
         }
     }
 
-    // If possible, bind buffer for all non activated core ops
-    auto status = bind_and_sync_buffers();
-    if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("Scheduler thread failed with status={}", status);
+    auto current_core_op_to_prepare = CoreOpsSchedulerOracle::choose_next_model_to_prepare(*this, m_devices.begin()->second->device_id);
+    if (INVALID_CORE_OP_HANDLE != current_core_op_to_prepare) {
+        m_current_core_op_preparing = current_core_op_to_prepare;
+        m_preparing_thread.signal();
     }
 
     update_closest_threshold_timeout();
@@ -537,5 +562,59 @@ void CoreOpsScheduler::SchedulerThread::worker_thread_main()
         m_scheduler.schedule();
     }
 }
+
+CoreOpsScheduler::PreparingThread::PreparingThread(CoreOpsScheduler &scheduler) :
+    m_scheduler(scheduler),
+    m_is_running(true),
+    m_execute_worker_thread(false),
+    m_thread([this] { prepare_worker_thread_main(); })
+{}
+
+CoreOpsScheduler::PreparingThread::~PreparingThread()
+{
+    stop();
+}
+
+void CoreOpsScheduler::PreparingThread::signal()
+{
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_execute_worker_thread = true;
+    }
+    m_cv.notify_one();
+}
+
+void CoreOpsScheduler::PreparingThread::stop()
+{
+    if (m_thread.joinable()) {
+        m_is_running = false;
+        signal();
+        m_thread.join();
+    }
+}
+
+void CoreOpsScheduler::PreparingThread::prepare_worker_thread_main()
+{
+    if (m_scheduler.m_devices.size() > 1) {
+        return;
+    }
+
+    while (m_is_running) {
+        {
+            std::unique_lock<std::mutex> lock(m_mutex);
+            m_cv.wait(lock, [this]() {
+                return  m_execute_worker_thread.load();
+            });
+            m_execute_worker_thread = false;
+        }
+
+        if (!m_is_running) {
+            break;
+        }
+
+   	    m_scheduler.prepare_transfers();
+    }
+}
+
 
 } /* namespace hailort */

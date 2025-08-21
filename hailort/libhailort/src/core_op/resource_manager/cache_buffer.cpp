@@ -62,11 +62,11 @@ Expected<std::shared_ptr<vdma::SgEdgeLayer>> CacheBuffer::create_sg_edge_layer_s
     const auto DONT_FORCE_DEFAULT_PAGE_SIZE = false;
     const auto FORCE_BATCH_SIZE = true;
     const auto IS_VDMA_ALIGNED_BUFFER = true;
-    const auto IS_EXTENDED_CCB_DESC_COUNT = false;
-    max_desc_size = std::min(max_desc_size, driver.desc_max_page_size());
+    const auto desc_size_params = driver.get_sg_desc_params();
+    max_desc_size = std::min(max_desc_size, desc_size_params.max_page_size);
     TRY(const auto buffer_requirements, vdma::BufferSizesRequirements::get_buffer_requirements_single_transfer(
-        vdma::VdmaBuffer::Type::SCATTER_GATHER, max_desc_size, batch_size, batch_size, transfer_size,
-        false , DONT_FORCE_DEFAULT_PAGE_SIZE, FORCE_BATCH_SIZE, IS_VDMA_ALIGNED_BUFFER, false, IS_EXTENDED_CCB_DESC_COUNT));
+        vdma::VdmaBuffer::Type::SCATTER_GATHER, desc_size_params, max_desc_size, batch_size, batch_size, transfer_size,
+        false , DONT_FORCE_DEFAULT_PAGE_SIZE, FORCE_BATCH_SIZE, IS_VDMA_ALIGNED_BUFFER, false));
     auto desc_page_size = buffer_requirements.desc_page_size();
     const auto descs_count = buffer_requirements.descs_count();
     const auto buffer_size = buffer_requirements.buffer_size();

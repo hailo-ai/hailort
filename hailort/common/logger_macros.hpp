@@ -18,9 +18,9 @@
 /* Minimum log level availble at compile time */
 #ifndef SPDLOG_ACTIVE_LEVEL
 #ifndef NDEBUG
-#define SPDLOG_ACTIVE_LEVEL (SPDLOG_LEVEL_DEBUG)
+#define SPDLOG_ACTIVE_LEVEL (SPDLOG_LEVEL_TRACE)
 #else
-#define SPDLOG_ACTIVE_LEVEL (SPDLOG_LEVEL_INFO)
+#define SPDLOG_ACTIVE_LEVEL (SPDLOG_LEVEL_DEBUG)
 #endif
 #endif
 
@@ -78,6 +78,16 @@ do{\
 #define LOGGER__WARNING  LOGGER__WARN
 #define LOGGER__ERROR(...)  LOGGER_TO_SPDLOG(SPDLOG_ERROR, __VA_ARGS__)
 #define LOGGER__CRITICAL(...)  LOGGER_TO_SPDLOG(SPDLOG_CRITICAL, __VA_ARGS__)
+
+// special macros for GenAI stats collection
+static inline size_t current_timestamp()
+{
+    auto now = std::chrono::steady_clock::now().time_since_epoch();
+    return std::chrono::duration_cast<std::chrono::microseconds>(now).count();
+}
+
+#define LOGGER__GENAI_STATS_START(...)  LOGGER_TO_SPDLOG(SPDLOG_DEBUG, "[STATS][{}][START] " __VA_ARGS__, current_timestamp())
+#define LOGGER__GENAI_STATS_END(...)  LOGGER_TO_SPDLOG(SPDLOG_DEBUG, "[STATS][{}][END] " __VA_ARGS__, current_timestamp())
 
 } /* namespace hailort */
 

@@ -16,7 +16,6 @@
 
 #include "core_op/core_op.hpp"
 #include "core_op/resource_manager/resource_manager.hpp"
-#include "eth/eth_stream.hpp"
 #include "vdma/vdma_stream.hpp"
 #include "mipi/mipi_stream.hpp"
 #include "device_common/control_protocol.hpp"
@@ -191,7 +190,7 @@ hailo_status CoreOp::deactivate()
 
 Expected<LayerInfo> CoreOp::get_layer_info(const std::string &stream_name)
 {
-    for (const auto &layer_info : m_metadata->get_all_layer_infos()) {
+    for (const LayerInfo &layer_info : m_metadata->get_all_layer_infos()) {
         if (layer_info.is_multi_planar) {
             for (const auto &plane : layer_info.planes) {
                 if (plane.name == stream_name) {
@@ -211,7 +210,7 @@ Expected<LayerInfo> CoreOp::get_layer_info(const std::string &stream_name)
 
 bool CoreOp::is_nms()
 {
-    for (auto layer_info : m_metadata->get_output_layer_infos()) {
+    for (const LayerInfo &layer_info : m_metadata->get_output_layer_infos()) {
         if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == layer_info.format.order) {
             return true;
         }
@@ -355,7 +354,7 @@ const SupportedFeatures &CoreOp::get_supported_features()
 
 Expected<uint16_t> CoreOp::get_stream_batch_size(const std::string &stream_name)
 {
-    for (const auto &layer_info : m_metadata->get_all_layer_infos()) {
+    for (const LayerInfo &layer_info : m_metadata->get_all_layer_infos()) {
         auto stream_under_multi_planes_layer = (layer_info.is_multi_planar && std::any_of(layer_info.planes.begin(), layer_info.planes.end(),
             [&stream_name](const auto &plane){ return plane.name == stream_name; }));
         if ((layer_info.name == stream_name) || (stream_under_multi_planes_layer)) {
@@ -473,13 +472,6 @@ Expected<std::shared_ptr<InputStreamBase>> CoreOp::create_input_stream_from_conf
                 break;
             }
 
-        case HAILO_STREAM_INTERFACE_ETH:
-            {
-                TRY(input_stream, EthernetInputStream::create(device,
-                    layer_info, stream_params.eth_input_params, m_core_op_activated_event));
-                break;
-            }
-
         case HAILO_STREAM_INTERFACE_MIPI:
             {
                 TRY(input_stream, MipiInputStream::create(device,
@@ -589,13 +581,6 @@ Expected<std::shared_ptr<OutputStreamBase>> CoreOp::create_output_stream_from_co
         case HAILO_STREAM_INTERFACE_INTEGRATED:
             {
                 TRY(output_stream, create_vdma_output_stream(device, stream_name, layer_info, stream_params));
-                break;
-            }
-
-        case HAILO_STREAM_INTERFACE_ETH:
-            {
-                TRY(output_stream, EthernetOutputStream::create(device,
-                    layer_info, stream_params.eth_output_params, m_core_op_activated_event));
                 break;
             }
 

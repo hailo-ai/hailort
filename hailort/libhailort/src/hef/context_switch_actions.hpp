@@ -90,6 +90,8 @@ public:
         WaitForCacheUpdated,
         Sleep,
         Halt,
+        ConfigChannelPreAllowInputDataflowAction,
+        DisableDataChannelsAction,
     };
 
     ContextSwitchConfigAction(ContextSwitchConfigAction &&) = default;
@@ -1015,6 +1017,38 @@ public:
 
 private:
     HaltAction();
+};
+
+class ConfigChannelPreAllowInputDataflowAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create();
+    ConfigChannelPreAllowInputDataflowAction(ConfigChannelPreAllowInputDataflowAction &&) = default;
+    ConfigChannelPreAllowInputDataflowAction(const ConfigChannelPreAllowInputDataflowAction &) = delete;
+    ConfigChannelPreAllowInputDataflowAction &operator=(ConfigChannelPreAllowInputDataflowAction &&) = delete;
+    ConfigChannelPreAllowInputDataflowAction &operator=(const ConfigChannelPreAllowInputDataflowAction &) = delete;
+    virtual ~ConfigChannelPreAllowInputDataflowAction() = default;
+    virtual bool supports_repeated_block() const override;
+    virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
+
+private:
+    explicit ConfigChannelPreAllowInputDataflowAction();
+};
+
+class DisableDataChannelsAction : public ContextSwitchConfigAction
+{
+public:
+    static Expected<ContextSwitchConfigActionPtr> create();
+    DisableDataChannelsAction(DisableDataChannelsAction &&) = default;
+    DisableDataChannelsAction(const DisableDataChannelsAction &) = delete;
+    DisableDataChannelsAction &operator=(DisableDataChannelsAction &&) = delete;
+    DisableDataChannelsAction &operator=(const DisableDataChannelsAction &) = delete;
+    virtual ~DisableDataChannelsAction() = default;
+    virtual bool supports_repeated_block() const override;
+    virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
+
+private:
+    explicit DisableDataChannelsAction();
 };
 
 } /* namespace hailort */

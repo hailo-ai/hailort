@@ -101,6 +101,17 @@ int main(int argc, char **argv)
     }
 
     for (auto &physical_device : physical_devices.value()) {
+        auto device_capabilities = physical_device.get().get_capabilities();
+        if (!device_capabilities) {
+            std::cerr << "Failed to get device capabilities for device " << physical_device.get().get_dev_id() << std::endl;
+            return device_capabilities.status();
+        }
+
+        if (!device_capabilities->power_measurements) {
+            std::cout << "Power measurement is not supported on device " << physical_device.get().get_dev_id() << std::endl;
+            return HAILO_NOT_SUPPORTED;
+        }
+
         status = physical_device.get().stop_power_measurement();
         if (HAILO_SUCCESS != status) {
             std::cerr << "Failed stopping former measurements" << std::endl;

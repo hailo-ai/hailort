@@ -46,16 +46,23 @@ private:
     SpscQueue<AsyncAction> m_queue;
     EventPtr m_shutdown_event;
     std::thread m_thread;
+    std::atomic<uint32_t> m_current_queue_size;
 };
 
 class OsConnectionContext : public ConnectionContext
 {
 public:
-    static Expected<std::shared_ptr<ConnectionContext>> create_shared(bool is_accepting);
+    static Expected<std::shared_ptr<ConnectionContext>> create_client_shared(const std::string &ip);
+    static Expected<std::shared_ptr<ConnectionContext>> create_server_shared(const std::string &ip);
 
-    OsConnectionContext(bool is_accepting) : ConnectionContext(is_accepting) {}
+    OsConnectionContext(bool is_accepting, const std::string &ip) : ConnectionContext(is_accepting), m_ip(ip) {}
 
     virtual ~OsConnectionContext() = default;
+
+    std::string get_ip() const { return m_ip; }
+
+private:
+    std::string m_ip;
 };
 
 class OsListener : public SessionListener
@@ -117,7 +124,7 @@ public:
             m_write_actions_thread(write_actions_thread),
             m_read_actions_thread(read_actions_thread) {}
 
-    static Expected<sockaddr_un> get_localhost_server_addr();
+    static Expected<sockaddr_un> get_localhost_server_addr(uint16_t port);
     hailo_status connect();
 
 private:
@@ -126,7 +133,7 @@ private:
     static Expected<std::shared_ptr<OsSession>> create_localhost_client(std::shared_ptr<OsConnectionContext> context, uint16_t port);
 
     hailo_status connect_by_addr(const std::string &ip, uint16_t port);
-    hailo_status connect_localhost();
+    hailo_status connect_localhost(uint16_t port);
 
     std::mutex m_read_mutex;
     std::condition_variable m_read_cv;

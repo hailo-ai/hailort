@@ -222,6 +222,7 @@ message DeviceIdentityProto {
     repeated uint32 serial_number = 8;
     repeated uint32 part_number = 9;
     string product_name = 10;
+    bool extended_fw_check = 11;
 }
 
 message Device_Identify_Reply {
@@ -275,8 +276,8 @@ message Device_QueryHealthStats_Request {
 
 message Device_QueryHealthStats_Reply {
     float on_die_temperature = 1;
-    float on_die_voltage = 2;
-    int32 startup_bist_mask = 3;
+    int32 on_die_voltage = 2;
+    int32 bist_failure_mask = 3;
 }
 
 message Device_QueryPerformanceStats_Request {

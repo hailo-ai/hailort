@@ -16,7 +16,6 @@
 #include "common/fork_support.hpp"
 
 #include "hailo/network_group.hpp"
-#include "hailo/network_rate_calculator.hpp"
 
 
 namespace hailort
@@ -102,19 +101,6 @@ public:
     auto OutputVStreams(const std::map<std::string, hailo_vstream_params_t> &output_vstreams_params)
     {
         return OutputVStreamsWrapper::create(get(), output_vstreams_params);
-    }
-
-    auto get_udp_rates_dict(uint32_t fps, uint32_t max_supported_rate_bytes)
-    {
-        auto rate_calculator = NetworkUdpRateCalculator::create(get());
-        VALIDATE_EXPECTED(rate_calculator);
-
-        auto udp_input_streams = get().get_input_streams_by_interface(HAILO_STREAM_INTERFACE_ETH);
-        auto results = rate_calculator->get_udp_ports_rates_dict(udp_input_streams,
-            fps, max_supported_rate_bytes);
-        VALIDATE_EXPECTED(results);
-
-        return py::cast(results.value());
     }
 
     void set_scheduler_timeout(int timeout, const std::string &network_name="")
@@ -309,29 +295,6 @@ public:
         if (cng) {
             cng->after_fork_in_child();
         }
-    }
-
-    static auto pickle_get_state(const ConfiguredNetworkGroupWrapper &self)
-    {
-        auto handle = self.get().get_client_handle();
-        VALIDATE_EXPECTED(handle);
-
-        auto vdevice_handle = self.get().get_vdevice_client_handle();
-        VALIDATE_EXPECTED(vdevice_handle);
-
-        return py::make_tuple(handle.value(), vdevice_handle.value(), self.get().name());
-    }
-
-    static auto pickle_set_state(py::tuple t)
-    {
-        auto handle = t[0].cast<uint32_t>();
-        auto vdevice_handle = t[1].cast<uint32_t>();
-        auto net_group_name = t[2].cast<std::string>();
-        auto net_group = ConfiguredNetworkGroup::duplicate_network_group_client(handle, vdevice_handle, net_group_name);
-        VALIDATE_EXPECTED(net_group);
-
-        const bool store_guard_for_multi_process = true;
-        return std::make_shared<ConfiguredNetworkGroupWrapper>(net_group.release(), store_guard_for_multi_process);
     }
 
     static void bind(py::module &m);

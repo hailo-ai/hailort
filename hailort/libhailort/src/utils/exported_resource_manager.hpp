@@ -53,7 +53,7 @@ private:
 
         auto it = m_storage.find(key);
         if (it != m_storage.end()) {
-            LOGGER__TRACE("There's already a resource registered under key {}", key);
+            LOGGER__TRACE("There's already a resource registered under key");
             return HAILO_INVALID_ARGUMENT;
         }
 
@@ -67,7 +67,7 @@ private:
 
         auto it = m_storage.find(key);
         if (it == m_storage.end()) {
-            LOGGER__TRACE("Key {} not found in resource manager", key);
+            LOGGER__TRACE("Key not found in resource manager");
             return make_unexpected(HAILO_NOT_FOUND);
         }
 
@@ -80,7 +80,7 @@ private:
 
         auto it = m_storage.find(key);
         if (it == m_storage.end()) {
-            LOGGER__TRACE("Key {} not found in resource manager", key);
+            LOGGER__TRACE("Key not found in resource manager");
             return HAILO_NOT_FOUND;
         }
 

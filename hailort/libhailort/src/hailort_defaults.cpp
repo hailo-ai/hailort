@@ -167,29 +167,6 @@ hailo_transform_params_t HailoRTDefaults::get_transform_params(const hailo_strea
     return params;
 }
 
-hailo_eth_input_stream_params_t HailoRTDefaults::get_eth_input_stream_params()
-{
-    hailo_eth_input_stream_params_t params{};
-    params.host_address = get_sockaddr();
-    params.device_port = HAILO_DEFAULT_ETH_DEVICE_PORT;
-    params.max_payload_size = HAILO_DEFAULT_ETH_MAX_PAYLOAD_SIZE;
-    params.is_sync_enabled = false;
-    params.frames_per_sync = 0;
-    params.rate_limit_bytes_per_sec = 0;
-    params.buffers_threshold = HAILO_DEFAULT_BUFFERS_THRESHOLD;
-    return params;
-}
-
-hailo_eth_output_stream_params_t HailoRTDefaults::get_eth_output_stream_params()
-{
-    hailo_eth_output_stream_params_t params{};
-    params.host_address = get_sockaddr();
-    params.device_port = HAILO_DEFAULT_ETH_DEVICE_PORT;
-    params.max_payload_size = HAILO_DEFAULT_ETH_MAX_PAYLOAD_SIZE;
-    params.is_sync_enabled = true;
-    return params;
-}
-
 hailo_pcie_input_stream_params_t HailoRTDefaults::get_pcie_input_stream_params()
 {
     hailo_pcie_input_stream_params_t params{};
@@ -270,13 +247,6 @@ Expected<hailo_stream_parameters_t> HailoRTDefaults::get_stream_parameters(hailo
             params.integrated_output_params = get_integrated_output_stream_params();
         }
         break;
-    case HAILO_STREAM_INTERFACE_ETH:
-        if (HAILO_H2D_STREAM == direction) {
-            params.eth_input_params = get_eth_input_stream_params();
-        } else {
-            params.eth_output_params = get_eth_output_stream_params();
-        }
-        break;
     case HAILO_STREAM_INTERFACE_MIPI:
         if (HAILO_H2D_STREAM == direction) {
             params.mipi_input_params = get_mipi_input_stream_params();
@@ -307,6 +277,7 @@ ConfigureNetworkParams HailoRTDefaults::get_configure_params(uint16_t batch_size
     }
     params.power_mode = power_mode;
     params.latency = HAILO_LATENCY_NONE;
+    params.enable_kv_cache = false;
     return params;
 }
 

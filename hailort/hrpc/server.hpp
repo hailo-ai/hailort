@@ -12,7 +12,7 @@
 
 #include "response_writer.hpp"
 #include "rpc_connection.hpp"
-#include "hailort_service/service_resource_manager.hpp"
+#include "server_resource_manager.hpp"
 #include "hrpc_protocol/serializer.hpp"
 
 constexpr auto SERVER_TIMEOUT = std::chrono::seconds(10);

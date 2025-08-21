@@ -11,7 +11,6 @@
 #include "vdevice/scheduler/scheduled_core_op_state.hpp"
 #include "vdevice/vdevice_core_op.hpp"
 
-
 namespace hailort
 {
 
@@ -24,7 +23,8 @@ ScheduledCoreOp::ScheduledCoreOp(std::shared_ptr<VDeviceCoreOp> core_op, std::ch
     m_max_ongoing_frames_per_device(max_ongoing_frames_per_device),
     m_use_dynamic_batch_flow(use_dynamic_batch_flow),
     m_instances_count(1),
-    m_requested_infer_requests(0),
+    m_pending_requests(0),
+    m_ready_requests(0),
     m_min_threshold(DEFAULT_SCHEDULER_MIN_THRESHOLD),
     m_priority(HAILO_SCHEDULER_PRIORITY_NORMAL),
     m_last_device_id(INVALID_DEVICE_ID)
@@ -88,9 +88,9 @@ void ScheduledCoreOp::set_priority(core_op_priority_t priority)
     m_priority = priority;
 }
 
-bool ScheduledCoreOp::is_over_threshold() const
+bool ScheduledCoreOp::is_over_threshold(uint32_t num_of_frames) const
 {
-    return m_requested_infer_requests.load() >= m_min_threshold;
+    return num_of_frames >= m_min_threshold;
 }
 
 bool ScheduledCoreOp::is_over_threshold_timeout() const
@@ -103,7 +103,7 @@ bool ScheduledCoreOp::is_over_threshold_timeout() const
 
 bool ScheduledCoreOp::is_first_frame() const
 {
-    return (m_requested_infer_requests.load() == 0);
+    return (m_pending_requests.load() == 0);
 }
 
 device_id_t ScheduledCoreOp::get_last_device()

@@ -271,9 +271,6 @@ public:
     VDevice(VDevice &&) = delete;
     VDevice &operator=(VDevice &&other) = delete;
 
-    static bool service_over_ip_mode();
-    static bool should_force_socket_based_client();
-
 protected:
     VDevice(const hailo_vdevice_params_t &params) : m_params(params)
         {};

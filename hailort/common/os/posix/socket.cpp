@@ -20,7 +20,6 @@
 namespace hailort
 {
 
-#define LINUX_RMEM_MAX_PATH "/proc/sys/net/core/rmem_max"
 
 hailo_status Socket::SocketModuleWrapper::init_module()
 {
@@ -260,40 +259,6 @@ hailo_status Socket::pton(int af, const char *src, void *dst)
     CHECK(0 != inet_rc, HAILO_ETH_FAILURE,
         "Failed to run 'inet_pton'. src is not a valid network address in the specified address family");
     CHECK(1 == inet_rc, HAILO_ETH_FAILURE, "Failed to run 'inet_pton', errno = {}.", errno);
-
-    return HAILO_SUCCESS;
-}
-
-hailo_status Socket::set_recv_buffer_size_max()
-{
-    int socket_rc = SOCKET_ERROR;
-    FILE *rmem_max_file = NULL;
-    uint8_t rmem_max_buffer[20] = {};
-    uint64_t rmem_max = 0;
-    int file_status = 0;
-    size_t bytes_read = 0;
-
-    rmem_max_file = fopen(LINUX_RMEM_MAX_PATH, "r");
-    if (NULL != rmem_max_file) {
-        bytes_read = fread(rmem_max_buffer, sizeof(rmem_max_buffer), sizeof(*rmem_max_buffer), rmem_max_file);
-        if ((0 != bytes_read) || (feof(rmem_max_file))) {
-            rmem_max = strtoul((char *)rmem_max_buffer, NULL, 10);
-        }
-
-        if (0 == rmem_max) {
-            LOGGER__WARN("Could not read rmem_max value from file '{}'", LINUX_RMEM_MAX_PATH);
-            rmem_max = UINT64_MAX;
-        }
-
-        file_status = fclose(rmem_max_file);
-        if (0 != file_status) {
-            LOGGER__WARN("Could not close file '{}' errno - {}.", LINUX_RMEM_MAX_PATH, errno);
-        }
-    } else {
-        LOGGER__WARN("Could not open file '{}' to read rmem_max value.", LINUX_RMEM_MAX_PATH);
-    }
-    socket_rc = setsockopt(m_socket_fd, SOL_SOCKET, SO_RCVBUF, &rmem_max, sizeof(rmem_max));
-    CHECK(0 == socket_rc, HAILO_ETH_FAILURE,  "Cannot set the rcv socket buffer to {}", rmem_max);
 
     return HAILO_SUCCESS;
 }

@@ -39,7 +39,6 @@ Expected<std::shared_ptr<VDeviceCoreOp>> VDeviceCoreOp::create(VDevice &vdevice,
         }
     }
 
-    // On HcpConfigCoreOp, we don't support infer_queue_size (and the core op doesn't use the queue).
     size_t queue_size = 0;
     auto iface = core_ops.begin()->second->get_default_streams_interface();
     CHECK_EXPECTED(iface);

@@ -48,82 +48,73 @@ Expected<ContextResources> ContextResources::create(HailoRTDriver &driver,
         "config_buffer_infos size ({}) is bigger than config_channels_id count  ({})",
         config_buffer_infos.size(), config_channels_ids.size());
 
-    std::vector<std::shared_ptr<ConfigBuffer>> config_buffers;
-    config_buffers.reserve(config_buffer_infos.size());
+    std::map<uint8_t, std::shared_ptr<ConfigBuffer>> config_buffers;
     if (zero_copy_config_over_descs) {
         // In case of alligned ccws - we will also use the mapped buffer of the ccws_section + the nops buffer
         // Also - we will program the descriptors right after creating the descriptor list
-        for (uint8_t config_stream_index = 0; config_stream_index < config_buffer_infos.size(); config_stream_index++) {
+        
+        for (auto config_buffer_info : config_buffer_infos) {
+            const auto config_stream_index = config_buffer_info.first;
             TRY(auto buffer_resource, ZeroCopyConfigBuffer::create(driver, config_channels_ids[config_stream_index],
-                config_buffer_infos.at(config_stream_index), mapped_buffers, nops_buffer));
-            config_buffers.emplace_back(std::make_shared<ZeroCopyConfigBuffer>(std::move(buffer_resource)));
+                config_buffer_info.second, mapped_buffers, nops_buffer));
+            config_buffers[config_stream_index] = std::make_shared<ZeroCopyConfigBuffer>(std::move(buffer_resource));
         }
     } else {
         // In the other case (no alligned ccws) - we will only create the config buffer (programming the descriptors will be done later) 
-        for (uint8_t config_stream_index = 0; config_stream_index < config_buffer_infos.size(); config_stream_index++) {
+        for (auto config_buffer_info : config_buffer_infos) {
+            const auto config_stream_index = config_buffer_info.first;
             TRY(auto buffer_resource, CopiedConfigBuffer::create(driver, config_channels_ids[config_stream_index],
-                config_buffer_infos.at(config_stream_index)));
-            config_buffers.emplace_back(std::make_shared<CopiedConfigBuffer>(std::move(buffer_resource)));
+                config_buffer_info.second));
+            config_buffers[config_stream_index] = std::make_shared<CopiedConfigBuffer>(std::move(buffer_resource));
         }
     }
 
     return ContextResources(driver, context_type, std::move(config_buffers), internal_buffer_manager);
 }
 
-hailo_status ContextResources::add_edge_layer(const LayerInfo &layer_info, vdma::ChannelId channel_id,
+hailo_status ContextResources::add_edge_layer(LayerInfo &&layer_info, vdma::ChannelId channel_id,
     const CONTROL_PROTOCOL__host_buffer_info_t &buffer_info, const SupportedFeatures &supported_features)
 {
     auto status = validate_edge_layer(layer_info, channel_id, supported_features);
     CHECK_SUCCESS(status);
 
-    m_edge_layers.emplace_back(EdgeLayer{
-        layer_info,
-        channel_id,
-        buffer_info
-    });
+    m_edge_layers.emplace_back(std::move(layer_info), channel_id, buffer_info);
 
     return HAILO_SUCCESS;
 }
 
-void ContextResources::add_ddr_channels_info(const DdrChannelsInfo &ddr_info)
+void ContextResources::add_ddr_channels_info(vdma::ChannelId d2h_channel_id, uint8_t d2h_stream_index, vdma::ChannelId h2d_channel_id,
+    uint8_t h2d_stream_index, CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info, uint8_t network_index,
+    uint16_t row_size, uint16_t min_buffered_rows, uint16_t total_buffers_per_frame)
 {
-    m_ddr_channels_infos.emplace_back(ddr_info);
+    m_ddr_channels_infos.emplace_back(d2h_channel_id, d2h_stream_index, h2d_channel_id, h2d_stream_index, host_buffer_info,
+        network_index, row_size, min_buffered_rows, total_buffers_per_frame);
 }
 
-std::vector<EdgeLayer> ContextResources::get_edge_layers() const
+const std::vector<EdgeLayer>& ContextResources::get_edge_layers() const
 {
     return m_edge_layers;
 }
 
-std::vector<EdgeLayer> ContextResources::get_edge_layers(LayerType layer_type) const
+std::vector<std::reference_wrapper<const EdgeLayer>> ContextResources::get_edge_layers(LayerType layer_type, hailo_stream_direction_t direction) const
 {
-    return get_edge_layers(layer_type, HAILO_STREAM_DIRECTION_MAX_ENUM);
-}
-
-std::vector<EdgeLayer> ContextResources::get_edge_layers(hailo_stream_direction_t direction) const
-{
-    return get_edge_layers(LayerType::NOT_SET, direction);
-}
-
-std::vector<EdgeLayer> ContextResources::get_edge_layers(LayerType layer_type, hailo_stream_direction_t direction) const
-{
-    std::vector<EdgeLayer> edge_layers;
-    for (const auto &edge_layer : m_edge_layers) {
+    std::vector<std::reference_wrapper<const EdgeLayer>> edge_layers;
+    for (const EdgeLayer &edge_layer : m_edge_layers) {
         const bool layer_type_ok = (layer_type == LayerType::NOT_SET) || (edge_layer.layer_info.type == layer_type);
         const bool direction_ok = (direction == HAILO_STREAM_DIRECTION_MAX_ENUM) || (edge_layer.layer_info.direction == direction);
         if (layer_type_ok && direction_ok) {
-            edge_layers.emplace_back(edge_layer);
+            edge_layers.push_back(edge_layer);
         }
     }
     return edge_layers;
 }
 
-Expected<EdgeLayer> ContextResources::get_edge_layer_by_stream_index(const uint8_t stream_index,
+Expected<std::reference_wrapper<const EdgeLayer>> ContextResources::get_edge_layer_by_stream_index(const uint8_t stream_index,
     const hailo_stream_direction_t direction) const
 {
     for (const auto &edge_layer : m_edge_layers) {
         if ((stream_index == edge_layer.layer_info.stream_index) && (direction == edge_layer.layer_info.direction)) {
-            return EdgeLayer(edge_layer);
+            return std::cref(edge_layer);
         }
     }
 
@@ -131,11 +122,11 @@ Expected<EdgeLayer> ContextResources::get_edge_layer_by_stream_index(const uint8
     return make_unexpected(HAILO_INTERNAL_FAILURE);
 }
 
-Expected<EdgeLayer> ContextResources::get_edge_layer_by_channel_id(const vdma::ChannelId channel_id) const
+Expected<std::reference_wrapper<const EdgeLayer>> ContextResources::get_edge_layer_by_channel_id(const vdma::ChannelId channel_id) const
 {
     for (const auto &edge_layer : m_edge_layers) {
         if (channel_id == edge_layer.channel_id) {
-            return EdgeLayer(edge_layer);
+            return std::cref(edge_layer);
         }
     }
 
@@ -193,17 +184,17 @@ hailo_status ContextResources::validate_edge_layer(const LayerInfo &layer_info, 
     return HAILO_SUCCESS;
 }
 
-std::vector<std::shared_ptr<ConfigBuffer>> &ContextResources::get_config_buffers()
+std::map<uint8_t, std::shared_ptr<ConfigBuffer>> &ContextResources::get_config_buffers()
 {
     return m_config_buffers;
 }
 
-static Expected<LatencyMeterPtr> create_hw_latency_meter(const std::vector<LayerInfo> &layers)
+static Expected<LatencyMeterPtr> create_hw_latency_meter(const std::vector<std::reference_wrapper<const LayerInfo>> &layers)
 {
     std::set<std::string> d2h_channel_names;
 
     size_t h2d_streams_count = 0;
-    for (const auto &layer : layers) {
+    for (const LayerInfo &layer : layers) {
         if (layer.direction == HAILO_D2H_STREAM) {
             if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == layer.format.order) {
                 LOGGER__WARNING("HW Latency measurement is not supported on NMS networks");
@@ -235,7 +226,7 @@ static Expected<LatencyMeterPtr> create_hw_latency_meter(const std::vector<Layer
 static Expected<LatencyMetersMap> create_latency_meters_from_config_params( 
     const ConfigureNetworkParams &config_params, std::shared_ptr<CoreOpMetadata> core_op_metadata)
 {
-    LatencyMetersMap latency_meters_map; 
+    LatencyMetersMap latency_meters_map;
 
     if ((config_params.latency & HAILO_LATENCY_MEASURE) == HAILO_LATENCY_MEASURE) {
         // Best effort for starting latency meter.
@@ -386,7 +377,7 @@ hailo_status ResourcesManager::fill_network_batch_size(CONTROL_PROTOCOL__applica
 uint16_t ResourcesManager::get_csm_buffer_size()
 {
     // All config buffers on the same platform will have the same desc_page_size - because it is derived from the host
-    return std::min(m_driver.desc_max_page_size(), vdma::DEFAULT_SG_PAGE_SIZE);
+    return m_driver.get_sg_desc_params().default_page_size;
 }
 
 void ResourcesManager::fill_config_channel_info(CONTROL_PROTOCOL__application_header_t &app_header)
@@ -460,8 +451,9 @@ hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &lay
     TRY(const auto queue_size, calc_default_queue_size(layer_info, network_batch_size));
 
     const auto transfer_size = LayerInfoUtils::get_layer_transfer_size(layer_info);
-    TRY(auto buffer_requirements, vdma::BufferSizesRequirements::get_buffer_requirements_for_boundary_channels(m_driver,
-        layer_info.max_shmifo_size, static_cast<uint16_t>(MIN_ACTIVE_TRANSFERS_SCALE), queue_size, transfer_size));
+    TRY(auto buffer_requirements, vdma::BufferSizesRequirements::get_buffer_requirements_for_boundary_channels(
+        m_driver.get_sg_desc_params(), layer_info.max_shmifo_size, static_cast<uint16_t>(MIN_ACTIVE_TRANSFERS_SCALE),
+        queue_size, transfer_size));
 
     // TODO HRT-16020: Try not to allocate descriptors in ccb boundary hw infer
     const bool CIRCULAR = true;
@@ -935,7 +927,7 @@ hailo_status ResourcesManager::configure_boundary_channels_for_hw_infer(uint16_t
         
     CONTROL_PROTOCOL__hw_infer_channels_info_t channels_info = {};
     channels_info.channel_count = 0;
-    for (const auto &metadata_layer_info : m_core_op_metadata->get_all_layer_infos()) {
+    for (const LayerInfo &metadata_layer_info : m_core_op_metadata->get_all_layer_infos()) {
         const std::vector<LayerInfo> &layers = metadata_layer_info.is_multi_planar ? metadata_layer_info.planes :
             std::vector<LayerInfo>{metadata_layer_info};
         for (const auto &layer_info : layers) {
@@ -965,7 +957,7 @@ hailo_status ResourcesManager::allocate_boundary_channels_buffers_hw_infer()
     TRY(const auto batch_size, get_batch_size());
     TRY(const auto batch_count, calc_hw_infer_batch_count(batch_size));
 
-    for (const auto &metadata_layer_info : m_core_op_metadata->get_all_layer_infos()) {
+    for (const LayerInfo &metadata_layer_info : m_core_op_metadata->get_all_layer_infos()) {
         const std::vector<LayerInfo> &layers = metadata_layer_info.is_multi_planar ? metadata_layer_info.planes :
             std::vector<LayerInfo>{metadata_layer_info};
         for (const auto &layer_info : layers) {
@@ -990,7 +982,7 @@ Expected<uint16_t> ResourcesManager::calc_hw_infer_batch_count(uint16_t dynamic_
 {
     uint16_t batch_count = UINT16_MAX;
 
-    for (const auto &metadata_layer_info : m_core_op_metadata->get_all_layer_infos()) {
+    for (const LayerInfo &metadata_layer_info : m_core_op_metadata->get_all_layer_infos()) {
         const std::vector<LayerInfo> &layers = metadata_layer_info.is_multi_planar ? metadata_layer_info.planes :
             std::vector<LayerInfo>{metadata_layer_info};
         for (const auto &layer_info : layers) {

@@ -58,7 +58,11 @@ int main(int argc, char *argv[])
             std::cout << "Health stats:\n";
             std::cout << "  - On die temperature: " << health_stats.on_die_temperature << "\n";
             std::cout << "  - On die voltage: " << health_stats.on_die_voltage << "\n";
-            std::cout << "  - startup bist mask SRAM status: " << health_stats.startup_bist_mask << "\n";
+            if (-1 != health_stats.bist_failure_mask) {
+                std::cout << "  - BIST failure mask: 0x" << std::hex << std::uppercase << health_stats.bist_failure_mask << std::dec << "\n";
+            } else {
+                std::cout << "  - Startup BIST failure mask: -1\n";
+            }
         }
 
         std::cout << "Query stats finished successfully" << std::endl;

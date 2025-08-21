@@ -46,7 +46,7 @@ Expected<size_t> read_binary_file(const std::string &file_path, MemoryView mem_v
 
     // Read the data
     file.read(reinterpret_cast<char*>(mem_view.data()), file_size);
-    CHECK(file.good(), HAILO_FILE_OPERATION_FAILURE, "Failed reading file {}", file_path);
+    CHECK(file.good(), HAILO_FILE_OPERATION_FAILURE, "Failed reading file {}. errno: {}", file_path, errno);
     return file_size;
 }
 
@@ -73,12 +73,12 @@ Expected<size_t> read_device_file(const std::string &file_path, MemoryView buffe
     }
 
     size_t bytes_read = 0;
-    while (bytes_read < buffer.size()) {
-        file.read(reinterpret_cast<char*>(buffer.data() + bytes_read), buffer.size() - bytes_read);
-        if (!file || (file.gcount() == 0)) {
+    while (file && (bytes_read < buffer.size())) {
+        file.read(reinterpret_cast<char*>(buffer.data() + bytes_read), (buffer.size() - bytes_read));
+        bytes_read += file.gcount();
+        if (file.gcount() == 0) {
             break;
         }
-        bytes_read += file.gcount();
     }
 
     return bytes_read;

@@ -80,6 +80,9 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
     // Check if the firmware was compiled with EXTENDED_CONTEXT_SWITCH_BUFFER
     board_info.extended_context_switch_buffer = IS_REVISION_EXTENDED_CONTEXT_SWITCH_BUFFER(board_info.fw_version.revision);
 
+    // Check if the firmware was compiled with EXTENDED_FW_CHECKS
+    board_info.extended_fw_check = IS_REVISION_EXTENDED_FW_CHECK(board_info.fw_version.revision);
+
     // Make sure response was from app CPU
     CHECK_AS_EXPECTED((0 == (board_info.fw_version.revision & REVISION_APP_CORE_FLAG_BIT_MASK)), HAILO_INVALID_FIRMWARE,
      "Got invalid app FW type, which means the FW was not marked correctly. unmaked FW revision {}", board_info.fw_version.revision);
@@ -207,6 +210,9 @@ hailo_status control__parse_core_identify_results(CONTROL_PROTOCOL__core_identif
 
     // Check if the firmware was compiled with EXTENDED_CONTEXT_SWITCH_BUFFER
     core_info->extended_context_switch_buffer = IS_REVISION_EXTENDED_CONTEXT_SWITCH_BUFFER(core_info->fw_version.revision);
+
+    // Check if the firmware was compiled with EXTENDED_FW_CHECKS
+    core_info->extended_fw_check = IS_REVISION_EXTENDED_FW_CHECK(core_info->fw_version.revision);
 
     // Make sure response was from core CPU
     CHECK((REVISION_APP_CORE_FLAG_BIT_MASK == (core_info->fw_version.revision & REVISION_APP_CORE_FLAG_BIT_MASK)), HAILO_INVALID_FIRMWARE,

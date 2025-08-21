@@ -256,7 +256,7 @@ Expected<Buffer> RawPcieSession::allocate_buffer(size_t size, hailo_dma_buffer_d
     auto dma_mapped_buffer_storage = make_shared_nothrow<DmaMappedBufferStorage>(std::move(buffer), mapped_buffer);
     CHECK_NOT_NULL(dma_mapped_buffer_storage, HAILO_OUT_OF_HOST_MEMORY);
 
-    return Buffer::create(dma_mapped_buffer_storage, false);
+    return Buffer::create(dma_mapped_buffer_storage);
 }
 
 } // namespace hailort

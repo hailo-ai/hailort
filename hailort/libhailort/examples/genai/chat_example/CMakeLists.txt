@@ -1,20 +1,12 @@
 cmake_minimum_required(VERSION 3.5.0)
 
-find_package(HailoRT 5.0.0 EXACT REQUIRED)
+project(hailort-examples-genai-chat)
 
-# Add nlohmann_json for chat-templates
-include(FetchContent)
-FetchContent_Declare(
-    json
-    GIT_REPOSITORY https://github.com/ArthurSonzogni/nlohmann_json_cmake_fetchcontent.git
-    GIT_TAG 391786c6c3abdd3eeb993a3154f1f2a4cfe137a0 # Version 3.9.1
-    GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(json)
+find_package(HailoRT 5 REQUIRED)
 
 add_executable(chat_example chat.cpp)
 
-target_link_libraries(chat_example PRIVATE HailoRT::libhailort nlohmann_json)
+target_link_libraries(chat_example PRIVATE HailoRT::libhailort)
 
 if(WIN32)
     target_compile_options(chat_example PRIVATE
@@ -24,4 +16,4 @@ if(WIN32)
     )
 endif()
 
-set_target_properties(chat_example PROPERTIES CXX_STANDARD 14)
+set_target_properties(chat_example PROPERTIES CXX_STANDARD 17)

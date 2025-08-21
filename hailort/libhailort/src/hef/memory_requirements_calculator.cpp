@@ -21,6 +21,45 @@
 namespace hailort
 {
 
+// Hardcoded desc params, normally taken from the driver
+static DescSizesParams get_sg_desc_size_params()
+{
+    DescSizesParams desc_sizes_params{};
+    desc_sizes_params.default_page_size = 512;
+    desc_sizes_params.min_page_size = 64;
+    desc_sizes_params.max_page_size = 4096;
+    desc_sizes_params.min_descs_count = 2;
+    desc_sizes_params.max_descs_count = 65536;
+    return desc_sizes_params;
+}
+
+static DescSizesParams get_ccb_desc_size_params(HailoRTDriver::DeviceBoardType board_type)
+{
+    DescSizesParams desc_sizes_params{};
+    // start with common params
+    desc_sizes_params.default_page_size = 512;
+    desc_sizes_params.min_page_size = 512;
+    desc_sizes_params.max_page_size = 4096;
+    desc_sizes_params.max_descs_count = 0x00040000;
+
+    // set board specific params
+    switch (board_type) {
+    case HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO15: /* fallthrough */
+    case HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO15L: /* fallthrough */
+    case HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO10H: /* fallthrough */
+    case HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO15H_ACCELERATOR_MODE: /* fallthrough */
+        desc_sizes_params.min_descs_count = 16;
+        break;
+    case HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_MARS:
+        desc_sizes_params.min_descs_count = 32; // MARS requires at least 32 descriptors
+        break;
+    default:
+        assert(false);
+    }
+
+    return desc_sizes_params;
+}
+
 static EdgeTypeMemoryRequirements join_requirements(const EdgeTypeMemoryRequirements &a, const EdgeTypeMemoryRequirements &b)
 {
     return EdgeTypeMemoryRequirements{a.cma_memory + b.cma_memory,
@@ -32,9 +71,11 @@ static Expected<EdgeTypeMemoryRequirements> get_context_cfg_requirements(const C
     HailoRTDriver::DmaType dma_type, bool use_ccb, HailoRTDriver::DeviceBoardType board_type)
 {
     EdgeTypeMemoryRequirements requirments{};
+    const auto desc_sizes_params = (use_ccb) ?
+        get_ccb_desc_size_params(board_type) :
+        get_sg_desc_size_params();
     for (const auto &cfg_info : context_metadata.config_buffers_info()) {
-        TRY(auto requirements, CopiedConfigBuffer::get_buffer_requirements(cfg_info.second, dma_type, vdma::MAX_SG_PAGE_SIZE,
-            board_type));
+        TRY(auto requirements, CopiedConfigBuffer::get_buffer_requirements(cfg_info.second, dma_type, desc_sizes_params));
         if (use_ccb) {
             requirments.cma_memory += requirements.buffer_size();
         } else {
@@ -65,8 +106,10 @@ static Expected<EdgeTypeMemoryRequirements> get_intermediate_requirements(const 
     uint16_t batch_size, HailoRTDriver::DmaType dma_type, HailoRTDriver::DeviceBoardType board_type)
 {
     batch_size = (batch_size == HAILO_DEFAULT_BATCH_SIZE) ? 1 : batch_size;
+    const auto sg_desc_params = get_sg_desc_size_params();
+    const auto ccb_desc_params = get_ccb_desc_size_params(board_type);
     TRY(auto plan, InternalBufferPlanner::create_buffer_planning(core_op_metadata, batch_size,
-        InternalBufferPlanner::Type::SINGLE_BUFFER_PER_BUFFER_TYPE, dma_type, vdma::MAX_SG_PAGE_SIZE, board_type));
+        InternalBufferPlanner::Type::SINGLE_BUFFER_PER_BUFFER_TYPE, dma_type, sg_desc_params, ccb_desc_params));
     auto report = InternalBufferPlanner::report_planning_info(plan);
     return EdgeTypeMemoryRequirements{report.cma_memory, report.cma_memory_for_descriptors, report.pinned_memory};
 }

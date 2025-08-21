@@ -59,10 +59,7 @@ public:
 
     hailo_status cancel_pending_transfers();
 
-    hailo_status register_cache_update_callback();
-    hailo_status unregister_cache_update_callback();
-
-    hailo_status bind_and_sync_buffers(std::unordered_map<std::string, TransferRequest> &transfers);
+    hailo_status prepare_transfers(std::unordered_map<std::string, TransferRequest> &transfers);
 
     virtual Expected<hailo_stream_interface_t> get_default_streams_interface() override;
 

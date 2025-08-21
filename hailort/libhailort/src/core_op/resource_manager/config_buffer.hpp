@@ -41,7 +41,7 @@ protected:
     ConfigBuffer(vdma::ChannelId channel_id);
 
     static Expected<vdma::BufferSizesRequirements> get_sg_buffer_requirements(const std::vector<uint32_t> &cfg_sizes,
-        uint16_t max_desc_page_size);
+        const DescSizesParams &desc_sizes_params);
 
     vdma::ChannelId m_channel_id;
     uint32_t m_acc_desc_count;
@@ -54,7 +54,7 @@ public:
         const ConfigBufferInfo &config_buffer_info);
 
     static Expected<vdma::BufferSizesRequirements> get_buffer_requirements(const ConfigBufferInfo &config_buffer_info,
-        HailoRTDriver::DmaType dma_type, uint16_t max_desc_page_size, HailoRTDriver::DeviceBoardType board_type);
+        HailoRTDriver::DmaType dma_type, const DescSizesParams &desc_sizes_params);
 
     // Write data to config channel
     hailo_status write(const MemoryView &data);
@@ -91,7 +91,7 @@ private:
         const std::vector<uint32_t> &cfg_sizes, const uint32_t buffer_size);
 
     static Expected<vdma::BufferSizesRequirements> get_ccb_buffer_requirements(uint32_t buffer_size,
-        uint16_t max_desc_page_size, bool is_extended_ccb_desc_count);
+        const DescSizesParams &desc_sizes_params);
 
     std::unique_ptr<vdma::VdmaEdgeLayer> m_buffer;
     const size_t m_total_buffer_size;
