@@ -98,12 +98,31 @@ Expected<Buffer> LLMCreateSerializer::serialize_request(const hailo_vdevice_para
     return get_serialized_message<LLM_Create_Request>(llm_create, static_cast<uint32_t>(HailoGenAIActionID::LLM__CREATE), "LLM_Create_Request");
 }
 
-Expected<std::tuple<std::string, std::string, std::string>> LLMCreateSerializer::deserialize_request(const MemoryView &serialized_request)
+Expected<Buffer> LLMCreateSerializer::serialize_request(const hailo_vdevice_params_t &vdevice_params, const LLMParams &llm_params, const std::string &hef_path, uint64_t file_size)
+{
+    LLM_Create_Request llm_create;
+
+    llm_create.set_lora_name(llm_params.lora());
+    if (!hef_path.empty()) {
+        llm_create.set_hef_path(hef_path);
+    }
+
+    std::string group_id = get_group_id_as_string(vdevice_params);
+    llm_create.set_group_id(group_id);
+
+    // Set file size for chunked transfer
+    llm_create.set_file_size(file_size);
+
+    return get_serialized_message<LLM_Create_Request>(llm_create, static_cast<uint32_t>(HailoGenAIActionID::LLM__CREATE), "LLM_Create_Request");
+}
+
+Expected<std::tuple<std::string, std::string, std::string, uint64_t>> LLMCreateSerializer::deserialize_request(const MemoryView &serialized_request)
 {
     TRY(auto llm_create, get_deserialized_message<LLM_Create_Request>(serialized_request,
         static_cast<uint32_t>(HailoGenAIActionID::LLM__CREATE), "LLM_Create_Request"));
 
-    return std::tuple<std::string, std::string, std::string>(llm_create.lora_name(), llm_create.hef_path(), llm_create.group_id());
+    return std::tuple<std::string, std::string, std::string, uint64_t>(
+        llm_create.lora_name(), llm_create.hef_path(), llm_create.group_id(), llm_create.file_size());
 }
 
 Expected<Buffer> LLMCreateSerializer::serialize_reply(hailo_status status, const std::string &prompt_template)
@@ -681,12 +700,30 @@ Expected<Buffer> VLMCreateSerializer::serialize_request(const hailo_vdevice_para
         static_cast<uint32_t>(HailoGenAIActionID::VLM__CREATE), "VLM_Create_Request");
 }
 
-Expected<std::pair<std::string, std::string>> VLMCreateSerializer::deserialize_request(const MemoryView &serialized_request)
+Expected<Buffer> VLMCreateSerializer::serialize_request(const hailo_vdevice_params_t &vdevice_params, const std::string &hef_path, uint64_t file_size)
+{
+    VLM_Create_Request vlm_create;
+
+    std::string group_id = get_group_id_as_string(vdevice_params);
+    vlm_create.set_group_id(group_id);
+    if (!hef_path.empty()) {
+        vlm_create.set_hef_path(hef_path);
+    }
+
+    // Set file size for chunked transfer
+    vlm_create.set_file_size(file_size);
+
+    return get_serialized_message<VLM_Create_Request>(vlm_create,
+        static_cast<uint32_t>(HailoGenAIActionID::VLM__CREATE), "VLM_Create_Request");
+}
+
+Expected<std::tuple<std::string, std::string, uint64_t>> VLMCreateSerializer::deserialize_request(const MemoryView &serialized_request)
 {
     TRY(auto vlm_create, get_deserialized_message<VLM_Create_Request>(serialized_request,
         static_cast<uint32_t>(HailoGenAIActionID::VLM__CREATE), "VLM_Create_Request"));
 
-    return std::make_pair(vlm_create.group_id(), vlm_create.hef_path());
+    return std::tuple<std::string, std::string, uint64_t>(
+        vlm_create.group_id(), vlm_create.hef_path(), vlm_create.file_size());
 }
 
 Expected<Buffer> VLMCreateSerializer::serialize_reply(hailo_status status,

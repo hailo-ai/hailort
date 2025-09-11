@@ -183,17 +183,22 @@ Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VD
     TRY(auto check_hef_exists_on_server_reply, session_wrapper->execute(MemoryView(check_hef_exists_on_server_request)));
     TRY(auto hef_exists, GenAICheckHefExistsSerializer::deserialize_reply(MemoryView(*check_hef_exists_on_server_reply)));
 
-    std::string hef_path_to_send = hef_exists ? hef_path : is_builtin ? BUILTIN : ""; // Empty string indicates that the HEF does not exist on the server
-    TRY(auto create_llm_request, LLMCreateSerializer::serialize_request(vdevice_params, llm_params, hef_path_to_send));
-    std::vector<MemoryView> write_buffers = { MemoryView(create_llm_request) };
-
-    Buffer file_data;
+    Buffer create_llm_request;
+    std::shared_ptr<Buffer> create_llm_reply;
     if (!is_builtin && !hef_exists) {
-        TRY(file_data, read_binary_file(hef_path, BufferStorageParams::create_dma()));
-        write_buffers.push_back(MemoryView(file_data));
-    }
+        // Get file size for chunked transfer
+        TRY(auto file_size, SessionWrapper::get_file_size(hef_path));
 
-    TRY(auto create_llm_reply, session_wrapper->execute(write_buffers));
+        // Create request with file size for chunked transfer
+        TRY(create_llm_request, LLMCreateSerializer::serialize_request(vdevice_params, llm_params, "", file_size));
+        CHECK_SUCCESS(session_wrapper->write(MemoryView(create_llm_request)));
+        CHECK_SUCCESS(session_wrapper->send_file_chunked(hef_path));
+        TRY(create_llm_reply, session_wrapper->read());
+    } else {
+        std::string hef_path_to_send = hef_exists ? hef_path : is_builtin ? BUILTIN : "";
+        TRY(create_llm_request, LLMCreateSerializer::serialize_request(vdevice_params, llm_params, hef_path_to_send));
+        TRY(create_llm_reply, session_wrapper->execute(MemoryView(create_llm_request)));
+    }
     TRY(auto prompt_template, LLMCreateSerializer::deserialize_reply(MemoryView(*create_llm_reply)), "Failed to create LLM");
 
     TRY(auto get_generator_default_params_request, LLMGetGeneratorParamsSerializer::serialize_request());
@@ -206,6 +211,7 @@ Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VD
 
     auto llm_ptr = make_unique_nothrow<Impl>(session_wrapper, llm_params, default_generator_params, prompt_template_handler_ptr);
     CHECK_NOT_NULL_AS_EXPECTED(llm_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
     return llm_ptr;
 }
 

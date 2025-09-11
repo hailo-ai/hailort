@@ -189,6 +189,7 @@ Expected<Buffer> LLMServer::handle_create_llm_request(const MemoryView &request)
     auto &lora_name = std::get<0>(tuple);
     auto hef_path = std::get<1>(tuple);
     auto &group_id = std::get<2>(tuple);
+    auto file_size = std::get<3>(tuple);
 
     auto params = HailoRTDefaults::get_vdevice_params();
     if (!group_id.empty()) {
@@ -199,7 +200,7 @@ Expected<Buffer> LLMServer::handle_create_llm_request(const MemoryView &request)
 
     LOGGER__GENAI_STATS_START("[create-llm] transfer HEF");
     std::shared_ptr<Buffer> hef_buffer_ptr;
-    if (!hef_path.empty()) {
+    if (!hef_path.empty()) { // hef path is not none only if hef exists locally, so no need to transfer it over the session
         if (BUILTIN == hef_path) {
             TRY_AS_HRPC_STATUS(hef_path, get_path_from_lora_name(lora_name), LLMCreateSerializer);
         }
@@ -207,7 +208,7 @@ Expected<Buffer> LLMServer::handle_create_llm_request(const MemoryView &request)
         hef_buffer_ptr = make_shared_nothrow<Buffer>(std::move(buff));
         CHECK_AS_HRPC_STATUS(nullptr != hef_buffer_ptr, HAILO_OUT_OF_HOST_MEMORY, LLMCreateSerializer); // Consider returning different status
     } else {
-        TRY_AS_HRPC_STATUS(hef_buffer_ptr, m_session.read(), LLMCreateSerializer);
+        TRY_AS_HRPC_STATUS(hef_buffer_ptr, m_session.receive_file_chunked(file_size), LLMCreateSerializer);
     }
     LOGGER__GENAI_STATS_END("[create-llm] transfer HEF");
     LOGGER__INFO("hef buffer of size '{}', lora: '{}'", hef_buffer_ptr->size(), lora_name);

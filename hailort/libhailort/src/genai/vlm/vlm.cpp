@@ -72,17 +72,21 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
     TRY(auto check_hef_exists_on_server_reply, session_wrapper->execute(MemoryView(check_hef_exists_on_server_request)));
     TRY(auto hef_exists, GenAICheckHefExistsSerializer::deserialize_reply(MemoryView(*check_hef_exists_on_server_reply)));
 
-    std::string hef_path_to_send = hef_exists ? hef_path : ""; // Empty string indicates that the HEF does not exist on the server
-    TRY(auto create_vlm_request, VLMCreateSerializer::serialize_request(vdevice_params, hef_path_to_send));
-    std::vector<MemoryView> write_buffers = { MemoryView(create_vlm_request) };
-
-    Buffer hef_data;
+    Buffer create_vlm_request;
+    std::shared_ptr<Buffer> create_vlm_reply;
     if (!hef_exists) {
-        TRY(hef_data, read_binary_file(hef_path, BufferStorageParams::create_dma()));
-        write_buffers.push_back(MemoryView(hef_data));
-    }
+        // Get file size for chunked transfer
+        TRY(auto file_size, SessionWrapper::get_file_size(hef_path));
 
-    TRY(auto create_vlm_reply, session_wrapper->execute(write_buffers));
+        // Create request with file size for chunked transfer
+        TRY(create_vlm_request, VLMCreateSerializer::serialize_request(vdevice_params, "", file_size));
+        CHECK_SUCCESS(session_wrapper->write(MemoryView(create_vlm_request)));
+        CHECK_SUCCESS(session_wrapper->send_file_chunked(hef_path));
+        TRY(create_vlm_reply, session_wrapper->read());
+    } else {
+        TRY(create_vlm_request, VLMCreateSerializer::serialize_request(vdevice_params, hef_path));
+        TRY(create_vlm_reply, session_wrapper->execute(MemoryView(create_vlm_request)));
+    }
     TRY(auto vlm_info_tuple, VLMCreateSerializer::deserialize_reply(MemoryView(*create_vlm_reply)), "Failed to create VLM");
 
     auto input_frame_shape = std::get<0>(vlm_info_tuple);

@@ -23,6 +23,8 @@ namespace hailort
 namespace genai
 {
 
+constexpr size_t CHUNKED_TRANSFER_CHUNK_SIZE = 64 * 1024 * 1024;
+
 enum class HailoGenAIActionID {
     LLM__CREATE = 0,
     LLM__GET_GENERATOR_PARAMS,
@@ -92,7 +94,8 @@ struct LLMCreateSerializer
     LLMCreateSerializer() = delete;
 
     static Expected<Buffer> serialize_request(const hailo_vdevice_params_t &vdevice_params, const LLMParams &llm_params, const std::string &hef_path = "");
-    static Expected<std::tuple<std::string, std::string, std::string>> deserialize_request(const MemoryView &serialized_request); // lora_name, hef_path, group_id
+    static Expected<Buffer> serialize_request(const hailo_vdevice_params_t &vdevice_params, const LLMParams &llm_params, const std::string &hef_path, uint64_t file_size);
+    static Expected<std::tuple<std::string, std::string, std::string, uint64_t>> deserialize_request(const MemoryView &serialized_request); // lora_name, hef_path, group_id, file_size
 
     static Expected<Buffer> serialize_reply(hailo_status status, const std::string &prompt_template = "");
     static Expected<std::string> deserialize_reply(const MemoryView &serialized_reply);
@@ -259,7 +262,8 @@ struct VLMCreateSerializer
     VLMCreateSerializer() = delete;
 
     static Expected<Buffer> serialize_request(const hailo_vdevice_params_t &vdevice_params, const std::string &hef_path = "");
-    static Expected<std::pair<std::string, std::string>> deserialize_request(const MemoryView &serialized_request);
+    static Expected<Buffer> serialize_request(const hailo_vdevice_params_t &vdevice_params, const std::string &hef_path, uint64_t file_size);
+    static Expected<std::tuple<std::string, std::string, uint64_t>> deserialize_request(const MemoryView &serialized_request); // group_id, hef_path, file_size
 
     static Expected<Buffer> serialize_reply(hailo_status status,
         hailo_3d_image_shape_t input_frame_shape = {}, hailo_format_t input_frame_format = {}, const std::string &prompt_template = "");

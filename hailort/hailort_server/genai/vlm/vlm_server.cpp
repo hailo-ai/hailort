@@ -81,9 +81,10 @@ hailo_status VLMServer::parse_config_json(const MemoryView &config_json)
 Expected<Buffer> VLMServer::handle_create_vlm_request(const MemoryView &request)
 {
     LOGGER__GENAI_STATS_START("[create-vlm] create vdevice");
-    TRY_AS_HRPC_STATUS(auto pair, VLMCreateSerializer::deserialize_request(request), VLMCreateSerializer);
-    auto &group_id = pair.first;
-    auto &hef_path = pair.second;
+    TRY_AS_HRPC_STATUS(auto tuple, VLMCreateSerializer::deserialize_request(request), VLMCreateSerializer);
+    auto &group_id = std::get<0>(tuple);
+    auto &hef_path = std::get<1>(tuple);
+    auto file_size = std::get<2>(tuple);
 
     auto params = HailoRTDefaults::get_vdevice_params();
     if (!group_id.empty()) {
@@ -94,13 +95,13 @@ Expected<Buffer> VLMServer::handle_create_vlm_request(const MemoryView &request)
 
     LOGGER__GENAI_STATS_START("[create-vlm] transfer HEF");
     std::shared_ptr<Buffer> hef_buffer_ptr;
-    if (!hef_path.empty()) {
+    if (!hef_path.empty()) { // hef path is not none only if hef exists locally, so no need to transfer it over the session
         TRY_AS_HRPC_STATUS(auto buff, read_binary_file(hef_path, BufferStorageParams::create_dma()), VLMCreateSerializer);
         hef_buffer_ptr = make_shared_nothrow<Buffer>(std::move(buff));
         CHECK_AS_HRPC_STATUS(nullptr != hef_buffer_ptr, HAILO_OUT_OF_HOST_MEMORY, VLMCreateSerializer); // Consider returning different status
     } else {
         // Empty string indicates that the HEF does not exist on the server
-        TRY_AS_HRPC_STATUS(hef_buffer_ptr, m_session.read(), VLMCreateSerializer);
+        TRY_AS_HRPC_STATUS(hef_buffer_ptr, m_session.receive_file_chunked(file_size), VLMCreateSerializer);
     }
 
     LOGGER__GENAI_STATS_END("[create-vlm] transfer HEF");
