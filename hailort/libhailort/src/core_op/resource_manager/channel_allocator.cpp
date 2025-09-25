@@ -13,29 +13,9 @@
 namespace hailort
 {
 
-ChannelAllocator::ChannelAllocator(size_t max_engines_count, hailo_device_architecture_t device_arch) :
-    m_max_engines_count(max_engines_count), m_device_arch(device_arch)
+ChannelAllocator::ChannelAllocator(size_t max_engines_count) :
+    m_max_engines_count(max_engines_count)
 {}
-
-static std::pair<uint8_t, uint8_t> get_min_max_channel_index(hailo_device_architecture_t device_arch,
-    HailoRTDriver::DmaDirection direction, bool use_enhanced_channel, const LayerIdentifier &layer_identifier)
-{
-    uint8_t min_channel_index;
-    uint8_t max_channel_index;
-    if (HailoRTDriver::DmaDirection::H2D == direction) {
-        min_channel_index = MIN_H2D_CHANNEL_INDEX;
-        max_channel_index = (device_arch == HAILO_ARCH_MARS) ? MAX_H2D_CHANNEL_INDEX_H10H2 : MAX_H2D_CHANNEL_INDEX;
-    } else {
-        min_channel_index = (device_arch == HAILO_ARCH_MARS) ? MIN_D2H_CHANNEL_INDEX_H10H2 : MIN_D2H_CHANNEL_INDEX;
-        max_channel_index = (device_arch == HAILO_ARCH_MARS) ? MAX_D2H_CHANNEL_INDEX_H10H2 : MAX_D2H_CHANNEL_INDEX;
-    }
-
-    if ((LayerType::BOUNDARY == std::get<0>(layer_identifier)) && use_enhanced_channel) {
-        min_channel_index = (device_arch == HAILO_ARCH_MARS) ? MIN_ENHANCED_D2H_CHANNEL_INDEX_H10H2 : MIN_ENHANCED_D2H_CHANNEL_INDEX;
-    }
-
-    return std::make_pair(min_channel_index, max_channel_index);
-}
 
 Expected<vdma::ChannelId> ChannelAllocator::get_available_channel_id(const LayerIdentifier &layer_identifier,
     HailoRTDriver::DmaDirection direction, uint8_t engine_index, bool use_enhanced_channel)
@@ -58,9 +38,15 @@ Expected<vdma::ChannelId> ChannelAllocator::get_available_channel_id(const Layer
         currently_used_channel_indexes.insert(channel_id_pair.second);
     }
 
-    auto channels_indexes = get_min_max_channel_index(m_device_arch, direction, use_enhanced_channel, layer_identifier);
-    const uint8_t min_channel_index = channels_indexes.first;
-    const uint8_t max_channel_index = channels_indexes.second;
+    uint8_t min_channel_index =
+        (direction == HailoRTDriver::DmaDirection::H2D) ? MIN_H2D_CHANNEL_INDEX : MIN_D2H_CHANNEL_INDEX;
+    uint8_t max_channel_index =
+        (direction == HailoRTDriver::DmaDirection::H2D) ? MAX_H2D_CHANNEL_INDEX : MAX_D2H_CHANNEL_INDEX;
+
+    // In case that enhance CCB channel is needed for hw infer
+    if ((LayerType::BOUNDARY == std::get<0>(layer_identifier)) && use_enhanced_channel) {
+        min_channel_index = MIN_ENHANCED_D2H_CHANNEL_INDEX;
+    }
 
     for (uint8_t index = min_channel_index; index <= max_channel_index; ++index) {
         const vdma::ChannelId channel_id = {engine_index, index};

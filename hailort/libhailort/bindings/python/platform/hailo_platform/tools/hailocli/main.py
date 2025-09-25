@@ -8,10 +8,10 @@ import argcomplete
 import hailo_platform
 from hailo_platform.tools.hailocli.base_utils import HailortCliUtil, HailortCliUtilError, Helper
 from hailo_platform.tools.hailocli.hailocli_commands import (BenchmarkCommandCLI, ControlCommandCLI, FWConfigCommandCLI,
-                                                             FWUpdaterCLI, MeasurePowerCommandCLI,
+                                                             FWUpdaterCLI, LoggerCommandCLI, MeasurePowerCommandCLI,
                                                              MonitorCommandCLI, ParseHEFCommandCLI, RunCommandCLI,
                                                              SSBUpdaterCLI, ScanCommandCLI, SensorConfigCommandCLI,
-                                                             TutorialRunnerCLI)
+                                                             TutorialRunnerCLI, UDPRateLimiterCLI)
 from hailo_platform.tools.hailocli.version_action import CustomVersionAction
 
 
@@ -23,7 +23,9 @@ class PlatformCommands:
         'fw-update': ('Firmware update tool', FWUpdaterCLI),
         'ssb-update': ('Second stage boot update tool', SSBUpdaterCLI),
         'fw-config': ('Firmware configuration tool', FWConfigCommandCLI),
+        'udp-rate-limiter': ('Limit the UDP rate', UDPRateLimiterCLI),
         'fw-control': ('Useful firmware control operations', ControlCommandCLI),
+        'fw-logger': ('Download fw logs to a file', LoggerCommandCLI),
         'scan': ('Scans for devices (Ethernet or PCIE)', ScanCommandCLI),
         'sensor-config': ('Sensor configuration tool', SensorConfigCommandCLI),
         'run': ('Run a compiled network', RunCommandCLI),
@@ -73,6 +75,8 @@ class PlatformCommands:
         argcomplete.autocomplete(self.parser)
         # HailortCliUtil commands are parsed by hailortcli:
         # * argv from after the command name are forwarded to hailortcli.
+        # * E.g. calling `hailo udp-limiter arg1 arg2` will result in the call `commands['udp-limiter'].run(['arg1', 'arg2'])`.
+        #   Inturn, this will create the process `hailortcli udp-rate-limiter arg1 arg2` (via the UDPRateLimiterCLI class).
         # In order to support this, we first check if the first argument in argv is the name of a HailortCliUtil class.
         # If so, we'll pass the arguments to the HailortCliUtil, otherwise we parse with argparse as usual.
         if len(argv) == 0:

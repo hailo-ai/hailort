@@ -8,10 +8,11 @@
  *        Hence, the hiearchy is as follows:
  *
  * VDevice                  (External "interface")
- * |-- VDeviceHandle                   (VDevice handle for a possibly shared VDeviceBase when hailort is running as single process)
- * |-- VDeviceClient                   (VDevice client for a possibly shared VDeviceBase when hailort is running as a service)
- * |-- VDeviceHrpcClient               (RPC handle communicating with the server)
- * |-- VDeviceSocketBasedClient        (Empty implementation for forced-socket in the client side)
+ * |
+ * |-- VDeviceHandle            (VDevice handle for a possibly shared VDeviceBase
+ * |                         when hailort is running as single process)
+ * |-- VDeviceClient            (VDevice client for a possibly shared VDeviceBase
+ * |                         when hailort is running as a service)
  * |-- VDeviceBase          (Actual implementations)
  *     |
  *     |-- std::vector<VdmaDevice>
@@ -29,6 +30,11 @@
 #include "vdma/vdma_config_manager.hpp"
 #include "vdevice/vdevice_core_op.hpp"
 #include "vdevice/scheduler/scheduler.hpp"
+
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+#include "service/hailort_rpc_client.hpp"
+#include "service/network_group_client.hpp"
+#endif // HAILO_SUPPORT_MULTI_PROCESS
 
 
 namespace hailort
@@ -135,7 +141,7 @@ public:
 
     static Expected<HailoRTDriver::AcceleratorType> get_accelerator_type(hailo_device_id_t *device_ids, size_t device_count);
     static hailo_status validate_params(const hailo_vdevice_params_t &params);
-    static Expected<bool> do_device_ids_contain_eth(const hailo_vdevice_params_t &params);
+    static Expected<bool> device_ids_contains_eth(const hailo_vdevice_params_t &params);
 
 private:
     VDeviceBase(const hailo_vdevice_params_t &params, std::map<device_id_t, std::unique_ptr<Device>> &&devices, CoreOpsSchedulerPtr core_ops_scheduler,
@@ -161,6 +167,60 @@ private:
     const std::string m_unique_vdevice_hash; // Used to identify this vdevice in the monitor. consider removing - TODO (HRT-8835)
     std::mutex m_mutex;
 };
+
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+using network_group_handle_t = uint32_t;
+
+class VDeviceClient : public VDevice
+{
+public:
+    static Expected<std::unique_ptr<VDevice>> create(const hailo_vdevice_params_t &params);
+
+    VDeviceClient(VDeviceClient &&) = delete;
+    VDeviceClient(const VDeviceClient &) = delete;
+    VDeviceClient &operator=(VDeviceClient &&) = delete;
+    VDeviceClient &operator=(const VDeviceClient &) = delete;
+    virtual ~VDeviceClient();
+
+    Expected<ConfiguredNetworkGroupVector> configure(Hef &hef,
+        const NetworkGroupsParamsMap &configure_params={}) override;
+
+    Expected<std::vector<std::reference_wrapper<Device>>> get_physical_devices() const override;
+
+    Expected<std::vector<std::string>> get_physical_devices_ids() const override;
+    Expected<hailo_stream_interface_t> get_default_streams_interface() const override;
+
+    virtual hailo_status before_fork() override;
+    virtual hailo_status after_fork_in_parent() override;
+    virtual hailo_status after_fork_in_child() override;
+    virtual hailo_status dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
+    virtual hailo_status dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
+    virtual hailo_status dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
+    virtual hailo_status dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t direction) override;
+
+private:
+    VDeviceClient(const hailo_vdevice_params_t &params, std::unique_ptr<HailoRtRpcClient> client,
+        uint32_t client_handle, VDeviceIdentifier &&identifier, std::vector<std::unique_ptr<hailort::Device>> &&devices);
+
+    hailo_status create_client();
+    hailo_status start_listener_thread(VDeviceIdentifier identifier);
+    hailo_status listener_run_in_thread(VDeviceIdentifier identifier);
+    hailo_status finish_listener_thread();
+
+    std::unique_ptr<HailoRtRpcClient> m_client;
+    uint32_t m_client_utils_handle;
+    VDeviceIdentifier m_identifier;
+    std::vector<std::unique_ptr<Device>> m_devices;
+
+    std::mutex m_mutex;
+    std::unordered_map<network_group_handle_t, std::shared_ptr<ConfiguredNetworkGroupClient>> m_network_groups;
+
+    AsyncThreadPtr<hailo_status> m_cb_listener_thread;
+    std::atomic_bool m_is_listener_thread_running;
+    std::atomic_bool m_should_use_listener_thread; // True only on async inference
+};
+
+#endif // HAILO_SUPPORT_MULTI_PROCESS
 
 class VDeviceHandle : public VDevice
 {

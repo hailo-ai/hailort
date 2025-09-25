@@ -15,15 +15,13 @@
 #include "hailo/hailort.h"
 #include "hailo/device.hpp"
 
-#include "common/socket.hpp"
 #include "common/utils.hpp"
 
 #include "device_common/control.hpp"
 #include "vdma/pcie/pcie_device.hpp"
 #include "vdma/integrated/integrated_device.hpp"
-#include "vdma/pcie/pcie_device_hrpc_client.hpp"
+#include "eth/eth_device.hpp"
 #include "utils/query_stats_utils.hpp"
-#include "utils/logger_fetcher.hpp"
 
 #include "byte_order.h"
 #include "firmware_header_utils.h"
@@ -58,12 +56,6 @@ Device::Device(Type type) :
 #endif
 }
 
-static bool is_valid_ip_address(const std::string &ip_address)
-{
-    struct sockaddr_in addr = {};
-    return Socket::pton(AF_INET, ip_address.c_str(), &addr) == HAILO_SUCCESS;
-}
-
 Expected<std::vector<std::string>> Device::scan()
 {
     // TODO: HRT-7530 support both CORE and PCIE
@@ -90,10 +82,22 @@ Expected<std::vector<hailo_pcie_device_info_t>> Device::scan_pcie()
     return PcieDevice::scan();
 }
 
+Expected<std::vector<hailo_eth_device_info_t>> Device::scan_eth(const std::string &interface_name,
+    std::chrono::milliseconds timeout)
+{
+    return EthernetDevice::scan(interface_name, timeout);
+}
+
+Expected<std::vector<hailo_eth_device_info_t>> Device::scan_eth_by_host_address(const std::string &host_address,
+    std::chrono::milliseconds timeout)
+{
+    return EthernetDevice::scan_by_host_address(host_address, timeout);
+}
+
 Expected<std::unique_ptr<Device>> Device::create()
 {
     TRY(const auto device_ids, scan(), "Failed scan devices");
-    CHECK(device_ids.size() >= 1, HAILO_INVALID_OPERATION,
+    CHECK_AS_EXPECTED(device_ids.size() >= 1, HAILO_INVALID_OPERATION,
         "There is no hailo device on the system");
 
     // Choose the first device.
@@ -107,8 +111,8 @@ Expected<std::unique_ptr<Device>> Device::create(const std::string &device_id)
         return create_core();
     } else if (auto pcie_info = PcieDevice::parse_pcie_device_info(device_id, DONT_LOG_ON_FAILURE)) {
         return create_pcie(pcie_info.release());
-    } else if (is_valid_ip_address(device_id)) {
-        return PcieDeviceHrpcClient::create(device_id);
+    } else if (auto eth_info = EthernetDevice::parse_eth_device_info(device_id, DONT_LOG_ON_FAILURE)) {
+        return create_eth(eth_info.release());
     } else {
         LOGGER__ERROR("Invalid device id {}", device_id);
         return make_unexpected(HAILO_INVALID_ARGUMENT);
@@ -125,6 +129,47 @@ Expected<std::unique_ptr<Device>> Device::create_pcie(const hailo_pcie_device_in
 {
     TRY(auto device, PcieDevice::create(device_info));
     return device;
+}
+
+Expected<std::unique_ptr<Device>> Device::create_eth(const hailo_eth_device_info_t &device_info)
+{
+    TRY(auto eth_device, EthernetDevice::create(device_info));
+    // Upcasting to Device unique_ptr (from EthernetDevice unique_ptr)
+    auto device = std::unique_ptr<Device>(std::move(eth_device));
+    return device;
+}
+
+Expected<std::unique_ptr<Device>> Device::create_eth(const std::string &ip_addr)
+{
+    TRY(auto eth_device, EthernetDevice::create(ip_addr));
+    // Upcasting to Device unique_ptr (from EthernetDevice unique_ptr)
+    auto device = std::unique_ptr<Device>(std::move(eth_device));
+    return device;
+}
+
+Expected<std::unique_ptr<Device>> Device::create_eth(const std::string &device_address, uint16_t port,
+    uint32_t timeout_milliseconds, uint8_t max_number_of_attempts)
+{
+    /* Validate address length */
+    CHECK_AS_EXPECTED(INET_ADDRSTRLEN >= device_address.size(),
+        HAILO_INVALID_ARGUMENT, "device_address is too long");
+
+    hailo_eth_device_info_t device_info = {};
+    device_info.host_address.sin_family = AF_INET;
+    device_info.host_address.sin_port = HAILO_ETH_PORT_ANY;
+    auto status = Socket::pton(AF_INET, HAILO_ETH_ADDRESS_ANY, &(device_info.host_address.sin_addr));
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    device_info.device_address.sin_family = AF_INET;
+    device_info.device_address.sin_port = port;
+    status = Socket::pton(AF_INET, device_address.c_str(), &(device_info.device_address.sin_addr));
+    CHECK_SUCCESS_AS_EXPECTED(status);
+
+    device_info.timeout_millis = timeout_milliseconds;
+    device_info.max_number_of_attempts = max_number_of_attempts;
+    device_info.max_payload_size = HAILO_DEFAULT_ETH_MAX_PAYLOAD_SIZE;
+
+    return create_eth(device_info);
 }
 
 Expected<hailo_pcie_device_info_t> Device::parse_pcie_device_info(const std::string &device_info_str)
@@ -146,7 +191,8 @@ Expected<Device::Type> Device::get_device_type(const std::string &device_id)
     }
     else if (auto pcie_info = PcieDevice::parse_pcie_device_info(device_id, DONT_LOG_ON_FAILURE)) {
         return Type::PCIE;
-    } else if (is_valid_ip_address(device_id)) {
+    }
+    else if (auto eth_info = EthernetDevice::parse_eth_device_info(device_id, DONT_LOG_ON_FAILURE)) {
         return Type::ETH;
     }
     else {
@@ -168,6 +214,9 @@ bool Device::device_ids_equal(const std::string &first, const std::string &secon
             return false;
         }
         return PcieDevice::pcie_device_infos_equal(*first_pcie_info, *second_pcie_info);
+    } else if (auto eth_info = EthernetDevice::parse_eth_device_info(first, DONT_LOG_ON_FAILURE)) {
+        // On ethernet devices, device ids should e equal
+        return first == second;
     } else {
         // first device does not match.
         return false;
@@ -331,24 +380,17 @@ Expected<hailo_health_stats_t> Device::query_health_stats()
 #else
 
     TRY(auto device_arch, get_architecture());
-    CHECK((device_arch == HAILO_ARCH_HAILO15H) || (device_arch == HAILO_ARCH_HAILO15L) || (device_arch == HAILO_ARCH_HAILO15M) ||
-        (device_arch == HAILO_ARCH_HAILO10H), HAILO_INVALID_DEVICE_ARCHITECTURE,
-        "Query health stats is not supported for device arch {}", HailoRTCommon::get_device_arch_str(device_arch));
+    if ((device_arch != HAILO_ARCH_HAILO15H) && (device_arch != HAILO_ARCH_HAILO15L) && (device_arch != HAILO_ARCH_HAILO15M) && (device_arch != HAILO_ARCH_HAILO10H)) {
+        LOGGER__ERROR("Query health stats is not supported for device arch {}", HailoRTCommon::get_device_arch_str(device_arch));
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
 
     hailo_health_stats_t health_stats = {-1, -1, -1};
-
     TRY(auto temp, get_chip_temperature());
+
     health_stats.on_die_temperature = std::max(temp.ts0_temperature, temp.ts1_temperature);
 
-    auto on_die_voltage = QueryStatsUtils::get_on_die_voltage();
-    if (HAILO_SUCCESS == on_die_voltage.status()) {
-        health_stats.on_die_voltage = static_cast<int32_t>(on_die_voltage.release());
-    }
-
-    auto bist_failure_mask = QueryStatsUtils::get_bist_failure_mask();
-    if (HAILO_SUCCESS == bist_failure_mask.status()) {
-        health_stats.bist_failure_mask = static_cast<int32_t>(bist_failure_mask.release());
-    }
+    // TODO (HRT-16224): add on_die_voltage and startup_bist_mask (currently APIs does not exist)
 
     return health_stats;
 #endif
@@ -362,9 +404,10 @@ Expected<hailo_performance_stats_t> Device::query_performance_stats()
 #else
 
     TRY(auto device_arch, get_architecture());
-    CHECK((device_arch == HAILO_ARCH_HAILO15H) || (device_arch == HAILO_ARCH_HAILO15L) || (device_arch == HAILO_ARCH_HAILO15M) ||
-        (device_arch == HAILO_ARCH_HAILO10H), HAILO_INVALID_DEVICE_ARCHITECTURE,
-        "Query performance stats is not supported for device arch {}", HailoRTCommon::get_device_arch_str(device_arch));
+    if ((device_arch != HAILO_ARCH_HAILO15H) && (device_arch != HAILO_ARCH_HAILO15L) && (device_arch != HAILO_ARCH_HAILO15M) && (device_arch != HAILO_ARCH_HAILO10H)) {
+        LOGGER__ERROR("Query performance stats is not supported for device arch {}", HailoRTCommon::get_device_arch_str(device_arch));
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
 
     hailo_performance_stats_t performance_stats = {-1, -1, -1, -1, -1, -1};
 
@@ -456,12 +499,6 @@ hailo_status Device::direct_read_memory(uint32_t address, void *buffer, uint32_t
     (void) buffer;
     (void) size;
     return HAILO_NOT_IMPLEMENTED;
-}
-
-Expected<size_t> Device::get_max_logs_size(hailo_log_type_t log_type)
-{
-    TRY(auto logger_fetcher, LoggerFetcherFactory::create(log_type));
-    return logger_fetcher->get_max_size();
 }
 
 Expected<hailo_device_identity_t> Device::identify()
@@ -566,7 +603,7 @@ Expected<std::vector<uint8_t>> Device::get_number_of_dynamic_contexts_per_networ
     std::vector<uint8_t> number_of_contexts_per_network_group;
     for (auto network_group_index = 0; network_group_index < context_switch_main_header.application_count; network_group_index++) {
         const uint32_t num_contexts = context_switch_main_header.application_header[network_group_index].dynamic_contexts_count;
-        CHECK(IS_FIT_IN_UINT8(num_contexts), HAILO_INTERNAL_FAILURE, "num_contexts must fit in one byte");
+        CHECK_AS_EXPECTED(IS_FIT_IN_UINT8(num_contexts), HAILO_INTERNAL_FAILURE, "num_contexts must fit in one byte");
         number_of_contexts_per_network_group.emplace_back(static_cast<uint8_t>(num_contexts));
     }
 
@@ -590,7 +627,7 @@ Expected<Buffer> Device::download_context_action_list(uint32_t network_group_id,
         (CONTROL_PROTOCOL__context_switch_context_type_t)context_type, context_index, action_list.size(),
         &base_address_local, action_list.data(), &actual_size, &batch_counter_local, &idle_time_local);
     CHECK_SUCCESS_AS_EXPECTED(status);
-    CHECK(actual_size <= max_size, HAILO_INTERNAL_FAILURE);
+    CHECK_AS_EXPECTED(actual_size <= max_size, HAILO_INTERNAL_FAILURE);
 
     // Create a copy of the list, truncating to the needed size
     TRY(auto final_action_list, Buffer::create(action_list.data(), actual_size));
@@ -603,14 +640,14 @@ Expected<Buffer> Device::download_context_action_list(uint32_t network_group_id,
     return final_action_list;
 }
 
-hailo_status Device::set_context_action_list_timestamp_batch(uint32_t batch_index)
+hailo_status Device::set_context_action_list_timestamp_batch(uint16_t batch_index)
 {
     static const bool ENABLE_USER_CONFIG = true;
     return Control::config_context_switch_timestamp(*this, batch_index, ENABLE_USER_CONFIG);
 }
 
 hailo_status Device::set_context_switch_breakpoint(uint8_t breakpoint_id, bool break_at_any_network_group_index,
-    uint8_t network_group_index, bool break_at_any_batch_index, uint32_t batch_index, bool break_at_any_context_index,
+    uint8_t network_group_index, bool break_at_any_batch_index, uint16_t batch_index, bool break_at_any_context_index,
     uint16_t context_index, bool break_at_any_action_index, uint16_t action_index) 
 {
     CONTROL_PROTOCOL__context_switch_breakpoint_data_t breakpoint_data = {
@@ -684,20 +721,20 @@ Expected<ConfigureNetworkParams> Device::create_configure_params(Hef &hef, const
     return hef.create_configure_params(stream_interface, network_group_name);
 }
 
-Expected<bool> Device::has_power_sensor()
+Expected<bool> Device::has_INA231()
 {
     TRY(auto info, get_extended_device_information(), "Failed to get extended device information");
     TRY(auto id, identify(), "Failed to identify device");
     auto is_evb = std::string(id.product_name).find("EVB") != std::string::npos;
-    auto has_power_sensor = info.supported_features.current_monitoring || is_evb;
-    return has_power_sensor;
+    auto has_INA231 = info.supported_features.current_monitoring || is_evb;
+    return has_INA231;
 }
 
 Expected<Device::Capabilities> Device::get_capabilities()
 {
     Device::Capabilities caps {false, false, true};
-    TRY(caps.current_measurements, has_power_sensor(), "Failed to check if power sensor is installed");
-    TRY(caps.power_measurements, has_power_sensor(), "Failed to check if power sensor is installed");
+    TRY(caps.current_measurements, has_INA231(), "Failed to check if INA231 is installed");
+    TRY(caps.power_measurements, has_INA231(), "Failed to check if INA231 is installed");
     return caps;
 }
 

@@ -16,8 +16,6 @@
 namespace hailort
 {
 
-static const std::string REPLACEMENT_CHAR = "\xEF\xBF\xBD"; // Unicode replacement character (U+FFFD, encoded as EF BF BD in UTF-8)
-
 // TODO: make it templated
 Expected<uint32_t> StringUtils::to_uint32(const std::string &str, int base)
 {
@@ -83,13 +81,6 @@ std::string StringUtils::to_hex_string(const uint8_t *array, size_t size, bool u
         }
     }
     return stream.str();
-}
-
-bool StringUtils::contains_replacement_char(const std::string &str)
-{
-    // Check for Unicode replacement character (U+FFFD, encoded as EF BF BD in UTF-8) at the end of the string
-    return str.size() >= REPLACEMENT_CHAR.size() &&
-        (0 == str.compare((str.size() - REPLACEMENT_CHAR.size()), REPLACEMENT_CHAR.size(), REPLACEMENT_CHAR));
 }
 
 } /* namespace hailort */

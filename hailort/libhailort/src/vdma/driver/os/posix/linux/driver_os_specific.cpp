@@ -171,9 +171,6 @@ hailo_status convert_errno_to_hailo_status(int err, const char* ioctl_name)
         // Expected error (stopping wait, i.e notification wait)
         LOGGER__DEBUG("Ioctl {} failed due to operation aborted", ioctl_name);
         return HAILO_DRIVER_WAIT_CANCELED;
-    case ENXIO:
-        LOGGER__ERROR("Ioctl {} failed due to device not connected", ioctl_name);
-        return HAILO_DEVICE_NOT_CONNECTED;
     default:
         LOGGER__ERROR("Ioctl {} failed with {}. Read dmesg log for more info", ioctl_name, err);
         return HAILO_DRIVER_OPERATION_FAILED;

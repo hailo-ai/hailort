@@ -15,7 +15,6 @@
 #include "hailo/hailort_defaults.hpp"
 
 #include "vdma/driver/hailort_driver.hpp"
-#include "common/internal_env_vars.hpp"
 
 #include "control_protocol.h"
 #include <vector>
@@ -28,7 +27,6 @@ namespace hailort
 
 #define INVALID_PAD_INDEX (UINT32_MAX)
 #define PERIPH_BYTES_PER_BUFFER_ALIGNMENT_SIZE (8)
-#define PERIPH_BYTES_PER_BUFFER_ALIGNMENT_SIZE_H10H2 (16)
 #define PERIPH_BYTES_PER_BUFFER_DDR_ALIGNMENT_SIZE (512)
 #define NMS_NUMBER_OF_QPS (2)
 
@@ -317,14 +315,8 @@ private:
         hailo_vstream_info_t res = {};
         res.format.type = layer_info.format.type;
         res.format.flags = layer_info.format.flags;
-
         // If a layer is multi-planar, its format_order is already the host-side format order
-        if (layer_info.is_multi_planar || IS_PP_DISABLED()) {
-            res.format.order = layer_info.format.order;
-        } else {
-            res.format.order = HailoRTDefaults::get_default_host_format_order(layer_info.format);
-        }
-
+        res.format.order = (layer_info.is_multi_planar) ? layer_info.format.order : HailoRTDefaults::get_default_host_format_order(layer_info.format);
         if (HailoRTCommon::is_nms(res)) {
             res.nms_shape.max_bboxes_per_class = layer_info.nms_info.max_bboxes_per_class * layer_info.nms_info.chunks_per_frame;
             res.nms_shape.number_of_classes = layer_info.nms_info.number_of_classes;

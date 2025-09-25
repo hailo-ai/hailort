@@ -13,7 +13,6 @@ import numpy
 import time
 import gc
 import os
-import json
 
 from hailo_platform.common.logger.logger import default_logger
 import hailo_platform.pyhailort._pyhailort as _pyhailort
@@ -28,11 +27,12 @@ from hailo_platform.pyhailort._pyhailort import (TemperatureInfo, # noqa F401
                                                  MipiDataTypeRx, MipiPixelsPerClock,
                                                  MipiClockSelection, MipiIspImageInOrder,
                                                  MipiIspImageOutDataType, IspLightFrequency,
-                                                 BootSource, Endianness,
+                                                 BootSource, HailoSocketDefs, Endianness,
                                                  MipiInputStreamParams, SensorConfigTypes)
 
 BBOX_PARAMS = _pyhailort.HailoRTDefaults.BBOX_PARAMS()
 BBOX_WITH_MASK_PARAMS = 6  # 4 coordinates + score + class_idx
+HAILO_DEFAULT_ETH_CONTROL_PORT = _pyhailort.HailoRTDefaults.HAILO_DEFAULT_ETH_CONTROL_PORT()
 INPUT_DATAFLOW_BASE_PORT = _pyhailort.HailoRTDefaults.DEVICE_BASE_INPUT_STREAM_PORT()
 OUTPUT_DATAFLOW_BASE_PORT = _pyhailort.HailoRTDefaults.DEVICE_BASE_OUTPUT_STREAM_PORT()
 PCIE_ANY_DOMAIN = _pyhailort.HailoRTDefaults.PCIE_ANY_DOMAIN()
@@ -41,11 +41,21 @@ DEFAULT_VSTREAM_TIMEOUT_MS = 10000
 DEFAULT_VSTREAM_QUEUE_SIZE = 2
 BOARD_INFO_NOT_CONFIGURED_ATTR = "<N/A>"
 
+class HailoSocket(object):
+    MAX_UDP_PAYLOAD_SIZE = HailoSocketDefs.MAX_UDP_PAYLOAD_SIZE()
+    MIN_UDP_PAYLOAD_SIZE = HailoSocketDefs.MIN_UDP_PAYLOAD_SIZE()
+    MAX_UDP_PADDED_PAYLOAD_SIZE = HailoSocketDefs.MAX_UDP_PADDED_PAYLOAD_SIZE()
+    MIN_UDP_PADDED_PAYLOAD_SIZE = HailoSocketDefs.MIN_UDP_PADDED_PAYLOAD_SIZE()
+    MAX_ALIGNED_UDP_PAYLOAD_SIZE_RTP = HailoSocketDefs.MAX_ALIGNED_UDP_PAYLOAD_SIZE_RTP()
+
 
 class HailoSchedulingAlgorithm(_pyhailort.SchedulingAlgorithm):
     pass
 
 class HailoRTException(Exception):
+    pass
+
+class UdpRecvError(HailoRTException):
     pass
 
 class InvalidProtocolVersionException(HailoRTException):
@@ -116,6 +126,8 @@ class ExceptionWrapper(object):
     @staticmethod
     def create_exception_from_status(error_code):
         string_error_code = get_status_message(error_code)
+        if string_error_code == "HAILO_ETH_RECV_FAILURE":
+            return UdpRecvError("Failed to receive data")
         if string_error_code == "HAILO_UNSUPPORTED_CONTROL_PROTOCOL_VERSION":
             return InvalidProtocolVersionException("HailoRT has failed because an invalid protocol version was received from device")
         if string_error_code == "HAILO_FW_CONTROL_FAILURE":
@@ -167,6 +179,43 @@ def get_status_message(status_code):
     return status_str
 
 
+class HailoUdpScan(object):
+    def __init__(self):
+        self._logger = default_logger()
+        with ExceptionWrapper():
+            self._scan = _pyhailort.UdpScan()
+
+    def scan_devices(self, interface_name, timeout_seconds=3):
+        self._logger.info('Scanning over interface {iface}'.format(iface=interface_name))
+        timeout_milliseconds = int(timeout_seconds * 1000)
+        device_ip_addresses =  self._scan.scan_devices(interface_name, timeout_milliseconds)
+        for ip in device_ip_addresses:
+            self._logger.debug("Found board at: {}".format(ip))
+        return device_ip_addresses
+
+
+class NetworkRateLimiter(object):
+    def __init__(self, ip, port, rate_bytes_per_sec):
+        if sys.platform != 'linux':
+            raise HailoRTInvalidOperationException('NetworkRateLimiter is supported only on UNIX os')
+        self._ip = ip
+        self._port = port
+        self._rate_bytes_per_sec = rate_bytes_per_sec
+
+    def set_rate_limit(self):
+        with ExceptionWrapper():
+            return _pyhailort.NetworkRateLimiter.set_rate_limit(self._ip, self._port, self._rate_bytes_per_sec)
+    
+    def reset_rate_limit(self):
+        with ExceptionWrapper():
+            return _pyhailort.NetworkRateLimiter.reset_rate_limit(self._ip, self._port)
+
+    def get_interface_name(ip):
+        "get the interface corresponding to the given ip"
+        with ExceptionWrapper():
+            return _pyhailort.NetworkRateLimiter.get_interface_name(ip)
+
+
 class ConfigureParams(object):
 
     @staticmethod
@@ -205,9 +254,9 @@ class ConfigureParams(object):
             output_interface (:class:`HailoStreamInterface`): The stream_interface to create output stream_params for.
             mipi_rx_id (int): Selection of which MIPI Rx device to use.
             data_type (:class:`~hailo_platform.pyhailort.pyhailort.MipiDataTypeRx`): The data type which will be passed over the MIPI.
-            img_width_pixels (int): The width in pixels of the image that enter to the MIPI CSI. The sensor output.
+            img_width_pixels (int): The width in pixels of the image that enter to the mipi CSI. The sensor output.
                                         When isp_enable and isp_crop_enable is false, is also the stream input.
-            img_height_pixels (int): The height in pixels of the image that enter to the MIPI CSI. The sensor output.
+            img_height_pixels (int): The height in pixels of the image that enter to the mipi CSI. The sensor output.
                                         When isp_enable and isp_crop_enable is false, is also the stream input.
             pixels_per_clock (:class:`~hailo_platform.pyhailort.pyhailort.MipiPixelsPerClock`): Number of pixels transmitted at each
                 clock.
@@ -221,7 +270,7 @@ class ConfigureParams(object):
             isp_img_in_order (:class:`~hailo_platform.pyhailort.pyhailort.MipiIspImageInOrder`):
                 The ISP Rx bayer pixel order. Only relevant when the ISP is enabled.
             isp_img_out_data_type (:class:`~hailo_platform.pyhailort.pyhailort.MipiIspImageOutDataType`):
-                The data type that the MIPI will take out. Only relevant when the ISP is enabled.
+                The data type that the mipi will take out. Only relevant when the ISP is enabled.
             isp_crop_enable (bool): Enable the crop feature in the ISP. Only relevant when the ISP is enabled.
             isp_crop_output_width_pixels (int): The width in pixels of the output window that the ISP take out. The stream input.
                                         Useful when isp_crop_enable is True. Only relevant when the ISP is enabled.
@@ -437,6 +486,12 @@ class HEF(object):
                 raise HailoRTException("bottleneck_fps is zero")
             return bottleneck_fps
 
+    def get_udp_rates_dict(self, fps, max_supported_rate_bytes, network_group_name=None):
+        if network_group_name is None:
+            network_group_name = self.get_network_group_names()[0]
+        with ExceptionWrapper():
+            return self._hef.get_udp_rates_dict(network_group_name, fps, int(max_supported_rate_bytes))
+
     def get_vstream_name_from_original_name(self, original_name, network_group_name=None):
         """Get vstream name from original layer name for a specific network group.
 
@@ -651,6 +706,10 @@ class ConfiguredNetwork(object):
         name = network_name if network_name is not None else ""
         return self._configured_network.get_all_stream_infos(name)
 
+    def get_udp_rates_dict(self, fps, max_supported_rate_bytes):
+        with ExceptionWrapper():
+            return self._configured_network.get_udp_rates_dict(int(fps), int(max_supported_rate_bytes))
+
     def _create_input_vstreams(self, input_vstreams_params):
         input_vstreams_holder = self._configured_network.InputVStreams(input_vstreams_params)
         self._input_vstreams_holders.append(input_vstreams_holder)
@@ -697,8 +756,7 @@ class ConfiguredNetwork(object):
         return self._configured_network.set_scheduler_timeout(timeout_ms, name)
 
     def set_scheduler_threshold(self, threshold):
-        """Sets the scheduler threshold.
-            This threshold sets the minimum number of send requests required before the network is considered ready to get run time from the scheduler.
+        """Sets the minimum number of send requests required before the network is considered ready to get run time from the scheduler.
             If at least one send request has been sent, but the threshold is not reached within a set time period (e.g. timeout - see :func:`ConfiguredNetwork.set_scheduler_timeout`),
             the scheduler will consider the network ready regardless.
 
@@ -710,7 +768,7 @@ class ConfiguredNetwork(object):
     def set_scheduler_priority(self, priority):
         """Sets the priority of the network.
             When the model scheduler will choose the next network, networks with higher priority will be prioritized in the selection.
-            Larger number represents higher priority.
+            bigger number represent higher priority.
 
         Args:
             priority (int): Priority as a number between HAILO_SCHEDULER_PRIORITY_MIN - HAILO_SCHEDULER_PRIORITY_MAX.
@@ -1369,6 +1427,28 @@ class HailoRTTransformUtils(object):
             return FormatType.FLOAT32
         raise HailoRTException("unsupported data type {}".format(dtype))
 
+# TODO: HRT-10427 - Remove
+class InternalEthernetDevice(object):
+    def __init__(self, address, port, response_timeout_seconds=10, max_number_of_attempts=3):
+        self.device = None
+        self._address = address
+        self._port = port
+        self._response_timeout_milliseconds = int(response_timeout_seconds * 1000)
+        self._max_number_of_attempts = max_number_of_attempts
+        with ExceptionWrapper():
+            self.device = _pyhailort.Device.create_eth(self._address, self._port,
+                self._response_timeout_milliseconds, self._max_number_of_attempts)
+
+    def __del__(self):
+        self.release()
+
+    def release(self):
+        if self.device is None:
+            return
+        with ExceptionWrapper():
+            self.device.release()
+            self.device = None
+
 
 class PcieDeviceInfo(_pyhailort.PcieDeviceInfo):
     """Represents pcie device info, includeing domain, bus, device and function.
@@ -1439,6 +1519,9 @@ class InternalPcieDevice(object):
             return [PcieDeviceInfo(dev_info.bus, dev_info.device, dev_info.func, dev_info.domain)
                 for dev_info in pcie_scanner.scan_devices()]
 
+    def create_debug_log(self):
+        return PcieDebugLog(self)
+
     def write_memory(self, address, data):
         with ExceptionWrapper():
             self.device.direct_write_memory(address, data)
@@ -1446,6 +1529,15 @@ class InternalPcieDevice(object):
     def read_memory(self, address, size):
         with ExceptionWrapper():
             return self.device.direct_read_memory(address, size)
+
+# TODO: HRT-10427 - Remove when removing InternalPcieDevice
+class PcieDebugLog(object):
+    def __init__(self, pci_device):
+        self._pcie_device = pci_device
+
+    def read(self, count, cpu_id):
+        with ExceptionWrapper():
+            return self._pcie_device.device.read_log(count, cpu_id)
 
 
 class HailoPowerMeasurementUtils(object):
@@ -1495,9 +1587,9 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
     pass
 
 SUPPORTED_PROTOCOL_VERSION = 2
-SUPPORTED_FW_MAJOR = 5
-SUPPORTED_FW_MINOR = 0
-SUPPORTED_FW_REVISION = 1
+SUPPORTED_FW_MAJOR = 4
+SUPPORTED_FW_MINOR = 23
+SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
 
@@ -1957,7 +2049,7 @@ class Control:
             return self._device.start_power_measurement(averaging_factor, sampling_period)
 
     def stop_power_measurement(self):
-        """Stop performing a long power measurement.
+        """Stop performing a long power measurement. Deletes all saved results from the firmware.
         Calling the function eliminates the start function settings for the averaging the samples,
         and returns to the default values, so the sensor will return a new value every 2.2 ms
         without averaging values.
@@ -1993,7 +2085,8 @@ class Control:
         """Read measured power from a long power measurement
 
         Args:
-            buffer_index (:class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex`): deprecated.
+            buffer_index (:class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex`): Index of the buffer on the firmware the data would be saved at.
+                Default is :class:`~hailo_platform.pyhailort.pyhailort.MeasurementBufferIndex.MEASUREMENT_BUFFER_INDEX_0`
             should_clear (bool): Flag indicating if the results saved at the firmware will be deleted after reading.
 
         Returns:
@@ -2358,11 +2451,11 @@ class Control:
             return self._device.previous_system_state(cpu_id)
 
     def get_chip_temperature(self):
-        """Returns the latest temperature measurements from the two internal temperature sensors of the Hailo chip.
+        """Returns the latest temperature measurements from the 2 internal temperature sensors of the Hailo chip.
 
         Returns:
             :class:`~hailo_platform.pyhailort.pyhailort.TemperatureInfo`:
-             Temperature in celsius of the two internal temperature sensors (TS), and a sample
+             Temperature in celsius of the 2 internal temperature sensors (TS), and a sample
              count (a running 16-bit counter)
         """
         with ExceptionWrapper():
@@ -2517,6 +2610,18 @@ class Device:
         .. attention:: Use the low level control API with care.
         """
         return self._control_object
+
+    def read_log(self, count, cpu_id):
+        """
+        Returns:
+            Returns buffer with debug log data.
+
+        Args:
+            count (int): bytes count to read
+            cpu_id (HailoCpuId): cpu id
+        """
+        with ExceptionWrapper():
+            return self._device.read_log(count, cpu_id)
 
     @property
     def loaded_network_groups(self):
@@ -3163,7 +3268,7 @@ class ConfiguredInferModel:
         """
         The readiness of the model to launch is determined by the ability to push buffers to the asynchronous inference pipeline.
         If the model is ready, the method will return immediately.
-        If it's not ready initially, the method will wait for the model to become ready.
+        If the model is not ready, the method will wait for the model to be ready.
 
         Args:
             timeout_ms (int, optional): Max amount of time to wait until the model is ready in milliseconds.
@@ -3292,7 +3397,7 @@ class ConfiguredInferModel:
         """
         Sets the priority of the network.
         When the network group scheduler will choose the next network, networks with higher priority will be prioritized in the selection.
-        Larger number represents higher priority
+        bigger number represent higher priority.
 
         Using this function is only allowed when scheduling_algorithm is not `HAILO_SCHEDULING_ALGORITHM_NONE`.
         The default priority is HAILO_SCHEDULER_PRIORITY_NORMAL.
@@ -3509,7 +3614,7 @@ class VDevice(object):
             otherwise an :class:`HailoRTException` will be raised.
 
         Note:
-            So long as the InferModel object is alive, the VDevice object is alive as well.
+            as long as the InferModel object is alive, the VDevice object is alive as well.
         """
         if os.getpid() != self._creation_pid:
             raise HailoRTException("InferModel can be created only from the process VDevice was created in.")
@@ -4088,887 +4193,3 @@ class OutputVStreams(object):
 
     def __iter__(self):
         return iter(self._vstreams.values())
-
-
-class HailoSession(object):
-    def __init__(self, session):
-        self._session = session
-
-    @staticmethod
-    def connect(port, device_id=""):
-        with ExceptionWrapper():
-            session = _pyhailort.Session.connect(port, device_id)
-            return HailoSession(session)
-
-    def write(self, input_data):
-        with ExceptionWrapper():
-            return self._session.write(input_data)
-
-    def read(self):
-        with ExceptionWrapper():
-            return self._session.read()
-
-    def close(self):
-        with ExceptionWrapper():
-            return self._session.close()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.close()
-        return False
-
-
-class HailoSessionListener(object):
-    def __init__(self, port, device_id=""):
-        self._device_id = device_id
-        self._port = port
-        with ExceptionWrapper():
-            self._listener = _pyhailort.SessionListener.create(self._port, self._device_id)
-
-    def accept(self):
-        with ExceptionWrapper():
-            assert self._listener is not None
-            session = self._listener.accept()
-            return HailoSession(session=session)
-
-
-class LLMGeneratorCompletion:
-    """
-    Generator completion object for streaming LLM text generation.
-
-    This class provides an iterator interface for receiving generated tokens one by one
-    from a Large Language Model. It is created by the ``LLM.generate()`` method and should
-    be used within a context manager for proper resource cleanup.
-
-    Example::
-
-        with llm.generate(prompt="Hello", max_generated_tokens=50) as gen_completion:
-            for token in gen_completion:
-                print(token, end='', flush=True)
-    """
-
-    def __init__(self, generator_completion):
-        """
-        Initialize the generator completion wrapper.
-
-        Args:
-            generator_completion: Internal generator completion object.
-        """
-        self._generator_completion = generator_completion
-
-    def release(self):
-        """
-        Release internal resources.
-
-        This method is called automatically when exiting the context manager.
-        Manual calls are needed only in case context manager is not used.
-        """
-        if self._generator_completion is not None:
-            self._generator_completion.release()
-            self._generator_completion = None
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.release()
-        return False
-
-    @property
-    def generation_status(self):
-        """
-        Get the current generation status.
-
-        Returns:
-            LLMGeneratorCompletionStatus: Current status of the generation process.
-        """
-        with ExceptionWrapper():
-            return self._generator_completion.generation_status()
-
-    def read(self, timeout_ms=10000):
-        with ExceptionWrapper():
-            return self._generator_completion.read(timeout_ms)
-
-    def read_all(self, timeout_ms=10000):
-        """
-        Read all remaining tokens and return complete response.
-
-        This method blocks until generation is complete or timeout occurs.
-
-        Args:
-            timeout_ms (int, optional): Timeout in milliseconds. Defaults to 10000.
-
-        Returns:
-            str: Complete generated response as a single string.
-
-        Example::
-
-            full_response = gen_completion.read_all()
-            print(f"Complete response: {full_response}")
-        """
-        with ExceptionWrapper():
-            return self._generator_completion.read_all(timeout_ms)
-
-    def __iter__(self):
-        """Iterator protocol support for streaming tokens."""
-        return self
-
-    def __next__(self):
-        """
-        Get next token in iterator protocol.
-
-        Returns:
-            str: Next generated token.
-
-        Raises:
-            StopIteration: When generation is complete.
-        """
-        return self._get_next_token()
-
-    def _get_next_token(self):
-        if self.generation_status != _pyhailort.LLMGeneratorCompletionStatus.GENERATING:
-            raise StopIteration("Generation complete")
-        return self.read()
-
-
-class LLM:
-    """
-    Large Language Model inference interface for Hailo devices.
-
-    This class provides a high-level Python interface for running Large Language Models
-    on Hailo hardware. It supports both streaming and non-streaming text generation,
-    context management, and various generation parameters.
-
-    Features:
-        - Streaming and non-streaming text generation
-        - Structured prompts (chat format) and raw text prompts
-        - Context management for multi-turn conversations
-        - Flexible generation parameters (temperature, top_p, etc.)
-        - LoRA (Low-Rank Adaptation) support for fine-tuned models
-        - Built-in tokenization utilities
-
-    Example::
-
-        # Basic usage
-        with VDevice() as vd:
-            with LLM(vd, "model.hef") as llm:
-                response = llm.generate_all("Hello, how are you?")
-                print(response)
-
-        # Streaming generation
-        with VDevice() as vd:
-            with LLM(vd, "model.hef") as llm:
-                prompt = [{"role": "user", "content": "Tell me a joke"}]
-                with llm.generate(prompt, temperature=0.8) as gen:
-                    for token in gen:
-                        print(token, end='', flush=True)
-
-    Note:
-        - The VDevice must remain active for the lifetime of the LLM instance.
-        - Using this class within a context manager (``with`` statement) is recommended to ensure proper resource cleanup.
-    """
-
-    def __init__(self, vdevice, model_path, lora_name=""):
-        """
-        Initialize the LLM with a Hailo device and model file.
-
-        Args:
-            vdevice (VDevice): An active VDevice instance managing Hailo hardware.
-            model_path (str): Path to the compiled HEF (Hailo Executable Format) file.
-            lora_name (str, optional): Name of LoRA adapter to load. Defaults to "".
-
-        Example::
-
-            with VDevice() as vd:
-                llm = LLM(vd, "models/qwen-2.5-1.5b-instruct.hef", lora_name="chat_adapter")
-        """
-        self._llm = _pyhailort.LLMWrapper.create(vdevice._vdevice, model_path, lora_name)
-
-    def release(self):
-        """
-        Release internal resources and cleanup.
-
-        This method is called automatically when exiting the context manager.
-        Manual calls are needed only in case context manager is not used.
-        """
-        if self._llm is not None:
-            self._llm.release()
-            self._llm = None
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.release()
-        return False
-
-    @staticmethod
-    def _fill_generator_params(gen_params, temperature, top_p, top_k, frequency_penalty, max_generated_tokens, do_sample, seed):
-        if temperature is not None:
-            gen_params.temperature = temperature
-        if top_p is not None:
-            gen_params.top_p = top_p
-        if top_k is not None:
-            gen_params.top_k = top_k
-        if frequency_penalty is not None:
-            gen_params.frequency_penalty = frequency_penalty
-        if max_generated_tokens is not None:
-            gen_params.max_generated_tokens = max_generated_tokens
-        if do_sample is not None:
-            gen_params.do_sample = do_sample
-        if seed is not None:
-            gen_params.seed = seed
-        return gen_params
-
-    @staticmethod
-    def _convert_messages_json(prompt):
-        if not isinstance(prompt, list):
-            raise HailoRTException("prompt must be a list of dicts in chat format")
-        for item in prompt:
-            if not isinstance(item, dict):
-                raise HailoRTException("prompt must be a list of dicts")
-        # Convert list of dictionaries to list of JSON strings
-        return [json.dumps(item) for item in prompt]
-
-    def generate(self, prompt, temperature=None, top_p=None, top_k=None, frequency_penalty=None, max_generated_tokens=None, do_sample=None, seed=None):
-        """
-        Generate text in streaming mode, yielding tokens as they are produced.
-
-        This method returns a context manager that provides an iterator for receiving
-        generated tokens one by one. This is ideal for interactive applications where
-        you want to display text as it's being generated.
-
-        Args:
-            prompt (str or list): Input prompt. Can be:
-                - str: Raw text prompt, to be inserted to the model as is.
-                - list: Structured chat format [{"role": "user", "content": "..."}]
-            temperature (float, optional): Sampling temperature (0.0-2.0).
-                Lower values = more deterministic, higher = more creative. Default varies by model.
-            top_p (float, optional): Nucleus sampling threshold (0.0-1.0).
-                Only consider tokens with cumulative probability up to this value.
-            top_k (int, optional): Top-k sampling limit. Only consider top-k most likely tokens.
-            frequency_penalty (float, optional): Repetition penalty. Positive values
-                discourage repetition.
-            max_generated_tokens (int, optional): Maximum number of tokens to generate.
-                If None, uses model default.
-            do_sample (bool, optional): Whether to use sampling (True) or greedy decoding (False).
-            seed (int, optional): Random seed for reproducible outputs.
-
-        Returns:
-            :class:`LLMGeneratorCompletion`: Generator completion object that can be iterated
-            to receive tokens one by one.
-
-        Example::
-
-            # Streaming with structured prompt
-            prompt = [{"role": "user", "content": "Tell me a story"}]
-            with llm.generate(prompt, temperature=0.8, max_generated_tokens=100) as gen:
-                for token in gen:
-                    print(token, end='', flush=True)
-
-            # Streaming with raw prompt
-            with llm.generate("Once upon a time", temperature=0.7) as gen:
-                for token in gen:
-                    print(token, end='', flush=True)
-
-        Note:
-            The conversation context is automatically maintained between calls.
-            Use ``clear_context()`` to reset the conversation history.
-        """
-        # Validate that prompt is either string or a list of JSON-like dicts
-        if not isinstance(prompt, str):
-            prompt = LLM._convert_messages_json(prompt)
-
-        with ExceptionWrapper():
-            generation_params = self._llm.create_generator_params()
-            generation_params = LLM._fill_generator_params(generation_params, temperature, top_p, top_k, frequency_penalty, max_generated_tokens, do_sample, seed)
-            return LLMGeneratorCompletion(self._llm.generate(generation_params, prompt))
-
-    def generate_all(self, prompt, temperature=None, top_p=None, top_k=None, frequency_penalty=None, max_generated_tokens=None, do_sample=None, seed=None):
-        """
-        Generate complete text response in non-streaming mode.
-
-        This method generates the complete response and returns it as a single string.
-        Use this when you need the full response before proceeding, or for batch processing
-        where streaming is not required.
-
-        Args:
-            prompt (str or list): Input prompt. Can be:
-                - str: Raw text prompt, to be inserted to the model as is.
-                - list: Structured chat format [{"role": "user", "content": "..."}]
-            temperature (float, optional): Sampling temperature (0.0-2.0).
-                Lower values = more deterministic, higher = more creative.
-            top_p (float, optional): Nucleus sampling threshold (0.0-1.0).
-                Only consider tokens with cumulative probability up to this value.
-            top_k (int, optional): Top-k sampling limit. Only consider top-k most likely tokens.
-            frequency_penalty (float, optional): Repetition penalty. Positive values
-                discourage repetition.
-            max_generated_tokens (int, optional): Maximum number of tokens to generate.
-                If None, uses model default.
-            do_sample (bool, optional): Whether to use sampling (True) or greedy decoding (False).
-            seed (int, optional): Random seed for reproducible outputs.
-
-        Returns:
-            str: Complete generated response as a single string.
-
-        Example::
-
-            # Simple text generation
-            response = llm.generate_all("Explain quantum physics")
-            print(response)
-
-            # Chat-style interaction
-            prompt = [
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": "What is the capital of France?"}
-            ]
-            print(llm.generate_all(prompt, temperature=0.1))
-
-            # With specific parameters
-            response = llm.generate_all(
-                "1+1=",
-                temperature=0.8,
-                max_generated_tokens=1
-            )
-
-        Note:
-            The conversation context is automatically maintained between calls.
-            Use ``clear_context()`` to reset the conversation history.
-        """
-        with self.generate(prompt, temperature, top_p, top_k, frequency_penalty, max_generated_tokens, do_sample, seed) as gen_completion:
-            return gen_completion.read_all()
-
-    def tokenize(self, text):
-        """
-        Tokenize input text using the model's tokenizer.
-
-        This method converts text into a list of token IDs that the model uses internally.
-        Useful for understanding how the model processes input, for debugging and
-        for understanding how many tokens are needed for a given prompt.
-
-        Args:
-            text (str): Text to tokenize.
-
-        Returns:
-            list: List of token IDs (integers) representing the input text.
-
-        Example::
-
-            tokens = llm.tokenize("Hello, world!")
-            print(f"Token IDs: {tokens}")
-            print(f"Number of tokens: {len(tokens)}")
-        """
-        with ExceptionWrapper():
-            return self._llm.tokenize(text)
-
-    def clear_context(self):
-        """
-        Clear the conversation context/history.
-
-        This method resets the model's memory of previous interactions, starting
-        fresh for the next generation. Call this between separate conversations
-        or when you want to start a new topic without prior context.
-
-        Example::
-
-            # First conversation
-            response1 = llm.generate_all("My name is Alice")
-            response2 = llm.generate_all("What's my name?")  # Will remember "Alice"
-
-            # Clear context and start fresh
-            llm.clear_context()
-            response3 = llm.generate_all("What's my name?")  # Won't remember "Alice"
-
-        Note:
-            This operation is irreversible. Once context is cleared, previous
-            conversation history cannot be recovered.
-        """
-        with ExceptionWrapper():
-            self._llm.clear_context()
-
-    def get_generation_recovery_sequence(self):
-        """
-        Get the current generation recovery sequence.
-
-        Recovery sequences are used to handle error conditions during generation,
-        or for when a generation is interrupted (e.g. by reaching max_generated_tokens).
-        This is an advanced feature for error handling and debugging.
-
-        Returns:
-            str: Recovery sequence string, to be inserted to the model when a generation is interrupted.
-
-        Note:
-            This is an advanced feature. Most users won't need to use this method.
-        """
-        with ExceptionWrapper():
-            return self._llm.get_generation_recovery_sequence()
-
-    def set_generation_recovery_sequence(self, sequence):
-        """
-        Set a custom generation recovery sequence.
-
-        Recovery sequences are used to handle error conditions during generation,
-        or for when a generation is interrupted (e.g. by reaching max_generated_tokens).
-        This is an advanced feature for error handling and debugging.
-
-        Args:
-            sequence (str): Recovery sequence string, to be inserted to the model when a generation is interrupted.
-
-        Note:
-            This is an advanced feature. Most users won't need to use this method.
-        """
-        with ExceptionWrapper():
-            self._llm.set_generation_recovery_sequence(sequence)
-
-    def prompt_template(self):
-        """
-        Get the model's prompt template format.
-
-        Different models use different prompt templates (chat template) for translating
-        structured prompts (list of dicts) to raw text prompts.
-        This method returns information about the expected format for this model.
-
-        Returns:
-            str: Prompt template as a string (Jinja2 template).
-
-        Example::
-
-            template = llm.prompt_template()
-            print(f"Model expects format: {template}")
-
-        Note:
-            When using structured prompts (list of dicts), the template is applied
-            automatically. This method is useful when constructing raw text prompts.
-        """
-        with ExceptionWrapper():
-            return self._llm.prompt_template()
-
-    def set_stop_tokens(self, stop_tokens):
-        """
-        Set custom stop tokens for generation.
-
-        Stop tokens are sequences that, when generated, will cause the model
-        to stop generating additional text. This is useful for controlling
-        response length and format.
-
-        A stop token can be a string that represents multiple tokens. In this case,
-        the generation will stop when the exact string is generated as a sequence.
-        All stop tokens are checked after each generated token. Setting too many
-        can affect performance. Setting stop tokens overrides current stop tokens.
-        Setting empty list will remove all stop tokens.
-
-        Args:
-            stop_tokens (list): List of strings that when generated will stop the generation.
-        """
-        with ExceptionWrapper():
-            self._llm.set_stop_tokens(stop_tokens)
-
-    def get_stop_tokens(self):
-        """
-        Get the currently configured stop tokens.
-
-        Returns:
-            list: List of strings, where each string is a current stop token.
-
-        Example::
-
-            current_stops = llm.get_stop_tokens()
-            print(f"Current stop tokens: {current_stops}")
-        """
-        with ExceptionWrapper():
-            return self._llm.get_stop_tokens()
-
-
-class VLM:
-    """
-    Vision Language Model inference interface for Hailo devices.
-
-    This class provides a high-level Python interface for running Vision Language Models
-    on Hailo hardware. It supports both streaming and non-streaming text generation,
-    context management, and various generation parameters.
-
-    Features:
-        - Streaming and non-streaming text generation, supporting multiple (or 0) images per generation
-        - Structured prompts (chat format) and raw text prompts
-        - Context management for multi-turn conversations
-        - Flexible generation parameters (temperature, top_p, etc.)
-        - Built-in tokenization utilities
-
-    Example::
-
-        # Basic usage
-        with VDevice() as vd:
-            with VLM(vd, "model.hef") as vlm:
-                response = vlm.generate_all(prompt="Hello, how are you?", frames=[])
-                print(response)
-
-        # Streaming generation
-        with VDevice() as vd:
-            with VLM(vd, "model.hef") as vlm:
-                prompt = [{"role": "user", "content": [{"type": "text", "text": "Describe this image"}, {"type": "image"}]}]
-                with vlm.generate(prompt, frames=[frame_numpy_array], temperature=0.8) as gen:
-                    for token in gen:
-                        print(token, end='', flush=True)
-
-    Note:
-        - The VDevice must remain active for the lifetime of the VLM instance.
-        - Using this class within a context manager (``with`` statement) is recommended to ensure proper resource cleanup.
-        - The given frames must be in the same order, shape, and dtype as the input frame of the model.
-    """
-
-    def __init__(self, vdevice, model_path):
-        """
-        Initialize the VLM with a Hailo device and model file.
-
-        Args:
-            vdevice (VDevice): An active VDevice instance managing Hailo hardware.
-            model_path (str): Path to the compiled HEF (Hailo Executable Format) file.
-
-        Example::
-
-            with VDevice() as vd:
-                vlm = VLM(vd, "models/qwen2-vl-2b-instruct.hef")
-        """
-        self._vlm = _pyhailort.VLMWrapper.create(vdevice._vdevice, model_path)
-
-    def release(self):
-        """
-        Release internal resources and cleanup.
-
-        This method is called automatically when exiting the context manager.
-        Manual calls are needed only in case context manager is not used.
-        """
-        if self._vlm is not None:
-            self._vlm.release()
-            self._vlm = None
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.release()
-        return False
-
-    @staticmethod
-    def _ensure_frames(frames):
-        if not isinstance(frames, list):
-            raise HailoRTException("frames must be a list of numpy arrays")
-        for arr in frames:
-            if not hasattr(arr, 'dtype') or not hasattr(arr, 'nbytes'):
-                raise HailoRTException("each frame must be a numpy array")
-
-    def generate(self, prompt, frames, temperature=None, top_p=None, top_k=None, frequency_penalty=None,
-        max_generated_tokens=None, do_sample=None, seed=None):
-        """
-        Generate text in streaming mode with vision input, yielding tokens as they are produced.
-
-        This method returns a context manager that provides an iterator for receiving
-        generated tokens one by one. This is ideal for interactive applications where
-        you want to display text as it's being generated.
-
-        Args:
-            prompt (str or list): Input prompt. Can be:
-                - str: Raw text prompt, to be inserted to the model as is.
-                - list: Structured chat format with or without vision content [{"role": "user", "content": [{"type": "text", "text": "..."}, {"type": "image"}]}]
-            frames (list): List of numpy arrays representing input images/frames. Empty list means no vision input. Must match model's expected input format.
-            temperature (float, optional): Sampling temperature (0.0-2.0).
-                Lower values = more deterministic, higher = more creative. Default varies by model.
-            top_p (float, optional): Nucleus sampling threshold (0.0-1.0).
-                Only consider tokens with cumulative probability up to this value.
-            top_k (int, optional): Top-k sampling limit. Only consider top-k most likely tokens.
-            frequency_penalty (float, optional): Repetition penalty. Positive values
-                discourage repetition.
-            max_generated_tokens (int, optional): Maximum number of tokens to generate.
-                If None, uses model default.
-            do_sample (bool, optional): Whether to use sampling (True) or greedy decoding (False).
-            seed (int, optional): Random seed for reproducible outputs.
-
-        Returns:
-            :class:`LLMGeneratorCompletion`: Generator completion object that can be iterated
-            to receive tokens one by one.
-
-        Example::
-
-            # Streaming with structured prompt and image
-            prompt = [{"role": "user", "content": [{"type": "text", "text": "Describe this image"}, {"type": "image"}]}]
-            with vlm.generate(prompt, frames=[image_array], temperature=0.7) as gen:
-                for token in gen:
-                    print(token, end='', flush=True)
-
-        Note:
-            The conversation context is automatically maintained between calls.
-            Use ``clear_context()`` to reset the conversation history.
-        """
-        # Validate that prompt is either string or a list of JSON-like dicts
-        if not isinstance(prompt, str):
-            prompt = LLM._convert_messages_json(prompt)
-        VLM._ensure_frames(frames)
-
-        with ExceptionWrapper():
-            generation_params = self._vlm.create_generator_params()
-            generation_params = LLM._fill_generator_params(generation_params, temperature, top_p, top_k, frequency_penalty, max_generated_tokens, do_sample, seed)
-            return LLMGeneratorCompletion(self._vlm.generate(generation_params, prompt, frames))
-
-    def generate_all(self, prompt, frames,
-                      temperature=None, top_p=None, top_k=None, frequency_penalty=None,
-                      max_generated_tokens=None, do_sample=None, seed=None):
-        """
-        Generate complete text response in non-streaming mode with vision input.
-
-        This method generates the complete response and returns it as a single string.
-        Use this when you need the full response before proceeding, or for batch processing
-        where streaming is not required.
-
-        Args:
-            prompt (str or list): Input prompt. Can be:
-                - str: Raw text prompt, to be inserted to the model as is.
-                - list: Structured chat format with vision content [{"role": "user", "content": [{"type": "text", "text": "..."}, {"type": "image"}]}]
-            frames (list): List of numpy arrays representing input images/frames. Empty list means no vision input. Must match model's expected input format.
-            temperature (float, optional): Sampling temperature (0.0-2.0).
-                Lower values = more deterministic, higher = more creative.
-            top_p (float, optional): Nucleus sampling threshold (0.0-1.0).
-                Only consider tokens with cumulative probability up to this value.
-            top_k (int, optional): Top-k sampling limit. Only consider top-k most likely tokens.
-            frequency_penalty (float, optional): Repetition penalty. Positive values
-                discourage repetition.
-            max_generated_tokens (int, optional): Maximum number of tokens to generate.
-                If None, uses model default.
-            do_sample (bool, optional): Whether to use sampling (True) or greedy decoding (False).
-            seed (int, optional): Random seed for reproducible outputs.
-
-        Returns:
-            str: Complete generated response as a single string.
-
-        Example::
-
-            # Chat-style interaction with image
-            prompt = [
-                {"role": "user", "content": [
-                    {"type": "text", "text": "What objects do you see?"},
-                    {"type": "image"}
-                ]}
-            ]
-            print(vlm.generate_all(prompt, frames=[image_array], temperature=0.1))
-
-            # Simple text generation (without vision)
-            response = vlm.generate_all("Tel me a joke", frames=[])
-
-        Note:
-            The conversation context is automatically maintained between calls.
-            Use ``clear_context()`` to reset the conversation history.
-        """
-        with self.generate(prompt, frames, temperature, top_p, top_k, frequency_penalty,
-                           max_generated_tokens, do_sample, seed) as gen_completion:
-            return gen_completion.read_all()
-
-    def tokenize(self, text):
-        """
-        Tokenize input text using the model's tokenizer.
-
-        This method converts text into a list of token IDs that the model uses internally.
-        Useful for understanding how the model processes input, for debugging and
-        for understanding how many tokens are needed for a given prompt.
-
-        Args:
-            text (str): Text to tokenize.
-
-        Returns:
-            list: List of token IDs (integers) representing the input text.
-
-        Example::
-
-            tokens = vlm.tokenize("Describe this image")
-            print(f"Token IDs: {tokens}")
-            print(f"Number of tokens: {len(tokens)}")
-        """
-        with ExceptionWrapper():
-            return self._vlm.tokenize(text)
-
-    def clear_context(self):
-        """
-        Clear the conversation context/history.
-
-        This method resets the model's memory of previous interactions, starting
-        fresh for the next generation. Call this between separate conversations
-        or when you want to start a new topic without prior context.
-
-        Example::
-
-            # First conversation
-            response1 = vlm.generate_all("What's in this image?", frames=[image1])
-            response2 = vlm.generate_all("What about the colors?", frames=[])  # Will remember image1
-
-            # Clear context and start fresh
-            vlm.clear_context()
-            response3 = vlm.generate_all("What about the colors?", frames=[])  # Won't remember image1
-
-        Note:
-            This operation is irreversible. Once context is cleared, previous
-            conversation history cannot be recovered.
-        """
-        with ExceptionWrapper():
-            self._vlm.clear_context()
-
-    def get_generation_recovery_sequence(self):
-        """
-        Get the current generation recovery sequence.
-
-        Recovery sequences are used to handle error conditions during generation,
-        or for when a generation is interrupted (e.g. by reaching max_generated_tokens).
-        This is an advanced feature for error handling and debugging.
-
-        Returns:
-            str: Recovery sequence string, to be inserted to the model when a generation is interrupted.
-
-        Note:
-            This is an advanced feature. Most users won't need to use this method.
-        """
-        with ExceptionWrapper():
-            return self._vlm.get_generation_recovery_sequence()
-
-    def set_generation_recovery_sequence(self, sequence):
-        """
-        Set a custom generation recovery sequence.
-
-        Recovery sequences are used to handle error conditions during generation,
-        or for when a generation is interrupted (e.g. by reaching max_generated_tokens).
-        This is an advanced feature for error handling and debugging.
-
-        Args:
-            sequence (str): Recovery sequence string, to be inserted to the model when a generation is interrupted.
-
-        Note:
-            This is an advanced feature. Most users won't need to use this method.
-        """
-        with ExceptionWrapper():
-            self._vlm.set_generation_recovery_sequence(sequence)
-
-    def prompt_template(self):
-        """
-        Get the model's prompt template format.
-
-        Different models use different prompt templates (chat template) for translating
-        structured prompts (list of dicts) to raw text prompts.
-        This method returns information about the expected format for this model.
-
-        Returns:
-            str: Prompt template as a string (Jinja2 template).
-
-        Example::
-
-            template = vlm.prompt_template()
-            print(f"Model expects format: {template}")
-
-        Note:
-            When using structured prompts (list of dicts), the template is applied
-            automatically. This method is useful when constructing raw text prompts.
-        """
-        with ExceptionWrapper():
-            return self._vlm.prompt_template()
-
-    def set_stop_tokens(self, stop_tokens):
-        """
-        Set custom stop tokens for generation.
-
-        Stop tokens are sequences that, when generated, will cause the model
-        to stop generating additional text. This is useful for controlling
-        response length and format.
-
-        Args:
-            stop_tokens (list): List of strings that when generated will stop the generation.
-        """
-        with ExceptionWrapper():
-            self._vlm.set_stop_tokens(stop_tokens)
-
-    def get_stop_tokens(self):
-        """
-        Get the currently configured stop tokens.
-
-        Returns:
-            list: List of strings, where each string is a current stop token.
-
-        Example::
-
-            current_stops = vlm.get_stop_tokens()
-            print(f"Current stop tokens: {current_stops}")
-        """
-        with ExceptionWrapper():
-            return self._vlm.get_stop_tokens()
-
-    def input_frame_size(self):
-        """
-        Get the expected input frame size in bytes.
-
-        This method returns the total size in bytes that each input frame should have.
-        Use this to ensure your numpy arrays have the correct total byte size.
-
-        Returns:
-            int: Expected frame size in bytes.
-
-        Example::
-
-            frame_size = vlm.input_frame_size()
-            print(f"Expected frame size: {frame_size} bytes")
-        """
-        with ExceptionWrapper():
-            return self._vlm.input_frame_size()
-
-    def input_frame_shape(self):
-        """
-        Get the expected input frame shape.
-
-        This method returns the expected dimensions for input frames.
-        Use this to ensure your numpy arrays have the correct shape.
-
-        Returns:
-            list: Frame shape as (height, width, channels).
-
-        Example::
-
-            shape = vlm.input_frame_shape()
-            print(f"Expected frame shape: {shape}")
-            # Create a frame with correct shape
-            frame = np.zeros(shape, dtype=np.uint8)
-        """
-        with ExceptionWrapper():
-            return self._vlm.input_frame_shape()
-
-    def input_frame_format_type(self):
-        """
-        Get the expected input frame data type.
-
-        This method returns the expected numpy data type for input frames.
-        Use this to ensure your numpy arrays have the correct dtype.
-
-        Returns:
-            numpy.dtype: Expected data type for input frames.
-
-        Example::
-
-            dtype = vlm.input_frame_format_type()
-            print(f"Expected frame dtype: {dtype}")
-            # Create a frame with correct dtype
-            frame = np.zeros((224, 224, 3), dtype=dtype)
-        """
-        with ExceptionWrapper():
-            return self._vlm.input_frame_format_type()
-
-    def input_frame_format_order(self):
-        """
-        Get the expected input frame format order.
-
-        This method returns the expected channel ordering for input frames
-        (Usually NHWC, which means (height, width, channels)).
-
-        Returns:
-            _pyhailort.hailo_format_order_t: Expected format order for input frames.
-
-        Example::
-
-            format_order = vlm.input_frame_format_order()
-            print(f"Expected format order: {format_order}")
-        """
-        with ExceptionWrapper():
-            return self._vlm.input_frame_format_order()

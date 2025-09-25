@@ -1,7 +1,5 @@
 cmake_minimum_required(VERSION 3.5.0)
 
-project(hailort-examples-c)
-
 add_subdirectory(data_quantization_example)
 add_subdirectory(raw_streams_example)
 add_subdirectory(vstreams_example)

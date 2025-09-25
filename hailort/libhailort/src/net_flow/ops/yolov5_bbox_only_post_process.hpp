@@ -73,16 +73,12 @@ private:
         CHECK(buffer_size == input_buffer.size(), HAILO_INVALID_ARGUMENT,
             "Failed to extract proposals, buffer_size should be {}, but is {}", buffer_size, input_buffer.size());
 
-        const auto input_row_size = padded_shape.width * padded_shape.features;
-        const auto anchor_size = entry_size * padded_shape.width;
-
-        // Optimized: incrementing pointers and offsets instead of calculating offsets with multiplication
+        auto input_row_size = padded_shape.width * padded_shape.features;
         SrcType *input_data = (SrcType*)input_buffer.data();
-        auto row_offset = 0;
         for (uint32_t row = 0; row < shape.height; row++) {
             for (uint32_t col = 0; col < shape.width; col++) {
-                auto entry_idx = row_offset + col;
                 for (uint32_t anchor = 0; anchor < num_of_anchors; anchor++) {
+                    auto entry_idx = (input_row_size * row) + col + ((anchor * entry_size) * padded_shape.width);
                     auto objectness = dequantize_and_sigmoid<DstType, SrcType>(input_data[entry_idx + OBJECTNESS_OFFSET], quant_info);
                     auto bbox = decode_bbox(input_data, entry_idx, X_OFFSET, Y_OFFSET, W_OFFSET, H_OFFSET, 
                         quant_info, anchor, layer_anchors, col, row, shape);
@@ -92,11 +88,8 @@ private:
 
                     add_classes_scores(quant_info, dst_ptr, next_bbox_output_offset, input_data, entry_idx,
                         CLASSES_START_INDEX, padded_shape.width);
-
-                    entry_idx += anchor_size;
                 }
             }
-            row_offset += input_row_size;
         }
         return HAILO_SUCCESS;
     }

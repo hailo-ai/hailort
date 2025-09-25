@@ -7,8 +7,8 @@
  * @brief Includes the classes for the basic functionality of connecting, reading and writing over the connection.
  **/
 
-#ifndef _HAILO_SESSION_HPP_
-#define _HAILO_SESSION_HPP_
+#ifndef _HAILO_RAW_CONNECTION_HPP_
+#define _HAILO_RAW_CONNECTION_HPP_
 
 #include "hailo/expected.hpp"
 #include "hailo/buffer.hpp"
@@ -17,8 +17,6 @@
 #include <chrono>
 #include <functional>
 #include <string>
-
-#define BACKLOG_SIZE (16)
 
 namespace hailort
 {
@@ -41,11 +39,11 @@ public:
      * This function should be used from the server.
      * The returned SessionListener object should be used to accept new clients.
      *
-     * @param[in] port                  The port to listen on.
-     * @param[in] ip                    The IP address to listen on.
+     * @param[in] port       The port to listen on.
+     * @param[in] device_id  The device id to listen on.
      * @return Upon success, returns Expected of a shared pointer of listener, representing the listener object.
     */
-    static Expected<std::shared_ptr<SessionListener>> create_shared(uint16_t port, const std::string &ip = "");
+    static Expected<std::shared_ptr<SessionListener>> create_shared(uint16_t port, const std::string &device_id = "");
 
     /**
      * This function should be called by the server side (device) in order to accept a new connection.
@@ -193,7 +191,6 @@ public:
 
     // Internal
     virtual hailo_status read_async(TransferRequest &&request) = 0;
-    virtual Expected<int> read_fd() = 0;
 
     virtual Expected<Buffer> allocate_buffer(size_t size, hailo_dma_buffer_direction_t direction) = 0;
 
@@ -212,4 +209,4 @@ private:
 
 } // namespace hailort
 
-#endif // _HAILO_SESSION_HPP_
+#endif // _HAILO_RAW_CONNECTION_HPP_

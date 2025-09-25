@@ -25,7 +25,7 @@ namespace vdma {
 
 struct OngoingTransfer {
     TransferRequest request;
-    uint32_t total_descs;
+    uint16_t last_desc;
     // Will be set to != HAILO_SUCCESS if the transfer failed to be launched in BoundaryChannel::launch_transfer_impl
     hailo_status launch_status = HAILO_SUCCESS;
 };
@@ -76,7 +76,8 @@ public:
     // To avoid buffer bindings, one can call this function to statically bind a full buffer to the channel. The buffer
     // size should be exactly desc_page_size() * descs_count() of current descriptors list.
     hailo_status bind_buffer(MappedBufferPtr buffer);
-    hailo_status prepare_transfer(TransferRequest &&transfer_request);
+
+    hailo_status map_and_bind_buffer(hailort::TransferBuffer &buffer);
 
     // TODO: rename BoundaryChannel::get_max_ongoing_transfers to BoundaryChannel::get_max_parallel_transfers (HRT-13513)
     size_t get_max_ongoing_transfers(size_t transfer_size) const;
@@ -98,6 +99,8 @@ public:
 
     bool should_measure_timestamp() const { return m_latency_meter != nullptr; }
 
+    void remove_buffer_binding();
+
     /**
      * Checks if the channel is ready to accept a new transfer of the given size.
      */
@@ -109,16 +112,18 @@ private:
     void on_request_complete(std::unique_lock<std::mutex> &lock, TransferRequest &request,
         hailo_status complete_status);
     hailo_status launch_and_enqueue_transfer(TransferRequest &&transfer_request, bool queue_failed_transfer = false);
-    Expected<std::tuple<std::vector<HailoRTDriver::TransferBuffer>, uint32_t>> prepare_driver_transfer(TransferRequest &transfer_request);
-    Expected<uint32_t> launch_transfer_impl(TransferRequest &transfer_request);
+    Expected<uint16_t> launch_transfer_impl(TransferRequest &transfer_request);
 
     static bool is_desc_between(uint16_t begin, uint16_t end, uint16_t desc);
+    hailo_status validate_bound_buffer(TransferRequest &transfer_request);
 
-    bool is_cyclic_buffer();
+    Expected<bool> should_bind_buffer(TransferRequest &transfer_request);
+    static Expected<bool> is_same_buffer(MappedBufferPtr mapped_buff, TransferBuffer &transfer_buffer);
     Expected<std::vector<TransferRequest>> split_messages(TransferRequest &&transfer_request);
 
     size_t get_chunk_size() const;
-    InterruptsDomain get_first_interrupts_domain() const;
+
+    uint16_t free_descs();
 
     const vdma::ChannelId m_channel_id;
     const Direction m_direction;
@@ -127,9 +132,7 @@ private:
     DescriptorList m_desc_list; // Host side descriptor list
     const std::string m_stream_name;
     // Since all desc list sizes are a power of 2, we can use IsPow2Tag to optimize the circular buffer
-    uint16_t m_num_launched;
-    uint16_t m_num_programmed;
-    std::atomic<uint32_t> m_num_free_descs;
+    CircularBuffer<IsPow2Tag> m_descs;
     bool m_is_channel_activated;
     std::mutex m_channel_mutex;
     // * m_pending_transfers holds transfers that are waiting to be bound to the descriptor list.

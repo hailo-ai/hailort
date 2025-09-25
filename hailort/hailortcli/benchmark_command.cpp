@@ -11,7 +11,6 @@
 #include "CLI/App.hpp"
 #include "hailortcli.hpp"
 #include "infer_stats_printer.hpp"
-#include "run2/run2_command.hpp"
 
 #include <iostream>
 
@@ -62,11 +61,62 @@ BenchmarkCommand::BenchmarkCommand(CLI::App &parent_app) :
 
 hailo_status BenchmarkCommand::execute()
 {
+    std::cout << "Starting Measurements..." << std::endl;
+
+    std::cout << "Measuring FPS in HW-only mode" << std::endl;
+    TRY(auto hw_only_mode_info, hw_only_mode(), "Measuring FPS in HW-only mode failed");
+
+    std::cout << "Measuring FPS (and Power on supported platforms) in streaming mode" << std::endl; 
+    TRY(auto streaming_mode_info, fps_streaming_mode(), "Measuring FPS (and Power on supported platforms) in streaming mode failed");
+
     // TODO - HRT-6931 - measure latency only in the case of single device.
-    // TODO support overall-latency measurement (HRT-18357)
-    // TODO support hardware only measurements (HRT-18357)
-    // TODO support json and csv output (HRT-18357)
-    return run2_benchmark(m_params.hef_path, m_params.time_to_run);
+    std::cout << "Measuring HW Latency" << std::endl;
+    TRY(auto latency_info, latency(), "Measuring Latency failed");
+
+    assert(hw_only_mode_info.network_group_results().size() == streaming_mode_info.network_group_results().size());
+    assert(latency_info.network_group_results().size() == streaming_mode_info.network_group_results().size());
+
+    std::cout << std::endl;
+    std::cout << "=======" << std::endl;
+    std::cout << "Summary" << std::endl;
+    std::cout << "=======" << std::endl;
+
+    for (auto &hw_only_res : hw_only_mode_info.network_group_results()) {
+        auto network_group_name = hw_only_res.network_group_name();
+        auto streaming_res = std::find_if(streaming_mode_info.network_group_results().begin(), streaming_mode_info.network_group_results().end(),
+            [network_group_name] (NetworkGroupInferResult &infer_results) { return (infer_results.network_group_name() == network_group_name); });
+        CHECK(streaming_mode_info.network_group_results().end() != streaming_res, HAILO_INTERNAL_FAILURE, "Failed to fun streaming results for network group {}", network_group_name);
+
+        auto latency_res = std::find_if(latency_info.network_group_results().begin(), latency_info.network_group_results().end(),
+            [network_group_name] (NetworkGroupInferResult &infer_results) { return (infer_results.network_group_name() == network_group_name); });
+        CHECK(latency_info.network_group_results().end() != latency_res, HAILO_INTERNAL_FAILURE, "Failed to fun latency results for network group {}", network_group_name);
+
+        std::cout << "FPS     (hw_only)                 = " << hw_only_res.fps().value() <<std::endl;
+        std::cout << "        (streaming)               = " << streaming_res->fps().value() <<std::endl;
+        if (auto hw_latency = latency_res->hw_latency()) {
+            std::cout << "Latency (hw)                      = " << InferStatsPrinter::latency_result_to_ms(hw_latency.value()) << " ms" << std::endl;
+        }
+        if (auto overall_latency = latency_res->overall_latency()) {
+            std::cout << "        (overall)                 = " << InferStatsPrinter::latency_result_to_ms(overall_latency.value()) << " ms" << std::endl;
+        }
+    }
+    if (streaming_mode_info.power_measurements_are_valid) {
+        for (const auto &pair : streaming_mode_info.m_power_measurements) {
+            std::cout << "Device " << pair.first << ":" << std::endl;
+            const auto &data = pair.second->data();
+            const auto &power_units = pair.second->power_units();
+            std::cout << "  Power in streaming mode (average) = " << data.average_value << " " << power_units << std::endl;
+            std::cout << "                          (max)     = " << data.max_value << " " << power_units << std::endl;
+        }
+    }
+
+    if (!m_csv_file_path.empty()){
+        m_params.csv_output = m_csv_file_path;
+        TRY(auto printer, InferStatsPrinter::create(m_params, false), "Failed to initialize infer stats printer");
+        printer.print_benchmark_csv_header();
+        printer.print_benchmark_csv(hw_only_mode_info, streaming_mode_info, latency_info);
+    }
+    return HAILO_SUCCESS;
 }
 
 Expected<InferResult> BenchmarkCommand::hw_only_mode()

@@ -90,8 +90,6 @@ public:
         WaitForCacheUpdated,
         Sleep,
         Halt,
-        ConfigChannelPreAllowInputDataflowAction,
-        DisableDataChannelsAction,
     };
 
     ContextSwitchConfigAction(ContextSwitchConfigAction &&) = default;
@@ -171,7 +169,6 @@ private:
 };
 
 class ConfigBuffer;
-class CopiedConfigBuffer;
 
 class WriteDataCcwAction : public ContextSwitchConfigAction
 {
@@ -190,7 +187,7 @@ public:
 
     virtual size_t size() const { return m_size; }
     virtual uint8_t config_stream_index() const { return m_config_stream_index; }
-    virtual hailo_status write_to_config_buffer(CopiedConfigBuffer& config_buffer, bool should_support_pre_fetch);
+    virtual hailo_status write_to_config_buffer(ConfigBuffer& config_buffer, bool should_support_pre_fetch);
     uint16_t total_ccw_burst() const { return m_total_ccw_burst; }
 
 protected:
@@ -216,7 +213,7 @@ public:
     virtual ~WriteDataCcwActionByBuffer() = default;
 
     virtual size_t size() const override { return m_data.size(); }
-    virtual hailo_status write_to_config_buffer(CopiedConfigBuffer& config_buffer, bool should_support_pre_fetch) override;
+    virtual hailo_status write_to_config_buffer(ConfigBuffer& config_buffer, bool should_support_pre_fetch) override;
 
 private:
     WriteDataCcwActionByBuffer(Buffer &&data, uint8_t config_stream_index,
@@ -1017,38 +1014,6 @@ public:
 
 private:
     HaltAction();
-};
-
-class ConfigChannelPreAllowInputDataflowAction : public ContextSwitchConfigAction
-{
-public:
-    static Expected<ContextSwitchConfigActionPtr> create();
-    ConfigChannelPreAllowInputDataflowAction(ConfigChannelPreAllowInputDataflowAction &&) = default;
-    ConfigChannelPreAllowInputDataflowAction(const ConfigChannelPreAllowInputDataflowAction &) = delete;
-    ConfigChannelPreAllowInputDataflowAction &operator=(ConfigChannelPreAllowInputDataflowAction &&) = delete;
-    ConfigChannelPreAllowInputDataflowAction &operator=(const ConfigChannelPreAllowInputDataflowAction &) = delete;
-    virtual ~ConfigChannelPreAllowInputDataflowAction() = default;
-    virtual bool supports_repeated_block() const override;
-    virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
-
-private:
-    explicit ConfigChannelPreAllowInputDataflowAction();
-};
-
-class DisableDataChannelsAction : public ContextSwitchConfigAction
-{
-public:
-    static Expected<ContextSwitchConfigActionPtr> create();
-    DisableDataChannelsAction(DisableDataChannelsAction &&) = default;
-    DisableDataChannelsAction(const DisableDataChannelsAction &) = delete;
-    DisableDataChannelsAction &operator=(DisableDataChannelsAction &&) = delete;
-    DisableDataChannelsAction &operator=(const DisableDataChannelsAction &) = delete;
-    virtual ~DisableDataChannelsAction() = default;
-    virtual bool supports_repeated_block() const override;
-    virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
-
-private:
-    explicit DisableDataChannelsAction();
 };
 
 } /* namespace hailort */

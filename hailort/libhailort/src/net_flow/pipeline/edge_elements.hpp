@@ -64,7 +64,7 @@ public:
     static Expected<std::shared_ptr<LastAsyncElement>> create(const std::string &name, const ElementBuildParams &build_params,
         size_t frame_size, std::shared_ptr<AsyncPipeline> async_pipeline);
     LastAsyncElement(const std::string &name, DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
-        PipelineBufferPoolPtr buffer_pool, std::shared_ptr<AsyncPipeline> async_pipeline);
+        BufferPoolPtr buffer_pool, std::shared_ptr<AsyncPipeline> async_pipeline);
     virtual ~LastAsyncElement() = default;
 
     virtual void run_push_async(PipelineBuffer &&buffer, const PipelinePad &sink) override;
@@ -80,13 +80,13 @@ public:
     virtual hailo_status execute_deactivate() override { return HAILO_SUCCESS; };
     virtual hailo_status execute_dequeue_user_buffers(hailo_status error_status) override;
 
-    virtual PipelineBufferPoolPtr get_buffer_pool(const std::string &/*pad_name*/) const override
+    virtual BufferPoolPtr get_buffer_pool(const std::string &/*pad_name*/) const override
     {
         return m_pool;
     }
 
 private:
-    PipelineBufferPoolPtr m_pool;
+    BufferPoolPtr m_pool;
 };
 
 // An element with one source pad only (generates data)

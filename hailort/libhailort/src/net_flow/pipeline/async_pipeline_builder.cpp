@@ -44,12 +44,8 @@ Expected<std::unordered_map<std::string, hailo_format_t>> AsyncPipelineBuilder::
             CHECK_AS_EXPECTED(contains(named_stream_infos, stream_name), HAILO_INTERNAL_FAILURE);
             const auto &stream_info = named_stream_infos.at(stream_name);
 
-            if (IS_PP_DISABLED()) {
-                expanded_input_format[input_format.first] = stream_info.format;
-            } else {
-                expanded_input_format[input_format.first] = HailoRTDefaults::expand_auto_format(input_format.second,
-                    stream_info.format);
-            }
+            expanded_input_format[input_format.first] = HailoRTDefaults::expand_auto_format(input_format.second,
+                stream_info.format);
         }
     }
     return expanded_input_format;
@@ -67,12 +63,8 @@ Expected<std::unordered_map<std::string, hailo_format_t>> AsyncPipelineBuilder::
         CHECK_AS_EXPECTED(contains(named_stream_infos, stream_name), HAILO_INTERNAL_FAILURE);
         const auto &stream_info = named_stream_infos.at(stream_name);
 
-        if (IS_PP_DISABLED()) {
-            expanded_output_format[output_format.first] = stream_info.format;
-        } else {
-            expanded_output_format[output_format.first] = HailoRTDefaults::expand_auto_format(output_format.second,
-                stream_info.format);
-        }
+        expanded_output_format[output_format.first] = HailoRTDefaults::expand_auto_format(output_format.second,
+            stream_info.format);
     }
     return expanded_output_format;
 }

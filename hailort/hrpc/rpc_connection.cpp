@@ -32,7 +32,17 @@ Expected<RpcConnection::Params> RpcConnection::Params::create(std::shared_ptr<Se
     TRY(auto read_rpc_headers_allocator, create_dma_allocator(MAX_READ_TRANSFERS, sizeof(rpc_message_header_t), HAILO_DMA_BUFFER_DIRECTION_D2H));
     TRY(auto read_rpc_body_allocator, create_dma_allocator(MAX_READ_TRANSFERS, READ_RPC_BUFFER_MAX_SIZE, HAILO_DMA_BUFFER_DIRECTION_D2H));
 
-    RpcConnection::Params params = { raw, write_rpc_headers_allocator, read_rpc_headers_allocator, read_rpc_body_allocator };
+    auto read_mutex = make_shared_nothrow<std::mutex>();
+    CHECK_NOT_NULL(read_mutex, HAILO_OUT_OF_HOST_MEMORY);
+
+    auto read_cv = make_shared_nothrow<std::condition_variable>();
+    CHECK_NOT_NULL(read_cv, HAILO_OUT_OF_HOST_MEMORY);
+
+    auto write_cv = make_shared_nothrow<std::condition_variable>();
+    CHECK_NOT_NULL(write_cv, HAILO_OUT_OF_HOST_MEMORY);
+
+    RpcConnection::Params params = { raw, write_rpc_headers_allocator, read_rpc_headers_allocator, read_rpc_body_allocator, read_mutex, read_cv };
+
     return params;
 }
 
@@ -86,11 +96,11 @@ hailo_status RpcConnection::read_buffers(std::vector<TransferBuffer> &&buffers)
     transfer_request.transfer_buffers = std::move(buffers);
     transfer_request.callback = [&] (hailo_status status) {
         {
-            std::unique_lock<std::mutex> lock(m_read_mutex);
+            std::unique_lock<std::mutex> lock(*m_read_mutex);
             assert(status != HAILO_UNINITIALIZED);
             transfer_status = status;
         }
-        m_read_cv.notify_one();
+        m_read_cv->notify_one();
     };
 
     status = m_session->read_async(std::move(transfer_request));
@@ -99,33 +109,12 @@ hailo_status RpcConnection::read_buffers(std::vector<TransferBuffer> &&buffers)
     }
     CHECK_SUCCESS(status);
 
-    std::unique_lock<std::mutex> lock(m_read_mutex);
-    CHECK(m_read_cv.wait_for(lock, TRANSFER_TIMEOUT, [&] { return transfer_status != HAILO_UNINITIALIZED; }),
+    std::unique_lock<std::mutex> lock(*m_read_mutex);
+    CHECK(m_read_cv->wait_for(lock, TRANSFER_TIMEOUT, [&] { return transfer_status != HAILO_UNINITIALIZED; }),
         HAILO_TIMEOUT, "Timeout waiting for transfer completion");
 
     return transfer_status;
 }
-
-#ifdef __linux__
-
-Expected<std::shared_ptr<FileDescriptor>> RpcConnection::read_dmabuf_fd()
-{
-    TRY(auto fd, m_session->read_fd());
-
-    auto fd_ptr = make_shared_nothrow<FileDescriptor>(fd);
-    CHECK_NOT_NULL(fd_ptr, HAILO_OUT_OF_HOST_MEMORY);
-
-    return fd_ptr;
-}
-
-#else
-
-Expected<std::shared_ptr<FileDescriptor>> RpcConnection::read_dmabuf_fd()
-{
-    return make_unexpected(HAILO_NOT_SUPPORTED);
-}
-
-#endif
 
 hailo_status RpcConnection::wait_for_write_message_async_ready(size_t buffer_size, std::chrono::milliseconds timeout)
 {
@@ -203,13 +192,7 @@ hailo_status RpcConnection::close()
         }
     }
 
-    m_is_active = false;
     return status;
-}
-
-bool RpcConnection::is_closed()
-{
-    return !m_is_active;
 }
 
 } // namespace hailort

@@ -1,8 +1,6 @@
 cmake_minimum_required(VERSION 3.5.0)
 
-project(hailort-examples-c-raw-async-streams-single-thread)
-
-find_package(HailoRT 5 REQUIRED)
+find_package(HailoRT 4.23.0 EXACT REQUIRED)
 
 SET_SOURCE_FILES_PROPERTIES(raw_async_streams_single_thread_example.c PROPERTIES LANGUAGE C)
 

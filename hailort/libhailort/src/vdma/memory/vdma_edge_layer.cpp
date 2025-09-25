@@ -35,10 +35,6 @@ Expected<std::unique_ptr<VdmaEdgeLayer>> VdmaEdgeLayer::create(HailoRTDriver &dr
     case Type::CONTINUOUS:
     {
         auto continuous_buffer = std::static_pointer_cast<ContinuousBuffer>(backing_buffer);
-
-        CHECK(total_desc_count >= driver.get_ccb_desc_params().min_descs_count, HAILO_INTERNAL_FAILURE,
-            "Total descriptor count ({}) must be greater/equal than the minimum descriptor count ({})",
-            total_desc_count, driver.get_ccb_desc_params().min_descs_count);
         TRY(auto continuous_edge_layer, ContinuousEdgeLayer::create(std::move(continuous_buffer), size, buffer_offset,
             desc_page_size, total_desc_count));
         auto edge_layer_ptr = make_unique_nothrow<ContinuousEdgeLayer>(std::move(continuous_edge_layer));

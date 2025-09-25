@@ -11,7 +11,6 @@
 #include "hailo/hailort.h"
 
 #include "transform/eigen.hpp"
-#include <cmath>
 
 #ifndef _MSC_VER
 #pragma GCC diagnostic push
@@ -111,26 +110,23 @@ Expected<std::shared_ptr<Op>> Yolov5SegPostProcess::create(std::shared_ptr<Yolov
         Buffer::create(transformed_proto_layer_frame_size));
     TRY(auto mask_mult_result_buffer,
         Buffer::create(proto_layer_metadata.shape.height * proto_layer_metadata.shape.width * sizeof(float32_t)));
-    TRY(auto crop_buffer,
-        Buffer::create(transformed_proto_layer_frame_size));
 
     const auto image_size = static_cast<uint32_t>(metadata->yolov5_config().image_width) * static_cast<uint32_t>(metadata->yolov5_config().image_height);
     TRY(auto resized_buffer, Buffer::create(image_size * sizeof(float32_t)));
 
     auto op = std::shared_ptr<Yolov5SegPostProcess>(new (std::nothrow) Yolov5SegPostProcess(std::move(metadata),
-        std::move(mask_mult_result_buffer), std::move(resized_buffer), std::move(transformed_proto_buffer), std::move(crop_buffer)));
+        std::move(mask_mult_result_buffer), std::move(resized_buffer), std::move(transformed_proto_buffer)));
     CHECK_NOT_NULL_AS_EXPECTED(op, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::shared_ptr<Op>(std::move(op));
 }
 
 Yolov5SegPostProcess::Yolov5SegPostProcess(std::shared_ptr<Yolov5SegOpMetadata> metadata,
-    Buffer &&mask_mult_result_buffer, Buffer &&resized_mask, Buffer &&transformed_proto_buffer, Buffer &&crop_buffer)
+    Buffer &&mask_mult_result_buffer, Buffer &&resized_mask, Buffer &&transformed_proto_buffer)
     : YOLOv5PostProcessOp(static_cast<std::shared_ptr<Yolov5OpMetadata>>(metadata)), m_metadata(metadata),
     m_mask_mult_result_buffer(std::move(mask_mult_result_buffer)),
     m_resized_mask_to_image_dim(std::move(resized_mask)),
-    m_transformed_proto_buffer(std::move(transformed_proto_buffer)),
-    m_crop_buffer(std::move(crop_buffer))
+    m_transformed_proto_buffer(std::move(transformed_proto_buffer))
 {}
 
 hailo_status Yolov5SegPostProcess::execute(const std::map<std::string, MemoryView> &inputs, std::map<std::string, MemoryView> &outputs)
@@ -187,155 +183,48 @@ void Yolov5SegPostProcess::mult_mask_vector_and_proto_matrix(const DetectionBbox
 {
     static auto shape = get_proto_layer_shape();
     static uint32_t proto_mat_cols = shape.height * shape.width;
-    uint32_t tensor_size = proto_mat_cols;
-
-
-    float32_t* mask_buffer = m_transformed_proto_buffer.as_pointer<float32_t>();
-    float32_t* crop_buffer = m_crop_buffer.as_pointer<float32_t>();
-    if (m_is_crop_optimization_on) {
-        // early crop
-        auto x_min = detection.get_bbox_x_min(shape.width);
-        auto y_min = detection.get_bbox_y_min(shape.height);
-        auto box_width = detection.get_bbox_width(shape.width, m_is_crop_optimization_on);
-        auto box_height = detection.get_bbox_height(shape.height, m_is_crop_optimization_on);
-
-        auto mask_size = static_cast<uint32_t>(detection.get_mask_size_in_bytes(static_cast<uint32_t>(shape.height),
-            static_cast<uint32_t>(shape.width), m_is_crop_optimization_on));
-        for (uint32_t c = 0; c < MASK_COEFFICIENT_SIZE; c++) {
-            for (uint32_t i = 0; i < box_height; i++) {
-                for (uint32_t j = 0; j < box_width; j++) {
-                    auto features_in = proto_mat_cols * c;
-                    auto features_out = mask_size * c;
-                    auto height_in = shape.width * (i + y_min);
-                    auto height_out = box_width * i;
-                    auto width_in = j + x_min;
-                    auto width_out = j;
-                    crop_buffer[features_out + height_out + width_out] =
-                        mask_buffer[features_in + height_in + width_in];
-                }
-            }
-        }
-        tensor_size = mask_size;
-    }
 
     Eigen::Map<Eigen::Matrix<float, MASK_COEFFICIENT_SIZE, Eigen::Dynamic, Eigen::RowMajor>> proto_layer(
-        m_is_crop_optimization_on ? crop_buffer : mask_buffer, MASK_COEFFICIENT_SIZE, tensor_size);
+        (float32_t*)m_transformed_proto_buffer.data(), MASK_COEFFICIENT_SIZE, proto_mat_cols);
 
     Eigen_Vector32f coefficients(detection.m_coefficients.data());
+    auto mult_result = (coefficients.transpose() * proto_layer);
+
     Eigen::Map<Eigen::Matrix<float, VECTOR_DIM, Eigen::Dynamic, Eigen::RowMajor>> result(
-            (float32_t*)m_mask_mult_result_buffer.data(), VECTOR_DIM, tensor_size);
-
-    if (m_is_nn_resize_optimization_on) {
-        // We do a math trick on mask threshold here
-        result = coefficients.transpose() * proto_layer;
-    } else {
-        result = 1.0f / (1.0f + (-1*(coefficients.transpose() * proto_layer)).array().exp());
-
-    }
-}
-
-void resize_nearest_neighbor(const float32_t* input, uint32_t in_w, uint32_t in_h,
-                             float32_t* output, uint32_t out_w, uint32_t out_h) {
-    float32_t scale_x = static_cast<float32_t>(out_w) / static_cast<float32_t>(in_w);
-    float32_t scale_y = static_cast<float32_t>(out_h) / static_cast<float32_t>(in_h);
-
-    uint32_t out_y_start = 0u;
-    for (uint32_t in_y = 0u; in_y < in_h; ++in_y) {
-        uint32_t out_y_end = static_cast<uint32_t>(static_cast<float32_t>(in_y + 1u) * scale_y);
-        out_y_end = std::min(out_y_end, out_h);
-
-        uint32_t out_x_start = 0u;
-        for (uint32_t in_x = 0u; in_x < in_w; ++in_x) {
-            uint32_t out_x_end = static_cast<uint32_t>(static_cast<float32_t>(in_x + 1u) * scale_x);
-            out_x_end = std::min(out_x_end, out_w);
-
-            float32_t val = input[in_y * in_w + in_x];
-
-            // Fill the region this input pixel maps to
-            for (uint32_t y = out_y_start; y < out_y_end; ++y) {
-                for (uint32_t x = out_x_start; x < out_x_end; ++x) {
-                    output[y * out_w + x] = val;
-                }
-            }
-
-            // Prepare for next X block
-            out_x_start = out_x_end;
-        }
-        // Prepare for next Y block
-        out_y_start = out_y_end;
-    }
+        (float32_t*)m_mask_mult_result_buffer.data(), VECTOR_DIM, proto_mat_cols);
+    result = 1.0f / (1.0f + (-1*mult_result).array().exp());
 }
 
 hailo_status Yolov5SegPostProcess::crop_and_copy_mask(const DetectionBbox &detection, MemoryView &buffer, uint32_t buffer_offset)
 {
     auto &yolov5_config = m_metadata->yolov5_config();
     auto mask_threshold = m_metadata->yolov5seg_config().mask_threshold;
-    if (m_is_nn_resize_optimization_on) {
-        // We do inverse sigmoid on mask_threshold instead of sigmoid on the mask
-        mask_threshold = std::log(mask_threshold / (1 - mask_threshold));
-    }
 
     // Based on Bilinear interpolation algorithm
     // TODO: HRT-11734 - Improve performance by resizing only the mask part if possible
     auto proto_layer_shape = get_proto_layer_shape();
     float32_t* resized_mask_to_image_dim_ptr = (float32_t*)m_resized_mask_to_image_dim.data();
-    uint32_t proto_width = 0;
-    uint32_t proto_height = 0;
-    uint32_t image_width = 0;
-    uint32_t image_height = 0;
-    if (m_is_crop_optimization_on) {
-        proto_width = detection.get_bbox_width(proto_layer_shape.width, m_is_crop_optimization_on);
-        proto_height = detection.get_bbox_height(proto_layer_shape.height, m_is_crop_optimization_on);
-        image_width = detection.get_bbox_width(static_cast<uint32_t>(yolov5_config.image_width), m_is_crop_optimization_on);
-        image_height = detection.get_bbox_height(static_cast<uint32_t>(yolov5_config.image_height), m_is_crop_optimization_on);
-    } else {
-        proto_width = proto_layer_shape.width;
-        proto_height = proto_layer_shape.height;
-        image_width = static_cast<uint32_t>(yolov5_config.image_width);
-        image_height = static_cast<uint32_t>(yolov5_config.image_height);
-    }
-    if (m_is_nn_resize_optimization_on) {
-        resize_nearest_neighbor((float32_t*)m_mask_mult_result_buffer.data(), proto_width,
-            proto_height, resized_mask_to_image_dim_ptr, image_width,
-            image_height);
-    } else {
-        stbir_resize_float_generic((float32_t*)m_mask_mult_result_buffer.data(), proto_width,
-            proto_height, 0, resized_mask_to_image_dim_ptr, image_width,
-            image_height, 0, 1, STBIR_ALPHA_CHANNEL_NONE, 0,
-            STBIR_EDGE_CLAMP, STBIR_FILTER_TRIANGLE, STBIR_COLORSPACE_LINEAR, NULL);
-    }
+    stbir_resize_float_generic((float32_t*)m_mask_mult_result_buffer.data(), proto_layer_shape.width,
+        proto_layer_shape.height, 0, resized_mask_to_image_dim_ptr, static_cast<uint32_t>(yolov5_config.image_width),
+        static_cast<uint32_t>(yolov5_config.image_height), 0, 1, STBIR_ALPHA_CHANNEL_NONE, 0,
+        STBIR_EDGE_CLAMP, STBIR_FILTER_TRIANGLE, STBIR_COLORSPACE_LINEAR, NULL);
 
-    // write result
+    auto x_min = static_cast<uint32_t>(MAX(std::ceil(detection.m_bbox.x_min * yolov5_config.image_width), 0.0f));
+    auto x_max = static_cast<uint32_t>(MIN(std::ceil(detection.m_bbox.x_max * yolov5_config.image_width), yolov5_config.image_width));
+    auto y_min = static_cast<uint32_t>(MAX(std::ceil(detection.m_bbox.y_min * yolov5_config.image_height), 0.0f));
+    auto y_max = static_cast<uint32_t>(MIN(std::ceil(detection.m_bbox.y_max * yolov5_config.image_height), yolov5_config.image_height));
+    auto box_width = detection.get_bbox_width(yolov5_config.image_width);
+
     uint8_t *dst_mask = (uint8_t*)(buffer.data() + buffer_offset);
-    if (m_is_crop_optimization_on) {
-        for (uint32_t i = 0; i < image_height; i++) {
-            for (uint32_t j = 0; j < image_width; j++) {
-                auto cropped_mask_idx = (i * image_width) + j;
+    for (uint32_t i = y_min; i <= y_max; i++) {
+        for (uint32_t j = x_min; j <= x_max; j++) {
+            auto image_mask_idx = (i * static_cast<uint32_t>(yolov5_config.image_width)) + j;
+            auto cropped_mask_idx = ((i-y_min) * box_width) + (j-x_min);
 
-                if (resized_mask_to_image_dim_ptr[cropped_mask_idx] > mask_threshold) {
-                    dst_mask[cropped_mask_idx] = 1;
-                } else {
-                    dst_mask[cropped_mask_idx] = 0;
-                }
-            }
-        }
-    } else {
-        auto x_min = static_cast<uint32_t>(MAX(std::ceil(detection.m_bbox.x_min * yolov5_config.image_width), 0.0f));
-        auto x_max = static_cast<uint32_t>(MIN(std::ceil(detection.m_bbox.x_max * yolov5_config.image_width), yolov5_config.image_width));
-        auto y_min = static_cast<uint32_t>(MAX(std::ceil(detection.m_bbox.y_min * yolov5_config.image_height), 0.0f));
-        auto y_max = static_cast<uint32_t>(MIN(std::ceil(detection.m_bbox.y_max * yolov5_config.image_height), yolov5_config.image_height));
-        auto box_width = detection.get_bbox_width(static_cast<uint32_t>(yolov5_config.image_width), m_is_crop_optimization_on);
-
-        for (uint32_t i = y_min; i <= y_max; i++) {
-            for (uint32_t j = x_min; j <= x_max; j++) {
-                auto image_mask_idx = (i * static_cast<uint32_t>(yolov5_config.image_width)) + j;
-                auto cropped_mask_idx = ((i-y_min) * box_width) + (j-x_min);
-
-                if (resized_mask_to_image_dim_ptr[image_mask_idx] > mask_threshold) {
-                    dst_mask[cropped_mask_idx] = 1;
-                } else {
-                    dst_mask[cropped_mask_idx] = 0;
-                }
+            if (resized_mask_to_image_dim_ptr[image_mask_idx] > mask_threshold) {
+                dst_mask[cropped_mask_idx] = 1;
+            } else {
+                dst_mask[cropped_mask_idx] = 0;
             }
         }
     }

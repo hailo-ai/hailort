@@ -22,6 +22,7 @@ void ConfiguredNetworkGroupWrapper::bind(py::module &m)
         .def("wait_for_activation", &ConfiguredNetworkGroupWrapper::wait_for_activation)
         .def("InputVStreams", &ConfiguredNetworkGroupWrapper::InputVStreams)
         .def("OutputVStreams", &ConfiguredNetworkGroupWrapper::OutputVStreams)
+        .def("get_udp_rates_dict", &ConfiguredNetworkGroupWrapper::get_udp_rates_dict)
         .def("set_scheduler_timeout", &ConfiguredNetworkGroupWrapper::set_scheduler_timeout)
         .def("set_scheduler_threshold", &ConfiguredNetworkGroupWrapper::set_scheduler_threshold)
         .def("set_scheduler_priority", &ConfiguredNetworkGroupWrapper::set_scheduler_priority)
@@ -42,6 +43,7 @@ void ConfiguredNetworkGroupWrapper::bind(py::module &m)
         .def("get_stream_names_from_vstream_name", &ConfiguredNetworkGroupWrapper::get_stream_names_from_vstream_name)
         .def("make_input_vstream_params", &ConfiguredNetworkGroupWrapper::make_input_vstream_params)
         .def("make_output_vstream_params", &ConfiguredNetworkGroupWrapper::make_output_vstream_params)
+        .def(py::pickle(&ConfiguredNetworkGroupWrapper::pickle_get_state, &ConfiguredNetworkGroupWrapper::pickle_set_state))
         ;
 }
 

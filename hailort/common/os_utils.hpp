@@ -15,10 +15,6 @@
 #include "hailo/hailort_common.hpp"
 
 #include "common/logger_macros.hpp"
-#include "common/internal_env_vars.hpp"
-#include "common/utils.hpp"
-
-#include <sstream>
 
 
 namespace hailort
@@ -70,34 +66,7 @@ public:
     static void set_current_thread_name(const std::string &name);
     static hailo_status set_current_thread_affinity(uint8_t cpu_index);
     static size_t get_page_size();
-    static int set_environment_variable(const std::string &name, const std::string &value);
-
-    static size_t get_dma_able_alignment()
-    {
-        // Note: Following is a HACK to allow transfers aligned to 512 bytes for specific customers. Although DMA should
-        // theoretically work as long as transfers are aligned to descriptor-page-size (512 by default), this
-        // configuration is NOT TESTED and may cause unexpected behaviour in many cases.
-        static size_t alignment = get_page_size();
-        static std::once_flag flag;
-
-        std::call_once(flag, [] () {
-            if (auto alignment_str = get_env_variable(HAILO_CUSTOM_DMA_ALIGNMENT_ENV_VAR)) {
-                std::stringstream ss(alignment_str.release());
-                size_t temp_alignment;
-                if (!(ss >> temp_alignment)) { // Check 'ss' contains a valid unsigned int.
-                    LOGGER__WARNING("Failed to parse custom DMA alignment to size_t");
-                    return;
-                }
-                if (temp_alignment < 64 || !is_powerof2(temp_alignment)) {
-                    LOGGER__WARNING("Illegal custom alignment: {}. Must be a power of 2 greater than 64.");
-                    return;
-                }
-                alignment = temp_alignment;
-            }
-        });
-
-        return alignment;
-    }
+    static size_t get_dma_able_alignment();
 };
 
 } /* namespace hailort */

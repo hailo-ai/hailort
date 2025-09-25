@@ -39,15 +39,14 @@ public:
     static const uint32_t DETECTION_WITH_BYTE_MASK_SIZE = sizeof(hailo_detection_with_byte_mask_t);
     static const uint32_t DETECTION_COUNT_SIZE = sizeof(uint16_t);
     static const uint32_t MAX_DEFUSED_LAYER_COUNT = 9;
-    // TODO: HRT-18046 - Fix alignment for Mars
-    static const size_t   HW_DATA_ALIGNMENT = 8;
+    static const size_t HW_DATA_ALIGNMENT = 8;
     static const uint32_t MUX_INFO_COUNT = 32;
     static const uint32_t MAX_MUX_PREDECESSORS = 4;
     static const uint16_t ETH_INPUT_BASE_PORT = 32401;
     static const uint16_t ETH_OUTPUT_BASE_PORT = 32501;
     static const uint32_t MAX_NMS_BURST_SIZE = 65536;
-    static const size_t   DMA_ABLE_ALIGNMENT_WRITE_HW_LIMITATION = 64;
-    static const size_t   DMA_ABLE_ALIGNMENT_READ_HW_LIMITATION = 4096;
+    static const size_t DMA_ABLE_ALIGNMENT_WRITE_HW_LIMITATION = 64;
+    static const size_t DMA_ABLE_ALIGNMENT_READ_HW_LIMITATION = 4096;
 
     /**
      * Deprecated: use get_nms_by_class_host_shape_size instead
@@ -162,7 +161,7 @@ public:
     }
 
     /**
-     * Gets a string representation of the given format type.
+     * Gets a string reprenestation of the given format type.
      *
      * @param[in] type             A ::hailo_format_type_t object.
      * @return The string representation of the format type.
@@ -180,12 +179,12 @@ public:
         case HAILO_FORMAT_TYPE_AUTO:
             return "AUTO";
         default:
-            return "INVALID_FORMAT_TYPE";
+            return "Nan";
         }
     }
 
     /**
-     * Gets a string representation of the given power mode.
+     * Gets a string reprenestation of the given power mode.
      *
      * @param[in] mode             A ::hailo_power_mode_t object.
      * @return The string representation of the power mode.
@@ -199,12 +198,12 @@ public:
         case HAILO_POWER_MODE_ULTRA_PERFORMANCE:
             return "ULTRA_PERFORMANCE";
         default:
-            return "INVALID_POWER_MODE";
+            return "Nan";
         }
     }
 
     /**
-     * Gets a string representation of the given latency measurement flags.
+     * Gets a string reprenestation of the given latency measurement flags.
      *
      * @param[in] flags            A ::hailo_latency_measurement_flags_t object.
      * @return The string representation of the latency measurement flags.
@@ -220,12 +219,12 @@ public:
         case HAILO_LATENCY_CLEAR_AFTER_GET:
             return "CLEAR_AFTER_GET";
         default:
-            return "INVALID_LATENCY_MEASUREMENT_FLAGS";
+            return "Nan";
         }
     }
 
     /**
-     * Gets a string representation of the given scheduling algorithm.
+     * Gets a string reprenestation of the given scheduling algorithm.
      *
      * @param[in] scheduling_algo  A ::hailo_scheduling_algorithm_t object.
      * @return The string representation of the scheduling algorithm.
@@ -239,12 +238,12 @@ public:
         case HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN:
             return "ROUND_ROBIN";
         default:
-            return "INVALID_SCHEDULING_ALGORITHM";
+            return "Nan";
         }
     }
 
     /**
-     * Gets a string representation of the given device architecture.
+     * Gets a string reprenestation of the given device architecture.
      *
      * @param[in] arch    A ::hailo_device_architecture_t object.
      * @return The string representation of the device architecture.
@@ -329,28 +328,7 @@ public:
         case HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE:
             return "HAILO NMS BY SCORE";
         default:
-            return "INVALID_FORMAT_ORDER";
-        }
-    }
-
-    /**
-     * Gets a string representation of the given log type.
-     *
-     * @param[in] type             A ::hailo_log_type_t object.
-     * @return The string representation of the log type.
-     */
-    static std::string get_log_type_str(const hailo_log_type_t &type)
-    {
-        switch (type)
-        {
-        case HAILO_LOG_TYPE__RUNTIME:
-            return "RUNTIME";
-        case HAILO_LOG_TYPE__SYSTEM_CONTROL:
-            return "SCU";
-        case HAILO_LOG_TYPE__NNC:
-            return "NNC";
-        default:
-            return "INVALID_LOG_TYPE";
+            return "Nan";
         }
     }
 
@@ -536,7 +514,7 @@ public:
     {
         // Compare with HAILO1X device archs
         return (HAILO_ARCH_HAILO15H == dev_arch) || (HAILO_ARCH_HAILO15M == dev_arch) || (HAILO_ARCH_HAILO15L == dev_arch) ||
-            (HAILO_ARCH_HAILO10H == dev_arch) || (HAILO_ARCH_MARS == dev_arch);
+            (HAILO_ARCH_HAILO10H == dev_arch);
     }
 
     static Expected<hailo_device_id_t> to_device_id(const std::string &device_id);

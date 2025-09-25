@@ -61,7 +61,6 @@ public:
     virtual void set_batch_size(uint16_t batch_size) override;
     virtual void set_power_mode(hailo_power_mode_t power_mode) override;
     virtual void set_hw_latency_measurement_flags(hailo_latency_measurement_flags_t latency) override;
-    virtual void set_enable_kv_cache(bool enable_kv_cache) override;
     virtual Expected<ConfiguredInferModel> configure() override;
     virtual Expected<InferStream> input() override;
     virtual Expected<InferStream> output() override;
@@ -199,7 +198,6 @@ public:
     virtual Expected<size_t> get_async_queue_size() const = 0;
     virtual hailo_status shutdown() = 0;
     virtual hailo_status update_cache_offset(int32_t offset_delta_entries) = 0;
-    virtual hailo_status init_cache(uint32_t read_offset) = 0;
 
     static Expected<ConfiguredInferModel::Bindings> create_bindings(
         std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&inputs,
@@ -246,7 +244,6 @@ public:
     virtual Expected<size_t> get_async_queue_size() const override;
     virtual hailo_status shutdown() override;
     virtual hailo_status update_cache_offset(int32_t offset_delta_entries) override;
-    virtual hailo_status init_cache(uint32_t read_offset) override;
 
     static Expected<std::shared_ptr<ConfiguredInferModelImpl>> create_for_ut(std::shared_ptr<ConfiguredNetworkGroup> net_group,
         std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner, const std::vector<std::string> &input_names, const std::vector<std::string> &output_names,

@@ -35,7 +35,6 @@ namespace net_flow
 #define INVALID_NMS_SCORE (std::numeric_limits<float32_t>::max())
 #define INVALID_NMS_CONFIG (-1)
 #define MAX_NMS_CLASSES (std::numeric_limits<uint16_t>::max())
-#define LOGIT_CLIP_MIN (1e-7f)
 
 inline bool operator==(const hailo_bbox_float32_t &first, const hailo_bbox_float32_t &second) {
     return first.y_min == second.y_min && first.x_min == second.x_min && first.y_max == second.y_max && first.x_max == second.x_max && first.score == second.score;
@@ -54,10 +53,10 @@ struct DetectionBbox
         : m_class_id(class_id), m_bbox(bbox), m_bbox_with_mask{} {}
 
     DetectionBbox(const hailo_bbox_float32_t &bbox, uint16_t class_id, std::vector<float32_t> &&mask,
-        float32_t image_height, float32_t image_width, bool is_crop_optimization_on)
+        float32_t image_height, float32_t image_width)
         : m_class_id(class_id), m_coefficients(std::move(mask)), m_bbox(bbox),
             m_bbox_with_mask{{bbox.y_min, bbox.x_min, bbox.y_max, bbox.x_max}, bbox.score, class_id,
-                get_mask_size_in_bytes(static_cast<uint32_t>(image_height), static_cast<uint32_t>(image_width), is_crop_optimization_on), nullptr}
+                get_mask_size_in_bytes(image_height, image_width), nullptr}
         {}
 
     DetectionBbox() : DetectionBbox(hailo_bbox_float32_t{
@@ -68,48 +67,20 @@ struct DetectionBbox
         INVALID_BBOX_DIM
     }, INVALID_NMS_DETECTION) {}
 
-    inline uint32_t get_bbox_y_min(uint32_t image_height) const
+    inline uint32_t get_bbox_height(float32_t image_height) const
     {
-        return static_cast<uint32_t>(std::max(std::floor(m_bbox.y_min * static_cast<float32_t>(image_height)), 0.0f));
+        return static_cast<uint32_t>(std::ceil((m_bbox.y_max - m_bbox.y_min) * image_height));
     }
 
-    inline uint32_t get_bbox_y_max(uint32_t image_height) const
+    inline uint32_t get_bbox_width(float32_t image_width) const
     {
-        return std::min(static_cast<uint32_t>(std::ceil(m_bbox.y_max * static_cast<float32_t>(image_height))), image_height);
+        return static_cast<uint32_t>(std::ceil((m_bbox.x_max - m_bbox.x_min) * image_width));
     }
 
-    inline uint32_t get_bbox_height(uint32_t image_height, bool is_crop_optimization_on) const
+    inline size_t get_mask_size_in_bytes(float32_t image_height, float32_t image_width) const
     {
-        if (is_crop_optimization_on) {
-            return get_bbox_y_max(image_height) - get_bbox_y_min(image_height);
-        } else {
-            return static_cast<uint32_t>(std::ceil((m_bbox.y_max - m_bbox.y_min) * static_cast<float32_t>(image_height)));
-        }
-    }
-
-    inline uint32_t get_bbox_x_min(uint32_t image_width) const
-    {
-        return static_cast<uint32_t>(std::max(std::floor(m_bbox.x_min * static_cast<float32_t>(image_width)), 0.0f));
-    }
-
-    inline uint32_t get_bbox_x_max(uint32_t image_width) const
-    {
-        return std::min(static_cast<uint32_t>(std::ceil(m_bbox.x_max * static_cast<float32_t>(image_width))), image_width);
-    }
-
-    inline uint32_t get_bbox_width(uint32_t image_width, bool is_crop_optimization_on) const
-    {
-        if (is_crop_optimization_on) {
-            return get_bbox_x_max(image_width) - get_bbox_x_min(image_width);
-        } else {
-            return static_cast<uint32_t>(std::ceil((m_bbox.x_max - m_bbox.x_min) * static_cast<float32_t>(image_width)));
-        }
-    }
-
-    inline size_t get_mask_size_in_bytes(uint32_t image_height, uint32_t image_width, bool is_crop_optimization_on) const
-    {
-        auto box_height = get_bbox_height(image_height, is_crop_optimization_on);
-        auto box_width = get_bbox_width(image_width, is_crop_optimization_on);
+        auto box_height = get_bbox_height(image_height);
+        auto box_width = get_bbox_width(image_width);
         auto mask_size = box_width * box_height;
 
         return mask_size;
@@ -152,22 +123,6 @@ public:
     {
         return (1.0f / (1.0f + std::exp(-number)));
     }
-
-    /**
-     * Compute the logit function (inverse of sigmoid) of @a number.
-     * This is used for threshold optimization when sigmoid is applied after dequantization.
-     *
-     * @param[in] number               The value to compute logit for (should be in range [0,1]).
-     *
-     * @return Returns the logit of @a number.
-     */
-     static inline float32_t logit(float32_t number)
-     {
-         // Prevent numerical overflow: log(<number too close to 0>) = -infinity and log(1 / <number too close to 0>) will get us to infinity
-         // Clip number to [LOGIT_CLIP_MIN, 1-LOGIT_CLIP_MIN] to ensure log(number/(1-number)) is finite
-         number = Quantization::clip(number, LOGIT_CLIP_MIN, 1.0f - LOGIT_CLIP_MIN);
-         return std::log(number / (1.0f - number));
-     }
 
     /**
      * Removes overlapping boxes in @a detections by setting the class confidence to zero.

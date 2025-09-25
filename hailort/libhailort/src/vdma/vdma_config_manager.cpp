@@ -51,6 +51,7 @@ hailo_status VdmaConfigManager::set_state_machine(std::shared_ptr<VdmaConfigCore
     // TODO: HRT-13253 don't use resources manager instead call m_vdma_device directly. The device should store the 
     // current active core op.
     if (next != nullptr) {
+        CHECK_SUCCESS(next->register_cache_update_callback(), "Failed to register cache update callback");
         CHECK_SUCCESS(next->get_resources_manager()->enable_state_machine(batch_size), "Failed to enable state machine");
         // In the case of switch NG, we call FW switch to next NG without marking the current NG as deactivated.
         // Added setter to mark the current NG as deactivated.
@@ -70,6 +71,7 @@ hailo_status VdmaConfigManager::switch_core_op(std::shared_ptr<VdmaConfigCoreOp>
     assert((nullptr != current) || (nullptr != next));
 
     if (current != nullptr) {
+        CHECK_SUCCESS(current->unregister_cache_update_callback(), "Failed unregistering cache updates from previous core-op");
         CHECK_SUCCESS(current->deactivate_host_resources(), "Failed deactivating host resources for current core-op");
 
         // TODO: In integrated device we need to reset after deactivate. This will be fixed in MSW-762 and the "if" will be removed

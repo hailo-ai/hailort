@@ -2,7 +2,6 @@
   <img src=".hailort.jpg" />
 </p>
 
-Note: The `master` branch supports only the Hailo-10 and Hailo-15 device families. For Hailo-8, Hailo-8R, and Hailo-8L devices, please use the `hailo8` branch.
 
 # HailoRT #
 

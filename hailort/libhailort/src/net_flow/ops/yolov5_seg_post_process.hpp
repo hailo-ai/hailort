@@ -74,7 +74,7 @@ public:
 
 private:
     Yolov5SegPostProcess(std::shared_ptr<Yolov5SegOpMetadata> metadata, Buffer &&mask_mult_result_buffer,
-        Buffer &&resized_mask, Buffer &&transformed_proto_buffer, Buffer &&crop_buffer);
+        Buffer &&resized_mask, Buffer &&transformed_proto_buffer);
 
     hailo_status fill_nms_with_byte_mask_format(MemoryView &buffer);
     void mult_mask_vector_and_proto_matrix(const DetectionBbox &detection);
@@ -90,7 +90,6 @@ private:
     Buffer m_resized_mask_to_image_dim;
 
     Buffer m_transformed_proto_buffer;
-    Buffer m_crop_buffer;
 };
 
 } /* namespace hailort */

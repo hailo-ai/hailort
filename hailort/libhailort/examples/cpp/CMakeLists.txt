@@ -1,36 +1,41 @@
 cmake_minimum_required(VERSION 3.5.0)
 
-project(hailort-examples-cpp)
+add_subdirectory(vstreams_example)
+add_subdirectory(infer_pipeline_example)
+add_subdirectory(async_infer_basic_example)
+add_subdirectory(async_infer_advanced_example)
+add_subdirectory(raw_streams_example)
+add_subdirectory(multi_network_vstream_example)
+add_subdirectory(switch_network_groups_example)
+add_subdirectory(switch_network_groups_manually_example)
+add_subdirectory(multi_device_example)
+add_subdirectory(power_measurement_example)
+add_subdirectory(multi_process_example)
+add_subdirectory(notification_callback_example)
 
-set(
-    CPP_EXAMPLES
-    async_infer_advanced
-    async_infer_basic
-    multi_model_inference
-    notification_callback
-    power_measurement
+set(CPP_EXAMPLE_TARGETS
+    cpp_vstreams_example
+    cpp_infer_pipeline_example
+    cpp_async_infer_basic_example
+    cpp_async_infer_advanced_example
+    cpp_raw_streams_example
+    cpp_multi_network_vstream_example
+    cpp_switch_network_groups_example
+    cpp_switch_network_groups_manually_example
+    cpp_multi_device_example
+    cpp_power_measurement_example
+    cpp_multi_process_example
+    cpp_notification_callback_example
 )
 
-if(UNIX)
-    list(
-        APPEND
-        CPP_EXAMPLES
-        query_performance_and_health_stats
-        async_infer_dma_buffer
-    )
+if(NOT CMAKE_SYSTEM_NAME STREQUAL QNX)
+    # TODO: HRT-10956 support QNX async examples
+    add_subdirectory(raw_async_streams_multi_thread_example)
+    add_subdirectory(raw_async_streams_single_thread_example)
+    set(CPP_EXAMPLE_TARGETS ${CPP_EXAMPLE_TARGETS}
+        cpp_raw_async_streams_multi_thread_example
+        cpp_raw_async_streams_single_thread_example)
 endif()
-
-# add subdirectories for each example, with suffix "_example" and add to the list of targets with prefix "cpp_" and suffix "_example"
-set(CPP_EXAMPLE_TARGETS)
-foreach(EXAMPLE_NAME IN LISTS CPP_EXAMPLES)
-    string(TOLOWER ${EXAMPLE_NAME} EXAMPLE_NAME_LOWER)
-
-    set(EXAMPLE_DIR "${EXAMPLE_NAME_LOWER}_example")
-    add_subdirectory(${EXAMPLE_DIR})
-
-    set(EXAMPLE_TARGET "cpp_${EXAMPLE_DIR}")
-    list(APPEND CPP_EXAMPLE_TARGETS ${EXAMPLE_TARGET})
-endforeach()
 
 add_custom_target(cpp_hailort_examples)
 add_dependencies(cpp_hailort_examples ${CPP_EXAMPLE_TARGETS})

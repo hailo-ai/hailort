@@ -27,11 +27,16 @@ namespace hailort
 
 class Buffer::StorageImpl final {
 public:
-    StorageImpl(BufferStoragePtr storage) :
-        m_storage(std::move(storage))
+    StorageImpl(BufferStoragePtr storage, std::unique_ptr<BufferStorageRegisteredResource> storage_resource) :
+        m_storage(std::move(storage)),
+        m_storage_resource(std::move(storage_resource))
     {}
 
     BufferStoragePtr m_storage;
+
+    // Optionally we register the resource. By default we register the resource to the manager, but on some cases (for
+    // example - the unit tests, we want to skip the registration).
+    std::unique_ptr<BufferStorageRegisteredResource> m_storage_resource;
 };
 
 Buffer::Buffer() :
@@ -122,17 +127,27 @@ Expected<Buffer> Buffer::create(std::initializer_list<uint8_t> init, const Buffe
     return buffer;
 }
 
-Expected<Buffer> Buffer::create(BufferStoragePtr storage)
+Expected<Buffer> Buffer::create(BufferStoragePtr storage, bool register_storage /* = true */)
 {
-    auto storage_impl = make_unique_nothrow<StorageImpl>(std::move(storage));
+    // If needed, register the storage
+    std::unique_ptr<BufferStorageRegisteredResource> optional_registered_resource;
+    if (register_storage) {
+        const auto storage_key = std::make_pair(storage->user_address(), storage->size());
+        auto registered_resource = BufferStorageRegisteredResource::create(storage, storage_key);
+        CHECK_EXPECTED(registered_resource);
+        optional_registered_resource = make_unique_nothrow<BufferStorageRegisteredResource>(registered_resource.release());
+        CHECK_NOT_NULL(optional_registered_resource, HAILO_OUT_OF_HOST_MEMORY);
+    }
+
+    auto storage_impl = make_unique_nothrow<StorageImpl>(std::move(storage), std::move(optional_registered_resource));
     CHECK_NOT_NULL(storage_impl, HAILO_OUT_OF_HOST_MEMORY);
 
     return Buffer(std::move(storage_impl));
 }
 
-Expected<BufferPtr> Buffer::create_shared(BufferStoragePtr storage)
+Expected<BufferPtr> Buffer::create_shared(BufferStoragePtr storage, bool register_storage)
 {
-    TRY(auto buffer, create(storage));
+    TRY(auto buffer, create(storage, register_storage));
     auto buffer_ptr = make_shared_nothrow<Buffer>(std::move(buffer));
     CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
     return buffer_ptr;
@@ -305,16 +320,6 @@ const MemoryView Buffer::slice(size_t from, size_t to) const
     return const_cast<Buffer*>(this)->slice(from, to);
 }
 
-MemoryView Buffer::as_view()
-{
-    return MemoryView(m_data, m_size);
-}
-
-const MemoryView Buffer::as_view() const
-{
-    return MemoryView(m_data, m_size);
-}
-
 Expected<void *> Buffer::release() noexcept
 {
     return m_storage_impl->m_storage->release();
@@ -328,11 +333,6 @@ MemoryView::MemoryView() noexcept :
 MemoryView::MemoryView(Buffer &buffer) noexcept :
     m_data(buffer.data()),
     m_size(buffer.size())
-{}
-
-MemoryView::MemoryView(BufferPtr buffer) noexcept :
-    m_data(buffer->data()),
-    m_size(buffer->size())
 {}
 
 MemoryView::MemoryView(void *data, size_t size) noexcept :

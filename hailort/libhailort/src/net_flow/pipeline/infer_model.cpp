@@ -294,11 +294,6 @@ void InferModelBase::set_hw_latency_measurement_flags(hailo_latency_measurement_
     m_config_params.latency = latency;
 }
 
-void InferModelBase::set_enable_kv_cache(bool enable_kv_cache)
-{
-    m_config_params.enable_kv_cache = enable_kv_cache;
-}
-
 Expected<ConfiguredInferModel> InferModelBase::configure()
 {
     NetworkGroupsParamsMap configure_params = {};
@@ -320,7 +315,6 @@ Expected<ConfiguredInferModel> InferModelBase::configure()
 
         network_group_name_params_pair.second.power_mode = m_config_params.power_mode;
         network_group_name_params_pair.second.latency = m_config_params.latency;
-        network_group_name_params_pair.second.enable_kv_cache = m_config_params.enable_kv_cache;
     }
 
     auto network_groups = m_vdevice.get().configure(m_hef, configure_params);
@@ -666,11 +660,6 @@ hailo_status ConfiguredInferModel::update_cache_offset(int32_t offset_delta_entr
     return m_pimpl->update_cache_offset(offset_delta_entries);
 }
 
-hailo_status ConfiguredInferModel::init_cache(uint32_t read_offset)
-{
-    return m_pimpl->init_cache(read_offset);
-}
-
 Expected<ConfiguredInferModel::Bindings> ConfiguredInferModelBase::create_bindings(
     std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&inputs,
     std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&outputs)
@@ -862,10 +851,6 @@ hailo_status ConfiguredInferModelImpl::update_cache_offset(int32_t offset_delta_
     return m_cng->update_cache_offset(offset_delta_entries);
 }
 
-hailo_status ConfiguredInferModelImpl::init_cache(uint32_t read_offset)
-{
-    return m_cng->init_cache(read_offset);
-}
 
 hailo_status ConfiguredInferModelImpl::activate()
 {
@@ -1051,7 +1036,10 @@ hailo_status AsyncInferJob::wait(std::chrono::milliseconds timeout)
         return HAILO_SUCCESS;
     }
 
-    return m_pimpl->wait(timeout);
+    auto status = m_pimpl->wait(timeout);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
 }
 
 void AsyncInferJob::detach()

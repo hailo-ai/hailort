@@ -41,12 +41,7 @@ ContextSwitchConfigAction::ContextSwitchConfigAction(Type type, CONTEXT_SWITCH_D
 
 Expected<std::vector<Buffer>> ContextSwitchConfigAction::serialize(const ContextResources &context_resources) const
 {
-    std::vector<Buffer> buffers;
-    // In case of action type CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT - action should not be serialized and will not go to fw
-    if (CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT == m_action_list_type) {
-        return buffers;
-    }
-    CHECK_AS_EXPECTED(m_action_list_type <= CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT, HAILO_INTERNAL_FAILURE,
+    CHECK_AS_EXPECTED(m_action_list_type < CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT, HAILO_INTERNAL_FAILURE,
         "Action cannot be serialized");
 
     TRY(auto header, serialize_header());
@@ -56,6 +51,7 @@ Expected<std::vector<Buffer>> ContextSwitchConfigAction::serialize(const Context
     std::copy(header.begin(), header.end(), serialized_action.data());
     std::copy(params.begin(), params.end(), serialized_action.data() + header.size());
 
+    std::vector<Buffer> buffers;
     buffers.emplace_back(std::move(serialized_action));
     return buffers;
 }
@@ -183,7 +179,7 @@ Expected<ContextSwitchConfigActionPtr> WriteDataCcwActionByBuffer::create(
     return result;
 }
 
-hailo_status WriteDataCcwActionByBuffer::write_to_config_buffer(CopiedConfigBuffer& config_buffer, bool should_support_pre_fetch)
+hailo_status WriteDataCcwActionByBuffer::write_to_config_buffer(ConfigBuffer& config_buffer, bool should_support_pre_fetch)
 {
     bool is_last_write = config_buffer.size_left() == size();
     if (should_support_pre_fetch && is_last_write) {
@@ -243,7 +239,7 @@ Expected<Buffer> WriteDataCcwAction::serialize_params(const ContextResources &) 
     return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
 
-hailo_status WriteDataCcwAction::write_to_config_buffer(CopiedConfigBuffer& config_buffer, bool should_support_pre_fetch)
+hailo_status WriteDataCcwAction::write_to_config_buffer(ConfigBuffer& config_buffer, bool should_support_pre_fetch)
 {
     uint64_t total_ccw_size = 0;
     for (const auto &ccw_write_ptr : m_ccw_write_ptrs) {
@@ -690,7 +686,7 @@ bool AllowInputDataflowAction::supports_repeated_block() const
 Expected<Buffer> AllowInputDataflowAction::serialize_params(const ContextResources &context_resources) const
 {
     // H2D direction because it is Input actions
-    TRY(const EdgeLayer& edge_layer,
+    TRY(const auto edge_layer,
         context_resources.get_edge_layer_by_stream_index(m_stream_index, HAILO_H2D_STREAM));
 
     CONTEXT_SWITCH_DEFS__fetch_data_action_data_t params{};
@@ -909,7 +905,7 @@ bool WaitOutputTransferDoneAction::supports_repeated_block() const
 Expected<Buffer> WaitOutputTransferDoneAction::serialize_params(const ContextResources &context_resources) const
 {
     // D2H direction because it is output action
-    TRY(const EdgeLayer& edge_layer,
+    TRY(const auto edge_layer,
         context_resources.get_edge_layer_by_stream_index(m_stream_index, HAILO_D2H_STREAM));
 
     CONTEXT_SWITCH_DEFS__vdma_dataflow_interrupt_data_t params{};
@@ -949,7 +945,7 @@ Expected<Buffer> OpenBoundaryInputChannelAction::serialize_params(const ContextR
     CONTEXT_SWITCH_DEFS__open_boundary_input_channel_data_t params{};
 
     // H2D direction because it is Input actions
-    TRY(const EdgeLayer& edge_layer, context_resources.get_edge_layer_by_channel_id(m_channel_id));
+    TRY(const auto edge_layer, context_resources.get_edge_layer_by_channel_id(m_channel_id));
 
     params.packed_vdma_channel_id = pack_vdma_channel_id(edge_layer.channel_id);
     params.host_buffer_info = m_host_buffer_info;
@@ -1511,7 +1507,7 @@ bool WaitDmaIdleAction::supports_repeated_block() const
 Expected<Buffer> WaitDmaIdleAction::serialize_params(const ContextResources &context_resources) const
 {
     // D2H direction because it is output action
-    TRY(const EdgeLayer& edge_layer,
+    TRY(const auto edge_layer,
         context_resources.get_edge_layer_by_stream_index(m_stream_index, HAILO_D2H_STREAM));
 
     CONTEXT_SWITCH_DEFS__wait_dma_idle_data_t params{};
@@ -1666,8 +1662,8 @@ Expected<Buffer> SwitchLcuBatchAction::serialize_params(const ContextResources &
 Expected<ContextSwitchConfigActionPtr> SleepAction::create(uint64_t sleep_time)
 {
     // truncating to uint32_t
-    uint32_t sleep_u32 = 0;
-
+    uint32_t sleep_u32 = 0; 
+    
     if (sleep_time > UINT32_MAX) {
         LOGGER__WARNING("Sleep time is too large, truncating to UINT32_MAX");
         sleep_u32 = UINT32_MAX;
@@ -1681,7 +1677,7 @@ Expected<ContextSwitchConfigActionPtr> SleepAction::create(uint64_t sleep_time)
     return result;
 }
 
-SleepAction::SleepAction(uint32_t sleep_time) :
+SleepAction::SleepAction(uint32_t sleep_time) :	
     ContextSwitchConfigAction(Type::Sleep, CONTEXT_SWITCH_DEFS__ACTION_TYPE_SLEEP),
     m_sleep_time(sleep_time)
 {}
@@ -1705,7 +1701,7 @@ Expected<ContextSwitchConfigActionPtr> HaltAction::create()
     return result;
 }
 
-HaltAction::HaltAction() :
+HaltAction::HaltAction() :	
     ContextSwitchConfigAction(Type::Halt, CONTEXT_SWITCH_DEFS__ACTION_TYPE_HALT)
 {}
 
@@ -1717,60 +1713,6 @@ bool HaltAction::supports_repeated_block() const
 Expected<Buffer> HaltAction::serialize_params(const ContextResources &) const
 {
     return Buffer::create(0);
-}
-
-Expected<ContextSwitchConfigActionPtr> ConfigChannelPreAllowInputDataflowAction::create()
-{
-    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ConfigChannelPreAllowInputDataflowAction());
-    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
-    return result;
-}
-
-// This is special type of action that tells us where to add the activation of channels, change vdma to stream mapping,
-// and add DDR pair info
-ConfigChannelPreAllowInputDataflowAction::ConfigChannelPreAllowInputDataflowAction() :
-    ContextSwitchConfigAction(Type::ConfigChannelPreAllowInputDataflowAction,
-                              CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT)
-{}
-
-bool ConfigChannelPreAllowInputDataflowAction::supports_repeated_block() const
-{
-    return true;
-}
-
-Expected<Buffer> ConfigChannelPreAllowInputDataflowAction::serialize_params(const ContextResources &context_resources) const
-{
-    // Seeing that the action type is CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT and action doesnt reach fw - this function
-    // should not be called - return error if called
-    (void) context_resources;
-    LOGGER__ERROR("Action ConfigChannelPreAllowInputDataflowAction should not be serialized");
-    return make_unexpected(HAILO_INTERNAL_FAILURE);
-}
-
-Expected<ContextSwitchConfigActionPtr> DisableDataChannelsAction::create()
-{
-    auto result = ContextSwitchConfigActionPtr(new (std::nothrow) DisableDataChannelsAction());
-    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
-    return result;
-}
-
-DisableDataChannelsAction::DisableDataChannelsAction() :
-    ContextSwitchConfigAction(Type::DisableDataChannelsAction,
-                              CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT)
-{}
-
-bool DisableDataChannelsAction::supports_repeated_block() const
-{
-    return false;
-}
-
-Expected<Buffer> DisableDataChannelsAction::serialize_params(const ContextResources &context_resources) const
-{
-    // Seeing that the action type is CONTEXT_SWITCH_DEFS__ACTION_TYPE_COUNT and action doesnt reach fw - this function
-    // should not be called - return error if called
-    (void) context_resources;
-    LOGGER__ERROR("Action DisableDataChannelsAction should not be serialized");
-    return make_unexpected(HAILO_INTERNAL_FAILURE);
 }
 
 } /* namespace hailort */

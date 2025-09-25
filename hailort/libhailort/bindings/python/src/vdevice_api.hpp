@@ -13,7 +13,6 @@
 #include "hef_api.hpp"
 #include "utils.hpp"
 #include "network_group_api.hpp"
-#include "infer_model_api.hpp"
 
 #include "hailo/hef.hpp"
 #include "hailo/vdevice.hpp"
@@ -33,6 +32,8 @@
 
 namespace hailort
 {
+
+class InferModelWrapper;
 
 struct VDeviceParamsWrapper {
     hailo_vdevice_params_t orig_params;
@@ -78,6 +79,7 @@ public:
 
         params.device_ids = device_ids_vector->data();
         params.device_count = static_cast<uint32_t>(device_ids_vector->size());
+        params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_NONE;
 
         return std::make_shared<VDeviceWrapper>(params);
     }
@@ -92,7 +94,7 @@ public:
         })
 #endif
     {
-        auto vdevice_expected = VDevice::create_shared(params);
+        auto vdevice_expected = VDevice::create(params);
         VALIDATE_EXPECTED(vdevice_expected);
 
         m_vdevice = vdevice_expected.release();
@@ -147,7 +149,7 @@ public:
     }
 
 private:
-    std::shared_ptr<VDevice> m_vdevice;
+    std::unique_ptr<VDevice> m_vdevice;
 
     // Keeping the network groups object alive.
     // The ConfiguredNetworkGroupWrapper holds a weak_ptr to the ConfiguredNetworkGroup since it is released by the
@@ -160,9 +162,6 @@ private:
 #ifdef HAILO_IS_FORK_SUPPORTED
     AtForkRegistry::AtForkGuard m_atfork_guard;
 #endif
-
-    friend class LLMWrapper;
-    friend class VLMWrapper;
 };
 
 } /* namespace hailort */

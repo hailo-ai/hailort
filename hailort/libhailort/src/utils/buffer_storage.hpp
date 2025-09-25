@@ -56,6 +56,18 @@ namespace vdma {
 
 using BufferStoragePtr = std::shared_ptr<BufferStorage>;
 
+// Using void* and size as key. Since the key is std::pair (not hash-able), we use std::map as the underlying container.
+using BufferStorageKey = std::pair<void *, size_t>;
+
+struct BufferStorageKeyHash {
+    size_t operator()(const BufferStorageKey &key) const noexcept
+    {
+        return std::hash<void *>()(key.first) ^ std::hash<size_t>()(key.second);
+    }
+};
+
+using BufferStorageResourceManager = ExportedResourceManager<BufferStoragePtr, BufferStorageKey, BufferStorageKeyHash>;
+using BufferStorageRegisteredResource = RegisteredResource<BufferStoragePtr, BufferStorageKey, BufferStorageKeyHash>;
 
 class BufferStorage
 {
@@ -197,7 +209,7 @@ class PooledBufferStorage : public BufferStorage
 public:
     ~PooledBufferStorage();
 
-    PooledBufferStorage(BufferPtr buffer, FastBufferPoolPtr buffer_pool);
+    PooledBufferStorage(BufferPtr buffer, BasicBufferPoolPtr buffer_pool);
     PooledBufferStorage(PooledBufferStorage&& other) noexcept;
     PooledBufferStorage(const PooledBufferStorage &) = delete;
     PooledBufferStorage &operator=(PooledBufferStorage &&) = delete;
@@ -208,7 +220,7 @@ public:
     virtual Expected<void*> release() noexcept override;
 
 private:
-    FastBufferPoolPtr m_buffer_pool;
+    BasicBufferPoolPtr m_buffer_pool;
     BufferPtr m_buffer;
 };
 

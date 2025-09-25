@@ -55,13 +55,6 @@ IntegratedDevice::IntegratedDevice(std::unique_ptr<HailoRTDriver> &&driver, hail
         return;
     }
 
-    m_power_measurement_data = make_shared_nothrow<SocPowerMeasurement>();
-    if (nullptr == m_power_measurement_data) {
-        LOGGER__ERROR("Failed to create power measurement data");
-        status = HAILO_OUT_OF_HOST_MEMORY;
-        return;
-    }
-
     status = HAILO_SUCCESS;
 }
 
@@ -119,8 +112,7 @@ hailo_status IntegratedDevice::start_power_measurement(
     hailo_sampling_period_t sampling_period)
 {
     CHECK(nullptr != m_power_measurement_data, HAILO_INVALID_OPERATION, "Must call set_power_measurement before start_power_measurement");
-    auto status = m_power_measurement_data->config(averaging_factor, sampling_period);
-    CHECK_SUCCESS(status, "Failed to configure power measurement");
+    CHECK(m_power_measurement_data->config(averaging_factor, sampling_period), HAILO_INTERNAL_FAILURE, "Failed to configure power measurement");
     return m_power_measurement_data->start();
 }
 
@@ -151,7 +143,6 @@ Expected<hailo_power_measurement_data_t> IntegratedDevice::get_power_measurement
 
 hailo_status IntegratedDevice::stop_power_measurement()
 {
-    CHECK_NOT_NULL(m_power_measurement_data, HAILO_INVALID_OPERATION);
     return m_power_measurement_data->stop();
 }
 
@@ -185,17 +176,17 @@ Expected<hailo_extended_device_information_t> IntegratedDevice::get_extended_dev
     TRY(auto is_eth_supported, compare_file_content(ETH_STATUS_FILE, STATUS_ENABLED));
     TRY(auto is_pci_supported, compare_file_content(PCI_STATUS_FILE, STATUS_ENABLED));
 
-    info.boot_source                           = HAILO_DEVICE_BOOT_SOURCE_INVALID; // TODO: HRT-15562
-    info.eth_mac_address[0]                    = NOT_AVAILABLE;                    // TODO: HRT-15562
-    info.lcs                                   = NOT_AVAILABLE;                    // TODO: HRT-15562
-    info.neural_network_core_clock_rate        = NOT_AVAILABLE;                    // TODO: HRT-15562
-    info.soc_id[0]                             = NOT_AVAILABLE;                    // TODO: HRT-15562
-    info.soc_pm_values[0]                      = NOT_AVAILABLE;                    // TODO: HRT-15562
-    info.supported_features.current_monitoring = NOT_AVAILABLE;                    // TODO: HRT-15562
-    info.supported_features.ethernet           = is_eth_supported;
-    info.supported_features.mdio               = NOT_AVAILABLE; // TODO: HRT-15562
-    info.supported_features.mipi               = NOT_AVAILABLE; // TODO: HRT-15562
-    info.supported_features.pcie               = is_pci_supported;
+    info.boot_source = HAILO_DEVICE_BOOT_SOURCE_INVALID; // TODO: HRT-15562
+    info.eth_mac_address[0] = NOT_AVAILABLE; // TODO: HRT-15562
+    info.lcs = NOT_AVAILABLE; // TODO: HRT-15562
+    info.neural_network_core_clock_rate = NOT_AVAILABLE; // TODO: HRT-15562
+    info.soc_id[0] = NOT_AVAILABLE; // TODO: HRT-15562
+    info.soc_pm_values[0] = NOT_AVAILABLE; // TODO: HRT-15562
+    info.supported_features.current_monitoring = NOT_AVAILABLE; // TODO: HRT-15562
+    info.supported_features.ethernet = is_eth_supported;
+    info.supported_features.mdio = NOT_AVAILABLE; // TODO: HRT-15562
+    info.supported_features.mipi = NOT_AVAILABLE; // TODO: HRT-15562
+    info.supported_features.pcie = is_pci_supported;
 
     {
         FileReader reader(FUSE_FILE);
@@ -224,9 +215,9 @@ Expected<hailo_extended_device_information_t> IntegratedDevice::get_extended_dev
     return info;
 }
 
-Expected<bool> IntegratedDevice::has_power_sensor()
+Expected<bool> IntegratedDevice::has_INA231()
 {
-    bool has_power_sensor = false;
+    bool has_INA231 = false;
     #ifdef __linux__
     glob_t glob_result;
     constexpr auto SENSOR_NAME_FILE_PATHS = "/sys/class/hwmon/hwmon*/name";
@@ -241,13 +232,13 @@ Expected<bool> IntegratedDevice::has_power_sensor()
         std::string line;
         std::getline(file, line);
         if (line == "ina231_precise") {
-            has_power_sensor = true;
+            has_INA231 = true;
             break;
         }
     }
     globfree(&glob_result);
     #endif // __linux__
-    return has_power_sensor;
+    return has_INA231;
 }
 
 #if defined(__linux__) && defined(GPIO_V2_GET_LINE_IOCTL)

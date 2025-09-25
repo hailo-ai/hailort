@@ -49,10 +49,9 @@ Expected<double> LiveStats::Track::get_last_measured_fps()
 }
 
 
-LiveStats::LiveStats(std::chrono::milliseconds interval, bool should_print) :
+LiveStats::LiveStats(std::chrono::milliseconds interval) :
     m_running(false),
     m_interval(interval),
-    m_should_print(should_print),
     m_stop_event(),
     m_tracks(),
     m_mutex(),
@@ -67,7 +66,7 @@ LiveStats::LiveStats(std::chrono::milliseconds interval, bool should_print) :
 LiveStats::~LiveStats()
 {
     stop();
-    measure_and_print();
+    print();
 }
 
 void LiveStats::add(std::shared_ptr<Track> track, uint8_t level)
@@ -76,7 +75,7 @@ void LiveStats::add(std::shared_ptr<Track> track, uint8_t level)
     m_tracks[level].emplace_back(track);
 }
 
-void LiveStats::measure_and_print()
+void LiveStats::print()
 {
     std::stringstream ss;
     uint32_t count = 0;
@@ -85,18 +84,13 @@ void LiveStats::measure_and_print()
         std::unique_lock<std::mutex> lock(m_mutex);
         for (auto &level_pair : m_tracks) {
             for (auto &track : level_pair.second) {
-                count += track->push_text(ss); // The push_text method indirectly calls measuring
+                count += track->push_text(ss);
             }
         }
     }
-    // The m_should_print boolean covers only this code because
-    // the other code in this function - the tracks logic - does the actual measurmenets
-    // TODO: separate print from LiveStats - currently it does measurements AND prints (HRT-18254)
-    if (m_should_print) {
-        // On the first print m_prev_count = 0, so no lines will be deleted
-        CliCommon::reset_cursor(m_prev_count);
-        std::cout << ss.str() << std::flush;
-    }
+    CliCommon::reset_cursor(m_prev_count);
+    // On the first print m_prev_count = 0, so no lines will be deleted
+    std::cout << ss.str() << std::flush;
     m_prev_count = count;
 }
 
@@ -124,7 +118,7 @@ hailo_status LiveStats::dump_stats(const std::string &json_path, const std::stri
 
     std::ofstream output_json(json_path);
     CHECK(output_json, HAILO_FILE_OPERATION_FAILURE, "Failed opening file '{}'", json_path);
-
+    
     output_json << std::setw(4) << json << std::endl; // 4: amount of spaces to indent (for pretty printing)
     CHECK(!output_json.bad() && !output_json.fail(), HAILO_FILE_OPERATION_FAILURE,
         "Failed writing to file '{}'", json_path);
@@ -155,11 +149,11 @@ hailo_status LiveStats::start()
             CHECK_SUCCESS(track->start());
         }
     }
-
+    
     m_thread = std::thread([this] () {
         OsUtils::set_current_thread_name("LIVE_PRINTER");
         while (true) {
-            measure_and_print();
+            print();
             auto status = m_stop_event->wait(m_interval);
             if (HAILO_TIMEOUT != status) {
                 break;

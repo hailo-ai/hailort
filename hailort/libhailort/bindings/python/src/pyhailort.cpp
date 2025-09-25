@@ -15,6 +15,7 @@ using namespace std;
 
 #include "hailo/hailort.h"
 #include "hailo/hailort_defaults.hpp"
+#include "hailo/network_rate_calculator.hpp"
 
 #include "infer_model_api.hpp"
 #include "hef_api.hpp"
@@ -23,9 +24,6 @@ using namespace std;
 #include "network_group_api.hpp"
 #include "device_api.hpp"
 #include "quantization_api.hpp"
-#include "session_api.hpp"
-#include "llm_api.hpp"
-#include "vlm_api.hpp"
 
 #include "utils.hpp"
 
@@ -34,6 +32,9 @@ using namespace std;
 // should be same as socket.hpp
 #define PADDING_BYTES_SIZE (6)
 #define PADDING_ALIGN_BYTES (8 - PADDING_BYTES_SIZE)
+#define MIN_UDP_PAYLOAD_SIZE (24)
+#define MAX_UDP_PAYLOAD_SIZE (1456)
+#define MAX_UDP_PADDED_PAYLOAD_SIZE (MAX_UDP_PAYLOAD_SIZE - PADDING_BYTES_SIZE - PADDING_ALIGN_BYTES)
 
 namespace hailort
 {
@@ -50,6 +51,37 @@ bool hailo_format_equals(hailo_format_t &first, hailo_format_t &second){
     return ((first.type == second.type) &&
         (first.order == second.order) &&
         (first.flags == second.flags));
+}
+
+class UdpScan {
+    public:
+        UdpScan() = default;
+        std::list<std::string> scan_devices(char *interface_name, uint32_t timeout_milliseconds);
+    private:
+        static const size_t m_max_number_of_devices = 100;
+        hailo_eth_device_info_t m_eth_device_infos[m_max_number_of_devices] = {};
+};
+
+std::list<std::string> UdpScan::scan_devices(char* interface_name, uint32_t timeout_milliseconds)
+{
+    hailo_status status = HAILO_UNINITIALIZED;
+    size_t number_of_devices = 0;
+    std::list<std::string> device_addresses;
+    char textual_ip_address[INET_ADDRSTRLEN] = {0};
+    const char *inet_ntop_rc = NULL;
+
+    status = hailo_scan_ethernet_devices(interface_name, m_eth_device_infos, 1, &number_of_devices, timeout_milliseconds);
+    VALIDATE_STATUS(status);
+
+    for(size_t i = 0; i<number_of_devices; ++i) {
+        inet_ntop_rc = inet_ntop(AF_INET, &(m_eth_device_infos[i].device_address.sin_addr), textual_ip_address, INET_ADDRSTRLEN);
+        if (NULL == inet_ntop_rc) {
+            EXIT_WITH_ERROR("Could not convert ip address to textual format (inet_ntop has failed)");
+        }
+        device_addresses.push_back(textual_ip_address);
+    }
+
+    return device_addresses;
 }
 
 class PcieScan {
@@ -78,6 +110,39 @@ std::string get_status_message(uint32_t status_in)
     }
 }
 
+class NetworkRateLimiter final
+{
+public:
+    static void set_rate_limit(const std::string &ip, uint16_t port, uint32_t rate_bytes_per_sec)
+    {
+        VALIDATE_STATUS(NetworkUdpRateCalculator::set_rate_limit(ip, port, rate_bytes_per_sec));
+    }
+
+    static void reset_rate_limit(const std::string &ip, uint16_t port)
+    {
+        VALIDATE_STATUS(NetworkUdpRateCalculator::reset_rate_limit(ip, port));
+    }
+
+    static std::string get_interface_name(const std::string &ip)
+    {
+        auto name = NetworkUdpRateCalculator::get_interface_name(ip);
+        VALIDATE_STATUS(name.status());
+
+        return name.value();
+    }
+
+    static void bind(py::module &m)
+    {
+        py::class_<NetworkRateLimiter>(m, "NetworkRateLimiter")
+        .def("set_rate_limit", &NetworkRateLimiter::set_rate_limit)
+        .def("reset_rate_limit", &NetworkRateLimiter::reset_rate_limit)
+        .def_static("get_interface_name", [](const std::string &ip) {
+            return NetworkRateLimiter::get_interface_name(ip);
+        })
+        ;
+    }
+};
+
 std::vector<hailo_detection_t> convert_nms_by_score_buffer_to_detections(py::array src_buffer)
 {
     std::vector<hailo_detection_t> detections;
@@ -103,8 +168,9 @@ std::vector<hailo_detection_with_byte_mask_t> convert_nms_with_byte_mask_buffer_
 
     size_t buffer_offset = sizeof(uint16_t);
     for (size_t i = 0; i < detections_count; i++) {
-        detections.emplace_back(*(hailo_detection_with_byte_mask_t*)(src_ptr + buffer_offset));
-        buffer_offset += sizeof(hailo_detection_with_byte_mask_t) + detections.back().mask_size;
+        hailo_detection_with_byte_mask_t detection = *(hailo_detection_with_byte_mask_t*)(src_ptr + buffer_offset);
+        buffer_offset += sizeof(hailo_detection_with_byte_mask_t) + detection.mask_size;
+        detections.emplace_back(std::move(detection));
     }
     return detections;
 }
@@ -162,6 +228,10 @@ PYBIND11_MODULE(_pyhailort, m) {
         })
         ;
 
+    py::class_<UdpScan>(m, "UdpScan")
+        .def(py::init<>())
+        .def("scan_devices", &UdpScan::scan_devices)
+        ;
     py::class_<PcieScan>(m, "PcieScan")
         .def(py::init<>())
         .def("scan_devices", &PcieScan::scan_devices)
@@ -678,6 +748,24 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_readwrite("user_buffer_format", &hailo_transform_params_t::user_buffer_format)
         ;
 
+    py::class_<hailo_eth_output_stream_params_t>(m, "EthOutputStreamParams")
+        .def(py::init<>())
+        .def_readwrite("device_port", &hailo_eth_output_stream_params_t::device_port)
+        .def_readwrite("host_address", &hailo_eth_output_stream_params_t::host_address)
+        .def_readwrite("is_sync_enabled", &hailo_eth_output_stream_params_t::is_sync_enabled)
+        .def_readwrite("max_payload_size", &hailo_eth_output_stream_params_t::max_payload_size)
+        .def_readwrite("buffers_threshold", &hailo_eth_output_stream_params_t::buffers_threshold)
+        ;
+
+    py::class_<hailo_eth_input_stream_params_t>(m, "EthInputStreamParams")
+        .def(py::init<>())
+        .def_readwrite("device_port", &hailo_eth_input_stream_params_t::device_port)
+        .def_readwrite("host_address", &hailo_eth_input_stream_params_t::host_address)
+        .def_readwrite("max_payload_size", &hailo_eth_input_stream_params_t::max_payload_size)
+        .def_readwrite("is_sync_enabled", &hailo_eth_input_stream_params_t::is_sync_enabled)
+        .def_readwrite("frames_per_sync", &hailo_eth_input_stream_params_t::frames_per_sync)
+        .def_readwrite("buffers_threshold", &hailo_eth_input_stream_params_t::buffers_threshold)
+        ;
 
     py::class_<hailo_pcie_output_stream_params_t>(m, "PcieOutputStreamParams")
         .def(py::init<>())
@@ -835,6 +923,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         )
         .def_static("default", []() {
             auto orig_params = HailoRTDefaults::get_vdevice_params();
+            orig_params.scheduling_algorithm = HAILO_SCHEDULING_ALGORITHM_NONE;
             VDeviceParamsWrapper params_wrapper{orig_params, "", {}};
             return params_wrapper;
         });
@@ -847,10 +936,14 @@ PYBIND11_MODULE(_pyhailort, m) {
             HAILO_STREAM_INTERFACE_PCIE, HAILO_H2D_STREAM)
         STREAM_PARAMETERS_UNION_PROPERTY(integrated_input_params, hailo_integrated_input_stream_params_t,
             HAILO_STREAM_INTERFACE_INTEGRATED, HAILO_H2D_STREAM)
+        STREAM_PARAMETERS_UNION_PROPERTY(eth_input_params, hailo_eth_input_stream_params_t,
+            HAILO_STREAM_INTERFACE_ETH, HAILO_H2D_STREAM)
         STREAM_PARAMETERS_UNION_PROPERTY(mipi_input_params, hailo_mipi_input_stream_params_t,
             HAILO_STREAM_INTERFACE_MIPI, HAILO_H2D_STREAM)
         STREAM_PARAMETERS_UNION_PROPERTY(pcie_output_params, hailo_pcie_output_stream_params_t,
             HAILO_STREAM_INTERFACE_PCIE, HAILO_D2H_STREAM)
+        STREAM_PARAMETERS_UNION_PROPERTY(eth_output_params, hailo_eth_output_stream_params_t,
+            HAILO_STREAM_INTERFACE_ETH, HAILO_D2H_STREAM)
         STREAM_PARAMETERS_UNION_PROPERTY(integrated_output_params, hailo_integrated_output_stream_params_t,
             HAILO_STREAM_INTERFACE_INTEGRATED, HAILO_D2H_STREAM)
         ;
@@ -989,6 +1082,7 @@ PYBIND11_MODULE(_pyhailort, m) {
 
     py::class_<uint32_t>(m, "HailoRTDefaults")
         .def_static("HAILO_INFINITE", []() { return HAILO_INFINITE;} )
+        .def_static("HAILO_DEFAULT_ETH_CONTROL_PORT", []() { return HAILO_DEFAULT_ETH_CONTROL_PORT;} )
         .def_static("BBOX_PARAMS", []() { return HailoRTCommon::BBOX_PARAMS;} )
         .def_static("DEVICE_BASE_INPUT_STREAM_PORT", []() { return HailoRTCommon::ETH_INPUT_BASE_PORT;} )
         .def_static("DEVICE_BASE_OUTPUT_STREAM_PORT", []() { return HailoRTCommon::ETH_OUTPUT_BASE_PORT;} )
@@ -1100,64 +1194,13 @@ PYBIND11_MODULE(_pyhailort, m) {
         })
         ;
 
-    // TODO: Consider moving this class to a separate file, and only bind here
-    py::class_<genai::LLMGeneratorParams>(m, "LLMGeneratorParams", py::module_local())
-        .def_property("temperature",
-            [](const genai::LLMGeneratorParams& params) -> float32_t {
-                return params.temperature();
-            },
-            [](genai::LLMGeneratorParams& params, float32_t value) {
-                VALIDATE_STATUS(params.set_temperature(value));
-            })
-        .def_property("top_k",
-            [](const genai::LLMGeneratorParams& params) -> uint32_t {
-                return params.top_k();
-            },
-            [](genai::LLMGeneratorParams& params, uint32_t value) {
-                VALIDATE_STATUS(params.set_top_k(value));
-            })
-        .def_property("top_p",
-            [](const genai::LLMGeneratorParams& params) -> float32_t {
-                return params.top_p();
-            },
-            [](genai::LLMGeneratorParams& params, float32_t value) {
-                VALIDATE_STATUS(params.set_top_p(value));
-            })
-        .def_property("frequency_penalty",
-            [](const genai::LLMGeneratorParams& params) -> float32_t {
-                return params.frequency_penalty();
-            },
-            [](genai::LLMGeneratorParams& params, float32_t value) {
-                VALIDATE_STATUS(params.set_frequency_penalty(value));
-            })
-        .def_property("max_generated_tokens",
-            [](const genai::LLMGeneratorParams& params) -> uint32_t {
-                return params.max_generated_tokens();
-            },
-            [](genai::LLMGeneratorParams& params, uint32_t value) {
-                VALIDATE_STATUS(params.set_max_generated_tokens(value));
-            })
-        .def_property("seed",
-            [](const genai::LLMGeneratorParams& params) -> uint32_t {
-                return params.seed();
-            },
-            [](genai::LLMGeneratorParams& params, uint32_t value) {
-                VALIDATE_STATUS(params.set_seed(value));
-            })
-        .def_property("do_sample",
-            [](const genai::LLMGeneratorParams& params) -> bool {
-                return params.do_sample();
-            },
-            [](genai::LLMGeneratorParams& params, bool value) {
-                VALIDATE_STATUS(params.set_do_sample(value));
-            })
-        ;
-
-    py::enum_<genai::LLMGeneratorCompletion::Status>(m, "LLMGeneratorCompletionStatus")
-        .value("GENERATING", genai::LLMGeneratorCompletion::Status::GENERATING)
-        .value("LOGICAL_END_OF_GENERATION", genai::LLMGeneratorCompletion::Status::LOGICAL_END_OF_GENERATION)
-        .value("MAX_TOKENS_REACHED", genai::LLMGeneratorCompletion::Status::MAX_TOKENS_REACHED)
-        .value("ABORTED", genai::LLMGeneratorCompletion::Status::ABORTED)
+    // https://github.com/pybind/pybind11/blob/master/docs/advanced/classes.rst
+    py::class_<uint32_t>(m, "HailoSocketDefs", py::module_local())
+        .def_static("MAX_UDP_PAYLOAD_SIZE", []() { return MAX_UDP_PAYLOAD_SIZE;} )
+        .def_static("MIN_UDP_PAYLOAD_SIZE", []() { return MIN_UDP_PAYLOAD_SIZE;} )
+        .def_static("MAX_UDP_PADDED_PAYLOAD_SIZE", []() { return MAX_UDP_PADDED_PAYLOAD_SIZE;} )
+        .def_static("MIN_UDP_PADDED_PAYLOAD_SIZE", []() { return MIN_UDP_PAYLOAD_SIZE;} )
+        .def_static("MAX_ALIGNED_UDP_PAYLOAD_SIZE_RTP", []() { return 1472;} )
         ;
 
     ActivatedAppContextManagerWrapper::bind(m);
@@ -1173,15 +1216,10 @@ PYBIND11_MODULE(_pyhailort, m) {
     InferVStreamsWrapper::bind(m);
     InputVStreamWrapper::bind(m);
     InputVStreamsWrapper::bind(m);
+    NetworkRateLimiter::bind(m);
     OutputVStreamWrapper::bind(m);
     OutputVStreamsWrapper::bind(m);
     VDeviceWrapper::bind(m);
-    SessionWrapper::bind(m);
-    SessionListenerWrapper::bind(m);
-
-    LLMGeneratorCompletionWrapper::bind(m);
-    LLMWrapper::bind(m);
-    VLMWrapper::bind(m);
 
     std::stringstream version;
     version << HAILORT_MAJOR_VERSION << "." << HAILORT_MINOR_VERSION << "." << HAILORT_REVISION_VERSION;

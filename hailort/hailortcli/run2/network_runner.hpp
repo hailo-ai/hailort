@@ -27,8 +27,6 @@
 #include "hailo/infer_model.hpp"
 #include "hailo/expected.hpp"
 #include "hailo/buffer.hpp"
-#include "utils/dma_buffer_utils.hpp"
-#include "common/file_descriptor.hpp"
 
 #include <string>
 #include <vector>
@@ -36,7 +34,7 @@
 using namespace hailort;
 
 constexpr std::chrono::milliseconds SYNC_EVENT_TIMEOUT(1000);
-constexpr const char DMA_HEAP_PATH[] = "/dev/dma_heap/hailo_media_buf,cma";
+
 
 enum class InferenceMode {
     FULL_SYNC,
@@ -85,7 +83,7 @@ struct NetworkParams
     uint32_t scheduler_threshold;
     uint32_t scheduler_timeout_ms;
     uint8_t scheduler_priority;
-    BufferType buffer_type;
+
     // Run parameters
     uint32_t framerate;
 
@@ -140,7 +138,6 @@ public:
     std::shared_ptr<ConfiguredNetworkGroup> get_configured_network_group();
     void set_last_measured_fps(double fps);
     double get_last_measured_fps();
-    const std::string &get_name() const { return m_name; }
 
 protected:
     static bool inference_succeeded(hailo_status status);
@@ -398,8 +395,6 @@ public:
     FullAsyncNetworkRunner(const NetworkParams &params, const std::string &name, VDevice &vdevice, std::shared_ptr<InferModel> infer_model,
         std::shared_ptr<ConfiguredInferModel> configured_infer_model);
 
-    ~FullAsyncNetworkRunner() = default;
-
     virtual Expected<std::vector<AsyncThreadPtr<hailo_status>>> start_inference_threads(EventPtr /*shutdown_event*/,
         std::shared_ptr<NetworkLiveTrack> /*net_live_track*/) override
     {
@@ -418,14 +413,9 @@ public:
     VStreamParams get_params(const std::string &name);
 
 private:
-    hailo_status prepare_input_buffers();
-    hailo_status prepare_output_buffers();
-
     std::unordered_map<std::string, Buffer> m_input_buffers; // Keys are inputs names
     std::vector<Buffer> m_output_buffers;
     std::vector<DmaMappedBuffer> m_dma_mapped_buffers;
-    std::unordered_map<std::string, std::vector<FileDescriptor>> m_dma_input_buffers;
-    std::vector<FileDescriptor> m_dma_output_buffers;
     ConfiguredInferModel::Bindings m_bindings;
 };
 

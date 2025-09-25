@@ -11,6 +11,7 @@
 #define HEF_API_HPP_
 
 #include "hailo/hef.hpp"
+#include "hailo/network_rate_calculator.hpp"
 #include "hailo/network_group.hpp"
 
 #include "vstream_api.hpp"
@@ -38,6 +39,7 @@ public:
     py::list get_network_groups_infos();
     py::list get_sorted_output_names(std::string net_group_name);
     float64_t get_bottleneck_fps(const std::string &net_group_name);
+    py::dict get_udp_rates_dict(const std::string &net_group_name, uint32_t fps, uint32_t max_supported_rate_bytes);
     py::list get_original_names_from_vstream_name(const std::string &vstream_name, const std::string &net_group_name);
     std::string get_vstream_name_from_original_name(const std::string &original_name, const std::string &net_group_name);
     py::list get_stream_names_from_vstream_name(const std::string &vstream_name, const std::string &net_group_name);

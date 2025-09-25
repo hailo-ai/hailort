@@ -125,7 +125,7 @@ public:
     bool has_called_activate;
     std::atomic_uint32_t ongoing_frames;
     std::condition_variable flush_cv;
-    std::mutex frame_count_mutex;
+    std::mutex flush_mutex;
     std::mutex input_caps_mutex;
 
     GstVideoInfo input_frame_info;

@@ -12,6 +12,7 @@
 
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
+#include "hailo/network_rate_calculator.hpp"
 
 #include "common/utils.hpp"
 
@@ -32,9 +33,6 @@ constexpr const uint16_t SINGLE_CONTEXT_BATCH_SIZE = 1;
 
 class VDeviceCoreOp;
 class VdmaConfigCoreOp;
-
-using StreamInfoVector = std::vector<hailo_stream_info_t>;
-
 
 class ScheduledCoreOp
 {
@@ -68,15 +66,13 @@ public:
     core_op_priority_t get_priority();
     void set_priority(core_op_priority_t priority);
 
-    bool is_over_threshold(uint32_t num_of_frames) const;
+    bool is_over_threshold() const;
     bool is_over_threshold_timeout() const;
-    bool is_first_frame() const;
 
     std::chrono::time_point<std::chrono::steady_clock> get_last_run_timestamp();
     void set_last_run_timestamp(const std::chrono::time_point<std::chrono::steady_clock> &timestamp);
 
-    std::atomic_uint32_t &get_num_pending_requests() { return m_pending_requests; }
-    std::atomic_uint32_t &get_num_ready_requests() { return m_ready_requests; }
+    std::atomic_uint32_t &requested_infer_requests() { return m_requested_infer_requests; }
 
     void add_instance();
     void remove_instance();
@@ -94,8 +90,8 @@ private:
     const bool m_use_dynamic_batch_flow;
     size_t m_instances_count;
 
-    std::atomic_uint32_t m_pending_requests;
-    std::atomic_uint32_t m_ready_requests;
+    std::atomic_uint32_t m_requested_infer_requests;
+
     uint32_t m_min_threshold;
 
     core_op_priority_t m_priority;

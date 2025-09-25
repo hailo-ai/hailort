@@ -6,7 +6,6 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/common_compiler_options.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/eigen.cmake)
-include(genai/llm/minja_wrapper/minja_wrapper.cmake)
 
 FUNCTION(relative_to_absolute_paths output)
     SET(listVar "")
@@ -28,6 +27,7 @@ add_subdirectory(device_common)
 add_subdirectory(vdevice)
 add_subdirectory(transform)
 add_subdirectory(stream_common)
+add_subdirectory(eth)
 add_subdirectory(vdma)
 add_subdirectory(mipi)
 add_subdirectory(hef)
@@ -36,6 +36,10 @@ add_subdirectory(core_op)
 add_subdirectory(net_flow)
 add_subdirectory(rpc_callbacks)
 add_subdirectory(genai)
+
+if(HAILO_BUILD_SERVICE)
+    add_subdirectory(service)
+endif()
 
 set(common_dir "${PROJECT_SOURCE_DIR}/common/src")
 set(COMMON_C_SOURCES
@@ -58,7 +62,7 @@ set(DRIVER_OS_DIR ${DRIVER_OS_DIR} CACHE INTERNAL "Absolute Full path of driver 
 set(HAILO_DRIVER_SRC_FILES ${HAILO_DRIVER_SRC_FILES} CACHE INTERNAL "Absolute Full path of driver src files")
 set(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES} CACHE INTERNAL "Absolute paths of hailort's cpp source files")
 set(COMMON_C_SOURCES ${COMMON_C_SOURCES} CACHE INTERNAL "Absolute paths of common source files")
-set(HAILORT_SRCS_ABS ${HAILORT_CPP_SOURCES} ${COMMON_C_SOURCES} ${HRPC_CPP_SOURCES} ${HRPC_PROTOCOL_CPP_SOURCES} ${GENAI_SCHEME_CPP_SOURCES} CACHE INTERNAL "All absolute paths of hailort's source files")
+set(HAILORT_SRCS_ABS ${HAILORT_CPP_SOURCES} ${COMMON_C_SOURCES} ${HRPC_CPP_SOURCES} ${HRPC_PROTOCOL_CPP_SOURCES} CACHE INTERNAL "All absolute paths of hailort's source files")
 
 SET_SOURCE_FILES_PROPERTIES(${C_SOURCES} PROPERTIES LANGUAGE CXX)
 add_library(libhailort SHARED ${HAILORT_SRCS_ABS})
@@ -85,8 +89,11 @@ target_link_libraries(libhailort PRIVATE scheduler_mon_proto)
 target_link_libraries(libhailort PRIVATE hailort_common)
 target_link_libraries(libhailort PRIVATE Eigen3::Eigen)
 target_link_libraries(libhailort PRIVATE rpc_proto)
-target_link_libraries(libhailort PRIVATE genai_scheme_proto)
-target_link_libraries(libhailort PRIVATE minja_wrapper)
+
+if(HAILO_BUILD_SERVICE)
+    target_link_libraries(libhailort PRIVATE grpc++_unsecure)
+    target_link_libraries(libhailort PRIVATE hailort_rpc_grpc_proto)
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL QNX)
     target_link_libraries(libhailort PRIVATE pci)
@@ -110,6 +117,7 @@ set(HAILORT_PUBLIC_HEADERS
     ${HAILORT_INC_DIR}/hailo/inference_pipeline.hpp
     ${HAILORT_INC_DIR}/hailo/infer_model.hpp
     ${HAILORT_INC_DIR}/hailo/runtime_statistics.hpp
+    ${HAILORT_INC_DIR}/hailo/network_rate_calculator.hpp
     ${HAILORT_INC_DIR}/hailo/vdevice.hpp
     ${HAILORT_INC_DIR}/hailo/quantization.hpp
     ${HAILORT_INC_DIR}/hailo/hailort_defaults.hpp
@@ -118,10 +126,10 @@ set(HAILORT_PUBLIC_HEADERS
     ${HAILORT_INC_DIR}/hailo/hailo_gst_tensor_metadata.hpp
 
     # GenAI
+    ${HAILORT_INC_DIR}/hailo/genai/vdevice_genai.hpp
     ${HAILORT_INC_DIR}/hailo/genai/common.hpp
     ${HAILORT_INC_DIR}/hailo/genai/llm/llm.hpp
     ${HAILORT_INC_DIR}/hailo/genai/text2image/text2image.hpp
-    ${HAILORT_INC_DIR}/hailo/genai/vlm/vlm.hpp
 )
 
 set_target_properties(libhailort PROPERTIES
@@ -130,7 +138,7 @@ set_target_properties(libhailort PROPERTIES
     VERSION ${HAILORT_MAJOR_VERSION}.${HAILORT_MINOR_VERSION}.${HAILORT_REVISION_VERSION}
     # SOVERSION ${HAILORT_MAJOR_VERSION}
 
-    CXX_STANDARD              17
+    CXX_STANDARD              14
     CXX_STANDARD_REQUIRED     YES
     CXX_EXTENSIONS            NO
     C_VISIBILITY_PRESET       hidden
@@ -152,7 +160,6 @@ target_include_directories(libhailort
     $<BUILD_INTERFACE:${DRIVER_INC_DIR}>
     $<BUILD_INTERFACE:${RPC_DIR}>
     $<BUILD_INTERFACE:${HRPC_DIR}>
-    $<BUILD_INTERFACE:${HAILORT_GENAI_DIR}>
 )
 
 target_compile_definitions(libhailort PUBLIC
@@ -186,7 +193,7 @@ configure_package_config_file(${CMAKE_CURRENT_SOURCE_DIR}/Config.cmake.in
 write_basic_package_version_file(
   "${CMAKE_SCRIPTS_DIR}/HailoRTConfigVersion.cmake"
   VERSION "${HAILORT_MAJOR_VERSION}.${HAILORT_MINOR_VERSION}.${HAILORT_REVISION_VERSION}"
-  COMPATIBILITY SameMajorVersion
+  COMPATIBILITY ExactVersion
 )
 
 # Support builds without installation

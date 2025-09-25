@@ -4,7 +4,7 @@ project(gsthailo)
 
 include(GNUInstallDirs)
 
-find_package(HailoRT 5 REQUIRED)
+find_package(HailoRT 4.23.0 EXACT REQUIRED)
 
 # GST_PLUGIN_DEFINE needs PACKAGE to be defined
 set(GST_HAILO_PACKAGE_NAME "hailo")
@@ -35,8 +35,10 @@ endif ()
 
 add_library(gsthailo SHARED ${GSTHAILO_SOURCES})
 
+set_property(TARGET gsthailo PROPERTY CXX_STANDARD 14)
+
 set_target_properties(gsthailo PROPERTIES
-    CXX_STANDARD              17
+    CXX_STANDARD              14
     CXX_STANDARD_REQUIRED     YES
     CXX_EXTENSIONS            NO
     C_VISIBILITY_PRESET       hidden
@@ -87,7 +89,7 @@ elseif (MSVC)
         message(FATAL_ERROR "HailoRT GStreamer elements installation is not supported on this architecture.")
     endif()
     set(GSTREAMER_LIB_DEST "${GSTREAMER_DEST}\\lib\\gstreamer-1.0")
-    set(PUBLIC_HEADER_DEST "${CMAKE_INSTALL_INCLUDEDIR}/gstreamer-1.0/gst/hailo")
+    set(PUBLIC_HEADER_DEST "${CMAKE_INSTALL_INCLUDEDIR}\\gstreamer-1.0\\gst\\hailo")
 endif()
 
 # Install command using the set variables

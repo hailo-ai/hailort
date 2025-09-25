@@ -44,10 +44,6 @@ private:
     void extract_bbox_classes(const hailo_bbox_float32_t &dims_bbox, SrcType *cls_data, const BufferMetaData &cls_metadata, uint32_t cls_index)
     {
         const auto &nms_config = m_metadata->nms_config();
-
-        // Quantize the threshold once instead of dequantizing each data point
-        SrcType quantized_threshold = Quantization::quantize_input<float32_t, SrcType>(static_cast<float32_t>(nms_config.nms_score_th), cls_metadata.quant_info);
-
         for (uint32_t class_index = 0; class_index < nms_config.number_of_classes; class_index++) {
             auto class_id = class_index;
             if (nms_config.background_removal) {
@@ -64,19 +60,15 @@ private:
             }
 
             auto class_entry_idx = cls_index + (class_index * cls_metadata.padded_shape.width);
-
-            if (cls_data[class_entry_idx] >= quantized_threshold) { // First - compare quantized values
-                // In case the quantized value is greater than the quantized threshold, double check - dequantize and compare to real threshold
-                auto class_score = Quantization::dequantize_output<DstType, SrcType>(cls_data[class_entry_idx],
-                    cls_metadata.quant_info);
-                if (class_score < nms_config.nms_score_th) {
-                    continue;
-                }
-                auto bbox = dims_bbox;
-                bbox.score = class_score;
-                m_detections.emplace_back(bbox, class_id);
-                m_classes_detections_count[class_id]++;
+            auto class_score = Quantization::dequantize_output<DstType, SrcType>(cls_data[class_entry_idx],
+                cls_metadata.quant_info);
+            if (class_score < nms_config.nms_score_th) {
+                continue;
             }
+            auto bbox = dims_bbox;
+            bbox.score = class_score;
+            m_detections.emplace_back(bbox, class_id);
+            m_classes_detections_count[class_id]++;
         }
     }
 

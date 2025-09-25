@@ -23,7 +23,7 @@ class I2CSlave(object):
             name (str): The name of the I2C slave.
             bus_index (int): The bus number the I2C slave is connected to.
             slave_address (int): The address of the I2C slave.
-            switch_number (int): The number of the switch to which the I2C is connected.
+            switch_number (int): The number of the switch the i2c salve is connected to.
             register_address_size (int): Slave register address length (in bytes).
             endianness (:class:`~hailo_platform.pyhailort.pyhailort.Endianness`): The endianness of the slave.
             should_hold_bus (bool): Should hold the bus during the read.

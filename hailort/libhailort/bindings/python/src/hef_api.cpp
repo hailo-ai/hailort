@@ -77,6 +77,15 @@ float64_t HefWrapper::get_bottleneck_fps(const std::string &net_group_name)
     return bottleneck_fps.release();
 }
 
+py::dict HefWrapper::get_udp_rates_dict(const std::string &net_group_name, uint32_t fps, uint32_t max_supported_rate_bytes)
+{
+    auto rate_calculator = NetworkUdpRateCalculator::create(hef.release(), net_group_name);
+    VALIDATE_EXPECTED(rate_calculator);
+    auto rates_per_name = rate_calculator.value().calculate_inputs_bandwith(fps, max_supported_rate_bytes);
+    VALIDATE_EXPECTED(rates_per_name);
+    return py::cast(rates_per_name.release());
+}
+
 py::list HefWrapper::get_original_names_from_vstream_name(const std::string &vstream_name, const std::string &net_group_name)
 {
     auto results = hef->get_original_names_from_vstream_name(vstream_name, net_group_name);
@@ -170,7 +179,7 @@ py::dict HefWrapper::get_external_resources()
     VALIDATE_EXPECTED(external_resource);
     std::map<std::string, py::bytes> external_resources;
     for (const auto &resource : external_resource.value()) {
-        external_resources[resource.first] = py::bytes(py::bytes(resource.second.as_pointer<char>(), resource.second.size()));
+        external_resources[resource.first] = py::bytes(resource.second);
     }
     return py::cast(external_resources);
 }
@@ -201,6 +210,7 @@ void HefWrapper::bind(py::module &m)
         .def("get_vstream_names_from_stream_name", &HefWrapper::get_vstream_names_from_stream_name)
         .def("get_vstream_name_from_original_name", &HefWrapper::get_vstream_name_from_original_name)
         .def("get_original_names_from_vstream_name", &HefWrapper::get_original_names_from_vstream_name)
+        .def("get_udp_rates_dict", &HefWrapper::get_udp_rates_dict)
         .def("create_configure_params", &HefWrapper::create_configure_params)
         .def("create_configure_params_mipi_input", &HefWrapper::create_configure_params_mipi_input)
         .def("get_input_vstream_infos", &HefWrapper::get_input_vstream_infos)

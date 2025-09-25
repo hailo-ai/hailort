@@ -11,22 +11,18 @@
 #define _HAILO_CONNECTION_CONTEXT_HPP_
 
 #include "hailo/expected.hpp"
+#include "vdma/driver/hailort_driver.hpp"
 
 #include <memory>
-#include <string>
-
-static const std::string SERVER_ADDR_USE_UNIX_SOCKET = "unix-socket";
 
 namespace hailort
 {
-
-class HailoRTDriver;
 
 class ConnectionContext
 {
 public:
     static Expected<std::shared_ptr<ConnectionContext>> create_client_shared(const std::string &device_id = "");
-    static Expected<std::shared_ptr<ConnectionContext>> create_server_shared(const std::string &ip = "");
+    static Expected<std::shared_ptr<ConnectionContext>> create_server_shared();
 
     bool is_accepting() const { return m_is_accepting; }
     virtual std::shared_ptr<HailoRTDriver> get_driver() { return nullptr; };

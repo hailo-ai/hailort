@@ -51,10 +51,9 @@ private:
         const auto src_row_size = input_metadata.padded_shape.width * input_metadata.padded_shape.features;
         const auto dst_row_size = output_metadata.shape.width;
 
-        // Optimized: incrementing pointers and offsets instead of calculating offsets with multiplication
-        const SrcType *src_row = src_ptr;
-        DstType *dst_row = dst_ptr;
         for (uint32_t r = 0; r < input_metadata.shape.height; r++) {
+            const SrcType *src_row = src_ptr + (r * src_row_size);
+            DstType *dst_row = dst_ptr + (r * dst_row_size);
             for (uint32_t w = 0; w < input_metadata.shape.width; w++) {
                 const SrcType *offset_in_row = src_row + w;
                 DstType max_index = 0;
@@ -69,8 +68,6 @@ private:
                 }
                 dst_row[w] = max_index;
             }
-            src_row += src_row_size;
-            dst_row += dst_row_size;
         }
         return HAILO_SUCCESS;
     }
@@ -84,12 +81,11 @@ private:
         const auto src_row_size = input_metadata.padded_shape.width * input_metadata.padded_shape.features;
         const auto dst_row_size = output_metadata.shape.width;
 
-        // Optimized: incrementing pointers and offsets instead of calculating offsets with multiplication
-        const SrcType *src_row = src_ptr;
-        DstType *dst_row = dst_ptr;
         for (uint32_t r = 0; r < input_metadata.shape.height; r++) {
-            const SrcType *offset_in_row = src_row;
+            const SrcType *src_row = src_ptr + (r * src_row_size);
+            DstType *dst_row = dst_ptr + (r * dst_row_size);
             for (uint32_t w = 0; w < input_metadata.shape.width; w++) {
+                const SrcType *offset_in_row = src_row + (w * input_metadata.padded_shape.features);
                 DstType max_index = 0;
                 auto max_value = *offset_in_row;
                 for (uint32_t c = 1; c < input_metadata.shape.features; c++) {
@@ -100,10 +96,7 @@ private:
                     }
                 }
                 dst_row[w] = max_index;
-                offset_in_row += input_metadata.padded_shape.features;
             }
-            src_row += src_row_size;
-            dst_row += dst_row_size;
         }
         return HAILO_SUCCESS;
     }
@@ -140,16 +133,15 @@ private:
         const auto num_of_eight_channels_chunks = input_metadata.padded_shape.features / F8CR_FEATURES_IN_CHUNK;
         const auto eight_channels_x_width_size = input_metadata.padded_shape.width * F8CR_FEATURES_IN_CHUNK;
 
-        // Optimized: incrementing pointers and offsets instead of calculating offsets with multiplication
-        const SrcType *src_row = src_ptr;
-        DstType *dst_row = dst_ptr;
         for (uint32_t r = 0; r < input_metadata.shape.height; r++) {
-            const SrcType *offset_in_row = src_row;
+            const SrcType *src_row = src_ptr + (r * src_row_size);
+            DstType *dst_row = dst_ptr + (r * dst_row_size);
             for (uint32_t w = 0; w < input_metadata.shape.width; w++) {
+                const SrcType *offset_in_row = src_row + (w * F8CR_FEATURES_IN_CHUNK);
                 DstType max_index = 0;
                 auto max_value = *offset_in_row;
-                const SrcType *offset_in_column = offset_in_row;
                 for (uint32_t channel_chunk_id = 0; channel_chunk_id < num_of_eight_channels_chunks; channel_chunk_id++) {
+                    const SrcType *offset_in_column = offset_in_row + (eight_channels_x_width_size * channel_chunk_id);
                     uint32_t num_of_channels_in_chunk = ((channel_chunk_id + 1 == num_of_eight_channels_chunks) ? (input_metadata.shape.features % F8CR_FEATURES_IN_CHUNK) : F8CR_FEATURES_IN_CHUNK );
                     for (uint32_t c = 0; c < num_of_channels_in_chunk; c++) {
                         const auto &current_value = *(offset_in_column + c);
@@ -158,13 +150,9 @@ private:
                             max_value = current_value;
                         }
                     }
-                    offset_in_column += eight_channels_x_width_size;
                 }
                 dst_row[w] = max_index;
-                offset_in_row += F8CR_FEATURES_IN_CHUNK;
             }
-            src_row += src_row_size;
-            dst_row += dst_row_size;
         }
         return HAILO_SUCCESS;
     }

@@ -36,23 +36,22 @@ public:
     uint16_t desc_page_size() const { return m_desc_page_size; }
     uint32_t buffer_size() const { return m_descs_count * m_desc_page_size; }
 
-    static Expected<BufferSizesRequirements> get_buffer_requirements_for_boundary_channels(
-        const DescSizesParams &desc_sizes_params, uint32_t max_shmifo_size, uint16_t min_active_trans,
-        uint16_t max_active_trans, uint32_t transfer_size);
+    static Expected<BufferSizesRequirements> get_buffer_requirements_for_boundary_channels(HailoRTDriver &driver,
+        uint32_t max_shmifo_size, uint16_t min_active_trans, uint16_t max_active_trans, uint32_t transfer_size);
 
     static Expected<BufferSizesRequirements> get_buffer_requirements_multiple_transfers(
-        vdma::VdmaBuffer::Type buffer_type, const DescSizesParams &desc_sizes_params, uint16_t max_desc_page_size,
+        vdma::VdmaBuffer::Type buffer_type, uint16_t max_desc_page_size,
         uint16_t batch_size, const std::vector<uint32_t> &transfer_sizes, bool is_circular,
         bool force_default_page_size, bool force_batch_size, bool is_ddr);
 
     static Expected<BufferSizesRequirements> get_buffer_requirements_single_transfer(
-        vdma::VdmaBuffer::Type buffer_type, const DescSizesParams &desc_sizes_params, uint16_t max_desc_page_size,
+        vdma::VdmaBuffer::Type buffer_type, uint16_t max_desc_page_size,
         uint16_t min_batch_size, uint16_t max_batch_size, uint32_t transfer_size, bool is_circular,
         bool force_default_page_size, bool force_batch_size, bool is_vdma_aligned_buffer, bool is_ddr);
 
 private:
-    static uint16_t find_initial_desc_page_size(const DescSizesParams &desc_sizes_params,
-        const std::vector<uint32_t> &transfer_sizes, bool force_default_page_size);
+    static uint16_t find_initial_desc_page_size(vdma::VdmaBuffer::Type buffer_type, const std::vector<uint32_t> &transfer_sizes,
+        uint16_t max_desc_page_size, bool force_default_page_size, uint16_t min_page_size);
     static uint32_t get_required_descriptor_count(const std::vector<uint32_t> &transfer_sizes, uint16_t desc_page_size,
         bool is_ddr_layer);
 

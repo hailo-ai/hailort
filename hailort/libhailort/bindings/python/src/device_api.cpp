@@ -38,6 +38,15 @@ DeviceWrapperPtr DeviceWrapper::create_pcie(hailo_pcie_device_info_t &device_inf
     return std::make_shared<DeviceWrapper>(device.release());
 }
 
+DeviceWrapperPtr DeviceWrapper::create_eth(const std::string &device_address, uint16_t port,
+    uint32_t timeout_milliseconds, uint8_t max_number_of_attempts)
+{
+    auto device = Device::create_eth(device_address, port, timeout_milliseconds, max_number_of_attempts);
+    VALIDATE_EXPECTED(device);
+
+    return std::make_shared<DeviceWrapper>(device.release());
+}
+
 void DeviceWrapper::release()
 {
     m_device.reset();
@@ -385,6 +394,21 @@ void DeviceWrapper::remove_notification_callback(hailo_notification_id_t notific
     VALIDATE_STATUS(status);
 }
 
+py::bytes DeviceWrapper::read_log(size_t byte_count, hailo_cpu_id_t cpu_id)
+{
+    std::string response;
+
+    response.reserve(byte_count);
+    response.resize(byte_count);
+
+    MemoryView response_view ((&response[0]), byte_count);
+    auto response_size_expected = device().read_log(response_view, cpu_id);
+    VALIDATE_EXPECTED(response_size_expected);
+
+    response.resize(response_size_expected.release());
+    return py::bytes(response);
+}
+
 void DeviceWrapper::direct_write_memory(uint32_t address, py::bytes buffer)
 {
     const auto buffer_str = static_cast<std::string>(buffer);
@@ -429,6 +453,7 @@ void DeviceWrapper::bind(py::module &m)
     // C'tors
     .def("create", &DeviceWrapper::create)
     .def("create_pcie", &DeviceWrapper::create_pcie)
+    .def("create_eth", &DeviceWrapper::create_eth)
     .def("release", &DeviceWrapper::release)
 
     // Controls
@@ -476,6 +501,7 @@ void DeviceWrapper::bind(py::module &m)
     .def("direct_write_memory", &DeviceWrapper::direct_write_memory)
     .def("direct_read_memory", &DeviceWrapper::direct_read_memory)
     .def_property_readonly("device_id", &DeviceWrapper::get_dev_id)
+    .def("read_log", &DeviceWrapper::read_log, py::return_value_policy::move)
 
     .def("set_notification_callback", &DeviceWrapper::set_notification_callback)
     .def("remove_notification_callback", &DeviceWrapper::remove_notification_callback)

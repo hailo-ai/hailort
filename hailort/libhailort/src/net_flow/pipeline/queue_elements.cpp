@@ -24,7 +24,7 @@ Expected<SpscQueue<PipelineBuffer>> BaseQueueElement::create_queue(size_t queue_
     return queue.release();
 }
 
-BaseQueueElement::BaseQueueElement(SpscQueue<PipelineBuffer> &&queue, PipelineBufferPoolPtr buffer_pool, EventPtr shutdown_event, const std::string &name,
+BaseQueueElement::BaseQueueElement(SpscQueue<PipelineBuffer> &&queue, BufferPoolPtr buffer_pool, EventPtr shutdown_event, const std::string &name,
     std::chrono::milliseconds timeout, DurationCollector &&duration_collector, AccumulatorPtr &&queue_size_accumulator,
     std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, Event &&activation_event, Event &&deactivation_event,
     PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline) :
@@ -273,7 +273,7 @@ Expected<std::shared_ptr<PushQueueElement>> PushQueueElement::create(const std::
         CHECK_AS_EXPECTED(nullptr != queue_size_accumulator, HAILO_OUT_OF_HOST_MEMORY);
     }
 
-    auto buffer_pool = PipelineBufferPool::create(frame_size, queue_size, shutdown_event, flags, vs_flags);
+    auto buffer_pool = BufferPool::create(frame_size, queue_size, shutdown_event, flags, vs_flags);
     CHECK_EXPECTED(buffer_pool);
 
     auto queue_ptr = make_shared_nothrow<PushQueueElement>(queue.release(), buffer_pool.release(), shutdown_event, name, timeout,
@@ -295,7 +295,7 @@ Expected<std::shared_ptr<PushQueueElement>> PushQueueElement::create(const std::
         pipeline_status, async_pipeline);
 }
 
-PushQueueElement::PushQueueElement(SpscQueue<PipelineBuffer> &&queue, PipelineBufferPoolPtr buffer_pool, EventPtr shutdown_event, const std::string &name,
+PushQueueElement::PushQueueElement(SpscQueue<PipelineBuffer> &&queue, BufferPoolPtr buffer_pool, EventPtr shutdown_event, const std::string &name,
     std::chrono::milliseconds timeout, DurationCollector &&duration_collector, AccumulatorPtr &&queue_size_accumulator,
     std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, Event &&activation_event, Event &&deactivation_event,
     std::shared_ptr<AsyncPipeline> async_pipeline, bool should_start_thread) :
@@ -439,7 +439,7 @@ Expected<std::shared_ptr<AsyncPushQueueElement>> AsyncPushQueueElement::create(c
         CHECK_AS_EXPECTED(nullptr != queue_size_accumulator, HAILO_OUT_OF_HOST_MEMORY);
     }
 
-    auto buffer_pool = PipelineBufferPool::create(frame_size, queue_size, shutdown_event, flags, vstream_stats_flags, is_empty, interacts_with_hw);
+    auto buffer_pool = BufferPool::create(frame_size, queue_size, shutdown_event, flags, vstream_stats_flags, is_empty, interacts_with_hw);
     CHECK_EXPECTED(buffer_pool);
 
     auto queue_ptr = make_shared_nothrow<AsyncPushQueueElement>(queue.release(), buffer_pool.release(),
@@ -462,7 +462,7 @@ Expected<std::shared_ptr<AsyncPushQueueElement>> AsyncPushQueueElement::create(c
         is_entry);
 }
 
-AsyncPushQueueElement::AsyncPushQueueElement(SpscQueue<PipelineBuffer> &&queue, PipelineBufferPoolPtr buffer_pool, EventPtr shutdown_event,
+AsyncPushQueueElement::AsyncPushQueueElement(SpscQueue<PipelineBuffer> &&queue, BufferPoolPtr buffer_pool, EventPtr shutdown_event,
     const std::string &name, std::chrono::milliseconds timeout, DurationCollector &&duration_collector,  AccumulatorPtr &&queue_size_accumulator,
     std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, Event &&activation_event, Event &&deactivation_event,
     std::shared_ptr<AsyncPipeline> async_pipeline) :
@@ -646,7 +646,7 @@ Expected<std::shared_ptr<PullQueueElement>> PullQueueElement::create(const std::
         CHECK_AS_EXPECTED(nullptr != queue_size_accumulator, HAILO_OUT_OF_HOST_MEMORY);
     }
 
-    auto buffer_pool = PipelineBufferPool::create(frame_size, queue_size, shutdown_event, flags, vstream_stats_flags);
+    auto buffer_pool = BufferPool::create(frame_size, queue_size, shutdown_event, flags, vstream_stats_flags);
     CHECK_EXPECTED(buffer_pool);
 
     auto queue_ptr = make_shared_nothrow<PullQueueElement>(queue.release(), buffer_pool.release(), shutdown_event,
@@ -666,7 +666,7 @@ Expected<std::shared_ptr<PullQueueElement>> PullQueueElement::create(const std::
         pipeline_status);
 }
 
-PullQueueElement::PullQueueElement(SpscQueue<PipelineBuffer> &&queue, PipelineBufferPoolPtr buffer_pool, EventPtr shutdown_event,
+PullQueueElement::PullQueueElement(SpscQueue<PipelineBuffer> &&queue, BufferPoolPtr buffer_pool, EventPtr shutdown_event,
     const std::string &name, std::chrono::milliseconds timeout, DurationCollector &&duration_collector, AccumulatorPtr &&queue_size_accumulator,
     std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, Event &&activation_event, Event &&deactivation_event) :
     BaseQueueElement(std::move(queue), buffer_pool, shutdown_event, name, timeout, std::move(duration_collector), std::move(queue_size_accumulator),
@@ -788,7 +788,7 @@ Expected<std::shared_ptr<UserBufferQueueElement>> UserBufferQueueElement::create
 
     auto is_empty = true; // UserBufferQueue always holds user buffers, therefore its created empty
     auto is_dma_able = false;
-    auto buffer_pool = PipelineBufferPool::create(frame_size, queue_size, shutdown_event, flags, vstream_stats_flags, is_empty, is_dma_able);
+    auto buffer_pool = BufferPool::create(frame_size, queue_size, shutdown_event, flags, vstream_stats_flags, is_empty, is_dma_able);
     CHECK_EXPECTED(buffer_pool);
 
     auto queue_ptr = make_shared_nothrow<UserBufferQueueElement>(pending_buffer_queue.release(),
@@ -809,7 +809,7 @@ Expected<std::shared_ptr<UserBufferQueueElement>> UserBufferQueueElement::create
         vstream_params.pipeline_elements_stats_flags, vstream_params.vstream_stats_flags, frame_size, pipeline_status);
 }
 
-UserBufferQueueElement::UserBufferQueueElement(SpscQueue<PipelineBuffer> &&queue, PipelineBufferPoolPtr buffer_pool,
+UserBufferQueueElement::UserBufferQueueElement(SpscQueue<PipelineBuffer> &&queue, BufferPoolPtr buffer_pool,
     EventPtr shutdown_event, const std::string &name, std::chrono::milliseconds timeout,
     DurationCollector &&duration_collector, AccumulatorPtr &&queue_size_accumulator, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
     Event &&activation_event, Event &&deactivation_event) :
@@ -916,7 +916,7 @@ Expected<std::shared_ptr<MultiPushQueue>> MultiPushQueue::create(const std::stri
     }
 
     std::vector<SpscQueue<PipelineBuffer>> queues;
-    std::vector<PipelineBufferPoolPtr> buffer_pools;
+    std::vector<BufferPoolPtr> buffer_pools;
     queues.reserve(num_of_queues);
     buffer_pools.reserve(num_of_queues);
 
@@ -925,7 +925,7 @@ Expected<std::shared_ptr<MultiPushQueue>> MultiPushQueue::create(const std::stri
         CHECK_EXPECTED(queue);
         queues.emplace_back(queue.release());
 
-        auto buffer_pool = PipelineBufferPool::create(frame_size, queue_size, build_params.shutdown_event, build_params.elem_stats_flags,
+        auto buffer_pool = BufferPool::create(frame_size, queue_size, build_params.shutdown_event, build_params.elem_stats_flags,
             build_params.vstream_stats_flags, is_empty, interacts_with_hw);
         CHECK_EXPECTED(buffer_pool);
         buffer_pools.emplace_back(buffer_pool.release());
@@ -947,7 +947,7 @@ Expected<std::shared_ptr<MultiPushQueue>> MultiPushQueue::create(const std::stri
 MultiPushQueue::MultiPushQueue(std::vector<SpscQueue<PipelineBuffer>> &&queues, size_t sink_count, const std::string &name,
     std::chrono::milliseconds timeout, DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
     PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline, EventPtr shutdown_event,
-    std::vector<PipelineBufferPoolPtr> &&buffer_pools) :
+    std::vector<BufferPoolPtr> &&buffer_pools) :
     PipelineElementInternal(name, std::move(duration_collector), std::move(pipeline_status), pipeline_direction, async_pipeline),
     m_timeout(timeout),
     m_thread_id(0),

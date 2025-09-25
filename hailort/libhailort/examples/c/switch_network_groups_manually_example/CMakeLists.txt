@@ -1,11 +1,9 @@
 cmake_minimum_required(VERSION 3.5.0)
 
-project(hailort-examples-c-switch-network-groups-manually)
-
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
-find_package(HailoRT 5 REQUIRED)
+find_package(HailoRT 4.23.0 EXACT REQUIRED)
 
 SET_SOURCE_FILES_PROPERTIES(switch_network_groups_manually_example.c PROPERTIES LANGUAGE C)
 

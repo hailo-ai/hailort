@@ -25,7 +25,7 @@ namespace hailort
 class ChannelAllocator final
 {
 public:
-    explicit ChannelAllocator(size_t max_engines_count, hailo_device_architecture_t device_arch);
+    explicit ChannelAllocator(size_t max_engines_count);
     ChannelAllocator(ChannelAllocator &&other) = default;
 
     Expected<vdma::ChannelId> get_available_channel_id(const LayerIdentifier &layer_identifier,
@@ -43,8 +43,6 @@ private:
     // Contains all channels id allocated for the network group. This channels are never released.
     std::set<vdma::ChannelId> m_boundary_channel_ids;
     std::set<vdma::ChannelId> m_internal_channel_ids;
-
-    hailo_device_architecture_t m_device_arch;
 };
 
 } /* namespace hailort */

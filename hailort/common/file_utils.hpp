@@ -22,21 +22,10 @@ namespace hailort
 Expected<size_t> get_istream_size(std::ifstream &s);
 
 /**
- * Reads full file content into a provided `MemoryView`, and return the file_size.
- */
-Expected<size_t> read_binary_file(const std::string &file_path, MemoryView mem_view);
-
-/**
- * Creates `Buffer` and reads full file content into it.
+ * Reads full file content into a `Buffer`
  */
 Expected<Buffer> read_binary_file(const std::string &file_path,
     const BufferStorageParams &output_buffer_params = {});
-
-/**
- * Reads a file from dev content into a provided `MemoryView`, and return the file_size.
- * Can't perform operations operations like tellg() on such files (hence, the special implementation).
- */
-Expected<size_t> read_device_file(const std::string &file_path, MemoryView buffer);
 
 // This class is an RAII to return to the original stream position
 class StreamPositionGuard
@@ -61,10 +50,6 @@ public:
     virtual ~SeekableBytesReader() = default;
     virtual hailo_status read(uint8_t *buffer, size_t n) = 0;
     virtual hailo_status read_from_offset(uint64_t offset, MemoryView dst, size_t n) = 0;
-
-    // TODO: HRT-17013
-    virtual Expected<MemoryView> read_from_offset_as_memview(uint64_t offset, size_t size) = 0;
-
     virtual hailo_status open() = 0;
     virtual bool is_open() const = 0;
     virtual hailo_status seek(size_t position) = 0;
@@ -84,8 +69,6 @@ public:
 
     virtual hailo_status read(uint8_t *buffer, size_t n);
     virtual hailo_status read_from_offset(uint64_t offset, MemoryView dst, size_t n);
-    virtual Expected<MemoryView> read_from_offset_as_memview(uint64_t offset, size_t size) override;
-
     virtual hailo_status open();
     virtual bool is_open() const;
     virtual hailo_status seek(size_t position);
@@ -120,9 +103,6 @@ public:
     virtual Expected<size_t> calculate_remaining_size();
 
     const MemoryView get_memview() const;
-
-    // TODO: HRT-17013 - When working from buffer, this is the only function necessary, remove 'read_from_offset' and rename this
-    virtual Expected<MemoryView> read_from_offset_as_memview(uint64_t offset, size_t size) override;
 
 private:
     MemoryView m_memview;

@@ -16,22 +16,15 @@
 #include <math.h>
 #include <fenv.h>
 
+static const float32_t INVALID_QP_VALUE = 0;
+
 #ifdef _MSC_VER
 #include <immintrin.h>
 #endif
 
+/** hailort namespace */
 namespace hailort
 {
-
-// Forward declarations for friend classes
-namespace net_flow
-{
-    class SSDPostProcessOp;
-    class YOLOV8PostProcessOp;
-    class YOLOXPostProcessOp;
-    class YOLOv5PostProcessOp;
-    class Yolov5SegPostProcess;
-}
 
 inline float bankers_round(float x)
 {
@@ -261,8 +254,8 @@ public:
      */
     static inline bool is_qp_valid(const hailo_quant_info_t &quant_info)
     {
-        hailo_quant_info_t invalid_qi(INVALID_QUANT_INFO);
-        return (0 != std::memcmp(&quant_info, &invalid_qi, sizeof(quant_info)));
+        return !((quant_info.qp_zp == INVALID_QP_VALUE) && (quant_info.qp_scale == INVALID_QP_VALUE) 
+            && (quant_info.limvals_min == INVALID_QP_VALUE) && (quant_info.limvals_max == INVALID_QP_VALUE));
     }
 
 private:
@@ -272,12 +265,6 @@ private:
         float32_t clipped_number = clip((float32_t)number, quant_info.limvals_min, quant_info.limvals_max);
         return (Q)bankers_round((clipped_number / quant_info.qp_scale) + quant_info.qp_zp);
     }
-
-    friend class net_flow::SSDPostProcessOp;
-    friend class net_flow::YOLOV8PostProcessOp;
-    friend class net_flow::YOLOXPostProcessOp;
-    friend class net_flow::YOLOv5PostProcessOp;
-    friend class net_flow::Yolov5SegPostProcess;
 };
 
 } /* namespace hailort */

@@ -19,6 +19,7 @@ set(HAILORTCLI_CPP_FILES
     sensor_config_command.cpp
     board_config_command.cpp
     fw_config_command.cpp
+    fw_logger_command.cpp
     fw_config_serializer.cpp
     common.cpp
     benchmark_command.cpp
@@ -26,7 +27,6 @@ set(HAILORTCLI_CPP_FILES
     memory_requirements_command.cpp
     graph_printer.cpp
     mon_command.cpp
-    logs_command.cpp
 
     run2/run2_command.cpp
     run2/network_runner.cpp
@@ -41,6 +41,7 @@ set(HAILORTCLI_CPP_FILES
 if(UNIX)
     # Unix only modules
     set(HAILORTCLI_CPP_FILES ${HAILORTCLI_CPP_FILES}
+        udp_rate_limiter_command.cpp
         measure_nnc_performance_command.cpp
         )
 endif()
@@ -60,7 +61,7 @@ add_executable(hailortcli
 )
 
 target_compile_options(hailortcli PRIVATE ${HAILORT_COMPILE_OPTIONS})
-set_property(TARGET hailortcli PROPERTY CXX_STANDARD 17)
+set_property(TARGET hailortcli PROPERTY CXX_STANDARD 14)
 
 # Link with a relative libhailort
 set_property(TARGET hailortcli PROPERTY INSTALL_RPATH "$ORIGIN")

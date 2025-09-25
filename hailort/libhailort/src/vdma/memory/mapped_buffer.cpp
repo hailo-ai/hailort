@@ -17,7 +17,7 @@ Expected<MappedBufferPtr> MappedBuffer::create_shared(DmaAbleBufferPtr buffer, H
     HailoRTDriver::DmaDirection data_direction)
 {
     TRY(auto buffer_handle, driver.vdma_buffer_map(reinterpret_cast<uintptr_t>(buffer->user_address()), buffer->size(), data_direction,
-        HailoRTDriver::DmaBufferType::USER_PTR_BUFFER));
+        buffer->buffer_identifier(), HailoRTDriver::DmaBufferType::USER_PTR_BUFFER));
 
     auto result = make_shared_nothrow<MappedBuffer>(driver, buffer, data_direction, buffer_handle, buffer->size());
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
@@ -28,7 +28,7 @@ Expected<MappedBufferPtr> MappedBuffer::create_shared(DmaAbleBufferPtr buffer, H
 Expected<MappedBufferPtr> MappedBuffer::create_shared_by_allocation(size_t size, HailoRTDriver &driver,
     HailoRTDriver::DmaDirection data_direction)
 {
-    auto buffer = DmaAbleBuffer::create_by_allocation(size);
+    auto buffer = DmaAbleBuffer::create_by_allocation(size, driver);
     CHECK_EXPECTED(buffer);
 
     return create_shared(buffer.release(), driver, data_direction);

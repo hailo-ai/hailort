@@ -29,7 +29,7 @@
 const std::string POWER_ARG = "power";
 const std::string CURRENT_ARG = "current";
 
-const std::chrono::seconds MEASUREMENTS_DURATION_SECS(1);
+const std::chrono::seconds MEASUREMENTS_DURATION_SECS(5);
 
 using namespace hailort;
 
@@ -57,7 +57,7 @@ void print_measurements_results(Device &device, const hailo_power_measurement_da
     auto type_str = (type == HAILO_POWER_MEASUREMENT_TYPES__POWER) ? "Power measurement" :
         "Current measurement";
 
-    std::cout << "Device " << std::string(id) << ":" << std::endl;
+    std::cout << "Device" << std::string(id) << ":" << std::endl;
     std::cout << "  " << type_str << std::endl;
     std::cout << "    Minimum value: " << result.min_value << MEASUREMENT_UNITS(type) << std::endl;
     std::cout << "    Average value: " << result.average_value << MEASUREMENT_UNITS(type) << std::endl;
@@ -101,17 +101,6 @@ int main(int argc, char **argv)
     }
 
     for (auto &physical_device : physical_devices.value()) {
-        auto device_capabilities = physical_device.get().get_capabilities();
-        if (!device_capabilities) {
-            std::cerr << "Failed to get device capabilities for device " << physical_device.get().get_dev_id() << std::endl;
-            return device_capabilities.status();
-        }
-
-        if (!device_capabilities->power_measurements) {
-            std::cout << "Power measurement is not supported on device " << physical_device.get().get_dev_id() << std::endl;
-            return HAILO_NOT_SUPPORTED;
-        }
-
         status = physical_device.get().stop_power_measurement();
         if (HAILO_SUCCESS != status) {
             std::cerr << "Failed stopping former measurements" << std::endl;

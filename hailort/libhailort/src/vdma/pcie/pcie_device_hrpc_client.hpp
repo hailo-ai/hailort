@@ -21,8 +21,8 @@ namespace hailort
 
 class PcieDeviceHrpcClient : public Device {
 public:
-    static Expected<std::unique_ptr<Device>> create(const std::string &device_id);
-    static Expected<std::unique_ptr<Device>> create(const std::string &device_id,
+    static Expected<std::unique_ptr<PcieDeviceHrpcClient>> create(const std::string &device_id);
+    static Expected<std::unique_ptr<PcieDeviceHrpcClient>> create(const std::string &device_id,
         std::shared_ptr<Client> client);
 
     PcieDeviceHrpcClient(const std::string &device_id, std::shared_ptr<Client> client, uint32_t handle,
@@ -85,9 +85,6 @@ public:
     virtual hailo_status before_fork() override;
     virtual hailo_status after_fork_in_parent() override;
     virtual hailo_status after_fork_in_child() override;
-
-    virtual Expected<bool> has_power_sensor() override;
-    virtual Expected<size_t> fetch_logs(MemoryView buffer, hailo_log_type_t log_type) override;
 
 private:
     static Expected<std::shared_ptr<Client>> get_connected_client(const std::string &device_id);

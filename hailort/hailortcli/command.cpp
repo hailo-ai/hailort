@@ -49,8 +49,11 @@ hailo_status DeviceCommand::execute()
 {
     pre_execute();
 
-    TRY(auto devices, create_devices(m_device_params));
-    return execute_on_devices(devices);
+    auto devices = create_devices(m_device_params);
+    if (!devices) {
+        return devices.status();
+    }
+    return execute_on_devices(devices.value());
 }
 
 hailo_status DeviceCommand::execute_on_devices(std::vector<std::unique_ptr<Device>> &devices)

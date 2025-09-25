@@ -51,23 +51,10 @@ using PipelineTimePoint = std::chrono::steady_clock::time_point;
 
 class VDevice;
 
-struct AdditionalData {
-    virtual ~AdditionalData() = default;
-    enum class Type {
-        Base,
-        IouPipelineData,
-        PixBufferPipelineData,
-        DmaBufferPipelineData
-    };
-
-    // Runtime type tag (avoids dynamic_cast). Derived types must override and return their static TYPE.
-    virtual Type type() const noexcept { return Type::Base; }
-};
+struct AdditionalData {};
 
 struct IouPipelineData : AdditionalData
 {
-    static constexpr Type TYPE = Type::IouPipelineData;
-    Type type() const noexcept override { return TYPE; }
     IouPipelineData(std::vector<net_flow::DetectionBbox> &&detections, std::vector<uint32_t> &&detections_classes_count)
         : m_detections(std::move(detections)),
           m_detections_classes_count(std::move(detections_classes_count)) {}
@@ -81,23 +68,19 @@ struct IouPipelineData : AdditionalData
 
 struct PixBufferPipelineData : AdditionalData
 {
-    static constexpr Type TYPE = Type::PixBufferPipelineData;
-    Type type() const noexcept override { return TYPE; }
     PixBufferPipelineData(const hailo_pix_buffer_t &buffer) : m_pix_buffer(buffer) {};
     hailo_pix_buffer_t m_pix_buffer;
 };
 
 struct DmaBufferPipelineData : AdditionalData
 {
-    static constexpr Type TYPE = Type::DmaBufferPipelineData;
-    Type type() const noexcept override { return TYPE; }
     DmaBufferPipelineData(const hailo_dma_buffer_t &buffer) : m_dma_buffer(buffer) {};
     hailo_dma_buffer_t m_dma_buffer;
 };
 
-class PipelineBufferPool;
-using PipelineBufferPoolPtr = std::shared_ptr<PipelineBufferPool>;
-using PipelineBufferPoolWeakPtr = std::weak_ptr<PipelineBufferPool>;
+class BufferPool;
+using BufferPoolPtr = std::shared_ptr<BufferPool>;
+using BufferPoolWeakPtr = std::weak_ptr<BufferPool>;
 
 class PipelineBuffer final
 {
@@ -121,18 +104,7 @@ public:
         void set_additional_data(std::shared_ptr<AdditionalData> data) { m_additional_data = data;}
         template <typename T>
         std::shared_ptr<T> get_additional_data() {
-            static_assert(std::is_base_of<AdditionalData, T>::value, "T must derive from AdditionalData");
-            if (!m_additional_data) {
-                return nullptr;
-            }
-            if constexpr (std::is_same<T, AdditionalData>::value) {
-                return std::static_pointer_cast<T>(m_additional_data);
-            } else {
-                if (m_additional_data->type() != T::TYPE) {
-                    return nullptr;
-                }
-                return std::static_pointer_cast<T>(m_additional_data);
-            }
+            return std::static_pointer_cast<T>(m_additional_data);
         }
 
     private:
@@ -151,10 +123,10 @@ public:
     // TODO HRT-12185: remove the option to pass a lambda as a parameter and save it as a member since it increases the memory consumption Significantly
     PipelineBuffer(hailo_status action_status = HAILO_SUCCESS, const TransferDoneCallbackAsyncInfer &exec_done = [](hailo_status){});
     PipelineBuffer(MemoryView view, const TransferDoneCallbackAsyncInfer &exec_done = [](hailo_status){}, hailo_status action_status = HAILO_SUCCESS,
-        bool is_user_buffer = true, PipelineBufferPoolWeakPtr pool = PipelineBufferPoolWeakPtr(), bool should_measure = false);
+        bool is_user_buffer = true, BufferPoolWeakPtr pool = BufferPoolWeakPtr(), bool should_measure = false);
     PipelineBuffer(hailo_pix_buffer_t buffer, const TransferDoneCallbackAsyncInfer &exec_done = [](hailo_status){});
     PipelineBuffer(hailo_dma_buffer_t dma_buffer, const TransferDoneCallbackAsyncInfer &exec_done = [](hailo_status){},
-        hailo_status action_status = HAILO_SUCCESS, bool is_user_buffer = true, PipelineBufferPoolWeakPtr pool = PipelineBufferPoolWeakPtr(), bool should_measure = false);
+        hailo_status action_status = HAILO_SUCCESS, bool is_user_buffer = true, BufferPoolWeakPtr pool = BufferPoolWeakPtr(), bool should_measure = false);
 
     ~PipelineBuffer();
 
@@ -179,7 +151,7 @@ public:
 
 private:
     Type m_type;
-    PipelineBufferPoolWeakPtr m_pool;
+    BufferPoolWeakPtr m_pool;
     MemoryView m_view;
     std::mutex m_exec_done_mutex;
     TransferDoneCallbackAsyncInfer m_exec_done;
@@ -190,21 +162,21 @@ private:
     BufferType m_buffer_type;
 
     static PipelineTimePoint add_timestamp(bool should_measure);
-    static void return_buffer_to_pool(PipelineBufferPoolWeakPtr buffer_pool_weak_ptr, MemoryView mem_view, bool is_user_buffer);
-    static void return_buffer_to_pool(PipelineBufferPoolWeakPtr buffer_pool_weak_ptr, hailo_dma_buffer_t dma_buffer, bool is_user_buffer);
+    static void return_buffer_to_pool(BufferPoolWeakPtr buffer_pool_weak_ptr, MemoryView mem_view, bool is_user_buffer);
+    static void return_buffer_to_pool(BufferPoolWeakPtr buffer_pool_weak_ptr, hailo_dma_buffer_t dma_buffer, bool is_user_buffer);
     hailo_status set_dma_buf_as_memview(BufferProtection dma_buffer_protection);
 };
 
-class PipelineBufferPool
+class BufferPool
 {
 public:
-    static Expected<PipelineBufferPoolPtr> create(size_t buffer_size, size_t buffer_count, EventPtr shutdown_event,
+    static Expected<BufferPoolPtr> create(size_t buffer_size, size_t buffer_count, EventPtr shutdown_event,
         hailo_pipeline_elem_stats_flags_t elem_flags, hailo_vstream_stats_flags_t vstream_flags, bool is_empty = false,
         bool dma_able = false);
 
-    PipelineBufferPool(size_t buffer_size, bool is_holding_user_buffers, bool measure_vstream_latency, std::vector<Buffer> &&buffers,
+    BufferPool(size_t buffer_size, bool is_holding_user_buffers, bool measure_vstream_latency, std::vector<Buffer> &&buffers,
         SpscQueue<PipelineBuffer> &&pipeline_buffers_queue, AccumulatorPtr &&queue_size_accumulator, size_t max_buffer_count);
-    virtual ~PipelineBufferPool() = default;
+    virtual ~BufferPool() = default;
 
     size_t buffer_size();
     hailo_status enqueue_buffer(PipelineBuffer &&pipeline_buffer);
@@ -227,7 +199,7 @@ private:
     size_t m_max_buffer_count;
     const bool m_measure_vstream_latency;
 
-    // PipelineBufferPool can hold allocated buffers (type of Buffer) and buffers that come from the user (type of MemoryView).
+    // BufferPool can hold allocated buffers (type of Buffer) and buffers that come from the user (type of MemoryView).
     // To be able to support both types, the queue of the pool holds MemoryViews and to hold the allocated buffers we use a vector.
     // So when the pool has allocated buffers, it will hold them in the vector and have pointers to them in the queue.
     // And when the pool holds user buffers, the vector will be empty and only the queue will hold the user's buffers.
@@ -350,7 +322,7 @@ public:
     void set_pull_complete_callback(PullCompleteCallback pull_complete_callback);
     void set_next(PipelinePad *next);
     void set_prev(PipelinePad *prev);
-    const PipelineBufferPoolPtr get_buffer_pool() const;
+    const BufferPoolPtr get_buffer_pool() const;
     PipelinePad *next();
     PipelinePad *prev();
     PipelineElement &element();
@@ -409,7 +381,7 @@ public:
     void print_deep_description(std::vector<std::string> &visited_elements);
 
     virtual hailo_status enqueue_execution_buffer(PipelineBuffer &&pipeline_buffer);
-    hailo_status empty_buffer_pool(PipelineBufferPoolPtr pool, hailo_status error_status, std::chrono::milliseconds timeout);
+    hailo_status empty_buffer_pool(BufferPoolPtr pool, hailo_status error_status, std::chrono::milliseconds timeout);
     virtual Expected<bool> can_push_buffer_upstream(uint32_t frames_count);
     virtual Expected<bool> can_push_buffer_downstream(uint32_t frames_count);
 
@@ -438,7 +410,7 @@ public:
         return HAILO_INVALID_OPERATION;
     }
 
-    virtual PipelineBufferPoolPtr get_buffer_pool(const std::string &/*pad_name*/) const
+    virtual BufferPoolPtr get_buffer_pool(const std::string &/*pad_name*/) const
     {
         // This method should be overriden by element with local pools
         return nullptr;

@@ -73,6 +73,28 @@ public:
     static Expected<std::vector<hailo_pcie_device_info_t>> scan_pcie();
 
     /**
+     * Returns information on all available ethernet devices in the system.
+     * 
+     * @param[in] interface_name            The name of the network interface to scan.
+     * @param[in] timeout                   The time in milliseconds to scan devices.
+     * @return Upon success, returns Expected of a vector of ::hailo_eth_device_info_t containing the information.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    static Expected<std::vector<hailo_eth_device_info_t>> scan_eth(const std::string &interface_name,
+        std::chrono::milliseconds timeout);
+
+    /**
+     * Scans ethernet device by host address.
+     * 
+     * @param[in] host_address              The IP address of the network interface to scan.
+     * @param[in] timeout                   The time in milliseconds to scan devices.
+     * @return Upon success, returns Expected of a vector of ::hailo_eth_device_info_t containing the information.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    static Expected<std::vector<hailo_eth_device_info_t>> scan_eth_by_host_address(const std::string &host_address,
+        std::chrono::milliseconds timeout);
+
+    /**
      * Creates a device. If there are more than one device detected in the system, an arbitrary device is returned.
      *
      * @return Upon success, returns Expected of a unique_ptr to Device object.
@@ -109,6 +131,36 @@ public:
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     static Expected<std::unique_ptr<Device>> create_pcie(const hailo_pcie_device_info_t &device_info);
+
+    /**
+     * Creates an ethernet device by the given info.
+     *
+     * @param[in] device_info   Information about the device to open.
+     * @return Upon success, returns Expected of a unique_ptr to Device object.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    static Expected<std::unique_ptr<Device>> create_eth(const hailo_eth_device_info_t &device_info);
+
+    /**
+     * Creates an ethernet device by IP address.
+     *
+     * @param[in] ip_addr      The device IP address.
+     * @return Upon success, returns Expected of a unique_ptr to Device object.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    static Expected<std::unique_ptr<Device>> create_eth(const std::string &ip_addr);
+
+    /**
+     * Creates an ethernet device by IP address, port number, timeout duration and max number of attempts
+     *
+     * @param[in] device_address The device IP address.
+     * @param[in] port The port number that the device will use for the Ethernet communication.
+     * @param[in] timeout_milliseconds  The time in milliseconds to scan devices.
+     * @param[in] max_number_of_attempts  The number of attempts to find a device.
+     * @return Upon success, returns Expected of a unique_ptr to Device object.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    static Expected<std::unique_ptr<Device>> create_eth(const std::string &device_address, uint16_t port, uint32_t timeout_milliseconds, uint8_t max_number_of_attempts);
 
     /**
      * Parse PCIe device BDF string into hailo device info structure.
@@ -185,26 +237,6 @@ public:
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     virtual Expected<size_t> read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id) = 0;
-
-    /**
-     * Fetch hailo logs from the Hailo device and returns them as buffer.
-     *
-     * @param[in] buffer            A buffer that would receive the log data.
-     * @param[in] log_type          The log type to fetch.
-     * @return Upon success, returns Expected of the size in bytes of the log data.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note Buffer size should be the maximum log size of the device. Use 'Device::get_max_logs_size' to get it.
-     */
-    virtual Expected<size_t> fetch_logs(MemoryView buffer, hailo_log_type_t log_type) = 0;
-
-    /**
-     * Gets the max logs size for the Hailo device (used for 'Device::fetch_logs').
-     *
-     * @param[in] log_type          The log type.
-     * @return Upon success, the max logs size in bytes.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     */
-    Expected<size_t> get_max_logs_size(hailo_log_type_t log_type);
 
     /**
      * Sends identify control to a Hailo device.
@@ -415,7 +447,7 @@ public:
      *
      * @return Upon success, returns @a hailo_chip_temperature_info_t, containing temperature information on the device.
      *         Otherwise, returns a ::hailo_status error.
-     * @note Temperature in Celsius of the two internal temperature sensors (TS).
+     * @note Temperature in Celsius of the 2 internal temperature sensors (TS).
      */
     virtual Expected<hailo_chip_temperature_info_t> get_chip_temperature();
 
@@ -776,9 +808,9 @@ public:
     Expected<Buffer> download_context_action_list(uint32_t network_group_id, uint8_t context_type,
         uint16_t context_index, uint32_t *base_address, uint32_t *batch_counter, uint32_t *idle_time_local, uint16_t max_size = 10000);
     // The batch configured is reset between network groups
-    hailo_status set_context_action_list_timestamp_batch(uint32_t batch_index);
+    hailo_status set_context_action_list_timestamp_batch(uint16_t batch_index);
     hailo_status set_context_switch_breakpoint(uint8_t breakpoint_id, bool break_at_any_network_group_index,
-        uint8_t network_group_index, bool break_at_any_batch_index, uint32_t batch_index,  bool break_at_any_context_index,
+        uint8_t network_group_index, bool break_at_any_batch_index, uint16_t batch_index,  bool break_at_any_context_index,
         uint16_t context_index, bool break_at_any_action_index, uint16_t action_index);
     hailo_status continue_context_switch_breakpoint(uint8_t breakpoint_id);
     hailo_status clear_context_switch_breakpoint(uint8_t breakpoint_id);
@@ -813,7 +845,7 @@ protected:
     hailo_device_architecture_t m_device_architecture;
 
 private:
-    virtual Expected<bool> has_power_sensor();
+    virtual Expected<bool> has_INA231();
     bool is_control_version_supported();
     uint32_t get_control_sequence();
 

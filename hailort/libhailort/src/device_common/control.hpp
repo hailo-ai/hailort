@@ -362,7 +362,7 @@ public:
             CONTROL_PROTOCOL__context_switch_debug_sys_status_t *breakpoint_status);
     static hailo_status get_context_switch_main_header(Device &device, 
             CONTROL_PROTOCOL__context_switch_main_header_t *main_header);
-    static hailo_status config_context_switch_timestamp(Device &device, uint32_t batch_index, bool enable_user_configuration);
+    static hailo_status config_context_switch_timestamp(Device &device, uint16_t batch_index, bool enable_user_configuration);
     static hailo_status test_chip_memories(Device &device);
     static hailo_status run_bist_test(Device &device, bool is_top_test, uint32_t top_bypass_bitmap,
                      uint8_t cluster_index, uint32_t cluster_bypass_bitmap_0, uint32_t cluster_bypass_bitmap_1);

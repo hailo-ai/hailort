@@ -17,18 +17,18 @@
 namespace hailort {
 namespace vdma {
 
-
 Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requirements_for_boundary_channels(
-    const DescSizesParams &desc_sizes_params, uint32_t max_shmifo_size, uint16_t min_active_trans,
-    uint16_t max_active_trans, uint32_t transfer_size)
+    HailoRTDriver &driver, uint32_t max_shmifo_size, uint16_t min_active_trans, uint16_t max_active_trans,
+    uint32_t transfer_size)
 {
     // TODO: Simplify this code + get rid of the for loop (?) (HRT-14822)
     // We'll first try to use the default page size. Next we'll try to increase the page size until we find a valid
     // page size that fits the requirements.
     // uint32_t to avoid overflow
-    uint32_t max_page_size = desc_sizes_params.default_page_size;
+    uint32_t max_page_size = is_env_variable_on(HAILO_LEGACY_BOUNDARY_CHANNEL_PAGE_SIZE_ENV_VAR) ?
+        driver.desc_max_page_size() : std::min(DEFAULT_SG_PAGE_SIZE, driver.desc_max_page_size());
     while (true) {
-        if (max_page_size > desc_sizes_params.max_page_size) {
+        if (max_page_size > driver.desc_max_page_size()) {
             // We exceeded the driver's max page size
             return make_unexpected(HAILO_CANT_MEET_BUFFER_REQUIREMENTS);
         }
@@ -40,15 +40,14 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
             max_page_size /= 2;
         }
 
-        const bool DONT_FORCE_DEFAULT_PAGE_SIZE = false;
-        const bool DONT_FORCE_BATCH_SIZE = false;
-        const bool IS_CIRCULAR = true;
-        const bool IS_VDMA_ALIGNED_BUFFER = false;
-        const bool IS_NOT_DDR = false;
-
+        const auto DONT_FORCE_DEFAULT_PAGE_SIZE = false;
+        const auto DONT_FORCE_BATCH_SIZE = false;
+        static const bool IS_CIRCULAR = true;
+        static const bool IS_VDMA_ALIGNED_BUFFER = false;
+        static const bool IS_NOT_DDR = false;
         auto buffer_sizes_requirements_exp = vdma::BufferSizesRequirements::get_buffer_requirements_single_transfer(
-            vdma::VdmaBuffer::Type::SCATTER_GATHER, desc_sizes_params, static_cast<uint16_t>(max_page_size),
-            min_active_trans, max_active_trans, transfer_size, IS_CIRCULAR, DONT_FORCE_DEFAULT_PAGE_SIZE, DONT_FORCE_BATCH_SIZE,
+            vdma::VdmaBuffer::Type::SCATTER_GATHER, static_cast<uint16_t>(max_page_size), min_active_trans,
+            max_active_trans, transfer_size, IS_CIRCULAR, DONT_FORCE_DEFAULT_PAGE_SIZE, DONT_FORCE_BATCH_SIZE,
             IS_VDMA_ALIGNED_BUFFER, IS_NOT_DDR);
         if (HAILO_SUCCESS == buffer_sizes_requirements_exp.status()) {
             // We found a valid page size
@@ -66,21 +65,36 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
 }
 
 Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requirements_multiple_transfers(
-    vdma::VdmaBuffer::Type buffer_type, const DescSizesParams &desc_sizes_params, uint16_t max_desc_page_size,
-    uint16_t batch_size, const std::vector<uint32_t> &transfer_sizes,
-    bool is_circular, bool force_default_page_size, bool force_batch_size, bool is_ddr)
+    vdma::VdmaBuffer::Type buffer_type, uint16_t max_desc_page_size, uint16_t batch_size,
+    const std::vector<uint32_t> &transfer_sizes, bool is_circular, bool force_default_page_size,
+    bool force_batch_size, bool is_ddr)
 {
-    const uint16_t initial_desc_page_size = find_initial_desc_page_size(desc_sizes_params, transfer_sizes,
-        force_default_page_size);
+    const uint32_t MAX_DESCS_COUNT = (buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) ?
+        MAX_SG_DESCS_COUNT : MAX_CCB_DESCS_COUNT;
+    const uint32_t MIN_DESCS_COUNT = (buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) ?
+        MIN_SG_DESCS_COUNT : MIN_CCB_DESCS_COUNT;
+    const uint16_t MAX_PAGE_SIZE = (buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) ?
+        MAX_SG_PAGE_SIZE : MAX_CCB_PAGE_SIZE;
+    const uint16_t MIN_PAGE_SIZE = (buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) ?
+        MIN_SG_PAGE_SIZE : MIN_CCB_PAGE_SIZE;
 
-    CHECK(max_desc_page_size <= desc_sizes_params.max_page_size, HAILO_INTERNAL_FAILURE);
-    CHECK(initial_desc_page_size <= max_desc_page_size, HAILO_INTERNAL_FAILURE,
+    const uint16_t initial_desc_page_size = find_initial_desc_page_size(buffer_type, transfer_sizes, max_desc_page_size,
+        force_default_page_size, MIN_PAGE_SIZE);
+
+    CHECK_AS_EXPECTED(max_desc_page_size <= MAX_PAGE_SIZE, HAILO_INTERNAL_FAILURE,
+        "max_desc_page_size given {} is bigger than hw max desc page size {}",
+            max_desc_page_size, MAX_PAGE_SIZE);
+    CHECK_AS_EXPECTED(MIN_PAGE_SIZE <= max_desc_page_size, HAILO_INTERNAL_FAILURE,
+        "max_desc_page_size given {} is lower that hw min desc page size {}",
+            max_desc_page_size, MIN_PAGE_SIZE);
+
+    CHECK_AS_EXPECTED(initial_desc_page_size <= max_desc_page_size, HAILO_INTERNAL_FAILURE,
         "Initial descriptor page size ({}) is larger than maximum descriptor page size ({})",
         initial_desc_page_size, max_desc_page_size);
-    CHECK(initial_desc_page_size >= desc_sizes_params.min_page_size, HAILO_INTERNAL_FAILURE,
+    CHECK_AS_EXPECTED(initial_desc_page_size >= MIN_PAGE_SIZE, HAILO_INTERNAL_FAILURE,
         "Initial descriptor page size ({}) is smaller than minimum descriptor page size ({})",
-        initial_desc_page_size, desc_sizes_params.min_page_size);
-    if (get_required_descriptor_count(transfer_sizes, max_desc_page_size, is_ddr) > desc_sizes_params.max_descs_count) {
+        initial_desc_page_size, MIN_PAGE_SIZE);
+    if (get_required_descriptor_count(transfer_sizes, max_desc_page_size, is_ddr) > MAX_DESCS_COUNT) {
         return make_unexpected(HAILO_CANT_MEET_BUFFER_REQUIREMENTS);
     }
 
@@ -89,7 +103,7 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
 
     auto descs_count = get_required_descriptor_count(transfer_sizes, initial_desc_page_size, is_ddr);
     // Too many descriptors; try a larger desc_page_size which will lead to less descriptors used
-    while ((descs_count * batch_size) > (desc_sizes_params.max_descs_count - 1)) {
+    while ((descs_count * batch_size) > (MAX_DESCS_COUNT - 1)) {
         CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(local_desc_page_size << 1), HAILO_INTERNAL_FAILURE,
             "Descriptor page size needs to fit in 16B");
         local_desc_page_size = static_cast<uint16_t>(local_desc_page_size << 1);
@@ -120,20 +134,25 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
     if (is_circular) {
         // The length of a descriptor list is always a power of 2. Therefore, on circular buffers the hw will have to
         // access all descriptors.
-        descs_count = get_nearest_powerof_2(descs_count, desc_sizes_params.min_descs_count);
-        CHECK_AS_EXPECTED(descs_count <= desc_sizes_params.max_descs_count, HAILO_CANT_MEET_BUFFER_REQUIREMENTS);
+        descs_count = get_nearest_powerof_2(descs_count, MIN_DESCS_COUNT);
+        CHECK_AS_EXPECTED(descs_count <= MAX_DESCS_COUNT, HAILO_CANT_MEET_BUFFER_REQUIREMENTS);
     }
 
     return BufferSizesRequirements{descs_count, desc_page_size};
 }
 
 Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requirements_single_transfer(
-    vdma::VdmaBuffer::Type buffer_type, const DescSizesParams &desc_sizes_params, uint16_t max_desc_page_size,
-    uint16_t min_batch_size, uint16_t max_batch_size, uint32_t transfer_size, bool is_circular,
-    bool force_default_page_size, bool force_batch_size, bool is_vdma_aligned_buffer, bool is_ddr)
+    vdma::VdmaBuffer::Type buffer_type, uint16_t max_desc_page_size, uint16_t min_batch_size, uint16_t max_batch_size,
+    uint32_t transfer_size, bool is_circular, bool force_default_page_size, bool force_batch_size, bool is_vdma_aligned_buffer,
+    bool is_ddr)
 {
+    const uint32_t MAX_DESCS_COUNT = (buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) ?
+        MAX_SG_DESCS_COUNT : MAX_CCB_DESCS_COUNT;
+    const uint32_t MIN_DESCS_COUNT = (buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) ?
+        MIN_SG_DESCS_COUNT : MIN_CCB_DESCS_COUNT;
+
     // First, get the result for the min size
-    auto results = get_buffer_requirements_multiple_transfers(buffer_type, desc_sizes_params, max_desc_page_size,
+    auto results = get_buffer_requirements_multiple_transfers(buffer_type, max_desc_page_size,
         min_batch_size, {transfer_size}, is_circular, force_default_page_size, force_batch_size, is_ddr);
     if (HAILO_CANT_MEET_BUFFER_REQUIREMENTS == results.status()) {
         // In case of failure to meet requirements, return without error printed to the prompt.
@@ -150,27 +169,30 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
     // In order to fetch all descriptors, the amount of active descs is lower by one that the amount
     // of descs given  (Otherwise we won't be able to determine if the buffer is empty or full).
     // Therefore we add 1 in order to compensate.
-    uint32_t descs_count = std::min((descs_per_transfer * max_batch_size) + 1, desc_sizes_params.max_descs_count);
-    descs_count = std::max(descs_count, desc_sizes_params.min_descs_count);
+    uint32_t descs_count = std::min((descs_per_transfer * max_batch_size) + 1, static_cast<uint32_t>(MAX_DESCS_COUNT));
+    descs_count = std::max(descs_count, MIN_DESCS_COUNT);
     if (is_circular) {
-        descs_count = get_nearest_powerof_2(descs_count, desc_sizes_params.min_descs_count);
+        descs_count = get_nearest_powerof_2(descs_count, MIN_DESCS_COUNT);
     }
 
     return BufferSizesRequirements{ descs_count, results->desc_page_size() };
 }
 
-uint16_t BufferSizesRequirements::find_initial_desc_page_size(const DescSizesParams &desc_sizes_params,
-    const std::vector<uint32_t> &transfer_sizes, bool force_default_page_size)
+uint16_t BufferSizesRequirements::find_initial_desc_page_size(
+    vdma::VdmaBuffer::Type buffer_type, const std::vector<uint32_t> &transfer_sizes,
+    uint16_t max_desc_page_size, bool force_default_page_size, uint16_t min_page_size)
 {
-    const uint16_t channel_max_page_size = desc_sizes_params.default_page_size;
+    static const uint16_t DEFAULT_PAGE_SIZE = (buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) ?
+        DEFAULT_SG_PAGE_SIZE : DEFAULT_CCB_PAGE_SIZE;
+    const uint16_t channel_max_page_size = std::min(DEFAULT_PAGE_SIZE, max_desc_page_size);
     const auto max_transfer_size = *std::max_element(transfer_sizes.begin(), transfer_sizes.end());
     // Note: If the pages pointed to by the descriptors are copied in their entirety, then DEFAULT_PAGE_SIZE
-    //       is the optimal value. For transfer_sizes smaller than desc_sizes_params.default_page_size using smaller descriptor page
+    //       is the optimal value. For transfer_sizes smaller than DEFAULT_PAGE_SIZE using smaller descriptor page
     //       sizes will save memory consumption without harming performance. In the case of nms for example, only one bbox
     //       is copied from each page. Hence, we'll use min_page_size for nms.
     const auto optimize_low_page_size = ((channel_max_page_size > max_transfer_size) && !force_default_page_size);
     const uint16_t initial_desc_page_size = optimize_low_page_size ?
-        static_cast<uint16_t>(get_nearest_powerof_2(max_transfer_size, desc_sizes_params.min_page_size)) :
+        static_cast<uint16_t>(get_nearest_powerof_2(max_transfer_size, min_page_size)) :
         channel_max_page_size;
     if (channel_max_page_size != initial_desc_page_size) {
         LOGGER__INFO("Using non-default initial_desc_page_size of {}, due to a small transfer size ({})",

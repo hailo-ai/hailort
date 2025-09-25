@@ -2282,7 +2282,7 @@ exit:
 
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_config_context_switch_timestamp_request(
         CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
-        uint32_t batch_index, bool enable_user_configuration)
+        uint16_t batch_index, bool enable_user_configuration)
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
     size_t local_request_size = 0;

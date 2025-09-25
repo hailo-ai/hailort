@@ -25,7 +25,7 @@ public:
 
     static constexpr auto INIFINITE_TIMEOUT() { return std::chrono::milliseconds(HAILO_INFINITE); }
 
-    virtual PipelineBufferPoolPtr get_buffer_pool(const std::string &/*pad_name*/) const override
+    virtual BufferPoolPtr get_buffer_pool(const std::string &/*pad_name*/) const override
     {
         return m_pool;
     }
@@ -34,7 +34,7 @@ public:
 
 protected:
     static Expected<SpscQueue<PipelineBuffer>> create_queue(size_t queue_size, EventPtr shutdown_event);
-    BaseQueueElement(SpscQueue<PipelineBuffer> &&queue, PipelineBufferPoolPtr buffer_pool,
+    BaseQueueElement(SpscQueue<PipelineBuffer> &&queue, BufferPoolPtr buffer_pool,
         EventPtr shutdown_event, const std::string &name,
         std::chrono::milliseconds timeout, DurationCollector &&duration_collector,
         AccumulatorPtr &&queue_size_accumulator, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
@@ -76,7 +76,7 @@ protected:
     Event m_activation_event;
     Event m_deactivation_event;
     AccumulatorPtr m_queue_size_accumulator;
-    PipelineBufferPoolPtr m_pool;
+    BufferPoolPtr m_pool;
 };
 
 class PushQueueElement : public BaseQueueElement
@@ -89,7 +89,7 @@ public:
     static Expected<std::shared_ptr<PushQueueElement>> create(const std::string &name, const hailo_vstream_params_t &vstream_params,
         size_t frame_size, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
         std::shared_ptr<AsyncPipeline> async_pipeline = nullptr);
-    PushQueueElement(SpscQueue<PipelineBuffer> &&queue, PipelineBufferPoolPtr buffer_pool, EventPtr shutdown_event, const std::string &name,
+    PushQueueElement(SpscQueue<PipelineBuffer> &&queue, BufferPoolPtr buffer_pool, EventPtr shutdown_event, const std::string &name,
         std::chrono::milliseconds timeout, DurationCollector &&duration_collector, AccumulatorPtr &&queue_size_accumulator,
         std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, Event &&activation_event, Event &&deactivation_event,
         std::shared_ptr<AsyncPipeline> async_pipeline, bool should_start_thread);
@@ -116,7 +116,7 @@ public:
         std::shared_ptr<std::atomic<hailo_status>> pipeline_status, std::shared_ptr<AsyncPipeline> async_pipeline, bool is_entry = false);
     static Expected<std::shared_ptr<AsyncPushQueueElement>> create(const std::string &name, const ElementBuildParams &build_params,
         size_t frame_size, bool is_empty, bool interacts_with_hw, std::shared_ptr<AsyncPipeline> async_pipeline, bool is_entry = false);
-    AsyncPushQueueElement(SpscQueue<PipelineBuffer> &&queue, PipelineBufferPoolPtr buffer_pool, EventPtr shutdown_event, const std::string &name,
+    AsyncPushQueueElement(SpscQueue<PipelineBuffer> &&queue, BufferPoolPtr buffer_pool, EventPtr shutdown_event, const std::string &name,
         std::chrono::milliseconds timeout, DurationCollector &&duration_collector, AccumulatorPtr &&queue_size_accumulator,
         std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, Event &&activation_event, Event &&deactivation_event,
         std::shared_ptr<AsyncPipeline> async_pipeline);
@@ -143,7 +143,7 @@ public:
         std::shared_ptr<std::atomic<hailo_status>> pipeline_status);
     static Expected<std::shared_ptr<PullQueueElement>> create(const std::string &name, const hailo_vstream_params_t &vstream_params,
         size_t frame_size, std::shared_ptr<std::atomic<hailo_status>> pipeline_status);
-    PullQueueElement(SpscQueue<PipelineBuffer> &&queue, PipelineBufferPoolPtr buffer_pool, EventPtr shutdown_event, const std::string &name,
+    PullQueueElement(SpscQueue<PipelineBuffer> &&queue, BufferPoolPtr buffer_pool, EventPtr shutdown_event, const std::string &name,
         std::chrono::milliseconds timeout, DurationCollector &&duration_collector, AccumulatorPtr &&queue_size_accumulator,
         std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, Event &&activation_event, Event &&deactivation_event);
     virtual ~PullQueueElement();
@@ -169,7 +169,7 @@ public:
         size_t frame_size, std::shared_ptr<std::atomic<hailo_status>> pipeline_status);
     static Expected<std::shared_ptr<UserBufferQueueElement>> create(const std::string &name, const hailo_vstream_params_t &vstream_params,
         size_t frame_size, std::shared_ptr<std::atomic<hailo_status>> pipeline_status);
-    UserBufferQueueElement(SpscQueue<PipelineBuffer> &&queue, PipelineBufferPoolPtr buffer_pool,
+    UserBufferQueueElement(SpscQueue<PipelineBuffer> &&queue, BufferPoolPtr buffer_pool,
         EventPtr shutdown_event, const std::string &name, std::chrono::milliseconds timeout, DurationCollector &&duration_collector,
         AccumulatorPtr &&queue_size_accumulator, std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status, Event &&activation_event,
         Event &&deactivation_event);
@@ -192,7 +192,7 @@ public:
     MultiPushQueue(std::vector<SpscQueue<PipelineBuffer>> &&queues, size_t sink_count, const std::string &name,
         std::chrono::milliseconds timeout, DurationCollector &&duration_collector, std::shared_ptr<std::atomic<hailo_status>> pipeline_status,
         PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline, EventPtr shutdown_event,
-        std::vector<PipelineBufferPoolPtr> &&buffer_pools);
+        std::vector<BufferPoolPtr> &&buffer_pools);
 
     virtual ~MultiPushQueue();
 
@@ -203,7 +203,7 @@ public:
     static constexpr auto INIFINITE_TIMEOUT() { return std::chrono::milliseconds(HAILO_INFINITE); }
     PipelinePad &next_pad();
 
-    virtual PipelineBufferPoolPtr get_buffer_pool(const std::string &pad_name) const override
+    virtual BufferPoolPtr get_buffer_pool(const std::string &pad_name) const override
     {
         return m_buffer_pools.at(pad_name);
     }
@@ -243,7 +243,7 @@ private:
     std::condition_variable m_all_queues_have_buffer_cv;
 
     EventPtr m_shutdown_event;
-    std::unordered_map<std::string, PipelineBufferPoolPtr> m_buffer_pools;
+    std::unordered_map<std::string, BufferPoolPtr> m_buffer_pools;
 };
 
 } /* namespace hailort */

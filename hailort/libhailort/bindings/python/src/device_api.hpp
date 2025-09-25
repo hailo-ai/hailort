@@ -52,6 +52,8 @@ public:
     static std::vector<std::string> scan();
     static DeviceWrapperPtr create(const std::string &device_id);
     static DeviceWrapperPtr create_pcie(hailo_pcie_device_info_t &device_info);
+    static DeviceWrapperPtr create_eth(const std::string &device_address, uint16_t port,
+        uint32_t timeout_milliseconds, uint8_t max_number_of_attempts);
     void release();
 
     DeviceWrapper(std::unique_ptr<Device> &&device) : m_device(std::move(device))
@@ -137,6 +139,7 @@ public:
     void set_notification_callback(const std::function<void(uintptr_t, const hailo_notification_t&, py::object)> &callback,
         hailo_notification_id_t notification_id, py::object opaque);
     void remove_notification_callback(hailo_notification_id_t notification_id);
+    py::bytes read_log(size_t byte_count, hailo_cpu_id_t cpu_id);
     void direct_write_memory(uint32_t address, py::bytes buffer);
     py::bytes direct_read_memory(uint32_t address, uint32_t size);
     const char *get_dev_id() const;

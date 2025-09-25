@@ -38,8 +38,7 @@ static constexpr std::chrono::milliseconds DEFAULT_TIMEOUT(50000);
 VdmaDevice::VdmaDevice(std::unique_ptr<HailoRTDriver> &&driver, Device::Type type, hailo_status &status) :
     DeviceBase::DeviceBase(type),
     m_driver(std::move(driver)),
-    m_is_configured(false),
-    m_amount_of_sram_used(0)
+    m_is_configured(false)
 {
     activate_notifications(get_dev_id());
 
@@ -113,8 +112,6 @@ hailo_status VdmaDevice::clear_configured_apps()
 
     status = Control::clear_configured_apps(*this);
     CHECK_SUCCESS(status, "Failed to clear configured network groups with status {}", status);
-
-    m_amount_of_sram_used = 0;
 
     return HAILO_SUCCESS;
 }
@@ -299,7 +296,14 @@ hailo_status VdmaDevice::dma_map_impl(HailoRTDriver &driver, void *address,
         return HAILO_SUCCESS;
     }
 
-    CHECK_EXPECTED(driver.vdma_buffer_map(reinterpret_cast<uintptr_t>(address), size, to_hailo_driver_direction(data_direction),
+    // Find buffer_identifier if registered to BufferStorageResourceManager.
+    auto buffer_identifier = HailoRTDriver::INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER;
+    if (auto storage = BufferStorageResourceManager::get_resource(std::make_pair(address, size))) {
+        TRY(const auto buffer, storage->get()->get_dma_able_buffer());
+        buffer_identifier = buffer->buffer_identifier();
+    }
+
+    CHECK_EXPECTED(driver.vdma_buffer_map(reinterpret_cast<uintptr_t>(address), size, to_hailo_driver_direction(data_direction), buffer_identifier,
         HailoRTDriver::DmaBufferType::USER_PTR_BUFFER));
     return HAILO_SUCCESS;
 }
@@ -321,7 +325,9 @@ hailo_status VdmaDevice::dma_unmap_impl(HailoRTDriver &driver, void *address,
 hailo_status VdmaDevice::dma_map_dmabuf_impl(HailoRTDriver &driver, int dmabuf_fd,
     size_t size, hailo_dma_buffer_direction_t data_direction)
 {
-    CHECK_EXPECTED(driver.vdma_buffer_map(dmabuf_fd, size, to_hailo_driver_direction(data_direction),
+    // Dont use BufferStorageResourceManager for dmabuf seeing as dmabufs are not allocated from hailoRT
+    auto buffer_identifier = HailoRTDriver::INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER;
+    CHECK_EXPECTED(driver.vdma_buffer_map(dmabuf_fd, size, to_hailo_driver_direction(data_direction), buffer_identifier,
         HailoRTDriver::DmaBufferType::DMABUF_BUFFER));
     return HAILO_SUCCESS;
 }

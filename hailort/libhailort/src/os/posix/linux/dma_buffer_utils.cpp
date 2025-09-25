@@ -15,12 +15,9 @@
 #include "hailo/event.hpp"
 #include "common/utils.hpp"
 #include "utils/dma_buffer_utils.hpp"
-#include <fcntl.h>
 
 namespace hailort
 {
-
-const size_t DmaBufferUtils::MAX_DMABUF_SIZE = 450 * 1024 * 1024;
 
 Expected<MemoryView> DmaBufferUtils::mmap_dma_buffer(hailo_dma_buffer_t dma_buffer, BufferProtection dma_buffer_protection)
 {
@@ -74,42 +71,4 @@ hailo_status DmaBufferUtils::munmap_dma_buffer(hailo_dma_buffer_t dma_buffer, Me
     return HAILO_SUCCESS;
 }
 
-Expected<FileDescriptor> DmaBufferUtils::create_dma_buffer(size_t size, const char *name, dma_heap_allocation_data *heap_data)
-{
-    CHECK(size <= MAX_DMABUF_SIZE, HAILO_INVALID_ARGUMENT, "DMA buffer size {} exceeds maximum size {}", size, MAX_DMABUF_SIZE);
-    
-    FileDescriptor heap_fd(open(name, O_RDWR));
-    CHECK(heap_fd >= 0, HAILO_FILE_OPERATION_FAILURE, "Failed to open DMA heap device '{}'. errno: {}", name, errno);
-
-    CHECK(0 == ioctl(heap_fd, DMA_HEAP_IOCTL_ALLOC, heap_data), HAILO_INTERNAL_FAILURE, 
-        "Failed to allocate DMA buffer of size {}. errno: {}", size, errno);
-
-    return FileDescriptor(static_cast<int>(heap_data->fd));
-}
-
-Expected<FileDescriptor> DmaBufferUtils::create_dma_buffer(const char *name, size_t size)
-{
-    struct dma_heap_allocation_data heap_data_output = {};
-    heap_data_output.len = size;
-    heap_data_output.fd_flags = O_RDWR | O_CLOEXEC;
-    heap_data_output.fd = 0;
-    heap_data_output.heap_flags = 0;
-
-    return create_dma_buffer(size, name, &heap_data_output);
-}
-
-Expected<std::string> DmaBufferUtils::get_dma_heap_path()
-{
-    static const std::vector<std::string> VALID_DMA_HEAPS = {
-        "/dev/dma_heap/hailo_media_buf,cma",   // vpu
-        "/dev/dma_heap/linux,cma",   // accelerator
-    };
-
-    for (const auto &path : VALID_DMA_HEAPS) {
-        if (access(path.c_str(), F_OK) == 0) {
-            return Expected<std::string>(path);
-        }
-    }
-    return make_unexpected(HAILO_INTERNAL_FAILURE);    
-}
 } /* namespace hailort */

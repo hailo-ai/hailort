@@ -27,12 +27,9 @@
 #include "hailo/buffer.hpp"
 #include "hailo/event.hpp"
 #include "hailo/runtime_statistics.hpp"
+#include "hailo/network_rate_calculator.hpp"
 #include "hailo/quantization.hpp"
 #include "hailo/hailort_defaults.hpp"
 #include "hailo/dma_mapped_buffer.hpp"
-#include "hailo/genai/llm/llm.hpp"
-#include "hailo/genai/vlm/vlm.hpp"
-#include "hailo/genai/text2image/text2image.hpp"
-#include "hailo/genai/common.hpp"
 
 #endif /* _HAILORT_HPP_ */

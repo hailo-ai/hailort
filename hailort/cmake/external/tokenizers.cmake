@@ -40,17 +40,15 @@ if (TOKENIZERS_LIB_PATH AND TOKENIZERS_RUST_LIB_PATH AND TOKENIZERS_INCLUDE_DIR)
   message(STATUS "Will include given include dir:     ${TOKENIZERS_INCLUDE_DIR}")
 
   # Create an imported target for the static library
-  if(NOT TARGET tokenizers_cpp)
-    add_library(tokenizers_cpp STATIC IMPORTED)
-    # Set the properties of the imported library
-    set_target_properties(tokenizers_cpp PROPERTIES
-        IMPORTED_LOCATION ${TOKENIZERS_LIB_PATH}
-        INTERFACE_INCLUDE_DIRECTORIES ${TOKENIZERS_INCLUDE_DIR}
-    )
+  add_library(tokenizers_cpp STATIC IMPORTED)
 
-    # Linking with dl is required for the rust impl of tokenizers - https://github.com/mlc-ai/tokenizers-cpp/issues/1#issuecomment-1556206254
-    target_link_libraries(tokenizers_cpp INTERFACE ${TOKENIZERS_RUST_LIB_PATH} dl)
-  endif()
+  # Set the properties of the imported library
+  set_target_properties(tokenizers_cpp PROPERTIES
+      IMPORTED_LOCATION ${TOKENIZERS_LIB_PATH}
+      INTERFACE_INCLUDE_DIRECTORIES ${TOKENIZERS_INCLUDE_DIR}
+  )
+
+  target_link_libraries(tokenizers_cpp INTERFACE ${TOKENIZERS_RUST_LIB_PATH} dl)
 else()
   # https://stackoverflow.com/questions/65527126/disable-install-for-fetchcontent
   FetchContent_GetProperties(tokenizers)

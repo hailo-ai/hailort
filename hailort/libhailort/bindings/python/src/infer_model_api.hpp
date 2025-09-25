@@ -83,6 +83,7 @@ public:
     ~ConfiguredInferModelWrapper()
     {
         if (m_is_alive) {
+            py::gil_scoped_release release; // don't block the user-defined callbacks while join()-ing
             m_configured_infer_model.shutdown();
             m_is_alive = false; // signal the thread to stop
             m_cv.notify_all(); // wake up the thread so it can return

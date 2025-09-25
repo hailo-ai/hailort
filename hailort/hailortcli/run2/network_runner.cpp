@@ -89,8 +89,7 @@ StreamParams::StreamParams() : IoParams(), flags(HAILO_STREAM_FLAGS_NONE)
 NetworkParams::NetworkParams() : hef_path(), net_group_name(), vstream_params(), stream_params(),
     scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN), multi_process_service(false),
     batch_size(HAILO_DEFAULT_BATCH_SIZE), scheduler_threshold(0), scheduler_timeout_ms(0),
-    buffer_type(BufferType::VIEW), framerate(UNLIMITED_FRAMERATE), measure_hw_latency(false),
-    measure_overall_latency(false)
+    framerate(UNLIMITED_FRAMERATE), measure_hw_latency(false),measure_overall_latency(false)
 {
 }
 
@@ -309,11 +308,12 @@ Expected<std::shared_ptr<NetworkRunner>> NetworkRunner::create_shared(VDevice &v
             }
 
             // We use a barrier for both hw and overall latency
-            auto latency_barrier = make_shared_nothrow<Barrier>(static_cast<int>(input_names.size() + output_names.size()));
+            auto latency_barrier = make_shared_nothrow<Barrier>(input_names.size() + output_names.size());
             CHECK_NOT_NULL_AS_EXPECTED(latency_barrier, HAILO_OUT_OF_HOST_MEMORY);
             net_runner_ptr->set_latency_barrier(latency_barrier);
         }
     }
+
     CHECK_SUCCESS(net_runner_ptr->prepare_buffers());
 
     return net_runner_ptr;
@@ -592,46 +592,14 @@ Expected<AsyncInferJob> FullAsyncNetworkRunner::create_infer_job(const Configure
     return job;
 }
 
-hailo_status FullAsyncNetworkRunner::prepare_input_buffers()
+hailo_status FullAsyncNetworkRunner::prepare_buffers()
 {
+    TRY(m_bindings, m_configured_infer_model->create_bindings());
+
     for (const auto &name : get_input_names()) {
         TRY(auto input_config, m_infer_model->input(name));
+
         auto params = get_params(name);
-        const auto frame_size = input_config.get_frame_size();
-
-#if defined(__linux__) 
-        if (BufferType::DMA_BUFFER == m_params.buffer_type) {
-            std::vector<FileDescriptor> fds;
-            Buffer temp_buffer;
-
-            if (!params.input_file_path.empty()) {
-                TRY(temp_buffer, read_binary_file(params.input_file_path));
-                CHECK(0 == (temp_buffer.size() % frame_size), HAILO_INVALID_ARGUMENT,
-                    "Size of data for input '{}' must be a multiple of the frame size {}. Received - {}", 
-                    name, frame_size, temp_buffer.size());
-
-                size_t num_frames = temp_buffer.size() / frame_size;
-                TRY(auto dma_heap_path, DmaBufferUtils::get_dma_heap_path());
-
-                for (size_t i = 0; i < num_frames; i++) {
-                    TRY(auto fd, DmaBufferUtils::create_dma_buffer(dma_heap_path.c_str(), frame_size));
-                    hailo_dma_buffer_t dma_buffer = { fd, frame_size };
-                    TRY(auto mapped, DmaBufferUtils::mmap_dma_buffer(dma_buffer, BufferProtection::READ_WRITE));
-                    memcpy(mapped.data(), temp_buffer.data() + i * frame_size, frame_size);
-                    CHECK_SUCCESS(DmaBufferUtils::munmap_dma_buffer(dma_buffer, mapped, BufferProtection::READ_WRITE));
-                    fds.push_back(std::move(fd));
-                }
-            } else {
-                // No file, create empty buffer
-                TRY(auto dma_heap_path, DmaBufferUtils::get_dma_heap_path());
-                TRY(auto fd, DmaBufferUtils::create_dma_buffer(dma_heap_path.c_str(), frame_size));
-                fds.push_back(std::move(fd));
-            }
-
-            m_dma_input_buffers.emplace(name, std::move(fds));
-            continue;
-        }
-#endif // not linux or not dma buffer
         Buffer buffer {};
         if (params.input_file_path.empty()) {
             TRY(buffer, create_uniformed_buffer(input_config.get_frame_size(), BufferStorageParams::create_dma()));
@@ -642,51 +610,27 @@ hailo_status FullAsyncNetworkRunner::prepare_input_buffers()
             "Size of data for input '{}' must be a multiple of the frame size {}. Received - {}", name, input_config.get_frame_size(), buffer.size());
         m_input_buffers.emplace(name, std::move(buffer));
 
-        TRY(auto mapped_buffer, DmaMappedBuffer::create(m_vdevice, m_input_buffers.at(name).data(),
-            m_input_buffers.at(name).size(), HAILO_DMA_BUFFER_DIRECTION_H2D));
-        m_dma_mapped_buffers.emplace_back(std::move(mapped_buffer));
-    }
-    return HAILO_SUCCESS;
-}
-
-hailo_status FullAsyncNetworkRunner::prepare_output_buffers()
-{
-    auto output_names = get_output_names();
-    
-#if defined(__linux__) 
-    if (BufferType::DMA_BUFFER == m_params.buffer_type) {
-        for (const auto &name : output_names) {
-            TRY(auto output_config, m_infer_model->output(name));
-            TRY(auto dma_heap_path, DmaBufferUtils::get_dma_heap_path());
-            TRY(auto fd, DmaBufferUtils::create_dma_buffer(dma_heap_path.c_str(), output_config.get_frame_size()));
-            m_dma_output_buffers.emplace_back(std::move(fd));
-            hailo_dma_buffer_t dmabuf = {m_dma_output_buffers.back(), output_config.get_frame_size()};
-            CHECK_SUCCESS(m_bindings.output(name)->set_dma_buffer(dmabuf));
+        for (uint32_t i = 0; i < (m_input_buffers.at(name).size() % input_config.get_frame_size()); i++) {
+            TRY(auto mapped_buffer, DmaMappedBuffer::create(m_vdevice, m_input_buffers.at(name).data() + (i * input_config.get_frame_size()),
+                input_config.get_frame_size(), HAILO_DMA_BUFFER_DIRECTION_H2D));
+            m_dma_mapped_buffers.emplace_back(std::move(mapped_buffer));
         }
-        return HAILO_SUCCESS;
     }
-#endif // not linux or not dma buffer
+
+    auto output_names = get_output_names();
     m_output_buffers.reserve(output_names.size());
     for (const auto &name : output_names) {
         TRY(auto output_config, m_infer_model->output(name));
         TRY(auto buffer, Buffer::create(output_config.get_frame_size(), 0, BufferStorageParams::create_dma()));
         m_output_buffers.emplace_back(std::move(buffer));
 
-        TRY(auto mapped_buffer, DmaMappedBuffer::create(m_vdevice, m_output_buffers.back().data(),
-            m_output_buffers.back().size(), HAILO_DMA_BUFFER_DIRECTION_D2H));
+        TRY(auto mapped_buffer, DmaMappedBuffer::create(m_vdevice, m_output_buffers.back().data(), m_output_buffers.back().size(),
+            HAILO_DMA_BUFFER_DIRECTION_D2H));
         m_dma_mapped_buffers.emplace_back(std::move(mapped_buffer));
+
         CHECK_SUCCESS(m_bindings.output(name)->set_buffer(MemoryView(m_output_buffers.back())));
     }
-    return HAILO_SUCCESS;
-}
 
-hailo_status FullAsyncNetworkRunner::prepare_buffers()
-{
-    TRY(m_bindings, m_configured_infer_model->create_bindings());
-    
-    CHECK_SUCCESS(prepare_input_buffers());
-    CHECK_SUCCESS(prepare_output_buffers());
-    
     return HAILO_SUCCESS;
 }
 
@@ -718,19 +662,10 @@ hailo_status FullAsyncNetworkRunner::run_single_thread_async_infer(EventPtr shut
         for (uint32_t frames_in_cycle = 0; frames_in_cycle < m_params.batch_size; frames_in_cycle++) {
             for (const auto &name : get_input_names()) {
                 TRY(auto input_config, m_infer_model->input(name));
-#if defined(__linux__) 
-               if(BufferType::DMA_BUFFER == m_params.buffer_type) {
-                    const auto frame_index = frame_id % m_dma_input_buffers.at(name).size();
-                    const auto& fd = m_dma_input_buffers.at(name)[frame_index];
-                    hailo_dma_buffer_t dmabuf = {fd, input_config.get_frame_size()};
-                    CHECK_SUCCESS(m_bindings.input(name)->set_dma_buffer(dmabuf));
-                    continue;
-               }
-#endif // not linux or not dma buffer
                 auto offset = (frame_id % (m_input_buffers.at(name).size() / input_config.get_frame_size())) * input_config.get_frame_size();
                 CHECK_SUCCESS(m_bindings.input(name)->set_buffer(MemoryView(m_input_buffers.at(name).data() + offset,
                     input_config.get_frame_size())));
-             }
+            }
             frame_id++;
             if (HAILO_SUCCESS == m_configured_infer_model->wait_for_async_ready(DEFAULT_TRANSFER_TIMEOUT)) {
                 TRY(last_job, create_infer_job(m_bindings, net_live_track, frame_rate_throttle, inference_status));

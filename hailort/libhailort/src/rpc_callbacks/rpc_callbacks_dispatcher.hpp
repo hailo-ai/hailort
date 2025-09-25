@@ -22,6 +22,7 @@ class ClientCallbackDispatcher
 {
 public:
     using CallbackFunc = std::function<void(const RpcCallback&, hailo_status)>;
+    using AdditionalReadsFunc = std::function<Expected<std::vector<TransferBuffer>>(const RpcCallback&)>;
 
     ClientCallbackDispatcher(uint32_t dispatcher_id, RpcCallbackType callback_type,
         bool should_remove_callback_after_trigger);
@@ -32,9 +33,10 @@ public:
     ClientCallbackDispatcher(ClientCallbackDispatcher &&other) = delete;
     ClientCallbackDispatcher& operator=(ClientCallbackDispatcher &&other) = delete;
 
+    void add_additional_reads(uint32_t callback_id, AdditionalReadsFunc additional_reads_func);
     void register_callback(uint32_t callback_id, CallbackFunc callback);
     hailo_status remove_callback(uint32_t callback_id);
-    hailo_status trigger_callback(const RpcCallback &rpc_callback);
+    hailo_status trigger_callback(const RpcCallback &rpc_callback, RpcConnection connection);
     hailo_status shutdown(hailo_status status);
     uint32_t id() const { return m_dispatcher_id; }
 
@@ -45,6 +47,7 @@ private:
     std::condition_variable m_cv;
     std::queue<RpcCallback> m_triggered_callbacks;
     std::unordered_map<uint32_t, CallbackFunc> m_registered_callbacks;
+    std::unordered_map<uint32_t, AdditionalReadsFunc> m_additional_reads_funcs;
     std::atomic_bool m_is_running;
     std::thread m_callback_thread;
 };

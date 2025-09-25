@@ -14,7 +14,7 @@
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
 #include "hailo/buffer.hpp"
-#include "hailo/vdevice.hpp"
+#include "hailo/genai/vdevice_genai.hpp"
 #include "hailo/genai/common.hpp"
 
 #include <vector>
@@ -29,7 +29,7 @@ class Text2Image;
 /*! Scheduler type for the diffusion process */
 enum class HailoDiffuserSchedulerType
 {
-    EULER_DISCRETE = 0,
+    EULER = 0,
     DDIM,
 };
 
@@ -43,40 +43,44 @@ public:
      * Sets the denoise model.
      *
      * @param[in] hef_path        The denoising hef model.
+     * @param[in] lora_name       The name of the chosen LoRA.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
-    hailo_status set_denoise_model(const std::string &hef_path);
+    hailo_status set_denoise_model(const std::string &hef_path, const std::string &lora_name="");
 
     /**
      * Sets the text encoder model.
      *
      * @param[in] hef_path        The text encoder hef model.
+     * @param[in] lora_name       The name of the chosen LoRA.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
-    hailo_status set_text_encoder_model(const std::string &hef_path);
+    hailo_status set_text_encoder_model(const std::string &hef_path, const std::string &lora_name="");
 
     /**
      * Sets the image decoder model.
      *
      * @param[in] hef_path        The image decoder hef model.
+     * @param[in] lora_name       The name of the chosen LoRA.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
-    hailo_status set_image_decoder_model(const std::string &hef_path);
+    hailo_status set_image_decoder_model(const std::string &hef_path, const std::string &lora_name="");
 
     /**
      * Sets the IP Adapter model.
      *
      * @param[in] hef_path        The IP Adapter hef model.
+     * @param[in] lora_name       The name of the chosen LoRA.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
-    hailo_status set_ip_adapter_model(const std::string &hef_path);
+    hailo_status set_ip_adapter_model(const std::string &hef_path, const std::string &lora_name="");
 
     /**
      * Sets the scheduler for the diffusion process.
      *
      * @param[in] scheduler_type     The chosen scheduler type.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note: Default scheduler is HailoDiffuserSchedulerType::EULER_DISCRETE.
+     * @note: Default scheduler is HailoDiffuserSchedulerType::Euler.
      */
     hailo_status set_scheduler(HailoDiffuserSchedulerType scheduler_type);
 
@@ -86,9 +90,19 @@ public:
     const std::string& denoise_hef() const;
 
     /**
+     * @return The LoRA of the denoising model.
+     */
+    const std::string& denoise_lora() const;
+
+    /**
      * @return The Hef path of the text encoder model.
      */
     const std::string& text_encoder_hef() const;
+
+    /**
+     * @return The LoRA of the text encoder model.
+     */
+    const std::string& text_encoder_lora() const;
 
     /**
      * @return The Hef path of the image decoder model.
@@ -96,9 +110,19 @@ public:
     const std::string& image_decoder_hef() const;
 
     /**
+     * @return The LoRA of the image decoder model.
+     */
+    const std::string& image_decoder_lora() const;
+
+    /**
      * @return The Hef path of the ip adapter model.
      */
     const std::string& ip_adapter_hef() const;
+
+    /**
+     * @return The LoRA of the ip adapter model.
+     */
+    const std::string& ip_adapter_lora() const;
 
     /**
      * @return The scheduler type for the diffusion process.
@@ -107,9 +131,17 @@ public:
 
 private:
     std::string m_denoise_hef;
+    std::string m_denoise_lora;
+
     std::string m_text_encoder_hef;
+    std::string m_text_encoder_lora;
+
     std::string m_image_decoder_hef;
+    std::string m_image_decoder_lora;
+
     std::string m_ip_adapter_hef;
+    std::string m_ip_adapter_lora;
+
     HailoDiffuserSchedulerType m_scheduler_type;
 };
 
@@ -165,7 +197,6 @@ public:
      * @param[in] seed   Random seed to control the noise generation.
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note If seed is not set, or is set to its default value UINT32_MAX - a random seed will be used.
      */
     hailo_status set_seed(uint32_t seed);
 
@@ -173,9 +204,6 @@ public:
      * @return The seed used in the model pipeline.
      */
     uint32_t seed() const;
-
-    Text2ImageGeneratorParams(uint32_t samples_count, uint32_t steps_count, float32_t guidance_scale, uint32_t seed) :
-        m_samples_count(samples_count), m_steps_count(steps_count), m_guidance_scale(guidance_scale), m_seed(seed) {}
 
 private:
     Text2ImageGeneratorParams() = default;
@@ -198,19 +226,6 @@ public:
     Text2ImageGenerator &operator=(const Text2ImageGenerator &) = delete;
     virtual ~Text2ImageGenerator();
 
-    /**
-     * Sets an external noise tensor to be used as the initial latent input for the first denoising iteration.
-     * 
-     * @param noise       A MemoryView containing the external noise tensor data.
-     *                    The size of the data should be `Text2Image::input_noise_frame_size()`.
-     * 
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     *
-     * @note The provided noise will be used as the initial noise for all subsequent generations, using this generator instance.
-     *       Creating a new generator restores the default random noise behavior.
-     */
-    hailo_status set_initial_noise(const MemoryView &noise);
-
    /**
      * Generates the output samples images.
      *
@@ -221,7 +236,6 @@ public:
      * @return Upon success, returns Expected of std::vector<Buffers> containing the output samples images.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      * @note: If the pipeline is configured with IP Adapter this function will fail and return error.
-     * @note: If abort() is called during a generation, the generation call will return ::HAILO_OPERATION_ABORTED.
      */
     Expected<std::vector<Buffer>> generate(const std::string &positive_prompt, const std::string &negative_prompt,
         std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
@@ -238,7 +252,6 @@ public:
      * @return Upon success, returns Expected of std::vector<Buffers> containing the output samples images.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      * @note: If the pipeline is configured without IP Adapter the function will fail and return error.
-     * @note: If abort() is called during a generation, the generation call will return ::HAILO_OPERATION_ABORTED.
      */
     Expected<std::vector<Buffer>> generate(const std::string &positive_prompt, const std::string &negative_prompt,
         const MemoryView &ip_adapter, std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
@@ -255,7 +268,6 @@ public:
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      * @note: If the pipeline is configured with IP Adapter this function will fail and return error.
-     * @note: If abort() is called during a generation, the generation call will return ::HAILO_OPERATION_ABORTED.
      */
     hailo_status generate(std::vector<MemoryView> &output_images, const std::string &positive_prompt,
         const std::string &negative_prompt, std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
@@ -274,23 +286,17 @@ public:
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      * @note: If the pipeline is configured without IP Adapter the function will fail and return error.
-     * @note: If abort() is called during a generation, the generation call will return ::HAILO_OPERATION_ABORTED.
      */
     hailo_status generate(std::vector<MemoryView> &output_images, const std::string &positive_prompt,
         const std::string &negative_prompt, const MemoryView &ip_adapter,
         std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
 
     /**
-     * Aborts the current generation.
-     *
-     * If a generation is in progress, it will be aborted, and the corresponding generate call will return ::HAILO_OPERATION_ABORTED.
-     * If no generation is in progress, this function has no effect and returns ::HAILO_SUCCESS.
-     * Once this function returns, a new generation can be initiated.
+     * Stops the generation immediately without returning output samples.
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note This function blocks until the ongoing generation is fully aborted.
      */
-    hailo_status abort();
+    hailo_status stop();
 
     static constexpr std::chrono::milliseconds DEFAULT_OPERATION_TIMEOUT = std::chrono::seconds(30);
 
@@ -302,7 +308,6 @@ private:
 
 /*! Represents the Text2Image Model pipeline.
  *  Manages the lifecycle and configuration of a Text2Image model instance.
- *  The entire Text2Image pipeline is offloaded to the Hailo device (tokenization, pre and post-process, etc), allowing for efficient processing of Text2Image models.
  */
 class HAILORTAPI Text2Image
 {
@@ -344,39 +349,6 @@ public:
      * @return Upon success, returns Expected of Text2ImageGenerator. Otherwise, returns Unexpected of ::hailo_status error.
      */
     Expected<Text2ImageGenerator> create_generator();
-
-    /**
-     * Generates text directly using default generation parameters without explicitly creating a generator.
-     * This is a convenience method that creates a generator with default parameters, and initiates generation.
-     *
-     * @param[in] positive_prompt       A non-empty positive prompt to be sent to the model.
-     * @param[in] negative_prompt       The negative prompt to be sent to the model. Can be an empty string.
-     * @param[in] timeout               The timeout for the generate operation.
-     *
-     * @return Upon success, returns Expected of std::vector<Buffers> containing the output samples images.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note This method is equivalent to: create_generator() -> generate(positive_prompt, negative_prompt, timeout).
-     * @note: If the pipeline is configured with IP Adapter this function will fail and return error.
-     */
-     Expected<std::vector<Buffer>> generate(const std::string &positive_prompt, const std::string &negative_prompt,
-        std::chrono::milliseconds timeout = Text2ImageGenerator::DEFAULT_OPERATION_TIMEOUT);
-
-    /**
-     * Generates text directly without explicitly creating a generator.
-     * This is a convenience method that creates a generator, and initiates generation.
-     *
-     * @param[in] params                The Text2ImageGeneratorParams used to set the generator parameters.
-     * @param[in] positive_prompt       A non-empty positive prompt to be sent to the model.
-     * @param[in] negative_prompt       The negative prompt to be sent to the model. Can be an empty string.
-     * @param[in] timeout               The timeout for the generate operation.
-     *
-     * @return Upon success, returns Expected of std::vector<Buffers> containing the output samples images.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note This method is equivalent to: create_generator(params) -> generate(positive_prompt, negative_prompt, timeout).
-     * @note: If the pipeline is configured with IP Adapter this function will fail and return error.
-     */
-     Expected<std::vector<Buffer>> generate(const Text2ImageGeneratorParams &params, const std::string &positive_prompt,
-        const std::string &negative_prompt, std::chrono::milliseconds timeout = Text2ImageGenerator::DEFAULT_OPERATION_TIMEOUT);
 
     /**
      * @return The frame size of a single output sample.
@@ -421,34 +393,6 @@ public:
      * @note This function is only valid when the pipeline is configured with an IP Adapter.
      */
     Expected<hailo_format_order_t> ip_adapter_format_order() const;
-
-    /**
-     * @return The frame size of the initial noise.
-     */
-    uint32_t input_noise_frame_size() const;
-
-    /**
-     * @return The shape of the initial noise.
-     */
-    hailo_3d_image_shape_t input_noise_shape() const;
-
-    /**
-     * @return The format type of the initial noise.
-     */
-    hailo_format_type_t input_noise_format_type() const;
-
-    /**
-     * @return The format order of the initial noise.
-     */
-    hailo_format_order_t input_noise_format_order() const;
-
-    /**
-     * Tokenizes a given string into a vector of integers representing the tokens.
-     *
-     * @param[in] prompt     The input string to tokenize.
-     * @return Upon success, returns Expected of vector of integers. Otherwise, returns Unexpected of ::hailo_status error.
-     */
-    Expected<std::vector<int>> tokenize(const std::string &prompt);
 
     class Impl;
     Text2Image(std::unique_ptr<Impl> pimpl);

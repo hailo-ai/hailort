@@ -390,7 +390,7 @@ hailo_status NmsOutputStream::cancel_pending_transfers()
 }
 
 // Binding buffer not supported on nms stream, returning success so it won't fail the scheduler
-hailo_status NmsOutputStream::prepare_transfer(TransferRequest &&) {
+hailo_status NmsOutputStream::bind_buffer(TransferRequest &&) {
     return HAILO_SUCCESS;
 }
 

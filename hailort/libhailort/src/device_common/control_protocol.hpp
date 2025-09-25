@@ -159,7 +159,7 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_pause_frames_request(CONTROL_PR
             uint8_t rx_pause_frames_enable);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_config_context_switch_timestamp_request(
         CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
-        uint32_t batch_index, bool enable_user_configuration);
+        uint16_t batch_index, bool enable_user_configuration);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_run_bist_test_request(
         CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, bool is_top_test,
         uint32_t top_bypass_bitmap, uint8_t cluster_index, uint32_t cluster_bypass_bitmap_0, uint32_t cluster_bypass_bitmap_1);

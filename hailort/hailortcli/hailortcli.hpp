@@ -42,7 +42,7 @@ struct hailo_vdevice_params {
 };
 
 void add_vdevice_options(CLI::App *app, hailo_vdevice_params &vdevice_params);
-void add_device_options(CLI::App *app, hailo_device_params &device_params);
+void add_device_options(CLI::App *app, hailo_device_params &device_params, bool support_asterisk=true);
 Expected<std::vector<std::unique_ptr<Device>>> create_devices(const hailo_device_params &device_params);
 Expected<std::vector<std::string>> get_device_ids(const hailo_device_params &device_params);
 

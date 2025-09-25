@@ -80,9 +80,6 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
     // Check if the firmware was compiled with EXTENDED_CONTEXT_SWITCH_BUFFER
     board_info.extended_context_switch_buffer = IS_REVISION_EXTENDED_CONTEXT_SWITCH_BUFFER(board_info.fw_version.revision);
 
-    // Check if the firmware was compiled with EXTENDED_FW_CHECKS
-    board_info.extended_fw_check = IS_REVISION_EXTENDED_FW_CHECK(board_info.fw_version.revision);
-
     // Make sure response was from app CPU
     CHECK_AS_EXPECTED((0 == (board_info.fw_version.revision & REVISION_APP_CORE_FLAG_BIT_MASK)), HAILO_INVALID_FIRMWARE,
      "Got invalid app FW type, which means the FW was not marked correctly. unmaked FW revision {}", board_info.fw_version.revision);
@@ -99,17 +96,13 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
         board_info.device_architecture = dev_arch;
     }
 
-    // Check if we're on H10H or H10H2 - relevant only for linux
+    // Check if we're on H10 - relevant only for linux
 #ifdef __linux__
     if (Device::Type::INTEGRATED == device.get_type()) {
         char hostname[HOST_NAME_MAX+1];
-        CHECK_AS_EXPECTED(0 == gethostname(hostname, sizeof(hostname)), HAILO_INTERNAL_FAILURE, "Failed to get hostname");
+        CHECK_AS_EXPECTED(0 == gethostname(hostname, HOST_NAME_MAX+1), HAILO_INTERNAL_FAILURE, "Failed to get hostname");
         if (std::string(hostname).find("hailo10") != std::string::npos) {
-            if (std::string(hostname).find("hailo10h2") != std::string::npos) {
-                board_info.device_architecture = HAILO_ARCH_MARS;
-            } else {
-                board_info.device_architecture = HAILO_ARCH_HAILO10H;
-            }
+            board_info.device_architecture = HAILO_ARCH_HAILO10H;
         }
     }
 #else
@@ -210,9 +203,6 @@ hailo_status control__parse_core_identify_results(CONTROL_PROTOCOL__core_identif
 
     // Check if the firmware was compiled with EXTENDED_CONTEXT_SWITCH_BUFFER
     core_info->extended_context_switch_buffer = IS_REVISION_EXTENDED_CONTEXT_SWITCH_BUFFER(core_info->fw_version.revision);
-
-    // Check if the firmware was compiled with EXTENDED_FW_CHECKS
-    core_info->extended_fw_check = IS_REVISION_EXTENDED_FW_CHECK(core_info->fw_version.revision);
 
     // Make sure response was from core CPU
     CHECK((REVISION_APP_CORE_FLAG_BIT_MASK == (core_info->fw_version.revision & REVISION_APP_CORE_FLAG_BIT_MASK)), HAILO_INVALID_FIRMWARE,
@@ -3301,7 +3291,7 @@ exit:
     return status;
 }
 
-hailo_status Control::config_context_switch_timestamp(Device &device, uint32_t batch_index, bool enable_user_configuration)
+hailo_status Control::config_context_switch_timestamp(Device &device, uint16_t batch_index, bool enable_user_configuration)
 {
     CONTROL_PROTOCOL__request_t request = {};
     size_t request_size = 0;

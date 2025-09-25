@@ -16,7 +16,6 @@
 #include <sys/stat.h>
 #include <sys/file.h>
 #include <pwd.h>
-#include <fstream>
 
 namespace hailort
 {
@@ -93,17 +92,9 @@ Expected<time_t> Filesystem::get_file_modified_time(const std::string &file_path
 {
     struct stat attr;
     auto res = stat(file_path.c_str(), &attr);
-    CHECK(0 == res, HAILO_INTERNAL_FAILURE, "stat() failed on file {}, with errno {}", file_path, errno);
+    CHECK_AS_EXPECTED((0 == res), HAILO_INTERNAL_FAILURE, "stat() failed on file {}, with errno {}", file_path, errno);
     auto last_modification_time = attr.st_mtime;
     return last_modification_time;
-}
-
-Expected<size_t> Filesystem::get_file_size(const std::string &file_path)
-{
-    std::ifstream file(file_path, std::ios::binary | std::ios::ate);
-    CHECK(file.is_open(), HAILO_FILE_OPERATION_FAILURE, "Failed to open file {} with errno {}", file_path, errno);
-
-    return static_cast<size_t>(file.tellg());
 }
 
 #if defined(__linux__)
@@ -239,39 +230,28 @@ Expected<TempFile> TempFile::create(const std::string &file_name, const std::str
     }
 
     std::string file_path = file_directory + file_name + UNIQUE_TMP_FILE_SUFFIX;
-    std::vector<char> fname(file_path.begin(), file_path.end());
-    fname.push_back('\0');
+    char *fname = static_cast<char*>(std::malloc(sizeof(char) * (file_path.length() + 1)));
+    std::strncpy(fname, file_path.c_str(), file_path.length() + 1);
 
-    std::vector<char> dirname(file_directory.begin(), file_directory.end());
-    dirname.push_back('\0');
-
-    int fd = mkstemp(fname.data());
+    int fd = mkstemp(fname);
     CHECK_AS_EXPECTED((-1 != fd), HAILO_FILE_OPERATION_FAILURE, "Failed to create tmp file {}, with errno {}", file_path, errno);
     close(fd);
 
-    return TempFile(fname.data(), dirname.data());
-
+    return TempFile(fname);
 }
 
-TempFile::TempFile(const char *file_path, const char *dir_path) :
-    m_file_path(file_path), m_dir_path(dir_path)
+TempFile::TempFile(const char *path) : m_path(path)
 {}
 
 TempFile::~TempFile()
 {
     // TODO: Guarantee file deletion upon unexpected program termination. 
-    std::remove(m_file_path.c_str());
+    std::remove(m_path.c_str());
 }
 
 std::string TempFile::name() const
 {
-    return m_file_path;
-}
-
-
-std::string TempFile::dir() const
-{
-    return m_dir_path;
+    return m_path;
 }
 
 Expected<LockedFile> LockedFile::create(const std::string &file_path, const std::string &mode)

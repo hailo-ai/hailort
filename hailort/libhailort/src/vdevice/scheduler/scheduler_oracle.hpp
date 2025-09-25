@@ -14,6 +14,7 @@
 #include "hailo/expected.hpp"
 
 #include "common/utils.hpp"
+
 #include "vdevice/scheduler/scheduler_base.hpp"
 
 
@@ -28,9 +29,8 @@ struct RunParams {
 class CoreOpsSchedulerOracle
 {
 public:
-    static scheduler_core_op_handle_t choose_next_model_to_run(SchedulerBase &scheduler, const device_id_t &device_id, bool check_threshold);
-    static scheduler_core_op_handle_t choose_next_model_to_prepare(SchedulerBase &scheduler, const device_id_t &device_id);
-    static std::vector<RunParams> get_oracle_run_decisions(SchedulerBase &scheduler);
+    static scheduler_core_op_handle_t choose_next_model(SchedulerBase &scheduler, const device_id_t &device_id, bool check_threshold);
+    static std::vector<RunParams> get_oracle_decisions(SchedulerBase &scheduler);
     static bool should_stop_streaming(SchedulerBase &scheduler, core_op_priority_t core_op_priority, const device_id_t &device_id);
 
 private:

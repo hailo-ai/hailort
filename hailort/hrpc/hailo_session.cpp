@@ -7,18 +7,21 @@
  * @brief Hailo Session
  **/
 
+#include "hailo/vdevice.hpp"
 #include "hailo/hailo_session.hpp"
 #include "hrpc/raw_connection_internal/pcie/hailo_session_internal.hpp"
 #include "hrpc/raw_connection_internal/socket/hailo_session_internal.hpp"
+#include "common/internal_env_vars.hpp"
 #include "connection_context.hpp"
 #include "vdma/channel/transfer_common.hpp"
 
 namespace hailort
 {
 
-Expected<std::shared_ptr<SessionListener>> SessionListener::create_shared(uint16_t port, const std::string &ip)
+Expected<std::shared_ptr<SessionListener>> SessionListener::create_shared(uint16_t port, const std::string &device_id)
 {
-    TRY(auto context, ConnectionContext::create_server_shared(ip));
+    (void)device_id; // Choosing the first device
+    TRY(auto context, ConnectionContext::create_server_shared());
     return SessionListener::create_shared(context, port);
 }
 
@@ -26,7 +29,6 @@ Expected<std::shared_ptr<SessionListener>> SessionListener::create_shared(std::s
 {
     // Create according to ConnectionContext type
     auto os_connection_context = std::dynamic_pointer_cast<OsConnectionContext>(context);
-    // using BACKLOG_SIZE
     if (os_connection_context != nullptr) {
         return OsListener::create_shared(os_connection_context, port);
     } else {

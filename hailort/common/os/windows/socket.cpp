@@ -151,30 +151,6 @@ Expected<size_t> Socket::send(const uint8_t *buffer, size_t size, int flags)
     return Expected<size_t>(bytes_written);
 }
 
-Expected<size_t> Socket::recvmsg(struct msghdr *msg, int flags) const
-{
-    (void)msg;
-    (void)flags;
-    return make_unexpected(HAILO_NOT_IMPLEMENTED);
-}
-
-Expected<size_t> Socket::sendmsg(const struct msghdr *msg, int flags) const
-{
-    (void)msg;
-    (void)flags;
-    return make_unexpected(HAILO_NOT_IMPLEMENTED);
-}
-
-Expected<int> Socket::read_fd()
-{
-    return make_unexpected(HAILO_NOT_IMPLEMENTED);
-}
-
-hailo_status Socket::write_fd(int /*fd*/, size_t /*buffer_size*/)
-{
-    return HAILO_NOT_IMPLEMENTED;
-}
-
 hailo_status Socket::ntop(int af, const void *src, char *dst, socklen_t size)
 {
     CHECK_ARG_NOT_NULL(src);
@@ -201,6 +177,19 @@ hailo_status Socket::pton(int af, const char *src, void *dst)
     CHECK(0 != inet_result, HAILO_ETH_FAILURE,
         "Failed to run 'inet_pton'. src is not a valid network address in the specified address family");
     CHECK(1 == inet_result, HAILO_ETH_FAILURE, "Failed to run 'inet_pton', WSALE = {}.", WSAGetLastError());
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status Socket::set_recv_buffer_size_max()
+{
+    int socket_rc = SOCKET_ERROR;
+ 
+    // TOOD: MAX_SIZE?? https://docs.microsoft.com/en-us/windows/win32/winsock/sol-socket-socket-options
+    const int MAX_RECV_BUFFER_SIZE = 52428800;
+    socket_rc = setsockopt(m_socket_fd, SOL_SOCKET, SO_RCVBUF,
+        reinterpret_cast<const char*>(&MAX_RECV_BUFFER_SIZE), sizeof(MAX_RECV_BUFFER_SIZE));
+    CHECK(0 == socket_rc, HAILO_ETH_FAILURE, "Failed setsockopt(SOL_SOCKET, SO_RCVBUF). WSALE={}", WSAGetLastError());
 
     return HAILO_SUCCESS;
 }

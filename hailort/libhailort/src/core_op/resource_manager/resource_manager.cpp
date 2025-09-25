@@ -20,14 +20,10 @@
 #define HAILO15H_NMS_MAX_CLASSES (1024)
 #define MAX_NUM_CONTEXTS_FOR_CONTROL_BUILDER (64)
 /* The context data buffers are save to a buffer in fw which is limited to 80kb,
-    After taking into consideration the headers and pointers in it, and the fact that we configure hef by hef - so a few
-    heavy hefs can fill SRAM and will still need memory for rest of hefs on DDR we limit the max to 55kb (instead of 80kb) */
-#define CONTEXT_SWITCH_CONFIG__MAX_BUFFER_SIZE_WITHOUT_HEADERS (1024 * 55)
+    After taking into consideration the headers and pointers in it, we limit the max to 75kb (instead of 80kb) */
+#define CONTEXT_SWITCH_CONFIG__MAX_BUFFER_SIZE_WITHOUT_HEADERS (1024 * 75)
 
 #define HW_INFER_CCB_DESC_PAGE_SIZE (512)
-// This is size of struct CONTEXT_SWITCH_CONFIG__fw_context_header_t used to represent context fw header in sram
-// Even when using infinite action list all contexts have a header of this size in SRAM
-#define INFINITE_ACTION_LIST__CONTEXT_FW_HEADER (32)
 
 namespace hailort
 {
@@ -40,7 +36,7 @@ static const constexpr size_t NN_CORE_QUEUE_SIZE_IN_BYTES = 32 * 1024 * 1024; //
 Expected<ContextResources> ContextResources::create(HailoRTDriver &driver,
     CONTROL_PROTOCOL__context_switch_context_type_t context_type,
     const std::vector<vdma::ChannelId> &config_channels_ids, const ConfigBufferInfoMap &config_buffer_infos,
-    std::shared_ptr<InternalBufferManager> internal_buffer_manager, bool zero_copy_config_over_descs, std::vector<std::shared_ptr<vdma::MappedBuffer>> mapped_buffers,
+    std::shared_ptr<InternalBufferManager> internal_buffer_manager, bool aligned_ccws, std::vector<std::shared_ptr<vdma::MappedBuffer>> mapped_buffers,
     std::shared_ptr<vdma::MappedBuffer> nops_buffer)
 {
     CHECK_AS_EXPECTED(context_type < CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_COUNT, HAILO_INVALID_ARGUMENT);
@@ -48,73 +44,82 @@ Expected<ContextResources> ContextResources::create(HailoRTDriver &driver,
         "config_buffer_infos size ({}) is bigger than config_channels_id count  ({})",
         config_buffer_infos.size(), config_channels_ids.size());
 
-    std::map<uint8_t, std::shared_ptr<ConfigBuffer>> config_buffers;
-    if (zero_copy_config_over_descs) {
+    std::vector<ConfigBuffer> config_buffers;
+    config_buffers.reserve(config_buffer_infos.size());
+    if (aligned_ccws) {
         // In case of alligned ccws - we will also use the mapped buffer of the ccws_section + the nops buffer
         // Also - we will program the descriptors right after creating the descriptor list
-        
-        for (auto config_buffer_info : config_buffer_infos) {
-            const auto config_stream_index = config_buffer_info.first;
-            TRY(auto buffer_resource, ZeroCopyConfigBuffer::create(driver, config_channels_ids[config_stream_index],
-                config_buffer_info.second, mapped_buffers, nops_buffer));
-            config_buffers[config_stream_index] = std::make_shared<ZeroCopyConfigBuffer>(std::move(buffer_resource));
+        for (uint8_t config_stream_index = 0; config_stream_index < config_buffer_infos.size(); config_stream_index++) {
+            TRY(auto buffer_resource, ConfigBuffer::create_for_aligned_ccws(driver, config_channels_ids[config_stream_index],
+                config_buffer_infos.at(config_stream_index), mapped_buffers, nops_buffer));
+            config_buffers.emplace_back(std::move(buffer_resource));
         }
     } else {
         // In the other case (no alligned ccws) - we will only create the config buffer (programming the descriptors will be done later) 
-        for (auto config_buffer_info : config_buffer_infos) {
-            const auto config_stream_index = config_buffer_info.first;
-            TRY(auto buffer_resource, CopiedConfigBuffer::create(driver, config_channels_ids[config_stream_index],
-                config_buffer_info.second));
-            config_buffers[config_stream_index] = std::make_shared<CopiedConfigBuffer>(std::move(buffer_resource));
+        for (uint8_t config_stream_index = 0; config_stream_index < config_buffer_infos.size(); config_stream_index++) {
+            TRY(auto buffer_resource, ConfigBuffer::create_with_copy_descriptors(driver, config_channels_ids[config_stream_index],
+                config_buffer_infos.at(config_stream_index)));
+            config_buffers.emplace_back(std::move(buffer_resource));
         }
     }
 
     return ContextResources(driver, context_type, std::move(config_buffers), internal_buffer_manager);
 }
 
-hailo_status ContextResources::add_edge_layer(LayerInfo &&layer_info, vdma::ChannelId channel_id,
+hailo_status ContextResources::add_edge_layer(const LayerInfo &layer_info, vdma::ChannelId channel_id,
     const CONTROL_PROTOCOL__host_buffer_info_t &buffer_info, const SupportedFeatures &supported_features)
 {
     auto status = validate_edge_layer(layer_info, channel_id, supported_features);
     CHECK_SUCCESS(status);
 
-    m_edge_layers.emplace_back(std::move(layer_info), channel_id, buffer_info);
+    m_edge_layers.emplace_back(EdgeLayer{
+        layer_info,
+        channel_id,
+        buffer_info
+    });
 
     return HAILO_SUCCESS;
 }
 
-void ContextResources::add_ddr_channels_info(vdma::ChannelId d2h_channel_id, uint8_t d2h_stream_index, vdma::ChannelId h2d_channel_id,
-    uint8_t h2d_stream_index, CONTROL_PROTOCOL__host_buffer_info_t host_buffer_info, uint8_t network_index,
-    uint16_t row_size, uint16_t min_buffered_rows, uint16_t total_buffers_per_frame)
+void ContextResources::add_ddr_channels_info(const DdrChannelsInfo &ddr_info)
 {
-    m_ddr_channels_infos.emplace_back(d2h_channel_id, d2h_stream_index, h2d_channel_id, h2d_stream_index, host_buffer_info,
-        network_index, row_size, min_buffered_rows, total_buffers_per_frame);
+    m_ddr_channels_infos.emplace_back(ddr_info);
 }
 
-const std::vector<EdgeLayer>& ContextResources::get_edge_layers() const
+std::vector<EdgeLayer> ContextResources::get_edge_layers() const
 {
     return m_edge_layers;
 }
 
-std::vector<std::reference_wrapper<const EdgeLayer>> ContextResources::get_edge_layers(LayerType layer_type, hailo_stream_direction_t direction) const
+std::vector<EdgeLayer> ContextResources::get_edge_layers(LayerType layer_type) const
 {
-    std::vector<std::reference_wrapper<const EdgeLayer>> edge_layers;
-    for (const EdgeLayer &edge_layer : m_edge_layers) {
+    return get_edge_layers(layer_type, HAILO_STREAM_DIRECTION_MAX_ENUM);
+}
+
+std::vector<EdgeLayer> ContextResources::get_edge_layers(hailo_stream_direction_t direction) const
+{
+    return get_edge_layers(LayerType::NOT_SET, direction);
+}
+
+std::vector<EdgeLayer> ContextResources::get_edge_layers(LayerType layer_type, hailo_stream_direction_t direction) const
+{
+    std::vector<EdgeLayer> edge_layers;
+    for (const auto &edge_layer : m_edge_layers) {
         const bool layer_type_ok = (layer_type == LayerType::NOT_SET) || (edge_layer.layer_info.type == layer_type);
         const bool direction_ok = (direction == HAILO_STREAM_DIRECTION_MAX_ENUM) || (edge_layer.layer_info.direction == direction);
         if (layer_type_ok && direction_ok) {
-            edge_layers.push_back(edge_layer);
+            edge_layers.emplace_back(edge_layer);
         }
     }
     return edge_layers;
 }
 
-Expected<std::reference_wrapper<const EdgeLayer>> ContextResources::get_edge_layer_by_stream_index(const uint8_t stream_index,
+Expected<EdgeLayer> ContextResources::get_edge_layer_by_stream_index(const uint8_t stream_index,
     const hailo_stream_direction_t direction) const
 {
     for (const auto &edge_layer : m_edge_layers) {
         if ((stream_index == edge_layer.layer_info.stream_index) && (direction == edge_layer.layer_info.direction)) {
-            return std::cref(edge_layer);
+            return EdgeLayer(edge_layer);
         }
     }
 
@@ -122,11 +127,11 @@ Expected<std::reference_wrapper<const EdgeLayer>> ContextResources::get_edge_lay
     return make_unexpected(HAILO_INTERNAL_FAILURE);
 }
 
-Expected<std::reference_wrapper<const EdgeLayer>> ContextResources::get_edge_layer_by_channel_id(const vdma::ChannelId channel_id) const
+Expected<EdgeLayer> ContextResources::get_edge_layer_by_channel_id(const vdma::ChannelId channel_id) const
 {
     for (const auto &edge_layer : m_edge_layers) {
         if (channel_id == edge_layer.channel_id) {
-            return std::cref(edge_layer);
+            return EdgeLayer(edge_layer);
         }
     }
 
@@ -184,17 +189,17 @@ hailo_status ContextResources::validate_edge_layer(const LayerInfo &layer_info, 
     return HAILO_SUCCESS;
 }
 
-std::map<uint8_t, std::shared_ptr<ConfigBuffer>> &ContextResources::get_config_buffers()
+std::vector<ConfigBuffer> &ContextResources::get_config_buffers()
 {
     return m_config_buffers;
 }
 
-static Expected<LatencyMeterPtr> create_hw_latency_meter(const std::vector<std::reference_wrapper<const LayerInfo>> &layers)
+static Expected<LatencyMeterPtr> create_hw_latency_meter(const std::vector<LayerInfo> &layers)
 {
     std::set<std::string> d2h_channel_names;
 
     size_t h2d_streams_count = 0;
-    for (const LayerInfo &layer : layers) {
+    for (const auto &layer : layers) {
         if (layer.direction == HAILO_D2H_STREAM) {
             if (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == layer.format.order) {
                 LOGGER__WARNING("HW Latency measurement is not supported on NMS networks");
@@ -226,7 +231,7 @@ static Expected<LatencyMeterPtr> create_hw_latency_meter(const std::vector<std::
 static Expected<LatencyMetersMap> create_latency_meters_from_config_params( 
     const ConfigureNetworkParams &config_params, std::shared_ptr<CoreOpMetadata> core_op_metadata)
 {
-    LatencyMetersMap latency_meters_map;
+    LatencyMetersMap latency_meters_map; 
 
     if ((config_params.latency & HAILO_LATENCY_MEASURE) == HAILO_LATENCY_MEASURE) {
         // Best effort for starting latency meter.
@@ -246,10 +251,9 @@ Expected<ResourcesManager> ResourcesManager::create(VdmaDevice &vdma_device, Hai
     const ConfigureNetworkParams &config_params, CacheManagerPtr cache_manager,
     std::shared_ptr<CoreOpMetadata> core_op_metadata, uint8_t core_op_index)
 {
-    TRY(const auto device_arch, vdma_device.get_architecture());
     // Allocate config channels. In order to use the same channel ids for config channels in all contexts,
     // we allocate all of them here, and use in preliminary/dynamic context.
-    ChannelAllocator allocator(driver.dma_engines_count(), device_arch);
+    ChannelAllocator allocator(driver.dma_engines_count());
     std::vector<vdma::ChannelId> config_channels_ids;
     const auto &config_channels_info = core_op_metadata->config_channels_info();
     config_channels_ids.reserve(config_channels_info.size());
@@ -377,7 +381,7 @@ hailo_status ResourcesManager::fill_network_batch_size(CONTROL_PROTOCOL__applica
 uint16_t ResourcesManager::get_csm_buffer_size()
 {
     // All config buffers on the same platform will have the same desc_page_size - because it is derived from the host
-    return m_driver.get_sg_desc_params().default_page_size;
+    return std::min(m_driver.desc_max_page_size(), vdma::DEFAULT_SG_PAGE_SIZE);
 }
 
 void ResourcesManager::fill_config_channel_info(CONTROL_PROTOCOL__application_header_t &app_header)
@@ -407,7 +411,7 @@ Expected<uint16_t> ResourcesManager::get_batch_size() const
 
 }
 
-Expected<uint16_t> ResourcesManager::calc_default_queue_size(const LayerInfo &layer_info, uint16_t batch_size)
+Expected<size_t> ResourcesManager::calc_default_queue_size(const LayerInfo &layer_info, uint16_t batch_size)
 {
     const size_t transfers_per_frame = (layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP) ?
         LayerInfoUtils::get_nms_layer_max_transfers_per_frame(layer_info) : 1;
@@ -423,12 +427,8 @@ Expected<uint16_t> ResourcesManager::calc_default_queue_size(const LayerInfo &la
 
     // Amount of transfers optimal for the nn core queue size. We clamp it with min/max to make sure the boundaries are
     // good for us (enough frames can be queued but not too many)
-    size_t nn_core_queue_size = NN_CORE_QUEUE_SIZE_IN_BYTES / bytes_per_transfer;
-    if (nn_core_queue_size > UINT16_MAX) {
-        LOGGER__DEBUG("Suggested queue size was larger than UINT16_MAX - setting queue size to UINT16_MAX");
-        nn_core_queue_size = UINT16_MAX;
-    }
-    return static_cast<uint16_t>(clamp(nn_core_queue_size, min_active_transfers, max_active_transfers));
+    const size_t nn_core_queue_size = NN_CORE_QUEUE_SIZE_IN_BYTES / bytes_per_transfer;
+    return clamp(nn_core_queue_size, min_active_transfers, max_active_transfers);
 }
 
 hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &layer_info, bool use_enhanced_channel)
@@ -442,18 +442,19 @@ hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &lay
     TRY(const auto device_arch, m_vdma_device.get_architecture());
     /* Add error in configure phase for invalid NMS parameters */
     if ((layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP) && (HailoRTCommon::is_hailo1x_device_type(device_arch))) {
-        CHECK(layer_info.nms_info.number_of_classes * layer_info.nms_info.chunks_per_frame * network_batch_size < HAILO15H_NMS_MAX_CLASSES,
-            HAILO_INVALID_ARGUMENT, "Invalid batch size for given NMS parameters. Max batch size for this network based on the NMS parameters is: {} (number_of_classes: {} chunks_per_frame: {})",
-            HAILO15H_NMS_MAX_CLASSES / (layer_info.nms_info.number_of_classes * layer_info.nms_info.chunks_per_frame),
-            layer_info.nms_info.number_of_classes, layer_info.nms_info.chunks_per_frame);
+        CHECK(layer_info.nms_info.number_of_classes * layer_info.nms_info.chunks_per_frame * network_batch_size < HAILO15H_NMS_MAX_CLASSES, 
+            HAILO_INVALID_ARGUMENT, "Invalid NMS parameters. Number of classes ({}) * division factor ({}) * batch size ({}) must be under {}",
+            layer_info.nms_info.number_of_classes, layer_info.nms_info.chunks_per_frame, network_batch_size, HAILO15H_NMS_MAX_CLASSES);
     }
 
     TRY(const auto queue_size, calc_default_queue_size(layer_info, network_batch_size));
+    CHECK(IS_FIT_IN_UINT16(queue_size), HAILO_INVALID_ARGUMENT,
+        "calculated min_active_trans for vdma descriptor list is out of UINT16 range");
 
     const auto transfer_size = LayerInfoUtils::get_layer_transfer_size(layer_info);
-    TRY(auto buffer_requirements, vdma::BufferSizesRequirements::get_buffer_requirements_for_boundary_channels(
-        m_driver.get_sg_desc_params(), layer_info.max_shmifo_size, static_cast<uint16_t>(MIN_ACTIVE_TRANSFERS_SCALE),
-        queue_size, transfer_size));
+    TRY(auto buffer_requirements, vdma::BufferSizesRequirements::get_buffer_requirements_for_boundary_channels(m_driver,
+        layer_info.max_shmifo_size, static_cast<uint16_t>(MIN_ACTIVE_TRANSFERS_SCALE), static_cast<uint16_t>(queue_size),
+        transfer_size));
 
     // TODO HRT-16020: Try not to allocate descriptors in ccb boundary hw infer
     const bool CIRCULAR = true;
@@ -568,12 +569,12 @@ Expected<CONTROL_PROTOCOL__application_header_t> ResourcesManager::get_control_c
 
 Expected<std::reference_wrapper<ContextResources>> ResourcesManager::add_new_context(
     CONTROL_PROTOCOL__context_switch_context_type_t context_type,
-    bool zero_copy_config_over_descs, const ConfigBufferInfoMap &config_info)
+    bool is_aligned_ccws_on, const ConfigBufferInfoMap &config_info)
 {
     CHECK_AS_EXPECTED(m_total_context_count < std::numeric_limits<uint16_t>::max(), HAILO_INVALID_CONTEXT_COUNT);
 
     TRY(auto context_resources, ContextResources::create(m_driver, context_type,
-        m_config_channels_ids, config_info, m_internal_buffer_manager, zero_copy_config_over_descs, m_ccws_section_mapped_buffers,
+        m_config_channels_ids, config_info, m_internal_buffer_manager, is_aligned_ccws_on, m_ccws_section_mapped_buffers,
         m_nops_mapped_buffer));
     m_contexts_resources.emplace_back(std::move(context_resources));
     m_total_context_count++;
@@ -646,26 +647,15 @@ Expected<std::map<uint32_t, Buffer>> ResourcesManager::read_cache_buffers()
 hailo_status ResourcesManager::configure()
 {
     m_is_configured = true;
-    size_t amount_sram_used = m_vdma_device.get_amount_of_sram_used();
 
     TRY(auto core_op_header, get_control_core_op_header());
     if ((Device::Type::INTEGRATED == m_vdma_device.get_type())
-        && ((CONTEXT_SWITCH_CONFIG__MAX_BUFFER_SIZE_WITHOUT_HEADERS < amount_sram_used +
-        get_action_list_buffer_builder()->get_action_list_buffer_size()) ||
-        (is_env_variable_on(DDR_ACTION_LIST_ENV_VAR, DDR_ACTION_LIST_ENV_VAR_VALUE)))) {
-        
-        // In infinite action list all fw headers are saved in SRAM and also prelimanary and activation contexts
-        // Seeing as prelimanary can be pretty heavy but activation is usually very small - we can assume that both together
-        // Will not pass CONTROL_PROTOCOL__MAX_CONTEXT_SIZE. (This is only an estimate and is not exact sizes regarding preliminary and activation)
-        const size_t amount_of_sram_needed = CONTROL_PROTOCOL__MAX_CONTEXT_SIZE +
-            (m_dynamic_context_count * INFINITE_ACTION_LIST__CONTEXT_FW_HEADER);
-        
+        && ((CONTEXT_SWITCH_CONFIG__MAX_BUFFER_SIZE_WITHOUT_HEADERS < get_action_list_buffer_builder()->get_action_list_buffer_size())
+        || (is_env_variable_on(DDR_ACTION_LIST_ENV_VAR, DDR_ACTION_LIST_ENV_VAR_VALUE)))) {
         TRY(auto dma_address ,get_action_list_buffer_builder()->write_controls_to_ddr(m_driver));
         CHECK(IS_FIT_IN_UINT32(dma_address), HAILO_INVALID_ARGUMENT, "Invalid Mapped Address {} must fit in uint32",
             dma_address);
         core_op_header.external_action_list_address = static_cast<uint32_t>(dma_address);
-        
-        m_vdma_device.set_amount_of_sram_used(amount_sram_used + amount_of_sram_needed);
 
         auto status = Control::context_switch_set_network_group_header(m_vdma_device, core_op_header);
         CHECK_SUCCESS(status);
@@ -674,7 +664,6 @@ hailo_status ResourcesManager::configure()
         CHECK_SUCCESS(status);
         status = Control::context_switch_set_context_info(m_vdma_device, get_action_list_buffer_builder()->get_controls());
         CHECK_SUCCESS(status);
-        m_vdma_device.set_amount_of_sram_used(amount_sram_used + get_action_list_buffer_builder()->get_action_list_buffer_size());
     }
 
     return HAILO_SUCCESS;
@@ -768,10 +757,10 @@ Expected<CONTROL_PROTOCOL__host_buffer_info_t> ResourcesManager::get_boundary_bu
 
 Expected<uint16_t> ResourcesManager::program_desc_for_hw_only_flow(vdma::DescriptorList &desc_list,
     vdma::MappedBuffer &mapped_buffer, vdma::ChannelId channel_id,
-    const uint32_t single_transfer_size, const uint16_t dynamic_batch_size, const uint32_t batch_count)
+    const uint32_t single_transfer_size, const uint16_t dynamic_batch_size, const uint16_t batch_count)
 {
     size_t acc_desc_offset = 0;
-    for (uint32_t batch_index = 0; batch_index < batch_count; batch_index++) {
+    for (uint16_t batch_index = 0; batch_index < batch_count; batch_index++) {
         for (uint16_t transfer_index = 0; transfer_index < dynamic_batch_size; transfer_index++) {
             const auto last_desc_interrupts_domain = ((dynamic_batch_size - 1) == transfer_index) ?
                 InterruptsDomain::DEVICE : InterruptsDomain::NONE;
@@ -927,7 +916,7 @@ hailo_status ResourcesManager::configure_boundary_channels_for_hw_infer(uint16_t
         
     CONTROL_PROTOCOL__hw_infer_channels_info_t channels_info = {};
     channels_info.channel_count = 0;
-    for (const LayerInfo &metadata_layer_info : m_core_op_metadata->get_all_layer_infos()) {
+    for (const auto &metadata_layer_info : m_core_op_metadata->get_all_layer_infos()) {
         const std::vector<LayerInfo> &layers = metadata_layer_info.is_multi_planar ? metadata_layer_info.planes :
             std::vector<LayerInfo>{metadata_layer_info};
         for (const auto &layer_info : layers) {
@@ -957,7 +946,7 @@ hailo_status ResourcesManager::allocate_boundary_channels_buffers_hw_infer()
     TRY(const auto batch_size, get_batch_size());
     TRY(const auto batch_count, calc_hw_infer_batch_count(batch_size));
 
-    for (const LayerInfo &metadata_layer_info : m_core_op_metadata->get_all_layer_infos()) {
+    for (const auto &metadata_layer_info : m_core_op_metadata->get_all_layer_infos()) {
         const std::vector<LayerInfo> &layers = metadata_layer_info.is_multi_planar ? metadata_layer_info.planes :
             std::vector<LayerInfo>{metadata_layer_info};
         for (const auto &layer_info : layers) {
@@ -982,7 +971,7 @@ Expected<uint16_t> ResourcesManager::calc_hw_infer_batch_count(uint16_t dynamic_
 {
     uint16_t batch_count = UINT16_MAX;
 
-    for (const LayerInfo &metadata_layer_info : m_core_op_metadata->get_all_layer_infos()) {
+    for (const auto &metadata_layer_info : m_core_op_metadata->get_all_layer_infos()) {
         const std::vector<LayerInfo> &layers = metadata_layer_info.is_multi_planar ? metadata_layer_info.planes :
             std::vector<LayerInfo>{metadata_layer_info};
         for (const auto &layer_info : layers) {
@@ -1088,7 +1077,7 @@ hailo_status ResourcesManager::map_and_set_ccws_section_buffer(BufferPtr hef_as_
     m_hef_as_buffer = hef_as_buffer; // keep the hef buffer alive
 
     /*
-    * Optimization for the zero_copy_config_over_descs feature.
+    * Optimization for the aligned_ccws feature.
     *
     * Previously, we used to have a single huge mapped buffer for the entire CCWS section, that is splitted to sg entries (each sg entry is offset + size).
     * That way - if we configure from offset 1Gb in the ccws section - we will have to iterate over all of the entries until that offset to find the right sg entry - it was very inefficient.

@@ -46,9 +46,9 @@ CacheBuffer::CacheBuffer(uint32_t cache_size, uint32_t input_size, uint32_t outp
     m_backing_buffer(backing_buffer)
 {
     // This is validated in the create function too; it's here just to be safe
-    assert(cache_size % padded_entry_size == 0);
-    assert(input_size % padded_entry_size == 0);
-    assert(output_size % padded_entry_size == 0);
+    assert(cache_size % entry_size == 0);
+    assert(input_size % entry_size == 0);
+    assert(output_size % entry_size == 0);
 }
 
 Expected<std::shared_ptr<vdma::SgEdgeLayer>> CacheBuffer::create_sg_edge_layer_shared(HailoRTDriver &driver,
@@ -62,10 +62,9 @@ Expected<std::shared_ptr<vdma::SgEdgeLayer>> CacheBuffer::create_sg_edge_layer_s
     const auto DONT_FORCE_DEFAULT_PAGE_SIZE = false;
     const auto FORCE_BATCH_SIZE = true;
     const auto IS_VDMA_ALIGNED_BUFFER = true;
-    const auto desc_size_params = driver.get_sg_desc_params();
-    max_desc_size = std::min(max_desc_size, desc_size_params.max_page_size);
+    max_desc_size = std::min(max_desc_size, driver.desc_max_page_size());
     TRY(const auto buffer_requirements, vdma::BufferSizesRequirements::get_buffer_requirements_single_transfer(
-        vdma::VdmaBuffer::Type::SCATTER_GATHER, desc_size_params, max_desc_size, batch_size, batch_size, transfer_size,
+        vdma::VdmaBuffer::Type::SCATTER_GATHER, max_desc_size, batch_size, batch_size, transfer_size,
         false , DONT_FORCE_DEFAULT_PAGE_SIZE, FORCE_BATCH_SIZE, IS_VDMA_ALIGNED_BUFFER, false));
     auto desc_page_size = buffer_requirements.desc_page_size();
     const auto descs_count = buffer_requirements.descs_count();

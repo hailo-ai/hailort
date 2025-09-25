@@ -172,8 +172,9 @@ Expected<TransferRequest> VdmaInputStream::align_transfer_request(TransferReques
     return TransferRequest(std::move(transfer_buffers), wrapped_callback);
 }
 
-hailo_status VdmaInputStream::prepare_transfer(TransferRequest &&transfer_request)
+hailo_status VdmaInputStream::bind_buffer(TransferRequest &&transfer_request)
 {
+    m_channel->remove_buffer_binding();
     if (TransferBufferType::MEMORYVIEW == transfer_request.transfer_buffers[0].type()) {
         const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
         if (!is_request_aligned) {
@@ -181,8 +182,8 @@ hailo_status VdmaInputStream::prepare_transfer(TransferRequest &&transfer_reques
             return HAILO_SUCCESS;
         }
     }
-    
-    return m_channel->prepare_transfer(std::move(transfer_request));
+
+    return m_channel->map_and_bind_buffer(transfer_request.transfer_buffers[0]);
 }
 
 hailo_status VdmaInputStream::write_async_impl(TransferRequest &&transfer_request)
@@ -385,8 +386,9 @@ hailo_status VdmaOutputStream::read_async_impl(TransferRequest &&transfer_reques
     }
 }
 
-hailo_status VdmaOutputStream::prepare_transfer(TransferRequest &&transfer_request)
+hailo_status VdmaOutputStream::bind_buffer(TransferRequest &&transfer_request)
 {
+    m_channel->remove_buffer_binding();
     if (TransferBufferType::MEMORYVIEW == transfer_request.transfer_buffers[0].type()) {
         const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
         TRY(auto is_request_end_aligned, transfer_request.is_request_end_aligned());
@@ -396,7 +398,7 @@ hailo_status VdmaOutputStream::prepare_transfer(TransferRequest &&transfer_reque
         }
     }
 
-    return m_channel->prepare_transfer(std::move(transfer_request));
+    return m_channel->map_and_bind_buffer(transfer_request.transfer_buffers[0]);
 }
 
 hailo_status VdmaOutputStream::activate_stream_impl()

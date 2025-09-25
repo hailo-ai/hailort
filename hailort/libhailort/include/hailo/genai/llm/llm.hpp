@@ -13,8 +13,8 @@
 
 #include "hailo/expected.hpp"
 #include "hailo/vdevice.hpp"
+#include "hailo/genai/vdevice_genai.hpp"
 #include "hailo/genai/common.hpp"
-#include "hailo/hailort_common.hpp"
 
 namespace hailort
 {
@@ -30,18 +30,10 @@ public:
     LLMParams() = default;
 
     /**
-     * Creates LLMParams with optional model configuration.
-     *
-     * @param[in] hef_path        The path of the Hef file. If empty, set_model() must be called later.
-     * @param[in] lora_name       The name of the chosen LoRA. Default is empty string.
-     */
-     LLMParams(const std::string &hef_path, const std::string &lora_name = "");
-
-    /**
      * Sets LLM model.
      *
      * @param[in] hef_path        The path of the Hef file.
-     * @param[in] lora_name       The name of the chosen LoRA.
+     * @param[in] lora_name       The name of the chosen LoRA. Currently not implemented.
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
@@ -125,7 +117,6 @@ public:
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      * @note This number includes all special tokens such as start and end tokens.
-     * @note This number does not include the tokens of the generation recovery sequence. See also LLM::set_generation_recovery_sequence().
      */
     hailo_status set_max_generated_tokens(uint32_t max_generated_tokens);
 
@@ -152,7 +143,8 @@ public:
      *
      * @param[in] seed          The seed for the random number generator for statistical sampling.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note If seed is not set, or is set to its default value HAILO_RANDOM_SEED - a random seed will be used.
+     * @note If the seed remains unchanged between calls, the generator will continue producing values from its
+     *       current state. If a new seed is provided, the generator is reinitialized.
      */
     hailo_status set_seed(uint32_t seed);
 
@@ -193,9 +185,6 @@ public:
         GENERATING = 0,
         MAX_TOKENS_REACHED,
         LOGICAL_END_OF_GENERATION,
-        ABORTED,
-
-        COUNT,
 
         MAX_VALUE = HAILO_MAX_ENUM,
     };
@@ -208,7 +197,6 @@ public:
      * @param[in]  timeout         The timeout for the read operation.
      * @return Upon success, returns Expected to size_t, representing the number of bytes read. Otherwise, returns Unexpected of ::hailo_status error.
      * @note The returned output is a UTF-8 encoded string.
-     * @note In case the next token completion is the replacement character (U+FFFD), this token will be buffered until the next printable character is received.
      */
     Expected<size_t> read(char *output, size_t output_size, std::chrono::milliseconds timeout = DEFAULT_READ_TIMEOUT);
 
@@ -218,21 +206,8 @@ public:
      * @param[in] timeout          The timeout for the read operation.
      * @return Upon success, returns Expected of std::string, representing the next token completion. Otherwise, returns Unexpected of ::hailo_status error.
      * @note The returned output is a UTF-8 encoded string.
-     * @note In case the next token completion is the replacement character (U+FFFD), this token will be buffered until the next printable character is received.
      */
     Expected<std::string> read(std::chrono::milliseconds timeout = DEFAULT_READ_TIMEOUT);
-
-    /**
-     * Reads all remaining token completions and returns them as a complete string.
-     *
-     * @param[in] timeout         The timeout for the entire read operation.
-     * @return Upon success, returns Expected of std::string containing all remaining generated text.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     * @note This function will read tokens until the generation is complete (status is not GENERATING).
-     * @note The returned output is a UTF-8 encoded string.
-     * @note After calling this function, no further reads should be attempted on this LLMGeneratorCompletion object.
-     */
-     Expected<std::string> read_all(std::chrono::milliseconds timeout = HAILO_INFINITE_TIMEOUT);
 
     /**
      * Returns the current generation status.
@@ -241,27 +216,11 @@ public:
      *         - GENERATING: The generation process is ongoing.
      *         - MAX_TOKENS_REACHED: The maximum number of tokens has been generated.
      *         - LOGICAL_END_OF_GENERATION: The generation reached its logical end.
-     *         - ABORTED: The generation was aborted by the user.
-     * @note Once this function returns a status indicating the end of generation (e.g., MAX_TOKENS_REACHED, LOGICAL_END_OF_GENERATION or ABORTED),
+     * @note Once this function returns a status indicating the end of generation  (e.g., MAX_TOKENS_REACHED or LOGICAL_END_OF_GENERATION),
      *  no further reads should be attempted on this LLMGeneratorCompletion object,
      *  as it indicates that all token completions have been provided.
      */
     Status generation_status() const;
-
-    /**
-     * Aborts the current generation by injecting the model's generation recovery sequence
-     * (from LLM::get_generation_recovery_sequence() or VLM::get_generation_recovery_sequence()).
-     *
-     * The function will:
-     * - Stop the generation process.
-     * - Flush any tokens that were generated but not yet read.
-     * - Set the generation status to ABORTED.
-     * - Allow a new generation to start once this function returns.
-     *
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note This function blocks until the generation is fully aborted.
-     */
-    hailo_status abort();
 
     static constexpr std::chrono::milliseconds DEFAULT_READ_TIMEOUT = std::chrono::seconds(10);
 
@@ -282,52 +241,41 @@ public:
     virtual ~LLMGenerator();
 
     /**
-     * Writes an input prompt to the LLM model.
+     * Writes the input prompt to the LLM model.
      *
-     * @param[in] prompt        The text prompt to be processed by the LLM model. The prompt is written as-is without any template formatting.
+     * @param[in] prompt        The prompt to be sent to the LLM model
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note Multiple consecutive writes will concatenate prompts without adding separators.
-     * @note Writing while the model is actively generating content can result in undefined behavior.
-     * @note If the LLMGenerator is destructed before generate() is called, all inputs written to it will be discarded.
+     * @note Multiple sequential writes are supported. Prompts are aggregated as-is without separators.
      */
     hailo_status write(const std::string &prompt);
 
     /**
-     * Writes a structured input prompt to the LLM model using JSON strings.
+     * Writes the input prompt to the LLM model.
      *
-     * @param[in] prompt_json_strings    A vector of JSON strings representing the structured prompt
-     *                                   (e.g., {R"({"role": "system", "content": "You are a helpful assistant"})", R"({"role": "user", "content": "Hello"})"}).
-     *                                   This structured input is combined with the model's prompt template (retrievable via `LLM::prompt_template()`).
-     *                                   Each element in the vector represents a message in JSON format.
+     * @param[in] prompt        The prompt to be sent to the LLM model.
+     * @param[in] prompt_size   The prompt size.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note In case a given key is not supported by the model's template, or if an expected key is missing (e.g., "content" without "role"), the word `None` will replace it.
-     * @note Multiple consecutive writes will concatenate prompts without adding separators.
-     * @note Writing while the model is actively generating content can result in undefined behavior.
-     * @note If the LLMGenerator is destructed before generate() is called, all inputs written to it will be discarded.
+     * @note Multiple sequential writes are supported. Prompts are aggregated as-is without separators.
      */
-    hailo_status write(const std::vector<std::string> &prompt_json_strings);
+    hailo_status write(const char *prompt, size_t prompt_size);
 
     /**
      * Marks the end of input and initiates the generation process.
      * Returns an LLMGeneratorCompletion, which allows fetching generated tokens incrementally.
      *
      * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
-     * @note Only one `LLMGeneratorCompletion` instance should exist at a time. Creating multiple instances concurrently may lead to undefined behavior.
-     *       A subsequent LLMGeneratorCompletion must only be created once the previous one has been fully destructed.
-     * @note If the LLMGenerator is destructed before generate() is called, all inputs written to it will be discarded.
+     * @note Once this function is called, the LLMGenerator is no longer functional.
      */
     Expected<LLMGeneratorCompletion> generate();
 
     class Impl;
-    LLMGenerator(std::shared_ptr<Impl> pimpl);
+    LLMGenerator(std::unique_ptr<Impl> pimpl);
 private:
-    std::shared_ptr<Impl> m_pimpl;
+    std::unique_ptr<Impl> m_pimpl;
 };
 
 /*! Represents the LLM Model.
  *  Manages the lifecycle and configuration of a large language model instance.
- *  Provides methods to generate text, and manage the conversation context that is stored on the Hailo device.
- *  The entire LLM pipeline is offloaded to the Hailo device (tokenization, pre and post-process, etc), allowing for efficient processing of large language models.
  */
 class HAILORTAPI LLM
 {
@@ -355,9 +303,6 @@ public:
      *
      * @param[in] params            The LLMGeneratorParams used to set the generator parameters.
      * @return Upon success, returns Expected of LLMGenerator. Otherwise, returns Unexpected of ::hailo_status error.
-     * @note Only one generator shall be active at any time to ensure precision in parameter handling.
-     *       A subsequent generator must only be created once the previous one has been fully destructed.
-     *       Creating two generators at the same time may lead to invalid usage and undefined behavior.
      */
     Expected<LLMGenerator> create_generator(const LLMGeneratorParams &params);
 
@@ -365,106 +310,8 @@ public:
      * Creates an LLMGenerator object using the model's default generator parameters.
      *
      * @return Upon success, returns Expected of LLMGenerator. Otherwise, returns Unexpected of ::hailo_status error.
-     * @note Only one generator shall be active at any time to ensure precision in parameter handling.
-     *       A subsequent generator must only be created once the previous one has been fully destructed.
-     *       Creating two generators at the same time may lead to invalid usage and undefined behavior.
      */
     Expected<LLMGenerator> create_generator();
-
-    /**
-     * Generates text directly using structured JSON prompts and default generation parameters without explicitly creating a generator.
-     * This is a convenience method that creates a generator with default parameters, writes the structured prompt, and initiates generation.
-     *
-     * @param[in] prompt_json_strings    A vector of JSON strings representing the structured prompt.
-     * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
-     * @note This method uses the model's default generation parameters.
-     * @note This method is equivalent to: create_generator() -> write(prompt_json_strings) -> generate().
-     * @note Since this function creates a generator, and only one generator can be active at a time,
-     *       no other generator can be created while this function is running.
-     * @note Only one `LLMGeneratorCompletion` instance should exist at a time. Creating multiple instances concurrently may lead to undefined behavior.
-     *       A subsequent LLMGeneratorCompletion must only be created once the previous one has been fully destructed.
-     */
-    Expected<LLMGeneratorCompletion> generate(const std::vector<std::string> &prompt_json_strings);
-
-    /**
-     * Generates text directly using structured JSON prompts without explicitly creating a generator.
-     * This is a convenience method that creates a generator, writes the structured prompt, and initiates generation.
-     *
-     * @param[in] params                 The LLMGeneratorParams used to configure generation.
-     * @param[in] prompt_json_strings    A vector of JSON strings representing the structured prompt.
-     * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
-     * @note This method is equivalent to: create_generator(params) -> write(prompt_json_strings) -> generate().
-     * @note Since this function creates a generator, and only one generator can be active at a time,
-     *       no other generator can be created while this function is running.
-     * @note Only one `LLMGeneratorCompletion` instance should exist at a time. Creating multiple instances concurrently may lead to undefined behavior.
-     *       A subsequent LLMGeneratorCompletion must only be created once the previous one has been fully destructed.
-     */
-    Expected<LLMGeneratorCompletion> generate(const LLMGeneratorParams &params, const std::vector<std::string> &prompt_json_strings);
-
-    /**
-     * Tokenizes a given string into a vector of integers representing the tokens.
-     *
-     * @param[in] prompt     The input string to tokenize.
-     * @return Upon success, returns Expected of vector of integers. Otherwise, returns Unexpected of ::hailo_status error.
-     */
-    Expected<std::vector<int>> tokenize(const std::string &prompt);
-
-    /**
-     * Clears the conversation context of the LLM.
-     *
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note This function must not be called while a generation is in progress
-     */
-    hailo_status clear_context();
-
-    /**
-     * Sets a custom generation recovery sequence to be injected into the model when generation ends abruptly
-     * (i.e., due to max-token termination or abort, but not when reaching a stop-token).
-     * This sequence helps maintain model usability after abrupt terminations and is not counted towards the max-generated-tokens limit.
-     *
-     * @param sequence    The recovery sequence to inject after abrupt generation endings. Can be empty string.
-     *
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note If not set, the model's default sequence will be used. See also get_generation_recovery_sequence().
-     * @note This sequence is NOT applied for LOGICAL_END_OF_GENERATION completions.
-     */
-    hailo_status set_generation_recovery_sequence(const std::string &sequence);
-
-    /**
-     * Gets the generation recovery sequence of the LLM model.
-     *
-     * @return Upon success, returns Expected of std::string, representing the generation recovery sequence of the LLM model. Otherwise, returns Unexpected of ::hailo_status error.
-     */
-    Expected<std::string> get_generation_recovery_sequence();
-
-    /**
-     * Returns the prompt template used by the LLM.
-     *
-     * @return Upon success, returns Expected of std::string containing the prompt template. Otherwise, returns Unexpected of ::hailo_status error.
-     */
-    Expected<std::string> prompt_template();
-
-    /**
-     * Sets custom stop token sequences for generation.
-     * The generation process will stop when any of the provided sequences is encountered.
-     *
-     * @param[in] stop_tokens   A vector of strings, where each string represents a stop sequence.
-     *                          If a string is encoded to multiple tokens, the full sequence must be matched.
-     *                          An empty vector clears all custom stop tokens.
-     *
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note This replaces any previously set stop tokens, including the built-in end-of-sentence tokens.
-     * @note Stop tokens are checked after each generated token, so very long sequences may impact performance.
-     */
-    hailo_status set_stop_tokens(const std::vector<std::string> &stop_tokens);
-
-    /**
-     * Gets the currently configured stop token sequences.
-     *
-     * @return Upon success, returns Expected of vector of strings representing the current stop token sequences.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     */
-    Expected<std::vector<std::string>> get_stop_tokens();
 
     LLM(LLM &&);
     LLM &operator=(LLM &&) = delete;

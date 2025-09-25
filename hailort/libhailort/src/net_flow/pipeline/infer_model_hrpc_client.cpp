@@ -63,6 +63,12 @@ InferModelHrpcClient::~InferModelHrpcClient()
             LOGGER__CRITICAL("Failed to destroy infer model! status = {}", execute_request_result.status());
             return;
         }
+
+        auto deserialize_reply_result = DestroyInferModelSerializer::deserialize_reply(MemoryView(execute_request_result->buffer->data(), execute_request_result->header.size));
+        if (HAILO_SUCCESS != deserialize_reply_result) {
+            LOGGER__CRITICAL("Failed to destroy infer model! status = {}", deserialize_reply_result);
+            return;
+        }
     }
 }
 
@@ -110,8 +116,9 @@ Expected<ConfiguredInferModel> InferModelHrpcClient::configure()
     TRY(auto result, client->execute_request(HailoRpcActionID::INFER_MODEL__CREATE_CONFIGURED_INFER_MODEL,
         MemoryView(request_buffer->data(), request_size)));
     TRY(auto tuple, CreateConfiguredInferModelSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size)));
-    auto configured_infer_model_handle = std::get<0>(tuple);
-    auto async_queue_size = std::get<1>(tuple);
+    CHECK_SUCCESS_AS_EXPECTED(std::get<0>(tuple));
+    auto configured_infer_model_handle = std::get<1>(tuple);
+    auto async_queue_size = std::get<2>(tuple);
 
     std::unordered_map<std::string, size_t> inputs_frame_sizes;
     std::unordered_map<std::string, size_t> outputs_frame_sizes;

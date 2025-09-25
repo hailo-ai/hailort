@@ -178,21 +178,13 @@ hailo_status SSDPostProcessOp::extract_detections(const std::string &reg_input_n
 
     auto reg_row_size = reg_padded_shape.width * reg_padded_shape.features;
     auto cls_row_size = cls_padded_shape.width * cls_padded_shape.features;
-    const auto reg_anchor_size = reg_entry_size * reg_padded_shape.width;
-    const auto cls_anchor_size = cls_entry_size * cls_padded_shape.width;
-
-    // Optimized: incrementing pointers and offsets instead of calculating offsets with multiplication
-    auto reg_row_offset = 0;
-    auto cls_row_offset = 0;
     for (uint32_t row = 0; row < reg_shape.height; row++) {
         for (uint32_t col = 0; col < reg_shape.width; col++) {
-            auto reg_idx = reg_row_offset + col;
-            auto cls_idx = cls_row_offset + col;
-            // Optimized: using pointer arithmetic instead of multiplication for anchor access
-            const auto *anchor_ptr = layer_anchors.data();
             for (uint32_t anchor = 0; anchor < num_of_anchors; anchor++) {
-                const auto &wa = anchor_ptr[0];
-                const auto &ha = anchor_ptr[1];
+                auto reg_idx = (reg_row_size * row) + col + ((anchor * reg_entry_size) * reg_padded_shape.width);
+                auto cls_idx = (cls_row_size * row) + col + ((anchor * cls_entry_size) * cls_padded_shape.width);
+                const auto &wa = layer_anchors[anchor * 2];
+                const auto &ha = layer_anchors[anchor * 2 + 1];
                 auto anchor_w_stride = 1.0f / static_cast<float32_t>(reg_shape.width);
                 auto anchor_h_stride = 1.0f / static_cast<float32_t>(reg_shape.height);
                 auto anchor_w_offset = 0.5f * anchor_w_stride;
@@ -235,13 +227,8 @@ hailo_status SSDPostProcessOp::extract_detections(const std::string &reg_input_n
                     CHECK_SUCCESS(HAILO_INVALID_ARGUMENT, "SSD post-process received invalid reg input type: {}",
                         static_cast<int>(inputs_metadata.at(reg_input_name).format.type));
                 }
-                reg_idx += reg_anchor_size;
-                cls_idx += cls_anchor_size;
-                anchor_ptr += 2; // Move to next anchor pair (w,h)
             }
         }
-        reg_row_offset += reg_row_size;
-        cls_row_offset += cls_row_size;
     }
 
     return HAILO_SUCCESS;

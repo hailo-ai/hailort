@@ -8,16 +8,17 @@ import os
 
 from contextlib import contextmanager
 
-from hailo_platform.pyhailort.control_object import PcieHcpControl
+from hailo_platform.pyhailort.control_object import UdpHcpControl, PcieHcpControl
 from hailo_platform.common.logger.logger import default_logger
 
-from hailo_platform.pyhailort.pyhailort import (InternalPcieDevice,
-                                                HailoRTTransformUtils, HailoRTException, BoardInformation)
+from hailo_platform.pyhailort.pyhailort import (InternalEthernetDevice, InternalPcieDevice,
+                                                HailoRTTransformUtils, HailoUdpScan, HailoRTException, BoardInformation)
 
 
 class InferenceTargets(object):
     """Enum-like class with all inference targets supported by the HailoRT."""
     UNINITIALIZED = 'uninitialized'
+    UDP_CONTROLLER = 'udp'
     PCIE_CONTROLLER = 'pcie'
 
 class HailoHWObjectException(Exception):
@@ -354,6 +355,77 @@ class HailoChipObject(HailoHWObject):
             self._device.release()
             self._device = None
             self._control_object = None
+
+
+class EthernetDevice(HailoChipObject):
+    """Represents any Hailo hardware device that supports UDP control and dataflow (deprecated)"""
+
+    NAME = InferenceTargets.UDP_CONTROLLER
+
+    def __init__(
+            self,
+            remote_ip,
+            remote_control_port=22401):
+        """Create the Hailo UDP hardware object.
+
+        Args:
+            remote_ip (str): Device IP address.
+            remote_control_port (int, optional): UDP port to which the device listens for control.
+                Defaults to 22401.
+        """
+
+        super(EthernetDevice, self).__init__()
+
+        self._logger.warning("EthernetDevice is deprecated! Please use VDevice/Device object.")
+
+        gc.collect()
+
+        self._remote_ip = remote_ip
+        self._remote_control_port = remote_control_port
+        # EthernetDevice __del__ function tries to release self._device.
+        # to avoid AttributeError if the __init__ func fails, we set it to None first.
+        # https://stackoverflow.com/questions/6409644/is-del-called-on-an-object-that-doesnt-complete-init
+        self._device = None
+        self._control_object = None
+
+        self._open_device()
+        self._id = "{}".format(self._remote_ip)
+        identity = self._control_object._identify_info
+        self._hw_arch = BoardInformation.get_hw_arch_str(identity.device_architecture)
+
+    @staticmethod
+    def scan_devices(interface_name, timeout_seconds=3):
+        """Scans for all eth devices on a specific network interface.
+
+        Args:
+            interface_name (str): Interface to scan.
+            timeout_seconds (int, optional): timeout for scan operation. Defaults to 3.
+        Returns:
+            list of str: IPs of scanned devices.
+        """
+        default_logger().warning("EthernetDevice scan_devices method is deprecated! Please use scan() of Device object.")
+        udp_scanner = HailoUdpScan()
+        return udp_scanner.scan_devices(interface_name, timeout_seconds=timeout_seconds)
+
+    def _open_device(self):
+        self._device = InternalEthernetDevice(self._remote_ip, self._remote_control_port)
+        self._control_object = UdpHcpControl(self._remote_ip, device=self._device, remote_control_port=self._remote_control_port)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.release()
+        return False
+
+    def __del__(self):
+        self.release()
+
+    @property
+    def remote_ip(self):
+        """Return the IP of the remote device (deprecated)."""
+        self._logger.warning("EthernetDevice remote_ip method is deprecated! Please use VDevice/Device object.")
+        return self._remote_ip
 
 
 class PcieDevice(HailoChipObject):

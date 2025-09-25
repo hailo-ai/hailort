@@ -59,7 +59,6 @@ public:
     virtual hailo_status wait_for_read_async_ready(size_t transfer_size, std::chrono::milliseconds timeout) override;
     using Session::read_async;
     virtual hailo_status read_async(TransferRequest &&request) override;
-    virtual Expected<int> read_fd() override;
 
     virtual Expected<Buffer> allocate_buffer(size_t size, hailo_dma_buffer_direction_t direction) override;
 
@@ -85,7 +84,6 @@ private:
     std::condition_variable m_ongoing_reads_cv;
 };
 
-// RawPcieListener will now handle listen and accept flow
 class RawPcieListener : public SessionListener
 {
 public:
@@ -96,7 +94,7 @@ public:
 
     virtual Expected<std::shared_ptr<Session>> accept() override;
 
-    explicit RawPcieListener(std::shared_ptr<PcieConnectionContext> context, uint16_t port) : SessionListener(port), m_context(context), m_port(port) {}
+    explicit RawPcieListener(std::shared_ptr<PcieConnectionContext> context, uint16_t port) : SessionListener(port), m_context(context) {}
 
     hailo_status set_session(PcieSession &&session);
 
@@ -104,7 +102,6 @@ private:
 
     std::shared_ptr<PcieConnectionContext> m_context;
     std::shared_ptr<PcieSession> m_session;
-    uint16_t m_port;
 };
 
 } // namespace hailort

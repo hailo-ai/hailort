@@ -31,11 +31,6 @@ public:
     MeasurementLiveTrack(std::shared_ptr<PowerMeasurement> power_measurement, std::shared_ptr<PowerMeasurement> current_measurement,
         std::shared_ptr<TemperatureMeasurement> temp_measurement, const std::string &device_id);
 
-    std::shared_ptr<PowerMeasurement> get_power_measurement() { return m_power_measurement; }
-    std::shared_ptr<PowerMeasurement> get_current_measurement() { return m_current_measurement; }
-    std::shared_ptr<TemperatureMeasurement> get_temp_measurement() { return m_temp_measurement; }
-    const std::string &get_device_id() const { return m_device_id; }
-
 private:
     void push_json_measurment_val(nlohmann::ordered_json &device_json, std::shared_ptr<BaseMeasurement> measurment, const std::string &measurment_name);
     std::shared_ptr<PowerMeasurement> m_power_measurement;

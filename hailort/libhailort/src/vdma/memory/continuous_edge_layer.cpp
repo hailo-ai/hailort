@@ -12,10 +12,19 @@
 namespace hailort {
 namespace vdma {
 
-
 Expected<ContinuousEdgeLayer> ContinuousEdgeLayer::create(std::shared_ptr<ContinuousBuffer> &&buffer, size_t size, size_t offset,
     uint16_t page_size, uint32_t num_pages)
 {
+    if (num_pages > MAX_CCB_DESCS_COUNT) {
+        LOGGER__INFO("continuous memory number of pages {} must be smaller/equal to {}.", num_pages, MAX_CCB_DESCS_COUNT);
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
+    }
+
+    if (page_size > MAX_CCB_PAGE_SIZE) {
+        LOGGER__INFO("continuous memory page size {} must be smaller/equal to {}.", page_size, MAX_CCB_PAGE_SIZE);
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
+    }
+
     if (buffer->size() < offset + size) {
         LOGGER__ERROR("Edge layer is not fully inside the connected buffer. buffer size is {} while edge layer offset {} and size {}",
             buffer->size(), offset, size);

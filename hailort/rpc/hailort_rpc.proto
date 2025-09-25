@@ -1,0 +1,1001 @@
+syntax = "proto3";
+
+option optimize_for = LITE_RUNTIME;
+
+service ProtoHailoRtRpc {
+    rpc client_keep_alive (keepalive_Request) returns (empty) {}
+    rpc get_service_version (get_service_version_Request) returns (get_service_version_Reply) {}
+
+    rpc VDevice_create (VDevice_create_Request) returns (VDevice_create_Reply) {}
+    rpc VDevice_release (Release_Request) returns (Release_Reply) {}
+    rpc VDevice_configure (VDevice_configure_Request) returns (VDevice_configure_Reply) {}
+    rpc VDevice_get_physical_devices_ids (VDevice_get_physical_devices_ids_Request) returns (VDevice_get_physical_devices_ids_Reply) {}
+    rpc VDevice_get_default_streams_interface (VDevice_get_default_streams_interface_Request) returns (VDevice_get_default_streams_interface_Reply) {}
+    rpc VDevice_get_callback_id (VDevice_get_callback_id_Request) returns (VDevice_get_callback_id_Reply) {}
+    rpc VDevice_finish_callback_listener (VDevice_finish_callback_listener_Request) returns (VDevice_finish_callback_listener_Reply) {}
+
+    rpc ConfiguredNetworkGroup_dup_handle (ConfiguredNetworkGroup_dup_handle_Request) returns (ConfiguredNetworkGroup_dup_handle_Reply) {}
+    rpc ConfiguredNetworkGroup_release (Release_Request) returns (Release_Reply) {}
+    rpc ConfiguredNetworkGroup_make_input_vstream_params (ConfiguredNetworkGroup_make_input_vstream_params_Request) returns (ConfiguredNetworkGroup_make_input_vstream_params_Reply) {}
+    rpc ConfiguredNetworkGroup_make_output_vstream_params (ConfiguredNetworkGroup_make_output_vstream_params_Request) returns (ConfiguredNetworkGroup_make_output_vstream_params_Reply) {}
+    rpc ConfiguredNetworkGroup_make_output_vstream_params_groups (ConfiguredNetworkGroup_make_output_vstream_params_groups_Request) returns (ConfiguredNetworkGroup_make_output_vstream_params_groups_Reply) {}
+    rpc ConfiguredNetworkGroup_name (ConfiguredNetworkGroup_name_Request) returns (ConfiguredNetworkGroup_name_Reply) {}
+    rpc ConfiguredNetworkGroup_get_network_infos (ConfiguredNetworkGroup_get_network_infos_Request) returns (ConfiguredNetworkGroup_get_network_infos_Reply) {}
+    rpc ConfiguredNetworkGroup_get_all_stream_infos (ConfiguredNetworkGroup_get_all_stream_infos_Request) returns (ConfiguredNetworkGroup_get_all_stream_infos_Reply) {}
+    rpc ConfiguredNetworkGroup_get_default_stream_interface (ConfiguredNetworkGroup_get_default_stream_interface_Request) returns (ConfiguredNetworkGroup_get_default_stream_interface_Reply) {}
+    rpc ConfiguredNetworkGroup_shutdown (ConfiguredNetworkGroup_shutdown_Request) returns (ConfiguredNetworkGroup_shutdown_Reply) {}
+    rpc ConfiguredNetworkGroup_get_output_vstream_groups (ConfiguredNetworkGroup_get_output_vstream_groups_Request) returns (ConfiguredNetworkGroup_get_output_vstream_groups_Reply) {}
+    rpc ConfiguredNetworkGroup_get_input_vstream_infos (ConfiguredNetworkGroup_get_vstream_infos_Request) returns (ConfiguredNetworkGroup_get_vstream_infos_Reply) {}
+    rpc ConfiguredNetworkGroup_get_output_vstream_infos (ConfiguredNetworkGroup_get_vstream_infos_Request) returns (ConfiguredNetworkGroup_get_vstream_infos_Reply) {}
+    rpc ConfiguredNetworkGroup_get_all_vstream_infos (ConfiguredNetworkGroup_get_vstream_infos_Request) returns (ConfiguredNetworkGroup_get_vstream_infos_Reply) {}
+    rpc ConfiguredNetworkGroup_is_scheduled (ConfiguredNetworkGroup_is_scheduled_Request) returns (ConfiguredNetworkGroup_is_scheduled_Reply) {}
+    rpc ConfiguredNetworkGroup_set_scheduler_timeout (ConfiguredNetworkGroup_set_scheduler_timeout_Request) returns (ConfiguredNetworkGroup_set_scheduler_timeout_Reply) {}
+    rpc ConfiguredNetworkGroup_set_scheduler_threshold (ConfiguredNetworkGroup_set_scheduler_threshold_Request) returns (ConfiguredNetworkGroup_set_scheduler_threshold_Reply) {}
+    rpc ConfiguredNetworkGroup_set_scheduler_priority (ConfiguredNetworkGroup_set_scheduler_priority_Request) returns (ConfiguredNetworkGroup_set_scheduler_priority_Reply) {}
+    rpc ConfiguredNetworkGroup_get_latency_measurement (ConfiguredNetworkGroup_get_latency_measurement_Request) returns (ConfiguredNetworkGroup_get_latency_measurement_Reply) {}
+    rpc ConfiguredNetworkGroup_is_multi_context (ConfiguredNetworkGroup_is_multi_context_Request) returns (ConfiguredNetworkGroup_is_multi_context_Reply) {}
+    rpc ConfiguredNetworkGroup_get_config_params(ConfiguredNetworkGroup_get_config_params_Request) returns (ConfiguredNetworkGroup_get_config_params_Reply) {}
+    rpc ConfiguredNetworkGroup_get_sorted_output_names(ConfiguredNetworkGroup_get_sorted_output_names_Request) returns (ConfiguredNetworkGroup_get_sorted_output_names_Reply) {}
+    rpc ConfiguredNetworkGroup_infer_queue_size(ConfiguredNetworkGroup_infer_queue_size_Request) returns (ConfiguredNetworkGroup_infer_queue_size_Reply) {}
+    rpc ConfiguredNetworkGroup_get_stream_names_from_vstream_name(ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Request) returns (ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Reply) {}
+    rpc ConfiguredNetworkGroup_get_vstream_names_from_stream_name(ConfiguredNetworkGroup_get_vstream_names_from_stream_name_Request) returns (ConfiguredNetworkGroup_get_vstream_names_from_stream_name_Reply) {}
+    rpc ConfiguredNetworkGroup_infer_async(ConfiguredNetworkGroup_infer_async_Request) returns (ConfiguredNetworkGroup_infer_async_Reply) {}
+    rpc ConfiguredNetworkGroup_get_layer_info(ConfiguredNetworkGroup_get_layer_info_Request) returns (ConfiguredNetworkGroup_get_layer_info_Reply) {}
+    rpc ConfiguredNetworkGroup_get_ops_metadata(ConfiguredNetworkGroup_get_ops_metadata_Request) returns (ConfiguredNetworkGroup_get_ops_metadata_Reply) {}
+    rpc ConfiguredNetworkGroup_set_nms_score_threshold(ConfiguredNetworkGroup_set_nms_score_threshold_Request) returns (ConfiguredNetworkGroup_set_nms_score_threshold_Reply) {}
+    rpc ConfiguredNetworkGroup_set_nms_iou_threshold(ConfiguredNetworkGroup_set_nms_iou_threshold_Request) returns (ConfiguredNetworkGroup_set_nms_iou_threshold_Reply) {}
+    rpc ConfiguredNetworkGroup_set_nms_max_bboxes_per_class(ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Request) returns (ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Reply) {}
+    rpc ConfiguredNetworkGroup_set_nms_max_bboxes_total(ConfiguredNetworkGroup_set_nms_max_bboxes_total_Request) returns (ConfiguredNetworkGroup_set_nms_max_bboxes_total_Reply) {}
+    rpc ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size(ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Request) returns (ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Reply) {}
+
+
+    rpc InputVStreams_create (VStream_create_Request) returns (VStreams_create_Reply) {}
+    rpc InputVStream_release (Release_Request) returns (Release_Reply) {}
+    rpc OutputVStreams_create (VStream_create_Request) returns (VStreams_create_Reply) {}
+    rpc OutputVStream_release (Release_Request) returns (Release_Reply) {}
+    rpc InputVStream_is_multi_planar (InputVStream_is_multi_planar_Request) returns (InputVStream_is_multi_planar_Reply) {}
+    rpc InputVStream_write (InputVStream_write_Request) returns (InputVStream_write_Reply) {}
+    rpc InputVStream_write_pix (InputVStream_write_pix_Request) returns (InputVStream_write_pix_Reply) {}
+    rpc OutputVStream_read (OutputVStream_read_Request) returns (OutputVStream_read_Reply) {}
+    rpc InputVStream_get_frame_size (VStream_get_frame_size_Request) returns (VStream_get_frame_size_Reply) {}
+    rpc OutputVStream_get_frame_size (VStream_get_frame_size_Request) returns (VStream_get_frame_size_Reply) {}
+    rpc InputVStream_flush (InputVStream_flush_Request) returns (InputVStream_flush_Reply) {}
+    rpc InputVStream_name (VStream_name_Request) returns (VStream_name_Reply) {}
+    rpc OutputVStream_name (VStream_name_Request) returns (VStream_name_Reply) {}
+    rpc InputVStream_network_name (VStream_network_name_Request) returns (VStream_network_name_Reply) {}
+    rpc OutputVStream_network_name (VStream_network_name_Request) returns (VStream_network_name_Reply) {}
+    rpc InputVStream_abort (VStream_abort_Request) returns (VStream_abort_Reply) {}
+    rpc OutputVStream_abort (VStream_abort_Request) returns (VStream_abort_Reply) {}
+    rpc InputVStream_stop_and_clear (VStream_stop_and_clear_Request) returns (VStream_stop_and_clear_Reply) {}
+    rpc InputVStream_start_vstream (VStream_start_vstream_Request) returns (VStream_start_vstream_Reply) {}
+    rpc OutputVStream_stop_and_clear (VStream_stop_and_clear_Request) returns (VStream_stop_and_clear_Reply) {}
+    rpc OutputVStream_start_vstream (VStream_start_vstream_Request) returns (VStream_start_vstream_Reply) {}
+    rpc InputVStream_resume (VStream_resume_Request) returns (VStream_resume_Reply) {}
+    rpc OutputVStream_resume (VStream_resume_Request) returns (VStream_resume_Reply) {}
+    rpc InputVStream_get_user_buffer_format (VStream_get_user_buffer_format_Request) returns (VStream_get_user_buffer_format_Reply) {}
+    rpc OutputVStream_get_user_buffer_format (VStream_get_user_buffer_format_Request) returns (VStream_get_user_buffer_format_Reply) {}
+    rpc InputVStream_get_info (VStream_get_info_Request) returns (VStream_get_info_Reply) {}
+    rpc OutputVStream_get_info (VStream_get_info_Request) returns (VStream_get_info_Reply) {}
+    rpc InputVStream_is_aborted (VStream_is_aborted_Request) returns (VStream_is_aborted_Reply) {}
+    rpc OutputVStream_is_aborted (VStream_is_aborted_Request) returns (VStream_is_aborted_Reply) {}
+    rpc OutputVStream_set_nms_score_threshold (VStream_set_nms_score_threshold_Request) returns (VStream_set_nms_score_threshold_Reply) {}
+    rpc OutputVStream_set_nms_iou_threshold (VStream_set_nms_iou_threshold_Request) returns (VStream_set_nms_iou_threshold_Reply) {}
+    rpc OutputVStream_set_nms_max_proposals_per_class (VStream_set_nms_max_proposals_per_class_Request) returns (VStream_set_nms_max_proposals_per_class_Reply) {}
+    rpc OutputVStream_set_nms_max_accumulated_mask_size (VStream_set_nms_max_accumulated_mask_size_Request) returns (VStream_set_nms_max_accumulated_mask_size_Reply) {}
+}
+
+message empty {}
+
+message keepalive_Request {
+    uint32 pid = 1;
+}
+
+message ProtoVDeviceIdentifier {
+    uint32 vdevice_handle = 1;
+}
+
+message ProtoConfiguredNetworkGroupIdentifier {
+    uint32 vdevice_handle = 1;
+    uint32 network_group_handle = 2;
+}
+
+message ProtoVStreamIdentifier {
+    uint32 vdevice_handle = 1;
+    uint32 network_group_handle = 2;
+    uint32 vstream_handle = 3;
+}
+
+message ProtoCallbackIdentifier {
+    uint32 vdevice_handle = 1;
+    uint32 network_group_handle = 2;
+    uint32 cb_type = 3;
+    uint32 cb_idx = 4;
+    string stream_name = 5;
+    uint32 direction = 6;
+    oneof transfer_data {
+        bytes data = 7;
+        ProtoShmBufferIdentifier shared_memory_identifier = 8;
+    }
+    uint32 status = 9;
+}
+
+message ProtoShmBufferIdentifier {
+    string name = 1;
+    uint32 size = 2;
+}
+
+message ProtoTransferRequest {
+    string stream_name = 1;
+    uint32 direction = 2;
+    oneof transfer_data {
+        bytes data = 3;
+        ProtoShmBufferIdentifier shared_memory_identifier = 4;
+    }
+    uint32 cb_idx = 5;
+}
+
+message ConfiguredNetworkGroup_infer_async_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    uint32 infer_request_done_cb_idx = 2;
+    repeated ProtoTransferRequest transfer_requests = 3;
+}
+
+message ConfiguredNetworkGroup_infer_async_Reply {
+    uint32 status = 1;
+}
+
+message ProtoVDeviceParams {
+    uint32 device_count = 1;
+    repeated string device_ids = 2;
+    uint32 scheduling_algorithm = 3;
+    string group_id = 4;
+}
+
+message ProtoHailoVersion {
+    uint32 major_version = 1;
+    uint32 minor_version = 2;
+    uint32 revision_version = 3;
+}
+
+message get_service_version_Request {
+}
+
+message get_service_version_Reply {
+    uint32 status = 1;
+    ProtoHailoVersion hailo_version = 2;
+}
+
+message ConfiguredNetworkGroup_dup_handle_Request {
+    uint32 pid = 1;
+    ProtoConfiguredNetworkGroupIdentifier identifier = 2;
+}
+
+message ConfiguredNetworkGroup_dup_handle_Reply {
+    uint32 handle = 1;
+    uint32 status = 2;
+}
+
+message VDevice_create_Request {
+    ProtoVDeviceParams hailo_vdevice_params = 1;
+    uint32 pid = 2;
+}
+
+message VDevice_create_Reply {
+    uint32 status = 1;
+    uint32 handle = 2;
+}
+
+message Release_ConfiguredNetworkGroup_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    uint32 pid = 2;
+}
+
+message Release_Request {
+    uint32 pid = 1;
+    oneof identifier {
+        ProtoVDeviceIdentifier vdevice_identifier = 2;
+        ProtoConfiguredNetworkGroupIdentifier network_group_identifier = 3;
+        ProtoVStreamIdentifier vstream_identifier = 4;
+    }
+}
+
+message Release_Reply {
+    uint32 status = 1;
+}
+
+message VStreams_create_Reply {
+    uint32 status = 1;
+    repeated uint32 handles = 2;
+    repeated string names = 3;
+}
+
+message VStream_create_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    repeated ProtoNamedVStreamParams vstreams_params = 2;
+    uint32 pid = 3;
+}
+
+message ProtoHailoFormat {
+    uint32 type = 1;
+    uint32 order = 2;
+    uint32 flags = 3;
+}
+
+message ProtoVStreamParams {
+    ProtoHailoFormat user_buffer_format = 1;
+    uint32 timeout_ms = 2;
+    uint32 queue_size = 3;
+    uint32 vstream_stats_flags = 4;
+    uint32 pipeline_elements_stats_flags = 5;
+}
+
+message ProtoNamedVStreamParams {
+    string name = 1;
+    ProtoVStreamParams params = 2;
+}
+
+message ProtoThreeDImageShape {
+    uint32 height = 1;
+    uint32 width = 2;
+    uint32 features = 3;
+}
+
+message ProtoStreamShape {
+    ProtoThreeDImageShape shape = 1;
+    ProtoThreeDImageShape hw_shape = 2;
+}
+
+message ProtoNmsDefuseInfo {
+    uint32 class_group_index = 1;
+    string original_name = 2;
+}
+
+enum ProtoNmsBurstType {
+    // No burst
+    PROTO_NMS_BURST_TYPE_NO_BURST = 0;
+    // No image delimiter, burst per class
+    PROTO_NMS_BURST_TYPE_H8_PER_CLASS = 1;
+    // Image delimiter and burst per class 
+    PROTO_NMS_BURST_TYPE_H15_PER_CLASS = 2;
+    // Image delimiter and burst per image 
+    PROTO_NMS_BURST_TYPE_H15_PER_FRAME = 3;
+}
+
+message ProtoNmsInfo {
+    uint32 number_of_classes = 1;
+    uint32 max_bboxes_per_class = 2;
+    uint32 bbox_size = 3;
+    uint32 chunks_per_frame = 4;
+    bool is_defused = 5;
+    ProtoNmsDefuseInfo defuse_info = 6;
+    uint32 burst_size = 7;
+    ProtoNmsBurstType burst_type = 8;
+    uint32 max_bboxes_total = 9;
+}
+
+message ProtoQuantInfo {
+    float qp_zp = 1;
+    float qp_scale = 2;
+    float limvals_min = 3;
+    float limvals_max = 4;
+}
+
+message ProtoStreamInfo {
+    ProtoStreamShape stream_shape = 1;
+    ProtoNmsInfo nms_info = 2;
+    uint32 hw_data_bytes = 3;
+    uint32 hw_frame_size = 4;
+    ProtoHailoFormat format = 5;
+    uint32 direction = 6;
+    uint32 index = 7;
+    string name = 8;
+    ProtoQuantInfo quant_info = 9;
+    bool is_mux = 10; 
+}
+
+message ProtoStreamsParams {
+    uint32 stream_interface = 1;
+    uint32 direction = 2;
+    uint32 flags = 3;
+}
+
+message ProtoNamedStreamParams {
+    string name = 1;
+    ProtoStreamsParams params = 2;
+}
+
+message ProtoNetworkParams {
+    uint32 batch_size = 1;
+}
+
+message ProtoNamedNetworkParams {
+    string name = 1;
+    ProtoNetworkParams params = 2;
+}
+
+message ProtoNmsShape {
+    uint32 number_of_classes = 1;
+    uint32 max_bboxes_per_class = 2;
+    uint32 max_accumulated_mask_size = 3;
+    uint32 max_bboxes_total = 4;
+}
+
+message ProtoVStreamInfo {
+    string name = 1;
+    string network_name = 2;
+    uint32 direction = 3;
+    ProtoHailoFormat format = 4;
+    ProtoThreeDImageShape shape = 5;
+    ProtoNmsShape nms_shape = 6;
+    ProtoQuantInfo quant_info = 7;
+}
+
+message ProtoUnimplementedMessage {
+    // Currently not used on client side, so isnt implemented
+}
+
+message ProtoLayerInfo {
+    uint32 type = 1;
+    uint32 direction = 2;
+    uint32 stream_index = 3;
+    uint32 dma_engine_index = 4;
+    string name = 5;
+    string network_name = 6;
+    uint32 network_index = 7;
+    ProtoUnimplementedMessage nn_stream_config = 8;
+    uint32 max_shmifo_size = 9;
+    uint32 context_index = 10;
+    uint32 pad_index = 11;
+
+    // Transformation and shape info
+    ProtoThreeDImageShape shape = 12;
+    ProtoThreeDImageShape hw_shape = 13;
+    uint32 hw_data_bytes = 14;
+    ProtoHailoFormat format = 15;
+    ProtoQuantInfo quant_info = 16;
+    repeated ProtoQuantInfo quant_infos = 17;
+    ProtoNmsInfo nms_info = 18;
+
+    // Mux info
+    bool is_mux = 19;
+    repeated ProtoLayerInfo predecessor = 20;
+    uint32 height_gcd = 21;
+    repeated uint32 height_ratios = 22;
+
+    // Multi planes info
+    bool is_multi_planar = 23;
+    repeated ProtoLayerInfo planes = 24;
+    uint32 plane_index = 25; // relevant for the underlying planes only
+
+    // Defused nms info
+    bool is_defused_nms = 26;
+    // TODO HRT-4441 change fused_layer from vector.
+    repeated ProtoLayerInfo fused_nms_layer = 27;
+
+    // Simulation Info
+    ProtoUnimplementedMessage buffer_indices = 28;
+
+    // Context switch info TODO: we should use std::optional for this structures (or implement our self).
+    ProtoUnimplementedMessage connected_context_info = 29;
+    ProtoUnimplementedMessage ddr_info = 30;
+}
+
+message ProtoBufferMetaData {
+    ProtoThreeDImageShape shape = 1;
+    ProtoThreeDImageShape padded_shape = 2;
+    ProtoHailoFormat format = 3;
+    ProtoQuantInfo quant_info = 4;
+}
+
+message ProtoNamedMetadata {
+    string name = 1;
+    ProtoBufferMetaData params = 2;
+}
+
+message ProtoYolov5Anchors {
+    string layer = 1;
+    repeated uint32 anchors = 2;
+}
+
+message ProtoYolov5Config {
+    float image_height = 1;
+    float image_width = 2;
+    repeated ProtoYolov5Anchors yolov5_anchors = 3;
+}
+
+message ProtoSSDRegToClsInputs {
+    string reg = 1;
+    string cls = 2;
+}
+
+message ProtoSSDAnchors {
+    string layer = 1;
+    repeated float anchors_per_layer = 2;
+}
+
+message ProtoSSDConfig {
+    float image_height = 1;
+    float image_width = 2;
+    uint32 centers_scale_factor = 3;
+    uint32 bbox_dimensions_scale_factor = 4;
+    uint32 ty_index = 5;
+    uint32 tx_index = 6;
+    uint32 th_index = 7;
+    uint32 tw_index = 8;
+    bool normalize_boxes = 9;
+    repeated ProtoSSDRegToClsInputs reg_to_cls_inputs = 10;
+    repeated ProtoSSDAnchors anchors = 11;
+}
+
+message ProtoNmsPostProcessConfig {
+    double nms_score_th = 1;
+    double nms_iou_th = 2;
+    uint32 max_proposals_per_class = 3;
+    uint32 number_of_classes = 4;
+    bool background_removal = 5;
+    uint32 background_removal_index = 6;
+    bool bbox_only = 7;
+    uint32 max_proposals_total = 8;
+}
+
+message ProtoYolov8MatchingLayersNames {
+    string reg = 1;
+    string cls = 2;
+    uint32 stride = 3;
+}
+
+message ProtoYolov8PostProcessConfig {
+    float image_height = 1;
+    float image_width = 2;
+    repeated ProtoYolov8MatchingLayersNames reg_to_cls_inputs = 3;
+}
+
+message ProtoYoloxMatchingLayersNames {
+    string reg = 1;
+    string obj = 2;
+    string cls = 3;
+}
+
+message ProtoYoloxPostProcessConfig {
+    float image_height = 1;
+    float image_width = 2;
+    repeated ProtoYoloxMatchingLayersNames input_names = 3;
+}
+
+message ProtoYoloV5SegPostProcessConfig {
+    double mask_threshold = 1;
+    uint32 max_accumulated_mask_size  = 2;
+    string layer_name = 3;
+}
+
+message ProtoOpMetadata {
+    string name = 1;
+    string network_name = 2;
+    uint32 type = 3;
+    repeated ProtoNamedMetadata inputs_metadata = 4;
+    repeated ProtoNamedMetadata outputs_metadata = 5;
+    ProtoNmsPostProcessConfig nms_post_process_config = 6;
+    ProtoYolov5Config yolov5_config = 7;
+    ProtoSSDConfig ssd_config = 8;
+    ProtoYolov8PostProcessConfig yolov8_config = 9;
+    ProtoYoloxPostProcessConfig yolox_config = 10;
+    ProtoYoloV5SegPostProcessConfig yolov5seg_config = 11;
+}
+
+message ProtoOpsMetadata {
+    repeated ProtoOpMetadata ops_metadata = 1;
+}
+
+message ProtoConfigureNetworkParams {
+    uint32 batch_size = 1;
+    uint32 power_mode = 2;
+    uint32 latency = 3;
+    repeated ProtoNamedStreamParams stream_params_map = 4;
+    repeated ProtoNamedNetworkParams network_params_map = 5;
+}
+
+message ProtoNamedConfigureNetworkParams {
+    string name = 1;
+    ProtoConfigureNetworkParams params = 2;
+}
+
+message ProtoVStreamGroup {
+    repeated string vstream_group = 1;
+}
+
+message VDevice_configure_Request {
+    ProtoVDeviceIdentifier identifier = 1;
+    bytes hef = 2;
+    repeated ProtoNamedConfigureNetworkParams configure_params_map = 3;
+    uint32 pid = 4;
+}
+
+message VDevice_configure_Reply {
+    uint32 status = 1;
+    repeated uint32 networks_handles = 2;
+}
+
+message VDevice_get_physical_devices_ids_Request {
+    ProtoVDeviceIdentifier identifier = 1;
+}
+
+message VDevice_get_physical_devices_ids_Reply {
+    uint32 status = 1;
+    repeated string devices_ids = 2;
+}
+
+message VDevice_get_default_streams_interface_Request {
+    ProtoVDeviceIdentifier identifier = 1;
+}
+
+message VDevice_get_default_streams_interface_Reply {
+    uint32 status = 1;
+    uint32 stream_interface = 2;
+}
+
+message VDevice_get_callback_id_Request {
+    ProtoVDeviceIdentifier identifier = 1;
+}
+
+message VDevice_get_callback_id_Reply {
+    uint32 status = 1;
+    ProtoCallbackIdentifier callback_id = 2;
+}
+
+message VDevice_finish_callback_listener_Request {
+    ProtoVDeviceIdentifier identifier = 1;
+}
+
+message VDevice_finish_callback_listener_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredNetworkGroup_make_input_vstream_params_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    uint32 format_type = 3;
+    uint32 timeout_ms = 4;
+    uint32 queue_size = 5;
+    string network_name = 6;
+}
+
+message ProtoNamedVStreamParamsMap {
+    repeated ProtoNamedVStreamParams vstream_params_map = 1;
+}
+
+message ConfiguredNetworkGroup_make_input_vstream_params_Reply {
+    uint32 status = 1;
+    ProtoNamedVStreamParamsMap vstream_params_map = 2;
+}    
+
+// TODO: Why do we have this struct for both input and output instead of 1 struct for both
+message ConfiguredNetworkGroup_make_output_vstream_params_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    uint32 format_type = 3;
+    uint32 timeout_ms = 4;
+    uint32 queue_size = 5;
+    string network_name = 6;
+}
+
+message ConfiguredNetworkGroup_make_output_vstream_params_Reply {
+    uint32 status = 1;
+    ProtoNamedVStreamParamsMap vstream_params_map = 2;
+}
+
+message ConfiguredNetworkGroup_make_output_vstream_params_groups_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    uint32 format_type = 3;
+    uint32 timeout_ms = 4;
+    uint32 queue_size = 5;
+}
+
+message ConfiguredNetworkGroup_make_output_vstream_params_groups_Reply {
+    uint32 status = 1;
+    repeated ProtoNamedVStreamParamsMap vstream_params_groups = 2;
+}
+
+message ConfiguredNetworkGroup_name_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+}
+
+message ConfiguredNetworkGroup_name_Reply {
+    uint32 status = 1;
+    string network_group_name = 2;
+}
+
+message ConfiguredNetworkGroup_get_network_infos_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+}
+
+message ConfiguredNetworkGroup_get_network_infos_Reply {
+    uint32 status = 1;
+    repeated string network_infos = 2;
+}
+
+message ConfiguredNetworkGroup_get_all_stream_infos_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    string network_name = 2;
+}
+
+message ConfiguredNetworkGroup_get_all_stream_infos_Reply {
+    uint32 status = 1;
+    repeated ProtoStreamInfo stream_infos = 2;
+}
+
+message ConfiguredNetworkGroup_get_default_stream_interface_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+}
+
+message ConfiguredNetworkGroup_get_default_stream_interface_Reply {
+    uint32 status = 1;
+    uint32 stream_interface = 2;
+}
+
+message ConfiguredNetworkGroup_shutdown_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+}
+
+message ConfiguredNetworkGroup_shutdown_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredNetworkGroup_get_output_vstream_groups_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+}
+
+message ConfiguredNetworkGroup_get_output_vstream_groups_Reply {
+    uint32 status = 1;
+    repeated ProtoVStreamGroup output_vstream_groups = 2;
+}
+
+message ConfiguredNetworkGroup_get_vstream_infos_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    string network_name = 2;
+}
+
+message ConfiguredNetworkGroup_get_latency_measurement_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    string network_name = 2;
+}
+
+message ConfiguredNetworkGroup_get_vstream_infos_Reply {
+    uint32 status = 1;
+    repeated ProtoVStreamInfo vstream_infos = 2;
+}
+
+message ConfiguredNetworkGroup_is_scheduled_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+}
+
+message ConfiguredNetworkGroup_is_scheduled_Reply {
+    uint32 status = 1;
+    bool is_scheduled = 2;
+}
+
+message ConfiguredNetworkGroup_set_scheduler_timeout_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    uint32 timeout_ms = 2;
+    string network_name = 3;
+}
+
+message ConfiguredNetworkGroup_set_scheduler_timeout_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredNetworkGroup_set_scheduler_threshold_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    uint32 threshold = 2;
+    string network_name = 3;
+}
+
+message ConfiguredNetworkGroup_set_scheduler_threshold_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredNetworkGroup_set_scheduler_priority_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    uint32 priority = 2;
+    string network_name = 3;
+}
+
+message ConfiguredNetworkGroup_set_scheduler_priority_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredNetworkGroup_get_latency_measurement_Reply {
+    uint32 status = 1;
+    uint32 avg_hw_latency = 2;
+}
+
+message ConfiguredNetworkGroup_is_multi_context_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+}
+
+message ConfiguredNetworkGroup_is_multi_context_Reply {
+    uint32 status = 1;
+    bool is_multi_context = 2;
+}
+
+message ConfiguredNetworkGroup_get_config_params_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+}
+
+message ConfiguredNetworkGroup_get_config_params_Reply {
+    uint32 status = 1;
+    ProtoConfigureNetworkParams params = 2;
+}
+
+message ConfiguredNetworkGroup_get_sorted_output_names_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+}
+
+message ConfiguredNetworkGroup_get_sorted_output_names_Reply {
+    uint32 status = 1;
+    repeated string sorted_output_names = 2;
+}
+
+message ConfiguredNetworkGroup_infer_queue_size_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+}
+
+message ConfiguredNetworkGroup_infer_queue_size_Reply {
+    uint32 status = 1;
+    uint32 infer_queue_size = 2;
+}
+
+message ConfiguredNetworkGroup_get_layer_info_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    string stream_name = 2;
+}
+
+message ConfiguredNetworkGroup_get_layer_info_Reply {
+    uint32 status = 1;
+    ProtoLayerInfo layer_info = 2;
+}
+
+message ConfiguredNetworkGroup_get_ops_metadata_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+}
+
+message ConfiguredNetworkGroup_get_ops_metadata_Reply {
+    uint32 status = 1;
+    ProtoOpsMetadata ops_metadata = 2;
+}
+
+message ConfiguredNetworkGroup_set_nms_score_threshold_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    string edge_name = 2;
+    float nms_score_th = 3;
+}
+
+message ConfiguredNetworkGroup_set_nms_score_threshold_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredNetworkGroup_set_nms_iou_threshold_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    string edge_name = 2;
+    float nms_iou_th = 3;
+}
+
+message ConfiguredNetworkGroup_set_nms_iou_threshold_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    string edge_name = 2;
+    uint32 nms_max_bboxes_per_class = 3;
+}
+
+message ConfiguredNetworkGroup_set_nms_max_bboxes_per_class_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredNetworkGroup_set_nms_max_bboxes_total_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    string edge_name = 2;
+    uint32 nms_max_bboxes_total = 3;
+}
+
+message ConfiguredNetworkGroup_set_nms_max_bboxes_total_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    string edge_name = 2;
+    uint32 max_accumulated_mask_size = 3;
+}
+
+message ConfiguredNetworkGroup_set_nms_max_accumulated_mask_size_Reply {
+    uint32 status = 1;
+}
+
+message ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    string vstream_name = 2;
+}
+
+message ConfiguredNetworkGroup_get_stream_names_from_vstream_name_Reply {
+    uint32 status = 1;
+    repeated string streams_names = 2;
+}
+
+message ConfiguredNetworkGroup_get_vstream_names_from_stream_name_Request {
+    ProtoConfiguredNetworkGroupIdentifier identifier = 1;
+    string stream_name = 2;
+}
+
+message ConfiguredNetworkGroup_get_vstream_names_from_stream_name_Reply {
+    uint32 status = 1;
+    repeated string vstreams_names = 2;
+}
+
+message InputVStream_write_Request {
+    ProtoVStreamIdentifier identifier = 1;
+    bytes data = 2;
+}
+
+message InputVStream_write_Reply {
+    uint32 status = 1;
+}
+
+message InputVStream_write_pix_Request {
+    ProtoVStreamIdentifier identifier = 1;
+    uint32 index = 2;
+    uint32 number_of_planes = 3;
+    repeated bytes planes_data = 4;
+}
+
+message InputVStream_write_pix_Reply {
+    uint32 status = 1;
+}
+
+message OutputVStream_read_Request {
+    ProtoVStreamIdentifier identifier = 1;
+    uint32 size = 2;
+}
+
+message OutputVStream_read_Reply {
+    uint32 status = 1;
+    bytes data = 2;
+}
+
+message VStream_get_frame_size_Request {
+    ProtoVStreamIdentifier identifier = 1;
+}
+
+message VStream_get_frame_size_Reply {
+    uint32 status = 1;
+    uint32 frame_size = 2;
+}
+
+message InputVStream_flush_Request {
+    ProtoVStreamIdentifier identifier = 1;
+}
+
+message InputVStream_flush_Reply {
+    uint32 status = 1;
+}
+
+message VStream_name_Request {
+    ProtoVStreamIdentifier identifier = 1;
+}
+
+message VStream_name_Reply {
+    uint32 status = 1;
+    string name = 2;
+}
+
+message VStream_network_name_Request {
+    ProtoVStreamIdentifier identifier = 1;
+}
+
+message VStream_network_name_Reply {
+    uint32 status = 1;
+    string network_name = 2;
+}
+
+message VStream_abort_Request {
+    ProtoVStreamIdentifier identifier = 1;
+}
+
+message VStream_abort_Reply {
+    uint32 status = 1;
+}
+
+message VStream_stop_and_clear_Request {
+    ProtoVStreamIdentifier identifier = 1;
+}
+
+message VStream_stop_and_clear_Reply {
+    uint32 status = 1;
+}
+
+message VStream_start_vstream_Request {
+    ProtoVStreamIdentifier identifier = 1;
+}
+
+message VStream_start_vstream_Reply {
+    uint32 status = 1;
+}
+
+message VStream_resume_Request {
+    ProtoVStreamIdentifier identifier = 1;
+}
+
+message VStream_resume_Reply {
+    uint32 status = 1;
+}
+
+message VStream_get_user_buffer_format_Request {
+    ProtoVStreamIdentifier identifier = 1;
+}
+
+message VStream_get_user_buffer_format_Reply {
+    uint32 status = 1;
+    ProtoHailoFormat user_buffer_format = 2;
+}
+
+message VStream_get_info_Request {
+    ProtoVStreamIdentifier identifier = 1;
+}
+
+message VStream_get_info_Reply {
+    uint32 status = 1;
+    ProtoVStreamInfo vstream_info = 2;
+}
+
+message InputVStream_is_multi_planar_Request {
+    ProtoVStreamIdentifier identifier = 1;
+}
+
+message InputVStream_is_multi_planar_Reply {
+    uint32 status = 1;
+    bool is_multi_planar = 2;
+}
+
+message VStream_is_aborted_Request {
+    ProtoVStreamIdentifier identifier = 1;
+}
+
+message VStream_is_aborted_Reply {
+    uint32 status = 1;
+    bool is_aborted = 2;
+}
+
+message VStream_set_nms_score_threshold_Request {
+    ProtoVStreamIdentifier identifier = 1;
+    float threshold = 2;
+}
+
+message VStream_set_nms_score_threshold_Reply {
+    uint32 status = 1;
+}
+
+message VStream_set_nms_iou_threshold_Request {
+    ProtoVStreamIdentifier identifier = 1;
+    float threshold = 2;
+}
+
+message VStream_set_nms_iou_threshold_Reply {
+    uint32 status = 1;
+}
+
+message VStream_set_nms_max_proposals_per_class_Request {
+    ProtoVStreamIdentifier identifier = 1;
+    uint32 max_proposals_per_class = 2;
+}
+
+message VStream_set_nms_max_proposals_per_class_Reply {
+    uint32 status = 1;
+}
+
+message VStream_set_nms_max_accumulated_mask_size_Request {
+    ProtoVStreamIdentifier identifier = 1;
+    uint32 max_accumulated_mask_size = 2;
+}
+
+message VStream_set_nms_max_accumulated_mask_size_Reply {
+    uint32 status = 1;
+}

@@ -11,8 +11,7 @@
 #include "firmware_header_utils.h"
 #include "common/utils.hpp"
 
-constexpr auto INVALID_LCS = 0;
-constexpr auto INVALID_CLOCK_RATE = 0;
+static const uint8_t INVALID_LCS = 0;
 #define MHz (1000 * 1000)
 
 
@@ -27,32 +26,24 @@ static std::string valid_attr_str(const std::string& key, const char *attr, size
     return key + ": " + std::string(attr, actual_len) + "\n";
 }
 
-// returns a valid string if the attribute differs from the invalid_value, otherwise returns an empty string
-static std::string valid_attr_str(const std::string& key, uint32_t attr, uint8_t invalid_value, const std::string &suffix = "")
+static std::string valid_attr_str(const std::string& key, uint8_t attr, uint8_t invalid_value)
 {
     if (attr == invalid_value) {
         return "";
     }
-    return key + ": " + std::to_string(attr) + suffix + "\n";
+    return key + ": " + std::to_string(attr);
 }
 
 static std::string extended_device_information_boot_string(hailo_device_boot_source_t boot_source)
 {
-    std::string boot_source_val;
     switch (boot_source) {
     case HAILO_DEVICE_BOOT_SOURCE_PCIE:
-    {
-        boot_source_val = "PCIE";
-        break;
-    }
+        return "PCIE";
     case HAILO_DEVICE_BOOT_SOURCE_FLASH:
-    {
-        boot_source_val = "FLASH";
-        break;
+        return "FLASH";
+    default:
+        return "Unknown";
     }
-    default: return "";
-    }
-    return "Boot source: " + boot_source_val + "\n";
 }
 
 static std::string extended_device_information_supported_features(hailo_device_supported_features_t supported_features)
@@ -100,8 +91,8 @@ static bool extended_device_information_is_array_not_empty(const uint8_t *array_
 
 static void print_extended_device_information(const hailo_extended_device_information_t &device_info)
 {
-    std::cout << extended_device_information_boot_string(device_info.boot_source);
-    std::cout << valid_attr_str("Neural Network Core Clock Rate", device_info.neural_network_core_clock_rate / MHz, INVALID_CLOCK_RATE, "MHz");
+    std::cout << "Boot source: " << extended_device_information_boot_string(device_info.boot_source) << std::endl;
+    std::cout << "Neural Network Core Clock Rate: " << (device_info.neural_network_core_clock_rate/MHz) <<"MHz" <<std::endl;
 
     std::string supported_features_str = extended_device_information_supported_features(device_info.supported_features);
     if(supported_features_str.length() > 0) {
@@ -152,9 +143,6 @@ static std::string fw_version_string(const hailo_device_identity_t &identity)
     if (identity.extended_context_switch_buffer) {
         os << ",extended context switch buffer";
     }
-    if (identity.extended_fw_check) {
-        os << ",extended fw check";
-    }
     os << ")";
     return os.str();
 }
@@ -174,8 +162,6 @@ static std::string identity_arch_string(const hailo_device_identity_t &identity)
         return "HAILO15M";
     case HAILO_ARCH_HAILO10H:
         return "HAILO10H";
-    case HAILO_ARCH_MARS:
-        return "MARS";
     default:
         return "Unknown";
     }
@@ -197,7 +183,7 @@ hailo_status FwControlIdentifyCommand::execute_on_device(Device &device)
     std::cout << "Control Protocol Version: " << identity.protocol_version << std::endl;
     std::cout << "Firmware Version: " << fw_version_string(identity) << std::endl;
     std::cout << "Logger Version: " << identity.logger_version << std::endl;
-    std::cout << valid_attr_str("Board Name", identity.board_name, identity.board_name_length);
+    std::cout << "Board Name: " << std::string(identity.board_name, identity.board_name_length) << std::endl;
     std::cout << "Device Architecture: " << identity_arch_string(identity) << std::endl;
     std::cout << valid_attr_str("Serial Number", identity.serial_number, identity.serial_number_length);
     std::cout << valid_attr_str("Part Number", identity.part_number, identity.part_number_length);

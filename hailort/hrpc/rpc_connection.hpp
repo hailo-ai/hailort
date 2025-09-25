@@ -32,7 +32,6 @@ struct rpc_message_header_t
     uint32_t size;
     uint32_t message_id;
     uint32_t action_id;
-    uint32_t status;
 };
 #pragma pack(pop)
 
@@ -42,8 +41,6 @@ struct rpc_message_t
     BufferPtr buffer;
 };
 
-class RpcConnection;
-using RpcConnectionPtr = std::shared_ptr<RpcConnection>;
 class RpcConnection
 {
 public:
@@ -56,19 +53,21 @@ public:
         std::shared_ptr<PoolAllocator> write_rpc_headers_allocator;
         std::shared_ptr<PoolAllocator> read_rpc_headers_allocator;
         std::shared_ptr<PoolAllocator> read_rpc_body_allocator;
+        std::shared_ptr<std::mutex> read_mutex;
+        std::shared_ptr<std::condition_variable> read_cv;
     };
 
     RpcConnection() = default;
     RpcConnection(Params &&params) :
             m_session(params.session), m_write_rpc_headers_allocator(params.write_rpc_headers_allocator),
             m_read_rpc_headers_allocator(params.read_rpc_headers_allocator), m_read_rpc_body_allocator(params.read_rpc_body_allocator),
-            m_is_active(true) {}
+            m_read_mutex(params.read_mutex),
+            m_read_cv(params.read_cv) {}
     ~RpcConnection() = default;
 
     Expected<rpc_message_t> read_message();
 
     hailo_status read_buffer(MemoryView buffer);
-    Expected<std::shared_ptr<FileDescriptor>> read_dmabuf_fd();
     hailo_status read_buffers(std::vector<TransferBuffer> &&buffers);
 
     hailo_status wait_for_write_message_async_ready(size_t buffer_size, std::chrono::milliseconds timeout);
@@ -83,7 +82,6 @@ public:
     hailo_status wait_for_read_buffer_async_ready(size_t buffer_size, std::chrono::milliseconds timeout);
 
     hailo_status close();
-    bool is_closed();
 
 private:
     std::shared_ptr<Session> m_session;
@@ -91,9 +89,8 @@ private:
     std::shared_ptr<PoolAllocator> m_read_rpc_headers_allocator;
     std::shared_ptr<PoolAllocator> m_read_rpc_body_allocator;
     EventPtr m_shutdown_event;
-    std::mutex m_read_mutex;
-    std::condition_variable m_read_cv;
-    bool m_is_active;
+    std::shared_ptr<std::mutex> m_read_mutex;
+    std::shared_ptr<std::condition_variable> m_read_cv;
 };
 
 } // namespace hailort

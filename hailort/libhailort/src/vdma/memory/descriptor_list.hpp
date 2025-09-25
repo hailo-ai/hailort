@@ -24,6 +24,33 @@ namespace hailort {
 namespace vdma {
 
 
+#define MAX_SG_DESCS_COUNT (64 * 1024u)
+#define MIN_SG_DESCS_COUNT (2u)
+#define DEFAULT_DESC_COUNT (64 * 1024u)
+
+static_assert(is_powerof2(MAX_SG_DESCS_COUNT), "MAX_SG_DESCS_COUNT must be a power of 2");
+static_assert(is_powerof2(MIN_SG_DESCS_COUNT), "MIN_SG_DESCS_COUNT must be a power of 2");
+static_assert(is_powerof2(DEFAULT_DESC_COUNT), "DEFAULT_DESC_COUNT must be a power of 2");
+static_assert(DEFAULT_DESC_COUNT <= MAX_SG_DESCS_COUNT && DEFAULT_DESC_COUNT >= MIN_SG_DESCS_COUNT,
+    "DEFAULT_DESC_COUNT not in range");
+
+// From PLDA's vDMA controller reference:
+// - Addresses of pages pointed to by vDMA descriptors need to be on a 64B boundary.
+//   Hence, we require a minimum page size of 64B.
+// - G_PAGE_SIZE_MAX dictates the maximum desc page size:
+//     max_page_size = 2 ^ (G_PAGE_SIZE_MAX - 1)
+//   In our case max_page_size = 2 ^ (13 - 1) = 4096
+static constexpr uint16_t MIN_SG_PAGE_SIZE = 64;
+static constexpr uint16_t MAX_SG_PAGE_SIZE = 4096;
+static constexpr uint16_t DEFAULT_SG_PAGE_SIZE = 512;
+
+static_assert(is_powerof2(MIN_SG_PAGE_SIZE), "MIN_SG_PAGE_SIZE must be a power of 2");
+static_assert(MIN_SG_PAGE_SIZE > 0, "MIN_SG_PAGE_SIZE must be larger then 0");
+static_assert(is_powerof2(MAX_SG_PAGE_SIZE), "MAX_SG_PAGE_SIZE must be a power of 2");
+static_assert(MAX_SG_PAGE_SIZE > 0, "MAX_SG_PAGE_SIZE must be larger then 0");
+static_assert(is_powerof2(DEFAULT_SG_PAGE_SIZE), "DEFAULT_SG_PAGE_SIZE must be a power of 2");
+static_assert(DEFAULT_SG_PAGE_SIZE > 0, "DEFAULT_SG_PAGE_SIZE must be larger then 0");
+
 static constexpr size_t SINGLE_DESCRIPTOR_SIZE = 0x10;
 static constexpr size_t DESCRIPTOR_LIST_ALIGN = 1 << 16;
 
@@ -79,6 +106,7 @@ public:
 
     uint32_t descriptors_in_buffer(size_t buffer_size) const;
     static uint32_t descriptors_in_buffer(size_t buffer_size, uint16_t desc_page_size);
+    static uint32_t calculate_descriptors_count(uint32_t buffer_size, uint16_t batch_size, uint16_t desc_page_size);
 
     /**
      * Returns the size of the buffer needed to allocate the descriptors list.

@@ -4,7 +4,7 @@
  **/
 /**
  * @file runtime_statistics.hpp
- * @brief Runtime Statistics
+ * @brief Runtime statistics
  **/
 
 #ifndef _HAILO_RUNTIME_STATISTICS_HPP_

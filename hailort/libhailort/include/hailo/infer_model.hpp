@@ -185,7 +185,7 @@ public:
         Expected<InferStream> output(const std::string &name);
 
         /**
-         * Returns the single input's InferStream object, as read only.
+         * Returns the single input's InferStream object, as readonly.
          *
          * @return Upon success, returns Expected of the single input's InferStream object. Otherwise, returns Unexpected of ::hailo_status error.
          * @note If Bindings has multiple inputs, will return ::HAILO_INVALID_OPERATION.
@@ -194,7 +194,7 @@ public:
         Expected<InferStream> input() const;
 
         /**
-         * Returns the single output's InferStream object, as read only.
+         * Returns the single output's InferStream object, as readonly.
          *
          * @return Upon success, returns Expected of the single output's InferStream object. Otherwise, returns Unexpected of ::hailo_status error.
          * @note If Bindings has multiple outputs, will return ::HAILO_INVALID_OPERATION.
@@ -203,7 +203,7 @@ public:
         Expected<InferStream> output() const;
 
         /**
-         * Gets an input's InferStream object, as read only.
+         * Gets an input's InferStream object, as readonly.
          *
          * @param[in] name                    The name of the input edge.
          * @return Upon success, returns Expected of the relevant InferStream object. Otherwise, returns a ::hailo_status error.
@@ -211,7 +211,7 @@ public:
         Expected<InferStream> input(const std::string &name) const;
 
         /**
-         * Gets an output's InferStream object, as read only.
+         * Gets an output's InferStream object, as readonly.
          *
          * @param[in] name                    The name of the output edge.
          * @return Upon success, returns Expected of the relevant InferStream object. Otherwise, returns a ::hailo_status error.
@@ -249,7 +249,7 @@ public:
     /**
      * The readiness of the model to launch is determined by the ability to push buffers to the asynchronous inference pipeline.
      * If the model is ready, the method will return immediately.
-     * If it's not ready initially, the method will wait for the model to become ready.
+     * If the model is not ready, the method will wait for the model to be ready.
      *
      * @param[in] timeout           Amount of time to wait until the model is ready in milliseconds.
      * @param[in] frames_count      The count of buffers you intent to infer in the next request. Useful for batch inference.
@@ -357,7 +357,7 @@ public:
     /**
      * Sets the priority of the network.
      * When the network group scheduler will choose the next network, networks with higher priority will be prioritized in the selection.
-     * Larger number represents higher priority
+     * bigger number represent higher priority.
      *
      * @param[in]  priority             Priority as a number between HAILO_SCHEDULER_PRIORITY_MIN - HAILO_SCHEDULER_PRIORITY_MAX.
      *
@@ -381,7 +381,6 @@ public:
 
 
     hailo_status update_cache_offset(int32_t offset_delta_entries);
-    hailo_status init_cache(uint32_t read_offset);
 
 private:
     friend class InferModelBase;
@@ -642,8 +641,6 @@ public:
         const std::unordered_map<std::string, size_t> inputs_frame_sizes = {},
         const std::unordered_map<std::string, size_t> outputs_frame_sizes = {},
         std::shared_ptr<ConfiguredNetworkGroup> net_group = nullptr) = 0;
-
-     virtual void set_enable_kv_cache(bool enable_kv_cache) = 0;
 };
 
 } /* namespace hailort */

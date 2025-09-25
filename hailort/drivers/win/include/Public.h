@@ -53,6 +53,7 @@ struct tCommonHailoIoctlParam
 #define HAILO_CMD_FREE_MEMORY           0x0060
 #define HAILO_CMD_ALLOC_MEMORY          0x0061
 
+
 #include "..\..\common\hailo_ioctl_common.h"
 
 #endif /* _HAILO_PUBLIC_H_ */

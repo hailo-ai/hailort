@@ -63,9 +63,6 @@ enum ProtoHEFExtensionType {
     CCW_PTR_SQUEEZE = 30;
     EXTERNAL_RESOURCES = 31;
     SHARED_CONFIG = 32;
-    CSM_CRC = 33;
-    ENABLE_CONFIG_CHANNELS = 34;
-    STRICT_RUNTIME_VERSIONING = 35;
     UNUSED = 0XFFFF;
 }
 
@@ -79,12 +76,6 @@ message ProtoHEFOptionalExtension {
     string name = 2;
 }
 
-message ProtoHEFSdkVersion {
-    uint32 sdk_version_major = 1;
-    uint32 sdk_version_minor = 2;
-    uint32 sdk_version_revision = 3;
-}
-
 message ProtoHEFHeader {
     // The target hw_arch the HEF is compiled to
     ProtoHEFHwArch hw_arch = 1;
@@ -93,8 +84,7 @@ message ProtoHEFHeader {
     uint64 timestamp = 2;
 
     // The version of the SDK the HEF has been created with
-    string sdk_version_str = 3;
-    ProtoHEFSdkVersion sdk_version = 5;
+    string sdk_version = 3;
 
     // The format version of the hef file
     uint64 version = 4;
@@ -591,7 +581,7 @@ message ProtoHEFAction {
         ProtoHEFActionWriteData write_data = 2;
         ProtoHEFActionWriteDataCcw write_data_ccw = 3;
         ProtoHEFActionWriteCompressedData write_compressed_data = 4;
-    ProtoHEFActionEnableSequencer enable_sequencer = 5;
+        ProtoHEFActionEnableSequencer enable_sequencer = 5;
         ProtoHEFActionWaitForSequencer wait_for_seqeuncer = 6;
         ProtoHEFActionDisableLcu disable_lcu = 7;
         ProtoHEFActionEnableLcu enable_lcu = 8;
@@ -603,8 +593,6 @@ message ProtoHEFAction {
         ProtoHEFActionWriteDataByType write_data_by_type = 14;
         ProtoHEFActionSwitchLcuBatch switch_lcu_batch = 15;
         ProtoHEFActionWriteDataCcwPtr write_data_ccw_ptr = 16;
-        ProtoHEFActionAllowConfigChannel allow_config_channels = 17;
-        ProtoHEFActionDisableDataChannels disable_data_channels = 18;
     }
 }
 
@@ -795,26 +783,17 @@ message ProtoHEFActionEnableNMS {
 message ProtoHEFActionNone {
 }
 
-// Deactivate data channels
-message ProtoHEFActionDisableDataChannels {
-}
-
 // Allow sending data to input dataflow
 message ProtoHEFActionAllowInputDataflow {
     uint32 sys_index = 1;
     ProtoHEFEdgeConnectionType connection_type = 2;
 }
 
-// Allow sending data to config dataflow
-message ProtoHEFActionAllowConfigChannel {
-    uint32 config_index = 1;
-}
-
 // Indicates that after this data is written, it should mark the DMA write as completed
 message ProtoHEFActionSetDmaCompelte {
 }
 
-// Wait until indication that DMA was complete
+// Wait until indication that DMA was complete 
 message ProtoHEFActionWaitForDmaCompelte {
 }
 

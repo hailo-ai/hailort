@@ -47,6 +47,7 @@ namespace hailort
 #define SCHEDULER_MON_TMP_DIR "/tmp/hmon_files/"
 #define NNC_UTILIZATION_TMP_DIR "/tmp/nnc_utilization/"
 #define NNC_UTILIZATION_FILE_NAME "nnc_utilization"
+#define NNC_UTILIZATION_FILE_PATH (NNC_UTILIZATION_TMP_DIR NNC_UTILIZATION_FILE_NAME)
 #define DEFAULT_SCHEDULER_MON_INTERVAL (std::chrono::seconds(1))
 #define SCHEDULER_MON_NAN_VAL (-1)
 
@@ -180,7 +181,8 @@ public:
 private:
     hailo_status start_mon(const std::string &unique_vdevice_hash);
 #if defined(__GNUC__)
-    Expected<std::shared_ptr<TempFile>> open_temp_mon_file(const std::string &file_name, const std::string &file_dir);
+    Expected<std::shared_ptr<TempFile>> open_temp_mon_file();
+    Expected<std::shared_ptr<TempFile>> open_temp_nnc_utilization_file();
     void write_utilization_to_file(const double utilization_percentage);
     void dump_state();
 #endif

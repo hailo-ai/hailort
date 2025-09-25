@@ -42,8 +42,8 @@ namespace hailort
 
 static const uint32_t POLYNOMIAL = 0xEDB88320;
 
-static const size_t MB = (1024 * 1024);
-static const size_t XXH3_CHUNK_SIZE = ((1024 * 1024) / 4); // We got best performance with this chunk_size for xxh3 algorithm
+static const size_t MB = 1024 * 1024;
+static const size_t XXH3_CHUNK_SIZE = 1024 * 1024 / 4; // We got best performance with this chunk_size for xxh3 algorithm
 
 template <typename T>
 static inline bool contains(const std::vector<T> &container, const T &value)
@@ -52,25 +52,25 @@ static inline bool contains(const std::vector<T> &container, const T &value)
 }
 
 template <typename T, typename Q>
-static inline bool contains(const std::map<Q, T> &container, const Q &value)
+static inline bool contains(const std::map<Q, T> &container, Q value)
 {
     return (container.find(value) != container.end());
 }
 
 template <typename T, typename Q>
-static inline bool contains(const std::unordered_map<Q, T> &container, const Q &value)
+static inline bool contains(const std::unordered_map<Q, T> &container, Q value)
 {
     return (container.find(value) != container.end());
 }
 
 template <typename T>
-static inline bool contains(const std::set<T> &container, const T &value)
+static inline bool contains(const std::set<T> &container, T value)
 {
     return (container.find(value) != container.end());
 }
 
 template <typename T>
-static inline bool contains(const std::unordered_set<T> &container, const T &value)
+static inline bool contains(const std::unordered_set<T> &container, T value)
 {
     return (container.find(value) != container.end());
 }
@@ -255,6 +255,47 @@ inline hailo_status get_status(const Expected<T> &exp)
 #define CHECK_IN_DEBUG(cond, ret_val, ...) CHECK(cond, ret_val, __VA_ARGS__)
 #endif // NDEBUG
 
+#ifdef HAILO_SUPPORT_MULTI_PROCESS
+#define _CHECK_SUCCESS_AS_RPC_STATUS(status, reply, is_default, fmt, ...)                                                                       \
+    do {                                                                                                                                        \
+        const auto &__check_success_status = (status);                                                                                          \
+        reply->set_status(static_cast<uint32_t>(__check_success_status));                                                                       \
+        _CHECK(                                                                                                                                 \
+            HAILO_SUCCESS == __check_success_status,                                                                                            \
+            grpc::Status::OK,                                                                                                                   \
+            _CONSTRUCT_MSG(is_default, "CHECK_SUCCESS_AS_RPC_STATUS failed with status={}", fmt, __check_success_status, ##__VA_ARGS__)         \
+        );                                                                                                                                      \
+    } while(0)
+#define CHECK_SUCCESS_AS_RPC_STATUS(status, reply, ...) _CHECK_SUCCESS_AS_RPC_STATUS(status, reply, ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
+
+#define CHECK_EXPECTED_AS_RPC_STATUS(expected, reply, ...) CHECK_SUCCESS_AS_RPC_STATUS(expected.status(), reply, __VA_ARGS__)
+
+#define _CHECK_AS_RPC_STATUS(cond, reply, ret_val, ...)                                                                                    \
+    do {                                                                                                                                   \
+        if (!(cond)) {                                                                                                                     \
+            reply->set_status(ret_val);                                                                                                    \
+            LOGGER__ERROR(                                                                                                                 \
+                _CONSTRUCT_MSG(is_default, "CHECK_AS_RPC_STATUS failed with status={}", fmt, ret_val, ##__VA_ARGS__)                       \
+            );                                                                                                                             \
+            return grpc::Status::OK;                                                                                                       \
+        }                                                                                                                                  \
+    } while(0)
+#define CHECK_AS_RPC_STATUS(cond, reply, ret_val, ...) _CHECK_AS_RPC_STATUS((cond), (reply), (ret_val), ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
+
+#define _CHECK_GRPC_STATUS(status, ret_val, warning_msg)                                                                         \
+    do {                                                                                                                         \
+        if (!status.ok()) {                                                                                                      \
+            LOGGER__ERROR("CHECK_GRPC_STATUS failed with error code: {}.", static_cast<int>(status.error_code()));               \
+            LOGGER__WARNING(warning_msg);                                                                                        \
+            return ret_val;                                                                                                      \
+        }                                                                                                                        \
+    } while(0)
+
+#define SERVICE_WARNING_MSG ("Make sure HailoRT service is enabled and active!")
+#define CHECK_GRPC_STATUS(status) _CHECK_GRPC_STATUS(status, HAILO_RPC_FAILED, SERVICE_WARNING_MSG)
+#define CHECK_GRPC_STATUS_AS_EXPECTED(status) _CHECK_GRPC_STATUS(status, make_unexpected(HAILO_RPC_FAILED), SERVICE_WARNING_MSG)
+#endif
+
 // Macros that check status. If status is 'valid_error', return without printing error to the prompt.
 #define CHECK_EXPECTED_WITH_ACCEPTABLE_STATUS(valid_error, exp, ...) if (valid_error == (exp).status()) {return make_unexpected(valid_error);} CHECK_SUCCESS(exp, __VA_ARGS__);
 #define CHECK_SUCCESS_WITH_ACCEPTABLE_STATUS(valid_error, status, ...) if ((valid_error) == (status)) {return make_unexpected(valid_error);} CHECK_SUCCESS(status, __VA_ARGS__);
@@ -301,60 +342,7 @@ inline hailo_status get_status(const Expected<T> &exp)
     CHECK_EXPECTED_WITH_ACCEPTABLE_STATUS(valid_error, expected_var_name, __VA_ARGS__); \
     var_decl = expected_var_name.release()
 
-
-// Same as TRY, but if the status is `valid_error` skip the CHECK print
 #define TRY_WITH_ACCEPTABLE_STATUS(valid_error, var_decl, expr, ...) _TRY_WITH_ACCEPTABLE_STATUS(valid_error, _HAILO_CONCAT(__expected, __COUNTER__), var_decl, expr, __VA_ARGS__)
-
-// TODO: These macros should be merged with the grpc macros, also change them to TRY
-#define CHECK_EXPECTED_AS_HRPC_STATUS(_exepcted, T) \
-    do { \
-        const auto &__check_expected_status = get_status(_exepcted); \
-        if (!_exepcted) { \
-            LOGGER__ERROR("CHECK_EXPECTED_AS_HRPC_STATUS failed, status: {}", __check_expected_status); \
-            auto reply = T::serialize_reply(__check_expected_status); \
-            if (reply) return reply; \
-            LOGGER__CRITICAL("Failed to create reply with status: {}", reply.status()); \
-            return make_unexpected(HAILO_INTERNAL_FAILURE); \
-        } \
-    } while (0)
-#define CHECK_SUCCESS_AS_HRPC_STATUS(_status, T) \
-    do { \
-        const auto &__check_success_status = get_status(_status); \
-        if (__check_success_status != HAILO_SUCCESS) { \
-            LOGGER__ERROR("CHECK_SUCCESS_AS_HRPC_STATUS failed, status: {}", __check_success_status); \
-            auto reply = T::serialize_reply(__check_success_status); \
-            if (reply) return reply; \
-            LOGGER__CRITICAL("Failed to create reply with status: {}", reply.status()); \
-            return make_unexpected(HAILO_INTERNAL_FAILURE); \
-        } \
-    } while (0)
-#define CHECK_AS_HRPC_STATUS(_cond, _status, T) \
-    do { \
-        if (!(_cond)) { \
-            LOGGER__ERROR("CHECK_AS_HRPC_STATUS failed, status: {}", _status); \
-            auto reply = T::serialize_reply(_status); \
-            if (reply) return reply; \
-            LOGGER__CRITICAL("Failed to create reply with status: {}", reply.status()); \
-            return make_unexpected(HAILO_INTERNAL_FAILURE); \
-        } \
-    } while (0)
-
-#define __HAILO_CONCAT(x, y) x ## y
-#define _HAILO_CONCAT(x, y) __HAILO_CONCAT(x, y)
-
-#define _TRY_AS_HRPC_STATUS(expected_var_name, var_decl, expr, ...) \
-    auto expected_var_name = (expr); \
-    CHECK_EXPECTED_AS_HRPC_STATUS(expected_var_name, __VA_ARGS__); \
-    var_decl = expected_var_name.release()
-
-#define TRY_AS_HRPC_STATUS(var_decl, expr, ...) _TRY_AS_HRPC_STATUS(_HAILO_CONCAT(__expected, __COUNTER__), var_decl, expr, __VA_ARGS__)
-
-#define _TRY_V_AS_HRPC_STATUS(expected_var_name, var_decl, expr, ...) \
-    auto expected_var_name = (expr); \
-    CHECK_EXPECTED_AS_HRPC_STATUS(expected_var_name, __VA_ARGS__); \
-    var_decl = expected_var_name.value()
-
-#define TRY_V_AS_HRPC_STATUS(var_decl, expr, ...) _TRY_V_AS_HRPC_STATUS(_HAILO_CONCAT(__expected, __COUNTER__), var_decl, expr, __VA_ARGS__)
 
 #ifndef _MSC_VER
 #define IGNORE_DEPRECATION_WARNINGS_BEGIN _Pragma("GCC diagnostic push") \
@@ -364,10 +352,6 @@ inline hailo_status get_status(const Expected<T> &exp)
 #define IGNORE_DEPRECATION_WARNINGS_BEGIN
 #define IGNORE_DEPRECATION_WARNINGS_END
 #endif
-
-#define FORCE_GET_FIRST_AVAILABLE ("FORCE_GET_FIRST_AVAILABLE")
-
-#define IS_PP_DISABLED() (is_env_variable_on(HAILO_DISABLE_PP_ENV_VAR))
 
 constexpr bool is_powerof2(size_t v) {
     // bit trick
@@ -445,10 +429,6 @@ constexpr size_t clamp(size_t v, size_t lo, size_t hi) {
     return (v < lo) ? lo : (v > hi) ? hi : v;
 }
 
-constexpr float32_t clamp(float32_t v, float32_t lo, float32_t hi) {
-    return (v < lo) ? lo : (v > hi) ? hi : v;
-}
-
 static inline Expected<std::string> get_env_variable(const std::string &env_var_name)
 {
     const auto env_var = std::getenv(env_var_name.c_str());
@@ -463,19 +443,6 @@ static inline Expected<std::string> get_env_variable(const std::string &env_var_
     }
 
     return Expected<std::string>(result);
-}
-
-inline bool has_suffix(const std::string &str, const std::string &suffix) noexcept
-{
-    size_t str_len = str.size();
-    size_t suffix_len = suffix.size();
-
-    if (str_len < suffix_len) {
-        return false;
-    }
-
-    // Compare the last 'suffix_len' characters of 'str' with 'suffix'
-    return std::memcmp(str.data() + str_len - suffix_len, suffix.data(), suffix_len) == 0;
 }
 
 template <typename T>
@@ -618,8 +585,6 @@ public:
     }
 
     static std::string to_hex_string(const uint8_t *array, size_t size, bool uppercase, const std::string &delimiter="");
-
-    static bool contains_replacement_char(const std::string &str);
 };
 
 class BufferUtils final

@@ -18,9 +18,12 @@
 #include "sensor_config_command.hpp"
 #include "board_config_command.hpp"
 #include "fw_config_command.hpp"
+#include "fw_logger_command.hpp"
 #include "benchmark_command.hpp"
 #include "mon_command.hpp"
-#include "logs_command.hpp"
+#if defined(__GNUC__)
+#include "udp_rate_limiter_command.hpp"
+#endif
 #include "parse_hef_command.hpp"
 #include "memory_requirements_command.hpp"
 #include "fw_control_command.hpp"
@@ -44,15 +47,9 @@
 #include <map>
 
 
-#ifdef NDEBUG
-#define LOGGER_PATTERN ("[%n] [%^%l%$] %v")
-#else
-#define LOGGER_PATTERN ("[%Y-%m-%d %X.%e] [%P] [%t] [%n] [%^%l%$] [%s:%#] [%!] %v")
-#endif
-
 Expected<std::vector<std::string>> get_device_ids(const hailo_device_params &device_params)
 {
-    if (device_params.device_ids.empty()) {
+    if (device_params.device_ids.empty() || contains(device_params.device_ids, std::string("*"))) {
         // No device id given, using all devices in the system.
         return Device::scan();
     }
@@ -76,8 +73,12 @@ Expected<std::vector<std::unique_ptr<Device>>> create_devices(const hailo_device
 
 class BDFValidator : public CLI::Validator {
   public:
-    BDFValidator() : Validator("BDF") {
-        func_ = [](std::string &bdf) {
+    BDFValidator(bool support_asterisk) : Validator("BDF") {
+        func_ = [support_asterisk](std::string &bdf) {
+            if (support_asterisk && (bdf == "*")) {
+                return std::string();
+            }
+
             auto pcie_device_info = Device::parse_pcie_device_info(bdf);
             if (pcie_device_info.has_value()) {
                 return std::string();
@@ -91,7 +92,7 @@ class BDFValidator : public CLI::Validator {
 
 void add_vdevice_options(CLI::App *app, hailo_vdevice_params &vdevice_params)
 {
-    add_device_options(app, vdevice_params.device_params);
+    add_device_options(app, vdevice_params.device_params, false);
     auto group = app->add_option_group("VDevice Options");
     auto device_count_option = group->add_option("--device-count", vdevice_params.device_count, "VDevice device count")
         ->check(CLI::PositiveNumber);
@@ -110,26 +111,32 @@ void add_vdevice_options(CLI::App *app, hailo_vdevice_params &vdevice_params)
     });
 }
 
-void add_device_options(CLI::App *app, hailo_device_params &device_params)
+void add_device_options(CLI::App *app, hailo_device_params &device_params, bool support_asterisk)
 {
     auto group = app->add_option_group("Device Options");
 
     // General device id
     auto *device_id_option = group->add_option("-s,--device-id", device_params.device_ids,
         std::string("Device id, same as returned from `hailortcli scan` command. ") +
-        std::string("For multiple devices, use space as separator.\n"));
+        std::string("For multiple devices, use space as separator.\n") +
+        (support_asterisk ?
+            std::string("In order to run on all devices connected to the machine one-by-one, use '*' (instead of device id).") :
+            std::string("")));
 
     // PCIe options
     auto *pcie_bdf_option = group->add_option("--bdf", device_params.device_ids,
         std::string("Device bdf ([<domain>]:<bus>:<device>.<func>, same as in lspci command).\n") +
-        std::string("For multiple BDFs, use space as separator.\n"))
-        ->check(BDFValidator());
+        std::string("For multiple BDFs, use space as separator.\n") +
+        (support_asterisk ?
+            std::string("In order to run on all devices connected to the machine one-by-one, use '*' (instead of device id).") :
+            std::string("")))
+        ->check(BDFValidator(support_asterisk));
 
     // Ethernet options
     auto *ip_option = group->add_option("--ip", device_params.device_ids, "IP address of the target")
         ->check(CLI::ValidIPV4);
 
-    group->parse_complete_callback([device_id_option, pcie_bdf_option, ip_option]()
+    group->parse_complete_callback([&device_params, device_id_option, pcie_bdf_option, ip_option, support_asterisk]()
     {
         // Check that only one device id param is given
         const std::string device_id_options_names = device_id_option->get_name(true, true) + ", " +
@@ -142,6 +149,11 @@ void add_device_options(CLI::App *app, hailo_device_params &device_params)
             static_cast<size_t>(!ip_option->empty());
         PARSE_CHECK(dev_id_options_parsed <= 1, 
             "Only one of " + device_id_options_names + " Can bet set");
+
+        if (contains(device_params.device_ids, std::string("*"))) {
+            PARSE_CHECK(support_asterisk, "Passing * is not allowed in this command");
+            PARSE_CHECK(device_params.device_ids.size() == 1, "passing '*' in combination with other device ids is not allowed");
+        }
     });
 }
 
@@ -181,16 +193,17 @@ public:
         add_subcommand<SensorConfigCommand>();
         add_subcommand<BoardConfigCommand>(OptionVisibility::HIDDEN);
         add_subcommand<FwConfigCommand>();
+        add_subcommand<FwLoggerCommand>();
         add_subcommand<FwUpdateCommand>();
         add_subcommand<SSBUpdateCommand>();
         add_subcommand<MonCommand>();
 #if defined(__GNUC__)
+        add_subcommand<UdpRateLimiterCommand>();
         add_subcommand<HwInferEstimatorCommand>(OptionVisibility::HIDDEN);
 #endif
         add_subcommand<ParseHefCommand>();
         add_subcommand<MemoryRequirementsCommand>(OptionVisibility::HIDDEN);
         add_subcommand<FwControlCommand>();
-        add_subcommand<LogsCommand>();
     }
 
     int parse_and_execute(int argc, char **argv)
@@ -207,7 +220,7 @@ int main(int argc, char** argv) {
     }
     auto console_sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
     console_sink->set_level(spdlog::level::info);
-    console_sink->set_pattern(LOGGER_PATTERN);
+    console_sink->set_pattern("[%n] [%^%l%$] %v");
     spdlog::set_default_logger(std::make_shared<spdlog::logger>("HailoRT CLI", console_sink));
 
     CLI::App app{"HailoRT CLI"};

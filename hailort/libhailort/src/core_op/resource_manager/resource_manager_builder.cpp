@@ -114,11 +114,11 @@ static hailo_status fill_boundary_input_layer_impl(ContextResources &context_res
         is_core_hw_padding_config_in_dfc));
 
     const auto channel_id = vdma_channel->get_channel_id();
-    auto status = context_resources.add_edge_layer(std::move(local_layer_info), channel_id, buffer_info,
+    auto status = context_resources.add_edge_layer(local_layer_info, channel_id, buffer_info,
         resources_manager.get_supported_features());
     CHECK_SUCCESS(status);
 
-    LOGGER__TRACE("Boundary input stream: {} h2d_channel: {}.", layer_info.stream_index, channel_id);
+    LOGGER__DEBUG("Boundary input stream: {} h2d_channel: {}.", layer_info.stream_index, channel_id);
     return HAILO_SUCCESS;
 }
 
@@ -157,11 +157,11 @@ static hailo_status fill_inter_context_input_layer(ContextResources &context_res
     TRY(auto local_layer_info, update_layer_info(layer_info, inter_context_buffer.get().get_host_buffer_info(frame_credits_in_bytes), hw_consts,
         hw_arch, should_optimize_credits, is_core_hw_padding_config_in_dfc));
 
-    auto status = context_resources.add_edge_layer(std::move(local_layer_info), channel_id,
+    auto status = context_resources.add_edge_layer(local_layer_info, channel_id,
         inter_context_buffer.get().get_host_buffer_info(frame_credits_in_bytes), resources_manager.get_supported_features());
     CHECK_SUCCESS(status);
 
-    LOGGER__TRACE("Intermediate edge key: {}:{} src_context:{}, dst_context: {}, h2d_channel {}.",
+    LOGGER__DEBUG("Intermediate edge key: {}:{} src_context:{}, dst_context: {}, h2d_channel {}.",
         connected_context.context_index, connected_context.stream_index,
         layer_info.connected_context_info.context_index, layer_info.context_index, channel_id);
 
@@ -182,11 +182,11 @@ static hailo_status fill_boundary_output_layer(ContextResources &context_resourc
         is_core_hw_padding_config_in_dfc));
 
     const auto channel_id = vdma_channel->get_channel_id();
-    auto status = context_resources.add_edge_layer(std::move(local_layer_info), channel_id, buffer_info,
+    auto status = context_resources.add_edge_layer(local_layer_info, channel_id, buffer_info,
         resources_manager.get_supported_features());
     CHECK_SUCCESS(status);
 
-    LOGGER__TRACE("Boundary output stream: {} d2h_channel: {}.", layer_info.stream_index, channel_id);
+    LOGGER__DEBUG("Boundary output stream: {} d2h_channel: {}.", layer_info.stream_index, channel_id);
     return HAILO_SUCCESS;
 }
 
@@ -210,11 +210,11 @@ static hailo_status fill_inter_context_output_layer(ContextResources &context_re
         inter_context_buffer.get().get_host_buffer_info(frame_credits_in_bytes), hw_consts,
         hw_arch, should_optimize_credits, is_core_hw_padding_config_in_dfc));
 
-    auto status = context_resources.add_edge_layer(std::move(local_layer_info), channel_id,
+    auto status = context_resources.add_edge_layer(local_layer_info, channel_id,
         inter_context_buffer.get().get_host_buffer_info(frame_credits_in_bytes), resources_manager.get_supported_features());
     CHECK_SUCCESS(status);
 
-    LOGGER__TRACE("Inter-context output stream {}, src_context:{}, d2h_channel {}.",
+    LOGGER__DEBUG("Inter-context output stream {}, src_context:{}, d2h_channel {}.",
         layer_info.stream_index, layer_info.context_index, channel_id);
     return HAILO_SUCCESS;
 }
@@ -245,15 +245,23 @@ static hailo_status fill_ddr_output_layer(ContextResources &context_resources,
     const auto row_size = static_cast<uint16_t>(layer_info.nn_stream_config.core_bytes_per_buffer);
     CHECK(0 == (row_size % PERIPH_BYTES_PER_BUFFER_DDR_ALIGNMENT_SIZE), HAILO_INVALID_ARGUMENT,
         "DDR Row size ({}) must be aligned to {}", row_size, PERIPH_BYTES_PER_BUFFER_DDR_ALIGNMENT_SIZE);
-    const uint16_t DDR_LAYER_BATCH_SIZE = 1;
+    const auto min_buffered_rows = layer_info.ddr_info.min_buffered_rows;
 
     // Create the ddr edge layer
-    TRY(auto ddr_buffer, resources_manager.create_intermediate_edge_layer(row_size, DDR_LAYER_BATCH_SIZE,
+    TRY(auto ddr_buffer, resources_manager.create_intermediate_edge_layer(row_size, min_buffered_rows,
         d2h_stream_index, layer_info.context_index, d2h_channel_id, LayerType::DDR));
 
-    context_resources.add_ddr_channels_info(d2h_channel_id, d2h_stream_index, h2d_channel_id, h2d_stream_index,
-        ddr_buffer.get().get_host_buffer_info(row_size), layer_info.network_index, row_size, layer_info.ddr_info.min_buffered_rows,
-        layer_info.ddr_info.total_buffers_per_frame);
+    DdrChannelsInfo ddr_pair_info{};
+    ddr_pair_info.h2d_stream_index = h2d_stream_index;
+    ddr_pair_info.d2h_stream_index = d2h_stream_index;
+    ddr_pair_info.network_index = layer_info.network_index;
+    ddr_pair_info.h2d_channel_id = h2d_channel_id;
+    ddr_pair_info.d2h_channel_id = d2h_channel_id;
+    ddr_pair_info.row_size = row_size;
+    ddr_pair_info.min_buffered_rows = min_buffered_rows;
+    ddr_pair_info.total_buffers_per_frame = layer_info.ddr_info.total_buffers_per_frame;
+    ddr_pair_info.host_buffer_info = ddr_buffer.get().get_host_buffer_info(row_size);
+    context_resources.add_ddr_channels_info(ddr_pair_info);
 
     // On ddr layers, we assume the periph credit size is aligned to the size of descriptor, so we don't want to
     // optimize the credits.
@@ -262,7 +270,7 @@ static hailo_status fill_ddr_output_layer(ContextResources &context_resources,
     TRY(auto local_layer_info, update_layer_info(layer_info, ddr_buffer.get().get_host_buffer_info(row_size), hw_consts,
         hw_arch, should_optimize_credits, is_core_hw_padding_config_in_dfc));
 
-    auto status = context_resources.add_edge_layer(std::move(local_layer_info), d2h_channel_id,
+    auto status = context_resources.add_edge_layer(local_layer_info, ddr_pair_info.d2h_channel_id,
         ddr_buffer.get().get_host_buffer_info(row_size), resources_manager.get_supported_features());
     CHECK_SUCCESS(status);
 
@@ -275,7 +283,7 @@ static hailo_status fill_ddr_input_layer(ContextResources &context_resources, Re
     auto connected_stream_index = layer_info.connected_context_info.stream_index;
     TRY(const auto ddr_info, context_resources.get_ddr_channels_info(connected_stream_index),
         "Matching DDR layer as not found for context {} src stream {}", layer_info.context_index, connected_stream_index);
-    LOGGER__TRACE("DDR layer: input stream_index: {}, output stream_index: {}, h2d_channel {}, d2h_channel: {}.",
+    LOGGER__DEBUG("DDR layer: input stream_index: {}, output stream_index: {}, h2d_channel {}, d2h_channel: {}.",
         ddr_info.h2d_stream_index, ddr_info.d2h_stream_index, ddr_info.h2d_channel_id, ddr_info.d2h_channel_id);
 
     CHECK(layer_info.stream_index == ddr_info.h2d_stream_index, HAILO_INVALID_HEF, "DDR channel pair mismatch in h2d channel");
@@ -289,7 +297,7 @@ static hailo_status fill_ddr_input_layer(ContextResources &context_resources, Re
     TRY(auto local_layer_info, update_layer_info(layer_info, ddr_info.host_buffer_info, hw_consts,
         hw_arch, should_optimize_credits, is_core_hw_padding_config_in_dfc));
 
-    auto status = context_resources.add_edge_layer(std::move(local_layer_info), ddr_info.h2d_channel_id,
+    auto status = context_resources.add_edge_layer(local_layer_info, ddr_info.h2d_channel_id,
         ddr_info.host_buffer_info, resources_manager.get_supported_features());
     CHECK_SUCCESS(status);
 
@@ -312,11 +320,11 @@ static hailo_status fill_cache_output_layer(ContextResources &context_resources,
         hw_arch, should_optimize_credits, is_core_hw_padding_config_in_dfc));
     local_layer_info.cache_info.batch_size = cache_buffer.get().output_batch_size();
 
-    auto status = context_resources.add_edge_layer(std::move(local_layer_info), channel_id,
+    auto status = context_resources.add_edge_layer(local_layer_info, channel_id,
         cache_buffer.get().get_host_output_buffer_info(), resources_manager.get_supported_features());
     CHECK_SUCCESS(status);
 
-    LOGGER__TRACE("Cache id {}: output stream {}, d2h_channel {}, context {}",
+    LOGGER__DEBUG("Cache id {}: output stream {}, d2h_channel {}, context {}",
         layer_info.cache_info.cache_id, layer_info.stream_index, channel_id, layer_info.context_index);
     return HAILO_SUCCESS;
 }
@@ -334,11 +342,11 @@ static hailo_status fill_cache_input_layer(ContextResources &context_resources, 
     TRY(auto local_layer_info, update_layer_info(layer_info, cache_buffer.get().get_host_input_buffer_info(), hw_consts,
         hw_arch, should_optimize_credits, is_core_hw_padding_config_in_dfc));
 
-    auto status = context_resources.add_edge_layer(std::move(local_layer_info), channel_id,
+    auto status = context_resources.add_edge_layer(local_layer_info, channel_id,
         cache_buffer.get().get_host_input_buffer_info(), resources_manager.get_supported_features());
     CHECK_SUCCESS(status);
 
-    LOGGER__TRACE("Cache id {}: input stream {}, h2d_channel {}, context {}",
+    LOGGER__DEBUG("Cache id {}: input stream {}, h2d_channel {}, context {}",
         layer_info.cache_info.cache_id, layer_info.stream_index, channel_id, layer_info.context_index);
 
     return HAILO_SUCCESS;
@@ -440,12 +448,12 @@ static hailo_status parse_and_fill_edge_layers_mapping(
     }
 
     for (const auto &output_layer_info : context_metadata.get_ddr_output_layers()) {
-        const auto h2d_layer_identifier = std::make_tuple(LayerType::DDR, HAILO_H2D_STREAM,
+        const auto h2d_layer_identifier = std::make_tuple(LayerType::DDR, HAILO_H2D_STREAM, 
                 output_layer_info.name, output_layer_info.connected_context_info.stream_index);
         status = resources_manager.free_channel_index(h2d_layer_identifier);
         CHECK_SUCCESS(status);
 
-        const auto d2h_layer_identifier = std::make_tuple(LayerType::DDR, HAILO_D2H_STREAM,
+        const auto d2h_layer_identifier = std::make_tuple(LayerType::DDR, HAILO_D2H_STREAM, 
                 output_layer_info.name, output_layer_info.stream_index);
         status = resources_manager.free_channel_index(d2h_layer_identifier);
         CHECK_SUCCESS(status);
@@ -564,7 +572,7 @@ static std::set<std::pair<uint32_t, uint32_t>> get_indexes_of_action_type(
 }
 
 static hailo_status push_fetch_config_actions(
-    std::shared_ptr<ConfigBuffer> config_resources, uint8_t config_stream_index,
+    ConfigBuffer &config_resources, uint8_t config_stream_index,
     uint16_t total_ccw_bursts, bool support_pre_fetch,
     std::vector<ContextSwitchConfigActionPtr> &processed_configuration_actions)
 {
@@ -572,11 +580,8 @@ static hailo_status push_fetch_config_actions(
         TRY(const auto action, AddCcwBurstAction::create(config_stream_index, total_ccw_bursts));
         processed_configuration_actions.emplace_back(std::move(action));
     } else {
-        CopiedConfigBuffer *copied_buffer_ptr = dynamic_cast<CopiedConfigBuffer*>(config_resources.get());
-        CHECK(nullptr != copied_buffer_ptr, HAILO_INTERNAL_FAILURE,
-            "When pre-fetch is not supported, CopiedConfigBuffer is expected, but got different type of ConfigBuffer.");
-        TRY(const auto desc_count, copied_buffer_ptr->program_descriptors());
-        TRY(const auto action, FetchCfgChannelDescriptorsAction::create(config_resources->channel_id(), desc_count));
+        TRY(const auto desc_count, config_resources.program_descriptors());
+        TRY(const auto action, FetchCfgChannelDescriptorsAction::create(config_resources.channel_id(), desc_count));
         processed_configuration_actions.emplace_back(std::move(action));
     }
 
@@ -584,24 +589,19 @@ static hailo_status push_fetch_config_actions(
 }
 
 static hailo_status proccess_write_ccw_action(ContextSwitchConfigActionPtr &configuration_action,
-    std::map<uint8_t, std::shared_ptr<ConfigBuffer>> &config_resources,
+    std::vector<ConfigBuffer> &config_resources,
     const bool support_pre_fetch, std::vector<ContextSwitchConfigActionPtr> &processed_configuration_actions,
-    bool zero_copy_config_over_descs)
+    bool aligned_ccws)
 {
     assert(ContextSwitchConfigAction::Type::WriteDataCcw == configuration_action->get_type());
     auto &write_ccw_action = *static_cast<WriteDataCcwAction*>(configuration_action.get());
 
     const auto config_stream_index = write_ccw_action.config_stream_index();
-    CHECK(config_resources.find(config_stream_index) != config_resources.end(),
-        HAILO_INTERNAL_FAILURE, "Config stream index {} not found in config resources.", config_stream_index);
+    assert(config_stream_index < config_resources.size());
 
-    if (!zero_copy_config_over_descs) {
-        CopiedConfigBuffer *copied_buffer_ptr = dynamic_cast<CopiedConfigBuffer*>(config_resources[config_stream_index].get());
-        CHECK(nullptr != copied_buffer_ptr, HAILO_INTERNAL_FAILURE,
-            "Expected ConfigBuffer type is CopiedConfigBuffer, but got different type.");
-        CopiedConfigBuffer &copied_buffer = *copied_buffer_ptr;
-        auto status = write_ccw_action.write_to_config_buffer(copied_buffer, support_pre_fetch);
-        CHECK_SUCCESS(status, "Failed on config {}", write_ccw_action.config_stream_index());
+    if (!aligned_ccws) {
+        auto status = write_ccw_action.write_to_config_buffer(config_resources[config_stream_index], support_pre_fetch);
+        CHECK_SUCCESS(status);
     }
 
     auto status = push_fetch_config_actions(config_resources[config_stream_index], config_stream_index,
@@ -611,41 +611,18 @@ static hailo_status proccess_write_ccw_action(ContextSwitchConfigActionPtr &conf
     return HAILO_SUCCESS;
 }
 
-static Expected<uint8_t> get_null_shmifo_id(const hailo_device_architecture_t hw_arch)
-{
-    // NULL_SHMIFO_STREAM_INDEX is defined in firmawrearch.h as
-    // ((1 << DRAM_DMA_PACKAGE__DRAM_DMA_ENGINE__W_SHMIFO) - 1), this are the equivalent
-    uint8_t HAILO15L_NULL_STREAM_INDEX = 15;
-    uint8_t HAILO15H_10H_NULL_STREAM_INDEX = 31;
-    uint8_t HAILO10H2_NULL_STREAM_INDEX = 63;
-    switch (hw_arch) {
-    case HAILO_ARCH_HAILO15L:
-        return HAILO15L_NULL_STREAM_INDEX;
-    case HAILO_ARCH_HAILO15H:
-    case HAILO_ARCH_HAILO10H:
-        return HAILO15H_10H_NULL_STREAM_INDEX;
-    case HAILO_ARCH_MARS:
-        return HAILO10H2_NULL_STREAM_INDEX;
-    default:
-        return make_unexpected(HAILO_INVALID_ARGUMENT);
-    }
-}
-
 static Expected<uint8_t> find_dummy_stream(const LayerInfo &layer_info, const ContextResources &context_resources,
-    const hailo_device_architecture_t hw_arch)
+    const bool is_null_shmifo_supported)
 {
-    bool is_null_shmifo_supported = HailoRTCommon::is_hailo1x_device_type(hw_arch);
     if (is_null_shmifo_supported) {
-        return get_null_shmifo_id(hw_arch);
+        static const uint8_t DUMMY_STREAM_INDEX = 31;
+        return Expected<uint8_t>(DUMMY_STREAM_INDEX);
     } else {
-        for (const auto& edge_layer : context_resources.get_edge_layers()) {
-            if (edge_layer.layer_info.direction != layer_info.direction) {
-                return Expected<uint8_t>(layer_info.stream_index);
-            }
-        }
+        const auto other_direction = (HAILO_H2D_STREAM == layer_info.direction) ? HAILO_D2H_STREAM : HAILO_H2D_STREAM;
+        const auto other_direction_edge_layers = context_resources.get_edge_layers(other_direction);
+        CHECK_AS_EXPECTED(!other_direction_edge_layers.empty(), HAILO_INTERNAL_FAILURE, "Couldn't find dummy stream");
+        return Expected<uint8_t>(other_direction_edge_layers.front().layer_info.stream_index);
     }
-    LOGGER__ERROR("Couldn't find dummy stream");
-    return make_unexpected(HAILO_INTERNAL_FAILURE);
 }
 
 static hailo_status add_change_vdma_to_stream_mapping_impl(const HEFHwArch &hw_arch,
@@ -660,7 +637,7 @@ static hailo_status add_change_vdma_to_stream_mapping_impl(const HEFHwArch &hw_a
     uint8_t stream_index = layer_info.stream_index;
     if (is_dummy_stream) {
         TRY(const auto dummy_stream_index, find_dummy_stream(layer_info, context_resources,
-        DeviceBase::hef_arch_to_device_arch(hw_arch)));
+            HailoRTCommon::is_hailo1x_device_type(DeviceBase::hef_arch_to_device_arch(hw_arch))));
         stream_index = dummy_stream_index;
     }
 
@@ -675,7 +652,7 @@ static hailo_status add_change_vdma_to_stream_mapping(const HEFHwArch &hw_arch,
     ContextResources &context_resources, uint16_t context_index,
     std::vector<ContextSwitchConfigActionPtr> &processed_configuration_actions)
 {
-    for (const LayerInfo &layer_info : core_op_metadata.get_all_layer_infos()) {
+    for (const auto &layer_info : core_op_metadata.get_all_layer_infos()) {
         if (layer_info.is_multi_planar) {
             for (const auto &plane : layer_info.planes) {
                 auto status = add_change_vdma_to_stream_mapping_impl(hw_arch, plane, resources_manager,
@@ -701,7 +678,7 @@ static hailo_status push_edge_layer_activation_actions(
     // In order to insure that input data can enter the chip only after all other elements are configured.
     // We parse ddr inputs before boundary/inter-context because otherwise on C2C mode we may lose some credit.
 
-    for (const EdgeLayer &edge_layer : context_resources.get_edge_layers(LayerType::DDR, HAILO_D2H_STREAM)) {
+    for (const auto &edge_layer : context_resources.get_edge_layers(LayerType::DDR, HAILO_D2H_STREAM)) {
         TRY(const auto activate_action, ActivateDdrOutputChannelAction::create(edge_layer.channel_id,
             edge_layer.layer_info.stream_index, edge_layer.layer_info.nn_stream_config, edge_layer.buffer_info,
             edge_layer.layer_info.ddr_info.min_buffered_rows));
@@ -709,7 +686,7 @@ static hailo_status push_edge_layer_activation_actions(
     }
 
     if (!push_internal_only) {
-        for (const EdgeLayer &edge_layer : context_resources.get_edge_layers(LayerType::BOUNDARY, HAILO_D2H_STREAM)) {
+        for (const auto &edge_layer : context_resources.get_edge_layers(LayerType::BOUNDARY, HAILO_D2H_STREAM)) {
             TRY(const auto activate_action, ActivateBoundaryOutputChannelAction::create(edge_layer.channel_id,
                 edge_layer.layer_info.stream_index, edge_layer.layer_info.network_index,
                 edge_layer.layer_info.nn_stream_config, edge_layer.buffer_info));
@@ -717,14 +694,14 @@ static hailo_status push_edge_layer_activation_actions(
         }
     }
 
-    for (const EdgeLayer &edge_layer : context_resources.get_edge_layers(LayerType::INTER_CONTEXT, HAILO_D2H_STREAM)) {
+    for (const auto &edge_layer : context_resources.get_edge_layers(LayerType::INTER_CONTEXT, HAILO_D2H_STREAM)) {
         TRY(auto activate_action, ActivateInterContextOutputChannelAction::create(edge_layer.channel_id,
             edge_layer.layer_info.stream_index, edge_layer.layer_info.network_index,
             edge_layer.layer_info.nn_stream_config, edge_layer.buffer_info));
         actions.emplace_back(std::move(activate_action));
     }
 
-    for (const EdgeLayer &edge_layer : context_resources.get_edge_layers(LayerType::CACHE, HAILO_D2H_STREAM)) {
+    for (const auto &edge_layer : context_resources.get_edge_layers(LayerType::CACHE, HAILO_D2H_STREAM)) {
         // TODO: Cache edge_layers' buffer_info isn't correct - total_desc_count and bytes_in_pattern are calculated
         //       according to the cache size, not the transfer size (since the edge layer is backed by a buffer of cache_size)
         //       Think of a way of holding the correct buffer_info for cache edge_layers (or maybe removing host buffer info all together)
@@ -735,7 +712,7 @@ static hailo_status push_edge_layer_activation_actions(
         actions.emplace_back(std::move(activate_action));
     }
 
-    for (const EdgeLayer &edge_layer : context_resources.get_edge_layers(LayerType::DDR, HAILO_H2D_STREAM)) {
+    for (const auto &edge_layer : context_resources.get_edge_layers(LayerType::DDR, HAILO_H2D_STREAM)) {
         const auto d2h_stream_index = edge_layer.layer_info.connected_context_info.stream_index;
         TRY(const auto ddr_channels_info, context_resources.get_ddr_channels_info(d2h_stream_index));
         const auto d2h_channel_id = ddr_channels_info.d2h_channel_id;
@@ -747,22 +724,22 @@ static hailo_status push_edge_layer_activation_actions(
     }
 
     if (!push_internal_only) {
-        for (const EdgeLayer &edge_layer : context_resources.get_edge_layers(LayerType::BOUNDARY, HAILO_H2D_STREAM)) {
+        for (const auto &edge_layer : context_resources.get_edge_layers(LayerType::BOUNDARY, HAILO_H2D_STREAM)) {
             TRY(auto activate_action, ActivateBoundaryInputChannelAction::create(edge_layer.channel_id,
                 edge_layer.layer_info.stream_index, edge_layer.layer_info.nn_stream_config, edge_layer.buffer_info,
                 edge_layer.layer_info.max_shmifo_size));
-            actions.emplace_back(std::move(activate_action));
+            actions.emplace_back(activate_action);
         }
     }
 
-    for (const EdgeLayer &edge_layer : context_resources.get_edge_layers(LayerType::INTER_CONTEXT, HAILO_H2D_STREAM)) {
+    for (const auto &edge_layer : context_resources.get_edge_layers(LayerType::INTER_CONTEXT, HAILO_H2D_STREAM)) {
         TRY(const auto activate_action, ActivateInterContextInputChannelAction::create(edge_layer.channel_id,
             edge_layer.layer_info.stream_index, edge_layer.layer_info.nn_stream_config, edge_layer.buffer_info,
             edge_layer.layer_info.max_shmifo_size));
         actions.emplace_back(std::move(activate_action));
     }
 
-    for (const EdgeLayer &edge_layer : context_resources.get_edge_layers(LayerType::CACHE, HAILO_H2D_STREAM)) {
+    for (const auto &edge_layer : context_resources.get_edge_layers(LayerType::CACHE, HAILO_H2D_STREAM)) {
         // TODO: Cache edge_layers' buffer_info isn't correct - total_desc_count and bytes_in_pattern are calculated
         //       according to the cache size, not the transfer size (since the edge layer is backed by a buffer of cache_size)
         //       Think of a way of holding the correct buffer_info for cache edge_layers (or maybe removing host buffer info all together)
@@ -776,57 +753,38 @@ static hailo_status push_edge_layer_activation_actions(
     return HAILO_SUCCESS;
 }
 
-static hailo_status push_pre_allow_input_data_configs(const HEFHwArch &hw_arch, const CoreOpMetadata &core_op_metadata,
-    const ResourcesManager &resources_manager, ContextResources &context_resources, uint16_t context_index,
-    std::vector<ContextSwitchConfigActionPtr> &processed_configuration_actions, bool is_single_context)
-{
-    const bool PUSH_ALL_EDGE_LAYERS = false;
-    auto status = push_edge_layer_activation_actions(context_resources, processed_configuration_actions,
-        PUSH_ALL_EDGE_LAYERS);
-    CHECK_SUCCESS(status);
-
-    if (!is_single_context) {
-        status = add_change_vdma_to_stream_mapping(hw_arch, core_op_metadata, resources_manager,
-            context_resources, context_index, processed_configuration_actions);
-        CHECK_SUCCESS(status);
-    }
-
-    // DDR buffer info actions need to happen after the edge layer activation actions.
-    status = add_ddr_buffers_info(processed_configuration_actions, context_resources);
-    CHECK_SUCCESS(status);
-
-    /* Open the boundary input channel */
-    for (const EdgeLayer &edge_layer : context_resources.get_edge_layers(LayerType::BOUNDARY, HAILO_H2D_STREAM)) {
-        TRY(const auto activate_action, ResumeVdmaChannel::create(edge_layer));
-        processed_configuration_actions.emplace_back(std::move(activate_action));
-    }
-
-    return HAILO_SUCCESS;
-}
-
 static hailo_status proccess_trigger_new_data_input_action(const HEFHwArch &hw_arch,
     const ContextSwitchConfigActionPtr &configuration_action,
-    uint32_t trigger_new_data_from_input_start,
-    uint32_t trigger_new_data_from_input_end,
-    uint32_t config_channel_pre_allow_input_start,
-    uint32_t action_index,
+    uint32_t trigger_new_data_from_input_group_start,
+    uint32_t trigger_new_data_from_input_group_end,
+    const uint32_t &action_index,
     const CoreOpMetadata &core_op_metadata,
     const ResourcesManager &resources_manager,
     ContextResources &context_resources,
     uint16_t context_index,
     std::vector<ContextSwitchConfigActionPtr> &processed_configuration_actions, bool is_single_context)
 {
-
-    // In case of support of split allow input action all of these actions will be added from the HEF action config channel
-    // Otherwise will be added from first allowinputdataflow
-    // TODO: HRT-18207: Remove support for hefs without extension
-    uint32_t pre_allow_input_data_index = resources_manager.get_supported_features().split_allow_input_action ?
-        config_channel_pre_allow_input_start : trigger_new_data_from_input_start;
-    // Push the pre allow input data flow channel configs
-    if (pre_allow_input_data_index == action_index) {
-        auto status = push_pre_allow_input_data_configs(hw_arch, core_op_metadata, resources_manager, context_resources,
-            context_index, processed_configuration_actions, is_single_context);
+    const bool PUSH_ALL_EDGE_LAYERS = false;
+    if (trigger_new_data_from_input_group_start == action_index) {
+        auto status = push_edge_layer_activation_actions(context_resources, processed_configuration_actions,
+            PUSH_ALL_EDGE_LAYERS);
         CHECK_SUCCESS(status);
+
+        if (!is_single_context) {
+            status = add_change_vdma_to_stream_mapping(hw_arch, core_op_metadata, resources_manager,
+                context_resources, context_index, processed_configuration_actions);
+            CHECK_SUCCESS(status);
+        }
+
+        // DDR buffer info actions need to happen after the edge layer activation actions.
+        status = add_ddr_buffers_info(processed_configuration_actions, context_resources);
+        CHECK_SUCCESS(status);
+
+        /* Open the boundary input channel */
+        for (const auto &edge_layer : context_resources.get_edge_layers(LayerType::BOUNDARY, HAILO_H2D_STREAM)) {
+            TRY(const auto activate_action, ResumeVdmaChannel::create(edge_layer));
+            processed_configuration_actions.emplace_back(std::move(activate_action));
+        }
     }
 
     // Add the current action
@@ -834,7 +792,7 @@ static hailo_status proccess_trigger_new_data_input_action(const HEFHwArch &hw_a
 
     // At the end of a consecutive group of TriggerNewDataFromDataInput actions, we can trigger the BurstCreditsTask
     // in the FW, via StartBurstCreditsTaskAction.
-    if (trigger_new_data_from_input_end == action_index) {
+    if (trigger_new_data_from_input_group_end == action_index) {
         auto boundary_input_edge_layers = context_resources.get_edge_layers(LayerType::BOUNDARY, HAILO_H2D_STREAM);
         if (boundary_input_edge_layers.size() > 0) {
             TRY(const auto start_burst_credits_task_action, StartBurstCreditsTaskAction::create());
@@ -847,13 +805,14 @@ static hailo_status proccess_trigger_new_data_input_action(const HEFHwArch &hw_a
 
 // At the end of each consecutive group of WriteDataCcwAction, a FetchCfgChannelDescriptorsAction is added.
 static hailo_status add_fetch_config_actions(std::vector<ContextSwitchConfigActionPtr> &configuration_actions,
-    std::map<uint8_t, std::shared_ptr<ConfigBuffer>> &config_resources, bool support_pre_fetch, bool zero_copy_config_over_descs)
+    std::vector<ConfigBuffer> &config_resources, bool support_pre_fetch, bool aligned_ccws)
 {
     std::vector<ContextSwitchConfigActionPtr> processed_configuration_actions;
-    for (auto& configuration_action : configuration_actions) {
+    for (uint32_t action_index = 0; action_index < configuration_actions.size(); action_index++) {
+        auto &configuration_action = configuration_actions[action_index];
         if (ContextSwitchConfigAction::Type::WriteDataCcw == configuration_action->get_type()) {
             auto status = proccess_write_ccw_action(configuration_action, config_resources,
-                support_pre_fetch, processed_configuration_actions, zero_copy_config_over_descs);
+                support_pre_fetch, processed_configuration_actions, aligned_ccws);
             CHECK_SUCCESS(status);
         } else {
             // Add the current action
@@ -869,22 +828,24 @@ static hailo_status add_fetch_config_actions(std::vector<ContextSwitchConfigActi
 
 // Push activate config channels in the beginning of the context, and deactivation on end of context.
 static hailo_status add_config_channel_activation_actions(std::vector<ContextSwitchConfigActionPtr> &actions,
-    const std::map<uint8_t, std::shared_ptr<ConfigBuffer>> &config_resources)
+    const std::vector<ConfigBuffer> &config_resources)
 {
     std::vector<ContextSwitchConfigActionPtr> processed_actions;
     const size_t new_actions_count = 2 * config_resources.size();
     processed_actions.reserve(actions.size() + new_actions_count);
 
-    for (const auto &config_buffer : config_resources) {
-        TRY(const auto activate_action, ActivateConfigChannelAction::create(config_buffer.first, config_buffer.second->channel_id(),
-            config_buffer.second->get_host_buffer_info()));
+    for (uint8_t config_stream_index = 0; config_stream_index < config_resources.size(); config_stream_index++) {
+        const auto &config_buffer = config_resources[config_stream_index];
+        TRY(const auto activate_action, ActivateConfigChannelAction::create(config_stream_index, config_buffer.channel_id(),
+            config_buffer.get_host_buffer_info()));
         processed_actions.push_back(std::move(activate_action));
     }
 
     processed_actions.insert(processed_actions.end(), actions.begin(), actions.end());
 
-    for (const auto &config_buffer : config_resources) {
-        TRY(const auto deactivate_action, DeactivateConfigChannelAction::create(config_buffer.first, config_buffer.second->channel_id()));
+    for (uint8_t config_stream_index = 0; config_stream_index < config_resources.size(); config_stream_index++) {
+        const auto &config_buffer = config_resources[config_stream_index];
+        TRY(const auto deactivate_action, DeactivateConfigChannelAction::create(config_stream_index, config_buffer.channel_id()));
         processed_actions.push_back(std::move(deactivate_action));
     }
 
@@ -907,32 +868,20 @@ static hailo_status handle_edge_layer_activation_actions(const HEFHwArch &hw_arc
     bool is_single_context)
 {
     const auto repeated_indexes = get_repreated_actions_boundary_indices(configuration_actions);
-
-    uint32_t config_channel_pre_allow_input_start = 0;
-    if (resources_manager.get_supported_features().split_allow_input_action) {
-        const auto config_channel_pre_allow_input_data_indexes = get_indexes_of_action_type(
-            configuration_actions, repeated_indexes, ContextSwitchConfigAction::Type::ConfigChannelPreAllowInputDataflowAction);
-        CHECK(config_channel_pre_allow_input_data_indexes.size() == 1, HAILO_INTERNAL_FAILURE,
-            "Expected only one group of TriggerNewDataFromDataInput actions");
-        config_channel_pre_allow_input_start = config_channel_pre_allow_input_data_indexes.cbegin()->first;
-    }
-
-    const auto trigger_new_data_from_input_indexes = get_indexes_of_action_type(
+    const auto trigger_new_data_from_input_group_indexes = get_indexes_of_action_type(
         configuration_actions, repeated_indexes, ContextSwitchConfigAction::Type::TriggerNewDataFromDataInput);
-    CHECK(trigger_new_data_from_input_indexes.size() == 1, HAILO_INTERNAL_FAILURE,
+    CHECK(trigger_new_data_from_input_group_indexes.size() == 1, HAILO_INTERNAL_FAILURE,
         "Expected only one group of TriggerNewDataFromDataInput actions");
-    const auto trigger_new_data_from_input_start = trigger_new_data_from_input_indexes.cbegin()->first;
-    const auto trigger_new_data_from_input_end = trigger_new_data_from_input_indexes.cbegin()->second;
+    const auto trigger_new_data_from_input_group_start = trigger_new_data_from_input_group_indexes.cbegin()->first;
+    const auto trigger_new_data_from_input_group_end = trigger_new_data_from_input_group_indexes.cbegin()->second;
 
     std::vector<ContextSwitchConfigActionPtr> processed_configuration_actions;
     for (uint32_t action_index = 0; action_index < configuration_actions.size(); action_index++) {
         const auto &configuration_action = configuration_actions[action_index];
-        if ((ContextSwitchConfigAction::Type::TriggerNewDataFromDataInput == configuration_action->get_type()) ||
-            (ContextSwitchConfigAction::Type::ConfigChannelPreAllowInputDataflowAction == configuration_action->get_type())) {
+        if (ContextSwitchConfigAction::Type::TriggerNewDataFromDataInput == configuration_action->get_type()) {
             auto status = proccess_trigger_new_data_input_action(hw_arch, configuration_action,
-                trigger_new_data_from_input_start, trigger_new_data_from_input_end, config_channel_pre_allow_input_start,
-                action_index, core_op_metadata, resources_manager, context_resources,
-                context_index, processed_configuration_actions, is_single_context);
+                trigger_new_data_from_input_group_start, trigger_new_data_from_input_group_end, action_index,
+                core_op_metadata, resources_manager, context_resources, context_index, processed_configuration_actions, is_single_context);
             CHECK_SUCCESS(status);
         } else {
             // Add the current action
@@ -1004,60 +953,23 @@ static hailo_status write_action_list(const ContextResources & context_resources
     return HAILO_SUCCESS;
 }
 
-static hailo_status insert_deactivate_channel_actions(const ContextResources &context_resources,
-    std::vector<ContextSwitchConfigActionPtr> &processed_configuration_actions)
-{
-    for (const EdgeLayer &edge_layer : context_resources.get_edge_layers()) {
-    #ifndef NDEBUG
-        TRY(auto validate_action, ValidateChannelAction::create(edge_layer, false));
-        processed_configuration_actions.emplace_back(validate_action);
-    #endif
-        if (edge_layer.layer_info.type != LayerType::BOUNDARY) {
-            TRY(auto deactive_action, DeactivateChannelAction::create(edge_layer, false));
-            processed_configuration_actions.emplace_back(deactive_action);
-        }
-    }
-
-    return HAILO_SUCCESS;
-}
-
-static hailo_status replace_deactivate_data_channels_actions(std::vector<ContextSwitchConfigActionPtr> &actions,
-    const ContextResources &context_resources)
-{
-    bool found_disable_action = false;
-    // Iterate through all actions and when find DisableDataChannelsAction - insert the deactivate channel actions needed for context
-    std::vector<ContextSwitchConfigActionPtr> processed_actions;
-    for (const auto& action : actions) {
-        if (ContextSwitchConfigAction::Type::DisableDataChannelsAction == action->get_type()) {
-            found_disable_action = true;
-            auto status = insert_deactivate_channel_actions(context_resources, processed_actions);
-            CHECK_SUCCESS(status);
-        } else {
-            // Add the current action
-            processed_actions.emplace_back(action);
-        }
-    }
-
-    CHECK(found_disable_action, HAILO_INTERNAL_FAILURE, "Error, no action of disable data channesl found in HEF");
-
-    // Replace the original actions with the processed ones.
-    actions = processed_actions;
-    return HAILO_SUCCESS;
-}
-
 static hailo_status add_edge_layer_end_of_context_actions(const ContextResources &context_resources,
-    std::vector<ContextSwitchConfigActionPtr> &actions, bool allow_split_input_action)
+    std::vector<ContextSwitchConfigActionPtr> &actions, const bool is_batch_switch_context)
 {
-    // Replace action DisableDataChannelsAction with all needed disables for context
-    // in old flow without extension we add deactivate channels at end of context
-    // TODO: HRT-18207: Remove support for hefs without extension
-    auto status = allow_split_input_action ? replace_deactivate_data_channels_actions(actions, context_resources) :
-        insert_deactivate_channel_actions(context_resources, actions);
-    CHECK_SUCCESS(status);
+    for (const auto &edge_layer : context_resources.get_edge_layers()) {
+#ifndef NDEBUG
+        TRY(auto validate_action, ValidateChannelAction::create(edge_layer, is_batch_switch_context));
+        actions.emplace_back(validate_action);
+#endif
+        const bool should_deactivate = (edge_layer.layer_info.type != LayerType::BOUNDARY);
+        if (should_deactivate) {
+            TRY(auto deactive_action, DeactivateChannelAction::create(edge_layer, is_batch_switch_context));
+            actions.emplace_back(deactive_action);
+        }
+    }
 
     /* Pause the boundary input channel */
-    // TODO: HRT-18339: Remove PauseVdmaChannel and do as part of deactivate
-    for (const EdgeLayer &edge_layer : context_resources.get_edge_layers(LayerType::BOUNDARY, HAILO_H2D_STREAM)) {
+    for (const auto &edge_layer : context_resources.get_edge_layers(LayerType::BOUNDARY, HAILO_H2D_STREAM)) {
         TRY(const auto activate_action, PauseVdmaChannel::create(edge_layer));
         actions.emplace_back(std::move(activate_action));
     }
@@ -1068,7 +980,7 @@ static hailo_status add_edge_layer_end_of_context_actions(const ContextResources
 static hailo_status fill_context_recipes_for_multi_context(const HEFHwArch &hw_arch,
     ContextResources &context_resources, ResourcesManager &resources_manager,
     uint16_t context_index, const CoreOpMetadata &core_op_metadata, const ContextMetadata &context_metadata,
-    bool is_single_context, bool is_last_context, bool caches_in_use, bool zero_copy_config_over_descs, bool enable_kv_cache)
+    bool is_single_context, bool is_last_context, bool caches_in_use, bool aligned_ccws)
 {
     hailo_status status = HAILO_UNINITIALIZED;
 
@@ -1080,7 +992,7 @@ static hailo_status fill_context_recipes_for_multi_context(const HEFHwArch &hw_a
     std::vector<ContextSwitchConfigActionPtr> actions = context_metadata.get_actions();
 
     const auto support_pre_fetch = HailoRTCommon::is_hailo1x_device_type(DeviceBase::hef_arch_to_device_arch(hw_arch));
-    status = add_fetch_config_actions(actions, context_resources.get_config_buffers(), support_pre_fetch, zero_copy_config_over_descs);
+    status = add_fetch_config_actions(actions, context_resources.get_config_buffers(), support_pre_fetch, aligned_ccws);
     CHECK_SUCCESS(status);
 
     status = handle_edge_layer_activation_actions(hw_arch, actions, core_op_metadata, resources_manager,
@@ -1096,17 +1008,18 @@ static hailo_status fill_context_recipes_for_multi_context(const HEFHwArch &hw_a
         TRY(const auto wait_action, WaitForNetworkGroupChangeAction::create());
         actions.emplace_back(std::move(wait_action));
     } else {
-        status = add_edge_layer_end_of_context_actions(context_resources, actions,
-            resources_manager.get_supported_features().split_allow_input_action);
-        CHECK_SUCCESS(status);
+        const bool NOT_BATCH_SWITCH_CONTEXT = false;
+        status = add_edge_layer_end_of_context_actions(context_resources, actions, NOT_BATCH_SWITCH_CONTEXT);
 
         if (is_last_context && caches_in_use) {
-            if (enable_kv_cache) {
-                // If caches are in use and KV cache is enabled, we'll wait for the caches to be updated at the end of the last context
+            const auto cache_offset_env_var = get_env_variable(HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR);
+            if (cache_offset_env_var.has_value() &&
+                    (cache_offset_env_var.value() == HAILORT_AUTO_UPDATE_CACHE_OFFSET_ENV_VAR_DISABLED)) {
+                LOGGER__INFO("Skipping cache offset updates");
+            } else {
+                // If caches are in use, we'll wait for the caches to be updated at the end of the last context
                 TRY(const auto action, WaitForCacheUpdatedAction::create());
                 actions.emplace_back(std::move(action));
-            } else {
-                LOGGER__INFO("Skipping cache offset updates (KV-cache usage is not enabled)");
             }
         }
     }
@@ -1120,7 +1033,7 @@ static hailo_status fill_context_recipes_for_multi_context(const HEFHwArch &hw_a
 static hailo_status create_boundary_channels(ResourcesManager &resources_manager,
     CoreOpMetadata &core_op_metadata)
 {
-    for (const LayerInfo &layer_info : core_op_metadata.get_all_layer_infos()) {
+    for (const auto &layer_info : core_op_metadata.get_all_layer_infos()) {
         if (layer_info.is_multi_planar) {
             for (const auto &plane : layer_info.planes) {
                 auto status = resources_manager.create_boundary_vdma_channel(plane,
@@ -1160,14 +1073,12 @@ static hailo_status fill_activation_config_recepies_for_multi_context(
     TRY(const auto reset_burst_task_action, ResetBurstCreditsTaskAction::create());
     actions.emplace_back(std::move(reset_burst_task_action));
 
-    for (const EdgeLayer &edge_layer : context_resources.get_edge_layers()) {
-        if (LayerType::BOUNDARY == edge_layer.layer_info.type) {
-            auto action = edge_layer.layer_info.direction == HAILO_H2D_STREAM ?
-                OpenBoundaryInputChannelAction::create(edge_layer.channel_id, edge_layer.buffer_info) :
-                OpenBoundaryOutputChannelAction::create(edge_layer.channel_id, edge_layer.buffer_info);
-            CHECK_EXPECTED_AS_STATUS(action); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
-            actions.emplace_back(action.release());
-        }
+    for (const auto &edge_layer : context_resources.get_edge_layers(LayerType::BOUNDARY)) {
+        auto action = edge_layer.layer_info.direction == HAILO_H2D_STREAM ?
+            OpenBoundaryInputChannelAction::create(edge_layer.channel_id, edge_layer.buffer_info) :
+            OpenBoundaryOutputChannelAction::create(edge_layer.channel_id, edge_layer.buffer_info);
+        CHECK_EXPECTED_AS_STATUS(action); // TODO (HRT-13278): Figure out how to remove CHECK_EXPECTED here
+        actions.emplace_back(action.release());
     }
 
     return write_action_list(context_resources, resources_manager.get_action_list_buffer_builder(), actions);
@@ -1273,10 +1184,10 @@ static hailo_status add_lcu_actions_to_batch_switch_context(ContextResources &co
     return HAILO_SUCCESS;
 }
 
-static hailo_status create_change_boundary_input_batch_actions(const std::vector<std::reference_wrapper<const EdgeLayer>> &boundary_input_layers,
+static hailo_status create_change_boundary_input_batch_actions(const std::vector<EdgeLayer> &boundary_input_layers,
     std::vector<ContextSwitchConfigActionPtr> &batch_switch_context_actions)
 {
-    for (const EdgeLayer &edge_layer : boundary_input_layers) {
+    for (const auto &edge_layer : boundary_input_layers) {
         TRY(const auto change_boundary_input_batch_action, ChangeBoundaryInputBatchAction::create(edge_layer.channel_id));
         batch_switch_context_actions.emplace_back(std::move(change_boundary_input_batch_action));
     }
@@ -1290,14 +1201,14 @@ static hailo_status create_change_boundary_input_batch_actions(const std::vector
 
 static hailo_status add_edge_layers_actions_to_batch_switch_context(ContextResources &context_resources,
     const CoreOpMetadata &core_op_metadata, ResourcesManager &resources_manager, const HEFHwArch &hw_arch,
-    std::vector<ContextSwitchConfigActionPtr> &actions, const std::vector<std::reference_wrapper<const EdgeLayer>> &activation_boundary_input_layers)
+    std::vector<ContextSwitchConfigActionPtr> &actions, const std::vector<EdgeLayer> &activation_boundary_input_layers)
 {
     auto status = fill_batch_switching_context_edge_layers(context_resources, core_op_metadata, resources_manager, hw_arch);
     CHECK_SUCCESS(status);
 
     // Close all internal channels
     const auto BATCH_SWITCHING_CONTEXT = true;
-    for (const EdgeLayer &edge_layer : context_resources.get_edge_layers()) {
+    for (const auto &edge_layer : context_resources.get_edge_layers()) {
         if (edge_layer.layer_info.type != LayerType::BOUNDARY) {
             TRY(const auto action, DeactivateChannelAction::create(edge_layer, BATCH_SWITCHING_CONTEXT));
             actions.emplace_back(std::move(action));
@@ -1324,7 +1235,7 @@ static hailo_status add_edge_layers_actions_to_batch_switch_context(ContextResou
 
 static hailo_status fill_batch_switching_context_config_recepies_for_multi_context(
     ContextResources &context_resources, const CoreOpMetadata &core_op_metadata, ResourcesManager &resources_manager,
-    const HEFHwArch &hw_arch, const std::vector<std::reference_wrapper<const EdgeLayer>> &activation_boundary_input_layers)
+    const HEFHwArch &hw_arch, const std::vector<EdgeLayer> &activation_boundary_input_layers)
 {
     std::vector<ContextSwitchConfigActionPtr> actions;
 
@@ -1344,7 +1255,7 @@ static hailo_status fill_batch_switching_context_config_recepies_for_multi_conte
 static hailo_status fill_preliminary_config_recepies_for_multi_context(const HEFHwArch &hw_arch,
     ContextResources &context_resources, ResourcesManager &resources_manager,
     std::shared_ptr<CoreOpMetadata> core_op_metadata, const ContextMetadata &preliminary_context,
-    bool is_single_context, bool zero_copy_config_over_descs)
+    bool is_single_context, bool aligned_ccws)
 {
     static const auto PRELIMINARY_CONTEXT_INDEX = 0; // First context in the hef
 
@@ -1360,7 +1271,7 @@ static hailo_status fill_preliminary_config_recepies_for_multi_context(const HEF
     std::vector<ContextSwitchConfigActionPtr> actions = preliminary_context.get_actions();
 
     const auto support_pre_fetch = HailoRTCommon::is_hailo1x_device_type(DeviceBase::hef_arch_to_device_arch(hw_arch));
-    auto status = add_fetch_config_actions(actions, context_resources.get_config_buffers(), support_pre_fetch, zero_copy_config_over_descs);
+    auto status = add_fetch_config_actions(actions, context_resources.get_config_buffers(), support_pre_fetch, aligned_ccws);
     CHECK_SUCCESS(status);
 
     if (resources_manager.get_supported_features().preliminary_run_asap) {
@@ -1386,7 +1297,7 @@ hailo_status ResourcesManagerBuilder::prepare_aligned_ccws_resources(const Hef &
     CHECK_SUCCESS(status);
 
     // create a mapped buffer and fill it with nops - we will use it for padding each ccws dma transfer
-    TRY(auto dmable_nops_buffer, vdma::DmaAbleBuffer::create_by_allocation(page_size));
+    TRY(auto dmable_nops_buffer, vdma::DmaAbleBuffer::create_by_allocation(page_size, driver));
     TRY(auto nops_buffer, vdma::MappedBuffer::create_shared(dmable_nops_buffer, driver, HailoRTDriver::DmaDirection::H2D));
     static constexpr uint64_t CCW_NOP = 0x0;
     std::vector<uint64_t> nops_data(page_size / sizeof(uint64_t), CCW_NOP);
@@ -1400,9 +1311,6 @@ Expected<std::shared_ptr<ResourcesManager>> ResourcesManagerBuilder::build(uint8
     HailoRTDriver &driver, CacheManagerPtr cache_manager, const ConfigureNetworkParams &config_params,
     std::shared_ptr<CoreOpMetadata> core_op_metadata, const HEFHwArch &hw_arch, const Hef &hef)
 {
-    // Validate HEF version before configuring the models in it
-    CHECK_SUCCESS_AS_EXPECTED(hef.pimpl->validate_hef_version());
-
     const auto num_contexts = core_op_metadata->dynamic_contexts().size() +
         CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS;
     CHECK_AS_EXPECTED(CONTROL_PROTOCOL__MAX_CONTEXTS_PER_NETWORK_GROUP >= num_contexts, HAILO_INVALID_HEF,
@@ -1434,12 +1342,12 @@ Expected<std::shared_ptr<ResourcesManager>> ResourcesManagerBuilder::build(uint8
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
 
-    if (hef.pimpl->zero_copy_config_over_descs()) {
+    if (hef.pimpl->is_aligned_ccws_on()) {
         status = ResourcesManagerBuilder::prepare_aligned_ccws_resources(hef, resources_manager, driver);
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
 
-    TRY(auto activation_context, resources_manager.add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_ACTIVATION, hef.pimpl->zero_copy_config_over_descs()));
+    TRY(auto activation_context, resources_manager.add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_ACTIVATION, hef.pimpl->is_aligned_ccws_on()));
     status = fill_activation_config_recepies_for_multi_context(activation_context.get(),
         resources_manager, core_op_metadata, hw_arch);
     CHECK_SUCCESS_AS_EXPECTED(status);
@@ -1448,18 +1356,17 @@ Expected<std::shared_ptr<ResourcesManager>> ResourcesManagerBuilder::build(uint8
     const auto activation_context_boundary_input_layers =
         activation_context.get().get_edge_layers(LayerType::BOUNDARY, HAILO_H2D_STREAM);
 
-    TRY(auto batch_switching_context, resources_manager.add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_BATCH_SWITCHING, hef.pimpl->zero_copy_config_over_descs()));
+    TRY(auto batch_switching_context, resources_manager.add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_BATCH_SWITCHING, hef.pimpl->is_aligned_ccws_on()));
     status = fill_batch_switching_context_config_recepies_for_multi_context(batch_switching_context.get(),
         *core_op_metadata, resources_manager, hw_arch, activation_context_boundary_input_layers);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     const auto is_single_context = (core_op_metadata->dynamic_contexts().size() == 1);
     TRY(auto preliminary_context, resources_manager.add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_PRELIMINARY,
-        hef.pimpl->zero_copy_config_over_descs(), core_op_metadata->preliminary_context().config_buffers_info()));
-
+        hef.pimpl->is_aligned_ccws_on(), core_op_metadata->preliminary_context().config_buffers_info()));
     status = fill_preliminary_config_recepies_for_multi_context(hw_arch, preliminary_context.get(),
         resources_manager, core_op_metadata, core_op_metadata->preliminary_context(), is_single_context,
-        hef.pimpl->zero_copy_config_over_descs());
+        hef.pimpl->is_aligned_ccws_on());
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     const auto caches_in_use = core_op_metadata->get_cache_layers_count() > 0;
@@ -1470,12 +1377,12 @@ Expected<std::shared_ptr<ResourcesManager>> ResourcesManagerBuilder::build(uint8
     for (size_t context_index = 0; context_index < num_dynamic_contexts; context_index++) {
         const auto &context_metadata = core_op_metadata->dynamic_contexts()[context_index];
         TRY(auto new_context, resources_manager.add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_DYNAMIC,
-            hef.pimpl->zero_copy_config_over_descs(), context_metadata.config_buffers_info()));
+            hef.pimpl->is_aligned_ccws_on(), context_metadata.config_buffers_info()));
 
         const auto is_last_context = (context_index == (num_dynamic_contexts - 1));
         status = fill_context_recipes_for_multi_context(hw_arch, new_context.get(), resources_manager,
             static_cast<uint16_t>(context_index), *core_op_metadata, context_metadata, is_single_context,
-            is_last_context, caches_in_use, hef.pimpl->zero_copy_config_over_descs(), config_params.enable_kv_cache);
+            is_last_context, caches_in_use, hef.pimpl->is_aligned_ccws_on());
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
 

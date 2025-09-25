@@ -4,7 +4,6 @@ include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/spdlog.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/readerwriterqueue.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/xxhash.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/common_compiler_options.cmake)
-include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/protobuf.cmake) # Required for genai serializer
 
 
 set(HAILORT_COMMON_CPP_SOURCES
@@ -17,9 +16,6 @@ set(HAILORT_COMMON_CPP_SOURCES
 
     ${CMAKE_CURRENT_SOURCE_DIR}/device_measurements.cpp
 )
-
-add_subdirectory(genai/serializer)
-set(GENAI_SCHEME_CPP_SOURCES ${GENAI_SCHEME_CPP_SOURCES} PARENT_SCOPE)
 
 if(WIN32)
     add_subdirectory(os/windows)
@@ -51,7 +47,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL QNX)
 endif()
 
 set_target_properties(hailort_common PROPERTIES
-    CXX_STANDARD              17
+    CXX_STANDARD              14
     CXX_STANDARD_REQUIRED     YES
     CXX_EXTENSIONS            NO
     POSITION_INDEPENDENT_CODE ON

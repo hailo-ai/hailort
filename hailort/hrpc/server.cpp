@@ -12,12 +12,10 @@
 namespace hailort
 {
 
-Expected<ClientConnectionPtr> ClientConnection::create(std::shared_ptr<Session> session, uint32_t client_id)
+Expected<ClientConnection> ClientConnection::create(std::shared_ptr<Session> session, uint32_t client_id)
 {
     TRY(auto conn_params, RpcConnection::Params::create(session));
-    auto ptr = make_shared_nothrow<ClientConnection>(std::move(conn_params), client_id);
-    CHECK_NOT_NULL(ptr, HAILO_OUT_OF_HOST_MEMORY);
-    return ptr;
+    return ClientConnection(std::move(conn_params), client_id);
 }
 
 uint32_t ClientConnection::client_id() const
@@ -25,22 +23,19 @@ uint32_t ClientConnection::client_id() const
     return m_client_id;
 }
 
-void Dispatcher::register_action(HailoRpcActionID action_id, ActionHandlerFunc action)
+void Dispatcher::register_action(HailoRpcActionID action_id,
+    std::function<Expected<Buffer>(const MemoryView&, ClientConnection)> action)
 {
     m_actions[action_id] = action;
 }
 
-hailo_status Dispatcher::call_action(HailoRpcActionID action_id, const MemoryView &request,
-    ClientConnectionPtr client_connection, ResponseWriter response_writer)
+Expected<Buffer> Dispatcher::call_action(HailoRpcActionID action_id, const MemoryView &request, ClientConnection client_connection)
 {
-    CHECK(m_actions.count(action_id), HAILO_RPC_FAILED, "Failed to find RPC action {}", static_cast<int>(action_id));
-
-    auto status = m_actions[action_id](request, client_connection, response_writer);
-    if (HAILO_SUCCESS != status) {
-        // If the handler failed for some reason, try to write the unsuccessful status back to the client.
-        return response_writer.write(status);
+    if (m_actions.find(action_id) != m_actions.end()) {
+        return m_actions[action_id](request, client_connection);
     }
-    return HAILO_SUCCESS;
+    LOGGER__ERROR("Failed to find RPC action {}", static_cast<int>(action_id));
+    return make_unexpected(HAILO_RPC_FAILED);
 }
 
 hailo_status Server::serve()
@@ -48,7 +43,7 @@ hailo_status Server::serve()
     TRY(auto server_connection, SessionListener::create_shared(m_connection_context, HAILORT_SERVER_PORT));
     while (true) {
         TRY(auto client_connection, create_client_connection(server_connection));
-        auto th = std::thread([this, client_connection]() { (void)serve_client(client_connection); });
+        auto th = std::thread([this, client_connection]() { serve_client(client_connection); });
         th.detach();
     }
     return HAILO_SUCCESS;
@@ -59,43 +54,87 @@ void Server::set_dispatcher(Dispatcher dispatcher)
     m_dispatcher = dispatcher;
 }
 
-Expected<ClientConnectionPtr> Server::create_client_connection(std::shared_ptr<SessionListener> server_connection)
+Expected<ClientConnection> Server::create_client_connection(std::shared_ptr<SessionListener> server_connection)
 {
-    TRY(auto session, server_connection->accept());
-    TRY(auto connection, ClientConnection::create(session, ++m_client_count));
-    return connection;
+    TRY(auto conn, server_connection->accept());
+    TRY(auto rpc_conn, ClientConnection::create(conn, ++m_client_count));
+    return rpc_conn;
 }
 
-hailo_status Server::serve_client(ClientConnectionPtr client_connection)
+hailo_status Server::serve_client(ClientConnection client_connection)
 {
-    auto status = HAILO_SUCCESS;
-    do {
-        status = handle_client_request(client_connection);
-    } while (HAILO_SUCCESS == status);
-    if (HAILO_COMMUNICATION_CLOSED != status) {
-        LOGGER__ERROR("handle request failed with status: {}", status);
+    while (true) {
+        auto request = client_connection.read_message();
+        if (HAILO_COMMUNICATION_CLOSED == request.status()) {
+            cleanup_client_resources(client_connection);
+            break; // Client EP is disconnected, exit this loop
+        }
+        CHECK_EXPECTED_AS_STATUS(request);
+
+        assert(request->header.action_id < static_cast<uint32_t>(HailoRpcActionID::MAX_VALUE));
+        TRY(auto reply, m_dispatcher.call_action(static_cast<HailoRpcActionID>(request->header.action_id),
+            MemoryView(request->buffer->data(), request->header.size), client_connection));
+        request->header.size = static_cast<uint32_t>(reply.size());
+
+        auto status = client_connection.wait_for_write_message_async_ready(reply.size(), SERVER_TIMEOUT);
+        CHECK_SUCCESS(status);
+
+        {
+            std::unique_lock<std::mutex> lock(m_write_mutex);
+            auto reply_memview = MemoryView(reply);
+            auto reply_ptr = make_shared_nothrow<Buffer>(std::move(reply));
+            CHECK_NOT_NULL(reply_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+            status = client_connection.write_message_async(request->header, reply_memview,
+            [reply_ptr] (hailo_status status) {
+                if ((HAILO_SUCCESS != status) && (HAILO_COMMUNICATION_CLOSED != status)) {
+                    LOGGER__ERROR("Failed to send reply, status = {}", status);
+                }
+            });
+            if ((HAILO_COMMUNICATION_CLOSED == status) || (HAILO_FILE_OPERATION_FAILURE == status)) {
+                lock.unlock(); // We need to acquire this lock when releasing the client resources (trigger cb)
+                cleanup_client_resources(client_connection);
+                break; // Client EP is disconnected, exit this loop
+            }
+            CHECK_SUCCESS(status);
+        }
     }
 
-    status = cleanup_client_resources(client_connection);
-    if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("client cleanup failed with status: {}", status);
-    }
-
-    std::unique_lock<std::mutex> lock(*m_write_mutex);
-    return client_connection->close();
+    return HAILO_SUCCESS;
 }
 
-hailo_status Server::handle_client_request(ClientConnectionPtr client_connection)
+hailo_status Server::trigger_callback(const RpcCallback &callback, ClientConnection connection,
+    std::function<hailo_status(ClientConnection)> additional_writes_lambda)
 {
-    TRY_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED, auto request, client_connection->read_message());
+    // TODO: callback handling should be outside of HRPC (HRT-14638)
+    TRY(auto reply, CallbackCalledSerializer::serialize_reply(callback));
+    rpc_message_header_t header;
+    header.action_id = static_cast<uint32_t>(HailoRpcActionID::CALLBACK_CALLED);
+    header.message_id = callback.callback_id;
+    header.size = static_cast<uint32_t>(reply.size());
 
-    assert(request.header.action_id < static_cast<uint32_t>(HailoRpcActionID::MAX_VALUE));
-    auto action_id = static_cast<HailoRpcActionID>(request.header.action_id);
-    MemoryView raw_request(request.buffer->data(), request.header.size);
-    ResponseWriter response_writer(request.header, client_connection, m_write_mutex);
+    auto reply_ptr = make_shared_nothrow<Buffer>(std::move(reply));
+    CHECK_NOT_NULL(reply_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
-    auto status = m_dispatcher.call_action(action_id, raw_request, client_connection, response_writer);
-    CHECK_SUCCESS_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED, status);
+    auto status = connection.wait_for_write_message_async_ready(reply_ptr->size(), SERVER_TIMEOUT);
+    CHECK_SUCCESS(status);
+
+    std::unique_lock<std::mutex> lock(m_write_mutex);
+    status = connection.write_message_async(header, MemoryView(*reply_ptr),
+        [reply_ptr] (hailo_status status) {
+            if (HAILO_SUCCESS != status) {
+                LOGGER__ERROR("Failed to send callback called reply, status = {}", status);
+            }
+        });
+    if ((HAILO_COMMUNICATION_CLOSED == status) || (HAILO_FILE_OPERATION_FAILURE == status)) {
+        return status;
+    }
+    CHECK_SUCCESS(status);
+
+    if (additional_writes_lambda) {
+        status = additional_writes_lambda(connection);
+        CHECK_SUCCESS(status);
+    }
 
     return HAILO_SUCCESS;
 }

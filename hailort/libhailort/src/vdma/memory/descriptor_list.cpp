@@ -19,11 +19,10 @@ Expected<DescriptorList> DescriptorList::create(uint32_t desc_count, uint16_t de
     HailoRTDriver &driver)
 {
     hailo_status status = HAILO_UNINITIALIZED;
-    const auto desc_params = driver.get_sg_desc_params();
-    assert(desc_page_size <= desc_params.max_page_size);
+    assert(desc_page_size <= driver.desc_max_page_size());
 
-    CHECK_AS_EXPECTED(desc_count <= desc_params.max_descs_count, HAILO_INVALID_ARGUMENT,
-        "descs_count {} must be smaller/equal to {}", desc_count, desc_params.max_descs_count);
+    CHECK_AS_EXPECTED(desc_count <= MAX_SG_DESCS_COUNT, HAILO_INVALID_ARGUMENT,
+        "descs_count {} must be smaller/equal to {}", desc_count, MAX_SG_DESCS_COUNT);
 
     DescriptorList object(desc_count, desc_page_size, is_circular, driver, status);
     if (HAILO_SUCCESS != status) {
@@ -103,6 +102,17 @@ uint32_t DescriptorList::descriptors_in_buffer(size_t buffer_size, uint16_t desc
 {
     assert(buffer_size < std::numeric_limits<uint32_t>::max());
     return static_cast<uint32_t>(DIV_ROUND_UP(buffer_size, desc_page_size));
+}
+
+uint32_t DescriptorList::calculate_descriptors_count(uint32_t buffer_size, uint16_t batch_size, uint16_t desc_page_size)
+{
+    // Because we use cyclic buffer, the amount of active descs is lower by one that the amount
+    // of descs given  (Otherwise we won't be able to determine if the buffer is empty or full).
+    // Therefore we add 1 in order to compensate.
+    uint32_t descs_count = std::min(((descriptors_in_buffer(buffer_size, desc_page_size) * batch_size) + 1),
+        MAX_SG_DESCS_COUNT);
+
+    return get_nearest_powerof_2(descs_count, MIN_SG_DESCS_COUNT);
 }
 
 size_t DescriptorList::descriptors_buffer_allocation_size(uint32_t desc_count)

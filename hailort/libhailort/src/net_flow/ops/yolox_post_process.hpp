@@ -91,28 +91,18 @@ private:
         SrcType *obj_data = (SrcType*)obj_buffer.data();
         SrcType *cls_data = (SrcType*)cls_buffer.data();
 
-        // Quantize the objectness threshold once instead of dequantizing each data point
-        SrcType quantized_obj_threshold = Quantization::quantize_input<float32_t, SrcType>(static_cast<float32_t>(nms_config.nms_score_th), obj_quant_info);
 
-        // Optimized: initialize row offsets to 0 and increment by row_size at end of each row - this is done to avoid multiplication in the inner loop
-        auto obj_row_offset = 0;
-        auto reg_row_offset = 0;
-        auto cls_row_offset = 0;
         for (uint32_t row = 0; row < reg_shape.height; row++) {
             for (uint32_t col = 0; col < reg_shape.width; col++) {
-                auto obj_idx = obj_row_offset + col;
-
-                if (obj_data[obj_idx] < quantized_obj_threshold) { // First - compare quantized values
-                    continue;
-                }
-                // In case quantized objectness is above the quantized threshold, double check - dequantize and compare to real threshold
+                auto obj_idx = (obj_row_size * row) + col;
                 auto objectness = Quantization::dequantize_output<DstType, SrcType>(obj_data[obj_idx], obj_quant_info);
+
                 if (objectness < nms_config.nms_score_th) {
                     continue;
                 }
 
-                auto reg_idx = reg_row_offset + col;
-                auto cls_idx = cls_row_offset + col;
+                auto reg_idx = (reg_row_size * row) + col;
+                auto cls_idx = (cls_row_size * row) + col;
 
                 auto tx = Quantization::dequantize_output<DstType, SrcType>(reg_data[reg_idx + X_OFFSET], reg_quant_info);
                 auto ty = Quantization::dequantize_output<DstType, SrcType>(reg_data[reg_idx + Y_OFFSET], reg_quant_info);
@@ -120,24 +110,8 @@ private:
                 auto th = Quantization::dequantize_output<DstType, SrcType>(reg_data[reg_idx + H_OFFSET], reg_quant_info);
                 auto bbox = decode(tx, ty, tw, th, col, row, static_cast<float32_t>(reg_shape.width), static_cast<float32_t>(reg_shape.height));
 
-                // Optimized: initialize class offset to avoid multiplication in class loop
-                auto class_entry_idx = cls_idx;
-
-                // In order to pass threshold: class_score >= nms_config.nms_score_th, which means class_confidence * objectness >= nms_config.nms_score_th
-                // Therefore, class_confidence >= nms_config.nms_score_th / objectness --> min_required_class_confidence = nms_config.nms_score_th / objectness
-                // We quantize this minimum required class confidence to enable fast comparison with quantized class confidence values
-                // In case the quantized confidence is above the quantized min_required_class_confidence, we dequantize and compare to real threshold
-                auto min_required_class_confidence = static_cast<float32_t>(nms_config.nms_score_th) / objectness;
-                SrcType quantized_min_class_confidence = Quantization::quantize_input<float32_t, SrcType>(min_required_class_confidence, cls_quant_info);
-
                 for (uint32_t curr_class_idx = 0; curr_class_idx < nms_config.number_of_classes; curr_class_idx++) {
-                    // First - compare quantized values to avoid expensive dequantization
-                    if (cls_data[class_entry_idx] < quantized_min_class_confidence) {
-                        class_entry_idx += cls_padded_shape.width;
-                        continue;
-                    }
-
-                    // Only dequantize if quantized value passes threshold
+                    auto class_entry_idx = cls_idx + (curr_class_idx * cls_padded_shape.width);
                     auto class_confidence = Quantization::dequantize_output<DstType, SrcType>(
                         cls_data[class_entry_idx], cls_quant_info);
                     auto class_score = class_confidence * objectness;
@@ -146,12 +120,8 @@ private:
                         m_detections.emplace_back(DetectionBbox(bbox, curr_class_idx));
                         m_classes_detections_count[curr_class_idx]++;
                     }
-                    class_entry_idx += cls_padded_shape.width;
                 }
             }
-            obj_row_offset += obj_row_size;
-            reg_row_offset += reg_row_size;
-            cls_row_offset += cls_row_size;
         }
 
         return HAILO_SUCCESS;

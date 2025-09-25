@@ -53,6 +53,7 @@ public:
 
     virtual size_t size() const override { return m_size; }
     virtual void *user_address() override { return m_user_address; }
+    virtual vdma_mapped_buffer_driver_identifier buffer_identifier() override { return HailoRTDriver::INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER; }
 
 private:
     const size_t m_size;
@@ -81,6 +82,7 @@ public:
 
     virtual void* user_address() override { return m_mmapped_buffer.address(); }
     virtual size_t size() const override { return m_mmapped_buffer.size(); }
+    virtual vdma_mapped_buffer_driver_identifier buffer_identifier() override { return HailoRTDriver::INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER; }
 
 private:
     // Using mmap instead of aligned_alloc to enable MEM_SHARE flag - used for multi-process fork.
@@ -106,6 +108,7 @@ public:
 
     virtual size_t size() const override { return m_memory_guard.size(); }
     virtual void *user_address() override { return m_memory_guard.address(); }
+    virtual vdma_mapped_buffer_driver_identifier buffer_identifier() override { return HailoRTDriver::INVALID_MAPPED_BUFFER_DRIVER_IDENTIFIER; }
 
 private:
     VirtualAllocGuard m_memory_guard;
@@ -113,6 +116,68 @@ private:
 #else
 #error "unsupported platform!"
 #endif
+
+// Allocate low memory buffer using HailoRTDriver.
+class DriverAllocatedDmaAbleBuffer : public DmaAbleBuffer {
+public:
+    static Expected<DmaAbleBufferPtr> create(HailoRTDriver &driver, size_t size)
+    {
+        auto driver_buffer_handle = driver.vdma_low_memory_buffer_alloc(size);
+        CHECK_EXPECTED(driver_buffer_handle);
+
+        auto mmapped_buffer = MmapBuffer<void>::create_file_map(size, driver.fd(), driver_buffer_handle.value());
+        if (!mmapped_buffer) {
+            auto free_status = driver.vdma_low_memory_buffer_free(driver_buffer_handle.value());
+            if (HAILO_SUCCESS != free_status) {
+                LOGGER__ERROR("Failed free vdma low memory with status {}", free_status);
+                // Continue
+            }
+
+            return make_unexpected(mmapped_buffer.status());
+        }
+        CHECK_EXPECTED(mmapped_buffer);
+
+        auto buffer = make_shared_nothrow<DriverAllocatedDmaAbleBuffer>(driver, driver_buffer_handle.value(),
+            mmapped_buffer.release());
+        CHECK_NOT_NULL_AS_EXPECTED(buffer, HAILO_OUT_OF_HOST_MEMORY);
+        return std::static_pointer_cast<DmaAbleBuffer>(buffer);
+    }
+
+    DriverAllocatedDmaAbleBuffer(HailoRTDriver &driver, vdma_mapped_buffer_driver_identifier driver_allocated_buffer_id,
+        MmapBuffer<void> &&mmapped_buffer) :
+        m_driver(driver),
+        m_driver_allocated_buffer_id(driver_allocated_buffer_id),
+        m_mmapped_buffer(std::move(mmapped_buffer))
+    {}
+
+    DriverAllocatedDmaAbleBuffer(const DriverAllocatedDmaAbleBuffer &) = delete;
+    DriverAllocatedDmaAbleBuffer &operator=(const DriverAllocatedDmaAbleBuffer &) = delete;
+
+    ~DriverAllocatedDmaAbleBuffer()
+    {
+        auto status = m_mmapped_buffer.unmap();
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to unmap buffer");
+            // continue
+        }
+
+        status = m_driver.vdma_low_memory_buffer_free(m_driver_allocated_buffer_id);
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to free low memory buffer");
+            // continue
+        }
+    }
+
+    virtual void* user_address() override { return m_mmapped_buffer.address(); }
+    virtual size_t size() const override { return m_mmapped_buffer.size(); }
+    virtual vdma_mapped_buffer_driver_identifier buffer_identifier() override { return m_driver_allocated_buffer_id; }
+
+private:
+    HailoRTDriver &m_driver;
+    const vdma_mapped_buffer_driver_identifier m_driver_allocated_buffer_id;
+
+    MmapBuffer<void> m_mmapped_buffer;
+};
 
 Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_from_user_address(void *user_address, size_t size)
 {
@@ -122,6 +187,16 @@ Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_from_user_address(void *user_ad
 Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_by_allocation(size_t size)
 {
     return PageAlignedDmaAbleBuffer::create(size);
+}
+
+Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_by_allocation(size_t size, HailoRTDriver &driver)
+{
+    if (driver.allocate_driver_buffer()) {
+        return DriverAllocatedDmaAbleBuffer::create(driver, size);
+    } else {
+        // The driver is not needed.
+        return create_by_allocation(size);
+    }
 }
 
 #elif defined(__QNX__)
@@ -149,6 +224,7 @@ public:
 
     virtual void *user_address() override { return m_mmapped_buffer.address(); }
     virtual size_t size() const override { return m_mmapped_buffer.size(); }
+    virtual vdma_mapped_buffer_driver_identifier buffer_identifier() override { return m_shm_fd; }
 
 private:
 
@@ -186,6 +262,13 @@ Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_from_user_address(void *user_ad
 Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_by_allocation(size_t size)
 {
     return SharedMemoryDmaAbleBuffer::create(size);
+}
+
+Expected<DmaAbleBufferPtr> DmaAbleBuffer::create_by_allocation(size_t size, HailoRTDriver &driver)
+{
+    // qnx doesn't need the driver for the allocation
+    (void)driver;
+    return create_by_allocation(size);
 }
 
 #else

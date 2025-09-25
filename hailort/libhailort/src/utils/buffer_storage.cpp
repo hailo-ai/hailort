@@ -137,10 +137,11 @@ Expected<void *> HeapStorage::release() noexcept
 
 Expected<DmaStoragePtr> DmaStorage::create(size_t size)
 {
+    // TODO: HRT-10283 support sharing low memory buffers for DART and similar systems.
     TRY(auto dma_able_buffer, vdma::DmaAbleBuffer::create_by_allocation(size));
 
     auto result = make_shared_nothrow<DmaStorage>(std::move(dma_able_buffer));
-    CHECK_NOT_NULL(result, HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
@@ -254,14 +255,14 @@ Expected<std::string> SharedMemoryStorage::shm_name()
     return m_shm_buffer->shm_name();
 }
 
-PooledBufferStorage::PooledBufferStorage(BufferPtr buffer, FastBufferPoolPtr buffer_pool) :
+PooledBufferStorage::PooledBufferStorage(BufferPtr buffer, BasicBufferPoolPtr buffer_pool) :
     m_buffer_pool(buffer_pool),
     m_buffer(buffer)
 {}
 
 PooledBufferStorage::~PooledBufferStorage()
 {
-    auto status = m_buffer_pool->release(std::move(m_buffer));
+    auto status = m_buffer_pool->return_to_pool(m_buffer);
     if (HAILO_SUCCESS != status) {
         LOGGER__CRITICAL("Failed to return buffer to pool: {}", status);
     }
