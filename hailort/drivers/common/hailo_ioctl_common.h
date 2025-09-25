@@ -7,7 +7,7 @@
 #define _HAILO_IOCTL_COMMON_H_
 
 #define HAILO_DRV_VER_MAJOR 4
-#define HAILO_DRV_VER_MINOR 22
+#define HAILO_DRV_VER_MINOR 23
 #define HAILO_DRV_VER_REVISION 0
 
 #define _STRINGIFY_EXPANDED( x ) #x
@@ -354,51 +354,7 @@ struct hailo_fw_control {
     enum hailo_cpu_id cpu_id;
 };
 
-/* structure used in ioctl HAILO_MEMORY_TRANSFER */
-// Max bar transfer size gotten from ATR0_TABLE_SIZE
-#define MAX_MEMORY_TRANSFER_LENGTH  (4096)
 
-enum hailo_transfer_direction {
-    TRANSFER_READ = 0,
-    TRANSFER_WRITE,
-
-    /** Max enum value to maintain ABI Integrity */
-    TRANSFER_MAX_ENUM = INT_MAX,
-};
-
-enum hailo_transfer_memory_type {
-    HAILO_TRANSFER_DEVICE_DIRECT_MEMORY,
-
-    // vDMA memories
-    HAILO_TRANSFER_MEMORY_VDMA0 = 0x100,
-    HAILO_TRANSFER_MEMORY_VDMA1,
-    HAILO_TRANSFER_MEMORY_VDMA2,
-
-    // PCIe driver memories
-    HAILO_TRANSFER_MEMORY_PCIE_BAR0 = 0x200,
-    HAILO_TRANSFER_MEMORY_PCIE_BAR2 = 0x202,
-    HAILO_TRANSFER_MEMORY_PCIE_BAR4 = 0x204,
-
-    // DRAM DMA driver memories
-    HAILO_TRANSFER_MEMORY_DMA_ENGINE0 = 0x300,
-    HAILO_TRANSFER_MEMORY_DMA_ENGINE1,
-    HAILO_TRANSFER_MEMORY_DMA_ENGINE2,
-
-    // PCIe EP driver memories
-    HAILO_TRANSFER_MEMORY_PCIE_EP_CONFIG = 0x400,
-    HAILO_TRANSFER_MEMORY_PCIE_EP_BRIDGE,
-
-    /** Max enum value to maintain ABI Integrity */
-    HAILO_TRANSFER_MEMORY_MAX_ENUM = INT_MAX,
-};
-
-struct hailo_memory_transfer_params {
-    enum hailo_transfer_direction transfer_direction;   // in
-    enum hailo_transfer_memory_type memory_type;        // in
-    uint64_t address;                                   // in
-    size_t count;                                       // in
-    uint8_t buffer[MAX_MEMORY_TRANSFER_LENGTH];         // in/out
-};
 
 /* structure used in ioctl HAILO_VDMA_BUFFER_SYNC */
 enum hailo_vdma_buffer_sync_type {
@@ -576,7 +532,7 @@ struct tCompatibleHailoIoctlData
     tCompatibleHailoIoctlParam Parameters;
     ULONG_PTR Value;
     union {
-        struct hailo_memory_transfer_params MemoryTransfer;
+
         struct hailo_vdma_enable_channels_params VdmaEnableChannels;
         struct hailo_vdma_disable_channels_params VdmaDisableChannels;
         struct hailo_vdma_interrupts_read_timestamp_params VdmaInterruptsReadTimestamps;
@@ -606,15 +562,13 @@ struct tCompatibleHailoIoctlData
 #pragma pack(pop)
 
 enum hailo_general_ioctl_code {
-    HAILO_MEMORY_TRANSFER_CODE,
-    HAILO_QUERY_DEVICE_PROPERTIES_CODE,
-    HAILO_QUERY_DRIVER_INFO_CODE,
+    HAILO_QUERY_DEVICE_PROPERTIES_CODE = 1,
+    HAILO_QUERY_DRIVER_INFO_CODE = 2,
 
     // Must be last
     HAILO_GENERAL_IOCTL_MAX_NR,
 };
 
-#define HAILO_MEMORY_TRANSFER           _IOWR_(HAILO_GENERAL_IOCTL_MAGIC,  HAILO_MEMORY_TRANSFER_CODE,            struct hailo_memory_transfer_params)
 #define HAILO_QUERY_DEVICE_PROPERTIES   _IOW_(HAILO_GENERAL_IOCTL_MAGIC,   HAILO_QUERY_DEVICE_PROPERTIES_CODE,    struct hailo_device_properties)
 #define HAILO_QUERY_DRIVER_INFO         _IOW_(HAILO_GENERAL_IOCTL_MAGIC,   HAILO_QUERY_DRIVER_INFO_CODE,          struct hailo_driver_info)
 
