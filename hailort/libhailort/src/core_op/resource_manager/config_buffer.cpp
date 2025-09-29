@@ -321,7 +321,7 @@ Expected<uint32_t> ZeroCopyConfigBuffer::program_descriptors_for_transfer(uint64
         CHECK_SUCCESS(m_desc_list->program(*curr_buffer, curr_bytes_to_transfer, offset_in_buffer, m_channel_id,
                                            current_desc_index + transfer_desc_count, DEFAULT_PROGRAM_BATCH_SIZE,
                                            true, InterruptsDomain::DEVICE));
- 
+
         transfer_desc_count += m_desc_list->descriptors_in_buffer(curr_bytes_to_transfer);
         bytes_transferred += curr_bytes_to_transfer;
     }

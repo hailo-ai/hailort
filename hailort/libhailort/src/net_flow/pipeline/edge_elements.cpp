@@ -9,6 +9,7 @@
 
 #include "net_flow/pipeline/vstream_internal.hpp"
 #include "net_flow/pipeline/edge_elements.hpp"
+#include "utils/profiler/tracer_macros.hpp"
 
 namespace hailort
 {
@@ -214,9 +215,12 @@ hailo_status LastAsyncElement::run_push(PipelineBuffer &&/*optional*/, const Pip
 
 void LastAsyncElement::run_push_async(PipelineBuffer &&buffer, const PipelinePad &/*sink*/)
 {
+    TRACE(RunPushAsyncStartTrace, name(), pipeline_unique_id(), network_name());
+
     // Call callback here on LastAsyncElement because if we wait for destructor to call callbacks they can be
     // called out of order
     buffer.call_exec_done();
+    TRACE(RunPushAsyncEndTrace, name(), pipeline_unique_id(), network_name());
 }
 
 hailo_status LastAsyncElement::execute_activate()

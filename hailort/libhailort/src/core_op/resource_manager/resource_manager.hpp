@@ -167,7 +167,7 @@ public:
     ExpectedRef<CacheBuffer> set_cache_output_channel(uint32_t cache_id, uint16_t batch_size, vdma::ChannelId channel_id);
     ExpectedRef<std::unordered_map<uint32_t, CacheBuffer>> get_cache_buffers();
 
-    Expected<uint16_t> calc_default_queue_size(const LayerInfo &layer_info, uint16_t batch_size);
+    Expected<uint16_t> calc_default_queue_size(const LayerInfo &layer_info, uint16_t batch_size, hailo_device_architecture_t device_arch);
     hailo_status create_boundary_vdma_channel(const LayerInfo &layer_info, bool use_enhanced_channel = false);
 
     Expected<CONTROL_PROTOCOL__application_header_t> get_control_core_op_header();
@@ -274,6 +274,10 @@ public:
     void set_nops_mapped_buffer(vdma::MappedBufferPtr nops_buffer)
     {
         m_nops_mapped_buffer = nops_buffer;
+    }
+
+    std::vector<ContextResources>& get_context_resources() {
+        return m_contexts_resources;
     }
 
     uint16_t get_csm_buffer_size();

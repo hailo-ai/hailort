@@ -81,7 +81,7 @@ Expected<LayerInfo> PeriphCalculator::calculate_periph_registers_impl(const Laye
     LayerInfo updated_layer_info = layer_info;
     const auto is_ddr = (LayerType::DDR == layer_info.type);
     auto periph_bytes_per_buffer_alignment_size = (hw_arch == HEFHwArch::HW_ARCH__MARS) ?
-        PERIPH_BYTES_PER_BUFFER_ALIGNMENT_SIZE_H10H2 : PERIPH_BYTES_PER_BUFFER_ALIGNMENT_SIZE;
+        PERIPH_BYTES_PER_BUFFER_ALIGNMENT_SIZE_H12L : PERIPH_BYTES_PER_BUFFER_ALIGNMENT_SIZE;
     const uint32_t alignment = is_ddr ? PERIPH_BYTES_PER_BUFFER_DDR_ALIGNMENT_SIZE : periph_bytes_per_buffer_alignment_size;
     const auto row_size = static_cast<uint32_t>(periph_shape.width * periph_shape.features * layer_info.hw_data_bytes);
     auto periph_frame_size = periph_shape.height * row_size;
@@ -128,11 +128,10 @@ Expected<LayerInfo> PeriphCalculator::calculate_periph_registers_impl(const Laye
     // put uint16_t max and add warning - seeing as this value doesn't really affect anything and we should not fail in that case.
     if (!IS_FIT_IN_UINT16(periph_buffers_per_frame)) {
         LOGGER__WARNING("periph buffers per frame too large - putting uint16_t max (This may affect HW infer estimator results");
-        periph_buffers_per_frame = UINT16_MAX;
     }
 
     updated_layer_info.nn_stream_config.periph_bytes_per_buffer = static_cast<uint16_t>(periph_bytes_per_buffer);
-    updated_layer_info.nn_stream_config.periph_buffers_per_frame = static_cast<uint16_t>(periph_buffers_per_frame);
+    updated_layer_info.nn_stream_config.periph_buffers_per_frame = periph_buffers_per_frame;
 
     return updated_layer_info;
 }

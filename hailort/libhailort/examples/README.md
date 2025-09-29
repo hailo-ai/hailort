@@ -1,8 +1,9 @@
 # Examples
 For a thorough explanation on the examples strcture and usage, refer to HailoRT user-guide in the developer zone - ``https://hailo.ai/developer-zone/documentation/hailort/latest/``.
 
-The following examples are provided, demonstrating the HailoRT API:
+The following examples below demonstrate the HailoRT API:
 
+> **_NOTE:_** The C examples cannot be run on Hailo-10H.
 - C examples:
   - `vstreams_example` - Basic inference of a shortcut network (inputs are sent through the device and right back out, without any changes made to the data):
     - Configure and activate network group and virtual streams.

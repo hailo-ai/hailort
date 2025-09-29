@@ -21,6 +21,7 @@
 #include "llm/llm_server.hpp"
 #include "vlm/vlm_server.hpp"
 #include "text2image/text2image_server.hpp"
+#include "speech2text/speech2text_server.hpp"
 #include "common/genai/connection_ports.hpp"
 #endif // HAILO_GENAI_SERVER
 
@@ -28,11 +29,7 @@
 
 using namespace hailort;
 
-#ifdef NDEBUG
-#define LOGGER_PATTERN ("[%n] [%^%l%$] %v")
-#else
 #define LOGGER_PATTERN ("[%Y-%m-%d %X.%e] [%P] [%t] [%n] [%^%l%$] [%s:%#] [%!] %v")
-#endif
 
 void init_logger(const std::string &name)
 {
@@ -149,6 +146,24 @@ int main(int argc, char* argv[])
         }
     });
     text2image_thread.detach();
+
+    auto speech2text_thread = std::thread([ip_addr]() {
+        TRY(auto server_connection, SessionListener::create_shared(genai::DEFAULT_SPEECH2TEXT_CONNECTION_PORT, ip_addr));
+        while (true) {
+            TRY(auto session, server_connection->accept());
+            auto th = std::thread([session]() {
+                auto speech2text_server = genai::Speech2TextServerManager::create(session);
+                if (!speech2text_server) {
+                    LOGGER__ERROR("Failed to create Speech2TextServer, status = {}", speech2text_server.status());
+                    return;
+                }
+                speech2text_server.value()->flow();
+            });
+            th.detach();
+        }
+    });
+    speech2text_thread.detach();
+
 #endif // HAILO_GENAI_SERVER
 
     hailort_server_th.join();

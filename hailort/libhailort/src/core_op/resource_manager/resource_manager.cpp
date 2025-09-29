@@ -35,7 +35,20 @@ namespace hailort
 // As a heuristic, we want to make sure NN_CORE_QUEUE_SIZE_IN_BYTES can be buffered in the nn core.
 // It doesn't mean we will actually use all of it since the actual queue size is bounded by
 // [MIN_ACTIVE_TRANSFERS_SCALE*batch_size, MAX_ACTIVE_TRANSFERS_SCALE*batch_size]
-static const constexpr size_t NN_CORE_QUEUE_SIZE_IN_BYTES = 32 * 1024 * 1024; // 32MB
+//L3 memory:
+// * H10, H15: 32KB x 128 x 5
+// * H15L: 24KB x 64 x 3
+// * H12L: 24KB x 64 x 6
+static size_t get_nn_core_queue_size_for_device(hailo_device_architecture_t device_arch)
+{
+    switch (device_arch) {
+        case HAILO_ARCH_HAILO15L:
+        case HAILO_ARCH_MARS:  
+            return 8 * 1024 * 1024; // 8MB
+        default:
+            return 32 * 1024 * 1024; // 32MB
+    }
+} 
 
 Expected<ContextResources> ContextResources::create(HailoRTDriver &driver,
     CONTROL_PROTOCOL__context_switch_context_type_t context_type,
@@ -321,6 +334,9 @@ ResourcesManager::ResourcesManager(ResourcesManager &&other) noexcept :
     m_boundary_channels(std::move(other.m_boundary_channels)),
     m_is_configured(std::exchange(other.m_is_configured, false)),
     m_is_activated(std::exchange(other.m_is_activated, false)),
+    m_ccws_section_mapped_buffers(std::move(other.m_ccws_section_mapped_buffers)),
+    m_nops_mapped_buffer(std::move(other.m_nops_mapped_buffer)),
+    m_hef_as_buffer(std::move(other.m_hef_as_buffer)),
     m_config_channels_ids(std::move(other.m_config_channels_ids)),
     m_hw_only_desc_boundary_buffers(std::move(other.m_hw_only_desc_boundary_buffers)),
     m_hw_only_ccb_boundary_buffers(std::move(other.m_hw_only_ccb_boundary_buffers)),
@@ -334,6 +350,7 @@ hailo_status ResourcesManager::fill_infer_features(CONTROL_PROTOCOL__application
     app_header.infer_features.preliminary_run_asap = m_core_op_metadata->supported_features().preliminary_run_asap;
     app_header.infer_features.batch_register_config = m_core_op_metadata->supported_features().batch_register_config;
     app_header.infer_features.can_fast_batch_switch = m_core_op_metadata->get_can_fast_batch_switch();
+    app_header.infer_features.split_allow_input_action = m_core_op_metadata->supported_features().split_allow_input_action;
     return HAILO_SUCCESS;
 }
 
@@ -407,7 +424,7 @@ Expected<uint16_t> ResourcesManager::get_batch_size() const
 
 }
 
-Expected<uint16_t> ResourcesManager::calc_default_queue_size(const LayerInfo &layer_info, uint16_t batch_size)
+Expected<uint16_t> ResourcesManager::calc_default_queue_size(const LayerInfo &layer_info, uint16_t batch_size, hailo_device_architecture_t device_arch)
 {
     const size_t transfers_per_frame = (layer_info.format.order == HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP) ?
         LayerInfoUtils::get_nms_layer_max_transfers_per_frame(layer_info) : 1;
@@ -423,7 +440,7 @@ Expected<uint16_t> ResourcesManager::calc_default_queue_size(const LayerInfo &la
 
     // Amount of transfers optimal for the nn core queue size. We clamp it with min/max to make sure the boundaries are
     // good for us (enough frames can be queued but not too many)
-    size_t nn_core_queue_size = NN_CORE_QUEUE_SIZE_IN_BYTES / bytes_per_transfer;
+    size_t nn_core_queue_size = get_nn_core_queue_size_for_device(device_arch) / bytes_per_transfer;
     if (nn_core_queue_size > UINT16_MAX) {
         LOGGER__DEBUG("Suggested queue size was larger than UINT16_MAX - setting queue size to UINT16_MAX");
         nn_core_queue_size = UINT16_MAX;
@@ -448,7 +465,7 @@ hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &lay
             layer_info.nms_info.number_of_classes, layer_info.nms_info.chunks_per_frame);
     }
 
-    TRY(const auto queue_size, calc_default_queue_size(layer_info, network_batch_size));
+    TRY(const auto queue_size, calc_default_queue_size(layer_info, network_batch_size, device_arch));
 
     const auto transfer_size = LayerInfoUtils::get_layer_transfer_size(layer_info);
     TRY(auto buffer_requirements, vdma::BufferSizesRequirements::get_buffer_requirements_for_boundary_channels(

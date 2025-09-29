@@ -76,6 +76,10 @@ target_link_libraries(hailortcli
     scheduler_mon_proto
     profiler_proto)
 
+if(HAILO_BUILD_CLIENT_TOKENIZER)
+    target_link_libraries(hailortcli tokenizers_cpp)
+endif()
+
 if(WIN32)
     target_link_libraries(hailortcli winmm.lib) # Used for timeBeginPeriod, timeEndPeriod
 endif()

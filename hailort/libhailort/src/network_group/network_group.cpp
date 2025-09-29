@@ -18,7 +18,6 @@
 
 #include "network_group/network_group_internal.hpp"
 #include "vdma/vdma_stream.hpp"
-#include "mipi/mipi_stream.hpp"
 #include "device_common/control.hpp"
 #include "net_flow/pipeline/vstream_builder.hpp"
 #include "net_flow/ops_metadata/yolov5_seg_op_metadata.hpp"
@@ -860,6 +859,14 @@ hailo_status ConfiguredNetworkGroupBase::write_cache_buffer(uint32_t cache_id, M
         "write_cache_buffer() is not supported for multi core-op network groups");
 
     return m_core_ops[0]->write_cache_buffer(cache_id, buffer);
+}
+
+hailo_status ConfiguredNetworkGroupBase::finalize_cache()
+{
+    CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
+        "finalize_cache() is not supported for multi core-op network groups");
+
+    return m_core_ops[0]->finalize_cache();
 }
 
 } /* namespace hailort */

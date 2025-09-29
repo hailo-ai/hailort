@@ -10,9 +10,10 @@
 #include "logs_command.hpp"
 
 LogsCommand::LogsCommand(CLI::App &parent_app) :
-    DeviceCommand(parent_app.add_subcommand("logs", "Prints the device logs")),
+    Command(parent_app.add_subcommand("logs", "Prints the device logs")),
     m_should_follow(false)
 {
+    add_device_options(m_app, m_device_params);
     m_app->add_option("log_type", m_log_type, "Logs type")
         ->transform(HailoCheckedTransformer<hailo_log_type_t>({
             { "runtime", HAILO_LOG_TYPE__RUNTIME },
@@ -28,9 +29,6 @@ LogsCommand::LogsCommand(CLI::App &parent_app) :
 
 hailo_status LogsCommand::read_log(Device &device)
 {
-    auto status = validate_specific_device_is_given();
-    CHECK_SUCCESS(status);
-
     TRY(auto max_log_size, device.get_max_logs_size(m_log_type));
 
     TRY(auto log_buffer, Buffer::create(max_log_size));
@@ -42,6 +40,14 @@ hailo_status LogsCommand::read_log(Device &device)
     CHECK(!std::cout.fail(), HAILO_INTERNAL_FAILURE, "Failed to write logs to stdout.");
 
     return HAILO_SUCCESS;
+}
+
+hailo_status LogsCommand::execute()
+{
+    CHECK_SUCCESS(validate_specific_device_is_given(m_device_params));
+    TRY(auto devices, create_devices(m_device_params));
+    CHECK(1 == devices.size(), HAILO_INTERNAL_FAILURE, "Multiple devices created");
+    return execute_on_device(*devices[0]);
 }
 
 hailo_status LogsCommand::execute_on_device(Device &device)
@@ -58,10 +64,4 @@ hailo_status LogsCommand::execute_on_device(Device &device)
     }
 
     return HAILO_SUCCESS;
-}
-
-void LogsCommand::pre_execute()
-{
-    // We want only the logger data to be written to stdout
-    DeviceCommand::m_show_stdout = false;
 }

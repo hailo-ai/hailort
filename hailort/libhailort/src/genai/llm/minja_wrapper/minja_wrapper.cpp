@@ -43,7 +43,7 @@ PromptTemplateHandler::Impl::Impl(const std::string &prompt_template)
 {
     minja::chat_template_inputs inputs;
     inputs.add_generation_prompt = false;
-    inputs.messages = json { empty_role };
+    inputs.messages = json::array({ empty_role });
     m_system_prompt = m_templ.apply(inputs);
 }
 

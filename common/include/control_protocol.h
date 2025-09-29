@@ -452,7 +452,7 @@ typedef struct {
     uint16_t core_bytes_per_buffer;
     uint16_t core_buffers_per_frame;
     uint16_t periph_bytes_per_buffer;
-    uint16_t periph_buffers_per_frame;
+    uint32_t periph_buffers_per_frame;
     uint16_t feature_padding_payload;
     uint32_t buffer_padding_payload;
     uint16_t buffer_padding;
@@ -553,15 +553,6 @@ typedef union {
     CONTROL_PROTOCOL__pcie_output_config_params_t pcie_output;
 } CONTROL_PROTOCOL__communication_config_prams_t;
 
-// Tightly coupled with hailo_power_mode_t
-typedef enum {
-    CONTROL_PROTOCOL__MODE_PERFORMANCE       = 0,
-    CONTROL_PROTOCOL__MODE_ULTRA_PERFORMANCE = 1,
-    
-    /* Must be last */
-    CONTROL_PROTOCOL__POWER_MODE_COUNT
-} CONTROL_PROTOCOL__power_mode_t;
-
 typedef struct {
     uint32_t stream_index_length;
     uint8_t stream_index;
@@ -571,8 +562,6 @@ typedef struct {
     uint32_t communication_type;
     uint32_t skip_nn_stream_config_length;
     uint8_t skip_nn_stream_config;
-    uint32_t power_mode_length;
-    uint8_t power_mode; // CONTROL_PROTOCOL__power_mode_t
     uint32_t nn_stream_config_length;
     CONTROL_PROTOCOL__nn_stream_config_t nn_stream_config;
     // Should be last for size calculations
@@ -884,6 +873,7 @@ typedef struct {
     bool preliminary_run_asap;
     bool batch_register_config;
     bool can_fast_batch_switch;
+    bool split_allow_input_action;
 } CONTROL_PROTOCOL__INFER_FEATURE_LIST_t;
 
 typedef struct {
@@ -1297,7 +1287,6 @@ typedef struct {
     uint16_t max_periph_bytes_per_buffer;
     uint16_t max_acceptable_bytes_per_buffer;
     uint32_t outbound_data_stream_size;
-    uint8_t should_optimize_credits;
     uint32_t default_initial_credit_size;
 } CONTROL_PROTOCOL__hw_consts_t;
 

@@ -76,17 +76,38 @@ void ChannelsGroup::process_interrupts(IrqData &&irq_data)
     assert(irq_data.channels_count <= ARRAY_ENTRIES(irq_data.channels_irq_data));
     for (uint8_t irq_index = 0; irq_index < irq_data.channels_count; irq_index++) {
         const auto &channel_irq_data = irq_data.channels_irq_data[irq_index];
-        auto status = process_channel_interrupt(channel_irq_data); // TODO: TODO: HRT-9429 done
+        auto status = process_channel_interrupt(channel_irq_data);
         if ((status != HAILO_SUCCESS) && (status != HAILO_STREAM_NOT_ACTIVATED)) {
             LOGGER__ERROR("Trigger channel completion failed on channel {} with status {}", channel_irq_data.channel_id, status);
         }
     }
 }
 
+// Function that based off the irq data returns the status to be sent to the callbak functions
+static hailo_status get_callback_status(vdma::ChannelId channel_id, const ChannelIrqData &irq_data)
+{
+    hailo_status status = HAILO_UNINITIALIZED;
+    if (!irq_data.is_active) {
+        status = HAILO_STREAM_ABORT;
+    } else if (!irq_data.validation_success) {
+        LOGGER__WARNING("Channel {} validation failed", channel_id);
+        status = HAILO_INTERNAL_FAILURE;
+    } else {
+        status = HAILO_SUCCESS;
+    }
+    return status;
+}
+
 hailo_status ChannelsGroup::process_channel_interrupt(const ChannelIrqData &channel_irq_data)
 {
     TRY(auto channel, get_by_id(channel_irq_data.channel_id), "Channel {} not found", channel_irq_data.channel_id);
-    return channel->trigger_channel_completion(channel_irq_data);
+    auto callback_status = get_callback_status(channel_irq_data.channel_id, channel_irq_data);
+    if (HAILO_SUCCESS == callback_status) {
+        return channel->trigger_channel_completion(channel_irq_data.transfers_completed);
+    } else {
+        channel->trigger_channel_error(callback_status);
+        return HAILO_SUCCESS;
+    }
 }
 
 } /* namespace vdma */

@@ -69,7 +69,7 @@ typedef struct {
     uint16_t core_bytes_per_buffer;
     uint16_t core_buffers_per_frame;
     uint16_t periph_bytes_per_buffer;
-    uint16_t periph_buffers_per_frame;
+    uint32_t periph_buffers_per_frame;
     uint16_t feature_padding_payload;
     uint32_t buffer_padding_payload;
     uint16_t buffer_padding;

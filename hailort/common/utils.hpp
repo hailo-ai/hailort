@@ -503,7 +503,7 @@ public:
 
     Expected<uint32_t> calculate(std::shared_ptr<std::ifstream> stream, size_t buffer_size) const
     {
-        TRY(auto stream_guard, StreamPositionGuard::create(stream));
+        TRY(auto stream_guard, StreamPositionGuard::create_shared(stream));
 
         uint32_t crc = 0xFFFFFFFF;
         std::vector<char> buffer(MB);
@@ -573,7 +573,7 @@ public:
 
     static Expected<uint64_t> calc_xxh3_on_stream(std::shared_ptr<std::ifstream> stream, size_t size)
     {
-        TRY(auto stream_guard, StreamPositionGuard::create(stream));
+        TRY(auto stream_guard, StreamPositionGuard::create_shared(stream));
 
         // TODO: HRT-15783 - Try improve performance with multiple buffers and threads
         auto state = std::unique_ptr<XXH3_state_t, decltype(&XXH3_freeState)>(

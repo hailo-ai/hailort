@@ -98,7 +98,7 @@ static bool extended_device_information_is_array_not_empty(const uint8_t *array_
     return false;
 }
 
-static void print_extended_device_information(const hailo_extended_device_information_t &device_info)
+static void print_extended_device_information(const hailo_extended_device_information_t &device_info, bool should_print_sku_id)
 {
     std::cout << extended_device_information_boot_string(device_info.boot_source);
     std::cout << valid_attr_str("Neural Network Core Clock Rate", device_info.neural_network_core_clock_rate / MHz, INVALID_CLOCK_RATE, "MHz");
@@ -130,8 +130,19 @@ static void print_extended_device_information(const hailo_extended_device_inform
         extended_device_information_print_array(device_info.soc_pm_values, sizeof(device_info.soc_pm_values), "");
     }
 
-    if (device_info.gpio_mask != 0) {
-        std::cout << "GPIO Mask: " << std::setfill('0') << std::setw(4) << std::hex << device_info.gpio_mask << std::dec << std::endl;
+    if (should_print_sku_id) {
+        std::string sku_id_str = "Disabled";
+        constexpr auto SKU_ENABLED_BIT_INDEX = 0;
+        if (device_info.gpio_mask & (1 << SKU_ENABLED_BIT_INDEX)) {
+            uint16_t sku_id = 0;
+            constexpr size_t SKU_ID_BITS_INDICES[] = {1, 2, 3, 10, 11, 12};
+            constexpr size_t SKU_ID_LENGTH = sizeof(SKU_ID_BITS_INDICES) / sizeof(SKU_ID_BITS_INDICES[0]);
+            for (size_t i = 0; i < SKU_ID_LENGTH; i++) {
+                sku_id |= static_cast<uint16_t>((device_info.gpio_mask & (SKU_ID_BITS_INDICES[i] << 1)) >> i);
+            }
+            sku_id_str = std::to_string(sku_id);
+        }
+        std::cout << "SKU-ID: " << sku_id_str << std::endl;
     }
 }
 
@@ -205,7 +216,7 @@ hailo_status FwControlIdentifyCommand::execute_on_device(Device &device)
 
     if (m_is_extended) {
         TRY(auto device_info, device.get_extended_device_information());
-        print_extended_device_information(device_info);
+        print_extended_device_information(device_info, (HAILO_ARCH_HAILO10H == identity.device_architecture));
     }
 
     std::cout << std::endl;

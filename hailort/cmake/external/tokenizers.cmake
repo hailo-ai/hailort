@@ -5,7 +5,7 @@ include(FetchContent)
 FetchContent_Declare(
     tokenizers
     GIT_REPOSITORY https://github.com/mlc-ai/tokenizers-cpp.git
-    GIT_TAG 125d072f52290fa6d2944b3d72ccc937786ec631 # disable-sentencepiece
+    GIT_TAG 55d53aa38dc8df7d9c8bd9ed50907e82ae83ce66 # main
     # GIT_SHALLOW TRUE
     SOURCE_DIR ${HAILO_EXTERNAL_DIR}/tokenizers-src
     SUBBUILD_DIR ${HAILO_EXTERNAL_DIR}/tokenizers-subbuild
@@ -59,7 +59,11 @@ else()
       if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
           set_readonly(TOKENIZERS_CPP_CARGO_TARGET x86_64-unknown-linux-gnu)
       elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
-          set_readonly(TOKENIZERS_CPP_CARGO_TARGET aarch64-unknown-linux-gnu)
+          if(ANDROID)
+              set_readonly(TOKENIZERS_CPP_CARGO_TARGET aarch64-linux-android)
+          else()
+              set_readonly(TOKENIZERS_CPP_CARGO_TARGET aarch64-unknown-linux-gnu)
+          endif()
       endif()
       set(MLC_ENABLE_SENTENCEPIECE_TOKENIZER OFF) # Disable sentencepiece for reducing binary size
       if (NOT HAILO_EXTERNALS_EXCLUDE_TARGETS)

@@ -186,6 +186,7 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(94, HAILO_INVALID_HEF_USE                         /*!< Invalid HEF use (i.e. when using HEF from a file path without first copying it's content to a mapped buffer while shared_weights is enabled) */)\
     HAILO_STATUS__X(95, HAILO_OPERATION_ABORTED                       /*!< Operation was aborted */)\
     HAILO_STATUS__X(96, HAILO_DEVICE_NOT_CONNECTED                    /*!< Device is not connected */)\
+    HAILO_STATUS__X(97, HAILO_DEVICE_TEMPORARILY_UNAVAILABLE          /*!< Device is temporarily unavailable, try again later */)\
 
 typedef enum {
 #define HAILO_STATUS__X(value, name) name = value,
@@ -518,7 +519,7 @@ typedef struct {
     /** Hailo device unit level tracking id*/
     uint8_t unit_level_tracking_id[HAILO_UNIT_LEVEL_TRACKING_BYTES_LENGTH];
     /** Hailo device pm values */
-    uint8_t soc_pm_values[HAILO_SOC_PM_VALUES_BYTES_LENGTH]; 
+    uint8_t soc_pm_values[HAILO_SOC_PM_VALUES_BYTES_LENGTH];
     /** Hailo device GPIO mask values */
     uint16_t gpio_mask;
 } hailo_extended_device_information_t;
@@ -944,191 +945,6 @@ typedef struct {
     EMPTY_STRUCT_PLACEHOLDER
 } hailo_pcie_output_stream_params_t;
 
-/** Indicates amount of pixels per clock on a MIPI stream **/
-typedef enum {
-    HAILO_MIPI_PIXELS_PER_CLOCK_1        = 0b0,
-    HAILO_MIPI_PIXELS_PER_CLOCK_2        = 0b01,
-    HAILO_MIPI_PIXELS_PER_CLOCK_4        = 0b10,
-
-    /** Max enum value to maintain ABI Integrity */
-    HAILO_MIPI_PIXELS_PER_CLOCK_MAX_ENUM = HAILO_MAX_ENUM
-} hailo_mipi_pixels_per_clock_t;
-
-/** Indicates Range of MIPI clock selection for a MIPI stream **/
-typedef enum {
-    HAILO_MIPI_CLOCK_SELECTION_80_TO_100_MBPS    = 0b00000,
-    HAILO_MIPI_CLOCK_SELECTION_100_TO_120_MBPS   = 0b00001,
-    HAILO_MIPI_CLOCK_SELECTION_120_TO_160_MBPS   = 0b00010,
-    HAILO_MIPI_CLOCK_SELECTION_160_TO_200_MBPS   = 0b00011,
-    HAILO_MIPI_CLOCK_SELECTION_200_TO_240_MBPS   = 0b00100,
-    HAILO_MIPI_CLOCK_SELECTION_240_TO_280_MBPS   = 0b00101,
-    HAILO_MIPI_CLOCK_SELECTION_280_TO_320_MBPS   = 0b00110,
-    HAILO_MIPI_CLOCK_SELECTION_320_TO_360_MBPS   = 0b00111,
-    HAILO_MIPI_CLOCK_SELECTION_360_TO_400_MBPS   = 0b01000,
-    HAILO_MIPI_CLOCK_SELECTION_400_TO_480_MBPS   = 0b01001,
-    HAILO_MIPI_CLOCK_SELECTION_480_TO_560_MBPS   = 0b01010,
-    HAILO_MIPI_CLOCK_SELECTION_560_TO_640_MBPS   = 0b01011,
-    HAILO_MIPI_CLOCK_SELECTION_640_TO_720_MBPS   = 0b01100,
-    HAILO_MIPI_CLOCK_SELECTION_720_TO_800_MBPS   = 0b01101,
-    HAILO_MIPI_CLOCK_SELECTION_800_TO_880_MBPS   = 0b01110,
-    HAILO_MIPI_CLOCK_SELECTION_880_TO_1040_MBPS  = 0b01111,
-    HAILO_MIPI_CLOCK_SELECTION_1040_TO_1200_MBPS = 0b10000,
-    HAILO_MIPI_CLOCK_SELECTION_1200_TO_1350_MBPS = 0b10001,
-    HAILO_MIPI_CLOCK_SELECTION_1350_TO_1500_MBPS = 0b10010,
-    HAILO_MIPI_CLOCK_SELECTION_1500_TO_1750_MBPS = 0b10011,
-    HAILO_MIPI_CLOCK_SELECTION_1750_TO_2000_MBPS = 0b10100,
-    HAILO_MIPI_CLOCK_SELECTION_2000_TO_2250_MBPS = 0b10101,
-    HAILO_MIPI_CLOCK_SELECTION_2250_TO_2500_MBPS = 0b10110,
-
-    /** The clock selection is calculated from the data rate. **/
-    HAILO_MIPI_CLOCK_SELECTION_AUTOMATIC         = 0b111111,
-
-    /** Max enum value to maintain ABI Integrity */
-    HAILO_MIPI_CLOCK_SELECTION_MAX_ENUM          = HAILO_MAX_ENUM
-} hailo_mipi_clock_selection_t;
-
-/** Indicates MIPI Rx data type **/
-typedef enum {
-    HAILO_MIPI_RX_TYPE_RGB_444  = 0x20,
-    HAILO_MIPI_RX_TYPE_RGB_555  = 0x21,
-    HAILO_MIPI_RX_TYPE_RGB_565  = 0x22,
-    HAILO_MIPI_RX_TYPE_RGB_666  = 0x23,
-    HAILO_MIPI_RX_TYPE_RGB_888  = 0x24,
-    HAILO_MIPI_RX_TYPE_RAW_6    = 0x28,
-    HAILO_MIPI_RX_TYPE_RAW_7    = 0x29,
-    HAILO_MIPI_RX_TYPE_RAW_8    = 0x2a,
-    HAILO_MIPI_RX_TYPE_RAW_10   = 0x2b,
-    HAILO_MIPI_RX_TYPE_RAW_12   = 0x2c,
-    HAILO_MIPI_RX_TYPE_RAW_14   = 0x2d,
-
-    /** Max enum value to maintain ABI Integrity */
-    HAILO_MIPI_RX_TYPE_MAX_ENUM = HAILO_MAX_ENUM
-} hailo_mipi_data_type_rx_t;
-
-/** Indicates ISP input bayer pixel order **/
-typedef enum {
-    HAILO_MIPI_ISP_IMG_IN_ORDER_B_FIRST  = 0,
-    HAILO_MIPI_ISP_IMG_IN_ORDER_GB_FIRST = 1,
-    HAILO_MIPI_ISP_IMG_IN_ORDER_GR_FIRST = 2,
-    HAILO_MIPI_ISP_IMG_IN_ORDER_R_FIRST  = 3,
-
-    /** Max enum value to maintain ABI Integrity */
-    HAILO_MIPI_ISP_IMG_IN_ORDER_MAX_ENUM = HAILO_MAX_ENUM
-} hailo_mipi_isp_image_in_order_t;
-
-/** Indicates ISP output data type **/
-typedef enum {
-    HAILO_MIPI_IMG_OUT_DATA_TYPE_RGB_888  = 0x24,
-    HAILO_MIPI_IMG_OUT_DATA_TYPE_YUV_422  = 0x1E,
-
-    /** Max enum value to maintain ABI Integrity */
-    HAILO_MIPI_IMG_OUT_DATA_TYPE_MAX_ENUM = HAILO_MAX_ENUM
-} hailo_mipi_isp_image_out_data_type_t;
-
-typedef enum {
-    HAILO_MIPI_ISP_LIGHT_FREQUENCY_60HZ = 0,
-    HAILO_MIPI_ISP_LIGHT_FREQUENCY_50HZ = 1,
-
-    /** Max enum value to maintain ABI Integrity */
-    ISP_LIGHT_FREQUENCY_MAX_ENUM = HAILO_MAX_ENUM
-} hailo_mipi_isp_light_frequency_t;
-
-/** MIPI params */
-typedef struct {
-    /** The width in pixels of the image that enter to the MIPI CSI. The sensor output.
-     *  When isp_enable and isp_crop_enable is false, is also the stream input. **/
-    uint16_t img_width_pixels; // sensor_out == mipi_in == ISP_in
-
-    /** The height in pixels of the image that enter to the MIPI CSI. The sensor output. 
-     *  When isp_enable and isp_crop_enable is false, is also the stream input. **/ 
-    uint16_t img_height_pixels; // sensor_out == mipi_in == ISP_in
-
-    /** Number of pixels transmitted at each clock.**/
-    hailo_mipi_pixels_per_clock_t pixels_per_clock;
-
-    /** Number of lanes to use. **/
-    uint8_t number_of_lanes;
-
-    /** Selection of clock range that would be used.
-     *  Setting ::HAILO_MIPI_CLOCK_SELECTION_AUTOMATIC means that the
-     *  clock selection is calculated from the data rate. **/
-    hailo_mipi_clock_selection_t clock_selection;
-
-    /** The virtual channel index of the MIPI dphy. **/
-    uint8_t virtual_channel_index;
-
-    /** Rate of the passed data (MHz). **/
-    uint32_t data_rate;
-} hailo_mipi_common_params_t;
-
-/** ISP params */
-typedef struct {
-    /** The ISP Rx bayer pixel order. Only relevant when the ISP is enabled. **/
-    hailo_mipi_isp_image_in_order_t isp_img_in_order;
-
-    /** The data type that the MIPI will take out. Only relevant when the ISP is enabled. **/
-    hailo_mipi_isp_image_out_data_type_t isp_img_out_data_type;
-
-    /** Enable the crop feature in the ISP. Only relevant when the ISP is enabled. **/
-    bool isp_crop_enable;
-
-    /** The width in pixels of the output window that the ISP take out. The stream input.
-     *  Useful when isp_crop_enable is True. Only relevant when the ISP is enabled. **/
-    uint16_t isp_crop_output_width_pixels;
-
-    /** The height in pixels of the output window that the ISP take out. The stream input.
-     *  Useful when isp_crop_enable is True. Only relevant when the ISP is enabled. **/
-    uint16_t isp_crop_output_height_pixels;
-
-    /** The width start point of the output window that the ISP take out. 
-     *  Useful when isp_crop_enable is True. Only relevant when the ISP is enabled. **/
-    uint16_t isp_crop_output_width_start_offset_pixels;
-
-    /** The height start point of the output window that the ISP take out. 
-     *  Useful when isp_crop_enable is True. Only relevant when the ISP is enabled. **/
-    uint16_t isp_crop_output_height_start_offset_pixels;
-
-    /** Enable Test pattern from the ISP. Only relevant when the ISP is enabled. **/
-    bool isp_test_pattern_enable;
-
-    /** Don't load the ISP configuration file from the FLASH. Only relevant when the ISP is enabled. **/
-    bool isp_configuration_bypass;
-
-    /** Enable the run-time Auto Exposure in the ISP. Only relevant when the ISP is enabled. **/
-    bool isp_run_time_ae_enable;
-
-    /** Enable the run-time Auto White Balance in the ISP. Only relevant when the ISP is enabled. **/
-    bool isp_run_time_awb_enable;
-
-    /** Enable the run-time Adaptive Function in the ISP. Only relevant when the ISP is enabled. **/
-    bool isp_run_time_adt_enable;
-
-    /** Enable the run-time Auto Focus in the ISP. Only relevant when the ISP is enabled. **/
-    bool isp_run_time_af_enable;
-
-    /** Interval in milliseconds between ISP run time calculations. Only relevant when the ISP is enabled. **/
-    uint16_t isp_run_time_calculations_interval_ms;
-
-    /** Selection of the light frequency. This parameter varies depending on the power grid of the country 
-     *  where the product is running. Only relevant when the ISP is enabled. **/
-    hailo_mipi_isp_light_frequency_t isp_light_frequency;
-} hailo_isp_params_t;
-
-/** MIPI input stream (host to device) parameters */
-typedef struct {
-    hailo_mipi_common_params_t mipi_common_params;
-
-    /** Selection of which MIPI Rx device to use. **/
-    uint8_t mipi_rx_id;
-
-    /** The data type which will be passed over the MIPI. **/
-    hailo_mipi_data_type_rx_t data_type;
-
-    /** Enable the ISP block in the MIPI dataflow. The ISP is not supported yet. **/
-    bool isp_enable;
-
-    hailo_isp_params_t isp_params;
-} hailo_mipi_input_stream_params_t;
 
 /** Core input stream (host to device) parameters */
 typedef struct {
@@ -1158,7 +974,6 @@ typedef struct {
     union {
         hailo_pcie_input_stream_params_t pcie_input_params;
         hailo_integrated_input_stream_params_t integrated_input_params;
-        hailo_mipi_input_stream_params_t mipi_input_params;
         hailo_pcie_output_stream_params_t pcie_output_params;
         hailo_integrated_output_stream_params_t integrated_output_params;
     };
@@ -1685,7 +1500,7 @@ typedef struct {
     int64_t ram_size_used;
     /** Percentage */
     float32_t nnc_utilization;
-    /** Per second */
+    /** Per second (not implemented)*/
     int32_t ddr_noc_total_transactions;
     /** Percentage (round numbers between 1-100) */
     int32_t dsp_utilization;
@@ -1899,39 +1714,6 @@ typedef enum {
 
 #define HAILO_PCIE_STREAM_PARAMS_DEFAULT                                     \
     {                                                                        \
-    }
-
-#define HAILO_MIPI_INPUT_STREAM_PARAMS_DEFAULT                               \
-    {                                                                        \
-        .mipi_common_params = {                                              \
-            .img_width_pixels = 1920,                                        \
-            .img_height_pixels = 1080,                                       \
-            .pixels_per_clock = HAILO_MIPI_PIXELS_PER_CLOCK_4,               \
-            .number_of_lanes = 2,                                            \
-            .clock_selection = HAILO_MIPI_CLOCK_SELECTION_AUTOMATIC,         \
-            .virtual_channel_index = 0,                                      \
-            .data_rate = 260                                                 \
-        },                                                                   \
-        .mipi_rx_id = 0,                                                     \
-        .data_type = HAILO_MIPI_RX_TYPE_RAW_8,                               \
-        .isp_enable = false,                                                 \
-        .isp_params = {                                                      \
-            .isp_img_in_order = HAILO_MIPI_ISP_IMG_IN_ORDER_GR_FIRST,        \
-            .isp_img_out_data_type = HAILO_MIPI_IMG_OUT_DATA_TYPE_RGB_888,   \
-            .isp_crop_enable = false,                                        \
-            .isp_crop_output_width_pixels = 1920,                            \
-            .isp_crop_output_height_pixels = 1080,                           \
-            .isp_crop_output_width_start_offset_pixels = 0,                  \
-            .isp_crop_output_height_start_offset_pixels = 0,                 \
-            .isp_test_pattern_enable = true,                                 \
-            .isp_configuration_bypass = false,                               \
-            .isp_run_time_ae_enable = true,                                  \
-            .isp_run_time_awb_enable = true,                                 \
-            .isp_run_time_adt_enable = true,                                 \
-            .isp_run_time_af_enable = false,                                 \
-            .isp_run_time_calculations_interval_ms = 0,                      \
-            .isp_light_frequency = HAILO_MIPI_ISP_LIGHT_FREQUENCY_50HZ       \
-        }                                                                    \
     }
 
 #define HAILO_ACTIVATE_NETWORK_GROUP_PARAMS_DEFAULT                          \
@@ -2700,20 +2482,6 @@ HAILORTAPI hailo_status hailo_init_configure_params_by_device(hailo_hef hef, hai
     hailo_configure_params_t *params);
 
 /**
- * Init configure params with default values for a given hef, where all input_streams_params are init to be MIPI type.
- *
- * @param[in]  hef                      A  ::hailo_hef object to configure the @a device by.
- * @param[in]  output_interface         A @a hailo_stream_interface_t indicating which @a hailo_stream_parameters_t to
- *                                      create for the output streams.
- * @param[in]  mipi_params              A ::hailo_mipi_input_stream_params_t object which contains the MIPI params for
- *                                      the input streams.
- * @param[out] params                   A @a hailo_configure_params_t to be filled.
- * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- */
-HAILORTAPI hailo_status hailo_init_configure_params_mipi_input(hailo_hef hef, hailo_stream_interface_t output_interface,
-    hailo_mipi_input_stream_params_t *mipi_params, hailo_configure_params_t *params);
-
-/**
  * Init configure params with default values for a given hef.
  *
  * @param[in]  hef                      A  ::hailo_hef object to configure the @a device by.
@@ -2725,22 +2493,6 @@ HAILORTAPI hailo_status hailo_init_configure_params_mipi_input(hailo_hef hef, ha
  */
 HAILORTAPI hailo_status hailo_init_configure_network_group_params(hailo_hef hef, hailo_stream_interface_t stream_interface,
     const char *network_group_name, hailo_configure_network_group_params_t *params);
-
-/**
- * Init configure params with default values for a given hef, where all input_streams_params are init to be MIPI type.
- *
- * @param[in]  hef                      A  ::hailo_hef object to configure the @a device by.
- * @param[in]  output_interface         A @a hailo_stream_interface_t indicating which @a hailo_stream_parameters_t to
- *                                      create for the output streams.
- * @param[in]  mipi_params              A ::hailo_mipi_input_stream_params_t object which contains the MIPI params for
- *                                      the input streams.
- * @param[in]  network_group_name       The name of the network_group to make configure params for. If NULL is passed,
- *                                      the first network_group in the HEF will be addressed.
- * @param[out] params                   A @a hailo_configure_params_t to be filled.
- * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- */
-HAILORTAPI hailo_status hailo_init_configure_network_group_params_mipi_input(hailo_hef hef, hailo_stream_interface_t output_interface,
-    hailo_mipi_input_stream_params_t *mipi_params, const char *network_group_name, hailo_configure_network_group_params_t *params);
 
 /**
  * Configure the device from an hef.

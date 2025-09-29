@@ -241,8 +241,19 @@ public:
      *
      * @return Upon success, returns Expected containing the device architecture the HEF was compiled for.
      *         Otherwise, returns Unexpected of ::hailo_status error.
+     *
+     * @deprecated Use get_compatible_device_archs instead.
      */
-    Expected<hailo_device_architecture_t> get_hef_device_arch() const;
+    Expected<hailo_device_architecture_t> get_hef_device_arch() const
+        DEPRECATED("Hef::get_hef_device_arch is deprecated. Use get_compatible_device_archs instead");
+
+    /**
+     * Get all device architectures that the HEF is compatible with.
+     *
+     * @return Upon success, returns Expected of a vector of hailo_device_architecture_t.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    Expected<std::vector<hailo_device_architecture_t>> get_compatible_device_archs() const;
 
     /**
      * Get string of device architecture HEF was compiled for.
@@ -336,31 +347,6 @@ public:
      */
     Expected<ConfigureNetworkParams> create_configure_params(hailo_stream_interface_t stream_interface, const std::string &network_group_name);
 
-   /**
-     * Creates the default configure params for the Hef, where all inputs stream params are init to be MIPI type.
-     * The user can modify the given params before configuring the network.
-     * 
-     * @param[in] output_interface  Stream interface to use on the output streams.
-     * @param[in] mipi_params       Specific MIPI params.
-     * @return Upon success, returns Expected of NetworkGroupsParamsMap, which maps network group name to configured network group params.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     */
-    Expected<NetworkGroupsParamsMap> create_configure_params_mipi_input(hailo_stream_interface_t output_interface,
-        const hailo_mipi_input_stream_params_t &mipi_params);
-
-    /**
-     * Creates the default configure params for the Hef, where all inputs stream params are init to be MIPI type.
-     * The user can modify the given params before configuring the network.
-     * 
-     * @param[in] output_interface    Stream interface to use on the output streams.
-     * @param[in] mipi_params         Specific MIPI params
-     * @param[in] network_group_name  Name of network_group to make configure params for.
-     * @return Upon success, returns Expected of ConfigureNetworkParams.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     */
-    Expected<ConfigureNetworkParams> create_configure_params_mipi_input(hailo_stream_interface_t output_interface,
-        const hailo_mipi_input_stream_params_t &mipi_params, const std::string &network_group_name);
-
     /**
      * Creates streams params with default values.
      *
@@ -384,21 +370,6 @@ public:
      */
     Expected<std::map<std::string, hailo_network_parameters_t>> create_network_parameters_by_name(
         const std::string &net_group_name);
-
-    /**
-     * Creates MIPI input stream params.
-     *
-     * @param[in] net_group_name    The name of the network_group for which to create the stream parameters for.
-     *                              If an empty string is given, the first network_group in the Hef will be addressed.
-     * @param[in] output_interface  A hailo_stream_interface_t indicating which hailo_stream_parameters_t to
-     *                              create for the input streams params.
-     * @param[in] mipi_params       A hailo_mipi_input_stream_params_t object which contains the MIPI params.
-     * @return Upon success, returns Expected of a map of input stream name to stream params.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     */
-    Expected<std::map<std::string, hailo_stream_parameters_t>> create_stream_parameters_by_name_mipi_input(
-        const std::string &net_group_name, hailo_stream_interface_t output_interface,
-        const hailo_mipi_input_stream_params_t &mipi_params);
 
     /**
      * Creates input virtual stream params for a given network_group.
@@ -470,8 +441,11 @@ public:
     static Expected<std::string> hash(const std::string &hef_path);
 
     Expected<std::string> get_description(bool stream_infos, bool vstream_infos) const;
-    Expected<std::map<std::string, MemoryView>> get_external_resources() const;
+    Expected<MemoryView> get_external_resources(const std::string &resource_name) const;
+    std::vector<std::string> get_external_resource_names() const;
     void set_memory_footprint_optimization(bool should_optimize); // Best effort optimization to reduce memcpy
+
+    static Expected<std::map<std::string, BufferPtr>> extract_hef_external_resources(const std::string &file_path);
 
     ~Hef();
     Hef(Hef &&);

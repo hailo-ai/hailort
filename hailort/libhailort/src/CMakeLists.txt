@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.5.0)
 
+option(HAILO_BUILD_CLIENT_TOKENIZER "Build with client-side tokenization support to optimize memory usage on device. Enables running large models on small-memory devices by moving tokenization to host. Requires cargo and rustup to be installed" OFF)
+
 find_package(Threads REQUIRED)
 
 include(GNUInstallDirs)
@@ -7,6 +9,11 @@ include(CMakePackageConfigHelpers)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/common_compiler_options.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/eigen.cmake)
 include(genai/llm/minja_wrapper/minja_wrapper.cmake)
+
+# Include tokenizers when client tokenizer is enabled
+if(HAILO_BUILD_CLIENT_TOKENIZER)
+    include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/tokenizers.cmake)
+endif()
 
 FUNCTION(relative_to_absolute_paths output)
     SET(listVar "")
@@ -29,13 +36,13 @@ add_subdirectory(vdevice)
 add_subdirectory(transform)
 add_subdirectory(stream_common)
 add_subdirectory(vdma)
-add_subdirectory(mipi)
 add_subdirectory(hef)
 add_subdirectory(network_group)
 add_subdirectory(core_op)
 add_subdirectory(net_flow)
 add_subdirectory(rpc_callbacks)
 add_subdirectory(genai)
+add_subdirectory(perfetto)
 
 set(common_dir "${PROJECT_SOURCE_DIR}/common/src")
 set(COMMON_C_SOURCES
@@ -63,6 +70,9 @@ set(HAILORT_SRCS_ABS ${HAILORT_CPP_SOURCES} ${COMMON_C_SOURCES} ${HRPC_CPP_SOURC
 SET_SOURCE_FILES_PROPERTIES(${C_SOURCES} PROPERTIES LANGUAGE CXX)
 add_library(libhailort SHARED ${HAILORT_SRCS_ABS})
 
+get_property(PERFETTO_DEFS GLOBAL PROPERTY PERFETTO_COMPILE_DEFS)
+target_compile_definitions(libhailort PRIVATE ${PERFETTO_DEFS})
+
 # Include libraries
 if(WIN32)
     set_property(TARGET libhailort PROPERTY
@@ -87,6 +97,15 @@ target_link_libraries(libhailort PRIVATE Eigen3::Eigen)
 target_link_libraries(libhailort PRIVATE rpc_proto)
 target_link_libraries(libhailort PRIVATE genai_scheme_proto)
 target_link_libraries(libhailort PRIVATE minja_wrapper)
+
+# Link tokenizers when client tokenizer is enabled
+if(HAILO_BUILD_CLIENT_TOKENIZER)
+    target_link_libraries(libhailort PRIVATE tokenizers_cpp)
+endif()
+
+if(ENABLE_PERFETTO)
+    target_link_libraries(libhailort PRIVATE perfetto)
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL QNX)
     target_link_libraries(libhailort PRIVATE pci)
@@ -122,6 +141,7 @@ set(HAILORT_PUBLIC_HEADERS
     ${HAILORT_INC_DIR}/hailo/genai/llm/llm.hpp
     ${HAILORT_INC_DIR}/hailo/genai/text2image/text2image.hpp
     ${HAILORT_INC_DIR}/hailo/genai/vlm/vlm.hpp
+    ${HAILORT_INC_DIR}/hailo/genai/speech2text/speech2text.hpp
 )
 
 set_target_properties(libhailort PROPERTIES
@@ -154,6 +174,15 @@ target_include_directories(libhailort
     $<BUILD_INTERFACE:${HRPC_DIR}>
     $<BUILD_INTERFACE:${HAILORT_GENAI_DIR}>
 )
+
+# Add tokenizer include directory when enabled
+if(HAILO_BUILD_CLIENT_TOKENIZER)
+    target_include_directories(libhailort PRIVATE
+        $<BUILD_INTERFACE:${HAILORT_TOKENIZER_DIR}>
+        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/hailort/hailort_server/genai>
+    )
+    target_compile_definitions(libhailort PRIVATE HAILO_CLIENT_TOKENIZER_ENABLED)
+endif()
 
 target_compile_definitions(libhailort PUBLIC
     -DHAILORT_MAJOR_VERSION=${HAILORT_MAJOR_VERSION}

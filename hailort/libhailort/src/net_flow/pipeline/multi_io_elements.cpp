@@ -9,6 +9,7 @@
 
 #include "net_flow/pipeline/vstream_internal.hpp"
 #include "net_flow/pipeline/multi_io_elements.hpp"
+#include "utils/profiler/tracer_macros.hpp"
 
 namespace hailort
 {
@@ -72,6 +73,7 @@ void BaseMuxElement::run_push_async(PipelineBuffer &&/*buffer*/, const PipelineP
 
 void BaseMuxElement::run_push_async_multi(std::vector<PipelineBuffer> &&buffers)
 {
+    TRACE(RunPushAsyncStartTrace, name(), pipeline_unique_id(), network_name());
     auto next_pads = execution_pads();
     assert(PipelineDirection::PUSH == m_pipeline_direction);
     assert(next_pads.size() == 1);
@@ -92,6 +94,7 @@ void BaseMuxElement::run_push_async_multi(std::vector<PipelineBuffer> &&buffers)
             next_pads[0]->run_push_async(PipelineBuffer(output.status()));
         }
     }
+    TRACE(RunPushAsyncEndTrace, name(), pipeline_unique_id(), network_name());
 }
 
 Expected<PipelineBuffer> BaseMuxElement::run_pull(PipelineBuffer &&optional, const PipelinePad &/*source*/)
@@ -376,6 +379,7 @@ hailo_status BaseDemuxElement::run_push(PipelineBuffer &&buffer, const PipelineP
 
 void BaseDemuxElement::run_push_async(PipelineBuffer &&buffer, const PipelinePad &/*sink*/)
 {
+    TRACE(RunPushAsyncStartTrace, name(), pipeline_unique_id(), network_name());
     assert(PipelineDirection::PUSH == m_pipeline_direction);
     if (HAILO_SUCCESS != buffer.action_status()) {
         for (const auto &pad : execution_pads()) {
@@ -405,6 +409,7 @@ void BaseDemuxElement::run_push_async(PipelineBuffer &&buffer, const PipelinePad
             pad->run_push_async(PipelineBuffer(outputs.status()));
         }
     }
+    TRACE(RunPushAsyncEndTrace, name(), pipeline_unique_id(), network_name());
 }
 
 Expected<PipelineBuffer> BaseDemuxElement::run_pull(PipelineBuffer &&optional, const PipelinePad &source)
@@ -911,7 +916,11 @@ void AsyncHwElement::action()
                     assert(contains(m_source_name_to_index, source_name));
                     // If pipeline_status is not success, someone already handled this error and no reason for this buffer to be pushed
                     assert(contains(m_source_name_to_index, source_name));
+                    TRACE(RunPushAsyncStartTrace, m_sources[m_source_name_to_index[source_name]].next()->name(),
+                        m_sources[m_source_name_to_index[source_name]].next()->pipeline_unique_id(), network_name());
                     m_sources[m_source_name_to_index[source_name]].next()->run_push_async(std::move(*buffer));
+                    TRACE(RunPushAsyncEndTrace, m_sources[m_source_name_to_index[source_name]].next()->name(),
+                        m_sources[m_source_name_to_index[source_name]].next()->pipeline_unique_id(), network_name());
                 }
         }));
     }
@@ -946,6 +955,7 @@ void AsyncHwElement::action()
 
 void AsyncHwElement::run_push_async(PipelineBuffer &&buffer, const PipelinePad &sink)
 {
+    TRACE(RunPushAsyncStartTrace, name(), pipeline_unique_id(), network_name());
     assert(contains(m_sink_name_to_index, sink.name()));
 
     m_barrier->arrive_and_wait();
@@ -958,6 +968,7 @@ void AsyncHwElement::run_push_async(PipelineBuffer &&buffer, const PipelinePad &
     } else {
         m_input_buffers.clear();
     }
+    TRACE(RunPushAsyncEndTrace, name(), pipeline_unique_id(), network_name());
 }
 
 hailo_status AsyncHwElement::run_push(PipelineBuffer &&/*optional*/, const PipelinePad &/*sink*/)

@@ -23,10 +23,9 @@ static std::vector<MemoryView> arrays_to_memory_views(std::vector<py::array> &ar
     return views;
 }
 
-VLMWrapper VLMWrapper::create(VDeviceWrapperPtr vdevice, const std::string &model_path)
+VLMWrapper VLMWrapper::create(VDeviceWrapperPtr vdevice, const std::string &model_path, bool optimize_memory_on_device)
 {
-    auto vlm_params = hailort::genai::VLMParams();
-    VALIDATE_STATUS(vlm_params.set_model(model_path));
+    auto vlm_params = hailort::genai::VLMParams(model_path, optimize_memory_on_device);
     auto vlm = genai::VLM::create(vdevice->m_vdevice, vlm_params);
     VALIDATE_EXPECTED(vlm);
 

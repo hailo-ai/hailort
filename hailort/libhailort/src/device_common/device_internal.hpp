@@ -48,9 +48,9 @@ enum class HEFHwArch // Must be aligned to ProtoHEFHwArch
     HW_ARCH__HAILO8P = 1,
     HW_ARCH__HAILO8R = 2,
     HW_ARCH__HAILO8L = 3,
-    HW_ARCH__HAILO15H = 103,
+    HW_ARCH__HAILO1XH = 103,
     HW_ARCH__HAILO15M = 4,
-    HW_ARCH__HAILO10H = 5,
+    //HW_ARCH__HAILO10H = 5, // Deprecated
     HW_ARCH__HAILO15L = 6,
 
     HW_ARCH__SAGE_A0 = 100,
@@ -100,7 +100,7 @@ public:
     virtual Expected<Buffer> read_user_config() override;
     virtual hailo_status write_user_config(const MemoryView &buffer) override;
     virtual hailo_status erase_user_config() override;
-    static hailo_device_architecture_t hef_arch_to_device_arch(HEFHwArch hef_arch);
+    static std::vector<hailo_device_architecture_t> hef_arch_to_device_compatible_archs(HEFHwArch hef_arch);
 
     virtual Expected<size_t> fetch_logs(MemoryView buffer, hailo_log_type_t log_type) override;
 
@@ -162,7 +162,6 @@ private:
         firmware_version_t *min_supported_binary_version, FW_BINARY_TYPE_t fw_binary_type);
     static hailo_status validate_fw_version_for_platform(const hailo_device_identity_t &board_info,
         firmware_version_t fw_version, FW_BINARY_TYPE_t fw_binary_type);
-    static bool is_hef_compatible(hailo_device_architecture_t device_arch, HEFHwArch hw_arch);
     static void check_clock_rate_for_hailo8(uint32_t clock_rate, HEFHwArch hef_hw_arch);
     hailo_status store_sensor_control_buffers(const std::vector<SENSOR_CONFIG__operation_cfg_t> &control_buffers, uint32_t section_index, hailo_sensor_types_t sensor_type,
         uint32_t reset_config_size, uint16_t config_height, uint16_t config_width, uint16_t config_fps, const std::string &config_name);

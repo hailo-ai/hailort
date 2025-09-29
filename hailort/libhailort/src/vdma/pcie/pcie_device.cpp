@@ -204,16 +204,6 @@ Expected<hailo_device_architecture_t> PcieDevice::get_architecture() const
     return Expected<hailo_device_architecture_t>(m_device_architecture);
 }
 
-hailo_status PcieDevice::direct_write_memory(uint32_t address, const void *buffer, uint32_t size)
-{
-    return m_driver->write_memory(HailoRTDriver::MemoryType::DIRECT_MEMORY, address, buffer, size);
-}
-
-hailo_status PcieDevice::direct_read_memory(uint32_t address, void *buffer, uint32_t size)
-{
-    return m_driver->read_memory(HailoRTDriver::MemoryType::DIRECT_MEMORY, address, buffer, size);
-}
-
 hailo_status PcieDevice::reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type)
 {
     hailo_status status = HAILO_UNINITIALIZED;

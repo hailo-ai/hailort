@@ -399,6 +399,11 @@ hailo_status VdmaOutputStream::prepare_transfer(TransferRequest &&transfer_reque
     return m_channel->prepare_transfer(std::move(transfer_request));
 }
 
+hailo_status VdmaInputStream::cancel_prepared_transfers()
+{
+    return m_channel->cancel_prepared_transfers();
+}
+
 hailo_status VdmaOutputStream::activate_stream_impl()
 {
     return m_channel->activate();
@@ -425,6 +430,11 @@ hailo_status VdmaOutputStream::cancel_pending_transfers()
     m_channel->cancel_pending_transfers();
 
     return HAILO_SUCCESS;
+}
+
+hailo_status VdmaOutputStream::cancel_prepared_transfers()
+{
+    return m_channel->cancel_prepared_transfers();
 }
 
 void VdmaOutputStream::set_d2h_callback(std::function<void(hailo_status)> callback)

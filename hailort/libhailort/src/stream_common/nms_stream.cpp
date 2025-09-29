@@ -394,6 +394,11 @@ hailo_status NmsOutputStream::prepare_transfer(TransferRequest &&) {
     return HAILO_SUCCESS;
 }
 
+hailo_status NmsOutputStream::cancel_prepared_transfers()
+{
+    return HAILO_SUCCESS;
+}
+
 NmsReaderThread::NmsReaderThread(std::shared_ptr<OutputStreamBase> base_stream, size_t max_queue_size,
     hailo_stream_interface_t stream_interface) :
     m_base_stream(base_stream),

@@ -34,6 +34,10 @@ message GenAIRpcRequest {
         Text2Image_Release_Request text2image_release = 26;
 
         GenAI_Check_Hef_Exists_Request genai_check_hef_exists = 27;
+
+        Speech2Text_Create_Request speech2text_create = 28;
+        Speech2Text_Generate_Request speech2text_generate = 29;
+        Speech2Text_Release_Request speech2text_release = 30;
     }
 }
 
@@ -69,6 +73,10 @@ message GenAIRpcReply {
         Text2Image_Release_Reply text2image_release = 26;
 
         GenAI_Check_Hef_Exists_Reply genai_check_hef_exists = 27;
+
+        Speech2Text_Create_Reply speech2text_create = 28;
+        Speech2Text_Generate_Reply speech2text_generate = 29;
+        Speech2Text_Release_Reply speech2text_release = 30;
     }
 }
 
@@ -76,11 +84,14 @@ message LLM_Create_Request {
     string lora_name = 1;
     string hef_path = 2;
     string group_id = 3;
+    uint64 file_size = 4;
+    bool tokenizer_on_host = 5;
 }
 
 message LLM_Create_Reply {
     uint32 status = 1;
     string prompt_template = 2;
+    uint32 embedding_features = 3;
 }
 
 message LLM_Get_Generator_Params_Request {
@@ -109,8 +120,9 @@ message LLM_Generator_Create_Reply {
     uint32 status = 1;
 }
 
+
 message LLM_Generator_Write_Request {
-    // Indicates that the next message to the server is the input prompt
+    // TODO (HRT-18669): Consider removing this RPC
 }
 
 message LLM_Generator_Write_Reply {
@@ -118,21 +130,35 @@ message LLM_Generator_Write_Reply {
 }
 
 message LLM_Generator_Generate_Request {
-    // Indicates that the server should start generating text
 }
 
 message LLM_Generator_Generate_Reply {
     uint32 status = 1;
+    repeated uint32 initial_prefix_tokens = 2;  // Initial prefix tokens to use for this generation session
+}
+
+message TextGenerationInput {
+    string initial_prompt = 1;      // Client-side tokenizer: empty | Server-side tokenizer: valid on first iter
+    repeated uint32 tokens = 2;     // * first iter - Client-side tokenizer: combined prefix+input tokens | Server-side tokenizer: prefix tokens_history_before_reasoning
+                                    // * Subsequent iters - single token
+    repeated bytes embeddings = 3;  // Client-side tokenizer: valid | Server-side tokenizer: empty
+}
+
+message TextGenerationOutput {
+    string output_token_str = 1;    // Valid if tokenization is on server-side
+    uint32 output_token_id = 2;
 }
 
 message LLM_Generator_Read_Request {
     uint32 timeout_ms = 1;
+    TextGenerationInput generation_input = 2;
 }
 
 message LLM_Generator_Read_Reply {
-    string output_token = 1;
+    TextGenerationOutput generation_output = 1;
     uint32 generation_status = 2;
     uint32 status = 3;
+    bool is_context_full = 4;
 }
 
 message LLM_Tokenize_Request {
@@ -166,7 +192,7 @@ message LLM_Generator_Abort_Reply {
 }
 
 message LLM_Set_End_Of_Generation_Sequence_Request {
-    string end_of_generation_sequence = 1;
+    repeated int32 end_of_generation_sequence_tokens = 1;
 }
 
 message LLM_Generator_Release_Request {
@@ -185,11 +211,16 @@ message LLM_Get_End_Of_Generation_Sequence_Request {
 
 message LLM_Get_End_Of_Generation_Sequence_Reply {
     string end_of_generation_sequence = 1;
-    uint32 status = 2;
+    repeated int32 end_of_generation_sequence_tokens = 2;
+    uint32 status = 3;
 }
 
 message LLM_Set_Stop_Tokens_Request {
-    repeated string stop_tokens = 1;
+    repeated TokenizedSequence tokenized_stop_tokens = 1;
+}
+
+message TokenizedSequence {
+    repeated int32 tokens = 1;
 }
 
 message LLM_Set_Stop_Tokens_Reply {
@@ -201,12 +232,15 @@ message LLM_Get_Stop_Tokens_Request {
 
 message LLM_Get_Stop_Tokens_Reply {
     repeated string stop_tokens = 1;
-    uint32 status = 2;
+    repeated TokenizedSequence tokenized_stop_tokens = 2;
+    uint32 status = 3;
 }
 
 message VLM_Create_Request {
     string group_id = 1;
     string hef_path = 2; // non-empty means hef exists on server side
+    uint64 file_size = 3;
+    bool tokenizer_on_host = 4;
 }
 
 message FrameFormat {
@@ -225,6 +259,7 @@ message VLM_Create_Reply {
     FrameFormat frame_format = 2;
     FrameShape frame_shape = 3;
     string prompt_template = 4;
+    uint32 embedding_features = 5;
 }
 
 message VLM_Generator_Generate_Request {
@@ -335,4 +370,36 @@ message GenAI_Check_Hef_Exists_Request {
 message GenAI_Check_Hef_Exists_Reply {
     uint32 status = 1;
     bool hef_exists = 2;
+}
+
+message Speech2Text_Create_Request {
+    string group_id = 1;
+}
+
+message Speech2Text_Create_Reply {
+    uint32 status = 1;
+}
+
+message Speech2Text_Generate_Request {
+    uint32 task_type = 1;
+    string language = 2;
+    // The next message to the server is the audio chunk
+}
+
+message ProtoSpeech2TextSegmentInfo {
+    float start_sec = 1;
+    float end_sec = 2;
+    string text = 3;
+}
+
+message Speech2Text_Generate_Reply {
+    uint32 status = 1;
+    repeated ProtoSpeech2TextSegmentInfo segments_infos = 2;
+}
+
+message Speech2Text_Release_Request {
+}
+
+message Speech2Text_Release_Reply {
+    uint32 status = 1;
 }

@@ -10,6 +10,7 @@
 #include "configured_infer_model_hrpc_client.hpp"
 #include "common/logger_macros.hpp"
 #include "hrpc/connection_context.hpp"
+#include "hrpc_protocol/serializer.hpp"
 
 namespace hailort
 {
@@ -91,7 +92,7 @@ ConfiguredInferModelHrpcClient::~ConfiguredInferModelHrpcClient()
             LOGGER__CRITICAL("Failed to serialize ConfiguredInferModel_release request");
             return;
         }
-        auto expected_result = client->execute_request(HailoRpcActionID::CONFIGURED_INFER_MODEL__DESTROY,
+        auto expected_result = client->execute_request(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__DESTROY),
             MemoryView(request_buffer.value()->data(), *request_size));
         if (!expected_result) {
             LOGGER__CRITICAL("Failed to destroy configured infer model! status = {}", expected_result.status());
@@ -201,7 +202,7 @@ Expected<AsyncInferJob> ConfiguredInferModelHrpcClient::run_async_impl(const Con
     }
     TRY(auto write_buffers, get_write_buffers(bindings));
     TRY(auto read_buffers, get_read_buffers(bindings));
-    auto expected = client->execute_request_async(HailoRpcActionID::CONFIGURED_INFER_MODEL__RUN_ASYNC,
+    auto expected = client->execute_request_async(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__RUN_ASYNC),
         request_view, wrapped_callback, std::move(write_buffers), std::move(read_buffers));
     CHECK_SUCCESS(expected);
 
@@ -343,7 +344,7 @@ hailo_status ConfiguredInferModelHrpcClient::set_scheduler_timeout(const std::ch
     TRY(auto serialized_request, client->allocate_request_buffer());
     TRY(auto request_size, SetSchedulerTimeoutSerializer::serialize_request(m_handle_id, timeout,
         MemoryView(*serialized_request)));
-    CHECK_SUCCESS(client->execute_request(HailoRpcActionID::CONFIGURED_INFER_MODEL__SET_SCHEDULER_TIMEOUT,
+    CHECK_SUCCESS(client->execute_request(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__SET_SCHEDULER_TIMEOUT),
         MemoryView(serialized_request->data(), request_size)));
 
     return HAILO_SUCCESS;
@@ -357,7 +358,7 @@ hailo_status ConfiguredInferModelHrpcClient::set_scheduler_threshold(uint32_t th
 
     TRY(auto serialized_request, client->allocate_request_buffer());
     TRY(auto request_size, SetSchedulerThresholdSerializer::serialize_request(m_handle_id, threshold, MemoryView(*serialized_request)));
-    CHECK_SUCCESS(client->execute_request(HailoRpcActionID::CONFIGURED_INFER_MODEL__SET_SCHEDULER_THRESHOLD,
+    CHECK_SUCCESS(client->execute_request(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__SET_SCHEDULER_THRESHOLD),
         MemoryView(serialized_request->data(), request_size)));
 
     return HAILO_SUCCESS;
@@ -372,7 +373,7 @@ hailo_status ConfiguredInferModelHrpcClient::set_scheduler_priority(uint8_t prio
     TRY(auto serialized_request, client->allocate_request_buffer());
     TRY(auto request_size, SetSchedulerPrioritySerializer::serialize_request(m_handle_id, priority,
         MemoryView(*serialized_request)));
-    CHECK_SUCCESS(client->execute_request(HailoRpcActionID::CONFIGURED_INFER_MODEL__SET_SCHEDULER_PRIORITY,
+    CHECK_SUCCESS(client->execute_request(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__SET_SCHEDULER_PRIORITY),
         MemoryView(serialized_request->data(), request_size)));
 
     return HAILO_SUCCESS;
@@ -389,7 +390,7 @@ Expected<LatencyMeasurementResult> ConfiguredInferModelHrpcClient::get_hw_latenc
         MemoryView(*serialized_request)));
     TRY_WITH_ACCEPTABLE_STATUS(HAILO_NOT_AVAILABLE,
         auto result, client->execute_request(
-            HailoRpcActionID::CONFIGURED_INFER_MODEL__GET_HW_LATENCY_MEASUREMENT,
+            static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__GET_HW_LATENCY_MEASUREMENT),
             MemoryView(serialized_request->data(), request_size)));
 
     TRY(auto avg_hw_latency,
@@ -406,7 +407,7 @@ hailo_status ConfiguredInferModelHrpcClient::activate()
 
     TRY(auto serialized_request, client->allocate_request_buffer());
     TRY(auto request_size, ActivateSerializer::serialize_request(m_handle_id, MemoryView(*serialized_request)));
-    CHECK_SUCCESS(client->execute_request(HailoRpcActionID::CONFIGURED_INFER_MODEL__ACTIVATE,
+    CHECK_SUCCESS(client->execute_request(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__ACTIVATE),
         MemoryView(serialized_request->data(), request_size)));
 
     return HAILO_SUCCESS;
@@ -420,7 +421,7 @@ hailo_status ConfiguredInferModelHrpcClient::deactivate()
 
     TRY(auto serialized_request, client->allocate_request_buffer());
     TRY(auto request_size, DeactivateSerializer::serialize_request(m_handle_id, MemoryView(*serialized_request)));
-    CHECK_SUCCESS(client->execute_request(HailoRpcActionID::CONFIGURED_INFER_MODEL__DEACTIVATE,
+    CHECK_SUCCESS(client->execute_request(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__DEACTIVATE),
         MemoryView(serialized_request->data(), request_size)));
 
     return HAILO_SUCCESS;
@@ -512,22 +513,55 @@ hailo_status ConfiguredInferModelHrpcClient::shutdown()
 
     TRY(auto serialized_request, client->allocate_request_buffer());
     TRY(auto request_size, ShutdownSerializer::serialize_request(m_handle_id, MemoryView(*serialized_request)));
-    CHECK_SUCCESS(client->execute_request(HailoRpcActionID::CONFIGURED_INFER_MODEL__SHUTDOWN,
+    CHECK_SUCCESS(client->execute_request(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__SHUTDOWN),
         MemoryView(serialized_request->data(), request_size)));
 
     return HAILO_SUCCESS;
 }
 
-hailo_status ConfiguredInferModelHrpcClient::update_cache_offset(int32_t /*offset_delta_entries*/)
+hailo_status ConfiguredInferModelHrpcClient::update_cache_offset(int32_t offset_delta_entries)
 {
-    LOGGER__ERROR("update_cache_offset is not supported for HrpcClient");
-    return HAILO_NOT_IMPLEMENTED;
+    auto client = m_client.lock();
+    CHECK(nullptr != client, HAILO_INTERNAL_FAILURE,
+        "Lost communication with the server. This may happen if VDevice is released while the CIM is in use.");
+
+    TRY(auto serialized_request, client->allocate_request_buffer());
+    TRY(auto request_size, UpdateCacheOffsetSerializer::serialize_request(m_handle_id, offset_delta_entries,
+        MemoryView(*serialized_request)));
+    CHECK_SUCCESS(client->execute_request(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__UPDATE_CACHE_OFFSET),
+        MemoryView(serialized_request->data(), request_size)));
+
+    return HAILO_SUCCESS;
 }
 
-hailo_status ConfiguredInferModelHrpcClient::init_cache(uint32_t /*read_offset*/)
+hailo_status ConfiguredInferModelHrpcClient::init_cache(uint32_t read_offset)
 {
-    LOGGER__ERROR("init_cache is not supported for HrpcClient");
-    return HAILO_NOT_IMPLEMENTED;
+    auto client = m_client.lock();
+    CHECK(nullptr != client, HAILO_INTERNAL_FAILURE,
+        "Lost communication with the server. This may happen if VDevice is released while the CIM is in use.");
+
+    TRY(auto serialized_request, client->allocate_request_buffer());
+    TRY(auto request_size, InitCacheSerializer::serialize_request(m_handle_id, read_offset,
+        MemoryView(*serialized_request)));
+    CHECK_SUCCESS(client->execute_request(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__INIT_CACHE),
+        MemoryView(serialized_request->data(), request_size)));
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status ConfiguredInferModelHrpcClient::finalize_cache()
+{
+    auto client = m_client.lock();
+    CHECK(nullptr != client, HAILO_INTERNAL_FAILURE,
+        "Lost communication with the server. This may happen if VDevice is released while the CIM is in use.");
+
+    TRY(auto serialized_request, client->allocate_request_buffer());
+    TRY(auto request_size, FinalizeCacheSerializer::serialize_request(m_handle_id,
+        MemoryView(*serialized_request)));
+    CHECK_SUCCESS(client->execute_request(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__FINALIZE_CACHE),
+        MemoryView(serialized_request->data(), request_size)));
+
+    return HAILO_SUCCESS;
 }
 
 } // namespace hailort

@@ -34,8 +34,6 @@ public:
     virtual ~PcieDevice() = default;
 
     virtual hailo_status reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type) override;
-    virtual hailo_status direct_write_memory(uint32_t address, const void *buffer, uint32_t size) override;
-    virtual hailo_status direct_read_memory(uint32_t address, void *buffer, uint32_t size) override;
     virtual bool is_stream_interface_supported(const hailo_stream_interface_t& stream_interface) const override
     {
         switch (stream_interface) {

@@ -42,10 +42,10 @@ public:
     ~Client();
 
     hailo_status connect(bool is_localhost = false);
-    Expected<rpc_message_t> execute_request(HailoRpcActionID action_id, const MemoryView &request,
+    Expected<rpc_message_t> execute_request(uint32_t action_id, const MemoryView &request,
         std::vector<TransferBuffer> &&write_buffers = {}, std::vector<TransferBuffer> &&read_buffers = {});
     hailo_status wait_for_execute_request_ready(const MemoryView &request, std::chrono::milliseconds timeout);
-    Expected<message_id_t> execute_request_async(HailoRpcActionID action_id, const MemoryView &request,
+    Expected<message_id_t> execute_request_async(uint32_t action_id, const MemoryView &request,
         HrpcCallback reply_received_callback, std::vector<TransferBuffer> &&write_buffers = {},
         std::vector<TransferBuffer> &&read_buffers = {});
     void set_notification_callback(std::function<hailo_status(const MemoryView&)> callback);

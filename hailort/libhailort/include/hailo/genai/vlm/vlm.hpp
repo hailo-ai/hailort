@@ -30,9 +30,13 @@ public:
     /**
      * Constructs a VLMParams object with the specified Hef path.
      *
-     * @param[in] hef_path        The path of the Hef file.
+     * @param[in] hef_path                   The path of the Hef file.
+     * @param[in] optimize_memory_on_device  Whether to optimize memory usage on device by enabling client-side tokenization.
+     *                                       When true, tokenization is performed on the host, reducing device memory usage.
+     *                                       Requires libhailort to be compiled with HAILO_BUILD_CLIENT_TOKENIZER=ON.
+     *                                       Default is false.
      */
-    VLMParams(const std::string &hef_path) : m_hef_path(hef_path) {}
+    VLMParams(const std::string &hef_path, bool optimize_memory_on_device = false) : m_hef_path(hef_path), m_optimize_memory_on_device(optimize_memory_on_device) {}
 
     /**
      * Sets VLM model.
@@ -48,8 +52,23 @@ public:
      */
     const std::string& hef() const;
 
+    /**
+     * @return Whether memory optimization on device is enabled.
+     */
+    bool optimize_memory_on_device() const;
+
+    /**
+     * Sets whether to optimize memory usage on device.
+     *
+     * @param[in] optimize_memory_on_device  Whether to enable client-side tokenization for memory optimization.
+     *                                       When true, tokenization is performed on the host, reducing device memory usage.
+     *                                       Requires libhailort to be compiled with HAILO_BUILD_CLIENT_TOKENIZER=ON.
+     */
+    void set_optimize_memory_on_device(bool optimize_memory_on_device);
+
 private:
     std::string m_hef_path;
+    bool m_optimize_memory_on_device;
 };
 
 /*! The VLMGenerator object is used to send input prompt and input frame to the VLM model for generating responses */

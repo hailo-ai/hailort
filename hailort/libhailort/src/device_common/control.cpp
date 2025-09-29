@@ -44,8 +44,7 @@ namespace hailort
 typedef std::array<std::array<float64_t, CONTROL_PROTOCOL__POWER_MEASUREMENT_TYPES__COUNT>, CONTROL_PROTOCOL__DVM_OPTIONS_COUNT> power_conversion_multiplier_t;
 
 
-Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOCOL_identify_response_t *identify_response,
-    Device &device)
+Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOCOL_identify_response_t *identify_response)
 {
     hailo_device_identity_t board_info;
 
@@ -98,23 +97,6 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
         TRY(const auto dev_arch, PartialClusterReader::get_actual_dev_arch_from_fuse(board_info.device_architecture));
         board_info.device_architecture = dev_arch;
     }
-
-    // Check if we're on H10H or H10H2 - relevant only for linux
-#ifdef __linux__
-    if (Device::Type::INTEGRATED == device.get_type()) {
-        char hostname[HOST_NAME_MAX+1];
-        CHECK_AS_EXPECTED(0 == gethostname(hostname, sizeof(hostname)), HAILO_INTERNAL_FAILURE, "Failed to get hostname");
-        if (std::string(hostname).find("hailo10") != std::string::npos) {
-            if (std::string(hostname).find("hailo10h2") != std::string::npos) {
-                board_info.device_architecture = HAILO_ARCH_MARS;
-            } else {
-                board_info.device_architecture = HAILO_ARCH_HAILO10H;
-            }
-        }
-    }
-#else
-    (void)device;
-#endif
 
     /* Write identify results to log */
     LOGGER__INFO("firmware_version is: {}.{}.{}",
@@ -354,7 +336,7 @@ Expected<hailo_device_identity_t> Control::identify(Device &device)
     CHECK_SUCCESS_AS_EXPECTED(status);
     identify_response = (CONTROL_PROTOCOL_identify_response_t *)(payload->parameters);
 
-    return control__parse_identify_results(identify_response, device);
+    return control__parse_identify_results(identify_response);
 }
 
 hailo_status Control::core_identify(Device &device, hailo_core_information_t *core_info)

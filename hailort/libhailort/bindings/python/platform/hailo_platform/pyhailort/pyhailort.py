@@ -25,11 +25,8 @@ from hailo_platform.pyhailort._pyhailort import (TemperatureInfo, # noqa F401
                                                  FormatOrder,
                                                  AveragingFactor, SamplingPeriod, MeasurementBufferIndex,
                                                  FormatType, WatchdogMode,
-                                                 MipiDataTypeRx, MipiPixelsPerClock,
-                                                 MipiClockSelection, MipiIspImageInOrder,
-                                                 MipiIspImageOutDataType, IspLightFrequency,
                                                  BootSource, Endianness,
-                                                 MipiInputStreamParams, SensorConfigTypes)
+                                                 SensorConfigTypes)
 
 BBOX_PARAMS = _pyhailort.HailoRTDefaults.BBOX_PARAMS()
 BBOX_WITH_MASK_PARAMS = 6  # 4 coordinates + score + class_idx
@@ -183,97 +180,6 @@ class ConfigureParams(object):
         with ExceptionWrapper():
             return hef._hef.create_configure_params(interface)
 
-    @staticmethod
-    def create_mipi_inputs_from_hef(hef, output_interface, mipi_rx_id=0, data_type=MipiDataTypeRx.RAW_8,
-            img_width_pixels=1920, img_height_pixels=1080,
-            pixels_per_clock=MipiPixelsPerClock.PIXELS_PER_CLOCK_4, number_of_lanes=2,
-            clock_selection=MipiClockSelection.SELECTION_AUTOMATIC, data_rate=260, virtual_channel_index=0,
-            isp_enable=False, isp_img_in_order=MipiIspImageInOrder.GR_FIRST,
-            isp_img_out_data_type=MipiIspImageOutDataType.RGB_888, isp_crop_enable=False,
-            isp_crop_output_width_pixels=1920, isp_crop_output_height_pixels=1080,
-            isp_crop_output_width_start_offset_pixels=0, isp_crop_output_height_start_offset_pixels=0,
-            isp_test_pattern_enable=True, isp_configuration_bypass=False,
-            isp_run_time_ae_enable=True, isp_run_time_awb_enable=True, isp_run_time_adt_enable=True,
-            isp_run_time_af_enable=False, isp_run_time_calculations_interval_ms=0,
-            isp_light_frequency=IspLightFrequency.LIGHT_FREQ_50_HZ):
-        """Create configure params from HEF. These params affects the HEF configuration into a device.
-
-        .. attention:: The ISP and its features are not officially supported yet.
-
-        Args:
-            hef (:class:`HEF`): The HEF to create the parameters from.
-            output_interface (:class:`HailoStreamInterface`): The stream_interface to create output stream_params for.
-            mipi_rx_id (int): Selection of which MIPI Rx device to use.
-            data_type (:class:`~hailo_platform.pyhailort.pyhailort.MipiDataTypeRx`): The data type which will be passed over the MIPI.
-            img_width_pixels (int): The width in pixels of the image that enter to the MIPI CSI. The sensor output.
-                                        When isp_enable and isp_crop_enable is false, is also the stream input.
-            img_height_pixels (int): The height in pixels of the image that enter to the MIPI CSI. The sensor output.
-                                        When isp_enable and isp_crop_enable is false, is also the stream input.
-            pixels_per_clock (:class:`~hailo_platform.pyhailort.pyhailort.MipiPixelsPerClock`): Number of pixels transmitted at each
-                clock.
-            number_of_lanes (int): Number of lanes to use.
-            clock_selection (:class:`~hailo_platform.pyhailort.pyhailort.MipiClockSelection`): Selection of clock range that would be
-                used. Setting :class:`~hailo_platform.pyhailort.pyhailort.MipiClockSelection.SELECTION_AUTOMATIC` means that the
-                clock selection is calculated from the data rate.
-            data_rate (int): Rate of the passed data (MHz).
-            virtual_channel_index (int): The virtual channel index of the MIPI dphy.
-            isp_enable (bool): Enable the ISP block in the MIPI dataflow. The ISP is not supported yet.
-            isp_img_in_order (:class:`~hailo_platform.pyhailort.pyhailort.MipiIspImageInOrder`):
-                The ISP Rx bayer pixel order. Only relevant when the ISP is enabled.
-            isp_img_out_data_type (:class:`~hailo_platform.pyhailort.pyhailort.MipiIspImageOutDataType`):
-                The data type that the MIPI will take out. Only relevant when the ISP is enabled.
-            isp_crop_enable (bool): Enable the crop feature in the ISP. Only relevant when the ISP is enabled.
-            isp_crop_output_width_pixels (int): The width in pixels of the output window that the ISP take out. The stream input.
-                                        Useful when isp_crop_enable is True. Only relevant when the ISP is enabled.
-            isp_crop_output_height_pixels (int): The height in pixels of the output window that the ISP take out. The stream input.
-                                        Useful when isp_crop_enable is True. Only relevant when the ISP is enabled.
-            isp_crop_output_width_start_offset_pixels (int): The width start point of the output window that the ISP take out. 
-                                        Useful when isp_crop_enable is True. Only relevant when the ISP is enabled.
-            isp_crop_output_height_start_offset_pixels (int): The height start point of the output window that the ISP take out. 
-                                        Useful when isp_crop_enable is True. Only relevant when the ISP is enabled.
-            isp_test_pattern_enable (bool): Enable Test pattern from the ISP. Only relevant when the ISP is enabled.
-            isp_configuration_bypass (bool): Don't load the ISP configuration file from the FLASH. Only relevant when the ISP is enabled.
-            isp_run_time_ae_enable (bool): Enable the run-time Auto Exposure in the ISP. Only relevant when the ISP is enabled.
-            isp_run_time_awb_enable (bool): Enable the run-time Auto White Balance in the ISP. Only relevant when the ISP is enabled.
-            isp_run_time_adt_enable (bool): Enable the run-time Adaptive Function in the ISP. Only relevant when the ISP is enabled.
-            isp_run_time_af_enable (bool): Enable the run-time Auto Focus in the ISP. Only relevant when the ISP is enabled.
-            isp_run_time_calculations_interval_ms (int): Interval in milliseconds between ISP run time calculations. Only relevant when the ISP is enabled.
-            isp_light_frequency (:class:`~hailo_platform.pyhailort.pyhailort.IspLightFrequency`):
-                                        Selection of the light frequency. This parameter varies depending on the power grid of the country where 
-                                        the product is running. Only relevant when the ISP is enabled.
-        Returns:
-            dict: The created stream params. The keys are the network_group names in the HEF. The values are default params, which can be changed.
-        """
-
-        mipi_params = MipiInputStreamParams()
-        mipi_params.mipi_rx_id = mipi_rx_id
-        mipi_params.data_type = data_type
-        mipi_params.isp_enable = isp_enable
-        mipi_params.mipi_common_params.pixels_per_clock = pixels_per_clock
-        mipi_params.mipi_common_params.number_of_lanes = number_of_lanes
-        mipi_params.mipi_common_params.clock_selection = clock_selection
-        mipi_params.mipi_common_params.virtual_channel_index = virtual_channel_index
-        mipi_params.mipi_common_params.data_rate = data_rate
-        mipi_params.mipi_common_params.img_width_pixels = img_width_pixels
-        mipi_params.mipi_common_params.img_height_pixels = img_height_pixels
-        mipi_params.isp_params.img_in_order = isp_img_in_order
-        mipi_params.isp_params.img_out_data_type = isp_img_out_data_type
-        mipi_params.isp_params.crop_enable = isp_crop_enable
-        mipi_params.isp_params.crop_output_width_pixels = isp_crop_output_width_pixels
-        mipi_params.isp_params.crop_output_height_pixels = isp_crop_output_height_pixels
-        mipi_params.isp_params.crop_output_width_start_offset_pixels = isp_crop_output_width_start_offset_pixels
-        mipi_params.isp_params.crop_output_height_start_offset_pixels = isp_crop_output_height_start_offset_pixels
-        mipi_params.isp_params.test_pattern_enable = isp_test_pattern_enable
-        mipi_params.isp_params.configuration_bypass = isp_configuration_bypass
-        mipi_params.isp_params.run_time_ae_enable = isp_run_time_ae_enable
-        mipi_params.isp_params.run_time_awb_enable = isp_run_time_awb_enable
-        mipi_params.isp_params.run_time_adt_enable = isp_run_time_adt_enable
-        mipi_params.isp_params.run_time_af_enable = isp_run_time_af_enable
-        mipi_params.isp_params.isp_run_time_calculations_interval_ms = isp_run_time_calculations_interval_ms
-        mipi_params.isp_params.isp_light_frequency = isp_light_frequency
-        with ExceptionWrapper():
-            return hef._hef.create_configure_params_mipi_input(output_interface, mipi_params)
-
 def _get_name_as_str(name):
     return name if name is not None else ""
 
@@ -330,10 +236,15 @@ class HEF(object):
         with ExceptionWrapper():
             return self._hef.get_network_groups_infos()
 
-    def _get_external_resources(self):
-        # Returns a dict of the appended external resources. Key is name, Value is the resource raw-bytes.
+    def _get_external_resources(self, resource_name):
+        # Returns a buffer of the appended external resources with this name as the resource raw-bytes.
         with ExceptionWrapper():
-            return self._hef.get_external_resources()
+            return self._hef.get_external_resources(resource_name)
+
+    def _get_external_resource_names(self):
+        # Returns the names of the external resources in this HEF.
+        with ExceptionWrapper():
+            return self._hef.get_external_resource_names()
 
     def get_input_vstream_infos(self, name=None):
         """Get input vstreams information.
@@ -1439,14 +1350,6 @@ class InternalPcieDevice(object):
             return [PcieDeviceInfo(dev_info.bus, dev_info.device, dev_info.func, dev_info.domain)
                 for dev_info in pcie_scanner.scan_devices()]
 
-    def write_memory(self, address, data):
-        with ExceptionWrapper():
-            self.device.direct_write_memory(address, data)
-
-    def read_memory(self, address, size):
-        with ExceptionWrapper():
-            return self.device.direct_read_memory(address, size)
-
 
 class HailoPowerMeasurementUtils(object):
     @staticmethod
@@ -1496,8 +1399,8 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 5
-SUPPORTED_FW_MINOR = 0
-SUPPORTED_FW_REVISION = 1
+SUPPORTED_FW_MINOR = 1
+SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
 
@@ -1792,7 +1695,6 @@ class HailoFirmwareVersion(object):
 class SupportedFeatures(object):
     def __init__(self, supported_features):
         self.ethernet = supported_features.ethernet
-        self.mipi = supported_features.mipi
         self.pcie = supported_features.pcie
         self.current_monitoring = supported_features.current_monitoring
         self.mdio = supported_features.mdio
@@ -1806,7 +1708,6 @@ class SupportedFeatures(object):
         """
         return 'Device supported features: \n' + \
             self._feature_str('Ethernet', self.ethernet) + \
-            self._feature_str('MIPI', self.mipi) + \
             self._feature_str('PCIE', self.pcie) + \
             self._feature_str('Current Monitoring', self.current_monitoring) + \
             self._feature_str('MDIO', self.mdio)
@@ -2748,6 +2649,10 @@ class InferModel:
         with ExceptionWrapper():
             self._infer_model.set_power_mode(power_mode)
 
+    def _set_enable_kv_cache(self, enable_kv_cache):
+        with ExceptionWrapper():
+            self._infer_model.set_enable_kv_cache(enable_kv_cache)
+
     def configure(self):
         """
         Configures the InferModel object. Also checks the validity of the configuration's formats.
@@ -3325,6 +3230,14 @@ class ConfiguredInferModel:
         """
         with ExceptionWrapper():
             return self._configured_infer_model.shutdown()
+
+    def _update_cache_offset(self, offset_delta_entries):
+        with ExceptionWrapper():
+            return self._configured_infer_model.update_cache_offset(offset_delta_entries)
+
+    def _finalize_cache(self):
+        with ExceptionWrapper():
+            return self._configured_infer_model.finalize_cache()
 
     def _get_nms_infos(self):
         nms_infos = {}
@@ -4253,13 +4166,13 @@ class LLM:
 
         # Basic usage
         with VDevice() as vd:
-            with LLM(vd, "model.hef") as llm:
+            with LLM(vd, "model.hef", optimize_memory_on_device=False) as llm:
                 response = llm.generate_all("Hello, how are you?")
                 print(response)
 
         # Streaming generation
         with VDevice() as vd:
-            with LLM(vd, "model.hef") as llm:
+            with LLM(vd, "model.hef", optimize_memory_on_device=False) as llm:
                 prompt = [{"role": "user", "content": "Tell me a joke"}]
                 with llm.generate(prompt, temperature=0.8) as gen:
                     for token in gen:
@@ -4270,7 +4183,7 @@ class LLM:
         - Using this class within a context manager (``with`` statement) is recommended to ensure proper resource cleanup.
     """
 
-    def __init__(self, vdevice, model_path, lora_name=""):
+    def __init__(self, vdevice, model_path, lora_name="", optimize_memory_on_device=False):
         """
         Initialize the LLM with a Hailo device and model file.
 
@@ -4278,13 +4191,14 @@ class LLM:
             vdevice (VDevice): An active VDevice instance managing Hailo hardware.
             model_path (str): Path to the compiled HEF (Hailo Executable Format) file.
             lora_name (str, optional): Name of LoRA adapter to load. Defaults to "".
+            optimize_memory_on_device (bool, optional): Whether to optimize memory usage on device by enabling client-side tokenization. Defaults to False.
 
         Example::
 
             with VDevice() as vd:
-                llm = LLM(vd, "models/qwen-2.5-1.5b-instruct.hef", lora_name="chat_adapter")
+                llm = LLM(vd, "models/qwen-2.5-1.5b-instruct.hef", lora_name="chat_adapter", optimize_memory_on_device=True)
         """
-        self._llm = _pyhailort.LLMWrapper.create(vdevice._vdevice, model_path, lora_name)
+        self._llm = _pyhailort.LLMWrapper.create(vdevice._vdevice, model_path, lora_name, optimize_memory_on_device)
 
     def release(self):
         """
@@ -4355,6 +4269,7 @@ class LLM:
                 If None, uses model default.
             do_sample (bool, optional): Whether to use sampling (True) or greedy decoding (False).
             seed (int, optional): Random seed for reproducible outputs.
+                If None, uses random seed.
 
         Returns:
             :class:`LLMGeneratorCompletion`: Generator completion object that can be iterated
@@ -4386,7 +4301,7 @@ class LLM:
             generation_params = LLM._fill_generator_params(generation_params, temperature, top_p, top_k, frequency_penalty, max_generated_tokens, do_sample, seed)
             return LLMGeneratorCompletion(self._llm.generate(generation_params, prompt))
 
-    def generate_all(self, prompt, temperature=None, top_p=None, top_k=None, frequency_penalty=None, max_generated_tokens=None, do_sample=None, seed=None):
+    def generate_all(self, prompt, temperature=None, top_p=None, top_k=None, frequency_penalty=None, max_generated_tokens=None, do_sample=None, seed=None, timeout_ms=10000):
         """
         Generate complete text response in non-streaming mode.
 
@@ -4409,6 +4324,8 @@ class LLM:
                 If None, uses model default.
             do_sample (bool, optional): Whether to use sampling (True) or greedy decoding (False).
             seed (int, optional): Random seed for reproducible outputs.
+                If None, uses random seed.
+            timeout_ms (int, optional): Timeout in milliseconds.
 
         Returns:
             str: Complete generated response as a single string.
@@ -4438,7 +4355,7 @@ class LLM:
             Use ``clear_context()`` to reset the conversation history.
         """
         with self.generate(prompt, temperature, top_p, top_k, frequency_penalty, max_generated_tokens, do_sample, seed) as gen_completion:
-            return gen_completion.read_all()
+            return gen_completion.read_all(timeout_ms)
 
     def tokenize(self, text):
         """
@@ -4600,13 +4517,13 @@ class VLM:
 
         # Basic usage
         with VDevice() as vd:
-            with VLM(vd, "model.hef") as vlm:
+            with VLM(vd, "model.hef", optimize_memory_on_device=False) as vlm:
                 response = vlm.generate_all(prompt="Hello, how are you?", frames=[])
                 print(response)
 
         # Streaming generation
         with VDevice() as vd:
-            with VLM(vd, "model.hef") as vlm:
+            with VLM(vd, "model.hef", optimize_memory_on_device=False) as vlm:
                 prompt = [{"role": "user", "content": [{"type": "text", "text": "Describe this image"}, {"type": "image"}]}]
                 with vlm.generate(prompt, frames=[frame_numpy_array], temperature=0.8) as gen:
                     for token in gen:
@@ -4618,20 +4535,21 @@ class VLM:
         - The given frames must be in the same order, shape, and dtype as the input frame of the model.
     """
 
-    def __init__(self, vdevice, model_path):
+    def __init__(self, vdevice, model_path, optimize_memory_on_device=False):
         """
         Initialize the VLM with a Hailo device and model file.
 
         Args:
             vdevice (VDevice): An active VDevice instance managing Hailo hardware.
             model_path (str): Path to the compiled HEF (Hailo Executable Format) file.
+            optimize_memory_on_device (bool, optional): Whether to optimize memory usage on device by enabling client-side tokenization. Defaults to False.
 
         Example::
 
             with VDevice() as vd:
-                vlm = VLM(vd, "models/qwen2-vl-2b-instruct.hef")
+                vlm = VLM(vd, "models/qwen2-vl-2b-instruct.hef", optimize_memory_on_device=True)
         """
-        self._vlm = _pyhailort.VLMWrapper.create(vdevice._vdevice, model_path)
+        self._vlm = _pyhailort.VLMWrapper.create(vdevice._vdevice, model_path, optimize_memory_on_device)
 
     def release(self):
         """
@@ -4684,6 +4602,7 @@ class VLM:
                 If None, uses model default.
             do_sample (bool, optional): Whether to use sampling (True) or greedy decoding (False).
             seed (int, optional): Random seed for reproducible outputs.
+                If None, uses random seed.
 
         Returns:
             :class:`LLMGeneratorCompletion`: Generator completion object that can be iterated
@@ -4713,7 +4632,7 @@ class VLM:
 
     def generate_all(self, prompt, frames,
                       temperature=None, top_p=None, top_k=None, frequency_penalty=None,
-                      max_generated_tokens=None, do_sample=None, seed=None):
+                      max_generated_tokens=None, do_sample=None, seed=None, timeout_ms=10000):
         """
         Generate complete text response in non-streaming mode with vision input.
 
@@ -4737,6 +4656,8 @@ class VLM:
                 If None, uses model default.
             do_sample (bool, optional): Whether to use sampling (True) or greedy decoding (False).
             seed (int, optional): Random seed for reproducible outputs.
+                If None, uses random seed.
+            timeout_ms (int, optional): Timeout in milliseconds.
 
         Returns:
             str: Complete generated response as a single string.
@@ -4761,7 +4682,7 @@ class VLM:
         """
         with self.generate(prompt, frames, temperature, top_p, top_k, frequency_penalty,
                            max_generated_tokens, do_sample, seed) as gen_completion:
-            return gen_completion.read_all()
+            return gen_completion.read_all(timeout_ms)
 
     def tokenize(self, text):
         """
@@ -4972,3 +4893,327 @@ class VLM:
         """
         with ExceptionWrapper():
             return self._vlm.input_frame_format_order()
+
+class HailoDiffuserSchedulerType(Enum):
+    """
+    Diffusion scheduler types for Text2Image generation.
+
+    Different schedulers implement different approaches for the denoising process
+    during image generation, which can affect the quality and characteristics
+    of the generated images.
+    """
+    EULER_DISCRETE = _pyhailort.HailoDiffuserSchedulerType.EULER_DISCRETE
+    DDIM = _pyhailort.HailoDiffuserSchedulerType.DDIM
+
+class Text2Image:
+    """
+    Text-to-Image model inference interface for Hailo devices.
+
+    This class provides a high-level Python interface for running Text-to-Image models
+    on Hailo hardware. It supports image generation from text prompts with various
+    generation parameters and diffusion schedulers.
+
+    Features:
+        - Image generation from text prompts
+        - Multiple diffusion schedulers (EULER_DISCRETE, DDIM)
+        - Configurable generation parameters (steps, guidance scale, samples count, seed)
+        - Built-in prompt tokenization utilities
+        - Numpy array output for generated images
+
+    Example::
+
+        # Basic usage
+        with VDevice() as vd:
+            with Text2Image(vd, "denoise.hef", "text_encoder.hef", "decoder.hef") as t2i:
+                images = t2i.generate("A beautiful sunset over mountains")
+                print(f"Generated {len(images)} images with shape {images[0].shape}")
+
+        # Advanced usage with custom parameters
+        with VDevice() as vd:
+            with Text2Image(vd, "denoise.hef", "text_encoder.hef", "decoder.hef",
+                          scheduler=HailoDiffuserSchedulerType.DDIM) as t2i:
+                images = t2i.generate("A futuristic cityscape", "blurry, low quality",
+                                    samples_count=4, steps_count=50, guidance_scale=7.5)
+                for i, img in enumerate(images):
+                    print(f"Image {i}: {img.shape}, dtype: {img.dtype}")
+
+    Note:
+        - The VDevice must remain active for the lifetime of the Text2Image instance.
+        - Using this class within a context manager (``with`` statement) is recommended to ensure proper resource cleanup.
+        - Generated images are returned as numpy arrays with shape (height, width, channels).
+    """
+
+    def __init__(self, vdevice, denoise_hef, text_encoder_hef, image_decoder_hef,
+                 scheduler_type=HailoDiffuserSchedulerType.EULER_DISCRETE):
+        """
+        Initialize the Text2Image model with HEF files and scheduler.
+
+        Args:
+            vdevice (VDevice): An active VDevice instance managing Hailo hardware.
+            denoise_hef (str): Path to the denoising model HEF file.
+            text_encoder_hef (str): Path to the text encoder model HEF file.
+            image_decoder_hef (str): Path to the image decoder model HEF file.
+            scheduler_type (HailoDiffuserSchedulerType, optional): Diffusion scheduler type.
+                Defaults to EULER_DISCRETE. Available options: EULER_DISCRETE, DDIM.
+
+        Example::
+
+            # Basic setup with default scheduler
+            with VDevice() as vd:
+                t2i = Text2Image(vd, "models/denoise.hef", "models/text_encoder.hef",
+                               "models/decoder.hef")
+
+            # Setup with DDIM scheduler
+            with VDevice() as vd:
+                t2i = Text2Image(vd, "models/denoise.hef", "models/text_encoder.hef",
+                               "models/decoder.hef",
+                               scheduler=HailoDiffuserSchedulerType.DDIM)
+        """
+        self._text2image = _pyhailort.Text2ImageWrapper.create(
+            vdevice._vdevice, denoise_hef, text_encoder_hef, image_decoder_hef, scheduler_type.value)
+
+    def release(self):
+        """
+        Release internal resources and cleanup.
+
+        This method is called automatically when exiting the context manager.
+        Manual calls are needed only in case context manager is not used.
+        """
+        if self._text2image is not None:
+            self._text2image.release()
+            self._text2image = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.release()
+        return False
+
+    @staticmethod
+    def _fill_generator_params(gen_params, samples_count, steps_count, guidance_scale, seed):
+        if samples_count is not None:
+            gen_params.samples_count = samples_count
+        if steps_count is not None:
+            gen_params.steps_count = steps_count
+        if guidance_scale is not None:
+            gen_params.guidance_scale = guidance_scale
+        if seed is not None:
+            gen_params.seed = seed
+        return gen_params
+
+    def generate(self, prompt, negative_prompt="", samples_count=None, steps_count=None, guidance_scale=None, seed=None, timeout_ms=30000):
+        """
+        Generate images from text prompts using specified generation parameters.
+
+        This method generates images based on the provided positive prompt while
+        optionally avoiding characteristics described in the negative prompt.
+        The generation process uses the configured diffusion scheduler and parameters.
+
+        Args:
+            prompt (str): Text description of desired image content.
+                This prompt guides what should be included in the generated image.
+            negative_prompt (str, optional): Text description of undesired content.
+                This prompt guides what should be avoided. Defaults to empty string.
+            samples_count (int, optional): Number of images to generate.
+                If None, uses model default (typically 1).
+            steps_count (int, optional): Number of denoising steps.
+                Higher values generally produce better quality but take longer.
+                If None, uses model default (typically 20-50).
+            guidance_scale (float, optional): Classifier-free guidance scale.
+                Higher values make the model follow the prompt more closely.
+                Typical range: 1.0-20.0. If None, uses model default (typically 7.5).
+            seed (int, optional): Random seed for reproducible outputs.
+                If None, uses random seed.
+            timeout_ms (int, optional): Maximum time to wait for generation in milliseconds.
+                Defaults to 30000 (30 seconds).
+
+        Returns:
+            list: List of numpy arrays, each representing a generated image.
+                Array shape is (height, width, channels) with dtype determined by the model.
+                The number of images is determined by the samples_count parameter.
+
+        Example::
+
+            # Basic generation
+            images_0 = t2i.generate("A serene lake at sunset")
+
+            # Generate multiple images with custom settings
+            images_1 = t2i.generate("A detailed portrait of a wise old wizard",
+                                "blurry, low quality, distorted",
+                                samples_count=3, steps_count=30, guidance_scale=8.0)
+
+            # Reproducible generation
+            images_2 = t2i.generate("A cat wearing a hat", seed=42)
+
+        Note:
+            - Higher steps_count generally produces better quality but takes longer
+            - Higher guidance_scale makes the model follow the prompt more closely
+            - Use negative prompts to avoid common artifacts or unwanted elements
+            - Setting a seed ensures reproducible results across multiple runs
+        """
+        with ExceptionWrapper():
+            generation_params = self._text2image.create_generator_params()
+            generation_params = Text2Image._fill_generator_params(generation_params, samples_count, steps_count, guidance_scale, seed)
+            return self._text2image.generate(generation_params, prompt, negative_prompt, timeout_ms)
+
+    def output_sample_frame_size(self):
+        """
+        Get the byte size of a single generated image.
+
+        Returns:
+            int: Size in bytes of each generated image.
+
+        Example::
+
+            size = t2i.output_sample_frame_size()
+            print(f"Each generated image will be {size} bytes")
+        """
+        with ExceptionWrapper():
+            return self._text2image.output_sample_frame_size()
+
+    def output_sample_shape(self):
+        """
+        Get the shape (dimensions) of generated images.
+
+        Returns:
+            tuple: Shape tuple (height, width, channels) of generated images.
+
+        Example::
+
+            shape = t2i.output_sample_shape()
+            print(f"Generated images will have shape: {shape}")
+            # Output: Generated images will have shape: (512, 512, 3)
+        """
+        with ExceptionWrapper():
+            return tuple(self._text2image.output_sample_shape())
+
+    def output_sample_format_type(self):
+        """
+        Get the data type of generated images.
+
+        Returns:
+            numpy.dtype: Data type of the generated image arrays.
+
+        Example::
+
+            dtype = t2i.output_sample_format_type()
+            print(f"Generated images will have dtype: {dtype}")
+            # Output: Generated images will have dtype: uint8
+        """
+        with ExceptionWrapper():
+            return self._text2image.output_sample_format_type()
+
+    def output_sample_format_order(self):
+        """
+        Get the format order of generated images.
+
+        Returns:
+            _pyhailort.hailo_format_order_t: Format order.
+
+        Example::
+
+            format_order = t2i.output_sample_format_order()
+            print(f"Image format order: {format_order}")
+        """
+        with ExceptionWrapper():
+            return self._text2image.output_sample_format_order()
+
+    def tokenize(self, prompt):
+        """
+        Tokenize a text prompt into integer tokens.
+
+        This method converts a text string into a list of token IDs that
+        the model uses internally. This can be useful for debugging prompts
+        or understanding model limitations.
+
+        Args:
+            prompt (str): Text prompt to tokenize.
+
+        Returns:
+            list: List of integer token IDs.
+
+        Example::
+
+            tokens = t2i.tokenize("A beautiful landscape")
+            print(f"Prompt tokens: {tokens}")
+            print(f"Token count: {len(tokens)}")
+        """
+        with ExceptionWrapper():
+            return self._text2image.tokenize(prompt)
+
+
+class SegmentInfo:
+    def __init__(self, segment_info):
+        self._segment_info = segment_info
+
+    @property
+    def start_sec(self):
+        return self._segment_info.start_sec
+
+    @property
+    def end_sec(self):
+        return self._segment_info.end_sec
+
+    @property
+    def text(self):
+        return self._segment_info.text
+
+    def __repr__(self):
+        return f"SegmentInfo(start_sec={self.start_sec}, end_sec={self.end_sec}, text='{self.text}')"
+
+
+class Speech2TextTask(Enum):
+    TRANSCRIBE = _pyhailort.Speech2TextTask.TRANSCRIBE
+    TRANSLATE = _pyhailort.Speech2TextTask.TRANSLATE
+
+
+class Speech2TextGeneratorParams:
+
+    def __init__(self, generator_params):
+        self._generator_params = generator_params
+
+    def set_task(self, task):
+        with ExceptionWrapper():
+            return self._generator_params.set_task(task.value)
+
+    def set_language(self, language):
+        with ExceptionWrapper():
+            return self._generator_params.set_language(language)
+
+    def task(self):
+        with ExceptionWrapper():
+            return Speech2TextTask(self._generator_params.task())
+
+    def language(self):
+        with ExceptionWrapper():
+            return self._generator_params.language()
+
+
+class Speech2Text:
+    def __init__(self, vdevice, model_path):
+        self._vdevice = vdevice
+        self._speech2text = _pyhailort.Speech2Text.create(vdevice._vdevice, model_path)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+
+    def create_generator_params(self):
+        with ExceptionWrapper():
+            return Speech2TextGeneratorParams(self._speech2text.create_generator_params())
+
+    def generate_all_text(self, generator_params, audio_data, timeout_ms=10000):
+        with ExceptionWrapper():
+            return self._speech2text.generate_all_text(generator_params._generator_params, audio_data, timeout_ms)
+
+    def generate_all_segments(self, generator_params, audio_data, timeout_ms=10000):
+        with ExceptionWrapper():
+            raw_segments = self._speech2text.generate_all_segments(generator_params._generator_params, audio_data, timeout_ms)
+            return [SegmentInfo(segment) for segment in raw_segments]
+
+    def release(self):
+        with ExceptionWrapper():
+            self._speech2text.release()

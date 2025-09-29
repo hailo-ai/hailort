@@ -257,6 +257,9 @@ hailo_status convert_errno_to_hailo_status(int err, const char *ioctl_name) {
         case ERROR_CONNECTION_REFUSED: /* Driver STATUS_CONNECTION_REFUSED */
             LOGGER__ERROR("Ioctl {} failed due to connection refused", ioctl_name);
             return HAILO_CONNECTION_REFUSED;
+        case ERROR_RETRY: /* Driver STATUS_TRY_AGAIN */
+            LOGGER__DEBUG("Ioctl {} failed due to device temporarily unavailable", ioctl_name);
+            return HAILO_DEVICE_TEMPORARILY_UNAVAILABLE;
         default:
             LOGGER__ERROR("Ioctl {} failed with {}. Get log for more info", ioctl_name, err);
             return HAILO_DRIVER_OPERATION_FAILED;
@@ -302,7 +305,6 @@ Expected<HailoRTDriver::DeviceInfo> query_device_info(const std::string &device_
         *(param_ptr) = data.Buffer.NameInCompatible;                                                               \
     }
 
-COMPATIBLE_PARAM_CAST(hailo_memory_transfer_params, MemoryTransfer);
 COMPATIBLE_PARAM_CAST(hailo_vdma_enable_channels_params, VdmaEnableChannels)
 COMPATIBLE_PARAM_CAST(hailo_vdma_disable_channels_params, VdmaDisableChannels)
 COMPATIBLE_PARAM_CAST(hailo_vdma_interrupts_read_timestamp_params, VdmaInterruptsReadTimestamps)
@@ -327,6 +329,7 @@ COMPATIBLE_PARAM_CAST(hailo_pci_ep_listen_params, ListenParams)
 COMPATIBLE_PARAM_CAST(hailo_pci_ep_accept_params, AcceptParams)
 COMPATIBLE_PARAM_CAST(hailo_pci_ep_close_params, PciEpCloseParams)
 COMPATIBLE_PARAM_CAST(hailo_write_action_list_params, WriteActionListParams)
+COMPATIBLE_PARAM_CAST(hailo_vdma_cancel_prepared_transfer_params, DescListResetParams)
 
 // Special handle for nullptr_t. This case occurs when there is no parameters passed.
 tCompatibleHailoIoctlData WindowsIoctlParamCast<nullptr_t>::to_compatible(nullptr_t data)

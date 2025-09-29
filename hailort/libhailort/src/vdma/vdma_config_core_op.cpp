@@ -209,6 +209,28 @@ hailo_status VdmaConfigCoreOp::prepare_transfers(std::unordered_map<std::string,
     return HAILO_SUCCESS;
 }
 
+hailo_status VdmaConfigCoreOp::cancel_prepared_transfers()
+{
+    auto status = HAILO_SUCCESS;
+    auto deactivate_status = HAILO_UNINITIALIZED;
+    for (const auto &name_pair : m_input_streams) {
+        deactivate_status = name_pair.second->cancel_prepared_transfers();
+        if (HAILO_SUCCESS != deactivate_status) {
+            LOGGER__ERROR("Failed to cancel pending transfers for input stream {}", name_pair.first);
+            status = deactivate_status;
+        }
+    }
+    for (const auto &name_pair : m_output_streams) {
+        deactivate_status = name_pair.second->cancel_prepared_transfers();
+        if (HAILO_SUCCESS != deactivate_status) {
+            LOGGER__ERROR("Failed to cancel pending transfers for output stream {}", name_pair.first);
+            status = deactivate_status;
+        }
+    }
+
+    return status;
+}
+
 Expected<std::shared_ptr<LatencyMetersMap>> VdmaConfigCoreOp::get_latency_meters()
 {
     auto latency_meters = m_resources_manager->get_latency_meters();
@@ -284,7 +306,14 @@ Expected<uint32_t> VdmaConfigCoreOp::get_cache_entry_size(uint32_t cache_id) con
 hailo_status VdmaConfigCoreOp::init_cache(uint32_t read_offset)
 {
     CHECK(has_caches(), HAILO_INVALID_OPERATION, "No caches in core-op");
-    return m_cache_manager->init_caches(read_offset);
+    auto status = m_cache_manager->init_caches(read_offset);
+    CHECK_SUCCESS(status);
+
+    // Signal to the fw that the cache offset has been updated
+    status = Control::context_switch_signal_cache_updated(m_resources_manager->get_device());
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
 }
 
 hailo_status VdmaConfigCoreOp::update_cache_offset(int32_t offset_delta_entries)
@@ -295,10 +324,26 @@ hailo_status VdmaConfigCoreOp::update_cache_offset(int32_t offset_delta_entries)
     // auto status = wait_for_activation(std::chrono::milliseconds(0));
     // CHECK_SUCCESS(status, "Core op must be activated before updating cache offset");
 
-    // Update the offsets in the cache manager
     const auto check_cache_snapshots = is_env_variable_on(HAILORT_CHECK_CACHE_UPDATE_ENV_VAR);
     const auto require_cache_changes_env = is_env_variable_on(HAILORT_REQUIRE_CACHE_CHANGES_ENV_VAR);
-    auto status = m_cache_manager->update_cache_offset(offset_delta_entries, check_cache_snapshots, require_cache_changes_env);
+    // Create callback that signals the firmware when cache update completes
+    auto callback = [this](hailo_status status) -> void {
+        if (HAILO_SUCCESS == status) {
+            auto signal_status = Control::context_switch_signal_cache_updated(m_resources_manager->get_device());
+            if (HAILO_SUCCESS != signal_status) {
+                LOGGER__ERROR("Failed to signal cache updated");
+            }
+        } else {
+            LOGGER__ERROR("Failed to update cache offset");
+        }
+    };
+
+    return m_cache_manager->update_cache_offset(offset_delta_entries, check_cache_snapshots, require_cache_changes_env, callback);
+}
+
+hailo_status VdmaConfigCoreOp::finalize_cache()
+{
+    auto status = m_cache_manager->finalize_caches();
     CHECK_SUCCESS(status);
 
     // Signal to the fw that the cache offset has been updated

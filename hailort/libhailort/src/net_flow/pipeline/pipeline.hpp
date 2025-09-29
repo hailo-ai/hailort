@@ -292,17 +292,19 @@ private:
 class PipelineObject
 {
 public:
-    PipelineObject(const std::string &name);
+    PipelineObject(const std::string &name, uint64_t pipeline_unique_id);
     virtual ~PipelineObject() = default;
     PipelineObject(PipelineObject &&) noexcept = default;
     PipelineObject& operator=(PipelineObject &&) noexcept = default;
 
     const std::string& name() const;
+    const uint64_t& pipeline_unique_id() const;
 
     static std::string create_element_name(const std::string &element_name, const std::string &stream_name, uint8_t stream_index);
 
 private:
     std::string m_name;
+    uint64_t m_pipeline_unique_id;
 };
 
 class PipelineElement;
@@ -376,7 +378,7 @@ private:
 class PipelineElement : public PipelineObject
 {
 public:
-    PipelineElement(const std::string &name, DurationCollector &&duration_collector,
+    PipelineElement(const std::string &name, uint64_t pipeline_unique_id, DurationCollector &&duration_collector,
                     std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
                     PipelineDirection pipeline_direction);
     virtual ~PipelineElement() = default;

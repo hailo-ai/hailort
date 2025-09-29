@@ -392,6 +392,8 @@ hailo_status OsSession::read(uint8_t *buffer, size_t size, std::chrono::millisec
 
 hailo_status OsSession::close()
 {
+    std::unique_lock<std::mutex> lock(m_close_mutex);
+
     if (INVALID_SOCKET == m_socket.get_fd()) { // In case of double close
         return HAILO_SUCCESS;
     }
@@ -420,7 +422,7 @@ hailo_status OsSession::write_async(TransferRequest &&request)
 {
     return m_write_actions_thread->enqueue_nonblocking({[this, buffers=std::move(request.transfer_buffers)] (bool is_aborted) -> hailo_status {
         if (is_aborted) {
-            return HAILO_STREAM_ABORT;
+            return HAILO_COMMUNICATION_CLOSED;
         }
 
         for (auto transfer_buffer : buffers) {
@@ -449,7 +451,7 @@ hailo_status OsSession::read_async(TransferRequest &&request)
 {
     return m_read_actions_thread->enqueue_nonblocking({[this, buffers=std::move(request.transfer_buffers)] (bool is_aborted) -> hailo_status {
         if (is_aborted) {
-            return HAILO_STREAM_ABORT;
+            return HAILO_COMMUNICATION_CLOSED;
         }
 
         for (auto transfer_buffer : buffers) {

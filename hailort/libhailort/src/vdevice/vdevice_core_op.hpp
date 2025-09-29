@@ -103,6 +103,7 @@ public:
     virtual Expected<std::vector<uint32_t>> get_cache_ids() const override;
     virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) override;
     virtual hailo_status write_cache_buffer(uint32_t cache_id, MemoryView buffer) override;
+    virtual hailo_status finalize_cache() override;
 
     VDeviceCoreOp(VDevice &vdevice,
         ActiveCoreOpHolder &active_core_op_holder,

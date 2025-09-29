@@ -70,6 +70,7 @@ public:
     virtual hailo_status shutdown() override;
     virtual hailo_status update_cache_offset(int32_t offset_delta_entries) override;
     virtual hailo_status init_cache(uint32_t read_offset) override;
+    virtual hailo_status finalize_cache() override;
 
 private:
     virtual hailo_status validate_bindings(const ConfiguredInferModel::Bindings &bindings) override;

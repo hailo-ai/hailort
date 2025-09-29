@@ -14,6 +14,7 @@ set(HAILORT_COMMON_CPP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/event_internal.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/fork_support.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/buffer_pool.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/genai/session_wrapper/session_wrapper.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/device_measurements.cpp
 )

@@ -597,16 +597,19 @@ void DeviceBase::d2h_notification_thread_main(const std::string &device_id)
 }
 
 hailo_status DeviceBase::check_hef_is_compatible(Hef &hef)
-{    
+{
     TRY(const auto device_arch, get_architecture(), "Can't get device architecture (is the FW loaded?)");
 
-    if (!is_hef_compatible(device_arch, static_cast<HEFHwArch>(hef.pimpl->get_device_arch()))) {
+    TRY(auto compatible_archs, hef.get_compatible_device_archs());
+    if (!contains(compatible_archs, device_arch)) {
         auto device_arch_str = HailoRTCommon::get_device_arch_str(device_arch);
-        auto hef_arch_str =
-            HailoRTCommon::get_device_arch_str(hef_arch_to_device_arch(static_cast<HEFHwArch>(hef.pimpl->get_device_arch())));
+        std::string compatible_archs_str = "";
+        for (const auto &arch : compatible_archs) {
+            compatible_archs_str += HailoRTCommon::get_device_arch_str(arch) + " ";
+        }
 
-        LOGGER__ERROR("HEF format is not compatible with device. Device arch: {}, HEF arch: {}",
-            device_arch_str.c_str(), hef_arch_str.c_str());
+        LOGGER__ERROR("HEF format is not compatible with device. Device arch: {}, HEF compatible for: {}",
+            device_arch_str.c_str(), compatible_archs_str.c_str());
         return HAILO_HEF_NOT_COMPATIBLE_WITH_DEVICE;
     }
 
@@ -716,58 +719,32 @@ hailo_status DeviceBase::validate_fw_version_for_platform(const hailo_device_ide
     return validate_binary_version_for_platform(&fw_version, &min_supported_fw_version, fw_binary_type);
 }
 
-bool DeviceBase::is_hef_compatible(hailo_device_architecture_t device_arch, HEFHwArch hef_arch)
-{
-    switch (device_arch) {
-    case HAILO_ARCH_HAILO8:
-        return (hef_arch == HEFHwArch::HW_ARCH__HAILO8P) || (hef_arch == HEFHwArch::HW_ARCH__HAILO8R) || (hef_arch == HEFHwArch::HW_ARCH__HAILO8L);
-    case HAILO_ARCH_HAILO8L:
-        return (hef_arch == HEFHwArch::HW_ARCH__HAILO8L);
-    case HAILO_ARCH_HAILO15H:
-    case HAILO_ARCH_HAILO10H:
-        // Compare with HW_ARCH__LAVENDER and HW_ARCH__GINGER to support hefs compiled for them
-        return (hef_arch == HEFHwArch::HW_ARCH__GINGER) || (hef_arch == HEFHwArch::HW_ARCH__LAVENDER) ||
-            (hef_arch == HEFHwArch::HW_ARCH__HAILO15H) || (hef_arch == HEFHwArch::HW_ARCH__HAILO15M) || (hef_arch == HEFHwArch::HW_ARCH__HAILO10H);
-    case HAILO_ARCH_HAILO15L:
-        return (hef_arch == HEFHwArch::HW_ARCH__HAILO15L) || (hef_arch == HEFHwArch::HW_ARCH__PLUTO);
-    case HAILO_ARCH_HAILO15M:
-        return (hef_arch == HEFHwArch::HW_ARCH__HAILO15M);
-    case HAILO_ARCH_MARS:
-        return (hef_arch == HEFHwArch::HW_ARCH__MARS);
-    default:
-        return false;
-    }
-}
-
-hailo_device_architecture_t DeviceBase::hef_arch_to_device_arch(HEFHwArch hef_arch)
+std::vector<hailo_device_architecture_t> DeviceBase::hef_arch_to_device_compatible_archs(HEFHwArch hef_arch)
 {
     switch (hef_arch) {
-    case HEFHwArch::HW_ARCH__SAGE_A0:
-        return HAILO_ARCH_HAILO8_A0;
+        case HEFHwArch::HW_ARCH__SAGE_A0:
+        return {HAILO_ARCH_HAILO8_A0};
     case HEFHwArch::HW_ARCH__HAILO8:
     case HEFHwArch::HW_ARCH__HAILO8P:
     case HEFHwArch::HW_ARCH__HAILO8R:
     case HEFHwArch::HW_ARCH__SAGE_B0:
     case HEFHwArch::HW_ARCH__PAPRIKA_B0:
-        return HAILO_ARCH_HAILO8;
+        return {HAILO_ARCH_HAILO8};
     case HEFHwArch::HW_ARCH__HAILO8L:
-        return HAILO_ARCH_HAILO8L;
-    case HEFHwArch::HW_ARCH__HAILO15H:
+        return {HAILO_ARCH_HAILO8L, HAILO_ARCH_HAILO8};
+    case HEFHwArch::HW_ARCH__HAILO1XH:
     case HEFHwArch::HW_ARCH__GINGER:
     case HEFHwArch::HW_ARCH__LAVENDER:
-        return HAILO_ARCH_HAILO15H;
+        return {HAILO_ARCH_HAILO15H, HAILO_ARCH_HAILO10H};
     case HEFHwArch::HW_ARCH__PLUTO:
     case HEFHwArch::HW_ARCH__HAILO15L:
-        return HAILO_ARCH_HAILO15L;
+        return {HAILO_ARCH_HAILO15L};
     case HEFHwArch::HW_ARCH__HAILO15M:
-        return HAILO_ARCH_HAILO15M;
-    case HEFHwArch::HW_ARCH__HAILO10H:
-        return HAILO_ARCH_HAILO10H;
+        return {HAILO_ARCH_HAILO15M, HAILO_ARCH_HAILO15H, HAILO_ARCH_HAILO10H};
     case HEFHwArch::HW_ARCH__MARS:
-        return HAILO_ARCH_MARS;
-
+        return {HAILO_ARCH_MARS};
     default:
-        return HAILO_ARCH_MAX_ENUM;
+        return {HAILO_ARCH_MAX_ENUM};
     }
 }
 

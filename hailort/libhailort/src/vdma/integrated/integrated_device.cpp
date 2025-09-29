@@ -19,6 +19,9 @@
 #endif // GPIO_V2_GET_LINE_IOCTL
 #endif // __linux__
 #include <memory>
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 namespace hailort
 {
@@ -160,6 +163,7 @@ Expected<hailo_extended_device_information_t> IntegratedDevice::get_extended_dev
     constexpr auto STATUS_ENABLED = "okay";
     constexpr auto ETH_STATUS_FILE = "/proc/device-tree/ethernet@1b5000/status";
     constexpr auto PCI_STATUS_FILE = "/proc/device-tree/hailo_pci_ep_driver/status";
+    constexpr auto IDENTIFICATION_FILE = "/sys/devices/soc0/identification_attributes";
     constexpr auto FUSE_FILE = "/sys/devices/soc0/fuse";
     constexpr auto ULT_OFFSET_IN_FUSE = sizeof(uint32_t); // crypto_dummy field before the ULT
     constexpr auto LOT_ID_SIZE = 8;
@@ -185,17 +189,34 @@ Expected<hailo_extended_device_information_t> IntegratedDevice::get_extended_dev
     TRY(auto is_eth_supported, compare_file_content(ETH_STATUS_FILE, STATUS_ENABLED));
     TRY(auto is_pci_supported, compare_file_content(PCI_STATUS_FILE, STATUS_ENABLED));
 
-    info.boot_source                           = HAILO_DEVICE_BOOT_SOURCE_INVALID; // TODO: HRT-15562
-    info.eth_mac_address[0]                    = NOT_AVAILABLE;                    // TODO: HRT-15562
-    info.lcs                                   = NOT_AVAILABLE;                    // TODO: HRT-15562
-    info.neural_network_core_clock_rate        = NOT_AVAILABLE;                    // TODO: HRT-15562
-    info.soc_id[0]                             = NOT_AVAILABLE;                    // TODO: HRT-15562
-    info.soc_pm_values[0]                      = NOT_AVAILABLE;                    // TODO: HRT-15562
-    info.supported_features.current_monitoring = NOT_AVAILABLE;                    // TODO: HRT-15562
+    info.boot_source                           = HAILO_DEVICE_BOOT_SOURCE_INVALID; // TODO: HRT-18652
+    info.eth_mac_address[0]                    = NOT_AVAILABLE;                    // TODO: HRT-18652
+    info.lcs                                   = NOT_AVAILABLE;
+    info.neural_network_core_clock_rate        = NOT_AVAILABLE;                    // TODO: HRT-18652
+    info.soc_id[0]                             = NOT_AVAILABLE;
+    info.soc_pm_values[0]                      = NOT_AVAILABLE;
+    info.supported_features.current_monitoring = NOT_AVAILABLE;                    // TODO: HRT-18652
     info.supported_features.ethernet           = is_eth_supported;
-    info.supported_features.mdio               = NOT_AVAILABLE; // TODO: HRT-15562
-    info.supported_features.mipi               = NOT_AVAILABLE; // TODO: HRT-15562
+    info.supported_features.mdio               = NOT_AVAILABLE; // TODO: HRT-18652
+    info.supported_features.mipi               = NOT_AVAILABLE; // TODO: HRT-18652
     info.supported_features.pcie               = is_pci_supported;
+
+    if (fs::exists(IDENTIFICATION_FILE)) {
+        FileReader reader(IDENTIFICATION_FILE);
+        auto status = reader.open();
+        CHECK_SUCCESS(status, "Failed to open file {}", IDENTIFICATION_FILE);
+
+        // parse IDENTIFICATION_FILE according to MSW-11266
+        status = reader.read(&info.lcs, 1);
+        CHECK_SUCCESS(status, "Failed to read lcs from file {}", IDENTIFICATION_FILE);
+
+        status = reader.read(info.soc_id, HAILO_SOC_ID_LENGTH);
+        CHECK_SUCCESS(status, "Failed to read soc_id from file {}", IDENTIFICATION_FILE);
+
+        constexpr auto PM_VALUES_SIZE = 3 * sizeof(uint32_t); // lvt, svt, ulvt (4 bytes for each)
+        status = reader.read(info.soc_pm_values, PM_VALUES_SIZE);
+        CHECK_SUCCESS(status, "Failed to read soc_pm_values from file {}", IDENTIFICATION_FILE);
+    }
 
     {
         FileReader reader(FUSE_FILE);
@@ -264,9 +285,11 @@ IntegratedDevice::GpioReader::~GpioReader()
 
 Expected<uint16_t> IntegratedDevice::GpioReader::read()
 {
+    // /dev/gpiochip1 is the GPIO bits 16-31
     constexpr auto GPIO_MASK_FILE = "/dev/gpiochip1";
-    m_fd = open(GPIO_MASK_FILE, O_RDONLY);
-    CHECK(m_fd >= 0, HAILO_FILE_OPERATION_FAILURE, "Failed to open {}", GPIO_MASK_FILE);
+    auto file_ptr = std::unique_ptr<FILE, int (*)(FILE *)>(std::fopen(GPIO_MASK_FILE, "r"), &std::fclose);
+    CHECK_NOT_NULL(file_ptr, HAILO_FILE_OPERATION_FAILURE);
+    m_fd = fileno(file_ptr.get());
 
     struct gpio_v2_line_request req = {};
     req.num_lines = HAILO_GPIO_MASK_VALUES_LENGTH;

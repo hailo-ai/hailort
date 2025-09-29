@@ -14,7 +14,6 @@ message HailoCallbackHandle {
 message VDeviceParamsProto {
     uint32 scheduling_algorithm = 1;
     string group_id = 2;
-    bool has_user_selected_device_or_group_id = 3;
 }
 
 message VDevice_Create_Request {
@@ -68,6 +67,7 @@ message InferModel_CreateConfiguredInferModel_Request {
     uint32 batch_size = 5;
     uint32 power_mode = 6;
     uint32 latency_flag = 7;
+    bool enable_kv_cache = 8;
 }
 
 message InferModel_CreateConfiguredInferModel_Reply {
@@ -128,6 +128,26 @@ message ConfiguredInferModel_Shutdown_Request {
 
 message ConfiguredInferModel_Shutdown_Reply {}
 
+message ConfiguredInferModel_UpdateCacheOffset_Request {
+    HailoObjectHandle configured_infer_model_handle = 1;
+    int32 offset_delta_entries = 2;
+}
+
+message ConfiguredInferModel_UpdateCacheOffset_Reply {}
+
+message ConfiguredInferModel_InitCache_Request {
+    HailoObjectHandle configured_infer_model_handle = 1;
+    uint32 read_offset = 2;
+}
+
+message ConfiguredInferModel_InitCache_Reply {}
+
+message ConfiguredInferModel_FinalizeCache_Request {
+    HailoObjectHandle configured_infer_model_handle = 1;
+}
+
+message ConfiguredInferModel_FinalizeCache_Reply {}
+
 message BufferInfo {
     uint32 size = 1;
     uint32 type = 2;
@@ -141,6 +161,18 @@ message ConfiguredInferModel_AsyncInfer_Request {
 }
 
 message ConfiguredInferModel_AsyncInfer_Reply {}
+
+message ConfiguredInferModel_RunAsyncForDuration_Request {
+    HailoObjectHandle configured_infer_model_handle = 1;
+    HailoObjectHandle infer_model_handle = 2;
+    uint32 duration_ms = 3;
+    repeated BufferInfo buffer_infos = 4; // Represents only inputs
+    // Protocol note: After this message, server expects to get the input buffers, one after the other, in order
+}
+
+message ConfiguredInferModel_RunAsyncForDuration_Reply {
+    uint32 fps = 1;
+}
 
 message CallbackCalled_Reply {
     HailoCallbackHandle callback_handle = 1;

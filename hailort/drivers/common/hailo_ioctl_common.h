@@ -7,8 +7,8 @@
 #define _HAILO_IOCTL_COMMON_H_
 
 #define HAILO_DRV_VER_MAJOR 5
-#define HAILO_DRV_VER_MINOR 0
-#define HAILO_DRV_VER_REVISION 1
+#define HAILO_DRV_VER_MINOR 1
+#define HAILO_DRV_VER_REVISION 0
 
 #define _STRINGIFY_EXPANDED( x ) #x
 #define _STRINGIFY_NUMBER( x ) _STRINGIFY_EXPANDED(x)
@@ -291,6 +291,11 @@ struct hailo_desc_list_program_params {
     uint32_t stride;            // in
 };
 
+/* structure used in ioctl HAILO_VDMA_CANCEL_PREPARED_TRANSFER */
+struct hailo_vdma_cancel_prepared_transfer_params {
+    uintptr_t desc_handle;      // in
+};
+
 /* structure used in ioctl HAILO_VDMA_ENABLE_CHANNELS */
 struct hailo_vdma_enable_channels_params {
     uint64_t channels_bitmap_per_engine[MAX_VDMA_ENGINES];  // in
@@ -353,51 +358,7 @@ struct hailo_fw_control {
     enum hailo_cpu_id cpu_id;
 };
 
-/* structure used in ioctl HAILO_MEMORY_TRANSFER */
-// Max bar transfer size gotten from ATR0_TABLE_SIZE
-#define MAX_MEMORY_TRANSFER_LENGTH  (4096)
 
-enum hailo_transfer_direction {
-    TRANSFER_READ = 0,
-    TRANSFER_WRITE,
-
-    /** Max enum value to maintain ABI Integrity */
-    TRANSFER_MAX_ENUM = INT_MAX,
-};
-
-enum hailo_transfer_memory_type {
-    HAILO_TRANSFER_DEVICE_DIRECT_MEMORY,
-
-    // vDMA memories
-    HAILO_TRANSFER_MEMORY_VDMA0 = 0x100,
-    HAILO_TRANSFER_MEMORY_VDMA1,
-    HAILO_TRANSFER_MEMORY_VDMA2,
-
-    // PCIe driver memories
-    HAILO_TRANSFER_MEMORY_PCIE_BAR0 = 0x200,
-    HAILO_TRANSFER_MEMORY_PCIE_BAR2 = 0x202,
-    HAILO_TRANSFER_MEMORY_PCIE_BAR4 = 0x204,
-
-    // DRAM DMA driver memories
-    HAILO_TRANSFER_MEMORY_DMA_ENGINE0 = 0x300,
-    HAILO_TRANSFER_MEMORY_DMA_ENGINE1,
-    HAILO_TRANSFER_MEMORY_DMA_ENGINE2,
-
-    // PCIe EP driver memories
-    HAILO_TRANSFER_MEMORY_PCIE_EP_CONFIG = 0x400,
-    HAILO_TRANSFER_MEMORY_PCIE_EP_BRIDGE,
-
-    /** Max enum value to maintain ABI Integrity */
-    HAILO_TRANSFER_MEMORY_MAX_ENUM = INT_MAX,
-};
-
-struct hailo_memory_transfer_params {
-    enum hailo_transfer_direction transfer_direction;   // in
-    enum hailo_transfer_memory_type memory_type;        // in
-    uint64_t address;                                   // in
-    size_t count;                                       // in
-    uint8_t buffer[MAX_MEMORY_TRANSFER_LENGTH];         // in/out
-};
 
 /* structure used in ioctl HAILO_VDMA_BUFFER_SYNC */
 enum hailo_vdma_buffer_sync_type {
@@ -571,7 +532,6 @@ struct tCompatibleHailoIoctlData
     tCompatibleHailoIoctlParam Parameters;
     ULONG_PTR Value;
     union {
-        struct hailo_memory_transfer_params MemoryTransfer;
         struct hailo_vdma_enable_channels_params VdmaEnableChannels;
         struct hailo_vdma_disable_channels_params VdmaDisableChannels;
         struct hailo_vdma_interrupts_read_timestamp_params VdmaInterruptsReadTimestamps;
@@ -596,6 +556,7 @@ struct tCompatibleHailoIoctlData
         struct hailo_pci_ep_accept_params AcceptParams;
         struct hailo_pci_ep_close_params PciEpCloseParams;
         struct hailo_write_action_list_params WriteActionListParams;
+        struct hailo_vdma_cancel_prepared_transfer_params DescListResetParams;
     } Buffer;
 };
 #endif // _MSC_VER
@@ -603,7 +564,6 @@ struct tCompatibleHailoIoctlData
 #pragma pack(pop)
 
 enum hailo_general_ioctl_code {
-    HAILO_MEMORY_TRANSFER_CODE,
     HAILO_QUERY_DEVICE_PROPERTIES_CODE,
     HAILO_QUERY_DRIVER_INFO_CODE,
 
@@ -611,7 +571,6 @@ enum hailo_general_ioctl_code {
     HAILO_GENERAL_IOCTL_MAX_NR,
 };
 
-#define HAILO_MEMORY_TRANSFER           _IOWR_(HAILO_GENERAL_IOCTL_MAGIC,  HAILO_MEMORY_TRANSFER_CODE,            struct hailo_memory_transfer_params)
 #define HAILO_QUERY_DEVICE_PROPERTIES   _IOW_(HAILO_GENERAL_IOCTL_MAGIC,   HAILO_QUERY_DEVICE_PROPERTIES_CODE,    struct hailo_device_properties)
 #define HAILO_QUERY_DRIVER_INFO         _IOW_(HAILO_GENERAL_IOCTL_MAGIC,   HAILO_QUERY_DRIVER_INFO_CODE,          struct hailo_driver_info)
 
@@ -631,6 +590,7 @@ enum hailo_vdma_ioctl_code {
     HAILO_VDMA_CONTINUOUS_BUFFER_FREE_CODE,
     HAILO_VDMA_LAUNCH_TRANSFER_CODE,
     HAILO_VDMA_PREPARE_TRANSFER_CODE,
+    HAILO_VDMA_CANCEL_PREPARED_TRANSFER_CODE,
 
     // Must be last
     HAILO_VDMA_IOCTL_MAX_NR,
@@ -656,7 +616,7 @@ enum hailo_vdma_ioctl_code {
 
 #define HAILO_VDMA_LAUNCH_TRANSFER            _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_LAUNCH_TRANSFER_CODE,              struct hailo_vdma_launch_transfer_params)
 #define HAILO_VDMA_PREPARE_TRANSFER           _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_PREPARE_TRANSFER_CODE,             struct hailo_vdma_prepare_transfer_params)
-
+#define HAILO_VDMA_CANCEL_PREPARED_TRANSFER   _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_CANCEL_PREPARED_TRANSFER_CODE,     struct hailo_vdma_cancel_prepared_transfer_params)
 
 enum hailo_nnc_ioctl_code {
     HAILO_FW_CONTROL_CODE,

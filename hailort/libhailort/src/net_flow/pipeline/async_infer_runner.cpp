@@ -23,14 +23,16 @@
 namespace hailort
 {
 
-Expected<std::shared_ptr<AsyncPipeline>> AsyncPipeline::create_shared()
+Expected<std::shared_ptr<AsyncPipeline>> AsyncPipeline::create_shared(const std::string &network_name)
 {
-    auto async_pipeline_ptr = make_shared_nothrow<AsyncPipeline>();
+    auto async_pipeline_ptr = make_shared_nothrow<AsyncPipeline>(network_name);
     CHECK_NOT_NULL_AS_EXPECTED(async_pipeline_ptr, HAILO_OUT_OF_HOST_MEMORY);
     return async_pipeline_ptr;
 }
 
-AsyncPipeline::AsyncPipeline() : m_is_multi_planar(false) {}
+AsyncPipeline::AsyncPipeline(const std::string &network_name) : m_is_multi_planar(false), m_network_name(network_name) {
+    m_pipeline_unique_id = generate_unique_id();
+}
 
 void AsyncPipeline::add_element_to_pipeline(std::shared_ptr<PipelineElement> pipeline_element)
 {
@@ -146,6 +148,34 @@ void AsyncPipeline::set_as_multi_planar()
 bool AsyncPipeline::is_multi_planar()
 {
     return m_is_multi_planar;
+}
+
+std::string AsyncPipeline::get_network_name() const
+{
+    return m_network_name;
+}
+
+uint64_t AsyncPipeline::generate_unique_id()
+{
+    // ID layout: [ 32 bits timestamp | 16 bits PID | 8 bits counter | 8 bits job_id ]
+    // job_id is used to identify a job_id in the pipeline (initialized to 0)
+    static std::atomic<uint8_t> counter{0};
+    uint8_t job_id = 0;
+
+    auto now = std::chrono::high_resolution_clock::now();
+    uint64_t timestamp = std::chrono::duration_cast<std::chrono::microseconds>(
+                             now.time_since_epoch()
+                         ).count();
+
+    uint64_t c   = counter.fetch_add(1) & 0xFF;
+    uint64_t pid = static_cast<uint64_t>(OsUtils::get_curr_pid()) & 0xFFFF;
+
+    return (timestamp << 32) | (pid << 16) | (c << 8) | job_id;
+}
+
+uint64_t AsyncPipeline::pipeline_unique_id()
+{
+    return m_pipeline_unique_id;
 }
 
 Expected<std::shared_ptr<AsyncInferRunnerImpl>> AsyncInferRunnerImpl::create(std::shared_ptr<ConfiguredNetworkGroup> net_group,
@@ -385,6 +415,11 @@ hailo_status AsyncInferRunnerImpl::get_pipeline_status() const
 std::shared_ptr<AsyncPipeline> AsyncInferRunnerImpl::get_async_pipeline() const
 {
     return m_async_pipeline;
+}
+
+uint64_t AsyncInferRunnerImpl::pipeline_unique_id() const
+{
+    return m_async_pipeline->pipeline_unique_id();
 }
 
 } /* namespace hailort */

@@ -616,9 +616,9 @@ hailo_status FullAsyncNetworkRunner::prepare_input_buffers()
                 for (size_t i = 0; i < num_frames; i++) {
                     TRY(auto fd, DmaBufferUtils::create_dma_buffer(dma_heap_path.c_str(), frame_size));
                     hailo_dma_buffer_t dma_buffer = { fd, frame_size };
-                    TRY(auto mapped, DmaBufferUtils::mmap_dma_buffer(dma_buffer, BufferProtection::READ_WRITE));
+                    TRY(auto mapped, DmaBufferUtils::mmap_dma_buffer(dma_buffer, BufferProtection::WRITE));
                     memcpy(mapped.data(), temp_buffer.data() + i * frame_size, frame_size);
-                    CHECK_SUCCESS(DmaBufferUtils::munmap_dma_buffer(dma_buffer, mapped, BufferProtection::READ_WRITE));
+                    CHECK_SUCCESS(DmaBufferUtils::munmap_dma_buffer(dma_buffer, mapped, BufferProtection::WRITE));
                     fds.push_back(std::move(fd));
                 }
             } else {

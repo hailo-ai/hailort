@@ -269,7 +269,13 @@ Expected<float64_t> Hef::get_bottleneck_fps(const std::string &net_group_name) c
 
 Expected<hailo_device_architecture_t> Hef::get_hef_device_arch() const
 {
-    return DeviceBase::hef_arch_to_device_arch(static_cast<HEFHwArch>(pimpl->get_device_arch()));
+    TRY(auto compatible_archs, get_compatible_device_archs());
+    return Expected<hailo_device_architecture_t>{compatible_archs.at(0)};
+}
+
+Expected<std::vector<hailo_device_architecture_t>> Hef::get_compatible_device_archs() const
+{
+    return DeviceBase::hef_arch_to_device_compatible_archs(static_cast<HEFHwArch>(pimpl->get_device_arch()));
 }
 
 Expected<std::string> Hef::device_arch_to_string(const hailo_device_architecture_t arch)
@@ -515,6 +521,7 @@ hailo_status Hef::Impl::fill_v3_hef_header(hef__header_t &hef_header, std::share
     hef_header.distinct.v3.xxh3_64bits = BYTE_ORDER__htonll(hef_header.distinct.v3.xxh3_64bits);
     hef_header.distinct.v3.hef_padding_size = BYTE_ORDER__htonl(hef_header.distinct.v3.hef_padding_size);
     hef_header.distinct.v3.additional_info_size = BYTE_ORDER__htonll(hef_header.distinct.v3.additional_info_size);
+    hef_header.distinct.v3.proto_xxh3_64bits = BYTE_ORDER__htonll(hef_header.distinct.v3.proto_xxh3_64bits);
 
     return HAILO_SUCCESS;
 }
@@ -582,11 +589,18 @@ hailo_status Hef::Impl::parse_hef_file(const std::string &hef_path)
         CHECK_SUCCESS(status);
         m_ccws_section_size = hef_header.distinct.v3.ccws_size_with_padding - hef_header.distinct.v3.hef_padding_size;
         m_offset_zero_point = HEF_HEADER_SIZE_V3 + hef_header.hef_proto_size + hef_header.distinct.v3.hef_padding_size;
-        TRY(auto calculated_residue_size, calc_hef_residue_size(hef_reader, hef_header.version));
-        TRY(auto calculated_xxh3_64bits, Xxhash::calc_xxh3_on_stream(hef_reader->get_fstream(), calculated_residue_size));
-        status = validate_hef_header(hef_header, calculated_xxh3_64bits, calculated_residue_size);
-        CHECK_SUCCESS(status);
-        m_xxh3_64bits = calculated_xxh3_64bits;
+        if (0 != hef_header.distinct.v3.proto_xxh3_64bits) {
+            // If proto_xxh3_64bits is populated check only it, and let the rest of the HEF be validated later (CCW - on FW, external resources - hef parsing)
+            TRY(auto hef_proto_checksum, Xxhash::calc_xxh3_on_stream(hef_reader->get_fstream(), hef_header.hef_proto_size));
+            CHECK(hef_header.distinct.v3.proto_xxh3_64bits == hef_proto_checksum, HAILO_HEF_FILE_CORRUPTED, "HEF proto xxhash does not match");
+            m_xxh3_64bits = hef_header.distinct.v3.xxh3_64bits;
+        } else {
+            TRY(auto calculated_residue_size, calc_hef_residue_size(hef_reader, hef_header.version));
+            TRY(auto calculated_xxh3_64bits, Xxhash::calc_xxh3_on_stream(hef_reader->get_fstream(), calculated_residue_size));
+            status = validate_hef_header(hef_header, calculated_xxh3_64bits, calculated_residue_size);
+            CHECK_SUCCESS(status);
+            m_xxh3_64bits = calculated_xxh3_64bits;
+        }
         break;
     }
     default:
@@ -701,20 +715,28 @@ hailo_status Hef::Impl::parse_hef_memview(const MemoryView &hef_memview)
         CHECK_SUCCESS(status);
 
         auto proto_and_ccw_buffer = hef_memview.data() + HEF_HEADER_SIZE_V3;
-        auto proto_size = hef_memview.size() - HEF_HEADER_SIZE_V3 - hef_header.distinct.v3.ccws_size_with_padding - hef_header.distinct.v3.additional_info_size;
+        auto proto_size = hef_header.hef_proto_size;
 
-        CHECK(hef_header.distinct.v3.ccws_size_with_padding >= hef_header.distinct.v3.hef_padding_size, HAILO_HEF_FILE_CORRUPTED, "Invalid HEF - ccws size is smaller than padding size");
+        CHECK(hef_header.distinct.v3.ccws_size_with_padding >= hef_header.distinct.v3.hef_padding_size, HAILO_HEF_FILE_CORRUPTED,
+            "Invalid HEF - ccws size is smaller than padding size");
         m_ccws_section_size = hef_header.distinct.v3.ccws_size_with_padding - hef_header.distinct.v3.hef_padding_size;
         m_offset_zero_point = HEF_HEADER_SIZE_V3 + hef_header.hef_proto_size + hef_header.distinct.v3.hef_padding_size;
 
-        TRY(auto proto_and_ccws_size, calc_hef_residue_size(hef_reader, hef_header.version));
-        auto proto_and_ccws_buffer = MemoryView::create_const(hef_memview.data() + HEF_HEADER_SIZE_V3, proto_and_ccws_size);
-        TRY(auto calculated_xxh3_64bits, Xxhash::calc_xxh3_on_buffer(proto_and_ccws_buffer));
+        if (0 != hef_header.distinct.v3.proto_xxh3_64bits) {
+            // If proto_xxh3_64bits is populated check only it, and let the rest of the HEF be validated later (CCW - on FW, external resources - hef parsing)
+            auto proto_buffer = MemoryView::create_const(hef_memview.data() + HEF_HEADER_SIZE_V3, hef_header.hef_proto_size);
+            TRY(auto hef_proto_checksum, Xxhash::calc_xxh3_on_buffer(proto_buffer));
+            CHECK(hef_header.distinct.v3.proto_xxh3_64bits == hef_proto_checksum, HAILO_HEF_FILE_CORRUPTED, "HEF proto xxhash does not match");
+            m_xxh3_64bits = hef_header.distinct.v3.xxh3_64bits;
+        } else {
+            TRY(auto proto_and_ccws_size, calc_hef_residue_size(hef_reader, hef_header.version));
+            auto proto_and_ccws_buffer = MemoryView::create_const(hef_memview.data() + HEF_HEADER_SIZE_V3, proto_and_ccws_size);
+            TRY(auto calculated_xxh3_64bits, Xxhash::calc_xxh3_on_buffer(proto_and_ccws_buffer));
 
-        status = validate_hef_header(hef_header, calculated_xxh3_64bits, proto_and_ccws_size);
-        CHECK_SUCCESS(status);
-        m_xxh3_64bits = calculated_xxh3_64bits;
-
+            status = validate_hef_header(hef_header, calculated_xxh3_64bits, proto_and_ccws_size);
+            CHECK_SUCCESS(status);
+            m_xxh3_64bits = calculated_xxh3_64bits;
+        }
         return parse_hef_memview_internal(static_cast<size_t>(proto_size), proto_and_ccw_buffer, hef_header.version, hef_reader, m_offset_zero_point);
     }
     default:
@@ -1010,7 +1032,7 @@ hailo_status Hef::Impl::transfer_protobuf_field_ownership(ProtoHEFHef &hef_messa
         m_hef_optional_extensions);
 
     for (const auto &external_resouce : hef_message.external_resources()) {
-        ExternalResourceInfo external_resource_info{external_resouce.name(), external_resouce.size(), external_resouce.offset()};
+        ExternalResourceInfo external_resource_info{external_resouce.name(), external_resouce.size(), external_resouce.offset(), external_resouce.xxhash()};
         m_hef_external_resources.emplace(external_resouce.name(), external_resource_info);
     }
 
@@ -3122,9 +3144,8 @@ static Expected<hailo_nms_burst_type_t> get_nms_burst_mode(const ProtoHEFNmsInfo
             LOGGER__ERROR("Unsupported burst type was given {} for arch {}", static_cast<int>(nms_info.burst_type()), static_cast<int>(hef_arch));
             return make_unexpected(HAILO_INVALID_HEF);
         }
-    case PROTO__HW_ARCH__HAILO15H:
+    case PROTO__HW_ARCH__HAILO1XH:
     case PROTO__HW_ARCH__HAILO15M:
-    case PROTO__HW_ARCH__HAILO10H:
     case PROTO__HW_ARCH__GINGER:
     case PROTO__HW_ARCH__LAVENDER:
     case PROTO__HW_ARCH__PLUTO:
@@ -3159,9 +3180,8 @@ static Expected<hailo_nms_burst_type_t> get_nms_bbox_mode(const ProtoHEFNmsInfo 
     case PROTO__HW_ARCH__SAGE_B0:
     case PROTO__HW_ARCH__HAILO8L:
         return HAILO_BURST_TYPE_H8_BBOX;
-    case PROTO__HW_ARCH__HAILO15H:
+    case PROTO__HW_ARCH__HAILO1XH:
     case PROTO__HW_ARCH__HAILO15M:
-    case PROTO__HW_ARCH__HAILO10H:
     case PROTO__HW_ARCH__GINGER:
     case PROTO__HW_ARCH__LAVENDER:
     case PROTO__HW_ARCH__PLUTO:
@@ -3759,24 +3779,6 @@ Expected<ConfigureNetworkParams> Hef::create_configure_params(hailo_stream_inter
     return pimpl->create_configure_params(stream_interface, network_group_name);
 }
 
-Expected<NetworkGroupsParamsMap> Hef::create_configure_params_mipi_input(hailo_stream_interface_t output_interface,
-    const hailo_mipi_input_stream_params_t &mipi_params)
-{
-    NetworkGroupsParamsMap results;
-    for (const auto &name : pimpl->get_network_groups_names()) {
-        TRY(auto params, create_configure_params_mipi_input(output_interface, mipi_params, name));
-        results.emplace(std::make_pair(name, params));
-    }
-    return results;
-}
-
-
-Expected<ConfigureNetworkParams> Hef::create_configure_params_mipi_input(hailo_stream_interface_t output_interface,
-    const hailo_mipi_input_stream_params_t &mipi_params, const std::string &network_group_name)
-{
-    return pimpl->create_configure_params_mipi_input(output_interface, mipi_params, network_group_name);
-}
-
 std::string Hef::hash() const
 {
     const auto &hash = pimpl->get_hash_as_memview();
@@ -3890,15 +3892,19 @@ Expected<std::vector<std::string>> Hef::Impl::get_post_processes_infos_descripti
 
 Expected<std::string> Hef::get_description(bool stream_infos, bool vstream_infos) const
 {
-    TRY(const auto arch, get_hef_device_arch());
-    return pimpl->get_description(stream_infos, vstream_infos, arch);
+    TRY(const auto compatible_archs, get_compatible_device_archs());
+    return pimpl->get_description(stream_infos, vstream_infos, compatible_archs);
 }
 
-Expected<std::string> Hef::Impl::get_description(bool stream_infos, bool vstream_infos, hailo_device_architecture_t device_arch)
+Expected<std::string> Hef::Impl::get_description(bool stream_infos, bool vstream_infos,
+    std::vector<hailo_device_architecture_t> compatible_archs)
 {
     std::string hef_infos;
-    auto hef_arch_str = HailoRTCommon::get_device_arch_str(device_arch);
-    hef_infos += "Architecture HEF was compiled for: " + hef_arch_str + "\n";
+    std::string hef_arch_str = HailoRTCommon::get_device_arch_str(compatible_archs.at(0));
+    for (size_t i = 1; i < compatible_archs.size(); i++) {
+        hef_arch_str += ", " + HailoRTCommon::get_device_arch_str(compatible_archs[i]);
+    }
+    hef_infos += "HEF Compatible for: " + hef_arch_str + "\n";
 
     TRY(const auto network_group_infos, get_network_groups_infos());
     for (const auto &network_group_info : network_group_infos) {
@@ -3947,26 +3953,53 @@ Expected<std::string> Hef::Impl::get_description(bool stream_infos, bool vstream
     return hef_infos;
 }
 
-Expected<std::map<std::string, MemoryView>> Hef::get_external_resources() const
+
+Expected<MemoryView> Hef::get_external_resources(const std::string &resource_name) const
 {
-    return pimpl->get_external_resources();
+    return pimpl->get_external_resources(resource_name);
 }
 
-Expected<std::map<std::string, MemoryView>> Hef::Impl::get_external_resources() const
+std::vector<std::string> Hef::get_external_resource_names() const
 {
-    std::map<std::string, MemoryView> external_resources;
+    return pimpl->get_external_resource_names();
+}
+
+Expected<MemoryView> Hef::Impl::get_external_resources(const std::string &resource_name) const
+{
+    MemoryView resource_memview = {};
     auto hef_reader = get_hef_reader();
     CHECK_SUCCESS(hef_reader->open());
     for (auto &name_to_external_resource_info : m_hef_external_resources) {
-        auto &external_resource_info = name_to_external_resource_info.second;
-        const auto offset = external_resource_info.offset + get_offset_zero_point();
-        const auto size = external_resource_info.size;
+        if (resource_name == name_to_external_resource_info.first) {
+            auto &external_resource_info = name_to_external_resource_info.second;
+            const auto offset = external_resource_info.offset + get_offset_zero_point();
+            const auto size = external_resource_info.size;
+            const auto checksum = external_resource_info.xxhash;
+            TRY(resource_memview, hef_reader->read_from_offset_as_memview(offset, size));
 
-        TRY(auto resource_memview, hef_reader->read_from_offset_as_memview(offset, size));
-        external_resources[external_resource_info.name] = std::move(resource_memview);
+            if (checksum != 0) { // validate checksum only if filled in the HEF
+                TRY(auto resource_checksum, Xxhash::calc_xxh3_on_buffer(resource_memview));
+                CHECK(checksum == resource_checksum, HAILO_HEF_FILE_CORRUPTED,
+                    "Resource '{}' checksum does not match", resource_name);
+            }
+            CHECK_SUCCESS(hef_reader->close());
+            return resource_memview;
+        }
     }
     CHECK_SUCCESS(hef_reader->close());
-    return external_resources;
+    return make_unexpected(HAILO_NOT_FOUND);
+}
+
+std::vector<std::string> Hef::Impl::get_external_resource_names() const
+{
+    std::vector<std::string> resource_names;
+    resource_names.reserve(m_hef_external_resources.size());
+
+    for (const auto &name_to_external_resource_info : m_hef_external_resources) {
+        resource_names.push_back(name_to_external_resource_info.first);
+    }
+
+    return resource_names;
 }
 
 Expected<std::vector<hailo_network_group_info_t>> Hef::Impl::get_network_groups_infos()
@@ -4090,18 +4123,6 @@ Expected<ConfigureNetworkParams> Hef::Impl::create_configure_params(hailo_stream
     return params;
 }
 
-Expected<ConfigureNetworkParams> Hef::Impl::create_configure_params_mipi_input(hailo_stream_interface_t output_interface,
-    const hailo_mipi_input_stream_params_t &mipi_params, const std::string &network_group_name)
-{
-    auto params = HailoRTDefaults::get_configure_params();
-    TRY(params.stream_params_by_name,
-        create_stream_parameters_by_name_mipi_input(network_group_name, output_interface, mipi_params));
-    TRY(params.network_params_by_name,
-        create_network_parameters_by_name(network_group_name));
-
-    return params;
-}
-
 Expected<std::map<std::string, hailo_stream_parameters_t>> Hef::create_stream_parameters_by_name(
     const std::string &net_group_name, hailo_stream_interface_t stream_interface)
 {
@@ -4168,44 +4189,6 @@ Expected<std::map<std::string, hailo_network_parameters_t>> Hef::Impl::create_ne
     return results;
 }
 
-Expected<std::map<std::string, hailo_stream_parameters_t>> Hef::create_stream_parameters_by_name_mipi_input(
-    const std::string &net_group_name, hailo_stream_interface_t output_interface,
-    const hailo_mipi_input_stream_params_t &mipi_params)
-{
-    TRY(const auto network_group_name_pair,
-        pimpl->get_network_group_and_network_name(net_group_name));
-    const auto &net_group_name_str = network_group_name_pair.first;
-
-    return pimpl->create_stream_parameters_by_name_mipi_input(net_group_name_str, output_interface, mipi_params);
-}
-
-Expected<std::map<std::string, hailo_stream_parameters_t>> Hef::Impl::create_stream_parameters_by_name_mipi_input(
-    const std::string &net_group_name, hailo_stream_interface_t output_interface,
-    const hailo_mipi_input_stream_params_t &mipi_params)
-{
-    TRY(const auto core_op_metadata,
-        get_core_op_metadata(net_group_name));
-
-    std::map<std::string, hailo_stream_parameters_t> results;
-    TRY(const auto input_stream_infos,
-        core_op_metadata->get_input_stream_infos());
-    for (auto &input_layer : input_stream_infos) {
-        hailo_stream_parameters_t params = {};
-        params.direction = HAILO_H2D_STREAM;
-        params.stream_interface = HAILO_STREAM_INTERFACE_MIPI;
-        params.mipi_input_params = mipi_params;
-        results.emplace(std::make_pair(input_layer.name, params));
-    }
-    TRY(const auto output_stream_infos,
-        core_op_metadata->get_output_stream_infos());
-    for (auto &output_layer : output_stream_infos) {
-        TRY(auto params, HailoRTDefaults::get_stream_parameters(output_interface, HAILO_D2H_STREAM));
-        results.emplace(std::make_pair(output_layer.name, params));
-    }
-
-    return results;
-}
-
 void Hef::set_memory_footprint_optimization(bool should_optimize)
 {
     return pimpl->set_memory_footprint_optimization(should_optimize);
@@ -4236,5 +4219,68 @@ Expected<std::string> Hef::hash(const std::string &hef_path)
 
     return StringUtils::to_hex_string(reinterpret_cast<uint8_t*>(&xxh3_64bits), sizeof(xxh3_64bits), LOWERCASE);
 }
+
+Expected<std::map<std::string, BufferPtr>> Hef::extract_hef_external_resources(const std::string &file_path)
+{
+    return Hef::Impl::extract_hef_external_resources(file_path);
+}
+
+Expected<std::map<std::string, BufferPtr>> Hef::Impl::extract_hef_external_resources(const std::string &file_path)
+{
+    TRY(auto hef_reader, SeekableBytesReader::create_reader(file_path));
+    CHECK_SUCCESS(hef_reader->open());
+
+    // Read and parse the HEF header and proto to extract external resources
+    hef__header_t hef_header = {};
+    CHECK_SUCCESS(hef_reader->read(reinterpret_cast<uint8_t*>(&hef_header), HEF_COMMON_SIZE));
+
+    auto hef_version = BYTE_ORDER__htonl(hef_header.version);
+    CHECK(hef_version == HEADER_VERSION_3, HAILO_HEF_NOT_SUPPORTED,
+        "Only HEF version 3 is supported. Current version: {}", hef_version);
+
+    CHECK_SUCCESS(hef_reader->read(reinterpret_cast<uint8_t*>(&hef_header.distinct), sizeof(hef__header_distinct_t::v3)));
+    auto proto_size = BYTE_ORDER__htonl(hef_header.hef_proto_size);
+
+    // Read and parse the proto message to extract external resource info
+    TRY(auto proto_buffer, Buffer::create_shared(proto_size));
+    CHECK_SUCCESS(hef_reader->read(proto_buffer->data(), proto_size));
+
+    ProtoHEFHef hef_message;
+    auto parse_result = hef_message.ParseFromArray(proto_buffer->data(), static_cast<int>(proto_size));
+    CHECK(parse_result, HAILO_HEF_FILE_CORRUPTED, "Failed to parse HEF proto message");
+
+    // Extract external resource info and calculate file size excluding external resources
+    std::map<std::string, BufferPtr> external_resources;
+
+    size_t offset_zero_point = HEF_HEADER_SIZE_V3 + proto_size + BYTE_ORDER__htonl(hef_header.distinct.v3.hef_padding_size);
+
+    for (const auto &external_resource : hef_message.external_resources()) {
+        const auto& resource_name = external_resource.name();
+        const auto resource_size = external_resource.size();
+        const auto resource_offset = external_resource.offset();
+
+        TRY(auto resource_buffer, Buffer::create_shared(resource_size));
+
+        // Seek to the resource location in the file
+        size_t absolute_offset = offset_zero_point + resource_offset;
+        CHECK_SUCCESS(hef_reader->seek(absolute_offset));
+        CHECK_SUCCESS(hef_reader->read(resource_buffer->data(), resource_size));
+
+        const uint64_t resource_checksum = external_resource.xxhash();
+        // Check if xxhash is set (not default value 0)
+        if (resource_checksum != 0) {
+            TRY(auto resource_checksum_result, Xxhash::calc_xxh3_on_buffer(MemoryView::create_const(resource_buffer->data(), resource_size)));
+            CHECK(resource_checksum == resource_checksum_result, HAILO_HEF_FILE_CORRUPTED,
+                "Resource '{}' checksum does not match", resource_name);
+        }
+
+        external_resources[resource_name] = resource_buffer;
+    }
+
+    CHECK_SUCCESS(hef_reader->close());
+
+    return external_resources;
+}
+
 
 } /* namespace hailort */

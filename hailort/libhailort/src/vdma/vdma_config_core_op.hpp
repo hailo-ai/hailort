@@ -60,6 +60,7 @@ public:
     hailo_status cancel_pending_transfers();
 
     hailo_status prepare_transfers(std::unordered_map<std::string, TransferRequest> &transfers);
+    hailo_status cancel_prepared_transfers();
 
     virtual Expected<hailo_stream_interface_t> get_default_streams_interface() override;
 
@@ -83,6 +84,7 @@ public:
     virtual Expected<std::vector<uint32_t>> get_cache_ids() const override;
     virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) override;
     virtual hailo_status write_cache_buffer(uint32_t cache_id, MemoryView buffer) override;
+    virtual hailo_status finalize_cache() override;
 
     virtual ~VdmaConfigCoreOp();
     VdmaConfigCoreOp(const VdmaConfigCoreOp &other) = delete;

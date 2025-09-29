@@ -33,6 +33,7 @@ Expected<MemoryView> DmaBufferUtils::mmap_dma_buffer(hailo_dma_buffer_t dma_buff
         prot = PROT_WRITE;
         dma_buf_sync_flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_WRITE;
     } else {
+        LOGGER__ERROR("Invalid buffer protection: {}", static_cast<int>(dma_buffer_protection));
         return make_unexpected(HAILO_INVALID_ARGUMENT);
     }
 
@@ -57,6 +58,7 @@ hailo_status DmaBufferUtils::munmap_dma_buffer(hailo_dma_buffer_t dma_buffer, Me
     } else if (BufferProtection::WRITE == dma_buffer_protection) {
         dma_buf_sync_flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE;
     } else {
+        LOGGER__ERROR("Invalid buffer protection: {}", static_cast<int>(dma_buffer_protection));
         return make_unexpected(HAILO_INVALID_ARGUMENT);
     }
 
@@ -110,6 +112,7 @@ Expected<std::string> DmaBufferUtils::get_dma_heap_path()
             return Expected<std::string>(path);
         }
     }
+    LOGGER__ERROR("No valid DMA heap found");
     return make_unexpected(HAILO_INTERNAL_FAILURE);    
 }
 } /* namespace hailort */

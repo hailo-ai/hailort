@@ -24,6 +24,7 @@
 #include "inference_manager.hpp"
 #include "text_encoder.hpp"
 #include "single_io_model.hpp"
+#include "genai_server.hpp"
 
 namespace hailort
 {
@@ -59,8 +60,6 @@ public:
     Text2ImageServer(std::shared_ptr<Session> session, std::shared_ptr<Event> shutdown_event,
         std::shared_ptr<std::atomic<State>> state, const std::string &generation_session_listener_ip = "");
     ~Text2ImageServer();
-
-    hailo_status flow();
 
     Expected<Buffer> handle_create_text2image_request(const MemoryView &request);
     Expected<Buffer> handle_create_generator_request(const MemoryView &request);
@@ -107,7 +106,6 @@ private:
     std::shared_ptr<Event> m_shutdown_event;
     
     bool m_has_super_resolution;
-    HailoDiffuserSchedulerType m_scheduler_type;
     Text2ImageGeneratorParams m_generator_params;
 
     std::unique_ptr<TextEncoder> m_text_encoder;
@@ -119,21 +117,15 @@ private:
     BufferPtr m_output_result; // TODO: HRT-17086 - Remove and use the model's output MemoryView
 };
 
-// TODO (HRT-18240): Make this class generic for all genai servers
-class Text2ImageServerManager
+class Text2ImageServerManager : public GenAIServerManager
 {
 public:
     static Expected<std::unique_ptr<Text2ImageServerManager>> create(std::shared_ptr<Session> session, const std::string &generation_session_listener_ip = "");
 
-    hailo_status flow();
-
     Text2ImageServerManager(std::shared_ptr<Session> session, std::unique_ptr<Text2ImageServer> &&server);
 
 protected:
-    SessionWrapper m_session;
     std::unique_ptr<Text2ImageServer> m_server;
-    std::array<std::function<Expected<Buffer>(const MemoryView &)>, static_cast<size_t>(HailoGenAIActionID::GENAI_ACTIONS_COUNT)> m_dispatcher;
-
 };
 
 } /* namespace genai */

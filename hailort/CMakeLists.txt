@@ -11,6 +11,7 @@ option(HAILO_COMPILE_WARNING_AS_ERROR "Add compilation flag for treating compila
 option(HAILO_SUPPORT_PACKAGING "Create HailoRT package (internal)" OFF)
 option(HAILO_BUILD_DOC "Build doc" OFF)
 option(HAILO_BUILD_HX18 "Build HX18" OFF)
+option(ENABLE_PERFETTO "Build with Perfetto tracing support" OFF)
 option(HAILO_BUILD_HAILORT_SERVER "Build Hailort Server" OFF)
 option(HAILO_BUILD_GENAI_SERVER "Build GenAI Server" OFF)
 
@@ -32,8 +33,8 @@ endif()
 
 # Set firmware version
 add_definitions( -DFIRMWARE_VERSION_MAJOR=5 )
-add_definitions( -DFIRMWARE_VERSION_MINOR=0 )
-add_definitions( -DFIRMWARE_VERSION_REVISION=1 )
+add_definitions( -DFIRMWARE_VERSION_MINOR=1 )
+add_definitions( -DFIRMWARE_VERSION_REVISION=0 )
 
 # TODO: temporary hack to support offline builds. Remove HAILO_OFFLINE_COMPILATION and use FETCHCONTENT_FULLY_DISCONNECTED
 if(HAILO_OFFLINE_COMPILATION)
@@ -55,6 +56,7 @@ set(RPC_DIR ${PROJECT_SOURCE_DIR}/hailort/rpc)
 set(HRPC_DIR ${PROJECT_SOURCE_DIR}/hailort/hrpc)
 set(HRPC_PROTOCOL_DIR ${PROJECT_SOURCE_DIR}/hailort/hrpc_protocol)
 set(HAILORT_GENAI_DIR ${HAILORT_SRC_DIR}/genai)
+set(HAILORT_TOKENIZER_DIR ${PROJECT_SOURCE_DIR}/hailort/common/genai/tokenizer)
 
 add_subdirectory(common)
 add_subdirectory(hrpc)

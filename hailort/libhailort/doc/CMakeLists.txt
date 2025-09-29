@@ -21,12 +21,12 @@ if(DOXYGEN_FOUND)
                       MAIN_DEPENDENCY ${DOXYFILE_OUT} ${DOXYFILE_IN}
                       COMMENT "Generating doc")
 
-    add_custom_target(doxygen DEPENDS ${DOXYGEN_INDEX_FILE})
+    add_custom_target(hailort_doxygen DEPENDS ${DOXYGEN_INDEX_FILE})
 
     install(
         DIRECTORY "${DOXYGEN_OUTPUT_DIR}" DESTINATION "doc/"
         CONFIGURATIONS Release)
 
-    add_custom_target(doc ALL DEPENDS doxygen)
+    add_custom_target(doc ALL DEPENDS hailort_doxygen)
 
 endif()

@@ -17,7 +17,6 @@
 #include "core_op/core_op.hpp"
 #include "core_op/resource_manager/resource_manager.hpp"
 #include "vdma/vdma_stream.hpp"
-#include "mipi/mipi_stream.hpp"
 #include "device_common/control_protocol.hpp"
 #include "stream_common/nms_stream.hpp"
 #include "stream_common/remote_process_stream.hpp"
@@ -469,13 +468,6 @@ Expected<std::shared_ptr<InputStreamBase>> CoreOp::create_input_stream_from_conf
         case HAILO_STREAM_INTERFACE_INTEGRATED:
             {
                 TRY(input_stream, create_vdma_input_stream(device, stream_name, layer_info, stream_params));
-                break;
-            }
-
-        case HAILO_STREAM_INTERFACE_MIPI:
-            {
-                TRY(input_stream, MipiInputStream::create(device,
-                    layer_info, stream_params.mipi_input_params, m_core_op_activated_event));
                 break;
             }
 

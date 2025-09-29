@@ -1271,8 +1271,12 @@ Expected<InferResult> run_command_hef_vdevice(const inference_runner_params &par
     TRY(auto vdevice, VDevice::create(vdevice_params), "Failed creating vdevice");
 
     std::vector<std::reference_wrapper<Device>> physical_devices;
-    if (!params.vdevice_params.multi_process_service) {
-        TRY(physical_devices, vdevice->get_physical_devices());
+    TRY(physical_devices, vdevice->get_physical_devices());
+    Device::Type device_type = physical_devices[0].get().get_type();
+    CHECK(Device::Type::INTEGRATED == device_type, HAILO_INVALID_OPERATION, "The \"run\" command is not supported for this device type! Use \"run2\" instead.");
+
+    if (params.vdevice_params.multi_process_service) {
+        physical_devices.clear();
     }
 
     TRY(const auto interface, vdevice->get_default_streams_interface(), "Failed to get default streams interface");

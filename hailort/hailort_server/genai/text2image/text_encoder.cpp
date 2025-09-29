@@ -9,14 +9,13 @@
 
 #include "text_encoder.hpp"
 #include "hailo/hailort.h"
+#include "common/genai/constants.hpp"
 
 namespace hailort
 {
 namespace genai
 {
 
-static const std::string INPUT_EMB_BINARY = "embeddings.bin";
-static const std::string TOKENIZER = "tokenizer.json";
 
 // TODO: HRT-16738 - Get these tokens from hef
 static const int EOF_TOKEN_ID = 49407; // <|endoftext|>
@@ -27,16 +26,12 @@ Expected<std::unique_ptr<TextEncoder>> TextEncoder::create(Hef text_encoder_hef,
     TRY(auto inference_manager_text_encoder, InferenceManager::create(vdevice, text_encoder_hef));
     inference_manager_text_encoder->get_model()->set_batch_size(INPUT_PROMPTS_BATCH_SIZE);
 
-    TRY(auto external_resources, inference_manager_text_encoder->get_hef().get_external_resources());
-    CHECK(contains(external_resources, INPUT_EMB_BINARY), HAILO_INVALID_ARGUMENT,
-        "Failed to create 'TextEncoder'. 'external_resources' should contain embeddings in binary format in hef");
-    CHECK(contains(external_resources, TOKENIZER), HAILO_INVALID_ARGUMENT,
-        "Failed to create 'TextEncoder'. 'external_resources' should contain tokenizer in hef");
-
     // Init tokenizer
     // HRT-16824 - HailoTokenizer should get memview in the c'tor and convert to string if neccesary inside
-    std::string tokenizer_blob(external_resources.at(TOKENIZER).size(), '\0');
-    std::memcpy(const_cast<char*>(tokenizer_blob.data()), external_resources[TOKENIZER].data(), tokenizer_blob.size());
+    TRY(auto tokenizer_view, inference_manager_text_encoder->get_hef().get_external_resources(TOKENIZER),
+        "Failed to create 'TextEncoder'. 'external_resources' should contain tokenizer in hef");
+    std::string tokenizer_blob(tokenizer_view.size(), '\0');
+    std::memcpy(const_cast<char*>(tokenizer_blob.data()), tokenizer_view.data(), tokenizer_blob.size());
     TRY(auto tokenizer, HailoTokenizer::create(tokenizer_blob));
 
     // Init embeddings
@@ -45,9 +40,11 @@ Expected<std::unique_ptr<TextEncoder>> TextEncoder::create(Hef text_encoder_hef,
     CHECK(embeddings_dtype == HAILO_FORMAT_TYPE_UINT16, HAILO_INVALID_OPERATION,
         "Expected dtype of embeddings to be uint16, instead got {}", HailoRTCommon::get_format_type_str(embeddings_dtype));
 
+    TRY(auto embeddings_view, inference_manager_text_encoder->get_hef().get_external_resources(INPUT_EMB_BINARY),
+        "Failed to create 'TextEncoder'. 'external_resources' should contain embeddings in binary format in hef");
     size_t cols = input.shape().features;
-    size_t rows = external_resources.at(INPUT_EMB_BINARY).size() / cols / sizeof(uint16_t);
-    TRY(auto token_embedder, TokenEmbedder<uint16_t>::create(external_resources.at(INPUT_EMB_BINARY), rows, cols));
+    size_t rows = embeddings_view.size() / cols / sizeof(uint16_t);
+    TRY(auto token_embedder, TokenEmbedder<uint16_t>::create(embeddings_view, rows, cols));
 
     TRY(auto output, inference_manager_text_encoder->get_model()->output());
     output.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);

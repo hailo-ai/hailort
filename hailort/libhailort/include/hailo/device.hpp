@@ -765,8 +765,6 @@ public:
      */
     Expected<Capabilities> get_capabilities();
 
-    virtual hailo_status direct_write_memory(uint32_t address, const void *buffer, uint32_t size);
-    virtual hailo_status direct_read_memory(uint32_t address, void *buffer, uint32_t size);
     hailo_status set_overcurrent_state(bool should_activate);
     Expected<bool> get_overcurrent_state();
     Expected<hailo_health_info_t> get_health_information();
@@ -783,6 +781,7 @@ public:
     hailo_status continue_context_switch_breakpoint(uint8_t breakpoint_id);
     hailo_status clear_context_switch_breakpoint(uint8_t breakpoint_id);
     Expected<uint8_t> get_context_switch_breakpoint_status(uint8_t breakpoint_id);
+    bool is_extended_fw_checks() const;
 
     virtual hailo_status before_fork() = 0;
     virtual hailo_status after_fork_in_parent() = 0;
@@ -811,6 +810,7 @@ protected:
     uint32_t m_control_sequence;
     bool m_is_control_version_supported;
     hailo_device_architecture_t m_device_architecture;
+    bool m_is_extended_fw_checks = false;
 
 private:
     virtual Expected<bool> has_power_sensor();

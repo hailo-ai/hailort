@@ -20,6 +20,7 @@ namespace hailort
  * Returns the amount of data left in the given file.
  */
 Expected<size_t> get_istream_size(std::ifstream &s);
+Expected<size_t> get_istream_size(const std::string &file_path);
 
 /**
  * Reads full file content into a provided `MemoryView`, and return the file_size.
@@ -42,11 +43,11 @@ Expected<size_t> read_device_file(const std::string &file_path, MemoryView buffe
 class StreamPositionGuard
 {
 public:
-    static Expected<StreamPositionGuard> create(std::shared_ptr<std::ifstream> stream);
+    static Expected<std::shared_ptr<StreamPositionGuard>> create_shared(std::shared_ptr<std::ifstream> stream);
+    StreamPositionGuard(std::shared_ptr<std::ifstream> stream, std::streampos beg_pos);
     ~StreamPositionGuard();
 
 private:
-    StreamPositionGuard(std::shared_ptr<std::ifstream> stream, std::streampos beg_pos);
 
     std::shared_ptr<std::ifstream> m_stream;
     const std::streampos m_beg_pos;
@@ -99,8 +100,8 @@ public:
 
 private:
     std::shared_ptr<std::ifstream> m_fstream = nullptr;
+    std::shared_ptr<StreamPositionGuard> m_fstream_guard = nullptr;
     std::string m_file_path;
-
 };
 
 class BufferReader : public SeekableBytesReader

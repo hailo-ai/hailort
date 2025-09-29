@@ -80,6 +80,12 @@ hailo_status InputStreamBase::prepare_transfer(TransferRequest &&)
     return HAILO_NOT_IMPLEMENTED;
 }
 
+hailo_status InputStreamBase::cancel_prepared_transfers()
+{
+    LOGGER__ERROR("cancel_prepared_transfers not implemented for this type of stream");
+    return HAILO_NOT_IMPLEMENTED;
+}
+
 hailo_status InputStreamBase::abort()
 {
     LOGGER__ERROR("InputStream::abort is deprecated. One should use ConfiguredNetworkGroup::shutdown()");
@@ -168,6 +174,12 @@ hailo_status OutputStreamBase::read_async(int dmabuf_fd, size_t size, const Tran
 hailo_status OutputStreamBase::prepare_transfer(TransferRequest &&)
 {
     LOGGER__ERROR("prepare_transfer not implemented for sync API");
+    return HAILO_NOT_IMPLEMENTED;
+}
+
+hailo_status OutputStreamBase::cancel_prepared_transfers()
+{
+    LOGGER__ERROR("cancel_prepared_transfers not implemented for this type of stream");
     return HAILO_NOT_IMPLEMENTED;
 }
 

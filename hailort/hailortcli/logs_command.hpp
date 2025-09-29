@@ -14,17 +14,18 @@
 #include "command.hpp"
 
 
-class LogsCommand : public DeviceCommand {
+class LogsCommand : public Command {
 public:
     explicit LogsCommand(CLI::App &parent_app);
 
 protected:
-    virtual hailo_status execute_on_device(Device &device) override;
-    virtual void pre_execute() override;
+    virtual hailo_status execute() override;
 
 private:
+    hailo_status execute_on_device(Device &device);
     hailo_status read_log(Device &device);
 
+    hailo_device_params m_device_params;
     hailo_log_type_t m_log_type;
     bool m_should_follow;
 };
