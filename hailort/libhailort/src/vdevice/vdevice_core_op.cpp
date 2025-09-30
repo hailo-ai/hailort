@@ -537,6 +537,13 @@ hailo_status VDeviceCoreOp::write_cache_buffer(uint32_t cache_id, MemoryView buf
     return m_core_ops.begin()->second->write_cache_buffer(cache_id, buffer);
 }
 
+hailo_status VDeviceCoreOp::finalize_cache()
+{
+    CHECK(1 == m_core_ops.size(), HAILO_INVALID_OPERATION,
+        "finalize_cache function is not supported on more than 1 physical device.");
+    return m_core_ops.begin()->second->finalize_cache();
+}
+
 hailo_status VDeviceCoreOp::add_to_trace()
 {
     const auto batch_size = get_stream_batch_size(m_config_params.stream_params_by_name.begin()->first);

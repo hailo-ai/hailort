@@ -34,6 +34,14 @@ Expected<size_t> get_istream_size(std::ifstream &s)
     return Expected<size_t>(static_cast<size_t>(total_size));
 }
 
+Expected<size_t> get_istream_size(const std::string &file_path)
+{
+    std::ifstream file(file_path, std::ios::in | std::ios::binary);
+    CHECK(file.good(), HAILO_OPEN_FILE_FAILURE, "Error opening file {}", file_path);
+
+    return get_istream_size(file);
+}
+
 Expected<size_t> read_binary_file(const std::string &file_path, MemoryView mem_view)
 {
     std::ifstream file(file_path, std::ios::in | std::ios::binary);
@@ -84,14 +92,16 @@ Expected<size_t> read_device_file(const std::string &file_path, MemoryView buffe
     return bytes_read;
 }
 
-Expected<StreamPositionGuard> StreamPositionGuard::create(std::shared_ptr<std::ifstream> stream)
+Expected<std::shared_ptr<StreamPositionGuard>> StreamPositionGuard::create_shared(std::shared_ptr<std::ifstream> stream)
 {
     CHECK_AS_EXPECTED((nullptr != stream), HAILO_INVALID_ARGUMENT);
 
     const auto beg_pos = stream->tellg();
     CHECK_AS_EXPECTED((-1 != beg_pos), HAILO_INTERNAL_FAILURE, "ifstream::tellg() failed");
 
-    return StreamPositionGuard(stream, beg_pos);
+    auto ptr = std::make_shared<StreamPositionGuard>(stream, beg_pos);
+    CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
+    return ptr;
 }
 
 StreamPositionGuard::StreamPositionGuard(std::shared_ptr<std::ifstream> stream, std::streampos beg_pos) :
@@ -101,10 +111,12 @@ StreamPositionGuard::StreamPositionGuard(std::shared_ptr<std::ifstream> stream, 
 
 StreamPositionGuard::~StreamPositionGuard()
 {
-    m_stream->seekg(m_beg_pos, std::ios::beg);
-    if (!m_stream->good()) {
-        LOGGER__ERROR("ifstream::seekg() failed");
-        return;
+    // Only try to restore position if stream is still open and in good state
+    if (m_stream && m_stream->is_open() && m_stream->good()) {
+        m_stream->seekg(m_beg_pos, std::ios::beg);
+        if (!m_stream->good()) {
+            LOGGER__ERROR("ifstream::seekg() failed");
+        }
     }
 }
 
@@ -160,11 +172,13 @@ hailo_status FileReader::open()
 {
     if (nullptr == m_fstream) { // The first call to open creates the ifstream object
         m_fstream = std::make_shared<std::ifstream>(m_file_path, std::ios::in | std::ios::binary);
+        CHECK(m_fstream->good(), HAILO_OPEN_FILE_FAILURE, "Failed opening file, path: {}", m_file_path);
+        TRY(m_fstream_guard, StreamPositionGuard::create_shared(m_fstream));
     } else {
         m_fstream->open(m_file_path, std::ios::in | std::ios::binary);
+        CHECK(m_fstream->good(), HAILO_OPEN_FILE_FAILURE, "Failed opening file, path: {}", m_file_path);
     }
 
-    CHECK(m_fstream->good(), HAILO_OPEN_FILE_FAILURE, "Failed opening file, path: {}", m_file_path);
     return HAILO_SUCCESS;
 }
 

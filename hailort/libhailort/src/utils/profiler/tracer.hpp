@@ -14,6 +14,7 @@
 
 #include "scheduler_profiler_handler.hpp"
 #include "monitor_handler.hpp"
+#include "perfetto_handler.hpp"
 #include "utils/query_stats_utils.hpp"
 namespace hailort
 {
@@ -40,10 +41,11 @@ public:
 private:
     void init_monitor_handler();
     void init_scheduler_profiler_handler();
+    void init_perfetto_handler();
     template<class TraceType, typename... Args>
     void execute_trace(Args... trace_args)
     {
-        if ((!m_should_trace) && (!m_should_monitor)) {
+        if ((!m_should_trace) && (!m_should_monitor) && (!m_should_use_perfetto)) {
             return;
         }
 
@@ -72,6 +74,7 @@ private:
 
     bool m_should_trace = false;
     bool m_should_monitor = false;
+    bool m_should_use_perfetto = false;
     std::chrono::high_resolution_clock::time_point m_start_time;
     std::vector<std::unique_ptr<Handler>> m_handlers;
     std::mutex m_mutex;

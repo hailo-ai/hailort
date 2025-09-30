@@ -585,12 +585,17 @@ bool DurationCollector::should_measure_average_fps(hailo_pipeline_elem_stats_fla
     return (flags & HAILO_PIPELINE_ELEM_STATS_MEASURE_FPS) != 0;
 }
 
-PipelineObject::PipelineObject(const std::string &name) : m_name(name)
+PipelineObject::PipelineObject(const std::string &name, uint64_t pipeline_unique_id) : m_name(name), m_pipeline_unique_id(pipeline_unique_id)
 {}
 
 const std::string &PipelineObject::name() const
 {
     return m_name;
+}
+
+const uint64_t &PipelineObject::pipeline_unique_id() const
+{
+    return m_pipeline_unique_id;
 }
 
 std::string PipelineObject::create_element_name(const std::string &element_name, const std::string &stream_name, uint8_t stream_index)
@@ -638,7 +643,7 @@ std::string PipelinePad::create_pad_name(const std::string &element_name, Type p
 }
 
 PipelinePad::PipelinePad(PipelineElement &element, const std::string &element_name, Type pad_type) :
-    PipelineObject(create_pad_name(element_name, pad_type)),
+    PipelineObject(create_pad_name(element_name, pad_type), element.pipeline_unique_id()),
     m_element(element),
     m_next(nullptr),
     m_prev(nullptr),
@@ -785,10 +790,10 @@ const PipelineBufferPoolPtr PipelinePad::get_buffer_pool() const
     return m_element.get_buffer_pool(name());
 }
 
-PipelineElement::PipelineElement(const std::string &name, DurationCollector &&duration_collector,
+PipelineElement::PipelineElement(const std::string &name, uint64_t pipeline_unique_id, DurationCollector &&duration_collector,
                                  std::shared_ptr<std::atomic<hailo_status>> &&pipeline_status,
                                  PipelineDirection pipeline_direction) :
-    PipelineObject(name),
+    PipelineObject(name, pipeline_unique_id),
     m_duration_collector(std::move(duration_collector)),
     m_pipeline_status(std::move(pipeline_status)),
     m_sinks(),

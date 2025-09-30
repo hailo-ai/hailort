@@ -25,7 +25,6 @@ typedef struct {
     uint8_t is_input;
     uint32_t communication_type;
     uint8_t skip_nn_stream_config;
-    uint8_t power_mode; // CONTROL_PROTOCOL__power_mode_t
     CONTROL_PROTOCOL__nn_stream_config_t nn_stream_config;
     CONTROL_PROTOCOL__communication_config_prams_t communication_params;
 } CONTROL_PROTOCOL__config_stream_params_t;

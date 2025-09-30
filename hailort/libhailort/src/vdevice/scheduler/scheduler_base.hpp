@@ -127,7 +127,7 @@ public:
     };
 
     virtual ReadyInfo is_core_op_ready_for_run(const scheduler_core_op_handle_t &core_op_handle, bool check_threshold,
-        const device_id_t &device_id) = 0;
+        const device_id_t &device_id, bool use_ready_queue) = 0;
     virtual bool is_core_op_ready_for_prepare(const scheduler_core_op_handle_t &core_op_handle, const device_id_t &device_id) = 0;
 
     virtual uint32_t get_device_count() const

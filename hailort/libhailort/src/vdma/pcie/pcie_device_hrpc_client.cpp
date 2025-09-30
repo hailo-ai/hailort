@@ -48,7 +48,7 @@ Expected<rpc_object_handle_t> PcieDeviceHrpcClient::create_remote_device(std::sh
 {
     TRY(auto request_buffer, client->allocate_request_buffer(), "Failed to allocate request buffer");
     TRY(auto request_size, CreateDeviceSerializer::serialize_request(MemoryView(*request_buffer)));
-    TRY(auto result, client->execute_request(HailoRpcActionID::DEVICE__CREATE, MemoryView(request_buffer->data(), request_size)));
+    TRY(auto result, client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__CREATE), MemoryView(request_buffer->data(), request_size)));
 
     return CreateDeviceSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
@@ -87,7 +87,8 @@ PcieDeviceHrpcClient::~PcieDeviceHrpcClient()
         return;
     }
 
-    auto result_expected = m_client->execute_request(HailoRpcActionID::DEVICE__DESTROY, MemoryView(request_buffer.value()->data(), *request_size));
+    auto result_expected = m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__DESTROY),
+        MemoryView(request_buffer.value()->data(), *request_size));
     if (!result_expected) {
         LOGGER__CRITICAL("Failed to destroy Device! status = {}", result_expected.status());
         return;
@@ -104,7 +105,8 @@ Expected<hailo_device_identity_t> PcieDeviceHrpcClient::identify()
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
     TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
     TRY(auto request_size, IdentifyDeviceSerializer::serialize_request(m_handle, MemoryView(*request_buffer)));
-    TRY(auto result, m_client->execute_request(HailoRpcActionID::DEVICE__IDENTIFY, MemoryView(request_buffer->data(), request_size)));
+    TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__IDENTIFY),
+        MemoryView(request_buffer->data(), request_size)));
 
     return IdentifyDeviceSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
@@ -114,44 +116,48 @@ Expected<hailo_extended_device_information_t> PcieDeviceHrpcClient::get_extended
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
     TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
     TRY(auto request_size, ExtendedDeviceInfoSerializer::serialize_request(m_handle, MemoryView(*request_buffer)));
-    TRY(auto result, m_client->execute_request(HailoRpcActionID::DEVICE__EXTENDED_INFO, MemoryView(request_buffer->data(), request_size)));
+    TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__EXTENDED_INFO),
+        MemoryView(request_buffer->data(), request_size)));
 
     return ExtendedDeviceInfoSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
 
 Expected<hailo_chip_temperature_info_t> PcieDeviceHrpcClient::get_chip_temperature()
 {
-    using Serializer = GetChipTemperatureSerializer;
-    constexpr auto ActionID = HailoRpcActionID::DEVICE__GET_CHIP_TEMPERATURE;
 
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
+
+    using Serializer = GetChipTemperatureSerializer;
     TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
     TRY(auto request_size, Serializer::serialize_request(m_handle, MemoryView(*request_buffer)));
-    TRY(auto result, m_client->execute_request(ActionID, MemoryView(request_buffer->data(), request_size)));
+    TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__GET_CHIP_TEMPERATURE),
+        MemoryView(request_buffer->data(), request_size)));
 
     return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
 
 Expected<hailo_health_stats_t> PcieDeviceHrpcClient::query_health_stats()
 {
-    using Serializer = QueryHealthStatsSerializer;
-    constexpr auto ActionID = HailoRpcActionID::DEVICE__QUERY_HEALTH_STATS;
-
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
+
+    using Serializer = QueryHealthStatsSerializer;
     TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
     TRY(auto request_size, Serializer::serialize_request(m_handle, MemoryView(*request_buffer)));
-    TRY(auto result, m_client->execute_request(ActionID, MemoryView(request_buffer->data(), request_size)));
+    TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__QUERY_HEALTH_STATS),
+        MemoryView(request_buffer->data(), request_size)));
 
     return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
 
 Expected<hailo_performance_stats_t> PcieDeviceHrpcClient::query_performance_stats()
 {
-    using Serializer = QueryPerformanceStatsSerializer;
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
+
+    using Serializer = QueryPerformanceStatsSerializer;
     TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
     TRY(auto request_size, Serializer::serialize_request(m_handle, MemoryView(*request_buffer)));
-    TRY(auto result, m_client->execute_request(HailoRpcActionID::DEVICE__QUERY_PERFORMANCE_STATS, MemoryView(request_buffer->data(), request_size)));
+    TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__QUERY_PERFORMANCE_STATS),
+        MemoryView(request_buffer->data(), request_size)));
 
     return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
@@ -160,13 +166,14 @@ Expected<float32_t> PcieDeviceHrpcClient::power_measurement(
     hailo_dvm_options_t dvm,
     hailo_power_measurement_types_t measurement_type)
 {
-    using Serializer = PowerMeasurementSerializer;
-    constexpr auto ActionID = HailoRpcActionID::DEVICE__POWER_MEASUREMENT;
+    CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
 
+    using Serializer = PowerMeasurementSerializer;
     TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
     TRY(auto request_size, Serializer::serialize_request(m_handle, dvm, measurement_type, MemoryView(*request_buffer)));
     TRY_WITH_ACCEPTABLE_STATUS(HAILO_OPEN_FILE_FAILURE, auto result,
-                               m_client->execute_request(ActionID, MemoryView(request_buffer->data(), request_size)));
+                               m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__POWER_MEASUREMENT),
+                               MemoryView(request_buffer->data(), request_size)));
     return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
 
@@ -174,13 +181,13 @@ hailo_status PcieDeviceHrpcClient::start_power_measurement(
     hailo_averaging_factor_t averaging_factor,
     hailo_sampling_period_t sampling_period)
 {
-    using Serializer = StartPowerMeasurementSerializer;
-    constexpr auto ActionID = HailoRpcActionID::DEVICE__START_POWER_MEASUREMENT;
-
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
+
+    using Serializer = StartPowerMeasurementSerializer;
     TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
     TRY(auto request_size, Serializer::serialize_request(m_handle, averaging_factor, sampling_period, MemoryView(*request_buffer)));
-    TRY(auto result, m_client->execute_request(ActionID, MemoryView(request_buffer->data(), request_size)));
+    TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__START_POWER_MEASUREMENT),
+        MemoryView(request_buffer->data(), request_size)));
 
     return HAILO_SUCCESS;
 }
@@ -190,14 +197,13 @@ Expected<hailo_power_measurement_data_t> PcieDeviceHrpcClient::get_power_measure
     bool should_clear)
 {
     (void)buffer_index;
+    CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
 
     using Serializer = GetPowerMeasurementSerializer;
-    constexpr auto ActionID = HailoRpcActionID::DEVICE__GET_POWER_MEASUREMENT;
-
-    CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
     TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
     TRY(auto request_size, Serializer::serialize_request(m_handle, should_clear, MemoryView(*request_buffer)));
-    TRY(auto result, m_client->execute_request(ActionID, MemoryView(request_buffer->data(), request_size)));
+    TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__GET_POWER_MEASUREMENT),
+        MemoryView(request_buffer->data(), request_size)));
 
     return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
@@ -208,40 +214,38 @@ hailo_status PcieDeviceHrpcClient::set_power_measurement(
     hailo_power_measurement_types_t measurement_type)
 {
     (void)buffer_index;
+    CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
 
     using Serializer = SetPowerMeasurementSerializer;
-    constexpr auto ActionID = HailoRpcActionID::DEVICE__SET_POWER_MEASUREMENT;
-
-    CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
     TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
     TRY(auto request_size, Serializer::serialize_request(m_handle, dvm, measurement_type, MemoryView(*request_buffer)));
-    TRY(auto result, m_client->execute_request(ActionID, MemoryView(request_buffer->data(), request_size)));
+    TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__SET_POWER_MEASUREMENT),
+        MemoryView(request_buffer->data(), request_size)));
 
     return HAILO_SUCCESS;
 }
 
 hailo_status PcieDeviceHrpcClient::stop_power_measurement()
 {
-    using Serializer = StopPowerMeasurementSerializer;
-    constexpr auto ActionID = HailoRpcActionID::DEVICE__STOP_POWER_MEASUREMENT;
-
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
+
+    using Serializer = StopPowerMeasurementSerializer;
     TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
     TRY(auto request_size, Serializer::serialize_request(m_handle, MemoryView(*request_buffer)));
-    TRY(auto result, m_client->execute_request(ActionID, MemoryView(request_buffer->data(), request_size)));
+    TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__STOP_POWER_MEASUREMENT),
+        MemoryView(request_buffer->data(), request_size)));
 
     return HAILO_SUCCESS;
 }
 
 Expected<hailo_device_architecture_t> PcieDeviceHrpcClient::get_architecture() const
 {
-    using Serializer = GetArchitectureSerializer;
-    constexpr auto ActionID = HailoRpcActionID::DEVICE__GET_ARCHITECTURE;
-
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
+
+    using Serializer = GetArchitectureSerializer;
     TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
     TRY(auto request_size, Serializer::serialize_request(m_handle, MemoryView(*request_buffer)));
-    TRY(auto result, m_client->execute_request(ActionID, MemoryView(request_buffer->data(), request_size)));
+    TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__GET_ARCHITECTURE), MemoryView(request_buffer->data(), request_size)));
 
     return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
@@ -325,7 +329,8 @@ hailo_status PcieDeviceHrpcClient::set_notification_callback(const NotificationC
     TRY(auto serialized_request, m_client->allocate_request_buffer());
     TRY(auto request_size, Serializer::serialize_request({m_handle, notification_id, static_cast<rpc_object_handle_t>(notification_id),
         m_callback_dispatcher->id()}, MemoryView(*serialized_request)));
-    TRY(auto result, m_client->execute_request(HailoRpcActionID::DEVICE__SET_NOTIFICATION_CALLBACK, MemoryView(serialized_request->data(), request_size)));
+    TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__SET_NOTIFICATION_CALLBACK),
+        MemoryView(serialized_request->data(), request_size)));
 
     return HAILO_SUCCESS;
 }
@@ -338,7 +343,8 @@ hailo_status PcieDeviceHrpcClient::remove_notification_callback(hailo_notificati
     using Serializer = RemoveNotificationCallbackSerializer;
     TRY(auto serialized_request, m_client->allocate_request_buffer());
     TRY(auto request_size, Serializer::serialize_request(m_handle, notification_id, MemoryView(*serialized_request)));
-    TRY(auto result, m_client->execute_request(HailoRpcActionID::DEVICE__REMOVE_NOTIFICATION_CALLBACK, MemoryView(serialized_request->data(), request_size)));
+    TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__REMOVE_NOTIFICATION_CALLBACK),
+        MemoryView(serialized_request->data(), request_size)));
 
     return HAILO_SUCCESS;
 }
@@ -394,8 +400,8 @@ Expected<size_t> PcieDeviceHrpcClient::fetch_logs(MemoryView buffer, hailo_log_t
 
     TRY(auto request_size, Serializer::serialize_request(m_handle, MemoryView(*request_buffer), buffer.size(), log_type));
 
-    TRY(auto result, m_client->execute_request(HailoRpcActionID::DEVICE__FETCH_LOGS, MemoryView(request_buffer->data(), request_size),
-        std::move(write_buffers), std::move(log_transfer_buffers)));
+    TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__FETCH_LOGS),
+        MemoryView(request_buffer->data(), request_size), std::move(write_buffers), std::move(log_transfer_buffers)));
 
     return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }

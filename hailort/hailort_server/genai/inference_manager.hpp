@@ -50,6 +50,7 @@ public:
     hailo_status configure();
     hailo_status update_cache_offset(int32_t offset_delta_entries);
     hailo_status init_cache(uint32_t read_offset);
+    hailo_status finalize_cache();
 
     const Hef &get_hef() const;
     std::map<std::string, size_t> get_inputs_frame_size() const;

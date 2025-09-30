@@ -155,24 +155,17 @@ py::dict HefWrapper::create_configure_params(hailo_stream_interface_t interface)
     return py::cast(configure_params.release());
 }
 
-py::dict HefWrapper::create_configure_params_mipi_input(hailo_stream_interface_t output_interface,
-    const hailo_mipi_input_stream_params_t &mipi_params)
+py::bytes HefWrapper::get_external_resources(const std::string &resource_name)
 {
-    auto configure_params = hef->create_configure_params_mipi_input(output_interface, mipi_params);
-    VALIDATE_EXPECTED(configure_params);
-
-    return py::cast(configure_params.release());
+    auto external_resource = hef->get_external_resources(resource_name);
+    VALIDATE_EXPECTED(external_resource);
+    return py::bytes(external_resource.value().as_pointer<char>(), external_resource.value().size());
 }
 
-py::dict HefWrapper::get_external_resources()
+py::list HefWrapper::get_external_resource_names()
 {
-    auto external_resource = hef->get_external_resources();
-    VALIDATE_EXPECTED(external_resource);
-    std::map<std::string, py::bytes> external_resources;
-    for (const auto &resource : external_resource.value()) {
-        external_resources[resource.first] = py::bytes(py::bytes(resource.second.as_pointer<char>(), resource.second.size()));
-    }
-    return py::cast(external_resources);
+    auto resource_names = hef->get_external_resource_names();
+    return py::cast(resource_names);
 }
 
 py::list HefWrapper::get_networks_names(const std::string &net_group_name)
@@ -202,7 +195,6 @@ void HefWrapper::bind(py::module &m)
         .def("get_vstream_name_from_original_name", &HefWrapper::get_vstream_name_from_original_name)
         .def("get_original_names_from_vstream_name", &HefWrapper::get_original_names_from_vstream_name)
         .def("create_configure_params", &HefWrapper::create_configure_params)
-        .def("create_configure_params_mipi_input", &HefWrapper::create_configure_params_mipi_input)
         .def("get_input_vstream_infos", &HefWrapper::get_input_vstream_infos)
         .def("get_output_vstream_infos", &HefWrapper::get_output_vstream_infos)
         .def("get_all_vstream_infos", &HefWrapper::get_all_vstream_infos)
@@ -211,6 +203,7 @@ void HefWrapper::bind(py::module &m)
         .def("get_all_stream_infos", &HefWrapper::get_all_stream_infos)
         .def("get_networks_names", &HefWrapper::get_networks_names)
         .def("get_external_resources", &HefWrapper::get_external_resources)
+        .def("get_external_resource_names", &HefWrapper::get_external_resource_names)
         ;
 }
 

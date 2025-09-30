@@ -71,12 +71,5 @@ hailo_status DeviceCommand::execute_on_devices(std::vector<std::unique_ptr<Devic
 
 hailo_status DeviceCommand::validate_specific_device_is_given()
 {
-    if ((1 != m_device_params.device_ids.size()) || contains(m_device_params.device_ids, std::string("*"))) {
-        // No specific device-id given, make sure there is only 1 device on the machine.
-        TRY(auto scan_res, Device::scan(), "Failed to scan for devices");
-        if (1 != scan_res.size()) {
-            return HAILO_INVALID_OPERATION;
-        }
-    }
-    return HAILO_SUCCESS;
+    return ::validate_specific_device_is_given(m_device_params);
 }

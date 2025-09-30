@@ -55,10 +55,9 @@ public:
         return hef;
     }
 
-    py::dict get_external_resources();
+    py::bytes get_external_resources(const std::string &resource_name);
+    py::list get_external_resource_names();
 
-    py::dict create_configure_params_mipi_input(hailo_stream_interface_t output_interface,
-        const hailo_mipi_input_stream_params_t &mipi_params);
     py::list get_networks_names(const std::string &net_group_name);
     static void bind(py::module &m);
 

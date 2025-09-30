@@ -5,11 +5,13 @@ project(hailort-examples-genai)
 add_subdirectory(chat_example)
 add_subdirectory(text2image_example)
 add_subdirectory(vlm_example)
+add_subdirectory(speech2text_example)
 
 set(GENAI_EXAMPLE_TARGETS
     chat_example
     image_generation_example
     vlm_example
+    speech2text_example
 )
 
 add_custom_target(genai_hailort_examples)

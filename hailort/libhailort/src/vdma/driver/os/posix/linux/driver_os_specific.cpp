@@ -174,6 +174,9 @@ hailo_status convert_errno_to_hailo_status(int err, const char* ioctl_name)
     case ENXIO:
         LOGGER__ERROR("Ioctl {} failed due to device not connected", ioctl_name);
         return HAILO_DEVICE_NOT_CONNECTED;
+    case EAGAIN:
+        LOGGER__DEBUG("Ioctl {} failed due to device temporarily unavailable", ioctl_name);
+        return HAILO_DEVICE_TEMPORARILY_UNAVAILABLE;
     default:
         LOGGER__ERROR("Ioctl {} failed with {}. Read dmesg log for more info", ioctl_name, err);
         return HAILO_DRIVER_OPERATION_FAILED;

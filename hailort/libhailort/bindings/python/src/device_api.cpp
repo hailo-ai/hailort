@@ -385,28 +385,6 @@ void DeviceWrapper::remove_notification_callback(hailo_notification_id_t notific
     VALIDATE_STATUS(status);
 }
 
-void DeviceWrapper::direct_write_memory(uint32_t address, py::bytes buffer)
-{
-    const auto buffer_str = static_cast<std::string>(buffer);
-    hailo_status status = device().direct_write_memory(address, buffer_str.c_str(),
-        (uint32_t)(buffer_str.length()));
-    VALIDATE_STATUS(status);
-}
-
-py::bytes DeviceWrapper::direct_read_memory(uint32_t address, uint32_t size)
-{
-    std::string buffer_str;
-
-    buffer_str.reserve(size);
-    buffer_str.resize(size);
-
-    hailo_status status = device().direct_read_memory(address, (char*)buffer_str.c_str(), size);
-    VALIDATE_STATUS(status);
-
-    buffer_str.resize(size);
-    return py::bytes(buffer_str);
-}
-
 const char *DeviceWrapper::get_dev_id() const
 {
     return device().get_dev_id();
@@ -473,8 +451,6 @@ void DeviceWrapper::bind(py::module &m)
     .def("get_throttling_state", &DeviceWrapper::get_throttling_state)
     .def("_set_overcurrent_state", &DeviceWrapper::set_overcurrent_state)
     .def("_get_overcurrent_state", &DeviceWrapper::get_overcurrent_state)
-    .def("direct_write_memory", &DeviceWrapper::direct_write_memory)
-    .def("direct_read_memory", &DeviceWrapper::direct_read_memory)
     .def_property_readonly("device_id", &DeviceWrapper::get_dev_id)
 
     .def("set_notification_callback", &DeviceWrapper::set_notification_callback)

@@ -56,7 +56,7 @@ static_assert((0 == ((ONGOING_TRANSFERS_SIZE - 1) & ONGOING_TRANSFERS_SIZE)), "O
 #define PCIE_EXPECTED_MD5_LENGTH (16)
 
 constexpr size_t MAX_VDMA_ENGINES_COUNT             = 3;
-// For all archs except for Hailo10H2
+// For all archs except for Hailo12L
 constexpr size_t VDMA_CHANNELS_PER_ENGINE           = 40;
 constexpr size_t MAX_VDMA_CHANNELS_COUNT            = MAX_VDMA_ENGINES_COUNT * VDMA_CHANNELS_PER_ENGINE;
 constexpr uint8_t MIN_H2D_CHANNEL_INDEX             = 0;
@@ -65,11 +65,11 @@ constexpr uint8_t MIN_D2H_CHANNEL_INDEX             = MAX_H2D_CHANNEL_INDEX + 1;
 constexpr uint8_t MAX_D2H_CHANNEL_INDEX             = 31;
 constexpr uint8_t MIN_ENHANCED_D2H_CHANNEL_INDEX    = 28;
 
-// For Hailo10H2
-constexpr uint8_t MAX_H2D_CHANNEL_INDEX_H10H2             = 23;
-constexpr uint8_t MIN_D2H_CHANNEL_INDEX_H10H2             = MAX_H2D_CHANNEL_INDEX_H10H2 + 1;
-constexpr uint8_t MAX_D2H_CHANNEL_INDEX_H10H2             = 39;
-constexpr uint8_t MIN_ENHANCED_D2H_CHANNEL_INDEX_H10H2    = MIN_D2H_CHANNEL_INDEX_H10H2;
+// For Hailo12L
+constexpr uint8_t MAX_H2D_CHANNEL_INDEX_H12L             = 23;
+constexpr uint8_t MIN_D2H_CHANNEL_INDEX_H12L             = MAX_H2D_CHANNEL_INDEX_H12L + 1;
+constexpr uint8_t MAX_D2H_CHANNEL_INDEX_H12L             = 39;
+constexpr uint8_t MIN_ENHANCED_D2H_CHANNEL_INDEX_H12L    = MIN_D2H_CHANNEL_INDEX_H12L;
 
 constexpr size_t MAX_TRANSFER_BUFFERS_IN_REQUEST = 8;
 
@@ -236,9 +236,6 @@ public:
 
     ~HailoRTDriver();
 
-    hailo_status read_memory(MemoryType memory_type, uint64_t address, void *buf, size_t size);
-    hailo_status write_memory(MemoryType memory_type, uint64_t address, const void *buf, size_t size);
-
     hailo_status vdma_enable_channels(const ChannelsBitmap &channels_bitmap, bool enable_timestamps_measure);
     hailo_status vdma_disable_channels(const ChannelsBitmap &channel_id);
     Expected<IrqData> vdma_interrupts_wait(const ChannelsBitmap &channels_bitmap);
@@ -331,6 +328,8 @@ public:
      * Binding the transfer buffers to the descriptor list
      * Synchronizing the transfer buffers
      */
+    hailo_status cancel_prepared_transfers(uintptr_t desc_handle);
+
     hailo_status hailo_vdma_prepare_transfer(vdma::ChannelId channel_id, uintptr_t desc_handle,
         const std::vector<TransferBuffer> &transfer_buffers, InterruptsDomain first_interrupts_domain,
         InterruptsDomain last_desc_interrupts);
@@ -423,9 +422,6 @@ public:
 private:
     template<typename PointerType>
     int run_ioctl(uint32_t ioctl_code, PointerType param);
-
-    hailo_status read_memory_ioctl(MemoryType memory_type, uint64_t address, void *buf, size_t size);
-    hailo_status write_memory_ioctl(MemoryType memory_type, uint64_t address, const void *buf, size_t size);
 
     Expected<VdmaBufferHandle> vdma_buffer_map_ioctl(uintptr_t user_address, size_t required_size,
         DmaDirection data_direction, DmaBufferType buffer_type);

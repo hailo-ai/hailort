@@ -238,11 +238,6 @@ if __name__ == "__main__":
             "install_lib": install_lib,  # Copy the extension to the install dir
         },
         description="HailoRT",
-        entry_points={
-            "console_scripts": [
-                "hailo=hailo_platform.tools.hailocli.main:main",
-            ]
-        },
         ext_modules=[
             Extension("_pyhailort", sources=[]),
         ],
@@ -267,6 +262,6 @@ if __name__ == "__main__":
             "linux_aarch64",
         ],
         url="https://hailo.ai/",
-        version="5.0.1",
+        version="5.1.0",
         zip_safe=False,
     )

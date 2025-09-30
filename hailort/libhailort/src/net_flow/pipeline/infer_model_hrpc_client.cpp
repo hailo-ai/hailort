@@ -58,7 +58,8 @@ InferModelHrpcClient::~InferModelHrpcClient()
             return;
         }
 
-        auto execute_request_result = client->execute_request(HailoRpcActionID::INFER_MODEL__DESTROY, MemoryView(request_buffer.value()->data(), *request_size));
+        auto execute_request_result = client->execute_request(static_cast<uint32_t>(HailoRpcActionID::INFER_MODEL__DESTROY),
+            MemoryView(request_buffer.value()->data(), *request_size));
         if (!execute_request_result) {
             LOGGER__CRITICAL("Failed to destroy infer model! status = {}", execute_request_result.status());
             return;
@@ -98,6 +99,8 @@ Expected<ConfiguredInferModel> InferModelHrpcClient::configure()
     request_params.batch_size = m_config_params.batch_size;
     request_params.power_mode = m_config_params.power_mode;
     request_params.latency_flag = m_config_params.latency;
+    request_params.enable_kv_cache = m_config_params.enable_kv_cache;
+
     request_params.infer_model_handle = m_handle;
     request_params.vdevice_handle = m_vdevice_handle;
 
@@ -107,7 +110,7 @@ Expected<ConfiguredInferModel> InferModelHrpcClient::configure()
     auto client = m_client.lock();
     CHECK_AS_EXPECTED(nullptr != client, HAILO_INTERNAL_FAILURE,
         "Lost comunication with the server. This may happen if VDevice is released while the InferModel is in use.");
-    TRY(auto result, client->execute_request(HailoRpcActionID::INFER_MODEL__CREATE_CONFIGURED_INFER_MODEL,
+    TRY(auto result, client->execute_request(static_cast<uint32_t>(HailoRpcActionID::INFER_MODEL__CREATE_CONFIGURED_INFER_MODEL),
         MemoryView(request_buffer->data(), request_size)));
     TRY(auto tuple, CreateConfiguredInferModelSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size)));
     auto configured_infer_model_handle = std::get<0>(tuple);

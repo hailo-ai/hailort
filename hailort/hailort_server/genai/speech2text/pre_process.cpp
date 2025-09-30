@@ -17,13 +17,9 @@ namespace genai
 {
  
 // TODO: HRT-18577 - Take params from hef
-constexpr int SAMPLE_RATE = 16000;
 constexpr int N_MELS = 80;
 constexpr int N_FFT = 400;
-constexpr int HOP_LENGTH = 160;
 constexpr float32_t FMIN = 0.0f;
-constexpr float32_t FMAX = SAMPLE_RATE / 2;
-constexpr size_t CHUNK_SIZE = 30; // TODO: HRT-18577 - Change to 10 seconds
 
 constexpr float32_t MIN_CLIP_VALUE = 1e-10f;
 constexpr float32_t DB_DYNAMIC_RANGE = 8.0f;
@@ -50,17 +46,18 @@ Eigen::Matrix<float32_t, 1, Eigen::Dynamic, Eigen::RowMajor> pad_audio(MemoryVie
 }
 
 // TODO: HRT-18595 - (use multiple threads, avoid runtime allocations if possible)
-Eigen::MatrixXf Speech2TextPreProcess::compute_log_mel(const MemoryView audio_chunk)
+Eigen::MatrixXf Speech2TextPreProcess::compute_log_mel(const MemoryView audio_chunk, size_t chunk_size, int sample_rate, int hop_length)
 {
     // The padding is a "silent chunk" for the model's productivity
     // ref: https://github.com/openai/whisper/blob/main/whisper/audio.py#L146
     // ref: https://github.com/openai/whisper/blob/main/whisper/audio.py#L170
-    auto padding_element_count = CHUNK_SIZE * SAMPLE_RATE;
+    auto padding_element_count = chunk_size * sample_rate;
     auto padded_audio = pad_audio(audio_chunk, padding_element_count);
     Eigen::Map<const Eigen::Matrix<float32_t, 1, Eigen::Dynamic, Eigen::RowMajor>> padded_audio_map(padded_audio.data(), 1, padded_audio.cols());
 
-    auto mel = librosa::Feature::melspectrogram(padded_audio_map, SAMPLE_RATE, N_FFT, HOP_LENGTH, HANN_WINDOW, HANN_CENTERED,
-        REFLECT_MODE, POWER, N_MELS, FMIN, FMAX);
+    auto max_freq = sample_rate / 2;
+    auto mel = librosa::Feature::melspectrogram(padded_audio_map, sample_rate, N_FFT, hop_length, HANN_WINDOW, HANN_CENTERED,
+        REFLECT_MODE, POWER, N_MELS, FMIN, max_freq);
 
     mel = mel.array().max(MIN_CLIP_VALUE);
     mel = mel.array().log10();
@@ -69,6 +66,20 @@ Eigen::MatrixXf Speech2TextPreProcess::compute_log_mel(const MemoryView audio_ch
     mel = (mel.array() + NORMALIZATION_BIAS) / NORMALIZATION_BIAS;
 
     return mel;
+}
+
+void Speech2TextPreProcess::pad_or_trim(const Eigen::MatrixXf &input, Eigen::Map<Eigen::MatrixXf> &output)
+{
+    assert(output.cols() == input.cols());
+
+    // Copy the necessary rows (trim if needed)
+    auto rows_to_copy = std::min(input.rows(), output.rows());
+    output.topRows(rows_to_copy) = input.topRows(rows_to_copy);
+
+    // Pad if needed
+    if (input.rows() < output.rows()) {
+        output.middleRows(rows_to_copy, output.rows() - rows_to_copy).setZero();
+    }
 }
 
 } /* namespace genai */

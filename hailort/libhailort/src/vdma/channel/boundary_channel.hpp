@@ -66,10 +66,17 @@ public:
     // unexpected results
     void cancel_pending_transfers();
 
+    hailo_status cancel_prepared_transfers();
+
     /**
      * Called when some transfer (or transfers) is completed.
      */
-    hailo_status trigger_channel_completion(const ChannelIrqData &irq_data);
+    hailo_status trigger_channel_completion(size_t transfers_completed);
+
+    /**
+     * Called on interrupt error. Assumes channel won't work after this.
+     */
+    void trigger_channel_error(hailo_status status);
 
     hailo_status launch_transfer(TransferRequest &&transfer_request);
 

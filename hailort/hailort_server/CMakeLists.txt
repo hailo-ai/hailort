@@ -60,7 +60,10 @@ target_link_libraries(hailort_server PRIVATE
 )
 
 if (HAILO_BUILD_GENAI_SERVER)
-    target_include_directories(hailort_server PRIVATE ${HAILORT_GENAI_INCLUDE_DIR})
+    target_include_directories(hailort_server PRIVATE
+        ${HAILORT_GENAI_INCLUDE_DIR}
+        ${HAILORT_TOKENIZER_DIR}
+    )
     target_compile_definitions(hailort_server PRIVATE HAILO_GENAI_SERVER)
 
     target_link_libraries(hailort_server PRIVATE

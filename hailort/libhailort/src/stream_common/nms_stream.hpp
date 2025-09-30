@@ -59,6 +59,7 @@ public:
     size_t get_max_ongoing_transfers() const;
 
     void cancel_pending_transfers();
+    hailo_status cancel_prepared_transfers();
 
 private:
 
@@ -99,6 +100,7 @@ public:
 
     virtual hailo_status cancel_pending_transfers() override;
     virtual hailo_status prepare_transfer(TransferRequest &&transfer_request) override;
+    virtual hailo_status cancel_prepared_transfers() override;
 
 protected:
     virtual Expected<std::unique_ptr<StreamBufferPool>> allocate_buffer_pool() override;

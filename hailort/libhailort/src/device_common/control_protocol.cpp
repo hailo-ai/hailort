@@ -485,10 +485,6 @@ HAILO_COMMON_STATUS_t control_protocol__pack_config_stream_base_request(CONTROL_
     request->parameters.config_stream_request.skip_nn_stream_config_length = BYTE_ORDER__htonl(sizeof(request->parameters.config_stream_request.skip_nn_stream_config));
     request->parameters.config_stream_request.skip_nn_stream_config = params->skip_nn_stream_config;
 
-    /* power_mode */
-    request->parameters.config_stream_request.power_mode_length = BYTE_ORDER__htonl(sizeof(request->parameters.config_stream_request.power_mode));
-    request->parameters.config_stream_request.power_mode = params->power_mode;
-
     /* nn_stream_config */
     request->parameters.config_stream_request.nn_stream_config_length = BYTE_ORDER__htonl(sizeof(request->parameters.config_stream_request.nn_stream_config));
     request->parameters.config_stream_request.nn_stream_config.core_bytes_per_buffer = BYTE_ORDER__htons(params->nn_stream_config.core_bytes_per_buffer);

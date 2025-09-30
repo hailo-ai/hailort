@@ -442,22 +442,6 @@ hailo_status Device::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buff
     return HAILO_NOT_IMPLEMENTED;
 }
 
-hailo_status Device::direct_write_memory(uint32_t address, const void *buffer, uint32_t size)
-{
-    (void) address;
-    (void) buffer;
-    (void) size;
-    return HAILO_NOT_IMPLEMENTED;
-}
-
-hailo_status Device::direct_read_memory(uint32_t address, void *buffer, uint32_t size)
-{
-    (void) address;
-    (void) buffer;
-    (void) size;
-    return HAILO_NOT_IMPLEMENTED;
-}
-
 Expected<size_t> Device::get_max_logs_size(hailo_log_type_t log_type)
 {
     TRY(auto logger_fetcher, LoggerFetcherFactory::create(log_type));
@@ -504,6 +488,7 @@ hailo_status Device::update_fw_state()
         m_is_control_version_supported = false;
     }
     m_device_architecture = board_info.device_architecture;
+    m_is_extended_fw_checks = board_info.extended_fw_check;
 
     return HAILO_SUCCESS;
 }
@@ -662,6 +647,11 @@ Expected<uint8_t> Device::get_context_switch_breakpoint_status(uint8_t breakpoin
     CHECK_SUCCESS_AS_EXPECTED(status, "Failed getting context switch breakpoint");
 
     return static_cast<uint8_t>(breakpoint_status);
+}
+
+bool Device::is_extended_fw_checks() const
+{
+    return m_is_extended_fw_checks;
 }
 
 Expected<std::unique_ptr<Device>> Device::create_core()

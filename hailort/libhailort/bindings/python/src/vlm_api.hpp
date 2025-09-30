@@ -25,7 +25,7 @@ namespace hailort {
 
 class VLMWrapper final {
 public:
-    static VLMWrapper create(std::shared_ptr<VDeviceWrapper> vdevice, const std::string &model_path);
+    static VLMWrapper create(std::shared_ptr<VDeviceWrapper> vdevice, const std::string &model_path, bool optimize_memory_on_device = false);
 
     VLMWrapper(std::unique_ptr<genai::VLM> vlm);
 

@@ -191,41 +191,6 @@ hailo_integrated_output_stream_params_t HailoRTDefaults::get_integrated_output_s
     return params;
 }
 
-hailo_mipi_input_stream_params_t HailoRTDefaults::get_mipi_input_stream_params()
-{
-    hailo_mipi_input_stream_params_t params = {};
-
-    params.mipi_rx_id = 0;
-    params.data_type = HAILO_MIPI_RX_TYPE_RAW_8;
-
-    params.mipi_common_params.img_width_pixels = 1920;
-    params.mipi_common_params.img_height_pixels = 1080;
-    params.mipi_common_params.pixels_per_clock = HAILO_MIPI_PIXELS_PER_CLOCK_4;
-    params.mipi_common_params.number_of_lanes = 2;
-    params.mipi_common_params.clock_selection = HAILO_MIPI_CLOCK_SELECTION_AUTOMATIC;
-    params.mipi_common_params.data_rate = 260;
-    params.mipi_common_params.virtual_channel_index = 0;
-
-    params.isp_enable = false;
-    params.isp_params.isp_img_in_order = HAILO_MIPI_ISP_IMG_IN_ORDER_GR_FIRST;
-    params.isp_params.isp_img_out_data_type = HAILO_MIPI_IMG_OUT_DATA_TYPE_RGB_888;
-    params.isp_params.isp_crop_enable = false;
-    params.isp_params.isp_crop_output_width_pixels = 1920;
-    params.isp_params.isp_crop_output_height_pixels = 1080;
-    params.isp_params.isp_crop_output_width_start_offset_pixels = 0;
-    params.isp_params.isp_crop_output_height_start_offset_pixels = 0;
-    params.isp_params.isp_test_pattern_enable = true;
-    params.isp_params.isp_configuration_bypass = false;
-    params.isp_params.isp_run_time_ae_enable = true;
-    params.isp_params.isp_run_time_awb_enable = true;
-    params.isp_params.isp_run_time_adt_enable = true;
-    params.isp_params.isp_run_time_af_enable = false;
-    params.isp_params.isp_run_time_calculations_interval_ms = 0;
-    params.isp_params.isp_light_frequency = HAILO_MIPI_ISP_LIGHT_FREQUENCY_50HZ;
-
-    return params;
-}
-
 Expected<hailo_stream_parameters_t> HailoRTDefaults::get_stream_parameters(hailo_stream_interface_t interface,
         hailo_stream_direction_t direction)
 {
@@ -247,14 +212,6 @@ Expected<hailo_stream_parameters_t> HailoRTDefaults::get_stream_parameters(hailo
             params.integrated_output_params = get_integrated_output_stream_params();
         }
         break;
-    case HAILO_STREAM_INTERFACE_MIPI:
-        if (HAILO_H2D_STREAM == direction) {
-            params.mipi_input_params = get_mipi_input_stream_params();
-            break;
-        } else {
-            LOGGER__ERROR("Invalid stream interface");
-            return make_unexpected(HAILO_INVALID_ARGUMENT);
-        }
     default:
         LOGGER__ERROR("Invalid stream interface");
         return make_unexpected(HAILO_INVALID_ARGUMENT);

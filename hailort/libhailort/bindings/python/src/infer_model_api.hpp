@@ -46,6 +46,7 @@ public:
     std::vector<InferModelInferStreamWrapper> outputs();
     InferModelInferStreamWrapper input(const std::string &name);
     InferModelInferStreamWrapper output(const std::string &name);
+    void set_enable_kv_cache(bool enable_kv_cache);
 
     static void bind(py::module &m);
 
@@ -106,6 +107,8 @@ public:
     void set_scheduler_priority(uint8_t priority);
     size_t get_async_queue_size() const;
     void shutdown();
+    void update_cache_offset(int32_t offset_delta_entries);
+    void finalize_cache();
 
     static void bind(py::module &m);
 

@@ -67,7 +67,7 @@ public:
     hailo_status set_priority(const scheduler_core_op_handle_t &core_op_handle, core_op_priority_t priority, const std::string &network_name);
 
     virtual ReadyInfo is_core_op_ready_for_run(const scheduler_core_op_handle_t &core_op_handle, bool check_threshold,
-        const device_id_t &device_id) override;
+        const device_id_t &device_id, bool use_ready_queue) override;
     virtual bool is_core_op_ready_for_prepare(const scheduler_core_op_handle_t &core_op_handle, const device_id_t &device_id) override;
     virtual scheduler_core_op_handle_t get_current_core_op_preparing() const override { return m_current_core_op_preparing; }
 
@@ -81,9 +81,11 @@ private:
     hailo_status optimize_streaming_if_enabled(const scheduler_core_op_handle_t &core_op_handle);
 
     Expected<InferRequest> dequeue_infer_request(scheduler_core_op_handle_t core_op_handle);
-    uint16_t get_frames_ready_to_transfer(scheduler_core_op_handle_t core_op_handle, const device_id_t &device_id) const;
+    uint16_t get_frames_ready_to_transfer(scheduler_core_op_handle_t core_op_handle, const device_id_t &device_id, 
+        bool use_ready_queue) const;
 
     hailo_status prepare_transfers();
+    hailo_status cancel_prepared_transfers(const device_id_t &device_id, scheduler_core_op_handle_t core_op_handle);
 
     Expected<std::shared_ptr<VdmaConfigCoreOp>> get_vdma_core_op(scheduler_core_op_handle_t core_op_handle,
         const device_id_t &device_id);
@@ -161,6 +163,33 @@ private:
     PreparingThread m_preparing_thread;
 
     std::atomic<scheduler_core_op_handle_t> m_current_core_op_preparing{INVALID_CORE_OP_HANDLE};
+
+    class SchedulerTrace {
+    public:
+        template<typename SchedulerBegin, typename SchedulerEnd>
+        SchedulerTrace(SchedulerBegin &&scheduler_begin, SchedulerEnd &&scheduler_end)
+            : m_id(next_trace_id()),
+            m_end(std::forward<SchedulerEnd>(scheduler_end))
+        {
+            scheduler_begin(m_id);
+        }
+        
+        ~SchedulerTrace();
+
+        SchedulerTrace(const SchedulerTrace&) = delete;
+        SchedulerTrace& operator=(const SchedulerTrace&) = delete;
+
+        SchedulerTrace(SchedulerTrace&& other) noexcept;
+        SchedulerTrace& operator=(SchedulerTrace&& other) noexcept;
+
+
+    private:
+        static uint64_t next_trace_id();
+
+        uint64_t m_id;
+        std::function<void(uint64_t)> m_end;
+    };   
+
 };
 } /* namespace hailort */
 

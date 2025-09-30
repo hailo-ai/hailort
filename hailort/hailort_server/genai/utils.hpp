@@ -123,6 +123,30 @@ inline Eigen::VectorXf interp(const Eigen::VectorXf &x, const Eigen::VectorXf &x
     return result;
 }
 
+inline Eigen::RowVectorXf log_softmax(const Eigen::RowVectorXf &x)
+{
+    float32_t max_val = x.maxCoeff();
+    Eigen::RowVectorXf result = x;
+    result.array() -= max_val;
+    float32_t sum_exp = result.array().exp().sum();
+    result.array() -= std::log(sum_exp);
+    return result;
+}
+
+inline float32_t logsumexp(const Eigen::RowVectorXf &x)
+{
+    float32_t max_val = x.maxCoeff();
+    Eigen::RowVectorXf shifted = x.array() - max_val;
+    return max_val + std::log(shifted.array().exp().sum());
+}
+
+inline int argmax(const Eigen::VectorXf &x)
+{
+    Eigen::Index idx = 0;
+    x.maxCoeff(&idx);
+    return static_cast<int>(idx);
+}
+
 } /* namespace genai */
 } /* namespace hailort */
 

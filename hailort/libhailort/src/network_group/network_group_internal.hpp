@@ -199,6 +199,7 @@ public:
 
     virtual hailo_status init_cache(uint32_t read_offset) override;
     virtual hailo_status update_cache_offset(int32_t offset_delta_entries) override;
+    virtual hailo_status finalize_cache() override;
     virtual Expected<std::vector<uint32_t>> get_cache_ids() const override;
     virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) override;
     virtual hailo_status write_cache_buffer(uint32_t cache_id, MemoryView buffer) override;

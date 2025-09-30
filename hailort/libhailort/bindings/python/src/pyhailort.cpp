@@ -26,6 +26,8 @@ using namespace std;
 #include "session_api.hpp"
 #include "llm_api.hpp"
 #include "vlm_api.hpp"
+#include "text2image_api.hpp"
+#include "speech2text_api.hpp"
 
 #include "utils.hpp"
 
@@ -580,98 +582,6 @@ PYBIND11_MODULE(_pyhailort, m) {
         ))
         ;
 
-    py::enum_<hailo_mipi_pixels_per_clock_t>(m, "MipiPixelsPerClock")
-        .value("PIXELS_PER_CLOCK_1", HAILO_MIPI_PIXELS_PER_CLOCK_1)
-        .value("PIXELS_PER_CLOCK_2", HAILO_MIPI_PIXELS_PER_CLOCK_2)
-        .value("PIXELS_PER_CLOCK_4", HAILO_MIPI_PIXELS_PER_CLOCK_4)
-        ;
-
-    py::enum_<hailo_mipi_clock_selection_t>(m, "MipiClockSelection")
-        .value("SELECTION_80_TO_100_MBPS", HAILO_MIPI_CLOCK_SELECTION_80_TO_100_MBPS)
-        .value("SELECTION_100_TO_120_MBPS", HAILO_MIPI_CLOCK_SELECTION_100_TO_120_MBPS)
-        .value("SELECTION_120_TO_160_MBPS", HAILO_MIPI_CLOCK_SELECTION_120_TO_160_MBPS)
-        .value("SELECTION_160_TO_200_MBPS", HAILO_MIPI_CLOCK_SELECTION_160_TO_200_MBPS)
-        .value("SELECTION_200_TO_240_MBPS", HAILO_MIPI_CLOCK_SELECTION_200_TO_240_MBPS)
-        .value("SELECTION_240_TO_280_MBPS", HAILO_MIPI_CLOCK_SELECTION_240_TO_280_MBPS)
-        .value("SELECTION_280_TO_320_MBPS", HAILO_MIPI_CLOCK_SELECTION_280_TO_320_MBPS)
-        .value("SELECTION_320_TO_360_MBPS", HAILO_MIPI_CLOCK_SELECTION_320_TO_360_MBPS)
-        .value("SELECTION_360_TO_400_MBPS", HAILO_MIPI_CLOCK_SELECTION_360_TO_400_MBPS)
-        .value("SELECTION_400_TO_480_MBPS", HAILO_MIPI_CLOCK_SELECTION_400_TO_480_MBPS)
-        .value("SELECTION_480_TO_560_MBPS", HAILO_MIPI_CLOCK_SELECTION_480_TO_560_MBPS)
-        .value("SELECTION_560_TO_640_MBPS", HAILO_MIPI_CLOCK_SELECTION_560_TO_640_MBPS)
-        .value("SELECTION_640_TO_720_MBPS", HAILO_MIPI_CLOCK_SELECTION_640_TO_720_MBPS)
-        .value("SELECTION_720_TO_800_MBPS", HAILO_MIPI_CLOCK_SELECTION_720_TO_800_MBPS)
-        .value("SELECTION_800_TO_880_MBPS", HAILO_MIPI_CLOCK_SELECTION_800_TO_880_MBPS)
-        .value("SELECTION_880_TO_1040_MBPS", HAILO_MIPI_CLOCK_SELECTION_880_TO_1040_MBPS)
-        .value("SELECTION_1040_TO_1200_MBPS", HAILO_MIPI_CLOCK_SELECTION_1040_TO_1200_MBPS)
-        .value("SELECTION_1200_TO_1350_MBPS", HAILO_MIPI_CLOCK_SELECTION_1200_TO_1350_MBPS)
-        .value("SELECTION_1350_TO_1500_MBPS", HAILO_MIPI_CLOCK_SELECTION_1350_TO_1500_MBPS)
-        .value("SELECTION_1500_TO_1750_MBPS", HAILO_MIPI_CLOCK_SELECTION_1500_TO_1750_MBPS)
-        .value("SELECTION_1750_TO_2000_MBPS", HAILO_MIPI_CLOCK_SELECTION_1750_TO_2000_MBPS)
-        .value("SELECTION_2000_TO_2250_MBPS", HAILO_MIPI_CLOCK_SELECTION_2000_TO_2250_MBPS)
-        .value("SELECTION_2250_TO_2500_MBPS", HAILO_MIPI_CLOCK_SELECTION_2250_TO_2500_MBPS)
-        .value("SELECTION_AUTOMATIC", HAILO_MIPI_CLOCK_SELECTION_AUTOMATIC)
-        ;
-
-    py::enum_<hailo_mipi_data_type_rx_t>(m, "MipiDataTypeRx")
-        .value("RGB_444", HAILO_MIPI_RX_TYPE_RGB_444)
-        .value("RGB_555", HAILO_MIPI_RX_TYPE_RGB_555)
-        .value("RGB_565", HAILO_MIPI_RX_TYPE_RGB_565)
-        .value("RGB_666", HAILO_MIPI_RX_TYPE_RGB_666)
-        .value("RGB_888", HAILO_MIPI_RX_TYPE_RGB_888)
-        .value("RAW_6", HAILO_MIPI_RX_TYPE_RAW_6)
-        .value("RAW_7", HAILO_MIPI_RX_TYPE_RAW_7)
-        .value("RAW_8", HAILO_MIPI_RX_TYPE_RAW_8)
-        .value("RAW_10", HAILO_MIPI_RX_TYPE_RAW_10)
-        .value("RAW_12", HAILO_MIPI_RX_TYPE_RAW_12)
-        .value("RAW_14", HAILO_MIPI_RX_TYPE_RAW_14)
-        ;
-
-    py::enum_<hailo_mipi_isp_image_in_order_t>(m, "MipiIspImageInOrder")
-        .value("B_FIRST", HAILO_MIPI_ISP_IMG_IN_ORDER_B_FIRST)
-        .value("GB_FIRST", HAILO_MIPI_ISP_IMG_IN_ORDER_GB_FIRST)
-        .value("GR_FIRST", HAILO_MIPI_ISP_IMG_IN_ORDER_GR_FIRST)
-        .value("R_FIRST", HAILO_MIPI_ISP_IMG_IN_ORDER_R_FIRST)
-        ;
-
-    py::enum_<hailo_mipi_isp_image_out_data_type_t>(m, "MipiIspImageOutDataType")
-        .value("RGB_888", HAILO_MIPI_IMG_OUT_DATA_TYPE_RGB_888)
-        .value("YUV_422", HAILO_MIPI_IMG_OUT_DATA_TYPE_YUV_422)
-        ;
-
-    py::enum_<hailo_mipi_isp_light_frequency_t>(m, "IspLightFrequency")
-        .value("LIGHT_FREQ_60_HZ", HAILO_MIPI_ISP_LIGHT_FREQUENCY_60HZ)
-        .value("LIGHT_FREQ_50_HZ", HAILO_MIPI_ISP_LIGHT_FREQUENCY_50HZ)
-        ;
-    
-    py::class_<hailo_isp_params_t>(m, "MipiIspParams")
-        .def_readwrite("img_in_order", &hailo_isp_params_t::isp_img_in_order)
-        .def_readwrite("img_out_data_type", &hailo_isp_params_t::isp_img_out_data_type)
-        .def_readwrite("crop_enable", &hailo_isp_params_t::isp_crop_enable)
-        .def_readwrite("crop_output_width_pixels", &hailo_isp_params_t::isp_crop_output_width_pixels)
-        .def_readwrite("crop_output_height_pixels", &hailo_isp_params_t::isp_crop_output_height_pixels)
-        .def_readwrite("crop_output_width_start_offset_pixels", &hailo_isp_params_t::isp_crop_output_width_start_offset_pixels)
-        .def_readwrite("crop_output_height_start_offset_pixels", &hailo_isp_params_t::isp_crop_output_height_start_offset_pixels)
-        .def_readwrite("test_pattern_enable", &hailo_isp_params_t::isp_test_pattern_enable)
-        .def_readwrite("configuration_bypass", &hailo_isp_params_t::isp_configuration_bypass)
-        .def_readwrite("run_time_ae_enable", &hailo_isp_params_t::isp_run_time_ae_enable)
-        .def_readwrite("run_time_awb_enable", &hailo_isp_params_t::isp_run_time_awb_enable)
-        .def_readwrite("run_time_adt_enable", &hailo_isp_params_t::isp_run_time_adt_enable)
-        .def_readwrite("run_time_af_enable", &hailo_isp_params_t::isp_run_time_af_enable)
-        .def_readwrite("isp_run_time_calculations_interval_ms", &hailo_isp_params_t::isp_run_time_calculations_interval_ms)
-        .def_readwrite("isp_light_frequency", &hailo_isp_params_t::isp_light_frequency)
-        ;
-
-    py::class_<hailo_mipi_common_params_t>(m, "MipiCommonParams")
-        .def_readwrite("img_width_pixels", &hailo_mipi_common_params_t::img_width_pixels)
-        .def_readwrite("img_height_pixels", &hailo_mipi_common_params_t::img_height_pixels)
-        .def_readwrite("pixels_per_clock", &hailo_mipi_common_params_t::pixels_per_clock)
-        .def_readwrite("number_of_lanes", &hailo_mipi_common_params_t::number_of_lanes)
-        .def_readwrite("clock_selection", &hailo_mipi_common_params_t::clock_selection)
-        .def_readwrite("virtual_channel_index", &hailo_mipi_common_params_t::virtual_channel_index)
-        .def_readwrite("data_rate", &hailo_mipi_common_params_t::data_rate)
-        ;
-
     py::class_<hailo_transform_params_t>(m, "TransformParams")
         .def(py::init<>())
         .def_readwrite("transform_mode", &hailo_transform_params_t::transform_mode)
@@ -693,15 +603,6 @@ PYBIND11_MODULE(_pyhailort, m) {
 
     py::class_<hailo_integrated_output_stream_params_t>(m, "IntegratedOutputStreamParams")
         .def(py::init<>())
-        ;
-
-    py::class_<hailo_mipi_input_stream_params_t>(m, "MipiInputStreamParams")
-        .def(py::init<>())
-        .def_readwrite("mipi_common_params", &hailo_mipi_input_stream_params_t::mipi_common_params)
-        .def_readwrite("mipi_rx_id", &hailo_mipi_input_stream_params_t::mipi_rx_id)
-        .def_readwrite("data_type", &hailo_mipi_input_stream_params_t::data_type)
-        .def_readwrite("isp_enable", &hailo_mipi_input_stream_params_t::isp_enable)
-        .def_readwrite("isp_params", &hailo_mipi_input_stream_params_t::isp_params)
         ;
 
     py::enum_<hailo_stream_interface_t>(m, "StreamInterface")
@@ -847,8 +748,6 @@ PYBIND11_MODULE(_pyhailort, m) {
             HAILO_STREAM_INTERFACE_PCIE, HAILO_H2D_STREAM)
         STREAM_PARAMETERS_UNION_PROPERTY(integrated_input_params, hailo_integrated_input_stream_params_t,
             HAILO_STREAM_INTERFACE_INTEGRATED, HAILO_H2D_STREAM)
-        STREAM_PARAMETERS_UNION_PROPERTY(mipi_input_params, hailo_mipi_input_stream_params_t,
-            HAILO_STREAM_INTERFACE_MIPI, HAILO_H2D_STREAM)
         STREAM_PARAMETERS_UNION_PROPERTY(pcie_output_params, hailo_pcie_output_stream_params_t,
             HAILO_STREAM_INTERFACE_PCIE, HAILO_D2H_STREAM)
         STREAM_PARAMETERS_UNION_PROPERTY(integrated_output_params, hailo_integrated_output_stream_params_t,
@@ -963,7 +862,6 @@ PYBIND11_MODULE(_pyhailort, m) {
 
     py::class_<hailo_device_supported_features_t>(m, "SupportedFeatures")
         .def_readonly("ethernet", &hailo_device_supported_features_t::ethernet)
-        .def_readonly("mipi", &hailo_device_supported_features_t::mipi)
         .def_readonly("pcie", &hailo_device_supported_features_t::pcie)
         .def_readonly("current_monitoring", &hailo_device_supported_features_t::current_monitoring)
         .def_readonly("mdio", &hailo_device_supported_features_t::mdio)
@@ -1182,6 +1080,8 @@ PYBIND11_MODULE(_pyhailort, m) {
     LLMGeneratorCompletionWrapper::bind(m);
     LLMWrapper::bind(m);
     VLMWrapper::bind(m);
+    Text2ImageWrapper::bind(m);
+    Speech2TextWrapper::bind(m);
 
     std::stringstream version;
     version << HAILORT_MAJOR_VERSION << "." << HAILORT_MINOR_VERSION << "." << HAILORT_REVISION_VERSION;

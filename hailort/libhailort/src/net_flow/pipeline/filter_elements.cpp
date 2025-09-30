@@ -9,6 +9,7 @@
 
 #include "net_flow/pipeline/vstream_internal.hpp"
 #include "net_flow/pipeline/filter_elements.hpp"
+#include "utils/profiler/tracer_macros.hpp"
 
 namespace hailort
 {
@@ -42,6 +43,7 @@ hailo_status FilterElement::run_push(PipelineBuffer &&buffer, const PipelinePad 
 
 void FilterElement::run_push_async(PipelineBuffer &&buffer, const PipelinePad &/*sink*/)
 {
+    TRACE(RunPushAsyncStartTrace, name(), pipeline_unique_id(), network_name());
     assert(m_pipeline_direction == PipelineDirection::PUSH);
     if (HAILO_SUCCESS != buffer.action_status()) {
         auto pool = next_pad().get_buffer_pool();
@@ -63,6 +65,7 @@ void FilterElement::run_push_async(PipelineBuffer &&buffer, const PipelinePad &/
     } else {
         next_pad().run_push_async(PipelineBuffer(output.status()));
     }
+    TRACE(RunPushAsyncEndTrace, name(), pipeline_unique_id(), network_name());
     return;
 }
 

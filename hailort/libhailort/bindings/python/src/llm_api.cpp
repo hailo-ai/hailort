@@ -49,10 +49,9 @@ void LLMGeneratorCompletionWrapper::bind(py::module &m)
 }
 
 LLMWrapper LLMWrapper::create(VDeviceWrapperPtr vdevice, const std::string &model_path,
-    const std::string &lora_name)
+    const std::string &lora_name, bool optimize_memory_on_device)
 {
-    auto llm_params = hailort::genai::LLMParams();
-    llm_params.set_model(model_path, lora_name);
+    auto llm_params = hailort::genai::LLMParams(model_path, lora_name, optimize_memory_on_device);
     auto llm = genai::LLM::create(vdevice->m_vdevice, llm_params);
     VALIDATE_EXPECTED(llm);
 

@@ -646,30 +646,6 @@ hailo_status hailo_init_configure_params_by_device(hailo_hef hef, hailo_device d
     return HAILO_SUCCESS;
 }
 
-
-hailo_status hailo_init_configure_params_mipi_input(hailo_hef hef, hailo_stream_interface_t output_interface,
-    hailo_mipi_input_stream_params_t *mipi_params, hailo_configure_params_t *params)
-{
-    CHECK_ARG_NOT_NULL(hef);
-    CHECK_ARG_NOT_NULL(mipi_params);
-    CHECK_ARG_NOT_NULL(params);
-
-    auto network_groups_names = reinterpret_cast<Hef*>(hef)->get_network_groups_names();
-    CHECK(HAILO_MAX_NETWORK_GROUPS >= network_groups_names.size(), HAILO_INVALID_HEF,
-        "Too many network_groups on a given HEF");
-
-    params->network_group_params_count = network_groups_names.size();
-    uint8_t net_group = 0;
-    for (const auto &net_group_name : network_groups_names) {
-        auto status = hailo_init_configure_network_group_params_mipi_input(hef, output_interface, mipi_params,
-            net_group_name.c_str(), &(params->network_group_params[net_group]));
-        CHECK_SUCCESS(status);
-        net_group++;
-    }
-
-    return HAILO_SUCCESS;
-}
-
 hailo_status fill_configured_network_params_with_default(hailo_hef hef, const char *network_group_name, hailo_configure_network_group_params_t &params)
 {
     std::string network_group_name_str; 
@@ -738,33 +714,6 @@ hailo_status hailo_init_configure_network_group_params(hailo_hef hef, hailo_stre
     status = hailo_init_network_params(hef, network_group_name, 
         params->network_params_by_name, 
         params->network_params_by_name_count);
-    CHECK_SUCCESS(status);
-
-    return HAILO_SUCCESS;
-}
-
-hailo_status hailo_init_configure_network_group_params_mipi_input(hailo_hef hef, hailo_stream_interface_t output_interface,
-    hailo_mipi_input_stream_params_t *mipi_params, const char *network_group_name, hailo_configure_network_group_params_t *params)
-{
-    CHECK_ARG_NOT_NULL(hef);
-    CHECK_ARG_NOT_NULL(mipi_params);
-    CHECK_ARG_NOT_NULL(params);
-
-    auto status = fill_configured_network_params_with_default(hef, network_group_name, *params);
-    CHECK_SUCCESS(status);
-
-    auto stream_params_by_name = reinterpret_cast<Hef*>(hef)->create_stream_parameters_by_name_mipi_input(network_group_name,
-        output_interface, *mipi_params);
-    CHECK_EXPECTED_AS_STATUS(stream_params_by_name);
-
-    status = fill_configured_network_params_with_stream_params(stream_params_by_name.value(), *params);
-    CHECK_SUCCESS(status);
-
-    /* Fill network params */
-    status = hailo_init_network_params(hef, network_group_name, 
-        params->network_params_by_name, 
-        params->network_params_by_name_count);
-
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;

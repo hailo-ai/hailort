@@ -15,7 +15,7 @@
 #include "hailo/buffer.hpp"
 #include "hailo/hailo_session.hpp"
 #include "common/utils.hpp"
-#include "common/thread_safe_queue.hpp"
+#include "common/genai/constants.hpp"
 #include "common/genai/serializer/serializer.hpp"
 #include "common/genai/connection_ports.hpp"
 
@@ -41,34 +41,28 @@ public:
 
     static Expected<std::unique_ptr<LLMServer>> create_unique(std::shared_ptr<Session> session);
 
-    VLMServer(std::shared_ptr<Session> session, SpscQueue<std::pair<std::string, LLMGeneratorCompletion::Status>> &&generated_tokens_queue,
-        SpscQueue<std::pair<std::vector<int>, uint32_t>> &&input_queue, EventPtr shutdown_event, LLMGeneratorParams &&post_process_params);
-
-    virtual ~VLMServer();
+    VLMServer(std::shared_ptr<Session> session, LLMGeneratorParams &&post_process_params);
+    virtual ~VLMServer() = default;
 
     // Handlers - consider moving to separate class
     Expected<Buffer> handle_create_vlm_request(const MemoryView &request);
     Expected<Buffer> handle_vlm_generate_request(const MemoryView &request);
 
 private:
-    virtual void async_generate_into_internal_db() override;
-    virtual void flush_internal_queues() override;
-
     hailo_status parse_config_json(const MemoryView &config_json) override;
 
-    hailo_status process_model(std::vector<int> &input_tokens, const LLMGeneratorParams &local_post_process_params,
-        const std::vector<MemoryView> &frame_embeddings);
+    // Override prefill phase to handle frame embeddings
+    Expected<std::pair<int, LLMGeneratorCompletion::Status>> handle_prefill_phase(const std::vector<int> &tokens,
+        const std::vector<MemoryView> &embeddings) override;
 
     // This function is used to process the prefill inputs and outputs, without handling (exporting) the generated token
     Expected<int> get_next_token_prefill(std::map<std::string, MemoryView> &prefill_inputs,
-        std::map<std::string, MemoryView> &prefill_outputs, std::vector<int> &input_tokens,
+        std::map<std::string, MemoryView> &prefill_outputs, const std::vector<MemoryView> &input_embeddings,
         const std::vector<MemoryView> &frame_embeddings, const LLMGeneratorParams &params);
 
     hailo_status process_prefill_inputs_chunk(std::map<std::string, MemoryView> &prefill_inputs, std::map<std::string, MemoryView> &prefill_outputs,
-        std::vector<int> &input_tokens, const std::vector<MemoryView> &frame_embeddings, uint32_t &current_frame_index, uint32_t &current_emb_index_in_frame);
-
-    Expected<std::pair<std::vector<int>, uint32_t>> get_input_tokens(const std::string &input_prompt); // 1st is adjusted-iput-tokens, 2nd is number of vision tokens
-    std::vector<int> adjust_vision_token(const std::vector<int> &tokens);
+        const std::vector<MemoryView> &input_embeddings, const std::vector<MemoryView> &frame_embeddings,
+        uint32_t &current_frame_index, uint32_t &current_emb_index_in_frame);
 
     std::unique_ptr<InferenceManager> m_inference_manager_frame_encoder;
     std::vector<BufferPtr> m_frame_encoder_input_buffers;
@@ -76,9 +70,7 @@ private:
 
     int m_image_pad_token_id;
 
-    SpscQueue<std::pair<std::vector<int>, uint32_t>> m_input_queue;  // input-tokens, number of frames
-                                                                     // queue for passing the prompt and frame for generation.
-                                                                     // size is 1 as only 1 generation in parallel is possible
+    std::vector<MemoryView> m_current_frame_embeddings;
 };
 
 class VLMServerManager : public LLMServerManager

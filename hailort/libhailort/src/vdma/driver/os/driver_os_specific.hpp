@@ -37,8 +37,7 @@ int run_hailo_ioctl(underlying_handle_t file, uint32_t ioctl_code, void *param);
 
 /**
  * On windows, all IOCTLs shares the same structure for input and output (tCompatibleHailoIoctlData).
- * To make windows and posix code the same, we need to convert the actual structure type (for example
- * hailo_memory_transfer_params) to the compatible structure (tCompatibleHailoIoctlData::Buffer::MemoryTransfer).
+ * To make windows and posix code the same, we need to convert the actual structure type to the compatible structure.
  *
  * This template static class is used to covert to compatible (for input parameters) and from compatible (for output
  * parameters).

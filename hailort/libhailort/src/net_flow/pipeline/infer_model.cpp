@@ -14,6 +14,7 @@
 #include "hef/hef_internal.hpp"
 #include "net_flow/pipeline/infer_model_internal.hpp"
 #include "net_flow/pipeline/async_infer_runner.hpp"
+#include "utils/profiler/tracer_macros.hpp"
 
 
 #define WAIT_FOR_ASYNC_IN_DTOR_TIMEOUT (std::chrono::milliseconds(10000))
@@ -671,6 +672,11 @@ hailo_status ConfiguredInferModel::init_cache(uint32_t read_offset)
     return m_pimpl->init_cache(read_offset);
 }
 
+hailo_status ConfiguredInferModel::finalize_cache()
+{
+    return m_pimpl->finalize_cache();
+}
+
 Expected<ConfiguredInferModel::Bindings> ConfiguredInferModelBase::create_bindings(
     std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&inputs,
     std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&outputs)
@@ -867,6 +873,11 @@ hailo_status ConfiguredInferModelImpl::init_cache(uint32_t read_offset)
     return m_cng->init_cache(read_offset);
 }
 
+hailo_status ConfiguredInferModelImpl::finalize_cache()
+{
+    return m_cng->finalize_cache();
+}
+
 hailo_status ConfiguredInferModelImpl::activate()
 {
     auto activated_ng = m_cng->activate();
@@ -957,12 +968,15 @@ hailo_status ConfiguredInferModelImpl::validate_bindings(const ConfiguredInferMo
 Expected<AsyncInferJob> ConfiguredInferModelImpl::run_async(const ConfiguredInferModel::Bindings &bindings,
     std::function<void(const AsyncInferCompletionInfo &)> callback)
 {
+    static uint8_t job_id = 0;
+    uint8_t current_job_id = job_id++;
+
     CHECK_SUCCESS_AS_EXPECTED(validate_bindings(bindings));
 
     auto job_pimpl = make_shared_nothrow<AsyncInferJobImpl>(static_cast<uint32_t>(m_input_names.size() + m_output_names.size()));
     CHECK_NOT_NULL_AS_EXPECTED(job_pimpl, HAILO_OUT_OF_HOST_MEMORY);
 
-    TransferDoneCallbackAsyncInfer transfer_done = [this, bindings, job_pimpl, callback](hailo_status status) {
+    TransferDoneCallbackAsyncInfer transfer_done = [this, bindings, job_pimpl, callback, current_job_id](hailo_status status) {
         bool should_call_callback = ConfiguredInferModelBase::get_stream_done(status, job_pimpl);
         if (should_call_callback) {
             auto final_status = (m_async_infer_runner->get_pipeline_status() == HAILO_SUCCESS) ?
@@ -976,10 +990,12 @@ Expected<AsyncInferJob> ConfiguredInferModelImpl::run_async(const ConfiguredInfe
                 m_ongoing_parallel_transfers--;
             }
             m_cv.notify_all();
+            TRACE(AsyncInferEndTrace, current_job_id, m_async_infer_runner->pipeline_unique_id(), m_cng->name().c_str());
         }
     };
 
     {
+        TRACE(AsyncInferStartTrace, current_job_id, m_async_infer_runner->pipeline_unique_id(), m_cng->name().c_str());
         std::unique_lock<std::mutex> lock(m_mutex);
         auto status = m_async_infer_runner->run(bindings, transfer_done);
         CHECK_SUCCESS_AS_EXPECTED(status);

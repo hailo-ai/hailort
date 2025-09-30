@@ -14,8 +14,6 @@
  *     |-- AsyncInputStreamBase
  *          |-- VdmaInputStream
  *          |-- ScheduledInputStream
- *     |-- EthernetInputStream
- *     |-- MipiInputStream
  *     |-- RemoteProcessInputStream (used for pyhailort to support fork)
  *     |-- VDeviceNativeInputStream
  *
@@ -25,7 +23,6 @@
  *          |-- VdmaOutputStream
  *          |-- NmsOutputStream (wraps other OutputStreamBase, accumulate bbox/burst reads into frame reads).
  *          |-- ScheduledOutputStream
- *     |-- EthernetOutputStream
  *     |-- RemoteProcessOutputStream (used for pyhailort to support fork)
  *     |-- VDeviceNativeOutputStream
  **/
@@ -100,6 +97,7 @@ public:
     virtual hailo_status write_async(int dmabuf_fd, size_t size, const TransferDoneCallback &user_callback) override final;
 
     virtual hailo_status prepare_transfer(TransferRequest &&transfer_request);
+    virtual hailo_status cancel_prepared_transfers();
 
     virtual hailo_status write_async(TransferRequest &&transfer_request);
 
@@ -166,6 +164,7 @@ public:
     virtual hailo_status read_async(int dmabuf_fd, size_t size, const TransferDoneCallback &user_callback) override final;
 
     virtual hailo_status prepare_transfer(TransferRequest &&transfer_request);
+    virtual hailo_status cancel_prepared_transfers();
 
     virtual hailo_status read_async(TransferRequest &&transfer_request);
     virtual hailo_status read_unaligned_address_async(const MemoryView &buffer, const TransferDoneCallback &user_callback);

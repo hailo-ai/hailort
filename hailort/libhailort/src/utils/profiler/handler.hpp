@@ -246,6 +246,138 @@ struct DumpProfilerStateTrace : Trace
     DumpProfilerStateTrace() : Trace("dump_profiler_state") {}
 };
 
+struct RunPushAsyncStartTrace : Trace
+{
+    RunPushAsyncStartTrace(const std::string &element_name, uint64_t pipeline_unique_id, const std::string &network_name)
+        : Trace("run_push_async_start"), element_name(element_name), pipeline_unique_id(pipeline_unique_id), network_name(network_name)
+    {}
+
+    std::string element_name;
+    uint64_t pipeline_unique_id;
+    std::string network_name;
+};
+
+struct RunPushAsyncEndTrace : Trace
+{
+    RunPushAsyncEndTrace(const std::string &element_name, uint64_t pipeline_unique_id, const std::string &network_name)
+        : Trace("run_push_async_end"), element_name(element_name), pipeline_unique_id(pipeline_unique_id), network_name(network_name)
+    {}
+
+    std::string element_name;
+    uint64_t pipeline_unique_id;
+    std::string network_name;
+};
+
+struct AsyncInferStartTrace : Trace
+{
+    AsyncInferStartTrace(const uint8_t &job_id, const uint64_t &pipeline_unique_id, const std::string &network_name)
+        : Trace("async_infer_start"), job_id(job_id), pipeline_unique_id(pipeline_unique_id), network_name(network_name)
+    {}
+
+    uint8_t job_id;
+    uint64_t pipeline_unique_id;
+    std::string network_name;
+};
+
+struct AsyncInferEndTrace : Trace
+{
+    AsyncInferEndTrace(const uint8_t &job_id, const uint64_t &pipeline_unique_id, const std::string &network_name)
+        : Trace("async_infer_end"), job_id(job_id), pipeline_unique_id(pipeline_unique_id), network_name(network_name)
+    {}
+
+    uint8_t job_id;
+    uint64_t pipeline_unique_id;
+    std::string network_name;
+};
+
+struct SwitchCoreOpStartTrace : Trace
+{
+    SwitchCoreOpStartTrace(uint64_t unique_id, const std::string &network_name, uint64_t timeout_ms, uint32_t threshold, int batch_size)
+        : Trace("switch_core_op_start"), unique_id(unique_id), network_name(network_name), timeout_ms(timeout_ms), threshold(threshold), batch_size(batch_size)
+    {}
+
+    uint64_t unique_id;
+    std::string network_name;
+    uint64_t timeout_ms;
+    uint32_t threshold;
+    int batch_size;
+};
+
+struct SwitchCoreOpEndTrace : Trace
+{
+    SwitchCoreOpEndTrace(uint64_t unique_id, const std::string &network_name)
+        : Trace("switch_core_op_end"), unique_id(unique_id), network_name(network_name)
+    {}
+
+    uint64_t unique_id;
+    std::string network_name;
+};
+
+struct PrepareCoreOpStartTrace : Trace
+{
+    PrepareCoreOpStartTrace(uint64_t unique_id, const std::string &network_name, uint32_t n_pending_req, uint32_t n_ready_req, uint32_t burst_size)
+        : Trace("prepare_transfers_start"), unique_id(unique_id), network_name(network_name), n_pending_req(n_pending_req), n_ready_req(n_ready_req), burst_size(burst_size)
+    {}
+
+    uint64_t unique_id;
+    std::string network_name;
+    uint32_t n_pending_req;
+    uint32_t n_ready_req;
+    uint32_t burst_size;
+};
+
+struct PrepareCoreOpEndTrace : Trace
+{
+    PrepareCoreOpEndTrace(uint64_t unique_id, const std::string &network_name)
+        : Trace("prepare_transfers_end"), unique_id(unique_id), network_name(network_name)
+    {}
+
+    uint64_t unique_id;
+    std::string network_name;
+};
+
+struct SchedulerInferAsyncStartTrace : Trace
+{
+    SchedulerInferAsyncStartTrace(uint64_t unique_id, const std::string &network_name, uint32_t n_pending_req, uint32_t n_ready_req, uint32_t n_ongoing_req)
+        : Trace("infer_async_start"), unique_id(unique_id), network_name(network_name), n_pending_req(n_pending_req), n_ready_req(n_ready_req), n_ongoing_req(n_ongoing_req)
+    {}
+
+    uint64_t unique_id;
+    std::string network_name;
+    uint32_t n_pending_req;
+    uint32_t n_ready_req;
+    uint32_t n_ongoing_req;
+};
+
+struct SchedulerInferAsyncEndTrace : Trace
+{
+    SchedulerInferAsyncEndTrace(uint64_t unique_id, const std::string &network_name)
+        : Trace("infer_async_end"), unique_id(unique_id), network_name(network_name)
+    {}
+
+    uint64_t unique_id;
+    std::string network_name;
+};
+
+struct SchedulerEnqueueInferRequestStartTrace : Trace
+{
+    SchedulerEnqueueInferRequestStartTrace(uint64_t unique_id, const std::string &network_name, uint32_t n_pending_req)
+        : Trace("enqueue_infer_request"), unique_id(unique_id), network_name(network_name), n_pending_req(n_pending_req)
+    {}
+    uint64_t unique_id;
+    std::string network_name;
+    uint32_t n_pending_req;
+};
+
+struct SchedulerEnqueueInferRequestEndTrace : Trace
+{
+    SchedulerEnqueueInferRequestEndTrace(uint64_t unique_id, const std::string &network_name)
+        : Trace("enqueue_infer_request_end"), unique_id(unique_id), network_name(network_name)
+    {}
+    uint64_t unique_id;
+    std::string network_name;
+};
+
 class Handler
 {
 public:
@@ -271,6 +403,18 @@ public:
     virtual void handle_trace(const DumpProfilerStateTrace&) {};
     virtual void handle_trace(const InitProfilerProtoTrace&) {};
     virtual void handle_trace(const HefLoadedTrace&) {};
+    virtual void handle_trace(const RunPushAsyncStartTrace&) {};
+    virtual void handle_trace(const RunPushAsyncEndTrace&) {};
+    virtual void handle_trace(const AsyncInferStartTrace&) {};
+    virtual void handle_trace(const AsyncInferEndTrace&) {};
+    virtual void handle_trace(const SwitchCoreOpStartTrace&) {};
+    virtual void handle_trace(const SwitchCoreOpEndTrace&) {};
+    virtual void handle_trace(const PrepareCoreOpStartTrace&) {};
+    virtual void handle_trace(const PrepareCoreOpEndTrace&) {};
+    virtual void handle_trace(const SchedulerInferAsyncStartTrace&) {};
+    virtual void handle_trace(const SchedulerInferAsyncEndTrace&) {};
+    virtual void handle_trace(const SchedulerEnqueueInferRequestStartTrace&) {};
+    virtual void handle_trace(const SchedulerEnqueueInferRequestEndTrace&) {};
     virtual bool should_dump_trace_file() { return false; }
     virtual bool should_stop () { return false; }
     virtual hailo_status dump_trace_file() { return HAILO_SUCCESS; }

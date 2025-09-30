@@ -19,6 +19,7 @@ Tracer::Tracer()
 {
     init_scheduler_profiler_handler();
     init_monitor_handler();
+    init_perfetto_handler();
 }
 
 void Tracer::init_scheduler_profiler_handler()
@@ -43,9 +44,17 @@ void Tracer::init_scheduler_profiler_handler()
 
 void Tracer::init_monitor_handler()
 {
-    m_should_monitor = is_env_variable_on(SCHEDULER_MON_ENV_VAR, SCHEDULER_MON_ENV_VAR_VALUE);
+    m_should_monitor = is_env_variable_on(SCHEDULER_MON_ENV_VAR);
     if (m_should_monitor) {
         m_handlers.push_back(std::make_unique<MonitorHandler>());
+    }
+}
+
+void Tracer::init_perfetto_handler()
+{
+    m_should_use_perfetto = is_env_variable_on(PERFETTO_TRACE_ENV_VAR);
+    if (m_should_use_perfetto) {
+        m_handlers.push_back(std::make_unique<PerfettoHandler>());
     }
 }
 

@@ -42,8 +42,6 @@ Expected<size_t> CreateVDeviceSerializer::serialize_request(const hailo_vdevice_
     auto proto_params = request.mutable_params();
     proto_params->set_scheduling_algorithm(params.scheduling_algorithm);
     proto_params->set_group_id(params.group_id == nullptr ? "" : std::string(params.group_id));
-    proto_params->set_has_user_selected_device_or_group_id((params.device_ids != nullptr) ||
-        ((nullptr != params.group_id) && (HAILO_DEFAULT_VDEVICE_GROUP_ID != std::string(params.group_id))));
 
     request.set_should_disable_pp_ops(should_disable_pp_ops);
 
@@ -60,8 +58,7 @@ Expected<std::tuple<SerializerVDeviceParamsWrapper, bool>> CreateVDeviceSerializ
 
     SerializerVDeviceParamsWrapper params(
         static_cast<hailo_scheduling_algorithm_e>(request.params().scheduling_algorithm()),
-        request.params().group_id(),
-        request.params().has_user_selected_device_or_group_id());
+        request.params().group_id());
 
     return std::make_tuple(std::move(params), request.should_disable_pp_ops());
 }
@@ -220,6 +217,7 @@ Expected<size_t> CreateConfiguredInferModelSerializer::serialize_request(rpc_cre
     request.set_batch_size(static_cast<uint32_t>(params.batch_size));
     request.set_power_mode(static_cast<uint32_t>(params.power_mode));
     request.set_latency_flag(static_cast<uint32_t>(params.latency_flag));
+    request.set_enable_kv_cache(params.enable_kv_cache);
 
     return get_serialized_request<InferModel_CreateConfiguredInferModel_Request>(request, "CreateConfiguredInferModel", buffer);
 }
@@ -262,6 +260,7 @@ Expected<rpc_create_configured_infer_model_request_params_t> CreateConfiguredInf
     request_params.batch_size = static_cast<uint16_t>(request.batch_size());
     request_params.power_mode = static_cast<hailo_power_mode_t>(request.power_mode());
     request_params.latency_flag = static_cast<hailo_latency_measurement_flags_t>(request.latency_flag());
+    request_params.enable_kv_cache = request.enable_kv_cache();
 
     return request_params;
 }
@@ -518,6 +517,85 @@ Expected<Buffer> ShutdownSerializer::serialize_reply()
     return Buffer();
 }
 
+Expected<size_t> UpdateCacheOffsetSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle, int32_t offset_delta_entries, MemoryView buffer)
+{
+    ConfiguredInferModel_UpdateCacheOffset_Request request;
+
+    auto proto_configured_infer_model_handle = request.mutable_configured_infer_model_handle();
+    proto_configured_infer_model_handle->set_id(configured_infer_model_handle);
+
+    request.set_offset_delta_entries(offset_delta_entries);
+
+    return get_serialized_request<ConfiguredInferModel_UpdateCacheOffset_Request>(request, "UpdateCacheOffset", buffer);
+}
+
+Expected<std::tuple<rpc_object_handle_t, int32_t>> UpdateCacheOffsetSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    ConfiguredInferModel_UpdateCacheOffset_Request request;
+
+    CHECK_AS_EXPECTED(request.ParseFromArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize 'UpdateCacheOffset'");
+
+    return std::make_tuple(request.configured_infer_model_handle().id(), request.offset_delta_entries());
+}
+
+Expected<Buffer> UpdateCacheOffsetSerializer::serialize_reply()
+{
+    return Buffer();
+}
+
+Expected<size_t> InitCacheSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle, uint32_t read_offset, MemoryView buffer)
+{
+    ConfiguredInferModel_InitCache_Request request;
+
+    auto proto_configured_infer_model_handle = request.mutable_configured_infer_model_handle();
+    proto_configured_infer_model_handle->set_id(configured_infer_model_handle);
+
+    request.set_read_offset(read_offset);
+
+    return get_serialized_request<ConfiguredInferModel_InitCache_Request>(request, "InitCache", buffer);
+}
+
+Expected<std::tuple<rpc_object_handle_t, uint32_t>> InitCacheSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    ConfiguredInferModel_InitCache_Request request;
+
+    CHECK_AS_EXPECTED(request.ParseFromArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize 'InitCache'");
+
+    return std::make_tuple(request.configured_infer_model_handle().id(), request.read_offset());
+}
+
+Expected<Buffer> InitCacheSerializer::serialize_reply()
+{
+    return Buffer();
+}
+
+Expected<size_t> FinalizeCacheSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle, MemoryView buffer)
+{
+    ConfiguredInferModel_FinalizeCache_Request request;
+
+    auto proto_configured_infer_model_handle = request.mutable_configured_infer_model_handle();
+    proto_configured_infer_model_handle->set_id(configured_infer_model_handle);
+
+    return get_serialized_request<ConfiguredInferModel_FinalizeCache_Request>(request, "FinalizeCache", buffer);
+}
+
+Expected<rpc_object_handle_t> FinalizeCacheSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    ConfiguredInferModel_FinalizeCache_Request request;
+
+    CHECK_AS_EXPECTED(request.ParseFromArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize 'FinalizeCache'");
+
+    return request.configured_infer_model_handle().id();
+}
+
+Expected<Buffer> FinalizeCacheSerializer::serialize_reply()
+{
+    return Buffer();
+}
+
 Expected<size_t> RunAsyncSerializer::serialize_request(const RunAsyncSerializer::Request &request_struct, MemoryView buffer)
 {
     ConfiguredInferModel_AsyncInfer_Request request;
@@ -562,6 +640,68 @@ Expected<RunAsyncSerializer::Request> RunAsyncSerializer::deserialize_request(
 Expected<Buffer> RunAsyncSerializer::serialize_reply()
 {
     return Buffer();
+}
+
+Expected<size_t> RunAsyncForDurationSerializer::serialize_request(const RunAsyncForDurationSerializer::Request &request_struct, MemoryView buffer)
+{
+    ConfiguredInferModel_RunAsyncForDuration_Request request;
+
+    auto proto_configured_infer_model_handle = request.mutable_configured_infer_model_handle();
+    proto_configured_infer_model_handle->set_id(request_struct.configured_infer_model_handle);
+
+    auto proto_infer_model_handle = request.mutable_infer_model_handle();
+    proto_infer_model_handle->set_id(request_struct.infer_model_handle);
+
+    request.set_duration_ms(request_struct.duration_ms);
+
+    request.mutable_buffer_infos()->Reserve(static_cast<int>(request_struct.buffer_infos.size()));
+    for (const auto &buffer_info : request_struct.buffer_infos) {
+        auto proto_buffer_info = request.add_buffer_infos();
+        proto_buffer_info->set_size(buffer_info.size);
+        proto_buffer_info->set_type(buffer_info.type);
+    }
+
+    return get_serialized_request<ConfiguredInferModel_RunAsyncForDuration_Request>(request, "RunAsyncForDuration", buffer);
+}
+
+Expected<RunAsyncForDurationSerializer::Request> RunAsyncForDurationSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    ConfiguredInferModel_RunAsyncForDuration_Request request;
+
+    CHECK_AS_EXPECTED(request.ParseFromArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize 'RunAsyncForDuration'");
+
+    std::vector<RunAsyncSerializer::BufferInfo> buffer_infos;
+    buffer_infos.reserve(request.buffer_infos_size());
+    for (const auto &buffer_info : request.buffer_infos()) {
+        buffer_infos.push_back({buffer_info.size(), buffer_info.type()});
+    }
+
+    RunAsyncForDurationSerializer::Request request_struct;
+    request_struct.configured_infer_model_handle = request.configured_infer_model_handle().id();
+    request_struct.infer_model_handle = request.infer_model_handle().id();
+    request_struct.duration_ms = request.duration_ms();
+    request_struct.buffer_infos = std::move(buffer_infos);
+    return request_struct;
+}
+
+Expected<Buffer> RunAsyncForDurationSerializer::serialize_reply(uint32_t fps)
+{
+    ConfiguredInferModel_RunAsyncForDuration_Reply reply;
+    reply.set_fps(fps);
+
+    TRY(auto serialized_reply, Buffer::create(reply.ByteSizeLong(), BufferStorageParams::create_dma()));
+    CHECK_AS_EXPECTED(reply.SerializeToArray(serialized_reply.data(), static_cast<int>(serialized_reply.size())),
+        HAILO_RPC_FAILED, "Failed to serialize 'RunAsyncForDuration'");
+
+    return serialized_reply;
+}
+Expected<uint32_t> RunAsyncForDurationSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    ConfiguredInferModel_RunAsyncForDuration_Reply reply;
+    CHECK_AS_EXPECTED(reply.ParseFromArray(serialized_reply.data(), static_cast<int>(serialized_reply.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize 'RunAsyncForDuration'");
+    return reply.fps();
 }
 
 Expected<Buffer> CallbackCalledSerializer::serialize_reply(const RpcCallback &callback)

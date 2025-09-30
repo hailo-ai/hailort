@@ -55,7 +55,8 @@ VDeviceHrpcClient::create_available_vdevice(const std::vector<std::string> &devi
 
         TRY(auto request_buffer, client->allocate_request_buffer(), "Failed to allocate request buffer");
         TRY(auto request_size, CreateVDeviceSerializer::serialize_request(params, IS_PP_DISABLED(), MemoryView(*request_buffer)));
-        auto expected_result = client->execute_request(HailoRpcActionID::VDEVICE__CREATE, MemoryView(request_buffer->data(), request_size));
+        auto expected_result = client->execute_request(static_cast<uint32_t>(HailoRpcActionID::VDEVICE__CREATE),
+            MemoryView(request_buffer->data(), request_size));
         if (!is_user_specific_devices && (HAILO_DEVICE_IN_USE == expected_result.status())) {
             continue;
         }
@@ -125,7 +126,8 @@ VDeviceHrpcClient::~VDeviceHrpcClient()
         return;
     }
 
-    auto result_expected = m_client->execute_request(HailoRpcActionID::VDEVICE__DESTROY, MemoryView(request_buffer.value()->data(), *request_size));
+    auto result_expected = m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::VDEVICE__DESTROY),
+        MemoryView(request_buffer.value()->data(), *request_size));
     if (!result_expected) {
         LOGGER__CRITICAL("Failed to destroy VDevice! status = {}", result_expected.status());
         return;
@@ -137,7 +139,7 @@ Expected<std::shared_ptr<InferModel>> VDeviceHrpcClient::create_infer_model(cons
     TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
 
     TRY(auto request_size, CreateInferModelSerializer::serialize_request(m_handle, hef_buffer.size(), name, MemoryView(*request_buffer)));
-    TRY(auto result, m_client->execute_request(HailoRpcActionID::VDEVICE__CREATE_INFER_MODEL,
+    TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::VDEVICE__CREATE_INFER_MODEL),
         MemoryView(request_buffer->data(), request_size), std::vector<TransferBuffer>{hef_buffer}));
     TRY(auto infer_model_handle, CreateInferModelSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size)));
 
@@ -189,9 +191,9 @@ Expected<std::vector<std::string>> VDeviceHrpcClient::get_physical_devices_ids()
     return result;
 }
 
-// Currently only homogeneous vDevice is allow (= all devices are from the same type)
 Expected<hailo_stream_interface_t> VDeviceHrpcClient::get_default_streams_interface() const
 {
+    LOGGER__ERROR("Not supported. Did you try calling `create_configure_params` on H10? If so, use InferModel instead");
     return make_unexpected(HAILO_NOT_IMPLEMENTED);
 }
 

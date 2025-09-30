@@ -33,32 +33,21 @@ static DescSizesParams get_sg_desc_size_params()
     return desc_sizes_params;
 }
 
-static DescSizesParams get_ccb_desc_size_params(HailoRTDriver::DeviceBoardType board_type)
+static DescSizesParams get_ccb_desc_size_params(uint32_t min_ccb_desc_count)
 {
     DescSizesParams desc_sizes_params{};
-    // start with common params
     desc_sizes_params.default_page_size = 512;
     desc_sizes_params.min_page_size = 512;
     desc_sizes_params.max_page_size = 4096;
     desc_sizes_params.max_descs_count = 0x00040000;
-
-    // set board specific params
-    switch (board_type) {
-    case HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO15: /* fallthrough */
-    case HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO15L: /* fallthrough */
-    case HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO10H: /* fallthrough */
-    case HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO15H_ACCELERATOR_MODE: /* fallthrough */
-        desc_sizes_params.min_descs_count = 16;
-        break;
-    case HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_MARS:
-        desc_sizes_params.min_descs_count = 32; // MARS requires at least 32 descriptors
-        break;
-    default:
-        assert(false);
-    }
-
+    desc_sizes_params.min_descs_count = min_ccb_desc_count;
     return desc_sizes_params;
 }
+
+struct DescSizesParamsPerType {
+    DescSizesParams ccb;
+    DescSizesParams sg;
+};
 
 static EdgeTypeMemoryRequirements join_requirements(const EdgeTypeMemoryRequirements &a, const EdgeTypeMemoryRequirements &b)
 {
@@ -68,12 +57,10 @@ static EdgeTypeMemoryRequirements join_requirements(const EdgeTypeMemoryRequirem
 }
 
 static Expected<EdgeTypeMemoryRequirements> get_context_cfg_requirements(const ContextMetadata &context_metadata,
-    HailoRTDriver::DmaType dma_type, bool use_ccb, HailoRTDriver::DeviceBoardType board_type)
+    HailoRTDriver::DmaType dma_type, bool use_ccb, const DescSizesParamsPerType &desc_params)
 {
     EdgeTypeMemoryRequirements requirments{};
-    const auto desc_sizes_params = (use_ccb) ?
-        get_ccb_desc_size_params(board_type) :
-        get_sg_desc_size_params();
+    const auto desc_sizes_params = use_ccb ? desc_params.ccb : desc_params.sg;
     for (const auto &cfg_info : context_metadata.config_buffers_info()) {
         TRY(auto requirements, CopiedConfigBuffer::get_buffer_requirements(cfg_info.second, dma_type, desc_sizes_params));
         if (use_ccb) {
@@ -89,13 +76,13 @@ static Expected<EdgeTypeMemoryRequirements> get_context_cfg_requirements(const C
 
 // Gets the memory requirements for the configuration buffers (weights and layer configurations)
 static Expected<EdgeTypeMemoryRequirements> get_cfg_requirements(const CoreOpMetadata &core_op_metadata,
-    HailoRTDriver::DmaType dma_type, bool zero_copy_config_over_descs, HailoRTDriver::DeviceBoardType board_type)
+    HailoRTDriver::DmaType dma_type, bool zero_copy_config_over_descs, const DescSizesParamsPerType &desc_params)
 {
     const bool use_ccb = CopiedConfigBuffer::should_use_ccb(dma_type) && !zero_copy_config_over_descs;
     TRY(auto requirments, get_context_cfg_requirements(core_op_metadata.preliminary_context(), dma_type, use_ccb,
-        board_type));
+        desc_params));
     for (const auto& context : core_op_metadata.dynamic_contexts()) {
-        TRY(auto context_requirments, get_context_cfg_requirements(context, dma_type, use_ccb, board_type));
+        TRY(auto context_requirments, get_context_cfg_requirements(context, dma_type, use_ccb, desc_params));
         requirments = join_requirements(requirments, context_requirments);
     }
     return requirments;
@@ -103,51 +90,53 @@ static Expected<EdgeTypeMemoryRequirements> get_cfg_requirements(const CoreOpMet
 
 // Gets the memory requirements for intermediate buffers (including inter-context and ddr buffers)
 static Expected<EdgeTypeMemoryRequirements> get_intermediate_requirements(const CoreOpMetadata &core_op_metadata,
-    uint16_t batch_size, HailoRTDriver::DmaType dma_type, HailoRTDriver::DeviceBoardType board_type)
+    uint16_t batch_size, HailoRTDriver::DmaType dma_type, const DescSizesParamsPerType &desc_params)
 {
     batch_size = (batch_size == HAILO_DEFAULT_BATCH_SIZE) ? 1 : batch_size;
-    const auto sg_desc_params = get_sg_desc_size_params();
-    const auto ccb_desc_params = get_ccb_desc_size_params(board_type);
     TRY(auto plan, InternalBufferPlanner::create_buffer_planning(core_op_metadata, batch_size,
-        InternalBufferPlanner::Type::SINGLE_BUFFER_PER_BUFFER_TYPE, dma_type, sg_desc_params, ccb_desc_params));
+        InternalBufferPlanner::Type::SINGLE_BUFFER_PER_BUFFER_TYPE, dma_type, desc_params.sg, desc_params.ccb));
     auto report = InternalBufferPlanner::report_planning_info(plan);
     return EdgeTypeMemoryRequirements{report.cma_memory, report.cma_memory_for_descriptors, report.pinned_memory};
 }
 
-static Expected<HailoRTDriver::DeviceBoardType> hef_arch_to_board_type(hailo_device_architecture_t hef_arch)
+static Expected<DescSizesParamsPerType> get_desc_params(Hef &hef)
 {
+    TRY(auto hef_archs, hef.get_compatible_device_archs());
+    const auto hef_arch = hef_archs.at(0); // take the first, since dma type is defined by chip generation
+
+
+    uint32_t min_ccb_desc_count = 0;
     switch (hef_arch) {
-    case HAILO_ARCH_HAILO8_A0:
-    case HAILO_ARCH_HAILO8:
-    case HAILO_ARCH_HAILO8L:
-        return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO8;
     case HAILO_ARCH_HAILO15H:
     case HAILO_ARCH_HAILO15L:
     case HAILO_ARCH_HAILO15M:
-        return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO15;
     case HAILO_ARCH_HAILO10H:
-        return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_HAILO10H;
-    case HAILO_ARCH_MARS:
-        return HailoRTDriver::DeviceBoardType::DEVICE_BOARD_TYPE_MARS;
-    default:
+        min_ccb_desc_count = 16;
         break;
+    case HAILO_ARCH_MARS:
+        min_ccb_desc_count = 32;
+        break;
+    default:
+        LOGGER__ERROR("Unsupported HEF architecture: {}", static_cast<int>(hef_arch));
+        return make_unexpected(HAILO_INVALID_ARGUMENT);
     }
-    LOGGER__ERROR("Unsupported HEF architecture: {}", static_cast<int>(hef_arch));
-    return make_unexpected(HAILO_INVALID_ARGUMENT);
+
+    return DescSizesParamsPerType{get_ccb_desc_size_params(min_ccb_desc_count), get_sg_desc_size_params()};
 }
 
 // Gets the memory requirements for a single model
 static Expected<MemoryRequirements> get_model_memory_requirements(const CoreOpMetadata &core_op_metadata, uint16_t batch_size,
-    HailoRTDriver::DmaType dma_type, bool zero_copy_config_over_descs, HailoRTDriver::DeviceBoardType board_type)
+    HailoRTDriver::DmaType dma_type, bool zero_copy_config_over_descs, const DescSizesParamsPerType &desc_params)
 {
-    TRY(auto intermediate, get_intermediate_requirements(core_op_metadata, batch_size, dma_type, board_type));
-    TRY(auto config, get_cfg_requirements(core_op_metadata, dma_type, zero_copy_config_over_descs, board_type));
+    TRY(auto intermediate, get_intermediate_requirements(core_op_metadata, batch_size, dma_type, desc_params));
+    TRY(auto config, get_cfg_requirements(core_op_metadata, dma_type, zero_copy_config_over_descs, desc_params));
     return MemoryRequirements{intermediate, config};
 }
 
 static Expected<HailoRTDriver::DmaType> get_dma_type(Hef &hef)
 {
-    TRY(auto hef_arch, hef.get_hef_device_arch());
+    TRY(auto hef_archs, hef.get_compatible_device_archs());
+    const auto hef_arch = hef_archs.at(0); // take the first, since dma type is defined by chip generation
     switch (hef_arch) {
     case HAILO_ARCH_HAILO8_A0:
     case HAILO_ARCH_HAILO8:
@@ -180,10 +169,9 @@ Expected<FullMemoryRequirements> MemoryRequirementsCalculator::get_memory_requir
         TRY(auto core_op_metadata, hef.pimpl->get_core_op_metadata(network_pair.first));
 
         TRY(const auto dma_type, get_dma_type(hef));
-        TRY(auto hef_arch, hef.get_hef_device_arch());
-        TRY(auto board_type, hef_arch_to_board_type(hef_arch));
+        TRY(auto desc_params, get_desc_params(hef));
         TRY(auto req, get_model_memory_requirements(*core_op_metadata, model.batch_size, dma_type,
-                hef.pimpl->zero_copy_config_over_descs(), board_type));
+                hef.pimpl->zero_copy_config_over_descs(), desc_params));
         full_memory_requirements.hefs_memory_requirements.push_back(req);
 
         // Add intermediate to total

@@ -12,6 +12,7 @@
 #include "net_flow/pipeline/queue_elements.hpp"
 #include "common/os_utils.hpp"
 #include "common/runtime_statistics_internal.hpp"
+#include "utils/profiler/tracer_macros.hpp"
 
 namespace hailort
 {
@@ -474,6 +475,7 @@ AsyncPushQueueElement::AsyncPushQueueElement(SpscQueue<PipelineBuffer> &&queue, 
 
 void AsyncPushQueueElement::run_push_async(PipelineBuffer &&buffer, const PipelinePad &/*sink*/)
 {
+    TRACE(RunPushAsyncStartTrace, name(), pipeline_unique_id(), network_name());
     // We do not measure duration for Q elements
     if (nullptr != m_queue_size_accumulator) {
         m_queue_size_accumulator->add_data_point(static_cast<double>(m_queue.size_approx()));
@@ -484,6 +486,7 @@ void AsyncPushQueueElement::run_push_async(PipelineBuffer &&buffer, const Pipeli
         handle_non_recoverable_async_error(status);
         stop_thread();
     }
+    TRACE(RunPushAsyncEndTrace, name(), pipeline_unique_id(), network_name());
 }
 
 void AsyncPushQueueElement::start_thread()
@@ -991,6 +994,7 @@ hailo_status MultiPushQueue::run_push(PipelineBuffer &&/*buffer*/, const Pipelin
 
 void MultiPushQueue::run_push_async(PipelineBuffer &&buffer, const PipelinePad &sink)
 {
+    TRACE(RunPushAsyncStartTrace, name(), pipeline_unique_id(), network_name());
     assert(contains(m_queues, sink.name()));
     auto status = m_queues.at(sink.name()).enqueue(std::move(buffer), m_timeout);
     if ((HAILO_SUCCESS != status) && (HAILO_SHUTDOWN_EVENT_SIGNALED != status)) {
@@ -1000,6 +1004,7 @@ void MultiPushQueue::run_push_async(PipelineBuffer &&buffer, const PipelinePad &
 
     std::unique_lock<std::mutex> lock(m_queues_operations_mutex);
     m_all_queues_have_buffer_cv.notify_all();
+    TRACE(RunPushAsyncEndTrace, name(), pipeline_unique_id(), network_name());
 }
 
 void MultiPushQueue::register_thread()

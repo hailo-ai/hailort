@@ -16,6 +16,7 @@ message ProtoHEFExternalResource {
     uint64 offset = 1;
     uint64 size = 2;
     string name = 3;
+    uint64 xxhash = 4;
 }
 
 message ProtoHEFIncludedFeatures {
@@ -100,15 +101,15 @@ message ProtoHEFHeader {
     uint64 version = 4;
 }
 
-// Enum describing the different possible hw_archs. Must be aligned to device_internal::HEFHwArch
+// Enum describing the different possible hw_archs
 enum ProtoHEFHwArch {
     PROTO__HW_ARCH__HAILO8 = 0;
     PROTO__HW_ARCH__HAILO8P = 1;
     PROTO__HW_ARCH__HAILO8R = 2;
     PROTO__HW_ARCH__HAILO8L = 3;
-    PROTO__HW_ARCH__HAILO15H = 103;
+    PROTO__HW_ARCH__HAILO1XH = 103;
     PROTO__HW_ARCH__HAILO15M = 4;
-    PROTO__HW_ARCH__HAILO10H = 5;
+    // PROTO__HW_ARCH__HAILO10H = 5; // Deprecated
     PROTO__HW_ARCH__HAILO15L = 6;
 
     // Reserving low numbers to public hw archs
@@ -118,6 +119,7 @@ enum ProtoHEFHwArch {
     PROTO__HW_ARCH__GINGER = 104;
     PROTO__HW_ARCH__LAVENDER = 105;
     PROTO__HW_ARCH__PLUTO = 106;
+    PROTO__HW_ARCH__MARS = 108;
 }
 
 

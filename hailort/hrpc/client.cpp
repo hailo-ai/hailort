@@ -106,7 +106,7 @@ hailo_status Client::message_loop()
     return HAILO_SUCCESS;
 }
 
-Expected<rpc_message_t> Client::execute_request(HailoRpcActionID action_id, const MemoryView &request,
+Expected<rpc_message_t> Client::execute_request(uint32_t action_id, const MemoryView &request,
     std::vector<TransferBuffer> &&write_buffers, std::vector<TransferBuffer> &&read_buffers)
 {
     auto status = wait_for_execute_request_ready(request, get_request_timeout(REQUEST_TIMEOUT));
@@ -146,7 +146,7 @@ hailo_status Client::wait_for_execute_request_ready(const MemoryView &request, s
     return m_connection->wait_for_write_message_async_ready(request.size(), timeout);
 }
 
-Expected<message_id_t> Client::execute_request_async(HailoRpcActionID action_id, const MemoryView &request,
+Expected<message_id_t> Client::execute_request_async(uint32_t action_id, const MemoryView &request,
     HrpcCallback callback, std::vector<TransferBuffer> &&write_buffers, std::vector<TransferBuffer> &&read_buffers)
 {
     rpc_message_header_t header;

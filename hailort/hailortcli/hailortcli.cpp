@@ -145,6 +145,17 @@ void add_device_options(CLI::App *app, hailo_device_params &device_params)
     });
 }
 
+hailo_status validate_specific_device_is_given(const hailo_device_params &device_params)
+{
+    if ((1 != device_params.device_ids.size()) || contains(device_params.device_ids, std::string("*"))) {
+        // No specific device-id given, make sure there is only 1 device on the machine.
+        TRY(auto scan_res, Device::scan(), "Failed to scan for devices");
+        CHECK(scan_res.size() > 0, HAILO_OUT_OF_PHYSICAL_DEVICES, "No devices found");
+        CHECK(1 == scan_res.size(), HAILO_INVALID_OPERATION, "Multiple devices found, please specify a specific device-id/bdf/ip");
+    }
+    return HAILO_SUCCESS;
+}
+
 static bool do_versions_match()
 {
     hailo_version_t libhailort_version = {};

@@ -32,10 +32,14 @@ public:
     /**
      * Creates LLMParams with optional model configuration.
      *
-     * @param[in] hef_path        The path of the Hef file. If empty, set_model() must be called later.
-     * @param[in] lora_name       The name of the chosen LoRA. Default is empty string.
+     * @param[in] hef_path                   The path of the Hef file. If empty, set_model() must be called later.
+     * @param[in] lora_name                  The name of the chosen LoRA. Default is empty string.
+     * @param[in] optimize_memory_on_device  Whether to optimize memory usage on device by enabling client-side tokenization.
+     *                                       When true, tokenization is performed on the host, reducing device memory usage.
+     *                                       Requires libhailort to be compiled with HAILO_BUILD_CLIENT_TOKENIZER=ON.
+     *                                       Default is false.
      */
-     LLMParams(const std::string &hef_path, const std::string &lora_name = "");
+     LLMParams(const std::string &hef_path, const std::string &lora_name = "", bool optimize_memory_on_device = false);
 
     /**
      * Sets LLM model.
@@ -57,9 +61,24 @@ public:
      */
     const std::string& lora() const;
 
+    /**
+     * @return Whether memory optimization on device is enabled.
+     */
+    bool optimize_memory_on_device() const;
+
+    /**
+     * Sets whether to optimize memory usage on device.
+     *
+     * @param[in] optimize_memory_on_device  Whether to enable client-side tokenization for memory optimization.
+     *                                       When true, tokenization is performed on the host, reducing device memory usage.
+     *                                       Requires libhailort to be compiled with HAILO_BUILD_CLIENT_TOKENIZER=ON.
+     */
+    void set_optimize_memory_on_device(bool optimize_memory_on_device);
+
 private:
     std::string m_hef_path;
     std::string m_lora;
+    bool m_optimize_memory_on_device;
 };
 
 /*! The LLMGeneratorParams represents the parameters for text generation, which can be changed during runtime for each generator. */

@@ -137,8 +137,6 @@ public:
     void set_notification_callback(const std::function<void(uintptr_t, const hailo_notification_t&, py::object)> &callback,
         hailo_notification_id_t notification_id, py::object opaque);
     void remove_notification_callback(hailo_notification_id_t notification_id);
-    void direct_write_memory(uint32_t address, py::bytes buffer);
-    py::bytes direct_read_memory(uint32_t address, uint32_t size);
     const char *get_dev_id() const;
     void set_sleep_state(hailo_sleep_state_t sleep_state);
 

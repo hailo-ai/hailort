@@ -143,6 +143,8 @@ private:
     std::shared_ptr<OsConnectionContext> m_context;
     std::shared_ptr<AsyncActionsThread> m_write_actions_thread;
     std::shared_ptr<AsyncActionsThread> m_read_actions_thread;
+
+    std::mutex m_close_mutex;
 };
 
 } // namespace hailort

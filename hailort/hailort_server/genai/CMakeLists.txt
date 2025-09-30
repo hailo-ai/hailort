@@ -9,10 +9,12 @@ add_subdirectory(text2image)
 add_subdirectory(speech2text)
 
 list(APPEND HAILORT_GENAI_SERVER_COMPONENTS_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/hailo_tokenizer.cpp
+    ${HAILORT_TOKENIZER_DIR}/hailo_tokenizer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/inference_manager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/decoder_inference_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/llm/llm_server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vlm/vlm_server.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/genai_server.cpp
 )
 
 set(HAILORT_GENAI_SOURCES

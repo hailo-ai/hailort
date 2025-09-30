@@ -38,6 +38,8 @@ public:
                     PipelineDirection pipeline_direction, std::shared_ptr<AsyncPipeline> async_pipeline = nullptr);
     PipelineElementInternal &operator=(PipelineElementInternal &&other) = delete;
 
+    std::string network_name() const;
+
 protected:
     void handle_non_recoverable_async_error(hailo_status error_status);
     std::weak_ptr<AsyncPipeline> m_async_pipeline;

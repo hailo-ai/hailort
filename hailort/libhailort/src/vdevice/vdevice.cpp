@@ -29,7 +29,6 @@
 
 #include "common/utils.hpp"
 
-
 namespace hailort
 {
 
@@ -331,7 +330,7 @@ hailo_status VDeviceBase::validate_params(const hailo_vdevice_params_t &params)
         auto acc_type = HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE;
         TRY(acc_type, get_accelerator_type(params.device_ids, params.device_count));
         CHECK(acc_type != HailoRTDriver::AcceleratorType::SOC_ACCELERATOR, HAILO_INVALID_OPERATION,
-            "Multi process service is only supported for Hailo15 devices");
+            "Multi process service is supported only on Hailo15 devices. Other devices support multi-process functionality without requiring a service");
     }
 
     return HAILO_SUCCESS;

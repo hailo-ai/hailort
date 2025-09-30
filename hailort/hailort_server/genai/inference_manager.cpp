@@ -27,7 +27,7 @@ Expected<std::unique_ptr<InferenceManager>> InferenceManager::create(std::shared
 }
 
 InferenceManager::InferenceManager(std::shared_ptr<hailort::VDevice> vdevice, std::shared_ptr<InferModel> model) :
-        m_vdevice(vdevice), m_model(model)
+    m_vdevice(vdevice), m_model(model)
 {}
 
 hailo_status InferenceManager::configure()
@@ -135,6 +135,11 @@ hailo_status InferenceManager::update_cache_offset(int32_t offset_delta_entries)
 hailo_status InferenceManager::init_cache(uint32_t read_offset)
 {
     return m_configured_model.init_cache(read_offset);
+}
+
+hailo_status InferenceManager::finalize_cache()
+{
+    return m_configured_model.finalize_cache();
 }
 
 const Hef &InferenceManager::get_hef() const

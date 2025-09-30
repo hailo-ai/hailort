@@ -382,6 +382,7 @@ public:
 
     hailo_status update_cache_offset(int32_t offset_delta_entries);
     hailo_status init_cache(uint32_t read_offset);
+    hailo_status finalize_cache();
 
 private:
     friend class InferModelBase;

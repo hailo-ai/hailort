@@ -105,6 +105,11 @@ InferModelInferStreamWrapper InferModelWrapper::output(const std::string &name)
     return InferModelInferStreamWrapper(infer_stream.release());
 }
 
+void InferModelWrapper::set_enable_kv_cache(bool enable_kv_cache)
+{
+    m_infer_model->set_enable_kv_cache(enable_kv_cache);
+}
+
 ConfiguredInferModelBindingsWrapper ConfiguredInferModelWrapper::create_bindings()
 {
     auto bindings = m_configured_infer_model.create_bindings();
@@ -375,6 +380,18 @@ void ConfiguredInferModelWrapper::shutdown()
     VALIDATE_STATUS(status);
 }
 
+void ConfiguredInferModelWrapper::update_cache_offset(int32_t offset_delta_entries)
+{
+    auto status = m_configured_infer_model.update_cache_offset(offset_delta_entries);
+    VALIDATE_STATUS(status);
+}
+
+void ConfiguredInferModelWrapper::finalize_cache()
+{
+    auto status = m_configured_infer_model.finalize_cache();
+    VALIDATE_STATUS(status);
+}
+
 void ConfiguredInferModelWrapper::execute_callbacks()
 {
     while (true)
@@ -434,6 +451,7 @@ void InferModelWrapper::bind(py::module &m)
         .def("outputs", &InferModelWrapper::outputs)
         .def("input", &InferModelWrapper::input)
         .def("output", &InferModelWrapper::output)
+        .def("set_enable_kv_cache", &InferModelWrapper::set_enable_kv_cache)
         ;
 }
 
@@ -461,6 +479,8 @@ void ConfiguredInferModelWrapper::bind(py::module &m)
         .def("set_scheduler_priority", &ConfiguredInferModelWrapper::set_scheduler_priority)
         .def("get_async_queue_size", &ConfiguredInferModelWrapper::get_async_queue_size)
         .def("shutdown", &ConfiguredInferModelWrapper::shutdown)
+        .def("update_cache_offset", &ConfiguredInferModelWrapper::update_cache_offset)
+        .def("finalize_cache", &ConfiguredInferModelWrapper::finalize_cache)
         ;
 }
 

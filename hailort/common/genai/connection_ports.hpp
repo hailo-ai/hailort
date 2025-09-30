@@ -22,6 +22,7 @@ static constexpr uint16_t DEFAULT_LLM_CONNECTION_PORT = 12145;
 static constexpr uint16_t DEFAULT_TEXT2IMAGE_CONNECTION_PORT = 12146;
 static constexpr uint16_t DEFAULT_VLM_CONNECTION_PORT = 12147;
 static constexpr uint16_t DEFAULT_TEXT2IMAGE_GENERATION_CONNECTION_PORT = 12148;
+static constexpr uint16_t DEFAULT_SPEECH2TEXT_CONNECTION_PORT = 12149;
 
 } /* namespace genai */
 } /* namespace hailort */

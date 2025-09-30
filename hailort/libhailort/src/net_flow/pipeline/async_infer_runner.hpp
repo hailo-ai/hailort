@@ -23,9 +23,9 @@ namespace hailort
 class AsyncPipeline
 {
 public:
-    static Expected<std::shared_ptr<AsyncPipeline>> create_shared();
+    static Expected<std::shared_ptr<AsyncPipeline>> create_shared(const std::string &network_name);
     AsyncPipeline &operator=(const AsyncPipeline &) = delete;
-    AsyncPipeline();
+    AsyncPipeline(const std::string &network_name);
     virtual ~AsyncPipeline() = default;
 
     void add_element_to_pipeline(std::shared_ptr<PipelineElement> pipeline_element);
@@ -45,13 +45,20 @@ public:
     void set_as_multi_planar();
     bool is_multi_planar();
 
+    uint64_t pipeline_unique_id();
+    std::string get_network_name() const;
+
 private:
+    uint64_t generate_unique_id();
+
     std::shared_ptr<AsyncHwElement> m_async_hw_element;
     std::vector<std::shared_ptr<PipelineElement>> m_pipeline_elements;
     std::unordered_map<std::string, std::shared_ptr<PipelineElement>> m_entry_elements;
     std::unordered_map<std::string, std::shared_ptr<PipelineElement>> m_last_elements;
     ElementBuildParams m_build_params;
     bool m_is_multi_planar;
+    uint64_t m_pipeline_unique_id;
+    const std::string m_network_name;
 };
 
 class AsyncInferRunnerImpl
@@ -87,6 +94,7 @@ public:
     std::string get_pipeline_description() const;
     hailo_status get_pipeline_status() const;
     std::shared_ptr<AsyncPipeline> get_async_pipeline() const;
+    uint64_t pipeline_unique_id() const;
 
 protected:
     hailo_status start_pipeline();

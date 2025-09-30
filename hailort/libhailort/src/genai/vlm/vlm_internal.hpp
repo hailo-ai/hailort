@@ -30,7 +30,8 @@ namespace genai
 class VLMGenerator::Impl final : public TextGeneratorBase
 {
 public:
-    Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<PromptTemplateHandler> prompt_template_handler);
+    Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
+        std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder);
 
     Expected<LLMGeneratorCompletion> generate(const std::string &prompt, const std::vector<MemoryView> &input_frames);
     Expected<LLMGeneratorCompletion> generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames);
@@ -40,6 +41,10 @@ private:
 
     std::shared_ptr<SessionWrapper> m_session;
     std::shared_ptr<PromptTemplateHandler> m_prompt_template_handler;
+
+    // Optionals, only used if optimize_memory_on_device is true
+    std::shared_ptr<HailoTokenizer> m_tokenizer;
+    std::shared_ptr<TokenEmbedder<uint16_t>> m_token_embedder;
 };
 
 
@@ -73,7 +78,8 @@ public:
 
     Impl(std::shared_ptr<SessionWrapper> session, const VLMParams &Vlm_params,
         const LLMGeneratorParams &default_generator_params, hailo_3d_image_shape_t input_frame_shape,
-        hailo_format_t input_frame_format, std::shared_ptr<PromptTemplateHandler> prompt_template_handler);
+        hailo_format_t input_frame_format, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
+        std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder);
 
 private:
     hailo_status validate_generator_params(const LLMGeneratorParams &params);
@@ -84,6 +90,10 @@ private:
     hailo_3d_image_shape_t m_input_frame_shape;
     hailo_format_t m_input_frame_format;
     std::shared_ptr<PromptTemplateHandler> m_prompt_template_handler;
+
+    // Optionals, only used if optimize_memory_on_device is true
+    std::shared_ptr<HailoTokenizer> m_tokenizer;
+    std::shared_ptr<TokenEmbedder<uint16_t>> m_token_embedder;
 };
 
 } /* namespace genai */

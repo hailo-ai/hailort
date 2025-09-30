@@ -138,8 +138,8 @@ typedef union {
         uint64_t ccws_size_with_padding;
         uint32_t hef_padding_size;
         uint64_t additional_info_size;
+        uint64_t proto_xxh3_64bits;
         uint64_t reserved1;
-        uint64_t reserved2;
     } v3;
 } hef__header_distinct_t;
 
@@ -282,6 +282,7 @@ struct ExternalResourceInfo
     std::string name;
     uint64_t size;
     uint64_t offset;
+    uint64_t xxhash;
 };
 
 class Hef::Impl final
@@ -342,9 +343,6 @@ public:
     Expected<std::vector<hailo_network_group_info_t>> get_network_groups_infos();
 
     Expected<ConfigureNetworkParams> create_configure_params(hailo_stream_interface_t stream_interface, const std::string &network_group_name);
-    Expected<ConfigureNetworkParams> create_configure_params_mipi_input(hailo_stream_interface_t output_interface,
-        const hailo_mipi_input_stream_params_t &mipi_params, const std::string &network_group_name);
-
 
     static Expected<std::shared_ptr<ProtoHEFCoreOpMock>> get_core_op_per_arch(const ProtoHEFCoreOpMock &core_op,
         ProtoHEFHwArch hef_arch, hailo_device_architecture_t device_arch, uint32_t partial_clusters_layout_bitmap);
@@ -354,10 +352,6 @@ public:
 
     Expected<std::map<std::string, hailo_network_parameters_t>> create_network_parameters_by_name(
         const std::string &net_group_name);
-
-    Expected<std::map<std::string,hailo_stream_parameters_t>> create_stream_parameters_by_name_mipi_input(
-        const std::string &net_group_name, hailo_stream_interface_t output_interface,
-        const hailo_mipi_input_stream_params_t &mipi_params);
 
     Expected<std::map<std::string, hailo_vstream_params_t>> make_input_vstream_params(
         const std::string &net_group_name, const std::string &network_name,
@@ -382,8 +376,10 @@ public:
     // TODO: Should return map of NG's core_ops metadata?
     Expected<CoreOpMetadataPtr> get_core_op_metadata(const std::string &network_group_name, uint32_t partial_clusters_layout_bitmap = PARTIAL_CLUSTERS_LAYOUT_IGNORE);
 
-    Expected<std::string> get_description(bool stream_infos, bool vstream_infos, hailo_device_architecture_t device_arch);
-    Expected<std::map<std::string, MemoryView>> get_external_resources() const; // Key is reosucre name, value is resource data in bytes
+    Expected<std::string> get_description(bool stream_infos, bool vstream_infos,
+        std::vector<hailo_device_architecture_t> compatible_archs);
+    Expected<MemoryView> get_external_resources(const std::string &resource_name) const;
+    std::vector<std::string> get_external_resource_names() const;
 
     const MemoryView get_hash_as_memview() const
     {
@@ -439,6 +435,8 @@ public:
     hailo_status validate_hef_version() const;
 
     void set_memory_footprint_optimization(bool should_optimize);
+
+    static Expected<std::map<std::string, BufferPtr>> extract_hef_external_resources(const std::string &file_path);
 
 private:
     Impl(const std::string &hef_path, hailo_status &status);

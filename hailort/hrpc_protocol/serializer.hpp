@@ -41,7 +41,11 @@ enum class HailoRpcActionID {
     CONFIGURED_INFER_MODEL__ACTIVATE,
     CONFIGURED_INFER_MODEL__DEACTIVATE,
     CONFIGURED_INFER_MODEL__SHUTDOWN,
+    CONFIGURED_INFER_MODEL__UPDATE_CACHE_OFFSET,
+    CONFIGURED_INFER_MODEL__INIT_CACHE,
+    CONFIGURED_INFER_MODEL__FINALIZE_CACHE,
     CONFIGURED_INFER_MODEL__RUN_ASYNC,
+    CONFIGURED_INFER_MODEL__RUN_ASYNC_FOR_DURATION,
 
     DEVICE__CREATE,
     DEVICE__DESTROY,
@@ -86,6 +90,7 @@ struct rpc_create_configured_infer_model_request_params_t
     uint16_t batch_size;
     hailo_power_mode_t power_mode;
     hailo_latency_measurement_flags_t latency_flag;
+    bool enable_kv_cache;
 };
 
 struct RunAsyncRpcCallback {
@@ -117,8 +122,8 @@ struct RpcCallback {
 class SerializerVDeviceParamsWrapper
 {
 public:
-    SerializerVDeviceParamsWrapper(hailo_scheduling_algorithm_t scheduling_algorithm, const std::string &group_id, bool has_user_selected_device_or_group_id)
-        : m_group_id(group_id), m_has_user_selected_device_or_group_id(has_user_selected_device_or_group_id)
+    SerializerVDeviceParamsWrapper(hailo_scheduling_algorithm_t scheduling_algorithm, const std::string &group_id)
+        : m_group_id(group_id)
     {
         constexpr static bool DISABLE_MULTI_PROCESS_SERVICE = false;
         m_vdevice_params = {
@@ -131,8 +136,7 @@ public:
     }
 
     SerializerVDeviceParamsWrapper(SerializerVDeviceParamsWrapper &&other) noexcept
-        : m_group_id(std::move(other.m_group_id)), m_vdevice_params(std::move(other.m_vdevice_params)),
-            m_has_user_selected_device_or_group_id(other.m_has_user_selected_device_or_group_id)
+        : m_group_id(std::move(other.m_group_id)), m_vdevice_params(std::move(other.m_vdevice_params))
     {
         m_vdevice_params.group_id = m_group_id.c_str();
     }
@@ -143,18 +147,15 @@ public:
             m_group_id = std::move(other.m_group_id);
             m_vdevice_params = std::move(other.m_vdevice_params);
             m_vdevice_params.group_id = m_group_id.c_str();
-            m_has_user_selected_device_or_group_id = other.m_has_user_selected_device_or_group_id;
         }
         return *this;
     }
 
     const hailo_vdevice_params_t &get() const { return m_vdevice_params; }
-    bool has_user_selected_device_or_group_id() const { return m_has_user_selected_device_or_group_id; }
 
 private:
     std::string m_group_id;
     hailo_vdevice_params_t m_vdevice_params;
-    bool m_has_user_selected_device_or_group_id;
 };
 
 template <typename T>
@@ -333,6 +334,36 @@ struct ShutdownSerializer
     static Expected<Buffer> serialize_reply();
 };
 
+struct UpdateCacheOffsetSerializer
+{
+    UpdateCacheOffsetSerializer() = delete;
+
+    static Expected<size_t> serialize_request(rpc_object_handle_t configured_infer_model_handle, int32_t offset_delta_entries, MemoryView buffer);
+    static Expected<std::tuple<rpc_object_handle_t, int32_t>> deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply();
+};
+
+struct InitCacheSerializer
+{
+    InitCacheSerializer() = delete;
+
+    static Expected<size_t> serialize_request(rpc_object_handle_t configured_infer_model_handle, uint32_t read_offset, MemoryView buffer);
+    static Expected<std::tuple<rpc_object_handle_t, uint32_t>> deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply();
+};
+
+struct FinalizeCacheSerializer
+{
+    FinalizeCacheSerializer() = delete;
+
+    static Expected<size_t> serialize_request(rpc_object_handle_t configured_infer_model_handle, MemoryView buffer);
+    static Expected<rpc_object_handle_t> deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply();
+};
+
 struct RunAsyncSerializer
 {
     RunAsyncSerializer() = delete;
@@ -354,6 +385,25 @@ struct RunAsyncSerializer
     static Expected<Request> deserialize_request(const MemoryView &serialized_request);
 
     static Expected<Buffer> serialize_reply();
+};
+
+struct RunAsyncForDurationSerializer
+{
+    RunAsyncForDurationSerializer() = delete;
+
+    struct Request
+    {
+        rpc_object_handle_t configured_infer_model_handle;
+        rpc_object_handle_t infer_model_handle;
+        uint32_t duration_ms;
+        std::vector<RunAsyncSerializer::BufferInfo> buffer_infos;
+    };
+
+    static Expected<size_t> serialize_request(const Request &request_struct, MemoryView buffer);
+    static Expected<Request> deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply(uint32_t fps = 0);
+    static Expected<uint32_t> deserialize_reply(const MemoryView &serialized_reply);
 };
 
 struct CallbackCalledSerializer

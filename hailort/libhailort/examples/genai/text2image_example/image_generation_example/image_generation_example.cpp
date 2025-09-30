@@ -12,7 +12,7 @@
 
 
 constexpr uint32_t TEXT2IMAGE_SEED_VALUE = 173;
-const std::string NEGATIVE_PROMPT = "ugly, tiling, poorly drawn hands, poorly drawn feet, poorly drawn face, out of frame,extra limbs, disfigured, deformed, body out of frame, bad anatomy, watermark, signature,cut off, low contrast, underexposed, overexposed, bad art, beginner, amateur, distorted face";
+const std::string NEGATIVE_PROMPT = "ugly, tiling, poorly drawn hands, poorly drawn feet, poorly drawn face, out of frame, extra limbs, disfigured, deformed, body out of frame, bad anatomy, watermark, signature,cut off, low contrast, underexposed, overexposed, bad art, beginner, amateur, distorted face";
 
 std::string get_positive_prompt()
 {

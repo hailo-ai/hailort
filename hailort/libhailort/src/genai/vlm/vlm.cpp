@@ -12,15 +12,19 @@
 #include "genai/genai_common.hpp"
 
 #include "hailo/genai/vlm/vlm.hpp"
+#include "hailo/genai/llm/llm.hpp"
 
 #include "hailo/hailort.h"
 #include "hailo/hailort_common.hpp"
 #include "common/filesystem.hpp"
 #include "common/utils.hpp"
 #include "common/file_utils.hpp"
+#include "common/thread_safe_queue.hpp"
+#include "common/genai/session_wrapper/session_wrapper.hpp"
 
 #include <filesystem>
 
+#include "common/genai/constants.hpp"
 #include "common/genai/serializer/serializer.hpp"
 #include "common/genai/connection_ports.hpp"
 
@@ -30,6 +34,7 @@ namespace hailort
 {
 namespace genai
 {
+
 
 hailo_status VLMParams::set_model(const std::string &hef_path)
 {
@@ -44,6 +49,16 @@ hailo_status VLMParams::set_model(const std::string &hef_path)
 const std::string& VLMParams::hef() const
 {
     return m_hef_path;
+}
+
+bool VLMParams::optimize_memory_on_device() const
+{
+    return m_optimize_memory_on_device;
+}
+
+void VLMParams::set_optimize_memory_on_device(bool optimize_memory_on_device)
+{
+    m_optimize_memory_on_device = optimize_memory_on_device;
 }
 
 Expected<VLM> VLM::create(std::shared_ptr<hailort::VDevice> vdevice, const VLMParams &vlm_params)
@@ -72,17 +87,46 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
     TRY(auto check_hef_exists_on_server_reply, session_wrapper->execute(MemoryView(check_hef_exists_on_server_request)));
     TRY(auto hef_exists, GenAICheckHefExistsSerializer::deserialize_reply(MemoryView(*check_hef_exists_on_server_reply)));
 
-    std::string hef_path_to_send = hef_exists ? hef_path : ""; // Empty string indicates that the HEF does not exist on the server
-    TRY(auto create_vlm_request, VLMCreateSerializer::serialize_request(vdevice_params, hef_path_to_send));
-    std::vector<MemoryView> write_buffers = { MemoryView(create_vlm_request) };
-
-    Buffer hef_data;
+    Buffer create_vlm_request;
+    std::shared_ptr<Buffer> create_vlm_reply;
+    std::shared_ptr<HailoTokenizer> tokenizer;
+    std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder;
+    BufferPtr token_embedder_buffer;
     if (!hef_exists) {
-        TRY(hef_data, read_binary_file(hef_path, BufferStorageParams::create_dma()));
-        write_buffers.push_back(MemoryView(hef_data));
-    }
+        // Get file size for chunked transfer
+        TRY(auto file_size, get_istream_size(hef_path));
+        if (vlm_params.optimize_memory_on_device()) {
+#ifndef HAILO_CLIENT_TOKENIZER_ENABLED
+            LOGGER__ERROR("Host-tokenization is not enabled in lib compilation");
+            return make_unexpected(HAILO_NOT_IMPLEMENTED);
+#else
+            // Reduce external-info file-sizes form HEF file size
+            TRY(auto external_resources, Hef::extract_hef_external_resources(hef_path));
+            for (const auto &[name, resource_buffer] : external_resources) {
+                // Counting on the fact that tokenizer and embeddings are always at the end of the HEF file
+                if (name == TOKENIZER) {
+                    std::string tokenizer_blob(resource_buffer->size(), '\0');
+                    std::memcpy(const_cast<char*>(tokenizer_blob.data()), resource_buffer->data(), resource_buffer->size());
+                    TRY(tokenizer, HailoTokenizer::create(tokenizer_blob));
+                    file_size -= resource_buffer->size();
+                } else if (name == INPUT_EMB_BINARY) {
+                    // Create token_embedder after getting the embedding features from the server
+                    token_embedder_buffer = resource_buffer;
+                    file_size -= resource_buffer->size();
+                }
+            }
+#endif // HAILO_CLIENT_TOKENIZER_ENABLED
+        }
 
-    TRY(auto create_vlm_reply, session_wrapper->execute(write_buffers));
+        // Create request with file size for chunked transfer
+        TRY(create_vlm_request, VLMCreateSerializer::serialize_request(vdevice_params, "", file_size, vlm_params.optimize_memory_on_device()));
+        CHECK_SUCCESS(session_wrapper->write(MemoryView(create_vlm_request)));
+        CHECK_SUCCESS(session_wrapper->send_file_chunked(hef_path, file_size));
+        TRY(create_vlm_reply, session_wrapper->read());
+    } else {
+        TRY(create_vlm_request, VLMCreateSerializer::serialize_request(vdevice_params, hef_path, vlm_params.optimize_memory_on_device()));
+        TRY(create_vlm_reply, session_wrapper->execute(MemoryView(create_vlm_request)));
+    }
     TRY(auto vlm_info_tuple, VLMCreateSerializer::deserialize_reply(MemoryView(*create_vlm_reply)), "Failed to create VLM");
 
     auto input_frame_shape = std::get<0>(vlm_info_tuple);
@@ -93,21 +137,38 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
     auto prompt_template_handler_ptr = make_shared_nothrow<PromptTemplateHandler>(std::move(prompt_template_handler));
     CHECK_NOT_NULL_AS_EXPECTED(prompt_template_handler_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
+    auto embedding_features = std::get<3>(vlm_info_tuple);
+    if (vlm_params.optimize_memory_on_device()) {
+#ifndef HAILO_CLIENT_TOKENIZER_ENABLED
+        (void)embedding_features;
+        LOGGER__ERROR("Host-tokenization is not enabled in lib compilation");
+        return make_unexpected(HAILO_NOT_IMPLEMENTED);
+#else
+        CHECK_AS_EXPECTED(nullptr != token_embedder_buffer, HAILO_NOT_AVAILABLE, "Token embedder buffer is not available");
+        TRY(token_embedder, TokenEmbedder<uint16_t>::create(token_embedder_buffer,
+            token_embedder_buffer->size() / (sizeof(uint16_t) * embedding_features), embedding_features));
+#endif // HAILO_CLIENT_TOKENIZER_ENABLED
+    }
+
     TRY(auto get_generator_default_params_request, LLMGetGeneratorParamsSerializer::serialize_request());
     TRY(auto get_generator_default_params_reply, session_wrapper->execute(MemoryView(get_generator_default_params_request)));
     TRY(auto default_generator_params, LLMGetGeneratorParamsSerializer::deserialize_reply(MemoryView(*get_generator_default_params_reply)));
 
-    auto vlm_ptr = make_unique_nothrow<Impl>(session_wrapper, vlm_params, default_generator_params, input_frame_shape, input_frame_format, prompt_template_handler_ptr);
+    auto vlm_ptr = make_unique_nothrow<Impl>(session_wrapper, vlm_params, default_generator_params, input_frame_shape, input_frame_format, prompt_template_handler_ptr,
+        tokenizer, token_embedder);
     CHECK_NOT_NULL_AS_EXPECTED(vlm_ptr, HAILO_OUT_OF_HOST_MEMORY);
     return vlm_ptr;
 }
 
 VLM::Impl::Impl(std::shared_ptr<SessionWrapper> session, const VLMParams &vlm_params,
     const LLMGeneratorParams &default_generator_params, hailo_3d_image_shape_t input_frame_shape,
-    hailo_format_t input_frame_format, std::shared_ptr<PromptTemplateHandler> prompt_template_handler) :
+    hailo_format_t input_frame_format, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
+    std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder) :
         m_session(session), m_vlm_params(vlm_params), m_default_generator_params(default_generator_params),
         m_input_frame_shape(input_frame_shape), m_input_frame_format(input_frame_format),
-        m_prompt_template_handler(prompt_template_handler)
+        m_prompt_template_handler(prompt_template_handler),
+        m_tokenizer(tokenizer),
+        m_token_embedder(token_embedder)
 {}
 
 VLM::Impl::~Impl()
@@ -181,6 +242,13 @@ Expected<std::vector<int>> VLM::tokenize(const std::string &prompt)
 
 Expected<std::vector<int>> VLM::Impl::tokenize(const std::string &prompt)
 {
+#ifdef HAILO_CLIENT_TOKENIZER_ENABLED
+    if (m_tokenizer) {
+        TRY(auto tokens, m_tokenizer->text_to_tokens(prompt));
+        return tokens;
+    }
+#endif // HAILO_CLIENT_TOKENIZER_ENABLED
+
     TRY(auto request, LLMTokenizeSerializer::serialize_request(prompt));
     TRY(auto reply, m_session->execute(MemoryView(request)));
     TRY(auto tokens, LLMTokenizeSerializer::deserialize_reply(MemoryView(*reply)));
@@ -222,7 +290,8 @@ hailo_status VLM::set_generation_recovery_sequence(const std::string &abort_sequ
 
 hailo_status VLM::Impl::set_generation_recovery_sequence(const std::string &abort_sequence)
 {
-    TRY(auto set_end_of_generation_sequence_request, LLMSetEndOfGenerationSequenceSerializer::serialize_request(abort_sequence));
+    TRY(auto tokens, tokenize(abort_sequence));
+    TRY(auto set_end_of_generation_sequence_request, LLMSetEndOfGenerationSequenceSerializer::serialize_request(tokens));
     TRY(auto set_end_of_generation_sequence_reply, m_session->execute(MemoryView(set_end_of_generation_sequence_request)));
     CHECK_SUCCESS(LLMSetEndOfGenerationSequenceSerializer::deserialize_reply(MemoryView(*set_end_of_generation_sequence_reply)), "Failed to set generation recovery sequence");
     return HAILO_SUCCESS;
@@ -237,8 +306,19 @@ Expected<std::string> VLM::Impl::get_generation_recovery_sequence()
 {
     TRY(auto get_end_of_generation_sequence_request, LLMGetEndOfGenerationSequenceSerializer::serialize_request());
     TRY(auto get_end_of_generation_sequence_reply, m_session->execute(MemoryView(get_end_of_generation_sequence_request)));
-    TRY(auto abort_sequence, LLMGetEndOfGenerationSequenceSerializer::deserialize_reply(MemoryView(*get_end_of_generation_sequence_reply)));
-    return abort_sequence;
+    TRY(auto end_of_gen_sequence_pair, LLMGetEndOfGenerationSequenceSerializer::deserialize_reply(MemoryView(*get_end_of_generation_sequence_reply)));
+    auto &[abort_sequence_str, end_of_gen_sequence_tokens] = end_of_gen_sequence_pair;
+    if (!abort_sequence_str.empty()) {
+        return std::string(abort_sequence_str);
+    } else {
+#ifdef HAILO_CLIENT_TOKENIZER_ENABLED
+        if (m_tokenizer) {
+            return m_tokenizer->tokens_to_text(end_of_gen_sequence_tokens, true);
+        }
+#endif // HAILO_CLIENT_TOKENIZER_ENABLED
+        // If tokenizer not on host, then the empty-string returned by the server is actually the abort sequence
+        return std::string();
+    }
 }
 
 hailo_status VLM::set_stop_tokens(const std::vector<std::string> &stop_tokens)
@@ -248,7 +328,16 @@ hailo_status VLM::set_stop_tokens(const std::vector<std::string> &stop_tokens)
 
 hailo_status VLM::Impl::set_stop_tokens(const std::vector<std::string> &stop_tokens)
 {
-    TRY(auto set_stop_tokens_request, LLMSetStopTokensSerializer::serialize_request(stop_tokens));
+    // Tokenize the stop tokens before sending to server
+    std::vector<std::vector<int>> tokenized_sequences;
+    for (const auto &stop_token : stop_tokens) {
+        TRY(auto tokens, tokenize(stop_token));
+        if (!tokens.empty()) {
+            tokenized_sequences.push_back(tokens);
+        }
+    }
+
+    TRY(auto set_stop_tokens_request, LLMSetStopTokensSerializer::serialize_request(tokenized_sequences));
     TRY(auto set_stop_tokens_reply, m_session->execute(MemoryView(set_stop_tokens_request)));
     CHECK_SUCCESS(LLMSetStopTokensSerializer::deserialize_reply(MemoryView(*set_stop_tokens_reply)), "Failed to set stop tokens");
     return HAILO_SUCCESS;
@@ -263,8 +352,25 @@ Expected<std::vector<std::string>> VLM::Impl::get_stop_tokens()
 {
     TRY(auto get_stop_tokens_request, LLMGetStopTokensSerializer::serialize_request());
     TRY(auto get_stop_tokens_reply, m_session->execute(MemoryView(get_stop_tokens_request)));
-    TRY(auto stop_tokens, LLMGetStopTokensSerializer::deserialize_reply(MemoryView(*get_stop_tokens_reply)));
-    return stop_tokens;
+    TRY(auto response_data, LLMGetStopTokensSerializer::deserialize_reply(MemoryView(*get_stop_tokens_reply)));
+    auto &[stop_tokens_str, stop_tokens_tokenized] = response_data;
+
+    std::vector<std::string> stop_tokens_results;
+    if (!stop_tokens_str.empty()) {
+        stop_tokens_results = stop_tokens_str;
+    } else {
+#ifdef HAILO_CLIENT_TOKENIZER_ENABLED
+        if (m_tokenizer) {
+            std::vector<std::string> stop_tokens_results;
+            for (const auto &tokenized_sequence : stop_tokens_tokenized) {
+                TRY(auto stop_token_str, m_tokenizer->tokens_to_text(tokenized_sequence));
+                stop_tokens_results.push_back(stop_token_str);
+            }
+        }
+#endif // HAILO_CLIENT_TOKENIZER_ENABLED
+        // If tokenizer not on host, then the empty-vector returned by the server is actually the stop tokens
+    }
+    return stop_tokens_results;
 }
 
 Expected<VLMGenerator> VLM::create_generator(const LLMGeneratorParams &params)
@@ -319,7 +425,8 @@ Expected<VLMGenerator> VLM::Impl::create_generator(const LLMGeneratorParams &par
     TRY(auto create_generator_reply, m_session->execute(MemoryView(create_generator_request)));
     CHECK_SUCCESS(LLMGeneratorCreateSerializer::deserialize_reply(MemoryView(*create_generator_reply)), "Failed to create LLM generator");
 
-    auto pimpl = make_unique_nothrow<VLMGenerator::Impl>(m_session, m_prompt_template_handler);
+    auto pimpl = make_unique_nothrow<VLMGenerator::Impl>(m_session, m_prompt_template_handler,
+        m_tokenizer, m_token_embedder);
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
     return VLMGenerator(std::move(pimpl));
 }
@@ -343,8 +450,11 @@ VLMGenerator::VLMGenerator(std::shared_ptr<Impl> pimpl) :
     m_pimpl(pimpl)
 {}
 
-VLMGenerator::Impl::Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<PromptTemplateHandler> prompt_template_handler) :
-    m_session(session), m_prompt_template_handler(prompt_template_handler)
+VLMGenerator::Impl::Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
+    std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder) :
+        m_session(session), m_prompt_template_handler(prompt_template_handler),
+        m_tokenizer(tokenizer),
+        m_token_embedder(token_embedder)
 {}
 
 Expected<LLMGeneratorCompletion> VLMGenerator::generate(const std::string &prompt, const std::vector<MemoryView> &input_frames)
@@ -365,7 +475,6 @@ Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate(const std::string 
     std::vector<MemoryView> write_buffers;
     write_buffers.reserve(input_frames.size() + 2);
     write_buffers.push_back(MemoryView(generator_generate_request));
-    write_buffers.push_back(MemoryView(prompt));
     write_buffers.insert(write_buffers.end(), input_frames.begin(), input_frames.end());
 
     TRY(auto generator_generate_reply, m_session->execute(write_buffers));
@@ -374,7 +483,13 @@ Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate(const std::string 
          " each passed frame size matches the expected input frame size (see 'VLM::input_frame_size'), and there is no other generation in progress",
             input_frames.size());
 
-    auto pimpl = make_unique_nothrow<LLMGeneratorCompletion::Impl>(m_session, shared_from_this());
+    TRY(auto shutdown_event, Event::create_shared(Event::State::not_signalled));
+    const auto TOKENS_BACKLOG = 1024;
+    TRY(auto client_token_queue, SpscQueue<LLMTokenPair>::create(
+        TOKENS_BACKLOG, shutdown_event, HAILO_INFINITE_TIMEOUT));
+
+    auto pimpl = make_unique_nothrow<LLMGeneratorCompletion::Impl>(m_session, shared_from_this(),
+        std::move(client_token_queue), shutdown_event, m_tokenizer, m_token_embedder, prompt);
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
     return LLMGeneratorCompletion(std::move(pimpl));
 }

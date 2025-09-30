@@ -881,7 +881,7 @@ Expected<std::shared_ptr<AsyncPipeline>> AsyncPipelineBuilder::create_pipeline(s
     build_params.elem_stats_flags = HAILO_PIPELINE_ELEM_STATS_NONE;
     build_params.vstream_stats_flags = HAILO_VSTREAM_STATS_NONE;
 
-    TRY(auto async_pipeline, AsyncPipeline::create_shared());
+    TRY(auto async_pipeline, AsyncPipeline::create_shared(net_group->name()));
     TRY(const auto all_stream_infos, net_group->get_all_stream_infos());
 
     std::unordered_map<std::string, hailo_stream_info_t> named_stream_infos;

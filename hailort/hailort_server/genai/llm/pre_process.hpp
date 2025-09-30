@@ -60,7 +60,7 @@ constexpr std::array<int, 6> MROPE_SECTION_ORIGINAL = {16, 24, 24, 16, 24, 24}; 
 class LLMPreProcess
 {
 public:
-    static Expected<std::unique_ptr<LLMPreProcess>> create(MemoryView &embeddings,
+    static Expected<std::unique_ptr<LLMPreProcess>> create(
         const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size,
         Eigen::VectorXf &&theta, uint32_t embeddings_layer_features, hailo_format_type_t embeddings_layer_type);
 
@@ -68,16 +68,16 @@ public:
     static Eigen::VectorXf generate_theta_from_memview(const MemoryView theta); // TODO: HRT-16646 - Move to c'tor (get theta memview)
 
     hailo_status prepare_inputs_prefill(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
-        std::vector<int> &input_tokens);
-    hailo_status prepare_inputs_tbt(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, int input_token);
+        const std::vector<MemoryView> &input_tokens_embeddings);
+
+    hailo_status prepare_inputs_tbt(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, const std::vector<MemoryView> &input_token_embedding);
     void reset_local_cache();
     static bool is_positional_embed_layer(const std::string &name);
 
     std::tuple<size_t, eigen_matrix_2d_u16_t, eigen_tensor_4d_u32_t, int> get_local_cache() const;
     void set_local_cache(size_t cache_size, const eigen_matrix_2d_u16_t &embeddings, const eigen_tensor_4d_u32_t &pos_ids, int timestamp_value);
 
-    LLMPreProcess(eigen_map_2d_u16_t embeddings_matrix,
-        Eigen::VectorXf &&theta, eigen_matrix_2d_u16_t &&local_cached_embeddings,
+    LLMPreProcess(Eigen::VectorXf &&theta, eigen_matrix_2d_u16_t &&local_cached_embeddings,
         const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size);
 
     LLMPreProcess(LLMPreProcess &&) = default;
@@ -92,7 +92,7 @@ protected:
     static void tile_along_last_axis(const Eigen::Tensor<float32_t, 4, Eigen::RowMajor> &input, int groups, MemoryView &layer_buffer);
 
     hailo_status validate_inputs(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, const std::map<std::string, size_t> &expected_sizes);
-    void update_cache_from_tokens(const std::vector<int> &tokens, std::function<Eigen::Matrix<uint16_t, 1, Eigen::Dynamic>(int)> tokens_lookup);
+    void update_cache_from_embeddings(const std::vector<MemoryView> &embedding_rows_views);
     void prepare_embeddings_input(MemoryView &layer_buffer, uint32_t number_of_tokens);
     void prepare_attention_mask_input(MemoryView &layer_buffer, int layer_input_tokens_size);
     hailo_status prepare_positional_embed_inputs(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, int layer_input_tokens_size,
@@ -105,8 +105,6 @@ protected:
 
     hailo_status fill_positional_embed(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
         const Eigen::Tensor<float32_t, 4, Eigen::RowMajor> &rope_cos, const Eigen::Tensor<float32_t, 4, Eigen::RowMajor> &rope_sin);
-
-    eigen_map_2d_u16_t m_embeddings_matrix;
 
     size_t m_cache_usage_size;
 

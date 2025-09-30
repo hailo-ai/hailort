@@ -38,7 +38,7 @@ private:
 
 class LLMWrapper final{
 public:
-    static LLMWrapper create(std::shared_ptr<VDeviceWrapper> vdevice, const std::string &model_path, const std::string &lora_name);
+    static LLMWrapper create(std::shared_ptr<VDeviceWrapper> vdevice, const std::string &model_path, const std::string &lora_name, bool optimize_memory_on_device = false);
 
     LLMWrapper(std::unique_ptr<genai::LLM> llm);
 

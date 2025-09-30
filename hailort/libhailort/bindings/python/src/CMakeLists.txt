@@ -28,8 +28,8 @@ set(HAILORT_COMMON_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../../../hailort/")
 set(HAILO_EXTERNALS_CMAKE_SCRIPTS ${HAILORT_COMMON_DIR}/cmake/external/)
 set(HAILO_EXTERNAL_DIR ${HAILORT_COMMON_DIR}/external) # used in pybind11.cmake
 set(HAILORT_VERSION_MAJOR 5)
-set(HAILORT_VERSION_MINOR 0)
-set(HAILORT_VERSION_REVISION 1)
+set(HAILORT_VERSION_MINOR 1)
+set(HAILORT_VERSION_REVISION 0)
 
 if(UNIX)
     # PYTHON_MODULE_EXTENSION does not take the CMAKE_SYSTEM_PROCESSOR into account so it needs to be added manually
@@ -63,6 +63,8 @@ pybind11_add_module(_pyhailort
 
     llm_api.cpp
     vlm_api.cpp
+    text2image_api.cpp
+    speech2text_api.cpp
 )
 
 set_target_properties(_pyhailort PROPERTIES

@@ -17,9 +17,11 @@
 #include "common/filesystem.hpp"
 #include "common/utils.hpp"
 #include "common/file_utils.hpp"
+#include "common/genai/session_wrapper/session_wrapper.hpp"
 
 #include <filesystem>
 
+#include "common/genai/constants.hpp"
 #include "common/genai/serializer/serializer.hpp"
 #include "common/genai/connection_ports.hpp"
 
@@ -30,10 +32,11 @@ namespace hailort
 namespace genai
 {
 
+
 constexpr std::chrono::milliseconds LLMGeneratorCompletion::DEFAULT_READ_TIMEOUT;
 
-LLMParams::LLMParams(const std::string &hef_path, const std::string &lora_name) :
-    m_hef_path(hef_path), m_lora(lora_name)
+LLMParams::LLMParams(const std::string &hef_path, const std::string &lora_name, bool optimize_memory_on_device) :
+    m_hef_path(hef_path), m_lora(lora_name), m_optimize_memory_on_device(optimize_memory_on_device)
 {}
 
 hailo_status LLMParams::set_model(const std::string &hef_path, const std::string &lora_name)
@@ -61,6 +64,16 @@ const std::string& LLMParams::hef() const
 const std::string& LLMParams::lora() const
 {
     return m_lora;
+}
+
+bool LLMParams::optimize_memory_on_device() const
+{
+    return m_optimize_memory_on_device;
+}
+
+void LLMParams::set_optimize_memory_on_device(bool optimize_memory_on_device)
+{
+    m_optimize_memory_on_device = optimize_memory_on_device;
 }
 
 hailo_status LLMGeneratorParams::set_temperature(float32_t temperature)
@@ -183,18 +196,63 @@ Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VD
     TRY(auto check_hef_exists_on_server_reply, session_wrapper->execute(MemoryView(check_hef_exists_on_server_request)));
     TRY(auto hef_exists, GenAICheckHefExistsSerializer::deserialize_reply(MemoryView(*check_hef_exists_on_server_reply)));
 
-    std::string hef_path_to_send = hef_exists ? hef_path : is_builtin ? BUILTIN : ""; // Empty string indicates that the HEF does not exist on the server
-    TRY(auto create_llm_request, LLMCreateSerializer::serialize_request(vdevice_params, llm_params, hef_path_to_send));
-    std::vector<MemoryView> write_buffers = { MemoryView(create_llm_request) };
-
-    Buffer file_data;
+    Buffer create_llm_request;
+    std::shared_ptr<Buffer> create_llm_reply;
+    std::shared_ptr<HailoTokenizer> tokenizer;
+    std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder;
+    BufferPtr token_embedder_buffer;
     if (!is_builtin && !hef_exists) {
-        TRY(file_data, read_binary_file(hef_path, BufferStorageParams::create_dma()));
-        write_buffers.push_back(MemoryView(file_data));
-    }
+        // Get file size for chunked transfer
+        TRY(auto file_size, get_istream_size(hef_path));
+        if (llm_params.optimize_memory_on_device()) {
+#ifndef HAILO_CLIENT_TOKENIZER_ENABLED
+            LOGGER__ERROR("Host-tokenization is not enabled in lib compilation");
+            return make_unexpected(HAILO_NOT_IMPLEMENTED);
+#else
+            // Reduce external-info file-sizes form HEF file size
+            TRY(auto external_resources, Hef::extract_hef_external_resources(hef_path));
+            for (const auto &[name, resource_buffer] : external_resources) {
+                // Counting on the fact that tokenizer and embeddings are always at the end of the HEF file
+                if (name == TOKENIZER) {
+                    std::string tokenizer_blob(resource_buffer->size(), '\0');
+                    std::memcpy(const_cast<char*>(tokenizer_blob.data()), resource_buffer->data(), resource_buffer->size());
+                    TRY(tokenizer, HailoTokenizer::create(tokenizer_blob));
+                    file_size -= resource_buffer->size();
+                    external_resources[name] = resource_buffer;
+                } else if (name == INPUT_EMB_BINARY) {
+                    // Create token_embedder after getting the embedding features from the server
+                    token_embedder_buffer = resource_buffer;
+                    file_size -= resource_buffer->size();
+                }
+            }
+#endif // HAILO_CLIENT_TOKENIZER_ENABLED
+        }
 
-    TRY(auto create_llm_reply, session_wrapper->execute(write_buffers));
-    TRY(auto prompt_template, LLMCreateSerializer::deserialize_reply(MemoryView(*create_llm_reply)), "Failed to create LLM");
+        // Create request with file size for chunked transfer
+        TRY(create_llm_request, LLMCreateSerializer::serialize_request(vdevice_params, llm_params, "", file_size));
+        CHECK_SUCCESS(session_wrapper->write(MemoryView(create_llm_request)));
+        CHECK_SUCCESS(session_wrapper->send_file_chunked(hef_path, file_size));
+        TRY(create_llm_reply, session_wrapper->read());
+    } else {
+        std::string hef_path_to_send = hef_exists ? hef_path : is_builtin ? BUILTIN : "";
+        TRY(create_llm_request, LLMCreateSerializer::serialize_request(vdevice_params, llm_params, hef_path_to_send));
+        TRY(create_llm_reply, session_wrapper->execute(MemoryView(create_llm_request)));
+    }
+    TRY(auto reply_tuple, LLMCreateSerializer::deserialize_reply(MemoryView(*create_llm_reply)), "Failed to create LLM");
+    auto prompt_template = std::get<0>(reply_tuple);
+    auto embedding_features = std::get<1>(reply_tuple);
+
+    if (llm_params.optimize_memory_on_device()) {
+#ifndef HAILO_CLIENT_TOKENIZER_ENABLED
+        (void)embedding_features;
+        LOGGER__ERROR("Host-tokenization is not enabled in lib compilation");
+        return make_unexpected(HAILO_NOT_IMPLEMENTED);
+#else
+        CHECK_AS_EXPECTED(nullptr != token_embedder_buffer, HAILO_NOT_AVAILABLE, "Token embedder buffer is not available");
+        TRY(token_embedder, TokenEmbedder<uint16_t>::create(token_embedder_buffer,
+            token_embedder_buffer->size() / (sizeof(uint16_t) * embedding_features), embedding_features));
+#endif // HAILO_CLIENT_TOKENIZER_ENABLED
+    }
 
     TRY(auto get_generator_default_params_request, LLMGetGeneratorParamsSerializer::serialize_request());
     TRY_V(auto get_generator_default_params, session_wrapper->execute(MemoryView(get_generator_default_params_request)));
@@ -204,15 +262,20 @@ Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VD
     auto prompt_template_handler_ptr = make_shared_nothrow<PromptTemplateHandler>(std::move(prompt_template_handler));
     CHECK_NOT_NULL_AS_EXPECTED(prompt_template_handler_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
-    auto llm_ptr = make_unique_nothrow<Impl>(session_wrapper, llm_params, default_generator_params, prompt_template_handler_ptr);
+    auto llm_ptr = make_unique_nothrow<Impl>(session_wrapper, llm_params, default_generator_params, prompt_template_handler_ptr,
+        tokenizer, token_embedder);
     CHECK_NOT_NULL_AS_EXPECTED(llm_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
     return llm_ptr;
 }
 
 LLM::Impl::Impl(std::shared_ptr<SessionWrapper> session, const LLMParams &llm_params,
-    const LLMGeneratorParams &default_generator_params, std::shared_ptr<PromptTemplateHandler> prompt_template_handler) :
+    const LLMGeneratorParams &default_generator_params, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
+    std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder) :
         m_session(session), m_llm_params(llm_params), m_default_generator_params(default_generator_params),
-        m_prompt_template_handler(prompt_template_handler)
+        m_prompt_template_handler(prompt_template_handler),
+        m_tokenizer(tokenizer),
+        m_token_embedder(token_embedder)
 {}
 
 LLM::Impl::~Impl()
@@ -245,6 +308,13 @@ Expected<std::vector<int>> LLM::tokenize(const std::string &prompt)
 
 Expected<std::vector<int>> LLM::Impl::tokenize(const std::string &prompt)
 {
+#ifdef HAILO_CLIENT_TOKENIZER_ENABLED
+    if (m_tokenizer) {
+        TRY(auto tokens, m_tokenizer->text_to_tokens(prompt));
+        return tokens;
+    }
+#endif // HAILO_CLIENT_TOKENIZER_ENABLED
+
     TRY(auto request, LLMTokenizeSerializer::serialize_request(prompt));
     TRY(auto reply, m_session->execute(MemoryView(request)));
     TRY(auto tokens, LLMTokenizeSerializer::deserialize_reply(MemoryView(*reply)));
@@ -263,6 +333,7 @@ hailo_status LLM::Impl::clear_context()
     CHECK_SUCCESS(LLMClearContextSerializer::deserialize_reply(MemoryView(*reply)),
         "Failed to clear context. Make sure there is no other generation in progress");
     m_prompt_template_handler->reset_state();
+
     return HAILO_SUCCESS;
 }
 
@@ -280,6 +351,7 @@ Expected<std::string> LLM::Impl::prompt_template()
     return prompt_template;
 }
 
+
 hailo_status LLM::set_generation_recovery_sequence(const std::string &abort_sequence)
 {
     return m_pimpl->set_generation_recovery_sequence(abort_sequence);
@@ -287,7 +359,8 @@ hailo_status LLM::set_generation_recovery_sequence(const std::string &abort_sequ
 
 hailo_status LLM::Impl::set_generation_recovery_sequence(const std::string &abort_sequence)
 {
-    TRY(auto set_end_of_generation_sequence_request, LLMSetEndOfGenerationSequenceSerializer::serialize_request(abort_sequence));
+    TRY(auto tokens, tokenize(abort_sequence));
+    TRY(auto set_end_of_generation_sequence_request, LLMSetEndOfGenerationSequenceSerializer::serialize_request(tokens));
     TRY(auto set_end_of_generation_sequence_reply, m_session->execute(MemoryView(set_end_of_generation_sequence_request)));
     CHECK_SUCCESS(LLMSetEndOfGenerationSequenceSerializer::deserialize_reply(MemoryView(*set_end_of_generation_sequence_reply)), "Failed to set generation recovery sequence");
     return HAILO_SUCCESS;
@@ -295,6 +368,7 @@ hailo_status LLM::Impl::set_generation_recovery_sequence(const std::string &abor
 
 Expected<std::string> LLM::get_generation_recovery_sequence()
 {
+
     return m_pimpl->get_generation_recovery_sequence();
 }
 
@@ -302,9 +376,21 @@ Expected<std::string> LLM::Impl::get_generation_recovery_sequence()
 {
     TRY(auto get_end_of_generation_sequence_request, LLMGetEndOfGenerationSequenceSerializer::serialize_request());
     TRY(auto get_end_of_generation_sequence_reply, m_session->execute(MemoryView(get_end_of_generation_sequence_request)));
-    TRY(auto abort_sequence, LLMGetEndOfGenerationSequenceSerializer::deserialize_reply(MemoryView(*get_end_of_generation_sequence_reply)));
-    return abort_sequence;
+    TRY(auto end_of_gen_sequence_pair, LLMGetEndOfGenerationSequenceSerializer::deserialize_reply(MemoryView(*get_end_of_generation_sequence_reply)));
+    auto &[abort_sequence_str, end_of_gen_sequence_tokens] = end_of_gen_sequence_pair;
+    if (!abort_sequence_str.empty()) {
+        return std::string(abort_sequence_str);
+    } else {
+#ifdef HAILO_CLIENT_TOKENIZER_ENABLED
+        if (m_tokenizer) {
+            return m_tokenizer->tokens_to_text(end_of_gen_sequence_tokens, true);
+        }
+#endif // HAILO_CLIENT_TOKENIZER_ENABLED
+        // If tokenizer not on host, then the empty-string returned by the server is actually the abort sequence
+        return std::string();
+    }
 }
+
 
 hailo_status LLM::set_stop_tokens(const std::vector<std::string> &stop_tokens)
 {
@@ -313,7 +399,16 @@ hailo_status LLM::set_stop_tokens(const std::vector<std::string> &stop_tokens)
 
 hailo_status LLM::Impl::set_stop_tokens(const std::vector<std::string> &stop_tokens)
 {
-    TRY(auto set_stop_tokens_request, LLMSetStopTokensSerializer::serialize_request(stop_tokens));
+    // Tokenize the stop tokens before sending to server
+    std::vector<std::vector<int>> tokenized_sequences;
+    for (const auto &stop_token : stop_tokens) {
+        TRY(auto tokens, tokenize(stop_token));
+        if (!tokens.empty()) {
+            tokenized_sequences.push_back(tokens);
+        }
+    }
+
+    TRY(auto set_stop_tokens_request, LLMSetStopTokensSerializer::serialize_request(tokenized_sequences));
     TRY(auto set_stop_tokens_reply, m_session->execute(MemoryView(set_stop_tokens_request)));
     CHECK_SUCCESS(LLMSetStopTokensSerializer::deserialize_reply(MemoryView(*set_stop_tokens_reply)), "Failed to set stop tokens");
     return HAILO_SUCCESS;
@@ -328,8 +423,25 @@ Expected<std::vector<std::string>> LLM::Impl::get_stop_tokens()
 {
     TRY(auto get_stop_tokens_request, LLMGetStopTokensSerializer::serialize_request());
     TRY(auto get_stop_tokens_reply, m_session->execute(MemoryView(get_stop_tokens_request)));
-    TRY(auto stop_tokens, LLMGetStopTokensSerializer::deserialize_reply(MemoryView(*get_stop_tokens_reply)));
-    return stop_tokens;
+    TRY(auto response_data, LLMGetStopTokensSerializer::deserialize_reply(MemoryView(*get_stop_tokens_reply)));
+    auto &[stop_tokens_str, stop_tokens_tokenized] = response_data;
+
+    std::vector<std::string> stop_tokens_results;
+    if (!stop_tokens_str.empty()) {
+        stop_tokens_results = stop_tokens_str;
+    } else {
+#ifdef HAILO_CLIENT_TOKENIZER_ENABLED
+        if (m_tokenizer) {
+            std::vector<std::string> stop_tokens_results;
+            for (const auto &tokenized_sequence : stop_tokens_tokenized) {
+                TRY(auto stop_token_str, m_tokenizer->tokens_to_text(tokenized_sequence));
+                stop_tokens_results.push_back(stop_token_str);
+            }
+        }
+#endif // HAILO_CLIENT_TOKENIZER_ENABLED
+        // If tokenizer not on host, then the empty-vector returned by the server is actually the stop tokens
+    }
+    return stop_tokens_results;
 }
 
 Expected<LLMGenerator> LLM::create_generator(const LLMGeneratorParams &params)
@@ -363,7 +475,8 @@ Expected<LLMGenerator> LLM::Impl::create_generator(const LLMGeneratorParams &par
     TRY(auto create_generator_reply, m_session->execute(MemoryView(create_generator_request)));
     CHECK_SUCCESS(LLMGeneratorCreateSerializer::deserialize_reply(MemoryView(*create_generator_reply)), "Failed to create LLM generator");
 
-    auto pimpl = make_shared_nothrow<LLMGenerator::Impl>(m_session, m_prompt_template_handler);
+    auto pimpl = make_shared_nothrow<LLMGenerator::Impl>(m_session, m_prompt_template_handler,
+        m_tokenizer, m_token_embedder);
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
     return LLMGenerator(pimpl);
 }
@@ -408,8 +521,11 @@ LLMGenerator::LLMGenerator(std::shared_ptr<Impl> pimpl) :
     m_pimpl(pimpl)
 {}
 
-LLMGenerator::Impl::Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<PromptTemplateHandler> prompt_template_handler) :
-    m_session(session), m_prompt_template_handler(prompt_template_handler)
+LLMGenerator::Impl::Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
+    std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder) :
+        m_session(session), m_prompt_template_handler(prompt_template_handler),
+        m_tokenizer(tokenizer),
+        m_token_embedder(token_embedder)
 {}
 
 LLMGenerator::Impl::~Impl()
@@ -452,9 +568,10 @@ hailo_status LLMGenerator::write(const std::string &prompt)
 hailo_status LLMGenerator::Impl::write(const std::string &prompt)
 {
     TRY(auto generator_write_request, LLMGeneratorWriteSerializer::serialize_request());
-    std::vector<MemoryView> write_buffers = {MemoryView(generator_write_request), MemoryView(prompt)};
-    TRY(auto generator_write_reply, m_session->execute(write_buffers));
+    TRY(auto generator_write_reply, m_session->execute(MemoryView(generator_write_request)));
     CHECK_SUCCESS(LLMGeneratorWriteSerializer::deserialize_reply(MemoryView(*generator_write_reply)), "Failed to write prompt");
+
+    m_aggregated_prompt += prompt;
 
     return HAILO_SUCCESS;
 }
@@ -471,13 +588,25 @@ Expected<LLMGeneratorCompletion> LLMGenerator::generate()
 
 Expected<LLMGeneratorCompletion> LLMGenerator::Impl::generate()
 {
+    CHECK(!m_aggregated_prompt.empty(), HAILO_INVALID_OPERATION, "Prompt cannot be empty! Make sure 'write()' was called");
+
     TRY(auto generator_generate_request, LLMGeneratorGenerateSerializer::serialize_request());
     TRY(auto generator_generate_reply, m_session->execute(MemoryView(generator_generate_request)));
-    CHECK_SUCCESS(LLMGeneratorGenerateSerializer::deserialize_reply(MemoryView(*generator_generate_reply)),
+    TRY(auto initial_prefix_tokens, LLMGeneratorGenerateSerializer::deserialize_reply(MemoryView(*generator_generate_reply)),
         "Failed to generate. Make sure there is no other generation in progress");
 
-    auto pimpl = make_unique_nothrow<LLMGeneratorCompletion::Impl>(m_session, shared_from_this());
+    TRY(auto shutdown_event, Event::create_shared(Event::State::not_signalled));
+    const auto TOKENS_BACKLOG = 1024;
+    TRY(auto client_token_queue, SpscQueue<LLMTokenPair>::create(
+        TOKENS_BACKLOG, shutdown_event, HAILO_INFINITE_TIMEOUT));
+
+    auto pimpl = make_unique_nothrow<LLMGeneratorCompletion::Impl>(m_session, shared_from_this(),
+        std::move(client_token_queue), shutdown_event, m_tokenizer, m_token_embedder,
+        m_aggregated_prompt, initial_prefix_tokens);
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
+
+    m_aggregated_prompt.clear();
+
     return LLMGeneratorCompletion(std::move(pimpl));
 }
 
@@ -486,27 +615,166 @@ LLMGeneratorCompletion::LLMGeneratorCompletion(std::unique_ptr<Impl> pimpl) :
 {}
 
 
-LLMGeneratorCompletion::Impl::Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<TextGeneratorBase> generator) :
-    m_generator_scope_guard(generator),
-    m_session(session),
-    m_generation_status(Status::GENERATING)
-{}
+LLMGeneratorCompletion::Impl::Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<TextGeneratorBase> generator,
+    SpscQueue<LLMTokenPair> &&client_token_queue, EventPtr shutdown_event,
+    std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder,
+    const std::string &aggregated_prompt, const std::vector<int> &initial_prefix_tokens) :
+        m_generator_scope_guard(generator),
+        m_session(session),
+        m_generation_status(Status::GENERATING),
+        m_client_token_queue(std::move(client_token_queue)),
+        m_shutdown_event(shutdown_event),
+        m_context_full_warning_issued(false),
+        m_tokenizer(tokenizer),
+        m_token_embedder(token_embedder)
+{
+    m_token_reader_thread = std::thread(&LLMGeneratorCompletion::Impl::token_reader_thread, this, aggregated_prompt, initial_prefix_tokens);
+}
 
 LLMGeneratorCompletion::Impl::~Impl()
 {
+    // If generation is still in progress, abort it (like origin/develop)
     if (m_generation_status == Status::GENERATING) {
         auto status = abort();
         if (HAILO_SUCCESS != status) {
             LOGGER__CRITICAL("Failed to release LLMGeneratorCompletion. Failed to abort LLM generator completion with status {}", status);
         }
-        while (m_generation_status == Status::GENERATING) {
-            auto token = read(DEFAULT_READ_TIMEOUT);
-            if (token.status() != HAILO_SUCCESS) {
-                LOGGER__CRITICAL("Failed to release LLMGeneratorCompletion. Failed to read flushed token with status {}", token.status());
+        
+        // abort() already joined the thread, no need for additional cleanup
+    } else {
+        // If not generating, ensure proper thread shutdown and cleanup
+        stop_token_reader_thread();
+    }
+}
+
+void LLMGeneratorCompletion::Impl::stop_token_reader_thread()
+{
+    // Signal shutdown to stop the token reader thread
+    if (m_shutdown_event) {
+        m_shutdown_event->signal();
+    }
+
+    if (m_token_reader_thread.joinable()) {
+        m_token_reader_thread.join();
+    }
+}
+
+void LLMGeneratorCompletion::Impl::token_reader_thread(const std::string &aggregated_prompt, const std::vector<int> &initial_prefix_tokens)
+{
+    LLMGeneratorReadSerializer::TextGenerationInput input = {};
+    input.initial_prompt = aggregated_prompt;
+    input.tokens = initial_prefix_tokens;
+
+    while (true) {
+        TimeoutGuard timeout_guard(LONG_TIMEOUT);
+
+        // Handle client-side tokenizer embeddings if needed
+        if (m_tokenizer && m_token_embedder) {
+            auto status = prepare_client_side_embeddings(input);
+            if (HAILO_SUCCESS != status) {
+                LOGGER__ERROR("Failed to prepare client-side embeddings: {}", status);
                 break;
             }
         }
+
+        // Send request and get response
+        auto response_exp = send_read_request(input, timeout_guard.get_remaining_timeout());
+        if (!response_exp) {
+            LOGGER__ERROR("Failed to send read request: {}", response_exp.status());
+            break;
+        }
+
+        auto [output_info, status] = response_exp.value();
+
+        if (output_info.is_context_full && !m_context_full_warning_issued) {
+            LOGGER__WARNING("Conversation context is full. It is adivsable to clear context as cache size was reached");
+            m_context_full_warning_issued = true;
+        }
+
+#ifdef HAILO_CLIENT_TOKENIZER_ENABLED
+
+        if (m_tokenizer) {
+            auto token_str = m_tokenizer->tokens_to_text({output_info.output_token_id}, true);
+            output_info.output_token_str = (token_str) ? token_str.value() : "";
+        }
+#endif // HAILO_CLIENT_TOKENIZER_ENABLED
+
+        // Enqueue token for client consumption
+        auto enqueue_result = m_client_token_queue.enqueue(std::make_pair(output_info.output_token_str, status), timeout_guard.get_remaining_timeout());
+        if (HAILO_SUCCESS != enqueue_result) {
+            if (HAILO_SHUTDOWN_EVENT_SIGNALED == enqueue_result) {
+                break; // Normal shutdown
+            } else if (HAILO_TIMEOUT == enqueue_result) {
+                LOGGER__WARNING("Client token queue is full, dropping token");
+                continue;
+            } else {
+                LOGGER__ERROR("Failed to enqueue token to client queue: {}", enqueue_result);
+                break;
+            }
+        }
+
+        // Check if generation is complete
+        if (status != Status::GENERATING) {
+            break;
+        }
+
+        // Prepare for next iteration
+        prepare_next_iteration(input, output_info.output_token_id);
     }
+
+    // Signal shutdown for any blocking user's read()
+    if (m_shutdown_event && (0 == m_client_token_queue.size_approx())) {
+        m_shutdown_event->signal();
+    }
+}
+
+hailo_status LLMGeneratorCompletion::Impl::prepare_client_side_embeddings(LLMGeneratorReadSerializer::TextGenerationInput &input)
+{
+#ifndef HAILO_CLIENT_TOKENIZER_ENABLED
+    (void)input;
+    LOGGER__ERROR("Host-tokenization is not enabled in lib compilation");
+    return HAILO_NOT_IMPLEMENTED;
+#else
+    std::vector<int> tokens_to_embed = input.tokens; // Either prefix-tokens for first iteration, or single input token for subsequent iterations
+
+
+    if (!input.initial_prompt.empty()) {
+        // First iteration - tokenize prompt and combine with prefix tokens
+        TRY(auto prompt_tokens, m_tokenizer->text_to_tokens(input.initial_prompt));
+        tokens_to_embed.insert(tokens_to_embed.end(), prompt_tokens.begin(), prompt_tokens.end());
+
+        // Update input.tokens and clear prompt for consistency
+        input.tokens = tokens_to_embed;
+        input.initial_prompt.clear();
+    }
+
+    // Convert tokens to embeddings
+    input.embeddings.clear();
+    auto embeddings = m_token_embedder->tokens_to_embeddings(tokens_to_embed);
+    for (auto &embedding : embeddings) {
+        TRY(auto buffer, Buffer::create_shared(embedding.data(), embedding.size(), BufferStorageParams::create_dma()));
+        input.embeddings.push_back(buffer);
+    }
+
+    return HAILO_SUCCESS;
+#endif // HAILO_CLIENT_TOKENIZER_ENABLED
+}
+
+Expected<std::pair<LLMGeneratorReadSerializer::TextGenerationOutput, LLMGeneratorCompletion::Status>>
+LLMGeneratorCompletion::Impl::send_read_request(const LLMGeneratorReadSerializer::TextGenerationInput &input, std::chrono::milliseconds timeout)
+{
+    TRY(auto read_request, LLMGeneratorReadSerializer::serialize_request(timeout, input));
+    TRY(auto read_reply, m_session->execute(MemoryView(read_request)));
+    TRY(auto response_pair, LLMGeneratorReadSerializer::deserialize_reply(MemoryView(*read_reply)));
+    
+    return response_pair;
+}
+
+void LLMGeneratorCompletion::Impl::prepare_next_iteration(LLMGeneratorReadSerializer::TextGenerationInput &input, int next_token_id)
+{
+    input.tokens = { next_token_id };
+    input.initial_prompt.clear();
+    input.embeddings.clear();
 }
 
 Expected<size_t> LLMGeneratorCompletion::read(char *output, size_t output_size, std::chrono::milliseconds timeout)
@@ -530,18 +798,32 @@ Expected<std::string> LLMGeneratorCompletion::read(std::chrono::milliseconds tim
 
 Expected<std::string> LLMGeneratorCompletion::Impl::read(std::chrono::milliseconds timeout)
 {
-    TimeoutGuard timeout_guard(timeout);
-    CHECK((m_generation_status == Status::GENERATING), HAILO_INVALID_OPERATION,
-        "read() cannot be called after generation completed!");
+    // Thread-safe status check
+    {
+        std::lock_guard<std::mutex> lock(m_status_mutex);
+        CHECK((m_generation_status == Status::GENERATING), HAILO_INVALID_OPERATION,
+            "read() cannot be called after generation completed!");
+    }
 
-    // Consider setting shorter timeout in the request, to leave space for comunication overhead
-    TRY(auto read_request, LLMGeneratorReadSerializer::serialize_request(timeout_guard.get_remaining_timeout()));
-    TRY(auto read_reply, m_session->execute(MemoryView(read_request)));
-    TRY(auto pair, LLMGeneratorReadSerializer::deserialize_reply(MemoryView(*read_reply)));
-    auto next_token = pair.first;
-    m_generation_status = pair.second;
+    // Read from the client-side queue instead of making server requests
+    auto token_pair_exp = m_client_token_queue.dequeue(timeout);
+    if (!token_pair_exp) {
+        if (HAILO_TIMEOUT == token_pair_exp.status()) {
+            return make_unexpected(HAILO_TIMEOUT);
+        } else if (HAILO_SHUTDOWN_EVENT_SIGNALED == token_pair_exp.status()) {
+            return make_unexpected(HAILO_INVALID_OPERATION);
+        } else {
+            return make_unexpected(token_pair_exp.status());
+        }
+    }
 
-    return next_token;
+    auto [token, status] = token_pair_exp.value();
+    {
+        std::lock_guard<std::mutex> lock(m_status_mutex);
+        m_generation_status = status;
+    }
+
+    return std::string(token);
 }
 
 Expected<std::string> LLMGeneratorCompletion::read_all(std::chrono::milliseconds timeout)
@@ -562,6 +844,7 @@ LLMGeneratorCompletion::Status LLMGeneratorCompletion::generation_status() const
 
 LLMGeneratorCompletion::Status LLMGeneratorCompletion::Impl::generation_status() const
 {
+    std::lock_guard<std::mutex> lock(m_status_mutex);
     return m_generation_status;
 }
 
@@ -572,9 +855,17 @@ hailo_status LLMGeneratorCompletion::abort()
 
 hailo_status LLMGeneratorCompletion::Impl::abort()
 {
+    // Send abort request to server
     TRY(auto abort_request, LLMGeneratorAbortSerializer::serialize_request());
     TRY(auto abort_reply, m_session->execute(MemoryView(abort_request)));
     CHECK_SUCCESS(LLMGeneratorAbortSerializer::deserialize_reply(MemoryView(*abort_reply)), "Failed to abort generation");
+
+    // The server will abort the generation, and return the recovery sequence with ABORTED status on last token
+    // Wait for token reader thread to finish naturally (don't signal shutdown - let recovery tokens flush)
+    if (m_token_reader_thread.joinable()) {
+        m_token_reader_thread.join();
+    }
+
     return HAILO_SUCCESS;
 }
 

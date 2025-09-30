@@ -30,19 +30,17 @@ static const uint32_t MERGE_SIZE_W = 2;
 class VLMPreProcess : public LLMPreProcess
 {
 public:
-    static Expected<std::unique_ptr<LLMPreProcess>> create(MemoryView &text_embeddings,
-        const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size,
-        Eigen::VectorXf &&theta, uint32_t text_embeddings_layer_features, hailo_format_type_t text_embeddings_layer_type, int vision_token_value,
-        const hailo_3d_image_shape_t &input_encoder_shape);
+    static Expected<std::unique_ptr<LLMPreProcess>> create(const std::map<std::string, size_t> &prefill_inputs_frame_size,
+        const std::map<std::string, size_t> &tbt_inputs_frame_size, Eigen::VectorXf &&theta,
+        uint32_t text_embeddings_layer_features, const hailo_3d_image_shape_t &input_encoder_shape);
 
     hailo_status prepare_inputs_prefill(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
-        std::vector<int> &input_tokens, const std::vector<MemoryView> &input_frames_embeddings,
+        std::vector<MemoryView> input_embeddings, const std::vector<MemoryView> &input_frames_embeddings,
         uint32_t &current_frame_index, uint32_t &current_emb_index_in_frame);
 
-    VLMPreProcess(eigen_map_2d_u16_t text_embeddings_matrix,
-        Eigen::VectorXf &&theta, Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> &&local_cached_embeddings,
+    VLMPreProcess(Eigen::VectorXf &&theta, Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> &&local_cached_embeddings,
         const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size,
-        int vision_token_value, const hailo_3d_image_shape_t &input_encoder_shape);
+        const hailo_3d_image_shape_t &input_encoder_shape);
 
     inline uint32_t embeddings_per_frame() const
     {
@@ -56,11 +54,9 @@ public:
     VLMPreProcess &operator=(const VLMPreProcess &) = delete;
     virtual ~VLMPreProcess() = default;
 
-    Eigen::Matrix<uint16_t, 1, Eigen::Dynamic, Eigen::RowMajor> get_embedding(int token, const std::vector<MemoryView> &input_frames_embeddings,
-        uint32_t &currennt_frame_index, uint32_t &currennt_emb_index_in_frame) const;
-
 private:
-    std::vector<std::pair<uint32_t, uint32_t>> get_vision_embeds_indices(const std::vector<int> &ids) const;
+    Eigen::Matrix<uint16_t, 1, Eigen::Dynamic, Eigen::RowMajor> get_embedding(int token, const std::vector<MemoryView> &input_frames_embeddings,
+        uint32_t &current_frame_index, uint32_t &current_emb_index_in_frame) const;
 
     hailo_status prepare_positional_embed_inputs(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, 
         int layer_input_tokens_size, const std::vector<std::pair<uint32_t, uint32_t>> &frames_tokens_indices, int input_tokens_count);
@@ -68,7 +64,6 @@ private:
     void fill_temporal_positional_embed(int pos_ids_start_index, int relative_st_image_index,
         int position_ids_features, int merged_patch_size_h, int merged_patch_size_w);
 
-    int m_vision_token_value;
     hailo_3d_image_shape_t m_input_encoder_shape;
     int m_temporal_pos_h;
     int m_temporal_pos_w;

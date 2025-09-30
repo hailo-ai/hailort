@@ -584,37 +584,26 @@ Expected<std::unique_ptr<Text2ImageServerManager>> Text2ImageServerManager::crea
 }
 
 Text2ImageServerManager::Text2ImageServerManager(std::shared_ptr<Session> session, std::unique_ptr<Text2ImageServer> &&server) :
-    m_session(session), m_server(std::move(server))
+    GenAIServerManager(session), m_server(std::move(server))
 {
-    m_dispatcher[static_cast<int>(HailoGenAIActionID::TEXT2IMAGE__CREATE)] =
+    m_dispatcher[HailoGenAIActionID::TEXT2IMAGE__CREATE] =
         [&](const MemoryView &request) { return m_server->handle_create_text2image_request(request); };
-    m_dispatcher[static_cast<int>(HailoGenAIActionID::TEXT2IMAGE__GET_GENERATOR_PARAMS)] =
+    m_dispatcher[HailoGenAIActionID::TEXT2IMAGE__GET_GENERATOR_PARAMS] =
         [&](const MemoryView &request) { return m_server->handle_get_generator_params_request(request); };
-    m_dispatcher[static_cast<int>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_CREATE)] =
+    m_dispatcher[HailoGenAIActionID::TEXT2IMAGE__GENERATOR_CREATE] =
         [&](const MemoryView &request) { return m_server->handle_create_generator_request(request); };
-    m_dispatcher[static_cast<int>(HailoGenAIActionID::TEXT2IMAGE__GET_IP_ADAPTER_FRAME_INFO)] =
+    m_dispatcher[HailoGenAIActionID::TEXT2IMAGE__GET_IP_ADAPTER_FRAME_INFO] =
         [&](const MemoryView &request) { return m_server->handle_get_ip_adapter_frame_info_request(request); };
-    m_dispatcher[static_cast<int>(HailoGenAIActionID::TEXT2IMAGE__TOKENIZE)] =
+    m_dispatcher[HailoGenAIActionID::TEXT2IMAGE__TOKENIZE] =
         [&](const MemoryView &request) { return m_server->handle_tokenize_request(request); };
-    m_dispatcher[static_cast<int>(HailoGenAIActionID::TEXT2IMAGE__RELEASE)] =
+    m_dispatcher[HailoGenAIActionID::TEXT2IMAGE__RELEASE] =
         [&](const MemoryView &request) { (void)request; m_server.reset(); return Text2ImageReleaseSerializer::serialize_reply(HAILO_SUCCESS); };
-    m_dispatcher[static_cast<int>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_SET_INITIAL_NOISE)] =
+    m_dispatcher[HailoGenAIActionID::TEXT2IMAGE__GENERATOR_SET_INITIAL_NOISE] =
         [&](const MemoryView &request) { return m_server->handle_set_initial_noise_request(request); };
-    m_dispatcher[static_cast<int>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_ABORT)] =
+    m_dispatcher[HailoGenAIActionID::TEXT2IMAGE__GENERATOR_ABORT] =
         [&](const MemoryView &request) { return m_server->handle_abort_request(request); };
 }
 
-hailo_status Text2ImageServerManager::flow()
-{
-    while (true) {
-        TRY(auto request, m_session.read());
-        TRY(auto action_id, GenAISerializerUtils::get_action_id(MemoryView(*request)));
-        TRY(auto reply, m_dispatcher[action_id](MemoryView(*request)));
-        CHECK_SUCCESS(m_session.write(MemoryView(reply)));
-    }
-
-    return HAILO_SUCCESS;
-}
 
 } /* namespace genai */
 } /* namespace hailort */
