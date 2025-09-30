@@ -291,7 +291,6 @@ Expected<HailoRTDriver::DeviceInfo> query_device_info(const std::string &device_
         *(param_ptr) = data.Buffer.NameInCompatible;                                                               \
     }
 
-COMPATIBLE_PARAM_CAST(hailo_memory_transfer_params, MemoryTransfer);
 COMPATIBLE_PARAM_CAST(hailo_vdma_enable_channels_params, VdmaEnableChannels)
 COMPATIBLE_PARAM_CAST(hailo_vdma_disable_channels_params, VdmaDisableChannels)
 COMPATIBLE_PARAM_CAST(hailo_vdma_interrupts_read_timestamp_params, VdmaInterruptsReadTimestamps)

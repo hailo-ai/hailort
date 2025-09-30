@@ -411,8 +411,7 @@ private:
     template<typename PointerType>
     int run_ioctl(uint32_t ioctl_code, PointerType param);
 
-    hailo_status read_memory_ioctl(MemoryType memory_type, uint64_t address, void *buf, size_t size);
-    hailo_status write_memory_ioctl(MemoryType memory_type, uint64_t address, const void *buf, size_t size);
+
 
     Expected<VdmaBufferHandle> vdma_buffer_map_ioctl(uintptr_t user_address, size_t required_size,
         DmaDirection data_direction, const vdma_mapped_buffer_driver_identifier &driver_buff_handle,
