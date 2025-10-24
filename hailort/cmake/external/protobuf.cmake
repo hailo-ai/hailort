@@ -27,6 +27,7 @@ if(NOT protobuf_POPULATED)
             CONFIGURE_ARGS
                 -DCMAKE_BUILD_TYPE=${TOOL_BUILD_TYPE}
                 -DCMAKE_INSTALL_PREFIX=${PROTOBUF_INSTALL_DIR}
+                -DCMAKE_INSTALL_LIBDIR=lib
 
                 -Dprotobuf_BUILD_TESTS:BOOL=OFF
                 -Dprotobuf_WITH_ZLIB:BOOL=OFF
