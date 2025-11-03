@@ -32,7 +32,8 @@ class VLMPreProcess : public LLMPreProcess
 public:
     static Expected<std::unique_ptr<LLMPreProcess>> create(const std::map<std::string, size_t> &prefill_inputs_frame_size,
         const std::map<std::string, size_t> &tbt_inputs_frame_size, Eigen::VectorXf &&theta,
-        uint32_t text_embeddings_layer_features, const hailo_3d_image_shape_t &input_encoder_shape);
+        uint32_t text_embeddings_layer_features, const hailo_3d_image_shape_t &input_encoder_shape, uint8_t scaled_mask_value,
+        const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params);
 
     hailo_status prepare_inputs_prefill(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
         std::vector<MemoryView> input_embeddings, const std::vector<MemoryView> &input_frames_embeddings,
@@ -40,7 +41,8 @@ public:
 
     VLMPreProcess(Eigen::VectorXf &&theta, Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> &&local_cached_embeddings,
         const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size,
-        const hailo_3d_image_shape_t &input_encoder_shape);
+        const hailo_3d_image_shape_t &input_encoder_shape, uint8_t scaled_mask_value, const InputLayersNamesSuffixes &input_layers_names_suffixes,
+        const PreProcessParams &pre_process_params);
 
     inline uint32_t embeddings_per_frame() const
     {

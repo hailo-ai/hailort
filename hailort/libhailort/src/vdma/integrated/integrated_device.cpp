@@ -188,6 +188,7 @@ Expected<hailo_extended_device_information_t> IntegratedDevice::get_extended_dev
 
     TRY(auto is_eth_supported, compare_file_content(ETH_STATUS_FILE, STATUS_ENABLED));
     TRY(auto is_pci_supported, compare_file_content(PCI_STATUS_FILE, STATUS_ENABLED));
+    TRY(auto is_power_measurement_supported, has_power_sensor());
 
     info.boot_source                           = HAILO_DEVICE_BOOT_SOURCE_INVALID; // TODO: HRT-18652
     info.eth_mac_address[0]                    = NOT_AVAILABLE;                    // TODO: HRT-18652
@@ -200,6 +201,7 @@ Expected<hailo_extended_device_information_t> IntegratedDevice::get_extended_dev
     info.supported_features.mdio               = NOT_AVAILABLE; // TODO: HRT-18652
     info.supported_features.mipi               = NOT_AVAILABLE; // TODO: HRT-18652
     info.supported_features.pcie               = is_pci_supported;
+    info.supported_features.power_measurement  = is_power_measurement_supported;
 
     if (fs::exists(IDENTIFICATION_FILE)) {
         FileReader reader(IDENTIFICATION_FILE);

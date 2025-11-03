@@ -124,7 +124,6 @@ public:
     virtual Expected<std::vector<uint32_t>> get_cache_ids() const = 0;
     virtual Expected<Buffer> read_cache_buffer(uint32_t cache_id) = 0;
     virtual hailo_status write_cache_buffer(uint32_t cache_id, MemoryView buffer) = 0;
-    virtual hailo_status finalize_cache() = 0;
 
     std::map<std::string, std::shared_ptr<InputStreamBase>> m_input_streams;
     std::map<std::string, std::shared_ptr<OutputStreamBase>> m_output_streams;

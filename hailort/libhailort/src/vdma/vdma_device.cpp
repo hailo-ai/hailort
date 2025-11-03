@@ -315,13 +315,15 @@ hailo_status VdmaDevice::dma_unmap_impl(HailoRTDriver &driver, void *address,
         // map.
         return HAILO_SUCCESS;
     }
-    return driver.vdma_buffer_unmap(reinterpret_cast<uintptr_t>(address), size, to_hailo_driver_direction(data_direction));
+    return driver.vdma_buffer_unmap(reinterpret_cast<uintptr_t>(address), size,
+        to_hailo_driver_direction(data_direction), HailoRTDriver::DmaBufferType::USER_PTR_BUFFER);
 }
 
 hailo_status VdmaDevice::dma_map_dmabuf_impl(HailoRTDriver &driver, int dmabuf_fd,
     size_t size, hailo_dma_buffer_direction_t data_direction)
 {
-    CHECK_EXPECTED(driver.vdma_buffer_map(dmabuf_fd, size, to_hailo_driver_direction(data_direction),
+    CHECK(dmabuf_fd >= 0, HAILO_INVALID_ARGUMENT, "cannot map dmabuf with fd: {}", dmabuf_fd);
+    CHECK_EXPECTED(driver.vdma_buffer_map(static_cast<uint32_t>(dmabuf_fd), size, to_hailo_driver_direction(data_direction),
         HailoRTDriver::DmaBufferType::DMABUF_BUFFER));
     return HAILO_SUCCESS;
 }
@@ -329,7 +331,9 @@ hailo_status VdmaDevice::dma_map_dmabuf_impl(HailoRTDriver &driver, int dmabuf_f
 hailo_status VdmaDevice::dma_unmap_dmabuf_impl(HailoRTDriver &driver, int dmabuf_fd,
     size_t size, hailo_dma_buffer_direction_t data_direction)
 {
-    return driver.vdma_buffer_unmap(dmabuf_fd, size, to_hailo_driver_direction(data_direction));
+    CHECK(dmabuf_fd >= 0, HAILO_INVALID_ARGUMENT, "cannot map dmabuf with fd: {}", dmabuf_fd);
+    return driver.vdma_buffer_unmap(static_cast<uint32_t>(dmabuf_fd), size, to_hailo_driver_direction(data_direction),
+        HailoRTDriver::DmaBufferType::DMABUF_BUFFER);
 }
 
 Expected<ConfiguredNetworkGroupVector> VdmaDevice::create_networks_group_vector(Hef &hef, const NetworkGroupsParamsMap &configure_params)

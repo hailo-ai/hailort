@@ -32,7 +32,6 @@ ClientConnection::ClientConnection(RpcConnection::Params &&params, uint32_t clie
         while (true) {
             auto action = m_action_thread_queue.dequeue(std::chrono::milliseconds(HAILO_INFINITE));
             if (action.status() == HAILO_SHUTDOWN_EVENT_SIGNALED) {
-                LOGGER__INFO("Shutting down action thread of client {}", m_client_id);
                 break;
             }
             if (HAILO_SUCCESS != action.status()) {

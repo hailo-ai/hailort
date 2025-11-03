@@ -221,7 +221,7 @@ hailo_format_t SoftmaxOpMetadata::expand_output_format_autos(const hailo_format_
 
     // Type should be float32, after de-quantization, and order NHWC or NC in softmax
     if (format.type == HAILO_FORMAT_TYPE_AUTO) {
-        format.type = HAILO_FORMAT_TYPE_FLOAT32;
+        format.type = HailoRTDefaults::get_default_nms_format_type(format.order);
     }
     if (format.order == HAILO_FORMAT_ORDER_AUTO) {
         format.order = HailoRTDefaults::get_default_host_format_order(input_format);

@@ -48,6 +48,7 @@ typedef struct {
 /* D2H_EVENT_ID_t Should be in the same order as the structs in D2H_EVENT__message_parameters_t union, since the host will parse according to this enum */
 /* For example ETHERNET_SERVICE_RX_ERROR_EVENT_ID is 0, so D2H_EVENT_rx_error_event_message_t is the first struct in D2H_EVENT__message_parameters_t */
 typedef enum {
+    /* Mailbox Event IDs */
     ETHERNET_SERVICE_RX_ERROR_EVENT_ID = 0,
     D2H_HOST_INFO_EVENT_ID,
     HEALTH_MONITOR_TEMPERATURE_ALARM_D2H_EVENT_ID,
@@ -61,6 +62,9 @@ typedef enum {
     HEALTH_MONITOR_CLOCK_CHANGED_EVENT_ID,
     HW_INFER_MANAGER_INFER_DONE,
     CONTEXT_SWITCH_RUN_TIME_ERROR,
+
+    /* SCMI Event IDs */
+    NN_CORE_CRC_ERROR_EVENT_ID,
 
     D2H_EVENT_ID_COUNT /* Must be last*/
 } D2H_EVENT_ID_t;
@@ -159,17 +163,17 @@ typedef struct {
 
 /* D2H_EVENT__message_parameters_t should be in the same order as hailo_notification_message_parameters_t */
 typedef union {
-   D2H_EVENT_rx_error_event_message_t rx_error_event;
-   D2H_EVENT_host_info_event_message_t host_info_event;
-   D2H_EVENT_health_monitor_closed_streams_event_message_t health_monitor_closed_streams_event;
-   D2H_EVENT_health_monitor_temperature_alarm_event_message_t health_monitor_temperature_alarm_event;
-   D2H_EVENT_health_monitor_overcurrent_alert_event_message_t health_monitor_overcurrent_alert_event;
-   D2H_EVENT_health_monitor_lcu_ecc_error_event_message_t health_monitor_lcu_ecc_error_event;
-   D2H_EVENT_health_monitor_cpu_ecc_event_message_t health_monitor_cpu_ecc_event;
-   D2H_EVENT_context_switch_breakpoint_reached_event_message_t context_switch_breakpoint_reached_event;
-   D2H_EVENT_health_monitor_clock_changed_event_message_t health_monitor_clock_changed_event;
-   D2H_EVENT_hw_infer_mamager_infer_done_message_t hw_infer_manager_infer_done_event;
-   D2H_EVENT_context_switch_run_time_error_event_message_t context_switch_run_time_error_event;
+    D2H_EVENT_rx_error_event_message_t rx_error_event;
+    D2H_EVENT_host_info_event_message_t host_info_event;
+    D2H_EVENT_health_monitor_closed_streams_event_message_t health_monitor_closed_streams_event;
+    D2H_EVENT_health_monitor_temperature_alarm_event_message_t health_monitor_temperature_alarm_event;
+    D2H_EVENT_health_monitor_overcurrent_alert_event_message_t health_monitor_overcurrent_alert_event;
+    D2H_EVENT_health_monitor_lcu_ecc_error_event_message_t health_monitor_lcu_ecc_error_event;
+    D2H_EVENT_health_monitor_cpu_ecc_event_message_t health_monitor_cpu_ecc_event;
+    D2H_EVENT_context_switch_breakpoint_reached_event_message_t context_switch_breakpoint_reached_event;
+    D2H_EVENT_health_monitor_clock_changed_event_message_t health_monitor_clock_changed_event;
+    D2H_EVENT_hw_infer_mamager_infer_done_message_t hw_infer_manager_infer_done_event;
+    D2H_EVENT_context_switch_run_time_error_event_message_t context_switch_run_time_error_event;
 } D2H_EVENT__message_parameters_t;
 
 typedef struct {

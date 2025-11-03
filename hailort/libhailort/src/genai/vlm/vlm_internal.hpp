@@ -58,7 +58,11 @@ public:
     Expected<LLMGeneratorParams> create_generator_params();
 
     Expected<std::vector<int>> tokenize(const std::string &prompt);
+    Expected<size_t> get_context_usage_size();
+    Expected<size_t> max_context_capacity();
     hailo_status clear_context();
+    Expected<BufferPtr> save_context();
+    hailo_status load_context(const MemoryView &context);
     hailo_status set_generation_recovery_sequence(const std::string &abort_sequence);
     Expected<std::string> get_generation_recovery_sequence();
     Expected<std::string> prompt_template();

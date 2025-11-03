@@ -37,9 +37,7 @@ Expected<hailo_vstream_info_t> Yolov8BboxOnlyOpMetadata::get_output_vstream_info
 hailo_status Yolov8BboxOnlyOpMetadata::validate_format_info()
 {
     for (const auto& output_metadata : m_outputs_metadata) {
-
-        CHECK(HAILO_FORMAT_TYPE_FLOAT32 == output_metadata.second.format.type, HAILO_INVALID_ARGUMENT, "The given output format type {} is not supported, "
-            "should be HAILO_FORMAT_TYPE_FLOAT32", HailoRTCommon::get_format_type_str(output_metadata.second.format.type));
+        CHECK_SUCCESS(validate_format_type(output_metadata.second.format));
 
         CHECK(HAILO_FORMAT_ORDER_NHWC == output_metadata.second.format.order, HAILO_INVALID_ARGUMENT, "The given output format order {} is not supported, "
             "should be HAILO_FORMAT_ORDER_NHWC", HailoRTCommon::get_format_order_str(output_metadata.second.format.order));

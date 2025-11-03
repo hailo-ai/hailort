@@ -77,6 +77,20 @@ std::vector<int> VLMWrapper::tokenize(const std::string &prompt)
     return expected.release();
 }
 
+size_t VLMWrapper::get_context_usage_size()
+{
+    auto count = m_vlm->get_context_usage_size();
+    VALIDATE_EXPECTED(count);
+    return count.release();
+}
+
+size_t VLMWrapper::max_context_capacity()
+{
+    auto capacity = m_vlm->max_context_capacity();
+    VALIDATE_EXPECTED(capacity);
+    return capacity.release();
+}
+
 void VLMWrapper::clear_context()
 {
     VALIDATE_STATUS(m_vlm->clear_context());
@@ -111,6 +125,21 @@ std::vector<std::string> VLMWrapper::get_stop_tokens()
     auto expected = m_vlm->get_stop_tokens();
     VALIDATE_EXPECTED(expected);
     return expected.release();
+}
+
+std::vector<uint8_t> VLMWrapper::save_context()
+{
+    auto expected = m_vlm->save_context();
+    VALIDATE_EXPECTED(expected);
+    auto buffer = expected.release();
+    // TODO (HRT-19106): Avoid copying the data to the Python side
+    return std::vector<uint8_t>(buffer->data(), buffer->data() + buffer->size());
+}
+
+void VLMWrapper::load_context(const std::vector<uint8_t> &context)
+{
+    MemoryView context_view(const_cast<uint8_t*>(context.data()), context.size());
+    VALIDATE_STATUS(m_vlm->load_context(context_view));
 }
 
 uint32_t VLMWrapper::input_frame_size() const
@@ -154,10 +183,14 @@ void VLMWrapper::bind(py::module &m)
         .def("prompt_template", &VLMWrapper::prompt_template)
         .def("set_stop_tokens", &VLMWrapper::set_stop_tokens)
         .def("get_stop_tokens", &VLMWrapper::get_stop_tokens)
+        .def("save_context", &VLMWrapper::save_context)
+        .def("load_context", &VLMWrapper::load_context)
         .def("input_frame_size", &VLMWrapper::input_frame_size)
         .def("input_frame_shape", &VLMWrapper::input_frame_shape)
         .def("input_frame_format_type", &VLMWrapper::input_frame_format_type)
         .def("input_frame_format_order", &VLMWrapper::input_frame_format_order)
+        .def("get_context_usage_size", &VLMWrapper::get_context_usage_size)
+        .def("max_context_capacity", &VLMWrapper::max_context_capacity)
         ;
 }
 

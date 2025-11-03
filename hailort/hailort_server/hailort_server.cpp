@@ -18,6 +18,8 @@
 #include "hrpc/connection_context.hpp"
 #include "vdma/pcie_session.hpp"
 
+#include <unordered_map>
+
 using namespace hailort;
 
 #define ASYNC_QUEUE_SIZE_FACTOR (2) // double buffer
@@ -51,16 +53,26 @@ struct InferModelInfo
 
 Expected<std::unique_ptr<VDevice>> VDeviceManager::create_vdevice(const hailo_vdevice_params_t &params, uint32_t client_id)
 {
+    static const auto WAIT_FOR_VDEVICE_TIMEOUT = std::chrono::seconds(5);
     std::unique_ptr<VDevice> vdevice = nullptr;
     {
         std::unique_lock<std::mutex> lock(m_vdevice_clients_mutex);
-        if ((m_active_clients_with_vdevice.size() == 0) && (m_pending_close_clients_with_vdevice.size() > 0)
-            && (m_active_vdevice_group_id == params.group_id)) {
+        auto no_active_clients = (m_active_clients_with_vdevice.size() == 0);
+        auto has_pending_close_clients = (m_pending_close_clients_with_vdevice.size() > 0);
+        auto is_same_vdevice_group = (m_active_vdevice_group_id == params.group_id);
+        auto is_unique_vdevice_group = (params.group_id == std::string(HAILO_UNIQUE_VDEVICE_GROUP_ID));
+
+        if ((no_active_clients && has_pending_close_clients && is_same_vdevice_group) || is_unique_vdevice_group) {
             m_requesting_clients_queue.push(client_id);
-            m_vdevice_clients_cv.wait(lock, [this, client_id] () {
+            auto wait_result = m_vdevice_clients_cv.wait_for(lock, WAIT_FOR_VDEVICE_TIMEOUT, [this, client_id, is_unique_vdevice_group] () {
+                // If creating a unique VDevice, wait for no active clients
+                if (is_unique_vdevice_group) {
+                    return (m_active_clients_with_vdevice.size() == 0);
+                }
                 return (m_pending_close_clients_with_vdevice.size() == 0) && (m_requesting_clients_queue.front() == client_id);
             });
             m_requesting_clients_queue.pop();
+            CHECK_AS_EXPECTED(wait_result, HAILO_DEVICE_IN_USE, "VDevice is in use");
         }
 
         auto vdevice_expected = VDevice::create(params);
@@ -78,6 +90,12 @@ Expected<std::unique_ptr<VDevice>> VDeviceManager::create_vdevice(const hailo_vd
     m_vdevice_clients_cv.notify_all(); // Notify for other waiting clients to continue
 
     return vdevice;
+}
+
+Expected<std::shared_ptr<VDevice>> VDeviceManager::create_shared_vdevice(const hailo_vdevice_params_t &params, uint32_t client_id)
+{
+    TRY(auto vdevice, create_vdevice(params, client_id));
+    return std::shared_ptr<VDevice>(std::move(vdevice));
 }
 
 void VDeviceManager::mark_vdevice_for_close(uint32_t client_id)
@@ -134,7 +152,7 @@ hailo_status HailoRTServer::cleanup_client_resources(ClientConnectionPtr client_
 
     (void)ServerResourceManager<VDevice>::get_instance().release_by_id(client_connection->client_id());
 
-    m_vdevice_manager.remove_vdevice(client_connection->client_id());
+    m_vdevice_manager->remove_vdevice(client_connection->client_id());
 
     return HAILO_SUCCESS;
 }
@@ -162,7 +180,7 @@ hailo_status HailoRTServer::handle_vdevice_create(const MemoryView &request, Cli
     CHECK(0 == res, HAILO_INTERNAL_FAILURE, "Failed to set env var {} to {}",
         HAILO_DISABLE_PP_ENV_VAR, should_disable_pp_ops);
 
-    TRY(auto vdevice, m_vdevice_manager.create_vdevice(vdevice_params.get(), client_connection->client_id()));
+    TRY(auto vdevice, m_vdevice_manager->create_vdevice(vdevice_params.get(), client_connection->client_id()));
     auto &manager = ServerResourceManager<VDevice>::get_instance();
     auto id = manager.register_resource(client_connection->client_id(), std::move(vdevice));
 
@@ -175,7 +193,7 @@ hailo_status HailoRTServer::handle_vdevice_destroy(const MemoryView &request, Cl
     auto &manager = ServerResourceManager<VDevice>::get_instance();
     TRY(auto vdevice_handle, DestroyVDeviceSerializer::deserialize_request(request));
     (void)manager.release_resource(vdevice_handle, client_connection->client_id());
-    m_vdevice_manager.remove_vdevice(client_connection->client_id());
+    m_vdevice_manager->remove_vdevice(client_connection->client_id());
 
     TRY(auto reply, DestroyVDeviceSerializer::serialize_reply());
     return response_writer.write(HAILO_SUCCESS, std::move(reply));
@@ -520,12 +538,44 @@ hailo_status HailoRTServer::handle_configured_infer_model_finalize_cache(const M
     auto &cim_manager = ServerResourceManager<ConfiguredInferModel>::get_instance();
     TRY(auto configured_infer_model_handle, FinalizeCacheSerializer::deserialize_request(request));
     auto lambda = [] (std::shared_ptr<ConfiguredInferModel> configured_infer_model) {
-        return configured_infer_model->finalize_cache();
+        (void)configured_infer_model;
+        return HAILO_SUCCESS;
     };
     auto status = cim_manager.execute<hailo_status>(configured_infer_model_handle, lambda);
     CHECK_SUCCESS(status);
 
     TRY(auto reply, FinalizeCacheSerializer::serialize_reply());
+    return response_writer.write(HAILO_SUCCESS, std::move(reply));
+}
+
+hailo_status HailoRTServer::handle_configured_infer_model_get_cache_buffers(const MemoryView &request, ClientConnectionPtr, ResponseWriter response_writer)
+{
+    auto &cim_manager = ServerResourceManager<ConfiguredInferModel>::get_instance();
+    TRY(auto configured_infer_model_handle, GetCacheBuffersSerializer::deserialize_request(request));
+    auto lambda = [] (std::shared_ptr<ConfiguredInferModel> configured_infer_model) {
+        return configured_infer_model->get_cache_buffers();
+    };
+    using CacheBuffersMap = std::unordered_map<uint32_t, BufferPtr>;
+    TRY(auto cache_buffers, cim_manager.execute<Expected<CacheBuffersMap>>(configured_infer_model_handle, lambda));
+    TRY(auto reply, GetCacheBuffersSerializer::serialize_reply(cache_buffers));
+    return response_writer.write(HAILO_SUCCESS, std::move(reply));
+}
+
+hailo_status HailoRTServer::handle_configured_infer_model_update_cache_buffer(const MemoryView &request, ClientConnectionPtr, ResponseWriter response_writer)
+{
+    auto &cim_manager = ServerResourceManager<ConfiguredInferModel>::get_instance();
+    TRY(auto request_params, UpdateCacheBufferSerializer::deserialize_request(request));
+    const auto &configured_infer_model_handle = std::get<0>(request_params);
+    const auto &cache_id = std::get<1>(request_params);
+    const auto &buffer = std::get<2>(request_params);
+
+    auto lambda = [cache_id, buffer] (std::shared_ptr<ConfiguredInferModel> configured_infer_model) {
+        return configured_infer_model->update_cache_buffer(cache_id, MemoryView(buffer));
+    };
+    auto status = cim_manager.execute<hailo_status>(configured_infer_model_handle, lambda);
+    CHECK_SUCCESS(status);
+
+    TRY(auto reply, UpdateCacheBufferSerializer::serialize_reply());
     return response_writer.write(HAILO_SUCCESS, std::move(reply));
 }
 
@@ -647,6 +697,100 @@ hailo_status ConfiguredInferModelRunAsyncHandler::do_action(ResponseWriter respo
     auto infer_lambda = [this, infer_done_callback, response_writer]
         (std::shared_ptr<ConfiguredInferModel> configured_infer_model) {
         return configured_infer_model->run_async(m_run_async_info->bindings, infer_done_callback);
+    };
+
+    auto &cim_manager = ServerResourceManager<ConfiguredInferModel>::get_instance();
+    TRY(auto job, cim_manager.execute<Expected<AsyncInferJob>>(m_configured_infer_model_handle, infer_lambda));
+    job.detach();
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status ConfiguredInferModelRunAsyncForDurationHandler::parse_request(const MemoryView &request, ClientConnectionPtr client_connection)
+{
+    TRY(auto request_struct, RunAsyncForDurationSerializer::deserialize_request(request));
+    m_configured_infer_model_handle = request_struct.configured_infer_model_handle;
+    auto infer_model_handle = request_struct.infer_model_handle;
+    m_duration_ms = request_struct.duration_ms;
+    m_sleep_between_frames_ms = request_struct.sleep_between_frames_ms;
+    const auto &buffer_infos = request_struct.io_buffer_infos;
+    
+    TRY(m_run_async_info, m_server.m_run_async_info_per_cim.at(m_configured_infer_model_handle)->acquire());
+    auto infer_model_info_lambda = [] (std::shared_ptr<InferModelInfo> infer_model_info) {
+        return *infer_model_info;
+    };
+    auto &infer_model_infos_manager = ServerResourceManager<InferModelInfo>::get_instance();
+    TRY(auto infer_model_info,
+        infer_model_infos_manager.execute<Expected<InferModelInfo>>(m_server.m_infer_model_to_info_id[infer_model_handle], infer_model_info_lambda));
+    
+    uint32_t buffer_index = 0;
+    for (const auto &input_name : infer_model_info.inputs_names) {
+        TRY(auto input, m_run_async_info->bindings.input(input_name));
+        CHECK(BufferType::VIEW == static_cast<BufferType>(buffer_infos[buffer_index].type), HAILO_INVALID_ARGUMENT,
+            "Buffer type must be VIEW");
+
+        TRY(auto buffer, m_server.m_buffer_pool_per_cim.at(m_configured_infer_model_handle)->acquire_buffer(input_name));
+        uint32_t read_size = 0;
+        while (read_size < buffer->size()) {
+            uint32_t current_size = buffer_infos[buffer_index++].size;
+            CHECK(read_size + current_size <= buffer->size(), HAILO_INTERNAL_FAILURE);
+
+            auto status = client_connection->read_buffer(MemoryView(buffer->data() + read_size, current_size));
+            CHECK_SUCCESS(status);
+
+            read_size += current_size;
+        }
+
+        auto status = input.set_buffer(MemoryView(*buffer));
+        CHECK_SUCCESS(status);
+
+        m_run_async_info->buffer_inputs.push_back(std::move(buffer));
+    }
+
+    for (const auto &output_name : infer_model_info.outputs_names) {
+        TRY(auto output, m_run_async_info->bindings.output(output_name));
+        CHECK(BufferType::VIEW == static_cast<BufferType>(buffer_infos[buffer_index++].type), HAILO_INVALID_ARGUMENT,
+            "Buffer type must be VIEW");
+        TRY(auto buffer, m_server.m_buffer_pool_per_cim.at(m_configured_infer_model_handle)->acquire_buffer(output_name));
+
+        auto status = output.set_buffer(MemoryView(buffer->data(), buffer->size()));
+        CHECK_SUCCESS(status);
+
+        m_run_async_info->buffer_outputs.push_back(std::move(buffer));
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status ConfiguredInferModelRunAsyncForDurationHandler::do_action(ResponseWriter response_writer)
+{
+    auto infer_done_callback = [run_async_info = m_run_async_info, response_writer]
+        (const AsyncInferCompletionInfo &completion_info, uint32_t fps) mutable {
+        // Need to clear buffers so they aren't retained when
+        // `run_asyc_info` is returned to the pool.
+        auto outputs = std::move(run_async_info->buffer_outputs);
+        run_async_info->buffer_inputs.clear();
+        run_async_info->buffer_outputs.clear();
+
+        auto infer_status = completion_info.status;
+        Buffer serialized_reply;
+        auto expected_reply = RunAsyncForDurationSerializer::serialize_reply(fps);
+        if (!expected_reply) {
+            LOGGER__ERROR("Failed to serialize reply with status: {}", expected_reply.status());
+            infer_status = expected_reply.status();
+        } else {
+            serialized_reply = std::move(expected_reply.release());
+        }
+        auto status = response_writer.write(infer_status, std::move(serialized_reply), std::move(outputs));
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to write async response to client with status: {}", status);
+        }
+    };
+
+    auto infer_lambda = [this, infer_done_callback]
+        (std::shared_ptr<ConfiguredInferModel> configured_infer_model) {
+        return configured_infer_model->run_async_for_duration(m_run_async_info->bindings,
+            m_duration_ms, m_sleep_between_frames_ms, infer_done_callback);
     };
 
     auto &cim_manager = ServerResourceManager<ConfiguredInferModel>::get_instance();
@@ -913,6 +1057,7 @@ hailo_status HailoRTServer::handle_device_set_notification_callback(const Memory
             return;
         }
 
+        response_writer.set_action_id(static_cast<uint32_t>(HailoRpcActionID::NOTIFICATION));
         auto status = response_writer.write(HAILO_SUCCESS, reply.release());
         if (HAILO_SUCCESS != status) {
             LOGGER__ERROR("Failed to write notification message");
@@ -974,6 +1119,30 @@ hailo_status HailoRTServer::handle_device_fetch_logs(const MemoryView &request, 
     return response_writer.write(HAILO_SUCCESS, std::move(reply), std::move(buffer_outputs));
 }
 
+hailo_status DeviceEchoBufferHandler::parse_request(const MemoryView &request, ClientConnectionPtr client_connection)
+{
+    TRY(auto buffer_size, EchoBufferSerializer::deserialize_request(request));
+
+    if (0 == buffer_size) {
+        m_buffer.reset();
+        return HAILO_SUCCESS;
+    } else if (nullptr == m_buffer) {
+        TRY(m_buffer, Buffer::create_shared(buffer_size, BufferStorageParams::create_dma()));
+    }
+
+    auto status = client_connection->read_buffer(m_buffer->as_view());
+    CHECK_SUCCESS(status);
+    return HAILO_SUCCESS;
+}
+
+hailo_status DeviceEchoBufferHandler::do_action(ResponseWriter response_writer)
+{
+    if (nullptr == m_buffer) {
+        return response_writer.write(HAILO_SUCCESS, {});
+    }
+    return response_writer.write(HAILO_SUCCESS, {}, {m_buffer});
+}
+
 Expected<Dispatcher> HailoRTServer::create_dispatcher()
 {
     Dispatcher dispatcher;
@@ -993,7 +1162,10 @@ Expected<Dispatcher> HailoRTServer::create_dispatcher()
     REGISTER_ACTION(dispatcher, CONFIGURED_INFER_MODEL__UPDATE_CACHE_OFFSET, handle_configured_infer_model_update_cache_offset);
     REGISTER_ACTION(dispatcher, CONFIGURED_INFER_MODEL__INIT_CACHE, handle_configured_infer_model_init_cache);
     REGISTER_ACTION(dispatcher, CONFIGURED_INFER_MODEL__FINALIZE_CACHE, handle_configured_infer_model_finalize_cache);
+    REGISTER_ACTION(dispatcher, CONFIGURED_INFER_MODEL__GET_CACHE_BUFFERS, handle_configured_infer_model_get_cache_buffers);
+    REGISTER_ACTION(dispatcher, CONFIGURED_INFER_MODEL__UPDATE_CACHE_BUFFER, handle_configured_infer_model_update_cache_buffer);
     REGISTER_ACTION_WITH_READS(dispatcher, CONFIGURED_INFER_MODEL__RUN_ASYNC, ConfiguredInferModelRunAsyncHandler);
+    REGISTER_ACTION_WITH_READS(dispatcher, CONFIGURED_INFER_MODEL__RUN_ASYNC_FOR_DURATION, ConfiguredInferModelRunAsyncForDurationHandler);
     REGISTER_ACTION(dispatcher, DEVICE__CREATE, handle_device_create);
     REGISTER_ACTION(dispatcher, DEVICE__DESTROY, handle_device_destroy);
     REGISTER_ACTION(dispatcher, DEVICE__IDENTIFY, handle_device_identify);
@@ -1010,5 +1182,6 @@ Expected<Dispatcher> HailoRTServer::create_dispatcher()
     REGISTER_ACTION(dispatcher, DEVICE__SET_NOTIFICATION_CALLBACK, handle_device_set_notification_callback);
     REGISTER_ACTION(dispatcher, DEVICE__REMOVE_NOTIFICATION_CALLBACK, handle_device_remove_notification_callback);
     REGISTER_ACTION(dispatcher, DEVICE__FETCH_LOGS, handle_device_fetch_logs);
+    REGISTER_ACTION_WITH_READS(dispatcher, DEVICE__ECHO_BUFFER, DeviceEchoBufferHandler);
     return dispatcher;
 }

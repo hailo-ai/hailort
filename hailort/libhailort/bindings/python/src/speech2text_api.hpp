@@ -21,34 +21,19 @@
 
 namespace hailort {
 
-class Speech2TextGeneratorParamsWrapper {
-public:
-    Speech2TextGeneratorParamsWrapper(genai::Speech2TextGeneratorParams generator_params);
-
-    void set_task(genai::Speech2TextTask task);
-    void set_language(std::string_view language);
-    genai::Speech2TextTask task() const;
-    std::string_view language() const;
-
-    genai::Speech2TextGeneratorParams params() const { return m_generator_params; };
-
-private:
-    genai::Speech2TextGeneratorParams m_generator_params;
-};
-
 class Speech2TextWrapper final {
 public:
     static Speech2TextWrapper create(VDeviceWrapperPtr vdevice, const std::string &model_path);
 
     Speech2TextWrapper(std::unique_ptr<genai::Speech2Text> speech2text);
 
-    Speech2TextGeneratorParamsWrapper create_generator_params();
+    std::string generate_all_text(py::array audio_data, genai::Speech2TextTask task, std::string_view language,
+        uint32_t timeout_ms);
 
-    std::string generate_all_text(const Speech2TextGeneratorParamsWrapper &params,
-        py::array audio_data, uint32_t timeout_ms);
+    std::vector<genai::Speech2Text::SegmentInfo> generate_all_segments(py::array audio_data, genai::Speech2TextTask task,
+        std::string_view language, uint32_t timeout_ms);
 
-    std::vector<genai::Speech2Text::SegmentInfo> generate_all_segments(const Speech2TextGeneratorParamsWrapper &params,
-        py::array audio_data, uint32_t timeout_ms);
+    std::vector<int> tokenize(const std::string &text);
 
     void release();
 

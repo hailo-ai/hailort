@@ -28,6 +28,7 @@ public:
 
     static Expected<hailo_format_order_t> get_device_format_order(uint32_t compiler_format_order);
     static hailo_format_order_t get_default_host_format_order(const hailo_format_t &device_format);
+    static hailo_format_type_t get_default_nms_format_type(hailo_format_order_t order);
 
     static hailo_format_t expand_auto_format(const hailo_format_t &host_format, const hailo_format_t &hw_format);
     static hailo_format_t get_user_buffer_format();

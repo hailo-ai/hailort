@@ -55,7 +55,7 @@ static std::string extended_device_information_boot_string(hailo_device_boot_sou
     return "Boot source: " + boot_source_val + "\n";
 }
 
-static std::string extended_device_information_supported_features(hailo_device_supported_features_t supported_features)
+static std::string extended_device_information_supported_features(hailo_device_supported_features_t supported_features, bool is_accelerator)
 {
     std::string supported_features_str;
 
@@ -73,6 +73,9 @@ static std::string extended_device_information_supported_features(hailo_device_s
     }
     if(supported_features.pcie) {
         supported_features_str.append("PCIE, ");
+    }
+    if(is_accelerator && supported_features.power_measurement){
+        supported_features_str.append("Power Measurement, ");
     }
 
     std::size_t last_comma_location = supported_features_str.find_last_of(",");
@@ -98,12 +101,12 @@ static bool extended_device_information_is_array_not_empty(const uint8_t *array_
     return false;
 }
 
-static void print_extended_device_information(const hailo_extended_device_information_t &device_info, bool should_print_sku_id)
+static void print_extended_device_information(const hailo_extended_device_information_t &device_info, bool is_accelerator)
 {
     std::cout << extended_device_information_boot_string(device_info.boot_source);
     std::cout << valid_attr_str("Neural Network Core Clock Rate", device_info.neural_network_core_clock_rate / MHz, INVALID_CLOCK_RATE, "MHz");
 
-    std::string supported_features_str = extended_device_information_supported_features(device_info.supported_features);
+    std::string supported_features_str = extended_device_information_supported_features(device_info.supported_features, is_accelerator);
     if(supported_features_str.length() > 0) {
         std::cout << "Device supported features: " << supported_features_str << std::endl;
     }
@@ -130,19 +133,19 @@ static void print_extended_device_information(const hailo_extended_device_inform
         extended_device_information_print_array(device_info.soc_pm_values, sizeof(device_info.soc_pm_values), "");
     }
 
-    if (should_print_sku_id) {
+    if (is_accelerator) {
         std::string sku_id_str = "Disabled";
         constexpr auto SKU_ENABLED_BIT_INDEX = 0;
         if (device_info.gpio_mask & (1 << SKU_ENABLED_BIT_INDEX)) {
             uint16_t sku_id = 0;
-            constexpr size_t SKU_ID_BITS_INDICES[] = {1, 2, 3, 10, 11, 12};
-            constexpr size_t SKU_ID_LENGTH = sizeof(SKU_ID_BITS_INDICES) / sizeof(SKU_ID_BITS_INDICES[0]);
+            constexpr size_t SKU_ID_BITS_INDICES[] = {1, 2, 3, 9, 10, 11};
+            constexpr size_t SKU_ID_LENGTH = sizeof(SKU_ID_BITS_INDICES) / sizeof(SKU_ID_BITS_INDICES[0]);
             for (size_t i = 0; i < SKU_ID_LENGTH; i++) {
-                sku_id |= static_cast<uint16_t>((device_info.gpio_mask & (SKU_ID_BITS_INDICES[i] << 1)) >> i);
+                sku_id |= static_cast<uint16_t>((device_info.gpio_mask & (1 << SKU_ID_BITS_INDICES[i])) ? 1 << i : 0);
             }
             sku_id_str = std::to_string(sku_id);
         }
-        std::cout << "SKU-ID: " << sku_id_str << std::endl;
+        std::cout << "board SKU-ID: " << sku_id_str << std::endl;
     }
 }
 

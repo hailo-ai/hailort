@@ -47,6 +47,9 @@ if (TOKENIZERS_LIB_PATH AND TOKENIZERS_RUST_LIB_PATH AND TOKENIZERS_INCLUDE_DIR)
         IMPORTED_LOCATION ${TOKENIZERS_LIB_PATH}
         INTERFACE_INCLUDE_DIRECTORIES ${TOKENIZERS_INCLUDE_DIR}
     )
+    if(NOT MSVC)
+      set_target_properties(tokenizers_cpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    endif()
 
     # Linking with dl is required for the rust impl of tokenizers - https://github.com/mlc-ai/tokenizers-cpp/issues/1#issuecomment-1556206254
     target_link_libraries(tokenizers_cpp INTERFACE ${TOKENIZERS_RUST_LIB_PATH} dl)
@@ -73,6 +76,9 @@ else()
               message(FATAL_ERROR "Cargo is not installed or not found in PATH.")
           endif()
           add_subdirectory(${tokenizers_SOURCE_DIR} ${tokenizers_BINARY_DIR} EXCLUDE_FROM_ALL)
+      endif()
+      if(NOT MSVC)
+        set_target_properties(tokenizers_cpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
       endif()
   endif()
 endif()

@@ -13,6 +13,7 @@
 #include "hailo/hailort.h"
 #include "hailo/buffer.hpp"
 #include "hailo/infer_model.hpp"
+#include <unordered_set>
 
 
 namespace hailort
@@ -43,14 +44,16 @@ public:
     hailo_status set_input_buffer(MemoryView buffer);
     hailo_status set_output_buffer(MemoryView buffer);
 
-    virtual Expected<std::pair<std::map<std::string, BufferPtr>, std::map<std::string, BufferPtr>>> allocate_buffers();
-    Expected<std::map<std::string, BufferPtr>> allocate_input_buffers();
-    Expected<std::map<std::string, BufferPtr>> allocate_output_buffers();
+    virtual Expected<std::pair<std::map<std::string, BufferPtr>, std::map<std::string, BufferPtr>>> allocate_buffers(const std::unordered_set<std::string> &layers_not_to_allocate = {});
+    Expected<std::map<std::string, BufferPtr>> allocate_input_buffers(const std::unordered_set<std::string> &layers_not_to_allocate = {});
+    Expected<std::map<std::string, BufferPtr>> allocate_output_buffers(const std::unordered_set<std::string> &layers_not_to_allocate = {});
 
     hailo_status configure();
     hailo_status update_cache_offset(int32_t offset_delta_entries);
     hailo_status init_cache(uint32_t read_offset);
-    hailo_status finalize_cache();
+
+    Expected<std::unordered_map<uint32_t, BufferPtr>> get_cache_buffers();
+    hailo_status update_cache_buffer(uint32_t cache_id, MemoryView buffer);
 
     const Hef &get_hef() const;
     std::map<std::string, size_t> get_inputs_frame_size() const;

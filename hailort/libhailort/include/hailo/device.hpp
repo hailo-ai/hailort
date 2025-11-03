@@ -786,6 +786,7 @@ public:
     virtual hailo_status before_fork() = 0;
     virtual hailo_status after_fork_in_parent() = 0;
     virtual hailo_status after_fork_in_child() = 0;
+    virtual hailo_status echo_buffer_async(const MemoryView buffer) = 0;
 
     virtual ~Device() = default;
     Device(const Device &) = delete;

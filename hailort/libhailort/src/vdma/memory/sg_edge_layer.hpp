@@ -46,8 +46,8 @@ public:
     virtual uint16_t desc_page_size() const override;
     virtual uint32_t descs_count() const override;
 
-    virtual Expected<uint32_t> program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
-        size_t desc_offset, size_t buffer_offset = 0, uint32_t batch_size = 1, bool should_bind = false, uint32_t stride = 0) override;
+    virtual Expected<uint32_t> program_descriptors(size_t transfer_size, size_t desc_offset,
+        size_t buffer_offset = 0, uint32_t batch_size = 1) override;
 
 private:
     SgEdgeLayer(std::shared_ptr<SgBuffer> &&buffer, DescriptorList &&desc_list,

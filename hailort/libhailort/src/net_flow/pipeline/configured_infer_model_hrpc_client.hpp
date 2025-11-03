@@ -70,13 +70,20 @@ public:
     virtual hailo_status shutdown() override;
     virtual hailo_status update_cache_offset(int32_t offset_delta_entries) override;
     virtual hailo_status init_cache(uint32_t read_offset) override;
-    virtual hailo_status finalize_cache() override;
+    virtual Expected<std::unordered_map<uint32_t, BufferPtr>> get_cache_buffers() override;
+    virtual hailo_status update_cache_buffer(uint32_t cache_id, MemoryView buffer) override;
+    virtual Expected<AsyncInferJob> run_async_for_duration(const ConfiguredInferModel::Bindings &bindings, uint32_t duration_ms,
+        uint32_t sleep_between_frames_ms, std::function<void(const AsyncInferCompletionInfo &, uint32_t)> callback) override;
 
 private:
     virtual hailo_status validate_bindings(const ConfiguredInferModel::Bindings &bindings) override;
+    hailo_status validate_input_bindings(const ConfiguredInferModel::Bindings &bindings);
+    hailo_status validate_output_bindings(const ConfiguredInferModel::Bindings &bindings);
     Expected<AsyncInferJob> run_async_impl(const ConfiguredInferModel::Bindings &bindings,
         std::function<void(const AsyncInferCompletionInfo &)> callback);
     Expected<std::vector<RunAsyncSerializer::BufferInfo>> get_buffer_infos(const ConfiguredInferModel::Bindings &bindings);
+    hailo_status push_input_buffer_infos(const ConfiguredInferModel::Bindings &bindings, std::vector<RunAsyncSerializer::BufferInfo> &buffer_infos);
+    hailo_status push_output_buffer_infos(const ConfiguredInferModel::Bindings &bindings, std::vector<RunAsyncSerializer::BufferInfo> &buffer_infos);
     Expected<std::vector<TransferBuffer>> get_write_buffers(const ConfiguredInferModel::Bindings &bindings);
     Expected<std::vector<TransferBuffer>> get_read_buffers(const ConfiguredInferModel::Bindings &bindings);
 

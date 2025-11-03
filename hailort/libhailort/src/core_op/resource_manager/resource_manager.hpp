@@ -228,9 +228,6 @@ public:
     hailo_power_mode_t get_power_mode() const;
     Expected<CONTROL_PROTOCOL__host_buffer_info_t> get_boundary_buffer_info(vdma::BoundaryChannel &channel,
         uint32_t transfer_size);
-    Expected<uint16_t> program_desc_for_hw_only_flow(vdma::DescriptorList &desc_list,
-        vdma::MappedBuffer &mapped_buffer, vdma::ChannelId channel_id,
-        const uint32_t single_transfer_size, const uint16_t dynamic_batch_size, const uint32_t batch_count);
     hailo_status allocate_mapped_buffer_for_hw_only_infer(vdma::BoundaryChannelPtr boundary_channel_ptr,
         const HailoRTDriver::DmaDirection direction, const uint32_t single_transfer_size, uint16_t batch_size, uint16_t batch_count);
     hailo_status configure_mapped_buffer_for_hw_only_infer(vdma::BoundaryChannelPtr boundary_channel_ptr,

@@ -500,6 +500,8 @@ typedef struct {
     bool current_monitoring;
     /** Is current mdio supported */
     bool mdio;
+    /** Is power measurement supported */
+    bool power_measurement;
 } hailo_device_supported_features_t;
 
 /** Hailo extended device information */
@@ -732,7 +734,7 @@ typedef enum {
      *      };
      *      \endcode
      *
-     *      The host format type supported ::HAILO_FORMAT_TYPE_FLOAT32.
+     *      The host format type supported ::HAILO_FORMAT_TYPE_UINT8.
      *
      * - Not used for device side
      */
@@ -782,6 +784,8 @@ typedef enum {
      *
      *      Maximum amount of bboxes is ::hailo_nms_shape_t.max_bboxes_total.
      *      It is possible to use ::hailo_detections_t to parse the data.
+     *
+     *      The host format type supported ::HAILO_FORMAT_TYPE_UINT8.
      *
      * - Not used for device side
      */
@@ -1423,6 +1427,8 @@ typedef enum {
     HAILO_NOTIFICATION_ID_HW_INFER_MANAGER_INFER_DONE,
     /** Matches hailo_notification_message_parameters_t::context_switch_run_time_error */
     HAILO_NOTIFICATION_ID_CONTEXT_SWITCH_RUN_TIME_ERROR_EVENT,
+    /** Matches hailo_notification_message_parameters_t::nn_core_crc_error */
+    HAILO_NOTIFICATION_ID_NN_CORE_CRC_ERROR_EVENT,
 
     /** Must be last! */
     HAILO_NOTIFICATION_ID_COUNT,

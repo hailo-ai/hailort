@@ -42,10 +42,13 @@ LLMInferenceManager::LLMInferenceManager(std::shared_ptr<hailort::VDevice> vdevi
     InferenceManager(vdevice, model)
 {}
 
-Expected<std::pair<std::map<std::string, BufferPtr>, std::map<std::string, BufferPtr>>> LLMInferenceManager::allocate_buffers()
+Expected<std::pair<std::map<std::string, BufferPtr>, std::map<std::string, BufferPtr>>> LLMInferenceManager::allocate_buffers(const std::unordered_set<std::string> &layers_not_to_allocate)
 {
     std::map<std::string, BufferPtr> input_buffers;
     for (const auto &input : m_model->inputs()) {
+        if (contains(layers_not_to_allocate, input.name())) {
+            continue;
+        }
         TRY(auto buffer, Buffer::create_shared(input.get_frame_size(), BufferStorageParams::create_dma()));
         input_buffers[input.name()] = buffer;
     }
@@ -54,6 +57,9 @@ Expected<std::pair<std::map<std::string, BufferPtr>, std::map<std::string, Buffe
     // TODO (HRT-16650): concatinate the multiple outputs inside libhailort
     size_t acc_size = 0;
     for (const auto &output : m_model->outputs()) {
+        if (contains(layers_not_to_allocate, output.name())) {
+            continue;
+        }
         acc_size += output.get_frame_size();
     }
     TRY(auto buffer, Buffer::create_shared(acc_size, BufferStorageParams::create_dma()));

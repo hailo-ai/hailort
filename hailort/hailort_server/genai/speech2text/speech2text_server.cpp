@@ -58,14 +58,24 @@ static const std::string COMMON_LAYER_INPUT_DECODER_NAME = "base-whisper-decoder
 // TODO: HRT-18789 - Get from hef
 static const std::string TOKENS_LAYER_INPUT_DECODER_NAME = "base-whisper-decoder-10s-out-seq-64/input_layer2";
 
-Speech2TextServer::Speech2TextServer(std::shared_ptr<Session> session) :
+Speech2TextServer::Speech2TextServer(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager) :
     m_session(session),
+    m_vdevice_manager(vdevice_manager),
     m_generator_params(Speech2TextTask::TRANSCRIBE, "")
 {}
 
-Expected<std::unique_ptr<Speech2TextServer>> Speech2TextServer::create_unique(std::shared_ptr<Session> session)
+Speech2TextServer::~Speech2TextServer()
 {
-    auto ptr = make_unique_nothrow<Speech2TextServer>(session);
+    // Remove all references to local VDevice before marking it as removed
+    m_inference_manager_decoder.reset();
+    m_inference_manager_encoder.reset();
+
+    m_vdevice_manager->remove_vdevice(DEFAULT_SPEECH2TEXT_CONNECTION_PORT); // Use it as a unique client id
+}
+
+Expected<std::unique_ptr<Speech2TextServer>> Speech2TextServer::create_unique(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager)
+{
+    auto ptr = make_unique_nothrow<Speech2TextServer>(session, vdevice_manager);
     CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::unique_ptr<Speech2TextServer>(std::move(ptr));
@@ -80,7 +90,7 @@ Expected<Buffer> Speech2TextServer::handle_create_speech2text_request(const Memo
     if (!group_id.empty()) {
         params.group_id = group_id.c_str();
     }
-    TRY_AS_HRPC_STATUS(auto vdevice, hailort::VDevice::create_shared(params), Speech2TextCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto vdevice, m_vdevice_manager->create_shared_vdevice(params, DEFAULT_SPEECH2TEXT_CONNECTION_PORT), Speech2TextCreateSerializer);
     LOGGER__GENAI_STATS_END("[create-speech2text] create vdevice");
 
     LOGGER__GENAI_STATS_START("[create-speech2text] transfer HEF");
@@ -104,6 +114,7 @@ Expected<Buffer> Speech2TextServer::handle_create_speech2text_request(const Memo
     encoder_input.set_format_order(HAILO_FORMAT_ORDER_NCHW); // TODO: HRT-18868 - Remove
     TRY_AS_HRPC_STATUS(auto encoder_output, m_inference_manager_encoder->get_model()->output(), Speech2TextCreateSerializer);
     auto encoder_output_shape = encoder_output.shape();
+    encoder_output.set_format_order(HAILO_FORMAT_ORDER_NHCW);
 
     TRY_AS_HRPC_STATUS(auto encoder_buffers, m_inference_manager_encoder->allocate_buffers(), Speech2TextCreateSerializer);
     assert(encoder_buffers.first.size() == 1);
@@ -114,7 +125,7 @@ Expected<Buffer> Speech2TextServer::handle_create_speech2text_request(const Memo
     LOGGER__GENAI_STATS_END("[create-speech2text] configure speech2text encoder model");
 
     LOGGER__GENAI_STATS_START("[create-speech2text] create speech2text decoder model");
-    TRY_AS_HRPC_STATUS(m_inference_manager_decoder, DecoderInferenceManager::create(vdevice, hef, SPEECH2TEXT_DECODER_MODEL_NAME, EMBEDDINGS_OUTPUT_LAYERS_NAMES), Speech2TextCreateSerializer);
+    TRY_AS_HRPC_STATUS(m_inference_manager_decoder, InferenceManager::create(vdevice, hef, SPEECH2TEXT_DECODER_MODEL_NAME), Speech2TextCreateSerializer);
     LOGGER__GENAI_STATS_END("[create-speech2text] create speech2text decoder model");
 
     LOGGER__GENAI_STATS_START("[create-speech2text] configure speech2text decoder model");
@@ -122,6 +133,7 @@ Expected<Buffer> Speech2TextServer::handle_create_speech2text_request(const Memo
     // Check that the decoder input shape is the same as the encoder output shape
     TRY_AS_HRPC_STATUS(auto decoder_input, m_inference_manager_decoder->get_model()->input(COMMON_LAYER_INPUT_DECODER_NAME), Speech2TextCreateSerializer);
     auto decoder_input_shape = decoder_input.shape();
+    decoder_input.set_format_order(HAILO_FORMAT_ORDER_NHCW);
     CHECK_AS_HRPC_STATUS(((decoder_input_shape.height == encoder_output_shape.height) && (decoder_input_shape.width == encoder_output_shape.width) &&
         (decoder_input_shape.features == encoder_output_shape.features)), HAILO_INVALID_ARGUMENT, Speech2TextCreateSerializer);
 
@@ -130,9 +142,10 @@ Expected<Buffer> Speech2TextServer::handle_create_speech2text_request(const Memo
     m_embeddings_outputs_row_size = 0;
     for (auto &output_name : decoder_outputs_names) {
         TRY_AS_HRPC_STATUS(auto output, m_inference_manager_decoder->get_model()->output(output_name), Speech2TextCreateSerializer);
-        output.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
         if (contains(EMBEDDINGS_OUTPUT_LAYERS_NAMES, output_name)) {
-            m_embeddings_outputs_cols_sizes.push_back(output.shape().features);
+            const auto &quant_infos = output.get_quant_infos();
+            CHECK_AS_HRPC_STATUS(quant_infos.size() == 1, HAILO_INVALID_ARGUMENT, Speech2TextCreateSerializer);
+            m_embeddings_outputs_info.emplace_back(output_name, output.shape().features, quant_infos[0]);
 
             if (m_embeddings_outputs_row_size == 0) {
                 m_embeddings_outputs_row_size = output.shape().width;
@@ -142,14 +155,18 @@ Expected<Buffer> Speech2TextServer::handle_create_speech2text_request(const Memo
             }
         }
     }
-    m_vocab_size = std::accumulate(m_embeddings_outputs_cols_sizes.begin(), m_embeddings_outputs_cols_sizes.end(), 0);
+    m_vocab_size = std::accumulate(m_embeddings_outputs_info.begin(), m_embeddings_outputs_info.end(), 0, [](size_t acc, const auto &output_info) {
+        return acc + std::get<1>(output_info);
+    });
 
-    std::vector<std::string> layers_not_to_allocate = {COMMON_LAYER_INPUT_DECODER_NAME};
+    std::unordered_set<std::string> layers_not_to_allocate = {COMMON_LAYER_INPUT_DECODER_NAME};
     TRY_AS_HRPC_STATUS(m_decoder_buffers, m_inference_manager_decoder->allocate_buffers(layers_not_to_allocate), Speech2TextCreateSerializer);
     m_decoder_buffers.first[COMMON_LAYER_INPUT_DECODER_NAME] = m_encoder_output_buffer; // Using the same buffer for encoder output and decoder input
     m_decoder_inputs = buffers_to_memviews(m_decoder_buffers.first);
     m_decoder_outputs = buffers_to_memviews(m_decoder_buffers.second);
-    TRY_AS_HRPC_STATUS(m_decoder_reordered_output_buffer, Buffer::create(m_decoder_outputs[CONCATENATED_OUTPUT_NAME].size()), Speech2TextCreateSerializer);
+
+    // Buffer used to store the next token scores after extracting and dequantizing the decoder outputs' embeddings to float32
+    TRY_AS_HRPC_STATUS(m_next_token_scores_buffer, Buffer::create(m_vocab_size * sizeof(float32_t), BufferStorageParams::create_dma()), Speech2TextCreateSerializer);
 
     CHECK_SUCCESS_AS_HRPC_STATUS(m_inference_manager_decoder->configure(), Speech2TextCreateSerializer);
     LOGGER__GENAI_STATS_END("[create-speech2text] configure speech2text decoder model");
@@ -185,6 +202,14 @@ Expected<Buffer> Speech2TextServer::handle_create_speech2text_request(const Memo
     m_post_process = Speech2TextPostProcess(CHUNK_SIZE_SEC, TIMESTAMP_BEGIN_TOKEN_ID, EOT_TOKEN_ID, std::move(blank_tokens), std::move(special_tokens), TIME_PRECISION, MAX_INITIAL_TIMESTAMP);
 
     return Speech2TextCreateSerializer::serialize_reply(HAILO_SUCCESS);
+}
+
+Expected<Buffer> Speech2TextServer::handle_tokenize_request(const MemoryView &request)
+{
+    TRY_AS_HRPC_STATUS(auto prompt, Speech2TextTokenizeSerializer::deserialize_request(request), Speech2TextTokenizeSerializer);
+    TRY_AS_HRPC_STATUS(auto tokens, m_tokenizer->text_to_tokens(prompt), Speech2TextTokenizeSerializer);
+    TRY_AS_HRPC_STATUS(auto reply, Speech2TextTokenizeSerializer::serialize_reply(HAILO_SUCCESS, tokens), Speech2TextTokenizeSerializer);
+    return reply;
 }
 
 Expected<int> Speech2TextServer::language_to_token_id(const std::string &language)
@@ -290,7 +315,7 @@ Expected<int> Speech2TextServer::update_segments_and_calc_seek(const std::vector
     // Multiple segments
     if (!segments_end_timestamp_indexes.empty()) {
         if (single_end) {
-            segments_end_timestamp_indexes.push_back(tokens.size()); // cut at the very end
+            segments_end_timestamp_indexes.push_back(tokens.size() - 1); // cut at the very end
         }
 
         size_t curr_segment_start_ts_index = 0;
@@ -320,7 +345,10 @@ Expected<int> Speech2TextServer::update_segments_and_calc_seek(const std::vector
             duration_sec = static_cast<float32_t>(last_timestamp - TIMESTAMP_BEGIN_TOKEN_ID) * TIME_PRECISION;
         }
 
-        std::vector<int> text_tokens(tokens.begin() + 1, tokens.end() - 1); // the plus 1 is to exclude the timestamp tokens from the text
+        auto tokens_end_iter = (tokens.size() > 1) && is_timestamp_token(tokens[tokens.size() - 1]) ?
+            tokens.end() - 1 : // if the last token is a timestamp, exclude it from the text
+            tokens.end();
+        std::vector<int> text_tokens(tokens.begin() + 1, tokens_end_iter); // the plus 1 is to exclude the timestamp tokens from the text
         TRY(auto text, m_tokenizer->tokens_to_text(text_tokens));
         segment_info.text = std::move(text);
         segment_info.start_sec = time_offset;
@@ -333,29 +361,34 @@ Expected<int> Speech2TextServer::update_segments_and_calc_seek(const std::vector
     return seek;
 }
 
-// TODO: HRT-18595 - Optimize - Try to avoid reorder if possible / optimize it.
-Eigen::Map<Eigen::Matrix<float32_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> Speech2TextServer::reorder_outputs(MemoryView output_buffer)
+Eigen::Map<Eigen::VectorXf> Speech2TextServer::get_next_token_scores(int next_token_idx)
 {
-    Eigen::Map<Eigen::Matrix<float32_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> reordered_matrix(reinterpret_cast<float32_t*>(m_decoder_reordered_output_buffer.data()),
-        m_embeddings_outputs_row_size, m_vocab_size);
+    float32_t *dst_ptr = reinterpret_cast<float32_t*>(m_next_token_scores_buffer.data());
+    Eigen::Map<Eigen::VectorXf> dst_row(dst_ptr, m_vocab_size);
 
-    size_t offset = 0;
-    float32_t* data_ptr = reinterpret_cast<float32_t*>(output_buffer.data());
-    for (size_t i = 0; i < m_embeddings_outputs_cols_sizes.size(); i++) {
-        size_t current_cols = m_embeddings_outputs_cols_sizes[i];
-        size_t dst_col_offset = std::accumulate(m_embeddings_outputs_cols_sizes.begin(), m_embeddings_outputs_cols_sizes.begin() + i, 0);
+    size_t dst_col_offset = 0;
+    const size_t row_idx = static_cast<size_t>(next_token_idx - 1);
+    for (auto &output_info : m_embeddings_outputs_info) {
+        auto &output_name = std::get<0>(output_info);
+        const size_t current_cols = std::get<1>(output_info);
+        auto &quant_info = std::get<2>(output_info);
 
-        // Map the source part as a matrix
-        Eigen::Map<Eigen::Matrix<float32_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> src_mat(data_ptr + offset,
-            m_embeddings_outputs_row_size, current_cols);
+        uint8_t *src_ptr = reinterpret_cast<uint8_t*>(m_decoder_outputs[output_name].data());
 
-        // Assign directly into the block of the destination matrix
-        reordered_matrix.block(0, dst_col_offset, m_embeddings_outputs_row_size, current_cols) = src_mat;
+        auto scale = quant_info.qp_scale;
+        auto zero_point = quant_info.qp_zp;
 
-        offset += m_embeddings_outputs_row_size * current_cols;
+        const size_t row_offset = row_idx * current_cols;
+        const uint8_t *src_row_ptr = src_ptr + row_offset;
+
+        // Dequantize this row segment into the correct region of dst_row
+        Eigen::Map<Eigen::Array<uint8_t, Eigen::Dynamic, 1>> quant_row(const_cast<uint8_t*>(src_row_ptr), current_cols);
+        dst_row.segment(dst_col_offset, current_cols) = (quant_row.cast<float32_t>().array() - zero_point) * scale;
+
+        dst_col_offset += current_cols;
     }
 
-    return reordered_matrix;
+    return dst_row;
 }
 
 Expected<std::pair<std::vector<int>, float32_t>> Speech2TextServer::decoder_loop(const std::vector<int> &context_tokens)
@@ -367,10 +400,6 @@ Expected<std::pair<std::vector<int>, float32_t>> Speech2TextServer::decoder_loop
     // Since we don't use previous context tokens, we probably can loop over the full sequence length.
     // TODO: HRT-18595 - Remove it, and check accuracy and performance.
     auto sample_len = m_decoder_seq_length / 2;
-
-    int vocab_size = static_cast<int>(m_decoder_outputs[CONCATENATED_OUTPUT_NAME].size() / m_decoder_seq_length / sizeof(float32_t));
-    Eigen::Map<Eigen::MatrixXf> decoder_output_matrix(reinterpret_cast<float32_t*>(m_decoder_outputs[CONCATENATED_OUTPUT_NAME].data()),
-        m_decoder_seq_length, vocab_size);
 
     // TODO HRT-18570 - Use `tokens` directly, need to adjust the post-process
     std::vector<int> generated_tokens = context_tokens;
@@ -387,10 +416,7 @@ Expected<std::pair<std::vector<int>, float32_t>> Speech2TextServer::decoder_loop
         LOGGER__GENAI_STATS_END("[generate-speech2text] hw-inference decoder model");
 
         LOGGER__GENAI_STATS_START("[generate-speech2text] decoder - post-process");
-        auto final_output = reorder_outputs(m_decoder_outputs[CONCATENATED_OUTPUT_NAME]);
-        // Note: Each time we consider the logits of the last token generated.
-        // OpenAI ref: https://github.com/openai/whisper/blob/main/whisper/decoding.py#L695
-        Eigen::Map<Eigen::VectorXf> next_token_scores(final_output.row(next_token_idx - 1).data(), vocab_size);
+        Eigen::Map<Eigen::VectorXf> next_token_scores = get_next_token_scores(next_token_idx);
 
         auto [next_token, logprob] = m_post_process.get_next_token(next_token_scores, generated_tokens);
         padded_input_tokens[next_token_idx] = next_token;
@@ -419,9 +445,10 @@ Expected<std::pair<std::vector<int>, float32_t>> Speech2TextServer::decoder_loop
     return std::make_pair(std::move(result_tokens), sum_logprobs);
 }
 
-Expected<std::unique_ptr<Speech2TextServerManager>> Speech2TextServerManager::create(std::shared_ptr<Session> session)
+Expected<std::unique_ptr<Speech2TextServerManager>> Speech2TextServerManager::create(std::shared_ptr<Session> session,
+    std::shared_ptr<VDeviceManager> vdevice_manager)
 {
-    TRY(auto server, Speech2TextServer::create_unique(session));
+    TRY(auto server, Speech2TextServer::create_unique(session, vdevice_manager));
 
     auto ptr = make_unique_nothrow<Speech2TextServerManager>(session, std::move(server));
     CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY); // Consider returning different status
@@ -436,6 +463,8 @@ Speech2TextServerManager::Speech2TextServerManager(std::shared_ptr<Session> sess
         [&](const MemoryView &request) { return m_server->handle_create_speech2text_request(request); };
     m_dispatcher[HailoGenAIActionID::SPEECH2TEXT__GENERATE] =
         [&](const MemoryView &request) { return m_server->handle_generate_request(request); };
+    m_dispatcher[HailoGenAIActionID::SPEECH2TEXT__TOKENIZE] =
+        [&](const MemoryView &request) { return m_server->handle_tokenize_request(request); };
     m_dispatcher[HailoGenAIActionID::SPEECH2TEXT__RELEASE] =
         [&](const MemoryView &request) { (void)request; m_server.reset(); return Speech2TextReleaseSerializer::serialize_reply(HAILO_SUCCESS); };
 }

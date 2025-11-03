@@ -28,6 +28,9 @@ namespace hailort
 #define HAILORT_CHECK_CACHE_UPDATE_ENV_VAR ("HAILORT_CHECK_CACHE_UPDATE")
 #define HAILORT_REQUIRE_CACHE_CHANGES_ENV_VAR ("HAILORT_REQUIRE_CACHE_CHANGES")
 
+/* Controls the number of descriptor lists in cache MultiSgEdgeLayer (set for double buffering) */
+#define HAILO_CACHE_DESC_LISTS_COUNT_ENV_VAR ("HAILO_CACHE_DESC_LISTS_COUNT")
+
 /* Used for the internal CLI mode `measure-nnc-performance` */
 #define HAILO_CONFIGURE_FOR_HW_INFER_ENV_VAR ("HAILO_CONFIGURE_FOR_HW_INFER")
 

@@ -3,7 +3,6 @@ cmake_minimum_required(VERSION 3.5.0)
 set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/genai_common.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/llm/llm.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/text2image/text2image.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vlm/vlm.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/speech2text/speech2text.cpp
 )

@@ -18,6 +18,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_set>
+#include <malloc.h>
 
 namespace hailort
 {
@@ -112,6 +113,12 @@ public:
                 release_resource = true;
                 res = resource->resource;
                 m_resources.erase(handle);
+
+#ifdef  __linux__
+                if (std::is_same_v<T, VDevice>) {
+                    malloc_trim(0); // Fixes out of memory issue by releasing already freed memory back to the system
+                }
+#endif
             }
         }
         if (release_resource) {
@@ -136,6 +143,11 @@ public:
                         release_resource = true;
                         res.push_back(iter->second->resource);
                         iter = m_resources.erase(iter);
+#ifdef __linux__
+                        if (std::is_same_v<T, VDevice>) {
+                            malloc_trim(0); // Fixes out of memory issue by releasing already freed memory back to the system
+                        }
+#endif
                     }
                 }
             }

@@ -31,7 +31,6 @@ set(SRC_FILES
 
     ${CMAKE_CURRENT_SOURCE_DIR}/pcie/pcie_device.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/integrated/integrated_device.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/pcie/pcie_device_hrpc_client.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/boundary_channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/channels_group.cpp
@@ -44,6 +43,7 @@ set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/mapped_buffer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/dma_able_buffer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/sg_edge_layer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/memory/multi_sg_edge_layer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/continuous_edge_layer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/buffer_requirements.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/vdma_buffer.cpp

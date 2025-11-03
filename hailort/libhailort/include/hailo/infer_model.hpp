@@ -382,7 +382,10 @@ public:
 
     hailo_status update_cache_offset(int32_t offset_delta_entries);
     hailo_status init_cache(uint32_t read_offset);
-    hailo_status finalize_cache();
+    Expected<std::unordered_map<uint32_t, BufferPtr>> get_cache_buffers();
+    hailo_status update_cache_buffer(uint32_t cache_id, MemoryView buffer);
+    Expected<AsyncInferJob> run_async_for_duration(const Bindings &bindings, uint32_t duration_ms,
+        uint32_t sleep_between_frames_ms, std::function<void(const AsyncInferCompletionInfo &completion_info, uint32_t fps)> callback);
 
 private:
     friend class InferModelBase;

@@ -11,6 +11,7 @@
 
 #include "hailo/hailort_defaults.hpp"
 #include "hailo/hailort_common.hpp"
+#include "hailo/quantization.hpp"
 
 #include "common/file_utils.hpp"
 
@@ -29,21 +30,21 @@ static const std::string VIS_SPECIAL_TOKEN_RESOURCE_NAME = "special_token__visio
 
 constexpr uint32_t VLMServer::MAX_FRAMES_IN_SINGLE_GENERATION;
 
-Expected<std::unique_ptr<LLMServer>> VLMServer::create_unique(std::shared_ptr<Session> session)
+Expected<std::unique_ptr<LLMServer>> VLMServer::create_unique(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager)
 {
     // Init with generation default params, will be overwritten by the params from the HEF
     auto post_process_params = LLMGeneratorParams(VLMServer::DEFAULT_GENERATION_TEMPERATURE, VLMServer::DEFAULT_GENERATION_TOP_P,
         VLMServer::DEFAULT_GENERATION_TOP_K, VLMServer::DEFAULT_GENERATION_FREQ_PENALTY, LLMServer::DEFAULT_GENERATION_MAX_GENERATED_TOKENS,
         VLMServer::DEFAULT_GENERATION_DO_SAMPLE, HAILO_RANDOM_SEED);
 
-    auto ptr = std::make_unique<VLMServer>(session, std::move(post_process_params));
+    auto ptr = std::make_unique<VLMServer>(session, vdevice_manager, std::move(post_process_params));
     CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY); // Consider returning different status
 
     return std::unique_ptr<LLMServer>(std::move(ptr));
 }
 
-VLMServer::VLMServer(std::shared_ptr<Session> session, LLMGeneratorParams &&post_process_params) :
-        LLMServer(session, std::move(post_process_params))
+VLMServer::VLMServer(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager, LLMGeneratorParams &&post_process_params) :
+        LLMServer(session, vdevice_manager, std::move(post_process_params))
 {
 }
 
@@ -72,7 +73,7 @@ Expected<Buffer> VLMServer::handle_create_vlm_request(const MemoryView &request)
     if (!group_id.empty()) {
         params.group_id = group_id.c_str();
     }
-    TRY_AS_HRPC_STATUS(auto vdevice, hailort::VDevice::create_shared(params), VLMCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto vdevice, m_vdevice_manager->create_shared_vdevice(params, DEFAULT_LLM_CONNECTION_PORT), VLMCreateSerializer);
     LOGGER__GENAI_STATS_END("[create-vlm] create vdevice");
 
     LOGGER__GENAI_STATS_START("[create-vlm] transfer HEF");
@@ -93,6 +94,14 @@ Expected<Buffer> VLMServer::handle_create_vlm_request(const MemoryView &request)
     TRY_AS_HRPC_STATUS(auto hef, Hef::create(hef_buffer_ptr), VLMCreateSerializer);
     hef.set_memory_footprint_optimization(true); // zero-copy configuration if possible
     LOGGER__GENAI_STATS_END("[create-vlm] create HEF");
+
+    LOGGER__GENAI_STATS_START("[create-vlm] parse GenAI resources");
+    TRY_AS_HRPC_STATUS(auto hailo_config_json_view, hef.get_external_resources(HAILO_CONFIG_JSON), VLMCreateSerializer);
+    CHECK_SUCCESS_AS_HRPC_STATUS(parse_config_json(hailo_config_json_view), VLMCreateSerializer);
+
+    TRY_AS_HRPC_STATUS(auto theta_view, hef.get_external_resources(THETA), VLMCreateSerializer);
+    auto theta = LLMPreProcess::generate_theta_from_memview(theta_view);
+    LOGGER__GENAI_STATS_END("[create-vlm] parse GenAI resources");
 
     LOGGER__GENAI_STATS_START("[create-vlm] create vision encoder model");
     TRY_AS_HRPC_STATUS(auto frame_encoder_model_name, get_model_name_from_suffix(hef, FRAME_ENCODER_MODEL_NAME_SUFFIX),
@@ -130,7 +139,7 @@ Expected<Buffer> VLMServer::handle_create_vlm_request(const MemoryView &request)
     LOGGER__GENAI_STATS_START("[create-vlm] configure prefill model");
     auto model_prefill = m_inference_manager_prefill->get_model();
     for (auto input : model_prefill->inputs()) {
-        if (LLMPreProcess::is_positional_embed_layer(input.name())) {
+        if (LLMPreProcess::is_positional_embed_layer(input.name(), m_input_layers_names_suffixes)) {
             input.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
         }
     }
@@ -156,7 +165,7 @@ Expected<Buffer> VLMServer::handle_create_vlm_request(const MemoryView &request)
     if (m_inference_manager_tbt) {
         auto model_tbt = m_inference_manager_tbt->get_model();
         for (auto input : model_tbt->inputs()) {
-            if (LLMPreProcess::is_positional_embed_layer(input.name())) {
+            if (LLMPreProcess::is_positional_embed_layer(input.name(), m_input_layers_names_suffixes)) {
                 input.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
             }
         }
@@ -170,38 +179,38 @@ Expected<Buffer> VLMServer::handle_create_vlm_request(const MemoryView &request)
     }
     LOGGER__GENAI_STATS_END("[create-vlm] configure tbt model");
 
-    CHECK_SUCCESS_AS_HRPC_STATUS(m_inference_manager_prefill->init_cache(0), VLMCreateSerializer);
-
-    LOGGER__GENAI_STATS_START("[create-vlm] parse GenAI resources");
+    LOGGER__GENAI_STATS_START("[create-vlm] create PreProcess");
     auto prefill_inputs_frame_size = m_inference_manager_prefill->get_inputs_frame_size();
     auto tbt_inputs_frame_size = m_inference_manager_tbt ? m_inference_manager_tbt->get_inputs_frame_size() : std::map<std::string, size_t>();
 
-    TRY_AS_HRPC_STATUS(auto hailo_config_json_view, hef.get_external_resources(HAILO_CONFIG_JSON), VLMCreateSerializer);
-    CHECK_SUCCESS_AS_HRPC_STATUS(parse_config_json(hailo_config_json_view), VLMCreateSerializer);
-
-    TRY_AS_HRPC_STATUS(auto theta_view, hef.get_external_resources(THETA), VLMCreateSerializer);
-    auto theta = LLMPreProcess::generate_theta_from_memview(theta_view);
-
     // Extract embeddings layer info
     // TODO: HRT-16646 - Add this to embeddings binary format in hef
-    TRY_AS_HRPC_STATUS(auto embeddings_input_name, get_layer_name_from_suffix<size_t>(INPUT_LAYER_EMBEDDINGS_SUFF, prefill_inputs_frame_size),
+    TRY_AS_HRPC_STATUS(auto embeddings_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.embeddings, prefill_inputs_frame_size),
         VLMCreateSerializer);
     TRY_AS_HRPC_STATUS(auto embeddings_input, m_inference_manager_prefill->get_model()->input(embeddings_input_name),
         VLMCreateSerializer);
     auto embeddings_features = embeddings_input.shape().features;
-    LOGGER__GENAI_STATS_END("[create-vlm] parse GenAI resources");
 
-    LOGGER__GENAI_STATS_START("[create-vlm] create PreProcess");
+    // Get scaled-mask value
+    TRY_AS_HRPC_STATUS(auto mask_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.attention_mask, prefill_inputs_frame_size),
+        VLMCreateSerializer);
+    TRY(auto mask_input, m_inference_manager_prefill->get_model()->input(mask_input_name));
+    auto mask_quant_infos = mask_input.get_quant_infos();
+    CHECK_AS_HRPC_STATUS(1 == mask_quant_infos.size(), HAILO_INTERNAL_FAILURE, VLMCreateSerializer);
+    float32_t dequantized_mask_value = 1;
+    uint8_t scaled_mask_value = 0;
+    Quantization::quantize_input_buffer<float32_t, uint8_t>(&dequantized_mask_value, &scaled_mask_value, 1, mask_quant_infos[0]);
+
     TRY_AS_HRPC_STATUS(m_pre_process, VLMPreProcess::create(prefill_inputs_frame_size, tbt_inputs_frame_size,
-        std::move(theta), embeddings_features, encoder_input_config.shape()),
+        std::move(theta), embeddings_features, encoder_input_config.shape(), scaled_mask_value, m_input_layers_names_suffixes, m_pre_process_params),
         VLMCreateSerializer);
     LOGGER__GENAI_STATS_END("[create-vlm] create PreProcess");
 
     LOGGER__GENAI_STATS_START("[create-vlm] create tokenizer");
+    const auto embeddings_per_frame = dynamic_cast<VLMPreProcess*>(m_pre_process.get())->embeddings_per_frame();
     if (!tokenizer_on_host) {
         // create token_embedder
         TRY_AS_HRPC_STATUS(auto embeddings_view, hef.get_external_resources(INPUT_EMB_BINARY), VLMCreateSerializer);
-        const auto embeddings_per_frame = dynamic_cast<VLMPreProcess*>(m_pre_process.get())->embeddings_per_frame();
         TRY_AS_HRPC_STATUS(m_token_embedder, TokenEmbedder<uint16_t>::create(embeddings_view,
             embeddings_view.size() / (sizeof(uint16_t) * embeddings_features), embeddings_features,
             m_image_pad_token_id, embeddings_per_frame), VLMCreateSerializer);
@@ -220,8 +229,8 @@ Expected<Buffer> VLMServer::handle_create_vlm_request(const MemoryView &request)
     hailo_format_t input_frame_format = encoder_input_config.format();
     hailo_3d_image_shape_t input_frame_shape = encoder_input_config.shape();
 
-    TRY_AS_HRPC_STATUS(auto reply, VLMCreateSerializer::serialize_reply(HAILO_SUCCESS, input_frame_shape, input_frame_format, m_chat_template),
-        VLMCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto reply, VLMCreateSerializer::serialize_reply(HAILO_SUCCESS, input_frame_shape, input_frame_format, m_chat_template, embeddings_features,
+        m_image_pad_token_id, embeddings_per_frame), VLMCreateSerializer);
     return reply;
 }
 
@@ -271,6 +280,7 @@ hailo_status VLMServer::process_prefill_inputs_chunk(std::map<std::string, Memor
 
     LOGGER__GENAI_STATS_START("[vlm-generate-prefill] update cache offset");
     CHECK_SUCCESS(m_inference_manager_prefill->update_cache_offset(static_cast<int32_t>(input_embeddings.size())));
+
     LOGGER__GENAI_STATS_END("[vlm-generate-prefill] update cache offset");
 
     LOGGER__GENAI_STATS_START("[vlm-generate-prefill] hw-inference prefill");
@@ -285,8 +295,8 @@ Expected<int> VLMServer::get_next_token_prefill(std::map<std::string, MemoryView
     const std::vector<MemoryView> &frame_embeddings,
     const LLMGeneratorParams &params)
 {
-    size_t num_full_chunks = input_embeddings.size() / PREFILL_INPUT_TOKENS_SIZE;
-    size_t remainder_size = input_embeddings.size() % PREFILL_INPUT_TOKENS_SIZE;
+    size_t num_full_chunks = input_embeddings.size() / m_pre_process_params.prefill_input_tokens_count;
+    size_t remainder_size = input_embeddings.size() % m_pre_process_params.prefill_input_tokens_count;
 
     uint32_t current_frame_index = 0;
     uint32_t current_emb_index_in_frame = 0;
@@ -301,7 +311,7 @@ Expected<int> VLMServer::get_next_token_prefill(std::map<std::string, MemoryView
     // Process full prefill chunks
     size_t offset = remainder_size;
     for (size_t i = 0; i < num_full_chunks; ++i) {
-        std::vector<MemoryView> input_embeddings_chunk(input_embeddings.begin() + offset, input_embeddings.begin() + offset + PREFILL_INPUT_TOKENS_SIZE);
+        std::vector<MemoryView> input_embeddings_chunk(input_embeddings.begin() + offset, input_embeddings.begin() + offset + m_pre_process_params.prefill_input_tokens_count);
         CHECK_SUCCESS(process_prefill_inputs_chunk(prefill_inputs, prefill_outputs, input_embeddings_chunk, frame_embeddings,
             current_frame_index, current_emb_index_in_frame));
         offset += input_embeddings_chunk.size();
@@ -328,7 +338,6 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> VLMServer::handle_prefi
 
     TRY(auto next_token, get_next_token_prefill(m_prefill_inputs, m_prefill_outputs,
         embeddings, m_current_frame_embeddings, m_current_generation_params));
-    CHECK_SUCCESS(m_inference_manager_prefill->finalize_cache());
 
     m_current_frame_embeddings.clear();
     m_generated_token_count++;
@@ -342,9 +351,9 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> VLMServer::handle_prefi
     return std::make_pair(next_token, generation_status);
 }
 
-Expected<std::unique_ptr<LLMServerManager>> VLMServerManager::create(std::shared_ptr<Session> session)
+Expected<std::unique_ptr<LLMServerManager>> VLMServerManager::create(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager)
 {
-    auto server = VLMServer::create_unique(session);
+    auto server = VLMServer::create_unique(session, vdevice_manager);
     CHECK_EXPECTED(server);
 
     auto ptr = std::make_unique<VLMServerManager>(session, std::move(server.value()));

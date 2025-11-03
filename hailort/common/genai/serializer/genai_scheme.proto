@@ -13,31 +13,26 @@ message GenAIRpcRequest {
         LLM_Generator_Abort_Request llm_generator_abort = 7;
         LLM_Generator_Release_Request llm_generator_release = 8;
         LLM_Tokenize_Request llm_tokenize = 9;
-        LLM_Clear_Context_Request llm_clear_context = 10;
-        LLM_Set_End_Of_Generation_Sequence_Request llm_set_end_of_generation_sequence = 11;
-        LLM_Get_End_Of_Generation_Sequence_Request llm_get_end_of_generation_sequence = 12;
-        LLM_Release_Request llm_release = 13;
-        LLM_Set_Stop_Tokens_Request llm_set_stop_tokens = 14;
-        LLM_Get_Stop_Tokens_Request llm_get_stop_tokens = 15;
+        LLM_Get_Context_Request llm_get_context = 10;
+        LLM_Set_Context_Request llm_set_context = 11;
+        LLM_Clear_Context_Request llm_clear_context = 12;
+        LLM_Set_End_Of_Generation_Sequence_Request llm_set_end_of_generation_sequence = 13;
+        LLM_Get_End_Of_Generation_Sequence_Request llm_get_end_of_generation_sequence = 14;
+        LLM_Release_Request llm_release = 15;
+        LLM_Set_Stop_Tokens_Request llm_set_stop_tokens = 16;
+        LLM_Get_Stop_Tokens_Request llm_get_stop_tokens = 17;
+        LLM_Get_Context_Usage_Size_Request llm_get_context_usage_size = 18;
+        LLM_Get_Max_Context_Capacity_Request llm_get_max_context_capacity = 19;
 
-        VLM_Create_Request vlm_create = 16;
-        VLM_Generator_Generate_Request vlm_generator_generate = 17;
+        VLM_Create_Request vlm_create = 20;
+        VLM_Generator_Generate_Request vlm_generator_generate = 21;
 
-        Text2Image_Create_Request text2image_create = 18;
-        Text2Image_Get_Generator_Params_Request text2image_get_generator_params = 19;
-        Text2Image_Generator_Create_Request text2image_generator_create = 20;
-        Text2Image_Generator_Generate_Request text2image_generator_generate = 21;
-        Text2Image_Get_IP_Adapter_Frame_Info_Request text2image_get_ip_adapter_frame_info = 22;
-        Text2Image_Tokenize_Request text2image_tokenize = 23;
-        Text2Image_Generator_Set_Initial_Noise_Request text2image_generator_set_initial_noise = 24;
-        Text2Image_Generator_Abort_Request text2image_generator_abort = 25;
-        Text2Image_Release_Request text2image_release = 26;
+        GenAI_Check_Hef_Exists_Request genai_check_hef_exists = 22;
 
-        GenAI_Check_Hef_Exists_Request genai_check_hef_exists = 27;
-
-        Speech2Text_Create_Request speech2text_create = 28;
-        Speech2Text_Generate_Request speech2text_generate = 29;
-        Speech2Text_Release_Request speech2text_release = 30;
+        Speech2Text_Create_Request speech2text_create = 23;
+        Speech2Text_Generate_Request speech2text_generate = 24;
+        Speech2Text_Release_Request speech2text_release = 25;
+        Speech2Text_Tokenize_Request speech2text_tokenize = 26;
     }
 }
 
@@ -52,31 +47,26 @@ message GenAIRpcReply {
         LLM_Generator_Abort_Reply llm_generator_abort = 7;
         LLM_Generator_Release_Reply llm_generator_release = 8;
         LLM_Tokenize_Reply llm_tokenize = 9;
-        LLM_Clear_Context_Reply llm_clear_context = 10;
-        LLM_Set_End_Of_Generation_Sequence_Reply llm_set_end_of_generation_sequence = 11;
-        LLM_Get_End_Of_Generation_Sequence_Reply llm_get_end_of_generation_sequence = 12;
-        LLM_Release_Reply llm_release = 13;
-        LLM_Set_Stop_Tokens_Reply llm_set_stop_tokens = 14;
-        LLM_Get_Stop_Tokens_Reply llm_get_stop_tokens = 15;
-        
-        VLM_Create_Reply vlm_create = 16;
-        VLM_Generator_Generate_Reply vlm_generator_generate = 17;
+        LLM_Get_Context_Reply llm_get_context = 10;
+        LLM_Set_Context_Reply llm_set_context = 11;
+        LLM_Clear_Context_Reply llm_clear_context = 12;
+        LLM_Set_End_Of_Generation_Sequence_Reply llm_set_end_of_generation_sequence = 13;
+        LLM_Get_End_Of_Generation_Sequence_Reply llm_get_end_of_generation_sequence = 14;
+        LLM_Release_Reply llm_release = 15;
+        LLM_Set_Stop_Tokens_Reply llm_set_stop_tokens = 16;
+        LLM_Get_Stop_Tokens_Reply llm_get_stop_tokens = 17;
+        LLM_Get_Context_Usage_Size_Reply llm_get_context_usage_size = 18;
+        LLM_Get_Max_Context_Capacity_Reply llm_get_max_context_capacity = 19;
 
-        Text2Image_Create_Reply text2image_create = 18;
-        Text2Image_Get_Generator_Params_Reply text2image_get_generator_params = 19;
-        Text2Image_Generator_Create_Reply text2image_generator_create = 20;
-        Text2Image_Generator_Generate_Reply text2image_generator_generate = 21;
-        Text2Image_Get_IP_Adapter_Frame_Info_Reply text2image_get_ip_adapter_frame_info = 22;
-        Text2Image_Tokenize_Reply text2image_tokenize = 23;
-        Text2Image_Generator_Set_Initial_Noise_Reply text2image_generator_set_initial_noise = 24;
-        Text2Image_Generator_Abort_Reply text2image_generator_abort = 25;
-        Text2Image_Release_Reply text2image_release = 26;
+        VLM_Create_Reply vlm_create = 20;
+        VLM_Generator_Generate_Reply vlm_generator_generate = 21;
 
-        GenAI_Check_Hef_Exists_Reply genai_check_hef_exists = 27;
+        GenAI_Check_Hef_Exists_Reply genai_check_hef_exists = 22;
 
-        Speech2Text_Create_Reply speech2text_create = 28;
-        Speech2Text_Generate_Reply speech2text_generate = 29;
-        Speech2Text_Release_Reply speech2text_release = 30;
+        Speech2Text_Create_Reply speech2text_create = 23;
+        Speech2Text_Generate_Reply speech2text_generate = 24;
+        Speech2Text_Release_Reply speech2text_release = 25;
+        Speech2Text_Tokenize_Reply speech2text_tokenize = 26;
     }
 }
 
@@ -170,6 +160,22 @@ message LLM_Tokenize_Reply {
     uint32 status = 2;
 }
 
+message LLM_Get_Context_Request {
+}
+
+message LLM_Get_Context_Reply {
+    uint32 status = 1;
+    // The next read will retrun the context buffer
+}
+
+message LLM_Set_Context_Request {
+    // Followed by sending the context buffer to the server
+}
+
+message LLM_Set_Context_Reply {
+    uint32 status = 1;
+}
+
 message LLM_Clear_Context_Request {
 }
 
@@ -236,6 +242,22 @@ message LLM_Get_Stop_Tokens_Reply {
     uint32 status = 3;
 }
 
+message LLM_Get_Context_Usage_Size_Request {
+}
+
+message LLM_Get_Context_Usage_Size_Reply {
+    uint32 status = 1;
+    uint32 context_usage = 2;
+}
+
+message LLM_Get_Max_Context_Capacity_Request {
+}
+
+message LLM_Get_Max_Context_Capacity_Reply {
+    uint32 status = 1;
+    uint32 max_context_capacity = 2;
+}
+
 message VLM_Create_Request {
     string group_id = 1;
     string hef_path = 2; // non-empty means hef exists on server side
@@ -260,6 +282,8 @@ message VLM_Create_Reply {
     FrameShape frame_shape = 3;
     string prompt_template = 4;
     uint32 embedding_features = 5;
+    uint32 image_pad_token_id = 6;
+    uint32 embeddings_per_frame = 7;
 }
 
 message VLM_Generator_Generate_Request {
@@ -267,98 +291,6 @@ message VLM_Generator_Generate_Request {
 }
 
 message VLM_Generator_Generate_Reply {
-    uint32 status = 1;
-}
-
-message Text2Image_Create_Request {
-    bool is_builtin = 1; // If not builtin, all the hefs will be passed in the next messages as raw buffers
-    bool is_ip_adapter = 2;
-    uint32 scheduler_type = 3;
-    string group_id = 4;
-
-    // HEFs order:
-        // text_encoder
-        // denoiser
-        // image decoder
-        // ip adapter
-}
-
-message Text2Image_Create_Reply {
-    FrameFormat output_frame_format = 1;
-    FrameShape output_frame_shape = 2;
-    FrameFormat input_noise_frame_format = 3;
-    FrameShape input_noise_frame_shape = 4;
-    uint32 status = 5;
-}
-
-message Text2Image_Get_IP_Adapter_Frame_Info_Request {
-}
-
-message Text2Image_Get_IP_Adapter_Frame_Info_Reply {
-    FrameFormat format = 1;
-    FrameShape shape = 2;
-    uint32 status = 3;
-}
-
-message ProtoText2ImageGeneratorParams {
-    uint32 samples_count = 1;
-    uint32 steps_count = 2;
-    float guidance_scale = 3;
-    uint32 seed = 4;
-}
-
-message Text2Image_Get_Generator_Params_Request {
-}
-
-message Text2Image_Get_Generator_Params_Reply {
-    ProtoText2ImageGeneratorParams generator_params = 1;
-    uint32 status = 2;
-}
-
-message Text2Image_Generator_Create_Request {
-    ProtoText2ImageGeneratorParams generator_params = 1;
-}
-
-message Text2Image_Generator_Create_Reply {
-    uint32 status = 1;
-}
-
-message Text2Image_Generator_Generate_Request {
-    bool has_negative_prompt = 1;
-    uint32 timeout_ms = 2;
-}
-message Text2Image_Generator_Generate_Reply {
-    uint32 status = 1;
-}
-
-message Text2Image_Tokenize_Request {
-    string prompt = 1;
-}
-
-message Text2Image_Tokenize_Reply {
-    repeated uint32 tokens = 1;
-    uint32 status = 2;
-}
-
-message Text2Image_Release_Request {
-}
-
-message Text2Image_Release_Reply {
-    uint32 status = 1;
-}
-
-message Text2Image_Generator_Set_Initial_Noise_Request {
-    // Indicates that the next message to the server is the external noise
-}
-
-message Text2Image_Generator_Set_Initial_Noise_Reply {
-    uint32 status = 1;
-}
-
-message Text2Image_Generator_Abort_Request {
-}
-
-message Text2Image_Generator_Abort_Reply {
     uint32 status = 1;
 }
 
@@ -402,4 +334,13 @@ message Speech2Text_Release_Request {
 
 message Speech2Text_Release_Reply {
     uint32 status = 1;
+}
+
+message Speech2Text_Tokenize_Request {
+    string text = 1;
+}
+
+message Speech2Text_Tokenize_Reply {
+    repeated int32 tokens = 1;
+    uint32 status = 2;
 }

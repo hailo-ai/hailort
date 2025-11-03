@@ -21,7 +21,7 @@
 #include "vdma/driver/hailort_driver.hpp"
 #include "core_op/resource_manager/resource_manager.hpp"
 #include "vdma/vdma_config_manager.hpp"
-#include "vdma/pcie/pcie_device_hrpc_client.hpp"
+#include "device/device_hrpc_client.hpp"
 
 #include <new>
 #include <algorithm>
@@ -81,9 +81,9 @@ Expected<std::unique_ptr<Device>> PcieDevice::create(const hailo_pcie_device_inf
     CHECK_EXPECTED(device_info);
 
     if (HailoRTDriver::AcceleratorType::SOC_ACCELERATOR == device_info->accelerator_type) {
-        TRY(auto pcie_device, PcieDeviceHrpcClient::create(device_info->device_id));
-        // Upcasting to Device unique_ptr (from PcieDeviceHrpcClient unique_ptr)
-        auto device = std::unique_ptr<Device>(std::move(pcie_device));
+        TRY(auto device_hrpc_client, DeviceHrpcClient::create(device_info->device_id));
+        // Upcasting to Device unique_ptr (from DeviceHrpcClient unique_ptr)
+        auto device = std::unique_ptr<Device>(std::move(device_hrpc_client));
         return device;
     }
 

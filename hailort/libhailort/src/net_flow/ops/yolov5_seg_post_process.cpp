@@ -60,9 +60,7 @@ hailo_status Yolov5SegOpMetadata::validate_format_info()
             "The given output format order {} is not supported, should be `HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK`",
             HailoRTCommon::get_format_order_str(output_metadata.second.format.order));
 
-        CHECK(HAILO_FORMAT_TYPE_FLOAT32 == output_metadata.second.format.type, HAILO_INVALID_ARGUMENT,
-            "The given output format type {} is not supported, should be `HAILO_FORMAT_TYPE_FLOAT32`",
-            HailoRTCommon::get_format_type_str(output_metadata.second.format.type));
+        CHECK_SUCCESS(validate_format_type(output_metadata.second.format));
 
         CHECK(!(HAILO_FORMAT_FLAGS_TRANSPOSED & output_metadata.second.format.flags), HAILO_INVALID_ARGUMENT,
             "Output {} is marked as transposed, which is not supported for this model.", output_metadata.first);

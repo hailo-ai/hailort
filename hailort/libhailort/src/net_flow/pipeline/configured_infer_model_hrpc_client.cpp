@@ -45,6 +45,10 @@ Expected<std::shared_ptr<ConfiguredInferModelHrpcClient>> ConfiguredInferModelHr
     std::vector<hailo_vstream_info_t> &&output_vstream_infos, uint32_t max_ongoing_transfers, rpc_object_handle_t infer_model_id,
     const std::unordered_map<std::string, size_t> inputs_frame_sizes, const std::unordered_map<std::string, size_t> outputs_frame_sizes)
 {
+    for (const auto &vstream_info : output_vstream_infos) {
+        CHECK(vstream_info.format.order != HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK, HAILO_INVALID_ARGUMENT,
+            "Format order HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK of '{}' is not supported for Hailo-15 devices with multi_process or Hailo-10H devices", vstream_info.name);
+    }
     // TODO: consider create a separate client object here - HRT-13687
     auto ptr = make_shared_nothrow<ConfiguredInferModelHrpcClient>(client, handle_id, std::move(input_vstream_infos),
         std::move(output_vstream_infos), max_ongoing_transfers, infer_model_id, inputs_frame_sizes,
@@ -202,9 +206,9 @@ Expected<AsyncInferJob> ConfiguredInferModelHrpcClient::run_async_impl(const Con
     }
     TRY(auto write_buffers, get_write_buffers(bindings));
     TRY(auto read_buffers, get_read_buffers(bindings));
-    auto expected = client->execute_request_async(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__RUN_ASYNC),
+    status = client->execute_request_async(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__RUN_ASYNC),
         request_view, wrapped_callback, std::move(write_buffers), std::move(read_buffers));
-    CHECK_SUCCESS(expected);
+    CHECK_SUCCESS(status);
 
     return AsyncInferJobBase::create(job);
 }
@@ -212,8 +216,19 @@ Expected<AsyncInferJob> ConfiguredInferModelHrpcClient::run_async_impl(const Con
 Expected<std::vector<RunAsyncSerializer::BufferInfo>> ConfiguredInferModelHrpcClient::get_buffer_infos(const ConfiguredInferModel::Bindings &bindings)
 {
     std::vector<RunAsyncSerializer::BufferInfo> buffer_infos;
-    buffer_infos.reserve(m_input_names.size()); // Minimum buffer_infos size is the number of inputs
+    buffer_infos.reserve(m_input_names.size() + m_output_names.size());
+    auto status = push_input_buffer_infos(bindings, buffer_infos);
+    CHECK_SUCCESS(status);
 
+    status = push_output_buffer_infos(bindings, buffer_infos);
+    CHECK_SUCCESS(status);
+
+    return buffer_infos;
+}
+
+hailo_status ConfiguredInferModelHrpcClient::push_input_buffer_infos(
+    const ConfiguredInferModel::Bindings &bindings, std::vector<RunAsyncSerializer::BufferInfo> &buffer_infos)
+{
     for (const auto &input_vstream_name : m_input_names) {
         TRY(auto input, bindings.input(input_vstream_name));
         auto buffer_type = ConfiguredInferModelBase::get_infer_stream_buffer_type(input);
@@ -243,10 +258,16 @@ Expected<std::vector<RunAsyncSerializer::BufferInfo>> ConfiguredInferModelHrpcCl
         }
         default:
             LOGGER__CRITICAL("Unknown buffer type");
-            return make_unexpected(HAILO_INTERNAL_FAILURE);
+            return HAILO_INTERNAL_FAILURE;
         }
     }
 
+    return HAILO_SUCCESS;
+}
+
+hailo_status ConfiguredInferModelHrpcClient::push_output_buffer_infos(
+    const ConfiguredInferModel::Bindings &bindings, std::vector<RunAsyncSerializer::BufferInfo> &buffer_infos)
+{
     for (const auto &output_vstream_name : m_output_names) {
         TRY(auto output, bindings.output(output_vstream_name));
         auto buffer_type = ConfiguredInferModelBase::get_infer_stream_buffer_type(output);
@@ -259,7 +280,7 @@ Expected<std::vector<RunAsyncSerializer::BufferInfo>> ConfiguredInferModelHrpcCl
         }
     }
 
-    return buffer_infos;
+    return HAILO_SUCCESS;
 }
 
 Expected<std::vector<TransferBuffer>> ConfiguredInferModelHrpcClient::get_write_buffers(const ConfiguredInferModel::Bindings &bindings)
@@ -434,6 +455,17 @@ Expected<size_t> ConfiguredInferModelHrpcClient::get_async_queue_size() const
 
 hailo_status ConfiguredInferModelHrpcClient::validate_bindings(const ConfiguredInferModel::Bindings &bindings)
 {
+    auto status = validate_input_bindings(bindings);
+    CHECK_SUCCESS(status);
+
+    status = validate_output_bindings(bindings);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status ConfiguredInferModelHrpcClient::validate_input_bindings(const ConfiguredInferModel::Bindings &bindings)
+{
     for (const auto &input_vstream_name : m_input_names) {
         TRY(auto input, bindings.input(input_vstream_name));
 
@@ -472,6 +504,12 @@ hailo_status ConfiguredInferModelHrpcClient::validate_bindings(const ConfiguredI
                 CHECK(false, HAILO_NOT_FOUND, "Couldnt find input buffer for '{}'", input_vstream_name);
         }
     }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status ConfiguredInferModelHrpcClient::validate_output_bindings(const ConfiguredInferModel::Bindings &bindings)
+{
     for (const auto &output_vstream_name : m_output_names) {
         TRY(auto output, bindings.output(output_vstream_name));
         auto buffer_type = ConfiguredInferModelBase::get_infer_stream_buffer_type(output);
@@ -494,7 +532,7 @@ hailo_status ConfiguredInferModelHrpcClient::validate_bindings(const ConfiguredI
                 auto buffer = output.get_dma_buffer();
                 CHECK_EXPECTED_AS_STATUS(buffer);
                 CHECK(buffer->size == m_outputs_frame_sizes.at(output_vstream_name), HAILO_INVALID_OPERATION,
-                    "Output buffer size {} is different than expected {} for out '{}'", buffer->size, m_outputs_frame_sizes.at(output_vstream_name), output_vstream_name);
+                    "Output buffer size {} is different than expected {} for output '{}'", buffer->size, m_outputs_frame_sizes.at(output_vstream_name), output_vstream_name);
                 break;
             }
             default:
@@ -549,19 +587,96 @@ hailo_status ConfiguredInferModelHrpcClient::init_cache(uint32_t read_offset)
     return HAILO_SUCCESS;
 }
 
-hailo_status ConfiguredInferModelHrpcClient::finalize_cache()
+Expected<std::unordered_map<uint32_t, BufferPtr>> ConfiguredInferModelHrpcClient::get_cache_buffers()
 {
     auto client = m_client.lock();
     CHECK(nullptr != client, HAILO_INTERNAL_FAILURE,
         "Lost communication with the server. This may happen if VDevice is released while the CIM is in use.");
 
     TRY(auto serialized_request, client->allocate_request_buffer());
-    TRY(auto request_size, FinalizeCacheSerializer::serialize_request(m_handle_id,
+    TRY(auto request_size, GetCacheBuffersSerializer::serialize_request(m_handle_id,
         MemoryView(*serialized_request)));
-    CHECK_SUCCESS(client->execute_request(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__FINALIZE_CACHE),
+    CHECK_SUCCESS(client->execute_request(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__GET_CACHE_BUFFERS),
+        MemoryView(serialized_request->data(), request_size)));
+
+    return GetCacheBuffersSerializer::deserialize_reply(MemoryView(serialized_request->data(), request_size));
+}
+
+hailo_status ConfiguredInferModelHrpcClient::update_cache_buffer(uint32_t cache_id, MemoryView buffer)
+{
+    auto client = m_client.lock();
+    CHECK(nullptr != client, HAILO_INTERNAL_FAILURE,
+        "Lost communication with the server. This may happen if VDevice is released while the CIM is in use.");
+
+    TRY(auto serialized_request, client->allocate_request_buffer());
+    TRY(auto request_size, UpdateCacheBufferSerializer::serialize_request(m_handle_id, cache_id, buffer,
+        MemoryView(*serialized_request)));
+    CHECK_SUCCESS(client->execute_request(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__UPDATE_CACHE_BUFFER),
         MemoryView(serialized_request->data(), request_size)));
 
     return HAILO_SUCCESS;
+}
+
+// This function runs an infer for a certain duration on the server, by looping on a single frame
+// Meaning no communication between client and server during infer, only at the start and the end
+Expected<AsyncInferJob> ConfiguredInferModelHrpcClient::run_async_for_duration(const ConfiguredInferModel::Bindings &bindings,
+    uint32_t duration_ms, uint32_t sleep_between_frames_ms, std::function<void(const AsyncInferCompletionInfo &, uint32_t)> callback)
+{
+    CHECK_SUCCESS(validate_input_bindings(bindings));
+    std::unique_lock<std::mutex> lock(m_infer_mutex);
+
+    std::vector<RunAsyncSerializer::BufferInfo> buffer_infos;
+    buffer_infos.reserve(m_input_names.size());
+    auto status = push_input_buffer_infos(bindings, buffer_infos);
+    CHECK_SUCCESS(status);
+
+    status = push_output_buffer_infos(bindings, buffer_infos);
+    CHECK_SUCCESS(status);
+
+    const RunAsyncForDurationSerializer::Request infer_request {m_handle_id, m_infer_model_handle_id, duration_ms, sleep_between_frames_ms, buffer_infos};
+
+    auto client = m_client.lock();
+    CHECK(nullptr != client, HAILO_INTERNAL_FAILURE,
+        "Lost communication with the server. This may happen if VDevice is released while the CIM is in use.");
+
+    TRY(const auto request_buffer, client->allocate_request_buffer());
+    TRY(const auto request_size, RunAsyncForDurationSerializer::serialize_request(infer_request, request_buffer->as_view()));
+    const auto request_view = MemoryView(request_buffer->data(), request_size);
+
+    status = client->wait_for_execute_request_ready(request_view, REQUEST_TIMEOUT);
+    CHECK_SUCCESS(status);
+
+    TRY(auto job, AsyncInferJobHrpcClient::create_shared());
+    auto wrapped_callback = [this, request_buffer, job, callback] (rpc_message_t reply) {
+        auto status = static_cast<hailo_status>(reply.header.status);
+
+        if (callback) {
+            uint32_t fps = 0;
+            if (HAILO_SUCCESS == status) {
+                auto expected_fps = RunAsyncForDurationSerializer::deserialize_reply(MemoryView(reply.buffer->data(), reply.header.size));
+                if (!expected_fps) {
+                    status = expected_fps.status();
+                } else {
+                    fps = expected_fps.value();
+                }
+            } else {
+                LOGGER__ERROR("Calling run async for duration has failed, status = {}", status);
+            }
+            callback(AsyncInferCompletionInfo(status), fps);
+        }
+
+        status = job->set_status(status);
+        if (HAILO_SUCCESS != status) {
+            LOGGER__CRITICAL("Failed to signal event with status: {}", status);
+        }
+    };
+    TRY(auto write_buffers, get_write_buffers(bindings));
+    TRY(auto read_buffers, get_read_buffers(bindings));
+    auto expected = client->execute_request_async(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__RUN_ASYNC_FOR_DURATION),
+        request_view, wrapped_callback, std::move(write_buffers), std::move(read_buffers));
+    CHECK_SUCCESS(expected);
+
+    return AsyncInferJobBase::create(job);
 }
 
 } // namespace hailort

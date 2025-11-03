@@ -1400,7 +1400,7 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 5
 SUPPORTED_FW_MINOR = 1
-SUPPORTED_FW_REVISION = 0
+SUPPORTED_FW_REVISION = 1
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
 
@@ -1698,6 +1698,7 @@ class SupportedFeatures(object):
         self.pcie = supported_features.pcie
         self.current_monitoring = supported_features.current_monitoring
         self.mdio = supported_features.mdio
+        self.power_measurement = supported_features.power_measurement
     
     def _feature_str(self, feature_name, is_feature_enabled):
         return '{}: {}\n'.format(feature_name, 'Enabled' if is_feature_enabled else 'Disabled')
@@ -1710,7 +1711,8 @@ class SupportedFeatures(object):
             self._feature_str('Ethernet', self.ethernet) + \
             self._feature_str('PCIE', self.pcie) + \
             self._feature_str('Current Monitoring', self.current_monitoring) + \
-            self._feature_str('MDIO', self.mdio)
+            self._feature_str('MDIO', self.mdio) + \
+            self._feature_str('Power Measurement', self.power_measurement)
 
     def __repr__(self):
         """Returns:
@@ -2034,44 +2036,6 @@ class Control:
         """
         with ExceptionWrapper():
             return self._device._get_overcurrent_state()
-
-    @staticmethod
-    def _create_c_i2c_slave(pythonic_slave):
-        c_slave = _pyhailort.I2CSlaveConfig()
-        c_slave.endianness = pythonic_slave.endianness
-        c_slave.slave_address = pythonic_slave.slave_address
-        c_slave.register_address_size = pythonic_slave.register_address_size
-        c_slave.bus_index = pythonic_slave.bus_index
-        return c_slave
-
-    def i2c_write(self, slave, register_address, data):
-        """Write data to an I2C slave.
-
-        Args:
-            slave (:class:`hailo_platform.pyhailort.i2c_slaves.I2CSlave`): I2C slave
-                configuration.
-            register_address (int): The address of the register to which the data will be written.
-            data (str): The data that will be written.
-        """
-        c_slave = self._create_c_i2c_slave(slave)
-        with ExceptionWrapper():
-            return self._device.i2c_write(c_slave, register_address, data, len(data))
-
-    def i2c_read(self, slave, register_address, data_length):
-        """Read data from an I2C slave.
-
-        Args:
-            slave (:class:`hailo_platform.pyhailort.i2c_slaves.I2CSlave`): I2C slave
-                configuration.
-            register_address (int): The address of the register from which the data will be read.
-            data_length (int): The number of bytes to read.
-
-        Returns:
-            str: Data read from the I2C slave.
-        """
-        c_slave = self._create_c_i2c_slave(slave)
-        with ExceptionWrapper():
-            return self._device.i2c_read(c_slave, register_address, data_length)
 
     def read_register(self, address):
         """Read the value of a register from a given address.
@@ -2824,8 +2788,6 @@ class ConfiguredInferModel:
                 """
                 with ExceptionWrapper():
                     self._validate_c_contiguous(buffer)
-                    if self._nms_info and self._nms_info.format_order in [FormatOrder.HAILO_NMS_WITH_BYTE_MASK, FormatOrder.HAILO_NMS_BY_SCORE] and buffer.dtype != numpy.uint8:
-                        raise HailoRTException(f"Buffer must be of type uint8 for {self._nms_info.format_order} format order. Got {buffer.dtype}.")
                     self._infer_stream.set_buffer(buffer)
 
                 self._buffer = buffer
@@ -4301,7 +4263,8 @@ class LLM:
             generation_params = LLM._fill_generator_params(generation_params, temperature, top_p, top_k, frequency_penalty, max_generated_tokens, do_sample, seed)
             return LLMGeneratorCompletion(self._llm.generate(generation_params, prompt))
 
-    def generate_all(self, prompt, temperature=None, top_p=None, top_k=None, frequency_penalty=None, max_generated_tokens=None, do_sample=None, seed=None, timeout_ms=10000):
+    def generate_all(self, prompt, temperature=None, top_p=None, top_k=None, frequency_penalty=None, max_generated_tokens=None, do_sample=None,
+        seed=None, timeout_ms=600000):
         """
         Generate complete text response in non-streaming mode.
 
@@ -4379,6 +4342,41 @@ class LLM:
         """
         with ExceptionWrapper():
             return self._llm.tokenize(text)
+
+    def get_context_usage_size(self):
+        """
+        Get the context usage size of the LLM model.
+
+        This method returns the total number of tokens currently stored in the model's context,
+        including both input tokens and generated tokens from previous interactions.
+        The context usage includes the conversation history and any tokens that have been
+        processed but not yet cleared by clear_context().
+
+        Returns:
+            int: Current number of tokens in the context.
+        """
+        with ExceptionWrapper():
+            return self._llm.get_context_usage_size()
+
+    def max_context_capacity(self):
+        """
+        Obtain the maximum context capacity of the LLM model.
+
+        This method returns the maximum number of tokens that can be stored in the model's context.
+        This value is determined in the model compilation,
+        represents the upper limit for context storage, and is not configurable.
+
+        Returns:
+            int: Maximum number of tokens that can be stored in the context.
+
+        Example::
+
+            max_capacity = llm.max_context_capacity()
+            current_usage = llm.get_context_usage_size()
+            print(f"Context usage: {current_usage}/{max_capacity}")
+        """
+        with ExceptionWrapper():
+            return self._llm.max_context_capacity()
 
     def clear_context(self):
         """
@@ -4496,6 +4494,66 @@ class LLM:
         """
         with ExceptionWrapper():
             return self._llm.get_stop_tokens()
+
+    def save_context(self):
+        """
+        Save the current context of the LLM as a binary blob.
+
+        This method saves the current conversation context (including all previous
+        interactions) as a binary blob that can be used to restore the context later
+        using load_context(). This is useful for saving conversation state between
+        sessions or for implementing context switching.
+
+        Returns:
+            bytes: Binary blob containing the saved context data.
+
+        Example::
+
+            # Save context after a conversation
+            context_data = llm.save_context()
+
+            # Save to file for later use
+            with open("conversation_context.bin", "wb") as f:
+                f.write(context_data)
+
+        Note:
+            - The context is unique for a specific LLM model
+            - Trying to load a context from a different model will result in an error
+            - The context includes all conversation history up to this point
+        """
+        with ExceptionWrapper():
+            return bytes(self._llm.save_context())
+
+    def load_context(self, context_data):
+        """
+        Load a previously saved context into the LLM.
+
+        This method restores a conversation context that was previously saved using
+        save_context(). This allows to continue the conversation from where it
+        left off, or to switch between different conversation contexts.
+
+        Args:
+            context_data (bytes): Binary blob containing the saved context data.
+
+        Example::
+
+            # Load context from file
+            with open("conversation_context.bin", "rb") as f:
+                context_data = f.read()
+
+            # Restore the conversation context
+            llm.load_context(context_data)
+
+            # Continue the conversation
+            response = llm.generate_all("What were we talking about?")
+
+        Note:
+            - The context must be from the same LLM model
+            - Loading a context will replace the current context completely
+            - This operation will fail if the context is from a different model
+        """
+        with ExceptionWrapper():
+            self._llm.load_context(list(context_data))
 
 
 class VLM:
@@ -4630,9 +4688,8 @@ class VLM:
             generation_params = LLM._fill_generator_params(generation_params, temperature, top_p, top_k, frequency_penalty, max_generated_tokens, do_sample, seed)
             return LLMGeneratorCompletion(self._vlm.generate(generation_params, prompt, frames))
 
-    def generate_all(self, prompt, frames,
-                      temperature=None, top_p=None, top_k=None, frequency_penalty=None,
-                      max_generated_tokens=None, do_sample=None, seed=None, timeout_ms=10000):
+    def generate_all(self, prompt, frames, temperature=None, top_p=None, top_k=None, frequency_penalty=None, max_generated_tokens=None,
+        do_sample=None, seed=None, timeout_ms=600000):
         """
         Generate complete text response in non-streaming mode with vision input.
 
@@ -4706,6 +4763,41 @@ class VLM:
         """
         with ExceptionWrapper():
             return self._vlm.tokenize(text)
+
+    def get_context_usage_size(self):
+        """
+        Get the context usage size of the VLM model.
+
+        This method returns the total number of tokens currently stored in the model's context,
+        including both input tokens and generated tokens from previous interactions.
+        The context usage includes the conversation history and any tokens that have been
+        processed but not yet cleared by clear_context().
+
+        Returns:
+            int: Current number of tokens in the context.
+        """
+        with ExceptionWrapper():
+            return self._vlm.get_context_usage_size()
+
+    def max_context_capacity(self):
+        """
+        Obtain the maximum context capacity of the VLM model.
+
+        This method returns the maximum number of tokens that can be stored in the model's context.
+        This value is determined in the model compilation,
+        represents the upper limit for context storage, and is not configurable.
+
+        Returns:
+            int: Maximum number of tokens that can be stored in the context.
+
+        Example::
+
+            max_capacity = vlm.max_context_capacity()
+            current_usage = vlm.get_context_usage_size()
+            print(f"Context usage: {current_usage}/{max_capacity}")
+        """
+        with ExceptionWrapper():
+            return self._vlm.max_context_capacity()
 
     def clear_context(self):
         """
@@ -4818,6 +4910,66 @@ class VLM:
         with ExceptionWrapper():
             return self._vlm.get_stop_tokens()
 
+    def save_context(self):
+        """
+        Save the current context of the VLM as a binary blob.
+
+        This method saves the current conversation context (including all previous
+        interactions) as a binary blob that can be used to restore the context later
+        using load_context(). This is useful for saving conversation state between
+        sessions or for implementing context switching.
+
+        Returns:
+            bytes: Binary blob containing the saved context data.
+
+        Example::
+
+            # Save context after a conversation
+            context_data = vlm.save_context()
+
+            # Save to file for later use
+            with open("conversation_context.bin", "wb") as f:
+                f.write(context_data)
+
+        Note:
+            - The context is unique for a specific VLM model
+            - Trying to load a context from a different model will result in an error
+            - The context includes all conversation history up to this point
+        """
+        with ExceptionWrapper():
+            return bytes(self._vlm.save_context())
+
+    def load_context(self, context_data):
+        """
+        Load a previously saved context into the VLM.
+
+        This method restores a conversation context that was previously saved using
+        save_context(). This allows to continue the conversation from where it
+        left off, or to switch between different conversation contexts.
+
+        Args:
+            context_data (bytes): Binary blob containing the saved context data.
+
+        Example::
+
+            # Load context from file
+            with open("conversation_context.bin", "rb") as f:
+                context_data = f.read()
+
+            # Restore the conversation context
+            vlm.load_context(context_data)
+
+            # Continue the conversation
+            response = vlm.generate_all("What were we talking about?", frames=[])
+
+        Note:
+            - The context must be from the same VLM model
+            - Loading a context will replace the current context completely
+            - This operation will fail if the context is from a different model
+        """
+        with ExceptionWrapper():
+            self._vlm.load_context(list(context_data))
+
     def input_frame_size(self):
         """
         Get the expected input frame size in bytes.
@@ -4894,83 +5046,125 @@ class VLM:
         with ExceptionWrapper():
             return self._vlm.input_frame_format_order()
 
-class HailoDiffuserSchedulerType(Enum):
+
+class SegmentInfo:
     """
-    Diffusion scheduler types for Text2Image generation.
+    Represents a transcribed audio segment with timing information.
 
-    Different schedulers implement different approaches for the denoising process
-    during image generation, which can affect the quality and characteristics
-    of the generated images.
-    """
-    EULER_DISCRETE = _pyhailort.HailoDiffuserSchedulerType.EULER_DISCRETE
-    DDIM = _pyhailort.HailoDiffuserSchedulerType.DDIM
-
-class Text2Image:
-    """
-    Text-to-Image model inference interface for Hailo devices.
-
-    This class provides a high-level Python interface for running Text-to-Image models
-    on Hailo hardware. It supports image generation from text prompts with various
-    generation parameters and diffusion schedulers.
-
-    Features:
-        - Image generation from text prompts
-        - Multiple diffusion schedulers (EULER_DISCRETE, DDIM)
-        - Configurable generation parameters (steps, guidance scale, samples count, seed)
-        - Built-in prompt tokenization utilities
-        - Numpy array output for generated images
+    This class contains the transcribed text along with start and end timestamps
+    for a specific segment of the audio input.
 
     Example::
 
-        # Basic usage
-        with VDevice() as vd:
-            with Text2Image(vd, "denoise.hef", "text_encoder.hef", "decoder.hef") as t2i:
-                images = t2i.generate("A beautiful sunset over mountains")
-                print(f"Generated {len(images)} images with shape {images[0].shape}")
-
-        # Advanced usage with custom parameters
-        with VDevice() as vd:
-            with Text2Image(vd, "denoise.hef", "text_encoder.hef", "decoder.hef",
-                          scheduler=HailoDiffuserSchedulerType.DDIM) as t2i:
-                images = t2i.generate("A futuristic cityscape", "blurry, low quality",
-                                    samples_count=4, steps_count=50, guidance_scale=7.5)
-                for i, img in enumerate(images):
-                    print(f"Image {i}: {img.shape}, dtype: {img.dtype}")
-
-    Note:
-        - The VDevice must remain active for the lifetime of the Text2Image instance.
-        - Using this class within a context manager (``with`` statement) is recommended to ensure proper resource cleanup.
-        - Generated images are returned as numpy arrays with shape (height, width, channels).
+        for segment in segments:
+            print(f"[{segment.start_sec:.2f}s-{segment.end_sec:.2f}s] {segment.text}")
     """
 
-    def __init__(self, vdevice, denoise_hef, text_encoder_hef, image_decoder_hef,
-                 scheduler_type=HailoDiffuserSchedulerType.EULER_DISCRETE):
+    def __init__(self, segment_info):
         """
-        Initialize the Text2Image model with HEF files and scheduler.
+        Initialize a SegmentInfo object.
+
+        Args:
+            segment_info: Internal segment object containing timing and text data.
+        """
+        self._segment_info = segment_info
+
+    @property
+    def start_sec(self):
+        """
+        Get the start time of the segment.
+
+        Returns:
+            float: Start time in seconds, relative to the start of the audio.
+        """
+        return self._segment_info.start_sec
+
+    @property
+    def end_sec(self):
+        """
+        Get the end time of the segment.
+
+        Returns:
+            float: End time in seconds, relative to the start of the audio.
+        """
+        return self._segment_info.end_sec
+
+    @property
+    def text(self):
+        """
+        Get the transcribed text of the segment.
+
+        Returns:
+            str: Transcribed text for this segment.
+        """
+        return self._segment_info.text
+
+    def __repr__(self):
+        return f"SegmentInfo(start_sec={self.start_sec}, end_sec={self.end_sec}, text='{self.text}')"
+
+
+class Speech2TextTask(Enum):
+    """
+    The available Speech2Text task types.
+
+    This enum defines the supported task types for speech processing:
+
+    - TRANSCRIBE: Transcribe speech to text in the same language
+    - TRANSLATE: Translate speech to text in a different language
+    """
+    TRANSCRIBE = _pyhailort.Speech2TextTask.TRANSCRIBE
+    TRANSLATE = _pyhailort.Speech2TextTask.TRANSLATE
+
+
+class Speech2Text:
+    """
+    Speech-to-Text model inference interface for Hailo devices.
+
+    This class provides a high-level Python interface for running Speech-to-Text models
+    on Hailo hardware. It supports audio transcription and translation with configurable
+    language settings and task types.
+
+    Features:
+        - Audio transcription with timestamped segments
+        - Language translation capabilities
+        - Support for multiple output formats (segments vs complete text)
+        - Configurable task types (transcribe/translate)
+        - Language-specific processing
+
+    Example::
+
+        # Basic transcription
+        with VDevice() as vd:
+            with Speech2Text(vd, "whisper.hef") as s2t:
+                print(s2t.generate_all_text(task=Speech2TextTask.TRANSCRIBE, language="en", audio_data=audio_array))
+
+        # Transcription with segments
+        with VDevice() as vd:
+            with Speech2Text(vd, "whisper.hef") as s2t:
+                all_segments = s2t.generate_all_segments(task=Speech2TextTask.TRANSCRIBE, language="en", audio_data=audio_array)
+                print(segment for segment in all_segments)
+
+    Note:
+        - The VDevice must remain active for the lifetime of the Speech2Text instance.
+        - Using this class within a context manager (``with`` statement) is recommended to ensure proper resource cleanup.
+        - Audio input must be in PCM float32 format (normalized to [-1.0, 1.0), mono, little-endian, 16 kHz).
+    """
+
+    def __init__(self, vdevice, model_path):
+        """
+        Initialize the Speech2Text model with a Hailo device and model file.
 
         Args:
             vdevice (VDevice): An active VDevice instance managing Hailo hardware.
-            denoise_hef (str): Path to the denoising model HEF file.
-            text_encoder_hef (str): Path to the text encoder model HEF file.
-            image_decoder_hef (str): Path to the image decoder model HEF file.
-            scheduler_type (HailoDiffuserSchedulerType, optional): Diffusion scheduler type.
-                Defaults to EULER_DISCRETE. Available options: EULER_DISCRETE, DDIM.
+            model_path (str): Path to the compiled HEF (Hailo Executable Format) file.
 
         Example::
 
-            # Basic setup with default scheduler
             with VDevice() as vd:
-                t2i = Text2Image(vd, "models/denoise.hef", "models/text_encoder.hef",
-                               "models/decoder.hef")
-
-            # Setup with DDIM scheduler
-            with VDevice() as vd:
-                t2i = Text2Image(vd, "models/denoise.hef", "models/text_encoder.hef",
-                               "models/decoder.hef",
-                               scheduler=HailoDiffuserSchedulerType.DDIM)
+                s2t = Speech2Text(vd, "models/whisper.hef")
         """
-        self._text2image = _pyhailort.Text2ImageWrapper.create(
-            vdevice._vdevice, denoise_hef, text_encoder_hef, image_decoder_hef, scheduler_type.value)
+        self._vdevice = vdevice
+        self._speech2text = _pyhailort.Speech2Text.create(vdevice._vdevice, model_path)
 
     def release(self):
         """
@@ -4979,9 +5173,8 @@ class Text2Image:
         This method is called automatically when exiting the context manager.
         Manual calls are needed only in case context manager is not used.
         """
-        if self._text2image is not None:
-            self._text2image.release()
-            self._text2image = None
+        with ExceptionWrapper():
+            self._speech2text.release()
 
     def __enter__(self):
         return self
@@ -4990,230 +5183,69 @@ class Text2Image:
         self.release()
         return False
 
-    @staticmethod
-    def _fill_generator_params(gen_params, samples_count, steps_count, guidance_scale, seed):
-        if samples_count is not None:
-            gen_params.samples_count = samples_count
-        if steps_count is not None:
-            gen_params.steps_count = steps_count
-        if guidance_scale is not None:
-            gen_params.guidance_scale = guidance_scale
-        if seed is not None:
-            gen_params.seed = seed
-        return gen_params
-
-    def generate(self, prompt, negative_prompt="", samples_count=None, steps_count=None, guidance_scale=None, seed=None, timeout_ms=30000):
+    def generate_all_text(self, audio_data, task=Speech2TextTask.TRANSCRIBE, language="en", timeout_ms=10000):
         """
-        Generate images from text prompts using specified generation parameters.
-
-        This method generates images based on the provided positive prompt while
-        optionally avoiding characteristics described in the negative prompt.
-        The generation process uses the configured diffusion scheduler and parameters.
+        Generate complete transcription as a single string.
 
         Args:
-            prompt (str): Text description of desired image content.
-                This prompt guides what should be included in the generated image.
-            negative_prompt (str, optional): Text description of undesired content.
-                This prompt guides what should be avoided. Defaults to empty string.
-            samples_count (int, optional): Number of images to generate.
-                If None, uses model default (typically 1).
-            steps_count (int, optional): Number of denoising steps.
-                Higher values generally produce better quality but take longer.
-                If None, uses model default (typically 20-50).
-            guidance_scale (float, optional): Classifier-free guidance scale.
-                Higher values make the model follow the prompt more closely.
-                Typical range: 1.0-20.0. If None, uses model default (typically 7.5).
-            seed (int, optional): Random seed for reproducible outputs.
-                If None, uses random seed.
-            timeout_ms (int, optional): Maximum time to wait for generation in milliseconds.
-                Defaults to 30000 (30 seconds).
+            audio_data (numpy.ndarray): Audio data as numpy array in PCM float32 format (normalized to [-1.0, 1.0), mono, little-endian, 16 kHz).
+            task (Speech2TextTask, optional): Task to perform (transcribe or translate). Defaults to TRANSCRIBE.
+            language (str, optional): Language to use for translation, in the format of ISO-639-1 two-letter code, for example: "en", "fr", etc. Defaults to "en".
+            timeout_ms (int, optional): Timeout in milliseconds. Defaults to 10000.
 
         Returns:
-            list: List of numpy arrays, each representing a generated image.
-                Array shape is (height, width, channels) with dtype determined by the model.
-                The number of images is determined by the samples_count parameter.
+            str: Complete transcription as a single string.
 
         Example::
 
-            # Basic generation
-            images_0 = t2i.generate("A serene lake at sunset")
-
-            # Generate multiple images with custom settings
-            images_1 = t2i.generate("A detailed portrait of a wise old wizard",
-                                "blurry, low quality, distorted",
-                                samples_count=3, steps_count=30, guidance_scale=8.0)
-
-            # Reproducible generation
-            images_2 = t2i.generate("A cat wearing a hat", seed=42)
-
-        Note:
-            - Higher steps_count generally produces better quality but takes longer
-            - Higher guidance_scale makes the model follow the prompt more closely
-            - Use negative prompts to avoid common artifacts or unwanted elements
-            - Setting a seed ensures reproducible results across multiple runs
+            complete_text = s2t.generate_all_text(task=Speech2TextTask.TRANSCRIBE, language="en", audio_data=audio_array)
+            print(f"Transcription: {complete_text}")
         """
         with ExceptionWrapper():
-            generation_params = self._text2image.create_generator_params()
-            generation_params = Text2Image._fill_generator_params(generation_params, samples_count, steps_count, guidance_scale, seed)
-            return self._text2image.generate(generation_params, prompt, negative_prompt, timeout_ms)
+            return self._speech2text.generate_all_text(audio_data, task.value, language, timeout_ms)
 
-    def output_sample_frame_size(self):
+    def generate_all_segments(self, audio_data, task=Speech2TextTask.TRANSCRIBE, language="en", timeout_ms=10000):
         """
-        Get the byte size of a single generated image.
-
-        Returns:
-            int: Size in bytes of each generated image.
-
-        Example::
-
-            size = t2i.output_sample_frame_size()
-            print(f"Each generated image will be {size} bytes")
-        """
-        with ExceptionWrapper():
-            return self._text2image.output_sample_frame_size()
-
-    def output_sample_shape(self):
-        """
-        Get the shape (dimensions) of generated images.
-
-        Returns:
-            tuple: Shape tuple (height, width, channels) of generated images.
-
-        Example::
-
-            shape = t2i.output_sample_shape()
-            print(f"Generated images will have shape: {shape}")
-            # Output: Generated images will have shape: (512, 512, 3)
-        """
-        with ExceptionWrapper():
-            return tuple(self._text2image.output_sample_shape())
-
-    def output_sample_format_type(self):
-        """
-        Get the data type of generated images.
-
-        Returns:
-            numpy.dtype: Data type of the generated image arrays.
-
-        Example::
-
-            dtype = t2i.output_sample_format_type()
-            print(f"Generated images will have dtype: {dtype}")
-            # Output: Generated images will have dtype: uint8
-        """
-        with ExceptionWrapper():
-            return self._text2image.output_sample_format_type()
-
-    def output_sample_format_order(self):
-        """
-        Get the format order of generated images.
-
-        Returns:
-            _pyhailort.hailo_format_order_t: Format order.
-
-        Example::
-
-            format_order = t2i.output_sample_format_order()
-            print(f"Image format order: {format_order}")
-        """
-        with ExceptionWrapper():
-            return self._text2image.output_sample_format_order()
-
-    def tokenize(self, prompt):
-        """
-        Tokenize a text prompt into integer tokens.
-
-        This method converts a text string into a list of token IDs that
-        the model uses internally. This can be useful for debugging prompts
-        or understanding model limitations.
+        Generate transcription with timestamped segments.
 
         Args:
-            prompt (str): Text prompt to tokenize.
+            audio_data (numpy.ndarray): Audio data as numpy array in PCM float32 format (normalized to [-1.0, 1.0), mono, little-endian, 16 kHz).
+            task (Speech2TextTask, optional): Task to perform (transcribe or translate). Defaults to TRANSCRIBE.
+            language (str, optional): Language to use for translation, in the format of ISO-639-1 two-letter code, for example: "en", "fr", etc. Defaults to "en".
+            timeout_ms (int, optional): Timeout in milliseconds. Defaults to 10000.
 
         Returns:
-            list: List of integer token IDs.
+            list[SegmentInfo]: List of SegmentInfo objects containing start/end timestamps and transcribed text.
 
         Example::
 
-            tokens = t2i.tokenize("A beautiful landscape")
-            print(f"Prompt tokens: {tokens}")
-            print(f"Token count: {len(tokens)}")
+            segments = s2t.generate_all_segments(task=Speech2TextTask.TRANSCRIBE, language="en", audio_data=audio_array)
+            for segment in segments:
+                print(f"[{segment.start_sec:.2f}s-{segment.end_sec:.2f}s] {segment.text}")
         """
         with ExceptionWrapper():
-            return self._text2image.tokenize(prompt)
-
-
-class SegmentInfo:
-    def __init__(self, segment_info):
-        self._segment_info = segment_info
-
-    @property
-    def start_sec(self):
-        return self._segment_info.start_sec
-
-    @property
-    def end_sec(self):
-        return self._segment_info.end_sec
-
-    @property
-    def text(self):
-        return self._segment_info.text
-
-    def __repr__(self):
-        return f"SegmentInfo(start_sec={self.start_sec}, end_sec={self.end_sec}, text='{self.text}')"
-
-
-class Speech2TextTask(Enum):
-    TRANSCRIBE = _pyhailort.Speech2TextTask.TRANSCRIBE
-    TRANSLATE = _pyhailort.Speech2TextTask.TRANSLATE
-
-
-class Speech2TextGeneratorParams:
-
-    def __init__(self, generator_params):
-        self._generator_params = generator_params
-
-    def set_task(self, task):
-        with ExceptionWrapper():
-            return self._generator_params.set_task(task.value)
-
-    def set_language(self, language):
-        with ExceptionWrapper():
-            return self._generator_params.set_language(language)
-
-    def task(self):
-        with ExceptionWrapper():
-            return Speech2TextTask(self._generator_params.task())
-
-    def language(self):
-        with ExceptionWrapper():
-            return self._generator_params.language()
-
-
-class Speech2Text:
-    def __init__(self, vdevice, model_path):
-        self._vdevice = vdevice
-        self._speech2text = _pyhailort.Speech2Text.create(vdevice._vdevice, model_path)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.release()
-
-    def create_generator_params(self):
-        with ExceptionWrapper():
-            return Speech2TextGeneratorParams(self._speech2text.create_generator_params())
-
-    def generate_all_text(self, generator_params, audio_data, timeout_ms=10000):
-        with ExceptionWrapper():
-            return self._speech2text.generate_all_text(generator_params._generator_params, audio_data, timeout_ms)
-
-    def generate_all_segments(self, generator_params, audio_data, timeout_ms=10000):
-        with ExceptionWrapper():
-            raw_segments = self._speech2text.generate_all_segments(generator_params._generator_params, audio_data, timeout_ms)
+            raw_segments = self._speech2text.generate_all_segments(audio_data, task.value, language, timeout_ms)
             return [SegmentInfo(segment) for segment in raw_segments]
 
-    def release(self):
+    def tokenize(self, text):
+        """
+        Tokenize input text using the model's tokenizer.
+
+        This method converts text into a list of token IDs that the model uses internally.
+        Useful for understanding how the model processes input, for debugging and
+        for understanding what is the tokens count of specific text.
+
+        Args:
+            text (str): Text to tokenize.
+
+        Returns:
+            list: List of token IDs (integers) representing the input text.
+
+        Example::
+
+            tokens = s2t.tokenize("Hello, world!")
+            print(f"Token IDs: {tokens}")
+            print(f"Number of tokens: {len(tokens)}")
+        """
         with ExceptionWrapper():
-            self._speech2text.release()
+            return self._speech2text.tokenize(text)

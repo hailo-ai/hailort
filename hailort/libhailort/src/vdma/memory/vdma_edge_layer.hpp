@@ -60,8 +60,8 @@ public:
     hailo_status read(void *buf_dst, size_t count, size_t offset);
     hailo_status write(const void *buf_src, size_t count, size_t offset);
 
-    virtual Expected<uint32_t> program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
-        size_t desc_offset, size_t buffer_offset = 0, uint32_t batch_size = 1, bool should_bind = false, uint32_t stride = 0) = 0;
+    virtual Expected<uint32_t> program_descriptors(size_t transfer_size, size_t desc_offset,
+        size_t buffer_offset = 0, uint32_t batch_size = 1) = 0;
 
     CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info(uint32_t transfer_size);
     static CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info(Type type, uint64_t dma_address,

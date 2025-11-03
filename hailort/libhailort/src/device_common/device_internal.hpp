@@ -13,7 +13,7 @@
  *     |-- VdmaDevice
  *     |   |-- PcieDevice
  *     |   |-- IntegratedDevice
- * |-- PcieDeviceHrpcClient     (RPC handle communicating with the server)
+ * |-- DeviceHrpcClient     (RPC handle communicating with the server)
  **/
 
 #ifndef _HAILO_DEVICE_INTERNAL_HPP_
@@ -124,6 +124,12 @@ public:
     virtual hailo_status after_fork_in_child() override
     {
         return HAILO_SUCCESS;
+    }
+
+    virtual hailo_status echo_buffer_async(const MemoryView buffer) override
+    {
+        (void)buffer;
+        return HAILO_NOT_IMPLEMENTED;
     }
 
 protected:

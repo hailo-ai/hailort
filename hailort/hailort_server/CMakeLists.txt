@@ -63,6 +63,7 @@ if (HAILO_BUILD_GENAI_SERVER)
     target_include_directories(hailort_server PRIVATE
         ${HAILORT_GENAI_INCLUDE_DIR}
         ${HAILORT_TOKENIZER_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}
     )
     target_compile_definitions(hailort_server PRIVATE HAILO_GENAI_SERVER)
 

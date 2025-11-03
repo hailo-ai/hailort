@@ -32,18 +32,6 @@ CacheManager::CacheManager(HailoRTDriver &driver) :
     m_read_offset_entries(0)
 {}
 
-CacheManager::~CacheManager()
-{
-    wait_for_cache_update_done();
-}
-
-void CacheManager::wait_for_cache_update_done()
-{
-    if (m_cache_update_thread.joinable()) {
-        m_cache_update_thread.join();
-    }
-}
-
 hailo_status CacheManager::create_caches_from_core_op(std::shared_ptr<CoreOpMetadata> core_op_metadata)
 {
     if (!core_op_has_caches(core_op_metadata)) {
@@ -145,55 +133,34 @@ hailo_status CacheManager::init_caches(uint32_t initial_read_offset_entries)
         return HAILO_SUCCESS;
     }
 
-    wait_for_cache_update_done();
-
     CHECK(initial_read_offset_entries < m_cache_length, HAILO_INVALID_ARGUMENT);
     m_read_offset_entries = initial_read_offset_entries;
 
     LOGGER__INFO("Initializing caches @ read_offset={}", initial_read_offset_entries);
 
     static const auto INITIAL_CONFIGURATION_OFFSET = 0;
-    return update_cache_offset_impl(INITIAL_CONFIGURATION_OFFSET);
+    return update_cache_offset(INITIAL_CONFIGURATION_OFFSET);
 }
 
-hailo_status CacheManager::update_cache_offset(int32_t offset_delta_entries, bool check_cache_snapshots,
-    bool require_changes, std::function<void(hailo_status)> callback)
+hailo_status CacheManager::update_cache_offset(int32_t offset_delta_entries, bool update_cache_offset,
+    bool require_changes)
 {
     if (!m_caches_created) {
         // No cache layers found, nothing to do
         LOGGER__WARNING("No cache layers found, but update_cache_offset was called");
-        callback(HAILO_SUCCESS);
         return HAILO_SUCCESS;
     }
 
-    wait_for_cache_update_done();
-
-    m_cache_update_thread = std::thread([this, offset_delta_entries, check_cache_snapshots, require_changes, callback]() {
-        hailo_status status = update_cache_offset_impl(offset_delta_entries, check_cache_snapshots, require_changes);
-        callback(status);
-    });
-
-    return HAILO_SUCCESS;
-}
-
-hailo_status CacheManager::update_cache_offset_impl(int32_t offset_delta_entries, bool check_snapshots, bool require_changes)
-{
     const auto new_read_offset_entries = (m_read_offset_entries + offset_delta_entries) % m_cache_length;
 
     for (auto &core : m_core_op_managers) {
         auto status = core.second.update_cache_offset(new_read_offset_entries, m_read_offset_entries,
-            check_snapshots, require_changes);
+            update_cache_offset, require_changes);
         CHECK_SUCCESS(status, "Failed to update cache offset for core_op {}", core.first);
     }
 
     m_read_offset_entries = new_read_offset_entries;
 
-    return HAILO_SUCCESS;
-}
-
-hailo_status CacheManager::finalize_caches()
-{
-    wait_for_cache_update_done();
     return HAILO_SUCCESS;
 }
 

@@ -70,9 +70,7 @@ public:
     CacheManager(const CacheManager &) = delete;
     CacheManager &operator=(CacheManager &&) = delete;
     CacheManager &operator=(const CacheManager &) = delete;
-    ~CacheManager();
-
-    void wait_for_cache_update_done();
+    ~CacheManager() = default;
 
     hailo_status create_caches_from_core_op(std::shared_ptr<CoreOpMetadata> core_op_metadata);
     ExpectedRef<CacheBuffer> set_cache_input_channel(const std::string &core_op_name, uint32_t cache_id,
@@ -89,11 +87,9 @@ public:
     //   correct offsets
     // * If require_changes is true, the function will return an error if no changes were made relative to the
     //   previous snapshot at the current offset. (ignored if check_snapshots is false)
-    hailo_status update_cache_offset(int32_t offset_delta_entries, bool check_snapshots = false, bool require_changes = false,
-        std::function<void(hailo_status)> callback = nullptr);
-    hailo_status finalize_caches();
-    uint32_t get_cache_length() const;
+    hailo_status update_cache_offset(int32_t offset_delta_entries, bool check_snapshots = false, bool require_changes = false);
 
+    uint32_t get_cache_length() const;
 
 private:
     class StorageManager final
@@ -182,7 +178,6 @@ private:
     static bool validate_cache_ids(std::shared_ptr<CoreOpMetadata> core_op_metadata,
         const std::unordered_map<std::string, CoreOpManager> &current_core_op_managers);
     hailo_status program_cache_buffers();
-    hailo_status update_cache_offset_impl(int32_t offset_delta_entries, bool check_snapshots = false, bool require_changes = false);
 
     HailoRTDriver &m_driver;
     StorageManager m_storage_manager;
@@ -190,7 +185,6 @@ private:
     bool m_caches_created;
     uint32_t m_cache_length;
     uint32_t m_read_offset_entries;
-    std::thread m_cache_update_thread;
 };
 
 } /* namespace hailort */

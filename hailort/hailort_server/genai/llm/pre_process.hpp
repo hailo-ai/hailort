@@ -31,14 +31,12 @@ static const std::string INPUT_LAYER_PE_K_COS_SUFF = "input_layer5";
 static const std::string INPUT_LAYER_PE_K_SIN_SUFF = "input_layer6";
 
 static constexpr int KV_CACHE_SIZE = 2048; // TODO: HRT-16287 - Use getter
-static constexpr int MASK_GROUPS_SIZE = 12;
-static constexpr int Q_GROUPS_SIZE = 12;
-static constexpr int K_GROUPS_SIZE = 2;
-static constexpr uint8_t SCALED_MASK_VALUE = 128;
-static constexpr int TBT_INPUT_TOKENS_SIZE = 1;
+static constexpr int NUM_ATTENTION_MASK = 12;
+static constexpr int NUM_KEY_VALUE_HEADS = 2;
 static constexpr int PREFILL_INPUT_TOKENS_SIZE = 96;
-static constexpr int TILE_SIZE = 64;
 
+static constexpr int TILE_SIZE = 64;
+static constexpr int TBT_INPUT_TOKENS_SIZE = 1;
 
 template<typename T>
 Expected<std::string> get_layer_name_from_suffix(const std::string &suffix, const std::map<std::string, T> &layer_name_to_input_buffer)
@@ -57,12 +55,29 @@ using eigen_tensor_4d_u32_t = Eigen::Tensor<uint32_t, 4, Eigen::RowMajor>;
 
 constexpr std::array<int, 6> MROPE_SECTION_ORIGINAL = {16, 24, 24, 16, 24, 24}; // TODO (HRT-17263): Get from HEF
 
+struct InputLayersNamesSuffixes {
+    std::string embeddings = INPUT_LAYER_EMBEDDINGS_SUFF;
+    std::string attention_mask = INPUT_LAYER_ATTENTION_MASK_SUFF;
+    std::string pe_q_cos = INPUT_LAYER_PE_Q_COS_SUFF;
+    std::string pe_q_sin = INPUT_LAYER_PE_Q_SIN_SUFF;
+    std::string pe_k_cos = INPUT_LAYER_PE_K_COS_SUFF;
+    std::string pe_k_sin = INPUT_LAYER_PE_K_SIN_SUFF;
+};
+
+struct PreProcessParams {
+    uint32_t kv_cache_size = KV_CACHE_SIZE;
+    uint32_t num_attention_heads = NUM_ATTENTION_MASK;
+    uint32_t num_key_value_heads = NUM_KEY_VALUE_HEADS;
+    uint32_t prefill_input_tokens_count = PREFILL_INPUT_TOKENS_SIZE;
+};
+
 class LLMPreProcess
 {
 public:
     static Expected<std::unique_ptr<LLMPreProcess>> create(
         const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size,
-        Eigen::VectorXf &&theta, uint32_t embeddings_layer_features, hailo_format_type_t embeddings_layer_type);
+        Eigen::VectorXf &&theta, uint32_t embeddings_layer_features, hailo_format_type_t embeddings_layer_type, uint8_t scaled_mask_value,
+        const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params);
 
     static Eigen::VectorXf generate_default_theta(); // TODO: HRT-16646 - Remove this flow
     static Eigen::VectorXf generate_theta_from_memview(const MemoryView theta); // TODO: HRT-16646 - Move to c'tor (get theta memview)
@@ -72,13 +87,18 @@ public:
 
     hailo_status prepare_inputs_tbt(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, const std::vector<MemoryView> &input_token_embedding);
     void reset_local_cache();
-    static bool is_positional_embed_layer(const std::string &name);
+    static bool is_positional_embed_layer(const std::string &name, const InputLayersNamesSuffixes &input_layers_names_suffixes);
 
     std::tuple<size_t, eigen_matrix_2d_u16_t, eigen_tensor_4d_u32_t, int> get_local_cache() const;
     void set_local_cache(size_t cache_size, const eigen_matrix_2d_u16_t &embeddings, const eigen_tensor_4d_u32_t &pos_ids, int timestamp_value);
 
+    size_t cache_usage_size() const {
+        return m_cache_usage_size;
+    }
+
     LLMPreProcess(Eigen::VectorXf &&theta, eigen_matrix_2d_u16_t &&local_cached_embeddings,
-        const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size);
+        const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size,
+        uint8_t scaled_mask_value, const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params);
 
     LLMPreProcess(LLMPreProcess &&) = default;
     LLMPreProcess(const LLMPreProcess &) = delete;
@@ -87,7 +107,7 @@ public:
     virtual ~LLMPreProcess() = default;
 
 protected:
-    static hailo_status validate_inputs_names(const std::map<std::string, size_t> &inputs_map);
+    static hailo_status validate_inputs_names(const std::map<std::string, size_t> &inputs_map, const InputLayersNamesSuffixes &input_layers_names_suffixes);
 
     static void tile_along_last_axis(const Eigen::Tensor<float32_t, 4, Eigen::RowMajor> &input, int groups, MemoryView &layer_buffer);
 
@@ -118,6 +138,10 @@ protected:
 
     std::vector<int> m_mrope_section;
     int m_current_timestamp_value;
+    uint8_t m_scaled_mask_value;
+
+    InputLayersNamesSuffixes m_input_layers_names_suffixes;
+    PreProcessParams m_params;
 };
 
 } /* namespace genai */

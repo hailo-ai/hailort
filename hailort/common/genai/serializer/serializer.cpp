@@ -483,6 +483,74 @@ hailo_status LLMClearContextSerializer::deserialize_reply(const MemoryView &seri
     return static_cast<hailo_status>(llm_clear_context.status());
 }
 
+Expected<Buffer> LLMGetContextSerializer::serialize_request()
+{
+    LLM_Get_Context_Request llm_get_context;
+    return get_serialized_message<LLM_Get_Context_Request>(llm_get_context,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_CONTEXT), "LLM_Get_Context_Request");
+}
+
+hailo_status LLMGetContextSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    TRY(auto llm_get_context, get_deserialized_message<LLM_Get_Context_Request>(serialized_request,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_CONTEXT), "LLM_Get_Context_Request"));
+
+    return HAILO_SUCCESS;
+}
+
+Expected<Buffer> LLMGetContextSerializer::serialize_reply(hailo_status status)
+{
+    LLM_Get_Context_Reply llm_get_context;
+    llm_get_context.set_status(status);
+
+    return get_serialized_message<LLM_Get_Context_Reply>(llm_get_context,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_CONTEXT), "LLM_Get_Context_Reply");
+}
+
+hailo_status LLMGetContextSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    TRY(auto llm_get_context, get_deserialized_message<LLM_Get_Context_Reply>(serialized_reply,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_CONTEXT), "LLM_Get_Context_Reply"));
+
+    CHECK(llm_get_context.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'LLM_Get_Context_Reply'");
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(llm_get_context.status()), "Failed to get context");
+
+    return HAILO_SUCCESS;
+}
+
+Expected<Buffer> LLMSetContextSerializer::serialize_request()
+{
+    LLM_Set_Context_Request llm_set_context;
+
+    return get_serialized_message<LLM_Set_Context_Request>(llm_set_context,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__SET_CONTEXT), "LLM_Set_Context_Request");
+}
+
+hailo_status LLMSetContextSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    TRY(auto llm_set_context, get_deserialized_message<LLM_Set_Context_Request>(serialized_request,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__SET_CONTEXT), "LLM_Set_Context_Request"));
+
+    return HAILO_SUCCESS;
+}
+
+Expected<Buffer> LLMSetContextSerializer::serialize_reply(hailo_status status)
+{
+    LLM_Set_Context_Reply llm_set_context;
+    llm_set_context.set_status(status);
+
+    return get_serialized_message<LLM_Set_Context_Reply>(llm_set_context,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__SET_CONTEXT), "LLM_Set_Context_Reply");
+}
+
+hailo_status LLMSetContextSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    TRY(auto llm_set_context, get_deserialized_message<LLM_Set_Context_Reply>(serialized_reply,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__SET_CONTEXT), "LLM_Set_Context_Reply"));
+
+    return static_cast<hailo_status>(llm_set_context.status());
+}
+
 Expected<Buffer> LLMSetEndOfGenerationSequenceSerializer::serialize_request(const std::vector<int> &end_of_generation_sequence_tokens)
 {
     LLM_Set_End_Of_Generation_Sequence_Request llm_set_end_of_generation_sequence;
@@ -776,6 +844,78 @@ hailo_status LLMGeneratorAbortSerializer::deserialize_reply(const MemoryView &se
     return static_cast<hailo_status>(llm_generator_abort.status());
 }
 
+Expected<Buffer> LLMGetContextUsageSizeSerializer::serialize_request()
+{
+    LLM_Get_Context_Usage_Size_Request llm_get_context_usage_size;
+    return get_serialized_message<LLM_Get_Context_Usage_Size_Request>(llm_get_context_usage_size,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_CONTEXT_USAGE_SIZE), "LLM_Get_Context_Usage_Size_Request");
+}
+
+hailo_status LLMGetContextUsageSizeSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    TRY(auto llm_get_context_usage_size, get_deserialized_message<LLM_Get_Context_Usage_Size_Request>(serialized_request,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_CONTEXT_USAGE_SIZE), "LLM_Get_Context_Usage_Size_Request"));
+
+    return HAILO_SUCCESS;
+}
+
+Expected<Buffer> LLMGetContextUsageSizeSerializer::serialize_reply(hailo_status status, size_t context_usage)
+{
+    LLM_Get_Context_Usage_Size_Reply llm_get_context_usage_size;
+    llm_get_context_usage_size.set_status(static_cast<uint32_t>(status));
+    llm_get_context_usage_size.set_context_usage(static_cast<uint32_t>(context_usage));
+
+    return get_serialized_message<LLM_Get_Context_Usage_Size_Reply>(llm_get_context_usage_size,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_CONTEXT_USAGE_SIZE), "LLM_Get_Context_Usage_Size_Reply");
+}
+
+Expected<size_t> LLMGetContextUsageSizeSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    TRY(auto llm_get_context_usage_size, get_deserialized_message<LLM_Get_Context_Usage_Size_Reply>(serialized_reply,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_CONTEXT_USAGE_SIZE), "LLM_Get_Context_Usage_Size_Reply"));
+
+    CHECK(llm_get_context_usage_size.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'LLM_Get_Context_Usage_Size_Reply'");
+    CHECK_SUCCESS(static_cast<hailo_status>(llm_get_context_usage_size.status()), "Failed to get current context usage");
+
+    return static_cast<size_t>(llm_get_context_usage_size.context_usage());
+}
+
+Expected<Buffer> LLMGetMaxContextCapacitySerializer::serialize_request()
+{
+    LLM_Get_Max_Context_Capacity_Request llm_get_max_context_capacity;
+    return get_serialized_message<LLM_Get_Max_Context_Capacity_Request>(llm_get_max_context_capacity,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_MAX_CONTEXT_CAPACITY), "LLM_Get_Max_Context_Capacity_Request");
+}
+
+hailo_status LLMGetMaxContextCapacitySerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    TRY(auto llm_get_max_context_capacity, get_deserialized_message<LLM_Get_Max_Context_Capacity_Request>(serialized_request,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_MAX_CONTEXT_CAPACITY), "LLM_Get_Max_Context_Capacity_Request"));
+
+    return HAILO_SUCCESS;
+}
+
+Expected<Buffer> LLMGetMaxContextCapacitySerializer::serialize_reply(hailo_status status, size_t max_context_capacity)
+{
+    LLM_Get_Max_Context_Capacity_Reply llm_get_max_context_capacity;
+    llm_get_max_context_capacity.set_status(static_cast<uint32_t>(status));
+    llm_get_max_context_capacity.set_max_context_capacity(static_cast<uint32_t>(max_context_capacity));
+
+    return get_serialized_message<LLM_Get_Max_Context_Capacity_Reply>(llm_get_max_context_capacity,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_MAX_CONTEXT_CAPACITY), "LLM_Get_Max_Context_Capacity_Reply");
+}
+
+Expected<size_t> LLMGetMaxContextCapacitySerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    TRY(auto llm_get_max_context_capacity, get_deserialized_message<LLM_Get_Max_Context_Capacity_Reply>(serialized_reply,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__GET_MAX_CONTEXT_CAPACITY), "LLM_Get_Max_Context_Capacity_Reply"));
+
+    CHECK(llm_get_max_context_capacity.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'LLM_Get_Max_Context_Capacity_Reply'");
+    CHECK_SUCCESS(static_cast<hailo_status>(llm_get_max_context_capacity.status()), "Failed to get max context capacity");
+
+    return static_cast<size_t>(llm_get_max_context_capacity.max_context_capacity());
+}
+
 Expected<Buffer> VLMCreateSerializer::serialize_request(const hailo_vdevice_params_t &vdevice_params, const std::string &hef_path, bool optimize_memory_on_device)
 {
     VLM_Create_Request vlm_create;
@@ -822,7 +962,8 @@ Expected<std::tuple<std::string, std::string, uint64_t, bool>> VLMCreateSerializ
 }
 
 Expected<Buffer> VLMCreateSerializer::serialize_reply(hailo_status status,
-    hailo_3d_image_shape_t input_frame_shape, hailo_format_t input_frame_format, const std::string &prompt_template, uint32_t embedding_features)
+    hailo_3d_image_shape_t input_frame_shape, hailo_format_t input_frame_format, const std::string &prompt_template, uint32_t embedding_features,
+    uint32_t image_pad_token_id, uint32_t embeddings_per_frame)
 {
     VLM_Create_Reply vlm_create;
     vlm_create.set_status(status);
@@ -839,11 +980,14 @@ Expected<Buffer> VLMCreateSerializer::serialize_reply(hailo_status status,
     vlm_create.set_prompt_template(prompt_template);
     vlm_create.set_embedding_features(embedding_features);
 
+    vlm_create.set_image_pad_token_id(image_pad_token_id);
+    vlm_create.set_embeddings_per_frame(embeddings_per_frame);
+
     return get_serialized_message<VLM_Create_Reply>(vlm_create,
         static_cast<uint32_t>(HailoGenAIActionID::VLM__CREATE), "VLM_Create_Reply");
 }
 
-Expected<std::tuple<hailo_3d_image_shape_t, hailo_format_t, std::string, uint32_t>> VLMCreateSerializer::deserialize_reply(const MemoryView &serialized_reply)
+Expected<std::tuple<hailo_3d_image_shape_t, hailo_format_t, std::string, uint32_t, uint32_t, uint32_t>> VLMCreateSerializer::deserialize_reply(const MemoryView &serialized_reply)
 {
     TRY(auto vlm_create, get_deserialized_message<VLM_Create_Reply>(serialized_reply,
         static_cast<uint32_t>(HailoGenAIActionID::VLM__CREATE), "VLM_Create_Reply"));
@@ -860,7 +1004,8 @@ Expected<std::tuple<hailo_3d_image_shape_t, hailo_format_t, std::string, uint32_
     input_frame_format.order = static_cast<hailo_format_order_t>(vlm_create.frame_format().format_order());
     input_frame_format.type = static_cast<hailo_format_type_t>(vlm_create.frame_format().format_type());
 
-    return std::make_tuple(input_frame_shape, input_frame_format, vlm_create.prompt_template(), vlm_create.embedding_features());
+    return std::make_tuple(input_frame_shape, input_frame_format, vlm_create.prompt_template(), vlm_create.embedding_features(),
+        vlm_create.image_pad_token_id(), vlm_create.embeddings_per_frame());
 }
 
 Expected<Buffer> VLMGeneratorGenerateSerializer::serialize_request(uint32_t number_of_frames)
@@ -896,440 +1041,6 @@ hailo_status VLMGeneratorGenerateSerializer::deserialize_reply(const MemoryView 
 
     CHECK(vlm_generator_generate.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'VLM_Generator_Generate_Reply'");
     return static_cast<hailo_status>(vlm_generator_generate.status());
-}
-
-Expected<Buffer> Text2ImageCreateSerializer::serialize_request(const hailo_vdevice_params_t &vdevice_params, bool is_builtin, bool is_ip_adapter,
-    HailoDiffuserSchedulerType scheduler_type)
-{
-    Text2Image_Create_Request text2image_create;
-    text2image_create.set_is_builtin(is_builtin);
-    text2image_create.set_is_ip_adapter(is_ip_adapter);
-    text2image_create.set_scheduler_type(static_cast<uint32_t>(scheduler_type));
-
-    std::string group_id = get_group_id_as_string(vdevice_params);
-    text2image_create.set_group_id(group_id);
-
-    return get_serialized_message<Text2Image_Create_Request>(text2image_create, static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__CREATE), "Text2Image_Create_Request");
-}
-
-Expected<Text2ImageCreateSerializer::RequestInfo> Text2ImageCreateSerializer::deserialize_request(const MemoryView &serialized_request)
-{
-    TRY(auto text2image_create, get_deserialized_message<Text2Image_Create_Request>(serialized_request,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__CREATE), "Text2Image_Create_Request"));
-
-    Text2ImageCreateSerializer::RequestInfo info;
-    info.is_builtin = text2image_create.is_builtin();
-    info.is_ip_adapter = text2image_create.is_ip_adapter();
-    info.scheduler_type = static_cast<HailoDiffuserSchedulerType>(text2image_create.scheduler_type());
-    info.group_id = text2image_create.group_id();
-
-    return info;
-}
-
-Expected<Buffer> Text2ImageCreateSerializer::serialize_reply(hailo_status status, hailo_3d_image_shape_t output_frame_shape, hailo_format_t output_frame_format,
-    hailo_3d_image_shape_t input_noise_frame_shape, hailo_format_t input_noise_frame_format)
-{
-    Text2Image_Create_Reply text2image_create;
-    text2image_create.set_status(status);
-
-    auto output_frame_shape_proto = text2image_create.mutable_output_frame_shape();
-    output_frame_shape_proto->set_height(output_frame_shape.height);
-    output_frame_shape_proto->set_width(output_frame_shape.width);
-    output_frame_shape_proto->set_features(output_frame_shape.features);
-
-    auto output_frame_format_proto = text2image_create.mutable_output_frame_format();
-    output_frame_format_proto->set_format_order(static_cast<uint32_t>(output_frame_format.order));
-    output_frame_format_proto->set_format_type(static_cast<uint32_t>(output_frame_format.type));
-
-    auto input_noise_frame_shape_proto = text2image_create.mutable_input_noise_frame_shape();
-    input_noise_frame_shape_proto->set_height(input_noise_frame_shape.height);
-    input_noise_frame_shape_proto->set_width(input_noise_frame_shape.width);
-    input_noise_frame_shape_proto->set_features(input_noise_frame_shape.features);
-
-    auto input_noise_frame_format_proto = text2image_create.mutable_input_noise_frame_format();
-    input_noise_frame_format_proto->set_format_order(static_cast<uint32_t>(input_noise_frame_format.order));
-    input_noise_frame_format_proto->set_format_type(static_cast<uint32_t>(input_noise_frame_format.type));
-
-    return get_serialized_message<Text2Image_Create_Reply>(text2image_create, static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__CREATE), "Text2Image_Create_Reply");
-}
-
-Expected<Buffer> Text2ImageCreateSerializer::serialize_reply(hailo_status error_status)
-{
-    Text2Image_Create_Reply text2image_create;
-    text2image_create.set_status(error_status);
-
-    return get_serialized_message<Text2Image_Create_Reply>(text2image_create, static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__CREATE), "Text2Image_Create_Reply");
-}
-
-Expected<Text2ImageCreateSerializer::ReplyInfo> Text2ImageCreateSerializer::deserialize_reply(const MemoryView &serialized_reply)
-{
-    TRY(auto text2image_create, get_deserialized_message<Text2Image_Create_Reply>(serialized_reply,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__CREATE), "Text2Image_Create_Reply"));
-
-    CHECK(text2image_create.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'Text2Image_Create_Reply'");
-    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(text2image_create.status()), "Failed to create Text2Image");
-
-    ReplyInfo reply_info = {};
-    reply_info.output_frame_shape.height = text2image_create.output_frame_shape().height();
-    reply_info.output_frame_shape.width = text2image_create.output_frame_shape().width();
-    reply_info.output_frame_shape.features = text2image_create.output_frame_shape().features();
-
-    reply_info.output_frame_format.order = static_cast<hailo_format_order_t>(text2image_create.output_frame_format().format_order());
-    reply_info.output_frame_format.type = static_cast<hailo_format_type_t>(text2image_create.output_frame_format().format_type());
-
-    reply_info.input_noise_frame_shape.height = text2image_create.input_noise_frame_shape().height();
-    reply_info.input_noise_frame_shape.width = text2image_create.input_noise_frame_shape().width();
-    reply_info.input_noise_frame_shape.features = text2image_create.input_noise_frame_shape().features();
-
-    reply_info.input_noise_frame_format.order = static_cast<hailo_format_order_t>(text2image_create.input_noise_frame_format().format_order());
-    reply_info.input_noise_frame_format.type = static_cast<hailo_format_type_t>(text2image_create.input_noise_frame_format().format_type());
-
-    return reply_info;
-}
-
-Expected<Buffer> Text2ImageGeneratorCreateSerializer::serialize_request(const Text2ImageGeneratorParams &params)
-{
-    Text2Image_Generator_Create_Request text2image_generator_create;
-
-    auto params_proto = text2image_generator_create.mutable_generator_params();
-    params_proto->set_steps_count(params.steps_count());
-    params_proto->set_samples_count(params.samples_count());
-    params_proto->set_guidance_scale(params.guidance_scale());
-    params_proto->set_seed(params.seed());
-
-    return get_serialized_message<Text2Image_Generator_Create_Request>(text2image_generator_create,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_CREATE), "Text2Image_Generator_Create_Request");
-}
-
-Expected<Text2ImageGeneratorParams> Text2ImageGeneratorCreateSerializer::deserialize_request(const MemoryView &serialized_request)
-{
-    TRY(auto text2image_generator_create, get_deserialized_message<Text2Image_Generator_Create_Request>(serialized_request,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_CREATE), "Text2Image_Generator_Create_Request"));
-
-    Text2ImageGeneratorParams params(text2image_generator_create.generator_params().samples_count(),
-        text2image_generator_create.generator_params().steps_count(),
-        text2image_generator_create.generator_params().guidance_scale(),
-        text2image_generator_create.generator_params().seed());
-
-    return params;
-}
-
-Expected<Buffer> Text2ImageGeneratorCreateSerializer::serialize_reply(hailo_status status)
-{
-    Text2Image_Generator_Create_Reply text2image_generator_create;
-    text2image_generator_create.set_status(status);
-
-    return get_serialized_message<Text2Image_Generator_Create_Reply>(text2image_generator_create,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_CREATE), "Text2Image_Generator_Create_Reply");
-}
-
-hailo_status Text2ImageGeneratorCreateSerializer::deserialize_reply(const MemoryView &serialized_reply)
-{
-    TRY(auto text2image_generator_create, get_deserialized_message<Text2Image_Generator_Create_Reply>(serialized_reply,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_CREATE), "Text2Image_Generator_Create_Reply"));
-
-    CHECK(text2image_generator_create.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to deserialize 'Text2Image_Generator_Create_Reply'");
-    return static_cast<hailo_status>(text2image_generator_create.status());
-}
-
-Expected<Buffer> Text2ImageGeneratorGenerateSerializer::serialize_request(bool has_negative_prompt)
-{
-    Text2Image_Generator_Generate_Request text2image_generator_generate;
-    text2image_generator_generate.set_has_negative_prompt(has_negative_prompt);
-
-    return get_serialized_message<Text2Image_Generator_Generate_Request>(text2image_generator_generate,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_GENERATE), "Text2Image_Generator_Generate_Request");
-}
-
-Expected<bool> Text2ImageGeneratorGenerateSerializer::deserialize_request(const MemoryView &serialized_request)
-{
-    TRY(auto text2image_generator_generate, get_deserialized_message<Text2Image_Generator_Generate_Request>(serialized_request,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_GENERATE), "Text2Image_Generator_Generate_Request"));
-
-    return text2image_generator_generate.has_negative_prompt();
-}
-
-Expected<Buffer> Text2ImageGeneratorGenerateSerializer::serialize_reply(hailo_status status)
-{
-    Text2Image_Generator_Generate_Reply text2image_generator_generate;
-    text2image_generator_generate.set_status(status);
-
-    return get_serialized_message<Text2Image_Generator_Generate_Reply>(text2image_generator_generate,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_GENERATE), "Text2Image_Generator_Generate_Reply");
-}
-
-hailo_status Text2ImageGeneratorGenerateSerializer::deserialize_reply(const MemoryView &serialized_reply)
-{
-    TRY(auto text2image_generator_generate, get_deserialized_message<Text2Image_Generator_Generate_Reply>(serialized_reply,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_GENERATE), "Text2Image_Generator_Generate_Reply"));
-
-    CHECK(text2image_generator_generate.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to deserialize 'Text2Image_Generator_Generate_Reply'");
-    return static_cast<hailo_status>(text2image_generator_generate.status());
-}
-
-Expected<Buffer> Text2ImageGetGeneratorParamsSerializer::serialize_request()
-{
-    Text2Image_Get_Generator_Params_Request text2image_get_generator_params;
-    return get_serialized_message<Text2Image_Get_Generator_Params_Request>(text2image_get_generator_params,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GET_GENERATOR_PARAMS), "Text2Image_Get_Generator_Params_Request");
-}
-
-
-hailo_status Text2ImageGetGeneratorParamsSerializer::deserialize_request(const MemoryView &serialized_request)
-{
-    TRY(auto text2image_get_generator_params, get_deserialized_message<Text2Image_Get_Generator_Params_Request>(serialized_request,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GET_GENERATOR_PARAMS), "Text2Image_Get_Generator_Params_Request"));
-
-    return HAILO_SUCCESS;
-}
-
-Expected<Buffer> Text2ImageGetGeneratorParamsSerializer::serialize_reply(hailo_status status, const Text2ImageGeneratorParams &generator_params)
-{
-    Text2Image_Get_Generator_Params_Reply text2image_get_generator_params;
-    text2image_get_generator_params.set_status(status);
-
-    auto params_proto = text2image_get_generator_params.mutable_generator_params();
-    params_proto->set_samples_count(generator_params.samples_count());
-    params_proto->set_steps_count(generator_params.steps_count());
-    params_proto->set_guidance_scale(generator_params.guidance_scale());
-    params_proto->set_seed(generator_params.seed());
-
-    return get_serialized_message<Text2Image_Get_Generator_Params_Reply>(text2image_get_generator_params,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GET_GENERATOR_PARAMS), "Text2Image_Get_Generator_Params_Reply");
-}
-
-Expected<Buffer> Text2ImageGetGeneratorParamsSerializer::serialize_reply(hailo_status status)
-{
-    Text2Image_Get_Generator_Params_Reply text2image_get_generator_params;
-    text2image_get_generator_params.set_status(status);
-
-    return get_serialized_message<Text2Image_Get_Generator_Params_Reply>(text2image_get_generator_params,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GET_GENERATOR_PARAMS), "Text2Image_Get_Generator_Params_Reply");
-}
-
-Expected<Text2ImageGeneratorParams> Text2ImageGetGeneratorParamsSerializer::deserialize_reply(const MemoryView &serialized_reply)
-{
-    TRY(auto text2image_get_generator_params, get_deserialized_message<Text2Image_Get_Generator_Params_Reply>(serialized_reply,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GET_GENERATOR_PARAMS), "Text2Image_Get_Generator_Params_Reply"));
-
-    CHECK(text2image_get_generator_params.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to deserialize 'Text2Image_Get_Generator_Params_Reply'");
-    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(text2image_get_generator_params.status()), "Failed to get Text2Image generator params");
-
-    Text2ImageGeneratorParams params(text2image_get_generator_params.generator_params().samples_count(),
-        text2image_get_generator_params.generator_params().steps_count(),
-        text2image_get_generator_params.generator_params().guidance_scale(),
-        text2image_get_generator_params.generator_params().seed());
-
-    return params;
-}
-
-Expected<Buffer> Text2ImageGetIPAdapterFrameInfoSerializer::serialize_request()
-{
-    Text2Image_Get_IP_Adapter_Frame_Info_Request text2image_get_ip_adapter_frame_info;
-    return get_serialized_message<Text2Image_Get_IP_Adapter_Frame_Info_Request>(text2image_get_ip_adapter_frame_info,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GET_IP_ADAPTER_FRAME_INFO), "Text2Image_Get_IP_Adapter_Frame_Info_Request");
-}
-
-hailo_status Text2ImageGetIPAdapterFrameInfoSerializer::deserialize_request(const MemoryView &serialized_request)
-{
-    TRY(auto text2image_get_ip_adapter_frame_info, get_deserialized_message<Text2Image_Get_IP_Adapter_Frame_Info_Request>(serialized_request,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GET_IP_ADAPTER_FRAME_INFO), "Text2Image_Get_IP_Adapter_Frame_Info_Request"));
-
-    return HAILO_SUCCESS;
-}
-
-Expected<Buffer> Text2ImageGetIPAdapterFrameInfoSerializer::serialize_reply(hailo_status status, hailo_3d_image_shape_t ip_adapter_frame_shape, hailo_format_t ip_adapter_frame_format)
-{
-    Text2Image_Get_IP_Adapter_Frame_Info_Reply text2image_get_ip_adapter_frame_info;
-    text2image_get_ip_adapter_frame_info.set_status(status);
-
-    auto ip_adapter_frame_shape_proto = text2image_get_ip_adapter_frame_info.mutable_shape();
-    ip_adapter_frame_shape_proto->set_height(ip_adapter_frame_shape.height);
-    ip_adapter_frame_shape_proto->set_width(ip_adapter_frame_shape.width);
-    ip_adapter_frame_shape_proto->set_features(ip_adapter_frame_shape.features);
-
-    auto ip_adapter_frame_format_proto = text2image_get_ip_adapter_frame_info.mutable_format();
-    ip_adapter_frame_format_proto->set_format_order(static_cast<uint32_t>(ip_adapter_frame_format.order));
-    ip_adapter_frame_format_proto->set_format_type(static_cast<uint32_t>(ip_adapter_frame_format.type));
-
-    return get_serialized_message<Text2Image_Get_IP_Adapter_Frame_Info_Reply>(text2image_get_ip_adapter_frame_info,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GET_IP_ADAPTER_FRAME_INFO), "Text2Image_Get_IP_Adapter_Frame_Info_Reply");
-}
-
-Expected<std::pair<hailo_3d_image_shape_t, hailo_format_t>> Text2ImageGetIPAdapterFrameInfoSerializer::deserialize_reply(const MemoryView &serialized_reply)
-{
-    TRY(auto text2image_get_ip_adapter_frame_info, get_deserialized_message<Text2Image_Get_IP_Adapter_Frame_Info_Reply>(serialized_reply,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GET_IP_ADAPTER_FRAME_INFO), "Text2Image_Get_IP_Adapter_Frame_Info_Reply"));
-
-    CHECK(text2image_get_ip_adapter_frame_info.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'Text2Image_Get_IP_Adapter_Frame_Info_Reply'");
-    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(text2image_get_ip_adapter_frame_info.status()), "Failed to get IP adapter frame info");
-
-    hailo_3d_image_shape_t ip_adapter_frame_shape = {};
-    ip_adapter_frame_shape.height = text2image_get_ip_adapter_frame_info.shape().height();
-    ip_adapter_frame_shape.width = text2image_get_ip_adapter_frame_info.shape().width();
-    ip_adapter_frame_shape.features = text2image_get_ip_adapter_frame_info.shape().features();
-
-    hailo_format_t ip_adapter_frame_format = {};
-    ip_adapter_frame_format.order = static_cast<hailo_format_order_t>(text2image_get_ip_adapter_frame_info.format().format_order());
-    ip_adapter_frame_format.type = static_cast<hailo_format_type_t>(text2image_get_ip_adapter_frame_info.format().format_type());
-
-    return std::make_pair(ip_adapter_frame_shape, ip_adapter_frame_format);
-}
-
-Expected<Buffer> Text2ImageGetIPAdapterFrameInfoSerializer::serialize_reply(hailo_status error_status)
-{
-    Text2Image_Get_IP_Adapter_Frame_Info_Reply text2image_get_ip_adapter_frame_info;
-    text2image_get_ip_adapter_frame_info.set_status(error_status);
-
-    return get_serialized_message<Text2Image_Get_IP_Adapter_Frame_Info_Reply>(text2image_get_ip_adapter_frame_info,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GET_IP_ADAPTER_FRAME_INFO), "Text2Image_Get_IP_Adapter_Frame_Info_Reply");
-}
-
-Expected<Buffer> Text2ImageTokenizeSerializer::serialize_request(const std::string &prompt)
-{
-    Text2Image_Tokenize_Request text2image_tokenize;
-    text2image_tokenize.set_prompt(prompt);
-
-    return get_serialized_message<Text2Image_Tokenize_Request>(text2image_tokenize,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__TOKENIZE), "Text2Image_Tokenize_Request");
-}
-
-Expected<std::string> Text2ImageTokenizeSerializer::deserialize_request(const MemoryView &serialized_request)
-{
-    TRY(auto text2image_tokenize, get_deserialized_message<Text2Image_Tokenize_Request>(serialized_request,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__TOKENIZE), "Text2Image_Tokenize_Request"));
-
-    auto cpy = text2image_tokenize.prompt();
-    return cpy;
-}
-
-Expected<Buffer> Text2ImageTokenizeSerializer::serialize_reply(hailo_status status, const std::vector<int> &tokens)
-{
-    Text2Image_Tokenize_Reply text2image_tokenize;
-    text2image_tokenize.set_status(status);
-    for (auto token : tokens) {
-        text2image_tokenize.add_tokens(token);
-    }
-
-    return get_serialized_message<Text2Image_Tokenize_Reply>(text2image_tokenize,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__TOKENIZE), "Text2Image_Tokenize_Reply");
-}
-
-Expected<std::vector<int>> Text2ImageTokenizeSerializer::deserialize_reply(const MemoryView &serialized_reply)
-{
-    TRY(auto text2image_tokenize, get_deserialized_message<Text2Image_Tokenize_Reply>(serialized_reply,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__TOKENIZE), "Text2Image_Tokenize_Reply"));
-
-    CHECK(text2image_tokenize.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'Text2Image_Tokenize_Reply'");
-    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(text2image_tokenize.status()), "Failed to tokenize");
-
-    std::vector<int> tokens;
-    for (auto token : text2image_tokenize.tokens()) {
-        tokens.push_back(token);
-    }
-
-    return tokens;
-}
-
-Expected<Buffer> Text2ImageGeneratorAbortSerializer::serialize_request()
-{
-    Text2Image_Generator_Abort_Request text2image_generator_abort;
-    return get_serialized_message<Text2Image_Generator_Abort_Request>(text2image_generator_abort,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_ABORT), "Text2Image_Generator_Abort_Request");
-}
-
-hailo_status Text2ImageGeneratorAbortSerializer::deserialize_request(const MemoryView &serialized_request)
-{
-    TRY(auto text2image_generator_abort, get_deserialized_message<Text2Image_Generator_Abort_Request>(serialized_request,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_ABORT), "Text2Image_Generator_Abort_Request"));
-
-    return HAILO_SUCCESS;
-}
-
-Expected<Buffer> Text2ImageGeneratorAbortSerializer::serialize_reply(hailo_status status)
-{
-    Text2Image_Generator_Abort_Reply text2image_generator_abort;
-    text2image_generator_abort.set_status(status);
-
-    return get_serialized_message<Text2Image_Generator_Abort_Reply>(text2image_generator_abort,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_ABORT), "Text2Image_Generator_Abort_Reply");
-}
-
-hailo_status Text2ImageGeneratorAbortSerializer::deserialize_reply(const MemoryView &serialized_reply)
-{
-    TRY(auto text2image_generator_abort, get_deserialized_message<Text2Image_Generator_Abort_Reply>(serialized_reply,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_ABORT), "Text2Image_Generator_Abort_Reply"));
-
-    CHECK(text2image_generator_abort.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'Text2Image_Generator_Abort_Reply'");
-    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(text2image_generator_abort.status()), "Failed to abort Text2Image generation");
-
-    return HAILO_SUCCESS;
-}
-
-Expected<Buffer> Text2ImageReleaseSerializer::serialize_request()
-{
-    Text2Image_Release_Request text2image_release;
-    return get_serialized_message<Text2Image_Release_Request>(text2image_release,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__RELEASE), "Text2Image_Release_Request");
-}
-
-hailo_status Text2ImageReleaseSerializer::deserialize_request(const MemoryView &serialized_request)
-{
-    TRY(auto text2image_release, get_deserialized_message<Text2Image_Release_Request>(serialized_request,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__RELEASE), "Text2Image_Release_Request"));
-
-    return HAILO_SUCCESS;
-}
-
-Expected<Buffer> Text2ImageReleaseSerializer::serialize_reply(hailo_status status)
-{
-    Text2Image_Release_Reply text2image_release;
-    text2image_release.set_status(status);
-
-    return get_serialized_message<Text2Image_Release_Reply>(text2image_release,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__RELEASE), "Text2Image_Release_Reply");
-}
-
-hailo_status Text2ImageReleaseSerializer::deserialize_reply(const MemoryView &serialized_reply)
-{
-    TRY(auto text2image_release, get_deserialized_message<Text2Image_Release_Reply>(serialized_reply,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__RELEASE), "Text2Image_Release_Reply"));
-
-    CHECK(text2image_release.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'Text2Image_Release_Reply'");
-    return static_cast<hailo_status>(text2image_release.status());
-}
-
-Expected<Buffer> Text2ImageGeneratorSetInitialNoiseSerializer::serialize_request()
-{
-    Text2Image_Generator_Set_Initial_Noise_Request text2image_generator_set_initial_noise;
-    return get_serialized_message<Text2Image_Generator_Set_Initial_Noise_Request>(text2image_generator_set_initial_noise,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_SET_INITIAL_NOISE), "Text2Image_Generator_Set_Initial_Noise_Request");
-}
-
-hailo_status Text2ImageGeneratorSetInitialNoiseSerializer::deserialize_request(const MemoryView &serialized_request)
-{
-    TRY(auto text2image_generator_set_initial_noise, get_deserialized_message<Text2Image_Generator_Set_Initial_Noise_Request>(serialized_request,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_SET_INITIAL_NOISE), "Text2Image_Generator_Set_Initial_Noise_Request"));
-
-    return HAILO_SUCCESS;
-}
-
-Expected<Buffer> Text2ImageGeneratorSetInitialNoiseSerializer::serialize_reply(hailo_status status)
-{
-    Text2Image_Generator_Set_Initial_Noise_Reply text2image_generator_set_initial_noise;
-    text2image_generator_set_initial_noise.set_status(status);
-
-    return get_serialized_message<Text2Image_Generator_Set_Initial_Noise_Reply>(text2image_generator_set_initial_noise,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_SET_INITIAL_NOISE), "Text2Image_Generator_Set_Initial_Noise_Reply");
-}
-
-hailo_status Text2ImageGeneratorSetInitialNoiseSerializer::deserialize_reply(const MemoryView &serialized_reply)
-{
-    TRY(auto text2image_generator_set_initial_noise, get_deserialized_message<Text2Image_Generator_Set_Initial_Noise_Reply>(serialized_reply,
-        static_cast<uint32_t>(HailoGenAIActionID::TEXT2IMAGE__GENERATOR_SET_INITIAL_NOISE), "Text2Image_Generator_Set_Initial_Noise_Reply"));
-
-    CHECK(text2image_generator_set_initial_noise.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'Text2Image_Generator_Set_Initial_Noise_Reply'");
-    return static_cast<hailo_status>(text2image_generator_set_initial_noise.status());
 }
 
 Expected<Buffer> GenAICheckHefExistsSerializer::serialize_request(const std::string &hef_path, const std::string &hash)
@@ -1501,7 +1212,48 @@ hailo_status Speech2TextReleaseSerializer::deserialize_reply(const MemoryView &s
 
     CHECK(speech2text_release.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'Speech2Text_Release_Reply'");
     return static_cast<hailo_status>(speech2text_release.status());
-}   
+}
+
+Expected<Buffer> Speech2TextTokenizeSerializer::serialize_request(const std::string &text)
+{
+    Speech2Text_Tokenize_Request speech2text_tokenize;
+    speech2text_tokenize.set_text(text);
+    return get_serialized_message<Speech2Text_Tokenize_Request>(speech2text_tokenize,
+        static_cast<uint32_t>(HailoGenAIActionID::SPEECH2TEXT__TOKENIZE), "Speech2Text_Tokenize_Request");
+}
+
+Expected<std::string> Speech2TextTokenizeSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    TRY(auto speech2text_tokenize, get_deserialized_message<Speech2Text_Tokenize_Request>(serialized_request,
+        static_cast<uint32_t>(HailoGenAIActionID::SPEECH2TEXT__TOKENIZE), "Speech2Text_Tokenize_Request"));
+    return std::string(speech2text_tokenize.text());
+}
+
+Expected<Buffer> Speech2TextTokenizeSerializer::serialize_reply(hailo_status status, const std::vector<int> &tokens)
+{
+    Speech2Text_Tokenize_Reply speech2text_tokenize;
+    speech2text_tokenize.set_status(status);
+    for (const auto &token : tokens) {
+        speech2text_tokenize.add_tokens(token);
+    }
+    return get_serialized_message<Speech2Text_Tokenize_Reply>(speech2text_tokenize,
+        static_cast<uint32_t>(HailoGenAIActionID::SPEECH2TEXT__TOKENIZE), "Speech2Text_Tokenize_Reply");
+}
+
+Expected<std::vector<int>> Speech2TextTokenizeSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    TRY(auto speech2text_tokenize, get_deserialized_message<Speech2Text_Tokenize_Reply>(serialized_reply,
+        static_cast<uint32_t>(HailoGenAIActionID::SPEECH2TEXT__TOKENIZE), "Speech2Text_Tokenize_Reply"));
+
+    CHECK(speech2text_tokenize.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'Speech2Text_Tokenize_Reply'");
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(speech2text_tokenize.status()), "Failed to tokenize");
+
+    std::vector<int> tokens;
+    for (const auto &token : speech2text_tokenize.tokens()) {
+        tokens.push_back(token);
+    }
+    return tokens;
+}
 
 } /* namespace genai */
 } /* namespace hailort */

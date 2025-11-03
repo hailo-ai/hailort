@@ -46,7 +46,7 @@ public:
         switch (user_format.order)
         {
         case HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS:
-            return { HailoRTCommon::get_nms_by_class_host_shape_size(nms_shape) };
+            return {HailoRTCommon::get_nms_by_class_host_shape_size(nms_shape)};
         case HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE:
         case HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK:
             // In reality, there is no such thing as shape for HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK and HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE result,

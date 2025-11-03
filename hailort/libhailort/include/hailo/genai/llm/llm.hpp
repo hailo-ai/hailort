@@ -429,12 +429,53 @@ public:
     Expected<std::vector<int>> tokenize(const std::string &prompt);
 
     /**
+     * Gets the current context usage of the LLM model.
+     *
+     * @return Upon success, returns Expected of size_t representing the current number of tokens in the context.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     * @note This function returns the total number of tokens currently stored in the model's context,
+     *       including both input tokens and generated tokens from previous interactions.
+     * @note The context usage includes the conversation history and any tokens that have been
+     *       processed but not yet cleared by clear_context().
+     */
+    Expected<size_t> get_context_usage_size();
+
+    /**
+     * Obtains the maximum context capacity of the LLM model.
+     *
+     * @return Upon success, returns Expected of size_t representing the maximum number of tokens
+     *         that can be stored in the model's context. Otherwise, returns Unexpected of ::hailo_status error.
+     * @note This function returns the maximum number of tokens that can be stored in the model's context,
+     *       which is determined in the model compilation, and is not configurable.
+     */
+    Expected<size_t> max_context_capacity();
+
+    /**
      * Clears the conversation context of the LLM.
      *
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      * @note This function must not be called while a generation is in progress
      */
     hailo_status clear_context();
+
+    /**
+     * Saves the current context of the LLM, as a binary blob that can be used to load the context later on.
+     *
+     * @return Upon success, returns Expected of BufferPtr. Otherwise, returns Unexpected of ::hailo_status error.
+     * @note The context is unique for a specific LLM model, and can be used to set the context using load_context().
+     *       Trying to set this context on a different LLM (e.g. QWEN context on a LLAMA model) will result in an error.
+     */
+    Expected<BufferPtr> save_context();
+
+    /**
+     * Loads a context to the LLM.
+     *
+     * @param[in] context     The context to set.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note The context is unique for a specific LLM model. It is retrieved using save_context().
+     *       Trying to set a context from a different LLM (e.g. QWEN context on a LLAMA model) will result in an error.
+     */
+    hailo_status load_context(const MemoryView &context);
 
     /**
      * Sets a custom generation recovery sequence to be injected into the model when generation ends abruptly

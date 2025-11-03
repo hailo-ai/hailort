@@ -3,11 +3,11 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @file pcie_device_hrpc_client.cpp
- * @brief Pcie Device HRPC client implementation
+ * @file device_hrpc_client.cpp
+ * @brief Device HRPC client implementation
  **/
 
-#include "pcie_device_hrpc_client.hpp"
+#include "device_hrpc_client.hpp"
 #include "device_common/device_internal.hpp"
 #include "hailo/hailort.h"
 #include "serializer.hpp"
@@ -17,7 +17,7 @@
 namespace hailort
 {
 
-Expected<std::shared_ptr<Client>> PcieDeviceHrpcClient::get_connected_client(const std::string &device_id)
+Expected<std::shared_ptr<Client>> DeviceHrpcClient::get_connected_client(const std::string &device_id)
 {
     auto client = make_shared_nothrow<Client>(device_id);
     CHECK_NOT_NULL(client, HAILO_OUT_OF_HOST_MEMORY);
@@ -38,13 +38,13 @@ Expected<std::shared_ptr<Client>> PcieDeviceHrpcClient::get_connected_client(con
     return client;
 }
 
-Expected<std::unique_ptr<Device>> PcieDeviceHrpcClient::create(const std::string &device_id)
+Expected<std::unique_ptr<Device>> DeviceHrpcClient::create(const std::string &device_id)
 {
     TRY(auto client, get_connected_client(device_id));
-    return PcieDeviceHrpcClient::create(device_id, client);
+    return DeviceHrpcClient::create(device_id, client);
 }
 
-Expected<rpc_object_handle_t> PcieDeviceHrpcClient::create_remote_device(std::shared_ptr<Client> client)
+Expected<rpc_object_handle_t> DeviceHrpcClient::create_remote_device(std::shared_ptr<Client> client)
 {
     TRY(auto request_buffer, client->allocate_request_buffer(), "Failed to allocate request buffer");
     TRY(auto request_size, CreateDeviceSerializer::serialize_request(MemoryView(*request_buffer)));
@@ -53,7 +53,7 @@ Expected<rpc_object_handle_t> PcieDeviceHrpcClient::create_remote_device(std::sh
     return CreateDeviceSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
 
-Expected<std::unique_ptr<Device>> PcieDeviceHrpcClient::create(const std::string &device_id,
+Expected<std::unique_ptr<Device>> DeviceHrpcClient::create(const std::string &device_id,
     std::shared_ptr<Client> client)
 {
     auto device_handle = INVALID_HANDLE_ID;
@@ -63,13 +63,13 @@ Expected<std::unique_ptr<Device>> PcieDeviceHrpcClient::create(const std::string
         TRY(callback_dispatcher, client->callback_dispatcher_manager()->new_dispatcher(RpcCallbackType::DEVICE_NOTIFICATION, false));
     }
 
-    auto device = make_unique_nothrow<PcieDeviceHrpcClient>(device_id, client, device_handle, callback_dispatcher);
+    auto device = make_unique_nothrow<DeviceHrpcClient>(device_id, client, device_handle, callback_dispatcher);
     CHECK_NOT_NULL(device, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::unique_ptr<Device>(std::move(device));
 }
 
-PcieDeviceHrpcClient::~PcieDeviceHrpcClient()
+DeviceHrpcClient::~DeviceHrpcClient()
 {
     if ((INVALID_HANDLE_ID == m_handle) || !m_client) {
         return;
@@ -100,7 +100,7 @@ PcieDeviceHrpcClient::~PcieDeviceHrpcClient()
     }
 }
 
-Expected<hailo_device_identity_t> PcieDeviceHrpcClient::identify()
+Expected<hailo_device_identity_t> DeviceHrpcClient::identify()
 {
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
     TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
@@ -111,7 +111,7 @@ Expected<hailo_device_identity_t> PcieDeviceHrpcClient::identify()
     return IdentifyDeviceSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
 
-Expected<hailo_extended_device_information_t> PcieDeviceHrpcClient::get_extended_device_information()
+Expected<hailo_extended_device_information_t> DeviceHrpcClient::get_extended_device_information()
 {
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
     TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
@@ -122,7 +122,7 @@ Expected<hailo_extended_device_information_t> PcieDeviceHrpcClient::get_extended
     return ExtendedDeviceInfoSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
 
-Expected<hailo_chip_temperature_info_t> PcieDeviceHrpcClient::get_chip_temperature()
+Expected<hailo_chip_temperature_info_t> DeviceHrpcClient::get_chip_temperature()
 {
 
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
@@ -136,7 +136,7 @@ Expected<hailo_chip_temperature_info_t> PcieDeviceHrpcClient::get_chip_temperatu
     return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
 
-Expected<hailo_health_stats_t> PcieDeviceHrpcClient::query_health_stats()
+Expected<hailo_health_stats_t> DeviceHrpcClient::query_health_stats()
 {
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
 
@@ -149,7 +149,7 @@ Expected<hailo_health_stats_t> PcieDeviceHrpcClient::query_health_stats()
     return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
 
-Expected<hailo_performance_stats_t> PcieDeviceHrpcClient::query_performance_stats()
+Expected<hailo_performance_stats_t> DeviceHrpcClient::query_performance_stats()
 {
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
 
@@ -162,7 +162,7 @@ Expected<hailo_performance_stats_t> PcieDeviceHrpcClient::query_performance_stat
     return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
 
-Expected<float32_t> PcieDeviceHrpcClient::power_measurement(
+Expected<float32_t> DeviceHrpcClient::power_measurement(
     hailo_dvm_options_t dvm,
     hailo_power_measurement_types_t measurement_type)
 {
@@ -177,7 +177,7 @@ Expected<float32_t> PcieDeviceHrpcClient::power_measurement(
     return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
 
-hailo_status PcieDeviceHrpcClient::start_power_measurement(
+hailo_status DeviceHrpcClient::start_power_measurement(
     hailo_averaging_factor_t averaging_factor,
     hailo_sampling_period_t sampling_period)
 {
@@ -192,7 +192,7 @@ hailo_status PcieDeviceHrpcClient::start_power_measurement(
     return HAILO_SUCCESS;
 }
 
-Expected<hailo_power_measurement_data_t> PcieDeviceHrpcClient::get_power_measurement(
+Expected<hailo_power_measurement_data_t> DeviceHrpcClient::get_power_measurement(
     hailo_measurement_buffer_index_t buffer_index,
     bool should_clear)
 {
@@ -208,7 +208,7 @@ Expected<hailo_power_measurement_data_t> PcieDeviceHrpcClient::get_power_measure
     return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
 
-hailo_status PcieDeviceHrpcClient::set_power_measurement(
+hailo_status DeviceHrpcClient::set_power_measurement(
     hailo_measurement_buffer_index_t buffer_index,
     hailo_dvm_options_t dvm,
     hailo_power_measurement_types_t measurement_type)
@@ -225,7 +225,7 @@ hailo_status PcieDeviceHrpcClient::set_power_measurement(
     return HAILO_SUCCESS;
 }
 
-hailo_status PcieDeviceHrpcClient::stop_power_measurement()
+hailo_status DeviceHrpcClient::stop_power_measurement()
 {
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
 
@@ -238,7 +238,7 @@ hailo_status PcieDeviceHrpcClient::stop_power_measurement()
     return HAILO_SUCCESS;
 }
 
-Expected<hailo_device_architecture_t> PcieDeviceHrpcClient::get_architecture() const
+Expected<hailo_device_architecture_t> DeviceHrpcClient::get_architecture() const
 {
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
 
@@ -250,7 +250,7 @@ Expected<hailo_device_architecture_t> PcieDeviceHrpcClient::get_architecture() c
     return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
 }
 
-hailo_status PcieDeviceHrpcClient::dma_map(void *address, size_t size, hailo_dma_buffer_direction_t data_direction)
+hailo_status DeviceHrpcClient::dma_map(void *address, size_t size, hailo_dma_buffer_direction_t data_direction)
 {
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
     auto driver = m_client->get_driver();
@@ -260,7 +260,7 @@ hailo_status PcieDeviceHrpcClient::dma_map(void *address, size_t size, hailo_dma
     return VdmaDevice::dma_map_impl(*driver.get(), address, size, data_direction);
 }
 
-hailo_status PcieDeviceHrpcClient::dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t data_direction)
+hailo_status DeviceHrpcClient::dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t data_direction)
 {
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
     auto driver = m_client->get_driver();
@@ -270,7 +270,7 @@ hailo_status PcieDeviceHrpcClient::dma_unmap(void *address, size_t size, hailo_d
     return VdmaDevice::dma_unmap_impl(*driver.get(), address, size, data_direction);
 }
 
-hailo_status PcieDeviceHrpcClient::dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t data_direction)
+hailo_status DeviceHrpcClient::dma_map_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t data_direction)
 {
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
     auto driver = m_client->get_driver();
@@ -280,7 +280,7 @@ hailo_status PcieDeviceHrpcClient::dma_map_dmabuf(int dmabuf_fd, size_t size, ha
     return VdmaDevice::dma_map_dmabuf_impl(*driver.get(), dmabuf_fd, size, data_direction);
 }
 
-hailo_status PcieDeviceHrpcClient::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t data_direction)
+hailo_status DeviceHrpcClient::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t data_direction)
 {
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
     auto driver = m_client->get_driver();
@@ -290,7 +290,7 @@ hailo_status PcieDeviceHrpcClient::dma_unmap_dmabuf(int dmabuf_fd, size_t size, 
     return VdmaDevice::dma_unmap_dmabuf_impl(*driver.get(), dmabuf_fd, size, data_direction);
 }
 
-hailo_status PcieDeviceHrpcClient::reset(hailo_reset_device_mode_t mode)
+hailo_status DeviceHrpcClient::reset(hailo_reset_device_mode_t mode)
 {
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
     auto driver = m_client->get_driver();
@@ -305,12 +305,13 @@ hailo_status PcieDeviceHrpcClient::reset(hailo_reset_device_mode_t mode)
     return driver->reset_chip();
 }
 
-hailo_status PcieDeviceHrpcClient::set_notification_callback(const NotificationCallback &func, hailo_notification_id_t notification_id,
+hailo_status DeviceHrpcClient::set_notification_callback(const NotificationCallback &func, hailo_notification_id_t notification_id,
     void *opaque)
 {
     switch (notification_id) {
     case HAILO_NOTIFICATION_ID_HEALTH_MONITOR_TEMPERATURE_ALARM:
     case HAILO_NOTIFICATION_ID_HEALTH_MONITOR_OVERCURRENT_ALARM:
+    case HAILO_NOTIFICATION_ID_NN_CORE_CRC_ERROR_EVENT:
         break;
     default:
         LOGGER__ERROR("Unsupported notification id = {}", static_cast<uint32_t>(notification_id));
@@ -335,7 +336,7 @@ hailo_status PcieDeviceHrpcClient::set_notification_callback(const NotificationC
     return HAILO_SUCCESS;
 }
 
-hailo_status PcieDeviceHrpcClient::remove_notification_callback(hailo_notification_id_t notification_id)
+hailo_status DeviceHrpcClient::remove_notification_callback(hailo_notification_id_t notification_id)
 {
     auto status = m_callback_dispatcher->remove_callback(notification_id);
     CHECK_SUCCESS(status);
@@ -349,7 +350,7 @@ hailo_status PcieDeviceHrpcClient::remove_notification_callback(hailo_notificati
     return HAILO_SUCCESS;
 }
 
-hailo_status PcieDeviceHrpcClient::before_fork()
+hailo_status DeviceHrpcClient::before_fork()
 {
     // It's important to destroy here because we initialize them again after the fork
     m_callback_dispatcher = nullptr;
@@ -357,7 +358,7 @@ hailo_status PcieDeviceHrpcClient::before_fork()
     return HAILO_SUCCESS;
 }
 
-hailo_status PcieDeviceHrpcClient::after_fork_in_parent()
+hailo_status DeviceHrpcClient::after_fork_in_parent()
 {
     TRY(m_client, get_connected_client(m_device_id), "Failed to create client");
     TRY(m_callback_dispatcher, m_client->callback_dispatcher_manager()->new_dispatcher(RpcCallbackType::DEVICE_NOTIFICATION, false));
@@ -365,7 +366,7 @@ hailo_status PcieDeviceHrpcClient::after_fork_in_parent()
     return HAILO_SUCCESS;
 }
 
-hailo_status PcieDeviceHrpcClient::after_fork_in_child()
+hailo_status DeviceHrpcClient::after_fork_in_child()
 {
     TRY(m_client, get_connected_client(m_device_id), "Failed to create client");
     TRY(m_callback_dispatcher, m_client->callback_dispatcher_manager()->new_dispatcher(RpcCallbackType::DEVICE_NOTIFICATION, false));
@@ -373,16 +374,41 @@ hailo_status PcieDeviceHrpcClient::after_fork_in_child()
     return HAILO_SUCCESS;
 }
 
+hailo_status DeviceHrpcClient::echo_buffer_async(const MemoryView buffer)
+{
+    TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
+    TRY(auto request_size, EchoBufferSerializer::serialize_request(static_cast<uint32_t>(buffer.size()), MemoryView(*request_buffer)));
+    if (0 == buffer.size()) {
+        auto status = m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__ECHO_BUFFER),
+            MemoryView(request_buffer->data(), request_size));
+        CHECK_SUCCESS(status);
+
+        return HAILO_SUCCESS;
+    }
+
+    auto status = m_client->execute_request_async(static_cast<uint32_t>(HailoRpcActionID::DEVICE__ECHO_BUFFER),
+        MemoryView(request_buffer->data(), request_size),
+        [] (rpc_message_t reply) {
+            hailo_status status = static_cast<hailo_status>(reply.header.status);
+            if(status != HAILO_SUCCESS) {
+                LOGGER__ERROR("Failed to echo buffer. status: {}", status);
+            }
+        }, {TransferBuffer(buffer)}, {TransferBuffer(buffer)});
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
 // Try getting power measurement just to see if it's possible.
 // Assuming: Power measurement succeeded -> sensor exists
 // In case of a failure, we will assume that sensor is not installed, because we have no way of verifying it
-Expected<bool> PcieDeviceHrpcClient::has_power_sensor()
+Expected<bool> DeviceHrpcClient::has_power_sensor()
 {
     auto power = power_measurement(HAILO_DVM_OPTIONS_AUTO, HAILO_POWER_MEASUREMENT_TYPES__POWER);
     return power.has_value();
 }
 
-Expected<size_t> PcieDeviceHrpcClient::fetch_logs(MemoryView buffer, hailo_log_type_t log_type)
+Expected<size_t> DeviceHrpcClient::fetch_logs(MemoryView buffer, hailo_log_type_t log_type)
 {
     using Serializer = FetchLogsSerializer;
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);

@@ -75,6 +75,7 @@ public:
     virtual ~NmsOpMetadata() = default;
     std::string get_nms_config_description();
     hailo_status validate_format_info() override;
+    hailo_status validate_format_type(const hailo_format_t &format);
     NmsPostProcessConfig &nms_config() { return m_nms_config;};
     hailo_nms_info_t nms_info();
     std::string get_op_description() override;

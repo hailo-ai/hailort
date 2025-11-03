@@ -30,7 +30,10 @@ public:
 
     Expected<Speech2TextGeneratorParams> create_generator_params();
     Expected<std::string> generate_all_text(MemoryView audio_buffer, const Speech2TextGeneratorParams &generator_params, std::chrono::milliseconds timeout);
+    Expected<std::string> generate_all_text(MemoryView audio_buffer, std::chrono::milliseconds timeout);
     Expected<std::vector<Speech2Text::SegmentInfo>> generate_all_segments(MemoryView audio_buffer, const Speech2TextGeneratorParams &generator_params, std::chrono::milliseconds timeout);
+    Expected<std::vector<Speech2Text::SegmentInfo>> generate_all_segments(MemoryView audio_buffer, std::chrono::milliseconds timeout);
+    Expected<std::vector<int>> tokenize(const std::string &text);
 
     Impl(std::shared_ptr<SessionWrapper> session, const Speech2TextParams &speech2text_params);
     ~Impl();

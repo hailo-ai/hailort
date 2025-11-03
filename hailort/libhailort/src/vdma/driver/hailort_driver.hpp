@@ -234,8 +234,6 @@ public:
     static Expected<std::vector<DeviceInfo>> scan_devices();
     static Expected<std::vector<DeviceInfo>> scan_devices(AcceleratorType accelerator_type);
 
-    ~HailoRTDriver();
-
     hailo_status vdma_enable_channels(const ChannelsBitmap &channels_bitmap, bool enable_timestamps_measure);
     hailo_status vdma_disable_channels(const ChannelsBitmap &channel_id);
     Expected<IrqData> vdma_interrupts_wait(const ChannelsBitmap &channels_bitmap);
@@ -266,29 +264,16 @@ public:
     Expected<uint64_t> write_action_list(uint8_t *data, size_t size);
 
     /**
-     * Maps a dmabuf to physical memory.
-     *
-     * @param[in] dmabuf_fd - File decsriptor to the dmabuf.
-     * @param[in] required_size - size of dmabug we are mapping.
-     * @param[in] data_direction - direction is used for optimization.
-     * @param[in] buffer_type - buffer type must be DMABUF
-     */
-    Expected<VdmaBufferHandle> vdma_buffer_map_dmabuf(int dmabuf_fd, size_t required_size, DmaDirection data_direction,
-        DmaBufferType buffer_type);
-
-    /**
      * Pins a page aligned user buffer to physical memory, creates an IOMMU mapping (pci_mag_sg).
      * The buffer is used for streaming D2H or H2D using DMA.
-     *
-     * @param[in] user_address - User address of the buffer to map.
      */
-    Expected<VdmaBufferHandle> vdma_buffer_map(uintptr_t user_address, size_t required_size, DmaDirection data_direction,
-        DmaBufferType buffer_type);
+    Expected<VdmaBufferHandle> vdma_buffer_map(uintptr_t addr_or_fd, size_t size, DmaDirection direction,
+        DmaBufferType type);
 
     /**
     * Unmaps user buffer mapped using HailoRTDriver::map_buffer.
     */
-    hailo_status vdma_buffer_unmap(uintptr_t user_address, size_t size, DmaDirection data_direction);
+    hailo_status vdma_buffer_unmap(uintptr_t addr_or_fd, size_t size, DmaDirection direction, DmaBufferType type);
 
     hailo_status vdma_buffer_sync(VdmaBufferHandle buffer, DmaSyncDirection sync_direction, size_t offset, size_t count);
 
@@ -312,9 +297,8 @@ public:
      * Program the given descriptors list to point to the given buffer.
      */
     hailo_status descriptors_list_program(uintptr_t desc_handle, VdmaBufferHandle buffer_handle,
-        size_t buffer_size, size_t buffer_offset, uint8_t channel_index,
-        uint32_t starting_desc, uint32_t batch_size, bool should_bind, InterruptsDomain last_desc_interrupts,
-        uint32_t stride);
+        size_t buffer_offset, size_t transfer_size, uint32_t transfers_count, uint8_t channel_index,
+        uint32_t starting_desc, InterruptsDomain last_desc_interrupts);
 
     struct TransferBuffer {
         bool is_dma_buf;
@@ -423,10 +407,6 @@ private:
     template<typename PointerType>
     int run_ioctl(uint32_t ioctl_code, PointerType param);
 
-    Expected<VdmaBufferHandle> vdma_buffer_map_ioctl(uintptr_t user_address, size_t required_size,
-        DmaDirection data_direction, DmaBufferType buffer_type);
-    hailo_status vdma_buffer_unmap_ioctl(VdmaBufferHandle handle);
-
     Expected<std::pair<uintptr_t, uint64_t>> continous_buffer_alloc_ioctl(size_t size);
     hailo_status continous_buffer_free_ioctl(uintptr_t desc_handle);
     Expected<void *> continous_buffer_mmap(uintptr_t desc_handle, size_t size);
@@ -467,35 +447,6 @@ private:
     // Need to refactor the driver lock mechanism and then remove the mutex from here.
     std::mutex m_driver_lock;
 #endif
-
-    // TODO HRT-11937: when ioctl is combined, move caching to driver
-    struct MappedBufferInfo {
-        VdmaBufferHandle handle;
-        size_t mapped_count;
-    };
-
-    struct MappedBufferKey {
-        uintptr_t address;
-        DmaDirection direction;
-        size_t size;
-
-        bool operator==(const MappedBufferKey &other) const
-        {
-            return address == other.address && direction == other.direction && size >= other.size;
-        }
-    };
-
-    struct MappedBufferKeyHash {
-        std::size_t operator()(const MappedBufferKey &key) const {
-            return std::hash<uintptr_t>()(key.address) ^
-                   std::hash<size_t>()(key.size) ^
-                   std::hash<int>()(static_cast<int>(key.direction));
-        }
-    };
-
-    std::mutex m_mapped_buffer_lock;
-    std::unordered_map<MappedBufferKey, MappedBufferInfo, MappedBufferKeyHash> m_mapped_buffer;
-
 };
 
 inline hailo_dma_buffer_direction_t to_hailo_dma_direction(HailoRTDriver::DmaDirection dma_direction)

@@ -67,6 +67,11 @@ public:
         return HAILO_SUCCESS;
     }
 
+    void set_action_id(uint32_t action_id)
+    {
+        m_message_header.action_id = action_id;
+    }
+
 private:
     rpc_message_header_t m_message_header;
     RpcConnectionPtr m_client_connection;

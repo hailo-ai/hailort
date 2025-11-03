@@ -43,9 +43,10 @@ public:
 
     hailo_status connect(bool is_localhost = false);
     Expected<rpc_message_t> execute_request(uint32_t action_id, const MemoryView &request,
-        std::vector<TransferBuffer> &&write_buffers = {}, std::vector<TransferBuffer> &&read_buffers = {});
+        std::vector<TransferBuffer> &&write_buffers = {}, std::vector<TransferBuffer> &&read_buffers = {},
+        std::chrono::milliseconds timeout = REQUEST_TIMEOUT);
     hailo_status wait_for_execute_request_ready(const MemoryView &request, std::chrono::milliseconds timeout);
-    Expected<message_id_t> execute_request_async(uint32_t action_id, const MemoryView &request,
+    hailo_status execute_request_async(uint32_t action_id, const MemoryView &request,
         HrpcCallback reply_received_callback, std::vector<TransferBuffer> &&write_buffers = {},
         std::vector<TransferBuffer> &&read_buffers = {});
     void set_notification_callback(std::function<hailo_status(const MemoryView&)> callback);
@@ -53,6 +54,11 @@ public:
     const std::string &device_id() const { return m_device_id; }
     Expected<BufferPtr> allocate_request_buffer();
     std::shared_ptr<ClientCallbackDispatcherManager> callback_dispatcher_manager();
+
+private:
+    Expected<message_id_t> execute_request_async_impl(uint32_t action_id, const MemoryView &request,
+        HrpcCallback reply_received_callback, std::vector<TransferBuffer> &&write_buffers,
+        std::vector<TransferBuffer> &&read_buffers);
 
 protected:
     hailo_status message_loop();

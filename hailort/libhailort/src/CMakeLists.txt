@@ -32,6 +32,7 @@ set(HAILORT_CPP_SOURCES
 add_subdirectory(utils)
 add_subdirectory(os)
 add_subdirectory(device_common)
+add_subdirectory(device)
 add_subdirectory(vdevice)
 add_subdirectory(transform)
 add_subdirectory(stream_common)
@@ -139,7 +140,6 @@ set(HAILORT_PUBLIC_HEADERS
     # GenAI
     ${HAILORT_INC_DIR}/hailo/genai/common.hpp
     ${HAILORT_INC_DIR}/hailo/genai/llm/llm.hpp
-    ${HAILORT_INC_DIR}/hailo/genai/text2image/text2image.hpp
     ${HAILORT_INC_DIR}/hailo/genai/vlm/vlm.hpp
     ${HAILORT_INC_DIR}/hailo/genai/speech2text/speech2text.hpp
 )

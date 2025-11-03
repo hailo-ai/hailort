@@ -25,6 +25,7 @@
 
 // TODO: HRT-13107
 #define DEVPATH "/dev/dma_heap/linux,cma"
+constexpr auto DEVPATH_ALT = "/dev/dma_heap/system";
 
 G_DEFINE_TYPE (GstHailoDmabufAllocator, gst_hailo_dmabuf_allocator, GST_TYPE_DMABUF_ALLOCATOR);
 
@@ -39,8 +40,11 @@ static GstMemory *gst_hailo_dmabuf_allocator_alloc(GstAllocator* allocator, gsiz
     if (!GstHailoDmaHeapControl::dma_heap_fd_open) {
         GstHailoDmaHeapControl::dma_heap_fd = open(DEVPATH, O_RDWR | O_CLOEXEC);
         if (GstHailoDmaHeapControl::dma_heap_fd < 0) {
-            HAILONET_ERROR("open fd failed!\n");
-            return nullptr;
+            GstHailoDmaHeapControl::dma_heap_fd = open(DEVPATH_ALT, O_RDWR | O_CLOEXEC);
+            if (GstHailoDmaHeapControl::dma_heap_fd < 0) {
+                HAILONET_ERROR("open fd failed!\n");
+                return nullptr;
+            }
         }
         GstHailoDmaHeapControl::dma_heap_fd_open = true;
     }

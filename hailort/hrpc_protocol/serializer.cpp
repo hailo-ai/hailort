@@ -596,6 +596,80 @@ Expected<Buffer> FinalizeCacheSerializer::serialize_reply()
     return Buffer();
 }
 
+Expected<size_t> GetCacheBuffersSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle, MemoryView buffer)
+{
+    ConfiguredInferModel_GetCacheBuffers_Request request;
+
+    auto proto_configured_infer_model_handle = request.mutable_configured_infer_model_handle();
+    proto_configured_infer_model_handle->set_id(configured_infer_model_handle);
+
+    return get_serialized_request<ConfiguredInferModel_GetCacheBuffers_Request>(request, "GetCacheBuffers", buffer);
+}
+
+Expected<rpc_object_handle_t> GetCacheBuffersSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    ConfiguredInferModel_GetCacheBuffers_Request request;
+
+    CHECK_AS_EXPECTED(request.ParseFromArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize 'GetCacheBuffers'");
+
+    return request.configured_infer_model_handle().id();
+}
+
+Expected<Buffer> GetCacheBuffersSerializer::serialize_reply(const std::unordered_map<uint32_t, BufferPtr> &cache_buffers)
+{
+    ConfiguredInferModel_GetCacheBuffers_Reply reply;
+    for (const auto &[id, buffer] : cache_buffers) {
+        auto proto_buffer = reply.add_buffers();
+        proto_buffer->set_id(id);
+        proto_buffer->set_data(buffer->data(), buffer->size());
+    }
+    return get_serialized_reply<ConfiguredInferModel_GetCacheBuffers_Reply>(reply, "GetCacheBuffers");
+}
+
+Expected<std::unordered_map<uint32_t, BufferPtr>> GetCacheBuffersSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    ConfiguredInferModel_GetCacheBuffers_Reply reply;
+    CHECK_AS_EXPECTED(reply.ParseFromArray(serialized_reply.data(), static_cast<int>(serialized_reply.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize 'GetCacheBuffers'");
+
+    std::unordered_map<uint32_t, BufferPtr> cache_buffers;
+    for (const auto &buffer_info : reply.buffers()) {
+        TRY(auto buffer, Buffer::create_shared(reinterpret_cast<const uint8_t*>(buffer_info.data().data()), buffer_info.data().size()));
+        cache_buffers.emplace(buffer_info.id(), buffer);
+    }
+    return cache_buffers;
+}
+
+Expected<size_t> UpdateCacheBufferSerializer::serialize_request(rpc_object_handle_t configured_infer_model_handle, uint32_t cache_id, MemoryView buffer, MemoryView output_buffer)
+{
+    ConfiguredInferModel_UpdateCacheBuffer_Request request;
+
+    auto proto_configured_infer_model_handle = request.mutable_configured_infer_model_handle();
+    proto_configured_infer_model_handle->set_id(configured_infer_model_handle);
+
+    request.mutable_buffer()->set_id(cache_id);
+    request.mutable_buffer()->set_data(buffer.data(), buffer.size());
+
+    return get_serialized_request<ConfiguredInferModel_UpdateCacheBuffer_Request>(request, "UpdateCacheBuffer", output_buffer);
+}
+
+Expected<std::tuple<rpc_object_handle_t, uint32_t, BufferPtr>> UpdateCacheBufferSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    ConfiguredInferModel_UpdateCacheBuffer_Request request;
+
+    CHECK_AS_EXPECTED(request.ParseFromArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize 'UpdateCacheBuffer'");
+
+    TRY(auto buffer, Buffer::create_shared(reinterpret_cast<const uint8_t*>(request.buffer().data().data()), request.buffer().data().size()));
+    return std::make_tuple(static_cast<uint32_t>(request.configured_infer_model_handle().id()), static_cast<uint32_t>(request.buffer().id()), buffer);
+}
+
+Expected<Buffer> UpdateCacheBufferSerializer::serialize_reply()
+{
+    return Buffer();
+}
+
 Expected<size_t> RunAsyncSerializer::serialize_request(const RunAsyncSerializer::Request &request_struct, MemoryView buffer)
 {
     ConfiguredInferModel_AsyncInfer_Request request;
@@ -653,10 +727,11 @@ Expected<size_t> RunAsyncForDurationSerializer::serialize_request(const RunAsync
     proto_infer_model_handle->set_id(request_struct.infer_model_handle);
 
     request.set_duration_ms(request_struct.duration_ms);
+    request.set_sleep_between_frames_ms(request_struct.sleep_between_frames_ms);
 
-    request.mutable_buffer_infos()->Reserve(static_cast<int>(request_struct.buffer_infos.size()));
-    for (const auto &buffer_info : request_struct.buffer_infos) {
-        auto proto_buffer_info = request.add_buffer_infos();
+    request.mutable_io_buffer_infos()->Reserve(static_cast<int>(request_struct.io_buffer_infos.size()));
+    for (const auto &buffer_info : request_struct.io_buffer_infos) {
+        auto proto_buffer_info = request.add_io_buffer_infos();
         proto_buffer_info->set_size(buffer_info.size);
         proto_buffer_info->set_type(buffer_info.type);
     }
@@ -671,17 +746,18 @@ Expected<RunAsyncForDurationSerializer::Request> RunAsyncForDurationSerializer::
     CHECK_AS_EXPECTED(request.ParseFromArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
         HAILO_RPC_FAILED, "Failed to de-serialize 'RunAsyncForDuration'");
 
-    std::vector<RunAsyncSerializer::BufferInfo> buffer_infos;
-    buffer_infos.reserve(request.buffer_infos_size());
-    for (const auto &buffer_info : request.buffer_infos()) {
-        buffer_infos.push_back({buffer_info.size(), buffer_info.type()});
+    std::vector<RunAsyncSerializer::BufferInfo> io_buffer_infos;
+    io_buffer_infos.reserve(request.io_buffer_infos_size());
+    for (const auto &buffer_info : request.io_buffer_infos()) {
+        io_buffer_infos.push_back({buffer_info.size(), buffer_info.type()});
     }
 
     RunAsyncForDurationSerializer::Request request_struct;
     request_struct.configured_infer_model_handle = request.configured_infer_model_handle().id();
     request_struct.infer_model_handle = request.infer_model_handle().id();
     request_struct.duration_ms = request.duration_ms();
-    request_struct.buffer_infos = std::move(buffer_infos);
+    request_struct.sleep_between_frames_ms = request.sleep_between_frames_ms();
+    request_struct.io_buffer_infos = std::move(io_buffer_infos);
     return request_struct;
 }
 
@@ -740,6 +816,9 @@ Expected<Buffer> CallbackCalledSerializer::serialize_reply(const RpcCallback &ca
             overcurrent_alert->set_is_last_overcurrent_violation_reached(msg.is_last_overcurrent_violation_reached);
             break;
         }
+        case HAILO_NOTIFICATION_ID_NN_CORE_CRC_ERROR_EVENT:
+            // No parameters to serialize
+            break;
         default:
             LOGGER__ERROR("Got unexpected notification id = {}", static_cast<uint32_t>(callback.data.device_notification.notification.id));
             return make_unexpected(HAILO_INTERNAL_FAILURE);
@@ -805,6 +884,9 @@ Expected<RpcCallback> CallbackCalledSerializer::deserialize_reply(const MemoryVi
             msg.is_last_overcurrent_violation_reached = overcurrent_alert.is_last_overcurrent_violation_reached();
             break;
         }
+        case HAILO_NOTIFICATION_ID_NN_CORE_CRC_ERROR_EVENT:
+            // No parameters to deserialize
+            break;
         default:
             LOGGER__ERROR("Got unexpected notification id = {}", static_cast<uint32_t>(rpc_callback.data.device_notification.notification.id));
             return make_unexpected(HAILO_INTERNAL_FAILURE);
@@ -1006,6 +1088,7 @@ Expected<Buffer> ExtendedDeviceInfoSerializer::serialize_reply(const hailo_exten
     supported_features->set_pcie(extended_info.supported_features.pcie);
     supported_features->set_current_monitoring(extended_info.supported_features.current_monitoring);
     supported_features->set_mdio(extended_info.supported_features.mdio);
+    supported_features->set_power_measurement(extended_info.supported_features.power_measurement);
 
     reply.set_boot_source(static_cast<DeviceBootSourceProto>(extended_info.boot_source));
 
@@ -1051,6 +1134,7 @@ Expected<hailo_extended_device_information_t> ExtendedDeviceInfoSerializer::dese
     extended_info.supported_features.pcie = reply.supported_features().pcie();
     extended_info.supported_features.current_monitoring = reply.supported_features().current_monitoring();
     extended_info.supported_features.mdio = reply.supported_features().mdio();
+    extended_info.supported_features.power_measurement = reply.supported_features().power_measurement();
     extended_info.boot_source = static_cast<hailo_device_boot_source_t>(reply.boot_source());
     std::transform(reply.soc_id().begin(), reply.soc_id().end(), extended_info.soc_id, [](uint32_t val) {
         return static_cast<uint8_t>(val);
@@ -1528,6 +1612,26 @@ Expected<size_t> FetchLogsSerializer::deserialize_reply(const MemoryView &serial
         HAILO_RPC_FAILED, "Failed to de-serialize 'FetchLogs'");
 
     return reply.log_size();
+}
+
+Expected<size_t> EchoBufferSerializer::serialize_request(uint32_t buffer_size, MemoryView buffer)
+{
+    Device_EchoBuffer_Request request;
+    request.set_buffer_size(buffer_size);
+    return get_serialized_request<Device_EchoBuffer_Request>(request, "EchoBuffer", buffer);
+}
+
+Expected<uint32_t> EchoBufferSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    Device_EchoBuffer_Request request;
+    CHECK_AS_EXPECTED(request.ParseFromArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize 'EchoBuffer'");
+    return request.buffer_size();
+}
+
+Expected<Buffer> EchoBufferSerializer::serialize_reply()
+{
+    return Buffer();
 }
 
 } /* namespace hailort */

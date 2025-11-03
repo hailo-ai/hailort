@@ -39,9 +39,9 @@ public:
     static constexpr float32_t DEFAULT_GENERATION_FREQ_PENALTY = 1.0f;
     static constexpr bool DEFAULT_GENERATION_DO_SAMPLE = false;
 
-    static Expected<std::unique_ptr<LLMServer>> create_unique(std::shared_ptr<Session> session);
+    static Expected<std::unique_ptr<LLMServer>> create_unique(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager);
 
-    VLMServer(std::shared_ptr<Session> session, LLMGeneratorParams &&post_process_params);
+    VLMServer(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager, LLMGeneratorParams &&post_process_params);
     virtual ~VLMServer() = default;
 
     // Handlers - consider moving to separate class
@@ -76,7 +76,7 @@ private:
 class VLMServerManager : public LLMServerManager
 {
 public:
-    static Expected<std::unique_ptr<LLMServerManager>> create(std::shared_ptr<Session> session);
+    static Expected<std::unique_ptr<LLMServerManager>> create(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager);
 
     VLMServerManager(std::shared_ptr<Session> session, std::unique_ptr<LLMServer> &&server);
 };

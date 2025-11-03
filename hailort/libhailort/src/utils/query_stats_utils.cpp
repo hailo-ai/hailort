@@ -238,9 +238,7 @@ Expected<int32_t> QueryStatsUtils::get_ddr_noc_utilization()
 
 Expected<float32_t> QueryStatsUtils::get_nnc_utilization(const std::string &id_info_str, const std::string &device_arch_str)
 {
-    auto unique_hash = std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count());
-    TRACE(MonitorStartTrace, unique_hash);
+    TRACE(MonitorStartTrace, "");
     TRACE(AddDeviceTrace, id_info_str, device_arch_str);
 
     std::this_thread::sleep_for(PERFORMANCE_QUERY_SAMPLING_TIME_WINDOW + EPSILON_TIME);
@@ -268,7 +266,7 @@ Expected<float32_t> QueryStatsUtils::get_nnc_utilization(const std::string &id_i
         std::this_thread::sleep_for(PERFORMANCE_QUERY_SAMPLING_TIME_WINDOW);
     }
 
-    TRACE(MonitorEndTrace, unique_hash);
+    TRACE(MonitorEndTrace, "", id_info_str);
 
     CHECK((retry < MAX_RETRIES), HAILO_INTERNAL_FAILURE, "Failed to get nnc_utilization after {} retries", MAX_RETRIES);
 

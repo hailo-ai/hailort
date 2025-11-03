@@ -27,6 +27,10 @@
 #include "genai_server.hpp"
 #include "token_embedder.hpp"
 
+#include "context_structure.hpp"
+
+#include "hailort_server.hpp"
+
 #include "nlohmann/json.hpp"
 #include <queue>
 
@@ -46,10 +50,10 @@ public:
     static constexpr bool DEFAULT_GENERATION_DO_SAMPLE = true;
     static constexpr uint32_t DEFAULT_GENERATION_MAX_GENERATED_TOKENS = 1024;
 
-    static Expected<std::unique_ptr<LLMServer>> create_unique(std::shared_ptr<Session> session);
+    static Expected<std::unique_ptr<LLMServer>> create_unique(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager);
 
-    LLMServer(std::shared_ptr<Session> session, LLMGeneratorParams &&post_process_params);
-    virtual ~LLMServer() = default;
+    LLMServer(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager, LLMGeneratorParams &&post_process_params);
+    virtual ~LLMServer();
 
     // Handlers
     Expected<Buffer> handle_create_llm_request(const MemoryView &request);
@@ -61,19 +65,22 @@ public:
     Expected<Buffer> handle_generator_release_request(const MemoryView &request);
     Expected<Buffer> handle_tokenize_request(const MemoryView &request);
     Expected<Buffer> handle_clear_context_request(const MemoryView &request);
+    Expected<Buffer> handle_get_context_request(const MemoryView &request);
+    Expected<Buffer> handle_set_context_request(const MemoryView &request);
     Expected<Buffer> handle_abort_request(const MemoryView &request);
     Expected<Buffer> handle_set_generation_recovery_sequence_request(const MemoryView &request);
     Expected<Buffer> handle_get_generation_recovery_sequence_request(const MemoryView &request);
     Expected<Buffer> handle_set_stop_tokens_request(const MemoryView &request);
     Expected<Buffer> handle_get_stop_tokens_request(const MemoryView &request);
+    Expected<Buffer> handle_get_context_usage_size(const MemoryView &request);
+    Expected<Buffer> handle_get_max_context_capacity(const MemoryView &request);
 
 protected:
     Expected<std::pair<int, LLMGeneratorCompletion::Status>> generate_next_token_on_demand(const std::vector<int> &tokens, const std::vector<MemoryView> &embeddings);
 
     virtual Expected<std::pair<int, LLMGeneratorCompletion::Status>> handle_prefill_phase(const std::vector<int> &tokens,
         const std::vector<MemoryView> &embeddings);
-    virtual Expected<std::pair<int, LLMGeneratorCompletion::Status>> handle_tbt_phase(const std::vector<int> &tokens,
-        const std::vector<MemoryView> &embeddings);
+    virtual Expected<std::pair<int, LLMGeneratorCompletion::Status>> handle_tbt_phase(const std::vector<MemoryView> &embeddings);
 
     std::string handle_next_token(int next_token);
 
@@ -102,7 +109,6 @@ protected:
     // Check if current token history matches any custom stop sequence
     bool check_custom_stop_sequences(int latest_token);
 
-
     void prepare_for_new_generation();
 
     void reset_cnversation_context();
@@ -110,7 +116,11 @@ protected:
     // Check if current-generation generated-tokens matches any custom stop sequence
     bool check_stop_sequences(int latest_token);
 
+    Expected<Buffer> get_context() const;
+    hailo_status set_context(const MemoryView &context_buffer);
+
     SessionWrapper m_session;
+    std::shared_ptr<VDeviceManager> m_vdevice_manager;
     std::unique_ptr<HailoTokenizer> m_tokenizer;
     std::unique_ptr<TokenEmbedder<uint16_t>> m_token_embedder;
 
@@ -198,13 +208,14 @@ protected:
     LLMGeneratorParams m_current_generation_params;
     bool m_abort_requested;
 
-    uint32_t m_total_context_tokens; // Total tokens in the context, including input & output
+    InputLayersNamesSuffixes m_input_layers_names_suffixes;
+    PreProcessParams m_pre_process_params;
 };
 
 class LLMServerManager : public GenAIServerManager
 {
 public:
-    static Expected<std::unique_ptr<LLMServerManager>> create(std::shared_ptr<Session> session);
+    static Expected<std::unique_ptr<LLMServerManager>> create(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager);
 
     LLMServerManager(std::shared_ptr<Session> session, std::unique_ptr<LLMServer> &&server);
 

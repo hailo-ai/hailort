@@ -46,7 +46,6 @@ using VDeviceWrapperPtr = std::shared_ptr<VDeviceWrapper>;
 // Forward declarations for friend classes
 class LLMWrapper;
 class VLMWrapper;
-class Text2ImageWrapper;
 class Speech2TextWrapper;
 
 class VDeviceWrapper {
@@ -169,7 +168,6 @@ private:
 
     friend class LLMWrapper;
     friend class VLMWrapper;
-    friend class Text2ImageWrapper;
     friend class Speech2TextWrapper;
 };
 

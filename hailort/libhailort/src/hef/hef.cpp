@@ -2158,13 +2158,20 @@ hailo_status HefUtils::fill_layer_info(const ProtoHEFEdgeLayerInfo &info,
     if (IS_PP_DISABLED() && (HAILO_D2H_STREAM == direction)) {
         // The output names in the layer info can have an added index at the end: "<name>_<index>"
         // In case we want to disable post processing, we need to remove this index from the name
-        auto it = std::find_if(core_op.sorted_outputs_order.begin(), core_op.sorted_outputs_order.end(),
-            [target = layer_info.name](const std::string& output_name) {
-                return target.find(output_name) == 0;
-            });
+        // We do it by replacing the name with the longest prefix match from the original names (without the "_<index>")
+        const std::string orig_name = layer_info.name;
+        std::string best_match;
+        for (const auto &output_name : core_op.sorted_outputs_order) {
+            if (output_name.size() > orig_name.size()) {
+                continue;
+            }
+            if ((orig_name.find(output_name) == 0) && (output_name.size() > best_match.size())) {
+                best_match = output_name;
+            }
+        }
 
-        if (it != core_op.sorted_outputs_order.end()) {
-            layer_info.name = *it;
+        if (!best_match.empty()) {
+            layer_info.name = best_match;
         }
     }
 

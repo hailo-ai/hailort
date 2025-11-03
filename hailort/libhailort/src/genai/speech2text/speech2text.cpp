@@ -89,9 +89,26 @@ Expected<std::string> Speech2Text::generate_all_text(MemoryView audio_buffer, co
     return m_pimpl->generate_all_text(audio_buffer, generator_params, timeout);
 }
 
+Expected<std::string> Speech2Text::generate_all_text(MemoryView audio_buffer, std::chrono::milliseconds timeout)
+{
+    TRY(auto generator_params, create_generator_params());
+    return m_pimpl->generate_all_text(audio_buffer, generator_params, timeout);
+}
+
 Expected<std::vector<Speech2Text::SegmentInfo>> Speech2Text::generate_all_segments(MemoryView audio_buffer, const Speech2TextGeneratorParams &generator_params, std::chrono::milliseconds timeout)
 {
     return m_pimpl->generate_all_segments(audio_buffer, generator_params, timeout);
+}
+
+Expected<std::vector<Speech2Text::SegmentInfo>> Speech2Text::generate_all_segments(MemoryView audio_buffer, std::chrono::milliseconds timeout)
+{
+    TRY(auto generator_params, create_generator_params());
+    return m_pimpl->generate_all_segments(audio_buffer, generator_params, timeout);
+}
+
+Expected<std::vector<int>> Speech2Text::tokenize(const std::string &text)
+{
+    return m_pimpl->tokenize(text);
 }
 
 Speech2Text::Impl::Impl(std::shared_ptr<SessionWrapper> session, const Speech2TextParams &speech2text_params) :
@@ -177,6 +194,15 @@ Expected<std::vector<Speech2Text::SegmentInfo>> Speech2Text::Impl::generate_impl
 
     return segments;
 }
+
+Expected<std::vector<int>> Speech2Text::Impl::tokenize(const std::string &text)
+{
+    TRY(auto request, Speech2TextTokenizeSerializer::serialize_request(text));
+    TRY(auto reply, m_session->execute(MemoryView(request)));
+    TRY(auto tokens, Speech2TextTokenizeSerializer::deserialize_reply(MemoryView(*reply)));
+    return tokens;
+}
+
 
 // https://stackoverflow.com/questions/71104545/constructor-and-destructor-in-c-when-using-the-pimpl-idiom
 // All member functions shoud be implemented in the cpp module

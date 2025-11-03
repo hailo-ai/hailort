@@ -29,7 +29,7 @@ int main(int argc, char **argv)
         std::cout << "Starting LLM - " << llm_hef_path << "...\n";
         auto vdevice = hailort::VDevice::create_shared().expect("Failed to create VDevice");
 
-        auto llm_params = hailort::genai::LLMParams(llm_hef_path);
+        auto llm_params = hailort::genai::LLMParams(llm_hef_path, "", true);
         auto llm = hailort::genai::LLM::create(vdevice, llm_params).expect("Failed to create LLM");
 
         std::cout << "Enter prompt: (use Ctrl+C to exit)\n";

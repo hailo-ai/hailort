@@ -20,7 +20,6 @@
 #ifdef HAILO_GENAI_SERVER
 #include "llm/llm_server.hpp"
 #include "vlm/vlm_server.hpp"
-#include "text2image/text2image_server.hpp"
 #include "speech2text/speech2text_server.hpp"
 #include "common/genai/connection_ports.hpp"
 #endif // HAILO_GENAI_SERVER
@@ -96,12 +95,12 @@ int main(int argc, char* argv[])
 
 #ifdef HAILO_GENAI_SERVER
     // Create GenAI server
-    auto llm_thread = std::thread([ip_addr]() {
+    auto llm_thread = std::thread([ip_addr, &server]() {
         TRY(auto server_connection, SessionListener::create_shared(genai::DEFAULT_LLM_CONNECTION_PORT, ip_addr));
         while (true) {
             TRY(auto session, server_connection->accept());
-            auto th = std::thread([session]() {
-                auto llm_server = genai::LLMServerManager::create(session);
+            auto th = std::thread([session, &server]() {
+                auto llm_server = genai::LLMServerManager::create(session, server->vdevice_manager());
                 if (!llm_server) {
                     LOGGER__ERROR("Failed to create LLMServer, status = {}", llm_server.status());
                     return;
@@ -113,12 +112,12 @@ int main(int argc, char* argv[])
     });
     llm_thread.detach();
 
-    auto vlm_thread = std::thread([ip_addr]() {
+    auto vlm_thread = std::thread([ip_addr, &server]() {
         TRY(auto server_connection, SessionListener::create_shared(genai::DEFAULT_VLM_CONNECTION_PORT, ip_addr));
         while (true) {
             TRY(auto session, server_connection->accept());
-            auto th = std::thread([session]() {
-                auto vlm_server = genai::VLMServerManager::create(session);
+            auto th = std::thread([session, &server]() {
+                auto vlm_server = genai::VLMServerManager::create(session, server->vdevice_manager());
                 if (!vlm_server) {
                     LOGGER__ERROR("Failed to create VLMServer, status = {}", vlm_server.status());
                     return;
@@ -130,29 +129,12 @@ int main(int argc, char* argv[])
     });
     vlm_thread.detach();
 
-    auto text2image_thread = std::thread([ip_addr]() {
-        TRY(auto server_connection, SessionListener::create_shared(genai::DEFAULT_TEXT2IMAGE_CONNECTION_PORT, ip_addr));
-        while (true) {
-            TRY(auto session, server_connection->accept());
-            auto th = std::thread([session, ip_addr]() {
-                auto text2image_server_manager = genai::Text2ImageServerManager::create(session, ip_addr);
-                if (!text2image_server_manager) {
-                    LOGGER__ERROR("Failed to create Text2ImageServerManager, status = {}", text2image_server_manager.status());
-                    return;
-                }
-                text2image_server_manager.value()->flow();
-            });
-            th.detach();
-        }
-    });
-    text2image_thread.detach();
-
-    auto speech2text_thread = std::thread([ip_addr]() {
+    auto speech2text_thread = std::thread([ip_addr, &server]() {
         TRY(auto server_connection, SessionListener::create_shared(genai::DEFAULT_SPEECH2TEXT_CONNECTION_PORT, ip_addr));
         while (true) {
             TRY(auto session, server_connection->accept());
-            auto th = std::thread([session]() {
-                auto speech2text_server = genai::Speech2TextServerManager::create(session);
+            auto th = std::thread([session, &server]() {
+                auto speech2text_server = genai::Speech2TextServerManager::create(session, server->vdevice_manager());
                 if (!speech2text_server) {
                     LOGGER__ERROR("Failed to create Speech2TextServer, status = {}", speech2text_server.status());
                     return;

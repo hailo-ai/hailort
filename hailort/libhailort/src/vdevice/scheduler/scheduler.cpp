@@ -355,34 +355,39 @@ hailo_status CoreOpsScheduler::prepare_transfers()
         }
     } reset_preparing{this};
 
-    hailo_status status = HAILO_SUCCESS;
     auto active_core_op_handle = m_devices.begin()->second->current_core_op_handle;
-    auto current_core_op_to_prepare = m_current_core_op_preparing.load();
+    auto current_core_op_to_prepare_handle = m_current_core_op_preparing.load();
+    auto current_core_op_to_prepare = m_scheduled_core_ops.at(current_core_op_to_prepare_handle);
     if ((m_current_core_op_preparing == INVALID_CORE_OP_HANDLE) || 
-        (m_scheduled_core_ops.at(current_core_op_to_prepare)->instances_count() == 0)) {
+        (current_core_op_to_prepare->instances_count() == 0)) {
         return HAILO_SUCCESS;
     }
 
-    CHECK(((m_scheduled_core_ops.at(current_core_op_to_prepare)->get_num_ready_requests().load() < m_scheduled_core_ops.at(current_core_op_to_prepare)->get_burst_size()) && 
-        (m_scheduled_core_ops.at(current_core_op_to_prepare)->get_num_pending_requests().load() > 0) &&
-        (current_core_op_to_prepare != active_core_op_handle)), HAILO_INTERNAL_FAILURE);
+    CHECK(((current_core_op_to_prepare->get_num_ready_requests().load() < current_core_op_to_prepare->get_burst_size()) && 
+        (current_core_op_to_prepare->get_num_pending_requests().load() > 0) &&
+        (current_core_op_to_prepare_handle != active_core_op_handle)), HAILO_INTERNAL_FAILURE);
 
-    TRY(auto infer_request, m_pending_requests.at(current_core_op_to_prepare).dequeue());
-    m_scheduled_core_ops.at(current_core_op_to_prepare)->get_num_pending_requests().fetch_sub(1);
-    TRY(auto vdma_core_op, get_vdma_core_op(current_core_op_to_prepare, m_devices.begin()->second->device_id));
-
-    SchedulerTrace prepare_transfers_trace(
-        [&](uint64_t id){ TRACE(PrepareCoreOpStartTrace, id, m_scheduled_core_ops.at(current_core_op_to_prepare)->get_core_op()->name(), m_scheduled_core_ops.at(current_core_op_to_prepare)->get_num_pending_requests().load(),
-            m_scheduled_core_ops.at(current_core_op_to_prepare)->get_num_ready_requests().load(), m_scheduled_core_ops.at(current_core_op_to_prepare)->get_burst_size()); },
-        [&](uint64_t id){ TRACE(PrepareCoreOpEndTrace, id, m_scheduled_core_ops.at(current_core_op_to_prepare)->get_core_op()->name()); });
+    while ((current_core_op_to_prepare->get_num_ready_requests().load() < current_core_op_to_prepare->get_burst_size()) && 
+        (current_core_op_to_prepare->get_num_pending_requests().load() > 0)) {
     
-    status = (vdma_core_op->prepare_transfers(infer_request.transfers));
-    m_ready_requests[current_core_op_to_prepare].enqueue(std::move(infer_request));
-    m_scheduled_core_ops.at(current_core_op_to_prepare)->get_num_ready_requests().fetch_add(1);
-    if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("Failed to bind buffers for core op {}", current_core_op_to_prepare);
+        TRY(auto infer_request, m_pending_requests.at(current_core_op_to_prepare_handle).dequeue());
+        current_core_op_to_prepare->get_num_pending_requests().fetch_sub(1);
+        TRY(auto vdma_core_op, get_vdma_core_op(current_core_op_to_prepare_handle, m_devices.begin()->second->device_id));
+
+        SchedulerTrace prepare_transfers_trace(
+            [&](uint64_t id){ TRACE(PrepareCoreOpStartTrace, id, current_core_op_to_prepare->get_core_op()->name(), current_core_op_to_prepare->get_num_pending_requests().load(),
+                current_core_op_to_prepare->get_num_ready_requests().load(), current_core_op_to_prepare->get_burst_size()); },
+            [&](uint64_t id){ TRACE(PrepareCoreOpEndTrace, id, current_core_op_to_prepare->get_core_op()->name()); });
+        
+        auto status = (vdma_core_op->prepare_transfers(infer_request.transfers));
+        m_ready_requests[current_core_op_to_prepare_handle].enqueue(std::move(infer_request));
+        current_core_op_to_prepare->get_num_ready_requests().fetch_add(1);
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to bind buffers for core op {}", current_core_op_to_prepare_handle);
+            return status;
+        }
     }
-    return status;
+    return HAILO_SUCCESS;
 }
 
 hailo_status CoreOpsScheduler::cancel_prepared_transfers(const device_id_t &device_id, scheduler_core_op_handle_t core_op_handle)
@@ -526,9 +531,9 @@ void CoreOpsScheduler::schedule()
     }
     
     // get decision for next core op to prepare
-    auto current_core_op_to_prepare = CoreOpsSchedulerOracle::choose_next_model_to_prepare(*this, m_devices.begin()->second->device_id);
-    if (INVALID_CORE_OP_HANDLE != current_core_op_to_prepare) {
-        m_current_core_op_preparing = current_core_op_to_prepare;
+    auto current_core_op_to_prepare_handle = CoreOpsSchedulerOracle::choose_next_model_to_prepare(*this, m_devices.begin()->second->device_id);
+    if (INVALID_CORE_OP_HANDLE != current_core_op_to_prepare_handle) {
+        m_current_core_op_preparing = current_core_op_to_prepare_handle;
         m_preparing_thread.signal();
     }
 

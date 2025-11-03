@@ -14,7 +14,7 @@
 #include "hrpc/client.hpp"
 #include "vdevice/vdevice_internal.hpp"
 #include "rpc_callbacks/rpc_callbacks_dispatcher.hpp"
-#include "vdma/pcie/pcie_device_hrpc_client.hpp"
+#include "device/device_hrpc_client.hpp"
 
 namespace hailort
 {

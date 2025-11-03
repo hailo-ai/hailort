@@ -38,27 +38,33 @@ hailo_status InferenceManager::configure()
     return HAILO_SUCCESS;
 }
 
-Expected<std::pair<std::map<std::string, BufferPtr>, std::map<std::string, BufferPtr>>> InferenceManager::allocate_buffers()
+Expected<std::pair<std::map<std::string, BufferPtr>, std::map<std::string, BufferPtr>>> InferenceManager::allocate_buffers(const std::unordered_set<std::string> &layers_not_to_allocate)
 {
-    TRY(auto input_buffers, allocate_input_buffers());
-    TRY(auto output_buffers, allocate_output_buffers());
+    TRY(auto input_buffers, allocate_input_buffers(layers_not_to_allocate));
+    TRY(auto output_buffers, allocate_output_buffers(layers_not_to_allocate));
     return std::make_pair(input_buffers, output_buffers);
 }
 
-Expected<std::map<std::string, BufferPtr>> InferenceManager::allocate_input_buffers()
+Expected<std::map<std::string, BufferPtr>> InferenceManager::allocate_input_buffers(const std::unordered_set<std::string> &layers_not_to_allocate)
 {
     std::map<std::string, BufferPtr> input_buffers;
     for (const auto &input : m_model->inputs()) {
+        if (contains(layers_not_to_allocate, input.name())) {
+            continue;
+        }
         TRY(auto buffer, Buffer::create_shared(input.get_frame_size(), BufferStorageParams::create_dma()));
         input_buffers[input.name()] = buffer;
     }
     return input_buffers;
 }
 
-Expected<std::map<std::string, BufferPtr>> InferenceManager::allocate_output_buffers()
+Expected<std::map<std::string, BufferPtr>> InferenceManager::allocate_output_buffers(const std::unordered_set<std::string> &layers_not_to_allocate)
 {
     std::map<std::string, BufferPtr> output_buffers;
     for (const auto &output : m_model->outputs()) {
+        if (contains(layers_not_to_allocate, output.name())) {
+            continue;
+        }
         TRY(auto buffer, Buffer::create_shared(output.get_frame_size(), BufferStorageParams::create_dma()));
         output_buffers[output.name()] = buffer;
     }
@@ -137,9 +143,14 @@ hailo_status InferenceManager::init_cache(uint32_t read_offset)
     return m_configured_model.init_cache(read_offset);
 }
 
-hailo_status InferenceManager::finalize_cache()
+Expected<std::unordered_map<uint32_t, BufferPtr>> InferenceManager::get_cache_buffers()
 {
-    return m_configured_model.finalize_cache();
+    return m_configured_model.get_cache_buffers();
+}
+
+hailo_status InferenceManager::update_cache_buffer(uint32_t cache_id, MemoryView buffer)
+{
+    return m_configured_model.update_cache_buffer(cache_id, buffer);
 }
 
 const Hef &InferenceManager::get_hef() const

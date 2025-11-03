@@ -17,7 +17,7 @@
 #include "vdma/memory/vdma_edge_layer.hpp"
 #include "vdma/memory/descriptor_list.hpp"
 #include "control_protocol.h"
-#include "vdma/memory/sg_edge_layer.hpp"
+#include "vdma/memory/multi_sg_edge_layer.hpp"
 
 namespace hailort
 {
@@ -93,10 +93,11 @@ private:
     // * They both share the same backing buffer.
     // * They each have separate descriptor lists that will be programmed separately.
     // * This way we can read/write/reprogram the cache buffer without affecting the other direction.
-    std::shared_ptr<vdma::SgEdgeLayer> m_cache_input;
-    std::shared_ptr<vdma::SgEdgeLayer> m_cache_output;
+    // * MultiSgEdgeLayer supports double buffering with multiple descriptor lists.
+    std::shared_ptr<vdma::MultiSgEdgeLayer> m_cache_input;
+    std::shared_ptr<vdma::MultiSgEdgeLayer> m_cache_output;
 
-    Expected<std::shared_ptr<vdma::SgEdgeLayer>> create_sg_edge_layer_shared(HailoRTDriver &driver,
+    Expected<std::shared_ptr<vdma::MultiSgEdgeLayer>> create_multi_sg_edge_layer_shared(HailoRTDriver &driver,
         uint32_t transfer_size, uint16_t batch_size, vdma::ChannelId channel_id,
         std::shared_ptr<vdma::VdmaBuffer> buffer, size_t buffer_offset, uint16_t max_desc_size);
 

@@ -137,16 +137,19 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
     auto prompt_template_handler_ptr = make_shared_nothrow<PromptTemplateHandler>(std::move(prompt_template_handler));
     CHECK_NOT_NULL_AS_EXPECTED(prompt_template_handler_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
-    auto embedding_features = std::get<3>(vlm_info_tuple);
     if (vlm_params.optimize_memory_on_device()) {
 #ifndef HAILO_CLIENT_TOKENIZER_ENABLED
-        (void)embedding_features;
         LOGGER__ERROR("Host-tokenization is not enabled in lib compilation");
         return make_unexpected(HAILO_NOT_IMPLEMENTED);
 #else
+        auto embedding_features = std::get<3>(vlm_info_tuple);
+        auto image_pad_token_id = std::get<4>(vlm_info_tuple);
+        auto embeddings_per_frame = std::get<5>(vlm_info_tuple);
+
         CHECK_AS_EXPECTED(nullptr != token_embedder_buffer, HAILO_NOT_AVAILABLE, "Token embedder buffer is not available");
         TRY(token_embedder, TokenEmbedder<uint16_t>::create(token_embedder_buffer,
-            token_embedder_buffer->size() / (sizeof(uint16_t) * embedding_features), embedding_features));
+            token_embedder_buffer->size() / (sizeof(uint16_t) * embedding_features), embedding_features,
+            image_pad_token_id, embeddings_per_frame));
 #endif // HAILO_CLIENT_TOKENIZER_ENABLED
     }
 
@@ -255,6 +258,32 @@ Expected<std::vector<int>> VLM::Impl::tokenize(const std::string &prompt)
     return tokens;
 }
 
+Expected<size_t> VLM::get_context_usage_size()
+{
+    return m_pimpl->get_context_usage_size();
+}
+
+Expected<size_t> VLM::Impl::get_context_usage_size()
+{
+    TRY(auto request, LLMGetContextUsageSizeSerializer::serialize_request());
+    TRY(auto reply, m_session->execute(MemoryView(request)));
+    TRY(auto context_usage, LLMGetContextUsageSizeSerializer::deserialize_reply(MemoryView(*reply)));
+    return context_usage;
+}
+
+Expected<size_t> VLM::max_context_capacity()
+{
+    return m_pimpl->max_context_capacity();
+}
+
+Expected<size_t> VLM::Impl::max_context_capacity()
+{
+    TRY(auto request, LLMGetMaxContextCapacitySerializer::serialize_request());
+    TRY(auto reply, m_session->execute(MemoryView(request)));
+    TRY(auto max_context_capacity, LLMGetMaxContextCapacitySerializer::deserialize_reply(MemoryView(*reply)));
+    return max_context_capacity;
+}
+
 hailo_status VLM::clear_context()
 {
     return m_pimpl->clear_context();
@@ -267,6 +296,36 @@ hailo_status VLM::Impl::clear_context()
     CHECK_SUCCESS(LLMClearContextSerializer::deserialize_reply(MemoryView(*reply)),
         "Failed to clear context. Make sure there is no other generation in progress");
     m_prompt_template_handler->reset_state();
+    return HAILO_SUCCESS;
+}
+
+Expected<BufferPtr> VLM::save_context()
+{
+    return m_pimpl->save_context();
+}
+
+Expected<BufferPtr> VLM::Impl::save_context()
+{
+    TRY(auto request, LLMGetContextSerializer::serialize_request());
+    CHECK_SUCCESS(m_session->write(MemoryView(request)), "Failed to write request");
+    TRY(auto context_shared, m_session->read());
+    TRY(auto reply, m_session->read());
+    CHECK_SUCCESS(LLMGetContextSerializer::deserialize_reply(MemoryView(*reply)), "Failed to get context");
+    return context_shared;
+}
+
+hailo_status VLM::load_context(const MemoryView &context)
+{
+    return m_pimpl->load_context(context);
+}
+
+hailo_status VLM::Impl::load_context(const MemoryView &context)
+{
+    TRY(auto request, LLMSetContextSerializer::serialize_request());
+    CHECK_SUCCESS(m_session->write(MemoryView(request)), "Failed to write request");
+    CHECK_SUCCESS(m_session->write(context), "Failed to write context");
+    TRY(auto reply, m_session->read());
+    CHECK_SUCCESS(LLMSetContextSerializer::deserialize_reply(MemoryView(*reply)), "Failed to set context");
     return HAILO_SUCCESS;
 }
 
@@ -441,8 +500,8 @@ hailo_status VLM::Impl::validate_generator_params(const LLMGeneratorParams &para
         "top_k should be greater than or equal to '1'. received: '{}'", params.top_k());
     CHECK_AS_EXPECTED(0 != params.frequency_penalty(), HAILO_INVALID_ARGUMENT,
         "frequency_penalty must be a nonzero value. received: '{}'", params.frequency_penalty());
-    CHECK_AS_EXPECTED(2 <= params.max_generated_tokens(), HAILO_INVALID_ARGUMENT,
-        "max_generated_tokens should be greater than '1'. received: '{}'", params.max_generated_tokens());
+    CHECK_AS_EXPECTED(0 < params.max_generated_tokens(), HAILO_INVALID_ARGUMENT,
+        "max_generated_tokens should be greater than or equal to '1'. received: '{}'", params.max_generated_tokens());
     return HAILO_SUCCESS;
 }
 

@@ -12,7 +12,9 @@
 # TODO: Remove this file once the hailort_server will use systemd
 # Carry out specific functions when asked to by the system
 
-ENV_FILE="/etc/default/hailort_server"
+readonly ENV_FILE="/etc/default/hailort_server"
+readonly STATIC_IP="192.168.10.12"
+readonly INTERFACE="usb0"
 if [ -f "$ENV_FILE" ]; then
     echo "Sourcing environment variables from $ENV_FILE"
     . "$ENV_FILE"
@@ -21,8 +23,13 @@ fi
 case "$1" in
   start)
     echo "Starting hailort_server"
-
-    if [ -z "$HAILO_SERVER_ADDRESS" ]; then
+    if ip link show "$INTERFACE" > /dev/null 2>&1; then
+        echo "Detected $INTERFACE - assigning IP $STATIC_IP"
+        ip link set "$INTERFACE" up
+        ip addr flush dev "$INTERFACE"
+        ip addr add "$STATIC_IP/24" dev "$INTERFACE"
+        SERVER_ADDRESS_ARG="$STATIC_IP"
+    elif [ -z "$HAILO_SERVER_ADDRESS" ]; then
         SERVER_ADDRESS_ARG=""
     else
         SERVER_ADDRESS_ARG="$HAILO_SERVER_ADDRESS"

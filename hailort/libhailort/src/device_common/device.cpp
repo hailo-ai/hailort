@@ -21,7 +21,7 @@
 #include "device_common/control.hpp"
 #include "vdma/pcie/pcie_device.hpp"
 #include "vdma/integrated/integrated_device.hpp"
-#include "vdma/pcie/pcie_device_hrpc_client.hpp"
+#include "device/device_hrpc_client.hpp"
 #include "utils/query_stats_utils.hpp"
 #include "utils/logger_fetcher.hpp"
 
@@ -108,7 +108,7 @@ Expected<std::unique_ptr<Device>> Device::create(const std::string &device_id)
     } else if (auto pcie_info = PcieDevice::parse_pcie_device_info(device_id, DONT_LOG_ON_FAILURE)) {
         return create_pcie(pcie_info.release());
     } else if (is_valid_ip_address(device_id)) {
-        return PcieDeviceHrpcClient::create(device_id);
+        return DeviceHrpcClient::create(device_id);
     } else {
         LOGGER__ERROR("Invalid device id {}", device_id);
         return make_unexpected(HAILO_INVALID_ARGUMENT);
