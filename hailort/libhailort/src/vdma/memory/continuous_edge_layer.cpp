@@ -40,15 +40,12 @@ uint32_t ContinuousEdgeLayer::descs_count() const
     return m_num_pages;
 }
 
-Expected<uint32_t> ContinuousEdgeLayer::program_descriptors(size_t transfer_size, InterruptsDomain last_desc_interrupts_domain,
-    size_t desc_offset, size_t buffer_offset, uint32_t batch_size, bool should_bind, uint32_t stride)
+Expected<uint32_t> ContinuousEdgeLayer::program_descriptors(size_t transfer_size,
+    size_t desc_offset, size_t buffer_offset, uint32_t batch_size)
 {
-    (void)last_desc_interrupts_domain;
     (void)desc_offset;
     (void)buffer_offset;
     (void)batch_size;
-    (void)should_bind;
-    (void)stride;
 
     // The descriptors in continuous mode are programmed by the hw, nothing to do here.
     return descriptors_in_buffer(transfer_size);

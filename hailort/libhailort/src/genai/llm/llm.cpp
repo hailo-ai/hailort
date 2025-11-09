@@ -321,6 +321,32 @@ Expected<std::vector<int>> LLM::Impl::tokenize(const std::string &prompt)
     return tokens;
 }
 
+Expected<size_t> LLM::get_context_usage_size()
+{
+    return m_pimpl->get_context_usage_size();
+}
+
+Expected<size_t> LLM::Impl::get_context_usage_size()
+{
+    TRY(auto request, LLMGetContextUsageSizeSerializer::serialize_request());
+    TRY(auto reply, m_session->execute(MemoryView(request)));
+    TRY(auto context_usage, LLMGetContextUsageSizeSerializer::deserialize_reply(MemoryView(*reply)));
+    return context_usage;
+}
+
+Expected<size_t> LLM::max_context_capacity()
+{
+    return m_pimpl->max_context_capacity();
+}
+
+Expected<size_t> LLM::Impl::max_context_capacity()
+{
+    TRY(auto request, LLMGetMaxContextCapacitySerializer::serialize_request());
+    TRY(auto reply, m_session->execute(MemoryView(request)));
+    TRY(auto max_context_capacity, LLMGetMaxContextCapacitySerializer::deserialize_reply(MemoryView(*reply)));
+    return max_context_capacity;
+}
+
 hailo_status LLM::clear_context()
 {
     return m_pimpl->clear_context();
@@ -334,6 +360,36 @@ hailo_status LLM::Impl::clear_context()
         "Failed to clear context. Make sure there is no other generation in progress");
     m_prompt_template_handler->reset_state();
 
+    return HAILO_SUCCESS;
+}
+
+Expected<BufferPtr> LLM::save_context()
+{
+    return m_pimpl->save_context();
+}
+
+Expected<BufferPtr> LLM::Impl::save_context()
+{
+    TRY(auto request, LLMGetContextSerializer::serialize_request());
+    CHECK_SUCCESS(m_session->write(MemoryView(request)), "Failed to write request");
+    TRY(auto context_shared, m_session->read());
+    TRY(auto reply, m_session->read());
+    CHECK_SUCCESS(LLMGetContextSerializer::deserialize_reply(MemoryView(*reply)), "Failed to get context");
+    return context_shared;
+}
+
+hailo_status LLM::load_context(const MemoryView &context)
+{
+    return m_pimpl->load_context(context);
+}
+
+hailo_status LLM::Impl::load_context(const MemoryView &context)
+{
+    TRY(auto request, LLMSetContextSerializer::serialize_request());
+    CHECK_SUCCESS(m_session->write(MemoryView(request)), "Failed to write request");
+    CHECK_SUCCESS(m_session->write(context), "Failed to write context");
+    TRY(auto reply, m_session->read());
+    CHECK_SUCCESS(LLMSetContextSerializer::deserialize_reply(MemoryView(*reply)), "Failed to set context");
     return HAILO_SUCCESS;
 }
 
@@ -491,8 +547,8 @@ hailo_status LLM::Impl::validate_generator_params(const LLMGeneratorParams &para
         "top_k should be greater than or equal to '1'. received: '{}'", params.top_k());
     CHECK_AS_EXPECTED(0 != params.frequency_penalty(), HAILO_INVALID_ARGUMENT,
         "frequency_penalty must be a nonzero value. received: '{}'", params.frequency_penalty());
-    CHECK_AS_EXPECTED(1 < params.max_generated_tokens(), HAILO_INVALID_ARGUMENT,
-        "max_generated_tokens should be greater than '1'. received: '{}'", params.max_generated_tokens());
+    CHECK_AS_EXPECTED(1 <= params.max_generated_tokens(), HAILO_INVALID_ARGUMENT,
+        "max_generated_tokens should be greater than or equal to '1'. received: '{}'", params.max_generated_tokens());
     return HAILO_SUCCESS;
 }
 

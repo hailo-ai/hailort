@@ -646,11 +646,10 @@ Expected<AsyncInferJob> ConfiguredInferModel::run_async(const std::vector<Config
     }
 
     auto transfer_done = [bindings, job_pimpl, callback](const AsyncInferCompletionInfo &completion_info) {
-        bool should_call_callback = ConfiguredInferModelBase::get_stream_done(completion_info.status, job_pimpl);
+        bool should_call_callback = job_pimpl->stream_done(completion_info.status);
         if (should_call_callback) {
-            AsyncInferCompletionInfo final_completion_info(ConfiguredInferModelBase::get_completion_status(job_pimpl));
-            callback(final_completion_info);
-            ConfiguredInferModelBase::mark_callback_done(job_pimpl);
+            callback(job_pimpl->completion_status());
+            job_pimpl->mark_callback_done();
         }
     };
 
@@ -672,9 +671,20 @@ hailo_status ConfiguredInferModel::init_cache(uint32_t read_offset)
     return m_pimpl->init_cache(read_offset);
 }
 
-hailo_status ConfiguredInferModel::finalize_cache()
+Expected<std::unordered_map<uint32_t, BufferPtr>> ConfiguredInferModel::get_cache_buffers()
 {
-    return m_pimpl->finalize_cache();
+    return m_pimpl->get_cache_buffers();
+}
+
+hailo_status ConfiguredInferModel::update_cache_buffer(uint32_t cache_id, MemoryView buffer)
+{
+    return m_pimpl->update_cache_buffer(cache_id, buffer);
+}
+
+Expected<AsyncInferJob> ConfiguredInferModel::run_async_for_duration(const ConfiguredInferModel::Bindings &bindings,
+    uint32_t duration_ms, uint32_t sleep_between_frames_ms, std::function<void(const AsyncInferCompletionInfo &, uint32_t)> callback)
+{
+    return m_pimpl->run_async_for_duration(bindings, duration_ms, sleep_between_frames_ms, callback);
 }
 
 Expected<ConfiguredInferModel::Bindings> ConfiguredInferModelBase::create_bindings(
@@ -697,21 +707,6 @@ Expected<ConfiguredInferModel::Bindings::InferStream> ConfiguredInferModelBase::
 BufferType ConfiguredInferModelBase::get_infer_stream_buffer_type(ConfiguredInferModel::Bindings::InferStream stream)
 {
     return stream.m_pimpl->get_type();
-}
-
-bool ConfiguredInferModelBase::get_stream_done(hailo_status status, std::shared_ptr<AsyncInferJobImpl> job_pimpl)
-{
-    return job_pimpl->stream_done(status);
-}
-
-hailo_status ConfiguredInferModelBase::get_completion_status(std::shared_ptr<AsyncInferJobImpl> job_pimpl)
-{
-    return job_pimpl->completion_status();
-}
-
-void ConfiguredInferModelBase::mark_callback_done(std::shared_ptr<AsyncInferJobImpl> job_pimpl)
-{
-    job_pimpl->mark_callback_done();
 }
 
 hailo_status ConfiguredInferModelBase::run(const ConfiguredInferModel::Bindings &bindings, std::chrono::milliseconds timeout)
@@ -873,9 +868,68 @@ hailo_status ConfiguredInferModelImpl::init_cache(uint32_t read_offset)
     return m_cng->init_cache(read_offset);
 }
 
-hailo_status ConfiguredInferModelImpl::finalize_cache()
+Expected<std::unordered_map<uint32_t, BufferPtr>> ConfiguredInferModelImpl::get_cache_buffers()
 {
-    return m_cng->finalize_cache();
+    TRY(auto cache_ids, m_cng->get_cache_ids());
+    std::unordered_map<uint32_t, BufferPtr> cache_buffers;
+    for (const auto &cache_id : cache_ids) {
+        TRY(auto buffer, m_cng->read_cache_buffer(cache_id));
+        cache_buffers.emplace(cache_id, std::make_shared<Buffer>(std::move(buffer)));
+    }
+
+    return cache_buffers;
+}
+
+hailo_status ConfiguredInferModelImpl::update_cache_buffer(uint32_t cache_id, MemoryView buffer)
+{
+    return m_cng->write_cache_buffer(cache_id, buffer);
+}
+
+// Runs infer on the same frame, for a certain duration
+Expected<AsyncInferJob> ConfiguredInferModelImpl::run_async_for_duration(const ConfiguredInferModel::Bindings &bindings,
+    uint32_t duration_ms, uint32_t sleep_between_frames_ms, std::function<void(const AsyncInferCompletionInfo &, uint32_t)> callback)
+{
+    auto job_pimpl = make_shared_nothrow<AsyncInferJobImpl>();
+    if (nullptr == job_pimpl) {
+        shutdown();
+        return make_unexpected(HAILO_OUT_OF_HOST_MEMORY);
+    }
+
+    auto run_async_func = [this, bindings, duration_ms, sleep_between_frames_ms] () -> Expected<uint32_t> {
+        uint32_t total_frames = 0;
+        hailo_status job_status = HAILO_SUCCESS;
+        auto start_time = std::chrono::high_resolution_clock::now();
+        while ((std::chrono::high_resolution_clock::now() - start_time < std::chrono::milliseconds(duration_ms))
+                && (HAILO_SUCCESS == job_status)) {
+            constexpr auto TIMEOUT = std::chrono::seconds(1);
+            constexpr auto FRAME_COUNT = 1;
+            auto status = wait_for_async_ready(TIMEOUT, FRAME_COUNT);
+            CHECK_SUCCESS(status);
+
+            TRY(auto job, run_async(bindings, [&total_frames, &job_status] (const AsyncInferCompletionInfo &completion_info) {
+                if ((HAILO_SUCCESS == job_status) && (HAILO_STREAM_ABORT != completion_info.status)) {
+                    // capture only the first failure
+                    job_status = completion_info.status;
+                }
+                total_frames++;
+            }));
+            job.detach();
+            std::this_thread::sleep_for(std::chrono::milliseconds(sleep_between_frames_ms));
+        }
+
+        auto status = shutdown();
+        CHECK_SUCCESS(status);
+        CHECK_SUCCESS(job_status, "One or more of infer jobs has failed with status = {}", job_status);
+
+        return static_cast<uint32_t>(static_cast<float32_t>(total_frames) / (static_cast<float32_t>(duration_ms) / 1000));
+    };
+    auto run_async_thread = std::thread([run_async_func, job_pimpl, callback] () {
+        auto expected_fps = run_async_func();
+        callback(expected_fps.status(), expected_fps.value());
+        job_pimpl->mark_callback_done();
+    });
+    run_async_thread.detach();
+    return AsyncInferJobImpl::create(job_pimpl);
 }
 
 hailo_status ConfiguredInferModelImpl::activate()
@@ -970,21 +1024,19 @@ Expected<AsyncInferJob> ConfiguredInferModelImpl::run_async(const ConfiguredInfe
 {
     static uint8_t job_id = 0;
     uint8_t current_job_id = job_id++;
-
-    CHECK_SUCCESS_AS_EXPECTED(validate_bindings(bindings));
+    CHECK_SUCCESS(validate_bindings(bindings));
 
     auto job_pimpl = make_shared_nothrow<AsyncInferJobImpl>(static_cast<uint32_t>(m_input_names.size() + m_output_names.size()));
-    CHECK_NOT_NULL_AS_EXPECTED(job_pimpl, HAILO_OUT_OF_HOST_MEMORY);
+    CHECK_NOT_NULL(job_pimpl, HAILO_OUT_OF_HOST_MEMORY);
 
     TransferDoneCallbackAsyncInfer transfer_done = [this, bindings, job_pimpl, callback, current_job_id](hailo_status status) {
-        bool should_call_callback = ConfiguredInferModelBase::get_stream_done(status, job_pimpl);
+        bool should_call_callback = job_pimpl->stream_done(status);
         if (should_call_callback) {
             auto final_status = (m_async_infer_runner->get_pipeline_status() == HAILO_SUCCESS) ?
-                ConfiguredInferModelBase::get_completion_status(job_pimpl) : m_async_infer_runner->get_pipeline_status();
+                job_pimpl->completion_status() : m_async_infer_runner->get_pipeline_status();
 
-            AsyncInferCompletionInfo completion_info(final_status);
-            callback(completion_info);
-            ConfiguredInferModelBase::mark_callback_done(job_pimpl);
+            callback(final_status);
+            job_pimpl->mark_callback_done();
             {
                 std::unique_lock<std::mutex> lock(m_mutex);
                 m_ongoing_parallel_transfers--;
@@ -1090,7 +1142,7 @@ hailo_status AsyncInferJobImpl::wait(std::chrono::milliseconds timeout)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     bool was_successful = m_cv.wait_for(lock, timeout, [this] () -> bool {
-        return (m_callback_called);
+        return m_callback_called;
     });
     CHECK(was_successful, HAILO_TIMEOUT, "Waiting for async job to finish has failed with timeout ({}ms)", timeout.count());
 
@@ -1111,7 +1163,7 @@ bool AsyncInferJobImpl::stream_done(const hailo_status &status)
     return should_call_callback;
 }
 
-hailo_status AsyncInferJobImpl::completion_status()
+hailo_status AsyncInferJobImpl::completion_status() const
 {
     return m_job_completion_status;
 }

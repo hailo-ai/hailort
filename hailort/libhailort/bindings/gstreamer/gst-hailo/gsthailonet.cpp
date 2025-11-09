@@ -446,6 +446,7 @@ static GstPadProbeReturn gst_hailonet_sink_probe(GstPad */*pad*/, GstPadProbeInf
 
     status = gst_hailonet_allocate_infer_resources(self);
     if (HAILO_SUCCESS != status) {
+        GST_ELEMENT_ERROR(self, RESOURCE, FAILED, ("Allocating infer resources failed! status = %d", status), (NULL));
         return GST_PAD_PROBE_REMOVE;
     }
 

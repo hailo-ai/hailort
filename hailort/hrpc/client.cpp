@@ -107,9 +107,10 @@ hailo_status Client::message_loop()
 }
 
 Expected<rpc_message_t> Client::execute_request(uint32_t action_id, const MemoryView &request,
-    std::vector<TransferBuffer> &&write_buffers, std::vector<TransferBuffer> &&read_buffers)
+    std::vector<TransferBuffer> &&write_buffers, std::vector<TransferBuffer> &&read_buffers,
+    std::chrono::milliseconds timeout)
 {
-    auto status = wait_for_execute_request_ready(request, get_request_timeout(REQUEST_TIMEOUT));
+    auto status = wait_for_execute_request_ready(request, get_request_timeout(timeout));
     CHECK_SUCCESS(status);
 
     std::mutex mutex;
@@ -124,11 +125,10 @@ Expected<rpc_message_t> Client::execute_request(uint32_t action_id, const Memory
     };
 
     TRY_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED, auto message_id,
-        execute_request_async(action_id, request, reply_received_callback, std::move(write_buffers),
-        std::move(read_buffers)));
+        execute_request_async_impl(action_id, request, reply_received_callback, std::move(write_buffers), std::move(read_buffers)));
 
     std::unique_lock<std::mutex> lock(mutex);
-    auto wait_status = cv.wait_for(lock, get_request_timeout(REQUEST_TIMEOUT));
+    auto wait_status = cv.wait_for(lock, get_request_timeout(timeout));
     if (std::cv_status::timeout == wait_status) {
         // Erase to avoid callback being called with uninitialized memory.
         (void)m_reply_data.pop(message_id);
@@ -146,7 +146,7 @@ hailo_status Client::wait_for_execute_request_ready(const MemoryView &request, s
     return m_connection->wait_for_write_message_async_ready(request.size(), timeout);
 }
 
-Expected<message_id_t> Client::execute_request_async(uint32_t action_id, const MemoryView &request,
+Expected<message_id_t> Client::execute_request_async_impl(uint32_t action_id, const MemoryView &request,
     HrpcCallback callback, std::vector<TransferBuffer> &&write_buffers, std::vector<TransferBuffer> &&read_buffers)
 {
     rpc_message_header_t header;
@@ -181,6 +181,14 @@ Expected<message_id_t> Client::execute_request_async(uint32_t action_id, const M
     CHECK_SUCCESS(status);
 
     return message_id;
+}
+
+hailo_status Client::execute_request_async(uint32_t action_id, const MemoryView &request,
+    HrpcCallback reply_received_callback, std::vector<TransferBuffer> &&write_buffers,
+    std::vector<TransferBuffer> &&read_buffers)
+{
+    auto expected = execute_request_async_impl(action_id, request, reply_received_callback, std::move(write_buffers), std::move(read_buffers));
+    return expected.status();
 }
 
 void Client::set_notification_callback(std::function<hailo_status(const MemoryView&)> callback)

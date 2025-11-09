@@ -11,8 +11,10 @@
 #include "hailo/hailort.h"
 #include "vdma/memory/sg_buffer.hpp"
 #include "core_op/resource_manager/resource_manager.hpp"
-#include "vdma/memory/sg_edge_layer.hpp"
+#include "vdma/memory/multi_sg_edge_layer.hpp"
 #include "vdma/memory/buffer_requirements.hpp"
+#include "common/internal_env_vars.hpp"
+#include "common/utils.hpp"
 
 namespace hailort
 {
@@ -51,7 +53,7 @@ CacheBuffer::CacheBuffer(uint32_t cache_size, uint32_t input_size, uint32_t outp
     assert(output_size % padded_entry_size == 0);
 }
 
-Expected<std::shared_ptr<vdma::SgEdgeLayer>> CacheBuffer::create_sg_edge_layer_shared(HailoRTDriver &driver,
+Expected<std::shared_ptr<vdma::MultiSgEdgeLayer>> CacheBuffer::create_multi_sg_edge_layer_shared(HailoRTDriver &driver,
         uint32_t transfer_size, uint16_t batch_size, vdma::ChannelId channel_id,
         std::shared_ptr<vdma::VdmaBuffer> buffer, size_t buffer_offset, uint16_t max_desc_size)
 {
@@ -59,6 +61,11 @@ Expected<std::shared_ptr<vdma::SgEdgeLayer>> CacheBuffer::create_sg_edge_layer_s
         "buffer_offset = {}, max_desc_size = {}, batch_size = {}",
         transfer_size, channel_id, buffer_offset, max_desc_size, batch_size);
 
+    const auto desc_list_count_exp = get_env_variable(HAILO_CACHE_DESC_LISTS_COUNT_ENV_VAR);
+    uint32_t desc_list_count = 1;
+    if (desc_list_count_exp.has_value()) {
+        desc_list_count = static_cast<uint32_t>(std::stoi(desc_list_count_exp.value()));
+    }
     const auto DONT_FORCE_DEFAULT_PAGE_SIZE = false;
     const auto FORCE_BATCH_SIZE = true;
     const auto IS_VDMA_ALIGNED_BUFFER = true;
@@ -71,10 +78,10 @@ Expected<std::shared_ptr<vdma::SgEdgeLayer>> CacheBuffer::create_sg_edge_layer_s
     const auto descs_count = buffer_requirements.descs_count();
     const auto buffer_size = buffer_requirements.buffer_size();
 
-    TRY(auto edge_layer, vdma::SgEdgeLayer::create(std::static_pointer_cast<vdma::SgBuffer>(buffer), buffer_size,
-        buffer_offset, driver, descs_count, desc_page_size, false, channel_id));
+    TRY(auto edge_layer, vdma::MultiSgEdgeLayer::create(std::static_pointer_cast<vdma::SgBuffer>(buffer), buffer_size,
+        buffer_offset, driver, descs_count, desc_page_size, false, channel_id, desc_list_count));
 
-    auto edge_layer_ptr = make_shared_nothrow<vdma::SgEdgeLayer>(std::move(edge_layer));
+    auto edge_layer_ptr = make_shared_nothrow<vdma::MultiSgEdgeLayer>(std::move(edge_layer));
     CHECK_NOT_NULL_AS_EXPECTED(edge_layer_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return edge_layer_ptr;
@@ -91,7 +98,7 @@ ExpectedRef<CacheBuffer> CacheBuffer::set_input_channel(HailoRTDriver &driver, v
     // entry is smaller than the default desc size. E.g. Updating the cache by one 64B entry, won't work if the desc size
     // is 512B, so the desc list should be programmed with 64B. If it is g.t.e. than 512B, the desc list will be programmed
     // as usual.
-    TRY(auto cache_layer, create_sg_edge_layer_shared(driver, m_entry_size, static_cast<uint16_t>(m_input_length),
+    TRY(auto cache_layer, create_multi_sg_edge_layer_shared(driver, m_entry_size, static_cast<uint16_t>(m_input_length),
         channel_id, m_backing_buffer, BUFFER_START, m_padded_entry_size));
     m_cache_input = std::move(cache_layer);
     return std::ref(*this);
@@ -108,7 +115,7 @@ ExpectedRef<CacheBuffer> CacheBuffer::set_output_channel(HailoRTDriver &driver, 
     // entry is smaller than the default desc size. E.g. Updating the cache by one 64B entry, won't work if the desc size
     // is 512B, so the desc list should be programmed with 64B. If it is g.t.e. than 512B, the desc list will be programmed
     // as usual.
-    TRY(auto cache_layer, create_sg_edge_layer_shared(driver, m_entry_size, static_cast<uint16_t>(m_output_length),
+    TRY(auto cache_layer, create_multi_sg_edge_layer_shared(driver, m_entry_size, static_cast<uint16_t>(m_output_length),
         channel_id, m_backing_buffer, BUFFER_START, m_padded_entry_size));
     m_cache_output = std::move(cache_layer);
     return std::ref(*this);
@@ -146,41 +153,37 @@ hailo_status CacheBuffer::write_cache(MemoryView buffer)
 
 hailo_status CacheBuffer::reprogram_descriptors_per_side(bool is_side_input, size_t buffer_offset)
 {
-    std::shared_ptr<vdma::SgEdgeLayer> sg_edge_layer = is_side_input ? m_cache_input : m_cache_output;
-    auto batch_size = is_side_input ? static_cast<uint16_t>(m_input_length) : static_cast<uint16_t>(m_output_length);
-    CHECK(buffer_offset % sg_edge_layer->desc_page_size() == 0, HAILO_INTERNAL_FAILURE,
-        "Buffer offset must be aligned to descriptor page size");
-    const auto total_transfer_size = static_cast<size_t>(batch_size * m_padded_entry_size);
-    assert(sg_edge_layer->backing_buffer_size() >= buffer_offset);
-    const auto size_to_end = sg_edge_layer->backing_buffer_size() - buffer_offset;
-    const auto first_chunk_size = std::min(size_to_end, static_cast<size_t>(batch_size * m_padded_entry_size));
-    CHECK(first_chunk_size % m_padded_entry_size == 0, HAILO_INTERNAL_FAILURE,
-        "First chunk size must be aligned to entry size");
+    CHECK(buffer_offset % m_padded_entry_size == 0, HAILO_INTERNAL_FAILURE,
+        "Buffer offset must be aligned to padded entry size");
 
-    // Program the first chunk of descriptors - from the buffer offset to the end of the buffer
-    const bool BIND = true;
+    std::shared_ptr<vdma::MultiSgEdgeLayer> multi_sg_edge_layer = is_side_input ? m_cache_input : m_cache_output;
+    const auto transfer_size = m_entry_size;
+
+    // Need to program 'entries_to_program' entries (each is transfer size).
+    // The program may be done in two chunks:
+    //   from `offset_in_entries` to the end of the buffer (or 'entries_to_end' entries if not overflowing the buffer)
+    //   from 0 till the end of the remaining size
+    const uint32_t entries_to_program = is_side_input ? m_input_length : m_output_length;
+
+    const auto offset_in_entries = buffer_offset / m_padded_entry_size;
+    const auto total_entries_count = multi_sg_edge_layer->backing_buffer_size() / m_padded_entry_size;
+    const auto entries_to_end = std::min(entries_to_program, static_cast<uint32_t>(total_entries_count - offset_in_entries));
+    const auto entries_from_start = entries_to_program - entries_to_end;
+
     const size_t DESC_LIST_START = 0;
-    const uint32_t SINGLE_BATCH = 1;
-    auto transfer_size = first_chunk_size;
-    const auto stride = m_entry_size;
-    TRY(const uint32_t first_chunk_desc_count, sg_edge_layer->program_descriptors(transfer_size,
-        InterruptsDomain::NONE, DESC_LIST_START, buffer_offset, SINGLE_BATCH, BIND, stride));
+    TRY(uint32_t desc_programmed, multi_sg_edge_layer->program_descriptors(transfer_size,
+        DESC_LIST_START, buffer_offset, entries_to_end));
 
-    uint32_t second_chunk_desc_count = 0;
-    if (first_chunk_size < total_transfer_size) {
-        // Program the second chunk of descriptors - from the start of the buffer till the end of the remaining size
+    if (entries_from_start > 0) {
         const size_t BUFFER_START = 0;
-        const auto second_chunk_size = total_transfer_size - first_chunk_size;
-        CHECK(second_chunk_size % m_padded_entry_size == 0, HAILO_INTERNAL_FAILURE,
-            "Second chunk size must be aligned to entry size");
-        transfer_size = second_chunk_size;
-        TRY(second_chunk_desc_count, sg_edge_layer->program_descriptors(transfer_size, InterruptsDomain::NONE,
-            first_chunk_desc_count, BUFFER_START, SINGLE_BATCH, BIND, stride));
+        TRY(const auto second_chunk_desc_programmed, multi_sg_edge_layer->program_descriptors(transfer_size,
+            desc_programmed, BUFFER_START, entries_from_start));
+        desc_programmed += second_chunk_desc_programmed;
     }
 
-    const auto expected_desc_count = sg_edge_layer->descs_count() - 1;
-    CHECK(first_chunk_desc_count + second_chunk_desc_count == expected_desc_count, HAILO_INTERNAL_FAILURE,
-        "Expected {} descriptors, got {}", expected_desc_count, first_chunk_desc_count + second_chunk_desc_count);
+    const auto expected_desc_count = multi_sg_edge_layer->descs_count() - 1;
+    CHECK(desc_programmed == expected_desc_count, HAILO_INTERNAL_FAILURE,
+        "Expected {} descriptors, got {}", expected_desc_count, desc_programmed);
 
     return HAILO_SUCCESS;
 }

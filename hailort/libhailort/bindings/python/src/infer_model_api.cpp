@@ -388,8 +388,7 @@ void ConfiguredInferModelWrapper::update_cache_offset(int32_t offset_delta_entri
 
 void ConfiguredInferModelWrapper::finalize_cache()
 {
-    auto status = m_configured_infer_model.finalize_cache();
-    VALIDATE_STATUS(status);
+    return;
 }
 
 void ConfiguredInferModelWrapper::execute_callbacks()

@@ -37,7 +37,8 @@ Expected<MappedBufferPtr> MappedBuffer::create_shared_by_allocation(size_t size,
 Expected<MappedBufferPtr> MappedBuffer::create_shared_from_dmabuf(int dmabuf_fd, size_t size, HailoRTDriver &driver,
     HailoRTDriver::DmaDirection data_direction)
 {
-    TRY(auto buffer_handle, driver.vdma_buffer_map_dmabuf(dmabuf_fd, size, data_direction,
+    CHECK(dmabuf_fd >= 0, HAILO_INVALID_ARGUMENT, "cannot map dmabuf with fd: {}", dmabuf_fd);
+    TRY(auto buffer_handle, driver.vdma_buffer_map(static_cast<uint32_t>(dmabuf_fd), size, data_direction,
         HailoRTDriver::DmaBufferType::DMABUF_BUFFER));
 
     // TODO: if need user address for dmabuf use DmaBufDmaAbleBuffer
@@ -59,11 +60,17 @@ MappedBuffer::MappedBuffer(HailoRTDriver &driver, DmaAbleBufferPtr buffer, Hailo
 
 MappedBuffer::~MappedBuffer()
 {
-    if (HailoRTDriver::INVALID_DRIVER_VDMA_MAPPING_HANDLE_VALUE != m_mapping_handle) {
-        auto address = INVALID_FD != m_fd ? static_cast<uintptr_t>(m_fd) : reinterpret_cast<uintptr_t>(user_address());
-        m_driver.vdma_buffer_unmap(address, size(), m_data_direction);
-        m_mapping_handle = HailoRTDriver::INVALID_DRIVER_VDMA_MAPPING_HANDLE_VALUE;
+    if (HailoRTDriver::INVALID_DRIVER_VDMA_MAPPING_HANDLE_VALUE == m_mapping_handle) {
+        return;
     }
+
+    uintptr_t addr_or_fd = static_cast<uintptr_t>(m_fd);
+    auto buffer_type = HailoRTDriver::DmaBufferType::DMABUF_BUFFER;
+    if (INVALID_FD == m_fd) {
+        addr_or_fd = reinterpret_cast<uintptr_t>(user_address());
+        buffer_type = HailoRTDriver::DmaBufferType::USER_PTR_BUFFER;
+    }
+    m_driver.vdma_buffer_unmap(addr_or_fd, size(), m_data_direction, buffer_type);
 }
 
 MappedBuffer::MappedBuffer(MappedBuffer &&other) noexcept :

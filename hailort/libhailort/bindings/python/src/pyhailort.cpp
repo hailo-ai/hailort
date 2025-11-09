@@ -26,7 +26,6 @@ using namespace std;
 #include "session_api.hpp"
 #include "llm_api.hpp"
 #include "vlm_api.hpp"
-#include "text2image_api.hpp"
 #include "speech2text_api.hpp"
 
 #include "utils.hpp"
@@ -865,6 +864,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_readonly("pcie", &hailo_device_supported_features_t::pcie)
         .def_readonly("current_monitoring", &hailo_device_supported_features_t::current_monitoring)
         .def_readonly("mdio", &hailo_device_supported_features_t::mdio)
+        .def_readonly("power_measurement", &hailo_device_supported_features_t::power_measurement)
         ;
 
     py::class_<sockaddr_in>(m, "sockaddr_in")
@@ -1080,7 +1080,6 @@ PYBIND11_MODULE(_pyhailort, m) {
     LLMGeneratorCompletionWrapper::bind(m);
     LLMWrapper::bind(m);
     VLMWrapper::bind(m);
-    Text2ImageWrapper::bind(m);
     Speech2TextWrapper::bind(m);
 
     std::stringstream version;

@@ -40,12 +40,16 @@ public:
 
     // Misc controls
     std::vector<int> tokenize(const std::string &prompt);
+    size_t get_context_usage_size();
+    size_t max_context_capacity();
     void clear_context();
     std::string get_generation_recovery_sequence();
     void set_generation_recovery_sequence(const std::string &sequence);
     std::string prompt_template();
     void set_stop_tokens(const std::vector<std::string> &stop_tokens);
     std::vector<std::string> get_stop_tokens();
+    std::vector<uint8_t> save_context();
+    void load_context(const std::vector<uint8_t> &context);
 
     // Input frame metadata
     uint32_t input_frame_size() const;

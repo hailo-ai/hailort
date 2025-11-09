@@ -329,7 +329,7 @@ private:
             res.nms_shape.max_bboxes_per_class = layer_info.nms_info.max_bboxes_per_class * layer_info.nms_info.chunks_per_frame;
             res.nms_shape.number_of_classes = layer_info.nms_info.number_of_classes;
             res.nms_shape.max_bboxes_total = res.nms_shape.max_bboxes_per_class * layer_info.nms_info.number_of_classes;
-            res.format.type = HAILO_FORMAT_TYPE_FLOAT32; // NMS on vstream is always float32s
+            res.format.type = HailoRTDefaults::get_default_nms_format_type(res.format.order);
         } else {
             res.shape.height = layer_info.shape.height;
             res.shape.width = layer_info.shape.width;

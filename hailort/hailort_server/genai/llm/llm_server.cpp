@@ -11,6 +11,7 @@
 
 #include "hailo/hailort_defaults.hpp"
 #include "hailo/hailort_common.hpp"
+#include "hailo/quantization.hpp"
 
 #include "common/file_utils.hpp"
 
@@ -65,7 +66,7 @@ Expected<std::string> get_tbt_model_name_suffix(const std::string &lora_name, si
     return lora_name + std::string("__tbt");
 }
 
-Expected<std::unique_ptr<LLMServer>> LLMServer::create_unique(std::shared_ptr<Session> session)
+Expected<std::unique_ptr<LLMServer>> LLMServer::create_unique(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager)
 {
     // Init with generation default params, will be overwritten by the params from the HEF
     auto post_process_params = LLMGeneratorParams(LLMServer::DEFAULT_GENERATION_TEMPERATURE, LLMServer::DEFAULT_GENERATION_TOP_P,
@@ -73,19 +74,27 @@ Expected<std::unique_ptr<LLMServer>> LLMServer::create_unique(std::shared_ptr<Se
         LLMServer::DEFAULT_GENERATION_MAX_GENERATED_TOKENS, LLMServer::DEFAULT_GENERATION_DO_SAMPLE,
         HAILO_RANDOM_SEED);
 
-    auto ptr = std::make_unique<LLMServer>(session, std::move(post_process_params));
+    auto ptr = std::make_unique<LLMServer>(session, vdevice_manager, std::move(post_process_params));
     CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY); // Consider returning different status
 
     return ptr;
 }
 
-LLMServer::LLMServer(std::shared_ptr<Session> session, LLMGeneratorParams &&post_process_params) :
-        m_session(SessionWrapper(session)), m_post_process(),
+LLMServer::LLMServer(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager, LLMGeneratorParams &&post_process_params) :
+        m_session(SessionWrapper(session)), m_vdevice_manager(vdevice_manager), m_post_process(),
         m_post_process_params(std::move(post_process_params)),
         m_next_input_prompt_prefix_tokens(), m_generated_token_count(0),
-        m_current_generation_params(m_post_process_params), m_abort_requested(false),
-        m_total_context_tokens(0)
+        m_current_generation_params(m_post_process_params), m_abort_requested(false)
 {}
+
+LLMServer::~LLMServer()
+{
+    // Remove all references to local VDevice before marking it as removed
+    m_inference_manager_prefill.reset();
+    m_inference_manager_tbt.reset();
+
+    m_vdevice_manager->remove_vdevice(DEFAULT_LLM_CONNECTION_PORT); // Use it as a unique client id
+}
 
 hailo_status LLMServer::parse_config_json(const MemoryView &config_json)
 {
@@ -145,6 +154,41 @@ hailo_status LLMServer::parse_config_json(const nlohmann::json &hailo_config_jso
         }
     }
 
+    if (hailo_config_json.contains("pre_process_params")) {
+        if (hailo_config_json["pre_process_params"].contains("kv_cache_size")) {
+            m_pre_process_params.kv_cache_size = hailo_config_json["pre_process_params"]["kv_cache_size"].get<uint32_t>();
+        }
+        if (hailo_config_json["pre_process_params"].contains("num_attention_heads")) {
+            m_pre_process_params.num_attention_heads = hailo_config_json["pre_process_params"]["num_attention_heads"].get<uint32_t>();
+        }
+        if (hailo_config_json["pre_process_params"].contains("num_key_value_heads")) {
+            m_pre_process_params.num_key_value_heads = hailo_config_json["pre_process_params"]["num_key_value_heads"].get<uint32_t>();
+        }
+        if (hailo_config_json["pre_process_params"].contains("prefill_input_tokens_count")) {
+            m_pre_process_params.prefill_input_tokens_count = hailo_config_json["pre_process_params"]["prefill_input_tokens_count"].get<uint32_t>();
+        }
+    }
+
+    if (hailo_config_json.contains("input_layers_names_suffixes")) {
+        if (hailo_config_json["input_layers_names_suffixes"].contains("embeddings")) {
+            m_input_layers_names_suffixes.embeddings = hailo_config_json["input_layers_names_suffixes"]["embeddings"].get<std::string>();
+        }
+        if (hailo_config_json["input_layers_names_suffixes"].contains("attention_mask")) {
+            m_input_layers_names_suffixes.attention_mask = hailo_config_json["input_layers_names_suffixes"]["attention_mask"].get<std::string>();
+        }
+        if (hailo_config_json["input_layers_names_suffixes"].contains("pe_q_cos")) {
+            m_input_layers_names_suffixes.pe_q_cos = hailo_config_json["input_layers_names_suffixes"]["pe_q_cos"].get<std::string>();
+        }
+        if (hailo_config_json["input_layers_names_suffixes"].contains("pe_q_sin")) {
+            m_input_layers_names_suffixes.pe_q_sin = hailo_config_json["input_layers_names_suffixes"]["pe_q_sin"].get<std::string>();
+        }
+        if (hailo_config_json["input_layers_names_suffixes"].contains("pe_k_cos")) {
+            m_input_layers_names_suffixes.pe_k_cos = hailo_config_json["input_layers_names_suffixes"]["pe_k_cos"].get<std::string>();
+        }
+        if (hailo_config_json["input_layers_names_suffixes"].contains("pe_k_sin")) {
+            m_input_layers_names_suffixes.pe_k_sin = hailo_config_json["input_layers_names_suffixes"]["pe_k_sin"].get<std::string>();
+        }
+    }
     return HAILO_SUCCESS;
 }
 
@@ -162,7 +206,7 @@ Expected<Buffer> LLMServer::handle_create_llm_request(const MemoryView &request)
     if (!group_id.empty()) {
         params.group_id = group_id.c_str();
     }
-    TRY_AS_HRPC_STATUS(auto vdevice, hailort::VDevice::create_shared(params), LLMCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto vdevice, m_vdevice_manager->create_shared_vdevice(params, DEFAULT_LLM_CONNECTION_PORT), LLMCreateSerializer);
     LOGGER__GENAI_STATS_END("[create-llm] create vdevice");
 
     LOGGER__GENAI_STATS_START("[create-llm] transfer HEF");
@@ -185,6 +229,16 @@ Expected<Buffer> LLMServer::handle_create_llm_request(const MemoryView &request)
     hef.set_memory_footprint_optimization(true); // zero-copy configuration if possible
     LOGGER__GENAI_STATS_END("[create-llm] create HEF");
 
+    LOGGER__GENAI_STATS_START("[create-llm] parse GenAI resources");
+    TRY_AS_HRPC_STATUS(auto hailo_config_json_view, hef.get_external_resources(HAILO_CONFIG_JSON),
+        LLMCreateSerializer);
+    CHECK_SUCCESS_AS_HRPC_STATUS(parse_config_json(hailo_config_json_view), LLMCreateSerializer);
+
+    TRY_AS_HRPC_STATUS(auto theta_view, hef.get_external_resources(THETA),
+        LLMCreateSerializer);
+    auto theta = LLMPreProcess::generate_theta_from_memview(theta_view);
+    LOGGER__GENAI_STATS_END("[create-llm] parse GenAI resources");
+
     LOGGER__GENAI_STATS_START("[create-llm] create prefill model");
     auto network_group_names = hef.get_network_groups_names();
     TRY_AS_HRPC_STATUS(auto prefill_model_suffix, get_prefill_model_name_suffix(lora_name, network_group_names.size()), LLMCreateSerializer);
@@ -195,7 +249,7 @@ Expected<Buffer> LLMServer::handle_create_llm_request(const MemoryView &request)
     LOGGER__GENAI_STATS_START("[create-llm] configure prefill model");
     auto model_prefill = m_inference_manager_prefill->get_model();
     for (auto input : model_prefill->inputs()) {
-        if (LLMPreProcess::is_positional_embed_layer(input.name())) {
+        if (LLMPreProcess::is_positional_embed_layer(input.name(), m_input_layers_names_suffixes)) {
             input.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
         }
     }
@@ -208,8 +262,6 @@ Expected<Buffer> LLMServer::handle_create_llm_request(const MemoryView &request)
 
     CHECK_SUCCESS_AS_HRPC_STATUS(m_inference_manager_prefill->configure(), LLMCreateSerializer);
     LOGGER__GENAI_STATS_END("[create-llm] configure prefill model");
-
-    CHECK_SUCCESS_AS_HRPC_STATUS(m_inference_manager_prefill->init_cache(0), LLMCreateSerializer);
 
     LOGGER__GENAI_STATS_START("[create-llm] create tbt model");
     // If no tbt model is available, continue without it
@@ -225,7 +277,7 @@ Expected<Buffer> LLMServer::handle_create_llm_request(const MemoryView &request)
     if (m_inference_manager_tbt) {
         auto model_tbt = m_inference_manager_tbt->get_model();
         for (auto input : model_tbt->inputs()) {
-            if (LLMPreProcess::is_positional_embed_layer(input.name())) {
+            if (LLMPreProcess::is_positional_embed_layer(input.name(), m_input_layers_names_suffixes)) {
                 input.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
             }
         }
@@ -239,32 +291,31 @@ Expected<Buffer> LLMServer::handle_create_llm_request(const MemoryView &request)
     }
     LOGGER__GENAI_STATS_END("[create-llm] configure tbt model");
 
-    LOGGER__GENAI_STATS_START("[create-llm] parse GenAI resources");
-
-    TRY_AS_HRPC_STATUS(auto hailo_config_json_view, hef.get_external_resources(HAILO_CONFIG_JSON),
-        LLMCreateSerializer);
-    CHECK_SUCCESS_AS_HRPC_STATUS(parse_config_json(hailo_config_json_view), LLMCreateSerializer);
-
-    TRY_AS_HRPC_STATUS(auto theta_view, hef.get_external_resources(THETA),
-        LLMCreateSerializer);
-    auto theta = LLMPreProcess::generate_theta_from_memview(theta_view);
-    LOGGER__GENAI_STATS_END("[create-llm] parse GenAI resources");
-
     LOGGER__GENAI_STATS_START("[create-llm] create PreProcess");
     auto prefill_inputs_frame_size = m_inference_manager_prefill->get_inputs_frame_size();
     auto tbt_inputs_frame_size = m_inference_manager_tbt ? m_inference_manager_tbt->get_inputs_frame_size() : std::map<std::string, size_t>();
 
     // Extract embeddings layer info
     // TODO: HRT-16646 - Add this to embeddings binary format in hef
-    TRY_AS_HRPC_STATUS(auto embeddings_input_name, get_layer_name_from_suffix<size_t>(INPUT_LAYER_EMBEDDINGS_SUFF, prefill_inputs_frame_size),
+    TRY_AS_HRPC_STATUS(auto embeddings_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.embeddings, prefill_inputs_frame_size),
         LLMCreateSerializer);
     TRY_AS_HRPC_STATUS(auto embeddings_input, m_inference_manager_prefill->get_model()->input(embeddings_input_name),
         LLMCreateSerializer);
     auto embeddings_features = embeddings_input.shape().features;
     auto embeddings_dtype = embeddings_input.format().type;
 
+    // Get scaled-mask value
+    TRY_AS_HRPC_STATUS(auto mask_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.attention_mask, prefill_inputs_frame_size),
+        LLMCreateSerializer);
+    TRY(auto mask_input, m_inference_manager_prefill->get_model()->input(mask_input_name));
+    auto mask_quant_infos = mask_input.get_quant_infos();
+    CHECK_AS_HRPC_STATUS(1 == mask_quant_infos.size(), HAILO_INTERNAL_FAILURE, LLMCreateSerializer);
+    float32_t dequantized_mask_value = 1;
+    uint8_t scaled_mask_value = 0;
+    Quantization::quantize_input_buffer<float32_t, uint8_t>(&dequantized_mask_value, &scaled_mask_value, 1, mask_quant_infos[0]);
+
     TRY_AS_HRPC_STATUS(m_pre_process, LLMPreProcess::create(prefill_inputs_frame_size, tbt_inputs_frame_size,
-        std::move(theta), embeddings_features, embeddings_dtype), LLMCreateSerializer);
+        std::move(theta), embeddings_features, embeddings_dtype, scaled_mask_value, m_input_layers_names_suffixes, m_pre_process_params), LLMCreateSerializer);
     LOGGER__GENAI_STATS_END("[create-llm] create PreProcess");
 
     LOGGER__GENAI_STATS_START("[create-llm] create tokenizer");
@@ -397,7 +448,6 @@ Expected<Buffer> LLMServer::handle_read_request(const MemoryView &request)
                 [](const BufferPtr &buffer) { return MemoryView(buffer); });
         }
 
-        m_total_context_tokens += static_cast<uint32_t>(input.tokens.size());
         TRY_AS_HRPC_STATUS(auto token_result, generate_next_token_on_demand(input.tokens, embeddings_views),
             LLMGeneratorReadSerializer);
 
@@ -409,7 +459,7 @@ Expected<Buffer> LLMServer::handle_read_request(const MemoryView &request)
     output.output_token_str = handle_next_token(next_token_id);
 
     TRY_AS_HRPC_STATUS(auto generator_read_reply,
-        LLMGeneratorReadSerializer::serialize_reply(HAILO_SUCCESS, output, gen_status, (m_total_context_tokens >= KV_CACHE_SIZE)),
+        LLMGeneratorReadSerializer::serialize_reply(HAILO_SUCCESS, output, gen_status, (m_pre_process->cache_usage_size() >= m_pre_process_params.kv_cache_size)),
         LLMGeneratorReadSerializer);
 
     return generator_read_reply;
@@ -435,6 +485,30 @@ Expected<Buffer> LLMServer::handle_clear_context_request(const MemoryView &reque
     reset_cnversation_context();
     TRY_AS_HRPC_STATUS(auto reply, LLMClearContextSerializer::serialize_reply(HAILO_SUCCESS),
         LLMClearContextSerializer);
+    return reply;
+}
+
+Expected<Buffer> LLMServer::handle_get_context_request(const MemoryView &request)
+{
+    CHECK_SUCCESS_AS_HRPC_STATUS(LLMGetContextSerializer::deserialize_request(request), LLMGetContextSerializer);
+    // Wait on a lock to make sure that no generation is in progress
+    std::unique_lock<std::mutex> lock(m_generation_mutex);
+    TRY_AS_HRPC_STATUS(auto context_buffer, get_context(), LLMGetContextSerializer);
+    CHECK_SUCCESS_AS_HRPC_STATUS(m_session.write(MemoryView(context_buffer)), LLMGetContextSerializer);
+    TRY_AS_HRPC_STATUS(auto reply, LLMGetContextSerializer::serialize_reply(HAILO_SUCCESS), LLMGetContextSerializer);
+    return reply;
+}
+
+Expected<Buffer> LLMServer::handle_set_context_request(const MemoryView &request)
+{
+    CHECK_SUCCESS_AS_HRPC_STATUS(LLMSetContextSerializer::deserialize_request(request), LLMSetContextSerializer);
+    TRY_AS_HRPC_STATUS(auto context_buffer, m_session.read(), LLMSetContextSerializer);
+    // Wait on a lock to make sure that no generation is in progress
+    std::unique_lock<std::mutex> lock(m_generation_mutex);
+    prepare_for_new_generation();
+    CHECK_SUCCESS_AS_HRPC_STATUS(set_context(MemoryView(context_buffer)), LLMSetContextSerializer);
+    TRY_AS_HRPC_STATUS(auto reply, LLMSetContextSerializer::serialize_reply(HAILO_SUCCESS),
+        LLMSetContextSerializer);
     return reply;
 }
 
@@ -504,6 +578,26 @@ Expected<Buffer> LLMServer::handle_get_stop_tokens_request(const MemoryView &req
     return reply;
 }
 
+Expected<Buffer> LLMServer::handle_get_context_usage_size(const MemoryView &request)
+{
+    CHECK_SUCCESS_AS_HRPC_STATUS(LLMGetContextUsageSizeSerializer::deserialize_request(request), LLMGetContextUsageSizeSerializer);
+
+    auto context_usage = m_pre_process->cache_usage_size() + m_next_input_prompt_prefix_tokens.size();
+    TRY_AS_HRPC_STATUS(auto reply, LLMGetContextUsageSizeSerializer::serialize_reply(HAILO_SUCCESS, context_usage),
+        LLMGetContextUsageSizeSerializer);
+    return reply;
+}
+
+Expected<Buffer> LLMServer::handle_get_max_context_capacity(const MemoryView &request)
+{
+    CHECK_SUCCESS_AS_HRPC_STATUS(LLMGetMaxContextCapacitySerializer::deserialize_request(request), LLMGetMaxContextCapacitySerializer);
+
+    auto max_context_capacity = m_pre_process_params.kv_cache_size;
+    TRY_AS_HRPC_STATUS(auto reply, LLMGetMaxContextCapacitySerializer::serialize_reply(HAILO_SUCCESS, max_context_capacity),
+        LLMGetMaxContextCapacitySerializer);
+    return reply;
+}
+
 Expected<Buffer> LLMServer::handle_generator_release_request(const MemoryView &request)
 {
     CHECK_SUCCESS_AS_HRPC_STATUS(LLMGeneratorReleaseSerializer::deserialize_request(request), LLMGeneratorReleaseSerializer);
@@ -534,8 +628,8 @@ Expected<int> LLMServer::get_next_token_prefill(std::map<std::string, MemoryView
     std::map<std::string, MemoryView> &prefill_outputs, const std::vector<MemoryView> &input_embeddings,
     const LLMGeneratorParams &params)
 {
-    size_t num_full_chunks = input_embeddings.size() / PREFILL_INPUT_TOKENS_SIZE;
-    size_t remainder_size = input_embeddings.size() % PREFILL_INPUT_TOKENS_SIZE;
+    size_t num_full_chunks = input_embeddings.size() / m_pre_process_params.prefill_input_tokens_count;
+    size_t remainder_size = input_embeddings.size() % m_pre_process_params.prefill_input_tokens_count;
     // Process the remainder first, if any
     if (remainder_size > 0) {
         std::vector<MemoryView> first_prefill_embeddings(input_embeddings.begin(), input_embeddings.begin() + remainder_size);
@@ -545,7 +639,7 @@ Expected<int> LLMServer::get_next_token_prefill(std::map<std::string, MemoryView
     // Process full prefill chunks
     size_t offset = remainder_size;
     for (size_t i = 0; i < num_full_chunks; ++i) {
-        std::vector<MemoryView> input_embeddings_chunk(input_embeddings.begin() + offset, input_embeddings.begin() + offset + PREFILL_INPUT_TOKENS_SIZE);
+        std::vector<MemoryView> input_embeddings_chunk(input_embeddings.begin() + offset, input_embeddings.begin() + offset + m_pre_process_params.prefill_input_tokens_count);
         CHECK_SUCCESS(process_prefill_inputs_chunk(prefill_inputs, prefill_outputs, input_embeddings_chunk));
         offset += input_embeddings_chunk.size();
     }
@@ -565,7 +659,6 @@ void LLMServer::reset_cnversation_context()
     m_pre_process->reset_local_cache();
     m_post_process.reset_random_generator();
     m_inference_manager_prefill->init_cache(0); // TODO (HRT-16833): Check if required
-    m_total_context_tokens = 0;
 
     prepare_for_new_generation();
 }
@@ -614,7 +707,7 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::generate_nex
     assert(!tokens.empty());
     assert(tokens.size() == embeddings.size());
     if ((tokens.size() == 1) && m_inference_manager_tbt) {
-        return handle_tbt_phase(tokens, embeddings);
+        return handle_tbt_phase(embeddings);
     } else {
         return handle_prefill_phase(tokens, embeddings);
     }
@@ -688,8 +781,6 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_prefi
             embeddings, m_current_generation_params));
     }
 
-    CHECK_SUCCESS(m_inference_manager_prefill->finalize_cache());
-
     m_generated_token_count++;
 
     auto generation_status = get_current_generation_status(next_token);
@@ -713,10 +804,9 @@ LLMGeneratorCompletion::Status LLMServer::get_current_generation_status(int next
     return LLMGeneratorCompletion::Status::GENERATING;
 }
 
-Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_tbt_phase(const std::vector<int> &tokens,
-    const std::vector<MemoryView> &embeddings)
+Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_tbt_phase(const std::vector<MemoryView> &embeddings)
 {
-    assert(1 == tokens.size());
+    assert(1 == embeddings.size());
     assert(m_inference_manager_tbt);
 
     std::map<std::string, MemoryView> tbt_inputs = m_tbt_inputs;
@@ -724,15 +814,7 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_tbt_p
 
     // TBT preprocessing (restore missing logic from old tbt_generation_loop)
     LOGGER__GENAI_STATS_START("[llm-generate-tbt] pre process");
-    std::vector<MemoryView> single_row_views;
-    if (m_token_embedder) {
-        assert(embeddings.empty());
-        single_row_views = m_token_embedder->tokens_to_embeddings(tokens);
-    } else {
-        assert(embeddings.size() == 1);
-        single_row_views = embeddings;
-    }
-    CHECK_SUCCESS(m_pre_process->prepare_inputs_tbt(tbt_inputs, single_row_views));
+    CHECK_SUCCESS(m_pre_process->prepare_inputs_tbt(tbt_inputs, embeddings));
     LOGGER__GENAI_STATS_END("[llm-generate-tbt] pre process");
 
     LOGGER__GENAI_STATS_START("[llm-generate-tbt] update cache offset");
@@ -752,7 +834,6 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_tbt_p
 
     auto generation_status = get_current_generation_status(next_token);
     if (generation_status != LLMGeneratorCompletion::Status::GENERATING) {
-        CHECK_SUCCESS(m_inference_manager_tbt->finalize_cache());
         // Handle end of generation - may return GENERATING if recovery tokens need delivery
         TRY(generation_status, handle_generation_completion(generation_status, next_token));
     }
@@ -849,7 +930,6 @@ hailo_status LLMServer::handle_reasoning_generation_completion()
     // Roll back by: reasoning tokens + generated tokens
     const auto total_rollback = m_reasoning.reasoning_section_token_count + m_generated_token_count;
     CHECK_SUCCESS(m_inference_manager_prefill->update_cache_offset(-static_cast<int32_t>(total_rollback)));
-    m_total_context_tokens -= static_cast<uint32_t>(total_rollback);
     LOGGER__GENAI_STATS_END("[llm-generate-reasoning] update cache offset for reasoning");
 
     // Directly prepend tokens instead of converting to text and back to tokens
@@ -860,9 +940,67 @@ hailo_status LLMServer::handle_reasoning_generation_completion()
     return HAILO_SUCCESS;
 }
 
-Expected<std::unique_ptr<LLMServerManager>> LLMServerManager::create(std::shared_ptr<Session> session)
+Expected<Buffer> LLMServer::get_context() const
 {
-    auto server = LLMServer::create_unique(session);
+    TRY(auto cache_buffers, m_inference_manager_prefill->get_cache_buffers());
+    auto [cache_usage_size, cached_embeddings, cached_pos_ids, timestamp_value] = m_pre_process->get_local_cache();
+
+    // Calculate the required payload size
+    TRY(auto payload_size, LLMContextUtils::calculate_payload_size(cached_embeddings, cached_pos_ids,
+        m_tokens_history, m_next_input_prompt_prefix_tokens, cache_buffers));
+
+    // Create buffer with header + dynamic payload
+    TRY(auto context_buffer, Buffer::create(sizeof(LLMContextHeader) + payload_size, BufferStorageParams::create_dma()));
+
+    // Create and set header
+    TRY(auto header, LLMContextUtils::create_header(m_inference_manager_prefill->get_hef(), payload_size));
+    std::memcpy(context_buffer.data(), &header, sizeof(LLMContextHeader));
+
+    // Serialize payload data
+    CHECK_SUCCESS(LLMContextUtils::serialize_payload(context_buffer.from(sizeof(LLMContextHeader)),
+        cache_usage_size, cached_embeddings, cached_pos_ids, timestamp_value, m_tokens_history,
+        m_next_input_prompt_prefix_tokens, cache_buffers));
+
+    return context_buffer;
+}
+
+hailo_status LLMServer::set_context(const MemoryView &context_buffer)
+{
+    if (context_buffer.size() < sizeof(LLMContextHeader)) {
+        return HAILO_INVALID_ARGUMENT;
+    }
+
+    const LLMContextHeader *header = reinterpret_cast<const LLMContextHeader*>(context_buffer.data());
+    CHECK_SUCCESS(LLMContextUtils::validate_header(*header, m_inference_manager_prefill->get_hef()));
+
+    if (context_buffer.size() < sizeof(LLMContextHeader) + header->payload_size) {
+        return HAILO_INVALID_ARGUMENT;
+    }
+
+    // Deserialize payload data
+    auto [cache_usage_size, cached_embeddings, cached_pos_ids, timestamp_value_from_cache] = m_pre_process->get_local_cache(); // initializing the eigen arrays properly
+    std::unordered_map<uint32_t, MemoryView> cache_buffers;
+    uint32_t timestamp_value;
+
+    CHECK_SUCCESS(LLMContextUtils::deserialize_payload(context_buffer.from(sizeof(LLMContextHeader)),
+        cache_usage_size, cached_embeddings, cached_pos_ids, timestamp_value, m_tokens_history,
+        m_next_input_prompt_prefix_tokens, cache_buffers));
+
+    // Set local cache
+    m_pre_process->set_local_cache(cache_usage_size, cached_embeddings, cached_pos_ids, timestamp_value);
+
+    // Update cache buffers
+    for (const auto &[cache_id, buffer] : cache_buffers) {
+        CHECK_SUCCESS(m_inference_manager_prefill->update_cache_buffer(cache_id, buffer));
+    }
+    CHECK_SUCCESS(m_inference_manager_prefill->init_cache(static_cast<uint32_t>(cache_usage_size)));
+
+    return HAILO_SUCCESS;
+}
+
+Expected<std::unique_ptr<LLMServerManager>> LLMServerManager::create(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager)
+{
+    auto server = LLMServer::create_unique(session, vdevice_manager);
     CHECK_EXPECTED(server);
 
     auto ptr = std::make_unique<LLMServerManager>(session, std::move(server.value()));
@@ -890,7 +1028,11 @@ LLMServerManager::LLMServerManager(std::shared_ptr<Session> session, std::unique
         [&](const MemoryView &request) { return m_server->handle_tokenize_request(request); };
     m_dispatcher[HailoGenAIActionID::LLM_CLEAR_CONTEXT] =
         [&](const MemoryView &request) { return m_server->handle_clear_context_request(request); };
-    m_dispatcher[HailoGenAIActionID::LLM_RELEASE] =
+    m_dispatcher[HailoGenAIActionID::LLM__GET_CONTEXT] =
+        [&](const MemoryView &request) { return m_server->handle_get_context_request(request); };
+    m_dispatcher[HailoGenAIActionID::LLM__SET_CONTEXT] =
+        [&](const MemoryView &request) { return m_server->handle_set_context_request(request); };
+        m_dispatcher[HailoGenAIActionID::LLM_RELEASE] =
         [&](const MemoryView &request) { (void)request; m_server.reset(); return LLMReleaseSerializer::serialize_reply(HAILO_SUCCESS); };
     m_dispatcher[HailoGenAIActionID::LLM__GENERATOR_ABORT] =
         [&](const MemoryView &request) { return m_server->handle_abort_request(request); };
@@ -902,6 +1044,10 @@ LLMServerManager::LLMServerManager(std::shared_ptr<Session> session, std::unique
         [&](const MemoryView &request) { return m_server->handle_set_stop_tokens_request(request); };
     m_dispatcher[HailoGenAIActionID::LLM__GET_STOP_TOKENS] =
         [&](const MemoryView &request) { return m_server->handle_get_stop_tokens_request(request); };
+    m_dispatcher[HailoGenAIActionID::LLM__GET_CONTEXT_USAGE_SIZE] =
+        [&](const MemoryView &request) { return m_server->handle_get_context_usage_size(request); };
+    m_dispatcher[HailoGenAIActionID::LLM__GET_MAX_CONTEXT_CAPACITY] =
+        [&](const MemoryView &request) { return m_server->handle_get_max_context_capacity(request); };
     m_dispatcher[HailoGenAIActionID::GENAI__CHECK_HEF_EXISTS] =
         [&](const MemoryView &request) { return handle_check_hef_exists_request(request); };
     m_dispatcher[HailoGenAIActionID::LLM__GENERATOR_RELEASE] =

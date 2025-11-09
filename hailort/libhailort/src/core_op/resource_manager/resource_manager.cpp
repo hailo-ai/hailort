@@ -520,16 +520,13 @@ ExpectedRef<vdma::VdmaEdgeLayer> ResourcesManager::create_intermediate_edge_laye
         is_circular, d2h_channel_id));
 
     if (LayerType::INTER_CONTEXT == layer_type) {
-        // We have max_batch_size transfers, so we program them one by one. The last transfer should report interrupt
-        // to the device.
-        TRY(const auto desc_count_local, edge_layer->program_descriptors(transfer_size, InterruptsDomain::DEVICE, 0, 0,
-            batch_size));
+        // Program transfer_size x batch_size
+        TRY(const auto desc_count_local, edge_layer->program_descriptors(transfer_size, 0, 0, batch_size));
         (void)desc_count_local;
     } else {
-        // Program all descriptors, no need for interrupt.
-        const auto interrupts_domain = InterruptsDomain::NONE;
+        // Program the entire descriptors list
         const auto total_size = edge_layer->descs_count() * edge_layer->desc_page_size();
-        TRY(const auto desc_count_local, edge_layer->program_descriptors(total_size, interrupts_domain, 0));
+        TRY(const auto desc_count_local, edge_layer->program_descriptors(total_size, 0));
         (void)desc_count_local;
     }
 
@@ -783,27 +780,6 @@ Expected<CONTROL_PROTOCOL__host_buffer_info_t> ResourcesManager::get_boundary_bu
     }
 }
 
-Expected<uint16_t> ResourcesManager::program_desc_for_hw_only_flow(vdma::DescriptorList &desc_list,
-    vdma::MappedBuffer &mapped_buffer, vdma::ChannelId channel_id,
-    const uint32_t single_transfer_size, const uint16_t dynamic_batch_size, const uint32_t batch_count)
-{
-    size_t acc_desc_offset = 0;
-    for (uint32_t batch_index = 0; batch_index < batch_count; batch_index++) {
-        for (uint16_t transfer_index = 0; transfer_index < dynamic_batch_size; transfer_index++) {
-            const auto last_desc_interrupts_domain = ((dynamic_batch_size - 1) == transfer_index) ?
-                InterruptsDomain::DEVICE : InterruptsDomain::NONE;
-            const bool should_bind = false;
-            CHECK_SUCCESS(desc_list.program(mapped_buffer, single_transfer_size,
-                (acc_desc_offset * desc_list.desc_page_size()), channel_id, static_cast<uint32_t>(acc_desc_offset), 1,
-                should_bind, last_desc_interrupts_domain));
-            acc_desc_offset += desc_list.descriptors_in_buffer(single_transfer_size);
-        }
-    }
-    CHECK_AS_EXPECTED(IS_FIT_IN_UINT16(acc_desc_offset), HAILO_INTERNAL_FAILURE,
-        "calculated acc_desc_offset for vdma descriptor list is out of UINT16 range");
-    return static_cast<uint16_t>(acc_desc_offset);
-}
-
 hailo_status ResourcesManager::allocate_mapped_buffer_for_hw_only_infer(
     vdma::BoundaryChannelPtr boundary_channel_ptr, const HailoRTDriver::DmaDirection direction,
     const uint32_t single_transfer_size, uint16_t batch_size, uint16_t batch_count)
@@ -865,17 +841,12 @@ hailo_status ResourcesManager::configure_mapped_buffer_for_hw_only_infer(vdma::B
                 boundary_channel_ptr->get_channel_id()), HAILO_INTERNAL_FAILURE);
             auto hw_infer_mapped_buffer = m_hw_only_desc_boundary_buffers[boundary_channel_ptr->get_channel_id()];
 
-            static const auto DEFAULT_BUFFER_OFFSET = 0;
-            auto status = desc_list.program(*hw_infer_mapped_buffer, hw_infer_mapped_buffer->size(),
-                DEFAULT_BUFFER_OFFSET, boundary_channel_ptr->get_channel_id());
-            CHECK_SUCCESS(status);
+            CHECK_SUCCESS(desc_list.program(*hw_infer_mapped_buffer, single_transfer_size, 0,
+                boundary_channel_ptr->get_channel_id(), 0, batch_size * batch_count));
+            const uint16_t desc_count = static_cast<uint16_t>(DIV_ROUND_UP(hw_infer_mapped_buffer->size(),
+                desc_list.desc_page_size()));
 
-            TRY(auto desc_programed, program_desc_for_hw_only_flow(desc_list, *hw_infer_mapped_buffer,
-                boundary_channel_ptr->get_channel_id(), single_transfer_size, batch_size, batch_count));
-            assert(static_cast<uint16_t>(desc_programed == DIV_ROUND_UP(hw_infer_mapped_buffer->size(),
-                desc_list.desc_page_size())));
-
-            channel_info_pair = std::make_pair(boundary_channel_ptr->get_channel_id(), desc_programed);
+            channel_info_pair = std::make_pair(boundary_channel_ptr->get_channel_id(), desc_count);
             break;
         }
         case CONTROL_PROTOCOL__CCB_BOUNDARY_CHANNEL:

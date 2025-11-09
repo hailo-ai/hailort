@@ -152,6 +152,16 @@ public:
     Expected<std::string> generate_all_text(MemoryView audio_buffer, const Speech2TextGeneratorParams &generator_params, std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
 
     /**
+    * Generates a full transcription from the given audio data and returns it as a single string.
+    *
+    * @param[in] audio_buffer       The audio data to process. Must be PCM float32 normalized to [-1.0, 1.0), mono, little-endian, at 16 kHz.
+    * @param[in] timeout            The timeout for the operation.
+    * @return Upon success, returns Expected of std::string. Otherwise, returns Unexpected of ::hailo_status error.
+    * @note The default generator parameters are used in this method, as returned by create_generator_params().
+    */
+    Expected<std::string> generate_all_text(MemoryView audio_buffer, std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
+
+    /**
     * Generates transcription segments from audio data, and returns them as a vector of SegmentInfo.
     *
     * @param[in] audio_buffer       The audio data to process. Must be PCM float32 normalized to [-1.0, 1.0), mono, little-endian, at 16 kHz.
@@ -162,6 +172,25 @@ public:
     */
     Expected<std::vector<SegmentInfo>> generate_all_segments(MemoryView audio_buffer,
         const Speech2TextGeneratorParams &generator_params, std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
+
+    /**
+    * Generates transcription segments from audio data, and returns them as a vector of SegmentInfo.
+    *
+    * @param[in] audio_buffer       The audio data to process. Must be PCM float32 normalized to [-1.0, 1.0), mono, little-endian, at 16 kHz.
+    * @param[in] timeout            The timeout for the operation.
+    * @return Upon success, returns Expected of std::vector<Speech2Text::SegmentInfo> containing
+    *         the transcription segments. Otherwise, returns Unexpected of ::hailo_status error.
+    * @note The default generator parameters are used in this method, as returned by create_generator_params().
+    */
+    Expected<std::vector<SegmentInfo>> generate_all_segments(MemoryView audio_buffer, std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
+
+    /**
+    * Tokenizes a given text into a vector of integers representing the tokens.
+    *
+    * @param[in] text     The input text to tokenize.
+    * @return Upon success, returns Expected of vector of integers. Otherwise, returns Unexpected of ::hailo_status error.
+    */
+    Expected<std::vector<int>> tokenize(const std::string &text);
 
     static constexpr std::chrono::milliseconds DEFAULT_OPERATION_TIMEOUT = std::chrono::seconds(10);
 

@@ -567,6 +567,14 @@ void DeviceBase::d2h_notification_thread_main(const std::string &device_id)
             }
         }
 
+        if (NN_CORE_CRC_ERROR_EVENT_ID == notification_fw_id) {
+            if (!m_is_shutdown_core_ops_called) {
+                LOGGER__WARNING("Aborting Infer, Device {} got CSM CRC-error from NN-core", device_id);
+                shutdown_core_ops();
+                m_is_shutdown_core_ops_called = true;
+            }
+        }
+
         hailo_notification_t callback_notification;
         hailo_notification_id_t hailo_notification_id;
         hailo_status status = fw_notification_id_to_hailo((D2H_EVENT_ID_t)notification_fw_id, &hailo_notification_id);
@@ -677,6 +685,9 @@ hailo_status DeviceBase::fw_notification_id_to_hailo(D2H_EVENT_ID_t fw_notificat
             break;
         case CONTEXT_SWITCH_RUN_TIME_ERROR:
             *hailo_notification_id = HAILO_NOTIFICATION_ID_CONTEXT_SWITCH_RUN_TIME_ERROR_EVENT;
+            break;
+        case NN_CORE_CRC_ERROR_EVENT_ID:
+            *hailo_notification_id = HAILO_NOTIFICATION_ID_NN_CORE_CRC_ERROR_EVENT;
             break;
         default:
             status = HAILO_INVALID_ARGUMENT;

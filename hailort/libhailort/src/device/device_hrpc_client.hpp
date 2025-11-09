@@ -3,12 +3,12 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @file pcie_device_hrpc_client.hpp
- * @brief Pcie Device HRPC client, represents the user's handle to the Device object (held in the hailort server)
+ * @file device_hrpc_client.hpp
+ * @brief Device HRPC client, represents the user's handle to the Device object (held in the hailort server)
  **/
 
-#ifndef HAILO_PCIE_DEVICE_HRPC_CLIENT_HPP_
-#define HAILO_PCIE_DEVICE_HRPC_CLIENT_HPP_
+#ifndef HAILO_DEVICE_HRPC_CLIENT_HPP_
+#define HAILO_DEVICE_HRPC_CLIENT_HPP_
 
 #include "hailo/device.hpp"
 #include "hailo/hailort.h"
@@ -19,16 +19,16 @@
 namespace hailort
 {
 
-class PcieDeviceHrpcClient : public Device {
+class DeviceHrpcClient : public Device {
 public:
     static Expected<std::unique_ptr<Device>> create(const std::string &device_id);
     static Expected<std::unique_ptr<Device>> create(const std::string &device_id,
         std::shared_ptr<Client> client);
 
-    PcieDeviceHrpcClient(const std::string &device_id, std::shared_ptr<Client> client, uint32_t handle,
+    DeviceHrpcClient(const std::string &device_id, std::shared_ptr<Client> client, uint32_t handle,
         std::shared_ptr<ClientCallbackDispatcher> callback_dispatcher) :
         Device(Device::Type::PCIE), m_device_id(device_id), m_client(client), m_handle(handle), m_callback_dispatcher(callback_dispatcher) {}
-    virtual ~PcieDeviceHrpcClient();
+    virtual ~DeviceHrpcClient();
 
     virtual Expected<ConfiguredNetworkGroupVector> configure(Hef &/*hef*/,
         const NetworkGroupsParamsMap &configure_params={}) override { (void)configure_params; return make_unexpected(HAILO_NOT_IMPLEMENTED); }
@@ -85,6 +85,7 @@ public:
     virtual hailo_status before_fork() override;
     virtual hailo_status after_fork_in_parent() override;
     virtual hailo_status after_fork_in_child() override;
+    virtual hailo_status echo_buffer_async(const MemoryView buffer) override;
 
     virtual Expected<bool> has_power_sensor() override;
     virtual Expected<size_t> fetch_logs(MemoryView buffer, hailo_log_type_t log_type) override;
@@ -101,4 +102,4 @@ private:
 
 } /* namespace hailort */
 
-#endif /* HAILO_PCIE_DEVICE_HRPC_CLIENT_HPP_ */
+#endif /* HAILO_DEVICE_HRPC_CLIENT_HPP_ */

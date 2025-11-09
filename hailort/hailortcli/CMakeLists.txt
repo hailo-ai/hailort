@@ -5,6 +5,11 @@ include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/cli11.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/json.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/dotwriter.cmake)
 
+# Include tokenizers when client tokenizer is enabled
+if(HAILO_BUILD_CLIENT_TOKENIZER)
+    include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/tokenizers.cmake)
+endif()
+
 set(HAILORTCLI_CPP_FILES
     hailortcli.cpp
     command.cpp

@@ -27,15 +27,8 @@ Speech2TextWrapper::Speech2TextWrapper(std::unique_ptr<genai::Speech2Text> speec
     m_speech2text(std::move(speech2text))
 {}
 
-Speech2TextGeneratorParamsWrapper Speech2TextWrapper::create_generator_params()
-{
-    auto expected_params = m_speech2text->create_generator_params();
-    VALIDATE_EXPECTED(expected_params);
-    return Speech2TextGeneratorParamsWrapper(expected_params.release());
-}
-
-std::string Speech2TextWrapper::generate_all_text(const Speech2TextGeneratorParamsWrapper &params,
-    py::array audio_data, uint32_t timeout_ms)
+std::string Speech2TextWrapper::generate_all_text(py::array audio_data,
+    genai::Speech2TextTask task, std::string_view language, uint32_t timeout_ms)
 {
     // Convert numpy array to MemoryView
     auto buffer_info = audio_data.request();
@@ -47,16 +40,17 @@ std::string Speech2TextWrapper::generate_all_text(const Speech2TextGeneratorPara
     if (!py::array_t<float32_t>::check_(audio_data)) {
         throw std::invalid_argument("Audio data must be float32 type");
     }
-    
+
     auto audio_buffer = hailort::MemoryView(audio_data.mutable_data(), static_cast<size_t>(audio_data.nbytes()));
-    
-    auto expected_result = m_speech2text->generate_all_text(audio_buffer, params.params(), std::chrono::milliseconds(timeout_ms));
+
+    auto generator_params = genai::Speech2TextGeneratorParams(task, language);
+    auto expected_result = m_speech2text->generate_all_text(audio_buffer, generator_params, std::chrono::milliseconds(timeout_ms));
     VALIDATE_EXPECTED(expected_result);
     return expected_result.release();
 }
 
 std::vector<genai::Speech2Text::SegmentInfo> Speech2TextWrapper::generate_all_segments(
-    const Speech2TextGeneratorParamsWrapper &params, py::array audio_data, uint32_t timeout_ms)
+    py::array audio_data, genai::Speech2TextTask task, std::string_view language, uint32_t timeout_ms)
 {
     // Convert numpy array to MemoryView
     auto buffer_info = audio_data.request();
@@ -71,8 +65,16 @@ std::vector<genai::Speech2Text::SegmentInfo> Speech2TextWrapper::generate_all_se
 
     auto audio_buffer = hailort::MemoryView(audio_data.mutable_data(), static_cast<size_t>(audio_data.nbytes()));
 
-    auto expected_result = m_speech2text->generate_all_segments(audio_buffer, params.params(),
+    auto generator_params = genai::Speech2TextGeneratorParams(task, language);
+    auto expected_result = m_speech2text->generate_all_segments(audio_buffer, generator_params,
         std::chrono::milliseconds(timeout_ms));
+    VALIDATE_EXPECTED(expected_result);
+    return expected_result.release();
+}
+
+std::vector<int> Speech2TextWrapper::tokenize(const std::string &text)
+{   
+    auto expected_result = m_speech2text->tokenize(text);
     VALIDATE_EXPECTED(expected_result);
     return expected_result.release();
 }
@@ -100,42 +102,11 @@ void Speech2TextWrapper::bind(py::module &m)
         .value("TRANSCRIBE", genai::Speech2TextTask::TRANSCRIBE)
         .value("TRANSLATE", genai::Speech2TextTask::TRANSLATE);
 
-    // Bind Speech2TextGeneratorParams
-    py::class_<Speech2TextGeneratorParamsWrapper, std::shared_ptr<Speech2TextGeneratorParamsWrapper>>(m, "Speech2TextGeneratorParams")
-        .def("set_task", &Speech2TextGeneratorParamsWrapper::set_task)
-        .def("set_language", &Speech2TextGeneratorParamsWrapper::set_language)
-        .def("task", &Speech2TextGeneratorParamsWrapper::task)
-        .def("language", &Speech2TextGeneratorParamsWrapper::language);
-
     // Bind Speech2TextWrapper
     py::class_<Speech2TextWrapper, std::shared_ptr<Speech2TextWrapper>>(m, "Speech2Text")
         .def_static("create", &Speech2TextWrapper::create)
-        .def("create_generator_params", &Speech2TextWrapper::create_generator_params)
         .def("generate_all_text", &Speech2TextWrapper::generate_all_text)
         .def("generate_all_segments", &Speech2TextWrapper::generate_all_segments)
+        .def("tokenize", &Speech2TextWrapper::tokenize)
         .def("release", &Speech2TextWrapper::release);
-}
-
-Speech2TextGeneratorParamsWrapper::Speech2TextGeneratorParamsWrapper(genai::Speech2TextGeneratorParams generator_params) :
-    m_generator_params(std::move(generator_params))
-{}
-
-void Speech2TextGeneratorParamsWrapper::set_task(genai::Speech2TextTask task)
-{
-    VALIDATE_STATUS(m_generator_params.set_task(task));
-}
-
-void Speech2TextGeneratorParamsWrapper::set_language(std::string_view language)
-{
-    VALIDATE_STATUS(m_generator_params.set_language(language));
-}
-
-genai::Speech2TextTask Speech2TextGeneratorParamsWrapper::task() const
-{
-    return m_generator_params.task();
-}
-
-std::string_view Speech2TextGeneratorParamsWrapper::language() const
-{
-    return m_generator_params.language();
 }

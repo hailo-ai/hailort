@@ -15,7 +15,6 @@ def join_drivers_path(path):
 
 
 import hailo_platform.pyhailort._pyhailort as _pyhailort
-from hailo_platform.pyhailort.hw_object import PcieDevice
 from hailo_platform.pyhailort.pyhailort import (HEF, ConfigureParams,
                                                 FormatType, FormatOrder,
                                                 HailoPowerMode,
@@ -39,7 +38,7 @@ def _verify_pyhailort_lib_exists():
         raise MissingPyHRTLib(f"{path} should include a _pyhailort library (_pyhailort*{python_version}*.{lib_extension}). Includes: {pprint.pformat(list(pathlib.Path(path).iterdir()))}")
 _verify_pyhailort_lib_exists()
 
-__version__ = "5.1.0"
+__version__ = "5.1.1"
 def _verify_version():
     if _pyhailort.__version__ != __version__:
         raise ImportError(
@@ -48,7 +47,7 @@ def _verify_version():
 _verify_version()
 
 __all__ = ['DvmTypes', 'PowerMeasurementTypes',
-           'SamplingPeriod', 'AveragingFactor', 'MeasurementBufferIndex', 'PcieDevice', 'HEF',
+           'SamplingPeriod', 'AveragingFactor', 'MeasurementBufferIndex', 'HEF',
            'ConfigureParams', 'FormatType', 'FormatOrder', 'join_drivers_path', 'HailoPowerMode',
            'Endianness', 'HailoStreamInterface', 'InputVStreamParams', 'OutputVStreamParams',
            'InputVStreams', 'OutputVStreams', 'InferVStreams', 'HailoStreamDirection', 'HailoFormatFlags', 'HailoCpuId',

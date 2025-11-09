@@ -49,7 +49,7 @@ The following examples below demonstrate the HailoRT API:
 - GenAI examples:
   - `chat_example` - Demonstrates LLM-based chat application using HailoRT C++ API.
   - `vlm_example` - Demonstrates VLM usage in a chat application using HailoRT C++ API.
-  - `image_generation_example` - Demonstrates Text2Image usage for image generation using HailoRT C++ API.
+  - `speech2text_example` - Demonstrates Speech2Text usage for audio transcription using HailoRT C++ API.
 
 ## Compiling with CMake
 Examples are configured and compiled using the following commands:

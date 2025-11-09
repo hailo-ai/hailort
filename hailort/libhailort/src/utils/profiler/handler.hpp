@@ -61,11 +61,12 @@ struct MonitorStartTrace : Trace
 
 struct MonitorEndTrace : Trace
 {
-    MonitorEndTrace(const std::string &unique_vdevice_hash)
-        : Trace("scheduler_end"), unique_vdevice_hash(unique_vdevice_hash)
+    MonitorEndTrace(const std::string &unique_vdevice_hash, const device_id_t &device_id = "")
+        : Trace("scheduler_end"), unique_vdevice_hash(unique_vdevice_hash), device_id(device_id)
     {}
 
     std::string unique_vdevice_hash;
+    std::string device_id;
 };
 
 struct AddCoreOpTrace : Trace

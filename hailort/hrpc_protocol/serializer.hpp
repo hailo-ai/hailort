@@ -25,6 +25,8 @@ namespace hailort
 #define INVALID_HANDLE_ID (UINT32_MAX)
 #define INVALID_LATENCY_MEASUREMENT (UINT32_MAX)
 
+constexpr std::chrono::seconds LONG_RPC_ACTION_TIMEOUT = std::chrono::seconds(45);
+
 enum class HailoRpcActionID {
     VDEVICE__CREATE,
     VDEVICE__DESTROY,
@@ -44,6 +46,8 @@ enum class HailoRpcActionID {
     CONFIGURED_INFER_MODEL__UPDATE_CACHE_OFFSET,
     CONFIGURED_INFER_MODEL__INIT_CACHE,
     CONFIGURED_INFER_MODEL__FINALIZE_CACHE,
+    CONFIGURED_INFER_MODEL__GET_CACHE_BUFFERS,
+    CONFIGURED_INFER_MODEL__UPDATE_CACHE_BUFFER,
     CONFIGURED_INFER_MODEL__RUN_ASYNC,
     CONFIGURED_INFER_MODEL__RUN_ASYNC_FOR_DURATION,
 
@@ -63,6 +67,7 @@ enum class HailoRpcActionID {
     DEVICE__SET_NOTIFICATION_CALLBACK,
     DEVICE__REMOVE_NOTIFICATION_CALLBACK,
     DEVICE__FETCH_LOGS,
+    DEVICE__ECHO_BUFFER,
 
     NOTIFICATION,
 
@@ -364,6 +369,27 @@ struct FinalizeCacheSerializer
     static Expected<Buffer> serialize_reply();
 };
 
+struct GetCacheBuffersSerializer
+{
+    GetCacheBuffersSerializer() = delete;
+
+    static Expected<size_t> serialize_request(rpc_object_handle_t configured_infer_model_handle, MemoryView buffer);
+    static Expected<rpc_object_handle_t> deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply(const std::unordered_map<uint32_t, BufferPtr> &cache_buffers);
+    static Expected<std::unordered_map<uint32_t, BufferPtr>> deserialize_reply(const MemoryView &serialized_reply);
+};
+
+struct UpdateCacheBufferSerializer
+{
+    UpdateCacheBufferSerializer() = delete;
+
+    static Expected<size_t> serialize_request(rpc_object_handle_t configured_infer_model_handle, uint32_t cache_id, MemoryView buffer, MemoryView output_buffer);
+    static Expected<std::tuple<rpc_object_handle_t, uint32_t, BufferPtr>> deserialize_request(const MemoryView &serialized_request);
+
+    static Expected<Buffer> serialize_reply();
+};
+
 struct RunAsyncSerializer
 {
     RunAsyncSerializer() = delete;
@@ -396,7 +422,8 @@ struct RunAsyncForDurationSerializer
         rpc_object_handle_t configured_infer_model_handle;
         rpc_object_handle_t infer_model_handle;
         uint32_t duration_ms;
-        std::vector<RunAsyncSerializer::BufferInfo> buffer_infos;
+        uint32_t sleep_between_frames_ms;
+        std::vector<RunAsyncSerializer::BufferInfo> io_buffer_infos;
     };
 
     static Expected<size_t> serialize_request(const Request &request_struct, MemoryView buffer);
@@ -569,6 +596,14 @@ struct FetchLogsSerializer
 
     static Expected<Buffer> serialize_reply(uint32_t log_size = 0);
     static Expected<size_t> deserialize_reply(const MemoryView &serialized_reply);
+};
+
+struct EchoBufferSerializer
+{
+    EchoBufferSerializer() = delete;
+    static Expected<size_t> serialize_request(uint32_t buffer_size, MemoryView buffer);
+    static Expected<uint32_t> deserialize_request(const MemoryView &serialized_request);
+    static Expected<Buffer> serialize_reply();
 };
 
 } /* namespace hailort */

@@ -1166,8 +1166,7 @@ hailo_status VStreamsBuilderUtils::add_nms_post_process(OutputStreamPtrVector &o
     assert(nullptr != op_metadata);
     vstreams_params.user_buffer_format = net_flow::NmsOpMetadata::expand_output_format_autos_by_op_type(
         vstreams_params.user_buffer_format, nms_op->metadata()->type(), op_metadata->nms_config().bbox_only);
-    CHECK(vstreams_params.user_buffer_format.type == HAILO_FORMAT_TYPE_FLOAT32, HAILO_INVALID_ARGUMENT,
-        "NMS output format type must be HAILO_FORMAT_TYPE_FLOAT32");
+    CHECK_SUCCESS(op_metadata->validate_format_type(vstreams_params.user_buffer_format));
 
     if (!op_metadata->nms_config().bbox_only) {
         CHECK(HailoRTCommon::is_nms(vstreams_params.user_buffer_format.order), HAILO_INVALID_ARGUMENT,

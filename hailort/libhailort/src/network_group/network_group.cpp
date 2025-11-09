@@ -861,12 +861,4 @@ hailo_status ConfiguredNetworkGroupBase::write_cache_buffer(uint32_t cache_id, M
     return m_core_ops[0]->write_cache_buffer(cache_id, buffer);
 }
 
-hailo_status ConfiguredNetworkGroupBase::finalize_cache()
-{
-    CHECK(m_core_ops.size() == 1, HAILO_INVALID_OPERATION,
-        "finalize_cache() is not supported for multi core-op network groups");
-
-    return m_core_ops[0]->finalize_cache();
-}
-
 } /* namespace hailort */

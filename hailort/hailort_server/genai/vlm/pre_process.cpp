@@ -16,19 +16,20 @@ namespace genai
 
 Expected<std::unique_ptr<LLMPreProcess>> VLMPreProcess::create(const std::map<std::string, size_t> &prefill_inputs_frame_size,
     const std::map<std::string, size_t> &tbt_inputs_frame_size, Eigen::VectorXf &&theta, uint32_t text_embeddings_layer_features,
-    const hailo_3d_image_shape_t &input_encoder_shape)
+    const hailo_3d_image_shape_t &input_encoder_shape, uint8_t scaled_mask_value, const InputLayersNamesSuffixes &input_layers_names_suffixes,
+    const PreProcessParams &pre_process_params)
 {
-    CHECK_SUCCESS(validate_inputs_names(prefill_inputs_frame_size));
-    CHECK_SUCCESS(validate_inputs_names(tbt_inputs_frame_size));
+    CHECK_SUCCESS(validate_inputs_names(prefill_inputs_frame_size, input_layers_names_suffixes));
+    CHECK_SUCCESS(validate_inputs_names(tbt_inputs_frame_size, input_layers_names_suffixes));
 
     auto cols = text_embeddings_layer_features;
 
     Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> local_cached_embeddings =
-        Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>(PREFILL_INPUT_TOKENS_SIZE, cols);
+        Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>(pre_process_params.prefill_input_tokens_count, cols);
 
     auto ptr = make_unique_nothrow<VLMPreProcess>(std::move(theta),
         std::move(local_cached_embeddings),
-        prefill_inputs_frame_size, tbt_inputs_frame_size, input_encoder_shape);
+        prefill_inputs_frame_size, tbt_inputs_frame_size, input_encoder_shape, scaled_mask_value, input_layers_names_suffixes, pre_process_params);
     CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY); // Consider returning different status
 
     return std::unique_ptr<LLMPreProcess>(std::move(ptr));
@@ -37,8 +38,10 @@ Expected<std::unique_ptr<LLMPreProcess>> VLMPreProcess::create(const std::map<st
 VLMPreProcess::VLMPreProcess(Eigen::VectorXf &&theta,
     Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> &&local_cached_embeddings,
     const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size,
-    const hailo_3d_image_shape_t &input_encoder_shape) :
-        LLMPreProcess(std::move(theta), std::move(local_cached_embeddings), prefill_inputs_frame_size, tbt_inputs_frame_size),
+    const hailo_3d_image_shape_t &input_encoder_shape, uint8_t scaled_mask_value, const InputLayersNamesSuffixes &input_layers_names_suffixes,
+    const PreProcessParams &pre_process_params) :
+        LLMPreProcess(std::move(theta), std::move(local_cached_embeddings), prefill_inputs_frame_size, tbt_inputs_frame_size, scaled_mask_value, input_layers_names_suffixes,
+            pre_process_params),
         m_input_encoder_shape(input_encoder_shape), m_temporal_pos_h(0), m_temporal_pos_w(0)
 {
 }
@@ -127,9 +130,9 @@ hailo_status VLMPreProcess::prepare_inputs_prefill(std::map<layer_name_t, Memory
     std::vector<MemoryView> input_embeddings, const std::vector<MemoryView> &input_frames_embeddings,
     uint32_t &current_frame_index, uint32_t &current_emb_index_in_frame)
 {
-    CHECK(input_embeddings.size() <= PREFILL_INPUT_TOKENS_SIZE, HAILO_INVALID_ARGUMENT,
+    CHECK(input_embeddings.size() <= m_params.prefill_input_tokens_count, HAILO_INVALID_ARGUMENT,
         "Preparing prefill inputs failed. `input_embeddings` size must be lower then {}, but got {} tokens",
-        PREFILL_INPUT_TOKENS_SIZE, input_embeddings.size());
+        m_params.prefill_input_tokens_count, input_embeddings.size());
     CHECK_SUCCESS(validate_inputs(layer_name_to_input_buffer, m_prefill_inputs_frame_size));
 
     std::vector<std::pair<uint32_t, uint32_t>> relative_frames_tokens_indices;
@@ -162,12 +165,12 @@ hailo_status VLMPreProcess::prepare_inputs_prefill(std::map<layer_name_t, Memory
     }
     update_cache_from_embeddings(input_embeddings);
 
-    TRY(auto embeddings_layer_name, get_layer_name_from_suffix<MemoryView>(INPUT_LAYER_EMBEDDINGS_SUFF, layer_name_to_input_buffer));
-    prepare_embeddings_input(layer_name_to_input_buffer[embeddings_layer_name], PREFILL_INPUT_TOKENS_SIZE);
+    TRY(auto embeddings_layer_name, get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.embeddings, layer_name_to_input_buffer));
+    prepare_embeddings_input(layer_name_to_input_buffer[embeddings_layer_name], m_params.prefill_input_tokens_count);
 
-    TRY(auto attention_mask_layer_name, get_layer_name_from_suffix<MemoryView>(INPUT_LAYER_ATTENTION_MASK_SUFF, layer_name_to_input_buffer));
-    prepare_attention_mask_input(layer_name_to_input_buffer[attention_mask_layer_name], PREFILL_INPUT_TOKENS_SIZE);
-    CHECK_SUCCESS(prepare_positional_embed_inputs(layer_name_to_input_buffer, PREFILL_INPUT_TOKENS_SIZE,
+    TRY(auto attention_mask_layer_name, get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.attention_mask, layer_name_to_input_buffer));
+    prepare_attention_mask_input(layer_name_to_input_buffer[attention_mask_layer_name], m_params.prefill_input_tokens_count);
+    CHECK_SUCCESS(prepare_positional_embed_inputs(layer_name_to_input_buffer, m_params.prefill_input_tokens_count,
         relative_frames_tokens_indices, static_cast<int>(input_embeddings.size())));
 
     return HAILO_SUCCESS;

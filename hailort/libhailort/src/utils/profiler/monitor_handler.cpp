@@ -70,6 +70,11 @@ void MonitorHandler::handle_trace(const MonitorEndTrace &trace)
 {
     if (m_unique_vdevice_hash == trace.unique_vdevice_hash) {
         clear_monitor();
+    } else if ("" != trace.device_id) {
+        m_devices_info.at(trace.device_id).monitor_count--;
+        if (0 == m_devices_info.at(trace.device_id).monitor_count) {
+            m_devices_info.erase(trace.device_id);
+        }
     }
 }
 
@@ -81,8 +86,12 @@ void MonitorHandler::handle_trace(const AddCoreOpTrace &trace)
 
 void MonitorHandler::handle_trace(const AddDeviceTrace &trace)
 {
-    DeviceInfo device_info(trace.device_id, trace.device_arch);
-    m_devices_info.emplace(trace.device_id, device_info);
+    if (contains(m_devices_info, trace.device_id)) {
+        m_devices_info.at(trace.device_id).monitor_count++;
+    } else {
+        DeviceInfo device_info(trace.device_id, trace.device_arch);
+        m_devices_info.emplace(trace.device_id, device_info);
+    }
 }
 
 void MonitorHandler::handle_trace(const ActivateCoreOpTrace &trace)
@@ -194,12 +203,18 @@ hailo_status MonitorHandler::start_mon(const std::string &unique_vdevice_hash)
     /* Clearing monitor members. Since the owner of monitor_handler is tracer, which is static,
     the monitor may get rerun without destructor being called. */
     if (m_is_monitor_currently_working) {
-        if (!m_unique_vdevice_hash.empty() && (unique_vdevice_hash != m_unique_vdevice_hash)) {
+        if (m_unique_vdevice_hash.empty()) {
+            m_unique_vdevice_hash = unique_vdevice_hash;
+            return HAILO_SUCCESS;
+        }
+
+        if (unique_vdevice_hash != m_unique_vdevice_hash) {
             LOGGER__WARNING("Trying to register a vdevice to hailo-monitor, "\
                 "while other vdevice is registered. Monitor currently supports single vdevice, which will result in non-consistent tracing.");
             return HAILO_INVALID_OPERATION;
+        } else {
+            clear_monitor();
         }
-        clear_monitor();
     }
     m_unique_vdevice_hash = unique_vdevice_hash;
     m_is_monitor_currently_working = true;

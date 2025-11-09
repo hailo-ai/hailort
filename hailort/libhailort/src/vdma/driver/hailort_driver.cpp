@@ -262,16 +262,6 @@ HailoRTDriver::HailoRTDriver(const std::string &device_id, FileDescriptor &&fd, 
     status = HAILO_SUCCESS;
 }
 
-HailoRTDriver::~HailoRTDriver()
-{
-    for (const auto &buffer_info : m_mapped_buffer) {
-        auto status = vdma_buffer_unmap_ioctl(buffer_info.second.handle);
-        if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed to unmap buffer handle {} status {}", buffer_info.second.handle, status);
-        }
-    }
-}
-
 Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_all_devices()
 {
     std::vector<HailoRTDriver::DeviceInfo> devices_info;
@@ -495,58 +485,30 @@ Expected<uint64_t> HailoRTDriver::write_action_list(uint8_t *data, size_t size)
     return dma_address;
 }
 
-Expected<HailoRTDriver::VdmaBufferHandle> HailoRTDriver::vdma_buffer_map_dmabuf(int dmabuf_fd, size_t required_size,
-    DmaDirection data_direction, DmaBufferType buffer_type)
+static hailo_vdma_buffer_params buffer_info(uintptr_t addr_or_fd, size_t size,
+    HailoRTDriver::DmaDirection direction, HailoRTDriver::DmaBufferType type)
 {
-    CHECK_AS_EXPECTED (DmaBufferType::DMABUF_BUFFER == buffer_type, HAILO_INVALID_ARGUMENT,
-        "Error, Invalid buffer type given, buffer type {}", static_cast<int>(buffer_type));
-
-    return vdma_buffer_map(static_cast<uintptr_t>(dmabuf_fd), required_size, data_direction,
-        buffer_type);
+    hailo_vdma_buffer_params buffer_info{};
+    buffer_info.addr_or_fd = addr_or_fd;
+    buffer_info.size = size;
+    buffer_info.direction = direction_to_dma_data_direction(direction);
+    buffer_info.type = driver_dma_buffer_type_to_dma_buffer_type(type);
+    buffer_info.mapped_handle = 0;
+    return buffer_info;
 }
 
-Expected<HailoRTDriver::VdmaBufferHandle> HailoRTDriver::vdma_buffer_map(uintptr_t user_address, size_t required_size,
-    DmaDirection data_direction, DmaBufferType buffer_type) {
-
-    std::unique_lock<std::mutex> mapping_lock(m_mapped_buffer_lock);
-    auto mapped_buffer_key = MappedBufferKey{user_address, data_direction, required_size};
-    auto mapped_buffer = m_mapped_buffer.find(mapped_buffer_key);
-
-    if (mapped_buffer != m_mapped_buffer.end()) {
-        // Buffer already mapped, increase ref count and use it.
-        assert(mapped_buffer->second.mapped_count > 0);
-        mapped_buffer->second.mapped_count++;
-        return Expected<VdmaBufferHandle>(mapped_buffer->second.handle);
-    } else {
-        // Buffer not mapped, map it now
-        auto handle = vdma_buffer_map_ioctl(user_address, required_size, data_direction, buffer_type);
-        CHECK_EXPECTED(handle);
-
-        const auto mapping_count = 1;
-        m_mapped_buffer[mapped_buffer_key] = MappedBufferInfo {
-            handle.value(),
-            mapping_count
-        };
-
-        return handle.release();
-    }
+Expected<HailoRTDriver::VdmaBufferHandle> HailoRTDriver::vdma_buffer_map(uintptr_t addr_or_fd, size_t size,
+    DmaDirection direction, DmaBufferType type) {
+    auto buffer_params = buffer_info(addr_or_fd, size, direction, type);
+    RUN_AND_CHECK_IOCTL_RESULT(HAILO_VDMA_BUFFER_MAP, &buffer_params, "Failed map vdma buffer");
+    return std::move(buffer_params.mapped_handle);
 }
 
-hailo_status HailoRTDriver::vdma_buffer_unmap(uintptr_t user_address, size_t size, DmaDirection data_direction)
+hailo_status HailoRTDriver::vdma_buffer_unmap(uintptr_t addr_or_fd, size_t size, DmaDirection direction,
+    DmaBufferType type)
 {
-    std::unique_lock<std::mutex> mapping_lock(m_mapped_buffer_lock);
-    auto mapped_buffer_key = MappedBufferKey{user_address, data_direction, size};
-    auto mapped_buffer = m_mapped_buffer.find(mapped_buffer_key);
-    CHECK(mapped_buffer != m_mapped_buffer.end(), HAILO_NOT_FOUND, "Mapped buffer {} {} not found",
-        user_address, size);
-
-    assert(mapped_buffer->second.mapped_count > 0);
-    mapped_buffer->second.mapped_count--;
-    if (mapped_buffer->second.mapped_count == 0) {
-        const auto handle = mapped_buffer->second.handle;
-        m_mapped_buffer.erase(mapped_buffer_key);
-        return vdma_buffer_unmap_ioctl(handle);
-    }
+    auto buffer_params = buffer_info(addr_or_fd, size, direction, type);
+    RUN_AND_CHECK_IOCTL_RESULT(HAILO_VDMA_BUFFER_UNMAP, &buffer_params, "Failed unmap vdma buffer");
     return HAILO_SUCCESS;
 }
 
@@ -572,21 +534,20 @@ hailo_status HailoRTDriver::vdma_buffer_sync(VdmaBufferHandle handle, DmaSyncDir
 }
 
 hailo_status HailoRTDriver::descriptors_list_program(uintptr_t desc_handle, VdmaBufferHandle buffer_handle,
-    size_t buffer_size, size_t buffer_offset, uint8_t channel_index, uint32_t starting_desc, uint32_t batch_size,
-    bool should_bind, InterruptsDomain last_desc_interrupts, uint32_t stride)
+    size_t buffer_offset, size_t transfer_size, uint32_t transfers_count, uint8_t channel_index,
+    uint32_t starting_desc,
+    InterruptsDomain last_desc_interrupts)
 {
     hailo_desc_list_program_params params{};
     params.buffer_handle = buffer_handle;
-    params.buffer_size = buffer_size;
     params.buffer_offset = buffer_offset;
-    params.batch_size = batch_size;
+    params.transfer_size = transfer_size;
+    params.transfers_count = transfers_count;
     params.desc_handle = desc_handle;
     params.channel_index = channel_index;
     params.starting_desc = starting_desc;
 
-    params.should_bind = should_bind;
     params.last_interrupts_domain = (hailo_vdma_interrupts_domain)last_desc_interrupts;
-    params.stride = stride;
 
 #ifdef NDEBUG
     params.is_debug = false;
@@ -789,11 +750,22 @@ hailo_status HailoRTDriver::pci_ep_listen(uint16_t port_number, uint8_t backlog_
 Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> HailoRTDriver::pci_ep_accept(uint16_t port_number,
     uintptr_t input_buffer_desc_handle, uintptr_t output_buffer_desc_handle)
 {
+    constexpr size_t MAX_CONNECT_RETRIES = 10;
+    constexpr auto RETRY_INTERVAL = std::chrono::milliseconds(100);
+
     hailo_pci_ep_accept_params params{};
     params.port_number = port_number;
     params.input_desc_handle = input_buffer_desc_handle;
     params.output_desc_handle = output_buffer_desc_handle;
-    RUN_AND_CHECK_IOCTL_RESULT(HAILO_PCI_EP_ACCEPT, &params, "Failed pci_ep accept");
+    hailo_status status = HAILO_SUCCESS;
+    for (size_t i = 0; i < MAX_CONNECT_RETRIES; i++) {
+        status = RUN_IOCTL(HAILO_PCI_EP_ACCEPT, &params);
+        if (HAILO_DEVICE_TEMPORARILY_UNAVAILABLE != status) {
+            break;
+        }
+        std::this_thread::sleep_for(RETRY_INTERVAL);
+    }
+    CHECK_SUCCESS(status, "Failed pci_ep accept");
     vdma::ChannelId input_channel{0, params.input_channel_index};
     vdma::ChannelId output_channel{0, params.output_channel_index};
     return std::make_pair(input_channel, output_channel);
@@ -883,74 +855,6 @@ int HailoRTDriver::run_ioctl(uint32_t ioctl_code, PointerType param)
 #else
 #error "Unsupported platform"
 #endif
-
-
-
-#if defined(__linux__) || defined(_WIN32)
-Expected<HailoRTDriver::VdmaBufferHandle> HailoRTDriver::vdma_buffer_map_ioctl(uintptr_t user_address, size_t required_size,
-    DmaDirection data_direction, DmaBufferType buffer_type)
-{
-    hailo_vdma_buffer_map_params map_user_buffer_info{};
-    map_user_buffer_info.user_address = user_address;
-    map_user_buffer_info.size = required_size;
-    map_user_buffer_info.data_direction = direction_to_dma_data_direction(data_direction);
-    map_user_buffer_info.buffer_type = driver_dma_buffer_type_to_dma_buffer_type(buffer_type);
-    map_user_buffer_info.mapped_handle = 0;
-
-    RUN_AND_CHECK_IOCTL_RESULT(HAILO_VDMA_BUFFER_MAP, &map_user_buffer_info, "Failed map vdma buffer, please make sure using compatible api(dma buffer or raw buffer)");
-
-    return std::move(map_user_buffer_info.mapped_handle);
-}
-#elif defined(__QNX__)
-Expected<HailoRTDriver::VdmaBufferHandle> HailoRTDriver::vdma_buffer_map_ioctl(uintptr_t user_address, size_t required_size,
-    DmaDirection data_direction,
-    DmaBufferType buffer_type)
-{
-    // Mapping is done by the driver_buff_handle (shm file descriptor), and not by address.
-    (void)user_address;
-    // TODO: qnx - Need to pass shm_id, probably doing so using user_address (like dmabuf)
-    return make_unexpected(HAILO_NOT_SUPPORTED);
-
-    // Create shared memory handle to send to driver
-    // shm_handle_t shm_handle;
-    // int err = shm_create_handle(driver_buff_handle, m_resource_manager_pid, O_RDWR,
-    //     &shm_handle, 0);
-    // if (0 != err) {
-    //     LOGGER__ERROR("Error creating shm object handle, errno is: {}", errno);
-    //     return make_unexpected(HAILO_INTERNAL_FAILURE);
-    // }
-
-    // hailo_vdma_buffer_map_params map_user_buffer_info {
-    //     .shared_memory_handle = shm_handle,
-    //     .size = required_size,
-    //     .data_direction = direction_to_dma_data_direction(data_direction),
-    //     .buffer_type = driver_dma_buffer_type_to_dma_buffer_type(buffer_type),
-    //     .mapped_handle = 0
-    // };
-
-    // // Note: The driver will accept the shm_handle, and will mmap it to its own address space. After the driver maps the
-    // // the shm, calling shm_delete_handle is not needed (but can't harm on the otherhand).
-    // // If the ioctl fails, we can't tell if the shm was mapped or not, so we delete it ourself.
-    // auto status = RUN_IOCTL(HAILO_VDMA_BUFFER_MAP, &map_user_buffer_info);
-    // if (HAILO_SUCCESS != status) {
-    //     LOGGER__ERROR("Failed to map user buffer with {}", status);
-    //     shm_delete_handle(shm_handle);
-    //     return make_unexpected(status);
-    // }
-
-    // return VdmaBufferHandle(map_user_buffer_info.mapped_handle);
-}
-#else
-#error "unsupported platform!"
-#endif // __linux__
-
-hailo_status HailoRTDriver::vdma_buffer_unmap_ioctl(VdmaBufferHandle handle)
-{
-    hailo_vdma_buffer_unmap_params unmap_user_buffer_info{};
-    unmap_user_buffer_info.mapped_handle = handle;
-    RUN_AND_CHECK_IOCTL_RESULT(HAILO_VDMA_BUFFER_UNMAP, &unmap_user_buffer_info, "Failed unmap vdma buffer");
-    return HAILO_SUCCESS;
-}
 
 Expected<DescriptorsListInfo> HailoRTDriver::descriptors_list_create(size_t desc_count,
     uint16_t desc_page_size, bool is_circular)

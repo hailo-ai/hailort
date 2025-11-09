@@ -148,6 +148,26 @@ message ConfiguredInferModel_FinalizeCache_Request {
 
 message ConfiguredInferModel_FinalizeCache_Reply {}
 
+message ConfiguredInferModel_GetCacheBuffers_Request {
+    HailoObjectHandle configured_infer_model_handle = 1;
+}
+
+message CacheBuffer {
+    int32 id = 1;
+    bytes data = 2;
+}
+
+message ConfiguredInferModel_GetCacheBuffers_Reply {
+    repeated CacheBuffer buffers = 1;
+}
+
+message ConfiguredInferModel_UpdateCacheBuffer_Request {
+    HailoObjectHandle configured_infer_model_handle = 1;
+    CacheBuffer buffer = 2;
+}
+
+message ConfiguredInferModel_UpdateCacheBuffer_Reply {}
+
 message BufferInfo {
     uint32 size = 1;
     uint32 type = 2;
@@ -166,12 +186,14 @@ message ConfiguredInferModel_RunAsyncForDuration_Request {
     HailoObjectHandle configured_infer_model_handle = 1;
     HailoObjectHandle infer_model_handle = 2;
     uint32 duration_ms = 3;
-    repeated BufferInfo buffer_infos = 4; // Represents only inputs
+    uint32 sleep_between_frames_ms = 4;
+    repeated BufferInfo io_buffer_infos = 5; // Represents both inputs and outputs
     // Protocol note: After this message, server expects to get the input buffers, one after the other, in order
 }
 
 message ConfiguredInferModel_RunAsyncForDuration_Reply {
     uint32 fps = 1;
+    // Protocol note: After this message, client expects to get the output buffers, one after the other, in order
 }
 
 message CallbackCalled_Reply {
@@ -271,6 +293,7 @@ message DeviceSupportedFeaturesProto {
     bool pcie = 3;
     bool current_monitoring = 4;
     bool mdio = 5;
+    bool power_measurement = 6;
 }
 
 enum DeviceBootSourceProto {
@@ -405,4 +428,13 @@ message Device_FetchLogs_Request {
 
 message Device_FetchLogs_Reply {
     uint32 log_size = 1;
+}
+
+message Device_EchoBuffer_Request {
+    uint32 buffer_size = 1;
+    // Protocol note: After this message, server expects to get the buffer
+}
+
+message Device_EchoBuffer_Reply {
+    // Protocol note: After this message, and only if status is HAILO_SUCCESS, client expects to get the buffer
 }

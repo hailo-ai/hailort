@@ -98,7 +98,7 @@ Expected<std::unique_ptr<VDevice>> VDeviceHrpcClient::create(const hailo_vdevice
     });
 
     auto device_id = client->device_id();
-    TRY(auto device, PcieDeviceHrpcClient::create(device_id, client));
+    TRY(auto device, DeviceHrpcClient::create(device_id, client));
 
     auto vdevice_handle = std::get<1>(tuple);
     auto vdevice_client = make_unique_nothrow<VDeviceHrpcClient>(params, std::move(client), vdevice_handle,
@@ -140,7 +140,7 @@ Expected<std::shared_ptr<InferModel>> VDeviceHrpcClient::create_infer_model(cons
 
     TRY(auto request_size, CreateInferModelSerializer::serialize_request(m_handle, hef_buffer.size(), name, MemoryView(*request_buffer)));
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::VDEVICE__CREATE_INFER_MODEL),
-        MemoryView(request_buffer->data(), request_size), std::vector<TransferBuffer>{hef_buffer}));
+        MemoryView(request_buffer->data(), request_size), std::vector<TransferBuffer>{hef_buffer}, {}, LONG_RPC_ACTION_TIMEOUT));
     TRY(auto infer_model_handle, CreateInferModelSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size)));
 
     TRY(auto hef, Hef::create(hef_buffer));

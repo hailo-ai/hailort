@@ -27,6 +27,7 @@ public:
     VDeviceManager() = default;
 
     Expected<std::unique_ptr<VDevice>> create_vdevice(const hailo_vdevice_params_t &params, uint32_t client_id);
+    Expected<std::shared_ptr<VDevice>> create_shared_vdevice(const hailo_vdevice_params_t &params, uint32_t client_id); // Always for GenAI
     void mark_vdevice_for_close(uint32_t client_id);
     void remove_vdevice(uint32_t client_id);
 
@@ -55,8 +56,8 @@ public:
     static Expected<std::unique_ptr<HailoRTServer>> create_unique(const std::string& ip = "");
     explicit HailoRTServer(std::shared_ptr<ConnectionContext> connection_context, std::shared_ptr<std::mutex> write_mutex,
         bool is_unix_socket) : Server(connection_context, write_mutex, [this] (uint32_t client_id) {
-            m_vdevice_manager.mark_vdevice_for_close(client_id);
-        }), m_is_unix_socket(is_unix_socket) {}
+            m_vdevice_manager->mark_vdevice_for_close(client_id);
+        }), m_is_unix_socket(is_unix_socket), m_vdevice_manager(std::make_shared<VDeviceManager>()) {}
 
     virtual ~HailoRTServer() = default;
 
@@ -65,7 +66,6 @@ public:
 
     hailo_status handle_vdevice_create(const MemoryView&, ClientConnectionPtr, ResponseWriter);
     hailo_status handle_vdevice_destroy(const MemoryView&, ClientConnectionPtr, ResponseWriter);
-    hailo_status handle_vdevice_create_infer_model(const MemoryView&, ClientConnectionPtr, ResponseWriter);
     hailo_status handle_infer_model_destroy(const MemoryView&, ClientConnectionPtr, ResponseWriter);
     hailo_status handle_infer_model_create_configured_infer_model(const MemoryView&, ClientConnectionPtr, ResponseWriter);
     hailo_status handle_configured_infer_model_destroy(const MemoryView&, ClientConnectionPtr, ResponseWriter);
@@ -79,7 +79,8 @@ public:
     hailo_status handle_configured_infer_model_update_cache_offset(const MemoryView&, ClientConnectionPtr, ResponseWriter);
     hailo_status handle_configured_infer_model_init_cache(const MemoryView&, ClientConnectionPtr, ResponseWriter);
     hailo_status handle_configured_infer_model_finalize_cache(const MemoryView&, ClientConnectionPtr, ResponseWriter);
-    hailo_status handle_configured_infer_model_run_async(const MemoryView&, ClientConnectionPtr, ResponseWriter);
+    hailo_status handle_configured_infer_model_get_cache_buffers(const MemoryView&, ClientConnectionPtr, ResponseWriter);
+    hailo_status handle_configured_infer_model_update_cache_buffer(const MemoryView&, ClientConnectionPtr, ResponseWriter);
     hailo_status handle_device_create(const MemoryView&, ClientConnectionPtr, ResponseWriter);
     hailo_status handle_device_destroy(const MemoryView&, ClientConnectionPtr, ResponseWriter);
     hailo_status handle_device_identify(const MemoryView&, ClientConnectionPtr, ResponseWriter);
@@ -98,6 +99,12 @@ public:
     hailo_status handle_device_fetch_logs(const MemoryView&, ClientConnectionPtr, ResponseWriter);
 
     friend class ConfiguredInferModelRunAsyncHandler;
+    friend class ConfiguredInferModelRunAsyncForDurationHandler;
+
+    // For other servers to register their vdevice to the HailoRTServer's VDeviceManager
+    std::shared_ptr<VDeviceManager> vdevice_manager() {
+        return m_vdevice_manager;
+    }
 
 private:
     virtual hailo_status cleanup_client_resources(ClientConnectionPtr client_connection) override;
@@ -107,7 +114,7 @@ private:
     ThreadSafeMap<uint32_t, std::shared_ptr<ServerNetworkGroupBufferPool>> m_buffer_pool_per_cim;
     ThreadSafeMap<uint32_t, ObjectPoolPtr<RunAsyncInfo>> m_run_async_info_per_cim;
     bool m_is_unix_socket;
-    VDeviceManager m_vdevice_manager;
+    std::shared_ptr<VDeviceManager> m_vdevice_manager;
 };
 
 class HailoRTServerActionHandler : public ActionHandler {
@@ -141,6 +148,30 @@ public:
 private:
     Pooled<RunAsyncInfo> m_run_async_info;
     uint32_t m_configured_infer_model_handle;
+};
+
+class ConfiguredInferModelRunAsyncForDurationHandler final : public HailoRTServerActionHandler {
+public:
+    ConfiguredInferModelRunAsyncForDurationHandler(HailoRTServer &server) : HailoRTServerActionHandler(server),
+        m_configured_infer_model_handle(0), m_duration_ms(0), m_sleep_between_frames_ms(0) {}
+    virtual hailo_status parse_request(const MemoryView &request, ClientConnectionPtr client_connection) override;
+    virtual hailo_status do_action(ResponseWriter response_writer) override;
+
+private:
+    Pooled<RunAsyncInfo> m_run_async_info;
+    uint32_t m_configured_infer_model_handle;
+    uint32_t m_duration_ms;
+    uint32_t m_sleep_between_frames_ms;
+};
+
+class DeviceEchoBufferHandler final : public HailoRTServerActionHandler {
+public:
+    DeviceEchoBufferHandler(HailoRTServer &server) : HailoRTServerActionHandler(server) {}
+    virtual hailo_status parse_request(const MemoryView &request, ClientConnectionPtr client_connection) override;
+    virtual hailo_status do_action(ResponseWriter response_writer) override;
+
+private:
+    inline static BufferPtr m_buffer = nullptr;
 };
 
 } // namespace hailort

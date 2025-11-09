@@ -276,6 +276,11 @@ public:
         return reinterpret_cast<T*>(m_data);
     }
 
+    // Returns a view of the current buffer starting at offset, till the end of the buffer
+    // If offset is greater than the buffer size, an empty view is returned
+    MemoryView from(size_t offset);
+    const MemoryView from(size_t offset) const;
+
 private:
     void *m_data;
     size_t m_size;

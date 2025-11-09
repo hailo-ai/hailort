@@ -306,14 +306,7 @@ Expected<uint32_t> VdmaConfigCoreOp::get_cache_entry_size(uint32_t cache_id) con
 hailo_status VdmaConfigCoreOp::init_cache(uint32_t read_offset)
 {
     CHECK(has_caches(), HAILO_INVALID_OPERATION, "No caches in core-op");
-    auto status = m_cache_manager->init_caches(read_offset);
-    CHECK_SUCCESS(status);
-
-    // Signal to the fw that the cache offset has been updated
-    status = Control::context_switch_signal_cache_updated(m_resources_manager->get_device());
-    CHECK_SUCCESS(status);
-
-    return HAILO_SUCCESS;
+    return m_cache_manager->init_caches(read_offset);
 }
 
 hailo_status VdmaConfigCoreOp::update_cache_offset(int32_t offset_delta_entries)
@@ -324,26 +317,12 @@ hailo_status VdmaConfigCoreOp::update_cache_offset(int32_t offset_delta_entries)
     // auto status = wait_for_activation(std::chrono::milliseconds(0));
     // CHECK_SUCCESS(status, "Core op must be activated before updating cache offset");
 
+    // Update the offsets in the cache manager
     const auto check_cache_snapshots = is_env_variable_on(HAILORT_CHECK_CACHE_UPDATE_ENV_VAR);
     const auto require_cache_changes_env = is_env_variable_on(HAILORT_REQUIRE_CACHE_CHANGES_ENV_VAR);
     // Create callback that signals the firmware when cache update completes
-    auto callback = [this](hailo_status status) -> void {
-        if (HAILO_SUCCESS == status) {
-            auto signal_status = Control::context_switch_signal_cache_updated(m_resources_manager->get_device());
-            if (HAILO_SUCCESS != signal_status) {
-                LOGGER__ERROR("Failed to signal cache updated");
-            }
-        } else {
-            LOGGER__ERROR("Failed to update cache offset");
-        }
-    };
 
-    return m_cache_manager->update_cache_offset(offset_delta_entries, check_cache_snapshots, require_cache_changes_env, callback);
-}
-
-hailo_status VdmaConfigCoreOp::finalize_cache()
-{
-    auto status = m_cache_manager->finalize_caches();
+    auto status = m_cache_manager->update_cache_offset(offset_delta_entries, check_cache_snapshots, require_cache_changes_env);
     CHECK_SUCCESS(status);
 
     // Signal to the fw that the cache offset has been updated

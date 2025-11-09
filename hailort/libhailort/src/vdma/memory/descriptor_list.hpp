@@ -73,9 +73,7 @@ public:
     hailo_status program(MappedBuffer& buffer, size_t buffer_size, size_t buffer_offset,
         ChannelId channel_id, uint32_t starting_desc = 0,
         uint32_t batch_size = 1,
-        bool should_bind = true,
-        InterruptsDomain last_desc_interrupts = InterruptsDomain::NONE,
-        uint32_t stride = 0);
+        InterruptsDomain last_desc_interrupts = InterruptsDomain::NONE);
 
     uint32_t descriptors_in_buffer(size_t buffer_size) const;
     static uint32_t descriptors_in_buffer(size_t buffer_size, uint16_t desc_page_size);

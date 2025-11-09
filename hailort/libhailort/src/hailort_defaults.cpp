@@ -103,6 +103,17 @@ hailo_format_order_t HailoRTDefaults::get_default_host_format_order(const hailo_
     return DEFAULT_FORMAT_ORDER_MAP[device_format.order];
 }
 
+hailo_format_type_t HailoRTDefaults::get_default_nms_format_type(hailo_format_order_t order)
+{
+    switch (order) {
+    case HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK:
+    case HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE:
+        return HAILO_FORMAT_TYPE_UINT8; // Each detection is a struct - uint8 is the best representation for the data
+    default:
+        return HAILO_FORMAT_TYPE_FLOAT32; // For all other NMS formats, the data is float32s
+    }
+}
+
 struct sockaddr_in HailoRTDefaults::get_sockaddr()
 {
     struct sockaddr_in address{};

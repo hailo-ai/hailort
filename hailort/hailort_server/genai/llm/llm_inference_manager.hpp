@@ -32,7 +32,7 @@ public:
     virtual ~LLMInferenceManager() = default;
 
     virtual hailo_status generate(const std::map<std::string, MemoryView> &inputs, const std::map<std::string, MemoryView> &outputs) override;
-    virtual Expected<std::pair<std::map<std::string, BufferPtr>, std::map<std::string, BufferPtr>>> allocate_buffers() override;
+    virtual Expected<std::pair<std::map<std::string, BufferPtr>, std::map<std::string, BufferPtr>>> allocate_buffers(const std::unordered_set<std::string> &layers_not_to_allocate = {}) override;
 };
 
 } /* namespace genai */

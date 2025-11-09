@@ -129,7 +129,8 @@ struct DeviceInfo {
     DeviceInfo(const device_id_t &device_id, const std::string &device_arch) :
         device_id(device_id), device_arch(device_arch), device_has_drained_everything(true),
         device_utilization_duration(0), last_measured_utilization_timestamp(std::chrono::steady_clock::now()),
-        current_core_op_handle(INVALID_CORE_OP_HANDLE), requested_transferred_frames_h2d(), finished_transferred_frames_d2h()
+        current_core_op_handle(INVALID_CORE_OP_HANDLE), requested_transferred_frames_h2d(), finished_transferred_frames_d2h(),
+        monitor_count(0)
     {}
     std::string device_id;
     std::string device_arch;
@@ -139,6 +140,7 @@ struct DeviceInfo {
     scheduler_core_op_handle_t current_core_op_handle;
     std::unordered_map<scheduler_core_op_handle_t, std::shared_ptr<SchedulerCounter>> requested_transferred_frames_h2d;
     std::unordered_map<scheduler_core_op_handle_t, std::shared_ptr<SchedulerCounter>> finished_transferred_frames_d2h;
+    uint32_t monitor_count;
 };
 
 struct StreamsInfo {

@@ -81,9 +81,8 @@ Expected<vdma::BufferSizesRequirements> CopiedConfigBuffer::get_buffer_requireme
 
 Expected<uint32_t> CopiedConfigBuffer::program_descriptors()
 {
-    // TODO HRT-9657: remove DEVICE interrupts
-    TRY(auto descriptors_count,
-        m_buffer->program_descriptors(m_acc_buffer_offset, InterruptsDomain::DEVICE, m_acc_desc_count));
+    const size_t offset = m_acc_desc_count * desc_page_size();
+    TRY(auto descriptors_count, m_buffer->program_descriptors(m_acc_buffer_offset, m_acc_desc_count, offset));
 
     m_acc_desc_count += descriptors_count;
     m_acc_buffer_offset = 0;
@@ -273,7 +272,7 @@ Expected<uint32_t> ZeroCopyConfigBuffer::program_descriptors(const std::vector<u
 
     const size_t padding_count = page_size - (total_dma_transfers_size % page_size);
     if (padding_count > 0) {
-        auto status = m_desc_list->program(*m_nops_buffer, padding_count, 0, m_channel_id, current_desc_index, 1, true, InterruptsDomain::DEVICE);
+        auto status = m_desc_list->program(*m_nops_buffer, padding_count, 0, m_channel_id, current_desc_index, 1);
         CHECK_SUCCESS(status, "Failed to program nops buffer");
         current_desc_index += 1;
     }
@@ -315,12 +314,11 @@ Expected<uint32_t> ZeroCopyConfigBuffer::program_descriptors_for_transfer(uint64
 
         // Calculate how many bytes are available in the current buffer from the current offset.
         const uint64_t available_bytes = curr_buffer->size() - offset_in_buffer;
-       
+
         // We transfer the minimum of what remains to be transferred and what is available in the current buffer.
         const uint64_t curr_bytes_to_transfer = std::min(ccw_burst_size - bytes_transferred, available_bytes);
         CHECK_SUCCESS(m_desc_list->program(*curr_buffer, curr_bytes_to_transfer, offset_in_buffer, m_channel_id,
-                                           current_desc_index + transfer_desc_count, DEFAULT_PROGRAM_BATCH_SIZE,
-                                           true, InterruptsDomain::DEVICE));
+                                           current_desc_index + transfer_desc_count));
 
         transfer_desc_count += m_desc_list->descriptors_in_buffer(curr_bytes_to_transfer);
         bytes_transferred += curr_bytes_to_transfer;

@@ -153,16 +153,13 @@ public:
 class AsyncInferJobImpl : public AsyncInferJobBase
 {
 public:
-    AsyncInferJobImpl(uint32_t streams_count);
+    AsyncInferJobImpl(uint32_t streams_count = 0);
     virtual hailo_status wait(std::chrono::milliseconds timeout) override;
-
-private:
-    friend class ConfiguredInferModelBase;
-
     bool stream_done(const hailo_status &status);
-    hailo_status completion_status();
+    hailo_status completion_status() const;
     void mark_callback_done();
 
+private:
     std::condition_variable m_cv;
     std::mutex m_mutex;
     std::atomic_uint32_t m_ongoing_transfers;
@@ -200,16 +197,16 @@ public:
     virtual hailo_status shutdown() = 0;
     virtual hailo_status update_cache_offset(int32_t offset_delta_entries) = 0;
     virtual hailo_status init_cache(uint32_t read_offset) = 0;
-    virtual hailo_status finalize_cache() = 0;
+    virtual Expected<std::unordered_map<uint32_t, BufferPtr>> get_cache_buffers() = 0;
+    virtual hailo_status update_cache_buffer(uint32_t cache_id, MemoryView buffer) = 0;
+    virtual Expected<AsyncInferJob> run_async_for_duration(const ConfiguredInferModel::Bindings &bindings, uint32_t duration_ms,
+        uint32_t sleep_between_frames_ms, std::function<void(const AsyncInferCompletionInfo &, uint32_t)> callback) = 0;
 
     static Expected<ConfiguredInferModel::Bindings> create_bindings(
         std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&inputs,
         std::unordered_map<std::string, ConfiguredInferModel::Bindings::InferStream> &&outputs);
     static Expected<ConfiguredInferModel::Bindings::InferStream> create_infer_stream(const hailo_vstream_info_t &vstream_info);
     static BufferType get_infer_stream_buffer_type(ConfiguredInferModel::Bindings::InferStream expected_stream);
-    static bool get_stream_done(hailo_status status, std::shared_ptr<AsyncInferJobImpl> job_pimpl);
-    static hailo_status get_completion_status(std::shared_ptr<AsyncInferJobImpl> job_pimpl);
-    static void mark_callback_done(std::shared_ptr<AsyncInferJobImpl> job_pimpl);
 
 private:
     virtual hailo_status validate_bindings(const ConfiguredInferModel::Bindings &bindings) = 0;
@@ -248,7 +245,10 @@ public:
     virtual hailo_status shutdown() override;
     virtual hailo_status update_cache_offset(int32_t offset_delta_entries) override;
     virtual hailo_status init_cache(uint32_t read_offset) override;
-    virtual hailo_status finalize_cache() override;
+    virtual Expected<std::unordered_map<uint32_t, BufferPtr>> get_cache_buffers() override;
+    virtual hailo_status update_cache_buffer(uint32_t cache_id, MemoryView buffer) override;
+    virtual Expected<AsyncInferJob> run_async_for_duration(const ConfiguredInferModel::Bindings &bindings, uint32_t duration_ms,
+        uint32_t sleep_between_frames_ms, std::function<void(const AsyncInferCompletionInfo &, uint32_t)> callback) override;
 
     static Expected<std::shared_ptr<ConfiguredInferModelImpl>> create_for_ut(std::shared_ptr<ConfiguredNetworkGroup> net_group,
         std::shared_ptr<AsyncInferRunnerImpl> async_infer_runner, const std::vector<std::string> &input_names, const std::vector<std::string> &output_names,

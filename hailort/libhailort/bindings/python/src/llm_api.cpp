@@ -99,6 +99,20 @@ std::vector<int> LLMWrapper::tokenize(const std::string &prompt)
     return expected.release();
 }
 
+size_t LLMWrapper::get_context_usage_size()
+{
+    auto count = m_llm->get_context_usage_size();
+    VALIDATE_EXPECTED(count);
+    return count.release();
+}
+
+size_t LLMWrapper::max_context_capacity()
+{
+    auto capacity = m_llm->max_context_capacity();
+    VALIDATE_EXPECTED(capacity);
+    return capacity.release();
+}
+
 void LLMWrapper::clear_context()
 {
     VALIDATE_STATUS(m_llm->clear_context());
@@ -135,6 +149,21 @@ std::vector<std::string> LLMWrapper::get_stop_tokens()
     return expected.release();
 }
 
+std::vector<uint8_t> LLMWrapper::save_context()
+{
+    auto expected = m_llm->save_context();
+    VALIDATE_EXPECTED(expected);
+    auto buffer = expected.release();
+    // TODO (HRT-19106): Avoid copying the data to the Python side
+    return std::vector<uint8_t>(buffer->data(), buffer->data() + buffer->size());
+}
+
+void LLMWrapper::load_context(const std::vector<uint8_t> &context)
+{
+    MemoryView context_view(const_cast<uint8_t*>(context.data()), context.size());
+    VALIDATE_STATUS(m_llm->load_context(context_view));
+}
+
 void LLMWrapper::release()
 {
     m_llm.reset();
@@ -150,10 +179,14 @@ void LLMWrapper::bind(py::module &m)
         .def("generate", static_cast<std::shared_ptr<LLMGeneratorCompletionWrapper>(LLMWrapper::*)(const genai::LLMGeneratorParams&, const std::vector<std::string>&)>(&LLMWrapper::generate))
         .def("tokenize", &LLMWrapper::tokenize)
         .def("clear_context", &LLMWrapper::clear_context)
+        .def("get_context_usage_size", &LLMWrapper::get_context_usage_size)
+        .def("max_context_capacity", &LLMWrapper::max_context_capacity)
         .def("get_generation_recovery_sequence", &LLMWrapper::get_generation_recovery_sequence)
         .def("set_generation_recovery_sequence", &LLMWrapper::set_generation_recovery_sequence)
         .def("prompt_template", &LLMWrapper::prompt_template)
         .def("set_stop_tokens", &LLMWrapper::set_stop_tokens)
         .def("get_stop_tokens", &LLMWrapper::get_stop_tokens)
+        .def("save_context", &LLMWrapper::save_context)
+        .def("load_context", &LLMWrapper::load_context)
         ;
 }

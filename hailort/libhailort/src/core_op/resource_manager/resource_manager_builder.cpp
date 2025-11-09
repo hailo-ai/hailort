@@ -986,7 +986,7 @@ static hailo_status add_edge_layer_end_of_context_actions(ResourcesManager &reso
 static hailo_status fill_context_recipes_for_multi_context(const HEFHwArch &hw_arch,
     ContextResources &context_resources, ResourcesManager &resources_manager,
     uint16_t config_context_index, const CoreOpMetadata &core_op_metadata, const ContextMetadata &context_metadata,
-    bool is_single_context, bool is_first_context, bool caches_in_use, bool zero_copy_config_over_descs, bool enable_kv_cache,
+    bool is_single_context, bool is_last_context, bool caches_in_use, bool zero_copy_config_over_descs, bool enable_kv_cache,
     ContextResources &next_context_resources)
 {
     // Parse context
@@ -1013,11 +1013,11 @@ static hailo_status fill_context_recipes_for_multi_context(const HEFHwArch &hw_a
             resources_manager.get_supported_features().split_allow_input_action);
         CHECK_SUCCESS(status);
 
-        if (is_first_context && caches_in_use) {
+        if (is_last_context && caches_in_use) {
             if (enable_kv_cache) {
                 // If caches are in use and KV cache is enabled, we'll wait for the caches to be updated at the end of the last context
                 TRY(const auto action, WaitForCacheUpdatedAction::create());
-                actions.insert(actions.begin(), std::move(action));
+                actions.emplace_back(std::move(action));
             } else {
                 LOGGER__INFO("Skipping cache offset updates (KV-cache usage is not enabled)");
             }
@@ -1251,7 +1251,7 @@ static hailo_status fill_batch_switching_context_config_recepies_for_multi_conte
 static hailo_status fill_preliminary_config_recepies_for_multi_context(const HEFHwArch &hw_arch,
     ContextResources &context_resources, ResourcesManager &resources_manager,
     std::shared_ptr<CoreOpMetadata> core_op_metadata, const ContextMetadata &preliminary_context,
-    bool is_single_context, bool zero_copy_config_over_descs, bool caches_in_use, bool enable_kv_cache)
+    bool is_single_context, bool zero_copy_config_over_descs)
 {
     static const auto PRELIMINARY_CONTEXT_INDEX = 0; // First context in the hef
 
@@ -1278,16 +1278,6 @@ static hailo_status fill_preliminary_config_recepies_for_multi_context(const HEF
 
     status = add_config_channel_activation_actions(actions, context_resources.get_config_buffers());
     CHECK_SUCCESS(status);
-
-    // Add WaitForCacheUpdatedAction to preliminary context when preliminary_run_asap and caches are in use
-    if (resources_manager.get_supported_features().preliminary_run_asap && caches_in_use) {
-        if (enable_kv_cache) {
-            TRY(const auto action, WaitForCacheUpdatedAction::create());
-            actions.insert(actions.begin(), std::move(action));
-        } else {
-            LOGGER__INFO("Skipping cache offset updates in preliminary context (KV-cache usage is not enabled)");
-        }
-    }
 
     status = handle_repeated_actions(actions);
     CHECK_SUCCESS(status);
@@ -1371,15 +1361,15 @@ Expected<std::shared_ptr<ResourcesManager>> ResourcesManagerBuilder::build(uint8
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     const auto is_single_context = (core_op_metadata->dynamic_contexts().size() == 1);
-    const auto caches_in_use = core_op_metadata->get_cache_layers_count() > 0;
-
     TRY(auto preliminary_context, resources_manager.add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_PRELIMINARY,
         hef.pimpl->zero_copy_config_over_descs(), core_op_metadata->preliminary_context().config_buffers_info()));
 
     status = fill_preliminary_config_recepies_for_multi_context(hw_arch, preliminary_context.get(),
         resources_manager, core_op_metadata, core_op_metadata->preliminary_context(), is_single_context,
-        hef.pimpl->zero_copy_config_over_descs(), caches_in_use, config_params.enable_kv_cache);
+        hef.pimpl->zero_copy_config_over_descs());
     CHECK_SUCCESS_AS_EXPECTED(status);
+
+    const auto caches_in_use = core_op_metadata->get_cache_layers_count() > 0;
     CHECK_AS_EXPECTED(!caches_in_use || !is_single_context, HAILO_INVALID_ARGUMENT,
         "Caches are in use but the network is single context");
 
@@ -1395,14 +1385,13 @@ Expected<std::shared_ptr<ResourcesManager>> ResourcesManagerBuilder::build(uint8
 
     for (uint16_t context_index = 0; context_index < num_dynamic_contexts; context_index++) {
         const auto &context_metadata = core_op_metadata->dynamic_contexts()[context_index];
-        const bool is_first_context = (context_index == 0);
         const bool is_last_context = (context_index == (num_dynamic_contexts - 1));
         const uint16_t config_context_index = resources_manager.get_supported_features().split_allow_input_action ?
             (is_last_context ? 0 : static_cast<uint16_t>(context_index + 1)) : context_index;
 	    status = fill_context_recipes_for_multi_context(hw_arch, resources_manager.get_context_resources()[
             context_index + CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS], resources_manager,
             static_cast<uint16_t>(config_context_index), *core_op_metadata, context_metadata, is_single_context,
-            is_first_context, caches_in_use, hef.pimpl->zero_copy_config_over_descs(), config_params.enable_kv_cache,
+            is_last_context, caches_in_use, hef.pimpl->zero_copy_config_over_descs(), config_params.enable_kv_cache,
             resources_manager.get_context_resources()[config_context_index + CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS]);
         CHECK_SUCCESS_AS_EXPECTED(status);
     }

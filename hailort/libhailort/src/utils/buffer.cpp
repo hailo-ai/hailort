@@ -377,4 +377,18 @@ std::ostream& operator<<(std::ostream& stream, const MemoryView& buffer)
     return stream;
 }
 
+MemoryView MemoryView::from(size_t offset)
+{
+    if (offset >= m_size) {
+        return MemoryView();
+    }
+
+    return MemoryView(static_cast<uint8_t*>(m_data) + offset, m_size - offset);
+}
+
+const MemoryView MemoryView::from(size_t offset) const
+{
+    return const_cast<MemoryView*>(this)->from(offset);
+}
+
 } /* namespace hailort */

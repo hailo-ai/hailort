@@ -415,10 +415,10 @@ Expected<CoreOpMetadataPtr> NetworkGroupMetadata::get_core_op_metadata() const
 /* This function is used for names getters (such as get_vstream_names_from_stream_name),
     so should be same across all clusters layouts */
 {
-    CHECK_AS_EXPECTED(1 == m_core_ops_metadata_per_arch.size(), HAILO_INTERNAL_FAILURE);
-    TRY(auto core_op_metadata, m_core_ops_metadata_per_arch.begin()->second.get_metadata(PARTIAL_CLUSTERS_LAYOUT_IGNORE));
-
-    return core_op_metadata;
+    if (1 != m_core_ops_metadata_per_arch.size()) {
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
+    }
+    return m_core_ops_metadata_per_arch.begin()->second.get_metadata(PARTIAL_CLUSTERS_LAYOUT_IGNORE);
 }
 
 Expected<std::vector<hailo_vstream_info_t>> NetworkGroupMetadata::get_input_vstream_infos(const std::string &network_name) const

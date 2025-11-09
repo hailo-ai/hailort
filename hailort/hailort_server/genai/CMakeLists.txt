@@ -5,13 +5,11 @@ set(HAILORT_GENAI_SERVER_COMPONENTS_SOURCES "")
 
 add_subdirectory(llm)
 add_subdirectory(vlm)
-add_subdirectory(text2image)
 add_subdirectory(speech2text)
 
 list(APPEND HAILORT_GENAI_SERVER_COMPONENTS_SOURCES
     ${HAILORT_TOKENIZER_DIR}/hailo_tokenizer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/inference_manager.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/decoder_inference_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/llm/llm_server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vlm/vlm_server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/genai_server.cpp
@@ -19,13 +17,8 @@ list(APPEND HAILORT_GENAI_SERVER_COMPONENTS_SOURCES
 
 set(HAILORT_GENAI_SOURCES
     ${HAILORT_GENAI_SERVER_COMPONENTS_SOURCES}
-    ${HAILORT_GENAI_TEXT2IMAGE_COMPONENTS_SOURCES}
     ${HAILORT_GENAI_SPEECH2TEXT_COMPONENTS_SOURCES}
     PARENT_SCOPE
 )
 
 set(HAILORT_GENAI_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR} PARENT_SCOPE)
-
-if (HAILO_BUILD_UT)
-    add_subdirectory(${PROJECT_SOURCE_DIR}/hailort/internals/genai/tests ${CMAKE_CURRENT_BINARY_DIR}/tests)
-endif()

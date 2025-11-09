@@ -58,55 +58,59 @@ Eigen::VectorXf LLMPreProcess::generate_theta_from_memview(const MemoryView thet
     return vec;
 }
 
-hailo_status LLMPreProcess::validate_inputs_names(const std::map<std::string, size_t> &inputs_map)
+hailo_status LLMPreProcess::validate_inputs_names(const std::map<std::string, size_t> &inputs_map, const InputLayersNamesSuffixes &input_names_suffixes)
 {
     // Allow working with empty inputs map for tbt model
     if (inputs_map.empty()) {
         return HAILO_SUCCESS;
     }
 
-    TRY(auto layer_name, get_layer_name_from_suffix<size_t>(INPUT_LAYER_EMBEDDINGS_SUFF, inputs_map));
-    TRY(layer_name, get_layer_name_from_suffix<size_t>(INPUT_LAYER_ATTENTION_MASK_SUFF, inputs_map));
-    TRY(layer_name, get_layer_name_from_suffix<size_t>(INPUT_LAYER_PE_Q_COS_SUFF, inputs_map));
-    TRY(layer_name, get_layer_name_from_suffix<size_t>(INPUT_LAYER_PE_Q_SIN_SUFF, inputs_map));
-    TRY(layer_name, get_layer_name_from_suffix<size_t>(INPUT_LAYER_PE_K_COS_SUFF, inputs_map));
-    TRY(layer_name, get_layer_name_from_suffix<size_t>(INPUT_LAYER_PE_K_SIN_SUFF, inputs_map));
+    TRY(auto layer_name, get_layer_name_from_suffix<size_t>(input_names_suffixes.embeddings, inputs_map));
+    TRY(layer_name, get_layer_name_from_suffix<size_t>(input_names_suffixes.attention_mask, inputs_map));
+    TRY(layer_name, get_layer_name_from_suffix<size_t>(input_names_suffixes.pe_q_cos, inputs_map));
+    TRY(layer_name, get_layer_name_from_suffix<size_t>(input_names_suffixes.pe_q_sin, inputs_map));
+    TRY(layer_name, get_layer_name_from_suffix<size_t>(input_names_suffixes.pe_k_cos, inputs_map));
+    TRY(layer_name, get_layer_name_from_suffix<size_t>(input_names_suffixes.pe_k_sin, inputs_map));
 
     return HAILO_SUCCESS;
 }
 
 Expected<std::unique_ptr<LLMPreProcess>> LLMPreProcess::create(
     const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size,
-    Eigen::VectorXf &&theta, uint32_t embeddings_layer_features, hailo_format_type_t embeddings_layer_type)
+    Eigen::VectorXf &&theta, uint32_t embeddings_layer_features, hailo_format_type_t embeddings_layer_type, uint8_t scaled_mask_value,
+    const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params)
 {
-    CHECK_SUCCESS(validate_inputs_names(prefill_inputs_frame_size));
-    CHECK_SUCCESS(validate_inputs_names(tbt_inputs_frame_size));
+    CHECK_SUCCESS(validate_inputs_names(prefill_inputs_frame_size, input_layers_names_suffixes));
+    CHECK_SUCCESS(validate_inputs_names(tbt_inputs_frame_size, input_layers_names_suffixes));
 
     // TODO: HRT-16156 - Support dtypes for embeddings layer
     CHECK(embeddings_layer_type == HAILO_FORMAT_TYPE_UINT16, HAILO_INVALID_ARGUMENT, "Creating LLM Pre-Process failed, only uint16 data type is currently supported");
     auto cols = embeddings_layer_features;
-    eigen_matrix_2d_u16_t local_cached_embeddings = eigen_matrix_2d_u16_t(PREFILL_INPUT_TOKENS_SIZE, cols);
+    eigen_matrix_2d_u16_t local_cached_embeddings = eigen_matrix_2d_u16_t(pre_process_params.prefill_input_tokens_count, cols);
 
     auto ptr = make_unique_nothrow<LLMPreProcess>(std::move(theta), std::move(local_cached_embeddings),
-        prefill_inputs_frame_size, tbt_inputs_frame_size);
+        prefill_inputs_frame_size, tbt_inputs_frame_size, scaled_mask_value, input_layers_names_suffixes, pre_process_params);
     CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY); // Consider returning different status
     return ptr;
 }
 
-LLMPreProcess::LLMPreProcess(Eigen::VectorXf &&theta,
-    eigen_matrix_2d_u16_t &&local_cached_embeddings,
-        const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size) :
+LLMPreProcess::LLMPreProcess(Eigen::VectorXf &&theta, eigen_matrix_2d_u16_t &&local_cached_embeddings,
+    const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size,
+    uint8_t scaled_mask_value, const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params) :
         m_cache_usage_size(0),
         m_local_cached_embeddings(std::move(local_cached_embeddings)),
         m_theta(std::move(theta)),
         m_prefill_inputs_frame_size(prefill_inputs_frame_size),
         m_tbt_inputs_frame_size(tbt_inputs_frame_size),
-        m_current_timestamp_value(0)
+        m_current_timestamp_value(0),
+        m_scaled_mask_value(scaled_mask_value),
+        m_input_layers_names_suffixes(input_layers_names_suffixes),
+        m_params(pre_process_params)
 {
     // Allocate position_ids tensor
     int position_ids_height = POSITIONAL_EMBEDDING_ROWS;
     int position_ids_width = POSITIONAL_EMBEDDING_COLS;
-    int position_ids_features = PREFILL_INPUT_TOKENS_SIZE;
+    int position_ids_features = m_params.prefill_input_tokens_count;
     m_local_cached_pos_ids = Eigen::Tensor<uint32_t, 4, Eigen::RowMajor>(position_ids_height, position_ids_width, position_ids_features, 1);
 
     const int MROPE_SECTIONS_COUNT = MROPE_SECTION_ORIGINAL.size();
@@ -128,18 +132,18 @@ void LLMPreProcess::prepare_embeddings_input(MemoryView &layer_buffer, uint32_t 
 // TODO: HRT-16225 - Optimization
 void LLMPreProcess::prepare_attention_mask_input(MemoryView &layer_buffer, int layer_input_tokens_size)
 {
-    int mask_cache_usage = std::min(static_cast<int>(m_cache_usage_size), KV_CACHE_SIZE);
+    int mask_cache_usage = std::min(static_cast<uint32_t>(m_cache_usage_size), m_params.kv_cache_size);
     int block1_rows_count = std::max(layer_input_tokens_size - mask_cache_usage, 0);      // unused cache size
     int block2_rows_count = std::min(mask_cache_usage, layer_input_tokens_size);          // actual input tokens size
     int group_total_rows = block1_rows_count + block2_rows_count;
-    int group_total_cols = KV_CACHE_SIZE;
-    assert(static_cast<size_t>(group_total_rows * group_total_cols * MASK_GROUPS_SIZE) == layer_buffer.size());
+    int group_total_cols = m_params.kv_cache_size;
+    assert(static_cast<size_t>(group_total_rows * group_total_cols * m_params.num_attention_heads) == layer_buffer.size());
     Eigen::Map<Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> attention_mask(
-        layer_buffer.data(), group_total_rows, group_total_cols * MASK_GROUPS_SIZE);
+        layer_buffer.data(), group_total_rows, group_total_cols * m_params.num_attention_heads);
 
-    // Fill Block 1: Padding tokens (all 1's scaled by SCALED_MASK_VALUE)
+    // Fill Block 1: Padding tokens (all 1's scaled by m_scaled_mask_value)
     if (block1_rows_count > 0) {
-        attention_mask.block(0, 0, block1_rows_count, group_total_cols).setConstant(SCALED_MASK_VALUE);
+        attention_mask.block(0, 0, block1_rows_count, group_total_cols).setConstant(m_scaled_mask_value);
     }
 
     // Fill Block 2: Valid tokens (cache + current tokens)
@@ -151,20 +155,20 @@ void LLMPreProcess::prepare_attention_mask_input(MemoryView &layer_buffer, int l
         int block2_cols_count = group_total_cols - mask_cache_usage;
         attention_mask.block(block2_row_index, block2_left_col_index, block2_rows_count, block2_cols_count).setZero();
 
-        // Middle part: Used cache (all 1's scaled by SCALED_MASK_VALUE)
+        // Middle part: Used cache (all 1's scaled by m_scaled_mask_value)
         int block2_mid_col_index = block2_cols_count;
         int block2_mid_cols_count = mask_cache_usage - block2_rows_count;
-        attention_mask.block(block2_row_index, block2_mid_col_index, block2_rows_count, block2_mid_cols_count).setConstant(SCALED_MASK_VALUE);
+        attention_mask.block(block2_row_index, block2_mid_col_index, block2_rows_count, block2_mid_cols_count).setConstant(m_scaled_mask_value);
 
-        // Right part: Self-attention (lower triangular scaled by SCALED_MASK_VALUE)
+        // Right part: Self-attention (lower triangular scaled by m_scaled_mask_value)
         int block2_right_col_index = block2_mid_col_index + block2_mid_cols_count;
         int block2_right_cols_count = block2_rows_count;
         auto self_att_block = attention_mask.block(block2_row_index, block2_right_col_index, block2_rows_count, block2_right_cols_count);
         self_att_block.setZero();
-        self_att_block.triangularView<Eigen::Lower>().setConstant(SCALED_MASK_VALUE);
+        self_att_block.triangularView<Eigen::Lower>().setConstant(m_scaled_mask_value);
     }
 
-    for (int group = 1; group < MASK_GROUPS_SIZE; group++) {
+    for (uint32_t group = 1; group < m_params.num_attention_heads; group++) {
         attention_mask.block(0, group * group_total_cols, group_total_rows, group_total_cols) = attention_mask.block(0, 0, group_total_rows, group_total_cols);
     }
 }
@@ -186,16 +190,16 @@ hailo_status LLMPreProcess::fill_positional_embed(std::map<layer_name_t, MemoryV
     const Eigen::Tensor<float32_t, 4, Eigen::RowMajor> &rope_cos, const Eigen::Tensor<float32_t, 4, Eigen::RowMajor> &rope_sin)
 {
     // Get the target layer names
-    TRY(auto q_cos_layer_name, get_layer_name_from_suffix<MemoryView>(INPUT_LAYER_PE_Q_COS_SUFF, layer_name_to_input_buffer));
-    TRY(auto k_cos_layer_name, get_layer_name_from_suffix<MemoryView>(INPUT_LAYER_PE_K_COS_SUFF, layer_name_to_input_buffer));
-    TRY(auto q_sin_layer_name, get_layer_name_from_suffix<MemoryView>(INPUT_LAYER_PE_Q_SIN_SUFF, layer_name_to_input_buffer));
-    TRY(auto k_sin_layer_name, get_layer_name_from_suffix<MemoryView>(INPUT_LAYER_PE_K_SIN_SUFF, layer_name_to_input_buffer));
+    TRY(auto q_cos_layer_name, get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.pe_q_cos, layer_name_to_input_buffer));
+    TRY(auto k_cos_layer_name, get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.pe_k_cos, layer_name_to_input_buffer));
+    TRY(auto q_sin_layer_name, get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.pe_q_sin, layer_name_to_input_buffer));
+    TRY(auto k_sin_layer_name, get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.pe_k_sin, layer_name_to_input_buffer));
 
     // Tile the results for the Q and K groups
-    tile_along_last_axis(rope_cos, Q_GROUPS_SIZE, layer_name_to_input_buffer[q_cos_layer_name]);
-    tile_along_last_axis(rope_sin, Q_GROUPS_SIZE, layer_name_to_input_buffer[q_sin_layer_name]);
-    tile_along_last_axis(rope_cos, K_GROUPS_SIZE, layer_name_to_input_buffer[k_cos_layer_name]);
-    tile_along_last_axis(rope_sin, K_GROUPS_SIZE, layer_name_to_input_buffer[k_sin_layer_name]);
+    tile_along_last_axis(rope_cos, m_params.num_attention_heads, layer_name_to_input_buffer[q_cos_layer_name]);
+    tile_along_last_axis(rope_sin, m_params.num_attention_heads, layer_name_to_input_buffer[q_sin_layer_name]);
+    tile_along_last_axis(rope_cos, m_params.num_key_value_heads, layer_name_to_input_buffer[k_cos_layer_name]);
+    tile_along_last_axis(rope_sin, m_params.num_key_value_heads, layer_name_to_input_buffer[k_sin_layer_name]);
 
     return HAILO_SUCCESS;
 }
@@ -270,12 +274,12 @@ void LLMPreProcess::update_cache_from_embeddings(const std::vector<MemoryView> &
 
 hailo_status LLMPreProcess::validate_inputs(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, const std::map<std::string, size_t> &expected_sizes)
 {
-    assert(HAILO_SUCCESS == get_layer_name_from_suffix<MemoryView>(INPUT_LAYER_EMBEDDINGS_SUFF, layer_name_to_input_buffer).status());
-    assert(HAILO_SUCCESS == get_layer_name_from_suffix<MemoryView>(INPUT_LAYER_ATTENTION_MASK_SUFF, layer_name_to_input_buffer).status());
-    assert(HAILO_SUCCESS == get_layer_name_from_suffix<MemoryView>(INPUT_LAYER_PE_Q_COS_SUFF, layer_name_to_input_buffer).status());
-    assert(HAILO_SUCCESS == get_layer_name_from_suffix<MemoryView>(INPUT_LAYER_PE_Q_SIN_SUFF, layer_name_to_input_buffer).status());
-    assert(HAILO_SUCCESS == get_layer_name_from_suffix<MemoryView>(INPUT_LAYER_PE_K_COS_SUFF, layer_name_to_input_buffer).status());
-    assert(HAILO_SUCCESS == get_layer_name_from_suffix<MemoryView>(INPUT_LAYER_PE_K_SIN_SUFF, layer_name_to_input_buffer).status());
+    assert(HAILO_SUCCESS == get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.embeddings, layer_name_to_input_buffer).status());
+    assert(HAILO_SUCCESS == get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.attention_mask, layer_name_to_input_buffer).status());
+    assert(HAILO_SUCCESS == get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.pe_q_cos, layer_name_to_input_buffer).status());
+    assert(HAILO_SUCCESS == get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.pe_q_sin, layer_name_to_input_buffer).status());
+    assert(HAILO_SUCCESS == get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.pe_k_cos, layer_name_to_input_buffer).status());
+    assert(HAILO_SUCCESS == get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.pe_k_sin, layer_name_to_input_buffer).status());
 
     for (const auto &input : layer_name_to_input_buffer) {
         CHECK(input.second.size() == expected_sizes.at(input.first), HAILO_INVALID_ARGUMENT,
@@ -303,17 +307,17 @@ hailo_status LLMPreProcess::prepare_inputs_prefill(std::map<layer_name_t, Memory
     const std::vector<MemoryView> &input_tokens_embeddings)
 {
     int num_rows = static_cast<int>(input_tokens_embeddings.size());
-    CHECK(static_cast<size_t>(num_rows) <= PREFILL_INPUT_TOKENS_SIZE, HAILO_INVALID_ARGUMENT,
-        "Preparing prefill inputs failed. embeddings rows must be lower then {}", PREFILL_INPUT_TOKENS_SIZE);
+    CHECK(static_cast<size_t>(num_rows) <= m_params.prefill_input_tokens_count, HAILO_INVALID_ARGUMENT,
+        "Preparing prefill inputs failed. embeddings rows must be lower then {}", m_params.prefill_input_tokens_count);
     CHECK_SUCCESS(validate_inputs(layer_name_to_input_buffer, m_prefill_inputs_frame_size)); // TODO (HRT-16660): when tried to mix between prefill and tbt sizes this check didnt fail
 
     update_cache_from_embeddings(input_tokens_embeddings);
-    TRY(auto input_layer_embeddings, get_layer_name_from_suffix<MemoryView>(INPUT_LAYER_EMBEDDINGS_SUFF, layer_name_to_input_buffer));
-    prepare_embeddings_input(layer_name_to_input_buffer[input_layer_embeddings], PREFILL_INPUT_TOKENS_SIZE);
+    TRY(auto input_layer_embeddings, get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.embeddings, layer_name_to_input_buffer));
+    prepare_embeddings_input(layer_name_to_input_buffer[input_layer_embeddings], m_params.prefill_input_tokens_count);
 
-    TRY(auto input_layer_attention_mask, get_layer_name_from_suffix<MemoryView>(INPUT_LAYER_ATTENTION_MASK_SUFF, layer_name_to_input_buffer));
-    prepare_attention_mask_input(layer_name_to_input_buffer[input_layer_attention_mask], PREFILL_INPUT_TOKENS_SIZE);
-    CHECK_SUCCESS(prepare_positional_embed_inputs(layer_name_to_input_buffer, PREFILL_INPUT_TOKENS_SIZE, num_rows));
+    TRY(auto input_layer_attention_mask, get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.attention_mask, layer_name_to_input_buffer));
+    prepare_attention_mask_input(layer_name_to_input_buffer[input_layer_attention_mask], m_params.prefill_input_tokens_count);
+    CHECK_SUCCESS(prepare_positional_embed_inputs(layer_name_to_input_buffer, m_params.prefill_input_tokens_count, num_rows));
 
     return HAILO_SUCCESS;
 }
@@ -325,10 +329,10 @@ hailo_status LLMPreProcess::prepare_inputs_tbt(std::map<layer_name_t, MemoryView
     assert(input_token_embedding.size() == 1);
     update_cache_from_embeddings(input_token_embedding);
 
-    TRY(auto input_layer_embeddings, get_layer_name_from_suffix<MemoryView>(INPUT_LAYER_EMBEDDINGS_SUFF, layer_name_to_input_buffer));
+    TRY(auto input_layer_embeddings, get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.embeddings, layer_name_to_input_buffer));
     prepare_embeddings_input(layer_name_to_input_buffer[input_layer_embeddings], TBT_INPUT_TOKENS_SIZE);
 
-    TRY(auto input_layer_attention_mask, get_layer_name_from_suffix<MemoryView>(INPUT_LAYER_ATTENTION_MASK_SUFF, layer_name_to_input_buffer));
+    TRY(auto input_layer_attention_mask, get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.attention_mask, layer_name_to_input_buffer));
     prepare_attention_mask_input(layer_name_to_input_buffer[input_layer_attention_mask], TBT_INPUT_TOKENS_SIZE);
     CHECK_SUCCESS(prepare_positional_embed_inputs(layer_name_to_input_buffer, TBT_INPUT_TOKENS_SIZE, 1));
 
@@ -342,12 +346,12 @@ void LLMPreProcess::reset_local_cache()
 }
 
 // TODO: HRT-16261 - Use layers info
-bool LLMPreProcess::is_positional_embed_layer(const std::string &name)
+bool LLMPreProcess::is_positional_embed_layer(const std::string &name, const InputLayersNamesSuffixes &input_layers_names_suffixes)
 {
-    if (has_suffix(name, INPUT_LAYER_PE_Q_COS_SUFF) ||
-        has_suffix(name, INPUT_LAYER_PE_Q_SIN_SUFF) ||
-        has_suffix(name, INPUT_LAYER_PE_K_COS_SUFF) ||
-        has_suffix(name, INPUT_LAYER_PE_K_SIN_SUFF))
+    if (has_suffix(name, input_layers_names_suffixes.pe_q_cos) ||
+        has_suffix(name, input_layers_names_suffixes.pe_q_sin) ||
+        has_suffix(name, input_layers_names_suffixes.pe_k_cos) ||
+        has_suffix(name, input_layers_names_suffixes.pe_k_sin))
     {
         return true;
     }

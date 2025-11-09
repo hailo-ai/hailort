@@ -529,8 +529,8 @@ hailo_status AsyncPipelineBuilder::add_nms_flow(std::shared_ptr<AsyncPipeline> a
     auto nms_op_metadata = std::dynamic_pointer_cast<net_flow::NmsOpMetadata>(nms_op->metadata());
     assert(nullptr != nms_op_metadata);
 
-    CHECK(output_format.second.type == HAILO_FORMAT_TYPE_FLOAT32, HAILO_INVALID_ARGUMENT,
-        "NMS output format type must be HAILO_FORMAT_TYPE_FLOAT32");
+    CHECK_SUCCESS(nms_op_metadata->validate_format_type(output_format.second));
+
     if(!nms_op_metadata->nms_config().bbox_only){
         CHECK(HailoRTCommon::is_nms(output_format.second.order), HAILO_INVALID_ARGUMENT,
             "NMS output format order must be an NMS format order");
